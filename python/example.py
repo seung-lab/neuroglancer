@@ -34,3 +34,4 @@ void main() {
 """)
 viewer.add(b, name='b')
 print(viewer)
+input()
