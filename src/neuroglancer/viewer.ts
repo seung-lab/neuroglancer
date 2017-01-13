@@ -33,6 +33,7 @@ import {registerTrackable, setStateServerURL} from 'neuroglancer/url_hash_state'
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {vec3} from 'neuroglancer/util/geom';
 import {GlobalKeyboardShortcutHandler, KeySequenceMap} from 'neuroglancer/util/keyboard_shortcut_handler';
+import {NullarySignal} from 'neuroglancer/util/signal';
 import {DataDisplayLayout, LAYOUTS} from 'neuroglancer/viewer_layouts';
 import {ViewerState} from 'neuroglancer/viewer_state';
 import {RPC} from 'neuroglancer/worker_rpc';
@@ -75,7 +76,7 @@ export class Viewer extends RefCounted implements ViewerState {
   layerSelectedValues =
       this.registerDisposer(new LayerSelectedValues(this.layerManager, this.mouseState));
   worker = new RPC(new Worker('chunk_worker.bundle.js'));
-  resetInitiated = new Signal();
+  resetInitiated = new NullarySignal();
 
   chunkQueueManager = new ChunkQueueManager(this.worker, this.display.gl, {
     gpuMemory: new AvailableCapacity(1e6, 1e9),
@@ -95,8 +96,8 @@ export class Viewer extends RefCounted implements ViewerState {
     super();
 
     // Delay hash update after each redraw to try to prevent noticeable lag in Chrome.
-    this.registerSignalBinding(display.updateStarted.add(this.onUpdateDisplay, this));
-    this.registerSignalBinding(display.updateFinished.add(this.onUpdateDisplayFinished, this));
+    this.registerDisposer(display.updateStarted.add(() => { this.onUpdateDisplay(); }));
+    this.registerDisposer(display.updateFinished.add(() => { this.onUpdateDisplayFinished(); }));
 
     // Prevent contextmenu on rightclick, as this inteferes with our use
     // of the right mouse button.
@@ -122,7 +123,7 @@ export class Viewer extends RefCounted implements ViewerState {
 
     this.layerManager.initializePosition(this.navigationState.position);
 
-    this.registerSignalBinding(
+    this.registerDisposer(
         this.layerSpecification.voxelCoordinatesSet.add((voxelCoordinates: vec3) => {
           this.navigationState.position.setVoxelCoordinates(voxelCoordinates);
         }));
@@ -142,10 +143,10 @@ export class Viewer extends RefCounted implements ViewerState {
       }
     })));
 
-    this.registerSignalBinding(this.chunkQueueManager.visibleChunksChanged.add(
+    this.registerDisposer(this.chunkQueueManager.visibleChunksChanged.add(
         () => { this.layerSelectedValues.handleLayerChange(); }));
 
-    this.chunkQueueManager.visibleChunksChanged.add(display.scheduleRedraw, display);
+    this.chunkQueueManager.visibleChunksChanged.add(() => { display.scheduleRedraw(); });
 
     this.makeUI();
 
