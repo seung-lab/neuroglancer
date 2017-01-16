@@ -34,6 +34,8 @@ import {Uint64} from 'neuroglancer/util/uint64';
 import {RangeWidget} from 'neuroglancer/widget/range';
 import {SegmentSetWidget} from 'neuroglancer/widget/segment_set_widget';
 import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
+import {openHttpRequest, sendHttpRequest} from 'neuroglancer/util/http_request';
+
 
 require('./segmentation_user_layer.css');
 
@@ -187,12 +189,26 @@ export class SegmentationUserLayer extends UserLayer {
         let {segmentSelectionState} = this.displayState;
         if (segmentSelectionState.hasSelectedSegment) {
           let segment = segmentSelectionState.selectedSegment;
-          let {visibleSegments} = this.displayState;
+          let {visibleSegments} = this.displayState; //HashSet of vissible segments
           if (visibleSegments.has(segment)) {
             visibleSegments.delete(segment);
           } else {
             visibleSegments.add(segment);
+            // TODO also add its connect components
+            let promise = sendHttpRequest(openHttpRequest(`http://localhost:8888/node/${segment}`), 'arraybuffer');
+            promise.then(
+              response => {
+                let r = new Uint32Array(response);
+                for (let u of r) {
+                  visibleSegments.add(new Uint64(u));
+                }
+              },
+              function(e) {
+                console.log(`Download failed for segment ${segment}`);
+                console.error(e);
+              });
           }
+
         }
         break;
       }

@@ -10,7 +10,7 @@ import h5py
 #   python setup.py bundle_client
 #
 # has not been run.
-neuroglancer.set_static_content_source(url='https://neuroglancer-demo.appspot.com')
+neuroglancer.set_static_content_source(url='http://localhost:8080')
 
 viewer = neuroglancer.Viewer(voxel_size=[6, 6, 40])
 with h5py.File('./snemi3d/image.h5') as f:

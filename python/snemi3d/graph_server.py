@@ -2,38 +2,49 @@ import tornado.ioloop
 import tornado.web
 import networkx as nx
 import json
+import numpy as np
 
 try:
     G = nx.read_gpickle('snemi3d_graph.pickle')
+    print 'restored graph'
 except:
     G = nx.Graph()
 
 def threshold_graph(G):
-    count = 0
     for edge in G.edges_iter(data=True):
         u, v, data = edge
-        if float(data['capacity']) < 0.4: #threshold for removing edges
-            count += 1
-    print count / float(len(G.edges()))
+        if float(data['capacity']) < 0.8: #threshold for removing edges
+            G.remove_edge(u,v)
 
 threshold_graph(G)
 
 class NodeHandler(tornado.web.RequestHandler):
     def get(self, u):
+        u = int(u)
         if G.has_node(u):
-            self.finish(json.dumps(G.neighbors(u)))
+            self.set_header("Access-Control-Allow-Origin", "*")
+            self.set_header("Access-Control-Allow-Headers", "x-requested-with")
+            self.set_header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS')
+            data = np.array(G.neighbors(u)).tostring()
+            self.write(data)
+
+            # self.finish(json.dumps(list(G.neighbors(u))))
         else:
             self.clear()
             self.set_status(400)
             self.finish()
 
     def post(self, u):
+        u = int(u)
+
         G.add_node(u)
         self.clear()
         self.set_status(200)
         self.finish()
 
     def delete(self, u):
+        u = int(u)
+        
         if G.has_node(u):
             G.remove_node(u)
             self.clear()
@@ -54,6 +65,8 @@ class EdgeHandler(tornado.web.RequestHandler):
         Returns:
             JSON: properties of the edge
         """
+        u = int(u); v = int(v)
+
         if G.has_edge(u,v):
             self.finish(json.dumps(G[u][v]))
         else:
@@ -62,13 +75,16 @@ class EdgeHandler(tornado.web.RequestHandler):
             self.finish()
 
     def post(self, u, v):
+        u = int(u); v = int(v)
         G.add_edge(u,v, capacity=1.0) #TODO add capacity for min cut
 
     def delete(self, u, v):
+        u = int(u); v = int(v)
         G.remove_edge(u,v)
 
 class SplitHandler(tornado.web.RequestHandler):
     def post(self, u, v):
+        u = int(u); v = int(v)
         cut_value, partitions = nx.minimum_cut(G, u, v)
         partitions = map(list, partitions)
         self.clear()
