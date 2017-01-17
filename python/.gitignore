@@ -2,3 +2,6 @@ dist
 build
 neuroglancer.egg-info
 _neuroglancer.so
+venv
+
+snemi3d/*.h5
