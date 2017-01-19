@@ -1,5 +1,7 @@
 import tornado.ioloop
 import tornado.web
+from tornado.testing import AsyncHTTPTestCase
+
 import networkx as nx
 import json
 import numpy as np
@@ -24,13 +26,16 @@ def threshold_graph(G):
 
 threshold_graph(G)
 
+def add_cors_headers(self):
+    self.set_header("Access-Control-Allow-Origin", "*")
+    self.set_header("Access-Control-Allow-Headers", "x-requested-with")
+    self.set_header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS')
+
 class NodeHandler(tornado.web.RequestHandler):
     def get(self, u):
         u = int(u)
         if G.has_node(u):
-            self.set_header("Access-Control-Allow-Origin", "*")
-            self.set_header("Access-Control-Allow-Headers", "x-requested-with")
-            self.set_header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS')
+            add_cors_headers(self)
             data = np.array(G.neighbors(u)).tostring()
             self.write(data)
 
@@ -73,9 +78,7 @@ class EdgeHandler(tornado.web.RequestHandler):
         u = int(u); v = int(v)
 
         if G.has_edge(u,v):
-            self.set_header("Access-Control-Allow-Origin", "*")
-            self.set_header("Access-Control-Allow-Headers", "x-requested-with")
-            self.set_header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS')
+            add_cors_headers(self)
             self.finish(json.dumps(G[u][v]))
         else:
             self.clear()
@@ -95,28 +98,27 @@ class SplitHandler(tornado.web.RequestHandler):
         u = int(u); v = int(v)
         cut_value, partitions = nx.minimum_cut(G, u, v)
         partitions = map(list, partitions)
-        self.clear()
-        self.set_header("Access-Control-Allow-Origin", "*")
-        self.set_header("Access-Control-Allow-Headers", "x-requested-with")
-        self.set_header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS')
+        add_cors_headers(self)
         self.set_status(400)
         self.finish(json.dumps(partitions))
 
 
 class ObjectHandler(tornado.web.RequestHandler):
+    """It treats a set of supervoxels as an object.
+       It will merge objects into a new one if a new object is post that
+       contains at least one member of an already existent object.
+
+       This is completly independent of the global region graph. When an object
+       is created this doesn't check if the provided nodes ids actually exist in
+       the global graph.
+    """
     def get(self):
-        self.set_header("Access-Control-Allow-Origin", "*")
-        self.set_header("Access-Control-Allow-Headers", "x-requested-with")
-        self.set_header('Access-Control-Allow-Methods', 'POST, GET')
+        add_cors_headers(self)
         self.write(json.dumps(map(list,sets)))
 
     def post(self):
-        self.clear()
-        self.set_header("Access-Control-Allow-Origin", "*")
-        self.set_header("Access-Control-Allow-Headers", "x-requested-with")
-        self.set_header('Access-Control-Allow-Methods', 'POST, GET')
-
-        nodes = tornado.escape.json_decode(self.request.body)['nodes']
+        add_cors_headers(self)
+        nodes = tornado.escape.json_decode(self.request.body)
         new_set = set(nodes)
         for node in nodes:
             if node in node2sets:
@@ -139,8 +141,50 @@ def make_app():
         (r'/1.0/object/', ObjectHandler),
     ])
 
-if __name__ == "__main__":
+
+
+class TestObjectHandler(AsyncHTTPTestCase):
+    def get_app(self):
+        return make_app()
+
+    def check_get(self, arr):
+        self.http_client.fetch(
+            self.get_url('/1.0/object/'),
+            self.stop,
+            method="GET"
+        )
+        response = self.wait()
+        self.assertEquals(json.loads(response.body), arr)
+
+    def check_post(self, arr):
+        self.http_client.fetch(
+            self.get_url('/1.0/object/'),
+            self.stop,
+            body=json.dumps(arr), #TODO(wms) can we just return an array?
+            method="POST"
+        )
+
+    def test_empty(self):
+        self.check_get([])
+
+    def test_insertion(self):
+        self.check_post([1,2,3])
+        self.check_get([[1,2,3]])
+
+        # adds the same stuff once again
+        self.check_post([1,2,3])
+        self.check_get([[1,2,3]])
+
+        # adds an independent objects
+        self.check_post([4,5,6])
+        self.check_get([[1,2,3],[4,5,6]])
+
+        # adds another set that merges the two objects from before
+        self.check_post([5,6,1,7])
+        self.check_get([[1,2,3,4,5,6,7]])
+
+
+if __name__ == '__main__':
     app = make_app()
     app.listen(8888)
     tornado.ioloop.IOLoop.current().start()
-
