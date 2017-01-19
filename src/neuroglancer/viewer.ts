@@ -186,6 +186,10 @@ export class Viewer extends RefCounted implements ViewerState {
     if (this.layerManager.managedLayers.length === 0) {
       new LayerDialog(this.layerSpecification);
     }
+
+    keyCommands.set('merge-selection', function () { console.log('merging selection'); })
+    keyCommands.set('two-point-split', function () { console.log('choose two points'); })
+
   }
 
   private makeUI() {
