@@ -5,3 +5,5 @@ _neuroglancer.so
 venv
 
 snemi3d/*.h5
+/ext/src/endian.h
+/ext/src/on_demand_object_mesh_generator.cc

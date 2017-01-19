@@ -35,7 +35,7 @@ import {RangeWidget} from 'neuroglancer/widget/range';
 import {SegmentSetWidget} from 'neuroglancer/widget/segment_set_widget';
 import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
 import {openHttpRequest, sendHttpRequest} from 'neuroglancer/util/http_request';
-
+import {mergeNodes} from 'neuroglancer/object_graph_service';
 
 require('./segmentation_user_layer.css');
 
@@ -186,17 +186,37 @@ export class SegmentationUserLayer extends UserLayer {
         this.displayState.visibleSegments.clear();
         break;
       }
+      case 'merge-selection': {
+        const {visibleSegments, segmentEquivalences} = this.displayState;
+
+        let segids : Uint64[] = [];
+        for (let segid of visibleSegments) {
+          segids.push(segid.clone());
+        }
+
+        let strings = segids.map( (seg64) => seg64.toString() ); // uint64s are emulated 
+
+        mergeNodes(strings).then( () => {
+          let seg0 = <Uint64>segids.pop();
+          segids.forEach((segid) => {
+            segmentEquivalences.link(seg0, segid);
+          });
+        });
+
+        break;
+      }
       case 'select': {
         let {segmentSelectionState} = this.displayState;
         if (segmentSelectionState.hasSelectedSegment) {
           let segment = segmentSelectionState.selectedSegment;
-          let {visibleSegments} = this.displayState; //HashSet of vissible segments
+          let {visibleSegments, segmentEquivalences} = this.displayState; //HashSet of vissible segments
           if (visibleSegments.has(segment)) {
             visibleSegments.delete(segment);
           } else {
             visibleSegments.add(segment);
+            // segmentEquivalences.link(3423, segment);
             // TODO also add its connect components
-            let promise = sendHttpRequest(openHttpRequest(`http://localhost:8888/node/${segment}`), 'arraybuffer');
+            let promise = sendHttpRequest(openHttpRequest(`http://localhost:8888/1.0/node/${segment}`), 'arraybuffer');
             promise.then(
               response => {
                 let r = new Uint32Array(response);

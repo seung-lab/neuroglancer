@@ -172,7 +172,7 @@ export class Viewer extends RefCounted implements ViewerState {
       });
     }
 
-    for (let command of ['recolor', 'clear-segments']) {
+    for (let command of ['merge-selection', 'recolor', 'clear-segments']) {
       keyCommands.set(command, function() { this.layerManager.invokeAction(command); });
     }
 
@@ -187,7 +187,6 @@ export class Viewer extends RefCounted implements ViewerState {
       new LayerDialog(this.layerSpecification);
     }
 
-    keyCommands.set('merge-selection', function () { console.log('merging selection'); })
     keyCommands.set('two-point-split', function () { console.log('choose two points'); })
 
   }

@@ -111,6 +111,11 @@ class ObjectHandler(tornado.web.RequestHandler):
         self.write(json.dumps(map(list,sets)))
 
     def post(self):
+        self.clear()
+        self.set_header("Access-Control-Allow-Origin", "*")
+        self.set_header("Access-Control-Allow-Headers", "x-requested-with")
+        self.set_header('Access-Control-Allow-Methods', 'POST, GET')
+
         nodes = tornado.escape.json_decode(self.request.body)['nodes']
         new_set = set(nodes)
         for node in nodes:
@@ -120,7 +125,7 @@ class ObjectHandler(tornado.web.RequestHandler):
         for node in nodes:
             node2sets[node] = new_set
         sets.append(new_set)
-        self.clear()
+        
         self.set_status(200)
         self.finish()
 
