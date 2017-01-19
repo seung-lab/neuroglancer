@@ -35,7 +35,7 @@ import {RangeWidget} from 'neuroglancer/widget/range';
 import {SegmentSetWidget} from 'neuroglancer/widget/segment_set_widget';
 import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
 import {openHttpRequest, sendHttpRequest} from 'neuroglancer/util/http_request';
-import {mergeNodes} from 'neuroglancer/object_graph_service';
+import {mergeNodes, getObjectList, setGraphServerURL} from 'neuroglancer/object_graph_service';
 
 require('./segmentation_user_layer.css');
 
@@ -59,9 +59,10 @@ export class SegmentationUserLayer extends UserLayer {
   volumePath: string|undefined;
   meshPath: string|undefined;
   skeletonsPath: string|undefined;
+  graphPath: string|undefined;
   meshLayer: MeshLayer|undefined;
 
-  constructor(public manager: LayerListSpecification, x: any) {
+  constructor(public manager: LayerListSpecification, spec: any) {
     super([]);
     this.displayState.visibleSegments.changed.add(() => { this.specificationChanged.dispatch(); });
     this.displayState.segmentEquivalences.changed.add(
@@ -71,16 +72,18 @@ export class SegmentationUserLayer extends UserLayer {
     this.displayState.notSelectedAlpha.changed.add(() => { this.specificationChanged.dispatch(); });
     this.displayState.objectAlpha.changed.add(() => { this.specificationChanged.dispatch(); });
 
-    this.displayState.selectedAlpha.restoreState(x[SELECTED_ALPHA_JSON_KEY]);
-    this.displayState.notSelectedAlpha.restoreState(x[NOT_SELECTED_ALPHA_JSON_KEY]);
-    this.displayState.objectAlpha.restoreState(x[OBJECT_ALPHA_JSON_KEY]);
-    this.displayState.objectToDataTransform.restoreState(x['transform']);
+    this.displayState.selectedAlpha.restoreState(spec[SELECTED_ALPHA_JSON_KEY]);
+    this.displayState.notSelectedAlpha.restoreState(spec[NOT_SELECTED_ALPHA_JSON_KEY]);
+    this.displayState.objectAlpha.restoreState(spec[OBJECT_ALPHA_JSON_KEY]);
+    this.displayState.objectToDataTransform.restoreState(spec['transform']);
     this.displayState.volumeSourceOptions.transform =
         this.displayState.objectToDataTransform.transform;
 
-    let volumePath = this.volumePath = verifyOptionalString(x['source']);
-    let meshPath = this.meshPath = verifyOptionalString(x['mesh']);
-    let skeletonsPath = this.skeletonsPath = verifyOptionalString(x['skeletons']);
+    let volumePath = this.volumePath = verifyOptionalString(spec['source']);
+    let meshPath = this.meshPath = verifyOptionalString(spec['mesh']);
+    let skeletonsPath = this.skeletonsPath = verifyOptionalString(spec['skeletons']);
+    let graphPath = this.graphPath = verifyOptionalString(spec['graph']);
+
     if (volumePath !== undefined) {
       getVolumeWithStatusMessage(manager.chunkManager, volumePath, {
         volumeType: VolumeType.SEGMENTATION
@@ -116,11 +119,17 @@ export class SegmentationUserLayer extends UserLayer {
       });
     }
 
-
     verifyObjectProperty(
-        x, 'equivalences', y => { this.displayState.segmentEquivalences.restoreState(y); });
+        spec, 'equivalences', y => { this.displayState.segmentEquivalences.restoreState(y); });
 
-    verifyObjectProperty(x, 'segments', y => {
+    // if (graphPath !== undefined) {
+    //   setGraphServerURL(graphPath);
+      getObjectList().then(equivalences => {
+        this.displayState.segmentEquivalences.addSets(equivalences);
+      });
+    // }
+
+    verifyObjectProperty(spec, 'segments', y => {
       if (y !== undefined) {
         let {visibleSegments, segmentEquivalences} = this.displayState;
         parseArray(y, value => {

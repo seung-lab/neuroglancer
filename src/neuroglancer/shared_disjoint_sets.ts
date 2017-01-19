@@ -71,11 +71,7 @@ export class SharedDisjointUint64Sets extends SharedObjectCounterpart {
 
   toJSON() { return this.disjointSets.toJSON(); }
 
-  /**
-   * Restores the state from a JSON representation.
-   */
-  restoreState(obj: any) {
-    this.clear();
+  addSets(obj: any) {
     if (obj !== undefined) {
       let ids = [new Uint64(), new Uint64()];
       parseArray(obj, z => {
@@ -87,6 +83,14 @@ export class SharedDisjointUint64Sets extends SharedObjectCounterpart {
         });
       });
     }
+  }
+
+  /**
+   * Restores the state from a JSON representation.
+   */
+  restoreState(obj: any) {
+    this.clear();
+    this.addSets(obj);
   }
 };
 
