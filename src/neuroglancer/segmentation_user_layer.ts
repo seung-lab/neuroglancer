@@ -116,6 +116,7 @@ export class SegmentationUserLayer extends UserLayer {
       });
     }
 
+
     verifyObjectProperty(
         x, 'equivalences', y => { this.displayState.segmentEquivalences.restoreState(y); });
 
@@ -201,6 +202,7 @@ export class SegmentationUserLayer extends UserLayer {
                 let r = new Uint32Array(response);
                 for (let u of r) {
                   visibleSegments.add(new Uint64(u));
+                  this.displayState.segmentEquivalences.link(segment, new Uint64(u));
                 }
               },
               function(e) {

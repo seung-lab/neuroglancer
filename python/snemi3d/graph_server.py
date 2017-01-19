@@ -6,7 +6,7 @@ import numpy as np
 
 try:
     G = nx.read_gpickle('snemi3d_graph.pickle')
-    print 'restored graph'
+    print 'graph restored'
 except:
     G = nx.Graph()
 
@@ -28,7 +28,6 @@ class NodeHandler(tornado.web.RequestHandler):
             data = np.array(G.neighbors(u)).tostring()
             self.write(data)
 
-            # self.finish(json.dumps(list(G.neighbors(u))))
         else:
             self.clear()
             self.set_status(400)
@@ -68,6 +67,9 @@ class EdgeHandler(tornado.web.RequestHandler):
         u = int(u); v = int(v)
 
         if G.has_edge(u,v):
+            self.set_header("Access-Control-Allow-Origin", "*")
+            self.set_header("Access-Control-Allow-Headers", "x-requested-with")
+            self.set_header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS')
             self.finish(json.dumps(G[u][v]))
         else:
             self.clear()
@@ -88,6 +90,9 @@ class SplitHandler(tornado.web.RequestHandler):
         cut_value, partitions = nx.minimum_cut(G, u, v)
         partitions = map(list, partitions)
         self.clear()
+        self.set_header("Access-Control-Allow-Origin", "*")
+        self.set_header("Access-Control-Allow-Headers", "x-requested-with")
+        self.set_header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS')
         self.set_status(400)
         self.finish(json.dumps(partitions))
 

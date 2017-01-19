@@ -48,6 +48,8 @@ export function makeDefaultKeyBindings(keyMap: KeySequenceMap) {
 
   keyMap.bind('keyn', 'add-layer');
   keyMap.bind('keyh', 'help');
-
   keyMap.bind('space', 'toggle-layout');
+  keyMap.bind('keym', 'merge-selection');
+  keyMap.bind('keyt', 'two-point-split');
+
 }
