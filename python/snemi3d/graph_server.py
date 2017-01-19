@@ -3,12 +3,18 @@ import tornado.web
 import networkx as nx
 import json
 import numpy as np
+from weakref import WeakValueDictionary
 
 try:
     G = nx.read_gpickle('snemi3d_graph.pickle')
     print 'graph restored'
 except:
     G = nx.Graph()
+
+# Global objects because I don't know how to have class members
+sets = []
+node2sets = WeakValueDictionary()
+
 
 def threshold_graph(G):
     for edge in G.edges_iter(data=True):
@@ -96,11 +102,36 @@ class SplitHandler(tornado.web.RequestHandler):
         self.set_status(400)
         self.finish(json.dumps(partitions))
 
+
+class ObjectHandler(tornado.web.RequestHandler):
+    def get(self):
+        self.set_header("Access-Control-Allow-Origin", "*")
+        self.set_header("Access-Control-Allow-Headers", "x-requested-with")
+        self.set_header('Access-Control-Allow-Methods', 'POST, GET')
+        self.write(json.dumps(map(list,sets)))
+
+    def post(self):
+        nodes = tornado.escape.json_decode(self.request.body)['nodes']
+        new_set = set(nodes)
+        for node in nodes:
+            if node in node2sets:
+                new_set = new_set.union(node2sets[node])
+                sets.remove(node2sets[node])
+        for node in nodes:
+            node2sets[node] = new_set
+        sets.append(new_set)
+        self.clear()
+        self.set_status(200)
+        self.finish()
+
+
+
 def make_app():
     return tornado.web.Application([
-        (r'/node/(\d+)', NodeHandler),
-        (r'/edge/(\d+)/(\d+)', EdgeHandler),
-        (r'/split/(\d+)/(\d+)', SplitHandler),
+        (r'/1.0/node/(\d+)', NodeHandler),
+        (r'/1.0/edge/(\d+)/(\d+)', EdgeHandler),
+        (r'/1.0/split/(\d+)/(\d+)', SplitHandler),
+        (r'/1.0/object/', ObjectHandler),
     ])
 
 if __name__ == "__main__":
