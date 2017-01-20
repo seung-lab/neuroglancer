@@ -228,10 +228,9 @@ export class SegmentationUserLayer extends UserLayer {
             let promise = sendHttpRequest(openHttpRequest(`http://localhost:8888/1.0/node/${segment}`), 'arraybuffer');
             promise.then(
               response => {
-                let r = new Uint32Array(response);
+                let r = new Uint32Array(response); //TODO make this code 64 bits 
                 for (let u of r) {
                   visibleSegments.add(new Uint64(u));
-                  this.displayState.segmentEquivalences.link(segment, new Uint64(u));
                 }
               },
               function(e) {

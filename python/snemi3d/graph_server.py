@@ -1,42 +1,62 @@
 import tornado.ioloop
 import tornado.web
-from tornado.testing import AsyncHTTPTestCase
 
 import networkx as nx
 import json
 import numpy as np
 from weakref import WeakValueDictionary
 
-try:
-    G = nx.read_gpickle('snemi3d_graph.pickle')
-    print 'graph restored'
-except:
-    G = nx.Graph()
 
-# Global objects because I don't know how to have class members
-sets = []
-node2sets = WeakValueDictionary()
+class BaseHandler(tornado.web.RequestHandler):
 
+    def initialize(self, G, sets, node2sets, threshold):
+        self.G = G
+        self.sets = sets
+        self.node2sets = node2sets
+        self.threshold = threshold
 
-def threshold_graph(G):
-    for edge in G.edges_iter(data=True):
-        u, v, data = edge
-        if float(data['capacity']) < 0.8: #threshold for removing edges
-            G.remove_edge(u,v)
+    def add_cors_headers(self):
+        self.set_header("Access-Control-Allow-Origin", "*")
+        self.set_header("Access-Control-Allow-Headers", "x-requested-with")
+        self.set_header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS')
 
-threshold_graph(G)
+    def prepare(self):
+        self.add_cors_headers()
 
-def add_cors_headers(self):
-    self.set_header("Access-Control-Allow-Origin", "*")
-    self.set_header("Access-Control-Allow-Headers", "x-requested-with")
-    self.set_header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS')
-
-class NodeHandler(tornado.web.RequestHandler):
+class NodeHandler(BaseHandler):
     def get(self, u):
+        #TODO(tartavull) add optional threshold argument
         u = int(u)
-        if G.has_node(u):
-            add_cors_headers(self)
-            data = np.array(G.neighbors(u)).tostring()
+        if self.G.has_node(u):
+            stack  = [u]
+            visited = set()
+            while len(stack):
+                node = stack.pop()
+                if node in visited:
+                    continue
+
+                # Here is some tricky code
+                # if the node we chose is part of an object we include
+                # all the nodes in that object
+                # if we chose an element which is connected with higher
+                # than threshold capacity to an object, we also include all
+                # nodes in that object.
+                # But we don't add the nodes of the objects to the stack, because
+                # we don't want to search for the neighbors of this object, because we
+                # asume that they are already correct.
+                if node in self.node2sets:
+                    visited = visited.union(self.node2sets[node])
+
+                for e0, e1, data in self.G.edges_iter(nbunch=node,data=True):
+                    visited.add(node)
+
+                    capacity = data['capacity']
+                    assert e0 == node
+                    if capacity > self.threshold and e1 not in visited:
+                        stack.append(e1)
+
+            #TODO(tartavull) make this 64 bits once neuroglancer can handle it
+            data = np.array(list(visited)).astype(np.uint32).tostring()
             self.write(data)
 
         else:
@@ -47,7 +67,7 @@ class NodeHandler(tornado.web.RequestHandler):
     def post(self, u):
         u = int(u)
 
-        G.add_node(u)
+        self.G.add_node(u)
         self.clear()
         self.set_status(200)
         self.finish()
@@ -55,8 +75,8 @@ class NodeHandler(tornado.web.RequestHandler):
     def delete(self, u):
         u = int(u)
         
-        if G.has_node(u):
-            G.remove_node(u)
+        if self.G.has_node(u):
+            self.G.remove_node(u)
             self.clear()
             self.set_status(200)
             self.finish()
@@ -65,7 +85,7 @@ class NodeHandler(tornado.web.RequestHandler):
             self.set_status(400)
             self.finish()
 
-class EdgeHandler(tornado.web.RequestHandler):
+class EdgeHandler(BaseHandler):
     def get(self, u, v):
         """        
         Args:
@@ -77,9 +97,8 @@ class EdgeHandler(tornado.web.RequestHandler):
         """
         u = int(u); v = int(v)
 
-        if G.has_edge(u,v):
-            add_cors_headers(self)
-            self.finish(json.dumps(G[u][v]))
+        if self.G.has_edge(u,v):
+            self.finish(json.dumps(self.G[u][v]))
         else:
             self.clear()
             self.set_status(400)
@@ -87,23 +106,34 @@ class EdgeHandler(tornado.web.RequestHandler):
 
     def post(self, u, v):
         u = int(u); v = int(v)
-        G.add_edge(u,v, capacity=1.0) #TODO add capacity for min cut
+        self.G.add_edge(u,v, capacity=1.0) #TODO(tartavull) add capacity for min cut
 
     def delete(self, u, v):
         u = int(u); v = int(v)
-        G.remove_edge(u,v)
+        self.G.remove_edge(u,v)
 
-class SplitHandler(tornado.web.RequestHandler):
-    def post(self, u, v):
+class SplitHandler(BaseHandler):
+    def post(self, u, v): #TODO(tartavull) write a test for this to make sure it is working
         u = int(u); v = int(v)
-        cut_value, partitions = nx.minimum_cut(G, u, v)
-        partitions = map(list, partitions)
-        add_cors_headers(self)
-        self.set_status(400)
+
+        print u, v
+        if u not in self.node2sets or v not in self.node2sets:
+            self.set_status(400)
+            return
+
+        u_set = self.node2sets[u]
+        v_set = self.node2sets[v]
+        if u_set != v_set:
+            self.set_status(400)
+            return
+
+        H = self.G.subgraph(list(u_set))
+        cut_value, partitions = nx.minimum_cut(H, u, v)
+        partitions = map(lambda x: map(int,x), partitions)
         self.finish(json.dumps(partitions))
 
 
-class ObjectHandler(tornado.web.RequestHandler):
+class ObjectHandler(BaseHandler):
     """It treats a set of supervoxels as an object.
        It will merge objects into a new one if a new object is post that
        contains at least one member of an already existent object.
@@ -112,76 +142,56 @@ class ObjectHandler(tornado.web.RequestHandler):
        is created this doesn't check if the provided nodes ids actually exist in
        the global graph.
     """
+
     def get(self):
-        add_cors_headers(self)
-        self.write(json.dumps(map(list,sets)))
+        self.write(json.dumps(map(list,self.sets)))
 
     def post(self):
-        add_cors_headers(self)
         nodes = tornado.escape.json_decode(self.request.body)
+        nodes = map(int, nodes)
         new_set = set(nodes)
         for node in nodes:
-            if node in node2sets:
-                new_set = new_set.union(node2sets[node])
-                sets.remove(node2sets[node])
+            if node in self.node2sets:
+                new_set = new_set.union(self.node2sets[node])
+                self.sets.remove(self.node2sets[node])
         for node in nodes:
-            node2sets[node] = new_set
-        sets.append(new_set)
+            self.node2sets[node] = new_set
+        self.sets.append(new_set)
         
         self.set_status(200)
         self.finish()
 
 
 
-def make_app():
-    return tornado.web.Application([
-        (r'/1.0/node/(\d+)', NodeHandler),
-        (r'/1.0/edge/(\d+)/(\d+)', EdgeHandler),
-        (r'/1.0/split/(\d+)/(\d+)', SplitHandler),
-        (r'/1.0/object/', ObjectHandler),
-    ])
+def make_app(test=False):
+    if not test:
+        G = nx.read_gpickle('snemi3d_graph.pickle')
+        print 'graph restored'
+    else:
+        G = nx.Graph()
 
+    def threshold_graph(G):
+        for edge in G.edges_iter(data=True):
+            u, v, data = edge
+            if float(data['capacity']) < 0.8: #threshold for removing edges
+                G.remove_edge(u,v)
 
+    threshold_graph(G)
 
-class TestObjectHandler(AsyncHTTPTestCase):
-    def get_app(self):
-        return make_app()
+    args =  {'G':G,
+             'sets': [],
+             'node2sets': WeakValueDictionary(),
+             'threshold': 0.8}
 
-    def check_get(self, arr):
-        self.http_client.fetch(
-            self.get_url('/1.0/object/'),
-            self.stop,
-            method="GET"
-        )
-        response = self.wait()
-        self.assertEquals(json.loads(response.body), arr)
+    app = tornado.web.Application([
+        (r'/1.0/node/(\d+)/?', NodeHandler, args),
+        (r'/1.0/edge/(\d+)/(\d+)/?', EdgeHandler, args),
+        (r'/1.0/split/(\d+)/(\d+)/?', SplitHandler, args),
+        (r'/1.0/object/?', ObjectHandler, args),
+    ], debug=True)
 
-    def check_post(self, arr):
-        self.http_client.fetch(
-            self.get_url('/1.0/object/'),
-            self.stop,
-            body=json.dumps(arr), #TODO(wms) can we just return an array?
-            method="POST"
-        )
-
-    def test_empty(self):
-        self.check_get([])
-
-    def test_insertion(self):
-        self.check_post([1,2,3])
-        self.check_get([[1,2,3]])
-
-        # adds the same stuff once again
-        self.check_post([1,2,3])
-        self.check_get([[1,2,3]])
-
-        # adds an independent objects
-        self.check_post([4,5,6])
-        self.check_get([[1,2,3],[4,5,6]])
-
-        # adds another set that merges the two objects from before
-        self.check_post([5,6,1,7])
-        self.check_get([[1,2,3,4,5,6,7]])
+    app.args = args
+    return app
 
 
 if __name__ == '__main__':
