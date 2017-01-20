@@ -63,7 +63,7 @@
     "ts-compiler": "^2.0.0",
     "tslint": "^5.6.0",
     "tslint-eslint-rules": "^3.2.0",
-    "tsutils": "^2.8.0",
+    "webpack-dev-server": "^2.2.0"
     "typescript": "^2.4.2",
     "utila": "^0.5.0-dev.1",
     "webpack": "^2.7.0",
