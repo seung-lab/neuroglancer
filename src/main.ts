@@ -23,8 +23,8 @@ import 'neuroglancer/synapse/user_layer';
 
 import {makeDefaultKeyBindings} from 'neuroglancer/default_key_bindings';
 import {makeDefaultViewer} from 'neuroglancer/default_viewer';
+import {bindDefaultCopyHandler, bindDefaultPasteHandler} from 'neuroglancer/ui/default_clipboard_handling';
 import {UrlHashBinding} from 'neuroglancer/ui/url_hash_binding';
-import {getCachedJson} from 'neuroglancer/util/trackable';
 
 window.addEventListener('DOMContentLoaded', () => {
   let viewer = (<any>window)['viewer'] = makeDefaultViewer();
@@ -33,17 +33,6 @@ window.addEventListener('DOMContentLoaded', () => {
   const hashBinding = new UrlHashBinding(viewer.state);
   hashBinding.updateFromUrlHash();
 
-  document.addEventListener('copy', (event: ClipboardEvent) => {
-    const selection = window.getSelection();
-    if (!selection.isCollapsed) {
-      return;
-    }
-    const {tagName} = (<HTMLElement>event.target);
-    if (tagName === 'TEXTAREA' || tagName === 'INPUT') {
-      return;
-    }
-    const stateJson = getCachedJson(viewer.state).value;
-    event.clipboardData.setData('text/plain', JSON.stringify(stateJson, undefined, '  '));
-    event.preventDefault();
-  });
+  bindDefaultCopyHandler(viewer);
+  bindDefaultPasteHandler(viewer);
 });
