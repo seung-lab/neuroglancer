@@ -78,6 +78,7 @@ export class UserLayerDropdown extends RefCounted {
   onHide() {}
 }
 
+// And user layer contains an array of RenderLayer
 export class UserLayer extends RefCounted {
   layersChanged = new Signal();
   readyStateChanged = new Signal();
@@ -388,6 +389,15 @@ export interface PickState {
   pickedOffset: number;
 }
 
+export enum SplitState {
+  INACTIVE = 0,
+  // Selecting elements for the first group.
+  FIRST = 1,
+  // Selecting elements for the second group.
+  SECOND = 2,
+}
+
+
 export class MouseSelectionState implements PickState {
   changed = new Signal();
   position = vec3.create();
@@ -395,6 +405,28 @@ export class MouseSelectionState implements PickState {
   pickedRenderLayer: RenderLayer|null = null;
   pickedValue = new Uint64(0, 0);
   pickedOffset = 0;
+
+  splitStatus = SplitState.INACTIVE;
+  
+  toggleSplit() {
+    if (this.splitStatus == SplitState.INACTIVE) {
+      this.splitStatus = SplitState.FIRST;
+    } else {
+      this.splitStatus = SplitState.INACTIVE;
+    }
+  }
+
+  updateSplit() {
+    if (this.splitStatus == SplitState.FIRST){
+      this.splitStatus = SplitState.SECOND;
+      return 'first';
+    } else {
+      // this.splitStatus has to be SplitState.SECOND
+      this.toggleSplit();
+      return 'second';
+    } 
+
+  }
 
   updater: ((mouseState: MouseSelectionState) => boolean)|undefined = undefined;
 

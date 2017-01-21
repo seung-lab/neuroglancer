@@ -62,6 +62,7 @@ export class SegmentationUserLayer extends UserLayer {
   graphPath: string|undefined;
   meshLayer: MeshLayer|undefined;
 
+  splitPartitions = [[],[]];
   constructor(public manager: LayerListSpecification, spec: any) {
     super([]);
     this.displayState.visibleSegments.changed.add(() => { this.specificationChanged.dispatch(); });
@@ -218,7 +219,7 @@ export class SegmentationUserLayer extends UserLayer {
         let {segmentSelectionState} = this.displayState;
         if (segmentSelectionState.hasSelectedSegment) {
           let segment = segmentSelectionState.selectedSegment;
-          let {visibleSegments, segmentEquivalences} = this.displayState; //HashSet of vissible segments
+          let {visibleSegments, segmentEquivalences} = this.displayState;
           if (visibleSegments.has(segment)) {
             visibleSegments.delete(segment);
           } else {
@@ -239,6 +240,26 @@ export class SegmentationUserLayer extends UserLayer {
               });
           }
 
+        }
+        break;
+      }
+      case 'split-select-first': {
+        let {segmentSelectionState} = this.displayState;
+        if (segmentSelectionState.hasSelectedSegment) {
+          let segment = segmentSelectionState.selectedSegment;
+          this.splitPartitions[0].push(segment.clone());
+        }
+        break;
+      }
+      case 'split-select-second': {
+        let {segmentSelectionState} = this.displayState;
+        if (segmentSelectionState.hasSelectedSegment) {
+          let segment = segmentSelectionState.selectedSegment;
+          this.splitPartitions[1].push(segment.clone());
+          console.log(`requesting split of ${this.splitPartitions}`);
+
+          //Reset
+          this.splitPartitions= [[],[]];
         }
         break;
       }

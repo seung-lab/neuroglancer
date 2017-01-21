@@ -187,7 +187,7 @@ export class Viewer extends RefCounted implements ViewerState {
       new LayerDialog(this.layerSpecification);
     }
 
-    keyCommands.set('two-point-split', function () { console.log('choose two points'); })
+    keyCommands.set('two-point-split', function () { this.mouseState.toggleSplit(); });
 
   }
 
