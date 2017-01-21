@@ -15,7 +15,7 @@
  */
 
 import {simpleStringHash} from 'neuroglancer/util/hash';
-import {CancellablePromise, makeCancellablePromise} from 'neuroglancer/util/promise';
+import {CancellationToken, uncancelableToken} from 'neuroglancer/util/cancellation';
 
 export type RequestModifier = (request: XMLHttpRequest) => void;
 
@@ -84,13 +84,13 @@ export function sendHttpRequest(xhr: XMLHttpRequest, responseType: string) {
   return makeCancellablePromise((resolve, reject, onCancel) => {
     xhr.onloadend = function(this: XMLHttpRequest) {
       let status = this.status;
+      token.remove(abort);
       if (status >= 200 && status < 300) {
         resolve(this.response);
       } else {
         reject(HttpError.fromXhr(xhr));
       }
     };
-    onCancel(() => { xhr.abort(); });
     xhr.send();
   });
 }
