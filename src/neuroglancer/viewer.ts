@@ -34,6 +34,7 @@ import {RefCounted} from 'neuroglancer/util/disposable';
 import {vec3} from 'neuroglancer/util/geom';
 import {GlobalKeyboardShortcutHandler, KeySequenceMap} from 'neuroglancer/util/keyboard_shortcut_handler';
 import {NullarySignal} from 'neuroglancer/util/signal';
+import {CompoundTrackable} from 'neuroglancer/util/trackable';
 import {DataDisplayLayout, LAYOUTS} from 'neuroglancer/viewer_layouts';
 import {ViewerState} from 'neuroglancer/viewer_state';
 import {RPC} from 'neuroglancer/worker_rpc';
@@ -92,10 +93,11 @@ export class Viewer extends RefCounted implements ViewerState {
   layoutName = new TrackableValue<string>(LAYOUTS[0][0], validateLayoutName);
   stateServer = new TrackableValue<string>(this.stateServerURL, validateStateServer);
 
+  state = new CompoundTrackable();
+
   constructor(public display: DisplayContext) {
     super();
 
-    // Delay hash update after each redraw to try to prevent noticeable lag in Chrome.
     this.registerDisposer(display.updateStarted.add(() => { this.onUpdateDisplay(); }));
     this.registerDisposer(display.updateFinished.add(() => { this.onUpdateDisplayFinished(); }));
 
@@ -106,6 +108,11 @@ export class Viewer extends RefCounted implements ViewerState {
       return false;
     });
 
+    const {state} = this;
+    state.add('layers', this.layerSpecification);
+    state.add('navigation', this.navigationState);
+    state.add('showAxisLines', this.showAxisLines);
+    state.add('showScaleBar', this.showScaleBar);
 
     registerTrackable('layers', this.layerSpecification);
     registerTrackable('navigation', this.navigationState);
@@ -130,7 +137,7 @@ export class Viewer extends RefCounted implements ViewerState {
 
     // Debounce this call to ensure that a transient state does not result in the layer dialog being
     // shown.
-    this.layerManager.layersChanged.add(this.registerCancellable(debounce(() => {
+    const maybeResetState = this.registerCancellable(debounce(() => {
       if (this.layerManager.managedLayers.length === 0) {
         // No layers, reset state.
         this.navigationState.reset();
@@ -141,7 +148,9 @@ export class Viewer extends RefCounted implements ViewerState {
           new LayerDialog(this.layerSpecification);
         }
       }
-    })));
+    }));
+    this.layerManager.layersChanged.add(maybeResetState);
+    maybeResetState();
 
     this.registerDisposer(this.chunkQueueManager.visibleChunksChanged.add(
         () => { this.layerSelectedValues.handleLayerChange(); }));
@@ -277,4 +286,4 @@ export class Viewer extends RefCounted implements ViewerState {
     }
     this.mouseState.stale = true;
   }
-};
+}
