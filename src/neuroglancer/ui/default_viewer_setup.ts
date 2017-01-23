@@ -18,14 +18,24 @@ import 'neuroglancer/image_user_layer';
 import 'neuroglancer/segmentation_user_layer';
 import 'neuroglancer/single_mesh_user_layer';
 import 'neuroglancer/annotation/user_layer';
-import 'neuroglancer/synapse/user_layer';
-
 
 import {makeDefaultKeyBindings} from 'neuroglancer/default_key_bindings';
 import {makeDefaultViewer} from 'neuroglancer/default_viewer';
 import {bindDefaultCopyHandler, bindDefaultPasteHandler} from 'neuroglancer/ui/default_clipboard_handling';
 import {UrlHashBinding} from 'neuroglancer/ui/url_hash_binding';
 
-window.addEventListener('DOMContentLoaded', () => {
-  const viewer = setupDefaultViewer();
-});
+/**
+ * Sets up the default neuroglancer viewer.
+ */
+export function setupDefaultViewer() {
+  let viewer = (<any>window)['viewer'] = makeDefaultViewer();
+  makeDefaultKeyBindings(viewer.keyMap);
+
+  const hashBinding = new UrlHashBinding(viewer.state);
+  hashBinding.updateFromUrlHash();
+
+  bindDefaultCopyHandler(viewer);
+  bindDefaultPasteHandler(viewer);
+
+  return viewer;
+}
