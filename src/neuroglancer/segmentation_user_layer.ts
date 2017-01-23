@@ -35,7 +35,7 @@ import {RangeWidget} from 'neuroglancer/widget/range';
 import {SegmentSetWidget} from 'neuroglancer/widget/segment_set_widget';
 import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
 import {openHttpRequest, sendHttpRequest} from 'neuroglancer/util/http_request';
-import {mergeNodes, getObjectList, setGraphServerURL} from 'neuroglancer/object_graph_service';
+import {splitObject, mergeNodes, getObjectList, getConnectedSegments, setGraphServerURL} from 'neuroglancer/object_graph_service';
 
 require('./segmentation_user_layer.css');
 
@@ -43,6 +43,10 @@ const SELECTED_ALPHA_JSON_KEY = 'selectedAlpha';
 const NOT_SELECTED_ALPHA_JSON_KEY = 'notSelectedAlpha';
 const OBJECT_ALPHA_JSON_KEY = 'objectAlpha';
 
+interface SourceSink {
+  sources: Uint64[],
+  sinks: Uint64[],
+}
 
 export class SegmentationUserLayer extends UserLayer {
   displayState: SliceViewSegmentationDisplayState&SegmentationDisplayState3D = {
@@ -61,8 +65,11 @@ export class SegmentationUserLayer extends UserLayer {
   skeletonsPath: string|undefined;
   graphPath: string|undefined;
   meshLayer: MeshLayer|undefined;
+  splitPartitions: SourceSink = {
+    sources: [],
+    sinks: [],
+  };
 
-  splitPartitions = [[],[]];
   constructor(public manager: LayerListSpecification, spec: any) {
     super([]);
     this.displayState.visibleSegments.changed.add(() => { this.specificationChanged.dispatch(); });
@@ -123,12 +130,13 @@ export class SegmentationUserLayer extends UserLayer {
     verifyObjectProperty(
         spec, 'equivalences', y => { this.displayState.segmentEquivalences.restoreState(y); });
 
-    // if (graphPath !== undefined) {
-    //   setGraphServerURL(graphPath);
-      getObjectList().then(equivalences => {
-        this.displayState.segmentEquivalences.addSets(equivalences);
-      });
-    // }
+    if (graphPath !== undefined) {
+      setGraphServerURL(graphPath);
+    }
+
+    getObjectList().then(equivalences => {
+      this.displayState.segmentEquivalences.addSets(equivalences);
+    });
 
     verifyObjectProperty(spec, 'segments', y => {
       if (y !== undefined) {
@@ -186,81 +194,89 @@ export class SegmentationUserLayer extends UserLayer {
 
   makeDropdown(element: HTMLDivElement) { return new SegmentationDropdown(element, this); }
 
-  handleAction(action: string) {
-    switch (action) {
-      case 'recolor': {
-        this.displayState.segmentColorHash.randomize();
-        break;
+  mergeSelection () {
+
+     const {visibleSegments, segmentEquivalences} = this.displayState;
+
+      let segids : Uint64[] = [];
+      for (let segid of visibleSegments) {
+        segids.push(segid.clone());
       }
-      case 'clear-segments': {
-        this.displayState.visibleSegments.clear();
-        break;
-      }
-      case 'merge-selection': {
-        const {visibleSegments, segmentEquivalences} = this.displayState;
 
-        let segids : Uint64[] = [];
-        for (let segid of visibleSegments) {
-          segids.push(segid.clone());
-        }
+      let strings = segids.map( (seg64) => seg64.toString() ); // uint64s are emulated 
 
-        let strings = segids.map( (seg64) => seg64.toString() ); // uint64s are emulated 
-
-        mergeNodes(strings).then( () => {
-          let seg0 = <Uint64>segids.pop();
-          segids.forEach((segid) => {
-            segmentEquivalences.link(seg0, segid);
-          });
+      mergeNodes(strings).then( () => {
+        let seg0 = <Uint64>segids.pop();
+        segids.forEach((segid) => {
+          segmentEquivalences.link(seg0, segid);
         });
+      });
+  }
 
-        break;
-      }
-      case 'select': {
-        let {segmentSelectionState} = this.displayState;
+  selectSegment () {
+     let {segmentSelectionState} = this.displayState;
         if (segmentSelectionState.hasSelectedSegment) {
           let segment = segmentSelectionState.selectedSegment;
           let {visibleSegments, segmentEquivalences} = this.displayState;
           if (visibleSegments.has(segment)) {
             visibleSegments.delete(segment);
-          } else {
+          } 
+          else {
             visibleSegments.add(segment);
-            let promise = sendHttpRequest(openHttpRequest(`http://localhost:8888/1.0/node/${segment}`), 'arraybuffer');
-            promise.then(
-              response => {
-                let r = new Uint32Array(response); //TODO make this code 64 bits 
-                for (let u of r) {
-                  visibleSegments.add(new Uint64(u));
-                }
-              },
-              function(e) {
-                console.log(`Download failed for segment ${segment}`);
-                console.error(e);
-              });
-          }
 
+            getConnectedSegments(segment).then(function (connected_segments) {
+              for (let seg of connected_segments) {
+                  visibleSegments.add(seg);
+                }
+            });
+          }
         }
-        break;
-      }
-      case 'split-select-first': {
-        let {segmentSelectionState} = this.displayState;
-        if (segmentSelectionState.hasSelectedSegment) {
-          let segment = segmentSelectionState.selectedSegment;
-          this.splitPartitions[0].push(segment.clone());
-        }
-        break;
-      }
-      case 'split-select-second': {
-        let {segmentSelectionState} = this.displayState;
-        if (segmentSelectionState.hasSelectedSegment) {
-          let segment = segmentSelectionState.selectedSegment;
-          this.splitPartitions[1].push(segment.clone());
-          console.log(`requesting split of ${this.splitPartitions}`);
-          
-          //Reset
-          this.splitPartitions= [[],[]];
-        }
-        break;
-      }
+  }
+
+  splitSelectFirst () {
+     let {segmentSelectionState} = this.displayState;
+     if (segmentSelectionState.hasSelectedSegment) {
+        let segment : Uint64 = <Uint64>segmentSelectionState.selectedSegment;
+        this.splitPartitions.sources.push(segment.clone());
+     }
+  }
+
+  splitSelectSecond () {
+    let {segmentSelectionState} = this.displayState;
+    if (!segmentSelectionState.hasSelectedSegment) {
+      return;
+    }
+    
+    let segment : Uint64 = <Uint64>segmentSelectionState.selectedSegment;
+    this.splitPartitions.sinks.push(segment.clone());
+
+    splitObject(this.splitPartitions.sources, this.splitPartitions.sinks)
+      .then(function () {
+        console.log("wow, it's split!");
+      });
+
+    // Reset
+    this.splitPartitions.sources.length = 0;
+    this.splitPartitions.sinks.length = 0;
+  }
+
+  handleAction(action: string) {
+    let actions: { [key:string] : Function } = {
+      'recolor': () => this.displayState.segmentColorHash.randomize(),
+      'clear-segments': () => this.displayState.visibleSegments.clear(),
+      'merge-selection': this.mergeSelection,
+      'select': this.selectSegment,
+      'split-select-first': this.splitSelectFirst,
+      'split-select-second': this.splitSelectSecond,
+    };
+
+    let fn : Function|undefined = actions[action];
+
+    if (fn) {
+      fn();
+    }
+    else {
+      console.error(`${action} is not a registered action.`);
     }
   }
 }

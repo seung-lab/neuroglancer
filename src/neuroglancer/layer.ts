@@ -390,11 +390,11 @@ export interface PickState {
 }
 
 export enum SplitState {
-  INACTIVE = 0,
+  INACTIVE,
   // Selecting elements for the first group.
-  FIRST = 1,
+  FIRST,
   // Selecting elements for the second group.
-  SECOND = 2,
+  SECOND,
 }
 
 
