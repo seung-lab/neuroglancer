@@ -50,9 +50,9 @@ class TestSplitHandler(BaseTestCase):
         self.G.add_edge(3,4,capacity=0.5)
 
         self.http_client.fetch(
-            self.get_url('/1.0/split/1/4'),
+            self.get_url('/1.0/split/'),
             self.stop,
-            body='',
+            body=json.dumps({'sources':[1], 'sinks':[4]}),
             method="POST"
         )
         response = self.wait()
@@ -66,9 +66,9 @@ class TestSplitHandler(BaseTestCase):
         self.G.add_edge(3,4,capacity=0.5)
 
         self.http_client.fetch(
-            self.get_url('/1.0/split/1/4'),
+            self.get_url('/1.0/split/'),
             self.stop,
-            body='',
+            body=json.dumps({'sources':[1], 'sinks':[4]}),
             method="POST"
         )
         response = self.wait()
@@ -85,13 +85,33 @@ class TestSplitHandler(BaseTestCase):
         self.G.add_edge(3,4,capacity=0.5)
 
         self.http_client.fetch(
-            self.get_url('/1.0/split/1/8'), #8 is not inside object
+            self.get_url('/1.0/split/'), #8 is not inside object
             self.stop,
-            body='',
+            body=json.dumps({'sources':[1], 'sinks':[8]}),
             method="POST"
         )
         response = self.wait()
         self.assertEqual(response.code, 400)
+
+
+    def test_multisplit(self):
+        self.check_post_object([1,2,3,4])
+        self.G.add_edge(1,2,capacity=0.1)
+        self.G.add_edge(2,3,capacity=0.8)
+        self.G.add_edge(3,4,capacity=0.1)
+
+        self.http_client.fetch(
+            self.get_url('/1.0/split/'),
+            self.stop,
+            body=json.dumps({'sources':[1,2], 'sinks':[3,4]}),
+            method="POST"
+        )
+        response = self.wait()
+        self.assertEqual(response.code, 200)
+
+        left = json.loads(response.body) == [[1,2],[3,4]]
+        right = json.loads(response.body) == [[3,4],[1,2]]
+        self.assertTrue(left or right)
 
 
 class TestObjectHandler(BaseTestCase):

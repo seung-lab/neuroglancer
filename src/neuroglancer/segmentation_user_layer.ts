@@ -224,8 +224,6 @@ export class SegmentationUserLayer extends UserLayer {
             visibleSegments.delete(segment);
           } else {
             visibleSegments.add(segment);
-            // segmentEquivalences.link(3423, segment);
-            // TODO also add its connect components
             let promise = sendHttpRequest(openHttpRequest(`http://localhost:8888/1.0/node/${segment}`), 'arraybuffer');
             promise.then(
               response => {
@@ -257,7 +255,7 @@ export class SegmentationUserLayer extends UserLayer {
           let segment = segmentSelectionState.selectedSegment;
           this.splitPartitions[1].push(segment.clone());
           console.log(`requesting split of ${this.splitPartitions}`);
-
+          
           //Reset
           this.splitPartitions= [[],[]];
         }

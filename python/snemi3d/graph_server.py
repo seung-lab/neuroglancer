@@ -113,22 +113,36 @@ class EdgeHandler(BaseHandler):
         self.G.remove_edge(u,v)
 
 class SplitHandler(BaseHandler):
-    def post(self, u, v): #TODO(tartavull) write a test for this to make sure it is working
-        u = int(u); v = int(v)
+    def post(self):
+        data = json.loads(self.request.body)
+        virtual_source = data['sources']
+        virtual_sink = data['sinks']
+        all_nodes = virtual_source + virtual_sink
 
-        print u, v
-        if u not in self.node2sets or v not in self.node2sets:
-            self.set_status(400)
-            return
+        for node in all_nodes:
+            if node not in self.node2sets:
+                self.set_status(400)
+                return
 
-        u_set = self.node2sets[u]
-        v_set = self.node2sets[v]
-        if u_set != v_set:
-            self.set_status(400)
-            return
+        first_set = self.node2sets[all_nodes[0]]
+        for node in all_nodes:
+            if first_set != self.node2sets[node]:
+                self.set_status(400)
+                return
 
-        H = self.G.subgraph(list(u_set))
-        cut_value, partitions = nx.minimum_cut(H, u, v)
+        H = self.G.subgraph(list(first_set))
+        H.add_node('virtual_source')
+        for u in virtual_source:
+            H.add_edge('virtual_source', u) #The edge is considered to have infinite capacity
+
+        H.add_node('virtual_sink')
+        for v in virtual_sink:
+            H.add_edge('virtual_sink', v) #The edge is considered to have infinite capacity
+
+
+        cut_value, partitions = nx.minimum_cut(H, 'virtual_source', 'virtual_sink')
+        partitions[0].remove('virtual_source')
+        partitions[1].remove('virtual_sink')
         partitions = map(lambda x: map(int,x), partitions)
         self.finish(json.dumps(partitions))
 
@@ -186,7 +200,7 @@ def make_app(test=False):
     app = tornado.web.Application([
         (r'/1.0/node/(\d+)/?', NodeHandler, args),
         (r'/1.0/edge/(\d+)/(\d+)/?', EdgeHandler, args),
-        (r'/1.0/split/(\d+)/(\d+)/?', SplitHandler, args),
+        (r'/1.0/split/?', SplitHandler, args),
         (r'/1.0/object/?', ObjectHandler, args),
     ], debug=True)
 
