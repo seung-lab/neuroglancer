@@ -214,29 +214,31 @@ export class SegmentationUserLayer extends UserLayer {
   }
 
   selectSegment () {
-     let {segmentSelectionState} = this.displayState;
-        if (segmentSelectionState.hasSelectedSegment) {
-          let segment = segmentSelectionState.selectedSegment;
-          let {visibleSegments, segmentEquivalences} = this.displayState;
-          if (visibleSegments.has(segment)) {
-            visibleSegments.delete(segment);
-          } 
-          else {
-            visibleSegments.add(segment);
+    let {segmentSelectionState} = this.displayState;
+    if (!segmentSelectionState.hasSelectedSegment) {
+      return;
+    }
+    
+    let segment = segmentSelectionState.selectedSegment;
+    let {visibleSegments, segmentEquivalences} = this.displayState;
+    if (visibleSegments.has(segment)) {
+      visibleSegments.delete(segment);
+    }
+    else {
+      visibleSegments.add(segment);
 
-            getConnectedSegments(segment).then(function (connected_segments) {
-              for (let seg of connected_segments) {
-                  visibleSegments.add(seg);
-                }
-            });
+      getConnectedSegments(segment).then(function (connected_segments) {
+        for (let seg of connected_segments) {
+            visibleSegments.add(seg);
           }
-        }
+      });
+    }
   }
 
   splitSelectFirst () {
      let {segmentSelectionState} = this.displayState;
      if (segmentSelectionState.hasSelectedSegment) {
-        let segment : Uint64 = <Uint64>segmentSelectionState.selectedSegment;
+        let segment : Uint64 = <Uint64>segmentSelectionState.rawSelectedSegment;
         this.splitPartitions.sources.push(segment.clone());
      }
   }
@@ -247,7 +249,7 @@ export class SegmentationUserLayer extends UserLayer {
       return;
     }
     
-    let segment : Uint64 = <Uint64>segmentSelectionState.selectedSegment;
+    let segment : Uint64 = <Uint64>segmentSelectionState.rawSelectedSegment;
     this.splitPartitions.sinks.push(segment.clone());
 
     splitObject(this.splitPartitions.sources, this.splitPartitions.sinks)
@@ -273,7 +275,7 @@ export class SegmentationUserLayer extends UserLayer {
     let fn : Function|undefined = actions[action];
 
     if (fn) {
-      fn();
+      fn.call(this);
     }
     else {
       console.error(`${action} is not a registered action.`);

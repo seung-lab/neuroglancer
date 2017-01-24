@@ -105,9 +105,7 @@ export class UserLayer extends RefCounted {
     let {renderLayers} = this;
     let {pickedRenderLayer} = pickState;
     if (pickedRenderLayer !== null && renderLayers.indexOf(pickedRenderLayer) !== -1) {
-      result =
-          pickedRenderLayer.transformPickedValue(pickState.pickedValue, pickState.pickedOffset);
-      return this.transformPickedValue(result);
+      return pickedRenderLayer.transformPickedValue(pickState.pickedValue, pickState.pickedOffset);
     }
     for (let layer of renderLayers) {
       if (!layer.ready) {
@@ -118,7 +116,7 @@ export class UserLayer extends RefCounted {
         break;
       }
     }
-    return this.transformPickedValue(result);
+    return result;
   }
 
   transformPickedValue(value: any) { return value; }
@@ -468,6 +466,7 @@ export class MouseSelectionState implements PickState {
 
 export class LayerSelectedValues extends RefCounted {
   values = new Map<UserLayer, any>();
+  rawValues = new Map<UserLayer, any>();
   changed = new Signal();
   needsUpdate = true;
   constructor(public layerManager: LayerManager, public mouseState: MouseSelectionState) {
@@ -495,8 +494,10 @@ export class LayerSelectedValues extends RefCounted {
     if (!this.needsUpdate) {
       return;
     }
+
     this.needsUpdate = false;
     let values = this.values;
+    let rawValues = this.rawValues;
     let mouseState = this.mouseState;
     values.clear();
     if (mouseState.active) {
@@ -504,7 +505,10 @@ export class LayerSelectedValues extends RefCounted {
       for (let layer of this.layerManager.managedLayers) {
         let userLayer = layer.layer;
         if (layer.visible && userLayer) {
-          values.set(userLayer, userLayer.getValueAt(position, mouseState));
+          let result = userLayer.getValueAt(position, mouseState);
+          
+          rawValues.set(userLayer, result);
+          values.set(userLayer, userLayer.transformPickedValue(result));
         }
       }
     }
@@ -513,6 +517,11 @@ export class LayerSelectedValues extends RefCounted {
   get(userLayer: UserLayer) {
     this.update();
     return this.values.get(userLayer);
+  }
+
+  getRaw (userLayer: UserLayer) {
+    this.update();
+    return this.rawValues.get(userLayer);
   }
 };
 

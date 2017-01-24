@@ -93,6 +93,9 @@ class BaseViewer(object):
             state['navigation'] = collections.OrderedDict()
             state['navigation']['pose'] = collections.OrderedDict()
             state['navigation']['pose']['voxelSize'] = list(self.voxel_size)
+
+        state['graph'] = 'http://localhost:8888'
+
         return state
 
     def register_volume(self, vol):

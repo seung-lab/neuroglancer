@@ -115,8 +115,8 @@ class EdgeHandler(BaseHandler):
 class SplitHandler(BaseHandler):
     def post(self):
         data = json.loads(self.request.body)
-        virtual_source = data['sources']
-        virtual_sink = data['sinks']
+        virtual_source = [ int(num) for num in data['sources'] ]
+        virtual_sink = [ int(num) for num in data['sinks'] ]
         all_nodes = virtual_source + virtual_sink
 
         for node in all_nodes:
