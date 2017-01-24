@@ -198,8 +198,13 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
     this.encoding = encoding;
 
     this.dims = vec3.create();
-    this.dims[0] = 1024;
-    this.dims[1] = 1024;
+
+    let tileSize = verifyOptionalInt(parameters['tilesize']);
+    if (tileSize === undefined) {
+      tileSize = 1024; // Default tile size is 1024 x 1024 
+    }
+    this.dims[0] = tileSize;
+    this.dims[1] = tileSize;
     this.dims[2] = 1;
   }
 
