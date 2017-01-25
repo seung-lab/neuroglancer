@@ -61,8 +61,7 @@ export function getObjectList () : Promise<Response> {
 		});
 }
 
-
-export function splitObject (sources: Uint64[], sinks: Uint64[]) : Promise<Response> {
+export function splitObject (sources: Uint64[], sinks: Uint64[]) : Promise<Uint64[][]> {
 	return fetch(`${GRAPH_BASE_URL}/1.0/split/`, {
 		method: "POST",
 		body: JSON.stringify({
@@ -72,9 +71,11 @@ export function splitObject (sources: Uint64[], sinks: Uint64[]) : Promise<Respo
 	})
 	.catch(function (error) {
 		console.error(error);
+	})
+	.then( (resp) => resp.json() )
+	.catch( (err) => console.error(err) )
+	.then( (split_groups: number[][]) => {
+		return <Uint64[][]>(split_groups.map( (nums) => nums.map( (num) => new Uint64(num) ) ));
 	});
 }
-
-
-
 

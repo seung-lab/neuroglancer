@@ -22,6 +22,7 @@ import {Signal} from 'signals';
 
 const RPC_TYPE_ID = 'DisjointUint64Sets';
 const ADD_METHOD_ID = 'DisjointUint64Sets.add';
+const SPLIT_METHOD_ID = 'DisjointUint64Sets.split';
 const CLEAR_METHOD_ID = 'DisjointUint64Sets.clear';
 
 @registerSharedObject(RPC_TYPE_ID)
@@ -48,6 +49,27 @@ export class SharedDisjointUint64Sets extends SharedObjectCounterpart {
         rpc.invoke(
             ADD_METHOD_ID,
             {'id': this.rpcId, 'al': a.low, 'ah': a.high, 'bl': b.low, 'bh': b.high});
+      }
+      this.changed.dispatch();
+    }
+  }
+
+  split(a: Uint64[], b: Uint64[]) {
+    if (this.disjointSets.split(a, b)) {
+      let {rpc} = this;
+      if (rpc) {
+        const xfer_a = Uint64.encodeUint32Array(a);
+        const xfer_b = Uint64.encodeUint32Array(b);
+
+        rpc.invoke(
+            SPLIT_METHOD_ID,
+            { 
+              id: this.rpcId, 
+              a: xfer_a,
+              b: xfer_b,
+            }, 
+            [xfer_a.buffer, xfer_b.buffer]
+        );
       }
       this.changed.dispatch();
     }
@@ -114,3 +136,25 @@ registerRPC(CLEAR_METHOD_ID, function(x) {
     obj.changed.dispatch();
   }
 });
+
+registerRPC(SPLIT_METHOD_ID, function (x) {
+  const obj = <SharedDisjointUint64Sets>this.get(x['id']);
+  
+  const split_group_a = Uint64.decodeUint32Array(x.a);
+  const split_group_b = Uint64.decodeUint32Array(x.b);
+
+  if (obj.disjointSets.split(split_group_a, split_group_b)) {
+    obj.changed.dispatch();
+  }
+});
+
+
+
+
+
+
+
+
+
+
+

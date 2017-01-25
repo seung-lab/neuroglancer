@@ -253,8 +253,8 @@ export class SegmentationUserLayer extends UserLayer {
     this.splitPartitions.sinks.push(segment.clone());
 
     splitObject(this.splitPartitions.sources, this.splitPartitions.sinks)
-      .then(function () {
-        console.log("wow, it's split!");
+      .then((splitgroups) => {
+        this.displayState.segmentEquivalences.split(splitgroups[0], splitgroups[1]);
       });
 
     // Reset

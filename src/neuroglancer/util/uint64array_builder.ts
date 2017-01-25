@@ -15,18 +15,18 @@
  * limitations under the License.
  */
 
-export class Float64ArrayBuilder {
+export class Uint64ArrayBuilder {
   length = 0;
-  data: Float64Array;
+  data: Uint32Array;
 
   constructor(initialCapacity: number = 16) {
-    this.data = new Float64Array(initialCapacity);
+    this.data = new Uint32Array(initialCapacity);
   }
 
   resize(newLength: number) {
     let {data} = this;
     if (newLength > data.length) {
-      let newData = new Float64Array(Math.max(newLength, data.length * 2));
+      let newData = new Uint32Array(Math.max(newLength, data.length * 2));
       newData.set(data.subarray(0, this.length));
       this.data = newData;
     }
@@ -35,11 +35,11 @@ export class Float64ArrayBuilder {
 
   get view() {
     let {data} = this;
-    return new Float64Array(data.buffer, data.byteOffset, this.length);
+    return new Uint32Array(data.buffer, data.byteOffset, this.length);
   }
 
   shrinkToFit() {
-    this.data = new Float64Array(this.view);
+    this.data = new Uint32Array(this.view);
   }
 
   clear() {

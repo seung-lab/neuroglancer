@@ -115,20 +115,31 @@ class EdgeHandler(BaseHandler):
 class SplitHandler(BaseHandler):
     def post(self):
         data = json.loads(self.request.body)
-        virtual_source = [ int(num) for num in data['sources'] ]
-        virtual_sink = [ int(num) for num in data['sinks'] ]
-        all_nodes = virtual_source + virtual_sink
+        virtual_source = set([ int(num) for num in data['sources'] ])
+        virtual_sink = set([ int(num) for num in data['sinks'] ])
+        all_nodes = virtual_source.union(virtual_sink)
+
+        if (len(virtual_source.intersection(virtual_sink)) != 0):
+            self.finish(u'Overlapping ids were submitted for source and sink.')
+            self.set_status(400);
+            return
 
         for node in all_nodes:
             if node not in self.node2sets:
+                self.finish(str(node) + u' did not belong to any known object.')
                 self.set_status(400)
                 return
 
-        first_set = self.node2sets[all_nodes[0]]
+        first_set = self.node2sets[list(all_nodes)[0]]
         for node in all_nodes:
             if first_set != self.node2sets[node]:
                 self.set_status(400)
                 return
+
+        # Virtual source and sinks allow for many sources and
+        # many sinks. It simply creates a new node that represents all the sources
+        # and equivanlently for the sinks allowing for seemless operation of the standard
+        # max flow algorithm that uses a single source and sink.
 
         H = self.G.subgraph(list(first_set))
         H.add_node('virtual_source')
@@ -192,10 +203,12 @@ def make_app(test=False):
 
     threshold_graph(G)
 
-    args =  {'G':G,
-             'sets': [],
-             'node2sets': WeakValueDictionary(),
-             'threshold': 0.8}
+    args =  {
+        'G': G,
+        'sets': [],
+        'node2sets': WeakValueDictionary(),
+        'threshold': 0.8
+    }
 
     app = tornado.web.Application([
         (r'/1.0/node/(\d+)/?', NodeHandler, args),
