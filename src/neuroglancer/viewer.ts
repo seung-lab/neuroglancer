@@ -172,7 +172,7 @@ export class Viewer extends RefCounted implements ViewerState {
       });
     }
 
-    for (let command of ['merge-selection', 'recolor', 'clear-segments']) {
+    for (let command of ['toggle-shatter-equivalencies', 'merge-selection', 'recolor', 'clear-segments']) {
       keyCommands.set(command, function() { this.layerManager.invokeAction(command); });
     }
 

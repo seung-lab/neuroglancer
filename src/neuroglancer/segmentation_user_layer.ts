@@ -272,7 +272,7 @@ export class SegmentationUserLayer extends UserLayer {
       'split-select-second': this.splitSelectSecond,
     };
 
-    let fn : Function|undefined = actions[action];
+    let fn : Function = actions[action];
 
     if (fn) {
       fn.call(this);

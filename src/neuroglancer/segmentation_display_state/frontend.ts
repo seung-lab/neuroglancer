@@ -171,8 +171,10 @@ export function getObjectColor(
 }
 
 export function forEachSegmentToDraw<SegmentData>(
-    displayState: SegmentationDisplayState, objects: Map<string, SegmentData>,
+    displayState: SegmentationDisplayState, 
+    objects: Map<string, SegmentData>,
     callback: (rootObjectId: Uint64, objectId: Uint64, segmentData: SegmentData) => void) {
+
   forEachVisibleSegment(displayState, (objectId, rootObjectId) => {
     const key = getObjectKey(objectId);
     const segmentData = objects.get(key);

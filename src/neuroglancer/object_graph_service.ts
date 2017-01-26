@@ -61,7 +61,7 @@ export function getObjectList () : Promise<Response> {
 		});
 }
 
-export function splitObject (sources: Uint64[], sinks: Uint64[]) : Promise<Uint64[][]> {
+export function splitObject (sources: Uint64[], sinks: Uint64[]) {
 	return fetch(`${GRAPH_BASE_URL}/1.0/split/`, {
 		method: "POST",
 		body: JSON.stringify({
@@ -74,8 +74,8 @@ export function splitObject (sources: Uint64[], sinks: Uint64[]) : Promise<Uint6
 	})
 	.then( (resp) => resp.json() )
 	.catch( (err) => console.error(err) )
-	.then( (split_groups: number[][]) => {
-		return <Uint64[][]>(split_groups.map( (nums) => nums.map( (num) => new Uint64(num) ) ));
+	.then( (split_groups: any) => { // this typing is stupid but was the only way to surpress TS errors
+		return <Uint64[][]>((<number[][]>split_groups).map( (nums) => nums.map( (num) => new Uint64(num) ) ));
 	});
 }
 
