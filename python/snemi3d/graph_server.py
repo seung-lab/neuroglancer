@@ -115,25 +115,26 @@ class EdgeHandler(BaseHandler):
 class SplitHandler(BaseHandler):
     def post(self):
         data = json.loads(self.request.body)
-        virtual_source = set([ int(num) for num in data['sources'] ])
-        virtual_sink = set([ int(num) for num in data['sinks'] ])
-        all_nodes = virtual_source.union(virtual_sink)
+        virtual_source = [ int(num) for num in data['sources'] ]
+        virtual_sink = [ int(num) for num in data['sinks'] ]
+        all_nodes = virtual_source + virtual_sink
 
-        if (len(virtual_source.intersection(virtual_sink)) != 0):
-            self.finish(u'Overlapping ids were submitted for source and sink.')
+        if set(virtual_source).intersection(set(virtual_sink)):
             self.set_status(400);
+            self.finish(u'Overlapping ids were submitted for source and sink.')
             return
 
         for node in all_nodes:
             if node not in self.node2sets:
-                self.finish(str(node) + u' did not belong to any known object.')
                 self.set_status(400)
+                self.finish(str(node) + u'did not belong to any known object.')
                 return
 
-        first_set = self.node2sets[list(all_nodes)[0]]
+        first_set = self.node2sets[all_nodes[0]]
         for node in all_nodes:
             if first_set != self.node2sets[node]:
                 self.set_status(400)
+                self.finish('Trying to split two different objects')
                 return
 
         # Virtual source and sinks allow for many sources and
@@ -141,7 +142,11 @@ class SplitHandler(BaseHandler):
         # and equivanlently for the sinks allowing for seemless operation of the standard
         # max flow algorithm that uses a single source and sink.
 
+
+        # this set might contain disconected subgraph, despite that nx.minimum_cut 
+        # is able to spit them apart
         H = self.G.subgraph(list(first_set))
+
         H.add_node('virtual_source')
         for u in virtual_source:
             H.add_edge('virtual_source', u) #The edge is considered to have infinite capacity
@@ -151,9 +156,9 @@ class SplitHandler(BaseHandler):
             H.add_edge('virtual_sink', v) #The edge is considered to have infinite capacity
 
 
-        cut_value, partitions = nx.minimum_cut(H, 'virtual_source', 'virtual_sink')
-        partitions[0].remove('virtual_source')
-        partitions[1].remove('virtual_sink')
+        cut_value, partitions = nx.minimum_cut(H, 'virtual_sink', 'virtual_source')
+        partitions[0].remove('virtual_sink')
+        partitions[1].remove('virtual_source')
         partitions = map(lambda x: map(int,x), partitions)
         self.finish(json.dumps(partitions))
 

@@ -57,7 +57,9 @@ class TestSplitHandler(BaseTestCase):
         )
         response = self.wait()
         self.assertEqual(response.code, 200)
-        self.assertEqual(json.loads(response.body),[[1,2],[3,4]])
+
+        set_response = set(map(tuple, json.loads(response.body)))
+        self.assertEqual(set_response, set([(1,2),(3,4)]))
 
     def test_split_side(self):
         self.check_post_object([1,2,3,4])
@@ -74,9 +76,12 @@ class TestSplitHandler(BaseTestCase):
         response = self.wait()
         self.assertEqual(response.code, 200)
 
-        left = json.loads(response.body) == [[1,2,3],[4]]
-        right = json.loads(response.body) == [[1],[2, 3, 4]]
+        set_response = set(map(tuple, json.loads(response.body)))
+        left = set_response == set([(1,2,3),(4,)])
+        right = set_response == set([(1,),(2, 3, 4)])
         self.assertTrue(left or right)
+
+        
 
     def test_split_outsider(self):
         self.check_post_object([1,2,3,4])
@@ -88,6 +93,22 @@ class TestSplitHandler(BaseTestCase):
             self.get_url('/1.0/split/'), #8 is not inside object
             self.stop,
             body=json.dumps({'sources':[1], 'sinks':[8]}),
+            method="POST"
+        )
+        response = self.wait()
+        self.assertEqual(response.code, 400)
+
+
+    def test_overlapping_sink_and_source(self):
+        self.check_post_object([1,2,3,4])
+        self.G.add_edge(1,2,capacity=0.5)
+        self.G.add_edge(2,3,capacity=0.8)
+        self.G.add_edge(3,4,capacity=0.5)
+
+        self.http_client.fetch(
+            self.get_url('/1.0/split/'), #8 is not inside object
+            self.stop,
+            body=json.dumps({'sources':[1,2], 'sinks':[2]}),
             method="POST"
         )
         response = self.wait()
@@ -109,9 +130,47 @@ class TestSplitHandler(BaseTestCase):
         response = self.wait()
         self.assertEqual(response.code, 200)
 
-        left = json.loads(response.body) == [[1,2],[3,4]]
-        right = json.loads(response.body) == [[3,4],[1,2]]
-        self.assertTrue(left or right)
+        tuple_response = map(tuple, json.loads(response.body))
+        self.assertEqual(set(tuple_response), set([(1,2),(3,4)]))
+
+    def test_disconnected_subgraphs(self):
+        self.check_post_object([1,2,3,4])
+        self.G.add_edge(1,2,capacity=0.1)
+        self.G.add_edge(3,4,capacity=0.1)
+        self.http_client.fetch(
+            self.get_url('/1.0/split/'),
+            self.stop,
+            body=json.dumps({'sources':[1], 'sinks':[4]}),
+            method="POST"
+        )
+        response = self.wait()
+        self.assertEqual(response.code, 200)
+
+        tuple_response = map(tuple, json.loads(response.body))
+        self.assertEqual(set(tuple_response), set([(1,2),(3,4)]))
+
+    def test_three_disconnected_subgraphs(self):
+        """
+        The source partition should be of minimal size in case of 
+        many subgraphs
+        """
+        self.check_post_object([1,2,3,4,5,6])
+        self.G.add_edge(1,2,capacity=0.1)
+        self.G.add_edge(3,4,capacity=0.1)
+        self.G.add_edge(5,6,capacity=0.1)
+        self.G.add_edge(7,8,capacity=0.1)
+
+        self.http_client.fetch(
+            self.get_url('/1.0/split/'),
+            self.stop,
+            body=json.dumps({'sources':[1], 'sinks':[4]}),
+            method="POST"
+        )
+        response = self.wait()
+        self.assertEqual(response.code, 200)
+
+        tuple_response = map(tuple, json.loads(response.body))
+        self.assertEqual(set(tuple_response), set([(1,2),(3,4,5,6)]))
 
 
 class TestObjectHandler(BaseTestCase):
