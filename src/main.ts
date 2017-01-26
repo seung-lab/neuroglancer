@@ -18,7 +18,7 @@ import 'neuroglancer/image_user_layer';
 import 'neuroglancer/segmentation_user_layer';
 import 'neuroglancer/single_mesh_user_layer';
 import 'neuroglancer/annotation/user_layer';
-import 'neuroglancer/synapseAnnotation/user_layer';
+import 'neuroglancer/synapse/user_layer';
 
 
 import {makeDefaultKeyBindings} from 'neuroglancer/default_key_bindings';

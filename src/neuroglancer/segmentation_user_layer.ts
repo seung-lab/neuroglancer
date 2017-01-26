@@ -277,9 +277,6 @@ export class SegmentationUserLayer extends UserLayer {
     if (fn) {
       fn.call(this);
     }
-    else {
-      console.error(`${action} is not a registered action.`);
-    }
   }
 }
 

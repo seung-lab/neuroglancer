@@ -31,8 +31,17 @@ export class SynapseAnnotationPointList {
 
   get length() { return Math.round(this.points.length / 3); }
 
+
   delete (index: number) {
-    this.points.eraseRange(index * 6, index * 6 + 6);
+
+
+    if( index % 2 == 0) {
+      this.points.eraseRange(index * 6, index * 6 + 6);
+    }
+    else { // If only one point is lay down, delete only one
+      this.points.eraseRange(index * 6, index * 6 + 3);
+    }
+
     ++this.generation;
     this.changed.dispatch();
   }

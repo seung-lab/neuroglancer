@@ -19,7 +19,7 @@
  * Defines a widget for displaying a list of point locations.
  */
 
-import {SynapseAnnotationPointList} from 'neuroglancer/synapseAnnotation/point_list';
+import {SynapseAnnotationPointList} from 'neuroglancer/synapse/point_list';
 import {WatchableValue} from 'neuroglancer/trackable_value';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {removeChildren, removeFromParent} from 'neuroglancer/util/dom';

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {SynapseAnnotationPointList} from 'neuroglancer/synapseAnnotation/point_list';
+import {SynapseAnnotationPointList} from 'neuroglancer/synapse/point_list';
 import {ChunkManager} from 'neuroglancer/chunk_manager/frontend';
 import {MouseSelectionState, RenderLayer} from 'neuroglancer/layer';
 import {VoxelSize} from 'neuroglancer/navigation_state';

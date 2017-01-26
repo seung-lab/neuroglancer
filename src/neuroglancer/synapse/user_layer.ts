@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-import {SynapseAnnotationPointListLayer, PerspectiveViewAnnotationPointListLayer, SliceViewAnnotationPointListLayer} from 'neuroglancer/synapseAnnotation/frontend';
-import {SynapseAnnotationPointList} from 'neuroglancer/synapseAnnotation/point_list';
+import {SynapseAnnotationPointListLayer, PerspectiveViewAnnotationPointListLayer, SliceViewAnnotationPointListLayer} from 'neuroglancer/synapse/frontend';
+import {SynapseAnnotationPointList} from 'neuroglancer/synapse/point_list';
 import {UserLayer, UserLayerDropdown} from 'neuroglancer/layer';
 import {LayerListSpecification, registerLayerType} from 'neuroglancer/layer_specification';
 import {WatchableValue} from 'neuroglancer/trackable_value';
@@ -24,7 +24,7 @@ import {SynapsePointListWidget} from 'neuroglancer/widget/synapse_list_widget';
 
 require('./user_layer.css');
 
-const LAYER_TYPE = 'synapseAnnotation';
+const LAYER_TYPE = 'synapse';
 
 export class SynapseAnnotationPointListUserLayer extends UserLayer {
   selectedIndex = new WatchableValue<number|null>(null);
