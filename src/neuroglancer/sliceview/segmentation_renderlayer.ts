@@ -32,15 +32,26 @@ export class EquivalencesHashMap {
   generation = Number.NaN;
   hashMap = new HashMapUint64();
   constructor(public disjointSets: DisjointUint64Sets) {}
-  update() {
+
+  update(shatter = false) {
     let {disjointSets} = this;
     const {generation} = disjointSets;
     if (this.generation !== generation) {
       this.generation = generation;
       let {hashMap} = this;
       hashMap.clear();
-      for (let [objectId, minObjectId] of disjointSets.mappings()) {
-        hashMap.set(objectId, minObjectId);
+
+      if (shatter) {
+        for (let [objectId, minObjectId] of disjointSets.mappings()) {
+          console.log(objectId, minObjectId);
+          hashMap.set(objectId, objectId);
+        }
+      }
+      else {
+        for (let [objectId, minObjectId] of disjointSets.mappings()) {
+          console.log(objectId, minObjectId);
+          hashMap.set(objectId, minObjectId);
+        }
       }
     }
   }
@@ -62,6 +73,7 @@ export class SegmentationRenderLayer extends RenderLayer {
       new EquivalencesHashMap(this.displayState.segmentEquivalences.disjointSets);
   private gpuEquivalencesHashTable = GPUHashTable.get(this.gl, this.equivalencesHashMap.hashMap);
   private hasEquivalences: boolean;
+  private shattered: boolean = false;
 
   constructor(
       multiscaleSource: MultiscaleVolumeChunkSource,
@@ -164,8 +176,11 @@ uint64_t getMappedObjectId() {
     gl.uniform4fv(shader.uniform('uSelectedSegment'), selectedSegmentForShader);
     gl.uniform1f(shader.uniform('uShowAllSegments'), visibleSegments.hashTable.size ? 0.0 : 1.0);
     this.hashTableManager.enable(gl, shader, this.gpuHashTable);
+    
+    console.log('shattered:', this.shattered)
+
     if (this.hasEquivalences) {
-      this.equivalencesHashMap.update();
+      this.equivalencesHashMap.update(this.shattered);
       this.equivalencesShaderManager.enable(gl, shader, this.gpuEquivalencesHashTable);
     }
 
@@ -177,4 +192,24 @@ uint64_t getMappedObjectId() {
     this.hashTableManager.disable(gl, shader);
     super.endSlice(shader);
   }
+
+  handleAction(action: string) {
+    super.handleAction(action);
+
+    let actions: { [key:string] : Function } = {
+      'toggle-shatter-equivalencies': () => { 
+        this.shattered = !this.shattered;
+        this.equivalencesHashMap.generation++;
+        this.equivalencesHashMap.update(this.shattered);
+      },
+    };
+
+    let fn : Function = actions[action];
+
+    if (fn) {
+      fn.call(this);
+      this.redrawNeeded.dispatch();
+    }
+  }
+
 };

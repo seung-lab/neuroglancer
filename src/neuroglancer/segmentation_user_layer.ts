@@ -19,6 +19,7 @@ import {getMeshSource, getSkeletonSource} from 'neuroglancer/datasource/factory'
 import {UserLayer, UserLayerDropdown} from 'neuroglancer/layer';
 import {LayerListSpecification, registerLayerType, registerVolumeLayerType} from 'neuroglancer/layer_specification';
 import {getVolumeWithStatusMessage} from 'neuroglancer/layer_specification';
+import {StatusMessage} from 'neuroglancer/status';
 import {MeshSource} from 'neuroglancer/mesh/frontend';
 import {MeshLayer} from 'neuroglancer/mesh/frontend';
 import {SegmentColorHash} from 'neuroglancer/segment_color';
