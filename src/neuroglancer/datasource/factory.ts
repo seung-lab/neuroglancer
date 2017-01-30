@@ -75,6 +75,9 @@ export interface DataSourceFactory {
   getMeshSource?: (chunkManager: ChunkManager, path: string) => Promise<MeshSource>| MeshSource;
   getSkeletonSource?:
       (chunkManager: ChunkManager, path: string) => Promise<SkeletonSource>| SkeletonSource;
+
+  //TODO(wms) Shouldn't we have a graph server source here?
+
   volumeCompleter?:
       (value: string, chunkManager: ChunkManager) => CancellablePromise<CompletionResult>;
 

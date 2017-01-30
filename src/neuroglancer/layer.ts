@@ -362,6 +362,10 @@ export class LayerManager extends RefCounted {
     };
   }
 
+  //FIXME Shouldn't we stop once a layer can handle an action? 
+  //For example if you had multiple annotation layers
+  //You probably just want the closest to the left to be doing
+  //the annotation and not all of them.
   invokeAction(action: string) {
     for (let managedLayer of this.managedLayers) {
       if (managedLayer.layer === null || !managedLayer.visible) {

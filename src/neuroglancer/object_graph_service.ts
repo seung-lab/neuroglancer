@@ -2,6 +2,7 @@
 import {Uint64} from 'neuroglancer/util/uint64';
 import {CancellablePromise} from 'neuroglancer/util/promise';
 import {openHttpRequest, sendHttpRequest} from 'neuroglancer/util/http_request';
+import {StatusMessage} from 'neuroglancer/status';
 
 
 let GRAPH_BASE_URL = 'http://localhost:8888';
@@ -63,6 +64,7 @@ export function getObjectList () : Promise<Response> {
 
 export function splitObject (sources: Uint64[], sinks: Uint64[]) {
 	return fetch(`${GRAPH_BASE_URL}/1.0/split/`, {
+
 		method: "POST",
 		body: JSON.stringify({
 			sources: sources,

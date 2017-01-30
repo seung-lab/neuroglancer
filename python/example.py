@@ -14,23 +14,25 @@ import neuroglancer
 # has not been run.
 neuroglancer.set_static_content_source(url='http://localhost:8080')
 
-def add_point_annotation(viewer, name='annotation'):
-  empty_data = np.zeros(shape=[1,1,1],dtype=np.float32)
-  viewer.add(empty_data, name=name, volume_type='pointAnnotation')
 
-def add_synapse_annotation(viewer, name='annotation'):
-  empty_data = np.zeros(shape=[1,1,1],dtype=np.float32)
-  viewer.add(empty_data, name=name, volume_type='synapseAnnotation')
+viewer = neuroglancer.Viewer()
 
-viewer = neuroglancer.Viewer(voxel_size=[6, 6, 40])
 with h5py.File('./snemi3d/image.h5') as f:
-  viewer.add(f['main'][:], name='image')
+  img = np.pad(f['main'][:], 1, 'constant', constant_values=0)
+  viewer.add(volume_type='image', data=img, name='image', voxel_size=[6, 6, 40])
 
-# add_point_annotation(viewer)
-# add_synapse_annotation(viewer)
+# if you add this layer by itself neuroglancer doesn't know the dataset size
+# viewer.add(volume_type='point', name='point_annotation')
+
+# if you add this layer by itself neuroglancer doesn't know the dataset size
+viewer.add(volume_type='synapse', name='synapse')
+
 
 with h5py.File('./snemi3d/machine_labels.h5') as f:
-  viewer.add(f['main'][:], name='segmentation')
+  # 0 pad is useful to make the meshes that are in contact with the borders
+  # of the volume have a planar cap
+  seg = np.pad(f['main'][:], 1, 'constant', constant_values=0)
+  viewer.add(volume_type='segmentation', data=seg, name='segmentation', voxel_size=[6, 6, 40])
 
 webbrowser.open(viewer.get_viewer_url())
 print(viewer.get_viewer_url())
