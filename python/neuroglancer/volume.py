@@ -27,13 +27,6 @@ from .token import make_random_token
 from . import downsample
 from . import downsample_scales
 
-
-
-
-
-
-
-
 def get_scale_key(scale):
     return '%d,%d,%d' % scale
 
@@ -52,8 +45,8 @@ def create_volume(volume_type, **kwargs):
 class Served(object):
     def __init__(self,
                  volume_type,
-                 data=None,
-              ):
+                 data=None
+                ):
         """Initializes a ServedVolume.
 
         @param data: 3-d [z, y, x] array or 4-d [channel, z, y, x] array.
@@ -93,12 +86,11 @@ class Served(object):
 
     def handle_info_request(self, req):
         data = json.dumps(self.info())
-        req.send_response(200)
-        req.send_header('Content-type', 'application/json')
-        req.send_header('Content-length', len(data))
-        req.send_header('Access-Control-Allow-Origin', '*')
-        req.end_headers()
-        req.wfile.write(data)
+        req.set_status(200)
+        req.set_header('Content-type', 'application/json')
+        req.set_header('Content-length', len(data))
+        req.set_header('Access-Control-Allow-Origin', '*')
+        req.finish(data)
 
     def handle_data_request(self, **kwargs):
         raise NotImplemented
@@ -243,12 +235,11 @@ class ServedVolume(Served):
             self.send_error(400, e.args[0])
             return
 
-        req.send_response(200)
-        req.send_header('Content-type', content_type)
-        req.send_header('Content-length', len(data))
-        req.send_header('Access-Control-Allow-Origin', '*')
-        req.end_headers()
-        req.wfile.write(data)
+        req.set_status(200)
+        req.set_header('Content-type', content_type)
+        req.set_header('Content-length', len(data))
+        req.set_header('Access-Control-Allow-Origin', '*')
+        req.finish(data)
 
     def info(self):
         info = dict(volumeType=self.volume_type,
@@ -366,12 +357,11 @@ class ServedSegmentation(ServedVolume):
         except ValueError as e:
             req.send_error(400, e.args[0])
             return
-        req.send_response(200)
-        req.send_header('Content-type', 'application/octet-stream')
-        req.send_header('Content-length', len(encoded_mesh))
-        req.send_header('Access-Control-Allow-Origin', '*')
-        req.end_headers()
-        req.wfile.write(encoded_mesh)
+        req.set_status(200)
+        req.set_header('Content-type', 'application/octet-stream')
+        req.set_header('Content-length', len(encoded_mesh))
+        req.set_header('Access-Control-Allow-Origin', '*')
+        req.finish(encoded_mesh)
 
 class ServedImage(ServedVolume):
     def __init__(self, **kwargs):

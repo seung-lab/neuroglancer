@@ -166,6 +166,9 @@ class SplitHandler(BaseHandler):
         partitions[0].remove('virtual_sink')
         partitions[1].remove('virtual_source')
         partitions = map(lambda x: map(int,x), partitions)
+
+
+        #TODO splitting is not being saved
         self.finish(json.dumps(partitions))
 
 

@@ -23,7 +23,7 @@ class Viewer(base_viewer.BaseViewer):
 
     def __init__(self, *args, **kwargs):
         super(Viewer, self).__init__(*args, **kwargs)
-        server.start()
+        server.start(viewer=self)
 
     def register_volume(self, volume):
         server.register_volume(volume)
@@ -40,6 +40,20 @@ class Viewer(base_viewer.BaseViewer):
 
     def _repr_html_(self):
         return '<a href="%s" target="_blank">Viewer</a>' % self.get_viewer_url()
+
+    def initialize_state(self, state):
+        # pandas.read_csv can be used to read a list
+        # state['layers']['synapse']['points'] = [[530, 557.5, 51], [617, 539.5, 52]]
+        # return state
+        return None
+
+    def on_state_changed(self, state):
+        return None
+
+    def on_closing(self, state):
+        #example on how to save synapses
+        # print ('saving ', state['layers']['synapse']['points'] )
+        pass
 
 
 def view(*args, **kwargs):
