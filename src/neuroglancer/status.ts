@@ -68,6 +68,13 @@ export class StatusMessage {
     this.element.style.display = value ? 'block' : 'none';
   }
 
+  static displayText (text: string, msec: number = 1500) {
+    let status = new StatusMessage();
+    status.setText(text);
+    setTimeout(status.dispose.bind(status), msec);
+    return status;
+  }
+
   static forPromise<T>(
       promise: Promise<T>,
       options: {initialMessage: string, delay?: Delay, errorPrefix: string}): Promise<T> {

@@ -102,6 +102,7 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
   private meshShaderManager = new MeshShaderManager();
   private shaders = new Map<ShaderModule, ShaderProgram>();
   private sharedObject: SegmentationLayerSharedObject;
+  private shattered: boolean = false;
 
   constructor(
       public chunkManager: ChunkManager, public source: MeshSource,
@@ -135,6 +136,8 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
   get gl() { return this.chunkManager.chunkQueueManager.gl; }
 
   draw(renderContext: PerspectiveViewRenderContext) {
+    const _this = this;
+
     if (!renderContext.emitColor && renderContext.alreadyEmittedPickID) {
       // No need for a separate pick ID pass.
       return;
@@ -156,8 +159,12 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
     const objectToDataMatrix = this.displayState.objectToDataTransform.transform;
 
     forEachSegmentToDraw(displayState, objectChunks, (rootObjectId, objectId, fragments) => {
+      let coloring_id = _this.shattered 
+        ? objectId
+        : rootObjectId;
+
       if (renderContext.emitColor) {
-        meshShaderManager.setColor(gl, shader, getObjectColor(displayState, rootObjectId, alpha));
+        meshShaderManager.setColor(gl, shader, getObjectColor(displayState, coloring_id, alpha));
       }
       if (renderContext.emitPickID) {
         meshShaderManager.setPickID(gl, shader, pickIDs.registerUint64(this, objectId));
@@ -171,6 +178,20 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
     });
 
     meshShaderManager.endLayer(gl, shader);
+  }
+
+  handleAction(action: string) {
+    super.handleAction(action);
+
+    let actions: { [key:string] : Function } = {
+      'toggle-shatter-equivalencies': () => this.shattered = !this.shattered,
+    };
+
+    let fn : Function = actions[action];
+
+    if (fn) {
+      fn.call(this);
+    }
   }
 }
 

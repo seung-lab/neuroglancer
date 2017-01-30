@@ -25,6 +25,7 @@ import {TrackableAlphaValue} from 'neuroglancer/trackable_alpha';
 import {DisjointUint64Sets} from 'neuroglancer/util/disjoint_sets';
 import {ShaderBuilder, ShaderProgram} from 'neuroglancer/webgl/shader';
 import {glsl_unnormalizeUint8} from 'neuroglancer/webgl/shader_lib';
+import {StatusMessage} from 'neuroglancer/status';
 
 const selectedSegmentForShader = new Float32Array(8);
 
@@ -43,13 +44,11 @@ export class EquivalencesHashMap {
 
       if (shatter) {
         for (let [objectId, minObjectId] of disjointSets.mappings()) {
-          console.log(objectId, minObjectId);
           hashMap.set(objectId, objectId);
         }
       }
       else {
         for (let [objectId, minObjectId] of disjointSets.mappings()) {
-          console.log(objectId, minObjectId);
           hashMap.set(objectId, minObjectId);
         }
       }
@@ -176,8 +175,6 @@ uint64_t getMappedObjectId() {
     gl.uniform4fv(shader.uniform('uSelectedSegment'), selectedSegmentForShader);
     gl.uniform1f(shader.uniform('uShowAllSegments'), visibleSegments.hashTable.size ? 0.0 : 1.0);
     this.hashTableManager.enable(gl, shader, this.gpuHashTable);
-    
-    console.log('shattered:', this.shattered)
 
     if (this.hasEquivalences) {
       this.equivalencesHashMap.update(this.shattered);
@@ -201,6 +198,12 @@ uint64_t getMappedObjectId() {
         this.shattered = !this.shattered;
         this.equivalencesHashMap.generation++;
         this.equivalencesHashMap.update(this.shattered);
+
+        let msg = this.shattered 
+          ? 'Shatter ON'
+          : 'Shatter OFF';
+
+        StatusMessage.displayText(msg);
       },
     };
 

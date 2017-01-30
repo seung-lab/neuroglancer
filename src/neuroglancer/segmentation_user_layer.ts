@@ -19,7 +19,6 @@ import {getMeshSource, getSkeletonSource} from 'neuroglancer/datasource/factory'
 import {UserLayer, UserLayerDropdown} from 'neuroglancer/layer';
 import {LayerListSpecification, registerLayerType, registerVolumeLayerType} from 'neuroglancer/layer_specification';
 import {getVolumeWithStatusMessage} from 'neuroglancer/layer_specification';
-import {StatusMessage} from 'neuroglancer/status';
 import {MeshSource} from 'neuroglancer/mesh/frontend';
 import {MeshLayer} from 'neuroglancer/mesh/frontend';
 import {SegmentColorHash} from 'neuroglancer/segment_color';
@@ -37,6 +36,7 @@ import {SegmentSetWidget} from 'neuroglancer/widget/segment_set_widget';
 import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
 import {openHttpRequest, sendHttpRequest} from 'neuroglancer/util/http_request';
 import {splitObject, mergeNodes, getObjectList, getConnectedSegments, setGraphServerURL} from 'neuroglancer/object_graph_service';
+import {StatusMessage} from 'neuroglancer/status';
 
 require('./segmentation_user_layer.css');
 
@@ -145,6 +145,7 @@ export class SegmentationUserLayer extends UserLayer {
         parseArray(y, value => {
           let id = Uint64.parseString(String(value), 10);
           visibleSegments.add(segmentEquivalences.get(id));
+          visibleSegments.add(id);
         });
       }
     });
@@ -212,6 +213,8 @@ export class SegmentationUserLayer extends UserLayer {
           segmentEquivalences.link(seg0, segid);
         });
       });
+
+      StatusMessage.displayText('Merged visible segments.');
   }
 
   selectSegment () {
@@ -224,14 +227,18 @@ export class SegmentationUserLayer extends UserLayer {
     let {visibleSegments, segmentEquivalences} = this.displayState;
     if (visibleSegments.has(segment)) {
       visibleSegments.delete(segment);
+
+      StatusMessage.displayText(`Deselected segment ${segment}.`);
     }
     else {
       visibleSegments.add(segment);
 
       getConnectedSegments(segment).then(function (connected_segments) {
         for (let seg of connected_segments) {
-            visibleSegments.add(seg);
-          }
+          visibleSegments.add(seg);
+        }
+
+        StatusMessage.displayText(`Selected ${connected_segments.length} segments.`);
       });
     }
   }
@@ -271,6 +278,7 @@ export class SegmentationUserLayer extends UserLayer {
       'select': this.selectSegment,
       'split-select-first': this.splitSelectFirst,
       'split-select-second': this.splitSelectSecond,
+      'toggle-shatter-equivalencies': () => { this.specificationChanged.dispatch(); },
     };
 
     let fn : Function = actions[action];
