@@ -121,20 +121,26 @@ class SplitHandler(BaseHandler):
 
         if set(virtual_source).intersection(set(virtual_sink)):
             self.set_status(400);
-            self.finish(u'Overlapping ids were submitted for source and sink.')
+            self.finish(json.dumps({ 
+                'error': u'Unable to split a single segment ID.' 
+            }))
             return
 
         for node in all_nodes:
             if node not in self.node2sets:
                 self.set_status(400)
-                self.finish(str(node) + u'did not belong to any known object.')
+                self.finish(json.dumps({ 
+                    'error': str(node) + u' did not belong to any known object.',
+                }))
                 return
 
         first_set = self.node2sets[all_nodes[0]]
         for node in all_nodes:
             if first_set != self.node2sets[node]:
                 self.set_status(400)
-                self.finish('Trying to split two different objects')
+                self.finish(json.dumps({ 
+                    'error': 'Selected objects were already split.'
+                }))
                 return
 
         # Virtual source and sinks allow for many sources and

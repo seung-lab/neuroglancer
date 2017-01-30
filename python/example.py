@@ -27,10 +27,10 @@ with h5py.File('./snemi3d/image.h5') as f:
   viewer.add(f['main'][:], name='image')
 
 # add_point_annotation(viewer)
-add_synapse_annotation(viewer)
+# add_synapse_annotation(viewer)
 
-# with h5py.File('./snemi3d/machine_labels.h5') as f:
-#   viewer.add(f['main'][:], name='segmentation')
+with h5py.File('./snemi3d/machine_labels.h5') as f:
+  viewer.add(f['main'][:], name='segmentation')
 
 webbrowser.open(viewer.get_viewer_url())
 print(viewer.get_viewer_url())

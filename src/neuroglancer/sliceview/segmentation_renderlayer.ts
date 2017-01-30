@@ -139,7 +139,7 @@ uint64_t getMappedObjectId() {
   bool has = uShowAllSegments > 0.0 ? true : ${this.hashTableManager.hasFunctionName}(value);
   if (uSelectedSegment[0] == unnormalizeUint8(value.low) &&
       uSelectedSegment[1] == unnormalizeUint8(value.high)) {
-    saturation = has ? 0.5 : 0.75;
+    saturation = has ? 0.5 : uNotSelectedAlpha;
   } else if (!has) {
     alpha = uNotSelectedAlpha;
   }

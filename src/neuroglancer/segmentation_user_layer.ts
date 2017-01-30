@@ -263,6 +263,8 @@ export class SegmentationUserLayer extends UserLayer {
     splitObject(this.splitPartitions.sources, this.splitPartitions.sinks)
       .then((splitgroups) => {
         this.displayState.segmentEquivalences.split(splitgroups[0], splitgroups[1]);
+      }, (error) => {
+        StatusMessage.displayText(error)
       });
 
     // Reset
