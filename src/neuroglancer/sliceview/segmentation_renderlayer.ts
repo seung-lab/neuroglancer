@@ -34,7 +34,7 @@ export class EquivalencesHashMap {
   hashMap = new HashMapUint64();
   constructor(public disjointSets: DisjointUint64Sets) {}
 
-  update(shatter = false) {
+  update() {
     let {disjointSets} = this;
     const {generation} = disjointSets;
     if (this.generation !== generation) {
@@ -42,15 +42,8 @@ export class EquivalencesHashMap {
       let {hashMap} = this;
       hashMap.clear();
 
-      if (shatter) {
-        for (let [objectId, minObjectId] of disjointSets.mappings()) {
-          hashMap.set(objectId, objectId);
-        }
-      }
-      else {
-        for (let [objectId, minObjectId] of disjointSets.mappings()) {
-          hashMap.set(objectId, minObjectId);
-        }
+      for (let [objectId, minObjectId] of disjointSets.mappings()) {
+        hashMap.set(objectId, minObjectId);
       }
     }
   }
@@ -132,6 +125,7 @@ uint64_t getMappedObjectId() {
     builder.addUniform('highp float', 'uShowAllSegments');
     builder.addUniform('highp float', 'uSelectedAlpha');
     builder.addUniform('highp float', 'uNotSelectedAlpha');
+    builder.addUniform('lowp float', 'uShattered');
     builder.addFragmentCode(glsl_unnormalizeUint8);
     builder.setFragmentMain(`
   uint64_t value = getMappedObjectId();
@@ -149,6 +143,11 @@ uint64_t getMappedObjectId() {
   } else if (!has) {
     alpha = uNotSelectedAlpha;
   }
+
+  if (uShattered == 1.0) {
+    value = getUint64DataValue();
+  }
+
   vec3 rgb = segmentColorHash(value);
   emit(vec4(mix(vec3(1.0,1.0,1.0), rgb, saturation), alpha));
 `);
@@ -174,10 +173,11 @@ uint64_t getMappedObjectId() {
     gl.uniform1f(shader.uniform('uNotSelectedAlpha'), this.displayState.notSelectedAlpha.value);
     gl.uniform4fv(shader.uniform('uSelectedSegment'), selectedSegmentForShader);
     gl.uniform1f(shader.uniform('uShowAllSegments'), visibleSegments.hashTable.size ? 0.0 : 1.0);
+    gl.uniform1f(shader.uniform('uShattered'), this.shattered ? 1.0 : 0.0);
     this.hashTableManager.enable(gl, shader, this.gpuHashTable);
 
     if (this.hasEquivalences) {
-      this.equivalencesHashMap.update(this.shattered);
+      this.equivalencesHashMap.update();
       this.equivalencesShaderManager.enable(gl, shader, this.gpuEquivalencesHashTable);
     }
 
@@ -196,8 +196,6 @@ uint64_t getMappedObjectId() {
     let actions: { [key:string] : Function } = {
       'toggle-shatter-equivalencies': () => { 
         this.shattered = !this.shattered;
-        this.equivalencesHashMap.generation++;
-        this.equivalencesHashMap.update(this.shattered);
 
         let msg = this.shattered 
           ? 'Shatter ON'

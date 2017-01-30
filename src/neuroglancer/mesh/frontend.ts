@@ -136,7 +136,7 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
   get gl() { return this.chunkManager.chunkQueueManager.gl; }
 
   draw(renderContext: PerspectiveViewRenderContext) {
-    const _this = this;
+    const self = this;
 
     if (!renderContext.emitColor && renderContext.alreadyEmittedPickID) {
       // No need for a separate pick ID pass.
@@ -159,7 +159,7 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
     const objectToDataMatrix = this.displayState.objectToDataTransform.transform;
 
     forEachSegmentToDraw(displayState, objectChunks, (rootObjectId, objectId, fragments) => {
-      let coloring_id = _this.shattered 
+      let coloring_id = self.shattered 
         ? objectId
         : rootObjectId;
 
