@@ -31,6 +31,7 @@ export class SegmentationLayerSharedObjectCounterpart extends SharedObjectCounte
   chunkManager: ChunkManager;
   visibleSegments: Uint64Set;
   segmentEquivalences: SharedDisjointUint64Sets;
+  shattered: boolean = false;
 
   /**
    * Indicates whether this layer is actually visible.

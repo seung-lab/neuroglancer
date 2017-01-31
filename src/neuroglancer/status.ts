@@ -42,6 +42,7 @@ export class StatusMessage {
     } else {
       this.timer = null;
     }
+
     statusContainer.appendChild(element);
   }
   dispose() {

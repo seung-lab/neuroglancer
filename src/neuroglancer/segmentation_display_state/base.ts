@@ -21,6 +21,7 @@ import {Uint64} from 'neuroglancer/util/uint64';
 export interface VisibleSegmentsState {
   visibleSegments: Uint64Set;
   segmentEquivalences: SharedDisjointUint64Sets;
+  shattered: boolean;
 }
 
 /**

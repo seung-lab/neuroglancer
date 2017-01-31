@@ -26,6 +26,7 @@ import {DisjointUint64Sets} from 'neuroglancer/util/disjoint_sets';
 import {ShaderBuilder, ShaderProgram} from 'neuroglancer/webgl/shader';
 import {glsl_unnormalizeUint8} from 'neuroglancer/webgl/shader_lib';
 import {StatusMessage} from 'neuroglancer/status';
+import {Actions} from 'neuroglancer/actions';
 
 const selectedSegmentForShader = new Float32Array(8);
 

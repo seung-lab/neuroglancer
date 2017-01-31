@@ -60,6 +60,7 @@ export class SegmentationUserLayer extends UserLayer {
     segmentEquivalences: SharedDisjointUint64Sets.makeWithCounterpart(this.manager.worker),
     volumeSourceOptions: {},
     objectToDataTransform: new CoordinateTransform(),
+    shattered: false,
   };
   volumePath: string|undefined;
   meshPath: string|undefined;
@@ -223,23 +224,39 @@ export class SegmentationUserLayer extends UserLayer {
       return;
     }
     
-    let segment = segmentSelectionState.selectedSegment;
+    let segment = this.displayState.shattered 
+      ? segmentSelectionState.rawSelectedSegment
+      : segmentSelectionState.selectedSegment;
+
     let {visibleSegments, segmentEquivalences} = this.displayState;
     if (visibleSegments.has(segment)) {
       visibleSegments.delete(segment);
 
-      StatusMessage.displayText(`Deselected segment ${segment}.`);
+      if (this.displayState.shattered) {
+        segmentEquivalences.unlink(segment);  
+      }
+      else {
+        getConnectedSegments(segment).then(function (connected_segments) {
+          for (let seg of connected_segments) {
+            visibleSegments.delete(seg);
+          }
+
+          StatusMessage.displayText(`Deselected ${connected_segments.length} segments.`);
+        });
+      }
     }
     else {
       visibleSegments.add(segment);
 
-      getConnectedSegments(segment).then(function (connected_segments) {
-        for (let seg of connected_segments) {
-          visibleSegments.add(seg);
-        }
+      if (!this.displayState.shattered) {
+        getConnectedSegments(segment).then(function (connected_segments) {
+          for (let seg of connected_segments) {
+            visibleSegments.add(seg);
+          }
 
-        StatusMessage.displayText(`Selected ${connected_segments.length} segments.`);
-      });
+          StatusMessage.displayText(`Selected ${connected_segments.length} segments.`);
+        });
+      }
     }
   }
 
@@ -280,7 +297,10 @@ export class SegmentationUserLayer extends UserLayer {
       'select': this.selectSegment,
       'split-select-first': this.splitSelectFirst,
       'split-select-second': this.splitSelectSecond,
-      'toggle-shatter-equivalencies': () => { this.specificationChanged.dispatch(); },
+      'toggle-shatter-equivalencies': () => { 
+        this.displayState.shattered = !this.displayState.shattered;
+        this.specificationChanged.dispatch(); 
+      },
     };
 
     let fn : Function = actions[action];
