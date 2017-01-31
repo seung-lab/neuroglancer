@@ -168,11 +168,15 @@ class SplitHandler(BaseHandler):
         partitions = map(lambda x: map(int,x), partitions)
 
         # update objects based on new partions
+        del self.sets[self.sets.index(object_set)]
+        
         first_set = set(partitions[0])
+        self.sets.append(first_set)
         for node in first_set:
             self.node2sets[node] = first_set
 
         second_set = set(partitions[1])
+        self.sets.append(second_set)
         for node in second_set:
             self.node2sets[node] = second_set
 
