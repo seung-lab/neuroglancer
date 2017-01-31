@@ -134,9 +134,9 @@ class SplitHandler(BaseHandler):
                 }))
                 return
 
-        first_set = self.node2sets[all_nodes[0]]
+        object_set = self.node2sets[all_nodes[0]]
         for node in all_nodes:
-            if first_set != self.node2sets[node]:
+            if object_set != self.node2sets[node]:
                 self.set_status(400)
                 self.finish(json.dumps({ 
                     'error': 'Selected objects were already split.'
@@ -151,7 +151,7 @@ class SplitHandler(BaseHandler):
 
         # this set might contain disconected subgraph, despite that nx.minimum_cut 
         # is able to spit them apart
-        H = self.G.subgraph(list(first_set))
+        H = self.G.subgraph(list(object_set))
 
         H.add_node('virtual_source')
         for u in virtual_source:
