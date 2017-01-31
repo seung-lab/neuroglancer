@@ -167,8 +167,15 @@ class SplitHandler(BaseHandler):
         partitions[1].remove('virtual_source')
         partitions = map(lambda x: map(int,x), partitions)
 
+        # update objects based on new partions
+        first_set = set(partitions[0])
+        for node in first_set:
+            self.node2sets[node] = first_set
 
-        #TODO splitting is not being saved
+        second_set = set(partitions[1])
+        for node in second_set:
+            self.node2sets[node] = second_set
+
         self.finish(json.dumps(partitions))
 
 
