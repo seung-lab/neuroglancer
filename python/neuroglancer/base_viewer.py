@@ -39,7 +39,7 @@ class Layer(object):
             volume_type=volume_type,
             data=data, **kwargs)
         self.name = name
-        extra_args = self.extra_args = dict()
+        extra_args = self.extra_args = self.volume.extra_args()
         if shader is not None:
             extra_args['shader'] = shader
         if visible is not None:
@@ -80,8 +80,6 @@ class BaseViewer(object):
             state['navigation'] = collections.OrderedDict()
             state['navigation']['pose'] = collections.OrderedDict()
             state['navigation']['pose']['voxelSize'] = list(self.voxel_size)
-
-        state['graph'] = 'http://localhost:8888'
 
         return state
 

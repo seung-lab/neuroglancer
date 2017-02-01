@@ -26,7 +26,7 @@ except ImportError:
     from socketserver import ThreadingMixIn  # pylint: disable=import-error
     from http.server import HTTPServer, BaseHTTPRequestHandler  # pylint: disable=import-error
 
-from .token import make_random_token
+from .randomtoken import make_random_token
 from . import static
 from . import volume
 

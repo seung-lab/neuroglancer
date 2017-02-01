@@ -1,10 +1,13 @@
+import threading
+import json
+from weakref import WeakValueDictionary
+
 import tornado.ioloop
 import tornado.web
+from tornado import httpserver, netutil
 
 import networkx as nx
-import json
 import numpy as np
-from weakref import WeakValueDictionary
 
 
 class BaseHandler(tornado.web.RequestHandler):
@@ -213,9 +216,9 @@ class ObjectHandler(BaseHandler):
 
 
 
-def make_app(test=False):
-    if not test:
-        G = nx.read_gpickle('snemi3d_graph.pickle')
+def make_app(path):
+    if path:
+        G = nx.read_gpickle(path)
         print 'graph restored'
     else:
         G = nx.Graph()
@@ -245,8 +248,17 @@ def make_app(test=False):
     app.args = args
     return app
 
+def start_server(path=None):
+    app = make_app(path)
+    sockets = netutil.bind_sockets(0, '')
+    server = httpserver.HTTPServer(app)
+    server.add_sockets(sockets)
+    
+    # thread = threading.Thread(target=tornado.ioloop.IOLoop.instance().start)
+    # thread.daemon = True
+    # thread.start()
+
+    return 'http://%s:%s' % sockets[0].getsockname()[:2]
 
 if __name__ == '__main__':
-    app = make_app()
-    app.listen(8888)
-    tornado.ioloop.IOLoop.current().start()
+   start_server()

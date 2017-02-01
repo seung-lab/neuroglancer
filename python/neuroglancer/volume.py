@@ -23,9 +23,10 @@ import json
 import numpy as np
 
 from .chunks import encode_jpeg, encode_npz, encode_raw
-from .token import make_random_token
+from .randomtoken import make_random_token
 from . import downsample
 from . import downsample_scales
+from . import graph_server
 
 def get_scale_key(scale):
     return '%d,%d,%d' % scale
@@ -98,6 +99,9 @@ class Served(object):
 
     def handle_mesh_request(self, **kwargs):
         raise NotImplemented
+
+    def extra_args(self):
+        return dict()
 
 
 
@@ -187,6 +191,8 @@ class ServedVolume(Served):
                                          shape=tuple(np.cast[int](np.ceil(original_shape / scale))))
             self.downsampling_scale_info[info.key] = info
 
+      
+
 
     def get_encoded_subvolume(self, data_format, start, end, scale_key='1,1,1'):
         scale_info = self.downsampling_scale_info.get(scale_key)
@@ -264,7 +270,7 @@ class ServedVolume(Served):
         if self.three_dimensional_scales is not None:
             info['threeDimensionalScales'] = [get_scale_info(s)
                                               for s in self.three_dimensional_scales]
-                               
+                              
         return info
 
 
@@ -282,6 +288,7 @@ class ServedSegmentation(ServedVolume):
 
     def __init__(self,
                  mesh_options=None,
+                 graph=True,
                  **kwargs):
 
         """ 
@@ -306,6 +313,13 @@ class ServedSegmentation(ServedVolume):
         self._mesh_generator_pending = False
         self._mesh_generator_lock = threading.Condition()
         self._mesh_options = mesh_options.copy() if mesh_options is not None else dict()
+        self.graph = graph
+
+        if self.graph:
+            path = None
+            if type(self.graph) is str:
+                path = self.graph
+            self.graph_server_url  = graph_server.start_server(path)
 
     def get_object_mesh(self, object_id):
         mesh_generator = self._get_mesh_generator()
@@ -365,6 +379,12 @@ class ServedSegmentation(ServedVolume):
         req.send_header('Access-Control-Allow-Origin', '*')
         req.end_headers()
         req.wfile.write(encoded_mesh)
+
+    def extra_args(self):
+        if self.graph:
+            return {'graph': self.graph_server_url}
+        else:
+            return dict()
 
 class ServedImage(ServedVolume):
     def __init__(self, **kwargs):
