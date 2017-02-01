@@ -17,14 +17,21 @@ import threading
 import json
 import socket
 import re
-
-import tornado.ioloop
-import tornado.web
-from sockjs.tornado import SockJSRouter, SockJSConnection
+try:
+    # Python 2 case
+    from SocketServer import ThreadingMixIn  # pylint: disable=import-error
+    from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler  # pylint: disable=import-error
+except ImportError:
+    # Python 3 case
+    from socketserver import ThreadingMixIn  # pylint: disable=import-error
+    from http.server import HTTPServer, BaseHTTPRequestHandler  # pylint: disable=import-error
 
 from .token import make_random_token
 from . import static
 from . import volume
+
+from tornado import web, ioloop
+from sockjs.tornado import SockJSConnection, SockJSRouter
 
 global_static_content_source = None
 global_server_args = dict(bind_address='127.0.0.1', bind_port=8000)
@@ -32,33 +39,8 @@ global_server = None
 debug = True
 
 
-class BaseHandler(tornado.web.RequestHandler):
-
-    def initialize(self, server):
-        self.server = server
-
-class VolumeHandler(BaseHandler):
-    def get(self, token, path):
-        vol = self.server.volumes.get(token)
-        if vol is None:
-            self.set_status(404)
-            return
-        vol.handle_request(path, self)
-
-class StaticHandler(BaseHandler):
-    def get(self, token, path):
-        if token != self.server.token:
-            self.set_status(404)
-
-        try:
-            data, content_type = global_static_content_source.get(path)
-        except ValueError as e:
-            self.set_status(404)
-            return
-        self.set_status(200)
-        self.set_header('Content-type', content_type)
-        self.set_header('Content-length', len(data))
-        self.finish(data)
+VOLUME_PATH_REGEX = re.compile(r'^/neuroglancer/([^/]+)/(.*)/?$')
+STATIC_PATH_REGEX = re.compile(r'/static/([^/]+)/((?:[a-zA-Z0-9_\-][a-zA-Z0-9_\-.]*)?)$')
 
 class StateHandler(SockJSConnection):
     clients = set()
@@ -87,10 +69,11 @@ class StateHandler(SockJSConnection):
     def on_close(self):
         # If client disconnects, remove him from the clients list
         self.clients.remove(self)
-        global_server.viewer.on_close(self.last_state)
+        # global_server.viewer.on_close(self.last_state)
 
-class Server(object):
-    def __init__(self, viewer, bind_address='127.0.0.1', bind_port=8000):
+class Server(ThreadingMixIn, HTTPServer):
+    def __init__(self, viewer, bind_address='127.0.0.1', bind_port=0):
+        HTTPServer.__init__(self, (bind_address, bind_port), RequestHandler)
         self.daemon_threads = True
         self.volumes = dict()
         self.token = make_random_token()
@@ -99,23 +82,74 @@ class Server(object):
         if global_static_content_source is None:
             global_static_content_source = static.get_default_static_content_source()
 
-        self.server_url = 'http://%s:%s' % (bind_address, bind_port)
-        
-        StateRouter = SockJSRouter(StateHandler, '/state')
+        if bind_address == '0.0.0.0':
+            hostname = socket.getfqdn()
+        else:
+            hostname = bind_address
+        self.server_url = 'http://%s:%s' % (hostname, self.server_address[1])
 
-        app = tornado.web.Application([
-        (r'^/neuroglancer/([^/]+)/(.*)/?$', VolumeHandler, {'server': self}),
-        (r'^/static/([^/]+)/((?:[a-zA-Z0-9_\-][a-zA-Z0-9_\-.]*)?)$', StaticHandler, {'server': self})
-        ] + StateRouter.urls , debug=debug)
-        app.listen(port=bind_port, address=bind_address)
-        self.loop = tornado.ioloop.IOLoop.current()
+        websocketRouter = SockJSRouter(StateHandler, '/state')
+        socketApp = web.Application(websocketRouter.urls)
+        socketApp.listen(9999)
+        self.ioloop = ioloop.IOLoop.instance()
+
+    def start(self):
+        self.serve_forever()
+
+    def start_websockets(self):
+        self.ioloop.start()
+
+    def shutdown():
+        self.shutdown()
+        self.ioloop.stop()
+
+    def handle_error(self, request, client_address):
+        if debug:
+            HTTPServer.handle_error(self, request, client_address)
+
+class RequestHandler(BaseHTTPRequestHandler):
+
+    def do_GET(self):  # pylint: disable=invalid-name
+        m = re.match(VOLUME_PATH_REGEX, self.path)
+        if m is not None:
+            token, path  = m.groups()
+            vol = self.server.volumes.get(token)
+            if vol is None:
+                self.send_error(404)
+                return
+            vol.handle_request(path, self)
+            return
+        m = re.match(STATIC_PATH_REGEX, self.path)
+        if m is not None:
+            self.handle_static_request(m.group(1), m.group(2))
+            return
+        self.send_error(404)
+        
+    def handle_static_request(self, token, path):
+        if token != self.server.token:
+            self.send_error(404)
+        try:
+            data, content_type = global_static_content_source.get(path)
+        except ValueError as e:
+            self.send_error(404, e.args[0])
+            return
+        self.send_response(200)
+        self.send_header('Content-type', content_type)
+        self.send_header('Content-length', len(data))
+        self.end_headers()
+        self.wfile.write(data)   
+
+    def log_message(self, format, *args):
+        if debug:
+            BaseHTTPRequestHandler.log_message(self, format, *args)
+
 
 
 def set_static_content_source(*args, **kwargs):
     global global_static_content_source
     global_static_content_source = static.get_static_content_source(*args, **kwargs)
 
-def set_server_bind_address(bind_address='127.0.0.1', bind_port=8000):
+def set_server_bind_address(bind_address='127.0.0.1', bind_port=0):
     global global_server_args
     global_server_args = dict(bind_address=bind_address, bind_port=bind_port)
 
@@ -124,13 +158,12 @@ def is_server_running():
 
 def stop():
     """Stop the server, invalidating any viewer URLs.
-
     This allows any previously-referenced data arrays to be garbage collected if there are no other
     references to them.
     """
     global global_server
     if global_server is not None:
-        global_server.loop.stop()
+        global_server.shutdown()
         global_server = None
 
 def get_server_url():
@@ -139,8 +172,12 @@ def get_server_url():
 def start(viewer):
     global global_server
     if global_server is None:
-        global_server = Server(viewer=viewer, **global_server_args)
-        thread = threading.Thread(target=global_server.loop.start)
+        global_server = Server(viewer, **global_server_args)
+        thread = threading.Thread(target=global_server.start)
+        thread.daemon = True
+        thread.start()
+
+        thread = threading.Thread(target=global_server.start_websockets)
         thread.daemon = True
         thread.start()
 

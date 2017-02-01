@@ -15,9 +15,14 @@ import neuroglancer
 neuroglancer.set_static_content_source(url='http://localhost:8080')
 viewer = neuroglancer.Viewer()
 
-def update(state):
-  print(state)
-viewer.on_state_changed = update
+def on_state_changed(state):
+  try:
+    visible_segments =  map(int, state['layers']['segmentation']['segments'])
+  except KeyError:
+    visible_segments = []
+  print (visible_segments)
+  return None
+viewer.on_state_changed = on_state_changed
 
 with h5py.File('./snemi3d/image.h5') as f:
   img = np.pad(f['main'][:], 1, 'constant', constant_values=0)

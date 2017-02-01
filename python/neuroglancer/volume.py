@@ -45,8 +45,8 @@ def create_volume(volume_type, **kwargs):
 class Served(object):
     def __init__(self,
                  volume_type,
-                 data=None
-                ):
+                 data=None,
+              ):
         """Initializes a ServedVolume.
 
         @param data: 3-d [z, y, x] array or 4-d [channel, z, y, x] array.
@@ -86,11 +86,12 @@ class Served(object):
 
     def handle_info_request(self, req):
         data = json.dumps(self.info())
-        req.set_status(200)
-        req.set_header('Content-type', 'application/json')
-        req.set_header('Content-length', len(data))
-        req.set_header('Access-Control-Allow-Origin', '*')
-        req.finish(data)
+        req.send_response(200)
+        req.send_header('Content-type', 'application/json')
+        req.send_header('Content-length', len(data))
+        req.send_header('Access-Control-Allow-Origin', '*')
+        req.end_headers()
+        req.wfile.write(data)
 
     def handle_data_request(self, **kwargs):
         raise NotImplemented
@@ -132,7 +133,7 @@ class ServedVolume(Served):
 
         self.offset = offset
         self.voxel_offset = voxel_offset
-        self.voxel_size = np.array(voxel_size)
+        self.voxel_size = voxel_size
         self.encoding = encoding
         self.downsampling = downsampling
         self.max_voxels_per_chunk_log2 = max_voxels_per_chunk_log2
@@ -140,7 +141,7 @@ class ServedVolume(Served):
         if self.voxel_offset is not None:
             if self.offset is not None:
                 raise ValueError('Must specify at most one of \'offset\' and \'voxel_offset\'.')
-            self.offset = tuple(self.voxel_offset * self.voxel_size)
+            self.offset = tuple(self.voxel_offset * np.array(self.voxel_size))
         if self.offset is None:
             self.offset = (0, 0, 0)
 
@@ -181,7 +182,7 @@ class ServedVolume(Served):
         self.downsampling_scale_info = self.downsampling_scale_info = {}
         for scale in self.downsampling_scales:
             info = ServedVolume.DownsamplingScaleInfo(key=get_scale_key(scale),
-                                         voxel_size=tuple(self.voxel_size * scale),
+                                         voxel_size=tuple(np.array(self.voxel_size) * scale),
                                          downsample_factor=scale,
                                          shape=tuple(np.cast[int](np.ceil(original_shape / scale))))
             self.downsampling_scale_info[info.key] = info
@@ -193,7 +194,7 @@ class ServedVolume(Served):
             raise ValueError('Invalid scale.')
         shape = scale_info.shape
         downsample_factor = scale_info.downsample_factor
-        for i in xrange(3):
+        for i in range(3):
             if end[i] < start[i] or start[i] < 0 or end[i] > shape[i]:
                 raise ValueError('Out of bounds data request.')
 
@@ -235,11 +236,12 @@ class ServedVolume(Served):
             self.send_error(400, e.args[0])
             return
 
-        req.set_status(200)
-        req.set_header('Content-type', content_type)
-        req.set_header('Content-length', len(data))
-        req.set_header('Access-Control-Allow-Origin', '*')
-        req.finish(data)
+        req.send_response(200)
+        req.send_header('Content-type', content_type)
+        req.send_header('Content-length', len(data))
+        req.send_header('Access-Control-Allow-Origin', '*')
+        req.end_headers()
+        req.wfile.write(data)
 
     def info(self):
         info = dict(volumeType=self.volume_type,
@@ -253,8 +255,8 @@ class ServedVolume(Served):
             info = self.downsampling_scale_info[get_scale_key(s)]
             return dict(key='%s/%s' % (self.token, info.key),
                         offset=self.offset,
-                        sizeInVoxels=info.shape,
-                        voxelSize=info.voxel_size)
+                        sizeInVoxels=list(map(int, info.shape)),
+                        voxelSize=list(map(int, info.voxel_size)))
 
         if self.two_dimensional_scales is not None:
             info['twoDimensionalScales'] = [[get_scale_info(s) for s in level]
@@ -262,7 +264,7 @@ class ServedVolume(Served):
         if self.three_dimensional_scales is not None:
             info['threeDimensionalScales'] = [get_scale_info(s)
                                               for s in self.three_dimensional_scales]
-
+                               
         return info
 
 
@@ -309,7 +311,7 @@ class ServedSegmentation(ServedVolume):
         mesh_generator = self._get_mesh_generator()
         data = mesh_generator.get_mesh(object_id)
         if data is None:
-            raise InvalidObjectIdForMesh()
+            raise ServedSegmentation.InvalidObjectIdForMesh()
         return data
 
     def _get_mesh_generator(self):
@@ -325,18 +327,18 @@ class ServedSegmentation(ServedVolume):
             try:
                 from . import _neuroglancer
             except ImportError:
-                raise MeshImplementationNotAvailable()
+                raise ServedSegmentation.MeshImplementationNotAvailable()
             if not (self.num_channels == 1 and
                     (self.data_type == 'uint8' or self.data_type == 'uint16' or
                      self.data_type == 'uint32' or self.data_type == 'uint64')):
-                raise MeshesNotSupportedForVolume()
+                raise ServedSegmentation.MeshesNotSupportedForVolume()
             self._mesh_generator_pending = True
         if len(self.data.shape) == 4:
             data = self.data[0, :, :, :]
         else:
             data = self.data
         self._mesh_generator = _neuroglancer.OnDemandObjectMeshGenerator(
-            data, self.voxel_size, self.offset / self.voxel_size, **self._mesh_options)
+            data, self.voxel_size, np.array(self.offset) / np.array(self.voxel_size), **self._mesh_options)
         with self._mesh_generator_lock:
             self._mesh_generator_pending = False
             self._mesh_generator_lock.notify_all()
@@ -345,23 +347,24 @@ class ServedSegmentation(ServedVolume):
     def handle_mesh_request(self, req, object_id):
         try:
             encoded_mesh = self.get_object_mesh(object_id)
-        except volume.MeshImplementationNotAvailable:
+        except ServedSegmentation.MeshImplementationNotAvailable:
             req.send_error(501, 'Mesh implementation not available')
             return
-        except volume.MeshesNotSupportedForVolume:
+        except ServedSegmentation.MeshesNotSupportedForVolume:
             req.send_error(405, 'Meshes not supported for volume')
             return
-        except volume.InvalidObjectIdForMesh:
+        except ServedSegmentation.InvalidObjectIdForMesh:
             req.send_error(404, 'Mesh not available for specified object id')
             return
         except ValueError as e:
             req.send_error(400, e.args[0])
             return
-        req.set_status(200)
-        req.set_header('Content-type', 'application/octet-stream')
-        req.set_header('Content-length', len(encoded_mesh))
-        req.set_header('Access-Control-Allow-Origin', '*')
-        req.finish(encoded_mesh)
+        req.send_response(200)
+        req.send_header('Content-type', 'application/octet-stream')
+        req.send_header('Content-length', len(encoded_mesh))
+        req.send_header('Access-Control-Allow-Origin', '*')
+        req.end_headers()
+        req.wfile.write(encoded_mesh)
 
 class ServedImage(ServedVolume):
     def __init__(self, **kwargs):
@@ -376,5 +379,4 @@ class ServedPoint(Served):
 class ServedSynapse(Served):
     def __init__(self, **kwargs):
         super(ServedSynapse, self).__init__(**kwargs)
-
 

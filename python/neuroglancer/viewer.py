@@ -23,7 +23,7 @@ class Viewer(base_viewer.BaseViewer):
 
     def __init__(self, *args, **kwargs):
         super(Viewer, self).__init__(*args, **kwargs)
-        server.start(viewer=self)
+        server.start(self)
 
     def register_volume(self, volume):
         server.register_volume(volume)

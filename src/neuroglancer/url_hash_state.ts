@@ -20,7 +20,7 @@ import {urlSafeParse, urlSafeStringify} from 'neuroglancer/util/json';
 import {Signal} from 'signals';
 import * as SockJS from 'sockjs-client';
 
-let sock = new SockJS('http://127.0.0.1:8000/state');
+let sock = new SockJS('http://127.0.0.1:9999/state');
 sock.onopen = function() {
      // sock.send('{}');
 };
