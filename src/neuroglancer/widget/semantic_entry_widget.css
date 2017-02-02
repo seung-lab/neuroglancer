@@ -1,0 +1,11 @@
+.semantic-entry input {
+  width: 19ch;
+}
+
+.semantic-entry input.invalid-input {
+  color: red;
+}
+
+.semantic-entry li {
+  color: white;
+}

@@ -25,6 +25,7 @@ import {SharedDisjointUint64Sets} from 'neuroglancer/shared_disjoint_sets';
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {UseCount} from 'neuroglancer/util/use_count';
 import {RPC, SharedObjectCounterpart} from 'neuroglancer/worker_rpc';
+import {HashMapUint64} from 'neuroglancer/gpu_hash/hash_table';
 
 export class SegmentationLayerSharedObjectCounterpart extends SharedObjectCounterpart implements
     VisibleSegmentsState {
@@ -32,6 +33,8 @@ export class SegmentationLayerSharedObjectCounterpart extends SharedObjectCounte
   visibleSegments: Uint64Set;
   segmentEquivalences: SharedDisjointUint64Sets;
   shattered: boolean = false;
+  semanticHashMap: HashMapUint64;
+  semanticMode: boolean = false;
 
   /**
    * Indicates whether this layer is actually visible.

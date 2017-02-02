@@ -26,7 +26,8 @@ import {DisjointUint64Sets} from 'neuroglancer/util/disjoint_sets';
 import {ShaderBuilder, ShaderProgram} from 'neuroglancer/webgl/shader';
 import {glsl_unnormalizeUint8} from 'neuroglancer/webgl/shader_lib';
 import {StatusMessage} from 'neuroglancer/status';
-import {Actions} from 'neuroglancer/actions';
+import {SharedDisjointUint64Sets} from 'neuroglancer/shared_disjoint_sets';
+import {Uint64} from 'neuroglancer/util/uint64';
 
 const selectedSegmentForShader = new Float32Array(8);
 
@@ -66,7 +67,9 @@ export class SegmentationRenderLayer extends RenderLayer {
       new EquivalencesHashMap(this.displayState.segmentEquivalences.disjointSets);
   private gpuEquivalencesHashTable = GPUHashTable.get(this.gl, this.equivalencesHashMap.hashMap);
   private hasEquivalences: boolean;
-  private shattered: boolean = false;
+
+  private semanticShaderManager = new HashMapShaderManager('semantic');
+  private gpusemanticHashTable = GPUHashTable.get(this.gl, this.displayState.semanticHashMap);
 
   constructor(
       multiscaleSource: MultiscaleVolumeChunkSource,
@@ -96,6 +99,8 @@ export class SegmentationRenderLayer extends RenderLayer {
 
   defineShader(builder: ShaderBuilder) {
     super.defineShader(builder);
+    this.segmentColorShaderManager.defineShader(builder);
+    this.semanticShaderManager.defineShader(builder);
     this.hashTableManager.defineShader(builder);
     builder.addFragmentCode(`
 uint64_t getUint64DataValue() {
@@ -121,12 +126,29 @@ uint64_t getMappedObjectId() {
 }
 `);
     }
-    this.segmentColorShaderManager.defineShader(builder);
+
+    builder.addFragmentCode(`
+      vec3 getObjectStatusColor() {
+        uint64_t value = getUint64DataValue();
+        uint64_t mappedValue;
+        if (${this.semanticShaderManager.getFunctionName}(value, mappedValue)){
+          vec3 rgb = segmentColorHash(mappedValue);
+          return rgb;
+        }
+        //If segment has no semantic display it as white
+        return vec3(1.0, 1.0, 1.0);
+      }
+      `);
+
+
+
+
     builder.addUniform('highp vec4', 'uSelectedSegment', 2);
     builder.addUniform('highp float', 'uShowAllSegments');
     builder.addUniform('highp float', 'uSelectedAlpha');
     builder.addUniform('highp float', 'uNotSelectedAlpha');
     builder.addUniform('lowp float', 'uShattered');
+    builder.addUniform('lowp float', 'uSemanticMode');
     builder.addFragmentCode(glsl_unnormalizeUint8);
     builder.setFragmentMain(`
   uint64_t value = getMappedObjectId();
@@ -149,8 +171,13 @@ uint64_t getMappedObjectId() {
     value = getUint64DataValue();
   }
 
-  vec3 rgb = segmentColorHash(value);
-  emit(vec4(mix(vec3(1.0,1.0,1.0), rgb, saturation), alpha));
+  if (uSemanticMode == 1.0) {
+    emit(vec4(mix(vec3(1.0,1.0,1.0), getObjectStatusColor(), saturation), alpha));
+  }
+  else {
+    vec3 rgb = segmentColorHash(value);
+    emit(vec4(mix(vec3(1.0,1.0,1.0), rgb, saturation), alpha));
+  }
 `);
   }
 
@@ -174,13 +201,21 @@ uint64_t getMappedObjectId() {
     gl.uniform1f(shader.uniform('uNotSelectedAlpha'), this.displayState.notSelectedAlpha.value);
     gl.uniform4fv(shader.uniform('uSelectedSegment'), selectedSegmentForShader);
     gl.uniform1f(shader.uniform('uShowAllSegments'), visibleSegments.hashTable.size ? 0.0 : 1.0);
-    gl.uniform1f(shader.uniform('uShattered'), this.shattered ? 1.0 : 0.0);
+    gl.uniform1f(shader.uniform('uShattered'), this.displayState.shattered ? 1.0 : 0.0);
+    gl.uniform1f(shader.uniform('uSemanticMode'), this.displayState.semanticMode ? 1.0 : 0.0);
+
     this.hashTableManager.enable(gl, shader, this.gpuHashTable);
 
     if (this.hasEquivalences) {
       this.equivalencesHashMap.update();
       this.equivalencesShaderManager.enable(gl, shader, this.gpuEquivalencesHashTable);
     }
+    this.semanticShaderManager.enable(gl, shader, this.gpusemanticHashTable);
+    // console.log('--gpustart---');
+    // for (let segid of this.gpusemanticHashTable.hashTable.keys()) {
+    //    console.log(segid);
+    // }
+    // console.log('--gpuend---');
 
     this.segmentColorShaderManager.enable(gl, shader, displayState.segmentColorHash);
     return shader;
@@ -194,19 +229,14 @@ uint64_t getMappedObjectId() {
   handleAction(action: string) {
     super.handleAction(action);
 
-    let actions: { [key:string] : Function } = {
-      'toggle-shatter-equivalencies': () => { 
-        this.shattered = !this.shattered;
 
-        let msg = this.shattered 
-          ? 'Shatter ON'
-          : 'Shatter OFF';
+    //FIXME probably redraw should be call everytime we dispatch
+    //segmentation_user_layer.specificationChanged.dispatch();
+    this.redrawNeeded.dispatch();
 
-        StatusMessage.displayText(msg);
-      },
-    };
+    let actions: { [key:string] : Function } = {};
 
-    let fn : Function = actions[action];
+    let fn : Function = actions[action]
 
     if (fn) {
       fn.call(this);

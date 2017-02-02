@@ -27,6 +27,7 @@ import {GL} from 'neuroglancer/webgl/context';
 import {ShaderBuilder, ShaderModule, ShaderProgram} from 'neuroglancer/webgl/shader';
 import {setVec4FromUint32} from 'neuroglancer/webgl/shader_lib';
 import {registerSharedObjectOwner, RPC} from 'neuroglancer/worker_rpc';
+import {Uint64} from 'neuroglancer/util/uint64';
 
 export class MeshShaderManager {
   private tempLightVec = new Float32Array(4);
@@ -102,7 +103,6 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
   private meshShaderManager = new MeshShaderManager();
   private shaders = new Map<ShaderModule, ShaderProgram>();
   private sharedObject: SegmentationLayerSharedObject;
-  private shattered: boolean = false;
 
   constructor(
       public chunkManager: ChunkManager, public source: MeshSource,
@@ -136,8 +136,6 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
   get gl() { return this.chunkManager.chunkQueueManager.gl; }
 
   draw(renderContext: PerspectiveViewRenderContext) {
-    const self = this;
-
     if (!renderContext.emitColor && renderContext.alreadyEmittedPickID) {
       // No need for a separate pick ID pass.
       return;
@@ -159,12 +157,29 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
     const objectToDataMatrix = this.displayState.objectToDataTransform.transform;
 
     forEachSegmentToDraw(displayState, objectChunks, (rootObjectId, objectId, fragments) => {
-      let coloring_id = self.shattered 
+      let color =  vec4.create();
+      let coloring_id = new Uint64();
+
+      if (displayState.semanticMode) {
+        if (!displayState.semanticHashMap.get(objectId, coloring_id)){
+          //Display them in white
+          color[0] = alpha;
+          color[1] = alpha;
+          color[2] = alpha;
+        } else {
+          color = getObjectColor(displayState, coloring_id, alpha)
+        }
+      } else {
+        coloring_id = displayState.shattered 
         ? objectId
         : rootObjectId;
+        color = getObjectColor(displayState, coloring_id, alpha)
+      }
+
+
 
       if (renderContext.emitColor) {
-        meshShaderManager.setColor(gl, shader, getObjectColor(displayState, coloring_id, alpha));
+        meshShaderManager.setColor(gl, shader, color);
       }
       if (renderContext.emitPickID) {
         meshShaderManager.setPickID(gl, shader, pickIDs.registerUint64(this, objectId));
@@ -184,7 +199,6 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
     super.handleAction(action);
 
     let actions: { [key:string] : Function } = {
-      'toggle-shatter-equivalencies': () => this.shattered = !this.shattered,
     };
 
     let fn : Function = actions[action];

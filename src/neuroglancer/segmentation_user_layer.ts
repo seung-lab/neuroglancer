@@ -34,9 +34,11 @@ import {Uint64} from 'neuroglancer/util/uint64';
 import {RangeWidget} from 'neuroglancer/widget/range';
 import {SegmentSetWidget} from 'neuroglancer/widget/segment_set_widget';
 import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
+import {SemanticEntryWidget} from 'neuroglancer/widget/semantic_entry_widget';
 import {openHttpRequest, sendHttpRequest} from 'neuroglancer/util/http_request';
 import {splitObject, mergeNodes, getObjectList, getConnectedSegments, enableGraphServer, GRAPH_SERVER_NOT_ENABLED} from 'neuroglancer/object_graph_service';
 import {StatusMessage} from 'neuroglancer/status';
+import {HashMapUint64} from 'neuroglancer/gpu_hash/hash_table';
 
 require('./segmentation_user_layer.css');
 
@@ -69,6 +71,8 @@ export class SegmentationUserLayer extends UserLayer {
     volumeSourceOptions: {},
     objectToDataTransform: new CoordinateTransform(),
     shattered: false,
+    semanticHashMap: new HashMapUint64(),
+    semanticMode: false
   };
   volumePath: string|undefined;
   meshPath: string|undefined;
@@ -299,6 +303,14 @@ export class SegmentationUserLayer extends UserLayer {
     this.splitPartitions.sources.length = 0;
     this.splitPartitions.sinks.length = 0;
   }
+  triggerRedraw() { //FIXME there should be a better way of doing this
+    if (this.meshLayer) {
+      this.meshLayer.redrawNeeded.dispatch();
+    }
+    for (let rl of this.renderLayers) {
+      rl.redrawNeeded.dispatch();
+    }
+  }
 
   handleAction(action: string) {
     let actions: { [key:string] : Function } = {
@@ -310,7 +322,19 @@ export class SegmentationUserLayer extends UserLayer {
       'split-select-second': this.splitSelectSecond,
       'toggle-shatter-equivalencies': () => { 
         this.displayState.shattered = !this.displayState.shattered;
-        this.specificationChanged.dispatch(); 
+        let msg = this.displayState.shattered 
+          ? 'Shatter ON'
+          : 'Shatter OFF';
+        StatusMessage.displayText(msg);
+      },
+      'toggle-semantic-mode': () => {
+        this.displayState.semanticMode = !this.displayState.semanticMode;
+        let msg = this.displayState.semanticMode 
+          ? 'Semantic mode ON'
+          : 'Semantic mode OFF';
+
+        StatusMessage.displayText(msg);
+
       },
     };
 
@@ -325,6 +349,8 @@ export class SegmentationUserLayer extends UserLayer {
 class SegmentationDropdown extends UserLayerDropdown {
   visibleSegmentWidget = this.registerDisposer(new SegmentSetWidget(this.layer.displayState));
   addSegmentWidget = this.registerDisposer(new Uint64EntryWidget());
+  addSemanticWidget = this.registerDisposer(new SemanticEntryWidget());
+
   selectedAlphaWidget =
       this.registerDisposer(new RangeWidget(this.layer.displayState.selectedAlpha));
   notSelectedAlphaWidget =
@@ -341,6 +367,17 @@ class SegmentationDropdown extends UserLayerDropdown {
     element.appendChild(this.selectedAlphaWidget.element);
     element.appendChild(this.notSelectedAlphaWidget.element);
     element.appendChild(this.objectAlphaWidget.element);
+    element.appendChild(this.registerDisposer(this.addSemanticWidget).element);
+    this.registerSignalBinding(this.addSemanticWidget.semanticApplied.add(
+      (semantic_index: number) => { 
+          for (let segid of this.layer.displayState.visibleSegments) {
+            this.layer.displayState.semanticHashMap.setOrUpdate(segid, new Uint64(semantic_index));
+          }
+          //FIX trigger redraw (hate this thing!)
+          this.layer.triggerRedraw();
+        }
+    ));
+
     this.addSegmentWidget.element.classList.add('add-segment');
     this.addSegmentWidget.element.title = 'Add segment ID';
     element.appendChild(this.registerDisposer(this.addSegmentWidget).element);
