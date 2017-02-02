@@ -76,8 +76,6 @@ export interface DataSourceFactory {
   getSkeletonSource?:
       (chunkManager: ChunkManager, path: string) => Promise<SkeletonSource>| SkeletonSource;
 
-  //TODO(wms) Shouldn't we have a graph server source here?
-
   volumeCompleter?:
       (value: string, chunkManager: ChunkManager) => CancellablePromise<CompletionResult>;
 
@@ -154,7 +152,7 @@ export function volumeCompleter(
           completions => applyCompletionOffset(protocol.length + 3, completions));
     }
   }
-  return Promise.reject<CompletionResult>(null);
+  return Promise.reject<CompletionResult|null>(null);
 }
 
 export function suggestLayerName(url: string) {

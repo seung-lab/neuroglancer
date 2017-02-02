@@ -306,12 +306,12 @@ export function stackAndProjectCompleter(
   const stackMatch = path.match(/^(?:([^\/]+)(?:\/([^\/]+))\/?(?:\/([^\/]*)))?$/);
   if (stackMatch === null) {
     // URL has incorrect format, don't return any results.
-    return Promise.reject<CompletionResult>(null);
+    return Promise.reject<CompletionResult|null>(null);
   }
   if (stackMatch[2] === undefined) {
     // let projectPrefix = stackMatch[2] || '';
     // TODO, complete the project? for now reject
-    return Promise.reject<CompletionResult>(null);
+    return Promise.reject<CompletionResult|null>(null);
   }
   return cancellableThen(getOwnerInfo(chunkManager, hostnames, stackMatch[1]), ownerInfo => {
     let completions =
@@ -327,7 +327,7 @@ export function volumeCompleter(
   let match = url.match(urlPattern);
   if (match === null) {
     // We don't yet have a full hostname.
-    return Promise.reject<CompletionResult>(null);
+    return Promise.reject<CompletionResult|null>(null);
   }
   let hostnames = [match[1]];
   let path = match[2];

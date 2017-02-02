@@ -12,11 +12,12 @@ import numpy as np
 
 class BaseHandler(tornado.web.RequestHandler):
 
-    def initialize(self, G, sets, node2sets, threshold):
+    def initialize(self, G, sets, node2sets, threshold, not_initialized):
         self.G = G
         self.sets = sets
         self.node2sets = node2sets
         self.threshold = threshold
+        self.not_initialized = not_initialized
 
     def add_cors_headers(self):
         self.set_header("Access-Control-Allow-Origin", "*")
@@ -28,6 +29,13 @@ class BaseHandler(tornado.web.RequestHandler):
 
 class NodeHandler(BaseHandler):
     def get(self, u):
+        if self.not_initialized:
+            print("Not initialized.")
+            self.clear()
+            self.set_status(503)
+            self.finish()
+            return
+
         #TODO(tartavull) add optional threshold argument
         u = int(u)
         if self.G.has_node(u):
@@ -235,7 +243,8 @@ def make_app(path):
         'G': G,
         'sets': [],
         'node2sets': WeakValueDictionary(),
-        'threshold': 0.8
+        'threshold': 0.8,
+        'not_initialized': path == '' or path is None,
     }
 
     app = tornado.web.Application([
@@ -258,7 +267,10 @@ def start_server(path=None):
     # thread.daemon = True
     # thread.start()
 
-    return 'http://%s:%s' % sockets[0].getsockname()[:2]
+    # 0: ('::', 53044, 0, 0)
+    # 1: ('0.0.0.0', 53286)
+
+    return 'http://localhost:%s' % sockets[1].getsockname()[1]
 
 if __name__ == '__main__':
    start_server()

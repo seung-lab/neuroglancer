@@ -76,6 +76,7 @@ class BaseViewer(object):
                     suffix += 1
                 specified_names.add(name)
             layers[name] = layer.get_layer_spec(self.get_server_url())
+            
         if self.voxel_size is not None:
             state['navigation'] = collections.OrderedDict()
             state['navigation']['pose'] = collections.OrderedDict()

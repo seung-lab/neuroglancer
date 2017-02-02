@@ -35,7 +35,7 @@ import {RangeWidget} from 'neuroglancer/widget/range';
 import {SegmentSetWidget} from 'neuroglancer/widget/segment_set_widget';
 import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
 import {openHttpRequest, sendHttpRequest} from 'neuroglancer/util/http_request';
-import {splitObject, mergeNodes, getObjectList, getConnectedSegments, setGraphServerURL} from 'neuroglancer/object_graph_service';
+import {splitObject, mergeNodes, getObjectList, getConnectedSegments, enableGraphServer, GRAPH_SERVER_NOT_ENABLED} from 'neuroglancer/object_graph_service';
 import {StatusMessage} from 'neuroglancer/status';
 
 require('./segmentation_user_layer.css');
@@ -47,6 +47,14 @@ const OBJECT_ALPHA_JSON_KEY = 'objectAlpha';
 interface SourceSink {
   sources: Uint64[],
   sinks: Uint64[],
+}
+
+function handleDisabledGraphServer (error: any) {
+    if (error === GRAPH_SERVER_NOT_ENABLED) {
+      return;
+    }
+
+    throw new Error(error);
 }
 
 export class SegmentationUserLayer extends UserLayer {
@@ -133,12 +141,12 @@ export class SegmentationUserLayer extends UserLayer {
         spec, 'equivalences', y => { this.displayState.segmentEquivalences.restoreState(y); });
 
     if (graphPath !== undefined) {
-      setGraphServerURL(graphPath);
-    }
+      enableGraphServer(graphPath);
 
-    getObjectList().then(equivalences => {
-      this.displayState.segmentEquivalences.addSets(equivalences);
-    });
+      getObjectList().then(equivalences => {
+        this.displayState.segmentEquivalences.addSets(equivalences);
+      });
+    }
 
     verifyObjectProperty(spec, 'segments', y => {
       if (y !== undefined) {
@@ -162,6 +170,7 @@ export class SegmentationUserLayer extends UserLayer {
     x['source'] = this.volumePath;
     x['mesh'] = this.meshPath;
     x['skeletons'] = this.skeletonsPath;
+    x['graph'] = this.graphPath;
     x[SELECTED_ALPHA_JSON_KEY] = this.displayState.selectedAlpha.toJSON();
     x[NOT_SELECTED_ALPHA_JSON_KEY] = this.displayState.notSelectedAlpha.toJSON();
     x[OBJECT_ALPHA_JSON_KEY] = this.displayState.objectAlpha.toJSON();
@@ -242,7 +251,7 @@ export class SegmentationUserLayer extends UserLayer {
           }
 
           StatusMessage.displayText(`Deselected ${connected_segments.length} segments.`);
-        });
+        }, handleDisabledGraphServer);
       }
     }
     else {
@@ -255,7 +264,7 @@ export class SegmentationUserLayer extends UserLayer {
           }
 
           StatusMessage.displayText(`Selected ${connected_segments.length} segments.`);
-        });
+        }, handleDisabledGraphServer);
       }
     }
   }
@@ -265,6 +274,8 @@ export class SegmentationUserLayer extends UserLayer {
      if (segmentSelectionState.hasSelectedSegment) {
         let segment : Uint64 = <Uint64>segmentSelectionState.rawSelectedSegment;
         this.splitPartitions.sources.push(segment.clone());
+
+        StatusMessage.displayText(`Selected ${segment} as source. Pick a sink.`);
      }
   }
 
