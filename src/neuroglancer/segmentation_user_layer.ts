@@ -349,7 +349,7 @@ export class SegmentationUserLayer extends UserLayer {
 class SegmentationDropdown extends UserLayerDropdown {
   visibleSegmentWidget = this.registerDisposer(new SegmentSetWidget(this.layer.displayState));
   addSegmentWidget = this.registerDisposer(new Uint64EntryWidget());
-  addSemanticWidget = this.registerDisposer(new SemanticEntryWidget());
+  addSemanticWidget = this.registerDisposer(new SemanticEntryWidget(this.layer.displayState));
 
   selectedAlphaWidget =
       this.registerDisposer(new RangeWidget(this.layer.displayState.selectedAlpha));
@@ -373,8 +373,8 @@ class SegmentationDropdown extends UserLayerDropdown {
           for (let segid of this.layer.displayState.visibleSegments) {
             this.layer.displayState.semanticHashMap.setOrUpdate(segid, new Uint64(semantic_index));
           }
-          //FIX trigger redraw (hate this thing!)
           this.layer.triggerRedraw();
+          StatusMessage.displayText(`Applied semantics to ${this.layer.displayState.visibleSegments.size} segments`);
         }
     ));
 

@@ -3,6 +3,7 @@ import {RefCounted} from 'neuroglancer/util/disposable';
 import {removeFromParent} from 'neuroglancer/util/dom';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {Signal} from 'signals';
+import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
 
 require('neuroglancer/noselect.css');
 require('./semantic_entry_widget.css');
@@ -11,16 +12,18 @@ type ItemElement = HTMLButtonElement;
 
 
 export class SemanticEntryWidget extends RefCounted {
+
+  get segmentColorHash() { return this.displayState.segmentColorHash; }
+
   element = document.createElement('div');
   semanticApplied = new Signal();
-  entered_list = Array();
   lastSemantic: string;
-  form: any;
   input: any;
-  label: any;
   ul: any;
+  private items = new Array<ItemElement>();
 
-  constructor() {
+
+  constructor(public displayState: SegmentationDisplayState) {
     super();
     let {element} = this;
     element.className = 'semantic-entry noselect';
@@ -35,22 +38,22 @@ export class SemanticEntryWidget extends RefCounted {
     <ul></ul>
     <hr>`;
     
-    this.form = element.querySelector('form');
-    this.label = element.querySelector('label');
+    let form = element.querySelector('form');
     this.input = element.querySelector('input');
     this.ul = element.querySelector('ul');
+    
+    this.registerSignalBinding(
+        displayState.segmentColorHash.changed.add(this.handleColorChanged, this));
 
-
-    this.registerEventListener(this.form, 'submit', (event: Event) => {
+    this.registerEventListener(form, 'submit', (event: Event) => {
       event.preventDefault();
       if (this.validateInput()) {
         this.input.classList.remove('valid-input', 'invalid-input');
-        this.entered_list.push(this.input.value);
-        this.updateUL()
+        this.addElement(this.input.value);
         this.input.value = '';
       }
     });
-    this.registerEventListener(this.form, 'input', () => {
+    this.registerEventListener(form, 'input', () => {
       if (this.input.value === '') {
         this.input.classList.remove('valid-input', 'invalid-input');
         return;
@@ -63,29 +66,34 @@ export class SemanticEntryWidget extends RefCounted {
     });
   }
 
-  updateUL() {
-    //clear list 
-    this.ul.innerHTML = '';
+  addElement(name: string) {
+    var li = document.createElement('li');
+    let button = document.createElement('button');
+    li.appendChild(button)
+    button.innerHTML = `${name}`
     let self = this;
-    // Create the list element:
-    for(var i = 0; i < this.entered_list.length; i++) {
-        // Create the list item:
-        var li = document.createElement('li');
-        let button = document.createElement('button');
-        li.appendChild(button)
-        button.innerHTML = `${this.entered_list[i]}`
-        button.addEventListener('click', function(this: ItemElement) {
-          self.semanticApplied.dispatch(self.entered_list.indexOf(this.innerHTML));
-          self.lastSemantic = this.innerHTML;
-        });
+    button.className = `${this.items.length}`;
+    button.addEventListener('click', function(this: ItemElement) {
+      self.semanticApplied.dispatch(parseInt(button.className));
+      self.lastSemantic = this.innerHTML;
+    });
+    this.setItemColor(this.items.length, button);
 
-        // Add it to the list:
-        this.ul.appendChild(li);
-    }
-
-    // Finally, return the constructed list:
+    this.ul.appendChild(li);
+    this.items.push(button);
   }
+
   validateInput() { return true; }
+
+  private setItemColor(idx:number, itemElement: ItemElement) {
+    itemElement.style.backgroundColor = this.segmentColorHash.computeCssColor(new Uint64(idx));
+  }
+
+  private handleColorChanged() {
+    for (var i = this.items.length - 1; i >= 0; i--) {
+      this.setItemColor(i, this.items[i]);
+    }
+  }
 
   disposed() {
     removeFromParent(this.element);
