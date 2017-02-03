@@ -33,6 +33,7 @@ viewer = neuroglancer.Viewer()
 # viewer.on_state_changed = on_state_changed
 
 img =  h5py.File('./snemi3d/image.h5')
+
 # img = np.pad(f['main'][:], 1, 'constant', constant_values=0)
 viewer.add(volume_type='image', data=img['main'], name='image', voxel_size=[6, 6, 40])
 
@@ -40,20 +41,21 @@ viewer.add(volume_type='image', data=img['main'], name='image', voxel_size=[6, 6
 # viewer.add(volume_type='point', name='point')
 
 # if you add this layer by itself neuroglancer doesn't know the dataset size
-# viewer.add(volume_type='synapse', nzame='synapse')
+viewer.add(volume_type='synapse', name='synapse')
 
 
 f = h5py.File('./snemi3d/machine_labels.h5')
-  # 0 pad is useful to make the meshes that are in contact with the borders
-  # of the volume have a planar cap
-  seg = np.pad(f['main'][:], 1, 'constant', constant_values=0)
-  viewer.add(
-    volume_type='segmentation', 
-    data=seg, 
-    name='segmentation', 
-    voxel_size=[6, 6, 40], 
-    graph='./snemi3d/snemi3d_graph.pickle'
-  )
+
+# 0 pad is useful to make the meshes that are in contact with the borders
+# of the volume have a planar cap
+seg = np.pad(f['main'][:], 1, 'constant', constant_values=0)
+viewer.add(
+  volume_type='segmentation', 
+  data=seg, 
+  name='segmentation', 
+  voxel_size=[6, 6, 40], 
+  graph='./snemi3d/snemi3d_graph.pickle'
+)
 
 webbrowser.open(viewer.get_viewer_url())
 print(viewer.get_viewer_url())
