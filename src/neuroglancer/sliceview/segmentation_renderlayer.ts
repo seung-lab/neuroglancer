@@ -128,15 +128,15 @@ uint64_t getMappedObjectId() {
     }
 
     builder.addFragmentCode(`
-      vec3 getObjectStatusColor() {
+      uint64_t getObjectSemantic() {
         uint64_t value = getUint64DataValue();
         uint64_t mappedValue;
-        if (${this.semanticShaderManager.getFunctionName}(value, mappedValue)){
-          vec3 rgb = segmentColorHash(mappedValue);
-          return rgb;
+        if(${this.semanticShaderManager.getFunctionName}(value, mappedValue)){
+          return mappedValue;
         }
-        //If segment has no semantic display it as white
-        return vec3(1.0, 1.0, 1.0);
+        mappedValue.high = vec4(255,255,255,255);
+        mappedValue.low = vec4(255,255,255,255);
+        return mappedValue;
       }
       `);
 
@@ -171,12 +171,29 @@ uint64_t getMappedObjectId() {
     value = getUint64DataValue();
   }
 
-  if (uSemanticMode == 1.0) {
-    emit(vec4(mix(vec3(1.0,1.0,1.0), getObjectStatusColor(), saturation), alpha));
+  uint64_t semantic = getObjectSemantic();
+  bool hasSemantic = true;
+  if (semantic.low == vec4(255,255,255,255) && semantic.high == vec4(255,255,255,255)) {
+    hasSemantic = false;
   }
-  else {
-    vec3 rgb = segmentColorHash(value);
-    emit(vec4(mix(vec3(1.0,1.0,1.0), rgb, saturation), alpha));
+
+  if (uSemanticMode == 1.0) {
+   if(hasSemantic) {
+      //ignore the high values, those are just flags
+      semantic.high = vec4(0,0,0,0);
+      vec3 rgb = segmentColorHash(semantic);
+      emit(vec4(mix(vec3(1.0,1.0,1.0), rgb, saturation), alpha));
+    } else {
+      emit(vec4(mix(vec3(1.0,1.0,1.0), vec3(1.0,1.0,1.0), saturation), alpha));
+    }
+  } else {
+    bool vissible = abs(semantic.high.x - 1.0/255.0) < 0.001;
+    if (hasSemantic && !vissible) {
+      emit(vec4(vec4(0, 0, 0, 0)));
+    } else {
+      vec3 rgb = segmentColorHash(value);
+      emit(vec4(mix(vec3(1.0,1.0,1.0), rgb, saturation), alpha));
+    }
   }
 `);
   }
@@ -211,12 +228,6 @@ uint64_t getMappedObjectId() {
       this.equivalencesShaderManager.enable(gl, shader, this.gpuEquivalencesHashTable);
     }
     this.semanticShaderManager.enable(gl, shader, this.gpusemanticHashTable);
-    // console.log('--gpustart---');
-    // for (let segid of this.gpusemanticHashTable.hashTable.keys()) {
-    //    console.log(segid);
-    // }
-    // console.log('--gpuend---');
-
     this.segmentColorShaderManager.enable(gl, shader, displayState.segmentColorHash);
     return shader;
   }

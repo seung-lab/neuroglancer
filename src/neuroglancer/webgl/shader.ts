@@ -140,13 +140,13 @@ export class ShaderProgram extends RefCounted {
       let log = gl.getProgramInfoLog(shaderProgram) || '';
 
       // DEBUG
-      // {
-      //   let combinedSource = 'VERTEX SHADER\n\n' + vertexSource + '\n\n\nFRAGMENT SHADER\n\n' +
-      //   fragmentSource + '\n';
-      //   let w = window.open("about:blank", "_blank");
-      //   w.document.write('<pre>' + combinedSource.replace('<', '&lt;').replace('>', '&gt;') +
-      //   '</pre>');
-      // }
+      {
+        let combinedSource = 'VERTEX SHADER\n\n' + vertexSource + '\n\n\nFRAGMENT SHADER\n\n' +
+        fragmentSource + '\n';
+        let w = window.open("about:blank", "_blank");
+        w.document.write('<pre>' + combinedSource.replace('<', '&lt;').replace('>', '&gt;') +
+        '</pre>');
+      }
 
       throw new ShaderLinkError(vertexSource, fragmentSource, log);
     }

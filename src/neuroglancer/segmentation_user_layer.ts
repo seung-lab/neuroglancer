@@ -368,14 +368,8 @@ class SegmentationDropdown extends UserLayerDropdown {
     element.appendChild(this.notSelectedAlphaWidget.element);
     element.appendChild(this.objectAlphaWidget.element);
     element.appendChild(this.registerDisposer(this.addSemanticWidget).element);
-    this.registerSignalBinding(this.addSemanticWidget.semanticApplied.add(
-      (semantic_index: number) => { 
-          for (let segid of this.layer.displayState.visibleSegments) {
-            this.layer.displayState.semanticHashMap.setOrUpdate(segid, new Uint64(semantic_index));
-          }
-          this.layer.triggerRedraw();
-          StatusMessage.displayText(`Applied semantics to ${this.layer.displayState.visibleSegments.size} segments`);
-        }
+    this.registerSignalBinding(this.addSemanticWidget.semanticUpdated.add(
+      () => { this.layer.triggerRedraw(); }
     ));
 
     this.addSegmentWidget.element.classList.add('add-segment');

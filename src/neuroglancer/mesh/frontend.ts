@@ -170,6 +170,11 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
           color = getObjectColor(displayState, coloring_id, alpha)
         }
       } else {
+        if (displayState.semanticHashMap.get(objectId, coloring_id)) {
+          if (coloring_id.high == 1) { //Don't draw this segment
+            return;
+          }
+        }
         coloring_id = displayState.shattered 
         ? objectId
         : rootObjectId;
