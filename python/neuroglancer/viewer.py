@@ -56,8 +56,16 @@ class Viewer(base_viewer.BaseViewer):
         pass
 
     @property
+    def server(self):
+        return server.global_server
+
+    def broadcast(self):
+        return self.server.broadcastState()
+
+    @property
     def state(self):
         return server.global_server.state
+
 
 def view(*args, **kwargs):
     """View a single array."""

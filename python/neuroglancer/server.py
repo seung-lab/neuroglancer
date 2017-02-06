@@ -17,6 +17,7 @@ import threading
 import json
 import socket
 import re
+
 try:
     # Python 2 case
     from SocketServer import ThreadingMixIn  # pylint: disable=import-error
@@ -29,7 +30,6 @@ except ImportError:
 from .randomtoken import make_random_token
 from . import static
 from . import volume
-from collections import OrderedDict
 
 from tornado import web, ioloop
 from sockjs.tornado import SockJSConnection, SockJSRouter
@@ -39,47 +39,52 @@ global_server_args = dict(bind_address='127.0.0.1', bind_port=8000)
 global_server = None
 debug = True
 
-
 VOLUME_PATH_REGEX = re.compile(r'^/neuroglancer/([^/]+)/(.*)/?$')
 STATIC_PATH_REGEX = re.compile(r'/static/([^/]+)/((?:[a-zA-Z0-9_\-][a-zA-Z0-9_\-.]*)?)$')
 
-# Having problems accessing the 
+# Used for manipulating all clients at once
+# from the server. E.g. from the command line.
 LAST_STATE = {} 
+CLIENTS = set()
 
 class StateHandler(SockJSConnection):
     clients = set()
     last_state = None
 
-    # def __init__(self, *args, **kwargs):
-    #     super().__init__(self, *args, **kwargs)
-    #     self.clients = set()
-    #     self.last_state = None
+    def __init__(self, *args, **kwargs):
+        super(StateHandler, self).__init__(*args, **kwargs)
+        self.clients = set()
+        self.last_state = None
 
     def on_open(self, info):
+        global CLIENTS
         # When new client comes in, will add it to the clients list
         self.clients.add(self)
-
+        CLIENTS.add(self)
        
     def on_message(self, msg):
-         global LAST_STATE
-         state = json.JSONDecoder(object_pairs_hook=OrderedDict).decode(msg)
+        global LAST_STATE
+
+        state = json.loads(msg)
         if not self.last_state:
             new_state = global_server.viewer.initialize_state(state)
             if new_state:
-                self.broadcast(self.clients, json.dumps(state))
+                self.broadcast(self.clients, json.dumps(new_state))
                 state = new_state
         else:
             new_state = global_server.viewer.on_state_changed(state) 
             if new_state:
-                self.broadcast(self.clients, json.dumps(state))
+                self.broadcast(self.clients, json.dumps(new_state))
                 state = new_state
 
         self.last_state = state
         LAST_STATE = state
 
     def on_close(self):
+        global CLIENTS
         # If client disconnects, remove him from the clients list
         self.clients.remove(self)
+        CLIENTS.remove(self)
         # global_server.viewer.on_close(self.last_state)
 
 class Server(ThreadingMixIn, HTTPServer):
@@ -99,12 +104,9 @@ class Server(ThreadingMixIn, HTTPServer):
             hostname = bind_address
         self.server_url = 'http://%s:%s' % (hostname, self.server_address[1])
 
-        self.__websocketRouter = SockJSRouter(StateHandler, '/state')
-        socketApp = web.Application(self.__websocketRouter.urls)
+        self._websocketRouter = SockJSRouter(StateHandler, '/state')
+        socketApp = web.Application(self._websocketRouter.urls)
         socketApp.listen(9999)
-
-        print(self.__websocketRouter._connection)
-        print(dir(self.__websocketRouter._connection))
 
         self.ioloop = ioloop.IOLoop.instance()
 
@@ -121,9 +123,13 @@ class Server(ThreadingMixIn, HTTPServer):
     @property
     def state(self):
         global LAST_STATE
-        print("stately", self.__websocketRouter._connection.last_state)
-        print("stately2", StateHandler.last_state)
-        return LAST_STATE #self.__websocketRouter._connection.last_state
+        return LAST_STATE
+
+    def broadcastState(self):
+        global LAST_STATE
+        global CLIENTS
+        
+        self._websocketRouter.broadcast(CLIENTS, json.dumps(LAST_STATE))  
 
     def handle_error(self, request, client_address):
         if debug:
