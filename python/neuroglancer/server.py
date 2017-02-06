@@ -43,9 +43,17 @@ debug = True
 VOLUME_PATH_REGEX = re.compile(r'^/neuroglancer/([^/]+)/(.*)/?$')
 STATIC_PATH_REGEX = re.compile(r'/static/([^/]+)/((?:[a-zA-Z0-9_\-][a-zA-Z0-9_\-.]*)?)$')
 
+# Having problems accessing the 
+LAST_STATE = {} 
+
 class StateHandler(SockJSConnection):
     clients = set()
     last_state = None
+
+    # def __init__(self, *args, **kwargs):
+    #     super().__init__(self, *args, **kwargs)
+    #     self.clients = set()
+    #     self.last_state = None
 
     def on_open(self, info):
         # When new client comes in, will add it to the clients list
@@ -53,8 +61,8 @@ class StateHandler(SockJSConnection):
 
        
     def on_message(self, msg):
-        state = json.JSONDecoder(object_pairs_hook=OrderedDict).decode(msg)
-        
+         global LAST_STATE
+         state = json.JSONDecoder(object_pairs_hook=OrderedDict).decode(msg)
         if not self.last_state:
             new_state = global_server.viewer.initialize_state(state)
             if new_state:
@@ -67,6 +75,7 @@ class StateHandler(SockJSConnection):
                 state = new_state
 
         self.last_state = state
+        LAST_STATE = state
 
     def on_close(self):
         # If client disconnects, remove him from the clients list
@@ -90,9 +99,13 @@ class Server(ThreadingMixIn, HTTPServer):
             hostname = bind_address
         self.server_url = 'http://%s:%s' % (hostname, self.server_address[1])
 
-        websocketRouter = SockJSRouter(StateHandler, '/state')
-        socketApp = web.Application(websocketRouter.urls)
+        self.__websocketRouter = SockJSRouter(StateHandler, '/state')
+        socketApp = web.Application(self.__websocketRouter.urls)
         socketApp.listen(9999)
+
+        print(self.__websocketRouter._connection)
+        print(dir(self.__websocketRouter._connection))
+
         self.ioloop = ioloop.IOLoop.instance()
 
     def start(self):
@@ -104,6 +117,13 @@ class Server(ThreadingMixIn, HTTPServer):
     def shutdown():
         self.shutdown()
         self.ioloop.stop()
+
+    @property
+    def state(self):
+        global LAST_STATE
+        print("stately", self.__websocketRouter._connection.last_state)
+        print("stately2", StateHandler.last_state)
+        return LAST_STATE #self.__websocketRouter._connection.last_state
 
     def handle_error(self, request, client_address):
         if debug:

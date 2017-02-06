@@ -55,6 +55,9 @@ class Viewer(base_viewer.BaseViewer):
         # print ('saving ', state['layers']['synapse']['points'] )
         pass
 
+    @property
+    def state(self):
+        return server.global_server.state
 
 def view(*args, **kwargs):
     """View a single array."""
