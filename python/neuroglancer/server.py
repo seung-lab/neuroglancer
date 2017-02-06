@@ -29,6 +29,7 @@ except ImportError:
 from .randomtoken import make_random_token
 from . import static
 from . import volume
+from collections import OrderedDict
 
 from tornado import web, ioloop
 from sockjs.tornado import SockJSConnection, SockJSRouter
@@ -52,16 +53,17 @@ class StateHandler(SockJSConnection):
 
        
     def on_message(self, msg):
-        state = json.loads(msg)
+        state = json.JSONDecoder(object_pairs_hook=OrderedDict).decode(msg)
+        
         if not self.last_state:
             new_state = global_server.viewer.initialize_state(state)
             if new_state:
-                self.broadcast(self.clients, json.dumps(new_state))
+                self.broadcast(self.clients, json.dumps(state))
                 state = new_state
         else:
             new_state = global_server.viewer.on_state_changed(state) 
             if new_state:
-                self.broadcast(self.clients, json.dumps(new_state))
+                self.broadcast(self.clients, json.dumps(state))
                 state = new_state
 
         self.last_state = state
