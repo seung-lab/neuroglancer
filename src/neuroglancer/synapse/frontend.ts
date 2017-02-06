@@ -148,7 +148,7 @@ else {
     builder.addUniform('highp mat4', 'uProjection');
     builder.addUniform('highp vec4', 'uPickID');
     builder.setVertexMain(`gl_Position = uProjection * vec4(aVertexPosition, 1.0);`);
-    builder.setFragmentMain(`gl_FragColor = vec4(0.0,0.0,0.0,1.0);`);
+    builder.setFragmentMain(`v4f_fragColor = vec4(0.0,0.0,0.0,1.0);`);
   }
 
   getShader(emitter: ShaderModule) {
@@ -185,7 +185,7 @@ else {
     const aVertexPosition = shader.attribute('aVertexPosition');
     const aCornerOffset = shader.attribute('aCornerOffset');
     base.buffer.bindToVertexAttrib(aVertexPosition, /*components=*/3);
-    gl.ANGLE_instanced_arrays.vertexAttribDivisorANGLE(aVertexPosition, 1);
+    gl.vertexAttribDivisor(aVertexPosition, 1);
     this.squareCornersBuffer.bindToVertexAttrib(aCornerOffset, /*components=*/2);
     this.countingBuffer.ensure(numPoints).bind(shader, 1);
 
@@ -214,10 +214,10 @@ else {
       gl.uniform4fv(shader.uniform('uSelectedIndex'), setVec4FromUint32(tempPickID, selectedIndex));
     }
 
-    gl.ANGLE_instanced_arrays.drawArraysInstancedANGLE(gl.TRIANGLE_FAN, 0, 4, numPoints);
+    gl.drawArraysInstanced(gl.TRIANGLE_FAN, 0, 4, numPoints);
     
     base.buffer.bindToVertexAttrib(aVertexPosition, /*components=*/3);
-    gl.ANGLE_instanced_arrays.vertexAttribDivisorANGLE(aVertexPosition, 0); //reset to default
+    gl.vertexAttribDivisor(aVertexPosition, 0); //reset to default
     disableCountingBuffer(gl, shader, /*instanced=*/true);
     gl.disableVertexAttribArray(aVertexPosition);
 
