@@ -9,7 +9,9 @@ import zlib
 from tqdm import tqdm
 import subprocess
 import shutil
+import random
 
+staging_root_dir_name = 'staging_' + str(random.randint(0, 10000))
 
 client = storage.Client(project='neuromancer-seung-import')
 bucket = client.get_bucket('neuroglancer-dev')
@@ -19,7 +21,7 @@ DATASET_NAME = 'snemi3d'
 def generateStagingMaterials(img, info, layer_name):
   for scale in info["scales"]:
 
-    staging_dir = './staging/' + layer_name + '/' + scale['key']
+    staging_dir = './' + staging_root_dir_name + '/' + layer_name + '/' + scale['key']
     os.makedirs(staging_dir)
 
     for chunk_size in scale["chunk_sizes"]:
@@ -87,7 +89,7 @@ def upload_hdf5(hdf5_filename, info, layer):
         staging_dir, layer, key
       )
       print(gsutil_upload_command)
-      subprocess.call(gsutil_upload_command, shell=True)  
+      subprocess.call(gsutil_upload_command, shell=True)
 
 chunk_size = 64
 isotropic_chunk_size = [ chunk_size, chunk_size, chunk_size ]
@@ -121,8 +123,6 @@ segmentation_info = {
   }], 
   "type": "segmentation",
 }
-
-# shutil.rmtree('./staging')
 
 # upload_hdf5('./snemi3d/image.h5', image_info, 'image')
 upload_hdf5('./snemi3d/machine_labels.h5', segmentation_info, 'segmentation')
