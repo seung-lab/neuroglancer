@@ -11,7 +11,7 @@ import subprocess
 import shutil
 import random
 
-staging_root_dir_name = 'staging_' + str(random.randint(0, 10000))
+STAGING_DIR = 'staging'# + str(random.randint(0, 10000))
 
 client = storage.Client(project='neuromancer-seung-import')
 bucket = client.get_bucket('neuroglancer-dev')
@@ -21,7 +21,7 @@ DATASET_NAME = 'snemi3d'
 def generateStagingMaterials(img, info, layer_name):
   for scale in info["scales"]:
 
-    staging_dir = './' + staging_root_dir_name + '/' + layer_name + '/' + scale['key']
+    staging_dir = './' + STAGING_DIR + '/' + layer_name + '/' + scale['key']
     os.makedirs(staging_dir)
 
     for chunk_size in scale["chunk_sizes"]:
@@ -93,7 +93,7 @@ def upload_hdf5(hdf5_filename, info, layer):
 
 chunk_size = 64
 isotropic_chunk_size = [ chunk_size, chunk_size, chunk_size ]
-volume_size = [ 1024, 1024, 128 ]
+volume_size = [ 1024, 1024, 100 ]
 resolution = [ 6, 6, 30 ]
 
 image_info = {
@@ -113,6 +113,7 @@ image_info = {
 segmentation_info = {
   "data_type": "uint32",
   "num_channels": 1,
+  "mesh": "mesh",
   "scales": [{
     "chunk_sizes": [ isotropic_chunk_size ],
     "encoding": "raw", 
@@ -124,7 +125,7 @@ segmentation_info = {
   "type": "segmentation",
 }
 
-# upload_hdf5('./snemi3d/image.h5', image_info, 'image')
+upload_hdf5('./snemi3d/image.h5', image_info, 'image')
 upload_hdf5('./snemi3d/machine_labels.h5', segmentation_info, 'segmentation')
 # now need to upload meshes
 
