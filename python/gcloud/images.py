@@ -12,7 +12,7 @@ import subprocess
 import shutil
 import random
 
-STAGING_DIR = os.environ['HOME'] + '/neuroglancer/python/staging/'
+STAGING_DIR = os.environ['HOME'] + '/neuroglancer/python/gcloud/staging/'
 
 def generateInfo(layer_type, data_type, resolution, volume_size, chunk_size=64, num_channels=1):
   info = {
@@ -136,7 +136,7 @@ def upload_to_gcloud(directory, layer_name, key, compress, dataset, bucket_name,
   subprocess.check_call(gsutil_upload_command, shell=True)
   shutil.rmtree(directory)
 
-def upload_hdf5(filename, dataset, bucket_name, resolution, layer):
+def process_hdf5(filename, dataset, bucket_name, resolution, layer):
   content_types = {
     'image': 'image/jpeg',
     'segmentation': 'application/octet-stream',
@@ -205,7 +205,7 @@ if __name__ == '__main__':
   resolution = map(int, args.resolution.split(','))
 
   if args.channel_path is not None:
-    upload_hdf5(
+    process_hdf5(
       filename=args.channel_path,
       dataset=args.dataset_name,
       bucket_name=args.bucket_name,
@@ -214,7 +214,7 @@ if __name__ == '__main__':
     )
 
   if args.segmentation_path is not None:
-    upload_hdf5(
+    process_hdf5(
       filename=args.segmentation_path,
       dataset=args.dataset_name,
       bucket_name=args.bucket_name,
