@@ -91,13 +91,17 @@ bool cMesher::write_obj(const unsigned int id, const std::string &filename) {
   return true;
 }
 
-meshobj cMesher::get_mesh(const unsigned int id, const bool generate_normals) {
+meshobj cMesher::get_mesh(const unsigned int id, const bool generate_normals, const int simplification_factor, const int max_simplification_error) {
     meshobj obj;
 
     zi::mesh::int_mesh im;
     im.add(mc.get_triangles(id));
     im.fill_simplifier<double>(s);
     s.prepare(generate_normals);
+
+    if (simplification_factor > 0) {
+      s.optimize(s.face_count() / simplification_factor, max_simplification_error); // this is the most cpu intensive line
+    }
 
     std::vector<zi::vl::vec3d> points;
     std::vector<zi::vl::vec3d> normals;

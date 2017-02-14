@@ -83,7 +83,7 @@ def generate_objs(mesher, resolution):
     mesher.write_obj(obj_id, OBJ_DIR + str(obj_id) + '.obj')
 
 def create_vbo(mesher, obj_id):
-  mesh = mesher.get_mesh(obj_id)
+  mesh = mesher.get_mesh(obj_id, simplification_factor=100)
 
   numpoints = len(mesh['points']) / 3
   numindicies = len(mesh['faces'])
@@ -254,6 +254,8 @@ if __name__ == '__main__':
   )
 
   upload_manifests(args.dataset_name, args.bucket_name)
+
+
 
 
 
