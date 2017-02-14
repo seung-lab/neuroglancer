@@ -12,7 +12,7 @@ tornado==4.4.2
 sockjs-tornado>=1.0.3
 wsgiref==0.1.2
 Pillow>=3.2.0
-
+tqdm>=3.7.1
 gapic-google-cloud-datastore-v1==0.14.1
 gapic-google-cloud-logging-v2==0.90.1
 gapic-google-cloud-pubsub-v1==0.14.1
