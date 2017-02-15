@@ -1,3 +1,5 @@
+#!/usr/bin/python
+
 from __future__ import print_function
 import argparse
 import h5py
@@ -33,7 +35,7 @@ OBJ_DIR = os.path.join(STAGING_DIR, 'obj')
 MANIFESTS_DIR = os.path.join(STAGING_DIR, 'manifests')
 JSON_DIR = os.path.join(STAGING_DIR, 'json')
 
-FILES_PER_SUBDIR = 1500
+FILES_PER_SUBDIR = 300
 
 EPSILON = sys.float_info.epsilon
 
@@ -207,7 +209,6 @@ def upload_manifests(dataset, bucket):
   generate_manifest_json()
 
   dirs = os.listdir(JSON_DIR)
-  print(dirs)
   for dir_index in dirs:
     vprint("Uploading JSON files to cloud storage ({}/{})...".format(dir_index, len(dirs)))
     subprocess.check_call('gsutil -m -h "Content-Type:application/json" cp -a public-read {input_dir} gs://{bucket}/{dataset}/segmentation/mesh/'.format(
