@@ -190,7 +190,7 @@ if __name__ == '__main__':
                   
   parser.add_argument('--cloudpath', 
     dest='cloudpath', action='store', metavar='CLOUD_PATH',
-    help='/[DATASET]/[BUCKET]/[LAYER] Path to gcloud bucket layer. e.g. /neuroglancer/snemi3d/images ; e.g. /neuroglancer/golden_cube_3x3/segmentation', 
+    help='/[BUCKET]/[DATASET]/[LAYER] Path to gcloud bucket layer. e.g. /neuroglancer/snemi3d/images ; e.g. /neuroglancer/golden_cube_3x3/segmentation', 
     required=True)
 
   parser.add_argument('--resolution', dest='resolution', action='store',
@@ -218,7 +218,7 @@ if __name__ == '__main__':
     resolution=resolution, 
     should_mesh=args.should_mesh,
   )
-  
+
   upload_info(info, args.cloudpath)
 
   filenames = slice_hdf5(filename, layer)
