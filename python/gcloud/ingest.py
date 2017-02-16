@@ -1,9 +1,6 @@
 #!/usr/bin/python
 
-"""Neuroglancer Cloud Ingest 
-
-
-"""
+"""Neuroglancer Cloud Ingest"""
 
 import argparse
 import json
@@ -21,12 +18,16 @@ import shutil
 import random
 import re
 
+from CloudTask import CloudTask, TaskQueue
+
 def mkdir(path):
     if not os.path.exists(path):
         os.makedirs(path)
 
     return path
 
+GCLOUD_PROJECT = 'neuromancer-seung-import'
+GCLOUD_QUEUE_NAME = 'test-pull-queue'
 STAGING_DIR = mkdir('./staging/ingest/')
 
 def generateInfo(filename, layer_type, resolution, should_mesh=False, chunk_size=64, num_channels=1):
@@ -96,14 +97,15 @@ def slice_hdf5(filepath, layer):
     xyz = (x,y,z)
     x_end, y_end, z_end = ( min(xyz[i] + chunk_sizes[i], volume_size[i]) for i in xrange(3) )
 
-    chunkimg = sourceimage[ z : z_end ][ y : y_end ][ x : x_end ]
+    chunkimg = sourceimage[ z : z_end, y : y_end, x : x_end ]
+    npz = chunks.encode_npz(chunkimg)
 
-    chunk_file_name = "{}-{}_{}-{}_{}-{}.h5".format(x, x_end, y, y_end, z, z_end)
+    chunk_file_name = "{}-{}_{}-{}_{}-{}.npz".format(x, x_end, y, y_end, z, z_end)
 
     chunk_file_path = os.path.join(savedir, chunk_file_name)
 
-    with h5py.File(chunk_file_path, 'w') as chunkfile:
-      chunkfile['main'] = chunkimg
+    with open(chunk_file_path, 'w') as chunkfile:
+      chunkfile.write(npz)
 
     sliced_filenames.append(chunk_file_path)
 
@@ -121,7 +123,7 @@ def upload_info(info, cloudpath):
   parts.append('info')
   url = "/".join(parts[1:]) # dataset/layer/info
 
-  client = storage.Client(project='neuromancer-seung-import')
+  client = storage.Client(project=GCLOUD_PROJECT)
   bucket = client.get_bucket(bucket_name)
 
   print("Uploading Info")
@@ -138,11 +140,15 @@ def format_cloudpath(cloudpath):
   cloudpath = re.sub(r'\/+$', '', cloudpath)
   return cloudpath
 
-def upload_hdf5_slices(filenames, cloudpath):
+def upload_slices(filenames, cloudpath):
   
   cloudpath = format_cloudpath(cloudpath)
 
-  gsutil_upload_cmd = "gsutil -m -h 'Content-Type:application/x-hdf' cp -I -Z -a public-read gs://{cloudpath}/ingest/".format(
+  # gsutil chokes when you ask it to upload more than about 1500 files at once
+  # so we're using streaming mode (-I) to enable it to handle arbitrary numbers of files
+  # -m = multithreaded upload, -h = headers
+
+  gsutil_upload_cmd = "gsutil -m -h 'Content-Type:application/octet-stream' cp -I -a public-read gs://{cloudpath}/build/".format(
     cloudpath=cloudpath
   )
 
@@ -152,22 +158,22 @@ def upload_hdf5_slices(filenames, cloudpath):
     shell=True
   )
 
-  # # process files stride files at a time
-  # stride = 2
-  # size = len(filenames)
-  # slice_end = lambda i: min(size, (i+stride))
-  # filename_generator = ( filenames[ j:slice_end(j) ] for j in xrange(0, size, stride) )
-
-  try:
-    for filename in filenames:
-      gcs_pipe.write(filename)
-  finally:
-    gcs_pipe.flush()
-    gcs_pipe.terminate()
+  # shoves filenames into pipe stdin, waits for process to execute, and terminates
+  # returns stdout
+  gcs_pipe.communicate(input="\n".join(filenames))
 
 
-def populate_cloud_task_queue():
-  pass
+def populate_cloud_tasks(filenames, cloudpath, queuename):
+  cloudpath = format_cloudpath(cloudpath)
+
+  taskqueue = TaskQueue(GCLOUD_PROJECT, queuename)
+
+  for fname in filenames:
+    task = CloudTask()
+    task.chunk_path = os.path.join(cloudpath, '/build/', fname)
+    task.chunk_encoding = 'npz'
+    task.info_path = os.path.join(cloudpath, '/info')
+    taskqueue.insert(t)
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='Ingest hdf5 dataset into GCloud and initiate process into neuroglancer format.')
@@ -212,13 +218,12 @@ if __name__ == '__main__':
     resolution=resolution, 
     should_mesh=args.should_mesh,
   )
+  
   upload_info(info, args.cloudpath)
 
-  upload_hdf5_slices(slice_hdf5(filename, layer), args.cloudpath)
-
- 
-
-  #ingest --segmentation ../machine_labels.h5 --mesh --cloudpath /neuroglancer/snemi3d/corrected_images/ --resolution 6,6,30
+  filenames = slice_hdf5(filename, layer)
+  upload_slices(filenames, args.cloudpath)
+  populate_cloud_tasks(filenames, args.cloudpath, GCLOUD_QUEUE_NAME)
   
 
 

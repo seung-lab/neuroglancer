@@ -9,3 +9,4 @@ snemi3d/*.h5
 /ext/src/on_demand_object_mesh_generator.cc
 
 staging
+SeungImport-*.json
