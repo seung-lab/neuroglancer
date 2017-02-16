@@ -14,14 +14,10 @@ import subprocess
 import shutil
 import random
 
-STAGING_DIR = os.environ['HOME'] + '/neuroglancer/python/gcloud/staging/'
+from lib import mkdir, GCLOUD_PROJECT, COMMON_STAGING_DIR
+
+STAGING_DIR = os.path.join(COMMON_STAGING_DIR, 'images')
 FILES_PER_SUBDIR = 300
-
-def mkdir(path):
-    if not os.path.exists(path):
-        os.makedirs(path)
-
-    return path
 
 def generateInfo(layer_type, data_type, resolution, volume_size, chunk_size=64, num_channels=1):
   info = {
@@ -86,7 +82,7 @@ def generateDownsamples(img, resolution, scale, chunk_size):
     yield subimg, filename
 
 def generateStagingMaterials(img, resolution, info, dataset, layer_name):
-  for scale in info["scales"][::-1]:
+  for scale in info["scales"][::-1]: # process highest mip level first
 
     staging_dir = os.path.join(STAGING_DIR, layer_name, scale['key'])
     
@@ -96,20 +92,7 @@ def generateStagingMaterials(img, resolution, info, dataset, layer_name):
     mkdir(staging_dir)
 
     for chunk_size in scale["chunk_sizes"]:
-      dirname = '{}/{}/{}/'.format(dataset, layer_name, scale["key"])
-
-      count = 0
-      current_dir_index = 0
-
-      subdir = mkdir(os.path.join(staging_dir, current_dir_index))
-
       for img_chunk, filename in tqdm(generateDownsamples(img, resolution, scale, chunk_size)):
-        if count % FILES_PER_SUBDIR == 0:
-          if count > 0:
-            yield staging_dir, scale['key']
-            subdir = mkdir(os.path.join(staging_dir, current_dir_index))
-            current_dir_index += 1
-
         content_type = 'application/octet-stream'
         content_encoding = None
 
@@ -124,45 +107,10 @@ def generateStagingMaterials(img, resolution, info, dataset, layer_name):
         else:
           raise NotImplemented
 
-        with open(os.path.join(subdir, filename), 'wb+') as f:
+        with open(os.path.join(staging_dir, filename), 'wb+') as f:
           f.write(encoded)
 
-        count += 1
-
     yield staging_dir, scale['key']
-
-def upload_to_gcloud(directory, layer_name, key, compress, dataset, bucket_name, cache_control=None, content_type=None):
-  def mkheader(header, content):
-    if content is not None:
-      return "-h '{}:{}'".format(header, content)
-    return None
-
-  headers = [
-    mkheader('Content-Type', content_type),
-    mkheader('Cache-Control', cache_control)
-  ]
-
-  headers = [ x for x in headers if x is not None ]
-
-  print("Uploading " + directory)
-
-  dirs = os.listdir(directory)
-  for dir_index in dirs:
-    subdir = os.path.join(directory, dir_index)
-    gsutil_upload_command = "gsutil {headers} -m cp {compress} -a public-read {local_dir} gs://{bucket}/{dataset}/{layer}/{key}/".format(
-      headers=" ".join(headers),
-      compress=('-Z' if compress else ''),
-      local_dir=os.path.join(subdir, '*'),
-      bucket=bucket_name,
-      dataset=dataset,
-      layer=layer_name,
-      key=key
-    )
-    print(gsutil_upload_command)
-    subprocess.check_call(gsutil_upload_command, shell=True)
-    shutil.rmtree(subdir)
-
-  shutil.rmtree(directory)
 
 def process_hdf5(filename, dataset, bucket_name, resolution, layer):
   content_types = {
@@ -184,7 +132,7 @@ def process_hdf5(filename, dataset, bucket_name, resolution, layer):
       volume_size=volume_size
     )
 
-    client = storage.Client(project='neuromancer-seung-import')
+    client = storage.Client(project=GCLOUD_PROJECT)
     bucket = client.get_bucket(bucket_name)
 
     print("Uploading Info")
@@ -194,13 +142,15 @@ def process_hdf5(filename, dataset, bucket_name, resolution, layer):
 
     print("Generating staging files...")
     for staging_dir, key in generateStagingMaterials(img, resolution, info, dataset, layer):
-      upload_to_gcloud(
-        directory=staging_dir,
-        dataset=dataset,
-        bucket_name=bucket_name,
-        layer_name=layer,
-        key=key,
-        content_type=content_types[layer],
+
+      cloudpath = '{}/{}/{}/{}/'.format(bucket_name, dataset, layer, key)
+
+      path = os.path.join(staging_dir, key)
+
+      lib.upload_to_gcloud(
+        filenames=os.listdir(path),
+        cloudpath=cloudpath,
+        headers={ 'Content-Type': content_types[layer] },
         compress=(layer == 'segmentation'),
       )
 

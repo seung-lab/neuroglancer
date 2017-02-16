@@ -15,18 +15,11 @@ from google.cloud import storage
 from tqdm import tqdm
 import subprocess
 import shutil
-import random
 import re
 
 from CloudTask import CloudTask, TaskQueue
+from lib import mkdir, format_cloudpath, GCLOUD_PROJECT
 
-def mkdir(path):
-    if not os.path.exists(path):
-        os.makedirs(path)
-
-    return path
-
-GCLOUD_PROJECT = 'neuromancer-seung-import'
 GCLOUD_QUEUE_NAME = 'test-pull-queue'
 STAGING_DIR = mkdir('./staging/ingest/')
 
@@ -130,15 +123,6 @@ def upload_info(info, cloudpath):
   blob = storage.blob.Blob(url, bucket)
   blob.upload_from_string(json.dumps(info))
   blob.make_public()
-
-def format_cloudpath(cloudpath):
-  """convert gc://bucket/dataset/layer or /bucket/dataset/layer
-                bucket/dataset/layer/
-     to: bucket/dataset/layer """
-
-  cloudpath = re.sub(r'^(gc:)?\/+', '', cloudpath)
-  cloudpath = re.sub(r'\/+$', '', cloudpath)
-  return cloudpath
 
 def upload_slices(filenames, cloudpath):
   

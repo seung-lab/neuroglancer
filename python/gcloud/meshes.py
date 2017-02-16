@@ -17,19 +17,15 @@ from collections import defaultdict
 from time import time
 import tempfile
 
+from lib import mkdir, COMMON_STAGING_DIR
+
 VERBOSE = True
 
 def vprint(*args, **kwargs):
   if VERBOSE:
     print(*args, **kwargs)
 
-def mkdir(path):
-    if not os.path.exists(path):
-        os.makedirs(path)
-
-    return path
-
-STAGING_DIR = mkdir(os.environ['HOME'] + '/neuroglancer/python/gcloud/staging/meshes/')
+STAGING_DIR = mkdir(os.path.join(COMMON_STAGING_DIR, '/meshes/'))
 MESH_DIR = tempfile.mkdtemp(dir=STAGING_DIR)
 OBJ_DIR = os.path.join(STAGING_DIR, 'obj')
 MANIFESTS_DIR = os.path.join(STAGING_DIR, 'manifests')
