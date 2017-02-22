@@ -35,6 +35,9 @@ def encode_npz(subvol):
     cdz = zlib.compress(fileobj.getvalue())
     return cdz
 
+def decode_npz(fileobj):
+    npy = np.load(file, 'r')
+    return zlib.decompress(npy)
 
 def encode_raw(subvol):
     return subvol.tostring('C')

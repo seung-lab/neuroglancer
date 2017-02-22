@@ -18,7 +18,7 @@ import shutil
 import re
 
 from CloudTask import CloudTask, TaskQueue
-from lib import mkdir, format_cloudpath, GCLOUD_PROJECT
+from lib import mkdir, xyzrange, format_cloudpath, GCLOUD_PROJECT
 
 GCLOUD_QUEUE_NAME = 'test-pull-queue'
 STAGING_DIR = mkdir('./staging/ingest/')
@@ -66,7 +66,7 @@ def generateInfo(filename, layer_type, resolution, should_mesh=False, chunk_size
   return info
 
 def slice_hdf5(filepath, layer):
-  chunk_sizes = (256, 256, 64)
+  chunk_sizes = (1024, 1024, 128)
 
   sourcefile = h5py.File(filepath, 'r')
   
@@ -74,19 +74,14 @@ def slice_hdf5(filepath, layer):
   volume_size = sourceimage.shape[::-1] 
   data_type = str(sourceimage.dtype)
 
-  # Step through coordinate space from 0 to volume_size
-  # using steps of chunk_sizes (e.g. 1024 in x,y and 128 in z)
-
-  rangeargs = ( (0, vs, cs) for vs, cs in zip(volume_size, chunk_sizes) )
-  xyzranges = [ xrange(beg, end, step) for beg, end, step in rangeargs ]
-
-  every_xyz = product(*xyzranges)
-
   savedir = mkdir(os.path.join(STAGING_DIR, layer))
 
   sliced_filenames = []
 
-  for x,y,z in tqdm(every_xyz):
+  # Step through coordinate space from 0 to volume_size
+  # using steps of chunk_sizes (e.g. 1024 in x,y and 128 in z)
+
+  for x,y,z in tqdm(xyzrange( (0,0,0), volume_size, chunk_sizes )):
     xyz = (x,y,z)
     x_end, y_end, z_end = ( min(xyz[i] + chunk_sizes[i], volume_size[i]) for i in xrange(3) )
 
