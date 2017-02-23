@@ -34,8 +34,14 @@ def xyzrange(start_vec, end_vec=None, stride_vec=(1,1,1)):
 
   rangeargs = ( (start, end, stride) for start, end, stride in zip(start_vec, end_vec, stride_vec) )
   xyzranges = ( xrange(*arg) for arg in rangeargs )
-  return product(*xyzranges)
+  
+  def vectorize():
+    pt = Vec3(0,0,0)
+    for x,y,z in product(*xyzranges):
+      pt.x, pt.y, pt.z = x, y, z
+      yield pt
 
+  return vectorize()
 
 def format_cloudpath(cloudpath):
   """convert gs://bucket/dataset/layer or /bucket/dataset/layer
@@ -96,8 +102,12 @@ def min2(a, b):
     return map2(min, a, b)
 
 class Vec3(np.ndarray):
-    def __new__(cls, x,y,z):
-        return super(Vec3, cls).__new__(cls, shape=(3,), buffer=np.array([x,y,z]), dtype=int)
+    def __new__(cls, x, y, z):
+      return super(Vec3, cls).__new__(cls, shape=(3,), buffer=np.array([x,y,z]), dtype=int)
+
+    @classmethod
+    def triple(x):
+      return Vec3(x,x,x)
 
     @property
     def x(self):
@@ -110,6 +120,9 @@ class Vec3(np.ndarray):
     @property
     def z(self):
         return self[2]
+
+    def clone(self):
+      return Vec3(self[0], self[1], self[2])
 
     def null(self):
         return self.length() <= 10 * np.finfo(np.float32).eps
@@ -126,6 +139,9 @@ class Vec3(np.ndarray):
     def nonzeroDims(self):
         isdim = lambda x: 1 if x > 10 * np.finfo(np.float32).eps else 0
         return reduce(sum, map(isdim, self))
+
+    def __hash__(self):
+        return repr(self)
 
     def __repr__(self):
         return "Vec3({},{},{})".format(self.x, self.y, self.z)
@@ -147,56 +163,61 @@ class Bbox(object):
 
     @classmethod
     def from_vec(self, vec):
-        return Bbox( (0,0,0), vec )
+      return Bbox( (0,0,0), vec )
 
     def size3(self):
-        return Vec3(*(self.maxpt - self.minpt))
+      return Vec3(*(self.maxpt - self.minpt))
 
     def volume(self):
-        return self.size3().rectVolume()
+      return self.size3().rectVolume()
 
     def center(self):
-        return (self.minpt + self.maxpt) / 2.0
+      return (self.minpt + self.maxpt) / 2.0
 
     def contains(self, point):
-        return (
-                point[0] >= self.minpt[0] 
-            and point[1] >= self.minpt[1]
-            and point[2] >= self.minpt[2] 
-            and point[0] <= self.maxpt[0] 
-            and point[1] <= self.maxpt[1]
-            and point[2] <= self.maxpt[2]
-        )
+      return (
+            point[0] >= self.minpt[0] 
+        and point[1] >= self.minpt[1]
+        and point[2] >= self.minpt[2] 
+        and point[0] <= self.maxpt[0] 
+        and point[1] <= self.maxpt[1]
+        and point[2] <= self.maxpt[2]
+      )
 
     def containsBbox(self, bbox):
-        return self.contains(bbox.minpt) and self.contains(bbox.maxpt)
+      return self.contains(bbox.minpt) and self.contains(bbox.maxpt)
 
     def clone(self):
-        return Bbox(self.minpt, self.maxpt)
+      return Bbox(self.minpt, self.maxpt)
 
-    def __sub__(self, scalar):
-        tmp = self.clone()
-        tmp.minpt -= scalar
-        tmp.maxpt -= scalar
-        return tmp
+    # note that operand can be a vector 
+    # or a scalar thanks to numpy
+    def __sub__(self, operand): 
+      tmp = self.clone()
+      tmp.minpt -= operand
+      tmp.maxpt -= operand
+      return tmp
 
-    def __add__(self, scalar):
-        tmp = self.clone()
-        tmp.minpt += scalar
-        tmp.maxpt += scalar
-        return tmp
+    def __add__(self, operand):
+      tmp = self.clone()
+      tmp.minpt += operand
+      tmp.maxpt += operand
+      return tmp
 
-    def __mul__(self, scalar):
-        tmp = self.clone()
-        tmp.minpt *= scalar
-        tmp.maxpt *= scalar
-        return tmp
+    def __mul__(self, operand):
+      tmp = self.clone()
+      tmp.minpt *= operand
+      tmp.maxpt *= operand
+      return tmp
 
-    def __div__(self, scalar):
-        tmp = self.clone()
-        tmp.minpt /= scalar
-        tmp.maxpt /= scalar
-        return tmp
+    def __div__(self, operand):
+      tmp = self.clone()
+      tmp.minpt /= operand
+      tmp.maxpt /= operand
+      return tmp
+
+    def __eq__(self, other):
+      return np.array_equal(self.minpt, other.minpt) and np.array_equal(self.maxpt, other.maxpt)
 
     def __repr__(self):
-        return "Bbox({},{})".format(self.minpt, self.maxpt)
+      return "Bbox({},{})".format(self.minpt, self.maxpt)
