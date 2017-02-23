@@ -119,7 +119,17 @@ class Volume(object):
     def shape():
         return self.global_bbox.size3()
 
-    def readImage(self, filename, filetype):
+    def readImageAt(self, x, y, z):
+        try:
+            filename = self.chunk_filenames[x][y][z]
+            if filename == '':
+                return self.__BLACK_BLOCK
+
+            return self.readImageFile(filename, self.filetype)
+        except IndexError:
+            return self.__BLACK_BLOCK
+
+    def readImageFile(self, filename, filetype):
         if filetype is None:
             return numpy.empty(self.file_chunk_size)
         elif filetype == FileTypes.HDF5:
@@ -131,7 +141,7 @@ class Volume(object):
         else:
             raise NotImplementedError("{} is not a supported file type.", filetype)
 
-    def writeImage(self, filename, filetype, data):
+    def writeImageFile(self, filename, filetype, data):
         if filetype is None:
             return
         elif filetype is FileTypes.HDF5:
@@ -146,25 +156,16 @@ class Volume(object):
     def cutout(self, window):
         """window is a Bbox"""
 
-        # doesn't deal with partial overlap
-        if not self.bbox.containsBbox(window):
-            return np.zeros(window.size3() + 2) # +2 to provide border for meshing
-
-        n_chunks = (window.size3() + 2) / self.file_chunk_size
-        n_chunks = np.ceil(n_chunks)
+        # +2 to provide border for meshing
+        n_chunks = np.ceil( (window.size3() + 2) / self.file_chunk_size )
 
         imagecache = CircularImageCache( n_chunks * self.file_chunk_size )
 
         startpt = np.floor((window.minpt - 1) / self.file_chunk_size) # -1 to provide 1px border
+
         for point in xyzrange(n_chunks):
             grid_index = startpt + point
-
-            try:
-                filename = self.chunk_filenames[x][y][z]
-                img = self.readImage(filename, self.filetype)
-            except IndexError:
-                img = self.__BLACK_BLOCK
-
+            img = self.readImageAt(*grid_index)
             imagecache.write(img, self.file_chunk_size * grid_index + 1)
 
         return imagecache.read(window.size3() + 2, window.minpt - 1)
@@ -191,16 +192,16 @@ class Volume(object):
         initial_population = min2(total_chunks, two_chunks)
 
         for x,y,z in xyzrange( initial_population ):
-            filename = self.chunk_filenames[x][y][z]
-            if filename == '':
-                continue 
-
-            img = self.readImage(filename, self.filetype)
+            img = self.readImageAt(x,y,z)
+            
+            if img is self.__BLACK_BLOCK:
+                continue
+            
             imagecache.write(img, self.file_chunk_size * Vec3(x,y,z))
 
         return imagecache
 
-    def advanceCache(self, imgcache, chunksize, position, delta):
+    def __advanceCache(self, imgcache, chunksize, position, delta):
 
         new_position = position + delta
 
@@ -216,11 +217,7 @@ class Volume(object):
             
             offset = new_position + file_pt
 
-            try:
-                filename = self.chunk_filenames[offset.x][offset.y][offset.z]
-                img = self.readImage(filename, self.filetype)
-            except IndexError:
-                img = self.__BLACK_BLOCK
+            img = self.readImageFile(*offset)
 
             imagecache.write(img, offset * self.file_chunk_size)
 
@@ -244,7 +241,7 @@ class Volume(object):
             delta = chunk - last_chunk
             last_chunk = chunk
 
-            self.advanceCache(imagecache, files_per_chunk, chunksize, chunk, delta)
+            self.__advanceCache(imagecache, files_per_chunk, chunksize, chunk, delta)
 
 
 def descendingChunkSequence(total_chunks):
