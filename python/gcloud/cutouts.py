@@ -2,6 +2,7 @@ import os
 import sys
 import h5py
 import numpy as np
+from tqdm import tqdm
 
 import neuroglancer
 
@@ -10,13 +11,13 @@ from lib import list_shape, xyzrange, Vec3, Bbox, map2, min2, max2
 from enum import Enum
 
 class FileTypes(Enum):
-    HDF5,
-    NPZ
+    HDF5 = 1,
+    NPZ = 2
 
 class CircularImageCache(object):
 
     def __init__(self, shape = Vec3(2048, 2048, 256), dtype=np.uint32):
-        self.buffer = np.zeros(shape=shape, dtype=dtype)
+        self.buffer = np.zeros(shape=shape.astype(int), dtype=dtype)
         self.offset = Vec3(0,0,0) 
         self.clean = True
 
@@ -39,40 +40,104 @@ class CircularImageCache(object):
         databox = Bbox.from_vec(shape)
         bufferbox = Bbox.from_vec(self.buffer.shape)
 
-        assert(bufferbox.containsBbox(databox), "data shape ({}) is larger than the buffer ({})".format(databox, bufferbox))
+        assert bufferbox.containsBbox(databox), "data shape ({}) is larger than the buffer ({})".format(databox, bufferbox)
 
         startpt = self.offset + Vec3(*offset)
-        endpt = startpt + Vec3(*databox.shape)
+        endpt = startpt + Vec3(*shape)
         
-        readbuffer = np.zeros(shape=shape)
-
         bufsize = Vec3(*self.buffer.shape)
 
-        for pt in xyzrange(startpt, endpt + 1):
-            readbuffer[ tuple(pt - startpt) ] = self.buffer[ tuple(np.mod(pt, bufsize)) ]
+        if all((endpt - startpt) < bufsize):
+            return self.buffer[ startpt.x:endpt.x, startpt.y:endpt.y, startpt.z:endpt.z ]
+        else:
+            readbuffer = np.empty(shape=shape)
 
-        return readbuffer
+            for pt in xyzrange(startpt, endpt):
+                readbuffer[ tuple((pt - startpt).astype(int)) ] = self.buffer[ tuple(np.mod(pt, bufsize).astype(int)) ]
+
+            return readbuffer
 
     def write(self, data, offset = (0,0,0)):
         databox = Bbox.from_vec(data.shape)
         bufferbox = Bbox.from_vec(self.buffer.shape)
 
-        assert(bufferbox.containsBbox(databox), "data shape ({}) is larger than the buffer ({})".format(databox, bufferbox))
-
-        startpt = self.offset + Vec3(*offset)
-        endpt = startpt + Vec3(*data.shape)
+        assert bufferbox.containsBbox(databox), "data shape ({}) is larger than the buffer ({})".format(databox, bufferbox)
 
         bufsize = Vec3(*self.buffer.shape)
 
-        for pt in xyzrange(startpt, endpt + 1):
-            self.buffer[ tuple(np.mod(pt, bufsize)) ] = data[ tuple(pt - startpt) ]
+        startpt = ( self.offset + Vec3(*offset) )
+        endpt = ( startpt + Vec3(*data.shape) )
+
+        total_delta = endpt - startpt
+        startpt = np.mod(startpt, bufsize).astype(int)
+        endpt = (startpt + total_delta).astype(int)
+
+        # print 'a', startpt, endpt, bufsize, min2(endpt, bufsize), data.shape
+
+        # inside
+        insidept = Vec3(*min2(endpt, bufsize).astype(int))
+        inside_delta = (insidept - startpt).astype(int)
+
+        # print 'b',insidept, inside_delta
+
+        self.buffer[ startpt.x:insidept.x, startpt.y:insidept.y, startpt.z:insidept.z ] = data[ :inside_delta.x, :inside_delta.y, :inside_delta.z]
+
+        # x reflection
+        xpt = Vec3(endpt.x, insidept.y, insidept.z)
+        x_delta = xpt - startpt - inside_delta
+        # print 'x', xpt, x_delta
+        self.buffer[ 0:x_delta.x, startpt.y:insidept.y, startpt.z:insidept.z ] = data[ inside_delta.x:(inside_delta.x + x_delta.x), :inside_delta.y, :inside_delta.z ]
+
+        # y reflection
+        ypt = Vec3(insidept.x, endpt.y, insidept.z)
+        y_delta = ypt - startpt - inside_delta
+        self.buffer[ startpt.x:insidept.x, 0:y_delta.y, startpt.z:insidept.z ] = data[ :inside_delta.x, inside_delta.y:(inside_delta.y + y_delta.y), :inside_delta.z ]
+
+        # # xy reflection
+        # xypt = Vec3(endpt.x, endpt.y, insidept.z)
+        # xyptm = np.mod(xypt, bufsize)
+        # xy_delta = xypt - insidept
+        # self.buffer[ 0:xyptm.x, 0:xyptm.y, startpt.z:insidept.z ] = data[ inside_delta.x:(inside_delta.x + xy_delta.x), inside_delta.y:(inside_delta.y + xy_delta.y), :inside_delta.z ]
+
+        lowstartpt = Vec3(startpt.x, startpt.y, insidept.z)
+
+        # z reflection 
+        zpt = Vec3(insidept.x, endpt.y, endpt.z)
+        z_delta = zpt - lowstartpt
+        self.buffer[ startpt.x:insidept.x, startpt.y:insidept.y, 0:z_delta.z ] = data[ :inside_delta.x, :inside_delta.y, inside_delta.z:(inside_delta.z + z_delta.z) ]
+
+        # # xz reflection
+
+        # xzpt = Vec3(endpt.x, insidept.y, endpt.z)
+        # xzptm = np.mod(xzpt, bufsize)
+        # xz_delta = xzpt - insidept
+        # self.buffer[ 0:xzptm.x, startpt.y:insidept.y, 0:xzptm.z ] = data[ inside_delta.x:(inside_delta.x + xz_delta.x), 0:inside_delta.y, inside_delta.z:(inside_delta.z + xz_delta.z) ]
+
+        # nsp = Vec3(startpt.x, insidept.y, insidept.z)
+
+        # # zy reflection
+        # zypt = Vec3(insidept.x, endpt.y, endpt.z)
+        # zyptm = np.mod(zypt, bufsize)
+        # zy_delta = zypt - nsp
+        # self.buffer[ 0:xzptm.x, startpt.y:insidept.y, 0:xzptm.z ] = data[ inside_delta.x:(inside_delta.x + xz_delta.x), 0:inside_delta.y, inside_delta.z:(inside_delta.z + xz_delta.z) ]
+
+        # print bufsize, self.offset, offset, startpt, data.shape, endpt, endpt - startpt, np.absolute(endpt - startpt)
+
+        
+
+        # if all(np.absolute(endpt - startpt) < bufsize) and all(startpt > endpt):
+        #     self.buffer[ startpt.x:endpt.x, startpt.y:endpt.y, startpt.z:endpt.z ] = data[:,:,:]
+        # else:
+        #     for pt in tqdm(xyzrange(startpt, endpt)):
+        #         self.buffer[ tuple(np.mod(pt, bufsize).astype(int)) ] = data[ tuple((pt - startpt).astype(int)) ]
+
 
 class Volume(object):
 
     def __init__(self, filebboxlist, filetype):
         """filebboxlist = [ ( filename, (np.array(x,y,z), np.array(x,y,z)) ), ... ]"""
 
-        assert(isinstance(filetype, FileTypes))
+        assert isinstance(filetype, FileTypes)
 
         self.filetype = filetype
         self.bbox = self.__compute_global_bbox([ bbox for filename, bbox in filebboxlist ])
@@ -82,15 +147,13 @@ class Volume(object):
         
         first_tuple = filebboxlist[0][1]
 
-        bbox = Bbox(first_tuple[0], first_tuple[1])
-        self.file_chunk_size = bbox.size3()
+        self.file_chunk_size = Bbox(first_tuple[0], first_tuple[1]).size3()
 
-        grid_dimensions = np.ceil(self.global_bbox.size3() / self.file_chunk_size)
-
+        grid_dimensions = np.ceil(self.bbox.size3() / self.file_chunk_size).astype(int)
         self.chunk_filenames = list_shape(grid_dimensions, '')
 
         for filename, bbox in filebboxlist:
-            x,y,z = np.floor(np.array(bbox[0]) / self.file_chunk_size)
+            x,y,z = np.floor(np.array(bbox[0]) / self.file_chunk_size).astype(int)
             self.chunk_filenames[x][y][z] = filename
 
         self.__BLACK_BLOCK = np.zeros(shape=self.file_chunk_size)
@@ -125,7 +188,8 @@ class Volume(object):
             if filename == '':
                 return self.__BLACK_BLOCK
 
-            return self.readImageFile(filename, self.filetype)
+            img = self.readImageFile(filename, self.filetype)
+            return img.T # z,y,x to x,y,z
         except IndexError:
             return self.__BLACK_BLOCK
 
@@ -187,7 +251,7 @@ class Volume(object):
         imagecache = CircularImageCache(files_per_chunk * self.file_chunk_size * 3, dtype=np.uint32) 
         imagecache.move(files_per_chunk) # top back and left are black, paint rest
 
-        two_chunks = files_per_chunk * Vec(2,2,2)
+        two_chunks = files_per_chunk * Vec3(2,2,2)
 
         initial_population = min2(total_chunks, two_chunks)
 
@@ -197,11 +261,12 @@ class Volume(object):
             if img is self.__BLACK_BLOCK:
                 continue
             
+            print x,y,z
             imagecache.write(img, self.file_chunk_size * Vec3(x,y,z))
 
         return imagecache
 
-    def __advanceCache(self, imgcache, chunksize, position, delta):
+    def __advanceCache(self, imagecache, chunksize, position, delta):
 
         new_position = position + delta
 
@@ -217,7 +282,7 @@ class Volume(object):
             
             offset = new_position + file_pt
 
-            img = self.readImageFile(*offset)
+            img = self.readImageAt(*offset)
 
             imagecache.write(img, offset * self.file_chunk_size)
 
@@ -225,10 +290,6 @@ class Volume(object):
     def generateChunks(self, chunksize):
         chunksize = Vec3(*chunksize)
 
-        if not self.bbox.containsBbox(chunksize):
-            return np.zeros(chunksize, dtype=np.uint32)
-
-        
         imagecache = self.initializeCache(chunksize)
 
         last_chunk = Vec3(-1, 0, 0)
@@ -236,20 +297,22 @@ class Volume(object):
 
         for chunk in descendingChunkSequence(self.totalChunks(chunksize)):
             img = imagecache.read(chunksize + 2, (-1, -1, -1))
-            yield (img, start_bbox + chunksize * chunk)
+            yield [ img, start_bbox + chunksize * chunk ]
 
             delta = chunk - last_chunk
             last_chunk = chunk
 
-            self.__advanceCache(imagecache, files_per_chunk, chunksize, chunk, delta)
+            self.__advanceCache(imagecache, chunksize, chunk, delta)
 
 
 def descendingChunkSequence(total_chunks):
     """spiral inward, descend 1 z, spiral outward to start, descend 1 z, spiral inward...."""
-     
-     spiral = [ pt for pt in spiralSequence(total_chunks.x, total_chunks.y) ]
+    
+    total_chunks = total_chunks.astype(int)
 
-     for z in xrange(total_chunks.z):
+    spiral = [ pt for pt in spiralSequence(total_chunks.x, total_chunks.y) ]
+
+    for z in xrange(total_chunks.z):
         for pt in spiral:
             tmp = pt.clone()
             tmp.z = z
@@ -303,7 +366,15 @@ def spiralSequence(width, height):
     return clockwise_spiral()
 
 
+files = [
+    ['../snemi3d/machine_labels.h5', [ Vec3(0,0,0), Vec3(1024, 1024, 128) ] ]
+]
 
+vol = Volume(files, FileTypes.HDF5)
+
+for img, bbox in vol.generateChunks(Vec3(1024, 1024, 128)):
+    vol.writeImageFile('./test.h5', FileTypes.HDF5, img)
+    print img.shape, bbox
 
 
 

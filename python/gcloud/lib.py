@@ -5,6 +5,8 @@ import subprocess
 import numpy as np
 import math
 
+from itertools import product
+
 GCLOUD_PROJECT = 'neuromancer-seung-import'
 COMMON_STAGING_DIR = './staging/'
 
@@ -32,8 +34,11 @@ def xyzrange(start_vec, end_vec=None, stride_vec=(1,1,1)):
     end_vec = start_vec
     start_vec = (0,0,0)
 
+  start_vec = np.array(start_vec, dtype=int)
+  end_vec = np.array(end_vec, dtype=int)
+
   rangeargs = ( (start, end, stride) for start, end, stride in zip(start_vec, end_vec, stride_vec) )
-  xyzranges = ( xrange(*arg) for arg in rangeargs )
+  xyzranges = [ xrange(*arg) for arg in rangeargs ]
   
   def vectorize():
     pt = Vec3(0,0,0)
@@ -86,14 +91,14 @@ def upload_to_gcloud(filenames, cloudpath, headers={}, compress=False):
 
 
 def map2(fn, a, b):
-    assert(len(a) == len(b))
+    assert len(a) == len(b)
     
-    newarray = np.empty(len(a))
+    result = np.empty(len(a))
 
-    for i in xrange(len(array)):
-        newarray[i] = fn(array[i], maxarray[i])
+    for i in xrange(len(result)):
+        result[i] = fn(a[i], b[i])
 
-    return newarray
+    return result
 
 def max2(a, b):
     return map2(max, a, b)
@@ -102,24 +107,36 @@ def min2(a, b):
     return map2(min, a, b)
 
 class Vec3(np.ndarray):
-    def __new__(cls, x, y, z):
-      return super(Vec3, cls).__new__(cls, shape=(3,), buffer=np.array([x,y,z]), dtype=int)
+    def __new__(cls, x, y, z, dtype=int):
+      return super(Vec3, cls).__new__(cls, shape=(3,), buffer=np.array([x,y,z]), dtype=dtype)
 
     @classmethod
-    def triple(x):
+    def triple(cls, x):
       return Vec3(x,x,x)
 
     @property
     def x(self):
         return self[0]
 
+    @x.setter
+    def x(self, val):
+        self[0] = val
+
     @property
     def y(self):
         return self[1]
 
+    @y.setter
+    def y(self, val):
+        self[1] = val
+
     @property
     def z(self):
         return self[2]
+
+    @z.setter
+    def z(self, val):
+        self[2] = val
 
     def clone(self):
       return Vec3(self[0], self[1], self[2])
@@ -135,10 +152,6 @@ class Vec3(np.ndarray):
 
     def rectVolume(self):
         return self[0] * self[1] * self[2]
-
-    def nonzeroDims(self):
-        isdim = lambda x: 1 if x > 10 * np.finfo(np.float32).eps else 0
-        return reduce(sum, map(isdim, self))
 
     def __hash__(self):
         return repr(self)
