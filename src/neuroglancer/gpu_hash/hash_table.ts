@@ -49,6 +49,9 @@ export abstract class HashTableBase {
   entryStride: number;
   maxWidth = 4096 / this.entryStride;
 
+  maxWidth = 4096 / this.entryStride;
+  generation = 0;
+
   mungedEmptyKey = -1;
 
   constructor(hashFunctions = HashTableBase.generateHashFunctions(NUM_ALTERNATIVES)) {
