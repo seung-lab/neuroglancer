@@ -47,9 +47,10 @@ class CircularImageCache(object):
         
         bufsize = Vec3(*self.buffer.shape)
 
-        if all((endpt - startpt) < bufsize):
+        # very fast path (seconds)
+        if all(np.absolute(endpt - startpt) < bufsize) and all(startpt > endpt):
             return self.buffer[ startpt.x:endpt.x, startpt.y:endpt.y, startpt.z:endpt.z ]
-        else:
+        else: # very slow path (~30 min)
             readbuffer = np.empty(shape=shape)
 
             for pt in xyzrange(startpt, endpt):
@@ -72,20 +73,22 @@ class CircularImageCache(object):
         startpt = np.mod(startpt, bufsize).astype(int)
         endpt = (startpt + total_delta).astype(int)
 
-        # print 'a', startpt, endpt, bufsize, min2(endpt, bufsize), data.shape
+        # only handles modulo along a single dimension at a time
+        # there's a partial version of multiple axis modulo in git history
+        # that you can try completing if necessary. Need to cover xy, xz, zy, xyz
+
+        # tried using just modulo arithmatic but it was too slow by orders of magnitude 
+        # see read for an example. Now manually computes reflections and uses vectorized instructions
 
         # inside
         insidept = Vec3(*min2(endpt, bufsize).astype(int))
         inside_delta = (insidept - startpt).astype(int)
-
-        # print 'b',insidept, inside_delta
 
         self.buffer[ startpt.x:insidept.x, startpt.y:insidept.y, startpt.z:insidept.z ] = data[ :inside_delta.x, :inside_delta.y, :inside_delta.z]
 
         # x reflection
         xpt = Vec3(endpt.x, insidept.y, insidept.z)
         x_delta = xpt - startpt - inside_delta
-        # print 'x', xpt, x_delta
         self.buffer[ 0:x_delta.x, startpt.y:insidept.y, startpt.z:insidept.z ] = data[ inside_delta.x:(inside_delta.x + x_delta.x), :inside_delta.y, :inside_delta.z ]
 
         # y reflection
@@ -93,43 +96,12 @@ class CircularImageCache(object):
         y_delta = ypt - startpt - inside_delta
         self.buffer[ startpt.x:insidept.x, 0:y_delta.y, startpt.z:insidept.z ] = data[ :inside_delta.x, inside_delta.y:(inside_delta.y + y_delta.y), :inside_delta.z ]
 
-        # # xy reflection
-        # xypt = Vec3(endpt.x, endpt.y, insidept.z)
-        # xyptm = np.mod(xypt, bufsize)
-        # xy_delta = xypt - insidept
-        # self.buffer[ 0:xyptm.x, 0:xyptm.y, startpt.z:insidept.z ] = data[ inside_delta.x:(inside_delta.x + xy_delta.x), inside_delta.y:(inside_delta.y + xy_delta.y), :inside_delta.z ]
-
         lowstartpt = Vec3(startpt.x, startpt.y, insidept.z)
 
         # z reflection 
         zpt = Vec3(insidept.x, endpt.y, endpt.z)
         z_delta = zpt - lowstartpt
         self.buffer[ startpt.x:insidept.x, startpt.y:insidept.y, 0:z_delta.z ] = data[ :inside_delta.x, :inside_delta.y, inside_delta.z:(inside_delta.z + z_delta.z) ]
-
-        # # xz reflection
-
-        # xzpt = Vec3(endpt.x, insidept.y, endpt.z)
-        # xzptm = np.mod(xzpt, bufsize)
-        # xz_delta = xzpt - insidept
-        # self.buffer[ 0:xzptm.x, startpt.y:insidept.y, 0:xzptm.z ] = data[ inside_delta.x:(inside_delta.x + xz_delta.x), 0:inside_delta.y, inside_delta.z:(inside_delta.z + xz_delta.z) ]
-
-        # nsp = Vec3(startpt.x, insidept.y, insidept.z)
-
-        # # zy reflection
-        # zypt = Vec3(insidept.x, endpt.y, endpt.z)
-        # zyptm = np.mod(zypt, bufsize)
-        # zy_delta = zypt - nsp
-        # self.buffer[ 0:xzptm.x, startpt.y:insidept.y, 0:xzptm.z ] = data[ inside_delta.x:(inside_delta.x + xz_delta.x), 0:inside_delta.y, inside_delta.z:(inside_delta.z + xz_delta.z) ]
-
-        # print bufsize, self.offset, offset, startpt, data.shape, endpt, endpt - startpt, np.absolute(endpt - startpt)
-
-        
-
-        # if all(np.absolute(endpt - startpt) < bufsize) and all(startpt > endpt):
-        #     self.buffer[ startpt.x:endpt.x, startpt.y:endpt.y, startpt.z:endpt.z ] = data[:,:,:]
-        # else:
-        #     for pt in tqdm(xyzrange(startpt, endpt)):
-        #         self.buffer[ tuple(np.mod(pt, bufsize).astype(int)) ] = data[ tuple((pt - startpt).astype(int)) ]
 
 
 class Volume(object):
@@ -373,7 +345,7 @@ files = [
 vol = Volume(files, FileTypes.HDF5)
 
 for img, bbox in vol.generateChunks(Vec3(1024, 1024, 128)):
-    vol.writeImageFile('./test.h5', FileTypes.HDF5, img)
+    # vol.writeImageFile('./test.h5', FileTypes.HDF5, img)
     print img.shape, bbox
 
 
