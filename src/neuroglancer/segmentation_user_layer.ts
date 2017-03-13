@@ -28,6 +28,7 @@ import {PerspectiveViewSkeletonLayer, SkeletonLayer, SliceViewPanelSkeletonLayer
 import {VolumeType} from 'neuroglancer/sliceview/base';
 import {SegmentationRenderLayer, SliceViewSegmentationDisplayState} from 'neuroglancer/sliceview/segmentation_renderlayer';
 import {trackableAlphaValue} from 'neuroglancer/trackable_alpha';
+import {TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {parseArray, verifyObjectProperty, verifyOptionalString} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
@@ -40,11 +41,13 @@ import {splitObject, mergeNodes, getObjectList, getConnectedSegments, enableGrap
 import {StatusMessage} from 'neuroglancer/status';
 import {HashMapUint64} from 'neuroglancer/gpu_hash/hash_table';
 
+require('neuroglancer/noselect.css');
 require('./segmentation_user_layer.css');
 
 const SELECTED_ALPHA_JSON_KEY = 'selectedAlpha';
 const NOT_SELECTED_ALPHA_JSON_KEY = 'notSelectedAlpha';
 const OBJECT_ALPHA_JSON_KEY = 'objectAlpha';
+const HIDE_SEGMENT_ZERO_JSON_KEY = 'hideSegmentZero';
 
 interface SourceSink {
   sources: Uint64[],
@@ -66,6 +69,7 @@ export class SegmentationUserLayer extends UserLayer {
     selectedAlpha: trackableAlphaValue(0.5),
     notSelectedAlpha: trackableAlphaValue(0),
     objectAlpha: trackableAlphaValue(1.0),
+    hideSegmentZero: new TrackableBoolean(true, true),
     visibleSegments: Uint64Set.makeWithCounterpart(this.manager.worker),
     segmentEquivalences: SharedDisjointUint64Sets.makeWithCounterpart(this.manager.worker),
     volumeSourceOptions: {},
@@ -93,6 +97,7 @@ export class SegmentationUserLayer extends UserLayer {
     this.displayState.selectedAlpha.changed.add(() => { this.specificationChanged.dispatch(); });
     this.displayState.notSelectedAlpha.changed.add(() => { this.specificationChanged.dispatch(); });
     this.displayState.objectAlpha.changed.add(() => { this.specificationChanged.dispatch(); });
+    this.displayState.hideSegmentZero.changed.add(() => { this.specificationChanged.dispatch(); });
 
     this.displayState.selectedAlpha.restoreState(spec[SELECTED_ALPHA_JSON_KEY]);
     this.displayState.notSelectedAlpha.restoreState(spec[NOT_SELECTED_ALPHA_JSON_KEY]);
@@ -179,6 +184,7 @@ export class SegmentationUserLayer extends UserLayer {
     x[SELECTED_ALPHA_JSON_KEY] = this.displayState.selectedAlpha.toJSON();
     x[NOT_SELECTED_ALPHA_JSON_KEY] = this.displayState.notSelectedAlpha.toJSON();
     x[OBJECT_ALPHA_JSON_KEY] = this.displayState.objectAlpha.toJSON();
+    x[HIDE_SEGMENT_ZERO_JSON_KEY] = this.displayState.hideSegmentZero.toJSON();
     let {visibleSegments} = this.displayState;
     if (visibleSegments.size > 0) {
       x['segments'] = visibleSegments.toJSON();
@@ -356,6 +362,7 @@ class SegmentationDropdown extends UserLayerDropdown {
   notSelectedAlphaWidget =
       this.registerDisposer(new RangeWidget(this.layer.displayState.notSelectedAlpha));
   objectAlphaWidget = this.registerDisposer(new RangeWidget(this.layer.displayState.objectAlpha));
+
   constructor(public element: HTMLDivElement, public layer: SegmentationUserLayer) {
     super();
     element.classList.add('segmentation-dropdown');
