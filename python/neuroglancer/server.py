@@ -106,6 +106,27 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)   
 
+    def handle_skeleton_request(self, key, object_id):
+        vol = self.server.volumes.get(key)
+        if vol is None:
+            self.send_error(404)
+        if vol.skeletons is None:
+            self.send_error(405, 'Skeletons not supported for volume')
+            return
+
+        skeleton = vol.skeletons.get_skeleton(object_id)
+        if skeleton is None:
+            self.send_error(404, 'Skeleton not available for specified object id')
+            return
+        encoded_skeleton = skeleton.encode(vol.skeletons)
+
+        self.send_response(200)
+        self.send_header('Content-type', 'application/octet-stream')
+        self.send_header('Content-length', len(encoded_skeleton))
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        self.wfile.write(encoded_skeleton)
+
     def log_message(self, format, *args):
         if debug:
             BaseHTTPRequestHandler.log_message(self, format, *args)
