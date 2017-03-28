@@ -32,7 +32,7 @@ def encode(img_chunk, encoding):
     raise NotImplementedError(encoding)
 
 def decode(filedata, encoding, shape=None, dtype=None):
-  if (shape is None or dtype is None) and encoding is not 'npz':
+  if (shape is None or dtype is None) and encoding != 'npz':
     raise ValueError("Only npz encoding can omit shape and dtype arguments. {}".format(encoding))
 
   if len(filedata) == 0:
@@ -42,7 +42,7 @@ def decode(filedata, encoding, shape=None, dtype=None):
   elif encoding == 'raw':
     return decode_raw(filedata, shape=shape, dtype=dtype)
   elif encoding == 'npz':
-    return decode_npz(string_data)
+    return decode_npz(filedata)
   else:
     raise NotImplementedError(encoding)
 
@@ -53,14 +53,14 @@ def encode_jpeg(arr):
     if len(arr.shape) == 3:
         arr = np.expand_dims(arr, 3) # add channels to end of x,y,z
 
-    arr = arr.transpose((3,2,1,0)) # channels, z, y, x
+    arr = arr.T # channels, z, y, x
     reshaped = arr.reshape(arr.shape[3] * arr.shape[2], arr.shape[1] * arr.shape[0])
     if arr.shape[0] == 1:
         img = Image.fromarray(reshaped, mode='L')
     elif arr.shape[0] == 3:
         img = Image.fromarray(reshaped, mode='RGB')
     else:
-        raise ValueError("Number of image channels should be 1 or 3. Got: {}".format(arr.shape[3]))
+        raise ValueError("Number of image channels should be 1 or 3. Got: {}, shape: {}".format(arr.shape[0], arr.shape))
 
     f = io.BytesIO()
     img.save(f, "JPEG")
@@ -96,5 +96,9 @@ def encode_raw(subvol):
     return subvol.tostring('F')
 
 def decode_raw(bytestring, shape=(64,64,64), dtype=np.uint32):
-    return np.frombuffer(bytestring, dtype=dtype).reshape(shape[::-1]).T
+    try:
+        return np.frombuffer(bytestring, dtype=dtype).reshape(shape[::-1]).T
+    except:
+        x= np.frombuffer(bytestring, dtype=dtype).reshape( (1,64,64,64) )
+        return x[ :shape[3], :shape[2], :shape[1], :shape[0] ].T
 
