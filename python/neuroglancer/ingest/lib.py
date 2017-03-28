@@ -401,7 +401,7 @@ class Bbox(object):
       result.maxpt = np.ceil(result.maxpt / chunk_size) * chunk_size 
       return result
 
-    def shink_to_chunk_size(self, chunk_size):
+    def shrink_to_chunk_size(self, chunk_size):
       chunk_size = np.array(chunk_size, dtype=np.float32)
       result = self.clone()
       result.minpt = np.ceil(result.minpt / chunk_size) * chunk_size
