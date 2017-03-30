@@ -12,7 +12,7 @@ from neuroglancer.ingest.volumes import Volume, VolumeCutout, generate_slices
 from google.cloud import storage as gstorage
 
 class GCloudVolume(Volume):
-  def __init__(self, dataset_name, layer, mip=0, cache_files=True, use_ls=True, use_secrets=False):
+  def __init__(self, dataset_name, layer, mip=0, cache_files=True, use_ls=False, use_secrets=False):
     super(self.__class__, self).__init__()
 
     # You can access these two with properties
@@ -27,12 +27,36 @@ class GCloudVolume(Volume):
 
     self._uncommitted_changes = []
 
-    self.refreshInfo()
+    if info is None:
+      self.refreshInfo()
+    else:
+      self.info = info
 
     try:
       self.mip = self.available_mips[self.mip]
     except:
       raise Exception("MIP {} has not been generated.".format(self.mip))
+
+  @classmethod
+  def create_new_info(cls, num_channels, layer_type, data_type, encoding, resolution, voxel_offset, volume_size, mesh=False, chunk_size=[64,64,64]):
+    info = {
+      "num_channels": int(num_channels),
+      "type": layer_type,
+      "data_type": data_type,
+      "scales": [{
+        "encoding": encoding,
+        "chunk_sizes": [chunk_size],
+        "key": "_".join(map(str, resolution)),
+        "resolution": list(resolution),
+        "voxel_offset": list(voxel_offset),
+        "size": list(volume_size),
+      }],
+    }
+
+    if mesh:
+      info['mesh'] = 'mesh'
+
+    return info
 
   @classmethod
   def from_cloudpath(cls, cloudpath, mip=0, *args, **kwargs):
@@ -49,20 +73,13 @@ class GCloudVolume(Volume):
 
   def commitInfo(self):
     blob = self.__getInfoBlob()
+    print self.info
     blob.upload_from_string(json.dumps(self.info), 'application/json')
     return self
 
   def __getInfoBlob(self):
     info_path = os.path.join(self.dataset_name, self.layer, 'info')
-
-    # for cloud use
-    if self.use_secrets:
-      return lib.get_blob(info_path)
-
-    # generally for local use
-    client = gstorage.Client(project=lib.GCLOUD_PROJECT_NAME)
-    bucket = client.get_bucket(lib.GCLOUD_BUCKET_NAME)
-    return gstorage.blob.Blob(info_path, bucket)
+    return lib.get_blob(info_path, use_secrets=self.use_secrets)
 
   @property
   def dataset_name(self):
@@ -280,7 +297,7 @@ class GCloudVolume(Volume):
     allslices = [ generate_slices(slices, self.volume_size) for slices in allslices ]
     allboxes = map(Bbox.from_slices, allslices)
     
-    big_bbox = Bbox.union(*allboxes)
+    big_bbox = Bbox.expand(*allboxes)
     subvol = self[ big_bbox.to_slices() ]
 
     for slcs, img in self._uncommitted_changes:

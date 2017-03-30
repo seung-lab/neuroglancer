@@ -25,6 +25,13 @@ def method(layer_type):
   else:
     return downsample_with_striding 
 
+def scale_series_to_downsample_factors(scales):
+  fullscales = [ np.array(scale) for scale in scales ] 
+  factors = []
+  for i in xrange(1, len(fullscales)):
+    factors.append( fullscales[i] / fullscales[i - 1]  )
+  return factors
+
 def downsample_with_averaging(array, factor):
     """Downsample x by factor using averaging.
 

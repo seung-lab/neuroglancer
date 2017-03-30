@@ -75,7 +75,7 @@ def cloudpath_to_hierarchy(cloudpath):
   cloudpath = format_cloudpath(cloudpath)
   return cloudpath.split('/')
 
-def gcloudFileIterator(cloudpaths, keep_files=None, use_ls=True, compress=False):
+def gcloudFileIterator(cloudpaths, keep_files=None, use_ls=False, compress=False):
   """
     Given a set of cloud paths, present each image file via a generator
     in sorted order. If keep_files is specified, your files will
@@ -243,8 +243,8 @@ def upload_to_gcloud(filenames, cloudpath, headers={}, compress=False, public=Fa
 def map2(fn, a, b):
     assert len(a) == len(b)
 
-    if isinstance(a, Vec3) or isinstance(b, Vec3):
-      result = Vec3(0,0,0)
+    if isinstance(a, Vec) or isinstance(b, Vec):
+      result = Vec(range(len(a)))
     else:    
       result = np.empty(len(a))
 
@@ -253,11 +253,11 @@ def map2(fn, a, b):
 
     return result
 
-def max2(a, b, dtype=np.int32):
-    return map2(max, a, b).astype(dtype)
+def max2(a, b):
+  return map2(max, a, b).astype(a.dtype)
 
-def min2(a, b, dtype=np.int32):
-    return map2(min, a, b).astype(dtype)
+def min2(a, b):
+  return map2(min, a, b).astype(a.dtype)
 
 def clamp(val, low, high):
   return min(max(val, low), high)
@@ -322,169 +322,196 @@ class Vec3(Vec):
 
 class Bbox(object):
 
-    def __init__(self, a, b):
-        self.minpt = Vec3(
-            min(a[0], b[0]),
-            min(a[1], b[1]),
-            min(a[2], b[2])
-        )
+  def __init__(self, a, b):
+    self.minpt = Vec3(
+      min(a[0], b[0]),
+      min(a[1], b[1]),
+      min(a[2], b[2])
+    )
 
-        self.maxpt = Vec3(
-            max(a[0], b[0]),
-            max(a[1], b[1]),
-            max(a[2], b[2])
-        )
+    self.maxpt = Vec3(
+      max(a[0], b[0]),
+      max(a[1], b[1]),
+      max(a[2], b[2])
+    )
 
-    @classmethod
-    def from_vec(cls, vec):
-      return Bbox( (0,0,0), vec )
+  @classmethod
+  def from_vec(cls, vec):
+    return Bbox( (0,0,0), vec )
 
-    @classmethod
-    def from_filename(cls, filename):
-      match = re.search(r'(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)(?:\.gz)?$', os.path.basename(filename))
+  @classmethod
+  def from_filename(cls, filename):
+    match = re.search(r'(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)(?:\.gz)?$', os.path.basename(filename))
 
-      (xmin, xmax,
-       ymin, ymax,
-       zmin, zmax) = map(int, match.groups())
+    (xmin, xmax,
+     ymin, ymax,
+     zmin, zmax) = map(int, match.groups())
 
-      return Bbox( (xmin, ymin, zmin), (xmax, ymax, zmax) )
+    return Bbox( (xmin, ymin, zmin), (xmax, ymax, zmax) )
 
-    @classmethod
-    def from_slices(cls, slices3):
-      return Bbox(
-        (slices3[0].start, slices3[1].start, slices3[2].start), 
-        (slices3[0].stop, slices3[1].stop, slices3[2].stop) 
-      )
+  @classmethod
+  def from_slices(cls, slices3):
+    return Bbox(
+      (slices3[0].start, slices3[1].start, slices3[2].start), 
+      (slices3[0].stop, slices3[1].stop, slices3[2].stop) 
+    )
 
-    def to_filename(self):
-      return '{}-{}_{}-{}_{}-{}'.format(
-        self.minpt.x, self.maxpt.x,
-        self.minpt.y, self.maxpt.y,
-        self.minpt.z, self.maxpt.z,
-      )
+  @classmethod
+  def from_list(cls, lst):
+    return Bbox( lst[:3], lst[3:6] )
 
-    def to_slices(self):
-      return (
-        slice(self.minpt.x, self.maxpt.x),
-        slice(self.minpt.y, self.maxpt.y),
-        slice(self.minpt.z, self.maxpt.z)
-      )
+  def to_filename(self):
+    return '{}-{}_{}-{}_{}-{}'.format(
+      self.minpt.x, self.maxpt.x,
+      self.minpt.y, self.maxpt.y,
+      self.minpt.z, self.maxpt.z,
+    )
 
-    @classmethod
-    def union(cls, *args):
-      result = args[0].clone()
-      for bbx in args:
-        result.minpt = min2(result, bbx)
-        result.maxpt = max2(result, bbx)
-      return result
+  def to_slices(self):
+    return (
+      slice(self.minpt.x, self.maxpt.x),
+      slice(self.minpt.y, self.maxpt.y),
+      slice(self.minpt.z, self.maxpt.z)
+    )
 
-    @classmethod
-    def clamp(cls, bbx0, bbx1):
-      result = bbx0.clone()
-      result.minpt = Vec3.clamp(bbx0.minpt, bbx1.minpt, bbx1.maxpt)
-      result.maxpt = Vec3.clamp(bbx0.maxpt, bbx1.minpt, bbx1.maxpt)
-      return result
+  def to_list(self):
+    return list(self.minpt) + list(self.maxpt)
 
-    def size3(self):
-      return Vec3(*(self.maxpt - self.minpt))
+  @classmethod
+  def expand(cls, *args):
+    result = args[0].clone()
+    for bbx in args:
+      result.minpt = min2(result, bbx)
+      result.maxpt = max2(result, bbx)
+    return result
 
-    def volume(self):
-      return self.size3().rectVolume()
+  @classmethod
+  def clamp(cls, bbx0, bbx1):
+    result = bbx0.clone()
+    result.minpt = Vec3.clamp(bbx0.minpt, bbx1.minpt, bbx1.maxpt)
+    result.maxpt = Vec3.clamp(bbx0.maxpt, bbx1.minpt, bbx1.maxpt)
+    return result
 
-    def center(self):
-      return (self.minpt + self.maxpt) / 2.0
+  def size3(self):
+    return Vec3(*(self.maxpt - self.minpt))
 
-    def expand_to_chunk_size(self, chunk_size):
-      chunk_size = np.array(chunk_size, dtype=np.float32)
-      result = self.clone()
-      result.minpt = np.floor(result.minpt / chunk_size) * chunk_size
-      result.maxpt = np.ceil(result.maxpt / chunk_size) * chunk_size 
-      return result
+  def volume(self):
+    return self.size3().rectVolume()
 
-    def shrink_to_chunk_size(self, chunk_size):
-      chunk_size = np.array(chunk_size, dtype=np.float32)
-      result = self.clone()
-      result.minpt = np.ceil(result.minpt / chunk_size) * chunk_size
-      result.maxpt = np.floor(result.maxpt / chunk_size) * chunk_size 
-      return result
+  def center(self):
+    return (self.minpt + self.maxpt) / 2.0
 
-    def contains(self, point):
-      return (
-            point[0] >= self.minpt[0] 
-        and point[1] >= self.minpt[1]
-        and point[2] >= self.minpt[2] 
-        and point[0] <= self.maxpt[0] 
-        and point[1] <= self.maxpt[1]
-        and point[2] <= self.maxpt[2]
-      )
+  def expand_to_chunk_size(self, chunk_size):
+    chunk_size = np.array(chunk_size, dtype=np.float32)
+    result = self.clone()
+    result.minpt = np.floor(result.minpt / chunk_size) * chunk_size
+    result.maxpt = np.ceil(result.maxpt / chunk_size) * chunk_size 
+    return result
 
-    def contains_bbox(self, bbox):
-      return self.contains(bbox.minpt) and self.contains(bbox.maxpt)
+  def shrink_to_chunk_size(self, chunk_size):
+    chunk_size = np.array(chunk_size, dtype=np.float32)
+    result = self.clone()
+    result.minpt = np.ceil(result.minpt / chunk_size) * chunk_size
+    result.maxpt = np.floor(result.maxpt / chunk_size) * chunk_size 
+    return result
 
-    def clone(self):
-      return Bbox(self.minpt, self.maxpt)
+  def round_to_chunk_size(self, chunk_size):
+    chunk_size = np.array(chunk_size, dtype=np.float32)
+    result = self.clone()
+    result.minpt = np.round(result.minpt / chunk_size) * chunk_size
+    result.maxpt = np.round(result.maxpt / chunk_size) * chunk_size
+    return result
 
-    # note that operand can be a vector 
-    # or a scalar thanks to numpy
-    def __sub__(self, operand): 
-      tmp = self.clone()
-      
-      if isinstance(operand, Bbox):
-        tmp.minpt -= operand.minpt
-        tmp.maxpt -= operand.maxpt
-      else:
-        tmp.minpt -= operand
-        tmp.maxpt -= operand
+  def contains(self, point):
+    return (
+          point[0] >= self.minpt[0] 
+      and point[1] >= self.minpt[1]
+      and point[2] >= self.minpt[2] 
+      and point[0] <= self.maxpt[0] 
+      and point[1] <= self.maxpt[1]
+      and point[2] <= self.maxpt[2]
+    )
 
-      return tmp
+  def contains_bbox(self, bbox):
+    return self.contains(bbox.minpt) and self.contains(bbox.maxpt)
 
-    def __add__(self, operand):
-      tmp = self.clone()
-      
-      if isinstance(operand, Bbox):
-        tmp.minpt += operand.minpt
-        tmp.maxpt += operand.maxpt
-      else:
-        tmp.minpt += operand
-        tmp.maxpt += operand
+  def clone(self):
+    return Bbox(self.minpt, self.maxpt)
 
-      return tmp
+  def astype(self, dtype):
+    result = self.clone()
+    result.minpt = self.minpt.astype(dtype)
+    result.maxpt = self.maxpt.astype(dtype)
+    return result
 
-    def __mul__(self, operand):
-      tmp = self.clone()
-      tmp.minpt *= operand
-      tmp.maxpt *= operand
-      return tmp
+  # note that operand can be a vector 
+  # or a scalar thanks to numpy
+  def __sub__(self, operand): 
+    tmp = self.clone()
+    
+    if isinstance(operand, Bbox):
+      tmp.minpt -= operand.minpt
+      tmp.maxpt -= operand.maxpt
+    else:
+      tmp.minpt -= operand
+      tmp.maxpt -= operand
 
-    def __div__(self, operand):
-      tmp = self.clone()
-      tmp.minpt /= operand
-      tmp.maxpt /= operand
-      return tmp
+    return tmp
 
-    def __eq__(self, other):
-      return np.array_equal(self.minpt, other.minpt) and np.array_equal(self.maxpt, other.maxpt)
+  def __add__(self, operand):
+    tmp = self.clone()
+    
+    if isinstance(operand, Bbox):
+      tmp.minpt += operand.minpt
+      tmp.maxpt += operand.maxpt
+    else:
+      tmp.minpt += operand
+      tmp.maxpt += operand
 
-    def __repr__(self):
-      return "Bbox({},{})".format(self.minpt, self.maxpt)
+    return tmp
 
-BLOB_BUCKET = None
+  def __mul__(self, operand):
+    tmp = self.clone()
+    tmp.minpt *= operand
+    tmp.maxpt *= operand
+    return tmp
+
+  def __div__(self, operand):
+    tmp = self.clone()
+    tmp.minpt /= operand
+    tmp.maxpt /= operand
+    return tmp
+
+  def __eq__(self, other):
+    return np.array_equal(self.minpt, other.minpt) and np.array_equal(self.maxpt, other.maxpt)
+
+  def __repr__(self):
+    return "Bbox({},{})".format(self.minpt, self.maxpt)
+
+BUCKETS = {}
 
 def credentials_path():
     self_dir = os.path.dirname(os.path.realpath(__file__))
     return os.path.join(self_dir, 'client-secret.json')
 
-def get_bucket_from_secrets():
-    client = storage.Client \
-            .from_service_account_json(credentials_path(), project=GCLOUD_PROJECT_NAME)
-    return client.get_bucket(GCLOUD_BUCKET_NAME)
+def get_bucket(bucket_name=GCLOUD_BUCKET_NAME, use_secrets=False):
+  global BUCKETS
+  if bucket_name in BUCKETS:
+    return BUCKETS[bucket_name]
 
-def get_blob(name):
-    global BLOB_BUCKET
-    if BLOB_BUCKET is None:
-        BLOB_BUCKET = get_bucket_from_secrets()
+  if use_secrets:
+    client = storage.Client.from_service_account_json(
+      credentials_path(), project=GCLOUD_PROJECT_NAME
+    )
+  else:
+    client = storage.Client(project=GCLOUD_PROJECT_NAME)
+    
+  BUCKETS[bucket_name] = client.get_bucket(bucket_name)
+  return BUCKETS[bucket_name]
 
-    return BLOB_BUCKET.get_blob(name)
+def get_blob(name, bucket_name=GCLOUD_BUCKET_NAME, use_secrets=False):
+    bucket = get_bucket(bucket_name=bucket_name, use_secrets=use_secrets)
+    return bucket.get_blob(name)
 
 class Storage(object):
 

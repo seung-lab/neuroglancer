@@ -53,7 +53,7 @@ def encode_jpeg(arr):
     if len(arr.shape) == 3:
         arr = np.expand_dims(arr, 3) # add channels to end of x,y,z
 
-    arr = arr.transpose((3,2,1,0)) # channels, z, y, x
+    arr = arr.T # channels, z, y, x
     reshaped = arr.reshape(arr.shape[3] * arr.shape[2], arr.shape[1] * arr.shape[0])
     if arr.shape[0] == 1:
         img = Image.fromarray(reshaped, mode='L')
@@ -96,5 +96,9 @@ def encode_raw(subvol):
     return subvol.tostring('F')
 
 def decode_raw(bytestring, shape=(64,64,64), dtype=np.uint32):
-    return np.frombuffer(bytestring, dtype=dtype).reshape(shape[::-1]).T
+    try:
+        return np.frombuffer(bytestring, dtype=dtype).reshape(shape[::-1]).T
+    except:
+        x= np.frombuffer(bytestring, dtype=dtype).reshape( (1,64,64,64) )
+        return x[ :shape[3], :shape[2], :shape[1], :shape[0] ].T
 
