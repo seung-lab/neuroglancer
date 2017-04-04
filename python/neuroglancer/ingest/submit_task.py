@@ -160,7 +160,8 @@ def divisors(n):
 
 def create_downsampling_tasks(dataset_name, layer_name, mip=-1, shape=Vec(4096, 4096, 512)):
   vol = GCloudVolume(dataset_name, layer_name, mip)
-
+  
+  shape = min2(vol.volume_size, shape)
   scales = downsample_scales.compute_xy_plane_downsampling_scales(shape)[1:] # omit (1,1,1)
   scales = [ vol.downsample_ratio * Vec(*factor3) for factor3 in scales ]
   map(vol.addScale, scales)

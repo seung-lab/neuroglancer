@@ -14,7 +14,7 @@ import numpy as np
 from backports import lzma
 from tqdm import tqdm
 
-from neuroglancer import chunks, downsample
+from neuroglancer import chunks, downsample, downsample_scales
 # from neuroglancer.ingest.mesher import Mesher
 from neuroglancer.ingest.volumes import GCloudVolume
 
@@ -73,7 +73,7 @@ class IngestTask(CloudTask):
     def _create_chunks(self, image):
       vol = self._volume
 
-      fullscales = downsample_scales.compute_xy_plane_downsampling_scales(image.shape)
+      fullscales = downsample_scales.compute_xy_plane_downsampling_scales(image.shape[:3])
 
       factors = downsample.scale_series_to_downsample_factors(fullscales)
 
@@ -127,10 +127,10 @@ class DownsampleTask(CloudTask):
     self._bounds = Bbox( self.offset, self.shape + self.offset )
     self._bounds = Bbox.clamp(self._bounds, vol.bounds)
     
-    img = vol[ self._bounds.to_slices() ]
+    image = vol[ self._bounds.to_slices() ]
+    shape = min2(Vec(*image.shape[:3]), self._bounds.size3())
 
-    fullscales = downsample_scales.compute_xy_plane_downsampling_scales(img.shape)
-
+    fullscales = downsample_scales.compute_xy_plane_downsampling_scales(shape)
     factors = downsample.scale_series_to_downsample_factors(fullscales)
 
     downsamplefn = downsample.method(vol.layer_type)
@@ -613,8 +613,8 @@ class TaskQueue(object):
 
     cloud_task_type = tags[task_json['tag']]
     decoded_json = base64.b64decode(task_json['payloadBase64']).encode('ascii')
-    
-    return cloud_task_type.fromjson(decoded_json, tid=int(task_json['id']))
+
+    return cloud_task_type.fromjson(decoded_json, tid=task_json['id'])
 
   def patch(self):
     """

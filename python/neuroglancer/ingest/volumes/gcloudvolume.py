@@ -263,7 +263,8 @@ class GCloudVolume(Volume):
 
     renderbuffer = np.zeros(shape=multichannel_shape(realized_bbox), dtype=self.data_type)
 
-    files = lib.gcloudFileIterator(cloudpaths, savedir, use_ls=self.use_ls, compress=(self.encoding == 'raw'))
+    compress = (self.layer_type == 'segmentation' and self.cache_files) # sometimes channel images are raw encoded too
+    files = lib.gcloudFileIterator(cloudpaths, savedir, use_ls=self.use_ls, compress=compress)
 
     for filehandle in tqdm(files, total=len(cloudpaths), desc="Rendering Image"):
       bbox = Bbox.from_filename(filehandle.name)
@@ -307,11 +308,11 @@ class GCloudVolume(Volume):
     self._uncommitted_changes = []
 
   def upload_image(self, img, offset):
-    shape = Vec(*img.shape)
-    offset = Vec(*offset)
+    shape = Vec(*img.shape)[:3]
+    offset = Vec(*offset)[:3]
 
     bounds = Bbox( offset, shape + offset)
-    bounds = Bbox.clamp(bounds, self.volume_size)
+    bounds = Bbox.clamp(bounds, Bbox.from_vec(self.volume_size))
     bounds = bounds.shrink_to_chunk_size( self.underlying )
 
     img_offset = bounds.minpt - offset
@@ -329,6 +330,9 @@ class GCloudVolume(Volume):
     for imgchunk, spt, ept in generate_chunks():
       if np.array_equal(spt, ept):
           continue
+
+      spt = spt.astype(int)
+      ept = ept.astype(int)
 
       filename = "{}-{}_{}-{}_{}-{}".format(
           spt.x, ept.x,

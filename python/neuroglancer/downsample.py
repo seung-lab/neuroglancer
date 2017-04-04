@@ -30,13 +30,16 @@ def scale_series_to_downsample_factors(scales):
   factors = []
   for i in xrange(1, len(fullscales)):
     factors.append( fullscales[i] / fullscales[i - 1]  )
-  return factors
+  return [ factor.astype(int) for factor in factors ]
 
 def downsample_with_averaging(array, factor):
     """Downsample x by factor using averaging.
 
     @return: The downsampled array, of the same type as x.
     """
+    if len(array.shape) == 4 and len(factor) == 3:
+      factor = list(factor) + [ 1 ] # don't mix channels
+
     factor = tuple(factor)
     output_shape = tuple(int(math.ceil(s / f)) for s, f in zip(array.shape, factor))
     temp = np.zeros(output_shape, float)

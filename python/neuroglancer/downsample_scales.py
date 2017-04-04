@@ -104,7 +104,7 @@ def compute_xy_plane_downsampling_scales(size,
     for i in xrange(num_downsamples):
         if factor > max_downsampling:
             break
-        elif dimension / factor < max_downsampled_size:
+        elif dimension / factor <= max_downsampled_size:
             break
 
         scales.append( (factor, factor, 1) )

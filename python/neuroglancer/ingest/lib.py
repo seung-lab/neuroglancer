@@ -241,17 +241,17 @@ def upload_to_gcloud(filenames, cloudpath, headers={}, compress=False, public=Fa
 
 
 def map2(fn, a, b):
-    assert len(a) == len(b)
+  assert len(a) == len(b)
 
-    if isinstance(a, Vec) or isinstance(b, Vec):
-      result = Vec(range(len(a)))
-    else:    
-      result = np.empty(len(a))
+  result = np.empty(len(a))
 
-    for i in xrange(len(result)):
-        result[i] = fn(a[i], b[i])
+  for i in xrange(len(result)):
+      result[i] = fn(a[i], b[i])
 
-    return result
+  if isinstance(a, Vec) or isinstance(b, Vec):
+    return Vec(*result)
+
+  return result
 
 def max2(a, b):
   return map2(max, a, b).astype(a.dtype)
