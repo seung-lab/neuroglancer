@@ -158,7 +158,7 @@ def divisors(n):
       if i*i != n:
         yield n / i
 
-def create_downsampling_task(dataset_name, layer_name, mip=-1, shape=Vec(4096, 4096, 512)):
+def create_downsampling_tasks(dataset_name, layer_name, mip=-1, shape=Vec(4096, 4096, 512)):
   vol = GCloudVolume(dataset_name, layer_name, mip)
 
   scales = downsample_scales.compute_xy_plane_downsampling_scales(shape)[1:] # omit (1,1,1)
@@ -167,7 +167,7 @@ def create_downsampling_task(dataset_name, layer_name, mip=-1, shape=Vec(4096, 4
   vol.commitInfo()
 
   tq = TaskQueue()
-  for startpt in xyzrange( vol.bounds.minpt, vol.bounds.maxpt, shape ):
+  for startpt in tqdm(xyzrange( vol.bounds.minpt, vol.bounds.maxpt, shape ), desc="Inserting Downsample Tasks"):
     task = DownsampleTask(
       dataset_name=vol.dataset_name,
       layer=vol.layer,
@@ -258,7 +258,7 @@ def ingest_hdf5_example():
   upload_build_chunks(dataset_name, layer_name, volume, offset)
   create_info_file_from_build(dataset_name, layer_name, layer_type, resolution=resolution, encoding="jpeg")
   create_ingest_task(dataset_name, layer_name)
-  create_downsampling_task("snemi3d_v0","image")
+  create_downsampling_tasks("snemi3d_v0","image")
 
   # ingest segmentation
   layer_name = "segmentation"
@@ -267,7 +267,7 @@ def ingest_hdf5_example():
   upload_build_chunks(dataset_name, layer_name, volume, offset)
   create_info_file_from_build(dataset_name, layer_name, layer_type, resolution=resolution, encoding="raw")
   create_ingest_task(dataset_name, layer_name)
-  create_downsampling_task("snemi3d_v0","segmentation")
+  create_downsampling_tasks("snemi3d_v0","segmentation")
   MeshTask(chunk_key="gs://neuroglancer/snemi3d_v0/segmentation/6_6_30",
        chunk_position="0-1024_0-1024_0-51",
        info_path="gs://neuroglancer/snemi3d_v0/segmentation/info", 
@@ -288,19 +288,19 @@ def ingest_hdf5_example():
   upload_build_chunks(dataset_name, layer_name, volume, offset)
   create_info_file_from_build(dataset_name, layer_name, layer_type, resolution=resolution, encoding="raw")
   create_ingest_task(dataset_name, layer_name)
-    create_downsampling_task(dataset_name,"segmentation")
-    MeshTask(chunk_key="gs://neuroglancer/"+dataset_name+"/segmentation/6_6_30",
-             chunk_position="0-1024_0-1024_0-51",
-             info_path="gs://neuroglancer/"+dataset_name+"/segmentation/info",
-             lod=0, simplification=5, segments=[]).execute()
-    MeshTask(chunk_key="gs://neuroglancer/"+dataset_name+"/segmentation/6_6_30",
-             chunk_position="0-1024_0-1024_50-100",
-             info_path="gs://neuroglancer/"+dataset_name+"/segmentation/info",
-             lod=0, simplification=5, segments=[]).execute()
-    MeshManifestTask(info_path="gs://neuroglancer/"+dataset_name+"/segmentation/info",
-                     lod=0).execute()
+  create_downsampling_tasks(dataset_name,"segmentation")
+  MeshTask(chunk_key="gs://neuroglancer/"+dataset_name+"/segmentation/6_6_30",
+           chunk_position="0-1024_0-1024_0-51",
+           info_path="gs://neuroglancer/"+dataset_name+"/segmentation/info",
+           lod=0, simplification=5, segments=[]).execute()
+  MeshTask(chunk_key="gs://neuroglancer/"+dataset_name+"/segmentation/6_6_30",
+           chunk_position="0-1024_0-1024_50-100",
+           info_path="gs://neuroglancer/"+dataset_name+"/segmentation/info",
+           lod=0, simplification=5, segments=[]).execute()
+  MeshManifestTask(info_path="gs://neuroglancer/"+dataset_name+"/segmentation/info",
+                   lod=0).execute()
 
-  create_downsampling_task("snemi3d_v0","affinities")
+  create_downsampling_tasks("snemi3d_v0","affinities")
 
   
 if __name__ == '__main__':   
@@ -322,6 +322,8 @@ if __name__ == '__main__':
   # )
 
 
+  create_downsampling_tasks('test_v0', 'image', mip=0)
+
   # create_ingest_tasks('test_v0', 'image')
 
 
@@ -339,4 +341,4 @@ if __name__ == '__main__':
   #                             layer_type="image",
   #                             resolution=[17,17,23])
   # create_ingest_task("e2198_v0","image")
-    pass
+  pass

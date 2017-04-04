@@ -110,14 +110,12 @@ class DownsampleTask(CloudTask):
         
   @property
   def payloadBase64(self):
-    vol = self._volume.mip
-
     payload = json.dumps({
-      'dataset_name': vol.dataset_name,
-      'layer': vol.layer,
-      'mip': vol.mip,
-      'shape': list(self._bounds.size3()),
-      'offset': list(self._bounds.minpt),
+      'dataset_name': self.dataset_name,
+      'layer': self.layer,
+      'mip': self.mip,
+      'shape': list(self.shape),
+      'offset': list(self.offset),
       'tid': self._id,
     })
     return base64.b64encode(payload)

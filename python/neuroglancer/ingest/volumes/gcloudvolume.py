@@ -12,7 +12,7 @@ from neuroglancer.ingest.volumes import Volume, VolumeCutout, generate_slices
 from google.cloud import storage as gstorage
 
 class GCloudVolume(Volume):
-  def __init__(self, dataset_name, layer, mip=0, cache_files=True, use_ls=False, use_secrets=False):
+  def __init__(self, dataset_name, layer, mip=0, info=None, cache_files=True, use_ls=False, use_secrets=False):
     super(self.__class__, self).__init__()
 
     # You can access these two with properties
@@ -73,7 +73,6 @@ class GCloudVolume(Volume):
 
   def commitInfo(self):
     blob = self.__getInfoBlob()
-    print self.info
     blob.upload_from_string(json.dumps(self.info), 'application/json')
     return self
 
