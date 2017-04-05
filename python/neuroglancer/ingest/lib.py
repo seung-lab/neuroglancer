@@ -20,6 +20,8 @@ GCLOUD_BUCKET_NAME = 'neuroglancer'
 GCLOUD_QUEUE_NAME = 'pull-queue'
 COMMON_STAGING_DIR = './staging/'
 
+CLOUD_COMPUTING = False if 'CLOUD_COMPUTING' not in os.environ else bool(int(os.environ['CLOUD_COMPUTING']))
+
 def mkdir(path):
   if path != '' and not os.path.exists(path):
     os.makedirs(path)
@@ -181,9 +183,12 @@ def download_from_gcloud(cloudpaths, destination, log=None, gzip=False):
   # so we're using streaming mode (-I) to enable it to handle arbitrary numbers of files
   # -m = multithreaded upload
 
-  gsutil_upload_cmd = "gsutil -m cp {logging} -I {destination}".format(
+  multiprocessing = '-m' if not CLOUD_COMPUTING else ''
+
+  gsutil_upload_cmd = "gsutil {multiprocessing} cp {logging} -I {destination}".format(
     logging=('-L {}'.format(log) if log is not None else ''),
     destination=destination,
+    multiprocessing=multiprocessing,
   )
 
   print(gsutil_upload_cmd)
@@ -220,11 +225,14 @@ def upload_to_gcloud(filenames, cloudpath, headers={}, compress=False, public=Fa
   cloudpath = re.sub(r'^/', '', cloudpath)
   cloudpath = re.sub(r'/$', '', cloudpath)
 
-  gsutil_upload_cmd = "gsutil -m {headers} cp -I {compress} {public} gs://{cloudpath}/".format(
+  multiprocessing = '-m' if not CLOUD_COMPUTING else ''
+
+  gsutil_upload_cmd = "gsutil {multiprocessing} {headers} cp -I {compress} {public} gs://{cloudpath}/".format(
     headers=" ".join(headers),
     compress=('-Z' if compress else ''),
     public=('-a public-read' if public else ''),
     cloudpath=cloudpath,
+    multiprocessing=multiprocessing,
   )
 
   print(gsutil_upload_cmd)
