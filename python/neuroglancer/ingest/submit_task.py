@@ -25,7 +25,8 @@ def create_ingest_tasks(dataset_name, layer_name):
   """
   tq = TaskQueue()
   bucket = lib.get_bucket(use_secrets=False)
-  for blob in tqdm(bucket.list_blobs(prefix='{}/{}/build/'.format(dataset_name, layer_name))):
+  blobs = bucket.list_blobs(prefix='{}/{}/build/'.format(dataset_name, layer_name))
+  for blob in tqdm(blobs, desc="Inserting Ingest Tasks"):
     t = IngestTask(
       chunk_path='gs://neuroglancer/'+blob.name,
       chunk_encoding='npz',
@@ -40,7 +41,8 @@ def create_bigarray_task(dataset_name, layer_name):
   """
   tq = TaskQueue()
   bucket = lib.get_bucket(use_secrets=True)
-  for blob in tqdm(bucket.list_blobs(prefix='{}/{}/bigarray/'.format(dataset_name, layer_name))):
+  blobs = bucket.list_blobs(prefix='{}/{}/bigarray/'.format(dataset_name, layer_name))
+  for blob in tqdm(blobs, desc="Inserting BigArray Tasks"):
     name = blob.name.split('/')[-1]
     if name == 'config.json':
       continue       
@@ -158,7 +160,7 @@ def divisors(n):
       if i*i != n:
         yield n / i
 
-def create_downsampling_tasks(dataset_name, layer_name, mip=-1, shape=Vec(4096, 4096, 512)):
+def create_downsampling_tasks(dataset_name, layer_name, mip=-1, shape=Vec(2048, 2048, 64)):
   vol = GCloudVolume(dataset_name, layer_name, mip)
   
   shape = min2(vol.volume_size, shape)
@@ -323,9 +325,9 @@ if __name__ == '__main__':
   # )
 
 
-  create_downsampling_tasks('test_v0', 'image', mip=0)
+  # create_downsampling_tasks('pinky40_v1', 'image-zerofill', mip=2)
 
-  # create_ingest_tasks('test_v0', 'image')
+  # create_ingest_tasks('s1_v0.1', 'image')
 
 
 
