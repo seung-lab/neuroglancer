@@ -61,7 +61,7 @@ class GCloudVolume(Volume):
   @classmethod
   def from_cloudpath(cls, cloudpath, mip=0, *args, **kwargs):
     # e.g. gs://neuroglancer/DATASET/LAYER/info
-    match = re.match(r'(?:gs://)?([\d\w_\-]+)/([\d\w_\-]+)/([\d\w_\-]+)/?(?:info)?')
+    match = re.match(r'(?:gs://)?([\d\w_\.\-]+)/([\d\w_\.\-]+)/([\d\w_\.\-]+)/?(?:info)?', cloudpath)
     bucket, dataset_name, layer = match.groups()
 
     return GCloudVolume(dataset_name, layer, mip, *args, **kwargs)
