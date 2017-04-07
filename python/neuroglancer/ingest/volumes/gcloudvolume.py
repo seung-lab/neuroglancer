@@ -196,6 +196,14 @@ class GCloudVolume(Volume):
     # "size": [2048, 2048, 256]}
     fullres = self.info['scales'][0]
 
+
+    # If the voxel_offset is not divisible by the ratio,
+    # zooming out will slightly shift the data.
+    # Imagine the offset is 10
+    #    the mip 1 will have an offset of 5
+    #    the mip 2 will have an offset of 2 instead of 2.5 
+    #        meaning that it will be half a pixel to the left
+    
     newscale = {
       u"encoding": fullres['encoding'],
       u"chunk_sizes": fullres['chunk_sizes'],

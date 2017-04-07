@@ -249,7 +249,7 @@ def upload_to_gcloud(filenames, cloudpath, headers={}, compress=False, public=Fa
 
 
 def map2(fn, a, b):
-  assert len(a) == len(b)
+  assert len(a) == len(b), "Vector lengths do not match: {} (len {}), {} (len {})".format(a[:3], len(a), b[:3], len(b))
 
   result = np.empty(len(a))
 
@@ -298,7 +298,7 @@ class Vec(np.ndarray):
         return reduce(operator.mul, self)
 
     def __hash__(self):
-        return repr(self)
+      return int(''.join(map(str, self)))
 
     def __repr__(self):
       values = u",".join(self.astype(unicode))
@@ -389,8 +389,8 @@ class Bbox(object):
   def expand(cls, *args):
     result = args[0].clone()
     for bbx in args:
-      result.minpt = min2(result, bbx)
-      result.maxpt = max2(result, bbx)
+      result.minpt = min2(result.minpt, bbx.minpt)
+      result.maxpt = max2(result.maxpt, bbx.maxpt)
     return result
 
   @classmethod
@@ -492,6 +492,9 @@ class Bbox(object):
 
   def __eq__(self, other):
     return np.array_equal(self.minpt, other.minpt) and np.array_equal(self.maxpt, other.maxpt)
+
+  def __hash__(self):
+    return int(''.join(self.to_list()))
 
   def __repr__(self):
     return "Bbox({},{})".format(self.minpt, self.maxpt)

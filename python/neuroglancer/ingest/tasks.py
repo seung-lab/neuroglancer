@@ -67,13 +67,14 @@ class IngestTask(CloudTask):
       self._create_chunks(data)
 
     def _download_input_chunk(self):
-      path = '{}/{}/build/{}'.format(self._dataset_name, self._layer_name, self._bounds.to_filename())
+      path = '{}/{}/build/{}'.format(self._volume.dataset_name, self._volume.layer, self._bounds.to_filename())
+      print('downloading {}'.format(path))
       return lib.get_blob(path).download_as_string()
 
     def _create_chunks(self, image):
       vol = self._volume
 
-      fullscales = downsample_scales.compute_xy_plane_downsampling_scales(image.shape[:3])
+      fullscales = downsample_scales.compute_xy_plane_downsampling_scales(image.shape[:3], max_downsampled_size=max(self._volume.underlying[:2]))
 
       factors = downsample.scale_series_to_downsample_factors(fullscales)
 

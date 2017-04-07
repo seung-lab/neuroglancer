@@ -8,10 +8,8 @@ import copy
 import numpy as np
 from tqdm import tqdm
 
-from google.cloud import storage
-
 import neuroglancer.ingest.lib as lib
-from neuroglancer.ingest.lib import xyzrange, Vec, Bbox, min2, max2
+from neuroglancer.ingest.lib import xyzrange, Vec, Bbox, min2, max2, Storage
 from neuroglancer import downsample_scales, chunks
 from neuroglancer.ingest.tasks import (TaskQueue, BigArrayTask, IngestTask,
    HyperSquareTask, MeshTask, MeshManifestTask, DownsampleTask)
@@ -63,7 +61,8 @@ def compute_bigarray_bounding_box(dataset_name, layer_name):
   
   bucket = lib.get_bucket(use_secrets=True)
   bboxes = []
-  for blob in tqdm(bucket.list_blobs(prefix='{}/{}/bigarray/'.format(dataset_name, layer_name))):
+  blobs = bucket.list_blobs(prefix='{}/{}/bigarray/'.format(dataset_name, layer_name))
+  for blob in tqdm(blobs, desc="Computing BigArray Bounds"):
     name = blob.name.split('/')[-1]
     if name == 'config.json':
       continue
@@ -76,71 +75,56 @@ def compute_bigarray_bounding_box(dataset_name, layer_name):
   print('offset', bounds.minpt - 1)
 
 def compute_build_bounding_box(dataset_name, layer_name):
-  chunk_sizes = set()
   bboxes = []
 
   bucket = lib.get_bucket(use_secrets=True)
-  for blob in tqdm(bucket.list_blobs(prefix='{}/{}/build/'.format(dataset_name, layer_name))):
+  blobs = bucket.list_blobs(prefix='{}/{}/build/'.format(dataset_name, layer_name))
+  for blob in tqdm(blobs, desc="Computing Build Bounds"):
     bbox = Bbox.from_filename(blob.name) 
     bboxes.append(bbox)
-    chunk_sizes.add(bbox.size3())
 
   bounds = Bbox.expand(*bboxes)
-  chunk_size = reduce(max2, chunk_sizes)
+  chunk_size = reduce(max2, map(lambda bbox: bbox.size3(), bboxes))
 
-  print('shape=', bounds.size3() , '; offset=', bounds.minpt, '; chunk_size=', chunk_size)
+  print('bounds={} (size: {}); chunk_size={}'.format(bounds, bounds.size3(), chunk_size))
   
-  return shape, offset, chunk_size
+  return bounds, chunk_size
 
 def get_build_data_type_and_shape(dataset_name, layer_name):
-  storage = Storage(dataset_name=dataset_name, layer_name=layer_name, compress=False)
-  for blob in storage._bucket.list_blobs(prefix='{}/{}/build/'.format(dataset_name, layer_name)):
+  bucket = lib.get_bucket(use_secrets=True)
+  blobs = bucket.list_blobs(prefix='{}/{}/build/'.format(dataset_name, layer_name))
+  for blob in blobs:
     arr = chunks.decode_npz(blob.download_as_string())
     return arr.dtype.name, arr.shape[3] #num_channels
 
 def create_info_file_from_build(dataset_name, layer_name, layer_type, resolution=[1,1,1], encoding="raw"):
   assert layer_type == "image" or layer_type == "segmentation"
-  layer_shape, layer_offset, build_chunk_size = compute_build_bounding_box(dataset_name, layer_name)
+  bounds, build_chunk_size = compute_build_bounding_box(dataset_name, layer_name)
   data_type, num_channels = get_build_data_type_and_shape(dataset_name, layer_name)
-  info = {
-    "data_type": data_type,
-    "num_channels": num_channels,
-    "scales": [], 
-    "type": layer_type,
-  }
-  if layer_type == "segmentation":
-    info['mesh'] = "mesh"
 
   neuroglancer_chunk_size = find_closest_divisor(build_chunk_size, closest_to=[64,64,64])
-  scale_ratios = downsample_scales.compute_near_isotropic_downsampling_scales(
-    size=layer_shape,
-    voxel_size=resolution,
-    dimensions_to_downsample=[0, 1, 2],
-    max_downsampled_size=neuroglancer_chunk_size
-  )
-  # if the voxel_offset is not divisible by the ratio
-  # zooming out will slightly shift the data.
-  # imagine the offset is 10
-  # the mip 1 will have an offset of 5
-  # the mip 2 will have an offset of 2 instead of 2.5 meaning that it will he half a pixel to the left
-  for ratio in scale_ratios:
-    downsampled_resolution = map(int, (resolution * np.array(ratio)))
-    scale = {  
-      "chunk_sizes": [ neuroglancer_chunk_size ],
-      "encoding": encoding, 
-      "key": "_".join(map(str, downsampled_resolution)),
-      "resolution": downsampled_resolution,
-      "size": map(int, np.ceil(np.array(layer_shape) / ratio)),
-      "voxel_offset": map(int, layer_offset /  np.array(ratio)),
-    }
-    info["scales"].append(scale)
 
-  storage = Storage(dataset_name=dataset_name, layer_name=layer_name, compress=True)
-  storage.add_file(
-    filename='info',
-    content=json.dumps(info)
+  info = GCloudVolume.create_new_info(
+    num_channels=num_channels, 
+    layer_type=layer_type, 
+    data_type=data_type, 
+    encoding=encoding, 
+    resolution=resolution, 
+    voxel_offset=bounds.minpt, 
+    volume_size=bounds.size3(), 
+    mesh=(layer_type == 'segmentation'), 
+    chunk_size=neuroglancer_chunk_size,
   )
-  storage.flush('')
+
+  scale_ratios = downsample_scales.compute_xy_plane_downsampling_scales(
+    size=build_chunk_size,
+    max_downsampled_size=max(neuroglancer_chunk_size[:2]), # exclude z since it won't be downsampled
+  )
+
+  vol = GCloudVolume(dataset_name, layer_name, mip=0, info=info, use_secrets=True)
+  map(vol.addScale, scale_ratios)
+
+  vol.commitInfo()
 
 def find_closest_divisor(to_divide, closest_to):
   def find_closest(td,ct):
@@ -339,9 +323,9 @@ if __name__ == '__main__':
   # create_ingest_task("zfish_v0","segmentation")
 
   # create_hypersquare_tasks("e2198_v0","image","e2198_compressed","")
-  # create_info_file_from_build(dataset_name="e2198_v0",
-  #                             layer_name="image",
-  #                             layer_type="image",
-  #                             resolution=[17,17,23])
-  # create_ingest_task("e2198_v0","image")
+  create_info_file_from_build(dataset_name="e2198_v0",
+                              layer_name="image",
+                              layer_type="image",
+                              resolution=[17,17,23])
+  create_ingest_tasks("e2198_v0","image")
   pass
