@@ -320,7 +320,7 @@ class GCloudVolume(Volume):
     offset = Vec(*offset)[:3]
 
     bounds = Bbox( offset, shape + offset)
-    bounds = Bbox.clamp(bounds, Bbox.from_vec(self.volume_size))
+    bounds = Bbox.clamp(bounds, self.bounds)
     bounds = bounds.shrink_to_chunk_size( self.underlying )
 
     img_offset = bounds.minpt - offset
