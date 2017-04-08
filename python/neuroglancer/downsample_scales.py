@@ -89,7 +89,6 @@ def compute_two_dimensional_near_isotropic_downsampling_scales(
     return scales
 
 def compute_xy_plane_downsampling_scales(size,
-                                       voxel_size,
                                        max_scales=DEFAULT_MAX_DOWNSAMPLING_SCALES,
                                        max_downsampling=DEFAULT_MAX_DOWNSAMPLING,
                                        max_downsampled_size=DEFAULT_MAX_DOWNSAMPLED_SIZE):

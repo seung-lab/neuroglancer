@@ -12,7 +12,7 @@ from neuroglancer.ingest.volumes import Volume, VolumeCutout, generate_slices
 from google.cloud import storage as gstorage
 
 class GCloudVolume(Volume):
-  def __init__(self, dataset_name, layer, mip=0, cache_files=True, use_ls=True, use_secrets=False):
+  def __init__(self, dataset_name, layer, mip=0, info=None, cache_files=True, use_ls=False, use_secrets=False):
     super(self.__class__, self).__init__()
 
     # You can access these two with properties
@@ -27,7 +27,10 @@ class GCloudVolume(Volume):
 
     self._uncommitted_changes = []
 
-    self.refreshInfo()
+    if info is None:
+      self.refreshInfo()
+    else:
+      self.info = info
 
     try:
       self.mip = self.available_mips[self.mip]
@@ -35,9 +38,30 @@ class GCloudVolume(Volume):
       raise Exception("MIP {} has not been generated.".format(self.mip))
 
   @classmethod
+  def create_new_info(cls, num_channels, layer_type, data_type, encoding, resolution, voxel_offset, volume_size, mesh=False, chunk_size=[64,64,64]):
+    info = {
+      "num_channels": int(num_channels),
+      "type": layer_type,
+      "data_type": data_type,
+      "scales": [{
+        "encoding": encoding,
+        "chunk_sizes": [chunk_size],
+        "key": "_".join(map(str, resolution)),
+        "resolution": list(resolution),
+        "voxel_offset": list(voxel_offset),
+        "size": list(volume_size),
+      }],
+    }
+
+    if mesh:
+      info['mesh'] = 'mesh'
+
+    return info
+
+  @classmethod
   def from_cloudpath(cls, cloudpath, mip=0, *args, **kwargs):
     # e.g. gs://neuroglancer/DATASET/LAYER/info
-    match = re.match(r'(?:gs://)?([\d\w_\-]+)/([\d\w_\-]+)/([\d\w_\-]+)/?(?:info)?')
+    match = re.match(r'(?:gs://)?([\d\w_\.\-]+)/([\d\w_\.\-]+)/([\d\w_\.\-]+)/?(?:info)?', cloudpath)
     bucket, dataset_name, layer = match.groups()
 
     return GCloudVolume(dataset_name, layer, mip, *args, **kwargs)
@@ -54,15 +78,7 @@ class GCloudVolume(Volume):
 
   def __getInfoBlob(self):
     info_path = os.path.join(self.dataset_name, self.layer, 'info')
-
-    # for cloud use
-    if self.use_secrets:
-      return lib.get_blob(info_path)
-
-    # generally for local use
-    client = gstorage.Client(project=lib.GCLOUD_PROJECT_NAME)
-    bucket = client.get_bucket(lib.GCLOUD_BUCKET_NAME)
-    return gstorage.blob.Blob(info_path, bucket)
+    return lib.get_blob(info_path, use_secrets=self.use_secrets)
 
   @property
   def dataset_name(self):
@@ -180,6 +196,14 @@ class GCloudVolume(Volume):
     # "size": [2048, 2048, 256]}
     fullres = self.info['scales'][0]
 
+
+    # If the voxel_offset is not divisible by the ratio,
+    # zooming out will slightly shift the data.
+    # Imagine the offset is 10
+    #    the mip 1 will have an offset of 5
+    #    the mip 2 will have an offset of 2 instead of 2.5 
+    #        meaning that it will be half a pixel to the left
+    
     newscale = {
       u"encoding": fullres['encoding'],
       u"chunk_sizes": fullres['chunk_sizes'],
@@ -247,7 +271,8 @@ class GCloudVolume(Volume):
 
     renderbuffer = np.zeros(shape=multichannel_shape(realized_bbox), dtype=self.data_type)
 
-    files = lib.gcloudFileIterator(cloudpaths, savedir, use_ls=self.use_ls, compress=(self.encoding == 'raw'))
+    compress = (self.layer_type == 'segmentation' and self.cache_files) # sometimes channel images are raw encoded too
+    files = lib.gcloudFileIterator(cloudpaths, savedir, use_ls=self.use_ls, compress=compress)
 
     for filehandle in tqdm(files, total=len(cloudpaths), desc="Rendering Image"):
       bbox = Bbox.from_filename(filehandle.name)
@@ -280,7 +305,7 @@ class GCloudVolume(Volume):
     allslices = [ generate_slices(slices, self.volume_size) for slices in allslices ]
     allboxes = map(Bbox.from_slices, allslices)
     
-    big_bbox = Bbox.union(*allboxes)
+    big_bbox = Bbox.expand(*allboxes)
     subvol = self[ big_bbox.to_slices() ]
 
     for slcs, img in self._uncommitted_changes:
@@ -291,11 +316,11 @@ class GCloudVolume(Volume):
     self._uncommitted_changes = []
 
   def upload_image(self, img, offset):
-    shape = Vec(*img.shape)
-    offset = Vec(*offset)
+    shape = Vec(*img.shape)[:3]
+    offset = Vec(*offset)[:3]
 
     bounds = Bbox( offset, shape + offset)
-    bounds = Bbox.clamp(bounds, self.volume_size)
+    bounds = Bbox.clamp(bounds, self.bounds)
     bounds = bounds.shrink_to_chunk_size( self.underlying )
 
     img_offset = bounds.minpt - offset
@@ -313,6 +338,9 @@ class GCloudVolume(Volume):
     for imgchunk, spt, ept in generate_chunks():
       if np.array_equal(spt, ept):
           continue
+
+      spt = spt.astype(int)
+      ept = ept.astype(int)
 
       filename = "{}-{}_{}-{}_{}-{}".format(
           spt.x, ept.x,
