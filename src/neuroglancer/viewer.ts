@@ -95,8 +95,12 @@ export class Viewer extends RefCounted implements ViewerState {
 
   state = new CompoundTrackable();
 
-  constructor(public display: DisplayContext) {
+  private options: ViewerOptions;
+
+  constructor(public display: DisplayContext, options: ViewerOptions = {}) {
     super();
+
+    this.options = {...defaultViewerOptions, ...options};
 
     this.registerDisposer(display.updateStarted.add(() => { this.onUpdateDisplay(); }));
     this.registerDisposer(display.updateFinished.add(() => { this.onUpdateDisplayFinished(); }));
@@ -144,7 +148,7 @@ export class Viewer extends RefCounted implements ViewerState {
         this.perspectiveNavigationState.pose.orientation.reset();
         this.perspectiveNavigationState.zoomFactor.reset();
         this.resetInitiated.dispatch();
-        if (!overlaysOpen) {
+        if (!overlaysOpen && this.options.showLayerDialog) {
           new LayerDialog(this.layerSpecification);
         }
       }
@@ -219,29 +223,40 @@ export class Viewer extends RefCounted implements ViewerState {
   }
 
   private makeUI() {
-    let {display} = this;
+    let {display, options} = this;
     let gridContainer = document.createElement('div');
     gridContainer.setAttribute('class', 'gllayoutcontainer noselect');
     let {container} = display;
     container.appendChild(gridContainer);
 
-    L.box('column', [
-      L.box(
-          'row',
-          [
-            L.withFlex(1, element => new PositionStatusPanel(element, this)),
-            element => {
-              let button = document.createElement('button');
-              button.className = 'help-button';
-              button.textContent = '?';
-              button.title = 'Help';
-              element.appendChild(button);
-              this.registerEventListener(button, 'click', () => { this.showHelpDialog(); });
-            },
-          ]),
-      element => { this.layerPanel = new LayerPanel(element, this.layerSpecification); },
-      L.withFlex(1, element => { this.createDataDisplayLayout(element); }),
-    ])(gridContainer);
+    let uiElements: L.Handler[] = [];
+
+    if (options.showHelpButton || options.showLocation) {
+      let rowElements: L.Handler[] = [];
+      if (options.showLocation) {
+        rowElements.push(L.withFlex(1, element => new PositionStatusPanel(element, this)));
+      }
+      if (options.showHelpButton) {
+        rowElements.push(element => {
+          let button = document.createElement('button');
+          button.className = 'help-button';
+          button.textContent = '?';
+          button.title = 'Help';
+          element.appendChild(button);
+          this.registerEventListener(button, 'click', () => { this.showHelpDialog(); });
+        });
+      }
+      uiElements.push(L.box('row', rowElements));
+    }
+
+    if (options.showLayerPanel) {
+      uiElements.push(
+          element => { this.layerPanel = new LayerPanel(element, this.layerSpecification); });
+    }
+
+    uiElements.push(L.withFlex(1, element => { this.createDataDisplayLayout(element); }));
+
+    L.box('column', uiElements)(gridContainer);
     this.display.onResize();
   }
 
