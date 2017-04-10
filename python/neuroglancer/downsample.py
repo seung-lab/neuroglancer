@@ -19,11 +19,65 @@ import numpy as np
 
 def method(layer_type):
   if layer_type == 'image':
-    return downsample_with_averaging
+    fn = downsample_with_averaging
   elif layer_type == 'segmentation':
-    return downsample_segmentation
+    fn = downsample_segmentation
   else:
-    return downsample_with_striding 
+    fn = downsample_with_striding 
+
+  def normalizedfn(img, *args):
+    return fn(odd_to_even(img), *args)
+
+  return normalizedfn
+
+def odd_to_even(img):
+  """
+  Change an odd sized image into an even sized one to make downsampling by 2 easier.
+  Works by mirroring the starting 1 pixel edge of the image on odd shaped sides.
+  
+  For example: [ 3, 2, 4 ] => [ 3, 3, 2, 4 ] which is now super easy to downsample.
+
+  """
+  original_shape = img.shape
+
+  if len(img.shape) == 2:
+    image = img[:,:, np.newaxis, np.newaxis ]
+  if len(img.shape) == 3:
+    image = img[:,:,:, np.newaxis ]
+
+  zeros = np.zeros(shape=(3,), dtype=img.dtype)
+
+  offset = zeros.copy()
+  for i in range(len(offset)):
+    offset[i] = image.shape[i] % 2
+
+  if np.array_equal(offset, zeros):
+    return img
+
+  oddshape = image.shape[:3] + offset
+
+  num_channels = image.shape[3]
+  oddshape = np.append(oddshape, num_channels)
+  oddshape = oddshape.astype(int)
+
+  newimg = np.empty(shape=oddshape, dtype=img.dtype)
+
+  ox,oy,oz = offset
+  sx,sy,sz,ch = oddshape
+
+  newimg[0,0,0] = image[0,0,0] # corner
+
+  newimg[ox:sx,0,0] = image[:,0,0]
+  newimg[0,oy:sy,0] = image[0,:,0]
+  newimg[0,0,oz:sz] = image[0,0,:]
+
+  newimg[ox:sx,oy:sy,0] = image[:,:,0]
+  newimg[ox:sx,0,oz:sz] = image[:,0,:]
+  newimg[0,oy:sy,oz:sz] = image[0,:,:]
+
+  newimg[ox:,oy:,oz:] = image
+
+  return np.squeeze(newimg).astype(img.dtype)
 
 def scale_series_to_downsample_factors(scales):
   fullscales = [ np.array(scale) for scale in scales ] 
@@ -61,8 +115,12 @@ def downsample_segmentation(data, factor):
   has_even_dims = (data.shape[0] % 2 == 0) and (data.shape[1] % 2 == 0)
   if not is_twod_pot_downsample or not has_even_dims:
     return downsample_with_striding(data, factor)
+
+  if len(data.shape) == 3:
+    data = data[ :,:,:, np.newaxis ]
+
   output = np.zeros(
-    shape=( data.shape[0] / 2, data.shape[1] / 2, data.shape[2], data.shape[3]), 
+    shape=( int(data.shape[0] / 2), int(data.shape[1] / 2), data.shape[2], data.shape[3]), 
     dtype=data.dtype
   )
   for z in xrange(data.shape[2]):
@@ -75,8 +133,10 @@ def downsample_segmentation_2D_4x(data):
   image by 2 on each side using the COUNTLESS algorithm."""
   sections = []
 
-  # This algorithm doesn't handle 0 correctly, so add one now and take it away later
-  # It's essentially a tradeoff between the low and high end of the integer.
+  # allows us to prevent losing 1/2 a bit of information 
+  # at the top end by using a bigger type. Without this 255 is handled incorrectly.
+  data, upgraded = upgrade_type(data) 
+
   data = data + 1 # don't use +=, it will affect the original data.
 
   factor = (2,2)
@@ -91,8 +151,37 @@ def downsample_segmentation_2D_4x(data):
 
   a = ab_ac | bc # ab or ac or bc
 
-  return a + (a == 0) * d - 1 # a or d + 1
+  result = a + (a == 0) * d - 1 # a or d + 1
+
+  if upgraded:
+    return downgrade_type(result)
+
+  return result
+
+def upgrade_type(arr):
+  dtype = arr.dtype
+
+  if dtype == np.uint8:
+    return arr.astype(np.uint16), True
+  elif dtype == np.uint16:
+    return arr.astype(np.uint32), True
+  elif dtype == np.uint32:
+    return arr.astype(np.uint64), True
+
+  return arr, False
   
+def downgrade_type(arr):
+  dtype = arr.dtype
+
+  if dtype == np.uint64:
+    return arr.astype(np.uint32)
+  elif dtype == np.uint32:
+    return arr.astype(np.uint16)
+  elif dtype == np.uint16:
+    return arr.astype(np.uint8)
+  
+  return arr
+
 def downsample_with_striding(array, factor): 
     """Downsample x by factor using striding.
 
