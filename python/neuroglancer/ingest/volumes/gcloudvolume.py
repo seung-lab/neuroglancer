@@ -366,6 +366,8 @@ class GCloudVolume(Volume):
       spt = spt.astype(int)
       ept = ept.astype(int)
 
+      ept = min2(ept, self.bounds.maxpt)
+
       filename = "{}-{}_{}-{}_{}-{}".format(
           spt.x, ept.x,
           spt.y, ept.y, 
