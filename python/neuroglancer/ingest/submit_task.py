@@ -50,8 +50,30 @@ def create_s1_ingest_tasks(dataset_name, layer_name):
       chunk_encoding='npz',
       info_path='gs://neuroglancer/{}/{}/info'.format(dataset_name,layer_name),
     )
-    t.execute()
-    # tq.insert(t)
+    # t.execute()
+    tq.insert(t)
+
+def create_downsampling_tasks(dataset_name, layer_name, mip=-1, shape=Vec(2048, 2048, 64)):
+  vol = GCloudVolume(dataset_name, layer_name, mip)
+  
+  shape = min2(vol.volume_size, shape)
+  scales = downsample_scales.compute_xy_plane_downsampling_scales(shape)[1:] # omit (1,1,1)
+  scales = [ vol.downsample_ratio * Vec(*factor3) for factor3 in scales ]
+  map(vol.addScale, scales)
+  vol.commitInfo()
+
+  tq = TaskQueue()
+  for startpt in tqdm(xyzrange( vol.bounds.minpt, vol.bounds.maxpt, shape ), desc="Inserting Downsample Tasks"):
+    task = DownsampleTask(
+      dataset_name=vol.dataset_name,
+      layer=vol.layer,
+      mip=vol.mip,
+      shape=shape.clone(),
+      offset=startpt.clone(),
+    )
+    # task.execute()
+    tq.insert(task)
+
 
 def create_bigarray_task(dataset_name, layer_name):
   """
@@ -164,27 +186,6 @@ def divisors(n):
       yield i
       if i*i != n:
         yield n / i
-
-def create_downsampling_tasks(dataset_name, layer_name, mip=-1, shape=Vec(2048, 2048, 64)):
-  vol = GCloudVolume(dataset_name, layer_name, mip)
-  
-  shape = min2(vol.volume_size, shape)
-  scales = downsample_scales.compute_xy_plane_downsampling_scales(shape)[1:] # omit (1,1,1)
-  scales = [ vol.downsample_ratio * Vec(*factor3) for factor3 in scales ]
-  map(vol.addScale, scales)
-  vol.commitInfo()
-
-  tq = TaskQueue()
-  for startpt in tqdm(xyzrange( vol.bounds.minpt, vol.bounds.maxpt, shape ), desc="Inserting Downsample Tasks"):
-    task = DownsampleTask(
-      dataset_name=vol.dataset_name,
-      layer=vol.layer,
-      mip=vol.mip,
-      shape=shape.clone(),
-      offset=startpt.clone(),
-    )
-    task.execute()
-    # tq.insert(task)
 
 
 def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hypersquare_chunk_size, resolution, voxel_offset, volume_size, overlap):
@@ -329,10 +330,10 @@ if __name__ == '__main__':
   #   overlap=[ 32, 32, 32 ],
   # )
 
-  # create_downsampling_tasks('pinky40_v3', 'image-zerofill', mip=6)
+  create_downsampling_tasks('s1_v0.1', 'image', mip=0)
 
   # create_info_file_from_build('s1_v0.1', layer_name='image', layer_type='image', resolution=[6,6,30], encoding='jpeg')
-  create_s1_ingest_tasks('s1_v0.1', 'image')
+  # create_s1_ingest_tasks('s1_v0.1', 'image')
 
 
 
