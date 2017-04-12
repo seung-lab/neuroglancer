@@ -377,9 +377,9 @@ class Bbox(object):
 
   def to_slices(self):
     return (
-      slice(self.minpt.x, self.maxpt.x),
-      slice(self.minpt.y, self.maxpt.y),
-      slice(self.minpt.z, self.maxpt.z)
+      slice(int(self.minpt.x), int(self.maxpt.x)),
+      slice(int(self.minpt.y), int(self.maxpt.y)),
+      slice(int(self.minpt.z), int(self.maxpt.z))
     )
 
   def to_list(self):

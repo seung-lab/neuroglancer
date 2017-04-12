@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 import neuroglancer
 import neuroglancer.ingest.lib as lib
-from neuroglancer.ingest.lib import clamp, xyzrange, Vec, Vec3, Bbox, min2, Storage
+from neuroglancer.ingest.lib import clamp, xyzrange, Vec, Vec3, Bbox, min2, max2, Storage
 from neuroglancer.ingest.volumes import Volume, VolumeCutout, generate_slices
 from google.cloud import storage as gstorage
 
@@ -190,6 +190,30 @@ class GCloudVolume(Volume):
     shape = self.mip_volume_size(mip)
     return Bbox( offset, offset + shape )
 
+  def slices_from_global_coords(self, slices):
+    maxsize = list(self.mip_volume_size(0))
+    maxsize.append(self.num_channels)
+
+    slices = generate_slices(slices, maxsize)[:3]
+    lower = Vec(*map(lambda x: x.start, slices))
+    upper = Vec(*map(lambda x: x.stop, slices))
+    step = Vec(*map(lambda x: x.step, slices))
+
+    print(lower, self.downsample_ratio)
+
+    lower /= self.downsample_ratio
+    upper /= self.downsample_ratio
+
+    signs = step / np.absolute(step)
+    step = signs * max2(np.absolute(step / self.downsample_ratio), Vec(1,1,1))
+    step = Vec(*np.round(step))
+
+    return [
+      slice(lower.x, upper.x, step.x),
+      slice(lower.y, upper.y, step.y),
+      slice(lower.z, upper.z, step.z)
+    ]
+
   def addScale(self, factor):
     # e.g. {"encoding": "raw", "chunk_sizes": [[64, 64, 64]], "key": "4_4_40", 
     # "resolution": [4, 4, 40], "voxel_offset": [0, 0, 0], 
@@ -321,7 +345,7 @@ class GCloudVolume(Volume):
 
     bounds = Bbox( offset, shape + offset)
     bounds = Bbox.clamp(bounds, self.bounds)
-    bounds = bounds.shrink_to_chunk_size( self.underlying )
+    # bounds = bounds.shrink_to_chunk_size( self.underlying )
 
     img_offset = bounds.minpt - offset
     img_end = Vec.clamp(bounds.size3() + img_offset, Vec(0,0,0), shape)

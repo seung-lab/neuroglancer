@@ -19,65 +19,51 @@ import numpy as np
 
 def method(layer_type):
   if layer_type == 'image':
-    fn = downsample_with_averaging
+    return downsample_with_averaging
   elif layer_type == 'segmentation':
-    fn = downsample_segmentation
+    return downsample_segmentation
   else:
-    fn = downsample_with_striding 
+    return downsample_with_striding 
 
-  def normalizedfn(img, *args):
-    return fn(odd_to_even(img), *args)
-
-  return normalizedfn
-
-def odd_to_even(img):
+def odd_to_even(image):
   """
-  Change an odd sized image into an even sized one to make downsampling by 2 easier.
+  To facilitate 2x2 downsampling segmentation, change an odd sized image into an even sized one.
   Works by mirroring the starting 1 pixel edge of the image on odd shaped sides.
+
+  e.g. turn a 3x3x5 image into a 4x4x5 (the x and y are what are getting downsampled)
   
   For example: [ 3, 2, 4 ] => [ 3, 3, 2, 4 ] which is now super easy to downsample.
 
   """
-  original_shape = img.shape
+  if len(image.shape) == 3:
+    image = image[ :,:,:, np.newaxis ]
 
-  if len(img.shape) == 2:
-    image = img[:,:, np.newaxis, np.newaxis ]
-  if len(img.shape) == 3:
-    image = img[:,:,:, np.newaxis ]
+  shape = np.array(image.shape)
 
-  zeros = np.zeros(shape=(3,), dtype=img.dtype)
+  offset = (shape % 2)[:2] # x,y offset
+  
+  if not np.any(offset): # any non-zeros
+    return image
 
-  offset = zeros.copy()
-  for i in range(len(offset)):
-    offset[i] = image.shape[i] % 2
-
-  if np.array_equal(offset, zeros):
-    return img
-
-  oddshape = image.shape[:3] + offset
-
-  num_channels = image.shape[3]
-  oddshape = np.append(oddshape, num_channels)
+  oddshape = image.shape[:2] + offset
+  oddshape = np.append(oddshape, shape[2:])
   oddshape = oddshape.astype(int)
 
-  newimg = np.empty(shape=oddshape, dtype=img.dtype)
+  newimg = np.empty(shape=oddshape, dtype=image.dtype)
 
-  ox,oy,oz = offset
+  ox,oy = offset
   sx,sy,sz,ch = oddshape
 
-  newimg[0,0,0] = image[0,0,0] # corner
+  newimg[0,0,0,:] = image[0,0,0,:] # corner
+  newimg[ox:sx,0,0,:] = image[:,0,0,:] # x axis line
+  newimg[0,oy:sy,0,:] = image[0,:,0,:] # y axis line 
+  newimg[0,0,:,:] = image[0,0,:,:] # vertical line
 
-  newimg[ox:sx,0,0] = image[:,0,0]
-  newimg[0,oy:sy,0] = image[0,:,0]
-  newimg[0,0,oz:sz] = image[0,0,:]
+  newimg[ox:,oy:,:,:] = image[:,:,:,:]
+  newimg[ox:sx,0,:,:] = image[:,0,:,:]
+  newimg[0,oy:sy,:,:] = image[0,:,:,:]
 
-  newimg[ox:sx,oy:sy,0] = image[:,:,0]
-  newimg[ox:sx,0,oz:sz] = image[:,0,:]
-  newimg[0,oy:sy,oz:sz] = image[0,:,:]
-
-  newimg[ox:,oy:,oz:] = image
-
-  return np.squeeze(newimg).astype(img.dtype)
+  return newimg
 
 def scale_series_to_downsample_factors(scales):
   fullscales = [ np.array(scale) for scale in scales ] 
@@ -113,11 +99,12 @@ def downsample_segmentation(data, factor):
   is_pot = lambda x: (x != 0) and not (x & (x - 1)) # is power of two
   is_twod_pot_downsample = (factor[2] == 1) and (factor[1] == factor[0]) and is_pot(factor[0])
   has_even_dims = (data.shape[0] % 2 == 0) and (data.shape[1] % 2 == 0)
-  if not is_twod_pot_downsample or not has_even_dims:
+  
+  if not is_twod_pot_downsample:
     return downsample_with_striding(data, factor)
 
-  if len(data.shape) == 3:
-    data = data[ :,:,:, np.newaxis ]
+  if not has_even_dims:
+    data = odd_to_even(data)
 
   output = np.zeros(
     shape=( int(data.shape[0] / 2), int(data.shape[1] / 2), data.shape[2], data.shape[3]), 

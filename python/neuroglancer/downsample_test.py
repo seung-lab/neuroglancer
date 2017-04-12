@@ -2,34 +2,34 @@ import numpy as np
 
 from neuroglancer import downsample
 
-image1x1x1 = np.array([[[0]]])
+image1x1x1 = np.array([[[[0]]]])
 
 image2x2x2 = np.array([ 
   [
-    [ 1, 1 ],
-    [ 2, 2 ],
+    [ [1], [1] ],
+    [ [2], [2] ],
   ], 
   [
-    [ 1, 0 ],
-    [ 0, 30 ],
+    [ [1], [0 ] ],
+    [ [0], [30] ],
   ] 
 ])
 
 image3x3x3 = np.array([ 
   [#z 0  1  2   
-    [ 1, 1, 1 ], # y=0
-    [ 1, 1, 1 ], # y=1      # x=0
-    [ 1, 1, 1 ], # y=2
+    [ [1], [1], [1] ], # y=0
+    [ [1], [1], [1] ], # y=1      # x=0
+    [ [1], [1], [1] ], # y=2
   ], 
   [
-    [ 2, 2, 2 ], # y=0 
-    [ 2, 2, 2 ], # y=1      # x=1
-    [ 2, 2, 2 ], # y=2
+    [ [2], [2], [2] ], # y=0 
+    [ [2], [2], [2] ], # y=1      # x=1
+    [ [2], [2], [2] ], # y=2
   ],
   [
-    [ 3, 3, 3 ], # y=0
-    [ 3, 3, 3 ], # y=1      # x=2
-    [ 3, 3, 3 ], # y=2
+    [ [3], [3], [3] ], # y=0
+    [ [3], [3], [3] ], # y=1      # x=2
+    [ [3], [3], [3] ], # y=2
   ],
 ])
 
@@ -39,17 +39,16 @@ def test_even_odd():
 
   oddimg = downsample.odd_to_even(image1x1x1).astype(int)
   
-  ans1x1x1 = np.array(
+  ans1x1x1 = np.array([
     [
-      [
-        [ 0,0 ],
-        [ 0,0 ]
-      ], 
-      [
-        [ 0,0 ], 
-        [ 0,0 ] 
-      ]
-    ])
+      [ [0] ],
+      [ [0] ], 
+    ],
+    [
+      [ [0] ],
+      [ [0] ] 
+    ]
+  ])
 
   assert np.array_equal(oddimg, ans1x1x1)
 
@@ -57,43 +56,43 @@ def test_even_odd():
 
   ans3x3x3 = np.array([
     [
-      [ 1, 1, 1, 1 ], 
-      [ 1, 1, 1, 1 ], 
-      [ 1, 1, 1, 1 ], 
-      [ 1, 1, 1, 1 ], 
+      [ [1], [1], [1] ], 
+      [ [1], [1], [1] ], 
+      [ [1], [1], [1] ], 
+      [ [1], [1], [1] ], 
     ],
     [
-      [ 1, 1, 1, 1 ], 
-      [ 1, 1, 1, 1 ], 
-      [ 1, 1, 1, 1 ], 
-      [ 1, 1, 1, 1 ], 
+      [ [1], [1], [1] ], 
+      [ [1], [1], [1] ], 
+      [ [1], [1], [1] ], 
+      [ [1], [1], [1] ], 
     ],
     [
-      [ 2, 2, 2, 2 ],
-      [ 2, 2, 2, 2 ],
-      [ 2, 2, 2, 2 ],
-      [ 2, 2, 2, 2 ],
+      [ [2], [2], [2] ],
+      [ [2], [2], [2] ],
+      [ [2], [2], [2] ],
+      [ [2], [2], [2] ],
     ],
     [
-      [ 3, 3, 3, 3 ],
-      [ 3, 3, 3, 3 ],
-      [ 3, 3, 3, 3 ],
-      [ 3, 3, 3, 3 ],
+      [ [3], [3], [3] ],
+      [ [3], [3], [3] ],
+      [ [3], [3], [3] ],
+      [ [3], [3], [3] ],
     ]
   ])
 
   assert np.array_equal(oddimg, ans3x3x3)
 
 def test_downsample_segmentation_4x():
-  case1 = np.array([ [ 0, 1 ], [ 2, 3 ] ]) # all different
-  case2 = np.array([ [ 0, 0 ], [ 2, 3 ] ]) # two are same
-  case3 = np.array([ [ 1, 1 ], [ 2, 2 ] ]) # two groups are same
-  case4 = np.array([ [ 1, 2 ], [ 2, 2 ] ]) # 3 are the same
-  case5 = np.array([ [ 5, 5 ], [ 5, 5 ] ]) # all are the same
+  case1 = np.array([ [ 0, 1 ], [ 2, 3 ] ]).reshape((2,2,1,1)) # all different
+  case2 = np.array([ [ 0, 0 ], [ 2, 3 ] ]).reshape((2,2,1,1)) # two are same
+  case3 = np.array([ [ 1, 1 ], [ 2, 2 ] ]).reshape((2,2,1,1)) # two groups are same
+  case4 = np.array([ [ 1, 2 ], [ 2, 2 ] ]).reshape((2,2,1,1)) # 3 are the same
+  case5 = np.array([ [ 5, 5 ], [ 5, 5 ] ]).reshape((2,2,1,1)) # all are the same
 
-  is_255_handled = np.array([ [ 255, 255 ], [ 1, 2 ] ], dtype=np.uint8)
+  is_255_handled = np.array([ [ 255, 255 ], [ 1, 2 ] ], dtype=np.uint8).reshape((2,2,1,1))
 
-  test = lambda case: downsample.downsample_segmentation_2D_4x(case)[0][0]
+  test = lambda case: downsample.downsample_segmentation_2D_4x(case)[0][0][0][0]
 
   assert test(case1) == 3 # d
   assert test(case2) == 0 # a==b
@@ -105,15 +104,21 @@ def test_downsample_segmentation_4x():
 
   assert downsample.downsample_segmentation_2D_4x(case1).dtype == case1.dtype
 
+  #  0 0 1 3 
+  #  1 1 6 3  => 1 3
 
   case_odd = np.array([ 
     [
-      [ 1, 1, 3 ], 
-      [ 0, 5, 3 ] 
+      [ [1] ], 
+      [ [0] ] 
     ],
     [
-      [ 1, 3, 4 ],
-      [ 6, 7, 8 ],
+      [ [1] ],
+      [ [6] ],
+    ],
+    [
+      [ [3] ],
+      [ [3] ],
     ],
   ]) # all are the same
 
@@ -121,11 +126,13 @@ def test_downsample_segmentation_4x():
 
   result = downsamplefn(case_odd, (2,2,1))
 
-  assert np.array_equal(result, np.array([[[
-    [1],
-    [1],
-    [7],
-    [3]
-  ]]]))
+  assert np.array_equal(result, np.array([
+    [
+      [ [1] ]
+    ],
+    [
+      [ [3] ]
+    ]
+  ]))
 
 

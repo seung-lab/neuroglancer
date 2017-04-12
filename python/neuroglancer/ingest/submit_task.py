@@ -162,7 +162,7 @@ def create_downsampling_tasks(dataset_name, layer_name, mip=-1, shape=Vec(2048, 
       shape=shape.clone(),
       offset=startpt.clone(),
     )
-
+    # task.execute()
     tq.insert(task)
 
 
@@ -308,8 +308,7 @@ if __name__ == '__main__':
   #   overlap=[ 32, 32, 32 ],
   # )
 
-
-  # create_downsampling_tasks('pinky40_v1', 'image-zerofill', mip=2)
+  create_downsampling_tasks('pinky40_v3', 'image-zerofill', mip=6)
 
   # create_ingest_tasks('s1_v0.1', 'image')
 
@@ -323,9 +322,9 @@ if __name__ == '__main__':
   # create_ingest_task("zfish_v0","segmentation")
 
   # create_hypersquare_tasks("e2198_v0","image","e2198_compressed","")
-  create_info_file_from_build(dataset_name="e2198_v0",
-                              layer_name="image",
-                              layer_type="image",
-                              resolution=[17,17,23])
-  create_ingest_tasks("e2198_v0","image")
+  # create_info_file_from_build(dataset_name="e2198_v0",
+  #                             layer_name="image",
+  #                             layer_type="image",
+  #                             resolution=[17,17,23])
+  # create_ingest_tasks("e2198_v0","image")
   pass

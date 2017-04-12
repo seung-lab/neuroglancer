@@ -6,6 +6,7 @@ import itertools
 import io
 import os
 import re
+import sys
 from tempfile import NamedTemporaryFile
 
 import h5py
@@ -122,12 +123,12 @@ class DownsampleTask(CloudTask):
     return base64.b64encode(payload)
     
   def execute(self):
-    self._volume = GCloudVolume(self.dataset_name, self.layer, self.mip, use_secrets=True, use_ls=False, cache_files=False)
+    self._volume = GCloudVolume(self.dataset_name, self.layer, self.mip, use_secrets=True, use_ls=False, cache_files=True)
     vol = self._volume
 
     self._bounds = Bbox( self.offset, self.shape + self.offset )
     self._bounds = Bbox.clamp(self._bounds, vol.bounds)
-    
+
     image = vol[ self._bounds.to_slices() ]
     shape = min2(Vec(*image.shape[:3]), self._bounds.size3())
 

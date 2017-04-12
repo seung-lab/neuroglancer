@@ -206,9 +206,6 @@ class VolumeCutout(np.ndarray):
   def num_channels(self):
     return self.shape[3]
 
-  def upload(self, info):
-    bounds = self.bounds.shrunk_to_chunk_size( (64,64,64) )
-
   def save_images(self, axis='z', channel=None, directory=None, image_format='PNG'):
 
     if directory is None:
@@ -263,21 +260,4 @@ class VolumeCutout(np.ndarray):
         path = os.path.join(directory, filename)
         img2d.save(path, image_format)
 
-  # def __getitem__(self, slices):
-  #   s = generate_slices(slices, self.bounds.maxpt)
-
-  #   bounds = self.bounds.clone()
-  #   bounds.minpt += Vec(s[0].start, s[1].start, s[2].start)
-  #   bounds.maxpt -= Vec(s[0].stop, s[1].stop, s[2].stop)
-
-  #   print s
-
-  #   return VolumeCutout(
-  #     buf=np.array(self)[ tuple(s) ],
-  #     dataset_name=self.dataset_name,
-  #     layer=self.layer,
-  #     mip=self.mip,
-  #     layer_type=self.layer_type,
-  #     bounds=bounds,
-  #   )
 
