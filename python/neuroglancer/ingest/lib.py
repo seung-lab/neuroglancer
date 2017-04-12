@@ -524,6 +524,11 @@ def get_blob(name, bucket_name=GCLOUD_BUCKET_NAME, use_secrets=False):
     bucket = get_bucket(bucket_name=bucket_name, use_secrets=use_secrets)
     return bucket.get_blob(name)
 
+def set_blob(name, value, mime_type=None, bucket_name=GCLOUD_BUCKET_NAME, use_secrets=False):
+    bucket = get_bucket(bucket_name=bucket_name, use_secrets=use_secrets)
+    blob = bucket.blob(name)
+    blob.upload_from_string(value, mime_type)
+
 class Storage(object):
 
     def __init__(self, dataset_name='', layer_name='', compress=True, public=False):
@@ -579,7 +584,7 @@ class Storage(object):
         """
         self._n_objects += 1
         with open(os.path.join(self._local, filename), 'wb') as f:
-            f.write(content)
+          f.write(content)
 
     def __del__(self):
         shutil.rmtree(self._local)

@@ -95,6 +95,19 @@ class IngestTask(CloudTask):
         self.chunk_path, self.chunk_encoding, self.info_path
       )
 
+class IngestS1Task(IngestTask):
+    def __init__(self, *args, **kwargs):
+      IngestTask.__init__(self, *args, **kwargs)
+      self.tag = 'ingest_s1'
+
+    def execute(self):
+      self._volume = GCloudVolume.from_cloudpath(self.info_path, mip=0, use_secrets=True)
+      self._bounds = Bbox.from_filename(self.chunk_path)
+      data = self._download_input_chunk()
+      data = chunks.decode(data, self.chunk_encoding).T
+      data = data[1:-1,1:-1,1:-1,:].astype(np.uint8)
+      self._create_chunks(data)
+
 class DownsampleTask(CloudTask):
   def __init__(self, dataset_name, layer, mip, shape, offset, tid=None):
     self.tag = 'downsample'
@@ -606,6 +619,7 @@ class TaskQueue(object):
         
     tags = {
       'ingest': IngestTask,
+      'ingest_s1': IngestS1Task,
       'downsample': DownsampleTask,
       'mesh': MeshTask,
       'mesh_manifest': MeshManifestTask,

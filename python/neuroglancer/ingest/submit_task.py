@@ -11,7 +11,7 @@ from tqdm import tqdm
 import neuroglancer.ingest.lib as lib
 from neuroglancer.ingest.lib import xyzrange, Vec, Bbox, min2, max2, Storage
 from neuroglancer import downsample_scales, chunks
-from neuroglancer.ingest.tasks import (TaskQueue, BigArrayTask, IngestTask,
+from neuroglancer.ingest.tasks import (TaskQueue, BigArrayTask, IngestTask, IngestS1Task,
    HyperSquareTask, MeshTask, MeshManifestTask, DownsampleTask)
 from neuroglancer.ingest.volumes import HDF5Volume, GCloudVolume
 
@@ -30,7 +30,28 @@ def create_ingest_tasks(dataset_name, layer_name):
       chunk_encoding='npz',
       info_path='gs://neuroglancer/{}/{}/info'.format(dataset_name,layer_name),
     )
+    # t.execute()
     tq.insert(t)
+
+def create_s1_ingest_tasks(dataset_name, layer_name):
+  """
+  Creates one task for each ingest chunk present in the build folder.
+  It is required that the info file is already placed in order for this task
+  to run succesfully.
+
+  s1 was an early build so it has some weird attributes like 1px overlaps.
+  """
+  tq = TaskQueue()
+  bucket = lib.get_bucket(use_secrets=False)
+  blobs = bucket.list_blobs(prefix='{}/{}/build/'.format(dataset_name, layer_name))
+  for blob in tqdm(blobs, desc="Inserting Ingest Tasks"):
+    t = IngestS1Task(
+      chunk_path='gs://neuroglancer/'+blob.name,
+      chunk_encoding='npz',
+      info_path='gs://neuroglancer/{}/{}/info'.format(dataset_name,layer_name),
+    )
+    t.execute()
+    # tq.insert(t)
 
 def create_bigarray_task(dataset_name, layer_name):
   """
@@ -97,7 +118,7 @@ def get_build_data_type_and_shape(dataset_name, layer_name):
     arr = chunks.decode_npz(blob.download_as_string())
     return arr.dtype.name, arr.shape[3] #num_channels
 
-def create_info_file_from_build(dataset_name, layer_name, layer_type, resolution=[1,1,1], encoding="raw"):
+def create_info_file_from_build(dataset_name, layer_name, layer_type, encoding, resolution):
   assert layer_type == "image" or layer_type == "segmentation"
   bounds, build_chunk_size = compute_build_bounding_box(dataset_name, layer_name)
   data_type, num_channels = get_build_data_type_and_shape(dataset_name, layer_name)
@@ -162,8 +183,8 @@ def create_downsampling_tasks(dataset_name, layer_name, mip=-1, shape=Vec(2048, 
       shape=shape.clone(),
       offset=startpt.clone(),
     )
-    # task.execute()
-    tq.insert(task)
+    task.execute()
+    # tq.insert(task)
 
 
 def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hypersquare_chunk_size, resolution, voxel_offset, volume_size, overlap):
@@ -308,9 +329,10 @@ if __name__ == '__main__':
   #   overlap=[ 32, 32, 32 ],
   # )
 
-  create_downsampling_tasks('pinky40_v3', 'image-zerofill', mip=6)
+  # create_downsampling_tasks('pinky40_v3', 'image-zerofill', mip=6)
 
-  # create_ingest_tasks('s1_v0.1', 'image')
+  # create_info_file_from_build('s1_v0.1', layer_name='image', layer_type='image', resolution=[6,6,30], encoding='jpeg')
+  create_s1_ingest_tasks('s1_v0.1', 'image')
 
 
 

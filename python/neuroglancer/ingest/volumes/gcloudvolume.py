@@ -72,12 +72,15 @@ class GCloudVolume(Volume):
     return self
 
   def commitInfo(self):
-    blob = self.__getInfoBlob()
-    blob.upload_from_string(json.dumps(self.info), 'application/json')
+    info_path = self.__getInfoPath()
+    lib.set_blob(info_path, json.dumps(self.info), 'application/json')
     return self
 
+  def __getInfoPath(self):
+    return os.path.join(self.dataset_name, self.layer, 'info')
+
   def __getInfoBlob(self):
-    info_path = os.path.join(self.dataset_name, self.layer, 'info')
+    info_path = self.__getInfoPath()
     return lib.get_blob(info_path, use_secrets=self.use_secrets)
 
   @property
@@ -133,6 +136,10 @@ class GCloudVolume(Volume):
   @property
   def layer_type(self):
     return self.info['type']
+
+  @property
+  def dtype(self):
+    return self.data_type
 
   @property
   def data_type(self):

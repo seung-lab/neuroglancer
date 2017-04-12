@@ -60,7 +60,7 @@ def encode_jpeg(arr):
     elif arr.shape[0] == 3:
         img = Image.fromarray(reshaped, mode='RGB')
     else:
-        raise ValueError("Number of image channels should be 1 or 3. Got: {}".format(arr.shape[3]))
+        raise ValueError("Number of image channels should be 1 or 3. Got: {}, shape: {}".format(arr.shape[0], arr.shape))
 
     f = io.BytesIO()
     img.save(f, "JPEG")
