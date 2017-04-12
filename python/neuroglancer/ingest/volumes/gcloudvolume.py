@@ -373,12 +373,15 @@ class GCloudVolume(Volume):
       spt = spt.astype(int)
       ept = ept.astype(int)
 
-      ept = min2(ept, self.bounds.maxpt)
+      # handle the edge of the dataset
+      clamp_ept = min2(ept, self.bounds.maxpt)
+      delta = ept - clamp_ept
+      newimgchunk = imgchunk[ :-delta.x, :-delta.y, :-delta.z, : ]
 
       filename = "{}-{}_{}-{}_{}-{}".format(
-          spt.x, ept.x,
-          spt.y, ept.y, 
-          spt.z, ept.z
+          spt.x, clamp_ept.x,
+          spt.y, clamp_ept.y, 
+          spt.z, clamp_ept.z
         )
 
       encoded = neuroglancer.chunks.encode(imgchunk, self.encoding)

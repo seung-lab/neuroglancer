@@ -71,8 +71,33 @@ def create_downsampling_tasks(dataset_name, layer_name, mip=-1, shape=Vec(2048, 
       shape=shape.clone(),
       offset=startpt.clone(),
     )
-    # task.execute()
-    tq.insert(task)
+    task.execute()
+    # tq.insert(task)
+
+def create_fixup_downsample_tasks(dataset_name, layer_name, points):
+  """you can use this to fix black spots from when downsample tasks fail
+  by specifying a point inside each black spot.
+  """
+  pts = map(np.array, points)
+
+  shape = Vec(2048, 2048, 64)
+
+  def nearest_offset(pt):
+    return np.floor(pt / shape) * shape
+
+  offsets = map(nearest_offset, pts)
+
+  tq = TaskQueue()
+  for offset in tqdm(offsets, desc="Inserting Corrective Downsample Tasks"):
+    task = DownsampleTask(
+      dataset_name=dataset_name,
+      layer=layer_name,
+      mip=0,
+      shape=shape,
+      offset=offset,
+    )
+    task.execute()
+    # tq.insert(task)
 
 
 def create_bigarray_task(dataset_name, layer_name):
@@ -330,7 +355,8 @@ if __name__ == '__main__':
   #   overlap=[ 32, 32, 32 ],
   # )
 
-  create_downsampling_tasks('s1_v0.1', 'image', mip=0)
+  # create_downsampling_tasks('s1_v0.1', 'image', mip=4)
+  create_fixup_downsample_tasks('s1_v0.1', 'image', [ (4434, 4518, 873) ])
 
   # create_info_file_from_build('s1_v0.1', layer_name='image', layer_type='image', resolution=[6,6,30], encoding='jpeg')
   # create_s1_ingest_tasks('s1_v0.1', 'image')
