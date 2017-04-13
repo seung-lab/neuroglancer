@@ -23,6 +23,8 @@ import neuroglancer.ingest.lib as lib
 from neuroglancer.ingest.lib import xyzrange, min2, max2, Vec, Bbox 
 from neuroglancer.ingest.lib import Storage, credentials_path, GCLOUD_PROJECT_NAME, GCLOUD_QUEUE_NAME
 
+from google.cloud import storage
+
 class CloudTask(object):
   @classmethod
   def fromjson(cls, payload, tid):
@@ -64,6 +66,7 @@ class IngestTask(CloudTask):
       self._volume = GCloudVolume.from_cloudpath(self.info_path, mip=0, use_secrets=True)
       self._bounds = Bbox.from_filename(self.chunk_path)
       data = self._download_input_chunk()
+      self._bounds = self._bounds.transpose()
       data = chunks.decode(data, self.chunk_encoding)
       self._create_chunks(data)
 
@@ -80,7 +83,7 @@ class IngestTask(CloudTask):
       factors = downsample.scale_series_to_downsample_factors(fullscales)
 
       downsamplefn = downsample.method(vol.layer_type)
-      
+
       vol.mip = 0
       vol.upload_image(image, self._bounds.minpt)
 
@@ -417,7 +420,7 @@ class BigArrayTask(CloudTask):
         self.chunk_path, self.chunk_encoding, self.version)
 
 class HyperSquareTask(CloudTask):
-  def __init__(self, bucket_name, dataset_name, layer, 
+  def __init__(self, bucket_name, dataset_name, layer_name, 
      volume_dir, layer_type, overlap, world_bounds, resolution, tid=None):
 
     self._id = tid
@@ -425,7 +428,7 @@ class HyperSquareTask(CloudTask):
 
     self.bucket_name = bucket_name
     self.dataset_name = dataset_name
-    self.layer_name = layer
+    self.layer_name = layer_name
     self.volume_dir = volume_dir
     self.layer_type = layer_type
     self.overlap = Vec(*overlap)
@@ -433,7 +436,7 @@ class HyperSquareTask(CloudTask):
     if type(world_bounds) is Bbox:
       self.world_bounds = world_bounds
     else:
-      self.world_bounds = Bbox.from_list(self.world_bounds)
+      self.world_bounds = Bbox.from_list(world_bounds)
 
     self.resolution = Vec(*resolution)
 
@@ -447,10 +450,12 @@ class HyperSquareTask(CloudTask):
   @property
   def payloadBase64(self):
     payload = json.dumps({
+      'bucket_name': self.bucket_name,
       'dataset_name': self.dataset_name,
       'layer_name': self.layer_name,
       'volume_dir': self.volume_dir,
       'layer_type': self.layer_type,
+      'overlap': list(self.overlap),
       'world_bounds': self.world_bounds.to_list(),
       'resolution': list(self.resolution),
       'tid': self._id,
@@ -458,7 +463,10 @@ class HyperSquareTask(CloudTask):
     return base64.b64encode(payload)
 
   def execute(self):
-    self._bucket = lib.get_bucket(use_secrets=self._use_secrets)
+    client = storage.Client.from_service_account_json(
+      lib.credentials_path(), project=lib.GCLOUD_PROJECT_NAME
+    )
+    self._bucket = client.get_bucket(self.bucket_name)
     self._metadata = meta = self._download_metadata()
 
     self._bounds = Bbox(
@@ -467,6 +475,7 @@ class HyperSquareTask(CloudTask):
     )
 
     shape = Vec(*meta['chunk_voxel_dimensions'])
+    shape = Vec(shape.x, shape.y, shape.z, 1)
 
     if self.layer_type == 'image':
       dtype = meta['image_type'].lower()
@@ -481,7 +490,7 @@ class HyperSquareTask(CloudTask):
     self._upload_chunk(cube, dtype)
 
   def _download_metadata(self):
-    cloudpath = '{}/metadata.json'.format(self._volume_cloudpath)
+    cloudpath = '{}/metadata.json'.format(self.volume_dir)
     metadata = self._bucket.get_blob(cloudpath).download_as_string()
     return json.loads(metadata)
 
@@ -491,14 +500,16 @@ class HyperSquareTask(CloudTask):
     return self._decode_lzma(seg_blob.download_as_string())
 
   def _materialize_images(self, shape, dtype):
-    cloudpaths = [ '{}/jpg/{}.jpg'.format(self._volume_cloudpath, i) for i in xrange(shape.z) ]
+    cloudpaths = [ '{}/jpg/{}.jpg'.format(self.volume_dir, i) for i in xrange(shape.z) ]
     datacube = np.zeros(shape=shape, dtype=np.uint8) # x,y,z,channels
 
-    blobs = self._bucket.list_blobs(prefix='{}/jpg'.format(self._volume_cloudpath))
+    prefix = '{}/jpg/'.format(self.volume_dir)
+
+    blobs = self._bucket.list_blobs(prefix=prefix)
     for blob in blobs:
       z = int(re.findall(r'(\d+)\.jpg', blob.name)[0])
       imgdata = blob.download_as_string()
-      datacube[:,:,z] = chunks.decode_jpeg(imgdata).T
+      datacube[:,:,z,:] = chunks.decode_jpeg(imgdata, shape=(256, 256, 1))
 
     return datacube
 
@@ -507,21 +518,24 @@ class HyperSquareTask(CloudTask):
     arr = np.fromstring(arr, dtype=dtype)
     return arr.reshape(shape[::-1]).T
 
-  def _upload_chunk(self, datacube):
+  def _upload_chunk(self, datacube, dtype):
     vol = GCloudVolume(self.dataset_name, self.layer_type, 0, use_secrets=self._use_secrets)
-    bounds = self._bounds.round_to_chunk_size( vol.underlying ).astype(int)
+    
+    qov = self.overlap / 4 # quarter overlap, e.g. 32 -> 8 in e2198
 
-    lp = bounds.minpt - self._bounds.minpt
-    hp = bounds.maxpt - self._bounds.minpt
+    img = datacube[ qov.x:-qov.x, qov.y:-qov.y, qov.z:-qov.z, : ] # e.g. 256 -> 240
 
-    img = datacube[ lp.x:hp.x, lp.y:hp.y, lp.z:hp.z ]
+    # I left this in unreduced form to make the mechanics clearer
+    bounds = self._bounds.clone()
+    bounds.minpt += qov # contract to negotiated non-overlap region
+    bounds.maxpt -= qov # contract to negotiated non-overlap region
+    bounds -= qov # shift so minpt lies at 0 
 
     vol.upload_image(img, bounds.minpt)
-    vol.commitData()
 
   def __repr__(self):
     return "HyperSquareTask({}, {}, {}, {}, {}, {}, {}, {}, {})".format(
-      self.bucket_name, self.dataset_name, self.layer, self.volume_dir, 
+      self.bucket_name, self.dataset_name, self.layer_name, self.volume_dir, 
       self.layer_type, self.overlap, self.world_bounds, self.resolution, 
       self._id
     )

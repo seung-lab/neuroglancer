@@ -452,6 +452,9 @@ class Bbox(object):
     result.maxpt = self.maxpt.astype(dtype)
     return result
 
+  def transpose(self):
+    return Bbox(self.minpt[::-1], self.maxpt[::-1])
+
   # note that operand can be a vector 
   # or a scalar thanks to numpy
   def __sub__(self, operand): 

@@ -30,8 +30,8 @@ def create_ingest_tasks(dataset_name, layer_name):
       chunk_encoding='npz',
       info_path='gs://neuroglancer/{}/{}/info'.format(dataset_name,layer_name),
     )
-    # t.execute()
-    tq.insert(t)
+    t.execute()
+    # tq.insert(t)
 
 def create_s1_ingest_tasks(dataset_name, layer_name):
   """
@@ -231,10 +231,7 @@ def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hyper
   scales = downsample_scales.compute_xy_plane_downsampling_scales(hypersquare_chunk_size)[1:] # omit (1,1,1)
 
   imgvol = GCloudVolume(dataset_name, 'image', 0, info=imginfo)
-  map(imgvol.addScale, scales)
-
   segvol = GCloudVolume(dataset_name, 'segmentation', 0, info=seginfo)
-  map(segvol.addScale, scales)
 
   print("Creating info files for image and segmentation...")
   imgvol.commitInfo()
@@ -246,7 +243,7 @@ def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hyper
     return HyperSquareTask(
       bucket_name=hypersquare_bucket_name,
       dataset_name=dataset_name,
-      layer=layer_name,
+      layer_name=tasktype,
       volume_dir=volname,
       layer_type=tasktype,
       overlap=overlap,
@@ -256,11 +253,19 @@ def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hyper
 
   tq = TaskQueue()
   print("Listing hypersquare bucket...")
-  volumes_listing = lib.gcloud_ls('gs://{}/'.format(hypersquare_bucket_name))
+  # volumes_listing = lib.gcloud_ls('gs://{}/'.format(hypersquare_bucket_name))
+
+  with open('e2198_volumes.json', 'r') as f:
+    volumes_listing = json.loads(f.read())
+
+  volumes_listing = [ x.split('/')[-2] for x in volumes_listing ]
 
   for cloudpath in tqdm(volumes_listing, desc="Creating Ingest Tasks"):
-    tq.insert( crttask(cloudpath, 'image') )
-    tq.insert( crttask(cloudpath, 'segmentation') )
+    # print(cloudpath)
+    task = crttask(cloudpath, 'image')
+    # task.execute()
+    tq.insert(task)
+    # tq.insert( crttask(cloudpath, 'segmentation') )
 
 
 def upload_build_chunks(dataset_name, layer_name, volume, offset=[0, 0, 0], build_chunk_size=[1024,1024,128]):
@@ -347,16 +352,18 @@ if __name__ == '__main__':
   #     max(zmax) - min(zmin) shapez 
   # from volumes where dataset=1;
 
-  # create_hypersquare_ingest_tasks('e2198_compressed', 'e2198_v0', 
-  #   hypersquare_chunk_size=[ 256, 256, 256 ], 
-  #   resolution=[ 16.5, 16.5, 23 ], 
-  #   voxel_offset=[ 466, 498, 434 ], # from n017 SQL query
-  #   volume_size=[ 3840, 20192, 12352 ], # from n017 SQL query
-  #   overlap=[ 32, 32, 32 ],
-  # )
+  create_hypersquare_ingest_tasks('e2198_compressed', 'e2198_v0', 
+    hypersquare_chunk_size=[ 256, 256, 256 ], 
+    resolution=[ 17, 17, 23 ], 
+    voxel_offset=[ 466, 498, 434 ], # from n017 SQL query
+    volume_size=[ 3840, 20192, 12352 ], # from n017 SQL query
+    overlap=[ 32, 32, 32 ],
+  )
+
+  # create_ingest_tasks('e2198_v0', 'image')
 
   # create_downsampling_tasks('s1_v0.1', 'image', mip=4)
-  create_fixup_downsample_tasks('s1_v0.1', 'image', [ (4434, 4518, 873) ])
+  # create_fixup_downsample_tasks('s1_v0.1', 'image', [ (4434, 4518, 873) ])
 
   # create_info_file_from_build('s1_v0.1', layer_name='image', layer_type='image', resolution=[6,6,30], encoding='jpeg')
   # create_s1_ingest_tasks('s1_v0.1', 'image')
