@@ -519,17 +519,16 @@ class HyperSquareTask(CloudTask):
     return arr.reshape(shape[::-1]).T
 
   def _upload_chunk(self, datacube, dtype):
-    vol = GCloudVolume(self.dataset_name, self.layer_type, 0, use_secrets=self._use_secrets)
+    vol = GCloudVolume(self.dataset_name, self.layer_name, 0, use_secrets=self._use_secrets)
     
-    qov = self.overlap / 4 # quarter overlap, e.g. 32 -> 8 in e2198
+    hov = self.overlap / 2 # half overlap, e.g. 32 -> 16 in e2198
 
-    img = datacube[ qov.x:-qov.x, qov.y:-qov.y, qov.z:-qov.z, : ] # e.g. 256 -> 240
+    img = datacube[ hov.x:-hov.x, hov.y:-hov.y, hov.z:-hov.z, : ] # e.g. 256 -> 224
 
-    # I left this in unreduced form to make the mechanics clearer
     bounds = self._bounds.clone()
-    bounds.minpt += qov # contract to negotiated non-overlap region
-    bounds.maxpt -= qov # contract to negotiated non-overlap region
-    bounds -= qov # shift so minpt lies at 0 
+
+    # the boxes are offset left of zero by half overlap, so no need to 
+    # compensate for weird shifts. only upload the non-overlap region.
 
     vol.upload_image(img, bounds.minpt)
 

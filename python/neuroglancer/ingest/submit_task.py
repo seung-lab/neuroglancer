@@ -223,6 +223,7 @@ def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hyper
       resolution=resolution,
       voxel_offset=voxel_offset,
       volume_size=volume_size,
+      chunk_size=[ 56, 56, 56 ],
     )
 
   imginfo = crtinfo('image', 'uint8', 'jpeg')
@@ -230,8 +231,11 @@ def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hyper
 
   scales = downsample_scales.compute_xy_plane_downsampling_scales(hypersquare_chunk_size)[1:] # omit (1,1,1)
 
-  imgvol = GCloudVolume(dataset_name, 'image', 0, info=imginfo)
-  segvol = GCloudVolume(dataset_name, 'segmentation', 0, info=seginfo)
+  IMG_LAYER_NAME = 'image2'
+  SEG_LAYER_NAME = 'segmentation'
+
+  imgvol = GCloudVolume(dataset_name, IMG_LAYER_NAME, 0, info=imginfo)
+  segvol = GCloudVolume(dataset_name, SEG_LAYER_NAME, 0, info=seginfo)
 
   print("Creating info files for image and segmentation...")
   imgvol.commitInfo()
@@ -239,11 +243,11 @@ def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hyper
 
   world_bounds = lib.Bbox( voxel_offset, Vec(*voxel_offset) + Vec(*volume_size) )
 
-  def crttask(volname, tasktype):
+  def crttask(volname, tasktype, layer_name):
     return HyperSquareTask(
       bucket_name=hypersquare_bucket_name,
       dataset_name=dataset_name,
-      layer_name=tasktype,
+      layer_name=layer_name,
       volume_dir=volname,
       layer_type=tasktype,
       overlap=overlap,
@@ -262,10 +266,10 @@ def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hyper
 
   for cloudpath in tqdm(volumes_listing, desc="Creating Ingest Tasks"):
     # print(cloudpath)
-    task = crttask(cloudpath, 'image')
+    task = crttask(cloudpath, 'image', IMG_LAYER_NAME)
     # task.execute()
     tq.insert(task)
-    # tq.insert( crttask(cloudpath, 'segmentation') )
+    # tq.insert( crttask(cloudpath, SEG_LAYER_NAME) )
 
 
 def upload_build_chunks(dataset_name, layer_name, volume, offset=[0, 0, 0], build_chunk_size=[1024,1024,128]):
