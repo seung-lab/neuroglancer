@@ -495,9 +495,9 @@ class HyperSquareTask(CloudTask):
     return json.loads(metadata)
 
   def _materialize_segmentation(self, shape, dtype):
-    segmentation_path = '{}/segmentation.lzma'.format(self._volume_cloudpath)
-    seg_blob = lib.get_blob(segmentation_path, use_secrets=self._use_secrets)
-    return self._decode_lzma(seg_blob.download_as_string())
+    segmentation_path = '{}/segmentation.lzma'.format(self.volume_dir)
+    seg_blob = self._bucket.get_blob(segmentation_path)
+    return self._decode_lzma(seg_blob.download_as_string(), shape, dtype)
 
   def _materialize_images(self, shape, dtype):
     cloudpaths = [ '{}/jpg/{}.jpg'.format(self.volume_dir, i) for i in xrange(shape.z) ]
