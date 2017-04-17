@@ -97,6 +97,10 @@ def compute_plane_downsampling_scales(size, preserve_axis='z',
     preserve_axis = axis_map[preserve_axis]
 
     size = np.array(size)
+
+    if np.any(size <= 0):
+        return [ (1,1,1) ]
+
     size[preserve_axis] = size[ (preserve_axis + 1) % 3 ]
 
     dimension = min(*size)
