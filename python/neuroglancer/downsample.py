@@ -15,6 +15,7 @@
 from __future__ import division
 
 import math
+import operator
 import numpy as np
 
 def method(layer_type):
@@ -92,19 +93,29 @@ def downsample_with_averaging(array, factor):
     return np.cast[array.dtype](temp / counts)
 
 def downsample_segmentation(data, factor):
-  factor = tuple(factor)
-  if factor == (1,1,1):
+  factor = np.array(factor)
+  if np.array_equal(factor, np.array([1,1,1])):
     return data
 
   is_pot = lambda x: (x != 0) and not (x & (x - 1)) # is power of two
-  is_twod_pot_downsample = (factor[2] == 1) and (factor[1] == factor[0]) and is_pot(factor[0])
-  has_even_dims = (data.shape[0] % 2 == 0) and (data.shape[1] % 2 == 0)
+  is_twod_pot_downsample = np.any(factor == 1) and is_pot(reduce(operator.mul, factor))
   
   if not is_twod_pot_downsample:
-    return downsample_with_striding(data, factor)
+    return downsample_with_striding(data, tuple(factor))
+
+  shape3d = np.array(data.shape[:3])
+  has_even_dims = sum(shape3d % 2) <= 1 # one in the 2d case, 0 in 3d case
+
+  preserved_axis = np.where(shape3d == 1)[0][0] # e.g. 0, 1, 2
+
+  # algorithm is written for xy plane, so
+  # switch other orientations to that plane, 
+  # do computation and switch back.
+  data = np.swapaxes(data, preserved_axis, 2)
 
   if not has_even_dims:
     data = odd_to_even(data)
+    shape3d = np.array(data.shape[:3])
 
   output = np.zeros(
     shape=( int(data.shape[0] / 2), int(data.shape[1] / 2), data.shape[2], data.shape[3]), 
@@ -112,7 +123,12 @@ def downsample_segmentation(data, factor):
   )
   for z in xrange(data.shape[2]):
     output[:,:,z,:] = downsample_segmentation_2D_4x(data[:,:,z,:])
-  factor = (factor[0] / 2, factor[1] / 2, 1)
+  
+  factor = factor / 2
+  factor[preserved_axis] = 1
+
+  output = np.swapaxes(output, preserved_axis, 2)
+  
   return downsample_segmentation(output, factor)
 
 def downsample_segmentation_2D_4x(data):
