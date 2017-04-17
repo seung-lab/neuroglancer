@@ -53,11 +53,11 @@ def create_s1_ingest_tasks(dataset_name, layer_name):
     # t.execute()
     tq.insert(t)
 
-def create_downsampling_tasks(dataset_name, layer_name, mip=-1, shape=Vec(2048, 2048, 64)):
+def create_downsampling_tasks(dataset_name, layer_name, mip=-1, axis='z', shape=Vec(2048, 2048, 64)):
   vol = GCloudVolume(dataset_name, layer_name, mip)
   
   shape = min2(vol.volume_size, shape)
-  scales = downsample_scales.compute_xy_plane_downsampling_scales(shape)[1:] # omit (1,1,1)
+  scales = downsample_scales.compute_plane_downsampling_scales(shape, preserve_axis=axis)[1:] # omit (1,1,1)
   scales = [ vol.downsample_ratio * Vec(*factor3) for factor3 in scales ]
   map(vol.addScale, scales)
   vol.commitInfo()
@@ -184,7 +184,7 @@ def create_info_file_from_build(dataset_name, layer_name, layer_type, encoding, 
     chunk_size=neuroglancer_chunk_size,
   )
 
-  scale_ratios = downsample_scales.compute_xy_plane_downsampling_scales(
+  scale_ratios = downsample_scales.compute_plane_downsampling_scales(
     size=build_chunk_size,
     max_downsampled_size=max(neuroglancer_chunk_size[:2]), # exclude z since it won't be downsampled
   )
@@ -229,9 +229,9 @@ def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hyper
   imginfo = crtinfo('image', 'uint8', 'jpeg')
   seginfo = crtinfo('segmentation', 'uint16', 'raw')
 
-  scales = downsample_scales.compute_xy_plane_downsampling_scales(hypersquare_chunk_size)[1:] # omit (1,1,1)
+  scales = downsample_scales.compute_plane_downsampling_scales(hypersquare_chunk_size)[1:] # omit (1,1,1)
 
-  IMG_LAYER_NAME = 'image2'
+  IMG_LAYER_NAME = 'image'
   SEG_LAYER_NAME = 'segmentation'
 
   imgvol = GCloudVolume(dataset_name, IMG_LAYER_NAME, 0, info=imginfo)
@@ -266,10 +266,10 @@ def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hyper
 
   for cloudpath in tqdm(volumes_listing, desc="Creating Ingest Tasks"):
     # print(cloudpath)
-    task = crttask(cloudpath, 'image', IMG_LAYER_NAME)
-    # task.execute()
-    tq.insert(task)
-    # tq.insert( crttask(cloudpath, SEG_LAYER_NAME) )
+    # img_task = crttask(cloudpath, 'image', IMG_LAYER_NAME)
+    seg_task = crttask(cloudpath, 'segmentation', SEG_LAYER_NAME)
+    # seg_task.execute()
+    tq.insert(seg_task)
 
 
 def upload_build_chunks(dataset_name, layer_name, volume, offset=[0, 0, 0], build_chunk_size=[1024,1024,128]):
@@ -356,17 +356,17 @@ if __name__ == '__main__':
   #     max(zmax) - min(zmin) shapez 
   # from volumes where dataset=1;
 
-  create_hypersquare_ingest_tasks('e2198_compressed', 'e2198_v0', 
-    hypersquare_chunk_size=[ 256, 256, 256 ], 
-    resolution=[ 17, 17, 23 ], 
-    voxel_offset=[ 466, 498, 434 ], # from n017 SQL query
-    volume_size=[ 3840, 20192, 12352 ], # from n017 SQL query
-    overlap=[ 32, 32, 32 ],
-  )
+  # create_hypersquare_ingest_tasks('e2198_compressed', 'e2198_v0', 
+  #   hypersquare_chunk_size=[ 256, 256, 256 ], 
+  #   resolution=[ 17, 17, 23 ], 
+  #   voxel_offset=[ 466, 498, 434 ], # from n017 SQL query
+  #   volume_size=[ 3840, 20192, 12352 ], # from n017 SQL query
+  #   overlap=[ 32, 32, 32 ],
+  # )
 
   # create_ingest_tasks('e2198_v0', 'image')
 
-  # create_downsampling_tasks('s1_v0.1', 'image', mip=4)
+  create_downsampling_tasks('e2198_v0', 'image', mip=0, axis='x', shape=Vec(64, 2048, 2048))
   # create_fixup_downsample_tasks('s1_v0.1', 'image', [ (4434, 4518, 873) ])
 
   # create_info_file_from_build('s1_v0.1', layer_name='image', layer_type='image', resolution=[6,6,30], encoding='jpeg')

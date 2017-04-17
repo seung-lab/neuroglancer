@@ -78,7 +78,7 @@ class IngestTask(CloudTask):
     def _create_chunks(self, image):
       vol = self._volume
 
-      fullscales = downsample_scales.compute_xy_plane_downsampling_scales(image.shape[:3], max_downsampled_size=max(self._volume.underlying[:2]))
+      fullscales = downsample_scales.compute_plane_downsampling_scales(image.shape[:3], max_downsampled_size=max(self._volume.underlying[:2]))
 
       factors = downsample.scale_series_to_downsample_factors(fullscales)
 
@@ -112,7 +112,7 @@ class IngestS1Task(IngestTask):
       self._create_chunks(data)
 
 class DownsampleTask(CloudTask):
-  def __init__(self, dataset_name, layer, mip, shape, offset, tid=None):
+  def __init__(self, dataset_name, layer, mip, shape, offset, axis='z', tid=None):
     self.tag = 'downsample'
 
     self._id = tid
@@ -122,6 +122,7 @@ class DownsampleTask(CloudTask):
     self.mip = mip
     self.shape = Vec(*shape)
     self.offset = Vec(*offset)
+    self.axis = axis
 
     self._volume = None
     self._bounds = None
@@ -134,6 +135,7 @@ class DownsampleTask(CloudTask):
       'mip': self.mip,
       'shape': list(self.shape),
       'offset': list(self.offset),
+      'axis': self.axis,
       'tid': self._id,
     })
     return base64.b64encode(payload)
@@ -148,7 +150,7 @@ class DownsampleTask(CloudTask):
     image = vol[ self._bounds.to_slices() ]
     shape = min2(Vec(*image.shape[:3]), self._bounds.size3())
 
-    fullscales = downsample_scales.compute_xy_plane_downsampling_scales(shape)
+    fullscales = downsample_scales.compute_plane_downsampling_scales(shape, self.axis)
     factors = downsample.scale_series_to_downsample_factors(fullscales)
 
     downsamplefn = downsample.method(vol.layer_type)

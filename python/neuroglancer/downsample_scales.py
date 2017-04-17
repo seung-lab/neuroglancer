@@ -88,14 +88,18 @@ def compute_two_dimensional_near_isotropic_downsampling_scales(
         scales.append(cur_scales)
     return scales
 
-def compute_xy_plane_downsampling_scales(size,
+def compute_plane_downsampling_scales(size, preserve_axis='z',
                                        max_scales=DEFAULT_MAX_DOWNSAMPLING_SCALES,
                                        max_downsampling=DEFAULT_MAX_DOWNSAMPLING,
                                        max_downsampled_size=DEFAULT_MAX_DOWNSAMPLED_SIZE):
 
-    x,y,z = size
+    axis_map = { 'x': 0, 'y': 1, 'z': 2 }
+    preserve_axis = axis_map[preserve_axis]
 
-    dimension = min(x,y)
+    size = np.array(size)
+    size[preserve_axis] = size[ (preserve_axis + 1) % 3 ]
+
+    dimension = min(*size)
     num_downsamples = int(np.log2(dimension / max_downsampled_size))
     num_downsamples = min(num_downsamples, max_scales)
 
@@ -107,7 +111,10 @@ def compute_xy_plane_downsampling_scales(size,
         elif dimension / factor < max_downsampled_size:
             break
 
-        scales.append( (factor, factor, 1) )
+        scale = [ factor, factor, factor ]
+        scale[preserve_axis] = 1
+
+        scales.append(tuple(scale))
         factor *= 2
 
     return scales

@@ -42,7 +42,7 @@ def generate_downsamples(dataset_name, layer, starting_mip=-1):
   vol = GCloudVolume(dataset_name, layer, mip=starting_mip, use_ls=False)
 
   def get_factors(chunk_size):
-    fullscales = downsample_scales.compute_xy_plane_downsampling_scales(
+    fullscales = downsample_scales.compute_plane_downsampling_scales(
       size=chunk_size,
       voxel_size=vol.resolution,
       # # This expression computes the maximum number of downsamples that can be
