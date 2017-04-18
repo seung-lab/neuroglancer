@@ -211,15 +211,21 @@ class TaskQueue(object):
         Acquires a lease on the topmost N unowned tasks in the specified queue.
         Required query parameters: leaseSecs, numTasks
         """
-        
-        tasks = self._api.lease(
-            project=self._project,
-            taskqueue=self._queue_name, 
-            numTasks=1, 
-            leaseSecs=600,
-            groupByTag=(tag is not None),
-            tag=tag,
-        ).execute(num_retries=6)
+        if not tag:
+            tasks = self.api.lease(
+                project=self._project,
+                taskqueue=self._queue_name, 
+                numTasks=1, 
+                leaseSecs=3600,
+                ).execute(num_retries=6)
+        else:
+            tasks = self.api.lease(
+                project=self._project,
+                taskqueue=self._queue_name, 
+                numTasks=1, 
+                leaseSecs=3600,
+                groupByTag=True,
+                tag=tag).execute(num_retries=6)
 
         if not 'items' in tasks:
             raise TaskQueue.QueueEmpty

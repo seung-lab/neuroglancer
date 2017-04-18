@@ -21,12 +21,28 @@ before_install:
 - sudo mv secrets /secrets && sudo chown $USER /secrets
 - export CHROME_BIN=/usr/bin/google-chrome
 - export DISPLAY=:99.0
-- sudo apt-get install libhdf5-dev
+- sudo apt-get install libhdf5-dev python-h5py
+- pip install h5py
 - pip install -r python/requirements.txt
 - py.test python/test
 script:
 - npm install
-- npm install --only=dev
+- npm install --only=dev 
+# - gulp check-format
+# - gulp tslint
+# - npm test # dissable because of being unable to run webgl on travis
+
+# build docker container
+- $(python version.py) #sets APPVERSION
+- docker build --tag tartavull/neuroglancer:$APPVERSION .
+after_success:
+- docker login -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD"
+- 'if [ "$TRAVIS_BRANCH" == "master" ]; then
+    docker push $DOCKER_USERNAME/neuroglancer:latest;
+  else
+    docker push $DOCKER_USERNAME/neuroglancer:$APPVERSION;
+  fi'
+
 before_deploy:
 - npm run build-min
 - cp -r ./dist/min appengine/static/

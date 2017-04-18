@@ -100,7 +100,7 @@ class Storage(object):
         else:
             return cls.ExtractedPath(*match.groups())
 
-    def put_file(self, file_path, content, compress=False):
+    def put_file(self, file_path, content, compress=True):
         """ 
         Args:
             filename (string): it can contains folders
@@ -326,7 +326,7 @@ class S3Interface(object):
         k = boto.s3.key.Key(self._bucket)
         k.key = self.get_path_to_file(file_path)
         try:
-            return k.get_contents_as_string(), k.content_encoding == "gzip"
+            return k.get_contents_as_string(), None#,k.content_encoding == "gzip"
         except boto.exception.S3ResponseError:
             return None, False
 
@@ -334,10 +334,19 @@ class S3Interface(object):
         """
         if there is no trailing slice we are looking for files with that prefix
         """
-        from tqdm import tqdm
         layer_path = self.get_path_to_file("")        
         path = os.path.join(layer_path, prefix)
         for blob in self._bucket.list(prefix=path):
             filename =  os.path.basename(prefix) + blob.name[len(path):]
             if '/' not in filename:
                 yield filename
+
+    def apply_gzip_encoding(self, prefix):
+        from tqdm import tqdm
+        layer_path = self.get_path_to_file("")        
+        path = os.path.join(layer_path, prefix)
+        for k in tqdm(self._bucket.list(prefix=path)):
+            filename =  os.path.basename(prefix) + k.name[len(path):]
+            if '/' not in filename:
+                print filename
+                k = k.copy(k.bucket.name, k.name, {'Content-Encoding':'gzip'}, preserve_acl=True)
