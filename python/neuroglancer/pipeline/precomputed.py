@@ -8,13 +8,14 @@ import numpy as np
 from neuroglancer import chunks
 
 class EmptyVolumeException(Exception):
-    pass
+    def __init__(self,file_path):
+        self.file_path=file_path
 
 class Precomputed(object):
     Chunk = namedtuple('Chunk',
         ['x_start','x_stop','y_start','y_stop','z_start','z_stop'])
 
-    def __init__(self, storage, scale_idx=0, fill=False):
+    def __init__(self, storage, scale_idx=0, fill=False, pad=None):
         """read/write numpy arrays to a layer.
 
         It usess the storage class to get and write files,
@@ -53,11 +54,15 @@ class Precomputed(object):
                 get an underlying chunk it will raise an
                 EmptyVolumeException. Otherwise the underlying
                 chunk would be assume to containe zeros.
+            pad (numeric, optional): if not None, indexing outside of 
+                the bounding box of this volume will yield
+                a constant array filled with pad.
         """
         self._storage = storage
         self._fill = fill
         self._download_info()
         self._scale = self.info['scales'][scale_idx]
+        self.pad = pad
 
         # Don't know how to handle more than one
         assert len(self._scale['chunk_sizes']) == 1
@@ -72,16 +77,20 @@ class Precomputed(object):
         return_volume = np.empty(
             shape=self._get_slices_shape(aligned_slices),
             dtype=self.info['data_type'])
-        
+
+        if self.pad is not None:
+            return_volume[:] = self.pad
+
         offset =  self._get_offsets(aligned_slices)
         for c in self._iter_chunks(aligned_slices):
+
             file_path = self._chunk_to_file_path(c)
             content =  self._storage.get_file(file_path)
             if not content and not self._fill:
-                raise EmptyVolumeException()
+                raise EmptyVolumeException(file_path)
 
             decoded = chunks.decode(
-                filedata=content,
+                content, 
                 encoding=self._scale['encoding'], 
                 shape=self._get_chunk_shape(c),
                 dtype=self.info['data_type'])
@@ -108,10 +117,13 @@ class Precomputed(object):
         self._storage.wait()
 
     def _get_offsets(self, slices):
+        return [slc.start for slc in slices]
+        """
         first_chunk = self._iter_chunks(slices).next()
         return [first_chunk.x_start,
                 first_chunk.y_start,
                 first_chunk.z_start]
+                """
 
     def _get_chunk_shape(self, chunk):
         return (chunk.x_stop-chunk.x_start, 
@@ -169,7 +181,7 @@ class Precomputed(object):
 
             #round to nearest grid size
             aligned_start = start - (start % chunk_size)
-            aligned_stop = min(stop + (-stop % chunk_size), size)
+            aligned_stop = stop + (-stop % chunk_size)
             aligned_slc = slice(aligned_start,aligned_stop)
             aligned_slices.append(self._add_offset(aligned_slc, voxel_offset))
 
@@ -185,23 +197,46 @@ class Precomputed(object):
         voxel_offset = self._scale['voxel_offset'][slc_idx]
         start = slc.start - voxel_offset
         stop = slc.stop - voxel_offset
-        if stop <= start or start < 0:
-            raise ValueError(slc)
-
         chunk_size = self._scale['chunk_sizes'][0][slc_idx]
         layer_size = self._scale['size'][slc_idx]
-        if start % chunk_size:
-            raise ValueError("{} is not grid aligned".format(slc.start))
+        if stop <= start:
+            raise ValueError(slc)
 
-        if stop > layer_size or (stop < layer_size and stop % chunk_size):
-            raise ValueError("{} is not grid aligned or larger than the dataset".format(slc.stop))
+        if self.pad is None:
+            if start < 0:
+                raise ValueError(slc)
 
-        chunks = []
-        for chunk_start in xrange(start, stop, chunk_size):
-            chunk_stop = min(chunk_start+chunk_size, layer_size)
+            if start % chunk_size:
+                raise ValueError("{} is not grid aligned".format(slc.start))
 
-            #re-add offsets
-            chunk_start += voxel_offset
-            chunk_stop += voxel_offset
-            chunks.append((chunk_start, chunk_stop))
+            if stop > layer_size or (stop < layer_size and stop % chunk_size):
+                raise ValueError("{} is not grid aligned or larger than the dataset".format(slc.stop))
+            chunks = []
+            for chunk_start in xrange(start, stop, chunk_size):
+                chunk_stop = min(chunk_start+chunk_size, layer_size)
+
+                #re-add offsets
+                chunk_start += voxel_offset
+                chunk_stop += voxel_offset
+                chunks.append((chunk_start, chunk_stop))
+        
+        #If this volume supports padding, then we will not force the slices
+        #to lie in bounds.
+        else:
+            if start % chunk_size:
+                raise ValueError("{} is not grid aligned".format(slc.start))
+            if stop % chunk_size:
+                raise ValueError("{} is not grid aligned".format(slc.stop))
+            chunks = []
+            for chunk_start in xrange(start, stop, chunk_size):
+                chunk_stop = min(chunk_start+chunk_size, layer_size)
+
+                #re-add offsets
+                chunk_start += voxel_offset
+                chunk_stop += voxel_offset
+                
+                #only return the chunks with data.
+                if chunk_start >= voxel_offset and chunk_start < chunk_stop:
+                    chunks.append((chunk_start, chunk_stop))
+
         return chunks

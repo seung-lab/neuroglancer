@@ -11,7 +11,7 @@ from neuroglancer.pipeline import logger
 @click.command()
 @click.option('--tag', default='',  help='kind of task to execute')
 def execute(tag):
-    tq = TaskQueue()
+    tq = TaskQueue(n_threads=0)
     while True:
         task = 'unknown'
         try:
@@ -24,7 +24,6 @@ def execute(tag):
             continue
         except EmptyVolumeException:
             logger.log('WARNING', task, "raised an EmptyVolumeException")
-            tq.delete(task)
         except Exception as e:
             logger.log('ERROR', task, "raised {}\n {}".format(e , traceback.format_exc()))
             raise #this will restart the container in kubernetes

@@ -125,6 +125,15 @@ class Storage(object):
             content = self._maybe_uncompress(content)
         return content
 
+    def get_file_cached(self, file_path):
+        #TODO: check timestamp to see if cache is stale
+        #TODO: clear the cache when it gets too large
+        if not hasattr(self,_cache):
+            self._cache={}
+        if file_path not in self._cache:
+            self._cache[file_path] = self.get_file(file_path)
+        return self._cache[file_path]
+
     def get_files(self, file_paths):
         """
         returns a list of files faster by using threads
@@ -335,14 +344,24 @@ class S3Interface(object):
                 return None, False
             else:
                 raise e
+
     def list_files(self, prefix):
         """
         if there is no trailing slice we are looking for files with that prefix
         """
-        from tqdm import tqdm
         layer_path = self.get_path_to_file("")        
         path = os.path.join(layer_path, prefix)
         for blob in self._bucket.list(prefix=path):
             filename =  os.path.basename(prefix) + blob.name[len(path):]
             if '/' not in filename:
                 yield filename
+
+    def apply_gzip_encoding(self, prefix):
+        from tqdm import tqdm
+        layer_path = self.get_path_to_file("")        
+        path = os.path.join(layer_path, prefix)
+        for k in tqdm(self._bucket.list(prefix=path)):
+            filename =  os.path.basename(prefix) + k.name[len(path):]
+            if '/' not in filename:
+                print filename
+                k = k.copy(k.bucket.name, k.name, {'Content-Encoding':'gzip'}, preserve_acl=True)

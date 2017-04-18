@@ -139,7 +139,7 @@ def create_info_file_from_build(storage, layer_type, resolution=[1,1,1], encodin
         }
         info['scales'].append(scale)
 
-    storage.put_file('info', content=json.dumps(info))
+    storage.put_file('info', content=json.dumps(info), compress=False)
 
 def find_closest_divisor(to_divide, closest_to):
     def find_closest(td,ct):
