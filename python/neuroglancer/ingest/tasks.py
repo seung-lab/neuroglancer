@@ -150,7 +150,8 @@ class DownsampleTask(CloudTask):
     image = vol[ self._bounds.to_slices() ]
     shape = min2(Vec(*image.shape[:3]), self._bounds.size3())
 
-    fullscales = downsample_scales.compute_plane_downsampling_scales(shape, self.axis)
+    # need to use self.shape here. shape or self._bounds means edges won't generate as many mip levels
+    fullscales = downsample_scales.compute_plane_downsampling_scales(self.shape, preserve_axis=self.axis)
     factors = downsample.scale_series_to_downsample_factors(fullscales)
 
     downsamplefn = downsample.method(vol.layer_type)
