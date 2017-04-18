@@ -16,7 +16,7 @@ from backports import lzma
 from tqdm import tqdm
 
 from neuroglancer import chunks, downsample, downsample_scales
-# from neuroglancer.ingest.mesher import Mesher
+from neuroglancer.ingest.mesher import Mesher
 from neuroglancer.ingest.volumes import GCloudVolume
 
 import neuroglancer.ingest.lib as lib

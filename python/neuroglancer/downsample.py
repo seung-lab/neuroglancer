@@ -106,7 +106,7 @@ def downsample_segmentation(data, factor):
   shape3d = np.array(data.shape[:3])
   has_even_dims = sum(shape3d % 2) <= 1 # one in the 2d case, 0 in 3d case
 
-  preserved_axis = np.where(shape3d == 1)[0][0] # e.g. 0, 1, 2
+  preserved_axis = np.where(factor == 1)[0][0] # e.g. 0, 1, 2
 
   # algorithm is written for xy plane, so
   # switch other orientations to that plane, 
