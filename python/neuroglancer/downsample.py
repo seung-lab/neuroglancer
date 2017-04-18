@@ -103,10 +103,13 @@ def downsample_segmentation(data, factor):
   if not is_twod_pot_downsample:
     return downsample_with_striding(data, tuple(factor))
 
-  shape3d = np.array(data.shape[:3])
-  has_even_dims = sum(shape3d % 2) <= 1 # one in the 2d case, 0 in 3d case
-
   preserved_axis = np.where(factor == 1)[0][0] # e.g. 0, 1, 2
+
+  shape3d = np.array(data.shape[:3])
+
+  modulo_shape = shape3d % 2
+  modulo_shape[preserved_axis] = 0
+  has_even_dims = sum(modulo_shape) == 0 
 
   # algorithm is written for xy plane, so
   # switch other orientations to that plane, 

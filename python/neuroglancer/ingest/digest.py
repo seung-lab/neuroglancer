@@ -21,6 +21,7 @@ tq = TaskQueue()
 while True:
     try:
         task = tq.lease()
+        print "Digesting Task: ", task
         task.execute()
         tq.delete(task)
         cloud_logger.info({

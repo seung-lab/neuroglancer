@@ -141,7 +141,7 @@ class DownsampleTask(CloudTask):
     return base64.b64encode(payload)
     
   def execute(self):
-    self._volume = GCloudVolume(self.dataset_name, self.layer, self.mip, use_secrets=True, use_ls=False, cache_files=True)
+    self._volume = GCloudVolume(self.dataset_name, self.layer, self.mip, use_secrets=True, use_ls=False, cache_files=(not lib.CLOUD_COMPUTING))
     vol = self._volume
 
     self._bounds = Bbox( self.offset, self.shape + self.offset )
@@ -166,8 +166,8 @@ class DownsampleTask(CloudTask):
       vol.upload_image(image, self._bounds.minpt / total_factor)
 
   def __repr__(self):
-    return "DownsampleTask({},{},{},{},{})".format(
-      self._volume.dataset_name, self._volume.layer, self._volume.mip, self._bounds.size3(), self._bounds.minpt
+    return "DownsampleTask('{}', '{}', mip={}, shape={}, offset={}, axis='{}')".format(
+      self.dataset_name, self.layer, self.mip, list(self.shape), list(self.offset), self.axis
     )
 
 class MeshTask(CloudTask):

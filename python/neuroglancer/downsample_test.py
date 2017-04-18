@@ -135,6 +135,10 @@ def test_downsample_segmentation_4x_z():
     ]
   ]))
 
+  data = np.ones(shape=(1024, 511, 62, 1), dtype=int)
+  result = downsamplefn(data, (2,2,1))
+  assert result.shape == (512, 256, 62, 1)
+
 def test_downsample_segmentation_4x_x():
   case1 = np.array([ [ 0, 1 ], [ 2, 3 ] ]).reshape((1,2,2,1)) # all different
   case2 = np.array([ [ 0, 0 ], [ 2, 3 ] ]).reshape((1,2,2,1)) # two are same
@@ -177,5 +181,12 @@ def test_downsample_segmentation_4x_x():
       [ [3] ]
     ]
   ]))
+
+  data = np.ones(shape=(1024, 62, 511, 1), dtype=int)
+  result = downsamplefn(data, (1,2,2))
+  assert result.shape == (1024, 31, 256, 1)
+
+  result = downsamplefn(result, (1,2,2))
+  assert result.shape == (1024, 16, 128, 1)
 
 
