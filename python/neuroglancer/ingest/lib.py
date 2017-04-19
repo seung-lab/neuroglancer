@@ -409,12 +409,13 @@ class Bbox(object):
   def center(self):
     return (self.minpt + self.maxpt) / 2.0
 
-  def expand_to_chunk_size(self, chunk_size):
+  def expand_to_chunk_size(self, chunk_size, offset=Vec(0,0,0, dtype=int)):
     chunk_size = np.array(chunk_size, dtype=np.float32)
     result = self.clone()
+    result = result - offset
     result.minpt = np.floor(result.minpt / chunk_size) * chunk_size
     result.maxpt = np.ceil(result.maxpt / chunk_size) * chunk_size 
-    return result
+    return result + offset
 
   def shrink_to_chunk_size(self, chunk_size):
     chunk_size = np.array(chunk_size, dtype=np.float32)
