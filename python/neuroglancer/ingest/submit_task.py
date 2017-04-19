@@ -50,14 +50,20 @@ def create_s1_ingest_tasks(dataset_name, layer_name):
       chunk_encoding='npz',
       info_path='gs://neuroglancer/{}/{}/info'.format(dataset_name,layer_name),
     )
-    # t.execute()
-    tq.insert(t)
+    t.execute()
+    # tq.insert(t)
 
 def create_downsampling_tasks(dataset_name, layer_name, mip=-1, axis='z', shape=Vec(2048, 2048, 64)):
   vol = GCloudVolume(dataset_name, layer_name, mip)
   
   shape = min2(vol.volume_size, shape)
-  scales = downsample_scales.compute_plane_downsampling_scales(shape, preserve_axis=axis)[1:] # omit (1,1,1)
+  
+  scales = downsample_scales.compute_plane_downsampling_scales(
+    size=shape, 
+    preserve_axis=axis, 
+    max_downsampled_size=(min(*vol.underlying) * 2),
+  )
+  scales = scales[1:] # omit (1,1,1)
   scales = [ vol.downsample_ratio * Vec(*factor3) for factor3 in scales ]
   map(vol.addScale, scales)
   vol.commitInfo()
@@ -70,20 +76,20 @@ def create_downsampling_tasks(dataset_name, layer_name, mip=-1, axis='z', shape=
       mip=vol.mip,
       shape=shape.clone(),
       offset=startpt.clone(),
+      axis=axis,
     )
-    task.execute()
-    # tq.insert(task)
+    # task.execute()
+    tq.insert(task)
 
-def create_fixup_downsample_tasks(dataset_name, layer_name, points):
+def create_fixup_downsample_tasks(dataset_name, layer_name, points, shape=Vec(2048, 2048, 64), mip=0, axis='z'):
   """you can use this to fix black spots from when downsample tasks fail
   by specifying a point inside each black spot.
   """
+  vol = GCloudVolume(dataset_name, layer_name, mip)
   pts = map(np.array, points)
 
-  shape = Vec(2048, 2048, 64)
-
   def nearest_offset(pt):
-    return np.floor(pt / shape) * shape
+    return (np.floor((pt - vol.mip_voxel_offset(0)) / shape) * shape) + vol.mip_voxel_offset(0)
 
   offsets = map(nearest_offset, pts)
 
@@ -92,9 +98,10 @@ def create_fixup_downsample_tasks(dataset_name, layer_name, points):
     task = DownsampleTask(
       dataset_name=dataset_name,
       layer=layer_name,
-      mip=0,
+      mip=mip,
       shape=shape,
       offset=offset,
+      axis=axis,
     )
     task.execute()
     # tq.insert(task)
@@ -111,9 +118,9 @@ def create_bigarray_task(dataset_name, layer_name):
   for blob in tqdm(blobs, desc="Inserting BigArray Tasks"):
     name = blob.name.split('/')[-1]
     if name == 'config.json':
-      continue       
+      continue
     t = BigArrayTask(
-      chunk_path='gs://neuroglancer/'+blob.name,
+      chunk_path='gs://neuroglancer/' + blob.name,
       chunk_encoding='npz_uint8', #_uint8 for affinites
       version='{}/{}'.format(dataset_name,layer_name))
     tq.insert(t)
@@ -366,8 +373,11 @@ if __name__ == '__main__':
 
   # create_ingest_tasks('e2198_v0', 'image')
 
-  create_downsampling_tasks('e2198_v0', 'image', mip=0, axis='x', shape=Vec(64, 2048, 2048))
-  # create_fixup_downsample_tasks('s1_v0.1', 'image', [ (4434, 4518, 873) ])
+  # create_downsampling_tasks('s1_v0.1', 'segmentation_0.2', mip=4)
+  # create_downsampling_tasks('e2198_v0', 'image', mip=0, shape=(56 * 16, 56 * 16, 56 * 1))
+  create_fixup_downsample_tasks('e2198_v0', 'image', [
+    (985, 1242, 1150)
+  ], mip=0, shape=(56 * 16, 56 * 16, 56 * 1))
 
   # create_info_file_from_build('s1_v0.1', layer_name='image', layer_type='image', resolution=[6,6,30], encoding='jpeg')
   # create_s1_ingest_tasks('s1_v0.1', 'image')

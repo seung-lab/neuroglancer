@@ -16,14 +16,17 @@ from backports import lzma
 from tqdm import tqdm
 
 from neuroglancer import chunks, downsample, downsample_scales
-from neuroglancer.ingest.mesher import Mesher
+# from neuroglancer.ingest.mesher import Mesher
 from neuroglancer.ingest.volumes import GCloudVolume
+
 
 import neuroglancer.ingest.lib as lib
 from neuroglancer.ingest.lib import xyzrange, min2, max2, Vec, Bbox 
 from neuroglancer.ingest.lib import Storage, credentials_path, GCLOUD_PROJECT_NAME, GCLOUD_QUEUE_NAME
 
 from google.cloud import storage
+
+import pdb
 
 class CloudTask(object):
   @classmethod
@@ -146,13 +149,21 @@ class DownsampleTask(CloudTask):
 
     self._bounds = Bbox( self.offset, self.shape + self.offset )
     self._bounds = Bbox.clamp(self._bounds, vol.bounds)
+    self._bounds -= vol.voxel_offset # gcloud already compensates for this
 
     image = vol[ self._bounds.to_slices() ]
     shape = min2(Vec(*image.shape[:3]), self._bounds.size3())
 
     # need to use self.shape here. shape or self._bounds means edges won't generate as many mip levels
-    fullscales = downsample_scales.compute_plane_downsampling_scales(self.shape, preserve_axis=self.axis)
+    fullscales = downsample_scales.compute_plane_downsampling_scales(
+      size=self.shape, 
+      preserve_axis=self.axis, 
+      max_downsampled_size=(min(*vol.underlying) * 2),
+    )
     factors = downsample.scale_series_to_downsample_factors(fullscales)
+
+    if len(factors) == 0:
+      print("No factors generated for shape: {}, image: {}".format(self.shape, shape))
 
     downsamplefn = downsample.method(vol.layer_type)
 
@@ -163,7 +174,7 @@ class DownsampleTask(CloudTask):
       vol.mip += 1
       image = downsamplefn(image, factor3)
       total_factor *= factor3
-      vol.upload_image(image, self._bounds.minpt / total_factor)
+      vol.upload_image(image, (self._bounds.minpt + vol.mip_voxel_offset(0)) / total_factor)
 
   def __repr__(self):
     return "DownsampleTask('{}', '{}', mip={}, shape={}, offset={}, axis='{}')".format(
