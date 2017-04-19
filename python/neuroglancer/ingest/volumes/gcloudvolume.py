@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import sys
 
 import numpy as np
 from tqdm import tqdm
@@ -206,8 +207,6 @@ class GCloudVolume(Volume):
     upper = Vec(*map(lambda x: x.stop, slices))
     step = Vec(*map(lambda x: x.step, slices))
 
-    print(lower, self.downsample_ratio)
-
     lower /= self.downsample_ratio
     upper /= self.downsample_ratio
 
@@ -288,13 +287,11 @@ class GCloudVolume(Volume):
 
   def _cutout(self, xmin, xmax, ymin, ymax, zmin, zmax, xstep=1, ystep=1, zstep=1, channel_slice=slice(None), savedir=None):
     requested_bbox = Bbox(Vec3(xmin, ymin, zmin), Vec3(xmax, ymax, zmax)) / self.downsample_ratio
-    volume_bbox = Bbox.from_vec(self.shape) # volume size in voxels
-    volume_bbox += self.voxel_offset
 
-    realized_bbox = requested_bbox.expand_to_chunk_size(self.underlying)
-    realized_bbox = Bbox.clamp(realized_bbox, volume_bbox)
+    realized_bbox = requested_bbox.expand_to_chunk_size(self.underlying, offset=self.voxel_offset)
+    realized_bbox = Bbox.clamp(realized_bbox, self.bounds)
 
-    cloudpaths = self.__cloudpaths(realized_bbox, volume_bbox, self.key, self.underlying)
+    cloudpaths = self.__cloudpaths(realized_bbox, self.bounds, self.key, self.underlying)
 
     def multichannel_shape(bbox):
       shape = bbox.size3()
@@ -320,7 +317,7 @@ class GCloudVolume(Volume):
 
       renderbuffer[ start.x:end.x, start.y:end.y, start.z:end.z, : ] = img3d[ :delta.x, :delta.y, :delta.z, : ]
 
-    requested_bbox = Bbox.clamp(requested_bbox, volume_bbox)
+    requested_bbox = Bbox.clamp(requested_bbox, self.bounds)
     lp = requested_bbox.minpt - realized_bbox.minpt # low realized point
     hp = lp + requested_bbox.size3()
 
