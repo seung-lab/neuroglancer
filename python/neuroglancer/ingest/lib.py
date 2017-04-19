@@ -183,7 +183,7 @@ def download_from_gcloud(cloudpaths, destination, log=None, gzip=False):
   # so we're using streaming mode (-I) to enable it to handle arbitrary numbers of files
   # -m = multithreaded upload
 
-  gsutil_upload_cmd = "gsutil {multiprocessing} {quiet} cp {logging} -I {destination}".format(
+  gsutil_upload_cmd = "gsutil {multiprocessing} {quiet} cp {logging} -c -I {destination}".format(
     logging=('-L {}'.format(log) if log is not None else ''),
     destination=destination,
     multiprocessing=('-m' if not CLOUD_COMPUTING else ''),
@@ -226,7 +226,7 @@ def upload_to_gcloud(filenames, cloudpath, headers={}, compress=False, public=Fa
 
   multiprocessing = '-m' if not CLOUD_COMPUTING else ''
 
-  gsutil_upload_cmd = "gsutil {multiprocessing} {quiet} {headers} cp -I {compress} {public} gs://{cloudpath}/".format(
+  gsutil_upload_cmd = "gsutil {multiprocessing} {quiet} {headers} cp -c -I {compress} {public} gs://{cloudpath}/".format(
     headers=" ".join(headers),
     compress=('-Z' if compress else ''),
     public=('-a public-read' if public else ''),
