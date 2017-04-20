@@ -174,7 +174,7 @@ class DownsampleTask(CloudTask):
       vol.mip += 1
       image = downsamplefn(image, factor3)
       total_factor *= factor3
-      vol.upload_image(image, (self._bounds.minpt + vol.mip_voxel_offset(0)) / total_factor)
+      vol.upload_image(image, (self._bounds.minpt + vol.mip_voxel_offset(self.mip)) / total_factor)
 
   def __repr__(self):
     return "DownsampleTask('{}', '{}', mip={}, shape={}, offset={}, axis='{}')".format(
