@@ -23,8 +23,8 @@ class Precomputed(object):
         self.info = json.loads(self._storage.get_file('info'))
 
     def __getitem__(self, slices):
-        """ It allows for non grid aligned slices
-        """
+        """ It allows for non grid aligned slices"""
+        
         new_slices, sub_slices = self._align_slices(slices)
         return_volume = np.empty(
             shape=self._get_slices_shape(new_slices),

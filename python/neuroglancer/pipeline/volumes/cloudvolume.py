@@ -7,25 +7,30 @@ from tqdm import tqdm
 
 import neuroglancer
 import neuroglancer.ingest.lib as lib
-from neuroglancer.ingest.lib import clamp, xyzrange, Vec, Vec3, Bbox, min2, max2, Storage
+from neuroglancer.ingest.lib import clamp, xyzrange, Vec, Vec3, Bbox, min2, max2
 from neuroglancer.ingest.volumes import Volume, VolumeCutout, generate_slices
-from google.cloud import storage as gstorage
 
-class GCloudVolume(Volume):
-  def __init__(self, dataset_name, layer, mip=0, info=None, cache_files=True, use_ls=False, use_secrets=False):
+from neuroglancer.pipeline.storage import Storage
+from neuroglancer.pipeline.secrets import PROJECT_NAME
+
+class CloudVolume(Volume):
+  def __init__(self, dataset_name, layer, mip=0, protocol='gs', bucket=lib.GCLOUD_BUCKET_NAME, info=None, cache_files=True, use_ls=False, use_secrets=False):
     super(self.__class__, self).__init__()
 
     # You can access these two with properties
+    self._protocol = protocol
+    self._bucket = bucket
     self._dataset_name = dataset_name
     self._layer = layer
 
     self.mip = mip
     
-    self.cache_files = cache_files
     self.use_ls = use_ls
     self.use_secrets = use_secrets
 
     self._uncommitted_changes = []
+
+    self._storage = Storage(cache_files=cache_files)
 
     if info is None:
       self.refreshInfo()
@@ -60,28 +65,32 @@ class GCloudVolume(Volume):
 
   @classmethod
   def from_cloudpath(cls, cloudpath, mip=0, *args, **kwargs):
-    # e.g. gs://neuroglancer/DATASET/LAYER/info
-    match = re.match(r'(?:gs://)?([\d\w_\.\-]+)/([\d\w_\.\-]+)/([\d\w_\.\-]+)/?(?:info)?', cloudpath)
-    bucket, dataset_name, layer = match.groups()
+    """cloudpath: e.g. gs://neuroglancer/DATASET/LAYER/info or s3://..."""
+    match = re.match(r'^(gs|file|s3)://([\d\w_\.\-]+)/([\d\w_\.\-]+)/([\d\w_\.\-]+)/?(?:info)?', cloudpath)
+    protocol, bucket, dataset_name, layer = match.groups()
 
-    return GCloudVolume(dataset_name, layer, mip, *args, **kwargs)
+    return CloudVolume(dataset_name, layer, mip, protocol, bucket, *args, **kwargs)
+
+  @property
+  def cache_files(self):
+    return self._storage.cache_files
+
+  @cache_files.setter
+  def cache_files(self, value):
+    self._storage.cache_files = value
 
   def refreshInfo(self):
-    blob = self.__getInfoBlob()
-    self.info = json.loads(blob.download_as_string())
+    infojson = self._storage.get_file(self.__getInfoPath())
+    self.info = json.loads(infojson)
     return self
 
   def commitInfo(self):
     info_path = self.__getInfoPath()
-    lib.set_blob(info_path, json.dumps(self.info), 'application/json')
+    self._storage.put_file(info_path, json.dumps(self.info), 'application/json')
     return self
 
   def __getInfoPath(self):
-    return os.path.join(self.dataset_name, self.layer, 'info')
-
-  def __getInfoBlob(self):
-    info_path = self.__getInfoPath()
-    return lib.get_blob(info_path, use_secrets=self.use_secrets)
+    return os.path.join(self.base_cloudpath, self.layer, 'info')
 
   @property
   def dataset_name(self):
@@ -92,8 +101,8 @@ class GCloudVolume(Volume):
     if name != self._dataset_name:
       self._dataset_name = name
       self.refreshInfo()
+  
   @property
-
   def layer(self):
     return self._layer
 
@@ -112,7 +121,7 @@ class GCloudVolume(Volume):
 
   @property
   def base_cloudpath(self):
-    return "gs://{}/{}/".format(lib.GCLOUD_BUCKET_NAME, self.dataset_name)
+    return "{}://{}/{}/".format(self._protocol, self._bucket, self.dataset_name)
 
   @property
   def shape(self):
@@ -274,7 +283,7 @@ class GCloudVolume(Volume):
     minpt += self.voxel_offset * self.downsample_ratio
     maxpt += self.voxel_offset * self.downsample_ratio
 
-    savedir = os.path.join(lib.COMMON_STAGING_DIR, 'gcloud', self.dataset_name, self.layer, str(self.mip))
+    savedir = os.path.join(lib.COMMON_STAGING_DIR, self._protocol, self.dataset_name, self.layer, str(self.mip))
 
     return self._cutout(
       xmin=minpt.x, xmax=maxpt.x, xstep=steps.x,
@@ -299,7 +308,7 @@ class GCloudVolume(Volume):
     renderbuffer = np.zeros(shape=multichannel_shape(realized_bbox), dtype=self.data_type)
 
     compress = (self.layer_type == 'segmentation' and self.cache_files) # sometimes channel images are raw encoded too
-    files = lib.gcloudFileIterator(cloudpaths, savedir, use_ls=self.use_ls, compress=compress)
+    files = self._storage.get_files(cloudpaths, savedir, use_ls=self.use_ls, compress=compress)
 
     for filehandle in tqdm(files, total=len(cloudpaths), desc="Rendering Image"):
       bbox = Bbox.from_filename(filehandle.name)
@@ -360,7 +369,6 @@ class GCloudVolume(Volume):
         yield chunkimg, startpt + bounds.minpt, endpt + bounds.minpt
 
     compress = (self.layer_type == 'segmentation')
-    storage = Storage(self.dataset_name, self.layer, compress)
 
     for imgchunk, spt, ept in generate_chunks():
       if np.array_equal(spt, ept):
@@ -380,10 +388,14 @@ class GCloudVolume(Volume):
           spt.z, clamp_ept.z
         )
 
-      encoded = neuroglancer.chunks.encode(imgchunk, self.encoding)
-      storage.add_file(filename, encoded)
+      cloudpath = os.path.join(self.base_cloudpath, self.layer, self.key, filename)
 
-    storage.flush(self.key)
+      encoded = neuroglancer.chunks.encode(imgchunk, self.encoding)
+      storage.put_file(cloudpath, encoded, compress)
+
+  def __createStorage(self):
+    layer_path = os.path.join(self.base_cloudpath, self.layer)
+    return Storage(layer_path=layer_path, cache_files=self.cache_files)
 
   def __cloudpaths(self, bbox, volume_bbox, key, chunk_size):
     def cloudpathgenerator():
