@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import threading
 import json
 from weakref import WeakValueDictionary
