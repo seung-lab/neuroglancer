@@ -1,9 +1,11 @@
+from __future__ import print_function
+
 from collections import namedtuple
 from cStringIO import StringIO
-from Queue import Queue
+import Queue
 import os.path
 import re
-from threading import Thread
+import threading
 from functools import partial
 
 from glob import glob
@@ -38,59 +40,60 @@ class Storage(object):
         self._n_threads = n_threads
 
         if self._path.protocol == 'file':
-            self._interface = FileInterface
+            self._interface_cls = FileInterface
         elif self._path.protocol == 'gs':
-            self._interface = GoogleCloudStorageInterface
+            self._interface_cls = GoogleCloudStorageInterface
         elif self._path.protocol == 's3':
-            self._interface = S3Interface
+            self._interface_cls = S3Interface
 
-        if self._n_threads:
-            self._create_processing_queue()
+        self._interface = self._interface_cls(self._path)
+
+        self._queue = Queue.Queue(maxsize=0) # infinite size
+        self._threads = ()
+        self._terminate = threading.Event()
+
+        self._start_threads(n_threads)
 
     def get_path_to_file(self, file_path):
         return os.path.join(self._layer_path, file_path)
 
-    def _create_processing_queue(self):
-        self._queue = Queue(maxsize=self._n_threads*4)
-        for _ in xrange(self._n_threads):
-            worker = Thread(target=self._process_task)
-            worker.setDaemon(True)
+    def _start_threads(self, n_threads):
+        self._terminate.set()
+        self._terminate = threading.Event()
+
+        threads = []
+
+        for _ in xrange(n_threads):
+            worker = threading.Thread(
+                target=self._consume_queue, 
+                args=(self._terminate,)
+            )
+            worker.daemon = True
             worker.start()
+            threads.append(worker)
+
+        self._threads = tuple(threads)
 
     def _kill_threads(self):
-        self.wait_until_queue_empty()
-        for _ in xrange(self._n_threads):
-            self._queue.put( ('TERMINATE', None, None ) )
+        self._queue.join() # if no threads were set the queue is always empty
+        self._terminate.set()
+        self._threads = ()
 
-    def _process_task(self):
-        """
-        Connections to s3 or gcs are likely not thread-safe,
-        to account for that every worker create it's own 
-        connection.
-        """
-        interface = self._interface(self._path)
-        while True:
-            # task[0] referes to an string with the method name.
-            # task[1] is a callback
-            # task[2:] are the arguments to the method.
-            task = self._queue.get()
-            fn_name, cb, args = task[0], task[1], task[2:]
-            
-            if fn_name == 'TERMINATE':
-                self._queue.task_done()
-                return
+    def _consume_queue(self, terminate_evt):
+        interface = self._interface_cls(self._path)
 
-            result = error = None
+        while not terminate_evt.is_set():
+            try:
+                fn = self._queue.get(block=True, timeout=1)
+            except Queue.Empty:
+                continue # periodically check if the thread is supposed to die
 
             try:
-                result = getattr(interface, fn_name)(*args)
-            except Exception as e:
-                error = e.value
-
-            if cb:
-                cb(result, error)
-
-            self._queue.task_done()
+                fn(interface)
+            except Exception as err:
+                print(err)
+            finally:
+                self._queue.task_done()
 
     @classmethod
     def extract_path(cls, layer_path):
@@ -109,17 +112,19 @@ class Storage(object):
         if compress:
             content = self._compress(content)
 
-        if self._n_threads:
-            # None is the non-existant callback
-            self._queue.put(('put_file', None, file_path, content, compress), block=True)
+        def put_file(interface):
+            interface.put_file(file_path, content, compress)
+
+        if len(self._threads):
+            self._queue.put(put_file, block=True)
         else:
-            self._interface(self._path).put_file(file_path, content, compress)
+            put_file(self._interface)
 
 
     def get_file(self, file_path):
         # Create get_files does uses threading to speed up downloading
 
-        content, decompress = self._interface(self._path).get_file(file_path)
+        content, decompress = self._interface.get_file(file_path)
         if content and decompress != False:
             content = self._maybe_uncompress(content)
         return content
@@ -131,7 +136,15 @@ class Storage(object):
 
         results = []
 
-        def store_result(path, result, error):
+        def get_file_thunk(path, interface):
+            result = error = None 
+
+            try:
+                result = interface.get_file(path)
+            except Exception as err:
+                error = err
+                print(err)
+            
             content, decompress = result
 
             if content and decompress:
@@ -144,21 +157,10 @@ class Storage(object):
             })
 
         for path in file_paths:
-            if self._n_threads:
-                callback = partial(store_result, path)
-                self._queue.put(('get_file', callback, path), block=True)
+            if len(self._threads):
+                self._queue.put(partial(get_file_thunk, path), block=True)
             else:
-                result = error = None
-
-                try:
-                    # False is the decompress? flag
-                    # get_file already runs through maybe_decompress, 
-                    # so it's definitely already decompressed
-                    result = ( self.get_file(path), False ) 
-                except Exception as e:
-                    error = e.value
-
-                store_result(path, result, error)
+                get_file_thunk(path, self._interface)
 
         self.wait_until_queue_empty()
 
@@ -190,7 +192,7 @@ class Storage(object):
             return gfile.read()
 
     def list_files(self, prefix=""):
-        for f in self._interface(self._path).list_files(prefix):
+        for f in self._interface.list_files(prefix):
             yield f
 
     def wait_until_queue_empty(self):
