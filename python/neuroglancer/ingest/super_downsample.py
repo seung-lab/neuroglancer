@@ -117,7 +117,7 @@ def generate_jpegs(dataset_name, layer, mip):
 
   directory = mkdir('./staging/jpegs/')
 
-  print "Saving {} Z-Slices to {}".format(zslice.stop, directory)
+  print("Saving {} Z-Slices to {}".format(zslice.stop, directory))
 
   for z in tqdm(xrange(zslice.stop)):
     img = renderbuffer[:,:,z]
@@ -179,9 +179,9 @@ if __name__ == "__main__":
     generate_downsamples(dataset, 'segmentation', mip)
 
   if args.affinity:
-    print "affinity layers are not yet supported."
+    print("affinity layers are not yet supported.")
 
-  print 'done'
+  print('done')
 
 # https://neuromancer-seung-import.appspot.com/#!{'layers':{'image':{'type':'image'_'source':'precomputed://glance://s1_v0/image'}_'segmentation':{'type':'segmentation'_'source':'precomputed://glance://s1_v0/segmentation'}}}
 

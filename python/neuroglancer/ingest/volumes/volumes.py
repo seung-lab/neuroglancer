@@ -216,7 +216,7 @@ class VolumeCutout(np.ndarray):
     
     mkdir(directory)
 
-    print "Saving to {}".format(directory)
+    print("Saving to {}".format(directory))
 
     indexmap = {
       'x': 0,

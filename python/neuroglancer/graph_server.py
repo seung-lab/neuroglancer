@@ -218,7 +218,7 @@ class ObjectHandler(BaseHandler):
 def make_app(path):
     if path:
         G = nx.read_gpickle(path)
-        print 'graph restored'
+        print('graph restored')
     else:
         G = nx.Graph()
 
