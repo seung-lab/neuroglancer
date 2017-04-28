@@ -94,7 +94,7 @@ class TaskQueue(object):
         def __init__(self):
             super(LookupError, self).__init__('Queue Empty')
 
-    def __init__(self, n_threads=40, project=PROJECT_NAME, queue_name=QUEUE_NAME, local=True):
+    def __init__(self, n_threads=40, project=PROJECT_NAME, queue_name=QUEUE_NAME):
         self._project = 's~' + project # unsure why this is necessary
         self._queue_name = queue_name
 
@@ -197,7 +197,7 @@ class TaskQueue(object):
         Lists all non-deleted Tasks in a TaskQueue, 
         whether or not they are currently leased, up to a maximum of 100.
         """
-        return self._api.list(project=self._project, taskqueue=self._queue_name).execute(num_retries=6)
+        return self.api.list(project=self._project, taskqueue=self._queue_name).execute(num_retries=6)['items']
 
     def update(self, task):
         """
@@ -253,7 +253,6 @@ class TaskQueue(object):
 
     def delete(self, tid):
         """Deletes a task from a TaskQueue."""
-
         def cloud_delete(api):
             api.delete(
                 project=self._project,
@@ -268,5 +267,3 @@ class TaskQueue(object):
 
     def __del__(self):
         self._kill_threads()
-
-
