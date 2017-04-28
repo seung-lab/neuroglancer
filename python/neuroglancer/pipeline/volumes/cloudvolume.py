@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import os
 import json
 import re
@@ -6,10 +8,10 @@ import numpy as np
 from tqdm import tqdm
 
 import neuroglancer
-import neuroglancer.ingest.lib as lib
-from neuroglancer.ingest.lib import clamp, xyzrange, Vec, Vec3, Bbox, min2, max2
-from neuroglancer.ingest.volumes import Volume, VolumeCutout, generate_slices
+from neuroglancer.pipeline.volumes import Volume, VolumeCutout, generate_slices
 
+import neuroglancer.pipeline.lib as lib
+from neuroglancer.pipeline.lib import clamp, xyzrange, Vec, Vec3, Bbox, min2, max2
 from neuroglancer.pipeline.storage import Storage
 from neuroglancer.pipeline.secrets import PROJECT_NAME
 
@@ -24,13 +26,10 @@ class CloudVolume(Volume):
     self._layer = layer
 
     self.mip = mip
-    
-    self.use_ls = use_ls
-    self.use_secrets = use_secrets
 
     self._uncommitted_changes = []
 
-    self._storage = Storage(cache_files=cache_files)
+    self._storage = Storage(self.layer_cloudpath)
 
     if info is None:
       self.refreshInfo()
@@ -71,26 +70,14 @@ class CloudVolume(Volume):
 
     return CloudVolume(dataset_name, layer, mip, protocol, bucket, *args, **kwargs)
 
-  @property
-  def cache_files(self):
-    return self._storage.cache_files
-
-  @cache_files.setter
-  def cache_files(self, value):
-    self._storage.cache_files = value
-
   def refreshInfo(self):
-    infojson = self._storage.get_file(self.__getInfoPath())
+    infojson = self._storage.get_file('info')
     self.info = json.loads(infojson)
     return self
 
   def commitInfo(self):
-    info_path = self.__getInfoPath()
-    self._storage.put_file(info_path, json.dumps(self.info), 'application/json')
-    return self
-
-  def __getInfoPath(self):
-    return os.path.join(self.base_cloudpath, self.layer, 'info')
+    infojson = json.dumps(self.info)
+    return self._storage.put_file('info', infojson, 'application/json').wait()
 
   @property
   def dataset_name(self):
@@ -122,6 +109,14 @@ class CloudVolume(Volume):
   @property
   def base_cloudpath(self):
     return "{}://{}/{}/".format(self._protocol, self._bucket, self.dataset_name)
+
+  @property
+  def layer_cloudpath(self):
+    return os.path.join(self.base_cloudpath, self.layer)
+
+  @property
+  def info_cloudpath(self):
+    return os.path.join(self.layer_cloudpath, 'info')
 
   @property
   def shape(self):
@@ -305,16 +300,20 @@ class CloudVolume(Volume):
       shape = bbox.size3()
       return (shape[0], shape[1], shape[2], self.num_channels)
 
-    renderbuffer = np.zeros(shape=multichannel_shape(realized_bbox), dtype=self.data_type)
+    renderbuffer = np.zeros(shape=multichannel_shape(realized_bbox), dtype=self.dtype)
 
-    compress = (self.layer_type == 'segmentation' and self.cache_files) # sometimes channel images are raw encoded too
-    files = self._storage.get_files(cloudpaths, savedir, use_ls=self.use_ls, compress=compress)
+    # bring this back later
+    # compress = (self.layer_type == 'segmentation' and self.cache_files) # sometimes channel images are raw encoded too
+    files = self._storage.get_files(cloudpaths)
 
-    for filehandle in tqdm(files, total=len(cloudpaths), desc="Rendering Image"):
-      bbox = Bbox.from_filename(filehandle.name)
+    for fileinfo in tqdm(files, total=len(cloudpaths), desc="Rendering Image"):
+      if fileinfo['error'] is not None:
+        continue 
+
+      bbox = Bbox.from_filename(filehandle['filename'])
 
       img3d = neuroglancer.chunks.decode(
-        filehandle.read(), self.encoding, multichannel_shape(bbox), self.data_type
+        filehandle['content'], self.encoding, multichannel_shape(bbox), self.dtype
       )
       
       start = bbox.minpt - realized_bbox.minpt
@@ -366,41 +365,42 @@ class CloudVolume(Volume):
       for startpt in xyzrange( img_offset, img_end, self.underlying ):
         endpt = min2(startpt + self.underlying, shape)
         chunkimg = img[ startpt.x:endpt.x, startpt.y:endpt.y, startpt.z:endpt.z ]
-        yield chunkimg, startpt + bounds.minpt, endpt + bounds.minpt
+
+        spt = (startpt + bounds.minpt).astype(int)
+        ept = (endpt + bounds.minpt).astype(int)
+    
+        yield chunkimg, spt, ept 
 
     compress = (self.layer_type == 'segmentation')
 
     for imgchunk, spt, ept in generate_chunks():
       if np.array_equal(spt, ept):
           continue
-
-      spt = spt.astype(int)
-      ept = ept.astype(int)
-
+      
       # handle the edge of the dataset
       clamp_ept = min2(ept, self.bounds.maxpt)
       delta = ept - clamp_ept
       newimgchunk = imgchunk[ :-delta.x, :-delta.y, :-delta.z, : ]
 
       filename = "{}-{}_{}-{}_{}-{}".format(
-          spt.x, clamp_ept.x,
-          spt.y, clamp_ept.y, 
-          spt.z, clamp_ept.z
-        )
+        spt.x, clamp_ept.x,
+        spt.y, clamp_ept.y, 
+        spt.z, clamp_ept.z
+      )
 
-      cloudpath = os.path.join(self.base_cloudpath, self.layer, self.key, filename)
-
+      cloudpath = os.path.join(self.layer_cloudpath, self.key, filename)
       encoded = neuroglancer.chunks.encode(imgchunk, self.encoding)
-      storage.put_file(cloudpath, encoded, compress)
 
-  def __createStorage(self):
-    layer_path = os.path.join(self.base_cloudpath, self.layer)
-    return Storage(layer_path=layer_path, cache_files=self.cache_files)
+      content_type = 'application/octet-stream'
+      if self.encoding == 'jpeg':
+        content_type == 'image/jpeg'
+
+      self._storage.put_file(cloudpath, encoded, content_type=content_type, compress=compress)
+
+    self._storage.wait()
 
   def __cloudpaths(self, bbox, volume_bbox, key, chunk_size):
-    def cloudpathgenerator():
-      resolution_cloudpath = os.path.join(self.base_cloudpath, self.layer, key)
-        
+    def cloudpathgenerator():  
       for x,y,z in xyzrange( bbox.minpt, bbox.maxpt, chunk_size ):
         highpt = min2(Vec3(x,y,z) + chunk_size, volume_bbox.maxpt)
         filename = "{}-{}_{}-{}_{}-{}".format(
@@ -409,7 +409,7 @@ class CloudVolume(Volume):
           z, highpt.z
         )
 
-        yield os.path.join(resolution_cloudpath, filename)
+        yield os.path.join(key, filename)
 
     return [ path for path in cloudpathgenerator() ] 
 

@@ -37,8 +37,7 @@ class Storage(object):
 
         self._layer_path = layer_path
         self._path = self.extract_path(layer_path)
-        self._n_threads = n_threads
-
+        
         if self._path.protocol == 'file':
             self._interface_cls = FileInterface
         elif self._path.protocol == 'gs':
@@ -103,7 +102,7 @@ class Storage(object):
         else:
             return cls.ExtractedPath(*match.groups())
 
-    def put_file(self, file_path, content, compress=False):
+    def put_file(self, file_path, content, content_type=None, compress=False):
         """ 
         Args:
             filename (string): it can contains folders
@@ -113,13 +112,14 @@ class Storage(object):
             content = self._compress(content)
 
         def put_file(interface):
-            interface.put_file(file_path, content, compress)
+            interface.put_file(file_path, content, content_type, compress)
 
         if len(self._threads):
             self._queue.put(put_file, block=True)
         else:
             put_file(self._interface)
 
+        return self
 
     def get_file(self, file_path):
         # Create get_files does uses threading to speed up downloading
@@ -195,12 +195,21 @@ class Storage(object):
         for f in self._interface.list_files(prefix):
             yield f
 
+    def wait(self):
+        return self.wait_until_queue_empty()
+
     def wait_until_queue_empty(self):
-        if self._n_threads:
+        if len(self._threads):
             self._queue.join()
 
     def __del__(self):
         self._kill_threads()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exception_type, exception_value, traceback):
+        self.wait_until_queue_empty()
 
 class FileInterface(object):
 
@@ -216,7 +225,7 @@ class FileInterface(object):
                              file_path])
         return  os.path.join(*clean)
 
-    def put_file(self, file_path, content, compress):
+    def put_file(self, file_path, content, content_type, compress):
         path = self.get_path_to_file(file_path)
         try:
             with open(path, 'wb') as f:
@@ -263,14 +272,16 @@ class GoogleCloudStorageInterface(object):
         return  os.path.join(*clean)
 
 
-    def put_file(self, file_path, content, compress):
+    def put_file(self, file_path, content, content_type, compress):
         """ 
         TODO set the content-encoding to
         gzip in case of compression.
         """
+        content_type = content_type or 'application/octet-stream'
+
         key = self.get_path_to_file(file_path)
         blob = self._bucket.blob( key )
-        blob.upload_from_string(content)
+        blob.upload_from_string(content, content_type)
         if compress:
             blob.content_encoding = "gzip"
             blob.patch()
@@ -308,13 +319,16 @@ class S3Interface(object):
                              file_path])
         return  os.path.join(*clean)
 
-    def put_file(self, file_path, content, compress):
+    def put_file(self, file_path, content, content_type, compress):
         k = boto.s3.key.Key(self._bucket)
         k.key = self.get_path_to_file(file_path)
         if compress:
             k.set_contents_from_string(
                 content,
-                headers={"Content-Encoding": "gzip"})
+                headers={
+                    "Content-Type": content_type or 'application/octet-stream',
+                    "Content-Encoding": "gzip",
+                })
         else:
             k.set_contents_from_string(content)
             
