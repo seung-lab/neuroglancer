@@ -227,6 +227,7 @@ class FileInterface(object):
         with open(path, 'wb') as f:
             f.write(content)
 
+
     def get_file(self, file_path):
         path = self.get_path_to_file(file_path) 
         try:

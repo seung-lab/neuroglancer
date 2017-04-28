@@ -240,7 +240,6 @@ class MockTaskQueue():
     def wait(self):
         return self
 
-
 def ingest_hdf5_example():
     dataset_path='gs://neuroglancer/test_v0'
     task_queue = MockTaskQueue()
