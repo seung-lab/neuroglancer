@@ -226,6 +226,7 @@ def upload_build_chunks(storage, volume, offset=[0, 0, 0], build_chunk_size=[102
         filename = 'build/{}-{}_{}-{}_{}-{}'.format(
             x_min, x_max, y_min, y_max, z_min, z_max)
         storage.put_file(filename, chunks.encode_npz(chunk))
+        storage.wait_until_queue_empty()
 
 class MockTaskQueue():
     def insert(self, task):

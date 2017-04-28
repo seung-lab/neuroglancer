@@ -89,6 +89,7 @@ class IngestTask(RegisteredTask):
             encoded = self._encode(chunk, scale["encoding"])
             filename = self._get_filename(x, y, z, chunk_size, downsample_ratio, scale)
             self._storage.put_file(filename, encoded)
+            self._storage.wait_until_queue_empty()
 
     def _encode(self, chunk, encoding):
         if encoding == "jpeg":
@@ -171,6 +172,7 @@ class DownsampleTask(RegisteredTask):
             file_path=self._get_filename(),
             content=self._encode(self._data, self._info['scales'][self._current_index]["encoding"])
             )
+        self._storage.wait_until_queue_empty()
 
     def _encode(self, chunk, encoding):
         if encoding == "jpeg":
@@ -242,6 +244,7 @@ class MeshTask(RegisteredTask):
             self._storage.put_file(
                 file_path='{}/{}:{}:{}'.format(self._info['mesh'], obj_id, self.lod, self.chunk_position),
                 content=self._create_mesh(obj_id))
+            self._storage.wait_until_queue_empty()
 
     def _create_mesh(self, obj_id):
         mesh = self._mesher.get_mesh(obj_id, simplification_factor=128, max_simplification_error=1000000)
@@ -302,6 +305,7 @@ class MeshManifestTask(RegisteredTask):
                 self._storage.put_file(
                     file_path='{}/{}:{}'.format(self._info['mesh'],last_id, self.lod),
                     content=json.dumps({"fragments": last_fragments}))
+                self._storage.wait_until_queue_empty()
                 last_id = _id
                 last_fragments = []
 
@@ -394,6 +398,7 @@ class BigArrayTask(RegisteredTask):
           xmin, xmax, ymin, ymax, zmin, zmax)
         encoded = self._encode(chunk, self.chunk_encoding)
         self._storage.put_file(filename, encoded)
+        self._storage.wait_until_queue_empty()
 
     def _encode(self, chunk, encoding):
         if encoding == "jpeg":
@@ -490,6 +495,7 @@ class HyperSquareTask(RegisteredTask):
           xmin, xmax, ymin, ymax, zmin, zmax)
         encoded = self._encode(chunk, self.chunk_encoding)
         self._storage.put_file(filename, encoded)
+        self._storage.wait_until_queue_empty()
 
     def _encode(self, chunk, encoding):
         if encoding == "jpeg":
