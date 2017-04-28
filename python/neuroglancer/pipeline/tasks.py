@@ -516,3 +516,15 @@ class HyperSquareTask(RegisteredTask):
         else:
             raise NotImplementedError(encoding)
 
+class SetEncodingTask(RegisteredTask):
+    def __init__(self, layer_path, prefix):
+        super(SetEncodingTask, self).__init__(layer_path, prefix)
+
+        self.layer_path = layer_path
+        self.prefix = prefix
+
+    def execute(self):
+        from neuroglancer.pipeline.storage import S3Interface
+        s3i = S3Interface(Storage.extract_path(self.layer_path))
+        s3i.apply_gzip_encoding(self.prefix)
+
