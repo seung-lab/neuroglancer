@@ -351,3 +351,31 @@ def test_real_data():
                   high_threshold=0.999987, low_threshold=0.003, merge_threshold=0.3, 
                   merge_size=800, dust_size=800).execute()
    
+def test_relabeling():
+    storage = Storage('file:///tmp/removeme/relabel_input')
+    data = np.arange(8).astype(np.uint32).reshape(2,2,2,1)
+    upload_build_chunks(storage, data, offset=(0,0,0))
+    storage.wait)
+    create_info_file_from_build(storage, layer_type= 'segmentation', encoding="raw")
+    storage.wait()
+    create_ingest_task(storage, MockTaskQueue())
+    storage.wait()
+
+    # create the output layer
+    out_dir = '/tmp/removeme/relabel_output'
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+
+    shutil.copyfile('/tmp/removeme/relabel_input/info', os.path.join(out_dir, 'info'))
+
+
+    mapping =  np.array([0,0,0,0,1,1,1,1], dtype=np.uint32)
+    np.save(os.path.join(out_dir, 'mapping.npy'), mapping)
+
+    t = RelabelTask(layer_in_path='file:///tmp/removeme/relabel_input',
+                    layer_out_path='file://'+out_dir,
+                    chunk_position='0-2_0-2_0-2',
+                    mapping_path='mapping.npy')
+    t.execute()
+
+    assert np.all(Precomputed(Storage('file://'+out_dir))[0:2,0:2,0:2].flatten() ==  mapping)

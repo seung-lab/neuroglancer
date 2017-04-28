@@ -6,6 +6,6 @@
 [subrepo]
 	remote = https://github.com/seung-lab/yacn
 	branch = master
-	commit = 55f83c162ade306edf93520f895dbf6d2173254d
-	parent = f71991ea25acb0414b9e19125e042041a3c72ca3
+	commit = e58ed677b916362698f02378dc36c1081a80a046
+	parent = f8061d9aed9a0e63275c82da4e529f5d434c16a2
 	cmdver = 0.3.1
