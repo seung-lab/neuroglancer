@@ -197,7 +197,7 @@ class TaskQueue(object):
         Lists all non-deleted Tasks in a TaskQueue, 
         whether or not they are currently leased, up to a maximum of 100.
         """
-        return self.api.list(project=self._project, taskqueue=self._queue_name).execute(num_retries=6)['items']
+        return self._api.list(project=self._project, taskqueue=self._queue_name).execute(num_retries=6)
 
     def update(self, task):
         """
@@ -211,21 +211,15 @@ class TaskQueue(object):
         Acquires a lease on the topmost N unowned tasks in the specified queue.
         Required query parameters: leaseSecs, numTasks
         """
-        if not tag:
-            tasks = self.api.lease(
-                project=self._project,
-                taskqueue=self._queue_name, 
-                numTasks=1, 
-                leaseSecs=3600,
-                ).execute(num_retries=6)
-        else:
-            tasks = self.api.lease(
-                project=self._project,
-                taskqueue=self._queue_name, 
-                numTasks=1, 
-                leaseSecs=3600,
-                groupByTag=True,
-                tag=tag).execute(num_retries=6)
+        
+        tasks = self._api.lease(
+            project=self._project,
+            taskqueue=self._queue_name, 
+            numTasks=1, 
+            leaseSecs=600,
+            groupByTag=(tag is not None),
+            tag=tag,
+        ).execute(num_retries=6)
 
         if not 'items' in tasks:
             raise TaskQueue.QueueEmpty
@@ -259,6 +253,7 @@ class TaskQueue(object):
 
     def delete(self, tid):
         """Deletes a task from a TaskQueue."""
+
         def cloud_delete(api):
             api.delete(
                 project=self._project,
