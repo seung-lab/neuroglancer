@@ -54,6 +54,10 @@ class Storage(object):
 
         self._start_threads(n_threads)
 
+    @property
+    def layer_path(self):
+        return self._layer_path
+
     def get_path_to_file(self, file_path):
         return os.path.join(self._layer_path, file_path)
 
@@ -119,7 +123,8 @@ class Storage(object):
         Required:
             files: [ (filepath, content), .... ]
         """
-        pbar = tqdm(total=len(files), desc="Uploading Files", disable=(len(files) <= 1))
+        desc = "Uploading Files" if self._path.protocol != 'file' else "Writing Files"
+        pbar = tqdm(total=len(files), desc=desc, disable=(len(files) <= 1))
 
         def put_file(path, content, interface):
             interface.put_file(path, content, content_type, compress)
@@ -156,7 +161,8 @@ class Storage(object):
 
         results = []
 
-        pbar = tqdm(total=len(file_paths), desc="Downloading Files")
+        desc = "Downloading Files" if self._path.protocol != 'file' else "Reading Files"
+        pbar = tqdm(total=len(file_paths), desc=desc)
         def get_file_thunk(path, interface):
             result = error = None 
 

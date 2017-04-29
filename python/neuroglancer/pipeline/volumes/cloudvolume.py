@@ -8,25 +8,26 @@ import numpy as np
 from tqdm import tqdm
 
 import neuroglancer
-from neuroglancer.pipeline.volumes import Volume, VolumeCutout, generate_slices
-
-import neuroglancer.pipeline.lib as lib
-from neuroglancer.pipeline.lib import clamp, xyzrange, Vec, Vec3, Bbox, min2, max2
+import neuroglancer.lib as lib
+from neuroglancer.lib import clamp, xyzrange, Vec, Vec3, Bbox, min2, max2
+from volumes import Volume, VolumeCutout, generate_slices
 from neuroglancer.pipeline.storage import Storage
-from neuroglancer.pipeline.secrets import PROJECT_NAME
+
+__all__ = [ 'CloudVolume' ]
 
 class CloudVolume(Volume):
   def __init__(self, dataset_name, layer, mip=0, protocol='gs', bucket=lib.GCLOUD_BUCKET_NAME, info=None, ):
     super(self.__class__, self).__init__()
 
-    # You can access these two with properties
     self._protocol = protocol
     self._bucket = bucket
+
+    # You can access these two with properties
     self._dataset_name = dataset_name
     self._layer = layer
 
     self.mip = mip
-    self.cache_files = False
+    self.cache_files = False # keeping in case we revive it
 
     self._storage = Storage(self.layer_cloudpath)
 
@@ -232,7 +233,6 @@ class CloudVolume(Volume):
     # "size": [2048, 2048, 256]}
     fullres = self.info['scales'][0]
 
-
     # If the voxel_offset is not divisible by the ratio,
     # zooming out will slightly shift the data.
     # Imagine the offset is 10
@@ -290,7 +290,6 @@ class CloudVolume(Volume):
 
   def _cutout(self, xmin, xmax, ymin, ymax, zmin, zmax, xstep=1, ystep=1, zstep=1, channel_slice=slice(None), savedir=None):
     requested_bbox = Bbox(Vec3(xmin, ymin, zmin), Vec3(xmax, ymax, zmax)) / self.downsample_ratio
-
     realized_bbox = requested_bbox.expand_to_chunk_size(self.underlying, offset=self.voxel_offset)
     realized_bbox = Bbox.clamp(realized_bbox, self.bounds)
 
@@ -311,7 +310,6 @@ class CloudVolume(Volume):
         continue 
 
       bbox = Bbox.from_filename(fileinfo['filename'])
-
       img3d = neuroglancer.chunks.decode(
         fileinfo['content'], self.encoding, multichannel_shape(bbox), self.dtype
       )
@@ -319,7 +317,6 @@ class CloudVolume(Volume):
       start = bbox.minpt - realized_bbox.minpt
       end = min2(start + self.underlying, renderbuffer.shape[:3] )
       delta = min2(end - start, img3d.shape[:3])
-
       end = start + delta
 
       renderbuffer[ start.x:end.x, start.y:end.y, start.z:end.z, : ] = img3d[ :delta.x, :delta.y, :delta.z, : ]

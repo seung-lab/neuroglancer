@@ -1,6 +1,7 @@
 from __future__ import print_function
 import copy
 from itertools import product
+from functools import reduce
 import json
 import math
 import re
@@ -10,10 +11,11 @@ import numpy as np
 from tqdm import tqdm
 
 from neuroglancer import downsample_scales, chunks
+from neuroglancer.lib import Vec, Bbox, max2, min2, xyzrange
 from neuroglancer.pipeline import Storage, TaskQueue
 from neuroglancer.pipeline.tasks import (BigArrayTask, IngestTask,
      HyperSquareTask, MeshTask, MeshManifestTask, DownsampleTask)
-from neuroglancer.pipeline.volumes import HDF5Volume
+from neuroglancer.pipeline.volumes import HDF5Volume, CloudVolume
 
 def create_ingest_task(storage, task_queue):
     """
@@ -68,30 +70,18 @@ def compute_bigarray_bounding_box(storage):
     print('offset', [abs_x_min-1, abs_y_min-1, abs_z_min-1])
 
 def compute_build_bounding_box(storage):
-    abs_x_min = abs_y_min = abs_z_min = float('inf')
-    abs_x_max = abs_y_max = abs_z_max = 0
-    chunk_sizes = set()
-    for filename in tqdm(storage.list_files(prefix='build/')):
-        match = re.match(r'^(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)$', filename)
-        (x_min, x_max,
-         y_min, y_max,
-         z_min, z_max) = map(int, match.groups())
-        abs_x_min = min(int(x_min), abs_x_min)
-        abs_y_min = min(int(y_min), abs_y_min)
-        abs_z_min = min(int(z_min), abs_z_min)
-        abs_x_max = max(int(x_max), abs_x_max)
-        abs_y_max = max(int(y_max), abs_y_max)
-        abs_z_max = max(int(z_max), abs_z_max)
-        chunk_size = (x_max - x_min, y_max - y_min, z_max - z_min)
-        chunk_sizes.add(chunk_size)
+    
+    bboxes = []
+    for filename in tqdm(storage.list_files(prefix='build/'), desc='Computing Build Bounds'):
+        bbox = Bbox.from_filename(filename) 
+        bboxes.append(bbox)
 
-    shape = [abs_x_max-abs_x_min,
-             abs_y_max-abs_y_min,
-             abs_z_max-abs_z_min]
-    offset = [abs_x_min, abs_y_min, abs_z_min]  
-    chunk_size = largest_size(chunk_sizes)
-    print('shape=', shape , '; offset=', offset, '; chunk_size=', chunk_size)
-    return shape, offset, chunk_size
+    bounds = Bbox.expand(*bboxes)
+    chunk_size = reduce(max2, map(lambda bbox: bbox.size3(), bboxes))
+
+    print('bounds={} (size: {}); chunk_size={}'.format(bounds, bounds.size3(), chunk_size))
+  
+    return bounds, chunk_size
 
 def get_build_data_type_and_shape(storage):
     for filename in storage.list_files(prefix='build/'):
@@ -99,10 +89,12 @@ def get_build_data_type_and_shape(storage):
         return arr.dtype.name, arr.shape[3] #num_channels
 
 # def create_info_file_from_build(storage, layer_type, resolution=[1,1,1], encoding='raw'):
-def create_info_file_from_build(dataset_name, layer_name, layer_type, encoding, resolution):
+def create_info_file_from_build(layer_path, layer_type, encoding, resolution):
   assert layer_type == "image" or layer_type == "segmentation"
-  bounds, build_chunk_size = compute_build_bounding_box(dataset_name, layer_name)
-  data_type, num_channels = get_build_data_type_and_shape(dataset_name, layer_name)
+
+  storage = Storage(layer_path)
+  bounds, build_chunk_size = compute_build_bounding_box(storage)
+  data_type, num_channels = get_build_data_type_and_shape(storage)
 
   neuroglancer_chunk_size = find_closest_divisor(build_chunk_size, closest_to=[64,64,64])
 
@@ -113,21 +105,21 @@ def create_info_file_from_build(dataset_name, layer_name, layer_type, encoding, 
     encoding=encoding, 
     resolution=resolution, 
     voxel_offset=bounds.minpt, 
-    volume_size=bounds.size3(), 
+    volume_size=bounds.size3(),
     mesh=(layer_type == 'segmentation'), 
     chunk_size=neuroglancer_chunk_size,
   )
 
   scale_ratios = downsample_scales.compute_plane_downsampling_scales(
     size=build_chunk_size,
-    max_downsampled_size=max(neuroglancer_chunk_size[:2]), # exclude z since it won't be downsampled
+    max_downsampled_size=max(neuroglancer_chunk_size[:2]) * 2, # exclude z since it won't be downsampled
   )
 
-  vol = CloudVolume(dataset_name, layer_name, mip=0, info=info, use_secrets=True)
+  vol = CloudVolume.from_cloudpath(layer_path, mip=0, info=info)
   map(vol.addScale, scale_ratios)
-
   vol.commitInfo()
-
+  
+  return vol.info
 
 def find_closest_divisor(to_divide, closest_to):
     def find_closest(td,ct):
@@ -147,14 +139,6 @@ def divisors(n):
             if i*i != n:
                 yield n / i
 
-def largest_size(sizes):
-    x = y = z = 0
-    for size in sizes:
-        x =  max(x, size[0])
-        y =  max(y, size[1])
-        z =  max(z, size[2])
-    return [x,y,z]
-
 def create_downsampling_tasks(layer_path, task_queue, mip=-1, axis='z', shape=Vec(2048, 2048, 64)):
   vol = CloudVolume.from_cloudpath(layer_path, mip)
   
@@ -172,15 +156,40 @@ def create_downsampling_tasks(layer_path, task_queue, mip=-1, axis='z', shape=Ve
 
   for startpt in tqdm(xyzrange( vol.bounds.minpt, vol.bounds.maxpt, shape ), desc="Inserting Downsample Tasks"):
     task = DownsampleTask(
-      dataset_name=vol.dataset_name,
-      layer=vol.layer,
+      layer_path=layer_path,
       mip=vol.mip,
       shape=shape.clone(),
       offset=startpt.clone(),
       axis=axis,
     )
     # task.execute()
-    tq.insert(task)
+    task_queue.insert(task)
+
+
+def create_fixup_downsample_tasks(layer_path, task_queue, points, shape=Vec(2048, 2048, 64), mip=0, axis='z'):
+  """you can use this to fix black spots from when downsample tasks fail
+  by specifying a point inside each black spot.
+  """
+  vol = CloudVolume.from_cloudpath(layer_path, mip)
+  pts = map(np.array, points)
+
+  def nearest_offset(pt):
+    return (np.floor((pt - vol.mip_voxel_offset(0)) / shape) * shape) + vol.mip_voxel_offset(0)
+
+  offsets = map(nearest_offset, pts)
+
+  for offset in tqdm(offsets, desc="Inserting Corrective Downsample Tasks"):
+    task = DownsampleTask(
+      dataset_name=dataset_name,
+      layer=layer_name,
+      mip=mip,
+      shape=shape,
+      offset=offset,
+      axis=axis,
+    )
+    task.execute()
+    # task_queue.insert(task)
+
 
 def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hypersquare_chunk_size, resolution, voxel_offset, volume_size, overlap):
   def crtinfo(layer_type, dtype, encoding):
@@ -222,7 +231,6 @@ def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hyper
       overlap=overlap,
       world_bounds=world_bounds,
       resolution=resolution,
-            tq.insert(t)
     )
 
   tq = TaskQueue()
@@ -243,21 +251,18 @@ def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hyper
     tq.insert(seg_task)
 
 def upload_build_chunks(storage, volume, offset=[0, 0, 0], build_chunk_size=[1024,1024,128]):
-    xyzranges = ( xrange(0, vs, bcs) for vs, bcs in zip(volume.shape, build_chunk_size) )
-    for x_min, y_min, z_min in tqdm(product(*xyzranges)):
-        x_max = min(volume.shape[0], x_min + build_chunk_size[0])
-        y_max = min(volume.shape[1], y_min + build_chunk_size[1])
-        z_max = min(volume.shape[2], z_min + build_chunk_size[2])
-        chunk = volume[x_min:x_max, y_min:y_max, z_min:z_max]
+    offset = Vec(*offset)
+    shape = Vec(*volume.shape[:3])
+    build_chunk_size = Vec(*build_chunk_size)
 
-        #adds offsets
-        x_min += offset[0]; x_max += offset[0]
-        y_min += offset[1]; y_max += offset[1]
-        z_min += offset[2]; z_max += offset[2]
-        filename = 'build/{}-{}_{}-{}_{}-{}'.format(
-            x_min, x_max, y_min, y_max, z_min, z_max)
-        storage.put_file(filename, chunks.encode_npz(chunk))
-        storage.wait_until_queue_empty()
+    edge = offset + shape
+    each_chunk = xyzrange(offset, edge, build_chunk_size)
+    for spt in tqdm(each_chunk, desc='Uploading Build Files'):
+        ept = min2(spt + build_chunk_size, edge)
+        bbox = Bbox(spt, ept)
+        chunk = volume[ bbox.to_slices() ]
+        filename = 'build/{}'.format(bbox.to_filename())
+        storage.put_file(filename, chunks.encode_npz(chunk)).wait()
 
 class MockTaskQueue():
     def insert(self, task):
@@ -277,7 +282,6 @@ def ingest_hdf5_example():
     create_info_file_from_build(storage, layer_type, resolution=resolution, encoding='raw')
     create_ingest_task(storage, task_queue)
     create_downsampling_task(storage, task_queue)
-
 
     #ingest segmentation
     layer_type = 'segmentation'

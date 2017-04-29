@@ -8,18 +8,19 @@ from neuroglancer.pipeline.task_creation import (upload_build_chunks, create_inf
     create_ingest_task, MockTaskQueue)
 
 def create_layer(size, offset, layer_type="image"):
-    storage = Storage('file:///tmp/removeme/layer', n_threads=0)
+    layer_path = 'file:///tmp/removeme/layer'
+    storage = Storage(layer_path, n_threads=0)
 
     if layer_type == "image":
         random_data = np.random.randint(255, size=size, dtype=np.uint8)
         upload_build_chunks(storage, random_data, offset)
         # Jpeg encoding is lossy so it won't work
-        create_info_file_from_build(storage, layer_type= 'image', encoding="raw")
+        create_info_file_from_build(layer_path, layer_type= 'image', encoding="raw", resolution=[1,1,1])
     else:
         random_data = np.random.randint(0xFFFFFF, size=size, dtype=np.uint32)
         upload_build_chunks(storage, random_data, offset)
         # Jpeg encoding is lossy so it won't work
-        create_info_file_from_build(storage, layer_type= 'segmentation', encoding="raw")
+        create_info_file_from_build(layer_path, layer_type= 'segmentation', encoding="raw", resolution=[1,1,1])
     create_ingest_task(storage, MockTaskQueue())
     return storage, random_data
 
