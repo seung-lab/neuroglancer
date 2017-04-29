@@ -8,6 +8,7 @@ import re
 import threading
 from functools import partial
 
+from tqdm import tqdm
 from glob import glob
 from google.cloud.storage import Client
 import boto 
@@ -108,16 +109,35 @@ class Storage(object):
             filename (string): it can contains folders
             content (string): binary data to save
         """
-        if compress:
-            content = self._compress(content)
+        return self.put_files([ (file_path, content) ], content_type, compress)
 
-        def put_file(interface):
-            interface.put_file(file_path, content, content_type, compress)
+    def put_files(self, files, content_type=None, compress=False):
+        """
+        Put lots of files at once and get a nice progress bar. It'll also wait
+        for the upload to complete, just like get_files.
 
-        if len(self._threads):
-            self._queue.put(put_file, block=True)
-        else:
-            put_file(self._interface)
+        Required:
+            files: [ (filepath, content), .... ]
+        """
+        pbar = tqdm(total=len(files), desc="Uploading Files", disable=(len(files) <= 1))
+
+        def put_file(path, content, interface):
+            interface.put_file(path, content, content_type, compress)
+            pbar.update()
+
+        for path, content in files:
+            if compress:
+                content = self._compress(content)
+
+            uploadfn = partial(put_file, path, content)
+
+            if len(self._threads):
+                self._queue.put(uploadfn, block=True)
+            else:
+                uploadfn(self._interface)
+
+        self.wait()
+        pbar.close()
 
         return self
 
@@ -136,6 +156,7 @@ class Storage(object):
 
         results = []
 
+        pbar = tqdm(total=len(file_paths), desc="Downloading Files")
         def get_file_thunk(path, interface):
             result = error = None 
 
@@ -156,6 +177,8 @@ class Storage(object):
                 "error": error,
             })
 
+            pbar.update()
+
         for path in file_paths:
             if len(self._threads):
                 self._queue.put(partial(get_file_thunk, path), block=True)
@@ -163,6 +186,7 @@ class Storage(object):
                 get_file_thunk(path, self._interface)
 
         self.wait_until_queue_empty()
+        pbar.close()
 
         return results
 

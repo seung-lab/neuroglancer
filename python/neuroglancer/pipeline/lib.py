@@ -419,19 +419,21 @@ class Bbox(object):
     result.maxpt = np.ceil(result.maxpt / chunk_size) * chunk_size 
     return result + offset
 
-  def shrink_to_chunk_size(self, chunk_size):
+  def shrink_to_chunk_size(self, chunk_size, offset=Vec(0,0,0, dtype=int)):
     chunk_size = np.array(chunk_size, dtype=np.float32)
     result = self.clone()
+    result = result - offset
     result.minpt = np.ceil(result.minpt / chunk_size) * chunk_size
     result.maxpt = np.floor(result.maxpt / chunk_size) * chunk_size 
-    return result
+    return result + offset
 
-  def round_to_chunk_size(self, chunk_size):
+  def round_to_chunk_size(self, chunk_size, offset=Vec(0,0,0, dtype=int)):
     chunk_size = np.array(chunk_size, dtype=np.float32)
     result = self.clone()
+    result = result - offset
     result.minpt = np.round(result.minpt / chunk_size) * chunk_size
     result.maxpt = np.round(result.maxpt / chunk_size) * chunk_size
-    return result
+    return result + offset
 
   def contains(self, point):
     return (
@@ -495,6 +497,9 @@ class Bbox(object):
     tmp.minpt /= operand
     tmp.maxpt /= operand
     return tmp
+
+  def __ne__(self, other):
+    return not (self == other)
 
   def __eq__(self, other):
     return np.array_equal(self.minpt, other.minpt) and np.array_equal(self.maxpt, other.maxpt)

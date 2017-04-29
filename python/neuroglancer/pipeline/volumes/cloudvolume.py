@@ -16,7 +16,7 @@ from neuroglancer.pipeline.storage import Storage
 from neuroglancer.pipeline.secrets import PROJECT_NAME
 
 class CloudVolume(Volume):
-  def __init__(self, dataset_name, layer, mip=0, protocol='gs', bucket=lib.GCLOUD_BUCKET_NAME, info=None, cache_files=True, use_ls=False, use_secrets=False):
+  def __init__(self, dataset_name, layer, mip=0, protocol='gs', bucket=lib.GCLOUD_BUCKET_NAME, info=None, ):
     super(self.__class__, self).__init__()
 
     # You can access these two with properties
@@ -26,8 +26,7 @@ class CloudVolume(Volume):
     self._layer = layer
 
     self.mip = mip
-
-    self._uncommitted_changes = []
+    self.cache_files = False
 
     self._storage = Storage(self.layer_cloudpath)
 
@@ -65,7 +64,7 @@ class CloudVolume(Volume):
   @classmethod
   def from_cloudpath(cls, cloudpath, mip=0, *args, **kwargs):
     """cloudpath: e.g. gs://neuroglancer/DATASET/LAYER/info or s3://..."""
-    match = re.match(r'^(gs|file|s3)://([\d\w_\.\-]+)/([\d\w_\.\-]+)/([\d\w_\.\-]+)/?(?:info)?', cloudpath)
+    match = re.match(r'^(gs|file|s3)://([/\d\w_\.\-]+)/([\d\w_\.\-]+)/([\d\w_\.\-]+)/?(?:info)?', cloudpath)
     protocol, bucket, dataset_name, layer = match.groups()
 
     return CloudVolume(dataset_name, layer, mip, protocol, bucket, *args, **kwargs)
@@ -98,6 +97,10 @@ class CloudVolume(Volume):
     if name != self._layer:
       self._layer = name
       self.refreshInfo()
+
+  @property
+  def scales(self):
+    return self.info['scales']
 
   @property
   def scale(self):
@@ -264,7 +267,7 @@ class CloudVolume(Volume):
 
   def __getitem__(self, slices):
     
-    maxsize = list(self.volume_size)
+    maxsize = list(self.bounds.maxpt)
     maxsize.append(self.num_channels)
 
     slices = generate_slices(slices, maxsize)
@@ -274,9 +277,6 @@ class CloudVolume(Volume):
     minpt = Vec3(*[ slc.start for slc in slices ]) * self.downsample_ratio
     maxpt = Vec3(*[ slc.stop for slc in slices ]) * self.downsample_ratio
     steps = Vec3(*[ slc.step for slc in slices ])
-
-    minpt += self.voxel_offset * self.downsample_ratio
-    maxpt += self.voxel_offset * self.downsample_ratio
 
     savedir = os.path.join(lib.COMMON_STAGING_DIR, self._protocol, self.dataset_name, self.layer, str(self.mip))
 
@@ -310,10 +310,10 @@ class CloudVolume(Volume):
       if fileinfo['error'] is not None:
         continue 
 
-      bbox = Bbox.from_filename(filehandle['filename'])
+      bbox = Bbox.from_filename(fileinfo['filename'])
 
       img3d = neuroglancer.chunks.decode(
-        filehandle['content'], self.encoding, multichannel_shape(bbox), self.dtype
+        fileinfo['content'], self.encoding, multichannel_shape(bbox), self.dtype
       )
       
       start = bbox.minpt - realized_bbox.minpt
@@ -332,55 +332,31 @@ class CloudVolume(Volume):
 
     return VolumeCutout.from_volume(self, renderbuffer, realized_bbox)
   
-  def __setitem__(self, slices, value):
-    self._uncommitted_changes.append( (slices, value) )
+  def __setitem__(self, slices, img):
+    imgshape = img.shape
+    if len(imgshape) == 3:
+      imgshape = imgshape + [ 1 ]
 
-  def commitData(self):
-    allslices = map(lambda x: x[0], self._uncommitted_changes)
-    allslices = [ generate_slices(slices, self.volume_size) for slices in allslices ]
-    allboxes = map(Bbox.from_slices, allslices)
+    slices = generate_slices(slices, self.shape)
+    bbox = Bbox.from_slices(slices)
+
+    slice_shape = list(bbox.size3()) + [ slices[3].stop - slices[3].start ]
+
+    if not np.array_equal(imgshape, slice_shape):
+      raise ValueError("Illegal slicing, Image shape: {} != {} Slice Shape".format(imgshape, slice_shape))
     
-    big_bbox = Bbox.expand(*allboxes)
-    subvol = self[ big_bbox.to_slices() ]
-
-    for slcs, img in self._uncommitted_changes:
-      bbox = Bbox.from_slices(slcs) - big_bbox.minpt
-      subvol[ bbox.to_slices() ] = img 
-
-    self.upload_image(subvol, big_bbox.minpt)
-    self._uncommitted_changes = []
+    self.upload_image(img, bbox.minpt)
 
   def upload_image(self, img, offset):
-    shape = Vec(*img.shape)[:3]
-    offset = Vec(*offset)[:3]
-
-    bounds = Bbox( offset, shape + offset)
-    bounds = Bbox.clamp(bounds, self.bounds)
-    # bounds = bounds.shrink_to_chunk_size( self.underlying )
-
-    img_offset = bounds.minpt - offset
-    img_end = Vec.clamp(bounds.size3() + img_offset, Vec(0,0,0), shape)
-
-    def generate_chunks():
-      for startpt in xyzrange( img_offset, img_end, self.underlying ):
-        endpt = min2(startpt + self.underlying, shape)
-        chunkimg = img[ startpt.x:endpt.x, startpt.y:endpt.y, startpt.z:endpt.z ]
-
-        spt = (startpt + bounds.minpt).astype(int)
-        ept = (endpt + bounds.minpt).astype(int)
-    
-        yield chunkimg, spt, ept 
-
-    compress = (self.layer_type == 'segmentation')
-
-    for imgchunk, spt, ept in generate_chunks():
+    uploads = []
+    for imgchunk, spt, ept in self._generate_chunks(img, offset):
       if np.array_equal(spt, ept):
           continue
-      
+
       # handle the edge of the dataset
       clamp_ept = min2(ept, self.bounds.maxpt)
-      delta = ept - clamp_ept
-      newimgchunk = imgchunk[ :-delta.x, :-delta.y, :-delta.z, : ]
+      newept = clamp_ept - spt
+      imgchunk = imgchunk[ :newept.x, :newept.y, :newept.z, : ]
 
       filename = "{}-{}_{}-{}_{}-{}".format(
         spt.x, clamp_ept.x,
@@ -388,16 +364,39 @@ class CloudVolume(Volume):
         spt.z, clamp_ept.z
       )
 
-      cloudpath = os.path.join(self.layer_cloudpath, self.key, filename)
+      cloudpath = os.path.join(self.key, filename)
       encoded = neuroglancer.chunks.encode(imgchunk, self.encoding)
+      uploads.append( (cloudpath, encoded) )
 
-      content_type = 'application/octet-stream'
-      if self.encoding == 'jpeg':
-        content_type == 'image/jpeg'
+    content_type = 'application/octet-stream'
+    if self.encoding == 'jpeg':
+      content_type == 'image/jpeg'
 
-      self._storage.put_file(cloudpath, encoded, content_type=content_type, compress=compress)
+    compress = (self.layer_type == 'segmentation')
+    self._storage.put_files(uploads, content_type=content_type, compress=compress)
 
-    self._storage.wait()
+  def _generate_chunks(self, img, offset):
+    shape = Vec(*img.shape)[:3]
+    offset = Vec(*offset)[:3]
+
+    bounds = Bbox( offset, shape + offset)
+
+    if not np.all(bounds.round_to_chunk_size(self.underlying, self.voxel_offset).minpt == bounds.minpt):
+      raise ValueError('Only grid aligned writes are currently supported. Got: {}, Volume Offset: {}'.format(bounds, self.voxel_offset))
+
+    bounds = Bbox.clamp(bounds, self.bounds)
+
+    img_offset = bounds.minpt - offset
+    img_end = Vec.clamp(bounds.size3() + img_offset, Vec(0,0,0), shape)
+  
+    for startpt in xyzrange( img_offset, img_end, self.underlying ):
+      endpt = min2(startpt + self.underlying, shape)
+      chunkimg = img[ startpt.x:endpt.x, startpt.y:endpt.y, startpt.z:endpt.z ]
+
+      spt = (startpt + bounds.minpt).astype(int)
+      ept = (endpt + bounds.minpt).astype(int)
+  
+      yield chunkimg, spt, ept 
 
   def __cloudpaths(self, bbox, volume_bbox, key, chunk_size):
     def cloudpathgenerator():  
