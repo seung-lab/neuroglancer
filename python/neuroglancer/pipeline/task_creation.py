@@ -98,44 +98,36 @@ def get_build_data_type_and_shape(storage):
         arr = chunks.decode_npz(storage.get_file('build/'+filename))
         return arr.dtype.name, arr.shape[3] #num_channels
 
-def create_info_file_from_build(storage, layer_type, resolution=[1,1,1], encoding='raw'):
-    assert layer_type == 'image' or layer_type == 'segmentation'
-    layer_shape, layer_offset, build_chunk_size = compute_build_bounding_box(storage)
-    data_type, num_channels = get_build_data_type_and_shape(storage)
-    info = {
-        'data_type': data_type,
-        'num_channels': num_channels,
-        'scales': [], 
-        'type': layer_type,
-    }
-    if layer_type == 'segmentation':
-        info['mesh'] = 'mesh'
+# def create_info_file_from_build(storage, layer_type, resolution=[1,1,1], encoding='raw'):
+def create_info_file_from_build(dataset_name, layer_name, layer_type, encoding, resolution):
+  assert layer_type == "image" or layer_type == "segmentation"
+  bounds, build_chunk_size = compute_build_bounding_box(dataset_name, layer_name)
+  data_type, num_channels = get_build_data_type_and_shape(dataset_name, layer_name)
 
-    neuroglancer_chunk_size = find_closest_divisor(build_chunk_size, closest_to=[64,64,64])
-    scale_ratios = downsample_scales.compute_near_isotropic_downsampling_scales(
-        size=layer_shape,
-        voxel_size=resolution,
-        dimensions_to_downsample=[0, 1, 2],
-        max_downsampled_size=neuroglancer_chunk_size
-    )
-    # if the voxel_offset is not divisible by the ratio
-    # zooming out will slightly shift the data.
-    # imagine the offset is 10
-    # the mip 1 will have an offset of 5
-    # the mip 2 will have an offset of 2 instead of 2.5 meaning that it will he half a pixel to the left
-    for ratio in scale_ratios:
-        downsampled_resolution = map(int, (resolution * np.array(ratio)))
-        scale = {  
-          'chunk_sizes': [ neuroglancer_chunk_size ],
-          'encoding': encoding, 
-          'key': '_'.join(map(str, downsampled_resolution)),
-          'resolution': downsampled_resolution,
-          'size': map(int, np.ceil(np.array(layer_shape) / ratio)),
-          'voxel_offset': map(int, layer_offset /  np.array(ratio)),
-        }
-        info['scales'].append(scale)
+  neuroglancer_chunk_size = find_closest_divisor(build_chunk_size, closest_to=[64,64,64])
 
-    storage.put_file('info', content=json.dumps(info))
+  info = CloudVolume.create_new_info(
+    num_channels=num_channels, 
+    layer_type=layer_type, 
+    data_type=data_type, 
+    encoding=encoding, 
+    resolution=resolution, 
+    voxel_offset=bounds.minpt, 
+    volume_size=bounds.size3(), 
+    mesh=(layer_type == 'segmentation'), 
+    chunk_size=neuroglancer_chunk_size,
+  )
+
+  scale_ratios = downsample_scales.compute_plane_downsampling_scales(
+    size=build_chunk_size,
+    max_downsampled_size=max(neuroglancer_chunk_size[:2]), # exclude z since it won't be downsampled
+  )
+
+  vol = CloudVolume(dataset_name, layer_name, mip=0, info=info, use_secrets=True)
+  map(vol.addScale, scale_ratios)
+
+  vol.commitInfo()
+
 
 def find_closest_divisor(to_divide, closest_to):
     def find_closest(td,ct):
@@ -163,53 +155,92 @@ def largest_size(sizes):
         z =  max(z, size[2])
     return [x,y,z]
 
-def create_downsampling_task(storage, task_queue, downsample_ratio=[2, 2, 1]):
-    # update info with new scale
-    info = json.loads(storage.get_file('info'))
-    next_scale = compute_next_scale(info['scales'][-1], downsample_ratio)
-    info['scales'].append(next_scale)
-    storage.put_file(file_path='info', content=json.dumps(info))
-    storage.wait_until_queue_empty()
+def create_downsampling_tasks(layer_path, task_queue, mip=-1, axis='z', shape=Vec(2048, 2048, 64)):
+  vol = CloudVolume.from_cloudpath(layer_path, mip)
+  
+  shape = min2(vol.volume_size, shape)
+  
+  scales = downsample_scales.compute_plane_downsampling_scales(
+    size=shape, 
+    preserve_axis=axis, 
+    max_downsampled_size=(min(*vol.underlying) * 2),
+  )
+  scales = scales[1:] # omit (1,1,1)
+  scales = [ vol.downsample_ratio * Vec(*factor3) for factor3 in scales ]
+  map(vol.addScale, scales)
+  vol.commitInfo()
 
-    # create tasks based on the new scale
-    for filename in iterate_over_chunks(next_scale):
-        t = DownsampleTask(
-           chunk_path=storage.get_path_to_file(os.path.join(next_scale['key'],filename)),
-           layer_path=storage.get_path_to_file(''))
-        task_queue.insert(t)
+  for startpt in tqdm(xyzrange( vol.bounds.minpt, vol.bounds.maxpt, shape ), desc="Inserting Downsample Tasks"):
+    task = DownsampleTask(
+      dataset_name=vol.dataset_name,
+      layer=vol.layer,
+      mip=vol.mip,
+      shape=shape.clone(),
+      offset=startpt.clone(),
+      axis=axis,
+    )
+    # task.execute()
+    tq.insert(task)
 
-def compute_next_scale(old_scale, downsample_ratio):
-    next_scale = copy.deepcopy(old_scale)
-    next_scale['resolution'] = [ r*v  for r,v in zip(next_scale['resolution'], downsample_ratio) ]
-    next_scale['key'] = '_'.join(map(str,next_scale['resolution']))
-    next_scale['voxel_offset'] = [ r/v  for r,v in zip(next_scale['voxel_offset'], downsample_ratio)]
-    next_scale['size'] = [ r/v  for r,v in zip(next_scale['size'], downsample_ratio)]
-    return next_scale
+def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hypersquare_chunk_size, resolution, voxel_offset, volume_size, overlap):
+  def crtinfo(layer_type, dtype, encoding):
+    return CloudVolume.create_new_info(
+      num_channels=1,
+      layer_type=layer_type,
+      data_type=dtype,
+      encoding=encoding,
+      resolution=resolution,
+      voxel_offset=voxel_offset,
+      volume_size=volume_size,
+      chunk_size=[ 56, 56, 56 ],
+    )
 
-def iterate_over_chunks(scale):
-    xyzranges = ( xrange(0, vs, bcs) for vs, bcs in zip(scale['size'], scale['chunk_sizes'][0]) )
-    for x_min, y_min, z_min in tqdm(product(*xyzranges)):
-        x_max = min(scale['size'][0], x_min + scale['chunk_sizes'][0][0])
-        y_max = min(scale['size'][1], y_min + scale['chunk_sizes'][0][1])
-        z_max = min(scale['size'][2], z_min + scale['chunk_sizes'][0][2])
+  imginfo = crtinfo('image', 'uint8', 'jpeg')
+  seginfo = crtinfo('segmentation', 'uint16', 'raw')
 
-        #adds offsets
-        x_min += scale['voxel_offset'][0]; x_max += scale['voxel_offset'][0]
-        y_min += scale['voxel_offset'][1]; y_max += scale['voxel_offset'][1]
-        z_min += scale['voxel_offset'][2]; z_max += scale['voxel_offset'][2]
-        yield '{}-{}_{}-{}_{}-{}'.format(
-            x_min, x_max, y_min, y_max, z_min, z_max)
+  scales = downsample_scales.compute_plane_downsampling_scales(hypersquare_chunk_size)[1:] # omit (1,1,1)
 
+  IMG_LAYER_NAME = 'image'
+  SEG_LAYER_NAME = 'segmentation'
 
-def create_hypersquare_tasks(storage, task_queue, bucket_name, path_from_bucket):
-    for filename in tqdm(storage.list_files(prefix=path_from_bucket)):
-        if '/0.jpg' in filename and 'Volume' in filename: #TODO this has to be reworked
-            t = HyperSquareTask(
-                chunk_path=storage.get_path_to_file('hypersquare/'+filename),
-                chunk_encoding='npz',
-                version='{}/{}'.format(storage._path.dataset_name, storage._path.layer_name),
-                layer_path=storage.get_path_to_file(''))
-            task_queue.insert(t)
+  imgvol = CloudVolume(dataset_name, IMG_LAYER_NAME, 0, info=imginfo)
+  segvol = CloudVolume(dataset_name, SEG_LAYER_NAME, 0, info=seginfo)
+
+  print("Creating info files for image and segmentation...")
+  imgvol.commitInfo()
+  segvol.commitInfo()
+
+  world_bounds = lib.Bbox( voxel_offset, Vec(*voxel_offset) + Vec(*volume_size) )
+
+  def crttask(volname, tasktype, layer_name):
+    return HyperSquareTask(
+      bucket_name=hypersquare_bucket_name,
+      dataset_name=dataset_name,
+      layer_name=layer_name,
+      volume_dir=volname,
+      layer_type=tasktype,
+      overlap=overlap,
+      world_bounds=world_bounds,
+      resolution=resolution,
+            tq.insert(t)
+    )
+
+  tq = TaskQueue()
+  print("Listing hypersquare bucket...")
+  # volumes_listing = lib.gcloud_ls('gs://{}/'.format(hypersquare_bucket_name))
+
+  # download this from: 
+  with open('e2198_volumes.json', 'r') as f:
+    volumes_listing = json.loads(f.read())
+
+  volumes_listing = [ x.split('/')[-2] for x in volumes_listing ]
+
+  for cloudpath in tqdm(volumes_listing, desc="Creating Ingest Tasks"):
+    # print(cloudpath)
+    # img_task = crttask(cloudpath, 'image', IMG_LAYER_NAME)
+    seg_task = crttask(cloudpath, 'segmentation', SEG_LAYER_NAME)
+    # seg_task.execute()
+    tq.insert(seg_task)
 
 def upload_build_chunks(storage, volume, offset=[0, 0, 0], build_chunk_size=[1024,1024,128]):
     xyzranges = ( xrange(0, vs, bcs) for vs, bcs in zip(volume.shape, build_chunk_size) )

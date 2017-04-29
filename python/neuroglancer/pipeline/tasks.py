@@ -13,258 +13,151 @@ import numpy as np
 from backports import lzma
 from tqdm import tqdm
 
+from neuroglancer import chunks, downsample, downsample_scales
 from neuroglancer.pipeline import Storage, Precomputed, RegisteredTask
-from neuroglancer import chunks, downsample
+from neuroglancer.pipeline.lib import xyzrange, min2, max2, Vec, Bbox 
+from neuroglancer.pipeline.volumes import CloudVolume
 from neuroglancer.ingest.mesher import Mesher
-
 
 class IngestTask(RegisteredTask):
     """Ingests and does downsampling.
-       We want tasks execution to be independent of each other, so that no sincronization is
+       We want tasks execution to be independent of each other, so that no synchronization is
        required.
        The downsample scales should be such that the lowest resolution chunk should be able
        to be produce from the data available.
     """
     def __init__(self, chunk_path, chunk_encoding, layer_path):
-        super(IngestTask, self).__init__(chunk_path, chunk_encoding, layer_path)
-        self.chunk_path = chunk_path
-        self.chunk_encoding = chunk_encoding
-        self.layer_path = layer_path
+      self.chunk_path = chunk_path
+      self.chunk_encoding = chunk_encoding
+      self.layer_path = layer_path
+
+      self._volume = None # defer until execution
+      self._bounds = None # defer until execution
 
     def execute(self):
-        self._storage = Storage(self.layer_path)
-        self._parse_chunk_path()
-        self._download_info()
-        self._download_input_chunk()
-        self._create_chunks()
-        self._storage.wait_until_queue_empty()
-
-    def _parse_chunk_path(self):
-        match = re.match(r'^.*/(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)$', self.chunk_path)
-        (self._xmin, self._xmax,
-         self._ymin, self._ymax,
-         self._zmin, self._zmax) = map(int, match.groups())
-        self._filename = "{}-{}_{}-{}_{}-{}".format(
-            self._xmin, self._xmax,
-            self._ymin, self._ymax,
-            self._zmin, self._zmax)
-
-    def _download_info(self):
-        self._info = json.loads(self._storage.get_file('info'))
+      self._volume = CloudVolume.from_cloudpath(self.layer_path, mip=0)
+      self._bounds = Bbox.from_filename(self.chunk_path)
+      data = self._download_input_chunk()
+      self._bounds = self._bounds.transpose()
+      data = chunks.decode(data, self.chunk_encoding)
+      self._create_chunks(data)
 
     def _download_input_chunk(self):
-        string_data = self._storage.get_file(os.path.join('build', self._filename))
-        if self.chunk_encoding == 'npz':
-          self._data = chunks.decode_npz(string_data)
-        else:
-          raise NotImplementedError(self.chunk_encoding)
+      storage = Storage(self.layer_path, n_threads=0)
+      relpath = '/build/{}'.format(self._bounds.to_filename())
+      return storage.get_file(relpath)
 
-    def _create_chunks(self):
-        for scale in self._info["scales"]:
-            for chunk_size in scale['chunk_sizes']:
-                self._generate_chunks(scale, chunk_size)
-                    
+    def _create_chunks(self, image):
+      vol = self._volume
 
-    def _generate_chunks(self, scale, chunk_size):
-        highest_resolution = np.array(self._info['scales'][0]['resolution'])
-        current_resolution = np.array(scale["resolution"])
-        downsample_ratio = current_resolution / highest_resolution
-        current_shape = self._data.shape[:-1] / downsample_ratio # we discard the channel component in data
+      fullscales = downsample_scales.compute_plane_downsampling_scales(image.shape[:3], max_downsampled_size=max(self._volume.underlying[:2]))
+      factors = downsample.scale_series_to_downsample_factors(fullscales)
+      downsamplefn = downsample.method(vol.layer_type)
 
-        # This is required because last data chunk is allowed to not 
-        # be a multiple of the chunk size.
-        n_chunks = self._ceil(current_shape, chunk_size)
-        for x,y,z in itertools.product(*list(map(xrange, n_chunks))):
-            # numpy allows for index that are larger than the array size
-            # because we are doing ceil in n_chunks, there will be cases where
-            # chunk.shape is less than chunk_size. In that case the filename should 
-            # base on chunk.shape.
-            subvol = self._data[
-                x * chunk_size[0] * downsample_ratio[0] : (x+1) * chunk_size[0] * downsample_ratio[0],
-                y * chunk_size[1] * downsample_ratio[1] : (y+1) * chunk_size[1] * downsample_ratio[1],
-                z * chunk_size[2] * downsample_ratio[2] : (z+1) * chunk_size[2] * downsample_ratio[2],
-                :]
-            chunk = downsample.downsample_with_striding(subvol, downsample_ratio)
+      vol.mip = 0
+      vol.upload_image(image, self._bounds.minpt)
 
-            encoded = self._encode(chunk, scale["encoding"])
-            filename = self._get_filename(x, y, z, chunk_size, downsample_ratio, scale)
-            self._storage.put_file(filename, encoded)
-            self._storage.wait_until_queue_empty()
+      for factor3 in factors:
+        vol.mip += 1
 
-    def _encode(self, chunk, encoding):
-        if encoding == "jpeg":
-            return chunks.encode_jpeg(chunk)
-        elif encoding == "npz":
-            return chunks.encode_npz(chunk)
-        elif encoding == "raw":
-            return chunks.encode_raw(chunk)
-        else:
-            raise NotImplementedError(encoding)
-
-    def _ceil(self, arr1, arr2):
-        return np.ceil(arr1.astype(np.float32) / arr2).astype(np.uint32)
-
-    def _get_filename(self, x, y, z, chunk_size, downsample_ratio, scale):
-        xmin = x * chunk_size[0] + self._xmin / downsample_ratio[0]
-        xmax = min((x + 1) * chunk_size[0] + self._xmin / downsample_ratio[0], scale['size'][0] + scale['voxel_offset'][0])
-        ymin = y * chunk_size[1] + self._ymin / downsample_ratio[1]
-        ymax = min((y + 1) * chunk_size[1] + self._ymin / downsample_ratio[1], scale['size'][1] + scale['voxel_offset'][1])
-        zmin = z * chunk_size[2] + self._zmin / downsample_ratio[2]
-        zmax = min((z + 1) * chunk_size[2] + self._zmin / downsample_ratio[2], scale['size'][2] + scale['voxel_offset'][2])
-
-        return '{}/{:d}-{:d}_{:d}-{:d}_{:d}-{:d}'.format(scale['key'],
-          xmin, xmax, ymin, ymax, zmin, zmax) 
+        image = downsamplefn(image, factor3)
+        vol.upload_image(image, self._bounds.minpt / vol.downsample_ratio)
 
 class DownsampleTask(RegisteredTask):
-    def __init__(self, chunk_path, layer_path):
-        super(DownsampleTask, self).__init__(chunk_path, layer_path)
-        self.chunk_path = chunk_path
-        self.layer_path = layer_path
+    def __init__(self, dataset_name, layer, mip, shape, offset, axis='z'):
+        self.dataset_name = dataset_name
+        self.layer = layer
+        self.mip = mip
+        self.shape = Vec(*shape)
+        self.offset = Vec(*offset)
+        self.axis = axis
 
-    def execute(self):
-        self._storage = Storage(self.layer_path)
-        self._download_info()
-        self._parse_chunk_path()
-        self._compute_downsampling_ratio()
-        self._download_input_chunk()
-        self._upload_output_chunk()
+        self._volume = None
+        self._bounds = None
+        
+      def execute(self):
+        self._volume = CloudVolume(self.dataset_name, self.layer, self.mip)
+        vol = self._volume
 
-    def _download_info(self):
-        self._info = json.loads(self._storage.get_file('info'))
+        self._bounds = Bbox( self.offset, self.shape + self.offset )
+        self._bounds = Bbox.clamp(self._bounds, vol.bounds)
+        
+        image = vol[ self._bounds.to_slices() ]
+        shape = min2(Vec(*image.shape[:3]), self._bounds.size3())
 
-    def _parse_chunk_path(self):
-        match = re.match(r'.*/([^//]+)/(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)$', self.chunk_path)
-        self._key = match.groups()[0]
-        (self._xmin, self._xmax,
-         self._ymin, self._ymax,
-         self._zmin, self._zmax) = map(int, match.groups()[1:])
+        # need to use self.shape here. shape or self._bounds means edges won't generate as many mip levels
+        fullscales = downsample_scales.compute_plane_downsampling_scales(
+          size=self.shape, 
+          preserve_axis=self.axis, 
+          max_downsampled_size=(min(*vol.underlying) * 2),
+        )
+        factors = downsample.scale_series_to_downsample_factors(fullscales)
 
-    def _compute_downsampling_ratio(self):
-        self._current_index = self._find_scale_idx()
-        current_resolution = self._info['scales'][self._current_index]['resolution']
-        higher_resolution = self._info['scales'][self._current_index-1]['resolution']
-        self._downsample_ratio = [ c/h for c,h in zip(current_resolution, higher_resolution)] + [1]
+        if len(factors) == 0:
+          print("No factors generated for shape: {}, image: {}".format(self.shape, shape))
 
-    def _find_scale_idx(self):
-        for scale_idx, scale in enumerate(self._info['scales']):
-            if scale['key'] == self._key:
-                assert scale_idx > 0
-                return scale_idx
+        downsamplefn = downsample.method(vol.layer_type)
 
-    def _download_input_chunk(self):
-        volume = Precomputed(self._storage, scale_idx=self._current_index-1)
-        chunk = volume[
-            self._xmin * self._downsample_ratio[0]:self._xmax * self._downsample_ratio[0],
-            self._ymin * self._downsample_ratio[1]:self._ymax * self._downsample_ratio[1],
-            self._zmin * self._downsample_ratio[2]:self._zmax * self._downsample_ratio[2]]
-        self._downsample_chunk(chunk)
+        original_mip = vol.mip
+        total_factor = Vec(1,1,1)
 
-    def _downsample_chunk(self, chunk):
-        if self._info['type'] == 'image':
-            self._data = downsample.downsample_with_averaging(chunk, self._downsample_ratio)
-        elif self._info['type'] == 'segmentation':
-            self._data = downsample.downsample_segmentation(chunk, self._downsample_ratio)
-        else:
-            raise NotImplementedError(self._info['type'])
-
-    def _upload_output_chunk(self): 
-        self._storage.put_file(
-            file_path=self._get_filename(),
-            content=self._encode(self._data, self._info['scales'][self._current_index]["encoding"])
-            )
-        self._storage.wait_until_queue_empty()
-
-    def _encode(self, chunk, encoding):
-        if encoding == "jpeg":
-            return chunks.encode_jpeg(chunk)
-        elif encoding == "npz":
-            return chunks.encode_npz(chunk)
-        elif encoding == "raw":
-            return chunks.encode_raw(chunk)
-        else:
-            raise NotImplementedError(encoding)
-
-    def _get_filename(self):
-        return '{}/{:d}-{:d}_{:d}-{:d}_{:d}-{:d}'.format(self._key,
-          self._xmin, self._xmax, self._ymin, self._ymax, self._zmin, self._zmax) 
+        for factor3 in factors:
+          vol.mip += 1
+          image = downsamplefn(image, factor3)
+          total_factor *= factor3
+          vol.upload_image(image, self._bounds.minpt / total_factor)
 
 class MeshTask(RegisteredTask):
 
-    def __init__(self, chunk_key, chunk_position, layer_path, 
-                 lod=0, simplification=5, segments=[]):
-        
-        super(MeshTask, self).__init__(chunk_key, chunk_position, layer_path, 
-                                       lod, simplification, segments)
-        self.chunk_key = chunk_key
-        self.chunk_position = chunk_position
-        self.layer_path = layer_path
-        self.lod = lod
-        self.simplification = simplification
-        self.segments = segments
+  def __init__(self, chunk_position, layer_path, lod=0, simplification=128, segments=[]):
+    self.chunk_position = chunk_position
+    self.layer_path = layer_path
+    self.lod = lod
+    self.simplification = simplification
+    self.segments = segments
 
-    def execute(self):
-        self._storage = Storage(self.layer_path)
-        self._mesher = Mesher()
-        self._parse_chunk_key()
-        self._parse_chunk_position()
-        self._download_info()
-        self._download_input_chunk()
-        self._compute_meshes()
-        self._storage.wait_until_queue_empty()
-
-    def _parse_chunk_key(self):
-        self._key = self.chunk_key.split('/')[-1]
-
-    def _parse_chunk_position(self):
-        match = re.match(r'^(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)$', self.chunk_position)
-        (self._xmin, self._xmax,
-         self._ymin, self._ymax,
-         self._zmin, self._zmax) = map(int, match.groups())
+  def execute(self):
+    self._mesher = Mesher()
+    self._bounds = Bbox.from_filename(self.chunk_position)
+    self._volume = CloudVolume.from_cloudpath(self.layer_path, mip=0)
     
-    def _download_info(self):
-        self._info = json.loads(self._storage.get_file('info'))
+    if 'mesh' not in self._volume.info:
+      raise ValueError("The mesh destination is not present in the info file.")
 
-        if 'mesh' not in self._info:
-            raise ValueError("Path on where to store the meshes is not present")
+    self._data = self._volume[self._bounds.to_slices()] # chunk_position includes a 1 pixel overlap
+    self._compute_meshes()
 
-    def _download_input_chunk(self):
-        """
-        It assumes that the chunk_position includes a 1 pixel overlap
-        """
-        #FIXME choose the mip level based on the chunk key
-        volume = Precomputed(self._storage)
-        self._data = volume[self._xmin:self._xmax,
-                            self._ymin:self._ymax,
-                            self._zmin:self._zmax]
-
-    def _compute_meshes(self):
-        data = np.swapaxes(self._data[:,:,:,0], 0,2)
+  def _compute_meshes(self):
+    with Storage(self.layer_path) as storage:
+        data = self._data.T
         self._mesher.mesh(data.flatten(), *data.shape)
-        for obj_id in tqdm(self._mesher.ids()):
-            self._storage.put_file(
-                file_path='{}/{}:{}:{}'.format(self._info['mesh'], obj_id, self.lod, self.chunk_position),
-                content=self._create_mesh(obj_id))
-            self._storage.wait_until_queue_empty()
+        for obj_id in tqdm(self._mesher.ids(), desc="Meshing"):
+          storage.put_file(
+            file_path='{}/{}:{}:{}'.format(self._volume.info['mesh'], obj_id, self.lod, self.chunk_position),
+            content=self._create_mesh(obj_id),
+            compress=True,
+        )
 
-    def _create_mesh(self, obj_id):
-        mesh = self._mesher.get_mesh(obj_id, simplification_factor=128, max_simplification_error=1000000)
-        vertices = self._update_vertices(np.array(mesh['points'], dtype=np.float32)) 
-        vertex_index_format = [
-            np.uint32(len(vertices) / 3), #Number of vertices (each vertex it's composed of three numbers(x,y,z))
-            vertices,
-            np.array(mesh['faces'], dtype=np.uint32)
-        ]
-        return b''.join([ array.tobytes() for array in vertex_index_format ])
+  def _create_mesh(self, obj_id):
+    mesh = self._mesher.get_mesh(obj_id, simplification_factor=self.simplification, max_simplification_error=1000000)
+    vertices = self._update_vertices(np.array(mesh['points'], dtype=np.float32)) 
+    vertex_index_format = [
+      np.uint32(len(vertices) / 3), # Number of vertices ( each vertex is three numbers (x,y,z) )
+      vertices,
+      np.array(mesh['faces'], dtype=np.uint32)
+    ]
+    return b''.join([ array.tobytes() for array in vertex_index_format ])
 
-    def _update_vertices(self, points):
-        # zlib meshing multiplies verticies by two to avoid working with floats like 1.5
-        # but we need to recover the exact position for display
-        points /= 2.0
-        resolution = self._info['scales'][0]['resolution']
-        points[0::3] = (points[0::3] + self._xmin) * resolution[0]   # x
-        points[1::3] = (points[1::3] + self._ymin) * resolution[1]   # y
-        points[2::3] = (points[2::3] + self._zmin) * resolution[2]   # z
-        return points
+  def _update_vertices(self, points):
+    # zlib meshing multiplies verticies by two to avoid working with floats like 1.5
+    # but we need to recover the exact position for display
+    points /= 2.0
+    resolution = self._volume.mip_resolution(0)
+    xmin, ymin, zmin = self._bounds.minpt
+    points[0::3] = (points[0::3] + xmin) * resolution.x 
+    points[1::3] = (points[1::3] + ymin) * resolution.y 
+    points[2::3] = (points[2::3] + zmin) * resolution.z 
+    return points
 
 class MeshManifestTask(RegisteredTask):
     """
@@ -415,95 +308,93 @@ class BigArrayTask(RegisteredTask):
             raise NotImplementedError(encoding)
 
 class HyperSquareTask(RegisteredTask):
-    def __init__(self, chunk_path, chunk_encoding, version, layer_path):
-        super(HyperSquareTask, self).__init__(chunk_path, chunk_encoding, version, layer_path)
-        self.chunk_path = chunk_path
-        self.chunk_encoding = chunk_encoding
-        self.version = version
-        self.layer_path = layer_path
+  def __init__(self, bucket_name, dataset_name, layer_name, 
+     volume_dir, layer_type, overlap, world_bounds, resolution):
 
-    def execute(self):
-        self._parse_chunk_path()
-        self._storage = Storage(self.layer_path)
-        self._download_metadata()
-        self._download_input_chunk()
-        self._upload_chunk()
+    self.bucket_name = bucket_name
+    self.dataset_name = dataset_name
+    self.layer_name = layer_name
+    self.volume_dir = volume_dir
+    self.layer_type = layer_type
+    self.overlap = Vec(*overlap)
 
-    def _parse_chunk_path(self):
-        if 'segmentation' in self._storage._path.layer_name: 
-            match = re.match(r'^gs://(.*)/(.*)/segmentation.lzma', self.chunk_path)
-            self._bucket_name, self._chunk_folder = match.groups()
-        elif 'image' in self._storage._path.layer_name:
-            match = re.match(r'^gs://(.*)/(.*)/jpg/0\.jpg', self.chunk_path)
-            self._bucket_name, self._chunk_folder = match.groups()
-        else:
-            return NotImplementedError("Don't know how process this layer")
+    if type(world_bounds) is Bbox:
+      self.world_bounds = world_bounds
+    else:
+      self.world_bounds = Bbox.from_list(world_bounds)
 
-    def _download_metadata(self):
-        #FIXME self._storage._client doesn't exist anymore
-        self._bucket = self._storage._client.get_bucket(self._bucket_name)
-        metadata = self._bucket.get_blob(
-            '{}/metadata-fixed.json'.format(self._chunk_folder)) \
-        .download_as_string()
-        self._metadata = json.loads(metadata)
-        
-    def _download_input_chunk(self):
-        if 'segmentation' in self._storage._path.layer_name: 
-            self._datablob = self._bukcet.get_blob(
-                '{}/segmentation.lzma'.format(self._chunk_folder))
-            string_data = self._datablob.download_as_string()
-            self._data = self._decode_lzma(string_data)
-        elif 'image' in self._storage._path.layer_name:
-            self._data = np.zeros(shape=(256,256,256), dtype=np.uint8) #x,y,z,channels
-            for blob in self._bucket.list_blobs(prefix='{}/jpg'.format(self._chunk_folder)):
-                z = int(re.findall(r'(\d+)\.jpg', blob.name)[0])
-                img = blob.download_as_string()
-                self._data[:,:,z] = chunks.decode_jpeg(img, shape=(256,256,1)).transpose()
-            self._data.transpose((2,1,0))
-        else:
-            return NotImplementedError("Don't know how to get the images for this layer")
+    self.resolution = Vec(*resolution)
 
-    def _decode_lzma(self, string_data):
-        arr = lzma.decompress(string_data)
-        if self._metadata['segment_id_type'] == 'UInt8':
-            arr = np.fromstring(arr, dtype=np.uint8)
-        elif self._metadata['segment_id_type'] == 'UInt16':
-            arr = np.fromstring(arr, dtype=np.uint16)
-        elif self._metadata['segment_id_type'] == 'UInt32':
-            arr = np.fromstring(arr, dtype=np.uint32)
-        elif self._metadata['segment_id_type'] == 'UInt64':
-            arr = np.fromstring(arr, dtype=np.uint64)
-        arr = arr.reshape(self._metadata['chunk_voxel_dimensions'][::-1])
-        return arr.transpose((2,1,0))
+    self._volume_cloudpath = 'gs://{}/{}'.format(self.bucket_name, self.volume_dir)
+    self._bucket = None
+    self._metadata = None
+    self._bounds = None
 
-    def _upload_chunk(self):
-        if self._dataset_name == 'zfish_v0':
-            overlap = [64, 64, 8]
-        elif self._dataset_name == 'e2198_v0':
-            overlap = [16, 16, 16]
-        else:
-            raise NotImplementedError(self.version)
- 
-        chunk = np.expand_dims(self._data[overlap[0]:-overlap[0],
-                                          overlap[1]:-overlap[1],
-                                          overlap[2]:-overlap[2]],3)
-        voxel_resolution = np.array(self._metadata['voxel_resolution'])
+  def execute(self):
+    client = storage.Client.from_service_account_json(
+      lib.credentials_path(), project=lib.GCLOUD_PROJECT_NAME
+    )
+    self._bucket = client.get_bucket(self.bucket_name)
+    self._metadata = meta = self._download_metadata()
 
-        xmin, ymin, zmin = (self._metadata['physical_offset_min'] / voxel_resolution) + overlap
-        xmax, ymax, zmax = (self._metadata['physical_offset_max'] / voxel_resolution) - overlap
-        filename = 'build/{:d}-{:d}_{:d}-{:d}_{:d}-{:d}'.format(
-          xmin, xmax, ymin, ymax, zmin, zmax)
-        encoded = self._encode(chunk, self.chunk_encoding)
-        self._storage.put_file(filename, encoded)
-        self._storage.wait_until_queue_empty()
+    self._bounds = Bbox(
+      meta['physical_offset_min'], # in voxels
+      meta['physical_offset_max']
+    )
 
-    def _encode(self, chunk, encoding):
-        if encoding == "jpeg":
-            return chunks.encode_jpeg(chunk)
-        elif encoding == "npz":
-            return chunks.encode_npz(chunk)
-        elif encoding == "raw":
-            return chunks.encode_raw(chunk)
-        else:
-            raise NotImplementedError(encoding)
+    shape = Vec(*meta['chunk_voxel_dimensions'])
+    shape = Vec(shape.x, shape.y, shape.z, 1)
+
+    if self.layer_type == 'image':
+      dtype = meta['image_type'].lower()
+      cube = self._materialize_images(shape, dtype)
+    elif self.layer_type == 'segmentation':
+      dtype = meta['segment_id_type'].lower()
+      cube = self._materialize_segmentation(shape, dtype)
+    else:
+      dtype = meta['affinity_type'].lower()
+      return NotImplementedError("Don't know how to get the images for this layer.")
+
+    self._upload_chunk(cube, dtype)
+
+  def _download_metadata(self):
+    cloudpath = '{}/metadata.json'.format(self.volume_dir)
+    metadata = self._bucket.get_blob(cloudpath).download_as_string()
+    return json.loads(metadata)
+
+  def _materialize_segmentation(self, shape, dtype):
+    segmentation_path = '{}/segmentation.lzma'.format(self.volume_dir)
+    seg_blob = self._bucket.get_blob(segmentation_path)
+    return self._decode_lzma(seg_blob.download_as_string(), shape, dtype)
+
+  def _materialize_images(self, shape, dtype):
+    cloudpaths = [ '{}/jpg/{}.jpg'.format(self.volume_dir, i) for i in xrange(shape.z) ]
+    datacube = np.zeros(shape=shape, dtype=np.uint8) # x,y,z,channels
+
+    prefix = '{}/jpg/'.format(self.volume_dir)
+
+    blobs = self._bucket.list_blobs(prefix=prefix)
+    for blob in blobs:
+      z = int(re.findall(r'(\d+)\.jpg', blob.name)[0])
+      imgdata = blob.download_as_string()
+      datacube[:,:,z,:] = chunks.decode_jpeg(imgdata, shape=(256, 256, 1))
+
+    return datacube
+
+  def _decode_lzma(self, string_data, shape, dtype):
+    arr = lzma.decompress(string_data)
+    arr = np.fromstring(arr, dtype=dtype)
+    return arr.reshape(shape[::-1]).T
+
+  def _upload_chunk(self, datacube, dtype):
+    vol = CloudVolume(self.dataset_name, self.layer_name, mip=0)
+    hov = self.overlap / 2 # half overlap, e.g. 32 -> 16 in e2198
+    img = datacube[ hov.x:-hov.x, hov.y:-hov.y, hov.z:-hov.z, : ] # e.g. 256 -> 224
+    bounds = self._bounds.clone()
+
+    # the boxes are offset left of zero by half overlap, so no need to 
+    # compensate for weird shifts. only upload the non-overlap region.
+
+    vol.upload_image(img, bounds.minpt)
+
 

@@ -31,10 +31,11 @@ def test_mesh():
     data[1:-1,1:-1,1:-1,:] = 1
     pr[0:64,0:64,0:64] = data
 
-    t = MeshTask(chunk_key=storage.get_path_to_file("1_1_1/"),
-             chunk_position='0-64_0-64_0-64',
-             layer_path=storage.get_path_to_file(""),
-             lod=0, simplification=5, segments=[])
+    t = MeshTask(
+        chunk_key=storage.get_path_to_file("1_1_1/"),
+        chunk_position='0-64_0-64_0-64',
+        layer_path=storage.get_path_to_file(""),
+        lod=0, simplification=5, segments=[])
     t.execute()
     assert storage.get_file('mesh/1:0:0-64_0-64_0-64') is not None 
     assert list(storage.list_files('mesh/')) == ['1:0:0-64_0-64_0-64']
