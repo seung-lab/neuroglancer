@@ -127,13 +127,14 @@ class Volume(object):
     
 class HDF5Volume(Volume):
 
-  def __init__(self, path, layer_type):
+  def __init__(self, path, layer_type, max_size=None):
     self._layer_type = layer_type
     self._f = h5py.File(path, 'r')
-    self._data = self._f['main']      
+    self._data = self._f['main']
     self._shape = self._data.shape[::-1]               
     if self._layer_type == "affinities":
-        self._data_type = "uint8"
+        self._data = self._data[:,:max_size[2],:max_size[1],:max_size[0]]
+        self._data_type = "float32"
     else:
         self._data_type = self._f['main'].dtype
 
@@ -143,8 +144,8 @@ class HDF5Volume(Volume):
     """
     data = self._data.__getitem__(slices[::-1])
     if self._layer_type == "affinities":
-        data = data.transpose((3,2,1,0)) * 255.0
-        return data.astype(np.uint8) 
+        data = data.transpose((3,2,1,0))
+        return data
     else:
         return np.expand_dims(np.swapaxes(data,0,2),3)
 

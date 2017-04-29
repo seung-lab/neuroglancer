@@ -94,7 +94,7 @@ class TaskQueue(object):
         def __init__(self):
             super(LookupError, self).__init__('Queue Empty')
 
-    def __init__(self, n_threads=40, project=PROJECT_NAME, queue_name=QUEUE_NAME, local=True):
+    def __init__(self, n_threads=40, project=PROJECT_NAME, queue_name=QUEUE_NAME):
         self._project = 's~' + project # unsure why this is necessary
         self._queue_name = queue_name
 
@@ -268,5 +268,3 @@ class TaskQueue(object):
 
     def __del__(self):
         self._kill_threads()
-
-

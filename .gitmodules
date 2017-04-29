@@ -1,0 +1,3 @@
+[submodule "python/ext/third_party/yacn"]
+	path = python/ext/third_party/yacn
+	url = https://github.com/seung-lab/yacn
