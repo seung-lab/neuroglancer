@@ -2,6 +2,7 @@ import pytest
 import re
 import shutil
 import time
+import gc
 
 from neuroglancer.pipeline import Storage
 
@@ -91,3 +92,23 @@ def test_list():
         assert set(s.list_files(prefix='nofolder/')) == set([])
     
     shutil.rmtree("/tmp/removeme/list")
+
+def test_threads_die():
+    s = Storage('file:///tmp/removeme/wow', n_threads=40)
+    threads = s._threads
+    s.kill_threads()
+    time.sleep(1.1)
+
+    assert not any(map(lambda t: t.isAlive(), threads))
+
+    with Storage('file:///tmp/removeme/wow', n_threads=40) as s:
+        threads = s._threads
+    time.sleep(1.1)
+    
+    assert not any(map(lambda t: t.isAlive(), threads))
+
+
+
+
+
+

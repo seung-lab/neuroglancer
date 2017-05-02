@@ -59,6 +59,7 @@ class Precomputed(object):
             self._storage.put_file(
                 file_path=self._chunk_to_file_path(c),
                 content=content)
+        self._storage.wait()
 
     def _get_offsets(self, slices):
         first_chunk = self._iter_chunks(slices).next()

@@ -11,6 +11,7 @@ import shutil
 import gc
 import gzip
 import operator
+import time
 from itertools import product
 
 from google.cloud import storage
@@ -25,8 +26,16 @@ COMMON_STAGING_DIR = './staging/'
 CLOUD_COMPUTING = False if 'CLOUD_COMPUTING' not in os.environ else bool(int(os.environ['CLOUD_COMPUTING']))
 
 def mkdir(path):
-  if path != '' and not os.path.exists(path):
-    os.makedirs(path)
+  try:
+    if path != '' and not os.path.exists(path):
+      os.makedirs(path)
+  except OSError as e:
+    if e.errno == 17:
+      time.sleep(0.1)
+      return mkdir(path)
+    else:
+      raise
+
   return path
 
 def touch(path):

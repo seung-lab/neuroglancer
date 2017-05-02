@@ -23,11 +23,12 @@ def create_ingest_task(storage, task_queue):
     It is required that the info file is already placed in order for this task
     to run succesfully.
     """
-    for filename in tqdm(storage.list_files(prefix='build/')):
+    for filename in storage.list_files(prefix='build/'):
         t = IngestTask(
-            chunk_path=storage.get_path_to_file('build/'+filename),
-            chunk_encoding='npz',
-            layer_path=storage.get_path_to_file(''))
+          chunk_path=storage.get_path_to_file('build/'+filename),
+          chunk_encoding='npz',
+          layer_path=storage.layer_path,
+        )
         task_queue.insert(t)
 
 def create_bigarray_task(storage, task_queue):
@@ -70,7 +71,6 @@ def compute_bigarray_bounding_box(storage):
     print('offset', [abs_x_min-1, abs_y_min-1, abs_z_min-1])
 
 def compute_build_bounding_box(storage):
-    
     bboxes = []
     for filename in tqdm(storage.list_files(prefix='build/'), desc='Computing Build Bounds'):
         bbox = Bbox.from_filename(filename) 
@@ -88,8 +88,8 @@ def get_build_data_type_and_shape(storage):
         arr = chunks.decode_npz(storage.get_file('build/'+filename))
         return arr.dtype.name, arr.shape[3] #num_channels
 
-# def create_info_file_from_build(storage, layer_type, resolution=[1,1,1], encoding='raw'):
-def create_info_file_from_build(layer_path, layer_type, encoding, resolution):
+# def create_info_file_from_build(storage.layer_path, layer_type, resolution=[1,1,1], encoding='raw'):
+def create_info_file_from_build(layer_path, layer_type, resolution, encoding):
   assert layer_type == "image" or layer_type == "segmentation"
 
   storage = Storage(layer_path)
@@ -251,18 +251,18 @@ def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hyper
     tq.insert(seg_task)
 
 def upload_build_chunks(storage, volume, offset=[0, 0, 0], build_chunk_size=[1024,1024,128]):
-    offset = Vec(*offset)
-    shape = Vec(*volume.shape[:3])
-    build_chunk_size = Vec(*build_chunk_size)
+  offset = Vec(*offset)
+  shape = Vec(*volume.shape[:3])
+  build_chunk_size = Vec(*build_chunk_size)
 
-    edge = offset + shape
-    each_chunk = xyzrange(offset, edge, build_chunk_size)
-    for spt in tqdm(each_chunk, desc='Uploading Build Files'):
-        ept = min2(spt + build_chunk_size, edge)
-        bbox = Bbox(spt, ept)
-        chunk = volume[ bbox.to_slices() ]
-        filename = 'build/{}'.format(bbox.to_filename())
-        storage.put_file(filename, chunks.encode_npz(chunk)).wait()
+  for spt in xyzrange( (0,0,0), shape, build_chunk_size):
+    ept = min2(spt + build_chunk_size, shape)
+    bbox = Bbox(spt, ept)
+    chunk = volume[ bbox.to_slices() ]
+    bbox += offset
+    filename = 'build/{}'.format(bbox.to_filename())
+    storage.put_file(filename, chunks.encode_npz(chunk))
+  storage.wait()
 
 class MockTaskQueue():
     def insert(self, task):
@@ -279,7 +279,7 @@ def ingest_hdf5_example():
     volume =  HDF5Volume('/usr/people/it2/snemi3d/image.h5', layer_type)
     storage = Storage(dataset_path+'/image', n_threads=0)
     upload_build_chunks(storage, volume, offset)
-    create_info_file_from_build(storage, layer_type, resolution=resolution, encoding='raw')
+    create_info_file_from_build(storage.layer_path, layer_type, resolution=resolution, encoding='raw')
     create_ingest_task(storage, task_queue)
     create_downsampling_task(storage, task_queue)
 
@@ -288,7 +288,7 @@ def ingest_hdf5_example():
     volume =  HDF5Volume('/usr/people/it2/snemi3d/human_labels.h5', layer_type)
     storage = Storage(dataset_path+'/segmentation', n_threads=0)
     upload_build_chunks(storage, volume, offset)
-    create_info_file_from_build(storage, layer_type, resolution=resolution, encoding='raw')
+    create_info_file_from_build(storage.layer_path, layer_type, resolution=resolution, encoding='raw')
     create_ingest_task(storage, task_queue)
     create_downsampling_task(storage, task_queue)
     t = MeshTask(chunk_key=dataset_path+'/segmentation/6_6_30',
@@ -311,7 +311,7 @@ def ingest_hdf5_example():
     volume =  HDF5Volume('/usr/people/it2/snemi3d/affinities.h5', layer_type='affinities')
     storage = Storage(dataset_path+'/affinities', n_threads=0)
     upload_build_chunks(storage, volume, offset)
-    create_info_file_from_build(storage, layer_type='image',
+    create_info_file_from_build(storage.layer_path, layer_type='image',
         resolution=resolution, encoding='raw')
     create_ingest_task(storage, task_queue)
     create_downsampling_task(storage, task_queue)

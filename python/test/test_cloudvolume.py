@@ -8,47 +8,30 @@ from neuroglancer.pipeline.volumes import CloudVolume
 from neuroglancer.pipeline.task_creation import (upload_build_chunks, create_info_file_from_build,
     create_ingest_task, MockTaskQueue)
 
-def create_layer(size, offset, layer_type="image"):
-    cloudpath = 'file:///tmp/removeme/layer'
-    storage = Storage(cloudpath, n_threads=0)
-
-    if layer_type == "image":
-        random_data = np.random.randint(255, size=size, dtype=np.uint8)
-        upload_build_chunks(storage, random_data, offset)
-        # Jpeg encoding is lossy so it won't work
-        create_info_file_from_build(storage, layer_type='image', encoding="raw")
-    else:
-        random_data = np.random.randint(0xFFFFFF, size=size, dtype=np.uint32)
-        upload_build_chunks(storage, random_data, offset)
-        # Jpeg encoding is lossy so it won't work
-        create_info_file_from_build(storage, layer_type='segmentation', encoding="raw")
-    
-    create_ingest_task(storage, MockTaskQueue())
-    
-    return cloudpath, random_data
-
-def delete_layer():
-    shutil.rmtree("/tmp/removeme/layer", ignore_errors=True)
+from layer_harness import delete_layer, create_layer
     
 def test_aligned_read():
     delete_layer()
-    
-    cloudpath, data = create_layer(size=(50,50,50,1), offset=(0,0,0))
-    cv = CloudVolume.from_cloudpath(cloudpath)
+    storage, data = create_layer(size=(50,50,50,1), offset=(0,0,0))
+    cv = CloudVolume.from_cloudpath(storage.layer_path)
     #the last dimension is the number of channels
     assert cv[0:50,0:50,0:50].shape == (50,50,50,1)
     assert np.all(cv[0:50,0:50,0:50] == data)
+
+    storage.kill_threads()
     
     delete_layer()
-    cloudpath, data = create_layer(size=(128,64,64,1), offset=(0,0,0))
-    cv = CloudVolume.from_cloudpath(cloudpath)
+    storage, data = create_layer(size=(128,64,64,1), offset=(0,0,0))
+    cv = CloudVolume.from_cloudpath(storage.layer_path)
     #the last dimension is the number of channels
     assert cv[0:64,0:64,0:64].shape == (64,64,64,1) 
     assert np.all(cv[0:64,0:64,0:64] ==  data[:64,:64,:64,:])
 
+    storage.kill_threads()
+
     delete_layer()
-    cloudpath, data = create_layer(size=(128,64,64,1), offset=(10,20,0))
-    cv = CloudVolume.from_cloudpath(cloudpath)
+    storage, data = create_layer(size=(128,64,64,1), offset=(10,20,0))
+    cv = CloudVolume.from_cloudpath(storage.layer_path)
     cutout = cv[10:74,20:84,0:64]
     #the last dimension is the number of channels
     assert cutout.shape == (64,64,64,1) 
@@ -58,21 +41,25 @@ def test_aligned_read():
     assert cutout2.shape == (64,64,64,1) 
     assert np.all(cutout2 == data[64:128,:64,:64,:])
 
+    storage.kill_threads()
+
 def test_non_aligned_read():
     delete_layer()
-    cloudpath, data = create_layer(size=(128,64,64,1), offset=(0,0,0))
-    cv = CloudVolume.from_cloudpath(cloudpath)
+    storage, data = create_layer(size=(128,64,64,1), offset=(0,0,0))
+    cv = CloudVolume.from_cloudpath(storage.layer_path)
     #the last dimension is the number of channels
     assert cv[31:65,0:64,0:64].shape == (34,64,64,1) 
     assert np.all(cv[31:65,0:64,0:64] == data[31:65,:64,:64,:])
+    storage.kill_threads()
 
     #read a single pixel
     delete_layer()
-    cloudpath, data = create_layer(size=(64,64,64,1), offset=(0,0,0))
-    cv = CloudVolume.from_cloudpath(cloudpath)
+    storage, data = create_layer(size=(64,64,64,1), offset=(0,0,0))
+    cv = CloudVolume.from_cloudpath(storage.layer_path)
     #the last dimension is the number of channels
     assert cv[22:23,22:23,22:23].shape == (1,1,1,1) 
     assert np.all(cv[22:23,22:23,22:23] == data[22:23,22:23,22:23,:])
+    storage.kill_threads()
 
     # Test steps (negative steps are not supported)
     img1 = cv[::2, ::2, ::2, :]
@@ -81,8 +68,8 @@ def test_non_aligned_read():
 
 def test_write():
     delete_layer()
-    cloudpath, data = create_layer(size=(50,50,50,1), offset=(0,0,0))
-    cv = CloudVolume.from_cloudpath(cloudpath)
+    storage, data = create_layer(size=(50,50,50,1), offset=(0,0,0))
+    cv = CloudVolume.from_cloudpath(storage.layer_path)
 
     replacement_data = np.zeros(shape=(50,50,50,1), dtype=np.uint8)
     cv[0:50,0:50,0:50] = replacement_data
@@ -94,25 +81,27 @@ def test_write():
 
     # out of bounds
     delete_layer()
-    cloudpath, data = create_layer(size=(128,64,64,1), offset=(10,20,0))
-    cv = CloudVolume.from_cloudpath(cloudpath)
+    storage, data = create_layer(size=(128,64,64,1), offset=(10,20,0))
+    cv = CloudVolume.from_cloudpath(storage.layer_path)
     with pytest.raises(ValueError):
         cv[74:138,20:84,0:64] = np.ones(shape=(64,64,64,1), dtype=np.uint8)
+    storage.kill_threads()
     
     # non-aligned writes
     delete_layer()
-    cloudpath, data = create_layer(size=(128,64,64,1), offset=(10,20,0))
-    cv = CloudVolume.from_cloudpath(cloudpath)
+    storage, data = create_layer(size=(128,64,64,1), offset=(10,20,0))
+    cv = CloudVolume.from_cloudpath(storage.layer_path)
     with pytest.raises(ValueError):
         cv[21:85,0:64,0:64] = np.ones(shape=(64,64,64,1), dtype=np.uint8)
+    storage.kill_threads()
 
 def test_writer_last_chunk_smaller():
     """
     we make it believe the last chunk is smaller by hacking the info file
     """
     delete_layer()
-    cloudpath, data = create_layer(size=(128,64,64,1), offset=(0,0,0))
-    cv = CloudVolume.from_cloudpath(cloudpath)
+    storage, data = create_layer(size=(128,64,64,1), offset=(0,0,0))
+    cv = CloudVolume.from_cloudpath(storage.layer_path)
     
     chunks = [ chunk for chunk in cv._generate_chunks(data[:100,:,:,:], (0,0,0)) ]
 
@@ -131,8 +120,8 @@ def test_writer_last_chunk_smaller():
 def test_reader_negative_indexing():
     """negative indexing is supported"""
     delete_layer()
-    cloudpath, data = create_layer(size=(128,64,64,1), offset=(0,0,0))
-    cv = CloudVolume.from_cloudpath(cloudpath)
+    storage, data = create_layer(size=(128,64,64,1), offset=(0,0,0))
+    cv = CloudVolume.from_cloudpath(storage.layer_path)
 
     # Test negative beginnings
     img1 = cv[-1:, -1:, -1:, :]
@@ -167,8 +156,8 @@ def test_reader_negative_indexing():
 
 def test_setitem_mismatch():
     delete_layer()
-    cloudpath, data = create_layer(size=(64,64,64,1), offset=(0,0,0))
-    cv = CloudVolume.from_cloudpath(cloudpath)
+    storage, data = create_layer(size=(64,64,64,1), offset=(0,0,0))
+    cv = CloudVolume.from_cloudpath(storage.layer_path)
 
     with pytest.raises(ValueError):
         cv[0:64,0:64,0:64] = np.zeros(shape=(5,5,5,1), dtype=np.uint8)

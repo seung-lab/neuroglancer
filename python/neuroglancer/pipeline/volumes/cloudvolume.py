@@ -29,7 +29,7 @@ class CloudVolume(Volume):
     self.mip = mip
     self.cache_files = False # keeping in case we revive it
 
-    self._storage = Storage(self.layer_cloudpath)
+    self._storage = Storage(self.layer_cloudpath, n_threads=0)
 
     if info is None:
       self.refreshInfo()
@@ -303,16 +303,22 @@ class CloudVolume(Volume):
 
     # bring this back later
     # compress = (self.layer_type == 'segmentation' and self.cache_files) # sometimes channel images are raw encoded too
-    files = self._storage.get_files(cloudpaths)
+    with Storage(self.layer_cloudpath) as storage:
+      files = storage.get_files(cloudpaths)
 
     for fileinfo in tqdm(files, total=len(cloudpaths), desc="Rendering Image"):
       if fileinfo['error'] is not None:
         continue 
 
       bbox = Bbox.from_filename(fileinfo['filename'])
-      img3d = neuroglancer.chunks.decode(
-        fileinfo['content'], self.encoding, multichannel_shape(bbox), self.dtype
-      )
+      try:
+        img3d = neuroglancer.chunks.decode(
+          fileinfo['content'], self.encoding, multichannel_shape(bbox), self.dtype
+        )
+      except Exception:
+        print('File Read Error: {} bytes, {}, {}, errors: {}'.format(
+            len(fileinfo['content']), bbox, fileinfo['filename'], fileinfo['error']))
+        raise
       
       start = bbox.minpt - realized_bbox.minpt
       end = min2(start + self.underlying, renderbuffer.shape[:3] )
@@ -370,7 +376,9 @@ class CloudVolume(Volume):
       content_type == 'image/jpeg'
 
     compress = (self.layer_type == 'segmentation')
-    self._storage.put_files(uploads, content_type=content_type, compress=compress)
+
+    with Storage(self.layer_cloudpath) as storage:
+      storage.put_files(uploads, content_type=content_type, compress=compress)
 
   def _generate_chunks(self, img, offset):
     shape = Vec(*img.shape)[:3]
@@ -408,5 +416,8 @@ class CloudVolume(Volume):
         yield os.path.join(key, filename)
 
     return [ path for path in cloudpathgenerator() ] 
+
+  def __del__(self):
+    self._storage.kill_threads()
 
 

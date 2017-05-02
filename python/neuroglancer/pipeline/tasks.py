@@ -38,7 +38,7 @@ class IngestTask(RegisteredTask):
     self._volume = CloudVolume.from_cloudpath(self.layer_path, mip=0)
     self._bounds = Bbox.from_filename(self.chunk_path)
     data = self._download_input_chunk()
-    self._bounds = self._bounds.transpose()
+    # self._bounds = self._bounds.transpose()
     data = chunks.decode(data, self.chunk_encoding)
     self._create_chunks(data)
 
@@ -50,7 +50,9 @@ class IngestTask(RegisteredTask):
   def _create_chunks(self, image):
     vol = self._volume
 
-    fullscales = downsample_scales.compute_plane_downsampling_scales(image.shape[:3], max_downsampled_size=max(self._volume.underlying[:2]))
+    fullscales = downsample_scales.compute_plane_downsampling_scales(image.shape[:3], 
+      max_downsampled_size=max(self._volume.underlying[:2] * 2)
+    )
     factors = downsample.scale_series_to_downsample_factors(fullscales)
     downsamplefn = downsample.method(vol.layer_type)
 
