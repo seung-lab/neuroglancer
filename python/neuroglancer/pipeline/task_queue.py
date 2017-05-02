@@ -12,6 +12,7 @@ import time
 
 import googleapiclient.errors
 import googleapiclient.discovery
+import numpy as np
 
 from neuroglancer.pipeline.secrets import google_credentials, PROJECT_NAME, QUEUE_NAME
 
@@ -55,6 +56,10 @@ class RegisteredTask(object):
     def serialize(self):
         d = copy.deepcopy(self._args)
         d['class'] = self.__class__.__name__
+        for k,v in d.items():
+            if isinstance(v, np.ndarray):
+                d[k] = list(v)
+
         return json.dumps(d)
 
     @property
@@ -183,7 +188,7 @@ class TaskQueue(object):
         else:
             cloud_insertion(self._api)
 
-    def wait_until_queue_empty(self):
+    def wait(self):
         self._queue.join()
 
     def get(self):

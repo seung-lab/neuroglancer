@@ -2,7 +2,7 @@ import json
 
 from oauth2client import service_account
 
-QUEUE_NAME = 'pull-queue'
+QUEUE_NAME = 'wms-test-pull-queue'
 PROJECT_NAME = 'neuromancer-seung-import'
 
 google_credentials_path = '/secrets/google-secret.json'

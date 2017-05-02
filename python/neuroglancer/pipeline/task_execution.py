@@ -17,7 +17,7 @@ cloud_logger.setLevel(logging.INFO) # defaults to WARN
 cloud_logger.addHandler(handler)
 
 
-tq = TaskQueue()
+tq = TaskQueue(queue_name=QUEUE_NAME)
 while True:
     try:
         task = tq.lease()

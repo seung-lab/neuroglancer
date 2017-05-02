@@ -61,7 +61,7 @@ def test_multi_threaded_insertion():
       task = MockTask()
       tq.insert(task)
 
-    tq.wait_until_queue_empty()
+    tq.wait()
 
     lst = tq.list()
 

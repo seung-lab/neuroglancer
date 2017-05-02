@@ -6,6 +6,7 @@ import Queue
 import os
 import re
 import threading
+import time
 from functools import partial
 
 from glob import glob
@@ -13,6 +14,7 @@ from google.cloud.storage import Client
 import boto 
 from boto.s3.connection import S3Connection
 import gzip
+import numpy as np
 
 from neuroglancer.lib import mkdir
 from neuroglancer.pipeline.secrets import PROJECT_NAME, google_credentials_path, aws_credentials
@@ -103,6 +105,8 @@ class Storage(object):
                 print(err)
             finally:
                 self._queue.task_done()
+
+        interface.release_connection()
 
     @classmethod
     def extract_path(cls, layer_path):
@@ -237,6 +241,75 @@ class Storage(object):
         self.wait_until_queue_empty()
         self.kill_threads()
 
+class ConnectionPool(object):
+    def __init__(self, max_connections=60):
+        self.active_pool = []
+        self.inactive_pool = []
+        self.max_connections = max_connections
+
+    def total_connections(self):
+        return len(self.active_pool) + len(self.inactive_pool)
+
+    def _create_connection(self):
+        raise NotImplementedError
+
+    def get_connection(self):
+        def _get_connection():
+            if len(self.inactive_pool):
+                return self.inactive_pool.pop()
+            elif self.total_connections() < self.max_connections:
+                return self._create_connection()
+            else:
+                return None
+        
+        while True:
+            conn = _get_connection()
+            if conn is None:
+                time.sleep(np.random.sample(1))
+            else:
+                break
+        
+        self.active_pool.append(conn)
+        return conn
+
+    def release_connection(self, conn):
+        self.active_pool.remove(conn)
+        self.inactive_pool.append(conn)
+
+    def _close_function(self):
+        return lambda x: x # no-op
+
+    def reset_pool(self):
+        closefn = self._close_function()
+        map(closefn, self.active_pool)
+        map(closefn, self.inactive_pool)
+
+        self.active_pool = []
+        self.inactive_pool = []
+
+    def __del__(self):
+        self.reset_pool()
+
+class S3ConnectionPool(ConnectionPool):
+    def _create_connection(self):
+        return S3Connection(
+            aws_credentials['AWS_ACCESS_KEY_ID'],
+            aws_credentials['AWS_SECRET_ACCESS_KEY']
+        )
+
+    def _close_function(self):
+        return lambda conn: conn.close()
+
+class GCloudConnectionPool(ConnectionPool):
+    def _create_connection(self):
+        return Client.from_service_account_json(
+            google_credentials_path,
+            project=PROJECT_NAME,
+        )
+
+S3_POOL = S3ConnectionPool()
+GC_POOL = GCloudConnectionPool()
+
 class FileInterface(object):
 
     def __init__(self, path):
@@ -292,13 +365,15 @@ class FileInterface(object):
                 continue
             yield os.path.basename(file_path)
 
+    def release_connection(self):
+        pass
+
 class GoogleCloudStorageInterface(object):
     def __init__(self, path):
+        global GC_POOL
         self._path = path
-        client = Client.from_service_account_json(
-            google_credentials_path,
-            project=PROJECT_NAME)
-        self._bucket = client.get_bucket(self._path.bucket_name)
+        self._client = GC_POOL.get_connection()
+        self._bucket = self._client.get_bucket(self._path.bucket_name)
 
     def get_path_to_file(self, file_path):
         clean = filter(None,[self._path.dataset_path,
@@ -340,13 +415,17 @@ class GoogleCloudStorageInterface(object):
             if '/' not in filename:
                 yield filename
 
+    def release_connection(self):
+        global GC_POOL
+        GC_POOL.release_connection(self._client)
+
 class S3Interface(object):
 
     def __init__(self, path):
+        global S3_POOL
         self._path = path
-        conn = S3Connection(aws_credentials['AWS_ACCESS_KEY_ID'],
-                            aws_credentials['AWS_SECRET_ACCESS_KEY'])
-        self._bucket = conn.get_bucket(self._path.bucket_name)
+        self._conn = S3_POOL.get_connection()
+        self._bucket = self._conn.get_bucket(self._path.bucket_name)
 
     def get_path_to_file(self, file_path):
         clean = filter(None,[self._path.dataset_path,
@@ -386,3 +465,7 @@ class S3Interface(object):
             filename =  os.path.basename(prefix) + blob.name[len(path):]
             if '/' not in filename:
                 yield filename
+
+    def release_connection(self):
+        global S3_POOL
+        S3_POOL.release_connection(self._conn)

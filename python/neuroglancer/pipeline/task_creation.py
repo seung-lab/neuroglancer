@@ -216,11 +216,12 @@ def create_quantized_affinity_tasks(taskqueue, src_layer, dest_layer, shape):
     task = QuantizeAffinitiesTask(
       source_layer_path=src_layer,
       dest_layer_path=dest_layer,
-      shape=shape.clone(),
-      offset=startpt.clone(),
+      shape=list(shape.clone()),
+      offset=list(startpt.clone()),
     )
-    task.execute()
-  # task_queue.insert(task)
+    # task.execute()
+    task_queue.insert(task)
+  task_queue.wait()
 
 def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hypersquare_chunk_size, resolution, voxel_offset, volume_size, overlap):
   def crtinfo(layer_type, dtype, encoding):
@@ -349,7 +350,7 @@ def ingest_hdf5_example():
 
     
 if __name__ == '__main__':  
-  task_queue = MockTaskQueue()
+  task_queue = TaskQueue(queue_name='wms-test-pull-queue')
 
   create_quantized_affinity_tasks(task_queue, 
     src_layer='s3://neuroglancer/pinky40_v11/affinitymap-jnet/',

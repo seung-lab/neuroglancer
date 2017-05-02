@@ -27,6 +27,7 @@ class IngestTask(RegisteredTask):
      to be produce from the data available.
   """
   def __init__(self, chunk_path, chunk_encoding, layer_path):
+    super(IngestTask, self).__init__(chunk_path, chunk_encoding, layer_path)
     self.chunk_path = chunk_path
     self.chunk_encoding = chunk_encoding
     self.layer_path = layer_path
@@ -67,6 +68,7 @@ class IngestTask(RegisteredTask):
 
 class DownsampleTask(RegisteredTask):
   def __init__(self, layer_path, mip, shape, offset, axis='z'):
+    super(DownsampleTask, self).__init__(layer_path, mip, shape, offset, axis)
     self.layer_path = layer_path
     self.mip = mip
     self.shape = Vec(*shape)
@@ -113,8 +115,9 @@ class DownsampleTask(RegisteredTask):
       total_factor *= factor3
       vol.upload_image(image, self._bounds.minpt / total_factor)
 
-class QuantizeAffinitiesTask(DownsampleTask):
+class QuantizeAffinitiesTask(RegisteredTask):
   def __init__(self, source_layer_path, dest_layer_path, shape, offset):
+    super(QuantizeAffinitiesTask, self).__init__(source_layer_path, dest_layer_path, shape, offset)
     self.source_layer_path = source_layer_path
     self.dest_layer_path = dest_layer_path
     self.shape = Vec(*shape)
@@ -133,12 +136,39 @@ class QuantizeAffinitiesTask(DownsampleTask):
     
     image = srcvol[ self._bounds.to_slices() ][ :, :, :, :1 ] # only use x affinity
     image = (image * 255.0).astype(np.uint8)
+
+    print(self.dest_layer_path)
     
     destvol = CloudVolume.from_cloudpath(self.dest_layer_path, mip=0)
     destvol[ self._bounds.to_slices() ] = image
 
     self.downsample(destvol, image)
 
+  def downsample(self, vol, image):
+
+    shape = min2(Vec(*image.shape[:3]), self._bounds.size3())
+
+    # need to use self.shape here. shape or self._bounds means edges won't generate as many mip levels
+    fullscales = downsample_scales.compute_plane_downsampling_scales(
+      size=self.shape, 
+      preserve_axis=self.axis, 
+      max_downsampled_size=(min(*vol.underlying) * 2),
+    )
+    factors = downsample.scale_series_to_downsample_factors(fullscales)
+
+    if len(factors) == 0:
+      print("No factors generated for shape: {}, image: {}".format(self.shape, shape))
+
+    downsamplefn = downsample.method(vol.layer_type)
+
+    original_mip = vol.mip
+    total_factor = Vec(1,1,1)
+
+    for factor3 in factors:
+      vol.mip += 1
+      image = downsamplefn(image, factor3)
+      total_factor *= factor3
+      vol.upload_image(image, self._bounds.minpt / total_factor)
 
 class MeshTask(RegisteredTask):
 
