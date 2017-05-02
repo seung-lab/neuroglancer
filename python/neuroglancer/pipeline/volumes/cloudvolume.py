@@ -73,11 +73,12 @@ class CloudVolume(Volume):
   def refreshInfo(self):
     infojson = self._storage.get_file('info')
     self.info = json.loads(infojson)
-    return self
+    return self.info
 
   def commitInfo(self):
     infojson = json.dumps(self.info)
-    return self._storage.put_file('info', infojson, 'application/json').wait()
+    self._storage.put_file('info', infojson, 'application/json').wait()
+    return self
 
   @property
   def dataset_name(self):
@@ -315,9 +316,10 @@ class CloudVolume(Volume):
           fileinfo['content'], self.encoding, multichannel_shape(bbox), self.dtype
         )
       except Exception:
+        content_len = len(fileinfo['content']) if fileinfo['content'] is not None else 0
         print('File Read Error: {} bytes, {}, {}, errors: {}'.format(
-            len(fileinfo['content']), bbox, fileinfo['filename'], fileinfo['error']))
-        raise
+            content_len, bbox, fileinfo['filename'], fileinfo['error']))
+        img3d = np.zeros(shape=multichannel_shape(bbox), dtype=self.dtype)
       
       start = bbox.minpt - realized_bbox.minpt
       end = min2(start + self.underlying, renderbuffer.shape[:3] )
@@ -335,7 +337,7 @@ class CloudVolume(Volume):
     return VolumeCutout.from_volume(self, renderbuffer, realized_bbox)
   
   def __setitem__(self, slices, img):
-    imgshape = img.shape
+    imgshape = list(img.shape)
     if len(imgshape) == 3:
       imgshape = imgshape + [ self.num_channels ]
 
@@ -352,8 +354,11 @@ class CloudVolume(Volume):
     self.upload_image(img, bbox.minpt)
 
   def upload_image(self, img, offset):
+    if str(self.dtype) != str(img.dtype):
+      raise ValueError('The uploaded image data type must match the volume data type. volume: {}, image: {}'.format(self.dtype, img.dtype))
+
     uploads = []
-    for imgchunk, spt, ept in self._generate_chunks(img, offset):
+    for imgchunk, spt, ept in tqdm(self._generate_chunks(img, offset), desc='uploading image'):
       if np.array_equal(spt, ept):
           continue
 
@@ -376,7 +381,7 @@ class CloudVolume(Volume):
     if self.encoding == 'jpeg':
       content_type == 'image/jpeg'
 
-    compress = (self.layer_type == 'segmentation')
+    compress = (self.layer_type in ('segmentation'))
 
     with Storage(self.layer_cloudpath) as storage:
       storage.put_files(uploads, content_type=content_type, compress=compress)
@@ -394,14 +399,17 @@ class CloudVolume(Volume):
 
     img_offset = bounds.minpt - offset
     img_end = Vec.clamp(bounds.size3() + img_offset, Vec(0,0,0), shape)
+
+    if len(img.shape) == 3:
+      img = img[:, :, :, np.newaxis ]
   
     for startpt in xyzrange( img_offset, img_end, self.underlying ):
       endpt = min2(startpt + self.underlying, shape)
-      chunkimg = img[ startpt.x:endpt.x, startpt.y:endpt.y, startpt.z:endpt.z ]
+      chunkimg = img[ startpt.x:endpt.x, startpt.y:endpt.y, startpt.z:endpt.z, : ]
 
       spt = (startpt + bounds.minpt).astype(int)
       ept = (endpt + bounds.minpt).astype(int)
-  
+    
       yield chunkimg, spt, ept 
 
   def __cloudpaths(self, bbox, volume_bbox, key, chunk_size):

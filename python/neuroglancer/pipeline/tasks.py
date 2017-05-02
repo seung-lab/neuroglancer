@@ -84,13 +84,18 @@ class DownsampleTask(RegisteredTask):
     self._bounds = Bbox.clamp(self._bounds, vol.bounds)
     
     image = vol[ self._bounds.to_slices() ]
+
+    self.downsample(vol, image)
+
+  def downsample(self, vol, image):
+
     shape = min2(Vec(*image.shape[:3]), self._bounds.size3())
 
     # need to use self.shape here. shape or self._bounds means edges won't generate as many mip levels
     fullscales = downsample_scales.compute_plane_downsampling_scales(
       size=self.shape, 
       preserve_axis=self.axis, 
-      max_downsampled_size=(min(*vol.underlying) * 4),
+      max_downsampled_size=(min(*vol.underlying) * 2),
     )
     factors = downsample.scale_series_to_downsample_factors(fullscales)
 
@@ -107,6 +112,33 @@ class DownsampleTask(RegisteredTask):
       image = downsamplefn(image, factor3)
       total_factor *= factor3
       vol.upload_image(image, self._bounds.minpt / total_factor)
+
+class QuantizeAffinitiesTask(DownsampleTask):
+  def __init__(self, source_layer_path, dest_layer_path, shape, offset):
+    self.source_layer_path = source_layer_path
+    self.dest_layer_path = dest_layer_path
+    self.shape = Vec(*shape)
+    self.offset = Vec(*offset)
+
+    self.mip = 0
+    self.axis = 'z'
+
+    self._bounds = None
+
+  def execute(self):
+    srcvol = CloudVolume.from_cloudpath(self.source_layer_path, mip=0)
+  
+    self._bounds = Bbox( self.offset, self.shape + self.offset )
+    self._bounds = Bbox.clamp(self._bounds, srcvol.bounds)
+    
+    image = srcvol[ self._bounds.to_slices() ][ :, :, :, :1 ] # only use x affinity
+    image = (image * 255.0).astype(np.uint8)
+    
+    destvol = CloudVolume.from_cloudpath(self.dest_layer_path, mip=0)
+    destvol[ self._bounds.to_slices() ] = image
+
+    self.downsample(destvol, image)
+
 
 class MeshTask(RegisteredTask):
 
@@ -398,5 +430,9 @@ class HyperSquareTask(RegisteredTask):
     # compensate for weird shifts. only upload the non-overlap region.
 
     vol.upload_image(img, bounds.minpt)
+
+
+
+
 
 

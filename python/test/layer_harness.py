@@ -22,6 +22,11 @@ def create_layer(size, offset, layer_type="image"):
         upload_build_chunks(storage, random_data, offset)
         # Jpeg encoding is lossy so it won't work
         create_info_file_from_build(storage.layer_path, layer_type='image', encoding="raw", resolution=[1,1,1])
+    elif layer_type == 'affinity':
+        random_data = np.random.uniform(low=0, high=1, size=size).astype(np.float32)
+        upload_build_chunks(storage, random_data, offset)
+        # Jpeg encoding is lossy so it won't work
+        create_info_file_from_build(storage.layer_path, layer_type='affinity', encoding="raw", resolution=[1,1,1])
     else:
         random_data = np.random.randint(0xFFFFFF, size=size, dtype=np.uint32)
         upload_build_chunks(storage, random_data, offset)
@@ -31,9 +36,7 @@ def create_layer(size, offset, layer_type="image"):
     
     return storage, random_data
 
-def delete_layer():
-    global layer_path
-
-    if os.path.exists(layer_path):
-        shutil.rmtree(layer_path)  
+def delete_layer(path=layer_path):
+    if os.path.exists(path):
+        shutil.rmtree(path)  
     

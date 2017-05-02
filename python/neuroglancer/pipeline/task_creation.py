@@ -6,6 +6,7 @@ import json
 import math
 import re
 import os
+import copy
 
 import numpy as np
 from tqdm import tqdm
@@ -14,7 +15,8 @@ from neuroglancer import downsample_scales, chunks
 from neuroglancer.lib import Vec, Bbox, max2, min2, xyzrange
 from neuroglancer.pipeline import Storage, TaskQueue
 from neuroglancer.pipeline.tasks import (BigArrayTask, IngestTask,
-     HyperSquareTask, MeshTask, MeshManifestTask, DownsampleTask)
+     HyperSquareTask, MeshTask, MeshManifestTask, DownsampleTask, 
+     QuantizeAffinitiesTask)
 from neuroglancer.pipeline.volumes import HDF5Volume, CloudVolume
 
 def create_ingest_task(storage, task_queue):
@@ -89,7 +91,7 @@ def get_build_data_type_and_shape(storage):
         return arr.dtype.name, arr.shape[3] #num_channels
 
 def create_info_file_from_build(layer_path, layer_type, resolution, encoding):
-  assert layer_type == "image" or layer_type == "segmentation"
+  assert layer_type in ('image', 'segmentation', 'affinity')
 
   with Storage(layer_path) as storage:
     bounds, build_chunk_size = compute_build_bounding_box(storage)
@@ -138,10 +140,10 @@ def divisors(n):
             if i*i != n:
                 yield n / i
 
-def create_downsampling_tasks(layer_path, task_queue, mip=-1, axis='z', shape=Vec(2048, 2048, 64)):
+def create_downsample_scales(layer_path, mip, ds_shape, axis='z'):
   vol = CloudVolume.from_cloudpath(layer_path, mip)
   
-  shape = min2(vol.volume_size, shape)
+  shape = min2(vol.volume_size, ds_shape)
   
   scales = downsample_scales.compute_plane_downsampling_scales(
     size=shape, 
@@ -151,7 +153,10 @@ def create_downsampling_tasks(layer_path, task_queue, mip=-1, axis='z', shape=Ve
   scales = scales[1:] # omit (1,1,1)
   scales = [ vol.downsample_ratio * Vec(*factor3) for factor3 in scales ]
   map(vol.addScale, scales)
-  vol.commitInfo()
+  return vol.commitInfo()
+
+def create_downsampling_tasks(layer_path, task_queue, mip=-1, axis='z', shape=Vec(2048, 2048, 64)):
+  vol = create_downsample_scales(layer_path, mip, shape)
 
   for startpt in tqdm(xyzrange( vol.bounds.minpt, vol.bounds.maxpt, shape ), desc="Inserting Downsample Tasks"):
     task = DownsampleTask(
@@ -163,7 +168,6 @@ def create_downsampling_tasks(layer_path, task_queue, mip=-1, axis='z', shape=Ve
     )
     # task.execute()
     task_queue.insert(task)
-
 
 def create_fixup_downsample_tasks(layer_path, task_queue, points, shape=Vec(2048, 2048, 64), mip=0, axis='z'):
   """you can use this to fix black spots from when downsample tasks fail
@@ -189,6 +193,34 @@ def create_fixup_downsample_tasks(layer_path, task_queue, points, shape=Vec(2048
     task.execute()
     # task_queue.insert(task)
 
+def create_quantized_affinity_info(src_layer, dest_layer, shape):
+  srcvol = CloudVolume.from_cloudpath(src_layer)
+  
+  info = copy.deepcopy(srcvol.info)
+  info['num_channels'] = 1
+  info['data_type'] = 'uint8'
+  info['type'] = 'segmentation'
+  info['scales'] = info['scales'][:1]
+  info['scales'][0]['chunk_sizes'] = [[ 64, 64, 64 ]]
+  return info
+
+def create_quantized_affinity_tasks(taskqueue, src_layer, dest_layer, shape):
+
+  info = create_quantized_affinity_info(src_layer, dest_layer, shape)
+  destvol = CloudVolume.from_cloudpath(dest_layer, info=info)
+  destvol.commitInfo()
+
+  create_downsample_scales(dest_layer, mip=0, ds_shape=shape)
+
+  for startpt in tqdm(xyzrange( destvol.bounds.minpt, destvol.bounds.maxpt, shape ), desc="Inserting QuantizeAffinities Tasks"):
+    task = QuantizeAffinitiesTask(
+      source_layer_path=src_layer,
+      dest_layer_path=dest_layer,
+      shape=shape.clone(),
+      offset=startpt.clone(),
+    )
+    task.execute()
+  # task_queue.insert(task)
 
 def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hypersquare_chunk_size, resolution, voxel_offset, volume_size, overlap):
   def crtinfo(layer_type, dtype, encoding):
@@ -316,18 +348,15 @@ def ingest_hdf5_example():
     create_downsampling_task(storage, task_queue)
 
     
-if __name__ == '__main__':   
-    # create_hypersquare_tasks('zfish_v0','segmentation', 'zfish', 'all_7/hypersquare/')
-    # create_info_file_from_build(dataset_name='zfish_v0',
-    #                             layer_name='segmentation',
-    #                             layer_type='segmentation',
-    #                             resolution=[5,5,45])
-    # create_ingest_task('zfish_v0','segmentation')
+if __name__ == '__main__':  
+  task_queue = MockTaskQueue()
 
-    # create_hypersquare_tasks('e2198_v0','image','e2198_compressed',')
-    # create_info_file_from_build(dataset_name='e2198_v0',
-                                # layer_name='image',
-                                # layer_type='image',
-                                # resolution=[17,17,23])
-    # create_ingest_task('e2198_v0','image')
-    ingest_hdf5_example()
+  create_quantized_affinity_tasks(task_queue, 
+    src_layer='s3://neuroglancer/pinky40_v11/affinitymap-jnet/',
+    dest_layer='gs://neuroglancer/pinky40_v11/qaffinitymap-jnet-x/',
+    shape=Vec(1024, 1024, 128),
+  )
+
+
+
+    

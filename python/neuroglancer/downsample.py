@@ -22,9 +22,9 @@ def method(layer_type):
   if layer_type == 'image':
     return downsample_with_averaging
   elif layer_type == 'segmentation':
-    return downsample_segmentation
+    return downsample_segmentation 
   else:
-    return downsample_with_striding 
+    return downsample_with_striding
 
 def odd_to_even(image):
   """

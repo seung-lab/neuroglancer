@@ -127,5 +127,3 @@ def test_create_info_file_from_build():
 
 
 
-
-
