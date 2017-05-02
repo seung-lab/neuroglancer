@@ -281,6 +281,11 @@ def min2(a, b):
 def clamp(val, low, high):
   return min(max(val, low), high)
 
+def eclamp(val, low, high):
+  if val > high or val < low:
+    raise ValueError('Value {} cannot be outside of inclusive range {} to {}'.format(val,low,high))
+  return val
+
 class Vec(np.ndarray):
     def __new__(cls, *args, **kwargs):
       dtype = kwargs['dtype'] if 'dtype' in kwargs else int

@@ -84,7 +84,7 @@ def test_write():
     storage, data = create_layer(size=(128,64,64,1), offset=(10,20,0))
     cv = CloudVolume.from_cloudpath(storage.layer_path)
     with pytest.raises(ValueError):
-        cv[74:138,20:84,0:64] = np.ones(shape=(64,64,64,1), dtype=np.uint8)
+        cv[74:150,20:84,0:64] = np.ones(shape=(64,64,64,1), dtype=np.uint8)
     storage.kill_threads()
     
     # non-aligned writes

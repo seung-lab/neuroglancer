@@ -206,10 +206,10 @@ class CloudVolume(Volume):
     return Bbox( offset, offset + shape )
 
   def slices_from_global_coords(self, slices):
-    maxsize = list(self.mip_volume_size(0))
-    maxsize.append(self.num_channels)
+    maxsize = list(self.mip_volume_size(0)) + [ self.num_channels ]
+    minsize = list(self.mip_voxel_offset(0)) + [ 0 ]
 
-    slices = generate_slices(slices, maxsize)[:3]
+    slices = generate_slices(slices, minsize, maxsize)[:3]
     lower = Vec(*map(lambda x: x.start, slices))
     upper = Vec(*map(lambda x: x.stop, slices))
     step = Vec(*map(lambda x: x.step, slices))
@@ -266,11 +266,10 @@ class CloudVolume(Volume):
     return newscale
 
   def __getitem__(self, slices):
-    
-    maxsize = list(self.bounds.maxpt)
-    maxsize.append(self.num_channels)
+    maxsize = list(self.bounds.maxpt) + [ self.num_channels ]
+    minsize = list(self.bounds.minpt) + [ 0 ]
 
-    slices = generate_slices(slices, maxsize)
+    slices = generate_slices(slices, minsize, maxsize)
 
     channel_slice = slices.pop()
 
@@ -338,9 +337,11 @@ class CloudVolume(Volume):
   def __setitem__(self, slices, img):
     imgshape = img.shape
     if len(imgshape) == 3:
-      imgshape = imgshape + [ 1 ]
+      imgshape = imgshape + [ self.num_channels ]
 
-    slices = generate_slices(slices, self.shape)
+    maxsize = list(self.bounds.maxpt) + [ self.num_channels ]
+    minsize = list(self.bounds.minpt) + [ 0 ]
+    slices = generate_slices(slices, minsize, maxsize)
     bbox = Bbox.from_slices(slices)
 
     slice_shape = list(bbox.size3()) + [ slices[3].stop - slices[3].start ]

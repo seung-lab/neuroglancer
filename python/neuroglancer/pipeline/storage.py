@@ -63,6 +63,9 @@ class Storage(object):
         return os.path.join(self._layer_path, file_path)
 
     def start_threads(self, n_threads):
+        if n_threads == len(self._threads):
+            return self
+
         self._terminate.set()
         self._terminate = threading.Event()
 
@@ -78,10 +81,12 @@ class Storage(object):
             threads.append(worker)
 
         self._threads = tuple(threads)
+        return self
 
     def kill_threads(self):
         self._terminate.set()
         self._threads = ()
+        return self
 
     def _consume_queue(self, terminate_evt):
         interface = self._interface_cls(self._path)
