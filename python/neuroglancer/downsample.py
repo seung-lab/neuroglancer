@@ -94,7 +94,7 @@ def downsample_with_averaging(array, factor):
 
 def downsample_segmentation(data, factor):
   factor = np.array(factor)
-  if np.array_equal(factor, np.array([1,1,1])):
+  if np.array_equal(factor[:3], np.array([1,1,1])):
     return data
 
   is_pot = lambda x: (x != 0) and not (x & (x - 1)) # is power of two
@@ -127,7 +127,7 @@ def downsample_segmentation(data, factor):
   for z in xrange(data.shape[2]):
     output[:,:,z,:] = downsample_segmentation_2D_4x(data[:,:,z,:])
   
-  factor = factor / 2
+  factor[:3] = factor[:3] / 2 # also preserve channels
   factor[preserved_axis] = 1
 
   output = np.swapaxes(output, preserved_axis, 2)

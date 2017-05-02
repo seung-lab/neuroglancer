@@ -23,16 +23,16 @@ class Precomputed(object):
         self.info = json.loads(self._storage.get_file('info'))
 
     def __getitem__(self, slices):
-        """ It allows for non grid aligned slices
-        """
+        """ It allows for non grid aligned slices"""
+        
         new_slices, sub_slices = self._align_slices(slices)
         return_volume = np.empty(
             shape=self._get_slices_shape(new_slices),
             dtype=self.info['data_type'])
-
+        
+        self._storage.wait_until_queue_empty()
         offset =  self._get_offsets(new_slices)
         for c in self._iter_chunks(new_slices):
-
             file_path = self._chunk_to_file_path(c)
             content = chunks.decode(
                 self._storage.get_file(file_path), 
@@ -59,6 +59,7 @@ class Precomputed(object):
             self._storage.put_file(
                 file_path=self._chunk_to_file_path(c),
                 content=content)
+        self._storage.wait()
 
     def _get_offsets(self, slices):
         first_chunk = self._iter_chunks(slices).next()

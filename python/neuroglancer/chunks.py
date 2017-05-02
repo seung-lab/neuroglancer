@@ -42,7 +42,7 @@ def decode(filedata, encoding, shape=None, dtype=None):
   elif encoding == 'raw':
     return decode_raw(filedata, shape=shape, dtype=dtype)
   elif encoding == 'npz':
-    return decode_npz(string_data)
+    return decode_npz(filedata)
   else:
     raise NotImplementedError(encoding)
 

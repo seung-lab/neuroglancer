@@ -103,14 +103,15 @@ class TaskQueue(object):
         self._queue = Queue.Queue(maxsize=0) # infinite size
         self._threads = ()
         self._terminate = threading.Event()
+        self._n_threads = n_threads
 
-        self._start_threads(n_threads)
+        self.start_threads(n_threads)
 
     @property
     def pending(self):
         return self._queue.qsize()
 
-    def _start_threads(self, n_threads):
+    def start_threads(self, n_threads):
         self._terminate.set()
         self._terminate = threading.Event()
 
@@ -127,8 +128,7 @@ class TaskQueue(object):
 
         self._threads = tuple(threads)
 
-    def _kill_threads(self):
-        self._queue.join() # if no threads were set the queue is always empty
+    def kill_threads(self):
         self._terminate.set()
         self._threads = ()
 
@@ -266,7 +266,16 @@ class TaskQueue(object):
         else:
             cloud_delete(self._api)
 
+    def __enter__(self):
+        self.start_threads(self._n_threads)
+        return self
+
+    def __exit__(self, exception_type, exception_value, traceback):
+        self.wait_until_queue_empty()
+        self.kill_threads()
+
     def __del__(self):
-        self._kill_threads()
+        self.wait_until_queue_empty()
+        self.kill_threads()
 
 

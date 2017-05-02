@@ -11,6 +11,7 @@ import shutil
 import gc
 import gzip
 import operator
+import time
 from itertools import product
 
 from google.cloud import storage
@@ -25,8 +26,16 @@ COMMON_STAGING_DIR = './staging/'
 CLOUD_COMPUTING = False if 'CLOUD_COMPUTING' not in os.environ else bool(int(os.environ['CLOUD_COMPUTING']))
 
 def mkdir(path):
-  if path != '' and not os.path.exists(path):
-    os.makedirs(path)
+  try:
+    if path != '' and not os.path.exists(path):
+      os.makedirs(path)
+  except OSError as e:
+    if e.errno == 17:
+      time.sleep(0.1)
+      return mkdir(path)
+    else:
+      raise
+
   return path
 
 def touch(path):
@@ -272,6 +281,11 @@ def min2(a, b):
 def clamp(val, low, high):
   return min(max(val, low), high)
 
+def eclamp(val, low, high):
+  if val > high or val < low:
+    raise ValueError('Value {} cannot be outside of inclusive range {} to {}'.format(val,low,high))
+  return val
+
 class Vec(np.ndarray):
     def __new__(cls, *args, **kwargs):
       dtype = kwargs['dtype'] if 'dtype' in kwargs else int
@@ -419,19 +433,21 @@ class Bbox(object):
     result.maxpt = np.ceil(result.maxpt / chunk_size) * chunk_size 
     return result + offset
 
-  def shrink_to_chunk_size(self, chunk_size):
+  def shrink_to_chunk_size(self, chunk_size, offset=Vec(0,0,0, dtype=int)):
     chunk_size = np.array(chunk_size, dtype=np.float32)
     result = self.clone()
+    result = result - offset
     result.minpt = np.ceil(result.minpt / chunk_size) * chunk_size
     result.maxpt = np.floor(result.maxpt / chunk_size) * chunk_size 
-    return result
+    return result + offset
 
-  def round_to_chunk_size(self, chunk_size):
+  def round_to_chunk_size(self, chunk_size, offset=Vec(0,0,0, dtype=int)):
     chunk_size = np.array(chunk_size, dtype=np.float32)
     result = self.clone()
+    result = result - offset
     result.minpt = np.round(result.minpt / chunk_size) * chunk_size
     result.maxpt = np.round(result.maxpt / chunk_size) * chunk_size
-    return result
+    return result + offset
 
   def contains(self, point):
     return (
@@ -495,6 +511,9 @@ class Bbox(object):
     tmp.minpt /= operand
     tmp.maxpt /= operand
     return tmp
+
+  def __ne__(self, other):
+    return not (self == other)
 
   def __eq__(self, other):
     return np.array_equal(self.minpt, other.minpt) and np.array_equal(self.maxpt, other.maxpt)

@@ -1,6 +1,8 @@
 import pytest
 import re
 import shutil
+import time
+import gc
 
 from neuroglancer.pipeline import Storage
 
@@ -34,24 +36,23 @@ def test_read_write():
             "gs://neuroglancer/removeme/read_write",
             "s3://neuroglancer/removeme/read_write"]
 
-    for num_threads in xrange(0,11,5):
+    for num_threads in xrange(0,2):
         for url in urls:
-            s = Storage(url, n_threads=num_threads)
-            content = 'some_string'
-            s.put_file('info', content, compress=False)
-            s.wait_until_queue_empty()
-            assert s.get_file('info') == content
-            assert s.get_file('nonexistentfile') is None
+            with Storage(url, n_threads=num_threads) as s:
+                content = 'some_string'
+                s.put_file('info', content, content_type='application/json', compress=False).wait()
+                assert s.get_file('info') == content
+                assert s.get_file('nonexistentfile') is None
 
-            num_infos = max(num_threads, 1)
+                num_infos = max(num_threads, 1)
 
-            results = s.get_files([ 'info' for i in xrange(num_infos) ])
+                results = s.get_files([ 'info' for i in xrange(num_infos) ])
 
-            assert len(results) == num_infos
-            assert results[0]['filename'] == 'info'
-            assert results[0]['content'] == content
-            assert all(map(lambda x: x['error'] is None, results))
-            assert s.get_files([ 'nonexistentfile' ])[0]['content'] is None
+                assert len(results) == num_infos
+                assert results[0]['filename'] == 'info'
+                assert results[0]['content'] == content
+                assert all(map(lambda x: x['error'] is None, results))
+                assert s.get_files([ 'nonexistentfile' ])[0]['content'] is None
 
     shutil.rmtree("/tmp/removeme/read_write")
 
@@ -78,10 +79,11 @@ def test_list():
     for url in urls:
         s = Storage(url, n_threads=5)
         content = 'some_string'
-        s.put_file('info1', content , compress=False)
-        s.put_file('info2', content , compress=False)
-        s.put_file('build/info3', content , compress=False)
+        s.put_file('info1', content, compress=False)
+        s.put_file('info2', content, compress=False)
+        s.put_file('build/info3', content, compress=False)
         s.wait_until_queue_empty()
+        time.sleep(1) # sometimes it takes a moment for google to update the list
         assert set(s.list_files(prefix='')) == set(['info1','info2'])
         assert set(s.list_files(prefix='inf')) == set(['info1','info2'])
         assert set(s.list_files(prefix='info1')) == set(['info1'])
@@ -90,3 +92,23 @@ def test_list():
         assert set(s.list_files(prefix='nofolder/')) == set([])
     
     shutil.rmtree("/tmp/removeme/list")
+
+def test_threads_die():
+    s = Storage('file:///tmp/removeme/wow', n_threads=40)
+    threads = s._threads
+    s.kill_threads()
+    time.sleep(1.1)
+
+    assert not any(map(lambda t: t.isAlive(), threads))
+
+    with Storage('file:///tmp/removeme/wow', n_threads=40) as s:
+        threads = s._threads
+    time.sleep(1.1)
+    
+    assert not any(map(lambda t: t.isAlive(), threads))
+
+
+
+
+
+

@@ -10,10 +10,13 @@ import numpy as np
 from tqdm import tqdm
 from PIL import Image
 
-from neuroglancer.ingest.lib import Vec, clamp, mkdir, COMMON_STAGING_DIR, xyzrange
+from neuroglancer.lib import Vec, eclamp, clamp, mkdir, COMMON_STAGING_DIR, xyzrange
 
-def generate_slices(slices, maxsize):
+def generate_slices(slices, minsize, maxsize, error=True):
   """Assisting function for __getitem__. e.g. vol[:,:,:,:]"""
+
+  clampfn = clamp if not error else eclamp
+
   if isinstance(slices, int) or isinstance(slices, float) or isinstance(slices, long):
     slices = [ slice(int(slices), int(slices)+1, 1) ]
   if type(slices) == slice:
@@ -30,9 +33,15 @@ def generate_slices(slices, maxsize):
     if isinstance(slc, int) or isinstance(slc, float) or isinstance(slc, long):
       slices[index] = slice(int(slc), int(slc)+1, 1)
     else:
-      start = 0 if slc.start is None else clamp(slc.start, 0, maxsize[index])
-      end = maxsize[index] if slc.stop is None else clamp(slc.stop, 0, maxsize[index])
+      start = minsize[index] if slc.start is None else slc.start
+      end = maxsize[index] if slc.stop is None else slc.stop 
       step = 1 if slc.step is None else slc.step
+
+      if step < 0:
+        raise ValueError('Negative step sizes are not supported. Got: {}'.format(step))
+
+      start = maxsize[index] + start if start < 0 else clampfn(start, minsize[index], maxsize[index])
+      end = maxsize[index] + end if end < 0 else clampfn(end, minsize[index], maxsize[index])
 
       slices[index] = slice(start, end, step)
 
@@ -208,9 +217,6 @@ class VolumeCutout(np.ndarray):
   @property
   def num_channels(self):
     return self.shape[3]
-
-  def upload(self, info):
-    bounds = self.bounds.shrunk_to_chunk_size( (64,64,64) )
 
   def save_images(self, axis='z', channel=None, directory=None, image_format='PNG'):
 
