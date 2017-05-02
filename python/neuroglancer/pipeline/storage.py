@@ -3,18 +3,18 @@ from __future__ import print_function
 from collections import namedtuple
 from cStringIO import StringIO
 import Queue
-import os.path
+import os
 import re
 import threading
 from functools import partial
 
-from tqdm import tqdm
 from glob import glob
 from google.cloud.storage import Client
 import boto 
 from boto.s3.connection import S3Connection
 import gzip
 
+from neuroglancer.lib import mkdir
 from neuroglancer.pipeline.secrets import PROJECT_NAME, google_credentials_path, aws_credentials
 
 class Storage(object):
@@ -38,7 +38,8 @@ class Storage(object):
 
         self._layer_path = layer_path
         self._path = self.extract_path(layer_path)
-        
+        self._n_threads = n_threads
+
         if self._path.protocol == 'file':
             self._interface_cls = FileInterface
         elif self._path.protocol == 'gs':
@@ -52,7 +53,7 @@ class Storage(object):
         self._threads = ()
         self._terminate = threading.Event()
 
-        self._start_threads(n_threads)
+        self.start_threads(n_threads)
 
     @property
     def layer_path(self):
@@ -61,7 +62,7 @@ class Storage(object):
     def get_path_to_file(self, file_path):
         return os.path.join(self._layer_path, file_path)
 
-    def _start_threads(self, n_threads):
+    def start_threads(self, n_threads):
         self._terminate.set()
         self._terminate = threading.Event()
 
@@ -78,8 +79,7 @@ class Storage(object):
 
         self._threads = tuple(threads)
 
-    def _kill_threads(self):
-        self._queue.join() # if no threads were set the queue is always empty
+    def kill_threads(self):
         self._terminate.set()
         self._threads = ()
 
@@ -123,12 +123,8 @@ class Storage(object):
         Required:
             files: [ (filepath, content), .... ]
         """
-        desc = "Uploading Files" if self._path.protocol != 'file' else "Writing Files"
-        pbar = tqdm(total=len(files), desc=desc, disable=(len(files) <= 1))
-
         def put_file(path, content, interface):
             interface.put_file(path, content, content_type, compress)
-            pbar.update()
 
         for path, content in files:
             if compress:
@@ -142,7 +138,6 @@ class Storage(object):
                 uploadfn(self._interface)
 
         self.wait()
-        pbar.close()
 
         return self
 
@@ -161,8 +156,6 @@ class Storage(object):
 
         results = []
 
-        desc = "Downloading Files" if self._path.protocol != 'file' else "Reading Files"
-        pbar = tqdm(total=len(file_paths), desc=desc)
         def get_file_thunk(path, interface):
             result = error = None 
 
@@ -173,7 +166,6 @@ class Storage(object):
                 print(err)
             
             content, decompress = result
-
             if content and decompress:
                 content = self._maybe_uncompress(content)
 
@@ -183,8 +175,6 @@ class Storage(object):
                 "error": error,
             })
 
-            pbar.update()
-
         for path in file_paths:
             if len(self._threads):
                 self._queue.put(partial(get_file_thunk, path), block=True)
@@ -192,7 +182,6 @@ class Storage(object):
                 get_file_thunk(path, self._interface)
 
         self.wait_until_queue_empty()
-        pbar.close()
 
         return results
 
@@ -233,13 +222,15 @@ class Storage(object):
             self._queue.join()
 
     def __del__(self):
-        self._kill_threads()
+        self.kill_threads()
 
     def __enter__(self):
+        self.start_threads(self._n_threads)
         return self
 
     def __exit__(self, exception_type, exception_value, traceback):
         self.wait_until_queue_empty()
+        self.kill_threads()
 
 class FileInterface(object):
 
@@ -257,22 +248,32 @@ class FileInterface(object):
 
     def put_file(self, file_path, content, content_type, compress):
         path = self.get_path_to_file(file_path)
+        mkdir(os.path.dirname(path))
+
+        if compress:
+            path += '.gz'
+
         try:
             with open(path, 'wb') as f:
                 f.write(content)
-        except IOError:
-            dirname = os.path.dirname(path)
-            if dirname != '' and not os.path.exists(dirname):
-                os.makedirs(dirname)
-
+                f.flush()
+        except IOError as err:
             with open(path, 'wb') as f:
                 f.write(content)
+                f.flush()
 
     def get_file(self, file_path):
         path = self.get_path_to_file(file_path) 
+
+        compressed = os.path.exists(path + '.gz')
+            
+        if compressed:
+            path += '.gz'
+
         try:
             with open(path, 'rb') as f:
-                return f.read(), None
+                data = f.read()
+            return data, compressed
         except IOError:
             return None, False
 
@@ -374,7 +375,6 @@ class S3Interface(object):
         """
         if there is no trailing slice we are looking for files with that prefix
         """
-        from tqdm import tqdm
         layer_path = self.get_path_to_file("")        
         path = os.path.join(layer_path, prefix)
         for blob in self._bucket.list(prefix=path):
