@@ -130,9 +130,9 @@ class MeshTask(RegisteredTask):
 
   def _compute_meshes(self):
     with Storage(self.layer_path) as storage:
-      data = self._data.T
-      self._mesher.mesh(data.flatten(), *data.shape)
-      for obj_id in tqdm(self._mesher.ids(), desc="Meshing"):
+      data = self._data
+      self._mesher.mesh(data.flatten(), *data.shape[:3])
+      for obj_id in self._mesher.ids():
         storage.put_file(
           file_path='{}/{}:{}:{}'.format(self._volume.info['mesh'], obj_id, self.lod, self.chunk_position),
           content=self._create_mesh(obj_id),
@@ -173,21 +173,21 @@ class MeshManifestTask(RegisteredTask):
     self.lod = lod
 
   def execute(self):
-    self._storage = Storage(self.layer_path)
-    self._download_info()
-    self._download_input_chunk()
+    with Storage(self.layer_path) as storage:
+      self._download_info(storage)
+      self._download_input_chunk(storage)
 
-  def _download_info(self):
-    self._info = json.loads(self._storage.get_file('info'))
+  def _download_info(self, storage):
+    self._info = json.loads(storage.get_file('info'))
     
-  def _download_input_chunk(self):
+  def _download_input_chunk(self, storage):
     """
     Assumes that list blob is lexicographically ordered
     """
     last_id = 0
     last_fragments = []
-    for filename in self._storage.list_files(prefix='mesh/'):
-      match = re.match(r'(\d+):(\d+):(.*)$',filename)
+    for filename in storage.list_files(prefix='mesh/'):
+      match = re.match(r'(\d+):(\d+):(.*)$', filename)
       if not match: # a manifest file will not match
         continue
       _id, lod, chunk_position = match.groups()
@@ -196,10 +196,11 @@ class MeshManifestTask(RegisteredTask):
         continue
 
       if last_id != _id:
-        self._storage.put_file(
+        storage.put_file(
           file_path='{}/{}:{}'.format(self._info['mesh'],last_id, self.lod),
-          content=json.dumps({"fragments": last_fragments}))
-        self._storage.wait_until_queue_empty()
+          content=json.dumps({"fragments": last_fragments})
+        ).wait()
+        
         last_id = _id
         last_fragments = []
 

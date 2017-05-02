@@ -88,13 +88,12 @@ def get_build_data_type_and_shape(storage):
         arr = chunks.decode_npz(storage.get_file('build/'+filename))
         return arr.dtype.name, arr.shape[3] #num_channels
 
-# def create_info_file_from_build(storage.layer_path, layer_type, resolution=[1,1,1], encoding='raw'):
 def create_info_file_from_build(layer_path, layer_type, resolution, encoding):
   assert layer_type == "image" or layer_type == "segmentation"
 
-  storage = Storage(layer_path)
-  bounds, build_chunk_size = compute_build_bounding_box(storage)
-  data_type, num_channels = get_build_data_type_and_shape(storage)
+  with Storage(layer_path) as storage:
+    bounds, build_chunk_size = compute_build_bounding_box(storage)
+    data_type, num_channels = get_build_data_type_and_shape(storage)
 
   neuroglancer_chunk_size = find_closest_divisor(build_chunk_size, closest_to=[64,64,64])
 
