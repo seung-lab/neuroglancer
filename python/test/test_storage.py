@@ -95,15 +95,15 @@ def test_list():
 
 def test_threads_die():
     s = Storage('file:///tmp/removeme/wow', n_threads=40)
-    threads = s._threads
+    assert s.are_threads_alive()
     s.kill_threads()
-    time.sleep(1.1)
+    assert not s.are_threads_alive()
 
-    assert not any(map(lambda t: t.isAlive(), threads))
+    s = Storage('file:///tmp/removeme/wow', n_threads=0)
+    assert not s.are_threads_alive()
 
     with Storage('file:///tmp/removeme/wow', n_threads=40) as s:
         threads = s._threads
-    time.sleep(1.1)
     
     assert not any(map(lambda t: t.isAlive(), threads))
 

@@ -7,6 +7,7 @@ import os
 import re
 import threading
 import time
+import signal
 from functools import partial
 
 from glob import glob
@@ -85,8 +86,18 @@ class Storage(object):
         self._threads = tuple(threads)
         return self
 
+    def are_threads_alive(self):
+        return any(map(lambda t: t.isAlive(), self._threads))
+
     def kill_threads(self):
         self._terminate.set()
+        while True:
+            alive = self.are_threads_alive()
+            if alive:
+                time.sleep(0.1)
+            else:
+                break
+
         self._threads = ()
         return self
 
@@ -232,6 +243,7 @@ class Storage(object):
 
     def __del__(self):
         self.kill_threads()
+        self._interface.release_connection()
 
     def __enter__(self):
         self.start_threads(self._n_threads)
@@ -240,12 +252,18 @@ class Storage(object):
     def __exit__(self, exception_type, exception_value, traceback):
         self.wait_until_queue_empty()
         self.kill_threads()
+        self._interface.release_connection()
 
 class ConnectionPool(object):
     def __init__(self, max_connections=60):
         self.active_pool = []
         self.inactive_pool = []
         self.max_connections = max_connections
+
+        self._term = False
+
+        signal.signal(signal.SIGINT, self.reset_pool)
+        signal.signal(signal.SIGTERM, self.reset_pool)
 
     def total_connections(self):
         return len(self.active_pool) + len(self.inactive_pool)
@@ -273,6 +291,9 @@ class ConnectionPool(object):
         return conn
 
     def release_connection(self, conn):
+        if conn is None:
+            return
+        
         self.active_pool.remove(conn)
         self.inactive_pool.append(conn)
 
@@ -281,8 +302,11 @@ class ConnectionPool(object):
 
     def reset_pool(self):
         closefn = self._close_function()
-        map(closefn, self.active_pool)
-        map(closefn, self.inactive_pool)
+        try:
+            map(closefn, self.active_pool)
+            map(closefn, self.inactive_pool)
+        except AttributeError:
+            pass # this happens on interpreter termination for s3
 
         self.active_pool = []
         self.inactive_pool = []
@@ -372,8 +396,9 @@ class GoogleCloudStorageInterface(object):
     def __init__(self, path):
         global GC_POOL
         self._path = path
-        self._client = GC_POOL.get_connection()
-        self._bucket = self._client.get_bucket(self._path.bucket_name)
+        self._client = None
+        self._bucket = None
+        self.acquire_connection()
 
     def get_path_to_file(self, file_path):
         clean = filter(None,[self._path.dataset_path,
@@ -415,17 +440,26 @@ class GoogleCloudStorageInterface(object):
             if '/' not in filename:
                 yield filename
 
+    def acquire_connection(self):
+        if self._client:
+            return
+
+        self._client = GC_POOL.get_connection()
+        self._bucket = self._client.get_bucket(self._path.bucket_name)
+
     def release_connection(self):
         global GC_POOL
         GC_POOL.release_connection(self._client)
+        self._client = None
 
 class S3Interface(object):
 
     def __init__(self, path):
         global S3_POOL
         self._path = path
-        self._conn = S3_POOL.get_connection()
-        self._bucket = self._conn.get_bucket(self._path.bucket_name)
+        self._conn = None
+        self._bucket = None
+        self.acquire_connection()
 
     def get_path_to_file(self, file_path):
         clean = filter(None,[self._path.dataset_path,
@@ -466,6 +500,14 @@ class S3Interface(object):
             if '/' not in filename:
                 yield filename
 
+    def acquire_connection(self):
+        if self._conn:
+            return
+
+        self._conn = S3_POOL.get_connection()
+        self._bucket = self._conn.get_bucket(self._path.bucket_name)
+
     def release_connection(self):
         global S3_POOL
         S3_POOL.release_connection(self._conn)
+        self._conn = None
