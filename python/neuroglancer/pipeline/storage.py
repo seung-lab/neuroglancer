@@ -245,6 +245,29 @@ class Storage(object):
         self._interface.release_connection()
 
 class ConnectionPool(object):
+    """
+    This class is intended to be subclassed. See below.
+
+    Creating fresh client or connection objects
+    for Google or Amazon eventually starts causing
+    breakdowns when too many connections open.
+
+    To promote efficient resource use and prevent
+    containers from dying, we create a ConnectionPool
+    that allows for the creation of at most `max_connections`
+    connections.
+
+    Storage interfaces may acquire and release connections 
+    when they need or finish using them. 
+
+    If the limit is reached, additional requests for
+    acquiring connections will block until they can
+    be serviced.
+
+    Optional:
+        max_connections: Set the max number of connections
+            for this connection pool.
+    """
     def __init__(self, max_connections=60):
         self.active_pool = []
         self.inactive_pool = []
@@ -390,12 +413,8 @@ class GoogleCloudStorageInterface(object):
                              file_path])
         return  os.path.join(*clean)
 
-
-    def put_file(self, file_path, content, compress):
-        """ 
-        TODO set the content-encoding to
-        gzip in case of compression.
-        """
+   def put_file(self, file_path, content, content_type, compress):
+        content_type = content_type or 'application/octet-stream'
         key = self.get_path_to_file(file_path)
         blob = self._bucket.blob( key )
         blob.upload_from_string(content)
