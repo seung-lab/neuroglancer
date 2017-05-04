@@ -39,15 +39,21 @@ class RegionGraphTask(RegisteredTask):
             with TemporaryDirectory() as out_dir:
                 self.in_dir = in_dir
                 self.out_dir = out_dir
-                self._get_remap()
                 self._create_temporary_hdf5(storage=Storage(self.watershed_layer), 
                         slices=self._chunk_slices, 
                         name="raw.h5")
                 self._create_temporary_hdf5(storage=Storage(self.affinities_layer), 
                         slices=self._chunk_slices, 
                         name="aff.h5")
+                self._create_temporary_hdf5(storage=Storage(self.segmentation_layer), 
+                        slices=self._chunk_slices, 
+                        name="mean_agg_tr.h5")
 
                 self._run_julia()
+        
+        #Is necessary to release references to in_dir and out_dir?
+        self.in_dir=None
+        self.out_dir=None
 
     def _parse_chunk_position(self):
         match = re.match(r'^(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)$', self.chunk_position)
@@ -70,41 +76,31 @@ class RegionGraphTask(RegisteredTask):
 
     def _run_julia(self):
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        subprocess.call(["julia",
+        ret = subprocess.call(["julia",
                   current_dir+"/../../ext/third_party/yacn/pre/full_prep_script.jl",
                   self.in_dir,
                   self.out_dir])
+        assert ret == 0
         self._save_results()
 
     def _save_results(self):
         s = Storage(self.yacn_layer)
         for fname, fextension in map(os.path.splitext,os.listdir(self.out_dir)):
             print fname
-            print fextension
             with open(os.path.join(self.out_dir,fname + fextension),'rb') as f:
                 s.put_file(file_path=(fname + '/{}'+fextension).format(self.chunk_position),
                            content=f.read()) 
+                f.close()
         s.wait_until_queue_empty()
 
     def _create_temporary_hdf5(self, storage, slices, name):
         #tmp_file = NamedTemporaryFile(delete=True, suffix='.h5')
         with h5py.File(os.path.join(self.in_dir, name),'w') as h5:
-            try:
-                data = Precomputed(storage)[slices]
-            except Exception as e:
-                print(e)
-                return None
-
+            data = Precomputed(storage)[slices]
             if data.shape[3] == 1:
                 data = np.squeeze(data,3)
             h5.create_dataset('main', data=data.T)
-
-    def _get_remap(self):
-        #tmp_file = NamedTemporaryFile(delete=False, suffix='.h5')
-        data = Storage(self.segmentation_layer).get_file('remap.h5')
-        with open(os.path.join(self.in_dir,'remap.h5'),'w') as f:
-            f.write(data)
-            f.close()
+            h5.close()
 
 class DiscriminateTask(RegisteredTask):
     def __init__(self, chunk_position, crop_position,
@@ -135,7 +131,7 @@ class DiscriminateTask(RegisteredTask):
         image = self._get_image_chunk()
         segmentation = self._get_segmentation_chunk()
         samples = self._get_samples_chunk()
-        #self._get_weights()
+        self._get_weights()
         self._infer(image, segmentation, samples)
   
     def _parse_chunk_position(self):
@@ -217,7 +213,7 @@ class FloodFillingTask(RegisteredTask):
         chunk_position is in absolute coordinates from the layer origin.
         crop_position in in relative coordinates to the chunk_position
         """
-        super(FloodFillingTask, self).__init__(self, chunk_position, neighbours_chunk_position, crop_position,
+        super(FloodFillingTask, self).__init__(chunk_position, neighbours_chunk_position, crop_position,
                  image_layer, watershed_layer, yacn_layer,
                  errors_layer, affinities_layer)
 
@@ -233,37 +229,39 @@ class FloodFillingTask(RegisteredTask):
     def execute(self):
         self._parse_chunk_position()
         self._parse_crop_position()
-        self.yacn_storage = Storage(self.yacn_layer)
+        self.yacn_storage = Storage(self.yacn_layer, n_threads=0)
+        errors = self._get_errors_chunk()
         image = self._get_image_chunk()
         watershed = self._get_watershed_chunk()
-        errors = self._get_errors_chunk()
         samples = self._get_sample_for_chunk()
         affinities = self._get_affinities_chunk()
 
         neighbours_vertices = [self._get_vertices_for_chunk(chunk) for chunk in self.neighbours_chunk_position]
-        neighbours_mean_edges = [self._get_mean_edges_for_chunk(chunk) for chunk in self.neighbours_chunk_position]
+        neighbours_edges = [self._get_edges_for_chunk(chunk) for chunk in self.neighbours_chunk_position]
         neighbours_contact_edges = [self._get_contact_edges_for_chunk(chunk) for chunk in self.neighbours_chunk_position]
 
         combined_vertices = np.concatenate(neighbours_vertices,axis=0)
-        combined_mean_edges = np.concatenate(neighbours_mean_edges,axis=0)
+        combined_edges = np.concatenate(neighbours_edges,axis=0)
         combined_contact_edges = np.concatenate(neighbours_contact_edges,axis=0)
 
         #os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
+        sys.path.insert(0, os.path.realpath('../../ext/third_party'))
         import ext.third_party.yacn.reconstruct.reconstruct as reconstruct
         from ext.third_party.yacn.reconstruct.commit_changes import *
+
         revised_combined_edges = reconstruct.reconstruct_wrapper(image=image, 
                 watershed=watershed, 
                 samples=samples, 
                 vertices=combined_vertices, 
-                edges=combined_mean_edges, 
+                edges=combined_edges, 
                 errors=errors,
                 full_edges=combined_contact_edges, 
                 affinities = affinities)
 
         E = unpack_edges(revised_combined_edges)
         revised_edges = [pack_edges(restrict(E, unpack_edges(f))) for f in neighbours_contact_edges]
-        s = Storage(self.yacn_layer)
+        s = self.yacn_storage
 
         for edges, chunk_position in zip(revised_edges, self.neighbours_chunk_position):
             with NamedTemporaryFile(delete=False) as tmp:
@@ -293,21 +291,21 @@ class FloodFillingTask(RegisteredTask):
                              slice(self._crop_zmin, self._crop_zmax))
     
     def _get_image_chunk(self):
-        image = Precomputed(Storage(self.image_layer))[self._chunk_slices] 
+        image = Precomputed(Storage(self.image_layer,n_threads=0))[self._chunk_slices] 
         return np.squeeze(image, axis=3).T
 
     def _get_watershed_chunk(self):
-        self._watershed_storage = Storage(self.watershed_layer)
+        self._watershed_storage = Storage(self.watershed_layer,n_threads=0)
         seg = Precomputed(self._watershed_storage)[self._chunk_slices] 
         return np.squeeze(seg, axis=3).T
 
     def _get_errors_chunk(self):
-        self._error_storage = Storage(self.errors_layer)
+        self._error_storage = Storage(self.errors_layer,n_threads=0)
         seg = Precomputed(self._error_storage)[self._chunk_slices] 
         return np.squeeze(seg, axis=3).T
 
     def _get_affinities_chunk(self):
-        self._affinities_storage = Storage(self.affinities_layer)
+        self._affinities_storage = Storage(self.affinities_layer,n_threads=0)
         seg = Precomputed(self._affinities_storage)[self._chunk_slices] 
         return seg.T
 
@@ -338,8 +336,12 @@ class FloodFillingTask(RegisteredTask):
             with h5py.File(tmp.name, 'r') as h5:
                 return h5['main'][:]
 
-    def _get_mean_edges_for_chunk(self, chunk_position):
-        file_data = self.yacn_storage.get_file('mean_edges/{}.h5'.format(chunk_position))
+    def _get_edges_for_chunk(self, chunk_position):
+        file_data = self.yacn_storage.get_file('revised_edges/{}.h5'.format(chunk_position))
+        if file_data is None:
+            file_data = self.yacn_storage.get_file('mean_edges/{}.h5'.format(chunk_position))
+        assert file_data is not None
+
         # Hate having to do this
         with NamedTemporaryFile(delete=False) as tmp:
             tmp.write(file_data)
@@ -348,7 +350,7 @@ class FloodFillingTask(RegisteredTask):
                 return h5['main'][:]
 
     def _get_weights(self):
-        s = Storage(self.yacn_layer)
+        s = (self.yacn_layer)
         for file_path in ['net/discriminate/latest.ckpt',
                           'net/discriminate/latest.ckpt.index',
                           'net/discriminate/latest.ckpt.data-00000-of-00001',
@@ -358,3 +360,4 @@ class FloodFillingTask(RegisteredTask):
 
             with open(file_path, wb) as f:
                 f.write(s.get_file(file_path))
+
