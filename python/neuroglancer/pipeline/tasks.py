@@ -177,15 +177,14 @@ class DownsampleTask(RegisteredTask):
         if self._info['type'] == 'image':
             self._data = downsample.downsample_with_averaging(chunk, self._downsample_ratio)
         elif self._info['type'] == 'segmentation':
-            self._data = downsample.downsample_segmentation(chunk, self._downsample_ratio)
+            self._data = downsample.downsample_with_striding(chunk, self._downsample_ratio)
         else:
             raise NotImplementedError(self._info['type'])
 
     def _upload_output_chunk(self):
         self._storage.put_file(
             file_path=self._get_filename(),
-            content=self._encode(self._data, self._info['scales'][self._output_index]["encoding"])
-            )
+            content=self._encode(self._data, self._info['scales'][self._output_index]["encoding"]))
 
     def _encode(self, chunk, encoding):
         if encoding == "jpeg":
