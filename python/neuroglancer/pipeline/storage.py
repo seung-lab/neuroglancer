@@ -66,15 +66,15 @@ class Storage(ThreadedQueue):
         else:
             return cls.ExtractedPath(*match.groups())
 
-    def put_file(self, file_path, content, compress=False):
+    def put_file(self, file_path, content, content_type=None, compress=False):
         """ 
         Args:
             filename (string): it can contains folders
             content (string): binary data to save
         """
-        return self.put_files([ (file_path, content) ], compress, block=False)
+        return self.put_files([ (file_path, content) ], content_type, compress, block=False)
 
-    def put_files(self, files, compress=False, block=True):
+    def put_files(self, files, content_type=None, compress=False, block=True):
         """
         Put lots of files at once and get a nice progress bar. It'll also wait
         for the upload to complete, just like get_files.
@@ -83,7 +83,7 @@ class Storage(ThreadedQueue):
             files: [ (filepath, content), .... ]
         """
         def base_uploadfn(path, content, interface):
-            interface.put_file(path, content, compress)
+            interface.put_file(path, content, content_type, compress)
 
         for path, content in files:
             if compress:
@@ -284,7 +284,16 @@ class FileInterface(object):
                 
                 for filename in files:
                     filenames.append(filename)
-            
+        
+        def stripgz(fname):
+            (base, ext) = os.path.splitext(fname)
+            if ext == '.gz':
+                return base
+            else:
+                return fname
+
+        filenames = map(stripgz, filenames)
+
         return _radix_sort(filenames).__iter__()
 
 class GoogleCloudStorageInterface(object):
@@ -303,7 +312,7 @@ class GoogleCloudStorageInterface(object):
         return  os.path.join(*clean)
 
 
-    def put_file(self, file_path, content, compress):
+    def put_file(self, file_path, content, content_type, compress):
         key = self.get_path_to_file(file_path)
         blob = self._bucket.blob( key )
         blob.upload_from_string(content, content_type)
