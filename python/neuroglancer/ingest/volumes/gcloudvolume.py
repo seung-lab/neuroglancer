@@ -6,8 +6,8 @@ import numpy as np
 from tqdm import tqdm
 
 import neuroglancer
-import neuroglancer.ingest.lib as lib
-from neuroglancer.ingest.lib import clamp, xyzrange, Vec, Vec3, Bbox, min2, max2, Storage
+import neuroglancer.lib as lib
+from neuroglancer.lib import clamp, xyzrange, Vec, Vec3, Bbox, min2, max2, Storage
 from neuroglancer.ingest.volumes import Volume, VolumeCutout, generate_slices
 from google.cloud import storage as gstorage
 
