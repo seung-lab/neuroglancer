@@ -3,16 +3,16 @@ from cStringIO import StringIO
 from Queue import Queue
 import os.path
 import re
-from threading import Thread, Lock
 from functools import partial
 
 from glob import glob
 import google.cloud.exceptions
 from google.cloud.storage import Client
-import boto 
+import boto
 from boto.s3.connection import S3Connection
 import gzip
 
+from neuroglancer.lib import mkdir
 from neuroglancer.pipeline.secrets import PROJECT_NAME, google_credentials_path, aws_credentials
 from neuroglancer.pipeline.threaded_queue import ThreadedQueue
 
@@ -207,8 +207,6 @@ class Storage(ThreadedQueue):
             yield f
 
 class FileInterface(object):
-    lock = Lock()
-
     def __init__(self, path):
         self._path = path
 
@@ -221,21 +219,33 @@ class FileInterface(object):
                              file_path])
         return  os.path.join(*clean)
 
-    def put_file(self, file_path, content, compress):
+    def put_file(self, file_path, content, content_type, compress):
         path = self.get_path_to_file(file_path)
-        dirpath = os.path.dirname(path)
-        with FileInterface.lock:
-            if not os.path.exists(dirpath):
-                os.makedirs(dirpath)
+        mkdir(os.path.dirname(path))
 
-        with open(path, 'wb') as f:
-            f.write(content)
+        if compress:
+            path += '.gz'
+
+        try:
+            with open(path, 'wb') as f:
+                f.write(content)
+                f.flush()
+        except IOError as err:
+            with open(path, 'wb') as f:
+                f.write(content)
 
     def get_file(self, file_path):
         path = self.get_path_to_file(file_path)
+
+        compressed = os.path.exists(path + '.gz')
+            
+        if compressed:
+            path += '.gz'
+
         try:
             with open(path, 'rb') as f:
-                return f.read(), None
+                data = f.read()
+            return data, compressed
         except IOError:
             return None, False
 
@@ -296,7 +306,7 @@ class GoogleCloudStorageInterface(object):
     def put_file(self, file_path, content, compress):
         key = self.get_path_to_file(file_path)
         blob = self._bucket.blob( key )
-        blob.upload_from_string(content)
+        blob.upload_from_string(content, content_type)
         if compress:
             blob.content_encoding = "gzip"
             blob.patch()
@@ -350,13 +360,16 @@ class S3Interface(object):
                              file_path])
         return  os.path.join(*clean)
 
-    def put_file(self, file_path, content, compress):
+    def put_file(self, file_path, content, content_type, compress):
         k = boto.s3.key.Key(self._bucket)
         k.key = self.get_path_to_file(file_path)
         if compress:
             k.set_contents_from_string(
                 content,
-                headers={"Content-Encoding": "gzip"})
+                headers={
+                    "Content-Type": content_type or 'application/octet-stream',
+                    "Content-Encoding": "gzip",
+                })
         else:
             k.set_contents_from_string(content)
             
