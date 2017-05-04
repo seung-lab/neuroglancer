@@ -133,9 +133,20 @@ class TaskQueue(object):
 
         self._threads = tuple(threads)
 
+    def are_threads_alive(self):
+        return any(map(lambda t: t.isAlive(), self._threads))
+
     def kill_threads(self):
         self._terminate.set()
+        while True:
+            alive = self.are_threads_alive()
+            if alive:
+                time.sleep(0.1)
+            else:
+                break
+
         self._threads = ()
+        return self
 
     def _consume_queue(self, terminate_evt):
         """
@@ -254,7 +265,7 @@ class TaskQueue(object):
                 self.delete(tid)
 
         if len(self._threads):
-            self.wait_until_queue_empty()
+            self.wait()
 
     def delete(self, tid):
         """Deletes a task from a TaskQueue."""
@@ -276,11 +287,11 @@ class TaskQueue(object):
         return self
 
     def __exit__(self, exception_type, exception_value, traceback):
-        self.wait_until_queue_empty()
+        self.wait()
         self.kill_threads()
 
     def __del__(self):
-        self.wait_until_queue_empty()
+        self.wait()
         self.kill_threads()
 
 

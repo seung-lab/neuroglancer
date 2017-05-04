@@ -30,7 +30,7 @@ class Storage(object):
     file:// would be useful for when the in-memory python datasource uses too much RAM,
     or possible for writing unit tests.
 
-    This should be the only way to interact with files, either for anyone of the protocols
+    This should be the only way to interact with files for any of the protocols.
     """
     gzip_magic_numbers = [0x1f,0x8b]
     path_regex = re.compile(r'^(gs|file|s3)://(/?.*?)/(.*/)?([^//]+)/([^//]+)/?$')

@@ -24,6 +24,4 @@ ADD ./ /root/python
 RUN pip install -r /root/python/requirements.txt
 RUN cd /root/python && python setup.py install
 RUN cd /root/python/neuroglancer/ingest && make
-ADD ./neuroglancer/ingest/client-secret.json /root/client-secret.json
-RUN gcloud auth activate-service-account --key-file=/root/client-secret.json
-CMD cd /root/python/ && python -m neuroglancer.ingest.digest
+CMD cd /root/python/ && python -m neuroglancer.pipeline.task_execution

@@ -155,7 +155,7 @@ def create_downsample_scales(layer_path, mip, ds_shape, axis='z'):
   map(vol.addScale, scales)
   return vol.commitInfo()
 
-def create_downsampling_tasks(layer_path, task_queue, mip=-1, axis='z', shape=Vec(2048, 2048, 64)):
+def create_downsampling_tasks(task_queue, layer_path, mip=-1, axis='z', shape=Vec(2048, 2048, 64)):
   vol = create_downsample_scales(layer_path, mip, shape)
 
   for startpt in tqdm(xyzrange( vol.bounds.minpt, vol.bounds.maxpt, shape ), desc="Inserting Downsample Tasks"):
@@ -168,30 +168,36 @@ def create_downsampling_tasks(layer_path, task_queue, mip=-1, axis='z', shape=Ve
     )
     # task.execute()
     task_queue.insert(task)
+  task_queue.wait()
 
-def create_fixup_downsample_tasks(layer_path, task_queue, points, shape=Vec(2048, 2048, 64), mip=0, axis='z'):
+def compute_fixup_offsets(vol, points, shape):
+  pts = map(np.array, points)
+
+  # points are specified in high res coordinates 
+  # because that's what people read off the screen.
+  def nearest_offset(pt):
+    return (np.floor((pt - vol.mip_voxel_offset(0)) / shape) * shape) + vol.mip_voxel_offset(0)
+
+  return map(nearest_offset, pts)
+
+def create_fixup_downsample_tasks(task_queue, layer_path, points, shape=Vec(2048, 2048, 64), mip=0, axis='z'):
   """you can use this to fix black spots from when downsample tasks fail
   by specifying a point inside each black spot.
   """
   vol = CloudVolume.from_cloudpath(layer_path, mip)
-  pts = map(np.array, points)
-
-  def nearest_offset(pt):
-    return (np.floor((pt - vol.mip_voxel_offset(0)) / shape) * shape) + vol.mip_voxel_offset(0)
-
-  offsets = map(nearest_offset, pts)
+  offsets = compute_fixup_offsets(vol, points, shape)
 
   for offset in tqdm(offsets, desc="Inserting Corrective Downsample Tasks"):
     task = DownsampleTask(
-      dataset_name=dataset_name,
-      layer=layer_name,
+      layer_path=layer_path,
       mip=mip,
       shape=shape,
       offset=offset,
       axis=axis,
     )
-    task.execute()
-    # task_queue.insert(task)
+    # task.execute()
+    task_queue.insert(task)
+  task_queue.wait()
 
 def create_quantized_affinity_info(src_layer, dest_layer, shape):
   srcvol = CloudVolume.from_cloudpath(src_layer)
@@ -212,12 +218,28 @@ def create_quantized_affinity_tasks(taskqueue, src_layer, dest_layer, shape):
 
   create_downsample_scales(dest_layer, mip=0, ds_shape=shape)
 
-  for startpt in tqdm(xyzrange( destvol.bounds.minpt, destvol.bounds.maxpt, shape ), desc="Inserting QuantizeAffinities Tasks"):
+  for startpt in tqdm(xyzrange( dest.bounds.minpt, dest.bounds.maxpt, shape ), desc="Inserting QuantizeAffinities Tasks"):
     task = QuantizeAffinitiesTask(
       source_layer_path=src_layer,
       dest_layer_path=dest_layer,
       shape=list(shape.clone()),
       offset=list(startpt.clone()),
+    )
+    # task.execute()
+    task_queue.insert(task)
+  task_queue.wait()
+
+def create_fixup_quantize_tasks(task_queue, src_layer, dest_layer, shape, points):
+  vol = CloudVolume.from_cloudpath(src_layer, 0)
+  offsets = compute_fixup_offsets(vol, points, shape)
+
+  for offset in tqdm(offsets, desc="Inserting Corrective Quantization Tasks"):
+    print(offset)
+    task = QuantizeAffinitiesTask(
+      source_layer_path=src_layer,
+      dest_layer_path=dest_layer,
+      shape=list(shape.clone()),
+      offset=list(offset.clone()),
     )
     # task.execute()
     task_queue.insert(task)
@@ -301,6 +323,19 @@ class MockTaskQueue():
         task.execute()
         del task
 
+    def wait(self):
+      return self
+
+    def kill_threads(self):
+      return self
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exception_type, exception_value, traceback):
+      pass
+
+
 def ingest_hdf5_example():
     dataset_path='gs://neuroglancer/test_v0'
     task_queue = MockTaskQueue()
@@ -347,17 +382,39 @@ def ingest_hdf5_example():
         resolution=resolution, encoding='raw')
     create_ingest_task(storage, task_queue)
     create_downsampling_task(storage, task_queue)
-
     
 if __name__ == '__main__':  
-  task_queue = TaskQueue(queue_name='wms-test-pull-queue')
+  # task_queue = 
+  # task_queue = MockTaskQueue()
 
-  create_quantized_affinity_tasks(task_queue, 
-    src_layer='s3://neuroglancer/pinky40_v11/affinitymap-jnet/',
-    dest_layer='gs://neuroglancer/pinky40_v11/qaffinitymap-jnet-x/',
-    shape=Vec(1024, 1024, 128),
-  )
+  src_layer = 's3://neuroglancer/pinky40_v11/affinitymap-jnet/'
+  dest_layer = 'gs://neuroglancer/pinky40_v11/qaffinitymap-jnet-x/'
+  shape = Vec(1024, 1024, 128)
 
+  # points = [[48596, 20702, 1], [11038, 37047, 65], [39234, 5186, 65], [39140, 4387, 128], [39187, 5374, 128], [39797, 5891, 128], [39140, 6314, 128], [39142, 4877, 192], [39686, 5883, 192], [39645, 4877, 192], [11019, 14559, 256], [10547, 34512, 384], [39805, 6925, 384], [39173, 5390, 384], [11027, 33927, 450], [39256, 4832, 448], [39712, 4832, 448], [39165, 4923, 512], [39074, 5379, 576], [39621, 5425, 576], [11483, 21204, 768], [39666, 5425, 768], [39165, 4376, 768], [39089, 5968, 832], [39635, 5918, 832], [12010, 6415, 832], [39148, 4421, 896], [39248, 4923, 896], [39148, 5976, 896], [39047, 24331, 896], [47472, 36116, 896], [11014, 40780, 896], [39175, 5902, 960]]
+  # speckles = [[12197, 17729, 884], [11738, 26289, 884], [11860, 30355, 884], [11830, 33625, 884], [10821, 38517, 884], [13644, 11643, 884], [11816, 11918, 756], [10522, 18922, 756], [10698, 22100, 756], [10816, 25513, 756], [11934, 33575, 756], [10875, 36341, 756], [10934, 40108, 756], [12169, 8741, 721], [27990, 8588, 686], [24730, 22754, 686], [37774, 17484, 686], [12018, 12083, 686], [10507, 18600, 686], [11640, 33477, 686], [10554, 39475, 686], [21605, 17514, 640], [43587, 6645, 640], [11130, 31353, 615], [12020, 16043, 615], [10655, 18205, 615], [11883, 8743, 615], [11003, 24200, 615], [23454, 10133, 615], [11996, 16372, 585], [11088, 19378, 585], [11259, 24285, 585], [11457, 27121, 585], [12223, 31772, 585], [11857, 31792, 535], [11009, 27198, 535], [10903, 17338, 535], [10974, 23982, 535], [12352, 8398, 535], [46457, 22664, 535], [12231, 9494, 453], [12987, 13980, 453], [11906, 16899, 453], [10933, 27710, 453], [11105, 35749, 453], [33717, 12461, 453], [11769, 33116, 399], [12341, 21958, 387], [10982, 17882, 387], [12055, 10944, 362], [13843, 12732, 362], [36802, 31185, 362], [12484, 14949, 330], [11125, 33330, 330], [13843, 6796, 255], [13486, 8870, 255], [11841, 20242, 255], [12055, 39410, 255], [10768, 33688, 255], [11698, 30827, 255], [11626, 28753, 255], [12913, 24819, 255], [13915, 10873, 255], [11912, 9728, 255], [13772, 6724, 164], [13915, 9371, 164], [14129, 11016, 164], [11984, 19956, 164], [12270, 22245, 164], [12055, 25105, 164], [11841, 28324, 164], [11841, 30613, 164], [10696, 33974, 164], [11841, 39410, 164], [39233, 4865, 113], [11841, 27251, 101], [11799, 37470, 90], [10791, 34887, 90], [10994, 39107, 90], [11665, 37236, 11], [10220, 35141, 11], [12099, 27484, 11], [11810, 12891, 11], [11087, 18454, 11], [11015, 32179, 11], [11160, 40415, 11]]
+
+  with TaskQueue(queue_name='wms-test-pull-queue') as task_queue:
+    # create_downsampling_tasks(task_queue, 's3://neuroglancer/pinky40_v11/watershed/', mip=0)
+    # create_downsampling_tasks(task_queue, dest_layer, mip=3)
+
+    # create_quantized_affinity_tasks(task_queue, 
+    #   src_layer=src_layer,
+    #   dest_layer=dest_layer,
+    #   shape=shape,
+    # )
+
+    # create_fixup_downsample_tasks(task_queue, dest_layer, points=points, mip=3) 
+
+    # create_fixup_quantize_tasks(task_queue, src_layer, dest_layer, shape, 
+    #   points=speckles,
+    # )
+
+  # create_fixup_quantize_tasks(task_queue, src_layer, dest_layer, shape, 
+  #   points=[ (41740, 30477, 866) ]
+  # )
+
+  # task_queue.kill_threads()
 
 
     
