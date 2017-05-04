@@ -17,6 +17,7 @@ from boto.s3.connection import S3Connection
 import gzip
 import numpy as np
 
+from neuroglancer.lib import mkdir
 from neuroglancer.pipeline.secrets import PROJECT_NAME, google_credentials_path, aws_credentials
 
 class Storage(object):
@@ -361,27 +362,34 @@ class FileInterface(object):
                              file_path])
         return  os.path.join(*clean)
 
-    def put_file(self, file_path, content, compress):
+    def put_file(self, file_path, content, content_type, compress):
         path = self.get_path_to_file(file_path)
+        mkdir(os.path.dirname(path))
+
+        if compress:
+            path += '.gz'
+
         try:
             with open(path, 'wb') as f:
                 f.write(content)
-        except IOError:
-            try: `
-                # a raise condition is possible
-                # where the first try fails to create the file
-                # because the folder that contains it doesn't exists
-                # but when we try to create here, some other thread
-                # already created this folder
-                os.makedirs(os.path.dirname(path))
-            except OSError:
-                pass
+                f.flush()
+        except IOError as err:
+            with open(path, 'wb') as f:
+                f.write(content)
+                f.flush()
 
     def get_file(self, file_path):
         path = self.get_path_to_file(file_path) 
+
+        compressed = os.path.exists(path + '.gz')
+            
+        if compressed:
+            path += '.gz'
+
         try:
             with open(path, 'rb') as f:
-                return f.read(), None
+                data = f.read()
+            return data, compressed
         except IOError:
             return None, False
 
@@ -417,7 +425,7 @@ class GoogleCloudStorageInterface(object):
         content_type = content_type or 'application/octet-stream'
         key = self.get_path_to_file(file_path)
         blob = self._bucket.blob( key )
-        blob.upload_from_string(content)
+        blob.upload_from_string(content, content_type)
         if compress:
             blob.content_encoding = "gzip"
             blob.patch()
@@ -468,13 +476,16 @@ class S3Interface(object):
                              file_path])
         return  os.path.join(*clean)
 
-    def put_file(self, file_path, content, compress):
+    def put_file(self, file_path, content, content_type, compress):
         k = boto.s3.key.Key(self._bucket)
         k.key = self.get_path_to_file(file_path)
         if compress:
             k.set_contents_from_string(
                 content,
-                headers={"Content-Encoding": "gzip"})
+                headers={
+                    "Content-Type": content_type or 'application/octet-stream',
+                    "Content-Encoding": "gzip",
+                })
         else:
             k.set_contents_from_string(content)
             
