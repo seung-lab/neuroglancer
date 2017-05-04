@@ -3,9 +3,11 @@ from __future__ import print_function
 from collections import namedtuple
 from cStringIO import StringIO
 import Queue
-import os.path
+import os
 import re
 import threading
+import time
+import signal
 from functools import partial
 
 from glob import glob
@@ -52,12 +54,19 @@ class Storage(object):
         self._threads = ()
         self._terminate = threading.Event()
 
-        self._start_threads(n_threads)
+        self.start_threads(n_threads)
+
+    @property
+    def layer_path(self):
+        return self._layer_path
 
     def get_path_to_file(self, file_path):
         return os.path.join(self._layer_path, file_path)
 
-    def _start_threads(self, n_threads):
+    def start_threads(self, n_threads):
+        if n_threads == len(self._threads):
+            return self
+
         self._terminate.set()
         self._terminate = threading.Event()
 
@@ -72,11 +81,18 @@ class Storage(object):
             threads.append(worker)
 
         self._threads = tuple(threads)
+        return self
 
-    def _kill_threads(self):
-        self._queue.join() # if no threads were set the queue is always empty
+    def are_threads_alive(self):
+        return any(map(lambda t: t.isAlive(), self._threads))
+
+    def kill_threads(self):
         self._terminate.set()
+        while self.are_threads_alive():
+          time.sleep(0.1)
+
         self._threads = ()
+        return self
 
     def _consume_queue(self, terminate_evt):
         interface = self._interface_cls(self._path)
@@ -102,23 +118,39 @@ class Storage(object):
         else:
             return cls.ExtractedPath(*match.groups())
 
-    def put_file(self, file_path, content, compress=False):
+    def put_file(self, file_path, content, content_type=None, compress=False):
         """ 
         Args:
             filename (string): it can contains folders
             content (string): binary data to save
         """
-        if compress:
-            content = self._compress(content)
+        return self.put_files([ (file_path, content) ], content_type, compress)
 
-        def put_file(interface):
-            interface.put_file(file_path, content, compress)
+    def put_files(self, files, content_type=None, compress=False):
+        """
+        Put lots of files at once and get a nice progress bar. It'll also wait
+        for the upload to complete, just like get_files.
 
-        if len(self._threads):
-            self._queue.put(put_file, block=True)
-        else:
-            put_file(self._interface)
+        Required:
+            files: [ (filepath, content), .... ]
+        """
+        def put_file(path, content, interface):
+            interface.put_file(path, content, content_type, compress)
 
+        for path, content in files:
+            if compress:
+                content = self._compress(content)
+
+            uploadfn = partial(put_file, path, content)
+
+            if len(self._threads):
+                self._queue.put(uploadfn, block=True)
+            else:
+                uploadfn(self._interface)
+
+        self.wait()
+
+        return self
 
     def get_file(self, file_path):
         # Create get_files does uses threading to speed up downloading
@@ -145,7 +177,6 @@ class Storage(object):
                 print(err)
             
             content, decompress = result
-
             if content and decompress:
                 content = self._maybe_uncompress(content)
 
@@ -194,12 +225,20 @@ class Storage(object):
             yield f
 
     def wait(self):
-        if self._n_threads:
+        if len(self._threads):
             self._queue.join()
+
+    def __del__(self):
+        self.kill_threads()
+        self._interface.release_connection()
+
+    def __enter__(self):
+        self.start_threads(self._n_threads)
         return self
-    
-    def __del__(self):      
-        self._kill_threads()
+
+    def __exit__(self, exception_type, exception_value, traceback):
+        self.wait()
+        self.kill_threads()
 
 class FileInterface(object):
 
