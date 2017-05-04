@@ -50,17 +50,20 @@ def test_all_stages():
         chunk_position='28672-29824_24064-25216_0-128', 
         crop_position='192-960_192-960_16-112',
         watershed_layer=dataset_path+'watershed', 
-        segmentation_layer=dataset_path+'segmentation', 
-        affinities_layer='s3://neuroglancer/pinky40_v4/affinitymap-jnet'
+        segmentation_layer=dataset_path+'segmentation',
+        yacn_layer=dataset_path+'yacn',
+        affinities_layer='s3://neuroglancer/pinky40_v4/affinitymap-jnet',
     )
     # t.execute()
 
-    # t = DiscriminateTask(
-    #         chunk_position='0-320_0-320_0-64',
-    #         crop_position='0-256_0-256_0-64',
-    #         image_layer=dataset_path+'image',
-    #         segmentation_layer=dataset_path+'segmentation',
-    #         yacn_layer=dataset_path+'yacn')
+    t = DiscriminateTask(
+            chunk_position='0-320_0-320_0-64',
+            crop_position='0-256_0-256_0-64',
+            image_layer=dataset_path+'image',
+            segmentation_layer=dataset_path+'segmentation',
+            yacn_layer=dataset_path+'yacn',
+            errors_layer=dataset_path+'errors'
+)
 
     # print t
     # t.execute()
