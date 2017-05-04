@@ -401,7 +401,12 @@ class FileInterface(object):
         for file_path in glob(path):
             if not os.path.isfile(file_path):
                 continue
-            yield os.path.basename(file_path)
+            fname = os.path.basename(file_path)
+            (base, ext) = os.path.splitext(fname)
+            if ext == '.gz':
+                yield base
+            else:
+                yield fname
 
     def release_connection(self):
         pass
