@@ -12,6 +12,12 @@ import numpy as np
 from neuroglancer.pipeline import Storage, Precomputed, RegisteredTask
 import string
 
+if "POD_ID" in os.environ:
+    POD_ID = os.environ["POD_ID"]
+else:
+	print "Warning: POD_ID environment variable not set."
+    POD_ID = "POD_ID"
+
 def h5_get(yacn_layer, name, chunk_position, default_shape = (0,2)):
     file_data = Storage(yacn_layer, n_threads=0).get_file('{}/{}.h5'.format(name, chunk_position))
     # Hate having to do this
@@ -177,20 +183,10 @@ class DiscriminateTask(RegisteredTask):
         seg = Precomputed(self._seg_storage)[self._chunk_slices] 
         return np.squeeze(seg, axis=3).T
 
-    def _get_samples_chunk(self):
-        file_data = Storage(self.yacn_layer).get_file('samples/{}.h5'.format(self.chunk_position))
-        # Hate having to do this
-        with NamedTemporaryFile(delete=False) as tmp:
-            tmp.write(file_data)
-            tmp.close()
-            with h5py.File(tmp.name, 'r') as h5:
-                return h5['main'][:]
-    
-
     def _infer(self, image, segmentation, samples):
         #os.environ["CUDA_VISIBLE_DEVICES"]="0"
-        from ext.third_party.yacn.nets.discriminate3_inference import main_model
-        main_model.restore('/tmp/net/discriminate/latest.ckpt')
+        from ext.third_party.yacn.nets.discriminate3_online_inference import main_model
+        main_model.restore('/tmp/{}/nets/discriminate3/latest.ckpt'.format(POD_ID))
         print image.shape, segmentation.shape
         output = main_model.inference(image, segmentation, samples)
         self._write_chunk(output)
@@ -204,17 +200,17 @@ class DiscriminateTask(RegisteredTask):
 
     def _get_weights(self):
         try:
-            os.makedirs('/tmp/net/discriminate/')
-            s = Storage(self.yacn_layer)
-            for file_path in ['net/discriminate/latest.ckpt',
-                              'net/discriminate/latest.ckpt.index',
-                              'net/discriminate/latest.ckpt.data-00000-of-00001']:
-
-                with open('/tmp/' + file_path, 'wb') as f:
-                    f.write(s.get_file(file_path))
-
+            os.makedirs('/tmp/{}/nets/discriminate3/'.format(POD_ID))
         except OSError:
             pass #folder already exists
+        s = Storage(self.yacn_layer)
+        for file_path in ['nets/discriminate3/latest.ckpt',
+                          'nets/discriminate3/latest.ckpt.index',
+                          'nets/discriminate3/latest.ckpt.data-00000-of-00001']:
+
+            with open('/tmp/{}/'.format(POD_ID) + file_path, 'wb') as f:
+                f.write(s.get_file(file_path))
+
 
 class FloodFillingTask(RegisteredTask):
     def __init__(self, chunk_position, neighbours_chunk_position, crop_position,
@@ -345,15 +341,24 @@ class FloodFillingTask(RegisteredTask):
                 else:
                     return h5['main'][:]
     def _get_weights(self):
-        s = (self.yacn_layer)
-        for file_path in ['net/discriminate/latest.ckpt',
-                          'net/discriminate/latest.ckpt.index',
-                          'net/discriminate/latest.ckpt.data-00000-of-00001',
-                          'net/sparse_vectors/latest.ckpt',
-                          'net/sparse_vectors/latest.ckpt.index',
-                          'net/sparse_vectors/latest.ckpt.data-00000-of-00001']:
+        tmp_dir = "/tmp/{}/".format(POD_ID)
+        try:
+            os.makedirs(os.path.join(tmp_dir,'nets/discriminate3/'))
+        except OSError:
+            pass #folder already exists
+        try:
+            os.makedirs(os.path.join(tmp_dir,'nets/sparse_vector_labels/'))
+        except OSError:
+            pass #folder already exists
+        s = Storage(self.yacn_layer)
+        for file_path in ['nets/discriminate3/latest.ckpt',
+                          'nets/discriminate3/latest.ckpt.index',
+                          'nets/discriminate3/latest.ckpt.data-00000-of-00001',
+                          'nets/sparse_vector_labels/latest.ckpt',
+                          'nets/sparse_vector_labels/latest.ckpt.index',
+                          'nets/sparse_vector_labels/latest.ckpt.data-00000-of-00001']:
 
-            with open(file_path, wb) as f:
+            with open(os.path.join(tmp_dir, file_path), 'wb') as f:
                 f.write(s.get_file(file_path))
 
 
