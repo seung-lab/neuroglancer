@@ -219,7 +219,7 @@ class DiscriminateTask(RegisteredTask):
 class FloodFillingTask(RegisteredTask):
     def __init__(self, chunk_position, neighbours_chunk_position, crop_position,
                  image_layer, watershed_layer, yacn_layer,
-                 errors_layer):
+                 errors_layer, skip_threshold):
         """
         This is the third stage of error detection a.k.a YACN.
 
@@ -230,7 +230,7 @@ class FloodFillingTask(RegisteredTask):
         crop_position in in relative coordinates to the chunk_position
         """
         super(FloodFillingTask, self).__init__(chunk_position, neighbours_chunk_position, crop_position,
-                 image_layer, watershed_layer, yacn_layer, errors_layer)
+                 image_layer, watershed_layer, yacn_layer, errors_layer, skip_threshold)
 
         self.chunk_position = chunk_position
         self.crop_position = crop_position
@@ -239,6 +239,7 @@ class FloodFillingTask(RegisteredTask):
         self.watershed_layer = watershed_layer
         self.errors_layer = errors_layer
         self.yacn_layer = yacn_layer
+        self.skip_threshold = skip_threshold
 
 
     def yacn_get(self, name):
@@ -248,8 +249,9 @@ class FloodFillingTask(RegisteredTask):
         self._parse_chunk_position()
         self._parse_crop_position()
         self.yacn_storage = Storage(self.yacn_layer, n_threads=0)
-        errors = self._get_errors_chunk()
         image = self._get_image_chunk()
+
+        errors = self._get_errors_chunk()
         watershed = self.yacn_get("thickened_raw")
         samples = self.yacn_get("samples")
         height_map = self.yacn_get("height_map")
@@ -268,14 +270,17 @@ class FloodFillingTask(RegisteredTask):
         import ext.third_party.yacn.reconstruct.reconstruct as reconstruct
         from ext.third_party.yacn.reconstruct.commit_changes import *
 
-        revised_combined_edges = reconstruct.reconstruct_wrapper(image=image, 
-                watershed=watershed, 
-                samples=samples, 
-                vertices=combined_vertices, 
-                edges=combined_edges, 
-                errors=errors,
-                full_edges=combined_contact_edges, 
-                height_map = height_map)
+        if np.count_nonzero(image) < self.skip_threshold * image.size:
+            revised_combined_edges = combined_edges
+        else:
+            revised_combined_edges = reconstruct.reconstruct_wrapper(image=image, 
+                    watershed=watershed, 
+                    samples=samples, 
+                    vertices=combined_vertices, 
+                    edges=combined_edges, 
+                    errors=errors,
+                    full_edges=combined_contact_edges, 
+                    height_map = height_map)
 
         E = unpack_edges(revised_combined_edges)
         revised_edges = [pack_edges(restrict(E, unpack_edges(f))) for f in neighbours_contact_edges]
