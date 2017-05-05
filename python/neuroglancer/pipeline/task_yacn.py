@@ -15,7 +15,7 @@ import string
 if "POD_ID" in os.environ:
     POD_ID = os.environ["POD_ID"]
 else:
-	print "Warning: POD_ID environment variable not set."
+    print "Warning: POD_ID environment variable not set."
     POD_ID = "POD_ID"
 
 def h5_get(yacn_layer, name, chunk_position, default_shape = (0,2)):
