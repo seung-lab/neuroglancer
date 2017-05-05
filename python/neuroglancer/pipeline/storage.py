@@ -124,6 +124,15 @@ class Storage(object):
             content = self._maybe_uncompress(content)
         return content
 
+    def get_file_cached(self, file_path):
+        #TODO: check timestamp to see if cache is stale
+        #TODO: clear the cache when it gets too large
+        if not hasattr(self,_cache):
+            self._cache={}
+        if file_path not in self._cache:
+            self._cache[file_path] = self.get_file(file_path)
+        return self._cache[file_path]
+
     def get_files(self, file_paths):
         """
         returns a list of files faster by using threads
