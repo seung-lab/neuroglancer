@@ -10,14 +10,14 @@ while True:
     try:
         task = tq.lease()
         task.execute()
-        tq.delete(task)
+        tq.delete(task.id)
         logger.log('INFO', task , "succesfully executed")
     except TaskQueue.QueueEmpty:
         sleep(1)
         continue
     except EmptyVolumeException:
         logger.log('WARNING', task, "raised an EmptyVolumeException")
-        tq.delete(task)
+        tq.delete(task.id)
     except Exception as e:
         logger.log('ERROR', task, "raised {}\n {}".format(e , traceback.format_exc()))
         raise #this will restart the container in kubernetes
