@@ -351,3 +351,54 @@ class FloodFillingTask(RegisteredTask):
             with open(file_path, wb) as f:
                 f.write(s.get_file(file_path))
 
+
+
+class RelabelTask(RegisteredTask):
+
+    def __init__(self, layer_in_path, layer_out_path, chunk_position, mapping_path):
+        """Summary
+        
+        Args:
+            layer_in_path (str): Contains the chunks to be relabel
+            layer_out_path (str): Where to place the relabel chunks
+            mapping_path (str) Path relative to layer_out_path containing 
+            a .npy file with the remmaping rules.
+        """
+        super(RelabelTask, self).__init__(layer_in_path, layer_out_path, chunk_position, mapping_path)
+        self.layer_in_path = layer_in_path
+        self.mapping_path = mapping_path
+        self.chunk_position = chunk_position
+        self.layer_out_path = layer_out_path
+
+    def execute(self):
+        self._parse_chunk_position()
+        self._get_input_chunk()
+        self._get_mapping()
+        self._relabel_chunk()
+        self._upload_chunk()
+
+    def _parse_chunk_position(self):
+        match = re.match(r'^(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)$', self.chunk_position)
+        (self._xmin, self._xmax,
+         self._ymin, self._ymax,
+         self._zmin, self._zmax) = map(int, match.groups())
+        self._chunk_slices = (slice(self._xmin, self._xmax),
+                              slice(self._ymin, self._ymax),
+                              slice(self._zmin, self._zmax))
+
+    def _get_input_chunk(self):
+        self._data = Precomputed(Storage(self.layer_in_path,n_threads=0))[self._chunk_slices] 
+
+    def _get_mapping(self):
+        if not os.path.exists('/tmp/mapping.npy'):
+            content = Storage(self.layer_out_path,n_threads=0).get_file(self.mapping_path)
+            with open('/tmp/mapping.npy', 'wb') as f:
+                f.write(content)
+        self._mapping = np.load('/tmp/mapping.npy')
+
+    def _relabel_chunk(self):
+        self._data = self._mapping[self._data]
+
+    def _upload_chunk(self):
+        pr = Precomputed(Storage(self.layer_out_path,n_threads=0))
+        pr[self._chunk_slices] = self._data
