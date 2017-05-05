@@ -12,6 +12,19 @@ import numpy as np
 from neuroglancer.pipeline import Storage, Precomputed, RegisteredTask
 import string
 
+def h5_get(yacn_layer, name, chunk_position, default_shape = (0,2)):
+    file_data = Storage(yacn_layer, n_threads=0).get_file('{}/{}.h5'.format(name, chunk_position))
+    # Hate having to do this
+    with NamedTemporaryFile(delete=False) as tmp:
+        tmp.write(file_data)
+        tmp.close()
+        with h5py.File(tmp.name, 'r') as h5:
+            A=h5['main']
+            if A.shape is None:
+                return np.zeros(default_shape,dtype=A.dtype)
+            else:
+                return h5['main'][:]
+
 class RegionGraphTask(RegisteredTask):
     def __init__(self, chunk_position, crop_position, watershed_layer,
                  affinities_layer, yacn_layer, segmentation_layer):
@@ -125,12 +138,15 @@ class DiscriminateTask(RegisteredTask):
         self.yacn_layer = yacn_layer
         self.errors_layer = errors_layer
 
+    def yacn_get(self, name):
+        return h5_get(self.yacn_layer, name, self.chunk_position)
+
     def execute(self):
         self._parse_chunk_position()
         self._parse_crop_position()
         image = self._get_image_chunk()
-        segmentation = self._get_segmentation_chunk()
-        samples = self._get_samples_chunk()
+        segmentation = self.yacn_get("thickened_mean_agg_tr")
+        samples = self.yacn_get("samples")
         self._get_weights()
         self._infer(image, segmentation, samples)
   
@@ -203,7 +219,7 @@ class DiscriminateTask(RegisteredTask):
 class FloodFillingTask(RegisteredTask):
     def __init__(self, chunk_position, neighbours_chunk_position, crop_position,
                  image_layer, watershed_layer, yacn_layer,
-                 errors_layer, affinities_layer):
+                 errors_layer):
         """
         This is the third stage of error detection a.k.a YACN.
 
@@ -214,17 +230,19 @@ class FloodFillingTask(RegisteredTask):
         crop_position in in relative coordinates to the chunk_position
         """
         super(FloodFillingTask, self).__init__(chunk_position, neighbours_chunk_position, crop_position,
-                 image_layer, watershed_layer, yacn_layer,
-                 errors_layer, affinities_layer)
+                 image_layer, watershed_layer, yacn_layer, errors_layer)
 
         self.chunk_position = chunk_position
         self.crop_position = crop_position
         self.neighbours_chunk_position = string.split(string.strip(neighbours_chunk_position)," ")
         self.image_layer = image_layer
         self.watershed_layer = watershed_layer
-        self.affinities_layer = affinities_layer
         self.errors_layer = errors_layer
         self.yacn_layer = yacn_layer
+
+
+    def yacn_get(self, name):
+        return h5_get(self.yacn_layer, name, self.chunk_position)
 
     def execute(self):
         self._parse_chunk_position()
@@ -232,13 +250,13 @@ class FloodFillingTask(RegisteredTask):
         self.yacn_storage = Storage(self.yacn_layer, n_threads=0)
         errors = self._get_errors_chunk()
         image = self._get_image_chunk()
-        watershed = self._get_watershed_chunk()
-        samples = self._get_sample_for_chunk()
-        affinities = self._get_affinities_chunk()
+        watershed = self.yacn_get("thickened_raw")
+        samples = self.yacn_get("samples")
+        height_map = self.yacn_get("height_map")
 
-        neighbours_vertices = [self._get_vertices_for_chunk(chunk) for chunk in self.neighbours_chunk_position]
+        neighbours_vertices = [h5_get(self.yacn_layer, "vertices", chunk) for chunk in self.neighbours_chunk_position]
         neighbours_edges = [self._get_edges_for_chunk(chunk) for chunk in self.neighbours_chunk_position]
-        neighbours_contact_edges = [self._get_contact_edges_for_chunk(chunk) for chunk in self.neighbours_chunk_position]
+        neighbours_contact_edges = [h5_get(self.yacn_layer, "full_edges", chunk) for chunk in self.neighbours_chunk_position]
 
         combined_vertices = np.concatenate(neighbours_vertices,axis=0)
         combined_edges = np.concatenate(neighbours_edges,axis=0)
@@ -257,7 +275,7 @@ class FloodFillingTask(RegisteredTask):
                 edges=combined_edges, 
                 errors=errors,
                 full_edges=combined_contact_edges, 
-                affinities = affinities)
+                height_map = height_map)
 
         E = unpack_edges(revised_combined_edges)
         revised_edges = [pack_edges(restrict(E, unpack_edges(f))) for f in neighbours_contact_edges]
@@ -301,40 +319,8 @@ class FloodFillingTask(RegisteredTask):
 
     def _get_errors_chunk(self):
         self._error_storage = Storage(self.errors_layer,n_threads=0)
-        seg = Precomputed(self._error_storage)[self._chunk_slices] 
+        seg = Precomputed(self._error_storage,pad=0)[self._chunk_slices] 
         return np.squeeze(seg, axis=3).T
-
-    def _get_affinities_chunk(self):
-        self._affinities_storage = Storage(self.affinities_layer,n_threads=0)
-        seg = Precomputed(self._affinities_storage)[self._chunk_slices] 
-        return seg.T
-
-    def _get_sample_for_chunk(self):
-        file_data = self.yacn_storage.get_file('samples/{}.h5'.format(self.chunk_position))
-        # Hate having to do this
-        with NamedTemporaryFile(delete=False) as tmp:
-            tmp.write(file_data)
-            tmp.close()
-            with h5py.File(tmp.name, 'r') as h5:
-                return h5['main'][:]
-
-    def _get_vertices_for_chunk(self, chunk_position):
-        file_data = self.yacn_storage.get_file('vertices/{}.h5'.format(chunk_position))
-        # Hate having to do this
-        with NamedTemporaryFile(delete=False) as tmp:
-            tmp.write(file_data)
-            tmp.close()
-            with h5py.File(tmp.name, 'r') as h5:
-                return h5['main'][:]
-
-    def _get_contact_edges_for_chunk(self, chunk_position):
-        file_data = self.yacn_storage.get_file('contact_edges/{}.h5'.format(chunk_position))
-        # Hate having to do this
-        with NamedTemporaryFile(delete=False) as tmp:
-            tmp.write(file_data)
-            tmp.close()
-            with h5py.File(tmp.name, 'r') as h5:
-                return h5['main'][:]
 
     def _get_edges_for_chunk(self, chunk_position):
         file_data = self.yacn_storage.get_file('revised_edges/{}.h5'.format(chunk_position))
@@ -342,13 +328,17 @@ class FloodFillingTask(RegisteredTask):
             file_data = self.yacn_storage.get_file('mean_edges/{}.h5'.format(chunk_position))
         assert file_data is not None
 
+        default_shape = (0,2)
         # Hate having to do this
         with NamedTemporaryFile(delete=False) as tmp:
             tmp.write(file_data)
             tmp.close()
             with h5py.File(tmp.name, 'r') as h5:
-                return h5['main'][:]
-
+                A=h5['main']
+                if A.shape is None:
+                    return np.zeros(default_shape,dtype=A.dtype)
+                else:
+                    return h5['main'][:]
     def _get_weights(self):
         s = (self.yacn_layer)
         for file_path in ['net/discriminate/latest.ckpt',
