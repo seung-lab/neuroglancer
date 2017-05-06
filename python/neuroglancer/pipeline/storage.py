@@ -105,6 +105,7 @@ class Storage(object):
                 continue # periodically check if the thread is supposed to die
 
             try:
+                print (fn)
                 fn(interface)
             except Exception as err:
                 print(err)
@@ -128,11 +129,18 @@ class Storage(object):
             filename (string): it can contains folders
             content (string): binary data to save
         """
-        if self._n_threads:
-            # None is the non-existant callback
-            self._queue.put(('put_file', None, file_path, content, compress), block=True)
-        else:
-            self._interface(self._path).put_file(file_path, content, compress)
+        def put_file(path, content, interface):
+            interface.put_file(path, content, content_type, compress)
+
+            if compress:
+                content = self._compress(content)
+
+            uploadfn = partial(put_file, file_path, content)
+
+            if len(self._threads):
+                self._queue.put(uploadfn, block=True)
+            else:
+                uploadfn(self._interface)
         return self
 
     def put_files(self, files, content_type=None, compress=False):
@@ -378,6 +386,7 @@ class FileInterface(object):
 
         with open(path, 'wb') as f:
             f.write(content)
+            print ('writting', path)
 
     def get_file(self, file_path):
         path = self.get_path_to_file(file_path) 
@@ -415,7 +424,7 @@ class GoogleCloudStorageInterface(object):
                              file_path])
         return  os.path.join(*clean)
 
-   def put_file(self, file_path, content, content_type, compress):
+    def put_file(self, file_path, content, content_type, compress):
         content_type = content_type or 'application/octet-stream'
         key = self.get_path_to_file(file_path)
         blob = self._bucket.blob( key )

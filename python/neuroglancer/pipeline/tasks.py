@@ -89,7 +89,8 @@ class IngestTask(RegisteredTask):
             encoded = self._encode(chunk, scale["encoding"])
             filename = self._get_filename(x, y, z, chunk_size, downsample_ratio, scale)
             self._storage.put_file(filename, encoded)
-            self._storage.wait()
+            print ('putting chunk' , filename)
+        self._storage.wait()
 
     def _encode(self, chunk, encoding):
         if encoding == "jpeg":

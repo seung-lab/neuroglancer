@@ -25,6 +25,7 @@ def create_layer(size, offset=[0,0,0], layer_type="image", layer_name="layer"):
         # Jpeg encoding is lossy so it won't work
         create_info_file_from_build(storage, layer_type= 'segmentation', encoding="raw", force_chunk=[64,64,64])
     create_ingest_task(storage, MockTaskQueue())
+    storage.wait()
     return storage, random_data
 
 def delete_layer(layer_name="layer"):
