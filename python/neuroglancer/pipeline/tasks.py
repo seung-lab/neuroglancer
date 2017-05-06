@@ -21,6 +21,8 @@ from cloudvolume.lib import xyzrange, min2, max2, Vec, Bbox, mkdir
 from neuroglancer import chunks, downsample, downsample_scales
 from neuroglancer.pipeline import RegisteredTask
 from neuroglancer.pipeline import Mesher # broken out for ease of commenting out
+Storage=cached.Cached(Storage)
+
 
 def downsample_and_upload(image, bounds, vol, ds_shape, mip=0, axis='z', skip_first=False):
     ds_shape = min2(vol.volume_size, ds_shape[:3])
@@ -648,3 +650,11 @@ class SetEncodingTask(RegisteredTask):
         s3i = S3Interface(Storage.extract_path(self.layer_path))
         s3i.apply_gzip_encoding(self.prefix)
 
+class SimpleTask(RegisteredTask):
+    def __init__(self, message):
+        super(SimpleTask, self).__init__(message)
+
+        self.message=message
+
+    def execute(self):
+        raise NotImplementedError()

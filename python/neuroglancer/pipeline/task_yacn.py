@@ -20,6 +20,7 @@ else:
 
 def h5_get(yacn_layer, name, chunk_position, default_shape = (0,2)):
     file_data = Storage(yacn_layer, n_threads=0).get_file('{}/{}.h5'.format(name, chunk_position))
+    assert file_data is not None
     # Hate having to do this
     with NamedTemporaryFile(delete=False) as tmp:
         tmp.write(file_data)
