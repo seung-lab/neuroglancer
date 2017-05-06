@@ -8,8 +8,8 @@ import numpy as np
 from neuroglancer import chunks
 
 class EmptyVolumeException(Exception):
-	def __init__(self,file_path):
-		self.file_path=file_path
+    def __init__(self,file_path):
+        self.file_path=file_path
 
 class Precomputed(object):
     Chunk = namedtuple('Chunk',
