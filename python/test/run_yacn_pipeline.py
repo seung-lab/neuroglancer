@@ -184,7 +184,7 @@ def stage1_enqueue():
 		print t
 		q.insert(t)
 		time.sleep(10)
-	q.wait_until_queue_empty()
+	q.wait()
 def stage2_enqueue():
 	import json
 	data = {
@@ -236,7 +236,7 @@ def stage2_enqueue():
 				yacn_layer=dataset_path+'yacn')
 		print t
 		q.insert(t)
-	q.wait_until_queue_empty()
+	q.wait()
 
 not_started = set(chunks)
 log_file="finished_tasks"

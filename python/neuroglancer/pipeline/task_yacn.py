@@ -110,7 +110,7 @@ class RegionGraphTask(RegisteredTask):
                 s.put_file(file_path=(fname + '/{}'+fextension).format(self.chunk_position),
                            content=f.read()) 
                 f.close()
-        s.wait_until_queue_empty()
+        s.wait()
 
     def _create_temporary_hdf5(self, storage, slices, name):
         #tmp_file = NamedTemporaryFile(delete=True, suffix='.h5')
@@ -289,7 +289,7 @@ class FloodFillingTask(RegisteredTask):
                 with open(tmp.name) as f:
                     s.put_file(file_path='revised_edges/{}.h5'.format(chunk_position),
                                content=f.read())
-        s.wait_until_queue_empty()
+        s.wait()
   
     def _parse_chunk_position(self):
         match = re.match(r'^(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)$', self.chunk_position)

@@ -121,11 +121,11 @@ def test_relabeling():
     storage = Storage('file:///tmp/removeme/relabel_input')
     data = np.arange(8).astype(np.uint32).reshape(2,2,2,1)
     upload_build_chunks(storage, data, offset=(0,0,0))
-    storage.wait_until_queue_empty()
+    storage.wait)
     create_info_file_from_build(storage, layer_type= 'segmentation', encoding="raw")
-    storage.wait_until_queue_empty()
+    storage.wait()
     create_ingest_task(storage, MockTaskQueue())
-    storage.wait_until_queue_empty()
+    storage.wait()
 
     # create the output layer
     out_dir = '/tmp/removeme/relabel_output'
