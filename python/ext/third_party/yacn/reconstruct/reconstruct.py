@@ -27,10 +27,12 @@ params = {
 'N_EPOCHS': 4,
 'N_STEPS': 30000,
 'GLOBAL_EXPAND': False,
-'ERROR_THRESHOLD': 0.5,
-'COST_BENEFIT_RATIO': 2,
+'ERROR_THRESHOLD': 0.25,
+'COST_BENEFIT_RATIO': 0.5,
 'PARENT': "",
 'RANDOMIZE_BATCH': 1000,
+'SPARSE_VECTOR_LABELS_MODEL': os.path.realpath(os.path.expanduser("~/experiments/sparse_vector_labels/latest.ckpt")),
+'DISCRIMINATE3_MODEL': os.path.realpath(os.path.expanduser("~/experiments/discriminate3/latest.ckpt")),
 }
 print(params)
 for x in params:
@@ -64,6 +66,12 @@ class SubVolume():
 				self.G = self.parent.G
 			else:
 				self.G = self.parent.G.subgraph(self.unique_list)
+		elif name =="proofread_G":
+			if GLOBAL_EXPAND:
+				self.proofread_G = self.parent.proofread_G
+			else:
+				self.proofread_G = self.parent.proofread_G.subgraph(self.unique_list)
+
 		elif name == "local_human_labels":
 			proofread_G = self.parent.proofread_G.subgraph(self.unique_list)
 			tic()
@@ -73,6 +81,9 @@ class SubVolume():
 		elif name == 'current_object':
 			central_segments = bfs(self.G,[self.raw_labels[tuple([(x.stop-x.start)/2 for x in self.region])]])
 			self.current_object = indicator(self.raw_labels,central_segments)
+		elif name == 'proofread_object':
+			central_segments = bfs(self.proofread_G,[self.raw_labels[tuple([(x.stop-x.start)/2 for x in self.region])]])
+			self.proofread_object = indicator(self.raw_labels, central_segments)
 		else:
 			setattr(self, name, getattr(self.parent,name)[self.region])
 		return getattr(self,name)
@@ -116,6 +127,35 @@ def analyze(cutout,example_id):
 	toc("compute statistics")
 
 
+
+	tic()
+	high_threshold = HIGH_THRESHOLD
+	low_threshold = LOW_THRESHOLD
+	traced_list = measurements.mean(cutout.traced, cutout.raw_labels, unique_list)
+	proofread_list = measurements.mean(cutout.proofread_object, cutout.raw_labels, unique_list)
+	current_list = measurements.mean(cutout.current_object, cutout.raw_labels, unique_list)
+	volumes = measurements.sum(np.ones_like(cutout.current_object), cutout.raw_labels, unique_list)
+
+	positive_indices = [i for i in xrange(len(unique_list)) if high_threshold < traced_list[i]]
+	uncertain_indices = [i for i in xrange(len(unique_list)) if low_threshold <= traced_list[i] <= high_threshold]
+	negative_indices = [i for i in xrange(len(unique_list)) if traced_list[i]<low_threshold]
+
+	cost = sum([volumes[i]*max(traced_list[i],1-traced_list[i]) for i in uncertain_indices]) + \
+		sum([volumes[i]*traced_list[i] for i in negative_indices]) + \
+		sum([volumes[i]*(1-traced_list[i]) for i in positive_indices])
+	benefit = sum([abs(volumes[i]*(traced_list[i]-current_list[i])) for i in positive_indices + negative_indices])
+
+	cost2 = sum([volumes[i] for i in uncertain_indices]) + \
+		sum([volumes[i]*traced_list[i] for i in negative_indices]) + \
+		sum([volumes[i]*(1-traced_list[i]) for i in positive_indices])
+	benefit2 = sum([abs(volumes[i]*(round(traced_list[i])-current_list[i])) for i in positive_indices + negative_indices])
+
+	true_cost = sum([volumes[i] * abs(round(traced_list[i])-proofread_list[i]) for i in xrange(len(unique_list))])
+	true_benefit = sum([volumes[i] * (abs(proofread_list[i] - round(current_list[i])) - abs(proofread_list[i] - traced_list[i])) for i in xrange(len(unique_list))])
+	toc("cost benefit analysis")
+
+
+
 	tic()
 	positive = [unique_list[i] for i in xrange(len(unique_list)) if guess[i] > 0.5]
 	negative = [unique_list[i] for i in xrange(len(unique_list)) if guess[i] <= 0.5]
@@ -156,7 +196,13 @@ def analyze(cutout,example_id):
 				"err_mean": [np.mean(new_errors_cutout)],
 				"satisfaction": [satisfaction],
 				"histogram": [histogram],
-				"example_id": [example_id]
+				"example_id": [example_id],
+				"cost": [cost],
+				"benefit": [benefit],
+				"cost2": [cost2],
+				"benefit2": [benefit2],
+				"true_cost": [true_cost],
+				"true_benefit": [true_benefit],
 			}
 			)
 	return df1, df2
@@ -170,7 +216,7 @@ def commit(cutout, low_threshold=LOW_THRESHOLD, high_threshold=HIGH_THRESHOLD, c
 	current_list = measurements.mean(cutout.current_object, cutout.raw_labels, unique_list)
 	volumes = measurements.sum(np.ones_like(cutout.current_object), cutout.raw_labels, unique_list)
 
-	positive_indices = [i for i in xrange(len(unique_list)) if traced_list[i]>high_threshold]
+	positive_indices = [i for i in xrange(len(unique_list)) if high_threshold < traced_list[i]]
 	uncertain_indices = [i for i in xrange(len(unique_list)) if low_threshold <= traced_list[i] <= high_threshold]
 	negative_indices = [i for i in xrange(len(unique_list)) if traced_list[i]<low_threshold]
 
@@ -178,14 +224,18 @@ def commit(cutout, low_threshold=LOW_THRESHOLD, high_threshold=HIGH_THRESHOLD, c
 		sum([volumes[i]*traced_list[i] for i in negative_indices]) + \
 		sum([volumes[i]*(1-traced_list[i]) for i in positive_indices])
 	benefit = sum([abs(volumes[i]*(traced_list[i]-current_list[i])) for i in positive_indices + negative_indices])
+
 	"""
 	cost = sum([volumes[i] * traced_list[i]*(1-traced_list[i]) for i in xrange(len(unique_list))])
 	benefit = sum([abs(volumes[i]*(round(traced_list[i])-current_list[i])) for i in xrange(len(unique_list))])
 	"""
-	print("cost " + str(cost))
-	print("benefit " + str(benefit))
-	
-	if not (len(uncertain_indices)==0 or (cost_benefit_ratio is not None and benefit > cost_benefit_ratio * cost) or force):
+
+	cost2 = sum([volumes[i] for i in uncertain_indices]) + \
+		sum([volumes[i]*traced_list[i] for i in negative_indices]) + \
+		sum([volumes[i]*(1-traced_list[i]) for i in positive_indices])
+	benefit2 = sum([abs(volumes[i]*(round(traced_list[i])-current_list[i])) for i in positive_indices + negative_indices])
+
+	if not (len(uncertain_indices)==0 or (cost_benefit_ratio is not None and benefit2 > cost_benefit_ratio * cost2) or force):
 		raise ReconstructionException("not confident")
 
 	split_point = (high_threshold + low_threshold)/2
@@ -218,7 +268,7 @@ def perturb(sample, V, radius=PERTURB_RADIUS):
 	region = tuple([slice(x-y,x+y+1,None) for x,y in zip(sample,radius)])
 	mask = (V.raw_labels[region]==V.raw_labels[tuple(sample)]).astype(np.int32)
 
-	patch = np.minimum(V.affinities[(0,)+region], mask)
+	patch = np.minimum(V.height_map[region], mask)
 	tmp=np.unravel_index(patch.argmax(),patch.shape)
 	return [t+x-y for t,x,y in zip(tmp,sample,radius)]
 
@@ -259,9 +309,12 @@ def reconstruct_volume(V, dry_run = False, analyze_run = False, logdir=None):
 	V.samples = V.samples[:]
 	V.edges = V.edges[:]
 	V.vertices = V.vertices[:]
+	V.raw_labels = V.raw_labels[:]
+	V.height_map = V.height_map[:]
 	V.G = regiongraphs.make_graph(V.vertices,V.edges)
 	V.full_G = regiongraphs.make_graph(V.vertices, V.full_edges)
 	V.changed_list = []
+	#V.glial = set(V.glial[:])
 	close=lambda x,y: V.full_G.has_edge(x,y)
 
 	if analyze_run:
@@ -275,7 +328,7 @@ def reconstruct_volume(V, dry_run = False, analyze_run = False, logdir=None):
 		n_errors = len(V.weights)-np.searchsorted(V.weights[::-1],0.5)
 		print(str(n_errors) + " errors")
 		for I in xrange(0,min(N_STEPS,n_errors),RANDOMIZE_BATCH):
-			shuff = np.arange(RANDOMIZE_BATCH)
+			shuff = np.arange(min(RANDOMIZE_BATCH, n_errors-I))
 			np.random.shuffle(shuff)
 			for j in shuff:
 				i=I+j
@@ -361,12 +414,12 @@ def reconstruct_volume(V, dry_run = False, analyze_run = False, logdir=None):
 			h5write(os.path.join(logdir,"epoch"+str(epoch)+"_errors.h5"), V.errors)
 	return np.array(V.G.edges())
 
-def reconstruct_wrapper(image, errors, watershed, affinities, samples, vertices, edges, full_edges, valid=set([]), glial=set([]), dendrite=set([])):
+def reconstruct_wrapper(image, errors, watershed, height_map, samples, vertices, edges, full_edges, valid=set([]), glial=set([]), dendrite=set([])):
 	V=Volume("", {
 			"image": image,
 			 "errors": errors,
 			 "raw_labels": watershed,
-			 "affinities": affinities,
+			 "height_map": height_map,
 			 "vertices": vertices,
 			 "edges": edges,
 			 "full_edges": full_edges,
@@ -380,24 +433,27 @@ def reconstruct_wrapper(image, errors, watershed, affinities, samples, vertices,
 if __name__ == "__main__":
 	#basename = sys.argv[1]
 	#basename=os.path.expanduser("/mnt/data01/jzung/pinky40_test")
-	basename=os.path.expanduser("~/mydatasets/3_3_1")
+	#basename=os.path.expanduser("~/mydatasets/3_3_1")
 	#basename=os.path.expanduser("~/mydatasets/2_3_1")
 	#basename=os.path.expanduser("~/mydatasets/golden")
+	basename=os.path.expanduser("/mnt/data01/jzung/golden")
 
 	print("loading files...")
 	V = Volume(basename,
 			{"image": "image.h5",
 			 "errors": PARENT + "errors.h5",
-			 "raw_labels": "raw.h5",
-			 "affinities": "aff.h5",
+			 "raw_labels": "thickened_raw.h5",
+			 "height_map": "height_map.h5",
 			 #"human_labels": "proofread.h5",
 			 "vertices": "vertices.h5",
-			 "edges": PARENT + "edges.h5",
+			 "edges": PARENT + "mean_edges.h5",
 			 "full_edges": "full_edges.h5",
 			 "valid": set([]),
 			 #"glial": set([30437,8343897,4322435,125946,8244754,4251447,8355342,5551,4346675,8256784,118018,8257243,20701,2391,4320,8271859,4250078]),
 			 #"glial": set([2]),
-			 "glial": set([]),
+			 "glial": set([3]),
+			 #"glial": "glial.h5",
+			 #"glial": set([]),
 			 "dendrite": set([]),
 			 "axon": set([]),
 			 "samples": "samples.h5",

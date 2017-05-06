@@ -9,6 +9,7 @@ include("compute_regiongraph.jl")
 include("compute_fullgraph.jl")
 include("filter_samples.jl")
 include("compute_proofreadgraph.jl")
+include("thicken_boundaries.jl")
 
 function do_prep(in_dir, out_dir; patch_size = (318,318,33), ground_truth=false, compute_full_edges=false, compute_samples=true)
 
@@ -20,9 +21,36 @@ function do_prep(in_dir, out_dir; patch_size = (318,318,33), ground_truth=false,
 	println(full_size)
 
 	mean_labels = load("mean_agg_tr.h5")
-	#remap = load("remap.h5")
-	#mean_labels = collect(remap_array(raw, remap))
-	#save("mean_labels.h5", mean_labels)
+
+	vertices = unique(raw)
+	save("vertices.h5", vertices)
+
+	contact_edges = compute_contactgraph(raw)
+	save("contact_edges.h5", contact_edges)
+
+	@time mean_contact_edges = compute_regiongraph(raw, mean_labels)
+	save("mean_contact_edges.h5", mean_contact_edges)
+
+	if compute_full_edges
+		full_edges = compute_fullgraph(Batched(), raw, resolution=Int[4,4,40], radius=130, downsample=Int[4,4,1])
+		save("full_edges.h5", full_edges)
+	end
+
+	affinities = load("aff.h5")
+	@time mean_edges = compute_regiongraph(raw, mean_labels, affinities, threshold=0.3)
+	save("mean_edges.h5", mean_edges)
+
+	@time h = height_map(affinities)
+	affinities=nothing
+	save("height_map.h5", quantize(h))
+	#thicken_threshold=0.20054501 #JNet long1
+	thicken_threshold=0.1
+	threshold!(raw, h, thicken_threshold)
+	threshold!(mean_labels, h, thicken_threshold)
+	save("thickened_raw.h5", raw)
+	save("thickened_mean_agg_tr.h5", mean_labels)
+
+	h=nothing
 
 	if compute_samples
 		#the sample around a point x is [x-floor(patch_size/2): x-floor(patch_size/2)+patch_size]
@@ -35,23 +63,6 @@ function do_prep(in_dir, out_dir; patch_size = (318,318,33), ground_truth=false,
 		save("samples.h5", flatten(samples))
 	end
 
-	vertices = unique(raw)
-	save("vertices.h5", vertices)
-
-	affinities = load("aff.h5")
-	@time mean_edges = compute_regiongraph(raw, mean_labels, affinities, threshold=0.3)
-	save("mean_edges.h5", mean_edges)
-
-	@time mean_contact_edges = compute_regiongraph(raw, mean_labels)
-	save("mean_contact_edges.h5", mean_edges)
-
-	if compute_full_edges
-		full_edges = compute_fullgraph(Batched(), raw, resolution=Int[4,4,40], radius=130, downsample=Int[4,4,1])
-		save("full_edges.h5", full_edges)
-	end
-
-	contact_edges = compute_contactgraph(raw)
-	save("contact_edges.h5", contact_edges)
 	
 	if ground_truth
 		valid = to_indicator(parse_valid_file(joinpath(in_dir,"valid.txt")))
@@ -79,7 +90,7 @@ function do_prep(in_dir, out_dir; patch_size = (318,318,33), ground_truth=false,
 end
 
 #basename = expanduser(ARGS[1])
-@time do_prep(expanduser(ARGS[1]),expanduser(ARGS[2]), ground_truth=false, compute_full_edges=false)
+@time do_prep(expanduser(ARGS[1]),expanduser(ARGS[2]), ground_truth=false, compute_full_edges=true)
 #=
 for i in 1:3
 	for j in 1:3

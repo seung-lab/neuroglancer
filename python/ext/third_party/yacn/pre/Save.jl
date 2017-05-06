@@ -1,5 +1,6 @@
 module Save
 using HDF5
+using NPZ
 
 export save, load, load_mmap
 immutable Path{T} 
@@ -38,11 +39,20 @@ function load_mmap(path::Path{:raw})
 end
 function save(path::Path{:h5},x)
 	h5open("$(path.prefix).h5", "w") do file
-		write(file, "/main", x)
+		file["/"]["main","shuffle", (), "deflate", 3] = x
 	end
 end
 function load(path::Path{:h5})
-	h5read("$(path.prefix).h5", "/main")
+	h5open("$(path.prefix).h5", "r") do file
+		read(file, "/main")
+	end
+end
+
+function save(path::Path{:npy},x)
+	npzwrite("$(path.prefix).npy",x)
+end
+function load(path::Path{:npy})
+	npzread("$(path.prefix).npy",x)
 end
 
 function load(path::Path{:jls})

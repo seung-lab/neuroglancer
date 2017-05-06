@@ -22,7 +22,7 @@ def h5read(filename, force=False):
 
 def h5write(filename, x):
 	f = h5py.File(filename, "w")
-	dset = f.create_dataset("main", data=x)
+	dset = f.create_dataset("main", compression="gzip", data=x)
 	f.close()
 
 tics=[]
