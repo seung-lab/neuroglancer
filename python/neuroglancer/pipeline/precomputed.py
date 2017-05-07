@@ -85,7 +85,8 @@ class Precomputed(object):
         for c in self._iter_chunks(aligned_slices):
 
             file_path = self._chunk_to_file_path(c)
-            content =  self._storage.get_file(file_path)
+            force_decompress = ('force_decompress' in self.info) and self.info['force_decompress']
+            content =  self._storage.get_file(file_path, force_decompress = force_decompress)
             if not content and not self._fill:
                 raise EmptyVolumeException(file_path)
 
