@@ -30,7 +30,7 @@ class Precomputed(object):
             shape=self._get_slices_shape(new_slices),
             dtype=self.info['data_type'])
         
-        self._storage.wait_until_queue_empty()
+        self._storage.wait()
         offset =  self._get_offsets(new_slices)
         for c in self._iter_chunks(new_slices):
             file_path = self._chunk_to_file_path(c)

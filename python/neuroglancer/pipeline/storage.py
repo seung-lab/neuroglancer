@@ -201,7 +201,7 @@ class Storage(object):
             else:
                 get_file_thunk(path, self._interface)
 
-        self.wait_until_queue_empty()
+        self.wait()
 
         return results
 
@@ -235,11 +235,9 @@ class Storage(object):
             yield f
 
     def wait(self):
-        return self.wait_until_queue_empty()
-
-    def wait_until_queue_empty(self):
         if len(self._threads):
             self._queue.join()
+        return self
 
     def __del__(self):
         self.kill_threads()
@@ -250,11 +248,34 @@ class Storage(object):
         return self
 
     def __exit__(self, exception_type, exception_value, traceback):
-        self.wait_until_queue_empty()
+        self.wait()
         self.kill_threads()
         self._interface.release_connection()
 
 class ConnectionPool(object):
+    """
+    This class is intended to be subclassed. See below.
+    
+    Creating fresh client or connection objects
+    for Google or Amazon eventually starts causing
+    breakdowns when too many connections open.
+    
+    To promote efficient resource use and prevent
+    containers from dying, we create a ConnectionPool
+    that allows for the creation of at most `max_connections`
+    connections.
+    
+    Storage interfaces may acquire and release connections 
+    when they need or finish using them. 
+    
+    If the limit is reached, additional requests for
+    acquiring connections will block until they can
+    be serviced.
+    
+    Optional:
+        max_connections: Set the max number of connections
+            for this connection pool.
+    """
     def __init__(self, max_connections=60):
         self.active_pool = []
         self.inactive_pool = []
@@ -387,7 +408,12 @@ class FileInterface(object):
         for file_path in glob(path):
             if not os.path.isfile(file_path):
                 continue
-            yield os.path.basename(file_path)
+            fname = os.path.basename(file_path)
+            (base, ext) = os.path.splitext(fname)
+            if ext == '.gz':
+                yield base
+            else:
+                yield fname
 
     def release_connection(self):
         pass
