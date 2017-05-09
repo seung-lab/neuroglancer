@@ -218,7 +218,7 @@ def create_quantized_affinity_tasks(taskqueue, src_layer, dest_layer, shape):
 
   create_downsample_scales(dest_layer, mip=0, ds_shape=shape)
 
-  for startpt in tqdm(xyzrange( dest.bounds.minpt, dest.bounds.maxpt, shape ), desc="Inserting QuantizeAffinities Tasks"):
+  for startpt in tqdm(xyzrange( destvol.bounds.minpt, destvol.bounds.maxpt, shape ), desc="Inserting QuantizeAffinities Tasks"):
     task = QuantizeAffinitiesTask(
       source_layer_path=src_layer,
       dest_layer_path=dest_layer,
@@ -234,7 +234,6 @@ def create_fixup_quantize_tasks(task_queue, src_layer, dest_layer, shape, points
   offsets = compute_fixup_offsets(vol, points, shape)
 
   for offset in tqdm(offsets, desc="Inserting Corrective Quantization Tasks"):
-    print(offset)
     task = QuantizeAffinitiesTask(
       source_layer_path=src_layer,
       dest_layer_path=dest_layer,
@@ -387,8 +386,8 @@ if __name__ == '__main__':
   # task_queue = 
   # task_queue = MockTaskQueue()
 
-  src_layer = 's3://neuroglancer/pinky40_v11/affinitymap-jnet/'
-  dest_layer = 'gs://neuroglancer/pinky40_v11/qaffinitymap-jnet-x/'
+  src_layer = 's3://neuroglancer/pinky40_v11/semanticmap-4/'
+  dest_layer = 'gs://neuroglancer/pinky40_v11/qsemanticmap-4-x/'
   shape = Vec(1024, 1024, 128)
 
   # points = [[48596, 20702, 1], [11038, 37047, 65], [39234, 5186, 65], [39140, 4387, 128], [39187, 5374, 128], [39797, 5891, 128], [39140, 6314, 128], [39142, 4877, 192], [39686, 5883, 192], [39645, 4877, 192], [11019, 14559, 256], [10547, 34512, 384], [39805, 6925, 384], [39173, 5390, 384], [11027, 33927, 450], [39256, 4832, 448], [39712, 4832, 448], [39165, 4923, 512], [39074, 5379, 576], [39621, 5425, 576], [11483, 21204, 768], [39666, 5425, 768], [39165, 4376, 768], [39089, 5968, 832], [39635, 5918, 832], [12010, 6415, 832], [39148, 4421, 896], [39248, 4923, 896], [39148, 5976, 896], [39047, 24331, 896], [47472, 36116, 896], [11014, 40780, 896], [39175, 5902, 960]]
@@ -397,17 +396,18 @@ if __name__ == '__main__':
   with TaskQueue(queue_name='wms-test-pull-queue') as task_queue:
     # create_downsampling_tasks(task_queue, 's3://neuroglancer/pinky40_v11/watershed/', mip=0)
     # create_downsampling_tasks(task_queue, dest_layer, mip=3)
+    # create_downsampling_tasks(task_queue, 'gs://neuroglancer/s1_v0.1/image/', mip=0)
 
-    # create_quantized_affinity_tasks(task_queue, 
-    #   src_layer=src_layer,
-    #   dest_layer=dest_layer,
-    #   shape=shape,
-    # )
+    create_quantized_affinity_tasks(task_queue,
+      src_layer=src_layer,
+      dest_layer=dest_layer,
+      shape=shape,
+    )
 
     # create_fixup_downsample_tasks(task_queue, dest_layer, points=points, mip=3) 
 
     # create_fixup_quantize_tasks(task_queue, src_layer, dest_layer, shape, 
-    #   points=speckles,
+    #   points=[ (27955, 21788, 512), (23232, 20703, 559) ],
     # )
 
   # create_fixup_quantize_tasks(task_queue, src_layer, dest_layer, shape, 
