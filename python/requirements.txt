@@ -1,6 +1,5 @@
 google-api-python-client==1.6.2
 tqdm==4.7.6
-google-cloud==0.22.0
 backports-abc==0.5
 boto==2.39.0
 Cython==0.25.2
