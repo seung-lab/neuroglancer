@@ -105,10 +105,9 @@ class Storage(object):
                 continue # periodically check if the thread is supposed to die
 
             try:
-                print (fn)
                 fn(interface)
-            except Exception as err:
-                print(err)
+            except Exception as e:
+                raise e
             finally:
                 self._queue.task_done()
 
@@ -129,18 +128,19 @@ class Storage(object):
             filename (string): it can contains folders
             content (string): binary data to save
         """
-        def put_file(path, content, interface):
-            interface.put_file(path, content, content_type, compress)
-
+        def _put_file(path, content, interface):
             if compress:
                 content = self._compress(content)
+            interface.put_file(path, content, compress)
 
-            uploadfn = partial(put_file, file_path, content)
 
-            if len(self._threads):
-                self._queue.put(uploadfn, block=True)
-            else:
-                uploadfn(self._interface)
+        uploadfn = partial(_put_file, file_path, content)
+        if len(self._threads):
+            self._queue.put(uploadfn, block=True)
+        else:
+            uploadfn(self._interface)
+
+
         return self
 
     def put_files(self, files, content_type=None, compress=False):
@@ -152,7 +152,7 @@ class Storage(object):
             files: [ (filepath, content), .... ]
         """
         def put_file(path, content, interface):
-            interface.put_file(path, content, content_type, compress)
+            interface.put_file(path, content, compress)
 
         for path, content in files:
             if compress:
@@ -386,7 +386,6 @@ class FileInterface(object):
 
         with open(path, 'wb') as f:
             f.write(content)
-            print ('writting', path)
 
     def get_file(self, file_path):
         path = self.get_path_to_file(file_path) 
@@ -424,8 +423,7 @@ class GoogleCloudStorageInterface(object):
                              file_path])
         return  os.path.join(*clean)
 
-    def put_file(self, file_path, content, content_type, compress):
-        content_type = content_type or 'application/octet-stream'
+    def put_file(self, file_path, content, compress):
         key = self.get_path_to_file(file_path)
         blob = self._bucket.blob( key )
         blob.upload_from_string(content)

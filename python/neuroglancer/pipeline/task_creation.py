@@ -100,6 +100,7 @@ def get_build_data_type_and_shape(storage):
 
 def create_info_file_from_build(storage, layer_type, resolution=[1,1,1], encoding='raw',
     soft_chunk=[64,64,64], force_chunk=None):
+    storage.wait()
     assert layer_type == 'image' or layer_type == 'segmentation'
     layer_shape, layer_offset, build_chunk_size = compute_build_bounding_box(storage)
     data_type, num_channels = get_build_data_type_and_shape(storage)
