@@ -4,6 +4,7 @@ MAINTAINER Ignacio Tartavull
 ## INSTALL gsutil
 # Prepare the image.
 ENV DEBIAN_FRONTEND noninteractive
+ENV TERM xterm
 RUN apt-get update && apt-get install -y -qq --no-install-recommends \
     apt-utils \
     curl \
@@ -27,6 +28,7 @@ RUN apt-get update && apt-get install -y -qq --no-install-recommends \
     vim \
     wget \
     zlib1g-dev \
+	htop \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -49,8 +51,7 @@ RUN julia -e "Pkg.update(); for f in readlines(open(\"REQUIRE\")); Pkg.add(strip
 
 ADD ./ /neuroglancer
 ADD ./secrets/ /secrets
-RUN cd /neuroglancer/python && python setup.py install
-RUN cd /neuroglancer/python/neuroglancer/ingest && make
+RUN cd /neuroglancer/python && pip install . && python setup.py develop
 
 
 # installs yacn dependencies
