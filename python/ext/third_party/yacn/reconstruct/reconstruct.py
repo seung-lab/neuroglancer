@@ -27,12 +27,14 @@ params = {
 'N_EPOCHS': 4,
 'N_STEPS': 30000,
 'GLOBAL_EXPAND': False,
-'ERROR_THRESHOLD': 0.25,
+'ERROR_THRESHOLD': 0.2,
 'COST_BENEFIT_RATIO': 0.5,
 'PARENT': "",
-'RANDOMIZE_BATCH': 1000,
+'RANDOMIZE_BATCH': 100,
 'SPARSE_VECTOR_LABELS_MODEL': os.path.realpath(os.path.expanduser("~/experiments/sparse_vector_labels/latest.ckpt")),
 'DISCRIMINATE3_MODEL': os.path.realpath(os.path.expanduser("~/experiments/discriminate3/latest.ckpt")),
+'HEIGHT_MAP_THRESHOLD': None,
+'HEIGHT_MAP': "height_map_1.h5",
 }
 print(params)
 for x in params:
@@ -248,7 +250,7 @@ def commit(cutout, low_threshold=LOW_THRESHOLD, high_threshold=HIGH_THRESHOLD, c
 	full_segment = bfs(V.G, rounded_positive)
 	if not V.glial.isdisjoint(full_segment):
 		raise ReconstructionException("blocking merge to glial cell")
-	if len(V.dendrite & full_segment) > 2:
+	if len(V.dendrite & full_segment) > 1:
 		raise ReconstructionException("blocking merge of two dendritic trunks")
 
 	original_components = list(nx.connected_components(V.G.subgraph(cutout.unique_list)))
@@ -277,10 +279,9 @@ def recompute_errors(V):
 	tic()
 	pass_errors = np.minimum(V.errors, 1-V.changed)
 	pass_visited = 2*(1 - V.changed)
-	V.machine_labels = flatten(V.G,V.raw_labels)
  	samples = np.array(filter(lambda i: V.changed[i[0],i[1],i[2]]>0, V.samples))
 
-	packed = map(reconstruct_utils.pack,[V.image[:], V.machine_labels, samples, pass_errors, pass_visited])
+	packed = map(reconstruct_utils.pack,[V.image, V.thickened_machine_labels, samples, pass_errors, pass_visited])
 	V.errors = reconstruct_utils.unpack(reconstruct_utils.discrim_daemon(*packed))
 	toc("done recomputing errors")
 
@@ -292,29 +293,36 @@ def sort_samples(V):
 	V.samples=V.samples[perm,:]
 	V.weights=weights[perm]
 
-def reconstruct_volume(V, dry_run = False, analyze_run = False, logdir=None):
+def reconstruct_volume(V, dry_run = False, analyze_run = False, logdir=None, return_errors=False):
 	if logdir is not None:
 		if not os.path.exists(logdir):
 			os.makedirs(logdir)
 		with open(os.path.join(logdir,"params"),'w') as f:
 			for x in params:
 				print(x + ": " + str(params[x]), file=f)
+		print("logging to {}".format(logdir))
 
 	if analyze_run:
 		df_segments=pd.DataFrame([],columns=[])
 		df_examples=pd.DataFrame([],columns=[])
 
 	V.full_size = V.image.shape
+	V.image = V.image[:]
 	V.errors = V.errors[:]
 	V.samples = V.samples[:]
 	V.edges = V.edges[:]
 	V.vertices = V.vertices[:]
 	V.raw_labels = V.raw_labels[:]
 	V.height_map = V.height_map[:]
+	V.glial = set(V.glial)
+	V.dendrite = set(V.dendrite)
 	V.G = regiongraphs.make_graph(V.vertices,V.edges)
 	V.full_G = regiongraphs.make_graph(V.vertices, V.full_edges)
 	V.changed_list = []
-	#V.glial = set(V.glial[:])
+	if HEIGHT_MAP_THRESHOLD is None:
+		V.thickened_raw_labels = V.raw_labels
+	else:
+		V.thickened_raw_labels = V.raw_labels * (V.height_map > HEIGHT_MAP_THRESHOLD).astype(np.int32)
 	close=lambda x,y: V.full_G.has_edge(x,y)
 
 	if analyze_run:
@@ -327,8 +335,9 @@ def reconstruct_volume(V, dry_run = False, analyze_run = False, logdir=None):
 		sort_samples(V)
 		n_errors = len(V.weights)-np.searchsorted(V.weights[::-1],0.5)
 		print(str(n_errors) + " errors")
-		for I in xrange(0,min(N_STEPS,n_errors),RANDOMIZE_BATCH):
-			shuff = np.arange(min(RANDOMIZE_BATCH, n_errors-I))
+		num_samples = min(N_STEPS, n_errors)
+		for I in xrange(0,num_samples,RANDOMIZE_BATCH):
+			shuff = np.arange(min(RANDOMIZE_BATCH, num_samples-I))
 			np.random.shuffle(shuff)
 			for j in shuff:
 				i=I+j
@@ -359,8 +368,8 @@ def reconstruct_volume(V, dry_run = False, analyze_run = False, logdir=None):
 					toc("select neighbours")
 
 					tic()
-					cutout.mask=indicator(cutout.raw_labels,current_segments)
-					cutout.central_supervoxel = indicator(cutout.raw_labels,[V.raw_labels[tuple(pos)]])
+					cutout.mask=indicator(cutout.thickened_raw_labels,current_segments)
+					cutout.central_supervoxel = indicator(cutout.thickened_raw_labels,[V.raw_labels[tuple(pos)]])
 					cutout.current_object
 					toc("gen masks")
 
@@ -408,13 +417,21 @@ def reconstruct_volume(V, dry_run = False, analyze_run = False, logdir=None):
 		if logdir is not None:
 			h5write(os.path.join(logdir,"epoch"+str(epoch)+"_edges.h5"), V.G.edges())
 			h5write(os.path.join(logdir,"epoch"+str(epoch)+"_changed_list.h5"), np.concatenate(V.changed_list+[np.zeros((0,3))],axis=0))
+			V.machine_labels = flatten(V.G,V.raw_labels)
+			if HEIGHT_MAP_THRESHOLD is None:
+				V.thickened_machine_labels = V.machine_labels
+			else:
+				V.thickened_machine_labels = V.machine_labels * (V.height_map > HEIGHT_MAP_THRESHOLD).astype(np.int32)
+			h5write(os.path.join(logdir,"epoch"+str(epoch)+"_machine_labels.h5"), V.machine_labels)
 		recompute_errors(V)
 		if logdir is not None:
-			h5write(os.path.join(logdir,"epoch"+str(epoch)+"_machine_labels.h5"), V.machine_labels)
 			h5write(os.path.join(logdir,"epoch"+str(epoch)+"_errors.h5"), V.errors)
-	return np.array(V.G.edges())
+	if return_errors:
+		return np.array(V.G.edges()), V.errors
+	else:
+		return np.array(V.G.edges())
 
-def reconstruct_wrapper(image, errors, watershed, height_map, samples, vertices, edges, full_edges, valid=set([]), glial=set([]), dendrite=set([])):
+def reconstruct_wrapper(image, errors, watershed, height_map, samples, vertices, edges, full_edges, valid=set([]), glial=[], dendrite=[], return_errors=False):
 	V=Volume("", {
 			"image": image,
 			 "errors": errors,
@@ -424,26 +441,27 @@ def reconstruct_wrapper(image, errors, watershed, height_map, samples, vertices,
 			 "edges": edges,
 			 "full_edges": full_edges,
 			 "valid": valid,
-			 "glial": glial,
-			 "dendrite": dendrite,
+			 "glial": set(glial) & set(vertices),
+			 "dendrite": set(dendrite) & set(vertices),
 			 "samples": samples,
 		})
-	return reconstruct_volume(V,dry_run=False,analyze_run=False, logdir=None)
+	return reconstruct_volume(V,dry_run=False,analyze_run=False, logdir=None, return_errors=return_errors)
 
 if __name__ == "__main__":
-	#basename = sys.argv[1]
+	basename = sys.argv[1]
 	#basename=os.path.expanduser("/mnt/data01/jzung/pinky40_test")
+	#basename=os.path.expanduser("/mnt/data01/jzung/12288-14336_8192-10240_1-257")
 	#basename=os.path.expanduser("~/mydatasets/3_3_1")
 	#basename=os.path.expanduser("~/mydatasets/2_3_1")
 	#basename=os.path.expanduser("~/mydatasets/golden")
-	basename=os.path.expanduser("/mnt/data01/jzung/golden")
+	#basename=os.path.expanduser("/mnt/data01/jzung/golden")
 
-	print("loading files...")
+	print("loading files from {}".format(basename))
 	V = Volume(basename,
 			{"image": "image.h5",
 			 "errors": PARENT + "errors.h5",
-			 "raw_labels": "thickened_raw.h5",
-			 "height_map": "height_map.h5",
+			 "raw_labels": "raw.h5",
+			 "height_map": HEIGHT_MAP,
 			 #"human_labels": "proofread.h5",
 			 "vertices": "vertices.h5",
 			 "edges": PARENT + "mean_edges.h5",
@@ -451,15 +469,16 @@ if __name__ == "__main__":
 			 "valid": set([]),
 			 #"glial": set([30437,8343897,4322435,125946,8244754,4251447,8355342,5551,4346675,8256784,118018,8257243,20701,2391,4320,8271859,4250078]),
 			 #"glial": set([2]),
-			 "glial": set([3]),
 			 #"glial": "glial.h5",
-			 #"glial": set([]),
-			 "dendrite": set([]),
+			 #"glial": "../glial.h5",
+			 "glial": [],
+			 "dendrite": [],
+			 #"dendrite": "../dendrite.h5",
 			 "axon": set([]),
 			 "samples": "samples.h5",
 			 })
 	print("done")
 	date = datetime.now().strftime("%j-%H-%M-%S")
-	reconstruct_volume(V,dry_run=False,analyze_run=False, logdir=os.path.join(basename,date))
-	#edges = h5write(os.path.join(basename,"revised_edges.h5"),reconstruct_volume(V))
+	revised_edges = reconstruct_volume(V,dry_run=False,analyze_run=False, logdir=os.path.join(basename,date))
+	h5write(os.path.join(basename,"revised_edges.h5"),revised_edges)
 

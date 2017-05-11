@@ -6,7 +6,7 @@ import random
 import traceback
 
 from neuroglancer.ingest.volumes.volumes import HDF5Volume
-from neuroglancer.pipeline import Precomputed, Storage, RegionGraphTask, DiscriminateTask, FloodFillingTask
+from neuroglancer.pipeline import Precomputed, Storage, RegionGraphTask, DiscriminateTask, FloodFillingTask, DumbsampleTask
 from neuroglancer.pipeline import EmptyVolumeException
 from neuroglancer.pipeline.task_creation import (upload_build_chunks, create_info_file_from_build,
 	create_ingest_task, MockTaskQueue)
@@ -15,6 +15,7 @@ from neuroglancer.pipeline import logger
 from neuroglancer.pipeline import Storage, Precomputed, RegisteredTask
 import time
 import re
+import os
 
 #The chunks corners are evenly spaced at intervals of chunk_size, starting at offset.
 def parse_chunk_position(chunk_position):
@@ -80,6 +81,7 @@ def is_valid(chunk):
 	return all([full_slices[i].start <= chunk.corner[i] < full_slices[i].stop for i in xrange(3)])
 
 chunk_size=[4*192,4*192,4*16]
+#chunk_size=[192,192,16]
 padding=[192,192,16]
 offset=[10240+192, 7680+192, 0+16]
 end = [65015-192,43715-192,1002-16]
@@ -102,19 +104,21 @@ def check_bucket(prefix, suffix="", mode="outer"):
 	import boto3
 	s3=boto3.resource('s3')
 	bucket=s3.Bucket('neuroglancer')
-	keys = [x.key for x in bucket.objects.filter(Prefix=prefix)]
-	for chunk in chunks:
+	keys = set([x.key for x in bucket.objects.filter(Prefix=prefix)])
+	print len(keys)
+	i=0
+	for k,chunk in enumerate(chunks):
+		if k % 1000 == 0:
+			print k
 		if mode == "outer":
 			key = prefix + str(chunk) + suffix
 		elif mode == "inner":
-			key == prefix + chunk.absolute_crop_position() + suffix
+			key = prefix + chunk.absolute_crop_position() + suffix
 		else:
 			assert False
-		print "Checking {}".format(key)
-		assert key in keys
-
-#check_bucket("pinky40_v11/yacn/height_map/", suffix=".h5")
-#check_bucket("pinky40_v11/errors/4_4_40/", suffix="", mode="inner")
+		if key not in keys:
+			i=i+1
+			print "{} missing {}".format(i,key)
 
 class LockException(Exception):
 	def __init__(self, key, subscriber, current_subscriber):
@@ -161,13 +165,13 @@ class ReleaseLocksTask(RegisteredTask):
 	def execute(self):
 		global not_started
 		chunk=parse_chunk_position(self.chunk_position)
-		assert chunk not in not_started
+		#assert chunk not in not_started
 		atomic_unlock(list(chunk.neighbours()), chunk)
 
-q=TaskQueue(queue_name="jz-test-pull-queue")
+
 dataset_path = "s3://neuroglancer/pinky40_v11/"
 dataset_path2 = "s3://neuroglancer/pinky40_v10/"
-def stage1_enqueue():
+def stage1_enqueue(q):
 	import time
 	q.purge()
 	for i,chunk in enumerate(chunks):
@@ -183,9 +187,9 @@ def stage1_enqueue():
 		)
 		print t
 		q.insert(t)
-		time.sleep(10)
 	q.wait()
-def stage2_enqueue():
+
+def stage2_enqueue(q):
 	import json
 	data = {
 	   "num_channels":1,
@@ -222,8 +226,8 @@ def stage2_enqueue():
 	}
 	info=json.dumps(data, indent=4, sort_keys=True, separators=(',', ': '), ensure_ascii=True)
 	s=Storage(dataset_path+'errors')
-	s.put_file(file_path=('info'),
-						   content=info )
+	s.put_file(file_path=('info'), content=info )
+	s.wait()
 
 	print len(chunks)
 	for chunk in chunks:
@@ -231,7 +235,7 @@ def stage2_enqueue():
 				chunk_position=str(chunk), 
 				crop_position=chunk.crop_position(),
 				image_layer=dataset_path2+"image",
-				segmentation_layer=dataset_path+'mean_0.27_segmentation',
+				segmentation_layer="gs://neuroglancer/pinky40_v11/mean_0.27_segmentation", 
 				errors_layer=dataset_path+'errors',
 				yacn_layer=dataset_path+'yacn')
 		print t
@@ -245,7 +249,10 @@ def restore():
 		chunk = parse_chunk_position(line.strip())
 		not_started.remove(chunk)
 		print "Finished " + str(chunk)
-def stage3_enqueue():
+	print len(not_started)
+	raw_input()
+def stage3_enqueue(q):
+	import random
 	q.purge()
 	restore()
 	global not_started
@@ -265,6 +272,7 @@ def stage3_enqueue():
 					image_layer=dataset_path2+'image',
 					watershed_layer=dataset_path+'watershed',
 					errors_layer=dataset_path+'errors',
+					residual_errors_layer=dataset_path+'residual_errors',
 					yacn_layer=dataset_path+'yacn',
 					skip_threshold=0.9,
 					)
@@ -272,15 +280,39 @@ def stage3_enqueue():
 			q.insert(t)
 		except (LockException, DoneEnqueuingException) as e:
 			#print "Lock failed: " + str(e.key) + " " + str(e.subscriber) + " " + str(e.current_subscriber)
-			try:
-				t=q.lease(tag="ReleaseLocksTask")
-				t.execute()
-				with open(log_file,"a") as f:
-					f.write(t.chunk_position+"\n")
-				q.delete(t._id)
-				print("released lock")
-			except TaskQueue.QueueEmpty:
-				pass
+			if random.random() < 0.01:
+				try:
+					t=q.lease(tag="ReleaseLocksTask")
+					t.execute()
+					with open(log_file,"a") as f:
+						f.write(t.chunk_position+"\n")
+					q.delete(t._id)
+					print("released lock")
+				except TaskQueue.QueueEmpty:
+					pass
+def dumbsample_enqueue(q):
+	import time
+	q.purge()
+	for i,chunk in enumerate(chunks):
+		print chunk
+		print i
+		t = DumbsampleTask(
+			chunk_position=str(chunk), 
+			crop_position=chunk.crop_position(),
+			input_layer=dataset_path+'errors',
+			output_layer=dataset_path+'errors', 
+		)
+		print t
+		q.insert(t)
+		t = DumbsampleTask(
+			chunk_position=str(chunk), 
+			crop_position=chunk.crop_position(),
+			input_layer=dataset_path+'residual_errors',
+			output_layer=dataset_path+'residual_errors', 
+		)
+		print t
+		q.insert(t)
+	q.wait()
 
 def stage1_task_loop():
 	while True:
@@ -289,6 +321,7 @@ def stage1_task_loop():
 			print t
 			t.execute()
 			q.delete(t._id)
+			logger.log('INFO', t, "successfully executed")
 		except TaskQueue.QueueEmpty:
 			print "queue empty"
 			time.sleep(1)
@@ -308,6 +341,7 @@ def stage2_task_loop():
 			print t
 			t.execute()
 			q.delete(t._id)
+			logger.log('INFO', t, "successfully executed")
 		except TaskQueue.QueueEmpty:
 			print "queue empty"
 			time.sleep(1)
@@ -320,16 +354,16 @@ def stage2_task_loop():
 			logger.log("ERROR", t, 'raised {}\n {}'.format(e, traceback.format_exc()))
 			raise
 
-
-def stage3_task_loop():
+def stage3_task_loop(q, lease_time):
 	while True:
 		try:
-			t=q.lease(tag="FloodFillingTask")
+			t=q.lease(tag="FloodFillingTask", leaseSecs=lease_time)
 			print t
 			t.execute()
 			q.delete(t._id)
 			#Let's just hope nothing crashes between these two lines!
 			q.insert(ReleaseLocksTask(t.chunk_position))
+			logger.log('INFO', t, "successfully executed")
 		except TaskQueue.QueueEmpty:
 			print "queue empty"
 			time.sleep(1)
@@ -337,8 +371,28 @@ def stage3_task_loop():
 		except EmptyVolumeException as e:
 			print "empty volume"
 			logger.log("WARNING", t, 'empty volume')
-			q.delete(t._id)
-			q.insert(ReleaseLocksTask(t.chunk_position))
 			continue
 		except Exception as e:
+			logger.log("ERROR", t, 'raised {}\n {}'.format(e, traceback.format_exc()))
+			raise
+
+def dumbsample_task_loop(q, lease_time):
+	while True:
+		try:
+			t=q.lease(tag="DumbsampleTask", leaseSecs=lease_time)
+			print t
+			t.execute()
+			q.delete(t._id)
+			logger.log('INFO', t, "successfully executed")
+		except TaskQueue.QueueEmpty:
+			print "queue empty"
+			time.sleep(1)
+			continue
+		except EmptyVolumeException as e:
+			print "empty volume"
+			q.delete(t._id)
+			logger.log("WARNING", t, 'empty volume')
+			continue
+		except Exception as e:
+			logger.log("ERROR", t, 'raised {}\n {}'.format(e, traceback.format_exc()))
 			raise

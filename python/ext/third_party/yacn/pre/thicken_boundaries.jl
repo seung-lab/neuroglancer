@@ -1,3 +1,5 @@
+using ImageFiltering
+
 function height_map{T}(aff::Array{T,4})
 	ret = fill(zero(T), (size(aff,1),size(aff,2),size(aff,3)))
 	@time for k in 1:size(aff,3), j in 1:size(aff,2), i in 2:size(aff,1)
@@ -24,5 +26,13 @@ function threshold!{T}(raw::Array{T,3}, h, t)
 end
 
 function quantize{T,N}(x::Array{T,N})
-	return round(1024*x)/1024
+	return round.(1024 .* x)./1024
+end
+
+function minfilter{T}(A::Array{T,3},n)
+	B=fill(zero(T),size(A))
+	for z in 1:size(A,3)
+		B[:,:,z] = map(x->x[1],mapwindow(extrema,A[:,:,z],n))
+	end
+	return B
 end

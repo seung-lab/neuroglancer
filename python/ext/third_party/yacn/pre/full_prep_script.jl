@@ -42,13 +42,17 @@ function do_prep(in_dir, out_dir; patch_size = (318,318,33), ground_truth=false,
 
 	@time h = height_map(affinities)
 	affinities=nothing
-	save("height_map.h5", quantize(h))
 	#thicken_threshold=0.20054501 #JNet long1
+	for kernel in [1,3,5,9,15]
+		save("height_map_$(kernel).h5", (minfilter(h,(kernel,kernel))))
+	end
+	#=
 	thicken_threshold=0.1
 	threshold!(raw, h, thicken_threshold)
 	threshold!(mean_labels, h, thicken_threshold)
 	save("thickened_raw.h5", raw)
 	save("thickened_mean_agg_tr.h5", mean_labels)
+	=#
 
 	h=nothing
 
@@ -90,7 +94,7 @@ function do_prep(in_dir, out_dir; patch_size = (318,318,33), ground_truth=false,
 end
 
 #basename = expanduser(ARGS[1])
-@time do_prep(expanduser(ARGS[1]),expanduser(ARGS[2]), ground_truth=false, compute_full_edges=true)
+@time do_prep(expanduser(ARGS[1]),expanduser(ARGS[2]), ground_truth=false, compute_samples=true, compute_full_edges=true)
 #=
 for i in 1:3
 	for j in 1:3

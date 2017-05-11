@@ -19,17 +19,16 @@ from misc_utils import *
 
 import scipy.ndimage.measurements as measurements
 import random
+import state
 
 
 patch_size=[33,318,318]
 resolution=[40,4,4]
 full_size=[256,2048,2048]
 
+neuroglancer.set_static_content_source(url='http://seungworkstation1000.princeton.edu:8080')
 neuroglancer.server.debug=False
-neuroglancer.server.global_server_args['bind_address']='seung-titan02.pni.princeton.edu'
-neuroglancer.server.global_server_args['bind_port']=80
-neuroglancer.server.global_bind_port2=9100
-neuroglancer.volume.ENABLE_MESHES=True
+neuroglancer.server.set_server_bind_address(bind_address='seungworkstation1000.princeton.edu',bind_port=80)
 
 def random_shader():
 	x=random.random()
@@ -51,10 +50,10 @@ def random_shader():
 			""".format(x,y,z)
 
 def get_focus():
-	return map(int, rev(viewer.state['navigation']['pose']['position']['voxelCoordinates']))
+	return map(int, rev(state.global_state['navigation']['pose']['position']['voxelCoordinates']))
 
 def get_selection():
-	s=set(map(int,viewer.state['layers']['raw_labels']['segments']))
+	s=set(map(int,state.global_state['layers']['raw_labels']['segments']))
 	return s
 
 def set_selection(segments,append=False,expand=True):
@@ -65,9 +64,10 @@ def set_selection(segments,append=False,expand=True):
 		segments = segments + list(get_selection())
 	segments = sorted(list(segments))
 		
-	viewer.state['layers']['raw_labels']['segments'] = segments
-	print(viewer.state['layers']['raw_labels']['segments'])
-	viewer.broadcast()
+	tmp_state = state.global_state
+	tmp_state['layers']['raw_labels']['segments'] = segments
+	print(tmp_state['layers']['raw_labels']['segments'])
+	state.broadcast(tmp_state)
 	draw_edges(V.G.subgraph(segments))
 
 def set_focus(pos):
@@ -76,8 +76,9 @@ def set_focus(pos):
 	cutout = cutout=SubVolume(V,get_region(V,pos))
 	cutout.pos=pos
 	draw_bbox(pos)
-	viewer.state['navigation']['pose']['position']['voxelCoordinates'] = rev(pos)
-	viewer.broadcast()
+	tmp_state = state.global_state
+	tmp_state['navigation']['pose']['position']['voxelCoordinates'] = rev(pos)
+	state.broadcast(tmp_state)
 
 def rev(x):
 	if type(x) == tuple:
@@ -97,9 +98,12 @@ def trace():
 	counter += 1
 	viewer.add(data=cutout.traced, volume_type='image', name='trace'+str(counter), voxel_size=rev(resolution), offset=rev([(cutout.pos[i]-patch_size[i]/2)*resolution[i] for i in xrange(3)]), shader=random_shader())
 	l=viewer.layers[-1]
+	print(l)
+	print(l.volume)
 	viewer.register_volume(l.volume)
-	viewer.state['layers']['trace'+str(counter)]=l.get_layer_spec(viewer.get_server_url())
-	viewer.broadcast()
+	tmp_state = state.global_state
+	tmp_state['layers']['trace'+str(counter)]=l.get_layer_spec(viewer.get_server_url())
+	state.broadcast(tmp_state)
 	print("done")
 
 
@@ -108,8 +112,9 @@ def draw_edges(G):
 	for u,v in G.edges():
 		tmp.append(rev(V.centroids[u,:]))
 		tmp.append(rev(V.centroids[v,:]))
-	viewer.state['layers']['edges']['points'] = tmp
-	viewer.broadcast()
+	tmp_state = state.global_state
+	tmp_state['layers']['edges']['points'] = tmp
+	state.broadcast(tmp_state)
 
 def draw_bbox(position):
 	position = rev(position)
@@ -128,8 +133,9 @@ def draw_bbox(position):
 					tmp.append(map(operator.add,position, [i*rps[0]/2, j*rps[1]/2, k*rps[2]/2]))
 					tmp.append(map(operator.add,position, [i*rps[0]/2, j*rps[1]/2, -k*rps[2]/2]))
 
-	viewer.state['layers']['bbox']['points'] = tmp
-	viewer.broadcast()
+	tmp_state = state.global_state
+	tmp_state['layers']['bbox']['points'] = tmp
+	state.broadcast(tmp_state)
 
 def select_neighbours(threshold=0.5):
 	if GLOBAL_EXPAND:
@@ -178,31 +184,39 @@ def next_index(jump=1):
 	current_index = current_index + jump
 	return current_index
 
-neuroglancer.set_static_content_source(url='http://seung-titan02.pni.princeton.edu:8080')
 
 #basename = sys.argv[1]
 basename=os.path.expanduser("~/mydatasets/3_3_1/")
 print("loading files...")
 vertices = h5read(os.path.join(basename, "vertices.h5"), force=True)
-edges = h5read(os.path.join(basename, "epoch1_edges.h5"), force=True)
+edges = h5read(os.path.join(basename, "mean_edges.h5"), force=True)
 
 V = Volume(basename,
 		{"image": "image.h5",
-		 "errors": "epoch1_errors.h5",
+		 "errors": "errors.h5",
 		 "raw_labels": "raw.h5",
-		 "affinities": "aff.h5",
-		 "valid_list": "valid.h5",
-		 "centroids": "raw_centroids.h5",
-		 #"machine_labels": "epoch1_machine_labels.h5",
+		 "height_map": HEIGHT_MAP,
 		 #"human_labels": "proofread.h5",
-		 "changed": np.zeros(full_size, dtype=np.int32),
+		 "vertices": "vertices.h5",
+		 "edges": PARENT + "mean_edges.h5",
+		 "full_edges": "full_edges.h5",
 		 "valid": set([]),
+		 #"glial": set([30437,8343897,4322435,125946,8244754,4251447,8355342,5551,4346675,8256784,118018,8257243,20701,2391,4320,8271859,4250078]),
+		 #"glial": set([2]),
+		 #"glial": "glial.h5",
+		 #"glial": "../glial.h5",
 		 "glial": set([]),
+		 "dendrite": set([]),
+		 #"dendrite": "../dendrite.h5",
+		 "axon": set([]),
+		 "samples": "samples.h5",
+		 "centroids": "raw_centroids.h5",
+		 "changed": np.zeros(full_size, dtype=np.int32),
 		 "G": regiongraphs.make_graph(vertices,edges),
-		 "samples": h5read(os.path.join(basename, "samples.h5"), force=True),
 		 })
 V.errors = V.errors[:]
-V.full_size=V.errors.shape
+V.samples = V.samples[:]
+V.full_size=full_size
 
 """
 import read_otpt
@@ -216,28 +230,22 @@ def next_error():
 
 print("done")
 
-#graph_server_url=graph_server.start_server(V.G)
-#graph_server_url="http://localhost:8088"
-
 print("sorting samples...")
 sort_samples(V)
 print("...done")
 
 viewer = neuroglancer.Viewer()
-def on_state_changed(state):
-	if neuroglancer.server.debug:
-		print(state)
 
 def show_points():
-	viewer.state['layers']['samples']['points'] = [rev(V.samples[i,:]) for i in xrange(8000)]
-	viewer.broadcast()
+	tmp_state = state.global_state
+	tmp_state['layers']['samples']['points'] = [rev(V.samples[i,:]) for i in xrange(8000)]
+	state.broadcast(tmp_state)
 
-viewer.on_state_changed = on_state_changed
 #viewer.add(data=np.array([[[0]]],dtype=np.uint8), volume_type='image', name='dummy', voxel_size=rev(resolution))
 viewer.add(data=V.image, volume_type='image', name='image', voxel_size=rev(resolution))
 viewer.add(data=V.errors, volume_type='image', name='errors', voxel_size=rev(resolution))
 #viewer.add(data=V.machine_labels, volume_type='segmentation', name='machine_labels', voxel_size=rev(resolution))
-viewer.add(data=V.raw_labels, volume_type='segmentation', name='raw_labels', voxel_size=rev(resolution))
+viewer.add(data=V.raw_labels, volume_type='segmentation', name='raw_labels', voxel_size=rev(resolution), graph=False)
 #viewer.add(data=V.human_labels, volume_type='segmentation', name='human_labels', voxel_size=rev(resolution))
 viewer.add(data=[], volume_type='synapse', name="bbox")
 viewer.add(data=[], volume_type='point', name="samples")
