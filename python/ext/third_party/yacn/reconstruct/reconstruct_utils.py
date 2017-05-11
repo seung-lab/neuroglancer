@@ -60,6 +60,8 @@ def run_discrim_online(q1,q2,device):
 			image, mask = q1.get()
 			X,Y,Z=np.shape(image)
 			q2.put(np.reshape(discriminate3_online_inference.main_model.test(image, mask),[X,Y,Z]))
+			image=None
+			mask=None
 		except Exception as e:
 			print(e)
 
@@ -91,6 +93,6 @@ import string
 if 'CUDA_VISIBLE_DEVICES' not in os.environ:
 	os.environ['CUDA_VISIBLE_DEVICES'] = ""
 devices = string.split(os.environ['CUDA_VISIBLE_DEVICES'],",")+[""]*10
-discrim_online_daemon = ComputeDaemon(run_discrim_online,devices[0])
+#discrim_online_daemon = ComputeDaemon(run_discrim_online,devices[0])
 trace_daemon = ComputeDaemon(run_trace,devices[0])
 discrim_daemon = ComputeDaemon(run_recompute_discrim,devices[0])
