@@ -2,6 +2,6 @@ dist
 build
 neuroglancer.egg-info
 _neuroglancer.so
-ext/src/endian.h
+_mesher.so
 snemi3d
 .cache
