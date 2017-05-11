@@ -10,6 +10,7 @@ import sys
 import h5py
 import numpy as np
 from neuroglancer.pipeline import Storage, Precomputed, RegisteredTask
+from neuroglancer.pipeline.precomputed import EmptyVolumeException
 import string
 
 if "POD_ID" in os.environ:
@@ -19,8 +20,13 @@ else:
     POD_ID = "POD_ID"
 
 def h5_get(yacn_layer, name, chunk_position, default_shape = (0,2)):
-    file_data = Storage(yacn_layer, n_threads=0).get_file('{}/{}.h5'.format(name, chunk_position))
-    assert file_data is not None
+    if chunk_position is not None:
+        path = '{}/{}.h5'.format(name,chunk_position)
+    else:
+        path = '{}.h5'.format(name)
+    file_data = Storage(yacn_layer, n_threads=1).get_file(path)
+    if file_data is None:
+        raise EmptyVolumeException(path.format(name, chunk_position))
     # Hate having to do this
     with NamedTemporaryFile(delete=False) as tmp:
         tmp.write(file_data)
@@ -186,7 +192,7 @@ class DiscriminateTask(RegisteredTask):
 
     def _infer(self, image, segmentation, samples):
         #os.environ["CUDA_VISIBLE_DEVICES"]="0"
-        from ext.third_party.yacn.nets.discriminate3_online_inference import main_model
+        from ext.third_party.yacn.nets.discriminate3_inference import main_model
         main_model.restore('/tmp/{}/nets/discriminate3/latest.ckpt'.format(POD_ID))
         print image.shape, segmentation.shape
         output = main_model.inference(image, segmentation, samples)
@@ -216,7 +222,7 @@ class DiscriminateTask(RegisteredTask):
 class FloodFillingTask(RegisteredTask):
     def __init__(self, chunk_position, neighbours_chunk_position, crop_position,
                  image_layer, watershed_layer, yacn_layer,
-                 errors_layer, skip_threshold):
+                 errors_layer, residual_errors_layer, skip_threshold):
         """
         This is the third stage of error detection a.k.a YACN.
 
@@ -227,7 +233,7 @@ class FloodFillingTask(RegisteredTask):
         crop_position in in relative coordinates to the chunk_position
         """
         super(FloodFillingTask, self).__init__(chunk_position, neighbours_chunk_position, crop_position,
-                 image_layer, watershed_layer, yacn_layer, errors_layer, skip_threshold)
+                 image_layer, watershed_layer, yacn_layer, errors_layer, residual_errors_layer, skip_threshold)
 
         self.chunk_position = chunk_position
         self.crop_position = crop_position
@@ -235,6 +241,7 @@ class FloodFillingTask(RegisteredTask):
         self.image_layer = image_layer
         self.watershed_layer = watershed_layer
         self.errors_layer = errors_layer
+        self.residual_errors_layer = residual_errors_layer
         self.yacn_layer = yacn_layer
         self.skip_threshold = skip_threshold
 
@@ -245,13 +252,15 @@ class FloodFillingTask(RegisteredTask):
     def execute(self):
         self._parse_chunk_position()
         self._parse_crop_position()
-        self.yacn_storage = Storage(self.yacn_layer, n_threads=0)
+        self.yacn_storage = Storage(self.yacn_layer, n_threads=1)
         image = self._get_image_chunk()
 
         errors = self._get_errors_chunk()
         watershed = self.yacn_get("thickened_raw")
         samples = self.yacn_get("samples")
         height_map = self.yacn_get("height_map")
+        glial = h5_get(self.yacn_layer, "glial", chunk_position=None)
+        dendrite = h5_get(self.yacn_layer, "dendrite", chunk_position=None)
 
         neighbours_vertices = [h5_get(self.yacn_layer, "vertices", chunk) for chunk in self.neighbours_chunk_position]
         neighbours_edges = [self._get_edges_for_chunk(chunk) for chunk in self.neighbours_chunk_position]
@@ -261,24 +270,30 @@ class FloodFillingTask(RegisteredTask):
         combined_edges = np.concatenate(neighbours_edges,axis=0)
         combined_contact_edges = np.concatenate(neighbours_contact_edges,axis=0)
 
-        #os.environ["CUDA_VISIBLE_DEVICES"]="0"
-
+        os.environ["CUDA_VISIBLE_DEVICES"]="0"
+        self._get_weights()
         sys.path.insert(0, os.path.realpath('../../ext/third_party'))
         import ext.third_party.yacn.reconstruct.reconstruct as reconstruct
         from ext.third_party.yacn.reconstruct.commit_changes import *
 
         if np.count_nonzero(image) < self.skip_threshold * image.size:
             revised_combined_edges = combined_edges
+            residual_errors = errors
         else:
-            revised_combined_edges = reconstruct.reconstruct_wrapper(image=image, 
+            revised_combined_edges, residual_errors = reconstruct.reconstruct_wrapper(image=image, 
                     watershed=watershed, 
                     samples=samples, 
                     vertices=combined_vertices, 
                     edges=combined_edges, 
                     errors=errors,
                     full_edges=combined_contact_edges, 
-                    height_map = height_map)
+                    height_map = height_map,
+                    glial = glial,
+                    dendrite = dendrite,
+                    return_errors=True
+                    )
 
+        self._write_residual_errors_chunk(residual_errors)
         E = unpack_edges(revised_combined_edges)
         revised_edges = [pack_edges(restrict(E, unpack_edges(f))) for f in neighbours_contact_edges]
         s = self.yacn_storage
@@ -311,22 +326,30 @@ class FloodFillingTask(RegisteredTask):
                              slice(self._crop_zmin, self._crop_zmax))
     
     def _get_image_chunk(self):
-        image = Precomputed(Storage(self.image_layer,n_threads=0))[self._chunk_slices] 
+        image = Precomputed(Storage(self.image_layer,n_threads=1))[self._chunk_slices] 
         return np.squeeze(image, axis=3).T
 
     def _get_watershed_chunk(self):
-        self._watershed_storage = Storage(self.watershed_layer,n_threads=0)
+        self._watershed_storage = Storage(self.watershed_layer,n_threads=1)
         seg = Precomputed(self._watershed_storage)[self._chunk_slices] 
         return np.squeeze(seg, axis=3).T
 
     def _get_errors_chunk(self):
-        self._error_storage = Storage(self.errors_layer,n_threads=0)
+        self._error_storage = Storage(self.errors_layer,n_threads=1)
         seg = Precomputed(self._error_storage,pad=0)[self._chunk_slices] 
         return np.squeeze(seg, axis=3).T
+
+    def _write_residual_errors_chunk(self, output):
+        output = np.expand_dims(output,axis=0)
+        Precomputed(Storage(self.residual_errors_layer, n_threads=1))[
+        self._xmin + self._crop_xmin: self._xmin + self._crop_xmax,
+        self._ymin + self._crop_ymin: self._ymin + self._crop_ymax,
+        self._zmin + self._crop_zmin: self._zmin + self._crop_zmax] = output.T[self._crop_slices]
 
     def _get_edges_for_chunk(self, chunk_position):
         file_data = self.yacn_storage.get_file('revised_edges/{}.h5'.format(chunk_position))
         if file_data is None:
+            print "{} is not yet touched, fetching mean edges".format(chunk_position)
             file_data = self.yacn_storage.get_file('mean_edges/{}.h5'.format(chunk_position))
         assert file_data is not None
 
@@ -351,7 +374,7 @@ class FloodFillingTask(RegisteredTask):
             os.makedirs(os.path.join(tmp_dir,'nets/sparse_vector_labels/'))
         except OSError:
             pass #folder already exists
-        s = Storage(self.yacn_layer)
+        s = Storage(self.yacn_layer, n_threads=1)
         for file_path in ['nets/discriminate3/latest.ckpt',
                           'nets/discriminate3/latest.ckpt.index',
                           'nets/discriminate3/latest.ckpt.data-00000-of-00001',
@@ -361,6 +384,7 @@ class FloodFillingTask(RegisteredTask):
 
             with open(os.path.join(tmp_dir, file_path), 'wb') as f:
                 f.write(s.get_file(file_path))
+
 
 
 
@@ -398,11 +422,11 @@ class RelabelTask(RegisteredTask):
                               slice(self._zmin, self._zmax))
 
     def _get_input_chunk(self):
-        self._data = Precomputed(Storage(self.layer_in_path,n_threads=0))[self._chunk_slices] 
+        self._data = Precomputed(Storage(self.layer_in_path,n_threads=1))[self._chunk_slices] 
 
     def _get_mapping(self):
         if not os.path.exists('/tmp/mapping.npy'):
-            content = Storage(self.layer_out_path,n_threads=0).get_file(self.mapping_path)
+            content = Storage(self.layer_out_path,n_threads=1).get_file(self.mapping_path)
             with open('/tmp/mapping.npy', 'wb') as f:
                 f.write(content)
         self._mapping = np.load('/tmp/mapping.npy')
@@ -411,5 +435,57 @@ class RelabelTask(RegisteredTask):
         self._data = self._mapping[self._data]
 
     def _upload_chunk(self):
-        pr = Precomputed(Storage(self.layer_out_path,n_threads=0))
+        pr = Precomputed(Storage(self.layer_out_path,n_threads=1))
         pr[self._chunk_slices] = self._data
+
+
+
+class DumbsampleTask(RegisteredTask):
+    def __init__(self, chunk_position, crop_position, input_layer, output_layer):
+        """
+        Write out the mean inside a chunk
+
+        chunk_position is in absolute coordinates from the layer origin.
+        crop_position in in relative coordinates to the chunk_position
+        """
+        super(DumbsampleTask, self).__init__(chunk_position, crop_position, input_layer, output_layer)
+
+        self.chunk_position = chunk_position
+        self.crop_position = crop_position
+        self.input_layer = input_layer
+        self.output_layer = output_layer
+
+    def execute(self):
+        self._parse_chunk_position()
+        self._parse_crop_position()
+        inpt = self._get_input_chunk()
+        self._write_output(np.mean(inpt))
+  
+    def _parse_chunk_position(self):
+        match = re.match(r'^(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)$', self.chunk_position)
+        (self._xmin, self._xmax,
+         self._ymin, self._ymax,
+         self._zmin, self._zmax) = map(int, match.groups())
+        self._chunk_slices = (slice(self._xmin, self._xmax),
+                              slice(self._ymin, self._ymax),
+                              slice(self._zmin, self._zmax))
+
+    def _parse_crop_position(self):
+        match = re.match(r'^(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)$', self.crop_position)
+        (self._crop_xmin, self._crop_xmax,
+         self._crop_ymin, self._crop_ymax,
+         self._crop_zmin, self._crop_zmax) = map(int, match.groups())
+        self._crop_slices = (slice(self._crop_xmin, self._crop_xmax),
+                             slice(self._crop_ymin, self._crop_ymax),
+                             slice(self._crop_zmin, self._crop_zmax))
+
+    def _get_input_chunk(self):
+        inpt = Precomputed(Storage(self.input_layer))[
+        self._xmin + self._crop_xmin: self._xmin + self._crop_xmax,
+        self._ymin + self._crop_ymin: self._ymin + self._crop_ymax,
+        self._zmin + self._crop_zmin: self._zmin + self._crop_zmax]
+        return np.squeeze(inpt, axis=3).T
+
+    def _write_output(self, output):
+        s=Storage(self.output_layer)
+        s.put_file(file_path="dumbsample/{}.txt".format(self.chunk_position),content=str(output))
