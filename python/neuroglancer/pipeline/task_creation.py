@@ -72,9 +72,9 @@ def compute_bigarray_bounding_box(storage):
                     abs_z_max-abs_z_min+1])
     print('offset', [abs_x_min-1, abs_y_min-1, abs_z_min-1])
 
-def compute_build_bounding_box(storage):
+def compute_build_bounding_box(storage, prefix='build/'):
     bboxes = []
-    for filename in tqdm(storage.list_files(prefix='build/'), desc='Computing Build Bounds'):
+    for filename in tqdm(storage.list_files(prefix=prefix), desc='Computing Bounds'):
         bbox = Bbox.from_filename(filename) 
         bboxes.append(bbox)
 
