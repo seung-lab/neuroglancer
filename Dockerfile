@@ -31,13 +31,7 @@ RUN apt-get update && apt-get install -y -qq --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install setuptools Cython wheel numpy
-
-# install neuroglancer
-RUN mkdir /.ssh
-ADD ./ /neuroglancer
-RUN pip install -r /neuroglancer/python/requirements.txt
-RUN cd /neuroglancer/python && python setup.py install
-RUN cd /neuroglancer/python/neuroglancer/ingest && make
+RUN pip install tensorflow-gpu gitpython pandas
 
 #installs julia
 RUN add-apt-repository ppa:staticfloat/juliareleases && \
@@ -45,12 +39,21 @@ RUN add-apt-repository ppa:staticfloat/juliareleases && \
         apt-get update && \
         apt-get install -y julia
 
+# install neuroglancer
+RUN mkdir /.ssh
+
+ADD ./python/requirements.txt requirements.txt
+RUN pip install -r requirements.txt
+ADD ./python/ext/third_party/yacn/REQUIRE REQUIRE
+RUN julia -e "Pkg.update(); for f in readlines(open(\"REQUIRE\")); Pkg.add(strip(f)); end"
+
+ADD ./ /neuroglancer
+ADD ./secrets/ /secrets
+RUN cd /neuroglancer/python && python setup.py install
+RUN cd /neuroglancer/python/neuroglancer/ingest && make
+
+
 # installs yacn dependencies
 RUN ln -s /usr/lib/x86_64-linux-gnu/libhdf5_serial.so /usr/lib/x86_64-linux-gnu/libhdf5.so
 ENV HDF5_DIR=/usr/include/hdf5/serial
 RUN echo "push!(LOAD_PATH, \"/neuroglancer/python/ext/third_party/yacn\")" > /root/.juliarc.jl
-RUN cd /neuroglancer/python/ext/third_party/yacn/ && \
-  julia -e "Pkg.update(); for f in readlines(open(\"REQUIRE\")); Pkg.add(strip(f)); end"
-RUN pip install tensorflow-gpu gitpython pandas
-
-CMD cd /neuroglancer/python/ && python -m neuroglancer.pipeline.task_execution
