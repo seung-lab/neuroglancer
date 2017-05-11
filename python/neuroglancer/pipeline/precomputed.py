@@ -73,6 +73,8 @@ class Precomputed(object):
     def __getitem__(self, slices):
         """ It allows for non grid aligned slices
         """
+        if not self.pad:
+            self._validate_slice_bounds(slices)
         aligned_slices, crop_slices = self._align_slices(slices)
         return_volume = np.empty(
             shape=self._get_slices_shape(aligned_slices),
@@ -104,6 +106,9 @@ class Precomputed(object):
         That is because the result of two workers writting
         to overlapping chunks would be hard to predict.
         """
+        assert self.pad is None
+        self._validate_slice_bounds(slices)
+        self._validate_slice_alignment(slices)
         offset =  self._get_offsets(slices)
         for c in self._iter_chunks(slices):
             input_chunk = input_volume[self._slices_from_chunk(c, offset)]
@@ -192,6 +197,38 @@ class Precomputed(object):
 
         return tuple(aligned_slices), tuple(crop_slices)
 
+    def _validate_slice_bounds(self, slices):
+        for slc_idx, slc in enumerate(slices):
+            voxel_offset = self._scale['voxel_offset'][slc_idx]
+            start = slc.start - voxel_offset
+            stop = slc.stop - voxel_offset
+            chunk_size = self._scale['chunk_sizes'][0][slc_idx]
+            layer_size = self._scale['size'][slc_idx]
+            if stop <= start:
+                raise ValueError(slc)
+            if self.pad is None:
+                if start < 0:
+                    raise ValueError(slc)
+                if stop > layer_size:
+                    raise ValueError("{} is larger than the dataset".format(slc.stop))
+
+    def _validate_slice_alignment(self, slices):
+        for slc_idx, slc in enumerate(slices):
+            voxel_offset = self._scale['voxel_offset'][slc_idx]
+            start = slc.start - voxel_offset
+            stop = slc.stop - voxel_offset
+            chunk_size = self._scale['chunk_sizes'][0][slc_idx]
+            layer_size = self._scale['size'][slc_idx]
+            if stop <= start:
+                raise ValueError(slc)
+
+            if start % chunk_size:
+                raise ValueError("{} is not grid aligned".format(slc.start))
+
+            if stop > layer_size or (stop < layer_size and stop % chunk_size):
+                raise ValueError("{} is not grid aligned or larger than the dataset".format(slc.stop))
+
+
     def _slice_to_chunks(self, slices, slc_idx):
         slc = slices[slc_idx]
         # susbstract the offset
@@ -200,18 +237,8 @@ class Precomputed(object):
         stop = slc.stop - voxel_offset
         chunk_size = self._scale['chunk_sizes'][0][slc_idx]
         layer_size = self._scale['size'][slc_idx]
-        if stop <= start:
-            raise ValueError(slc)
 
         if self.pad is None:
-            if start < 0:
-                raise ValueError(slc)
-
-            if start % chunk_size:
-                raise ValueError("{} is not grid aligned".format(slc.start))
-
-            if stop > layer_size or (stop < layer_size and stop % chunk_size):
-                raise ValueError("{} is not grid aligned or larger than the dataset".format(slc.stop))
             chunks = []
             for chunk_start in xrange(start, stop, chunk_size):
                 chunk_stop = min(chunk_start+chunk_size, layer_size)
