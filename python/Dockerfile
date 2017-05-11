@@ -21,6 +21,8 @@ RUN sed -i -- 's/\"disable_updater\": false/\"disable_updater\": true/g' /google
 RUN mkdir /.ssh
 ENV PATH /google-cloud-sdk/bin:$PATH
 ADD ./ /root/python
+RUN pip install virtualenv virtualenvwrapper
+RUN bash /root/python/venv/bin/activate
 RUN pip install -r /root/python/requirements.txt
 RUN cd /root/python && python setup.py install
 RUN cd /root/python/neuroglancer/ingest && make
