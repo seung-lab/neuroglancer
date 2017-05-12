@@ -243,7 +243,7 @@ class CloudVolume(Volume):
     
     newscale = {
       u"encoding": fullres['encoding'],
-      u"chunk_sizes": fullres['chunk_sizes'],
+      u"chunk_sizes": [[64,64,64]],
       u"resolution": list( Vec3(*fullres['resolution']) * factor ),
       u"voxel_offset": list(np.ceil(Vec3(*fullres['voxel_offset']) / Vec3(*factor)).astype(int) ),
       u"size": list(np.ceil(Vec3(*fullres['size']) / Vec3(*factor)).astype(int)),

@@ -461,6 +461,24 @@ class HyperSquareTask(RegisteredTask):
 
     vol.upload_image(img, bounds.minpt)
 
+class TransferTask(RegisteredTask):
+  def __init__(self, src_path, dest_path, shape, offset):
+    super(self.__class__, self).__init__(src_path, dest_path, shape, offset)
+    self.src_path = src_path
+    self.dest_path = dest_path
+    self.shape = Vec(*shape)
+    self.offset = Vec(*offset)
+
+  def execute(self):
+    srccv = CloudVolume.from_cloudpath(self.src_path)
+    destcv = CloudVolume.from_cloudpath(self.dest_path)
+
+    bounds = Bbox( self.offset, self.shape + self.offset )
+    bounds = Bbox.clamp(bounds, srccv.bounds)
+    
+    destcv[ bounds.to_slices() ] = srccv[ bounds.to_slices() ]
+
+
 
 
 
