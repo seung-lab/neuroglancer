@@ -439,7 +439,7 @@ class GoogleCloudStorageInterface(object):
         TODO set the content-encoding to
         gzip in case of compression.
         """
-        content_type = content_type or 'application/octet-stream'
+        content_type = content_type or 'binary/octet-stream'
 
         key = self.get_path_to_file(file_path)
         blob = self._bucket.blob( key )
@@ -503,7 +503,7 @@ class S3Interface(object):
             k.set_contents_from_string(
                 content,
                 headers={
-                    "Content-Type": content_type or 'application/octet-stream',
+                    "Content-Type": content_type or 'binary/octet-stream',
                     "Content-Encoding": "gzip",
                 })
         else:
