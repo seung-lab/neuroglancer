@@ -15,6 +15,9 @@ from neuroglancer.pipeline.storage import Storage
 
 __all__ = [ 'CloudVolume' ]
 
+class EmptyVolumeException(Exception):
+    pass
+
 class CloudVolume(Volume):
   def __init__(self, dataset_name, layer, mip=0, protocol='gs', bucket=lib.GCLOUD_BUCKET_NAME, info=None, ):
     super(self.__class__, self).__init__()
@@ -311,15 +314,19 @@ class CloudVolume(Volume):
         continue 
 
       bbox = Bbox.from_filename(fileinfo['filename'])
+      content_len = len(fileinfo['content']) if fileinfo['content'] is not None else 0
+
+      if content_len == 0:
+        raise EmptyVolumeException(fileinfo['filename'])
+
       try:
         img3d = neuroglancer.chunks.decode(
           fileinfo['content'], self.encoding, multichannel_shape(bbox), self.dtype
         )
       except Exception:
-        content_len = len(fileinfo['content']) if fileinfo['content'] is not None else 0
         print('File Read Error: {} bytes, {}, {}, errors: {}'.format(
             content_len, bbox, fileinfo['filename'], fileinfo['error']))
-        img3d = np.zeros(shape=multichannel_shape(bbox), dtype=self.dtype)
+        raise
       
       start = bbox.minpt - realized_bbox.minpt
       end = min2(start + self.underlying, renderbuffer.shape[:3] )
