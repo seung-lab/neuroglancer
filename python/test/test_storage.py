@@ -2,7 +2,6 @@ import pytest
 import re
 import shutil
 import time
-
 from neuroglancer.pipeline import Storage
 
 def test_path_extraction():
@@ -35,24 +34,21 @@ def test_read_write():
             "gs://neuroglancer/removeme/read_write",
             "s3://neuroglancer/removeme/read_write"]
 
-    for num_threads in xrange(0,11,5):
+    for num_threads in xrange(0,2):
         for url in urls:
-            s = Storage(url, n_threads=num_threads)
-            content = 'some_string'
-            s.put_file('info', content, compress=False)
-            s.wait()
-            assert s.get_file('info') == content
-            assert s.get_file('nonexistentfile') is None
+            with Storage(url, n_threads=num_threads) as s:
+                content = 'some_string'
+                s.put_file('info', content, content_type='application/json', compress=False).wait()
+                assert s.get_file('info') == content
+                assert s.get_file('nonexistentfile') is None
+                num_infos = max(num_threads, 1)
+                results = s.get_files([ 'info' for i in xrange(num_infos) ])
 
-            num_infos = max(num_threads, 1)
-
-            results = s.get_files([ 'info' for i in xrange(num_infos) ])
-
-            assert len(results) == num_infos
-            assert results[0]['filename'] == 'info'
-            assert results[0]['content'] == content
-            assert all(map(lambda x: x['error'] is None, results))
-            assert s.get_files([ 'nonexistentfile' ])[0]['content'] is None
+                assert len(results) == num_infos
+                assert results[0]['filename'] == 'info'
+                assert results[0]['content'] == content
+                assert all(map(lambda x: x['error'] is None, results))
+                assert s.get_files([ 'nonexistentfile' ])[0]['content'] is None
 
     shutil.rmtree("/tmp/removeme/read_write")
 
@@ -92,3 +88,23 @@ def test_list():
         assert set(s.list_files(prefix='nofolder/')) == set([])
     
     shutil.rmtree("/tmp/removeme/list")
+
+def test_threads_die():
+    s = Storage('file:///tmp/removeme/wow', n_threads=40)
+    assert s.are_threads_alive()
+    s.kill_threads()
+    assert not s.are_threads_alive()
+
+    s = Storage('file:///tmp/removeme/wow', n_threads=0)
+    assert not s.are_threads_alive()
+
+    with Storage('file:///tmp/removeme/wow', n_threads=40) as s:
+        threads = s._threads
+    
+    assert not any(map(lambda t: t.isAlive(), threads))
+
+
+
+
+
+
