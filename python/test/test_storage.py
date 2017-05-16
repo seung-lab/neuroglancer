@@ -2,7 +2,6 @@ import pytest
 import re
 import shutil
 import time
-import gc
 
 from neuroglancer.pipeline import Storage
 
@@ -62,11 +61,13 @@ def test_compression():
             "s3://neuroglancer/removeme/compression"]
 
     for url in urls:
-        s = Storage(url, n_threads=5)
-        content = 'some_string'
-        s.put_file('info', content, compress=True).wait()
-        assert s.get_file('info') == content
-        assert s.get_file('nonexistentfile') is None
+        with Storage(url, n_threads=5) as s:
+            content = 'some_string'
+            s.put_file('info', content, compress=True)
+            s.wait()
+            assert s.get_file('info') == content
+            assert s.get_file('nonexistentfile') is None
+            s.delete_file('info')
 
     shutil.rmtree("/tmp/removeme/compression")
 
@@ -76,21 +77,23 @@ def test_list():
             "s3://neuroglancer/removeme/list"]
 
     for url in urls:
-        s = Storage(url, n_threads=5)
-        content = 'some_string'
-        s.put_file('info1', content, compress=False)
-        s.put_file('info2', content, compress=False)
-        s.put_file('build/info3', content, compress=False)
-        s.put_file('info4', content, compress=True)
-        s.put_file('info.txt', content, compress=False)
-        s.wait()
-        time.sleep(1) # sometimes it takes a moment for google to update the list
-        assert set(s.list_files(prefix='')) == set(['info1','info2','info4','info.txt'])
-        assert set(s.list_files(prefix='inf')) == set(['info1','info2','info4','info.txt'])
-        assert set(s.list_files(prefix='info1')) == set(['info1'])
-        assert set(s.list_files(prefix='build')) == set([])
-        assert set(s.list_files(prefix='build/')) == set(['info3'])
-        assert set(s.list_files(prefix='nofolder/')) == set([])
+        with Storage(url, n_threads=5) as s:
+            content = 'some_string'
+            s.put_file('info1', content, compress=False)
+            s.put_file('info2', content, compress=False)
+            s.put_file('build/info3', content, compress=False)
+            s.put_file('info4', content, compress=True)
+            s.put_file('info.txt', content, compress=False)
+            s.wait()
+            time.sleep(1) # sometimes it takes a moment for google to update the list
+            assert set(s.list_files(prefix='')) == set(['info1','info2','info4','info.txt'])
+            assert set(s.list_files(prefix='inf')) == set(['info1','info2','info4','info.txt'])
+            assert set(s.list_files(prefix='info1')) == set(['info1'])
+            assert set(s.list_files(prefix='build')) == set([])
+            assert set(s.list_files(prefix='build/')) == set(['info3'])
+            assert set(s.list_files(prefix='nofolder/')) == set([])
+            for file_path in ('info1', 'info2', 'build/info3', 'info4', 'info.txt'):
+                s.delete_file(file_path)
     
     shutil.rmtree("/tmp/removeme/list")
 

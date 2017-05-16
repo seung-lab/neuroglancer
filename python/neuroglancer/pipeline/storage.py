@@ -11,6 +11,7 @@ import signal
 from functools import partial
 
 from glob import glob
+import google.cloud.exceptions
 from google.cloud.storage import Client
 import boto 
 from boto.s3.connection import S3Connection
@@ -66,7 +67,7 @@ class Storage(ThreadedQueue):
 
     def _consume_queue(self, terminate_evt):
         super(Storage, self)._consume_queue(terminate_evt)
-        interface.release_connection()
+        self._interface.release_connection()
 
     @classmethod
     def extract_path(cls, layer_path):
@@ -154,7 +155,8 @@ class Storage(ThreadedQueue):
 
         return results
 
-    def delete(self, file_path):
+    def delete_file(self, file_path):
+
         def thunk_delete(interface):
             interface.delete_file(file_path)
 
@@ -350,6 +352,11 @@ class FileInterface(object):
         except IOError:
             return None, False
 
+    def delete_file(self, file_path):
+        path = self.get_path_to_file(file_path)
+        if os.path.exists(path):
+            os.remove(path)
+
     def list_files(self, prefix):
         layer_path = self.get_path_to_file("")        
         path = os.path.join(layer_path, prefix)
@@ -406,6 +413,14 @@ class GoogleCloudStorageInterface(object):
         # blob handles the decompression in the case
         # it is necessary
         return blob.download_as_string(), False
+
+    def delete_file(self, file_path):
+        key = self.get_path_to_file(file_path)
+        
+        try:
+            self._bucket.delete_blob( key )
+        except google.cloud.exceptions.NotFound:
+            pass
 
     def list_files(self, prefix):
         """
@@ -464,8 +479,16 @@ class S3Interface(object):
         k.key = self.get_path_to_file(file_path)
         try:
             return k.get_contents_as_string(), k.content_encoding == "gzip"
-        except boto.exception.S3ResponseError:
-            return None, False
+        except boto.exception.S3ResponseError as e:
+            if e.error_code == 'NoSuchKey':
+                return None, False
+            else:
+                raise e
+
+    def delete_file(self, file_path):
+        k = boto.s3.key.Key(self._bucket)
+        k.key = self.get_path_to_file(file_path)
+        self._bucket.delete_key(k)
 
     def list_files(self, prefix):
         """
