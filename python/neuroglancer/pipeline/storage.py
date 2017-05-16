@@ -19,8 +19,9 @@ import numpy as np
 
 from neuroglancer.lib import mkdir
 from neuroglancer.pipeline.secrets import PROJECT_NAME, google_credentials_path, aws_credentials
+from neuroglancer.pipeline.threaded_queue import ThreadedQueue
 
-class Storage(object):
+class Storage(ThreadedQueue):
     """
     Probably rather sooner that later we will have to store datasets in S3.
     The idea is to modify this class constructor to probably take a path of 
@@ -41,8 +42,7 @@ class Storage(object):
 
         self._layer_path = layer_path
         self._path = self.extract_path(layer_path)
-        self._n_threads = n_threads
-
+        
         if self._path.protocol == 'file':
             self._interface_cls = FileInterface
         elif self._path.protocol == 'gs':
@@ -52,11 +52,7 @@ class Storage(object):
 
         self._interface = self._interface_cls(self._path)
 
-        self._queue = Queue.Queue(maxsize=0) # infinite size
-        self._threads = ()
-        self._terminate = threading.Event()
-
-        self.start_threads(n_threads)
+        super(Storage, self).__init__(n_threads)
 
     @property
     def layer_path(self):
@@ -65,58 +61,11 @@ class Storage(object):
     def get_path_to_file(self, file_path):
         return os.path.join(self._layer_path, file_path)
 
-    def start_threads(self, n_threads):
-        if n_threads == len(self._threads):
-            return self
-
-        self._terminate.set()
-        self._terminate = threading.Event()
-
-        threads = []
-
-        for _ in xrange(n_threads):
-            worker = threading.Thread(
-                target=self._consume_queue, 
-                args=(self._terminate,)
-            )
-            worker.daemon = True
-            worker.start()
-            threads.append(worker)
-
-        self._threads = tuple(threads)
-        return self
-
-    def are_threads_alive(self):
-        return any(map(lambda t: t.isAlive(), self._threads))
-
-    def kill_threads(self):
-        self._terminate.set()
-        while True:
-            alive = self.are_threads_alive()
-            if alive:
-                time.sleep(0.1)
-            else:
-                break
-
-        self._threads = ()
-        return self
+    def _initialize_interface(self):
+        return self._interface_cls(self._path)
 
     def _consume_queue(self, terminate_evt):
-        interface = self._interface_cls(self._path)
-
-        while not terminate_evt.is_set():
-            try:
-                fn = self._queue.get(block=True, timeout=1)
-            except Queue.Empty:
-                continue # periodically check if the thread is supposed to die
-
-            try:
-                fn(interface)
-            except Exception as err:
-                print(err)
-            finally:
-                self._queue.task_done()
-
+        super(Storage, self)._consume_queue(terminate_evt)
         interface.release_connection()
 
     @classmethod
@@ -153,7 +102,7 @@ class Storage(object):
             uploadfn = partial(put_file, path, content)
 
             if len(self._threads):
-                self._queue.put(uploadfn, block=True)
+                self.put(uploadfn)
             else:
                 uploadfn(self._interface)
 
@@ -197,13 +146,24 @@ class Storage(object):
 
         for path in file_paths:
             if len(self._threads):
-                self._queue.put(partial(get_file_thunk, path), block=True)
+                self.put(partial(get_file_thunk, path))
             else:
                 get_file_thunk(path, self._interface)
 
         self.wait()
 
         return results
+
+    def delete(self, file_path):
+        def thunk_delete(interface):
+            interface.delete_file(file_path)
+
+        if len(self._threads):
+            self.put(thunk_delete)
+        else:
+            thunk_delete(self._interface)
+
+        return self
 
     def _maybe_uncompress(self, content):
         """ Uncompression is applied if the first to bytes matches with
@@ -234,22 +194,12 @@ class Storage(object):
         for f in self._interface.list_files(prefix):
             yield f
 
-    def wait(self):
-        if len(self._threads):
-            self._queue.join()
-        return self
-
     def __del__(self):
-        self.kill_threads()
+        super(Storage, self).__del__()
         self._interface.release_connection()
 
-    def __enter__(self):
-        self.start_threads(self._n_threads)
-        return self
-
     def __exit__(self, exception_type, exception_value, traceback):
-        self.wait()
-        self.kill_threads()
+        super(Storage, self).__exit__(exception_type, exception_value, traceback)
         self._interface.release_connection()
 
 class ConnectionPool(object):
