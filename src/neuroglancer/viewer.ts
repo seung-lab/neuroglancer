@@ -32,7 +32,7 @@ import {TrackableValue} from 'neuroglancer/trackable_value';
 import {registerTrackable, setStateServerURL} from 'neuroglancer/url_hash_state';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {vec3} from 'neuroglancer/util/geom';
-import {GlobalKeyboardShortcutHandler, KeySequenceMap} from 'neuroglancer/util/keyboard_shortcut_handler';
+import {globalKeyboardHandlerStack, KeySequenceMap} from 'neuroglancer/util/keyboard_shortcut_handler';
 import {NullarySignal} from 'neuroglancer/util/signal';
 import {CompoundTrackable} from 'neuroglancer/util/trackable';
 import {DataDisplayLayout, LAYOUTS} from 'neuroglancer/viewer_layouts';
@@ -164,7 +164,7 @@ export class Viewer extends RefCounted implements ViewerState {
     this.makeUI();
 
     this.registerDisposer(
-        new GlobalKeyboardShortcutHandler(this.keyMap, this.onKeyCommand.bind(this)));
+        globalKeyboardHandlerStack.push(this.keyMap, this.onKeyCommand.bind(this)));
 
     this.layoutName.changed.add(() => {
       if (this.dataDisplayLayout !== undefined) {
