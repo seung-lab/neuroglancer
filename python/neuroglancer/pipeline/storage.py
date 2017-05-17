@@ -134,10 +134,15 @@ class Storage(ThreadedQueue):
             except Exception as err:
                 error = err
                 print(err)
-            
-            content, decompress = result
-            if content and decompress:
-                content = self._maybe_uncompress(content)
+
+            if result is None:
+                err = Exception(path)
+                print(err)
+                content = None
+            else:
+                content, decompress = result
+                if content and decompress:
+                    content = self._maybe_uncompress(content)
 
             results.append({
                 "filename": path,
