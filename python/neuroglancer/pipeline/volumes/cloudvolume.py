@@ -3,6 +3,7 @@ from __future__ import print_function
 import os
 import json
 import re
+from collections import namedtuple
 
 import numpy as np
 from tqdm import tqdm
@@ -15,19 +16,25 @@ from neuroglancer.pipeline.storage import Storage
 
 __all__ = [ 'CloudVolume' ]
 
+ExtractedPath = namedtuple('ExtractedPath', 
+  ('protocol','bucket_name', 'dataset_name','layer_name')
+)
+
 class EmptyVolumeException(Exception):
     pass
 
 class CloudVolume(Volume):
-  def __init__(self, dataset_name, layer, mip=0, protocol='gs', bucket=lib.GCLOUD_BUCKET_NAME, info=None, ):
+  def __init__(self, cloudpath, mip=0, info=None):
     super(self.__class__, self).__init__()
 
-    self._protocol = protocol
-    self._bucket = bucket
+    extract = CloudVolume.extract_path(cloudpath)
+
+    self._protocol = extract.protocol
+    self._bucket = extract.bucket_name
 
     # You can access these two with properties
-    self._dataset_name = dataset_name
-    self._layer = layer
+    self._dataset_name = extract.dataset_name
+    self._layer = extract.layer_name
 
     self.mip = mip
     self.cache_files = False # keeping in case we revive it
@@ -45,7 +52,7 @@ class CloudVolume(Volume):
       raise Exception("MIP {} has not been generated.".format(self.mip))
 
   @classmethod
-  def create_new_info(cls, num_channels, layer_type, data_type, encoding, resolution, voxel_offset, volume_size, mesh=False, chunk_size=[64,64,64]):
+  def create_new_info(cls, num_channels, layer_type, data_type, encoding, resolution, voxel_offset, volume_size, mesh=None, chunk_size=[64,64,64]):
     info = {
       "num_channels": int(num_channels),
       "type": layer_type,
@@ -61,17 +68,15 @@ class CloudVolume(Volume):
     }
 
     if mesh:
-      info['mesh'] = 'mesh'
+      info['mesh'] = 'mesh' if type(mesh) not in (str, unicode) else mesh
 
     return info
 
   @classmethod
-  def from_cloudpath(cls, cloudpath, mip=0, *args, **kwargs):
+  def extract_path(cls, cloudpath):
     """cloudpath: e.g. gs://neuroglancer/DATASET/LAYER/info or s3://..."""
     match = re.match(r'^(gs|file|s3)://([/\d\w_\.\-]+)/([\d\w_\.\-]+)/([\d\w_\.\-]+)/?(?:info)?', cloudpath)
-    protocol, bucket, dataset_name, layer = match.groups()
-
-    return CloudVolume(dataset_name, layer, mip, protocol, bucket, *args, **kwargs)
+    return ExtractedPath(*match.groups())
 
   def refreshInfo(self):
     infojson = self._storage.get_file('info')

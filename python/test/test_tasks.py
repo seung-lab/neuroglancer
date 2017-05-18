@@ -12,7 +12,7 @@ from test.test_precomputed import create_layer, delete_layer
 def test_ingest_image():
     delete_layer()
     storage, data = create_layer(size=(512,512,128,1), offset=(0,0,0), layer_type='image')
-    cv = CloudVolume.from_cloudpath(storage.layer_path)
+    cv = CloudVolume(storage.layer_path)
     assert len(cv.scales) == 3
     assert len(cv.available_mips) == 3
 
@@ -43,7 +43,7 @@ def test_ingest_image():
 def test_ingest_segmentation():
     delete_layer()
     storage, data = create_layer(size=(512,512,128,1), offset=(0,0,0), layer_type='segmentation')
-    cv = CloudVolume.from_cloudpath(storage.layer_path)
+    cv = CloudVolume(storage.layer_path)
     assert len(cv.scales) == 3
     assert len(cv.available_mips) == 3
 
@@ -73,7 +73,7 @@ def test_ingest_segmentation():
 def test_downsample_no_offset():
     delete_layer()
     storage, data = create_layer(size=(1024,1024,128,1), offset=(0,0,0))
-    cv = CloudVolume.from_cloudpath(storage.layer_path)
+    cv = CloudVolume(storage.layer_path)
     assert len(cv.scales) == 4
     assert len(cv.available_mips) == 4
 
@@ -109,7 +109,7 @@ def test_downsample_no_offset():
 def test_downsample_with_offset():
     delete_layer()
     storage, data = create_layer(size=(1024,1024,128,1), offset=(3,7,11))
-    cv = CloudVolume.from_cloudpath(storage.layer_path)
+    cv = CloudVolume(storage.layer_path)
     assert len(cv.scales) == 4
     assert len(cv.available_mips) == 4
 
@@ -145,7 +145,7 @@ def test_downsample_with_offset():
 def test_mesh():
     delete_layer()
     storage, _ = create_layer(size=(64,64,64,1), offset=(0,0,0), layer_type="segmentation")
-    cv = CloudVolume.from_cloudpath(storage.layer_path)
+    cv = CloudVolume(storage.layer_path)
     # create a box of ones surrounded by zeroes
     data = np.zeros(shape=(64,64,64,1), dtype=np.uint32)
     data[1:-1,1:-1,1:-1,:] = 1
@@ -169,7 +169,7 @@ def test_quantize_affinities():
     delete_layer(qpath)
 
     storage, _ = create_layer(size=(256,256,128,3), offset=(0,0,0), layer_type="affinity")
-    cv = CloudVolume.from_cloudpath(storage.layer_path)
+    cv = CloudVolume(storage.layer_path)
 
     shape = (128, 128, 64)
     slices = np.s_[ :shape[0], :shape[1], :shape[2], :1 ]
@@ -186,7 +186,7 @@ def test_quantize_affinities():
     )
 
     info = create_quantized_affinity_info(storage.layer_path, qpath, shape)
-    qcv = CloudVolume.from_cloudpath(qpath, info=info)
+    qcv = CloudVolume(qpath, info=info)
     qcv.commitInfo()
 
     create_downsample_scales(qpath, mip=0, ds_shape=shape)

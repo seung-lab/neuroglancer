@@ -116,7 +116,7 @@ def create_info_file_from_build(layer_path, layer_type, resolution, encoding):
     max_downsampled_size=max(neuroglancer_chunk_size[:2]) * 2, # exclude z since it won't be downsampled
   )
 
-  vol = CloudVolume.from_cloudpath(layer_path, mip=0, info=info)
+  vol = CloudVolume(layer_path, mip=0, info=info)
   map(vol.addScale, scale_ratios)
   vol.commitInfo()
   
@@ -141,7 +141,7 @@ def divisors(n):
                 yield n / i
 
 def create_downsample_scales(layer_path, mip, ds_shape, axis='z'):
-  vol = CloudVolume.from_cloudpath(layer_path, mip)
+  vol = CloudVolume(layer_path, mip)
   
   shape = min2(vol.volume_size, ds_shape)
   
@@ -172,7 +172,7 @@ def create_downsampling_tasks(task_queue, layer_path, mip=-1, axis='z', shape=Ve
 
 def create_transfer_tasks(task_queue, src_layer_path, dest_layer_path, shape=Vec(2048, 2048, 64)):
   shape = Vec(*shape)
-  vol = CloudVolume.from_cloudpath(src_layer_path)
+  vol = CloudVolume(src_layer_path)
 
   for startpt in tqdm(xyzrange( vol.bounds.minpt, vol.bounds.maxpt, shape ), desc="Inserting Transfer Tasks"):
     task = TransferTask(
@@ -198,7 +198,7 @@ def create_fixup_downsample_tasks(task_queue, layer_path, points, shape=Vec(2048
   """you can use this to fix black spots from when downsample tasks fail
   by specifying a point inside each black spot.
   """
-  vol = CloudVolume.from_cloudpath(layer_path, mip)
+  vol = CloudVolume(layer_path, mip)
   offsets = compute_fixup_offsets(vol, points, shape)
 
   for offset in tqdm(offsets, desc="Inserting Corrective Downsample Tasks"):
@@ -214,7 +214,7 @@ def create_fixup_downsample_tasks(task_queue, layer_path, points, shape=Vec(2048
   task_queue.wait()
 
 def create_quantized_affinity_info(src_layer, dest_layer, shape):
-  srcvol = CloudVolume.from_cloudpath(src_layer)
+  srcvol = CloudVolume(src_layer)
   
   info = copy.deepcopy(srcvol.info)
   info['num_channels'] = 1
@@ -228,7 +228,7 @@ def create_quantized_affinity_tasks(taskqueue, src_layer, dest_layer, shape):
   shape = Vec(*shape)
 
   info = create_quantized_affinity_info(src_layer, dest_layer, shape)
-  destvol = CloudVolume.from_cloudpath(dest_layer, info=info)
+  destvol = CloudVolume(dest_layer, info=info)
   destvol.commitInfo()
 
   create_downsample_scales(dest_layer, mip=0, ds_shape=shape)
@@ -246,7 +246,7 @@ def create_quantized_affinity_tasks(taskqueue, src_layer, dest_layer, shape):
 
 def create_fixup_quantize_tasks(task_queue, src_layer, dest_layer, shape, points):
   shape = Vec(*shape)
-  vol = CloudVolume.from_cloudpath(src_layer, 0)
+  vol = CloudVolume(src_layer, 0)
   offsets = compute_fixup_offsets(vol, points, shape)
 
   for offset in tqdm(offsets, desc="Inserting Corrective Quantization Tasks"):

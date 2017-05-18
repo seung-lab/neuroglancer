@@ -36,7 +36,7 @@ class IngestTask(RegisteredTask):
     self._bounds = None # defer until execution
 
   def execute(self):
-    self._volume = CloudVolume.from_cloudpath(self.layer_path, mip=0)
+    self._volume = CloudVolume(self.layer_path, mip=0)
     self._bounds = Bbox.from_filename(self.chunk_path)
     data = self._download_input_chunk()
     # self._bounds = self._bounds.transpose()
@@ -79,7 +79,7 @@ class DownsampleTask(RegisteredTask):
     self._bounds = None
     
   def execute(self):
-    self._volume = CloudVolume.from_cloudpath(self.layer_path, self.mip)
+    self._volume = CloudVolume(self.layer_path, self.mip)
     vol = self._volume
 
     self._bounds = Bbox( self.offset, self.shape + self.offset )
@@ -129,7 +129,7 @@ class QuantizeAffinitiesTask(RegisteredTask):
     self._bounds = None
 
   def execute(self):
-    srcvol = CloudVolume.from_cloudpath(self.source_layer_path, mip=0)
+    srcvol = CloudVolume(self.source_layer_path, mip=0)
   
     self._bounds = Bbox( self.offset, self.shape + self.offset )
     self._bounds = Bbox.clamp(self._bounds, srcvol.bounds)
@@ -139,7 +139,7 @@ class QuantizeAffinitiesTask(RegisteredTask):
 
     print(self.dest_layer_path)
     
-    destvol = CloudVolume.from_cloudpath(self.dest_layer_path, mip=0)
+    destvol = CloudVolume(self.dest_layer_path, mip=0)
     destvol[ self._bounds.to_slices() ] = image
 
     self.downsample(destvol, image)
@@ -182,7 +182,7 @@ class MeshTask(RegisteredTask):
   def execute(self):
     self._mesher = Mesher()
     self._bounds = Bbox.from_filename(self.chunk_position)
-    self._volume = CloudVolume.from_cloudpath(self.layer_path, mip=0)
+    self._volume = CloudVolume(self.layer_path, mip=0)
     
     if 'mesh' not in self._volume.info:
       raise ValueError("The mesh destination is not present in the info file.")
@@ -470,8 +470,8 @@ class TransferTask(RegisteredTask):
     self.offset = Vec(*offset)
 
   def execute(self):
-    srccv = CloudVolume.from_cloudpath(self.src_path)
-    destcv = CloudVolume.from_cloudpath(self.dest_path)
+    srccv = CloudVolume(self.src_path)
+    destcv = CloudVolume(self.dest_path)
 
     bounds = Bbox( self.offset, self.shape + self.offset )
     bounds = Bbox.clamp(bounds, srccv.bounds)
