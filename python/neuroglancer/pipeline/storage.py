@@ -9,6 +9,7 @@ import threading
 import time
 import signal
 from functools import partial
+import threading
 
 from glob import glob
 import google.cloud.exceptions
@@ -83,9 +84,9 @@ class Storage(ThreadedQueue):
             filename (string): it can contains folders
             content (string): binary data to save
         """
-        return self.put_files([ (file_path, content) ], content_type, compress)
+        return self.put_files([ (file_path, content) ], content_type, compress, block=False)
 
-    def put_files(self, files, content_type=None, compress=False):
+    def put_files(self, files, content_type=None, compress=False, block=True):
         """
         Put lots of files at once and get a nice progress bar. It'll also wait
         for the upload to complete, just like get_files.
@@ -107,7 +108,8 @@ class Storage(ThreadedQueue):
             else:
                 uploadfn(self._interface)
 
-        self.wait()
+        if block:
+            self.wait()
 
         return self
 
@@ -238,7 +240,7 @@ class ConnectionPool(object):
         self.inactive_pool = []
         self.max_connections = max_connections
 
-        self._term = False
+        self._lock = threading.Lock()
 
         signal.signal(signal.SIGINT, self.reset_pool)
         signal.signal(signal.SIGTERM, self.reset_pool)
@@ -250,30 +252,32 @@ class ConnectionPool(object):
         raise NotImplementedError
 
     def get_connection(self):
-        def _get_connection():
-            if len(self.inactive_pool):
-                return self.inactive_pool.pop()
-            elif self.total_connections() < self.max_connections:
-                return self._create_connection()
-            else:
-                return None
-        
-        while True:
-            conn = _get_connection()
-            if conn is None:
-                time.sleep(np.random.sample(1))
-            else:
-                break
-        
-        self.active_pool.append(conn)
+        with self._lock:
+            def _get_connection():
+                if len(self.inactive_pool):
+                    return self.inactive_pool.pop()
+                elif self.total_connections() < self.max_connections:
+                    return self._create_connection()
+                else:
+                    return None
+            
+            while True:
+                conn = _get_connection()
+                if conn is None:
+                    time.sleep(np.random.sample(1))
+                else:
+                    break
+            
+            self.active_pool.append(conn)
         return conn
 
     def release_connection(self, conn):
         if conn is None:
             return
         
-        self.active_pool.remove(conn)
-        self.inactive_pool.append(conn)
+        with self._lock:
+            self.active_pool.remove(conn)
+            self.inactive_pool.append(conn)
 
     def _close_function(self):
         return lambda x: x # no-op
