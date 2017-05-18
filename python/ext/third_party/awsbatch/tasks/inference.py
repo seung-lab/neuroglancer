@@ -55,7 +55,14 @@ def register_job_definition(queueName='s1-inference'):
                 "-w", "Ref::waittime"
             ],
             'jobRoleArn'                : 'arn:aws:iam::098703261575:role/chunkflow-worker',
-            'volumes'                   : [],
+            'volumes'                   : [
+                {
+                    'host': {
+                        'sourcePath'    : '/var/lib/nvidia-docker/volumes/nvidia_driver/latest'
+                    },
+                    'name'              : 'nvidia'
+                }
+            ],
             'environment'               : [
                 {
                     'name'              : 'PYTHONPATH',
@@ -79,7 +86,7 @@ def register_job_definition(queueName='s1-inference'):
                     "containerPath": "/usr/local/nvidia",
                     "readOnly": False,
                     "sourceVolume": "nvidia"
-            	}   
+            	}
             ],
             'privileged'                : False,
             'ulimits'                   : [],
@@ -131,8 +138,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--queuename", "-q", help = "AWS SQS queue name")
     args = parser.parse_args()
-    
+
     #create_compute_environment()
     #create_job_queue( )
-    register_job_definition( args.queuename )
+    #register_job_definition( args.queuename )
     submit_job( args.queuename )
