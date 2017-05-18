@@ -17,7 +17,7 @@ from neuroglancer import chunks, downsample, downsample_scales
 from neuroglancer.lib import xyzrange, min2, max2, Vec, Bbox 
 from neuroglancer.pipeline import Storage, Precomputed, RegisteredTask
 from neuroglancer.pipeline.volumes import CloudVolume
-from neuroglancer.pipeline import Mesher
+from neuroglancer.ingest.mesher import Mesher
 
 class IngestTask(RegisteredTask):
   """Ingests and does downsampling.
