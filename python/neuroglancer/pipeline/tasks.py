@@ -172,17 +172,21 @@ class QuantizeAffinitiesTask(RegisteredTask):
 
 class MeshTask(RegisteredTask):
 
-  def __init__(self, chunk_position, layer_path, lod=0, simplification=128, segments=[]):
-    self.chunk_position = chunk_position
+  def __init__(self, shape, offset, layer_path, mip=0, simplification_factor=100, max_simplification_error=1000000):
+    self.shape = Vec(*shape)
+    self.offset = Vec(*offset)
+    self.mip = mip
     self.layer_path = layer_path
-    self.lod = lod
-    self.simplification = simplification
-    self.segments = segments
+    self.lod = 0 # level of detail -- to be implemented
+    self.simplification_factor = simplification_factor
+    self.max_simplification_error = max_simplification_error
 
   def execute(self):
     self._mesher = Mesher()
-    self._bounds = Bbox.from_filename(self.chunk_position)
-    self._volume = CloudVolume(self.layer_path, mip=0)
+
+    self._volume = CloudVolume(self.layer_path, self.mip)
+    self._bounds = Bbox( self.offset, self.shape + self.offset )
+    self._bounds = Bbox.clamp(self._bounds, self._volume.bounds)
     
     if 'mesh' not in self._volume.info:
       raise ValueError("The mesh destination is not present in the info file.")
@@ -196,13 +200,16 @@ class MeshTask(RegisteredTask):
       self._mesher.mesh(data.flatten(), *data.shape[:3])
       for obj_id in self._mesher.ids():
         storage.put_file(
-          file_path='{}/{}:{}:{}'.format(self._volume.info['mesh'], obj_id, self.lod, self.chunk_position),
+          file_path='{}/{}:{}:{}'.format(self._volume.info['mesh'], obj_id, self.lod, self._bounds.to_filename()),
           content=self._create_mesh(obj_id),
           compress=True,
         )
 
   def _create_mesh(self, obj_id):
-    mesh = self._mesher.get_mesh(obj_id, simplification_factor=self.simplification, max_simplification_error=1000000)
+    mesh = self._mesher.get_mesh(obj_id, 
+      simplification_factor=self.simplification_factor, 
+      max_simplification_error=self.max_simplification_error
+    )
     vertices = self._update_vertices(np.array(mesh['points'], dtype=np.float32)) 
     vertex_index_format = [
       np.uint32(len(vertices) / 3), # Number of vertices ( each vertex is three numbers (x,y,z) )
@@ -215,7 +222,7 @@ class MeshTask(RegisteredTask):
     # zlib meshing multiplies verticies by two to avoid working with floats like 1.5
     # but we need to recover the exact position for display
     points /= 2.0
-    resolution = self._volume.mip_resolution(0)
+    resolution = self._volume.resolution
     xmin, ymin, zmin = self._bounds.minpt
     points[0::3] = (points[0::3] + xmin) * resolution.x 
     points[1::3] = (points[1::3] + ymin) * resolution.y 

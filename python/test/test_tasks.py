@@ -152,11 +152,10 @@ def test_mesh():
     cv[0:64,0:64,0:64] = data
 
     t = MeshTask(
-        chunk_position='0-64_0-64_0-64',
+        shape=(64,64,64),
+        offset=(0,0,0),
         layer_path=storage.layer_path,
-        lod=0, 
-        simplification=5, 
-        segments=[]
+        mip=0,
     )
     t.execute()
     assert storage.get_file('mesh/1:0:0-64_0-64_0-64') is not None 
