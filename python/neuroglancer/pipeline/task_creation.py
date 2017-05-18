@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 from neuroglancer import downsample_scales, chunks
 from neuroglancer.lib import Vec, Bbox, max2, min2, xyzrange
-from neuroglancer.pipeline import Storage, TaskQueue
+from neuroglancer.pipeline import Storage, TaskQueue, MockTaskQueue
 from neuroglancer.pipeline.tasks import (BigArrayTask, IngestTask,
      HyperSquareTask, MeshTask, MeshManifestTask, DownsampleTask, 
      QuantizeAffinitiesTask, TransferTask)
@@ -156,6 +156,7 @@ def create_downsample_scales(layer_path, mip, ds_shape, axis='z'):
   return vol.commitInfo()
 
 def create_downsampling_tasks(task_queue, layer_path, mip=-1, axis='z', shape=Vec(2048, 2048, 64)):
+  shape = Vec(*shape)
   vol = create_downsample_scales(layer_path, mip, shape)
 
   for startpt in tqdm(xyzrange( vol.bounds.minpt, vol.bounds.maxpt, shape ), desc="Inserting Downsample Tasks"):
@@ -170,6 +171,7 @@ def create_downsampling_tasks(task_queue, layer_path, mip=-1, axis='z', shape=Ve
   task_queue.wait()
 
 def create_transfer_tasks(task_queue, src_layer_path, dest_layer_path, shape=Vec(2048, 2048, 64)):
+  shape = Vec(*shape)
   vol = CloudVolume.from_cloudpath(src_layer_path)
 
   for startpt in tqdm(xyzrange( vol.bounds.minpt, vol.bounds.maxpt, shape ), desc="Inserting Transfer Tasks"):
@@ -223,6 +225,7 @@ def create_quantized_affinity_info(src_layer, dest_layer, shape):
   return info
 
 def create_quantized_affinity_tasks(taskqueue, src_layer, dest_layer, shape):
+  shape = Vec(*shape)
 
   info = create_quantized_affinity_info(src_layer, dest_layer, shape)
   destvol = CloudVolume.from_cloudpath(dest_layer, info=info)
@@ -242,6 +245,7 @@ def create_quantized_affinity_tasks(taskqueue, src_layer, dest_layer, shape):
   task_queue.wait()
 
 def create_fixup_quantize_tasks(task_queue, src_layer, dest_layer, shape, points):
+  shape = Vec(*shape)
   vol = CloudVolume.from_cloudpath(src_layer, 0)
   offsets = compute_fixup_offsets(vol, points, shape)
 
@@ -328,27 +332,6 @@ def upload_build_chunks(storage, volume, offset=[0, 0, 0], build_chunk_size=[102
     filename = 'build/{}'.format(bbox.to_filename())
     storage.put_file(filename, chunks.encode_npz(chunk))
   storage.wait()
-
-class MockTaskQueue():
-    def __init__(self, queue_name=''):
-        pass
-
-    def insert(self, task):
-        task.execute()
-        del task
-
-    def wait(self):
-      return self
-
-    def kill_threads(self):
-      return self
-
-    def __enter__(self):
-      return self
-
-    def __exit__(self, exception_type, exception_value, traceback):
-      pass
-
 
 def ingest_hdf5_example():
     dataset_path='gs://neuroglancer/test_v0'

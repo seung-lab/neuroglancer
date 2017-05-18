@@ -16,7 +16,7 @@ import numpy as np
 
 from neuroglancer.pipeline.secrets import google_credentials, PROJECT_NAME, QUEUE_NAME
 
-__all__ = ['RegisteredTask', 'TaskQueue']
+__all__ = ['RegisteredTask', 'TaskQueue', 'MockTaskQueue']
 
 registry = {}
 
@@ -294,4 +294,22 @@ class TaskQueue(object):
         self.wait()
         self.kill_threads()
 
+class MockTaskQueue():
+    def __init__(self, queue_name=''):
+        pass
 
+    def insert(self, task):
+        task.execute()
+        del task
+
+    def wait(self):
+      return self
+
+    def kill_threads(self):
+      return self
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exception_type, exception_value, traceback):
+      pass
