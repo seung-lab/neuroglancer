@@ -311,7 +311,7 @@ class CloudVolume(Volume):
 
     # bring this back later
     # compress = (self.layer_type == 'segmentation' and self.cache_files) # sometimes channel images are raw encoded too
-    with Storage(self.layer_cloudpath, n_threads=0) as storage:
+    with Storage(self.layer_cloudpath) as storage:
       files = storage.get_files(cloudpaths)
 
     for fileinfo in tqdm(files, total=len(cloudpaths), desc="Rendering Image"):
