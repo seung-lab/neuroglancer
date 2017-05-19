@@ -14,9 +14,9 @@ def create_compute_environment():
             'maxvCpus'          : 2048,
             'desiredvCpus'      : 0,
             'instanceTypes'     : [ 'p2.xlarge' ],
-            'imageId'           : 'ami-76c0ab60',
-            'subnets'           : ['subnet-fb3626a0',],
-            'securityGroupIds'  : ['sg-35753f4a',],
+            'imageId'           : 'ami-1bbdc60d',
+            'subnets'           : ['subnet-e5c90fbf',],
+            'securityGroupIds'  : ['sg-d5f2b1ab',],
             'ec2KeyPair'        : 'jpwu_workstation',
             'instanceRole'      : 'arn:aws:iam::098703261575:role/chunkflow-worker',
             # spot compute environment do not support tagging!
@@ -32,9 +32,9 @@ def create_compute_environment():
     resp = client.describe_compute_environments()
 
 
-def register_job_definition(queueName='s1-inference'):
+def register_job_definition(queueName='convnet-inference'):
     resp = client.register_job_definition(
-        jobDefinitionName               = queueName,
+        jobDefinitionName               = 'convnet-inference',
         type                            = 'container',
         parameters                      = {
             'queuename'                 : queueName,
@@ -43,7 +43,7 @@ def register_job_definition(queueName='s1-inference'):
             'waittime'                  : '5'
         },
         containerProperties             = {
-            'image'                     : '098703261575.dkr.ecr.us-east-1.amazonaws.com/chunkflow',
+            'image'                     : '098703261575.dkr.ecr.us-east-1.amazonaws.com/chunkflow:latest',
             'vcpus'                     : 2,
             'memory'                    : 30500,
             'command'                   : [
@@ -57,7 +57,7 @@ def register_job_definition(queueName='s1-inference'):
             'jobRoleArn'                : 'arn:aws:iam::098703261575:role/chunkflow-worker',
             'volumes'                   : [
                 {
-                    'host': {
+                    'host'              : {
                         'sourcePath'    : '/var/lib/nvidia-docker/volumes/nvidia_driver/latest'
                     },
                     'name'              : 'nvidia'
@@ -86,7 +86,7 @@ def register_job_definition(queueName='s1-inference'):
                     "containerPath": "/usr/local/nvidia",
                     "readOnly": False,
                     "sourceVolume": "nvidia"
-            	}
+            	}   
             ],
             'privileged'                : False,
             'ulimits'                   : [],
@@ -108,14 +108,15 @@ def create_job_queue():
             }
         ])
 
-def submit_job( jobDefinition = 's1-inference' ):
+def submit_job( jobName     = 'convnet-inference',
+                queueName   = 'convnet-inference'):
     resp = client.submit_job(
-        jobName         = 'convnet-inference',
+        jobName         = jobName,
         jobQueue        = 'convnet-inference',
-        jobDefinition   = jobDefinition,
+        jobDefinition   = 'convnet-inference',
         parameters      = {
-            'queuename'     : 's1-inference',
-            'processnumber' : '2',
+            'queuename'     : queueName,
+            'processnumber' : '1',
             'workernumber'  : '1',
             'waittime'      : '5'
         },
@@ -129,17 +130,26 @@ def submit_job( jobDefinition = 's1-inference' ):
                 "-w", "Ref::waittime"
             ],
             'vcpus'     : 2,
-            'memory'    : 30500
+            'memory'    : 20000
         },
         retryStrategy   = {'attempts' : 3})
+    print(resp)
+    return resp 
 
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--queuename", "-q", help = "AWS SQS queue name")
+    parser.add_argument("--queuename", "-q", 
+            default     = 'convnet-inference',
+            help = "AWS SQS queue name")
+    parser.add_argument("--jobname", "-j",
+            default = 'convnet-inference',
+            help = "name of this job")
     args = parser.parse_args()
-
+    
     #create_compute_environment()
     #create_job_queue( )
-    #register_job_definition( args.queuename )
-    submit_job( args.queuename )
+    register_job_definition( args.queuename )
+    submit_job( jobName     = args.jobname,
+                queueName   = args.queuename )
+    print('job {} submited to queue {}'.format(args.jobname, args.queuename))
