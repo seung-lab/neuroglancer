@@ -56,9 +56,11 @@ def test_read_write():
     shutil.rmtree("/tmp/removeme/read_write")
 
 def test_compression():
-    urls = ["file:///tmp/removeme/compression",
-            "gs://neuroglancer/removeme/compression",
-            "s3://neuroglancer/removeme/compression"]
+    urls = [  
+        "file:///tmp/removeme/compression",
+        "gs://neuroglancer/removeme/compression",
+        "s3://neuroglancer/removeme/compression"
+    ]
 
     for url in urls:
         with Storage(url, n_threads=5) as s:
@@ -68,8 +70,6 @@ def test_compression():
             assert s.get_file('info') == content
             assert s.get_file('nonexistentfile') is None
             s.delete_file('info')
-
-    shutil.rmtree("/tmp/removeme/compression")
 
 def test_list():  
     urls = ["file:///tmp/removeme/list",

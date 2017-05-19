@@ -9,19 +9,19 @@ import threading
 import time
 import signal
 from functools import partial
-import threading
 
 from glob import glob
 import google.cloud.exceptions
-from google.cloud.storage import Client
 import boto 
-from boto.s3.connection import S3Connection
 import gzip
 import numpy as np
 
 from neuroglancer.lib import mkdir
-from neuroglancer.pipeline.secrets import PROJECT_NAME, google_credentials_path, aws_credentials
 from neuroglancer.pipeline.threaded_queue import ThreadedQueue
+from neuroglancer.pipeline.connection_pool import S3ConnectionPool, GCloudConnectionPool
+
+S3_POOL = S3ConnectionPool()
+GC_POOL = GCloudConnectionPool()
 
 class Storage(ThreadedQueue):
     """
@@ -65,6 +65,9 @@ class Storage(ThreadedQueue):
 
     def _initialize_interface(self):
         return self._interface_cls(self._path)
+
+    def _close_interface(self, interface):
+        interface.release_connection()
 
     def _consume_queue(self, terminate_evt):
         super(Storage, self)._consume_queue(terminate_evt)
@@ -211,111 +214,6 @@ class Storage(ThreadedQueue):
         super(Storage, self).__exit__(exception_type, exception_value, traceback)
         self._interface.release_connection()
 
-class ConnectionPool(object):
-    """
-    This class is intended to be subclassed. See below.
-    
-    Creating fresh client or connection objects
-    for Google or Amazon eventually starts causing
-    breakdowns when too many connections open.
-    
-    To promote efficient resource use and prevent
-    containers from dying, we create a ConnectionPool
-    that allows for the creation of at most `max_connections`
-    connections.
-    
-    Storage interfaces may acquire and release connections 
-    when they need or finish using them. 
-    
-    If the limit is reached, additional requests for
-    acquiring connections will block until they can
-    be serviced.
-    
-    Optional:
-        max_connections: Set the max number of connections
-            for this connection pool.
-    """
-    def __init__(self, max_connections=60):
-        self.active_pool = []
-        self.inactive_pool = []
-        self.max_connections = max_connections
-
-        self._lock = threading.Lock()
-
-        signal.signal(signal.SIGINT, self.reset_pool)
-        signal.signal(signal.SIGTERM, self.reset_pool)
-
-    def total_connections(self):
-        return len(self.active_pool) + len(self.inactive_pool)
-
-    def _create_connection(self):
-        raise NotImplementedError
-
-    def get_connection(self):
-        with self._lock:
-            def _get_connection():
-                if len(self.inactive_pool):
-                    return self.inactive_pool.pop()
-                elif self.total_connections() < self.max_connections:
-                    return self._create_connection()
-                else:
-                    return None
-            
-            while True:
-                conn = _get_connection()
-                if conn is None:
-                    time.sleep(np.random.sample(1))
-                else:
-                    break
-            
-            self.active_pool.append(conn)
-        return conn
-
-    def release_connection(self, conn):
-        if conn is None:
-            return
-        
-        with self._lock:
-            self.active_pool.remove(conn)
-            self.inactive_pool.append(conn)
-
-    def _close_function(self):
-        return lambda x: x # no-op
-
-    def reset_pool(self):
-        closefn = self._close_function()
-        try:
-            map(closefn, self.active_pool)
-            map(closefn, self.inactive_pool)
-        except AttributeError:
-            pass # this happens on interpreter termination for s3
-
-        self.active_pool = []
-        self.inactive_pool = []
-
-    def __del__(self):
-        self.reset_pool()
-
-class S3ConnectionPool(ConnectionPool):
-    def _create_connection(self):
-        return S3Connection(
-            aws_credentials['AWS_ACCESS_KEY_ID'],
-            aws_credentials['AWS_SECRET_ACCESS_KEY']
-        )
-
-    def _close_function(self):
-        return lambda conn: conn.close()
-
-class GCloudConnectionPool(ConnectionPool):
-    def _create_connection(self):
-        return Client.from_service_account_json(
-            google_credentials_path,
-            project=PROJECT_NAME,
-        )
-
-S3_POOL = S3ConnectionPool()
-GC_POOL = GCloudConnectionPool()
-
 class FileInterface(object):
 
     def __init__(self, path):
@@ -386,7 +284,6 @@ class FileInterface(object):
 
 class GoogleCloudStorageInterface(object):
     def __init__(self, path):
-        global GC_POOL
         self._path = path
         self._client = None
         self._bucket = None
@@ -450,14 +347,12 @@ class GoogleCloudStorageInterface(object):
         self._bucket = self._client.get_bucket(self._path.bucket_name)
 
     def release_connection(self):
-        global GC_POOL
         GC_POOL.release_connection(self._client)
         self._client = None
 
 class S3Interface(object):
 
     def __init__(self, path):
-        global S3_POOL
         self._path = path
         self._conn = None
         self._bucket = None
@@ -518,6 +413,5 @@ class S3Interface(object):
         self._bucket = self._conn.get_bucket(self._path.bucket_name)
 
     def release_connection(self):
-        global S3_POOL
         S3_POOL.release_connection(self._conn)
         self._conn = None
