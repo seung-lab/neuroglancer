@@ -19,8 +19,7 @@ class ConnectionPool(object):
     
     To promote efficient resource use and prevent
     containers from dying, we create a ConnectionPool
-    that allows for the creation of at most `max_connections`
-    connections.
+    that allows for the reuse of connections.
     
     Storage interfaces may acquire and release connections 
     when they need or finish using them. 
@@ -28,14 +27,9 @@ class ConnectionPool(object):
     If the limit is reached, additional requests for
     acquiring connections will block until they can
     be serviced.
-    
-    Optional:
-        max_connections: Set the max number of connections
-            for this connection pool.
     """
     def __init__(self):
         self.pool = Queue.Queue(maxsize=0)
-        self.max_connections = max_connections
         self.outstanding = 0
         self._lock = threading.Lock()
 
