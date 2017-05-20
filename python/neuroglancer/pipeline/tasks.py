@@ -185,14 +185,21 @@ class MeshTask(RegisteredTask):
   def execute(self):
     self._mesher = Mesher()
 
-    self._volume = CloudVolume(self.layer_path, self.mip)
+    self._volume = CloudVolume(self.layer_path, self.mip, bounded=False)
     self._bounds = Bbox( self.offset, self.shape + self.offset )
     self._bounds = Bbox.clamp(self._bounds, self._volume.bounds)
+
+    # Marching cubes loves its 1vx overlaps. 
+    # This avoids lines appearing between 
+    # adjacent chunks.
+    data_bounds = self._bounds.clone()
+    data_bounds.minpt -= 1
+    data_bounds.maxpt += 1
     
     if 'mesh' not in self._volume.info:
       raise ValueError("The mesh destination is not present in the info file.")
 
-    self._data = self._volume[self._bounds.to_slices()] # chunk_position includes a 1 pixel overlap
+    self._data = self._volume[data_bounds.to_slices()] # chunk_position includes a 1 pixel overlap
     self._compute_meshes()
 
   def _compute_meshes(self):
