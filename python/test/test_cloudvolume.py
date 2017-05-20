@@ -133,27 +133,6 @@ def test_reader_negative_indexing():
     with pytest.raises(ValueError):
         img1 = cv[::-1, ::-1, ::-1, :]
 
-# def test_reader_grid_aligned():
-#     """indexing has to be grid aligned"""
-#     delete_layer()
-#     storage, data = create_layer(size=(128,64,64,1), offset=(0,0,0))
-#     pr = Precomputed(storage)
-#     assert [(0,64)] == pr._slice_to_chunks([slice(0,64)], slc_idx=0)
-#     assert [(64,128)] == pr._slice_to_chunks([slice(64,128)], slc_idx=0)
-    
-#     with pytest.raises(ValueError):
-#         pr._slice_to_chunks([slice(0,63)], slc_idx=0)
-
-#     with pytest.raises(ValueError):
-#         pr._slice_to_chunks([slice(0,63)], slc_idx=0)
-
-#     with pytest.raises(ValueError):
-#         pr._slice_to_chunks([slice(1,64)], slc_idx=0)
-
-#     with pytest.raises(ValueError):
-#         pr._slice_to_chunks([slice(63,128)], slc_idx=0)
-
-
 def test_setitem_mismatch():
     delete_layer()
     storage, data = create_layer(size=(64,64,64,1), offset=(0,0,0))
@@ -162,5 +141,30 @@ def test_setitem_mismatch():
     with pytest.raises(ValueError):
         cv[0:64,0:64,0:64] = np.zeros(shape=(5,5,5,1), dtype=np.uint8)
 
+def test_bounds():
+    delete_layer()
+    storage, data = create_layer(size=(128,64,64,1), offset=(100,100,100))
+    cv = CloudVolume(storage.layer_path, bounded=True)
+    try:
+        cutout = cv[0:,0:,0:,:]
+        cutout = cv[100:229,100:165,100:165,0]
+        cutout = cv[99:228,100:164,100:164,0]
+    except ValueError:
+        pass
+    else:
+        assert False
 
+    # don't die
+    cutout = cv[100:228,100:164,100:164,0]
 
+    cv.bounded = False
+    cutout = cv[0:,0:,0:,:]
+    assert cutout.shape == (228, 164, 164, 1)
+
+    assert np.count_nonzero(cutout) != 0
+
+    cutout[100:,100:,100:,:] = 0
+
+    assert np.count_nonzero(cutout) == 0
+
+    storage.kill_threads()

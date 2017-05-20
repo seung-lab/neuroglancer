@@ -24,7 +24,34 @@ class EmptyVolumeException(Exception):
     pass
 
 class CloudVolume(Volume):
-  def __init__(self, cloudpath, mip=0, info=None):
+  """
+  CloudVolume represents an interface to a dataset layer at a given
+  mip level. You can use it to send and receive data from neuroglancer
+  datasets on supported hosts like Google Storage, S3, and local Filesystems.
+
+  Required:
+    cloudpath: Path to the dataset layer. This should match storage's supported
+      providers.
+
+      e.g. Google: gs://neuroglancer/$DATASET/$LAYER/
+           S3    : s3://neuroglancer/$DATASET/$LAYER/
+           Lcl FS: file:///tmp/$DATASET/$LAYER/
+  Optional:
+    mip: (int) Which level of downsampling to read to/write from. 0 is the highest resolution.
+    bounded: (bool) If a region outside of volume bounds is accessed:
+        True: 
+          - Throw an error
+          - Negative indicies have the normal python meaning
+        False: 
+          - Fill the region with black (useful for e.g. marching cubes's 1px boundary)
+          - Negative indicies refer to cartesian space
+    fill_missing: (bool) If a file inside volume bounds is unable to be fetched:
+        True: Use a block of zeros
+        False: Throw an error
+    info: (dict) in lieu of fetching a neuroglancer info file, use this provided one.
+            This is useful when creating new datasets.
+  """
+  def __init__(self, cloudpath, mip=0, bounded=True, fill_missing=False, info=None):
     super(self.__class__, self).__init__()
 
     extract = CloudVolume.extract_path(cloudpath)
@@ -37,7 +64,8 @@ class CloudVolume(Volume):
     self._layer = extract.layer_name
 
     self.mip = mip
-    self.cache_files = False # keeping in case we revive it
+    self.bounded = bounded
+    self.fill_missing = fill_missing
 
     self._storage = Storage(self.layer_cloudpath, n_threads=0)
 
@@ -278,39 +306,43 @@ class CloudVolume(Volume):
     maxsize = list(self.bounds.maxpt) + [ self.num_channels ]
     minsize = list(self.bounds.minpt) + [ 0 ]
 
-    slices = generate_slices(slices, minsize, maxsize)
-
+    slices = generate_slices(slices, minsize, maxsize, bounded=self.bounded)
     channel_slice = slices.pop()
 
-    minpt = Vec3(*[ slc.start for slc in slices ]) * self.downsample_ratio
-    maxpt = Vec3(*[ slc.stop for slc in slices ]) * self.downsample_ratio
-    steps = Vec3(*[ slc.step for slc in slices ])
+    minpt = Vec(*[ slc.start for slc in slices ])
+    maxpt = Vec(*[ slc.stop for slc in slices ]) 
+    steps = Vec(*[ slc.step for slc in slices ])
 
-    savedir = os.path.join(lib.COMMON_STAGING_DIR, self._protocol, self.dataset_name, self.layer, str(self.mip))
+    requested_bbox = Bbox(minpt, maxpt)
+    cutout = self._cutout(requested_bbox, steps, channel_slice)
 
-    return self._cutout(
-      xmin=minpt.x, xmax=maxpt.x, xstep=steps.x,
-      ymin=minpt.y, ymax=maxpt.y, ystep=steps.y,
-      zmin=minpt.z, zmax=maxpt.z, zstep=steps.z,
-      channel_slice=channel_slice,
-      savedir=( savedir if self.cache_files else None ),
-    )
+    if self.bounded:
+      return cutout
+    elif cutout.bounds == requested_bbox:
+      return cutout
 
-  def _cutout(self, xmin, xmax, ymin, ymax, zmin, zmax, xstep=1, ystep=1, zstep=1, channel_slice=slice(None), savedir=None):
-    requested_bbox = Bbox(Vec3(xmin, ymin, zmin), Vec3(xmax, ymax, zmax)) / self.downsample_ratio
+    # This section below covers the case where the requested volume is bigger
+    # than the dataset volume and the bounds guards have been switched 
+    # off. This is useful for Marching Cubes where a 1px excess boundary
+    # is needed.
+    shape = list(requested_bbox.size3()) + [ cutout.shape[3] ]
+    renderbuffer = np.zeros(shape=shape, dtype=self.dtype)
+    lp = cutout.bounds.minpt - requested_bbox.minpt
+    hp = lp + cutout.bounds.size3()
+    renderbuffer[ lp.x:hp.x, lp.y:hp.y, lp.z:hp.z, : ] = cutout 
+    return VolumeCutout.from_volume(self, renderbuffer, requested_bbox)
+
+  def _cutout(self, requested_bbox, steps, channel_slice=slice(None)):
     realized_bbox = requested_bbox.expand_to_chunk_size(self.underlying, offset=self.voxel_offset)
     realized_bbox = Bbox.clamp(realized_bbox, self.bounds)
-
-    cloudpaths = self.__cloudpaths(realized_bbox, self.bounds, self.key, self.underlying)
 
     def multichannel_shape(bbox):
       shape = bbox.size3()
       return (shape[0], shape[1], shape[2], self.num_channels)
 
+    cloudpaths = self.__cloudpaths(realized_bbox, self.bounds, self.key, self.underlying)
     renderbuffer = np.zeros(shape=multichannel_shape(realized_bbox), dtype=self.dtype)
 
-    # bring this back later
-    # compress = (self.layer_type == 'segmentation' and self.cache_files) # sometimes channel images are raw encoded too
     with Storage(self.layer_cloudpath) as storage:
       files = storage.get_files(cloudpaths)
 
@@ -321,7 +353,7 @@ class CloudVolume(Volume):
       bbox = Bbox.from_filename(fileinfo['filename'])
       content_len = len(fileinfo['content']) if fileinfo['content'] is not None else 0
 
-      if content_len == 0:
+      if content_len == 0 and not self.fill_missing:
         raise EmptyVolumeException(fileinfo['filename'])
 
       try:
@@ -340,13 +372,12 @@ class CloudVolume(Volume):
 
       renderbuffer[ start.x:end.x, start.y:end.y, start.z:end.z, : ] = img3d[ :delta.x, :delta.y, :delta.z, : ]
 
-    requested_bbox = Bbox.clamp(requested_bbox, self.bounds)
-    lp = requested_bbox.minpt - realized_bbox.minpt # low realized point
-    hp = lp + requested_bbox.size3()
+    bounded_request = Bbox.clamp(requested_bbox, self.bounds)
+    lp = bounded_request.minpt - realized_bbox.minpt # low realized point
+    hp = lp + bounded_request.size3()
 
-    renderbuffer = renderbuffer[ lp.x:hp.x:xstep, lp.y:hp.y:ystep, lp.z:hp.z:zstep, channel_slice ] 
-
-    return VolumeCutout.from_volume(self, renderbuffer, realized_bbox)
+    renderbuffer = renderbuffer[ lp.x:hp.x:steps.x, lp.y:hp.y:steps.y, lp.z:hp.z:steps.z, channel_slice ] 
+    return VolumeCutout.from_volume(self, renderbuffer, bounded_request)
   
   def __setitem__(self, slices, img):
     imgshape = list(img.shape)
