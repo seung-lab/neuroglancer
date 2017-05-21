@@ -52,7 +52,7 @@ export class EquivalencesHashMap {
       }
     }
   }
-};
+}
 
 export interface SliceViewSegmentationDisplayState extends SegmentationDisplayState {
   selectedAlpha: TrackableAlphaValue;

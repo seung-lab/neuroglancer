@@ -47,7 +47,7 @@ export class HttpError extends Error {
     return new HttpError(
         (<any>xhr)[METHOD_SYMBOL], (<any>xhr)[URL_SYMBOL], xhr.status, xhr.statusText);
   }
-};
+}
 
 export function openHttpRequest(url: string, method = 'GET') {
   let xhr = new XMLHttpRequest();

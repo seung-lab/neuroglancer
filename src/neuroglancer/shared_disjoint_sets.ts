@@ -100,11 +100,17 @@ export class SharedDisjointUint64Sets extends SharedObjectCounterpart {
     }
   }
 
-  setElements(a: Uint64) { return this.disjointSets.setElements(a); }
+  setElements(a: Uint64) {
+    return this.disjointSets.setElements(a);
+  }
 
-  get size() { return this.disjointSets.size; }
+  get size() {
+    return this.disjointSets.size;
+  }
 
-  toJSON() { return this.disjointSets.toJSON(); }
+  toJSON() {
+    return this.disjointSets.toJSON();
+  }
 
   addSets(obj: any) {
     if (obj !== undefined) {

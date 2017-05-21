@@ -22,6 +22,7 @@ import {ChunkDecoder} from 'neuroglancer/sliceview/backend_chunk_decoders';
 import {decodeJpegChunk} from 'neuroglancer/sliceview/backend_chunk_decoders/jpeg';
 import {decodeNdstoreNpzChunk} from 'neuroglancer/sliceview/backend_chunk_decoders/ndstoreNpz';
 import {decodeRawChunk} from 'neuroglancer/sliceview/backend_chunk_decoders/raw';
+import {ParameterizedVolumeChunkSource, VolumeChunk} from 'neuroglancer/sliceview/volume/backend';
 import {CancellationToken} from 'neuroglancer/util/cancellation';
 import {DATA_TYPE_BYTES} from 'neuroglancer/util/data_type';
 import {convertEndian16, convertEndian32, Endianness} from 'neuroglancer/util/endian';
@@ -96,21 +97,22 @@ function decodeSkeletonChunk(
     const totalBytes = bytesPerVertex * numVertices;
     const attribute = new Uint8Array(response, curOffset, totalBytes);
     switch (bytesPerVertex) {
-    case 2:
-      convertEndian16(attribute, Endianness.LITTLE);
-      break;
-    case 4:
-    case 8:
-      convertEndian32(attribute, Endianness.LITTLE);
-      break;
+      case 2:
+        convertEndian16(attribute, Endianness.LITTLE);
+        break;
+      case 4:
+      case 8:
+        convertEndian32(attribute, Endianness.LITTLE);
+        break;
     }
     attributes.push(attribute);
     curOffset += totalBytes;
   }
   chunk.vertexAttributes = attributes;
   decodeSkeletonVertexPositionsAndIndices(
-      chunk, response, Endianness.LITTLE, /*vertexByteOffset=*/vertexPositionsStartOffset, numVertices,
-    /*indexByteOffset=*/curOffset, /*numEdges=*/numEdges);
+      chunk, response, Endianness.LITTLE, /*vertexByteOffset=*/vertexPositionsStartOffset,
+      numVertices,
+      /*indexByteOffset=*/curOffset, /*numEdges=*/numEdges);
 }
 
 @registerChunkSource(SkeletonSourceParameters)

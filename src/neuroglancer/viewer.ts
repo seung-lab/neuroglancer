@@ -102,8 +102,12 @@ export class Viewer extends RefCounted implements ViewerState {
 
     this.options = {...defaultViewerOptions, ...options};
 
-    this.registerDisposer(display.updateStarted.add(() => { this.onUpdateDisplay(); }));
-    this.registerDisposer(display.updateFinished.add(() => { this.onUpdateDisplayFinished(); }));
+    this.registerDisposer(display.updateStarted.add(() => {
+      this.onUpdateDisplay();
+    }));
+    this.registerDisposer(display.updateFinished.add(() => {
+      this.onUpdateDisplayFinished();
+    }));
 
     const {state} = this;
     state.add('layers', this.layerSpecification);
@@ -149,10 +153,13 @@ export class Viewer extends RefCounted implements ViewerState {
     this.layerManager.layersChanged.add(maybeResetState);
     maybeResetState();
 
-    this.registerDisposer(this.chunkQueueManager.visibleChunksChanged.add(
-        () => { this.layerSelectedValues.handleLayerChange(); }));
+    this.registerDisposer(this.chunkQueueManager.visibleChunksChanged.add(() => {
+      this.layerSelectedValues.handleLayerChange();
+    }));
 
-    this.chunkQueueManager.visibleChunksChanged.add(() => { display.scheduleRedraw(); });
+    this.chunkQueueManager.visibleChunksChanged.add(() => {
+      display.scheduleRedraw();
+    });
 
     this.makeUI();
 
@@ -168,8 +175,12 @@ export class Viewer extends RefCounted implements ViewerState {
     });
 
     let {keyCommands} = this;
-    keyCommands.set('toggle-layout', function() { this.toggleLayout(); });
-    keyCommands.set('snap', function() { this.navigationState.pose.snap(); });
+    keyCommands.set('toggle-layout', function() {
+      this.toggleLayout();
+    });
+    keyCommands.set('snap', function() {
+      this.navigationState.pose.snap();
+    });
     keyCommands.set('add-layer', function() {
       this.layerPanel.addLayerMenu();
       return true;
@@ -236,18 +247,23 @@ export class Viewer extends RefCounted implements ViewerState {
           button.textContent = '?';
           button.title = 'Help';
           element.appendChild(button);
-          this.registerEventListener(button, 'click', () => { this.showHelpDialog(); });
+          this.registerEventListener(button, 'click', () => {
+            this.showHelpDialog();
+          });
         });
       }
       uiElements.push(L.box('row', rowElements));
     }
 
     if (options.showLayerPanel) {
-      uiElements.push(
-          element => { this.layerPanel = new LayerPanel(element, this.layerSpecification); });
+      uiElements.push(element => {
+        this.layerPanel = new LayerPanel(element, this.layerSpecification);
+      });
     }
 
-    uiElements.push(L.withFlex(1, element => { this.createDataDisplayLayout(element); }));
+    uiElements.push(L.withFlex(1, element => {
+      this.createDataDisplayLayout(element);
+    }));
 
     L.box('column', uiElements)(gridContainer);
     this.display.onResize();
@@ -265,15 +281,21 @@ export class Viewer extends RefCounted implements ViewerState {
     this.layoutName.value = newLayout[0];
   }
 
-  showHelpDialog() { new KeyBindingHelpDialog(this.keyMap); }
+  showHelpDialog() {
+    new KeyBindingHelpDialog(this.keyMap);
+  }
 
-  get gl() { return this.display.gl; }
+  get gl() {
+    return this.display.gl;
+  }
 
   onUpdateDisplay() {
     this.chunkQueueManager.chunkUpdateDeadline = null;
   }
 
-  onUpdateDisplayFinished() { this.mouseState.updateIfStale(); }
+  onUpdateDisplayFinished() {
+    this.mouseState.updateIfStale();
+  }
 
   private onKeyCommand(action: string) {
     let command = this.keyCommands.get(action);
