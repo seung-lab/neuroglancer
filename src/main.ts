@@ -27,5 +27,5 @@ import {bindDefaultCopyHandler, bindDefaultPasteHandler} from 'neuroglancer/ui/d
 import {UrlHashBinding} from 'neuroglancer/ui/url_hash_binding';
 
 window.addEventListener('DOMContentLoaded', () => {
-  const viewer = setupDefaultViewer();
+  setupDefaultViewer();
 });
