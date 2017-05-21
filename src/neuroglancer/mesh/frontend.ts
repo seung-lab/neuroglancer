@@ -118,7 +118,7 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
       'source': source.addCounterpartRef(),
     });
     this.setReady(true);
-    this.visibilityCount.addDependency(sharedObject.visibilityCount);
+    sharedObject.visibility.add(this.visibility);
   }
 
   private getShader(emitter: ShaderModule) {
@@ -255,7 +255,7 @@ export class FragmentChunk extends Chunk {
 }
 
 export abstract class MeshSource extends ChunkSource {
-  fragmentSource = new FragmentSource(this.chunkManager, this);
+  fragmentSource = this.registerDisposer(new FragmentSource(this.chunkManager, this));
   initializeCounterpart(rpc: RPC, options: any) {
     this.fragmentSource.initializeCounterpart(this.chunkManager.rpc!, {});
     options['fragmentSource'] = this.fragmentSource.addCounterpartRef();

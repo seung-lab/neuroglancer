@@ -36,7 +36,9 @@ import {globalKeyboardHandlerStack, KeySequenceMap} from 'neuroglancer/util/keyb
 import {NullarySignal} from 'neuroglancer/util/signal';
 import {CompoundTrackable} from 'neuroglancer/util/trackable';
 import {DataDisplayLayout, LAYOUTS} from 'neuroglancer/viewer_layouts';
-import {ViewerState} from 'neuroglancer/viewer_state';
+import {ViewerState, VisibilityPrioritySpecification} from 'neuroglancer/viewer_state';
+import {WatchableVisibilityPriority} from 'neuroglancer/visibility_priority/frontend';
+import {GL} from 'neuroglancer/webgl/context';
 import {RPC} from 'neuroglancer/worker_rpc';
 import {Signal} from 'signals';
 import {StatusMessage} from 'neuroglancer/status';
@@ -76,20 +78,18 @@ export class Viewer extends RefCounted implements ViewerState {
   layerPanel: LayerPanel;
   layerSelectedValues =
       this.registerDisposer(new LayerSelectedValues(this.layerManager, this.mouseState));
-  worker = new RPC(new Worker('chunk_worker.bundle.js'));
   resetInitiated = new NullarySignal();
 
-  chunkQueueManager = new ChunkQueueManager(this.worker, this.display.gl, {
-    gpuMemory: new AvailableCapacity(1e6, 1e9),
-    systemMemory: new AvailableCapacity(1e7, 2e9),
-    download: new AvailableCapacity(32, Number.POSITIVE_INFINITY)
-  });
-  chunkManager = new ChunkManager(this.chunkQueueManager);
+  get chunkManager() {
+    return this.dataContext.chunkManager;
+  }
+  get chunkQueueManager() {
+    return this.dataContext.chunkQueueManager;
+  }
+
   keyMap = new KeySequenceMap();
   keyCommands = new Map<string, (this: Viewer) => void>();
-  layerSpecification = new LayerListSpecification(
-      this.layerManager, this.chunkManager, this.worker, this.layerSelectedValues,
-      this.navigationState.voxelSize);
+  layerSpecification: LayerListSpecification;
   layoutName = new TrackableValue<string>(LAYOUTS[0][0], validateLayoutName);
   stateServer = new TrackableValue<string>(this.stateServerURL, validateStateServer);
 
@@ -97,10 +97,28 @@ export class Viewer extends RefCounted implements ViewerState {
 
   private options: ViewerOptions;
 
-  constructor(public display: DisplayContext, options: ViewerOptions = {}) {
+  get dataContext() {
+    return this.options.dataContext;
+  }
+  get visibility() {
+    return this.options.visibility;
+  }
+
+  visible = true;
+
+  constructor(public display: DisplayContext, options: Partial<ViewerOptions> = {}) {
     super();
 
-    this.options = {...defaultViewerOptions, ...options};
+    const {
+      dataContext = new DataManagementContext(display.gl),
+      visibility = new WatchableVisibilityPriority(WatchableVisibilityPriority.VISIBLE),
+    } = options;
+
+    this.options = {...defaultViewerOptions, ...options, dataContext, visibility};
+
+    this.layerSpecification = new LayerListSpecification(
+        this.layerManager, this.chunkManager, this.layerSelectedValues,
+        this.navigationState.voxelSize);
 
     this.registerDisposer(display.updateStarted.add(() => {
       this.onUpdateDisplay();
@@ -153,18 +171,17 @@ export class Viewer extends RefCounted implements ViewerState {
     this.layerManager.layersChanged.add(maybeResetState);
     maybeResetState();
 
-    this.registerDisposer(this.chunkQueueManager.visibleChunksChanged.add(() => {
+    this.registerDisposer(this.dataContext.chunkQueueManager.visibleChunksChanged.add(() => {
       this.layerSelectedValues.handleLayerChange();
     }));
 
-    this.chunkQueueManager.visibleChunksChanged.add(() => {
-      display.scheduleRedraw();
-    });
+    this.registerDisposer(this.dataContext.chunkQueueManager.visibleChunksChanged.add(() => {
+      if (this.visible) {
+        display.scheduleRedraw();
+      }
+    }));
 
     this.makeUI();
-
-    this.registerDisposer(
-        globalKeyboardHandlerStack.push(this.keyMap, this.onKeyCommand.bind(this)));
 
     this.layoutName.changed.add(() => {
       if (this.dataDisplayLayout !== undefined) {
@@ -267,6 +284,37 @@ export class Viewer extends RefCounted implements ViewerState {
 
     L.box('column', uiElements)(gridContainer);
     this.display.onResize();
+
+    let keyboardHandlerDisposer: (() => void)|undefined;
+
+    const updateVisibility = () => {
+      const shouldBeVisible = this.visibility.visible;
+      if (shouldBeVisible) {
+        if (keyboardHandlerDisposer === undefined) {
+          keyboardHandlerDisposer =
+              globalKeyboardHandlerStack.push(this.keyMap, this.onKeyCommand.bind(this));
+        }
+        if (!this.visible) {
+          gridContainer.style.visibility = 'inherit';
+        }
+      } else if (!shouldBeVisible && this.visible) {
+        if (keyboardHandlerDisposer !== undefined) {
+          keyboardHandlerDisposer!();
+          keyboardHandlerDisposer = undefined;
+        }
+        if (this.visible) {
+          gridContainer.style.visibility = 'hidden';
+        }
+      }
+      this.visible = shouldBeVisible;
+    };
+    updateVisibility();
+    this.registerDisposer(() => {
+      if (keyboardHandlerDisposer !== undefined) {
+        keyboardHandlerDisposer();
+      }
+    });
+    this.registerDisposer(this.visibility.changed.add(updateVisibility));
   }
 
   createDataDisplayLayout(element: HTMLElement) {
@@ -290,11 +338,15 @@ export class Viewer extends RefCounted implements ViewerState {
   }
 
   onUpdateDisplay() {
-    this.chunkQueueManager.chunkUpdateDeadline = null;
+    if (this.visible) {
+      this.dataContext.chunkQueueManager.chunkUpdateDeadline = null;
+    }
   }
 
   onUpdateDisplayFinished() {
-    this.mouseState.updateIfStale();
+    if (this.visible) {
+      this.mouseState.updateIfStale();
+    }
   }
 
   private onKeyCommand(action: string) {
@@ -310,9 +362,11 @@ export class Viewer extends RefCounted implements ViewerState {
   }
 
   private handleNavigationStateChanged() {
-    let {chunkQueueManager} = this;
-    if (chunkQueueManager.chunkUpdateDeadline === null) {
-      chunkQueueManager.chunkUpdateDeadline = Date.now() + 10;
+    if (this.visible) {
+      let {chunkQueueManager} = this.dataContext;
+      if (chunkQueueManager.chunkUpdateDeadline === null) {
+        chunkQueueManager.chunkUpdateDeadline = Date.now() + 10;
+      }
     }
     this.mouseState.stale = true;
   }
