@@ -24,16 +24,16 @@ params = {
 'CENTRAL_CROP': 0.33333,
 'VISITED_CROP': 0.33333,
 'ERRORS_CROP': 0.15,
-'N_EPOCHS': 1,
+'N_EPOCHS': 4,
 'N_STEPS': 30000,
 'GLOBAL_EXPAND': False,
-'ERROR_THRESHOLD': 0.25,
+'ERROR_THRESHOLD': 0.2,
 'COST_BENEFIT_RATIO': 0.5,
 'PARENT': "",
 'RANDOMIZE_BATCH': 100,
 'SPARSE_VECTOR_LABELS_MODEL': os.path.realpath(os.path.expanduser("~/experiments/sparse_vector_labels/latest.ckpt")),
 'DISCRIMINATE3_MODEL': os.path.realpath(os.path.expanduser("~/experiments/discriminate3/latest.ckpt")),
-'HEIGHT_MAP_THRESHOLD': 0.1,
+'HEIGHT_MAP_THRESHOLD': None,
 'HEIGHT_MAP': "height_map_1.h5",
 }
 print(params)
@@ -281,7 +281,7 @@ def recompute_errors(V):
 	pass_visited = 2*(1 - V.changed)
  	samples = np.array(filter(lambda i: V.changed[i[0],i[1],i[2]]>0, V.samples))
 
-	packed = map(reconstruct_utils.pack,[V.image[:], V.machine_labels, samples, pass_errors, pass_visited])
+	packed = map(reconstruct_utils.pack,[V.image, V.thickened_machine_labels, samples, pass_errors, pass_visited])
 	V.errors = reconstruct_utils.unpack(reconstruct_utils.discrim_daemon(*packed))
 	toc("done recomputing errors")
 
@@ -307,6 +307,7 @@ def reconstruct_volume(V, dry_run = False, analyze_run = False, logdir=None, ret
 		df_examples=pd.DataFrame([],columns=[])
 
 	V.full_size = V.image.shape
+	V.image = V.image[:]
 	V.errors = V.errors[:]
 	V.samples = V.samples[:]
 	V.edges = V.edges[:]
@@ -319,7 +320,7 @@ def reconstruct_volume(V, dry_run = False, analyze_run = False, logdir=None, ret
 	V.full_G = regiongraphs.make_graph(V.vertices, V.full_edges)
 	V.changed_list = []
 	if HEIGHT_MAP_THRESHOLD is None:
-		V.thickened_raw_labels = raw
+		V.thickened_raw_labels = V.raw_labels
 	else:
 		V.thickened_raw_labels = V.raw_labels * (V.height_map > HEIGHT_MAP_THRESHOLD).astype(np.int32)
 	close=lambda x,y: V.full_G.has_edge(x,y)
@@ -417,6 +418,10 @@ def reconstruct_volume(V, dry_run = False, analyze_run = False, logdir=None, ret
 			h5write(os.path.join(logdir,"epoch"+str(epoch)+"_edges.h5"), V.G.edges())
 			h5write(os.path.join(logdir,"epoch"+str(epoch)+"_changed_list.h5"), np.concatenate(V.changed_list+[np.zeros((0,3))],axis=0))
 			V.machine_labels = flatten(V.G,V.raw_labels)
+			if HEIGHT_MAP_THRESHOLD is None:
+				V.thickened_machine_labels = V.machine_labels
+			else:
+				V.thickened_machine_labels = V.machine_labels * (V.height_map > HEIGHT_MAP_THRESHOLD).astype(np.int32)
 			h5write(os.path.join(logdir,"epoch"+str(epoch)+"_machine_labels.h5"), V.machine_labels)
 		recompute_errors(V)
 		if logdir is not None:
@@ -443,9 +448,9 @@ def reconstruct_wrapper(image, errors, watershed, height_map, samples, vertices,
 	return reconstruct_volume(V,dry_run=False,analyze_run=False, logdir=None, return_errors=return_errors)
 
 if __name__ == "__main__":
-	#basename = sys.argv[1]
+	basename = sys.argv[1]
 	#basename=os.path.expanduser("/mnt/data01/jzung/pinky40_test")
-	basename=os.path.expanduser("/mnt/data01/jzung/12288-14336_8192-10240_1-257")
+	#basename=os.path.expanduser("/mnt/data01/jzung/12288-14336_8192-10240_1-257")
 	#basename=os.path.expanduser("~/mydatasets/3_3_1")
 	#basename=os.path.expanduser("~/mydatasets/2_3_1")
 	#basename=os.path.expanduser("~/mydatasets/golden")
@@ -464,15 +469,16 @@ if __name__ == "__main__":
 			 "valid": set([]),
 			 #"glial": set([30437,8343897,4322435,125946,8244754,4251447,8355342,5551,4346675,8256784,118018,8257243,20701,2391,4320,8271859,4250078]),
 			 #"glial": set([2]),
-			 "glial": "glial.h5",
 			 #"glial": "glial.h5",
-			 #"glial": set([]),
-			 "dendrite": "dendrite.h5",
+			 #"glial": "../glial.h5",
+			 "glial": [],
+			 "dendrite": [],
+			 #"dendrite": "../dendrite.h5",
 			 "axon": set([]),
 			 "samples": "samples.h5",
 			 })
 	print("done")
 	date = datetime.now().strftime("%j-%H-%M-%S")
-	reconstruct_volume(V,dry_run=False,analyze_run=False, logdir=os.path.join(basename,date))
-	#edges = h5write(os.path.join(basename,"revised_edges.h5"),reconstruct_volume(V))
+	revised_edges = reconstruct_volume(V,dry_run=False,analyze_run=False, logdir=os.path.join(basename,date))
+	h5write(os.path.join(basename,"revised_edges.h5"),revised_edges)
 
