@@ -264,6 +264,10 @@ class CloudVolume(Volume):
       slice(lower.z, upper.z, step.z)
     ]
 
+  def reset_scales(self):
+    self.info['scales'] = self.info['scales'][0:1]
+    return self.commitInfo()
+
   def addScale(self, factor):
     # e.g. {"encoding": "raw", "chunk_sizes": [[64, 64, 64]], "key": "4_4_40", 
     # "resolution": [4, 4, 40], "voxel_offset": [0, 0, 0], 
@@ -437,8 +441,12 @@ class CloudVolume(Volume):
 
     bounds = Bbox( offset, shape + offset)
 
-    if not np.all(bounds.round_to_chunk_size(self.underlying, self.voxel_offset).minpt == bounds.minpt):
-      raise ValueError('Only grid aligned writes are currently supported. Got: {}, Volume Offset: {}'.format(bounds, self.voxel_offset))
+    alignment_check = bounds.round_to_chunk_size(self.underlying, self.voxel_offset)
+
+    if not np.all(alignment_check.minpt == bounds.minpt):
+      raise ValueError('Only grid aligned writes are currently supported. Got: {}, Volume Offset: {}, Alignment Check: {}'.format(
+        bounds, self.voxel_offset, alignment_check)
+      )
 
     bounds = Bbox.clamp(bounds, self.bounds)
 

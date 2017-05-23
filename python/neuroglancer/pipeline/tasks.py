@@ -90,19 +90,20 @@ class DownsampleTask(RegisteredTask):
     self.downsample(vol, image)
 
   def downsample(self, vol, image):
-
-    shape = min2(Vec(*image.shape[:3]), self._bounds.size3())
+    ds_shape = min2(self._volume.volume_size, self.shape)
 
     # need to use self.shape here. shape or self._bounds means edges won't generate as many mip levels
     fullscales = downsample_scales.compute_plane_downsampling_scales(
-      size=self.shape, 
+      size=ds_shape, 
       preserve_axis=self.axis, 
-      max_downsampled_size=(min(*vol.underlying) * 2),
+      max_downsampled_size=(min(*vol.underlying) * 2), # bug, the preserved axis should be handled
     )
     factors = downsample.scale_series_to_downsample_factors(fullscales)
 
     if len(factors) == 0:
-      print("No factors generated for shape: {}, image: {}".format(self.shape, shape))
+      print("No factors generated. Image Shape: {}, Downsample Shape: {}, Volume Shape: {}, Bounds: {}".format(
+        image.shape, ds_shape, self._volume.volume_size, self._bounds)
+      )
 
     downsamplefn = downsample.method(vol.layer_type)
 

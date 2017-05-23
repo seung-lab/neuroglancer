@@ -130,7 +130,7 @@ def create_downsample_scales(layer_path, mip, ds_shape, axis='z'):
   scales = downsample_scales.compute_plane_downsampling_scales(
     size=shape, 
     preserve_axis=axis, 
-    max_downsampled_size=(min(*vol.underlying) * 2),
+    max_downsampled_size=(min(*vol.underlying) * 2), # bug, the preserved axis should be handled
   )
   scales = scales[1:] # omit (1,1,1)
   scales = [ vol.downsample_ratio * Vec(*factor3) for factor3 in scales ]
