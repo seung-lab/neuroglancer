@@ -277,9 +277,11 @@ class CloudVolume(Volume):
     #    the mip 2 will have an offset of 2 instead of 2.5 
     #        meaning that it will be half a pixel to the left
     
+    chunk_size = lib.find_closest_divisor(fullres['chunk_sizes'][0], closest_to=[64,64,64])
+
     newscale = {
       u"encoding": fullres['encoding'],
-      u"chunk_sizes": [[64,64,64]],
+      u"chunk_sizes": [ chunk_size ],
       u"resolution": list( Vec3(*fullres['resolution']) * factor ),
       u"voxel_offset": list(np.ceil(Vec3(*fullres['voxel_offset']) / Vec3(*factor)).astype(int) ),
       u"size": list(np.ceil(Vec3(*fullres['size']) / Vec3(*factor)).astype(int)),

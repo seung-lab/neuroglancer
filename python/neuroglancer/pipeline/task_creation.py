@@ -12,7 +12,7 @@ import numpy as np
 from tqdm import tqdm
 
 from neuroglancer import downsample_scales, chunks
-from neuroglancer.lib import Vec, Bbox, max2, min2, xyzrange
+from neuroglancer.lib import Vec, Bbox, max2, min2, xyzrange, find_closest_divisor
 from neuroglancer.pipeline import Storage, TaskQueue, MockTaskQueue
 from neuroglancer.pipeline.tasks import (BigArrayTask, IngestTask,
      HyperSquareTask, MeshTask, MeshManifestTask, DownsampleTask, 
@@ -121,24 +121,6 @@ def create_info_file_from_build(layer_path, layer_type, resolution, encoding):
   vol.commitInfo()
   
   return vol.info
-
-def find_closest_divisor(to_divide, closest_to):
-    def find_closest(td,ct):
-        min_distance = td
-        best = td
-        for x in divisors(td):
-            if abs(x-ct) < min_distance:
-                min_distance = abs(x-ct)
-                best = x
-        return best
-    return [find_closest(td,ct) for td, ct in zip(to_divide,closest_to)]
-
-def divisors(n):
-    for i in xrange(1, int(math.sqrt(n) + 1)):
-        if n % i == 0:
-            yield i
-            if i*i != n:
-                yield n / i
 
 def create_downsample_scales(layer_path, mip, ds_shape, axis='z'):
   vol = CloudVolume(layer_path, mip)
