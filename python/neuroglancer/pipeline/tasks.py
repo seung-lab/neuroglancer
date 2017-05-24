@@ -196,8 +196,14 @@ class MeshTask(RegisteredTask):
     data_bounds = self._bounds.clone()
     data_bounds.minpt -= 1
     data_bounds.maxpt += 1
+
+    self._mesh_dir = None
+    if 'meshing' in self._volume.info:
+      self._mesh_dir = self._volume.info['meshing']
+    elif 'mesh' in self._volume.info:
+      self._mesh_dir = self._volume.info['mesh']
     
-    if 'mesh' not in self._volume.info:
+    if not self._mesh_dir:
       raise ValueError("The mesh destination is not present in the info file.")
 
     self._data = self._volume[data_bounds.to_slices()] # chunk_position includes a 1 pixel overlap
@@ -209,7 +215,7 @@ class MeshTask(RegisteredTask):
       self._mesher.mesh(data.flatten(), *data.shape[:3])
       for obj_id in self._mesher.ids():
         storage.put_file(
-          file_path='{}/{}:{}:{}'.format(self._volume.info['mesh'], obj_id, self.lod, self._bounds.to_filename()),
+          file_path='{}/{}:{}:{}'.format(self._mesh_dir, obj_id, self.lod, self._bounds.to_filename()),
           content=self._create_mesh(obj_id),
           compress=True,
         )
