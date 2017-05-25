@@ -23,5 +23,6 @@ ENV PATH /google-cloud-sdk/bin:$PATH
 ADD ./ /root/python
 RUN pip install -r /root/python/requirements.txt
 RUN cd /root/python && python setup.py install
-RUN cd /root/python/neuroglancer/ingest && make
+# RUN cd /root/python/neuroglancer/ingest && make
+RUN cp /root/python/neuroglancer/ingest/linux_mesher.so /root/python/neuroglancer/ingest/mesher.so
 CMD cd /root/python/ && python -m neuroglancer.pipeline.task_execution
