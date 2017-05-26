@@ -5,6 +5,7 @@ import itertools
 import io
 import os
 import re
+from cStringIO import StringIO
 from tempfile import NamedTemporaryFile
 
 import h5py
@@ -14,7 +15,7 @@ from backports import lzma
 from tqdm import tqdm
 
 from neuroglancer import chunks, downsample, downsample_scales
-from neuroglancer.lib import xyzrange, min2, max2, Vec, Bbox 
+from neuroglancer.lib import xyzrange, min2, max2, Vec, Bbox, mkdir 
 from neuroglancer.pipeline import Storage, Precomputed, RegisteredTask
 from neuroglancer.pipeline.volumes import CloudVolume
 from neuroglancer.ingest.mesher import Mesher
@@ -501,8 +502,77 @@ class TransferTask(RegisteredTask):
     destcv[ bounds.to_slices() ] = srccv[ bounds.to_slices() ]
 
 
+class WatershedRemapTask(RegisteredTask):
+    """
+    Take raw watershed output and using a remapping file,
+    generate an aggregated segmentation. 
 
+    The remap array is a key:value mapping where the 
+    array index is the key and the value is the contents.
 
+    You can find a script to convert h5 remap files into npy
+    files in pipeline/scripts/remap2npy.py
 
+    Required:
+        map_path: path to remap file. Must be in npy or npz format.
+        src_path: path to watershed layer
+        dest_path: path to new layer
+        shape: size of volume to remap
+        offset: voxel offset into dataset
+    """
+    def __init__(self, map_path, src_path, dest_path, shape, offset):
+        super(self.__class__, self).__init__(map_path, src_path, dest_path, shape, offset)
+        self.map_path = map_path
+        self.src_path = src_path
+        self.dest_path = dest_path
+        self.shape = Vec(*shape)
+        self.offset = Vec(*offset)        
 
+    def execute(self):
+        srccv = CloudVolume(self.src_path)
+        destcv = CloudVolume(self.dest_path)
+
+        bounds = Bbox( self.offset, self.shape + self.offset )
+        bounds = Bbox.clamp(bounds, srccv.bounds)
+
+        remap = self._get_map()
+        watershed_data = srccv[ bounds.to_slices() ]
+
+        # Here's how the remapping works. Numpy has a special
+        # indexing that can be used to perform the remap.
+        # The remap array is a key:value mapping where the 
+        # array index is the key and the value is the contents.
+        # The watershed_data array contains only data values that
+        # are within the length of the remap array.
+        #
+        # e.g. 
+        #
+        # remap = np.array([1,2,3]) # i.e. 0=>1, 1=>2, 1=>3
+        # vals = np.array([0,1,1,1,2,0,2,1,2])
+        #
+        # remap[vals] # array([1, 2, 2, 2, 3, 1, 3, 2, 3])
+
+        destcv[ bounds.to_slices() ] = remap[watershed_data]
+
+    def _get_map(self):
+        layer_path, filename = os.path.split(self.map_path)
+
+        classname = self.__class__.__name__
+        lcldir = mkdir(os.path.join('/tmp/', classname))
+        lclpath = os.path.join(lcldir, filename)
+
+        if os.path.exists(lclpath):
+            npy_map_file = open(lclpath, 'rb')
+        else:
+            with Storage(layer_path, n_threads=0) as stor:
+                rawfilestr = stor.get_file(filename)
+
+            with open(lclpath, 'wb') as f:
+                f.write(rawfilestr)
+
+            npy_map_file = StringIO(rawfilestr)
+
+        remap = np.load(npy_map_file)
+        npy_map_file.close()
+        return remap
 

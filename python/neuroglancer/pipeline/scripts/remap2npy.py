@@ -17,6 +17,9 @@ with h5py.File(in_file,'r') as f:
 
 print arr.shape, arr.dtype
 
+# These remap files are often created by julia or
+# matlab which assume 1-indexing. Add a new index
+# at 0 to realign with python's 0-indexing. 
 arr = np.concatenate( (np.array([0]), arr) )
 arr = arr.astype(np.uint32)
 
