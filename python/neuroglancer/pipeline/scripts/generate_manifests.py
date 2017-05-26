@@ -1,3 +1,21 @@
+#!/usr/bin/python
+
+"""
+This script is an alternative to deploying a cloud task.
+The first step is to download the mesh files:
+
+gsutil ls gs://neuroglancer/DATASET/LAYER/mesh/ > DATASET.txt
+
+Then you run this script:
+
+python generate_manifests.py DATASET
+
+You can probably do this faster in the cloud, but if you 
+want to keep things simple, you can process Pinky40_v11 
+in a few hrs or s1_v0.1 in an hour when they are meshed
+at a near isotropic mip level.
+"""
+
 from tqdm import tqdm
 import os
 import re
