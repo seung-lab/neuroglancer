@@ -219,8 +219,26 @@ class DiscriminateTask(RegisteredTask):
                 f.write(s.get_file(file_path))
 
 
+def parse_chunk_position(chunk_position):
+    match = re.match(r'^(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)$', chunk_position)
+    (_xmin, _xmax,
+     _ymin, _ymax,
+     _zmin, _zmax) = map(int, match.groups())
+    return (slice(_xmin, _xmax),
+                          slice(_ymin, _ymax),
+                          slice(_zmin, _zmax))
+
+def range_intersects(s1,s2):
+    return not (s1.stop < s2.start or s2.stop < s1.start)
+
+def intersects(bbox_1, bbox_2):
+    s1,s2,s3 = parse_chunk_position(bbox_1)
+    t1,t2,t3 = parse_chunk_position(bbox_2)
+    return range_intersects(s1,t1) and range_intersects(s2,t2) and range_intersects(s3,t3)
+
+
 class FloodFillingTask(RegisteredTask):
-    def __init__(self, chunk_position, neighbours_chunk_position, crop_position,
+    def __init__(self, chunk_position, neighbours_chunk_position, skip_chunk_position, crop_position,
                  image_layer, watershed_layer, yacn_layer,
                  errors_layer, residual_errors_layer, skip_threshold):
         """
@@ -232,12 +250,13 @@ class FloodFillingTask(RegisteredTask):
         chunk_position is in absolute coordinates from the layer origin.
         crop_position in in relative coordinates to the chunk_position
         """
-        super(FloodFillingTask, self).__init__(chunk_position, neighbours_chunk_position, crop_position,
+        super(FloodFillingTask, self).__init__(chunk_position, neighbours_chunk_position, skip_chunk_position, crop_position,
                  image_layer, watershed_layer, yacn_layer, errors_layer, residual_errors_layer, skip_threshold)
 
         self.chunk_position = chunk_position
         self.crop_position = crop_position
-        self.neighbours_chunk_position = string.split(string.strip(neighbours_chunk_position)," ")
+        self.neighbours_chunk_position = string.split(string.strip(neighbours_chunk_position))
+        self.skip_chunk_position = string.split(string.strip(skip_chunk_position))
         self.image_layer = image_layer
         self.watershed_layer = watershed_layer
         self.errors_layer = errors_layer
@@ -249,12 +268,27 @@ class FloodFillingTask(RegisteredTask):
     def yacn_get(self, name):
         return h5_get(self.yacn_layer, name, self.chunk_position)
 
+    
+    def is_valid_1(self):
+        if np.count_nonzero(self.image) < self.skip_threshold * image.size:
+            print("invalid due to zero image")
+            return False
+        else:
+            return True
+    def is_valid_2(self):
+        if any([intersects(self.chunk_position, c) for c in self.skip_chunk_position]):
+            print("invalid due to overlap with skip chunk")
+            return False
+        else:
+            return True
+
     def execute(self):
         self._parse_chunk_position()
         self._parse_crop_position()
         self.yacn_storage = Storage(self.yacn_layer, n_threads=1)
+        
         image = self._get_image_chunk()
-
+        self.image = image
         errors = self._get_errors_chunk()
         watershed = self.yacn_get("thickened_raw")
         samples = self.yacn_get("samples")
@@ -276,7 +310,7 @@ class FloodFillingTask(RegisteredTask):
         import ext.third_party.yacn.reconstruct.reconstruct as reconstruct
         from ext.third_party.yacn.reconstruct.commit_changes import *
 
-        if np.count_nonzero(image) < self.skip_threshold * image.size:
+        if self.is_valid_1() and self.is_valid_2():
             revised_combined_edges = combined_edges
             residual_errors = errors
         else:
