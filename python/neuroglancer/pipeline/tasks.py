@@ -174,7 +174,7 @@ class QuantizeAffinitiesTask(RegisteredTask):
 
 class MeshTask(RegisteredTask):
 
-  def __init__(self, shape, offset, layer_path, mip=0, simplification_factor=100, max_simplification_error=1000000):
+  def __init__(self, shape, offset, layer_path, mip=0, simplification_factor=100, max_simplification_error=40):
     super(MeshTask, self).__init__(shape, offset, layer_path, mip, simplification_factor, max_simplification_error)
     self.shape = Vec(*shape)
     self.offset = Vec(*offset)
