@@ -200,6 +200,132 @@ class DownsampleTask(RegisteredTask):
         return '{}/{:d}-{:d}_{:d}-{:d}_{:d}-{:d}'.format(self._key,
           self._xmin, self._xmax, self._ymin, self._ymax, self._zmin, self._zmax) 
 
+def indicator(A,s):
+    return np.reshape(np.in1d(A,np.array(list(s))).astype(np.int32),np.shape(A))
+
+
+class ObjectMeshTask(RegisteredTask):
+
+    def __init__(self, chunk_position, layer_path, segments, label,
+                 lod=0, simplification=5):
+        
+        super(ObjectMeshTask, self).__init__(chunk_position, layer_path,  segments, label,
+                                       lod, simplification)
+        self.chunk_position = chunk_position
+        self.layer_path = layer_path
+        self.lod = lod
+        self.simplification = simplification
+        self.segments = segments
+        self.label = label
+
+    def execute(self):
+        self._storage = Storage(self.layer_path)
+        self._mesher = Mesher()
+        self._parse_chunk_position()
+        self._download_info()
+        self._download_input_chunk()
+        self._compute_meshes()
+        self._storage.wait()
+
+    def _parse_chunk_position(self):
+        match = re.match(r'^(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)$', self.chunk_position)
+        (self._xmin, self._xmax,
+         self._ymin, self._ymax,
+         self._zmin, self._zmax) = map(int, match.groups())
+    
+    def _download_info(self):
+        self._info = json.loads(self._storage.get_file('info'))
+
+        if 'mesh' not in self._info:
+            raise ValueError("Path on where to store the meshes is not present")
+
+    def _download_input_chunk(self):
+        """
+        It assumes that the chunk_position includes a 1 pixel overlap
+        """
+        #FIXME choose the mip level based on the chunk key
+        volume = Precomputed(self._storage)
+        self._data = volume[self._xmin:self._xmax,
+                            self._ymin:self._ymax,
+                            self._zmin:self._zmax]
+
+    def _compute_meshes(self):
+        data = np.swapaxes(indicator(self._data[:,:,:,0],self.segments), 0,2)
+        self._mesher.mesh(data.flatten(), *data.shape)
+
+        self._storage.put_file(
+            file_path='{}/{}:{}:{}'.format(self._info['mesh'], self.label, self.lod, self.chunk_position),
+            content=self._create_mesh(1))
+        self._storage.wait()
+
+
+        file_path='{}/{}:{}'.format(self.label, self.lod, self.chunk_position)
+
+        fragments = []
+        fragments.append('{}:{}:{}'.format(self.label, self.lod, self.chunk_position))
+
+        self._storage.put_file(
+            file_path='{}/{}:{}'.format(self._info['mesh'], self.label, self.lod),
+            content=json.dumps({"fragments": fragments}))
+        self._storage.wait()
+
+    def _create_mesh(self, obj_id):
+        mesh = self._mesher.get_mesh(obj_id, simplification_factor=128, max_simplification_error=1000000)
+        vertices = self._update_vertices(np.array(mesh['points'], dtype=np.float32)) 
+        vertex_index_format = [
+            np.uint32(len(vertices) / 3), #Number of vertices (each vertex it's composed of three numbers(x,y,z))
+            vertices,
+            np.array(mesh['faces'], dtype=np.uint32)
+        ]
+        return b''.join([ array.tobytes() for array in vertex_index_format ])
+
+    def _update_vertices(self, points):
+        # zlib meshing multiplies verticies by two to avoid working with floats like 1.5
+        # but we need to recover the exact position for display
+        points /= 2.0
+        resolution = self._info['scales'][0]['resolution']
+        points[0::3] = (points[0::3] + self._xmin) * resolution[0]   # x
+        points[1::3] = (points[1::3] + self._ymin) * resolution[1]   # y
+        points[2::3] = (points[2::3] + self._zmin) * resolution[2]   # z
+        return points
+
+class MergeMeshTask(RegisteredTask):
+    """
+    Finalize mesh generation by post-processing chunk fragment
+    lists into mesh fragment manifests.
+    These are necessary for neuroglancer to know which mesh
+    fragments to download for a given segid.
+    """
+    def __init__(self, layer_path, labels, new_label, lod=0):
+        super(MergeMeshTask, self).__init__(layer_path, labels, new_label, lod)
+        self.layer_path = layer_path
+        self.lod = lod
+        self.labels = labels
+        self.new_label = new_label
+
+    def execute(self):
+        self._storage = Storage(self.layer_path)
+        self._download_info()
+        self._download_input_chunk()
+
+    def _download_info(self):
+        self._info = json.loads(self._storage.get_file('info'))
+        
+    def _download_input_chunk(self):
+        """
+        Assumes that list blob is lexicographically ordered
+        """
+        fragments=[]
+        for seg in self.labels:
+            #print('{}/{}:{}'.format(self._info['mesh'], seg, self.lod))
+            manifest = json.loads(self._storage.get_file('{}/{}:{}'.format(self._info['mesh'], seg, self.lod)))
+            fragments=fragments+manifest["fragments"]
+
+        self._storage.put_file(
+            file_path='{}/{}:{}'.format(self._info['mesh'], self.new_label, self.lod),
+            content=json.dumps({"fragments": fragments}))
+        self._storage.wait()
+
 class MeshTask(RegisteredTask):
 
     def __init__(self, chunk_key, chunk_position, layer_path, 
@@ -304,7 +430,7 @@ class MeshManifestTask(RegisteredTask):
         """
         last_id = 0
         last_fragments = []
-        for filename in self._storage.list_files(prefix='mesh/'):
+        for filename in sorted(self._storage.list_files(prefix='mesh/')):
             match = re.match(r'(\d+):(\d+):(.*)$',filename)
             if not match: # a manifest file will not match
                 continue

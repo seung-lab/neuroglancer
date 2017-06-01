@@ -1,8 +1,9 @@
 module MultiGraphs
 using LightGraphs
 using DataStructures
+using Iterators
 
-#todo: garbage collection
+#TODO: garbage collection
 
 type MultiGraph
 	g::LightGraphs.Graph
@@ -23,9 +24,12 @@ end
 function delete_vertex!(G::MultiGraph,vertex)
 	u=vertex_map[vertex]
 	for v in neighbors(G.g,u)
-		rem_edge!(G,u,v)
+		rem_edge!(G.g,u,v)
+		delete!(G.edge_map, (u,v))
 	end
 	delete!(G.vertex_map,vertex)
+	delete!(G.inverse_vertex_map,u)
+	#todo: delete incident edges
 end
 
 function delete_edge!(G::MultiGraph,U,V,e)
@@ -44,6 +48,11 @@ function add_edge!(G::MultiGraph,U,V,e)
 	v=G.vertex_map[V]
 	LightGraphs.add_edge!(G.g,u,v)
 	push!(G.edge_map[(u,v)],e)
+end
+
+function incident_edges(G::MultiGraph, U)
+	u=G.vertex_map[U]
+	return iterators.chain([edge_map[(u,v)] for v in neighbors(G.g, u)]...)
 end
 
 function connected_components(G::MultiGraph, Vertices)
