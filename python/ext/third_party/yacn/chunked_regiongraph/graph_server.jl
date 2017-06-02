@@ -1,9 +1,13 @@
 push!(LOAD_PATH, dirname(@__FILE__))
-println(LOAD_PATH)
 using HttpServer
 using HttpCommon
 using ChunkedGraphs
 using Save
+using PyCall
+
+@pyimport neuroglancer.simple_task_queue.task_queue as task_queue
+tq = task_queue.TaskQueue("http://localhost:8006/1.0")
+
 include("tasks.jl")
 
 edges = Save.load("~/testing/chunked_edges.jls")
@@ -38,26 +42,43 @@ function labeller(start_label)
 	return unique_label
 end
 
+task_labeller = labeller(0)
+
+function simple_print(x::Array)
+	string('[',map(n->"$(n),",x)...,']')
+end
+
 function mesh!(v::ChunkedGraphs.Vertex)
 	if !(v.label in meshed)
-		if ChunkedGraphs.is_leaf(v)
-			task=pl.ObjectMeshTask(slices_to_str(chunk_id_to_slices(v.label[2])),WATERSHED_STORAGE,[v.label[1]],v.label)
-			println(task)
-			task[:execute]()
-		elseif length(v.children) > 0 && ChunkedGraphs.is_leaf(collect(v.children)[1])
+		#if ChunkedGraphs.is_leaf(v)
+		if ChunkedGraphs.level(v)==0
+			task_name=string(task_labeller())
+			tq[:insert](name=task_labeller(),
+			 payload="""
+			 ObjectMeshTask("$(slices_to_str(chunk_id_to_slices(v.label[2])))","$(WATERSHED_STORAGE)",$(simple_print([v.label[1]])),$(v.label)).execute()
+			 """)
+		#elseif length(v.children) > 0 && ChunkedGraphs.is_leaf(collect(v.children)[1])
+		elseif ChunkedGraphs.level(v)==1
 			child1 = collect(v.children)[1]
-			task = pl.ObjectMeshTask(slices_to_str(chunk_id_to_slices(child1.label[2])),WATERSHED_STORAGE,[child.label[1] for child in v.children],v.label)
-			println(task)
-			task[:execute]()
+			task_name=string(task_labeller())
+			tq[:insert](name=task_name,
+			payload="""
+			ObjectMeshTask("$(slices_to_str(chunk_id_to_slices(child1.label[2])))","$(WATERSHED_STORAGE)",$(simple_print([child.label[1] for child in v.children])),$(v.label)).execute()
+			""")
+			println(task_name)
 		else
-			for child in v.children
-				mesh!(child)
-			end
-
-			pl.MergeMeshTask(WATERSHED_STORAGE,[child.label for child in v.children],v.label)[:execute]()
+			task_name = string(task_labeller())
+			child_task_names = filter(x->x!=nothing,[mesh!(child) for child in v.children])
+			tq[:insert](name=task_name,
+			payload="""
+			MergeMeshTask("$(WATERSHED_STORAGE)",$([child.label for child in v.children]),$(v.label)).execute()
+			""",
+			dependencies=child_task_names)
 		end
 		push!(meshed,v.label)
+		return task_name
 	end
+	return nothing
 end
 
 function handle_node(id)
@@ -72,7 +93,8 @@ function handle_node(id)
 end
 
 d=Dict(
-	   r"/1.0/node/(\d+)/?" => handle_node
+	   r"/1.0/node/(\d+)/?" => handle_node,
+	   r"/1.0/split/(\d+),(\d+),(\d+),(\d+)_(\d+),(\d+),(\d+),(\d+)/?" => split,
 	   )
 
 headers=HttpCommon.headers()
@@ -84,7 +106,7 @@ http = HttpHandler() do req::Request, res::Response
 	for r in keys(d)
 		if ismatch(r, req.resource)
 
-			m = match(r"/1.0/node/(\d+)/?",req.resource)
+			m = match(r,req.resource)
 
 			return d[r](m.captures...)
 		end
