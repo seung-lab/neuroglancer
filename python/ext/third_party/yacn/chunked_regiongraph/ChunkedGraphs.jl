@@ -93,7 +93,7 @@ end
 #####Tree utility functions#####
 level(c::Chunk) = level(c.id)
 level(id::ChunkID) = id[1]
-level(v::Vertex) = v.G.level
+level(v::Vertex) = level(v.G)
 
 function is_root(c::Chunk)
 	return c.id == TOP_ID
