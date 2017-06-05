@@ -14,7 +14,7 @@ from neuroglancer.lib import clamp, xyzrange, Vec, Vec3, Bbox, min2, max2
 from volumes import Volume, VolumeCutout, generate_slices
 from neuroglancer.pipeline.storage import Storage
 
-__all__ = [ 'CloudVolume' ]
+__all__ = [ 'CloudVolume', 'EmptyVolumeException' ]
 
 ExtractedPath = namedtuple('ExtractedPath', 
   ('protocol','bucket_name', 'dataset_name','layer_name')
@@ -361,6 +361,8 @@ class CloudVolume(Volume):
 
       if content_len == 0 and not self.fill_missing:
         raise EmptyVolumeException(fileinfo['filename'])
+      elif content_len == 0 and self.fill_missing:
+        fileinfo['content'] = ''
 
       try:
         img3d = neuroglancer.chunks.decode(

@@ -68,19 +68,20 @@ class IngestTask(RegisteredTask):
       vol.upload_image(image, self._bounds.minpt / vol.downsample_ratio)
 
 class DownsampleTask(RegisteredTask):
-  def __init__(self, layer_path, mip, shape, offset, axis='z'):
-    super(DownsampleTask, self).__init__(layer_path, mip, shape, offset, axis)
+  def __init__(self, layer_path, mip, shape, offset, fill_missing=False, axis='z'):
+    super(DownsampleTask, self).__init__(layer_path, mip, shape, offset, fill_missing, axis)
     self.layer_path = layer_path
     self.mip = mip
     self.shape = Vec(*shape)
     self.offset = Vec(*offset)
+    self.fill_missing = fill_missing
     self.axis = axis
 
     self._volume = None
     self._bounds = None
     
   def execute(self):
-    self._volume = CloudVolume(self.layer_path, self.mip)
+    self._volume = CloudVolume(self.layer_path, self.mip, fill_missing=self.fill_missing)
     vol = self._volume
 
     self._bounds = Bbox( self.offset, self.shape + self.offset )

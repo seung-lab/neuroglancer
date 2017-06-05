@@ -2,7 +2,7 @@ import os.path
 
 import numpy as np
 
-from neuroglancer.pipeline.volumes import CloudVolume
+from neuroglancer.pipeline.volumes import CloudVolume, EmptyVolumeException
 from neuroglancer.pipeline import Storage, Precomputed, DownsampleTask, MeshTask, QuantizeAffinitiesTask
 from neuroglancer.pipeline.task_creation import create_downsample_scales, create_downsampling_tasks, create_quantized_affinity_info
 from neuroglancer.pipeline.task_queue import MockTaskQueue
@@ -141,6 +141,37 @@ def test_downsample_with_offset():
     data_ds3 = downsample.downsample_with_averaging(data_ds2, factor=[2, 2, 1, 1])
     cv.mip = 3
     assert np.all(cv[0:8, 0:8, 11:75] == data_ds3[0:8,0:8,0:64])
+
+def test_downsample_w_missing():
+    delete_layer()
+    storage, data = create_layer(size=(1024,1024,128,1), offset=(3,7,11))
+    cv = CloudVolume(storage.layer_path)
+    assert len(cv.scales) == 4
+    assert len(cv.available_mips) == 4
+    delete_layer()
+
+    cv.commitInfo()
+
+    try:
+        create_downsampling_tasks(MockTaskQueue(), storage.layer_path, mip=0, shape=(512, 512, 64), fill_missing=False)
+    except EmptyVolumeException:
+        pass
+
+    create_downsampling_tasks(MockTaskQueue(), storage.layer_path, mip=0, shape=(512, 512, 64), fill_missing=True)
+
+    cv.refreshInfo()
+
+    assert len(cv.available_mips) == 4
+    assert np.array_equal(cv.mip_volume_size(0), [ 1024, 1024, 128 ])
+    assert np.array_equal(cv.mip_volume_size(1), [ 512, 512, 128 ])
+    assert np.array_equal(cv.mip_volume_size(2), [ 256, 256, 128 ])
+    assert np.array_equal(cv.mip_volume_size(3), [ 128, 128, 128 ])
+
+    assert np.all(cv.mip_voxel_offset(3) == (0,0,11))
+    
+    cv.mip = 0
+    cv.fill_missing = True
+    assert np.count_nonzero(cv[3:67, 7:71, 11:75]) == 0
 
 def test_mesh():
     delete_layer()
