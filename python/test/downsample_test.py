@@ -189,4 +189,57 @@ def test_downsample_segmentation_4x_x():
   result = downsamplefn(result, (1,2,2))
   assert result.shape == (1024, 16, 128, 1)
 
+def test_downsample_max_pooling():
+  for dtype in (np.int8, np.float32):
+    cases = [
+      np.array([ [ -1, 0 ], [ 0, 0 ] ], dtype=dtype), 
+      np.array([ [ 0, 0 ], [ 0, 0 ] ], dtype=dtype), 
+      np.array([ [ 0, 1 ], [ 0, 0 ] ], dtype=dtype),
+      np.array([ [ 0, 1 ], [ 1, 0 ] ], dtype=dtype),
+      np.array([ [ 0, 1 ], [ 0, 2 ] ], dtype=dtype)
+    ]
+
+    for i in xrange(len(cases)):
+      case = cases[i]
+      result = downsample.downsample_with_max_pooling(case, (1, 1))
+      assert np.all(result == cases[i])
+
+    answers = [ 0, 0, 1, 1, 2 ]
+
+    for i in xrange(len(cases)):
+      case = cases[i]
+      result = downsample.downsample_with_max_pooling(case, (2, 2))
+      assert result == answers[i]
+
+
+    cast = lambda arr: np.array(arr, dtype=np.int8) 
+
+    answers = map(cast, [  
+      [[ 0, 0 ]],
+      [[ 0, 0 ]],
+      [[ 0, 1 ]],
+      [[ 1, 1 ]],
+      [[ 0, 2 ]],
+    ])
+
+    for i in xrange(len(cases)):
+      case = cases[i]
+      result = downsample.downsample_with_max_pooling(case, (2, 1))
+      assert np.all(result == answers[i])
+
+    answers = map(cast, [  
+      [[ 0 ], [ 0 ]],
+      [[ 0 ], [ 0 ]],
+      [[ 1 ], [ 0 ]],
+      [[ 1 ], [ 1 ]],
+      [[ 1 ], [ 2 ]],
+    ])
+
+    for i in xrange(len(cases)):
+      case = cases[i]
+      result = downsample.downsample_with_max_pooling(case, (1, 2))
+      assert np.all(result == answers[i])
+  
+
+
 
