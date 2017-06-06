@@ -92,8 +92,6 @@ def register_job_definition(queueName='convnet-inference'):
             'ulimits'                   : [],
             'user'                      : 'root'
         },
-        retryStrategy                   = {
-            'attempts'                  : 3
         })
 
 def create_job_queue():
