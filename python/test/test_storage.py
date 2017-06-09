@@ -1,9 +1,9 @@
 import pytest
 import re
-import shutil
 import time
+import shutil
 
-from neuroglancer.pipeline import Storage
+from neuroglancer.pipeline.storage import Storage, wait_full_jitter
 
 def test_path_extraction():
     assert (Storage.extract_path('s3://bucket_name/dataset_name/layer_name') 
@@ -110,6 +110,97 @@ def test_threads_die():
         threads = s._threads
     
     assert not any(map(lambda t: t.isAlive(), threads))
+
+def test_retry():
+    urls = [
+        "gs://neuroglancer/removeme/retry",
+        "s3://neuroglancer/removeme/retry"
+    ]
+
+    for url in urls:
+        with Storage(url, n_threads=20) as s:
+            s.put_file('exists', 'some string', compress=False).wait()
+            results = s.get_files([ 'exists' for _ in xrange(200) ])
+
+            for result in results:
+                assert result['error'] is None
+                assert result['content'] == 'some string'
+
+            assert len(result) == 200
+
+def test_wait_full_jitter():
+    fn = wait_full_jitter(0.5, 60.0)
+
+    for _ in xrange(1000):
+       assert 0 <= fn(0,0) <= 0.5
+       assert 0 <= fn(1,0) <= 1.0
+       assert 0 <= fn(2,0) <= 2.0
+       assert 0 <= fn(3,0) <= 4.0
+       assert 0 <= fn(4,0) <= 8.0
+       assert 0 <= fn(5,0) <= 16.0
+       assert 0 <= fn(6,0) <= 32.0
+       assert 0 <= fn(7,0) <= 60.0
+       assert 0 <= fn(8,0) <= 60.0
+       assert 0 <= fn(9,0) <= 60.0
+
+    def test_assertions(fn):
+        failed = True
+        try:
+            fn()
+            failed = False
+        except AssertionError:
+            pass
+        finally:
+            assert failed
+
+    test_assertions(lambda: wait_full_jitter(-1, 0))
+    test_assertions(lambda: wait_full_jitter(0, -1))
+
+    fn = wait_full_jitter(10, 5)
+    for _ in xrange(1000):
+        assert 0.00 <= fn(0,0) <= 5.00
+
+    # Default arguments exist
+    fn = wait_full_jitter()
+    fn(0,0)
+
+def test_wait_full_jitter_statistically():
+    fn = wait_full_jitter(0.5, 60.0)
+
+    attempt = []
+    for i in xrange(10):
+        attempt.append(
+            [ fn(i,0) for _ in xrange(4000) ]
+        )
+
+    mean = lambda lst: float(sum(lst)) / float(len(lst))
+    
+    assert  0.20 <= mean(attempt[0]) <=  0.30
+    assert  0.35 <= mean(attempt[1]) <=  0.65
+    assert  0.75 <= mean(attempt[2]) <=  1.25
+    assert  1.75 <= mean(attempt[3]) <=  3.25
+    assert  3.50 <= mean(attempt[4]) <=  5.50
+    assert  7.00 <= mean(attempt[5]) <=  9.00
+    assert 14.00 <= mean(attempt[6]) <= 18.00
+    assert 28.00 <= mean(attempt[7]) <= 34.00
+    assert 28.00 <= mean(attempt[8]) <= 34.00
+    assert 28.00 <= mean(attempt[9]) <= 34.00
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
