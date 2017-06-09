@@ -137,7 +137,7 @@ def create_downsample_scales(layer_path, mip, ds_shape, axis='z'):
   map(vol.addScale, scales)
   return vol.commitInfo()
 
-def create_downsampling_tasks(task_queue, layer_path, mip=-1, axis='z', shape=Vec(2048, 2048, 64)):
+def create_downsampling_tasks(task_queue, layer_path, mip=-1, fill_missing=False, axis='z', shape=Vec(2048, 2048, 64)):
   shape = Vec(*shape)
   vol = create_downsample_scales(layer_path, mip, shape)
 
@@ -148,6 +148,7 @@ def create_downsampling_tasks(task_queue, layer_path, mip=-1, axis='z', shape=Ve
       shape=shape.clone(),
       offset=startpt.clone(),
       axis=axis,
+      fill_missing=fill_missing,
     )
     task_queue.insert(task)
   task_queue.wait()
@@ -162,6 +163,7 @@ def create_meshing_tasks(task_queue, layer_path, mip, shape=Vec(512, 512, 512)):
       mip=vol.mip,
       shape=shape.clone(),
       offset=startpt.clone(),
+      max_simplification_error=40,
     )
     task_queue.insert(task)
   task_queue.wait()
@@ -235,7 +237,7 @@ def create_quantized_affinity_info(src_layer, dest_layer, shape):
   info['scales'][0]['chunk_sizes'] = [[ 64, 64, 64 ]]
   return info
 
-def create_quantized_affinity_tasks(taskqueue, src_layer, dest_layer, shape):
+def create_quantized_affinity_tasks(taskqueue, src_layer, dest_layer, shape, fill_missing=False):
   shape = Vec(*shape)
 
   info = create_quantized_affinity_info(src_layer, dest_layer, shape)
@@ -250,8 +252,8 @@ def create_quantized_affinity_tasks(taskqueue, src_layer, dest_layer, shape):
       dest_layer_path=dest_layer,
       shape=list(shape.clone()),
       offset=list(startpt.clone()),
+      fill_missing=fill_missing,
     )
-    # task.execute()
     task_queue.insert(task)
   task_queue.wait()
 
@@ -393,31 +395,30 @@ def ingest_hdf5_example():
     
 if __name__ == '__main__':  
 
-  src_path = 's3://neuroglancer/pinky40_v11/watershed/'
-  dest_path = 'gs://neuroglancer/pinky40_v11/watershed_mst_trimmed_remap/' 
-  map_path = os.path.join(dest_path, 'mst_trimmed_remap.npy')
+  src_path = 'gs://neuroglancer/pinky40_v11/watershed/'
+  dest_path = 'gs://neuroglancer/pinky40_v11/watershed_mst_split_spines_remap/' 
+  map_path = os.path.join(dest_path, 'mst_split_spines_remap.npy')
   
-  with MockTaskQueue(queue_name='wms-test-pull-queue') as task_queue:
-    # create_downsampling_tasks(task_queue, 'gs://neuroglancer/pinky40_v11/image/', mip=4)
-    # create_meshing_tasks(task_queue, 'gs://neuroglancer/s1_v0.1/segmentation_0.2', mip=2)
+  with TaskQueue(queue_name='wms-test-pull-queue') as task_queue:
+    # create_downsampling_tasks(task_queue, 'gs://neuroglancer/pinky40_v11/watershed/', mip=0, fill_missing=False)
+    # create_meshing_tasks(task_queue, dest_path, mip=3)
 
-    create_watershed_remap_tasks(task_queue, map_path, src_path, dest_path)
+    # create_watershed_remap_tasks(task_queue, map_path, src_path, dest_path)
 
-    # create_quantized_affinity_tasks(task_queue,
-    #   src_layer=src_layer,
-    #   dest_layer=dest_layer,
-    #   shape=shape,
-    # )
+    create_quantized_affinity_tasks(task_queue,
+      src_layer='gs://neuroglancer/zfish_v1/affinitymap',
+      dest_layer='gs://neuroglancer/zfish_v1/qaffinitymap-x',
+      shape=(2048, 2048, 64),
+      fill_missing=True,
+    )
 
     # create_transfer_tasks(task_queue,
-    #   src_layer_path='s3://neuroglancer/pinky40_v11/watershed_mst_smc_sem5_remap/', 
-    #   dest_layer_path='gs://neuroglancer/pinky40_v11/watershed_mst_smc_sem5_remap/',
+    #   src_layer_path='s3://neuroglancer/pinky40_v11/watershed/', 
+    #   dest_layer_path='gs://neuroglancer/pinky40_v11/watershed/',
     # )
 
-    
-
     # create_fixup_downsample_tasks(task_queue, 'gs://neuroglancer/pinky40_v11/image/', 
-    #   points=points, mip=0) 
+    #   points=[ (66098, 13846, 139) ], mip=0) 
 
     # create_fixup_quantize_tasks(task_queue, src_layer, dest_layer, shape, 
     #   points=[ (27955, 21788, 512), (23232, 20703, 559) ],
