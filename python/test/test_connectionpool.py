@@ -5,9 +5,8 @@ from neuroglancer.pipeline.connection_pool import S3ConnectionPool, GCloudConnec
 from neuroglancer.pipeline.threaded_queue import ThreadedQueue
 from neuroglancer.pipeline import Storage
 
-max_connections = 60
-S3_POOL = S3ConnectionPool(max_connections=max_connections)
-GC_POOL = GCloudConnectionPool(max_connections=max_connections)
+S3_POOL = S3ConnectionPool()
+GC_POOL = GCloudConnectionPool()
 
 def test_gc_stresstest():
   with Storage('gs://neuroglancer/removeme/connection_pool/', n_threads=0) as stor:
