@@ -22,6 +22,7 @@ blosc==1.5.0
 backports.lzma==0.0.8
 scipy==0.18.1
 pytest==3.0.7 
+tenacity==4.1.0
 
 # do not use
 # google-cloud==0.22.0 
