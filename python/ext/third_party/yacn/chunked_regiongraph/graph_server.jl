@@ -7,6 +7,17 @@ using Save
 using PyCall
 using Utils
 
+# type MeshNode
+# 	min::Vector{Int32}
+# 	max::Vector{Int32}
+# 	paths::Vector{String}
+# 	alternatives::Vector{MeshNode}
+# 	function MeshNode()
+# 		return new([-1,-1,-1], [-1,-1,-1], [], [])
+# 	end
+# end
+
+
 @pyimport neuroglancer.simple_task_queue.task_queue as task_queue
 #tq = task_queue.TaskQueue("http://127.0.0.1:8000/1.0")
 tq = task_queue.TaskQueue("http://50.16.149.198:8001/1.0")
@@ -114,11 +125,49 @@ function mesh!(v::ChunkedGraphs.Vertex)
 			MergeMeshTask("$(WATERSHED_STORAGE)",$(simple_print([child.label for child in v.children])),$(v.label)).execute()
 			""",
 			dependencies=child_task_names)
+			println("Level $(ChunkedGraphs.level(v)) Manifest: $(task_name), Segments: $(simple_print([child.label for child in v.children]))")
 		end
 		mesh_task[v.label]=task_name
 	end
 	return mesh_task[v.label]
 end
+
+
+# function mesh2!(v::ChunkedGraphs.Vertex, mesh_node::MeshNode)
+# 	if ChunkedGraphs.level(v) == 0
+# 		# A pre-meshed supervoxel within this lowest-resolution chunk; no alternatives
+# 		chunk_pos = v.label[2]
+# 		push!(mesh_node.paths, "$(v.label[1]):0:$(slices_to_str(chunk_id_to_slices(chunk_pos)))")
+# 		return
+# 	end
+# 	if ChunkedGraphs.level(v) == 1
+# 		# A fusion of all supervoxels within this lowest-resolution chunk
+# 		child_node = MeshNode()
+# 		for child in v.children
+# 			mesh2!(child, child_node)
+# 		end
+# 		push!(mesh_node.alternatives, child_node)
+
+# 		chunk_pos = collect(v.children)[1].label[2]
+# 		chunk_slices = chunk_id_to_slices(chunk_pos)
+# 		push!(mesh_node.paths, "$(v.label[1]):0:$(slices_to_str(chunk_slices))")
+
+# 		for dim in 1:3
+# 			mesh_node.min[dim], mesh_node.max[dim] = extrema(chunk_slices[dim])
+# 			child_node.min[dim], child_node.max[dim] = mesh_node.min[dim], mesh_node.max[dim]
+# 		end
+# 	else
+# 		for child in v.children
+# 			child_node = MeshNode()
+# 			mesh2!(child, child_node)
+# 			push!(mesh_node.alternatives, child_node)
+# 		end
+
+# 		mesh_node.min = min(collect(x.min for x in mesh_node.alternatives)..., typemax(Int32))
+# 		mesh_node.max = max(collect(x.max for x in mesh_node.alternatives)..., typemin(Int32))
+# 		push!(mesh_node.paths, "$(v.label[1]):0:$(mesh_node.min[1])-$(mesh_node.max[1])_$(mesh_node.min[2])-$(mesh_node.max[2])_$(mesh_node.min[3])-$(mesh_node.max[3])")
+# 	end
+# end
 
 function handle_node(id)
 	id=parse(UInt64,id)
