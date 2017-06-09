@@ -19,7 +19,7 @@ import {AvailableCapacity} from 'neuroglancer/chunk_manager/base';
 import {ChunkManager, ChunkQueueManager} from 'neuroglancer/chunk_manager/frontend';
 import {DisplayContext} from 'neuroglancer/display_context';
 import {KeyBindingHelpDialog} from 'neuroglancer/help/key_bindings';
-import {LayerManager, LayerSelectedValues, MouseSelectionState, SplitState} from 'neuroglancer/layer';
+import {LayerManager, LayerSelectedValues, MouseSelectionState, ActionState, ActionMode} from 'neuroglancer/layer';
 import {LayerDialog} from 'neuroglancer/layer_dialog';
 import {LayerPanel} from 'neuroglancer/layer_panel';
 import {LayerListSpecification} from 'neuroglancer/layer_specification';
@@ -260,14 +260,42 @@ export class Viewer extends RefCounted implements ViewerState {
       this.showPerspectiveSliceViews.toggle();
     });
 
-    keyCommands.set('two-point-split', function () { 
-      this.mouseState.toggleSplit(); 
+    keyCommands.set('two-point-merge', function () { 
+      this.mouseState.toggleAction(); 
 
-      if (this.mouseState.splitStatus === SplitState.INACTIVE) {
-        StatusMessage.displayText('Split Mode Deactivated.');
+      if (this.mouseState.actionStatus === ActionState.INACTIVE) {
+        StatusMessage.displayText('Merge Mode Deactivated.');
+        this.mouseState.setMode(ActionMode.NONE);
       }
       else {
-       StatusMessage.displayText('Split Mode Activated.'); 
+        StatusMessage.displayText('Merge Mode Activated.');
+        this.mouseState.setMode(ActionMode.MERGE);
+      }
+    });
+
+    keyCommands.set('two-point-split', function () {
+      this.mouseState.toggleAction(); 
+
+      if (this.mouseState.actionStatus === ActionState.INACTIVE) {
+        StatusMessage.displayText('Split Mode Deactivated.');
+        this.mouseState.setMode(ActionMode.NONE);
+      }
+      else {
+        StatusMessage.displayText('Split Mode Activated.');
+        this.mouseState.setMode(ActionMode.SPLIT);
+      }
+    });
+
+    keyCommands.set('yacn-select', function () {
+      this.mouseState.toggleAction();
+
+      if (this.mouseState.actionStatus === ActionState.INACTIVE) {
+        StatusMessage.displayText('YACN Mode Deactivated.');
+        this.mouseState.setMode(ActionMode.NONE);
+      }
+      else {
+        StatusMessage.displayText('YACN Mode Activated.');
+        this.mouseState.setMode(ActionMode.YACN);
       }
     });
   }

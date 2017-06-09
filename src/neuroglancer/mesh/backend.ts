@@ -19,7 +19,7 @@ import {ChunkPriorityTier, ChunkState} from 'neuroglancer/chunk_manager/base';
 import {FRAGMENT_SOURCE_RPC_ID, MESH_LAYER_RPC_ID} from 'neuroglancer/mesh/base';
 import {SegmentationLayerSharedObjectCounterpart} from 'neuroglancer/segmentation_display_state/backend';
 import {getObjectKey} from 'neuroglancer/segmentation_display_state/base';
-import {forEachVisibleSegment} from 'neuroglancer/segmentation_display_state/base';
+import {forEachVisibleSegment3D} from 'neuroglancer/segmentation_display_state/base';
 import {CancellationToken} from 'neuroglancer/util/cancellation';
 import {convertEndian32, Endianness} from 'neuroglancer/util/endian';
 import {vec3} from 'neuroglancer/util/geom';
@@ -27,11 +27,13 @@ import {verifyObject, verifyObjectProperty, verifyStringArray} from 'neuroglance
 import {Uint64} from 'neuroglancer/util/uint64';
 import {getBasePriority, getPriorityTier} from 'neuroglancer/visibility_priority/backend';
 import {registerSharedObject, RPC} from 'neuroglancer/worker_rpc';
+import {getChildren, enableGraphServer} from 'neuroglancer/object_graph_service';
 
 const MESH_OBJECT_MANIFEST_CHUNK_PRIORITY = 100;
 const MESH_OBJECT_FRAGMENT_CHUNK_PRIORITY = 50;
 
 export type FragmentId = string;
+
 
 // Chunk that contains the list of fragments that make up a single object.
 export class ManifestChunk extends Chunk {
@@ -67,6 +69,7 @@ export class ManifestChunk extends Chunk {
     return this.objectId.toString();
   }
 }
+
 
 /**
  * Chunk that contains the mesh for a single fragment of a single object.
@@ -296,7 +299,7 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
     this.source = this.registerDisposer(rpc.getRef<MeshSource>(options['source']));
     this.registerDisposer(this.chunkManager.recomputeChunkPriorities.add(() => {
       this.updateChunkPriorities();
-    }));
+    enableGraphServer(options['graphPath']);
   }
 
   private updateChunkPriorities() {
@@ -305,9 +308,9 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
       return;
     }
     const priorityTier = getPriorityTier(visibility);
-    const basePriority = getBasePriority(visibility);
-    const {source, chunkManager} = this;
-    forEachVisibleSegment(this, objectId => {
+    forEachVisibleSegment3D(this, (objectId, rootObjectId) => {
+      let segmentID = objectId.clone();
+      let rootID = rootObjectId.clone();
       let manifestChunk = source.getChunk(objectId);
       chunkManager.requestChunk(
           manifestChunk, priorityTier, basePriority + MESH_OBJECT_MANIFEST_CHUNK_PRIORITY);
@@ -317,6 +320,31 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
           chunkManager.requestChunk(
               fragmentChunk, priorityTier, basePriority + MESH_OBJECT_FRAGMENT_CHUNK_PRIORITY);
         }
+      }
+
+      // If no manifest exists, the mesh is still being generated, in which case
+      // we query the graph server for the child nodes and add those manifest
+      // files to the queue instead
+      if (manifestChunk.state === ChunkState.FAILED && objectId.high > 0) { // no need to query neuroglancer supervoxels (high == 0)
+        manifestChunk.state = ChunkState.REQUESTING_CHILDREN;
+        getChildren(segmentID).then(children => {
+          manifestChunk.state = ChunkState.FAILED;
+          if (!this.rootSegments.has(rootID)) {
+            console.log("Adding 3D children aborted due to missing root.");
+            return;
+          }
+          for (let childId of children) {
+            this.visibleSegments3D.add(childId);
+            if (segmentID.high != objectId.high || segmentID.low != objectId.low) {
+              console.log(`Error: OrgObjectID is ${segmentID}, before linking it's already ${objectId}!`)
+            }
+            this.segmentEquivalences.link(segmentID, childId);
+            if (segmentID.high != objectId.high || segmentID.low != objectId.low) {
+              console.log(`Error: OrgObjectID was ${segmentID}, after linking it's ${objectId}!`)
+            }
+          };
+          this.visibleSegments3D.delete(segmentID);
+        });
       }
     });
   }

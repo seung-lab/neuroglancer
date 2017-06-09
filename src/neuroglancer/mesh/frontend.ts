@@ -18,7 +18,7 @@ import {ChunkSourceParametersConstructor, ChunkState} from 'neuroglancer/chunk_m
 import {Chunk, ChunkManager, ChunkSource} from 'neuroglancer/chunk_manager/frontend';
 import {FRAGMENT_SOURCE_RPC_ID, MESH_LAYER_RPC_ID} from 'neuroglancer/mesh/base';
 import {PerspectiveViewRenderContext, PerspectiveViewRenderLayer} from 'neuroglancer/perspective_view/render_layer';
-import {forEachSegmentToDraw, getObjectColor, registerRedrawWhenSegmentationDisplayState3DChanged, SegmentationDisplayState3D, SegmentationLayerSharedObject} from 'neuroglancer/segmentation_display_state/frontend';
+import {forEachSegmentToDraw3D, getObjectColor, registerRedrawWhenSegmentationDisplayState3DChanged, SegmentationDisplayState3D, SegmentationLayerSharedObject} from 'neuroglancer/segmentation_display_state/frontend';
 import {mat4, vec3, vec4} from 'neuroglancer/util/geom';
 import {stableStringify} from 'neuroglancer/util/json';
 import {getObjectId} from 'neuroglancer/util/object_id';
@@ -106,6 +106,7 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
 
   constructor(
       public chunkManager: ChunkManager, public source: MeshSource,
+      public graphPath: string,
       public displayState: SegmentationDisplayState3D) {
     super();
 
@@ -116,6 +117,7 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
     sharedObject.RPC_TYPE_ID = MESH_LAYER_RPC_ID;
     sharedObject.initializeCounterpartWithChunkManager({
       'source': source.addCounterpartRef(),
+      'graphPath': graphPath
     });
     this.setReady(true);
     sharedObject.visibility.add(this.visibility);
@@ -160,7 +162,7 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
 
     const objectToDataMatrix = this.displayState.objectToDataTransform.transform;
 
-    forEachSegmentToDraw(displayState, objectChunks, (rootObjectId, objectId, fragments) => {
+    forEachSegmentToDraw3D(displayState, objectChunks, (rootObjectId, objectId, fragments) => {
       let color =  vec4.create();
       let coloring_id = new Uint64();
 

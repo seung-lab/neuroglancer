@@ -83,13 +83,13 @@ export class SemanticEntryWidget extends RefCounted {
     semanticButton.addEventListener('click', function(this: ItemElement) {
       let id : number = parseInt(this.id);
 
-      for (let segid of self.displayState.visibleSegments) {
+      for (let segid of self.displayState.rootSegments) {
         if (self.visible[id] == 0){
-          self.displayState.visibleSegments.delete(segid);
+          self.displayState.rootSegments.delete(segid);
         }
         self.displayState.semanticHashMap.setOrUpdate(segid, new Uint64(id, self.visible[id]));
       }
-      StatusMessage.displayText(`Applied semantics to ${self.displayState.visibleSegments.size} segments`);
+      StatusMessage.displayText(`Applied semantics to ${self.displayState.rootSegments.size} segments`);
       self.semanticUpdated.dispatch();
     });
 

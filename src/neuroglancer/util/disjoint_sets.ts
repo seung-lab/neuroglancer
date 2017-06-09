@@ -154,11 +154,7 @@ export class DisjointUint64Sets {
     let key = a.toString();
     let element = this.map.get(key);
 
-    if (!element 
-      || (
-        (<any>element)[parentSymbol] === element
-        && (<any>element)[rankSymbol] === 0)) {
-
+    if (!element || ((<any>element)[parentSymbol] === element)) {
       return true;
     }
 
@@ -184,6 +180,17 @@ export class DisjointUint64Sets {
     }
 
     return is_ok;
+  }
+
+  deleteSet (a: Uint64): boolean {
+    const ids = [...this.setElements(a)];
+    if (ids.length > 0) {
+      for (const id of ids) {
+        this.map.delete(id.toString());
+      }
+      return true;
+    }
+    return false;
   }
 
   private shatter (a: Uint64) : Uint64[] {

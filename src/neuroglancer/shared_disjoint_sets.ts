@@ -23,6 +23,7 @@ import {registerRPC, registerSharedObject, RPC, SharedObjectCounterpart} from 'n
 const RPC_TYPE_ID = 'DisjointUint64Sets';
 const ADD_METHOD_ID = 'DisjointUint64Sets.add';
 const REMOVE_METHOD_ID = 'DisjointUint64Sets.remove';
+const DELETE_SET_METHOD_ID = 'DisjointUint64Sets.deleteSet';
 const SPLIT_METHOD_ID = 'DisjointUint64Sets.split';
 const CLEAR_METHOD_ID = 'DisjointUint64Sets.clear';
 
@@ -62,6 +63,18 @@ export class SharedDisjointUint64Sets extends SharedObjectCounterpart {
         rpc.invoke(
             REMOVE_METHOD_ID,
             {'id': this.rpcId, 'al': a.low, 'ah': a.high});
+      }
+      this.changed.dispatch();
+    }
+  }
+
+  deleteSet (a: Uint64) {
+    if (this.disjointSets.deleteSet(a)) {
+      let {rpc} = this;
+      if (rpc) {
+        rpc.invoke(
+          DELETE_SET_METHOD_ID,
+          {'id': this.rpcId, 'al': a.low, 'ah': a.high});
       }
       this.changed.dispatch();
     }
@@ -155,6 +168,16 @@ registerRPC(REMOVE_METHOD_ID, function(x) {
   tempA.high = x['ah'];
 
   if (obj.disjointSets.unlink(tempA)) {
+    obj.changed.dispatch();
+  }
+});
+
+registerRPC(DELETE_SET_METHOD_ID, function(x) {
+  let obj = <SharedDisjointUint64Sets>this.get(x['id']);
+  tempA.low = x['al'];
+  tempA.high = x['ah'];
+
+  if (obj.disjointSets.deleteSet(tempA)) {
     obj.changed.dispatch();
   }
 });

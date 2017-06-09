@@ -60,8 +60,8 @@ export interface SliceViewSegmentationDisplayState extends SegmentationDisplaySt
 
 export class SegmentationRenderLayer extends RenderLayer {
   protected segmentColorShaderManager = new SegmentColorShaderManager('segmentColorHash');
-  private hashTableManager = new HashSetShaderManager('visibleSegments');
-  private gpuHashTable = GPUHashTable.get(this.gl, this.displayState.visibleSegments.hashTable);
+  private hashTableManager = new HashSetShaderManager('visibleSegments2D');
+  private gpuHashTable = GPUHashTable.get(this.gl, this.displayState.visibleSegments2D.hashTable);
 
   private equivalencesShaderManager = new HashMapShaderManager('equivalences');
   private equivalencesHashMap =
@@ -230,7 +230,7 @@ uint64_t getMappedObjectId() {
     let gl = this.gl;
 
     let {displayState} = this;
-    let {segmentSelectionState, visibleSegments} = this.displayState;
+    let {segmentSelectionState, visibleSegments2D} = this.displayState;
     if (!segmentSelectionState.hasSelectedSegment) {
       selectedSegmentForShader.fill(0);
     } else {
@@ -244,7 +244,7 @@ uint64_t getMappedObjectId() {
     gl.uniform1f(shader.uniform('uSelectedAlpha'), this.displayState.selectedAlpha.value);
     gl.uniform1f(shader.uniform('uNotSelectedAlpha'), this.displayState.notSelectedAlpha.value);
     gl.uniform4fv(shader.uniform('uSelectedSegment'), selectedSegmentForShader);
-    gl.uniform1f(shader.uniform('uShowAllSegments'), visibleSegments.hashTable.size ? 0.0 : 1.0);
+    gl.uniform1f(shader.uniform('uShowAllSegments'), visibleSegments2D.hashTable.size ? 0.0 : 1.0);
     gl.uniform1f(shader.uniform('uShattered'), this.displayState.shattered ? 1.0 : 0.0);
     gl.uniform1f(shader.uniform('uSemanticMode'), this.displayState.semanticMode ? 1.0 : 0.0);
 

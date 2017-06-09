@@ -15,7 +15,7 @@
  */
 
 import {DisplayContext, RenderedPanel} from 'neuroglancer/display_context';
-import {MouseSelectionState, SplitState} from 'neuroglancer/layer';
+import {MouseSelectionState, ActionState} from 'neuroglancer/layer';
 import {NavigationState} from 'neuroglancer/navigation_state';
 import {AXES_NAMES, kAxes, vec3} from 'neuroglancer/util/geom';
 import {getWheelZoomAmount} from 'neuroglancer/util/wheel_zoom';
@@ -147,9 +147,13 @@ export abstract class RenderedDataPanel extends RenderedPanel {
         if (mouseState.updateUnconditionally()) {
           this.viewer.layerManager.invokeAction('annotate');
         }
-      } else if (mouseState.splitStatus != SplitState.INACTIVE) {
-        let action = mouseState.updateSplit();
-        this.viewer.layerManager.invokeAction(`split-select-${action}`);
+      } else if (mouseState.actionStatus != ActionState.INACTIVE) {
+        let [mode, action] = mouseState.updateAction();
+        if (mode === 'yacn') {
+          this.viewer.layerManager.invokeAction(`${mode}-select`);
+        } else {
+          this.viewer.layerManager.invokeAction(`${mode}-select-${action}`);
+        }
       } else {
         this.startDragViewport(e);
       }

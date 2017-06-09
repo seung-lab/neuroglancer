@@ -19,7 +19,7 @@ import {Chunk, ChunkManager, ChunkSource} from 'neuroglancer/chunk_manager/front
 import {RenderLayer} from 'neuroglancer/layer';
 import {VoxelSize} from 'neuroglancer/navigation_state';
 import {PerspectiveViewRenderContext, PerspectiveViewRenderLayer} from 'neuroglancer/perspective_view/render_layer';
-import {forEachSegmentToDraw, getObjectColor, registerRedrawWhenSegmentationDisplayState3DChanged, SegmentationDisplayState3D, SegmentationLayerSharedObject} from 'neuroglancer/segmentation_display_state/frontend';
+import {forEachSegmentToDraw2D, getObjectColor, registerRedrawWhenSegmentationDisplayState3DChanged, SegmentationDisplayState3D, SegmentationLayerSharedObject} from 'neuroglancer/segmentation_display_state/frontend';
 import {SKELETON_LAYER_RPC_ID, VertexAttributeInfo} from 'neuroglancer/skeleton/base';
 import {SliceViewPanelRenderContext, SliceViewPanelRenderLayer} from 'neuroglancer/sliceview/panel';
 import {TrackableValue} from 'neuroglancer/trackable_value';
@@ -269,7 +269,7 @@ export class SkeletonLayer extends RefCounted {
 
     gl.lineWidth(lineWidth);
 
-    forEachSegmentToDraw(displayState, skeletons, (rootObjectId, objectId, skeleton) => {
+    forEachSegmentToDraw2D(displayState, skeletons, (rootObjectId, objectId, skeleton) => {
       if (skeleton.state !== ChunkState.GPU_MEMORY) {
         return;
       }

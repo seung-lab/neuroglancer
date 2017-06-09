@@ -1,6 +1,6 @@
 module ChunkedGraphs
 
-export update!, ChunkedGraph, add_atomic_edge!, add_atomic_vertex!, delete_atomic_edge!, leaves, bfs
+export update!, ChunkedGraph, add_atomic_edge!, add_atomic_vertex!, delete_atomic_edge!, get_vertex, leaves, bfs, get_vertices
 
 import DataStructures
 using Save
@@ -91,8 +91,12 @@ function get_chunk(g::ChunkedGraph, id::ChunkID)
 	return g.graphs[id]
 end
 
-function get_atomic_vertex(g::ChunkedGraph, label)
+function get_vertex(g::ChunkedGraph, label)
 	return g.vertices[label]
+end
+
+function get_vertices(c::Chunk)
+  return collect(keys(c.graph.vertex_map))
 end
 
 #####Tree utility functions#####
@@ -194,7 +198,7 @@ function update!(c::Chunk)
 		end
 
 		for e in c.deleted_edges
-			u,v=lcG(map(x->get_atomic_vertex(c.chunked_graph,x),e)...)
+			u,v=lcG(map(x->get_vertex(c.chunked_graph,x),e)...)
 			@assert u.G == c
 			@assert v.G == c
 			MultiGraphs.delete_edge!(c.graph,u,v,e)
@@ -203,7 +207,7 @@ function update!(c::Chunk)
 		end
 
 		for e in c.added_edges
-			u,v=lcG(map(x->get_atomic_vertex(c.chunked_graph,x),e)...)
+			u,v=lcG(map(x->get_vertex(c.chunked_graph,x),e)...)
 			@assert u.G == c
 			@assert v.G == c
 			MultiGraphs.add_edge!(c.graph,u,v,e)
@@ -220,7 +224,9 @@ function update!(c::Chunk)
 
 			cc = MultiGraphs.connected_components(c.graph, dirty_vertices)
 			for component in cc
-				v=Vertex(unique_label(c.id), nothing, c.parent,component)
+				l=unique_label(c.id)
+				v=Vertex(l, nothing, c.parent,component)
+				c.chunked_graph.vertices[l]=v
 				for child in component
 					child.parent=v
 				end

@@ -3,40 +3,75 @@ import {Uint64} from 'neuroglancer/util/uint64';
 import {openHttpRequest, sendHttpRequest, HttpError} from 'neuroglancer/util/http_request';
 
 
-export const GRAPH_SERVER_NOT_ENABLED = Symbol('Graph Server Not Enabled.');
+export const GRAPH_SERVER_NOT_SPECIFIED = Symbol('Graph Server Not Specified.');
 
 let GRAPH_BASE_URL = '';
 
 export function enableGraphServer (url: string) : void {
-	GRAPH_BASE_URL = url;
+  GRAPH_BASE_URL = url;
 }
 
-export function getConnectedSegments (segment: Uint64) : Promise<Uint64[]> {
-	if (!GRAPH_BASE_URL) {
-		return Promise.reject(GRAPH_SERVER_NOT_ENABLED);
-	}
+export function getRoot (segment: Uint64) : Promise<Uint64> {
+  if (!GRAPH_BASE_URL) {
+    return Promise.resolve(segment);
+  }
 
-	let promise = sendHttpRequest(openHttpRequest(`${GRAPH_BASE_URL}/1.0/node/${segment}`), 'arraybuffer');
-    return promise.then(response => {
-        let uint32 = new Uint32Array(response);
-        let final : Uint64[] = new Array(uint32.length);
+  let promise = sendHttpRequest(openHttpRequest(`${GRAPH_BASE_URL}/1.0/segment/${segment}/root`), 'arraybuffer');
+  return promise.then(response => {
+    let uint32 = new Uint32Array(response);
+    return new Uint64(uint32[0], uint32[1]);
+  }).catch((e: HttpError) => {
+    console.log(`Could not retrieve root for segment ${segment}`);
+    console.error(e);
 
-        for (let i = 0; i < uint32.length; i++) {
-        	final[i] = new Uint64(uint32[i]);
-        }
+    return Promise.reject(e);
+  });
+}
 
-        return final;
-      },
-      function (e: HttpError) {
-      	if (e.code == 503) {
-      		return <Uint64[]>[];
-      	}
+export function getLeaves (segment: Uint64) : Promise<Uint64[]> {
+  if (!GRAPH_BASE_URL) {
+    return Promise.resolve([segment]);
+  }
 
-        console.log(`Download failed for segment ${segment}`);
-        console.error(e);
+  let promise = sendHttpRequest(openHttpRequest(`${GRAPH_BASE_URL}/1.0/segment/${segment}/leaves`), 'arraybuffer');
+  return promise.then(response => {
+    let uint32 = new Uint32Array(response);
+    let final : Uint64[] = new Array(uint32.length/2);
 
-        return <Uint64[]>[];
-      });
+    for (let i = 0; i < uint32.length/2; i++) {
+      final[i] = new Uint64(uint32[2*i], uint32[2*i+1]);
+    }
+
+    return final;
+  }).catch((e: HttpError) => {
+    console.log(`Could not retrieve connected components for segment ${segment}`);
+    console.error(e);
+
+    return Promise.reject(e);
+  });
+}
+
+export function getChildren(segment: Uint64) : Promise<Uint64[]> {
+  if (!GRAPH_BASE_URL) {
+    return Promise.resolve([]);
+  }
+
+  let promise = sendHttpRequest(openHttpRequest(`${GRAPH_BASE_URL}/1.0/segment/${segment}/children`), 'arraybuffer');
+  return promise.then(response => {
+    let uint32 = new Uint32Array(response);
+    let final : Uint64[] = new Array(uint32.length/2);
+
+    for (let i = 0; i < uint32.length/2; i++) {
+      final[i] = new Uint64(uint32[2*i], uint32[2*i+1]);
+    }
+
+    return final;
+  }).catch((e: HttpError) => {
+    console.log(`Could not retrieve children for segment ${segment}`);
+    console.error(e);
+
+    return Promise.reject(e);
+  });
 }
 
 /* Directs the graph server to merge 
@@ -44,48 +79,43 @@ export function getConnectedSegments (segment: Uint64) : Promise<Uint64[]> {
  * 
  * This will remove them from other objects.
  */
-export function mergeNodes<T> (nodes: T[]) : Promise<any> {
-	return fetch(`${GRAPH_BASE_URL}/1.0/object/`, {
-	  method: "POST",
-	  body: JSON.stringify(nodes),
-	})
-	.catch(function (error) {
-		console.error(error);
-	})
-	.then(function (resp) {
-		console.log("yay merged");
-		return resp;
-	});
+export function mergeNodes (first: Uint64, second: Uint64) : Promise<Uint64> {
+  if (!GRAPH_BASE_URL) {
+    return Promise.reject(GRAPH_SERVER_NOT_SPECIFIED);
+  }
+
+  let promise = sendHttpRequest(openHttpRequest(`${GRAPH_BASE_URL}/1.0/merge/${first},${second}`), 'arraybuffer');
+  return promise.then(response => {
+    let uint32 = new Uint32Array(response);
+    return new Uint64(uint32[0], uint32[1]);
+  }).catch((e: HttpError) => {
+    console.log(`Could not retrieve merge result of segments ${first} and ${second}.`);
+    console.error(e);
+
+    return Promise.reject(e);
+  });
 }
 
-/* Fetches all registered objects in the dataset
- * with their nodes. Not scalable, will be chunked in future.
- */
-export function getObjectList () : Promise<any> {
-	return fetch(`${GRAPH_BASE_URL}/1.0/object/`)
-		.then(function (response: Response) {
-			return response.json();
-		}, function (error) {
-			console.error(error);
-		});
-}
+export function splitObject (first: Uint64, second: Uint64) : Promise<Uint64[]> {
+  if (!GRAPH_BASE_URL) {
+    return Promise.reject(GRAPH_SERVER_NOT_SPECIFIED);
+  }
 
-export function splitObject (sources: Uint64[], sinks: Uint64[]) : Promise<Uint64[][]> {
-	return fetch(`${GRAPH_BASE_URL}/1.0/split/`, {
+  let promise = sendHttpRequest(openHttpRequest(`${GRAPH_BASE_URL}/1.0/split/${first},${second}`), 'arraybuffer');
+  return promise.then(response => {
+    let uint32 = new Uint32Array(response);
+    let final : Uint64[] = new Array(uint32.length/2);
 
-		method: "POST",
-		body: JSON.stringify({
-			sources: sources,
-			sinks: sinks,
-		})
-	})
-	.then( (resp) => resp.json(), (error) => error )
-	.then( (split_groups: any) => { // this typing is stupid but was the only way to surpress TS errors
-		if (split_groups.error) {
-			throw new Error(split_groups.error);
-		}
+    for (let i = 0; i < uint32.length/2; i++) {
+      final[i] = new Uint64(uint32[2*i], uint32[2*i+1]);
+    }
 
-		return <Uint64[][]>((<number[][]>split_groups).map( (nums) => nums.map( (num) => new Uint64(num) ) ));
-	}, (error) => error );
+    return final;
+  }).catch((e: HttpError) => {
+    console.log(`Could not retrieve split result of segments ${first} and ${second}.`);
+    console.error(e);
+
+    return Promise.reject(e);
+  });
 }
 

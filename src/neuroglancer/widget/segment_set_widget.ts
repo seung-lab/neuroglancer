@@ -31,7 +31,7 @@ export class SegmentSetWidget extends RefCounted {
   private itemContainer = document.createElement('span');
   private items = new Map<string, ItemElement>();
 
-  get visibleSegments() {
+  get rootSegments() { return this.displayState.rootSegments; }
     return this.displayState.visibleSegments;
   }
   get segmentColorHash() {
@@ -47,7 +47,7 @@ export class SegmentSetWidget extends RefCounted {
     element.className = 'segment-set-widget noselect';
     clearButton.className = 'clear-button';
     clearButton.title = 'Remove all segment IDs';
-    this.registerEventListener(clearButton, 'click', () => {
+    this.registerEventListener(clearButton, 'click', () => { this.rootSegments.clear(); });
       this.visibleSegments.clear();
     });
 
@@ -56,14 +56,14 @@ export class SegmentSetWidget extends RefCounted {
 
     itemContainer.appendChild(clearButton);
 
-    this.registerDisposer(displayState.visibleSegments.changed.add((x, add) => {
+    this.registerDisposer(displayState.rootSegments.changed.add((x, add) => {
       this.handleSetChanged(x, add);
     }));
     this.registerDisposer(displayState.segmentColorHash.changed.add(() => {
       this.handleColorChanged();
     }));
 
-    for (let x of displayState.visibleSegments) {
+    for (let x of displayState.rootSegments) {
       this.addElement(x.toString());
     }
     this.updateClearButtonVisibility();
@@ -71,7 +71,7 @@ export class SegmentSetWidget extends RefCounted {
 
   private updateClearButtonVisibility() {
     let {clearButton} = this;
-    clearButton.style.display = (this.displayState.visibleSegments.size > 0) ? '' : 'none';
+    clearButton.style.display = (this.displayState.rootSegments.size > 0) ? '' : 'none';
   }
 
   private handleSetChanged(x: Uint64|null, added: boolean) {
@@ -106,7 +106,7 @@ export class SegmentSetWidget extends RefCounted {
     let widget = this;
     itemElement.addEventListener('click', function(this: ItemElement) {
       temp.tryParseString(this.textContent!);
-      widget.visibleSegments.delete(temp);
+      widget.rootSegments.delete(temp);
     });
     itemElement.addEventListener('mouseenter', function(this: ItemElement) {
       temp.tryParseString(this.textContent!);

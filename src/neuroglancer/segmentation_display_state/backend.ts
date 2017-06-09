@@ -29,7 +29,9 @@ import {HashMapUint64} from 'neuroglancer/gpu_hash/hash_table';
 const Base = withSharedVisibility(withChunkManager(SharedObjectCounterpart));
 
 export class SegmentationLayerSharedObjectCounterpart extends Base implements VisibleSegmentsState {
-  visibleSegments: Uint64Set;
+  rootSegments: Uint64Set;
+  visibleSegments2D: Uint64Set;
+  visibleSegments3D: Uint64Set;
   segmentEquivalences: SharedDisjointUint64Sets;
   shattered: boolean = false;
   semanticHashMap: HashMapUint64;
@@ -37,13 +39,19 @@ export class SegmentationLayerSharedObjectCounterpart extends Base implements Vi
 
   constructor(rpc: RPC, options: any) {
     super(rpc, options);
-    // No need to increase the reference count of visibleSegments or
-    // segmentEquivalences since our owner will hold a reference to their owners.
-    this.visibleSegments = <Uint64Set>rpc.get(options['visibleSegments']);
+    // No need to increase the reference count of chunkManager, rootSegments,
+    // visibleSegments2D/3D or segmentEquivalences since our owner will hold
+    // a reference to their owners.
+    this.rootSegments = <Uint64Set>rpc.get(options['rootSegments']);
+    this.visibleSegments2D = <Uint64Set>rpc.get(options['visibleSegments2D']);
+    this.visibleSegments3D = <Uint64Set>rpc.get(options['visibleSegments3D']);
     this.segmentEquivalences = <SharedDisjointUint64Sets>rpc.get(options['segmentEquivalences']);
 
     const scheduleUpdateChunkPriorities = () => {
       this.chunkManager.scheduleUpdateChunkPriorities();
+    this.registerSignalBinding(this.rootSegments.changed.add(scheduleUpdateChunkPriorities));
+    this.registerSignalBinding(this.visibleSegments2D.changed.add(scheduleUpdateChunkPriorities));
+    this.registerSignalBinding(this.visibleSegments3D.changed.add(scheduleUpdateChunkPriorities));
     };
     this.registerDisposer(this.visibleSegments.changed.add(scheduleUpdateChunkPriorities));
     this.registerDisposer(this.segmentEquivalences.changed.add(scheduleUpdateChunkPriorities));

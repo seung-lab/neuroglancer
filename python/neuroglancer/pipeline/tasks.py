@@ -24,6 +24,7 @@ from neuroglancer.pipeline import Mesher # broken out for ease of commenting out
 Storage=cached.Cached(Storage)
 
 
+
 def downsample_and_upload(image, bounds, vol, ds_shape, mip=0, axis='z', skip_first=False):
     ds_shape = min2(vol.volume_size, ds_shape[:3])
 
@@ -167,13 +168,38 @@ class ObjectMeshTask(RegisteredTask):
         self.label = label
 
     def execute(self):
+        # t_start = timer()
         self._storage = Storage(self.layer_path)
+        # t_end = timer()
+        # print("Creating Storage instance: {} ms".format(1000.0 * (t_end-t_start)))
+
+        # t_start = timer()
         self._mesher = Mesher()
+        # t_end = timer()
+        # print("Creating Mesher instance: {} ms".format(1000.0 * (t_end-t_start)))
+
+        # t_start = timer()
         self._parse_chunk_position()
+        # t_end = timer()
+        # print("Parsing chunk position: {} ms".format(1000.0 * (t_end-t_start)))
+
+        # t_start = timer()
         self._download_info()
+        # t_end = timer()
+        # print("Download info: {} ms".format(1000.0 * (t_end-t_start)))
+
+        # t_start = timer()
         self._download_input_chunk()
-        self._compute_meshes()
+        # t_end = timer()
+        # print("Download input chunk: {} ms".format(1000.0 * (t_end-t_start)))
+
+        self._compute_meshes() # Timed in function
+
+        # t_start = timer()
         self._storage.wait()
+        # t_end = timer()
+        # print("Waiting for Storage: {} ms".format(1000.0 * (t_end-t_start)))
+
 
     def _parse_chunk_position(self):
         match = re.match(r'^(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)$', self.chunk_position)
@@ -218,17 +244,30 @@ class ObjectMeshTask(RegisteredTask):
         self._storage.wait()
 
     def _create_mesh(self, obj_id):
+        # t_start = timer()
         mesh = self._mesher.get_mesh(obj_id, simplification_factor=128, max_simplification_error=1000000)
+        # t_end = timer()
+        # print("Marching Cubes + Simplification: {} ms".format(1000.0 * (t_end-t_start)))
+
+        # t_start = timer()
         vertices = self._update_vertices(np.array(mesh['points'], dtype=np.float32)) 
+        # t_end = timer()
+        # print("Updating Vertices: {} ms".format(1000.0 * (t_end-t_start)))
+
+        # t_start = timer()
         vertex_index_format = [
             np.uint32(len(vertices) / 3), #Number of vertices (each vertex it's composed of three numbers(x,y,z))
             vertices,
             np.array(mesh['faces'], dtype=np.uint32)
         ]
-        return b''.join([ array.tobytes() for array in vertex_index_format ])
+        ret = b''.join([ array.tobytes() for array in vertex_index_format ])
+        # t_end = timer()
+        # print("Converting to byte stream: {} ms".format(1000.0 * (t_end-t_start)))
+
+        return ret
 
     def _update_vertices(self, points):
-        # zlib meshing multiplies verticies by two to avoid working with floats like 1.5
+        # zi_lib meshing multiplies verticies by two to avoid working with floats like 1.5
         # but we need to recover the exact position for display
         points /= 2.0
         resolution = self._info['scales'][0]['resolution']

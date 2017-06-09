@@ -407,12 +407,22 @@ export interface PickState {
   pickedOffset: number;
 }
 
-export enum SplitState {
+export enum ActionState {
   INACTIVE,
   // Selecting elements for the first group.
   FIRST,
   // Selecting elements for the second group.
   SECOND,
+}
+
+export enum ActionMode {
+  NONE,
+  // Merge two objects into one.
+  MERGE,
+  // Split one object into two.
+  SPLIT,
+  // Run YACN for automated error detection and correction
+  YACN,
 }
 
 
@@ -424,26 +434,51 @@ export class MouseSelectionState implements PickState {
   pickedValue = new Uint64(0, 0);
   pickedOffset = 0;
 
-  splitStatus = SplitState.INACTIVE;
-  
-  toggleSplit() {
-    if (this.splitStatus == SplitState.INACTIVE) {
-      this.splitStatus = SplitState.FIRST;
+  actionMode = ActionMode.NONE;
+  actionStatus = ActionState.INACTIVE;
+
+
+  setMode(mode: ActionMode) {
+    this.actionMode = mode;
+  }
+
+  toggleAction() {
+    if (this.actionStatus == ActionState.INACTIVE) {
+      this.actionStatus = ActionState.FIRST;
     } else {
-      this.splitStatus = SplitState.INACTIVE;
+      this.actionStatus = ActionState.INACTIVE;
     }
   }
 
-  updateSplit() {
-    if (this.splitStatus == SplitState.FIRST){
-      this.splitStatus = SplitState.SECOND;
-      return 'first';
-    } else {
-      // this.splitStatus has to be SplitState.SECOND
-      this.toggleSplit();
-      return 'second';
-    } 
-
+  updateAction() {
+    switch (this.actionMode) {
+      case ActionMode.MERGE: {
+        if (this.actionStatus === ActionState.FIRST) {
+          this.actionStatus = ActionState.SECOND;
+          return ['merge', 'first'];
+        } else {
+          this.actionStatus = ActionState.INACTIVE;
+          return ['merge', 'second'];
+        }
+      }
+      case ActionMode.SPLIT: {
+        if (this.actionStatus === ActionState.FIRST) {
+          this.actionStatus = ActionState.SECOND;
+          return ['split', 'first'];
+        } else {
+          this.actionStatus = ActionState.INACTIVE;
+          return ['split', 'second'];
+        }
+      }
+      case ActionMode.YACN: {
+        this.actionStatus = ActionState.INACTIVE;
+        return ['yacn'];
+      }
+      default: {
+        // Should never happen
+        return [];
+      }
+    }
   }
 
   updater: ((mouseState: MouseSelectionState) => boolean)|undefined = undefined;
