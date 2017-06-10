@@ -22,6 +22,7 @@ tqdm==4.7.6
 tornado==4.4.2
 wsgiref==0.1.2
 scipy==0.18.1
+urlparse
 
 # do not use
 # google-cloud==0.22.0 
