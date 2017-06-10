@@ -35,7 +35,8 @@ def toc(msg="toc"):
 	print("\t"*len(tics) + msg + " " + str(elapsed))
 
 def indicator(A, s):
-	return np.reshape(np.in1d(A,np.array(list(s))).astype(np.int32),np.shape(A))
+	s=np.array(list(s),dtype=np.uint64)
+	return np.reshape(np.in1d(A,s).astype(np.int32),np.shape(A))
 
 
 def compute_fullgraph(raw, resolution=np.array([4,4,40]), r=100):
@@ -62,8 +63,11 @@ def compute_fullgraph(raw, resolution=np.array([4,4,40]), r=100):
 		return t1[:count_neighbors](t2,r) > 0
 	return close
 
+def is_nonzero(x):
+	return (np.uint64(x) & np.uint64(0b11111111111111111111111111111111))!=0
+
 def unique_nonzero(A):
-	return filter(lambda x: x!=0, np.unique(A))
+	return filter(is_nonzero, np.unique(A))
 
 
 def flatten(G, raw, dense=True):
