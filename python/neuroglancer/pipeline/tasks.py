@@ -16,6 +16,11 @@ from tqdm import tqdm
 from neuroglancer.pipeline import Storage, Precomputed, RegisteredTask, Mesher
 from neuroglancer import chunks, downsample
 
+import cached
+
+#this will hopefully limit the number of storage objects created
+Storage=cached.Cached(Storage)
+
 class IngestTask(RegisteredTask):
     """Ingests and does downsampling.
        We want tasks execution to be independent of each other, so that no sincronization is
@@ -657,3 +662,11 @@ class SetEncodingTask(RegisteredTask):
         s3i = S3Interface(Storage.extract_path(self.layer_path))
         s3i.apply_gzip_encoding(self.prefix)
 
+class SimpleTask(RegisteredTask):
+    def __init__(self, message):
+        super(SimpleTask, self).__init__(message)
+
+        self.message=message
+
+    def execute(self):
+        raise NotImplementedError()
