@@ -6,65 +6,63 @@ import DataStructures
 using Save
 using Iterators
 import MultiGraphs
-
-const Int=Int32
+using Utils
 
 #####Chunk Ids#####
-const bx = 2
-const by = 2
-const bz = 2
+include("constants.jl")
+const MAX_DEPTH=6
+const TOP_ID=ChunkID(MAX_DEPTH,0,0,0)
 
 
-#The first element represents level, the last three represent location
-typealias ChunkID Tuple{Int,Int,Int,Int}
-
-const MAX_DEPTH=5
-const TOP_ID=convert(ChunkID,(MAX_DEPTH,0,0,0))
 @inline function parent(t::ChunkID)
-	if t[1] >= MAX_DEPTH
+	if level(t) >= MAX_DEPTH
 		return TOP_ID
 	else 
-		return convert(ChunkID,(t[1]+1,fld(t[2],bx),fld(t[3],by),fld(t[4],bz)))
+		x,y,z=pos(t)
+		return ChunkID(level(t)+1,fld(x,bx),fld(y,by),fld(z,bz))
 	end
 end
 
 #TODO: change VOID objects to nullables
-#TODO: make all vertices have labels of the same type
 #####Chunked graph types#####
-type ChunkedGraph{C,V}
+type Vertex{C}
+	label::Label
+	parent::Union{Vertex{C},Void}
+	G::C
+	children
+end
+
+type ChunkedGraph{C}
 	graphs::Dict{ChunkID, C}
-	vertices::Dict{Any, V}
+	flat_graph::MultiGraphs.SimpleGraph{Label}
+	vertices::Dict{Label, Vertex{C}}
 	root::Union{C,Void}
 end
 function ChunkedGraph()
 	d=Dict{ChunkID,Chunk}()
-	ret = ChunkedGraph{Chunk,Vertex}(d,Dict{Any,Vertex}(),nothing)
+	ret = ChunkedGraph{Chunk}(d,MultiGraphs.SimpleGraph(Label),Dict{Label,Vertex{Chunk}}(),nothing)
 	d[TOP_ID]=Chunk(ret,TOP_ID,nothing)
 	ret.root=d[TOP_ID]
 	return ret
 end
 
-type Vertex{C}
-	label::Any
-	parent::Union{Vertex,Void}
-	G::C
-	children
-end
+
+typealias AtomicEdge Tuple{Label,Label}
 
 #The 'added' and 'deleted' sets buffer updates to the graph
 type Chunk
-	chunked_graph::ChunkedGraph{Chunk,Vertex}
-	graph::MultiGraphs.MultiGraph
+	chunked_graph::ChunkedGraph{Chunk}
+	graph::MultiGraphs.MultiGraph{Vertex{Chunk},Tuple{Label,Label}}
 	id::ChunkID
 	parent::Union{Chunk,Void}
 	subgraphs::Array{Chunk,1}
-	added_vertices::Set{Vertex}
-	deleted_vertices::Set{Vertex}
-	added_edges::Set
-	deleted_edges::Set
+	added_vertices::Set{Vertex{Chunk}}
+	deleted_vertices::Set{Vertex{Chunk}}
+	added_edges::Set{AtomicEdge}
+	deleted_edges::Set{AtomicEdge}
 	clean::Bool
 	function Chunk(G,id,par)
-		d=new(G,MultiGraphs.MultiGraph(),id,par,Chunk[],Set{Vertex}(),Set{Vertex}(),Set(),Set(),true)
+		d=new(G,MultiGraphs.MultiGraph(Vertex{Chunk},Tuple{Label,Label}),id,par,Chunk[],Set{Vertex}(),Set{Vertex}(),Set{AtomicEdge}(),Set{AtomicEdge}(),true)
 		if par != nothing
 			push!(par.subgraphs,d)
 		end
@@ -72,11 +70,18 @@ type Chunk
 	end
 end
 
+import Base: ==, hash
+==(x::Vertex,y::Vertex) = (x.label == y.label)
+Base.hash(v::Vertex) = Base.hash(v.label)
+
 function Base.show(io::IO,x::Chunk)
 	write(io, "Chunk(id=$(x.id)),clean=$(x.clean)")
 end
 function Base.show(io::IO,v::Vertex)
 	write(io, "Vertex(label=$(v.label),parent=$(v.parent))")
+end
+function Base.show(io::IO,g::ChunkedGraph)
+	write(io, "ChunkedGraph(...)")
 end
 
 function get_chunk(g::ChunkedGraph, id::ChunkID)
@@ -91,9 +96,8 @@ function get_atomic_vertex(g::ChunkedGraph, label)
 end
 
 #####Tree utility functions#####
-level(c::Chunk) = level(c.id)
-level(id::ChunkID) = id[1]
-level(v::Vertex) = level(v.G)
+Utils.level(c::Chunk) = Utils.level(c.id)
+Utils.level(v::Vertex) = Utils.level(v.G)
 
 function is_root(c::Chunk)
 	return c.id == TOP_ID
@@ -113,8 +117,8 @@ function root(x)
 		return root(parent(x))
 	end
 end
-function is_leaf(v::Vertex)
-	return v.children == nothing
+function is_leaf(x)
+	return level(x)==1
 end
 
 #TODO: remove log(n) overhead
@@ -143,9 +147,6 @@ function lca(t1,t2)
 		return lca(parent(t1),parent(t2))
 	end
 end
-function chunk_id(label)
-	return label[2]
-end
 
 function touch(x::Void)
 end
@@ -156,9 +157,9 @@ end
 
 
 #####Graph operations#####
-function unordered{T}(x::Tuple{T,T})
-	a,b = x
-	return (min(a,b),max(a,b))
+
+function update!(c::ChunkedGraph)
+	update!(c.root)
 end
 
 function update!(c::Chunk)
@@ -166,13 +167,13 @@ function update!(c::Chunk)
 		for s in c.subgraphs
 			update!(s)
 		end
-		println("updating $(c.id)")
+		println("updating $(level(c.id)), $(map(Int,pos(c.id)))")
 
 		#vertices that are being deleted from c.G
-		dead_dirty_vertices=Set([])
+		dead_dirty_vertices=Set{Vertex{Chunk}}()
 
 		#vertices which need updates
-		dirty_vertices=Set([])
+		dirty_vertices=Set{Vertex{Chunk}}()
 
 		for v in c.deleted_vertices
 			for e in MultiGraphs.incident_edges(c.graph, v)
@@ -219,7 +220,7 @@ function update!(c::Chunk)
 
 			cc = MultiGraphs.connected_components(c.graph, dirty_vertices)
 			for component in cc
-				v=Vertex(unique_label(), nothing, c.parent,component)
+				v=Vertex(unique_label(c.id), nothing, c.parent,component)
 				for child in component
 					child.parent=v
 				end
@@ -229,10 +230,10 @@ function update!(c::Chunk)
 			c.parent.clean=false
 		end
 
-		c.added_edges=Set([])
-		c.added_vertices=Set{Vertex}([])
-		c.deleted_edges=Set([])
-		c.deleted_vertices=Set{Vertex}([])
+		c.added_edges=Set{AtomicEdge}([])
+		c.added_vertices=Set{Vertex{Chunk}}([])
+		c.deleted_edges=Set{AtomicEdge}([])
+		c.deleted_vertices=Set{Vertex{Chunk}}([])
 		c.clean=true
 	end
 end
@@ -240,10 +241,10 @@ end
 
 
 MAX_LABEL=0
-function unique_label()
+function unique_label(chunk_id)
 	global MAX_LABEL
 	MAX_LABEL+=1
-	return MAX_LABEL
+	return Label(MAX_LABEL,chunk_id)
 end
 
 
@@ -253,12 +254,16 @@ function add_atomic_vertex!(G::ChunkedGraph, label)
 	G.vertices[label]=v
 	push!(s.added_vertices, v)
 	touch(s)
+
+	MultiGraphs.add_vertex!(G.flat_graph, label)
 end
 
 function add_atomic_edge!(G::ChunkedGraph, edge)
 	s=lca(get_chunk(G,chunk_id(edge[1])),get_chunk(G,chunk_id(edge[2])))
-	push!(s.added_edges,edge)
+	push!(s.added_edges,unordered(edge))
 	touch(s)
+
+	MultiGraphs.add_edge!(G.flat_graph, edge[1], edge[2])
 end
 
 function delete_atomic_edge!(G::ChunkedGraph, edge)
@@ -266,6 +271,9 @@ function delete_atomic_edge!(G::ChunkedGraph, edge)
 
 	push!(s.deleted_edges, unordered(edge))
 	touch(s)
+
+
+	MultiGraphs.delete_edge!(G.flat_graph, edge[1], edge[2])
 end
 
 
@@ -275,7 +283,9 @@ function bfs(G::ChunkedGraph, label)
 	return MultiGraphs.connected_components(chunk.graph,[v])[1]
 end
 
-
+function MultiGraphs.induced_edges(G::ChunkedGraph, Us)
+	return MultiGraphs.induced_edges(G.flat_graph, Us)
+end
 
 end
 

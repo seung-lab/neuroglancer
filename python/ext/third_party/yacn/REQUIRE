@@ -3,3 +3,9 @@ DataStructures
 HDF5
 PyCall
 NPZ
+LightGraphs
+Iterators
+HttpServer
+HttpCommon
+MbedTLS
+OffsetArrays
