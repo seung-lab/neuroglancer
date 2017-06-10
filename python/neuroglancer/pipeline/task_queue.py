@@ -86,17 +86,6 @@ class RegisteredTask(object):
             string = string[:-1]
 
         return string + ")"  
-class RawTask(object):
-    def __init__(self, payload):
-        self.payload=payload
-
-    @property
-    def payloadBase64(self):
-        return base64.b64encode(self.payload)
-
-    @property
-    def id(self):
-        return self._id
 
 class TaskQueue(ThreadedQueue):
     """

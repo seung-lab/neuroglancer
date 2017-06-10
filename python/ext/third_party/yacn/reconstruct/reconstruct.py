@@ -96,7 +96,7 @@ class SubVolume():
 
 		max_error_list = measurements.maximum(self.errors,self.raw_labels, unique_list)
 		additional_segments = [unique_list[i] for i in xrange(len(unique_list)) if max_error_list[i]>threshold or max_error_list[i]==0.0]
-		additional_segments = filter(lambda x: x != 0 and x not in self.parent.valid, additional_segments)
+		additional_segments = filter(lambda x: is_nonzero(x) and x not in self.parent.valid, additional_segments)
 
 		return additional_segments
 
