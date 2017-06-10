@@ -9,12 +9,14 @@ from tornado import httpserver, netutil
 import numpy as np
 import ssl
 from tasks import ServerTask as Task
+from urlparse import parse_qs
 
 class BaseHandler(tornado.web.RequestHandler):
 
-	def initialize(self, queue, name_to_task):
+	def initialize(self, queue, name_to_task,record):
 		self.queue=queue
 		self.name_to_task=name_to_task
+		self.record=record
 
 	def add_cors_headers(self):
 		self.set_header("Access-Control-Allow-Origin", "*")
@@ -28,6 +30,13 @@ class TaskHandler(BaseHandler):
 	def get(self):
 		data = json.loads(self.request.body)
 		lease_time = data[u'lease_time']
+		#todo: remove linear search for ready tasks
+		#instead, implement a priority queue based on number of number of dependencies
+		#and release time.
+
+		#The constant time solution involving a staging queue containing 
+		#only tasks without outstanding dependencies is complicated by our 
+		#leasing timeouts.
 		for t in self.queue:
 			if t.is_ready():
 				print "leasing {}".format(t.name)
@@ -42,7 +51,7 @@ class TaskHandler(BaseHandler):
 		print "inserting {}".format(t.name)
 		self.queue.append(t)
 		self.name_to_task[data[u'name']]=t
-		print self.name_to_task.keys()
+		print "{} tasks in queue".format(len(self.queue))
 
 	def delete(self):
 		data = json.loads(self.request.body)
@@ -52,15 +61,29 @@ class TaskHandler(BaseHandler):
 		self.name_to_task[name]=None
 		print "deleting {}".format(task.name)
 		self.queue.remove(task)
+		print "{} tasks in queue".format(len(self.queue))
+		self.record.write("{}\n".format(name))
+		self.record.flush()
+
+counter=0
+class SlackTaskHandler(TaskHandler):
+	def post(self):
+		global counter
+		counter+=1
+		args = parse_qs(self.request.body)
+		self.request.body = json.dumps({"name":"slack_task_{}".format(counter),"payload":args['text'][0],"dependencies":[]})
+		self.put()
 
 def make_app(path):
 	args =  {
 		'queue': [],
 		'name_to_task': {},
+		'record': open("log.txt",'w')
 	}
 
 	app = tornado.web.Application([
 		(r'/1.0/?', TaskHandler, args),
+		(r'/slack/?', SlackTaskHandler, args),
 	], debug=True)
 
 	app.args = args
@@ -69,7 +92,7 @@ def make_app(path):
 def start_server(path=None):
 	app = make_app(path)
 	http_server = tornado.httpserver.HTTPServer(app)
-	http_server.bind(8006)
+	http_server.bind(8000)
 	http_server.start(1)
 	tornado.ioloop.IOLoop.current().start()
 

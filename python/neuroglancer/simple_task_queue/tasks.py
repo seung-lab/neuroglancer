@@ -3,7 +3,7 @@ import time
 class ServerTask():
 	def __init__(self, name, dependencies, payload):
 		self.name=name
-		self.parents = dependencies
+		self.parents = filter(lambda x: x is not None, dependencies)
 		self.children = set([])
 		for parent in self.parents:
 			parent.children.add(self)
@@ -20,7 +20,7 @@ class ServerTask():
 		return len(self.parents)==0 and time.time() > self.release_time
 	
 	def lease(self, lease_time=600):
-		self.release_time = time.time() + self.release_time
+		self.release_time = time.time() + lease_time
 
 	def delete(self):
 		for child in self.children:
