@@ -1,36 +1,17 @@
 using PyCall
 using OffsetArrays
+using Utils
 @pyimport neuroglancer.pipeline as pl
 const pyslice=pybuiltin(:slice)
 
-const Int=Int32
+include("constants.jl")
 
-const cx = 512
-const cy = 512
-const cz = 64
-
-@inline function int_div(x,y)
-	return floor(Int,x/y)
-end
-@inline function to_chunk_id(x,y,z)
-	return (Int(0), int_div(x,cx), int_div(y,cy), int_div(z,cz))
-end
-function chunk_id_to_slices(chunk_id)
-	l,x,y,z = chunk_id
-	@assert l==0
-	return ((x)*cx:(x+1)*(cx),
-		 	(y)*cy:(y+1)*(cy),
-			(z)*cz:(z+1)*(cz))
-end
-function unordered(x,y)
-	return (min(x,y),max(x,y))
-end
 function chunked_labelling{T}(raw::OffsetArray{T,3})
-	ret = OffsetArray(Tuple{T,Tuple{Int,Int,Int,Int}},indices(raw)...)
+	ret = OffsetArray(Label,indices(raw)...)
 	for k in indices(raw,3)
 		for j in indices(raw,2)
 			for i in indices(raw,1)
-				ret[i,j,k]=(raw[i,j,k],to_chunk_id(i,j,k))
+				ret[i,j,k]=Label(raw[i,j,k],to_chunk_id(i,j,k))
 			end
 		end
 	end
@@ -61,10 +42,23 @@ function compute_regiongraph{T,S}(raw::AbstractArray{T,3}, machine_labels::Abstr
 	return collect(edges)
 end
 
+function cached(f)
+	cache=Dict()
+	function my_f(args...)
+		if !haskey(cache, args)
+			cache[args] = f(args...)
+		else
+			println("restoring from cache")
+		end
+		return cache[args]
+	end
+end
+CachedStorage = cached(pl.Storage)
+
 immutable PrecomputedWrapper
 	val
 	function PrecomputedWrapper(storage_string)
-		return new(pl.Precomputed(pl.Storage(storage_string)))
+		return new(pl.Precomputed(CachedStorage(storage_string)))
 	end
 end
 
@@ -78,18 +72,6 @@ function Base.getindex(x::PrecomputedWrapper, slicex::UnitRange, slicey::UnitRan
 
 end
 
-function str_to_slices(s)
-	m=match(r"(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)",s)
-end
-
-function slices_to_str(s)
-	t=map(slice_to_str,s)
-	return "$(t[1])_$(t[2])_$(t[3])"
-end
-function slice_to_str(s)
-	return "$(s.start)-$(s.stop)"
-end
-
 function edge_task(watershed_storage, segmentation_storage, output_storage, slices)
 	watershed = PrecomputedWrapper(watershed_storage)
 	watershed_cutout = watershed[slices...]
@@ -97,12 +79,13 @@ function edge_task(watershed_storage, segmentation_storage, output_storage, slic
 	segmentation = PrecomputedWrapper(segmentation_storage)
 	segmentation_cutout = segmentation[slices...]
 
-	edges = compute_regiongraph(chunked_labelling(watershed_cutout),segmentation_cutout)
+	relabelled = chunked_labelling(watershed_cutout)
+	edges = compute_regiongraph(relabelled,segmentation_cutout)
+	vertices = unique(relabelled)
 	
-	
-	println(edges)
 	output_storage = pl.Storage(output_storage)
-	output_storage[:put_file](file_path="$(slices_to_str(slices)).txt", content="$(edges)")
+	output_storage[:put_file](file_path="$(slices_to_str(slices))_edges.txt", content="$(edges)")
+	output_storage[:put_file](file_path="$(slices_to_str(slices))_vertices.txt", content="$(vertices)")
 	output_storage[:wait]()
 end
 
@@ -116,3 +99,4 @@ function map_chunks(f, ranges, low_overlap, high_overlap)
 		f(slices)
 	end
 end
+
