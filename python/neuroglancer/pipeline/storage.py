@@ -125,13 +125,15 @@ class Storage(object):
             content = self._maybe_uncompress(content)
         return content
 
-    def get_file_cached(self, file_path):
+    def get_file_cached(self, file_path, force_decompress=False):
         #TODO: check timestamp to see if cache is stale
         #TODO: clear the cache when it gets too large
-        if not hasattr(self,_cache):
+        if not hasattr(self,"_cache"):
             self._cache={}
+            self._cache_size=0
         if file_path not in self._cache:
-            self._cache[file_path] = self.get_file(file_path)
+            self._cache[file_path] = self.get_file(file_path, force_decompress)
+            self._cache_size += len(self._cache[file_path])
         return self._cache[file_path]
 
     def get_files(self, file_paths, force_decompress=False):

@@ -15,7 +15,7 @@ class Precomputed(object):
     Chunk = namedtuple('Chunk',
         ['x_start','x_stop','y_start','y_stop','z_start','z_stop'])
 
-    def __init__(self, storage, scale_idx=0, fill=False, pad=None):
+    def __init__(self, storage, scale_idx=0, fill=False, pad=None, cache=False):
         """read/write numpy arrays to a layer.
 
         It usess the storage class to get and write files,
@@ -64,6 +64,11 @@ class Precomputed(object):
         self._scale = self.info['scales'][scale_idx]
         self.pad = pad
 
+        if cache:
+            self.get_file = lambda file_path, force_decompress: self._storage.get_file_cached(file_path, force_decompress)
+        else:
+            self.get_file = lambda file_path, force_decompress: self._storage.get_file(file_path, force_decompress)
+
         # Don't know how to handle more than one
         assert len(self._scale['chunk_sizes']) == 1
 
@@ -88,7 +93,7 @@ class Precomputed(object):
 
             file_path = self._chunk_to_file_path(c)
             force_decompress = ('force_decompress' in self.info) and self.info['force_decompress']
-            content =  self._storage.get_file(file_path, force_decompress = force_decompress)
+            content =  self.get_file(file_path, force_decompress = force_decompress)
             if not content and not self._fill:
                 raise EmptyVolumeException(file_path)
 
@@ -99,6 +104,37 @@ class Precomputed(object):
                 dtype=self.info['data_type'])
             return_volume[self._slices_from_chunk(c,offset)] = decoded
         return return_volume[crop_slices]
+
+    def __setitem_misaligned__(self, slices, input_volume):
+        """ It allows for non grid aligned slices
+        """
+        if not self.pad:
+            self._validate_slice_bounds(slices)
+        aligned_slices, crop_slices = self._align_slices(slices)
+        return_volume = np.empty(
+            shape=self._get_slices_shape(aligned_slices),
+            dtype=self.info['data_type'])
+
+        if self.pad is not None:
+            return_volume[:] = self.pad
+
+        offset =  self._get_offsets(aligned_slices)
+        for c in self._iter_chunks(aligned_slices):
+
+            file_path = self._chunk_to_file_path(c)
+            force_decompress = ('force_decompress' in self.info) and self.info['force_decompress']
+            content =  self.get_file(file_path, force_decompress = force_decompress)
+            if not content and not self._fill:
+                raise EmptyVolumeException(file_path)
+
+            decoded = chunks.decode(
+                content, 
+                encoding=self._scale['encoding'], 
+                shape=self._get_chunk_shape(c),
+                dtype=self.info['data_type'])
+            return_volume[self._slices_from_chunk(c,offset)] = decoded
+        return_volume[crop_slices]=input_volume
+        self.__setitem__(aligned_slices, return_volume)
 
     def __setitem__(self, slices, input_volume):
         """
