@@ -1,12 +1,14 @@
+import json
 import os.path
+import shutil
 
 import numpy as np
 
 from neuroglancer.pipeline.volumes import CloudVolume, EmptyVolumeException
-from neuroglancer.pipeline import Storage, Precomputed, DownsampleTask, MeshTask, QuantizeAffinitiesTask
+from neuroglancer.pipeline import Storage, Precomputed, DownsampleTask, MeshTask, MeshManifestTask, QuantizeAffinitiesTask
 from neuroglancer.pipeline.task_creation import create_downsample_scales, create_downsampling_tasks, create_quantized_affinity_info
 from neuroglancer.pipeline.task_queue import MockTaskQueue
-from neuroglancer import downsample
+from neuroglancer import downsample, lib
 from test.test_precomputed import create_layer, delete_layer
 
 def test_ingest_image():
@@ -231,8 +233,54 @@ def test_quantize_affinities():
     assert np.all(data == qdata)
     assert data.dtype == np.uint8
 
+def test_mesh_manifests():
+    directory = '/tmp/removeme/mesh_manifests/'
+    layer_path = 'file://' + directory
+    mesh_dir = 'mesh_mip_3_error_40'
 
+    delete_layer(layer_path)
 
+    to_path = lambda filename: os.path.join(directory, mesh_dir, filename)
+
+    n_segids = 100
+    n_lods = 2
+    n_fragids = 5
+
+    with Storage(layer_path) as stor:
+        stor.put_file('info', '{"mesh":"mesh_mip_3_error_40"}')
+
+    for segid in xrange(n_segids):
+        for lod in xrange(n_lods):
+            for fragid in xrange(n_fragids):
+                filename = '{}:{}:{}'.format(segid, lod, fragid)
+                lib.touch(to_path(filename))
+
+    for i in xrange(10):
+        MeshManifestTask(layer_path=layer_path, prefix=i, lod=0).execute()
+
+    for segid in xrange(n_segids):
+        for fragid in xrange(n_fragids):
+            filename = '{}:0'.format(segid)
+            assert os.path.exists(to_path(filename))
+            filename = '{}:1'.format(segid)
+            assert not os.path.exists(to_path(filename))
+
+    for i in xrange(10):
+        MeshManifestTask(layer_path=layer_path, prefix=i, lod=1).execute()
+
+    for segid in xrange(n_segids):
+        for fragid in xrange(n_fragids):
+            filename = '{}:0'.format(segid)
+            assert os.path.exists(to_path(filename))
+            filename = '{}:1'.format(segid)
+            assert os.path.exists(to_path(filename))
+
+    with open(to_path('50:0'), 'r') as f:
+        content = json.loads(f.read())
+        assert content == {"fragments": [ "50:0:0","50:0:1","50:0:2","50:0:3","50:0:4" ]}
+
+    if os.path.exists(directory):
+        shutil.rmtree(directory)
 
 
 

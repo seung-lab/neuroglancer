@@ -203,7 +203,8 @@ def compute_fixup_offsets(vol, points, shape):
   # points are specified in high res coordinates 
   # because that's what people read off the screen.
   def nearest_offset(pt):
-    return (np.floor((pt - vol.mip_voxel_offset(0)) / shape) * shape) + vol.mip_voxel_offset(0)
+    mip0offset = (np.floor((pt - vol.mip_voxel_offset(0)) / shape) * shape) + vol.mip_voxel_offset(0)
+    return mip0offset / vol.downsample_ratio
 
   return map(nearest_offset, pts)
 
@@ -222,7 +223,6 @@ def create_fixup_downsample_tasks(task_queue, layer_path, points, shape=Vec(2048
       offset=offset,
       axis=axis,
     )
-    # task.execute()
     task_queue.insert(task)
   task_queue.wait()
 
@@ -272,6 +272,15 @@ def create_fixup_quantize_tasks(task_queue, src_layer, dest_layer, shape, points
     # task.execute()
     task_queue.insert(task)
   task_queue.wait()
+
+def create_mesh_manifest_tasks(task_queue, layer_path):
+
+  # This only works for prefix = '' or prefix = 0-9 because otherwise
+  # it'll miss some of the beginning numbers.
+  for prefix in xrange(10):
+    task = MeshManifestTask(layer_path=layer_path, prefix=prefix)
+    task_queue.insert(task)
+  task_queue.wait(task)
 
 def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hypersquare_chunk_size, resolution, voxel_offset, volume_size, overlap):
   def crtinfo(layer_type, dtype, encoding):
@@ -396,21 +405,21 @@ def ingest_hdf5_example():
 if __name__ == '__main__':  
 
   src_path = 'gs://neuroglancer/pinky40_v11/watershed/'
-  dest_path = 'gs://neuroglancer/pinky40_v11/watershed_mst_split_spines_remap/' 
-  map_path = os.path.join(dest_path, 'mst_split_spines_remap.npy')
+  dest_path = 'gs://neuroglancer/pinky40_v11/watershed_mst_split_spines_2M_remap/' 
+  map_path = os.path.join(dest_path, 'mst_split_spines_2M_remap.npy')
   
   with TaskQueue(queue_name='wms-test-pull-queue') as task_queue:
-    # create_downsampling_tasks(task_queue, 'gs://neuroglancer/pinky40_v11/watershed/', mip=0, fill_missing=False)
+    create_downsampling_tasks(task_queue, 'gs://neuroglancer/pinky40_v11/watershed_mst_split_spines_2M_remap/', mip=4)
     # create_meshing_tasks(task_queue, dest_path, mip=3)
 
     # create_watershed_remap_tasks(task_queue, map_path, src_path, dest_path)
 
-    create_quantized_affinity_tasks(task_queue,
-      src_layer='gs://neuroglancer/zfish_v1/affinitymap',
-      dest_layer='gs://neuroglancer/zfish_v1/qaffinitymap-x',
-      shape=(2048, 2048, 64),
-      fill_missing=True,
-    )
+    # create_quantized_affinity_tasks(task_queue,
+    #   src_layer='gs://neuroglancer/zfish_v1/affinitymap',
+    #   dest_layer='gs://neuroglancer/zfish_v1/qaffinitymap-x',
+    #   shape=(2048, 2048, 64),
+    #   fill_missing=True,
+    # )
 
     # create_transfer_tasks(task_queue,
     #   src_layer_path='s3://neuroglancer/pinky40_v11/watershed/', 
@@ -418,7 +427,7 @@ if __name__ == '__main__':
     # )
 
     # create_fixup_downsample_tasks(task_queue, 'gs://neuroglancer/pinky40_v11/image/', 
-    #   points=[ (66098, 13846, 139) ], mip=0) 
+    #   points=[ (66098, 13846, 139) ], mip=5, shape=(128,128,64)) 
 
     # create_fixup_quantize_tasks(task_queue, src_layer, dest_layer, shape, 
     #   points=[ (27955, 21788, 512), (23232, 20703, 559) ],

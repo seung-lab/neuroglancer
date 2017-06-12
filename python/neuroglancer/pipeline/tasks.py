@@ -7,6 +7,7 @@ import os
 import re
 from cStringIO import StringIO
 from tempfile import NamedTemporaryFile
+from collections import defaultdict
 
 import h5py
 import blosc
@@ -252,44 +253,48 @@ class MeshManifestTask(RegisteredTask):
   These are necessary for neuroglancer to know which mesh
   fragments to download for a given segid.
   """
-  def __init__(self, layer_path, lod):
-    super(MeshManifestTask, self).__init__(layer_path, lod)
+  def __init__(self, layer_path, prefix, lod=0):
+    super(MeshManifestTask, self).__init__(layer_path, prefix)
     self.layer_path = layer_path
     self.lod = lod
+    self.prefix = prefix
 
   def execute(self):
     with Storage(self.layer_path) as storage:
-      self._download_info(storage)
-      self._download_input_chunk(storage)
+      self._info = json.loads(storage.get_file('info'))
 
-  def _download_info(self, storage):
-    self._info = json.loads(storage.get_file('info'))
-    
-  def _download_input_chunk(self, storage):
-    """
-    Assumes that list blob is lexicographically ordered
-    """
-    last_id = 0
-    last_fragments = []
-    for filename in storage.list_files(prefix='mesh/'):
-      match = re.match(r'(\d+):(\d+):(.*)$', filename)
-      if not match: # a manifest file will not match
-        continue
-      _id, lod, chunk_position = match.groups()
-      _id = int(_id); lod = int(lod)
+      self.mesh_dir = None
+      if 'meshing' in self._info:
+        self.mesh_dir = self._info['meshing']
+      elif 'mesh' in self._info:
+        self.mesh_dir = self._info['mesh']
+
+      self._generate_manifests(storage)
+  
+  def _get_mesh_filenames_subset(self, storage):
+    prefix = '{}/{}'.format(self.mesh_dir, self.prefix)
+    segids = defaultdict(list)
+
+    for filename in storage.list_files(prefix=prefix):
+      # `match` implies the beginning (^). `search` matches whole string
+      segid, lod = re.match('(\d+):(\d+)', filename).groups() 
+      segid, lod = int(segid), int(lod)
+
       if lod != self.lod:
         continue
 
-      if last_id != _id:
-        storage.put_file(
-          file_path='{}/{}:{}'.format(self._info['mesh'],last_id, self.lod),
-          content=json.dumps({"fragments": last_fragments})
-        ).wait()
-        
-        last_id = _id
-        last_fragments = []
+      segids[segid].append(filename)  
 
-      last_fragments.append('{}:{}:{}'.format(_id, lod, chunk_position))
+    return segids  
+
+  def _generate_manifests(self, storage):
+    segids = self._get_mesh_filenames_subset(storage)
+    for segid, frags in tqdm(segids.items()):
+      storage.put_file(
+        file_path='{}/{}:{}'.format(self.mesh_dir, segid, self.lod),
+        content=json.dumps({ "fragments": frags }),
+        content_type='application/json',
+      )
 
 class BigArrayTask(RegisteredTask):
   def __init__(self, layer_path, chunk_path, chunk_encoding, version):
