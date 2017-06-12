@@ -21,6 +21,45 @@ from neuroglancer.pipeline import Storage, Precomputed, RegisteredTask
 from neuroglancer.pipeline.volumes import CloudVolume
 from neuroglancer.ingest.mesher import Mesher
 
+def downsample_and_upload(image, bounds, vol, ds_shape, mip=0, axis='z', skip_first=False):
+    ds_shape = min2(vol.volume_size, ds_shape)
+
+    # sometimes we downsample a base layer of 512x512 
+    # into underlying chunks of 64x64 which permits more scales
+    underlying_mip = (mip + 1) if (mip + 1) in vol.available_mips else mip
+    underlying_shape = vol.mip_underlying(underlying_mip).astype(np.float32)
+    toidx = { 'x': 0, 'y': 1, 'z': 2 }
+    preserved_idx = toidx[axis]
+    underlying_shape[preserved_idx] = float('inf')
+
+    # Need to use ds_shape here. Using image bounds means truncated 
+    # edges won't generate as many mip levels
+    fullscales = downsample_scales.compute_plane_downsampling_scales(
+      size=ds_shape, 
+      preserve_axis=axis, 
+      max_downsampled_size=int(min(*underlying_shape)),
+    )
+    factors = downsample.scale_series_to_downsample_factors(fullscales)
+
+    if len(factors) == 0:
+      print("No factors generated. Image Shape: {}, Downsample Shape: {}, Volume Shape: {}, Bounds: {}".format(
+        image.shape, ds_shape, vol.volume_size, bounds)
+      )
+
+    downsamplefn = downsample.method(vol.layer_type)
+
+    vol.mip = mip
+    if not skip_first:
+      vol[ bounds.to_slices() ] = image
+
+    new_bounds = bounds.clone()
+
+    for factor3 in factors:
+      vol.mip += 1
+      image = downsamplefn(image, factor3)
+      new_bounds /= factor3
+      vol[ new_bounds.to_slices() ] = image
+
 class IngestTask(RegisteredTask):
   """Ingests and does downsampling.
      We want tasks execution to be independent of each other, so that no synchronization is
@@ -34,39 +73,19 @@ class IngestTask(RegisteredTask):
     self.chunk_encoding = chunk_encoding
     self.layer_path = layer_path
 
-    self._volume = None # defer until execution
-    self._bounds = None # defer until execution
-
   def execute(self):
-    self._volume = CloudVolume(self.layer_path, mip=0)
-    self._bounds = Bbox.from_filename(self.chunk_path)
-    data = self._download_input_chunk()
-    # self._bounds = self._bounds.transpose()
-    data = chunks.decode(data, self.chunk_encoding)
-    self._create_chunks(data)
+    volume = CloudVolume(self.layer_path, mip=0)
+    bounds = Bbox.from_filename(self.chunk_path)
+    image = self._download_input_chunk(bounds)
+    image = chunks.decode(image, self.chunk_encoding)
+    # BUG: We need to provide some kind of ds_shape independent of the image
+    # otherwise the edges of the dataset may not generate as many mip levels.
+    downsample_and_upload(image, bounds, volume, mip=0, ds_shape=image.shape[:3])
 
-  def _download_input_chunk(self):
+  def _download_input_chunk(self, bounds):
     storage = Storage(self.layer_path, n_threads=0)
-    relpath = 'build/{}'.format(self._bounds.to_filename())
+    relpath = 'build/{}'.format(bounds.to_filename())
     return storage.get_file(relpath)
-
-  def _create_chunks(self, image):
-    vol = self._volume
-
-    fullscales = downsample_scales.compute_plane_downsampling_scales(image.shape[:3], 
-      max_downsampled_size=max(self._volume.underlying[:2] * 2)
-    )
-    factors = downsample.scale_series_to_downsample_factors(fullscales)
-    downsamplefn = downsample.method(vol.layer_type)
-
-    vol.mip = 0
-    vol.upload_image(image, self._bounds.minpt)
-
-    for factor3 in factors:
-      vol.mip += 1
-
-      image = downsamplefn(image, factor3)
-      vol.upload_image(image, self._bounds.minpt / vol.downsample_ratio)
 
 class DownsampleTask(RegisteredTask):
   def __init__(self, layer_path, mip, shape, offset, fill_missing=False, axis='z'):
@@ -78,46 +97,12 @@ class DownsampleTask(RegisteredTask):
     self.fill_missing = fill_missing
     self.axis = axis
 
-    self._volume = None
-    self._bounds = None
-    
   def execute(self):
-    self._volume = CloudVolume(self.layer_path, self.mip, fill_missing=self.fill_missing)
-    vol = self._volume
-
-    self._bounds = Bbox( self.offset, self.shape + self.offset )
-    self._bounds = Bbox.clamp(self._bounds, vol.bounds)
-    
-    image = vol[ self._bounds.to_slices() ]
-
-    self.downsample(vol, image)
-
-  def downsample(self, vol, image):
-    ds_shape = min2(self._volume.volume_size, self.shape)
-
-    # need to use self.shape here. shape or self._bounds means edges won't generate as many mip levels
-    fullscales = downsample_scales.compute_plane_downsampling_scales(
-      size=ds_shape, 
-      preserve_axis=self.axis, 
-      max_downsampled_size=(min(*vol.underlying) * 2), # bug, the preserved axis should be handled
-    )
-    factors = downsample.scale_series_to_downsample_factors(fullscales)
-
-    if len(factors) == 0:
-      print("No factors generated. Image Shape: {}, Downsample Shape: {}, Volume Shape: {}, Bounds: {}".format(
-        image.shape, ds_shape, self._volume.volume_size, self._bounds)
-      )
-
-    downsamplefn = downsample.method(vol.layer_type)
-
-    original_mip = vol.mip
-    total_factor = Vec(1,1,1)
-
-    for factor3 in factors:
-      vol.mip += 1
-      image = downsamplefn(image, factor3)
-      total_factor *= factor3
-      vol.upload_image(image, self._bounds.minpt / total_factor)
+    vol = CloudVolume(self.layer_path, self.mip, fill_missing=self.fill_missing)
+    bounds = Bbox( self.offset, self.shape + self.offset )
+    bounds = Bbox.clamp(bounds, vol.bounds)
+    image = vol[ bounds.to_slices() ]
+    downsample_and_upload(image, bounds, vol, self.shape, self.mip, self.axis, skip_first=True)
 
 class QuantizeAffinitiesTask(RegisteredTask):
   def __init__(self, source_layer_path, dest_layer_path, shape, offset, fill_missing=False):
@@ -128,53 +113,19 @@ class QuantizeAffinitiesTask(RegisteredTask):
     self.offset = Vec(*offset)
     self.fill_missing = fill_missing
 
-    self.mip = 0
-    self.axis = 'z'
-
-    self._bounds = None
-
   def execute(self):
     srcvol = CloudVolume(self.source_layer_path, mip=0, fill_missing=self.fill_missing)
   
-    self._bounds = Bbox( self.offset, self.shape + self.offset )
-    self._bounds = Bbox.clamp(self._bounds, srcvol.bounds)
+    bounds = Bbox( self.offset, self.shape + self.offset )
+    bounds = Bbox.clamp(bounds, srcvol.bounds)
     
-    image = srcvol[ self._bounds.to_slices() ][ :, :, :, :1 ] # only use x affinity
+    image = srcvol[ bounds.to_slices() ][ :, :, :, :1 ] # only use x affinity
     image = (image * 255.0).astype(np.uint8)
 
     destvol = CloudVolume(self.dest_layer_path, mip=0)
-    destvol[ self._bounds.to_slices() ] = image
-
-    self.downsample(destvol, image)
-
-  def downsample(self, vol, image):
-
-    shape = min2(Vec(*image.shape[:3]), self._bounds.size3())
-
-    # need to use self.shape here. shape or self._bounds means edges won't generate as many mip levels
-    fullscales = downsample_scales.compute_plane_downsampling_scales(
-      size=self.shape, 
-      preserve_axis=self.axis, 
-      max_downsampled_size=(min(*vol.underlying) * 2),
-    )
-    factors = downsample.scale_series_to_downsample_factors(fullscales)
-
-    if len(factors) == 0:
-      print("No factors generated for shape: {}, image: {}".format(self.shape, shape))
-
-    downsamplefn = downsample.method(vol.layer_type)
-
-    original_mip = vol.mip
-    total_factor = Vec(1,1,1)
-
-    for factor3 in factors:
-      vol.mip += 1
-      image = downsamplefn(image, factor3)
-      total_factor *= factor3
-      vol.upload_image(image, self._bounds.minpt / total_factor)
+    downsample_and_upload(image, bounds, destvol, self.shape, mip=0, axis='z')
 
 class MeshTask(RegisteredTask):
-
   def __init__(self, shape, offset, layer_path, mip=0, simplification_factor=100, max_simplification_error=40):
     super(MeshTask, self).__init__(shape, offset, layer_path, mip, simplification_factor, max_simplification_error)
     self.shape = Vec(*shape)
@@ -504,8 +455,8 @@ class TransferTask(RegisteredTask):
     bounds = Bbox( self.offset, self.shape + self.offset )
     bounds = Bbox.clamp(bounds, srccv.bounds)
     
-    destcv[ bounds.to_slices() ] = srccv[ bounds.to_slices() ]
-
+    image = srccv[ bounds.to_slices() ]
+    downsample_and_upload(image, bounds, destvol, self.shape)
 
 class WatershedRemapTask(RegisteredTask):
     """
@@ -557,7 +508,8 @@ class WatershedRemapTask(RegisteredTask):
         #
         # remap[vals] # array([1, 2, 2, 2, 3, 1, 3, 2, 3])
 
-        destcv[ bounds.to_slices() ] = remap[watershed_data]
+        image = remap[watershed_data]
+        downsample_and_upload(image, bounds, destcv, self.shape)
 
     def _get_map(self):
         layer_path, filename = os.path.split(self.map_path)

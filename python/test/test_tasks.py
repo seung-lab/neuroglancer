@@ -9,11 +9,11 @@ from neuroglancer.pipeline import Storage, Precomputed, DownsampleTask, MeshTask
 from neuroglancer.pipeline.task_creation import create_downsample_scales, create_downsampling_tasks, create_quantized_affinity_info
 from neuroglancer.pipeline.task_queue import MockTaskQueue
 from neuroglancer import downsample, lib
-from test.test_precomputed import create_layer, delete_layer
+from layer_harness import delete_layer, create_layer
 
 def test_ingest_image():
     delete_layer()
-    storage, data = create_layer(size=(512,512,128,1), offset=(0,0,0), layer_type='image')
+    storage, data = create_layer(size=(256,256,128,1), offset=(0,0,0), layer_type='image')
     cv = CloudVolume(storage.layer_path)
     assert len(cv.scales) == 3
     assert len(cv.available_mips) == 3
@@ -24,9 +24,9 @@ def test_ingest_image():
     assert np.all(cv[slice64] == data[slice64])
 
     assert len(cv.available_mips) == 3
-    assert np.array_equal(cv.mip_volume_size(0), [ 512, 512, 128 ])
-    assert np.array_equal(cv.mip_volume_size(1), [ 256, 256, 128 ])
-    assert np.array_equal(cv.mip_volume_size(2), [ 128, 128, 128 ])
+    assert np.array_equal(cv.mip_volume_size(0), [ 256, 256, 128 ])
+    assert np.array_equal(cv.mip_volume_size(1), [ 128, 128, 128 ])
+    assert np.array_equal(cv.mip_volume_size(2), [ 64, 64, 128 ])
     
     slice64 = np.s_[0:64, 0:64, 0:64]
 
@@ -44,7 +44,7 @@ def test_ingest_image():
 
 def test_ingest_segmentation():
     delete_layer()
-    storage, data = create_layer(size=(512,512,128,1), offset=(0,0,0), layer_type='segmentation')
+    storage, data = create_layer(size=(256,256,128,1), offset=(0,0,0), layer_type='segmentation')
     cv = CloudVolume(storage.layer_path)
     assert len(cv.scales) == 3
     assert len(cv.available_mips) == 3
@@ -55,9 +55,9 @@ def test_ingest_segmentation():
     assert np.all(cv[slice64] == data[slice64])
 
     assert len(cv.available_mips) == 3
-    assert np.array_equal(cv.mip_volume_size(0), [ 512, 512, 128 ])
-    assert np.array_equal(cv.mip_volume_size(1), [ 256, 256, 128 ])
-    assert np.array_equal(cv.mip_volume_size(2), [ 128, 128, 128 ])
+    assert np.array_equal(cv.mip_volume_size(0), [ 256, 256, 128 ])
+    assert np.array_equal(cv.mip_volume_size(1), [ 128, 128, 128 ])
+    assert np.array_equal(cv.mip_volume_size(2), [  64,  64, 128 ])
     
     slice64 = np.s_[0:64, 0:64, 0:64]
 
@@ -76,8 +76,8 @@ def test_downsample_no_offset():
     delete_layer()
     storage, data = create_layer(size=(1024,1024,128,1), offset=(0,0,0))
     cv = CloudVolume(storage.layer_path)
-    assert len(cv.scales) == 4
-    assert len(cv.available_mips) == 4
+    assert len(cv.scales) == 5
+    assert len(cv.available_mips) == 5
 
     cv.commitInfo()
 
@@ -85,11 +85,12 @@ def test_downsample_no_offset():
 
     cv.refreshInfo()
 
-    assert len(cv.available_mips) == 4
+    assert len(cv.available_mips) == 5
     assert np.array_equal(cv.mip_volume_size(0), [ 1024, 1024, 128 ])
-    assert np.array_equal(cv.mip_volume_size(1), [ 512, 512, 128 ])
-    assert np.array_equal(cv.mip_volume_size(2), [ 256, 256, 128 ])
-    assert np.array_equal(cv.mip_volume_size(3), [ 128, 128, 128 ])
+    assert np.array_equal(cv.mip_volume_size(1), [  512,  512, 128 ])
+    assert np.array_equal(cv.mip_volume_size(2), [  256,  256, 128 ])
+    assert np.array_equal(cv.mip_volume_size(3), [  128,  128, 128 ])
+    assert np.array_equal(cv.mip_volume_size(4), [   64,   64, 128 ])
     
     slice64 = np.s_[0:64, 0:64, 0:64]
 
@@ -108,9 +109,13 @@ def test_downsample_no_offset():
     cv.mip = 3
     assert np.all(cv[slice64] == data_ds3[slice64])
 
+    data_ds4 = downsample.downsample_with_averaging(data_ds3, factor=[2, 2, 1, 1])
+    cv.mip = 4
+    assert np.all(cv[slice64] == data_ds4[slice64])
+
 def test_downsample_with_offset():
     delete_layer()
-    storage, data = create_layer(size=(1024,1024,128,1), offset=(3,7,11))
+    storage, data = create_layer(size=(512,512,128,1), offset=(3,7,11))
     cv = CloudVolume(storage.layer_path)
     assert len(cv.scales) == 4
     assert len(cv.available_mips) == 4
@@ -122,10 +127,10 @@ def test_downsample_with_offset():
     cv.refreshInfo()
 
     assert len(cv.available_mips) == 4
-    assert np.array_equal(cv.mip_volume_size(0), [ 1024, 1024, 128 ])
-    assert np.array_equal(cv.mip_volume_size(1), [ 512, 512, 128 ])
-    assert np.array_equal(cv.mip_volume_size(2), [ 256, 256, 128 ])
-    assert np.array_equal(cv.mip_volume_size(3), [ 128, 128, 128 ])
+    assert np.array_equal(cv.mip_volume_size(0), [ 512, 512, 128 ])
+    assert np.array_equal(cv.mip_volume_size(1), [ 256, 256, 128 ])
+    assert np.array_equal(cv.mip_volume_size(2), [ 128, 128, 128 ])
+    assert np.array_equal(cv.mip_volume_size(3), [  64,  64, 128 ])
 
     assert np.all(cv.mip_voxel_offset(3) == (0,0,11))
     
@@ -146,7 +151,7 @@ def test_downsample_with_offset():
 
 def test_downsample_w_missing():
     delete_layer()
-    storage, data = create_layer(size=(1024,1024,128,1), offset=(3,7,11))
+    storage, data = create_layer(size=(512,512,128,1), offset=(3,7,11))
     cv = CloudVolume(storage.layer_path)
     assert len(cv.scales) == 4
     assert len(cv.available_mips) == 4
@@ -155,25 +160,43 @@ def test_downsample_w_missing():
     cv.commitInfo()
 
     try:
-        create_downsampling_tasks(MockTaskQueue(), storage.layer_path, mip=0, shape=(512, 512, 64), fill_missing=False)
+        create_downsampling_tasks(MockTaskQueue(), storage.layer_path, mip=0, shape=(256, 256, 64), fill_missing=False)
     except EmptyVolumeException:
         pass
 
-    create_downsampling_tasks(MockTaskQueue(), storage.layer_path, mip=0, shape=(512, 512, 64), fill_missing=True)
+    create_downsampling_tasks(MockTaskQueue(), storage.layer_path, mip=0, shape=(256, 256, 64), fill_missing=True)
 
     cv.refreshInfo()
 
     assert len(cv.available_mips) == 4
-    assert np.array_equal(cv.mip_volume_size(0), [ 1024, 1024, 128 ])
-    assert np.array_equal(cv.mip_volume_size(1), [ 512, 512, 128 ])
-    assert np.array_equal(cv.mip_volume_size(2), [ 256, 256, 128 ])
-    assert np.array_equal(cv.mip_volume_size(3), [ 128, 128, 128 ])
+    assert np.array_equal(cv.mip_volume_size(0), [ 512, 512, 128 ])
+    assert np.array_equal(cv.mip_volume_size(1), [ 256, 256, 128 ])
+    assert np.array_equal(cv.mip_volume_size(2), [ 128, 128, 128 ])
+    assert np.array_equal(cv.mip_volume_size(3), [  64,  64, 128 ])
 
     assert np.all(cv.mip_voxel_offset(3) == (0,0,11))
     
     cv.mip = 0
     cv.fill_missing = True
     assert np.count_nonzero(cv[3:67, 7:71, 11:75]) == 0
+
+def test_downsample_higher_mip():
+    delete_layer()
+    storage, data = create_layer(size=(512,512,64,1), offset=(3,7,11))
+    cv = CloudVolume(storage.layer_path)
+    cv.info['scales'] = cv.info['scales'][:1]
+    
+    cv.commitInfo()
+    create_downsampling_tasks(MockTaskQueue(), storage.layer_path, mip=0, shape=(256, 256, 64))
+    cv.refreshInfo()
+    assert len(cv.available_mips) == 3
+
+    create_downsampling_tasks(MockTaskQueue(), storage.layer_path, mip=1, shape=(256, 256, 64))
+    cv.refreshInfo()
+    assert len(cv.available_mips) == 4
+
+    cv.mip = 3
+    assert cv[:,:,:].shape == (64,64,64,1)
 
 def test_mesh():
     delete_layer()

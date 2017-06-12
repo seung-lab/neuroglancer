@@ -111,26 +111,28 @@ def create_info_file_from_build(layer_path, layer_type, resolution, encoding):
     chunk_size=neuroglancer_chunk_size,
   )
 
-  scale_ratios = downsample_scales.compute_plane_downsampling_scales(
-    size=build_chunk_size,
-    max_downsampled_size=max(neuroglancer_chunk_size[:2]) * 2, # exclude z since it won't be downsampled
-  )
-
-  vol = CloudVolume(layer_path, mip=0, info=info)
-  map(vol.addScale, scale_ratios)
-  vol.commitInfo()
+  vol = CloudVolume(layer_path, mip=0, info=info).commitInfo()
+  vol = create_downsample_scales(layer_path, mip=0, ds_shape=build_chunk_size, axis='z')
   
   return vol.info
 
 def create_downsample_scales(layer_path, mip, ds_shape, axis='z'):
   vol = CloudVolume(layer_path, mip)
-  
   shape = min2(vol.volume_size, ds_shape)
-  
+
+  # sometimes we downsample a base layer of 512x512 
+  # into underlying chunks of 64x64 which permits more scales
+  underlying_mip = (mip + 1) if (mip + 1) in vol.available_mips else mip
+  underlying_shape = vol.mip_underlying(underlying_mip).astype(np.float32)
+
+  toidx = { 'x': 0, 'y': 1, 'z': 2 }
+  preserved_idx = toidx[axis]
+  underlying_shape[preserved_idx] = float('inf')
+
   scales = downsample_scales.compute_plane_downsampling_scales(
     size=shape, 
     preserve_axis=axis, 
-    max_downsampled_size=(min(*vol.underlying) * 2), # bug, the preserved axis should be handled
+    max_downsampled_size=int(min(*underlying_shape)),
   )
   scales = scales[1:] # omit (1,1,1)
   scales = [ vol.downsample_ratio * Vec(*factor3) for factor3 in scales ]
@@ -277,10 +279,10 @@ def create_mesh_manifest_tasks(task_queue, layer_path):
 
   # This only works for prefix = '' or prefix = 0-9 because otherwise
   # it'll miss some of the beginning numbers.
-  for prefix in xrange(10):
+  for prefix in xrange(1,10):
     task = MeshManifestTask(layer_path=layer_path, prefix=prefix)
     task_queue.insert(task)
-  task_queue.wait(task)
+  task_queue.wait()
 
 def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hypersquare_chunk_size, resolution, voxel_offset, volume_size, overlap):
   def crtinfo(layer_type, dtype, encoding):
@@ -409,8 +411,10 @@ if __name__ == '__main__':
   map_path = os.path.join(dest_path, 'mst_split_spines_2M_remap.npy')
   
   with TaskQueue(queue_name='wms-test-pull-queue') as task_queue:
-    create_downsampling_tasks(task_queue, 'gs://neuroglancer/pinky40_v11/watershed_mst_split_spines_2M_remap/', mip=4)
+    create_downsampling_tasks(task_queue, 'gs://neuroglancer/piriform_v0/image', mip=0, fill_missing=True)
     # create_meshing_tasks(task_queue, dest_path, mip=3)
+
+    # create_mesh_manifest_tasks(task_queue, dest_path)
 
     # create_watershed_remap_tasks(task_queue, map_path, src_path, dest_path)
 

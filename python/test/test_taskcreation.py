@@ -104,7 +104,7 @@ def test_create_info_file_from_build():
   assert info['type'] == 'image'
   assert info['data_type'] == 'uint8'
   assert info['scales'][0]['encoding'] == 'raw'
-  assert len(info['scales']) == 3
+  assert len(info['scales']) == 4
 
   assert np.all(tuple(info['scales'][0]['resolution']) == (7,5,17))
   assert np.all(tuple(info['scales'][0]['size']) == (1024,1024,128))
@@ -120,6 +120,11 @@ def test_create_info_file_from_build():
   assert np.all(tuple(info['scales'][2]['size']) == (256,256,128))
   assert np.all(tuple(info['scales'][2]['voxel_offset']) == (0,5,5))
   assert np.all(tuple(info['scales'][2]['chunk_sizes'][0]) == (64,64,64))
+
+  assert np.all(tuple(info['scales'][3]['resolution']) == (56,40,17))
+  assert np.all(tuple(info['scales'][3]['size']) == (128,128,128))
+  assert np.all(tuple(info['scales'][3]['voxel_offset']) == (0,2,5))
+  assert np.all(tuple(info['scales'][3]['chunk_sizes'][0]) == (64,64,64))
 
 
 
