@@ -198,3 +198,7 @@ def downsample_with_striding(array, factor):
     @return: The downsampled array, of the same type as x.
     """
     return array[tuple(np.s_[::f] for f in factor)]
+
+
+if __name__ == "__main__":
+  print downsample_with_averaging(np.arange(8).reshape(2,2,2),[2,2,2])

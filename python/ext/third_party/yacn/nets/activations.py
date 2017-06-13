@@ -14,6 +14,7 @@ class SymmetricTanh():
 			lengths = tf.maximum(lengths,0.0001)
 			x=tf.Print(x,[tf.reduce_mean(lengths)])
 			return self.postmultiply*x*tf.tanh(lengths)/lengths
+			
 class Tanh():
 	def __init__(self):
 		self.premultiply = tf.Variable(1.0, dtype=dtype)

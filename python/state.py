@@ -61,8 +61,8 @@ def broadcast(state):
 
 socketApp = web.Application(router.urls)
 http_server = httpserver.HTTPServer(socketApp, ssl_options={
-    "certfile": "./certificate.crt",
-    "keyfile": "./privateKey.key",
+    "certfile": "/secrets/certificate.crt",
+    "keyfile": "/secrets/privateKey.key",
 })
 http_server.bind(9999) #port
 http_server.start(1)

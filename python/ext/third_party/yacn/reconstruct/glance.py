@@ -1,6 +1,7 @@
 #!/usr/bin/python
-
 from __future__ import print_function
+from __future__ import absolute_import
+
 import graph_server
 import os
 import sys
@@ -41,9 +42,9 @@ def random_shader():
 	return """void main() {{
 			  emitRGBA(
 					vec4({}*toNormalized(getDataValue()),
-					{}*toNormalized(getDataValue()),
-					{}*toNormalized(getDataValue()),
-					toNormalized(getDataValue())
+					     {}*toNormalized(getDataValue()),
+					     {}*toNormalized(getDataValue()),
+					        toNormalized(getDataValue())
 						 )
 					  );
 			}}
@@ -81,7 +82,7 @@ def set_focus(pos):
 	state.broadcast(tmp_state)
 
 def rev(x):
-	if type(x) == tuple:
+	if type(x) is tuple:
 		return tuple(reversed(x))
 	else:
 		return list(reversed(x))

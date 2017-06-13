@@ -1,6 +1,6 @@
 import tensorflow as tf
 import numpy as np
-from utils import *
+from ext.third_party.yacn.nets.utils import *
 
 class RandomRotationPadded():
 	def __init__(self):
@@ -10,7 +10,8 @@ class RandomRotationPadded():
 		def rotation_factory(s):
 			return lambda: tf.constant(s,dtype=tf.int32)
 		
-		self.rev = tf.case([(tf.equal(r,i), rotation_factory(s)) for i,s in enumerate(subsets([1,2,3]))],lambda: tf.constant([],dtype=tf.int32),exclusive=True)
+		pred_fn_pairs = [(tf.equal(r,i), rotation_factory(s)) for i,s in enumerate(subsets([1,2,3]))]
+		self.rev = tf.case(pred_fn_pairs, default=lambda: rotation_factory([0])() ,exclusive=True)
 
 	def __call__(self,x):
 		return tf.reshape(tf.transpose(tf.reverse(x, self.rev), perm=self.perm), static_shape(x))
@@ -104,23 +105,34 @@ class ApplyRandomChunk():
 		return tf.reshape(tf.concat([fA[tuple(rangesA)],A[tuple(rangesB)]],1), s)
 
 def default_augmentation():
+	"""
+	Because of miss alignment augmentation
+	the image will became smaller
+
+	figure out how to communicate he desire output patch
+	"""
 	rr=RandomRotationPadded()
-	t1=ApplyRandomSlice(0.01, MisAlign([20,20]))
+	# t1=ApplyRandomSlice(0.01, MisAlign([20,20]))
 	t2=ApplyRandomSlice(0.01, RandomBlur())
 	t3=ApplyRandomSlice(0.01, RandomBrightness())
 	t4=MissingSection(0.01)
 
 	def f_image(x):
 		s=static_shape(x)
-		return rr(t4(t3(t2(t1(x)))))[:,:,20:s[2]-20,20:s[3]-20,:]
+		return rr(t4(t3(t2(x))))#[:,:,20:s[2]-20,20:s[3]-20,:]
 
 	def f_label(x):
 		s=static_shape(x)
-		return rr(t1(x))[:,:,20:s[2]-20,20:s[3]-20,:]
+		return rr(t4(x))#[:,:,20:s[2]-20,20:s[3]-20,:]
 	return f_image, f_label
 
 if __name__=='__main__':
-	x=tf.constant(np.reshape(np.array([[range(0+i,5+i), range(10+i,15+i), range(20+i,25+i), range(30+i,35+i), range(40+i,45+i)] for i in xrange(8)],dtype=np.float32),[1,8,5,5,1]))
+	x=tf.constant(np.reshape(np.array([
+		[range(0+i,5+i),
+		 range(10+i,15+i),
+		 range(20+i,25+i),
+		 range(30+i,35+i),
+		 range(40+i,45+i)] for i in xrange(8)],dtype=np.float32),[1,8,5,5,1]))
 
 	t1=ApplyRandomSlice(0.2,MisAlign([3,3]))
 	#t2=MissingSection(0.2)

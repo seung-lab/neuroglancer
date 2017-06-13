@@ -180,7 +180,14 @@ class Precomputed(object):
                 self.info['num_channels'])
 
     def _chunk_to_file_path(self, chunk):
-        return '{}/{}-{}_{}-{}_{}-{}'.format(
+        if self._scale['encoding'] == 'jpeg':
+            return '{}/{}-{}_{}-{}_{}-{}'.format(
+                self._scale['key'], 
+                chunk.x_start, chunk.x_stop,
+                chunk.y_start, chunk.y_stop,
+                chunk.z_start, chunk.z_stop)
+
+        return '{}/{}-{}_{}-{}_{}-{}.gz'.format(
             self._scale['key'], 
             chunk.x_start, chunk.x_stop,
             chunk.y_start, chunk.y_stop,

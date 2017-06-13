@@ -46,13 +46,13 @@ function do_prep(in_dir, out_dir; patch_size = (318,318,33), ground_truth=false,
 	for kernel in [1,3,5,9,15]
 		save("height_map_$(kernel).h5", (minfilter(h,(kernel,kernel))))
 	end
-	#=
+	
 	thicken_threshold=0.1
-	threshold!(raw, h, thicken_threshold)
+	# threshold!(raw, h, thicken_threshold)
 	threshold!(mean_labels, h, thicken_threshold)
-	save("thickened_raw.h5", raw)
+	# save("thickened_raw.h5", raw)
 	save("thickened_mean_agg_tr.h5", mean_labels)
-	=#
+	
 
 	h=nothing
 

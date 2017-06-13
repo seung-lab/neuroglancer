@@ -22,6 +22,7 @@ from utils import *
 from loss_functions import *
 import dataset
 import augment
+import dataset_path
 
 
 class VectorLabelModel(Model):
@@ -30,7 +31,7 @@ class VectorLabelModel(Model):
 				 nvec_labels, maxn,
 				 devices, train_vols, test_vols, name=None):
 
-		self.name=name
+		self._name= name
 		self.summaries = []
 		self.devices = devices
 		self.patch_size = patch_size
@@ -53,10 +54,8 @@ class VectorLabelModel(Model):
 
 		def scv(sess,x):
 			placeholder = tf.placeholder(tf.as_dtype(x.dtype), shape=x.shape)
-			fd={}
-			fd[placeholder]=x
 			v=tf.Variable(placeholder,name="scv")
-			sess.run(tf.variables_initializer([v]),feed_dict=fd)
+			sess.run(tf.variables_initializer([v]),feed_dict={placeholder:x})
 			return v
 		
 		with tf.device("/cpu:0"):
@@ -82,12 +81,11 @@ class VectorLabelModel(Model):
 			loss = 0
 			for i,d in enumerate(devices):
 				with tf.device(d):
-					vol_id = tf.cond(tf.equal(self.iteration_type,0),
-							lambda: random_sample(tf.constant(train_vols)),
-							lambda: random_sample(tf.constant(test_vols)),
-							)
 
-					focus = tf.concat([[0],tf.reshape(samples[vol_id,('RAND',0)],(3,)),[0]],0)
+					# get random volum id
+		        	vol_id = self._dataset.get_random_volume_id(self.is_train_iter)
+        			focus = self._get_random_focus(vol_id)
+
 					myvalid = valid[vol_id]
 					maxlabel = tf.shape(myvalid)[0]
 
@@ -125,10 +123,10 @@ class VectorLabelModel(Model):
 						loss3=0
 						#loss1, prediction = label_loss_fun(vector_labels, human_labels, central_labels, central)
 						#loss2, long_range_affinities = long_range_loss_fun(vector_labels, human_labels, offsets, mask)
-						guess = affinity(central_vector,vector_labels)
+						guess = affinity(central_vector, vector_labels)
 						truth = label_diff(human_labels, central_label)
 						loss3 = tf.reduce_sum(bounded_cross_entropy(guess,truth)) * is_valid
-						loss += loss1 + loss2 + loss3
+						return loss1 + loss2 + loss3
 
 			def training_iteration():
 				optimizer = tf.train.AdamOptimizer(0.001, beta1=0.95, beta2=0.9995, epsilon=0.1)
@@ -189,53 +187,4 @@ class VectorLabelModel(Model):
 	def load_random_dataset(self):
 		pass
 
-TRAIN = dataset.MultiDataset(
-		[
-			os.path.expanduser("~/mydatasets/1_1_1/"),
-			os.path.expanduser("~/mydatasets/1_2_1/"),
-			os.path.expanduser("~/mydatasets/2_1_1/"),
-			os.path.expanduser("~/mydatasets/2_2_1/"),
-			os.path.expanduser("~/mydatasets/1_3_1/"),
-			os.path.expanduser("~/mydatasets/3_1_1/"),
 
-			os.path.expanduser("~/mydatasets/2_3_1/"),
-		],
-		{
-			"image": "image.h5",
-			"human_labels": "lzf_proofread.h5",
-			"machine_labels": "lzf_mean_agg_tr.h5",
-			"samples": "padded_valid_samples.h5",
-			"valid": "valid.h5",
-		}
-)
-
-patch_size=(33,318,318)
-args = {
-	"offsets": filter(valid_offset, itertools.product(
-		[-3, -1, 0, 1, 3],
-		[-27, -9, 0, 9, 27],
-		[-27, -9, 0, 9, 27])),
-	"devices": get_device_list(),
-	"patch_size": patch_size,
-	"nvec_labels": 6,
-	"maxn": 40,
-	"dataset": TRAIN,
-	"train_vols": [0,1,2,3,4,5],
-	"test_vols": [6],
-	"name": "test",
-}
-
-#New setup
-#A sample is a list of supervoxel ids, a window position, and a volume id
-#We want to be able to train with multiple volumes.
-
-#pp = pprint.PrettyPrinter(indent=4)
-#pp.pprint(args)
-main_model = VectorLabelModel(**args)
-#main_model.restore("~/experiments/sparse_vector_labels/latest.ckpt")
-
-print("initialized")
-
-if __name__ == '__main__':
-	main_model.train(nsteps=1000000, checkpoint_interval=3000, test_interval=15)
-	print("done")

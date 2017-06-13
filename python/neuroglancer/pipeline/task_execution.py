@@ -16,6 +16,7 @@ def execute(tag):
         task = 'unknown'
         try:
             task = tq.lease(tag)
+            print task
             task.execute()
             tq.delete(task)
             logger.log('INFO', task , "succesfully executed")

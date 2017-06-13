@@ -26,7 +26,7 @@ from .chunks import encode_jpeg, encode_npz, encode_raw
 from .randomtoken import make_random_token
 from . import downsample
 from . import downsample_scales
-from . import graph_server
+# from . import graph_server
 
 def get_scale_key(scale):
     return '%d,%d,%d' % scale
@@ -290,7 +290,7 @@ class ServedSegmentation(ServedVolume):
 
     def __init__(self,
                  mesh_options=None,
-                 graph=True,
+                 graph=False,
                  **kwargs):
 
         """ 
@@ -317,11 +317,11 @@ class ServedSegmentation(ServedVolume):
         self._mesh_options = mesh_options.copy() if mesh_options is not None else dict()
         self.graph = graph
 
-        if self.graph:
-            path = None
-            if type(self.graph) is str:
-                path = self.graph
-            self.graph_server_url  = graph_server.start_server(path)
+        # if self.graph:
+        #     path = None
+        #     if type(self.graph) is str:
+        #         path = self.graph
+        #     self.graph_server_url  = graph_server.start_server(path)
 
     def get_object_mesh(self, object_id):
         mesh_generator = self._get_mesh_generator()
@@ -382,11 +382,11 @@ class ServedSegmentation(ServedVolume):
         req.end_headers()
         req.wfile.write(encoded_mesh)
 
-    def extra_args(self):
-        if self.graph:
-            return {'graph': self.graph_server_url}
-        else:
-            return dict()
+    # def extra_args(self):
+    #     if self.graph:
+    #         return {'graph': self.graph_server_url}
+    #     else:
+    #         return dict()
 
 class ServedImage(ServedVolume):
     def __init__(self, **kwargs):

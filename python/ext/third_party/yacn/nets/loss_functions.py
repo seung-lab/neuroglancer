@@ -3,32 +3,7 @@ import tensorflow as tf
 from utils import *
 import math
 
-def bounded_cross_entropy(guess,truth):
-	guess = 0.999998*guess + 0.000001
-	return  - truth * tf.log(guess) - (1-truth) * tf.log(1-guess)
 
-def label_diff(x,y):
-	return tf.to_float(tf.equal(x,y))
-
-
-def length_scale(x):
-	if x == 0:
-		return -1
-	else:
-		return math.log(abs(x))
-
-
-def valid_pair(x, y, strict=False):
-	return x == 0 or y == 0 or (
-		(not strict or length_scale(x) >= length_scale(y)) and abs(
-			length_scale(x) - length_scale(y)) <= math.log(3.1))
-
-
-def valid_offset(x):
-	return x > (0,0,0) and \
-	valid_pair(4 * x[0], x[1], strict=True) and \
-	valid_pair(4 * x[0], x[2], strict=True) and \
-	valid_pair(x[1],x[2])
 
 def get_pair(A,offset, patch_size):
 	os1 = map(lambda x: max(0,x) ,offset)
@@ -64,13 +39,6 @@ def long_range_loss_fun(vec_labels, human_labels, offsets, mask):
 		cost += tf.reduce_sum(curr_mask * bounded_cross_entropy(guess, truth))
 
 	return cost, otpts
-def affinity(x, y):
-	displacement = x - y
-	interaction = tf.reduce_sum(
-		displacement * displacement,
-		reduction_indices=[4],
-		keep_dims=True)
-	return tf.exp(-0.5 * interaction)
 
 def batch_interaction(mu0, cov0, mu1, cov1, maxn=40, nvec_labels=20):
 	propagator = identity_matrix(nvec_labels)
@@ -165,25 +133,7 @@ def label_loss_fun(vec_labels, human_labels, central_labels, central_labels_mask
 
 	return tf.reduce_sum(weight_matrix * cost) + tf.reduce_sum(tf.reshape(central_labels_mask,[-1,1]) * bounded_cross_entropy(affinity(vec_labels, centred_vec_labels),1)), predictions
 
-def error_free(obj, human_labels):
-	obj = tf.reshape(obj, [-1])
-	ind = tf.to_int32(tf.argmax(obj, axis=0))
 
-	def A():
-		human_labels_reshape = tf.reshape(human_labels, [-1])
-		closest_obj=tf.to_float(tf.equal(human_labels_reshape, human_labels_reshape[ind]))
-		return tf.to_float(tf.reduce_all(tf.equal(obj,closest_obj)))
-	
-	def B():
-		return 1-obj[ind]
-
-	return tf.maximum(A(),B())
-
-def has_error(obj, human_labels):
-	return 1-error_free(obj,human_labels)
-
-def localized_errors(obj, human_labels, ds_shape, expander):
-	return 1-(downsample([obj,human_labels], ds_shape, expander, error_free))
 
 """
 #obj should be zero-one
@@ -199,11 +149,13 @@ def localized_errors_vectorized(obj, human_labels, ds_shape, expander):
 		tf.reduce_all(tf.equal(obj_reshape, tf.to_float(tf.equal(obj_label, human_labels_reshape))), axis=5, keep_dims = True))), squeeze_dims = [5])
 """
 
-#f is the function applied to the downsampling window
-def downsample(us, ds_shape, expander, f):
-	multi=(type(us)==type([]))
-	shape = ds_shape
-	if multi:
+def downsample(us, shape, expander, f):
+	"""
+	f is the function applied to the downsampling window
+	"""
+
+	if type(us) is list:
+		# we assume the shape of all components of the list is the same
 		full_shape = static_shape(us[0])
 	else:
 		full_shape = static_shape(us)
@@ -211,7 +163,9 @@ def downsample(us, ds_shape, expander, f):
 	inds = [[i,j,k] for i in xrange(0,shape[1]) for j in xrange(0,shape[2]) for k in xrange(0,shape[3])]
 	slices = [(slice(0,shape[0]),)+expander((slice(i,i+1), slice(j,j+1),slice(k,k+1))) + (slice(0,shape[4]),) for i,j,k in inds]
 
-	if multi:
+	for slc, ind in zip(slices, inds):
+		print (ind ,slc)
+	if type(us) is list:
 		array_form = tf.scatter_nd(indices=inds, updates=map(lambda x: f(*[V[x] for V in us]), slices), shape=shape[1:4])
 	else:
 		array_form = tf.scatter_nd(indices=inds, updates=map(lambda x: f(us[x]), slices), shape=shape[1:4])

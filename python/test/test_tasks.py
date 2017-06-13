@@ -3,15 +3,10 @@ import shutil
 
 import numpy as np
 
-<<<<<<< 5f897ed1a3ae3d9ea2a02cb020f56a9d6749010d
-from neuroglancer.pipeline import Storage, Precomputed, DownsampleTask, MeshTask, WatershedTask
-from neuroglancer.pipeline.task_creation import create_downsampling_task, MockTaskQueue
-=======
 from neuroglancer.pipeline import Storage, Precomputed, DownsampleTask, MeshTask, RelabelTask
 from neuroglancer.pipeline.task_creation import (upload_build_chunks, create_info_file_from_build,
     create_ingest_task, MockTaskQueue, create_downsampling_task)
 
->>>>>>> feat(yacn): Adds stage1 ,stage2 and stage3 WIP
 from neuroglancer import downsample
 from test.test_precomputed import create_layer, delete_layer
 
@@ -121,7 +116,7 @@ def test_relabeling():
     storage = Storage('file:///tmp/removeme/relabel_input')
     data = np.arange(8).astype(np.uint32).reshape(2,2,2,1)
     upload_build_chunks(storage, data, offset=(0,0,0))
-    storage.wait)
+    storage.wait()
     create_info_file_from_build(storage, layer_type= 'segmentation', encoding="raw")
     storage.wait()
     create_ingest_task(storage, MockTaskQueue())

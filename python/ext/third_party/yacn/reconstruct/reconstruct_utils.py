@@ -1,3 +1,5 @@
+from __future__ import absolute_import
+
 import numpy as np
 import sys
 import os
@@ -7,12 +9,8 @@ import numpy as np
 from multiprocessing import Process, Queue
 import misc_utils
 import uuid
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-if "POD_ID" in os.environ:
-	POD_ID = os.environ["POD_ID"]
-else:
-	POD_ID = "POD_ID"
-NETS_DIR = "/tmp/{}/nets/".format(POD_ID)
+
+NETS_DIR = "/usr/people/it2/nets/"
 
 class FileArray(object):
 	def __init__(self, A):
@@ -39,7 +37,7 @@ def run_trace(q1,q2,device):
 	import os
 	os.environ["CUDA_VISIBLE_DEVICES"]=device
 
-	from ..nets import sparse_vector_labels_inference
+	from ext.third_party.yacn.nets import sparse_vector_labels_inference
 	sparse_vector_labels_inference.main_model.restore(os.path.join(NETS_DIR,"sparse_vector_labels/latest.ckpt"))
 	while True:
 		try:
@@ -53,7 +51,7 @@ def run_discrim_online(q1,q2,device):
 	import os
 	os.environ["CUDA_VISIBLE_DEVICES"]=device
 
-	from ..nets import discriminate3_online_inference
+	from ext.third_party.yacn.nets import discriminate3_online_inference
 	discriminate3_online_inference.main_model.restore(os.path.join(NETS_DIR,"discriminate3/latest.ckpt"))
 	while True:
 		try:
@@ -69,7 +67,7 @@ def run_discrim_online(q1,q2,device):
 def run_recompute_discrim(q1,q2,device):
 	import os
 	os.environ["CUDA_VISIBLE_DEVICES"]=device
-	from ..nets import discriminate3_online_inference as inference
+	from ext.third_party.yacn.nets import discriminate3_online_inference as inference
 	inference.main_model.restore(os.path.join(NETS_DIR,"discriminate3/latest.ckpt"))
 	while True:
 		try:

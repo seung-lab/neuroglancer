@@ -9,3 +9,4 @@ HttpServer
 HttpCommon
 MbedTLS
 OffsetArrays
+ImageFiltering

@@ -13,18 +13,13 @@ from neuroglancer.pipeline import Storage, Precomputed, RegisteredTask
 from neuroglancer.pipeline.precomputed import EmptyVolumeException
 import string
 
-if "POD_ID" in os.environ:
-    POD_ID = os.environ["POD_ID"]
-else:
-    print "Warning: POD_ID environment variable not set."
-    POD_ID = "POD_ID"
 
 def h5_get(yacn_layer, name, chunk_position, default_shape = (0,2)):
     if chunk_position is not None:
         path = '{}/{}.h5'.format(name,chunk_position)
     else:
         path = '{}.h5'.format(name)
-    file_data = Storage(yacn_layer).get_file(path)
+    file_data = Storage(yacn_layer, n_threads=1).get_file(path)
     if file_data is None:
         raise EmptyVolumeException(path.format(name, chunk_position))
     # Hate having to do this
@@ -112,7 +107,7 @@ class RegionGraphTask(RegisteredTask):
     def _save_results(self):
         s = Storage(self.yacn_layer)
         for fname, fextension in map(os.path.splitext,os.listdir(self.out_dir)):
-            print(fname)
+            print fname
             with open(os.path.join(self.out_dir,fname + fextension),'rb') as f:
                 s.put_file(file_path=(fname + '/{}'+fextension).format(self.chunk_position),
                            content=f.read()) 
@@ -178,8 +173,8 @@ class DiscriminateTask(RegisteredTask):
          self._crop_ymin, self._crop_ymax,
          self._crop_zmin, self._crop_zmax) = map(int, match.groups())
         self._crop_slices = (slice(self._crop_xmin, self._crop_xmax),
-                              slice(self._crop_ymin, self._crop_ymax),
-                              slice(self._crop_zmin, self._crop_zmax))
+                             slice(self._crop_ymin, self._crop_ymax),
+                             slice(self._crop_zmin, self._crop_zmax))
 
     def _get_image_chunk(self):
         image = Precomputed(Storage(self.image_layer))[self._chunk_slices] 
@@ -193,7 +188,7 @@ class DiscriminateTask(RegisteredTask):
     def _infer(self, image, segmentation, samples):
         #os.environ["CUDA_VISIBLE_DEVICES"]="0"
         from ext.third_party.yacn.nets.discriminate3_inference import main_model
-        main_model.restore('/tmp/{}/nets/discriminate3/latest.ckpt'.format(POD_ID))
+        main_model.restore('/usr/people/it2/nets/discriminate3/latest.ckpt')
         print image.shape, segmentation.shape
         output = main_model.inference(image, segmentation, samples)
         self._write_chunk(output)
@@ -207,7 +202,7 @@ class DiscriminateTask(RegisteredTask):
 
     def _get_weights(self):
         try:
-            os.makedirs('/tmp/{}/nets/discriminate3/'.format(POD_ID))
+            os.makedirs('/usr/people/it2/nets/discriminate3/')
         except OSError:
             pass #folder already exists
         s = Storage(self.yacn_layer)
@@ -215,7 +210,7 @@ class DiscriminateTask(RegisteredTask):
                           'nets/discriminate3/latest.ckpt.index',
                           'nets/discriminate3/latest.ckpt.data-00000-of-00001']:
 
-            with open('/tmp/{}/'.format(POD_ID) + file_path, 'wb') as f:
+            with open('/usr/people/it2/'+ file_path, 'wb') as f:
                 f.write(s.get_file(file_path))
 
 
@@ -399,7 +394,7 @@ class FloodFillingTask(RegisteredTask):
                 else:
                     return h5['main'][:]
     def _get_weights(self):
-        tmp_dir = "/tmp/{}/".format(POD_ID)
+        tmp_dir = "/usr/people/it2/"
         try:
             os.makedirs(os.path.join(tmp_dir,'nets/discriminate3/'))
         except OSError:
