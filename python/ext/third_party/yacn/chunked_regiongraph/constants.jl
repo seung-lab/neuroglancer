@@ -1,4 +1,4 @@
-const Int=Int32
+#const Int=Int32
 
 const bx = 2
 const by = 2

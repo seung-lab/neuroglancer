@@ -1,4 +1,5 @@
 push!(LOAD_PATH, dirname(@__FILE__))
+include("../pre/Save.jl")
 using HttpServer
 using HttpCommon
 using ChunkedGraphs
@@ -7,6 +8,7 @@ using PyCall
 using Utils
 
 @pyimport neuroglancer.simple_task_queue.task_queue as task_queue
+#tq = task_queue.TaskQueue("http://127.0.0.1:8000/1.0")
 tq = task_queue.TaskQueue("http://50.16.149.198:8001/1.0")
 
 edges = Save.load("~/testing/chunked_edges.jls")
@@ -102,14 +104,14 @@ function mesh!(v::ChunkedGraphs.Vertex)
 			task_name=string(task_labeller())
 			tq[:insert](name=task_name,
 			payload="""
-			ObjectMeshTask("$(slices_to_str(chunk_id_to_slices(chunk_id(child1.label),high_pad=1)))","$(WATERSHED_STORAGE)",$(simple_print([seg_id(child.label) for child in v.children])),$(seg_id(v.label))).execute()
+			ObjectMeshTask("$(slices_to_str(chunk_id_to_slices(chunk_id(child1.label),high_pad=1)))","$(WATERSHED_STORAGE)",$(simple_print([seg_id(child.label) for child in v.children])),$(v.label)).execute()
 			""")
 		else
 			task_name = string(task_labeller())
 			child_task_names = filter(x->x!=nothing,[mesh!(child) for child in v.children])
 			tq[:insert](name=task_name,
 			payload="""
-			MergeMeshTask("$(WATERSHED_STORAGE)",$(simple_print([seg_id(child.label) for child in v.children])),$(seg_id(v.label))).execute()
+			MergeMeshTask("$(WATERSHED_STORAGE)",$(simple_print([child.label for child in v.children])),$(v.label)).execute()
 			""",
 			dependencies=child_task_names)
 		end
@@ -119,28 +121,42 @@ function mesh!(v::ChunkedGraphs.Vertex)
 end
 
 function handle_node(id)
-	id=parse(UInt32,id)
-	l=handles[id]
+	id=parse(UInt64,id)
 
-	root_vertex = bfs(G, handles[id])[1]
+	if chunk_id(id) == 0 # Lvl 0, a neuroglancer supervoxel, need to lookup chunk id
+		id=handles[id]
+	end
+
+	root_vertex = bfs(G, id)[1]
 	segments = leaves(root_vertex)
 
-	println("selected $(length(segments)) segments")
-	s=cat(1,collect(Set{UInt32}(seg_id(x) for x in segments)),seg_id(root_vertex.label))
+	println("selected $(length(segments)) segments with root $(root_vertex.label)")
+	s=cat(1,collect(Set{UInt64}(seg_id(x) for x in segments)),root_vertex.label)
 	mesh!(root_vertex)
-	return Response(reinterpret(UInt8,s),headers)
-end
 
-function children(id)
-	id=parse(UInt32,id)
-	v=handles[id]
-	s = UInt32[child.label for child in v.children]
 	return Response(reinterpret(UInt8,s),headers)
 end
 
 function pos_to_label(x)
 	x=eval(parse(x))
 	return (x[1],to_chunk_id(x[2],x[3],x[4]))
+end
+
+function handle_children(id)
+	id = parse(UInt64,id)
+
+	if chunk_id(id) == 0 # Lvl 0, a neuroglancer supervoxel, has no children
+		return Response(UInt8[],headers)
+	end
+
+	v = get_vertex(G, id)
+	if ChunkedGraphs.level(v) == 2 # Lvl 2, children are neuroglancer supervoxel, need to trim the chunk ids
+		s = UInt64[seg_id(child.label) for child in v.children]
+	else
+		s = UInt64[child.label for child in v.children]
+	end
+
+	return Response(reinterpret(UInt8,s),headers)
 end
 
 function handle_split(id1,id2)
@@ -160,11 +176,12 @@ function handle_subgraph(vertices)
 end
 
 d=Dict(
-	   r"/1.0/node/(\d+)/?" => handle_node,
-	   r"/1.0/merge/(\d+),(\d+)/?" => handle_merge,
-	   r"/1.0/split/(\d+),(\d+)/?" => handle_split,
-	   r"/1.0/subgraph/(\[[\d,\(\)]*?\])/?" => handle_subgraph,
-	   )
+		 r"/1.0/node/(\d+)/?" => handle_node,
+		 r"/1.0/merge/(\d+),(\d+)/?" => handle_merge,
+		 r"/1.0/split/(\d+),(\d+)/?" => handle_split,
+		 r"/1.0/subgraph/(\[[\d,\(\)]*?\])/?" => handle_subgraph,
+		 r"/1.0/children/(\d+)/?" => handle_children,
+		 )
 
 headers=HttpCommon.headers()
 
@@ -174,9 +191,7 @@ headers["Access-Control-Allow-Methods"]= "POST, GET, OPTIONS"
 http = HttpHandler() do req::Request, res::Response
 	for r in keys(d)
 		if ismatch(r, req.resource)
-
 			m = match(r,req.resource)
-
 			return d[r](m.captures...)
 		end
 	end
@@ -188,3 +203,5 @@ http.events["listen"] = (saddr) -> println("Running on https://$saddr (Press CTR
 server = Server(http)
 
 run(server, host=getaddrinfo("seungworkstation1000.princeton.edu"), port=9100)
+#run(server, host=getaddrinfo("127.0.0.1"), port=9100)
+

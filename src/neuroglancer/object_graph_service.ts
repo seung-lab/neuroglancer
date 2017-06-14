@@ -20,10 +20,10 @@ export function getConnectedSegments (segment: Uint64) : Promise<Uint64[]> {
 	let promise = sendHttpRequest(openHttpRequest(`${GRAPH_BASE_URL}/1.0/node/${segment}`), 'arraybuffer');
     return promise.then(response => {
         let uint32 = new Uint32Array(response);
-        let final : Uint64[] = new Array(uint32.length);
+        let final : Uint64[] = new Array(uint32.length/2);
 
-        for (let i = 0; i < uint32.length; i++) {
-        	final[i] = new Uint64(uint32[i]);
+        for (let i = 0; i < uint32.length/2; i++) {
+        	final[i] = new Uint64(uint32[2*i], uint32[2*i+1]);
         }
 
         return final;
