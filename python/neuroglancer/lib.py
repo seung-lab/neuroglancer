@@ -55,6 +55,25 @@ def list_shape(shape, elem=None):
 
     return helper(elem, shape, 0)
 
+
+def find_closest_divisor(to_divide, closest_to):
+    def find_closest(td,ct):
+        min_distance = td
+        best = td
+        for x in divisors(td):
+            if abs(x-ct) < min_distance:
+                min_distance = abs(x-ct)
+                best = x
+        return best
+    return [find_closest(td,ct) for td, ct in zip(to_divide,closest_to)]
+
+def divisors(n):
+    for i in xrange(1, int(math.sqrt(n) + 1)):
+        if n % i == 0:
+            yield i
+            if i*i != n:
+                yield n / i
+
 def xyzrange(start_vec, end_vec=None, stride_vec=(1,1,1)):
   if end_vec is None:
     end_vec = start_vec
@@ -280,6 +299,11 @@ def min2(a, b):
 
 def clamp(val, low, high):
   return min(max(val, low), high)
+
+def eclamp(val, low, high):
+  if val > high or val < low:
+    raise ValueError('Value {} cannot be outside of inclusive range {} to {}'.format(val,low,high))
+  return val
 
 class Vec(np.ndarray):
     def __new__(cls, *args, **kwargs):
