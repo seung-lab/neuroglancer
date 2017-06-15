@@ -174,6 +174,8 @@ def create_transfer_tasks(task_queue, src_layer_path, dest_layer_path, shape=Vec
   shape = Vec(*shape)
   vol = CloudVolume(src_layer_path)
 
+  create_downsample_scales(dest_layer_path, mip=0, ds_shape=shape)
+
   for startpt in tqdm(xyzrange( vol.bounds.minpt, vol.bounds.maxpt, shape ), desc="Inserting Transfer Tasks"):
     task = TransferTask(
       src_path=src_layer_path,
@@ -187,6 +189,8 @@ def create_transfer_tasks(task_queue, src_layer_path, dest_layer_path, shape=Vec
 def create_watershed_remap_tasks(task_queue, map_path, src_layer_path, dest_layer_path, shape=Vec(2048, 2048, 64)):
   shape = Vec(*shape)
   vol = CloudVolume(src_layer_path)
+
+  create_downsample_scales(dest_layer_path, mip=0, ds_shape=shape)
 
   for startpt in tqdm(xyzrange( vol.bounds.minpt, vol.bounds.maxpt, shape ), desc="Inserting Remap Tasks"):
     task = WatershedRemapTask(
