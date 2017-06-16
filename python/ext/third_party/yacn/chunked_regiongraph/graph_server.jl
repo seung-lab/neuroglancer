@@ -61,7 +61,7 @@ ProfileView.view()
 wait()
 =#
 
-const WATERSHED_STORAGE = "s3://neuroglancer/pinky40_v11/watershed"
+const WATERSHED_STORAGE = "gs://neuroglancer/pinky40_v11/watershed"
 
 #maps ids to the mesh task name
 const mesh_task=Dict()
@@ -201,9 +201,12 @@ function handle_children(id)
 	v = get_vertex(G, id)
 	if ChunkedGraphs.level(v) == 2 # Lvl 2, children are neuroglancer supervoxel, need to trim the chunk ids
 		s = UInt64[seg_id(child.label) for child in v.children]
+    println("handle_children - v: $(v.label), (Level $(ChunkedGraphs.level(v))), - children: $(simple_print([seg_id(child.label) for child in v.children]))")
 	else
 		s = UInt64[child.label for child in v.children]
+    println("handle_children - v: $(v.label), (Level $(ChunkedGraphs.level(v))), - children: $(simple_print([child.label for child in v.children]))")
 	end
+  
 
 	return Response(reinterpret(UInt8,s),headers)
 end

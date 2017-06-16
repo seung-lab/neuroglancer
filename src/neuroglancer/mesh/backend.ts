@@ -25,6 +25,7 @@ import {vec3} from 'neuroglancer/util/geom';
 import {verifyObject, verifyObjectProperty} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {registerSharedObject, RPC} from 'neuroglancer/worker_rpc';
+import {getChildSegments, enableGraphServer, GRAPH_SERVER_NOT_ENABLED} from 'neuroglancer/object_graph_service';
 
 const MESH_OBJECT_MANIFEST_CHUNK_PRIORITY = 100;
 const MESH_OBJECT_FRAGMENT_CHUNK_PRIORITY = 50;
@@ -293,6 +294,7 @@ class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
     this.source = this.registerDisposer(rpc.getRef<MeshSource>(options['source']));
     this.registerSignalBinding(
         this.chunkManager.recomputeChunkPriorities.add(this.updateChunkPriorities, this));
+    enableGraphServer(options['graphPath']);
   }
 
   private updateChunkPriorities() {
@@ -313,6 +315,23 @@ class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
         // console.log("FIXME: updatefragment chunk priority");
         // console.log(manifestChunk.data);
         // let fragmentChunk = fragmentSource.getChunk(manifestChunk);
+      }
+      if (objectId.high > 0) {
+        console.log(`${objectId}: with status ${manifestChunk.state}`)
+      }
+
+      if (manifestChunk.state === ChunkState.FAILED && objectId.high > 0) { // no need to query neuroglancer supervoxels (high == 0)
+        getChildSegments(objectId).then((childIds) => {
+          console.log(`Manifest for segment ${objectId} is missing. Checking children:` + childIds);
+
+          childIds.forEach(childId => {
+            this.visibleSegments.add(childId);
+          });
+        });
+        //Get Children from GraphServer
+        //Add Children as "visibleSegments"
+        //Remove current segment from "visibleSegments"
+
       }
     });
   }

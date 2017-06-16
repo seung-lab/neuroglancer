@@ -166,7 +166,7 @@ export class SegmentationUserLayer extends UserLayer {
   }
 
   addMesh(meshSource: MeshSource) {
-    this.meshLayer = new MeshLayer(this.manager.chunkManager, meshSource, this.displayState);
+    this.meshLayer = new MeshLayer(this.manager.chunkManager, meshSource, this.graphPath, this.displayState);
     this.addRenderLayer(this.meshLayer);
   }
 
