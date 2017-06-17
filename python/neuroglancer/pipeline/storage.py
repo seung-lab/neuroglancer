@@ -182,8 +182,16 @@ class Storage(ThreadedQueue):
         with gzip.GzipFile(mode='rb', fileobj=stringio) as gfile:
             return gfile.read()
 
-    def list_files(self, prefix=""):
-        for f in self._interface.list_files(prefix):
+    def list_files(self, prefix="", flat=False):
+        """
+        List the files in the layer with the given prefix. 
+
+        flat means only generate one level of a directory,
+        while non-flat means generate all file paths with that 
+        prefix.
+        """
+
+        for f in self._interface.list_files(prefix, flat):
             yield f
 
 class FileInterface(object):
@@ -191,7 +199,6 @@ class FileInterface(object):
 
     def __init__(self, path):
         self._path = path
-
 
     def get_path_to_file(self, file_path):
         
@@ -225,15 +232,37 @@ class FileInterface(object):
         if os.path.exists(path):
             os.remove(path)
 
-    def list_files(self, prefix):
+    def list_files(self, prefix, flat):
+        """
+        List the files in the layer with the given prefix. 
+
+        flat means only generate one level of a directory,
+        while non-flat means generate all file paths with that 
+        prefix.
+        """
+
         layer_path = self.get_path_to_file("")        
-        path = os.path.join(layer_path, prefix)
-        path += "*"
+        path = os.path.join(layer_path, prefix) + '*'
+
         filenames = []
-        for file_path in glob(path):
-            if not os.path.isfile(file_path):
-                continue
-            filenames.append(os.path.basename(file_path))
+        remove = layer_path + '/'
+
+        if flat:
+            for file_path in glob(path):
+                if not os.path.isfile(file_path):
+                    continue
+                filename = file_path.replace(remove, '')
+                filenames.append(filename)
+        else:
+            subdir = os.path.join(layer_path, os.path.dirname(prefix))
+            for root, dirs, files in os.walk(subdir):
+                files = [ os.path.join(root, f) for f in files ]
+                files = [ f.replace(remove, '') for f in files ]
+                files = [ f for f in files if f[:len(prefix)] == prefix ]
+                
+                for filename in files:
+                    filenames.append(filename)
+            
         return _radix_sort(filenames).__iter__()
 
 class GoogleCloudStorageInterface(object):
@@ -277,15 +306,21 @@ class GoogleCloudStorageInterface(object):
         except google.cloud.exceptions.NotFound:
             pass
 
-    def list_files(self, prefix):
+    def list_files(self, prefix, flat=False):
         """
-        if there is no trailing slice we are looking for files with that prefix
+        List the files in the layer with the given prefix. 
+
+        flat means only generate one level of a directory,
+        while non-flat means generate all file paths with that 
+        prefix.
         """
         layer_path = self.get_path_to_file("")        
         path = os.path.join(layer_path, prefix)
         for blob in self._bucket.list_blobs(prefix=path):
-            filename =  os.path.basename(prefix) + blob.name[len(path):]
-            if '/' not in filename:
+            filename = blob.name.replace(layer_path + '/', '')
+            if not flat and filename[-1] != '/':
+                yield filename
+            elif flat and '/' not in blob.name.replace(path, ''):
                 yield filename
 
 class S3Interface(object):
@@ -336,16 +371,22 @@ class S3Interface(object):
         k.key = self.get_path_to_file(file_path)
         self._bucket.delete_key(k)
 
-    def list_files(self, prefix):
+    def list_files(self, prefix, flat=False):
         """
-        if there is no trailing slice we are looking for files with that prefix
+        List the files in the layer with the given prefix. 
+
+        flat means only generate one level of a directory,
+        while non-flat means generate all file paths with that 
+        prefix.
         """
-        from tqdm import tqdm
+
         layer_path = self.get_path_to_file("")        
         path = os.path.join(layer_path, prefix)
         for blob in self._bucket.list(prefix=path):
-            filename =  os.path.basename(prefix) + blob.name[len(path):]
-            if '/' not in filename:
+            filename = blob.name.replace(layer_path + '/', '')
+            if not flat and filename[-1] != '/':
+                yield filename
+            elif flat and '/' not in blob.name.replace(path, ''):
                 yield filename
 
 def _radix_sort(L, i=0):
