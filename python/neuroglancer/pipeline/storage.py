@@ -42,7 +42,6 @@ class Storage(ThreadedQueue):
         ['protocol','bucket_name','dataset_path','dataset_name','layer_name'])
 
     def __init__(self, layer_path='', n_threads=20):
-
         self._layer_path = layer_path
         self._path = self.extract_path(layer_path)
         
@@ -116,6 +115,9 @@ class Storage(ThreadedQueue):
             self.wait()
 
         return self
+
+    def exists(self, file_path):
+        return self._interface.exists(file_path)
 
     def get_file(self, file_path):
         # Create get_files does uses threading to speed up downloading
@@ -260,6 +262,10 @@ class FileInterface(object):
         except IOError:
             return None, False
 
+    def exists(self, file_path):
+        path = self.get_path_to_file(file_path)
+        return os.path.exists(path) or os.path.exists(path + '.gz')
+
     def delete_file(self, file_path):
         path = self.get_path_to_file(file_path)
         if os.path.exists(path):
@@ -371,6 +377,12 @@ class GoogleCloudStorageInterface(object):
         return blob.download_as_string(), False
 
     @retry
+    def exists(self, file_path):
+        key = self.get_path_to_file(file_path)
+        blob = self._bucket.get_blob(key)
+        return blob is not None
+
+    @retry
     def delete_file(self, file_path):
         key = self.get_path_to_file(file_path)
         
@@ -433,7 +445,6 @@ class S3Interface(object):
     
     @retry
     def get_file(self, file_path):
-        print(file_path)
         k = boto.s3.key.Key(self._bucket)
         k.key = self.get_path_to_file(file_path)
         try:
@@ -443,6 +454,12 @@ class S3Interface(object):
                 return None, False
             else:
                 raise e
+
+    @retry
+    def exists(self, file_path):
+        k = boto.s3.key.Key(self._bucket)
+        k.key = self.get_path_to_file(file_path)
+        return k.exists
 
     @retry
     def delete_file(self, file_path):
