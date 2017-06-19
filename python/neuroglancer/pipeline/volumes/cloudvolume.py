@@ -11,6 +11,7 @@ from tqdm import tqdm
 import neuroglancer
 import neuroglancer.lib as lib
 from neuroglancer.lib import clamp, xyzrange, Vec, Vec3, Bbox, min2, max2
+from provenance import DatasetProvenance, DataLayerProvenance
 from volumes import Volume, VolumeCutout, generate_slices
 from neuroglancer.pipeline.storage import Storage
 
@@ -73,6 +74,9 @@ class CloudVolume(Volume):
       self.refreshInfo()
     else:
       self.info = info
+
+    # self.dataset_provenance = DatasetProvenance(self.base_cloudpath)
+    self.layer_provenance = DataLayerProvenance(self.layer_cloudpath)
 
     try:
       self.mip = self.available_mips[self.mip]

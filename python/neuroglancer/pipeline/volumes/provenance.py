@@ -29,6 +29,9 @@ class Provenance(object):
     validate(jsondata, self.schema)
     return self.reset(json.loads(jsondata))
 
+  def __str__(self):
+    return '<{}: {}>'.format(self.__class__.__name__, self.tojson())
+
 
 class DatasetProvenance(Provenance):
   schema = {
