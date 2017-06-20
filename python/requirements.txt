@@ -22,3 +22,4 @@ tenacity==4.1.0
 google-api-python-client==1.6.2
 google-cloud==0.25
 jsonschema==2.6.0
+intern==0.9.4

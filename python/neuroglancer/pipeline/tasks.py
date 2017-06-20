@@ -15,11 +15,14 @@ import numpy as np
 from backports import lzma
 from tqdm import tqdm
 
+from intern.remote.boss import BossRemote
+from intern.resource.boss.resource import ChannelResource
+from neuroglancer.pipeline.secrets import boss_credentials
 from neuroglancer import chunks, downsample, downsample_scales
 from neuroglancer.lib import xyzrange, min2, max2, Vec, Bbox, mkdir 
 from neuroglancer.pipeline import Storage, Precomputed, RegisteredTask
 from neuroglancer.pipeline.volumes import CloudVolume
-from neuroglancer.ingest.mesher import Mesher
+# from neuroglancer.ingest.mesher import Mesher
 
 def downsample_and_upload(image, bounds, vol, ds_shape, mip=0, axis='z', skip_first=False):
     ds_shape = min2(vol.volume_size, ds_shape)
@@ -537,3 +540,48 @@ class WatershedRemapTask(RegisteredTask):
         npy_map_file.close()
         return remap
 
+class BossTransferTask(RegisteredTask):
+  """
+  This is a very limited task that is used for transferring
+  mip 0 data from The BOSS (https://docs.theboss.io). 
+  If our needs become more sophisticated we can make a 
+  BossVolume and integrate that into TransferTask.
+
+  Of note, to initiate a transfer, write the bounds
+  of the coordinate frame from your experiment into the
+  destinate info file.
+  """
+
+  def __init__(self, src_path, dest_path, shape, offset):
+    super(self.__class__, self).__init__(src_path, dest_path, shape, offset)
+    self.src_path = src_path
+    self.dest_path = dest_path
+    self.shape = Vec(*shape)
+    self.offset = Vec(*offset)
+
+  def execute(self):
+    match = re.match(r'^(boss)://([/\d\w_\.\-]+)/([\d\w_\.\-]+)/([\d\w_\.\-]+)/?', 
+        self.src_path)
+    protocol, collection, experiment, channel = match.groups()
+
+    dest_vol = CloudVolume(self.dest_path)
+
+    bounds = Bbox( self.offset, self.shape + self.offset )
+    bounds = Bbox.clamp(bounds, dest_vol.bounds)
+
+    x_rng = [ bounds.minpt.x, bounds.maxpt.x ]
+    y_rng = [ bounds.minpt.y, bounds.maxpt.y ]
+    z_rng = [ bounds.minpt.z, bounds.maxpt.z ]
+
+    chan = ChannelResource(
+      name=channel,
+      collection_name=collection, 
+      experiment_name=experiment, 
+      type='image', 
+      datatype=dest_vol.dtype
+    )
+
+    rmt = BossRemote(boss_credentials)
+    img3d = rmt.get_cutout(chan, 0, x_rng, y_rng, z_rng).T
+    print(img3d, img3d.shape, img3d.dtype)
+    downsample_and_upload(img3d, bounds, dest_vol, self.shape)

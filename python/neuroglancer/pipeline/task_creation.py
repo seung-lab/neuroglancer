@@ -16,7 +16,8 @@ from neuroglancer.lib import Vec, Bbox, max2, min2, xyzrange, find_closest_divis
 from neuroglancer.pipeline import Storage, TaskQueue, MockTaskQueue
 from neuroglancer.pipeline.tasks import (BigArrayTask, IngestTask,
      HyperSquareTask, MeshTask, MeshManifestTask, DownsampleTask, 
-     QuantizeAffinitiesTask, TransferTask, WatershedRemapTask)
+     QuantizeAffinitiesTask, TransferTask, BossTransferTask, 
+     WatershedRemapTask)
 from neuroglancer.pipeline.volumes import HDF5Volume, CloudVolume
 
 def create_ingest_task(storage, task_queue):
@@ -178,6 +179,24 @@ def create_transfer_tasks(task_queue, src_layer_path, dest_layer_path, shape=Vec
 
   for startpt in tqdm(xyzrange( vol.bounds.minpt, vol.bounds.maxpt, shape ), desc="Inserting Transfer Tasks"):
     task = TransferTask(
+      src_path=src_layer_path,
+      dest_path=dest_layer_path,
+      shape=shape.clone(),
+      offset=startpt.clone(),
+    )
+    task_queue.insert(task)
+  task_queue.wait()
+
+def create_boss_transfer_tasks(task_queue, src_layer_path, dest_layer_path, shape=Vec(1024, 1024, 64)):
+  # Note: Weird errors with datatype changing to float64 when requesting 2048,2048,64
+  # 1024,1024,64 worked nicely though.
+  shape = Vec(*shape)
+  vol = CloudVolume(dest_layer_path)
+
+  create_downsample_scales(dest_layer_path, mip=0, ds_shape=shape)
+
+  for startpt in tqdm(xyzrange( vol.bounds.minpt, vol.bounds.maxpt, shape ), desc="Inserting Boss Transfer Tasks"):
+    task = BossTransferTask(
       src_path=src_layer_path,
       dest_path=dest_layer_path,
       shape=shape.clone(),
@@ -411,16 +430,22 @@ def ingest_hdf5_example():
 if __name__ == '__main__':  
 
   src_path = 'gs://neuroglancer/pinky40_v11/watershed/'
-  dest_path = 'gs://neuroglancer/pinky40_v11/watershed_mst_split_spines_2M_remap/' 
+  dest_path = 'gs://neuroglancer/pinky40_v11/watershed_mst_split_axons4_remap/' 
   map_path = os.path.join(dest_path, 'mst_split_spines_2M_remap.npy')
   
-  with TaskQueue(queue_name='wms-test-pull-queue') as task_queue:
-    create_downsampling_tasks(task_queue, 'gs://neuroglancer/piriform_v0/image', mip=0, fill_missing=True)
+  with MockTaskQueue(queue_name='wms-test-pull-queue') as task_queue:
+    # create_downsampling_tasks(task_queue, dest_path, mip=5, fill_missing=False)
     # create_meshing_tasks(task_queue, dest_path, mip=3)
 
     # create_mesh_manifest_tasks(task_queue, dest_path)
 
     # create_watershed_remap_tasks(task_queue, map_path, src_path, dest_path)
+
+    create_boss_transfer_tasks(task_queue, 
+      src_layer_path='boss://BCMID_8973_AIBSID_243774/neuroanatomical_aibs_pu_dataset/neuroanatomical_aibs_pu_dataset_channel',
+      dest_layer_path='gs://neuroglancer/pinky100_v0/image',
+      shape=Vec(1024,1024,64),
+    )
 
     # create_quantized_affinity_tasks(task_queue,
     #   src_layer='gs://neuroglancer/zfish_v1/affinitymap',

@@ -12,3 +12,7 @@ google_credentials = service_account.ServiceAccountCredentials \
 aws_credentials_path =  '/secrets/aws-secret.json'
 with open(aws_credentials_path, 'rb') as f:
   aws_credentials = json.loads(f.read())
+
+boss_credentials_path = '/secrets/boss-secret.json'
+with open(boss_credentials_path, 'rb') as f:
+  boss_credentials = json.loads(f.read())
