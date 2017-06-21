@@ -228,7 +228,11 @@ class MeshManifestTask(RegisteredTask):
 
     for filename in storage.list_files(prefix=prefix):
       # `match` implies the beginning (^). `search` matches whole string
-      segid, lod = re.match('(\d+):(\d+)', filename).groups() 
+      matches = re.match('(\d+):(\d+):', filename)
+      if not matches:
+        continue
+
+      segid, lod = matches.groups() 
       segid, lod = int(segid), int(lod)
 
       if lod != self.lod:
