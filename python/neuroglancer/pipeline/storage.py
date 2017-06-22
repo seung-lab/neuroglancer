@@ -189,6 +189,18 @@ class Storage(ThreadedQueue):
         flat means only generate one level of a directory,
         while non-flat means generate all file paths with that 
         prefix.
+
+        Here's how flat=True handles different senarios:
+            1. partial directory name prefix = 'bigarr'
+                - lists the '' directory and filters on key 'bigarr'
+            2. full directory name prefix = 'bigarray'
+                - Same as (1), but using key 'bigarray'
+            3. full directory name + "/" prefix = 'bigarray/'
+                - Lists the 'bigarray' directory
+            4. partial file name prefix = 'bigarray/chunk_'
+                - Lists the 'bigarray/' directory and filters on 'chunk_'
+        
+        Return: generated sequence of file paths relative to layer_path
         """
 
         for f in self._interface.list_files(prefix, flat):
