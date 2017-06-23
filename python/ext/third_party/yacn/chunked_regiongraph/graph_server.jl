@@ -1,5 +1,6 @@
 push!(LOAD_PATH, dirname(@__FILE__))
 include("../pre/Save.jl")
+include("./constants.jl")
 using HttpServer
 using HttpCommon
 using ChunkedGraphs
@@ -61,7 +62,7 @@ ProfileView.view()
 wait()
 =#
 
-const WATERSHED_STORAGE = "gs://neuroglancer/pinky40_v11/watershed"
+const WATERSHED_STORAGE = "gs://neuroglancer/pinky40_v11/watershed_cutout"
 
 #maps ids to the mesh task name
 const mesh_task=Dict()
@@ -76,37 +77,50 @@ function labeller(start_label)
 end
 
 task_labeller = labeller(0)
+# task_name=string(task_labeller())
+# tq[:insert](name=task_name,	payload=prod(["MeshManifestTask(\"$(WATERSHED_STORAGE)\",0).execute()"]))
+
+# for x in 29696:cx:35000
+#   for y in 19968:cy:25000
+#     for z in 0:cz:511
+#       task_name=string(task_labeller())
+#       tq[:insert](name=task_name,	payload=prod(["MeshTask(\"4_4_40\",\"$(x)-$(x+cx)_$(y)-$(y+cy)_$(z)-$(z+cz)\",\"$(WATERSHED_STORAGE)\",0,1).execute()"]))
+#     end
+#   end
+# end
+# println("All done!")
+# exit()
 
 function simple_print(x::Array)
 	string('[',map(n->"$(n),",x)...,']')
 end
 
-function mesh!(c::ChunkedGraphs.Chunk)
-	vertex_list = vertices(c)
-	if !haskey(mesh_task,v.label)
-		if ChunkedGraphs.level(v)==2
-			task_name=string(task_labeller())
-			tq[:insert](name=task_name,
-			payload=prod(["""
-			ObjectMeshTask("$(slices_to_str(chunk_id_to_slices(c.id),high_pad=1))","$(WATERSHED_STORAGE)",$(simple_print([child.label[1] for child in v.children])),$(v.label)).execute()
-			""" for v in vertices(c)]))
-		else
-			task_name = string(task_labeller())
-			child_task_names = filter(x->x!=nothing,[mesh!(child) for child in c.children])
-			tq[:insert](name=task_name,
-			payload=prod(["""
-			MergeMeshTask("$(WATERSHED_STORAGE)",$([child.label for child in v.children]),$(v.label)).execute()
-			"""
-			for v in vertices(c)]),
-			dependencies=child_task_names)
-		end
-		mesh_task[c.id]=task_name
-		for v in vertex_list
-			mesh_task[v.label] = task_name
-		end
-	end
-	return mesh_task[c.id]
-end
+# function mesh!(c::ChunkedGraphs.Chunk)
+# 	vertex_list = vertices(c)
+# 	if !haskey(mesh_task,v.label)
+# 		if ChunkedGraphs.level(v)==2
+# 			task_name=string(task_labeller())
+# 			tq[:insert](name=task_name,
+# 			payload=prod(["""
+# 			ObjectMeshTask("$(slices_to_str(chunk_id_to_slices(c.id),high_pad=1))","$(WATERSHED_STORAGE)",$(simple_print([child.label[1] for child in v.children])),$(v.label)).execute()
+# 			""" for v in vertices(c)]))
+# 		else
+# 			task_name = string(task_labeller())
+# 			child_task_names = filter(x->x!=nothing,[mesh!(child) for child in c.children])
+# 			tq[:insert](name=task_name,
+# 			payload=prod(["""
+# 			MergeMeshTask("$(WATERSHED_STORAGE)",$([child.label for child in v.children]),$(v.label)).execute()
+# 			"""
+# 			for v in vertices(c)]),
+# 			dependencies=child_task_names)
+# 		end
+# 		mesh_task[c.id]=task_name
+# 		for v in vertex_list
+# 			mesh_task[v.label] = task_name
+# 		end
+# 	end
+# 	return mesh_task[c.id]
+# end
 
 function mesh!(v::ChunkedGraphs.Vertex)
 	if !haskey(mesh_task,v.label)
@@ -132,44 +146,22 @@ function mesh!(v::ChunkedGraphs.Vertex)
 	return mesh_task[v.label]
 end
 
+function handle_remesh(id)
+  id=parse(UInt64,id)
 
-# function mesh2!(v::ChunkedGraphs.Vertex, mesh_node::MeshNode)
-# 	if ChunkedGraphs.level(v) == 0
-# 		# A pre-meshed supervoxel within this lowest-resolution chunk; no alternatives
-# 		chunk_pos = v.label[2]
-# 		push!(mesh_node.paths, "$(v.label[1]):0:$(slices_to_str(chunk_id_to_slices(chunk_pos)))")
-# 		return
-# 	end
-# 	if ChunkedGraphs.level(v) == 1
-# 		# A fusion of all supervoxels within this lowest-resolution chunk
-# 		child_node = MeshNode()
-# 		for child in v.children
-# 			mesh2!(child, child_node)
-# 		end
-# 		push!(mesh_node.alternatives, child_node)
+	if chunk_id(id) == 0 # Lvl 0, a neuroglancer supervoxel, need to lookup chunk id
+		id=handles[id]
+	end
 
-# 		chunk_pos = collect(v.children)[1].label[2]
-# 		chunk_slices = chunk_id_to_slices(chunk_pos)
-# 		push!(mesh_node.paths, "$(v.label[1]):0:$(slices_to_str(chunk_slices))")
+  v = get_vertex(G, id)
 
-# 		for dim in 1:3
-# 			mesh_node.min[dim], mesh_node.max[dim] = extrema(chunk_slices[dim])
-# 			child_node.min[dim], child_node.max[dim] = mesh_node.min[dim], mesh_node.max[dim]
-# 		end
-# 	else
-# 		for child in v.children
-# 			child_node = MeshNode()
-# 			mesh2!(child, child_node)
-# 			push!(mesh_node.alternatives, child_node)
-# 		end
+	println("Remeshing $(v.label) and all descendants.")
+	mesh!(v)
 
-# 		mesh_node.min = min(collect(x.min for x in mesh_node.alternatives)..., typemax(Int32))
-# 		mesh_node.max = max(collect(x.max for x in mesh_node.alternatives)..., typemin(Int32))
-# 		push!(mesh_node.paths, "$(v.label[1]):0:$(mesh_node.min[1])-$(mesh_node.max[1])_$(mesh_node.min[2])-$(mesh_node.max[2])_$(mesh_node.min[3])-$(mesh_node.max[3])")
-# 	end
-# end
+	return Response(reinterpret(UInt8,[v.label]),headers)
+end
 
-function handle_node(id)
+function handle_leaves(id)
 	id=parse(UInt64,id)
 
 	if chunk_id(id) == 0 # Lvl 0, a neuroglancer supervoxel, need to lookup chunk id
@@ -181,9 +173,21 @@ function handle_node(id)
 
 	println("selected $(length(segments)) segments with root $(root_vertex.label)")
 	s=cat(1,collect(Set{UInt64}(seg_id(x) for x in segments)),root_vertex.label)
-	mesh!(root_vertex)
 
 	return Response(reinterpret(UInt8,s),headers)
+end
+
+function handle_root(id)
+	id=parse(UInt64,id)
+
+	if chunk_id(id) == 0 # Lvl 0, a neuroglancer supervoxel, need to lookup chunk id
+		id=handles[id]
+	end
+
+	root_vertex = bfs(G, id)[1]
+	println("Root for segment $(id): $(root_vertex.label)")
+
+	return Response(reinterpret(UInt8,[root_vertex.label]),headers)
 end
 
 function pos_to_label(x)
@@ -206,7 +210,6 @@ function handle_children(id)
 		s = UInt64[child.label for child in v.children]
     println("handle_children - v: $(v.label), (Level $(ChunkedGraphs.level(v))), - children: $(simple_print([child.label for child in v.children]))")
 	end
-  
 
 	return Response(reinterpret(UInt8,s),headers)
 end
@@ -228,11 +231,13 @@ function handle_subgraph(vertices)
 end
 
 d=Dict(
-		 r"/1.0/node/(\d+)/?" => handle_node,
-		 r"/1.0/merge/(\d+),(\d+)/?" => handle_merge,
-		 r"/1.0/split/(\d+),(\d+)/?" => handle_split,
+		 r"/1.0/segment/(\d+)/root/?" => handle_root,
+     r"/1.0/segment/(\d+)/children/?" => handle_children,
+     r"/1.0/segment/(\d+)/leaves/?" => handle_leaves,
+     r"/1.0/segment/(\d+)/remesh/?" => handle_remesh, # TODO: POST
+		 r"/1.0/merge/(\d+),(\d+)/?" => handle_merge, # TODO: POST
+		 r"/1.0/split/(\d+),(\d+)/?" => handle_split, # TODO: POST
 		 r"/1.0/subgraph/(\[[\d,\(\)]*?\])/?" => handle_subgraph,
-		 r"/1.0/children/(\d+)/?" => handle_children,
 		 )
 
 headers=HttpCommon.headers()
@@ -254,6 +259,6 @@ http.events["listen"] = (saddr) -> println("Running on https://$saddr (Press CTR
 
 server = Server(http)
 
-run(server, host=getaddrinfo("seungworkstation1000.princeton.edu"), port=9100)
-#run(server, host=getaddrinfo("127.0.0.1"), port=9100)
+#run(server, host=getaddrinfo("seungworkstation1000.princeton.edu"), port=9100)
+run(server, host=getaddrinfo("seungworkstation14.princeton.edu"), port=9100)
 

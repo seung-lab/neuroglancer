@@ -12,40 +12,29 @@ export function enableGraphServer (url: string) : void {
   GRAPH_BASE_URL = url;
 }
 
-export function getConnectedSegments (segment: Uint64) : Promise<Uint64[]> {
+export function getRoot (segment: Uint64) : Promise<Uint64> {
   if (!GRAPH_BASE_URL) {
     return Promise.reject(GRAPH_SERVER_NOT_ENABLED);
   }
 
-  let promise = sendHttpRequest(openHttpRequest(`${GRAPH_BASE_URL}/1.0/node/${segment}`), 'arraybuffer');
+  let promise = sendHttpRequest(openHttpRequest(`${GRAPH_BASE_URL}/1.0/segment/${segment}/root`), 'arraybuffer');
   return promise.then(response => {
     let uint32 = new Uint32Array(response);
-    let final : Uint64[] = new Array(uint32.length/2);
-
-    for (let i = 0; i < uint32.length/2; i++) {
-      final[i] = new Uint64(uint32[2*i], uint32[2*i+1]);
-    }
-
-    return final;
-  },
-  function (e: HttpError) {
-    if (e.code == 503) {
-      return <Uint64[]>[];
-    }
-
-    console.log(`Could not retrieve connected components for segment ${segment}`);
+    return new Uint64(uint32[0], uint32[1]);
+  }).catch((e: HttpError) => {
+    console.log(`Could not retrieve root for segment ${segment}`);
     console.error(e);
 
-    return <Uint64[]>[];
+    return Promise.reject(e);
   });
 }
 
-export function getChildSegments(segment: Uint64) : Promise<Uint64[]> {
+export function getLeaves (segment: Uint64) : Promise<Uint64[]> {
   if (!GRAPH_BASE_URL) {
     return Promise.reject(GRAPH_SERVER_NOT_ENABLED);
   }
 
-  let promise = sendHttpRequest(openHttpRequest(`${GRAPH_BASE_URL}/1.0/children/${segment}`), 'arraybuffer');
+  let promise = sendHttpRequest(openHttpRequest(`${GRAPH_BASE_URL}/1.0/segment/${segment}/leaves`), 'arraybuffer');
   return promise.then(response => {
     let uint32 = new Uint32Array(response);
     let final : Uint64[] = new Array(uint32.length/2);
@@ -55,16 +44,34 @@ export function getChildSegments(segment: Uint64) : Promise<Uint64[]> {
     }
 
     return final;
-  },
-  function (e: HttpError) {
-    if (e.code == 503) {
-      return <Uint64[]>[];
+  }).catch((e: HttpError) => {
+    console.log(`Could not retrieve connected components for segment ${segment}`);
+    console.error(e);
+
+    return Promise.reject(e);
+  });
+}
+
+export function getChildren(segment: Uint64) : Promise<Uint64[]> {
+  if (!GRAPH_BASE_URL) {
+    return Promise.reject(GRAPH_SERVER_NOT_ENABLED);
+  }
+
+  let promise = sendHttpRequest(openHttpRequest(`${GRAPH_BASE_URL}/1.0/segment/${segment}/children`), 'arraybuffer');
+  return promise.then(response => {
+    let uint32 = new Uint32Array(response);
+    let final : Uint64[] = new Array(uint32.length/2);
+
+    for (let i = 0; i < uint32.length/2; i++) {
+      final[i] = new Uint64(uint32[2*i], uint32[2*i+1]);
     }
 
+    return final;
+  }).catch((e: HttpError) => {
     console.log(`Could not retrieve children for segment ${segment}`);
     console.error(e);
 
-    return <Uint64[]>[];
+    return Promise.reject(e);
   });
 }
 

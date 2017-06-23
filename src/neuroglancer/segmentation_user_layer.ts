@@ -36,7 +36,7 @@ import {SegmentSetWidget} from 'neuroglancer/widget/segment_set_widget';
 import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
 import {SemanticEntryWidget} from 'neuroglancer/widget/semantic_entry_widget';
 import {openHttpRequest, sendHttpRequest} from 'neuroglancer/util/http_request';
-import {splitObject, mergeNodes, getObjectList, getConnectedSegments, enableGraphServer, GRAPH_SERVER_NOT_ENABLED} from 'neuroglancer/object_graph_service';
+import {splitObject, mergeNodes, getObjectList, getRoot, getLeaves, getChildren, enableGraphServer, GRAPH_SERVER_NOT_ENABLED} from 'neuroglancer/object_graph_service';
 import {StatusMessage} from 'neuroglancer/status';
 import {HashMapUint64} from 'neuroglancer/gpu_hash/hash_table';
 
@@ -66,7 +66,9 @@ export class SegmentationUserLayer extends UserLayer {
     selectedAlpha: trackableAlphaValue(0.5),
     notSelectedAlpha: trackableAlphaValue(0),
     objectAlpha: trackableAlphaValue(1.0),
-    visibleSegments: Uint64Set.makeWithCounterpart(this.manager.worker),
+    rootSegments: Uint64Set.makeWithCounterpart(this.manager.worker),
+    visibleSegments2D: Uint64Set.makeWithCounterpart(this.manager.worker),
+    visibleSegments3D: Uint64Set.makeWithCounterpart(this.manager.worker),
     segmentEquivalences: SharedDisjointUint64Sets.makeWithCounterpart(this.manager.worker),
     volumeSourceOptions: {},
     objectToDataTransform: new CoordinateTransform(),
@@ -86,7 +88,49 @@ export class SegmentationUserLayer extends UserLayer {
 
   constructor(public manager: LayerListSpecification, spec: any) {
     super([]);
-    this.displayState.visibleSegments.changed.add(() => { this.specificationChanged.dispatch(); });
+    this.displayState.rootSegments.changed.add((rootSegment: Uint64, added: boolean) => {
+      if (rootSegment === null && !added) {
+        // Clear all segment sets
+        let leafSegmentCount = this.displayState.visibleSegments2D.size;
+        this.displayState.visibleSegments2D.clear();
+        this.displayState.visibleSegments3D.clear();
+        StatusMessage.displayText(`Deselected all ${leafSegmentCount} segments.`);
+      } else if (added) {
+        // Add root to 3D set, and leaves to 2D set
+        this.displayState.visibleSegments3D.add(rootSegment);
+        getLeaves(rootSegment).then(leafSegments => {
+          for (let seg of leafSegments) {
+            this.displayState.visibleSegments2D.add(seg);
+          }
+          StatusMessage.displayText(`Selected ${leafSegments.length} segments.`);
+        }).catch(e => handleDisabledGraphServer(e));
+      } else if (!added) {
+        // Remove leaves from 2D set; and root plus possible descendants from 3D set
+        const that = this;
+        function remove3DChildren(seg: Uint64) {
+          if (that.displayState.visibleSegments3D.has(seg)) {
+            that.displayState.visibleSegments3D.delete(seg);
+          } else {
+            getChildren(seg).then(childIds => {
+              for (let seg of childIds) {
+                console.log(`Calling recursively for ${seg}`)
+                remove3DChildren(seg);
+              }
+            }).catch(e => handleDisabledGraphServer(e));
+          }
+        }
+        remove3DChildren(rootSegment);
+        getLeaves(rootSegment).then(leafSegments => {
+          for (let seg of leafSegments) {
+            this.displayState.visibleSegments2D.delete(seg);
+          }
+          StatusMessage.displayText(`Deselected ${leafSegments.length} segments.`);
+        }).catch(e => handleDisabledGraphServer(e));
+      }
+      this.specificationChanged.dispatch();
+    });
+    this.displayState.visibleSegments2D.changed.add(() => { this.specificationChanged.dispatch(); });
+    this.displayState.visibleSegments3D.changed.add(() => { this.specificationChanged.dispatch(); });
     this.displayState.segmentEquivalences.changed.add(
         () => { this.specificationChanged.dispatch(); });
     this.displayState.segmentSelectionState.bindTo(manager.layerSelectedValues, this);
@@ -155,11 +199,11 @@ export class SegmentationUserLayer extends UserLayer {
 
     verifyObjectProperty(spec, 'segments', y => {
       if (y !== undefined) {
-        let {visibleSegments, segmentEquivalences} = this.displayState;
+        let {rootSegments, segmentEquivalences} = this.displayState;
         parseArray(y, value => {
           let id = Uint64.parseString(String(value), 10);
-          visibleSegments.add(segmentEquivalences.get(id));
-          visibleSegments.add(id);
+          rootSegments.add(segmentEquivalences.get(id));
+          rootSegments.add(id);
         });
       }
     });
@@ -179,9 +223,9 @@ export class SegmentationUserLayer extends UserLayer {
     x[SELECTED_ALPHA_JSON_KEY] = this.displayState.selectedAlpha.toJSON();
     x[NOT_SELECTED_ALPHA_JSON_KEY] = this.displayState.notSelectedAlpha.toJSON();
     x[OBJECT_ALPHA_JSON_KEY] = this.displayState.objectAlpha.toJSON();
-    let {visibleSegments} = this.displayState;
-    if (visibleSegments.size > 0) {
-      x['segments'] = visibleSegments.toJSON();
+    let {rootSegments} = this.displayState;
+    if (rootSegments.size > 0) {
+      x['segments'] = rootSegments.toJSON();
     }
     let {segmentEquivalences} = this.displayState;
     if (segmentEquivalences.size > 0) {
@@ -212,23 +256,22 @@ export class SegmentationUserLayer extends UserLayer {
   makeDropdown(element: HTMLDivElement) { return new SegmentationDropdown(element, this); }
 
   mergeSelection () {
+    const {visibleSegments2D, segmentEquivalences} = this.displayState;
 
-     const {visibleSegments, segmentEquivalences} = this.displayState;
+    let segids : Uint64[] = [];
+    for (let segid of visibleSegments2D) {
+      segids.push(segid.clone());
+    }
+    let strings = segids.map( (seg64) => seg64.toString() ); // uint64s are emulated 
 
-      let segids : Uint64[] = [];
-      for (let segid of visibleSegments) {
-        segids.push(segid.clone());
-      }
-      let strings = segids.map( (seg64) => seg64.toString() ); // uint64s are emulated 
-
-      mergeNodes(strings).then( () => {
-        let seg0 = <Uint64>segids.pop();
-        segids.forEach((segid) => {
-          segmentEquivalences.link(seg0, segid);
-        });
+    mergeNodes(strings).then( () => {
+      let seg0 = <Uint64>segids.pop();
+      segids.forEach((segid) => {
+        segmentEquivalences.link(seg0, segid);
       });
+    });
 
-      StatusMessage.displayText('Merged visible segments.');
+    StatusMessage.displayText('Merged visible segments.');
   }
 
   selectSegment () {
@@ -241,46 +284,29 @@ export class SegmentationUserLayer extends UserLayer {
       ? segmentSelectionState.rawSelectedSegment
       : segmentSelectionState.selectedSegment;
 
-    let {visibleSegments, segmentEquivalences} = this.displayState;
-    if (visibleSegments.has(segment)) {
-      visibleSegments.delete(segment);
-
-      if (this.displayState.shattered) {
-        segmentEquivalences.unlink(segment);  
-      }
-      else {
-        getConnectedSegments(segment).then(function (connected_segments) {
-          for (let seg of connected_segments) {
-            visibleSegments.delete(seg);
-          }
-
-          StatusMessage.displayText(`Deselected ${connected_segments.length} segments.`);
-        }, handleDisabledGraphServer);
-      }
+    let {rootSegments, visibleSegments2D, visibleSegments3D, segmentEquivalences} = this.displayState;
+    if (visibleSegments2D.has(segment)) {
+      getRoot(segment).then(rootSegment => {
+        rootSegments.delete(rootSegment);
+        visibleSegments3D.delete(rootSegment);
+      }).catch(e => handleDisabledGraphServer(e));
     }
     else {
-      visibleSegments.add(segment);
-
-      if (!this.displayState.shattered) {
-        getConnectedSegments(segment).then(function (connected_segments) {
-          for (let seg of connected_segments) {
-            visibleSegments.add(seg);
-          }
-
-          StatusMessage.displayText(`Selected ${connected_segments.length} segments.`);
-        }, handleDisabledGraphServer);
-      }
+      getRoot(segment).then(rootSegment => {
+        rootSegments.add(rootSegment);
+        visibleSegments3D.add(rootSegment);
+      }).catch(e => handleDisabledGraphServer(e));
     }
   }
 
   splitSelectFirst () {
-     let {segmentSelectionState} = this.displayState;
-     if (segmentSelectionState.hasSelectedSegment) {
-        let segment : Uint64 = <Uint64>segmentSelectionState.rawSelectedSegment;
-        this.splitPartitions.sources.push(segment.clone());
+    let {segmentSelectionState} = this.displayState;
+    if (segmentSelectionState.hasSelectedSegment) {
+      let segment : Uint64 = <Uint64>segmentSelectionState.rawSelectedSegment;
+      this.splitPartitions.sources.push(segment.clone());
 
-        StatusMessage.displayText(`Selected ${segment} as source. Pick a sink.`);
-     }
+      StatusMessage.displayText(`Selected ${segment} as source. Pick a sink.`);
+    }
   }
 
   splitSelectSecond () {
@@ -303,6 +329,7 @@ export class SegmentationUserLayer extends UserLayer {
     this.splitPartitions.sources.length = 0;
     this.splitPartitions.sinks.length = 0;
   }
+
   triggerRedraw() { //FIXME there should be a better way of doing this
     if (this.meshLayer) {
       this.meshLayer.redrawNeeded.dispatch();
@@ -315,7 +342,11 @@ export class SegmentationUserLayer extends UserLayer {
   handleAction(action: string) {
     let actions: { [key:string] : Function } = {
       'recolor': () => this.displayState.segmentColorHash.randomize(),
-      'clear-segments': () => this.displayState.visibleSegments.clear(),
+      'clear-segments': () => {
+        this.displayState.rootSegments.clear(),
+        this.displayState.visibleSegments2D.clear(),
+        this.displayState.visibleSegments3D.clear()
+      },
       'merge-selection': this.mergeSelection,
       'select': this.selectSegment,
       'split-select-first': this.splitSelectFirst,
@@ -376,7 +407,13 @@ class SegmentationDropdown extends UserLayerDropdown {
     this.addSegmentWidget.element.title = 'Add segment ID';
     element.appendChild(this.registerDisposer(this.addSegmentWidget).element);
     this.registerSignalBinding(this.addSegmentWidget.valueEntered.add(
-        (value: Uint64) => { this.layer.displayState.visibleSegments.add(value); }));
+      (value: Uint64) => {
+        getRoot(value).then(rootSegment => {
+          this.layer.displayState.rootSegments.add(rootSegment);
+        }).catch(e => handleDisabledGraphServer(e));
+      }
+    ));
+
     element.appendChild(this.registerDisposer(this.visibleSegmentWidget).element);
   }
 }

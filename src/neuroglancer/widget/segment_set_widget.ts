@@ -31,7 +31,7 @@ export class SegmentSetWidget extends RefCounted {
   private itemContainer = document.createElement('span');
   private items = new Map<string, ItemElement>();
 
-  get visibleSegments() { return this.displayState.visibleSegments; }
+  get rootSegments() { return this.displayState.rootSegments; }
   get segmentColorHash() { return this.displayState.segmentColorHash; }
   get segmentSelectionState() { return this.displayState.segmentSelectionState; }
 
@@ -41,7 +41,7 @@ export class SegmentSetWidget extends RefCounted {
     element.className = 'segment-set-widget noselect';
     clearButton.className = 'clear-button';
     clearButton.title = 'Remove all segment IDs';
-    this.registerEventListener(clearButton, 'click', () => { this.visibleSegments.clear(); });
+    this.registerEventListener(clearButton, 'click', () => { this.rootSegments.clear(); });
 
     itemContainer.className = 'item-container';
     element.appendChild(itemContainer);
@@ -49,11 +49,11 @@ export class SegmentSetWidget extends RefCounted {
     itemContainer.appendChild(clearButton);
 
     this.registerSignalBinding(
-        displayState.visibleSegments.changed.add(this.handleSetChanged, this));
+        displayState.rootSegments.changed.add(this.handleSetChanged, this));
     this.registerSignalBinding(
         displayState.segmentColorHash.changed.add(this.handleColorChanged, this));
 
-    for (let x of displayState.visibleSegments) {
+    for (let x of displayState.rootSegments) {
       this.addElement(x.toString());
     }
     this.updateClearButtonVisibility();
@@ -61,7 +61,7 @@ export class SegmentSetWidget extends RefCounted {
 
   private updateClearButtonVisibility() {
     let {clearButton} = this;
-    clearButton.style.display = (this.displayState.visibleSegments.size > 0) ? '' : 'none';
+    clearButton.style.display = (this.displayState.rootSegments.size > 0) ? '' : 'none';
   }
 
   private handleSetChanged(x: Uint64|null, added: boolean) {
@@ -96,7 +96,7 @@ export class SegmentSetWidget extends RefCounted {
     let widget = this;
     itemElement.addEventListener('click', function(this: ItemElement) {
       temp.tryParseString(this.textContent!);
-      widget.visibleSegments.delete(temp);
+      widget.rootSegments.delete(temp);
     });
     itemElement.addEventListener('mouseenter', function(this: ItemElement) {
       temp.tryParseString(this.textContent!);
