@@ -253,6 +253,8 @@ class FileInterface(object):
         path = self.get_path_to_file(file_path)
         if os.path.exists(path):
             os.remove(path)
+        elif os.path.exists(path + '.gz'):
+            os.remove(path + '.gz')
 
     def list_files(self, prefix, flat):
         """
@@ -380,7 +382,9 @@ class S3Interface(object):
                     "Content-Encoding": "gzip",
                 })
         else:
-            k.set_contents_from_string(content)
+            k.set_contents_from_string(content, headers={
+                "Content-Type": content_type or 'application/octet-stream',
+            })
             
     def get_file(self, file_path):
         """

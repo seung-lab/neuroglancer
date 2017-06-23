@@ -57,17 +57,24 @@ def test_read_write():
     shutil.rmtree("/tmp/removeme/read_write")
 
 def test_delete():
-    urls = ["file:///tmp/removeme/list",
-            "gs://neuroglancer/removeme/list",
-            "s3://neuroglancer/removeme/list"]
+    urls = [
+        "file:///tmp/removeme/delete",
+        "gs://neuroglancer/removeme/delete",
+        "s3://neuroglancer/removeme/delete"
+    ]
 
     for url in urls:
         with Storage(url, n_threads=1) as s:
             content = 'some_string'
             s.put_file('delete-test', content, compress=False).wait()
+            s.put_file('delete-test-compressed', content, compress=True).wait()
             assert s.get_file('delete-test') == content
             s.delete_file('delete-test').wait()
             assert s.get_file('delete-test') is None
+
+            assert s.get_file('delete-test-compressed') == content
+            s.delete_file('delete-test-compressed').wait()
+            assert s.get_file('delete-test-compressed') is None
 
 def test_compression():
     urls = ["file:///tmp/removeme/compression",
