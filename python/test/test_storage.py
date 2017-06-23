@@ -136,7 +136,6 @@ def test_list():
     
     shutil.rmtree("/tmp/removeme/list")
 
-
 def test_exists():
     urls = [
         "file:///tmp/removeme/exists",
@@ -154,3 +153,22 @@ def test_exists():
             assert s.exists('info')
             assert not s.exists('doesntexist')
             s.delete_file('info')
+
+def test_retry():
+    """Try to stress test getting files."""
+    urls = [
+        "gs://neuroglancer/removeme/retry",
+        "s3://neuroglancer/removeme/retry"
+    ]
+
+    for url in urls:
+        with Storage(url, n_threads=20) as s:
+            s.put_file('exists', 'some string', compress=False).wait()
+            results = s.get_files([ 'exists' for _ in xrange(200) ])
+
+            for result in results:
+                assert result['error'] is None
+                assert result['content'] == 'some string'
+
+            assert len(results) == 200
+

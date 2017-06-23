@@ -1,20 +1,28 @@
 from collections import namedtuple
 from cStringIO import StringIO
-from Queue import Queue
-import os.path
-import re
 from functools import partial
+import os.path
+from Queue import Queue
+import re
+from threading import Lock
 
+import boto
+from boto.s3.connection import S3Connection 
 from glob import glob
 import google.cloud.exceptions
 from google.cloud.storage import Client
-import boto
-from boto.s3.connection import S3Connection
 import gzip
+import tenacity
 
 from neuroglancer.lib import mkdir
 from neuroglancer.pipeline.secrets import PROJECT_NAME, google_credentials_path, aws_credentials
 from neuroglancer.pipeline.threaded_queue import ThreadedQueue
+
+retry = tenacity.retry(
+    reraise=True, 
+    stop=tenacity.stop_after_attempt(7), 
+    wait=tenacity.wait_full_jitter(0.5, 60.0),
+)
 
 class Storage(ThreadedQueue):
     """
@@ -209,6 +217,7 @@ class Storage(ThreadedQueue):
         for f in self._interface.list_files(prefix, flat):
             yield f
 
+
 class FileInterface(object):
     def __init__(self, path):
         self._path = path
@@ -320,7 +329,7 @@ class GoogleCloudStorageInterface(object):
                              file_path])
         return  os.path.join(*clean)
 
-
+    @retry
     def put_file(self, file_path, content, content_type, compress):
         key = self.get_path_to_file(file_path)
         blob = self._bucket.blob( key )
@@ -329,6 +338,7 @@ class GoogleCloudStorageInterface(object):
             blob.content_encoding = "gzip"
             blob.patch()
 
+    @retry
     def get_file(self, file_path):
         key = self.get_path_to_file(file_path)
         blob = self._bucket.get_blob( key )
@@ -343,6 +353,7 @@ class GoogleCloudStorageInterface(object):
         blob = self._bucket.get_blob(key)
         return blob is not None
 
+    @retry
     def delete_file(self, file_path):
         key = self.get_path_to_file(file_path)
         
@@ -383,6 +394,7 @@ class S3Interface(object):
                              file_path])
         return  os.path.join(*clean)
 
+    @retry
     def put_file(self, file_path, content, content_type, compress):
         k = boto.s3.key.Key(self._bucket)
         k.key = self.get_path_to_file(file_path)
@@ -397,7 +409,8 @@ class S3Interface(object):
             k.set_contents_from_string(content, headers={
                 "Content-Type": content_type or 'application/octet-stream',
             })
-            
+    
+    @retry        
     def get_file(self, file_path):
         """
             There are many types of execptions which can get raised
@@ -420,7 +433,8 @@ class S3Interface(object):
         k = boto.s3.key.Key(self._bucket)
         k.key = self.get_path_to_file(file_path)
         return k.exists()
-
+   
+    @retry
     def delete_file(self, file_path):
         k = boto.s3.key.Key(self._bucket)
         k.key = self.get_path_to_file(file_path)
