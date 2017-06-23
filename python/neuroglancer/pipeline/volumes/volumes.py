@@ -10,10 +10,13 @@ import numpy as np
 from tqdm import tqdm
 from PIL import Image
 
-from neuroglancer.lib import Vec, clamp, mkdir, COMMON_STAGING_DIR, xyzrange
+from neuroglancer.lib import Vec, eclamp, clamp, mkdir, COMMON_STAGING_DIR, xyzrange
 
-def generate_slices(slices, maxsize):
+def generate_slices(slices, minsize, maxsize, bounded=True):
   """Assisting function for __getitem__. e.g. vol[:,:,:,:]"""
+
+  clampfn = (lambda v,x,y: v) if not bounded else eclamp
+
   if isinstance(slices, int) or isinstance(slices, float) or isinstance(slices, long):
     slices = [ slice(int(slices), int(slices)+1, 1) ]
   if type(slices) == slice:
@@ -30,9 +33,20 @@ def generate_slices(slices, maxsize):
     if isinstance(slc, int) or isinstance(slc, float) or isinstance(slc, long):
       slices[index] = slice(int(slc), int(slc)+1, 1)
     else:
-      start = 0 if slc.start is None else clamp(slc.start, 0, maxsize[index])
-      end = maxsize[index] if slc.stop is None else clamp(slc.stop, 0, maxsize[index])
+      start = minsize[index] if slc.start is None else slc.start
+      end = maxsize[index] if slc.stop is None else slc.stop 
       step = 1 if slc.step is None else slc.step
+
+      if step < 0:
+        raise ValueError('Negative step sizes are not supported. Got: {}'.format(step))
+
+      # note: when unbounded, negative indicies do not refer to
+      # the end of the volume as they can describe, e.g. a 1px
+      # border on the edge of the beginning of the dataset as in
+      # marching cubes.
+      if bounded:
+        start = maxsize[index] + start if start < 0 else clampfn(start, minsize[index], maxsize[index])
+        end = maxsize[index] + end if end < 0 else clampfn(end, minsize[index], maxsize[index])
 
       slices[index] = slice(start, end, step)
 
