@@ -75,11 +75,12 @@ def find_closest_divisor(to_divide, closest_to):
   def find_closest(td, ct):
     min_distance = td
     best = td
-    for x in divisors(td):
-      if abs(x-ct) < min_distance:
-        min_distance = abs(x-ct)
-        best = x
-      return best
+    
+    for divisor in divisors(td):
+      if abs(divisor - ct) < min_distance:
+        min_distance = abs(divisor - ct)
+        best = divisor
+    return best
   
   return [ find_closest(td, ct) for td, ct in zip(to_divide, closest_to) ]
 
