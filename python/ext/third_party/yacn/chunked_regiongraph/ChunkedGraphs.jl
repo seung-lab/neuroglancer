@@ -1,6 +1,6 @@
 module ChunkedGraphs
 
-export update!, ChunkedGraph, add_atomic_edge!, add_atomic_vertex!, delete_atomic_edge!, leaves, bfs
+export update!, ChunkedGraph, add_atomic_edge!, add_atomic_vertex!, delete_atomic_edge!, leaves, bfs, add_atomic_vertices!, add_atomic_edges!
 
 import DataStructures
 using Save
@@ -10,8 +10,8 @@ using Utils
 
 #####Chunk Ids#####
 include("constants.jl")
-const MAX_DEPTH=6
-const TOP_ID=ChunkID(MAX_DEPTH,0,0,0)
+const MAX_DEPTH=5
+const TOP_ID=ChunkID(MAX_DEPTH+1,0,0,0)
 
 
 @inline function parent(t::ChunkID)
@@ -230,10 +230,10 @@ function update!(c::Chunk)
 			c.parent.clean=false
 		end
 
-		c.added_edges=Set{AtomicEdge}([])
-		c.added_vertices=Set{Vertex{Chunk}}([])
-		c.deleted_edges=Set{AtomicEdge}([])
-		c.deleted_vertices=Set{Vertex{Chunk}}([])
+		empty!(c.added_edges)
+		empty!(c.added_vertices)
+		empty!(c.deleted_edges)
+		empty!(c.deleted_vertices)
 		c.clean=true
 	end
 end
@@ -264,6 +264,26 @@ function add_atomic_edge!(G::ChunkedGraph, edge)
 	touch(s)
 
 	MultiGraphs.add_edge!(G.flat_graph, edge[1], edge[2])
+end
+
+function add_atomic_edges!(G::ChunkedGraph, edges)
+	for (i,e) in enumerate(edges)
+		add_atomic_edge!(G,e)
+	end
+end
+
+function upsize!(A,n)
+	sizehint!(A,length(A)+n)
+end
+
+function add_atomic_vertices!(G::ChunkedGraph, vertices)
+	upsize!(G.vertices, length(vertices))
+	upsize!(G.flat_graph.vertex_map, length(vertices))
+	upsize!(G.flat_graph.inverse_vertex_map, length(vertices))
+	upsize!(G.flat_graph.g.fadjlist, length(vertices))
+	for (i,v) in enumerate(vertices)
+		add_atomic_vertex!(G,v)
+	end
 end
 
 function delete_atomic_edge!(G::ChunkedGraph, edge)

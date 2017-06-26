@@ -36,9 +36,10 @@ function delete_edge!(G::MultiGraph,U,V,e)
 	e=unordered(e)
 	u=G.vertex_map[U]
 	v=G.vertex_map[V]
+	uv=unordered(u,v)
 	if has_edge(G.g,u,v)
-		delete!(G.edge_map[unordered(u,v)],e)
-		if length(G.edge_map[unordered(u,v)]) == 0
+		delete!(G.edge_map[uv],e)
+		if length(G.edge_map[uv]) == 0
 			rem_edge!(G.g,u,v)
 		 end
 	end
@@ -48,11 +49,14 @@ function add_edge!{Vert,E}(G::MultiGraph{Vert,E},U,V,e)
 	e=unordered(e)
 	u=G.vertex_map[U]
 	v=G.vertex_map[V]
+	uv = unordered(u,v)
 	LightGraphs.add_edge!(G.g,u,v)
-	if !haskey(G.edge_map,unordered(u,v))
-		G.edge_map[unordered(u,v)]=Set{E}(E[e])
+	if !haskey(G.edge_map,uv)
+		tmp=Set{E}()
+		push!(tmp,e)
+		G.edge_map[uv]=tmp
 	else
-		push!(G.edge_map[unordered(u,v)],e)
+		push!(G.edge_map[uv],e)
 	end
 end
 
@@ -127,11 +131,11 @@ function add_edge!(G::SimpleGraph,U,V)
 	LightGraphs.add_edge!(G.g,u,v)
 end
 
-function induced_edges(G::SimpleGraph,Us)
+function induced_edges{V}(G::SimpleGraph{V},Us)
 	us = Int[G.vertex_map[U] for U in Us if haskey(G.vertex_map,U)]
-	us_set = Set(us)
+	us_set = Set{Int}(us)
 
-	ret = []
+	ret = Tuple{V,V}[]
 	for u in us
 		for v in neighbors(G.g,u)
 			if v in us_set && u < v

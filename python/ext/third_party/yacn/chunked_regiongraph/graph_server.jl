@@ -13,40 +13,36 @@ edges = Save.load("~/testing/chunked_edges.jls")
 vertices = Save.load("~/testing/chunked_vertices.jls")
 println("$(length(edges)) edges")
 println("$(length(vertices)) vertices")
-handles = Dict()
 mesh_label = Dict()
-for v in vertices
-	handles[seg_id(v)]=v
+function get_handles(vertices)
+	handles = Dict{UInt32,UInt64}()
+	for v in vertices
+		handles[seg_id(v)]=v
+	end
+	return handles
 end
+
+@time handles = get_handles(vertices)
 
 begin
 	G=ChunkedGraph()
-	for v in vertices
-		add_atomic_vertex!(G,v)
-	end
-
-	for e in edges
-		add_atomic_edge!(G,e)
-	end
+	@time add_atomic_vertices!(G,vertices)
+	@time add_atomic_edges!(G,edges)
 	@time update!(G)
 end
-#=
+
+G=nothing
+gc()
 Profile.init(n=Int(1e7),delay=0.01)
 @profile begin
 	G=ChunkedGraph()
-	for v in vertices
-		add_atomic_vertex!(G,v)
-	end
-
-	for e in edges
-		add_atomic_edge!(G,e)
-	end
+	@time add_atomic_vertices!(G,vertices)
+	@time add_atomic_edges!(G,edges)
 	@time update!(G)
 end
 using ProfileView
 ProfileView.view()
 wait()
-=#
 
 const WATERSHED_STORAGE = "s3://neuroglancer/pinky40_v11/watershed"
 
@@ -68,6 +64,7 @@ function simple_print(x::Array)
 	string('[',map(n->"$(n),",x)...,']')
 end
 
+#=
 function mesh!(c::ChunkedGraphs.Chunk)
 	vertex_list = vertices(c)
 	if !haskey(mesh_task,v.label)
@@ -94,6 +91,7 @@ function mesh!(c::ChunkedGraphs.Chunk)
 	end
 	return mesh_task[c.id]
 end
+=#
 
 function mesh!(v::ChunkedGraphs.Vertex)
 	if !haskey(mesh_task,v.label)
