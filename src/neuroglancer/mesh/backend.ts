@@ -324,9 +324,8 @@ class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
 
       if (manifestChunk.state === ChunkState.FAILED && objectId.high > 0) { // no need to query neuroglancer supervoxels (high == 0)
         manifestChunk.state = ChunkState.EXPIRED;
+        console.log(`Manifest for segment ${objectId} is missing.`);
         getChildren(objectId).then((childIds) => {
-          console.log(`Manifest for segment ${objectId} is missing. Checking children:` + childIds);
-          this.visibleSegments3D.delete(objectId);
           childIds.forEach(childId => {
             this.visibleSegments3D.add(childId);
           });

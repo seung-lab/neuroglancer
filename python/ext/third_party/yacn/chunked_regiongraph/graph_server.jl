@@ -20,8 +20,8 @@ using Utils
 
 
 @pyimport neuroglancer.simple_task_queue.task_queue as task_queue
-#tq = task_queue.TaskQueue("http://127.0.0.1:8000/1.0")
-tq = task_queue.TaskQueue("http://50.16.149.198:8001/1.0")
+tq = task_queue.TaskQueue("http://127.0.0.1:8000/1.0")
+#tq = task_queue.TaskQueue("http://50.16.149.198:8001/1.0")
 
 edges = Save.load("~/testing/chunked_edges.jls")
 vertices = Save.load("~/testing/chunked_vertices.jls")
@@ -129,7 +129,7 @@ function mesh!(v::ChunkedGraphs.Vertex)
 			task_name=string(task_labeller())
 			tq[:insert](name=task_name,
 			payload="""
-			ObjectMeshTask("$(slices_to_str(chunk_id_to_slices(chunk_id(child1.label),high_pad=1)))","$(WATERSHED_STORAGE)",$(simple_print([seg_id(child.label) for child in v.children])),$(v.label)).execute()
+			ObjectMeshTask("$(slices_to_str(chunk_id_to_slices(chunk_id(child1.label),high_pad=0)))","$(WATERSHED_STORAGE)",$(simple_print([seg_id(child.label) for child in v.children])),$(v.label)).execute()
 			""")
 		else
 			task_name = string(task_labeller())
@@ -185,6 +185,7 @@ function handle_root(id)
 	end
 
 	root_vertex = bfs(G, id)[1]
+	mesh!(root_vertex)
 	println("Root for segment $(id): $(root_vertex.label)")
 
 	return Response(reinterpret(UInt8,[root_vertex.label]),headers)

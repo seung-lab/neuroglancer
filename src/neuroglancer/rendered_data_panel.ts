@@ -142,8 +142,8 @@ export abstract class RenderedDataPanel extends RenderedPanel {
           this.viewer.layerManager.invokeAction('annotate');
         }
       } else if (mouseState.splitStatus != SplitState.INACTIVE) {
-        let action = mouseState.updateSplit();
-        this.viewer.layerManager.invokeAction(`split-select-${action}`);
+        let [mode, action] = mouseState.updateSplit();
+        this.viewer.layerManager.invokeAction(`${mode}-select-${action}`);
       } else {
         this.startDragViewport(e);
       }

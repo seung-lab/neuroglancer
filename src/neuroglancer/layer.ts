@@ -399,6 +399,14 @@ export enum SplitState {
   SECOND,
 }
 
+export enum SplitMode {
+  NONE,
+  // Merge two objects into one.
+  MERGE,
+  // Split one object into two.
+  SPLIT,
+}
+
 
 export class MouseSelectionState implements PickState {
   changed = new Signal();
@@ -408,24 +416,30 @@ export class MouseSelectionState implements PickState {
   pickedValue = new Uint64(0, 0);
   pickedOffset = 0;
 
+  splitMode = SplitMode.NONE;
   splitStatus = SplitState.INACTIVE;
+
+  setMode(mode: SplitMode) {
+    this.splitMode = mode;
+  }
   
   toggleSplit() {
     if (this.splitStatus == SplitState.INACTIVE) {
       this.splitStatus = SplitState.FIRST;
     } else {
       this.splitStatus = SplitState.INACTIVE;
+      this.setMode(SplitMode.NONE);
     }
   }
 
   updateSplit() {
-    if (this.splitStatus == SplitState.FIRST){
+    if (this.splitStatus == SplitState.FIRST) {
       this.splitStatus = SplitState.SECOND;
-      return 'first';
+      return this.splitMode == SplitMode.MERGE ? ['merge', 'first'] : ['split', 'first'];
     } else {
       // this.splitStatus has to be SplitState.SECOND
       this.toggleSplit();
-      return 'second';
+      return this.splitMode == SplitMode.MERGE ? ['merge', 'second'] : ['split', 'second'];
     } 
 
   }

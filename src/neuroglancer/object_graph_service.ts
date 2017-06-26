@@ -106,22 +106,25 @@ export function getObjectList () : Promise<any> {
     });
 }
 
-export function splitObject (sources: Uint64[], sinks: Uint64[]) : Promise<Uint64[][]> {
-  return fetch(`${GRAPH_BASE_URL}/1.0/split/`, {
+export function splitObject (source: Uint64, sink: Uint64) : Promise<any> {
+  let a = source;
+  let b = sink;
+  // return fetch(`${GRAPH_BASE_URL}/1.0/split/`, {
 
-    method: "POST",
-    body: JSON.stringify({
-      sources: sources,
-      sinks: sinks,
-    })
-  })
-  .then( (resp) => resp.json(), (error) => error )
-  .then( (split_groups: any) => { // this typing is stupid but was the only way to surpress TS errors
-    if (split_groups.error) {
-      throw new Error(split_groups.error);
-    }
+  //   method: "POST",
+  //   body: JSON.stringify({
+  //     sources: source,
+  //     sinks: sink,
+  //   })
+  // })
+  // .then( (resp) => resp.json(), (error) => error )
+  // .then( (split_groups: any) => { // this typing is stupid but was the only way to surpress TS errors
+  //   if (split_groups.error) {
+  //     throw new Error(split_groups.error);
+  //   }
 
-    return <Uint64[][]>((<number[][]>split_groups).map( (nums) => nums.map( (num) => new Uint64(num) ) ));
-  }, (error) => error );
+  //   return <Uint64[][]>((<number[][]>split_groups).map( (nums) => nums.map( (num) => new Uint64(num) ) ));
+  // }, (error) => error );
+  return null;
 }
 
