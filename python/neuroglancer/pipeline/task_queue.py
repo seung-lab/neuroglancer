@@ -4,19 +4,17 @@ import json
 import inspect
 import base64
 import copy
+import re
 from collections import OrderedDict
-import Queue
 from functools import partial
-import threading
-import time
 
 import googleapiclient.errors
 import googleapiclient.discovery
-import numpy as np
 
 from neuroglancer.pipeline.secrets import google_credentials, PROJECT_NAME, QUEUE_NAME
+from neuroglancer.pipeline.threaded_queue import ThreadedQueue
 
-__all__ = ['RegisteredTask', 'TaskQueue', 'MockTaskQueue']
+__all__ = ['RegisteredTask', 'TaskQueue']
 
 registry = {}
 
@@ -56,10 +54,6 @@ class RegisteredTask(object):
     def serialize(self):
         d = copy.deepcopy(self._args)
         d['class'] = self.__class__.__name__
-        for k,v in d.items():
-            if isinstance(v, np.ndarray):
-                d[k] = list(v)
-
         return json.dumps(d)
 
     @property
@@ -79,9 +73,13 @@ class RegisteredTask(object):
             else:
                 string += "{}={},".format(arg_name, arg_value)
 
-        return string[:-1] + ")"  #remove the last comma
+        # remove the last comma if necessary
+        if string[-1] == ',':
+            string = string[:-1]
 
-class TaskQueue(object):
+        return string + ")"  
+
+class TaskQueue(ThreadedQueue):
     """
     The standard usage is that a client calls lease to get the next available task,
     performs that task, and then calls task.delete on that task before the lease expires.
@@ -99,82 +97,47 @@ class TaskQueue(object):
         def __init__(self):
             super(LookupError, self).__init__('Queue Empty')
 
-    def __init__(self, n_threads=40, project=PROJECT_NAME, queue_name=QUEUE_NAME, local=True):
-        self._project = 's~' + project # unsure why this is necessary
+    def __init__(self, n_threads=40, project=PROJECT_NAME, queue_name=QUEUE_NAME):
+        super(TaskQueue, self).__init__(n_threads) # creates self._queue
+
+        self._project = 's~' + project # s~ means North America, e~ means Europe
         self._queue_name = queue_name
+        self._api = self._initialize_interface()
 
-        self._api = googleapiclient.discovery.build('taskqueue', 'v1beta2', credentials=google_credentials).tasks()
-
-        self._queue = Queue.Queue(maxsize=0) # infinite size
-        self._threads = ()
-        self._terminate = threading.Event()
-        self._n_threads = n_threads
-
-        self.start_threads(n_threads)
+    # This is key to making sure threading works. Don't refactor this method away.
+    def _initialize_interface(self):
+        return googleapiclient.discovery.build('taskqueue', 'v1beta2', credentials=google_credentials)
 
     @property
-    def pending(self):
-        return self._queue.qsize()
+    def enqueued(self):
+        """
+        Returns the approximate(!) number of tasks enqueued in the cloud.
 
-    def start_threads(self, n_threads):
-        self._terminate.set()
-        self._terminate = threading.Event()
-
-        threads = []
-
-        for _ in xrange(n_threads):
-            worker = threading.Thread(
-                target=self._consume_queue, 
-                args=(self._terminate,)
-            )
-            worker.daemon = True
-            worker.start()
-            threads.append(worker)
-
-        self._threads = tuple(threads)
-
-    def are_threads_alive(self):
-        return any(map(lambda t: t.isAlive(), self._threads))
-
-    def kill_threads(self):
-        self._terminate.set()
-        while True:
-            alive = self.are_threads_alive()
-            if alive:
-                time.sleep(0.1)
+        WARNING: The number computed by Google is eventually
+            consistent. It may return impossible numbers that
+            are small deviations from the number in the queue.
+            For instance, we've seen 1005 enqueued after 1000 
+            inserts.
+        
+        Returns: (int) number of tasks in cloud queue
+        """
+        tqinfo = self.get()
+        return tqinfo['stats']['totalTasks']
+        
+    def _consume_queue_execution(self, fn):
+        try:
+            super(self.__class__, self)._consume_queue_execution(fn)
+        except googleapiclient.errors.HttpError as httperr:
+            # Retry if Timeout, Service Unavailable, or ISE
+            # ISEs can happen from flooding or other issues that
+            # aren't the fault of the request.
+            if httperr.resp.status in (408, 500, 503): 
+                self.put(fn)
+            elif httperr.resp.status == 400:
+                if not re.search('task name is invalid', repr(httperr), flags=re.IGNORECASE):
+                    raise
             else:
-                break
-
-        self._threads = ()
-        return self
-
-    def _consume_queue(self, terminate_evt):
-        """
-        This is the main thread function that consumes functions that are
-        inside the _queue object. To use, execute self._queue(fn), where fn
-        is a function that performs some kind of network IO or otherwise
-        benefits from threading and is independent.
-
-        terminate_evt is automatically passed in on thread creation and 
-        is a common event for this generation of threads. The threads
-        will terminate when the event is set and the queue burns down.
-        """
-        api = googleapiclient.discovery.build('taskqueue', 'v1beta2', credentials=google_credentials).tasks()
-
-        while not terminate_evt.is_set():
-            try:
-                fn = self._queue.get(block=True, timeout=1)
-            except Queue.Empty:
-                continue # periodically check if the thread is supposed to die
-
-            try:
-                fn(api)
-            except googleapiclient.errors.HttpError as httperr:
-                print(httperr)
-                if httperr.resp.status != 400: # i.e. "task name is invalid"
-                    self._queue.put(fn)
-            finally:
-                self._queue.task_done()
+                raise
 
     def insert(self, task):
         """
@@ -188,32 +151,50 @@ class TaskQueue(object):
         }
 
         def cloud_insertion(api):
-            api.insert(
+            api.tasks().insert(
                 project=self._project,
                 taskqueue=self._queue_name,
                 body=body,
             ).execute(num_retries=6)
 
         if len(self._threads):
-            self._queue.put(cloud_insertion, block=True)
+            self.put(cloud_insertion)
         else:
             cloud_insertion(self._api)
 
-    def wait(self):
-        self._queue.join()
+        return self
 
     def get(self):
         """
-        Gets the named task in a TaskQueue.
+        Gets information about the TaskQueue
         """
-        raise NotImplemented
+        return self._api.taskqueues().get(
+            project=self._project,
+            taskqueue=self._queue_name,
+            getStats=True,
+        ).execute(num_retries=6)
+
+    def get_task(self, tid):
+        """
+        Gets the named task in the TaskQueue. 
+        tid is a unique string Google provides 
+        e.g. '7c6e81c9b7ab23f0'
+        """
+        return self._api.tasks().get(
+            project=self._project,
+            taskqueue=self._queue_name,
+            task=tid,
+        ).execute(num_retries=6)
 
     def list(self):
         """
         Lists all non-deleted Tasks in a TaskQueue, 
         whether or not they are currently leased, up to a maximum of 100.
         """
-        return self._api.list(project=self._project, taskqueue=self._queue_name).execute(num_retries=6)
+        return self._api.tasks().list(
+            project=self._project, 
+            taskqueue=self._queue_name
+        ).execute(num_retries=6)
 
     def update(self, task):
         """
@@ -227,8 +208,9 @@ class TaskQueue(object):
         Acquires a lease on the topmost N unowned tasks in the specified queue.
         Required query parameters: leaseSecs, numTasks
         """
+        tag = tag if tag else None
         
-        tasks = self._api.lease(
+        tasks = self._api.tasks().lease(
             project=self._project,
             taskqueue=self._queue_name, 
             numTasks=1, 
@@ -259,40 +241,29 @@ class TaskQueue(object):
             if not lst.has_key('items'):
                 break
 
-            taskids = [ task['id'] for task in lst['items'] ]
-
-            for tid in taskids:
-                self.delete(tid)
-
-        if len(self._threads):
+            for task in lst['items']:
+                self.delete(task['id'])
             self.wait()
+        return self
 
-    def delete(self, tid):
+    def delete(self, task_id):
         """Deletes a task from a TaskQueue."""
+        if isinstance(task_id, RegisteredTask):
+            task_id = task_id.id
 
         def cloud_delete(api):
-            api.delete(
+            api.tasks().delete(
                 project=self._project,
                 taskqueue=self._queue_name,
-                task=tid,
+                task=task_id,
             ).execute(num_retries=6)
 
         if len(self._threads):
-            self._queue.put(cloud_delete, block=True)
+            self.put(cloud_delete)
         else:
             cloud_delete(self._api)
-
-    def __enter__(self):
-        self.start_threads(self._n_threads)
         return self
 
-    def __exit__(self, exception_type, exception_value, traceback):
-        self.wait()
-        self.kill_threads()
-
-    def __del__(self):
-        self.wait()
-        self.kill_threads()
 
 class MockTaskQueue():
     def __init__(self, queue_name=''):
