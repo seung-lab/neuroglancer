@@ -61,6 +61,7 @@ def downsample_and_upload(image, bounds, vol, ds_shape, mip=0, axis='z', skip_fi
       vol.mip += 1
       image = downsamplefn(image, factor3)
       new_bounds /= factor3
+      new_bounds.maxpt = new_bounds.minpt + Vec(*image.shape[:3])
       vol[ new_bounds.to_slices() ] = image
 
 class IngestTask(RegisteredTask):
@@ -567,8 +568,13 @@ class BossTransferTask(RegisteredTask):
     dest_vol = CloudVolume(self.dest_path)
 
     bounds = Bbox( self.offset, self.shape + self.offset )
+    bounds = Bbox.clamp(bounds, dest_vol.bounds)
     # -1 b/c boss uses inclusive-exclusive bounds for their bboxes
-    bounds = Bbox.clamp(bounds, dest_vol.bounds - 1)
+    bounds.maxpt = Vec.clamp(
+      bounds.maxpt, 
+      dest_vol.bounds.minpt, 
+      dest_vol.bounds.maxpt - 1
+    )
 
     if bounds.volume() < 1:
       return
@@ -587,4 +593,7 @@ class BossTransferTask(RegisteredTask):
 
     rmt = BossRemote(boss_credentials)
     img3d = rmt.get_cutout(chan, 0, x_rng, y_rng, z_rng).T
+
+    print(img3d.shape, bounds.size3())
+
     downsample_and_upload(img3d, bounds, dest_vol, self.shape)
