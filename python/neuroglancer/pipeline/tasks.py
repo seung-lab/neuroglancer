@@ -567,7 +567,11 @@ class BossTransferTask(RegisteredTask):
     dest_vol = CloudVolume(self.dest_path)
 
     bounds = Bbox( self.offset, self.shape + self.offset )
-    bounds = Bbox.clamp(bounds, dest_vol.bounds)
+    # -1 b/c boss uses inclusive-exclusive bounds for their bboxes
+    bounds = Bbox.clamp(bounds, dest_vol.bounds - 1)
+
+    if bounds.volume() < 1:
+      return
 
     x_rng = [ bounds.minpt.x, bounds.maxpt.x ]
     y_rng = [ bounds.minpt.y, bounds.maxpt.y ]
@@ -583,5 +587,4 @@ class BossTransferTask(RegisteredTask):
 
     rmt = BossRemote(boss_credentials)
     img3d = rmt.get_cutout(chan, 0, x_rng, y_rng, z_rng).T
-    print(img3d, img3d.shape, img3d.dtype)
     downsample_and_upload(img3d, bounds, dest_vol, self.shape)
