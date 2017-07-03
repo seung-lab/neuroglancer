@@ -287,12 +287,16 @@ class CloudVolume(Volume):
     
     chunk_size = lib.find_closest_divisor(fullres['chunk_sizes'][0], closest_to=[64,64,64])
 
+    def downscale(size):
+      smaller = Vec(size, dtype=np.float32) / Vec(*factor)
+      return list(np.ceil(smaller).astype(int))
+
     newscale = {
       u"encoding": fullres['encoding'],
       u"chunk_sizes": [ chunk_size ],
       u"resolution": list( Vec3(*fullres['resolution']) * factor ),
-      u"voxel_offset": list(np.ceil(Vec3(*fullres['voxel_offset']) / Vec3(*factor)).astype(int) ),
-      u"size": list(np.ceil(Vec3(*fullres['size']) / Vec3(*factor)).astype(int)),
+      u"voxel_offset": downscale(fullres['voxel_offset']),
+      u"size": downscale(fullres['size']),
     }
 
     newscale[u'key'] = unicode("_".join([ str(res) for res in newscale['resolution']]))
