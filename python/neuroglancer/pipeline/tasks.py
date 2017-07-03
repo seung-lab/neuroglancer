@@ -360,7 +360,7 @@ class BigArrayTask(RegisteredTask):
 
 class HyperSquareTask(RegisteredTask):
   def __init__(self, bucket_name, dataset_name, layer_name, 
-      volume_dir, layer_type, overlap, world_bounds, resolution):
+      volume_dir, layer_type, overlap, resolution):
 
     self.bucket_name = bucket_name
     self.dataset_name = dataset_name
@@ -368,11 +368,6 @@ class HyperSquareTask(RegisteredTask):
     self.volume_dir = volume_dir
     self.layer_type = layer_type
     self.overlap = Vec(*overlap)
-
-    if type(world_bounds) is Bbox:
-      self.world_bounds = world_bounds
-    else:
-      self.world_bounds = Bbox.from_list(world_bounds)
 
     self.resolution = Vec(*resolution)
 
@@ -428,7 +423,11 @@ class HyperSquareTask(RegisteredTask):
     for blob in blobs:
       z = int(re.findall(r'(\d+)\.jpg', blob.name)[0])
       imgdata = blob.download_as_string()
-      datacube[:,:,z,:] = chunks.decode_jpeg(imgdata, shape=(256, 256, 1))
+      # Hypersquare images are each situated in the xy plane 
+      # so the shape should be (width,height,1)
+      shape = self._bounds.size3() 
+      shape.z = 1
+      datacube[:,:,z,:] = chunks.decode_jpeg(imgdata, shape=tuple(shape))
 
     return datacube
 
@@ -446,7 +445,8 @@ class HyperSquareTask(RegisteredTask):
     # the boxes are offset left of zero by half overlap, so no need to 
     # compensate for weird shifts. only upload the non-overlap region.
 
-    vol.upload_image(img, bounds.minpt)
+    downsample_and_upload(image, bounds, vol, ds_shape=img.shape)
+    vol[ bounds.to_slices() ] = img
 
 class TransferTask(RegisteredTask):
   def __init__(self, src_path, dest_path, shape, offset):

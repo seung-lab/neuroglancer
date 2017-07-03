@@ -335,8 +335,6 @@ def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hyper
   imgvol.commitInfo()
   segvol.commitInfo()
 
-  world_bounds = lib.Bbox( voxel_offset, Vec(*voxel_offset) + Vec(*volume_size) )
-
   def crttask(volname, tasktype, layer_name):
     return HyperSquareTask(
       bucket_name=hypersquare_bucket_name,
@@ -345,7 +343,6 @@ def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hyper
       volume_dir=volname,
       layer_type=tasktype,
       overlap=overlap,
-      world_bounds=world_bounds,
       resolution=resolution,
     )
 
