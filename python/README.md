@@ -72,7 +72,7 @@ randomly-generated 160-bit secret key.
 
 Some of the objects in this directory require mesh generation for the
 segmentation volumes, and that depends on a C++ extension module. To build it,
-you will need `gcc >= 5`. To see if your compiler is up to date, you can check
+you will need `gcc >= 4`. To see if your compiler is up to date, you can check
 in Terminal with:
 
 ```shell
