@@ -68,14 +68,38 @@ randomly-generated 160-bit secret key.
 
 ## Development
 
-## Building the C++ extension module
+### Getting started  
 
-Mesh generation for segmentation volumes depends on a C++ extension module.  To
-build it, activate a suitable Python virtual environment and run:
+Some of the objects in this directory require mesh generation for the
+segmentation volumes, and that depends on a C++ extension module. To build it,
+you will need `gcc >= 4`. To see if your compiler is up to date, you can check
+in Terminal with:
+
+```shell
+gcc -v
+```
+
+If you need to update to a more recent version of gcc, you can follow the
+instructions in [this guide](https://gist.github.com/application2000/73fd6f4bf1be6600a2cf9f56315a2d91).
+
+You will also need an authorization token for both Google Tasks and AWS Simple
+Tasks. The easiest way is to copy them from another workstation in lab to your
+local machine so that these two files exist in these locations:
+
+```shell
+/secrets/google-secret.json
+/secrets/aws-secret.json
+```
+
+You're ready to build the extension module. Activate a suitable Python virtual
+environment and run:
 
 ```shell
 python setup.py develop
 ```
+
+Now you're good to go. Use the [test directory](https://github.com/seung-lab/neuroglancer/tree/master/python/test)
+or the [script directory](https://github.com/seung-lab/neuroglancer/tree/master/python/neuroglancer/pipeline/scripts) as a guide for writing scripts.
 
 ### Serving the Neuroglancer client code
 
