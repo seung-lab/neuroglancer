@@ -490,7 +490,7 @@ class WatershedRemapTask(RegisteredTask):
         self.src_path = src_path
         self.dest_path = dest_path
         self.shape = Vec(*shape)
-        self.offset = Vec(*offset)        
+        self.offset = Vec(*offset) 
 
     def execute(self):
         srccv = CloudVolume(self.src_path)

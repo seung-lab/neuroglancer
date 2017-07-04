@@ -427,22 +427,22 @@ def ingest_hdf5_example():
 if __name__ == '__main__':  
 
   src_path = 'gs://neuroglancer/pinky40_v11/watershed/'
-  dest_path = 'gs://neuroglancer/pinky40_v11/watershed_mst_split_axons4_remap/' 
-  map_path = os.path.join(dest_path, 'mst_split_spines_2M_remap.npy')
+  dest_path = 'gs://neuroglancer/pinky40_v11/watershed_mst_split_tuning_remap/' 
+  map_path = os.path.join(dest_path, 'mst_split_tuning_remap.npy')
   
-  with MockTaskQueue(queue_name='wms-test-pull-queue') as task_queue:
+  with TaskQueue(queue_name='wms-test-pull-queue') as task_queue:
     # create_downsampling_tasks(task_queue, dest_path, mip=5, fill_missing=False)
     # create_meshing_tasks(task_queue, dest_path, mip=3)
 
     # create_mesh_manifest_tasks(task_queue, dest_path)
 
-    # create_watershed_remap_tasks(task_queue, map_path, src_path, dest_path)
+    create_watershed_remap_tasks(task_queue, map_path, src_path, dest_path)
 
-    create_boss_transfer_tasks(task_queue, 
-      src_layer_path='boss://BCMID_8973_AIBSID_243774/neuroanatomical_aibs_pu_dataset/neuroanatomical_aibs_pu_dataset_channel',
-      dest_layer_path='gs://neuroglancer/pinky100_v0/image',
-      shape=Vec(1024,1024,64),
-    )
+    # create_boss_transfer_tasks(task_queue, 
+    #   src_layer_path='boss://BCMID_8973_AIBSID_243774/neuroanatomical_aibs_pu_dataset/neuroanatomical_aibs_pu_dataset_channel',
+    #   dest_layer_path='gs://neuroglancer/pinky100_v0/image',
+    #   shape=Vec(1024,1024,64),
+    # )
 
     # create_quantized_affinity_tasks(task_queue,
     #   src_layer='gs://neuroglancer/zfish_v1/affinitymap',
