@@ -288,7 +288,7 @@ class CloudVolume(Volume):
     chunk_size = lib.find_closest_divisor(fullres['chunk_sizes'][0], closest_to=[64,64,64])
 
     def downscale(size):
-      smaller = Vec(size, dtype=np.float32) / Vec(*factor)
+      smaller = Vec(*size, dtype=np.float32) / Vec(*factor)
       return list(np.ceil(smaller).astype(int))
 
     newscale = {
