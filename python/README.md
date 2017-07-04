@@ -98,8 +98,8 @@ environment and run:
 python setup.py develop
 ```
 
-Now you're good to go. Use the [test directory](https://github.com/seung-lab/neuroglancer/tree/master/python/test) as a guide
-to write scripts.
+Now you're good to go. Use the [test directory](https://github.com/seung-lab/neuroglancer/tree/master/python/test)
+or the [script directory](https://github.com/seung-lab/neuroglancer/tree/master/python/neuroglancer/pipeline/scripts) as a guide for writing scripts.
 
 ### Serving the Neuroglancer client code
 
