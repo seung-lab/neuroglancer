@@ -8,6 +8,7 @@ import re
 from collections import OrderedDict
 from functools import partial
 
+import numpy as np
 import googleapiclient.errors
 import googleapiclient.discovery
 
@@ -54,6 +55,11 @@ class RegisteredTask(object):
     def serialize(self):
         d = copy.deepcopy(self._args)
         d['class'] = self.__class__.__name__
+
+        for k,v in d.iteritems():
+            if isinstance(v, np.ndarray):
+                d[k] = tuple(v)
+
         return json.dumps(d)
 
     @property
