@@ -15,7 +15,8 @@ from neuroglancer import downsample_scales, chunks
 from neuroglancer.lib import Vec, Bbox, max2, min2, xyzrange, find_closest_divisor
 from neuroglancer.pipeline import Storage, TaskQueue, MockTaskQueue
 from neuroglancer.pipeline.tasks import (BigArrayTask, IngestTask,
-     HyperSquareTask, MeshTask, MeshManifestTask, DownsampleTask, 
+     HyperSquareTask, HyperSquareLocalizationTask, 
+     MeshTask, MeshManifestTask, DownsampleTask, 
      QuantizeAffinitiesTask, TransferTask, BossTransferTask, 
      WatershedRemapTask)
 from neuroglancer.pipeline.volumes import HDF5Volume, CloudVolume
@@ -363,6 +364,28 @@ def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hyper
     # seg_task.execute()
     tq.insert(seg_task)
 
+def create_hypersquare_localization_tasks(task_queue, src_path, dest_path, volume_map_file):
+  """
+  The volume map file should be JSON encoded and 
+  look like { "X-X_Y-Y_Z-Z": EW_VOLUME_ID }
+  """
+
+  with open(volume_map_file, 'r') as f:
+    volume_map = json.loads(f.read())
+
+  for boundstr, volume_id in volume_map_file:
+    bbox = Bbox.from_filename(boundstr)
+
+    task = HyperSquareLocalizationTask(
+      src_path=src_path,
+      dest_path=dest_path,
+      high_value=int(volume_id),
+      shape=bbox.size3(),
+      offset=bbox.minpt.clone(),
+    )
+    task_queue.insert(task)
+  task_queue.wait()
+
 def upload_build_chunks(storage, volume, offset=[0, 0, 0], build_chunk_size=[1024,1024,128]):
   offset = Vec(*offset)
   shape = Vec(*volume.shape[:3])
@@ -431,12 +454,12 @@ if __name__ == '__main__':
   map_path = os.path.join(dest_path, 'mst_split_tuning_remap.npy')
   
   with TaskQueue(queue_name='wms-test-pull-queue') as task_queue:
-    # create_downsampling_tasks(task_queue, dest_path, mip=5, fill_missing=False)
+    create_downsampling_tasks(task_queue, dest_path, mip=5, fill_missing=False)
     # create_meshing_tasks(task_queue, dest_path, mip=3)
 
     # create_mesh_manifest_tasks(task_queue, dest_path)
 
-    create_watershed_remap_tasks(task_queue, map_path, src_path, dest_path)
+    # create_watershed_remap_tasks(task_queue, map_path, src_path, dest_path)
 
     # create_boss_transfer_tasks(task_queue, 
     #   src_layer_path='boss://BCMID_8973_AIBSID_243774/neuroanatomical_aibs_pu_dataset/neuroanatomical_aibs_pu_dataset_channel',

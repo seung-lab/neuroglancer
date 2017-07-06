@@ -22,7 +22,7 @@ from neuroglancer import chunks, downsample, downsample_scales
 from neuroglancer.lib import xyzrange, min2, max2, Vec, Bbox, mkdir 
 from neuroglancer.pipeline import Storage, Precomputed, RegisteredTask
 from neuroglancer.pipeline.volumes import CloudVolume
-# from neuroglancer.ingest.mesher import Mesher
+from neuroglancer.ingest.mesher import Mesher
 
 def downsample_and_upload(image, bounds, vol, ds_shape, mip=0, axis='z', skip_first=False):
     ds_shape = min2(vol.volume_size, ds_shape)
@@ -448,6 +448,57 @@ class HyperSquareTask(RegisteredTask):
     downsample_and_upload(image, bounds, vol, ds_shape=img.shape)
     vol[ bounds.to_slices() ] = img
 
+class HyperSquareLocalizationTask(RegisteredTask):
+  """
+  Remaps imported hypersquare areas by increasing the 
+  integer width from 16 to 32 bits and encoding the segmentation 
+  volume_id from the eyewire database in the high bits.
+
+  This allows for creating consensus maps based on this physical
+  map.
+  """
+  def __init__(self, src_path, dest_path, high_value, shape, offset):
+    self.src_path = src_path
+    self.dest_path = dest_path
+    self.high_value = int(high_value)
+    self.shape = Vec(*shape)
+    self.offset = Vec(*offset)
+
+  def execute(self):
+    bounds = Bbox( self.offset, self.shape + self.offset )
+
+    srcvol = CloudVolume(self.src_path)
+    destvol = CloudVolume(self.dest_path)
+
+    image = srcvol[ bounds.to_slices() ]
+    image = image.astype(np.uint32) | (self.high_value << 16)
+    destvol[ bounds.to_slices() ] = image
+
+
+# class HyperSquareConsensusRemap(RegisteredTask):
+#   """
+
+#   """
+
+#   def __init__(self, src_path, dest_path, consensus_map, shape, offset):
+#     self.src_path = src_path
+#     self.dest_path = dest_path
+#     self.consensus_map = consensus_map
+#     self.shape = Vec(*shape)
+#     self.offset = Vec(*offset)
+
+#   def execute(self):
+#     bounds = Bbox( self.offset, self.shape + self.offset )
+#     srcvol = CloudVolume(self.src_path)
+#     destvol = CloudVolume(self.dest_path)
+
+#     with Storage(self.dest_path, n_threads=0) as stor:
+#       consensus = stor.get_file(self.consensus_map)
+
+
+
+
+
 class TransferTask(RegisteredTask):
   def __init__(self, src_path, dest_path, shape, offset):
     super(self.__class__, self).__init__(src_path, dest_path, shape, offset)
@@ -597,3 +648,6 @@ class BossTransferTask(RegisteredTask):
     print(img3d.shape, bounds.size3())
 
     downsample_and_upload(img3d, bounds, dest_vol, self.shape)
+
+
+

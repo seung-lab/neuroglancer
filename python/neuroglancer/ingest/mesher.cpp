@@ -11,7 +11,7 @@
             "cMesher.cpp"
         ]
     }, 
-    "module_name": "mesher"
+    "module_name": "neuroglancer.ingest.mesher"
 }
 END: Cython Metadata */
 
@@ -456,8 +456,8 @@ static CYTHON_INLINE float __PYX_NAN() {
   #endif
 #endif
 
-#define __PYX_HAVE__mesher
-#define __PYX_HAVE_API__mesher
+#define __PYX_HAVE__neuroglancer__ingest__mesher
+#define __PYX_HAVE_API__neuroglancer__ingest__mesher
 #include <vector>
 #include "ios"
 #include "new"
@@ -661,21 +661,21 @@ static const char *__pyx_filename;
 
 
 static const char *__pyx_f[] = {
-  "mesher.pyx",
-  "stringsource",
+  "neuroglancer/ingest/mesher.pyx",
+  "neuroglancer/ingest/stringsource",
 };
 
 /*--- Type declarations ---*/
-struct __pyx_obj_6mesher_Mesher;
+struct __pyx_obj_12neuroglancer_6ingest_6mesher_Mesher;
 
-/* "mesher.pyx":27
+/* "neuroglancer/ingest/mesher.pyx":27
  * 
  * # creating a cython wrapper class
  * cdef class Mesher:             # <<<<<<<<<<<<<<
  *     cdef cMesher *thisptr      # hold a C++ instance which we're wrapping
  *     def __cinit__(self):
  */
-struct __pyx_obj_6mesher_Mesher {
+struct __pyx_obj_12neuroglancer_6ingest_6mesher_Mesher {
   PyObject_HEAD
   cMesher *thisptr;
 };
@@ -891,16 +891,16 @@ static int __Pyx_InitStrings(__Pyx_StringTabEntry *t);
 
 /* Module declarations from 'libcpp.string' */
 
-/* Module declarations from 'mesher' */
-static PyTypeObject *__pyx_ptype_6mesher_Mesher = 0;
+/* Module declarations from 'neuroglancer.ingest.mesher' */
+static PyTypeObject *__pyx_ptype_12neuroglancer_6ingest_6mesher_Mesher = 0;
 static std::vector<unsigned int>  __pyx_convert_vector_from_py_unsigned_int(PyObject *); /*proto*/
 static PyObject *__pyx_convert_vector_to_py_unsigned_int(const std::vector<unsigned int>  &); /*proto*/
 static PyObject *__pyx_convert_vector_to_py_float(const std::vector<float>  &); /*proto*/
 static std::string __pyx_convert_string_from_py_std__in_string(PyObject *); /*proto*/
-#define __Pyx_MODULE_NAME "mesher"
-int __pyx_module_is_main_mesher = 0;
+#define __Pyx_MODULE_NAME "neuroglancer.ingest.mesher"
+int __pyx_module_is_main_neuroglancer__ingest__mesher = 0;
 
-/* Implementation of 'mesher' */
+/* Implementation of 'neuroglancer.ingest.mesher' */
 static PyObject *__pyx_builtin_range;
 static const char __pyx_k_sx[] = "sx";
 static const char __pyx_k_sy[] = "sy";
@@ -930,17 +930,17 @@ static PyObject *__pyx_n_s_sx;
 static PyObject *__pyx_n_s_sy;
 static PyObject *__pyx_n_s_sz;
 static PyObject *__pyx_n_s_test;
-static int __pyx_pf_6mesher_6Mesher___cinit__(struct __pyx_obj_6mesher_Mesher *__pyx_v_self); /* proto */
-static void __pyx_pf_6mesher_6Mesher_2__dealloc__(struct __pyx_obj_6mesher_Mesher *__pyx_v_self); /* proto */
-static PyObject *__pyx_pf_6mesher_6Mesher_4mesh(struct __pyx_obj_6mesher_Mesher *__pyx_v_self, PyObject *__pyx_v_data, PyObject *__pyx_v_sx, PyObject *__pyx_v_sy, PyObject *__pyx_v_sz); /* proto */
-static PyObject *__pyx_pf_6mesher_6Mesher_6ids(struct __pyx_obj_6mesher_Mesher *__pyx_v_self); /* proto */
-static PyObject *__pyx_pf_6mesher_6Mesher_8get_mesh(struct __pyx_obj_6mesher_Mesher *__pyx_v_self, PyObject *__pyx_v_mesh_id, PyObject *__pyx_v_normals, PyObject *__pyx_v_simplification_factor, PyObject *__pyx_v_max_simplification_error); /* proto */
-static PyObject *__pyx_pf_6mesher_6Mesher_10write_obj(struct __pyx_obj_6mesher_Mesher *__pyx_v_self, PyObject *__pyx_v_mesh_id, PyObject *__pyx_v_filename); /* proto */
-static PyObject *__pyx_tp_new_6mesher_Mesher(PyTypeObject *t, PyObject *a, PyObject *k); /*proto*/
+static int __pyx_pf_12neuroglancer_6ingest_6mesher_6Mesher___cinit__(struct __pyx_obj_12neuroglancer_6ingest_6mesher_Mesher *__pyx_v_self); /* proto */
+static void __pyx_pf_12neuroglancer_6ingest_6mesher_6Mesher_2__dealloc__(struct __pyx_obj_12neuroglancer_6ingest_6mesher_Mesher *__pyx_v_self); /* proto */
+static PyObject *__pyx_pf_12neuroglancer_6ingest_6mesher_6Mesher_4mesh(struct __pyx_obj_12neuroglancer_6ingest_6mesher_Mesher *__pyx_v_self, PyObject *__pyx_v_data, PyObject *__pyx_v_sx, PyObject *__pyx_v_sy, PyObject *__pyx_v_sz); /* proto */
+static PyObject *__pyx_pf_12neuroglancer_6ingest_6mesher_6Mesher_6ids(struct __pyx_obj_12neuroglancer_6ingest_6mesher_Mesher *__pyx_v_self); /* proto */
+static PyObject *__pyx_pf_12neuroglancer_6ingest_6mesher_6Mesher_8get_mesh(struct __pyx_obj_12neuroglancer_6ingest_6mesher_Mesher *__pyx_v_self, PyObject *__pyx_v_mesh_id, PyObject *__pyx_v_normals, PyObject *__pyx_v_simplification_factor, PyObject *__pyx_v_max_simplification_error); /* proto */
+static PyObject *__pyx_pf_12neuroglancer_6ingest_6mesher_6Mesher_10write_obj(struct __pyx_obj_12neuroglancer_6ingest_6mesher_Mesher *__pyx_v_self, PyObject *__pyx_v_mesh_id, PyObject *__pyx_v_filename); /* proto */
+static PyObject *__pyx_tp_new_12neuroglancer_6ingest_6mesher_Mesher(PyTypeObject *t, PyObject *a, PyObject *k); /*proto*/
 static PyObject *__pyx_int_0;
 static PyObject *__pyx_int_8;
 
-/* "mesher.pyx":29
+/* "neuroglancer/ingest/mesher.pyx":29
  * cdef class Mesher:
  *     cdef cMesher *thisptr      # hold a C++ instance which we're wrapping
  *     def __cinit__(self):             # <<<<<<<<<<<<<<
@@ -949,28 +949,28 @@ static PyObject *__pyx_int_8;
  */
 
 /* Python wrapper */
-static int __pyx_pw_6mesher_6Mesher_1__cinit__(PyObject *__pyx_v_self, PyObject *__pyx_args, PyObject *__pyx_kwds); /*proto*/
-static int __pyx_pw_6mesher_6Mesher_1__cinit__(PyObject *__pyx_v_self, PyObject *__pyx_args, PyObject *__pyx_kwds) {
+static int __pyx_pw_12neuroglancer_6ingest_6mesher_6Mesher_1__cinit__(PyObject *__pyx_v_self, PyObject *__pyx_args, PyObject *__pyx_kwds); /*proto*/
+static int __pyx_pw_12neuroglancer_6ingest_6mesher_6Mesher_1__cinit__(PyObject *__pyx_v_self, PyObject *__pyx_args, PyObject *__pyx_kwds) {
   int __pyx_r;
   __Pyx_RefNannyDeclarations
   __Pyx_RefNannySetupContext("__cinit__ (wrapper)", 0);
   if (unlikely(PyTuple_GET_SIZE(__pyx_args) > 0)) {
     __Pyx_RaiseArgtupleInvalid("__cinit__", 1, 0, 0, PyTuple_GET_SIZE(__pyx_args)); return -1;}
   if (unlikely(__pyx_kwds) && unlikely(PyDict_Size(__pyx_kwds) > 0) && unlikely(!__Pyx_CheckKeywordStrings(__pyx_kwds, "__cinit__", 0))) return -1;
-  __pyx_r = __pyx_pf_6mesher_6Mesher___cinit__(((struct __pyx_obj_6mesher_Mesher *)__pyx_v_self));
+  __pyx_r = __pyx_pf_12neuroglancer_6ingest_6mesher_6Mesher___cinit__(((struct __pyx_obj_12neuroglancer_6ingest_6mesher_Mesher *)__pyx_v_self));
 
   /* function exit code */
   __Pyx_RefNannyFinishContext();
   return __pyx_r;
 }
 
-static int __pyx_pf_6mesher_6Mesher___cinit__(struct __pyx_obj_6mesher_Mesher *__pyx_v_self) {
+static int __pyx_pf_12neuroglancer_6ingest_6mesher_6Mesher___cinit__(struct __pyx_obj_12neuroglancer_6ingest_6mesher_Mesher *__pyx_v_self) {
   int __pyx_r;
   __Pyx_RefNannyDeclarations
   cMesher *__pyx_t_1;
   __Pyx_RefNannySetupContext("__cinit__", 0);
 
-  /* "mesher.pyx":30
+  /* "neuroglancer/ingest/mesher.pyx":30
  *     cdef cMesher *thisptr      # hold a C++ instance which we're wrapping
  *     def __cinit__(self):
  *         self.thisptr = new cMesher()             # <<<<<<<<<<<<<<
@@ -985,7 +985,7 @@ static int __pyx_pf_6mesher_6Mesher___cinit__(struct __pyx_obj_6mesher_Mesher *_
   }
   __pyx_v_self->thisptr = __pyx_t_1;
 
-  /* "mesher.pyx":29
+  /* "neuroglancer/ingest/mesher.pyx":29
  * cdef class Mesher:
  *     cdef cMesher *thisptr      # hold a C++ instance which we're wrapping
  *     def __cinit__(self):             # <<<<<<<<<<<<<<
@@ -997,14 +997,14 @@ static int __pyx_pf_6mesher_6Mesher___cinit__(struct __pyx_obj_6mesher_Mesher *_
   __pyx_r = 0;
   goto __pyx_L0;
   __pyx_L1_error:;
-  __Pyx_AddTraceback("mesher.Mesher.__cinit__", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __Pyx_AddTraceback("neuroglancer.ingest.mesher.Mesher.__cinit__", __pyx_clineno, __pyx_lineno, __pyx_filename);
   __pyx_r = -1;
   __pyx_L0:;
   __Pyx_RefNannyFinishContext();
   return __pyx_r;
 }
 
-/* "mesher.pyx":31
+/* "neuroglancer/ingest/mesher.pyx":31
  *     def __cinit__(self):
  *         self.thisptr = new cMesher()
  *     def __dealloc__(self):             # <<<<<<<<<<<<<<
@@ -1013,21 +1013,21 @@ static int __pyx_pf_6mesher_6Mesher___cinit__(struct __pyx_obj_6mesher_Mesher *_
  */
 
 /* Python wrapper */
-static void __pyx_pw_6mesher_6Mesher_3__dealloc__(PyObject *__pyx_v_self); /*proto*/
-static void __pyx_pw_6mesher_6Mesher_3__dealloc__(PyObject *__pyx_v_self) {
+static void __pyx_pw_12neuroglancer_6ingest_6mesher_6Mesher_3__dealloc__(PyObject *__pyx_v_self); /*proto*/
+static void __pyx_pw_12neuroglancer_6ingest_6mesher_6Mesher_3__dealloc__(PyObject *__pyx_v_self) {
   __Pyx_RefNannyDeclarations
   __Pyx_RefNannySetupContext("__dealloc__ (wrapper)", 0);
-  __pyx_pf_6mesher_6Mesher_2__dealloc__(((struct __pyx_obj_6mesher_Mesher *)__pyx_v_self));
+  __pyx_pf_12neuroglancer_6ingest_6mesher_6Mesher_2__dealloc__(((struct __pyx_obj_12neuroglancer_6ingest_6mesher_Mesher *)__pyx_v_self));
 
   /* function exit code */
   __Pyx_RefNannyFinishContext();
 }
 
-static void __pyx_pf_6mesher_6Mesher_2__dealloc__(struct __pyx_obj_6mesher_Mesher *__pyx_v_self) {
+static void __pyx_pf_12neuroglancer_6ingest_6mesher_6Mesher_2__dealloc__(struct __pyx_obj_12neuroglancer_6ingest_6mesher_Mesher *__pyx_v_self) {
   __Pyx_RefNannyDeclarations
   __Pyx_RefNannySetupContext("__dealloc__", 0);
 
-  /* "mesher.pyx":32
+  /* "neuroglancer/ingest/mesher.pyx":32
  *         self.thisptr = new cMesher()
  *     def __dealloc__(self):
  *         del self.thisptr             # <<<<<<<<<<<<<<
@@ -1036,7 +1036,7 @@ static void __pyx_pf_6mesher_6Mesher_2__dealloc__(struct __pyx_obj_6mesher_Meshe
  */
   delete __pyx_v_self->thisptr;
 
-  /* "mesher.pyx":31
+  /* "neuroglancer/ingest/mesher.pyx":31
  *     def __cinit__(self):
  *         self.thisptr = new cMesher()
  *     def __dealloc__(self):             # <<<<<<<<<<<<<<
@@ -1048,7 +1048,7 @@ static void __pyx_pf_6mesher_6Mesher_2__dealloc__(struct __pyx_obj_6mesher_Meshe
   __Pyx_RefNannyFinishContext();
 }
 
-/* "mesher.pyx":33
+/* "neuroglancer/ingest/mesher.pyx":33
  *     def __dealloc__(self):
  *         del self.thisptr
  *     def mesh(self, data, sx, sy, sz):             # <<<<<<<<<<<<<<
@@ -1057,8 +1057,8 @@ static void __pyx_pf_6mesher_6Mesher_2__dealloc__(struct __pyx_obj_6mesher_Meshe
  */
 
 /* Python wrapper */
-static PyObject *__pyx_pw_6mesher_6Mesher_5mesh(PyObject *__pyx_v_self, PyObject *__pyx_args, PyObject *__pyx_kwds); /*proto*/
-static PyObject *__pyx_pw_6mesher_6Mesher_5mesh(PyObject *__pyx_v_self, PyObject *__pyx_args, PyObject *__pyx_kwds) {
+static PyObject *__pyx_pw_12neuroglancer_6ingest_6mesher_6Mesher_5mesh(PyObject *__pyx_v_self, PyObject *__pyx_args, PyObject *__pyx_kwds); /*proto*/
+static PyObject *__pyx_pw_12neuroglancer_6ingest_6mesher_6Mesher_5mesh(PyObject *__pyx_v_self, PyObject *__pyx_args, PyObject *__pyx_kwds) {
   PyObject *__pyx_v_data = 0;
   PyObject *__pyx_v_sx = 0;
   PyObject *__pyx_v_sy = 0;
@@ -1121,18 +1121,18 @@ static PyObject *__pyx_pw_6mesher_6Mesher_5mesh(PyObject *__pyx_v_self, PyObject
   __pyx_L5_argtuple_error:;
   __Pyx_RaiseArgtupleInvalid("mesh", 1, 4, 4, PyTuple_GET_SIZE(__pyx_args)); __PYX_ERR(0, 33, __pyx_L3_error)
   __pyx_L3_error:;
-  __Pyx_AddTraceback("mesher.Mesher.mesh", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __Pyx_AddTraceback("neuroglancer.ingest.mesher.Mesher.mesh", __pyx_clineno, __pyx_lineno, __pyx_filename);
   __Pyx_RefNannyFinishContext();
   return NULL;
   __pyx_L4_argument_unpacking_done:;
-  __pyx_r = __pyx_pf_6mesher_6Mesher_4mesh(((struct __pyx_obj_6mesher_Mesher *)__pyx_v_self), __pyx_v_data, __pyx_v_sx, __pyx_v_sy, __pyx_v_sz);
+  __pyx_r = __pyx_pf_12neuroglancer_6ingest_6mesher_6Mesher_4mesh(((struct __pyx_obj_12neuroglancer_6ingest_6mesher_Mesher *)__pyx_v_self), __pyx_v_data, __pyx_v_sx, __pyx_v_sy, __pyx_v_sz);
 
   /* function exit code */
   __Pyx_RefNannyFinishContext();
   return __pyx_r;
 }
 
-static PyObject *__pyx_pf_6mesher_6Mesher_4mesh(struct __pyx_obj_6mesher_Mesher *__pyx_v_self, PyObject *__pyx_v_data, PyObject *__pyx_v_sx, PyObject *__pyx_v_sy, PyObject *__pyx_v_sz) {
+static PyObject *__pyx_pf_12neuroglancer_6ingest_6mesher_6Mesher_4mesh(struct __pyx_obj_12neuroglancer_6ingest_6mesher_Mesher *__pyx_v_self, PyObject *__pyx_v_data, PyObject *__pyx_v_sx, PyObject *__pyx_v_sy, PyObject *__pyx_v_sz) {
   PyObject *__pyx_r = NULL;
   __Pyx_RefNannyDeclarations
   std::vector<unsigned int>  __pyx_t_1;
@@ -1141,7 +1141,7 @@ static PyObject *__pyx_pf_6mesher_6Mesher_4mesh(struct __pyx_obj_6mesher_Mesher 
   unsigned int __pyx_t_4;
   __Pyx_RefNannySetupContext("mesh", 0);
 
-  /* "mesher.pyx":34
+  /* "neuroglancer/ingest/mesher.pyx":34
  *         del self.thisptr
  *     def mesh(self, data, sx, sy, sz):
  *         self.thisptr.mesh(data, sx, sy, sz)             # <<<<<<<<<<<<<<
@@ -1154,7 +1154,7 @@ static PyObject *__pyx_pf_6mesher_6Mesher_4mesh(struct __pyx_obj_6mesher_Mesher 
   __pyx_t_4 = __Pyx_PyInt_As_unsigned_int(__pyx_v_sz); if (unlikely((__pyx_t_4 == (unsigned int)-1) && PyErr_Occurred())) __PYX_ERR(0, 34, __pyx_L1_error)
   __pyx_v_self->thisptr->mesh(__pyx_t_1, __pyx_t_2, __pyx_t_3, __pyx_t_4);
 
-  /* "mesher.pyx":33
+  /* "neuroglancer/ingest/mesher.pyx":33
  *     def __dealloc__(self):
  *         del self.thisptr
  *     def mesh(self, data, sx, sy, sz):             # <<<<<<<<<<<<<<
@@ -1166,7 +1166,7 @@ static PyObject *__pyx_pf_6mesher_6Mesher_4mesh(struct __pyx_obj_6mesher_Mesher 
   __pyx_r = Py_None; __Pyx_INCREF(Py_None);
   goto __pyx_L0;
   __pyx_L1_error:;
-  __Pyx_AddTraceback("mesher.Mesher.mesh", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __Pyx_AddTraceback("neuroglancer.ingest.mesher.Mesher.mesh", __pyx_clineno, __pyx_lineno, __pyx_filename);
   __pyx_r = NULL;
   __pyx_L0:;
   __Pyx_XGIVEREF(__pyx_r);
@@ -1174,7 +1174,7 @@ static PyObject *__pyx_pf_6mesher_6Mesher_4mesh(struct __pyx_obj_6mesher_Mesher 
   return __pyx_r;
 }
 
-/* "mesher.pyx":35
+/* "neuroglancer/ingest/mesher.pyx":35
  *     def mesh(self, data, sx, sy, sz):
  *         self.thisptr.mesh(data, sx, sy, sz)
  *     def ids(self):             # <<<<<<<<<<<<<<
@@ -1183,25 +1183,25 @@ static PyObject *__pyx_pf_6mesher_6Mesher_4mesh(struct __pyx_obj_6mesher_Mesher 
  */
 
 /* Python wrapper */
-static PyObject *__pyx_pw_6mesher_6Mesher_7ids(PyObject *__pyx_v_self, CYTHON_UNUSED PyObject *unused); /*proto*/
-static PyObject *__pyx_pw_6mesher_6Mesher_7ids(PyObject *__pyx_v_self, CYTHON_UNUSED PyObject *unused) {
+static PyObject *__pyx_pw_12neuroglancer_6ingest_6mesher_6Mesher_7ids(PyObject *__pyx_v_self, CYTHON_UNUSED PyObject *unused); /*proto*/
+static PyObject *__pyx_pw_12neuroglancer_6ingest_6mesher_6Mesher_7ids(PyObject *__pyx_v_self, CYTHON_UNUSED PyObject *unused) {
   PyObject *__pyx_r = 0;
   __Pyx_RefNannyDeclarations
   __Pyx_RefNannySetupContext("ids (wrapper)", 0);
-  __pyx_r = __pyx_pf_6mesher_6Mesher_6ids(((struct __pyx_obj_6mesher_Mesher *)__pyx_v_self));
+  __pyx_r = __pyx_pf_12neuroglancer_6ingest_6mesher_6Mesher_6ids(((struct __pyx_obj_12neuroglancer_6ingest_6mesher_Mesher *)__pyx_v_self));
 
   /* function exit code */
   __Pyx_RefNannyFinishContext();
   return __pyx_r;
 }
 
-static PyObject *__pyx_pf_6mesher_6Mesher_6ids(struct __pyx_obj_6mesher_Mesher *__pyx_v_self) {
+static PyObject *__pyx_pf_12neuroglancer_6ingest_6mesher_6Mesher_6ids(struct __pyx_obj_12neuroglancer_6ingest_6mesher_Mesher *__pyx_v_self) {
   PyObject *__pyx_r = NULL;
   __Pyx_RefNannyDeclarations
   PyObject *__pyx_t_1 = NULL;
   __Pyx_RefNannySetupContext("ids", 0);
 
-  /* "mesher.pyx":36
+  /* "neuroglancer/ingest/mesher.pyx":36
  *         self.thisptr.mesh(data, sx, sy, sz)
  *     def ids(self):
  *         return self.thisptr.ids()             # <<<<<<<<<<<<<<
@@ -1215,7 +1215,7 @@ static PyObject *__pyx_pf_6mesher_6Mesher_6ids(struct __pyx_obj_6mesher_Mesher *
   __pyx_t_1 = 0;
   goto __pyx_L0;
 
-  /* "mesher.pyx":35
+  /* "neuroglancer/ingest/mesher.pyx":35
  *     def mesh(self, data, sx, sy, sz):
  *         self.thisptr.mesh(data, sx, sy, sz)
  *     def ids(self):             # <<<<<<<<<<<<<<
@@ -1226,7 +1226,7 @@ static PyObject *__pyx_pf_6mesher_6Mesher_6ids(struct __pyx_obj_6mesher_Mesher *
   /* function exit code */
   __pyx_L1_error:;
   __Pyx_XDECREF(__pyx_t_1);
-  __Pyx_AddTraceback("mesher.Mesher.ids", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __Pyx_AddTraceback("neuroglancer.ingest.mesher.Mesher.ids", __pyx_clineno, __pyx_lineno, __pyx_filename);
   __pyx_r = NULL;
   __pyx_L0:;
   __Pyx_XGIVEREF(__pyx_r);
@@ -1234,7 +1234,7 @@ static PyObject *__pyx_pf_6mesher_6Mesher_6ids(struct __pyx_obj_6mesher_Mesher *
   return __pyx_r;
 }
 
-/* "mesher.pyx":37
+/* "neuroglancer/ingest/mesher.pyx":37
  *     def ids(self):
  *         return self.thisptr.ids()
  *     def get_mesh(self, mesh_id, normals=False, simplification_factor=0, max_simplification_error=8):             # <<<<<<<<<<<<<<
@@ -1243,8 +1243,8 @@ static PyObject *__pyx_pf_6mesher_6Mesher_6ids(struct __pyx_obj_6mesher_Mesher *
  */
 
 /* Python wrapper */
-static PyObject *__pyx_pw_6mesher_6Mesher_9get_mesh(PyObject *__pyx_v_self, PyObject *__pyx_args, PyObject *__pyx_kwds); /*proto*/
-static PyObject *__pyx_pw_6mesher_6Mesher_9get_mesh(PyObject *__pyx_v_self, PyObject *__pyx_args, PyObject *__pyx_kwds) {
+static PyObject *__pyx_pw_12neuroglancer_6ingest_6mesher_6Mesher_9get_mesh(PyObject *__pyx_v_self, PyObject *__pyx_args, PyObject *__pyx_kwds); /*proto*/
+static PyObject *__pyx_pw_12neuroglancer_6ingest_6mesher_6Mesher_9get_mesh(PyObject *__pyx_v_self, PyObject *__pyx_args, PyObject *__pyx_kwds) {
   PyObject *__pyx_v_mesh_id = 0;
   PyObject *__pyx_v_normals = 0;
   PyObject *__pyx_v_simplification_factor = 0;
@@ -1312,18 +1312,18 @@ static PyObject *__pyx_pw_6mesher_6Mesher_9get_mesh(PyObject *__pyx_v_self, PyOb
   __pyx_L5_argtuple_error:;
   __Pyx_RaiseArgtupleInvalid("get_mesh", 0, 1, 4, PyTuple_GET_SIZE(__pyx_args)); __PYX_ERR(0, 37, __pyx_L3_error)
   __pyx_L3_error:;
-  __Pyx_AddTraceback("mesher.Mesher.get_mesh", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __Pyx_AddTraceback("neuroglancer.ingest.mesher.Mesher.get_mesh", __pyx_clineno, __pyx_lineno, __pyx_filename);
   __Pyx_RefNannyFinishContext();
   return NULL;
   __pyx_L4_argument_unpacking_done:;
-  __pyx_r = __pyx_pf_6mesher_6Mesher_8get_mesh(((struct __pyx_obj_6mesher_Mesher *)__pyx_v_self), __pyx_v_mesh_id, __pyx_v_normals, __pyx_v_simplification_factor, __pyx_v_max_simplification_error);
+  __pyx_r = __pyx_pf_12neuroglancer_6ingest_6mesher_6Mesher_8get_mesh(((struct __pyx_obj_12neuroglancer_6ingest_6mesher_Mesher *)__pyx_v_self), __pyx_v_mesh_id, __pyx_v_normals, __pyx_v_simplification_factor, __pyx_v_max_simplification_error);
 
   /* function exit code */
   __Pyx_RefNannyFinishContext();
   return __pyx_r;
 }
 
-static PyObject *__pyx_pf_6mesher_6Mesher_8get_mesh(struct __pyx_obj_6mesher_Mesher *__pyx_v_self, PyObject *__pyx_v_mesh_id, PyObject *__pyx_v_normals, PyObject *__pyx_v_simplification_factor, PyObject *__pyx_v_max_simplification_error) {
+static PyObject *__pyx_pf_12neuroglancer_6ingest_6mesher_6Mesher_8get_mesh(struct __pyx_obj_12neuroglancer_6ingest_6mesher_Mesher *__pyx_v_self, PyObject *__pyx_v_mesh_id, PyObject *__pyx_v_normals, PyObject *__pyx_v_simplification_factor, PyObject *__pyx_v_max_simplification_error) {
   PyObject *__pyx_r = NULL;
   __Pyx_RefNannyDeclarations
   unsigned int __pyx_t_1;
@@ -1333,7 +1333,7 @@ static PyObject *__pyx_pf_6mesher_6Mesher_8get_mesh(struct __pyx_obj_6mesher_Mes
   PyObject *__pyx_t_5 = NULL;
   __Pyx_RefNannySetupContext("get_mesh", 0);
 
-  /* "mesher.pyx":38
+  /* "neuroglancer/ingest/mesher.pyx":38
  *         return self.thisptr.ids()
  *     def get_mesh(self, mesh_id, normals=False, simplification_factor=0, max_simplification_error=8):
  *         return self.thisptr.get_mesh(mesh_id, normals, simplification_factor, max_simplification_error)             # <<<<<<<<<<<<<<
@@ -1351,7 +1351,7 @@ static PyObject *__pyx_pf_6mesher_6Mesher_8get_mesh(struct __pyx_obj_6mesher_Mes
   __pyx_t_5 = 0;
   goto __pyx_L0;
 
-  /* "mesher.pyx":37
+  /* "neuroglancer/ingest/mesher.pyx":37
  *     def ids(self):
  *         return self.thisptr.ids()
  *     def get_mesh(self, mesh_id, normals=False, simplification_factor=0, max_simplification_error=8):             # <<<<<<<<<<<<<<
@@ -1362,7 +1362,7 @@ static PyObject *__pyx_pf_6mesher_6Mesher_8get_mesh(struct __pyx_obj_6mesher_Mes
   /* function exit code */
   __pyx_L1_error:;
   __Pyx_XDECREF(__pyx_t_5);
-  __Pyx_AddTraceback("mesher.Mesher.get_mesh", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __Pyx_AddTraceback("neuroglancer.ingest.mesher.Mesher.get_mesh", __pyx_clineno, __pyx_lineno, __pyx_filename);
   __pyx_r = NULL;
   __pyx_L0:;
   __Pyx_XGIVEREF(__pyx_r);
@@ -1370,7 +1370,7 @@ static PyObject *__pyx_pf_6mesher_6Mesher_8get_mesh(struct __pyx_obj_6mesher_Mes
   return __pyx_r;
 }
 
-/* "mesher.pyx":39
+/* "neuroglancer/ingest/mesher.pyx":39
  *     def get_mesh(self, mesh_id, normals=False, simplification_factor=0, max_simplification_error=8):
  *         return self.thisptr.get_mesh(mesh_id, normals, simplification_factor, max_simplification_error)
  *     def write_obj(self, mesh_id, filename):             # <<<<<<<<<<<<<<
@@ -1378,8 +1378,8 @@ static PyObject *__pyx_pf_6mesher_6Mesher_8get_mesh(struct __pyx_obj_6mesher_Mes
  */
 
 /* Python wrapper */
-static PyObject *__pyx_pw_6mesher_6Mesher_11write_obj(PyObject *__pyx_v_self, PyObject *__pyx_args, PyObject *__pyx_kwds); /*proto*/
-static PyObject *__pyx_pw_6mesher_6Mesher_11write_obj(PyObject *__pyx_v_self, PyObject *__pyx_args, PyObject *__pyx_kwds) {
+static PyObject *__pyx_pw_12neuroglancer_6ingest_6mesher_6Mesher_11write_obj(PyObject *__pyx_v_self, PyObject *__pyx_args, PyObject *__pyx_kwds); /*proto*/
+static PyObject *__pyx_pw_12neuroglancer_6ingest_6mesher_6Mesher_11write_obj(PyObject *__pyx_v_self, PyObject *__pyx_args, PyObject *__pyx_kwds) {
   PyObject *__pyx_v_mesh_id = 0;
   PyObject *__pyx_v_filename = 0;
   PyObject *__pyx_r = 0;
@@ -1424,18 +1424,18 @@ static PyObject *__pyx_pw_6mesher_6Mesher_11write_obj(PyObject *__pyx_v_self, Py
   __pyx_L5_argtuple_error:;
   __Pyx_RaiseArgtupleInvalid("write_obj", 1, 2, 2, PyTuple_GET_SIZE(__pyx_args)); __PYX_ERR(0, 39, __pyx_L3_error)
   __pyx_L3_error:;
-  __Pyx_AddTraceback("mesher.Mesher.write_obj", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __Pyx_AddTraceback("neuroglancer.ingest.mesher.Mesher.write_obj", __pyx_clineno, __pyx_lineno, __pyx_filename);
   __Pyx_RefNannyFinishContext();
   return NULL;
   __pyx_L4_argument_unpacking_done:;
-  __pyx_r = __pyx_pf_6mesher_6Mesher_10write_obj(((struct __pyx_obj_6mesher_Mesher *)__pyx_v_self), __pyx_v_mesh_id, __pyx_v_filename);
+  __pyx_r = __pyx_pf_12neuroglancer_6ingest_6mesher_6Mesher_10write_obj(((struct __pyx_obj_12neuroglancer_6ingest_6mesher_Mesher *)__pyx_v_self), __pyx_v_mesh_id, __pyx_v_filename);
 
   /* function exit code */
   __Pyx_RefNannyFinishContext();
   return __pyx_r;
 }
 
-static PyObject *__pyx_pf_6mesher_6Mesher_10write_obj(struct __pyx_obj_6mesher_Mesher *__pyx_v_self, PyObject *__pyx_v_mesh_id, PyObject *__pyx_v_filename) {
+static PyObject *__pyx_pf_12neuroglancer_6ingest_6mesher_6Mesher_10write_obj(struct __pyx_obj_12neuroglancer_6ingest_6mesher_Mesher *__pyx_v_self, PyObject *__pyx_v_mesh_id, PyObject *__pyx_v_filename) {
   PyObject *__pyx_r = NULL;
   __Pyx_RefNannyDeclarations
   unsigned int __pyx_t_1;
@@ -1443,7 +1443,7 @@ static PyObject *__pyx_pf_6mesher_6Mesher_10write_obj(struct __pyx_obj_6mesher_M
   PyObject *__pyx_t_3 = NULL;
   __Pyx_RefNannySetupContext("write_obj", 0);
 
-  /* "mesher.pyx":40
+  /* "neuroglancer/ingest/mesher.pyx":40
  *         return self.thisptr.get_mesh(mesh_id, normals, simplification_factor, max_simplification_error)
  *     def write_obj(self, mesh_id, filename):
  *         return self.thisptr.write_obj(mesh_id, filename)             # <<<<<<<<<<<<<<
@@ -1457,7 +1457,7 @@ static PyObject *__pyx_pf_6mesher_6Mesher_10write_obj(struct __pyx_obj_6mesher_M
   __pyx_t_3 = 0;
   goto __pyx_L0;
 
-  /* "mesher.pyx":39
+  /* "neuroglancer/ingest/mesher.pyx":39
  *     def get_mesh(self, mesh_id, normals=False, simplification_factor=0, max_simplification_error=8):
  *         return self.thisptr.get_mesh(mesh_id, normals, simplification_factor, max_simplification_error)
  *     def write_obj(self, mesh_id, filename):             # <<<<<<<<<<<<<<
@@ -1467,7 +1467,7 @@ static PyObject *__pyx_pf_6mesher_6Mesher_10write_obj(struct __pyx_obj_6mesher_M
   /* function exit code */
   __pyx_L1_error:;
   __Pyx_XDECREF(__pyx_t_3);
-  __Pyx_AddTraceback("mesher.Mesher.write_obj", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __Pyx_AddTraceback("neuroglancer.ingest.mesher.Mesher.write_obj", __pyx_clineno, __pyx_lineno, __pyx_filename);
   __pyx_r = NULL;
   __pyx_L0:;
   __Pyx_XGIVEREF(__pyx_r);
@@ -1757,7 +1757,7 @@ static std::string __pyx_convert_string_from_py_std__in_string(PyObject *__pyx_v
   return __pyx_r;
 }
 
-static PyObject *__pyx_tp_new_6mesher_Mesher(PyTypeObject *t, CYTHON_UNUSED PyObject *a, CYTHON_UNUSED PyObject *k) {
+static PyObject *__pyx_tp_new_12neuroglancer_6ingest_6mesher_Mesher(PyTypeObject *t, CYTHON_UNUSED PyObject *a, CYTHON_UNUSED PyObject *k) {
   PyObject *o;
   if (likely((t->tp_flags & Py_TPFLAGS_IS_ABSTRACT) == 0)) {
     o = (*t->tp_alloc)(t, 0);
@@ -1765,14 +1765,14 @@ static PyObject *__pyx_tp_new_6mesher_Mesher(PyTypeObject *t, CYTHON_UNUSED PyOb
     o = (PyObject *) PyBaseObject_Type.tp_new(t, __pyx_empty_tuple, 0);
   }
   if (unlikely(!o)) return 0;
-  if (unlikely(__pyx_pw_6mesher_6Mesher_1__cinit__(o, __pyx_empty_tuple, NULL) < 0)) goto bad;
+  if (unlikely(__pyx_pw_12neuroglancer_6ingest_6mesher_6Mesher_1__cinit__(o, __pyx_empty_tuple, NULL) < 0)) goto bad;
   return o;
   bad:
   Py_DECREF(o); o = 0;
   return NULL;
 }
 
-static void __pyx_tp_dealloc_6mesher_Mesher(PyObject *o) {
+static void __pyx_tp_dealloc_12neuroglancer_6ingest_6mesher_Mesher(PyObject *o) {
   #if PY_VERSION_HEX >= 0x030400a1
   if (unlikely(Py_TYPE(o)->tp_finalize) && (!PyType_IS_GC(Py_TYPE(o)) || !_PyGC_FINALIZED(o))) {
     if (PyObject_CallFinalizerFromDealloc(o)) return;
@@ -1782,27 +1782,27 @@ static void __pyx_tp_dealloc_6mesher_Mesher(PyObject *o) {
     PyObject *etype, *eval, *etb;
     PyErr_Fetch(&etype, &eval, &etb);
     ++Py_REFCNT(o);
-    __pyx_pw_6mesher_6Mesher_3__dealloc__(o);
+    __pyx_pw_12neuroglancer_6ingest_6mesher_6Mesher_3__dealloc__(o);
     --Py_REFCNT(o);
     PyErr_Restore(etype, eval, etb);
   }
   (*Py_TYPE(o)->tp_free)(o);
 }
 
-static PyMethodDef __pyx_methods_6mesher_Mesher[] = {
-  {"mesh", (PyCFunction)__pyx_pw_6mesher_6Mesher_5mesh, METH_VARARGS|METH_KEYWORDS, 0},
-  {"ids", (PyCFunction)__pyx_pw_6mesher_6Mesher_7ids, METH_NOARGS, 0},
-  {"get_mesh", (PyCFunction)__pyx_pw_6mesher_6Mesher_9get_mesh, METH_VARARGS|METH_KEYWORDS, 0},
-  {"write_obj", (PyCFunction)__pyx_pw_6mesher_6Mesher_11write_obj, METH_VARARGS|METH_KEYWORDS, 0},
+static PyMethodDef __pyx_methods_12neuroglancer_6ingest_6mesher_Mesher[] = {
+  {"mesh", (PyCFunction)__pyx_pw_12neuroglancer_6ingest_6mesher_6Mesher_5mesh, METH_VARARGS|METH_KEYWORDS, 0},
+  {"ids", (PyCFunction)__pyx_pw_12neuroglancer_6ingest_6mesher_6Mesher_7ids, METH_NOARGS, 0},
+  {"get_mesh", (PyCFunction)__pyx_pw_12neuroglancer_6ingest_6mesher_6Mesher_9get_mesh, METH_VARARGS|METH_KEYWORDS, 0},
+  {"write_obj", (PyCFunction)__pyx_pw_12neuroglancer_6ingest_6mesher_6Mesher_11write_obj, METH_VARARGS|METH_KEYWORDS, 0},
   {0, 0, 0, 0}
 };
 
-static PyTypeObject __pyx_type_6mesher_Mesher = {
+static PyTypeObject __pyx_type_12neuroglancer_6ingest_6mesher_Mesher = {
   PyVarObject_HEAD_INIT(0, 0)
-  "mesher.Mesher", /*tp_name*/
-  sizeof(struct __pyx_obj_6mesher_Mesher), /*tp_basicsize*/
+  "neuroglancer.ingest.mesher.Mesher", /*tp_name*/
+  sizeof(struct __pyx_obj_12neuroglancer_6ingest_6mesher_Mesher), /*tp_basicsize*/
   0, /*tp_itemsize*/
-  __pyx_tp_dealloc_6mesher_Mesher, /*tp_dealloc*/
+  __pyx_tp_dealloc_12neuroglancer_6ingest_6mesher_Mesher, /*tp_dealloc*/
   0, /*tp_print*/
   0, /*tp_getattr*/
   0, /*tp_setattr*/
@@ -1830,7 +1830,7 @@ static PyTypeObject __pyx_type_6mesher_Mesher = {
   0, /*tp_weaklistoffset*/
   0, /*tp_iter*/
   0, /*tp_iternext*/
-  __pyx_methods_6mesher_Mesher, /*tp_methods*/
+  __pyx_methods_12neuroglancer_6ingest_6mesher_Mesher, /*tp_methods*/
   0, /*tp_members*/
   0, /*tp_getset*/
   0, /*tp_base*/
@@ -1840,7 +1840,7 @@ static PyTypeObject __pyx_type_6mesher_Mesher = {
   0, /*tp_dictoffset*/
   0, /*tp_init*/
   0, /*tp_alloc*/
-  __pyx_tp_new_6mesher_Mesher, /*tp_new*/
+  __pyx_tp_new_12neuroglancer_6ingest_6mesher_Mesher, /*tp_new*/
   0, /*tp_free*/
   0, /*tp_is_gc*/
   0, /*tp_bases*/
@@ -1982,14 +1982,14 @@ PyMODINIT_FUNC PyInit_mesher(void)
   #if PY_MAJOR_VERSION < 3 && (__PYX_DEFAULT_STRING_ENCODING_IS_ASCII || __PYX_DEFAULT_STRING_ENCODING_IS_DEFAULT)
   if (__Pyx_init_sys_getdefaultencoding_params() < 0) __PYX_ERR(0, 1, __pyx_L1_error)
   #endif
-  if (__pyx_module_is_main_mesher) {
+  if (__pyx_module_is_main_neuroglancer__ingest__mesher) {
     if (PyObject_SetAttrString(__pyx_m, "__name__", __pyx_n_s_main) < 0) __PYX_ERR(0, 1, __pyx_L1_error)
   }
   #if PY_MAJOR_VERSION >= 3
   {
     PyObject *modules = PyImport_GetModuleDict(); if (unlikely(!modules)) __PYX_ERR(0, 1, __pyx_L1_error)
-    if (!PyDict_GetItemString(modules, "mesher")) {
-      if (unlikely(PyDict_SetItemString(modules, "mesher", __pyx_m) < 0)) __PYX_ERR(0, 1, __pyx_L1_error)
+    if (!PyDict_GetItemString(modules, "neuroglancer.ingest.mesher")) {
+      if (unlikely(PyDict_SetItemString(modules, "neuroglancer.ingest.mesher", __pyx_m) < 0)) __PYX_ERR(0, 1, __pyx_L1_error)
     }
   }
   #endif
@@ -2001,10 +2001,10 @@ PyMODINIT_FUNC PyInit_mesher(void)
   /*--- Variable export code ---*/
   /*--- Function export code ---*/
   /*--- Type init code ---*/
-  if (PyType_Ready(&__pyx_type_6mesher_Mesher) < 0) __PYX_ERR(0, 27, __pyx_L1_error)
-  __pyx_type_6mesher_Mesher.tp_print = 0;
-  if (PyObject_SetAttrString(__pyx_m, "Mesher", (PyObject *)&__pyx_type_6mesher_Mesher) < 0) __PYX_ERR(0, 27, __pyx_L1_error)
-  __pyx_ptype_6mesher_Mesher = &__pyx_type_6mesher_Mesher;
+  if (PyType_Ready(&__pyx_type_12neuroglancer_6ingest_6mesher_Mesher) < 0) __PYX_ERR(0, 27, __pyx_L1_error)
+  __pyx_type_12neuroglancer_6ingest_6mesher_Mesher.tp_print = 0;
+  if (PyObject_SetAttrString(__pyx_m, "Mesher", (PyObject *)&__pyx_type_12neuroglancer_6ingest_6mesher_Mesher) < 0) __PYX_ERR(0, 27, __pyx_L1_error)
+  __pyx_ptype_12neuroglancer_6ingest_6mesher_Mesher = &__pyx_type_12neuroglancer_6ingest_6mesher_Mesher;
   /*--- Type import code ---*/
   /*--- Variable import code ---*/
   /*--- Function import code ---*/
@@ -2013,7 +2013,7 @@ PyMODINIT_FUNC PyInit_mesher(void)
   if (__Pyx_patch_abc() < 0) __PYX_ERR(0, 1, __pyx_L1_error)
   #endif
 
-  /* "mesher.pyx":1
+  /* "neuroglancer/ingest/mesher.pyx":1
  * # distutils: language = c++             # <<<<<<<<<<<<<<
  * # distutils: sources = cMesher.cpp
  * 
@@ -2038,11 +2038,11 @@ PyMODINIT_FUNC PyInit_mesher(void)
   __Pyx_XDECREF(__pyx_t_1);
   if (__pyx_m) {
     if (__pyx_d) {
-      __Pyx_AddTraceback("init mesher", __pyx_clineno, __pyx_lineno, __pyx_filename);
+      __Pyx_AddTraceback("init neuroglancer.ingest.mesher", __pyx_clineno, __pyx_lineno, __pyx_filename);
     }
     Py_DECREF(__pyx_m); __pyx_m = 0;
   } else if (!PyErr_Occurred()) {
-    PyErr_SetString(PyExc_ImportError, "init mesher");
+    PyErr_SetString(PyExc_ImportError, "init neuroglancer.ingest.mesher");
   }
   __pyx_L0:;
   __Pyx_RefNannyFinishContext();
@@ -2485,7 +2485,7 @@ static PyObject* __pyx_convert__to_py_struct__meshobj(struct meshobj s) {
   PyObject* res;
   PyObject* member;
   res = PyDict_New(); if (unlikely(!res)) return NULL;
-  member = __pyx_convert_vector_to_py_unsigned_int(s.points); if (unlikely(!member)) goto bad;
+  member = __pyx_convert_vector_to_py_float(s.points); if (unlikely(!member)) goto bad;
   if (unlikely(PyDict_SetItem(res, __pyx_n_s_points, member) < 0)) goto bad;
   Py_DECREF(member);
   member = __pyx_convert_vector_to_py_float(s.normals); if (unlikely(!member)) goto bad;

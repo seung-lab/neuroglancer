@@ -5,7 +5,10 @@ import shutil
 import numpy as np
 
 from neuroglancer.pipeline.volumes import CloudVolume, EmptyVolumeException
-from neuroglancer.pipeline import Storage, Precomputed, DownsampleTask, MeshTask, MeshManifestTask, QuantizeAffinitiesTask
+from neuroglancer.pipeline import (
+    Storage, Precomputed, DownsampleTask, 
+    MeshTask, MeshManifestTask, QuantizeAffinitiesTask,
+    HyperSquareLocalizationTask)
 from neuroglancer.pipeline.task_creation import create_downsample_scales, create_downsampling_tasks, create_quantized_affinity_info
 from neuroglancer.pipeline.task_queue import MockTaskQueue
 from neuroglancer import downsample, lib
@@ -304,6 +307,54 @@ def test_mesh_manifests():
 
     if os.path.exists(directory):
         shutil.rmtree(directory)
+
+def test_hypersquare_localization_remap():
+    delete_layer()
+    storage, image = create_layer(
+        size=(64,64,64,1), 
+        offset=(0,0,0), 
+        layer_type="segmentation",
+        dtype=np.uint16, # hypersquare is uint16
+    )
+
+    image32 = image.astype(np.uint32) + 65536
+
+    info = storage.get_file('info')
+
+    dest_path = 'file:///tmp/removeme/hypersquare/test/'
+
+    with Storage(dest_path) as stor:
+        info = info.replace('uint16', 'uint32')
+        stor.put_file('info', info, 'application/json')
+
+    task = HyperSquareLocalizationTask(
+        src_path=storage.layer_path,
+        dest_path=dest_path,
+        high_value=1,
+        shape=(64,64,64),
+        offset=(0,0,0)
+    )
+
+    task.execute()
+
+    vol = CloudVolume(dest_path)
+    destimg = vol[0:64, 0:64, 0:64]
+    print(image32[0:2,0:2,0:2], destimg[0:2,0:2,0:2])
+    assert np.all(image32 == destimg)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
