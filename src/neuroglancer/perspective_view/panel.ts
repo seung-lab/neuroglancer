@@ -179,9 +179,12 @@ export class PerspectivePanel extends RenderedDataPanel {
   }
 
   onResize() {
-    this.width = this.element.clientWidth;
-    this.height = this.element.clientHeight;
-    this.viewportChanged();
+    const {clientWidth, clientHeight} = this.element;
+    if (clientWidth !== this.width || clientHeight !== this.height) {
+      this.width = this.element.clientWidth;
+      this.height = this.element.clientHeight;
+      this.viewportChanged();
+    }
   }
 
   disposed() {
@@ -256,6 +259,7 @@ export class PerspectivePanel extends RenderedDataPanel {
     if (!this.navigationState.valid || width === 0 || height === 0) {
       return;
     }
+    this.onResize();
 
     if (this.viewer.showSliceViews.value) {
       for (let sliceView of this.sliceViews) {
