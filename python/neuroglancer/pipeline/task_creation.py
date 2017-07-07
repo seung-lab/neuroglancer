@@ -15,7 +15,7 @@ from neuroglancer import downsample_scales, chunks
 from neuroglancer.lib import Vec, Bbox, max2, min2, xyzrange, find_closest_divisor
 from neuroglancer.pipeline import Storage, TaskQueue, MockTaskQueue
 from neuroglancer.pipeline.tasks import (BigArrayTask, IngestTask,
-     HyperSquareTask, HyperSquareLocalizationTask, 
+     HyperSquareTask, HyperSquareConsensusTask, 
      MeshTask, MeshManifestTask, DownsampleTask, 
      QuantizeAffinitiesTask, TransferTask, BossTransferTask, 
      WatershedRemapTask)
@@ -308,7 +308,7 @@ def create_mesh_manifest_tasks(task_queue, layer_path):
     task_queue.insert(task)
   task_queue.wait()
 
-def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hypersquare_chunk_size, resolution, voxel_offset, volume_size, overlap):
+def create_hypersquare_ingest_tasks(task_queue, hypersquare_bucket_name, dataset_name, hypersquare_chunk_size, resolution, voxel_offset, volume_size, overlap):
   def crtinfo(layer_type, dtype, encoding):
     return CloudVolume.create_new_info(
       num_channels=1,
@@ -346,14 +346,13 @@ def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hyper
       overlap=overlap,
       resolution=resolution,
     )
-
-  tq = TaskQueue()
+  
   print("Listing hypersquare bucket...")
-  # volumes_listing = lib.gcloud_ls('gs://{}/'.format(hypersquare_bucket_name))
+  volumes_listing = lib.gcloud_ls('gs://{}/'.format(hypersquare_bucket_name))
 
   # download this from: 
-  with open('e2198_volumes.json', 'r') as f:
-    volumes_listing = json.loads(f.read())
+  # with open('e2198_volumes.json', 'r') as f:
+  #   volumes_listing = json.loads(f.read())
 
   volumes_listing = [ x.split('/')[-2] for x in volumes_listing ]
 
@@ -364,22 +363,32 @@ def create_hypersquare_ingest_tasks(hypersquare_bucket_name, dataset_name, hyper
     # seg_task.execute()
     tq.insert(seg_task)
 
-def create_hypersquare_localization_tasks(task_queue, src_path, dest_path, volume_map_file):
+def create_hypersquare_consensus_tasks(task_queue, src_path, dest_path, volume_map_file, consensus_map_path):
   """
+  Transfer an Eyewire consensus into neuroglancer. This first requires
+  importing the raw segmentation via a hypersquare ingest task. However,
+  this can probably be streamlined at some point.
+
   The volume map file should be JSON encoded and 
   look like { "X-X_Y-Y_Z-Z": EW_VOLUME_ID }
+
+  The consensus map file should look like:
+  { VOLUMEID: { CELLID: [segids] } }
   """
 
   with open(volume_map_file, 'r') as f:
     volume_map = json.loads(f.read())
 
+  create_downsample_scales(dest_path, mip=0, shape=(896, 896, 56))
+
   for boundstr, volume_id in volume_map_file:
     bbox = Bbox.from_filename(boundstr)
 
-    task = HyperSquareLocalizationTask(
+    task = HyperSquareConsensusTask(
       src_path=src_path,
       dest_path=dest_path,
-      high_value=int(volume_id),
+      ew_volume_id=int(volume_id),
+      consensus_map_path=consensus_map_path,
       shape=bbox.size3(),
       offset=bbox.minpt.clone(),
     )
@@ -454,12 +463,18 @@ if __name__ == '__main__':
   map_path = os.path.join(dest_path, 'mst_split_tuning_remap.npy')
   
   with TaskQueue(queue_name='wms-test-pull-queue') as task_queue:
-    create_downsampling_tasks(task_queue, dest_path, mip=5, fill_missing=False)
+    pass
+    # create_downsampling_tasks(task_queue, dest_path, mip=5, fill_missing=False)
     # create_meshing_tasks(task_queue, dest_path, mip=3)
 
     # create_mesh_manifest_tasks(task_queue, dest_path)
 
     # create_watershed_remap_tasks(task_queue, map_path, src_path, dest_path)
+
+    # create_hypersquare_consensus_tasks(
+    #   src_path='gs://neuroglancer/zfish_v1/segmentation/',
+
+    # )
 
     # create_boss_transfer_tasks(task_queue, 
     #   src_layer_path='boss://BCMID_8973_AIBSID_243774/neuroanatomical_aibs_pu_dataset/neuroanatomical_aibs_pu_dataset_channel',
@@ -475,8 +490,8 @@ if __name__ == '__main__':
     # )
 
     # create_transfer_tasks(task_queue,
-    #   src_layer_path='s3://neuroglancer/pinky40_v11/watershed/', 
-    #   dest_layer_path='gs://neuroglancer/pinky40_v11/watershed/',
+    #   src_layer_path='gs://neuroglancer/pinky40_v11/image/', 
+    #   dest_layer_path='gs://neuroglancer/pinky40_v11/image_rechunked/',
     # )
 
     # create_fixup_downsample_tasks(task_queue, 'gs://neuroglancer/pinky40_v11/image/', 
@@ -494,13 +509,4 @@ if __name__ == '__main__':
 
   # with Storage('gs://neuroglancer/pinky40_v11/image') as stor:
   #   compute_build_bounding_box(stor, '4_4_40/')
-        
-
-
-
-
-
-
-
-
-    
+  

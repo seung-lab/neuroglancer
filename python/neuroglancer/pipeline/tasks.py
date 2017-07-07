@@ -64,6 +64,25 @@ def downsample_and_upload(image, bounds, vol, ds_shape, mip=0, axis='z', skip_fi
       new_bounds.maxpt = new_bounds.minpt + Vec(*image.shape[:3])
       vol[ new_bounds.to_slices() ] = image
 
+def cache(task, cloudpath):
+  layer_path, filename = os.path.split(cloudpath)
+
+  classname = task.__class__.__name__
+  lcldir = mkdir(os.path.join('/tmp/', classname))
+  lclpath = os.path.join(lcldir, filename)
+
+  if os.path.exists(lclpath):
+    with open(lclpath, 'rb') as f:
+      filestr = f.read()
+  else:
+      with Storage(layer_path, n_threads=0) as stor:
+          filestr = stor.get_file(filename)
+
+      with open(lclpath, 'wb') as f:
+          f.write(rawfilestr)
+
+  return filestr
+
 class IngestTask(RegisteredTask):
   """Ingests and does downsampling.
      We want tasks execution to be independent of each other, so that no synchronization is
@@ -475,28 +494,68 @@ class HyperSquareLocalizationTask(RegisteredTask):
     destvol[ bounds.to_slices() ] = image
 
 
-# class HyperSquareConsensusRemap(RegisteredTask):
-#   """
+class HyperSquareConsensusTask(RegisteredTask):
+  """
+  Import an Eyewire consensus into neuroglancer by combining
+  database information encoded as JSON files with pre-ingested
+  Hypersquare.
 
-#   """
+  The result of the remapping is that all human traced cells should
+  be present and identifiable by their Eyewire cells.id number. 
+  The remaining segments should be the same segid but reencoded
+  from 16 to 32 bits such that their high bits encode the 
+  tasks.segmentation_id according to some mapping that fits
+  into 16 bits. It's usually: 
 
-#   def __init__(self, src_path, dest_path, consensus_map, shape, offset):
-#     self.src_path = src_path
-#     self.dest_path = dest_path
-#     self.consensus_map = consensus_map
-#     self.shape = Vec(*shape)
-#     self.offset = Vec(*offset)
+    tasks.segmentation_id - min(tasks.segmentation_id for that dataset)
 
-#   def execute(self):
-#     bounds = Bbox( self.offset, self.shape + self.offset )
-#     srcvol = CloudVolume(self.src_path)
-#     destvol = CloudVolume(self.dest_path)
+  The consensus map file should be uploaded into the neuroglancer
+  data layer directory corresponding to the destination layer being
+  processed. The contents of the file are JSON encoded and look like:
 
-#     with Storage(self.dest_path, n_threads=0) as stor:
-#       consensus = stor.get_file(self.consensus_map)
+  { VOLUMEID: { CELLID: [segids] } }
+  """
 
+  def __init__(self, src_path, dest_path, ew_volume_id, 
+    consensus_map_path, shape, offset):
 
+    super(HyperSquareConsensusTask, self).__init__(
+      src_path, dest_path, ew_volume_id, 
+      consensus_map_path, shape, offset
+    )
+    self.src_path = src_path
+    self.dest_path = dest_path
+    self.consensus_map_path = consensus_map_path
+    self.shape = Vec(*shape)
+    self.offset = Vec(*offset)
+    self.ew_volume_id = int(ew_volume_id)
 
+  def execute(self):
+    bounds = Bbox( self.offset, self.shape + self.offset )
+    srcvol = CloudVolume(self.src_path)
+    destvol = CloudVolume(self.dest_path)
+
+    consensus = cache(self.consensus_map_path)
+    consensus = json.loads(consensus)
+    consensus = consensus[self.ew_volume_id]
+
+    segidmap = self.build_segidmap(consensus)
+
+    image = srcvol[ bounds.to_slices() ]
+    consensus_image = segidmap[ image ]
+    volume_segid_image = image.astype(np.uint32) | (self.ew_volume_id << 16)
+    final_image = consensus_image + (consensus_image == 0) * volume_segid_image
+
+    downsample_and_upload(final_image, bounds, destvol, ds_shape=final_image.shape)
+
+  def build_segid_map(self, consensus):
+    segidmap = np.zeros(shape=(2 ** 16), dtype=np.uint16)
+
+    for cellid in consensus:
+      for segid in cells[cellid]:
+        segidmap[segid] = int(cellid)
+
+    return segidmap
 
 
 class TransferTask(RegisteredTask):
@@ -515,7 +574,7 @@ class TransferTask(RegisteredTask):
     bounds = Bbox.clamp(bounds, srccv.bounds)
     
     image = srccv[ bounds.to_slices() ]
-    downsample_and_upload(image, bounds, destvol, self.shape)
+    downsample_and_upload(image, bounds, destcv, self.shape)
 
 class WatershedRemapTask(RegisteredTask):
     """
@@ -571,25 +630,9 @@ class WatershedRemapTask(RegisteredTask):
         downsample_and_upload(image, bounds, destcv, self.shape)
 
     def _get_map(self):
-        layer_path, filename = os.path.split(self.map_path)
-
-        classname = self.__class__.__name__
-        lcldir = mkdir(os.path.join('/tmp/', classname))
-        lclpath = os.path.join(lcldir, filename)
-
-        if os.path.exists(lclpath):
-            npy_map_file = open(lclpath, 'rb')
-        else:
-            with Storage(layer_path, n_threads=0) as stor:
-                rawfilestr = stor.get_file(filename)
-
-            with open(lclpath, 'wb') as f:
-                f.write(rawfilestr)
-
-            npy_map_file = StringIO(rawfilestr)
-
-        remap = np.load(npy_map_file)
-        npy_map_file.close()
+        file = StringIO(cache(self, self.map_path))
+        remap = np.load(file)
+        file.close()
         return remap
 
 class BossTransferTask(RegisteredTask):
