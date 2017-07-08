@@ -26,6 +26,9 @@ for dataset in datasets:
     if not valid_paths.match(layer):
       continue 
 
+    if 'removeme' in layer:
+      continue
+
     with Storage(layer, n_threads=0) as stor:
       if not stor.exists('provenance'):
         missing_report.append(layer)
