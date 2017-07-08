@@ -141,9 +141,12 @@ def create_downsample_scales(layer_path, mip, ds_shape, axis='z'):
   map(vol.addScale, scales)
   return vol.commitInfo()
 
-def create_downsampling_tasks(task_queue, layer_path, mip=-1, fill_missing=False, axis='z', shape=Vec(2048, 2048, 64)):
-  shape = Vec(*shape)
+def create_downsampling_tasks(task_queue, layer_path, mip=-1, fill_missing=False, axis='z', num_mips=5):
+  shape = (64 * (2 ** num_mips), 64 * (2 ** num_mips), 64)
   vol = create_downsample_scales(layer_path, mip, shape)
+  shape = vol.underlying[:3]
+  shape.x *= 2 ** num_mips
+  shape.y *= 2 ** num_mips
 
   for startpt in tqdm(xyzrange( vol.bounds.minpt, vol.bounds.maxpt, shape ), desc="Inserting Downsample Tasks"):
     task = DownsampleTask(
