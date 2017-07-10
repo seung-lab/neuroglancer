@@ -76,7 +76,7 @@ class CloudVolume(Volume):
       self.info = info
 
     # self.dataset_provenance = DatasetProvenance(self.base_cloudpath)
-    self.layer_provenance = DataLayerProvenance(self.layer_cloudpath)
+    # self.layer_provenance = DataLayerProvenance(self.layer_cloudpath)
 
     try:
       self.mip = self.available_mips[self.mip]

@@ -25,7 +25,7 @@ from neuroglancer.pipeline.volumes import CloudVolume
 from neuroglancer.ingest.mesher import Mesher
 
 def downsample_and_upload(image, bounds, vol, ds_shape, mip=0, axis='z', skip_first=False):
-    ds_shape = min2(vol.volume_size, ds_shape)
+    ds_shape = min2(vol.volume_size, ds_shape[:3])
 
     # sometimes we downsample a base layer of 512x512 
     # into underlying chunks of 64x64 which permits more scales
@@ -76,10 +76,10 @@ def cache(task, cloudpath):
       filestr = f.read()
   else:
       with Storage(layer_path, n_threads=0) as stor:
-          filestr = stor.get_file(filename)
+        filestr = stor.get_file(filename)
 
       with open(lclpath, 'wb') as f:
-          f.write(rawfilestr)
+        f.write(filestr)
 
   return filestr
 
@@ -532,27 +532,50 @@ class HyperSquareConsensusTask(RegisteredTask):
 
   def execute(self):
     bounds = Bbox( self.offset, self.shape + self.offset )
-    srcvol = CloudVolume(self.src_path)
+    srcvol = CloudVolume(self.src_path, fill_missing=True)
     destvol = CloudVolume(self.dest_path)
 
-    consensus = cache(self.consensus_map_path)
+    consensus = cache(self, self.consensus_map_path)
     consensus = json.loads(consensus)
-    consensus = consensus[self.ew_volume_id]
+    try:
+      consensus = consensus[str(self.ew_volume_id)]
+    except KeyError:
+      print("Black Region", bounds, self.ew_volume_id)
+      consensus = {}
 
-    segidmap = self.build_segidmap(consensus)
+    segidmap = self.build_segid_map(consensus)
 
-    image = srcvol[ bounds.to_slices() ]
-    consensus_image = segidmap[ image ]
-    volume_segid_image = image.astype(np.uint32) | (self.ew_volume_id << 16)
+    try:
+      image = srcvol[ bounds.to_slices() ]
+    except ValueError:
+      print("Skipping", bounds)
+      zeroshape = list(bounds.size3()) + [ srcvol.num_channels ]
+      image = np.zeros(shape=zeroshape, dtype=np.uint32)
+
+    image = image.astype(np.uint32)
+
+    # Merge equivalent segments, non-consensus segments are black
+    consensus_image = segidmap[ image ] 
+
+    # Write volume ID to high bits of extended bit width image
+    volume_segid_image = image | (self.ew_volume_id << 16) 
+    
+    # Zero out segid 0 in the high bits so neuroglancer interprets them as empty
+    volume_segid_image *= np.logical_not(np.logical_not(image))
+
+    # Final image is consensus keyed by cell ID (C), i.e. 0xCCCCCCCC. 
+    # Non-empty non-consensus segments are written as:
+    # | 16 bit volume_id (V) | 16 bit seg_id (S) |, i.e. 0xVVVVSSSS 
+    # empties are 0x00000000
     final_image = consensus_image + (consensus_image == 0) * volume_segid_image
 
-    downsample_and_upload(final_image, bounds, destvol, ds_shape=final_image.shape)
+    destvol[ bounds.to_slices() ] = final_image
 
   def build_segid_map(self, consensus):
-    segidmap = np.zeros(shape=(2 ** 16), dtype=np.uint16)
+    segidmap = np.zeros(shape=(2 ** 16), dtype=np.uint32)
 
     for cellid in consensus:
-      for segid in cells[cellid]:
+      for segid in consensus[cellid]:
         segidmap[segid] = int(cellid)
 
     return segidmap

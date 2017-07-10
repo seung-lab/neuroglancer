@@ -349,7 +349,7 @@ def create_hypersquare_ingest_tasks(task_queue, hypersquare_bucket_name, dataset
       overlap=overlap,
       resolution=resolution,
     )
-  
+
   print("Listing hypersquare bucket...")
   volumes_listing = lib.gcloud_ls('gs://{}/'.format(hypersquare_bucket_name))
 
@@ -366,7 +366,7 @@ def create_hypersquare_ingest_tasks(task_queue, hypersquare_bucket_name, dataset
     # seg_task.execute()
     tq.insert(seg_task)
 
-def create_hypersquare_consensus_tasks(task_queue, src_path, dest_path, volume_map_file, consensus_map_path):
+def create_hypersquare_consensus_tasks(task_queue, src_path, dest_path, volume_map_file, consensus_map_path, shape):
   """
   Transfer an Eyewire consensus into neuroglancer. This first requires
   importing the raw segmentation via a hypersquare ingest task. However,
@@ -382,9 +382,9 @@ def create_hypersquare_consensus_tasks(task_queue, src_path, dest_path, volume_m
   with open(volume_map_file, 'r') as f:
     volume_map = json.loads(f.read())
 
-  create_downsample_scales(dest_path, mip=0, shape=(896, 896, 56))
+  # create_downsample_scales(dest_path, mip=0, ds_shape=shape)
 
-  for boundstr, volume_id in volume_map_file:
+  for boundstr, volume_id in volume_map.iteritems():
     bbox = Bbox.from_filename(boundstr)
 
     task = HyperSquareConsensusTask(
@@ -465,19 +465,21 @@ if __name__ == '__main__':
   dest_path = 'gs://neuroglancer/pinky40_v11/watershed_mst_split_tuning_remap/' 
   map_path = os.path.join(dest_path, 'mst_split_tuning_remap.npy')
   
-  with TaskQueue(queue_name='wms-test-pull-queue') as task_queue:
-    pass
-    # create_downsampling_tasks(task_queue, dest_path, mip=5, fill_missing=False)
+  with MockTaskQueue(queue_name='wms-test-pull-queue') as task_queue:
+    # create_downsampling_tasks(task_queue, 'gs://neuroglancer/pinky40_v11/image_rechunked/', mip=5, fill_missing=False)
     # create_meshing_tasks(task_queue, dest_path, mip=3)
 
     # create_mesh_manifest_tasks(task_queue, dest_path)
 
     # create_watershed_remap_tasks(task_queue, map_path, src_path, dest_path)
 
-    # create_hypersquare_consensus_tasks(
-    #   src_path='gs://neuroglancer/zfish_v1/segmentation/',
-
-    # )
+    create_hypersquare_consensus_tasks(task_queue,
+      src_path='gs://neuroglancer/zfish_v0/segmentation/',
+      dest_path='gs://neuroglancer/zfish_v0/consensus-2017-07-05',
+      volume_map_file='/Users/wms/Desktop/zfish_volumes.json',
+      consensus_map_path='gs://neuroglancer/zfish_v0/consensus-2017-07-05/zfish_consensus.json',
+      shape=(896, 896, 56),
+    )
 
     # create_boss_transfer_tasks(task_queue, 
     #   src_layer_path='boss://BCMID_8973_AIBSID_243774/neuroanatomical_aibs_pu_dataset/neuroanatomical_aibs_pu_dataset_channel',
