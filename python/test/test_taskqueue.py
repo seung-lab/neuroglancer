@@ -30,85 +30,56 @@ def test_get():
 
   n_inserts = 5
   tq.purge()
-
-  try:
-    for _ in xrange(n_inserts):
-      task = MockTask()
-      tq.insert(task)
-    tq.wait()
-
-    tqinfo = tq.get()
-    assert tqinfo['id'] == 'projects/s~{}/taskqueues/{}'.format(PROJECT_NAME, QUEUE_NAME)
-    assert tqinfo['stats']['totalTasks'] == n_inserts
-    assert tq.enqueued == n_inserts
-  finally:
-    tq.purge()
-
-  time.sleep(5)
-  assert tq.enqueued == 0
+  for _ in xrange(n_inserts):
+    task = MockTask()
+    tq.insert(task)
+  tq.wait()
+  tq.purge()
 
 def test_single_threaded_insertion():
   global QUEUE_NAME
   tq = TaskQueue(n_threads=0, queue_name=QUEUE_NAME).purge()
   
   n_inserts = 5
-
-  try:
-    for _ in xrange(n_inserts):
-      task = MockTask()
-      tq.insert(task)
-
-    lst = tq.list()
-    assert lst.has_key('items')
-
-    items = lst['items']
-    assert len(items) == n_inserts
-
-    tags = map(lambda x: x['tag'], items)
-    assert all(map(lambda x: x == MockTask.__name__, tags))
-  finally:
-    tq.purge()
+  for _ in xrange(n_inserts):
+    task = MockTask()
+    tq.insert(task)
 
   lst = tq.list()
-  assert not lst.has_key('items')
+  assert 'items' in lst
+  items = lst['items']
+  assert len(items) == n_inserts
+
+  tags = map(lambda x: x['tag'], items)
+  assert all(map(lambda x: x == MockTask.__name__, tags))
+
+  tq.purge()
+  assert not 'items' in tq.list()
+  assert tq.enqueued == 0
+
 
 def test_multi_threaded_insertion():
   global QUEUE_NAME
   tq = TaskQueue(n_threads=40, queue_name=QUEUE_NAME)
 
-  n_inserts = 1000
-
+  n_inserts = 100
   tq.purge()
-
-  time.sleep(1)
-  assert tq.enqueued == 0
-
-  try:
-    for _ in xrange(n_inserts):
-      task = MockTask()
-      tq.insert(task)
-
-    tq.wait()
-
-    lst = tq.list()
-
-    assert lst.has_key('items')
-
-    items = lst['items']
-
-    assert len(items) == 100 # task list api only lists 100 items at a time
-    # time.sleep(5)
-    # assert tq.enqueued == n_inserts # Google is returning impossible values like 1005
-
-    tags = map(lambda x: x['tag'], items)
-
-    assert all(map(lambda x: x == MockTask.__name__, tags))
-  finally:
-    tq.purge()
-
-  time.sleep(5)
+  tq.wait()
   assert tq.enqueued == 0
   
+  for _ in xrange(n_inserts):
+    task = MockTask()
+    tq.insert(task)
+  tq.wait()
+
+  lst = tq.list()
+  assert 'items' in lst
+  items = lst['items']
+  assert len(items) == 100 # task list api only lists 100 items at a time
+  tags = map(lambda x: x['tag'], items)
+  assert all(map(lambda x: x == MockTask.__name__, tags))
+  tq.purge()
+  assert tq.enqueued == 0
 
 def test_400_errors():
   global QUEUE_NAME

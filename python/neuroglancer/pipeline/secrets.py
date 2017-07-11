@@ -5,6 +5,7 @@ from oauth2client import service_account
 
 QUEUE_NAME = 'pull-queue' if 'PIPELINE_USER_QUEUE' not in os.environ else os.environ['PIPELINE_USER_QUEUE']
 PROJECT_NAME = 'neuromancer-seung-import'
+APPENGINE_QUEUE_URL = 'https://queue-dot-neuromancer-seung-import.appspot.com'
 
 google_credentials_path = '/secrets/google-secret.json'
 google_credentials = service_account.ServiceAccountCredentials \
