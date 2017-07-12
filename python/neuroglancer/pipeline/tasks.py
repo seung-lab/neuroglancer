@@ -10,19 +10,14 @@ from tempfile import NamedTemporaryFile
 from collections import defaultdict
 
 import h5py
-import blosc
 import numpy as np
 from backports import lzma
 from tqdm import tqdm
 
-from intern.remote.boss import BossRemote
-from intern.resource.boss.resource import ChannelResource
-from neuroglancer.pipeline.secrets import boss_credentials
 from neuroglancer import chunks, downsample, downsample_scales
 from neuroglancer.lib import xyzrange, min2, max2, Vec, Bbox, mkdir 
 from neuroglancer.pipeline import Storage, Precomputed, RegisteredTask
 from neuroglancer.pipeline.volumes import CloudVolume
-from neuroglancer.ingest.mesher import Mesher
 
 def downsample_and_upload(image, bounds, vol, ds_shape, mip=0, axis='z', skip_first=False):
     ds_shape = min2(vol.volume_size, ds_shape[:3])
@@ -150,6 +145,7 @@ class QuantizeAffinitiesTask(RegisteredTask):
 
 class MeshTask(RegisteredTask):
   def __init__(self, shape, offset, layer_path, mip=0, simplification_factor=100, max_simplification_error=40):
+    from neuroglancer.ingest.mesher import Mesher
     super(MeshTask, self).__init__(shape, offset, layer_path, mip, simplification_factor, max_simplification_error)
     self.shape = Vec(*shape)
     self.offset = Vec(*offset)
@@ -276,6 +272,7 @@ class MeshManifestTask(RegisteredTask):
 
 class BigArrayTask(RegisteredTask):
   def __init__(self, layer_path, chunk_path, chunk_encoding, version):
+    import blosc
     super(BigArrayTask, self).__init__(layer_path, chunk_path, chunk_encoding, version)
     self.layer_path = layer_path
     self.chunk_path = chunk_path
@@ -671,6 +668,10 @@ class BossTransferTask(RegisteredTask):
   """
 
   def __init__(self, src_path, dest_path, shape, offset):
+    from intern.remote.boss import BossRemote
+    from intern.resource.boss.resource import ChannelResource
+    from neuroglancer.pipeline.secrets import boss_credentials
+
     super(self.__class__, self).__init__(src_path, dest_path, shape, offset)
     self.src_path = src_path
     self.dest_path = dest_path
