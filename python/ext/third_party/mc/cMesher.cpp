@@ -92,51 +92,55 @@ bool cMesher::write_obj(const unsigned int id, const std::string &filename) {
 }
 
 meshobj cMesher::get_mesh(const unsigned int id, const bool generate_normals, const int simplification_factor, const int max_simplification_error) {
-    meshobj obj;
+  meshobj obj;
 
-    zi::mesh::int_mesh im;
-    im.add(mc.get_triangles(id));
-    im.fill_simplifier<double>(s);
-    s.prepare(generate_normals);
+  if (mc.count(id) == 0) { // MC produces no triangles if either none or all voxels were labeled!
+    return obj;
+  }
 
-    if (simplification_factor > 0) {
-      s.optimize(s.face_count() / simplification_factor, max_simplification_error); // this is the most cpu intensive line
+  zi::mesh::int_mesh im;
+  im.add(mc.get_triangles(id));
+  im.fill_simplifier<double>(s);
+  s.prepare(generate_normals);
+
+  if (simplification_factor > 0) {
+    s.optimize(s.face_count() / simplification_factor, max_simplification_error); // this is the most cpu intensive line
+  }
+
+  std::vector<zi::vl::vec3d> points;
+  std::vector<zi::vl::vec3d> normals;
+  std::vector<zi::vl::vec<unsigned, 3> > faces;
+
+  s.get_faces(points, normals, faces);
+  obj.points.reserve(3 * points.size());
+  obj.faces.reserve(3 * faces.size());
+
+  if (generate_normals) {
+    obj.normals.reserve(3 * points.size());
+  }
+  else {
+    obj.normals.reserve(1); 
+  }
+
+  for (auto v = points.begin(); v != points.end(); ++v) {
+    obj.points.push_back((*v)[2]);
+    obj.points.push_back((*v)[1]);
+    obj.points.push_back((*v)[0]);
+  }
+
+  if (generate_normals) {
+    for (auto vn = normals.begin(); vn != normals.end(); ++vn) {
+      obj.normals.push_back((*vn)[2]);
+      obj.normals.push_back((*vn)[1]);
+      obj.normals.push_back((*vn)[0]);
     }
+  }
 
-    std::vector<zi::vl::vec3d> points;
-    std::vector<zi::vl::vec3d> normals;
-    std::vector<zi::vl::vec<unsigned,3> > faces;
+  for (auto f = faces.begin(); f != faces.end(); ++f) {
+    obj.faces.push_back((*f)[0]);
+    obj.faces.push_back((*f)[2]);
+    obj.faces.push_back((*f)[1]);
+  }
 
-    s.get_faces(points, normals, faces);
-    obj.points.reserve(3* points.size());
-    obj.faces.reserve(3 * faces.size());
-
-    if (generate_normals) {
-      obj.normals.reserve(3 * points.size());
-    }
-    else {
-      obj.normals.reserve(1); 
-    }
-
-    for (auto v = points.begin(); v != points.end(); ++v) {
-        obj.points.push_back((*v)[2]);
-        obj.points.push_back((*v)[1]);
-        obj.points.push_back((*v)[0]);
-    }
-
-    if (generate_normals) {
-      for (auto vn = normals.begin(); vn != normals.end(); ++vn) {
-          obj.normals.push_back((*vn)[2]);
-          obj.normals.push_back((*vn)[1]);
-          obj.normals.push_back((*vn)[0]);
-      }
-    }
-
-    for (auto f = faces.begin(); f != faces.end(); ++f) {
-        obj.faces.push_back((*f)[0]);
-        obj.faces.push_back((*f)[2]);
-        obj.faces.push_back((*f)[1]);
-    }
-
-  return obj; 
+  return obj;
 }
