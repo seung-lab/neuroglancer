@@ -537,3 +537,19 @@ class S3Interface(object):
     def release_connection(self):
         S3_POOL.release_connection(self._conn)
         self._conn = None
+
+def _radix_sort(L, i=0):
+    """
+    Most significant char radix sort
+    """
+    if len(L) <= 1: 
+        return L
+    done_bucket = []
+    buckets = [ [] for x in range(255) ]
+    for s in L:
+        if i >= len(s):
+            done_bucket.append(s)
+        else:
+            buckets[ ord(s[i]) ].append(s)
+    buckets = [ _radix_sort(b, i + 1) for b in buckets ]
+    return done_bucket + [ b for blist in buckets for b in blist ]

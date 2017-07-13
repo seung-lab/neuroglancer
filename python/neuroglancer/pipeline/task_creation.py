@@ -382,9 +382,9 @@ def create_hypersquare_consensus_tasks(task_queue, src_path, dest_path, volume_m
   with open(volume_map_file, 'r') as f:
     volume_map = json.loads(f.read())
 
-  # create_downsample_scales(dest_path, mip=0, ds_shape=shape)
+  create_downsample_scales(dest_path, mip=0, ds_shape=shape)
 
-  for boundstr, volume_id in volume_map.iteritems():
+  for boundstr, volume_id in tqdm(volume_map.iteritems(), desc="Inserting HyperSquare Consensus Remap Tasks"):
     bbox = Bbox.from_filename(boundstr)
 
     task = HyperSquareConsensusTask(
@@ -465,21 +465,21 @@ if __name__ == '__main__':
   dest_path = 'gs://neuroglancer/pinky40_v11/watershed_mst_split_tuning_remap/' 
   map_path = os.path.join(dest_path, 'mst_split_tuning_remap.npy')
   
-  with MockTaskQueue(queue_name='wms-test-pull-queue') as task_queue:
-    # create_downsampling_tasks(task_queue, 'gs://neuroglancer/pinky40_v11/image_rechunked/', mip=5, fill_missing=False)
+  with TaskQueue(queue_name='wms-test-pull-queue') as task_queue:
+    # create_downsampling_tasks(task_queue, 'gs://neuroglancer/zfish_v0/consensus-2017-07-11/', mip=5, fill_missing=True)
     # create_meshing_tasks(task_queue, dest_path, mip=3)
 
-    # create_mesh_manifest_tasks(task_queue, dest_path)
+    create_mesh_manifest_tasks(task_queue, dest_path)
 
     # create_watershed_remap_tasks(task_queue, map_path, src_path, dest_path)
 
-    create_hypersquare_consensus_tasks(task_queue,
-      src_path='gs://neuroglancer/zfish_v0/segmentation/',
-      dest_path='gs://neuroglancer/zfish_v0/consensus-2017-07-05',
-      volume_map_file='/Users/wms/Desktop/zfish_volumes.json',
-      consensus_map_path='gs://neuroglancer/zfish_v0/consensus-2017-07-05/zfish_consensus.json',
-      shape=(896, 896, 56),
-    )
+    # create_hypersquare_consensus_tasks(task_queue,
+    #   src_path='gs://neuroglancer/zfish_v0/segmentation/',
+    #   dest_path='gs://neuroglancer/zfish_v0/consensus-2017-07-11',
+    #   volume_map_file='/Users/wms/Desktop/zfish_volumes.json',
+    #   consensus_map_path='gs://neuroglancer/zfish_v0/consensus-2017-07-11/zfish_consensus.json',
+    #   shape=(896, 896, 56),
+    # )
 
     # create_boss_transfer_tasks(task_queue, 
     #   src_layer_path='boss://BCMID_8973_AIBSID_243774/neuroanatomical_aibs_pu_dataset/neuroanatomical_aibs_pu_dataset_channel',
