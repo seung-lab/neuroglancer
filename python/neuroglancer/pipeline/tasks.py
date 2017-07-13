@@ -668,15 +668,21 @@ class BossTransferTask(RegisteredTask):
   """
 
   def __init__(self, src_path, dest_path, shape, offset):
+    # import intern on demand 
     from intern.remote.boss import BossRemote
     from intern.resource.boss.resource import ChannelResource
-    from neuroglancer.pipeline.secrets import boss_credentials
 
     super(self.__class__, self).__init__(src_path, dest_path, shape, offset)
     self.src_path = src_path
     self.dest_path = dest_path
     self.shape = Vec(*shape)
     self.offset = Vec(*offset)
+    self._get_credential()
+
+def _get_credential(self);
+    boss_credentials_path = '/secrets/boss-secret.json'
+    with open(boss_credentials_path, 'rb') as f:
+        self._credential = json.loads(f.read())
 
   def execute(self):
     match = re.match(r'^(boss)://([/\d\w_\.\-]+)/([\d\w_\.\-]+)/([\d\w_\.\-]+)/?', 
