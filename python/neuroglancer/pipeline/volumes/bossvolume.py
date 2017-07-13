@@ -56,7 +56,7 @@ class BossVolume(Volume):
     self.dtype = 'uint8'
     self._get_credential()
 
-  def _get_credential(self);
+  def _get_credential(self):
     boss_credentials_path = '/secrets/boss-secret.json'
     with open(boss_credentials_path, 'rb') as f:
       self._credential = json.loads(f.read())
