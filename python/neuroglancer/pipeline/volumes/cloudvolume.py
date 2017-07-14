@@ -128,7 +128,7 @@ class CloudVolume(Volume):
   @classmethod
   def extract_path(cls, cloudpath):
     """cloudpath: e.g. gs://neuroglancer/DATASET/LAYER/info or s3://..."""
-    match = re.match(r'^(gs|file|s3)://([/\d\w_\.\-]+)/([\d\w_\.\-]+)/([\d\w_\.\-]+)/?(?:info)?', cloudpath)
+    match = re.match(r'^(gs|file|s3)://(/?[\d\w_\.\-]+)/([\d\w_\.\-]+)/([\d\w_\.\-]+)/?', cloudpath)
     return ExtractedPath(*match.groups())
 
   def refreshInfo(self):

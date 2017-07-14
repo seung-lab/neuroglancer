@@ -168,3 +168,46 @@ def test_bounds():
     assert np.count_nonzero(cutout) == 0
 
     storage.kill_threads()
+
+def test_extract_path():
+    def shoulderror(url):
+        try:
+            path = CloudVolume.extract_path(url)
+            assert False, url
+        except:
+            pass
+
+    def okgoogle(url):
+        path = CloudVolume.extract_path(url)
+        assert path.protocol == 'gs', url
+        assert path.bucket_name == 'bucket', url
+        assert path.dataset_name == 'dataset', url
+        assert path.layer_name == 'layer', url
+       
+
+    shoulderror('ou3bouqjsa fkj aojsf oaojf ojsaf')
+
+    okgoogle('gs://bucket/dataset/layer/')
+    okgoogle('gs://bucket/dataset/layer/info')
+
+    path = CloudVolume.extract_path('s3://bucketxxxxxx/datasetzzzzz91h8__3/layer1br9bobasjf/')
+    assert path.protocol == 's3'
+    assert path.bucket_name == 'bucketxxxxxx'
+    assert path.dataset_name == 'datasetzzzzz91h8__3'
+    assert path.layer_name == 'layer1br9bobasjf'
+
+    path = CloudVolume.extract_path('file://bucket/dataset/layer/')
+    assert path.protocol == 'file'
+    assert path.bucket_name == 'bucket'
+    assert path.dataset_name == 'dataset'
+    assert path.layer_name == 'layer'
+
+    shoulderror('lucifer://bucket/dataset/layer/')
+    shoulderror('gs://///')
+    shoulderror('gs://neuroglancer//segmentation')
+
+    path = CloudVolume.extract_path('file:///tmp/removeme/layer/')
+    assert path.protocol == 'file'
+    assert path.bucket_name == '/tmp'
+    assert path.dataset_name == 'removeme'
+    assert path.layer_name == 'layer'
