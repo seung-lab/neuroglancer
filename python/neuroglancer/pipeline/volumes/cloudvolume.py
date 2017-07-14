@@ -19,7 +19,10 @@ ExtractedPath = namedtuple('ExtractedPath',
   ('protocol','bucket_name', 'dataset_name','layer_name')
 )
 
+DEFAULT_CHUNK_SIZE = (64,64,64)
+
 class EmptyVolumeException(Exception):
+    """Raised upon finding a missing chunk."""
     pass
 
 class CloudVolume(Volume):
@@ -27,6 +30,11 @@ class CloudVolume(Volume):
   CloudVolume represents an interface to a dataset layer at a given
   mip level. You can use it to send and receive data from neuroglancer
   datasets on supported hosts like Google Storage, S3, and local Filesystems.
+
+  Uploading to and downloading from a neuroglancer dataset requires specifying
+  an `info` file located at the root of a data layer. Amongst other things, 
+  the bounds of the volume are described in the info file via a 3D "offset" 
+  and 3D "shape" in voxels.
 
   Required:
     cloudpath: Path to the dataset layer. This should match storage's supported
@@ -40,10 +48,10 @@ class CloudVolume(Volume):
     bounded: (bool) If a region outside of volume bounds is accessed:
         True: 
           - Throw an error
-          - Negative indicies have the normal python meaning
+          - Negative indices have the normal python meaning (wrap around backwards)
         False: 
           - Fill the region with black (useful for e.g. marching cubes's 1px boundary)
-          - Negative indicies refer to cartesian space
+          - Negative indices refer to cartesian space
     fill_missing: (bool) If a file inside volume bounds is unable to be fetched:
         True: Use a block of zeros
         False: Throw an error
@@ -79,7 +87,25 @@ class CloudVolume(Volume):
       raise Exception("MIP {} has not been generated.".format(self.mip))
 
   @classmethod
-  def create_new_info(cls, num_channels, layer_type, data_type, encoding, resolution, voxel_offset, volume_size, mesh=None, chunk_size=[64,64,64]):
+  def create_new_info(cls, num_channels, layer_type, data_type, encoding, resolution, voxel_offset, volume_size, mesh=None, chunk_size=DEFAULT_CHUNK_SIZE):
+    """
+    Used for creating new neuroglancer info files.
+
+    Required:
+      num_channels: (int) 1 for grayscale, 3 for RGB 
+      layer_type: (str) typically "image" or "segmentation"
+      data_type: (str) e.g. "uint8", "uint16", "uint32", "float32"
+      encoding: (str) "raw" for binaries like numpy arrays, "jpeg"
+      resolution: int (x,y,z), x,y,z voxel dimensions in nanometers
+      voxel_offset: int (x,y,z), beginning of dataset in positive cartesian space
+      volume_size: int (x,y,z), extent of dataset in cartesian space from voxel_offset
+    
+    Optional:
+      mesh: (str) name of mesh directory, typically "mesh"
+      chunk_size: int (x,y,z), dimensions of each downloadable 3D image chunk in voxels
+
+    Returns: dict representing a single mip level that's JSON encodable
+    """
     info = {
       "num_channels": int(num_channels),
       "type": layer_type,
@@ -160,6 +186,7 @@ class CloudVolume(Volume):
 
   @property
   def shape(self):
+    """Returns Vec(x,y,z,channels) shape of the volume similar to numpy.""" 
     return self.mip_shape(self.mip)
 
   def mip_shape(self, mip):
@@ -168,6 +195,7 @@ class CloudVolume(Volume):
 
   @property
   def volume_size(self):
+    """Returns Vec(x,y,z) shape of the volume (i.e. shape - channels) similar to numpy.""" 
     return self.mip_volume_size(self.mip)
 
   def mip_volume_size(self, mip):
@@ -175,14 +203,17 @@ class CloudVolume(Volume):
 
   @property
   def available_mips(self):
+    """Returns a list of mip levels that are defined."""
     return range(len(self.info['scales']))
 
   @property
   def layer_type(self):
+    """e.g. 'image' or 'segmentation'"""
     return self.info['type']
 
   @property
   def dtype(self):
+    """e.g. 'uint8'"""
     return self.data_type
 
   @property
@@ -191,6 +222,7 @@ class CloudVolume(Volume):
 
   @property
   def encoding(self):
+    """e.g. 'raw' or 'jpeg'"""
     return self.mip_encoding(self.mip)
 
   def mip_encoding(self, mip):
@@ -202,6 +234,7 @@ class CloudVolume(Volume):
 
   @property
   def voxel_offset(self):
+    """Vec(x,y,z) start of the dataset in voxels"""
     return self.mip_voxel_offset(self.mip)
 
   def mip_voxel_offset(self, mip):
@@ -209,6 +242,7 @@ class CloudVolume(Volume):
 
   @property 
   def resolution(self):
+    """Vec(x,y,z) dimensions of each voxel in nanometers"""
     return self.mip_resolution(self.mip)
 
   def mip_resolution(self, mip):
@@ -216,10 +250,12 @@ class CloudVolume(Volume):
 
   @property
   def downsample_ratio(self):
+    """Describes how downsampled the current mip level is as an (x,y,z) factor triple."""
     return self.resolution / self.mip_resolution(0)
 
   @property
   def underlying(self):
+    """Underlying chunk size dimensions in voxels"""
     return self.mip_underlying(self.mip)
 
   def mip_underlying(self, mip):
@@ -227,6 +263,7 @@ class CloudVolume(Volume):
 
   @property
   def key(self):
+    """The subdirectory within the data layer containing the chunks for this mip level"""
     return self.mip_key(self.mip)
 
   def mip_key(self, mip):
@@ -234,6 +271,7 @@ class CloudVolume(Volume):
 
   @property
   def bounds(self):
+    """Returns a bounding box for the dataset with dimensions in voxels"""
     return self.mip_bounds(self.mip)
 
   def mip_bounds(self, mip):
@@ -242,6 +280,12 @@ class CloudVolume(Volume):
     return Bbox( offset, offset + shape )
 
   def slices_from_global_coords(self, slices):
+    """
+    Used for converting from mip 0 coordinates to upper mip level
+    coordinates. This is mainly useful for debugging since the neuroglancer
+    client displays the mip 0 coordinates for your cursor.
+    """
+
     maxsize = list(self.mip_volume_size(0)) + [ self.num_channels ]
     minsize = list(self.mip_voxel_offset(0)) + [ 0 ]
 
@@ -264,10 +308,20 @@ class CloudVolume(Volume):
     ]
 
   def reset_scales(self):
+    """Used for manually resetting downsamples if something messed up."""
     self.info['scales'] = self.info['scales'][0:1]
     return self.commitInfo()
 
   def add_scale(self, factor):
+    """
+    Generate a new downsample scale to for the info file and return an updated dictionary.
+    You'll still need to call self.commitInfo() to make it permenant.
+
+    Required:
+      factor: int (x,y,z), e.g. (2,2,1) would represent a reduction of 2x in x and y
+
+    Returns: info dict
+    """
     # e.g. {"encoding": "raw", "chunk_sizes": [[64, 64, 64]], "key": "4_4_40", 
     # "resolution": [4, 4, 40], "voxel_offset": [0, 0, 0], 
     # "size": [2048, 2048, 256]}
@@ -280,7 +334,7 @@ class CloudVolume(Volume):
     #    the mip 2 will have an offset of 2 instead of 2.5 
     #        meaning that it will be half a pixel to the left
     
-    chunk_size = find_closest_divisor(fullres['chunk_sizes'][0], closest_to=[64,64,64])
+    chunk_size = find_closest_divisor(fullres['chunk_sizes'][0], closest_to=DEFAULT_CHUNK_SIZE)
 
     newscale = {
       u"encoding": fullres['encoding'],
@@ -345,7 +399,7 @@ class CloudVolume(Volume):
       shape = bbox.size3()
       return (shape[0], shape[1], shape[2], self.num_channels)
 
-    cloudpaths = self.__cloudpaths(realized_bbox, self.bounds, self.key, self.underlying)
+    cloudpaths = self.__chunknames(realized_bbox, self.bounds, self.key, self.underlying)
     renderbuffer = np.zeros(shape=multichannel_shape(realized_bbox), dtype=self.dtype)
 
     with Storage(self.layer_cloudpath) as storage:
@@ -358,10 +412,11 @@ class CloudVolume(Volume):
       bbox = Bbox.from_filename(fileinfo['filename'])
       content_len = len(fileinfo['content']) if fileinfo['content'] is not None else 0
 
-      if content_len == 0 and not self.fill_missing:
-        raise EmptyVolumeException(fileinfo['filename'])
-      elif content_len == 0 and self.fill_missing:
-        fileinfo['content'] = ''
+      if not fileinfo['content']:
+        if self.fill_missing:
+          fileinfo['content'] = ''
+        else:
+          raise EmptyVolumeException(fileinfo['filename'])
 
       try:
         img3d = neuroglancer.chunks.decode(
@@ -445,7 +500,7 @@ class CloudVolume(Volume):
     alignment_check = bounds.round_to_chunk_size(self.underlying, self.voxel_offset)
 
     if not np.all(alignment_check.minpt == bounds.minpt):
-      raise ValueError('Only grid aligned writes are currently supported. Got: {}, Volume Offset: {}, Alignment Check: {}'.format(
+      raise ValueError('Only chunk aligned writes are currently supported. Got: {}, Volume Offset: {}, Alignment Check: {}'.format(
         bounds, self.voxel_offset, alignment_check)
       )
 
@@ -466,19 +521,19 @@ class CloudVolume(Volume):
     
       yield chunkimg, spt, ept 
 
-  def __cloudpaths(self, bbox, volume_bbox, key, chunk_size):
-    def cloudpathgenerator():  
-      for x,y,z in xyzrange( bbox.minpt, bbox.maxpt, chunk_size ):
-        highpt = min2(Vec(x,y,z) + chunk_size, volume_bbox.maxpt)
-        filename = "{}-{}_{}-{}_{}-{}".format(
-          x, highpt.x,
-          y, highpt.y, 
-          z, highpt.z
-        )
+  def __chunknames(self, bbox, volume_bbox, key, chunk_size):
+    paths = []
 
-        yield os.path.join(key, filename)
+    for x,y,z in xyzrange( bbox.minpt, bbox.maxpt, chunk_size ):
+      highpt = min2(Vec(x,y,z) + chunk_size, volume_bbox.maxpt)
+      filename = "{}-{}_{}-{}_{}-{}".format(
+        x, highpt.x,
+        y, highpt.y, 
+        z, highpt.z
+      )
+      paths.append( os.path.join(key, filename) )
 
-    return [ path for path in cloudpathgenerator() ] 
+    return paths
 
   def __del__(self):
     self._storage.kill_threads()
