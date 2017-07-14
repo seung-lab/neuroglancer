@@ -10,12 +10,10 @@ import numpy as np
 from tqdm import tqdm
 from PIL import Image
 
-from neuroglancer.lib import Vec, eclamp, clamp, mkdir, COMMON_STAGING_DIR, xyzrange
+from neuroglancer.lib import Vec, check_bounds, clamp, mkdir, COMMON_STAGING_DIR, xyzrange
 
 def generate_slices(slices, minsize, maxsize, bounded=True):
   """Assisting function for __getitem__. e.g. vol[:,:,:,:]"""
-
-  clampfn = (lambda v,x,y: v) if not bounded else eclamp
 
   if isinstance(slices, int) or isinstance(slices, float) or isinstance(slices, long):
     slices = [ slice(int(slices), int(slices)+1, 1) ]
@@ -45,8 +43,12 @@ def generate_slices(slices, minsize, maxsize, bounded=True):
       # border on the edge of the beginning of the dataset as in
       # marching cubes.
       if bounded:
-        start = maxsize[index] + start if start < 0 else clampfn(start, minsize[index], maxsize[index])
-        end = maxsize[index] + end if end < 0 else clampfn(end, minsize[index], maxsize[index])
+        if start < 0:
+          start = maxsize[index] + start         
+        check_bounds(start, minsize[index], maxsize[index])
+        if end < 0:
+          end = maxsize[index] + end
+        check_bounds(end, minsize[index], maxsize[index])
 
       slices[index] = slice(start, end, step)
 
