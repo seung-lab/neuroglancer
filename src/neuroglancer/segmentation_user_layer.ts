@@ -54,6 +54,8 @@ const NOT_SELECTED_ALPHA_JSON_KEY = 'notSelectedAlpha';
 const OBJECT_ALPHA_JSON_KEY = 'objectAlpha';
 const HIDE_SEGMENT_ZERO_JSON_KEY = 'hideSegmentZero';
 
+const DEBUG = true;
+
 interface SourceSink {
   source: { segment: Uint64, root: Uint64 }
   sink: { segment: Uint64, root: Uint64 }
@@ -110,28 +112,35 @@ export class SegmentationUserLayer extends UserLayer {
         this.displayState.visibleSegments3D.add(rootSegment);
         getLeaves(rootSegment).then(leafSegments => {
           if (!this.displayState.rootSegments.has(rootSegment)) {
-            console.log("Adding 2D segments canceled due to missing root.");
+            if (DEBUG === true) {
+              console.log("Adding 2D segments canceled due to missing root.");
+            }
             return;
           }
 
-          for (let seg of leafSegments) {
-            this.displayState.visibleSegments2D.add(seg);
-            this.displayState.segmentEquivalences.link(rootSegment, seg);
+          if (DEBUG === true) {
+            console.log(`Reserving ${Math.ceil(this.displayState.visibleSegments2D.size + 1.5 * leafSegments.length)} 2D segments`);
+            console.log(`Reserving ${Math.ceil(this.displayState.visibleSegments3D.size + 1.5 * leafSegments.length / 10)} 3D segments`);
           }
+          this.displayState.visibleSegments2D.reserve(Math.ceil(this.displayState.visibleSegments2D.size + 1.5 * leafSegments.length));
+          this.displayState.visibleSegments3D.reserve(Math.ceil(this.displayState.visibleSegments3D.size + 1.5 * leafSegments.length / 10));
+          this.displayState.segmentEquivalences.disjointSets.hashMap.reserve(Math.ceil(this.displayState.segmentEquivalences.disjointSets.size + 1.5 * leafSegments.length));
+
+          this.displayState.visibleSegments2D.add(leafSegments);
+          this.displayState.segmentEquivalences.link(rootSegment, leafSegments);
+
           StatusMessage.displayText(`Selected ${leafSegments.length} segments.`);
         });
       } else if (!added) {
         let segments = [...this.displayState.segmentEquivalences.setElements(rootSegment)];
-        let segmentCount = 0;
-        for (let seg of segments) {
-          if (this.displayState.visibleSegments2D.has(seg)) {
-            this.displayState.visibleSegments2D.delete(seg);
-            ++segmentCount;
-          }
-          if (this.displayState.visibleSegments3D.has(seg)) {
-            this.displayState.visibleSegments3D.delete(seg);
-          }
-        }
+        let segmentCount = segments.length; // Wrong count, but faster than below
+        // for (let seg of segments) {
+        //   if (this.displayState.visibleSegments2D.has(seg)) {
+        //     ++segmentCount;
+        //   }
+        // }
+        this.displayState.visibleSegments2D.delete(segments);
+        this.displayState.visibleSegments3D.delete(segments);
         this.displayState.segmentEquivalences.deleteSet(rootSegment);
         StatusMessage.displayText(`Deselected ${segmentCount} segments.`);
       }

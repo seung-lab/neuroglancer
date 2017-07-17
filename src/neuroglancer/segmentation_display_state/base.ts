@@ -47,33 +47,18 @@ export function forEachRootSegment(
 
 export function forEachVisibleSegment2D(
     state: VisibleSegmentsState, callback: (objectId: Uint64, rootObjectId: Uint64) => void) {
-  let {rootSegments, visibleSegments2D, segmentEquivalences} = state;
-  for (let rootObjectId of rootSegments) {
-    // TODO(jbms): Remove this check if logic is added to ensure that it always holds.
-    if (!segmentEquivalences.disjointSets.isMinElement(rootObjectId)) {
-      continue;
-    }
-    for (let objectId of segmentEquivalences.setElements(rootObjectId)) {
-      if (visibleSegments2D.has(objectId)) {
-        callback(objectId, rootObjectId);
-      }
-    }
+  let {visibleSegments2D, segmentEquivalences} = state;
+  for (let objectId of visibleSegments2D) {
+    let rootObjectId = segmentEquivalences.get(objectId);
+    callback(objectId, rootObjectId);
   }
 }
 
 export function forEachVisibleSegment3D(
     state: VisibleSegmentsState, callback: (objectId: Uint64, rootObjectId: Uint64) => void) {
-  let {rootSegments, visibleSegments3D, segmentEquivalences} = state;
-  for (let rootObjectId of rootSegments) {
-    // TODO(jbms): Remove this check if logic is added to ensure that it always holds.
-    if (!segmentEquivalences.disjointSets.isMinElement(rootObjectId)) {
-      continue;
-    }
-    for (let objectId of segmentEquivalences.setElements(rootObjectId)) {
-      if (visibleSegments3D.has(objectId)) {
-        callback(objectId, rootObjectId);
-      }
-    }
+  let {visibleSegments3D, segmentEquivalences} = state;
+  for (let objectId of visibleSegments3D) {
+    let rootObjectId = segmentEquivalences.get(objectId);
+    callback(objectId, rootObjectId);
   }
 }
-

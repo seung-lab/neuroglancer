@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
+import {HashMapUint64} from 'neuroglancer/gpu_hash/hash_table';
 import {Uint64} from 'neuroglancer/util/uint64';
 
 const rankSymbol = Symbol('disjoint_sets:rank');
 const parentSymbol = Symbol('disjoint_sets:parent');
 const nextSymbol = Symbol('disjoint_sets:next');
 const prevSymbol = Symbol('disjoint_sets:prev');
+const maxSymbol = Symbol('disjoint_sets:max');
 
 function findRepresentative(v: any): any {
   // First pass: find the root, which will be stored in ancestor.
@@ -85,8 +87,6 @@ function initializeElement(v: any) {
   v[nextSymbol] = v[prevSymbol] = v;
 }
 
-const minSymbol = Symbol('disjoint_sets:min');
-
 function isRootElement(v: any) {
   return v[parentSymbol] === v;
 }
@@ -94,11 +94,12 @@ function isRootElement(v: any) {
 /**
  * Represents a collection of disjoint sets of Uint64 values.
  *
- * Supports merging sets, retrieving the minimum Uint64 value contained in a set (the representative
+ * Supports merging sets, retrieving the maximum Uint64 value contained in a set (the representative
  * value), and iterating over the elements contained in a set.
  */
 export class DisjointUint64Sets {
   private map = new Map<string, Uint64>();
+  hashMap = new HashMapUint64();
   generation = 0;
 
   has(x: Uint64): boolean {
@@ -113,23 +114,26 @@ export class DisjointUint64Sets {
     if (element === undefined) {
       return x;
     }
-    return findRepresentative(element)[minSymbol];
+    return findRepresentative(element)[maxSymbol];
   }
 
-  isMinElement(x: Uint64) {
+  // Max element is used as representative of a set. The octree level is stored
+  // within the first bytes of the 64bit ID; the max element refers to a root.
+  isMaxElement(x: Uint64) {
     let y = this.get(x);
     return (y === x || Uint64.equal(y, x));
   }
 
   private makeSet(x: Uint64): Uint64 {
     let key = x.toString();
-    let {map} = this;
+    let {map, hashMap} = this;
     let element = map.get(key);
     if (element === undefined) {
       element = x.clone();
       initializeElement(element);
-      (<any>element)[minSymbol] = element;
+      (<any>element)[maxSymbol] = element;
       map.set(key, element);
+      hashMap.set(element, element);
       return element;
     }
     return findRepresentative(element);
@@ -144,42 +148,12 @@ export class DisjointUint64Sets {
     this.generation++;
     let newNode = linkUnequalSetRepresentatives(a, b);
     spliceCircularLists(a, b);
-    let aMin = (<any>a)[minSymbol];
-    let bMin = (<any>b)[minSymbol];
-    newNode[minSymbol] = Uint64.min(aMin, bMin);
+    let aMax = (<any>a)[maxSymbol];
+    let bMax = (<any>b)[maxSymbol];
+    newNode[maxSymbol] = Uint64.max(aMax, bMax);
+    this.hashMap.setOrUpdate(a, newNode[maxSymbol]);
+    this.hashMap.setOrUpdate(b, newNode[maxSymbol]);
     return true;
-  }
-
-  unlink (a: Uint64): boolean {
-    let key = a.toString();
-    let element = this.map.get(key);
-
-    if (!element || ((<any>element)[parentSymbol] === element)) {
-      return true;
-    }
-
-    let nodes = this.shatter(element);
-
-    if (nodes[0] === element) {
-      nodes.shift();
-    }
-
-    if (nodes.length === 0) {
-      return false;
-    }
-
-    let is_ok = true;
-
-    if (nodes.length > 1) {
-      nodes.forEach( (x) => {
-        if (x !== element) {
-          let this_is_ok = this.link(nodes[0], x);
-          is_ok = is_ok && this_is_ok;
-        }
-      });
-    }
-
-    return is_ok;
   }
 
   deleteSet (a: Uint64): boolean {
@@ -187,6 +161,7 @@ export class DisjointUint64Sets {
     if (ids.length > 0) {
       for (const id of ids) {
         this.map.delete(id.toString());
+        this.hashMap.delete(id);
       }
       return true;
     }
@@ -206,36 +181,6 @@ export class DisjointUint64Sets {
     return nodes;
   }
 
-  split (a: Uint64[], b: Uint64[]) : boolean {
-    if (a.length === 0 || b.length === 0) {
-      return false;
-    }
-
-    let consistencyfn = (list: Uint64[]) => {
-      let root = this.get(list[0]);
-      for (let elem of list) {
-        if (root !== this.get(elem)) {
-          throw new Error(`${elem} was not attached to ${list}`);
-        }
-      }
-    };
-
-    consistencyfn(a);
-    consistencyfn(b);
-
-    if (this.get(a[0]) !== this.get(b[0])) {
-      throw new Error(`${a} and ${b} are not in the same set.`);
-    }
-
-    this.shatter(a[0]);
-
-    a.forEach( (x) => this.link(a[0], x) );
-    b.forEach( (x) => this.link(b[0], x) );
-
-    return true;
-  }
-
-
   * setElements(a: Uint64): IterableIterator<Uint64> {
     let key = a.toString();
     let element = this.map.get(key);
@@ -247,12 +192,13 @@ export class DisjointUint64Sets {
   }
 
   clear() {
-    let {map} = this;
+    let {map, hashMap} = this;
     if (map.size === 0) {
       return false;
     }
     ++this.generation;
     map.clear();
+    hashMap.clear();
     return true;
   }
 
@@ -263,7 +209,7 @@ export class DisjointUint64Sets {
   * mappings(temp = <[Uint64, Uint64]>new Array<Uint64>(2)) {
     for (let element of this.map.values()) {
       temp[0] = element;
-      temp[1] = findRepresentative(element)[minSymbol];
+      temp[1] = findRepresentative(element)[maxSymbol];
       yield temp;
     }
   }

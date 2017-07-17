@@ -19,7 +19,7 @@ import {Uint64} from 'neuroglancer/util/uint64';
 
 export const NUM_ALTERNATIVES = 3;
 
-const DEFAULT_LOAD_FACTOR = 0.9;
+const DEFAULT_LOAD_FACTOR = 0.8;
 
 const DEBUG = false;
 
@@ -235,6 +235,16 @@ export abstract class HashTableBase {
     return false;
   }
 
+  reserve(x: number) {
+    if (x > this.capacity) {
+      this.backupPending();
+      this.grow(x);
+      this.restorePending();
+      return true;
+    }
+    return false;
+  }
+
   private clearTable() {
     let {table, entryStride, emptyLow, emptyHigh} = this;
     let length = table.length;
@@ -375,12 +385,18 @@ export abstract class HashTableBase {
 
     if (++this.size > this.capacity) {
       this.backupPending();
+      if (DEBUG) {
+        console.log("Growing because we exceeded max capacity.");
+      }
       this.grow(Math.ceil(this.growFactor * this.width * this.height));
       this.restorePending();
     }
 
     while (!this.tryToInsert()) {
       this.backupPending();
+      if (DEBUG) {
+        console.log("Growing because insertion failed.");
+      }
       this.grow(this.width * this.height);
       this.restorePending();
     }

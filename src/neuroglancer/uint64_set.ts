@@ -36,11 +36,19 @@ export class Uint64Set extends SharedObjectCounterpart {
     this.changed = <any>undefined;
   }
 
-  add_(x: Uint64) {
-    return this.hashTable.add(x);
+  add_(x: Uint64 | Uint64[]) {
+    if (x.constructor === Array) {
+      let changed = false;
+      for (const v of <Uint64[]>x) {
+        changed = this.hashTable.add(v) || changed;
+      }
+      return changed;
+    } else {
+      return this.hashTable.add(<Uint64>x);
+    }
   }
 
-  add(x: Uint64) {
+  add(x: Uint64 | Uint64[]) {
     if (this.add_(x)) {
       let {rpc} = this;
       if (rpc) {
@@ -54,15 +62,36 @@ export class Uint64Set extends SharedObjectCounterpart {
     return this.hashTable.has(x);
   }
 
+  reserve_(x: number) { return this.hashTable.reserve(x); }
+
+  reserve(x: number) {
+    if (this.reserve_(x)) {
+      let {rpc} = this;
+      if (rpc) {
+        rpc.invoke('Uint64Set.reserve', {'id': this.rpcId, 'value': x});
+      }
+      this.changed.dispatch(x, true);
+    }
+  }
+
+
   [Symbol.iterator]() {
     return this.hashTable.keys();
   }
 
-  delete_(x: Uint64) {
-    return this.hashTable.delete(x);
+  delete_(x: Uint64 | Uint64[]) {
+    if (x.constructor === Array) {
+      let changed = false;
+      for (const v of <Uint64[]>x) {
+        changed = this.hashTable.delete(v) || changed;
+      }
+      return changed;
+    } else {
+      return this.hashTable.delete(<Uint64>x);
+    }
   }
 
-  delete(x: Uint64) {
+  delete (x: Uint64 | Uint64[]) {
     if (this.delete_(x)) {
       let {rpc} = this;
       if (rpc) {
@@ -98,6 +127,13 @@ export class Uint64Set extends SharedObjectCounterpart {
 registerRPC('Uint64Set.add', function(x) {
   let obj = this.get(x['id']);
   if (obj.add_(x['value'])) {
+    obj.changed.dispatch();
+  }
+});
+
+registerRPC('Uint64Set.reserve', function(x) {
+  let obj = this.get(x['id']);
+  if (obj.reserve_(x['value'])) {
     obj.changed.dispatch();
   }
 });

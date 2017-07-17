@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import debounce from 'lodash/debounce';
 import {Chunk, ChunkSource} from 'neuroglancer/chunk_manager/backend';
 import {ChunkPriorityTier, ChunkState} from 'neuroglancer/chunk_manager/base';
 import {FRAGMENT_SOURCE_RPC_ID, MESH_LAYER_RPC_ID} from 'neuroglancer/mesh/base';
@@ -293,13 +294,34 @@ export class FragmentSource extends ChunkSource {
 @registerSharedObject(MESH_LAYER_RPC_ID)
 export class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
   source: MeshSource;
+  private requestedChildChunks: Map<string, { add: Uint64[], delete: Uint64[] }>;
+  private handleChildChunks:Function;
 
   constructor(rpc: RPC, options: any) {
     super(rpc, options);
     this.source = this.registerDisposer(rpc.getRef<MeshSource>(options['source']));
     this.registerDisposer(this.chunkManager.recomputeChunkPriorities.add(() => {
       this.updateChunkPriorities();
+    this.requestedChildChunks = new Map<string, { add: Uint64[], delete: Uint64[] }>();
+    this.handleChildChunks = debounce(this.delayedHandleChildChunks, 100);
+
     enableGraphServer(options['graphPath']);
+  }
+
+  private delayedHandleChildChunks() {
+    let rootTmp: Uint64;
+    for (const [rootID, elements] of this.requestedChildChunks.entries()) {
+      rootTmp = Uint64.parseString(rootID);
+      if (!this.rootSegments.has(rootTmp)) {
+        console.log("Adding 3D children aborted due to missing root.");
+        continue;
+      }
+
+      this.visibleSegments3D.add(elements.add);
+      this.segmentEquivalences.link(rootTmp, elements.add);
+      this.visibleSegments3D.delete(elements.delete);
+    }
+    this.requestedChildChunks.clear();
   }
 
   private updateChunkPriorities() {
@@ -333,17 +355,13 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
             console.log("Adding 3D children aborted due to missing root.");
             return;
           }
-          for (let childId of children) {
-            this.visibleSegments3D.add(childId);
-            if (segmentID.high != objectId.high || segmentID.low != objectId.low) {
-              console.log(`Error: OrgObjectID is ${segmentID}, before linking it's already ${objectId}!`)
-            }
-            this.segmentEquivalences.link(segmentID, childId);
-            if (segmentID.high != objectId.high || segmentID.low != objectId.low) {
-              console.log(`Error: OrgObjectID was ${segmentID}, after linking it's ${objectId}!`)
-            }
-          };
-          this.visibleSegments3D.delete(segmentID);
+          if (!this.requestedChildChunks.has(rootID.toString())) {
+            this.requestedChildChunks.set(rootID.toString(), { add: new Array<Uint64>(), delete: new Array<Uint64>() });
+          }
+
+          this.requestedChildChunks.get(rootID.toString()).add.push(...children);
+          this.requestedChildChunks.get(rootID.toString()).delete.push(segmentID);
+          this.handleChildChunks();
         });
       }
     });

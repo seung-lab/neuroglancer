@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-import {HashMapUint64} from 'neuroglancer/gpu_hash/hash_table';
 import {GPUHashTable, HashMapShaderManager, HashSetShaderManager} from 'neuroglancer/gpu_hash/shader';
 import {SegmentColorShaderManager} from 'neuroglancer/segment_color';
 import {registerRedrawWhenSegmentationDisplayStateChanged, SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
@@ -30,25 +29,7 @@ import {ShaderBuilder, ShaderProgram} from 'neuroglancer/webgl/shader';
 import {glsl_unnormalizeUint8} from 'neuroglancer/webgl/shader_lib';
 
 const selectedSegmentForShader = new Float32Array(8);
-
-export class EquivalencesHashMap {
-  generation = Number.NaN;
-  hashMap = new HashMapUint64();
-  constructor(public disjointSets: DisjointUint64Sets) {}
-
-  update() {
-    let {disjointSets} = this;
-    const {generation} = disjointSets;
-    if (this.generation !== generation) {
-      this.generation = generation;
-      let {hashMap} = this;
-      hashMap.clear();
-
-      for (let [objectId, minObjectId] of disjointSets.mappings()) {
-        hashMap.set(objectId, minObjectId);
-      }
-    }
-  }
+const DEBUG = true;
 }
 
 export interface SliceViewSegmentationDisplayState extends SegmentationDisplayState {
@@ -64,9 +45,7 @@ export class SegmentationRenderLayer extends RenderLayer {
   private gpuHashTable = GPUHashTable.get(this.gl, this.displayState.visibleSegments2D.hashTable);
 
   private equivalencesShaderManager = new HashMapShaderManager('equivalences');
-  private equivalencesHashMap =
-      new EquivalencesHashMap(this.displayState.segmentEquivalences.disjointSets);
-  private gpuEquivalencesHashTable = GPUHashTable.get(this.gl, this.equivalencesHashMap.hashMap);
+  private gpuEquivalencesHashTable = GPUHashTable.get(this.gl, this.displayState.segmentEquivalences.disjointSets.hashMap);
   private hasEquivalences: boolean;
 
   private semanticShaderManager = new HashMapShaderManager('semantic');
@@ -251,7 +230,6 @@ uint64_t getMappedObjectId() {
     this.hashTableManager.enable(gl, shader, this.gpuHashTable);
 
     if (this.hasEquivalences) {
-      this.equivalencesHashMap.update();
       this.equivalencesShaderManager.enable(gl, shader, this.gpuEquivalencesHashTable);
     }
     this.semanticShaderManager.enable(gl, shader, this.gpusemanticHashTable);
