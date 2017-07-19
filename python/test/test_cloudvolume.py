@@ -117,21 +117,21 @@ def test_writer_last_chunk_smaller():
     assert np.array_equal(ept, (100,64,64))
     assert img.shape == (36,64,64,1)
 
-def test_reader_negative_indexing():
-    """negative indexing is supported"""
-    delete_layer()
-    storage, data = create_layer(size=(128,64,64,1), offset=(0,0,0))
-    cv = CloudVolume(storage.layer_path)
+# def test_reader_negative_indexing():
+#     """negative indexing is supported"""
+#     delete_layer()
+#     storage, data = create_layer(size=(128,64,64,1), offset=(0,0,0))
+#     cv = CloudVolume(storage.layer_path)
 
-    # Test negative beginnings
-    img1 = cv[-1:, -1:, -1:, :]
-    img2 = cv[:, :, :, :][-1:, -1:, -1:, :]
+#     # Test negative beginnings
+#     img1 = cv[-1:, -1:, -1:, :]
+#     img2 = cv[:, :, :, :][-1:, -1:, -1:, :]
 
-    assert np.array_equal(img1, img2)    
+#     assert np.array_equal(img1, img2)    
 
-    # Test negative ends
-    with pytest.raises(ValueError):
-        img1 = cv[::-1, ::-1, ::-1, :]
+#     # Test negative ends
+#     with pytest.raises(ValueError):
+#         img1 = cv[::-1, ::-1, ::-1, :]
 
 def test_setitem_mismatch():
     delete_layer()

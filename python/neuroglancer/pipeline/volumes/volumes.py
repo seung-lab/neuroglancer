@@ -43,11 +43,11 @@ def generate_slices(slices, minsize, maxsize, bounded=True):
       # border on the edge of the beginning of the dataset as in
       # marching cubes.
       if bounded:
-        if start < 0:
-          start = maxsize[index] + start         
+        # if start < 0: # this is support for negative indicies
+          # start = maxsize[index] + start         
         check_bounds(start, minsize[index], maxsize[index])
-        if end < 0:
-          end = maxsize[index] + end
+        # if end < 0: # this is support for negative indicies
+        #   end = maxsize[index] + end
         check_bounds(end, minsize[index], maxsize[index])
 
       slices[index] = slice(start, end, step)

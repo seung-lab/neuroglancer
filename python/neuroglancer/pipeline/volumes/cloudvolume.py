@@ -46,12 +46,8 @@ class CloudVolume(Volume):
   Optional:
     mip: (int) Which level of downsampling to read to/write from. 0 is the highest resolution.
     bounded: (bool) If a region outside of volume bounds is accessed:
-        True: 
-          - Throw an error
-          - Negative indices have the normal python meaning (wrap around backwards)
-        False: 
-          - Fill the region with black (useful for e.g. marching cubes's 1px boundary)
-          - Negative indices refer to cartesian space
+        True: Throw an error
+        False: Fill the region with black (useful for e.g. marching cubes's 1px boundary)
     fill_missing: (bool) If a file inside volume bounds is unable to be fetched:
         True: Use a block of zeros
         False: Throw an error
