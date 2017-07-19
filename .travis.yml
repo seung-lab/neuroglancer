@@ -28,7 +28,7 @@ before_deploy:
 - npm install
 - npm install --only=dev 
 - npm run build-min
-- cp -r ./dist/min appengine/static/
+- cp -r ./dist/min appengine/frontend/static/
 - export DEPLOY="false"
 - if [ "$APPVERSION" == "master" ]; then export DEPLOY="true"; fi
 - virtualenv frontend
