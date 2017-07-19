@@ -8,7 +8,7 @@ from neuroglancer.pipeline.secrets import PROJECT_NAME
 
 import time
 
-PIPELINE_USER_QUEUE = None if 'PIPELINE_USER_QUEUE' not in os.environ else os.environ['PIPELINE_USER_QUEUE']
+PIPELINE_USER_QUEUE = None if 'TEST_PIPELINE_USER_QUEUE' not in os.environ else os.environ['TEST_PIPELINE_USER_QUEUE']
 TRAVIS_BRANCH = None if 'TRAVIS_BRANCH' not in os.environ else os.environ['TRAVIS_BRANCH']
 
 if PIPELINE_USER_QUEUE is not None:
