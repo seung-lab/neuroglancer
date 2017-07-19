@@ -89,7 +89,7 @@ def compute_build_bounding_box(storage, prefix='build/'):
 
 def get_build_data_type_and_shape(storage):
     for filename in storage.list_files(prefix='build/'):
-        arr = chunks.decode_npz(storage.get_file('build/'+filename))
+        arr = chunks.decode_npz(storage.get_file(filename))
         return arr.dtype.name, arr.shape[3] #num_channels
 
 def create_info_file_from_build(layer_path, layer_type, resolution, encoding):

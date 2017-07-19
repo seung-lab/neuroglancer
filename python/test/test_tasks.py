@@ -84,7 +84,7 @@ def test_downsample_no_offset():
 
     cv.commitInfo()
 
-    create_downsampling_tasks(MockTaskQueue(), storage.layer_path, mip=0, shape=(512, 512, 64))
+    create_downsampling_tasks(MockTaskQueue(), storage.layer_path, mip=0, num_mips=4)
 
     cv.refreshInfo()
 
@@ -125,7 +125,7 @@ def test_downsample_with_offset():
 
     cv.commitInfo()
 
-    create_downsampling_tasks(MockTaskQueue(), storage.layer_path, mip=0, shape=(512, 512, 64))
+    create_downsampling_tasks(MockTaskQueue(), storage.layer_path, mip=0, num_mips=3)
 
     cv.refreshInfo()
 
@@ -163,11 +163,11 @@ def test_downsample_w_missing():
     cv.commitInfo()
 
     try:
-        create_downsampling_tasks(MockTaskQueue(), storage.layer_path, mip=0, shape=(256, 256, 64), fill_missing=False)
+        create_downsampling_tasks(MockTaskQueue(), storage.layer_path, mip=0, num_mips=3, fill_missing=False)
     except EmptyVolumeException:
         pass
 
-    create_downsampling_tasks(MockTaskQueue(), storage.layer_path, mip=0, shape=(256, 256, 64), fill_missing=True)
+    create_downsampling_tasks(MockTaskQueue(), storage.layer_path, mip=0, num_mips=3, fill_missing=True)
 
     cv.refreshInfo()
 
@@ -190,11 +190,11 @@ def test_downsample_higher_mip():
     cv.info['scales'] = cv.info['scales'][:1]
     
     cv.commitInfo()
-    create_downsampling_tasks(MockTaskQueue(), storage.layer_path, mip=0, shape=(256, 256, 64))
+    create_downsampling_tasks(MockTaskQueue(), storage.layer_path, mip=0, num_mips=2)
     cv.refreshInfo()
     assert len(cv.available_mips) == 3
 
-    create_downsampling_tasks(MockTaskQueue(), storage.layer_path, mip=1, shape=(256, 256, 64))
+    create_downsampling_tasks(MockTaskQueue(), storage.layer_path, mip=1, num_mips=2)
     cv.refreshInfo()
     assert len(cv.available_mips) == 4
 
@@ -218,7 +218,7 @@ def test_mesh():
     )
     t.execute()
     assert storage.get_file('mesh/1:0:0-64_0-64_0-64') is not None 
-    assert list(storage.list_files('mesh/')) == ['1:0:0-64_0-64_0-64']
+    assert list(storage.list_files('mesh/')) == ['mesh/1:0:0-64_0-64_0-64']
 
 def test_quantize_affinities():
     qpath = 'file:///tmp/removeme/quantized/'
