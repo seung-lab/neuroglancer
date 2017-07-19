@@ -318,7 +318,7 @@ def min2(a, b):
 def clamp(val, low, high):
   return min(max(val, low), high)
 
-def eclamp(val, low, high):
+def check_bounds(val, low, high):
   if val > high or val < low:
     raise ValueError('Value {} cannot be outside of inclusive range {} to {}'.format(val,low,high))
   return val

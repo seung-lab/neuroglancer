@@ -1,5 +1,5 @@
 from volumes import *
-from gcloudvolume import *
+from cloudvolume import *
 
 
 
