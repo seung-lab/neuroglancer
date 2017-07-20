@@ -10,10 +10,11 @@ import numpy as np
 from tqdm import tqdm
 
 from neuroglancer import downsample_scales, chunks
-from neuroglancer.pipeline import Storage, TaskQueue
+from neuroglancer.lib import Vec, Bbox, max2, min2, xyzrange, find_closest_divisor
+from neuroglancer.pipeline import Storage, TaskQueue, MockTaskQueue
 from neuroglancer.pipeline.tasks import (BigArrayTask, IngestTask,
      HyperSquareTask, MeshTask, MeshManifestTask, DownsampleTask)
-from neuroglancer.pipeline.volumes import HDF5Volume
+from neuroglancer.pipeline.volumes import HDF5Volume, CloudVolume
 
 def create_ingest_task(storage, task_queue):
     """
@@ -67,105 +68,73 @@ def compute_bigarray_bounding_box(storage):
                     abs_z_max-abs_z_min+1])
     print('offset', [abs_x_min-1, abs_y_min-1, abs_z_min-1])
 
-def compute_build_bounding_box(storage):
-    abs_x_min = abs_y_min = abs_z_min = float('inf')
-    abs_x_max = abs_y_max = abs_z_max = 0
-    chunk_sizes = set()
-    for filename in tqdm(storage.list_files(prefix='build/')):
-        match = re.search(r'(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)$', filename)
-        (x_min, x_max,
-         y_min, y_max,
-         z_min, z_max) = map(int, match.groups())
-        abs_x_min = min(int(x_min), abs_x_min)
-        abs_y_min = min(int(y_min), abs_y_min)
-        abs_z_min = min(int(z_min), abs_z_min)
-        abs_x_max = max(int(x_max), abs_x_max)
-        abs_y_max = max(int(y_max), abs_y_max)
-        abs_z_max = max(int(z_max), abs_z_max)
-        chunk_size = (x_max - x_min, y_max - y_min, z_max - z_min)
-        chunk_sizes.add(chunk_size)
+def compute_build_bounding_box(storage, prefix='build/'):
+    bboxes = []
+    for filename in tqdm(storage.list_files(prefix=prefix), desc='Computing Bounds'):
+        bbox = Bbox.from_filename(filename) 
+        bboxes.append(bbox)
 
-    shape = [abs_x_max-abs_x_min,
-             abs_y_max-abs_y_min,
-             abs_z_max-abs_z_min]
-    offset = [abs_x_min, abs_y_min, abs_z_min]  
-    chunk_size = largest_size(chunk_sizes)
-    print('shape=', shape , '; offset=', offset, '; chunk_size=', chunk_size)
-    return shape, offset, chunk_size
+    bounds = Bbox.expand(*bboxes)
+    chunk_size = reduce(max2, map(lambda bbox: bbox.size3(), bboxes))
+
+    print('bounds={} (size: {}); chunk_size={}'.format(bounds, bounds.size3(), chunk_size))
+  
+    return bounds, chunk_size
 
 def get_build_data_type_and_shape(storage):
     for filename in storage.list_files(prefix='build/'):
         arr = chunks.decode_npz(storage.get_file(filename))
         return arr.dtype.name, arr.shape[3] #num_channels
 
-def create_info_file_from_build(storage, layer_type, resolution=[1,1,1], encoding='raw',
-    soft_chunk=[64,64,64], force_chunk=None):
-    assert layer_type == 'image' or layer_type == 'segmentation'
-    layer_shape, layer_offset, build_chunk_size = compute_build_bounding_box(storage)
+def create_info_file_from_build(layer_path, layer_type, resolution, encoding):
+  assert layer_type in ('image', 'segmentation')
+
+  with Storage(layer_path) as storage:
+    bounds, build_chunk_size = compute_build_bounding_box(storage)
     data_type, num_channels = get_build_data_type_and_shape(storage)
-    info = {
-        'data_type': data_type,
-        'num_channels': num_channels,
-        'scales': [], 
-        'type': layer_type,
-    }
-    if layer_type == 'segmentation':
-        info['mesh'] = 'mesh'
 
-    if force_chunk is not None:
-        neuroglancer_chunk_size =  force_chunk
-    else:
-        neuroglancer_chunk_size = find_closest_divisor(build_chunk_size, closest_to=soft_chunk)
-    scale_ratios = downsample_scales.compute_near_isotropic_downsampling_scales(
-        size=layer_shape,
-        voxel_size=resolution,
-        dimensions_to_downsample=[0, 1, 2],
-        max_downsampled_size=neuroglancer_chunk_size
-    )
-    # if the voxel_offset is not divisible by the ratio
-    # zooming out will slightly shift the data.
-    # imagine the offset is 10
-    # the mip 1 will have an offset of 5
-    # the mip 2 will have an offset of 2 instead of 2.5 meaning that it will he half a pixel to the left
-    for ratio in scale_ratios:
-        downsampled_resolution = map(int, (resolution * np.array(ratio)))
-        scale = {  
-          'chunk_sizes': [ neuroglancer_chunk_size ],
-          'encoding': encoding, 
-          'key': '_'.join(map(str, downsampled_resolution)),
-          'resolution': downsampled_resolution,
-          'size': map(int, np.ceil(np.array(layer_shape) / ratio)),
-          'voxel_offset': map(int, layer_offset /  np.array(ratio)),
-        }
-        info['scales'].append(scale)
+  neuroglancer_chunk_size = find_closest_divisor(build_chunk_size, closest_to=[64,64,64])
 
-    storage.put_file('info', content=json.dumps(info))
+  info = CloudVolume.create_new_info(
+    num_channels=num_channels, 
+    layer_type=layer_type, 
+    data_type=data_type, 
+    encoding=encoding, 
+    resolution=resolution, 
+    voxel_offset=bounds.minpt, 
+    volume_size=bounds.size3(),
+    mesh=(layer_type == 'segmentation'), 
+    chunk_size=neuroglancer_chunk_size,
+  )
 
-def find_closest_divisor(to_divide, closest_to):
-    def find_closest(td,ct):
-        min_distance = td
-        best = td
-        for x in divisors(td):
-            if abs(x-ct) < min_distance:
-                min_distance = abs(x-ct)
-                best = x
-        return best
-    return [find_closest(td,ct) for td, ct in zip(to_divide,closest_to)]
+  vol = CloudVolume(layer_path, mip=0, info=info).commitInfo()
+  vol = create_downsample_scales(layer_path, mip=0, ds_shape=build_chunk_size, axis='z')
+  
+  return vol.info
 
-def divisors(n):
-    for i in xrange(1, int(math.sqrt(n) + 1)):
-        if n % i == 0:
-            yield i
-            if i*i != n:
-                yield n / i
+def create_downsample_scales(layer_path, mip, ds_shape, axis='z'):
+  vol = CloudVolume(layer_path, mip)
+  shape = min2(vol.volume_size, ds_shape)
 
-def largest_size(sizes):
-    x = y = z = 0
-    for size in sizes:
-        x =  max(x, size[0])
-        y =  max(y, size[1])
-        z =  max(z, size[2])
-    return [x,y,z]
+  # sometimes we downsample a base layer of 512x512 
+  # into underlying chunks of 64x64 which permits more scales
+  underlying_mip = (mip + 1) if (mip + 1) in vol.available_mips else mip
+  underlying_shape = vol.mip_underlying(underlying_mip).astype(np.float32)
+
+  toidx = { 'x': 0, 'y': 1, 'z': 2 }
+  preserved_idx = toidx[axis]
+  underlying_shape[preserved_idx] = float('inf')
+
+  scales = downsample_scales.compute_plane_downsampling_scales(
+    size=shape, 
+    preserve_axis=axis, 
+    max_downsampled_size=int(min(*underlying_shape)),
+  )
+  scales = scales[1:] # omit (1,1,1)
+  scales = [ vol.downsample_ratio * Vec(*factor3) for factor3 in scales ]
+  map(vol.add_scale, scales)
+  return vol.commitInfo()
+
 
 def create_downsampling_task(storage, task_queue, downsample_ratio=[2, 2, 1]):
     # update info with new scale
@@ -216,29 +185,18 @@ def create_hypersquare_tasks(storage, task_queue, bucket_name, path_from_bucket)
             task_queue.insert(t)
 
 def upload_build_chunks(storage, volume, offset=[0, 0, 0], build_chunk_size=[1024,1024,128]):
-    xyzranges = ( xrange(0, vs, bcs) for vs, bcs in zip(volume.shape, build_chunk_size) )
-    for x_min, y_min, z_min in tqdm(product(*xyzranges)):
-        x_max = min(volume.shape[0], x_min + build_chunk_size[0])
-        y_max = min(volume.shape[1], y_min + build_chunk_size[1])
-        z_max = min(volume.shape[2], z_min + build_chunk_size[2])
-        chunk = volume[x_min:x_max, y_min:y_max, z_min:z_max]
+  offset = Vec(*offset)
+  shape = Vec(*volume.shape[:3])
+  build_chunk_size = Vec(*build_chunk_size)
 
-        #adds offsets
-        x_min += offset[0]; x_max += offset[0]
-        y_min += offset[1]; y_max += offset[1]
-        z_min += offset[2]; z_max += offset[2]
-        filename = 'build/{}-{}_{}-{}_{}-{}'.format(
-            x_min, x_max, y_min, y_max, z_min, z_max)
-        storage.put_file(filename, chunks.encode_npz(chunk))
-    storage.wait()
-
-class MockTaskQueue():
-    def insert(self, task):
-        task.execute()
-        del task
-
-    def wait(self):
-        return self
+  for spt in xyzrange( (0,0,0), shape, build_chunk_size):
+    ept = min2(spt + build_chunk_size, shape)
+    bbox = Bbox(spt, ept)
+    chunk = volume[ bbox.to_slices() ]
+    bbox += offset
+    filename = 'build/{}'.format(bbox.to_filename())
+    storage.put_file(filename, chunks.encode_npz(chunk))
+  storage.wait()
 
 
 def ingest_hdf5_example():

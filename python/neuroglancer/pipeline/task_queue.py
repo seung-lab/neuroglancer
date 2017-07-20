@@ -272,3 +272,23 @@ class TaskQueue(ThreadedQueue):
         else:
             cloud_delete(self._api)
         return self
+
+class MockTaskQueue():
+    def __init__(self, queue_name=''):
+        pass
+
+    def insert(self, task):
+        task.execute()
+        del task
+
+    def wait(self):
+      return self
+
+    def kill_threads(self):
+      return self
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exception_type, exception_value, traceback):
+      pass
