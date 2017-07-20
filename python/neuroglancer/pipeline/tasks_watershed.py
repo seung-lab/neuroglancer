@@ -6,7 +6,7 @@ import os
 import h5py
 import numpy as np
 
-from neuroglancer.pipeline import Storage, Precomputed, RegisteredTask
+from neuroglancer.pipeline import CloudVolume, RegisteredTask
 
 class WatershedTask(RegisteredTask):
 
@@ -49,7 +49,7 @@ class WatershedTask(RegisteredTask):
          self._cropzmin, self._cropzmax) = map(int, match.groups())
 
     def _download_input_chunk(self):
-        volume = Precomputed(Storage(self.layer_path_affinities))
+        volume = CloudVolume(self.layer_path_affinities)
         self._data = volume[self._xmin:self._xmax,
                             self._ymin:self._ymax,
                             self._zmin:self._zmax]
@@ -80,7 +80,7 @@ class WatershedTask(RegisteredTask):
                     self._data = h5['main'][:].T
 
     def _upload_chunk(self):
-        volume = Precomputed(Storage(self.layer_path_segmentation))
+        volume = CloudVolume(self.layer_path_segmentation)
         crop_data = self._data[self._cropxmin:self._cropxmax,
                                self._cropymin:self._cropymax,
                                self._cropzmin:self._cropzmax, np.newaxis]

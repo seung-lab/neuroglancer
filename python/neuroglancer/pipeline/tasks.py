@@ -20,7 +20,7 @@ from intern.resource.boss.resource import ChannelResource
 from neuroglancer.pipeline.secrets import boss_credentials
 from neuroglancer import chunks, downsample, downsample_scales
 from neuroglancer.lib import xyzrange, min2, max2, Vec, Bbox, mkdir 
-from neuroglancer.pipeline import Storage, Precomputed, RegisteredTask
+from neuroglancer.pipeline import Storage, RegisteredTask
 from neuroglancer.pipeline import Mesher # broken out for ease of commenting out
 from neuroglancer.pipeline.volumes import CloudVolume
 

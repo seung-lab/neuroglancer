@@ -6,7 +6,7 @@ import numpy as np
 
 from neuroglancer.pipeline.volumes import CloudVolume, EmptyVolumeException
 from neuroglancer.pipeline import (
-    Storage, Precomputed, DownsampleTask, 
+    Storage, DownsampleTask, 
     MeshTask, MeshManifestTask, QuantizeAffinitiesTask,
     HyperSquareConsensusTask, WatershedTask)
 from neuroglancer.pipeline.task_creation import create_downsample_scales, create_downsampling_tasks, create_quantized_affinity_info
@@ -364,8 +364,8 @@ def test_real_data():
     return # this is to expensive to be test by travis
     from tqdm import tqdm
     from itertools import product
-    storage = Storage('s3://neuroglancer/pinky40_v11/affinitymap-jnet')
-    scale = Precomputed(storage).info['scales'][0]
+    vol = CloudVolume('s3://neuroglancer/pinky40_v11/affinitymap-jnet')
+    scale = vol.info['scales'][0]
     for x_min in xrange(0, scale['size'][0], 512):
         for y_min in xrange(0, scale['size'][1], 512):
             for z_min in xrange(0, scale['size'][2], 1024):
