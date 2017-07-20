@@ -9,7 +9,8 @@ import numpy as np
 from tqdm import tqdm
 
 import neuroglancer
-from neuroglancer.lib import clamp, xyzrange, Vec, Bbox, min2, max2, find_closest_divisor
+import neuroglancer.lib as lib
+from neuroglancer.lib import clamp, xyzrange, Vec, Bbox, min2, max2
 from volumes import Volume, VolumeCutout, generate_slices
 from neuroglancer.pipeline.storage import Storage
 
@@ -339,7 +340,7 @@ class CloudVolume(Volume):
     newscale = {
       u"encoding": fullres['encoding'],
       u"chunk_sizes": [ chunk_size ],
-      u"resolution": list( Vec3(*fullres['resolution']) * factor ),
+      u"resolution": list( Vec(*fullres['resolution']) * factor ),
       u"voxel_offset": downscale(fullres['voxel_offset'], np.floor),
       u"size": downscale(fullres['size'], np.ceil),
     }

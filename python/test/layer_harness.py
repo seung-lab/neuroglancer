@@ -9,12 +9,13 @@ from neuroglancer.pipeline.storage import Storage
 from neuroglancer.pipeline.task_creation import (upload_build_chunks, create_info_file_from_build,
     create_ingest_task, MockTaskQueue)
 
-layer_path = '/tmp/removeme/layer'
+layer_path = '/tmp/removeme/'
 
-def create_storage():
-    return Storage('file://' + layer_path, n_threads=0)
+def create_storage(layer_name='layer'):
+    stor_path = os.path.join(layer_path, layer_name)
+    return Storage('file://' + stor_path, n_threads=0)
 
-def create_layer(size, offset, layer_type="image", dtype=None):
+def create_layer(size, offset, layer_type="image", layer_name='layer', dtype=None):
 
     default = lambda dt: dtype or dt
 
@@ -28,12 +29,12 @@ def create_layer(size, offset, layer_type="image", dtype=None):
         high = np.array([0], dtype=default(np.uint32)) - 1
         random_data = np.random.randint(high[0], size=size, dtype=default(np.uint32))
         
-    storage = upload_image(random_data, offset, layer_type)
+    storage = upload_image(random_data, offset, layer_type, layer_name)
     
     return storage, random_data
 
-def upload_image(image, offset, layer_type):
-    storage = create_storage()
+def upload_image(image, offset, layer_type, layer_name):
+    storage = create_storage(layer_name)
     upload_build_chunks(storage, image, offset)
     # Jpeg encoding is lossy so it won't work
     create_info_file_from_build(storage.layer_path, layer_type=layer_type, encoding="raw", resolution=[1,1,1])

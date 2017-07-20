@@ -18,7 +18,7 @@ def test_upload_build_chunks():
   random_data = np.random.randint(255, size=(1024, 1024, 256, 1), dtype=np.uint8)
   task_creation.upload_build_chunks(storage, random_data, offset=(0,0,0), build_chunk_size=(512,512,64))
 
-  build_path = os.path.join(layer_path, 'build')
+  build_path = os.path.join(layer_path, 'layer/build')
 
   files = os.listdir(build_path)
   assert len(files) == (2 * 2 * 4)
