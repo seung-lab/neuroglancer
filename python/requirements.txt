@@ -1,10 +1,11 @@
 backports.lzma==0.0.8
-blosc==1.5.0
 boto==2.39.0
+blosc==1.5.0
 click==6.6
 Cython==0.25.2
 google-api-python-client==1.6.2
 google-cloud==0.27.0
+intern==0.9.4
 jsonschema==2.6.0
 networkx==1.11
 numpy==1.13.1
