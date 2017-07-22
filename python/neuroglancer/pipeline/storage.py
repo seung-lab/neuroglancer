@@ -324,10 +324,9 @@ class GoogleCloudStorageInterface(object):
     def put_file(self, file_path, content, content_type, compress):
         key = self.get_path_to_file(file_path)
         blob = self._bucket.blob( key )
-        blob.upload_from_string(content, content_type)
         if compress:
             blob.content_encoding = "gzip"
-            blob.patch()
+        blob.upload_from_string(content, content_type)
 
     def get_file(self, file_path):
         key = self.get_path_to_file(file_path)

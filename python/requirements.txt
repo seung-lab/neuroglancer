@@ -8,7 +8,7 @@ Cython==0.25.2
 certifi==2016.9.26
 decorator==4.0.11
 google-api-python-client==1.6.2
-google-cloud==0.25
+google-cloud==0.26
 jsonschema==2.6.0
 networkx==1.11
 numpy==1.11.1
