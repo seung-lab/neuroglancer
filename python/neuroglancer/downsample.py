@@ -23,8 +23,21 @@ def method(layer_type):
     return downsample_with_averaging
   elif layer_type == 'segmentation':
     return downsample_segmentation
+  elif layer_type == 'activation':
+    return downsample_with_max_pooling
   else:
     return downsample_with_striding 
+
+def validate_factor(array, factor):
+  factor = np.array(factor, dtype=np.int32)
+  if np.any(factor <= 0):
+    raise ValueError("Factors less than one don't make sense. Factor: {}".format(factor))
+
+  factor = list(factor)
+  while len(factor) < len(array.shape):
+    factor += [ 1 ]
+
+  return tuple(factor)
 
 def odd_to_even(image):
   """
@@ -74,14 +87,18 @@ def scale_series_to_downsample_factors(scales):
   return [ factor.astype(int) for factor in factors ]
 
 def downsample_with_averaging(array, factor):
-    """Downsample x by factor using averaging.
+    """
+    Downsample x by factor using averaging.
+
+    If factor has fewer parameters than data.shape, the remainder
+    are assumed to be 1.
 
     @return: The downsampled array, of the same type as x.
     """
-    if len(array.shape) == 4 and len(factor) == 3:
-      factor = list(factor) + [ 1 ] # don't mix channels
+    factor = validate_factor(array, factor)
+    if np.array_equal(factor[:3], np.array([1,1,1])):
+      return array
 
-    factor = tuple(factor)
     output_shape = tuple(int(math.ceil(s / f)) for s, f in zip(array.shape, factor))
     temp = np.zeros(output_shape, float)
     counts = np.zeros(output_shape, np.int)
@@ -92,14 +109,49 @@ def downsample_with_averaging(array, factor):
         counts[indexing_expr] += 1
     return np.cast[array.dtype](temp / counts)
 
+def downsample_with_max_pooling(array, factor):
+  """
+  Downsample by picking the maximum value within a
+  cuboid specified by factor. That is, a reduction factor
+  of 2x2 works by summarizing many 2x2 cuboids. If factor's 
+  length is smaller than array.shape, the remaining factors will
+  be filled with 1.
+  """
+  factor = validate_factor(array, factor)
+  if np.all(np.array(factor, int) == 1):
+      return array
+
+  sections = []
+
+  for offset in np.ndindex(factor):
+    part = array[tuple(np.s_[o::f] for o, f in zip(offset, factor))]
+    sections.append(part)
+
+  output = sections[0].copy()
+
+  for section in sections[1:]:
+    np.maximum(output, section, output)
+
+  return output
+
 def downsample_segmentation(data, factor):
+  """
+  Downsample by picking the most frequent value within a
+  2x2 square for each 2D image within a 3D stack if factor
+  is specified such that a power of two downsampling is possible.
+
+  Otherwise, downsample by striding.
+
+  If factor has fewer parameters than data.shape, the remainder
+  are assumed to be 1.
+  """
   if len(factor) == 4:
     assert factor[3] == 1 
     factor = factor[:3]
 
   factor = np.array(factor)
-  if np.array_equal(factor, np.array([1,1,1])):
-    return data
+  if np.all(np.array(factor, int) == 1):
+      return data
 
   is_pot = lambda x: (x != 0) and not (x & (x - 1)) # is power of two
   is_twod_pot_downsample = np.any(factor == 1) and is_pot(reduce(operator.mul, factor))
@@ -193,8 +245,15 @@ def downgrade_type(arr):
   return arr
 
 def downsample_with_striding(array, factor): 
-    """Downsample x by factor using striding.
+    """
+    Downsample x by factor using striding.
+
+    If factor has fewer parameters than data.shape, the remainder
+    are assumed to be 1.
 
     @return: The downsampled array, of the same type as x.
     """
+    factor = validate_factor(array, factor)
+    if np.all(np.array(factor, int) == 1):
+      return array
     return array[tuple(np.s_[::f] for f in factor)]
