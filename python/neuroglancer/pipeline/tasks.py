@@ -1,4 +1,5 @@
 from __future__ import print_function
+
 from collections import defaultdict
 import json
 import itertools
@@ -246,8 +247,10 @@ class MeshManifestTask(RegisteredTask):
     segids = defaultdict(list)
 
     for filename in storage.list_files(prefix=prefix):
+      filename = os.path.basename(filename)
       # `match` implies the beginning (^). `search` matches whole string
-      matches = re.match('(\d+):(\d+):', filename)
+      matches = re.search('(\d+):(\d+):', filename)
+      
       if not matches:
         continue
 
