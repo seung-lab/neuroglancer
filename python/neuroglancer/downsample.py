@@ -33,8 +33,9 @@ def validate_factor(array, factor):
   if np.any(factor <= 0):
     raise ValueError("Factors less than one don't make sense. Factor: {}".format(factor))
 
-  if len(array.shape) == 4 and len(factor) == 3:
-    factor = list(factor) + [ 1 ] # don't mix channels
+  factor = list(factor)
+  while len(factor) < len(array.shape):
+    factor += [ 1 ]
 
   return tuple(factor)
 
