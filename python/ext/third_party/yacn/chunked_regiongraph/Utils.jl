@@ -2,12 +2,12 @@ module Utils
 
 export unordered, to_chunk_id, chunk_id_to_slices, str_to_slices, slices_to_str, ChunkID, Label, seg_id, chunk_id, level, pos
 
-function unordered{T}(x::Tuple{T,T})
+@inline function unordered{T}(x::Tuple{T,T})
 	a,b = x
-	return (min(a,b),max(a,b))
+	return (min(a,b),max(a,b))::Tuple{T,T}
 end
-function unordered{T}(a::T,b::T)
-	return (min(a,b),max(a,b))
+@inline function unordered{T}(a::T,b::T)
+	return (min(a,b),max(a,b))::Tuple{T,T}
 end
 
 
@@ -29,36 +29,36 @@ function to_chunk_id(x,y,z)
 	return ChunkID(L,X,Y,Z)
 end
 
-function ChunkID(L::UInt32,X::UInt32,Y::UInt32,Z::UInt32)
+@inline function ChunkID(L::UInt32,X::UInt32,Y::UInt32,Z::UInt32)
 	return (L << 24) | (X << 16) | (Y << 8) | Z
 end
 
-function ChunkID(L,X,Y,Z)
+@inline function ChunkID(L,X,Y,Z)
 	return ChunkID(UInt32(L),UInt32(X),UInt32(Y),UInt32(Z))
 end
 
-function level(id::ChunkID)
+@inline function level(id::ChunkID)
 	return ((id >> 24) & low_mask_8)
 end
 
-function pos(id::ChunkID)
+@inline function pos(id::ChunkID)
 	return (id >> 16) & low_mask_8, (id >> 8) & low_mask_8, id & low_mask_8
 end
 
-function Label(seg_id::UInt32, chunk_id::ChunkID)
+@inline function Label(seg_id::UInt32, chunk_id::ChunkID)
 	return (UInt64(seg_id)) | (UInt64(chunk_id) << 32)
 end
 
-function Label(x,y)
+@inline function Label(x,y)
 	return Label(UInt32(x),UInt32(y))
 end
 
 const low_mask_32 = UInt64(0b11111111111111111111111111111111)
-function seg_id(l::Label)
+@inline function seg_id(l::Label)
 	return UInt32(l & low_mask_32)
 end
 
-function chunk_id(l::Label)
+@inline function chunk_id(l::Label)
 	return UInt32((l >> 32) & low_mask_32)
 end
 

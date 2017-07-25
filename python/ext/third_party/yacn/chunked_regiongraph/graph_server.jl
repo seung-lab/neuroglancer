@@ -1,6 +1,7 @@
 push!(LOAD_PATH, dirname(@__FILE__))
 include("../pre/Save.jl")
 include("./constants.jl")
+using MbedTLS
 using HttpServer
 using HttpCommon
 using ChunkedGraphs
@@ -8,59 +9,44 @@ using Save
 using PyCall
 using Utils
 
-# type MeshNode
-# 	min::Vector{Int32}
-# 	max::Vector{Int32}
-# 	paths::Vector{String}
-# 	alternatives::Vector{MeshNode}
-# 	function MeshNode()
-# 		return new([-1,-1,-1], [-1,-1,-1], [], [])
-# 	end
-# end
-
+# Generate a certificate and key if they do not exist
+rel(p::String) = joinpath(dirname(@__FILE__), p)
+if !isfile(rel("keys/server.crt"))
+	@static if is_unix()
+		run(`mkdir -p $(rel("keys"))`)
+		run(`openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout
+			$(rel("keys/server.key")) -out $(rel("keys/server.crt"))`)
+	end
+end
 
 @pyimport neuroglancer.simple_task_queue.task_queue as task_queue
 tq = task_queue.TaskQueue("http://127.0.0.1:8000/1.0")
-#tq = task_queue.TaskQueue("http://50.16.149.198:8001/1.0")
 
 edges = Save.load("~/testing/chunked_edges.jls")
 vertices = Save.load("~/testing/chunked_vertices.jls")
+
+#N=round(Int,1e8)
+#edges=edges[1:N]
+#vertices=unique(cat(1,UInt64[e[1] for e in edges],UInt64[e[2] for e in edges]))
+
 println("$(length(edges)) edges")
 println("$(length(vertices)) vertices")
-handles = Dict()
-mesh_label = Dict()
-for v in vertices
-	handles[seg_id(v)]=v
+
+function get_handles(vertices)
+		handles = Dict{UInt32,UInt64}()
+		for v in vertices
+				handles[seg_id(v)]=v
+		end
+		return handles
 end
 
+@time handles = get_handles(vertices)
 begin
-	G=ChunkedGraph()
-	for v in vertices
-		add_atomic_vertex!(G,v)
-	end
-
-	for e in edges
-		add_atomic_edge!(G,e)
-	end
-	@time update!(G)
+		G=ChunkedGraph()
+		@time add_atomic_vertices!(G,vertices)
+		@time add_atomic_edges!(G,edges)
+		@time update!(G)
 end
-#=
-Profile.init(n=Int(1e7),delay=0.01)
-@profile begin
-	G=ChunkedGraph()
-	for v in vertices
-		add_atomic_vertex!(G,v)
-	end
-
-	for e in edges
-		add_atomic_edge!(G,e)
-	end
-	@time update!(G)
-end
-using ProfileView
-ProfileView.view()
-wait()
-=#
 
 const WATERSHED_STORAGE = "gs://neuroglancer/pinky40_v11/watershed_cutout"
 
@@ -77,19 +63,6 @@ function labeller(start_label)
 end
 
 task_labeller = labeller(0)
-# task_name=string(task_labeller())
-# tq[:insert](name=task_name,	payload=prod(["MeshManifestTask(\"$(WATERSHED_STORAGE)\",0).execute()"]))
-
-# for x in 29696:cx:35000
-#   for y in 19968:cy:25000
-#     for z in 0:cz:511
-#       task_name=string(task_labeller())
-#       tq[:insert](name=task_name,	payload=prod(["MeshTask(\"4_4_40\",\"$(x)-$(x+cx)_$(y)-$(y+cy)_$(z)-$(z+cz)\",\"$(WATERSHED_STORAGE)\",0,1).execute()"]))
-#     end
-#   end
-# end
-# println("All done!")
-# exit()
 
 function simple_print(x::Array)
 	string('[',map(n->"$(n),",x)...,']')
@@ -112,24 +85,12 @@ function mesh!(c::ChunkedGraphs.Chunk)
 		""" for v in vertex_list]),
 		dependencies = [mesh_task_name])
 	else
-		#task_name = string(task_labeller())
 		for child in c.subgraphs
 			mesh!(child)
 		end
-		# tq[:insert](name=task_name,
-		# payload=prod(["""
-		# MergeMeshTask("$(WATERSHED_STORAGE)",$([child.label for child in v.children]),$(v.label)).execute()
-		# """
-		# for v in vertex_list]),
-		# dependencies=child_task_names)
 	end
-	# mesh_task[c.id]=task_name
-	# mesh_task[v.label] = task_name
 	return
 end
-
-# mesh!(G.root)
-# exit();
 
 function mesh!(v::ChunkedGraphs.Vertex)
 	if !haskey(mesh_task,v.label)
@@ -215,6 +176,7 @@ function handle_children(id)
 
 	v = get_vertex(G, id)
 	if ChunkedGraphs.level(v) == 2 # Lvl 2, children are neuroglancer supervoxel, need to trim the chunk ids
+		return Response(UInt8[],headers)
 		s = UInt64[seg_id(child.label) for child in v.children]
 		println("$(now()): handle_children - v: $(v.label), (Level $(ChunkedGraphs.level(v))), - children: $(simple_print([seg_id(child.label) for child in v.children]))")
 	else
@@ -298,7 +260,7 @@ end
 http.events["listen"] = (saddr) -> println("Running on https://$saddr (Press CTRL+C to quit)")
 
 server = Server(http)
+cert = MbedTLS.crt_parse_file(rel("keys/server.crt"))
+key = MbedTLS.parse_keyfile(rel("keys/server.key"))
 
-#run(server, host=getaddrinfo("seungworkstation1000.princeton.edu"), port=9100)
-run(server, host=getaddrinfo("seungworkstation14.princeton.edu"), port=9100)
-
+run(server, host=getaddrinfo("127.0.0.1"), port=9100, ssl=(cert, key))
