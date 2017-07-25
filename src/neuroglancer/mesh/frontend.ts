@@ -106,6 +106,7 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
 
   constructor(
       public chunkManager: ChunkManager, public source: MeshSource,
+      public graphPath: string,
       public displayState: SegmentationDisplayState3D) {
     super();
 
@@ -116,6 +117,7 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
     sharedObject.RPC_TYPE_ID = MESH_LAYER_RPC_ID;
     sharedObject.initializeCounterpartWithChunkManager({
       'source': source.addCounterpartRef(),
+      'graphPath': graphPath
     });
     this.setReady(true);
     this.visibilityCount.addDependency(sharedObject.visibilityCount);

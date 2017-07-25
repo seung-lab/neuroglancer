@@ -19,7 +19,7 @@ import {AvailableCapacity} from 'neuroglancer/chunk_manager/base';
 import {ChunkManager, ChunkQueueManager} from 'neuroglancer/chunk_manager/frontend';
 import {DisplayContext} from 'neuroglancer/display_context';
 import {KeyBindingHelpDialog} from 'neuroglancer/help/key_bindings';
-import {LayerManager, LayerSelectedValues, MouseSelectionState, SplitState} from 'neuroglancer/layer';
+import {LayerManager, LayerSelectedValues, MouseSelectionState, SplitState, SplitMode} from 'neuroglancer/layer';
 import {LayerDialog} from 'neuroglancer/layer_dialog';
 import {LayerPanel} from 'neuroglancer/layer_panel';
 import {LayerListSpecification} from 'neuroglancer/layer_specification';
@@ -180,7 +180,7 @@ export class Viewer extends RefCounted implements ViewerState {
       });
     }
 
-    for (let command of ['toggle-shatter-equivalencies', 'merge-selection', 'recolor', 'clear-segments', 'toggle-semantic-mode']) {
+    for (let command of ['toggle-shatter-equivalencies', 'recolor', 'clear-segments', 'toggle-semantic-mode']) {
       keyCommands.set(command, function() { this.layerManager.invokeAction(command); });
     }
 
@@ -195,14 +195,29 @@ export class Viewer extends RefCounted implements ViewerState {
       new LayerDialog(this.layerSpecification);
     }
 
-    keyCommands.set('two-point-split', function () { 
+    keyCommands.set('two-point-merge', function () { 
+      this.mouseState.toggleSplit(); 
+
+      if (this.mouseState.splitStatus === SplitState.INACTIVE) {
+        StatusMessage.displayText('Merge Mode Deactivated.');
+        this.mouseState.setMode(SplitMode.NONE);
+      }
+      else {
+        StatusMessage.displayText('Merge Mode Activated.');
+        this.mouseState.setMode(SplitMode.MERGE);
+      }
+    });
+
+    keyCommands.set('two-point-split', function () {
       this.mouseState.toggleSplit(); 
 
       if (this.mouseState.splitStatus === SplitState.INACTIVE) {
         StatusMessage.displayText('Split Mode Deactivated.');
+        this.mouseState.setMode(SplitMode.NONE);
       }
       else {
-       StatusMessage.displayText('Split Mode Activated.'); 
+        StatusMessage.displayText('Split Mode Activated.');
+        this.mouseState.setMode(SplitMode.SPLIT);
       }
     });
 

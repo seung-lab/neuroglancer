@@ -19,12 +19,13 @@ import {ChunkPriorityTier, ChunkState} from 'neuroglancer/chunk_manager/base';
 import {FRAGMENT_SOURCE_RPC_ID, MESH_LAYER_RPC_ID} from 'neuroglancer/mesh/base';
 import {SegmentationLayerSharedObjectCounterpart} from 'neuroglancer/segmentation_display_state/backend';
 import {getObjectKey} from 'neuroglancer/segmentation_display_state/base';
-import {forEachVisibleSegment} from 'neuroglancer/segmentation_display_state/base';
+import {forEachVisibleSegment3D} from 'neuroglancer/segmentation_display_state/base';
 import {convertEndian32, Endianness} from 'neuroglancer/util/endian';
 import {vec3} from 'neuroglancer/util/geom';
 import {verifyObject, verifyObjectProperty} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {registerSharedObject, RPC} from 'neuroglancer/worker_rpc';
+import {getChildren, enableGraphServer, GRAPH_SERVER_NOT_ENABLED} from 'neuroglancer/object_graph_service';
 
 const MESH_OBJECT_MANIFEST_CHUNK_PRIORITY = 100;
 const MESH_OBJECT_FRAGMENT_CHUNK_PRIORITY = 50;
@@ -55,6 +56,11 @@ export class ManifestChunk extends Chunk {
     if (this.priorityTier === ChunkPriorityTier.VISIBLE) {
       this.source!.chunkManager.scheduleUpdateChunkPriorities();
     }
+  }
+
+  downloadFailed(error: any) {
+    super.downloadFailed(error);
+    this.source!.chunkManager.scheduleUpdateChunkPriorities();
   }
 
   toString() { return this.objectId.toString(); }
@@ -293,6 +299,7 @@ class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
     this.source = this.registerDisposer(rpc.getRef<MeshSource>(options['source']));
     this.registerSignalBinding(
         this.chunkManager.recomputeChunkPriorities.add(this.updateChunkPriorities, this));
+    enableGraphServer(options['graphPath']);
   }
 
   private updateChunkPriorities() {
@@ -300,7 +307,7 @@ class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
       return;
     }
     let {source, chunkManager} = this;
-    forEachVisibleSegment(this, objectId => {
+    forEachVisibleSegment3D(this, objectId => {
       let manifestChunk = source.getChunk(objectId);
       chunkManager.requestChunk(
           manifestChunk, ChunkPriorityTier.VISIBLE, MESH_OBJECT_MANIFEST_CHUNK_PRIORITY);
@@ -313,6 +320,16 @@ class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
         // console.log("FIXME: updatefragment chunk priority");
         // console.log(manifestChunk.data);
         // let fragmentChunk = fragmentSource.getChunk(manifestChunk);
+      }
+
+      if (manifestChunk.state === ChunkState.FAILED && objectId.high > 0) { // no need to query neuroglancer supervoxels (high == 0)
+        manifestChunk.state = ChunkState.EXPIRED;
+        console.log(`Manifest for segment ${objectId} is missing.`);
+        getChildren(objectId).then((childIds) => {
+          childIds.forEach(childId => {
+            this.visibleSegments3D.add(childId);
+          });
+        });
       }
     });
   }
