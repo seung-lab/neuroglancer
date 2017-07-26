@@ -34,22 +34,20 @@ def decode_mesh_buffer(fragment):
     face_data = fragment[4+(num_vertices*3)*4:]
     vertices = []
 
-    while vertex_data:
-        try:
-            x = struct.unpack("=f", vertex_data[0:4])[0]
-            y = struct.unpack("=f", vertex_data[4:8])[0]
-            z = struct.unpack("=f", vertex_data[8:12])[0]
-        except Exception as exc:
-            import pdb; pdb.set_trace()
-            pass
-        vertices.append((x,y,z))
-        vertex_data = vertex_data[12:]
+    if len(vertex_data) % 12 != 0:
+      print("Unable to process fragment.")
+      return { 'num_vertices': 0, 'vertices': [], 'faces': [] }
+
+    for i in xrange(0, len(vertex_data), 12):
+      x = struct.unpack("=f", vertex_data[i:i+4])[0]
+      y = struct.unpack("=f", vertex_data[i+4:i+8])[0]
+      z = struct.unpack("=f", vertex_data[i+8:i+12])[0]
+      vertices.append((x,y,z))
 
     faces = []
-    while face_data:
-        p = struct.unpack("=I", face_data[0:4])[0]
-        faces.append(p)
-        face_data = face_data[4:]
+    for i in xrange(0, len(face_data), 4):
+      p = struct.unpack("=I", face_data[i:i+4])[0]
+      faces.append(p)
 
     return {
       'num_vertices': num_vertices, 
@@ -57,25 +55,26 @@ def decode_mesh_buffer(fragment):
       'faces': faces
     }
 
-def mesh_to_obj(fragment):
+def mesh_to_obj(fragment, num_prev_verticies):
     objdata = []
     
     for vertex in fragment['vertices']:
         objdata.append('v %s %s %s' % (vertex[0], vertex[1], vertex[2]))
     
-    faces = fragment['faces']
+    faces = [ face + num_prev_verticies + 1 for face in fragment['faces'] ]
     for i in xrange(0, len(faces), 3):
-      objdata.append('f %s %s %s' % (faces[i]+1, faces[i+1]+1, faces[i+2]+1))
+      objdata.append('f %s %s %s' % (faces[i], faces[i+1], faces[i+2]))
     
     return objdata
 
 def save_mesh(mesh_id, meshdata):
-  mkdir(mesh_id)
-  for name, fragment in meshdata.items():
-      mesh_data = mesh_to_obj(fragment)
-      name = os.path.basename(name)
-      with open('./{}/{}.obj'.format(mesh_id, name), 'wb') as f:
-        f.write('\n'.join(mesh_data))
+  num_vertices = 0
+  with open('./{}.obj'.format(mesh_id), 'wb') as f:
+    for name, fragment in meshdata.items():
+      mesh_data = mesh_to_obj(fragment, num_vertices)
+      f.write('\n'.join(mesh_data) + '\n')
+      num_vertices += fragment['num_vertices']
+
 
 if __name__ == '__main__':
   prog, cloudpath = sys.argv[:2]
