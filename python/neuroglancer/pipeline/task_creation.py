@@ -481,7 +481,7 @@ if __name__ == '__main__':
     # create_downsampling_tasks(task_queue, 'gs://neuroglancer/zfish_v0/consensus-2017-07-11/', mip=5, fill_missing=True)
     # create_meshing_tasks(task_queue, dest_path, mip=3)
 
-    create_mesh_manifest_tasks(task_queue, dest_path)
+    create_mesh_manifest_tasks(task_queue, src_path)
 
     # create_watershed_remap_tasks(task_queue, map_path, src_path, dest_path)
 

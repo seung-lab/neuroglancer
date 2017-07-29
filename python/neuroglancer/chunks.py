@@ -17,11 +17,18 @@ import io
 import numpy as np
 from PIL import Image
 
+try:
+    import compress_segmentation
+except ImportError:
+    print "Unable to import compress_segmentation"
+
 def encode(img_chunk, encoding):
   if encoding == "jpeg":
     return encode_jpeg(img_chunk)
   elif encoding == "npz":
     return encode_npz(img_chunk)
+  elif encoding == 'compressed_segmentation':
+    return compress_segmentation.compress(img_chunk)
   elif encoding == "npz_uint8":
     chunk = chunk * 255
     chunk = chunk.astype(np.uint8)

@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+// g++ -O3 -std=c++14 compress_segmentation.cc -o compress_segmentation
+
 #include "compress_segmentation.h"
 
 #include <algorithm>
@@ -230,3 +232,4 @@ DO_INSTANTIATE(uint64_t)
 
 }  // namespace compress_segmentation
 }  // namespace neuroglancer
+

@@ -85,6 +85,9 @@ template <class Label>
 using EncodedValueCache =
     std::unordered_map<std::vector<Label>, uint32_t, HashVector>;
 
+typedef EncodedValueCache<uint32_t> EncodedValueCache32;
+typedef EncodedValueCache<uint64_t> EncodedValueCache64;
+
 // Encodes a single block.
 //
 // Args:
