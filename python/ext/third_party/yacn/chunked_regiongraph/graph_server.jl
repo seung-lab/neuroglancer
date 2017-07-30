@@ -20,11 +20,16 @@ using Utils
 
 
 @pyimport neuroglancer.simple_task_queue.task_queue as task_queue
-#tq = task_queue.TaskQueue("http://127.0.0.1:8000/1.0")
+tq = task_queue.TaskQueue("http://127.0.0.1:8000/1.0")
 tq = task_queue.TaskQueue("http://50.16.149.198:8001/1.0")
 
 edges = Save.load("~/testing/chunked_edges.jls")
 vertices = Save.load("~/testing/chunked_vertices.jls")
+
+#N=round(Int,1e8)
+#edges=edges[1:N]
+#vertices=unique(cat(1,UInt64[e[1] for e in edges],UInt64[e[2] for e in edges]))
+
 println("$(length(edges)) edges")
 println("$(length(vertices)) vertices")
 mesh_label = Dict()
@@ -37,14 +42,16 @@ function get_handles(vertices)
 end
 
 @time handles = get_handles(vertices)
-
-begin
+Profile.init(n=10000000,delay=0.1)
+@profile begin
 	G=ChunkedGraph()
 	@time add_atomic_vertices!(G,vertices)
 	@time add_atomic_edges!(G,edges)
 	@time update!(G)
 end
-
+using ProfileView
+ProfileView.view()
+wait()
 #=
 G=nothing
 gc()

@@ -29,7 +29,7 @@ type Vertex{C}
 	label::Label
 	parent::Union{Vertex{C},Void}
 	G::C
-	children
+	children::Union{Array{Vertex{C}},Void}
 end
 
 type ChunkedGraph{C}
@@ -47,7 +47,7 @@ function ChunkedGraph()
 end
 
 
-typealias AtomicEdge Tuple{Label,Label}
+const AtomicEdge = Tuple{Label,Label}
 
 #The 'added' and 'deleted' sets buffer updates to the graph
 type Chunk
@@ -151,29 +151,46 @@ end
 function touch(x::Void)
 end
 function touch(x::Chunk)
-	x.clean=false
-	touch(x.parent)
+	if x.clean
+		x.clean=false
+		touch(x.parent)
+	end
 end
 
 
 #####Graph operations#####
 
 function update!(c::ChunkedGraph)
+	gc_enable(false)
 	update!(c.root)
+	gc_enable(true)
+	println("gc...")
+	gc()
+	println("done")
 end
+
+n_processed=0
 
 function update!(c::Chunk)
 	if !c.clean
 		for s in c.subgraphs
 			update!(s)
 		end
-		println("updating $(level(c.id)), $(map(Int,pos(c.id)))")
+		println("updating $(level(c.id)), $(map(Int,pos(c.id))), $(length(c.added_vertices)), $(length(c.added_edges))")
+		global n_processed
+		n_processed+=1
+		if n_processed % 20000 == 0
+			gc()
+		end
+		println("$n_processed/$(length(c.chunked_graph.graphs))")
 
 		#vertices that are being deleted from c.G
 		dead_dirty_vertices=Set{Vertex{Chunk}}()
 
 		#vertices which need updates
 		dirty_vertices=Set{Vertex{Chunk}}()
+
+		upsize!(c.graph, length(c.added_vertices), length(c.added_edges))
 
 		for v in c.deleted_vertices
 			for e in MultiGraphs.incident_edges(c.graph, v)
@@ -187,6 +204,7 @@ function update!(c::Chunk)
 		end
 
 		for v in c.added_vertices
+			@assert chunk_id(v.label) == c.id
 			@assert v.parent ==nothing
 			@assert v.G==c
 			MultiGraphs.add_vertex!(c.graph,v)
@@ -220,13 +238,12 @@ function update!(c::Chunk)
 
 			cc = MultiGraphs.connected_components(c.graph, dirty_vertices)
 			for component in cc
-				l=unique_label(c.id)
+				l=unique_label(c.parent.id)
 				v=Vertex(l, nothing, c.parent,component)
 				c.chunked_graph.vertices[l]=v
 				for child in component
 					child.parent=v
 				end
-				v.children=component
 				push!(c.parent.added_vertices,v)
 			end
 			c.parent.clean=false
@@ -241,12 +258,14 @@ function update!(c::Chunk)
 end
 
 
-
-MAX_LABEL=0
+type BoxedInt
+	val::Int
+end
+const MAX_LABEL=BoxedInt(0)
 function unique_label(chunk_id)
 	global MAX_LABEL
-	MAX_LABEL+=1
-	return Label(MAX_LABEL,chunk_id)
+	MAX_LABEL.val+=1
+	return Label(MAX_LABEL.val,chunk_id)
 end
 
 
@@ -260,8 +279,8 @@ function add_atomic_vertex!(G::ChunkedGraph, label)
 	MultiGraphs.add_vertex!(G.flat_graph, label)
 end
 
-function add_atomic_edge!(G::ChunkedGraph, edge)
-	s=lca(get_chunk(G,chunk_id(edge[1])),get_chunk(G,chunk_id(edge[2])))
+function add_atomic_edge!(G::ChunkedGraph, edge::Tuple{Label,Label})
+	s=lca(get_chunk(G,chunk_id(edge[1])),get_chunk(G,chunk_id(edge[2])))::Chunk
 	push!(s.added_edges,unordered(edge))
 	touch(s)
 
@@ -269,13 +288,28 @@ function add_atomic_edge!(G::ChunkedGraph, edge)
 end
 
 function add_atomic_edges!(G::ChunkedGraph, edges)
-	for (i,e) in enumerate(edges)
+	sorted_edges = map(unordered, edges)
+	sort!(sorted_edges)
+	gc_enable(false)
+	for (i,e) in enumerate(sorted_edges)
+		if i%100000 == 0
+			println(i)
+		end
+
 		add_atomic_edge!(G,e)
 	end
+	gc_enable(true)
+	gc()
 end
 
 function upsize!(A,n)
 	sizehint!(A,length(A)+n)
+end
+function upsize!(G::MultiGraphs.MultiGraph,n_v,n_e)
+	upsize!(G.vertex_map,n_v)
+	upsize!(G.inverse_vertex_map,n_v)
+	upsize!(G.g.fadjlist,n_v)
+	upsize!(G.edge_map,n_e)
 end
 
 function add_atomic_vertices!(G::ChunkedGraph, vertices)
@@ -283,9 +317,12 @@ function add_atomic_vertices!(G::ChunkedGraph, vertices)
 	upsize!(G.flat_graph.vertex_map, length(vertices))
 	upsize!(G.flat_graph.inverse_vertex_map, length(vertices))
 	upsize!(G.flat_graph.g.fadjlist, length(vertices))
+	gc_enable(false)
 	for (i,v) in enumerate(vertices)
 		add_atomic_vertex!(G,v)
 	end
+	gc_enable(true)
+	gc()
 end
 
 function delete_atomic_edge!(G::ChunkedGraph, edge)

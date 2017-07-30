@@ -4,16 +4,36 @@ using DataStructures
 using Iterators
 using Utils
 
+immutable SimpleSet{E}
+	data::Array{E}
+end
+
+
+function Base.push!{E}(x::SimpleSet{E},y::E)
+	if !(y in x.data)
+		push!(x.data,y)
+	end
+end
+
+function Base.in{E}(x::SimpleSet{E},y::E)
+	return y in x.data
+end
+
+function delete!{E}(x::SimpleSet{E},y)
+	deleteat!(x.data,findin(x.data,y)[1])
+end
+
+
 #TODO: garbage collection
 
 type MultiGraph{V,E}
 	g::LightGraphs.Graph
 	vertex_map::Dict{V,Int}
 	inverse_vertex_map::Dict{Int,V}
-	edge_map::Dict{Tuple{Int,Int},Set{E}}
+	edge_map::Dict{Tuple{Int,Int},SimpleSet{E}}
 end
 function MultiGraph(V,E)
-	return MultiGraph{V,E}(LightGraphs.Graph(), Dict{V,Int}(),Dict{Int,V}(),Dict{Tuple{Int,Int},Set{E}}())
+	return MultiGraph{V,E}(LightGraphs.Graph(), Dict{V,Int}(),Dict{Int,V}(),Dict{Tuple{Int,Int},SimpleSet{E}}(E[]))
 end
 function add_vertex!(G::MultiGraph, v)
 	LightGraphs.add_vertex!(G.g)
@@ -52,9 +72,7 @@ function add_edge!{Vert,E}(G::MultiGraph{Vert,E},U,V,e)
 	uv = unordered(u,v)
 	LightGraphs.add_edge!(G.g,u,v)
 	if !haskey(G.edge_map,uv)
-		tmp=Set{E}()
-		push!(tmp,e)
-		G.edge_map[uv]=tmp
+		G.edge_map[uv]=SimpleSet{E}(E[e])
 	else
 		push!(G.edge_map[uv],e)
 	end
@@ -69,12 +87,16 @@ function connected_components{V,E}(G::MultiGraph{V,E}, Vertices)
 	g=G.g
 	vertices = map(x->G.vertex_map[x],Vertices)
 	visited=Set{Int}()
+	sizehint!(visited, length(vertices))
 	components=Array{Int,1}[]
+	to_visit=Set{Int}()#Set{Int}(Int[v])
 
 	for v in vertices
 		if !(v in visited)
 			next_component=Int[]
-			to_visit=Set{Int}(Int[v])
+			empty!(to_visit)
+			push!(to_visit,v)
+
 			while length(to_visit) > 0
 				x=pop!(to_visit)
 				push!(next_component,x)
@@ -88,6 +110,7 @@ function connected_components{V,E}(G::MultiGraph{V,E}, Vertices)
 			push!(components, next_component)
 		end
 	end
+	#@assert length(vertices) == sum(map(length,components))
 	return Array{V,1}[map(x->G.inverse_vertex_map[x],y) for y in components]
 end
 
@@ -105,9 +128,11 @@ function SimpleGraph(V)
 	return SimpleGraph{V}(LightGraphs.Graph(), Dict{V,Int}(),Dict{Int,V}())
 end
 function add_vertex!(G::SimpleGraph, v)
-	LightGraphs.add_vertex!(G.g)
-	G.vertex_map[v] = nv(G.g)
-	G.inverse_vertex_map[nv(G.g)] = v
+	if !(haskey(G.vertex_map,v))
+		LightGraphs.add_vertex!(G.g)
+		G.vertex_map[v] = nv(G.g)
+		G.inverse_vertex_map[nv(G.g)] = v
+	end
 end
 
 function delete_vertex!(G::SimpleGraph,vertex)
