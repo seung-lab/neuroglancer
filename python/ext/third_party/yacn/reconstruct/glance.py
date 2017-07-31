@@ -1,7 +1,6 @@
 #!/usr/bin/python
 
 from __future__ import print_function
-import graph_server
 import os
 import sys
 import webbrowser
