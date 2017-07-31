@@ -3,7 +3,6 @@ from intern.remote.boss import BossRemote
 from intern.resource.boss.resource import *
 import numpy as np
 
-from neuroglancer.pipeline.secrets import boss_credentials
 from volumes import Volume, VolumeCutout, generate_slices, EmptyVolumeException
 
 ExtractedPath = namedtuple('ExtractedPath', 
@@ -55,6 +54,12 @@ class BossVolume(Volume):
 
     self.num_channels = 1
     self.dtype = 'uint8'
+    self._get_credential()
+
+  def _get_credential(self):
+    boss_credentials_path = '/secrets/boss-secret.json'
+    with open(boss_credentials_path, 'rb') as f:
+      self._credential = json.loads(f.read())
 
   @classmethod
   def extract_path(cls, cloudpath):
@@ -102,6 +107,6 @@ class BossVolume(Volume):
     chan = ChannelResource(
       self._bucket, self._dataset_name, self._layer, 'image', datatype=self.dtype)
 
-    rmt = BossRemote(boss_credentials)
+    rmt = BossRemote(self._credential)
     img3d = rmt.get_cutout(chan, self.mip, x_rng, y_rng, z_rng).T
     return VolumeCutout.from_volume(self, renderbuffer, realized_bbox)
