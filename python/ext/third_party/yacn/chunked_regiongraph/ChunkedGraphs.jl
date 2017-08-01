@@ -164,9 +164,6 @@ function update!(c::ChunkedGraph)
 	gc_enable(false)
 	update!(c.root)
 	gc_enable(true)
-	println("gc...")
-	gc()
-	println("done")
 end
 
 n_processed=0
@@ -293,13 +290,12 @@ function add_atomic_edges!(G::ChunkedGraph, edges)
 	gc_enable(false)
 	for (i,e) in enumerate(sorted_edges)
 		if i%100000 == 0
-			println(i)
+			println("$i / $(length(sorted_edges))")
 		end
 
 		add_atomic_edge!(G,e)
 	end
 	gc_enable(true)
-	gc()
 end
 
 function upsize!(A,n)
@@ -322,7 +318,6 @@ function add_atomic_vertices!(G::ChunkedGraph, vertices)
 		add_atomic_vertex!(G,v)
 	end
 	gc_enable(true)
-	gc()
 end
 
 function delete_atomic_edge!(G::ChunkedGraph, edge)

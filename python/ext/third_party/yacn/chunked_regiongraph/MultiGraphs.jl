@@ -4,23 +4,21 @@ using DataStructures
 using Iterators
 using Utils
 
-immutable SimpleSet{E}
-	data::Array{E}
-end
-
-
-function Base.push!{E}(x::SimpleSet{E},y::E)
-	if !(y in x.data)
-		push!(x.data,y)
+function setpush!{E}(x::Vector{E},y::E)
+	if !(y in x)
+		push!(x,y)
 	end
 end
 
-function Base.in{E}(x::SimpleSet{E},y::E)
-	return y in x.data
+function setpush!{E}(x::Set{E},y::E)
+	push!(x,y)
 end
 
-function delete!{E}(x::SimpleSet{E},y)
-	deleteat!(x.data,findin(x.data,y)[1])
+function setdelete!{E}(x::Vector{E},y::E)
+	deleteat!(x,findin(x,(y,)))
+end
+function setdelete!{E}(x::Set{E},y::E)
+	delete!(x,y)
 end
 
 
@@ -30,10 +28,10 @@ type MultiGraph{V,E}
 	g::LightGraphs.Graph
 	vertex_map::Dict{V,Int}
 	inverse_vertex_map::Dict{Int,V}
-	edge_map::Dict{Tuple{Int,Int},SimpleSet{E}}
+	edge_map::Dict{Tuple{Int,Int},Vector{E}}
 end
 function MultiGraph(V,E)
-	return MultiGraph{V,E}(LightGraphs.Graph(), Dict{V,Int}(),Dict{Int,V}(),Dict{Tuple{Int,Int},SimpleSet{E}}(E[]))
+	return MultiGraph{V,E}(LightGraphs.Graph(), Dict{V,Int}(),Dict{Int,V}(),Dict{Tuple{Int,Int},Vector{E}}(E[]))
 end
 function add_vertex!(G::MultiGraph, v)
 	LightGraphs.add_vertex!(G.g)
@@ -58,7 +56,7 @@ function delete_edge!(G::MultiGraph,U,V,e)
 	v=G.vertex_map[V]
 	uv=unordered(u,v)
 	if has_edge(G.g,u,v)
-		delete!(G.edge_map[uv],e)
+		setdelete!(G.edge_map[uv],e)
 		if length(G.edge_map[uv]) == 0
 			rem_edge!(G.g,u,v)
 		 end
@@ -72,9 +70,9 @@ function add_edge!{Vert,E}(G::MultiGraph{Vert,E},U,V,e)
 	uv = unordered(u,v)
 	LightGraphs.add_edge!(G.g,u,v)
 	if !haskey(G.edge_map,uv)
-		G.edge_map[uv]=SimpleSet{E}(E[e])
+		G.edge_map[uv]=E[e]
 	else
-		push!(G.edge_map[uv],e)
+		setpush!(G.edge_map[uv],e)
 	end
 end
 
