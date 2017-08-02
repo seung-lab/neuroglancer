@@ -272,13 +272,25 @@ def create_fixup_quantize_tasks(task_queue, src_layer, dest_layer, shape, points
     task_queue.insert(task)
   task_queue.wait()
 
-def create_mesh_manifest_tasks(task_queue, layer_path):
+# split the work up into ~1000 tasks (magnitude 3)
+def create_mesh_manifest_tasks(task_queue, layer_path, magnitude=3):
+  assert int(magnitude) == magnitude
 
-  # This only works for prefix = '' or prefix = 0-9 because otherwise
-  # it'll miss some of the beginning numbers.
-  for prefix in xrange(1,10):
+  start = 10 ** (magnitude - 1)
+  end = 10 ** magnitude
+
+  # For a prefix like 100, tasks 1-99 will be missed. Account for them by
+  # enumerating them individually with a suffixed ':' to limit matches to
+  # only those small numbers
+  for prefix in xrange(1, start):
+    task = MeshManifestTask(layer_path=layer_path, prefix=str(prefix) + ':')
+    task_queue.insert(task)
+
+  # enumerate from e.g. 100 to 999
+  for prefix in xrange(start, end):
     task = MeshManifestTask(layer_path=layer_path, prefix=prefix)
     task_queue.insert(task)
+
   task_queue.wait()
 
 def create_hypersquare_ingest_tasks(task_queue, hypersquare_bucket_name, dataset_name, hypersquare_chunk_size, resolution, voxel_offset, volume_size, overlap):
