@@ -275,8 +275,8 @@ class MergeMeshTask(RegisteredTask):
         self._storage.wait()
 
 class MeshTask(RegisteredTask):
-  def __init__(self, shape, offset, layer_path, mip=0, simplification_factor=100, max_simplification_error=40):
-    super(MeshTask, self).__init__(shape, offset, layer_path, mip, simplification_factor, max_simplification_error)
+  def __init__(self, shape, offset, layer_path, mip=0, simplification_factor=100, max_simplification_error=40, remap=None):
+    super(MeshTask, self).__init__(shape, offset, layer_path, mip, simplification_factor, max_simplification_error, remap)
     self.shape = Vec(*shape)
     self.offset = Vec(*offset)
     self.mip = mip
@@ -284,9 +284,11 @@ class MeshTask(RegisteredTask):
     self.lod = 0 # level of detail -- to be implemented
     self.simplification_factor = simplification_factor
     self.max_simplification_error = max_simplification_error
+    self.remap = remap
 
   def execute(self):
     self._mesher = Mesher()
+    self._remap()
 
     self._volume = CloudVolume(self.layer_path, self.mip, bounded=False)
     self._bounds = Bbox( self.offset, self.shape + self.offset )
@@ -311,13 +313,20 @@ class MeshTask(RegisteredTask):
     self._data = self._volume[data_bounds.to_slices()] # chunk_position includes a 1 pixel overlap
     self._compute_meshes()
 
+    def _remap(self):
+
+        self.remap_list = list(self.remap.values())
+
+        r = lambda x: self.remap_list.indexOf(self.remap.get(x, 0))
+        self._data = np.vectorize(r)(self._data)
+
   def _compute_meshes(self):
     with Storage(self.layer_path) as storage:
       data = self._data[:,:,:,0].T
       self._mesher.mesh(data.flatten(), *data.shape[:3])
       for obj_id in self._mesher.ids():
         storage.put_file(
-          file_path='{}/{}:{}:{}'.format(self._mesh_dir, obj_id, self.lod, self._bounds.to_filename()),
+          file_path='{}/{}:{}:{}'.format(self._mesh_dir, self.remap_list[obj_id], self.lod, self._bounds.to_filename()),
           content=self._create_mesh(obj_id),
           compress=True,
         )
