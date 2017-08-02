@@ -14,7 +14,7 @@ from neuroglancer.lib import clamp, xyzrange, Vec, Bbox, min2, max2
 from volumes import Volume, VolumeCutout, generate_slices
 from neuroglancer.pipeline.storage import Storage
 
-__all__ = [ 'CloudVolume', 'EmptyVolumeException' ]
+__all__ = [ 'CloudVolume', 'EmptyVolumeException', 'Precomputed' ]
 
 ExtractedPath = namedtuple('ExtractedPath', 
   ('protocol','bucket_name', 'dataset_name','layer_name')
@@ -23,8 +23,12 @@ ExtractedPath = namedtuple('ExtractedPath',
 DEFAULT_CHUNK_SIZE = (64,64,64)
 
 class EmptyVolumeException(Exception):
-    """Raised upon finding a missing chunk."""
-    pass
+  """Raised upon finding a missing chunk."""
+  pass
+
+def Precomputed(storage, scale_idx=0, fill=False):
+  """Shim to provide backwards compatibility with Precomputed."""
+  return CloudVolume(storage.layer_path, mip=scale_idx, fill_missing=fill)
 
 class CloudVolume(Volume):
   """
