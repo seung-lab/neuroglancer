@@ -203,16 +203,17 @@ class DownsampleTask(RegisteredTask):
 class MeshTask(RegisteredTask):
 
     def __init__(self, chunk_key, chunk_position, layer_path, 
-                 lod=0, simplification=5, segments=[]):
+                 lod=0, simplification=5, segments=[], remap=None):
         
         super(MeshTask, self).__init__(chunk_key, chunk_position, layer_path, 
-                                       lod, simplification, segments)
+                                       lod, simplification, segments, remap)
         self.chunk_key = chunk_key
         self.chunk_position = chunk_position
         self.layer_path = layer_path
         self.lod = lod
         self.simplification = simplification
         self.segments = segments
+        self.remap = remap
 
     def execute(self):
         self._storage = Storage(self.layer_path)
@@ -221,6 +222,7 @@ class MeshTask(RegisteredTask):
         self._parse_chunk_position()
         self._download_info()
         self._download_input_chunk()
+        self._remap()
         self._compute_meshes()
         self._storage.wait()
 
@@ -249,12 +251,19 @@ class MeshTask(RegisteredTask):
                             self._ymin:self._ymax,
                             self._zmin:self._zmax]
 
+    def _remap(self):
+
+        self.remap_list = list(self.remap.values())
+
+        r = lambda x: self.remap_list.indexOf(self.remap.get(x, 0))
+        self._data = np.vectorize(r)(self._data)
+
     def _compute_meshes(self):
         data = np.swapaxes(self._data[:,:,:,0], 0,2)
         self._mesher.mesh(data.flatten(), *data.shape)
         for obj_id in tqdm(self._mesher.ids()):
             self._storage.put_file(
-                file_path='{}/{}:{}:{}'.format(self._info['mesh'], obj_id, self.lod, self.chunk_position),
+                file_path='{}/{}:{}:{}'.format(self._info['mesh'], self.remap_list[obj_id], self.lod, self.chunk_position),
                 content=self._create_mesh(obj_id))
             self._storage.wait()
 
