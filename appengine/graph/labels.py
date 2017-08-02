@@ -1,46 +1,52 @@
 import numpy as np
 
-def to_label(chunk_height, chunk_x, chunk_y, chunk_z, intra_chunk_id ):
+MAX_HEIGHT_BITS = 8
+MAX_X_BITS = 8
+MAX_Y_BITS = 8
+MAX_Z_BITS = 8
+MAX_INTRA_ID_BITS = 64 - MAX_HEIGHT_BITS - MAX_X_BITS - MAX_Y_BITS - MAX_Z_BITS
+
+def to_label(chunk_height, chunk_x, chunk_y, chunk_z, intra_chunk_id):
     """
     Produces a 64bit unsinged integer from the inputs
-    6 bits to represent the chunk_height -> 64
-    12 bits to represent the chunk_x -> 4096
-    12 bits to represent the chunk_y -> 4096
-    10 bits to represent the chunk_z -> 1024
-    24 bits to represent the intra_chunk_id -> 16777216
+    MAX_HEIGHT_BITS bits to represent the chunk_height
+    MAX_X_BITS bits to represent the chunk_x
+    MAX_Y_BITS bits to represent the chunk_y
+    MAX_Z_BITS bits to represent the chunk_z
+    MAX_INTRA_ID_BITS bits to represent the intra_chunk_id
     """
-    if not (0 <= chunk_height < 2**6 and
-            0 <= chunk_x < 2**12 and 
-            0 <= chunk_y < 2**12 and 
-            0 <= chunk_z < 2**10 and
-            0 <= intra_chunk_id < 2**24):
+    if not (0 <= chunk_height < 2**MAX_HEIGHT_BITS and
+            0 <= chunk_x < 2**MAX_X_BITS and 
+            0 <= chunk_y < 2**MAX_Y_BITS and 
+            0 <= chunk_z < 2**MAX_Z_BITS and
+            0 <= intra_chunk_id < 2**MAX_INTRA_ID_BITS):
         raise ValueError("Arguments are not"\
                          " between allowable ranges")
 
-    return np.uint64((chunk_height << 12 + 12 + 10 + 24) |
-            (chunk_x << 12 + 10 + 24) |
-            (chunk_y << 10 + 24) |
-            (chunk_z << 24) |
+    return np.uint64(chunk_height << MAX_X_BITS + MAX_Y_BITS + MAX_Z_BITS + MAX_INTRA_ID_BITS |
+            chunk_x << MAX_Y_BITS + MAX_Z_BITS + MAX_INTRA_ID_BITS |
+            chunk_y << MAX_Z_BITS + MAX_INTRA_ID_BITS |
+            chunk_z << MAX_INTRA_ID_BITS |
             intra_chunk_id)
 
-def from_label( label ):
+def from_label(label):
     label = int(label) #np.uint64 doesn't accept shifts
-    mask = lambda s , k: 2**(k) - 1 & label >> s
-    return (mask(12 + 12 + 10 + 24, 6), # chunk_height
-            mask(12+ 10 + 24, 12), #chunk_x
-            mask(10+24, 12), #chunk_y
-            mask(24, 10), #chunk_z
-            mask(0, 24)) #intra_chunk_id
+    mask = lambda s, k: 2**k - 1 & label >> s
+    return (mask(MAX_X_BITS + MAX_Y_BITS + MAX_Z_BITS + MAX_INTRA_ID_BITS, MAX_HEIGHT_BITS), # chunk_height
+            mask(MAX_Y_BITS + MAX_Z_BITS + MAX_INTRA_ID_BITS, MAX_X_BITS), #chunk_x
+            mask(MAX_Z_BITS + MAX_INTRA_ID_BITS, MAX_Y_BITS), #chunk_y
+            mask(MAX_INTRA_ID_BITS, MAX_Z_BITS), #chunk_z
+            mask(0, MAX_INTRA_ID_BITS)) #intra_chunk_id
 
-def from_chunk_key_and_intra( chunk_key, intra):
+def from_chunk_key_and_intra(chunk_key, intra):
     args = from_chunk_key(chunk_key) + (intra,)
     return to_label(*args)
 
-def to_chunk_key( chunk_height, chunk_x, chunk_y, chunk_z ):
+def to_chunk_key(chunk_height, chunk_x, chunk_y, chunk_z):
     return to_label(chunk_height, chunk_x, chunk_y, chunk_z, 0)
 
-def from_chunk_key( chunk_key ):
-    return from_label( chunk_key )[:-1]
+def from_chunk_key(chunk_key):
+    return from_label(chunk_key)[:-1]
 
-def intra_hash_from_children( children , k=24):
-    return hash(tuple(children)) and 2**(k) - 1 
+def intra_hash_from_children(children, k=MAX_INTRA_ID_BITS):
+    return hash(tuple(children)) & 2**k - 1

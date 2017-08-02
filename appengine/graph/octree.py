@@ -89,7 +89,7 @@ class Octree(object):
                 for c_z in xrange(z, max_z+1):
                     yield labels.to_chunk_key(height-1, c_x, c_y, c_z)
 
-    def _is_chunk_valid(self, height, x, y ,z):
+    def _is_chunk_valid(self, height, x, y, z):
         if (0 > x or x > self._max_x(height) or
             0 > y or y > self._max_y(height) or
             0 > z or z > self._max_z(height) or
@@ -101,13 +101,12 @@ class Octree(object):
         """
         We want to have a single cache to be able to 
         keep easier control of memory usage
-
         The chunk_io module will own this cache
         """
         return chunk_io.get_chunk(self._path, chunk_key)
 
     def get_node(self, label):
-        height, x, y, z , intra = labels.from_label(label)
+        height, x, y, z, intra = labels.from_label(label)
         if not self._is_chunk_valid(height, x, y, z):
             raise ValueError("Not a valid chunk")
 
@@ -115,12 +114,27 @@ class Octree(object):
             labels.to_chunk_key(height, x, y, z))
         return chunk.get_node(intra)
 
+    def get_root_label(self, label):
+        node = self.get_node(label)
+        while node.parent is not None:
+            label = node.parent
+            node = self.get_node(label)
+
+        return label
+
+    def get_leaf_labels(self, label):
+        node = self.get_node(label)
+        if node.children is None:
+            return label
+        else:
+            return [self.get_leaf_labels(child) for child in node.children]
+
     def _add_edge(self, label_u, label_v, edge):
         height_u, x_u, y_u, z_u, intra_u = labels.from_label(label_u)
         height_v, x_v, y_v, z_v, intra_v = labels.from_label(label_v)
 
         #we check in add_atomic_edge that its true
-        assert  height_u == height_v
+        assert height_u == height_v
         parent_u = self.get_node(label_u).parent
         parent_v = self.get_node(label_v).parent
 
@@ -136,32 +150,44 @@ class Octree(object):
             labels.to_chunk_key(height_u, x_u, y_u, z_u))
         chunk.add_edge(intra_u, intra_v, edge)
 
-        new_parent = self._merge_node_recursive(parent_u, parent_v)
-        chunk.get_node(intra_u).parent = new_parent
-        chunk.get_node(intra_v).parent = new_parent
-
-    def _merge_node_recursive(self, label_u, label_v):
-        if not label_u:
+        if parent_u == parent_v:
             return
 
+        new_parent = self._merge_node_recursive(parent_u, parent_v)
+        for child in (chunk.get_connected_component(intra_u).union( 
+                      chunk.get_connected_component(intra_v))):
+            chunk.get_node(child).parent = new_parent
+        
+
+    def _merge_node_recursive(self, label_u, label_v):
+        if label_u is None or label_u == label_v:
+            return
+
+        # verify both labels belong to the same chunk
         height_u, x_u, y_u, z_u, intra_u = labels.from_label(label_u)
         height_v, x_v, y_v, z_v, intra_v = labels.from_label(label_v)
         assert (height_u, x_u, y_u, z_u) == (height_v, x_v, y_v, z_v)
 
+        # get common chunk
         chunk_key = labels.to_chunk_key(height_u, x_u, y_u, z_u)
         chunk = self.get_chunk(chunk_key)
 
+        # retrieve union of children
         ch_u = chunk.get_node(intra_u).children
         ch_v = chunk.get_node(intra_v).children
         children = ch_u + ch_v
+
+        # calculate unique hash as intra
         new_intra = labels.intra_hash_from_children(children)
         while chunk.has_node(new_intra):
-            new_intra =  (new_intra + 1) % 2**24
+            new_intra = (new_intra + 1) % 2**labels.MAX_INTRA_ID_BITS
 
+        # recursive merge on higher level
         new_parent = self._merge_node_recursive(
             chunk.get_node(intra_u).parent,
             chunk.get_node(intra_v).parent)
         
+        # do the actual merge on this level
         chunk.add_node(new_intra, children=children, parent=new_parent)
         chunk.delete_node(intra_u)
         chunk.delete_node(intra_v)
@@ -180,14 +206,14 @@ class Octree(object):
                               "atomic nodes")
 
         #This will check that the chunks are valid
-        node_u = self.get_node(label_u)
-        node_v = self.get_node(label_v)
         edge = UnorderedPair(label_u, label_v)
-        if (x_u, y_u, z_u) !=  (x_v, y_v, z_v): 
-            node_u.add_external_edge( edge )
-            node_v.add_external_edge( edge )
+        if (x_u, y_u, z_u) !=  (x_v, y_v, z_v):
+            node_u = self.get_node(label_u)
+            node_v = self.get_node(label_v)
+            node_u.add_external_edge(edge)
+            node_v.add_external_edge(edge)
 
-        self._add_edge( label_u, label_v, edge)
+        self._add_edge(label_u, label_v, edge)
 
     def _add_node_recursive(self, chunk_key, intra=None,
         children=[], parent=None):
@@ -196,11 +222,11 @@ class Octree(object):
             return
         chunk = self.get_chunk(chunk_key)
 
-        if not intra:
+        if intra is None:
             intra = labels.intra_hash_from_children(children)
         while chunk.has_node(intra):
-            intra =  (intra + 1) % (2**24)
-            
+            intra = (intra + 1) % 2**labels.MAX_INTRA_ID_BITS
+
         label = labels.from_chunk_key_and_intra(chunk_key, intra)
         if parent is None:
             parent = self._add_node_recursive(
@@ -219,6 +245,23 @@ class Octree(object):
         self._add_node_recursive(
             labels.to_chunk_key(height, x, y, z),
             intra)
+
+    def add_atomic_nodes(self, chunk_key, intras):
+        height, x, y, z = labels.from_chunk_key(chunk_key)
+        if (not self._is_chunk_valid(height, x, y, z)
+            or height != 0):
+            raise ValueError("Invalid chunk")
+        
+        chunk = self.get_chunk(chunk_key)
+
+        chunk_parent = self.get_chunk_parent(chunk_key)
+        for intra in intras:
+            chunk_children = [labels.to_label(height, x, y, z, intra)]
+            parent = self._add_node_recursive(
+                chunk_parent,
+                children=chunk_children
+            )
+            chunk.add_node(intra, children=[], parent=parent)
     
     def delete_atomic_edge(self, label_u, label_v):
         if label_u == label_v:
@@ -252,7 +295,7 @@ class Octree(object):
             self._split_node_recursive(label_u, label_v)
         else:
             #the tree we want to delete is higher in the
-            #herarchy
+            #hierarchy
             self._delete_edge(self.get_node(label_u).parent,
                               self.get_node(label_v).parent,
                               edge)
@@ -285,9 +328,9 @@ class Octree(object):
                 labels.to_chunk_key(height_u, x_u, y_u, z_u))
         parent_chunk = self.get_chunk(parent_chunk_key)
 
-        old_parent  = self.get_node(label_u).parent
-        if not old_parent:
-            # we are at the higher level of the herarchy
+        old_parent = self.get_node(label_u).parent
+        if old_parent is None:
+            # we are at the higher level of the hierarchy
             return 
 
         parent_parent = self.get_node(old_parent).parent
@@ -310,6 +353,3 @@ class Octree(object):
         self._split_node_recursive(
             self.get_node(label_u).parent,
             self.get_node(label_v).parent)
-
-
-

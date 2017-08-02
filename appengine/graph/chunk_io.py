@@ -16,7 +16,7 @@ from chunks import Chunk
 # TODO for some reason it has to be larger than 3
 # otherwise tests fails
 # figure out why
-capacity = 3
+capacity = 512
 PRODUCTION = False
 if ('PRODUCTION' in os.environ and 
    os.environ['PRODUCTION'] == 'true'):

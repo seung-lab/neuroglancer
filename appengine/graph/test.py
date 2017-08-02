@@ -111,7 +111,7 @@ class TestOctree(unittest.TestCase):
         with self.assertRaises(KeyError):
             tree.get_node(label_u)
 
-    def test_add_atomic_node_herarchy(self):
+    def test_add_atomic_node_hierarchy(self):
         """
         When we add a node to a chunk
         the connected componets of this chunk
@@ -136,6 +136,51 @@ class TestOctree(unittest.TestCase):
         assert chunk.get_node(parent_intra).children == [label]
         assert tree.get_node(label).parent == parent_label
 
+    def test_circle(self):
+        tree = Octree(size=(2,1,1), path='/tmp/graph/0')
+
+        tree.add_atomic_node(3)
+        tree.add_atomic_node(2)
+        tree.add_atomic_node(1)
+
+        tree.add_atomic_edge(1,2)
+        tree.add_atomic_edge(1,3)
+        tree.add_atomic_edge(2,3)
+
+    def test_circle_external_edge(self):
+        tree = Octree(size=(1,1,4), path='/tmp/graph/0')
+
+        tree.add_atomic_node(4294967297) # 0, 0, 0, 1, 1
+        tree.add_atomic_node(1)          # 0, 0, 0, 0, 1
+        tree.add_atomic_node(2)          # 0, 0, 0, 0, 2
+        tree.add_atomic_node(3)          # 0, 0, 0, 0, 3
+
+        tree.add_atomic_edge(1,2)
+        tree.add_atomic_edge(1,4294967297)
+        tree.add_atomic_edge(2,3)
+        tree.add_atomic_edge(2,4294967297)
+
+    def test_add_atomic_nodes(self):
+        tree = Octree(size=(4,1,3), path='/tmp/graph/0')
+        chunk_id = labels.to_chunk_key(0, 1, 0, 1)
+        intras = (10,20,42,1337)
+        tree.add_atomic_nodes(chunk_id, intras)
+
+        assert tree.get_node(labels.to_label(0, 1, 0, 1, 10))
+        assert tree.get_node(labels.to_label(0, 1, 0, 1, 20))
+        assert tree.get_node(labels.to_label(0, 1, 0, 1, 42))
+        assert tree.get_node(labels.to_label(0, 1, 0, 1, 1337))
+
+        parent_chunk_key = tree.get_chunk_parent(chunk_id)
+        parent_chunk = tree.get_chunk(parent_chunk_key)
+        parent_labels = [labels.from_chunk_key_and_intra(parent_chunk_key, parent_intra) for parent_intra in parent_chunk._g.nodes()]
+
+        assert len(parent_chunk._g.nodes()) == 4
+
+        assert tree.get_node(labels.to_label(0, 1, 0, 1, 10)).parent in parent_labels
+        assert tree.get_node(labels.to_label(0, 1, 0, 1, 20)).parent in parent_labels
+        assert tree.get_node(labels.to_label(0, 1, 0, 1, 42)).parent in parent_labels
+        assert tree.get_node(labels.to_label(0, 1, 0, 1, 1337)).parent in parent_labels
 
     def test_add_atomic_edge(self):
         #we don't to check for invalid chunks
@@ -279,7 +324,7 @@ class TestOctree(unittest.TestCase):
         parent_parent_v = tree.get_node(parent_v).parent
         assert parent_parent_u != parent_parent_v
 
-        #there should be two nodes in the herarchy
+        #there should be two nodes in the hierarchy
         #and no edges
         label_chunk_key = labels.to_chunk_key(0,0,0,0)
         parent_chunk_key = labels.to_chunk_key(1,0,0,0)
@@ -329,7 +374,7 @@ class TestOctree(unittest.TestCase):
         parent_parent_v = tree.get_node(parent_v).parent
         assert parent_parent_u != parent_parent_v
 
-        #there should be two nodes in the herarchy
+        #there should be two nodes in the hierarchy
         #and no edges
         parent_chunk_key = labels.to_chunk_key(1,0,0,0)
         parent_parent_chunk_key = labels.to_chunk_key(2,0,0,0)
