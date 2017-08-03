@@ -19,24 +19,29 @@ Example Output:
     obj files for SEGID3 in ./SEGID3/
 """
 
-from cStringIO import StringIO
-import gzip
 import json
 import os
 import struct
 import sys
 
-from neuroglancer.lib import mkdir
 from neuroglancer.pipeline import CloudVolume, Storage
 
 def download_fragments(cloudpath, mesh_id):
   vol = CloudVolume(cloudpath)
   mesh_dir = vol.info['mesh']
 
-  download_path = os.path.join(mesh_dir, mesh_id + ':0')
+  mesh_json_file_name = str(mesh_id) + ':0'
+
+  download_path = os.path.join(mesh_dir, mesh_json_file_name)
 
   with Storage(cloudpath) as stor:
     fragments = json.loads(stor.get_file(download_path))['fragments']
+    
+    # Older mesh manifest generation tasks had a bug where they
+    # accidently included the manifest file in the list of mesh
+    # fragments. Exclude these accidental files, no harm done.
+    fragments = [ f for f in fragments if f != mesh_json_file_name ] 
+
     paths = [ os.path.join(mesh_dir, fragment) for fragment in fragments ]
     frag_datas = stor.get_files(paths)  
   return frag_datas
@@ -44,18 +49,22 @@ def download_fragments(cloudpath, mesh_id):
 def decode_downloaded_data(frag_datas):
   data = {}
   for result in frag_datas:
-    data[result['filename']] = decode_mesh_buffer(result['content'])
+    data[result['filename']] = decode_mesh_buffer(result['filename'], result['content'])
   return data
 
-def decode_mesh_buffer(fragment):
+def decode_mesh_buffer(filename, fragment):
     num_vertices = struct.unpack("=I", fragment[0:4])[0]
     vertex_data = fragment[4:4+(num_vertices*3)*4]
     face_data = fragment[4+(num_vertices*3)*4:]
     vertices = []
 
-    if len(vertex_data) % 12 != 0:
-      print("Unable to process fragment.")
-      return { 'num_vertices': 0, 'vertices': [], 'faces': [] }
+    if len(vertex_data) != 12 * num_vertices:
+      raise ValueError("""Unable to process fragment {}. Violation: len vertex data != 12 * num vertices
+        Array Length: {}, Vertex Count: {}
+      """.format(filename, len(vertex_data), num_vertices))
+    elif len(face_data) % 12 != 0:
+      raise ValueError("""Unable to process fragment {}. Violation: len face data is not a multiple of 12.
+        Array Length: {}""".format(filename, len(face_data)))
 
     for i in xrange(0, len(vertex_data), 12):
       x = struct.unpack("=f", vertex_data[i:i+4])[0]
@@ -65,8 +74,14 @@ def decode_mesh_buffer(fragment):
 
     faces = []
     for i in xrange(0, len(face_data), 4):
-      p = struct.unpack("=I", face_data[i:i+4])[0]
-      faces.append(p)
+      vertex_number = struct.unpack("=I", face_data[i:i+4])[0]
+      if vertex_number >= num_vertices:
+        raise ValueError(
+          "Unable to process fragment {}. Vertex number {} greater than num_vertices {}.".format(
+            filename, vertex_number, num_vertices
+          )
+        )
+      faces.append(vertex_number)
 
     return {
       'num_vertices': num_vertices, 
@@ -74,17 +89,17 @@ def decode_mesh_buffer(fragment):
       'faces': faces
     }
 
-def mesh_to_obj(fragment, num_prev_verticies):
-    objdata = []
-    
-    for vertex in fragment['vertices']:
-        objdata.append('v %s %s %s' % (vertex[0], vertex[1], vertex[2]))
-    
-    faces = [ face + num_prev_verticies + 1 for face in fragment['faces'] ]
-    for i in xrange(0, len(faces), 3):
-      objdata.append('f %s %s %s' % (faces[i], faces[i+1], faces[i+2]))
-    
-    return objdata
+def mesh_to_obj(fragment, num_prev_vertices):
+  objdata = []
+  
+  for vertex in fragment['vertices']:
+    objdata.append('v %s %s %s' % (vertex[0], vertex[1], vertex[2]))
+  
+  faces = [ face + num_prev_vertices + 1 for face in fragment['faces'] ]
+  for i in xrange(0, len(faces), 3):
+    objdata.append('f %s %s %s' % (faces[i], faces[i+1], faces[i+2]))
+  
+  return objdata
 
 def save_mesh(mesh_id, meshdata):
   num_vertices = 0
