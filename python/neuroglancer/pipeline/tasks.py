@@ -314,11 +314,11 @@ class MeshTask(RegisteredTask):
     self._compute_meshes()
 
     def _remap(self):
+        if self.remap!=None:
+            self.remap_list = list(self.remap.values())
 
-        self.remap_list = list(self.remap.values())
-
-        r = lambda x: self.remap_list.indexOf(self.remap.get(x, 0))
-        self._data = np.vectorize(r)(self._data)
+            r = lambda x: self.remap_list.indexOf(self.remap.get(x, 0))
+            self._data = np.vectorize(r)(self._data)
 
   def _compute_meshes(self):
     with Storage(self.layer_path) as storage:
@@ -326,7 +326,7 @@ class MeshTask(RegisteredTask):
       self._mesher.mesh(data.flatten(), *data.shape[:3])
       for obj_id in self._mesher.ids():
         storage.put_file(
-          file_path='{}/{}:{}:{}'.format(self._mesh_dir, self.remap_list[obj_id], self.lod, self._bounds.to_filename()),
+          file_path='{}/{}:{}:{}'.format(self._mesh_dir, self.remap_list[obj_id] if self.remap != None else obj_id, self.lod, self._bounds.to_filename()),
           content=self._create_mesh(obj_id),
           compress=True,
         )
