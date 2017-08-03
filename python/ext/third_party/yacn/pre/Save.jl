@@ -13,9 +13,9 @@ function Path(s::AbstractString)
 end
 
 function save(path::Path{:jls},x)
-	f=open("$(path.prefix).jls","w")
-	serialize(f,x)
-	close(f)
+	open("$(path.prefix).jls","w") do f
+		serialize(f,x)
+	end
 end
 function save{T}(path::Path{:raw},x::Array{T})
 	f=open("$(path.prefix).raw","w")
@@ -56,7 +56,9 @@ function load(path::Path{:npy})
 end
 
 function load(path::Path{:jls})
-	return deserialize(open("$(path.prefix).jls","r"))
+	open("$(path.prefix).jls","r") do file
+		return deserialize(file)
+	end
 end
 function load(path::Path{:raw})
 	f2=open("$(path.prefix).meta","r")

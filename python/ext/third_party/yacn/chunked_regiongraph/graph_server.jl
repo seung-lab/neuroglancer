@@ -3,7 +3,7 @@ include("../pre/Save.jl")
 include("./constants.jl")
 using HttpServer
 using HttpCommon
-using ChunkedGraphs
+using ChunkedGraphs2
 using Save
 using PyCall
 using Utils
@@ -23,15 +23,10 @@ using Utils
 tq = task_queue.TaskQueue("http://127.0.0.1:8000/1.0")
 tq = task_queue.TaskQueue("http://50.16.149.198:8001/1.0")
 
-edges = Save.load("~/testing/chunked_edges.jls")
-vertices = Save.load("~/testing/chunked_vertices.jls")
 
-#N=round(Int,1e8)
-#edges=edges[1:N]
-#vertices=unique(cat(1,UInt64[e[1] for e in edges],UInt64[e[2] for e in edges]))
-
-println("$(length(edges)) edges")
+vertices = Save.load("~/data/chunked_vertices.jls")
 println("$(length(vertices)) vertices")
+
 mesh_label = Dict()
 function get_handles(vertices)
 	handles = Dict{UInt32,UInt64}()
@@ -41,31 +36,11 @@ function get_handles(vertices)
 	return handles
 end
 
-@time handles = get_handles(vertices)
+#@time handles = get_handles(vertices)
 Profile.init(n=10000000,delay=0.1)
-@profile begin
-	G=ChunkedGraph()
-	@time add_atomic_vertices!(G,vertices)
-	@time add_atomic_edges!(G,edges)
-	@time update!(G)
-end
-using ProfileView
-ProfileView.view()
-wait()
-#=
-G=nothing
-gc()
-Profile.init(n=Int(1e7),delay=0.01)
-@profile begin
-	G=ChunkedGraph()
-	@time add_atomic_vertices!(G,vertices)
-	@time add_atomic_edges!(G,edges)
-	@time update!(G)
-end
-using ProfileView
-ProfileView.view()
-wait()
-=#
+
+
+G=ChunkedGraph("~/testing")
 
 const WATERSHED_STORAGE = "gs://neuroglancer/pinky40_v11/watershed_cutout"
 
@@ -100,34 +75,36 @@ function simple_print(x::Array)
 	string('[',map(n->"$(n),",x)...,']')
 end
 
-#=
 function mesh!(c::ChunkedGraphs.Chunk)
-	vertex_list = vertices(c)
-	if !haskey(mesh_task,v.label)
-		if ChunkedGraphs.level(v)==2
-			task_name=string(task_labeller())
-			tq[:insert](name=task_name,
-			payload=prod(["""
-			ObjectMeshTask("$(slices_to_str(chunk_id_to_slices(c.id),high_pad=1))","$(WATERSHED_STORAGE)",$(simple_print([child.label[1] for child in v.children])),$(v.label)).execute()
-			""" for v in vertices(c)]))
-		else
-			task_name = string(task_labeller())
-			child_task_names = filter(x->x!=nothing,[mesh!(child) for child in c.children])
-			tq[:insert](name=task_name,
-			payload=prod(["""
-			MergeMeshTask("$(WATERSHED_STORAGE)",$([child.label for child in v.children]),$(v.label)).execute()
-			"""
-			for v in vertices(c)]),
-			dependencies=child_task_names)
+	vertex_list = c.vertices
+	if ChunkedGraphs.level(c)==2
+		remap=Dict()
+		for v in values(c.vertices)
+			for l in leaves(v)
+				remap[l]=v.label
+			end
 		end
-		mesh_task[c.id]=task_name
-		for v in vertex_list
-			mesh_task[v.label] = task_name
-		end
+		task_name=string(task_labeller())
+		tq[:insert](name=task_name,
+		payload=["""
+		   MeshTask("$(slices_to_str(chunk_id_to_slices(c.id),high_pad=1))","$(WATERSHED_STORAGE)",$(remap)).execute()
+		""" for v in vertices(c)])
+	else
+		task_name = string(task_labeller())
+		child_task_names = filter(x->x!=nothing,[mesh!(child) for child in c.subgraphs])
+		tq[:insert](name=task_name,
+		payload=prod(["""
+		MergeMeshTask("$(WATERSHED_STORAGE)",$([child.label for child in v.children]),$(v.label)).execute()
+		"""
+		for v in vertices(c)]),
+		dependencies=child_task_names)
+	end
+	mesh_task[c.id]=task_name
+	for v in vertex_list
+		mesh_task[v.label] = task_name
 	end
 	return mesh_task[c.id]
 end
-=#
 
 function mesh!(v::ChunkedGraphs.Vertex)
 	if !haskey(mesh_task,v.label)
