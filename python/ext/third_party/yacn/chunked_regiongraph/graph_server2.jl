@@ -19,15 +19,22 @@ if !isfile(rel("keys/server.crt"))
 	end
 end
 
-@pyimport neuroglancer.simple_task_queue.task_queue as task_queue
-tq = task_queue.TaskQueue("http://127.0.0.1:8000/1.0")
+@pyimport neuroglancer.pipeline.task_queue as task_queue
+@pyimport neuroglancer.pipeline.tasks as tasks 
+tq = task_queue.TaskQueue(queue_name="https://queue-dot-neuromancer-seung-import.appspot.com/")
 
 edges = Save.load("~/data/chunked_edges.jls")
 vertices = Save.load("~/data/chunked_vertices.jls")
 
-#N=round(Int,1e8)
-#edges=edges[1:N]
-#vertices=unique(cat(1,UInt64[e[1] for e in edges],UInt64[e[2] for e in edges]))
+function is_valid(x)
+	return pos(chunk_id(x))[1]<21
+end
+function is_valid{T}(x::Tuple{T,T})
+	return is_valid(x[1]) && is_valid(x[2])
+end
+
+edges=filter(is_valid,edges)
+vertices=filter(is_valid,vertices)
 
 println("$(length(edges)) edges")
 println("$(length(vertices)) vertices")
@@ -41,7 +48,13 @@ function get_handles(vertices)
 end
 
 @time handles = get_handles(vertices)
-G=ChunkedGraph("~/testing")
+G=ChunkedGraph(nothing)
+@profile begin
+	@time add_atomic_vertices!(G,vertices)
+	@time add_atomic_edges!(G,edges)
+	@time update!(G)
+end
+#ChunkedGraphs2.save!(G)
 
 const WATERSHED_STORAGE = "gs://neuroglancer/pinky40_v11/watershed_cutout"
 
@@ -65,20 +78,27 @@ end
 
 function mesh!(c::ChunkedGraphs2.Chunk)
 	if ChunkedGraphs2.level(c) == 1
-		vertex_list = unique(map(ChunkedGraphs2.parent,get_vertices(c)))
+		vertex_list=Set()
+		for v in values(c.vertices)
+			if v.parent != ChunkedGraphs2.NULL_LABEL
+				push!(vertex_list,get_vertex(G,v.parent))
+			end
+		end
+
+		d=Dict()
+		for v in vertex_list
+			for l in leaves(G,v)
+				d[l]=v.label
+			end
+		end
 
 		mesh_task_name = string(task_labeller())
-		tq[:insert](name=mesh_task_name,
-		payload=prod(["""
-		ObjectMeshTask("$(slices_to_str(chunk_id_to_slices(c.id,high_pad=0)))","$(WATERSHED_STORAGE)",$(simple_print([seg_id(child.label) for child in v.children])),$(v.label)).execute()
-		""" for v in vertex_list]))
-
-		task_name = string(task_labeller())
-		tq[:insert](name=task_name,
-		payload=prod(["""
-		MergeMeshTask("$(WATERSHED_STORAGE)",$(simple_print([v.label])),$(v.label)).execute()
-		""" for v in vertex_list]),
-		dependencies = [mesh_task_name])
+		tq[:insert](tasks.MeshTask(
+							 "4_4_40",
+							 slices_to_str(chunk_id_to_slices(c.id,high_pad=0)),
+							 WATERSHED_STORAGE, 
+							 remap=d
+							 ))
 	else
 		for child in c.subgraphs
 			mesh!(child)
@@ -86,6 +106,7 @@ function mesh!(c::ChunkedGraphs2.Chunk)
 	end
 	return
 end
+#mesh!(ChunkedGraphs2.get_chunk(G,ChunkedGraphs2.TOP_ID))
 
 function mesh!(v::ChunkedGraphs2.Vertex)
 	if !haskey(mesh_task,v.label)
