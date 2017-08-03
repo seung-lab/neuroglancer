@@ -252,18 +252,18 @@ class MeshTask(RegisteredTask):
                             self._zmin:self._zmax]
 
     def _remap(self):
+        if self.remap!=None:
+            self.remap_list = list(self.remap.values())
 
-        self.remap_list = list(self.remap.values())
-
-        r = lambda x: self.remap_list.indexOf(self.remap.get(x, 0))
-        self._data = np.vectorize(r)(self._data)
+            r = lambda x: self.remap_list.indexOf(self.remap.get(x, 0))
+            self._data = np.vectorize(r)(self._data)
 
     def _compute_meshes(self):
         data = np.swapaxes(self._data[:,:,:,0], 0,2)
         self._mesher.mesh(data.flatten(), *data.shape)
         for obj_id in tqdm(self._mesher.ids()):
             self._storage.put_file(
-                file_path='{}/{}:{}:{}'.format(self._info['mesh'], self.remap_list[obj_id], self.lod, self.chunk_position),
+                file_path='{}/{}:{}:{}'.format(self._info['mesh'], self.remap_list[obj_id] if self.remap != None else obj_id, self.lod, self.chunk_position),
                 content=self._create_mesh(obj_id))
             self._storage.wait()
 
