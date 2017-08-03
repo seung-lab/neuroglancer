@@ -315,10 +315,17 @@ class MeshTask(RegisteredTask):
 
     def _remap(self):
         if self.remap!=None:
-            self.remap_list = list(self.remap.values())
+            actual_remap = {int(k):int(v) for k,v in self.remap.iteritems()}
+            print(actual_remap)
 
-            r = lambda x: self.remap_list.indexOf(self.remap.get(x, 0))
+            self.remap_list = [0]+list(actual_remap.values())
+            d={}
+            for i,v in enumerate(self.remap_list):
+                d[v]=i
+
+            r = lambda x: d[actual_remap.get(x, 0)]
             self._data = np.vectorize(r)(self._data)
+            print(np.mean(self._data))
 
   def _compute_meshes(self):
     with Storage(self.layer_path) as storage:

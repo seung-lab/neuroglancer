@@ -21,7 +21,7 @@ end
 
 @pyimport neuroglancer.pipeline.task_queue as task_queue
 @pyimport neuroglancer.pipeline.tasks as tasks 
-tq = task_queue.TaskQueue(queue_name="https://queue-dot-neuromancer-seung-import.appspot.com/")
+tq = task_queue.TaskQueue(queue_server="pull-queue")
 
 edges = Save.load("~/data/chunked_edges.jls")
 vertices = Save.load("~/data/chunked_vertices.jls")
@@ -56,7 +56,7 @@ G=ChunkedGraph(nothing)
 end
 #ChunkedGraphs2.save!(G)
 
-const WATERSHED_STORAGE = "gs://neuroglancer/pinky40_v11/watershed_cutout"
+const WATERSHED_STORAGE = "gs://neuroglancer/pinky40_v11/watershed"
 
 #maps ids to the mesh task name
 const mesh_task=Dict()
@@ -88,17 +88,18 @@ function mesh!(c::ChunkedGraphs2.Chunk)
 		d=Dict()
 		for v in vertex_list
 			for l in leaves(G,v)
-				d[l]=v.label
+				d[seg_id(l)]=v.label
 			end
 		end
 
 		mesh_task_name = string(task_labeller())
-		tq[:insert](tasks.MeshTask(
+		task = tasks.MeshTask(
 							 "4_4_40",
 							 slices_to_str(chunk_id_to_slices(c.id,high_pad=0)),
 							 WATERSHED_STORAGE, 
 							 remap=d
-							 ))
+							 )
+		tq[:insert](task)
 	else
 		for child in c.subgraphs
 			mesh!(child)
@@ -106,7 +107,7 @@ function mesh!(c::ChunkedGraphs2.Chunk)
 	end
 	return
 end
-#mesh!(ChunkedGraphs2.get_chunk(G,ChunkedGraphs2.TOP_ID))
+mesh!(ChunkedGraphs2.get_chunk(G,ChunkedGraphs2.TOP_ID))
 
 function mesh!(v::ChunkedGraphs2.Vertex)
 	if !haskey(mesh_task,v.label)
