@@ -585,12 +585,13 @@ class HyperSquareConsensusTask(RegisteredTask):
 
 
 class TransferTask(RegisteredTask):
-  def __init__(self, src_path, dest_path, shape, offset):
-    super(self.__class__, self).__init__(src_path, dest_path, shape, offset)
+  def __init__(self, src_path, dest_path, shape, offset, skip_downsample=False):
+    super(self.__class__, self).__init__(src_path, dest_path, shape, offset, skip_downsample)
     self.src_path = src_path
     self.dest_path = dest_path
     self.shape = Vec(*shape)
     self.offset = Vec(*offset)
+    self.skip_downsample = skip_downsample
 
   def execute(self):
     srccv = CloudVolume(self.src_path)
@@ -600,7 +601,10 @@ class TransferTask(RegisteredTask):
     bounds = Bbox.clamp(bounds, srccv.bounds)
     
     image = srccv[ bounds.to_slices() ]
-    downsample_and_upload(image, bounds, destcv, self.shape)
+    if self.skip_downsample:
+      destcv[ bounds.to_slices() ] = image
+    else:
+      downsample_and_upload(image, bounds, destcv, self.shape)
 
 class WatershedRemapTask(RegisteredTask):
     """
@@ -660,63 +664,4 @@ class WatershedRemapTask(RegisteredTask):
         remap = np.load(file)
         file.close()
         return remap
-
-class BossTransferTask(RegisteredTask):
-  """
-  This is a very limited task that is used for transferring
-  mip 0 data from The BOSS (https://docs.theboss.io). 
-  If our needs become more sophisticated we can make a 
-  BossVolume and integrate that into TransferTask.
-
-  Of note, to initiate a transfer, write the bounds
-  of the coordinate frame from your experiment into the
-  destinate info file.
-  """
-
-  def __init__(self, src_path, dest_path, shape, offset):
-    super(self.__class__, self).__init__(src_path, dest_path, shape, offset)
-    self.src_path = src_path
-    self.dest_path = dest_path
-    self.shape = Vec(*shape)
-    self.offset = Vec(*offset)
-
-  def execute(self):
-    match = re.match(r'^(boss)://([/\d\w_\.\-]+)/([\d\w_\.\-]+)/([\d\w_\.\-]+)/?', 
-        self.src_path)
-    protocol, collection, experiment, channel = match.groups()
-
-    dest_vol = CloudVolume(self.dest_path)
-
-    bounds = Bbox( self.offset, self.shape + self.offset )
-    bounds = Bbox.clamp(bounds, dest_vol.bounds)
-    # -1 b/c boss uses inclusive-exclusive bounds for their bboxes
-    bounds.maxpt = Vec.clamp(
-      bounds.maxpt, 
-      dest_vol.bounds.minpt, 
-      dest_vol.bounds.maxpt - 1
-    )
-
-    if bounds.volume() < 1:
-      return
-
-    x_rng = [ bounds.minpt.x, bounds.maxpt.x ]
-    y_rng = [ bounds.minpt.y, bounds.maxpt.y ]
-    z_rng = [ bounds.minpt.z, bounds.maxpt.z ]
-
-    chan = ChannelResource(
-      name=channel,
-      collection_name=collection, 
-      experiment_name=experiment, 
-      type='image', 
-      datatype=dest_vol.dtype
-    )
-
-    rmt = BossRemote(boss_credentials)
-    img3d = rmt.get_cutout(chan, 0, x_rng, y_rng, z_rng).T
-
-    print(img3d.shape, bounds.size3())
-
-    downsample_and_upload(img3d, bounds, dest_vol, self.shape)
-
-
 

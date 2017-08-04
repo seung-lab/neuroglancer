@@ -8,6 +8,10 @@ from collections import namedtuple
 import numpy as np
 from tqdm import tqdm
 
+from intern.remote.boss import BossRemote
+from intern.resource.boss.resource import ChannelResource, ExperimentResource, CoordinateFrameResource
+from neuroglancer.pipeline.secrets import boss_credentials
+
 import neuroglancer
 import neuroglancer.lib as lib
 from neuroglancer.lib import clamp, xyzrange, Vec, Vec3, Bbox, min2, max2
@@ -68,7 +72,9 @@ class CloudVolume(Volume):
     self.bounded = bounded
     self.fill_missing = fill_missing
 
-    self._storage = Storage(self.layer_cloudpath, n_threads=0)
+    self._storage = None
+    if self._protocol != 'boss':
+      self._storage = Storage(self.layer_cloudpath, n_threads=0)
 
     if info is None:
       self.refreshInfo()
@@ -107,15 +113,69 @@ class CloudVolume(Volume):
   @classmethod
   def extract_path(cls, cloudpath):
     """cloudpath: e.g. gs://neuroglancer/DATASET/LAYER/info or s3://..."""
-    match = re.match(r'^(gs|file|s3)://([/\d\w_\.\-]+)/([\d\w_\.\-]+)/([\d\w_\.\-]+)/?(?:info)?', cloudpath)
+    match = re.match(r'^(gs|file|s3|boss)://([/\d\w_\.\-]+)/([\d\w_\.\-]+)/([\d\w_\.\-]+)/?(?:info)?', cloudpath)
     return ExtractedPath(*match.groups())
 
   def refreshInfo(self):
-    infojson = self._storage.get_file('info')
-    self.info = json.loads(infojson)
+    if self._protocol != "boss":
+      infojson = self._storage.get_file('info')
+      self.info = json.loads(infojson)
+    else:
+      self.info = self.fetchBossInfo()
     return self.info
 
+  def fetchBossInfo(self):
+    experiment = ExperimentResource(
+      name=self._dataset_name, 
+      collection_name=self._bucket
+    )
+    rmt = BossRemote(boss_credentials)
+    experiment = rmt.get_project(experiment)
+
+    coord_frame = CoordinateFrameResource(name=experiment.coord_frame)
+    coord_frame = rmt.get_project(coord_frame)
+
+    channel = ChannelResource(self._layer, self._bucket, self._dataset_name)
+    channel = rmt.get_project(channel)    
+
+    unit_factors = {
+      'nanometers': 1,
+      'micrometers': 1e3,
+      'millimeters': 1e6,
+      'centimeters': 1e7,
+    }
+
+    unit_factor = unit_factors[coord_frame.voxel_unit]
+
+    cf = coord_frame
+    resolution = [ cf.x_voxel_size, cf.y_voxel_size, cf.z_voxel_size ]
+    resolution = [ int(round(_)) * unit_factor for _ in resolution ]
+
+    bbox = Bbox(
+      (cf.x_start, cf.y_start, cf.z_start),
+      (cf.x_stop, cf.y_stop, cf.z_stop)
+    )
+    bbox.maxpt = bbox.maxpt - 1 # boss uses exclusive outer bound
+
+    layer_type = 'unknown'
+    if 'type' in channel.raw:
+      layer_type = channel.raw['type']
+
+    return CloudVolume.create_new_info(
+      num_channels=1,
+      layer_type=layer_type,
+      data_type=channel.datatype,
+      encoding='raw',
+      resolution=resolution,
+      voxel_offset=bbox.minpt,
+      volume_size=bbox.size3(),
+    )
+
+
   def commitInfo(self):
+    if self._protocol == 'boss':
+      return self
+
     infojson = json.dumps(self.info)
     self._storage.put_file('info', infojson, 'application/json').wait()
     return self
@@ -328,7 +388,11 @@ class CloudVolume(Volume):
     steps = Vec(*[ slc.step for slc in slices ])
 
     requested_bbox = Bbox(minpt, maxpt)
-    cutout = self._cutout(requested_bbox, steps, channel_slice)
+
+    if self._protocol == 'boss':
+      cutout = self._boss_cutout(requested_bbox, steps, channel_slice)
+    else:
+      cutout = self._cutout(requested_bbox, steps, channel_slice)
 
     if self.bounded:
       return cutout
@@ -345,6 +409,36 @@ class CloudVolume(Volume):
     hp = lp + cutout.bounds.size3()
     renderbuffer[ lp.x:hp.x, lp.y:hp.y, lp.z:hp.z, : ] = cutout 
     return VolumeCutout.from_volume(self, renderbuffer, requested_bbox)
+
+  def _boss_cutout(self, requested_bbox, steps, channel_slice=slice(None)):
+    bounds = Bbox.clamp(requested_bbox, self.bounds)
+
+    if bounds.volume() < 1:
+      raise ValueError('Requested less than one pixel of volume. {}'.format(bounds))
+
+    x_rng = [ bounds.minpt.x, bounds.maxpt.x ]
+    y_rng = [ bounds.minpt.y, bounds.maxpt.y ]
+    z_rng = [ bounds.minpt.z, bounds.maxpt.z ]
+
+    layer_type = 'image' if self.layer_type == 'unknown' else self.layer_type
+
+    chan = ChannelResource(
+      collection_name=self._bucket, 
+      experiment_name=self._dataset_name, 
+      name=self._layer, # Channel
+      type=layer_type, 
+      datatype=self.dtype,
+    )
+
+    rmt = BossRemote(boss_credentials)
+    cutout = rmt.get_cutout(chan, self.mip, x_rng, y_rng, z_rng).T
+    cutout = cutout[::steps.x, ::steps.y, ::steps.z]
+
+    if len(cutout.shape) == 3:
+      cutout = cutout.reshape(tuple(list(cutout.shape) + [ 1 ]))
+
+    return VolumeCutout.from_volume(self, cutout, bounds)
+
 
   def _cutout(self, requested_bbox, steps, channel_slice=slice(None)):
     realized_bbox = requested_bbox.expand_to_chunk_size(self.underlying, offset=self.voxel_offset)
@@ -410,7 +504,42 @@ class CloudVolume(Volume):
     if not np.array_equal(imgshape, slice_shape):
       raise ValueError("Illegal slicing, Image shape: {} != {} Slice Shape".format(imgshape, slice_shape))
     
-    self.upload_image(img, bbox.minpt)
+    if self._protocol == 'boss':
+      self.upload_boss_image(img, bbox.minpt)
+    else:
+      self.upload_image(img, bbox.minpt)
+
+  def upload_boss_image(self, img, offset):
+    shape = Vec(*img.shape[:3])
+    offset = Vec(*offset)
+
+    bounds = Bbox(offset, shape + offset)
+
+    if bounds.volume() < 1:
+      raise ValueError('Requested less than one pixel of volume. {}'.format(bounds))
+
+    x_rng = [ bounds.minpt.x, bounds.maxpt.x ]
+    y_rng = [ bounds.minpt.y, bounds.maxpt.y ]
+    z_rng = [ bounds.minpt.z, bounds.maxpt.z ]
+
+    layer_type = 'image' if self.layer_type == 'unknown' else self.layer_type
+
+    chan = ChannelResource(
+      collection_name=self._bucket, 
+      experiment_name=self._dataset_name, 
+      name=self._layer, # Channel
+      type=layer_type, 
+      datatype=self.dtype,
+    )
+
+    if img.shape[3] == 1:
+      img = img.reshape( img.shape[:3] )
+
+    rmt = BossRemote(boss_credentials)
+    img = img.T
+    img = np.ascontiguousarray(img.astype(self.dtype))
+
+    rmt.create_cutout(chan, self.mip, x_rng, y_rng, z_rng, img)
 
   def upload_image(self, img, offset):
     if str(self.dtype) != str(img.dtype):
