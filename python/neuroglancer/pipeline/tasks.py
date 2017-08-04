@@ -7,6 +7,7 @@ import itertools
 import json
 import os
 import re
+import cached
 from tempfile import NamedTemporaryFile
 
 import blosc
