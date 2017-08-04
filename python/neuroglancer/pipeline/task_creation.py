@@ -175,21 +175,23 @@ def create_meshing_tasks(task_queue, layer_path, mip, shape=Vec(512, 512, 512)):
     task_queue.insert(task)
   task_queue.wait()
 
-def create_transfer_tasks(task_queue, src_layer_path, dest_layer_path, shape=Vec(2048, 2048, 64), skip_downsample=False):
+def create_transfer_tasks(task_queue, src_layer_path, dest_layer_path, shape=Vec(2048, 2048, 64), skip_downsample=False, fill_missing=False):
   shape = Vec(*shape)
   vol = CloudVolume(src_layer_path)
 
   if not skip_downsample:
     create_downsample_scales(dest_layer_path, mip=0, ds_shape=shape)
 
-  for startpt in tqdm(xyzrange( vol.bounds.minpt, vol.bounds.maxpt, shape ), desc="Inserting Transfer Tasks"):
-    print(startpt)
+  bounds = vol.bounds.clone()
+
+  for startpt in tqdm(xyzrange( bounds.minpt, bounds.maxpt, shape ), desc="Inserting Transfer Tasks"):
     task = TransferTask(
       src_path=src_layer_path,
       dest_path=dest_layer_path,
       shape=shape.clone(),
       offset=startpt.clone(),
       skip_downsample=skip_downsample,
+      fill_missing=fill_missing,
     )
     task_queue.insert(task)
   task_queue.wait()
@@ -480,7 +482,7 @@ if __name__ == '__main__':
   dest_path = 'gs://neuroglancer/pinky40_v11/watershed_mst_split_tuning_remap/' 
   map_path = os.path.join(dest_path, 'mst_split_tuning_remap.npy')
   
-  with MockTaskQueue(queue_name='wms-test-pull-queue') as task_queue:
+  with TaskQueue(queue_name='wms-pull-queue') as task_queue:
     # create_downsampling_tasks(task_queue, 'gs://neuroglancer/zfish_v0/consensus-2017-07-11/', mip=5, fill_missing=True)
     # create_meshing_tasks(task_queue, dest_path, mip=3)
 
@@ -510,10 +512,11 @@ if __name__ == '__main__':
     # )
 
     create_transfer_tasks(task_queue,
-      src_layer_path='gs://neuroglancer/pinky40_v11/watershed_mst_smc_sem5_remap/', 
-      dest_layer_path='boss://pinky40/v7/segmentation_v11_1_mean_affinity_027_ingest2',
+      src_layer_path='gs://neuroglancer/pinky40_v11/psdsegs_mst_smc/', 
+      dest_layer_path='boss://pinky40/v7/psdsegs_mst_smc_2_ingest_2',
       shape=(1024,1024,64),
       skip_downsample=True,
+      fill_missing=True,
     )
 
     # create_fixup_downsample_tasks(task_queue, 'gs://neuroglancer/pinky40_v11/image/', 
