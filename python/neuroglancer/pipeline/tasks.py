@@ -245,39 +245,44 @@ class MergeMeshTask(RegisteredTask):
     These are necessary for neuroglancer to know which mesh
     fragments to download for a given segid.
     """
-    def __init__(self, layer_path, labels, new_label, lod=0):
-        super(MergeMeshTask, self).__init__(layer_path, labels, new_label, lod)
+    def __init__(self, layer_path, remap, lod=0):
+        super(MergeMeshTask, self).__init__(layer_path, remap, lod)
         self.layer_path = layer_path
         self.lod = lod
-        self.labels = labels
-        self.new_label = new_label
+        self.remap = remap
 
     def execute(self):
-        self._storage = Storage(self.layer_path)
+        self._storage = CachedStorage(self.layer_path)
         self._download_info()
-        self._download_input_chunk()
+        self._upload_manifests()
 
     def _download_info(self):
         self._info = json.loads(self._storage.get_file('info'))
         
-    def _download_input_chunk(self):
+    def _upload_manifests(self):
         """
         Assumes that list blob is lexicographically ordered
         """
-        fragments=[]
-        for seg in self.labels:
-            #print('{}/{}:{}'.format(self._info['mesh'], seg, self.lod))
-            manifest = json.loads(self._storage.get_file('{}/{}:{}'.format(self._info['mesh'], seg, self.lod)))
-            fragments=fragments+manifest["fragments"]
+        actual_remap = {int(k):int(v) for k,v in self.remap.iteritems()}
+        lists = defaultdict(list)
+        for k,v in actual_remap.iteritems():
+            lists[v].append(k)
 
-        self._storage.put_file(
-            file_path='{}/{}:{}'.format(self._info['mesh'], self.new_label, self.lod),
-            content=json.dumps({"fragments": fragments}))
+        for v in lists.keys():
+            print(v)
+            fragments=[]
+            for seg in lists[v]:
+                manifest = json.loads(self._storage.get_file('{}/{}:{}'.format(self._info['mesh'], seg, self.lod)))
+                fragments=fragments+manifest["fragments"]
+
+            self._storage.put_file(
+                file_path='{}/{}:{}'.format(self._info['mesh'], v, self.lod),
+                content=json.dumps({"fragments": fragments}))
         self._storage.wait()
 
 class MeshTask(RegisteredTask):
-  def __init__(self, shape, offset, layer_path, mip=0, simplification_factor=100, max_simplification_error=40, remap=None):
-    super(MeshTask, self).__init__(shape, offset, layer_path, mip, simplification_factor, max_simplification_error, remap)
+  def __init__(self, shape, offset, layer_path, mip=0, simplification_factor=100, max_simplification_error=40, remap=None, generate_manifests=False):
+    super(MeshTask, self).__init__(shape, offset, layer_path, mip, simplification_factor, max_simplification_error, remap, generate_manifests)
     self.shape = Vec(*shape)
     self.offset = Vec(*offset)
     self.mip = mip
@@ -286,6 +291,7 @@ class MeshTask(RegisteredTask):
     self.simplification_factor = simplification_factor
     self.max_simplification_error = max_simplification_error
     self.remap = remap
+    self.generate_manifests=generate_manifests
 
   def execute(self):
     self._mesher = Mesher()
@@ -317,7 +323,6 @@ class MeshTask(RegisteredTask):
     def _remap(self):
         if self.remap!=None:
             actual_remap = {int(k):int(v) for k,v in self.remap.iteritems()}
-            print(actual_remap)
 
             self.remap_list = [0]+list(actual_remap.values())
             d={}
@@ -333,11 +338,22 @@ class MeshTask(RegisteredTask):
       data = self._data[:,:,:,0].T
       self._mesher.mesh(data.flatten(), *data.shape[:3])
       for obj_id in self._mesher.ids():
+        remapped_id = self.remap_list[obj_id] if self.remap != None else obj_id
         storage.put_file(
-          file_path='{}/{}:{}:{}'.format(self._mesh_dir, self.remap_list[obj_id] if self.remap != None else obj_id, self.lod, self._bounds.to_filename()),
+          file_path='{}/{}:{}:{}'.format(self._mesh_dir, remapped_id, self.lod, self._bounds.to_filename()),
           content=self._create_mesh(obj_id),
           compress=True,
         )
+        
+        if self.generate_manifests:
+          fragments = []
+          fragments.append('{}:{}:{}'.format(remapped_id, self.lod, self.chunk_position))
+
+          storage.put_file(
+            file_path='{}/{}:{}'.format(self._mesh_dir, remapped_id, self.lod),
+            content=json.dumps({"fragments": fragments}),
+            content_type='application/json'
+          )
 
   def _create_mesh(self, obj_id):
     mesh = self._mesher.get_mesh(obj_id, 
