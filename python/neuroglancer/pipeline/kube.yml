@@ -1,0 +1,37 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: meshing
+spec:
+  replicas: 45
+  template:
+    metadata:
+      labels:
+        app: neuroglancer
+    spec:
+      containers:
+        - name: neuroglancer
+          image: gcr.io/your-project-name/your-docker-image-name 
+          env:
+          - name: PIPELINE_USER_QUEUE
+            value: your-pull-queue
+          - name: TASK_LEASE_SECS
+            value: 7200
+          volumeMounts:
+          - name: secrets
+            mountPath: "/secrets"
+            readOnly: true
+          - name: tmp
+            mountPath: "/tmp"
+            readOnly: false
+          imagePullPolicy: Always
+          resources:
+            requests:
+              memory: 16Gi
+      volumes:
+      - name: secrets
+        secret:
+          secretName: secrets
+      - name: tmp
+        emptyDir: { medium: "Memory" }
+      
