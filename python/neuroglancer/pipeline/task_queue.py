@@ -51,7 +51,7 @@ class RegisteredTask(object):
         obj = deserialize(base64data)
         assert type(obj) == cls
         return obj
-        
+
     def serialize(self):
         d = copy.deepcopy(self._args)
         d['class'] = self.__class__.__name__
@@ -71,7 +71,7 @@ class RegisteredTask(object):
         return self._id
 
     def __repr__(self):
-        
+
         string = self.__class__.__name__ + "("
         for arg_name, arg_value in self._args.iteritems():
             if type(arg_value) is str or type(arg_value) is unicode:
@@ -83,7 +83,7 @@ class RegisteredTask(object):
         if string[-1] == ',':
             string = string[:-1]
 
-        return string + ")"  
+        return string + ")"
 
 class TaskQueue(ThreadedQueue):
     """
@@ -94,9 +94,9 @@ class TaskQueue(ThreadedQueue):
     it should call task.update before the lease expires.
 
     If the client completes the task after the lease has expired,
-    it still needs to delete the task. 
+    it still needs to delete the task.
 
-    Tasks should be designed to be idempotent to avoid errors 
+    Tasks should be designed to be idempotent to avoid errors
     if multiple clients complete the same task.
     """
     class QueueEmpty(LookupError):
@@ -122,14 +122,14 @@ class TaskQueue(ThreadedQueue):
         WARNING: The number computed by Google is eventually
             consistent. It may return impossible numbers that
             are small deviations from the number in the queue.
-            For instance, we've seen 1005 enqueued after 1000 
+            For instance, we've seen 1005 enqueued after 1000
             inserts.
-        
+
         Returns: (int) number of tasks in cloud queue
         """
         tqinfo = self.get()
         return tqinfo['stats']['totalTasks']
-        
+
     def _consume_queue_execution(self, fn):
         try:
             super(self.__class__, self)._consume_queue_execution(fn)
@@ -137,7 +137,7 @@ class TaskQueue(ThreadedQueue):
             # Retry if Timeout, Service Unavailable, or ISE
             # ISEs can happen from flooding or other issues that
             # aren't the fault of the request.
-            if httperr.resp.status in (408, 500, 503): 
+            if httperr.resp.status in (408, 500, 503):
                 self.put(fn)
             elif httperr.resp.status == 400:
                 if not re.search('task name is invalid', repr(httperr), flags=re.IGNORECASE):
@@ -182,8 +182,8 @@ class TaskQueue(ThreadedQueue):
 
     def get_task(self, tid):
         """
-        Gets the named task in the TaskQueue. 
-        tid is a unique string Google provides 
+        Gets the named task in the TaskQueue.
+        tid is a unique string Google provides
         e.g. '7c6e81c9b7ab23f0'
         """
         return self._api.tasks().get(
@@ -194,11 +194,11 @@ class TaskQueue(ThreadedQueue):
 
     def list(self):
         """
-        Lists all non-deleted Tasks in a TaskQueue, 
+        Lists all non-deleted Tasks in a TaskQueue,
         whether or not they are currently leased, up to a maximum of 100.
         """
         return self._api.tasks().list(
-            project=self._project, 
+            project=self._project,
             taskqueue=self._queue_name
         ).execute(num_retries=6)
 
@@ -209,25 +209,25 @@ class TaskQueue(ThreadedQueue):
         """
         raise NotImplemented
 
-    def lease(self, tag=None):
+    def lease(self, leaseSecs=600, tag=None):
         """
         Acquires a lease on the topmost N unowned tasks in the specified queue.
         Required query parameters: leaseSecs, numTasks
         """
         tag = tag if tag else None
-        
+
         tasks = self._api.tasks().lease(
             project=self._project,
-            taskqueue=self._queue_name, 
-            numTasks=1, 
-            leaseSecs=600,
+            taskqueue=self._queue_name,
+            numTasks=1,
+            leaseSecs=leaseSecs,
             groupByTag=(tag is not None),
             tag=tag,
         ).execute(num_retries=6)
 
         if not 'items' in tasks:
             raise TaskQueue.QueueEmpty
-          
+
         task_json = tasks['items'][0]
         t = payloadBase64Decode(task_json['payloadBase64'])
         t._id =  task_json['id']
