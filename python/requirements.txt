@@ -21,5 +21,6 @@ pytest==3.0.7
 tenacity==4.1.0
 google-api-python-client==1.6.2
 google-cloud==0.26
+google-cloud-storage==1.2.0
 jsonschema==2.6.0
 intern==0.9.4
