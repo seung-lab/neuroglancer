@@ -59,3 +59,5 @@ RUN echo "push!(LOAD_PATH, \"/neuroglancer/python/ext/third_party/contact_analys
 RUN echo "ENV[\"USER\"] = \"docker\"" >> /root/.juliarc.jl
 RUN echo "using JSON\nfor (k,v) in JSON.parse(open(\"/secrets/aws-secret.json\"))\n  ENV[k] = v\nend" >> /root/.juliarc.jl
 
+
+CMD cd /neuroglancer/python/ && python -m neuroglancer.pipeline.task_execution
