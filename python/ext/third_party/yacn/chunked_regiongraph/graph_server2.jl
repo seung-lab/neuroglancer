@@ -6,7 +6,7 @@ using HttpServer
 using HttpCommon
 using ChunkedGraphs2
 using Save
-using PyCall
+#using PyCall
 using Utils
 
 # Generate a certificate and key if they do not exist
@@ -19,24 +19,25 @@ if !isfile(rel("keys/server.crt"))
 	end
 end
 
+#=
 @pyimport neuroglancer.pipeline.task_queue as task_queue
 @pyimport neuroglancer.pipeline.tasks as tasks 
 tq = task_queue.TaskQueue(queue_server="pull-queue")
+=#
 
-edges = Save.load("~/data/chunked_edges.jls")
+G=ChunkedGraph("~/testing2")
+@time for f in filter(s->ismatch(r".*vertices.jls",s), readdir(expanduser("~/testing2")))
+	m=match(r"(\d+)_(\d+)_(\d+)_(\d+).*",f)
+	id = ChunkID(map(x->parse(UInt32,x),m.captures)...)
+	if Utils.level(id) >= 3
+		ChunkedGraphs2.get_chunk(G,id)
+	end
+end
+
+#edges = Save.load("~/data/chunked_edges.jls")
 vertices = Save.load("~/data/chunked_vertices.jls")
 
-function is_valid(x)
-	return pos(chunk_id(x))[1]<21
-end
-function is_valid{T}(x::Tuple{T,T})
-	return is_valid(x[1]) && is_valid(x[2])
-end
-
-edges=filter(is_valid,edges)
-vertices=filter(is_valid,vertices)
-
-println("$(length(edges)) edges")
+#println("$(length(edges)) edges")
 println("$(length(vertices)) vertices")
 
 function get_handles(vertices)
@@ -47,16 +48,9 @@ function get_handles(vertices)
 		return handles
 end
 
-@time handles = get_handles(vertices)
-G=ChunkedGraph(nothing)
-@profile begin
-	@time add_atomic_vertices!(G,vertices)
-	@time add_atomic_edges!(G,edges)
-	@time update!(G)
-end
-#ChunkedGraphs2.save!(G)
 
-const WATERSHED_STORAGE = "gs://neuroglancer/pinky40_v11/watershed"
+@time handles = get_handles(vertices)
+
 
 #maps ids to the mesh task name
 const mesh_task=Dict()
@@ -107,7 +101,6 @@ function mesh!(c::ChunkedGraphs2.Chunk)
 	end
 	return
 end
-mesh!(ChunkedGraphs2.get_chunk(G,ChunkedGraphs2.TOP_ID))
 
 function mesh!(v::ChunkedGraphs2.Vertex)
 	if !haskey(mesh_task,v.label)
@@ -192,12 +185,17 @@ function handle_children(id)
 	end
 
 	v = get_vertex(G, id)
-	if ChunkedGraphs2.level(v) == 2 # Lvl 2, children are neuroglancer supervoxel, need to trim the chunk ids
+
+	if ChunkedGraphs2.level(v) == 1
+		s=seg_id(v.id)
+		println("$(now()): handle_children - v: $(v.label), (Level $(ChunkedGraphs2.level(v)))")
+	elseif ChunkedGraphs2.level(v) == 2 # Lvl 2, children are neuroglancer supervoxel, need to trim the chunk ids
 		#return Response(UInt8[],headers)
 		s = UInt64[seg_id(child) for child in v.children]
 		println("$(now()): handle_children - v: $(v.label), (Level $(ChunkedGraphs2.level(v))), - children: $(simple_print([seg_id(child) for child in v.children]))")
 	else
-		s = UInt64[child for child in v.children]
+		#s = UInt64[child for child in v.children]
+		s = UInt64[child for child in leaves(G,v,2)]
 		println("$(now()): handle_children - v: $(v.label), (Level $(ChunkedGraphs2.level(v))), - children: $(simple_print([child for child in v.children]))")
 	end
 
@@ -206,16 +204,21 @@ end
 
 function handle_split(id1,id2)
 	id1 = parse(UInt64, id1)
+	@assert chunk_id(id1)==0
 	if chunk_id(id1) == 0 # Lvl 0, a neuroglancer supervoxel, need to lookup chunk id
 		id1 = handles[id1]
 	end
 
 	id2 = parse(UInt64, id2)
+	@assert chunk_id(id2)==0
 	if chunk_id(id2) == 0 # Lvl 0, a neuroglancer supervoxel, need to lookup chunk id
 		id2 = handles[id2]
 	end
 
-	delete_atomic_edge!(G, (id1, id2))
+	#delete_atomic_edge!(G, (id1, id2))
+	for e in ChunkedGraphs2.min_cut(G,id1,id2)
+		delete_atomic_edge!(G,e)
+	end
 	update!(G)
 
 	root1 = bfs(G, id1)[1]
@@ -227,11 +230,13 @@ end
 
 function handle_merge(id1, id2)
 	id1 = parse(UInt64, id1)
+	@assert chunk_id(id1)==0
 	if chunk_id(id1) == 0 # Lvl 0, a neuroglancer supervoxel, need to lookup chunk id
 		id1 = handles[id1]
 	end
 
 	id2 = parse(UInt64, id2)
+	@assert chunk_id(id2)==0
 	if chunk_id(id2) == 0 # Lvl 0, a neuroglancer supervoxel, need to lookup chunk id
 		id2 = handles[id2]
 	end

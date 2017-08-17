@@ -7,11 +7,13 @@ using Save
 using Iterators
 import MultiGraphs
 using Utils
+using DataStructures
 
 #####Chunk Ids#####
 include("constants.jl")
-const MAX_DEPTH=5
+const MAX_DEPTH=3
 const TOP_ID=ChunkID(MAX_DEPTH+1,0,0,0)
+const SECOND_ID=ChunkID(MAX_DEPTH,0,0,0)
 const NULL_LABEL=typemax(UInt64)
 const NULL_LIST=Vector{Label}[]
 
@@ -27,6 +29,8 @@ end
 @inline function parent(t::ChunkID)
 	if level(t) >= MAX_DEPTH
 		return TOP_ID
+	elseif level(t) == MAX_DEPTH - 1
+		return SECOND_ID
 	else 
 		x,y,z=pos(t)
 		return ChunkID(level(t)+1,fld(x,bx),fld(y,by),fld(z,bz))
@@ -57,11 +61,12 @@ end
 
 type ChunkedGraph{C}
 	graphs::Dict{ChunkID,C}
+	last_used::PriorityQueue{ChunkID,Float64}
 	path::Union{String,Void}
 end
 
 function ChunkedGraph(path)
-	return ChunkedGraph{Chunk}(Dict{ChunkID,Chunk}(),path)
+	return ChunkedGraph{Chunk}(Dict{ChunkID,Chunk}(),DataStructures.PriorityQueue(ChunkID,Float64),path)
 end
 
 const AtomicEdge = Tuple{Label,Label}
@@ -115,7 +120,10 @@ function is_root(c::Chunk)
 	return is_root(c.id)
 end
 
+eviction_mode=false
+const CACHE_SIZE = 40000
 function get_chunk(g::ChunkedGraph, id::ChunkID)
+	global eviction_mode
 	if !haskey(g.graphs,id)
 		tmp=nothing
 		if g.path !=nothing
@@ -126,14 +134,31 @@ function get_chunk(g::ChunkedGraph, id::ChunkID)
 		end
 		g.graphs[id]=tmp::Chunk
 	end
-	return g.graphs[id]::Chunk
+	ret=g.graphs[id]::Chunk
+	if !eviction_mode
+		if level(ret.id)==1
+			g.last_used[ret.id]=time()
+		end
+		eviction_mode=true
+		while length(g.graphs) > CACHE_SIZE
+			evict!(g.graphs[DataStructures.peek(g.last_used)[1]])
+		end
+		eviction_mode=false
+	else
+		if level(ret.id) == 1
+			if !haskey(g.last_used,ret.id)
+				g.last_used[ret.id]=0
+			end
+		end
+	end
+	return ret
 end
 
 function parent(c::Chunk)
 	return get_chunk(c.chunked_graph, parent(c.id))
 end
 
-function save_chunk(c::Chunk)
+function save_chunk!(c::Chunk)
 	@assert c.clean
 	prefix=to_string(c.id)
 	Save.save(joinpath(c.chunked_graph.path,"$(prefix)_vertices.jls"),collect(values(c.vertices)))
@@ -145,23 +170,26 @@ end
 function save!(c::ChunkedGraph)
 	println("Saving...")
 	for c in collect(values(c.graphs))
-		save_chunk(c)
+		save_chunk!(c)
 	end
 	println("done")
 end
 
 function evict!(c::Chunk)
-	@assert c.clean
-	for s in c.subgraphs
-		evict!(s)
+	@assert !is_root(c)
+	@assert c.id != SECOND_ID
+	#@assert c.clean
+	update!(c)
+	while !isempty(c.subgraphs)
+		evict!(c.subgraphs[end])
 	end
 	if c.modified
 		save_chunk!(c)
 	end
-	if !is_root(c)
-		delete!(c.parent.subgraphs, c)
-	end
-	delete!(c.chunked_graph.graphs, c)
+	filter!(x->x!=c, c.parent.subgraphs)
+	delete!(c.chunked_graph.graphs, c.id)
+	dequeue!(c.chunked_graph.last_used, c.id)
+	println("Evicted $(c.id)")
 end
 
 function to_string(id::ChunkID)
@@ -173,15 +201,15 @@ function load_chunk(G::ChunkedGraph,id)
 	vertices=nothing
 	graph=nothing
 	max_label=nothing
-	#try
+	try
 		prefix=to_string(id)
 		vertices=Save.load(joinpath(G.path,"$(prefix)_vertices.jls"))
 		graph=Save.load(joinpath(G.path,"$(prefix)_graph.jls"))
 		max_label=Save.load(joinpath(G.path,"$(prefix)_max_label.jls"))
-	#catch
-	#	println("failed.")
-	#	return nothing
-	#end
+	catch
+		println("failed.")
+		return nothing
+	end
 	vertices_dict=Dict{Label,Vertex}()
 	sizehint!(vertices_dict, length(vertices))
 	for v in vertices
@@ -228,6 +256,8 @@ function promote!(G,v)
 	MultiGraphs.add_vertex!(c.parent.graph,pv.label)
 	c.parent.vertices[pv.label]=pv
 	c.parent.modified=true
+
+	return pv
 end
 
 function touch(x::Void)
@@ -247,9 +277,140 @@ end
 function leaves(G,v::Vertex)
 	if is_leaf(v)
 		return [v.label]
+	elseif level(v)==2
+		return v.children
 	else
 		return cat(1,map(x->leaves(G,get_vertex(G,x)),v.children)...)
 	end
+end
+function leaves(G,v::Vertex,l::Integer)
+	@assert level(chunk_id(v)) > l
+	if is_leaf(v)
+		return [v.label]
+	elseif level(v)==l+1
+		return v.children
+	else
+		return cat(1,map(x->leaves(G,get_vertex(G,x),l),v.children)...)
+	end
+end
+
+const Cuboid = Tuple{UnitRange,UnitRange,UnitRange}
+const BIG=1000000
+function to_cuboid(id::ChunkID)
+	@assert level(id) >= 1
+
+	if id==TOP_ID || id==SECOND_ID
+		return (-BIG:BIG,-BIG:BIG,-BIG:BIG)
+	end
+	l=2^(level(id)-1)
+	x,y,z=pos(id)
+
+	return (x*l:(x+1)*l, y*l:(y+1)*l, z*l:(z+1)*l)::Cuboid
+end
+
+function overlaps(r1::UnitRange,r2::UnitRange)
+	return r1.start <= r2.stop && r2.start <= r1.stop
+end
+function overlaps(c1::Cuboid,c2::Cuboid)
+	return all(map(overlaps, c1, c2))
+end
+
+function leaves(G,v::Vertex, cuboid::Cuboid)
+	if overlaps(to_cuboid(chunk_id(v)),cuboid)
+		if is_leaf(v)
+			return [v.label]
+		else
+			return cat(1,map(x->leaves(G,get_vertex(G,x)),v.children)...)
+		end
+	else
+		return Vertex[]
+	end
+end
+
+#vertices should be a collection of labels
+function induced_subgraph(G,chunk,vertices,cuboid)
+	filter!(v->overlaps(to_cuboid(chunk_id(v)),cuboid),vertices)
+	if !overlaps(to_cuboid(chunk_id(chunk)), cuboid)
+		return Label[], Tuple{Label,Label}[]
+	end
+
+	for v in vertices
+		@assert haskey(chunk.vertices, v)
+		V=chunk.vertices[v]
+		for child in V.children
+			if overlaps(to_cuboid(chunk_id(child)),cuboid)
+				get_vertex(G,child)
+				@assert get_chunk(G,chunk_id(child)) in chunk.subgraphs
+				@assert get_chunk(G,chunk_id(child))==get_chunk(G,chunk_id(V.children[1]))
+			end
+		end
+	end
+	atomic_edges = cat(1,values(MultiGraphs.induced_edges(chunk.graph, filter(vert -> haskey(chunk.vertices,vert),vertices)))...)
+	atomic_vertices = Label[]
+	
+	if level(chunk) > 1
+		children = cat(1,[chunk.vertices[v].children for v in vertices]...)
+		for s in chunk.subgraphs
+			s_vertices,s_edges = induced_subgraph(G,s, filter(c-> chunk_id(c) == chunk_id(s),children),cuboid)
+			append!(atomic_vertices, s_vertices)
+			append!(atomic_edges, s_edges)
+		end
+	else
+		@assert length(chunk.subgraphs) == 0
+		append!(atomic_vertices, vertices)
+	end
+
+	atomic_vertices = unique(atomic_vertices)
+	return atomic_vertices, collect(filter(e->e[1] in atomic_vertices && e[2] in atomic_vertices, atomic_edges))
+end
+
+import LightGraphs
+function min_cut(G,v1,v2)
+	@assert level(chunk_id(v1))==1
+	@assert level(chunk_id(v2))==1
+	x1,y1,z1=pos(chunk_id(v1))
+	x2,y2,z2=pos(chunk_id(v2))
+
+	cuboid=(min(x1,x2)-2:max(x1,x2)+2, min(y1,y2)-2:max(y1,y2)+2, min(z1,z2)-2:max(z1,z2)+2)
+	r1=root(G,get_vertex(G,v1))
+	r2=root(G,get_vertex(G,v2))
+
+	while level(chunk_id(r1.label)) < level(chunk_id(r2.label))
+		r1=promote!(G,r1)
+	end
+	while level(chunk_id(r2.label)) < level(chunk_id(r1.label))
+		r2=promote!(G,r2)
+	end
+
+	r1,r2 = lcG(G, r1, r2)
+	chunk = get_chunk(G,chunk_id(r1))
+	atomic_vertices, atomic_edges=induced_subgraph(G, chunk, [r1.label,r2.label], cuboid)
+
+
+	encode=Dict()
+	decode=Dict()
+	for (i,v) in enumerate(atomic_vertices)
+		encode[v]=i
+		decode[i]=v
+	end
+
+	N=length(encode)
+	flow_graph = LightGraphs.DiGraph(N)
+	capacities = zeros(N,N)
+	for (u,v) in atomic_edges
+		LightGraphs.add_edge!(flow_graph,encode[u],encode[v])
+		LightGraphs.add_edge!(flow_graph,encode[v],encode[u])
+		capacities[encode[u],encode[v]]=1
+		capacities[encode[v],encode[u]]=1
+	end
+
+	_,_,labels= LightGraphs.multiroute_flow(flow_graph, encode[v1], encode[v2], capacities, flow_algorithm = LightGraphs.BoykovKolmogorovAlgorithm(),routes=1)
+	@assert length(labels)==N
+	@assert labels[encode[v1]]!=labels[encode[v2]]
+	println(unique(labels))
+	ret = filter(e->labels[encode[e[1]]]!=labels[encode[e[2]]], atomic_edges)
+	println("Cut $(ret)")
+	return ret
 end
 
 function is_root(v::Vertex)
