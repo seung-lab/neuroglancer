@@ -25,8 +25,8 @@ end
 tq = task_queue.TaskQueue(queue_server="pull-queue")
 =#
 
-G=ChunkedGraph("~/testing2")
-@time for f in filter(s->ismatch(r".*vertices.jls",s), readdir(expanduser("~/testing2")))
+G=ChunkedGraph("/ssd/testing2")
+@time for f in filter(s->ismatch(r".*vertices.jls",s), readdir(expanduser("/ssd/testing2")))
 	m=match(r"(\d+)_(\d+)_(\d+)_(\d+).*",f)
 	id = ChunkID(map(x->parse(UInt32,x),m.captures)...)
 	if Utils.level(id) >= 3
@@ -34,8 +34,8 @@ G=ChunkedGraph("~/testing2")
 	end
 end
 
-#edges = Save.load("~/data/chunked_edges.jls")
-vertices = Save.load("~/data/chunked_vertices.jls")
+#edges = Save.load("/ssd/data/chunked_edges.jls")
+vertices = Save.load("/ssd/data/chunked_vertices.jls")
 
 #println("$(length(edges)) edges")
 println("$(length(vertices)) vertices")
@@ -129,7 +129,7 @@ end
 function handle_remesh(id)
 	id=parse(UInt64,id)
 
-	if chunk_id(id) == 0 # Lvl 0, a neuroglancer supervoxel, need to lookup chunk id
+	if chunk_id(id) == 0 # Lvl 1, a neuroglancer supervoxel, need to lookup chunk id
 		id=handles[id]
 	end
 
@@ -144,7 +144,7 @@ end
 function handle_leaves(id)
 	id=parse(UInt64,id)
 
-	if chunk_id(id) == 0 # Lvl 0, a neuroglancer supervoxel, need to lookup chunk id
+	if chunk_id(id) == 0 # Lvl 1, a neuroglancer supervoxel, need to lookup chunk id
 		id=handles[id]
 	end
 
@@ -161,7 +161,7 @@ function handle_root(id)
 	id=parse(UInt64,id)
 	print("$(now()): Root for segment $(id): ")
 
-	if chunk_id(id) == 0 # Lvl 0, a neuroglancer supervoxel, need to lookup chunk id
+	if chunk_id(id) == 0 # Lvl 1, a neuroglancer supervoxel, need to lookup chunk id
 		id=handles[id]
 	end
 
@@ -180,22 +180,21 @@ end
 function handle_children(id)
 	id = parse(UInt64,id)
 
-	if chunk_id(id) == 0 # Lvl 0, a neuroglancer supervoxel, has no children
-		return Response(UInt8[],headers)
+	if chunk_id(id) == 0 # Lvl 1, a neuroglancer supervoxel, need to lookup chunk id
+		id = handles[id]
 	end
 
 	v = get_vertex(G, id)
 
-	if ChunkedGraphs2.level(v) == 1
-		s=seg_id(v.id)
+	if ChunkedGraphs2.level(v) == 1 # Lvl 1, a neuroglancer supervoxel, no children
+		s = UInt64[]
 		println("$(now()): handle_children - v: $(v.label), (Level $(ChunkedGraphs2.level(v)))")
 	elseif ChunkedGraphs2.level(v) == 2 # Lvl 2, children are neuroglancer supervoxel, need to trim the chunk ids
-		#return Response(UInt8[],headers)
 		s = UInt64[seg_id(child) for child in v.children]
 		println("$(now()): handle_children - v: $(v.label), (Level $(ChunkedGraphs2.level(v))), - children: $(simple_print([seg_id(child) for child in v.children]))")
 	else
 		#s = UInt64[child for child in v.children]
-		s = UInt64[child for child in leaves(G,v,2)]
+		s = UInt64[child for child in leaves(G,v,2)] # J's hack to skip the middle layers and jump right to the pre-meshed lower level agglomeration.
 		println("$(now()): handle_children - v: $(v.label), (Level $(ChunkedGraphs2.level(v))), - children: $(simple_print([child for child in v.children]))")
 	end
 
@@ -205,39 +204,45 @@ end
 function handle_split(id1,id2)
 	id1 = parse(UInt64, id1)
 	@assert chunk_id(id1)==0
-	if chunk_id(id1) == 0 # Lvl 0, a neuroglancer supervoxel, need to lookup chunk id
+	if chunk_id(id1) == 0 # Lvl 1, a neuroglancer supervoxel, need to lookup chunk id
 		id1 = handles[id1]
 	end
 
 	id2 = parse(UInt64, id2)
 	@assert chunk_id(id2)==0
-	if chunk_id(id2) == 0 # Lvl 0, a neuroglancer supervoxel, need to lookup chunk id
+	if chunk_id(id2) == 0 # Lvl 1, a neuroglancer supervoxel, need to lookup chunk id
 		id2 = handles[id2]
 	end
 
 	#delete_atomic_edge!(G, (id1, id2))
-	for e in ChunkedGraphs2.min_cut(G,id1,id2)
+  cuts = ChunkedGraphs2.min_cut(G,id1,id2)
+	for e in cuts
 		delete_atomic_edge!(G,e)
 	end
 	update!(G)
 
-	root1 = bfs(G, id1)[1]
-	root2 = bfs(G, id2)[1]
-	println("$(now()): Split $(seg_id(id1)) and $(seg_id(id2)) => $(root1.label), $(root2.label)")
+  root_labels = Set{UInt64}()
+  for e in cuts
+    push!(root_labels, bfs(G, e[1])[1].label)
+    push!(root_labels, bfs(G, e[2])[1].label)
+  end
 
-	return Response(reinterpret(UInt8, [root1.label, root2.label]), headers)
+  root_labels = Array{UInt64}(map(x->level(chunk_id(x)) == 1 ? seg_id(x) : x, collect(root_labels)))
+
+	println("$(now()): Split $(seg_id(id1)) and $(seg_id(id2)) => $(simple_print(root_labels))")
+	return Response(reinterpret(UInt8, root_labels), headers)
 end
 
 function handle_merge(id1, id2)
 	id1 = parse(UInt64, id1)
 	@assert chunk_id(id1)==0
-	if chunk_id(id1) == 0 # Lvl 0, a neuroglancer supervoxel, need to lookup chunk id
+	if chunk_id(id1) == 0 # Lvl 1, a neuroglancer supervoxel, need to lookup chunk id
 		id1 = handles[id1]
 	end
 
 	id2 = parse(UInt64, id2)
 	@assert chunk_id(id2)==0
-	if chunk_id(id2) == 0 # Lvl 0, a neuroglancer supervoxel, need to lookup chunk id
+	if chunk_id(id2) == 0 # Lvl 1, a neuroglancer supervoxel, need to lookup chunk id
 		id2 = handles[id2]
 	end
 
@@ -285,4 +290,4 @@ server = Server(http)
 cert = MbedTLS.crt_parse_file(rel("keys/server.crt"))
 key = MbedTLS.parse_keyfile(rel("keys/server.key"))
 
-run(server, host=getaddrinfo("seungworkstation1000.princeton.edu"), port=9100, ssl=(cert, key))
+run(server, host=getaddrinfo("seungworkstation14.princeton.edu"), port=9100, ssl=(cert, key))

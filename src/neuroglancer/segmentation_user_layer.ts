@@ -379,7 +379,7 @@ export class SegmentationUserLayer extends UserLayer {
     if (!segmentSelectionState.hasSelectedSegment) {
       return;
     }
-    
+
     let segment : Uint64 = <Uint64>segmentSelectionState.rawSelectedSegment;
     let root : Uint64 = <Uint64>segmentSelectionState.selectedSegment;
     this.pendingGraphMod.sink = {segment: segment.clone(), root: root.clone()};
@@ -393,7 +393,7 @@ export class SegmentationUserLayer extends UserLayer {
     StatusMessage.displayText(`Selected ${segment} as sink for split.`);
 
     splitObject(this.pendingGraphMod.source.segment, this.pendingGraphMod.sink.segment).then((splitRoots) => {
-      rootSegments.delete(root);
+      rootSegments.delete(this.pendingGraphMod.sink.root);
       for (let splitRoot of splitRoots) {
         rootSegments.add(splitRoot);
       }

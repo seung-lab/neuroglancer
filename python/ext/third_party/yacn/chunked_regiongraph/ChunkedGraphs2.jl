@@ -400,8 +400,8 @@ function min_cut(G,v1,v2)
 	for (u,v) in atomic_edges
 		LightGraphs.add_edge!(flow_graph,encode[u],encode[v])
 		LightGraphs.add_edge!(flow_graph,encode[v],encode[u])
-		capacities[encode[u],encode[v]]=1
-		capacities[encode[v],encode[u]]=1
+		capacities[encode[u],encode[v]] = seg_id(u) == seg_id(v) ? 1000000 : 1 # Don't split supervoxels at chunk boundaries
+		capacities[encode[v],encode[u]] = seg_id(u) == seg_id(v) ? 1000000 : 1
 	end
 
 	_,_,labels= LightGraphs.multiroute_flow(flow_graph, encode[v1], encode[v2], capacities, flow_algorithm = LightGraphs.BoykovKolmogorovAlgorithm(),routes=1)
@@ -409,7 +409,9 @@ function min_cut(G,v1,v2)
 	@assert labels[encode[v1]]!=labels[encode[v2]]
 	println(unique(labels))
 	ret = filter(e->labels[encode[e[1]]]!=labels[encode[e[2]]], atomic_edges)
-	println("Cut $(ret)")
+	for (a,b) in ret
+		println("Cut: $(level(chunk_id(a))), $(map(Int,pos(chunk_id(a)))), $(seg_id(a)) | $(level(chunk_id(b))), $(map(Int,pos(chunk_id(b)))), $(seg_id(b))")
+	end
 	return ret
 end
 
@@ -449,7 +451,7 @@ function update!(c::Chunk)
 		for s in c.subgraphs
 			update!(s)
 		end
-		println("updating $(level(c.id)), $(map(Int,pos(c.id))), $(length(c.added_vertices)), $(length(c.added_edges))")
+		println("updating $(level(c.id)), $(map(Int,pos(c.id))), V: +$(length(c.added_vertices))/-$(length(c.deleted_vertices)), E: +$(length(c.added_edges))/-$(length(c.deleted_edges))")
 		global n_processed
 		n_processed+=1
 		println("$n_processed/$(length(c.chunked_graph.graphs))")

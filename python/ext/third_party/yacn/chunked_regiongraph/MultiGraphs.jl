@@ -184,7 +184,7 @@ function induced_edges{V}(G::SimpleGraph{V},Us)
 	return ret
 end
 
-function connected_component{V,E}(G::SimpleGraph{V,E}, V)
+function connected_component{X}(G::SimpleGraph{X}, V)
 	g=G.g
 	v = G.vertex_map[V]
 	visited=Set{Int}()
