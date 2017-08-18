@@ -17,6 +17,7 @@ import threading
 import json
 import socket
 import re
+import sys
 
 try:
     # Python 2 case
@@ -148,7 +149,10 @@ def start(viewer):
 def block():
     global thread
     if thread:
-        thread.join()
+        while True:
+            thread.join(600)
+            if not thread.isAlive():
+                break
 
 def register_volume(volume):
     global_server.volumes[volume.token] = volume

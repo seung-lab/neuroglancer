@@ -4,12 +4,12 @@ import h5py
 import webbrowser
 import neuroglancer
 from neuroglancer import static
+import sys
 
 path = './neuroglancer/static/'
 
 neuroglancer.set_static_content_source(path=path)
 viewer = neuroglancer.Viewer()
-# neuroglancer.set_static_content_source(url='http://localhost:8080')
 
 # viewer.add(volume_type='image', data=np.zeros(shape=(100,100,100), dtype=np.uint8), name='image', voxel_size=[6, 6, 40])
 # viewer.add(volume_type='point', name='point')
@@ -26,8 +26,12 @@ viewer = neuroglancer.Viewer()
 #   voxel_size=[6, 6, 40], 
 #   graph='./snemi3d/snemi3d_graph.pickle'
 # )
+
 url = viewer.get_viewer_url()
 webbrowser.open(url)
 print(url)
 
-# neuroglancer.block()
+if not sys.flags.interactive:
+  neuroglancer.block()
+
+
