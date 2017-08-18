@@ -85,6 +85,25 @@ class TestHandlers(unittest.TestCase):
         self.assertEqual(response.status_int, 200)
         self.assertEqual(len(json.loads(response.body)), 1)
 
+    def test_lease_querystring(self):
+        request = webapp2.Request.blank('/myproject/taskqueue/myqueue/tasks')
+        request.method = 'POST'
+        body = {
+            "payloadBase64": 'somepayload',
+            "tag": 'task_a'
+        }
+        request.body = json.dumps(body)
+        response = request.get_response(taskqueue.app)
+
+        # Lease the only available task
+        request = webapp2.Request.blank(
+            '/myproject/taskqueue/myqueue/tasks/lease?tag=&leaseSecs=600&numTasks=1')
+        request.method = 'POST'
+        response = request.get_response(taskqueue.app)
+        self.assertEqual(response.status_int, 200)
+        self.assertEqual(len(json.loads(response.body)), 1)
+        self.assertEqual(len(taskqueue.queues['myqueue'].pq._pq), 0)
+
     def test_invalid_post(self):
         request = webapp2.Request.blank('/myproject/taskqueue/myqueue/tasks/oops')
         request.method = 'POST'

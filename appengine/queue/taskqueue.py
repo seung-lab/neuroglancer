@@ -226,8 +226,13 @@ class Task(object):
     def _set_retry_timer(self, lease_for):
         """
         Re insert in pq after certain time
+
+        It has to be a daemon so that the response is sent
+        without waiting for this to be finished
         """
-        Timer(lease_for, self.maybe_insert_into_pq, ()).start()
+        t = Timer(lease_for, self.maybe_insert_into_pq, ())
+        t.daemon = True
+        t.start()
  
     def lease(self, lease_for):
         """
