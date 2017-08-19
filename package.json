@@ -24,9 +24,17 @@
     "gulp": "gulp"
   },
   "devDependencies": {
+    "assert": "^1.4.1",
     "@types/jasmine": "^2.2.22-alpha",
     "@types/sockjs-client": "^1.0.30",
     "babel-plugin-istanbul": "^3.0.0",
+    "babel-core": "^6.7.4",
+    "babel-loader": "^6.2.9",
+    "babel-plugin-transform-es2015-block-scoping": "^6.9.0",
+    "babel-plugin-transform-es2015-classes": "^6.9.0",
+    "babel-plugin-transform-es2015-destructuring": "^6.23.0",
+    "babel-plugin-transform-es2015-parameters": "^6.9.0",
+    "browserify-zlib": "^0.2.0",
     "clang-format": "^1.0.46",
     "dom-converter": "^0.1.4",
     "extract-text-webpack-plugin": "^2.1.2",
@@ -59,7 +67,8 @@
     "typescript": "^2.4.2",
     "utila": "^0.5.0-dev.1",
     "webpack": "^2.7.0",
-    "webpack-dev-server": "^2.1.0-beta.12"
+    "webpack-dev-server": "^2.1.0-beta.12",
+    "webpack-closure-compiler": "2.1.2"
   },
   "dependencies": {
     "@types/codemirror": "0.0.22-alpha",
@@ -72,14 +81,6 @@
     "@types/webpack-env": "^1.12.1",
     "acorn-dynamic-import": "^2.0.2",
     "ajv": "^5.2.2",
-    "assert": "^1.4.1",
-    "babel-core": "^6.7.4",
-    "babel-loader": "^6.2.9",
-    "babel-plugin-transform-es2015-block-scoping": "^6.9.0",
-    "babel-plugin-transform-es2015-classes": "^6.9.0",
-    "babel-plugin-transform-es2015-destructuring": "^6.23.0",
-    "babel-plugin-transform-es2015-parameters": "^6.9.0",
-    "browserify-zlib": "^0.2.0",
     "codemirror": "^5.15.2",
     "constants-browserify": "^1.0.0",
     "css-loader": "^0.26.1",
@@ -103,7 +104,6 @@
     "timers-browserify": "^2.0.4",
     "ts-loader": "2.3.2",
     "url": "^0.11.0",
-    "watchpack": "^1.4.0",
-    "webpack-closure-compiler": "2.1.2"
+    "watchpack": "^1.4.0"
   }
 }
