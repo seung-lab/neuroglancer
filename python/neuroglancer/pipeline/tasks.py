@@ -1,547 +1,694 @@
 from __future__ import print_function
+
 from collections import defaultdict
-import json
-import itertools
+from cStringIO import StringIO
 import io
+import itertools
+import json
 import os
 import re
 from tempfile import NamedTemporaryFile
 
-import h5py
 import blosc
-import numpy as np
 from backports import lzma
+import h5py
+import numpy as np
 from tqdm import tqdm
 
-from neuroglancer.pipeline import Storage, Precomputed, RegisteredTask, Mesher
-from neuroglancer import chunks, downsample
+from intern.remote.boss import BossRemote
+from intern.resource.boss.resource import ChannelResource
+from neuroglancer.pipeline.secrets import boss_credentials
+from neuroglancer import chunks, downsample, downsample_scales
+from neuroglancer.lib import xyzrange, min2, max2, Vec, Bbox, mkdir 
+from neuroglancer.pipeline import Storage, RegisteredTask
+from neuroglancer.pipeline import Mesher # broken out for ease of commenting out
+from neuroglancer.pipeline.volumes import CloudVolume
+
+def downsample_and_upload(image, bounds, vol, ds_shape, mip=0, axis='z', skip_first=False):
+    ds_shape = min2(vol.volume_size, ds_shape[:3])
+
+    # sometimes we downsample a base layer of 512x512 
+    # into underlying chunks of 64x64 which permits more scales
+    underlying_mip = (mip + 1) if (mip + 1) in vol.available_mips else mip
+    underlying_shape = vol.mip_underlying(underlying_mip).astype(np.float32)
+    toidx = { 'x': 0, 'y': 1, 'z': 2 }
+    preserved_idx = toidx[axis]
+    underlying_shape[preserved_idx] = float('inf')
+
+    # Need to use ds_shape here. Using image bounds means truncated 
+    # edges won't generate as many mip levels
+    fullscales = downsample_scales.compute_plane_downsampling_scales(
+      size=ds_shape, 
+      preserve_axis=axis, 
+      max_downsampled_size=int(min(*underlying_shape)),
+    )
+    factors = downsample.scale_series_to_downsample_factors(fullscales)
+
+    if len(factors) == 0:
+      print("No factors generated. Image Shape: {}, Downsample Shape: {}, Volume Shape: {}, Bounds: {}".format(
+        image.shape, ds_shape, vol.volume_size, bounds)
+      )
+
+    downsamplefn = downsample.method(vol.layer_type)
+
+    vol.mip = mip
+    if not skip_first:
+      vol[ bounds.to_slices() ] = image
+
+    new_bounds = bounds.clone()
+
+    for factor3 in factors:
+      vol.mip += 1
+      image = downsamplefn(image, factor3)
+      new_bounds /= factor3
+      new_bounds.maxpt = new_bounds.minpt + Vec(*image.shape[:3])
+      vol[ new_bounds.to_slices() ] = image
+
+def cache(task, cloudpath):
+  layer_path, filename = os.path.split(cloudpath)
+
+  classname = task.__class__.__name__
+  lcldir = mkdir(os.path.join('/tmp/', classname))
+  lclpath = os.path.join(lcldir, filename)
+
+  if os.path.exists(lclpath):
+    with open(lclpath, 'rb') as f:
+      filestr = f.read()
+  else:
+      with Storage(layer_path, n_threads=0) as stor:
+        filestr = stor.get_file(filename)
+
+      with open(lclpath, 'wb') as f:
+        f.write(filestr)
+
+  return filestr
 
 class IngestTask(RegisteredTask):
-    """Ingests and does downsampling.
-       We want tasks execution to be independent of each other, so that no sincronization is
-       required.
-       The downsample scales should be such that the lowest resolution chunk should be able
-       to be produce from the data available.
-    """
-    def __init__(self, chunk_path, chunk_encoding, layer_path):
-        super(IngestTask, self).__init__(chunk_path, chunk_encoding, layer_path)
-        self.chunk_path = chunk_path
-        self.chunk_encoding = chunk_encoding
-        self.layer_path = layer_path
+  """Ingests and does downsampling.
+     We want tasks execution to be independent of each other, so that no synchronization is
+     required.
+     The downsample scales should be such that the lowest resolution chunk should be able
+     to be produce from the data available.
+  """
+  def __init__(self, chunk_path, chunk_encoding, layer_path):
+    super(IngestTask, self).__init__(chunk_path, chunk_encoding, layer_path)
+    self.chunk_path = chunk_path
+    self.chunk_encoding = chunk_encoding
+    self.layer_path = layer_path
 
-    def execute(self):
-        self._storage = Storage(self.layer_path)
-        self._parse_chunk_path()
-        self._download_info()
-        self._download_input_chunk()
-        self._create_chunks()
-        self._storage.wait()
+  def execute(self):
+    volume = CloudVolume(self.layer_path, mip=0)
+    bounds = Bbox.from_filename(self.chunk_path)
+    image = self._download_input_chunk(bounds)
+    image = chunks.decode(image, self.chunk_encoding)
+    # BUG: We need to provide some kind of ds_shape independent of the image
+    # otherwise the edges of the dataset may not generate as many mip levels.
+    downsample_and_upload(image, bounds, volume, mip=0, ds_shape=image.shape[:3])
 
-    def _parse_chunk_path(self):
-        match = re.match(r'^.*/(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)$', self.chunk_path)
-        (self._xmin, self._xmax,
-         self._ymin, self._ymax,
-         self._zmin, self._zmax) = map(int, match.groups())
-        self._filename = "{}-{}_{}-{}_{}-{}".format(
-            self._xmin, self._xmax,
-            self._ymin, self._ymax,
-            self._zmin, self._zmax)
-
-    def _download_info(self):
-        self._info = json.loads(self._storage.get_file('info'))
-
-    def _download_input_chunk(self):
-        string_data = self._storage.get_file(os.path.join('build', self._filename))
-        if self.chunk_encoding == 'npz':
-          self._data = chunks.decode_npz(string_data)
-        else:
-          raise NotImplementedError(self.chunk_encoding)
-
-    def _create_chunks(self):
-        for scale in self._info["scales"]:
-            for chunk_size in scale['chunk_sizes']:
-                self._generate_chunks(scale, chunk_size)
-                    
-
-    def _generate_chunks(self, scale, chunk_size):
-        highest_resolution = np.array(self._info['scales'][0]['resolution'])
-        current_resolution = np.array(scale["resolution"])
-        downsample_ratio = current_resolution / highest_resolution
-        current_shape = self._data.shape[:-1] / downsample_ratio # we discard the channel component in data
-
-        # This is required because last data chunk is allowed to not 
-        # be a multiple of the chunk size.
-        n_chunks = self._ceil(current_shape, chunk_size)
-        for x,y,z in itertools.product(*list(map(xrange, n_chunks))):
-            # numpy allows for index that are larger than the array size
-            # because we are doing ceil in n_chunks, there will be cases where
-            # chunk.shape is less than chunk_size. In that case the filename should 
-            # base on chunk.shape.
-            subvol = self._data[
-                x * chunk_size[0] * downsample_ratio[0] : (x+1) * chunk_size[0] * downsample_ratio[0],
-                y * chunk_size[1] * downsample_ratio[1] : (y+1) * chunk_size[1] * downsample_ratio[1],
-                z * chunk_size[2] * downsample_ratio[2] : (z+1) * chunk_size[2] * downsample_ratio[2],
-                :]
-            chunk = downsample.downsample_with_striding(subvol, downsample_ratio)
-
-            encoded = self._encode(chunk, scale["encoding"])
-            filename = self._get_filename(x, y, z, chunk_size, downsample_ratio, scale)
-            self._storage.put_file(filename, encoded)
-            self._storage.wait()
-
-    def _encode(self, chunk, encoding):
-        if encoding == "jpeg":
-            return chunks.encode_jpeg(chunk)
-        elif encoding == "npz":
-            return chunks.encode_npz(chunk)
-        elif encoding == "raw":
-            return chunks.encode_raw(chunk)
-        else:
-            raise NotImplementedError(encoding)
-
-    def _ceil(self, arr1, arr2):
-        return np.ceil(arr1.astype(np.float32) / arr2).astype(np.uint32)
-
-    def _get_filename(self, x, y, z, chunk_size, downsample_ratio, scale):
-        xmin = x * chunk_size[0] + self._xmin / downsample_ratio[0]
-        xmax = min((x + 1) * chunk_size[0] + self._xmin / downsample_ratio[0], scale['size'][0] + scale['voxel_offset'][0])
-        ymin = y * chunk_size[1] + self._ymin / downsample_ratio[1]
-        ymax = min((y + 1) * chunk_size[1] + self._ymin / downsample_ratio[1], scale['size'][1] + scale['voxel_offset'][1])
-        zmin = z * chunk_size[2] + self._zmin / downsample_ratio[2]
-        zmax = min((z + 1) * chunk_size[2] + self._zmin / downsample_ratio[2], scale['size'][2] + scale['voxel_offset'][2])
-
-        return '{}/{:d}-{:d}_{:d}-{:d}_{:d}-{:d}'.format(scale['key'],
-          xmin, xmax, ymin, ymax, zmin, zmax) 
+  def _download_input_chunk(self, bounds):
+    storage = Storage(self.layer_path, n_threads=0)
+    relpath = 'build/{}'.format(bounds.to_filename())
+    return storage.get_file(relpath)
 
 class DownsampleTask(RegisteredTask):
-    def __init__(self, chunk_path, layer_path):
-        super(DownsampleTask, self).__init__(chunk_path, layer_path)
-        self.chunk_path = chunk_path
-        self.layer_path = layer_path
+  def __init__(self, layer_path, mip, shape, offset, fill_missing=False, axis='z'):
+    super(DownsampleTask, self).__init__(layer_path, mip, shape, offset, fill_missing, axis)
+    self.layer_path = layer_path
+    self.mip = mip
+    self.shape = Vec(*shape)
+    self.offset = Vec(*offset)
+    self.fill_missing = fill_missing
+    self.axis = axis
 
-    def execute(self):
-        self._storage = Storage(self.layer_path)
-        self._download_info()
-        self._parse_chunk_path()
-        self._compute_downsampling_ratio()
-        self._compute_input_slice()
-        self._download_input_chunk()
-        self._upload_output_chunk()
-        self._storage.wait()
+  def execute(self):
+    vol = CloudVolume(self.layer_path, self.mip, fill_missing=self.fill_missing)
+    bounds = Bbox( self.offset, self.shape + self.offset )
+    bounds = Bbox.clamp(bounds, vol.bounds)
+    image = vol[ bounds.to_slices() ]
+    downsample_and_upload(image, bounds, vol, self.shape, self.mip, self.axis, skip_first=True)
 
-    def _download_info(self):
-        self._info = json.loads(self._storage.get_file('info'))
+class QuantizeAffinitiesTask(RegisteredTask):
+  def __init__(self, source_layer_path, dest_layer_path, shape, offset, fill_missing=False):
+    super(QuantizeAffinitiesTask, self).__init__(source_layer_path, dest_layer_path, shape, offset, fill_missing)
+    self.source_layer_path = source_layer_path
+    self.dest_layer_path = dest_layer_path
+    self.shape = Vec(*shape)
+    self.offset = Vec(*offset)
+    self.fill_missing = fill_missing
 
-    def _parse_chunk_path(self):
-        match = re.match(r'.*/([^//]+)/(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)$', self.chunk_path)
-        self._key = match.groups()[0]
-        (self._xmin, self._xmax,
-         self._ymin, self._ymax,
-         self._zmin, self._zmax) = map(int, match.groups()[1:])
+  def execute(self):
+    srcvol = CloudVolume(self.source_layer_path, mip=0, fill_missing=self.fill_missing)
+  
+    bounds = Bbox( self.offset, self.shape + self.offset )
+    bounds = Bbox.clamp(bounds, srcvol.bounds)
+    
+    image = srcvol[ bounds.to_slices() ][ :, :, :, :1 ] # only use x affinity
+    image = (image * 255.0).astype(np.uint8)
 
-    def _compute_downsampling_ratio(self):
-        self._output_index = self._find_scale_idx()
-        self._input_index = self._output_index-1
-        output_resolution = self._info['scales'][self._output_index]['resolution']
-
-        self._input_scale = self._info['scales'][self._input_index]
-        input_resolution = self._input_scale['resolution']
-        self._downsample_ratio = [ c/h for c,h in zip(output_resolution, input_resolution)] + [1]
-
-    def _compute_input_slice(self):
-        self._input_xmin =  self._xmin * self._downsample_ratio[0]
-        self._input_ymin =  self._ymin * self._downsample_ratio[1]
-        self._input_zmin =  self._zmin * self._downsample_ratio[2]
-
-        input_max_input_size = [self._input_scale['voxel_offset'][idx] + self._input_scale['size'][idx] for idx in range(3)]
-        self._input_xmax = min(self._xmax * self._downsample_ratio[0],  input_max_input_size[0])
-        self._input_ymax = min(self._ymax * self._downsample_ratio[1],  input_max_input_size[1])
-        self._input_zmax = min(self._zmax * self._downsample_ratio[2],  input_max_input_size[2])
-
-    def _find_scale_idx(self):
-        for scale_idx, scale in enumerate(self._info['scales']):
-            if scale['key'] == self._key:
-                assert scale_idx > 0
-                return scale_idx
-
-    def _download_input_chunk(self):
-        volume = Precomputed(self._storage, scale_idx=self._input_index, fill=False)
-        chunk = volume[
-            self._input_xmin:self._input_xmax,
-            self._input_ymin:self._input_ymax,
-            self._input_zmin:self._input_zmax]
-        self._downsample_chunk(chunk)
-
-    def _downsample_chunk(self, chunk):
-        if self._info['type'] == 'image':
-            self._data = downsample.downsample_with_averaging(chunk, self._downsample_ratio)
-        elif self._info['type'] == 'segmentation':
-            self._data = downsample.downsample_segmentation(chunk, self._downsample_ratio)
-        else:
-            raise NotImplementedError(self._info['type'])
-
-    def _upload_output_chunk(self):
-        self._storage.put_file(
-            file_path=self._get_filename(),
-            content=self._encode(self._data, self._info['scales'][self._output_index]["encoding"]))
-        self._storage.wait()
-
-    def _encode(self, chunk, encoding):
-        if encoding == "jpeg":
-            return chunks.encode_jpeg(chunk)
-        elif encoding == "npz":
-            return chunks.encode_npz(chunk)
-        elif encoding == "raw":
-            return chunks.encode_raw(chunk)
-        else:
-            raise NotImplementedError(encoding)
-
-    def _get_filename(self):
-        return '{}/{:d}-{:d}_{:d}-{:d}_{:d}-{:d}'.format(self._key,
-          self._xmin, self._xmax, self._ymin, self._ymax, self._zmin, self._zmax) 
+    destvol = CloudVolume(self.dest_layer_path, mip=0)
+    downsample_and_upload(image, bounds, destvol, self.shape, mip=0, axis='z')
 
 class MeshTask(RegisteredTask):
+  def __init__(self, shape, offset, layer_path, mip=0, simplification_factor=100, max_simplification_error=40):
+    super(MeshTask, self).__init__(shape, offset, layer_path, mip, simplification_factor, max_simplification_error)
+    self.shape = Vec(*shape)
+    self.offset = Vec(*offset)
+    self.mip = mip
+    self.layer_path = layer_path
+    self.lod = 0 # level of detail -- to be implemented
+    self.simplification_factor = simplification_factor
+    self.max_simplification_error = max_simplification_error
 
-    def __init__(self, chunk_key, chunk_position, layer_path, 
-                 lod=0, simplification=5, segments=[]):
-        
-        super(MeshTask, self).__init__(chunk_key, chunk_position, layer_path, 
-                                       lod, simplification, segments)
-        self.chunk_key = chunk_key
-        self.chunk_position = chunk_position
-        self.layer_path = layer_path
-        self.lod = lod
-        self.simplification = simplification
-        self.segments = segments
+  def execute(self):
+    self._mesher = Mesher()
 
-    def execute(self):
-        self._storage = Storage(self.layer_path)
-        self._mesher = Mesher()
-        self._parse_chunk_key()
-        self._parse_chunk_position()
-        self._download_info()
-        self._download_input_chunk()
-        self._compute_meshes()
-        self._storage.wait()
+    self._volume = CloudVolume(self.layer_path, self.mip, bounded=False)
+    self._bounds = Bbox( self.offset, self.shape + self.offset )
+    self._bounds = Bbox.clamp(self._bounds, self._volume.bounds)
 
-    def _parse_chunk_key(self):
-        self._key = self.chunk_key.split('/')[-1]
+    # Marching cubes loves its 1vx overlaps. 
+    # This avoids lines appearing between 
+    # adjacent chunks.
+    data_bounds = self._bounds.clone()
+    data_bounds.minpt -= 1
+    data_bounds.maxpt += 1
 
-    def _parse_chunk_position(self):
-        match = re.match(r'^(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)$', self.chunk_position)
-        (self._xmin, self._xmax,
-         self._ymin, self._ymax,
-         self._zmin, self._zmax) = map(int, match.groups())
+    self._mesh_dir = None
+    if 'meshing' in self._volume.info:
+      self._mesh_dir = self._volume.info['meshing']
+    elif 'mesh' in self._volume.info:
+      self._mesh_dir = self._volume.info['mesh']
     
-    def _download_info(self):
-        self._info = json.loads(self._storage.get_file('info'))
+    if not self._mesh_dir:
+      raise ValueError("The mesh destination is not present in the info file.")
 
-        if 'mesh' not in self._info:
-            raise ValueError("Path on where to store the meshes is not present")
+    self._data = self._volume[data_bounds.to_slices()] # chunk_position includes a 1 pixel overlap
+    self._compute_meshes()
 
-    def _download_input_chunk(self):
-        """
-        It assumes that the chunk_position includes a 1 pixel overlap
-        """
-        #FIXME choose the mip level based on the chunk key
-        volume = Precomputed(self._storage)
-        self._data = volume[self._xmin:self._xmax,
-                            self._ymin:self._ymax,
-                            self._zmin:self._zmax]
+  def _compute_meshes(self):
+    with Storage(self.layer_path) as storage:
+      data = self._data[:,:,:,0].T
+      self._mesher.mesh(data.flatten(), *data.shape[:3])
+      for obj_id in self._mesher.ids():
+        storage.put_file(
+          file_path='{}/{}:{}:{}'.format(self._mesh_dir, obj_id, self.lod, self._bounds.to_filename()),
+          content=self._create_mesh(obj_id),
+          compress=True,
+        )
 
-    def _compute_meshes(self):
-        data = np.swapaxes(self._data[:,:,:,0], 0,2)
-        self._mesher.mesh(data.flatten(), *data.shape)
-        for obj_id in tqdm(self._mesher.ids()):
-            self._storage.put_file(
-                file_path='{}/{}:{}:{}'.format(self._info['mesh'], obj_id, self.lod, self.chunk_position),
-                content=self._create_mesh(obj_id))
-            self._storage.wait()
+  def _create_mesh(self, obj_id):
+    mesh = self._mesher.get_mesh(obj_id, 
+      simplification_factor=self.simplification_factor, 
+      max_simplification_error=self.max_simplification_error
+    )
+    vertices = self._update_vertices(np.array(mesh['points'], dtype=np.float32)) 
+    vertex_index_format = [
+      np.uint32(len(vertices) / 3), # Number of vertices ( each vertex is three numbers (x,y,z) )
+      vertices,
+      np.array(mesh['faces'], dtype=np.uint32)
+    ]
+    return b''.join([ array.tobytes() for array in vertex_index_format ])
 
-    def _create_mesh(self, obj_id):
-        mesh = self._mesher.get_mesh(obj_id, simplification_factor=128, max_simplification_error=1000000)
-        vertices = self._update_vertices(np.array(mesh['points'], dtype=np.float32)) 
-        vertex_index_format = [
-            np.uint32(len(vertices) / 3), #Number of vertices (each vertex it's composed of three numbers(x,y,z))
-            vertices,
-            np.array(mesh['faces'], dtype=np.uint32)
-        ]
-        return b''.join([ array.tobytes() for array in vertex_index_format ])
-
-    def _update_vertices(self, points):
-        # zlib meshing multiplies verticies by two to avoid working with floats like 1.5
-        # but we need to recover the exact position for display
-        points /= 2.0
-        resolution = self._info['scales'][0]['resolution']
-        points[0::3] = (points[0::3] + self._xmin) * resolution[0]   # x
-        points[1::3] = (points[1::3] + self._ymin) * resolution[1]   # y
-        points[2::3] = (points[2::3] + self._zmin) * resolution[2]   # z
-        return points
+  def _update_vertices(self, points):
+    # zlib meshing multiplies verticies by two to avoid working with floats like 1.5
+    # but we need to recover the exact position for display
+    points /= 2.0
+    resolution = self._volume.resolution
+    xmin, ymin, zmin = self._bounds.minpt
+    points[0::3] = (points[0::3] + xmin) * resolution.x 
+    points[1::3] = (points[1::3] + ymin) * resolution.y 
+    points[2::3] = (points[2::3] + zmin) * resolution.z 
+    return points
 
 class MeshManifestTask(RegisteredTask):
-    """
-    Finalizes mesh generation by post-processing chunk fragment
-    lists into mesh fragment manifests.
-    These are necessary for neuroglancer to know which mesh
-    fragments to download for a given segment id.
+  """
+  Finalize mesh generation by post-processing chunk fragment
+  lists into mesh fragment manifests.
+  These are necessary for neuroglancer to know which mesh
+  fragments to download for a given segid.
 
-    This implements a parallel version which has many assumptions, which if 
-    they don't hold true some manifest will be missing, or the manifest won't be 
-    correct.
+  If we parallelize using prefixes single digit prefixes ['0','1',..'9'] all meshes will
+  be correctly processed. But if we do ['10','11',..'99'] meshes from [0,9] won't get
+  processed and need to be handle specifically by creating tasks that will process
+  a single mesh ['0:','1:',..'9:']
+  """
+  def __init__(self, layer_path, prefix, lod=0):
+    super(MeshManifestTask, self).__init__(layer_path, prefix)
+    self.layer_path = layer_path
+    self.lod = lod
+    self.prefix = prefix
 
-    We first assume that storage.list_files returns a msd radix ordered list of filename
-    which is true for gs:// s3:// and file:// protocols We also asume that mesh is 
-    composed of 3 strings id:lod:chunk_position
+  def execute(self):
+    with Storage(self.layer_path) as storage:
+      self._info = json.loads(storage.get_file('info'))
 
-    Because of ord(':') > ord('9') when listing files, '99:0:chunk' appears first than
-    '9:0:chunk'.
-    If we parallelize using prefixes single digit prefixes ['0','1',..'9'] all meshes will
-    be correctly processed. But if we do ['10','11',..'99'] meshes from [0,9] won't get
-    processed and need to be handle specifically by creating tasks that will process
-    a single mesh ['0:','1:',..'9:']
-    
-    """
-    def __init__(self, layer_path, lod, prefix=''):
-        super(MeshManifestTask, self).__init__(layer_path, lod, prefix)
-        self.layer_path = layer_path
-        self.lod = lod
-        self.prefix = prefix
+      self.mesh_dir = None
+      if 'meshing' in self._info:
+        self.mesh_dir = self._info['meshing']
+      elif 'mesh' in self._info:
+        self.mesh_dir = self._info['mesh']
 
-    def execute(self):
-        self._storage = Storage(self.layer_path)
-        self._download_info()
-        self._download_input_chunk()
+      self._generate_manifests(storage)
+  
+  def _get_mesh_filenames_subset(self, storage):
+    prefix = '{}/{}'.format(self.mesh_dir, self.prefix)
+    segids = defaultdict(list)
 
-    def _download_info(self):
-        self._info = json.loads(self._storage.get_file('info'))
+    for filename in storage.list_files(prefix=prefix):
+      filename = os.path.basename(filename)
+      # `match` implies the beginning (^). `search` matches whole string
+      matches = re.search('(\d+):(\d+):', filename)
+      
+      if not matches:
+        continue
 
-    def _iter_over_meshes(self):
-        """
-        Assumes that list files is most significant digix randix sorted
-        """
-        for filename in self._storage.list_files(prefix='mesh/{}'.format(self.prefix)):
-            match = re.search(r'(\d+):(\d+):(.*)$',filename)
-            if not match: # a manifest file will not match
-                continue
-            _id, lod, chunk_position = match.groups()
-            _id = int(_id); lod = int(lod)
-            if lod != self.lod:
-                continue
+      segid, lod = matches.groups() 
+      segid, lod = int(segid), int(lod)
 
-            yield _id, lod, chunk_position
+      if lod != self.lod:
+        continue
 
-    def _download_input_chunk(self):
-        last_id = 0
-        last_fragments = []
-        for _id, lod, chunk_position in self._iter_over_meshes():
-            if last_id != _id:
-                self._storage.put_file(
-                    file_path='{}/{}:{}'.format(self._info['mesh'],last_id, self.lod),
-                    content=json.dumps({"fragments": last_fragments}))
-                last_id = _id
-                last_fragments = []
+      segids[segid].append(filename)  
 
-            last_fragments.append('{}:{}:{}'.format(_id, lod, chunk_position))
+    return segids  
 
-        # add last last_fragments
-        self._storage.put_file(
-                    file_path='{}/{}:{}'.format(self._info['mesh'],last_id, self.lod),
-                    content=json.dumps({"fragments": last_fragments}))
-        self._storage.wait()
+  def _generate_manifests(self, storage):
+    segids = self._get_mesh_filenames_subset(storage)
+    for segid, frags in tqdm(segids.items()):
+      storage.put_file(
+        file_path='{}/{}:{}'.format(self.mesh_dir, segid, self.lod),
+        content=json.dumps({ "fragments": frags }),
+        content_type='application/json',
+      )
 
 class BigArrayTask(RegisteredTask):
-    def __init__(self, layer_path, chunk_path, chunk_encoding, version):
-        super(BigArrayTask, self).__init__(layer_path, chunk_path, chunk_encoding, version)
-        self.layer_path = layer_path
-        self.chunk_path = chunk_path
-        self.chunk_encoding = chunk_encoding
-        self.version = version
+  def __init__(self, layer_path, chunk_path, chunk_encoding, version):
+    super(BigArrayTask, self).__init__(layer_path, chunk_path, chunk_encoding, version)
+    self.layer_path = layer_path
+    self.chunk_path = chunk_path
+    self.chunk_encoding = chunk_encoding
+    self.version = version
   
-    def execute(self):
-        self._parse_chunk_path()
-        self._storage = Storage(self.layer_path)
-        self._download_input_chunk()
-        self._upload_chunk()
+  def execute(self):
+    self._parse_chunk_path()
+    self._storage = Storage(self.layer_path)
+    self._download_input_chunk()
+    self._upload_chunk()
 
-    def _parse_chunk_path(self):
-        if self.version == 'zfish_v0/affinities':
-            match = re.match(r'^.*/bigarray/block_(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)_1-3.h5$',
-                self.chunk_path)
-        elif self.version == 'zfish_v0/image' or self.version == 'pinky_v0/image':
-            match = re.match(r'^.*/bigarray/(\d+):(\d+)_(\d+):(\d+)_(\d+):(\d+)$',
-                self.chunk_path)
-        else:
-            raise NotImplementedError(self.version)
+  def _parse_chunk_path(self):
+    if self.version == 'zfish_v0/affinities':
+      match = re.match(r'^.*/bigarray/block_(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)_1-3.h5$',
+        self.chunk_path)
+    elif self.version == 'zfish_v0/image' or self.version == 'pinky_v0/image':
+      match = re.match(r'^.*/bigarray/(\d+):(\d+)_(\d+):(\d+)_(\d+):(\d+)$',
+        self.chunk_path)
+    else:
+      raise NotImplementedError(self.version)
 
-        (self._xmin, self._xmax,
-         self._ymin, self._ymax,
-         self._zmin, self._zmax) = match.groups()
-         
-        self._xmin = int(self._xmin)
-        self._xmax = int(self._xmax)
-        self._ymin = int(self._ymin)
-        self._ymax = int(self._ymax)
-        self._zmin = int(self._zmin)
-        self._zmax = int(self._zmax)
-        self._filename = self.chunk_path.split('/')[-1]
+    (self._xmin, self._xmax,
+     self._ymin, self._ymax,
+     self._zmin, self._zmax) = match.groups()
+     
+    self._xmin = int(self._xmin)
+    self._xmax = int(self._xmax)
+    self._ymin = int(self._ymin)
+    self._ymax = int(self._ymax)
+    self._zmin = int(self._zmin)
+    self._zmax = int(self._zmax)
+    self._filename = self.chunk_path.split('/')[-1]
 
-    def _download_input_chunk(self):
-        string_data = self._storage.get_file(os.path.join('bigarray',self._filename))
-        if self.version == 'zfish_v0/affinities':
-            self._data = self._decode_hdf5(string_data)
-        elif self.version == 'zfish_v0/image':
-            self._data = self._decode_blosc(string_data, shape=[2048, 2048, 128])
-        elif self.version == 'pinky_v0/image':
-            self._data = self._decode_blosc(string_data, shape=[2048, 2048, 64])
-        else:
-          raise NotImplementedError(self.version)
+  def _download_input_chunk(self):
+    string_data = self._storage.get_file(os.path.join('bigarray',self._filename))
+    if self.version == 'zfish_v0/affinities':
+      self._data = self._decode_hdf5(string_data)
+    elif self.version == 'zfish_v0/image':
+      self._data = self._decode_blosc(string_data, shape=[2048, 2048, 128])
+    elif self.version == 'pinky_v0/image':
+      self._data = self._decode_blosc(string_data, shape=[2048, 2048, 64])
+    else:
+      raise NotImplementedError(self.version)
 
-    def _decode_blosc(self, string, shape):
-        seeked = blosc.decompress(string[10:])
-        arr =  np.fromstring(seeked, dtype=np.uint8).reshape(
-            shape[::-1]).transpose((2,1,0))
-        return np.expand_dims(arr,3)
+  def _decode_blosc(self, string, shape):
+    seeked = blosc.decompress(string[10:])
+    arr =  np.fromstring(seeked, dtype=np.uint8).reshape(
+      shape[::-1]).transpose((2,1,0))
+    return np.expand_dims(arr,3)
 
 
-    def _decode_hdf5(self, string):
-        with NamedTemporaryFile(delete=False) as tmp:
-            tmp.write(string)
-            tmp.close()
-            with h5py.File(tmp.name,'r') as h5:
-                return np.transpose(h5['img'][:], axes=(3,2,1,0))
+  def _decode_hdf5(self, string):
+    with NamedTemporaryFile(delete=False) as tmp:
+      tmp.write(string)
+      tmp.close()
+      with h5py.File(tmp.name,'r') as h5:
+        return np.transpose(h5['img'][:], axes=(3,2,1,0))
 
-    def _upload_chunk(self):
-        if self.version == 'zfish_v0/affinities':
-            shape = [313472, 193664, 1280]
-            offset = [14336, 11264, 16384]
-        elif self.version == 'zfish_v0/image':
-            shape = [69632, 34816, 1280]
-            offset = [14336, 12288, 16384]
-        elif self.version == 'pinky_v0/image':
-            shape = [100352, 55296, 1024]
-            offset = [2048, 14336, 16384]
-        else:
-            raise NotImplementedError(self.version)
+  def _upload_chunk(self):
+    if self.version == 'zfish_v0/affinities':
+      shape = [313472, 193664, 1280]
+      offset = [14336, 11264, 16384]
+    elif self.version == 'zfish_v0/image':
+      shape = [69632, 34816, 1280]
+      offset = [14336, 12288, 16384]
+    elif self.version == 'pinky_v0/image':
+      shape = [100352, 55296, 1024]
+      offset = [2048, 14336, 16384]
+    else:
+      raise NotImplementedError(self.version)
 
-        xmin = self._xmin - offset[0] - 1
-        xmax = min(self._xmax - offset[0], shape[0])
-        ymin = self._ymin - offset[1] - 1
-        ymax = min(self._ymax - offset[1], shape[1])
-        zmin = self._zmin - offset[2] - 1
-        zmax = min(self._zmax - offset[2], shape[2])
+    xmin = self._xmin - offset[0] - 1
+    xmax = min(self._xmax - offset[0], shape[0])
+    ymin = self._ymin - offset[1] - 1
+    ymax = min(self._ymax - offset[1], shape[1])
+    zmin = self._zmin - offset[2] - 1
+    zmax = min(self._zmax - offset[2], shape[2])
 
-        #bigarray chunk has padding to fill the volume
-        chunk = self._data[:xmax-xmin, :ymax-ymin, :zmax-zmin, :]
-        filename = 'build/{:d}-{:d}_{:d}-{:d}_{:d}-{:d}'.format(
-          xmin, xmax, ymin, ymax, zmin, zmax)
-        encoded = self._encode(chunk, self.chunk_encoding)
-        self._storage.put_file(filename, encoded)
-        self._storage.wait()
+    #bigarray chunk has padding to fill the volume
+    chunk = self._data[:xmax-xmin, :ymax-ymin, :zmax-zmin, :]
+    filename = 'build/{:d}-{:d}_{:d}-{:d}_{:d}-{:d}'.format(
+      xmin, xmax, ymin, ymax, zmin, zmax)
+    encoded = self._encode(chunk, self.chunk_encoding)
+    self._storage.put_file(filename, encoded)
+    self._storage.wait_until_queue_empty()
 
-    def _encode(self, chunk, encoding):
-        if encoding == "jpeg":
-            return chunks.encode_jpeg(chunk)
-        elif encoding == "npz":
-            return chunks.encode_npz(chunk)
-        elif encoding == "npz_uint8":
-            chunk = chunk * 255
-            chunk = chunk.astype(np.uint8)
-            return chunks.encode_npz(chunk)
-        elif encoding == "raw":
-            return chunks.encode_raw(chunk)
-        else:
-            raise NotImplementedError(encoding)
+  def _encode(self, chunk, encoding):
+    if encoding == "jpeg":
+      return chunks.encode_jpeg(chunk)
+    elif encoding == "npz":
+      return chunks.encode_npz(chunk)
+    elif encoding == "npz_uint8":
+      chunk = chunk * 255
+      chunk = chunk.astype(np.uint8)
+      return chunks.encode_npz(chunk)
+    elif encoding == "raw":
+      return chunks.encode_raw(chunk)
+    else:
+      raise NotImplementedError(encoding)
 
 class HyperSquareTask(RegisteredTask):
-    def __init__(self, chunk_path, chunk_encoding, version, layer_path):
-        super(HyperSquareTask, self).__init__(chunk_path, chunk_encoding, version, layer_path)
-        self.chunk_path = chunk_path
-        self.chunk_encoding = chunk_encoding
-        self.version = version
-        self.layer_path = layer_path
+  def __init__(self, bucket_name, dataset_name, layer_name, 
+      volume_dir, layer_type, overlap, resolution):
+
+    self.bucket_name = bucket_name
+    self.dataset_name = dataset_name
+    self.layer_name = layer_name
+    self.volume_dir = volume_dir
+    self.layer_type = layer_type
+    self.overlap = Vec(*overlap)
+
+    self.resolution = Vec(*resolution)
+
+    self._volume_cloudpath = 'gs://{}/{}'.format(self.bucket_name, self.volume_dir)
+    self._bucket = None
+    self._metadata = None
+    self._bounds = None
+
+  def execute(self):
+    client = storage.Client.from_service_account_json(
+      lib.credentials_path(), project=lib.GCLOUD_PROJECT_NAME
+    )
+    self._bucket = client.get_bucket(self.bucket_name)
+    self._metadata = meta = self._download_metadata()
+
+    self._bounds = Bbox(
+      meta['physical_offset_min'], # in voxels
+      meta['physical_offset_max']
+    )
+
+    shape = Vec(*meta['chunk_voxel_dimensions'])
+    shape = Vec(shape.x, shape.y, shape.z, 1)
+
+    if self.layer_type == 'image':
+      dtype = meta['image_type'].lower()
+      cube = self._materialize_images(shape, dtype)
+    elif self.layer_type == 'segmentation':
+      dtype = meta['segment_id_type'].lower()
+      cube = self._materialize_segmentation(shape, dtype)
+    else:
+      dtype = meta['affinity_type'].lower()
+      return NotImplementedError("Don't know how to get the images for this layer.")
+
+    self._upload_chunk(cube, dtype)
+
+  def _download_metadata(self):
+    cloudpath = '{}/metadata.json'.format(self.volume_dir)
+    metadata = self._bucket.get_blob(cloudpath).download_as_string()
+    return json.loads(metadata)
+
+  def _materialize_segmentation(self, shape, dtype):
+    segmentation_path = '{}/segmentation.lzma'.format(self.volume_dir)
+    seg_blob = self._bucket.get_blob(segmentation_path)
+    return self._decode_lzma(seg_blob.download_as_string(), shape, dtype)
+
+  def _materialize_images(self, shape, dtype):
+    cloudpaths = [ '{}/jpg/{}.jpg'.format(self.volume_dir, i) for i in xrange(shape.z) ]
+    datacube = np.zeros(shape=shape, dtype=np.uint8) # x,y,z,channels
+
+    prefix = '{}/jpg/'.format(self.volume_dir)
+
+    blobs = self._bucket.list_blobs(prefix=prefix)
+    for blob in blobs:
+      z = int(re.findall(r'(\d+)\.jpg', blob.name)[0])
+      imgdata = blob.download_as_string()
+      # Hypersquare images are each situated in the xy plane 
+      # so the shape should be (width,height,1)
+      shape = self._bounds.size3() 
+      shape.z = 1
+      datacube[:,:,z,:] = chunks.decode_jpeg(imgdata, shape=tuple(shape))
+
+    return datacube
+
+  def _decode_lzma(self, string_data, shape, dtype):
+    arr = lzma.decompress(string_data)
+    arr = np.fromstring(arr, dtype=dtype)
+    return arr.reshape(shape[::-1]).T
+
+  def _upload_chunk(self, datacube, dtype):
+    vol = CloudVolume(self.dataset_name, self.layer_name, mip=0)
+    hov = self.overlap / 2 # half overlap, e.g. 32 -> 16 in e2198
+    img = datacube[ hov.x:-hov.x, hov.y:-hov.y, hov.z:-hov.z, : ] # e.g. 256 -> 224
+    bounds = self._bounds.clone()
+
+    # the boxes are offset left of zero by half overlap, so no need to 
+    # compensate for weird shifts. only upload the non-overlap region.
+
+    downsample_and_upload(image, bounds, vol, ds_shape=img.shape)
+    vol[ bounds.to_slices() ] = img
+
+class HyperSquareConsensusTask(RegisteredTask):
+  """
+  Import an Eyewire consensus into neuroglancer by combining
+  database information encoded as JSON files with pre-ingested
+  Hypersquare.
+
+  The result of the remapping is that all human traced cells should
+  be present and identifiable by their Eyewire cells.id number. 
+  The remaining segments should be the same segid but reencoded
+  from 16 to 32 bits such that their high bits encode the 
+  tasks.segmentation_id according to some mapping that fits
+  into 16 bits. It's usually: 
+
+    tasks.segmentation_id - min(tasks.segmentation_id for that dataset)
+
+  The consensus map file should be uploaded into the neuroglancer
+  data layer directory corresponding to the destination layer being
+  processed. The contents of the file are JSON encoded and look like:
+
+  { VOLUMEID: { CELLID: [segids] } }
+  """
+
+  def __init__(self, src_path, dest_path, ew_volume_id, 
+    consensus_map_path, shape, offset):
+
+    super(HyperSquareConsensusTask, self).__init__(
+      src_path, dest_path, ew_volume_id, 
+      consensus_map_path, shape, offset
+    )
+    self.src_path = src_path
+    self.dest_path = dest_path
+    self.consensus_map_path = consensus_map_path
+    self.shape = Vec(*shape)
+    self.offset = Vec(*offset)
+    self.ew_volume_id = int(ew_volume_id)
+
+  def execute(self):
+    bounds = Bbox( self.offset, self.shape + self.offset )
+    srcvol = CloudVolume(self.src_path, fill_missing=True)
+    destvol = CloudVolume(self.dest_path)
+
+    consensus = cache(self, self.consensus_map_path)
+    consensus = json.loads(consensus)
+    try:
+      consensus = consensus[str(self.ew_volume_id)]
+    except KeyError:
+      print("Black Region", bounds, self.ew_volume_id)
+      consensus = {}
+
+    segidmap = self.build_segid_map(consensus)
+
+    try:
+      image = srcvol[ bounds.to_slices() ]
+    except ValueError:
+      print("Skipping", bounds)
+      zeroshape = list(bounds.size3()) + [ srcvol.num_channels ]
+      image = np.zeros(shape=zeroshape, dtype=np.uint32)
+
+    image = image.astype(np.uint32)
+
+    # Merge equivalent segments, non-consensus segments are black
+    consensus_image = segidmap[ image ] 
+
+    # Write volume ID to high bits of extended bit width image
+    volume_segid_image = image | (self.ew_volume_id << 16) 
+    
+    # Zero out segid 0 in the high bits so neuroglancer interprets them as empty
+    volume_segid_image *= np.logical_not(np.logical_not(image))
+
+    # Final image is consensus keyed by cell ID (C), i.e. 0xCCCCCCCC. 
+    # Non-empty non-consensus segments are written as:
+    # | 16 bit volume_id (V) | 16 bit seg_id (S) |, i.e. 0xVVVVSSSS 
+    # empties are 0x00000000
+    final_image = consensus_image + (consensus_image == 0) * volume_segid_image
+
+    destvol[ bounds.to_slices() ] = final_image
+
+  def build_segid_map(self, consensus):
+    segidmap = np.zeros(shape=(2 ** 16), dtype=np.uint32)
+
+    for cellid in consensus:
+      for segid in consensus[cellid]:
+        segidmap[segid] = int(cellid)
+
+    return segidmap
+
+
+class TransferTask(RegisteredTask):
+  def __init__(self, src_path, dest_path, shape, offset):
+    super(self.__class__, self).__init__(src_path, dest_path, shape, offset)
+    self.src_path = src_path
+    self.dest_path = dest_path
+    self.shape = Vec(*shape)
+    self.offset = Vec(*offset)
+
+  def execute(self):
+    srccv = CloudVolume(self.src_path)
+    destcv = CloudVolume(self.dest_path)
+
+    bounds = Bbox( self.offset, self.shape + self.offset )
+    bounds = Bbox.clamp(bounds, srccv.bounds)
+    
+    image = srccv[ bounds.to_slices() ]
+    downsample_and_upload(image, bounds, destcv, self.shape)
+
+class WatershedRemapTask(RegisteredTask):
+    """
+    Take raw watershed output and using a remapping file,
+    generate an aggregated segmentation. 
+
+    The remap array is a key:value mapping where the 
+    array index is the key and the value is the contents.
+
+    You can find a script to convert h5 remap files into npy
+    files in pipeline/scripts/remap2npy.py
+
+    Required:
+        map_path: path to remap file. Must be in npy or npz format.
+        src_path: path to watershed layer
+        dest_path: path to new layer
+        shape: size of volume to remap
+        offset: voxel offset into dataset
+    """
+    def __init__(self, map_path, src_path, dest_path, shape, offset):
+        super(self.__class__, self).__init__(map_path, src_path, dest_path, shape, offset)
+        self.map_path = map_path
+        self.src_path = src_path
+        self.dest_path = dest_path
+        self.shape = Vec(*shape)
+        self.offset = Vec(*offset) 
 
     def execute(self):
-        self._parse_chunk_path()
-        self._storage = Storage(self.layer_path)
-        self._download_metadata()
-        self._download_input_chunk()
-        self._upload_chunk()
+        srccv = CloudVolume(self.src_path)
+        destcv = CloudVolume(self.dest_path)
 
-    def _parse_chunk_path(self):
-        if 'segmentation' in self._storage._path.layer_name: 
-            match = re.match(r'^gs://(.*)/(.*)/segmentation.lzma', self.chunk_path)
-            self._bucket_name, self._chunk_folder = match.groups()
-        elif 'image' in self._storage._path.layer_name:
-            match = re.match(r'^gs://(.*)/(.*)/jpg/0\.jpg', self.chunk_path)
-            self._bucket_name, self._chunk_folder = match.groups()
-        else:
-            return NotImplementedError("Don't know how process this layer")
+        bounds = Bbox( self.offset, self.shape + self.offset )
+        bounds = Bbox.clamp(bounds, srccv.bounds)
 
-    def _download_metadata(self):
-        #FIXME self._storage._client doesn't exist anymore
-        self._bucket = self._storage._client.get_bucket(self._bucket_name)
-        metadata = self._bucket.get_blob(
-            '{}/metadata-fixed.json'.format(self._chunk_folder)) \
-        .download_as_string()
-        self._metadata = json.loads(metadata)
-        
-    def _download_input_chunk(self):
-        if 'segmentation' in self._storage._path.layer_name: 
-            self._datablob = self._bukcet.get_blob(
-                '{}/segmentation.lzma'.format(self._chunk_folder))
-            string_data = self._datablob.download_as_string()
-            self._data = self._decode_lzma(string_data)
-        elif 'image' in self._storage._path.layer_name:
-            self._data = np.zeros(shape=(256,256,256), dtype=np.uint8) #x,y,z,channels
-            for blob in self._bucket.list_blobs(prefix='{}/jpg'.format(self._chunk_folder)):
-                z = int(re.findall(r'(\d+)\.jpg', blob.name)[0])
-                img = blob.download_as_string()
-                self._data[:,:,z] = chunks.decode_jpeg(img, shape=(256,256,1)).transpose()
-            self._data.transpose((2,1,0))
-        else:
-            return NotImplementedError("Don't know how to get the images for this layer")
+        remap = self._get_map()
+        watershed_data = srccv[ bounds.to_slices() ]
 
-    def _decode_lzma(self, string_data):
-        arr = lzma.decompress(string_data)
-        if self._metadata['segment_id_type'] == 'UInt8':
-            arr = np.fromstring(arr, dtype=np.uint8)
-        elif self._metadata['segment_id_type'] == 'UInt16':
-            arr = np.fromstring(arr, dtype=np.uint16)
-        elif self._metadata['segment_id_type'] == 'UInt32':
-            arr = np.fromstring(arr, dtype=np.uint32)
-        elif self._metadata['segment_id_type'] == 'UInt64':
-            arr = np.fromstring(arr, dtype=np.uint64)
-        arr = arr.reshape(self._metadata['chunk_voxel_dimensions'][::-1])
-        return arr.transpose((2,1,0))
+        # Here's how the remapping works. Numpy has a special
+        # indexing that can be used to perform the remap.
+        # The remap array is a key:value mapping where the 
+        # array index is the key and the value is the contents.
+        # The watershed_data array contains only data values that
+        # are within the length of the remap array.
+        #
+        # e.g. 
+        #
+        # remap = np.array([1,2,3]) # i.e. 0=>1, 1=>2, 1=>3
+        # vals = np.array([0,1,1,1,2,0,2,1,2])
+        #
+        # remap[vals] # array([1, 2, 2, 2, 3, 1, 3, 2, 3])
 
-    def _upload_chunk(self):
-        if self._dataset_name == 'zfish_v0':
-            overlap = [64, 64, 8]
-        elif self._dataset_name == 'e2198_v0':
-            overlap = [16, 16, 16]
-        else:
-            raise NotImplementedError(self.version)
- 
-        chunk = np.expand_dims(self._data[overlap[0]:-overlap[0],
-                                          overlap[1]:-overlap[1],
-                                          overlap[2]:-overlap[2]],3)
-        voxel_resolution = np.array(self._metadata['voxel_resolution'])
+        image = remap[watershed_data]
+        downsample_and_upload(image, bounds, destcv, self.shape)
 
-        xmin, ymin, zmin = (self._metadata['physical_offset_min'] / voxel_resolution) + overlap
-        xmax, ymax, zmax = (self._metadata['physical_offset_max'] / voxel_resolution) - overlap
-        filename = 'build/{:d}-{:d}_{:d}-{:d}_{:d}-{:d}'.format(
-          xmin, xmax, ymin, ymax, zmin, zmax)
-        encoded = self._encode(chunk, self.chunk_encoding)
-        self._storage.put_file(filename, encoded)
-        self._storage.wait()
+    def _get_map(self):
+        file = StringIO(cache(self, self.map_path))
+        remap = np.load(file)
+        file.close()
+        return remap
 
-    def _encode(self, chunk, encoding):
-        if encoding == "jpeg":
-            return chunks.encode_jpeg(chunk)
-        elif encoding == "npz":
-            return chunks.encode_npz(chunk)
-        elif encoding == "raw":
-            return chunks.encode_raw(chunk)
-        else:
-            raise NotImplementedError(encoding)
+class BossTransferTask(RegisteredTask):
+  """
+  This is a very limited task that is used for transferring
+  mip 0 data from The BOSS (https://docs.theboss.io). 
+  If our needs become more sophisticated we can make a 
+  BossVolume and integrate that into TransferTask.
 
+  Of note, to initiate a transfer, write the bounds
+  of the coordinate frame from your experiment into the
+  destinate info file.
+  """
+
+  def __init__(self, src_path, dest_path, shape, offset):
+    super(self.__class__, self).__init__(src_path, dest_path, shape, offset)
+    self.src_path = src_path
+    self.dest_path = dest_path
+    self.shape = Vec(*shape)
+    self.offset = Vec(*offset)
+
+  def execute(self):
+    match = re.match(r'^(boss)://([/\d\w_\.\-]+)/([\d\w_\.\-]+)/([\d\w_\.\-]+)/?', 
+        self.src_path)
+    protocol, collection, experiment, channel = match.groups()
+
+    dest_vol = CloudVolume(self.dest_path)
+
+    bounds = Bbox( self.offset, self.shape + self.offset )
+    bounds = Bbox.clamp(bounds, dest_vol.bounds)
+    # -1 b/c boss uses inclusive-exclusive bounds for their bboxes
+    bounds.maxpt = Vec.clamp(
+      bounds.maxpt, 
+      dest_vol.bounds.minpt, 
+      dest_vol.bounds.maxpt - 1
+    )
+
+    if bounds.volume() < 1:
+      return
+
+    x_rng = [ bounds.minpt.x, bounds.maxpt.x ]
+    y_rng = [ bounds.minpt.y, bounds.maxpt.y ]
+    z_rng = [ bounds.minpt.z, bounds.maxpt.z ]
+
+    chan = ChannelResource(
+      name=channel,
+      collection_name=collection, 
+      experiment_name=experiment, 
+      type='image', 
+      datatype=dest_vol.dtype
+    )
+
+    rmt = BossRemote(boss_credentials)
+    img3d = rmt.get_cutout(chan, 0, x_rng, y_rng, z_rng).T
+
+    downsample_and_upload(img3d, bounds, dest_vol, self.shape)

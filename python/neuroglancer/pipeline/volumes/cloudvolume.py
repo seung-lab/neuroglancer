@@ -9,11 +9,12 @@ import numpy as np
 from tqdm import tqdm
 
 import neuroglancer
-from neuroglancer.lib import clamp, xyzrange, Vec, Bbox, min2, max2, find_closest_divisor
+import neuroglancer.lib as lib
+from neuroglancer.lib import clamp, xyzrange, Vec, Bbox, min2, max2
 from volumes import Volume, VolumeCutout, generate_slices
 from neuroglancer.pipeline.storage import Storage
 
-__all__ = [ 'CloudVolume', 'EmptyVolumeException' ]
+__all__ = [ 'CloudVolume', 'EmptyVolumeException', 'Precomputed' ]
 
 ExtractedPath = namedtuple('ExtractedPath', 
   ('protocol','bucket_name', 'dataset_name','layer_name')
@@ -22,8 +23,12 @@ ExtractedPath = namedtuple('ExtractedPath',
 DEFAULT_CHUNK_SIZE = (64,64,64)
 
 class EmptyVolumeException(Exception):
-    """Raised upon finding a missing chunk."""
-    pass
+  """Raised upon finding a missing chunk."""
+  pass
+
+def Precomputed(storage, scale_idx=0, fill=False):
+  """Shim to provide backwards compatibility with Precomputed."""
+  return CloudVolume(storage.layer_path, mip=scale_idx, fill_missing=fill)
 
 class CloudVolume(Volume):
   """
@@ -330,14 +335,18 @@ class CloudVolume(Volume):
     #    the mip 2 will have an offset of 2 instead of 2.5 
     #        meaning that it will be half a pixel to the left
     
-    chunk_size = find_closest_divisor(fullres['chunk_sizes'][0], closest_to=DEFAULT_CHUNK_SIZE)
+    chunk_size = lib.find_closest_divisor(fullres['chunk_sizes'][0], closest_to=[64,64,64])
+
+    def downscale(size, roundingfn):
+      smaller = Vec(*size, dtype=np.float32) / Vec(*factor)
+      return list(roundingfn(smaller).astype(int))
 
     newscale = {
       u"encoding": fullres['encoding'],
       u"chunk_sizes": [ chunk_size ],
       u"resolution": list( Vec(*fullres['resolution']) * factor ),
-      u"voxel_offset": list(np.ceil(Vec(*fullres['voxel_offset']) / Vec(*factor)).astype(int) ),
-      u"size": list(np.ceil(Vec(*fullres['size']) / Vec(*factor)).astype(int)),
+      u"voxel_offset": downscale(fullres['voxel_offset'], np.floor),
+      u"size": downscale(fullres['size'], np.ceil),
     }
 
     newscale[u'key'] = unicode("_".join([ str(res) for res in newscale['resolution']]))
