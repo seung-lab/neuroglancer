@@ -25,6 +25,7 @@ after_success:
   fi'
 
 before_deploy:
+- sudo apt-get install oracle-java8-set-default
 - npm install
 - npm install --only=dev 
 - npm run build-min

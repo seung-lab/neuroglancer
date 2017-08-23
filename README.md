@@ -154,6 +154,8 @@ node.js is required to build the viewer.
 
 6. See [package.json](package.json) for other commands available.
 
+  - To run `npm run build-min` you will need to be running Java 7 or later.
+
 # Creating a dependent project
 
 See [examples/dependent-project](examples/dependent-project).
