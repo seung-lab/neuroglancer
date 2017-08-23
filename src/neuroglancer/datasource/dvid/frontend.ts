@@ -536,7 +536,7 @@ export function volumeCompleter(
   let match = url.match(curUrlPattern);
   if (match === null) {
     // We don't yet have a full hostname.
-    return Promise.reject<CompletionResult|null>(null);
+    return Promise.reject<CompletionResult>(null);
   }
   let baseUrl = match[1];
   let baseUrls = [baseUrl];

@@ -25,7 +25,9 @@ import {Overlay} from 'neuroglancer/overlay';
 import {SegmentColorHash} from 'neuroglancer/segment_color';
 import {SegmentationDisplayState3D, SegmentSelectionState, Uint64MapEntry} from 'neuroglancer/segmentation_display_state/frontend';
 import {SharedDisjointUint64Sets} from 'neuroglancer/shared_disjoint_sets';
-import {PerspectiveViewSkeletonLayer, SkeletonLayer, SliceViewPanelSkeletonLayer} from 'neuroglancer/skeleton/frontend';
+import {FRAGMENT_MAIN_START as SKELETON_FRAGMENT_MAIN_START, getTrackableFragmentMain, 
+        PerspectiveViewSkeletonLayer, SkeletonLayer, SkeletonLayerDisplayState, 
+        SliceViewPanelSkeletonLayer} from 'neuroglancer/skeleton/frontend';
 import {VolumeType} from 'neuroglancer/sliceview/volume/base';
 import {SegmentationRenderLayer, SliceViewSegmentationDisplayState} from 'neuroglancer/sliceview/volume/segmentation_renderlayer';
 import {trackableAlphaValue} from 'neuroglancer/trackable_alpha';
@@ -33,13 +35,12 @@ import {TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {parseArray, verifyObjectProperty, verifyOptionalString} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
-import {makeWatchableShaderError} from 'neuroglancer/webgl/dynamic_shader';
 import {RangeWidget} from 'neuroglancer/widget/range';
+import {makeWatchableShaderError} from 'neuroglancer/webgl/dynamic_shader';
 import {SegmentSetWidget} from 'neuroglancer/widget/segment_set_widget';
 import {ShaderCodeWidget} from 'neuroglancer/widget/shader_code_widget';
 import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
 import {SemanticEntryWidget} from 'neuroglancer/widget/semantic_entry_widget';
-import {openHttpRequest, sendHttpRequest} from 'neuroglancer/util/http_request';
 import {splitObject, mergeNodes, getObjectList, getConnectedSegments, enableGraphServer, GRAPH_SERVER_NOT_ENABLED} from 'neuroglancer/object_graph_service';
 import {StatusMessage} from 'neuroglancer/status';
 import {HashMapUint64} from 'neuroglancer/gpu_hash/hash_table';
@@ -66,7 +67,8 @@ function handleDisabledGraphServer (error: any) {
 }
 
 export class SegmentationUserLayer extends UserLayer {
-  displayState: SliceViewSegmentationDisplayState&SegmentationDisplayState3D = {
+  displayState: SliceViewSegmentationDisplayState&SegmentationDisplayState3D&
+  SkeletonLayerDisplayState = {
     segmentColorHash: SegmentColorHash.getDefault(),
     segmentSelectionState: new SegmentSelectionState(),
     selectedAlpha: trackableAlphaValue(0.5),
@@ -77,6 +79,8 @@ export class SegmentationUserLayer extends UserLayer {
     segmentEquivalences: SharedDisjointUint64Sets.makeWithCounterpart(this.manager.worker),
     volumeSourceOptions: {},
     objectToDataTransform: new CoordinateTransform(),
+    fragmentMain: getTrackableFragmentMain(),
+    shaderError: makeWatchableShaderError(),
     shattered: false,
     semanticHashMap: new HashMapUint64(),
     semanticMode: false
@@ -127,10 +131,10 @@ export class SegmentationUserLayer extends UserLayer {
     this.displayState.objectToDataTransform.restoreState(spec['transform']);
     this.displayState.volumeSourceOptions.transform =
         this.displayState.objectToDataTransform.transform;
-    this.displayState.fragmentMain.restoreState(x['skeletonShader']);
+    this.displayState.fragmentMain.restoreState(spec['skeletonShader']);
 
     let volumePath = this.volumePath = verifyOptionalString(spec['source']);
-    let meshPath = this.meshPath = verifyOptionalString(spec['mesh']);
+    let meshPath = this.meshPath = spec['mesh'] === null ? null : verifyOptionalString(spec['mesh']);
     let skeletonsPath = this.skeletonsPath = verifyOptionalString(spec['skeletons']);
     let graphPath = this.graphPath = verifyOptionalString(spec['graph']);
 
@@ -323,6 +327,8 @@ export class SegmentationUserLayer extends UserLayer {
     
     let segment : Uint64 = <Uint64>segmentSelectionState.rawSelectedSegment;
     this.splitPartitions.sinks.push(segment.clone());
+    StatusMessage.displayText(`Selected ${segment} as sink. Splitting.`);
+
 
     splitObject(this.splitPartitions.sources, this.splitPartitions.sinks)
       .then((splitgroups) => {
@@ -406,11 +412,22 @@ class SegmentationDropdown extends UserLayerDropdown {
     notSelectedAlphaWidget.promptElement.textContent = 'Opacity (off)';
     objectAlphaWidget.promptElement.textContent = 'Opacity (3d)';
 
+    {
+      const checkbox =
+         this.registerDisposer(new TrackableBooleanCheckbox(layer.displayState.hideSegmentZero));
+      checkbox.element.className = 'neuroglancer-segmentation-dropdown-hide-segment-zero noselect';
+      const label = document.createElement('label');
+      label.className = 'neuroglancer-segmentation-dropdown-hide-segment-zero noselect';
+      label.appendChild(document.createTextNode('Hide segment ID 0'));  
+      label.appendChild(checkbox.element);
+      element.appendChild(label);
+    }
+
     element.appendChild(this.selectedAlphaWidget.element);
     element.appendChild(this.notSelectedAlphaWidget.element);
     element.appendChild(this.objectAlphaWidget.element);
     element.appendChild(this.registerDisposer(this.addSemanticWidget).element);
-    this.registerSignalBinding(this.addSemanticWidget.semanticUpdated.add(
+    this.registerDisposer(this.addSemanticWidget.semanticUpdated.add(
       () => { this.layer.triggerRedraw(); }
     ));
 

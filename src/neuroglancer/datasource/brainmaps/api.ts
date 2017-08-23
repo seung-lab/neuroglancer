@@ -126,8 +126,8 @@ export function makeRequest(
         --numPendingRequests;
         return;
       }
-      xhr = openShardedHttpRequest(INSTANCE_BASE_URLS[instance], path, method);
-      xhr.responseType = <XMLHttpRequestResponseType>responseType;
+      xhr = openShardedHttpRequest(INSTANCE_BASE_URLS[instance], httpCall.path, httpCall.method);
+      xhr.responseType = httpCall.responseType;
       xhr.setRequestHeader('Authorization', `${token['tokenType']} ${token['accessToken']}`);
       xhr.onloadend = function(this: XMLHttpRequest) {
         if (xhr === null) {

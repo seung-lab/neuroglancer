@@ -338,11 +338,11 @@ class ChunkPriorityQueue {
 }
 
 function makeChunkPriorityQueue0(compare: ComparisonFunction<Chunk>) {
-  return new ChunkPriorityQueue(new PairingHeap0(compare), <LinkedListOperations>LinkedList0);
+  return new ChunkPriorityQueue(new PairingHeap0(compare), <LinkedListOperations<Chunk>>LinkedList0);
 }
 
 function makeChunkPriorityQueue1(compare: ComparisonFunction<Chunk>) {
-  return new ChunkPriorityQueue(new PairingHeap1(compare), <LinkedListOperations>LinkedList1);
+  return new ChunkPriorityQueue(new PairingHeap1(compare), <LinkedListOperations<Chunk>>LinkedList1);
 }
 
 function tryToFreeCapacity(

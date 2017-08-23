@@ -86,8 +86,8 @@ export interface DataSourceFactory {
       (chunkManager: ChunkManager, path: string,
        cancellationToken: CancellationToken) => Promise<MeshSource>| MeshSource;
   getSkeletonSource?:
-      (chunkManager: ChunkManager, path: string) => Promise<SkeletonSource>| SkeletonSource;
-
+      (chunkManager: ChunkManager, path: string,
+       cancellationToken: CancellationToken) => Promise<SkeletonSource>| SkeletonSource;
   volumeCompleter?:
       (value: string, chunkManager: ChunkManager,
        cancellationToken: CancellationToken) => Promise<CompletionResult>;
@@ -184,7 +184,7 @@ export function volumeCompleter(
           .then(completions => applyCompletionOffset(protocol.length + 3, completions));
     }
   }
-  return Promise.reject<CompletionResult|null>(null);
+  return Promise.reject<CompletionResult>(null);
 }
 
 export function suggestLayerName(url: string) {

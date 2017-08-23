@@ -28,9 +28,6 @@ import {DisjointUint64Sets} from 'neuroglancer/util/disjoint_sets';
 import {vec3} from 'neuroglancer/util/geom';
 import {ShaderBuilder, ShaderProgram} from 'neuroglancer/webgl/shader';
 import {glsl_unnormalizeUint8} from 'neuroglancer/webgl/shader_lib';
-import {StatusMessage} from 'neuroglancer/status';
-import {SharedDisjointUint64Sets} from 'neuroglancer/shared_disjoint_sets';
-import {Uint64} from 'neuroglancer/util/uint64';
 
 const selectedSegmentForShader = new Float32Array(8);
 
@@ -222,9 +219,11 @@ uint64_t getMappedObjectId() {
       vec3 rgb = segmentColorHash(value);
       emit(vec4(mix(vec3(1.0,1.0,1.0), rgb, saturation), alpha));
     }
+  }`;
+  builder.setFragmentMain(fragmentMain);
+  
   }
-`);
-  }
+
 
   beginSlice(sliceView: SliceView) {
     let shader = super.beginSlice(sliceView);

@@ -488,7 +488,7 @@ export class MouseSelectionState implements PickState {
 export class LayerSelectedValues extends RefCounted {
   values = new Map<UserLayer, any>();
   rawValues = new Map<UserLayer, any>();
-  changed = new Signal();
+  changed = new NullarySignal();
   needsUpdate = true;
   constructor(public layerManager: LayerManager, public mouseState: MouseSelectionState) {
     super();

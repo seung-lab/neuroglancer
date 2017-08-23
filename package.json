@@ -57,16 +57,14 @@
     "karma-webpack": "^2.0.2",
     "minimist": "^1.2.0",
     "nunjucks": "^3.0.0",
-    "tslint": "^5.5.0",
+    "tslint": "^5.6.0",
     "tslint-eslint-rules": "^4.1.1",
     "tapable": "^0.2.8",
     "ts-compiler": "^2.0.0",
-    "tslint": "^5.6.0",
-    "webpack-dev-server": "^2.2.0"
+    "webpack-dev-server": "^2.1.0-beta.12",
     "typescript": "^2.4.2",
     "utila": "^0.5.0-dev.1",
     "webpack": "^2.7.0",
-    "webpack-dev-server": "^2.1.0-beta.12",
     "webpack-closure-compiler": "2.1.2"
   },
   "dependencies": {

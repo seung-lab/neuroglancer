@@ -1,37 +1,64 @@
-
-import numpy as np
-import h5py
-import webbrowser
-import neuroglancer
-from neuroglancer import static
+import os
 import sys
+import webbrowser
 
-path = './neuroglancer/static/'
+import neuroglancer
+import numpy as np
+from neuroglancer.skeleton import Skeleton
 
-neuroglancer.set_static_content_source(path=path)
-viewer = neuroglancer.Viewer()
+# There are 3 options for accesing the frontend
+# Option 1)
+# neuroglancer.set_static_content_source(url='https://neuromancer-seung-import.appspot.com')
 
-# viewer.add(volume_type='image', data=np.zeros(shape=(100,100,100), dtype=np.uint8), name='image', voxel_size=[6, 6, 40])
-# viewer.add(volume_type='point', name='point')
-# viewer.add(volume_type='synapse', name='synapse')
+# Option 2)
+# npm run build
+neuroglancer.set_static_content_source(path=os.path.join(os.path.dirname(__file__), '../dist/dev')
+)
 
-# f = h5py.File('./snemi3d/machine_labels.h5')
-# # 0 pad is useful to make the meshes that are in contact with the borders
-# # of the volume have a planar cap
-# seg = np.pad(f['main'][:], 1, 'constant', constant_values=0)
-# viewer.add(
-#   volume_type='segmentation', 
-#   data=seg, 
-#   name='segmentation', 
-#   voxel_size=[6, 6, 40], 
-#   graph='./snemi3d/snemi3d_graph.pickle'
-# )
+# Option 3) Useful if you are developing the frontend
+# run a local server `npm run dev-server`
+# neuroglancer.set_static_content_source(url='http://localhost:8080')
 
-url = viewer.get_viewer_url()
-webbrowser.open(url)
-print(url)
+viewer = neuroglancer.Viewer(voxel_size=[10, 10, 10])
+
+
+#Fist layer (image)
+a = np.zeros((3, 100, 100, 100), dtype=np.uint8)
+ix, iy, iz = np.meshgrid(*[np.linspace(0, 1, n) for n in a.shape[1:]], indexing='ij')
+a[0, :, :, :] = np.abs(np.sin(4 * (ix + iy))) * 255
+a[1, :, :, :] = np.abs(np.sin(4 * (iy + iz))) * 255
+a[2, :, :, :] = np.abs(np.sin(4 * (ix + iz))) * 255
+viewer.add(a,
+           name='a',
+           # offset is in nm, not voxels
+           offset=(200, 300, 150),
+           shader="""
+void main() {
+  emitRGB(vec3(toNormalized(getDataValue(0)),
+               toNormalized(getDataValue(1)),
+               toNormalized(getDataValue(2))));
+}
+""")
+
+
+#Second layer (segmentation)
+b = np.cast[np.uint32](np.floor(np.sqrt((ix - 0.5)**2 + (iy - 0.5)**2 + (iz - 0.5)**2) * 10))
+b = np.pad(b, 1, 'constant')
+viewer.add(b, name='b')
+
+#Third layer (points)
+viewer.add(data=[], name='layer_point', layer_type='point')
+
+#Fourth layer (synapses)
+viewer.add(data=[], name='layer_synapse', layer_type='synapse')
+
+#Fith layer (vector graphics)
+viewer.add(data=[[10, 20 ,30],
+                 [15, 20 ,30],
+                 [15, 25 ,30]], name='layer_vector_graphics', layer_type='line')
+
+# Open browser
+webbrowser.open(str(viewer))
 
 if not sys.flags.interactive:
-  neuroglancer.block()
-
-
+    neuroglancer.block()

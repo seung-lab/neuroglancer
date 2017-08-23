@@ -19,10 +19,13 @@ import {WatchableValue} from 'neuroglancer/trackable_value';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {urlSafeParse, urlSafeStringify, verifyObject} from 'neuroglancer/util/json';
 import {getCachedJson, Trackable} from 'neuroglancer/util/trackable';
+import * as SockJS from 'sockjs-client';
 
 /**
  * @file Implements a binding between a Trackable value and the URL hash state.
  */
+
+
 
 /**
  * An instance of this class manages a binding between a Trackable value and the URL hash state.
@@ -39,6 +42,9 @@ export class UrlHashBinding extends RefCounted {
    */
   private prevStateGeneration: number|undefined;
 
+
+  private sock : any|undefined;
+
   /**
    * Most recent error parsing URL hash.
    */
@@ -50,7 +56,25 @@ export class UrlHashBinding extends RefCounted {
     const throttledSetUrlHash = debounce(() => this.setUrlHash(), updateDelayMilliseconds);
     this.registerDisposer(root.changed.add(throttledSetUrlHash));
     this.registerDisposer(() => throttledSetUrlHash.cancel());
+    this.setStateServerURL('https://localhost:9999');
   }
+
+  setStateServerURL(url: string){
+    this.sock = new SockJS(url);
+    this.sock.onopen = function() {
+      console.log('opened socket connection');
+    };
+    this.sock.onmessage = this.onmessage
+    this.sock.onclose = function() {
+      console.log('closing socket connection');
+    };
+  }
+  
+  onmessage(e: any) {
+      let state = JSON.parse(e.data);
+      verifyObject(state);
+      this.root.restoreState(state);  
+   }
 
   /**
    * Sets the URL hash to match the current state.
@@ -62,6 +86,7 @@ export class UrlHashBinding extends RefCounted {
       this.prevStateGeneration = cacheState.generation;
       let stateString = urlSafeStringify(cacheState.value);
       if (stateString !== this.prevStateString) {
+        this.sock.send(JSON.stringify(cacheState.value));
         this.prevStateString = stateString;
         if (stateString === '{}') {
           history.replaceState(null, '', '#');
@@ -110,3 +135,9 @@ export class UrlHashBinding extends RefCounted {
     }
   }
 }
+
+
+
+
+
+

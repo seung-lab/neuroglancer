@@ -23,7 +23,7 @@ import {SynapseAnnotationPointList} from 'neuroglancer/synapse/point_list';
 import {WatchableValue} from 'neuroglancer/trackable_value';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {removeChildren, removeFromParent} from 'neuroglancer/util/dom';
-import {Signal} from 'signals';
+import {Signal} from 'neuroglancer/util/signal';
 
 require('neuroglancer/noselect.css');
 require('./synapse_list_widget.css');
@@ -47,7 +47,7 @@ export class SynapsePointListWidget extends RefCounted {
     itemContainer.className = 'neuroglancer-item-container neuroglancer-select-text';
     element.appendChild(clearButton);
     element.appendChild(itemContainer);
-    this.registerSignalBinding(pointList.changed.add(this.maybeUpdate, this));
+    this.registerDisposer(pointList.changed.add(this.maybeUpdate));
   }
 
   get visible() { return this.visible_; }

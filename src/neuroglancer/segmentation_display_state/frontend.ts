@@ -49,7 +49,6 @@ export class SegmentSelectionState extends RefCounted {
     } 
     else {
       let existingValue = this.selectedSegment;
-      let existingRawValue = this.rawSelectedSegment;
       if (!this.hasSelectedSegment || value.low !== existingValue.low || value.high !== existingValue.high) {
 
         existingValue.low = value.low;
@@ -63,9 +62,7 @@ export class SegmentSelectionState extends RefCounted {
   setRaw(value: Uint64|null|undefined) {
     if (value == null) {
       return;
-    }
-    
-    let existingValue = this.selectedSegment;
+    }    
     let existingRawValue = this.rawSelectedSegment;
     if (!this.hasSelectedSegment || value.low !== existingRawValue.low || value.high !== existingRawValue.high) {
 
@@ -94,12 +91,12 @@ export class SegmentSelectionState extends RefCounted {
         return value;
     }
 
-    this.registerSignalBinding(layerSelectedValues.changed.add(() => {
+    this.registerDisposer(layerSelectedValues.changed.add(() => {
       let value = layerSelectedValues.get(userLayer);
       this.set(toUint64(value));
     }));
 
-    this.registerSignalBinding(layerSelectedValues.changed.add(() => {
+    this.registerDisposer(layerSelectedValues.changed.add(() => {
       let value = layerSelectedValues.getRaw(userLayer);
       this.setRaw(toUint64(value));
     }));

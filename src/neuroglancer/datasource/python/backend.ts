@@ -17,7 +17,8 @@
 import {registerChunkSource} from 'neuroglancer/chunk_manager/backend';
 import {MeshSourceParameters, SkeletonSourceParameters, VolumeChunkEncoding, VolumeChunkSourceParameters} from 'neuroglancer/datasource/python/base';
 import {decodeTriangleVertexPositionsAndIndices, FragmentChunk, ManifestChunk, ParameterizedMeshSource} from 'neuroglancer/mesh/backend';
-import {ParameterizedVolumeChunkSource, VolumeChunk} from 'neuroglancer/sliceview/volume/backend';
+import {decodeSkeletonVertexPositionsAndIndices, ParameterizedSkeletonSource, SkeletonChunk} from 'neuroglancer/skeleton/backend';
+import {VertexAttributeInfo} from 'neuroglancer/skeleton/base';
 import {ChunkDecoder} from 'neuroglancer/sliceview/backend_chunk_decoders';
 import {decodeJpegChunk} from 'neuroglancer/sliceview/backend_chunk_decoders/jpeg';
 import {decodeNdstoreNpzChunk} from 'neuroglancer/sliceview/backend_chunk_decoders/ndstoreNpz';
@@ -40,7 +41,7 @@ export class VolumeChunkSource extends ParameterizedVolumeChunkSource<VolumeChun
 
   download(chunk: VolumeChunk, cancellationToken: CancellationToken) {
     let {parameters} = this;
-    let path = `/neuroglancer/${parameters.key}/${this.encoding}`;
+    let path = `/neuroglancer/${this.encoding}/${parameters.key}`;
     {
       // chunkPosition must not be captured, since it will be invalidated by the next call to
       // computeChunkBounds.
@@ -73,11 +74,11 @@ export class MeshSource extends ParameterizedMeshSource<MeshSourceParameters> {
 
   downloadFragment(chunk: FragmentChunk, cancellationToken: CancellationToken) {
     let {parameters} = this;
-    let requestPath = `/neuroglancer/${parameters.key}/mesh/${chunk.manifestChunk!.objectId}`;
-    handleChunkDownloadPromise(
-        chunk,
-        sendHttpRequest(openShardedHttpRequest(parameters.baseUrls, requestPath), 'arraybuffer'),
-        decodeFragmentChunk);
+    let requestPath = `/neuroglancer/mesh/${parameters.key}/${chunk.manifestChunk!.objectId}`;
+    return sendHttpRequest(
+               openShardedHttpRequest(parameters.baseUrls, requestPath), 'arraybuffer',
+               cancellationToken)
+        .then(response => decodeFragmentChunk(chunk, response));
   }
 }
 

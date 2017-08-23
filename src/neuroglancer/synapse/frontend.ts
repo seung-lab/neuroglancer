@@ -28,10 +28,9 @@ import {Buffer} from 'neuroglancer/webgl/buffer';
 import {GL} from 'neuroglancer/webgl/context';
 import {countingBufferShaderModule, disableCountingBuffer, getCountingBuffer} from 'neuroglancer/webgl/index_emulation';
 import {ShaderBuilder, ShaderModule, ShaderProgram} from 'neuroglancer/webgl/shader';
-import {GL_FLOAT} from 'neuroglancer/webgl/constants';
 import {glsl_addUint32, setVec4FromUint32, glsl_divmodUint32, glsl_floatToUint32, gsls_floatvec4eq} from 'neuroglancer/webgl/shader_lib';
 import {getSquareCornersBuffer} from 'neuroglancer/webgl/square_corners_buffer';
-import {Signal} from 'signals';
+import {NullarySignal} from 'neuroglancer/util/signal'
 
 const tempMat = mat4.create();
 const tempPickID = new Float32Array(4);
@@ -39,7 +38,7 @@ const tempPickID = new Float32Array(4);
 export class SynapseAnnotationPointListLayer extends RefCounted {
   buffer: Buffer;
   generation = -1;
-  redrawNeeded = new Signal();
+  redrawNeeded = new NullarySignal();
   color_pre = Float32Array.of(1.0, 0.0, 0.0, 1.0);
   color_post = Float32Array.of(0.0, 0.0, 1.0, 1.0);
   selectedColor = Float32Array.of(1.0, 1.0, 0.0, 1.0);
@@ -49,12 +48,12 @@ export class SynapseAnnotationPointListLayer extends RefCounted {
       public voxelSizeObject: VoxelSize, public selectedIndex: WatchableValue<number|null>) {
     super();
     this.buffer = new Buffer(chunkManager.gl);
-    this.registerSignalBinding(pointList.changed.add(() => {
+    this.registerDisposer(pointList.changed.add(() => {
       // Clear selectedIndex, since the indices have changed.
       this.selectedIndex.value = null;
       this.redrawNeeded.dispatch();
     }));
-    this.registerSignalBinding(selectedIndex.changed.add(() => { this.redrawNeeded.dispatch(); }));
+    this.registerDisposer(selectedIndex.changed.add(() => { this.redrawNeeded.dispatch(); }));
   }
 
   get gl() { return this.chunkManager.gl; }
@@ -256,7 +255,7 @@ export class PerspectiveViewAnnotationPointListLayer extends PerspectiveViewRend
   constructor(public base: SynapseAnnotationPointListLayer) {
     super();
     this.registerDisposer(base);
-    this.registerSignalBinding(base.redrawNeeded.add(() => { this.redrawNeeded.dispatch(); }));
+    this.registerDisposer(base.redrawNeeded.add(() => { this.redrawNeeded.dispatch(); }));
     this.setReady(true);
   }
 
@@ -291,7 +290,7 @@ export class SliceViewAnnotationPointListLayer extends SliceViewPanelRenderLayer
   constructor(public base: SynapseAnnotationPointListLayer) {
     super();
     this.registerDisposer(base);
-    this.registerSignalBinding(base.redrawNeeded.add(() => { this.redrawNeeded.dispatch(); }));
+    this.registerDisposer(base.redrawNeeded.add(() => { this.redrawNeeded.dispatch(); }));
     this.setReady(true);
   }
 

@@ -21,7 +21,7 @@
 
 import {ChunkManager} from 'neuroglancer/chunk_manager/frontend';
 import {CompletionResult, registerDataSourceFactory} from 'neuroglancer/datasource/factory';
-import {VolumeChunkSourceParameters} from 'neuroglancer/datasource/ndstore/base';
+import {NDSTORE_URL_PREFIX, VolumeChunkSourceParameters} from 'neuroglancer/datasource/ndstore/base';
 import {DataType, VolumeChunkSpecification, VolumeSourceOptions, VolumeType} from 'neuroglancer/sliceview/volume/base';
 import {defineParameterizedVolumeChunkSource, MultiscaleVolumeChunkSource as GenericMultiscaleVolumeChunkSource} from 'neuroglancer/sliceview/volume/frontend';
 import {applyCompletionOffset, getPrefixMatchesWithDescriptions} from 'neuroglancer/util/completion';
@@ -265,7 +265,7 @@ export function tokenAndChannelCompleter(
   let channelMatch = path.match(/^(?:([^\/]+)(?:\/([^\/]*))?)?$/);
   if (channelMatch === null) {
     // URL has incorrect format, don't return any results.
-    return Promise.reject<CompletionResult|null>(null);
+    return Promise.reject<CompletionResult>(null);
   }
   if (channelMatch[2] === undefined) {
     let keyPrefix = channelMatch[1] || '';
@@ -292,7 +292,7 @@ export function volumeCompleter(
   let match = url.match(urlPattern);
   if (match === null) {
     // We don't yet have a full hostname.
-    return Promise.reject<CompletionResult|null>(null);
+    return Promise.reject<CompletionResult>(null);
   }
   let hostnames = [match[1]];
   let path = match[2];

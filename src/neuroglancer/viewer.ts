@@ -29,7 +29,6 @@ import {overlaysOpen} from 'neuroglancer/overlay';
 import {PositionStatusPanel} from 'neuroglancer/position_status_panel';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {TrackableValue} from 'neuroglancer/trackable_value';
-import {registerTrackable, setStateServerURL} from 'neuroglancer/url_hash_state';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {removeFromParent} from 'neuroglancer/util/dom';
 import {vec3} from 'neuroglancer/util/geom';
@@ -41,8 +40,8 @@ import {ViewerState, VisibilityPrioritySpecification} from 'neuroglancer/viewer_
 import {WatchableVisibilityPriority} from 'neuroglancer/visibility_priority/frontend';
 import {GL} from 'neuroglancer/webgl/context';
 import {RPC} from 'neuroglancer/worker_rpc';
-import {Signal} from 'signals';
 import {StatusMessage} from 'neuroglancer/status';
+
 
 require('./viewer.css');
 require('./help_button.css');
@@ -61,10 +60,42 @@ export function validateLayoutName(obj: any) {
   return layout[0];
 }
 
-export function validateStateServer(url: string) {
-  setStateServerURL(url);
-  return url;
+export class DataManagementContext extends RefCounted {
+  worker = new Worker('chunk_worker.bundle.js');
+  chunkQueueManager = this.registerDisposer(new ChunkQueueManager(new RPC(this.worker), this.gl, {
+    gpuMemory: new AvailableCapacity(1e6, 1e9),
+    systemMemory: new AvailableCapacity(1e7, 2e9),
+    download: new AvailableCapacity(32, Number.POSITIVE_INFINITY)
+  }));
+  chunkManager = this.registerDisposer(new ChunkManager(this.chunkQueueManager));
+
+  get rpc(): RPC {
+    return this.chunkQueueManager.rpc!;
+  }
+
+  constructor(public gl: GL) {
+    super();
+    this.chunkQueueManager.registerDisposer(() => this.worker.terminate());
+  }
 }
+
+export interface UIOptions {
+  showHelpButton: boolean;
+  showLayerDialog: boolean;
+  showLayerPanel: boolean;
+  showLocation: boolean;
+}
+
+export interface ViewerOptions extends UIOptions, VisibilityPrioritySpecification {
+  dataContext: DataManagementContext;
+}
+
+const defaultViewerOptions = {
+  showHelpButton: true,
+  showLayerDialog: true,
+  showLayerPanel: true,
+  showLocation: true,
+};
 
 export class Viewer extends RefCounted implements ViewerState {
   navigationState = this.registerDisposer(new NavigationState());
@@ -75,7 +106,7 @@ export class Viewer extends RefCounted implements ViewerState {
   dataDisplayLayout: DataDisplayLayout;
   showScaleBar = new TrackableBoolean(true, true);
   showPerspectiveSliceViews = new TrackableBoolean(true, true);
-  stateServerURL= '';
+
   layerPanel: LayerPanel;
   layerSelectedValues =
       this.registerDisposer(new LayerSelectedValues(this.layerManager, this.mouseState));
@@ -92,7 +123,6 @@ export class Viewer extends RefCounted implements ViewerState {
   keyCommands = new Map<string, (this: Viewer) => void>();
   layerSpecification: LayerListSpecification;
   layoutName = new TrackableValue<string>(LAYOUTS[0][0], validateLayoutName);
-  stateServer = new TrackableValue<string>(this.stateServerURL, validateStateServer);
 
   state = new CompoundTrackable();
 
@@ -136,19 +166,14 @@ export class Viewer extends RefCounted implements ViewerState {
     state.add('showAxisLines', this.showAxisLines);
     state.add('showScaleBar', this.showScaleBar);
 
-    registerTrackable('layers', this.layerSpecification);
-    registerTrackable('navigation', this.navigationState);
-    registerTrackable('showAxisLines', this.showAxisLines);
-    registerTrackable('showScaleBar', this.showScaleBar);
+    state.add('perspectiveOrientation', this.perspectiveNavigationState.pose.orientation);
+    state.add('perspectiveZoom', this.perspectiveNavigationState.zoomFactor);
+    state.add('showSlices', this.showPerspectiveSliceViews);
+    state.add('layout', this.layoutName);
 
-    registerTrackable('perspectiveOrientation', this.perspectiveNavigationState.pose.orientation);
-    registerTrackable('perspectiveZoom', this.perspectiveNavigationState.zoomFactor);
-    registerTrackable('showSlices', this.showPerspectiveSliceViews);
-    registerTrackable('layout', this.layoutName);
-    registerTrackable('stateURL', this.stateServer);
-   
-    this.registerSignalBinding(
-        this.navigationState.changed.add(this.handleNavigationStateChanged, this));
+    this.registerDisposer(this.navigationState.changed.add(() => {
+      this.handleNavigationStateChanged();
+    }));
 
     this.layerManager.initializePosition(this.navigationState.position);
 
@@ -218,20 +243,22 @@ export class Viewer extends RefCounted implements ViewerState {
       });
     }
 
-    for (let command of ['toggle-shatter-equivalencies', 'merge-selection', 'recolor', 'clear-segments', 'toggle-semantic-mode']) {
-      keyCommands.set(command, function() { this.layerManager.invokeAction(command); });
+    for (let command of ['recolor', 'clear-segments','merge-selection',
+      'toggle-shatter-equivalencies','toggle-semantic-mode']) {
+      keyCommands.set(command, function() {
+        this.layerManager.invokeAction(command);
+      });
     }
 
-    keyCommands.set('toggle-axis-lines', function() { this.showAxisLines.toggle(); });
-    keyCommands.set('toggle-scale-bar', function() { this.showScaleBar.toggle(); });
-    this.keyCommands.set(
-        'toggle-show-slices', function() { this.showPerspectiveSliceViews.toggle(); });
-
-    // This needs to happen after the global keyboard shortcut handler for the viewer has been
-    // registered, so that it has priority.
-    if (this.layerManager.managedLayers.length === 0) {
-      new LayerDialog(this.layerSpecification);
-    }
+    keyCommands.set('toggle-axis-lines', function() {
+      this.showAxisLines.toggle();
+    });
+    keyCommands.set('toggle-scale-bar', function() {
+      this.showScaleBar.toggle();
+    });
+    this.keyCommands.set('toggle-show-slices', function() {
+      this.showPerspectiveSliceViews.toggle();
+    });
 
     keyCommands.set('two-point-split', function () { 
       this.mouseState.toggleSplit(); 
@@ -243,7 +270,6 @@ export class Viewer extends RefCounted implements ViewerState {
        StatusMessage.displayText('Split Mode Activated.'); 
       }
     });
-
   }
 
   private makeUI() {

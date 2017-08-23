@@ -70,7 +70,7 @@ def _neuroglancer_compile():
     src_dir = os.path.join(setup_dir, 'ext/src')
     third_party_dir = os.path.join(setup_dir, 'ext/third_party')
     openmesh_dir = os.path.join(setup_dir, 'ext/third_party/openmesh/OpenMesh/src')
-    print cythonize(os.path.join(third_party_dir,'mc/_mesher.pyx'))[0].__dict__
+    cythonize(os.path.join(third_party_dir,'mc/_mesher.pyx'))
     local_sources = [
         '_neuroglancer.cc',
         'openmesh_dependencies.cc',

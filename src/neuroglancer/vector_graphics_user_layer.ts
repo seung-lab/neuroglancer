@@ -137,7 +137,7 @@ class VectorGraphicsDropDown extends UserLayerDropdown {
     helpLink.title = 'Documentation on vector graphics layer rendering';
     helpLink.target = '_blank';
     helpLink.href =
-        'https://github.com/google/neuroglancer/blob/master/src/neuroglancer/sliceview/vectorgraphics_layer_rendering.md';
+        'https://github.com/seung-lab/neuroglancer/blob/master/src/neuroglancer/sliceview/vectorgraphics_layer_rendering.md';
 
     topRow.appendChild(spacer);
     topRow.appendChild(helpLink);
@@ -178,4 +178,3 @@ class VectorGraphicsColorWidget extends Vec3Widget {
 
 
 registerLayerType('line', VectorGraphicsUserLayer);
-// registerLayerType('point', VectorGraphicsUserLayer);

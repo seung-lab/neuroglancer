@@ -1,6 +1,5 @@
 
 import {Uint64} from 'neuroglancer/util/uint64';
-import {CancellablePromise} from 'neuroglancer/util/promise';
 import {openHttpRequest, sendHttpRequest, HttpError} from 'neuroglancer/util/http_request';
 
 

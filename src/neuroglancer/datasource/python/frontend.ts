@@ -23,8 +23,10 @@ import {ChunkManager} from 'neuroglancer/chunk_manager/frontend';
 import {registerDataSourceFactory} from 'neuroglancer/datasource/factory';
 import {MeshSourceParameters, SkeletonSourceParameters, VolumeChunkEncoding, VolumeChunkSourceParameters} from 'neuroglancer/datasource/python/base';
 import {defineParameterizedMeshSource} from 'neuroglancer/mesh/frontend';
-import {DataType, DEFAULT_MAX_VOXELS_PER_CHUNK_LOG2, VolumeChunkSpecification, VolumeSourceOptions, VolumeType} from 'neuroglancer/sliceview/volume/base';
-import {getNearIsotropicBlockSize, getTwoDimensionalBlockSize} from 'neuroglancer/sliceview/base';
+import {VertexAttributeInfo} from 'neuroglancer/skeleton/base';
+import {parameterizedSkeletonSource} from 'neuroglancer/skeleton/frontend';
+import {DataType, DEFAULT_MAX_VOXELS_PER_CHUNK_LOG2, getNearIsotropicBlockSize, getTwoDimensionalBlockSize} from 'neuroglancer/sliceview/base';
+import {VolumeChunkSpecification, VolumeSourceOptions, VolumeType} from 'neuroglancer/sliceview/volume/base';
 import {defineParameterizedVolumeChunkSource, MultiscaleVolumeChunkSource as GenericMultiscaleVolumeChunkSource} from 'neuroglancer/sliceview/volume/frontend';
 import {mat4, vec3} from 'neuroglancer/util/geom';
 import {openShardedHttpRequest, sendHttpRequest} from 'neuroglancer/util/http_request';
@@ -202,8 +204,8 @@ export function getSkeletonSource(chunkManager: ChunkManager, path: string) {
 
 export function getShardedVolume(chunkManager: ChunkManager, baseUrls: string[], key: string) {
   return chunkManager.memoize.getUncounted(
-      {'baseUrls': baseUrls, 'key': key},
-      () => sendHttpRequest(openShardedHttpRequest(baseUrls, `/neuroglancer/${key}/info`), 'json')
+      {'type': 'python:MultiscaleVolumeChunkSource', baseUrls, key},
+      () => sendHttpRequest(openShardedHttpRequest(baseUrls, `/neuroglancer/info/${key}`), 'json')
                 .then(
                     response =>
                         new MultiscaleVolumeChunkSource(chunkManager, baseUrls, key, response)));
