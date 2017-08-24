@@ -11,34 +11,43 @@ before_install:
   -in credentials.tar.gz.enc -out credentials.tar.gz -d
 - tar -xzf credentials.tar.gz
 - sudo mv secrets /secrets && sudo chown $USER /secrets
-# build docker container
 - $(python version.py) #sets APPVERSION
-- docker build --tag tartavull/neuroglancer:$APPVERSION .
+
 script:
-- docker run -it -v /secrets:/secrets tartavull/neuroglancer:$APPVERSION /bin/sh -c 'cd /neuroglancer && py.test python/test'
-after_success:
-- docker login -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD"
-- 'if [ "$TRAVIS_BRANCH" == "master" ]; then
-    docker push $DOCKER_USERNAME/neuroglancer;
-  else
-    docker push $DOCKER_USERNAME/neuroglancer:$APPVERSION;
+- 'if [ $(./was_modified.py python) == "true" ]; then
+    docker build --tag tartavull/neuroglancer:$APPVERSION . || travis_terminate 1;
+    docker run -it -v /secrets:/secrets tartavull/neuroglancer:$APPVERSION /bin/sh -c "cd /neuroglancer && py.test python/test" || travis_terminate 1;
+    docker login -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD" || travis_terminate 1;
+    if [ "$TRAVIS_BRANCH" == "master" ]; then
+      docker push $DOCKER_USERNAME/neuroglancer || travis_terminate 1;
+    else
+      docker push $DOCKER_USERNAME/neuroglancer:$APPVERSION || travis_terminate 1;
+    fi
   fi'
 
 before_deploy:
-- sudo apt-get install oracle-java8-set-default
-- npm install
-- npm install --only=dev 
-- npm run build-min
-- cp -r ./dist/min appengine/frontend/static/
+- 'if [ $(./was_modified.py appengine/frontend) == "true" ]; then
+    sudo apt-get -qq update || travis_terminate 1;
+    sudo apt-get install -y  oracle-java8-set-default || travis_terminate 1;
+    npm install || travis_terminate 1;
+    npm install --only=dev || travis_terminate 1;
+    npm run build-min || travis_terminate 1;
+    cp -r ./dist/min appengine/frontend/static/ || travis_terminate 1;
+    virtualenv frontend || travis_terminate 1;
+    source frontend/bin/activate || travis_terminate 1;
+    pip install -t ./appengine/frontend/lib -r ./appengine/frontend/requirements.txt || travis_terminate 1;
+    deactivate || travis_terminate 1;
+  fi'
+
+- 'if [ $(./was_modified.py appengine/queue) == "true" ]; then
+    virtualenv queue || travis_terminate 1;
+    source queue/bin/activate || travis_terminate 1;
+    pip install -t ./appengine/queue/lib -r ./appengine/queue/requirements.txt || travis_terminate 1;
+    py.test ./appengine/queue/test.py || travis_terminate 1;
+    deactivate || travis_terminate 1;
+  fi'
 - export DEPLOY="false"
 - if [ "$APPVERSION" == "master" ]; then export DEPLOY="true"; fi
-- virtualenv frontend
-- source frontend/bin/activate
-- pip install -t ./appengine/frontend/lib -r ./appengine/frontend/requirements.txt
-- deactivate
-- virtualenv queue
-- source queue/bin/activate
-- pip install -t ./appengine/queue/lib -r ./appengine/queue/requirements.txt
 deploy:
   - provider: gae
     skip_cleanup: true
@@ -47,6 +56,7 @@ deploy:
     version: "$APPVERSION"
     on:
       all_branches: true
+      condition: $(./was_modified.py appengine/frontend) == "true"
     no_promote: true
     default: "$DEPLOY"
     verbosity: error
@@ -60,6 +70,7 @@ deploy:
     version: "$APPVERSION"
     on:
       all_branches: true
+      condition:  $(./was_modified.py appengine/queue) == "true"
     no_promote: true
     default: "$DEPLOY"
     verbosity: error
