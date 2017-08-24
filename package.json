@@ -71,6 +71,7 @@
     "webpack-closure-compiler": "2.1.2"
   },
   "dependencies": {
+    "@google-cloud/storage": "^1.2.1",
     "@types/codemirror": "0.0.22-alpha",
     "@types/gl-matrix": "^2.2.34",
     "@types/lodash": "^4.14.44",
