@@ -13,6 +13,7 @@ import googleapiclient.discovery
 
 from neuroglancer.pipeline.secrets import google_credentials, PROJECT_NAME, QUEUE_NAME
 from neuroglancer.pipeline.threaded_queue import ThreadedQueue
+from appengine_queue_api import AppEngineTaskQueue
 
 __all__ = ['RegisteredTask', 'TaskQueue']
 
@@ -97,16 +98,24 @@ class TaskQueue(ThreadedQueue):
         def __init__(self):
             super(LookupError, self).__init__('Queue Empty')
 
-    def __init__(self, n_threads=40, project=PROJECT_NAME, queue_name=QUEUE_NAME):
-        super(TaskQueue, self).__init__(n_threads) # creates self._queue
+    def __init__(self, n_threads=40, project=PROJECT_NAME,
+                 queue_name=QUEUE_NAME, queue_server='appengine'):
 
         self._project = 's~' + project # s~ means North America, e~ means Europe
         self._queue_name = queue_name
+        self._queue_server = queue_server
         self._api = self._initialize_interface()
+
+        super(TaskQueue, self).__init__(n_threads) # creates self._queue
 
     # This is key to making sure threading works. Don't refactor this method away.
     def _initialize_interface(self):
-        return googleapiclient.discovery.build('taskqueue', 'v1beta2', credentials=google_credentials)
+        if self._queue_server == 'appengine':
+            return AppEngineTaskQueue()
+        elif self._queue_server == 'pull-queue':
+            return googleapiclient.discovery.build('taskqueue', 'v1beta2', credentials=google_credentials)
+        else:
+            raise ValueError('Unkown server ' + self._queue_server)
 
     @property
     def enqueued(self):
@@ -134,7 +143,7 @@ class TaskQueue(ThreadedQueue):
             if httperr.resp.status in (408, 500, 503): 
                 self.put(fn)
             elif httperr.resp.status == 400:
-                if not re.search('task name is invalid', repr(httperr), flags=re.IGNORECASE):
+                if not re.search('task name is invalid', repr(httperr.content), flags=re.IGNORECASE):
                     raise
             else:
                 raise
@@ -238,7 +247,7 @@ class TaskQueue(ThreadedQueue):
         """Deletes all tasks in the queue."""
         while True:
             lst = self.list()
-            if not lst.has_key('items'):
+            if 'items' not in lst:
                 break
 
             for task in lst['items']:
@@ -263,3 +272,23 @@ class TaskQueue(ThreadedQueue):
         else:
             cloud_delete(self._api)
         return self
+
+class MockTaskQueue():
+    def __init__(self, queue_name=''):
+        pass
+
+    def insert(self, task):
+        task.execute()
+        del task
+
+    def wait(self):
+      return self
+
+    def kill_threads(self):
+      return self
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exception_type, exception_value, traceback):
+      pass

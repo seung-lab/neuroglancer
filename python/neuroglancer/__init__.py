@@ -14,7 +14,7 @@
 
 from __future__ import absolute_import
 from .base_viewer import BaseViewer
-from .server import set_static_content_source, set_server_bind_address, is_server_running, stop
+from .server import set_static_content_source, set_server_bind_address, is_server_running, stop, block
 from .static import dist_dev_static_content_source
 from .viewer import Viewer, view
 from . import server

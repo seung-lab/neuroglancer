@@ -77,6 +77,9 @@ class FileSource(StaticContentSource):
     def __init__(self, path=None, file_open=open):
         if path is None:
             path = os.path.join(os.path.dirname(__file__), '../../../dist/dev')
+
+        file_open = file_open or open
+
         self.file_path = path
         self.file_open = file_open
 

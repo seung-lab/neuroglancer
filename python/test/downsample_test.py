@@ -33,6 +33,33 @@ image3x3x3 = np.array([
   ],
 ])
 
+image4x4x4 = np.array([ 
+  [ #z 0    1    2   3 
+    [ [1], [1], [1], [1] ], # y=0
+    [ [1], [1], [1], [1] ], # y=1      # x=0
+    [ [1], [1], [1], [1] ], # y=2
+    [ [1], [1], [1], [1] ], # y=3
+  ], 
+  [
+    [ [2], [2], [2], [2] ], # y=0
+    [ [2], [2], [2], [2] ], # y=1      # x=1
+    [ [2], [2], [2], [2] ], # y=2
+    [ [2], [2], [2], [2] ], # y=3
+  ], 
+  [
+    [ [3], [3], [3], [3] ], # y=0
+    [ [3], [3], [3], [3] ], # y=1      # x=2
+    [ [3], [3], [3], [3] ], # y=2
+    [ [3], [3], [3], [3] ], # y=3
+  ],
+  [
+    [ [4], [4], [4], [4] ], # y=0
+    [ [4], [4], [4], [4] ], # y=1      # x=3
+    [ [4], [4], [4], [4] ], # y=2
+    [ [4], [4], [4], [4] ], # y=3
+  ], 
+])
+
 def test_even_odd():
   evenimg = downsample.odd_to_even(image2x2x2)
   assert np.array_equal(evenimg, image2x2x2)
@@ -189,4 +216,92 @@ def test_downsample_segmentation_4x_x():
   result = downsamplefn(result, (1,2,2))
   assert result.shape == (1024, 16, 128, 1)
 
+def test_downsample_max_pooling():
+  for dtype in (np.int8, np.float32):
+    cases = [
+      np.array([ [ -1, 0 ], [ 0, 0 ] ], dtype=dtype), 
+      np.array([ [ 0, 0 ], [ 0, 0 ] ], dtype=dtype), 
+      np.array([ [ 0, 1 ], [ 0, 0 ] ], dtype=dtype),
+      np.array([ [ 0, 1 ], [ 1, 0 ] ], dtype=dtype),
+      np.array([ [ 0, 1 ], [ 0, 2 ] ], dtype=dtype)
+    ]
+
+    for i in xrange(len(cases)):
+      case = cases[i]
+      result = downsample.downsample_with_max_pooling(case, (1, 1))
+      assert np.all(result == cases[i])
+
+    answers = [ 0, 0, 1, 1, 2 ]
+
+    for i in xrange(len(cases)):
+      case = cases[i]
+      result = downsample.downsample_with_max_pooling(case, (2, 2))
+      assert result == answers[i]
+
+
+    cast = lambda arr: np.array(arr, dtype=dtype) 
+
+    answers = map(cast, [  
+      [[ 0, 0 ]],
+      [[ 0, 0 ]],
+      [[ 0, 1 ]],
+      [[ 1, 1 ]],
+      [[ 0, 2 ]],
+    ])
+
+    for i in xrange(len(cases)):
+      case = cases[i]
+      result = downsample.downsample_with_max_pooling(case, (2, 1))
+      assert np.all(result == answers[i])
+
+    answers = map(cast, [  
+      [[ 0 ], [ 0 ]],
+      [[ 0 ], [ 0 ]],
+      [[ 1 ], [ 0 ]],
+      [[ 1 ], [ 1 ]],
+      [[ 1 ], [ 2 ]],
+    ])
+
+    for i in xrange(len(cases)):
+      case = cases[i]
+      result = downsample.downsample_with_max_pooling(case, (1, 2))
+      assert np.all(result == answers[i])
+
+  result = downsample.downsample_with_max_pooling(image4x4x4, (2, 2, 2))
+  answer = cast([
+    [
+      [ [2], [2] ], # y=0    # x = 0
+      [ [2], [2] ]  # y=1
+    ],
+    [
+      [ [4], [4] ], # y = 0     # x = 1
+      [ [4], [4] ]  # y = 1
+    ]
+  ])
+
+  assert np.all(result == answer)
+
+  result = downsample.downsample_with_max_pooling(image4x4x4, (2, 2, 1))
+  answer = cast([
+    [
+      [ [2], [2], [2], [2] ], # y=0    # x = 0
+      [ [2], [2], [2], [2] ]  # y=1
+    ],
+    [
+      [ [4], [4], [4], [4] ], # y = 0     # x = 1
+      [ [4], [4], [4], [4] ]  # y = 1
+    ]
+  ])
+
+  assert np.all(result == answer)
+
+  result = downsample.downsample_with_max_pooling(image4x4x4, (4, 2, 1))
+  answer = cast([
+    [
+      [ [4], [4], [4], [4] ], # y = 0     # x = 1
+      [ [4], [4], [4], [4] ]  # y = 1
+    ]
+  ])
+
+  assert np.all(result == answer)
 

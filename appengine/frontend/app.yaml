@@ -13,6 +13,8 @@ skip_files:
 - ^(.*/)?\..*$
 - ^node_modules$
 
+service: default
+
 handlers:
 # Handle the main page by serving the index page.
 # Note the $ to specify the end of the path, since app.yaml does prefix matching.

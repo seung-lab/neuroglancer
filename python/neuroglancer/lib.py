@@ -103,9 +103,15 @@ def xyzrange(start_vec, end_vec=None, stride_vec=(1,1,1)):
   rangeargs = ( (start, end, stride) for start, end, stride in zip(start_vec, end_vec, stride_vec) )
   xyzranges = [ xrange(*arg) for arg in rangeargs ]
   
+  # iterate then x first, then y, then z
+  # this way you process in the xy plane slice by slice
+  # but you don't create process lots of prefix-adjacent keys
+  # since all the keys start with X
+  zyxranges = xyzranges[::-1]
+
   def vectorize():
     pt = Vec3(0,0,0)
-    for x,y,z in product(*xyzranges):
+    for z,y,x in product(*zyxranges):
       pt.x, pt.y, pt.z = x, y, z
       yield pt
 
@@ -318,7 +324,7 @@ def min2(a, b):
 def clamp(val, low, high):
   return min(max(val, low), high)
 
-def eclamp(val, low, high):
+def check_bounds(val, low, high):
   if val > high or val < low:
     raise ValueError('Value {} cannot be outside of inclusive range {} to {}'.format(val,low,high))
   return val

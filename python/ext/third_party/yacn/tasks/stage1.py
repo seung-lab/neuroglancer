@@ -1,5 +1,5 @@
-from neuroglancer.ingest.volumes.precomputed import Precomputed
-from neuroglancer.ingest.storage import Storage
+from neuroglancer.pipeline import CloudVolume
+
 import boto
 from boto.s3.key import Key
 import uuid
@@ -60,17 +60,14 @@ while True:
 		task = get_task()
 		slices = parse_ranges(task['chunk'])
 
-		storage = Storage(task['watershed'])
-		pr=Precomputed(storage)
+		pr = CloudVolume(task['watershed'])
 		h5write(os.path.join(WORKDIR, "raw.h5"), np.squeeze(pr[slices]).transpose().astype(np.int32))
 		
-		#storage = Storage(task['affinities'])
-		#pr=Precomputed(storage)
+		#pr = CloudVolume(task['affinities'])
 		#h5write(os.path.join(WORKDIR, "aff.h5"), pr[slices])
 		h5write(os.path.join(WORKDIR, "aff.h5"), np.zeros((map(lambda x: x.stop - x.start, slices)+[3,]),dtype=np.float32))
 
-		storage = Storage(task['mean_affinity'])
-		pr=Precomputed(storage)
+		pr = CloudVolume(task['mean_affinity'])
 		h5write(os.path.join(WORKDIR, "mean_agg_tr.h5"), np.squeeze(pr[slices]).transpose().astype(np.int32))
 
 		call(["julia", "/usr/people/jzung/yacn/pre/full_prep_script.jl", WORKDIR])

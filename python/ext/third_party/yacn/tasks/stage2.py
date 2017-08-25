@@ -1,5 +1,4 @@
-from neuroglancer.ingest.volumes.precomputed import Precomputed
-from neuroglancer.ingest.storage import Storage
+from neuroglancer.pipeline import Storage, CloudVolume
 import boto
 from boto.s3.key import Key
 import uuid
@@ -71,12 +70,10 @@ while True:
 		task = get_task()
 		slices = parse_ranges(task['chunk'])
 
-		storage = Storage(task['seg'])
-		pr=Precomputed(storage)
+		pr = CloudVolume(task['seg'])
 		seg = np.squeeze(pr[slices]).transpose().astype(np.int32)
 		
-		#storage = Storage(task['image'])
-		#pr=Precomputed(storage)
+		#pr = CloudVolume(task['image'])
 		#image = np.squeeze(pr[slices]).transpose().astype(np.int32)
 		image = np.zeros_like(seg, dtype=np.uint8)
 
@@ -84,6 +81,7 @@ while True:
 		with open(os.path.join(WORKDIR, "samples.h5"),'w') as f:
 			f.write(storage.get_file(task['chunk']+".h5"))
 			f.close()
+		storage.kill_threads()
 		samples = h5read(os.path.join(WORKDIR, "samples.h5"))
 
 		np.squeeze(discriminate3_inference.main_model.inference(image, seg, samples))

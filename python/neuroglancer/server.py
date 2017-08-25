@@ -17,6 +17,7 @@ import threading
 import json
 import socket
 import re
+import sys
 
 try:
     # Python 2 case
@@ -39,6 +40,7 @@ global_static_content_source = None
 global_server_args = dict(bind_address='127.0.0.1', bind_port=8000)
 global_server = None
 debug = True
+thread = None
 
 
 VOLUME_PATH_REGEX = re.compile(r'^/neuroglancer/([^/]+)/(.*)/?$')
@@ -136,11 +138,21 @@ def get_server_url():
 
 def start(viewer):
     global global_server
+    global thread
+
     if global_server is None:
         global_server = Server(viewer, **global_server_args)
         thread = threading.Thread(target=global_server.start)
         thread.daemon = True
         thread.start()
+
+def block():
+    global thread
+    if thread:
+        while True:
+            thread.join(600)
+            if not thread.isAlive():
+                break
 
 def register_volume(volume):
     global_server.volumes[volume.token] = volume
