@@ -23,7 +23,7 @@ def encode(img_chunk, encoding):
   elif encoding == "npz":
     return encode_npz(img_chunk)
   elif encoding == "npz_uint8":
-    chunk = chunk * 255
+    chunk = img_chunk * 255
     chunk = chunk.astype(np.uint8)
     return encode_npz(chunk)
   elif encoding == "raw":
@@ -35,14 +35,14 @@ def decode(filedata, encoding, shape=None, dtype=None):
   if (shape is None or dtype is None) and encoding is not 'npz':
     raise ValueError("Only npz encoding can omit shape and dtype arguments. {}".format(encoding))
 
-  if len(filedata) == 0:
+  if filedata is None or len(filedata) == 0:
     return np.zeros(shape=shape, dtype=dtype)
   elif encoding == 'jpeg':
     return decode_jpeg(filedata, shape=shape, dtype=dtype)
   elif encoding == 'raw':
     return decode_raw(filedata, shape=shape, dtype=dtype)
   elif encoding == 'npz':
-    return decode_npz(string_data)
+    return decode_npz(filedata)
   else:
     raise NotImplementedError(encoding)
 

@@ -2,30 +2,12 @@ import pytest
 
 import shutil
 import numpy as np
-from neuroglancer.ingest.volumes.precomputed import Precomputed
-from neuroglancer.ingest.storage import Storage
-from neuroglancer.ingest.submit_task import (upload_build_chunks, create_info_file_from_build,
+
+from neuroglancer.pipeline import Storage, Precomputed
+from neuroglancer.pipeline.task_creation import (upload_build_chunks, create_info_file_from_build,
     create_ingest_task, MockTaskQueue)
+from test.layer_harness import delete_layer, create_layer
 
-def create_layer(size, offset, layer_type="image"):
-    storage = Storage('file:///tmp/removeme/layer', n_threads=0)
-
-    if layer_type == "image":
-        random_data = np.random.randint(255, size=size, dtype=np.uint8)
-        upload_build_chunks(storage, random_data, offset)
-        # Jpeg encoding is lossy so it won't work
-        create_info_file_from_build(storage, layer_type= 'image', encoding="raw")
-    else:
-        random_data = np.random.randint(0xFFFFFF, size=size, dtype=np.uint32)
-        upload_build_chunks(storage, random_data, offset)
-        # Jpeg encoding is lossy so it won't work
-        create_info_file_from_build(storage, layer_type= 'segmentation', encoding="raw")
-    create_ingest_task(storage, MockTaskQueue())
-    return storage, random_data
-
-def delete_layer():
-    shutil.rmtree("/tmp/removeme/layer", ignore_errors=True)
-    
 def test_aligned_read():
     delete_layer()
     storage, data = create_layer(size=(50,50,50,1), offset=(0,0,0))
@@ -156,3 +138,11 @@ def test_reader_grid_aligned():
 
     with pytest.raises(ValueError):
         pr._slice_to_chunks([slice(63,128)], slc_idx=0)
+
+
+def test_setitem_mismatch():
+    delete_layer()
+    storage, data = create_layer(size=(64,64,64,1), offset=(0,0,0))
+    pr = Precomputed(storage)
+    with pytest.raises(ValueError):
+        pr[0:64,0:64,0:64] = np.zeros(shape=(5,5,5,1), dtype=np.uint8)

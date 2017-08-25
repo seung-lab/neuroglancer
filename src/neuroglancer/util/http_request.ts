@@ -75,13 +75,12 @@ export function openShardedHttpRequest(baseUrls: string|string[], path: string, 
   return xhr;
 }
 
-export function sendHttpRequest(
-    xhr: XMLHttpRequest, responseType: 'arraybuffer'): CancellablePromise<ArrayBuffer>;
+export function sendHttpRequest(xhr: XMLHttpRequest, responseType: 'arraybuffer'): CancellablePromise<ArrayBuffer>;
 export function sendHttpRequest(xhr: XMLHttpRequest, responseType: 'json'): CancellablePromise<any>;
 export function sendHttpRequest(xhr: XMLHttpRequest, responseType: string): any;
 
 export function sendHttpRequest(xhr: XMLHttpRequest, responseType: string) {
-  xhr.responseType = responseType;
+  xhr.responseType = <XMLHttpRequestResponseType>responseType;
   return makeCancellablePromise((resolve, reject, onCancel) => {
     xhr.onloadend = function(this: XMLHttpRequest) {
       let status = this.status;
@@ -115,6 +114,13 @@ export function parseSpecialUrl(url: string): [string[], string] {
     const bucket = match[2];
     const baseUrls = [
       `https://storage.googleapis.com/${bucket}`,
+    ];
+    return [baseUrls, match[3]];
+  }
+  else if (protocol === 's3') {
+    const bucket = match[2];
+    const baseUrls = [
+      `https://s3.amazonaws.com/${bucket}`,
     ];
     return [baseUrls, match[3]];
   }
