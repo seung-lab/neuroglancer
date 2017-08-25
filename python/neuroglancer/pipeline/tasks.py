@@ -82,6 +82,15 @@ def cache(task, cloudpath):
 
   return filestr
 
+class EdgeTask(RegisteredTask):
+    # Dummy for Julia PyCall
+    def __init__(self, watershed_path, agglomeration_path, output_path, chunk_position):
+        super(EdgeTask, self).__init__(watershed_path, agglomeration_path, output_path, chunk_position)
+        self.watershed_path = watershed_path
+        self.agglomeration_path = agglomeration_path
+        self.output_path = output_path
+        self.chunk_position = chunk_position
+  
 class IngestTask(RegisteredTask):
   """Ingests and does downsampling.
      We want tasks execution to be independent of each other, so that no synchronization is
