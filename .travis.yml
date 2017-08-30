@@ -39,6 +39,12 @@ before_deploy:
 - virtualenv queue
 - source queue/bin/activate
 - pip install -t ./appengine/queue/lib -r ./appengine/queue/requirements.txt
+- deactivate
+- virtualenv graph
+- source graph/bin/activate
+- pip install -t ./appengine/graph/lib -r ./appengine/graph/requirements.txt
+- export PYTHONPATH="$(pwd)/appengine/graph/lib:$PYTHONPATH"
+- cd ./appengine/graph && python -m unittest -v test && cd ../..
 deploy:
   - provider: gae
     skip_cleanup: true
@@ -64,4 +70,17 @@ deploy:
     default: "$DEPLOY"
     verbosity: error
     config: "./appengine/queue/app.yaml"
+    no_stop_previous_version: false
+
+  - provider: gae
+    skip_cleanup: true
+    keyfile: "/secrets/google-secret.json"
+    project: neuromancer-seung-import
+    version: "$APPVERSION"
+    on:
+      all_branches: true
+    no_promote: true
+    default: "$DEPLOY"
+    verbosity: error
+    config: "./appengine/graph/app.yaml"
     no_stop_previous_version: false
