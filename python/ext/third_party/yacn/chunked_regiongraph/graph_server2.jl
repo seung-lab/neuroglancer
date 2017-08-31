@@ -26,8 +26,8 @@ tq = task_queue.TaskQueue(queue_server="pull-queue")
 =#
 
 G=ChunkedGraph("/ssd/testing2")
-@time for f in filter(s->ismatch(r".*vertices.jls",s), readdir(expanduser("/ssd/testing2")))
-	m=match(r"(\d+)_(\d+)_(\d+)_(\d+).*",f)
+@time for f in filter(s->ismatch(r".*\.chunk",s), readdir(expanduser("/ssd/testing2")))
+	m=match(r"(\d+)_(\d+)_(\d+)_(\d+)\..*",f)
 	id = ChunkID(map(x->parse(UInt32,x),m.captures)...)
 	if Utils.level(id) >= 3
 		ChunkedGraphs2.get_chunk(G,id)
@@ -215,19 +215,19 @@ function handle_split(id1,id2)
 	end
 
 	#delete_atomic_edge!(G, (id1, id2))
-  cuts = ChunkedGraphs2.min_cut(G,id1,id2)
+	cuts = ChunkedGraphs2.min_cut(G,id1,id2)
 	for e in cuts
 		delete_atomic_edge!(G,e)
 	end
 	update!(G)
 
-  root_labels = Set{UInt64}()
-  for e in cuts
-    push!(root_labels, bfs(G, e[1])[1].label)
-    push!(root_labels, bfs(G, e[2])[1].label)
-  end
+	root_labels = Set{UInt64}()
+	for e in cuts
+		push!(root_labels, bfs(G, e[1])[1].label)
+		push!(root_labels, bfs(G, e[2])[1].label)
+	end
 
-  root_labels = Array{UInt64}(map(x->level(chunk_id(x)) == 1 ? seg_id(x) : x, collect(root_labels)))
+	root_labels = Array{UInt64}(map(x->level(chunk_id(x)) == 1 ? seg_id(x) : x, collect(root_labels)))
 
 	println("$(now()): Split $(seg_id(id1)) and $(seg_id(id2)) => $(simple_print(root_labels))")
 	return Response(reinterpret(UInt8, root_labels), headers)

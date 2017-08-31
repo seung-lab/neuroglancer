@@ -4,6 +4,8 @@ using DataStructures
 using Iterators
 using Utils
 
+import Base.sizehint!
+
 function setpush!{E}(x::Vector{E},y::E)
 	if !(y in x)
 		push!(x,y)
@@ -33,6 +35,14 @@ end
 function MultiGraph(V,E)
 	return MultiGraph{V,E}(LightGraphs.Graph(), Dict{V,Int}(),Dict{Int,V}(),Dict{Tuple{Int,Int},Vector{E}}(E[]))
 end
+
+function sizehint!(G::MultiGraph, v::Integer, e::Integer)
+  sizehint!(G.vertex_map, v)
+  sizehint!(G.inverse_vertex_map, v)
+  sizehint!(G.edge_map, e)
+  sizehint!(G.g.fadjlist, v)
+end
+
 function add_vertex!(G::MultiGraph, v)
 	LightGraphs.add_vertex!(G.g)
 	G.vertex_map[v] = nv(G.g)

@@ -51,7 +51,6 @@ type Vertex
 	children::Vector{Label}
 end
 
-
 import Base: ==, hash
 ==(x::Vertex,y::Vertex) = (x.label == y.label)
 Base.hash(v::Vertex) = Base.hash(v.label)
@@ -136,7 +135,7 @@ function get_chunk(g::ChunkedGraph, id::ChunkID)
 	end
 	ret=g.graphs[id]::Chunk
 	if !eviction_mode
-		if level(ret.id)==1
+		if level(ret.id) == 1
 			g.last_used[ret.id]=time()
 		end
 		eviction_mode=true
@@ -160,11 +159,35 @@ end
 
 function save_chunk!(c::Chunk)
 	@assert c.clean
-	prefix=to_string(c.id)
-	Save.save(joinpath(c.chunked_graph.path,"$(prefix)_vertices.jls"),collect(values(c.vertices)))
-	Save.save(joinpath(c.chunked_graph.path,"$(prefix)_graph.jls"),c.graph)
-	Save.save(joinpath(c.chunked_graph.path,"$(prefix)_max_label.jls"),c.max_label)
-	c.modified=false
+
+	prefix = to_string(c.id)
+	path = expanduser(joinpath(c.chunked_graph.path, "$(prefix).chunk"))
+	print("Saving to $(path)...")
+
+	buf = IOBuffer()
+	write(buf, UInt64(1)) # Version
+	write(buf, UInt64(c.max_label)) # Max SegID
+	write(buf, UInt64(length(c.vertices))) # Vertex Count
+	write(buf, UInt64(length(LightGraphs.edges(c.graph.g)))) # Edge Count
+	
+	for vertex in values(c.vertices)
+		write(buf, UInt64(vertex.label)) # Vertex Label
+		write(buf, UInt64(vertex.parent)) # Vertex Parent
+		write(buf, UInt64(length(vertex.children))) # Vertex Children Count
+		write(buf, convert(Vector{UInt64}, vertex.children))
+	end
+	
+	if length(LightGraphs.edges(c.graph.g)) > 0
+		write(buf, map(v->c.graph.inverse_vertex_map[v], collect(UInt64, Base.flatten(LightGraphs.edges(c.graph.g)))))
+	end
+
+	f = open(path, "w")
+	write(f, buf.data)
+	close(f)
+	close(buf)
+	println("done.")
+
+	c.modified = false
 end
 
 function save!(c::ChunkedGraph)
@@ -198,22 +221,70 @@ function to_string(id::ChunkID)
 end
 
 function load_chunk(G::ChunkedGraph,id)
-	vertices=nothing
-	graph=nothing
-	max_label=nothing
+	vertices = nothing
+	graph = nothing
+	max_label = nothing
 	try
 		prefix=to_string(id)
-		vertices=Save.load(joinpath(G.path,"$(prefix)_vertices.jls"))
-		graph=Save.load(joinpath(G.path,"$(prefix)_graph.jls"))
-		max_label=Save.load(joinpath(G.path,"$(prefix)_max_label.jls"))
+		path = expanduser(joinpath(G.path, "$(prefix).chunk"))
+		print("Loading from $(path)...")
+
+		# Plain Binary
+		max_label = UInt64(0)
+		vertices = Vector{Vertex}()
+		edges = Vector{Tuple{UInt64, UInt64}}()
+
+		f = open(path, "r")
+
+		# Check File Version
+		version = read(f, UInt64)
+		@assert version === UInt64(1)
+
+		# Read Chunk Info
+		(max_label, v_cnt, e_cnt) = read(f, UInt64, 3)
+
+		# Read Vector{Vertex}
+		resize!(vertices, v_cnt)
+		for i in range(1, v_cnt)
+			(label, parent, child_cnt) = read(f, UInt64, 3)
+			children = read(f, UInt64, child_cnt)
+			@inbounds vertices[i] = Vertex(label, parent, children)
+		end
+		
+		# Read Vector{AtomicEdge}
+		edges = read(f, Tuple{UInt64, UInt64}, e_cnt)
+
+		# Rebuild Graph
+		graph = MultiGraphs.MultiGraph(Label, AtomicEdge)
+		MultiGraphs.sizehint!(graph, v_cnt, e_cnt)
+
+		for v in vertices
+			MultiGraphs.add_vertex!(graph, v.label)
+		end
+
+		for e in edges
+			MultiGraphs.add_edge!(graph, e[1], e[2], e)
+		end
+
+		close(f)
+		println("done.")
 	catch
-		println("failed.")
-		return nothing
+		try
+			prefix=to_string(id)
+			vertices=Save.load(joinpath(G.path,"$(prefix)_vertices.jls"))
+			graph=Save.load(joinpath(G.path,"$(prefix)_graph.jls"))
+			max_label=Save.load(joinpath(G.path,"$(prefix)_max_label.jls"))
+		catch e
+			println("failed: $e")
+			return nothing
+		end
 	end
-	vertices_dict=Dict{Label,Vertex}()
-	sizehint!(vertices_dict, length(vertices))
+
+
+	vertices_dict = Dict{Label,Vertex}()
+	sizehint!(vertices_dict, floor(UInt32, 1.5 * length(vertices)))
 	for v in vertices
-		vertices_dict[v.label]=v
+		vertices_dict[v.label] = v
 	end
 
 	return Chunk(G,id,vertices_dict,graph,max_label)
@@ -466,15 +537,15 @@ function update!(c::Chunk)
 		upsize!(c.vertices, length(c.added_vertices))
 
 		for v in c.deleted_vertices
-			for child in v.children
-				#@assert get_vertex(c.chunked_graph,child).parent==NULL_LABEL
-			end
+			# for child in v.children
+			#	@assert get_vertex(c.chunked_graph,child).parent==NULL_LABEL
+			# end
 
 			for e in MultiGraphs.incident_edges(c.graph, v.label)
-				push!(c.added_edges, e)
+				push!(dirty_vertices, get_vertex(c.chunked_graph, e[1] === v.label ? e[2] : e[1]))
 			end
 
-			#this should delete all edges incident with v as well
+			# this should delete all edges incident with v as well
 			MultiGraphs.delete_vertex!(c.graph,v.label)
 			delete!(c.vertices,v.label)
 
@@ -554,7 +625,7 @@ end
 
 
 function add_atomic_vertex!(G::ChunkedGraph, label)
-	@assert level(chunk_id(label))==1
+	@assert level(chunk_id(label))==1 "$(level(chunk_id(label))) == 1"
 	s=get_chunk(G,chunk_id(label))::Chunk
 	if !haskey(s.vertices,label)
 		v=Vertex(label,NULL_LABEL,NULL_LIST)

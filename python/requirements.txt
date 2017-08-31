@@ -12,6 +12,7 @@ numpy==1.13.1
 pyopenssl==17.2.0
 Pillow==4.2.1
 protobuf==3.3.0
+pycapnp==0.6.1
 pytest==3.0.7
 tenacity==4.4.0
 tornado==4.4.2
