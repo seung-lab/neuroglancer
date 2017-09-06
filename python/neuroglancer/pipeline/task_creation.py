@@ -8,15 +8,17 @@ import os
 
 import numpy as np
 from tqdm import tqdm
+from cloudvolume import CloudVolume, Storage
+from cloudvolume.lib import Vec, Bbox, max2, min2, xyzrange, find_closest_divisor
 
 from neuroglancer import downsample_scales, chunks
-from neuroglancer.lib import Vec, Bbox, max2, min2, xyzrange, find_closest_divisor
-from neuroglancer.pipeline import Storage, TaskQueue, MockTaskQueue
+from neuroglancer.pipeline import TaskQueue, MockTaskQueue
 from neuroglancer.pipeline.tasks import (
   BigArrayTask, IngestTask, HyperSquareTask, HyperSquareConsensusTask, 
   MeshTask, MeshManifestTask, DownsampleTask, QuantizeAffinitiesTask, 
-  TransferTask, BossTransferTask, WatershedRemapTask)
-from neuroglancer.pipeline.volumes import HDF5Volume, CloudVolume
+  TransferTask, WatershedRemapTask
+)
+from neuroglancer.pipeline.volumes import HDF5Volume
 
 def create_ingest_task(storage, task_queue):
     """

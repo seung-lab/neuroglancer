@@ -15,14 +15,12 @@ import h5py
 import numpy as np
 from tqdm import tqdm
 
-from intern.remote.boss import BossRemote
-from intern.resource.boss.resource import ChannelResource
-from neuroglancer.pipeline.secrets import boss_credentials
+from cloudvolume import CloudVolume, Storage
+from cloudvolume.lib import xyzrange, min2, max2, Vec, Bbox, mkdir 
+
 from neuroglancer import chunks, downsample, downsample_scales
-from neuroglancer.lib import xyzrange, min2, max2, Vec, Bbox, mkdir 
-from neuroglancer.pipeline import Storage, RegisteredTask
+from neuroglancer.pipeline import RegisteredTask
 from neuroglancer.pipeline import Mesher # broken out for ease of commenting out
-from neuroglancer.pipeline.volumes import CloudVolume
 
 def downsample_and_upload(image, bounds, vol, ds_shape, mip=0, axis='z', skip_first=False):
     ds_shape = min2(vol.volume_size, ds_shape[:3])
@@ -637,58 +635,4 @@ class WatershedRemapTask(RegisteredTask):
         remap = np.load(file)
         file.close()
         return remap
-
-class BossTransferTask(RegisteredTask):
-  """
-  This is a very limited task that is used for transferring
-  mip 0 data from The BOSS (https://docs.theboss.io). 
-  If our needs become more sophisticated we can make a 
-  BossVolume and integrate that into TransferTask.
-
-  Of note, to initiate a transfer, write the bounds
-  of the coordinate frame from your experiment into the
-  destinate info file.
-  """
-
-  def __init__(self, src_path, dest_path, shape, offset):
-    super(self.__class__, self).__init__(src_path, dest_path, shape, offset)
-    self.src_path = src_path
-    self.dest_path = dest_path
-    self.shape = Vec(*shape)
-    self.offset = Vec(*offset)
-
-  def execute(self):
-    match = re.match(r'^(boss)://([/\d\w_\.\-]+)/([\d\w_\.\-]+)/([\d\w_\.\-]+)/?', 
-        self.src_path)
-    protocol, collection, experiment, channel = match.groups()
-
-    dest_vol = CloudVolume(self.dest_path)
-
-    bounds = Bbox( self.offset, self.shape + self.offset )
-    bounds = Bbox.clamp(bounds, dest_vol.bounds)
-    # -1 b/c boss uses inclusive-exclusive bounds for their bboxes
-    bounds.maxpt = Vec.clamp(
-      bounds.maxpt, 
-      dest_vol.bounds.minpt, 
-      dest_vol.bounds.maxpt - 1
-    )
-
-    if bounds.volume() < 1:
-      return
-
-    x_rng = [ bounds.minpt.x, bounds.maxpt.x ]
-    y_rng = [ bounds.minpt.y, bounds.maxpt.y ]
-    z_rng = [ bounds.minpt.z, bounds.maxpt.z ]
-
-    chan = ChannelResource(
-      name=channel,
-      collection_name=collection, 
-      experiment_name=experiment, 
-      type='image', 
-      datatype=dest_vol.dtype
-    )
-
-    rmt = BossRemote(boss_credentials)
-    img3d = rmt.get_cutout(chan, 0, x_rng, y_rng, z_rng).T
-
-    downsample_and_upload(img3d, bounds, dest_vol, self.shape)
+        

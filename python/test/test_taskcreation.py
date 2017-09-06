@@ -3,10 +3,10 @@ import pytest
 import os
 import shutil
 
+from cloudvolume import Storage
+from cloudvolume.lib import Bbox
 import numpy as np
 
-from neuroglancer.lib import Bbox
-from neuroglancer.pipeline.storage import Storage
 import neuroglancer.pipeline.task_creation as task_creation
 from layer_harness import layer_path, delete_layer, create_storage
 

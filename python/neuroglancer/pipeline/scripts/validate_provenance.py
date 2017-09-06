@@ -3,8 +3,7 @@ import re
 import subprocess
 import sys
 
-from neuroglancer.pipeline import Storage
-from neuroglancer.pipeline.volumes.provenance import DataLayerProvenance
+from cloudvolume import Storage, DataLayerProvenance
 
 def ls(cloudpath):
   listing = subprocess.check_output(['gsutil', 'ls', cloudpath])

@@ -12,8 +12,9 @@ import googleapiclient.errors
 import googleapiclient.discovery
 import numpy as np
 
+from cloudvolume.threaded_queue import ThreadedQueue
+
 from neuroglancer.pipeline.secrets import google_credentials, PROJECT_NAME, QUEUE_NAME
-from neuroglancer.pipeline.threaded_queue import ThreadedQueue
 from appengine_queue_api import AppEngineTaskQueue
 
 __all__ = ['RegisteredTask', 'TaskQueue']
