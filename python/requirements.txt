@@ -15,5 +15,6 @@ pytest==3.0.7
 python-jsonschema-objects==0.2.1
 requests==2.18.4
 sockjs-tornado==1.0.3
+tenacity==4.4.0
 tornado==4.4.2
 tqdm==4.7.6
