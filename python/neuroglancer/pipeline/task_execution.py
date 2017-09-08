@@ -11,7 +11,7 @@ from neuroglancer.pipeline import logger
 @click.command()
 @click.option('--tag', default='',  help='kind of task to execute')
 def execute(tag):
-    tq = TaskQueue()
+    tq = TaskQueue(queue_server='pull-queue')
     while True:
         task = 'unknown'
         try:

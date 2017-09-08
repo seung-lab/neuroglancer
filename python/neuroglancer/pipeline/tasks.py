@@ -560,22 +560,36 @@ class HyperSquareConsensusTask(RegisteredTask):
 
 
 class TransferTask(RegisteredTask):
-  def __init__(self, src_path, dest_path, shape, offset):
-    super(self.__class__, self).__init__(src_path, dest_path, shape, offset)
+  def __init__(self, src_path, dest_path, shape, offset, skip_downsample=False, fill_missing=False):
+    super(self.__class__, self).__init__(src_path, dest_path, shape, offset, skip_downsample, fill_missing)
     self.src_path = src_path
     self.dest_path = dest_path
     self.shape = Vec(*shape)
     self.offset = Vec(*offset)
+    self.skip_downsample = skip_downsample
+    self.fill_missing = fill_missing
 
   def execute(self):
-    srccv = CloudVolume(self.src_path)
+    srccv = CloudVolume(self.src_path, fill_missing=self.fill_missing)
     destcv = CloudVolume(self.dest_path)
 
     bounds = Bbox( self.offset, self.shape + self.offset )
     bounds = Bbox.clamp(bounds, srccv.bounds)
     
     image = srccv[ bounds.to_slices() ]
-    downsample_and_upload(image, bounds, destcv, self.shape)
+
+    if image.dtype < np.dtype(destcv.dtype):
+      image = image.astype(destcv.dtype)
+    elif image.dtype != np.dtype(destcv.dtype):
+      raise ValueError('Incompatible data types: {}, {}'.format(
+        image.dtype, destcv.dtype
+      ))
+
+    if self.skip_downsample:
+      destcv[ bounds.to_slices() ] = image
+    else:
+      downsample_and_upload(image, bounds, destcv, self.shape)
+
 
 class WatershedRemapTask(RegisteredTask):
     """
