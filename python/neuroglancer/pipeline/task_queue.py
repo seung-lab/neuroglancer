@@ -10,6 +10,7 @@ from functools import partial
 
 import googleapiclient.errors
 import googleapiclient.discovery
+import numpy as np
 
 from neuroglancer.pipeline.secrets import google_credentials, PROJECT_NAME, QUEUE_NAME
 from neuroglancer.pipeline.threaded_queue import ThreadedQueue
@@ -55,7 +56,13 @@ class RegisteredTask(object):
     def serialize(self):
         d = copy.deepcopy(self._args)
         d['class'] = self.__class__.__name__
-        return json.dumps(d)
+
+        def serializenumpy(obj):
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            return obj
+
+        return json.dumps(d, default=serializenumpy)
 
     @property
     def payloadBase64(self):
