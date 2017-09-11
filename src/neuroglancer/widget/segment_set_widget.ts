@@ -31,9 +31,15 @@ export class SegmentSetWidget extends RefCounted {
   private itemContainer = document.createElement('span');
   private items = new Map<string, ItemElement>();
 
-  get visibleSegments() { return this.displayState.visibleSegments; }
-  get segmentColorHash() { return this.displayState.segmentColorHash; }
-  get segmentSelectionState() { return this.displayState.segmentSelectionState; }
+  get visibleSegments() {
+    return this.displayState.visibleSegments;
+  }
+  get segmentColorHash() {
+    return this.displayState.segmentColorHash;
+  }
+  get segmentSelectionState() {
+    return this.displayState.segmentSelectionState;
+  }
 
   constructor(public displayState: SegmentationDisplayState) {
     super();
@@ -41,17 +47,21 @@ export class SegmentSetWidget extends RefCounted {
     element.className = 'segment-set-widget noselect';
     clearButton.className = 'clear-button';
     clearButton.title = 'Remove all segment IDs';
-    this.registerEventListener(clearButton, 'click', () => { this.visibleSegments.clear(); });
+    this.registerEventListener(clearButton, 'click', () => {
+      this.visibleSegments.clear();
+    });
 
     itemContainer.className = 'item-container';
     element.appendChild(itemContainer);
 
     itemContainer.appendChild(clearButton);
 
-    this.registerSignalBinding(
-        displayState.visibleSegments.changed.add(this.handleSetChanged, this));
-    this.registerSignalBinding(
-        displayState.segmentColorHash.changed.add(this.handleColorChanged, this));
+    this.registerDisposer(displayState.visibleSegments.changed.add((x, add) => {
+      this.handleSetChanged(x, add);
+    }));
+    this.registerDisposer(displayState.segmentColorHash.changed.add(() => {
+      this.handleColorChanged();
+    }));
 
     for (let x of displayState.visibleSegments) {
       this.addElement(x.toString());
@@ -71,7 +81,7 @@ export class SegmentSetWidget extends RefCounted {
       // Cleared.
       let {itemContainer, clearButton} = this;
       while (true) {
-        let lastElement = itemContainer.lastElementChild;
+        let lastElement = itemContainer.lastElementChild!;
         if (lastElement === clearButton) {
           break;
         }
@@ -117,7 +127,9 @@ export class SegmentSetWidget extends RefCounted {
   }
 
   private handleColorChanged() {
-    this.items.forEach(itemElement => { this.setItemColor(itemElement); });
+    this.items.forEach(itemElement => {
+      this.setItemColor(itemElement);
+    });
   }
 
   disposed() {

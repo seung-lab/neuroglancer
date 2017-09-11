@@ -14,21 +14,29 @@
  * limitations under the License.
  */
 
-import {handleChunkDownloadPromise, registerChunkSource} from 'neuroglancer/chunk_manager/backend';
-import {TileChunkSourceParameters, TileEncoding, VolumeChunkSourceParameters} from 'neuroglancer/datasource/dvid/base';
-import {ParameterizedVolumeChunkSource, VolumeChunk} from 'neuroglancer/sliceview/backend';
+import {registerChunkSource} from 'neuroglancer/chunk_manager/backend';
+import {TileChunkSourceParameters, TileEncoding, VolumeChunkEncoding, VolumeChunkSourceParameters} from 'neuroglancer/datasource/dvid/base';
 import {ChunkDecoder} from 'neuroglancer/sliceview/backend_chunk_decoders';
+import {decodeCompressedSegmentationChunk} from 'neuroglancer/sliceview/backend_chunk_decoders/compressed_segmentation';
 import {decodeJpegChunk} from 'neuroglancer/sliceview/backend_chunk_decoders/jpeg';
-import {decodeRawChunk} from 'neuroglancer/sliceview/backend_chunk_decoders/raw';
+import {ParameterizedVolumeChunkSource, VolumeChunk} from 'neuroglancer/sliceview/volume/backend';
+import {CancellationToken} from 'neuroglancer/util/cancellation';
 import {openShardedHttpRequest, sendHttpRequest} from 'neuroglancer/util/http_request';
+import {RPC} from 'neuroglancer/worker_rpc';
 
 const TILE_CHUNK_DECODERS = new Map<TileEncoding, ChunkDecoder>([
   [TileEncoding.JPEG, decodeJpegChunk],
 ]);
 
 @registerChunkSource(VolumeChunkSourceParameters)
-class VolumeChunkSource extends ParameterizedVolumeChunkSource<VolumeChunkSourceParameters> {
-  download(chunk: VolumeChunk) {
+export class VolumeChunkSource extends ParameterizedVolumeChunkSource<VolumeChunkSourceParameters> {
+  constructor(rpc: RPC, options: any) {
+    super(rpc, options);
+
+    this.parameters = options['parameters'];
+  }
+
+  download(chunk: VolumeChunk, cancellationToken: CancellationToken) {
     let params = this.parameters;
     let path: string;
     {
@@ -36,29 +44,53 @@ class VolumeChunkSource extends ParameterizedVolumeChunkSource<VolumeChunkSource
       // computeChunkBounds.
       let chunkPosition = this.computeChunkBounds(chunk);
       let chunkDataSize = chunk.chunkDataSize!;
-      path =
-          `/api/node/${params['nodeKey']}/${params['dataInstanceKey']}/raw/0_1_2/${chunkDataSize[0]}_${chunkDataSize[1]}_${chunkDataSize[2]}/${chunkPosition[0]}_${chunkPosition[1]}_${chunkPosition[2]}/nd`;
+
+      // if the volume is an image, get a jpeg
+      path = this.getPath(chunkPosition, chunkDataSize);
     }
-    handleChunkDownloadPromise(
-        chunk, sendHttpRequest(openShardedHttpRequest(params.baseUrls, path), 'arraybuffer'),
-        decodeRawChunk);
+    let decoder = this.getDecoder(params);
+    return sendHttpRequest(
+               openShardedHttpRequest(params.baseUrls, path), 'arraybuffer', cancellationToken)
+        .then(response => decoder(chunk, response));
   }
-};
+  getPath(chunkPosition: Float32Array, chunkDataSize: Float32Array) {
+    let params = this.parameters;
+    if (params.encoding === VolumeChunkEncoding.JPEG) {
+      return `/api/node/${params['nodeKey']}/${params['dataInstanceKey']}/raw/0_1_2/` +
+          `${chunkDataSize[0]}_${chunkDataSize[1]}_${chunkDataSize[2]}/` +
+          `${chunkPosition[0]}_${chunkPosition[1]}_${chunkPosition[2]}/jpeg`;
+    } else {
+      // encoding is COMPRESSED_SEGMENTATION
+      return `/api/node/${params['nodeKey']}/${params['dataInstanceKey']}/raw/0_1_2/` +
+          `${chunkDataSize[0]}_${chunkDataSize[1]}_${chunkDataSize[2]}/` +
+          `${chunkPosition[0]}_${chunkPosition[1]}_${chunkPosition[2]}?compression=googlegzip`;
+    }
+  }
+  getDecoder(params: any) {
+    if (params.encoding === VolumeChunkEncoding.JPEG) {
+      return decodeJpegChunk;
+    } else {
+      // encoding is COMPRESSED_SEGMENTATION
+      return decodeCompressedSegmentationChunk;
+    }
+  }
+}
 
 @registerChunkSource(TileChunkSourceParameters)
-class TileChunkSource extends ParameterizedVolumeChunkSource<TileChunkSourceParameters> {
+export class TileChunkSource extends ParameterizedVolumeChunkSource<TileChunkSourceParameters> {
   chunkDecoder = TILE_CHUNK_DECODERS.get(this.parameters['encoding'])!;
 
-  download(chunk: VolumeChunk) {
+  download(chunk: VolumeChunk, cancellationToken: CancellationToken) {
     let params = this.parameters;
     let {chunkGridPosition} = chunk;
 
     // Needed by decoder.
     chunk.chunkDataSize = this.spec.chunkDataSize;
-    let path =
-        `/api/node/${params['nodeKey']}/${params['dataInstanceKey']}/tile/${params['dims']}/${params['level']}/${chunkGridPosition[0]}_${chunkGridPosition[1]}_${chunkGridPosition[2]}`;
-    handleChunkDownloadPromise(
-        chunk, sendHttpRequest(openShardedHttpRequest(params.baseUrls, path), 'arraybuffer'),
-        this.chunkDecoder);
+    let path = `/api/node/${params['nodeKey']}/${params['dataInstanceKey']}/tile/` +
+        `${params['dims']}/${params['level']}/` +
+        `${chunkGridPosition[0]}_${chunkGridPosition[1]}_${chunkGridPosition[2]}`;
+    return sendHttpRequest(
+               openShardedHttpRequest(params.baseUrls, path), 'arraybuffer', cancellationToken)
+        .then(response => this.chunkDecoder(chunk, response));
   }
-};
+}

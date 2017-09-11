@@ -116,7 +116,6 @@ export class ScaleBarDimensions {
     // Determine significand value in this.allowedSignificands that is closest
     // to targetSignificand.
     let bestSignificand = 1;
-    let {allowedSignificands} = this;
     for (let allowedSignificand of this.allowedSignificands) {
       if (Math.abs(allowedSignificand - targetSignificand) <
           Math.abs(bestSignificand - targetSignificand)) {
@@ -143,7 +142,7 @@ export class ScaleBarDimensions {
     this.physicalLength = physicalNanometers / unit.lengthInNanometers;
     return true;
   }
-};
+}
 
 export class ScaleBarWidget extends RefCounted {
   element = document.createElement('div');
@@ -166,5 +165,7 @@ export class ScaleBarWidget extends RefCounted {
     }
   }
 
-  disposed() { removeFromParent(this.element); }
-};
+  disposed() {
+    removeFromParent(this.element);
+  }
+}

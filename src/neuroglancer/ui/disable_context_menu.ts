@@ -14,19 +14,13 @@
  * limitations under the License.
  */
 
-import {ON_VISIBILITY_CHANGE_METHOD_ID, SharedObjectWithVisibilityCount} from 'neuroglancer/shared_visibility_count/base';
-
-export function shareVisibility(obj: SharedObjectWithVisibilityCount) {
-  const update = () => {
-    if (obj.rpc != null) {
-      obj.rpc.invoke(
-          ON_VISIBILITY_CHANGE_METHOD_ID,
-          {'id': obj.rpcId, 'visible': obj.visibilityCount.value > 0});
-    }
-  };
-  if (obj.visibilityCount.value > 0) {
-    update();
-  }
-  obj.visibilityCount.becameNonZero.add(update);
-  obj.visibilityCount.becameZero.add(update);
+/**
+ * Prevent context menu on right click, as this interferes with other event handlers for right mouse
+ * clicks.
+ */
+export function disableContextMenu() {
+  document.addEventListener('contextmenu', (e: Event) => {
+    e.preventDefault();
+    return false;
+  });
 }

@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-import {SignalBinding} from 'signals';
-
 export interface Disposable { dispose: () => void; }
 
 export type Disposer = Disposable | (() => void);
@@ -72,17 +70,20 @@ export class RefCounted implements Disposable {
     }
     return f;
   }
-  registerSignalBinding(binding: SignalBinding) { this.registerDisposer(() => binding.detach()); }
   registerEventListener(target: EventTarget, eventType: string, listener: any, arg?: any) {
     target.addEventListener(eventType, listener, arg);
     this.registerDisposer(() => target.removeEventListener(eventType, listener, arg));
   }
   registerCancellable<T extends{cancel: () => void}>(cancellable: T) {
-    this.registerDisposer(() => { cancellable.cancel(); });
+    this.registerDisposer(() => {
+      cancellable.cancel();
+    });
     return cancellable;
   }
 }
 
 export class RefCountedValue<T> extends RefCounted {
-  constructor(public value: T) { super(); }
+  constructor(public value: T) {
+    super();
+  }
 }

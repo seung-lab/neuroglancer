@@ -18,21 +18,23 @@ import {ChunkManager} from 'neuroglancer/chunk_manager/frontend';
 import {getVolume, GetVolumeOptions} from 'neuroglancer/datasource/factory';
 import {LayerManager, LayerSelectedValues, ManagedUserLayer, UserLayer} from 'neuroglancer/layer';
 import {VoxelSize} from 'neuroglancer/navigation_state';
-import {VolumeType} from 'neuroglancer/sliceview/base';
-import {MultiscaleVolumeChunkSource} from 'neuroglancer/sliceview/frontend';
+import {VolumeType} from 'neuroglancer/sliceview/volume/base';
+import {MultiscaleVolumeChunkSource} from 'neuroglancer/sliceview/volume/frontend';
 import {StatusMessage} from 'neuroglancer/status';
-import {Trackable} from 'neuroglancer/url_hash_state';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {vec3} from 'neuroglancer/util/geom';
 import {verifyObject, verifyObjectProperty, verifyOptionalString} from 'neuroglancer/util/json';
-import {RPC} from 'neuroglancer/worker_rpc';
-import {Signal} from 'signals';
+import {NullarySignal, Signal} from 'neuroglancer/util/signal';
+import {Trackable} from 'neuroglancer/util/trackable';
 
 export function getVolumeWithStatusMessage(
     chunkManager: ChunkManager, x: string,
     options: GetVolumeOptions = {}): Promise<MultiscaleVolumeChunkSource> {
   return StatusMessage.forPromise(
-      new Promise(function(resolve) { resolve(getVolume(chunkManager, x, options)); }), {
+      new Promise(function(resolve) {
+        resolve(getVolume(chunkManager, x, options));
+      }),
+      {
         initialMessage: `Retrieving metadata for volume ${x}.`,
         delay: true,
         errorPrefix: `Error retrieving metadata for volume ${x}: `,
@@ -58,22 +60,34 @@ export class ManagedUserLayerWithSpecification extends ManagedUserLayer {
     }
     return layerSpec;
   }
-};
+}
 
 export class LayerListSpecification extends RefCounted implements Trackable {
-  changed = new Signal();
-  voxelCoordinatesSet = new Signal();
+  changed = new NullarySignal();
+  voxelCoordinatesSet = new Signal<(coordinates: vec3) => void>();
 
-  constructor(
-      public layerManager: LayerManager, public chunkManager: ChunkManager, public worker: RPC,
-      public layerSelectedValues: LayerSelectedValues, public voxelSize: VoxelSize) {
-    super();
-    this.registerSignalBinding(layerManager.layersChanged.add(this.changed.dispatch, this.changed));
-    this.registerSignalBinding(
-        layerManager.specificationChanged.add(this.changed.dispatch, this.changed));
+  /**
+   * @deprecated
+   */
+  get worker() {
+    return this.chunkManager.rpc!;
   }
 
-  reset() { this.layerManager.clear(); }
+  get rpc() {
+    return this.chunkManager.rpc!;
+  }
+
+  constructor(
+      public layerManager: LayerManager, public chunkManager: ChunkManager,
+      public layerSelectedValues: LayerSelectedValues, public voxelSize: VoxelSize) {
+    super();
+    this.registerDisposer(layerManager.layersChanged.add(this.changed.dispatch));
+    this.registerDisposer(layerManager.specificationChanged.add(this.changed.dispatch));
+  }
+
+  reset() {
+    this.layerManager.clear();
+  }
 
   restoreState(x: any) {
     verifyObject(x);
@@ -151,7 +165,7 @@ export class LayerListSpecification extends RefCounted implements Trackable {
 }
 
 interface UserLayerConstructor {
-  new (manager: LayerListSpecification, x: any): UserLayer;
+  new(manager: LayerListSpecification, x: any): UserLayer;
 }
 
 const layerTypes = new Map<string, UserLayerConstructor>();

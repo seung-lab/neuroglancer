@@ -15,20 +15,26 @@
  */
 
 import {RefCounted} from 'neuroglancer/util/disposable';
+import {NullarySignal} from 'neuroglancer/util/signal';
+import {WatchableVisibilityPriority} from 'neuroglancer/visibility_priority/frontend';
 import {GL, initializeWebGL} from 'neuroglancer/webgl/context';
-import {Signal} from 'signals';
 
 export abstract class RenderedPanel extends RefCounted {
   gl: GL;
-  constructor(public context: DisplayContext, public element: HTMLElement) {
+  constructor(
+      public context: DisplayContext, public element: HTMLElement,
+      public visibility: WatchableVisibilityPriority) {
     super();
     this.gl = context.gl;
-    this.registerEventListener(
-        element, 'mouseenter', (_event: MouseEvent) => { this.context.setActivePanel(this); });
+    this.registerEventListener(element, 'mouseenter', (_event: MouseEvent) => {
+      this.context.setActivePanel(this);
+    });
     context.addPanel(this);
   }
 
-  scheduleRedraw() { this.context.scheduleRedraw(); }
+  scheduleRedraw() {
+    this.context.scheduleRedraw();
+  }
 
   setGLViewport() {
     let element = this.element;
@@ -46,7 +52,9 @@ export abstract class RenderedPanel extends RefCounted {
 
   abstract onResize(): void;
 
-  onKeyCommand(_action: string) { return false; }
+  onKeyCommand(_action: string) {
+    return false;
+  }
 
   abstract draw(): void;
 
@@ -54,13 +62,17 @@ export abstract class RenderedPanel extends RefCounted {
     this.context.removePanel(this);
     super.disposed();
   }
-};
+
+  get visible() {
+    return this.visibility.visible;
+  }
+}
 
 export class DisplayContext extends RefCounted {
   canvas = document.createElement('canvas');
   gl: GL;
-  updateStarted = new Signal();
-  updateFinished = new Signal();
+  updateStarted = new NullarySignal();
+  updateFinished = new NullarySignal();
   panels = new Set<RenderedPanel>();
   activePanel: RenderedPanel|null = null;
   private updatePending: number|null = null;
@@ -132,7 +144,6 @@ export class DisplayContext extends RefCounted {
     this.updatePending = null;
     this.updateStarted.dispatch();
     if (this.needsRedraw) {
-      // console.log("Redraw");
       this.needsRedraw = false;
       let gl = this.gl;
       let canvas = this.canvas;
@@ -142,7 +153,8 @@ export class DisplayContext extends RefCounted {
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       for (let panel of this.panels) {
         let {element} = panel;
-        if (element.clientWidth === 0 || element.clientHeight === 0) {
+        if (!panel.visible || element.clientWidth === 0 || element.clientHeight === 0 ||
+            element.offsetWidth === 0 || element.offsetHeight === 0) {
           // Skip drawing if the panel has zero client area.
           continue;
         }
@@ -159,4 +171,4 @@ export class DisplayContext extends RefCounted {
     }
     this.updateFinished.dispatch();
   }
-};
+}

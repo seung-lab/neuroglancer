@@ -43,10 +43,16 @@ for (let axis = 0; axis < 3; ++axis) {
     });
   }
 }
-KEY_COMMANDS.set('snap', function() { this.navigationState.pose.snap(); });
+KEY_COMMANDS.set('snap', function() {
+  this.navigationState.pose.snap();
+});
 
-KEY_COMMANDS.set('zoom-in', function() { this.navigationState.zoomBy(0.5); });
-KEY_COMMANDS.set('zoom-out', function() { this.navigationState.zoomBy(2.0); });
+KEY_COMMANDS.set('zoom-in', function() {
+  this.navigationState.zoomBy(0.5);
+});
+KEY_COMMANDS.set('zoom-out', function() {
+  this.navigationState.zoomBy(2.0);
+});
 
 const tempVec3 = vec3.create();
 
@@ -62,7 +68,7 @@ export abstract class RenderedDataPanel extends RenderedPanel {
   navigationState: NavigationState;
 
   constructor(context: DisplayContext, element: HTMLElement, public viewer: ViewerState) {
-    super(context, element);
+    super(context, element, viewer.visibility);
 
     element.classList.add('rendered-data-panel');
 
@@ -155,4 +161,4 @@ export abstract class RenderedDataPanel extends RenderedPanel {
       }
     }
   }
-};
+}

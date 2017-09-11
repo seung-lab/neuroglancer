@@ -17,11 +17,11 @@
 import {HashFunction, PRIME_MODULUS} from 'neuroglancer/gpu_hash/hash_function';
 import {glsl_hashFunction} from 'neuroglancer/gpu_hash/shader';
 import {hsvToRgb} from 'neuroglancer/util/colorspace';
+import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {GL} from 'neuroglancer/webgl/context';
 import {ShaderBuilder, ShaderProgram} from 'neuroglancer/webgl/shader';
 import {glsl_hsvToRgb, glsl_uint64} from 'neuroglancer/webgl/shader_lib';
-import {Signal} from 'signals';
 
 const NUM_COMPONENTS = 2;
 
@@ -47,7 +47,10 @@ vec3 ${this.prefix}(uint64_t x) {
       let bIndex = 2 * i;
       let aIndex = 2 * i;
       s += `
-  v[${i}] = computeHash(x, ${aName}[${aIndex}], ${aName}[${aIndex + 1}], ${bName}[${bIndex}], ${bName}[${bIndex + 1}], primeModulus, 1.0 / 256.0);
+  v[${i}] = computeHash(x,
+                        ${aName}[${aIndex}], ${aName}[${aIndex + 1}],
+                        ${bName}[${bIndex}], ${bName}[${bIndex + 1}],
+                        primeModulus, 1.0 / 256.0);
 `;
     }
     s += `
@@ -62,7 +65,7 @@ vec3 ${this.prefix}(uint64_t x) {
     gl.uniform4fv(shader.uniform(this.aName), segmentColorHash.a_);
     gl.uniform1fv(shader.uniform(this.bName), segmentColorHash.b_);
   }
-};
+}
 
 function fract(x: number) {
   return x - Math.trunc(x);
@@ -75,7 +78,7 @@ export class SegmentColorHash {
   hashFunctions: HashFunction[];
   a_ = new Float32Array(4 * 2 * NUM_COMPONENTS);
   b_ = new Float32Array(2 * NUM_COMPONENTS);
-  changed = new Signal();
+  changed = new NullarySignal();
 
   constructor(hashFunctions?: HashFunction[]) {
     if (hashFunctions == null) {
@@ -113,7 +116,9 @@ export class SegmentColorHash {
   }
 
   debugCompute(out: Float32Array, x: Uint64) {
-    function mod(a: number, b: number) { return a % b; }
+    function mod(a: number, b: number) {
+      return a % b;
+    }
     let {low, high} = x;
     let b = this.b_;
     let modulus = PRIME_MODULUS;
@@ -130,7 +135,9 @@ export class SegmentColorHash {
       let y = mod(dotResult2 * b[bIndex + 1], modulus);
       let modResult = mod(b[bIndex] + dotResult + y, modulus);
       console.log(
-          `b = ${b[bIndex]}, sums=${sums[0]} ${sums[1]}, dotResult=${dotResult}, prod = ${dotResult * dotResult} dotResult2=${dotResult2}, y=${y}, modResult=${modResult}`);
+          `b = ${b[bIndex]}, sums=${sums[0]} ${sums[1]}, dotResult=${dotResult}, ` +
+          `prod = ${dotResult * dotResult} dotResult2=${dotResult2}, y=${y}, ` +
+          `modResult=${modResult}`);
       out[i] = fract(modResult * (1.0 / 256.0));
     }
     return out;
@@ -147,7 +154,9 @@ export class SegmentColorHash {
     this.changed.dispatch();
   }
 
-  toString() { return `new SegmentColorHash([${this.hashFunctions}])`; }
+  toString() {
+    return `new SegmentColorHash([${this.hashFunctions}])`;
+  }
 
   private computeGPUCoefficients_() {
     let hashFunctions = this.hashFunctions;
@@ -167,4 +176,4 @@ export class SegmentColorHash {
       }
     }
   }
-};
+}

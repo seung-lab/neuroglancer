@@ -23,6 +23,7 @@ import {SliceViewPanelRenderContext, SliceViewPanelRenderLayer} from 'neuroglanc
 import {WatchableValue} from 'neuroglancer/trackable_value';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {mat4, vec3} from 'neuroglancer/util/geom';
+import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {Buffer} from 'neuroglancer/webgl/buffer';
 import {GL} from 'neuroglancer/webgl/context';
@@ -30,7 +31,6 @@ import {countingBufferShaderModule, disableCountingBuffer, getCountingBuffer} fr
 import {ShaderBuilder, ShaderModule, ShaderProgram} from 'neuroglancer/webgl/shader';
 import {glsl_addUint32, setVec4FromUint32} from 'neuroglancer/webgl/shader_lib';
 import {getSquareCornersBuffer} from 'neuroglancer/webgl/square_corners_buffer';
-import {Signal} from 'signals';
 
 const tempMat = mat4.create();
 const tempPickID = new Float32Array(4);
@@ -38,7 +38,7 @@ const tempPickID = new Float32Array(4);
 export class AnnotationPointListLayer extends RefCounted {
   buffer: Buffer;
   generation = -1;
-  redrawNeeded = new Signal();
+  redrawNeeded = new NullarySignal();
   color = Float32Array.of(1.0, 1.0, 0.0, 1.0);
   selectedColor = Float32Array.of(0.0, 1.0, 0.0, 1.0);
 
@@ -47,15 +47,19 @@ export class AnnotationPointListLayer extends RefCounted {
       public voxelSizeObject: VoxelSize, public selectedIndex: WatchableValue<number|null>) {
     super();
     this.buffer = new Buffer(chunkManager.gl);
-    this.registerSignalBinding(pointList.changed.add(() => {
+    this.registerDisposer(pointList.changed.add(() => {
       // Clear selectedIndex, since the indices have changed.
       this.selectedIndex.value = null;
       this.redrawNeeded.dispatch();
     }));
-    this.registerSignalBinding(selectedIndex.changed.add(() => { this.redrawNeeded.dispatch(); }));
+    this.registerDisposer(selectedIndex.changed.add(() => {
+      this.redrawNeeded.dispatch();
+    }));
   }
 
-  get gl() { return this.chunkManager.gl; }
+  get gl() {
+    return this.chunkManager.gl;
+  }
 
   updateBuffer() {
     let {pointList} = this;
@@ -76,7 +80,9 @@ export class RenderHelper extends RefCounted {
   private squareCornersBuffer = getSquareCornersBuffer(this.gl);
   private countingBuffer = this.registerDisposer(getCountingBuffer(this.gl));
 
-  constructor(public gl: GL) { super(); }
+  constructor(public gl: GL) {
+    super();
+  }
 
   defineShader(builder: ShaderBuilder) {
     // Position of point in camera coordinates.
@@ -197,11 +203,15 @@ export class PerspectiveViewAnnotationPointListLayer extends PerspectiveViewRend
   constructor(public base: AnnotationPointListLayer) {
     super();
     this.registerDisposer(base);
-    this.registerSignalBinding(base.redrawNeeded.add(() => { this.redrawNeeded.dispatch(); }));
+    this.registerDisposer(base.redrawNeeded.add(() => {
+      this.redrawNeeded.dispatch();
+    }));
     this.setReady(true);
   }
 
-  get gl() { return this.base.chunkManager.gl; }
+  get gl() {
+    return this.base.chunkManager.gl;
+  }
 
   draw(renderContext: PerspectiveViewRenderContext) {
     this.renderHelper.draw(this, this.base, renderContext);
@@ -211,7 +221,9 @@ export class PerspectiveViewAnnotationPointListLayer extends PerspectiveViewRend
     this.base.updateMouseState(mouseState, pickedOffset);
   }
 
-  transformPickedValue(_pickedValue: Uint64, pickedOffset: number) { return pickedOffset; }
+  transformPickedValue(_pickedValue: Uint64, pickedOffset: number) {
+    return pickedOffset;
+  }
 }
 
 class SliceViewRenderHelper extends RenderHelper {
@@ -232,11 +244,15 @@ export class SliceViewAnnotationPointListLayer extends SliceViewPanelRenderLayer
   constructor(public base: AnnotationPointListLayer) {
     super();
     this.registerDisposer(base);
-    this.registerSignalBinding(base.redrawNeeded.add(() => { this.redrawNeeded.dispatch(); }));
+    this.registerDisposer(base.redrawNeeded.add(() => {
+      this.redrawNeeded.dispatch();
+    }));
     this.setReady(true);
   }
 
-  get gl() { return this.base.chunkManager.gl; }
+  get gl() {
+    return this.base.chunkManager.gl;
+  }
 
   draw(renderContext: SliceViewPanelRenderContext) {
     this.renderHelper.draw(this, this.base, renderContext);
@@ -246,5 +262,7 @@ export class SliceViewAnnotationPointListLayer extends SliceViewPanelRenderLayer
     this.base.updateMouseState(mouseState, pickedOffset);
   }
 
-  transformPickedValue(_pickedValue: Uint64, pickedOffset: number) { return pickedOffset; }
+  transformPickedValue(_pickedValue: Uint64, pickedOffset: number) {
+    return pickedOffset;
+  }
 }

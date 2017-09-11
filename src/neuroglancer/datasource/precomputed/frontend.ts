@@ -18,8 +18,8 @@ import {ChunkManager} from 'neuroglancer/chunk_manager/frontend';
 import {registerDataSourceFactory} from 'neuroglancer/datasource/factory';
 import {MeshSourceParameters, VolumeChunkEncoding, VolumeChunkSourceParameters} from 'neuroglancer/datasource/precomputed/base';
 import {defineParameterizedMeshSource} from 'neuroglancer/mesh/frontend';
-import {DataType, VolumeChunkSpecification, VolumeSourceOptions, VolumeType} from 'neuroglancer/sliceview/base';
-import {defineParameterizedVolumeChunkSource, MultiscaleVolumeChunkSource as GenericMultiscaleVolumeChunkSource} from 'neuroglancer/sliceview/frontend';
+import {DataType, VolumeChunkSpecification, VolumeSourceOptions, VolumeType} from 'neuroglancer/sliceview/volume/base';
+import {defineParameterizedVolumeChunkSource, MultiscaleVolumeChunkSource as GenericMultiscaleVolumeChunkSource} from 'neuroglancer/sliceview/volume/frontend';
 import {mat4, vec3} from 'neuroglancer/util/geom';
 import {openShardedHttpRequest, parseSpecialUrl, sendHttpRequest} from 'neuroglancer/util/http_request';
 import {parseArray, parseFixedLengthArray, parseIntVec, verifyEnumString, verifyFinitePositiveFloat, verifyObject, verifyObjectProperty, verifyOptionalString, verifyPositiveInt, verifyString} from 'neuroglancer/util/json';
@@ -77,8 +77,7 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
   }
 
   constructor(
-      public chunkManager: ChunkManager, public baseUrls: string[], public path: string,
-      private obj: any) {
+      public chunkManager: ChunkManager, public baseUrls: string[], public path: string, obj: any) {
     verifyObject(obj);
     this.dataType = verifyObjectProperty(obj, 'data_type', x => verifyEnumString(x, DataType));
     this.numChannels = verifyObjectProperty(obj, 'num_channels', verifyPositiveInt);
@@ -117,14 +116,14 @@ export function getShardedMeshSource(chunkManager: ChunkManager, parameters: Mes
   return MeshSource.get(chunkManager, parameters);
 }
 
-export function getMeshSource(chunkManager: ChunkManager, url: string, lod: number = 0) {
+export function getMeshSource(chunkManager: ChunkManager, url: string) {
   const [baseUrls, path] = parseSpecialUrl(url);
-  return getShardedMeshSource(chunkManager, {baseUrls, path, lod});
+  return getShardedMeshSource(chunkManager, {baseUrls, path, lod: 0});
 }
 
 export function getShardedVolume(chunkManager: ChunkManager, baseUrls: string[], path: string) {
   return chunkManager.memoize.getUncounted(
-      {'baseUrls': baseUrls, 'path': path},
+      {'type': 'precomputed:MultiscaleVolumeChunkSource', baseUrls, path},
       () => sendHttpRequest(openShardedHttpRequest(baseUrls, path + '/info'), 'json')
                 .then(
                     response =>

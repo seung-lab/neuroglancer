@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-
+from __future__ import print_function
 from distutils.command.build import build
 from subprocess import call
 import os
@@ -35,9 +35,9 @@ class bundle_client(build):
         build_dir = os.path.join(project_dir, 'dist/' + self.client_bundle_type)
         static_dir = os.path.join(this_dir, 'neuroglancer/static')
 
-        print "Project dir " + project_dir
-        print "Build dir " + build_dir
-        print "Static dir " + static_dir
+        print("Project dir " + project_dir)
+        print("Build dir " + build_dir)
+        print("Static dir " + static_dir)
 
         prev_dir = os.path.abspath('.')
         os.chdir(project_dir)
@@ -70,7 +70,7 @@ def _neuroglancer_compile():
     src_dir = os.path.join(setup_dir, 'ext/src')
     third_party_dir = os.path.join(setup_dir, 'ext/third_party')
     openmesh_dir = os.path.join(setup_dir, 'ext/third_party/openmesh/OpenMesh/src')
-    print cythonize(os.path.join(third_party_dir,'mc/_mesher.pyx'))[0].__dict__
+    cythonize(os.path.join(third_party_dir,'mc/_mesher.pyx'))
     local_sources = [
         '_neuroglancer.cc',
         'openmesh_dependencies.cc',

@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import {VertexAttributeInfo} from 'neuroglancer/skeleton/base';
+
 export enum VolumeChunkEncoding {
   JPEG,
   NPZ,
@@ -28,9 +30,10 @@ export class VolumeChunkSourceParameters {
   static RPC_ID = 'python/VolumeChunkSource';
 
   static stringify(parameters: VolumeChunkSourceParameters) {
-    return `python:volume:${parameters['baseUrls'][0]}/${parameters['key']}/${VolumeChunkEncoding[parameters['encoding']]}`;
+    return `python:volume:${parameters['baseUrls'][0]}/${parameters['key']}/` +
+        `${VolumeChunkEncoding[parameters['encoding']]}`;
   }
-};
+}
 
 export class MeshSourceParameters {
   baseUrls: string[];
@@ -41,4 +44,16 @@ export class MeshSourceParameters {
   static stringify(parameters: MeshSourceParameters) {
     return `python:mesh:${parameters['baseUrls'][0]}/${parameters['key']}`;
   }
-};
+}
+
+export class SkeletonSourceParameters {
+  baseUrls: string[];
+  key: string;
+  vertexAttributes: Map<string, VertexAttributeInfo>;
+
+  static RPC_ID = 'python/SkeletonSource';
+
+  static stringify(parameters: SkeletonSourceParameters) {
+    return `python:skeleton:${parameters['baseUrls'][0]}/${parameters['key']}`;
+  }
+}

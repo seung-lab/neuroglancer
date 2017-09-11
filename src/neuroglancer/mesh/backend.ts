@@ -20,10 +20,12 @@ import {FRAGMENT_SOURCE_RPC_ID, MESH_LAYER_RPC_ID} from 'neuroglancer/mesh/base'
 import {SegmentationLayerSharedObjectCounterpart} from 'neuroglancer/segmentation_display_state/backend';
 import {getObjectKey} from 'neuroglancer/segmentation_display_state/base';
 import {forEachVisibleSegment} from 'neuroglancer/segmentation_display_state/base';
+import {CancellationToken} from 'neuroglancer/util/cancellation';
 import {convertEndian32, Endianness} from 'neuroglancer/util/endian';
 import {vec3} from 'neuroglancer/util/geom';
-import {verifyObject, verifyObjectProperty} from 'neuroglancer/util/json';
+import {verifyObject, verifyObjectProperty, verifyStringArray} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
+import {getBasePriority, getPriorityTier} from 'neuroglancer/visibility_priority/backend';
 import {registerSharedObject, RPC} from 'neuroglancer/worker_rpc';
 
 const MESH_OBJECT_MANIFEST_CHUNK_PRIORITY = 100;
@@ -37,7 +39,9 @@ export class ManifestChunk extends Chunk {
   objectId = new Uint64();
   fragmentIds: FragmentId[]|null;
 
-  constructor() { super(); }
+  constructor() {
+    super();
+  }
   // We can't save a reference to objectId, because it may be a temporary
   // object.
   initializeManifestChunk(key: string, objectId: Uint64) {
@@ -45,20 +49,24 @@ export class ManifestChunk extends Chunk {
     this.objectId.assign(objectId);
   }
 
-  freeSystemMemory() { this.fragmentIds = null; }
+  freeSystemMemory() {
+    this.fragmentIds = null;
+  }
 
   downloadSucceeded() {
     // We can't easily determine the memory usage of the JSON manifest.  Just use 100 bytes as a
     // default value.
     this.systemMemoryBytes = 100;
     super.downloadSucceeded();
-    if (this.priorityTier === ChunkPriorityTier.VISIBLE) {
+    if (this.priorityTier < ChunkPriorityTier.RECENT) {
       this.source!.chunkManager.scheduleUpdateChunkPriorities();
     }
   }
 
-  toString() { return this.objectId.toString(); }
-};
+  toString() {
+    return this.objectId.toString();
+  }
+}
 
 /**
  * Chunk that contains the mesh for a single fragment of a single object.
@@ -69,7 +77,9 @@ export class FragmentChunk extends Chunk {
   vertexPositions: Float32Array|null = null;
   indices: Uint32Array|null = null;
   vertexNormals: Float32Array|null = null;
-  constructor() { super(); }
+  constructor() {
+    super();
+  }
   initializeFragmentChunk(key: string, manifestChunk: ManifestChunk, fragmentId: FragmentId) {
     super.initialize(key);
     this.manifestChunk = manifestChunk;
@@ -105,7 +115,7 @@ export class FragmentChunk extends Chunk {
         vertexPositions!.byteLength + indices!.byteLength + vertexNormals!.byteLength;
     super.downloadSucceeded();
   }
-};
+}
 
 /**
  * Assigns chunk.fragmentKeys to response[keysPropertyName].
@@ -115,17 +125,7 @@ export class FragmentChunk extends Chunk {
 export function decodeJsonManifestChunk(
     chunk: ManifestChunk, response: any, keysPropertyName: string) {
   verifyObject(response);
-  chunk.fragmentIds = verifyObjectProperty(response, keysPropertyName, fragmentKeys => {
-    if (!Array.isArray(fragmentKeys)) {
-      throw new Error(`Expected array, received: ${JSON.stringify(fragmentKeys)}.`);
-    }
-    for (let x of fragmentKeys) {
-      if (typeof x !== 'string') {
-        throw new Error(`Expected string fragment key, received: ${JSON.stringify(x)}.`);
-      }
-    }
-    return <string[]>fragmentKeys;
-  });
+  chunk.fragmentIds = verifyObjectProperty(response, keysPropertyName, verifyStringArray);
 }
 
 /**
@@ -267,8 +267,9 @@ export abstract class MeshSource extends ChunkSource {
     return chunk;
   }
 
-  abstract downloadFragment(chunk: FragmentChunk): void;
-};
+  abstract downloadFragment(chunk: FragmentChunk, cancellationToken: CancellationToken):
+      Promise<void>;
+}
 
 export abstract class ParameterizedMeshSource<Parameters> extends MeshSource {
   parameters: Parameters;
@@ -276,44 +277,47 @@ export abstract class ParameterizedMeshSource<Parameters> extends MeshSource {
     super(rpc, options);
     this.parameters = options['parameters'];
   }
-};
+}
 
 @registerSharedObject(FRAGMENT_SOURCE_RPC_ID)
 export class FragmentSource extends ChunkSource {
   meshSource: MeshSource|null = null;
-  download(chunk: FragmentChunk) { this.meshSource!.downloadFragment(chunk); }
-};
+  download(chunk: FragmentChunk, cancellationToken: CancellationToken) {
+    return this.meshSource!.downloadFragment(chunk, cancellationToken);
+  }
+}
 
 @registerSharedObject(MESH_LAYER_RPC_ID)
-class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
+export class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
   source: MeshSource;
 
   constructor(rpc: RPC, options: any) {
     super(rpc, options);
     this.source = this.registerDisposer(rpc.getRef<MeshSource>(options['source']));
-    this.registerSignalBinding(
-        this.chunkManager.recomputeChunkPriorities.add(this.updateChunkPriorities, this));
+    this.registerDisposer(this.chunkManager.recomputeChunkPriorities.add(() => {
+      this.updateChunkPriorities();
+    }));
   }
 
   private updateChunkPriorities() {
-    if (!this.visible) {
+    const visibility = this.visibility.value;
+    if (visibility === Number.NEGATIVE_INFINITY) {
       return;
     }
-    let {source, chunkManager} = this;
+    const priorityTier = getPriorityTier(visibility);
+    const basePriority = getBasePriority(visibility);
+    const {source, chunkManager} = this;
     forEachVisibleSegment(this, objectId => {
       let manifestChunk = source.getChunk(objectId);
       chunkManager.requestChunk(
-          manifestChunk, ChunkPriorityTier.VISIBLE, MESH_OBJECT_MANIFEST_CHUNK_PRIORITY);
+          manifestChunk, priorityTier, basePriority + MESH_OBJECT_MANIFEST_CHUNK_PRIORITY);
       if (manifestChunk.state === ChunkState.SYSTEM_MEMORY_WORKER) {
         for (let fragmentId of manifestChunk.fragmentIds!) {
           let fragmentChunk = source.getFragmentChunk(manifestChunk, fragmentId);
           chunkManager.requestChunk(
-              fragmentChunk, ChunkPriorityTier.VISIBLE, MESH_OBJECT_FRAGMENT_CHUNK_PRIORITY);
+              fragmentChunk, priorityTier, basePriority + MESH_OBJECT_FRAGMENT_CHUNK_PRIORITY);
         }
-        // console.log("FIXME: updatefragment chunk priority");
-        // console.log(manifestChunk.data);
-        // let fragmentChunk = fragmentSource.getChunk(manifestChunk);
       }
     });
   }
-};
+}

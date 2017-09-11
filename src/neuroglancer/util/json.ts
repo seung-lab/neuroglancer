@@ -142,7 +142,9 @@ export function stableStringify(x: any) {
 }
 
 function swapQuotes(x: string) {
-  return x.replace(/['"]/g, s => { return (s === '"' ? '\'' : '"'); });
+  return x.replace(/['"]/g, s => {
+    return (s === '"' ? '\'' : '"');
+  });
 }
 
 export function urlSafeStringifyString(x: string) {
@@ -228,7 +230,7 @@ function convertStringLiteral(
       s += m[1];
       s += '\\';
       s += quoteReplace;
-      inner = inner.substr(m.index + m[0].length);
+      inner = inner.substr(m.index! + m[0].length);
     }
     s += quoteReplace;
     return s;
@@ -272,7 +274,7 @@ function convertJsonHelper(x: string, desiredCommaChar: string, desiredQuoteChar
       replacement = '';
     } else {
       before = x.substr(0, m.index);
-      x = x.substr(m.index + m[0].length);
+      x = x.substr(m.index! + m[0].length);
       let originalString = m[1];
       if (originalString !== undefined) {
         replacement =
@@ -313,7 +315,7 @@ export function pythonLiteralToJSON(x: string) {
       replacement = '';
     } else {
       before = x.substr(0, m.index);
-      x = x.substr(m.index + m[0].length);
+      x = x.substr(m.index! + m[0].length);
       let singleQuoteString = m[1];
       if (singleQuoteString !== undefined) {
         replacement = normalizeStringLiteral(singleQuoteString);
@@ -383,7 +385,8 @@ export function verifyMapKey<U>(obj: any, map: Map<string, U>) {
   let result = map.get(obj);
   if (result === undefined) {
     throw new Error(
-        `Expected one of ${JSON.stringify(Array.from(map.keys()))}, but received: ${JSON.stringify(obj)}.`);
+        `Expected one of ${JSON.stringify(Array.from(map.keys()))}, ` +
+        `but received: ${JSON.stringify(obj)}.`);
   }
   return result;
 }
@@ -400,6 +403,13 @@ export function verifyOptionalString(obj: any): string|undefined {
     return undefined;
   }
   return verifyString(obj);
+}
+
+export function verifyOptionalInt(obj: any): number|undefined {
+  if (obj === undefined) {
+    return undefined;
+  }
+  return verifyInt(obj);
 }
 
 export function verifyObjectProperty<T>(
@@ -487,4 +497,16 @@ export function verify3dScale(obj: any) {
 
 export function verify3dDimensions(obj: any) {
   return parseFixedLengthArray(vec3.create(), obj, verifyPositiveInt);
+}
+
+export function verifyStringArray(a: any) {
+  if (!Array.isArray(a)) {
+    throw new Error(`Expected array, received: ${JSON.stringify(a)}.`);
+  }
+  for (let x of a) {
+    if (typeof x !== 'string') {
+      throw new Error(`Expected string, received: ${JSON.stringify(x)}.`);
+    }
+  }
+  return <string[]>a;
 }

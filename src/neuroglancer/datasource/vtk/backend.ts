@@ -30,28 +30,29 @@ function parseVTKFromArrayBuffer(buffer: ArrayBuffer) {
 
 registerSingleMeshFactory('vtk', {
   description: 'VTK',
-  getMesh: (chunkManager, url, getPriority) =>
-               GenericFileSource
-                   .getData(chunkManager.addRef(), parseVTKFromArrayBuffer, url, getPriority)
-                   .then(mesh => {
-                     let result: SingleMesh = {
-                       info: {
-                         numTriangles: mesh.numTriangles,
-                         numVertices: mesh.numVertices,
-                         vertexAttributes: [],
-                       },
-                       indices: mesh.indices,
-                       vertexPositions: mesh.vertexPositions,
-                       vertexAttributes: [],
-                     };
-                     for (const attribute of mesh.vertexAttributes) {
-                       result.info.vertexAttributes.push({
-                         name: attribute.name,
-                         dataType: DataType.FLOAT32,
-                         numComponents: attribute.numComponents,
-                       });
-                       result.vertexAttributes.push(attribute.data);
-                     }
-                     return result;
-                   })
+  getMesh: (chunkManager, url, getPriority, cancellationToken) =>
+      GenericFileSource
+          .getData(
+              chunkManager.addRef(), parseVTKFromArrayBuffer, url, getPriority, cancellationToken)
+          .then(mesh => {
+            let result: SingleMesh = {
+              info: {
+                numTriangles: mesh.numTriangles,
+                numVertices: mesh.numVertices,
+                vertexAttributes: [],
+              },
+              indices: mesh.indices,
+              vertexPositions: mesh.vertexPositions,
+              vertexAttributes: [],
+            };
+            for (const attribute of mesh.vertexAttributes) {
+              result.info.vertexAttributes.push({
+                name: attribute.name,
+                dataType: DataType.FLOAT32,
+                numComponents: attribute.numComponents,
+              });
+              result.vertexAttributes.push(attribute.data);
+            }
+            return result;
+          })
 });

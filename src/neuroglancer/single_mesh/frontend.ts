@@ -18,15 +18,14 @@ import {ChunkState} from 'neuroglancer/chunk_manager/base';
 import {Chunk, ChunkManager, ChunkSource} from 'neuroglancer/chunk_manager/frontend';
 import {CoordinateTransform} from 'neuroglancer/coordinate_transform';
 import {PerspectiveViewRenderContext, PerspectiveViewRenderLayer} from 'neuroglancer/perspective_view/render_layer';
-import {SharedObjectWithVisibilityCount} from 'neuroglancer/shared_visibility_count/base';
-import {shareVisibility} from 'neuroglancer/shared_visibility_count/frontend';
 import {GET_SINGLE_MESH_INFO_RPC_ID, SINGLE_MESH_CHUNK_KEY, SINGLE_MESH_LAYER_RPC_ID, SINGLE_MESH_SOURCE_RPC_ID, SingleMeshInfo, SingleMeshSourceParameters, VertexAttributeInfo} from 'neuroglancer/single_mesh/base';
 import {TrackableValue} from 'neuroglancer/trackable_value';
 import {DataType} from 'neuroglancer/util/data_type';
-import {mat4, vec2, vec3, vec4} from 'neuroglancer/util/geom';
+import {mat4, vec2, vec3} from 'neuroglancer/util/geom';
 import {parseArray, stableStringify, verifyOptionalString, verifyString} from 'neuroglancer/util/json';
 import {getObjectId} from 'neuroglancer/util/object_id';
 import {Uint64} from 'neuroglancer/util/uint64';
+import {withSharedVisibility} from 'neuroglancer/visibility_priority/frontend';
 import {Buffer} from 'neuroglancer/webgl/buffer';
 import {GL} from 'neuroglancer/webgl/context';
 import {makeWatchableShaderError} from 'neuroglancer/webgl/dynamic_shader';
@@ -34,7 +33,7 @@ import {CountingBuffer, countingBufferShaderModule, disableCountingBuffer, getCo
 import {compute1dTextureFormat, compute1dTextureLayout, OneDimensionalTextureAccessHelper, OneDimensionalTextureFormat, setOneDimensionalTextureData} from 'neuroglancer/webgl/one_dimensional_texture_access';
 import {ShaderBuilder, ShaderModule, ShaderProgram} from 'neuroglancer/webgl/shader';
 import {getShaderType, glsl_addUint32, glsl_divmodUint32, setVec4FromUint32} from 'neuroglancer/webgl/shader_lib';
-import {registerSharedObjectOwner, RPC} from 'neuroglancer/worker_rpc';
+import {registerSharedObjectOwner, RPC, SharedObject} from 'neuroglancer/worker_rpc';
 
 export const FRAGMENT_MAIN_START = '//NEUROGLANCER_SINGLE_MESH_LAYER_FRAGMENT_MAIN_START';
 
@@ -210,7 +209,7 @@ vLightingFactor = abs(dot(normal, uLightDirection.xyz)) + uLightDirection.w;
     };
     bindTexture(data.vertexTexture);
     bindTexture(data.normalTexture);
-    let {attributeInfo, attributeNames} = this;
+    const {attributeNames} = this;
     data.vertexAttributeTextures.forEach((texture, i) => {
       if (attributeNames[i] !== undefined) {
         bindTexture(texture);
@@ -341,16 +340,23 @@ export class SingleMeshSource extends ChunkSource {
     options['info'] = this.info;
     super.initializeCounterpart(rpc, options);
   }
-  getChunk(x: any) { return new SingleMeshChunk(this, x); }
-  toString() { return SingleMeshSourceParameters.stringify(this.parameters); }
+  getChunk(x: any) {
+    return new SingleMeshChunk(this, x);
+  }
+  toString() {
+    return SingleMeshSourceParameters.stringify(this.parameters);
+  }
 }
 
+const SharedObjectWithSharedVisibility = withSharedVisibility(SharedObject);
+class SingleMeshLayerSharedObject extends SharedObjectWithSharedVisibility {}
+
 export class SingleMeshLayer extends PerspectiveViewRenderLayer {
-  private shaderManager: SingleMeshShaderManager|undefined;
+  protected shaderManager: SingleMeshShaderManager|undefined;
   private shaders = new Map<ShaderModule, ShaderProgram|null>();
-  private sharedObject: SharedObjectWithVisibilityCount;
+  private sharedObject = this.registerDisposer(new SingleMeshLayerSharedObject());
   private fallbackFragmentMain = DEFAULT_FRAGMENT_MAIN;
-  private countingBuffer = this.registerDisposer(getCountingBuffer(this.gl));
+  protected countingBuffer = this.registerDisposer(getCountingBuffer(this.gl));
 
   constructor(public source: SingleMeshSource, public displayState: SingleMeshDisplayState) {
     super();
@@ -362,20 +368,19 @@ export class SingleMeshLayer extends PerspectiveViewRenderLayer {
       this.disposeShaders();
       this.redrawNeeded.dispatch();
     };
-    this.registerSignalBinding(displayState.fragmentMain.changed.add(shaderChanged));
-    this.registerSignalBinding(displayState.attributeNames.changed.add(shaderChanged));
-    this.registerSignalBinding(
-        displayState.objectToDataTransform.changed.add(() => { this.redrawNeeded.dispatch(); }));
+    this.registerDisposer(displayState.fragmentMain.changed.add(shaderChanged));
+    this.registerDisposer(displayState.attributeNames.changed.add(shaderChanged));
+    this.registerDisposer(displayState.objectToDataTransform.changed.add(() => {
+      this.redrawNeeded.dispatch();
+    }));
     this.displayState.shaderError.value = undefined;
-    let sharedObject = this.sharedObject =
-        this.registerDisposer(new SharedObjectWithVisibilityCount(this.visibilityCount));
+    const {sharedObject} = this;
+    sharedObject.visibility.add(this.visibility);
     sharedObject.RPC_TYPE_ID = SINGLE_MESH_LAYER_RPC_ID;
     sharedObject.initializeCounterpart(source.chunkManager.rpc!, {
       'chunkManager': source.chunkManager.rpcId,
       'source': source.addCounterpartRef(),
     });
-    shareVisibility(sharedObject);
-
     this.setReady(true);
   }
 
@@ -394,12 +399,12 @@ export class SingleMeshLayer extends PerspectiveViewRenderLayer {
     super.disposed();
   }
 
-  private makeShaderManager(fragmentMain = this.displayState.fragmentMain.value) {
+  protected makeShaderManager(fragmentMain = this.displayState.fragmentMain.value) {
     return new SingleMeshShaderManager(
         this.displayState.attributeNames.value, this.source.info.vertexAttributes, fragmentMain);
   }
 
-  private getShader(emitter: ShaderModule): ShaderProgram|null {
+  protected getShader(emitter: ShaderModule): ShaderProgram|null {
     let {shaders} = this;
     let shader = shaders.get(emitter);
     if (shader === undefined) {
@@ -433,7 +438,9 @@ export class SingleMeshLayer extends PerspectiveViewRenderLayer {
     return this.displayState.fragmentMain.value.match(/emitRGBA|emitPremultipliedRGBA/) !== null;
   }
 
-  get gl() { return this.source.gl; }
+  get gl() {
+    return this.source.gl;
+  }
 
   draw(renderContext: PerspectiveViewRenderContext) {
     if (!renderContext.emitColor && renderContext.alreadyEmittedPickID) {
@@ -449,7 +456,7 @@ export class SingleMeshLayer extends PerspectiveViewRenderLayer {
       return;
     }
 
-    let {gl, displayState} = this;
+    let {gl} = this;
     let shaderManager = this.shaderManager!;
     shader.bind();
     shaderManager.beginLayer(gl, shader, renderContext);
@@ -465,7 +472,9 @@ export class SingleMeshLayer extends PerspectiveViewRenderLayer {
     shaderManager.endLayer(gl, shader);
   }
 
-  drawPicking(renderContext: PerspectiveViewRenderContext) { this.draw(renderContext); }
+  drawPicking(renderContext: PerspectiveViewRenderContext) {
+    this.draw(renderContext);
+  }
 
   transformPickedValue(_pickedValue: Uint64, pickedOffset: number) {
     let chunk = <SingleMeshChunk|undefined>this.source.chunks.get(SINGLE_MESH_CHUNK_KEY);
@@ -497,7 +506,7 @@ export class SingleMeshLayer extends PerspectiveViewRenderLayer {
 
 function getSingleMeshInfo(chunkManager: ChunkManager, parameters: SingleMeshSourceParameters) {
   return chunkManager.memoize.getUncounted(
-      ['single_mesh/getMeshInfo', parameters],
+      {type: 'single_mesh:getMeshInfo', parameters},
       () => chunkManager.rpc!.promiseInvoke<SingleMeshInfo>(
           GET_SINGLE_MESH_INFO_RPC_ID,
           {'chunkManager': chunkManager.addCounterpartRef(), 'parameters': parameters}));

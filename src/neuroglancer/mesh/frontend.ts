@@ -97,10 +97,10 @@ vColor = vec4(lightingFactor * uColor.rgb, uColor.a);
     gl.disableVertexAttribArray(shader.attribute('aVertexPosition'));
     gl.disableVertexAttribArray(shader.attribute('aVertexNormal'));
   }
-};
+}
 
 export class MeshLayer extends PerspectiveViewRenderLayer {
-  private meshShaderManager = new MeshShaderManager();
+  protected meshShaderManager = new MeshShaderManager();
   private shaders = new Map<ShaderModule, ShaderProgram>();
   private sharedObject: SegmentationLayerSharedObject;
 
@@ -118,10 +118,10 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
       'source': source.addCounterpartRef(),
     });
     this.setReady(true);
-    this.visibilityCount.addDependency(sharedObject.visibilityCount);
+    sharedObject.visibility.add(this.visibility);
   }
 
-  private getShader(emitter: ShaderModule) {
+  protected getShader(emitter: ShaderModule) {
     let {shaders} = this;
     let shader = shaders.get(emitter);
     if (shader === undefined) {
@@ -131,9 +131,13 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
     return shader;
   }
 
-  get isTransparent() { return this.displayState.objectAlpha.value < 1.0; }
+  get isTransparent() {
+    return this.displayState.objectAlpha.value < 1.0;
+  }
 
-  get gl() { return this.chunkManager.chunkQueueManager.gl; }
+  get gl() {
+    return this.chunkManager.chunkQueueManager.gl;
+  }
 
   draw(renderContext: PerspectiveViewRenderContext) {
     if (!renderContext.emitColor && renderContext.alreadyEmittedPickID) {
@@ -248,12 +252,23 @@ export class FragmentChunk extends Chunk {
     this.indexBuffer.dispose();
     this.normalBuffer.dispose();
   }
-};
+}
+
+export abstract class MeshSource extends ChunkSource {
+  fragmentSource = this.registerDisposer(new FragmentSource(this.chunkManager, this));
+  initializeCounterpart(rpc: RPC, options: any) {
+    this.fragmentSource.initializeCounterpart(this.chunkManager.rpc!, {});
+    options['fragmentSource'] = this.fragmentSource.addCounterpartRef();
+    super.initializeCounterpart(rpc, options);
+  }
+}
 
 @registerSharedObjectOwner(FRAGMENT_SOURCE_RPC_ID)
 export class FragmentSource extends ChunkSource {
   objectChunks = new Map<string, Set<FragmentChunk>>();
-  constructor(chunkManager: ChunkManager, public meshSource: MeshSource) { super(chunkManager); }
+  constructor(chunkManager: ChunkManager, public meshSource: MeshSource) {
+    super(chunkManager);
+  }
   addChunk(key: string, chunk: FragmentChunk) {
     super.addChunk(key, chunk);
     let {objectChunks} = this;
@@ -276,17 +291,10 @@ export class FragmentSource extends ChunkSource {
       objectChunks.delete(objectKey);
     }
   }
-  getChunk(x: any) { return new FragmentChunk(this, x); }
-};
-
-export abstract class MeshSource extends ChunkSource {
-  fragmentSource = new FragmentSource(this.chunkManager, this);
-  initializeCounterpart(rpc: RPC, options: any) {
-    this.fragmentSource.initializeCounterpart(this.chunkManager.rpc!, {});
-    options['fragmentSource'] = this.fragmentSource.addCounterpartRef();
-    super.initializeCounterpart(rpc, options);
+  getChunk(x: any) {
+    return new FragmentChunk(this, x);
   }
-};
+}
 
 /**
  * Defines a MeshSource for which all state is encapsulated in an object of type Parameters.
@@ -294,7 +302,9 @@ export abstract class MeshSource extends ChunkSource {
 export function defineParameterizedMeshSource<Parameters>(
     parametersConstructor: ChunkSourceParametersConstructor<Parameters>) {
   const newConstructor = class ParameterizedMeshSource extends MeshSource {
-    constructor(chunkManager: ChunkManager, public parameters: Parameters) { super(chunkManager); }
+    constructor(chunkManager: ChunkManager, public parameters: Parameters) {
+      super(chunkManager);
+    }
     initializeCounterpart(rpc: RPC, options: any) {
       options['parameters'] = this.parameters;
       super.initializeCounterpart(rpc, options);
@@ -303,7 +313,9 @@ export function defineParameterizedMeshSource<Parameters>(
       return chunkManager.getChunkSource(
           this, stableStringify(parameters), () => new this(chunkManager, parameters));
     }
-    toString() { return parametersConstructor.stringify(this.parameters); }
+    toString() {
+      return parametersConstructor.stringify(this.parameters);
+    }
   };
   newConstructor.prototype.RPC_TYPE_ID = parametersConstructor.RPC_ID;
   return newConstructor;

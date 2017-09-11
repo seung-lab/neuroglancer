@@ -14,13 +14,14 @@
  * limitations under the License.
  */
 
-import {handleChunkDownloadPromise, registerChunkSource} from 'neuroglancer/chunk_manager/backend';
+import {registerChunkSource} from 'neuroglancer/chunk_manager/backend';
 import {VolumeChunkSourceParameters} from 'neuroglancer/datasource/ndstore/base';
-import {ParameterizedVolumeChunkSource, VolumeChunk} from 'neuroglancer/sliceview/backend';
 import {ChunkDecoder} from 'neuroglancer/sliceview/backend_chunk_decoders';
 import {decodeJpegChunk} from 'neuroglancer/sliceview/backend_chunk_decoders/jpeg';
 import {decodeNdstoreNpzChunk} from 'neuroglancer/sliceview/backend_chunk_decoders/ndstoreNpz';
 import {decodeRawChunk} from 'neuroglancer/sliceview/backend_chunk_decoders/raw';
+import {ParameterizedVolumeChunkSource, VolumeChunk} from 'neuroglancer/sliceview/volume/backend';
+import {CancellationToken} from 'neuroglancer/util/cancellation';
 import {openShardedHttpRequest, sendHttpRequest} from 'neuroglancer/util/http_request';
 
 let chunkDecoders = new Map<string, ChunkDecoder>();
@@ -29,13 +30,13 @@ chunkDecoders.set('jpeg', decodeJpegChunk);
 chunkDecoders.set('raw', decodeRawChunk);
 
 @registerChunkSource(VolumeChunkSourceParameters)
-class VolumeChunkSource extends ParameterizedVolumeChunkSource<VolumeChunkSourceParameters> {
+export class VolumeChunkSource extends ParameterizedVolumeChunkSource<VolumeChunkSourceParameters> {
   chunkDecoder = chunkDecoders.get(this.parameters.encoding)!;
 
-  download(chunk: VolumeChunk) {
+  download(chunk: VolumeChunk, cancellationToken: CancellationToken) {
     let {parameters} = this;
-    let path =
-        `/ocp/ca/${parameters.key}/${parameters.channel}/${parameters.encoding}/${parameters.resolution}`;
+    let path = `${parameters.urlPrefix}/${parameters.key}/${parameters.channel}/` +
+        `${parameters.encoding}/${parameters.resolution}`;
     {
       // chunkPosition must not be captured, since it will be invalidated by the next call to
       // computeChunkBounds.
@@ -45,9 +46,11 @@ class VolumeChunkSource extends ParameterizedVolumeChunkSource<VolumeChunkSource
         path += `/${chunkPosition[i]},${chunkPosition[i] + chunkDataSize[i]}`;
       }
     }
-    path += `/neariso/`;
-    handleChunkDownloadPromise(
-        chunk, sendHttpRequest(openShardedHttpRequest(parameters.baseUrls, path), 'arraybuffer'),
-        this.chunkDecoder);
+    if (parameters.neariso) {
+      path += `/neariso/`;
+    }
+    return sendHttpRequest(
+               openShardedHttpRequest(parameters.baseUrls, path), 'arraybuffer', cancellationToken)
+        .then(response => this.chunkDecoder(chunk, response));
   }
-};
+}

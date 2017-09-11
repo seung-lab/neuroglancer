@@ -43,7 +43,9 @@ interface ShaderCodeState {
 
 export class ShaderCodeWidget extends RefCounted {
   textEditor: CodeMirror.Editor;
-  get element() { return this.textEditor.getWrapperElement(); }
+  get element() {
+    return this.textEditor.getWrapperElement();
+  }
   private changingValue = false;
   private debouncedValueUpdater = debounce(() => {
     this.changingValue = true;
@@ -65,14 +67,15 @@ export class ShaderCodeWidget extends RefCounted {
       this.setValidState(undefined);
       this.debouncedValueUpdater();
     });
-    this.registerSignalBinding(this.state.fragmentMain.changed.add(() => {
+    this.registerDisposer(this.state.fragmentMain.changed.add(() => {
       if (!this.changingValue) {
         this.textEditor.setValue(this.state.fragmentMain.value);
       }
     }));
     this.element.classList.add('neuroglancer-shader-code-widget');
-    this.registerSignalBinding(
-        this.state.shaderError.changed.add(() => { this.updateErrorState(); }));
+    this.registerDisposer(this.state.shaderError.changed.add(() => {
+      this.updateErrorState();
+    }));
     this.updateErrorState();
   }
 

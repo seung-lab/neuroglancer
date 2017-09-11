@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
-import {DataType, VolumeChunkSpecification} from 'neuroglancer/sliceview/base';
-import {ChunkFormatHandler, registerChunkFormatHandler, VolumeChunkSource} from 'neuroglancer/sliceview/frontend';
 import {SingleTextureChunkFormat, SingleTextureVolumeChunk} from 'neuroglancer/sliceview/single_texture_chunk_format';
+import {DataType, VolumeChunkSpecification} from 'neuroglancer/sliceview/volume/base';
+import {VolumeChunkSource} from 'neuroglancer/sliceview/volume/frontend';
+import {ChunkFormatHandler, registerChunkFormatHandler} from 'neuroglancer/sliceview/volume/frontend';
 import {TypedArray, TypedArrayConstructor} from 'neuroglancer/util/array';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {vec2, vec3, vec3Key} from 'neuroglancer/util/geom';
@@ -43,10 +44,11 @@ class TextureLayout extends RefCounted {
 
   static get(gl: GL, chunkDataSize: vec3, texelsPerElement: number, numChannels: number) {
     return gl.memoize.get(
-        `sliceview.UncompressedTextureLayout:${vec3Key(chunkDataSize)},${texelsPerElement},${numChannels}`,
+        `sliceview.UncompressedTextureLayout:${vec3Key(chunkDataSize)},` +
+            `${texelsPerElement},${numChannels}`,
         () => new TextureLayout(gl, chunkDataSize, texelsPerElement, numChannels));
   }
-};
+}
 
 export class ChunkFormat extends SingleTextureChunkFormat<TextureLayout> {
   texelsPerElement: number;
@@ -117,7 +119,7 @@ ${shaderType} getDataValue (int channelIndex) {
   setTextureData(gl: GL, textureLayout: TextureLayout, data: TypedArray) {
     setOneDimensionalTextureData(gl, textureLayout, this, data);
   }
-};
+}
 
 interface Source extends VolumeChunkSource {
   chunkFormatHandler: UncompressedChunkFormatHandler;
@@ -163,7 +165,7 @@ export class UncompressedVolumeChunk extends SingleTextureVolumeChunk<Uint8Array
     }
     throw new Error('Invalid data type: ' + dataType);
   }
-};
+}
 
 export class UncompressedChunkFormatHandler extends RefCounted implements ChunkFormatHandler {
   chunkFormat: ChunkFormat;
@@ -176,8 +178,10 @@ export class UncompressedChunkFormatHandler extends RefCounted implements ChunkF
         this.registerDisposer(this.chunkFormat.getTextureLayout(gl, spec.chunkDataSize));
   }
 
-  getChunk(source: VolumeChunkSource, x: any) { return new UncompressedVolumeChunk(source, x); }
-};
+  getChunk(source: VolumeChunkSource, x: any) {
+    return new UncompressedVolumeChunk(source, x);
+  }
+}
 
 registerChunkFormatHandler((gl: GL, spec: VolumeChunkSpecification) => {
   if (spec.compressedSegmentationBlockSize == null) {

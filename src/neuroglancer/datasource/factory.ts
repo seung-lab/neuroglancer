@@ -17,10 +17,12 @@
 import {ChunkManager} from 'neuroglancer/chunk_manager/frontend';
 import {MeshSource} from 'neuroglancer/mesh/frontend';
 import {SkeletonSource} from 'neuroglancer/skeleton/frontend';
-import {VolumeType} from 'neuroglancer/sliceview/base';
-import {MultiscaleVolumeChunkSource} from 'neuroglancer/sliceview/frontend';
+import {VectorGraphicsType} from 'neuroglancer/sliceview/vector_graphics/base';
+import {MultiscaleVectorGraphicsChunkSource} from 'neuroglancer/sliceview/vector_graphics/frontend';
+import {VolumeType} from 'neuroglancer/sliceview/volume/base';
+import {MultiscaleVolumeChunkSource} from 'neuroglancer/sliceview/volume/frontend';
+import {CancellationToken, uncancelableToken} from 'neuroglancer/util/cancellation';
 import {applyCompletionOffset, CompletionWithDescription} from 'neuroglancer/util/completion';
-import {CancellablePromise, cancellableThen} from 'neuroglancer/util/promise';
 
 export type Completion = CompletionWithDescription;
 
@@ -68,16 +70,27 @@ export interface GetVolumeOptions {
   volumeType?: VolumeType;
 }
 
+export interface GetVectorGraphicsOptions { vectorGraphicsType?: VectorGraphicsType; }
+
 export interface DataSourceFactory {
   description?: string;
-  getVolume?: (chunkManager: ChunkManager, path: string, options: GetVolumeOptions) =>
-      Promise<MultiscaleVolumeChunkSource>| MultiscaleVolumeChunkSource;
-  getMeshSource?: (chunkManager: ChunkManager, path: string) => Promise<MeshSource>| MeshSource;
+  getVolume?:
+      (chunkManager: ChunkManager, path: string, options: GetVolumeOptions,
+       cancellationToken:
+           CancellationToken) => Promise<MultiscaleVolumeChunkSource>| MultiscaleVolumeChunkSource;
+  getVectorGraphicsSource?:
+      (chunkManager: ChunkManager, path: string, options: GetVectorGraphicsOptions,
+       cancellationToken: CancellationToken) =>
+          Promise<MultiscaleVectorGraphicsChunkSource>| MultiscaleVectorGraphicsChunkSource;
+  getMeshSource?:
+      (chunkManager: ChunkManager, path: string,
+       cancellationToken: CancellationToken) => Promise<MeshSource>| MeshSource;
   getSkeletonSource?:
-      (chunkManager: ChunkManager, path: string) => Promise<SkeletonSource>| SkeletonSource;
-
+      (chunkManager: ChunkManager, path: string,
+       cancellationToken: CancellationToken) => Promise<SkeletonSource>| SkeletonSource;
   volumeCompleter?:
-      (value: string, chunkManager: ChunkManager) => CancellablePromise<CompletionResult>;
+      (value: string, chunkManager: ChunkManager,
+       cancellationToken: CancellationToken) => Promise<CompletionResult>;
 
   /**
    * Returns a suggested layer name for the given volume source.
@@ -112,23 +125,43 @@ function getDataSource(url: string): [DataSourceFactory, string, string] {
   return [factory, m[2], dataSource];
 }
 
-export function getVolume(chunkManager: ChunkManager, url: string, options: GetVolumeOptions = {}) {
+export function getVolume(
+    chunkManager: ChunkManager, url: string, options: GetVolumeOptions = {},
+    cancellationToken = uncancelableToken) {
   let [factories, path] = getDataSource(url);
-  return Promise.resolve(factories.getVolume!(chunkManager, path, options));
+  return new Promise<MultiscaleVolumeChunkSource>(resolve => {
+    resolve(factories.getVolume!(chunkManager, path, options, cancellationToken));
+  });
 }
 
-export function getMeshSource(chunkManager: ChunkManager, url: string) {
+export function getVectorGraphicsSource(
+    chunkManager: ChunkManager, url: string, options: GetVectorGraphicsOptions = {},
+    cancellationToken = uncancelableToken) {
   let [factories, path] = getDataSource(url);
-  return Promise.resolve(factories.getMeshSource!(chunkManager, path));
+  return new Promise<MultiscaleVectorGraphicsChunkSource>(resolve => {
+    resolve(factories.getVectorGraphicsSource!(chunkManager, path, options, cancellationToken));
+  });
 }
 
-export function getSkeletonSource(chunkManager: ChunkManager, url: string) {
+export function getMeshSource(
+    chunkManager: ChunkManager, url: string, cancellationToken = uncancelableToken) {
   let [factories, path] = getDataSource(url);
-  return Promise.resolve(factories.getSkeletonSource!(chunkManager, path));
+  return new Promise<MeshSource>(resolve => {
+    resolve(factories.getMeshSource!(chunkManager, path, cancellationToken));
+  });
+}
+
+export function getSkeletonSource(
+    chunkManager: ChunkManager, url: string, cancellationToken = uncancelableToken) {
+  let [factories, path] = getDataSource(url);
+  return new Promise<SkeletonSource>(resolve => {
+    resolve(factories.getSkeletonSource!(chunkManager, path, cancellationToken));
+  });
 }
 
 export function volumeCompleter(
-    url: string, chunkManager: ChunkManager): CancellablePromise<CompletionResult> {
+    url: string, chunkManager: ChunkManager,
+    cancellationToken = uncancelableToken): Promise<CompletionResult> {
   // Check if url matches a protocol.  Note that protocolPattern always matches.
   let protocolMatch = url.match(protocolPattern)!;
   let protocol = protocolMatch[1];
@@ -147,12 +180,11 @@ export function volumeCompleter(
   if (factory !== undefined) {
     let subCompleter = factory.volumeCompleter;
     if (subCompleter !== undefined) {
-      return cancellableThen(
-          subCompleter(protocolMatch[2], chunkManager),
-          completions => applyCompletionOffset(protocol.length + 3, completions));
+      return subCompleter(protocolMatch[2], chunkManager, cancellationToken)
+          .then(completions => applyCompletionOffset(protocol.length + 3, completions));
     }
   }
-  return Promise.reject<CompletionResult|null>(null);
+  return Promise.reject<CompletionResult>(null);
 }
 
 export function suggestLayerName(url: string) {

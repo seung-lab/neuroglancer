@@ -2,7 +2,7 @@
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {removeFromParent} from 'neuroglancer/util/dom';
 import {Uint64} from 'neuroglancer/util/uint64';
-import {Signal} from 'signals';
+import {NullarySignal} from 'neuroglancer/util/signal'
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
 import {StatusMessage} from 'neuroglancer/status';
 
@@ -17,7 +17,7 @@ export class SemanticEntryWidget extends RefCounted {
   get segmentColorHash() { return this.displayState.segmentColorHash; }
 
   element = document.createElement('div');
-  semanticUpdated = new Signal();
+  semanticUpdated = new NullarySignal();
   input: any;
   ul: any;
   private items = new Array<ItemElement>();
@@ -43,8 +43,8 @@ export class SemanticEntryWidget extends RefCounted {
     this.input = element.querySelector('input');
     this.ul = element.querySelector('ul');
     
-    this.registerSignalBinding(
-        displayState.segmentColorHash.changed.add(this.handleColorChanged, this));
+    this.registerDisposer(
+        displayState.segmentColorHash.changed.add(this.handleColorChanged));
 
     this.registerEventListener(form, 'submit', (event: Event) => {
       event.preventDefault();
@@ -128,11 +128,11 @@ export class SemanticEntryWidget extends RefCounted {
     itemElement.style.backgroundColor = this.segmentColorHash.computeCssColor(new Uint64(idx));
   }
 
-  private handleColorChanged() {
+  private handleColorChanged = () => {
     for (var i = this.items.length - 1; i >= 0; i--) {
       this.setItemColor(i, this.items[i]);
     }
-  }
+  };
 
   disposed() {
     removeFromParent(this.element);

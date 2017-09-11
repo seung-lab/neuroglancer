@@ -14,10 +14,16 @@
  * limitations under the License.
  */
 
-import {UseCount} from 'neuroglancer/util/use_count';
-import {SharedObject} from 'neuroglancer/worker_rpc';
+/**
+ * @file Convenience interface for creating TrackableValue instances designed to represent alpha
+ * (opacity) values.
+ */
 
-export class SharedObjectWithVisibilityCount extends SharedObject {
-  constructor(public visibilityCount = new UseCount()) { super(); }
+import {TrackableValue} from 'neuroglancer/trackable_value';
+import {verifyFiniteFloat} from 'neuroglancer/util/json';
+
+export type TrackableFiniteFloat = TrackableValue<number>;
+
+export function trackableFiniteFloat(initialValue = 1.0) {
+  return new TrackableValue<number>(initialValue, verifyFiniteFloat);
 }
-export const ON_VISIBILITY_CHANGE_METHOD_ID = 'shared_visibility_count.onVisibilityChange';

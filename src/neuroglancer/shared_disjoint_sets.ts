@@ -16,9 +16,9 @@
 
 import {DisjointUint64Sets} from 'neuroglancer/util/disjoint_sets';
 import {parseArray} from 'neuroglancer/util/json';
+import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {registerRPC, registerSharedObject, RPC, SharedObjectCounterpart} from 'neuroglancer/worker_rpc';
-import {Signal} from 'signals';
 
 const RPC_TYPE_ID = 'DisjointUint64Sets';
 const ADD_METHOD_ID = 'DisjointUint64Sets.add';
@@ -29,7 +29,7 @@ const CLEAR_METHOD_ID = 'DisjointUint64Sets.clear';
 @registerSharedObject(RPC_TYPE_ID)
 export class SharedDisjointUint64Sets extends SharedObjectCounterpart {
   disjointSets = new DisjointUint64Sets();
-  changed = new Signal();
+  changed = new NullarySignal();
 
   static makeWithCounterpart(rpc: RPC) {
     let obj = new this();
@@ -100,11 +100,17 @@ export class SharedDisjointUint64Sets extends SharedObjectCounterpart {
     }
   }
 
-  setElements(a: Uint64) { return this.disjointSets.setElements(a); }
+  setElements(a: Uint64) {
+    return this.disjointSets.setElements(a);
+  }
 
-  get size() { return this.disjointSets.size; }
+  get size() {
+    return this.disjointSets.size;
+  }
 
-  toJSON() { return this.disjointSets.toJSON(); }
+  toJSON() {
+    return this.disjointSets.toJSON();
+  }
 
   addSets(obj: any) {
     if (obj !== undefined) {

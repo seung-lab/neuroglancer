@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {mat4, quat, vec2, vec3, vec4} from 'gl-matrix';
+import {mat4, quat, vec3} from 'gl-matrix';
 
 export {mat2, mat3, mat4, quat, vec2, vec3, vec4} from 'gl-matrix';
 
@@ -24,7 +24,7 @@ export const AXES_NAMES = ['x', 'y', 'z'];
 
 export class BoundingBox {
   constructor(public lower: vec3, public upper: vec3) {}
-};
+}
 
 export const kAxes = [
   vec3.fromValues(1, 0, 0),
@@ -141,7 +141,7 @@ export function effectiveScalingFactorFromMat4(out: vec3, m: mat4) {
 }
 
 export function translationRotationScaleZReflectionToMat4(
-  out: mat4, translation: vec3, rotation: quat, scale: vec3, zReflection: number) {
+    out: mat4, translation: vec3, rotation: quat, scale: vec3, zReflection: number) {
   const temp: Float32Array = out;
   out[0] = scale[0];
   out[1] = scale[1];

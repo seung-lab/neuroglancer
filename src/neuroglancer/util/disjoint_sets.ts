@@ -249,7 +249,9 @@ export class DisjointUint64Sets {
     return true;
   }
 
-  get size() { return this.map.size; }
+  get size() {
+    return this.map.size;
+  }
 
   * mappings(temp = <[Uint64, Uint64]>new Array<Uint64>(2)) {
     for (let element of this.map.values()) {
@@ -259,7 +261,9 @@ export class DisjointUint64Sets {
     }
   }
 
-  [Symbol.iterator]() { return this.mappings(); }
+  [Symbol.iterator]() {
+    return this.mappings();
+  }
 
   /**
    * Returns an array of arrays of strings, where the arrays contained in the outer array correspond
@@ -282,4 +286,4 @@ export class DisjointUint64Sets {
     sets.sort((a, b) => Uint64.compare(a[0], b[0]));
     return sets.map(set => set.map(element => element.toString()));
   }
-};
+}

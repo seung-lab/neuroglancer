@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {DataType, VolumeType} from 'neuroglancer/sliceview/base';
+import {DataType, VolumeType} from 'neuroglancer/sliceview/volume/base';
 import {mat4, quat, vec3} from 'neuroglancer/util/geom';
 
 export const GET_NIFTI_VOLUME_INFO_RPC_ID = 'nifti/getNiftiVolumeInfo';
@@ -59,5 +59,7 @@ export class VolumeSourceParameters {
 
   static RPC_ID = 'nifti/VolumeChunkSource';
 
-  static stringify(p: VolumeSourceParameters) { return `nifti:${p.url}`; }
+  static stringify(p: VolumeSourceParameters) {
+    return `nifti:${p.url}`;
+  }
 }

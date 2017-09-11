@@ -28,27 +28,57 @@ from . import volume
 
 class Layer(object):
     def __init__(self,
-                 volume_type,
                  data=None,
                  name=None,
+                 default_voxel_size=(1, 1, 1),
+                 voxel_size=None,
+                 voxel_offset=None,
+                 offset=None,
                  shader=None,
+                 skeleton_shader=None,
                  visible=None,
+                 layer_type=None,
                  **kwargs):
-        
-        self.volume = volume.create_volume(
-            volume_type=volume_type,
-            data=data, **kwargs)
+
+        self.data = data
         self.name = name
-        extra_args = self.extra_args = self.volume.extra_args()
+        self.layer_type = layer_type
+        if self.layer_type is None or self.layer_type in ('image', 'segmentation'):
+            if offset is None and voxel_offset is None:
+                if hasattr(data, 'attrs'):
+                    if 'resolution' in data.attrs:
+                        voxel_size = tuple(data.attrs['resolution'])[::-1]
+                    if 'offset' in data.attrs:
+                        offset = tuple(data.attrs['offset'])[::-1]
+            if voxel_size is None:
+                voxel_size = default_voxel_size
+            self.volume = volume.ServedVolume(
+                data=data, offset=offset, voxel_offset=voxel_offset, voxel_size=voxel_size, **kwargs)
+
+        extra_args = self.extra_args = dict()
         if shader is not None:
             extra_args['shader'] = shader
+        if skeleton_shader is not None:
+            extra_args['skeletonShader'] = skeleton_shader
         if visible is not None:
             extra_args['visible'] = visible
 
     def get_layer_spec(self, server_url):
-        return dict(type=self.volume.volume_type,
-                    source='python://%s/%s' % (server_url, self.volume.token),
-                    **self.extra_args)
+
+        if self.layer_type in  ('point','synapse','line'):
+            spec = dict(type=self.layer_type,
+                        points=self.data)
+        else:
+            spec = dict(type=self.volume.volume_type,
+                        source='python://%s/%s' % (server_url, self.volume.token),
+                        **self.extra_args)
+
+            if self.volume.skeletons is not None:
+                spec['skeletons'] = 'python://%s/%s?%s' % (
+                    server_url, self.volume.token,
+                    json.dumps(self.volume.skeletons.get_vertex_attributes_spec()))
+                spec['mesh'] = None
+        return spec
 
 
 class BaseViewer(object):
@@ -57,7 +87,11 @@ class BaseViewer(object):
         self.layers = []
 
     def add(self, *args, **kwargs):
-        layer = Layer(*args, **kwargs)
+        if self.voxel_size is None:
+            default_voxel_size = (1, 1, 1)
+        else:
+            default_voxel_size = self.voxel_size
+        layer = Layer(*args, default_voxel_size=default_voxel_size, **kwargs)
         self.layers.append(layer)
 
     def get_json_state(self):
@@ -65,7 +99,8 @@ class BaseViewer(object):
         layers = state['layers'] = collections.OrderedDict()
         specified_names = set(layer.name for layer in self.layers)
         for layer in self.layers:
-            self.register_volume(layer.volume)
+            if hasattr(layer,'volume'):
+                self.register_volume(layer.volume)
             name = layer.name
             if name is None:
                 base_name = layer.volume.volume_type
@@ -76,12 +111,10 @@ class BaseViewer(object):
                     suffix += 1
                 specified_names.add(name)
             layers[name] = layer.get_layer_spec(self.get_server_url())
-            
         if self.voxel_size is not None:
             state['navigation'] = collections.OrderedDict()
             state['navigation']['pose'] = collections.OrderedDict()
             state['navigation']['pose']['voxelSize'] = list(self.voxel_size)
-
         return state
 
     def register_volume(self, vol):

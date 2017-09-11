@@ -29,15 +29,19 @@ import {overlaysOpen} from 'neuroglancer/overlay';
 import {PositionStatusPanel} from 'neuroglancer/position_status_panel';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {TrackableValue} from 'neuroglancer/trackable_value';
-import {registerTrackable, setStateServerURL} from 'neuroglancer/url_hash_state';
 import {RefCounted} from 'neuroglancer/util/disposable';
+import {removeFromParent} from 'neuroglancer/util/dom';
 import {vec3} from 'neuroglancer/util/geom';
-import {GlobalKeyboardShortcutHandler, KeySequenceMap} from 'neuroglancer/util/keyboard_shortcut_handler';
+import {globalKeyboardHandlerStack, KeySequenceMap} from 'neuroglancer/util/keyboard_shortcut_handler';
+import {NullarySignal} from 'neuroglancer/util/signal';
+import {CompoundTrackable} from 'neuroglancer/util/trackable';
 import {DataDisplayLayout, LAYOUTS} from 'neuroglancer/viewer_layouts';
-import {ViewerState} from 'neuroglancer/viewer_state';
+import {ViewerState, VisibilityPrioritySpecification} from 'neuroglancer/viewer_state';
+import {WatchableVisibilityPriority} from 'neuroglancer/visibility_priority/frontend';
+import {GL} from 'neuroglancer/webgl/context';
 import {RPC} from 'neuroglancer/worker_rpc';
-import {Signal} from 'signals';
 import {StatusMessage} from 'neuroglancer/status';
+
 
 require('./viewer.css');
 require('./help_button.css');
@@ -56,10 +60,42 @@ export function validateLayoutName(obj: any) {
   return layout[0];
 }
 
-export function validateStateServer(url: string) {
-  setStateServerURL(url);
-  return url;
+export class DataManagementContext extends RefCounted {
+  worker = new Worker('chunk_worker.bundle.js');
+  chunkQueueManager = this.registerDisposer(new ChunkQueueManager(new RPC(this.worker), this.gl, {
+    gpuMemory: new AvailableCapacity(1e6, 1e9),
+    systemMemory: new AvailableCapacity(1e7, 2e9),
+    download: new AvailableCapacity(32, Number.POSITIVE_INFINITY)
+  }));
+  chunkManager = this.registerDisposer(new ChunkManager(this.chunkQueueManager));
+
+  get rpc(): RPC {
+    return this.chunkQueueManager.rpc!;
+  }
+
+  constructor(public gl: GL) {
+    super();
+    this.chunkQueueManager.registerDisposer(() => this.worker.terminate());
+  }
 }
+
+export interface UIOptions {
+  showHelpButton: boolean;
+  showLayerDialog: boolean;
+  showLayerPanel: boolean;
+  showLocation: boolean;
+}
+
+export interface ViewerOptions extends UIOptions, VisibilityPrioritySpecification {
+  dataContext: DataManagementContext;
+}
+
+const defaultViewerOptions = {
+  showHelpButton: true,
+  showLayerDialog: true,
+  showLayerPanel: true,
+  showLocation: true,
+};
 
 export class Viewer extends RefCounted implements ViewerState {
   navigationState = this.registerDisposer(new NavigationState());
@@ -70,87 +106,110 @@ export class Viewer extends RefCounted implements ViewerState {
   dataDisplayLayout: DataDisplayLayout;
   showScaleBar = new TrackableBoolean(true, true);
   showPerspectiveSliceViews = new TrackableBoolean(true, true);
-  stateServerURL= '';
+
   layerPanel: LayerPanel;
   layerSelectedValues =
       this.registerDisposer(new LayerSelectedValues(this.layerManager, this.mouseState));
-  worker = new RPC(new Worker('chunk_worker.bundle.js'));
-  resetInitiated = new Signal();
+  resetInitiated = new NullarySignal();
 
-  chunkQueueManager = new ChunkQueueManager(this.worker, this.display.gl, {
-    gpuMemory: new AvailableCapacity(1e6, 1e9),
-    systemMemory: new AvailableCapacity(1e7, 2e9),
-    download: new AvailableCapacity(32, Number.POSITIVE_INFINITY)
-  });
-  chunkManager = new ChunkManager(this.chunkQueueManager);
+  get chunkManager() {
+    return this.dataContext.chunkManager;
+  }
+  get chunkQueueManager() {
+    return this.dataContext.chunkQueueManager;
+  }
+
   keyMap = new KeySequenceMap();
   keyCommands = new Map<string, (this: Viewer) => void>();
-  layerSpecification = new LayerListSpecification(
-      this.layerManager, this.chunkManager, this.worker, this.layerSelectedValues,
-      this.navigationState.voxelSize);
+  layerSpecification: LayerListSpecification;
   layoutName = new TrackableValue<string>(LAYOUTS[0][0], validateLayoutName);
-  stateServer = new TrackableValue<string>(this.stateServerURL, validateStateServer);
 
-  constructor(public display: DisplayContext) {
+  state = new CompoundTrackable();
+
+  private options: ViewerOptions;
+
+  get dataContext() {
+    return this.options.dataContext;
+  }
+  get visibility() {
+    return this.options.visibility;
+  }
+
+  visible = true;
+
+  constructor(public display: DisplayContext, options: Partial<ViewerOptions> = {}) {
     super();
 
-    // Delay hash update after each redraw to try to prevent noticeable lag in Chrome.
-    this.registerSignalBinding(display.updateStarted.add(this.onUpdateDisplay, this));
-    this.registerSignalBinding(display.updateFinished.add(this.onUpdateDisplayFinished, this));
+    const {
+      dataContext = new DataManagementContext(display.gl),
+      visibility = new WatchableVisibilityPriority(WatchableVisibilityPriority.VISIBLE),
+    } = options;
 
-    // Prevent contextmenu on rightclick, as this inteferes with our use
-    // of the right mouse button.
-    this.registerEventListener(document, 'contextmenu', (e: Event) => {
-      e.preventDefault();
-      return false;
-    });
+    this.registerDisposer(dataContext);
 
+    this.options = {...defaultViewerOptions, ...options, dataContext, visibility};
 
-    registerTrackable('layers', this.layerSpecification);
-    registerTrackable('navigation', this.navigationState);
-    registerTrackable('showAxisLines', this.showAxisLines);
-    registerTrackable('showScaleBar', this.showScaleBar);
+    this.layerSpecification = new LayerListSpecification(
+        this.layerManager, this.chunkManager, this.layerSelectedValues,
+        this.navigationState.voxelSize);
 
-    registerTrackable('perspectiveOrientation', this.perspectiveNavigationState.pose.orientation);
-    registerTrackable('perspectiveZoom', this.perspectiveNavigationState.zoomFactor);
-    registerTrackable('showSlices', this.showPerspectiveSliceViews);
-    registerTrackable('layout', this.layoutName);
-    registerTrackable('stateURL', this.stateServer);
-   
-    this.registerSignalBinding(
-        this.navigationState.changed.add(this.handleNavigationStateChanged, this));
+    this.registerDisposer(display.updateStarted.add(() => {
+      this.onUpdateDisplay();
+    }));
+    this.registerDisposer(display.updateFinished.add(() => {
+      this.onUpdateDisplayFinished();
+    }));
+
+    const {state} = this;
+    state.add('layers', this.layerSpecification);
+    state.add('navigation', this.navigationState);
+    state.add('showAxisLines', this.showAxisLines);
+    state.add('showScaleBar', this.showScaleBar);
+
+    state.add('perspectiveOrientation', this.perspectiveNavigationState.pose.orientation);
+    state.add('perspectiveZoom', this.perspectiveNavigationState.zoomFactor);
+    state.add('showSlices', this.showPerspectiveSliceViews);
+    state.add('layout', this.layoutName);
+
+    this.registerDisposer(this.navigationState.changed.add(() => {
+      this.handleNavigationStateChanged();
+    }));
 
     this.layerManager.initializePosition(this.navigationState.position);
 
-    this.registerSignalBinding(
+    this.registerDisposer(
         this.layerSpecification.voxelCoordinatesSet.add((voxelCoordinates: vec3) => {
           this.navigationState.position.setVoxelCoordinates(voxelCoordinates);
         }));
 
     // Debounce this call to ensure that a transient state does not result in the layer dialog being
     // shown.
-    this.layerManager.layersChanged.add(this.registerCancellable(debounce(() => {
-      if (this.layerManager.managedLayers.length === 0) {
+    const maybeResetState = this.registerCancellable(debounce(() => {
+      if (!this.wasDisposed && this.layerManager.managedLayers.length === 0) {
         // No layers, reset state.
         this.navigationState.reset();
         this.perspectiveNavigationState.pose.orientation.reset();
         this.perspectiveNavigationState.zoomFactor.reset();
         this.resetInitiated.dispatch();
-        if (!overlaysOpen) {
+        if (!overlaysOpen && this.options.showLayerDialog && this.visibility.visible) {
           new LayerDialog(this.layerSpecification);
         }
       }
-    })));
+    }));
+    this.layerManager.layersChanged.add(maybeResetState);
+    maybeResetState();
 
-    this.registerSignalBinding(this.chunkQueueManager.visibleChunksChanged.add(
-        () => { this.layerSelectedValues.handleLayerChange(); }));
+    this.registerDisposer(this.dataContext.chunkQueueManager.visibleChunksChanged.add(() => {
+      this.layerSelectedValues.handleLayerChange();
+    }));
 
-    this.chunkQueueManager.visibleChunksChanged.add(display.scheduleRedraw, display);
+    this.registerDisposer(this.dataContext.chunkQueueManager.visibleChunksChanged.add(() => {
+      if (this.visible) {
+        display.scheduleRedraw();
+      }
+    }));
 
     this.makeUI();
-
-    this.registerDisposer(
-        new GlobalKeyboardShortcutHandler(this.keyMap, this.onKeyCommand.bind(this)));
 
     this.layoutName.changed.add(() => {
       if (this.dataDisplayLayout !== undefined) {
@@ -161,8 +220,12 @@ export class Viewer extends RefCounted implements ViewerState {
     });
 
     let {keyCommands} = this;
-    keyCommands.set('toggle-layout', function() { this.toggleLayout(); });
-    keyCommands.set('snap', function() { this.navigationState.pose.snap(); });
+    keyCommands.set('toggle-layout', function() {
+      this.toggleLayout();
+    });
+    keyCommands.set('snap', function() {
+      this.navigationState.pose.snap();
+    });
     keyCommands.set('add-layer', function() {
       this.layerPanel.addLayerMenu();
       return true;
@@ -180,20 +243,22 @@ export class Viewer extends RefCounted implements ViewerState {
       });
     }
 
-    for (let command of ['toggle-shatter-equivalencies', 'merge-selection', 'recolor', 'clear-segments', 'toggle-semantic-mode']) {
-      keyCommands.set(command, function() { this.layerManager.invokeAction(command); });
+    for (let command of ['recolor', 'clear-segments','merge-selection',
+      'toggle-shatter-equivalencies','toggle-semantic-mode']) {
+      keyCommands.set(command, function() {
+        this.layerManager.invokeAction(command);
+      });
     }
 
-    keyCommands.set('toggle-axis-lines', function() { this.showAxisLines.toggle(); });
-    keyCommands.set('toggle-scale-bar', function() { this.showScaleBar.toggle(); });
-    this.keyCommands.set(
-        'toggle-show-slices', function() { this.showPerspectiveSliceViews.toggle(); });
-
-    // This needs to happen after the global keyboard shortcut handler for the viewer has been
-    // registered, so that it has priority.
-    if (this.layerManager.managedLayers.length === 0) {
-      new LayerDialog(this.layerSpecification);
-    }
+    keyCommands.set('toggle-axis-lines', function() {
+      this.showAxisLines.toggle();
+    });
+    keyCommands.set('toggle-scale-bar', function() {
+      this.showScaleBar.toggle();
+    });
+    this.keyCommands.set('toggle-show-slices', function() {
+      this.showPerspectiveSliceViews.toggle();
+    });
 
     keyCommands.set('two-point-split', function () { 
       this.mouseState.toggleSplit(); 
@@ -205,34 +270,81 @@ export class Viewer extends RefCounted implements ViewerState {
        StatusMessage.displayText('Split Mode Activated.'); 
       }
     });
-
   }
 
   private makeUI() {
-    let {display} = this;
+    let {display, options} = this;
     let gridContainer = document.createElement('div');
     gridContainer.setAttribute('class', 'gllayoutcontainer noselect');
     let {container} = display;
     container.appendChild(gridContainer);
+    this.registerDisposer(() => removeFromParent(gridContainer));
 
-    L.box('column', [
-      L.box(
-          'row',
-          [
-            L.withFlex(1, element => new PositionStatusPanel(element, this)),
-            element => {
-              let button = document.createElement('button');
-              button.className = 'help-button';
-              button.textContent = '?';
-              button.title = 'Help';
-              element.appendChild(button);
-              this.registerEventListener(button, 'click', () => { this.showHelpDialog(); });
-            },
-          ]),
-      element => { this.layerPanel = new LayerPanel(element, this.layerSpecification); },
-      L.withFlex(1, element => { this.createDataDisplayLayout(element); }),
-    ])(gridContainer);
+    let uiElements: L.Handler[] = [];
+
+    if (options.showHelpButton || options.showLocation) {
+      let rowElements: L.Handler[] = [];
+      if (options.showLocation) {
+        rowElements.push(L.withFlex(1, element => new PositionStatusPanel(element, this)));
+      }
+      if (options.showHelpButton) {
+        rowElements.push(element => {
+          let button = document.createElement('button');
+          button.className = 'help-button';
+          button.textContent = '?';
+          button.title = 'Help';
+          element.appendChild(button);
+          this.registerEventListener(button, 'click', () => {
+            this.showHelpDialog();
+          });
+        });
+      }
+      uiElements.push(L.box('row', rowElements));
+    }
+
+    if (options.showLayerPanel) {
+      uiElements.push(element => {
+        this.layerPanel = new LayerPanel(element, this.layerSpecification);
+      });
+    }
+
+    uiElements.push(L.withFlex(1, element => {
+      this.createDataDisplayLayout(element);
+    }));
+
+    L.box('column', uiElements)(gridContainer);
     this.display.onResize();
+
+    let keyboardHandlerDisposer: (() => void)|undefined;
+
+    const updateVisibility = () => {
+      const shouldBeVisible = this.visibility.visible;
+      if (shouldBeVisible) {
+        if (keyboardHandlerDisposer === undefined) {
+          keyboardHandlerDisposer =
+              globalKeyboardHandlerStack.push(this.keyMap, this.onKeyCommand.bind(this));
+        }
+        if (!this.visible) {
+          gridContainer.style.visibility = 'inherit';
+        }
+      } else if (!shouldBeVisible && this.visible) {
+        if (keyboardHandlerDisposer !== undefined) {
+          keyboardHandlerDisposer!();
+          keyboardHandlerDisposer = undefined;
+        }
+        if (this.visible) {
+          gridContainer.style.visibility = 'hidden';
+        }
+      }
+      this.visible = shouldBeVisible;
+    };
+    updateVisibility();
+    this.registerDisposer(() => {
+      if (keyboardHandlerDisposer !== undefined) {
+        keyboardHandlerDisposer();
+      }
+    });
+    this.registerDisposer(this.visibility.changed.add(updateVisibility));
   }
 
   createDataDisplayLayout(element: HTMLElement) {
@@ -247,15 +359,25 @@ export class Viewer extends RefCounted implements ViewerState {
     this.layoutName.value = newLayout[0];
   }
 
-  showHelpDialog() { new KeyBindingHelpDialog(this.keyMap); }
-
-  get gl() { return this.display.gl; }
-
-  onUpdateDisplay() {
-    this.chunkQueueManager.chunkUpdateDeadline = null;
+  showHelpDialog() {
+    new KeyBindingHelpDialog(this.keyMap);
   }
 
-  onUpdateDisplayFinished() { this.mouseState.updateIfStale(); }
+  get gl() {
+    return this.display.gl;
+  }
+
+  onUpdateDisplay() {
+    if (this.visible) {
+      this.dataContext.chunkQueueManager.chunkUpdateDeadline = null;
+    }
+  }
+
+  onUpdateDisplayFinished() {
+    if (this.visible) {
+      this.mouseState.updateIfStale();
+    }
+  }
 
   private onKeyCommand(action: string) {
     let command = this.keyCommands.get(action);
@@ -270,10 +392,12 @@ export class Viewer extends RefCounted implements ViewerState {
   }
 
   private handleNavigationStateChanged() {
-    let {chunkQueueManager} = this;
-    if (chunkQueueManager.chunkUpdateDeadline === null) {
-      chunkQueueManager.chunkUpdateDeadline = Date.now() + 10;
+    if (this.visible) {
+      let {chunkQueueManager} = this.dataContext;
+      if (chunkQueueManager.chunkUpdateDeadline === null) {
+        chunkQueueManager.chunkUpdateDeadline = Date.now() + 10;
+      }
     }
     this.mouseState.stale = true;
   }
-};
+}
