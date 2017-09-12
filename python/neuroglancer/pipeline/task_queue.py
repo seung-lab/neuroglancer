@@ -12,8 +12,11 @@ import googleapiclient.errors
 import googleapiclient.discovery
 import numpy as np
 
+from cloudvolume.threaded_queue import ThreadedQueue
+
+from cloudvolume.threaded_queue import ThreadedQueue
+
 from neuroglancer.pipeline.secrets import google_credentials, PROJECT_NAME, QUEUE_NAME
-from neuroglancer.pipeline.threaded_queue import ThreadedQueue
 from appengine_queue_api import AppEngineTaskQueue
 
 __all__ = ['RegisteredTask', 'TaskQueue']
@@ -281,7 +284,7 @@ class TaskQueue(ThreadedQueue):
         return self
 
 class MockTaskQueue():
-    def __init__(self, queue_name=''):
+    def __init__(self, queue_name='', queue_server=''):
         pass
 
     def insert(self, task):

@@ -8,15 +8,17 @@ import os
 
 import numpy as np
 from tqdm import tqdm
+from cloudvolume import CloudVolume, Storage
+from cloudvolume.lib import Vec, Bbox, max2, min2, xyzrange, find_closest_divisor
 
 from neuroglancer import downsample_scales, chunks
-from neuroglancer.lib import Vec, Bbox, max2, min2, xyzrange, find_closest_divisor
-from neuroglancer.pipeline import Storage, TaskQueue, MockTaskQueue
+from neuroglancer.pipeline import TaskQueue, MockTaskQueue
 from neuroglancer.pipeline.tasks import (
   BigArrayTask, IngestTask, HyperSquareTask, HyperSquareConsensusTask, 
   MeshTask, MeshManifestTask, DownsampleTask, QuantizeAffinitiesTask, 
-  TransferTask, BossTransferTask, WatershedRemapTask)
-from neuroglancer.pipeline.volumes import HDF5Volume, CloudVolume
+  TransferTask, WatershedRemapTask
+)
+from neuroglancer.pipeline.volumes import HDF5Volume
 
 def create_ingest_task(storage, task_queue):
     """
@@ -145,36 +147,21 @@ def create_meshing_tasks(task_queue, layer_path, mip, shape=Vec(512, 512, 512)):
     task_queue.insert(task)
   task_queue.wait()
 
-def create_transfer_tasks(task_queue, src_layer_path, dest_layer_path, shape=Vec(2048, 2048, 64)):
+def create_transfer_tasks(task_queue, src_layer_path, dest_layer_path, shape=Vec(2048, 2048, 64), skip_downsample=False, fill_missing=False):
   shape = Vec(*shape)
   vol = CloudVolume(src_layer_path)
 
-  create_downsample_scales(dest_layer_path, mip=0, ds_shape=shape)
+  if not skip_downsample:
+    create_downsample_scales(dest_layer_path, mip=0, ds_shape=shape)
 
-  for startpt in tqdm(xyzrange( vol.bounds.minpt, vol.bounds.maxpt, shape ), desc="Inserting Transfer Tasks"):
+  for startpt in tqdm(xyzrange( bounds.minpt, bounds.maxpt, shape ), desc="Inserting Transfer Tasks"):
     task = TransferTask(
       src_path=src_layer_path,
       dest_path=dest_layer_path,
       shape=shape.clone(),
       offset=startpt.clone(),
-    )
-    task_queue.insert(task)
-  task_queue.wait()
-
-def create_boss_transfer_tasks(task_queue, src_layer_path, dest_layer_path, shape=Vec(1024, 1024, 64)):
-  # Note: Weird errors with datatype changing to float64 when requesting 2048,2048,64
-  # 1024,1024,64 worked nicely though.
-  shape = Vec(*shape)
-  vol = CloudVolume(dest_layer_path)
-
-  create_downsample_scales(dest_layer_path, mip=0, ds_shape=shape)
-
-  for startpt in tqdm(xyzrange( vol.bounds.minpt, vol.bounds.maxpt, shape ), desc="Inserting Boss Transfer Tasks"):
-    task = BossTransferTask(
-      src_path=src_layer_path,
-      dest_path=dest_layer_path,
-      shape=shape.clone(),
-      offset=startpt.clone(),
+      skip_downsample=skip_downsample,
+      fill_missing=fill_missing,
     )
     task_queue.insert(task)
   task_queue.wait()
@@ -447,9 +434,9 @@ if __name__ == '__main__':
   dest_path = 'gs://neuroglancer/pinky40_v11/watershed_mst_split_tuning_remap/' 
   map_path = os.path.join(dest_path, 'mst_split_tuning_remap.npy')
   
-  with TaskQueue(queue_name='wms-test-pull-queue') as task_queue:
+  with MockTaskQueue(queue_name='wms-pull-queue', queue_server='pull-queue') as task_queue:
     # create_downsampling_tasks(task_queue, 'gs://neuroglancer/zfish_v0/consensus-2017-07-11/', mip=5, fill_missing=True)
-    create_meshing_tasks(task_queue, src_path, mip=3)
+    # create_meshing_tasks(task_queue, src_path, mip=3)
 
     # create_mesh_manifest_tasks(task_queue, dest_path)
 
@@ -463,12 +450,6 @@ if __name__ == '__main__':
     #   shape=(896, 896, 56),
     # )
 
-    # create_boss_transfer_tasks(task_queue, 
-    #   src_layer_path='boss://BCMID_8973_AIBSID_243774/neuroanatomical_aibs_pu_dataset/neuroanatomical_aibs_pu_dataset_channel',
-    #   dest_layer_path='gs://neuroglancer/pinky100_v0/image',
-    #   shape=Vec(1024,1024,64),
-    # )
-
     # create_quantized_affinity_tasks(task_queue,
     #   src_layer='gs://neuroglancer/zfish_v1/affinitymap',
     #   dest_layer='gs://neuroglancer/zfish_v1/qaffinitymap-x',
@@ -476,10 +457,14 @@ if __name__ == '__main__':
     #   fill_missing=True,
     # )
 
-    # create_transfer_tasks(task_queue,
-    #   src_layer_path='gs://neuroglancer/pinky40_v11/image/', 
-    #   dest_layer_path='gs://neuroglancer/pinky40_v11/image_rechunked/',
-    # )
+    create_transfer_tasks(task_queue,
+      src_layer_path='gs://neuroglancer/pinky40_v11/psdsegs_mst_smc/', 
+      dest_layer_path='boss://pinky40/v7/psdsegs_mst_smc_2_ingest_2',
+      shape=(1024,1024,64),
+      skip_downsample=True,
+      fill_missing=True,
+    )
+
 
     # create_fixup_downsample_tasks(task_queue, 'gs://neuroglancer/pinky40_v11/image/', 
     #   points=[ (66098, 13846, 139) ], mip=5, shape=(128,128,64)) 

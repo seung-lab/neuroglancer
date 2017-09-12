@@ -1,6 +1,9 @@
 #!/usr/bin/python
 
 """
+WARNING: This script is outdated. Try using MeshManifestTasks 
+instead.
+
 This script is an alternative to deploying a cloud task.
 The first step is to download the mesh files:
 

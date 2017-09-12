@@ -5,7 +5,7 @@ import numpy as np
 
 import os
 
-from neuroglancer.pipeline.storage import Storage
+from cloudvolume import Storage
 from neuroglancer.pipeline.task_creation import (upload_build_chunks, create_info_file_from_build,
     create_ingest_task, MockTaskQueue)
 

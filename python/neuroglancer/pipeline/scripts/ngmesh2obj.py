@@ -1,6 +1,9 @@
 #!/use/bin/python
 
 """
+WARNING: This script has been supersceded by the capabilities
+integrated into CloudVolume. Use vol.save_mesh() instead.
+
 This script can be used to generate standard obj files
 from precomputed neuroglancer meshes. This can be useful
 to e.g. provide meshes to 3D graphics artists.

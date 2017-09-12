@@ -1,4 +1,4 @@
-from neuroglancer.pipeline import Storage, CloudVolume
+from cloudvolume import Storage, CloudVolume
 import boto
 from boto.s3.key import Key
 import uuid
