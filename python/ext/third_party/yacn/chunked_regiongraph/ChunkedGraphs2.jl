@@ -1,6 +1,6 @@
 module ChunkedGraphs2
 
-export update!, ChunkedGraph, add_atomic_edge!, add_atomic_vertex!, delete_atomic_edge!, leaves, bfs, add_atomic_vertices!, add_atomic_edges!, get_vertex, leaves, bfs
+export update!, ChunkedGraph, add_atomic_edge!, add_atomic_vertex!, delete_atomic_edge!, add_atomic_vertices!, add_atomic_edges!, get_vertex, leaves, bfs, root
 
 import DataStructures
 using Save

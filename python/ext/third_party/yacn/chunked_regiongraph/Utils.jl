@@ -49,6 +49,10 @@ end
 	return (UInt64(seg_id)) | (UInt64(chunk_id) << 32)
 end
 
+@inline function Label(level, x, y, z, seg_id)
+	return Label(seg_id, ChunkID(level, x, y, z))
+end
+
 @inline function Label(x,y)
 	return Label(UInt32(x),UInt32(y))
 end
