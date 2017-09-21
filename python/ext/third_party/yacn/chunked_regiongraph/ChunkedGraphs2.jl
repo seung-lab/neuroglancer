@@ -313,12 +313,15 @@ function lcG(G, v1::Vertex, v2::Vertex)
 end
 
 function promote!(G,v)
+	"""
+	TODO check we don't call this over max height
+	"""
+	println("promoting $v")
 	c=get_chunk(G,chunk_id(v))
 
 	@assert c.clean
 	@assert v.parent == NULL_LABEL
 	@assert length(MultiGraphs.incident_edges(c.graph,v.label))==0
-	c=get_chunk(G,chunk_id(v))
 	l=unique_label(c.parent)
 	pv=Vertex(l, NULL_LABEL, Label[v.label])
 	v.parent=pv.label
@@ -503,14 +506,17 @@ end
 
 #####Graph operations#####
 
+n_processed=0
 function update!(c::ChunkedGraph)
+	global n_processed
+	n_processed = 0
 	gc_enable(false)
 	update!(get_chunk(c,TOP_ID))
 	println("updated")
 	gc_enable(true)
+
 end
 
-n_processed=0
 
 function print_chunk_id(x::ChunkID)
 	println("$(level(x)), $(map(Int,pos(x)))")
@@ -518,103 +524,113 @@ end
 
 
 function update!(c::Chunk)
-	if !c.clean
-		for s in c.subgraphs
-			update!(s)
-		end
-		println("updating $(level(c.id)), $(map(Int,pos(c.id))), V: +$(length(c.added_vertices))/-$(length(c.deleted_vertices)), E: +$(length(c.added_edges))/-$(length(c.deleted_edges))")
-		global n_processed
-		n_processed+=1
-		println("$n_processed/$(length(c.chunked_graph.graphs))")
-
-		#vertices that are being deleted from c.G
-		dead_dirty_vertices=Set{Vertex}()
-
-		#vertices which need updates
-		dirty_vertices=Set{Vertex}()
-
-		upsize!(c.graph, length(c.added_vertices), length(c.added_edges))
-		upsize!(c.vertices, length(c.added_vertices))
-
-		for v in c.deleted_vertices
-			# for child in v.children
-			#	@assert get_vertex(c.chunked_graph,child).parent==NULL_LABEL
-			# end
-
-			for e in MultiGraphs.incident_edges(c.graph, v.label)
-				push!(dirty_vertices, get_vertex(c.chunked_graph, e[1] === v.label ? e[2] : e[1]))
-			end
-
-			# this should delete all edges incident with v as well
-			MultiGraphs.delete_vertex!(c.graph,v.label)
-			delete!(c.vertices,v.label)
-
-			push!(dead_dirty_vertices, v)
-		end
-
-		for v in c.added_vertices
-			@assert chunk_id(v) == c.id
-			@assert v.parent ==NULL_LABEL
-			@assert !haskey(c.vertices,v.label)
-			MultiGraphs.add_vertex!(c.graph,v.label)
-			c.vertices[v.label]=v
-			push!(dirty_vertices,v)
-		end
-
-		for e in c.deleted_edges
-			u,v=lcG(c.chunked_graph, map(x->get_vertex(c.chunked_graph,x),e)...)
-			@assert chunk_id(u) == chunk_id(c)
-			@assert chunk_id(v) == chunk_id(c)
-			MultiGraphs.delete_edge!(c.graph,u.label,v.label,e)
-			push!(dirty_vertices,u)
-			push!(dirty_vertices,v)
-		end
-
-		for e in c.added_edges
-			u,v=lcG(c.chunked_graph, map(x->get_vertex(c.chunked_graph,x),e)...)
-			@assert chunk_id(u) == chunk_id(c)
-			@assert chunk_id(v) == chunk_id(c)
-			@assert haskey(c.vertices,u.label)
-			@assert haskey(c.vertices,v.label)
-
-			@assert haskey(c.graph.vertex_map,u.label)
-			@assert haskey(c.graph.vertex_map,v.label)
-			MultiGraphs.add_edge!(c.graph,u.label,v.label,e)
-			push!(dirty_vertices,u)
-			push!(dirty_vertices,v)
-		end
-
-		if !is_root(c)
-			for v in chain(dirty_vertices, dead_dirty_vertices)
-				if v.parent != NULL_LABEL
-					@assert chunk_id(v.parent)==chunk_id(c.parent)
-					push!(c.parent.deleted_vertices, c.parent.vertices[v.parent])
-					v.parent = NULL_LABEL
-				end
-			end
-
-			cc = MultiGraphs.connected_components(c.graph, map(x->x.label,dirty_vertices))
-			for component in cc
-				if length(component) > 1
-					l=unique_label(c.parent)
-					new_vertex=Vertex(l, NULL_LABEL, component)
-					for child_label in component
-						c.vertices[child_label].parent=new_vertex.label
-					end
-					push!(c.parent.added_vertices,new_vertex)
-				else
-					c.vertices[component[1]].parent=NULL_LABEL
-				end
-			end
-			c.parent.clean=false
-		end
-
-		empty!(c.added_edges)
-		empty!(c.added_vertices)
-		empty!(c.deleted_edges)
-		empty!(c.deleted_vertices)
-		c.clean=true
+	if c.clean
+		return
 	end
+
+	#Update children first
+	for s in c.subgraphs
+		update!(s)
+	end
+
+	#Print debug messages
+	println("updating $(level(c.id)), $(map(Int,pos(c.id))) V: +$(length(c.added_vertices))/-$(length(c.deleted_vertices)), E: +$(length(c.added_edges))/-$(length(c.deleted_edges))")
+	global n_processed
+	n_processed+=1
+	println("$n_processed/$(length(c.chunked_graph.graphs))")
+
+	#vertices which need updates
+	dirty_vertices=Set{Vertex}()
+
+
+	# FIXME: We should upsize with the difference of added minus deleted
+	upsize!(c.graph, length(c.added_vertices), length(c.added_edges))
+	upsize!(c.vertices, length(c.added_vertices))
+
+	# Insert added vertices
+	# mark them as dirty_vertices as well
+	for v in c.added_vertices
+		@assert chunk_id(v) == c.id
+		@assert v.parent == NULL_LABEL
+		@assert !haskey(c.vertices, v.label)
+		MultiGraphs.add_vertex!(c.graph, v.label)
+		c.vertices[v.label]=v
+		push!(dirty_vertices,v)
+	end
+
+	# Delete all vertices and marked the vertices connected to 
+	# the one we are deleting as dirty
+	for v in c.deleted_vertices
+		# for child in v.children
+		#	@assert get_vertex(c.chunked_graph,child).parent==NULL_LABEL
+		# end
+
+		for e in MultiGraphs.incident_edges(c.graph, v.label)
+			push!(c.added_edges, e) 
+		end
+
+		# this should delete all edges incident with v as well
+		MultiGraphs.delete_vertex!(c.graph,v.label)
+		delete!(c.vertices,v.label)
+	end
+
+
+	for e in c.deleted_edges
+		# FIXME unncesary work just for an assert
+		# write actual tests to verify correctness
+		u,v=lcG(c.chunked_graph, map(x->get_vertex(c.chunked_graph,x),e)...)
+		@assert chunk_id(u) == chunk_id(c)
+		@assert chunk_id(v) == chunk_id(c)
+		MultiGraphs.delete_edge!(c.graph,u.label,v.label,e)
+		push!(dirty_vertices,u)
+		push!(dirty_vertices,v)
+	end
+
+	for e in c.added_edges
+		u,v=lcG(c.chunked_graph, map(x->get_vertex(c.chunked_graph,x),e)...)
+		@assert chunk_id(u) == chunk_id(c)
+		@assert chunk_id(v) == chunk_id(c)
+		@assert haskey(c.vertices,u.label)
+		@assert haskey(c.vertices,v.label)
+
+		@assert haskey(c.graph.vertex_map,u.label)
+		@assert haskey(c.graph.vertex_map,v.label)
+		MultiGraphs.add_edge!(c.graph,u.label,v.label,e)
+		push!(dirty_vertices,u)
+		push!(dirty_vertices,v)
+	end
+
+	if !is_root(c)
+		for v in chain(dirty_vertices, c.deleted_vertices)
+			if v.parent != NULL_LABEL
+				@assert chunk_id(v.parent)==chunk_id(c.parent)
+				push!(c.parent.deleted_vertices, c.parent.vertices[v.parent])
+				v.parent = NULL_LABEL
+			end
+		end
+
+		cc = MultiGraphs.connected_components(c.graph, map(x->x.label,dirty_vertices))
+		for component in cc
+			if length(component) > 1
+				l=unique_label(c.parent)
+				new_vertex=Vertex(l, NULL_LABEL, component)
+				for child_label in component
+					c.vertices[child_label].parent=new_vertex.label
+				end
+				push!(c.parent.added_vertices,new_vertex)
+			else
+				c.vertices[component[1]].parent=NULL_LABEL
+			end
+		end
+		c.parent.clean=false
+	end
+
+	empty!(c.added_edges)
+	empty!(c.added_vertices)
+	empty!(c.deleted_edges)
+	empty!(c.deleted_vertices)
+	c.clean=true
+
 end
 
 
@@ -635,9 +651,9 @@ function add_atomic_vertex!(G::ChunkedGraph, label)
 end
 
 function add_atomic_edge!(G::ChunkedGraph, edge::Tuple{Label,Label})
-	s=get_chunk(G,lca(chunk_id(edge[1]),chunk_id(edge[2])))::Chunk
-	push!(s.added_edges,unordered(edge))
-	touch(s)
+	c = get_chunk(G,lca(chunk_id(edge[1]),chunk_id(edge[2])))::Chunk
+	push!(c.added_edges,unordered(edge))
+	touch(c)
 end
 
 function add_atomic_edges!(G::ChunkedGraph, edges)

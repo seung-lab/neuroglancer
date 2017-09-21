@@ -43,17 +43,25 @@ function test_cases()
 
         add_atomic_edge!(G, (Utils.Label(1,0,0,1,3), Utils.Label(1,0,0,0,2)))
         update!(G)
-        # @test root(G, get_vertex(G, Utils.Label(1,0,0,1,3))) == root(G, get_vertex(G, Utils.Label(1,0,0,0,2)))
-
         add_atomic_edge!(G, (Utils.Label(1,0,0,0,2), Utils.Label(1,0,0,0,1)))
         update!(G)
-        # print( root(G, get_vertex(G, Utils.Label(1,0,0,1,3))) )
-        # print( root(G, get_vertex(G, Utils.Label(1,0,0,0,2))) )
-        # @test root(G, get_vertex(G, Utils.Label(1,0,0,1,3))) == root(G, get_vertex(G, Utils.Label(1,0,0,0,2)))
-        # @test root(G, get_vertex(G, Utils.Label(1,0,0,1,3))) == root(G, get_vertex(G, Utils.Label(1,0,0,0,1)))
-
-
+        @test root(G, get_vertex(G, Utils.Label(1,0,0,1,3))) == root(G, get_vertex(G, Utils.Label(1,0,0,0,2)))
+        @test root(G, get_vertex(G, Utils.Label(1,0,0,1,3))) == root(G, get_vertex(G, Utils.Label(1,0,0,0,1)))
     end
+    @testset "test_circle_external_edge" begin
+        G = ChunkedGraph("/tmp/graph")
+        add_atomic_vertex!(G, Utils.Label(1,0,0,1,3))
+        add_atomic_vertex!(G, Utils.Label(1,0,0,0,2))
+        add_atomic_vertex!(G, Utils.Label(1,0,0,0,1))
+
+        add_atomic_edge!(G, (Utils.Label(1,0,0,1,3), Utils.Label(1,0,0,0,2)))
+        update!(G)
+        add_atomic_edge!(G, (Utils.Label(1,0,0,0,2), Utils.Label(1,0,0,0,1)))
+        update!(G)
+        @test root(G, get_vertex(G, Utils.Label(1,0,0,1,3))) == root(G, get_vertex(G, Utils.Label(1,0,0,0,2)))
+        @test root(G, get_vertex(G, Utils.Label(1,0,0,1,3))) == root(G, get_vertex(G, Utils.Label(1,0,0,0,1)))
+    end
+
 
 end
 test_cases()
