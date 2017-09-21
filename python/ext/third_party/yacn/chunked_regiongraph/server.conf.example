@@ -1,0 +1,7 @@
+{
+  "graphpath": "/ssd/pinky40",
+  "logpath": "logs",
+  "certpath": "keys",
+  "host": "127.0.0.1",
+  "port": 9100
+}

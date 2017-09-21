@@ -1,6 +1,7 @@
 push!(LOAD_PATH, dirname(@__FILE__))
 include("../pre/Save.jl")
 include("./constants.jl")
+
 using MbedTLS
 using HttpServer
 using HttpCommon
@@ -8,14 +9,27 @@ using ChunkedGraphs2
 using Save
 #using PyCall
 using Utils
+using Logging
+using JSON
+
+rel(p::String) = joinpath(dirname(@__FILE__), p)
+
+settings = JSON.parsefile(rel("server.conf"))
+@static if is_unix()
+	run(`mkdir -p $(rel(settings["graphpath"]))`)
+  run(`mkdir -p $(rel(settings["logpath"]))`)
+  run(`mkdir -p $(rel(settings["certpath"]))`)
+end
+
+@Logging.configure(level=DEBUG)
+Logging.configure(filename=joinpath(rel(settings["logpath"]), "graph.log"))
+
 
 # Generate a certificate and key if they do not exist
-rel(p::String) = joinpath(dirname(@__FILE__), p)
-if !isfile(rel("keys/server.crt"))
+if !isfile(joinpath(rel(settings["certpath"]), "server.crt"))
 	@static if is_unix()
-		run(`mkdir -p $(rel("keys"))`)
 		run(`openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout
-			$(rel("keys/server.key")) -out $(rel("keys/server.crt"))`)
+			$(joinpath(rel(settings["certpath"]), "server.key")) -out $(joinpath(rel(settings["certpath"]), "server.crt"))`)
 	end
 end
 
@@ -25,8 +39,8 @@ end
 tq = task_queue.TaskQueue(queue_server="pull-queue")
 =#
 
-G=ChunkedGraph("/ssd/testing2")
-@time for f in filter(s->ismatch(r".*\.chunk",s), readdir(expanduser("/ssd/testing2")))
+G = ChunkedGraph(rel(settings["graphpath"]))
+@time for f in filter(s->ismatch(r".*\.chunk",s), readdir(expanduser(rel(settings["graphpath"]))))
 	m=match(r"(\d+)_(\d+)_(\d+)_(\d+)\..*",f)
 	id = ChunkID(map(x->parse(UInt32,x),m.captures)...)
 	if Utils.level(id) >= 3
@@ -34,8 +48,8 @@ G=ChunkedGraph("/ssd/testing2")
 	end
 end
 
-#edges = Save.load("/ssd/data/chunked_edges.jls")
-vertices = Save.load("/ssd/data/chunked_vertices.jls")
+#edges = Save.load(joinpath(rel(settings["graphpath"]), "chunked_edges.jls"))
+vertices = Save.load(joinpath(rel(settings["graphpath"]), "chunked_vertices.jls"))
 
 #println("$(length(edges)) edges")
 println("$(length(vertices)) vertices")
@@ -127,6 +141,7 @@ function mesh!(v::ChunkedGraphs2.Vertex)
 end
 
 function handle_remesh(id)
+  @debug("handle_remesh($id)")
 	id=parse(UInt64,id)
 
 	if chunk_id(id) == 0 # Lvl 1, a neuroglancer supervoxel, need to lookup chunk id
@@ -142,6 +157,7 @@ function handle_remesh(id)
 end
 
 function handle_leaves(id)
+  @debug("handle_leaves($id)")
 	id=parse(UInt64,id)
 
 	if chunk_id(id) == 0 # Lvl 1, a neuroglancer supervoxel, need to lookup chunk id
@@ -158,6 +174,7 @@ function handle_leaves(id)
 end
 
 function handle_root(id)
+  @debug("handle_root($id)")
 	id=parse(UInt64,id)
 	print("$(now()): Root for segment $(id): ")
 
@@ -178,6 +195,7 @@ function pos_to_label(x)
 end
 
 function handle_children(id)
+  @debug("handle_children($id)")
 	id = parse(UInt64,id)
 
 	if chunk_id(id) == 0 # Lvl 1, a neuroglancer supervoxel, need to lookup chunk id
@@ -202,6 +220,7 @@ function handle_children(id)
 end
 
 function handle_split(id1,id2)
+  @info("handle_split($id1, $id2)")
 	id1 = parse(UInt64, id1)
 	@assert chunk_id(id1)==0
 	if chunk_id(id1) == 0 # Lvl 1, a neuroglancer supervoxel, need to lookup chunk id
@@ -234,6 +253,7 @@ function handle_split(id1,id2)
 end
 
 function handle_merge(id1, id2)
+  @info("handle_merge($id1, $id2)")
 	id1 = parse(UInt64, id1)
 	@assert chunk_id(id1)==0
 	if chunk_id(id1) == 0 # Lvl 1, a neuroglancer supervoxel, need to lookup chunk id
@@ -256,6 +276,7 @@ function handle_merge(id1, id2)
 end
 
 function handle_subgraph(vertices)
+  @debug("handle_subgraph($vertices)")
 	return Response(simple_print(MultiGraphs.induced_edges(G, eval(parse(vertices)))))
 end
 
@@ -287,7 +308,8 @@ end
 http.events["listen"] = (saddr) -> println("Running on https://$saddr (Press CTRL+C to quit)")
 
 server = Server(http)
-cert = MbedTLS.crt_parse_file(rel("keys/server.crt"))
-key = MbedTLS.parse_keyfile(rel("keys/server.key"))
 
-run(server, host=getaddrinfo("seungworkstation14.princeton.edu"), port=9100, ssl=(cert, key))
+cert = MbedTLS.crt_parse_file(joinpath(rel(settings["certpath"]), "server.crt"))
+key = MbedTLS.parse_keyfile(joinpath(rel(settings["certpath"]), "server.key"))
+
+run(server, host=getaddrinfo(settings["host"]), port=settings["port"], ssl=(cert, key))

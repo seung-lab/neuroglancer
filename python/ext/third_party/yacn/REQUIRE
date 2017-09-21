@@ -7,5 +7,6 @@ LightGraphs
 Iterators
 HttpServer
 HttpCommon
+Logging
 MbedTLS
 OffsetArrays
