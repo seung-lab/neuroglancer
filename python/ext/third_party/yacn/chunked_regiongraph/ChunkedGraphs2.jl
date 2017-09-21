@@ -177,8 +177,11 @@ function save_chunk!(c::Chunk)
 		write(buf, convert(Vector{UInt64}, vertex.children))
 	end
 	
-	if length(LightGraphs.edges(c.graph.g)) > 0
-		write(buf, map(v->c.graph.inverse_vertex_map[v], collect(UInt64, Base.flatten(LightGraphs.edges(c.graph.g)))))
+	for (edge, atomic_edges) in c.graph.edge_map
+		write(buf, UInt64(c.graph.inverse_vertex_map[edge[1]]))
+		write(buf, UInt64(c.graph.inverse_vertex_map[edge[2]]))
+		write(buf, UInt64(length(atomic_edges)))
+		write(buf, convert(Vector{Tuple{UInt64, UInt64}}, atomic_edges))
 	end
 
 	f = open(path, "w")
@@ -221,9 +224,10 @@ function to_string(id::ChunkID)
 end
 
 function load_chunk(G::ChunkedGraph,id)
-	vertices = nothing
+	vertex_map = nothing
 	graph = nothing
 	max_label = nothing
+
 	try
 		prefix=to_string(id)
 		path = expanduser(joinpath(G.path, "$(prefix).chunk"))
@@ -231,8 +235,8 @@ function load_chunk(G::ChunkedGraph,id)
 
 		# Plain Binary
 		max_label = UInt64(0)
-		vertices = Vector{Vertex}()
-		edges = Vector{Tuple{UInt64, UInt64}}()
+		vertex_map = Dict{Label, Vertex}()
+		edge_map = Dict{Tuple{Int64, Int64}, Vector{Tuple{UInt64, UInt64}}}()
 
 		f = open(path, "r")
 
@@ -243,51 +247,35 @@ function load_chunk(G::ChunkedGraph,id)
 		# Read Chunk Info
 		(max_label, v_cnt, e_cnt) = read(f, UInt64, 3)
 
-		# Read Vector{Vertex}
-		resize!(vertices, v_cnt)
+		# Allocate Graph
+		graph = MultiGraphs.MultiGraph(Label, AtomicEdge)
+		MultiGraphs.sizehint!(graph, v_cnt, e_cnt)
+		sizehint!(vertex_map, floor(UInt32, 1.5 * v_cnt))
+
+		# Read Vertices
 		for i in range(1, v_cnt)
 			(label, parent, child_cnt) = read(f, UInt64, 3)
 			children = read(f, UInt64, child_cnt)
-			@inbounds vertices[i] = Vertex(label, parent, children)
-		end
-		
-		# Read Vector{AtomicEdge}
-		edges = read(f, Tuple{UInt64, UInt64}, e_cnt)
-
-		# Rebuild Graph
-		graph = MultiGraphs.MultiGraph(Label, AtomicEdge)
-		MultiGraphs.sizehint!(graph, v_cnt, e_cnt)
-
-		for v in vertices
-			MultiGraphs.add_vertex!(graph, v.label)
+			MultiGraphs.add_vertex!(graph, label)
+			vertex_map[label] = Vertex(label, parent, children)
 		end
 
-		for e in edges
-			MultiGraphs.add_edge!(graph, e[1], e[2], e)
+		# Read EdgeMap
+		sizehint!(edge_map, e_cnt)
+		for i in range(1, e_cnt)
+			(u, v, atomic_edge_cnt) = read(f, UInt64, 3)
+			atomic_edges = read(f, Tuple{UInt64, UInt64}, atomic_edge_cnt)
+			MultiGraphs.add_edges!(graph, u, v, atomic_edges)
 		end
 
 		close(f)
 		println("done.")
-	catch
-		try
-			prefix=to_string(id)
-			vertices=Save.load(joinpath(G.path,"$(prefix)_vertices.jls"))
-			graph=Save.load(joinpath(G.path,"$(prefix)_graph.jls"))
-			max_label=Save.load(joinpath(G.path,"$(prefix)_max_label.jls"))
-		catch e
-			println("failed: $e")
-			return nothing
-		end
+	catch e
+		println("failed: $e")
+		return nothing
 	end
 
-
-	vertices_dict = Dict{Label,Vertex}()
-	sizehint!(vertices_dict, floor(UInt32, 1.5 * length(vertices)))
-	for v in vertices
-		vertices_dict[v.label] = v
-	end
-
-	return Chunk(G,id,vertices_dict,graph,max_label)
+	return Chunk(G, id, vertex_map, graph, max_label)
 end
 
 function get_vertex(g::ChunkedGraph, label)

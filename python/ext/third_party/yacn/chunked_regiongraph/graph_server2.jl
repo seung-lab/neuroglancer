@@ -49,7 +49,10 @@ G = ChunkedGraph(rel(settings["graphpath"]))
 end
 
 #edges = Save.load(joinpath(rel(settings["graphpath"]), "chunked_edges.jls"))
-vertices = Save.load(joinpath(rel(settings["graphpath"]), "chunked_vertices.jls"))
+vertices = Vector{UInt64}()
+if(length(G.graphs) > 0)
+  vertices = Save.load(joinpath(rel(settings["graphpath"]), "chunked_vertices.jls"))
+end
 
 #println("$(length(edges)) edges")
 println("$(length(vertices)) vertices")

@@ -37,10 +37,10 @@ function MultiGraph(V,E)
 end
 
 function sizehint!(G::MultiGraph, v::Integer, e::Integer)
-  sizehint!(G.vertex_map, v)
-  sizehint!(G.inverse_vertex_map, v)
-  sizehint!(G.edge_map, e)
-  sizehint!(G.g.fadjlist, v)
+	sizehint!(G.vertex_map, v)
+	sizehint!(G.inverse_vertex_map, v)
+	sizehint!(G.edge_map, e)
+	sizehint!(G.g.fadjlist, v)
 end
 
 function add_vertex!(G::MultiGraph, v)
@@ -83,6 +83,22 @@ function add_edge!{Vert,E}(G::MultiGraph{Vert,E},U,V,e)
 		G.edge_map[uv]=E[e]
 	else
 		setpush!(G.edge_map[uv],e)
+	end
+end
+
+function add_edges!{Vert,E}(G::MultiGraph{Vert,E},U,V,edges)
+	u=G.vertex_map[U]
+	v=G.vertex_map[V]
+	uv = unordered(u,v)
+	LightGraphs.add_edge!(G.g,u,v)
+
+	for edge in edges
+		e = unordered(edge)
+		if !haskey(G.edge_map,uv)
+			G.edge_map[uv]=E[e]
+		else
+			setpush!(G.edge_map[uv],e)
+		end
 	end
 end
 
