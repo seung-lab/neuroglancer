@@ -1,6 +1,9 @@
 module ChunkedGraphs2
 
-export update!, ChunkedGraph, add_atomic_edge!, add_atomic_vertex!, delete_atomic_edge!, add_atomic_vertices!, add_atomic_edges!, get_vertex, leaves, bfs, root
+export update!, ChunkedGraph, add_atomic_edge!
+export add_atomic_vertex!, delete_atomic_edge! 
+export add_atomic_vertices!, add_atomic_edges!
+export get_vertex, leaves, bfs, root, delete_atomic_vertex!
 
 import DataStructures
 using Save
@@ -478,11 +481,7 @@ function min_cut(G,v1,v2)
 end
 
 function is_root(v::Vertex)
-	if v.parent == NULL_LABEL
-		return true
-	else
-		return false
-	end
+	return v.parent == NULL_LABEL
 end
 function root(G,x)
 	if is_root(x)
@@ -554,7 +553,9 @@ function update!(c::Chunk)
 		# end
 
 		for e in MultiGraphs.incident_edges(c.graph, v.label)
-			push!(c.added_edges, e) 
+			if !in(e[1], c.deleted_vertices) || !in(e[2], c.deleted_vertices)
+				push!(c.added_edges, e)
+			end
 		end
 
 		# this should delete all edges incident with v as well
@@ -631,12 +632,26 @@ end
 function add_atomic_vertex!(G::ChunkedGraph, label)
 	@assert level(chunk_id(label))==1 "$(level(chunk_id(label))) == 1"
 	s=get_chunk(G,chunk_id(label))::Chunk
-	if !haskey(s.vertices,label)
-		v=Vertex(label,NULL_LABEL,NULL_LIST)
-		push!(s.added_vertices, v)
-		touch(s)
+	if haskey(s.vertices,label)
+		throw(KeyError)
 	end
+
+	# Create new vertex with no parent neither children
+	v=Vertex(label, NULL_LABEL, NULL_LIST)
+	push!(s.added_vertices, v)
+	touch(s)
 end
+
+function delete_atomic_vertex!(G::ChunkedGraph, label)
+	#=
+	get_vertex will throw KeyError if label doesn't exists
+	=#
+	@assert level(chunk_id(label))==1 "$(level(chunk_id(label))) == 1"
+	s=get_chunk(G,chunk_id(label))::Chunk
+	push!(s.deleted_vertices, get_vertex(G, label)) 
+	touch(s)
+end
+
 
 function add_atomic_edge!(G::ChunkedGraph, edge::Tuple{Label,Label})
 	c = get_chunk(G,lca(chunk_id(edge[1]),chunk_id(edge[2])))::Chunk
