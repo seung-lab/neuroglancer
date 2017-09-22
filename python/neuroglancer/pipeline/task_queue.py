@@ -228,7 +228,7 @@ class TaskQueue(ThreadedQueue):
         """
         raise NotImplemented
 
-    def raw_lease(self, numTasks=1, leaseSecs=600, tag=None):
+    def raw_lease(self, numTasks, leaseSecs, tag=None):
         """
         Get the raw information off the task queue without
         converting it into a pipeline task. Mainly useful
@@ -247,7 +247,7 @@ class TaskQueue(ThreadedQueue):
 
     def lease(self, tag=None):
         """
-        Acquires a lease on the topmost N unowned tasks in the specified queue.
+        Acquires a lease on the top task in the specified queue.
         Required query parameters: leaseSecs, numTasks
         """
         tasks = self.raw_lease(numTasks=1, leaseSecs=600, tag=tag)
