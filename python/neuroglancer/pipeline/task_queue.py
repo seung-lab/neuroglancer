@@ -12,7 +12,7 @@ import googleapiclient.errors
 import googleapiclient.discovery
 import numpy as np
 
-from neuroglancer.pipeline.secrets import google_credentials, PROJECT_NAME, QUEUE_NAME
+from neuroglancer.pipeline.secrets import google_credentials, PROJECT_NAME, QUEUE_NAME, QUEUE_TYPE
 from neuroglancer.pipeline.threaded_queue import ThreadedQueue
 from appengine_queue_api import AppEngineTaskQueue
 
@@ -106,7 +106,7 @@ class TaskQueue(ThreadedQueue):
             super(LookupError, self).__init__('Queue Empty')
 
     def __init__(self, n_threads=40, project=PROJECT_NAME,
-                 queue_name=QUEUE_NAME, queue_server='appengine'):
+                 queue_name=QUEUE_NAME, queue_server=QUEUE_TYPE):
 
         self._project = 's~' + project # s~ means North America, e~ means Europe
         self._queue_name = queue_name
