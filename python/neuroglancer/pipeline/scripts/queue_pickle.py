@@ -49,7 +49,7 @@ def save(queue_name, file):
   num_lease = 100
   last_few = []
 
-  with TaskQueue(queue_name=queue_name) as tq:
+  with TaskQueue(queue_name=queue_name, queue_server='pull-queue') as tq:
     iters = int(math.ceil(float(tq.enqueued) / float(num_lease)))
 
     for i in tqdm(xrange(iters), desc='Leasing Tasks'):
@@ -70,7 +70,7 @@ def save(queue_name, file):
 @click.argument('file')
 def load(queue_name, file):
     queue = deserialize(file)
-    with TaskQueue(queue_name=queue_name) as tq:
+    with TaskQueue(queue_name=queue_name, queue_server='pull-queue') as tq:
       for task in tqdm(queue):
         tq.insert(task)
 
