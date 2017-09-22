@@ -101,7 +101,23 @@ function test_cases()
             @test root(G, get_vertex(G, Utils.Label(1,0,0,0,1))) != root(G, get_vertex(G, Utils.Label(1,0,0,0,2)))
         end
 
-        @testset "delete_vertex_with_edge" begin
+        @testset "delete_edge_different_chunk" begin
+            G = ChunkedGraph("/tmp/graph")
+            add_atomic_vertex!(G, Utils.Label(1,0,0,0, 1) )
+            add_atomic_vertex!(G, Utils.Label(1,0,0,1, 2) )
+            add_atomic_edge!(G, (Utils.Label(1,0,0,0,1), Utils.Label(1,0,0,1,2)))
+            update!(G)
+            @test root(G, get_vertex(G, Utils.Label(1,0,0,0,1))) == root(G, get_vertex(G, Utils.Label(1,0,0,1,2)))
+
+            delete_atomic_edge!(G, (Utils.Label(1,0,0,0,1), Utils.Label(1,0,0,1,2)))
+            update!(G)
+            @test root(G, get_vertex(G, Utils.Label(1,0,0,0,1))) != root(G, get_vertex(G, Utils.Label(1,0,0,1,2)))
+            @test length(root(G, get_vertex(G, Utils.Label(1,0,0,0,1))).children) == 1
+            @test length(root(G, get_vertex(G, Utils.Label(1,0,0,1,2))).children) == 1
+
+        end
+
+        @testset "test_delete_vertex_with_edge_same_chunk" begin
             G = ChunkedGraph("/tmp/graph")
             add_atomic_vertex!(G, Utils.Label(1,0,0,0, 1) )
             add_atomic_vertex!(G, Utils.Label(1,0,0,0, 2) )
@@ -110,8 +126,37 @@ function test_cases()
 
             delete_atomic_vertex!(G, Utils.Label(1,0,0,0, 1))
             update!(G)
-            children = root(G, get_vertex(G, Utils.Label(1,0,0,0,1))).children
-            print(children)
+            @test length(root(G, get_vertex(G, Utils.Label(1,0,0,0,1))).children) == 1
+        end
+
+        @testset "test_delete_vertex_with_edge_adjacent_chunk" begin
+            G = ChunkedGraph("/tmp/graph")
+            add_atomic_vertex!(G, Utils.Label(1,0,0,0,1) )
+            add_atomic_vertex!(G, Utils.Label(1,0,0,1,2) )
+            add_atomic_edge!(G, (Utils.Label(1,0,0,0,1), Utils.Label(1,0,0,1,2)))
+            update!(G)
+
+            delete_atomic_vertex!(G, Utils.Label(1,0,0,0, 1))
+            update!(G)
+            @test length(root(G, get_vertex(G, Utils.Label(1,0,0,0,1))).children) == 1
+        end
+
+        @testset "test_3_node_delete" begin
+            G = ChunkedGraph("/tmp/graph")
+            add_atomic_vertex!(G, Utils.Label(1,0,0,0,1) )
+            add_atomic_vertex!(G, Utils.Label(1,0,0,1,2) )
+            add_atomic_vertex!(G, Utils.Label(1,0,0,3,3) )
+
+            add_atomic_edge!(G, (Utils.Label(1,0,0,0,1), Utils.Label(1,0,0,1,2)))
+            add_atomic_edge!(G, (Utils.Label(1,0,0,1,2), Utils.Label(1,0,0,3,3)))
+            update!(G)
+
+            delete_atomic_edge!(G, (Utils.Label(1,0,0,0,1), Utils.Label(1,0,0,1,2)))
+            update!(G)
+            @test root(G, get_vertex(G, Utils.Label(1,0,0,0,1))) != root(G, get_vertex(G, Utils.Label(1,0,0,1,2)))
+            @test root(G, get_vertex(G, Utils.Label(1,0,0,1,2))) == root(G, get_vertex(G, Utils.Label(1,0,0,3,3)))
+
+            @test length(root(G, get_vertex(G, Utils.Label(1,0,0,0,1))).children) == 1
         end
     end
 
