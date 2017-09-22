@@ -17,8 +17,8 @@ rel(p::String) = joinpath(dirname(@__FILE__), p)
 settings = JSON.parsefile(rel("server.conf"))
 @static if is_unix()
 	run(`mkdir -p $(rel(settings["graphpath"]))`)
-  run(`mkdir -p $(rel(settings["logpath"]))`)
-  run(`mkdir -p $(rel(settings["certpath"]))`)
+	run(`mkdir -p $(rel(settings["logpath"]))`)
+	run(`mkdir -p $(rel(settings["certpath"]))`)
 end
 
 @Logging.configure(level=DEBUG)
@@ -51,7 +51,7 @@ end
 #edges = Save.load(joinpath(rel(settings["graphpath"]), "chunked_edges.jls"))
 vertices = Vector{UInt64}()
 if(length(G.graphs) > 0)
-  vertices = Save.load(joinpath(rel(settings["graphpath"]), "chunked_vertices.jls"))
+	vertices = Save.load(joinpath(rel(settings["graphpath"]), "chunked_vertices.jls"))
 end
 
 #println("$(length(edges)) edges")
@@ -144,7 +144,7 @@ function mesh!(v::ChunkedGraphs2.Vertex)
 end
 
 function handle_remesh(id)
-  @debug("handle_remesh($id)")
+	@debug("handle_remesh($id)")
 	id=parse(UInt64,id)
 
 	if chunk_id(id) == 0 # Lvl 1, a neuroglancer supervoxel, need to lookup chunk id
@@ -160,7 +160,7 @@ function handle_remesh(id)
 end
 
 function handle_leaves(id)
-  @debug("handle_leaves($id)")
+	@debug("handle_leaves($id)")
 	id=parse(UInt64,id)
 
 	if chunk_id(id) == 0 # Lvl 1, a neuroglancer supervoxel, need to lookup chunk id
@@ -177,7 +177,7 @@ function handle_leaves(id)
 end
 
 function handle_root(id)
-  @debug("handle_root($id)")
+	@debug("handle_root($id)")
 	id=parse(UInt64,id)
 	print("$(now()): Root for segment $(id): ")
 
@@ -198,7 +198,7 @@ function pos_to_label(x)
 end
 
 function handle_children(id)
-  @debug("handle_children($id)")
+	@debug("handle_children($id)")
 	id = parse(UInt64,id)
 
 	if chunk_id(id) == 0 # Lvl 1, a neuroglancer supervoxel, need to lookup chunk id
@@ -223,7 +223,7 @@ function handle_children(id)
 end
 
 function handle_split(id1,id2)
-  @info("handle_split($id1, $id2)")
+	@info("handle_split($id1, $id2)")
 	id1 = parse(UInt64, id1)
 	@assert chunk_id(id1)==0
 	if chunk_id(id1) == 0 # Lvl 1, a neuroglancer supervoxel, need to lookup chunk id
@@ -256,7 +256,7 @@ function handle_split(id1,id2)
 end
 
 function handle_merge(id1, id2)
-  @info("handle_merge($id1, $id2)")
+	@info("handle_merge($id1, $id2)")
 	id1 = parse(UInt64, id1)
 	@assert chunk_id(id1)==0
 	if chunk_id(id1) == 0 # Lvl 1, a neuroglancer supervoxel, need to lookup chunk id
@@ -278,8 +278,15 @@ function handle_merge(id1, id2)
 	return Response(reinterpret(UInt8, [root.label]), headers)
 end
 
+function handle_save()
+	@info("handle_save()")
+	update!(G)
+	save!(G)
+	return Response(reinterpret(UInt8, []), headers)
+end
+
 function handle_subgraph(vertices)
-  @debug("handle_subgraph($vertices)")
+	@debug("handle_subgraph($vertices)")
 	return Response(simple_print(MultiGraphs.induced_edges(G, eval(parse(vertices)))))
 end
 
@@ -290,6 +297,7 @@ d=Dict(
 		 r"/1.0/segment/(\d+)/remesh/?" => handle_remesh, # TODO: POST
 		 r"/1.0/merge/(\d+),(\d+)/?" => handle_merge, # TODO: POST
 		 r"/1.0/split/(\d+),(\d+)/?" => handle_split, # TODO: POST
+		 r"/1.0/save/?" => handle_save, # HACK: Should be done automatically, when idle
 		 r"/1.0/subgraph/(\[[\d,\(\)]*?\])/?" => handle_subgraph,
 		 )
 
@@ -315,4 +323,4 @@ server = Server(http)
 cert = MbedTLS.crt_parse_file(joinpath(rel(settings["certpath"]), "server.crt"))
 key = MbedTLS.parse_keyfile(joinpath(rel(settings["certpath"]), "server.key"))
 
-run(server, host=getaddrinfo(settings["host"]), port=settings["port"], ssl=(cert, key))
+#run(server, host=getaddrinfo(settings["host"]), port=settings["port"], ssl=(cert, key))

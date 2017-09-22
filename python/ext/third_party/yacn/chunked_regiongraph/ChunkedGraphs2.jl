@@ -1,6 +1,6 @@
 module ChunkedGraphs2
 
-export update!, ChunkedGraph, add_atomic_edge!
+export update!, save!, ChunkedGraph, add_atomic_edge!
 export add_atomic_vertex!, delete_atomic_edge! 
 export add_atomic_vertices!, add_atomic_edges!
 export get_vertex, leaves, bfs, root, delete_atomic_vertex!
@@ -196,10 +196,12 @@ function save_chunk!(c::Chunk)
 	c.modified = false
 end
 
-function save!(c::ChunkedGraph)
+function save!(c::ChunkedGraph, force::Bool = false)
 	println("Saving...")
 	for c in collect(values(c.graphs))
-		save_chunk!(c)
+		if c.modified || force
+			save_chunk!(c)
+		end
 	end
 	println("done")
 end
