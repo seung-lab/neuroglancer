@@ -1,9 +1,12 @@
 module ChunkedGraphs2
 
-export update!, save!, ChunkedGraph, add_atomic_edge!
-export add_atomic_vertex!, delete_atomic_edge! 
-export add_atomic_vertices!, add_atomic_edges!
-export get_vertex, leaves, bfs, root, delete_atomic_vertex!
+export update!, save!, ChunkedGraph
+#TODO add_atomic_vertex should call be able to 
+#take a single vertex or a list of them
+export delete_atomic_vertex!, add_atomic_vertex!, add_atomic_vertices! 
+export delete_atomic_edge!, add_atomic_edges!, add_atomic_edge!
+export get_vertex, leaves, bfs, root
+export min_cut
 
 import DataStructures
 using Save
@@ -40,7 +43,13 @@ end
 	end
 end
 
-function lca(t1,t2)
+type Vertex
+	label::Label
+	parent::Label
+	children::Vector{Label}
+end
+
+function lca(t1, t2)
 	if t1 == t2
 		return t1
 	else
@@ -48,11 +57,7 @@ function lca(t1,t2)
 	end
 end
 
-type Vertex
-	label::Label
-	parent::Label
-	children::Vector{Label}
-end
+
 
 import Base: ==, hash
 ==(x::Vertex,y::Vertex) = (x.label == y.label)
@@ -72,6 +77,29 @@ function ChunkedGraph(path)
 end
 
 const AtomicEdge = Tuple{Label,Label}
+
+function common_parent_vertex(G::ChunkedGraph, vertices::Vector{Label})
+	@assert length(vertices) >= 1
+
+	s_vertices = Set()
+	for vertex in vertices
+		@assert level(chunk_id(vertex)) == 1
+		push!(s_vertices, get_vertex(G, vertex))
+	end
+
+	while length(s_vertices) > 1
+		new_s_vertices = Set()
+		for vertex in s_vertices
+	    	if vertex.parent == NULL_LABEL
+	    		promote!(G, vertex)
+	    	end
+	   		push!(new_s_vertices, get_vertex(G, vertex.parent))
+
+		end
+		s_vertices = new_s_vertices
+	end
+	return pop!(s_vertices)
+end
 
 #The 'added' and 'deleted' sets buffer updates to the graph
 type Chunk
@@ -236,7 +264,7 @@ function load_chunk(G::ChunkedGraph,id)
 	try
 		prefix=to_string(id)
 		path = expanduser(joinpath(G.path, "$(prefix).chunk"))
-		print("Loading from $(path)...")
+		# print("Loading from $(path)...")
 
 		# Plain Binary
 		max_label = UInt64(0)
@@ -274,9 +302,9 @@ function load_chunk(G::ChunkedGraph,id)
 		end
 
 		close(f)
-		println("done.")
+		# println("done.")
 	catch e
-		println("failed: $e")
+		# println("failed: $e")
 		return nothing
 	end
 
@@ -286,6 +314,9 @@ end
 function get_vertex(g::ChunkedGraph, label)
 	return get_chunk(g,chunk_id(label)).vertices[label]
 end
+
+
+
 
 function lcG(G, v1::Vertex, v2::Vertex)
 	if chunk_id(v1) == chunk_id(v2)
@@ -309,7 +340,7 @@ function promote!(G,v)
 	"""
 	TODO check we don't call this over max height
 	"""
-	println("promoting $v")
+	# println("promoting $v")
 	c=get_chunk(G,chunk_id(v))
 
 	@assert c.clean
@@ -395,91 +426,152 @@ function leaves(G,v::Vertex, cuboid::Cuboid)
 end
 
 #vertices should be a collection of labels
-function induced_subgraph(G,chunk,vertices,cuboid)
-	filter!(v->overlaps(to_cuboid(chunk_id(v)),cuboid),vertices)
+function induced_subgraph(G::ChunkedGraph, chunk::Chunk, vertices::Vector{Label}, cuboid)
+	#=
+	Chunk is a common ancestor that contains all vertices roots
+
+	We always start from lcG of all vertices.
+	And traverse the tree down getting all edges and vertices
+	Making sure we remain inside the cuboid
+
+	=#
+
+	#If I'm outside cuboid return empty lists
 	if !overlaps(to_cuboid(chunk_id(chunk)), cuboid)
-		return Label[], Tuple{Label,Label}[]
+	    return Label[], Tuple{Label,Label}[]
 	end
 
-	for v in vertices
-		@assert haskey(chunk.vertices, v)
-		V=chunk.vertices[v]
-		for child in V.children
-			if overlaps(to_cuboid(chunk_id(child)),cuboid)
-				get_vertex(G,child)
-				@assert get_chunk(G,chunk_id(child)) in chunk.subgraphs
-				@assert get_chunk(G,chunk_id(child))==get_chunk(G,chunk_id(V.children[1]))
-			end
-		end
-	end
-	atomic_edges = cat(1,values(MultiGraphs.induced_edges(chunk.graph, filter(vert -> haskey(chunk.vertices,vert),vertices)))...)
-	atomic_vertices = Label[]
-	
-	if level(chunk) > 1
+	if level(chunk) == 1 #atomic (base case)
+		#=
+		We never call induced_subgraph on this level
+		if all vertices are in a level 0 chunk, we would
+		find the common root which would be at least level 1
+
+		When we traverse down will arrive at this base case
+		in which we want to return all children of the root
+		and all the edges between them
+		=#
+		@assert length(chunk.subgraphs) == 0
+		atomic_vertices = vertices
+		atomic_edges = cat(1, values(MultiGraphs.induced_edges(chunk.graph, vertices))...)
+		atomic_edges =  collect(filter(
+			e->e[1] in atomic_vertices && e[2] in atomic_vertices, atomic_edges)) 
+	else
 		children = cat(1,[chunk.vertices[v].children for v in vertices]...)
+		atomic_vertices = Label[]
+		atomic_edges = []
 		for s in chunk.subgraphs
-			s_vertices,s_edges = induced_subgraph(G,s, filter(c-> chunk_id(c) == chunk_id(s),children),cuboid)
+			s_children =  filter(c-> chunk_id(c) == chunk_id(s),children)
+			s_vertices, s_edges = induced_subgraph(G, s, s_children, cuboid)
 			append!(atomic_vertices, s_vertices)
 			append!(atomic_edges, s_edges)
 		end
-	else
-		@assert length(chunk.subgraphs) == 0
-		append!(atomic_vertices, vertices)
 	end
 
 	atomic_vertices = unique(atomic_vertices)
-	return atomic_vertices, collect(filter(e->e[1] in atomic_vertices && e[2] in atomic_vertices, atomic_edges))
+	return atomic_vertices, atomic_edges
 end
 
 import LightGraphs
-function min_cut(G,v1,v2)
-	@assert level(chunk_id(v1))==1
-	@assert level(chunk_id(v2))==1
-	x1,y1,z1=pos(chunk_id(v1))
-	x2,y2,z2=pos(chunk_id(v2))
 
-	cuboid=(min(x1,x2)-2:max(x1,x2)+2, min(y1,y2)-2:max(y1,y2)+2, min(z1,z2)-2:max(z1,z2)+2)
-	r1=root(G,get_vertex(G,v1))
-	r2=root(G,get_vertex(G,v2))
+function bounding_box(labels::Vector{UInt64})
+	MAX_INT = 100000
 
-	while level(chunk_id(r1.label)) < level(chunk_id(r2.label))
-		r1=promote!(G,r1)
+	min_x, min_y, min_z = 0,0,0
+	max_x, max_y, max_z = MAX_INT, MAX_INT, MAX_INT
+	for l in labels
+		@assert level(chunk_id(l))==1
+		x,y,z = pos(chunk_id(l))
+		min_x = min(min_x,x); max_x =  max(max_x,x)
+		min_y = min(min_y,y); max_y =  max(max_y,z)
+		min_z = min(min_z,z); max_z =  max(max_z,z)
 	end
-	while level(chunk_id(r2.label)) < level(chunk_id(r1.label))
-		r2=promote!(G,r2)
-	end
+	return (min_x-2: max_x+2,
+			min_y-2: max_y+2,
+			min_z-2: max_z+2)
 
-	r1,r2 = lcG(G, r1, r2)
-	chunk = get_chunk(G,chunk_id(r1))
-	atomic_vertices, atomic_edges=induced_subgraph(G, chunk, [r1.label,r2.label], cuboid)
+end
+
+function min_cut(G::ChunkedGraph, source::UInt64, sink::UInt64)
+	#make sure sources and sinks is a list
+	#otherwise convert into a list
+	return min_cut(G, Vector{UInt64}([source]), Vector{UInt64}([sink]))
+end
+function min_cut(G::ChunkedGraph, sources::Vector{UInt64}, sinks::Vector{UInt64})
+	#=
+	Returns a list of edges to cut
+	=#
+	INF_CAPACTIY = 1000000
+
+	
+
+	#iterate thru all sources and sinks and find bounding box
+	bbox = bounding_box(vcat(sources,sinks))
+	r = common_parent_vertex(G, cat(1, sources, sinks))
+	chunk = get_chunk(G,chunk_id(r))
+	atomic_vertices, atomic_edges = induced_subgraph(G, chunk, [r.label], bbox)
 
 
+	# why do I need to encode things? just to make the matrix less sparse?
 	encode=Dict()
-	decode=Dict()
 	for (i,v) in enumerate(atomic_vertices)
 		encode[v]=i
-		decode[i]=v
 	end
 
-	N=length(encode)
+	N=length(atomic_vertices)
+	fake_source = N+1
+	fake_sink = N+2
+	N += 2
 	flow_graph = LightGraphs.DiGraph(N)
 	capacities = zeros(N,N)
 	for (u,v) in atomic_edges
 		LightGraphs.add_edge!(flow_graph,encode[u],encode[v])
 		LightGraphs.add_edge!(flow_graph,encode[v],encode[u])
-		capacities[encode[u],encode[v]] = seg_id(u) == seg_id(v) ? 1000000 : 1 # Don't split supervoxels at chunk boundaries
-		capacities[encode[v],encode[u]] = seg_id(u) == seg_id(v) ? 1000000 : 1
+
+		# Don't split supervoxels at chunk boundaries
+		# FIXME: this hack only works because seg_id are currently unique
+		# across the whole dataset
+		capacities[encode[u],encode[v]] = seg_id(u) == seg_id(v) ? INF_CAPACTIY : 1 
+		capacities[encode[v],encode[u]] = seg_id(u) == seg_id(v) ? INF_CAPACTIY : 1
 	end
 
-	_,_,labels= LightGraphs.multiroute_flow(flow_graph, encode[v1], encode[v2], capacities, flow_algorithm = LightGraphs.BoykovKolmogorovAlgorithm(),routes=1)
-	@assert length(labels)==N
-	@assert labels[encode[v1]]!=labels[encode[v2]]
-	println(unique(labels))
-	ret = filter(e->labels[encode[e[1]]]!=labels[encode[e[2]]], atomic_edges)
-	for (a,b) in ret
-		println("Cut: $(level(chunk_id(a))), $(map(Int,pos(chunk_id(a)))), $(seg_id(a)) | $(level(chunk_id(b))), $(map(Int,pos(chunk_id(b)))), $(seg_id(b))")
+	# create a fake source and add edges with infinite weight to all sources
+	for source in sources
+		LightGraphs.add_edge!(flow_graph , encode[source], fake_source)
+		LightGraphs.add_edge!(flow_graph , fake_source, encode[source])
+
+		capacities[encode[source], fake_source] = INF_CAPACTIY
+		capacities[fake_source, encode[source]] = INF_CAPACTIY
 	end
-	return ret
+
+	# create a fake sink
+	for sink in sinks
+		LightGraphs.add_edge!(flow_graph , encode[sink], fake_sink)
+		LightGraphs.add_edge!(flow_graph , fake_sink, encode[sink])
+
+		capacities[encode[sink], fake_sink] = INF_CAPACTIY
+		capacities[fake_sink, encode[sink]] = INF_CAPACTIY
+	end
+
+	f,_,labels= LightGraphs.multiroute_flow(
+		flow_graph, fake_source, fake_sink, capacities,
+		flow_algorithm = LightGraphs.BoykovKolmogorovAlgorithm(),
+		routes=1)
+
+	if f < 0.00001
+		throw(KeyError("no cut found"))
+	end
+
+	# labels contains either 1,2 or 0
+	# 1 means that the vertex in position i
+	# should be part of the source
+	# 2 means that it should be part of the sink
+	# 0 means that it could be either 1 or 2
+	# We will transform all 0 to 1, so that this function always
+	# return two parts
+	labels = map(x-> x == 0? 1 : x, labels)
+	edges_to_cut = filter(e->labels[encode[e[1]]]!=labels[encode[e[2]]], atomic_edges)
+	return edges_to_cut
 end
 
 function is_root(v::Vertex)
@@ -501,7 +593,7 @@ function update!(c::ChunkedGraph)
 	n_processed = 0
 	gc_enable(false)
 	update!(get_chunk(c,TOP_ID))
-	println("updated")
+	# println("updated")
 	gc_enable(true)
 
 end
@@ -523,10 +615,10 @@ function update!(c::Chunk)
 	end
 
 	#Print debug messages
-	println("updating $(level(c.id)), $(map(Int,pos(c.id))) V: +$(length(c.added_vertices))/-$(length(c.deleted_vertices)), E: +$(length(c.added_edges))/-$(length(c.deleted_edges))")
+	# println("updating $(level(c.id)), $(map(Int,pos(c.id))) V: +$(length(c.added_vertices))/-$(length(c.deleted_vertices)), E: +$(length(c.added_edges))/-$(length(c.deleted_edges))")
 	global n_processed
 	n_processed+=1
-	println("$n_processed/$(length(c.chunked_graph.graphs))")
+	# println("$n_processed/$(length(c.chunked_graph.graphs))")
 
 	#vertices which need updates
 	dirty_vertices=Set{Vertex}()
@@ -567,28 +659,29 @@ function update!(c::Chunk)
 
 
 	for e in c.deleted_edges
-		# FIXME unncesary work just for an assert
-		# write actual tests to verify correctness
-		u,v=lcG(c.chunked_graph, map(x->get_vertex(c.chunked_graph,x),e)...)
-		@assert chunk_id(u) == chunk_id(c)
-		@assert chunk_id(v) == chunk_id(c)
-		MultiGraphs.delete_edge!(c.graph,u.label,v.label,e)
-		push!(dirty_vertices,u)
-		push!(dirty_vertices,v)
+			u,v=lcG(c.chunked_graph, map(x->get_vertex(c.chunked_graph,x),e)...)
+			@assert chunk_id(u) == chunk_id(c)
+			@assert chunk_id(v) == chunk_id(c)
+			MultiGraphs.delete_edge!(c.graph,u.label,v.label,e)
+			push!(dirty_vertices,u)
+			push!(dirty_vertices,v)
 	end
 
 	for e in c.added_edges
-		u,v=lcG(c.chunked_graph, map(x->get_vertex(c.chunked_graph,x),e)...)
-		@assert chunk_id(u) == chunk_id(c)
-		@assert chunk_id(v) == chunk_id(c)
-		@assert haskey(c.vertices,u.label)
-		@assert haskey(c.vertices,v.label)
+		try
+			u,v=lcG(c.chunked_graph, map(x->get_vertex(c.chunked_graph,x),e)...)
+			@assert chunk_id(u) == chunk_id(c)
+			@assert chunk_id(v) == chunk_id(c)
+			@assert haskey(c.vertices,u.label)
+			@assert haskey(c.vertices,v.label)
 
-		@assert haskey(c.graph.vertex_map,u.label)
-		@assert haskey(c.graph.vertex_map,v.label)
-		MultiGraphs.add_edge!(c.graph,u.label,v.label,e)
-		push!(dirty_vertices,u)
-		push!(dirty_vertices,v)
+			@assert haskey(c.graph.vertex_map,u.label)
+			@assert haskey(c.graph.vertex_map,v.label)
+			MultiGraphs.add_edge!(c.graph,u.label,v.label,e)
+			push!(dirty_vertices,u)
+			push!(dirty_vertices,v)
+		catch #vertices might not exist anymore
+		end
 	end
 
 	if !is_root(c)
@@ -643,17 +736,6 @@ function add_atomic_vertex!(G::ChunkedGraph, label)
 	push!(s.added_vertices, v)
 	touch(s)
 end
-
-function delete_atomic_vertex!(G::ChunkedGraph, label)
-	#=
-	get_vertex will throw KeyError if label doesn't exists
-	=#
-	@assert level(chunk_id(label))==1 "$(level(chunk_id(label))) == 1"
-	s=get_chunk(G,chunk_id(label))::Chunk
-	push!(s.deleted_vertices, get_vertex(G, label)) 
-	touch(s)
-end
-
 
 function add_atomic_edge!(G::ChunkedGraph, edge::Tuple{Label,Label})
 	c = get_chunk(G,lca(chunk_id(edge[1]),chunk_id(edge[2])))::Chunk

@@ -138,100 +138,23 @@ function connected_components{V,E}(G::MultiGraph{V,E}, Vertices)
 	return Array{V,1}[map(x->G.inverse_vertex_map[x],y) for y in components]
 end
 
-function induced_edges{V,E}(G::MultiGraph{V,E},Us)
-	us = Int[G.vertex_map[U] for U in Us if haskey(G.vertex_map,U)]
-	us_set = Set{Int}(us)
+function induced_edges{V,E}(G::MultiGraph{V,E}, vertices)
+	#=
+	Returns a dictionary from edges to list of atomic edges
+	=#
+	vertices = Int[G.vertex_map[vertex] for vertex in vertices 
+				   if haskey(G.vertex_map,vertex)]
+	vertex_set = Set{Int}(vertices)
 
 	ret = Dict{Tuple{V,V},Vector{E}}()
-	for u in us
+	for u in vertex_set
 		for v in neighbors(G.g,u)
-			if v in us_set && u < v
-				e=(G.inverse_vertex_map[u],G.inverse_vertex_map[v])
-				ret[e]=G.edge_map[unordered(u,v)]
+			if v in vertex_set && u < v
+				edge = (G.inverse_vertex_map[u], G.inverse_vertex_map[v])
+				ret[edge]=G.edge_map[unordered(u,v)]
 			end
 		end
 	end
 	return ret
 end
-
-
-
-
-type SimpleGraph{V}
-	g::LightGraphs.Graph
-	vertex_map::Dict{V,Int}
-	inverse_vertex_map::Dict{Int,V}
-
-end
-function SimpleGraph(V)
-	return SimpleGraph{V}(LightGraphs.Graph(), Dict{V,Int}(),Dict{Int,V}())
-end
-function add_vertex!(G::SimpleGraph, v)
-	if !(haskey(G.vertex_map,v))
-		LightGraphs.add_vertex!(G.g)
-		G.vertex_map[v] = nv(G.g)
-		G.inverse_vertex_map[nv(G.g)] = v
-	end
-end
-
-function delete_vertex!(G::SimpleGraph,vertex)
-	u=G.vertex_map[vertex]
-	for v in collect(neighbors(G.g,u))
-		rem_edge!(G.g,u,v)
-	end
-	delete!(G.vertex_map,vertex)
-	delete!(G.inverse_vertex_map,u)
-end
-
-function delete_edge!(G::SimpleGraph,U,V)
-	u=G.vertex_map[U]
-	v=G.vertex_map[V]
-	rem_edge!(G.g,u,v)
-end
-
-function add_edge!(G::SimpleGraph,U,V)
-	u=G.vertex_map[U]
-	v=G.vertex_map[V]
-	LightGraphs.add_edge!(G.g,u,v)
-end
-
-function induced_edges{V}(G::SimpleGraph{V},Us)
-	us = Int[G.vertex_map[U] for U in Us if haskey(G.vertex_map,U)]
-	us_set = Set{Int}(us)
-
-	ret = Tuple{V,V}[]
-	for u in us
-		for v in neighbors(G.g,u)
-			if v in us_set && u < v
-				push!(ret,(G.inverse_vertex_map[u],G.inverse_vertex_map[v]))
-			end
-		end
-	end
-	return ret
-end
-
-function connected_component{X}(G::SimpleGraph{X}, V)
-	g=G.g
-	v = G.vertex_map[V]
-	visited=Set{Int}()
-	sizehint!(visited, length(vertices))
-	component=Array{Int,1}[]
-	to_visit=Set{Int}()#Set{Int}(Int[v])
-
-	push!(to_visit,v)
-	while length(to_visit) > 0
-		x=pop!(to_visit)
-		push!(component,x)
-		push!(visited,x)
-		for n in neighbors(g,x)
-			if !(n in visited)
-				push!(to_visit,n)
-			end
-		end
-	end
-	#@assert length(vertices) == sum(map(length,components))
-	return map(x->G.inverse_vertex_map[x],component)
-end
-
-
 end
