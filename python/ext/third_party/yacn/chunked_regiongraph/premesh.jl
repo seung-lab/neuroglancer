@@ -8,7 +8,11 @@ using ChunkedGraphs2
 using Save
 using PyCall
 using Utils
+using JSON
 
+rel(p::String) = joinpath(dirname(@__FILE__), p)
+
+settings = JSON.parsefile(rel("server.conf"))
 
 @pyimport neuroglancer.pipeline.task_queue as task_queue
 @pyimport neuroglancer.pipeline.tasks as tasks 
@@ -18,11 +22,8 @@ tq = task_queue.TaskQueue(queue_server="pull-queue",n_threads=0)
 #@pyimport neuroglancer.simple_task_queue.task_queue as task_queue
 #tq = task_queue.TaskQueue("http://127.0.0.1:8000/1.0")
 
-G=ChunkedGraph("~/testing2")
+G = ChunkedGraph(rel(settings["graphpath"]))
 const WATERSHED_STORAGE = "gs://neuroglancer/pinky40_v11/watershed"
-
-#println(chunk_id_to_slices(ChunkID(map(UInt32,(1,42,42,2))...)))
-#wait()
 
 function labeller(start_label)
 	n=start_label
@@ -35,7 +36,7 @@ end
 
 task_labeller = labeller(0)
 function mesh!(c::ChunkedGraphs2.Chunk)
-	if ChunkedGraphs2.level(c) == 1 && false
+	if ChunkedGraphs2.level(c) == 1 #&& false
 		vertex_list=Set()
 		if length(c.vertices) == 0
 			return nothing
@@ -56,7 +57,7 @@ function mesh!(c::ChunkedGraphs2.Chunk)
 		label=task_labeller()
 		task = tasks.MeshTask(
 							 "4_4_40",
-							 slices_to_str(chunk_id_to_slices(c.id,high_pad=0)),
+							 slices_to_str(chunk_id_to_slices(c.id,high_pad=2)),
 							 WATERSHED_STORAGE, 
 							 remap=remap,
 							 generate_manifests=true
@@ -89,8 +90,8 @@ function mesh!(c::ChunkedGraphs2.Chunk)
 		return nothing
 	end
 end
-@time for f in filter(s->ismatch(r".*vertices.jls",s), readdir(expanduser("~/testing2")))
-	m=match(r"(\d+)_(\d+)_(\d+)_(\d+).*",f)
+@time for f in filter(s->ismatch(r".*\.chunk",s), readdir(expanduser(rel(settings["graphpath"]))))
+	m=match(r"(\d+)_(\d+)_(\d+)_(\d+)\..*",f)
 	id = ChunkID(map(x->parse(UInt32,x),m.captures)...)
 	if Utils.level(id) == 1
 		mesh!(ChunkedGraphs2.get_chunk(G,id))
