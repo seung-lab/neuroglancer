@@ -78,27 +78,32 @@ end
 
 const AtomicEdge = Tuple{Label,Label}
 
-function common_parent_vertex(G::ChunkedGraph, vertices::Vector{Label})
-	@assert length(vertices) >= 1
+function common_parent_vertices(G::ChunkedGraph, vertex_labels::Vector{Label})
+	@assert length(vertex_labels) >= 1
 
-	s_vertices = Set()
-	for vertex in vertices
-		@assert level(chunk_id(vertex)) == 1
-		push!(s_vertices, get_vertex(G, vertex))
+	# Get unique set of root_vertices (not necessarily on top-level)
+	root_vertex_set = Set{ChunkedGraphs2.Vertex}()
+	for vertex_label in vertex_labels
+		@assert level(chunk_id(vertex_label)) == 1
+		push!(root_vertex_set, root(G, get_vertex(G, vertex_label)))
 	end
 
-	while length(s_vertices) > 1
-		new_s_vertices = Set()
-		for vertex in s_vertices
-	    	if vertex.parent == NULL_LABEL
-	    		promote!(G, vertex)
-	    	end
-	   		push!(new_s_vertices, get_vertex(G, vertex.parent))
+	root_vertices = collect(root_vertex_set)
 
+	# Make sure all root_vertices are on the same level
+	max_level = max(map(r->level(chunk_id(r.label)), root_vertices)...)
+	for i in eachindex(root_vertices)
+		while level(chunk_id(root_vertices[i].label)) < max_level
+			root_vertices[i] = promote!(G, root_vertices[i])
 		end
-		s_vertices = new_s_vertices
 	end
-	return pop!(s_vertices)
+
+	# Make sure all root_vertices are in the same chunk (already on the same level)
+	while length(unique(map(r->chunk_id(r), root_vertices))) !== 1
+		root_vertices = map(r->promote!(G, r), root_vertices)
+	end
+
+	return root_vertices
 end
 
 #The 'added' and 'deleted' sets buffer updates to the graph
@@ -315,9 +320,6 @@ function get_vertex(g::ChunkedGraph, label)
 	return get_chunk(g,chunk_id(label)).vertices[label]
 end
 
-
-
-
 function lcG(G, v1::Vertex, v2::Vertex)
 	if chunk_id(v1) == chunk_id(v2)
 		return (v1,v2)
@@ -425,51 +427,29 @@ function leaves(G,v::Vertex, cuboid::Cuboid)
 	end
 end
 
-#vertices should be a collection of labels
-function induced_subgraph(G::ChunkedGraph, chunk::Chunk, vertices::Vector{Label}, cuboid)
-	#=
-	Chunk is a common ancestor that contains all vertices roots
+function induced_subgraph{T<:Integer}(G::ChunkedGraph, chunk::Chunk, vertices::Vector{Label}, cuboid::Tuple{UnitRange{T},UnitRange{T},UnitRange{T}})
+	atomic_edges = AtomicEdge[]
+	chunks = [chunk];
+	lvl = level(first(chunks))
+	while lvl > 0
+		# Add all induced_edges of all important vertices in all chunks on the current level to the existing list of atomic_edges
+		append!(atomic_edges, vcat([vcat(values(MultiGraphs.induced_edges(c.graph, vertices))...) for c in chunks]...));
 
-	We always start from lcG of all vertices.
-	And traverse the tree down getting all edges and vertices
-	Making sure we remain inside the cuboid
+		if lvl > 1
+			# From the current set of vertices, collect all child vertices
+			vertices = vcat([vcat([c.vertices[v].children for v in filter(v->haskey(c.vertices, v), vertices)]...) for c in chunks]...);
 
-	=#
+			# Make sure we got all the necessary chunks in memory
+			foreach(v->get_chunk(G, chunk_id(v)), vertices)
 
-	#If I'm outside cuboid return empty lists
-	if !overlaps(to_cuboid(chunk_id(chunk)), cuboid)
-	    return Label[], Tuple{Label,Label}[]
-	end
-
-	if level(chunk) == 1 #atomic (base case)
-		#=
-		We never call induced_subgraph on this level
-		if all vertices are in a level 0 chunk, we would
-		find the common root which would be at least level 1
-
-		When we traverse down will arrive at this base case
-		in which we want to return all children of the root
-		and all the edges between them
-		=#
-		@assert length(chunk.subgraphs) == 0
-		atomic_vertices = vertices
-		atomic_edges = cat(1, values(MultiGraphs.induced_edges(chunk.graph, vertices))...)
-		atomic_edges =  collect(filter(
-			e->e[1] in atomic_vertices && e[2] in atomic_vertices, atomic_edges)) 
-	else
-		children = cat(1,[chunk.vertices[v].children for v in vertices]...)
-		atomic_vertices = Label[]
-		atomic_edges = []
-		for s in chunk.subgraphs
-			s_children =  filter(c-> chunk_id(c) == chunk_id(s),children)
-			s_vertices, s_edges = induced_subgraph(G, s, s_children, cuboid)
-			append!(atomic_vertices, s_vertices)
-			append!(atomic_edges, s_edges)
+			# From the current set of chunks, collect all child chunks that still lie within the cuboid ROI
+			chunks = filter(subc->overlaps(to_cuboid(chunk_id(subc)), cuboid), vcat([c.subgraphs for c in chunks]...))
 		end
+		lvl -= 1
 	end
 
-	atomic_vertices = unique(atomic_vertices)
-	return atomic_vertices, atomic_edges
+	atomic_vertices = Set(vertices)
+	return collect(atomic_vertices), filter(e->e[1] in atomic_vertices && e[2] in atomic_vertices, atomic_edges)
 end
 
 import LightGraphs
@@ -477,18 +457,18 @@ import LightGraphs
 function bounding_box(labels::Vector{UInt64})
 	MAX_INT = 100000
 
-	min_x, min_y, min_z = 0,0,0
-	max_x, max_y, max_z = MAX_INT, MAX_INT, MAX_INT
+	min_x, min_y, min_z = MAX_INT, MAX_INT, MAX_INT
+	max_x, max_y, max_z = 0,0,0
 	for l in labels
 		@assert level(chunk_id(l))==1
 		x,y,z = pos(chunk_id(l))
 		min_x = min(min_x,x); max_x =  max(max_x,x)
-		min_y = min(min_y,y); max_y =  max(max_y,z)
+		min_y = min(min_y,y); max_y =  max(max_y,y)
 		min_z = min(min_z,z); max_z =  max(max_z,z)
 	end
 	return (min_x-2: max_x+2,
-			min_y-2: max_y+2,
-			min_z-2: max_z+2)
+					min_y-2: max_y+2,
+					min_z-2: max_z+2)
 
 end
 
@@ -501,18 +481,18 @@ function min_cut(G::ChunkedGraph, sources::Vector{UInt64}, sinks::Vector{UInt64}
 	#=
 	Returns a list of edges to cut
 	=#
-	INF_CAPACTIY = 1000000
+	INF_CAPACITY = 1000000
 
-	
+	# DISCUSSION:
+	# The connection between sources and sinks can lie outside bounding box, erroneously returning "no cut"
+	# Not limiting the search region obviously leads to a considerable slowdown for huge objects, but it returns
+	# correct results.
+	bbox = (0:typemax(UInt64), 0:typemax(UInt64), 0:typemax(UInt64)) # bounding_box(vcat(sources,sinks))
+	root_vertices = common_parent_vertices(G, vcat(sources, sinks))
+	chunk = get_chunk(G, chunk_id(root_vertices[1].label))
+	atomic_vertices, atomic_edges = induced_subgraph(G, chunk, map(r->r.label, root_vertices), bbox)
 
-	#iterate thru all sources and sinks and find bounding box
-	bbox = bounding_box(vcat(sources,sinks))
-	r = common_parent_vertex(G, cat(1, sources, sinks))
-	chunk = get_chunk(G,chunk_id(r))
-	atomic_vertices, atomic_edges = induced_subgraph(G, chunk, [r.label], bbox)
-
-
-	# why do I need to encode things? just to make the matrix less sparse?
+	# Relabel atomic vertices to get a dense matrix for LightGraphs
 	encode=Dict()
 	for (i,v) in enumerate(atomic_vertices)
 		encode[v]=i
@@ -531,8 +511,8 @@ function min_cut(G::ChunkedGraph, sources::Vector{UInt64}, sinks::Vector{UInt64}
 		# Don't split supervoxels at chunk boundaries
 		# FIXME: this hack only works because seg_id are currently unique
 		# across the whole dataset
-		capacities[encode[u],encode[v]] = seg_id(u) == seg_id(v) ? INF_CAPACTIY : 1 
-		capacities[encode[v],encode[u]] = seg_id(u) == seg_id(v) ? INF_CAPACTIY : 1
+		capacities[encode[u],encode[v]] = seg_id(u) == seg_id(v) ? INF_CAPACITY : 1 
+		capacities[encode[v],encode[u]] = seg_id(u) == seg_id(v) ? INF_CAPACITY : 1
 	end
 
 	# create a fake source and add edges with infinite weight to all sources
@@ -540,8 +520,8 @@ function min_cut(G::ChunkedGraph, sources::Vector{UInt64}, sinks::Vector{UInt64}
 		LightGraphs.add_edge!(flow_graph , encode[source], fake_source)
 		LightGraphs.add_edge!(flow_graph , fake_source, encode[source])
 
-		capacities[encode[source], fake_source] = INF_CAPACTIY
-		capacities[fake_source, encode[source]] = INF_CAPACTIY
+		capacities[encode[source], fake_source] = INF_CAPACITY
+		capacities[fake_source, encode[source]] = INF_CAPACITY
 	end
 
 	# create a fake sink
@@ -549,17 +529,18 @@ function min_cut(G::ChunkedGraph, sources::Vector{UInt64}, sinks::Vector{UInt64}
 		LightGraphs.add_edge!(flow_graph , encode[sink], fake_sink)
 		LightGraphs.add_edge!(flow_graph , fake_sink, encode[sink])
 
-		capacities[encode[sink], fake_sink] = INF_CAPACTIY
-		capacities[fake_sink, encode[sink]] = INF_CAPACTIY
+		capacities[encode[sink], fake_sink] = INF_CAPACITY
+		capacities[fake_sink, encode[sink]] = INF_CAPACITY
 	end
 
-	f,_,labels= LightGraphs.multiroute_flow(
+	f, _, labels = LightGraphs.multiroute_flow(
 		flow_graph, fake_source, fake_sink, capacities,
 		flow_algorithm = LightGraphs.BoykovKolmogorovAlgorithm(),
 		routes=1)
 
-	if f < 0.00001
-		throw(KeyError("no cut found"))
+	# No split found, or no split allowed
+	if f < 0.00001 || f >= INF_CAPACITY
+		return AtomicEdge[]
 	end
 
 	# labels contains either 1,2 or 0
@@ -570,7 +551,13 @@ function min_cut(G::ChunkedGraph, sources::Vector{UInt64}, sinks::Vector{UInt64}
 	# We will transform all 0 to 1, so that this function always
 	# return two parts
 	labels = map(x-> x == 0? 1 : x, labels)
-	edges_to_cut = filter(e->labels[encode[e[1]]]!=labels[encode[e[2]]], atomic_edges)
+	edges_to_cut = filter(e->labels[encode[e[1]]] != labels[encode[e[2]]], atomic_edges)
+	
+	# DISCUSSION:
+	# We connected sinks and sources each by using a fake source/sink.
+	# It is possible that real sources/sinks become disconnected after
+	# cutting these edges - or already were disconnected in the beginning.
+	# Should we create edges between all sinks and sources, respectively?
 	return edges_to_cut
 end
 
@@ -728,7 +715,7 @@ function add_atomic_vertex!(G::ChunkedGraph, label)
 	@assert level(chunk_id(label))==1 "$(level(chunk_id(label))) == 1"
 	s=get_chunk(G,chunk_id(label))::Chunk
 	if haskey(s.vertices,label)
-		throw(KeyError)
+		return
 	end
 
 	# Create new vertex with no parent neither children
