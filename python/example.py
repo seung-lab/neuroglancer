@@ -60,12 +60,6 @@ viewer.add(data=[[10, 20 ,30],
                  [15, 20 ,30],
                  [15, 25 ,30]], name='layer_vector_graphics', layer_type='line')
 
-# Sixth layer (skeleton)
-skeleton = Skeleton([[10, 20, 30],
-                     [15, 20, 30],
-                     [15, 25, 30]], [[1,2],[2,3]])
-#viewer.add(name='skeleton', layer_type='single_mesh', data = skeleton)
-
 # Open browser
 webbrowser.open(str(viewer))
 
