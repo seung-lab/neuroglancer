@@ -36,7 +36,7 @@ RUN pip install setuptools Cython wheel numpy tensorflow-gpu pandas
 # install neuroglancer
 RUN mkdir /.ssh
 ADD ./ /neuroglancer
-RUN pip install -r /neuroglancer/python/requirements.txt --upgrade
+RUN pip install -r /neuroglancer/python/requirements.txt 
 RUN cd /neuroglancer/python && pip install . && python setup.py develop
 
 #installs julia
