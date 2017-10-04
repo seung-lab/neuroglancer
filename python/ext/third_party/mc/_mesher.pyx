@@ -22,6 +22,7 @@ cdef extern from "cMesher.h":
         vector[unsigned int] ids()
         meshobj get_mesh(unsigned int, bool normals, int simplification_factor, int max_simplification_error)
         bool write_obj(unsigned int id, string filename)
+        meshobj merge_meshes(vector[unsigned int], vector[unsigned char], bool normals, int simplification_factor, int max_simplification_error)
 
 # creating a cython wrapper class
 cdef class Mesher:
@@ -38,3 +39,5 @@ cdef class Mesher:
         return self.thisptr.get_mesh(mesh_id, normals, simplification_factor, max_simplification_error)
     def write_obj(self, mesh_id, filename):
         return self.thisptr.write_obj(mesh_id, filename)
+    def merge_meshes(self, entry_points, data, normals=False, simplification_factor=0, max_simplification_error=8):
+        return self.thisptr.merge_meshes(entry_points, data, normals, simplification_factor, max_simplification_error)

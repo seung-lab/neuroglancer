@@ -156,97 +156,6 @@ class QuantizeAffinitiesTask(RegisteredTask):
     destvol = CloudVolume(self.dest_layer_path, mip=0)
     downsample_and_upload(image, bounds, destvol, self.shape, mip=0, axis='z')
 
-def indicator(A,s):
-    return np.reshape(np.in1d(A,np.array(list(s))).astype(np.int32),np.shape(A))
-
-
-class ObjectMeshTask(RegisteredTask):
-
-    def __init__(self, chunk_position, layer_path, segments, label,
-                 lod=0, simplification=5):
-        
-        super(ObjectMeshTask, self).__init__(chunk_position, layer_path,  segments, label,
-                                       lod, simplification)
-        self.chunk_position = chunk_position
-        self.layer_path = layer_path
-        self.lod = lod
-        self.simplification = simplification
-        self.segments = segments
-        self.label = label
-
-    def execute(self):
-        self._storage = Storage(self.layer_path)
-        self._mesher = Mesher()
-        self._parse_chunk_position()
-        self._download_info()
-        self._download_input_chunk()
-        self._compute_meshes() # Timed in function
-        self._storage.wait()
-
-    def _parse_chunk_position(self):
-        match = re.match(r'^(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)$', self.chunk_position)
-        (self._xmin, self._xmax,
-         self._ymin, self._ymax,
-         self._zmin, self._zmax) = map(int, match.groups())
-    
-    def _download_info(self):
-        self._info = json.loads(self._storage.get_file('info'))
-
-        if 'mesh' not in self._info:
-            raise ValueError("Path on where to store the meshes is not present")
-
-    def _download_input_chunk(self):
-        """
-        It assumes that the chunk_position includes a 1 pixel overlap
-        """
-        #FIXME choose the mip level based on the chunk key
-        volume = Precomputed(self._storage)
-        self._data = volume[self._xmin:self._xmax,
-                            self._ymin:self._ymax,
-                            self._zmin:self._zmax]
-
-    def _compute_meshes(self):
-        data = np.swapaxes(indicator(self._data[:,:,:,0],self.segments), 0,2)
-        self._mesher.mesh(data.flatten(), *data.shape)
-
-        self._storage.put_file(
-            file_path='{}/{}:{}:{}'.format(self._info['mesh'], self.label, self.lod, self.chunk_position),
-            content=self._create_mesh(1))
-        self._storage.wait()
-
-
-        file_path='{}/{}:{}'.format(self.label, self.lod, self.chunk_position)
-
-        fragments = []
-        fragments.append('{}:{}:{}'.format(self.label, self.lod, self.chunk_position))
-
-        self._storage.put_file(
-            file_path='{}/{}:{}'.format(self._info['mesh'], self.label, self.lod),
-            content=json.dumps({"fragments": fragments}))
-        self._storage.wait()
-
-    def _create_mesh(self, obj_id):
-        mesh = self._mesher.get_mesh(obj_id, simplification_factor=128, max_simplification_error=1000000)
-        vertices = self._update_vertices(np.array(mesh['points'], dtype=np.float32)) 
-        vertex_index_format = [
-            np.uint32(len(vertices) / 3), #Number of vertices (each vertex it's composed of three numbers(x,y,z))
-            vertices,
-            np.array(mesh['faces'], dtype=np.uint32)
-        ]
-        ret = b''.join([ array.tobytes() for array in vertex_index_format ])
-
-        return ret
-
-    def _update_vertices(self, points):
-        # zi_lib meshing multiplies verticies by two to avoid working with floats like 1.5
-        # but we need to recover the exact position for display
-        points /= 2.0
-        resolution = self._info['scales'][0]['resolution']
-        points[0::3] = (points[0::3] + self._xmin) * resolution[0]   # x
-        points[1::3] = (points[1::3] + self._ymin) * resolution[1]   # y
-        points[2::3] = (points[2::3] + self._zmin) * resolution[2]   # z
-        return points
-
 class MergeMeshTask(RegisteredTask):
     """
     Finalize mesh generation by post-processing chunk fragment
@@ -289,9 +198,77 @@ class MergeMeshTask(RegisteredTask):
                 content=json.dumps({"fragments": fragments}))
         self._storage.wait()
 
+class MeshStitchTask(RegisteredTask):
+
+    def __init__(self, layer_path, input_manifests, output_fragment, simplification_factor=128, max_simplification_error=1000000):
+        super(MeshStitchTask, self).__init__(layer_path, input_manifests, output_fragment, simplification_factor, max_simplification_error)
+        self.layer_path = layer_path
+        self.input_manifests = input_manifests
+        self.output_fragment = output_fragment
+        self.simplification_factor = simplification_factor
+        self.max_simplification_error = max_simplification_error
+
+    def execute(self):
+        self._storage = CachedStorage(self.layer_path)
+        self._mesher = Mesher()
+        self._parse_output_fragment()
+        self._download_info()
+        self._download_input_meshes()
+        self._create_output_mesh()
+
+    def _parse_output_fragment(self):
+        match = re.match(r'^(\d+):(\d+):(\d+-\d+_\d+-\d+_\d+-\d+)$', self.output_fragment)
+        self._segid = int(match.groups()[0])
+        self._lod = int(match.groups()[1])
+        self._output_fragment_pos = match.groups()[2]
+
+    def _download_info(self):
+        self._info = json.loads(self._storage.get_file('info'))
+        if 'mesh' not in self._info:
+            raise ValueError("Path on where to store the meshes is not present")
+
+    def _download_input_meshes(self):
+        self._meshes = []
+        self._entrypoints = np.empty((0), dtype=np.uint32)
+        total_size = 0
+
+        for manifest in self.input_manifests:
+            input_fragments = json.loads(self._storage.get_file('{}/{}'.format(self._info['mesh'], manifest)))
+            for fragment in input_fragments['fragments']:
+                self._entrypoints = np.append(self._entrypoints, total_size)
+                self._meshes.append(np.fromstring(self._storage.get_file('{}/{}'.format(self._info['mesh'], fragment)), dtype=np.uint8))
+                total_size += len(self._meshes[-1])
+
+    def _merge_mesh(self):
+        mesh = self._mesher.merge_meshes(self._entrypoints, np.hstack(self._meshes),
+            simplification_factor=self.simplification_factor,
+            max_simplification_error=self.max_simplification_error
+        )
+
+        vertices = np.array(mesh['points'], dtype=np.float32)
+        vertex_index_format = [
+            np.uint32(len(vertices) / 3), # Number of vertices ( each vertex is three numbers (x,y,z) )
+            vertices,
+            np.array(mesh['faces'], dtype=np.uint32)
+        ]
+        return b''.join([ array.tobytes() for array in vertex_index_format ])
+
+    def _create_output_mesh(self):
+        self._storage.put_file(
+            file_path='{}/{}:{}:{}'.format(self._info['mesh'], self._segid, self._lod, self._output_fragment_pos),
+            content=self._merge_mesh()
+        )
+        self._storage.wait()
+
+        self._storage.put_file(
+            file_path='{}/{}:{}'.format(self._info['mesh'], self._segid, self._lod),
+            content=json.dumps({"fragments": [self.output_fragment]})
+        )
+        self._storage.wait()
+
 class MeshTask(RegisteredTask):
-  def __init__(self, shape, offset, layer_path, mip=0, simplification_factor=100, max_simplification_error=40, remap=None, generate_manifests=False):
-    super(MeshTask, self).__init__(shape, offset, layer_path, mip, simplification_factor, max_simplification_error, remap, generate_manifests)
+  def __init__(self, shape, offset, layer_path, mip=0, simplification_factor=100, max_simplification_error=40, remap=None, generate_manifests=False, low_pad=1, high_pad=1):
+    super(MeshTask, self).__init__(shape, offset, layer_path, mip, simplification_factor, max_simplification_error, remap, generate_manifests, low_pad, high_pad)
     self.shape = Vec(*shape)
     self.offset = Vec(*offset)
     self.mip = mip
@@ -299,6 +276,8 @@ class MeshTask(RegisteredTask):
     self.lod = 0 # level of detail -- to be implemented
     self.simplification_factor = simplification_factor
     self.max_simplification_error = max_simplification_error
+    self.low_pad = low_pad
+    self.high_pad = high_pad
     self.remap = remap
     self.generate_manifests=generate_manifests
 
@@ -314,8 +293,8 @@ class MeshTask(RegisteredTask):
     # This avoids lines appearing between 
     # adjacent chunks.
     data_bounds = self._bounds.clone()
-    data_bounds.minpt -= 1
-    data_bounds.maxpt += 1
+    data_bounds.minpt -= self.low_pad
+    data_bounds.maxpt += self.high_pad
 
     self._mesh_dir = None
     if 'meshing' in self._volume.info:

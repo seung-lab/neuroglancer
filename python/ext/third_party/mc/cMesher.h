@@ -26,6 +26,8 @@ public:
   std::vector<unsigned int> ids();
   meshobj get_mesh(const unsigned int id, const bool generate_normals, const int simplification_factor, const int max_error);
   bool write_obj(const unsigned int id, const std::string &filename);
+  meshobj merge_meshes(const std::vector<unsigned int> &entry_points, const std::vector<unsigned char> &data,
+                       bool generate_normals, int simplification_factor, int max_simplification_error);
 private:
   zi::mesh::marching_cubes<unsigned int> mc;
   zi::mesh::simplifier<double> s;
