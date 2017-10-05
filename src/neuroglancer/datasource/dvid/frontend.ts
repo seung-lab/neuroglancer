@@ -458,6 +458,10 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
   getMeshSource(): null {
     return null;
   }
+
+  getSkeletonSource(): null {
+    return null;
+  }
 }
 
 export function getShardedVolume(

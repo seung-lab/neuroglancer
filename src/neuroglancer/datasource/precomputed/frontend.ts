@@ -16,16 +16,19 @@
 
 import {ChunkManager} from 'neuroglancer/chunk_manager/frontend';
 import {registerDataSourceFactory} from 'neuroglancer/datasource/factory';
-import {MeshSourceParameters, VolumeChunkEncoding, VolumeChunkSourceParameters} from 'neuroglancer/datasource/precomputed/base';
+import {MeshSourceParameters, SkeletonSourceParameters, VolumeChunkEncoding, VolumeChunkSourceParameters} from 'neuroglancer/datasource/precomputed/base';
+import {defineParameterizedSkeletonSource} from 'neuroglancer/skeleton/frontend';
 import {defineParameterizedMeshSource} from 'neuroglancer/mesh/frontend';
 import {DataType, VolumeChunkSpecification, VolumeSourceOptions, VolumeType} from 'neuroglancer/sliceview/volume/base';
 import {defineParameterizedVolumeChunkSource, MultiscaleVolumeChunkSource as GenericMultiscaleVolumeChunkSource} from 'neuroglancer/sliceview/volume/frontend';
 import {mat4, vec3} from 'neuroglancer/util/geom';
 import {openShardedHttpRequest, parseSpecialUrl, sendHttpRequest} from 'neuroglancer/util/http_request';
-import {parseArray, parseFixedLengthArray, parseIntVec, verifyEnumString, verifyFinitePositiveFloat, verifyObject, verifyObjectProperty, verifyOptionalString, verifyPositiveInt, verifyString} from 'neuroglancer/util/json';
+import {parseArray, parseFixedLengthArray, parseIntVec, verifyEnumString, verifyFinitePositiveFloat, verifyObject, verifyObjectAsMap, verifyObjectProperty, verifyOptionalString, verifyPositiveInt, verifyString} from 'neuroglancer/util/json';
+import {VertexAttributeInfo} from 'neuroglancer/skeleton/base';
 
 const VolumeChunkSource = defineParameterizedVolumeChunkSource(VolumeChunkSourceParameters);
 const MeshSource = defineParameterizedMeshSource(MeshSourceParameters);
+const BaseSkeletonSource = defineParameterizedSkeletonSource(SkeletonSourceParameters);
 
 class ScaleInfo {
   key: string;
@@ -65,6 +68,7 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
   numChannels: number;
   volumeType: VolumeType;
   mesh: string|undefined;
+  skeletons: string|undefined;
   scales: ScaleInfo[];
 
   getMeshSource() {
@@ -73,7 +77,11 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
       return null;
     }
     return getShardedMeshSource(
-        this.chunkManager, {baseUrls: this.baseUrls, path: `${this.path}/${mesh}`, lod: 0});
+        this.chunkManager, {baseUrls: this.baseUrls, path: `${this.path}/${this.mesh}`, lod: 0});
+  }
+
+  getSkeletonSource() {
+    return getSkeletonSource(this.chunkManager, `${this.baseUrls[0]}${this.path}/${this.skeletons}?{}`);
   }
 
   constructor(
@@ -83,6 +91,7 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
     this.numChannels = verifyObjectProperty(obj, 'num_channels', verifyPositiveInt);
     this.volumeType = verifyObjectProperty(obj, 'type', x => verifyEnumString(x, VolumeType));
     this.mesh = verifyObjectProperty(obj, 'mesh', verifyOptionalString);
+    this.skeletons = verifyObjectProperty(obj, 'skeletons', verifyOptionalString);
     this.scales = verifyObjectProperty(obj, 'scales', x => parseArray(x, y => new ScaleInfo(y)));
   }
 
@@ -112,6 +121,44 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
   }
 }
 
+
+export class SkeletonSource extends BaseSkeletonSource {
+  get skeletonVertexCoordinatesInVoxels() {
+    return false;
+  }
+  get vertexAttributes() {
+    return this.parameters.vertexAttributes;
+  }
+}
+
+function parseVertexAttributeInfo(x: any): VertexAttributeInfo {
+  verifyObject(x);
+  return {
+    dataType: verifyObjectProperty(x, 'dataType', y => verifyEnumString(y, DataType)),
+    numComponents: verifyObjectProperty(x, 'numComponents', verifyPositiveInt),
+  };
+}
+
+function parseSkeletonVertexAttributes(spec: string): Map<string, VertexAttributeInfo> {
+  return verifyObjectAsMap(JSON.parse(spec), parseVertexAttributeInfo);
+}
+
+export function getSkeletonSource(chunkManager: ChunkManager, path: string) {
+
+  const skeletonUrlPattern = /^((?:http|https):\/\/.*\/)([^\/?]+)\?(.*)$/;
+
+  let match = path.match(skeletonUrlPattern);
+  if (match === null) {
+    throw new Error(`Invalid skeleton volume path: ${JSON.stringify(path)}`);
+  }
+  return SkeletonSource.get(chunkManager, {
+    baseUrls: [match[1]],
+    key: match[2],
+    vertexAttributes: parseSkeletonVertexAttributes(match[3]),
+  });
+}
+
+
 export function getShardedMeshSource(chunkManager: ChunkManager, parameters: MeshSourceParameters) {
   return MeshSource.get(chunkManager, parameters);
 }
@@ -135,8 +182,10 @@ export function getVolume(chunkManager: ChunkManager, url: string) {
   return getShardedVolume(chunkManager, baseUrls, path);
 }
 
+
 registerDataSourceFactory('precomputed', {
   description: 'Precomputed file-backed data source',
   getVolume: getVolume,
   getMeshSource: getMeshSource,
+  getSkeletonSource: getSkeletonSource
 });

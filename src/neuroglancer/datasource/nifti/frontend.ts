@@ -58,6 +58,10 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
   getMeshSource(): null {
     return null;
   }
+
+  getSkeletonSource(): null {
+    return null;
+  }
 }
 
 const VolumeChunkSource = defineParameterizedVolumeChunkSource(VolumeSourceParameters);

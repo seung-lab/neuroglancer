@@ -21,7 +21,7 @@ import {BrainmapsInstance, INSTANCE_IDENTIFIERS, INSTANCE_NAMES, makeRequest, PR
 import {ChangeSpec, MeshSourceParameters, SkeletonSourceParameters, VolumeChunkEncoding, VolumeSourceParameters} from 'neuroglancer/datasource/brainmaps/base';
 import {GetVolumeOptions, registerDataSourceFactory} from 'neuroglancer/datasource/factory';
 import {defineParameterizedMeshSource} from 'neuroglancer/mesh/frontend';
-import {parameterizedSkeletonSource} from 'neuroglancer/skeleton/frontend';
+import {defineParameterizedSkeletonSource} from 'neuroglancer/skeleton/frontend';
 import {DataType, VolumeChunkSpecification, VolumeSourceOptions, VolumeType} from 'neuroglancer/sliceview/volume/base';
 import {defineParameterizedVolumeChunkSource, MultiscaleVolumeChunkSource as GenericMultiscaleVolumeChunkSource} from 'neuroglancer/sliceview/volume/frontend';
 import {StatusMessage} from 'neuroglancer/status';
@@ -31,7 +31,7 @@ import {parseArray, parseQueryStringParameters, parseXYZ, verifyEnumString, veri
 
 const VolumeChunkSource = defineParameterizedVolumeChunkSource(VolumeSourceParameters);
 const MeshSource = defineParameterizedMeshSource(MeshSourceParameters);
-const BaseSkeletonSource = parameterizedSkeletonSource(SkeletonSourceParameters);
+const BaseSkeletonSource = defineParameterizedSkeletonSource(SkeletonSourceParameters);
 
 const SERVER_DATA_TYPES = new Map<string, DataType>();
 SERVER_DATA_TYPES.set('UINT8', DataType.UINT8);
@@ -182,6 +182,10 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
       'meshName': validMesh.name,
       'changeSpec': this.changeSpec,
     });
+  }
+
+  getSkeletonSource(): null {
+    return null;
   }
 }
 

@@ -237,11 +237,12 @@ export class SkeletonLayer extends RefCounted {
   draw(
       renderContext: SliceViewPanelRenderContext, layer: RenderLayer, renderHelper: RenderHelper,
       lineWidth?: number) {
+
     if (lineWidth === undefined) {
       lineWidth = renderContext.emitColor ? 1 : 5;
     }
     let {gl, source, displayState} = this;
-    let alpha = Math.min(1.0, displayState.objectAlpha.value);
+    let alpha = 1.0 //disable alpha Math.min(1.0, displayState.objectAlpha.value);
     if (alpha <= 0.0) {
       // Skip drawing.
       return;
@@ -413,7 +414,7 @@ export class ParameterizedSkeletonSource<Parameters> extends SkeletonSource {
 /**
  * Defines a SkeletonSource for which all state is encapsulated in an object of type Parameters.
  */
-export function parameterizedSkeletonSource<Parameters>(
+export function defineParameterizedSkeletonSource<Parameters>(
     parametersConstructor: ChunkSourceParametersConstructor<Parameters>) {
   const newConstructor =
       class SpecializedParameterizedSkeletonSource extends ParameterizedSkeletonSource<Parameters> {

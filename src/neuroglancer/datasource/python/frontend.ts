@@ -24,7 +24,7 @@ import {registerDataSourceFactory} from 'neuroglancer/datasource/factory';
 import {MeshSourceParameters, SkeletonSourceParameters, VolumeChunkEncoding, VolumeChunkSourceParameters} from 'neuroglancer/datasource/python/base';
 import {defineParameterizedMeshSource} from 'neuroglancer/mesh/frontend';
 import {VertexAttributeInfo} from 'neuroglancer/skeleton/base';
-import {parameterizedSkeletonSource} from 'neuroglancer/skeleton/frontend';
+import {defineParameterizedSkeletonSource} from 'neuroglancer/skeleton/frontend';
 import {DataType, DEFAULT_MAX_VOXELS_PER_CHUNK_LOG2, getNearIsotropicBlockSize, getTwoDimensionalBlockSize} from 'neuroglancer/sliceview/base';
 import {VolumeChunkSpecification, VolumeSourceOptions, VolumeType} from 'neuroglancer/sliceview/volume/base';
 import {defineParameterizedVolumeChunkSource, MultiscaleVolumeChunkSource as GenericMultiscaleVolumeChunkSource} from 'neuroglancer/sliceview/volume/frontend';
@@ -34,7 +34,7 @@ import {parseArray, parseFixedLengthArray, verify3dDimensions, verify3dScale, ve
 
 const VolumeChunkSource = defineParameterizedVolumeChunkSource(VolumeChunkSourceParameters);
 const MeshSource = defineParameterizedMeshSource(MeshSourceParameters);
-const BaseSkeletonSource = parameterizedSkeletonSource(SkeletonSourceParameters);
+const BaseSkeletonSource = defineParameterizedSkeletonSource(SkeletonSourceParameters);
 
 interface ScaleInfo {
   key: string;
@@ -164,6 +164,10 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
       baseUrls: this.baseUrls,
       key: this.key,
     });
+  }
+
+  getSkeletonSource(): null {
+    return null;
   }
 }
 

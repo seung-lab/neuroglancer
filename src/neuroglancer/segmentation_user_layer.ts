@@ -44,6 +44,7 @@ import {SemanticEntryWidget} from 'neuroglancer/widget/semantic_entry_widget';
 import {splitObject, mergeNodes, getObjectList, getConnectedSegments, enableGraphServer, GRAPH_SERVER_NOT_ENABLED} from 'neuroglancer/object_graph_service';
 import {StatusMessage} from 'neuroglancer/status';
 import {HashMapUint64} from 'neuroglancer/gpu_hash/hash_table';
+import {SkeletonSource} from 'neuroglancer/skeleton/frontend';
 
 require('neuroglancer/noselect.css');
 require('./segmentation_user_layer.css');
@@ -135,7 +136,7 @@ export class SegmentationUserLayer extends UserLayer {
 
     let volumePath = this.volumePath = verifyOptionalString(spec['source']);
     let meshPath = this.meshPath = spec['mesh'] === null ? null : verifyOptionalString(spec['mesh']);
-    let skeletonsPath = this.skeletonsPath = verifyOptionalString(spec['skeletons']);
+    let skeletonsPath = this.skeletonsPath = spec['skeleton'] === null ? null : verifyOptionalString(spec['skeleton']);
     let graphPath = this.graphPath = verifyOptionalString(spec['graph']);
 
     if (volumePath !== undefined) {
@@ -148,6 +149,13 @@ export class SegmentationUserLayer extends UserLayer {
             let meshSource = volume.getMeshSource();
             if (meshSource != null) {
               this.addMesh(meshSource);
+            }
+          }
+          if (skeletonsPath === undefined) {
+            let skeletonSource = volume.getSkeletonSource();
+            if (skeletonSource != null) {
+              this.skeletonsPath = 'from_info_file'; // this makes the dropdown menu visible
+              this.addSkeleton(skeletonSource);
             }
           }
         }
@@ -165,10 +173,7 @@ export class SegmentationUserLayer extends UserLayer {
     if (skeletonsPath !== undefined) {
       getSkeletonSource(manager.chunkManager, skeletonsPath).then(skeletonSource => {
         if (!this.wasDisposed) {
-          let base = new SkeletonLayer(
-              manager.chunkManager, skeletonSource, manager.voxelSize, this.displayState);
-          this.addRenderLayer(new PerspectiveViewSkeletonLayer(base.addRef()));
-          this.addRenderLayer(new SliceViewPanelSkeletonLayer(/* transfer ownership */ base));
+          this.addSkeleton(skeletonSource);
         }
       });
     }
@@ -200,6 +205,13 @@ export class SegmentationUserLayer extends UserLayer {
   addMesh(meshSource: MeshSource) {
     this.meshLayer = new MeshLayer(this.manager.chunkManager, meshSource, this.displayState);
     this.addRenderLayer(this.meshLayer);
+  }
+
+  addSkeleton(skeletonSource: SkeletonSource) {
+    let base = new SkeletonLayer(
+              this.manager.chunkManager, skeletonSource, this.manager.voxelSize, this.displayState);
+    this.addRenderLayer(new PerspectiveViewSkeletonLayer(base.addRef()));
+    this.addRenderLayer(new SliceViewPanelSkeletonLayer(/* transfer ownership */ base));
   }
 
   toJSON() {
@@ -396,6 +408,7 @@ class SegmentationDropdown extends UserLayerDropdown {
   visibleSegmentWidget = this.registerDisposer(new SegmentSetWidget(this.layer.displayState));
   addSegmentWidget = this.registerDisposer(new Uint64EntryWidget());
   addSemanticWidget = this.registerDisposer(new SemanticEntryWidget(this.layer.displayState));
+  skeletonDialog: HTMLElement|null|undefined;
 
   selectedAlphaWidget =
       this.registerDisposer(new RangeWidget(this.layer.displayState.selectedAlpha));
@@ -406,6 +419,7 @@ class SegmentationDropdown extends UserLayerDropdown {
 
   constructor(public element: HTMLDivElement, public layer: SegmentationUserLayer) {
     super();
+
     element.classList.add('segmentation-dropdown');
     let {selectedAlphaWidget, notSelectedAlphaWidget, objectAlphaWidget} = this;
     selectedAlphaWidget.promptElement.textContent = 'Opacity (on)';
@@ -439,47 +453,54 @@ class SegmentationDropdown extends UserLayerDropdown {
     }));
     element.appendChild(this.registerDisposer(this.visibleSegmentWidget).element);
 
-    if (this.layer.skeletonsPath !== undefined) {
-      let topRow = document.createElement('div');
-      topRow.className = 'neuroglancer-segmentation-dropdown-skeleton-shader-header';
-      let label = document.createElement('div');
-      label.style.flex = '1';
-      label.textContent = 'Skeleton shader:';
-      let helpLink = document.createElement('a');
-      let helpButton = document.createElement('button');
-      helpButton.type = 'button';
-      helpButton.textContent = '?';
-      helpButton.className = 'help-link';
-      helpLink.appendChild(helpButton);
-      helpLink.title = 'Documentation on skeleton rendering';
-      helpLink.target = '_blank';
-      helpLink.href =
-          'https://github.com/google/neuroglancer/blob/master/src/neuroglancer/sliceview/image_layer_rendering.md';
+   
+  }
 
-      let maximizeButton = document.createElement('button');
-      maximizeButton.innerHTML = '&square;';
-      maximizeButton.className = 'maximize-button';
-      maximizeButton.title = 'Show larger editor view';
-      this.registerEventListener(maximizeButton, 'click', () => {
-        new ShaderCodeOverlay(this.layer);
-      });
+  buildSkeletonDialog(element: HTMLDivElement) {
+    let topRow = document.createElement('div');
+    topRow.className = 'neuroglancer-segmentation-dropdown-skeleton-shader-header';
+    let label = document.createElement('div');
+    label.style.flex = '1';
+    label.textContent = 'Skeleton shader:';
+    let helpLink = document.createElement('a');
+    let helpButton = document.createElement('button');
+    helpButton.type = 'button';
+    helpButton.textContent = '?';
+    helpButton.className = 'help-link';
+    helpLink.appendChild(helpButton);
+    helpLink.title = 'Documentation on skeleton rendering';
+    helpLink.target = '_blank';
+    helpLink.href =
+        'https://github.com/seung-lab/neuroglancer/blob/master/src/neuroglancer/sliceview/image_layer_rendering.md';
 
-      topRow.appendChild(label);
-      topRow.appendChild(maximizeButton);
-      topRow.appendChild(helpLink);
+    let maximizeButton = document.createElement('button');
+    maximizeButton.innerHTML = '&square;';
+    maximizeButton.className = 'maximize-button';
+    maximizeButton.title = 'Show larger editor view';
+    this.registerEventListener(maximizeButton, 'click', () => {
+      new ShaderCodeOverlay(this.layer);
+    });
 
-      element.appendChild(topRow);
+    topRow.appendChild(label);
+    topRow.appendChild(maximizeButton);
+    topRow.appendChild(helpLink);
 
-      const codeWidget = this.codeWidget =
-          this.registerDisposer(makeSkeletonShaderCodeWidget(this.layer));
-      element.appendChild(codeWidget.element);
-      codeWidget.textEditor.refresh();
-    }
+    element.appendChild(topRow);
+
+    const codeWidget = this.codeWidget =
+        this.registerDisposer(makeSkeletonShaderCodeWidget(this.layer));
+    element.appendChild(codeWidget.element);
+    codeWidget.textEditor.refresh();
+    this.skeletonDialog = topRow;
   }
 
   onShow() {
     if (this.codeWidget !== undefined) {
       this.codeWidget.textEditor.refresh();
+    }
+
+    if (this.layer.skeletonsPath !== undefined && this.skeletonDialog == null) {
+      this.buildSkeletonDialog(this.element);
     }
   }
 }
