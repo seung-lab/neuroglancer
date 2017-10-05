@@ -207,6 +207,10 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
   getMeshSource(): null {
     return null;
   }
+
+  getSkeletonSource(): null {
+    return null;
+  }
 }
 
 const pathPattern = /^([^\/?]+)(?:\/([^\/?]+))?(?:\?(.*))?$/;
