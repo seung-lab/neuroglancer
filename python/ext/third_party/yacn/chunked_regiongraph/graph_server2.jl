@@ -214,8 +214,8 @@ function handle_children(id)
 		s = UInt64[seg_id(child) for child in v.children]
 		println("$(now()): handle_children - v: $(v.label), (Level $(ChunkedGraphs2.level(v))), - children: $(simple_print([seg_id(child) for child in v.children]))")
 	else
-		#s = UInt64[child for child in v.children]
-		s = UInt64[child for child in leaves(G,v,2)] # J's hack to skip the middle layers and jump right to the pre-meshed lower level agglomeration.
+		s = UInt64[child for child in v.children]
+		#s = UInt64[child for child in leaves(G,v,2)] # J's hack to skip the middle layers and jump right to the pre-meshed lower level agglomeration.
 		println("$(now()): handle_children - v: $(v.label), (Level $(ChunkedGraphs2.level(v))), - children: $(simple_print([child for child in v.children]))")
 	end
 

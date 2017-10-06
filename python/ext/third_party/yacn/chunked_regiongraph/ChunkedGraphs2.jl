@@ -17,7 +17,7 @@ using DataStructures
 
 #####Chunk Ids#####
 include("constants.jl")
-const MAX_DEPTH=3
+const MAX_DEPTH=10
 const TOP_ID=ChunkID(MAX_DEPTH+1,0,0,0)
 const SECOND_ID=ChunkID(MAX_DEPTH,0,0,0)
 const NULL_LABEL=typemax(UInt64)
