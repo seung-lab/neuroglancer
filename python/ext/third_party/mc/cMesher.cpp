@@ -214,6 +214,15 @@ meshobj cMesher::get_mesh(const unsigned int id, const bool generate_normals, co
 // Expects Precomputed format (Indexed mesh: first 4 Byte for vertex count, then vertex positions, then triangle indices)
 meshobj cMesher::merge_meshes(const std::vector<unsigned int> &entry_points, const std::vector<unsigned char> &data, bool generate_normals, int simplification_factor, int max_simplification_error) {
   meshobj obj;
+  
+  
+  std::ofstream o("entry.data", std::ios::out | std::ios::binary);
+  o.write((char*)&entry_points[0], sizeof(unsigned int) * entry_points.size());
+  o.close();
+  std::ofstream o2("data.data", std::ios::out | std::ios::binary);
+  o2.write((char*)&data[0], data.size());
+  o2.close();
+
   const unsigned char tri_face = 3;
   zi::mesh::face_mesh<float> merged_mesh;
   for (int i = 0; i < entry_points.size(); ++i) {
@@ -262,16 +271,16 @@ meshobj cMesher::merge_meshes(const std::vector<unsigned int> &entry_points, con
   }
 
   for (auto v = points.begin(); v != points.end(); ++v) {
-    obj.points.push_back((*v)[2]);
-    obj.points.push_back((*v)[1]);
     obj.points.push_back((*v)[0]);
+    obj.points.push_back((*v)[1]);
+    obj.points.push_back((*v)[2]);
   }
 
   if (generate_normals) {
     for (auto vn = normals.begin(); vn != normals.end(); ++vn) {
-      obj.normals.push_back((*vn)[2]);
-      obj.normals.push_back((*vn)[1]);
       obj.normals.push_back((*vn)[0]);
+      obj.normals.push_back((*vn)[1]);
+      obj.normals.push_back((*vn)[2]);
     }
   }
 
