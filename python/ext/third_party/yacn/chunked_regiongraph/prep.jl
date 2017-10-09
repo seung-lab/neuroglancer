@@ -15,7 +15,7 @@ map_chunks((10240:cx:65014, 7680:cy:43714, 0:cz:1001), 0, 1) do slices
 	println(string(slices))
   task = tasks.EdgeTask(
 							 "gs://neuroglancer/pinky40_v11/watershed",
-               "gs://neuroglancer/pinky40_v11/mean_0.27_segmentation",
+               "gs://neuroglancer/pinky40_v11/watershed_mst_trimmed_sem_remap",
                "gs://neuroglancer/pinky40_v11/chunked_regiongraph",
                string(slices))
 	tq[:insert](task)

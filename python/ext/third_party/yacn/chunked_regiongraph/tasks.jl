@@ -84,8 +84,12 @@ function edge_task(watershed_storage, segmentation_storage, output_storage, slic
 	vertices = unique(relabelled)
 	
 	output_storage = pl.Storage(output_storage)
-	output_storage[:put_file](file_path="$(slices_to_str(slices))_edges.txt", content="$(edges)")
-	output_storage[:put_file](file_path="$(slices_to_str(slices))_vertices.txt", content="$(vertices)")
+	edge_buf = IOBuffer()
+	vertex_buf = IOBuffer()
+	serialize(edge_buf, edges)
+	serialize(vertex_buf, vertices)
+	output_storage[:put_file](file_path="$(slices_to_str(slices))_edges.jls", content=pybytes(edge_buf.data))
+	output_storage[:put_file](file_path="$(slices_to_str(slices))_vertices.jls", content=pybytes(vertex_buf.data))
 	output_storage[:wait]()
 end
 
