@@ -14,6 +14,9 @@ Adapted to include passing of multidimensional arrays
 #include <zi/vl/vec_functions.hpp>
 #include <vector>
 #include <fstream>
+#include <map>
+#include <set>
+#include <algorithm>
 
 
 #include "cMesher.h"
@@ -71,6 +74,58 @@ void calc_normals(zi::vl::vec<T,3>* n, const zi::vl::vec<T,3>* p, std::size_t ps
   for (int i = 0; i < psize; ++i) {
     zi::vl::normalize<T,3>(n[i]);
   }
+}
+
+template < class T >
+unsigned make_manifold(zi::mesh::face_mesh<T> &mesh) {
+  std::map<std::pair<uint32_t, uint32_t>, std::pair<uint32_t, uint32_t>> edge_face_map;
+  std::set<uint32_t> bad_faces;
+
+  for (int i = 0; i < mesh.faces().size(); ++i) {
+    for (int j = 0; j < 3 ; ++j) {
+      std::pair<uint32_t, uint32_t> unordered_edge = std::minmax(mesh.faces()[i][j], mesh.faces()[i][j==2 ? 0 : j+1]);
+      std::map<std::pair<uint32_t, uint32_t>, std::pair<uint32_t, uint32_t>>::iterator it = edge_face_map.find(unordered_edge);
+      if ( it == edge_face_map.end()) {
+        auto p = std::make_pair(unordered_edge, std::make_pair(i, -1));
+        edge_face_map.insert(p);
+      }
+      else {
+        if (it->second.second == -1) {
+          it->second.second = i;
+        } else {
+          zi::vl::vec<T,3> f1v1 = mesh.points()[mesh.faces()[it->second.first][0]];
+          zi::vl::vec<T,3> f1v2 = mesh.points()[mesh.faces()[it->second.first][1]];
+          zi::vl::vec<T,3> f1v3 = mesh.points()[mesh.faces()[it->second.first][2]];
+          zi::vl::vec<T,3> f2v1 = mesh.points()[mesh.faces()[it->second.second][0]];
+          zi::vl::vec<T,3> f2v2 = mesh.points()[mesh.faces()[it->second.second][1]];
+          zi::vl::vec<T,3> f2v3 = mesh.points()[mesh.faces()[it->second.second][2]];
+          zi::vl::vec<T,3> fiv1 = mesh.points()[mesh.faces()[i][0]];
+          zi::vl::vec<T,3> fiv2 = mesh.points()[mesh.faces()[i][1]];
+          zi::vl::vec<T,3> fiv3 = mesh.points()[mesh.faces()[i][2]];
+
+          T area_first = zi::vl::sqrlen(zi::vl::cross(f1v2 - f1v1, f1v3 - f1v1));
+          T area_second = zi::vl::sqrlen(zi::vl::cross(f2v2 - f2v1, f2v3 - f2v1));
+          T area_new = zi::vl::sqrlen(zi::vl::cross(fiv2 - fiv1, fiv3 - fiv1));
+
+          if (bad_faces.find(it->second.first) != bad_faces.end() || (bad_faces.find(i) == bad_faces.end() && area_first <= area_new && area_first <= area_second)) {
+            bad_faces.insert(it->second.first);
+            it->second.first = i;
+          } else if (bad_faces.find(it->second.second) != bad_faces.end() || (bad_faces.find(i) == bad_faces.end() && area_second <= area_new && area_second <= area_first)) {
+            bad_faces.insert(it->second.second);
+            it->second.second = i;
+          } else {
+            bad_faces.insert(i);
+          }
+        }
+      }
+    }
+  }
+
+  for (auto rit = bad_faces.rbegin(); rit != bad_faces.rend(); ++rit) {
+    mesh.faces().erase(mesh.faces().begin() + *rit); // inefficient, but we don't expect many faces to be removed
+  }
+
+  return bad_faces.size();
 }
 
 void cMesher::mesh(const std::vector<unsigned int> &data,
@@ -159,7 +214,7 @@ meshobj cMesher::get_mesh(const unsigned int id, const bool generate_normals, co
 // Expects Precomputed format (Indexed mesh: first 4 Byte for vertex count, then vertex positions, then triangle indices)
 meshobj cMesher::merge_meshes(const std::vector<unsigned int> &entry_points, const std::vector<unsigned char> &data, bool generate_normals, int simplification_factor, int max_simplification_error) {
   meshobj obj;
-
+  const unsigned char tri_face = 3;
   zi::mesh::face_mesh<float> merged_mesh;
   for (int i = 0; i < entry_points.size(); ++i) {
     size_t start = entry_points[i];
@@ -180,6 +235,9 @@ meshobj cMesher::merge_meshes(const std::vector<unsigned int> &entry_points, con
     merged_mesh.add(p, n, v_cnt, f, f_cnt);
     delete[] n;
   }
+
+  unsigned deleted_faces = make_manifold(merged_mesh);
+  std::cout << "Removed " << deleted_faces << " triangles due to non-manifold edges.\n";
 
   merged_mesh.fill_simplifier<double>(s);
   s.prepare(generate_normals);
