@@ -66,6 +66,12 @@ export class ManifestChunk extends Chunk {
     }
   }
 
+  downloadFailed(error: any) {
+    // Missing manifest means remeshing is in progress. Initiate loading of child chunks.
+    super.downloadFailed(error);
+    this.source!.chunkManager.scheduleUpdateChunkPriorities();
+  }
+
   toString() {
     return this.objectId.toString();
   }
@@ -302,6 +308,8 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
     this.source = this.registerDisposer(rpc.getRef<MeshSource>(options['source']));
     this.registerDisposer(this.chunkManager.recomputeChunkPriorities.add(() => {
       this.updateChunkPriorities();
+    }));
+
     this.requestedChildChunks = new Map<string, { add: Uint64[], delete: Uint64[] }>();
     this.handleChildChunks = debounce(this.delayedHandleChildChunks, 100);
 
@@ -313,7 +321,7 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
     for (const [rootID, elements] of this.requestedChildChunks.entries()) {
       rootTmp = Uint64.parseString(rootID);
       if (!this.rootSegments.has(rootTmp)) {
-        console.log("Adding 3D children aborted due to missing root.");
+        console.log('Adding 3D children aborted due to missing root.');
         continue;
       }
 
@@ -330,6 +338,8 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
       return;
     }
     const priorityTier = getPriorityTier(visibility);
+    const basePriority = getBasePriority(visibility);
+    const {source, chunkManager} = this;
     forEachVisibleSegment3D(this, (objectId, rootObjectId) => {
       let segmentID = objectId.clone();
       let rootID = rootObjectId.clone();
@@ -352,7 +362,7 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
         getChildren(segmentID).then(children => {
           manifestChunk.state = ChunkState.FAILED;
           if (!this.rootSegments.has(rootID)) {
-            console.log("Adding 3D children aborted due to missing root.");
+            console.log('Adding 3D children aborted due to missing root.');
             return;
           }
           if (!this.requestedChildChunks.has(rootID.toString())) {

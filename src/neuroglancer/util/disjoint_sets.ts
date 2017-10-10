@@ -168,19 +168,6 @@ export class DisjointUint64Sets {
     return false;
   }
 
-  private shatter (a: Uint64) : Uint64[] {
-    let rep = this.makeSet(a);
-
-    let nodes = [];
-    for (let node of setElementIterator(rep)) {
-      nodes.push(node);
-    } 
-
-    nodes.forEach(initializeElement);
-
-    return nodes;
-  }
-
   * setElements(a: Uint64): IterableIterator<Uint64> {
     let key = a.toString();
     let element = this.map.get(key);

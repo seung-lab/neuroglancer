@@ -323,4 +323,4 @@ server = Server(http)
 cert = MbedTLS.crt_parse_file(joinpath(rel(settings["certpath"]), "server.crt"))
 key = MbedTLS.parse_keyfile(joinpath(rel(settings["certpath"]), "server.key"))
 
-#run(server, host=getaddrinfo(settings["host"]), port=settings["port"], ssl=(cert, key))
+run(server, host=getaddrinfo(settings["host"]), port=settings["port"], ssl=(cert, key))

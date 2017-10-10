@@ -100,7 +100,7 @@ export function sendHttpRequest(
         reject(HttpError.fromXhr(xhr));
       }
     };
-    xhr.send(data);
+    xhr.send();
   });
 }
 

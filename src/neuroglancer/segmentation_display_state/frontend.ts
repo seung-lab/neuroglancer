@@ -46,7 +46,7 @@ export class SegmentSelectionState extends RefCounted {
         this.hasSelectedSegment = false;
         this.changed.dispatch();
       }
-    } 
+    }
     else {
       let existingValue = this.selectedSegment;
       if (!this.hasSelectedSegment || value.low !== existingValue.low || value.high !== existingValue.high) {
@@ -62,7 +62,7 @@ export class SegmentSelectionState extends RefCounted {
   setRaw(value: Uint64|null|undefined) {
     if (value == null) {
       return;
-    }    
+    }
     let existingRawValue = this.rawSelectedSegment;
     if (!this.hasSelectedSegment || value.low !== existingRawValue.low || value.high !== existingRawValue.high) {
 
@@ -120,11 +120,10 @@ export function registerRedrawWhenSegmentationDisplayStateChanged(
     displayState: SegmentationDisplayState, renderLayer: {redrawNeeded: NullarySignal}&RefCounted) {
   const dispatchRedrawNeeded = renderLayer.redrawNeeded.dispatch;
   renderLayer.registerDisposer(displayState.segmentColorHash.changed.add(dispatchRedrawNeeded));
-  renderLayer.registerDisposer(displayState.visibleSegments.changed.add(dispatchRedrawNeeded));
   renderLayer.registerDisposer(displayState.rootSegments.changed.add(dispatchRedrawNeeded));
   renderLayer.registerDisposer(displayState.visibleSegments2D.changed.add(dispatchRedrawNeeded));
   renderLayer.registerDisposer(displayState.visibleSegments3D.changed.add(dispatchRedrawNeeded));
-      displayState.segmentSelectionState.changed.add(dispatchRedrawNeeded));
+  renderLayer.registerDisposer(displayState.segmentSelectionState.changed.add(dispatchRedrawNeeded));
 }
 
 export function registerRedrawWhenSegmentationDisplayStateWithAlphaChanged(

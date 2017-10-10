@@ -23,14 +23,11 @@ import {MultiscaleVolumeChunkSource} from 'neuroglancer/sliceview/volume/fronten
 import {RenderLayer} from 'neuroglancer/sliceview/volume/renderlayer';
 import {TrackableAlphaValue} from 'neuroglancer/trackable_alpha';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
-import {DisjointUint64Sets} from 'neuroglancer/util/disjoint_sets';
 import {vec3} from 'neuroglancer/util/geom';
 import {ShaderBuilder, ShaderProgram} from 'neuroglancer/webgl/shader';
 import {glsl_unnormalizeUint8} from 'neuroglancer/webgl/shader_lib';
 
 const selectedSegmentForShader = new Float32Array(8);
-const DEBUG = true;
-}
 
 export interface SliceViewSegmentationDisplayState extends SegmentationDisplayState {
   selectedAlpha: TrackableAlphaValue;

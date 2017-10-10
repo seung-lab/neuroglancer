@@ -7,7 +7,6 @@ import itertools
 import json
 import os
 import re
-import cached
 from tempfile import NamedTemporaryFile
 
 import blosc
@@ -156,48 +155,6 @@ class QuantizeAffinitiesTask(RegisteredTask):
     destvol = CloudVolume(self.dest_layer_path, mip=0)
     downsample_and_upload(image, bounds, destvol, self.shape, mip=0, axis='z')
 
-class MergeMeshTask(RegisteredTask):
-    """
-    Finalize mesh generation by post-processing chunk fragment
-    lists into mesh fragment manifests.
-    These are necessary for neuroglancer to know which mesh
-    fragments to download for a given segid.
-    """
-    def __init__(self, layer_path, remap, lod=0):
-        super(MergeMeshTask, self).__init__(layer_path, remap, lod)
-        self.layer_path = layer_path
-        self.lod = lod
-        self.remap = remap
-
-    def execute(self):
-        self._storage = CachedStorage(self.layer_path)
-        self._download_info()
-        self._upload_manifests()
-
-    def _download_info(self):
-        self._info = json.loads(self._storage.get_file('info'))
-        
-    def _upload_manifests(self):
-        """
-        Assumes that list blob is lexicographically ordered
-        """
-        actual_remap = {int(k):int(v) for k,v in self.remap.iteritems()}
-        lists = defaultdict(list)
-        for k,v in actual_remap.iteritems():
-            lists[v].append(k)
-
-        for v in lists.keys():
-            print(v)
-            fragments=[]
-            for seg in lists[v]:
-                manifest = json.loads(self._storage.get_file('{}/{}:{}'.format(self._info['mesh'], seg, self.lod)))
-                fragments=fragments+manifest["fragments"]
-
-            self._storage.put_file(
-                file_path='{}/{}:{}'.format(self._info['mesh'], v, self.lod),
-                content=json.dumps({"fragments": fragments}))
-        self._storage.wait()
-
 class MeshStitchTask(RegisteredTask):
 
     def __init__(self, layer_path, input_manifests, output_fragment, simplification_factor=128, max_simplification_error=1000000):
@@ -283,8 +240,6 @@ class MeshTask(RegisteredTask):
 
   def execute(self):
     self._mesher = Mesher()
-    self._remap()
-
     self._volume = CloudVolume(self.layer_path, self.mip, bounded=False)
     self._bounds = Bbox( self.offset, self.shape + self.offset )
     self._bounds = Bbox.clamp(self._bounds, self._volume.bounds)
@@ -306,20 +261,20 @@ class MeshTask(RegisteredTask):
       raise ValueError("The mesh destination is not present in the info file.")
 
     self._data = self._volume[data_bounds.to_slices()] # chunk_position includes a 1 pixel overlap
+    self._remap()
     self._compute_meshes()
 
-    def _remap(self):
-        if self.remap!=None:
-            actual_remap = {int(k):int(v) for k,v in self.remap.iteritems()}
+  def _remap(self):
+    if self.remap != None:
+      actual_remap = { int(k):int(v) for k,v in self.remap.iteritems() }
 
-            self.remap_list = [0]+list(actual_remap.values())
-            d={}
-            for i,v in enumerate(self.remap_list):
-                d[v]=i
+      self.remap_list = [0] + list(actual_remap.values())
+      d = {}
+      for i,v in enumerate(self.remap_list):
+        d[v] = i
 
-            r = lambda x: d[actual_remap.get(x, 0)]
-            self._data = np.vectorize(r)(self._data)
-            print(np.mean(self._data))
+      r = lambda x: d[actual_remap.get(x, 0)]
+      self._data = np.vectorize(r)(self._data)
 
   def _compute_meshes(self):
     with Storage(self.layer_path) as storage:
@@ -335,7 +290,7 @@ class MeshTask(RegisteredTask):
         
         if self.generate_manifests:
           fragments = []
-          fragments.append('{}:{}:{}'.format(remapped_id, self.lod, self.chunk_position))
+          fragments.append('{}:{}:{}'.format(remapped_id, self.lod, self._bounds.to_filename()))
 
           storage.put_file(
             file_path='{}/{}:{}'.format(self._mesh_dir, remapped_id, self.lod),

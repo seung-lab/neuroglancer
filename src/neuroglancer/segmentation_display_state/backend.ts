@@ -49,11 +49,10 @@ export class SegmentationLayerSharedObjectCounterpart extends Base implements Vi
 
     const scheduleUpdateChunkPriorities = () => {
       this.chunkManager.scheduleUpdateChunkPriorities();
-    this.registerSignalBinding(this.rootSegments.changed.add(scheduleUpdateChunkPriorities));
-    this.registerSignalBinding(this.visibleSegments2D.changed.add(scheduleUpdateChunkPriorities));
-    this.registerSignalBinding(this.visibleSegments3D.changed.add(scheduleUpdateChunkPriorities));
     };
-    this.registerDisposer(this.visibleSegments.changed.add(scheduleUpdateChunkPriorities));
+    this.registerDisposer(this.rootSegments.changed.add(scheduleUpdateChunkPriorities));
+    this.registerDisposer(this.visibleSegments2D.changed.add(scheduleUpdateChunkPriorities));
+    this.registerDisposer(this.visibleSegments3D.changed.add(scheduleUpdateChunkPriorities));
     this.registerDisposer(this.segmentEquivalences.changed.add(scheduleUpdateChunkPriorities));
   }
 }

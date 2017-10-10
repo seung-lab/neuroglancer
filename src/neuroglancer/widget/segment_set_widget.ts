@@ -31,8 +31,8 @@ export class SegmentSetWidget extends RefCounted {
   private itemContainer = document.createElement('span');
   private items = new Map<string, ItemElement>();
 
-  get rootSegments() { return this.displayState.rootSegments; }
-    return this.displayState.visibleSegments;
+  get rootSegments() {
+    return this.displayState.rootSegments;
   }
   get segmentColorHash() {
     return this.displayState.segmentColorHash;
@@ -47,8 +47,8 @@ export class SegmentSetWidget extends RefCounted {
     element.className = 'segment-set-widget noselect';
     clearButton.className = 'clear-button';
     clearButton.title = 'Remove all segment IDs';
-    this.registerEventListener(clearButton, 'click', () => { this.rootSegments.clear(); });
-      this.visibleSegments.clear();
+    this.registerEventListener(clearButton, 'click', () => {
+      this.rootSegments.clear();
     });
 
     itemContainer.className = 'item-container';
@@ -74,7 +74,7 @@ export class SegmentSetWidget extends RefCounted {
     clearButton.style.display = (this.displayState.rootSegments.size > 0) ? '' : 'none';
   }
 
-  private handleSetChanged(x: Uint64|null, added: boolean) {
+  private handleSetChanged(x: Uint64|Uint64[]|null, added: boolean) {
     this.updateClearButtonVisibility();
     let {items} = this;
     if (x === null) {
@@ -89,12 +89,29 @@ export class SegmentSetWidget extends RefCounted {
       }
       items.clear();
     } else if (added) {
-      this.addElement(x.toString());
+      if (x.constructor === Array) {
+        for (const v of <Uint64[]>x) {
+          this.addElement(v.toString());
+        }
+      }
+      else {
+        this.addElement(x.toString());
+      }
     } else {
-      let s = x.toString();
-      let itemElement = items.get(s)!;
-      itemElement.parentElement!.removeChild(itemElement);
-      items.delete(s);
+      if (x.constructor === Array) {
+        for (const v of <Uint64[]>x) {
+          let s = v.toString();
+          let itemElement = items.get(s)!;
+          itemElement.parentElement!.removeChild(itemElement);
+          items.delete(s);
+        }
+      }
+      else {
+        let s = x.toString();
+        let itemElement = items.get(s)!;
+        itemElement.parentElement!.removeChild(itemElement);
+        items.delete(s);
+      }
     }
   }
 

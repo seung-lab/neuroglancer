@@ -22,7 +22,7 @@ import {registerRPC, registerSharedObject, RPC, SharedObjectCounterpart} from 'n
 @registerSharedObject('Uint64Set')
 export class Uint64Set extends SharedObjectCounterpart {
   hashTable = new HashSetUint64();
-  changed = new Signal<(x: Uint64 | null, add: boolean) => void>();
+  changed = new Signal<(x: Uint64 | Uint64[] | null, add: boolean) => void>();
 
   static makeWithCounterpart(rpc: RPC) {
     let obj = new Uint64Set();
@@ -70,7 +70,7 @@ export class Uint64Set extends SharedObjectCounterpart {
       if (rpc) {
         rpc.invoke('Uint64Set.reserve', {'id': this.rpcId, 'value': x});
       }
-      this.changed.dispatch(x, true);
+      // this.changed.dispatch(x, true);
     }
   }
 

@@ -41,7 +41,7 @@ import {SegmentSetWidget} from 'neuroglancer/widget/segment_set_widget';
 import {ShaderCodeWidget} from 'neuroglancer/widget/shader_code_widget';
 import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
 import {SemanticEntryWidget} from 'neuroglancer/widget/semantic_entry_widget';
-import {splitObject, mergeNodes, getRoot, getLeaves, getChildren, enableGraphServer, GRAPH_SERVER_NOT_SPECIFIED} from 'neuroglancer/object_graph_service';
+import {splitObject, mergeNodes, getRoot, getLeaves, /*getChildren,*/ enableGraphServer, GRAPH_SERVER_NOT_SPECIFIED} from 'neuroglancer/object_graph_service';
 import {StatusMessage} from 'neuroglancer/status';
 import {HashMapUint64} from 'neuroglancer/gpu_hash/hash_table';
 import {SkeletonSource} from 'neuroglancer/skeleton/frontend';
@@ -444,16 +444,16 @@ export class SegmentationUserLayer extends UserLayer {
 
         StatusMessage.displayText(msg);
       },
-      'yacn-select': () => {
-        let coords = [...this.manager.layerSelectedValues.mouseState.position.values()].map((v, i) => {
-          return Math.round(v / this.manager.voxelSize.size[i])
-        });
-        let promise = sendHttpRequest(openHttpRequest(`http://seungworkstation1000:8080/slack/`, 'POST'), 'arraybuffer',
-            `text=yacn(${coords[0]},${coords[1]},${coords[2]},"http://seungworkstation14.princeton.edu:9100")`);
-        return promise.then(() => {
-          StatusMessage.displayText(`YACN error correction started at (${coords[0]},${coords[1]},${coords[2]})`);
-        });
-      }
+      // 'yacn-select': () => {
+      //   let coords = [...this.manager.layerSelectedValues.mouseState.position.values()].map((v, i) => {
+      //     return Math.round(v / this.manager.voxelSize.size[i])
+      //   });
+      //   let promise = sendHttpRequest(openHttpRequest(`http://seungworkstation1000:8080/slack/`, 'POST'), 'arraybuffer',
+      //       `text=yacn(${coords[0]},${coords[1]},${coords[2]},"http://seungworkstation14.princeton.edu:9100")`);
+      //   return promise.then(() => {
+      //     StatusMessage.displayText(`YACN error correction started at (${coords[0]},${coords[1]},${coords[2]})`);
+      //   });
+      // }
     };
 
     let fn : Function = actions[action];
@@ -500,7 +500,7 @@ class SegmentationDropdown extends UserLayerDropdown {
       checkbox.element.className = 'neuroglancer-segmentation-dropdown-hide-segment-zero noselect';
       const label = document.createElement('label');
       label.className = 'neuroglancer-segmentation-dropdown-hide-segment-zero noselect';
-      label.appendChild(document.createTextNode('Hide segment ID 0'));  
+      label.appendChild(document.createTextNode('Hide segment ID 0'));
       label.appendChild(checkbox.element);
       element.appendChild(label);
     }
@@ -517,16 +517,12 @@ class SegmentationDropdown extends UserLayerDropdown {
     this.addSegmentWidget.element.title = 'Add segment ID';
     element.appendChild(this.registerDisposer(this.addSegmentWidget).element);
     this.registerDisposer(this.addSegmentWidget.valueEntered.add((value: Uint64) => {
-      (value: Uint64) => {
-        getRoot(value).then(rootSegment => {
-          this.layer.displayState.rootSegments.add(rootSegment);
-        });
-      }
-    ));
+      getRoot(value).then(rootSegment => {
+        this.layer.displayState.rootSegments.add(rootSegment);
+      });
+    }));
 
     element.appendChild(this.registerDisposer(this.visibleSegmentWidget).element);
-
-   
   }
 
   buildSkeletonDialog(element: HTMLDivElement) {
