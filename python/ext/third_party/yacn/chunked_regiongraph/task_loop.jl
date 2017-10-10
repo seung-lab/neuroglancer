@@ -25,13 +25,13 @@ while true
     
     tq[:delete](task)
   catch e
-    if typeof(e) <: PyCall.PyError && contains(e.val, "QueueEmpty")
-      sleep(1)
-      continue
-    else
+    #if typeof(e) <: PyCall.PyError && contains(e.val, "QueueEmpty")
+    #  sleep(1)
+    #  continue
+    #else
       println("Error is $e")
       sleep(1)
-    end
+    #end
   end
 
 end

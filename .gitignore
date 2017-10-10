@@ -6,6 +6,13 @@ client-secret.json
 /build/
 /coverage/
 /npm-debug.log
+/testdata/ply/
+/python/ext/third_party/yacn/chunked_regiongraph/logs/
+/python/ext/third_party/yacn/chunked_regiongraph/keys/
+/python/ext/third_party/yacn/chunked_regiongraph/server.conf
+/python/nkem-pinky-graph-chunkgen.yml
+/python/nkem-pinky-graph-meshing.yml
+*.vscode
 *.pyc
 __pycache__
 *.sw[pmn]
