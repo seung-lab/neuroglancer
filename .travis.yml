@@ -30,22 +30,25 @@ script:
 before_deploy:
 - 'if [ $(./was_modified.py appengine/frontend) == "true" ]; then
     sudo apt-get -qq update || travis_terminate 1;
-    sudo apt-get install -y  oracle-java8-set-default || travis_terminate 1;
+    sudo apt-get install -y  oracle-java8-set-default python-pytest || travis_terminate 1;
     npm install || travis_terminate 1;
     npm install --only=dev || travis_terminate 1;
     npm run build-min || travis_terminate 1;
     cp -r ./dist/min appengine/frontend/static/ || travis_terminate 1;
     virtualenv frontend || travis_terminate 1;
     source frontend/bin/activate || travis_terminate 1;
+    pip install -r ./appengine/frontend/requirements.txt || travis_terminate 1;
     pip install -t ./appengine/frontend/lib -r ./appengine/frontend/requirements.txt || travis_terminate 1;
     deactivate || travis_terminate 1;
   fi'
 
 - 'if [ $(./was_modified.py appengine/queue) == "true" ]; then
+    sudo apt-get -qq update || travis_terminate 1;
+    sudo apt-get install -y python-pytest || travis_terminate 1;
     virtualenv queue || travis_terminate 1;
     source queue/bin/activate || travis_terminate 1;
+    pip install -r ./appengine/queue/requirements.txt || travis_terminate 1;
     pip install -t ./appengine/queue/lib -r ./appengine/queue/requirements.txt || travis_terminate 1;
-    py.test ./appengine/queue/test.py || travis_terminate 1;
     deactivate || travis_terminate 1;
   fi'
 - export DEPLOY="false"
