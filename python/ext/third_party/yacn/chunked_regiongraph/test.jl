@@ -29,9 +29,9 @@ function test_cases()
 			add_atomic_vertex!(G, Utils.Label(1,0,0,0,1))
 			update!(G)
 
-			add_atomic_edge!(G, (Utils.Label(1,0,0,0,1), Utils.Label(1,0,0,0,2)))
-			add_atomic_edge!(G, (Utils.Label(1,0,0,0,1), Utils.Label(1,0,0,0,3)))
-			add_atomic_edge!(G, (Utils.Label(1,0,0,0,2), Utils.Label(1,0,0,0,3)))
+			add_atomic_edge!(G, AtomicEdge(Utils.Label(1,0,0,0,1), Utils.Label(1,0,0,0,2), 1.f0))
+			add_atomic_edge!(G, AtomicEdge(Utils.Label(1,0,0,0,1), Utils.Label(1,0,0,0,3), 1.f0))
+			add_atomic_edge!(G, AtomicEdge(Utils.Label(1,0,0,0,2), Utils.Label(1,0,0,0,3), 1.f0))
 			update!(G)
 
 			@test get_vertex(G, Utils.Label(1,0,0,0,1)).parent == get_vertex(G, Utils.Label(1,0,0,0,2)).parent
@@ -44,60 +44,23 @@ function test_cases()
 			add_atomic_vertex!(G, Utils.Label(1,0,0,0,2))
 			add_atomic_vertex!(G, Utils.Label(1,0,0,0,1))
 
-			add_atomic_edge!(G, (Utils.Label(1,0,0,1,3), Utils.Label(1,0,0,0,2)))
+			add_atomic_edge!(G, AtomicEdge(Utils.Label(1,0,0,1,3), Utils.Label(1,0,0,0,2), 1.f0))
 			update!(G)
-			add_atomic_edge!(G, (Utils.Label(1,0,0,0,2), Utils.Label(1,0,0,0,1)))
-			update!(G)
-			@test root(G, get_vertex(G, Utils.Label(1,0,0,1,3))) == root(G, get_vertex(G, Utils.Label(1,0,0,0,2)))
-			@test root(G, get_vertex(G, Utils.Label(1,0,0,1,3))) == root(G, get_vertex(G, Utils.Label(1,0,0,0,1)))
-		end
-
-		@testset "test_circle_external_edge" begin
-			G = ChunkedGraph("/tmp/graph")
-			add_atomic_vertex!(G, Utils.Label(1,0,0,1,3))
-			add_atomic_vertex!(G, Utils.Label(1,0,0,0,2))
-			add_atomic_vertex!(G, Utils.Label(1,0,0,0,1))
-
-			add_atomic_edge!(G, (Utils.Label(1,0,0,1,3), Utils.Label(1,0,0,0,2)))
-			update!(G)
-			add_atomic_edge!(G, (Utils.Label(1,0,0,0,2), Utils.Label(1,0,0,0,1)))
+			add_atomic_edge!(G, AtomicEdge(Utils.Label(1,0,0,0,2), Utils.Label(1,0,0,0,1), 1.f0))
 			update!(G)
 			@test root(G, get_vertex(G, Utils.Label(1,0,0,1,3))) == root(G, get_vertex(G, Utils.Label(1,0,0,0,2)))
 			@test root(G, get_vertex(G, Utils.Label(1,0,0,1,3))) == root(G, get_vertex(G, Utils.Label(1,0,0,0,1)))
 		end
-
-		# @testset "deleted_node" begin
-		#     G = ChunkedGraph("/tmp/graph")
-		#     label = Utils.Label(1,0,0,0, 1)
-		#     add_atomic_vertex!(G, label )
-		#     update!(G)
-		#     delete_atomic_vertex!(G, label)
-		#     update!(G)
-		#     @test_throws KeyError get_vertex(G, label)
-		#     add_atomic_vertex!(G, label)
-		#     update!(G)
-		#     @test get_vertex(G, label) == ChunkedGraphs2.Vertex(label, 
-		#         ChunkedGraphs2.NULL_LABEL, 
-		#         ChunkedGraphs2.NULL_LIST)
-		# end
-
-		# @testset "deleted_node_fusion" begin
-		#     G = ChunkedGraph("/tmp/graph")
-		#     label = Utils.Label(1,0,0,0, 1)
-		#     add_atomic_vertex!(G, label )
-		#     @test_throws KeyError delete_atomic_vertex!(G, label)
-		#     update!(G)
-		# end
 
 		@testset "delete_edge_same_chunk" begin
 			G = ChunkedGraph("/tmp/graph")
 			add_atomic_vertex!(G, Utils.Label(1,0,0,0, 1) )
 			add_atomic_vertex!(G, Utils.Label(1,0,0,0, 2) )
-			add_atomic_edge!(G, (Utils.Label(1,0,0,0,1), Utils.Label(1,0,0,0,2)))
+			add_atomic_edge!(G, AtomicEdge(Utils.Label(1,0,0,0,1), Utils.Label(1,0,0,0,2), 1.f0))
 			update!(G)
 			@test root(G, get_vertex(G, Utils.Label(1,0,0,0,1))) == root(G, get_vertex(G, Utils.Label(1,0,0,0,2)))
 
-			delete_atomic_edge!(G, (Utils.Label(1,0,0,0,1), Utils.Label(1,0,0,0,2)))
+			delete_atomic_edge!(G, AtomicEdge(Utils.Label(1,0,0,0,1), Utils.Label(1,0,0,0,2)))
 			update!(G)
 			@test root(G, get_vertex(G, Utils.Label(1,0,0,0,1))) != root(G, get_vertex(G, Utils.Label(1,0,0,0,2)))
 		end
@@ -108,11 +71,11 @@ function test_cases()
 			v = Utils.Label(1,0,0,1,2)
 			add_atomic_vertex!(G, u)
 			add_atomic_vertex!(G, v)
-			add_atomic_edge!(G, (u,v))
+			add_atomic_edge!(G, AtomicEdge(u,v, 1.f0))
 			update!(G)
 			@test root(G, get_vertex(G,u)) == root(G, get_vertex(G,v))
 
-			delete_atomic_edge!(G, (u,v))
+			delete_atomic_edge!(G, AtomicEdge(u,v))
 			update!(G)
 			@test root(G, get_vertex(G,u)) != root(G, get_vertex(G,v))
 			@test length(root(G, get_vertex(G, u)).children) == 1
@@ -125,11 +88,11 @@ function test_cases()
 			add_atomic_vertex!(G, Utils.Label(1,0,0,1,2) )
 			add_atomic_vertex!(G, Utils.Label(1,0,0,3,3) )
 
-			add_atomic_edge!(G, (Utils.Label(1,0,0,0,1), Utils.Label(1,0,0,1,2)))
-			add_atomic_edge!(G, (Utils.Label(1,0,0,1,2), Utils.Label(1,0,0,3,3)))
+			add_atomic_edge!(G, AtomicEdge(Utils.Label(1,0,0,0,1), Utils.Label(1,0,0,1,2), 1.f0))
+			add_atomic_edge!(G, AtomicEdge(Utils.Label(1,0,0,1,2), Utils.Label(1,0,0,3,3), 1.f0))
 			update!(G)
 
-			delete_atomic_edge!(G, (Utils.Label(1,0,0,0,1), Utils.Label(1,0,0,1,2)))
+			delete_atomic_edge!(G, AtomicEdge(Utils.Label(1,0,0,0,1), Utils.Label(1,0,0,1,2)))
 			update!(G)
 			@test root(G, get_vertex(G, Utils.Label(1,0,0,0,1))) != root(G, get_vertex(G, Utils.Label(1,0,0,1,2)))
 			@test root(G, get_vertex(G, Utils.Label(1,0,0,1,2))) == root(G, get_vertex(G, Utils.Label(1,0,0,3,3)))
@@ -146,10 +109,10 @@ function test_cases()
 			add_atomic_vertex!(G, u )
 			add_atomic_vertex!(G, v )
 
-			add_atomic_edge!(G, (u, v))
+			add_atomic_edge!(G, AtomicEdge(u, v, 1.f0))
 
 			update!(G)
-			@test Set(min_cut(G, u, v)) == Set([(u,v)])
+			@test Set(min_cut(G, u, v)) == Set([AtomicEdge(u,v)])
 
 			println(min_cut(G, u, u))
 			# @test_throws KeyError min_cut(G, v, v)
@@ -168,15 +131,15 @@ function test_cases()
 			add_atomic_vertex!(G, v )
 			add_atomic_vertex!(G, w )
 
-			add_atomic_edge!(G, (u, v))
-			add_atomic_edge!(G, (u, w))
-			add_atomic_edge!(G, (v, w))
+			add_atomic_edge!(G, AtomicEdge(u, v, 1.f0))
+			add_atomic_edge!(G, AtomicEdge(u, w, 1.f0))
+			add_atomic_edge!(G, AtomicEdge(v, w, 1.f0))
 
 			update!(G)
 
-			@test Set(min_cut(G, u, v)) == Set([(u,v),(v,w)])
-			@test Set(min_cut(G, [u,w], [v])) == Set([(u,v),(v,w)])
-			@test Set(min_cut(G, [u], [v,w])) == Set([(u,v),(u,w)])
+			@test Set(min_cut(G, u, v)) == Set([AtomicEdge(u,v),AtomicEdge(v,w)])
+			@test Set(min_cut(G, [u,w], [v])) == Set([AtomicEdge(u,v),AtomicEdge(v,w)])
+			@test Set(min_cut(G, [u], [v,w])) == Set([AtomicEdge(u,v),AtomicEdge(u,w)])
 		end
 
 		@testset "chunk_min_cut" begin
@@ -189,15 +152,15 @@ function test_cases()
 			add_atomic_vertex!(G, v )
 			add_atomic_vertex!(G, w )
 
-			add_atomic_edge!(G, (u, v))
-			add_atomic_edge!(G, (u, w))
-			add_atomic_edge!(G, (v, w))
+			add_atomic_edge!(G, AtomicEdge(u, v, 1.f0))
+			add_atomic_edge!(G, AtomicEdge(u, w, 1.f0))
+			add_atomic_edge!(G, AtomicEdge(v, w, 1.f0))
 
 			update!(G)
 
-			@test Set(min_cut(G, u, v)) == Set([(u,v),(v,w)])
-			@test Set(min_cut(G, [u,w], [v])) == Set([(u,v),(v,w)])
-			@test Set(min_cut(G, [u], [v,w])) == Set([(u,v),(u,w)])
+			@test Set(min_cut(G, u, v)) == Set([AtomicEdge(u,v),AtomicEdge(v,w)])
+			@test Set(min_cut(G, [u,w], [v])) == Set([AtomicEdge(u,v),AtomicEdge(v,w)])
+			@test Set(min_cut(G, [u], [v,w])) == Set([AtomicEdge(u,v),AtomicEdge(u,w)])
 		end
 
 		@testset "multi_split" begin
@@ -217,19 +180,19 @@ function test_cases()
 			add_atomic_vertex!(G, b1 )
 			add_atomic_vertex!(G, b2 )
 
-			add_atomic_edge!(G, (a1, a2))
-			add_atomic_edge!(G, (a1, x1))
-			add_atomic_edge!(G, (a2, x1))
-			add_atomic_edge!(G, (x1, x2))
-			add_atomic_edge!(G, (x2, b1))
-			add_atomic_edge!(G, (x2, b2))
-			add_atomic_edge!(G, (b1, b2))
+			add_atomic_edge!(G, AtomicEdge(a1, a2, 1.f0))
+			add_atomic_edge!(G, AtomicEdge(a1, x1, 1.f0))
+			add_atomic_edge!(G, AtomicEdge(a2, x1, 1.f0))
+			add_atomic_edge!(G, AtomicEdge(x1, x2, 1.f0))
+			add_atomic_edge!(G, AtomicEdge(x2, b1, 1.f0))
+			add_atomic_edge!(G, AtomicEdge(x2, b2, 1.f0))
+			add_atomic_edge!(G, AtomicEdge(b1, b2, 1.f0))
 
 			update!(G)
 
-			@test Set(min_cut(G, [a1,a2], [b1])) == Set([(x1,x2)])
-			@test Set(min_cut(G, [a1,b1], [b2])) == Set([(x2,b2),(b1,b2)])
-			@test Set(min_cut(G, [a1,b1], [a2,b2])) == Set([(a1,a2),(b1,b2),(a2,x1),(x2,b2)])
+			@test Set(min_cut(G, [a1,a2], [b1])) == Set([AtomicEdge(x1,x2)])
+			@test Set(min_cut(G, [a1,b1], [b2])) == Set([AtomicEdge(x2,b2),AtomicEdge(b1,b2)])
+			@test Set(min_cut(G, [a1,b1], [a2,b2])) == Set([AtomicEdge(a1,a2),AtomicEdge(b1,b2),AtomicEdge(a2,x1),AtomicEdge(x2,b2)])
 		end
 
 		@testset "multi_split_omni" begin
@@ -254,14 +217,14 @@ function test_cases()
 			end
 
 			for i=1:13
-				add_atomic_edge!(G, (v[i], v[3*i-1]))
-				add_atomic_edge!(G, (v[i], v[3*i]))
-				add_atomic_edge!(G, (v[i], v[3*i+1]))
+				add_atomic_edge!(G, AtomicEdge(v[i], v[3*i-1], 0.5f0))
+				add_atomic_edge!(G, AtomicEdge(v[i], v[3*i], 0.5f0))
+				add_atomic_edge!(G, AtomicEdge(v[i], v[3*i+1], 0.5f0))
 			end
 
 			update!(G)
 
-			@test Set(min_cut(G, [v[17], v[6], v[3]], [v[18], v[4], v[12]])) == Set([(v[1],v[4]),(v[6], v[18])])
+			@test Set(min_cut(G, [v[17], v[6], v[3]], [v[18], v[4], v[12]])) == Set([AtomicEdge(v[1],v[4]),AtomicEdge(v[6], v[18])])
 		end
 
 		@testset "supervoxels_not_splitted" begin
@@ -281,7 +244,7 @@ function test_cases()
 			v = Utils.Label(1,0,0,1,1)
 			add_atomic_vertex!(G, u )
 			add_atomic_vertex!(G, v )
-			add_atomic_edge!(G, (u, v))
+			add_atomic_edge!(G, AtomicEdge(u, v, 1.f0))
 			update!(G)
 
 			@test isempty(min_cut(G, u, v))

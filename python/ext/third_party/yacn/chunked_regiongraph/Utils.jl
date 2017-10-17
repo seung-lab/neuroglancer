@@ -1,22 +1,54 @@
 module Utils
 
-export unordered, to_chunk_id, chunk_id_to_slices, str_to_slices, slices_to_str, ChunkID, Label, seg_id, chunk_id, level, pos
-
-@inline function unordered{T}(x::Tuple{T,T})
-	a,b = x
-	return (min(a,b),max(a,b))::Tuple{T,T}
-end
-@inline function unordered{T}(a::T,b::T)
-	return (min(a,b),max(a,b))::Tuple{T,T}
-end
-
-
-include("constants.jl")
+export unordered, to_chunk_id, chunk_id_to_slices, str_to_slices, slices_to_str, ChunkID, Label, Affinity, AtomicEdge, seg_id, chunk_id, level, pos
 
 #The first element represents level, the last three represent location
 #typealias ChunkID Tuple{Int,Int,Int,Int}
 typealias ChunkID UInt32
 typealias Label UInt64
+typealias Affinity Float32
+
+type AtomicEdge
+  u::Label
+  v::Label
+  aff::Affinity
+end
+function AtomicEdge(u::Label, v::Label)
+  return AtomicEdge(u, v, 1.f0)
+end
+function AtomicEdge(a::Tuple{Label, Label, Affinity})
+  return AtomicEdge(a[1], a[2], a[3])
+end
+
+Base.isless(x::AtomicEdge,y::AtomicEdge) = isequal(x.u, y.u) ? x.v < y.v : x.u < y.u
+Base.:(<)(x::AtomicEdge,y::AtomicEdge) = isless(x,y)
+Base.:(==)(x::AtomicEdge,y::AtomicEdge) = isequal(x.u, y.u) && isequal(x.v, y.v)
+Base.hash(x::AtomicEdge, h::UInt) = hash(x.u, hash(x.v, hash(:AtomicEdge, h)))
+Base.write(s::IO, x::AtomicEdge) = unsafe_write(s, Ptr{AtomicEdge}(pointer_from_objref(x)), sizeof(AtomicEdge))
+Base.read(s::IO, t::Type{AtomicEdge}) = begin
+  ret = AtomicEdge(0, 0, 0.f0)
+  unsafe_read(s, pointer_from_objref(ret), sizeof(AtomicEdge))
+  return ret
+end
+Base.read(s::IO, a::Array{AtomicEdge}) = begin
+  for i in eachindex(a)
+    a[i] = read(s, AtomicEdge)
+  end
+  return a
+end
+Base.read(s::IO, t::Type{AtomicEdge}, dims::Dims) = read(s, Array{AtomicEdge}(dims))
+
+function unordered(x::AtomicEdge)
+	return AtomicEdge(min(x.u,x.v), max(x.u,x.v), x.aff)
+end
+
+function unordered{T<:Integer}(x::Tuple{T,T})
+	a,b = x
+	return (min(a,b), max(a,b))::Tuple{T,T}
+end
+function unordered{T<:Integer}(a::T,b::T)
+	return (min(a,b), max(a,b))::Tuple{T,T}
+end
 
 const low_mask_8 = UInt32(0b11111111)
 

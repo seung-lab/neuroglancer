@@ -17,11 +17,17 @@ using DataStructures
 
 #####Chunk Ids#####
 include("constants.jl")
-const MAX_DEPTH=10
+const MAX_DEPTH=8
 const TOP_ID=ChunkID(MAX_DEPTH+1,0,0,0)
 const SECOND_ID=ChunkID(MAX_DEPTH,0,0,0)
 const NULL_LABEL=typemax(UInt64)
 const NULL_LIST=Vector{Label}[]
+
+type Vertex
+	label::Label
+	parent::Label
+	children::Vector{Label}
+end
 
 #=
 macro assert(ex)
@@ -32,7 +38,8 @@ end
 function is_root(c::ChunkID)
 	return c == TOP_ID
 end
-@inline function parent(t::ChunkID)
+
+@inline function parent_chunk(t::ChunkID)
 	if level(t) >= MAX_DEPTH
 		return TOP_ID
 	elseif level(t) == MAX_DEPTH - 1
@@ -43,25 +50,18 @@ end
 	end
 end
 
-type Vertex
-	label::Label
-	parent::Label
-	children::Vector{Label}
-end
-
-function lca(t1, t2)
+function lca(t1::ChunkID, t2::ChunkID)
 	if t1 == t2
 		return t1
 	else
-		return lca(parent(t1),parent(t2))
+		return lca(parent_chunk(t1),parent_chunk(t2))
 	end
 end
 
-
-
 import Base: ==, hash
-==(x::Vertex,y::Vertex) = (x.label == y.label)
-Base.hash(v::Vertex) = Base.hash(v.label)
+Base.:(==)(x::Vertex,y::Vertex) = isequal(x.label, y.label)
+Base.hash(v::Vertex, h::UInt) = hash(v.label, hash(:Vertex, h))
+
 function Utils.chunk_id(v::Vertex)
 	chunk_id(v.label)
 end
@@ -72,11 +72,9 @@ type ChunkedGraph{C}
 	path::Union{String,Void}
 end
 
-function ChunkedGraph(path)
+function ChunkedGraph(path::AbstractString)
 	return ChunkedGraph{Chunk}(Dict{ChunkID,Chunk}(),DataStructures.PriorityQueue(ChunkID,Float64),path)
 end
-
-const AtomicEdge = Tuple{Label,Label}
 
 function common_parent_vertices(G::ChunkedGraph, vertex_labels::Vector{Label})
 	@assert length(vertex_labels) >= 1
@@ -120,24 +118,24 @@ type Chunk
 	deleted_edges::Set{AtomicEdge}
 	clean::Bool
 	modified::Bool
-	max_label::UInt32
+	max_label::Label
 
-	function Chunk(G,id)
+	function Chunk(G::ChunkedGraph, id::ChunkID)
 		d=new(G,MultiGraphs.MultiGraph(Label,AtomicEdge),id,Dict{Label,Vertex}(),nothing,Chunk[],Set{Vertex}(),Set{Vertex}(),Set{AtomicEdge}(),Set{AtomicEdge}(),true,false,0)
 
 		if !is_root(id)
-			par=get_chunk(G,parent(id))
+			par=get_chunk(G,parent_chunk(id))
 			push!(par.subgraphs,d)
 			d.parent=par
 		end
 		return d
 	end
 
-	function Chunk(G,id,vertices,graph,max_label)
+	function Chunk(G::ChunkedGraph, id::ChunkID, vertices::Dict{Label,Vertex}, graph::MultiGraphs.MultiGraph{Label,AtomicEdge}, max_label::Label)
 		d=new(G,graph,id,vertices,nothing,Chunk[],Set{Vertex}(),Set{Vertex}(),Set{AtomicEdge}(),Set{AtomicEdge}(),true,false,max_label)
 
 		if !is_root(id)
-			par=get_chunk(G,parent(id))
+			par=get_chunk(G,parent_chunk(id))
 			push!(par.subgraphs,d)
 			d.parent=par
 		end
@@ -189,8 +187,8 @@ function get_chunk(g::ChunkedGraph, id::ChunkID)
 	return ret
 end
 
-function parent(c::Chunk)
-	return get_chunk(c.chunked_graph, parent(c.id))
+function parent_chunk(c::Chunk)
+	return get_chunk(c.chunked_graph, parent_chunk(c.id))
 end
 
 function save_chunk!(c::Chunk)
@@ -217,7 +215,7 @@ function save_chunk!(c::Chunk)
 		write(buf, UInt64(c.graph.inverse_vertex_map[edge[1]]))
 		write(buf, UInt64(c.graph.inverse_vertex_map[edge[2]]))
 		write(buf, UInt64(length(atomic_edges)))
-		write(buf, convert(Vector{Tuple{UInt64, UInt64}}, atomic_edges))
+		write(buf, convert(Vector{AtomicEdge}, atomic_edges))
 	end
 
 	f = open(path, "w")
@@ -261,7 +259,7 @@ function to_string(id::ChunkID)
 	return "$(level(id))_$(x)_$(y)_$(z)"
 end
 
-function load_chunk(G::ChunkedGraph,id)
+function load_chunk(G::ChunkedGraph, id::ChunkID)
 	vertex_map = nothing
 	graph = nothing
 	max_label = nothing
@@ -274,7 +272,7 @@ function load_chunk(G::ChunkedGraph,id)
 		# Plain Binary
 		max_label = UInt64(0)
 		vertex_map = Dict{Label, Vertex}()
-		edge_map = Dict{Tuple{Int64, Int64}, Vector{Tuple{UInt64, UInt64}}}()
+		edge_map = Dict{Tuple{Int64, Int64}, Vector{AtomicEdge}}()
 
 		f = open(path, "r")
 
@@ -302,7 +300,7 @@ function load_chunk(G::ChunkedGraph,id)
 		sizehint!(edge_map, e_cnt)
 		for i in range(1, e_cnt)
 			(u, v, atomic_edge_cnt) = read(f, UInt64, 3)
-			atomic_edges = read(f, Tuple{UInt64, UInt64}, atomic_edge_cnt)
+			atomic_edges = read(f, AtomicEdge, atomic_edge_cnt)
 			MultiGraphs.add_edges!(graph, u, v, atomic_edges)
 		end
 
@@ -316,11 +314,11 @@ function load_chunk(G::ChunkedGraph,id)
 	return Chunk(G, id, vertex_map, graph, max_label)
 end
 
-function get_vertex(g::ChunkedGraph, label)
+function get_vertex(g::ChunkedGraph, label::Label)
 	return get_chunk(g,chunk_id(label)).vertices[label]
 end
 
-function lcG(G, v1::Vertex, v2::Vertex)
+function lcG(G::ChunkedGraph, v1::Vertex, v2::Vertex)
 	if chunk_id(v1) == chunk_id(v2)
 		return (v1,v2)
 	else
@@ -338,7 +336,7 @@ function lcG(G, v1::Vertex, v2::Vertex)
 	end
 end
 
-function promote!(G,v)
+function promote!(G::ChunkedGraph, v::Vertex)
 	"""
 	TODO check we don't call this over max height
 	"""
@@ -370,11 +368,11 @@ function touch(x::Chunk)
 	end
 end
 
-function is_leaf(x)
+function is_leaf(x::Vertex)
 	return level(x)==1
 end
 
-function leaves(G,v::Vertex)
+function leaves(G::ChunkedGraph, v::Vertex)
 	if is_leaf(v)
 		return [v.label]
 	elseif level(v)==2
@@ -383,7 +381,8 @@ function leaves(G,v::Vertex)
 		return cat(1,map(x->leaves(G,get_vertex(G,x)),v.children)...)
 	end
 end
-function leaves(G,v::Vertex,l::Integer)
+
+function leaves(G::ChunkedGraph, v::Vertex, l::Integer)
 	@assert level(chunk_id(v)) > l
 	if is_leaf(v)
 		return [v.label]
@@ -415,7 +414,7 @@ function overlaps(c1::Cuboid,c2::Cuboid)
 	return all(map(overlaps, c1, c2))
 end
 
-function leaves(G,v::Vertex, cuboid::Cuboid)
+function leaves(G::ChunkedGraph, v::Vertex, cuboid::Cuboid)
 	if overlaps(to_cuboid(chunk_id(v)),cuboid)
 		if is_leaf(v)
 			return [v.label]
@@ -449,7 +448,7 @@ function induced_subgraph{T<:Integer}(G::ChunkedGraph, chunk::Chunk, vertices::V
 	end
 
 	atomic_vertices = Set(vertices)
-	return collect(atomic_vertices), filter(e->e[1] in atomic_vertices && e[2] in atomic_vertices, atomic_edges)
+	return collect(atomic_vertices), filter(e->e.u in atomic_vertices && e.v in atomic_vertices, atomic_edges)
 end
 
 import LightGraphs
@@ -481,7 +480,7 @@ function min_cut(G::ChunkedGraph, sources::Vector{UInt64}, sinks::Vector{UInt64}
 	#=
 	Returns a list of edges to cut
 	=#
-	INF_CAPACITY = 1000000
+	INF_CAPACITY = typemax(Affinity)
 
 	# DISCUSSION:
 	# The connection between sources and sinks can lie outside bounding box, erroneously returning "no cut"
@@ -503,16 +502,20 @@ function min_cut(G::ChunkedGraph, sources::Vector{UInt64}, sinks::Vector{UInt64}
 	fake_sink = N+2
 	N += 2
 	flow_graph = LightGraphs.DiGraph(N)
-	capacities = zeros(N,N)
-	for (u,v) in atomic_edges
+	capacities = zeros(Affinity, (N,N))
+	for atomic_edge in atomic_edges
+    u = atomic_edge.u
+    v = atomic_edge.v
+    affinity = atomic_edge.aff
+
 		LightGraphs.add_edge!(flow_graph,encode[u],encode[v])
 		LightGraphs.add_edge!(flow_graph,encode[v],encode[u])
 
 		# Don't split supervoxels at chunk boundaries
 		# FIXME: this hack only works because seg_id are currently unique
 		# across the whole dataset
-		capacities[encode[u],encode[v]] = seg_id(u) == seg_id(v) ? INF_CAPACITY : 1 
-		capacities[encode[v],encode[u]] = seg_id(u) == seg_id(v) ? INF_CAPACITY : 1
+		capacities[encode[u],encode[v]] = seg_id(u) == seg_id(v) ? INF_CAPACITY : affinity 
+		capacities[encode[v],encode[u]] = seg_id(u) == seg_id(v) ? INF_CAPACITY : affinity
 	end
 
 	# create a fake source and add edges with infinite weight to all sources
@@ -539,7 +542,7 @@ function min_cut(G::ChunkedGraph, sources::Vector{UInt64}, sinks::Vector{UInt64}
 		routes=1)
 
 	# No split found, or no split allowed
-	if f < 0.00001 || f >= INF_CAPACITY
+	if f < 0.00001 || f == INF_CAPACITY
 		return AtomicEdge[]
 	end
 
@@ -551,7 +554,7 @@ function min_cut(G::ChunkedGraph, sources::Vector{UInt64}, sinks::Vector{UInt64}
 	# We will transform all 0 to 1, so that this function always
 	# return two parts
 	labels = map(x-> x == 0? 1 : x, labels)
-	edges_to_cut = filter(e->labels[encode[e[1]]] != labels[encode[e[2]]], atomic_edges)
+	edges_to_cut = filter(e->labels[encode[e.u]] != labels[encode[e.v]], atomic_edges)
 	
 	# DISCUSSION:
 	# We connected sinks and sources each by using a fake source/sink.
@@ -634,7 +637,7 @@ function update!(c::Chunk)
 		# end
 
 		for e in MultiGraphs.incident_edges(c.graph, v.label)
-			if !in(e[1], c.deleted_vertices) || !in(e[2], c.deleted_vertices)
+			if !in(e.u, c.deleted_vertices) || !in(e.v, c.deleted_vertices)
 				push!(c.added_edges, e)
 			end
 		end
@@ -646,7 +649,7 @@ function update!(c::Chunk)
 
 
 	for e in c.deleted_edges
-			u,v=lcG(c.chunked_graph, map(x->get_vertex(c.chunked_graph,x),e)...)
+			u,v=lcG(c.chunked_graph, map(x->get_vertex(c.chunked_graph,x),(e.u, e.v))...)
 			@assert chunk_id(u) == chunk_id(c)
 			@assert chunk_id(v) == chunk_id(c)
 			MultiGraphs.delete_edge!(c.graph,u.label,v.label,e)
@@ -656,7 +659,7 @@ function update!(c::Chunk)
 
 	for e in c.added_edges
 		try
-			u,v=lcG(c.chunked_graph, map(x->get_vertex(c.chunked_graph,x),e)...)
+			u,v=lcG(c.chunked_graph, map(x->get_vertex(c.chunked_graph,x),(e.u, e.v))...)
 			@assert chunk_id(u) == chunk_id(c)
 			@assert chunk_id(v) == chunk_id(c)
 			@assert haskey(c.vertices,u.label)
@@ -711,7 +714,7 @@ function unique_label(chunk::Chunk)
 end
 
 
-function add_atomic_vertex!(G::ChunkedGraph, label)
+function add_atomic_vertex!(G::ChunkedGraph, label::Label)
 	@assert level(chunk_id(label))==1 "$(level(chunk_id(label))) == 1"
 	s=get_chunk(G,chunk_id(label))::Chunk
 	if haskey(s.vertices,label)
@@ -724,13 +727,13 @@ function add_atomic_vertex!(G::ChunkedGraph, label)
 	touch(s)
 end
 
-function add_atomic_edge!(G::ChunkedGraph, edge::Tuple{Label,Label})
-	c = get_chunk(G,lca(chunk_id(edge[1]),chunk_id(edge[2])))::Chunk
-	push!(c.added_edges,unordered(edge))
+function add_atomic_edge!(G::ChunkedGraph, edge::AtomicEdge)
+	c = get_chunk(G,lca(chunk_id(edge.u),chunk_id(edge.v)))
+	push!(c.added_edges, unordered(edge))
 	touch(c)
 end
 
-function add_atomic_edges!(G::ChunkedGraph, edges)
+function add_atomic_edges!(G::ChunkedGraph, edges::Vector{AtomicEdge})
 	for i in 1:length(edges)
 		edges[i]=unordered(edges[i])
 	end
@@ -746,17 +749,21 @@ function add_atomic_edges!(G::ChunkedGraph, edges)
 	gc_enable(true)
 end
 
-function upsize!(A,n)
+function upsize!(A::AbstractArray, n::Integer)
 	sizehint!(A,length(A)+n)
 end
-function upsize!(G::MultiGraphs.MultiGraph,n_v,n_e)
+function upsize!(A::Dict, n::Integer)
+	sizehint!(A,length(A)+n)
+end
+
+function upsize!(G::MultiGraphs.MultiGraph, n_v::Integer, n_e::Integer)
 	upsize!(G.vertex_map,n_v)
 	upsize!(G.inverse_vertex_map,n_v)
 	upsize!(G.g.fadjlist,n_v)
 	upsize!(G.edge_map,n_e)
 end
 
-function add_atomic_vertices!(G::ChunkedGraph, vertices)
+function add_atomic_vertices!(G::ChunkedGraph, vertices::Vector{Label})
 	gc_enable(false)
 	for (i,v) in enumerate(vertices)
 		add_atomic_vertex!(G,v)
@@ -764,15 +771,15 @@ function add_atomic_vertices!(G::ChunkedGraph, vertices)
 	gc_enable(true)
 end
 
-function delete_atomic_edge!(G::ChunkedGraph, edge)
-	s=get_chunk(G,lca(chunk_id(edge[1]),chunk_id(edge[2])))
+function delete_atomic_edge!(G::ChunkedGraph, edge::AtomicEdge)
+	s=get_chunk(G,lca(chunk_id(edge.u),chunk_id(edge.v)))
 
 	push!(s.deleted_edges, unordered(edge))
 	touch(s)
 end
 
 
-function bfs(G::ChunkedGraph, label)
+function bfs(G::ChunkedGraph, label::Label)
 	#wrong
 	return [root(G,get_vertex(G,label))]
 end
