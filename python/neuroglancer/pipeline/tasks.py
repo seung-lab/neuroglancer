@@ -166,9 +166,9 @@ class MeshStitchTask(RegisteredTask):
         self.max_simplification_error = max_simplification_error
 
     def execute(self):
-        self._storage = CachedStorage(self.layer_path)
         self._mesher = Mesher()
         self._parse_output_fragment()
+        self._volume = CloudVolume(self.layer_path, 0, bounded=False)
         self._download_info()
         self._download_input_meshes()
         self._create_output_mesh()
@@ -180,21 +180,27 @@ class MeshStitchTask(RegisteredTask):
         self._output_fragment_pos = match.groups()[2]
 
     def _download_info(self):
-        self._info = json.loads(self._storage.get_file('info'))
-        if 'mesh' not in self._info:
-            raise ValueError("Path on where to store the meshes is not present")
+        self._mesh_dir = None
+        if 'meshing' in self._volume.info:
+            self._mesh_dir = self._volume.info['meshing']
+        elif 'mesh' in self._volume.info:
+            self._mesh_dir = self._volume.info['mesh']
+
+        if not self._mesh_dir:
+            raise ValueError("The mesh destination is not present in the info file.")
 
     def _download_input_meshes(self):
-        self._meshes = []
-        self._entrypoints = np.empty((0), dtype=np.uint32)
-        total_size = 0
+        with Storage(self.layer_path) as storage:
+            self._meshes = []
+            self._entrypoints = np.empty((0), dtype=np.uint32)
+            total_size = 0
 
-        for manifest in self.input_manifests:
-            input_fragments = json.loads(self._storage.get_file('{}/{}'.format(self._info['mesh'], manifest)))
-            for fragment in input_fragments['fragments']:
-                self._entrypoints = np.append(self._entrypoints, total_size)
-                self._meshes.append(np.fromstring(self._storage.get_file('{}/{}'.format(self._info['mesh'], fragment)), dtype=np.uint8))
-                total_size += len(self._meshes[-1])
+            for manifest in self.input_manifests:
+                input_fragments = json.loads(storage.get_file('{}/{}'.format(self._mesh_dir, manifest)))
+                for fragment in input_fragments['fragments']:
+                    self._entrypoints = np.append(self._entrypoints, total_size)
+                    self._meshes.append(np.fromstring(storage.get_file('{}/{}'.format(self._mesh_dir, fragment)), dtype=np.uint8))
+                    total_size += len(self._meshes[-1])
 
     def _merge_mesh(self):
         mesh = self._mesher.merge_meshes(self._entrypoints, np.hstack(self._meshes),
@@ -211,17 +217,18 @@ class MeshStitchTask(RegisteredTask):
         return b''.join([ array.tobytes() for array in vertex_index_format ])
 
     def _create_output_mesh(self):
-        self._storage.put_file(
-            file_path='{}/{}:{}:{}'.format(self._info['mesh'], self._segid, self._lod, self._output_fragment_pos),
-            content=self._merge_mesh()
-        )
-        self._storage.wait()
+        with Storage(self.layer_path) as storage:
+            storage.put_file(
+                file_path='{}/{}:{}:{}'.format(self._mesh_dir, self._segid, self._lod, self._output_fragment_pos),
+                content=self._merge_mesh(),
+                compress=True,
+            )
 
-        self._storage.put_file(
-            file_path='{}/{}:{}'.format(self._info['mesh'], self._segid, self._lod),
-            content=json.dumps({"fragments": [self.output_fragment]})
-        )
-        self._storage.wait()
+            storage.put_file(
+                file_path='{}/{}:{}'.format(self._mesh_dir, self._segid, self._lod),
+                content=json.dumps({"fragments": [self.output_fragment]}),
+                content_type='application/json'
+            )
 
 class MeshTask(RegisteredTask):
   def __init__(self, shape, offset, layer_path, mip=0, simplification_factor=100, max_simplification_error=40, remap=None, generate_manifests=False, low_pad=1, high_pad=1):

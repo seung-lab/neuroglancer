@@ -62,5 +62,7 @@ RUN echo "using JSON\nfor (k,v) in JSON.parse(open(\"/secrets/aws-secret.json\")
 RUN mkdir /root/.neuroglancer
 RUN ln -s /secrets /root/.neuroglancer/secrets
 RUN echo $GOOGLE_STORAGE_PROJECT > /root/.neuroglancer/project_name
+# Temp fix - remove later!
+RUN pip install google-resumable-media==0.2.3
 
 CMD cd /neuroglancer/python/ && python -m neuroglancer.pipeline.task_execution
