@@ -1,5 +1,5 @@
 module Utils
-
+include("constants.jl")
 export unordered, to_chunk_id, chunk_id_to_slices, str_to_slices, slices_to_str, ChunkID, Label, Affinity, AtomicEdge, seg_id, chunk_id, level, pos
 
 #The first element represents level, the last three represent location
@@ -9,15 +9,15 @@ typealias Label UInt64
 typealias Affinity Float32
 
 type AtomicEdge
-  u::Label
-  v::Label
-  aff::Affinity
+	u::Label
+	v::Label
+	aff::Affinity
 end
 function AtomicEdge(u::Label, v::Label)
-  return AtomicEdge(u, v, 1.f0)
+	return AtomicEdge(u, v, 1.f0)
 end
 function AtomicEdge(a::Tuple{Label, Label, Affinity})
-  return AtomicEdge(a[1], a[2], a[3])
+	return AtomicEdge(a[1], a[2], a[3])
 end
 
 Base.isless(x::AtomicEdge,y::AtomicEdge) = isequal(x.u, y.u) ? x.v < y.v : x.u < y.u
@@ -26,15 +26,15 @@ Base.:(==)(x::AtomicEdge,y::AtomicEdge) = isequal(x.u, y.u) && isequal(x.v, y.v)
 Base.hash(x::AtomicEdge, h::UInt) = hash(x.u, hash(x.v, hash(:AtomicEdge, h)))
 Base.write(s::IO, x::AtomicEdge) = unsafe_write(s, Ptr{AtomicEdge}(pointer_from_objref(x)), sizeof(AtomicEdge))
 Base.read(s::IO, t::Type{AtomicEdge}) = begin
-  ret = AtomicEdge(0, 0, 0.f0)
-  unsafe_read(s, pointer_from_objref(ret), sizeof(AtomicEdge))
-  return ret
+	ret = AtomicEdge(0, 0, 0.f0)
+	unsafe_read(s, pointer_from_objref(ret), sizeof(AtomicEdge))
+	return ret
 end
 Base.read(s::IO, a::Array{AtomicEdge}) = begin
-  for i in eachindex(a)
-    a[i] = read(s, AtomicEdge)
-  end
-  return a
+	for i in eachindex(a)
+		a[i] = read(s, AtomicEdge)
+	end
+	return a
 end
 Base.read(s::IO, t::Type{AtomicEdge}, dims::Dims) = read(s, Array{AtomicEdge}(dims))
 
@@ -102,9 +102,9 @@ function chunk_id_to_slices(chunk_id;low_pad=0, high_pad=0)
 	l=level(chunk_id)
 	x,y,z = pos(chunk_id)
 	@assert l>=1
-  chunk_size_x = 2^(l-1) * cx
-  chunk_size_y = 2^(l-1) * cy
-  chunk_size_z = 2^(l-1) * cz
+	chunk_size_x = 2^(l-1) * cx
+	chunk_size_y = 2^(l-1) * cy
+	chunk_size_z = 2^(l-1) * cz
 	return ((x)*chunk_size_x-low_pad:(x+1)*(chunk_size_x)+high_pad,
 		 	(y)*chunk_size_y-low_pad:(y+1)*(chunk_size_y)+high_pad,
 			(z)*chunk_size_z-low_pad:(z+1)*(chunk_size_z)+high_pad)

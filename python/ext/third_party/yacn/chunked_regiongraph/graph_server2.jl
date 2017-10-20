@@ -7,7 +7,7 @@ using HttpServer
 using HttpCommon
 using ChunkedGraphs2
 using Save
-#using PyCall
+using SegmentPicking
 using Utils
 using Logging
 using JSON
@@ -39,7 +39,7 @@ end
 tq = task_queue.TaskQueue(queue_server="pull-queue")
 =#
 
-G = ChunkedGraph(rel(settings["graphpath"]))
+G = ChunkedGraph(rel(settings["graphpath"]), settings["cloudpath"])
 @time for f in filter(s->ismatch(r".*\.chunk",s), readdir(expanduser(rel(settings["graphpath"]))))
 	m=match(r"(\d+)_(\d+)_(\d+)_(\d+)\..*",f)
 	id = ChunkID(map(x->parse(UInt32,x),m.captures)...)
@@ -222,22 +222,17 @@ function handle_children(id)
 	return Response(reinterpret(UInt8,s),headers)
 end
 
-function handle_split(id1,id2)
-	@info("handle_split($id1, $id2)")
-	id1 = parse(UInt64, id1)
-	@assert chunk_id(id1)==0
-	if chunk_id(id1) == 0 # Lvl 1, a neuroglancer supervoxel, need to lookup chunk id
-		id1 = handles[id1]
-	end
+function handle_split(data)
+	@info("handle_split($(String(data)))")
+	parsed = JSON.parse(String(data))
 
-	id2 = parse(UInt64, id2)
-	@assert chunk_id(id2)==0
-	if chunk_id(id2) == 0 # Lvl 1, a neuroglancer supervoxel, need to lookup chunk id
-		id2 = handles[id2]
-	end
+	sources = unique(convert(Vector{UInt64}, filter(y->y != nothing, map(x->SegmentPicking.get_supervoxel_at(G, parse(UInt64, x[1]), (x[2], x[3], x[4])), parsed["sources"]))))
+	sinks = unique(convert(Vector{UInt64}, filter(y->y != nothing, map(x->SegmentPicking.get_supervoxel_at(G, parse(UInt64, x[1]), (x[2], x[3], x[4])), parsed["sinks"]))))
 
-	#delete_atomic_edge!(G, (id1, id2))
-	cuts = ChunkedGraphs2.min_cut(G,id1,id2)
+	@assert !isempty(sources) && !isempty(sinks)
+	@assert isempty(intersect(sources, sinks))
+
+	cuts = ChunkedGraphs2.min_cut(G, sources, sinks)
 	for e in cuts
 		delete_atomic_edge!(G,e)
 	end
@@ -245,35 +240,28 @@ function handle_split(id1,id2)
 
 	root_labels = Set{UInt64}()
 	for e in cuts
-		push!(root_labels, bfs(G, e[1])[1].label)
-		push!(root_labels, bfs(G, e[2])[1].label)
+		push!(root_labels, ChunkedGraphs2.root(G, ChunkedGraphs2.get_vertex(G, e.u)).label)
+		push!(root_labels, ChunkedGraphs2.root(G, ChunkedGraphs2.get_vertex(G, e.v)).label)
 	end
 
 	root_labels = Array{UInt64}(map(x->level(chunk_id(x)) == 1 ? seg_id(x) : x, collect(root_labels)))
 
-	println("$(now()): Split $(seg_id(id1)) and $(seg_id(id2)) => $(simple_print(root_labels))")
+	println("$(now()): Split $(sources) and $(sinks) => $(simple_print(root_labels))")
 	return Response(reinterpret(UInt8, root_labels), headers)
 end
 
-function handle_merge(id1, id2)
-	@info("handle_merge($id1, $id2)")
-	id1 = parse(UInt64, id1)
-	@assert chunk_id(id1)==0
-	if chunk_id(id1) == 0 # Lvl 1, a neuroglancer supervoxel, need to lookup chunk id
-		id1 = handles[id1]
-	end
+function handle_merge(data)
+	@info("handle_merge($(String(data)))")
+	parsed = JSON.parse(String(data))
 
-	id2 = parse(UInt64, id2)
-	@assert chunk_id(id2)==0
-	if chunk_id(id2) == 0 # Lvl 1, a neuroglancer supervoxel, need to lookup chunk id
-		id2 = handles[id2]
-	end
+	segments = unique(convert(Vector{UInt64}, filter(y->y != nothing, map(x->SegmentPicking.get_supervoxel_at(G, parse(UInt64, x[1]), (x[2], x[3], x[4])), parsed))))
+	@assert length(segments) == 2
 
-	add_atomic_edge!(G, (id1, id2))
+	add_atomic_edge!(G, Utils.AtomicEdge(segments[1], segments[2]))
 	update!(G)
 
-	root = bfs(G, id1)[1]
-	println("$(now()): Merged $(seg_id(id1)) and $(seg_id(id2)) => $(root.label)")
+	root = ChunkedGraphs2.root(G, ChunkedGraphs2.get_vertex(G, segments[1]))
+	println("$(now()): Merged $(seg_id(segments[1])) and $(seg_id(segments[2])) => $(root.label)")
 	
 	return Response(reinterpret(UInt8, [root.label]), headers)
 end
@@ -285,36 +273,47 @@ function handle_save()
 	return Response(reinterpret(UInt8, []), headers)
 end
 
-function handle_subgraph(vertices)
-	@debug("handle_subgraph($vertices)")
-	return Response(simple_print(MultiGraphs.induced_edges(G, eval(parse(vertices)))))
-end
+# function handle_subgraph(vertices)
+# 	@debug("handle_subgraph($vertices)")
+# 	return Response(simple_print(MultiGraphs.induced_edges(G, eval(parse(vertices)))))
+# end
 
-d=Dict(
-		 r"/1.0/segment/(\d+)/root/?" => handle_root,
-		 r"/1.0/segment/(\d+)/children/?" => handle_children,
-		 r"/1.0/segment/(\d+)/leaves/?" => handle_leaves,
-		 r"/1.0/segment/(\d+)/remesh/?" => handle_remesh, # TODO: POST
-		 r"/1.0/merge/(\d+),(\d+)/?" => handle_merge, # TODO: POST
-		 r"/1.0/split/(\d+),(\d+)/?" => handle_split, # TODO: POST
-		 r"/1.0/save/?" => handle_save, # HACK: Should be done automatically, when idle
-		 r"/1.0/subgraph/(\[[\d,\(\)]*?\])/?" => handle_subgraph,
-		 )
+# d=Dict(
+# 		 r"/1.0/segment/(\d+)/root/?" => handle_root,
+# 		 r"/1.0/segment/(\d+)/children/?" => handle_children,
+# 		 r"/1.0/segment/(\d+)/leaves/?" => handle_leaves,
+# 		 r"/1.0/segment/(\d+)/remesh/?" => handle_remesh, # TODO: POST
+# 		 r"/1.0/merge/(\d+),(\d+)/?" => handle_merge, # TODO: POST
+# 		 r"/1.0/split/(\d+),(\d+)/?" => handle_split, # TODO: POST
+# 		 r"/1.0/save/?" => handle_save, # HACK: Should be done automatically, when idle
+# 		 r"/1.0/subgraph/(\[[\d,\(\)]*?\])/?" => handle_subgraph,
+# 		 )
 
 headers=HttpCommon.headers()
 
 headers["Access-Control-Allow-Origin"]= "*"
-headers["Access-Control-Allow-Headers"]= "x-requested-with"
+headers["Access-Control-Allow-Headers"]= "Origin, X-Requested-With, Content-Type, Accept"
 headers["Access-Control-Allow-Methods"]= "POST, GET, OPTIONS"
+
 http = HttpHandler() do req::Request, res::Response
-	for r in keys(d)
-		if ismatch(r, req.resource)
-			m = match(r,req.resource)
-			return d[r](m.captures...)
-		end
+	if req.method == "OPTIONS"
+		return Response(UInt8[], headers)
+	elseif ismatch(r"/1.0/segment/(\d+)/root/?", req.resource) && req.method == "GET"
+		return handle_root(match(r"/1.0/segment/(\d+)/root/?", req.resource).captures...)
+	elseif ismatch(r"/1.0/segment/(\d+)/children/?", req.resource) && req.method == "GET"
+		return handle_children(match(r"/1.0/segment/(\d+)/children/?", req.resource).captures...)
+	elseif ismatch(r"/1.0/segment/(\d+)/leaves/?", req.resource) && req.method == "GET"
+		return handle_leaves(match(r"/1.0/segment/(\d+)/leaves/?", req.resource).captures...)
+	elseif ismatch(r"/1.0/graph/merge/?", req.resource) && req.method == "POST"
+		return handle_merge(req.data)
+	elseif ismatch(r"/1.0/graph/split/?", req.resource) && req.method == "POST"
+		return handle_split(req.data)
+	elseif ismatch(r"/1.0/graph/save/?", req.resource) && req.method == "POST"
+		return handle_save()
+	else
+		println("could not parse $(req.resource)")
+		return Response(400)
 	end
-	println("could not parse $(req.resource)")
-	return Response(400)
 end
 http.events["listen"] = (saddr) -> println("Running on https://$saddr (Press CTRL+C to quit)")
 

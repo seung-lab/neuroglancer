@@ -163,6 +163,40 @@ function test_cases()
 			@test Set(min_cut(G, [u], [v,w])) == Set([AtomicEdge(u,v),AtomicEdge(u,w)])
 		end
 
+		@testset "affinity_min_cut" begin
+			G = ChunkedGraph("/tmp/graph")
+			source = Utils.Label(1,0,0,0,1)
+			a1 = Utils.Label(1,0,0,0,2)
+			a2 = Utils.Label(1,0,0,0,3)
+			a3 = Utils.Label(1,0,0,0,4)
+			b = Utils.Label(1,0,0,0,5)
+			sink = Utils.Label(1,0,0,0,6)
+
+			add_atomic_vertex!(G, source)
+			add_atomic_vertex!(G, sink)
+			add_atomic_vertex!(G, a1)
+			add_atomic_vertex!(G, a2)
+			add_atomic_vertex!(G, a3)
+			add_atomic_vertex!(G, b)
+
+			add_atomic_edge!(G, AtomicEdge(source, a1, 0.25f0))
+			add_atomic_edge!(G, AtomicEdge(source, a2, 0.25f0))
+			add_atomic_edge!(G, AtomicEdge(source, a3, 0.25f0))
+
+			add_atomic_edge!(G, AtomicEdge(a1, a2, 1.0f0))
+			add_atomic_edge!(G, AtomicEdge(a2, a3, 1.0f0))
+			add_atomic_edge!(G, AtomicEdge(a3, a1, 1.0f0))
+
+			add_atomic_edge!(G, AtomicEdge(a1, b, 1.0f0))
+			add_atomic_edge!(G, AtomicEdge(a2, b, 1.0f0))
+			add_atomic_edge!(G, AtomicEdge(a3, b, 1.0f0))
+
+			add_atomic_edge!(G, AtomicEdge(b, sink, 0.76))
+			update!(G)
+
+			@test Set(min_cut(G, source, sink)) == Set([AtomicEdge(source,a1),AtomicEdge(source,a2),AtomicEdge(source,a3)])
+		end
+
 		@testset "multi_split" begin
 			# Two triangles connected over a small bridge (x1-x2)
 			G = ChunkedGraph("/tmp/graph")

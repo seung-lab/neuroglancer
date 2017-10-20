@@ -25,8 +25,8 @@ import {Overlay} from 'neuroglancer/overlay';
 import {SegmentColorHash} from 'neuroglancer/segment_color';
 import {SegmentationDisplayState3D, SegmentSelectionState, Uint64MapEntry} from 'neuroglancer/segmentation_display_state/frontend';
 import {SharedDisjointUint64Sets} from 'neuroglancer/shared_disjoint_sets';
-import {FRAGMENT_MAIN_START as SKELETON_FRAGMENT_MAIN_START, getTrackableFragmentMain, 
-        PerspectiveViewSkeletonLayer, SkeletonLayer, SkeletonLayerDisplayState, 
+import {FRAGMENT_MAIN_START as SKELETON_FRAGMENT_MAIN_START, getTrackableFragmentMain,
+        PerspectiveViewSkeletonLayer, SkeletonLayer, SkeletonLayerDisplayState,
         SliceViewPanelSkeletonLayer} from 'neuroglancer/skeleton/frontend';
 import {VolumeType} from 'neuroglancer/sliceview/volume/base';
 import {SegmentationRenderLayer, SliceViewSegmentationDisplayState} from 'neuroglancer/sliceview/volume/segmentation_renderlayer';
@@ -41,7 +41,7 @@ import {SegmentSetWidget} from 'neuroglancer/widget/segment_set_widget';
 import {ShaderCodeWidget} from 'neuroglancer/widget/shader_code_widget';
 import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
 import {SemanticEntryWidget} from 'neuroglancer/widget/semantic_entry_widget';
-import {splitObject, mergeNodes, getRoot, getLeaves, /*getChildren,*/ enableGraphServer, GRAPH_SERVER_NOT_SPECIFIED} from 'neuroglancer/object_graph_service';
+import {splitObject, mergeNodes, getRoot, getLeaves, /*getChildren,*/ enableGraphServer, GRAPH_SERVER_NOT_SPECIFIED, SegmentPosition} from 'neuroglancer/object_graph_service';
 import {StatusMessage} from 'neuroglancer/status';
 import {HashMapUint64} from 'neuroglancer/gpu_hash/hash_table';
 import {SkeletonSource} from 'neuroglancer/skeleton/frontend';
@@ -55,11 +55,6 @@ const OBJECT_ALPHA_JSON_KEY = 'objectAlpha';
 const HIDE_SEGMENT_ZERO_JSON_KEY = 'hideSegmentZero';
 
 const DEBUG = true;
-
-interface SourceSink {
-  source: { segment: Uint64, root: Uint64 }
-  sink: { segment: Uint64, root: Uint64 }
-}
 
 export class SegmentationUserLayer extends UserLayer {
   displayState: SliceViewSegmentationDisplayState&SegmentationDisplayState3D&
@@ -92,9 +87,9 @@ export class SegmentationUserLayer extends UserLayer {
   skeletonsPath: string|undefined;
   graphPath: string|undefined;
   meshLayer: MeshLayer|undefined;
-  pendingGraphMod: SourceSink = {
-    source: { segment: new Uint64(0), root: new Uint64(0) },
-    sink: { segment: new Uint64(0), root: new Uint64(0) },
+  pendingGraphMod: {
+    source: SegmentPosition[],
+    sink: SegmentPosition[],
   };
 
   constructor(public manager: LayerListSpecification, spec: any) {
@@ -113,7 +108,7 @@ export class SegmentationUserLayer extends UserLayer {
         getLeaves(rootSegment).then(leafSegments => {
           if (!this.displayState.rootSegments.has(rootSegment)) {
             if (DEBUG === true) {
-              console.log("Adding 2D segments canceled due to missing root.");
+              console.log('Adding 2D segments canceled due to missing root.');
             }
             return;
           }
@@ -324,9 +319,15 @@ export class SegmentationUserLayer extends UserLayer {
       return;
     }
 
-    let segment : Uint64 = <Uint64>segmentSelectionState.rawSelectedSegment;
-    let root : Uint64 = <Uint64>segmentSelectionState.selectedSegment;
-    this.pendingGraphMod.source = {segment: segment.clone(), root: root.clone()};
+    let coords = [...this.manager.layerSelectedValues.mouseState.position.values()].map((v, i) => {
+      return Math.round(v / this.manager.voxelSize.size[i]);
+    });
+
+    let segment: Uint64 = <Uint64>segmentSelectionState.rawSelectedSegment;
+    let root: Uint64 = <Uint64>segmentSelectionState.selectedSegment;
+    this.pendingGraphMod = { source: [{segment: new Uint64(0), root: new Uint64(0), position: coords}],
+                             sink: [{segment: new Uint64(0), root: new Uint64(0), position: coords}] };
+    this.pendingGraphMod.source[0] = {segment: segment.clone(), root: root.clone(), position: coords};
 
     StatusMessage.displayText(`Selected ${segment} as source for merge. Pick a sink.`);
   }
@@ -337,24 +338,28 @@ export class SegmentationUserLayer extends UserLayer {
       return;
     }
 
-    let segment : Uint64 = <Uint64>segmentSelectionState.rawSelectedSegment;
-    let root : Uint64 = <Uint64>segmentSelectionState.selectedSegment;
-    this.pendingGraphMod.sink = {segment: segment.clone(), root: root.clone()};
+    let coords = [...this.manager.layerSelectedValues.mouseState.position.values()].map((v, i) => {
+      return Math.round(v / this.manager.voxelSize.size[i]);
+    });
 
-    if (Uint64.compare(this.pendingGraphMod.sink.segment, this.pendingGraphMod.source.segment) === 0) {
+    let segment: Uint64 = <Uint64>segmentSelectionState.rawSelectedSegment;
+    let root: Uint64 = <Uint64>segmentSelectionState.selectedSegment;
+    this.pendingGraphMod.sink[0] = {segment: segment.clone(), root: root.clone(), position: coords};
+
+    /*if (Uint64.compare(this.pendingGraphMod.sink.segment, this.pendingGraphMod.source.segment) === 0) {
       StatusMessage.displayText(`Source and sink for merge are identical. Aborting.`);
       return;
-    }
+    }*/
 
     StatusMessage.displayText(`Selected ${segment} as sink for merge.`);
 
-    mergeNodes(this.pendingGraphMod.source.segment, this.pendingGraphMod.sink.segment).then((mergedRoot) => {
-      rootSegments.delete(this.pendingGraphMod.sink.root);
-      rootSegments.delete(this.pendingGraphMod.source.root);
+    mergeNodes(this.pendingGraphMod.source[0], this.pendingGraphMod.sink[0]).then((mergedRoot) => {
+      rootSegments.delete(this.pendingGraphMod.sink[0].root);
+      rootSegments.delete(this.pendingGraphMod.source[0].root);
       rootSegments.add(mergedRoot);
     }).catch(e => {
       if (e === GRAPH_SERVER_NOT_SPECIFIED) {
-        this.displayState.segmentEquivalences.link(this.pendingGraphMod.source.segment, this.pendingGraphMod.sink.segment);
+        this.displayState.segmentEquivalences.link(this.pendingGraphMod.source[0].segment, this.pendingGraphMod.sink[0].segment);
       } else {
         throw e;
       }
@@ -367,9 +372,15 @@ export class SegmentationUserLayer extends UserLayer {
       return;
     }
 
-    let segment : Uint64 = <Uint64>segmentSelectionState.rawSelectedSegment;
-    let root : Uint64 = <Uint64>segmentSelectionState.selectedSegment;
-    this.pendingGraphMod.source = {segment: segment.clone(), root: root.clone()};
+    let coords = [...this.manager.layerSelectedValues.mouseState.position.values()].map((v, i) => {
+      return Math.round(v / this.manager.voxelSize.size[i]);
+    });
+
+    let segment: Uint64 = <Uint64>segmentSelectionState.rawSelectedSegment;
+    let root: Uint64 = <Uint64>segmentSelectionState.selectedSegment;
+    this.pendingGraphMod = { source: [{segment: new Uint64(0), root: new Uint64(0), position: coords}],
+    sink: [{segment: new Uint64(0), root: new Uint64(0), position: coords}] };
+    this.pendingGraphMod.source[0] = {segment: segment.clone(), root: root.clone(), position: coords};
 
     StatusMessage.displayText(`Selected ${segment} as source for split. Pick a sink.`);
   }
@@ -380,20 +391,26 @@ export class SegmentationUserLayer extends UserLayer {
       return;
     }
 
-    let segment : Uint64 = <Uint64>segmentSelectionState.rawSelectedSegment;
-    let root : Uint64 = <Uint64>segmentSelectionState.selectedSegment;
-    this.pendingGraphMod.sink = {segment: segment.clone(), root: root.clone()};
+    let coords = [...this.manager.layerSelectedValues.mouseState.position.values()].map((v, i) => {
+      return Math.round(v / this.manager.voxelSize.size[i]);
+    });
+
+    let segment: Uint64 = <Uint64>segmentSelectionState.rawSelectedSegment;
+    let root: Uint64 = <Uint64>segmentSelectionState.selectedSegment;
+    this.pendingGraphMod.sink[0] = {segment: segment.clone(), root: root.clone(), position: coords};
 
 
-    if (Uint64.compare(this.pendingGraphMod.sink.segment, this.pendingGraphMod.source.segment) === 0) {
+    /*if (Uint64.compare(this.pendingGraphMod.sink.segment, this.pendingGraphMod.source.segment) === 0) {
       StatusMessage.displayText(`Source and sink for split are identical. Aborting.`);
       return;
-    }
+    }*/
 
     StatusMessage.displayText(`Selected ${segment} as sink for split.`);
 
-    splitObject(this.pendingGraphMod.source.segment, this.pendingGraphMod.sink.segment).then((splitRoots) => {
-      rootSegments.delete(this.pendingGraphMod.sink.root);
+    splitObject(this.pendingGraphMod.source, this.pendingGraphMod.sink).then((splitRoots) => {
+      for (let sink of this.pendingGraphMod.sink) {
+        rootSegments.delete(sink.root);
+      }
       for (let splitRoot of splitRoots) {
         rootSegments.add(splitRoot);
       }
@@ -406,7 +423,7 @@ export class SegmentationUserLayer extends UserLayer {
     });
   }
 
-  triggerRedraw() { //FIXME there should be a better way of doing this
+  triggerRedraw() { // FIXME there should be a better way of doing this
     if (this.meshLayer) {
       this.meshLayer.redrawNeeded.dispatch();
     }
@@ -416,29 +433,29 @@ export class SegmentationUserLayer extends UserLayer {
   }
 
   handleAction(action: string) {
-    let actions: { [key:string] : Function } = {
+    let actions: { [key:string]: Function } = {
       'recolor': () => this.displayState.segmentColorHash.randomize(),
       'clear-segments': () => {
-        this.displayState.rootSegments.clear(),
-        this.displayState.visibleSegments2D.clear(),
-        this.displayState.visibleSegments3D.clear(),
-        this.displayState.segmentEquivalences.clear()
+        this.displayState.rootSegments.clear();
+        this.displayState.visibleSegments2D.clear();
+        this.displayState.visibleSegments3D.clear();
+        this.displayState.segmentEquivalences.clear();
       },
       'select': this.selectSegment,
       'merge-select-first': this.mergeSelectFirst,
       'merge-select-second': this.mergeSelectSecond,
       'split-select-first': this.splitSelectFirst,
       'split-select-second': this.splitSelectSecond,
-      'toggle-shatter-equivalencies': () => { 
+      'toggle-shatter-equivalencies': () => {
         this.displayState.shattered = !this.displayState.shattered;
-        let msg = this.displayState.shattered 
+        let msg = this.displayState.shattered
           ? 'Shatter ON'
           : 'Shatter OFF';
         StatusMessage.displayText(msg);
       },
       'toggle-semantic-mode': () => {
         this.displayState.semanticMode = !this.displayState.semanticMode;
-        let msg = this.displayState.semanticMode 
+        let msg = this.displayState.semanticMode
           ? 'Semantic mode ON'
           : 'Semantic mode OFF';
 
@@ -456,7 +473,7 @@ export class SegmentationUserLayer extends UserLayer {
       // }
     };
 
-    let fn : Function = actions[action];
+    let fn: Function = actions[action];
 
     if (fn) {
       fn.call(this);

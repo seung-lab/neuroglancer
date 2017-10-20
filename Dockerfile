@@ -50,6 +50,7 @@ RUN ln -s /usr/lib/x86_64-linux-gnu/libhdf5_serial.so /usr/lib/x86_64-linux-gnu/
 ENV HDF5_DIR=/usr/include/hdf5/serial
 ADD ./python/ext/third_party/yacn/REQUIRE REQUIRE
 RUN julia -e "Pkg.update(); for f in readlines(open(\"REQUIRE\")); Pkg.add(strip(f)); end"
+RUN julia -e "Pkg.clone(\"https://github.com/seung-lab/CloudVolume.jl\");"
 
 # install contact_analysis julia dependencies
 RUN cd /neuroglancer/python/ext/third_party/contact_analysis/ && \

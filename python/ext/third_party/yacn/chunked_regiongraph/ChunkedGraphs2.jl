@@ -14,6 +14,7 @@ using Iterators
 import MultiGraphs
 using Utils
 using DataStructures
+using CloudVolume
 
 #####Chunk Ids#####
 include("constants.jl")
@@ -69,11 +70,17 @@ end
 type ChunkedGraph{C}
 	graphs::Dict{ChunkID,C}
 	last_used::PriorityQueue{ChunkID,Float64}
-	path::Union{String,Void}
+	path::AbstractString
+	cloudvolume::CloudVolumeWrapper
 end
 
-function ChunkedGraph(path::AbstractString)
-	return ChunkedGraph{Chunk}(Dict{ChunkID,Chunk}(),DataStructures.PriorityQueue(ChunkID,Float64),path)
+function ChunkedGraph(graphpath::AbstractString, cloudpath::AbstractString)
+	return ChunkedGraph{Chunk}(
+		Dict{ChunkID,Chunk}(),
+		DataStructures.PriorityQueue(ChunkID,Float64),
+		graphpath,
+		CloudVolume.CloudVolumeWrapper(cloudpath, bounded = false, cache = true)
+	)
 end
 
 function common_parent_vertices(G::ChunkedGraph, vertex_labels::Vector{Label})
@@ -504,9 +511,9 @@ function min_cut(G::ChunkedGraph, sources::Vector{UInt64}, sinks::Vector{UInt64}
 	flow_graph = LightGraphs.DiGraph(N)
 	capacities = zeros(Affinity, (N,N))
 	for atomic_edge in atomic_edges
-    u = atomic_edge.u
-    v = atomic_edge.v
-    affinity = atomic_edge.aff
+		u = atomic_edge.u
+		v = atomic_edge.v
+		affinity = atomic_edge.aff
 
 		LightGraphs.add_edge!(flow_graph,encode[u],encode[v])
 		LightGraphs.add_edge!(flow_graph,encode[v],encode[u])
@@ -567,7 +574,8 @@ end
 function is_root(v::Vertex)
 	return v.parent == NULL_LABEL
 end
-function root(G,x)
+
+function root(G::ChunkedGraph, x::Vertex)
 	if is_root(x)
 		return x
 	else
