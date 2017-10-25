@@ -18,14 +18,12 @@ import debounce from 'lodash/debounce';
 import {WatchableValue} from 'neuroglancer/trackable_value';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {urlSafeParse, urlSafeStringify, verifyObject} from 'neuroglancer/util/json';
-import {getCachedJson, Trackable} from 'neuroglancer/util/trackable';
+import {getCachedJson, CompoundTrackable} from 'neuroglancer/util/trackable';
 import * as SockJS from 'sockjs-client';
 
 /**
  * @file Implements a binding between a Trackable value and the URL hash state.
  */
-
-
 
 /**
  * An instance of this class manages a binding between a Trackable value and the URL hash state.
@@ -50,31 +48,31 @@ export class UrlHashBinding extends RefCounted {
    */
   parseError = new WatchableValue<Error|undefined>(undefined);
 
-  constructor(public root: Trackable, updateDelayMilliseconds = 200) {
+  constructor(public root: CompoundTrackable, updateDelayMilliseconds = 200) {
     super();
+    this.updateFromUrlHash(); // initialize state based on url hash
     this.registerEventListener(window, 'hashchange', () => this.updateFromUrlHash());
     const throttledSetUrlHash = debounce(() => this.setUrlHash(), updateDelayMilliseconds);
     this.registerDisposer(root.changed.add(throttledSetUrlHash));
     this.registerDisposer(() => throttledSetUrlHash.cancel());
-    this.setStateServerURL('https://localhost:9999');
+    this.setStateServerURL(root.children.get('stateServer').toJSON());
   }
 
   setStateServerURL(url: string){
-    this.sock = new SockJS(url);
-    this.sock.onopen = function() {
-      console.log('opened socket connection');
-    };
-    this.sock.onmessage = this.onmessage
-    this.sock.onclose = function() {
-      console.log('closing socket connection');
-    };
+    if (url !== undefined){
+      this.sock = new SockJS(url);
+      this.sock.onopen = function() {
+        console.log('opened socket connection');
+      };
+      this.sock.onmessage = (e: any) => {
+        let state = urlSafeParse(decodeURI(e.data));
+        this.root.restoreState(state);  
+      };
+      this.sock.onclose = function() {
+        console.log('closing socket connection');
+      };
+    }
   }
-  
-  onmessage(e: any) {
-      let state = JSON.parse(e.data);
-      verifyObject(state);
-      this.root.restoreState(state);  
-   }
 
   /**
    * Sets the URL hash to match the current state.
@@ -86,7 +84,9 @@ export class UrlHashBinding extends RefCounted {
       this.prevStateGeneration = cacheState.generation;
       let stateString = urlSafeStringify(cacheState.value);
       if (stateString !== this.prevStateString) {
-        this.sock.send(JSON.stringify(cacheState.value));
+        if (this.sock !== undefined){
+          this.sock.send(JSON.stringify(cacheState.value));
+        }
         this.prevStateString = stateString;
         if (stateString === '{}') {
           history.replaceState(null, '', '#');
