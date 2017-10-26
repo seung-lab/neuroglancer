@@ -42,7 +42,6 @@ import {GL} from 'neuroglancer/webgl/context';
 import {RPC} from 'neuroglancer/worker_rpc';
 import {StatusMessage} from 'neuroglancer/status';
 
-
 require('./viewer.css');
 require('./help_button.css');
 require('neuroglancer/noselect.css');
@@ -58,6 +57,10 @@ export function getLayoutByName(obj: any) {
 export function validateLayoutName(obj: any) {
   let layout = getLayoutByName(obj);
   return layout[0];
+}
+
+export function validateStateServer(obj: any) {
+  return obj
 }
 
 export class DataManagementContext extends RefCounted {
@@ -123,6 +126,7 @@ export class Viewer extends RefCounted implements ViewerState {
   keyCommands = new Map<string, (this: Viewer) => void>();
   layerSpecification: LayerListSpecification;
   layoutName = new TrackableValue<string>(LAYOUTS[0][0], validateLayoutName);
+  stateServer = new TrackableValue<string>('', validateStateServer)
 
   state = new CompoundTrackable();
 
@@ -170,6 +174,7 @@ export class Viewer extends RefCounted implements ViewerState {
     state.add('perspectiveZoom', this.perspectiveNavigationState.zoomFactor);
     state.add('showSlices', this.showPerspectiveSliceViews);
     state.add('layout', this.layoutName);
+    state.add('stateServer', this.stateServer);
 
     this.registerDisposer(this.navigationState.changed.add(() => {
       this.handleNavigationStateChanged();
@@ -190,6 +195,7 @@ export class Viewer extends RefCounted implements ViewerState {
         this.navigationState.reset();
         this.perspectiveNavigationState.pose.orientation.reset();
         this.perspectiveNavigationState.zoomFactor.reset();
+        this.stateServer.reset();
         this.resetInitiated.dispatch();
         if (!overlaysOpen && this.options.showLayerDialog && this.visibility.visible) {
           new LayerDialog(this.layerSpecification);
