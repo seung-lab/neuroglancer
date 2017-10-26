@@ -10,9 +10,9 @@ import numpy as np
 from tqdm import tqdm
 from cloudvolume import CloudVolume, Storage
 from cloudvolume.lib import Vec, Bbox, max2, min2, xyzrange, find_closest_divisor
+from taskqueue import TaskQueue, MockTaskQueue
 
 from neuroglancer import downsample_scales, chunks
-from neuroglancer.pipeline import TaskQueue, MockTaskQueue
 from neuroglancer.pipeline.tasks import (
   BigArrayTask, IngestTask, HyperSquareTask, HyperSquareConsensusTask, 
   MeshTask, MeshManifestTask, DownsampleTask, QuantizeAffinitiesTask, 
@@ -85,7 +85,7 @@ def create_info_file_from_build(layer_path, layer_type, resolution, encoding):
     chunk_size=neuroglancer_chunk_size,
   )
 
-  vol = CloudVolume(layer_path, mip=0, info=info).commitInfo()
+  vol = CloudVolume(layer_path, mip=0, info=info).commit_info()
   vol = create_downsample_scales(layer_path, mip=0, ds_shape=build_chunk_size, axis='z')
   
   return vol.info
@@ -249,7 +249,7 @@ def create_quantized_affinity_tasks(taskqueue, src_layer, dest_layer, shape, fil
 
   info = create_quantized_affinity_info(src_layer, dest_layer, shape)
   destvol = CloudVolume(dest_layer, info=info)
-  destvol.commitInfo()
+  destvol.commit_info()
 
   create_downsample_scales(dest_layer, mip=0, ds_shape=shape)
 
@@ -326,8 +326,8 @@ def create_hypersquare_ingest_tasks(task_queue, hypersquare_bucket_name, dataset
   segvol = CloudVolume(dataset_name, SEG_LAYER_NAME, 0, info=seginfo)
 
   print("Creating info files for image and segmentation...")
-  imgvol.commitInfo()
-  segvol.commitInfo()
+  imgvol.commit_info()
+  segvol.commit_info()
 
   def crttask(volname, tasktype, layer_name):
     return HyperSquareTask(

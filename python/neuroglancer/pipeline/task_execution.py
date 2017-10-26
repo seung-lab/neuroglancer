@@ -3,10 +3,10 @@ from time import sleep
 import traceback
 
 import click
+from taskqueue import TaskQueue
 
-from neuroglancer.pipeline import TaskQueue, EmptyVolumeException
+from neuroglancer.pipeline import EmptyVolumeException
 from neuroglancer.pipeline import logger
-
 
 @click.command()
 @click.option('--tag', default='',  help='kind of task to execute')

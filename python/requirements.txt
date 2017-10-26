@@ -10,6 +10,7 @@ numpy==1.13.1
 pyopenssl==17.2.0
 pytest==3.0.7 
 sockjs-tornado==1.0.3
+task-queue==0.1.0
 tenacity==4.4.0
 tornado==4.4.2
 tqdm==4.7.6

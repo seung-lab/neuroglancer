@@ -17,9 +17,9 @@ from tqdm import tqdm
 
 from cloudvolume import CloudVolume, Storage
 from cloudvolume.lib import xyzrange, min2, max2, Vec, Bbox, mkdir 
+from taskqueue import RegisteredTask
 
 from neuroglancer import chunks, downsample, downsample_scales
-from neuroglancer.pipeline import RegisteredTask
 from neuroglancer.pipeline import Mesher # broken out for ease of commenting out
 
 def downsample_and_upload(image, bounds, vol, ds_shape, mip=0, axis='z', skip_first=False):
