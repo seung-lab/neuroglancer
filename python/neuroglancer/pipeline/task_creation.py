@@ -134,7 +134,13 @@ def create_downsampling_tasks(task_queue, layer_path, mip=-1, fill_missing=False
 
 def create_meshing_tasks(task_queue, layer_path, mip, shape=Vec(512, 512, 512)):
   shape = Vec(*shape)
+  max_simplification_error = 40
+
   vol = CloudVolume(layer_path, mip)
+
+  if not 'mesh' in vol.info:
+    vol.info['mesh'] = 'mesh_mip_{}_err_{}'.format(mip, max_simplification_error)
+    vol.commit_info()
 
   for startpt in tqdm(xyzrange( vol.bounds.minpt, vol.bounds.maxpt, shape ), desc="Inserting Mesh Tasks"):
     task = MeshTask(
@@ -142,7 +148,7 @@ def create_meshing_tasks(task_queue, layer_path, mip, shape=Vec(512, 512, 512)):
       mip=vol.mip,
       shape=shape.clone(),
       offset=startpt.clone(),
-      max_simplification_error=40,
+      max_simplification_error=max_simplification_error,
     )
     task_queue.insert(task)
   task_queue.wait()
