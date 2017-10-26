@@ -12,6 +12,7 @@ type AtomicEdge
 	u::Label
 	v::Label
 	aff::Affinity
+	AtomicEdge(u, v, aff) = u > v ? new(v, u, aff) : new(u, v, aff)
 end
 function AtomicEdge(u::Label, v::Label)
 	return AtomicEdge(u, v, 1.f0)
@@ -28,6 +29,9 @@ Base.write(s::IO, x::AtomicEdge) = unsafe_write(s, Ptr{AtomicEdge}(pointer_from_
 Base.read(s::IO, t::Type{AtomicEdge}) = begin
 	ret = AtomicEdge(0, 0, 0.f0)
 	unsafe_read(s, pointer_from_objref(ret), sizeof(AtomicEdge))
+	if ret.u > ret.v # Should never happen
+		(ret.u, ret.v) = (ret.v, ret.u)
+	end
 	return ret
 end
 Base.read(s::IO, a::Array{AtomicEdge}) = begin
@@ -37,10 +41,6 @@ Base.read(s::IO, a::Array{AtomicEdge}) = begin
 	return a
 end
 Base.read(s::IO, t::Type{AtomicEdge}, dims::Dims) = read(s, Array{AtomicEdge}(dims))
-
-function unordered(x::AtomicEdge)
-	return AtomicEdge(min(x.u,x.v), max(x.u,x.v), x.aff)
-end
 
 function unordered{T<:Integer}(x::Tuple{T,T})
 	a,b = x

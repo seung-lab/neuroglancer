@@ -222,7 +222,7 @@ function save_chunk!(c::Chunk)
 		write(buf, UInt64(c.graph.inverse_vertex_map[edge[1]]))
 		write(buf, UInt64(c.graph.inverse_vertex_map[edge[2]]))
 		write(buf, UInt64(length(atomic_edges)))
-		write(buf, convert(Vector{AtomicEdge}, atomic_edges))
+		write(buf, convert(Vector{AtomicEdge}, collect(atomic_edges)))
 	end
 
 	f = open(path, "w")
@@ -267,20 +267,14 @@ function to_string(id::ChunkID)
 end
 
 function load_chunk(G::ChunkedGraph, id::ChunkID)
-	vertex_map = nothing
-	graph = nothing
-	max_label = nothing
+	vertex_map = Dict{Label, Vertex}()
+	graph = MultiGraphs.MultiGraph(Label, AtomicEdge)
+	max_label = UInt64(0)
 
 	try
 		prefix=to_string(id)
 		path = expanduser(joinpath(G.path, "$(prefix).chunk"))
 		# print("Loading from $(path)...")
-
-		# Plain Binary
-		max_label = UInt64(0)
-		vertex_map = Dict{Label, Vertex}()
-		edge_map = Dict{Tuple{Int64, Int64}, Vector{AtomicEdge}}()
-
 		f = open(path, "r")
 
 		# Check File Version
@@ -291,8 +285,7 @@ function load_chunk(G::ChunkedGraph, id::ChunkID)
 		(max_label, v_cnt, e_cnt) = read(f, UInt64, 3)
 
 		# Allocate Graph
-		graph = MultiGraphs.MultiGraph(Label, AtomicEdge)
-		MultiGraphs.sizehint!(graph, v_cnt, e_cnt)
+		MultiGraphs.sizehint!(graph, floor(UInt32, 1.5 * v_cnt), floor(UInt32, 1.5 * e_cnt))
 		sizehint!(vertex_map, floor(UInt32, 1.5 * v_cnt))
 
 		# Read Vertices
@@ -304,7 +297,6 @@ function load_chunk(G::ChunkedGraph, id::ChunkID)
 		end
 
 		# Read EdgeMap
-		sizehint!(edge_map, e_cnt)
 		for i in range(1, e_cnt)
 			(u, v, atomic_edge_cnt) = read(f, UInt64, 3)
 			atomic_edges = read(f, AtomicEdge, atomic_edge_cnt)
@@ -314,7 +306,7 @@ function load_chunk(G::ChunkedGraph, id::ChunkID)
 		close(f)
 		# println("done.")
 	catch e
-		# println("failed: $e")
+		#println("failed: $e")
 		return nothing
 	end
 
@@ -385,7 +377,7 @@ function leaves(G::ChunkedGraph, v::Vertex)
 	elseif level(v)==2
 		return v.children
 	else
-		return cat(1,map(x->leaves(G,get_vertex(G,x)),v.children)...)
+		return mapreduce(x->leaves(G, get_vertex(G, x)), vcat, Label[], v.children)
 	end
 end
 
@@ -396,7 +388,7 @@ function leaves(G::ChunkedGraph, v::Vertex, l::Integer)
 	elseif level(v)==l+1
 		return v.children
 	else
-		return cat(1,map(x->leaves(G,get_vertex(G,x),l),v.children)...)
+		return mapreduce(x->leaves(G, get_vertex(G, x), l), vcat, Label[], v.children)
 	end
 end
 
@@ -426,10 +418,10 @@ function leaves(G::ChunkedGraph, v::Vertex, cuboid::Cuboid)
 		if is_leaf(v)
 			return [v.label]
 		else
-			return cat(1,map(x->leaves(G,get_vertex(G,x)),v.children)...)
+			return mapreduce(x->leaves(G, get_vertex(G, x)), vcat, Label[], v.children)
 		end
 	else
-		return Vertex[]
+		return Label[]
 	end
 end
 
@@ -439,11 +431,11 @@ function induced_subgraph{T<:Integer}(G::ChunkedGraph, chunk::Chunk, vertices::V
 	lvl = level(first(chunks))
 	while lvl > 0
 		# Add all induced_edges of all important vertices in all chunks on the current level to the existing list of atomic_edges
-		append!(atomic_edges, vcat([vcat(values(MultiGraphs.induced_edges(c.graph, vertices))...) for c in chunks]...));
-
+		#append!(atomic_edges, vcat([vcat(values(MultiGraphs.induced_edges(c.graph, vertices))...) for c in chunks]...)); # arrays
+		append!(atomic_edges, collect(reduce(union, union(values(MultiGraphs.induced_edges(c.graph, vertices))...) for c in chunks)));
 		if lvl > 1
 			# From the current set of vertices, collect all child vertices
-			vertices = vcat([vcat([c.vertices[v].children for v in filter(v->haskey(c.vertices, v), vertices)]...) for c in chunks]...);
+			vertices = convert(Vector{UInt64}, vcat([vcat([c.vertices[v].children for v in filter(v->haskey(c.vertices, v), vertices)]...) for c in chunks]...));
 
 			# Make sure we got all the necessary chunks in memory
 			foreach(v->get_chunk(G, chunk_id(v)), vertices)
@@ -737,14 +729,11 @@ end
 
 function add_atomic_edge!(G::ChunkedGraph, edge::AtomicEdge)
 	c = get_chunk(G,lca(chunk_id(edge.u),chunk_id(edge.v)))
-	push!(c.added_edges, unordered(edge))
+	push!(c.added_edges, edge)
 	touch(c)
 end
 
 function add_atomic_edges!(G::ChunkedGraph, edges::Vector{AtomicEdge})
-	for i in 1:length(edges)
-		edges[i]=unordered(edges[i])
-	end
 	sort!(edges)
 	gc_enable(false)
 	for (i,e) in enumerate(edges)
@@ -782,7 +771,7 @@ end
 function delete_atomic_edge!(G::ChunkedGraph, edge::AtomicEdge)
 	s=get_chunk(G,lca(chunk_id(edge.u),chunk_id(edge.v)))
 
-	push!(s.deleted_edges, unordered(edge))
+	push!(s.deleted_edges, edge)
 	touch(s)
 end
 
