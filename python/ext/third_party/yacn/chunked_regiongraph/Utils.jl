@@ -12,6 +12,7 @@ type AtomicEdge
 	u::Label
 	v::Label
 	aff::Affinity
+	AtomicEdge() = new(0, 0, 0.f0)
 	AtomicEdge(u, v, aff) = u > v ? new(v, u, aff) : new(u, v, aff)
 end
 function AtomicEdge(u::Label, v::Label)
@@ -27,7 +28,7 @@ Base.:(==)(x::AtomicEdge,y::AtomicEdge) = isequal(x.u, y.u) && isequal(x.v, y.v)
 Base.hash(x::AtomicEdge, h::UInt) = hash(x.u, hash(x.v, hash(:AtomicEdge, h)))
 Base.write(s::IO, x::AtomicEdge) = unsafe_write(s, Ptr{AtomicEdge}(pointer_from_objref(x)), sizeof(AtomicEdge))
 Base.read(s::IO, t::Type{AtomicEdge}) = begin
-	ret = AtomicEdge(0, 0, 0.f0)
+	ret = AtomicEdge()
 	unsafe_read(s, pointer_from_objref(ret), sizeof(AtomicEdge))
 	if ret.u > ret.v # Should never happen
 		(ret.u, ret.v) = (ret.v, ret.u)
@@ -36,7 +37,7 @@ Base.read(s::IO, t::Type{AtomicEdge}) = begin
 end
 Base.read(s::IO, a::Array{AtomicEdge}) = begin
 	for i in eachindex(a)
-		a[i] = read(s, AtomicEdge)
+		@inbounds a[i] = read(s, AtomicEdge)
 	end
 	return a
 end
@@ -58,15 +59,15 @@ function to_chunk_id(x,y,z)
 	X=UInt32(fld(x,cx)) & low_mask_8
 	Y=UInt32(fld(y,cy)) & low_mask_8
 	Z=UInt32(fld(z,cz)) & low_mask_8
-	return ChunkID(L,X,Y,Z)
+	return chunk_id(L,X,Y,Z)
 end
 
-@inline function ChunkID(L::UInt32,X::UInt32,Y::UInt32,Z::UInt32)
+@inline function chunk_id(L::UInt32,X::UInt32,Y::UInt32,Z::UInt32)
 	return (L << 24) | (X << 16) | (Y << 8) | Z
 end
 
-@inline function ChunkID(L,X,Y,Z)
-	return ChunkID(UInt32(L),UInt32(X),UInt32(Y),UInt32(Z))
+@inline function chunk_id(L::Integer, X::Integer, Y::Integer, Z::Integer)
+	return chunk_id(UInt32(L),UInt32(X),UInt32(Y),UInt32(Z))
 end
 
 @inline function level(id::ChunkID)
@@ -81,11 +82,11 @@ end
 	return (UInt64(seg_id)) | (UInt64(chunk_id) << 32)
 end
 
-@inline function Label(level, x, y, z, seg_id)
-	return Label(seg_id, ChunkID(level, x, y, z))
+@inline function Label(level::Integer, x::Integer, y::Integer, z::Integer, seg_id::Integer)
+	return Label(seg_id, chunk_id(level, x, y, z))
 end
 
-@inline function Label(x,y)
+@inline function Label(x::Integer,y::Integer)
 	return Label(UInt32(x),UInt32(y))
 end
 
@@ -98,7 +99,7 @@ end
 	return UInt32((l >> 32) & low_mask_32)
 end
 
-function chunk_id_to_slices(chunk_id;low_pad=0, high_pad=0)
+function chunk_id_to_slices(chunk_id::ChunkID; low_pad=0, high_pad=0)
 	l=level(chunk_id)
 	x,y,z = pos(chunk_id)
 	@assert l>=1

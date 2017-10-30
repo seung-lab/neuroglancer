@@ -19,8 +19,8 @@ using CloudVolume
 #####Chunk Ids#####
 include("constants.jl")
 const MAX_DEPTH=8
-const TOP_ID=ChunkID(MAX_DEPTH+1,0,0,0)
-const SECOND_ID=ChunkID(MAX_DEPTH,0,0,0)
+const TOP_ID=chunk_id(MAX_DEPTH+1,0,0,0)
+const SECOND_ID=chunk_id(MAX_DEPTH,0,0,0)
 const NULL_LABEL=typemax(UInt64)
 const NULL_LIST=Vector{Label}[]
 
@@ -47,7 +47,7 @@ end
 		return SECOND_ID
 	else 
 		x,y,z=pos(t)
-		return ChunkID(level(t)+1,fld(x,bx),fld(y,by),fld(z,bz))
+		return chunk_id(level(t)+1,fld(x,bx),fld(y,by),fld(z,bz))
 	end
 end
 
@@ -371,25 +371,34 @@ function is_leaf(x::Vertex)
 	return level(x)==1
 end
 
-function leaves(G::ChunkedGraph, v::Vertex)
-	if is_leaf(v)
-		return [v.label]
-	elseif level(v)==2
-		return v.children
-	else
-		return mapreduce(x->leaves(G, get_vertex(G, x)), vcat, Label[], v.children)
-	end
-end
+# function leaves(G::ChunkedGraph, v::Vertex, l::Integer)
+# 	@assert level(chunk_id(v)) > l
+# 	if is_leaf(v)
+# 		return [v.label]
+# 	elseif level(v)==l+1
+# 		return v.children
+# 	else
+# 		return mapreduce(x->leaves(G, get_vertex(G, x), l), vcat, Label[], v.children)
+# 	end
+# end
 
 function leaves(G::ChunkedGraph, v::Vertex, l::Integer)
 	@assert level(chunk_id(v)) > l
-	if is_leaf(v)
-		return [v.label]
-	elseif level(v)==l+1
-		return v.children
-	else
-		return mapreduce(x->leaves(G, get_vertex(G, x), l), vcat, Label[], v.children)
+	gc_enable(false)
+	vertices = [v]
+	lvl = level(chunk_id(v))
+	while lvl > l+1
+		vertices = map(l->get_vertex(G, l), mapreduce(vertex->vertex.children, vcat, Label[], vertices));
+		lvl -= 1
 	end
+	ret = mapreduce(vertex->vertex.children, vcat, Label[], vertices)
+
+	gc_enable(true)
+	return ret
+end
+
+function leaves(G::ChunkedGraph, v::Vertex)
+	return leaves(G, v, 1)
 end
 
 const Cuboid = Tuple{UnitRange,UnitRange,UnitRange}

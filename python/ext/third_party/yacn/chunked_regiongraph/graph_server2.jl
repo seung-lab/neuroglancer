@@ -42,7 +42,7 @@ tq = task_queue.TaskQueue(queue_server="pull-queue")
 G = ChunkedGraph(rel(settings["graphpath"]), settings["cloudpath"])
 @time for f in filter(s->ismatch(r".*\.chunk",s), readdir(expanduser(rel(settings["graphpath"]))))
 	m=match(r"(\d+)_(\d+)_(\d+)_(\d+)\..*",f)
-	id = ChunkID(map(x->parse(UInt32,x),m.captures)...)
+	id = chunk_id(map(x->parse(UInt32,x),m.captures)...)
 	if Utils.level(id) >= 3
 		ChunkedGraphs2.get_chunk(G,id)
 	end

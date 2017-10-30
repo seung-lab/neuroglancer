@@ -68,7 +68,8 @@ function delete_edge!(G::MultiGraph, U::Label, V::Label, e::AtomicEdge)
 		setdelete!(G.edge_map[uv],e)
 		if length(G.edge_map[uv]) == 0
 			rem_edge!(G.g,u,v)
-		 end
+			delete!(G.edge_map, unordered(u,v))
+		end
 	end
 end
 

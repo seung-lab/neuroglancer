@@ -97,7 +97,7 @@ function mesh!(c::ChunkedGraphs2.Chunk)
 end
 #@time for f in filter(s->ismatch(r".*\.chunk",s), readdir(expanduser(rel(settings["graphpath"]))))
 #	m=match(r"(\d+)_(\d+)_(\d+)_(\d+)\..*",f)
-#	id = ChunkID(map(x->parse(UInt32,x),m.captures)...)
+#	id = chunk_id(map(x->parse(UInt32,x),m.captures)...)
 #	x,y,z = pos(id)
 #        if level(id) == 1 && x == 0x51 && y == 0x39 && (z == 0x02 || z == 0x03) #if Utils.level(id) == 1
 #		mesh!(ChunkedGraphs2.get_chunk(G,id))
