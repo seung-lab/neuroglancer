@@ -81,6 +81,9 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
   }
 
   getSkeletonSource() {
+    if (!this.skeletons) {
+      return null;
+    }
     return getSkeletonSource(this.chunkManager, `${this.baseUrls[0]}${this.path}/${this.skeletons}?{}`);
   }
 

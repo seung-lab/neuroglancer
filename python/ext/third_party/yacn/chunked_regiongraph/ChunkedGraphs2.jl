@@ -494,7 +494,7 @@ function min_cut(G::ChunkedGraph, sources::Vector{UInt64}, sinks::Vector{UInt64}
 	# The connection between sources and sinks can lie outside bounding box, erroneously returning "no cut"
 	# Not limiting the search region obviously leads to a considerable slowdown for huge objects, but it returns
 	# correct results.
-	bbox = (0:typemax(UInt64), 0:typemax(UInt64), 0:typemax(UInt64)) # bounding_box(vcat(sources,sinks))
+	bbox = bounding_box(vcat(sources,sinks))
 	root_vertices = common_parent_vertices(G, vcat(sources, sinks))
 	chunk = get_chunk(G, chunk_id(root_vertices[1].label))
 	atomic_vertices, atomic_edges = induced_subgraph(G, chunk, map(r->r.label, root_vertices), bbox)

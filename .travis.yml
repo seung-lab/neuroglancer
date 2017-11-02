@@ -16,7 +16,7 @@ before_install:
 - $(python version.py) #sets APPVERSION
 
 script:
-- 'if [ $(./was_modified.py python) == "true" ]; then
+- 'if [ $(./was_modified.py python) != "true" ]; then
     docker build --tag tartavull/neuroglancer:$APPVERSION . || travis_terminate 1;
     docker run -it -v /secrets:/secrets tartavull/neuroglancer:$APPVERSION /bin/sh -c "cd /neuroglancer && py.test python/test" || travis_terminate 1;
     docker login -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD" || travis_terminate 1;
@@ -28,7 +28,7 @@ script:
   fi'
 
 before_deploy:
-- 'if [ $(./was_modified.py appengine/frontend) == "true" ]; then
+- 'if [ $(./was_modified.py appengine/frontend) != "true" ]; then
     sudo apt-get -qq update || travis_terminate 1;
     sudo apt-get install -y  oracle-java8-set-default || travis_terminate 1;
     npm install || travis_terminate 1;
@@ -48,7 +48,7 @@ before_deploy:
     py.test ./appengine/queue/test.py || travis_terminate 1;
     deactivate || travis_terminate 1;
   fi'
-- export DEPLOY="false"
+- export DEPLOY="true"
 - if [ "$APPVERSION" == "master" ]; then export DEPLOY="true"; fi
 deploy:
   - provider: gae
@@ -58,7 +58,6 @@ deploy:
     version: "$APPVERSION"
     on:
       all_branches: true
-      condition: $(./was_modified.py appengine/frontend) == "true"
     no_promote: true
     default: "$DEPLOY"
     verbosity: error

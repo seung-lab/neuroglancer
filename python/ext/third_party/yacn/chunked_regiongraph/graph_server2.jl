@@ -189,6 +189,16 @@ function handle_root(id)
 	#mesh!(root_vertex)
 	println("$(root_vertex.label)")
 
+	#Temporary hack to prevent NG from dying when clicking on big objects
+	if level(chunk_id(root_vertex.label)) > 3
+		l = length(leaves(G, root_vertex, 3))
+		println("Number of level 3 chunks: ", l)
+		if l > 1000
+			@debug("$(root_vertex.label) is too large.")
+			return Response(UInt8[], headers)
+		end
+	end
+
 	return Response(reinterpret(UInt8,[root_vertex.label]),headers)
 end
 
@@ -214,8 +224,8 @@ function handle_children(id)
 		s = UInt64[seg_id(child) for child in v.children]
 		println("$(now()): handle_children - v: $(v.label), (Level $(ChunkedGraphs2.level(v))), - children: $(simple_print([seg_id(child) for child in v.children]))")
 	else
-		s = UInt64[child for child in v.children]
-		#s = UInt64[child for child in leaves(G,v,2)] # J's hack to skip the middle layers and jump right to the pre-meshed lower level agglomeration.
+		#s = UInt64[child for child in v.children]
+		s = UInt64[child for child in leaves(G,v,2)] # J's hack to skip the middle layers and jump right to the pre-meshed lower level agglomeration.
 		println("$(now()): handle_children - v: $(v.label), (Level $(ChunkedGraphs2.level(v))), - children: $(simple_print([child for child in v.children]))")
 	end
 
@@ -229,8 +239,14 @@ function handle_split(data)
 	sources = unique(convert(Vector{UInt64}, filter(y->y != nothing, map(x->SegmentPicking.get_supervoxel_at(G, parse(UInt64, x[1]), (x[2], x[3], x[4])), parsed["sources"]))))
 	sinks = unique(convert(Vector{UInt64}, filter(y->y != nothing, map(x->SegmentPicking.get_supervoxel_at(G, parse(UInt64, x[1]), (x[2], x[3], x[4])), parsed["sinks"]))))
 
-	@assert !isempty(sources) && !isempty(sinks)
-	@assert isempty(intersect(sources, sinks))
+	if isempty(sources) || isempty(sinks)
+		println("Empty source or sink.")
+		return Response(UInt8[], headers)
+	end
+	if !isempty(intersect(sources, sinks))
+		println("Source and sink are the same")
+		return Response(UInt8[], headers)
+	end
 
 	cuts = ChunkedGraphs2.min_cut(G, sources, sinks)
 	for e in cuts
@@ -270,7 +286,7 @@ function handle_save()
 	@info("handle_save()")
 	update!(G)
 	save!(G)
-	return Response(reinterpret(UInt8, []), headers)
+	return Response(UInt8[], headers)
 end
 
 # function handle_subgraph(vertices)

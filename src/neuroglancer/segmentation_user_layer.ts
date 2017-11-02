@@ -101,7 +101,7 @@ export class SegmentationUserLayer extends UserLayer {
         this.displayState.visibleSegments2D.clear();
         this.displayState.visibleSegments3D.clear();
         this.displayState.segmentEquivalences.clear();
-        StatusMessage.displayText(`Deselected all ${leafSegmentCount} segments.`);
+        StatusMessage.displayText(`Deselected all ${leafSegmentCount} segments.`, 3000);
       } else if (added) {
         // Add root to 3D set, and leaves to 2D set
         this.displayState.visibleSegments3D.add(rootSegment);
@@ -124,7 +124,7 @@ export class SegmentationUserLayer extends UserLayer {
           this.displayState.visibleSegments2D.add(leafSegments);
           this.displayState.segmentEquivalences.link(rootSegment, leafSegments);
 
-          StatusMessage.displayText(`Selected ${leafSegments.length} segments.`);
+          StatusMessage.displayText(`Selected ${leafSegments.length} segments.`, 3000);
         });
       } else if (!added) {
         let segments = [...this.displayState.segmentEquivalences.setElements(rootSegment)];
@@ -295,7 +295,7 @@ export class SegmentationUserLayer extends UserLayer {
     }
 
     if (this.displayState.shattered && this.graphPath !== undefined) {
-      StatusMessage.displayText(`Warning: Deselecting single supervoxels currently not possible, disable shatter mode!`);
+      StatusMessage.displayText(`Error: Deselecting single supervoxels currently not possible, disable shatter mode!`, 3000);
       return;
     }
 
@@ -309,6 +309,8 @@ export class SegmentationUserLayer extends UserLayer {
     else {
       getRoot(segment).then(rootSegment => {
         rootSegments.add(rootSegment);
+      }).catch((e: Error) => {
+        StatusMessage.displayText(e.message, 3000);
       });
     }
   }
@@ -329,7 +331,7 @@ export class SegmentationUserLayer extends UserLayer {
                              sink: [{segment: new Uint64(0), root: new Uint64(0), position: coords}] };
     this.pendingGraphMod.source[0] = {segment: segment.clone(), root: root.clone(), position: coords};
 
-    StatusMessage.displayText(`Selected ${segment} as source for merge. Pick a sink.`);
+    StatusMessage.displayText(`Selected ${segment} as source for merge. Pick a sink.`, 3000);
   }
 
   mergeSelectSecond() {
@@ -351,7 +353,7 @@ export class SegmentationUserLayer extends UserLayer {
       return;
     }*/
 
-    StatusMessage.displayText(`Selected ${segment} as sink for merge.`);
+    StatusMessage.displayText(`Selected ${segment} as sink for merge.`, 3000);
 
     mergeNodes(this.pendingGraphMod.source[0], this.pendingGraphMod.sink[0]).then((mergedRoot) => {
       rootSegments.delete(this.pendingGraphMod.sink[0].root);
@@ -382,7 +384,7 @@ export class SegmentationUserLayer extends UserLayer {
     sink: [{segment: new Uint64(0), root: new Uint64(0), position: coords}] };
     this.pendingGraphMod.source[0] = {segment: segment.clone(), root: root.clone(), position: coords};
 
-    StatusMessage.displayText(`Selected ${segment} as source for split. Pick a sink.`);
+    StatusMessage.displayText(`Selected ${segment} as source for split. Pick a sink.`, 3000);
   }
 
   splitSelectSecond () {
@@ -405,9 +407,13 @@ export class SegmentationUserLayer extends UserLayer {
       return;
     }*/
 
-    StatusMessage.displayText(`Selected ${segment} as sink for split.`);
+    StatusMessage.displayText(`Selected ${segment} as sink for split.`, 3000);
 
     splitObject(this.pendingGraphMod.source, this.pendingGraphMod.sink).then((splitRoots) => {
+      if (splitRoots.length === 0) {
+        StatusMessage.displayText(`No split found.`, 3000);
+        return;
+      }
       for (let sink of this.pendingGraphMod.sink) {
         rootSegments.delete(sink.root);
       }
@@ -536,6 +542,8 @@ class SegmentationDropdown extends UserLayerDropdown {
     this.registerDisposer(this.addSegmentWidget.valueEntered.add((value: Uint64) => {
       getRoot(value).then(rootSegment => {
         this.layer.displayState.rootSegments.add(rootSegment);
+      }).catch((e: Error) => {
+        StatusMessage.displayText(e.message, 3000);
       });
     }));
 

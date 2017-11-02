@@ -24,8 +24,12 @@ export function getRoot (segment: Uint64): Promise<Uint64> {
 
   let promise = sendHttpRequest(openHttpRequest(`${GRAPH_BASE_URL}/1.0/segment/${segment}/root`), 'arraybuffer');
   return promise.then(response => {
-    let uint32 = new Uint32Array(response);
-    return new Uint64(uint32[0], uint32[1]);
+    if (response.byteLength === 0) {
+      throw new Error(`Agglomeration for segment ${segment} is too large to show.`);
+    } else {
+      let uint32 = new Uint32Array(response);
+      return new Uint64(uint32[0], uint32[1]);
+    }
   }).catch((e: HttpError) => {
     console.log(`Could not retrieve root for segment ${segment}`);
     console.error(e);
