@@ -39,7 +39,7 @@ if os.path.exists(project_name_path):
 
 google_credentials_path = secretpath('secrets/google-secret.json')
 if os.path.exists(google_credentials_path):
-  service_account.ServiceAccountCredentials \
+  google_credentials = service_account.ServiceAccountCredentials \
     .from_json_keyfile_name(google_credentials_path)
 else:
   google_credentials = ''
