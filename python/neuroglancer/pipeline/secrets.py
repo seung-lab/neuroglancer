@@ -10,45 +10,48 @@ QUEUE_TYPE = 'appengine' if 'QUEUE_TYPE' not in os.environ else os.environ['QUEU
 PROJECT_NAME = 'neuromancer-seung-import'
 APPENGINE_QUEUE_URL = 'https://queue-dot-neuromancer-seung-import.appspot.com'
 
-backwards_backwards_compatible_path = '/secrets'
-backwards_compatible_path = os.path.join(os.environ['HOME'], '.neuroglancer/')
-new_path = os.path.join(os.environ['HOME'], '.cloudvolume/')
+CLOUD_VOLUME_DIR = mkdir(os.path.join(os.environ['HOME'], '.cloudvolume'))
 
-if os.path.exists(new_path):
-  CLOUD_VOLUME_DIR = new_path
-elif os.path.exists(backwards_compatible_path):
-  CLOUD_VOLUME_DIR = backwards_compatible_path
-  print(colorize('yellow', 'Deprecation Warning: Directory ~/.cloudvolume is now preferred to ~/.neuroglancer.\nConsider running: mv ~/.neuroglancer ~/.cloudvolume'))
-elif os.path.exists(backwards_backwards_compatible_path):
-  print(colorize('yellow', 'Deprecation Warning: Directory ~/.cloudvolume is now preferred to /secrets.\nConsider running: mv /secrets/* ~/.cloudvolume/secrets/'))
-else:
-  CLOUD_VOLUME_DIR = mkdir(new_path)
+def secretpath(filepath):
+  preferred = CLOUD_VOLUME_DIR
+  
+  if os.path.exists(preferred):
+    return os.path.join(preferred, filepath)
 
-secret_path = mkdir(os.path.join(CLOUD_VOLUME_DIR, 'secrets/'))
+  backcompat = [
+    os.path.join(os.environ['HOME'], '.neuroglancer'), # older
+    '/' # original
+  ]
 
-project_name_path = os.path.join(CLOUD_VOLUME_DIR, 'project_name')
+  for path in rootpaths:
+    if os.path.exists(path):
+      print(colorize('yellow', 'Deprecation Warning: Directory ~/.cloudvolume is now preferred to ~/.neuroglancer.\nConsider running: mv ~/.neuroglancer ~/.cloudvolume'))  
+      return mkdir(os.path.join(path, filepath))
+
+  return mkdir(os.path.join(preferred, filepath))
+
+project_name_path = secretpath('project_name')
 if os.path.exists(project_name_path):
   with open(project_name_path, 'r') as f:
     PROJECT_NAME = f.read()
 
-google_credentials_path = os.path.join(secret_path, 'google-secret.json')
+google_credentials_path = secretpath('secrets/google-secret.json')
 if os.path.exists(google_credentials_path):
   service_account.ServiceAccountCredentials \
     .from_json_keyfile_name(google_credentials_path)
 else:
   google_credentials = ''
 
-aws_credentials_path = os.path.join(secret_path, 'aws-secret.json')
+aws_credentials_path = secretpath('secrets/aws-secret.json')
 if os.path.exists(aws_credentials_path):
   with open(aws_credentials_path, 'r') as f:
     aws_credentials = json.loads(f.read())
 else:
   aws_credentials = ''
 
-boss_credentials_path = os.path.join(secret_path, 'boss-secret.json')
+boss_credentials_path = secretpath('secrets/boss-secret.json')
 if os.path.exists(boss_credentials_path):
   with open(boss_credentials_path, 'r') as f:
     boss_credentials = json.loads(f.read())
 else:
   boss_credentials = ''
-
