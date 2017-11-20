@@ -560,16 +560,17 @@ class HyperSquareConsensusTask(RegisteredTask):
 
 
 class TransferTask(RegisteredTask):
-  def __init__(self, src_path, dest_path, shape, offset):
+  def __init__(self, src_path, dest_path, shape, offset, fill_missing):
     super(self.__class__, self).__init__(src_path, dest_path, shape, offset)
     self.src_path = src_path
     self.dest_path = dest_path
     self.shape = Vec(*shape)
     self.offset = Vec(*offset)
+    self.fill_missing = fill_missing
 
   def execute(self):
-    srccv = CloudVolume(self.src_path)
-    destcv = CloudVolume(self.dest_path)
+    srccv = CloudVolume(self.src_path, fill_missing=self.fill_missing)
+    destcv = CloudVolume(self.dest_path, fill_missing=self.fill_missing)
 
     bounds = Bbox( self.offset, self.shape + self.offset )
     bounds = Bbox.clamp(bounds, srccv.bounds)
