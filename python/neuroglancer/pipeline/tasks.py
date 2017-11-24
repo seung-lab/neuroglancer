@@ -17,9 +17,9 @@ from tqdm import tqdm
 
 from cloudvolume import CloudVolume, Storage
 from cloudvolume.lib import xyzrange, min2, max2, Vec, Bbox, mkdir 
+from taskqueue import RegisteredTask
 
 from neuroglancer import chunks, downsample, downsample_scales
-from neuroglancer.pipeline import RegisteredTask
 from neuroglancer.pipeline import Mesher # broken out for ease of commenting out
 
 def downsample_and_upload(image, bounds, vol, ds_shape, mip=0, axis='z', skip_first=False):
@@ -560,21 +560,25 @@ class HyperSquareConsensusTask(RegisteredTask):
 
 
 class TransferTask(RegisteredTask):
-  def __init__(self, src_path, dest_path, shape, offset):
-    super(self.__class__, self).__init__(src_path, dest_path, shape, offset)
+  # translate = change of origin
+  def __init__(self, src_path, dest_path, shape, offset, fill_missing, translate):
+    super(self.__class__, self).__init__(src_path, dest_path, shape, offset, fill_missing, translate)
     self.src_path = src_path
     self.dest_path = dest_path
     self.shape = Vec(*shape)
     self.offset = Vec(*offset)
+    self.fill_missing = fill_missing
+    self.translate = Vec(*translate)
 
   def execute(self):
-    srccv = CloudVolume(self.src_path)
-    destcv = CloudVolume(self.dest_path)
+    srccv = CloudVolume(self.src_path, fill_missing=self.fill_missing)
+    destcv = CloudVolume(self.dest_path, fill_missing=self.fill_missing)
 
     bounds = Bbox( self.offset, self.shape + self.offset )
     bounds = Bbox.clamp(bounds, srccv.bounds)
     
     image = srccv[ bounds.to_slices() ]
+    bounds += self.translate
     downsample_and_upload(image, bounds, destcv, self.shape)
 
 class WatershedRemapTask(RegisteredTask):

@@ -1,5 +1,5 @@
 from neuroglancer._mesher import Mesher
-from task_queue import MockTaskQueue, TaskQueue, RegisteredTask
+from taskqueue import MockTaskQueue, TaskQueue, RegisteredTask
 from tasks import *
 from tasks_watershed import WatershedTask
 from cloudvolume import CloudVolume, Storage, EmptyVolumeException

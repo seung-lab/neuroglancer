@@ -5,14 +5,15 @@ import json
 import math
 import re
 import os
+from time import strftime
 
 import numpy as np
 from tqdm import tqdm
 from cloudvolume import CloudVolume, Storage
 from cloudvolume.lib import Vec, Bbox, max2, min2, xyzrange, find_closest_divisor
+from taskqueue import TaskQueue, MockTaskQueue
 
 from neuroglancer import downsample_scales, chunks
-from neuroglancer.pipeline import TaskQueue, MockTaskQueue
 from neuroglancer.pipeline.tasks import (
   BigArrayTask, IngestTask, HyperSquareTask, HyperSquareConsensusTask, 
   MeshTask, MeshManifestTask, DownsampleTask, QuantizeAffinitiesTask, 
@@ -85,12 +86,12 @@ def create_info_file_from_build(layer_path, layer_type, resolution, encoding):
     chunk_size=neuroglancer_chunk_size,
   )
 
-  vol = CloudVolume(layer_path, mip=0, info=info).commitInfo()
+  vol = CloudVolume(layer_path, mip=0, info=info).commit_info()
   vol = create_downsample_scales(layer_path, mip=0, ds_shape=build_chunk_size, axis='z')
   
   return vol.info
 
-def create_downsample_scales(layer_path, mip, ds_shape, axis='z'):
+def create_downsample_scales(layer_path, mip, ds_shape, axis='z', preserve_chunk_size=False):
   vol = CloudVolume(layer_path, mip)
   shape = min2(vol.volume_size, ds_shape)
 
@@ -107,18 +108,25 @@ def create_downsample_scales(layer_path, mip, ds_shape, axis='z'):
     size=shape, 
     preserve_axis=axis, 
     max_downsampled_size=int(min(*underlying_shape)),
-  )
+  ) 
   scales = scales[1:] # omit (1,1,1)
   scales = [ vol.downsample_ratio * Vec(*factor3) for factor3 in scales ]
-  map(vol.add_scale, scales)
-  return vol.commitInfo()
+  
+  for scale in scales:
+    vol.add_scale(scale)
+
+  if preserve_chunk_size:
+    for i in range(1, len(vol.scales)):
+      vol.scales[i]['chunk_sizes'] = vol.scales[0]['chunk_sizes']
+  
+  return vol.commit_info()
 
 def create_downsampling_tasks(task_queue, layer_path, mip=-1, fill_missing=False, axis='z', num_mips=5):
-  shape = (64 * (2 ** num_mips), 64 * (2 ** num_mips), 64)
-  vol = create_downsample_scales(layer_path, mip, shape)
+  vol = CloudVolume(layer_path, mip=mip)
   shape = vol.underlying[:3]
   shape.x *= 2 ** num_mips
   shape.y *= 2 ** num_mips
+  vol = create_downsample_scales(layer_path, mip, shape, preserve_chunk_size=True)
 
   for startpt in tqdm(xyzrange( vol.bounds.minpt, vol.bounds.maxpt, shape ), desc="Inserting Downsample Tasks"):
     task = DownsampleTask(
@@ -130,7 +138,19 @@ def create_downsampling_tasks(task_queue, layer_path, mip=-1, fill_missing=False
       fill_missing=fill_missing,
     )
     task_queue.insert(task)
-  task_queue.wait()
+  task_queue.wait('Uploading')
+  vol.provenance.processing.append({
+    'method': {
+      'task': 'DownsampleTask',
+      'mip': mip,
+      'shape': list(shape),
+      'axis': axis,
+      'method': 'downsample_with_averaging'
+    },
+    'by': 'ws9@princeton.edu',
+    'date': strftime('%Y-%m-%d %H:%M %Z'),
+  }) 
+  vol.commit_provenance()
 
 def create_meshing_tasks(task_queue, layer_path, mip, shape=Vec(512, 512, 512)):
   shape = Vec(*shape)
@@ -153,11 +173,12 @@ def create_meshing_tasks(task_queue, layer_path, mip, shape=Vec(512, 512, 512)):
     task_queue.insert(task)
   task_queue.wait()
 
-def create_transfer_tasks(task_queue, src_layer_path, dest_layer_path, shape=Vec(2048, 2048, 64)):
+def create_transfer_tasks(task_queue, src_layer_path, dest_layer_path, shape=Vec(2048, 2048, 64), fill_missing=False, translate=(0,0,0)):
   shape = Vec(*shape)
+  translate = Vec(*translate)
   vol = CloudVolume(src_layer_path)
 
-  create_downsample_scales(dest_layer_path, mip=0, ds_shape=shape)
+  create_downsample_scales(dest_layer_path, mip=0, ds_shape=shape, preserve_chunk_size=True)
 
   for startpt in tqdm(xyzrange( vol.bounds.minpt, vol.bounds.maxpt, shape ), desc="Inserting Transfer Tasks"):
     task = TransferTask(
@@ -165,9 +186,23 @@ def create_transfer_tasks(task_queue, src_layer_path, dest_layer_path, shape=Vec
       dest_path=dest_layer_path,
       shape=shape.clone(),
       offset=startpt.clone(),
+      fill_missing=fill_missing,
+      translate=translate,
     )
     task_queue.insert(task)
-  task_queue.wait()
+  task_queue.wait('Uploading Transfer Tasks')
+  dvol = CloudVolume(dest_layer_path)
+  dvol.provenance.processing.append({
+    'method': {
+      'task': 'TransferTask',
+      'src': src_layer_path,
+      'dest': dest_layer_path,
+      'shape': list(shape),
+    },
+    'by': 'ws9@princeton.edu',
+    'date': strftime('%Y-%m-%d %H:%M %Z'),
+  }) 
+  dvol.commit_provenance()
 
 def create_boss_transfer_tasks(task_queue, src_layer_path, dest_layer_path, shape=Vec(1024, 1024, 64)):
   # Note: Weird errors with datatype changing to float64 when requesting 2048,2048,64
@@ -249,7 +284,7 @@ def create_quantized_affinity_tasks(taskqueue, src_layer, dest_layer, shape, fil
 
   info = create_quantized_affinity_info(src_layer, dest_layer, shape)
   destvol = CloudVolume(dest_layer, info=info)
-  destvol.commitInfo()
+  destvol.commit_info()
 
   create_downsample_scales(dest_layer, mip=0, ds_shape=shape)
 
@@ -326,8 +361,8 @@ def create_hypersquare_ingest_tasks(task_queue, hypersquare_bucket_name, dataset
   segvol = CloudVolume(dataset_name, SEG_LAYER_NAME, 0, info=seginfo)
 
   print("Creating info files for image and segmentation...")
-  imgvol.commitInfo()
-  segvol.commitInfo()
+  imgvol.commit_info()
+  segvol.commit_info()
 
   def crttask(volname, tasktype, layer_name):
     return HyperSquareTask(
@@ -484,13 +519,19 @@ if __name__ == '__main__':
     #   fill_missing=True,
     # )
 
-    # create_transfer_tasks(task_queue,
-    #   src_layer_path='gs://neuroglancer/pinky40_v11/image/', 
-    #   dest_layer_path='gs://neuroglancer/pinky40_v11/image_rechunked/',
-    # )
+    create_transfer_tasks(task_queue,
+      src_layer_path='s3://neuroglancer/drosophila_v0/watershed', 
+      dest_layer_path='gs://neuroglancer/drosophila_v0/watershed',
+      fill_missing=True,
+      translate=[11001, 15001, 11],
+    )
 
-    # create_fixup_downsample_tasks(task_queue, 'gs://neuroglancer/pinky40_v11/image/', 
-    #   points=[ (66098, 13846, 139) ], mip=5, shape=(128,128,64)) 
+    # create_fixup_downsample_tasks(task_queue, 'gs://neuroglancer/drosophila_v0/image_v14/', 
+    #   points=[ (149735, 58982, 136) ], mip=0, shape=(4096,4096,10)) 
+
+    # create_fixup_downsample_tasks(task_queue, 'file://~/.cloudvolume/cache/gs/neuroglancer/drosophila_v0/image_v14/', 
+    #   points=[ (146235, 59852, 139) ], mip=0, shape=(4096,4096,10)) 
+
 
     # create_fixup_quantize_tasks(task_queue, src_layer, dest_layer, shape, 
     #   points=[ (27955, 21788, 512), (23232, 20703, 559) ],

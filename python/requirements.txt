@@ -3,13 +3,14 @@ blosc==1.5.0
 click==6.6
 cryptography==2.0.3
 Cython==0.25.2
-cloud-volume==0.5.5
+cloud-volume==0.6.1
 google-api-python-client==1.6.2
 networkx==1.11
-numpy==1.13.1
+numpy==1.13.3
 pyopenssl==17.2.0
 pytest==3.0.7 
 sockjs-tornado==1.0.3
+task-queue==0.1.4
 tenacity==4.4.0
 tornado==4.4.2
 tqdm==4.7.6

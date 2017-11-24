@@ -11,8 +11,8 @@ before_install:
   -in credentials.tar.gz.enc -out credentials.tar.gz -d
 - tar -xzf credentials.tar.gz
 - sudo mv secrets /secrets && sudo chown $USER /secrets
-- sudo mkdir -p $HOME/.neuroglancer
-- sudo ln -s /secrets $HOME/.neuroglancer/secrets # for cloudvolume
+- sudo mkdir -p $HOME/.cloudvolume
+- sudo ln -s /secrets $HOME/.cloudvolume/secrets # for cloudvolume
 - $(python version.py) #sets APPVERSION
 
 script:

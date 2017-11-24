@@ -3,10 +3,10 @@ import subprocess
 from tempfile import NamedTemporaryFile
 import os
 
+from cloudvolume import CloudVolume
 import h5py
 import numpy as np
-
-from neuroglancer.pipeline import CloudVolume, RegisteredTask
+from taskqueue import RegisteredTask
 
 class WatershedTask(RegisteredTask):
 
