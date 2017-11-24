@@ -560,13 +560,15 @@ class HyperSquareConsensusTask(RegisteredTask):
 
 
 class TransferTask(RegisteredTask):
-  def __init__(self, src_path, dest_path, shape, offset, fill_missing):
-    super(self.__class__, self).__init__(src_path, dest_path, shape, offset)
+  # translate = change of origin
+  def __init__(self, src_path, dest_path, shape, offset, fill_missing, translate):
+    super(self.__class__, self).__init__(src_path, dest_path, shape, offset, fill_missing, translate)
     self.src_path = src_path
     self.dest_path = dest_path
     self.shape = Vec(*shape)
     self.offset = Vec(*offset)
     self.fill_missing = fill_missing
+    self.translate = Vec(*translate)
 
   def execute(self):
     srccv = CloudVolume(self.src_path, fill_missing=self.fill_missing)
@@ -576,6 +578,7 @@ class TransferTask(RegisteredTask):
     bounds = Bbox.clamp(bounds, srccv.bounds)
     
     image = srccv[ bounds.to_slices() ]
+    bounds += self.translate
     downsample_and_upload(image, bounds, destcv, self.shape)
 
 class WatershedRemapTask(RegisteredTask):
