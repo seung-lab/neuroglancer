@@ -38,6 +38,7 @@ RUN mkdir /.ssh
 ADD ./ /neuroglancer
 RUN pip install -r /neuroglancer/python/requirements.txt 
 RUN cd /neuroglancer/python && pip install . && python setup.py develop
+RUN pip install pyasn1 --upgrade
 
 #installs julia
 # RUN add-apt-repository ppa:staticfloat/juliareleases && \
