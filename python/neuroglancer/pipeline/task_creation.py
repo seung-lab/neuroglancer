@@ -173,8 +173,9 @@ def create_meshing_tasks(task_queue, layer_path, mip, shape=Vec(512, 512, 512)):
     task_queue.insert(task)
   task_queue.wait()
 
-def create_transfer_tasks(task_queue, src_layer_path, dest_layer_path, shape=Vec(2048, 2048, 64), fill_missing=False):
+def create_transfer_tasks(task_queue, src_layer_path, dest_layer_path, shape=Vec(2048, 2048, 64), fill_missing=False, translate=(0,0,0)):
   shape = Vec(*shape)
+  translate = Vec(*translate)
   vol = CloudVolume(src_layer_path)
 
   create_downsample_scales(dest_layer_path, mip=0, ds_shape=shape, preserve_chunk_size=True)
@@ -186,6 +187,7 @@ def create_transfer_tasks(task_queue, src_layer_path, dest_layer_path, shape=Vec
       shape=shape.clone(),
       offset=startpt.clone(),
       fill_missing=fill_missing,
+      translate=translate,
     )
     task_queue.insert(task)
   task_queue.wait('Uploading Transfer Tasks')
@@ -517,13 +519,19 @@ if __name__ == '__main__':
     #   fill_missing=True,
     # )
 
-    # create_transfer_tasks(task_queue,
-    #   src_layer_path='gs://neuroglancer/pinky40_v11/image/', 
-    #   dest_layer_path='gs://neuroglancer/pinky40_v11/image_rechunked/',
-    # )
+    create_transfer_tasks(task_queue,
+      src_layer_path='s3://neuroglancer/drosophila_v0/watershed', 
+      dest_layer_path='gs://neuroglancer/drosophila_v0/watershed',
+      fill_missing=True,
+      translate=[11001, 15001, 11],
+    )
 
-    # create_fixup_downsample_tasks(task_queue, 'gs://neuroglancer/pinky40_v11/image/', 
-    #   points=[ (66098, 13846, 139) ], mip=5, shape=(128,128,64)) 
+    # create_fixup_downsample_tasks(task_queue, 'gs://neuroglancer/drosophila_v0/image_v14/', 
+    #   points=[ (149735, 58982, 136) ], mip=0, shape=(4096,4096,10)) 
+
+    # create_fixup_downsample_tasks(task_queue, 'file://~/.cloudvolume/cache/gs/neuroglancer/drosophila_v0/image_v14/', 
+    #   points=[ (146235, 59852, 139) ], mip=0, shape=(4096,4096,10)) 
+
 
     # create_fixup_quantize_tasks(task_queue, src_layer, dest_layer, shape, 
     #   points=[ (27955, 21788, 512), (23232, 20703, 559) ],
