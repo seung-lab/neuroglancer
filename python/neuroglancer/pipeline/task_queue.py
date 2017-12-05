@@ -159,12 +159,21 @@ class TaskQueue(ThreadedQueue):
         """
         Insert a task into an existing queue.
         """
-        body = {
-            "payloadBase64": task.payloadBase64,
-            "queueName": self._queue_name,
-            "groupByTag": True,
-            "tag": task.__class__.__name__
-        }
+        
+        if isinstance(task, RegisteredTask):
+            body = {
+                "payloadBase64": task.payloadBase64,
+                "queueName": self._queue_name,
+                "groupByTag": True,
+                "tag": task.__class__.__name__
+            }
+        else:
+            body = {
+                "payloadBase64": task['payloadBase64'],
+                "queueName": self._queue_name,
+                "groupByTag": True,
+                "tag": task['tag'],
+            }
 
         def cloud_insertion(api):
             api.tasks().insert(
@@ -219,21 +228,29 @@ class TaskQueue(ThreadedQueue):
         """
         raise NotImplemented
 
-    def lease(self, tag=None):
+    def raw_lease(self, numTasks, leaseSecs, tag=None):
         """
-        Acquires a lease on the topmost N unowned tasks in the specified queue.
-        Required query parameters: leaseSecs, numTasks
+        Get the raw information off the task queue without
+        converting it into a pipeline task. Mainly useful
+        for pickling queues.
         """
         tag = tag if tag else None
         
-        tasks = self._api.tasks().lease(
+        return self._api.tasks().lease(
             project=self._project,
             taskqueue=self._queue_name, 
-            numTasks=1, 
-            leaseSecs=600,
+            numTasks=numTasks, 
+            leaseSecs=leaseSecs,
             groupByTag=(tag is not None),
             tag=tag,
         ).execute(num_retries=6)
+
+    def lease(self, tag=None):
+        """
+        Acquires a lease on the top task in the specified queue.
+        Required query parameters: leaseSecs, numTasks
+        """
+        tasks = self.raw_lease(numTasks=1, leaseSecs=600, tag=tag)
 
         if not 'items' in tasks:
             raise TaskQueue.QueueEmpty
