@@ -19,6 +19,8 @@ import {Uint64} from 'neuroglancer/util/uint64';
 
 export const NUM_ALTERNATIVES = 3;
 
+// For 3 hash functions, a DEFAULT_LOAD_FACTOR of 0.8 reliably avoids
+// expensive rehashing caused by unresolvable collisions.
 const DEFAULT_LOAD_FACTOR = 0.8;
 
 const DEBUG = false;

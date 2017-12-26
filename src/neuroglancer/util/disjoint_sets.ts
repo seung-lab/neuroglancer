@@ -155,6 +155,7 @@ export class DisjointUint64Sets {
       for (const id of ids) {
         this.map.delete(id.toString());
       }
+      ++this.generation;
       return true;
     }
     return false;
