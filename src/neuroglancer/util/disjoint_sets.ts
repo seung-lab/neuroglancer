@@ -100,6 +100,12 @@ export class DisjointUint64Sets {
   private map = new Map<string, Uint64>();
   generation = 0;
 
+  has(x: Uint64): boolean {
+    let key = x.toString();
+    let element = this.map.get(key);
+    return element !== undefined;
+  }
+
   get(x: Uint64): Uint64 {
     let key = x.toString();
     let element = this.map.get(key);
