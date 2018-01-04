@@ -5,14 +5,14 @@ from __future__ import absolute_import
 import six  
 from jinja2 import Template
 
+from collections import defaultdict, deque
 import logging
 import webapp2
 import os
 import binascii
 import json
 import time
-from threading import Timer
-from collections import defaultdict
+import sys
 
 from priority_queue import PriorityQueue
 
@@ -24,48 +24,6 @@ logging.getLogger().setLevel(logging.INFO)
 We are currently ignoring the project name in all our queries
 """
 
-class Queue(object):
-    """
-    TODO: keep track of stats for
-    https://cloud.google.com/appengine/docs/standard/python/taskqueue/rest/taskqueues#resource
-    """
-    def __init__(self):
-        self.purge()
-        self._leased_timestamps = []
-
-    def mark_leased_timestamp(self):
-        last_hr = int(time.time()) - 3600
-        self._leased_timestamps = list(filter(lambda x: x >= last_hr, self._leased_timestamps))
-        self._leased_timestamps.append(int(time.time()))
-
-    def leased_in_last(self, sec):
-        last_min = int(time.time()) - sec
-        return len(list(filter(lambda x: x >= last_hr, self._leased_timestamps)))
-
-    def purge(self):
-        self._tasks = {}
-        self._pq = PriorityQueue()
-
-    @property
-    def tasks(self):
-        return self._tasks
-
-    @property
-    def pq(self):
-        return self._pq
-
-    def __len__(self):
-        return len(self._tasks)
-
-queues = defaultdict(Queue)
-def restart_module():
-    global queues
-    queues = defaultdict(Queue)
-
-def make_random_token():
-    """Return a 20-byte (40 character) random hex string."""
-    return binascii.hexlify(os.urandom(20))
-
 def now():
     """
     microseconds since 00:00:00 (UTC), Thursday, 1 January 1970
@@ -73,63 +31,114 @@ def now():
     """
     return int(time.time() * 10**6)
 
+class Queue(object):
+    def __init__(self):
+        self.tasks = {}
+        self._queue = deque()
+        self._leased_timestamps = []
+        self._next_id = 0
+
+    def next_id(self):
+        current = self._next_id
+        self._next_id = (self._next_id + 1) % sys.maxint
+        return current
+
+    def _mark_leased_timestamp(self):
+        last_hr = int(time.time()) - 3600
+        self._leased_timestamps = list(filter(lambda x: x >= last_hr, self._leased_timestamps))
+        self._leased_timestamps.append(int(time.time()))
+
+    def leased_in_last(self, sec):
+        the_past = int(time.time()) - sec
+        return len(list(filter(lambda x: x >= the_past, self._leased_timestamps)))
+
+    def purge(self):
+        self.tasks = {}
+        self._queue.clear()
+
+    def enqueue(self, task):
+        if task.id in self.tasks:
+            raise ValueError("Already enqueued " + task.id)
+
+        self._queue.append(task)
+        self.tasks[task.id] = task
+
+        for parent_id in task.parents:
+            self.tasks[parent_id].children.update(task.id)
+        for child_id in task.children:
+            self.tasks[child_id].children.update(task.id)
+
+        task.enqueueTimestamp = now()
+            
+    def lease(self, seconds, tag=None):
+        moment = now()
+        while len(self._queue):
+            task = self._queue.popleft()
+
+            if moment < task.leaseTimestamp:
+                self._queue.append(task)
+                continue
+            elif tag and task.tag != tag:
+                self._queue.append(task)
+                continue
+            else:
+                task.lease(seconds)
+                self._mark_leased_timestamp()
+                return task
+        return None
+
+    def leases_outstanding(self):
+        moment = now()
+        count = 0
+
+        for task in list(self._queue):
+            if moment <= task.leaseTimestamp:
+                count += 1
+        return count
+
+    def complete(self, task):
+        self._queue.remove(task) # potentially slow
+        del self.tasks[task.id]
+
+        for parent_id in task.parents:
+            self.tasks[parent_id].children.discard(task.id)
+
+        for child_id in task.children:
+            child = self.tasks[child_id]
+            child.parents.discard(task.id)
+            if len(child.parents) == 0:
+                self.complete(child)
+
+    def __len__(self):
+        return len(self._queue)
+
+queues = defaultdict(Queue)
+def restart_module():
+    global queues
+    queues = defaultdict(Queue)
+
 class Task(object):
+    def __init__(self, id, payloadBase64, queueName=None, tag='',
+        parents=[], children=[]):
 
-    def __init__(self, id=None, payloadBase64=None,
-        queueName=None, retry_count=5, tag='',
-        dependencies=[]):
-        
-        assert queueName
-        self._queueName = queueName
-        self._queue = queues[self._queueName]
-        if id is None:
-            while True:
-                id =  make_random_token()
-                if id not in self._queue.tasks:
-                    break
-        elif id in self._queue.tasks:
-            raise ValueError(id + " already exists")
-        elif id == 'lease':
-            #we wouldn't know if you want to update a task
-            #or lease some tasks
-            raise ValueError(id + " is not a valid task name")
+        # dependencies are specified with their integer taskids, 
 
+        self.queueName = queueName # just metadata
+                
         self._id = id
-
-        assert payloadBase64
         self._payloadBase64 = payloadBase64
-
-
-        self._retry_count = retry_count
-
+        self.retry_count = 0
         self._tag = tag
 
-        self._parents = set()
-        self._children = set(dependencies)
-        for child in dependencies:
-            # we might have already deleted one of the dependencies
-            # when this task is submitted
-            # so we will ignore dependencies which doesn't exists
-            if child in self._queue.tasks:
-                self._queue.tasks[child]._parents.add(self.id)
-
-        self._enqueueTimestamp = now()
+        self.parents = set(parents)
+        self.children = set(children)
+        self.enqueueTimestamp = None
         self._leaseTimeStamp = 0
-
-        self._in_pq = False
-        self.maybe_insert_into_pq()
-
-    @property
-    def enqueueTimestamp(self):
-        """
-        long[Not mutable.] Time (in microseconds since the epoch) at which the task was enqueued.
-        """
-        return self._enqueueTimestamp
 
     @property
     def id(self):
         """  
-        string  Randomly generated name of the task. You may override the default generated name by specifying your own name when inserting the task.
+        string  Unique name of the task. You may override the default generated name by specifying your own name when inserting the task.
         We strongly recommend against specifying a task name yourself.
         """
         return self._id
@@ -163,22 +172,7 @@ class Task(object):
         Required for calls to tasks.insert. 
         """
         return self._payloadBase64
-
-    @property
-    def queueName(self):
-        """
-        string  [Not mutable.] Name of the queue that the task is in.
-        Required for calls to tasks.insert. 
-        """
-        return self._queueName
     
-    @property
-    def retry_count(self):
-        """
-        integer The number of leases applied to this task.  
-        """
-        return self._retry_count
-
     @property
     def tag(self):
         """
@@ -187,23 +181,8 @@ class Task(object):
         """
         return self._tag
 
-    @property
-    def children(self):
-        """
-        List of tasks' id which need to be fullfilled
-        before this task can be leased
-        """
-        return list(self._children)
-
-    def delete(self):
-        for p in self._parents:
-            # it cannot have been deleted
-            # without deleting this task first
-            assert p in self._queue.tasks
-            self._queue.tasks[p]._children.remove(self.id)
-
     def dependencies_met(self):
-        return not self._children
+        return not self.children
 
     def to_json(self):
         return json.dumps(self.to_dict())
@@ -218,48 +197,17 @@ class Task(object):
           "leaseTimestamp": self.leaseTimestamp,
           "retry_count": self.retry_count,
           "tag": self.tag,
-          "children": self.children
+          "children": list(self.children),
+          "parents": list(self.parents),
         }
 
-
-    def maybe_insert_into_pq(self):
-        """
-        We only want to have items in the priority queue
-        which can be leased, so we check that dependencies
-        are met before inserting.
-
-        We use the time of insertion as the priority.
-        Which will be similar to enqueueTimestamp when
-        first inseting a task for first time. (with met dependencies)
-
-        And similar to leaseTimeStamp when retrying a task.
-        This means that when a task is retried it get pushed to the end
-        of the queue. If we would insert with enqueueTimestamp after a 
-        retry it would get executed inmediately.
-        """
-        if not self._children and not self._in_pq:
-            self._in_pq = True
-            self._queue.pq.add_item(now() , self.id)
-
-
-    def _set_retry_timer(self, lease_for):
-        """
-        Re insert in pq after certain time
-
-        It has to be a daemon so that the response is sent
-        without waiting for this to be finished
-        """
-        t = Timer(lease_for, self.maybe_insert_into_pq, ())
-        t.daemon = True
-        t.start()
- 
     def lease(self, lease_for):
         """
         time to lease for in seconds
         """
         assert self._leaseTimeStamp <= now()
         self._leaseTimeStamp = now() + lease_for * 10**6
-        self._set_retry_timer(lease_for)
+        self.retry_count += 1
 
     def __hash__(self):
         return hash(self.id)
@@ -271,7 +219,8 @@ class TaskHandler(webapp2.RequestHandler):
 
         queue =  queues[taskqueue_name]
         if not maybe_task_name:
-            self._list_task(queue)
+            numTasks = int(self.request.get('N', default_value='100'))
+            self._list_tasks(queue, numTasks)
         else:
             self._get_task(queue, maybe_task_name)
 
@@ -279,8 +228,10 @@ class TaskHandler(webapp2.RequestHandler):
     def post(self, project_name, taskqueue_name, maybe_lease_or_task_name):
         self.response.headers.add_header('Access-Control-Allow-Origin', '*')
         
+        args = maybe_lease_or_task_name.split('/')
+
         queue =  queues[taskqueue_name]
-        if maybe_lease_or_task_name == 'lease':
+        if args[0] == 'lease':
             numTasks = int(self.request.get('numTasks', default_value='1'))
             assert numTasks >= 1
             leaseSecs = int(self.request.get('leaseSecs', default_value='1'))
@@ -288,12 +239,12 @@ class TaskHandler(webapp2.RequestHandler):
             tag = self.request.get('tag', default_value='')
 
             self._lease_task(queue, numTasks, leaseSecs, tag)
-        elif maybe_lease_or_task_name == '':
+        elif args[0] == '':
             self._insert_task(queue, taskqueue_name)
-        else:
+        elif args[0] == 'id':
             newLeaseSeconds = int(self.request.get('newLeaseSeconds', default_value='1'))
             assert newLeaseSeconds >= 1
-            self._update_task(queue, maybe_lease_or_task_name, newLeaseSeconds)
+            self._update_task(queue, args[1], newLeaseSeconds)
 
     def patch(self, project_name, taskqueue_name, task_name):
         self.response.headers.add_header('Access-Control-Allow-Origin', '*')
@@ -305,7 +256,6 @@ class TaskHandler(webapp2.RequestHandler):
 
     def delete(self, project_name, taskqueue_name, task_name):
         self.response.headers.add_header('Access-Control-Allow-Origin', '*')
-
         queue =  queues[taskqueue_name]
         self._delete_task(queue, task_name)
 
@@ -314,18 +264,19 @@ class TaskHandler(webapp2.RequestHandler):
         DELETE  /${projectname}/taskqueue/$(queuename)/tasks/$(taskname)
         Deletes a task from a TaskQueue.
         """
-        if (task_name not in queue.tasks 
-            or not queue.tasks[task_name].dependencies_met()):
+        tid = int(task_name)
+        if (tid not in queue.tasks 
+            or not queue.tasks[tid].dependencies_met()):
+
             self.response.write(
                 task_name
                 + " task name is invalid or has unmet dependencies")
             self.response.status = 400
             return
-        queue.tasks[task_name].delete()
-        del queue.tasks[task_name]
-        # we are not deleting it from the priority queue
-        # so when we lease it, we might find that it doesn't exist
-        logging.debug('deleted task '+ task_name)
+        
+        task = queue.tasks[tid]
+        queue.complete(task)
+        logging.debug('deleted task '+ str(tid))
 
     def _get_task(self, queue, task_name):
         """
@@ -333,8 +284,7 @@ class TaskHandler(webapp2.RequestHandler):
         Gets the named task in a TaskQueue.
         """
         if task_name not in queue.tasks:
-            self.response.write(
-                task_name + " task name is invalid")
+            self.response.write(task_name + " task name is invalid")
             self.response.status = 400
             return
         self.response.write(queue.tasks[task_name].to_json())
@@ -345,13 +295,14 @@ class TaskHandler(webapp2.RequestHandler):
         Insert a task into an existing queue.    
         """
         body_object = json.loads(self.request.body)
+        
         try:
-            task = Task(queueName=taskqueue_name, **body_object)
+            task = Task(queue.next_id(), queueName=taskqueue_name, **body_object)
         except Exception as e:
             self.response.write(e)
             self.response.status = 400
             return
-        queue.tasks[task.id] = task
+        queue.enqueue(task)
         self.response.write(task.to_json())
 
     def _lease_task(self, queue, numTasks, leaseSecs,  tag):
@@ -363,30 +314,16 @@ class TaskHandler(webapp2.RequestHandler):
         If it cannot lease numTasks tasks it will return as many as it can lease
         which might be an empty list if no tasks are leasable
         """
-        tasks_to_lease = []
-        for pq_idx , (_, task_name) in enumerate(queue.pq):
-            if task_name not in queue.tasks:
-                #we might have deleted this task
-                #without ever leasing it
-                queue.pq.delete_index(pq_idx)
+        tasks = []
+        for _ in range(numTasks):
+            task = queue.lease(leaseSecs, tag=tag)
+            if task is not None:
+                tasks.append(task)
 
-            if tag and not queue.tasks[task_name] == tag:
-                continue
-
-            numTasks -= 1
-            tasks_to_lease.append(task_name)
-            queue.pq.delete_index(pq_idx)
-            queue.tasks[task_name]._in_pq = False
-            queue.tasks[task_name].lease(leaseSecs)
-            queue.mark_leased_timestamp()
-
-            if not numTasks:
-                break
-
-        resp = json.dumps([ queue.tasks[t].to_dict() for t in tasks_to_lease ])
+        resp = json.dumps([ t.to_dict() for t in tasks ])
         self.response.write(resp)
 
-    def _list_task(self, queue):
+    def _list_tasks(self, queue, numTasks):
         """
         GET  /$(projectname)/taskqueue/$(queuename)/tasks
         Lists all non-deleted Tasks in a TaskQueue,
@@ -394,7 +331,7 @@ class TaskHandler(webapp2.RequestHandler):
         """
         tasks_returned = []
         for _, task in six.iteritems(queue.tasks):
-            if len(tasks_returned) == 100:
+            if len(tasks_returned) >= numTasks:
                 break
             d = task.to_dict()
             del d['payloadBase64']
@@ -413,10 +350,6 @@ class TaskHandler(webapp2.RequestHandler):
             self.response.status = 400
             return
 
-        #we need to checked the task is out
-
-        #we need to delete the old timer
-        #and create a new one
         raise NotImplementedError()
 
     def _update_task(self, queue, task_name, newLeaseSeconds):
@@ -463,6 +396,7 @@ class TaskQueueHandler(webapp2.RequestHandler):
             args[1] = args[1].replace('/', '')
             if args[1] == 'purge':
                 queue.purge()
+                self.response.write(r"""{ "msg": "purged" }""")
                 return
 
     def get(self, project_name, taskqueue_name):
@@ -521,6 +455,7 @@ class TaskQueueHandler(webapp2.RequestHandler):
                 "kind": "taskqueues#taskqueue",
                 "stats": {
                     "totalTasks": len(queue),
+                    "leasesOutstanding": queue.leases_outstanding(),
                     "leasedInLast": {
                         60: queue.leased_in_last(60),
                         600: queue.leased_in_last(600),
@@ -536,6 +471,7 @@ class TaskQueueHandler(webapp2.RequestHandler):
         page = template.render(
             tqname=taskqueue_name,
             enqueued=len(queue),
+            leases_outstanding=queue.leases_outstanding(),
             one_min=queue.leased_in_last(60),
             ten_min=queue.leased_in_last(600),
             one_hr=queue.leased_in_last(3600),
@@ -543,6 +479,7 @@ class TaskQueueHandler(webapp2.RequestHandler):
         self.response.write(page)
 
 app = webapp2.WSGIApplication([
+    (r'/(.*)/taskqueue/(.*)/tasks/id/(.*)', TaskHandler),
     (r'/(.*)/taskqueue/(.*)/tasks/?(.*)', TaskHandler),
     (r'/(.*)/taskqueue/(.*)/?', TaskQueueHandler),
 ], debug=True)

@@ -21,6 +21,7 @@
 			tqname: '{{ tqname }}',
 			enqueued: {{ enqueued }},
 			leased: {
+				outstanding: {{ leases_outstanding }},
 				60: {{ one_min }},
 				600: {{ ten_min }},
 				3600: {{ one_hr }},
@@ -55,12 +56,20 @@
 				.then( (resp) => { 
 					STATE.enqueued = resp['stats']['totalTasks'];
 					STATE.leased = resp['stats']['leasedInLast'];
+					STATE.leased.outstanding = resp['stats']['leasesOutstanding'];
 					STATE.timestamp = (new Date()).getTime();
 				});
+
+			fetch(`${url}/tasks`)
+				.then( resp => resp.json() )
+				.then( resp => {
+					STATE.tasks = resp;
+				})
 		}
 
 		requestAnimationFrame(function render() {
 			$('#enqueued').textContent = STATE.enqueued;
+			$('#outstanding').textContent = STATE.leased.outstanding;
 			$('#leased').textContent = `${STATE.leased[60]} | ${STATE.leased[600]} | ${STATE.leased[3600]}`;
 
 			let sec = STATE.enqueued / STATE.leased[60]; 
@@ -83,10 +92,12 @@
 
 			$('#eta').textContent = `${eta} (${time})`;
 
+			$('#tasks').textContent = JSON.stringify(STATE.tasks);
+
 			requestAnimationFrame(render);
 		});
 
-		setInterval(update, 10 * 1000);
+		setInterval(update, 2 * 1000);
 	</script>
 </head>
 <body>
@@ -94,11 +105,13 @@
 	<table>
 		<tr>
 			<th>Enqueued Tasks</th>
+			<th>Leases Outstanding</th>
 			<th>Leased Last 1m|10m|1hr</th>
 			<th>ETA</th>
 		</tr>
 		<tr>
 			<td id='enqueued'>{{ enqueued }}</td>
+			<td id='outstanding'>{{ leases_outstanding }}</td>
 			<td id='leased'>{{ one_min }} | {{ ten_min }} | {{ one_hr }}</td>
 			<td id='eta'></td>
 		</tr>
@@ -110,5 +123,8 @@
 		<button id='purge' onclick="purge()">Purge Queue</button>
 		<button id='refresh' onclick="update()">Refresh</button>
 	</div>
+
+	<h1>Queue</h1>
+	<div id="tasks"></div>
 </body>
 </html>
