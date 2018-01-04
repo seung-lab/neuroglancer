@@ -72,7 +72,7 @@
 			$('#outstanding').textContent = STATE.leased.outstanding;
 			$('#leased').textContent = `${STATE.leased[60]} | ${STATE.leased[600]} | ${STATE.leased[3600]}`;
 
-			let sec = STATE.enqueued / STATE.leased[60]; 
+			let sec = STATE.enqueued / STATE.leased[60] * 60; 
 			let t = new Date(STATE.timestamp + sec * 1000);
 			let time = t.toLocaleTimeString();
 

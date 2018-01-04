@@ -12,6 +12,7 @@ import os
 import binascii
 import json
 import time
+import threading
 import sys
 
 from priority_queue import PriorityQueue
@@ -37,10 +38,12 @@ class Queue(object):
         self._queue = deque()
         self._leased_timestamps = []
         self._next_id = 0
+        self._next_id_lock = threading.Lock()
 
     def next_id(self):
-        current = self._next_id
-        self._next_id = (self._next_id + 1) % sys.maxint
+        with self._next_id_lock:
+            current = self._next_id
+            self._next_id = (self._next_id + 1) % sys.maxint
         return current
 
     def _mark_leased_timestamp(self):
@@ -58,7 +61,7 @@ class Queue(object):
 
     def enqueue(self, task):
         if task.id in self.tasks:
-            raise ValueError("Already enqueued " + task.id)
+            raise ValueError("Already enqueued " + str(task.id) + task.to_json() + self.tasks[task.id].to_json())
 
         self._queue.append(task)
         self.tasks[task.id] = task
@@ -74,12 +77,11 @@ class Queue(object):
         moment = now()
         while len(self._queue):
             task = self._queue.popleft()
+            self._queue.append(task)
 
             if moment < task.leaseTimestamp:
-                self._queue.append(task)
                 continue
-            elif tag and task.tag != tag:
-                self._queue.append(task)
+            elif tag and task.tag != tag:       
                 continue
             else:
                 task.lease(seconds)
@@ -118,12 +120,10 @@ def restart_module():
     queues = defaultdict(Queue)
 
 class Task(object):
-    def __init__(self, id, payloadBase64, queueName=None, tag='',
+    def __init__(self, id, payloadBase64, tag='',
         parents=[], children=[]):
 
         # dependencies are specified with their integer taskids, 
-
-        self.queueName = queueName # just metadata
                 
         self._id = id
         self._payloadBase64 = payloadBase64
@@ -191,7 +191,6 @@ class Task(object):
         return {
           "kind": self.kind,
           "id": self.id,
-          "queueName": self.queueName,
           "payloadBase64": self.payloadBase64,
           "enqueueTimestamp": self.enqueueTimestamp,
           "leaseTimestamp": self.leaseTimestamp,
@@ -297,7 +296,7 @@ class TaskHandler(webapp2.RequestHandler):
         body_object = json.loads(self.request.body)
         
         try:
-            task = Task(queue.next_id(), queueName=taskqueue_name, **body_object)
+            task = Task(queue.next_id(), **body_object)
         except Exception as e:
             self.response.write(e)
             self.response.status = 400
@@ -330,7 +329,7 @@ class TaskHandler(webapp2.RequestHandler):
         whether or not they are currently leased, up to a maximum of 100.
         """
         tasks_returned = []
-        for _, task in six.iteritems(queue.tasks):
+        for _, task in list(queue.tasks.items()):
             if len(tasks_returned) >= numTasks:
                 break
             d = task.to_dict()
