@@ -2,6 +2,9 @@ from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
 
+import six  
+from jinja2 import Template
+
 import logging
 import webapp2
 import os
@@ -12,6 +15,9 @@ from threading import Timer
 from collections import defaultdict
 
 from priority_queue import PriorityQueue
+
+with open('status.html') as htmlf:
+    STATUS_PAGE_HTML = htmlf.read()
 
 logging.getLogger().setLevel(logging.INFO)
 """
@@ -24,6 +30,19 @@ class Queue(object):
     https://cloud.google.com/appengine/docs/standard/python/taskqueue/rest/taskqueues#resource
     """
     def __init__(self):
+        self.purge()
+        self._leased_timestamps = []
+
+    def mark_leased_timestamp(self):
+        last_hr = int(time.time()) - 3600
+        self._leased_timestamps = list(filter(lambda x: x >= last_hr, self._leased_timestamps))
+        self._leased_timestamps.append(int(time.time()))
+
+    def leased_in_last(self, sec):
+        last_min = int(time.time()) - sec
+        return len(list(filter(lambda x: x >= last_hr, self._leased_timestamps)))
+
+    def purge(self):
         self._tasks = {}
         self._pq = PriorityQueue()
 
@@ -247,9 +266,9 @@ class Task(object):
 
 
 class TaskHandler(webapp2.RequestHandler):
-
-
     def get(self, project_name, taskqueue_name, maybe_task_name):
+        self.response.headers.add_header('Access-Control-Allow-Origin', '*')
+
         queue =  queues[taskqueue_name]
         if not maybe_task_name:
             self._list_task(queue)
@@ -258,6 +277,8 @@ class TaskHandler(webapp2.RequestHandler):
 
 
     def post(self, project_name, taskqueue_name, maybe_lease_or_task_name):
+        self.response.headers.add_header('Access-Control-Allow-Origin', '*')
+        
         queue =  queues[taskqueue_name]
         if maybe_lease_or_task_name == 'lease':
             numTasks = int(self.request.get('numTasks', default_value='1'))
@@ -275,12 +296,16 @@ class TaskHandler(webapp2.RequestHandler):
             self._update_task(queue, maybe_lease_or_task_name, newLeaseSeconds)
 
     def patch(self, project_name, taskqueue_name, task_name):
+        self.response.headers.add_header('Access-Control-Allow-Origin', '*')
+
         queue =  queues[taskqueue_name]
         newLeaseSeconds = int(self.request.get('newLeaseSeconds', default_value='1'))
         assert newLeaseSeconds >= 1
         self._patch_task(queue, task_name, newLeaseSeconds)
 
     def delete(self, project_name, taskqueue_name, task_name):
+        self.response.headers.add_header('Access-Control-Allow-Origin', '*')
+
         queue =  queues[taskqueue_name]
         self._delete_task(queue, task_name)
 
@@ -309,7 +334,7 @@ class TaskHandler(webapp2.RequestHandler):
         """
         if task_name not in queue.tasks:
             self.response.write(
-                task_name+ " task name is invalid")
+                task_name + " task name is invalid")
             self.response.status = 400
             return
         self.response.write(queue.tasks[task_name].to_json())
@@ -338,26 +363,28 @@ class TaskHandler(webapp2.RequestHandler):
         If it cannot lease numTasks tasks it will return as many as it can lease
         which might be an empty list if no tasks are leasable
         """
-        task_to_lease = []
+        tasks_to_lease = []
         for pq_idx , (_, task_name) in enumerate(queue.pq):
             if task_name not in queue.tasks:
                 #we might have deleted this task
                 #without ever leasing it
                 queue.pq.delete_index(pq_idx)
 
-
             if tag and not queue.tasks[task_name] == tag:
                 continue
 
             numTasks -= 1
-            task_to_lease.append(task_name)
+            tasks_to_lease.append(task_name)
             queue.pq.delete_index(pq_idx)
             queue.tasks[task_name]._in_pq = False
             queue.tasks[task_name].lease(leaseSecs)
+            queue.mark_leased_timestamp()
 
             if not numTasks:
                 break
-        self.response.write(json.dumps([queue.tasks[t].to_dict() for t in task_to_lease]))
+
+        resp = json.dumps([ queue.tasks[t].to_dict() for t in tasks_to_lease ])
+        self.response.write(resp)
 
     def _list_task(self, queue):
         """
@@ -366,7 +393,7 @@ class TaskHandler(webapp2.RequestHandler):
         whether or not they are currently leased, up to a maximum of 100.
         """
         tasks_returned = []
-        for _, task in queue.tasks.iteritems():
+        for _, task in six.iteritems(queue.tasks):
             if len(tasks_returned) == 100:
                 break
             d = task.to_dict()
@@ -408,7 +435,7 @@ class TaskHandler(webapp2.RequestHandler):
         # we need to check the task is not leased out
         raise NotImplementedError()
 
-class TaskQueuekHandler(webapp2.RequestHandler):
+class TaskQueueHandler(webapp2.RequestHandler):
     """
     TODO we don't offer functionanility to create/delete
     taskqueue
@@ -418,6 +445,25 @@ class TaskQueuekHandler(webapp2.RequestHandler):
     We also don't offer functionality to list all the
     taskqueue names
     """
+    def post(self, project_name, taskqueue_name):
+        self.response.headers.add_header('Access-Control-Allow-Origin', '*')
+
+        args = taskqueue_name.split('/')
+        taskqueue_name = args[0]
+
+        if taskqueue_name not in queues:
+            msg = r"""{ "error": "Task queue %s does not exist." }""" % taskqueue_name
+            self.response.write(msg)
+            self.response.status = 404
+            return
+        
+        queue = queues[taskqueue_name]
+
+        if len(args) > 1:
+            args[1] = args[1].replace('/', '')
+            if args[1] == 'purge':
+                queue.purge()
+                return
 
     def get(self, project_name, taskqueue_name):
         """
@@ -451,23 +497,54 @@ class TaskQueuekHandler(webapp2.RequestHandler):
         TODO(tartavull): currently returning a subset
         of this information
         """
+        self.response.headers.add_header('Access-Control-Allow-Origin', '*')
+
+        args = taskqueue_name.split('/')
+        taskqueue_name = args[0]
+
         if taskqueue_name not in queues:
-            self.response.write("taskqueue does not exist")
+            msg = r"""{ "error": "Task queue %s does not exist." }""" % taskqueue_name
+            self.response.write(msg)
             self.response.status = 404
             return
 
-        queue =  queues[taskqueue_name]
+        queue = queues[taskqueue_name]
+
+        if len(args) > 1:
+            args[1] = args[1].replace('/', '')
+            if args[1] == 'status':
+                self.render_status_page(taskqueue_name, queue)
+                return
+
         self.response.write(json.dumps(
             {
                 "kind": "taskqueues#taskqueue",
                 "stats": {
-                    "totalTasks": len(queue)
-                    }
+                    "totalTasks": len(queue),
+                    "leasedInLast": {
+                        60: queue.leased_in_last(60),
+                        600: queue.leased_in_last(600),
+                        3600: queue.leased_in_last(3600),
+                    },
+                },
             }))
+
+    def render_status_page(self, taskqueue_name, queue):
+        global STATUS_PAGE_HTML
+
+        template = Template(STATUS_PAGE_HTML)
+        page = template.render(
+            tqname=taskqueue_name,
+            enqueued=len(queue),
+            one_min=queue.leased_in_last(60),
+            ten_min=queue.leased_in_last(600),
+            one_hr=queue.leased_in_last(3600),
+        )
+        self.response.write(page)
 
 app = webapp2.WSGIApplication([
     (r'/(.*)/taskqueue/(.*)/tasks/?(.*)', TaskHandler),
-    (r'/(.*)/taskqueue/(.*)/?', TaskQueuekHandler)
+    (r'/(.*)/taskqueue/(.*)/?', TaskQueueHandler),
 ], debug=True)
 
 
