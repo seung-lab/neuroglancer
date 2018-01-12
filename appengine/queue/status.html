@@ -29,7 +29,7 @@
 			timestamp: (new Date()).getTime(),
 		};
 
-		var BASEURL = 'http://queue-dot-neuromancer-seung-import.appspot.com/s~neuromancer-seung-import/taskqueue';
+		var BASEURL = location.origin + '/s~neuromancer-seung-import/taskqueue';
 
 		function $(elem) {
 			if (elem[0] == '#') {
