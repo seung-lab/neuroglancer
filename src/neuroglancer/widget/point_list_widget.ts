@@ -20,6 +20,9 @@
  */
 
 import {AnnotationPointList} from 'neuroglancer/annotation/point_list';
+import {AnnotationPointColorList} from 'neuroglancer/annotation/point_color_list';
+import {AnnotationPointSizeList} from 'neuroglancer/annotation/point_size_list';
+import {TrackableBooleanCheckbox, TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {WatchableValue} from 'neuroglancer/trackable_value';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {removeChildren, removeFromParent} from 'neuroglancer/util/dom';
@@ -36,8 +39,9 @@ export class PointListWidget extends RefCounted {
   pointSelected = new Signal<(index: number) => void>();
   private visible_ = false;
 
-  constructor(
-      public pointList: AnnotationPointList, public selectionIndex: WatchableValue<number|null>) {
+  constructor(public pointList: AnnotationPointList, public colorList: AnnotationPointColorList,
+              public sizeList: AnnotationPointSizeList, public selectionIndex: WatchableValue<number|null>,
+              public usePerspective2D: TrackableBoolean, public usePerspective3D: TrackableBoolean) {
     super();
     let {element, clearButton, itemContainer} = this;
     element.className = 'neuroglancer-point-list-widget';
@@ -45,9 +49,31 @@ export class PointListWidget extends RefCounted {
     clearButton.textContent = 'Delete all points';
     this.registerEventListener(clearButton, 'click', () => {
       this.pointList.reset();
+      this.colorList.reset();
+      this.sizeList.reset();
     });
     itemContainer.className = 'neuroglancer-item-container neuroglancer-select-text';
     element.appendChild(clearButton);
+    {
+      const checkbox =
+          this.registerDisposer(new TrackableBooleanCheckbox(usePerspective2D));
+      checkbox.element.className = 'neuroglancer-perspective-checkbox';
+      const label = document.createElement('label');
+      label.className = 'neuroglancer-perspective-checkbox';
+      label.appendChild(document.createTextNode('Perspective Scaling (2D)'));
+      label.appendChild(checkbox.element);
+      element.appendChild(label);
+    }
+    {
+      const checkbox =
+          this.registerDisposer(new TrackableBooleanCheckbox(usePerspective3D));
+      checkbox.element.className = 'neuroglancer-perspective-checkbox';
+      const label = document.createElement('label');
+      label.className = 'neuroglancer-perspective-checkbox';
+      label.appendChild(document.createTextNode('Perspective Scaling (3D)'));
+      label.appendChild(checkbox.element);
+      element.appendChild(label);
+    }
     element.appendChild(itemContainer);
     this.registerDisposer(pointList.changed.add(() => {
       this.maybeUpdate();
