@@ -24,7 +24,7 @@ import {vec3} from 'neuroglancer/util/geom';
 import {parseFixedLengthArray, verifyFiniteFloat} from 'neuroglancer/util/json';
 import {NullarySignal} from 'neuroglancer/util/signal';
 
-export const DEFAULT_COLOR = [1.0, 1.0, 0.0];
+export const DEFAULT_COLOR = vec3.fromValues(1.0, 1.0, 0.0);
 
 export class AnnotationPointColorList {
   colors = new Float32ArrayBuilder();

@@ -24,6 +24,7 @@ import {PerspectiveViewRenderContext, PerspectiveViewRenderLayer} from 'neurogla
 import {SliceViewPanelRenderContext, SliceViewPanelRenderLayer} from 'neuroglancer/sliceview/panel';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {WatchableValue} from 'neuroglancer/trackable_value';
+import {TrackableVec3} from 'neuroglancer/trackable_vec3';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {mat4, vec3} from 'neuroglancer/util/geom';
 import {NullarySignal} from 'neuroglancer/util/signal';
@@ -47,6 +48,7 @@ export class AnnotationPointListLayer extends RefCounted {
   sizeGeneration = -1;
   usePerspective2D = new TrackableBoolean(false);
   usePerspective3D = new TrackableBoolean(false);
+  defaultColor = new TrackableVec3(vec3.clone(DEFAULT_COLOR), DEFAULT_COLOR);
   redrawNeeded = new NullarySignal();
 
   constructor(
@@ -77,6 +79,10 @@ export class AnnotationPointListLayer extends RefCounted {
     this.registerDisposer(this.usePerspective3D.changed.add(() => {
       this.redrawNeeded.dispatch();
     }));
+    this.registerDisposer(this.defaultColor.changed.add(() => {
+      ++this.colorList.generation;
+      this.redrawNeeded.dispatch();
+    }));
   }
 
   get gl() {
@@ -86,19 +92,21 @@ export class AnnotationPointListLayer extends RefCounted {
   updateBuffer() {
     let {pointList, colorList, sizeList} = this;
     let newGeneration = pointList.generation;
+    let pointsChanged = false;
     if (this.posGeneration !== newGeneration) {
+      pointsChanged = true;
       this.posGeneration = newGeneration;
       this.posBuffer.setData(pointList.points.view);
     }
 
     newGeneration = colorList.generation;
-    if (this.colGeneration !== newGeneration) {
+    if (this.colGeneration !== newGeneration || pointsChanged) {
       this.colGeneration = newGeneration;
       if (colorList.colors.length < pointList.points.length) {
         let tmp = new Float32Array(pointList.points.length);
         tmp.set(colorList.colors.view);
         for (let i = colorList.colors.length; i < pointList.points.length; i += 3) {
-          tmp.set(DEFAULT_COLOR, i);
+          tmp.set(this.defaultColor.value, i);
         }
         this.colBuffer.setData(tmp);
       } else {
@@ -107,7 +115,7 @@ export class AnnotationPointListLayer extends RefCounted {
     }
 
     newGeneration = sizeList.generation;
-    if (this.sizeGeneration !== newGeneration) {
+    if (this.sizeGeneration !== newGeneration || pointsChanged) {
       this.sizeGeneration = newGeneration;
       if (sizeList.sizes.length < pointList.points.length) {
         let tmp = new Float32Array(pointList.points.length);

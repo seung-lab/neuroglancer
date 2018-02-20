@@ -24,6 +24,8 @@ import {AnnotationPointColorList} from 'neuroglancer/annotation/point_color_list
 import {AnnotationPointSizeList} from 'neuroglancer/annotation/point_size_list';
 import {TrackableBooleanCheckbox, TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {WatchableValue} from 'neuroglancer/trackable_value';
+import {TrackableVec3} from 'neuroglancer/trackable_vec3';
+import {hexToRgb, rgbToHex} from 'neuroglancer/util/colorspace';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {removeChildren, removeFromParent} from 'neuroglancer/util/dom';
 import {Signal} from 'neuroglancer/util/signal';
@@ -34,6 +36,7 @@ require('./point_list_widget.css');
 export class PointListWidget extends RefCounted {
   element = document.createElement('div');
   private clearButton = document.createElement('button');
+  private defaultColorInput = document.createElement('input');
   private itemContainer = document.createElement('div');
   generation = -1;
   pointSelected = new Signal<(index: number) => void>();
@@ -41,9 +44,10 @@ export class PointListWidget extends RefCounted {
 
   constructor(public pointList: AnnotationPointList, public colorList: AnnotationPointColorList,
               public sizeList: AnnotationPointSizeList, public selectionIndex: WatchableValue<number|null>,
-              public usePerspective2D: TrackableBoolean, public usePerspective3D: TrackableBoolean) {
+              public usePerspective2D: TrackableBoolean, public usePerspective3D: TrackableBoolean,
+              public defaultColor: TrackableVec3) {
     super();
-    let {element, clearButton, itemContainer} = this;
+    let {element, clearButton, itemContainer, defaultColorInput} = this;
     element.className = 'neuroglancer-point-list-widget';
     clearButton.className = 'neuroglancer-clear-button';
     clearButton.textContent = 'Delete all points';
@@ -52,7 +56,6 @@ export class PointListWidget extends RefCounted {
       this.colorList.reset();
       this.sizeList.reset();
     });
-    itemContainer.className = 'neuroglancer-item-container neuroglancer-select-text';
     element.appendChild(clearButton);
     {
       const checkbox =
@@ -74,6 +77,27 @@ export class PointListWidget extends RefCounted {
       label.appendChild(checkbox.element);
       element.appendChild(label);
     }
+    {
+      defaultColorInput.type = 'color';
+      this.registerDisposer(defaultColor.changed.add(() => {
+        this.updateColorInput();
+      }));
+      this.updateColorInput();
+      this.registerEventListener(defaultColorInput, 'input', () => {
+        hexToRgb(defaultColor.value, defaultColorInput.value);
+        defaultColor.changed.dispatch();
+      });
+      const div = document.createElement('div');
+      div.className = 'neuroglancer-defaultcolor-input-container';
+      const label = document.createElement('label');
+      label.appendChild(document.createTextNode('Default Color'));
+      label.htmlFor = 'neuroglancer-defaultcolor-input';
+      defaultColorInput.id = 'neuroglancer-defaultcolor-input';
+      div.appendChild(label);
+      div.appendChild(defaultColorInput);
+      element.appendChild(div);
+    }
+    itemContainer.className = 'neuroglancer-item-container neuroglancer-select-text';
     element.appendChild(itemContainer);
     this.registerDisposer(pointList.changed.add(() => {
       this.maybeUpdate();
@@ -90,6 +114,11 @@ export class PointListWidget extends RefCounted {
         this.maybeUpdate();
       }
     }
+  }
+
+  updateColorInput() {
+    let col = rgbToHex(this.defaultColor.value);
+    this.defaultColorInput.value = col ? col : '#000000';
   }
 
   maybeUpdate() {
@@ -130,6 +159,7 @@ export class PointListWidget extends RefCounted {
     this.element = <any>undefined;
     this.itemContainer = <any>undefined;
     this.clearButton = <any>undefined;
+    this.defaultColorInput = <any>undefined;
     super.disposed();
   }
 }

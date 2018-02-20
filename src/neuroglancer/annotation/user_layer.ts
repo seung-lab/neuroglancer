@@ -16,8 +16,8 @@
 
 import {AnnotationPointListLayer, PerspectiveViewAnnotationPointListLayer, SliceViewAnnotationPointListLayer} from 'neuroglancer/annotation/frontend';
 import {AnnotationPointList} from 'neuroglancer/annotation/point_list';
-import {AnnotationPointColorList, DEFAULT_COLOR} from 'neuroglancer/annotation/point_color_list';
-import {AnnotationPointSizeList, DEFAULT_SIZE} from 'neuroglancer/annotation/point_size_list';
+import {AnnotationPointColorList} from 'neuroglancer/annotation/point_color_list';
+import {AnnotationPointSizeList} from 'neuroglancer/annotation/point_size_list';
 import {UserLayer, UserLayerDropdown} from 'neuroglancer/layer';
 import {LayerListSpecification, registerLayerType} from 'neuroglancer/layer_specification';
 import {WatchableValue} from 'neuroglancer/trackable_value';
@@ -37,6 +37,7 @@ export class AnnotationPointListUserLayer extends UserLayer {
     super([]);
     this.layer.usePerspective2D.restoreState(x['perspective2D']);
     this.layer.usePerspective3D.restoreState(x['perspective3D']);
+    this.layer.defaultColor.restoreState(x['defaultColor']);
     this.layer.pointList.restoreState(x['points']);
     this.layer.colorList.restoreState(x['colors']);
     this.layer.sizeList.restoreState(x['sizes']);
@@ -44,6 +45,9 @@ export class AnnotationPointListUserLayer extends UserLayer {
       this.specificationChanged.dispatch();
     }));
     this.registerDisposer(this.layer.usePerspective3D.changed.add(() => {
+      this.specificationChanged.dispatch();
+    }));
+    this.registerDisposer(this.layer.defaultColor.changed.add(() => {
       this.specificationChanged.dispatch();
     }));
     this.registerDisposer(this.layer.pointList.changed.add(() => {
@@ -68,6 +72,7 @@ export class AnnotationPointListUserLayer extends UserLayer {
     let x: any = {'type': LAYER_TYPE};
     x['perspective2D'] = this.layer.usePerspective2D.toJSON();
     x['perspective3D'] = this.layer.usePerspective3D.toJSON();
+    x['defaultColor'] = this.layer.defaultColor.toJSON();
     x['points'] = this.layer.pointList.toJSON();
     x['colors'] = this.layer.colorList.toJSON();
     x['sizes'] = this.layer.sizeList.toJSON();
@@ -80,13 +85,15 @@ export class AnnotationPointListUserLayer extends UserLayer {
         let selectedValue = this.manager.layerSelectedValues.get(this);
         if (selectedValue !== undefined) {
           this.layer.pointList.delete(selectedValue);
-          this.layer.colorList.delete(selectedValue);
-          this.layer.sizeList.delete(selectedValue);
+          if (selectedValue < this.layer.colorList.length) {
+            this.layer.colorList.delete(selectedValue);
+          }
+          if (selectedValue < this.layer.sizeList.length) {
+            this.layer.sizeList.delete(selectedValue);
+          }
         } else if (this.manager.layerSelectedValues.mouseState.active) {
           this.layer.pointList.append(this.manager.voxelSize.voxelFromSpatial(
               vec3.create(), this.manager.layerSelectedValues.mouseState.position));
-          this.layer.colorList.append(vec3.clone(DEFAULT_COLOR));
-          this.layer.sizeList.append(DEFAULT_SIZE);
         }
         break;
       }
@@ -102,7 +109,8 @@ class Dropdown extends UserLayerDropdown {
   pointListWidget = this.registerDisposer(
       new PointListWidget(this.layer.layer.pointList, this.layer.layer.colorList,
         this.layer.layer.sizeList, this.layer.selectedIndex,
-        this.layer.layer.usePerspective2D, this.layer.layer.usePerspective3D));
+        this.layer.layer.usePerspective2D, this.layer.layer.usePerspective3D,
+        this.layer.layer.defaultColor));
   constructor(public element: HTMLDivElement, public layer: AnnotationPointListUserLayer) {
     super();
     element.classList.add('neuroglancer-annotation-point-list-dropdown');
