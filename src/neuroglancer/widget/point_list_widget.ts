@@ -23,7 +23,7 @@ import {AnnotationPointList} from 'neuroglancer/annotation/point_list';
 import {AnnotationPointColorList} from 'neuroglancer/annotation/point_color_list';
 import {AnnotationPointSizeList} from 'neuroglancer/annotation/point_size_list';
 import {TrackableBooleanCheckbox, TrackableBoolean} from 'neuroglancer/trackable_boolean';
-import {WatchableValue} from 'neuroglancer/trackable_value';
+import {WatchableValue, TrackableValue} from 'neuroglancer/trackable_value';
 import {TrackableVec3} from 'neuroglancer/trackable_vec3';
 import {hexToRgb, rgbToHex} from 'neuroglancer/util/colorspace';
 import {RefCounted} from 'neuroglancer/util/disposable';
@@ -36,6 +36,7 @@ require('./point_list_widget.css');
 export class PointListWidget extends RefCounted {
   element = document.createElement('div');
   private clearButton = document.createElement('button');
+  private defaultSizeInput = document.createElement('input');
   private defaultColorInput = document.createElement('input');
   private itemContainer = document.createElement('div');
   generation = -1;
@@ -45,9 +46,9 @@ export class PointListWidget extends RefCounted {
   constructor(public pointList: AnnotationPointList, public colorList: AnnotationPointColorList,
               public sizeList: AnnotationPointSizeList, public selectionIndex: WatchableValue<number|null>,
               public usePerspective2D: TrackableBoolean, public usePerspective3D: TrackableBoolean,
-              public defaultColor: TrackableVec3) {
+              public defaultSize: TrackableValue<number>,  public defaultColor: TrackableVec3) {
     super();
-    let {element, clearButton, itemContainer, defaultColorInput} = this;
+    let {element, clearButton, itemContainer, defaultSizeInput, defaultColorInput} = this;
     element.className = 'neuroglancer-point-list-widget';
     clearButton.className = 'neuroglancer-clear-button';
     clearButton.textContent = 'Delete all points';
@@ -76,6 +77,27 @@ export class PointListWidget extends RefCounted {
       label.appendChild(document.createTextNode('Perspective Scaling (3D)'));
       label.appendChild(checkbox.element);
       element.appendChild(label);
+    }
+    {
+      defaultSizeInput.type = 'number';
+      defaultSizeInput.min = '1';
+      this.registerDisposer(defaultSize.changed.add(() => {
+        this.updateSizeInput();
+      }));
+      this.updateSizeInput();
+      this.registerEventListener(defaultSizeInput, 'input', () => {
+        defaultSize.value = parseFloat(defaultSizeInput.value);
+        defaultSize.changed.dispatch();
+      });
+      const div = document.createElement('div');
+      div.className = 'neuroglancer-defaultsize-input-container';
+      const label = document.createElement('label');
+      label.appendChild(document.createTextNode('Default Size'));
+      label.htmlFor = 'neuroglancer-defaultsize-input';
+      defaultSizeInput.id = 'neuroglancer-defaultsize-input';
+      div.appendChild(label);
+      div.appendChild(defaultSizeInput);
+      element.appendChild(div);
     }
     {
       defaultColorInput.type = 'color';
@@ -114,6 +136,10 @@ export class PointListWidget extends RefCounted {
         this.maybeUpdate();
       }
     }
+  }
+
+  updateSizeInput() {
+    this.defaultSizeInput.value = this.defaultSize.value.toString();
   }
 
   updateColorInput() {

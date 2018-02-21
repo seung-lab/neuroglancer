@@ -37,6 +37,7 @@ export class AnnotationPointListUserLayer extends UserLayer {
     super([]);
     this.layer.usePerspective2D.restoreState(x['perspective2D']);
     this.layer.usePerspective3D.restoreState(x['perspective3D']);
+    this.layer.defaultSize.restoreState(x['defaultSize']);
     this.layer.defaultColor.restoreState(x['defaultColor']);
     this.layer.pointList.restoreState(x['points']);
     this.layer.colorList.restoreState(x['colors']);
@@ -45,6 +46,9 @@ export class AnnotationPointListUserLayer extends UserLayer {
       this.specificationChanged.dispatch();
     }));
     this.registerDisposer(this.layer.usePerspective3D.changed.add(() => {
+      this.specificationChanged.dispatch();
+    }));
+    this.registerDisposer(this.layer.defaultSize.changed.add(() => {
       this.specificationChanged.dispatch();
     }));
     this.registerDisposer(this.layer.defaultColor.changed.add(() => {
@@ -72,6 +76,7 @@ export class AnnotationPointListUserLayer extends UserLayer {
     let x: any = {'type': LAYER_TYPE};
     x['perspective2D'] = this.layer.usePerspective2D.toJSON();
     x['perspective3D'] = this.layer.usePerspective3D.toJSON();
+    x['defaultSize'] = this.layer.defaultSize.toJSON();
     x['defaultColor'] = this.layer.defaultColor.toJSON();
     x['points'] = this.layer.pointList.toJSON();
     x['colors'] = this.layer.colorList.toJSON();
@@ -110,7 +115,7 @@ class Dropdown extends UserLayerDropdown {
       new PointListWidget(this.layer.layer.pointList, this.layer.layer.colorList,
         this.layer.layer.sizeList, this.layer.selectedIndex,
         this.layer.layer.usePerspective2D, this.layer.layer.usePerspective3D,
-        this.layer.layer.defaultColor));
+        this.layer.layer.defaultSize, this.layer.layer.defaultColor));
   constructor(public element: HTMLDivElement, public layer: AnnotationPointListUserLayer) {
     super();
     element.classList.add('neuroglancer-annotation-point-list-dropdown');

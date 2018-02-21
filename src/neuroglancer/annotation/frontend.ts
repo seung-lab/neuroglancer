@@ -23,10 +23,11 @@ import {VoxelSize} from 'neuroglancer/navigation_state';
 import {PerspectiveViewRenderContext, PerspectiveViewRenderLayer} from 'neuroglancer/perspective_view/render_layer';
 import {SliceViewPanelRenderContext, SliceViewPanelRenderLayer} from 'neuroglancer/sliceview/panel';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
-import {WatchableValue} from 'neuroglancer/trackable_value';
+import {WatchableValue, TrackableValue} from 'neuroglancer/trackable_value';
 import {TrackableVec3} from 'neuroglancer/trackable_vec3';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {mat4, vec3} from 'neuroglancer/util/geom';
+import {verifyFinitePositiveFloat} from 'neuroglancer/util/json';
 import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {Buffer} from 'neuroglancer/webgl/buffer';
@@ -48,6 +49,7 @@ export class AnnotationPointListLayer extends RefCounted {
   sizeGeneration = -1;
   usePerspective2D = new TrackableBoolean(false);
   usePerspective3D = new TrackableBoolean(false);
+  defaultSize = new TrackableValue<number>(DEFAULT_SIZE, verifyFinitePositiveFloat);
   defaultColor = new TrackableVec3(vec3.clone(DEFAULT_COLOR), DEFAULT_COLOR);
   redrawNeeded = new NullarySignal();
 
@@ -77,6 +79,10 @@ export class AnnotationPointListLayer extends RefCounted {
       this.redrawNeeded.dispatch();
     }));
     this.registerDisposer(this.usePerspective3D.changed.add(() => {
+      this.redrawNeeded.dispatch();
+    }));
+    this.registerDisposer(this.defaultSize.changed.add(() => {
+      ++this.sizeList.generation;
       this.redrawNeeded.dispatch();
     }));
     this.registerDisposer(this.defaultColor.changed.add(() => {
@@ -120,7 +126,7 @@ export class AnnotationPointListLayer extends RefCounted {
       if (sizeList.sizes.length < pointList.points.length) {
         let tmp = new Float32Array(pointList.points.length);
         tmp.set(sizeList.sizes.view);
-        tmp.fill(DEFAULT_SIZE, sizeList.sizes.length, pointList.points.length);
+        tmp.fill(this.defaultSize.value, sizeList.sizes.length, pointList.points.length);
         this.sizeBuffer.setData(tmp);
       } else {
         this.sizeBuffer.setData(sizeList.sizes.view);
@@ -149,7 +155,8 @@ export class RenderHelper extends RefCounted {
     // Color of point in RGB float [0..1]
     builder.addAttribute('mediump vec3', 'aVertexColor');
 
-    // The x, y and z radii of the point in world units (or pixel if fixed size).
+    // The radius of the point in world units (when using perspective scaling)
+    // For fixed size points, radius is simply 0.25 * world unit radius.
     builder.addAttribute('mediump float', 'aVertexSize');
 
     // XY corners of square ranging from [-1, -1] to [1, 1].
@@ -190,7 +197,7 @@ if (uPerspective) {
   gl_Position = uProjection * worldCornerPos;
   gl_Position /= gl_Position.w;
 } else {
-  gl_Position.xy += SQRT2 * aVertexSize * aCornerOffset / uViewport;
+  gl_Position.xy += 0.25 * aVertexSize * aCornerOffset / uViewport;
 }
 
 vPointCoord = aCornerOffset;

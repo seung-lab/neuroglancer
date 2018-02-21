@@ -23,7 +23,7 @@ import {Float32ArrayBuilder} from 'neuroglancer/util/float32array_builder';
 import {parseFixedLengthArray, verifyFiniteFloat} from 'neuroglancer/util/json';
 import {NullarySignal} from 'neuroglancer/util/signal';
 
-export const DEFAULT_SIZE = 8.0;
+export const DEFAULT_SIZE = 32.0;
 
 export class AnnotationPointSizeList {
   sizes = new Float32ArrayBuilder();
