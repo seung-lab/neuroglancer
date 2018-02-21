@@ -167,6 +167,7 @@ export class RenderHelper extends RefCounted {
 
     builder.addUniform('highp vec4', 'uSelectedIndex');
     builder.addVarying('highp vec4', 'vColor');
+    builder.addVarying('highp float', 'vDepth');
 
     builder.addUniform('highp vec2', 'uViewport');
     builder.addUniform('highp mat4', 'uModelView');
@@ -184,6 +185,7 @@ vec4 worldPos = uModelView * vec4(aVertexPosition, 1.0);
 
 gl_Position = uProjection * worldPos;
 gl_Position /= gl_Position.w;
+vDepth = gl_Position.z;
 
 if (uPerspective) {
   vec4 tmpProjCornerPos = gl_Position;
@@ -206,7 +208,7 @@ uint32_t primitiveIndex = getPrimitiveIndex();
 
 uint32_t pickID; pickID.value = uPickID;
 vPickID = add(pickID, primitiveIndex).value;
-vec4 vUserColor = vec4(aVertexColor, 65536.0);
+vec4 vUserColor = vec4(aVertexColor, 1.0);
 
 if (uSelectedIndex == primitiveIndex.value) {
   vColor = vec4(1.0) - vec4(vUserColor.gbr, 0.0);
@@ -344,7 +346,7 @@ class SliceViewRenderHelper extends RenderHelper {
     super.defineShader(builder);
     builder.addFragmentCode(`
 vec4 getColor() {
-  float scalar = 1.0 - 2.0 * abs(0.5 - gl_FragCoord.z);
+  float scalar = 1.0 - abs(vDepth);
   return vec4(vColor.xyz, scalar * vColor.a);
 }
 `);
