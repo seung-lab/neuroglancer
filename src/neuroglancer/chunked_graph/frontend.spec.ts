@@ -16,13 +16,42 @@
 
  import {} from 'neuroglancer/chunked_graph/frontend';
 
-# NEED 
+/* Need to:
+ - maintain list of operations requested
+ 	- operations should have associated states: 
+ 		- requested: client has submitted operation to MASTER, but has not received acknowledgement
+ 		- queued: client has received acknowledgment of operation receipt by MASTER
+ 		- completed: client has received acknowledgement of operation being executed by MASTER
+ 		- ignored: client has received acknowledgment that MASTER decided to not execute oepration
+ 		- (deleted): client has decided to undo a previous operation and has not received acknowledgment from MASTER of execution or ignoring
+ 	- should have a second list of operations that simulate sequentiality for the undo operation
+ - maintain list of mesh objects
+ 	- meshes should subscribe to pub/sub for if they become stale
+ 	- see neuroglancer/segmentation_display_state
+ 	- can remove getChildren from neuroglancer/chunked_graph/backend &
+ 	  neuroglancer/mesh/backend
+ - maintain list of supervoxels in display window (optional) 
+ - how to undo operations?
+ 	- split between connected components should be removing an edge
+*/
 
 
  describe('chunked_graph/frontend', () => {
- 	it('get_supervoxel_id', () => {
+ 	it('merge', () => {
  		expect(
- 			get_supervoxel_id
+ 			merge
  			);
- 	}
+ 	}),
+ 	it('split', () => {
+ 		expect(
+ 			);
+ 	})
+ 	it('addOperation', () => {
+ 		expect(
+ 			);
+ 	})
+ 	it('setOperationState', () => {
+ 		expect(
+ 			);
+ 	})
  })
