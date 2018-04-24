@@ -40,3 +40,33 @@ a weighted mincut algorithm.
 
 1. **Relabel**
 
+
+# How neuroglancer works, for dummies.
+
+* The top class is a Viewer. It contains:
+** display, describing the window and controlling the GL
+** navigationState, describing where the viewer currently is in space
+** mouseState, describing what the mouse is doing
+** layerManager, describing each set of data that's been loaded.
+** layerSelectedValues, listing which segments have been selected for each 
+layer.
+** layerSpecification (usually topLevelLayerListSpecification), containing the 
+chunkManager.
+
+The layerManager contains each layer that has been loaded under its
+managedLayer class. A common managed layer type is 
+ManagedUserLayerWithSpecification, which contains information about the
+datasource, type, and whether a chunkedGraph is associated.
+
+The managedLayer contains references to the layer it represents. For 
+segmentations, that's a segmentationUserLayer, which contains information about
+the displayState (colors, shaders, alphas, etc). Each layer contains a
+meshLayer, which is populated based on the path in the info file. Each layer 
+also has a list of renderLayers, which includes a segmentationRenderLayer,
+as well as the same meshLayer. The segmentationRenderLayer stores information 
+about which chunks have been loaded under source(s).
+
+For simplicity, Nico assigned the chunkedGraph to the meshLayer. He then 
+easily piggy-backed on its the meshLayer's chunk services.
+
+# How we implemented the graph
