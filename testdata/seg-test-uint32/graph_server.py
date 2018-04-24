@@ -38,6 +38,21 @@ class RequestHandler(SimpleHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Origin', '*')
         SimpleHTTPRequestHandler.end_headers(self)
 
+    def do_GET(self):
+        print(self.path)
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        s = '{"root":10}'
+        self.wfile.write(s)
+
+    def do_OPTIONS(self):
+        print(self.path)
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        s = '{"merge":10}'
+        self.wfile.write(s)
 
 class Server(HTTPServer):
     protocol_version = 'HTTP/1.1'
