@@ -141,7 +141,7 @@ export class SegmentationUserLayer extends UserLayer {
     this.displayState.objectToDataTransform.restoreState(x['transform']);
     this.displayState.fragmentMain.restoreState(x['skeletonShader']);
 
-    this.chunkedGraphUrl = x['chunkedGraph'] === null ? null : verifyOptionalString(x['chunkedGraph']);
+    let chunkedGraphUrl = this.chunkedGraphUrl = x['chunkedGraph'] === null ? null : verifyOptionalString(x['chunkedGraph']);
 
     let volumePath = this.volumePath = verifyOptionalString(x['source']);
     let meshPath = this.meshPath = x['mesh'] === null ? null : verifyOptionalString(x['mesh']);
@@ -244,7 +244,8 @@ export class SegmentationUserLayer extends UserLayer {
           });
     }
 
-    if (!this.chunkedGraphUrl) {
+    // if (!this.chunkedGraphUrl) {
+    if (chunkedGraphUrl != null) {
       verifyObjectProperty(x, 'equivalences', y => {
         this.displayState.segmentEquivalences.restoreState(y);
       });
