@@ -1,0 +1,35 @@
+{
+  "data_type": "uint32",
+  "mesh": "mesh_mip_3_err_40",
+  "chunkedGraph":"http://127.0.0.1:8999",
+  "num_channels": 1,
+  "scales": [
+    {
+      "chunk_sizes": [
+        [
+          2048,
+          2048,
+          1
+        ]
+      ],
+      "encoding": "raw",
+      "key": "4_4_40",
+      "resolution": [
+        4,
+        4,
+        40
+      ],
+      "size": [
+        2048,
+        2048,
+        1
+      ],
+      "voxel_offset": [
+        0,
+        0,
+        0
+      ]
+    }
+  ],
+  "type": "segmentation"
+}
