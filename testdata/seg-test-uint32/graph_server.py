@@ -24,6 +24,7 @@ from __future__ import print_function, absolute_import
 import argparse
 import os
 import sys
+from random import randint
 
 try:
     # Python3 and Python2 with future package.
@@ -46,13 +47,15 @@ class RequestHandler(SimpleHTTPRequestHandler):
         s = '{"root":10}'
         self.wfile.write(s)
 
-    def do_OPTIONS(self):
-        print(self.path)
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.end_headers()
-        s = '{"merge":10}'
-        self.wfile.write(s)
+    # def do_OPTIONS(self):
+    #     print(self.path)
+    #     self.send_response(200)
+    #     self.send_header('Content-Type', 'application/json')
+    #     self.end_headers()
+    #     src_node = randint(1,10)
+    #     dst_node = randint(10,20)
+    #     s = '{"edges":[{"w":0.5,"src":{0},"dst":{1}}]}'.format(src_node, dst_node)
+    #     self.wfile.write(s)
 
 class Server(HTTPServer):
     protocol_version = 'HTTP/1.1'

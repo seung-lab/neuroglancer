@@ -85,14 +85,16 @@ export class ChunkedGraphLayer extends GenericSliceViewRenderLayer {
       return Promise.resolve(segment);
     }
 
-    let promise = sendHttpRequest(openHttpRequest(`${url}/1.0/segment/${segment}/root`), 'arraybuffer');
+    // let promise = sendHttpRequest(openHttpRequest(`${url}/1.0/segment/${segment}/root`), 'arraybuffer');
+    let promise = sendHttpRequest(openHttpRequest(`${url}/1.0/segment/${segment}/root`), 'json');
 
     return promise.then(response => {
       if (response.byteLength === 0) {
         throw new Error(`Agglomeration for segment ${segment} is too large to show.`);
       } else {
-        let uint32 = new Uint32Array(response);
-        return new Uint64(uint32[0], uint32[1]);
+        // let uint32 = new Uint32Array(response);
+        // return new Uint64(uint32[0], uint32[1]);
+        return new Uint64(response["root"])
       }
     }).catch((e: HttpError) => {
       console.log(`Could not retrieve root for segment ${segment}`);
