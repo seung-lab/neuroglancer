@@ -15,16 +15,20 @@
  */
 
  import {FlowNetwork, FlowEdge} from 'js-graph-algorithms';
- import {pythonLiteralParse} from 'neuroglancer/util/json';
 
 /**
  * Returns a js-graph-algorithms FlowNetwork object based on JSON from the
  * graph server.
  */
- export function jsonToGraph(x: string){
- 	// n = number of nodes in the graph
- 	g = FlowNetwork(n)
- 	return g
+ export function jsonToGraph(obj: object) {
+ 	let edges = obj.edges;
+ 	let nodes = [...new Set([...edges.map(function(i: any){return i.src}),
+ 					...edges.map(function(i: any){return i.dst})])];
+ 	let g: FlowNetwork = new FlowNetwork(nodes.length);
+ 	for (let e in edges){
+ 		g.addEdge(new FlowEdge(e.src, e.dst, e.w));
+ 	}
+ 	return g;
  }
 
  

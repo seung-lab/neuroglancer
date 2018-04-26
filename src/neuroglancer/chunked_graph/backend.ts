@@ -15,6 +15,7 @@
  */
 
 import debounce from 'lodash/debounce';
+import jsonToGraph from 'neuroglancer/chunked_graph/subgraph';
 import {ChunkState, ChunkPriorityTier} from 'neuroglancer/chunk_manager/base';
 import {CHUNKED_GRAPH_LAYER_RPC_ID, ChunkedGraphSource as ChunkedGraphSourceInterface, ChunkedGraphChunkSpecification} from 'neuroglancer/chunked_graph/base';
 import {SharedDisjointUint64Sets} from 'neuroglancer/shared_disjoint_sets';
@@ -75,6 +76,12 @@ export class ChunkedGraphChunk extends SliceViewChunk {
   freeSystemMemory() {
     this.mappings = null;
   }
+}
+
+export function decodeGraph(chunk: ChunkedGraphChunk, data: string) {
+  let obj = JSON.parse(data);
+  let graph = jsonToGraph(obj);
+  chunk.mappings!.set(obj.root, graph);
 }
 
 export function decodeSupervoxelArray(chunk: ChunkedGraphChunk, rootObjectKey: string, data: ArrayBuffer) {
