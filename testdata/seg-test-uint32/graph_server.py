@@ -29,10 +29,23 @@ from random import randint
 try:
     # Python3 and Python2 with future package.
     from http.server import SimpleHTTPRequestHandler, HTTPServer
+    from url.parse import urlparse, parse_qs
 except ImportError:
     from BaseHTTPServer import HTTPServer
     from SimpleHTTPServer import SimpleHTTPRequestHandler
+    from urlparse import urlparse, parse_qs
 
+def get_query(url):
+    return parse_qs(urlparse(url).query)
+
+def get_path_dirs(url):
+    path = urlparse(url).path
+    sections = []; temp = "";
+    while path != '/':
+        temp = os.path.split(path)
+        path = temp[0]
+        sections.append(temp[1])
+    return sections
 
 class RequestHandler(SimpleHTTPRequestHandler):
     def end_headers(self):
@@ -41,21 +54,22 @@ class RequestHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         print(self.path)
+        p = get_path_dirs(self.path)
+        print(p)
+        q = get_query(self.path)
+        print(q)
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
-        self.end_headers()
-        s = '{"root":10}'
+        self.end_headers() 
+        s = ''       
+        if p[0] == 'root':
+            s = '{"root":10}'
+        elif p[0] == 'leaves':
+            root = p[1]
+            src_node = randint(1,10)
+            dst_node = randint(10,20)            
+            s = '{{"root":{0},"edges":[{{"w":0.5,"src":{1},"dst":{2}}}]}}'.format(root, src_node, dst_node)
         self.wfile.write(s)
-
-    # def do_OPTIONS(self):
-    #     print(self.path)
-    #     self.send_response(200)
-    #     self.send_header('Content-Type', 'application/json')
-    #     self.end_headers()
-    #     src_node = randint(1,10)
-    #     dst_node = randint(10,20)
-    #     s = '{"edges":[{"w":0.5,"src":{0},"dst":{1}}]}'.format(src_node, dst_node)
-    #     self.wfile.write(s)
 
 class Server(HTTPServer):
     protocol_version = 'HTTP/1.1'
