@@ -14,7 +14,9 @@
  * limitations under the License.
  */
 
-import {ChunkedGraphChunk, decodeSupervoxelArray, ChunkedGraphChunkSource} from 'neuroglancer/chunked_graph/backend';
+// import {ChunkedGraphChunk, decodeSupervoxelArray, ChunkedGraphChunkSource} from 'neuroglancer/chunked_graph/backend';
+import {Subgraph} from 'neuroglancer/chunked_graph/subgraph';
+import {ChunkedGraphChunk, decodeGraph, ChunkedGraphChunkSource} from 'neuroglancer/chunked_graph/backend';
 import {WithParameters} from 'neuroglancer/chunk_manager/backend';
 import {MeshSourceParameters, SkeletonSourceParameters, VolumeChunkEncoding, VolumeChunkSourceParameters, ChunkedGraphSourceParameters} from 'neuroglancer/datasource/precomputed/base';
 import {decodeJsonManifestChunk, decodeTriangleVertexPositionsAndIndices, FragmentChunk, ManifestChunk, MeshSource} from 'neuroglancer/mesh/backend';
@@ -58,8 +60,12 @@ chunkDecoders.set(VolumeChunkEncoding.COMPRESSED_SEGMENTATION, decodeCompressedS
   }
 }
 
-export function decodeChunkedGraphChunk(chunk: ChunkedGraphChunk, rootObjectKey: string, response: ArrayBuffer) {
-  return decodeSupervoxelArray(chunk, rootObjectKey, response);
+// export function decodeChunkedGraphChunk(chunk: ChunkedGraphChunk, rootObjectKey: string, response: ArrayBuffer) {
+//   return decodeSupervoxelArray(chunk, rootObjectKey, response);
+// }
+
+export function decodeChunkedGraphChunk(chunk: ChunkedGraphChunk, rootObjectKey: string, response: Subgraph) {
+  return decodeGraph(chunk, rootObjectKey, response);
 }
 
 @registerSharedObject() export class PrecomputedChunkedGraphSource extends
@@ -78,8 +84,9 @@ export function decodeChunkedGraphChunk(chunk: ChunkedGraphChunk, rootObjectKey:
         let requestPath = `${parameters.path}/${key}/leaves?bounds=${bounds}`;
         promises.push(
             sendHttpRequest(
-                openShardedHttpRequest(parameters.baseUrls, requestPath), 'arraybuffer', cancellationToken)
-                .then(response => decodeChunkedGraphChunk(chunk, key, response)));
+                openShardedHttpRequest(parameters.baseUrls, requestPath), 'json', cancellationToken)
+                // openShardedHttpRequest(parameters.baseUrls, requestPath), 'arraybuffer', cancellationToken)
+                .then(response => decodeChunkedGraphChunk(chunk, key, <Subgraph>response)));
       }
     }
     return Promise.all(promises).then(() => {return;});

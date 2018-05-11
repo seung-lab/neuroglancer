@@ -63,12 +63,15 @@ class RequestHandler(SimpleHTTPRequestHandler):
         self.end_headers() 
         s = ''       
         if p[0] == 'root':
-            s = '{"root":10}'
+            root = 10
+            if int(p[1]) > 2:
+                root = 20
+            s = '{{"root":{0}}}'.format(root)
         elif p[0] == 'leaves':
             root = p[1]
-            src_node = randint(1,10)
-            dst_node = randint(10,20)            
-            s = '{{"root":{0},"edges":[{{"w":0.5,"src":{1},"dst":{2}}}]}}'.format(root, src_node, dst_node)
+            src_node = randint(1,5)
+            dst_node = randint(5,10)            
+            s = '[{{"w":0.5,"src":{1},"dst":{2}}}]'.format(root, src_node, dst_node)
         self.wfile.write(s)
 
 class Server(HTTPServer):
