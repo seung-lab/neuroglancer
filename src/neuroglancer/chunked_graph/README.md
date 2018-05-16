@@ -27,30 +27,23 @@ decided to handle subgraphs based on the viewport.
 
 We support the following operations:
 
-1. **Merge**
-
-Join two clusters together. This is done by adding an edge between the two 
+1. **Merge**. Join two clusters together. This is done by adding an edge between the two 
 supervoxels selected while in merge mode.
 
-1. **Split**
-
-Divide one cluster into two. This is done by removing a set of edges between 
+1. **Split**. Divide one cluster into two. This is done by removing a set of edges between 
 a set of source and sink supervoxels. The set of edges will be determined by 
 a weighted mincut algorithm.
-
-1. **Relabel**
-
 
 # How neuroglancer works, for dummies.
 
 * The top class is a Viewer. It contains:
-** display, describing the window and controlling the GL
-** navigationState, describing where the viewer currently is in space
-** mouseState, describing what the mouse is doing
-** layerManager, describing each set of data that's been loaded.
-** layerSelectedValues, listing which segments have been selected for each 
+  * display, describing the window and controlling the GL
+  * navigationState, describing where the viewer currently is in space
+  * mouseState, describing what the mouse is doing
+  * layerManager, describing each set of data that's been loaded.
+  * layerSelectedValues, listing which segments have been selected for each 
 layer.
-** layerSpecification (usually topLevelLayerListSpecification), containing the 
+  * layerSpecification (usually topLevelLayerListSpecification), containing the 
 chunkManager.
 
 The layerManager contains each layer that has been loaded under its
@@ -68,5 +61,3 @@ about which chunks have been loaded under source(s).
 
 For simplicity, Nico assigned the chunkedGraph to the meshLayer. He then 
 easily piggy-backed on its the meshLayer's chunk services.
-
-# How we implemented the graph
