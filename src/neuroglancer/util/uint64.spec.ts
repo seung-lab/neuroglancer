@@ -55,6 +55,11 @@ describe('uint64', () => {
     expect(temp.tryParseString('1')).toBe(true);
   });
 
+  it('parseString succeeds with full low32', () => {
+    let temp = new Uint64(114307078, 0);
+    expect(temp.tryParseString('490945161711321088')).toBe(true);
+  });
+
   it('parseString toString round trip', () => {
     function check(s: string, base: number) {
       let x = Uint64.parseString(s, base);
