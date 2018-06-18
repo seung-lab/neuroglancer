@@ -19,7 +19,9 @@ import {VertexAttributeInfo} from 'neuroglancer/skeleton/base';
 export enum VolumeChunkEncoding {
   RAW,
   JPEG,
-  COMPRESSED_SEGMENTATION
+  COMPRESSED_SEGMENTATION,
+  FPZIP,
+  KEMPRESSED
 }
 
 export class VolumeChunkSourceParameters {
