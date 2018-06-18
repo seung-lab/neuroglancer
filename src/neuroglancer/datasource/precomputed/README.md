@@ -44,8 +44,8 @@ The root value must be an object with the following keys:
     dimensions in voxels of each supported chunk size.  Typically just a single chunk size will be
     specified as `[[x, y, z]]`.
   - `"encoding"`: A string value equal (case-insensitively) to the name of one of the supported
-    `VolumeChunkEncoding` values specified in [base.ts](base.ts).  May be one of `"raw"`, `"jpeg"`,
-    or `"compressed_segmentation"`.  These encodings are described below.
+    `VolumeChunkEncoding` values specified in [base.ts](base.ts).  May be one of `"raw"`, `"jpeg"`, 
+    `"fpzip"`, `"kempressed"`, or `"compressed_segmentation"`.  These encodings are described below.
   - `"compressed_segmentation_block_size"`: This property must be specified if, and only if,
     `"encoding"` is `"compressed_segmentation"`.  If specified, it must be a 3-element `[x, y, z]`
     array of integers specifying the x, y, and z block size for the compressed segmentation
@@ -90,6 +90,19 @@ volumes where it is important to retain the precise values.  The width and heigh
 may be arbitrary, provided that the total number of pixels is equal to the product of the x, y, and
 z dimensions of the subvolume, and that the 1-D array obtained by concatenating the horizontal rows
 of the image corresponds to the flattened `[x, y, z]` Fortran-order representation of the subvolume.
+
+### `"fpzip"` encoding
+
+The subvolume data is encoded using the [fpzip algorithm](https://computation.llnl.gov/projects/floating-point-compression). Once decoded from the fpzip format, the result is identical to a 
+`"raw"` encoded volume.
+
+#### `"kempressed"` encoding
+
+`"kempressed"` encoding is an fpzip variant where we first add two to all elements. Since all our 
+values are between 0 and 1 inclusive, this effectively sets the exponent field within the float 
+identically across all elements. We also interchange the last two axes from XYZC to XYCZ as this
+helps cluster related values better on anisotropic datasets.
+
 
 ### `"compressed_segmentation"` encoding
 
