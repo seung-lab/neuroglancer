@@ -19,29 +19,74 @@ import {VolumeChunk} from 'neuroglancer/sliceview/volume/backend';
 import {DATA_TYPE_BYTES, DataType} from 'neuroglancer/util/data_type';
 import {convertEndian16, convertEndian32, Endianness, ENDIANNESS} from 'neuroglancer/util/endian';
 
-import {decompress} from 'fpzip'
+import {decompress} from 'fpzip';
 
-
+// may want to consider using a worker pool
 let fpzip_worker = new Worker('fpzip_worker.js');
 
-    fpzip_worker.postMessage({ 
-      type: 'decompress_fpzip', 
-      msg: { data: response }, 
-      callback: unique,
-    }, transferrables);
+let messageHandlers = {
+  callbacks: {},
+  count: 0,
+};
+    
+fpzip_worker.onerror = function (error) {
+  console.log(error);
+};
+
+fpzip_worker.onmessage = function (evt) {
+  if (evt.data.callback !== undefined) {
+    messageHandlers.callbacks[evt.data.callback](evt.data.msg);
+  }
+};
+
+type TypedArray = Int8Array | Uint8Array | Int16Array | Uint16Array | Int32Array | Uint32Array | Uint8ClampedArray | Float32Array | Float64Array;
+
+function sendWorkerMessage (type: string, msg: any, transferrables: TypedArray[] | null) {
+  return new Promise((fulfill, reject) => {
+    sendWorkerMessageCallback(type, msg, (res) => fulfill(res), transferrables);
+  });
+}
+  
+function sendWorkerMessageCallback (type: string, msg: any, callback: function, transferrables: TypedArray[] | null) {
+  let unique = null;
+  if (callback) {
+    unique = messageHandlers.count;
+    messageHandlers.count++;
+
+    messageHandlers.callbacks[unique] = (res) => {
+      callback(res);  
+      delete messageHandlers.callbacks[unique];
+    };
+  }
+
+  fpzip_worker.postMessage({ 
+    type: type, 
+    msg: msg, 
+    callback: unique,
+  }, transferrables);
+}
 
 
 export function decodeFpzipChunk(
     chunk: VolumeChunk, response: ArrayBuffer, endianness: Endianness = ENDIANNESS) {
 
   // decode fpzip 
-  decodeRawChunk(chunk, response, endianness);
+
+  sendWorkerMessage('fpzip_decompress', {
+    buffer: response,
+  }, [ response ])
+    .then(function (decoded: ArrayBuffer) {
+      decodeRawChunk(chunk, decoded, endianness);
+    });
 }
 
 export function decodeKempressedChunk(
     chunk: VolumeChunk, response: ArrayBuffer, endianness: Endianness = ENDIANNESS) {
 
-  // decode fpzip 
-  // dekempression
-  decodeRawChunk(chunk, response, endianness);
+  sendWorkerMessage('fpzip_dekempress', {
+    buffer: response,
+  }, [ response ])
+    .then(function (decoded: ArrayBuffer) {
+      decodeRawChunk(chunk, decoded, endianness);
+    });
 }

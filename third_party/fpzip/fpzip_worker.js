@@ -7,6 +7,7 @@ let fpzip_struct_decoded_image = {
 	ny: 'i32',
 	nz: 'i32',
 	nf: 'i32',
+	nbytes: 'i32',
 	data: 'void*',
 }
 
@@ -22,26 +23,26 @@ function readStruct (ptr, structType) {
 }
 
 function fpzip_decompress (buffer, callback) {
+	return fpzip_decompress_type(buffer, callback, Module.decompress);
+}
+
+function fpzip_dekempress (buffer, callback) {
+	return fpzip_decompress_type(buffer, callback, Module.dekempress);
+}
+
+function fpzip_decompress_type (buffer, callback, decompressfn) {
 	let heapbufptr = Module._malloc(buffer.byteLength);
 	let heaparr = new Uint8Array(Module.HEAPU8.buffer, heapbufptr, affinitybuf.byteLength); 
 	heaparr.set(buffer);
 
-	let decoded_image_ptr = Module.decompress(heapbufptr);
+	let decoded_image_ptr = decompressfn(heapbufptr);
 	let res = readStruct(decoded_image_ptr, fpzip_struct_decoded_image);
 
-	let nbytes = res.nx * res.ny * res.nz * res.nf;
-
-	let ArrayType;
-	if (res.type === 0) {
-		ArrayType = Float32Array;
-		nbytes *= 4;
-	}
-	else {
-		ArrayType = Float64Array;
-		nbytes *= 8;
-	}
-
-	let image = Module.HEAPU8.buffer.slice(res.data, res.data + nbytes);
+	let ArrayType = (res.type == 0)
+		? Float32Array 
+		: Float64Array;
+	
+	let image = Module.HEAPU8.buffer.slice(res.data, res.data + res.nbytes);
 	image = new ArrayType(image.buffer);
 	postMessage({ callback: callback, msg: { 
 		image: image, 
@@ -78,6 +79,9 @@ function processQueue () {
 		case 'fpzip_decompress':
 			fpzip_decompress.apply(null, req[1]);
 			break;
+		case 'fpzip_dekempress':
+			fpzip_dekempress.apply(null, req[1]);
+			break;
 		default:
 			console.log('invalid queue type', req[0]);
 	}
@@ -88,7 +92,8 @@ function processQueue () {
 onmessage = function (e) {
 	switch (e.data.type) {
 		case 'fpzip_decompress':
-			queueRequest([e.data.type, [e.data.msg.bytes, e.data.callback]]);
+		case 'fpzip_dekempress':
+			queueRequest([e.data.type, [e.data.msg.buffer, e.data.callback]]);
 			break;
 		default:
 			console.log('invalid type', e.data.type);
