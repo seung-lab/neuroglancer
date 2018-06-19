@@ -16,15 +16,12 @@
 
 import {decodeRawChunk} from 'neuroglancer/sliceview/backend_chunk_decoders/raw';
 import {VolumeChunk} from 'neuroglancer/sliceview/volume/backend';
-import {DATA_TYPE_BYTES, DataType} from 'neuroglancer/util/data_type';
-import {convertEndian16, convertEndian32, Endianness, ENDIANNESS} from 'neuroglancer/util/endian';
-
-import {decompress} from 'fpzip';
+import {Endianness, ENDIANNESS} from 'neuroglancer/util/endian';
 
 // may want to consider using a worker pool
-let fpzip_worker = new Worker('fpzip_worker.js');
+let fpzip_worker : Worker = new Worker('fpzip_worker.js');
 
-let messageHandlers = {
+let messageHandlers : any = {
   callbacks: {},
   count: 0,
 };
@@ -39,21 +36,27 @@ fpzip_worker.onmessage = function (evt) {
   }
 };
 
-type TypedArray = Int8Array | Uint8Array | Int16Array | Uint16Array | Int32Array | Uint32Array | Uint8ClampedArray | Float32Array | Float64Array;
+type TypedArray = Int8Array | Uint8Array | Int16Array | Uint16Array | Int32Array | Uint32Array | Uint8ClampedArray | Float32Array | Float64Array | ArrayBuffer;
 
-function sendWorkerMessage (type: string, msg: any, transferrables: TypedArray[] | null) {
-  return new Promise((fulfill, reject) => {
-    sendWorkerMessageCallback(type, msg, (res) => fulfill(res), transferrables);
+function sendWorkerMessage (
+  type: string, msg: any, 
+  transferrables: TypedArray[] | null) {
+
+  return new Promise((fulfill) => {
+    sendWorkerMessageCallback(type, msg, (res: TypedArray) => fulfill(res), transferrables);
   });
 }
   
-function sendWorkerMessageCallback (type: string, msg: any, callback: function, transferrables: TypedArray[] | null) {
-  let unique = null;
+function sendWorkerMessageCallback (
+  type: string, msg: any, callback: Function, 
+  transferrables: TypedArray[] | null) {
+
+  let unique : number = 0;
   if (callback) {
     unique = messageHandlers.count;
     messageHandlers.count++;
 
-    messageHandlers.callbacks[unique] = (res) => {
+    messageHandlers.callbacks[unique] = (res: TypedArray) => {
       callback(res);  
       delete messageHandlers.callbacks[unique];
     };
@@ -63,14 +66,12 @@ function sendWorkerMessageCallback (type: string, msg: any, callback: function, 
     type: type, 
     msg: msg, 
     callback: unique,
-  }, transferrables);
+  }, <any[]>transferrables);
 }
 
 
 export function decodeFpzipChunk(
     chunk: VolumeChunk, response: ArrayBuffer, endianness: Endianness = ENDIANNESS) {
-
-  // decode fpzip 
 
   sendWorkerMessage('fpzip_decompress', {
     buffer: response,
