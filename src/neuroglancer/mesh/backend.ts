@@ -19,9 +19,11 @@ import {Chunk, ChunkSource} from 'neuroglancer/chunk_manager/backend';
 import {ChunkPriorityTier, ChunkState} from 'neuroglancer/chunk_manager/base';
 import {ChunkedGraphLayer} from 'neuroglancer/sliceview/chunked_graph/backend';
 import {FRAGMENT_SOURCE_RPC_ID, MESH_LAYER_RPC_ID} from 'neuroglancer/mesh/base';
+import {PerspectiveViewRenderLayer, PerspectiveViewState} from 'neuroglancer/perspective_view/backend';
 import {SegmentationLayerSharedObjectCounterpart} from 'neuroglancer/segmentation_display_state/backend';
 import {getObjectKey} from 'neuroglancer/segmentation_display_state/base';
-import {forEachVisibleSegment3D, Bounds} from 'neuroglancer/segmentation_display_state/base';
+import {Bounds, forEachVisibleSegment3D} from 'neuroglancer/segmentation_display_state/base';
+import {WatchableSet} from 'neuroglancer/trackable_value';
 import {CancellationToken} from 'neuroglancer/util/cancellation';
 import {convertEndian32, Endianness} from 'neuroglancer/util/endian';
 import {vec3} from 'neuroglancer/util/geom';
@@ -201,7 +203,7 @@ export function computeVertexNormals(positions: Float32Array, indices: Uint32Arr
  * array.
  */
 export function decodeVertexPositionsAndIndices(
-    chunk: {vertexPositions: Float32Array | null, indices: Uint32Array | null},
+    chunk: {vertexPositions: Float32Array|null, indices: Uint32Array|null},
     verticesPerPrimitive: number, data: ArrayBuffer, endianness: Endianness,
     vertexByteOffset: number, numVertices: number, indexByteOffset?: number,
     numPrimitives?: number) {
@@ -357,7 +359,8 @@ export class FragmentSource extends ChunkSource {
 }
 
 @registerSharedObject(MESH_LAYER_RPC_ID)
-export class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
+export class MeshLayer extends SegmentationLayerSharedObjectCounterpart implements
+    PerspectiveViewRenderLayer {
   source: MeshSource;
   chunkedGraph: ChunkedGraphLayer|null;
   private requestedChildChunks: Map<string, { add: Uint64[], delete: Uint64[] }>;
@@ -365,6 +368,9 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
   private debouncedHandleChildChunks = debounce(() => {
     this.handleChildChunks();
   }, 100);
+
+  viewStates = new WatchableSet<PerspectiveViewState>();
+  private viewStatesDisposers = new Map<PerspectiveViewState, () => void>();
 
   constructor(rpc: RPC, options: any) {
     super(rpc, options);
@@ -375,6 +381,34 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
     }));
 
     this.requestedChildChunks = new Map<string, { add: Uint64[], delete: Uint64[] }>();
+
+    const scheduleUpdateChunkPriorities = () => {
+      this.chunkManager.scheduleUpdateChunkPriorities();
+    };
+    this.registerDisposer(this.viewStates.changed.add(() => {
+      const {viewStatesDisposers} = this;
+      const {viewStates} = this;
+      for (const [viewState, disposer] of viewStatesDisposers) {
+        if (!viewStates.has(viewState)) {
+          disposer();
+        }
+      }
+      for (const viewState of viewStates) {
+        if (!viewStatesDisposers.has(viewState)) {
+          viewState.viewport.changed.add(scheduleUpdateChunkPriorities);
+          viewState.visibility.changed.add(scheduleUpdateChunkPriorities);
+          viewStatesDisposers.set(viewState, () => {
+            viewState.viewport.changed.remove(scheduleUpdateChunkPriorities);
+            viewState.visibility.changed.remove(scheduleUpdateChunkPriorities);
+          });
+        }
+      }
+    }));
+    this.registerDisposer(() => {
+      for (const disposer of this.viewStatesDisposers.values()) {
+        disposer();
+      }
+    });
   }
 
   private handleChildChunks() {
