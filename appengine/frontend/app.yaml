@@ -28,6 +28,7 @@ handlers:
 - url: /nbind.wasm
   static_files: static/nbind.wasm
   upload: static/nbind.wasm
+  mime_type: application/wasm
   login: required
   secure: always
   redirect_http_response_code: 301
