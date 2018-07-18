@@ -25,6 +25,13 @@ handlers:
   secure: always
   redirect_http_response_code: 301
 
+- url: /nbind.wasm
+  static_files: static/nbind.wasm
+  upload: static/nbind.wasm
+  login: required
+  secure: always
+  redirect_http_response_code: 301
+
 - url: /
   static_dir: static
   login: required
