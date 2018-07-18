@@ -21,8 +21,8 @@ script:
 after_success:
 - sudo apt-get -qq update;
 - sudo apt-get install -y oracle-java8-set-default
-- npm run build-python-min
-- cp -r ./dist/python-min appengine/frontend/static/
+- npm run build-python
+- cp -r ./dist/python-dev appengine/frontend/static/
 - cp ./src/neuroglancer/sliceview/backend_chunk_decoders/nbind.wasm appengine/frontend/static/
 deploy:
 - provider: gae
