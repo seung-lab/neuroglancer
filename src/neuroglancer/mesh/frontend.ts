@@ -26,7 +26,7 @@ import {getObjectId} from 'neuroglancer/util/object_id';
 import {Buffer} from 'neuroglancer/webgl/buffer';
 import {GL} from 'neuroglancer/webgl/context';
 import {ShaderBuilder, ShaderModule, ShaderProgram} from 'neuroglancer/webgl/shader';
-import {setVec4FromUint32} from 'neuroglancer/webgl/shader_lib';
+import {setVec4FromUint32, glsl_random} from 'neuroglancer/webgl/shader_lib';
 import {registerSharedObjectOwner, RPC} from 'neuroglancer/worker_rpc';
 
 export class MeshShaderManager {
@@ -38,23 +38,73 @@ export class MeshShaderManager {
     builder.addAttribute('highp vec3', 'aVertexPosition');
     builder.addAttribute('highp vec3', 'aVertexNormal');
     builder.addVarying('highp vec4', 'vColor');
+    builder.addVarying('highp vec3', 'vNormal');
+    builder.addVarying('highp vec3', 'vPositionWorld');
+    builder.addVarying('highp vec3', 'vPositionEye');
+    builder.addVarying('highp vec3', 'vLightDir');
     builder.addUniform('highp vec4', 'uLightDirection');
     builder.addUniform('highp vec4', 'uColor');
-    builder.addUniform('highp mat4', 'uModelMatrix');
-    builder.addUniform('highp mat4', 'uProjection');
+    builder.addUniform('highp mat4', 'uObjectMatrix');
+    builder.addUniform('highp mat4', 'uModelViewMatrix');
+    builder.addUniform('highp mat4', 'uProjectionMatrix');
     builder.addUniform('highp vec4', 'uPickID');
+    builder.addFragmentCode(glsl_random);
     builder.setVertexMain(`
-gl_Position = uProjection * (uModelMatrix * vec4(aVertexPosition, 1.0));
-vec3 normal = (uModelMatrix * vec4(aVertexNormal, 0.0)).xyz;
-float lightingFactor = abs(dot(normal, uLightDirection.xyz)) + uLightDirection.w;
+vPositionWorld = aVertexPosition.xyz;
+vPositionEye = (uModelViewMatrix * uObjectMatrix * vec4(aVertexPosition, 1.0)).xyz;
+gl_Position = uProjectionMatrix * (uModelViewMatrix * uObjectMatrix * vec4(aVertexPosition, 1.0));
+vNormal = normalize((uModelViewMatrix * uObjectMatrix * vec4(aVertexNormal, 0.0)).xyz);
+float lightingFactor = abs(dot(vNormal, uLightDirection.xyz)) + uLightDirection.w;
+vLightDir = (uModelViewMatrix * uObjectMatrix * vec4(uLightDirection.xyz, 0.0)).xyz;
 vColor = vec4(lightingFactor * uColor.rgb, uColor.a);
 `);
-    builder.setFragmentMain(`emit(vColor, uPickID);`);
+    builder.setFragmentMain(`
+const float LIGHT_INTENSITY = 0.25;
+const vec3 RED = vec3(1.0, 0.7, 0.7) * LIGHT_INTENSITY;
+const vec3 ORANGE = vec3(1.0, 0.67, 0.43) * LIGHT_INTENSITY;
+const vec3 BLUE = vec3(0.54, 0.77, 1.0) * LIGHT_INTENSITY;
+const vec3 WHITE = vec3(1.2, 1.07, 0.98) * LIGHT_INTENSITY;
+
+vec3 normal = normalize(vNormal);
+vec3 eye = -normalize(vPositionEye.xyz);
+vec3 light = normalize(vec3(0.0, 1.0, 2.0));
+
+// Compute curvature for fake ambient occlusion
+vec3 dx = dFdx(normal);
+vec3 dy = dFdy(normal);
+vec3 xneg = normal - dx;
+vec3 xpos = normal + dx;
+vec3 yneg = normal - dy;
+vec3 ypos = normal + dy;
+float curv = cross(xneg, xpos).y - cross(yneg, ypos).x;
+
+// Bump mapping based on procedural noise texture
+vec3 noise = getNormal(vPositionWorld / 500.0);
+normal += 0.3*noise;
+normal = normalize(normal);
+
+float NdotL = dot(normal, light);
+float NdotE = dot(normal, eye);
+
+float ambient = clamp(0.25 + 0.6*curv, 0.0, 0.25);
+float diffuse = pow(abs(NdotL), 1.0 / 2.2);
+float fresnel = pow(1.0 - max(NdotE, 0.0), 2.5) * 0.45;
+
+float specular1 = pow(max(0.0, dot(light, reflect(-eye, normal))), 8.0) * 0.64;
+normal = normalize(normal + light * 0.675);
+float specular2 = pow(max(0.0, dot(light, reflect(-eye, normal))), 80.0) * 1.5;
+
+vec3 col = mix(ambient * uColor.rgb, vec3(1.0), fresnel) + 0.6 * diffuse * uColor.rgb + specular1 * WHITE + specular2 * WHITE;
+
+col = clamp(col, 0.0, 1.0);
+emit(vec4(vec3(col), 1.0), uPickID);
+`);
   }
 
   beginLayer(gl: GL, shader: ShaderProgram, renderContext: PerspectiveViewRenderContext) {
-    let {dataToDevice, lightDirection, ambientLighting, directionalLighting} = renderContext;
-    gl.uniformMatrix4fv(shader.uniform('uProjection'), false, dataToDevice);
+    let {dataToViewport, viewportToDevice, lightDirection, ambientLighting, directionalLighting} = renderContext;
+    gl.uniformMatrix4fv(shader.uniform('uModelViewMatrix'), false, dataToViewport);
+    gl.uniformMatrix4fv(shader.uniform('uProjectionMatrix'), false, viewportToDevice);
     let lightVec = <vec3>this.tempLightVec;
     vec3.scale(lightVec, lightDirection, directionalLighting);
     lightVec[3] = ambientLighting;
@@ -70,7 +120,7 @@ vColor = vec4(lightingFactor * uColor.rgb, uColor.a);
   }
 
   beginObject(gl: GL, shader: ShaderProgram, objectToDataMatrix: mat4) {
-    gl.uniformMatrix4fv(shader.uniform('uModelMatrix'), false, objectToDataMatrix);
+    gl.uniformMatrix4fv(shader.uniform('uObjectMatrix'), false, objectToDataMatrix);
   }
 
   getShader(gl: GL, emitter: ShaderModule) {

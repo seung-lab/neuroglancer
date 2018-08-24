@@ -555,3 +555,67 @@ float divmod(uint32_t dividend, float divisor, out uint32_t quotient) {
 }
 `
 ];
+
+
+/*
+"Wet stone" by Alexander Alekseev aka TDM - 2014
+License Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
+Contact: tdmaav@gmail.com
+https://www.shadertoy.com/view/ldSSzV
+*/
+
+export var glsl_random = `
+float hash12(vec2 p) {
+  float h = dot(p, vec2(127.1, 311.7));
+  return fract(sin(h) * 437.545);
+}
+
+float noise_3(in vec3 p) {
+  vec3 i = floor(p);
+  vec3 f = fract(p);
+  vec3 u = f * f * (3.0 - 2.0 * f);
+
+  vec2 ii = i.xy + i.z * vec2(5.0);
+  float a = hash12( ii + vec2(0.0, 0.0) );
+  float b = hash12( ii + vec2(1.0, 0.0) );
+  float c = hash12( ii + vec2(0.0, 1.0) );
+  float d = hash12( ii + vec2(1.0, 1.0) );
+  float v1 = mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+
+  ii += vec2(5.0);
+  a = hash12( ii + vec2(0.0, 0.0) );
+  b = hash12( ii + vec2(1.0, 0.0) );
+  c = hash12( ii + vec2(0.0, 1.0) );
+  d = hash12( ii + vec2(1.0, 1.0) );
+  float v2 = mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+
+  return max(mix(v1, v2, u.z), 0.0);
+}
+
+float fbm3_high(vec3 p, float a, float f) {
+  float ret = 0.0;
+  float amp = 1.0;
+  float frq = 1.0;
+  for(int i = 0; i < 4; i++) {
+    float n = pow(noise_3(p * frq), 2.0);
+    ret += n * amp;
+    frq *= f;
+    amp *= a * pow(n, 0.2);
+  }
+  return ret;
+}
+
+float getDisplacement(vec3 p) {
+  const float DISPLACEMENT = 0.1;
+  return fbm3_high(p*4.0,0.4,2.96) * DISPLACEMENT;
+}
+
+vec3 getNormal(vec3 p) {
+  const float EPSILON = 1e-3;
+  vec3 n;
+  n.x = getDisplacement(vec3(p.x + EPSILON, p.y, p.z));
+  n.y = getDisplacement(vec3(p.x, p.y + EPSILON, p.z));
+  n.z = getDisplacement(vec3(p.x, p.y, p.z + EPSILON));
+  return normalize(n - getDisplacement(p));
+}
+`;

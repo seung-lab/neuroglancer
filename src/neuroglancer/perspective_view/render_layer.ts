@@ -21,7 +21,9 @@ import {ShaderModule} from 'neuroglancer/webgl/shader';
 import {SharedObject} from 'neuroglancer/worker_rpc';
 
 export interface PerspectiveViewRenderContext {
-  dataToDevice: mat4;
+  dataToViewport: mat4;  // ModelView
+  viewportToDevice: mat4;  // Projection
+  dataToDevice: mat4;  // ModelViewProjection
   lightDirection: vec3;
   ambientLighting: number;
   directionalLighting: number;
