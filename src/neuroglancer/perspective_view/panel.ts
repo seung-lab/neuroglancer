@@ -159,8 +159,9 @@ export class PerspectivePanel extends RenderedDataPanel {
         }));
   })();
   projectionMat = mat4.create();
-  inverseProjectionMat = mat4.create();
+  inverseModelViewProjectionMat = mat4.create();
   modelViewMat = mat4.create();
+  modelViewProjectionMat = mat4.create();
   width = 0;
   height = 0;
   protected pickIDs = new PickIDManager();
@@ -218,14 +219,14 @@ export class PerspectivePanel extends RenderedDataPanel {
     registerActionListener(element, 'translate-via-mouse-drag', (e: ActionEvent<MouseEvent>) => {
       startRelativeMouseDrag(e.detail, (_event, deltaX, deltaY) => {
         const temp = tempVec3;
-        const {projectionMat} = this;
+        const {modelViewProjectionMat} = this;
         const {width, height} = this;
         const {position} = this.viewer.navigationState;
         const pos = position.spatialCoordinates;
-        vec3.transformMat4(temp, pos, projectionMat);
+        vec3.transformMat4(temp, pos, modelViewProjectionMat);
         temp[0] = 2 * deltaX / width;
         temp[1] = -2 * deltaY / height;
-        vec3.transformMat4(pos, temp, this.inverseProjectionMat);
+        vec3.transformMat4(pos, temp, this.inverseModelViewProjectionMat);
         position.changed.dispatch();
       });
     });
@@ -316,11 +317,10 @@ export class PerspectivePanel extends RenderedDataPanel {
     let viewOffset = vec3.set(tempVec3, 0, 0, zOffsetAmount);
     mat4.translate(modelViewMat, modelViewMat, viewOffset);
 
-    let modelViewMatInv = tempMat4;
-    mat4.invert(modelViewMatInv, modelViewMat);
+    mat4.invert(modelViewMat, modelViewMat);
 
-    mat4.multiply(projectionMat, projectionMat, modelViewMatInv);
-    mat4.invert(this.inverseProjectionMat, projectionMat);
+    mat4.multiply(this.modelViewProjectionMat, projectionMat, modelViewMat);
+    mat4.invert(this.inverseModelViewProjectionMat, this.modelViewProjectionMat);
   }
 
   viewportChanged() {
@@ -395,7 +395,7 @@ export class PerspectivePanel extends RenderedDataPanel {
     out[0] = 2.0 * glWindowX / width - 1.0;
     out[1] = 2.0 * glWindowY / height - 1.0;
     out[2] = 2.0 * glWindowZ - 1.0;
-    vec3.transformMat4(out, out, this.inverseProjectionMat);
+    vec3.transformMat4(out, out, this.inverseModelViewProjectionMat);
     this.pickIDs.setMouseState(
         mouseState,
         offscreenFramebuffer.readPixelAsUint32(OffscreenTextures.PICK, glWindowX, glWindowY));
@@ -464,7 +464,9 @@ export class PerspectivePanel extends RenderedDataPanel {
     let pickIDs = this.pickIDs;
     pickIDs.clear();
     let renderContext: PerspectiveViewRenderContext = {
-      dataToDevice: projectionMat,
+      dataToViewport: this.modelViewMat,
+      viewportToDevice: projectionMat,
+      dataToDevice: this.modelViewProjectionMat,
       lightDirection: lightingDirection,
       ambientLighting: ambient,
       directionalLighting: directional,
@@ -649,16 +651,16 @@ export class PerspectivePanel extends RenderedDataPanel {
   protected drawAxisLines() {
     const temp = tempVec3;
     const temp2 = tempVec3b;
-    const {projectionMat} = this;
+    const {modelViewProjectionMat} = this;
     const {position} = this.viewer.navigationState;
     const pos = position.spatialCoordinates;
-    vec3.transformMat4(temp, pos, projectionMat);
+    vec3.transformMat4(temp, pos, modelViewProjectionMat);
     temp[0] = 0.5;
-    vec3.transformMat4(temp2, temp, this.inverseProjectionMat);
+    vec3.transformMat4(temp2, temp, this.inverseModelViewProjectionMat);
     const length0 = vec3.distance(temp2, pos);
     temp[0] = 0;
     temp[1] = 0.5;
-    vec3.transformMat4(temp2, temp, this.inverseProjectionMat);
+    vec3.transformMat4(temp2, temp, this.inverseModelViewProjectionMat);
     const length1 = vec3.distance(temp2, pos);
 
     let {gl} = this;
@@ -677,7 +679,7 @@ export class PerspectivePanel extends RenderedDataPanel {
     mat[13] = center[1];
     mat[14] = center[2];
     mat[15] = 1;
-    mat4.multiply(mat, this.projectionMat, mat);
+    mat4.multiply(mat, this.modelViewProjectionMat, mat);
 
     gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
     this.axesLineHelper.draw(mat, false);
