@@ -29,7 +29,8 @@ import {GL_BLEND, GL_COLOR_BUFFER_BIT, GL_ONE_MINUS_SRC_ALPHA, GL_SCISSOR_TEST, 
 import {FramebufferConfiguration, makeTextureBuffers, OffscreenCopyHelper} from 'neuroglancer/webgl/offscreen';
 import {ShaderBuilder, ShaderModule} from 'neuroglancer/webgl/shader';
 import {ScaleBarTexture, TrackableScaleBarOptions} from 'neuroglancer/widget/scale_bar';
-import {Annotation, getAnnotationTypeHandler} from 'neuroglancer/annotation';
+import {Annotation} from 'neuroglancer/annotation';
+import {getAnnotationTypeRenderHandler} from 'neuroglancer/annotation/type_handler'
 
 
 export interface SliceViewerState extends RenderedDataViewerState {
@@ -155,18 +156,21 @@ export class SliceViewPanel extends RenderedDataPanel {
           let annotationRef = annotationLayer.source.getReference(selectedAnnotationId)!;
           let ann = <Annotation>annotationRef.value
           
-          const handler = getAnnotationTypeHandler(ann.type)
-          let point = handler.getClosestPoint(ann, voxelSize, mouseState.position);
-
-          if (mouseState.updateUnconditionally()) {
-            startRelativeMouseDrag(e.detail, (_event, deltaX, deltaY) => {
-              voxelSize.spatialFromVoxel(point,point);
-              vec3.transformMat4(point, point, this.sliceView.dataToViewport);
-              vec3.set(point, point[0]-deltaX, point[1]-deltaY, point[2]);
-              vec3.transformMat4(point, point, this.sliceView.viewportToData);
-              voxelSize.voxelFromSpatial(point,point);
-              annotationLayer.source.changed.dispatch();
-            });
+          //const renderHandler = getAnnotationTypeRenderHandler(ann.type)
+          console.log(mouseState.pickedOffset)
+          
+          // if (mouseState.updateUnconditionally()) {
+          //   startRelativeMouseDrag(e.detail, (_event, deltaX, deltaY) => {
+          //     voxelSize.spatialFromVoxel(point,point);
+          //     vec3.transformMat4(point, point, this.sliceView.dataToViewport);
+          //     vec3.set(point, point[0]-deltaX, point[1]-deltaY, point[2]);
+          //     vec3.transformMat4(point, point, this.sliceView.viewportToData);
+          //     voxelSize.voxelFromSpatial(point,point);
+          //     annotationLayer.source.changed.dispatch();
+          //   },
+          //   (_event) => {
+              
+          //   });
          }
        }
     }
