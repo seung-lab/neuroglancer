@@ -420,11 +420,10 @@ registerAnnotationTypeRenderHandler(AnnotationType.AXIS_ALIGNED_BOUNDING_BOX, {
       snapPositionToCorner(repPoint, objectToData, corners, partIndex);
     } else if (partIndex >= EDGES_PICK_OFFSET && partIndex < FACES_PICK_OFFSET) {
       // for edges we will pick cornerA to move
-      // let edgeCorners = getEdgeCorners(corners, partIndex - EDGES_PICK_OFFSET);
-      // }
-      //
+      let edgeCorners = getEdgeCorners(corners, partIndex - EDGES_PICK_OFFSET);
+  
       // FIXME: can't figure out how to resize based upon edge grabbed
-      vec3.transformMat4(repPoint, ann.pointA, objectToData);
+      vec3.transformMat4(repPoint, edgeCorners.cornerA, objectToData);
       // snapPositionToCorner(repPoint, objectToData, corners, 5);
     }
     else{ // for now faces will move the whole object so pick the first corner
@@ -432,7 +431,7 @@ registerAnnotationTypeRenderHandler(AnnotationType.AXIS_ALIGNED_BOUNDING_BOX, {
     }
     return repPoint
   }, 
-  updateViaRepresentativePoint: (oldAnnotation: AxisAlignedBoundingBox, position: vec3, dataToObject: mat4, partIndex: number) => {
+  updateViaRepresentativePoint: (oldAnnotation: AxisAlignedBoundingBox, position: vec3, dataToObject: mat4, partIndex: number,data, offset) => {
     let newPt = vec3.transformMat4(vec3.create(), position, dataToObject);
     let baseBox = <AxisAlignedBoundingBox>{
       id: '',
@@ -452,39 +451,13 @@ registerAnnotationTypeRenderHandler(AnnotationType.AXIS_ALIGNED_BOUNDING_BOX, {
       // picked a corner
       console.log('move corner')
     } else if (partIndex >= EDGES_PICK_OFFSET && partIndex < FACES_PICK_OFFSET) {
-      // for edges we will pick cornerA to move
-      // switch (partIndex - EDGES_PICK_OFFSET) {
-      //   case 1:
-      //     baseBox.pointA = newPt;
-      //     baseBox.pointB = oldAnnotation.pointB;
-      //     break;
-      //   case 5:
-      //     baseBox.pointA = newPt;
-      //     baseBox.pointB = oldAnnotation.pointB;
-      //     break;
-      //   case 9: 
-      //     baseBox.pointA = newPt;
-      //     baseBox.pointB = oldAnnotation.pointB;
-      //     break;
-      //   case 6:
-      //     baseBox.pointA = oldAnnotation.pointA;
-      //     baseBox.pointB = newPt;
-      //     break;
-      //   case 3:
-      //     baseBox.pointA = oldAnnotation.pointA;
-      //     baseBox.pointB = newPt;
-      //     break;
-      //   case 10: 
-      //     baseBox.pointA = oldAnnotation.pointA;
-      //     baseBox.pointB = newPt;
-      //     break;
-      //   default:
-      //     baseBox.pointA = newPt;
-      //     baseBox.pointB = oldAnnotation.pointB;
-      // }
-      let delta = vec3.sub(vec3.create(), oldAnnotation.pointB, oldAnnotation.pointA);
+      const corners = new Float32Array(data, offset, 6);
+      let edgeIndex = partIndex - EDGES_PICK_OFFSET
+      //let edgeCornersA = getEdgeCorners(corners, edgeIndex);
+      let edgeCornersB = getEdgeCorners(corners, edgeIndex + 3 - edgeIndex%4);
+      // FIXME: can't figure out how to resize based upon edge grabbed
       baseBox.pointA = newPt;
-      baseBox.pointB = vec3.add(vec3.create(), newPt, delta);
+      baseBox.pointB = vec3.transformMat4(vec3.create(), edgeCornersB.cornerB, dataToObject);
     }
     else{ // for now faces will move the whole object so pick the first corner
       let delta = vec3.sub(vec3.create(), oldAnnotation.pointB, oldAnnotation.pointA);
