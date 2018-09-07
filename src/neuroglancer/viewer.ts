@@ -458,7 +458,7 @@ export class Viewer extends RefCounted implements ViewerState {
       topRow.appendChild(button);
     }
     {
-      const button = makeTextIconButton('🔗', 'Post JSON to state server');
+      const button = makeTextIconButton('☁️', 'Post JSON to state server');
       this.registerEventListener(button, 'click', () => {
         this.postJsonState();
       });
@@ -632,6 +632,7 @@ export class Viewer extends RefCounted implements ViewerState {
             .replace(new RegExp('[?&]' + parameter + '=[^&#]*(#.*)?$'), '$1')
             .replace(new RegExp('([?&])' + parameter + '=[^&]*&'), '$1');
         }
+        
         RemoveParameterFromUrl(window.location.search, 'json_url');
       }
       catch (HttpError){
