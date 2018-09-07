@@ -331,7 +331,7 @@ export class Viewer extends RefCounted implements ViewerState {
     state.add('jsonStateServer', this.jsonStateServer);
     state.add('selectedLayer', this.selectedLayer);
     state.add('crossSectionBackgroundColor', this.crossSectionBackgroundColor);
-    
+
     this.registerDisposer(this.navigationState.changed.add(() => {
       this.handleNavigationStateChanged();
     }));
@@ -443,7 +443,6 @@ export class Viewer extends RefCounted implements ViewerState {
     topRow.appendChild(annotationToolStatus.element);
     this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
         this.uiControlVisibility.showAnnotationToolStatus, annotationToolStatus.element));
-    
     
     {
       const button = makeTextIconButton('{}', 'Edit JSON state');
