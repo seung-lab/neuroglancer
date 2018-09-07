@@ -622,20 +622,17 @@ export class Viewer extends RefCounted implements ViewerState {
     if (urlParams.has('json_url')){
       
       let json_url = urlParams.get('json_url')
-      console.log(json_url)
+      function RemoveParameterFromUrl(url: string, parameter: string) {
+        return url
+          .replace(new RegExp('[?&]' + parameter + '=[^&#]*(#.*)?$'), '$1')
+          .replace(new RegExp('([?&])' + parameter + '=[^&]*&'), '$1');
+      }
+      history.replaceState(null,'',RemoveParameterFromUrl(window.location.href, 'json_url'))
       try{
-        function RemoveParameterFromUrl(url: string, parameter: string) {
-          return url
-            .replace(new RegExp('[?&]' + parameter + '=[^&#]*(#.*)?$'), '$1')
-            .replace(new RegExp('([?&])' + parameter + '=[^&]*&'), '$1');
-        }
+        
         sendHttpRequest( openHttpRequest(json_url!), 'json').then(response => {
           this.state.restoreState(response)
-          console.log( RemoveParameterFromUrl(window.location.href, 'json_url'));
-          history.replaceState(null,'',RemoveParameterFromUrl(window.location.href, 'json_url'))
-        })
-        
-        
+        })  
       }
       catch (HttpError){
         console.log('failed to load from: ' + json_url)
