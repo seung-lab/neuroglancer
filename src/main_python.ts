@@ -163,6 +163,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
   const hashBinding = viewer.registerDisposer(new UrlHashBinding(viewer.state));
   hashBinding.updateFromUrlHash();
+  viewer.loadFromJsonUrl();
 
   let serverConnection: ServerConnection;
   if (viewer.stateServer.value === '') {
@@ -184,4 +185,6 @@ window.addEventListener('DOMContentLoaded', () => {
 
   bindDefaultCopyHandler(viewer);
   bindDefaultPasteHandler(viewer);
+
+
 });
