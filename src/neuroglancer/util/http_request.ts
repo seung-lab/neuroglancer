@@ -100,6 +100,7 @@ export function sendHttpRequest(
         reject(HttpError.fromXhr(xhr));
       }
     };
+    xhr.withCredentials = true;
     xhr.send();
   });
 }
