@@ -97,6 +97,7 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
   dataType: DataType;
   numChannels: number;
   volumeType: VolumeType;
+  meshManifest: string|undefined;
   mesh: string|undefined;
   skeleton: string|undefined;
   graph: GraphInfo|undefined;
@@ -142,12 +143,31 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
   }
 
   getMeshSource() {
-    let {mesh} = this;
+    let {mesh, meshManifest} = this;
     if (mesh === undefined) {
       return null;
     }
-    return getShardedMeshSource(
-        this.chunkManager, {baseUrls: this.baseUrls, path: `${this.path}/${mesh}`, lod: 0});
+    if (meshManifest === undefined) {
+      return getShardedMeshSource(
+        this.chunkManager, {
+          meshManifestBaseUrls: this.baseUrls,
+          meshFragmentBaseUrls: this.baseUrls,
+          meshManifestPath: `${this.path}/${mesh}`,
+          meshFragmentPath: `${this.path}/${mesh}`,
+          lod: 0
+        }
+      );
+    } else {
+      return getShardedMeshSource(
+        this.chunkManager, {
+          meshManifestBaseUrls: [meshManifest],
+          meshFragmentBaseUrls: this.baseUrls,
+          meshManifestPath: '',
+          meshFragmentPath: `${this.path}/${mesh}`,
+          lod: 0
+        }
+      );
+    }
   }
 
   getSkeletonSource() {
@@ -165,6 +185,7 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
     this.dataType = verifyObjectProperty(obj, 'data_type', x => verifyEnumString(x, DataType));
     this.numChannels = verifyObjectProperty(obj, 'num_channels', verifyPositiveInt);
     this.volumeType = verifyObjectProperty(obj, 'type', x => verifyEnumString(x, VolumeType));
+    this.meshManifest = verifyObjectProperty(obj, 'mesh_manifest', verifyOptionalString);
     this.mesh = verifyObjectProperty(obj, 'mesh', verifyOptionalString);
     this.skeleton = verifyObjectProperty(obj, 'skeletons', verifyOptionalString);
     this.graph = verifyObjectProperty(obj, 'graph', x => x === undefined ? x : new GraphInfo(x));
@@ -252,8 +273,16 @@ export function getShardedVolume(chunkManager: ChunkManager, baseUrls: string[],
 }
 
 export function getMeshSource(chunkManager: ChunkManager, url: string) {
+  // TODO: Enable users to overwrite manifest/fragment source separately
+  // by modifying the JSON state - currently only possible using the info file
   const [baseUrls, path] = parseSpecialUrl(url);
-  return getShardedMeshSource(chunkManager, {baseUrls, path, lod: 0});
+  return getShardedMeshSource(chunkManager, {
+    meshManifestBaseUrls: baseUrls,
+    meshFragmentBaseUrls: baseUrls,
+    meshManifestPath: path,
+    meshFragmentPath: path,
+    lod: 0
+  });
 }
 
 export function getVolume(chunkManager: ChunkManager, url: string) {

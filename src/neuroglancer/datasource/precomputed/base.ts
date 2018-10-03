@@ -39,8 +39,10 @@ export class ChunkedGraphSourceParameters {
 
 
 export class MeshSourceParameters {
-  baseUrls: string[];
-  path: string;
+  meshManifestBaseUrls: string[];
+  meshFragmentBaseUrls: string[];
+  meshManifestPath: string;
+  meshFragmentPath: string;
   lod: number;
 
   static RPC_ID = 'precomputed/MeshSource';
