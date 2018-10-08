@@ -234,6 +234,8 @@ export class SegmentationUserLayer extends Base {
             if (chunkedGraphSources) {
               this.chunkedGraphLayer = new ChunkedGraphLayer(this.manager.chunkManager, this.chunkedGraphUrl, chunkedGraphSources, this.displayState);
               this.addRenderLayer(this.chunkedGraphLayer);
+              this.tabs.add('graph', {label: 'Graph', order: -75, getter: () =>
+                  new GraphControlsTab(this)});
 
               // Have to wait for graph server initialization to fetch agglomerations
               this.displayState.segmentEquivalences.clear();
@@ -588,6 +590,20 @@ function makeSkeletonShaderCodeWidget(layer: SegmentationUserLayer) {
   });
 }
 
+class GraphControlsTab extends Tab {
+  chunkedGraphWidget: ChunkedGraphWidget|undefined;
+
+  constructor(public layer: SegmentationUserLayer) {
+    super();
+    const {element} = this;
+    if (layer.chunkedGraphUrl) {
+      const chunkedGraphWidget =
+          this.registerDisposer(new ChunkedGraphWidget({url: layer.chunkedGraphUrl || ''}));
+      element.appendChild(chunkedGraphWidget.element);
+    }
+  }
+}
+
 class DisplayOptionsTab extends Tab {
   visibleSegmentWidget = this.registerDisposer(new SegmentSetWidget(this.layer.displayState));
   addSegmentWidget = this.registerDisposer(new Uint64EntryWidget());
@@ -598,7 +614,6 @@ class DisplayOptionsTab extends Tab {
   saturationWidget = this.registerDisposer(new RangeWidget(this.layer.displayState.saturation));
   objectAlphaWidget = this.registerDisposer(new RangeWidget(this.layer.displayState.objectAlpha));
   codeWidget: ShaderCodeWidget|undefined;
-  chunkedGraphWidget: ChunkedGraphWidget|undefined;
 
   constructor(public layer: SegmentationUserLayer) {
     super();
@@ -636,12 +651,6 @@ class DisplayOptionsTab extends Tab {
       label.appendChild(document.createTextNode('Hide segment ID 0'));
       label.appendChild(checkbox.element);
       element.appendChild(label);
-    }
-
-    if (layer.chunkedGraphUrl && this.chunkedGraphWidget == null) {
-      const chunkedGraphWidget =
-          this.registerDisposer(new ChunkedGraphWidget({url: layer.chunkedGraphUrl || ''}));
-      element.appendChild(chunkedGraphWidget.element);
     }
 
     this.addSegmentWidget.element.classList.add('add-segment');
