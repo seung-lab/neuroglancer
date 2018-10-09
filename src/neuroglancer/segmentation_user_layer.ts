@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {SegmentSelection, ChunkedGraphLayer} from 'neuroglancer/sliceview/chunked_graph/frontend';
+import {GraphOperationLayer} from 'neuroglancer/graph_operation/frontend';
 import {UserLayer} from 'neuroglancer/layer';
 import {LayerListSpecification, registerLayerType, registerVolumeLayerType} from 'neuroglancer/layer_specification';
 import {MeshSource} from 'neuroglancer/mesh/frontend';
@@ -26,6 +26,7 @@ import {SegmentationDisplayState3D, SegmentSelectionState, Uint64MapEntry} from 
 import {SharedDisjointUint64Sets} from 'neuroglancer/shared_disjoint_sets';
 import {SharedWatchableValue} from 'neuroglancer/shared_watchable_value';
 import {FRAGMENT_MAIN_START as SKELETON_FRAGMENT_MAIN_START, getTrackableFragmentMain, PerspectiveViewSkeletonLayer, SkeletonLayer, SkeletonLayerDisplayState, SkeletonSource, SliceViewPanelSkeletonLayer} from 'neuroglancer/skeleton/frontend';
+import {ChunkedGraphLayer, SegmentSelection} from 'neuroglancer/sliceview/chunked_graph/frontend';
 import {VolumeType} from 'neuroglancer/sliceview/volume/base';
 import {SegmentationRenderLayer, SliceViewSegmentationDisplayState} from 'neuroglancer/sliceview/volume/segmentation_renderlayer';
 import {StatusMessage} from 'neuroglancer/status';
@@ -40,7 +41,6 @@ import {parseArray, verify3dVec, verifyObjectProperty, verifyOptionalString} fro
 import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {makeWatchableShaderError} from 'neuroglancer/webgl/dynamic_shader';
-import {ChunkedGraphWidget} from 'neuroglancer/widget/chunked_graph_widget';
 import {RangeWidget} from 'neuroglancer/widget/range';
 import {SegmentSetWidget} from 'neuroglancer/widget/segment_set_widget';
 import {ShaderCodeWidget} from 'neuroglancer/widget/shader_code_widget';
@@ -94,6 +94,7 @@ export class SegmentationUserLayer extends Base {
   chunkedGraphUrl: string|null|undefined;
   meshPath: string|null|undefined;
   skeletonsPath: string|null|undefined;
+  graphOperationLayer: Borrowed<GraphOperationLayer>|undefined;
   chunkedGraphLayer: Borrowed<ChunkedGraphLayer>|undefined;
   meshLayer: Borrowed<MeshLayer>|undefined;
   skeletonLayer: Borrowed<SkeletonLayer>|undefined;
@@ -229,8 +230,7 @@ export class SegmentationUserLayer extends Base {
             if (chunkedGraphSources && this.chunkedGraphUrl) {
               this.chunkedGraphLayer = new ChunkedGraphLayer(this.manager.chunkManager, this.chunkedGraphUrl, chunkedGraphSources, this.displayState);
               this.addRenderLayer(this.chunkedGraphLayer);
-              this.tabs.add('graph', {label: 'Graph', order: -75, getter: () =>
-                  new GraphControlsTab(this)});
+              this.graphOperationLayer = new GraphOperationLayer(this);
 
               // Have to wait for graph server initialization to fetch agglomerations
               this.displayState.segmentEquivalences.clear();
@@ -421,9 +421,7 @@ export class SegmentationUserLayer extends Base {
       if (rootSegments.has(segment)) {
         rootSegments.delete(segment);
       } else if (this.chunkedGraphLayer) {
-        let coordinates = [...this.manager.layerSelectedValues.mouseState.position.values()].map((v, i) => {
-          return Math.round(v / this.manager.voxelSize.size[i]);
-        });
+        let coordinates = [...this.manager.layerSelectedValues.mouseState.position.values()];
 
         let selection = {segmentId: segment.clone(), rootId: segment.clone(), position: coordinates};
 
@@ -457,9 +455,7 @@ export class SegmentationUserLayer extends Base {
     if (segmentSelectionState.hasSelectedSegment) {
       let segment = segmentSelectionState.rawSelectedSegment;
       let root = segmentSelectionState.selectedSegment;
-      let coordinates = [...this.manager.layerSelectedValues.mouseState.position.values()].map((v, i) => {
-        return Math.round(v / this.manager.voxelSize.size[i]);
-      });
+      let coordinates = [...this.manager.layerSelectedValues.mouseState.position.values()];
 
       this.pendingGraphMod = {
         source: [{segmentId: segment.clone(), rootId: root.clone(), position: coordinates}],
@@ -474,9 +470,7 @@ export class SegmentationUserLayer extends Base {
     if (segmentSelectionState.hasSelectedSegment) {
       let segment = segmentSelectionState.rawSelectedSegment;
       let root = segmentSelectionState.selectedSegment;
-      let coordinates = [...this.manager.layerSelectedValues.mouseState.position.values()].map((v, i) => {
-        return Math.round(v / this.manager.voxelSize.size[i]);
-      });
+      let coordinates = [...this.manager.layerSelectedValues.mouseState.position.values()];
 
       this.pendingGraphMod.sink[0] = {segmentId: segment.clone(), rootId: root.clone(), position: coordinates};
       StatusMessage.showTemporaryMessage(`Selected ${segment} as sink for merge.`, 3000);
@@ -499,9 +493,7 @@ export class SegmentationUserLayer extends Base {
     if (segmentSelectionState.hasSelectedSegment) {
       let segment = segmentSelectionState.rawSelectedSegment;
       let root = segmentSelectionState.selectedSegment;
-      let coordinates = [...this.manager.layerSelectedValues.mouseState.position.values()].map((v, i) => {
-        return Math.round(v / this.manager.voxelSize.size[i]);
-      });
+      let coordinates = [...this.manager.layerSelectedValues.mouseState.position.values()];
 
       this.pendingGraphMod = {
         source: [{segmentId: segment.clone(), rootId: root.clone(), position: coordinates}],
@@ -516,9 +508,7 @@ export class SegmentationUserLayer extends Base {
     if (segmentSelectionState.hasSelectedSegment) {
       let segment = segmentSelectionState.rawSelectedSegment;
       let root = segmentSelectionState.selectedSegment;
-      let coordinates = [...this.manager.layerSelectedValues.mouseState.position.values()].map((v, i) => {
-        return Math.round(v / this.manager.voxelSize.size[i]);
-      });
+      let coordinates = [...this.manager.layerSelectedValues.mouseState.position];
 
       this.pendingGraphMod.sink[0] = {segmentId: segment.clone(), rootId: root.clone(), position: coordinates};
       StatusMessage.showTemporaryMessage(`Selected ${segment} as sink for split.`, 3000);
@@ -583,20 +573,6 @@ function makeSkeletonShaderCodeWidget(layer: SegmentationUserLayer) {
     shaderError: layer.displayState.shaderError,
     fragmentMainStartLine: SKELETON_FRAGMENT_MAIN_START,
   });
-}
-
-class GraphControlsTab extends Tab {
-  chunkedGraphWidget: ChunkedGraphWidget|undefined;
-
-  constructor(public layer: SegmentationUserLayer) {
-    super();
-    const {element} = this;
-    if (layer.chunkedGraphUrl) {
-      const chunkedGraphWidget =
-          this.registerDisposer(new ChunkedGraphWidget({url: layer.chunkedGraphUrl || ''}));
-      element.appendChild(chunkedGraphWidget.element);
-    }
-  }
 }
 
 class DisplayOptionsTab extends Tab {
