@@ -643,15 +643,19 @@ export class Viewer extends RefCounted implements ViewerState {
       console.log('no state server found');
       this.promptJsonStateServer('no state server found');
     }
+    ///   let promise = sendHttpJsonPostRequest(openHttpRequest(`${url}/1.0/graph/root`, 'POST'),
+    ///[String(selection.segmentId), ...selection.position],
+    ///'arraybuffer');
+
     // upload state to jsonStateServer (only if it's defined)
     if (this.jsonStateServer.value) {
       sendHttpJsonPostRequest(
           openHttpRequest(this.jsonStateServer.value, 'POST'), this.state.toJSON(), 'json')
           .then(response => {
-            console.log(response.uri);
+            console.log(response.text);
             history.replaceState(
                 null, '',
-                window.location.origin + window.location.pathname + '?json_url=' + response.uri);
+                window.location.origin + window.location.pathname + '?json_url=' + response.text);
           })
           // catch errors with upload and prompt the user if there was an error
           .catch(() => {
