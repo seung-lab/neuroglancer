@@ -649,12 +649,12 @@ export class Viewer extends RefCounted implements ViewerState {
 
     // upload state to jsonStateServer (only if it's defined)
     if (this.jsonStateServer.value) {
-      sendHttpJsonPostRequest(
-          openHttpRequest(this.jsonStateServer.value, 'POST'), this.state.toJSON(), 'text')
+        sendHttpJsonPostRequest(
+          openHttpRequest(this.jsonStateServer.value, 'POST'), this.state.toJSON(), 'json')
           .then(response => {
             history.replaceState(
                 null, '',
-                window.location.origin + window.location.pathname + '?json_url=' + response.text);
+                window.location.origin + window.location.pathname + '?json_url=' + response);
           })
           // catch errors with upload and prompt the user if there was an error
           .catch((err) => {
