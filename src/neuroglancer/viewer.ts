@@ -652,14 +652,14 @@ export class Viewer extends RefCounted implements ViewerState {
       sendHttpJsonPostRequest(
           openHttpRequest(this.jsonStateServer.value, 'POST'), this.state.toJSON(), 'text')
           .then(response => {
-            console.log(response.text);
             history.replaceState(
                 null, '',
                 window.location.origin + window.location.pathname + '?json_url=' + response.text);
           })
           // catch errors with upload and prompt the user if there was an error
-          .catch(() => {
+          .catch((err) => {
             console.log('entered state server not responding:', this.jsonStateServer.value);
+            console.log(err);
             this.promptJsonStateServer('state server not responding, enter a new one?');
             if (this.jsonStateServer.value) {
               this.postJsonState();
