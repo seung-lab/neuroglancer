@@ -118,13 +118,7 @@ window.addEventListener('DOMContentLoaded', () => {
   const screenshotHandler = new ScreenshotHandler(viewer);
   configState.add('screenshot', screenshotHandler.requestState);
 
-  let sharedState: Trackable|undefined = viewer.state;
   viewer.loadFromJsonUrl();
-  if (window.location.hash) {
-    const hashBinding = viewer.registerDisposer(new UrlHashBinding(viewer.state));
-    hashBinding.updateFromUrlHash();
-    sharedState = undefined;
-  }
 
   const prefetchManager = new PrefetchManager(
       viewer.display, dataSourceProvider, viewer.dataContext.addRef(), viewer.uiConfiguration);
