@@ -650,7 +650,7 @@ export class Viewer extends RefCounted implements ViewerState {
     // upload state to jsonStateServer (only if it's defined)
     if (this.jsonStateServer.value) {
       sendHttpJsonPostRequest(
-          openHttpRequest(this.jsonStateServer.value, 'POST'), this.state.toJSON(), 'json')
+          openHttpRequest(this.jsonStateServer.value, 'POST'), this.state.toJSON(), 'text')
           .then(response => {
             console.log(response.text);
             history.replaceState(
