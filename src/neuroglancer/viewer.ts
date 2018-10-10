@@ -654,6 +654,7 @@ export class Viewer extends RefCounted implements ViewerState {
         sendHttpJsonPostRequest(
           openHttpRequest(this.jsonStateServer.value, 'POST'), this.state.toJSON(), 'json')
           .then(response => {
+            console.log(response);
             history.replaceState(
                 null, '',
                 window.location.origin + window.location.pathname + '?json_url=' + response);
