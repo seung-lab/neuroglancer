@@ -208,7 +208,8 @@ export class Viewer extends RefCounted implements ViewerState {
   layerSpecification: TopLevelLayerListSpecification;
   layout: RootLayoutContainer;
 
-  jsonStateServer = new TrackableValue<string>('', validateStateServer);
+  stateServer = new TrackableValue<string>('', validateStateServer);
+  jsonStateServer = new TrackableValue<string>('', validateStateServer)
   state = new CompoundTrackable();
 
   dataContext: Owned<DataManagementContext>;
@@ -326,6 +327,7 @@ export class Viewer extends RefCounted implements ViewerState {
         'systemMemoryLimit', this.dataContext.chunkQueueManager.capacities.systemMemory.sizeLimit);
     state.add(
         'concurrentDownloads', this.dataContext.chunkQueueManager.capacities.download.itemLimit);
+    state.add('stateServer', this.stateServer);
     state.add('jsonStateServer', this.jsonStateServer);
     state.add('selectedLayer', this.selectedLayer);
     state.add('crossSectionBackgroundColor', this.crossSectionBackgroundColor);
