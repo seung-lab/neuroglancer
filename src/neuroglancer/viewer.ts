@@ -617,50 +617,55 @@ export class Viewer extends RefCounted implements ViewerState {
     if (urlParams.has('json_url')) {
       let json_url = urlParams.get('json_url');
       history.replaceState(null, '', removeParameterFromUrl(window.location.href, 'json_url'));
-      sendHttpRequest(openHttpRequest(json_url!), 'json')
+      StatusMessage
+      .forPromise(
+        sendHttpRequest(openHttpRequest(json_url!), 'json')
           .then(response => {
             this.state.restoreState(response);
-          })
-          .catch(() => {
-            console.log('failed to load from: ' + json_url);
-          });
-    }
+          }),
+              {
+                initialMessage: `Retrieving state from json_url: ${json_url}.`,
+                delay: true,
+                errorPrefix: `Error retrieving state: `,
+              });
+      }
+
   }
 
   promptJsonStateServer(message: string): void {
     let json_server_input = prompt(message, 'https://www.dynamicannotationframework.com/nglstate/post');
     if (json_server_input !== null) {
       this.jsonStateServer.value = json_server_input;
-      console.log('entered for JSON server:', this.jsonStateServer.value);
     } else {
       this.jsonStateServer.reset();
-      console.log('cancelled');
     }
   }
 
   postJsonState() {
     // if jsonStateServer is not present prompt for value and store it in state
     if (!this.jsonStateServer.value) {
-      console.log('no state server found');
       this.promptJsonStateServer('no state server found');
     }
-    ///   let promise = sendHttpJsonPostRequest(openHttpRequest(`${url}/1.0/graph/root`, 'POST'),
-    ///[String(selection.segmentId), ...selection.position],
-    ///'arraybuffer');
 
     // upload state to jsonStateServer (only if it's defined)
     if (this.jsonStateServer.value) {
+      StatusMessage
+      .forPromise(
         sendHttpJsonPostRequest(
           openHttpRequest(this.jsonStateServer.value, 'POST'), this.state.toJSON(), 'json')
           .then(response => {
             history.replaceState(
                 null, '',
                 window.location.origin + window.location.pathname + '?json_url=' + response);
+          }),
+          {
+            initialMessage: `Posting state to: ${this.jsonStateServer.value}.`,
+            delay: true,
+            errorPrefix: `Error posting state: `,
           })
           // catch errors with upload and prompt the user if there was an error
-          .catch((err) => {
-            console.log('entered state server not responding:', this.jsonStateServer.value);
-            console.log(err);
+          .catch(() => {
+            console.log('not responding');
             this.promptJsonStateServer('state server not responding, enter a new one?');
             if (this.jsonStateServer.value) {
               this.postJsonState();
