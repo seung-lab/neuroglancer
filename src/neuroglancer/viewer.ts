@@ -616,7 +616,6 @@ export class Viewer extends RefCounted implements ViewerState {
     var urlParams = new URLSearchParams(window.location.search);
     if (urlParams.has('json_url')) {
       let json_url = urlParams.get('json_url');
-      console.log(json_url);
       history.replaceState(null, '', removeParameterFromUrl(window.location.href, 'json_url'));
       sendHttpRequest(openHttpRequest(json_url!), 'json')
           .then(response => {
@@ -654,7 +653,6 @@ export class Viewer extends RefCounted implements ViewerState {
         sendHttpJsonPostRequest(
           openHttpRequest(this.jsonStateServer.value, 'POST'), this.state.toJSON(), 'json')
           .then(response => {
-            console.log(response);
             history.replaceState(
                 null, '',
                 window.location.origin + window.location.pathname + '?json_url=' + response);

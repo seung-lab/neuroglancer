@@ -39,7 +39,7 @@ export function setupDefaultViewer() {
   }));
   hashBinding.updateFromUrlHash();
   
-  viewer.loadFromJsonUrl();
+  //viewer.loadFromJsonUrl();
 
   bindDefaultCopyHandler(viewer);
   bindDefaultPasteHandler(viewer);
