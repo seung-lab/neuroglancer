@@ -251,9 +251,9 @@ export class FramebufferConfiguration<ColorBuffer extends TextureBuffer|Renderbu
       this.framebuffer.unbind();
     }
 
-    if (glWindowX > 0 
+    if (glWindowX >= 0 
         && glWindowX < gl.drawingBufferWidth
-        && glWindowY > 0
+        && glWindowY >= 0
         && glWindowY < gl.drawingBufferHeight) {
 
       return buffer;
