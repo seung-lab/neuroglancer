@@ -217,35 +217,34 @@ export class FramebufferConfiguration<ColorBuffer extends TextureBuffer|Renderbu
    * Only supports UNSIGNED_BYTE RGBA textures.
    */
   readPixel(textureIndex: number, glWindowX: number, glWindowY: number): Uint8Array {
-    let {gl} = this;
-    try {
-      this.bindSingle(textureIndex);
-      gl.readPixels(glWindowX, glWindowY, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, tempPixel);
-    } finally {
-      this.framebuffer.unbind();
-    }
-    return tempPixel;
+    return this.readPixels(textureIndex, glWindowX, glWindowY, 1, 1, tempPixel);
   }
 
   readPixels(
     textureIndex: number, glWindowX: number, glWindowY: number, 
-    width: number, height: number
+    width: number, height: number, buffer?: Uint8Array
   ) : Uint8Array {
 
     let {gl} = this;
-    let cutout = new Uint8Array(width * height * 4);
-
-    let left = Math.max(0, glWindowX - (width >> 1))
-    let bottom = Math.max(0, glWindowY - (height >> 1))
+    
+    if (!buffer) {
+      buffer = new Uint8Array(width * height * 4);
+    }
+    
+    // Appearently WebGL supports reading pixels off the 
+    // edge of the texture so we don't need to do anything
+    // fancy to correct for it.
+    let left = glWindowX - (width >> 1);
+    let bottom = glWindowY - (height >> 1);
 
     try {
       this.bindSingle(textureIndex);
-      gl.readPixels(left, bottom, width, height, gl.RGBA, gl.UNSIGNED_BYTE, cutout);
+      gl.readPixels(left, bottom, width, height, gl.RGBA, gl.UNSIGNED_BYTE, buffer);
     } finally {
       this.framebuffer.unbind();
     }
 
-    return cutout;
+    return buffer;
   }
 
   /**

@@ -125,12 +125,13 @@ v4f_fragColor = vec4(accum.rgb / accum.a, revealage);
 const PerspectiveViewStateBase = withSharedVisibility(SharedObject);
 class PerspectiveViewState extends PerspectiveViewStateBase {}
 
+// The following three variables are for cursor state.
 const ReceptiveField = { // must pick odd numbers
-  width: 57,
-  height: 57,
+  width: 23,
+  height: 23,
 };
-
 const RFSpiral = spiralSequence(ReceptiveField.width, ReceptiveField.height);
+const zData = new Uint8Array(ReceptiveField.width * ReceptiveField.height * 4);
 
 export class PerspectivePanel extends RenderedDataPanel {
   viewer: PerspectiveViewerState;
@@ -361,12 +362,13 @@ export class PerspectivePanel extends RenderedDataPanel {
     const field_height = ReceptiveField.height;
     const pixels = field_width * field_height;
 
-    let zData = offscreenFramebuffer.readPixels(
-      OffscreenTextures.Z, glWindowX, glWindowY, field_width, field_height
+    offscreenFramebuffer.readPixels(
+      OffscreenTextures.Z, glWindowX, glWindowY, 
+      field_width, field_height, zData
     );
 
-    let zDatum : number = 0;
-    let rfindex : number = 0; 
+    let zDatum = 0;
+    let rfindex = 0; 
     for (let i = 0; i < pixels; i++) {
       rfindex = RFSpiral[i];
       zDatum = unpackFloat01FromFixedPoint(
