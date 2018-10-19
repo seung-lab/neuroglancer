@@ -217,21 +217,22 @@ export class FramebufferConfiguration<ColorBuffer extends TextureBuffer|Renderbu
    * Only supports UNSIGNED_BYTE RGBA textures.
    */
   readPixel(textureIndex: number, glWindowX: number, glWindowY: number): Uint8Array {
+
     return this.readPixels(textureIndex, glWindowX, glWindowY, 1, 1, tempPixel);
   }
 
   readPixels(
-    textureIndex: number, glWindowX: number, glWindowY: number, 
+    textureIndex: number, glWindowX: number, glWindowY: number,
     width: number, height: number, buffer?: Uint8Array
   ) : Uint8Array {
 
     let {gl} = this;
-    
+
     if (!buffer) {
       buffer = new Uint8Array(width * height * 4);
     }
-    
-    // Appearently WebGL supports reading pixels off the 
+
+    // Appearently WebGL supports reading pixels off the
     // edge of the texture so we don't need to do anything
     // fancy to correct for it.
     let left = glWindowX - (width >> 1);

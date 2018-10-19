@@ -357,18 +357,18 @@ export class PerspectivePanel extends RenderedDataPanel {
     }
     let glWindowX = this.mouseX;
     let glWindowY = height - this.mouseY;
-    
+
     const field_width = ReceptiveField.width;
     const field_height = ReceptiveField.height;
     const pixels = field_width * field_height;
 
     offscreenFramebuffer.readPixels(
-      OffscreenTextures.Z, glWindowX, glWindowY, 
+      OffscreenTextures.Z, glWindowX, glWindowY,
       field_width, field_height, zData
     );
 
     let zDatum = 0;
-    let rfindex = 0; 
+    let rfindex = 0;
     for (let i = 0; i < pixels; i++) {
       rfindex = RFSpiral[i];
       zDatum = unpackFloat01FromFixedPoint(
@@ -684,8 +684,8 @@ export class PerspectivePanel extends RenderedDataPanel {
   }
 }
 
-/*  Generate a clockwise spiral around a 2D rectangular grid. 
-    Outputs Vec3s, but only x and y are used. Used for spiraling 
+/*  Generate a clockwise spiral around a 2D rectangular grid.
+    Outputs Vec3s, but only x and y are used. Used for spiraling
     out of the center of the cursor to look for objects within the
     receptive field.
 
@@ -694,7 +694,7 @@ export class PerspectivePanel extends RenderedDataPanel {
       | 1, 0, 5 |    | 3, 4, 5 |
       | 2, 3, 4 |    | 6, 7, 8 |
 
-    Renders as [4,3,6,7,8,5,2,1,0] to show how to access the 
+    Renders as [4,3,6,7,8,5,2,1,0] to show how to access the
     right hand side array in a spiral pattern.
 
     width: width of array in pixels
@@ -703,7 +703,7 @@ export class PerspectivePanel extends RenderedDataPanel {
     Note: width and height must be odd numbers
 
     We also apply a circularizing operator to filter out elements of
-    the spiral that are outside a given radius from the center, 
+    the spiral that are outside a given radius from the center,
     otherwise the cursor will be more sensitive along diagonals.
 */
 function spiralSequence(width: number, height: number) : Uint32Array {
@@ -735,11 +735,11 @@ function spiralSequence(width: number, height: number) : Uint32Array {
 
     for (let covered = 0; covered < pixels; covered++) {
       sequence[covered] = pt[0] + width * pt[1];
-      
+
       pt[0] += direction[0];
       pt[1] += direction[1];
-      steps += 1;   
-      
+      steps += 1;
+
       if (steps === bounds[bound_idx]) {
         steps = 0;
         bounds[bound_idx] -= 1;
@@ -753,7 +753,7 @@ function spiralSequence(width: number, height: number) : Uint32Array {
 
   sequence = clockwise_spiral(sequence).reverse();
 
-  // Circularize 
+  // Circularize
   let r2 = Math.max(width, height) / 2;
   r2 *= r2;
 
