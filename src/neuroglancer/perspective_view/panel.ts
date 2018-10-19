@@ -683,11 +683,26 @@ export class PerspectivePanel extends RenderedDataPanel {
 }
 
 /*  Generate a clockwise spiral around a 2D rectangular grid. 
-    Outputs Vec3s, but only x and y are used.
-    e.g. 3x3:
-      |  1 | 2  | 3  |
-      |  8 | 9  | 4  | 
-      |  7 | 6  | 5  |
+    Outputs Vec3s, but only x and y are used. Used for spiraling 
+    out of the center of the cursor to look for objects within the
+    receptive field.
+
+      3x3 pattern    3x3 unraveled array
+      | 8, 7, 6 |    | 0, 1, 2 |
+      | 1, 0, 5 |    | 3, 4, 5 |
+      | 2, 3, 4 |    | 6, 7, 8 |
+
+    Renders as [4,3,6,7,8,5,2,1,0] to show how to access the 
+    right hand side array in a spiral pattern.
+
+    width: width of array in pixels
+    height: height of array in pixels
+
+    Note: width and height must be odd numbers
+
+    We also apply a circularizing operator to filter out elements of
+    the spiral that are outside a given radius from the center, 
+    otherwise the cursor will be more sensitive along diagonals.
 */
 function spiralSequence(width: number, height: number) : Uint32Array {
   const pixels = width * height;
@@ -734,5 +749,18 @@ function spiralSequence(width: number, height: number) : Uint32Array {
     return sequence;
   }
 
-  return clockwise_spiral(sequence).reverse();
+  sequence = clockwise_spiral(sequence).reverse();
+
+  // Circularize 
+  let r2 = Math.max(width, height) / 2;
+  r2 *= r2;
+
+  return sequence.filter( (idx) => {
+    let x = (idx % width) - (width >> 1);
+    let y = Math.floor(idx / height) - (height >> 1);
+
+    let dist2 = x*x + y*y;
+
+    return dist2 <= r2;
+  });
 }
