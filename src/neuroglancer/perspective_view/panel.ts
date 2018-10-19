@@ -125,6 +125,13 @@ v4f_fragColor = vec4(accum.rgb / accum.a, revealage);
 const PerspectiveViewStateBase = withSharedVisibility(SharedObject);
 class PerspectiveViewState extends PerspectiveViewStateBase {}
 
+const ReceptiveField = { // must pick odd numbers
+  width: 57,
+  height: 57,
+};
+
+const RFSpiral = spiralSequence(ReceptiveField.width, ReceptiveField.height);
+
 export class PerspectivePanel extends RenderedDataPanel {
   viewer: PerspectiveViewerState;
 
@@ -349,11 +356,36 @@ export class PerspectivePanel extends RenderedDataPanel {
     }
     let glWindowX = this.mouseX;
     let glWindowY = height - this.mouseY;
-    let zData = offscreenFramebuffer.readPixel(OffscreenTextures.Z, glWindowX, glWindowY);
-    let glWindowZ = 1.0 - unpackFloat01FromFixedPoint(zData);
+    
+    const field_width = ReceptiveField.width;
+    const field_height = ReceptiveField.height;
+    const pixels = field_width * field_height;
+
+    let zData = offscreenFramebuffer.readPixels(
+      OffscreenTextures.Z, glWindowX, glWindowY, field_width, field_height
+    );
+
+    let zDatum : number = 0;
+    let rfindex : number = 0; 
+    for (let i = 0; i < pixels; i++) {
+      rfindex = RFSpiral[i];
+      zDatum = unpackFloat01FromFixedPoint(
+        zData.slice(rfindex * 4, (rfindex + 1) * 4)
+      );
+
+      if (zDatum) {
+        break;
+      }
+    }
+
+    let glWindowZ = 1.0 - zDatum;
     if (glWindowZ === 1.0) {
       return false;
     }
+
+    glWindowX += (rfindex % field_width) - (field_width >> 1);
+    glWindowY += Math.floor(rfindex / field_height) - (field_height >> 1);
+
     out[0] = 2.0 * glWindowX / width - 1.0;
     out[1] = 2.0 * glWindowY / height - 1.0;
     out[2] = 2.0 * glWindowZ - 1.0;
@@ -648,4 +680,59 @@ export class PerspectivePanel extends RenderedDataPanel {
   zoomByMouse(factor: number) {
     this.navigationState.zoomBy(factor);
   }
+}
+
+/*  Generate a clockwise spiral around a 2D rectangular grid. 
+    Outputs Vec3s, but only x and y are used.
+    e.g. 3x3:
+      |  1 | 2  | 3  |
+      |  8 | 9  | 4  | 
+      |  7 | 6  | 5  |
+*/
+function spiralSequence(width: number, height: number) : Uint32Array {
+  const pixels = width * height;
+  let sequence = new Uint32Array(pixels);
+
+  if (width === 0 || height === 0) {
+    return sequence;
+  }
+  else if (width === 1) {
+    for (let i = 0; i < height; i++) {
+      sequence[i] = i * width;
+    }
+    return sequence;
+  }
+  else if (height === 1) {
+    for (let i = 0; i < width; i++) {
+      sequence[i] = i;
+    }
+    return sequence;
+  }
+
+  function clockwise_spiral(sequence: Uint32Array) {
+    let bounds = [ width, height - 1 ];
+    let direction = [ 1, 0 ];
+    let pt = [ 0, 0 ];
+    let bound_idx = 0;
+    let steps = 1;
+
+    for (let covered = 0; covered < pixels; covered++) {
+      sequence[covered] = pt[0] + width * pt[1];
+      
+      pt[0] += direction[0];
+      pt[1] += direction[1];
+      steps += 1;   
+      
+      if (steps === bounds[bound_idx]) {
+        steps = 0;
+        bounds[bound_idx] -= 1;
+        bound_idx = (bound_idx + 1) % 2;
+        direction = [ -direction[1], direction[0] ];
+      }
+    }
+
+    return sequence;
+  }
+
+  return clockwise_spiral(sequence).reverse();
 }

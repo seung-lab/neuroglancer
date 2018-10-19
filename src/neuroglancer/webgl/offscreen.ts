@@ -227,6 +227,27 @@ export class FramebufferConfiguration<ColorBuffer extends TextureBuffer|Renderbu
     return tempPixel;
   }
 
+  readPixels(
+    textureIndex: number, glWindowX: number, glWindowY: number, 
+    width: number, height: number
+  ) : Uint8Array {
+
+    let {gl} = this;
+    let cutout = new Uint8Array(width * height * 4);
+
+    let left = Math.max(0, glWindowX - (width >> 1))
+    let bottom = Math.max(0, glWindowY - (height >> 1))
+
+    try {
+      this.bindSingle(textureIndex);
+      gl.readPixels(left, bottom, width, height, gl.RGBA, gl.UNSIGNED_BYTE, cutout);
+    } finally {
+      this.framebuffer.unbind();
+    }
+
+    return cutout;
+  }
+
   /**
    * Calls readPixel, but interprets the RGBA result as a little-endian uint32 value.
    */
