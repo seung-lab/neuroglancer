@@ -217,8 +217,14 @@ export class FramebufferConfiguration<ColorBuffer extends TextureBuffer|Renderbu
    * Only supports UNSIGNED_BYTE RGBA textures.
    */
   readPixel(textureIndex: number, glWindowX: number, glWindowY: number): Uint8Array {
-
-    return this.readPixels(textureIndex, glWindowX, glWindowY, 1, 1, tempPixel);
+    let {gl} = this;
+    try {
+      this.bindSingle(textureIndex);
+      gl.readPixels(glWindowX, glWindowY, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, tempPixel);
+    } finally {
+      this.framebuffer.unbind();
+    }
+    return tempPixel;
   }
 
   readPixels(
@@ -243,6 +249,29 @@ export class FramebufferConfiguration<ColorBuffer extends TextureBuffer|Renderbu
       gl.readPixels(left, bottom, width, height, gl.RGBA, gl.UNSIGNED_BYTE, buffer);
     } finally {
       this.framebuffer.unbind();
+    }
+
+    if (glWindowX > 0 
+        && glWindowX < gl.drawingBufferWidth
+        && glWindowY > 0
+        && glWindowY < gl.drawingBufferHeight) {
+
+      return buffer;
+    }
+
+    // According to the WebGL spec, if we are reading outside of the 
+    // texture, those values are undefined so let's zero them out.
+    // https://www.khronos.org/registry/OpenGL-Refpages/es2.0/xhtml/glReadPixels.xml
+    // "Values for pixels that lie outside the window connected to the current GL context are undefined."
+
+    let i = 0;
+    for (let y = glWindowY; y < glWindowY + height; y++) {
+      for (let x = glWindowX; x < glWindowX + width; x++) {
+        if (x < 0 || y < 0 || x >= gl.drawingBufferWidth || y >= gl.drawingBufferHeight) {
+          buffer[i] = 0;
+        }
+        i++;
+      }
     }
 
     return buffer;

@@ -358,6 +358,10 @@ export class PerspectivePanel extends RenderedDataPanel {
     let glWindowX = this.mouseX;
     let glWindowY = height - this.mouseY;
 
+    if (isNaN(glWindowX) || isNaN(glWindowY)) {
+      return false;
+    }
+
     const field_width = ReceptiveField.width;
     const field_height = ReceptiveField.height;
     const pixels = field_width * field_height;
