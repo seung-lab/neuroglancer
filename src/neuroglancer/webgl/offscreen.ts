@@ -264,11 +264,13 @@ export class FramebufferConfiguration<ColorBuffer extends TextureBuffer|Renderbu
     // https://www.khronos.org/registry/OpenGL-Refpages/es2.0/xhtml/glReadPixels.xml
     // "Values for pixels that lie outside the window connected to the current GL context are undefined."
 
+    let buff32 = new Uint32Array(buffer.buffer);
+
     let i = 0;
     for (let y = glWindowY; y < glWindowY + height; y++) {
       for (let x = glWindowX; x < glWindowX + width; x++) {
         if (x < 0 || y < 0 || x >= gl.drawingBufferWidth || y >= gl.drawingBufferHeight) {
-          buffer[i] = 0;
+          buff32[i] = 0;
         }
         i++;
       }
