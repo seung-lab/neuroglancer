@@ -386,6 +386,10 @@ export class SegmentationUserLayer extends Base {
         }
         break;
       }
+      case 'shatter-selected':{
+        this.shatterSelect();
+        break;
+      }
       case 'select': {
         this.selectSegment();
         break;
@@ -400,6 +404,10 @@ export class SegmentationUserLayer extends Base {
       }
       case 'merge-select-second': {
         this.mergeSelectSecond();
+        break;
+      }
+      case 'shatter-select': {
+        this.shatterSelect();
         break;
       }
       case 'split-select-first': {
@@ -484,6 +492,35 @@ export class SegmentationUserLayer extends Base {
       }
       else {
         this.displayState.segmentEquivalences.link(this.pendingGraphMod.source[0].segmentId, this.pendingGraphMod.sink[0].segmentId);
+      }
+    }
+  }
+
+  shatterSelect() {
+
+    let {segmentSelectionState, rootSegments} = this.displayState;
+    if (segmentSelectionState.hasSelectedSegment) {
+      let segment = segmentSelectionState.rawSelectedSegment;
+      let root = segmentSelectionState.selectedSegment;
+      let coordinates = [...this.manager.layerSelectedValues.mouseState.position];
+
+      let shatterSource = [{segmentId: segment.clone(), rootId: root.clone(), radius:1, position: coordinates}];
+      StatusMessage.showTemporaryMessage(`Selected ${segment} selected for shatter.`, 3000);
+
+      if (this.chunkedGraphLayer) {
+        this.chunkedGraphLayer.shatterSegments(shatterSource).then((splitRoots) => {
+          if (splitRoots.length === 0) {
+            StatusMessage.showTemporaryMessage(`No shatter found.`, 3000);
+            return;
+          }
+          rootSegments.delete(root);
+          for (let splitRoot of splitRoots) {
+            rootSegments.add(splitRoot);
+          }
+        });
+      }
+      else {
+        StatusMessage.showTemporaryMessage('shatter without graph server not yet implemented.', 3000);
       }
     }
   }

@@ -31,6 +31,9 @@ export interface SegmentSelection {
   rootId: Uint64;
   position: number[];
 }
+export interface ShatterSegmentSelection extends SegmentSelection {
+  radius: number;
+}
 
 export class ChunkedGraphChunkSource extends SliceViewChunkSource implements
     ChunkedGraphChunkSourceInterface {
@@ -111,6 +114,32 @@ export class ChunkedGraphLayer extends GenericSliceViewRenderLayer {
       return new Uint64(uint32[0], uint32[1]);
     }).catch((e: HttpError) => {
       console.log(`Could not retrieve merge result of segments ${first.segmentId} and ${second.segmentId}.`);
+      console.error(e);
+      return Promise.reject(e);
+    });
+  }
+
+  shatterSegments(first: ShatterSegmentSelection[]): Promise<Uint64[]> {
+    const {url} = this;
+    if (url === '') {
+      return Promise.reject(GRAPH_SERVER_NOT_SPECIFIED);
+    }
+
+    let promise = sendHttpJsonPostRequest(openHttpRequest(`${url}/1.0/graph/shatter`, 'POST'),
+      {
+        'sources': first.map(x => [String(x.segmentId), x.radius, ...x.position]),
+      },
+      'arraybuffer');
+
+    return promise.then(response => {
+      let uint32 = new Uint32Array(response);
+      let final: Uint64[] = new Array(uint32.length / 2);
+      for (let i = 0; i < uint32.length / 2; i++) {
+        final[i] = new Uint64(uint32[2 * i], uint32[2 * i + 1]);
+      }
+      return final;
+    }).catch((e: HttpError) => {
+      console.log(`Could not retrieve shatter result.`);// of segments ${first} and ${second}.`);
       console.error(e);
       return Promise.reject(e);
     });
