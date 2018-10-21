@@ -567,6 +567,7 @@ export enum ActionMode {
   NONE,
   MERGE,
   SPLIT,
+  SHATTER
 }
 
 export interface PickState {
@@ -662,6 +663,10 @@ export class MouseSelectionState implements PickState {
           this.actionState = ActionState.INACTIVE;
           return ['split', 'second'];
         }
+      }
+      case ActionMode.SHATTER: {
+        this.actionState = ActionState.INACTIVE;
+        return ['shatter', 'first'];
       }
       default: {
         // Should never happen

@@ -536,6 +536,18 @@ export class Viewer extends RefCounted implements ViewerState {
       });
     }
 
+    this.bindAction('shatter-mode', () => {
+      this.mouseState.toggleAction();
+      if (this.mouseState.actionState === ActionState.INACTIVE) {
+        this.mouseState.setMode(ActionMode.NONE);
+        StatusMessage.showTemporaryMessage('Shatter mode deactivated.');
+      }
+      else {
+        this.mouseState.setMode(ActionMode.SHATTER);
+        StatusMessage.showTemporaryMessage('Shatter mode activated.');
+      }
+    });
+
     this.bindAction('two-point-merge', () => {
       this.mouseState.toggleAction();
       if (this.mouseState.actionState === ActionState.INACTIVE) {

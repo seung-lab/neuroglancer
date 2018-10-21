@@ -406,7 +406,7 @@ export class SegmentationUserLayer extends Base {
         this.mergeSelectSecond();
         break;
       }
-      case 'shatter-select': {
+      case 'shatter-select-first': {
         this.shatterSelect();
         break;
       }
