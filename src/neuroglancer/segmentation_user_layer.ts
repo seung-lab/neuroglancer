@@ -504,7 +504,7 @@ export class SegmentationUserLayer extends Base {
       let root = segmentSelectionState.selectedSegment;
       let coordinates = [...this.manager.layerSelectedValues.mouseState.position];
 
-      let shatterSource = [{segmentId: segment.clone(), rootId: root.clone(), radius:1, position: coordinates}];
+      let shatterSource = [{segmentId: segment.clone(), rootId: root.clone(), radius:3, position: coordinates}];
       StatusMessage.showTemporaryMessage(`Selected ${segment} selected for shatter.`, 3000);
 
       if (this.chunkedGraphLayer) {
