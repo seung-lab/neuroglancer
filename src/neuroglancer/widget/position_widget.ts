@@ -133,7 +133,8 @@ export class PositionWidget extends RefCounted {
         }));
 
     this.registerDisposer(registerActionListener(inputElement, 'tab-forward', event => {
-      const selectionStart = Math.min(inputElement.selectionStart || 0, inputElement.selectionEnd || 0);
+      const selectionStart =
+          Math.min(inputElement.selectionStart || 0, inputElement.selectionEnd || 0);
       const valueSubstring = inputElement.value.substring(selectionStart);
       const match = valueSubstring.match(/^([^,\s]*)((?:\s+)|(?:\s*,\s*))?([^,\s]*)/);
       if (match !== null) {
@@ -149,7 +150,8 @@ export class PositionWidget extends RefCounted {
     }));
 
     this.registerDisposer(registerActionListener(inputElement, 'tab-backward', event => {
-      const selectionEnd = Math.max(inputElement.selectionStart || 0, inputElement.selectionEnd || 0);
+      const selectionEnd =
+          Math.max(inputElement.selectionStart || 0, inputElement.selectionEnd || 0);
       const valueSubstring = inputElement.value.substring(0, selectionEnd);
       const match = valueSubstring.match(/([^,\s]*)((?:\s+)|(?:\s*,\s*))?([^,\s]*)$/);
       if (match !== null) {
@@ -208,8 +210,10 @@ export class PositionWidget extends RefCounted {
   private adjustFromCursor(cursorPosition: number|undefined, adjustment: number) {
     const {inputElement} = this;
     if (cursorPosition === undefined) {
-      cursorPosition = (inputElement.selectionDirection === 'forward' ? inputElement.selectionEnd :
-                                                                       inputElement.selectionStart) || 0;
+      cursorPosition =
+          (inputElement.selectionDirection === 'forward' ? inputElement.selectionEnd :
+                                                           inputElement.selectionStart) ||
+          0;
     }
     if (this.cleanInput() === undefined) {
       return;

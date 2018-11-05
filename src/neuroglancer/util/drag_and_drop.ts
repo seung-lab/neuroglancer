@@ -64,7 +64,8 @@ export interface DragInfo {
   parameters: any;
 }
 
-export function decodeParametersFromDragTypeList(dragTypes: ReadonlyArray<string>, prefix: string): DragInfo|undefined {
+export function decodeParametersFromDragTypeList(
+    dragTypes: ReadonlyArray<string>, prefix: string): DragInfo|undefined {
   for (const dragType of dragTypes) {
     const parameters = decodeParametersFromDragType(dragType, prefix);
     if (parameters !== undefined) {
