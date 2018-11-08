@@ -33,7 +33,6 @@ import {WatchableMap} from 'neuroglancer/util/watchable_map';
 import {withSharedVisibility} from 'neuroglancer/visibility_priority/frontend';
 import {DepthBuffer, FramebufferConfiguration, makeTextureBuffers, OffscreenCopyHelper, TextureBuffer} from 'neuroglancer/webgl/offscreen';
 import {ShaderBuilder} from 'neuroglancer/webgl/shader';
-import {glsl_packFloat01ToFixedPoint, unpackFloat01FromFixedPoint} from 'neuroglancer/webgl/shader_lib';
 import {ScaleBarOptions, ScaleBarTexture} from 'neuroglancer/widget/scale_bar';
 import {RPC, SharedObject} from 'neuroglancer/worker_rpc';
 
@@ -57,15 +56,13 @@ export enum OffscreenTextures {
   NUM_TEXTURES
 }
 
-export const glsl_perspectivePanelEmit = [
-  glsl_packFloat01ToFixedPoint, `
-void emit(vec4 color, vec4 pickId) {
-  v4f_fragData${OffscreenTextures.COLOR} = color;
-  v4f_fragData${OffscreenTextures.Z} = packFloat01ToFixedPoint(1.0 - gl_FragCoord.z);
-  v4f_fragData${OffscreenTextures.PICK} = pickId;
+export const glsl_perspectivePanelEmit = `
+void emit(vec4 color, highp uint pickId) {
+  out_color = color;
+  out_z = 1.0 - gl_FragCoord.z;
+  out_pickId = float(pickId);
 }
-`
-];
+`;
 
 /**
  * http://jcgt.org/published/0002/02/09/paper.pdf
@@ -82,7 +79,7 @@ float computeOITWeight(float alpha) {
 // Color must be premultiplied by alpha.
 export const glsl_perspectivePanelEmitOIT = [
   glsl_computeOITWeight, `
-void emit(vec4 color, vec4 pickId) {
+void emit(vec4 color, highp uint pickId) {
   float weight = computeOITWeight(color.a);
   vec4 accum = color * weight;
   v4f_fragData0 = vec4(accum.rgb, color.a);
@@ -92,10 +89,9 @@ void emit(vec4 color, vec4 pickId) {
 ];
 
 export function perspectivePanelEmit(builder: ShaderBuilder) {
-  builder.addOutputBuffer(
-      'vec4', `v4f_fragData${OffscreenTextures.COLOR}`, OffscreenTextures.COLOR);
-  builder.addOutputBuffer('vec4', `v4f_fragData${OffscreenTextures.Z}`, OffscreenTextures.Z);
-  builder.addOutputBuffer('vec4', `v4f_fragData${OffscreenTextures.PICK}`, OffscreenTextures.PICK);
+  builder.addOutputBuffer('vec4', `out_color`, OffscreenTextures.COLOR);
+  builder.addOutputBuffer('highp float', `out_z`, OffscreenTextures.Z);
+  builder.addOutputBuffer('highp float', `out_pickId`, OffscreenTextures.PICK);
   builder.addFragmentCode(glsl_perspectivePanelEmit);
 }
 
@@ -131,7 +127,7 @@ const ReceptiveField = { // must pick odd numbers
   height: 23,
 };
 const RFSpiral = spiralSequence(ReceptiveField.width, ReceptiveField.height);
-const zData = new Uint8Array(ReceptiveField.width * ReceptiveField.height * 4);
+const zData = new Float32Array(ReceptiveField.width * ReceptiveField.height * 4);
 
 export class PerspectivePanel extends RenderedDataPanel {
   viewer: PerspectiveViewerState;
@@ -169,7 +165,17 @@ export class PerspectivePanel extends RenderedDataPanel {
       this.registerDisposer(SliceViewRenderHelper.get(this.gl, perspectivePanelEmit));
 
   protected offscreenFramebuffer = this.registerDisposer(new FramebufferConfiguration(this.gl, {
-    colorBuffers: makeTextureBuffers(this.gl, OffscreenTextures.NUM_TEXTURES),
+    colorBuffers: [
+      new TextureBuffer(
+          this.gl, WebGL2RenderingContext.RGBA8, WebGL2RenderingContext.RGBA,
+          WebGL2RenderingContext.UNSIGNED_BYTE),
+      new TextureBuffer(
+          this.gl, WebGL2RenderingContext.R32F, WebGL2RenderingContext.RED,
+          WebGL2RenderingContext.FLOAT),
+      new TextureBuffer(
+          this.gl, WebGL2RenderingContext.R32F, WebGL2RenderingContext.RED,
+          WebGL2RenderingContext.FLOAT),
+    ],
     depthBuffer: new DepthBuffer(this.gl)
   }));
 
@@ -366,7 +372,7 @@ export class PerspectivePanel extends RenderedDataPanel {
     const field_height = ReceptiveField.height;
     const pixels = RFSpiral.length;
 
-    offscreenFramebuffer.readPixels(
+    offscreenFramebuffer.readPixelsFloat32(
       OffscreenTextures.Z, glWindowX, glWindowY,
       field_width, field_height, zData
     );
@@ -375,10 +381,7 @@ export class PerspectivePanel extends RenderedDataPanel {
     let rfindex = 0;
     for (let i = 0; i < pixels; i++) {
       rfindex = RFSpiral[i];
-      zDatum = unpackFloat01FromFixedPoint(
-        zData.slice(rfindex * 4, (rfindex + 1) * 4)
-      );
-
+      zDatum = zData[4*rfindex];
       if (zDatum) {
         break;
       }
@@ -398,7 +401,7 @@ export class PerspectivePanel extends RenderedDataPanel {
     vec3.transformMat4(out, out, this.inverseProjectionMat);
     this.pickIDs.setMouseState(
         mouseState,
-        offscreenFramebuffer.readPixelAsUint32(OffscreenTextures.PICK, glWindowX, glWindowY));
+        offscreenFramebuffer.readPixelFloat32(OffscreenTextures.PICK, glWindowX, glWindowY));
     return true;
   }
 
@@ -710,20 +713,18 @@ export class PerspectivePanel extends RenderedDataPanel {
     the spiral that are outside a given radius from the center,
     otherwise the cursor will be more sensitive along diagonals.
 */
-function spiralSequence(width: number, height: number) : Uint32Array {
+function spiralSequence(width: number, height: number): Uint32Array {
   const pixels = width * height;
   let sequence = new Uint32Array(pixels);
 
   if (width === 0 || height === 0) {
     return sequence;
-  }
-  else if (width === 1) {
+  } else if (width === 1) {
     for (let i = 0; i < height; i++) {
       sequence[i] = i * width;
     }
     return sequence;
-  }
-  else if (height === 1) {
+  } else if (height === 1) {
     for (let i = 0; i < width; i++) {
       sequence[i] = i;
     }
@@ -731,9 +732,9 @@ function spiralSequence(width: number, height: number) : Uint32Array {
   }
 
   function clockwise_spiral(sequence: Uint32Array) {
-    let bounds = [ width, height - 1 ];
-    let direction = [ 1, 0 ];
-    let pt = [ 0, 0 ];
+    let bounds = [width, height - 1];
+    let direction = [1, 0];
+    let pt = [0, 0];
     let bound_idx = 0;
     let steps = 1;
 
@@ -748,7 +749,7 @@ function spiralSequence(width: number, height: number) : Uint32Array {
         steps = 0;
         bounds[bound_idx] -= 1;
         bound_idx = (bound_idx + 1) % 2;
-        direction = [ -direction[1], direction[0] ];
+        direction = [-direction[1], direction[0]];
       }
     }
 
@@ -761,11 +762,11 @@ function spiralSequence(width: number, height: number) : Uint32Array {
   let r2 = Math.max(width, height) / 2;
   r2 *= r2;
 
-  return sequence.filter( (idx) => {
+  return sequence.filter((idx) => {
     let x = (idx % width) - (width >> 1);
     let y = Math.floor(idx / height) - (height >> 1);
 
-    let dist2 = x*x + y*y;
+    let dist2 = x * x + y * y;
 
     return dist2 <= r2;
   });
