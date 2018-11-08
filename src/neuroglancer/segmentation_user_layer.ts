@@ -64,6 +64,7 @@ const HIGHLIGHTS_JSON_KEY = 'highlights';
 const EQUIVALENCES_JSON_KEY = 'equivalences';
 const CLIP_BOUNDS_JSON_KEY = 'clipBounds';
 const SKELETON_SHADER_JSON_KEY = 'skeletonShader';
+const COLOR_SEED_JSON_KEY = 'colorSeed';
 
 
 const Base = UserLayerWithVolumeSourceMixin(UserLayer);
@@ -114,21 +115,16 @@ export class SegmentationUserLayer extends Base {
     this.displayState.rootSegments.changed.add((segmentId: Uint64|null, add: boolean) => {
       this.rootSegmentChange(segmentId, add);
     });
-    this.displayState.visibleSegments2D!.changed.add(() => {
-      this.specificationChanged.dispatch();
-    });
-    this.displayState.visibleSegments3D.changed.add(() => {
-      this.specificationChanged.dispatch();
-    });
-    this.displayState.segmentEquivalences.changed.add(() => {
-      this.specificationChanged.dispatch();
-    });
+    this.displayState.visibleSegments2D!.changed.add(this.specificationChanged.dispatch);
+    this.displayState.visibleSegments3D.changed.add(this.specificationChanged.dispatch);
+    this.displayState.segmentEquivalences.changed.add(this.specificationChanged.dispatch);
     this.displayState.segmentSelectionState.bindTo(manager.layerSelectedValues, this);
-    this.displayState.selectedAlpha.changed.add(() => this.specificationChanged.dispatch());
-    this.displayState.notSelectedAlpha.changed.add(() => this.specificationChanged.dispatch());
-    this.displayState.objectAlpha.changed.add(() => this.specificationChanged.dispatch());
-    this.displayState.hideSegmentZero.changed.add(() => this.specificationChanged.dispatch());
-    this.displayState.fragmentMain.changed.add(() => this.specificationChanged.dispatch());
+    this.displayState.selectedAlpha.changed.add(this.specificationChanged.dispatch);
+    this.displayState.notSelectedAlpha.changed.add(this.specificationChanged.dispatch);
+    this.displayState.objectAlpha.changed.add(this.specificationChanged.dispatch);
+    this.displayState.hideSegmentZero.changed.add(this.specificationChanged.dispatch);
+    this.displayState.fragmentMain.changed.add(this.specificationChanged.dispatch);
+    this.displayState.segmentColorHash.changed.add(this.specificationChanged.dispatch);
     this.tabs.add(
         'rendering', {label: 'Rendering', order: -100, getter: () => new DisplayOptionsTab(this)});
     this.tabs.default = 'rendering';
@@ -146,6 +142,7 @@ export class SegmentationUserLayer extends Base {
     this.displayState.objectAlpha.restoreState(specification[OBJECT_ALPHA_JSON_KEY]);
     this.displayState.hideSegmentZero.restoreState(specification[HIDE_SEGMENT_ZERO_JSON_KEY]);
     this.displayState.fragmentMain.restoreState(specification[SKELETON_SHADER_JSON_KEY]);
+    this.displayState.segmentColorHash.restoreState(specification[COLOR_SEED_JSON_KEY]);
 
     verifyObjectProperty(specification, EQUIVALENCES_JSON_KEY, y => {
       this.displayState.segmentEquivalences.restoreState(y);
@@ -322,6 +319,7 @@ export class SegmentationUserLayer extends Base {
     x[SATURATION_JSON_KEY] = this.displayState.saturation.toJSON();
     x[OBJECT_ALPHA_JSON_KEY] = this.displayState.objectAlpha.toJSON();
     x[HIDE_SEGMENT_ZERO_JSON_KEY] = this.displayState.hideSegmentZero.toJSON();
+    x[COLOR_SEED_JSON_KEY] = this.displayState.segmentColorHash.toJSON();
     let {rootSegments} = this.displayState;
     if (rootSegments.size > 0) {
       x[ROOT_SEGMENTS_JSON_KEY] = rootSegments.toJSON();
