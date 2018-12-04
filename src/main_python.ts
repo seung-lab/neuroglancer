@@ -118,6 +118,8 @@ window.addEventListener('DOMContentLoaded', () => {
   const screenshotHandler = new ScreenshotHandler(viewer);
   configState.add('screenshot', screenshotHandler.requestState);
 
+
+  viewer.loadFromJsonUrl();
   let sharedState: Trackable|undefined = viewer.state;
 
   if (window.location.hash) {
@@ -169,8 +171,6 @@ window.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('resize', updateSize);
   size.changed.add(debounce(() => updateSize(), 0));
 
-  const hashBinding = viewer.registerDisposer(new UrlHashBinding(viewer.state));
-  hashBinding.updateFromUrlHash();
 
   const serverConnection = new ServerConnection(sharedState, privateState, configState);
   remoteActionHandler.sendActionRequested.add(
