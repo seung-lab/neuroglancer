@@ -36,7 +36,7 @@ import {setDefaultInputEventBindings} from 'neuroglancer/ui/default_input_event_
 import {makeDefaultViewer} from 'neuroglancer/ui/default_viewer';
 import {UrlHashBinding} from 'neuroglancer/ui/url_hash_binding';
 import {parseFixedLengthArray, verifyInt} from 'neuroglancer/util/json';
-import {CompoundTrackable} from 'neuroglancer/util/trackable';
+import {CompoundTrackable,Trackable} from 'neuroglancer/util/trackable';
 import {InputEventBindings} from 'neuroglancer/viewer';
 
 function makeTrackableBasedEventActionMaps(inputEventBindings: InputEventBindings) {
@@ -118,7 +118,13 @@ window.addEventListener('DOMContentLoaded', () => {
   const screenshotHandler = new ScreenshotHandler(viewer);
   configState.add('screenshot', screenshotHandler.requestState);
 
-  viewer.loadFromJsonUrl();
+  let sharedState: Trackable|undefined = viewer.state;
+
+  if (window.location.hash) {
+    const hashBinding = viewer.registerDisposer(new UrlHashBinding(viewer.state));
+    hashBinding.updateFromUrlHash();
+    sharedState = undefined;
+  }
 
   const prefetchManager = new PrefetchManager(
       viewer.display, dataSourceProvider, viewer.dataContext.addRef(), viewer.uiConfiguration);
@@ -166,19 +172,7 @@ window.addEventListener('DOMContentLoaded', () => {
   const hashBinding = viewer.registerDisposer(new UrlHashBinding(viewer.state));
   hashBinding.updateFromUrlHash();
 
-  let serverConnection: ServerConnection;
-  if (viewer.stateServer.value === '') {
-    if (window.location.hash) {
-      serverConnection = new ServerConnection(undefined, privateState, configState);
-    } else {
-      serverConnection = new ServerConnection(viewer.state, privateState, configState);
-    }
-  }
-  else {
-    serverConnection = new ServerConnection(viewer.state, privateState, configState,
-        viewer.stateServer.value);
-    serverConnection.sendActionNotification('initState', viewer.state);
-  }
+  const serverConnection = new ServerConnection(sharedState, privateState, configState);
   remoteActionHandler.sendActionRequested.add(
       (action, state) => serverConnection.sendActionNotification(action, state));
   screenshotHandler.sendScreenshotRequested.add(
