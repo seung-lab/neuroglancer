@@ -32,12 +32,11 @@ export class SegmentSetWidget extends RefCounted {
   private enabledItems = new Map<string, ItemElement>();
   private disabledItems = new Map<string, ItemElement>();
   
-  // disabledItems is a map to store the elements related to hidden segments.
-  // The following describes the relationship between a segment ID's existence in either
-  // of the above maps with its appearance in neuroglancer and its button in the widget:
-  // At any point, if a segment ID is in the enabledItems map, then it is in the widget
-  // and displayed in neuroglancer. If it is only in the disabledItems map, then it is only
-  // in the widget. If it is in neither, then it neither appears in neuroglancer nor in the widget.
+  // A segment ID will only be a key in either the enabledItems
+  // or the disableItems map, in which case it is displayed or
+  // hidden in neuroglancer respectively (but in either case it
+  // appears in the widget). If a segment ID is in neither map
+  // it is neither in the widget nor displayed on neuroglancer.
 
   get rootSegments() {
     return this.displayState.rootSegments;
@@ -69,10 +68,10 @@ export class SegmentSetWidget extends RefCounted {
     itemContainer.appendChild(clearButton);
 
     this.registerDisposer(displayState.rootSegments.changed.add((x, add) => {
-      this.handleSetChanged(x, add, true);
+      this.handleEnabledSetChanged(x, add);
     }));
     this.registerDisposer(displayState.hiddenRootSegments!.changed.add((x, add) => {
-      this.handleSetChanged(x, add, false);
+      this.handleDisabledSetChanged(x, add);
     }));
     this.registerDisposer(displayState.segmentColorHash.changed.add(() => {
       this.handleColorChanged();
@@ -110,57 +109,72 @@ export class SegmentSetWidget extends RefCounted {
     disabledItems.clear();
   }
 
-  // The logic in handling each the displayed and the hidden segment set's changing is very similar,
-  // so we can combine the actions into one function.
-  private handleSetChanged(x: Uint64|Uint64[]|null, added: boolean, enabledSetChanged: boolean) {
-    const {enabledItems, disabledItems, anyRootSegments, anyHiddenRootSegments} = this;
-    const {itemMapToChange, otherItemMap, anySegmentsInUnchangedSet} = (enabledSetChanged) ?
-      {
-        itemMapToChange: enabledItems,
-        otherItemMap: disabledItems,
-        anySegmentsInUnchangedSet: anyHiddenRootSegments
-      } : {
-        itemMapToChange : disabledItems,
-        otherItemMap: enabledItems,
-        anySegmentsInUnchangedSet: anyRootSegments
-      };
-
+  private handleEnabledSetChanged(x: Uint64|Uint64[]|null, added: boolean) {
+    const {enabledItems, disabledItems, hiddenRootSegments, anyHiddenRootSegments} = this;
     if (x === null) {
-      // Make sure there aren't any items in other map before clearing
-      if (! anySegmentsInUnchangedSet()) {
+      if (! anyHiddenRootSegments()) {
         // Cleared.
         this.clearItems();
       }
     } else if (added) {
-      for (const v of Array<Uint64>().concat(x)) {
-        const s = v.toString();
-        const itemInOtherMap = otherItemMap.get(s);
+      for (const segmentID of Array<Uint64>().concat(x)) {
+        const segmentIDString = segmentID.toString();
+        const disabledItem = disabledItems.get(segmentIDString);
         // Make sure item not already added
-        if (! itemInOtherMap && enabledSetChanged) {
-          this.addElement(s);
+        if (! disabledItem) {
+          this.addElement(segmentIDString);
         }
-        else if (! itemInOtherMap) {
+        else {
+          // Preparing to enable or disable an element
+          enabledItems.set(segmentIDString, disabledItem);
+          hiddenRootSegments!.delete(x);
+          this.setItemsToggleButtonToHideSegment(disabledItem, segmentIDString);
+        }
+      }
+    } else {
+      for (const segmentID of Array<Uint64>().concat(x)) {
+        const segmentIDString = segmentID.toString();
+        // Make sure item has been deleted, instead of disabled
+        if (! disabledItems.get(segmentIDString)) {
+          let itemElement = enabledItems.get(segmentIDString)!;
+          itemElement.parentElement!.removeChild(itemElement);
+        }
+        enabledItems.delete(segmentIDString);
+      }
+    }
+  }
+
+  private handleDisabledSetChanged(x: Uint64|Uint64[]|null, added: boolean) {
+    const {enabledItems, disabledItems, rootSegments, anyRootSegments} = this; 
+    if (x === null) {
+      if (! anyRootSegments()) {
+        // Cleared.
+        this.clearItems();
+      }
+    } else if (added) {
+      for (const segmentID of Array<Uint64>().concat(x)) {
+        const segmentIDString = segmentID.toString();
+        const enabledItem = enabledItems.get(segmentIDString);
+        if (! enabledItem) {
           // Should never happen
           throw new Error('Erroneous attempt to hide a segment ID that does not exist in the widget');
         }
         else {
           // Preparing to enable or disable an element
-          itemMapToChange.set(s, itemInOtherMap);
-          if (enabledSetChanged) {
-            // Do this just in case root segment was enabled by clicking in neuroglancer as opposed to button
-            this.setItemsToggleButtonToHideSegment(itemInOtherMap, s);
-          }
+          disabledItems.set(segmentIDString, enabledItem);
+          rootSegments.delete(x);
+          this.setItemsToggleButtonToShowSegment(enabledItem, segmentIDString);
         }
       }
     } else {
-      for (const v of Array<Uint64>().concat(x)) {
-        const s = v.toString();
-        // Make sure item has been deleted, instead of enabled or disabled
-        if (! otherItemMap.get(s)) {
-          let itemElement = itemMapToChange.get(s)!;
+      for (const segmentID of Array<Uint64>().concat(x)) {
+        const segmentIDString = segmentID.toString();
+        // Make sure item has been deleted, instead of enabled
+        if (! enabledItems.get(segmentIDString)) {
+          let itemElement = disabledItems.get(segmentIDString)!;
           itemElement.parentElement!.removeChild(itemElement);
         }
-        itemMapToChange.delete(s);
+        disabledItems.delete(segmentIDString);
       }
     }
   }
@@ -193,17 +207,12 @@ export class SegmentSetWidget extends RefCounted {
     itemToggleButton.addEventListener('click', function(this: HTMLButtonElement) {
       temp.tryParseString(s);
       if (widget.enabledItems.get(s)) {
-        // Add before delete so item is in at least one set
+        // Add to hiddenRootSegments. handleSetChanged will delete segment from rootSegments
         widget.hiddenRootSegments!.add(temp);
-        widget.rootSegments.delete(temp);
-        this.textContent = 'Show segment';
-        this.title = `Show segment ID ${s}`;
       }
       else {
-        // Add before delete again
+        // Add to rootSegments. handleSetChanged will delete segment from hiddenRootSegments
         widget.rootSegments.add(temp);
-        widget.hiddenRootSegments!.delete(temp);
-        widget.setToggleButtonToHideSegment(this, s);
       }
     });
     // Button for the user to copy a segment's ID
@@ -251,10 +260,19 @@ export class SegmentSetWidget extends RefCounted {
     this.setToggleButtonToHideSegment(itemToggleButton, segmentIDString);
   }
 
-  // Made this function just to avoid doing this in several different places
   private setToggleButtonToHideSegment(itemToggleButton: HTMLButtonElement, segmentIDString: string) {
     itemToggleButton.textContent = 'Hide segment';
     itemToggleButton.title = `Hide segment ID ${segmentIDString}`;
+  }
+
+  private setItemsToggleButtonToShowSegment(itemElement: ItemElement, segmentIDString: string) {
+    const itemToggleButton =  <HTMLButtonElement>(itemElement.getElementsByClassName('segment-toggle-button')[0]);
+    this.setToggleButtonToShowSegment(itemToggleButton, segmentIDString);
+  }
+
+  private setToggleButtonToShowSegment(itemToggleButton: HTMLButtonElement, segmentIDString: string) {
+    itemToggleButton.textContent = 'Show segment';
+    itemToggleButton.title = `Show segment ID ${segmentIDString}`;
   }
 
   disposed() {
