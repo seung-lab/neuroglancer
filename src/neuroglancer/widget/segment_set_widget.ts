@@ -234,7 +234,7 @@ export class SegmentSetWidget extends RefCounted {
             this.style.backgroundColor = 'rgb(240, 240, 240)';
           }
         }, 300);
-      }
+      };
       document.addEventListener('copy', handleCopy);
       document.execCommand('copy');
     });
