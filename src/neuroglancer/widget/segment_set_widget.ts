@@ -31,7 +31,7 @@ export class SegmentSetWidget extends RefCounted {
   private itemContainer = document.createElement('div');
   private enabledItems = new Map<string, ItemElement>();
   private disabledItems = new Map<string, ItemElement>();
-  
+
   // A segment ID will only be a key in either the enabledItems
   // or the disableItems map, in which case it is displayed or
   // hidden in neuroglancer respectively (but in either case it
@@ -83,17 +83,20 @@ export class SegmentSetWidget extends RefCounted {
     this.updateClearButtonVisibility();
   }
 
-  private anyRootSegments = () => {
-    return this.displayState.rootSegments.size > 0;
-  }
+  private anyRootSegments =
+      () => {
+        return this.displayState.rootSegments.size > 0;
+      }
 
-  private anyHiddenRootSegments = () => {
-    return this.displayState.hiddenRootSegments!.size > 0;
-  }
+  private anyHiddenRootSegments =
+      () => {
+        return this.displayState.hiddenRootSegments!.size > 0;
+      }
 
   private updateClearButtonVisibility() {
     const {clearButton} = this;
-    clearButton.style.display = (this.anyRootSegments() || this.anyHiddenRootSegments()) ? '' : 'none';
+    clearButton.style.display =
+        (this.anyRootSegments() || this.anyHiddenRootSegments()) ? '' : 'none';
   }
 
   private clearItems() {
@@ -110,9 +113,10 @@ export class SegmentSetWidget extends RefCounted {
   }
 
   private handleEnabledSetChanged(x: Uint64|Uint64[]|null, added: boolean) {
+    this.updateClearButtonVisibility();
     const {enabledItems, disabledItems, hiddenRootSegments, anyHiddenRootSegments} = this;
     if (x === null) {
-      if (! anyHiddenRootSegments()) {
+      if (!anyHiddenRootSegments()) {
         // Cleared.
         this.clearItems();
       }
@@ -121,10 +125,9 @@ export class SegmentSetWidget extends RefCounted {
         const segmentIDString = segmentID.toString();
         const disabledItem = disabledItems.get(segmentIDString);
         // Make sure item not already added
-        if (! disabledItem) {
+        if (!disabledItem) {
           this.addElement(segmentIDString);
-        }
-        else {
+        } else {
           // Preparing to enable or disable an element
           enabledItems.set(segmentIDString, disabledItem);
           hiddenRootSegments!.delete(x);
@@ -135,7 +138,7 @@ export class SegmentSetWidget extends RefCounted {
       for (const segmentID of Array<Uint64>().concat(x)) {
         const segmentIDString = segmentID.toString();
         // Make sure item has been deleted, instead of disabled
-        if (! disabledItems.get(segmentIDString)) {
+        if (!disabledItems.get(segmentIDString)) {
           let itemElement = enabledItems.get(segmentIDString)!;
           itemElement.parentElement!.removeChild(itemElement);
         }
@@ -145,9 +148,10 @@ export class SegmentSetWidget extends RefCounted {
   }
 
   private handleDisabledSetChanged(x: Uint64|Uint64[]|null, added: boolean) {
-    const {enabledItems, disabledItems, rootSegments, anyRootSegments} = this; 
+    this.updateClearButtonVisibility();
+    const {enabledItems, disabledItems, rootSegments, anyRootSegments} = this;
     if (x === null) {
-      if (! anyRootSegments()) {
+      if (!anyRootSegments()) {
         // Cleared.
         this.clearItems();
       }
@@ -155,11 +159,11 @@ export class SegmentSetWidget extends RefCounted {
       for (const segmentID of Array<Uint64>().concat(x)) {
         const segmentIDString = segmentID.toString();
         const enabledItem = enabledItems.get(segmentIDString);
-        if (! enabledItem) {
+        if (!enabledItem) {
           // Should never happen
-          throw new Error('Erroneous attempt to hide a segment ID that does not exist in the widget');
-        }
-        else {
+          throw new Error(
+              'Erroneous attempt to hide a segment ID that does not exist in the widget');
+        } else {
           // Preparing to enable or disable an element
           disabledItems.set(segmentIDString, enabledItem);
           rootSegments.delete(x);
@@ -170,7 +174,7 @@ export class SegmentSetWidget extends RefCounted {
       for (const segmentID of Array<Uint64>().concat(x)) {
         const segmentIDString = segmentID.toString();
         // Make sure item has been deleted, instead of enabled
-        if (! enabledItems.get(segmentIDString)) {
+        if (!enabledItems.get(segmentIDString)) {
           let itemElement = disabledItems.get(segmentIDString)!;
           itemElement.parentElement!.removeChild(itemElement);
         }
@@ -179,14 +183,14 @@ export class SegmentSetWidget extends RefCounted {
     }
   }
 
-  private addElement(s: string) {
+  private addElement(segmentIDString: string) {
     // Wrap buttons in div so node button and its hide button appear on same line
     const itemElement = document.createElement('div');
     itemElement.className = 'segment-div';
     const itemButton = document.createElement('button');
     itemButton.className = 'segment-button';
-    itemButton.textContent = s;
-    itemButton.title = `Remove segment ID ${s}`;
+    itemButton.textContent = segmentIDString;
+    itemButton.title = `Remove segment ID ${segmentIDString}`;
     const widget = this;
     itemButton.addEventListener('click', function(this: HTMLButtonElement) {
       temp.tryParseString(this.textContent!);
@@ -203,14 +207,13 @@ export class SegmentSetWidget extends RefCounted {
     });
     const itemToggleButton = document.createElement('button');
     itemToggleButton.className = 'segment-toggle-button';
-    widget.setToggleButtonToHideSegment(itemToggleButton, s);
+    widget.setToggleButtonToHideSegment(itemToggleButton, segmentIDString);
     itemToggleButton.addEventListener('click', function(this: HTMLButtonElement) {
-      temp.tryParseString(s);
-      if (widget.enabledItems.get(s)) {
+      temp.tryParseString(segmentIDString);
+      if (widget.enabledItems.get(segmentIDString)) {
         // Add to hiddenRootSegments. handleSetChanged will delete segment from rootSegments
         widget.hiddenRootSegments!.add(temp);
-      }
-      else {
+      } else {
         // Add to rootSegments. handleSetChanged will delete segment from hiddenRootSegments
         widget.rootSegments.add(temp);
       }
@@ -218,11 +221,11 @@ export class SegmentSetWidget extends RefCounted {
     // Button for the user to copy a segment's ID
     const itemCopyIDButton = document.createElement('button');
     itemCopyIDButton.className = 'segment-copy-button';
-    itemCopyIDButton.title = `Copy segment ID ${s}`;
-    itemCopyIDButton.textContent = 'Copy ID';
+    itemCopyIDButton.title = `Copy segment ID ${segmentIDString}`;
+    itemCopyIDButton.textContent = '\u2702';
     itemCopyIDButton.addEventListener('click', function(this: HTMLButtonElement) {
       const handleCopy = (e: ClipboardEvent) => {
-        e.clipboardData.setData('text/plain', s);
+        e.clipboardData.setData('text/plain', segmentIDString);
         e.preventDefault();
         document.removeEventListener('copy', handleCopy);
         this.style.backgroundColor = 'rgb(0, 255, 0)';
@@ -240,11 +243,11 @@ export class SegmentSetWidget extends RefCounted {
     itemElement.appendChild(itemCopyIDButton);
     this.setItemButtonColor(itemElement);
     this.itemContainer.appendChild(itemElement);
-    this.enabledItems.set(s, itemElement);
+    this.enabledItems.set(segmentIDString, itemElement);
   }
 
   private setItemButtonColor(itemElement: ItemElement) {
-    const itemButton =  <HTMLElement>(itemElement.getElementsByClassName('segment-button')[0]);
+    const itemButton = <HTMLElement>(itemElement.getElementsByClassName('segment-button')[0]);
     temp.tryParseString(itemButton.textContent!);
     itemButton.style.backgroundColor = this.segmentColorHash.computeCssColor(temp);
   }
@@ -256,23 +259,31 @@ export class SegmentSetWidget extends RefCounted {
   }
 
   private setItemsToggleButtonToHideSegment(itemElement: ItemElement, segmentIDString: string) {
-    const itemToggleButton =  <HTMLButtonElement>(itemElement.getElementsByClassName('segment-toggle-button')[0]);
+    const itemToggleButton =
+        <HTMLButtonElement>(itemElement.getElementsByClassName('segment-toggle-button')[0]);
     this.setToggleButtonToHideSegment(itemToggleButton, segmentIDString);
   }
 
-  private setToggleButtonToHideSegment(itemToggleButton: HTMLButtonElement, segmentIDString: string) {
-    itemToggleButton.textContent = 'Hide segment';
+  private setToggleButtonToHideSegment(
+      itemToggleButton: HTMLButtonElement, segmentIDString: string) {
+    itemToggleButton.textContent = 'Hide';
     itemToggleButton.title = `Hide segment ID ${segmentIDString}`;
+    itemToggleButton.style.borderStyle = 'outset';
+    itemToggleButton.style.backgroundColor = 'rgb(240, 240, 240)';
   }
 
   private setItemsToggleButtonToShowSegment(itemElement: ItemElement, segmentIDString: string) {
-    const itemToggleButton =  <HTMLButtonElement>(itemElement.getElementsByClassName('segment-toggle-button')[0]);
+    const itemToggleButton =
+        <HTMLButtonElement>(itemElement.getElementsByClassName('segment-toggle-button')[0]);
     this.setToggleButtonToShowSegment(itemToggleButton, segmentIDString);
   }
 
-  private setToggleButtonToShowSegment(itemToggleButton: HTMLButtonElement, segmentIDString: string) {
-    itemToggleButton.textContent = 'Show segment';
+  private setToggleButtonToShowSegment(
+      itemToggleButton: HTMLButtonElement, segmentIDString: string) {
+    itemToggleButton.textContent = 'Show';
     itemToggleButton.title = `Show segment ID ${segmentIDString}`;
+    itemToggleButton.style.borderStyle = 'inset';
+    itemToggleButton.style.backgroundColor = 'rgb(210, 210, 210)';
   }
 
   disposed() {
