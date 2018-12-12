@@ -17,23 +17,29 @@
 import {AnnotationSource, makeDataBoundsBoundingBox} from 'neuroglancer/annotation';
 import {ChunkManager, WithParameters} from 'neuroglancer/chunk_manager/frontend';
 import {DataSource} from 'neuroglancer/datasource';
-import {MeshSourceParameters, SkeletonSourceParameters, VolumeChunkEncoding, VolumeChunkSourceParameters} from 'neuroglancer/datasource/precomputed/base';
+import {ChunkedGraphSourceParameters, MeshSourceParameters, SkeletonSourceParameters, VolumeChunkEncoding, VolumeChunkSourceParameters} from 'neuroglancer/datasource/graphene/base';
 import {MeshSource} from 'neuroglancer/mesh/frontend';
 import {VertexAttributeInfo} from 'neuroglancer/skeleton/base';
 import {SkeletonSource} from 'neuroglancer/skeleton/frontend';
+import {ChunkedGraphChunkSpecification, ChunkedGraphSourceOptions} from 'neuroglancer/sliceview/chunked_graph/base';
+import {ChunkedGraphChunkSource} from 'neuroglancer/sliceview/chunked_graph/frontend';
 import {DataType, VolumeChunkSpecification, VolumeSourceOptions, VolumeType} from 'neuroglancer/sliceview/volume/base';
 import {MultiscaleVolumeChunkSource as GenericMultiscaleVolumeChunkSource, VolumeChunkSource} from 'neuroglancer/sliceview/volume/frontend';
+import {Uint64Set} from 'neuroglancer/uint64_set';
 import {mat4, vec3} from 'neuroglancer/util/geom';
-import {openShardedHttpRequest, parseSpecialUrl, sendHttpRequest} from 'neuroglancer/util/http_request';
+import {openHttpRequest, parseSpecialUrl, sendHttpRequest} from 'neuroglancer/util/http_request';
 import {parseArray, parseFixedLengthArray, parseIntVec, verifyEnumString, verifyFinitePositiveFloat, verifyObject, verifyObjectAsMap, verifyObjectProperty, verifyOptionalString, verifyPositiveInt, verifyString} from 'neuroglancer/util/json';
 
-class PrecomputedVolumeChunkSource extends
+class GrapheneVolumeChunkSource extends
 (WithParameters(VolumeChunkSource, VolumeChunkSourceParameters)) {}
 
-class PrecomputedMeshSource extends
+class GrapheneChunkedGraphChunkSource extends
+(WithParameters(ChunkedGraphChunkSource, ChunkedGraphSourceParameters)) {}
+
+class GrapheneMeshSource extends
 (WithParameters(MeshSource, MeshSourceParameters)) {}
 
-class PrecomputedSkeletonSource extends
+class GrapheneSkeletonSource extends
 (WithParameters(SkeletonSource, SkeletonSourceParameters)) {
   get skeletonVertexCoordinatesInVoxels() {
     return false;
@@ -76,13 +82,51 @@ class ScaleInfo {
   }
 }
 
+class GraphInfo {
+  chunkSize: vec3;
+  constructor(obj: any) {
+    verifyObject(obj);
+    this.chunkSize = verifyObjectProperty(
+        obj, 'chunk_size', x => parseFixedLengthArray(vec3.create(), x, verifyPositiveInt));
+  }
+}
+
 export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunkSource {
+  baseUrls: string[];
+  path: string;
   dataType: DataType;
   numChannels: number;
   volumeType: VolumeType;
   mesh: string|undefined;
   skeleton: string|undefined;
+  graph: GraphInfo;
   scales: ScaleInfo[];
+
+  getChunkedGraphUrl() {
+    return this.graphUrl;
+  }
+
+  getChunkedGraphSources(options: ChunkedGraphSourceOptions, rootSegments: Uint64Set) {
+    const spec = ChunkedGraphChunkSpecification.getDefaults({
+      voxelSize: this.scales[0].resolution,
+      transform: mat4.fromTranslation(
+          mat4.create(),
+          vec3.multiply(vec3.create(), this.scales[0].resolution, this.scales[0].voxelOffset)),
+      upperVoxelBound: this.scales[0].size,
+      chunkDataSizes: [this.graph.chunkSize],
+      baseVoxelOffset: this.scales[0].voxelOffset,
+      chunkedGraphSourceOptions: options,
+    });
+
+    return [[this.chunkManager.getChunkSource(GrapheneChunkedGraphChunkSource, {
+      spec,
+      rootSegments,
+      parameters: {
+        'baseUrls': this.graphUrl,
+        'path': '/segment',
+      }
+    })]];
+  }
 
   getMeshSource() {
     let {mesh} = this;
@@ -102,14 +146,15 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
         this.chunkManager, `${this.baseUrls[0]}${this.path}/${this.skeleton}?{}`);
   }
 
-  constructor(
-      public chunkManager: ChunkManager, public baseUrls: string[], public path: string, obj: any) {
+  constructor(public chunkManager: ChunkManager, public graphUrl: string, obj: any) {
     verifyObject(obj);
+    [this.baseUrls, this.path] = verifyObjectProperty(obj, 'data_dir', (x) => parseSpecialUrl(x));
     this.dataType = verifyObjectProperty(obj, 'data_type', x => verifyEnumString(x, DataType));
     this.numChannels = verifyObjectProperty(obj, 'num_channels', verifyPositiveInt);
     this.volumeType = verifyObjectProperty(obj, 'type', x => verifyEnumString(x, VolumeType));
     this.mesh = verifyObjectProperty(obj, 'mesh', verifyOptionalString);
     this.skeleton = verifyObjectProperty(obj, 'skeletons', verifyOptionalString);
+    this.graph = verifyObjectProperty(obj, 'graph', x => new GraphInfo(x));
     this.scales = verifyObjectProperty(obj, 'scales', x => parseArray(x, y => new ScaleInfo(y)));
   }
 
@@ -130,7 +175,7 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
             compressedSegmentationBlockSize: scaleInfo.compressedSegmentationBlockSize,
             volumeSourceOptions,
           })
-          .map(spec => this.chunkManager.getChunkSource(PrecomputedVolumeChunkSource, {
+          .map(spec => this.chunkManager.getChunkSource(GrapheneVolumeChunkSource, {
             spec,
             parameters: {
               'baseUrls': this.baseUrls,
@@ -144,7 +189,7 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
   getStaticAnnotations() {
     const baseScale = this.scales[0];
     const annotationSet =
-      new AnnotationSource(mat4.fromScaling(mat4.create(), baseScale.resolution));
+        new AnnotationSource(mat4.fromScaling(mat4.create(), baseScale.resolution));
     annotationSet.readonly = true;
     annotationSet.add(makeDataBoundsBoundingBox(
         baseScale.voxelOffset, vec3.add(vec3.create(), baseScale.voxelOffset, baseScale.size)));
@@ -171,7 +216,7 @@ export function getSkeletonSource(chunkManager: ChunkManager, path: string) {
   if (match === null) {
     throw new Error(`Invalid skeleton volume path: ${JSON.stringify(path)}`);
   }
-  return chunkManager.getChunkSource(PrecomputedSkeletonSource, {
+  return chunkManager.getChunkSource(GrapheneSkeletonSource, {
     parameters: {
       baseUrls: [match[1]],
       path: match[2],
@@ -181,16 +226,14 @@ export function getSkeletonSource(chunkManager: ChunkManager, path: string) {
 }
 
 export function getShardedMeshSource(chunkManager: ChunkManager, parameters: MeshSourceParameters) {
-  return chunkManager.getChunkSource(PrecomputedMeshSource, {parameters});
+  return chunkManager.getChunkSource(GrapheneMeshSource, {parameters});
 }
 
-export function getShardedVolume(chunkManager: ChunkManager, baseUrls: string[], path: string) {
+export function getShardedVolume(chunkManager: ChunkManager, url: string) {
   return chunkManager.memoize.getUncounted(
-      {'type': 'precomputed:MultiscaleVolumeChunkSource', baseUrls, path},
-      () => sendHttpRequest(openShardedHttpRequest(baseUrls, path + '/info'), 'json')
-                .then(
-                    response =>
-                        new MultiscaleVolumeChunkSource(chunkManager, baseUrls, path, response)));
+      {'type': 'graphene:MultiscaleVolumeChunkSource', url},
+      () => sendHttpRequest(openHttpRequest(url + '/info'), 'json')
+                .then(response => new MultiscaleVolumeChunkSource(chunkManager, url, response)));
 }
 
 export function getMeshSource(chunkManager: ChunkManager, url: string) {
@@ -199,13 +242,12 @@ export function getMeshSource(chunkManager: ChunkManager, url: string) {
 }
 
 export function getVolume(chunkManager: ChunkManager, url: string) {
-  const [baseUrls, path] = parseSpecialUrl(url);
-  return getShardedVolume(chunkManager, baseUrls, path);
+  return getShardedVolume(chunkManager, url);
 }
 
-export class PrecomputedDataSource extends DataSource {
+export class GrapheneDataSource extends DataSource {
   get description() {
-    return 'Precomputed file-backed data source';
+    return 'Graph-backed data source';
   }
   getVolume(chunkManager: ChunkManager, url: string) {
     return getVolume(chunkManager, url);

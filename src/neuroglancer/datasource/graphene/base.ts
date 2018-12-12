@@ -27,15 +27,23 @@ export class VolumeChunkSourceParameters {
   path: string;
   encoding: VolumeChunkEncoding;
 
-  static RPC_ID = 'precomputed/VolumeChunkSource';
+  static RPC_ID = 'graphene/VolumeChunkSource';
 }
+
+export class ChunkedGraphSourceParameters {
+  baseUrls: string[];
+  path: string;
+
+  static RPC_ID = 'graphene/ChunkedGraphSource';
+}
+
 
 export class MeshSourceParameters {
   baseUrls: string[];
   path: string;
   lod: number;
 
-  static RPC_ID = 'precomputed/MeshSource';
+  static RPC_ID = 'graphene/MeshSource';
 }
 
 
@@ -44,5 +52,5 @@ export class SkeletonSourceParameters {
   path: string;
   vertexAttributes: Map<string, VertexAttributeInfo>;
 
-  static RPC_ID = 'precomputed/SkeletonSource';
+  static RPC_ID = 'graphene/SkeletonSource';
 }
