@@ -133,8 +133,12 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
     if (mesh === undefined) {
       return null;
     }
-    return getShardedMeshSource(
-        this.chunkManager, {baseUrls: this.baseUrls, path: `${this.path}/${mesh}`, lod: 0});
+    return getShardedMeshSource(this.chunkManager, {
+      meshManifestBaseUrls: [this.graphUrl.replace('segmentation', 'meshing')],
+      meshFragmentBaseUrls: this.baseUrls,
+      meshFragmentPath: `${this.path}/${mesh}`,
+      lod: 0
+    });
   }
 
   getSkeletonSource() {
@@ -238,7 +242,12 @@ export function getShardedVolume(chunkManager: ChunkManager, url: string) {
 
 export function getMeshSource(chunkManager: ChunkManager, url: string) {
   const [baseUrls, path] = parseSpecialUrl(url);
-  return getShardedMeshSource(chunkManager, {baseUrls, path, lod: 0});
+  return getShardedMeshSource(chunkManager, {
+    meshManifestBaseUrls: baseUrls,
+    meshFragmentBaseUrls: baseUrls,
+    meshFragmentPath: path,
+    lod: 0
+  });
 }
 
 export function getVolume(chunkManager: ChunkManager, url: string) {

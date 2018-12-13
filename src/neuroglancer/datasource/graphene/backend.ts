@@ -104,17 +104,18 @@ export function decodeFragmentChunk(chunk: FragmentChunk, response: ArrayBuffer)
 (WithParameters(MeshSource, MeshSourceParameters)) {
   download(chunk: ManifestChunk, cancellationToken: CancellationToken) {
     let {parameters} = this;
-    let requestPath = `${parameters.path}/${chunk.objectId}:${parameters.lod}`;
+    let requestPath = `/manifest/${chunk.objectId}:${parameters.lod}?verify=True`;
     return sendHttpRequest(
-               openShardedHttpRequest(parameters.baseUrls, requestPath), 'json', cancellationToken)
+               openShardedHttpRequest(parameters.meshManifestBaseUrls, requestPath), 'json',
+               cancellationToken)
         .then(response => decodeManifestChunk(chunk, response));
   }
 
   downloadFragment(chunk: FragmentChunk, cancellationToken: CancellationToken) {
     let {parameters} = this;
-    let requestPath = `${parameters.path}/${chunk.fragmentId}`;
+    let requestPath = `${parameters.meshFragmentPath}/${chunk.fragmentId}`;
     return sendHttpRequest(
-               openShardedHttpRequest(parameters.baseUrls, requestPath), 'arraybuffer',
+               openShardedHttpRequest(parameters.meshFragmentBaseUrls, requestPath), 'arraybuffer',
                cancellationToken)
         .then(response => decodeFragmentChunk(chunk, response));
   }

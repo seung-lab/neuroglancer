@@ -39,8 +39,9 @@ export class ChunkedGraphSourceParameters {
 
 
 export class MeshSourceParameters {
-  baseUrls: string[];
-  path: string;
+  meshManifestBaseUrls: string[];
+  meshFragmentBaseUrls: string[];
+  meshFragmentPath: string;
   lod: number;
 
   static RPC_ID = 'graphene/MeshSource';
