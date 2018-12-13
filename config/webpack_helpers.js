@@ -47,6 +47,8 @@ const DEFAULT_DATA_SOURCES = exports.DEFAULT_DATA_SOURCES = [
   'neuroglancer/datasource/precomputed',
   'neuroglancer/datasource/nifti',
   'neuroglancer/datasource/n5',
+  'neuroglancer/datasource/computed',
+  'neuroglancer/datasource/computed/example',
   {source: 'neuroglancer/datasource/vtk', register: null},
   {source: 'neuroglancer/datasource/csv', register: null},
 ];
