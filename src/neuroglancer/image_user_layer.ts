@@ -21,7 +21,7 @@ import {VolumeType} from 'neuroglancer/sliceview/volume/base';
 import {FRAGMENT_MAIN_START, getTrackableFragmentMain, ImageRenderLayer} from 'neuroglancer/sliceview/volume/image_renderlayer';
 import {trackableAlphaValue} from 'neuroglancer/trackable_alpha';
 import {trackableBlendModeValue} from 'neuroglancer/trackable_blend';
-import {UserLayerWithVolumeSourceMixin} from 'neuroglancer/user_layer_with_volume_source';
+import {UserLayerWithMIPLevelConstraintsMixin} from 'neuroglancer/user_layer_with_mip_level_constraints';
 import {makeWatchableShaderError} from 'neuroglancer/webgl/dynamic_shader';
 import {RangeWidget} from 'neuroglancer/widget/range';
 import {ShaderCodeWidget} from 'neuroglancer/widget/shader_code_widget';
@@ -34,7 +34,7 @@ const OPACITY_JSON_KEY = 'opacity';
 const BLEND_JSON_KEY = 'blend';
 const SHADER_JSON_KEY = 'shader';
 
-const Base = UserLayerWithVolumeSourceMixin(UserLayer);
+const Base = UserLayerWithMIPLevelConstraintsMixin(UserLayer);
 export class ImageUserLayer extends Base {
   opacity = trackableAlphaValue(0.5);
   blendMode = trackableBlendModeValue();
@@ -67,7 +67,9 @@ export class ImageUserLayer extends Base {
           fragmentMain: this.fragmentMain,
           shaderError: this.shaderError,
           transform: this.transform,
+          mipLevelConstraints: this.mipLevelConstraints
         });
+        this.populateVoxelSelectionWidget(renderLayer);
         this.addRenderLayer(renderLayer);
         this.shaderError.changed.dispatch();
         this.isReady = true;

@@ -1,0 +1,12 @@
+.voxel-size-selection {
+    margin-top: 0.4em;
+    margin-bottom: 0.1em;
+}
+
+.voxel-selection-dropdown {
+    height: 1.3em;
+}
+
+#minVoxelSizeLabel {
+    margin-right: 3px;
+}

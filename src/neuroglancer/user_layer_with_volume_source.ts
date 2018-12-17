@@ -29,6 +29,7 @@ interface BaseConstructor {
   new(...args: any[]): UserLayerWithAnnotations&UserLayerWithCoordinateTransform;
 }
 
+// Only called by UserLayerWithVolumeSourceMixin in this file.
 function helper<TBase extends BaseConstructor>(Base: TBase) {
   class C extends Base implements UserLayerWithVolumeSource {
     volumePath: string|undefined;

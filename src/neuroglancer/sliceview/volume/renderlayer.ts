@@ -30,6 +30,7 @@ import {ShaderBuilder, ShaderProgram} from 'neuroglancer/webgl/shader';
 import {getShaderType} from 'neuroglancer/webgl/shader_lib';
 
 const DEBUG_VERTICES = false;
+const DEBUG_CHUNKS = false;
 
 /**
  * Extra amount by which the chunk position computed in the vertex shader is shifted in the
@@ -298,7 +299,12 @@ ${getShaderType(this.dataType)} getDataValue() { return getDataValue(0); }
     // All sources are required to have the same texture format.
     let chunkFormat = this.chunkFormat;
     chunkFormat.beginDrawing(gl, shader);
-
+    if (DEBUG_CHUNKS) {
+      console.log('==============================');
+    }
+    let totalChunksRequested = 0;
+    let totalChunksDrawn = 0;
+    let totalChunksInSources = 0;
     for (let transformedSource of visibleSources) {
       const chunkLayout = transformedSource.chunkLayout;
       const source = transformedSource.source as VolumeChunkSource;
@@ -321,10 +327,11 @@ ${getShaderType(this.dataType)} getDataValue() { return getDataValue(0); }
         chunkDataSize = newChunkDataSize;
         vertexComputationManager.setupChunkDataSize(gl, shader, chunkDataSize);
       };
-
+      let numDrawnChunks = 0;
       for (let key of visibleChunks) {
         let chunk = chunks.get(key);
         if (chunk && chunk.state === ChunkState.GPU_MEMORY) {
+          numDrawnChunks++;
           let newChunkDataSize = chunk.chunkDataSize;
           if (newChunkDataSize !== chunkDataSize) {
             setChunkDataSize(newChunkDataSize);
@@ -335,6 +342,16 @@ ${getShaderType(this.dataType)} getDataValue() { return getDataValue(0); }
           vertexComputationManager.drawChunk(gl, shader, chunkPosition);
         }
       }
+      if (DEBUG_CHUNKS) {
+        console.log(`Num chunks: ${visibleChunks.length}, num drawn: ${numDrawnChunks}, source chunks: ${source.chunks.size}`);
+      }
+      totalChunksDrawn += numDrawnChunks;
+      totalChunksInSources += source.chunks.size;
+      totalChunksRequested += visibleChunks.length;
+    }
+    if (DEBUG_CHUNKS) {
+      console.log(`Total chunks. Drawn: ${totalChunksDrawn}; Requested: ${totalChunksRequested}; In Sources: ${totalChunksInSources}`);
+      console.log('==============================');
     }
     chunkFormat.endDrawing(gl, shader);
     this.endSlice(shader);
