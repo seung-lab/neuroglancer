@@ -31,12 +31,15 @@ export class TrackableMIPLevelConstraints extends RefCounted {
 
   public restoreState(
       newMinMIPLevel: number|undefined = undefined, newMaxMIPLevel: number|undefined = undefined) {
-    this.verifyValidConstraints(newMinMIPLevel, newMaxMIPLevel);
-    // Avoid firing this.changed.dispatch twice
-    this.dispatchOff = true;
-    this.minMIPLevel.restoreState(newMinMIPLevel);
-    this.dispatchOff = false;
-    this.maxMIPLevel.restoreState(newMaxMIPLevel);
+    if (this.minMIPLevel.value !== newMinMIPLevel || this.maxMIPLevel.value !== newMaxMIPLevel) {
+      this.verifyValidConstraints(newMinMIPLevel, newMaxMIPLevel);
+      // Turn off default behavior to always fire this.changed.dispatch exactly once
+      this.dispatchOff = true;
+      this.minMIPLevel.restoreState(newMinMIPLevel);
+      this.maxMIPLevel.restoreState(newMaxMIPLevel);
+      this.dispatchOff = false;
+      this.changed.dispatch();
+    }
   }
 
   private handleMIPLevelChanged(minLevelWasChanged: boolean) {
@@ -94,7 +97,8 @@ export class TrackableMIPLevelConstraints extends RefCounted {
   }
 
   // Ensure that minMIPLevelRendered <= maxMIPLevelRendered when one is adjusted by widget. Return
-  // true/false to only kick off changed dispatch once when levels are adjusted.
+  // true/false to tell handleMIPLevelChange to kick off changed dispatch exactly once when levels
+  // are adjusted.
   private maybeAdjustConstraints(minLevelWasChanged: boolean): boolean {
     if (this.minMIPLevel.value !== undefined && this.maxMIPLevel.value !== undefined &&
         this.minMIPLevel.value > this.maxMIPLevel.value) {
