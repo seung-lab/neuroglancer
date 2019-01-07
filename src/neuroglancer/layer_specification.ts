@@ -133,7 +133,9 @@ export class TopLevelLayerListSpecification extends RefCounted implements LayerL
       // If array, layers have an order
       for (const layerObj of x) {
         verifyObject(layerObj);
-        const name = this.layerManager.getUniqueLayerName(verifyObjectProperty(layerObj, 'name', verifyString));
+        const name = layerObj.name;
+        // Delete name property so that layerObj specification object is identical to what it used to be
+        delete layerObj.name;
         this.layerManager.addManagedLayer(this.getLayer(name, layerObj));
       }
     } else {
