@@ -437,10 +437,11 @@ class Layers(object):
                 self._layers.append(ManagedLayer(k, v, _readonly=_readonly))
         else:
             # layers property can also be an array in JSON now. each layer has a name property
-            for layer in six.iteritems(json_data):
-                name = text_type(layer.name)
-                del layer[name]
-                self._layers.append(ManagedLayer(name, layer, _readonly=_readonly))
+            for layer in json_data:
+                if isinstance(layer, ManagedLayer):
+                    self._layers.append(ManagedLayer(layer.name, layer, _readonly=_readonly))
+                elif isinstance(layer, dict):
+                    self._layers.append(ManagedLayer(text_type(layer['name']), layer, _readonly=_readonly))
 
     def index(self, k):
         for i, u in enumerate(self._layers):
