@@ -233,8 +233,11 @@ export class RenderLayer extends SliceViewRenderLayer {
   }
 
   getValueAt(position: vec3) {
-    for (let alternatives of getTransformedSources(this)) {
-      for (let transformedSource of alternatives) {
+    const transformedSources = getTransformedSources(this);
+    const minMIPLevel = this.mipLevelConstraints.getDeFactoMinMIPLevel();
+    const maxMIPLevel = this.mipLevelConstraints.getDeFactoMaxMIPLevel();
+    for (let i = minMIPLevel; i <= maxMIPLevel; ++i) {
+      for (let transformedSource of transformedSources[i]) {
         const source = transformedSource.source as VolumeChunkSource;
         let result = source.getValueAt(position, transformedSource.chunkLayout);
         if (result != null) {

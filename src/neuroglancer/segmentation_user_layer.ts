@@ -33,7 +33,7 @@ import {trackableAlphaValue} from 'neuroglancer/trackable_alpha';
 import {ElementVisibilityFromTrackableBoolean, TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
 import {ComputedWatchableValue} from 'neuroglancer/trackable_value';
 import {Uint64Set} from 'neuroglancer/uint64_set';
-import {UserLayerWithMIPLevelConstraintsMixin} from 'neuroglancer/user_layer_with_mip_level_constraints';
+import {UserLayerWithVolumeSourceMixin} from 'neuroglancer/user_layer_with_volume_source';
 import {Borrowed} from 'neuroglancer/util/disposable';
 import {vec3} from 'neuroglancer/util/geom';
 import {parseArray, verify3dVec, verifyObjectProperty, verifyOptionalString} from 'neuroglancer/util/json';
@@ -65,7 +65,8 @@ const EQUIVALENCES_JSON_KEY = 'equivalences';
 const CLIP_BOUNDS_JSON_KEY = 'clipBounds';
 const SKELETON_SHADER_JSON_KEY = 'skeletonShader';
 
-const Base = UserLayerWithMIPLevelConstraintsMixin(UserLayer);
+
+const Base = UserLayerWithVolumeSourceMixin(UserLayer);
 export class SegmentationUserLayer extends Base {
   displayState: SliceViewSegmentationDisplayState&SegmentationDisplayState3D&
       SkeletonLayerDisplayState = {
@@ -225,7 +226,7 @@ export class SegmentationUserLayer extends Base {
       multiscaleSource.then(volume => {
         if (!this.wasDisposed) {
           const segmentationRenderLayer = new SegmentationRenderLayer(volume, this.displayState);
-          this.populateVoxelSelectionWidget(segmentationRenderLayer);
+          this.setupVoxelSelectionWidget(segmentationRenderLayer);
           this.addRenderLayer(segmentationRenderLayer);
           // Chunked Graph Server
           if (this.chunkedGraphUrl === undefined && volume.getChunkedGraphUrl) {
@@ -715,6 +716,8 @@ class DisplayOptionsTab extends Tab {
         }
       }
     });
+
+    element.appendChild(layer.voxelSizeSelectionWidget.element);
   }
 }
 

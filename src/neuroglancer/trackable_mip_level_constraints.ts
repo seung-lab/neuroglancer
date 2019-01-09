@@ -9,8 +9,8 @@ export class TrackableMIPLevelConstraints extends RefCounted {
   minMIPLevel: TrackableMIPLevel;
   maxMIPLevel: TrackableMIPLevel;
   changed = new NullarySignal();
-  private numberLevels: number|undefined;
-  private dispatchOff = false;
+  private _numberLevels: number|undefined;
+  private dispatchEnabled = true;
 
   constructor(
       initialMinMIPLevel: number|undefined = undefined,
@@ -30,20 +30,22 @@ export class TrackableMIPLevelConstraints extends RefCounted {
   }
 
   public restoreState(
-      newMinMIPLevel: number|undefined = undefined, newMaxMIPLevel: number|undefined = undefined) {
+      newMinMIPLevel: number|undefined = undefined, newMaxMIPLevel: number|undefined = undefined, fireDispatch: boolean = true) {
     if (this.minMIPLevel.value !== newMinMIPLevel || this.maxMIPLevel.value !== newMaxMIPLevel) {
       this.verifyValidConstraints(newMinMIPLevel, newMaxMIPLevel);
       // Turn off default behavior to always fire this.changed.dispatch exactly once
-      this.dispatchOff = true;
+      this.dispatchEnabled = false;
       this.minMIPLevel.restoreState(newMinMIPLevel);
       this.maxMIPLevel.restoreState(newMaxMIPLevel);
-      this.dispatchOff = false;
-      this.changed.dispatch();
+      this.dispatchEnabled = true;
+      if (fireDispatch) {
+        this.changed.dispatch();
+      }
     }
   }
 
   private handleMIPLevelChanged(minLevelWasChanged: boolean) {
-    if (!this.dispatchOff) {
+    if (this.dispatchEnabled) {
       // If maybeAdjustConstraints returns true, then the other constraint
       // will be changed, and handleMIPLevelChanged will fire again.
       // Either way, this.changed.dispatch will fire exactly once.
@@ -54,20 +56,24 @@ export class TrackableMIPLevelConstraints extends RefCounted {
     }
   }
 
+  get numberLevels() {
+    return this._numberLevels;
+  }
+
   // De facto min MIP level is 0 if not specified
   public getDeFactoMinMIPLevel =
       () => {
-        const {minMIPLevel: {value}, numberLevels} = this;
-        verifyNonnegativeInt(numberLevels);
+        const {minMIPLevel: {value}, _numberLevels} = this;
+        verifyNonnegativeInt(_numberLevels);
         return (value !== undefined) ? value : 0;
       }
 
   // De facto max MIP level is numberLevels - 1 if not specified
   public getDeFactoMaxMIPLevel =
       () => {
-        const {maxMIPLevel: {value}, numberLevels} = this;
-        verifyNonnegativeInt(numberLevels);
-        return (value !== undefined) ? value : numberLevels! - 1;
+        const {maxMIPLevel: {value}, _numberLevels} = this;
+        verifyNonnegativeInt(_numberLevels);
+        return (value !== undefined) ? value : _numberLevels! - 1;
       }
 
   // Only set the number of levels once either in constructor or after the renderLayer has been
@@ -77,7 +83,7 @@ export class TrackableMIPLevelConstraints extends RefCounted {
       throw new Error('Cannot set number of MIP Levels more than once.');
     }
     verifyOptionalNonnegativeInt(numberLevels);
-    this.numberLevels = numberLevels;
+    this._numberLevels = numberLevels;
   }
 
   private verifyValidConstraints(

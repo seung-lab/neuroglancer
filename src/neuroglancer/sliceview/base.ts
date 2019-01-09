@@ -21,7 +21,8 @@ import {approxEqual} from 'neuroglancer/util/compare';
 import {DATA_TYPE_BYTES, DataType} from 'neuroglancer/util/data_type';
 import {effectiveScalingFactorFromMat4, identityMat4, kAxes, kInfinityVec, kZeroVec, mat4, rectifyTransformMatrixIfAxisAligned, transformVectorByMat4, vec3} from 'neuroglancer/util/geom';
 import {SharedObject} from 'neuroglancer/worker_rpc';
-import { TrackableMIPLevelConstraints } from 'neuroglancer/trackable_mip_level_constraints';
+import {TrackableMIPLevelConstraints} from 'neuroglancer/trackable_mip_level_constraints';
+import {TrackableValue} from 'neuroglancer/trackable_value';
 
 export {DATA_TYPE_BYTES, DataType};
 
@@ -127,7 +128,8 @@ export interface RenderLayer {
   transform: CoordinateTransform;
   transformedSources: TransformedSource[][]|undefined;
   transformedSourcesGeneration: number;
-  mipLevelConstraints?: TrackableMIPLevelConstraints;
+  mipLevelConstraints: TrackableMIPLevelConstraints;
+  activeMinMIPLevel?: TrackableValue<number|undefined>; // not needed for backend
 }
 
 export function getTransformedSources(renderLayer: RenderLayer) {
@@ -326,8 +328,12 @@ export class SliceViewBase extends SharedObject {
       visibleSources.length = 0;
       const transformedSources = getTransformedSources(renderLayer);
       const numSources = transformedSources.length;
-      const minScaleIndex = renderLayer.mipLevelConstraints!.getDeFactoMinMIPLevel();
-      const maxScaleIndex = renderLayer.mipLevelConstraints!.getDeFactoMaxMIPLevel();
+      const {mipLevelConstraints} = renderLayer;
+      const { minScaleIndex, maxScaleIndex } = (mipLevelConstraints.numberLevels === undefined) ?
+        { minScaleIndex: 0, maxScaleIndex: numSources - 1 } : {
+          minScaleIndex: mipLevelConstraints.getDeFactoMinMIPLevel(),
+          maxScaleIndex: mipLevelConstraints.getDeFactoMaxMIPLevel()
+        };
       let scaleIndex: number;
 
       // At the smallest scale, all alternative sources must have the same voxel size, which is
@@ -350,6 +356,8 @@ export class SliceViewBase extends SharedObject {
         return false;
       };
 
+      let highestResolutionIndex;
+
       /**
        * Registers a source as being visible.  This should be called with consecutively decreasing
        * values of scaleIndex.
@@ -364,6 +372,7 @@ export class SliceViewBase extends SharedObject {
           visibleChunkLayouts.set(chunkLayout, existingSources);
         }
         existingSources.set(source, sourceScaleIndex);
+        highestResolutionIndex = scaleIndex;
       };
 
       // Here we start iterating from numSources - 1, instead of from the user
@@ -383,6 +392,11 @@ export class SliceViewBase extends SharedObject {
           break;
         }
       }
+
+      if (renderLayer.activeMinMIPLevel) {
+        renderLayer.activeMinMIPLevel.value = highestResolutionIndex;
+      }
+
       // Reverse visibleSources list since we added sources from coarsest to finest resolution, but
       // we want them ordered from finest to coarsest.
       visibleSources.reverse();
