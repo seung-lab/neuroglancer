@@ -25,6 +25,7 @@ import {TrackableMIPLevelConstraints} from 'neuroglancer/trackable_mip_level_con
 import {TrackableValue} from 'neuroglancer/trackable_value';
 
 export {DATA_TYPE_BYTES, DataType};
+export type GlobalCoordinateRectangle = [vec3, vec3, vec3, vec3];
 
 const DEBUG_CHUNK_INTERSECTIONS = false;
 const DEBUG_VISIBLE_SOURCES = false;
@@ -182,7 +183,7 @@ function pickBestAlternativeSource(
   return alternatives[bestAlternativeIndex];
 }
 
-const tempCorners = [vec3.create(), vec3.create(), vec3.create(), vec3.create()];
+const tempGlobalRectangle: GlobalCoordinateRectangle = [vec3.create(), vec3.create(), vec3.create(), vec3.create()];
 
 export class SliceViewBase extends SharedObject {
   width = -1;
@@ -201,6 +202,9 @@ export class SliceViewBase extends SharedObject {
   //
   // to data coordinates.
   viewportToData = mat4.create();
+
+  // voxelSize from navigation state, used by backend to prefetch chunks that are close by
+  voxelSize = vec3.create();
 
   // Normalized x, y, and z viewport axes in data coordinate space.
   viewportAxes = [vec3.create(), vec3.create(), vec3.create()];
@@ -255,7 +259,8 @@ export class SliceViewBase extends SharedObject {
     }
     return false;
   }
-  setViewportToDataMatrix(mat: mat4) {
+  setViewportToDataMatrix(mat: mat4, voxelSize: vec3) {
+    vec3.copy(this.voxelSize, voxelSize);
     if (this.hasViewportToData && mat4.equals(this.viewportToData, mat)) {
       return false;
     }
@@ -308,7 +313,7 @@ export class SliceViewBase extends SharedObject {
 
   /**
    * Computes the list of sources to use for each visible layer, based on the
-   * current pixelSize, and the user specified integers minMIPLevelRendered and maxMIPLevelRendered.
+   * current pixelSize, and the user specified integers minMIPLevel and maxMIPLevel.
    */
   updateVisibleSources() {
     if (!this.visibleSourcesStale) {
@@ -402,26 +407,45 @@ export class SliceViewBase extends SharedObject {
       visibleSources.reverse();
     }
   }
-  computeVisibleChunks<T>(
+
+  protected computeVisibleChunks<T>(
       getLayoutObject: (chunkLayout: ChunkLayout) => T,
       addChunk:
           (chunkLayout: ChunkLayout, layoutObject: T, lowerBound: vec3,
-           fullyVisibleSources: SliceViewChunkSource[]) => void) {
+           fullyVisibleSources: SliceViewChunkSource[]) => void,
+      rectangleOut?: GlobalCoordinateRectangle) {
     this.updateVisibleSources();
+    const visibleRectangle = (rectangleOut) ? rectangleOut: tempGlobalRectangle;
+    this.computeGlobalRectangle(visibleRectangle);
+    this.computeChunksWithinRectangle(
+        getLayoutObject, addChunk, visibleRectangle, this.centerDataPosition);
+  }
 
-    // Lower and upper bound in global data coordinates.
-    const globalCorners = tempCorners;
-    let {width, height, viewportToData} = this;
+  // Used to get global coordinates of viewport corners. These corners
+  // are used to find chunks within these corners in computeChunksFromGlobalCorners. The order of
+  // these corners are relevant in the backend in computePrefetchChunksWithinPlane to construct the corners of
+  // prefetch rectangles.
+  protected computeGlobalRectangle(rectangleOut: GlobalCoordinateRectangle, widthMultiplier = 1, heightMultiplier = 1) {
+    const {viewportToData, width, height} = this;
+    const modifiedWidth = widthMultiplier * width;
+    const modifiedHeight = heightMultiplier * height;
     for (let i = 0; i < 3; ++i) {
-      globalCorners[0][i] = -kAxes[0][i] * width / 2 - kAxes[1][i] * height / 2;
-      globalCorners[1][i] = -kAxes[0][i] * width / 2 + kAxes[1][i] * height / 2;
-      globalCorners[2][i] = kAxes[0][i] * width / 2 - kAxes[1][i] * height / 2;
-      globalCorners[3][i] = kAxes[0][i] * width / 2 + kAxes[1][i] * height / 2;
+      rectangleOut[0][i] = -kAxes[0][i] * modifiedWidth / 2 - kAxes[1][i] * modifiedHeight / 2;
+      rectangleOut[1][i] = -kAxes[0][i] * modifiedWidth / 2 + kAxes[1][i] * modifiedHeight / 2;
+      rectangleOut[2][i] = kAxes[0][i] * modifiedWidth / 2 - kAxes[1][i] * modifiedHeight / 2;
+      rectangleOut[3][i] = kAxes[0][i] * modifiedWidth / 2 + kAxes[1][i] * modifiedHeight / 2;
     }
     for (let i = 0; i < 4; ++i) {
-      vec3.transformMat4(globalCorners[i], globalCorners[i], viewportToData);
+      vec3.transformMat4(rectangleOut[i], rectangleOut[i], viewportToData);
     }
-    // console.log("data bounds", dataLowerBound, dataUpperBound);
+  }
+
+  protected computeChunksWithinRectangle<T>(
+      getLayoutObject: (chunkLayout: ChunkLayout) => T,
+      addChunk:
+          (chunkLayout: ChunkLayout, layoutObject: T, lowerBound: vec3,
+           fullyVisibleSources: SliceViewChunkSource[]) => void,
+      rectangle: GlobalCoordinateRectangle, centerDataPosition: vec3) {
 
     // These variables hold the lower and upper bounds on chunk grid positions that intersect the
     // viewing plane.
@@ -466,10 +490,10 @@ export class SliceViewBase extends SharedObject {
 
       // Center position in chunk grid coordinates.
       const planeDistanceToOrigin =
-          vec3.dot(chunkLayout.globalToLocalGrid(tempVec3, this.centerDataPosition), planeNormal);
+          vec3.dot(chunkLayout.globalToLocalGrid(tempVec3, centerDataPosition), planeNormal);
 
       for (let i = 0; i < 4; ++i) {
-        const localCorner = chunkLayout.globalToLocalGrid(tempVec3, globalCorners[i]);
+        const localCorner = chunkLayout.globalToLocalGrid(tempVec3, rectangle[i]);
         for (let j = 0; j < 3; ++j) {
           lowerChunkBound[j] = Math.min(lowerChunkBound[j], Math.floor(localCorner[j]));
           upperChunkBound[j] = Math.max(upperChunkBound[j], Math.floor(localCorner[j]) + 1);
@@ -934,6 +958,7 @@ export const SLICEVIEW_RPC_ID = 'SliceView';
 export const SLICEVIEW_RENDERLAYER_RPC_ID = 'sliceview/RenderLayer';
 export const SLICEVIEW_ADD_VISIBLE_LAYER_RPC_ID = 'SliceView.addVisibleLayer';
 export const SLICEVIEW_REMOVE_VISIBLE_LAYER_RPC_ID = 'SliceView.removeVisibleLayer';
+export const SLICEVIEW_UPDATE_PREFETCHING_RPC_ID = 'SliceView.updatePrefetching';
 export const SLICEVIEW_UPDATE_VIEW_RPC_ID = 'SliceView.updateView';
 export const SLICEVIEW_RENDERLAYER_UPDATE_TRANSFORM_RPC_ID = 'SliceView.updateTransform';
 export const SLICEVIEW_RENDERLAYER_UPDATE_MIP_LEVEL_CONSTRAINTS_RPC_ID =
