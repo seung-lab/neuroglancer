@@ -30,7 +30,7 @@ import {ShaderBuilder, ShaderProgram} from 'neuroglancer/webgl/shader';
 import {getShaderType} from 'neuroglancer/webgl/shader_lib';
 
 const DEBUG_VERTICES = false;
-const DEBUG_CHUNKS = false;
+const DEBUG_CHUNKS = true;
 
 /**
  * Extra amount by which the chunk position computed in the vertex shader is shifted in the
@@ -345,9 +345,9 @@ ${getShaderType(this.dataType)} getDataValue() { return getDataValue(0); }
           vertexComputationManager.drawChunk(gl, shader, chunkPosition);
         }
       }
-      if (DEBUG_CHUNKS) {
-        console.log(`Num chunks: ${visibleChunks.length}, num drawn: ${numDrawnChunks}, source chunks: ${source.chunks.size}`);
-      }
+      // if (DEBUG_CHUNKS) {
+      //   console.log(`Num chunks: ${visibleChunks.length}, num drawn: ${numDrawnChunks}, source chunks: ${source.chunks.size}`);
+      // }
       totalChunksDrawn += numDrawnChunks;
       totalChunksInSources += source.chunks.size;
       totalChunksRequested += visibleChunks.length;

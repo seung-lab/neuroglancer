@@ -412,11 +412,13 @@ export class SliceViewBase extends SharedObject {
     // Lower and upper bound in global data coordinates.
     const globalCorners = tempCorners;
     let {width, height, viewportToData} = this;
+    const modifiedWidth = 1.2 * width;
+    const modifiedHeight = 1.2 * height;
     for (let i = 0; i < 3; ++i) {
-      globalCorners[0][i] = -kAxes[0][i] * width / 2 - kAxes[1][i] * height / 2;
-      globalCorners[1][i] = -kAxes[0][i] * width / 2 + kAxes[1][i] * height / 2;
-      globalCorners[2][i] = kAxes[0][i] * width / 2 - kAxes[1][i] * height / 2;
-      globalCorners[3][i] = kAxes[0][i] * width / 2 + kAxes[1][i] * height / 2;
+      globalCorners[0][i] = -kAxes[0][i] * modifiedWidth / 2 - kAxes[1][i] * modifiedHeight / 2;
+      globalCorners[1][i] = -kAxes[0][i] * modifiedWidth / 2 + kAxes[1][i] * modifiedHeight / 2;
+      globalCorners[2][i] = kAxes[0][i] * modifiedWidth / 2 - kAxes[1][i] * modifiedHeight / 2;
+      globalCorners[3][i] = kAxes[0][i] * modifiedWidth / 2 + kAxes[1][i] * modifiedHeight / 2;
     }
     for (let i = 0; i < 4; ++i) {
       vec3.transformMat4(globalCorners[i], globalCorners[i], viewportToData);
