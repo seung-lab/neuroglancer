@@ -57,6 +57,7 @@ export interface LayerGroupViewerState {
   selectedLayer: SelectedLayerState;
   visibleLayerRoles: WatchableSet<RenderLayerRole>;
   crossSectionBackgroundColor: TrackableRGB;
+  perspectiveViewBackgroundColor: TrackableRGB;
   sliceViewPrefetchingEnabled: TrackableBoolean;
 }
 
@@ -227,6 +228,9 @@ export class LayerGroupViewer extends RefCounted {
   }
   get crossSectionBackgroundColor() {
     return this.viewerState.crossSectionBackgroundColor;
+  }
+  get perspectiveViewBackgroundColor() {
+    return this.viewerState.perspectiveViewBackgroundColor;
   }
   get scaleBarOptions() {
     return this.viewerState.scaleBarOptions;

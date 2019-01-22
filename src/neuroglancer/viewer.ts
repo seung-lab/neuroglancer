@@ -193,6 +193,7 @@ export class Viewer extends RefCounted implements ViewerState {
   showDefaultAnnotations = new TrackableBoolean(true, true);
   sliceViewPrefetchingEnabled = new TrackableBoolean(true, true);
   crossSectionBackgroundColor = new TrackableRGB(vec3.fromValues(0.5, 0.5, 0.5));
+  perspectiveViewBackgroundColor = new TrackableRGB(vec3.fromValues(0, 0, 0));
   scaleBarOptions = new TrackableScaleBarOptions();
   contextMenu: ContextMenu;
 
@@ -333,6 +334,7 @@ export class Viewer extends RefCounted implements ViewerState {
     state.add('jsonStateServer', this.jsonStateServer);
     state.add('selectedLayer', this.selectedLayer);
     state.add('crossSectionBackgroundColor', this.crossSectionBackgroundColor);
+    state.add('perspectiveViewBackgroundColor', this.perspectiveViewBackgroundColor);
 
     this.registerDisposer(this.navigationState.changed.add(() => {
       this.handleNavigationStateChanged();
