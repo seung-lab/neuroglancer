@@ -145,6 +145,9 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
       throw new Error(`Invalid type: ${JSON.stringify(t)}`);
     }
     this.dataType = verifyObjectProperty(obj, 'data_type', x => verifyEnumString(x, DataType));
+    if (this.dataType === DataType.INT16) {
+      this.dataType = DataType.UINT16;
+    }
     this.numChannels = verifyObjectProperty(obj, 'num_channels', verifyPositiveInt);
     this.volumeType = verifyObjectProperty(obj, 'type', x => verifyEnumString(x, VolumeType));
     this.mesh = verifyObjectProperty(obj, 'mesh', verifyOptionalString);

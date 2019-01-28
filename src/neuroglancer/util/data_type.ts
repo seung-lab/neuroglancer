@@ -23,6 +23,7 @@ export enum DataType {
   UINT32 = 2,
   UINT64 = 3,
   FLOAT32 = 4,
+  INT16 = 5,
 }
 
 interface DataTypeBytes {
@@ -35,3 +36,4 @@ DATA_TYPE_BYTES[DataType.UINT16] = 2;
 DATA_TYPE_BYTES[DataType.UINT32] = 4;
 DATA_TYPE_BYTES[DataType.UINT64] = 8;
 DATA_TYPE_BYTES[DataType.FLOAT32] = 4;
+DATA_TYPE_BYTES[DataType.INT16] = 2;
