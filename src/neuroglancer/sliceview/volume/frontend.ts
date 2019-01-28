@@ -190,6 +190,7 @@ export interface MultiscaleVolumeChunkSource extends MultiscaleSliceViewChunkSou
 
   numChannels: number;
   dataType: DataType;
+  isSignedData?: boolean;
   volumeType: VolumeType;
 
   /**

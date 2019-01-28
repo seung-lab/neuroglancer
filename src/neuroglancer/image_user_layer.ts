@@ -18,7 +18,7 @@ import {UserLayer} from 'neuroglancer/layer';
 import {LayerListSpecification, registerLayerType, registerVolumeLayerType} from 'neuroglancer/layer_specification';
 import {Overlay} from 'neuroglancer/overlay';
 import {VolumeType} from 'neuroglancer/sliceview/volume/base';
-import {FRAGMENT_MAIN_START, getTrackableFragmentMain, ImageRenderLayer} from 'neuroglancer/sliceview/volume/image_renderlayer';
+import {FRAGMENT_MAIN_START, getTrackableFragmentMain, ImageRenderLayer, DEFAULT_FRAGMENT_MAIN_SIGNED_DATA} from 'neuroglancer/sliceview/volume/image_renderlayer';
 import {trackableAlphaValue} from 'neuroglancer/trackable_alpha';
 import {trackableBlendModeValue} from 'neuroglancer/trackable_blend';
 import {UserLayerWithVolumeSourceMixin} from 'neuroglancer/user_layer_with_volume_source';
@@ -74,6 +74,11 @@ export class ImageUserLayer extends Base {
     }
     multiscaleSource.then(volume => {
       if (!this.wasDisposed) {
+        if (specification[SHADER_JSON_KEY] !== undefined) {
+          this.fragmentMain.restoreState(specification[SHADER_JSON_KEY]);
+        } else if (volume.isSignedData) {
+          this.fragmentMain.restoreState(DEFAULT_FRAGMENT_MAIN_SIGNED_DATA);
+        }
         let renderLayer = this.renderLayer = new ImageRenderLayer(volume, {
           opacity: this.opacity,
           blendMode: this.blendMode,

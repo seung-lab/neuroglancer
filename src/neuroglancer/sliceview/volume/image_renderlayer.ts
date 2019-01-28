@@ -31,6 +31,29 @@ const DEFAULT_FRAGMENT_MAIN = `void main() {
 }
 `;
 
+const normFactorSignedData = '30.0';
+
+export const DEFAULT_FRAGMENT_MAIN_SIGNED_DATA = `void main() {
+  float xVec = toNormalized(getDataValue(0));
+  float normFactor = ${normFactorSignedData};
+  float normPosFactor = normFactor;
+  float normNegFactor = normFactor;
+  if (xVec < 0.5) {
+    xVec *= normPosFactor;
+    if (xVec > 1.0) {
+     xVec = 1.0;
+    }
+    emitRGB(vec3(0.0, xVec, 0.0));
+  } else {
+    xVec = 1.0 - xVec;
+    xVec *= normNegFactor;
+    if (xVec > 1.0) {
+     xVec = 1.0;
+    }
+    emitRGB(vec3(xVec, 0.0, 0.0));
+  }
+}
+`;
 
 export function getTrackableFragmentMain(value = DEFAULT_FRAGMENT_MAIN) {
   return makeTrackableFragmentMain(value);

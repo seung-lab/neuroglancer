@@ -102,6 +102,7 @@ class ScaleInfo {
 
 export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunkSource {
   dataType: DataType;
+  isSignedData: boolean = false;
   numChannels: number;
   volumeType: VolumeType;
   mesh: string|undefined;
@@ -145,8 +146,10 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
       throw new Error(`Invalid type: ${JSON.stringify(t)}`);
     }
     this.dataType = verifyObjectProperty(obj, 'data_type', x => verifyEnumString(x, DataType));
+    // TODO: Explicit support in GLSL code for INT16, instead of treating data as UINT16.
     if (this.dataType === DataType.INT16) {
       this.dataType = DataType.UINT16;
+      this.isSignedData = true;
     }
     this.numChannels = verifyObjectProperty(obj, 'num_channels', verifyPositiveInt);
     this.volumeType = verifyObjectProperty(obj, 'type', x => verifyEnumString(x, VolumeType));
