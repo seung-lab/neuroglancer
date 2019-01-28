@@ -35,13 +35,13 @@ const tempCenter = vec3.create();
 // Prefetch parameters
 const PREFETCH_WIDTH_MULTIPLIER = 2;
 const PREFETCH_HEIGHT_MULTIPLIER = 2;
-const PREFETCH_ADDITIONAL_DEPTH_VOXELS = 1;
 
 // Temporary values used to get prefetch rectangles in SliceView.computeVisibleAndPrefetchChunks
 const tempRectangle1: GlobalCoordinateRectangle = [vec3.create(), vec3.create(), vec3.create(), vec3.create()];
 const tempRectangle2: GlobalCoordinateRectangle = [vec3.create(), vec3.create(), vec3.create(), vec3.create()];
-const prefetchCenter = vec3.create();
 const prefetchDepthMovement = vec3.create();
+const tempChunkBound1 = vec3.create();
+const tempChunkBound2 = vec3.create();
 
 class SliceViewCounterpartBase extends SliceViewBase {
   constructor(rpc: RPC, options: any) {
@@ -136,9 +136,11 @@ export class SliceView extends SliceViewIntermediateBase {
   }
 
   // Prefetch chunks are defined by the state of the viewport and the constants
-  // PREFETCH_WIDTH_MULTIPLIER, PREFETCH_HEIGHT_MULTIPLIER, and PREFETCH_ADDITIONAL_DEPTH_VOXELS.
-  // These specify which non-visible chunks to request as prefetch chunks, if prefetching is turned
-  // on.
+  // PREFETCH_WIDTH_MULTIPLIER and PREFETCH_HEIGHT_MULTIPLIER. If prefetching is turned
+  // on, these specify which non-visible chunks within the plane to request as prefetch chunks.
+  // Prefetch chunks outside the plane are retrieved (again, only if prefetching enabled)
+  // always in the same way: the first non-visible chunks encountered when moving the plane along
+  // the normal vector in each direction.
   private computeVisibleAndPrefetchChunks<T>(
       getLayoutObject: (chunkLayout: ChunkLayout) => T,
       addVisibleChunk:
@@ -150,8 +152,9 @@ export class SliceView extends SliceViewIntermediateBase {
     this.computeVisibleChunks(getLayoutObject, addVisibleChunk, tempRectangle1);
     const visibleRectangle = tempRectangle1;
 
-    // computePrefetchChunksOutsidePlane prefetch chunks by taking current viewport and moving it
-    // along normal vector to the plane, PREFETCH_ADDITIONAL_DEPTH_VOXELS voxels in each direction
+    // computePrefetchChunksOutsidePlane prefetches chunks by taking current viewport and moving it
+    // along normal vector to the plane in each direction until we find chunks to prefetch or
+    // we hit the end of the dataset
     const computePrefetchChunksOutsidePlane = () => {
       const {voxelSize, viewportAxes} = this;
       const moveVertex =
@@ -159,25 +162,43 @@ export class SliceView extends SliceViewIntermediateBase {
             vec3.scale(vertexOut, movementVector, movementMagnitude);
             vec3.add(vertexOut, vertexIn, vertexOut);
           };
+      const copyRectangle =
+          (rectangleOut: GlobalCoordinateRectangle, rectangleIn: GlobalCoordinateRectangle) => {
+            for (let i = 0; i < 4; ++i) {
+              vec3.copy(rectangleOut[i], rectangleIn[i]);
+            }
+          };
+      const setPrefetchBounds = (prefetchingIntoPlane: boolean) => {
+        const direction = (prefetchingIntoPlane) ? 1 : -1;
+        return (chunkLayout: ChunkLayout, rectangleOut: GlobalCoordinateRectangle,
+                lowerBoundOut: vec3, upperBoundOut: vec3) => {
+          SliceViewBase.getChunkBoundsForRectangle(
+              chunkLayout, rectangleOut, tempChunkBound1, tempChunkBound2);
+          const visibleLowerChunkBound = tempChunkBound1;
+          const visibleUpperChunkBound = tempChunkBound2;
+          let i = 1;
+          while (true) {
+            for (let j = 0; j < 4; ++j) {
+              moveVertex(
+                  rectangleOut[j], visibleRectangle[j], prefetchDepthMovement, i * direction);
+            }
+            SliceViewBase.getChunkBoundsForRectangle(
+                chunkLayout, rectangleOut, lowerBoundOut, upperBoundOut);
+            if ((!vec3.exactEquals(lowerBoundOut, visibleLowerChunkBound) ||
+                 (!vec3.exactEquals(upperBoundOut, visibleUpperChunkBound)))) {
+              break;
+            }
+            ++i;
+          }
+          return true;
+        };
+      };
       const prefetchRectangle = tempRectangle2;
+      copyRectangle(prefetchRectangle, visibleRectangle);
       vec3.multiply(prefetchDepthMovement, voxelSize, viewportAxes[2]);
-      for (let i = 1; i <= PREFETCH_ADDITIONAL_DEPTH_VOXELS; ++i) {
-        // Move corners and center along plane normal in one direction
-        for (let j = 0; j < 4; ++j) {
-          moveVertex(prefetchRectangle[j], visibleRectangle[j], prefetchDepthMovement, i);
-        }
-        moveVertex(prefetchCenter, this.centerDataPosition, prefetchDepthMovement, i);
-        this.computeChunksWithinRectangle(
-            getLayoutObject, addPrefetchChunk, prefetchRectangle, prefetchCenter);
-
-        // Move corners and center along plane normal in other direction
-        for (let j = 0; j < 4; ++j) {
-          moveVertex(prefetchRectangle[j], visibleRectangle[j], prefetchDepthMovement, i * -1);
-        }
-        moveVertex(prefetchCenter, this.centerDataPosition, prefetchDepthMovement, i * -1);
-        this.computeChunksWithinRectangle(
-            getLayoutObject, addPrefetchChunk, prefetchRectangle, prefetchCenter);
-      }
+      this.computeChunksWithinRectangle(getLayoutObject, addPrefetchChunk, prefetchRectangle, setPrefetchBounds(true));
+      copyRectangle(prefetchRectangle, visibleRectangle);
+      this.computeChunksWithinRectangle(getLayoutObject, addPrefetchChunk, prefetchRectangle, setPrefetchBounds(false));
     };
 
     // computePrefetchChunksWithinPlane selects prefetch chunks by taking current viewport rectangle
@@ -186,14 +207,6 @@ export class SliceView extends SliceViewIntermediateBase {
     // the part that is not visible into 4 smaller rectanges (below, above, left of, and right of
     // the visible viewport), and calls computeChunksWithinRectangle on each one.
     const computePrefetchChunksWithinPlane = () => {
-      const setCenterDataPosition = (rectangle: GlobalCoordinateRectangle) => {
-        vec3.copy(prefetchCenter, rectangle[0]);
-        for (let i = 1; i < 4; ++i) {
-          vec3.add(prefetchCenter, prefetchCenter, rectangle[i]);
-        }
-        vec3.scale(prefetchCenter, prefetchCenter, 0.25);
-      };
-
       enum CornerType { INNER, OUTER }
       type CornerIndex = number;
       type CornerInstruction = [CornerType, CornerIndex];
@@ -211,9 +224,8 @@ export class SliceView extends SliceViewIntermediateBase {
               rectangleCorners.push(rectangleWithVertex[cornerInstruction[1]]);
             });
             const prefetchRectangle = <GlobalCoordinateRectangle>rectangleCorners;
-            setCenterDataPosition(prefetchRectangle);
             this.computeChunksWithinRectangle(
-                getLayoutObject, addPrefetchChunk, prefetchRectangle, prefetchCenter);
+                getLayoutObject, addPrefetchChunk, prefetchRectangle);
           };
       this.computeGlobalRectangle(tempRectangle2, 1, PREFETCH_HEIGHT_MULTIPLIER);
       const heightAdjustedRectangle = tempRectangle2;

@@ -119,6 +119,15 @@ function compareBounds(
   return curResult;
 }
 
+function areBoundsInvalid(lowerBound: vec3, upperBound: vec3) {
+  for (let i = 0; i < 3; ++i) {
+    if (lowerBound[i] > upperBound[i]) {
+      return true;
+    }
+  }
+  return false;
+}
+
 interface TransformedSource {
   source: SliceViewChunkSource;
   chunkLayout: ChunkLayout;
@@ -417,8 +426,8 @@ export class SliceViewBase extends SharedObject {
     this.updateVisibleSources();
     const visibleRectangle = (rectangleOut) ? rectangleOut: tempGlobalRectangle;
     this.computeGlobalRectangle(visibleRectangle);
-    this.computeChunksWithinRectangle(
-        getLayoutObject, addChunk, visibleRectangle, this.centerDataPosition);
+    return this.computeChunksWithinRectangle(
+        getLayoutObject, addChunk, visibleRectangle);
   }
 
   // Used to get global coordinates of viewport corners. These corners
@@ -440,13 +449,33 @@ export class SliceViewBase extends SharedObject {
     }
   }
 
+  // Returns false indicating rectangle was not changed
+  protected static getChunkBoundsForRectangle(
+      chunkLayout: ChunkLayout, rectangle: GlobalCoordinateRectangle, lowerBoundOut: vec3,
+      upperBoundOut: vec3): boolean {
+    vec3.set(
+        lowerBoundOut, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY,
+        Number.POSITIVE_INFINITY);
+    vec3.set(
+        upperBoundOut, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY,
+        Number.NEGATIVE_INFINITY);
+    for (let i = 0; i < 4; ++i) {
+      const localCorner = chunkLayout.globalToLocalGrid(tempVec3, rectangle[i]);
+      for (let j = 0; j < 3; ++j) {
+        lowerBoundOut[j] = Math.min(lowerBoundOut[j], Math.floor(localCorner[j]));
+        upperBoundOut[j] = Math.max(upperBoundOut[j], Math.floor(localCorner[j]) + 1);
+      }
+    }
+    return false;
+  }
+
   protected computeChunksWithinRectangle<T>(
       getLayoutObject: (chunkLayout: ChunkLayout) => T,
       addChunk:
           (chunkLayout: ChunkLayout, layoutObject: T, lowerBound: vec3,
            fullyVisibleSources: SliceViewChunkSource[]) => void,
-      rectangle: GlobalCoordinateRectangle, centerDataPosition: vec3) {
-
+      rectangle: GlobalCoordinateRectangle,
+      makeBoundsForRectangle = SliceViewBase.getChunkBoundsForRectangle) {
     // These variables hold the lower and upper bounds on chunk grid positions that intersect the
     // viewing plane.
     var lowerChunkBound = vec3.create();
@@ -461,228 +490,247 @@ export class SliceViewBase extends SharedObject {
 
     var planeNormal = vec3.create();
 
+    const centerDataPosition = vec3.create();
+
     // Sources whose bounds partially contain the current bounding box.
     let partiallyVisibleSources = new Array<SliceViewChunkSource>();
 
     // Sources whose bounds fully contain the current bounding box.
     let fullyVisibleSources = new Array<SliceViewChunkSource>();
 
-    this.visibleChunkLayouts.forEach((visibleSources, chunkLayout) => {
-      let layoutObject = getLayoutObject(chunkLayout);
-      computeSourcesChunkBounds(
-          sourcesLowerChunkBound, sourcesUpperChunkBound, visibleSources.keys());
-      if (DEBUG_CHUNK_INTERSECTIONS) {
-        console.log(`Initial sources chunk bounds: ${vec3.str(sourcesLowerChunkBound)}, ${
-            vec3.str(sourcesUpperChunkBound)}`);
+    const setCenterDataPosition = () => {
+      vec3.copy(centerDataPosition, rectangle[0]);
+      for (let i = 1; i < 4; ++i) {
+        vec3.add(centerDataPosition, centerDataPosition, rectangle[i]);
       }
+      vec3.scale(centerDataPosition, centerDataPosition, 0.25);
+    };
 
-      vec3.set(
-          lowerChunkBound, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY,
-          Number.POSITIVE_INFINITY);
-      vec3.set(
-          upperChunkBound, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY,
-          Number.NEGATIVE_INFINITY);
+    setCenterDataPosition();
 
-      chunkLayout.globalToLocalSpatialVector(planeNormal, this.viewportAxes[2]);
-      for (let i = 0; i < 3; ++i) {
-        positiveVertex[i] = planeNormal[i] > 0 ? 1 : 0;
-      }
+    const computeChunksForLayout =
+        (chunkLayout: ChunkLayout,
+         visibleSources: Map<SliceViewChunkSource, number>): void => {
+          let layoutObject = getLayoutObject(chunkLayout);
 
-      // Center position in chunk grid coordinates.
-      const planeDistanceToOrigin =
-          vec3.dot(chunkLayout.globalToLocalGrid(tempVec3, centerDataPosition), planeNormal);
+          const setupLocalChunkBounds = () => {
+            computeSourcesChunkBounds(
+                sourcesLowerChunkBound, sourcesUpperChunkBound, visibleSources.keys());
+            if (DEBUG_CHUNK_INTERSECTIONS) {
+              console.log(`Initial sources chunk bounds: ${vec3.str(sourcesLowerChunkBound)}, ${
+                  vec3.str(sourcesUpperChunkBound)}`);
+            }
 
-      for (let i = 0; i < 4; ++i) {
-        const localCorner = chunkLayout.globalToLocalGrid(tempVec3, rectangle[i]);
-        for (let j = 0; j < 3; ++j) {
-          lowerChunkBound[j] = Math.min(lowerChunkBound[j], Math.floor(localCorner[j]));
-          upperChunkBound[j] = Math.max(upperChunkBound[j], Math.floor(localCorner[j]) + 1);
-        }
-      }
-      vec3.max(lowerChunkBound, lowerChunkBound, sourcesLowerChunkBound);
-      vec3.min(upperChunkBound, upperChunkBound, sourcesUpperChunkBound);
+            chunkLayout.globalToLocalSpatialVector(planeNormal, this.viewportAxes[2]);
+            for (let i = 0; i < 3; ++i) {
+              positiveVertex[i] = planeNormal[i] > 0 ? 1 : 0;
+            }
 
-      // console.log('chunkBounds', lowerBound, upperBound);
+            if (makeBoundsForRectangle(chunkLayout, rectangle, lowerChunkBound, upperChunkBound)) {
+              // rectangle modified in order to prefetch, reset center
+              setCenterDataPosition();
+            }
+            vec3.max(lowerChunkBound, lowerChunkBound, sourcesLowerChunkBound);
+            vec3.min(upperChunkBound, upperChunkBound, sourcesUpperChunkBound);
+          };
+          setupLocalChunkBounds();
 
-      // Checks whether [lowerBound, upperBound) intersects the viewport plane.
-      //
-      // positiveVertexDistanceToOrigin = dot(planeNormal, lowerBound +
-      // positiveVertex * (upperBound - lowerBound)) - planeDistanceToOrigin;
-      // negativeVertexDistanceToOrigin = dot(planeNormal, lowerBound +
-      // negativeVertex * (upperBound - lowerBound)) - planeDistanceToOrigin;
-      //
-      // positive vertex must have positive distance, and negative vertex must
-      // have negative distance.
-      function intersectsPlane() {
-        var positiveVertexDistanceToOrigin = 0;
-        var negativeVertexDistanceToOrigin = 0;
-        // Check positive vertex.
-        for (let i = 0; i < 3; ++i) {
-          let normalValue = planeNormal[i];
-          let lowerValue = lowerChunkBound[i];
-          let upperValue = upperChunkBound[i];
-          let diff = upperValue - lowerValue;
-          let positiveOffset = positiveVertex[i] * diff;
-          // console.log(
-          //     normalValue, lowerValue, upperValue, diff, positiveOffset,
-          //     positiveVertexDistanceToOrigin, negativeVertexDistanceToOrigin);
-          positiveVertexDistanceToOrigin += normalValue * (lowerValue + positiveOffset);
-          negativeVertexDistanceToOrigin += normalValue * (lowerValue + diff - positiveOffset);
-        }
-        if (DEBUG_CHUNK_INTERSECTIONS) {
-          console.log(`    planeNormal = ${planeNormal}`);
-          console.log(
-              '    {positive,negative}VertexDistanceToOrigin: ', positiveVertexDistanceToOrigin,
-              negativeVertexDistanceToOrigin, planeDistanceToOrigin);
-          console.log(
-              '    intersectsPlane:', negativeVertexDistanceToOrigin, planeDistanceToOrigin,
-              positiveVertexDistanceToOrigin);
-        }
-        if (positiveVertexDistanceToOrigin < planeDistanceToOrigin) {
-          return false;
-        }
-
-        return negativeVertexDistanceToOrigin <= planeDistanceToOrigin;
-      }
-
-      fullyVisibleSources.length = 0;
-      partiallyVisibleSources.length = 0;
-      for (let source of visibleSources.keys()) {
-        let spec = source.spec;
-        let result = compareBounds(
-            lowerChunkBound, upperChunkBound, spec.lowerChunkBound, spec.upperChunkBound);
-        if (DEBUG_CHUNK_INTERSECTIONS) {
-          console.log(
-              `Comparing source bounds lowerBound=${vec3.str(lowerChunkBound)}, ` +
-                  `upperBound=${vec3.str(upperChunkBound)}, ` +
-                  `lowerChunkBound=${vec3.str(spec.lowerChunkBound)}, ` +
-                  `upperChunkBound=${vec3.str(spec.upperChunkBound)}, ` +
-                  `got ${BoundsComparisonResult[result]}`,
-              spec, source);
-        }
-        switch (result) {
-          case BoundsComparisonResult.FULLY_INSIDE:
-            fullyVisibleSources.push(source);
-            break;
-          case BoundsComparisonResult.PARTIALLY_INSIDE:
-            partiallyVisibleSources.push(source);
-            break;
-        }
-      }
-      let partiallyVisibleSourcesLength = partiallyVisibleSources.length;
-
-      // Mutates lowerBound and upperBound while running, but leaves them the
-      // same once finished.
-      function checkBounds(nextSplitDim: number) {
-        if (DEBUG_CHUNK_INTERSECTIONS) {
-          console.log(
-              `chunk bounds: ${lowerChunkBound} ${upperChunkBound} ` +
-              `fullyVisible: ${fullyVisibleSources} partiallyVisible: ` +
-              `${partiallyVisibleSources.slice(0, partiallyVisibleSourcesLength)}`);
-        }
-
-        if (fullyVisibleSources.length === 0 && partiallyVisibleSourcesLength === 0) {
-          if (DEBUG_CHUNK_INTERSECTIONS) {
-            console.log('  no visible sources');
+          // Center position in chunk grid coordinates.
+          const planeDistanceToOrigin =
+              vec3.dot(chunkLayout.globalToLocalGrid(tempVec3, centerDataPosition), planeNormal);
+          // Make sure bounds are not invalid. This can only happen when the backend is prefetching
+          // along the normal to the plane, and tries to prefetch outside the bounds of the dataset
+          if (areBoundsInvalid(lowerChunkBound, upperChunkBound)) {
+            return;
           }
-          return;
-        }
 
-        if (DEBUG_CHUNK_INTERSECTIONS) {
-          console.log(
-              `Check bounds: [ ${vec3.str(lowerChunkBound)}, ${vec3.str(upperChunkBound)} ]`);
-        }
-        var volume = 1;
-        for (let i = 0; i < 3; ++i) {
-          volume *= Math.max(0, upperChunkBound[i] - lowerChunkBound[i]);
-        }
+          // Checks whether [lowerBound, upperBound) intersects the viewport plane.
+          //
+          // positiveVertexDistanceToOrigin = dot(planeNormal, lowerBound +
+          // positiveVertex * (upperBound - lowerBound)) - planeDistanceToOrigin;
+          // negativeVertexDistanceToOrigin = dot(planeNormal, lowerBound +
+          // negativeVertex * (upperBound - lowerBound)) - planeDistanceToOrigin;
+          //
+          // positive vertex must have positive distance, and negative vertex must
+          // have negative distance.
+          function intersectsPlane() {
+            var positiveVertexDistanceToOrigin = 0;
+            var negativeVertexDistanceToOrigin = 0;
+            // Check positive vertex.
+            for (let i = 0; i < 3; ++i) {
+              let normalValue = planeNormal[i];
+              let lowerValue = lowerChunkBound[i];
+              let upperValue = upperChunkBound[i];
+              let diff = upperValue - lowerValue;
+              let positiveOffset = positiveVertex[i] * diff;
+              // console.log(
+              //     normalValue, lowerValue, upperValue, diff, positiveOffset,
+              //     positiveVertexDistanceToOrigin, negativeVertexDistanceToOrigin);
+              positiveVertexDistanceToOrigin += normalValue * (lowerValue + positiveOffset);
+              negativeVertexDistanceToOrigin += normalValue * (lowerValue + diff - positiveOffset);
+            }
+            if (DEBUG_CHUNK_INTERSECTIONS) {
+              console.log(`    planeNormal = ${planeNormal}`);
+              console.log(
+                  '    {positive,negative}VertexDistanceToOrigin: ', positiveVertexDistanceToOrigin,
+                  negativeVertexDistanceToOrigin, planeDistanceToOrigin);
+              console.log(
+                  '    intersectsPlane:', negativeVertexDistanceToOrigin, planeDistanceToOrigin,
+                  positiveVertexDistanceToOrigin);
+            }
+            if (positiveVertexDistanceToOrigin < planeDistanceToOrigin) {
+              return false;
+            }
 
-        if (volume === 0) {
-          if (DEBUG_CHUNK_INTERSECTIONS) {
-            console.log('  volume == 0');
+            return negativeVertexDistanceToOrigin <= planeDistanceToOrigin;
           }
-          return;
-        }
 
-        if (!intersectsPlane()) {
-          if (DEBUG_CHUNK_INTERSECTIONS) {
-            console.log('  doesn\'t intersect plane');
+          function populateVisibleSources() {
+            fullyVisibleSources.length = 0;
+            partiallyVisibleSources.length = 0;
+            for (let source of visibleSources.keys()) {
+              let spec = source.spec;
+              let result = compareBounds(
+                  lowerChunkBound, upperChunkBound, spec.lowerChunkBound, spec.upperChunkBound);
+              if (DEBUG_CHUNK_INTERSECTIONS) {
+                console.log(
+                    `Comparing source bounds lowerBound=${vec3.str(lowerChunkBound)}, ` +
+                        `upperBound=${vec3.str(upperChunkBound)}, ` +
+                        `lowerChunkBound=${vec3.str(spec.lowerChunkBound)}, ` +
+                        `upperChunkBound=${vec3.str(spec.upperChunkBound)}, ` +
+                        `got ${BoundsComparisonResult[result]}`,
+                    spec, source);
+              }
+              switch (result) {
+                case BoundsComparisonResult.FULLY_INSIDE:
+                  fullyVisibleSources.push(source);
+                  break;
+                case BoundsComparisonResult.PARTIALLY_INSIDE:
+                  partiallyVisibleSources.push(source);
+                  break;
+              }
+            }
           }
-          return;
-        }
+          populateVisibleSources();
+          let partiallyVisibleSourcesLength = partiallyVisibleSources.length;
 
-        if (DEBUG_CHUNK_INTERSECTIONS) {
-          console.log(
-              'Within bounds: [' + vec3.str(lowerChunkBound) + ', ' + vec3.str(upperChunkBound) +
-              ']');
-        }
+          // Mutates lowerBound and upperBound while running, but leaves them the
+          // same once finished.
+          function checkBounds(nextSplitDim: number) {
+            if (DEBUG_CHUNK_INTERSECTIONS) {
+              console.log(
+                  `chunk bounds: ${lowerChunkBound} ${upperChunkBound} ` +
+                  `fullyVisible: ${fullyVisibleSources} partiallyVisible: ` +
+                  `${partiallyVisibleSources.slice(0, partiallyVisibleSourcesLength)}`);
+            }
 
-        if (volume === 1) {
-          addChunk(chunkLayout, layoutObject, lowerChunkBound, fullyVisibleSources);
-          return;
-        }
+            if (fullyVisibleSources.length === 0 && partiallyVisibleSourcesLength === 0) {
+              if (DEBUG_CHUNK_INTERSECTIONS) {
+                console.log('  no visible sources');
+              }
+              return;
+            }
 
-        var dimLower: number, dimUpper: number, diff: number;
-        while (true) {
-          dimLower = lowerChunkBound[nextSplitDim];
-          dimUpper = upperChunkBound[nextSplitDim];
-          diff = dimUpper - dimLower;
-          if (diff === 1) {
-            nextSplitDim = (nextSplitDim + 1) % 3;
-          } else {
-            break;
+            if (DEBUG_CHUNK_INTERSECTIONS) {
+              console.log(
+                  `Check bounds: [ ${vec3.str(lowerChunkBound)}, ${vec3.str(upperChunkBound)} ]`);
+            }
+            var volume = 1;
+            for (let i = 0; i < 3; ++i) {
+              volume *= Math.max(0, upperChunkBound[i] - lowerChunkBound[i]);
+            }
+
+            if (volume === 0) {
+              if (DEBUG_CHUNK_INTERSECTIONS) {
+                console.log('  volume == 0');
+              }
+              return;
+            }
+
+            if (!intersectsPlane()) {
+              if (DEBUG_CHUNK_INTERSECTIONS) {
+                console.log('  doesn\'t intersect plane');
+              }
+              return;
+            }
+
+            if (DEBUG_CHUNK_INTERSECTIONS) {
+              console.log(
+                  'Within bounds: [' + vec3.str(lowerChunkBound) + ', ' +
+                  vec3.str(upperChunkBound) + ']');
+            }
+
+            if (volume === 1) {
+              addChunk(chunkLayout, layoutObject, lowerChunkBound, fullyVisibleSources);
+              return;
+            }
+
+            var dimLower: number, dimUpper: number, diff: number;
+            while (true) {
+              dimLower = lowerChunkBound[nextSplitDim];
+              dimUpper = upperChunkBound[nextSplitDim];
+              diff = dimUpper - dimLower;
+              if (diff === 1) {
+                nextSplitDim = (nextSplitDim + 1) % 3;
+              } else {
+                break;
+              }
+            }
+
+            let splitPoint = dimLower + Math.floor(0.5 * diff);
+            let newNextSplitDim = (nextSplitDim + 1) % 3;
+            let fullyVisibleSourcesLength = fullyVisibleSources.length;
+
+            upperChunkBound[nextSplitDim] = splitPoint;
+
+            let oldPartiallyVisibleSourcesLength = partiallyVisibleSourcesLength;
+            function adjustSources() {
+              partiallyVisibleSourcesLength = partitionArray(
+                  partiallyVisibleSources, 0, oldPartiallyVisibleSourcesLength, source => {
+                    let spec = source.spec;
+                    let result = compareBounds(
+                        lowerChunkBound, upperChunkBound, spec.lowerChunkBound,
+                        spec.upperChunkBound);
+                    switch (result) {
+                      case BoundsComparisonResult.PARTIALLY_INSIDE:
+                        return true;
+                      case BoundsComparisonResult.FULLY_INSIDE:
+                        fullyVisibleSources.push(source);
+                      default:
+                        return false;
+                    }
+                  });
+            }
+
+            adjustSources();
+            checkBounds(newNextSplitDim);
+
+            // Truncate list of fully visible sources.
+            fullyVisibleSources.length = fullyVisibleSourcesLength;
+
+            // Restore partiallyVisibleSources.
+            partiallyVisibleSourcesLength = oldPartiallyVisibleSourcesLength;
+
+            upperChunkBound[nextSplitDim] = dimUpper;
+            lowerChunkBound[nextSplitDim] = splitPoint;
+
+            adjustSources();
+            checkBounds(newNextSplitDim);
+
+            lowerChunkBound[nextSplitDim] = dimLower;
+
+            // Truncate list of fully visible sources.
+            fullyVisibleSources.length = fullyVisibleSourcesLength;
+
+            // Restore partiallyVisibleSources.
+            partiallyVisibleSourcesLength = oldPartiallyVisibleSourcesLength;
           }
-        }
+          checkBounds(0);
+        };
 
-        let splitPoint = dimLower + Math.floor(0.5 * diff);
-        let newNextSplitDim = (nextSplitDim + 1) % 3;
-        let fullyVisibleSourcesLength = fullyVisibleSources.length;
-
-        upperChunkBound[nextSplitDim] = splitPoint;
-
-        let oldPartiallyVisibleSourcesLength = partiallyVisibleSourcesLength;
-        function adjustSources() {
-          partiallyVisibleSourcesLength = partitionArray(
-              partiallyVisibleSources, 0, oldPartiallyVisibleSourcesLength, source => {
-                let spec = source.spec;
-                let result = compareBounds(
-                    lowerChunkBound, upperChunkBound, spec.lowerChunkBound, spec.upperChunkBound);
-                switch (result) {
-                  case BoundsComparisonResult.PARTIALLY_INSIDE:
-                    return true;
-                  case BoundsComparisonResult.FULLY_INSIDE:
-                    fullyVisibleSources.push(source);
-                  default:
-                    return false;
-                }
-              });
-        }
-
-        adjustSources();
-        checkBounds(newNextSplitDim);
-
-        // Truncate list of fully visible sources.
-        fullyVisibleSources.length = fullyVisibleSourcesLength;
-
-        // Restore partiallyVisibleSources.
-        partiallyVisibleSourcesLength = oldPartiallyVisibleSourcesLength;
-
-        upperChunkBound[nextSplitDim] = dimUpper;
-        lowerChunkBound[nextSplitDim] = splitPoint;
-
-        adjustSources();
-        checkBounds(newNextSplitDim);
-
-        lowerChunkBound[nextSplitDim] = dimLower;
-
-        // Truncate list of fully visible sources.
-        fullyVisibleSources.length = fullyVisibleSourcesLength;
-
-        // Restore partiallyVisibleSources.
-        partiallyVisibleSourcesLength = oldPartiallyVisibleSourcesLength;
-      }
-      checkBounds(0);
-    });
+    for (const [curChunkLayout, curVisibleSources] of this.visibleChunkLayouts) {
+      computeChunksForLayout(curChunkLayout, curVisibleSources);
+    }
   }
 }
 
