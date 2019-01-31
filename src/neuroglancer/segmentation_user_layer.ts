@@ -101,6 +101,8 @@ export class SegmentationUserLayer extends Base {
   meshLayer: Borrowed<MeshLayer>|undefined;
   skeletonLayer: Borrowed<SkeletonLayer>|undefined;
 
+  displayOptionsTab: Borrowed<DisplayOptionsTab>|undefined;
+
   // Dispatched when either meshLayer or skeletonLayer changes.
   objectLayerStateChanged = new NullarySignal();
 
@@ -129,6 +131,16 @@ export class SegmentationUserLayer extends Base {
     this.displayState.objectAlpha.changed.add(() => this.specificationChanged.dispatch());
     this.displayState.hideSegmentZero.changed.add(() => this.specificationChanged.dispatch());
     this.displayState.fragmentMain.changed.add(() => this.specificationChanged.dispatch());
+    // this.tabs.add(
+    //   'rendering', {
+    //     label: 'Rendering', order: -100, getter: () => {
+    //       const displayOptionsTab = new DisplayOptionsTab(this);
+    //       if (this.displayOptionsTab === undefined) {
+    //         this.displayOptionsTab = displayOptionsTab;
+    //       }
+    //       return displayOptionsTab;
+    //     }
+    //   });
     this.tabs.add(
         'rendering', {label: 'Rendering', order: -100, getter: () => new DisplayOptionsTab(this)});
     this.tabs.default = 'rendering';
@@ -225,6 +237,7 @@ export class SegmentationUserLayer extends Base {
       ++remaining;
       multiscaleSource.then(volume => {
         if (!this.wasDisposed) {
+          const numberOfMeshLevelsOfDetail = 5;
           const segmentationRenderLayer = new SegmentationRenderLayer(volume, this.displayState);
           this.setupVoxelSelectionWidget(segmentationRenderLayer);
           this.addRenderLayer(segmentationRenderLayer);

@@ -28,7 +28,7 @@ import {MultiscaleVolumeChunkSource as GenericMultiscaleVolumeChunkSource, Volum
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {mat4, vec3} from 'neuroglancer/util/geom';
 import {openHttpRequest, parseSpecialUrl, sendHttpRequest} from 'neuroglancer/util/http_request';
-import {parseArray, parseFixedLengthArray, parseIntVec, verifyEnumString, verifyFinitePositiveFloat, verifyObject, verifyObjectAsMap, verifyObjectProperty, verifyOptionalString, verifyPositiveInt, verifyString} from 'neuroglancer/util/json';
+import {parseArray, parseFixedLengthArray, parseIntVec, verifyEnumString, verifyFinitePositiveFloat, verifyObject, verifyObjectAsMap, verifyObjectProperty, verifyOptionalString, verifyPositiveInt, verifyString, verifyOptionalNonnegativeInt} from 'neuroglancer/util/json';
 
 class GrapheneVolumeChunkSource extends
 (WithParameters(VolumeChunkSource, VolumeChunkSourceParameters)) {}
@@ -160,6 +160,7 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
     this.skeleton = verifyObjectProperty(obj, 'skeletons', verifyOptionalString);
     this.graph = verifyObjectProperty(obj, 'graph', x => new GraphInfo(x));
     this.scales = verifyObjectProperty(obj, 'scales', x => parseArray(x, y => new ScaleInfo(y)));
+    // this.meshNumberOfLevelsOfDetail = verifyObjectProperty(obj, 'meshLOD', verifyOptionalNonnegativeInt);
   }
 
   getSources(volumeSourceOptions: VolumeSourceOptions) {

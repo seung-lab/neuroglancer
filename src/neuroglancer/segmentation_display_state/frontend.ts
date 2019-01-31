@@ -28,6 +28,7 @@ import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {withSharedVisibility} from 'neuroglancer/visibility_priority/frontend';
 import {SharedObject} from 'neuroglancer/worker_rpc';
+import {TrackableValue} from 'neuroglancer/trackable_value';
 
 export class Uint64MapEntry {
   constructor(public key: Uint64, public value: Uint64) {}
