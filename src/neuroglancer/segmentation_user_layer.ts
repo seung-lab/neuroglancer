@@ -18,11 +18,11 @@ import {SegmentSelection, ChunkedGraphLayer} from 'neuroglancer/sliceview/chunke
 import {UserLayer} from 'neuroglancer/layer';
 import {LayerListSpecification, registerLayerType, registerVolumeLayerType} from 'neuroglancer/layer_specification';
 import {MeshSource} from 'neuroglancer/mesh/frontend';
-import {MeshLayer} from 'neuroglancer/mesh/frontend';
+import {MeshLayer, MeshLayerDisplayState, getTrackableMeshLevelOfDetail} from 'neuroglancer/mesh/frontend';
 import {Overlay} from 'neuroglancer/overlay';
 import {SegmentColorHash} from 'neuroglancer/segment_color';
 import {Bounds} from 'neuroglancer/segmentation_display_state/base';
-import {SegmentationDisplayState3D, SegmentSelectionState, Uint64MapEntry} from 'neuroglancer/segmentation_display_state/frontend';
+import {SegmentSelectionState, Uint64MapEntry} from 'neuroglancer/segmentation_display_state/frontend';
 import {SharedDisjointUint64Sets} from 'neuroglancer/shared_disjoint_sets';
 import {SharedWatchableValue} from 'neuroglancer/shared_watchable_value';
 import {FRAGMENT_MAIN_START as SKELETON_FRAGMENT_MAIN_START, getTrackableFragmentMain, PerspectiveViewSkeletonLayer, SkeletonLayer, SkeletonLayerDisplayState, SkeletonSource, SliceViewPanelSkeletonLayer} from 'neuroglancer/skeleton/frontend';
@@ -68,7 +68,7 @@ const SKELETON_SHADER_JSON_KEY = 'skeletonShader';
 
 const Base = UserLayerWithVolumeSourceMixin(UserLayer);
 export class SegmentationUserLayer extends Base {
-  displayState: SliceViewSegmentationDisplayState&SegmentationDisplayState3D&
+  displayState: SliceViewSegmentationDisplayState&MeshLayerDisplayState&
       SkeletonLayerDisplayState = {
         segmentColorHash: SegmentColorHash.getDefault(),
         segmentSelectionState: new SegmentSelectionState(),
@@ -87,7 +87,8 @@ export class SegmentationUserLayer extends Base {
         objectToDataTransform: this.transform,
         fragmentMain: getTrackableFragmentMain(),
         shaderError: makeWatchableShaderError(),
-        mipLevelConstraints: this.mipLevelConstraints
+        mipLevelConstraints: this.mipLevelConstraints,
+        selectedLevelOfDetail: getTrackableMeshLevelOfDetail()
       };
 
   /**
@@ -102,6 +103,7 @@ export class SegmentationUserLayer extends Base {
   skeletonLayer: Borrowed<SkeletonLayer>|undefined;
 
   // displayOptionsTab: Borrowed<DisplayOptionsTab>|undefined;
+  // selectedMeshLevelOfDetail = new TrackableValue(5, verifyNonnegativeInt);
 
   // Dispatched when either meshLayer or skeletonLayer changes.
   objectLayerStateChanged = new NullarySignal();
@@ -212,7 +214,7 @@ export class SegmentationUserLayer extends Base {
       this.manager.dataSourceProvider.getMeshSource(this.manager.chunkManager, meshPath)
           .then(meshSource => {
             if (!this.wasDisposed) {
-              this.addMesh(meshSource);
+              this.addMesh([meshSource]);
               if (--remaining === 0) {
                 this.isReady = true;
               }
@@ -237,7 +239,7 @@ export class SegmentationUserLayer extends Base {
       ++remaining;
       multiscaleSource.then(volume => {
         if (!this.wasDisposed) {
-          const numberOfMeshLevelsOfDetail = 5;
+          // const numberOfMeshLevelsOfDetail = 5;
           const segmentationRenderLayer = new SegmentationRenderLayer(volume, this.displayState);
           this.setupVoxelSelectionWidget(segmentationRenderLayer);
           this.addRenderLayer(segmentationRenderLayer);
@@ -269,21 +271,43 @@ export class SegmentationUserLayer extends Base {
           // Meshes
           if (meshPath === undefined) {
             ++remaining;
-            Promise.resolve(volume.getMeshSource()).then(meshSource => {
-              if (this.wasDisposed) {
-                if (meshSource !== null) {
-                  meshSource.dispose();
+            if (volume.getMeshSources) {
+              Promise.resolve(volume.getMeshSources()).then(meshSources => {
+                if (this.wasDisposed) {
+                  if (meshSources) {
+                    meshSources.forEach(meshSource => {
+                      if (meshSource !== null) {
+                        meshSource.dispose();
+                      }
+                    });
+                  }
+                  return;
                 }
-                return;
-              }
-              if (--remaining === 0) {
-                this.isReady = true;
-              }
-              if (meshSource) {
-                this.addMesh(meshSource, this.chunkedGraphLayer);
-                this.objectLayerStateChanged.dispatch();
-              }
-            });
+                if (--remaining === 0) {
+                  this.isReady = true;
+                }
+                if (meshSources) {
+                  this.addMesh(meshSources, this.chunkedGraphLayer);
+                  this.objectLayerStateChanged.dispatch();
+                }
+              });
+            } else {
+              Promise.resolve(volume.getMeshSource()).then(meshSource => {
+                if (this.wasDisposed) {
+                  if (meshSource !== null) {
+                    meshSource.dispose();
+                  }
+                  return;
+                }
+                if (--remaining === 0) {
+                  this.isReady = true;
+                }
+                if (meshSource) {
+                  this.addMesh([meshSource], this.chunkedGraphLayer);
+                  this.objectLayerStateChanged.dispatch();
+                }
+              });
+            }
           }
           if (skeletonsPath === undefined && volume.getSkeletonSource) {
             ++remaining;
@@ -311,8 +335,11 @@ export class SegmentationUserLayer extends Base {
     }
   }
 
-  addMesh(meshSource: MeshSource, chunkedGraph?: ChunkedGraphLayer) {
-    this.meshLayer = new MeshLayer(this.manager.chunkManager, chunkedGraph ? chunkedGraph : null, meshSource, this.displayState);
+  addMesh(meshSources: MeshSource[], chunkedGraph?: ChunkedGraphLayer) {
+    if (meshSources.length === 0) {
+      throw new Error('Mesh sources length cannot be 0');
+    }
+    this.meshLayer = new MeshLayer(this.manager.chunkManager, chunkedGraph ? chunkedGraph : null, meshSources, this.displayState);
     this.addRenderLayer(this.meshLayer);
   }
 
@@ -731,6 +758,10 @@ class DisplayOptionsTab extends Tab {
     });
 
     element.appendChild(layer.voxelSizeSelectionWidget.element);
+
+    if (layer.meshLayer !== undefined) {
+      element.appendChild(layer.meshLayer.meshLevelOfDetailSelectionWidget.element);
+    }
   }
 }
 

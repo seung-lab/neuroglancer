@@ -18,17 +18,18 @@ import debounce from 'lodash/debounce';
 import {Chunk, ChunkSource} from 'neuroglancer/chunk_manager/backend';
 import {ChunkPriorityTier, ChunkState} from 'neuroglancer/chunk_manager/base';
 import {ChunkedGraphLayer} from 'neuroglancer/sliceview/chunked_graph/backend';
-import {FRAGMENT_SOURCE_RPC_ID, MESH_LAYER_RPC_ID} from 'neuroglancer/mesh/base';
+import {FRAGMENT_SOURCE_RPC_ID, MESH_LAYER_RPC_ID, UPDATE_SELECTED_MESH_LEVEL_OF_DETAIL_RPC_ID} from 'neuroglancer/mesh/base';
 import {SegmentationLayerSharedObjectCounterpart} from 'neuroglancer/segmentation_display_state/backend';
 import {getObjectKey} from 'neuroglancer/segmentation_display_state/base';
 import {forEachVisibleSegment3D, Bounds} from 'neuroglancer/segmentation_display_state/base';
 import {CancellationToken} from 'neuroglancer/util/cancellation';
 import {convertEndian32, Endianness} from 'neuroglancer/util/endian';
 import {vec3} from 'neuroglancer/util/geom';
-import {verifyObject, verifyObjectProperty, verifyStringArray} from 'neuroglancer/util/json';
+import {verifyObject, verifyObjectProperty, verifyStringArray, verifyNonnegativeInt} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {getBasePriority, getPriorityTier} from 'neuroglancer/visibility_priority/backend';
-import {registerSharedObject, RPC} from 'neuroglancer/worker_rpc';
+import {registerRPC, registerSharedObject, RPC} from 'neuroglancer/worker_rpc';
+import {TrackableValue} from 'neuroglancer/trackable_value';
 
 const MESH_OBJECT_MANIFEST_CHUNK_PRIORITY = 100;
 const MESH_OBJECT_FRAGMENT_CHUNK_PRIORITY = 50;
@@ -306,8 +307,9 @@ export class FragmentSource extends ChunkSource {
 
 @registerSharedObject(MESH_LAYER_RPC_ID)
 export class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
-  source: MeshSource;
+  sources: MeshSource[] = [];
   chunkedGraph: ChunkedGraphLayer|null;
+  selectedLevelOfDetail: TrackableValue<number>;
   private requestedChildChunks: Map<string, { add: Uint64[], delete: Uint64[] }>;
 
   private debouncedHandleChildChunks = debounce(() => {
@@ -316,8 +318,17 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
 
   constructor(rpc: RPC, options: any) {
     super(rpc, options);
-    this.source = this.registerDisposer(rpc.getRef<MeshSource>(options['source']));
+    const sourceRefs = <any[]>options['sources'];
+    sourceRefs.forEach(sourceRef => {
+      this.sources.push(rpc.getRef<MeshSource>(sourceRef));
+    });
+    // this.source = this.registerDisposer(rpc.getRef<MeshSource>(options['source']));
     this.chunkedGraph = this.registerDisposer(rpc.get(options['chunkedGraph']));
+    this.selectedLevelOfDetail = new TrackableValue<number>(options['meshLevelOfDetail'], verifyNonnegativeInt);
+    this.registerDisposer(this.selectedLevelOfDetail.changed.add(() => {
+      // console.log(`backend level of detail: ${this.selectedLevelOfDetail.value}`);
+      this.updateChunkPriorities();
+    }));
     this.registerDisposer(this.chunkManager.recomputeChunkPriorities.add(() => {
       this.updateChunkPriorities();
     }));
@@ -351,7 +362,8 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
     }
     const priorityTier = getPriorityTier(visibility);
     const basePriority = getBasePriority(visibility);
-    const {source, chunkManager} = this;
+    const {sources, chunkManager} = this;
+    const source = sources[this.selectedLevelOfDetail.value];
     forEachVisibleSegment3D(this, (objectId, rootObjectId) => {
       let manifestChunk = source.getChunk(objectId, this.clipBounds.value);
       chunkManager.requestChunk(
@@ -404,3 +416,9 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
     });
   }
 }
+
+registerRPC(UPDATE_SELECTED_MESH_LEVEL_OF_DETAIL_RPC_ID, function(x) {
+  const layer = <MeshLayer>this.get(x.id);
+  const newLevelOfDetail: number|undefined = x.levelOfDetail;
+  layer.selectedLevelOfDetail.restoreState(newLevelOfDetail);
+});

@@ -1,4 +1,4 @@
-import './voxel_size_selection_widget.css';
+// import './voxel_size_selection_widget.css';
 
 import {TrackableValue} from 'neuroglancer/trackable_value';
 import {RefCounted} from 'neuroglancer/util/disposable';

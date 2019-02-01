@@ -17,10 +17,10 @@
 import {ChunkState} from 'neuroglancer/chunk_manager/base';
 import {Chunk, ChunkManager, ChunkSource} from 'neuroglancer/chunk_manager/frontend';
 import {ChunkedGraphLayer} from 'neuroglancer/sliceview/chunked_graph/frontend';
-import {FRAGMENT_SOURCE_RPC_ID, MESH_LAYER_RPC_ID} from 'neuroglancer/mesh/base';
+import {FRAGMENT_SOURCE_RPC_ID, MESH_LAYER_RPC_ID, UPDATE_SELECTED_MESH_LEVEL_OF_DETAIL_RPC_ID} from 'neuroglancer/mesh/base';
 import {PerspectiveViewRenderContext, PerspectiveViewRenderLayer} from 'neuroglancer/perspective_view/render_layer';
 import {forEachVisibleSegment3D, getObjectKey} from 'neuroglancer/segmentation_display_state/base';
-import {forEachSegment3DToDraw, getObjectColor, registerRedrawWhenSegmentationDisplayState3DChanged, SegmentationDisplayState3D, SegmentationLayerSharedObject} from 'neuroglancer/segmentation_display_state/frontend';
+import {forEachSegment3DToDraw, getObjectColor, registerRedrawWhenMeshLayerDisplayState, SegmentationDisplayState3D, SegmentationLayerSharedObject} from 'neuroglancer/segmentation_display_state/frontend';
 import {mat4, vec3, vec4} from 'neuroglancer/util/geom';
 import {getObjectId} from 'neuroglancer/util/object_id';
 import {Buffer} from 'neuroglancer/webgl/buffer';
@@ -29,6 +29,8 @@ import {ShaderBuilder, ShaderModule, ShaderProgram} from 'neuroglancer/webgl/sha
 import {setVec4FromUint32} from 'neuroglancer/webgl/shader_lib';
 import {registerSharedObjectOwner, RPC} from 'neuroglancer/worker_rpc';
 import {MeshLevelOfDetailSelectionWidget} from 'neuroglancer/widget/mesh_level_of_detail_selection_widget';
+import {TrackableValue} from 'neuroglancer/trackable_value';
+import {verifyNonnegativeInt} from 'neuroglancer/util/json';
 
 export class MeshShaderManager {
   private tempLightVec = new Float32Array(4);
@@ -100,6 +102,14 @@ vColor = vec4(lightingFactor * uColor.rgb, uColor.a);
   }
 }
 
+export interface MeshLayerDisplayState extends SegmentationDisplayState3D {
+  selectedLevelOfDetail: TrackableValue<number>;
+}
+
+export function getTrackableMeshLevelOfDetail(value = 0) {
+  return new TrackableValue<number>(value, verifyNonnegativeInt);
+}
+
 export class MeshLayer extends PerspectiveViewRenderLayer {
   protected meshShaderManager = new MeshShaderManager();
   private shaders = new Map<ShaderModule, ShaderProgram>();
@@ -109,22 +119,33 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
   constructor(
       public chunkManager: ChunkManager,
       public chunkedGraph: ChunkedGraphLayer|null,
-      public source: MeshSource,
-      public displayState: SegmentationDisplayState3D,
-      public selectedLevelOfDetail: TrackableValue<number>,
-      public maxL) {
+      public sources: MeshSource[],
+      public displayState: MeshLayerDisplayState) {
     super();
 
-    registerRedrawWhenSegmentationDisplayState3DChanged(displayState, this);
+    registerRedrawWhenMeshLayerDisplayState(displayState, this);
+    const {selectedLevelOfDetail} = displayState;
 
     let sharedObject = this.sharedObject =
         this.registerDisposer(new SegmentationLayerSharedObject(chunkManager, displayState));
     sharedObject.RPC_TYPE_ID = MESH_LAYER_RPC_ID;
+    const sourceRefs: any[] = [];
+    sources.forEach(source => {
+      sourceRefs.push(source.addCounterpartRef());
+    });
     sharedObject.initializeCounterpartWithChunkManager({
-      'source': source.addCounterpartRef(),
+      'sources': sourceRefs,
+      'meshLevelOfDetail': selectedLevelOfDetail.value,
       'chunkedGraph': chunkedGraph ? chunkedGraph.rpcId : null,
     });
-    this.meshLevelOfDetailSelectionWidget = this.registerDisposer(new MeshLevelOfDetailSelectionWidget());
+    this.registerDisposer(selectedLevelOfDetail.changed.add(() => {
+      console.log(`frontend level of detail: ${selectedLevelOfDetail.value}`);
+      chunkManager.rpc!.invoke(
+        UPDATE_SELECTED_MESH_LEVEL_OF_DETAIL_RPC_ID,
+          {id: sharedObject.rpcId, levelOfDetail: selectedLevelOfDetail.value});
+    }));
+    this.meshLevelOfDetailSelectionWidget = this.registerDisposer(
+        new MeshLevelOfDetailSelectionWidget(selectedLevelOfDetail, sources.length));
 
     this.setReady(true);
     sharedObject.visibility.add(this.visibility);
@@ -163,7 +184,7 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
     shader.bind();
     meshShaderManager.beginLayer(gl, shader, renderContext);
 
-    let objectChunks = this.source.fragmentSource.objectChunks;
+    let objectChunks = this.sources[this.displayState.selectedLevelOfDetail.value].fragmentSource.objectChunks;
 
     let {pickIDs} = renderContext;
 
@@ -188,8 +209,9 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
   }
 
   isReady() {
-    const {displayState, source} = this;
+    const {displayState, sources} = this;
     let ready = true;
+    const source = sources[displayState.selectedLevelOfDetail.value];
     const fragmentChunks = source.fragmentSource.chunks;
     forEachVisibleSegment3D(displayState, objectId => {
       const key = getObjectKey(objectId, displayState.clipBounds.value);

@@ -16,3 +16,4 @@
 
 export const MESH_LAYER_RPC_ID = 'mesh/MeshLayer';
 export const FRAGMENT_SOURCE_RPC_ID = 'mesh/FragmentSource';
+export const UPDATE_SELECTED_MESH_LEVEL_OF_DETAIL_RPC_ID = 'MeshLayer.updateLevelOfDetail';

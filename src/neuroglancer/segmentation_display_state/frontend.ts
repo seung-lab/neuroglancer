@@ -28,7 +28,8 @@ import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {withSharedVisibility} from 'neuroglancer/visibility_priority/frontend';
 import {SharedObject} from 'neuroglancer/worker_rpc';
-import {TrackableValue} from 'neuroglancer/trackable_value';
+// import {TrackableValue} from 'neuroglancer/trackable_value';
+import {MeshLayerDisplayState} from 'neuroglancer/mesh/frontend';
 
 export class Uint64MapEntry {
   constructor(public key: Uint64, public value: Uint64) {}
@@ -142,6 +143,14 @@ export function registerRedrawWhenSegmentationDisplayState3DChanged(
   registerRedrawWhenSegmentationDisplayStateWithAlphaChanged(displayState, renderLayer);
   renderLayer.registerDisposer(
       displayState.objectToDataTransform.changed.add(renderLayer.redrawNeeded.dispatch));
+}
+
+export function registerRedrawWhenMeshLayerDisplayState(
+  displayState: MeshLayerDisplayState,
+  renderLayer: { redrawNeeded: NullarySignal } & RefCounted) {
+  registerRedrawWhenSegmentationDisplayState3DChanged(displayState, renderLayer);
+  renderLayer.registerDisposer(
+    displayState.selectedLevelOfDetail.changed.add(renderLayer.redrawNeeded.dispatch));
 }
 
 /**

@@ -83,6 +83,7 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
   mesh: string|undefined;
   skeleton: string|undefined;
   scales: ScaleInfo[];
+  meshLevelsOfDetail: number;
 
   getMeshSource() {
     let {mesh} = this;
@@ -91,6 +92,19 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
     }
     return getShardedMeshSource(
         this.chunkManager, {baseUrls: this.baseUrls, path: `${this.path}/${mesh}`, lod: 0});
+  }
+
+  getMeshSources() {
+    const {mesh} = this;
+    if (mesh === undefined) {
+      return null;
+    }
+    const meshSources = [];
+    for (let lod = 0; lod < this.meshLevelsOfDetail; ++lod) {
+      meshSources.push(getShardedMeshSource(
+        this.chunkManager, {baseUrls: this.baseUrls, path: `${this.path}/${mesh}`, lod}));
+    }
+    return meshSources;
   }
 
   getSkeletonSource() {
@@ -111,6 +125,8 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
     this.mesh = verifyObjectProperty(obj, 'mesh', verifyOptionalString);
     this.skeleton = verifyObjectProperty(obj, 'skeletons', verifyOptionalString);
     this.scales = verifyObjectProperty(obj, 'scales', x => parseArray(x, y => new ScaleInfo(y)));
+    // this.meshLevelsOfDetail = verifyObjectProperty(obj, 'mesh_levels_of_detail', verifyOptionalNonnegativeInt) || 0;
+    this.meshLevelsOfDetail = 5;
   }
 
   getSources(volumeSourceOptions: VolumeSourceOptions) {
