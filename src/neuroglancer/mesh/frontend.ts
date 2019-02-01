@@ -28,6 +28,7 @@ import {GL} from 'neuroglancer/webgl/context';
 import {ShaderBuilder, ShaderModule, ShaderProgram} from 'neuroglancer/webgl/shader';
 import {setVec4FromUint32} from 'neuroglancer/webgl/shader_lib';
 import {registerSharedObjectOwner, RPC} from 'neuroglancer/worker_rpc';
+import {MeshLevelOfDetailSelectionWidget} from 'neuroglancer/widget/mesh_level_of_detail_selection_widget';
 
 export class MeshShaderManager {
   private tempLightVec = new Float32Array(4);
@@ -103,12 +104,15 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
   protected meshShaderManager = new MeshShaderManager();
   private shaders = new Map<ShaderModule, ShaderProgram>();
   private sharedObject: SegmentationLayerSharedObject;
+  meshLevelOfDetailSelectionWidget: MeshLevelOfDetailSelectionWidget;
 
   constructor(
       public chunkManager: ChunkManager,
       public chunkedGraph: ChunkedGraphLayer|null,
       public source: MeshSource,
-      public displayState: SegmentationDisplayState3D) {
+      public displayState: SegmentationDisplayState3D,
+      public selectedLevelOfDetail: TrackableValue<number>,
+      public maxL) {
     super();
 
     registerRedrawWhenSegmentationDisplayState3DChanged(displayState, this);
@@ -120,6 +124,8 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
       'source': source.addCounterpartRef(),
       'chunkedGraph': chunkedGraph ? chunkedGraph.rpcId : null,
     });
+    this.meshLevelOfDetailSelectionWidget = this.registerDisposer(new MeshLevelOfDetailSelectionWidget());
+
     this.setReady(true);
     sharedObject.visibility.add(this.visibility);
   }

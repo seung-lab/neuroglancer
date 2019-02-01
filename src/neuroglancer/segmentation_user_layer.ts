@@ -101,7 +101,7 @@ export class SegmentationUserLayer extends Base {
   meshLayer: Borrowed<MeshLayer>|undefined;
   skeletonLayer: Borrowed<SkeletonLayer>|undefined;
 
-  displayOptionsTab: Borrowed<DisplayOptionsTab>|undefined;
+  // displayOptionsTab: Borrowed<DisplayOptionsTab>|undefined;
 
   // Dispatched when either meshLayer or skeletonLayer changes.
   objectLayerStateChanged = new NullarySignal();
