@@ -88,6 +88,7 @@ export abstract class RenderLayer extends GenericRenderLayer {
       'minMIPLevel': minMIPLevel.value,
       'maxMIPLevel': maxMIPLevel.value,
       'numberOfMIPLevels': transformedSources.length,
+      'voxelSize': this.voxelSize,
       ...rpcTransfer
     });
     this.rpcId = sharedObject.rpcId;

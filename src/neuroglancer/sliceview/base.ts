@@ -139,6 +139,7 @@ export interface RenderLayer {
   transformedSources: TransformedSource[][]|undefined;
   transformedSourcesGeneration: number;
   mipLevelConstraints: TrackableMIPLevelConstraints;
+  voxelSize: vec3|null;
   activeMinMIPLevel?: TrackableValue<number|undefined>; // not needed for backend
 }
 
@@ -212,9 +213,6 @@ export class SliceViewBase extends SharedObject {
   // to data coordinates.
   viewportToData = mat4.create();
 
-  // voxelSize from navigation state, used by backend to prefetch chunks that are close by
-  voxelSize = vec3.create();
-
   // Normalized x, y, and z viewport axes in data coordinate space.
   viewportAxes = [vec3.create(), vec3.create(), vec3.create()];
 
@@ -268,8 +266,7 @@ export class SliceViewBase extends SharedObject {
     }
     return false;
   }
-  setViewportToDataMatrix(mat: mat4, voxelSize: vec3) {
-    vec3.copy(this.voxelSize, voxelSize);
+  setViewportToDataMatrix(mat: mat4) {
     if (this.hasViewportToData && mat4.equals(this.viewportToData, mat)) {
       return false;
     }

@@ -156,7 +156,7 @@ export class SliceView extends SliceViewIntermediateBase {
     // along normal vector to the plane in each direction until we find chunks to prefetch or
     // we hit the end of the dataset
     const computePrefetchChunksOutsidePlane = () => {
-      const {voxelSize, viewportAxes} = this;
+      const {viewportAxes} = this;
       const moveVertex =
           (vertexOut: vec3, vertexIn: vec3, movementVector: vec3, movementMagnitude: number) => {
             vec3.scale(vertexOut, movementVector, movementMagnitude);
@@ -195,6 +195,7 @@ export class SliceView extends SliceViewIntermediateBase {
       };
       const prefetchRectangle = tempRectangle2;
       copyRectangle(prefetchRectangle, visibleRectangle);
+      const voxelSize = this.visibleLayers.keys().next().value.voxelSize;
       vec3.multiply(prefetchDepthMovement, voxelSize, viewportAxes[2]);
       this.computeChunksWithinRectangle(getLayoutObject, addPrefetchChunk, prefetchRectangle, setPrefetchBounds(true));
       copyRectangle(prefetchRectangle, visibleRectangle);
@@ -286,7 +287,7 @@ registerRPC(SLICEVIEW_UPDATE_VIEW_RPC_ID, function(x) {
     obj.setViewportSize(x.width, x.height);
   }
   if (x.viewportToData) {
-    obj.setViewportToDataMatrix(x.viewportToData, x.voxelSize);
+    obj.setViewportToDataMatrix(x.viewportToData);
   }
 });
 registerRPC(SLICEVIEW_ADD_VISIBLE_LAYER_RPC_ID, function(x) {
@@ -370,6 +371,7 @@ export class RenderLayer extends SharedObjectCounterpart implements RenderLayerI
   transformedSources: {source: SliceViewChunkSource, chunkLayout: ChunkLayout}[][];
   transformedSourcesGeneration = -1;
   mipLevelConstraints: TrackableMIPLevelConstraints;
+  voxelSize: vec3;
 
   constructor(rpc: RPC, options: any) {
     super(rpc, options);
@@ -386,6 +388,7 @@ export class RenderLayer extends SharedObjectCounterpart implements RenderLayerI
     mat4.copy(this.transform.transform, options['transform']);
     this.transform.changed.add(this.layerChanged.dispatch);
     this.mipLevelConstraints = new TrackableMIPLevelConstraints(options['minMIPLevel'], options['maxMIPLevel'], options['numberOfMIPLevels']);
+    this.voxelSize = vec3.clone(options['voxelSize']);
   }
 }
 registerRPC(SLICEVIEW_RENDERLAYER_UPDATE_TRANSFORM_RPC_ID, function(x) {

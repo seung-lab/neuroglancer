@@ -141,7 +141,7 @@ export class SliceView extends Base {
       return;
     }
     navigationState.toMat4(tempMat);
-    this.setViewportToDataMatrix(tempMat, navigationState.pose.position.voxelSize.size);
+    this.setViewportToDataMatrix(tempMat);
   }
 
   private updateVisibleLayers = this.registerCancellable(debounce(() => {
@@ -237,11 +237,11 @@ export class SliceView extends Base {
   }
 
   onViewportToDataMatrixChanged() {
-    let {viewportToData, dataToViewport, voxelSize} = this;
+    let {viewportToData, dataToViewport} = this;
     mat4.invert(dataToViewport, viewportToData);
     rectifyTransformMatrixIfAxisAligned(dataToViewport);
     this.rpc!.invoke(
-        SLICEVIEW_UPDATE_VIEW_RPC_ID, {id: this.rpcId, viewportToData: viewportToData, voxelSize});
+        SLICEVIEW_UPDATE_VIEW_RPC_ID, {id: this.rpcId, viewportToData: viewportToData});
   }
 
   onHasValidViewport() {
