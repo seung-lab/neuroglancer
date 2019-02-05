@@ -446,10 +446,9 @@ export class SliceViewBase extends SharedObject {
     }
   }
 
-  // Returns false indicating rectangle was not changed
   protected static getChunkBoundsForRectangle(
       chunkLayout: ChunkLayout, rectangle: GlobalCoordinateRectangle, lowerBoundOut: vec3,
-      upperBoundOut: vec3): boolean {
+      upperBoundOut: vec3) {
     vec3.set(
         lowerBoundOut, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY,
         Number.POSITIVE_INFINITY);
@@ -463,7 +462,6 @@ export class SliceViewBase extends SharedObject {
         upperBoundOut[j] = Math.max(upperBoundOut[j], Math.floor(localCorner[j]) + 1);
       }
     }
-    return false;
   }
 
   protected computeChunksWithinRectangle<T>(
@@ -472,7 +470,9 @@ export class SliceViewBase extends SharedObject {
           (chunkLayout: ChunkLayout, layoutObject: T, lowerBound: vec3,
            fullyVisibleSources: SliceViewChunkSource[]) => void,
       rectangle: GlobalCoordinateRectangle,
-      makeBoundsForRectangle = SliceViewBase.getChunkBoundsForRectangle) {
+      makeBoundsForRectangle?:
+          (chunkLayout: ChunkLayout, rectangle: GlobalCoordinateRectangle, lowerBoundOut: vec3,
+           upperBoundOut: vec3, voxelSize: vec3) => void) {
     // These variables hold the lower and upper bounds on chunk grid positions that intersect the
     // viewing plane.
     var lowerChunkBound = vec3.create();
@@ -523,9 +523,13 @@ export class SliceViewBase extends SharedObject {
               positiveVertex[i] = planeNormal[i] > 0 ? 1 : 0;
             }
 
-            if (makeBoundsForRectangle(chunkLayout, rectangle, lowerChunkBound, upperChunkBound)) {
+            if (makeBoundsForRectangle) {
+              makeBoundsForRectangle(chunkLayout, rectangle, lowerChunkBound, upperChunkBound, visibleSources.keys().next().value.spec.voxelSize);
               // rectangle modified in order to prefetch, reset center
               setCenterDataPosition();
+            }
+            else {
+              SliceViewBase.getChunkBoundsForRectangle(chunkLayout, rectangle, lowerChunkBound, upperChunkBound);
             }
             vec3.max(lowerChunkBound, lowerChunkBound, sourcesLowerChunkBound);
             vec3.min(upperChunkBound, upperChunkBound, sourcesUpperChunkBound);

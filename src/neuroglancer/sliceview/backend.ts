@@ -171,7 +171,8 @@ export class SliceView extends SliceViewIntermediateBase {
       const setPrefetchBounds = (prefetchingIntoPlane: boolean) => {
         const direction = (prefetchingIntoPlane) ? 1 : -1;
         return (chunkLayout: ChunkLayout, rectangleOut: GlobalCoordinateRectangle,
-                lowerBoundOut: vec3, upperBoundOut: vec3) => {
+                lowerBoundOut: vec3, upperBoundOut: vec3, voxelSize: vec3) => {
+          vec3.multiply(prefetchDepthMovement, voxelSize, viewportAxes[2]);
           SliceViewBase.getChunkBoundsForRectangle(
               chunkLayout, rectangleOut, tempChunkBound1, tempChunkBound2);
           const visibleLowerChunkBound = tempChunkBound1;
@@ -190,13 +191,10 @@ export class SliceView extends SliceViewIntermediateBase {
             }
             ++i;
           }
-          return true;
         };
       };
       const prefetchRectangle = tempRectangle2;
       copyRectangle(prefetchRectangle, visibleRectangle);
-      const voxelSize = this.visibleLayers.keys().next().value.voxelSize;
-      vec3.multiply(prefetchDepthMovement, voxelSize, viewportAxes[2]);
       this.computeChunksWithinRectangle(getLayoutObject, addPrefetchChunk, prefetchRectangle, setPrefetchBounds(true));
       copyRectangle(prefetchRectangle, visibleRectangle);
       this.computeChunksWithinRectangle(getLayoutObject, addPrefetchChunk, prefetchRectangle, setPrefetchBounds(false));
