@@ -214,6 +214,16 @@ export function getMeshSource(chunkManager: ChunkManager, url: string) {
   return getShardedMeshSource(chunkManager, {baseUrls, path, lod: 0});
 }
 
+export function getMeshSources(chunkManager: ChunkManager, url: string) {
+  const [baseUrls, path] = parseSpecialUrl(url);
+  const meshSources = [];
+  for (let lod = 0; lod < 5; ++lod) {
+    meshSources.push(getShardedMeshSource(
+      chunkManager, { baseUrls, path, lod }));
+  }
+  return meshSources;
+}
+
 export function getVolume(chunkManager: ChunkManager, url: string) {
   const [baseUrls, path] = parseSpecialUrl(url);
   return getShardedVolume(chunkManager, baseUrls, path);
@@ -228,6 +238,9 @@ export class PrecomputedDataSource extends DataSource {
   }
   getMeshSource(chunkManager: ChunkManager, url: string) {
     return getMeshSource(chunkManager, url);
+  }
+  getMeshSources(chunkManager: ChunkManager, url: string) {
+    return getMeshSources(chunkManager, url);
   }
   getSkeletonSource(chunkManager: ChunkManager, url: string) {
     return getSkeletonSource(chunkManager, url);

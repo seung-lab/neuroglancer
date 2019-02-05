@@ -211,10 +211,10 @@ export class SegmentationUserLayer extends Base {
     let remaining = 0;
     if (meshPath != null) {
       ++remaining;
-      this.manager.dataSourceProvider.getMeshSource(this.manager.chunkManager, meshPath)
-          .then(meshSource => {
+      this.manager.dataSourceProvider.getMeshSources(this.manager.chunkManager, meshPath)
+          .then(meshSources => {
             if (!this.wasDisposed) {
-              this.addMesh([meshSource]);
+              this.addMesh(meshSources);
               if (--remaining === 0) {
                 this.isReady = true;
               }
@@ -759,9 +759,15 @@ class DisplayOptionsTab extends Tab {
 
     element.appendChild(layer.voxelSizeSelectionWidget.element);
 
-    if (layer.meshLayer !== undefined) {
-      element.appendChild(layer.meshLayer.meshLevelOfDetailSelectionWidget.element);
-    }
+    let dontAddTwice = true;
+    const maybeAddMeshUI = () => {
+      if (layer.meshLayer !== undefined && dontAddTwice) {
+        dontAddTwice = false;
+        element.appendChild(layer.meshLayer.meshLevelOfDetailSelectionWidget.element);
+      }
+    };
+    this.registerDisposer(this.layer.objectLayerStateChanged.add(maybeAddMeshUI));
+    maybeAddMeshUI();
   }
 }
 
