@@ -139,7 +139,6 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
       'chunkedGraph': chunkedGraph ? chunkedGraph.rpcId : null,
     });
     this.registerDisposer(selectedLevelOfDetail.changed.add(() => {
-      console.log(`frontend level of detail: ${selectedLevelOfDetail.value}`);
       chunkManager.rpc!.invoke(
         UPDATE_SELECTED_MESH_LEVEL_OF_DETAIL_RPC_ID,
           {id: sharedObject.rpcId, levelOfDetail: selectedLevelOfDetail.value});

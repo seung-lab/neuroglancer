@@ -322,11 +322,9 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
     sourceRefs.forEach(sourceRef => {
       this.sources.push(rpc.getRef<MeshSource>(sourceRef));
     });
-    // this.source = this.registerDisposer(rpc.getRef<MeshSource>(options['source']));
     this.chunkedGraph = this.registerDisposer(rpc.get(options['chunkedGraph']));
     this.selectedLevelOfDetail = new TrackableValue<number>(options['meshLevelOfDetail'], verifyNonnegativeInt);
     this.registerDisposer(this.selectedLevelOfDetail.changed.add(() => {
-      // console.log(`backend level of detail: ${this.selectedLevelOfDetail.value}`);
       this.chunkManager.scheduleUpdateChunkPriorities();
       this.updateChunkPriorities();
     }));

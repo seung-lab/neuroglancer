@@ -85,8 +85,9 @@ export interface DataSource {
           Promise<MultiscaleVectorGraphicsChunkSource>|MultiscaleVectorGraphicsChunkSource;
   getMeshSource?(chunkManager: ChunkManager, path: string, cancellationToken: CancellationToken):
       Promise<MeshSource>|MeshSource;
-  getMeshSources?(chunkManager: ChunkManager, path: string, cancellationToken: CancellationToken):
-      Promise<MeshSource[]>|MeshSource[];
+  getMeshSources?
+      (chunkManager: ChunkManager, path: string, levelsOfDetail: number,
+       cancellationToken: CancellationToken): Promise<MeshSource[]>|MeshSource[];
   getSkeletonSource?
       (chunkManager: ChunkManager, path: string, cancellationToken: CancellationToken):
           Promise<SkeletonSource>|SkeletonSource;
@@ -168,11 +169,18 @@ export class DataSourceProvider extends RefCounted {
     });
   }
 
-  getMeshSources(chunkManager: ChunkManager, url: string, cancellationToken = uncancelableToken) {
+  getMeshSources(chunkManager: ChunkManager, url: string, levelsOfDetail: number, cancellationToken = uncancelableToken) {
     let [dataSource, path] = this.getDataSource(url);
-    return new Promise<MeshSource[]>(resolve => {
-      resolve(dataSource.getMeshSources!(chunkManager, path, cancellationToken));
-    });
+    if (dataSource.getMeshSources) {
+      return new Promise<MeshSource[]>(resolve => {
+        resolve(dataSource.getMeshSources!(chunkManager, path, levelsOfDetail, cancellationToken));
+      });
+    } else {
+      const meshSourcePromise = new Promise(resolve => {
+        resolve(dataSource.getMeshSource!(chunkManager, path, cancellationToken));
+      }).then(meshSource => [meshSource]);
+      return meshSourcePromise as Promise<MeshSource[]>;
+    }
   }
 
   getSkeletonSource(

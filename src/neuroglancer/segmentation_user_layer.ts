@@ -36,7 +36,7 @@ import {Uint64Set} from 'neuroglancer/uint64_set';
 import {UserLayerWithVolumeSourceMixin} from 'neuroglancer/user_layer_with_volume_source';
 import {Borrowed} from 'neuroglancer/util/disposable';
 import {vec3} from 'neuroglancer/util/geom';
-import {parseArray, verify3dVec, verifyObjectProperty, verifyOptionalString} from 'neuroglancer/util/json';
+import {parseArray, verify3dVec, verifyObjectProperty, verifyOptionalString, verifyOptionalNonnegativeInt} from 'neuroglancer/util/json';
 import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {makeWatchableShaderError} from 'neuroglancer/webgl/dynamic_shader';
@@ -64,6 +64,8 @@ const HIGHLIGHTS_JSON_KEY = 'highlights';
 const EQUIVALENCES_JSON_KEY = 'equivalences';
 const CLIP_BOUNDS_JSON_KEY = 'clipBounds';
 const SKELETON_SHADER_JSON_KEY = 'skeletonShader';
+const MESH_LEVELS_OF_DETAIL_JSON_KEY = 'meshLevelsOfDetail';
+const SELECTED_MESH_LEVEL_OF_DETAIL_JSON_KEY = 'selectedMeshLevelOfDetail';
 
 
 const Base = UserLayerWithVolumeSourceMixin(UserLayer);
@@ -97,13 +99,11 @@ export class SegmentationUserLayer extends Base {
    */
   chunkedGraphUrl: string|null|undefined;
   meshPath: string|null|undefined;
+  meshLevelsOfDetail: number|null|undefined;
   skeletonsPath: string|null|undefined;
   chunkedGraphLayer: Borrowed<ChunkedGraphLayer>|undefined;
   meshLayer: Borrowed<MeshLayer>|undefined;
   skeletonLayer: Borrowed<SkeletonLayer>|undefined;
-
-  // displayOptionsTab: Borrowed<DisplayOptionsTab>|undefined;
-  // selectedMeshLevelOfDetail = new TrackableValue(5, verifyNonnegativeInt);
 
   // Dispatched when either meshLayer or skeletonLayer changes.
   objectLayerStateChanged = new NullarySignal();
@@ -134,16 +134,6 @@ export class SegmentationUserLayer extends Base {
     this.displayState.hideSegmentZero.changed.add(() => this.specificationChanged.dispatch());
     this.displayState.fragmentMain.changed.add(() => this.specificationChanged.dispatch());
     this.displayState.selectedLevelOfDetail.changed.add(() => this.specificationChanged.dispatch());
-    // this.tabs.add(
-    //   'rendering', {
-    //     label: 'Rendering', order: -100, getter: () => {
-    //       const displayOptionsTab = new DisplayOptionsTab(this);
-    //       if (this.displayOptionsTab === undefined) {
-    //         this.displayOptionsTab = displayOptionsTab;
-    //       }
-    //       return displayOptionsTab;
-    //     }
-    //   });
     this.tabs.add(
         'rendering', {label: 'Rendering', order: -100, getter: () => new DisplayOptionsTab(this)});
     this.tabs.default = 'rendering';
@@ -209,10 +199,16 @@ export class SegmentationUserLayer extends Base {
     let skeletonsPath = this.skeletonsPath = specification[SKELETONS_JSON_KEY] === null ?
         null :
         verifyOptionalString(specification[SKELETONS_JSON_KEY]);
+    const meshLevelsOfDetail = this.meshLevelsOfDetail = specification[MESH_LEVELS_OF_DETAIL_JSON_KEY] === null ?
+      null :
+      verifyOptionalNonnegativeInt(specification[MESH_LEVELS_OF_DETAIL_JSON_KEY]);
+    if (specification[SELECTED_MESH_LEVEL_OF_DETAIL_JSON_KEY]) {
+      this.displayState.selectedLevelOfDetail.restoreState(specification[SELECTED_MESH_LEVEL_OF_DETAIL_JSON_KEY]);
+    }
     let remaining = 0;
     if (meshPath != null) {
       ++remaining;
-      this.manager.dataSourceProvider.getMeshSources(this.manager.chunkManager, meshPath)
+      this.manager.dataSourceProvider.getMeshSources(this.manager.chunkManager, meshPath, meshLevelsOfDetail || 1)
           .then(meshSources => {
             if (!this.wasDisposed) {
               this.addMesh(meshSources);
@@ -240,7 +236,6 @@ export class SegmentationUserLayer extends Base {
       ++remaining;
       multiscaleSource.then(volume => {
         if (!this.wasDisposed) {
-          // const numberOfMeshLevelsOfDetail = 5;
           const segmentationRenderLayer = new SegmentationRenderLayer(volume, this.displayState);
           this.setupVoxelSelectionWidget(segmentationRenderLayer);
           this.addRenderLayer(segmentationRenderLayer);
@@ -387,6 +382,8 @@ export class SegmentationUserLayer extends Base {
       };
     }
     x[SKELETON_SHADER_JSON_KEY] = this.displayState.fragmentMain.toJSON();
+    x[MESH_LEVELS_OF_DETAIL_JSON_KEY] = this.meshLevelsOfDetail;
+    x[SELECTED_MESH_LEVEL_OF_DETAIL_JSON_KEY] = this.displayState.selectedLevelOfDetail.toJSON();
     return x;
   }
 

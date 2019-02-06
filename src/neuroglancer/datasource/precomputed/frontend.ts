@@ -25,7 +25,7 @@ import {DataType, VolumeChunkSpecification, VolumeSourceOptions, VolumeType} fro
 import {MultiscaleVolumeChunkSource as GenericMultiscaleVolumeChunkSource, VolumeChunkSource} from 'neuroglancer/sliceview/volume/frontend';
 import {mat4, vec3} from 'neuroglancer/util/geom';
 import {openShardedHttpRequest, parseSpecialUrl, sendHttpRequest} from 'neuroglancer/util/http_request';
-import {parseArray, parseFixedLengthArray, parseIntVec, verifyEnumString, verifyFinitePositiveFloat, verifyObject, verifyObjectAsMap, verifyObjectProperty, verifyOptionalString, verifyPositiveInt, verifyString} from 'neuroglancer/util/json';
+import {parseArray, parseFixedLengthArray, parseIntVec, verifyEnumString, verifyFinitePositiveFloat, verifyObject, verifyObjectAsMap, verifyObjectProperty, verifyOptionalString, verifyPositiveInt, verifyString, verifyOptionalNonnegativeInt} from 'neuroglancer/util/json';
 
 class PrecomputedVolumeChunkSource extends
 (WithParameters(VolumeChunkSource, VolumeChunkSourceParameters)) {}
@@ -125,8 +125,7 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
     this.mesh = verifyObjectProperty(obj, 'mesh', verifyOptionalString);
     this.skeleton = verifyObjectProperty(obj, 'skeletons', verifyOptionalString);
     this.scales = verifyObjectProperty(obj, 'scales', x => parseArray(x, y => new ScaleInfo(y)));
-    // this.meshLevelsOfDetail = verifyObjectProperty(obj, 'mesh_levels_of_detail', verifyOptionalNonnegativeInt) || 0;
-    this.meshLevelsOfDetail = 5;
+    this.meshLevelsOfDetail = verifyObjectProperty(obj, 'mesh_levels_of_detail', verifyOptionalNonnegativeInt) || 1;
   }
 
   getSources(volumeSourceOptions: VolumeSourceOptions) {
@@ -214,10 +213,10 @@ export function getMeshSource(chunkManager: ChunkManager, url: string) {
   return getShardedMeshSource(chunkManager, {baseUrls, path, lod: 0});
 }
 
-export function getMeshSources(chunkManager: ChunkManager, url: string) {
+export function getMeshSources(chunkManager: ChunkManager, url: string, levelsOfDetail: number) {
   const [baseUrls, path] = parseSpecialUrl(url);
   const meshSources = [];
-  for (let lod = 0; lod < 8; ++lod) {
+  for (let lod = 0; lod < levelsOfDetail; ++lod) {
     meshSources.push(getShardedMeshSource(
       chunkManager, { baseUrls, path, lod }));
   }
@@ -239,8 +238,8 @@ export class PrecomputedDataSource extends DataSource {
   getMeshSource(chunkManager: ChunkManager, url: string) {
     return getMeshSource(chunkManager, url);
   }
-  getMeshSources(chunkManager: ChunkManager, url: string) {
-    return getMeshSources(chunkManager, url);
+  getMeshSources(chunkManager: ChunkManager, url: string, levelsOfDetail: number) {
+    return getMeshSources(chunkManager, url, levelsOfDetail);
   }
   getSkeletonSource(chunkManager: ChunkManager, url: string) {
     return getSkeletonSource(chunkManager, url);
