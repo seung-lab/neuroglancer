@@ -139,7 +139,6 @@ export interface RenderLayer {
   transformedSources: TransformedSource[][]|undefined;
   transformedSourcesGeneration: number;
   mipLevelConstraints: TrackableMIPLevelConstraints;
-  voxelSize: vec3|null;
   activeMinMIPLevel?: TrackableValue<number|undefined>; // not needed for backend
 }
 

@@ -369,7 +369,6 @@ export class RenderLayer extends SharedObjectCounterpart implements RenderLayerI
   transformedSources: {source: SliceViewChunkSource, chunkLayout: ChunkLayout}[][];
   transformedSourcesGeneration = -1;
   mipLevelConstraints: TrackableMIPLevelConstraints;
-  voxelSize: vec3;
 
   constructor(rpc: RPC, options: any) {
     super(rpc, options);
@@ -386,7 +385,6 @@ export class RenderLayer extends SharedObjectCounterpart implements RenderLayerI
     mat4.copy(this.transform.transform, options['transform']);
     this.transform.changed.add(this.layerChanged.dispatch);
     this.mipLevelConstraints = new TrackableMIPLevelConstraints(options['minMIPLevel'], options['maxMIPLevel'], options['numberOfMIPLevels']);
-    this.voxelSize = vec3.clone(options['voxelSize']);
   }
 }
 registerRPC(SLICEVIEW_RENDERLAYER_UPDATE_TRANSFORM_RPC_ID, function(x) {

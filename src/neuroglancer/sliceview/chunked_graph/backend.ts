@@ -187,7 +187,6 @@ export class ChunkedGraphLayer extends Base implements RenderLayerInterface {
   transformedSources: {source: ChunkedGraphChunkSource, chunkLayout: ChunkLayout}[][];
   transformedSourcesGeneration = -1;
   mipLevelConstraints = new TrackableMIPLevelConstraints();
-  voxelSize = null;
 
   graphurl: string;
   rootSegments: Uint64Set;
