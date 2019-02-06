@@ -217,7 +217,7 @@ export function getMeshSource(chunkManager: ChunkManager, url: string) {
 export function getMeshSources(chunkManager: ChunkManager, url: string) {
   const [baseUrls, path] = parseSpecialUrl(url);
   const meshSources = [];
-  for (let lod = 0; lod < 5; ++lod) {
+  for (let lod = 0; lod < 8; ++lod) {
     meshSources.push(getShardedMeshSource(
       chunkManager, { baseUrls, path, lod }));
   }

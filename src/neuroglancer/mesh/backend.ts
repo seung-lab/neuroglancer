@@ -327,6 +327,7 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
     this.selectedLevelOfDetail = new TrackableValue<number>(options['meshLevelOfDetail'], verifyNonnegativeInt);
     this.registerDisposer(this.selectedLevelOfDetail.changed.add(() => {
       // console.log(`backend level of detail: ${this.selectedLevelOfDetail.value}`);
+      this.chunkManager.scheduleUpdateChunkPriorities();
       this.updateChunkPriorities();
     }));
     this.registerDisposer(this.chunkManager.recomputeChunkPriorities.add(() => {

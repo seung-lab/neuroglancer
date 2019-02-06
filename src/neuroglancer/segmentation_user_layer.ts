@@ -133,6 +133,7 @@ export class SegmentationUserLayer extends Base {
     this.displayState.objectAlpha.changed.add(() => this.specificationChanged.dispatch());
     this.displayState.hideSegmentZero.changed.add(() => this.specificationChanged.dispatch());
     this.displayState.fragmentMain.changed.add(() => this.specificationChanged.dispatch());
+    this.displayState.selectedLevelOfDetail.changed.add(() => this.specificationChanged.dispatch());
     // this.tabs.add(
     //   'rendering', {
     //     label: 'Rendering', order: -100, getter: () => {
