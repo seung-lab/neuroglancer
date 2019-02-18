@@ -16,7 +16,7 @@
 
 import {WithParameters} from 'neuroglancer/chunk_manager/backend';
 import {MeshSourceParameters, SkeletonSourceParameters, VolumeChunkEncoding, VolumeChunkSourceParameters} from 'neuroglancer/datasource/precomputed/base';
-import {decodeJsonManifestChunk, decodeTriangleVertexPositionsAndIndices, FragmentChunk, ManifestChunk, MeshSource} from 'neuroglancer/mesh/backend';
+import {decodeJsonManifestChunk, decodeTriangleVertexPositionsAndIndices, decodeTriangleVertexPositionsAndIndicesDraco, FragmentChunk, ManifestChunk, MeshSource} from 'neuroglancer/mesh/backend';
 import {decodeSkeletonVertexPositionsAndIndices, SkeletonChunk, SkeletonSource} from 'neuroglancer/skeleton/backend';
 import {VertexAttributeInfo} from 'neuroglancer/skeleton/base';
 import {ChunkDecoder} from 'neuroglancer/sliceview/backend_chunk_decoders';
@@ -68,6 +68,15 @@ export function decodeFragmentChunk(chunk: FragmentChunk, response: ArrayBuffer)
       chunk, response, Endianness.LITTLE, /*vertexByteOffset=*/4, numVertices);
 }
 
+export function decodeDracoFragmentChunk(chunk: FragmentChunk, response: ArrayBuffer) {
+  try {
+    decodeTriangleVertexPositionsAndIndicesDraco(chunk, response);
+  } catch (e) {
+    // not a draco mesh
+    decodeFragmentChunk(chunk, response);
+  }
+}
+
 @registerSharedObject() export class PrecomputedMeshSource extends
 (WithParameters(MeshSource, MeshSourceParameters)) {
   download(chunk: ManifestChunk, cancellationToken: CancellationToken) {
@@ -84,7 +93,7 @@ export function decodeFragmentChunk(chunk: FragmentChunk, response: ArrayBuffer)
     return sendHttpRequest(
                openShardedHttpRequest(parameters.baseUrls, requestPath), 'arraybuffer',
                cancellationToken)
-        .then(response => decodeFragmentChunk(chunk, response));
+        .then(response => decodeDracoFragmentChunk(chunk, response));
   }
 }
 
