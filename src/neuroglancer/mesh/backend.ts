@@ -29,6 +29,7 @@ import {verifyObject, verifyObjectProperty, verifyStringArray} from 'neuroglance
 import {Uint64} from 'neuroglancer/util/uint64';
 import {getBasePriority, getPriorityTier} from 'neuroglancer/visibility_priority/backend';
 import {registerSharedObject, RPC} from 'neuroglancer/worker_rpc';
+const DracoLoader = require('dracoloader');
 
 const MESH_OBJECT_MANIFEST_CHUNK_PRIORITY = 100;
 const MESH_OBJECT_FRAGMENT_CHUNK_PRIORITY = 50;
@@ -36,6 +37,8 @@ const MESH_OBJECT_FRAGMENT_CHUNK_PRIORITY = 50;
 const DEBUG = false;
 
 export type FragmentId = string;
+
+const dracoLoader = DracoLoader.default;
 
 // Chunk that contains the list of fragments that make up a single object.
 export class ManifestChunk extends Chunk {
@@ -243,6 +246,71 @@ export function decodeTriangleVertexPositionsAndIndices(
   decodeVertexPositionsAndIndices(
       chunk, /*verticesPerPrimitive=*/3, data, endianness, vertexByteOffset, numVertices,
       indexByteOffset, numTriangles);
+  chunk.vertexNormals = computeVertexNormals(chunk.vertexPositions!, chunk.indices!);
+}
+
+export function decodeTriangleVertexPositionsAndIndicesDraco(
+  chunk: FragmentChunk, data: ArrayBuffer) {
+  if (!dracoLoader.moduleLoaded) {
+    throw new Error('draco module not loaded');
+  }
+  const decoderModule = dracoLoader.decoderModule;
+  // const startTime = Date.now();
+  const decoder = new decoderModule.Decoder();
+  const buffer = new decoderModule.DecoderBuffer();
+  buffer.Init(new Int8Array(data), data.byteLength);
+  // console.log(`Setup time: ${Date.now() - startTime}`);
+  const mesh = new decoderModule.Mesh();
+  decoder.DecodeBufferToMesh(buffer, mesh);
+  const decoderAttr = decoderModule.POSITION;
+  const attrId = decoder.GetAttributeId(mesh, decoderAttr);
+  if (attrId < 0) {
+    throw new Error('Invalid Draco mesh');
+  }
+  // console.log(`Time to decode: ${Date.now() - startTime}`);
+  decoderModule.destroy(buffer);
+  const numFaces = mesh.num_faces();
+  const numIndices = numFaces * 3;
+  const numPoints = mesh.num_points();
+  const indices = new Uint32Array(numIndices);
+
+  // console.log('Number of faces ' + numFaces);
+  // console.log('Number of vertices ' + numPoints);
+
+  // Add Faces to mesh
+  // const beginFaceTime = Date.now();
+  // console.log(`Alloc time: ${beginFaceTime - startTime}`);
+  const ia = new decoderModule.DracoInt32Array();
+  for (let i = 0; i < numFaces; ++i) {
+    decoder.GetFaceFromMesh(mesh, i, ia);
+    const index = i * 3;
+    indices[index] = ia.GetValue(0);
+    indices[index + 1] = ia.GetValue(1);
+    indices[index + 2] = ia.GetValue(2);
+  }
+  decoderModule.destroy(ia);
+  // const endFaceTime = Date.now();
+  // console.log(`Face time: ${endFaceTime - beginFaceTime}`);
+  const stride = 3;
+  const numValues = numPoints * stride;
+
+  const attribute = decoder.GetAttribute(mesh, attrId);
+  const attributeData = new decoderModule.DracoFloat32Array();
+  decoder.GetAttributeFloatForAllPoints(mesh, attribute, attributeData);
+
+  // assert(numValues === attributeData.size(), 'Wrong attribute size.');
+
+  const attributeDataArray = new Float32Array(numValues);
+  for (let i = 0; i < numValues; ++i) {
+    attributeDataArray[i] = attributeData.GetValue(i);
+  }
+  decoderModule.destroy(attributeData);
+
+  chunk.vertexPositions = attributeDataArray;
+  chunk.indices = indices;
+  // const endTime = Date.now();
+  // console.log(`Time: ${endTime - startTime}`);
+  // console.log(`Vertex time: ${endTime - endFaceTime}`);
   chunk.vertexNormals = computeVertexNormals(chunk.vertexPositions!, chunk.indices!);
 }
 
