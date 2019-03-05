@@ -31,27 +31,26 @@ const DEFAULT_FRAGMENT_MAIN = `void main() {
 }
 `;
 
-const normFactorSignedData = '30.0';
+const normFactorSignedData = '200.0';
 
-export const DEFAULT_FRAGMENT_MAIN_SIGNED_DATA = `void main() {
-  float xVec = toNormalized(getDataValue(0));
-  float normFactor = ${normFactorSignedData};
-  float normPosFactor = normFactor;
-  float normNegFactor = normFactor;
-  if (xVec < 0.5) {
-    xVec *= normPosFactor;
-    if (xVec > 1.0) {
-     xVec = 1.0;
-    }
-    emitRGB(vec3(0.0, xVec, 0.0));
-  } else {
-    xVec = 1.0 - xVec;
-    xVec *= normNegFactor;
-    if (xVec > 1.0) {
-     xVec = 1.0;
-    }
-    emitRGB(vec3(xVec, 0.0, 0.0));
+export const DEFAULT_FRAGMENT_MAIN_SIGNED_DATA = `#define SCALE ${normFactorSignedData}
+#define RED vec3(1.,0.,0.)
+#define CYAN vec3(0.,1.,1.)
+#define GREEN vec3(.5,1.,0.)
+#define BLUE vec3(.5,0.,1.)
+
+void main () {
+  float x = toNormalized(getDataValue(0));
+  float y = toNormalized(getDataValue(1));
+  if (x > 0.5) {
+    x = x - 1.0;
   }
+  if (y > 0.5) {
+    y = y - 1.0;
+  }
+  vec3 x_color = (-x)*GREEN + x*BLUE;
+  vec3 y_color = (-y)*CYAN + y*RED;
+  emitRGB((x_color + y_color)*SCALE);
 }
 `;
 
