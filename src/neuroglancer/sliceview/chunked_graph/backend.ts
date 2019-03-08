@@ -29,6 +29,7 @@ import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {registerSharedObject, RPC, SharedObjectCounterpart} from 'neuroglancer/worker_rpc';
 import {WatchableValueInterface} from 'src/neuroglancer/trackable_value';
+import {reauthenticate} from 'neuroglancer/authentication';
 
 const tempChunkDataSize = vec3.create();
 const tempChunkPosition = vec3.create();
@@ -233,18 +234,26 @@ export class ChunkedGraphLayer extends Base implements RenderLayerInterface<Slic
       return Promise.resolve([segment]);
     }
 
-    let promise = sendHttpRequest(openHttpRequest(`${url}/segment/${segment}/children`), 'arraybuffer');
-    return promise.then(response => {
-      let uint32 = new Uint32Array(response);
-      let final: Uint64[] = new Array(uint32.length / 2);
-      for (let i = 0; i < uint32.length / 2; i++) {
-        final[i] = new Uint64(uint32[2 * i], uint32[2 * i + 1]);
-      }
-      return final;
-    }).catch((e: HttpError) => {
-      console.log(`Could not retrieve children for segment ${segment}`);
-      console.error(e);
-      return Promise.reject(e);
+    return reauthenticate().then((token) => {
+      const xhr = openHttpRequest(`${url}/segment/${segment}/children`);
+
+      xhr.setRequestHeader(
+          'Authorization',
+          `Bearer ${token}`);
+
+      const promise = sendHttpRequest(xhr, 'arraybuffer');
+      return promise.then(response => {
+        let uint32 = new Uint32Array(response);
+        let final: Uint64[] = new Array(uint32.length / 2);
+        for (let i = 0; i < uint32.length / 2; i++) {
+          final[i] = new Uint64(uint32[2 * i], uint32[2 * i + 1]);
+        }
+        return final;
+      }).catch((e: HttpError) => {
+        console.log(`Could not retrieve children for segment ${segment}`);
+        console.error(e);
+        return Promise.reject(e);
+      });
     });
   }
 
