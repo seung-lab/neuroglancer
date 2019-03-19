@@ -21,7 +21,6 @@ const DracoLoader = {};
 DracoLoader.dracoDecoderType = {};
 DracoLoader.moduleLoaded = false;
 DracoLoader.dracoDecoderType['onModuleLoaded'] = () => {
-    DracoLoader.dracoDecoder = new DracoLoader.decoderModule.Decoder;
     DracoLoader.moduleLoaded = true;
 };
 
