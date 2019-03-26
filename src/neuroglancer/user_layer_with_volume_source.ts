@@ -23,7 +23,7 @@ import {getAnnotationRenderOptions, UserLayerWithAnnotations, UserLayerWithAnnot
 import {UserLayerWithCoordinateTransform, UserLayerWithCoordinateTransformMixin} from 'neuroglancer/user_layer_with_coordinate_transform';
 import {verifyObjectProperty, verifyOptionalString} from 'neuroglancer/util/json';
 import {TrackableMIPLevelConstraints} from 'neuroglancer/trackable_mip_level_constraints';
-import {RenderLayer as GenericSliceViewRenderLayer} from 'neuroglancer/sliceview/renderlayer.ts';
+import {RenderLayer as GenericSliceViewRenderLayer} from 'neuroglancer/sliceview/renderlayer';
 import {VoxelSizeSelectionWidget} from 'neuroglancer/widget/voxel_size_selection_widget';
 import {vec3} from 'neuroglancer/util/geom';
 
