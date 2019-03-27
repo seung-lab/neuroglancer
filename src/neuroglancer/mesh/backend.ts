@@ -252,6 +252,7 @@ export function decodeTriangleVertexPositionsAndIndices(
 export function decodeTriangleVertexPositionsAndIndicesDraco(
   chunk: FragmentChunk, data: ArrayBuffer) {
   if (!dracoLoader.moduleLoaded) {
+    // Should never happen
     throw new Error('draco module not loaded');
   }
   const decoderModule = dracoLoader.decoderModule;
@@ -371,7 +372,7 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart {
   constructor(rpc: RPC, options: any) {
     super(rpc, options);
     this.source = this.registerDisposer(rpc.getRef<MeshSource>(options['source']));
-    this.chunkedGraph = this.registerDisposer(rpc.get(options['chunkedGraph']));
+    this.chunkedGraph = this.registerDisposer(rpc.get(options['chunkedGraph'])) || null;
     this.registerDisposer(this.chunkManager.recomputeChunkPriorities.add(() => {
       this.updateChunkPriorities();
     }));

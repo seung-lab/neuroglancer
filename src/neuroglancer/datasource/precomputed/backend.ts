@@ -69,12 +69,7 @@ export function decodeFragmentChunk(chunk: FragmentChunk, response: ArrayBuffer)
 }
 
 export function decodeDracoFragmentChunk(chunk: FragmentChunk, response: ArrayBuffer) {
-  try {
-    decodeTriangleVertexPositionsAndIndicesDraco(chunk, response);
-  } catch (e) {
-    // not a draco mesh
-    decodeFragmentChunk(chunk, response);
-  }
+  decodeTriangleVertexPositionsAndIndicesDraco(chunk, response);
 }
 
 @registerSharedObject() export class PrecomputedMeshSource extends
@@ -91,9 +86,16 @@ export function decodeDracoFragmentChunk(chunk: FragmentChunk, response: ArrayBu
     let {parameters} = this;
     let requestPath = `${parameters.path}/${chunk.fragmentId}`;
     return sendHttpRequest(
-               openShardedHttpRequest(parameters.baseUrls, requestPath), 'arraybuffer',
-               cancellationToken)
-        .then(response => decodeDracoFragmentChunk(chunk, response));
+      openShardedHttpRequest(parameters.baseUrls, requestPath), 'arraybuffer',
+      cancellationToken)
+      .then(response => {
+        try {
+          decodeDracoFragmentChunk(chunk, response);
+        } catch {
+          // not a draco mesh
+          decodeFragmentChunk(chunk, response);
+        }
+      });
   }
 }
 
