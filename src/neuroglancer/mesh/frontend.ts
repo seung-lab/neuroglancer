@@ -184,7 +184,7 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
     let ready = true;
     const fragmentChunks = source.fragmentSource.chunks;
     forEachVisibleSegment3D(displayState, objectId => {
-      const key = getObjectKey(objectId, displayState.clipBounds.value);
+      const key = getObjectKey(objectId);
       const manifestChunk = source.chunks.get(key);
       if (manifestChunk === undefined) {
         ready = false;

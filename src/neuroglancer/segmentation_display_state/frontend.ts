@@ -191,7 +191,7 @@ export function forEachRootSegmentToDraw<SegmentData>(
     displayState: SegmentationDisplayState, objects: Map<string, SegmentData>,
     callback: (rootObjectId: Uint64, segmentData: SegmentData) => void) {
   forEachRootSegment(displayState, rootObjectId => {
-    const key = getObjectKey(rootObjectId, displayState.clipBounds.value);
+    const key = getObjectKey(rootObjectId);
     const segmentData = objects.get(key);
     if (segmentData !== undefined) {
       callback(rootObjectId, segmentData);
@@ -203,7 +203,7 @@ export function forEachSegment2DToDraw<SegmentData>(
     displayState: SegmentationDisplayState, objects: Map<string, SegmentData>,
     callback: (rootObjectId: Uint64, objectId: Uint64, segmentData: SegmentData) => void) {
   forEachVisibleSegment2D(displayState, (objectId, rootObjectId) => {
-    const key = getObjectKey(objectId, displayState.clipBounds.value);
+    const key = getObjectKey(objectId);
     const segmentData = objects.get(key);
     if (segmentData !== undefined) {
       callback(rootObjectId, objectId, segmentData);
@@ -215,7 +215,7 @@ export function forEachSegment3DToDraw<SegmentData>(
     displayState: SegmentationDisplayState, objects: Map<string, SegmentData>,
     callback: (rootObjectId: Uint64, objectId: Uint64, segmentData: SegmentData) => void) {
   forEachVisibleSegment3D(displayState, (objectId, rootObjectId) => {
-    const key = getObjectKey(objectId, displayState.clipBounds.value);
+    const key = getObjectKey(objectId);
     const segmentData = objects.get(key);
     if (segmentData !== undefined) {
       callback(rootObjectId, objectId, segmentData);
@@ -235,7 +235,6 @@ export class SegmentationLayerSharedObject extends Base {
     options['rootSegments'] = displayState.rootSegments.rpcId;
     options['visibleSegments3D'] = displayState.visibleSegments3D.rpcId;
     options['segmentEquivalences'] = displayState.segmentEquivalences.rpcId;
-    options['clipBounds'] = displayState.clipBounds.rpcId;
     super.initializeCounterpart(this.chunkManager.rpc!, options);
   }
 }

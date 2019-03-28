@@ -21,10 +21,8 @@ import {MeshSource} from 'neuroglancer/mesh/frontend';
 import {MeshLayer} from 'neuroglancer/mesh/frontend';
 import {Overlay} from 'neuroglancer/overlay';
 import {SegmentColorHash} from 'neuroglancer/segment_color';
-import {Bounds} from 'neuroglancer/segmentation_display_state/base';
 import {SegmentationDisplayState3D, SegmentSelectionState, Uint64MapEntry} from 'neuroglancer/segmentation_display_state/frontend';
 import {SharedDisjointUint64Sets} from 'neuroglancer/shared_disjoint_sets';
-import {SharedWatchableValue} from 'neuroglancer/shared_watchable_value';
 import {FRAGMENT_MAIN_START as SKELETON_FRAGMENT_MAIN_START, getTrackableFragmentMain, PerspectiveViewSkeletonLayer, SkeletonLayer, SkeletonLayerDisplayState, SkeletonSource, SliceViewPanelSkeletonLayer} from 'neuroglancer/skeleton/frontend';
 import {VolumeType} from 'neuroglancer/sliceview/volume/base';
 import {SegmentationRenderLayer, SliceViewSegmentationDisplayState} from 'neuroglancer/sliceview/volume/segmentation_renderlayer';
@@ -35,8 +33,7 @@ import {ComputedWatchableValue} from 'neuroglancer/trackable_value';
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {UserLayerWithVolumeSourceMixin} from 'neuroglancer/user_layer_with_volume_source';
 import {Borrowed} from 'neuroglancer/util/disposable';
-import {vec3} from 'neuroglancer/util/geom';
-import {parseArray, verify3dVec, verifyObjectProperty, verifyOptionalString} from 'neuroglancer/util/json';
+import {parseArray, verifyObjectProperty, verifyOptionalString} from 'neuroglancer/util/json';
 import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {makeWatchableShaderError} from 'neuroglancer/webgl/dynamic_shader';
@@ -62,7 +59,6 @@ const ROOT_SEGMENTS_JSON_KEY = 'segments';
 const HIDDEN_ROOT_SEGMENTS_JSON_KEY = 'hiddenSegments';
 const HIGHLIGHTS_JSON_KEY = 'highlights';
 const EQUIVALENCES_JSON_KEY = 'equivalences';
-const CLIP_BOUNDS_JSON_KEY = 'clipBounds';
 const SKELETON_SHADER_JSON_KEY = 'skeletonShader';
 const COLOR_SEED_JSON_KEY = 'colorSeed';
 
@@ -77,7 +73,6 @@ export class SegmentationUserLayer extends Base {
         saturation: trackableAlphaValue(1.0),
         notSelectedAlpha: trackableAlphaValue(0),
         objectAlpha: trackableAlphaValue(1.0),
-        clipBounds: SharedWatchableValue.make<Bounds|undefined>(this.manager.worker, undefined),
         hideSegmentZero: new TrackableBoolean(true, true),
         rootSegments: Uint64Set.makeWithCounterpart(this.manager.worker),
         hiddenRootSegments: new Uint64Set(),
@@ -164,19 +159,6 @@ export class SegmentationUserLayer extends Base {
     restoreSegmentsList(HIDDEN_ROOT_SEGMENTS_JSON_KEY, this.displayState.hiddenRootSegments!);
     restoreSegmentsList(HIGHLIGHTS_JSON_KEY, this.displayState.highlightedSegments);
 
-    verifyObjectProperty(specification, CLIP_BOUNDS_JSON_KEY, y => {
-      if (y === undefined) {
-        return;
-      }
-      let center: vec3|undefined, size: vec3|undefined;
-      verifyObjectProperty(y, 'center', z => center = verify3dVec(z));
-      verifyObjectProperty(y, 'size', z => size = verify3dVec(z));
-      if (!center || !size) {
-        return;
-      }
-      let bounds = {center, size};
-      this.displayState.clipBounds.value = bounds;
-    });
     this.displayState.highlightedSegments.changed.add(() => {
       this.specificationChanged.dispatch();
     });
@@ -335,13 +317,6 @@ export class SegmentationUserLayer extends Base {
     let {segmentEquivalences} = this.displayState;
     if (segmentEquivalences.size > 0 && !this.chunkedGraphUrl) { // Too many equivalences when using Chunked Graph
       x[EQUIVALENCES_JSON_KEY] = segmentEquivalences.toJSON();
-    }
-    let {clipBounds} = this.displayState;
-    if (clipBounds.value) {
-      x[CLIP_BOUNDS_JSON_KEY] = {
-        center: Array.from(clipBounds.value.center),
-        size: Array.from(clipBounds.value.size),
-      };
     }
     x[SKELETON_SHADER_JSON_KEY] = this.displayState.fragmentMain.toJSON();
     return x;

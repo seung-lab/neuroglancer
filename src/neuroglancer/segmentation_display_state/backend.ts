@@ -19,19 +19,17 @@ import 'neuroglancer/shared_disjoint_sets';
 import 'neuroglancer/uint64_set';
 
 import {withChunkManager} from 'neuroglancer/chunk_manager/backend';
-import {Bounds, VisibleSegmentsState} from 'neuroglancer/segmentation_display_state/base';
+import {VisibleSegmentsState} from 'neuroglancer/segmentation_display_state/base';
 import {SharedDisjointUint64Sets} from 'neuroglancer/shared_disjoint_sets';
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {withSharedVisibility} from 'neuroglancer/visibility_priority/backend';
 import {RPC, SharedObjectCounterpart} from 'neuroglancer/worker_rpc';
-import {SharedWatchableValue} from 'neuroglancer/shared_watchable_value';
 
 const Base = withSharedVisibility(withChunkManager(SharedObjectCounterpart));
 
 export class SegmentationLayerSharedObjectCounterpart extends Base implements VisibleSegmentsState {
   rootSegments: Uint64Set;
   visibleSegments3D: Uint64Set;
-  clipBounds: SharedWatchableValue<Bounds>;
   segmentEquivalences: SharedDisjointUint64Sets;
 
   constructor(rpc: RPC, options: any) {
@@ -40,7 +38,6 @@ export class SegmentationLayerSharedObjectCounterpart extends Base implements Vi
     // segmentEquivalences since our owner will hold a reference to their owners.
     this.rootSegments = <Uint64Set>rpc.get(options['rootSegments']);
     this.visibleSegments3D = <Uint64Set>rpc.get(options['visibleSegments3D']);
-    this.clipBounds = <SharedWatchableValue<Bounds>>rpc.get(options['clipBounds']);
     this.segmentEquivalences = <SharedDisjointUint64Sets>rpc.get(options['segmentEquivalences']);
 
     const scheduleUpdateChunkPriorities = () => {
@@ -49,6 +46,5 @@ export class SegmentationLayerSharedObjectCounterpart extends Base implements Vi
     this.registerDisposer(this.rootSegments.changed.add(scheduleUpdateChunkPriorities));
     this.registerDisposer(this.visibleSegments3D.changed.add(scheduleUpdateChunkPriorities));
     this.registerDisposer(this.segmentEquivalences.changed.add(scheduleUpdateChunkPriorities));
-    this.registerDisposer(this.clipBounds.changed.add(scheduleUpdateChunkPriorities));
   }
 }
