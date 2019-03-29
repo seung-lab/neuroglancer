@@ -20,7 +20,7 @@ import {ChunkedGraphLayer} from 'neuroglancer/sliceview/chunked_graph/frontend';
 import {RenderLayer} from 'neuroglancer/layer';
 import {VoxelSize} from 'neuroglancer/navigation_state';
 import {PerspectiveViewRenderContext, PerspectiveViewRenderLayer} from 'neuroglancer/perspective_view/render_layer';
-import {forEachRootSegmentToDraw, getObjectColor, registerRedrawWhenSegmentationDisplayState3DChanged, SegmentationDisplayState3D, SegmentationLayerSharedObject} from 'neuroglancer/segmentation_display_state/frontend';
+import {getObjectColor, registerRedrawWhenSegmentationDisplayState3DChanged, SegmentationDisplayState3D, SegmentationLayerSharedObject} from 'neuroglancer/segmentation_display_state/frontend';
 import {SKELETON_LAYER_RPC_ID, VertexAttributeInfo} from 'neuroglancer/skeleton/base';
 import {SliceViewPanelRenderContext, SliceViewPanelRenderLayer} from 'neuroglancer/sliceview/panel';
 import {TrackableValue} from 'neuroglancer/trackable_value';
@@ -35,6 +35,7 @@ import glsl_COLORMAPS from 'neuroglancer/webgl/colormaps.glsl';
 import {GL} from 'neuroglancer/webgl/context';
 import {WatchableShaderError} from 'neuroglancer/webgl/dynamic_shader';
 import {ShaderBuilder, ShaderModule, ShaderProgram} from 'neuroglancer/webgl/shader';
+import {forEachVisibleSegment3D, getObjectKey} from '../segmentation_display_state/base';
 
 const tempMat2 = mat4.create();
 
@@ -137,8 +138,9 @@ void emitDefault() {
       const info = vertexAttributes[i];
       skeletonChunk.vertexBuffer.bindToVertexAttrib(
           shader.attribute(`aVertex${i}`),
-          /*components=*/info.numComponents, info.webglDataType, /*normalized=*/false, /*stride=*/0,
-          /*offset=*/vertexAttributeOffsets[i]);
+          /*components=*/ info.numComponents, info.webglDataType, /*normalized=*/ false,
+          /*stride=*/ 0,
+          /*offset=*/ vertexAttributeOffsets[i]);
     }
     skeletonChunk.indexBuffer.bind();
     gl.drawElements(gl.LINES, skeletonChunk.numIndices, gl.UNSIGNED_INT, 0);
@@ -269,8 +271,11 @@ export class SkeletonLayer extends RefCounted {
 
     gl.lineWidth(lineWidth);
 
-    forEachRootSegmentToDraw(displayState, skeletons, (rootObjectId, skeleton) => {
-      if (skeleton.state !== ChunkState.GPU_MEMORY) {
+    forEachVisibleSegment3D(displayState, (rootObjectId, objectId) => {
+      const key = getObjectKey(objectId);
+      const skeleton = skeletons.get(key);
+
+      if (skeleton === undefined || skeleton.state !== ChunkState.GPU_MEMORY) {
         return;
       }
       if (renderContext.emitColor) {
