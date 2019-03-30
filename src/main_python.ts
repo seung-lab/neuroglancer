@@ -157,7 +157,6 @@ window.addEventListener('DOMContentLoaded', () => {
       element.style.transform = `scale(${scale})`;
       element.style.transformOrigin = 'top left';
     }
-    viewer.display.onResize();
   };
   updateSize();
   window.addEventListener('resize', updateSize);

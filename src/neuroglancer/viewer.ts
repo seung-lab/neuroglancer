@@ -291,7 +291,6 @@ export class Viewer extends RefCounted implements ViewerState {
     }
     this.registerDisposer(this.uiConfiguration.showPanelBorders.changed.add(() => {
       this.updateShowBorders();
-      this.display.onResize();
     }));
 
     this.showLayerDialog = showLayerDialog;
@@ -496,9 +495,7 @@ export class Viewer extends RefCounted implements ViewerState {
     layoutAndSidePanel.appendChild(this.layout.element);
     layoutAndSidePanel.appendChild(
         this.registerDisposer(new LayerInfoPanelContainer(this.selectedLayer.addRef())).element);
-    this.registerDisposer(this.selectedLayer.changed.add(() => this.display.onResize()));
     gridContainer.appendChild(layoutAndSidePanel);
-    this.display.onResize();
 
     const updateVisibility = () => {
       const shouldBeVisible = this.visibility.visible;
