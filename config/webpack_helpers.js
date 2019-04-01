@@ -213,6 +213,7 @@ function getBaseConfig(options) {
         }
       ],
     },
+    // node fs used server-side to serve draco decoder, do this so webpack doesn't complain that fs doesn't exist client-side
     node: {'Buffer': false, 'fs': "empty"},
   };
   if (!options.noOutput) {

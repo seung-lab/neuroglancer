@@ -260,11 +260,15 @@ export function decodeTriangleVertexPositionsAndIndicesDraco(
   const buffer = new decoderModule.DecoderBuffer();
   buffer.Init(new Int8Array(data), data.byteLength);
   const mesh = new decoderModule.Mesh();
-  decoder.DecodeBufferToMesh(buffer, mesh);
+  const decodeStatus = decoder.DecodeBufferToMesh(buffer, mesh);
+  if (!decodeStatus.ok()) {
+    // Not a draco mesh
+    throw new TypeError('Draco decoding failed');
+  }
   const decoderAttr = decoderModule.POSITION;
   const attrId = decoder.GetAttributeId(mesh, decoderAttr);
   if (attrId < 0) {
-    // Not a draco mesh
+    // Draco mesh has no position attribute, which we need
     throw new Error('Invalid Draco mesh');
   }
   decoderModule.destroy(buffer);
@@ -290,6 +294,7 @@ export function decodeTriangleVertexPositionsAndIndicesDraco(
   const attributeData = new decoderModule.DracoFloat32Array();
   decoder.GetAttributeFloatForAllPoints(mesh, attribute, attributeData);
 
+  // Get vertex coordinates from mesh
   const attributeDataArray = new Float32Array(numValues);
   for (let i = 0; i < numValues; ++i) {
     attributeDataArray[i] = attributeData.GetValue(i);

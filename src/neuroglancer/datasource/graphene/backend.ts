@@ -124,9 +124,11 @@ export function decodeDracoFragmentChunk(chunk: FragmentChunk, response: ArrayBu
       .then(response => {
         try {
           decodeDracoFragmentChunk(chunk, response);
-        } catch {
-          // not a draco mesh
-          decodeFragmentChunk(chunk, response);
+        } catch (err) {
+          if (err instanceof TypeError) {
+            // not a draco mesh
+            decodeFragmentChunk(chunk, response);
+          }
         }
       });
   }
