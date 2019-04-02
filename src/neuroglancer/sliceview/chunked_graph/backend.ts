@@ -22,13 +22,13 @@ import {SharedDisjointUint64Sets} from 'neuroglancer/shared_disjoint_sets';
 import {SliceViewChunk, SliceViewChunkSource} from 'neuroglancer/sliceview/backend';
 import {RenderLayer as RenderLayerInterface, TransformedSource} from 'neuroglancer/sliceview/base';
 import {CHUNKED_GRAPH_LAYER_RPC_ID, ChunkedGraphChunkSource as ChunkedGraphChunkSourceInterface, ChunkedGraphChunkSpecification} from 'neuroglancer/sliceview/chunked_graph/base';
-import {TrackableMIPLevelConstraints} from 'neuroglancer/trackable_mip_level_constraints';
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {mat4, vec3, vec3Key} from 'neuroglancer/util/geom';
 import {HttpError, openHttpRequest, sendHttpRequest} from 'neuroglancer/util/http_request';
 import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {registerSharedObject, RPC, SharedObjectCounterpart} from 'neuroglancer/worker_rpc';
+import {WatchableValueInterface} from 'src/neuroglancer/trackable_value';
 
 const tempChunkDataSize = vec3.create();
 const tempChunkPosition = vec3.create();
@@ -185,7 +185,7 @@ export class ChunkedGraphLayer extends Base implements RenderLayerInterface<Slic
   transform = new CoordinateTransform();
   transformedSources: TransformedSource<SliceViewChunkSource>[][];
   transformedSourcesGeneration = -1;
-  mipLevelConstraints = new TrackableMIPLevelConstraints();
+  renderScaleTarget: WatchableValueInterface<number>;
 
   graphurl: string;
   rootSegments: Uint64Set;

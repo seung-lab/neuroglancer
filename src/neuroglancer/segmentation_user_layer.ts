@@ -39,6 +39,7 @@ import {Uint64} from 'neuroglancer/util/uint64';
 import {makeWatchableShaderError} from 'neuroglancer/webgl/dynamic_shader';
 import {ChunkedGraphWidget} from 'neuroglancer/widget/chunked_graph_widget';
 import {RangeWidget} from 'neuroglancer/widget/range';
+import {RenderScaleWidget} from 'neuroglancer/widget/render_scale_widget';
 import {SegmentSetWidget} from 'neuroglancer/widget/segment_set_widget';
 import {ShaderCodeWidget} from 'neuroglancer/widget/shader_code_widget';
 import {Tab} from 'neuroglancer/widget/tab_view';
@@ -83,7 +84,6 @@ export class SegmentationUserLayer extends Base {
         objectToDataTransform: this.transform,
         fragmentMain: getTrackableFragmentMain(),
         shaderError: makeWatchableShaderError(),
-        mipLevelConstraints: this.mipLevelConstraints
       };
 
   /**
@@ -204,9 +204,13 @@ export class SegmentationUserLayer extends Base {
       ++remaining;
       multiscaleSource.then(volume => {
         if (!this.wasDisposed) {
-          const segmentationRenderLayer = new SegmentationRenderLayer(volume, this.displayState);
-          this.setupVoxelSelectionWidget(segmentationRenderLayer);
-          this.addRenderLayer(segmentationRenderLayer);
+          const {displayState} = this;
+          this.addRenderLayer(new SegmentationRenderLayer(volume, {
+            ...displayState,
+            transform: displayState.objectToDataTransform,
+            renderScaleHistogram: this.sliceViewRenderScaleHistogram,
+            renderScaleTarget: this.sliceViewRenderScaleTarget,
+          }));
           // Chunked Graph Server
           if (this.chunkedGraphUrl === undefined && volume.getChunkedGraphUrl) {
             this.chunkedGraphUrl = volume.getChunkedGraphUrl();
@@ -597,6 +601,13 @@ class DisplayOptionsTab extends Tab {
       element.appendChild(this.selectedAlphaWidget.element);
       element.appendChild(this.notSelectedAlphaWidget.element);
       element.appendChild(this.saturationWidget.element);
+
+      {
+        const renderScaleWidget = this.registerDisposer(new RenderScaleWidget(
+            this.layer.sliceViewRenderScaleHistogram, this.layer.sliceViewRenderScaleTarget));
+        renderScaleWidget.label.textContent = 'Resolution (slice)';
+        element.appendChild(renderScaleWidget.element);
+      }
     }
     this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
         this.registerDisposer(new ComputedWatchableValue(
@@ -689,8 +700,6 @@ class DisplayOptionsTab extends Tab {
         }
       }
     });
-
-    element.appendChild(layer.voxelSizeSelectionWidget.element);
   }
 }
 

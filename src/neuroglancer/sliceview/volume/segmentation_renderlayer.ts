@@ -14,17 +14,16 @@
  * limitations under the License.
  */
 
-import {CoordinateTransform} from 'neuroglancer/coordinate_transform';
 import {HashMapUint64} from 'neuroglancer/gpu_hash/hash_table';
 import {GPUHashTable, HashMapShaderManager, HashSetShaderManager} from 'neuroglancer/gpu_hash/shader';
 import {SegmentColorShaderManager} from 'neuroglancer/segment_color';
 import {registerRedrawWhenSegmentationDisplayStateChanged, SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
 import {SliceView} from 'neuroglancer/sliceview/frontend';
+import {RenderLayerOptions} from 'neuroglancer/sliceview/renderlayer';
 import {VolumeSourceOptions} from 'neuroglancer/sliceview/volume/base';
 import {MultiscaleVolumeChunkSource} from 'neuroglancer/sliceview/volume/frontend';
 import {RenderLayer} from 'neuroglancer/sliceview/volume/renderlayer';
 import {TrackableAlphaValue} from 'neuroglancer/trackable_alpha';
-import {TrackableMIPLevelConstraints} from 'neuroglancer/trackable_mip_level_constraints';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {DisjointUint64Sets} from 'neuroglancer/util/disjoint_sets';
 import {ShaderBuilder, ShaderProgram} from 'neuroglancer/webgl/shader';
@@ -47,13 +46,12 @@ export class EquivalencesHashMap {
   }
 }
 
-export interface SliceViewSegmentationDisplayState extends SegmentationDisplayState {
+export interface SliceViewSegmentationDisplayState extends SegmentationDisplayState,
+                                                           RenderLayerOptions {
   selectedAlpha: TrackableAlphaValue;
   notSelectedAlpha: TrackableAlphaValue;
   volumeSourceOptions?: VolumeSourceOptions;
-  mipLevelConstraints: TrackableMIPLevelConstraints;
   hideSegmentZero: TrackableBoolean;
-  objectToDataTransform: CoordinateTransform;
 }
 
 export class SegmentationRenderLayer extends RenderLayer {
@@ -61,7 +59,8 @@ export class SegmentationRenderLayer extends RenderLayer {
   private hashTableManager = new HashSetShaderManager('visibleSegments2D');
   private gpuHashTable = GPUHashTable.get(this.gl, this.displayState.visibleSegments2D!.hashTable);
   private hashTableManagerHighlighted = new HashSetShaderManager('highlightedSegments');
-  private gpuHashTableHighlighted = GPUHashTable.get(this.gl, this.displayState.highlightedSegments.hashTable);
+  private gpuHashTableHighlighted =
+      GPUHashTable.get(this.gl, this.displayState.highlightedSegments.hashTable);
 
   private equivalencesShaderManager = new HashMapShaderManager('equivalences');
   private equivalencesHashMap =
@@ -74,8 +73,9 @@ export class SegmentationRenderLayer extends RenderLayer {
       public displayState: SliceViewSegmentationDisplayState) {
     super(multiscaleSource, {
       sourceOptions: displayState.volumeSourceOptions,
-      transform: displayState.objectToDataTransform,
-      mipLevelConstraints: displayState.mipLevelConstraints
+      transform: displayState.transform,
+      renderScaleHistogram: displayState.renderScaleHistogram,
+      renderScaleTarget: displayState.renderScaleTarget,
     });
     registerRedrawWhenSegmentationDisplayStateChanged(displayState, this);
     this.registerDisposer(displayState.selectedAlpha.changed.add(() => {

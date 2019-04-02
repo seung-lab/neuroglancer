@@ -16,13 +16,12 @@
 
 import {CoordinateTransform} from 'neuroglancer/coordinate_transform';
 import {ChunkLayout} from 'neuroglancer/sliceview/chunk_layout';
+import {WatchableValueInterface} from 'neuroglancer/trackable_value';
 import {partitionArray} from 'neuroglancer/util/array';
 import {approxEqual} from 'neuroglancer/util/compare';
 import {DATA_TYPE_BYTES, DataType} from 'neuroglancer/util/data_type';
 import {effectiveScalingFactorFromMat4, identityMat4, kAxes, kInfinityVec, kZeroVec, mat4, rectifyTransformMatrixIfAxisAligned, transformVectorByMat4, vec3} from 'neuroglancer/util/geom';
 import {SharedObject} from 'neuroglancer/worker_rpc';
-import {TrackableMIPLevelConstraints} from 'neuroglancer/trackable_mip_level_constraints';
-import {TrackableValue} from 'neuroglancer/trackable_value';
 
 export {DATA_TYPE_BYTES, DataType};
 export type GlobalCoordinateRectangle = [vec3, vec3, vec3, vec3];
@@ -139,8 +138,7 @@ export interface RenderLayer<Source extends SliceViewChunkSource> {
   transform: CoordinateTransform;
   transformedSources: TransformedSource<Source>[][]|undefined;
   transformedSourcesGeneration: number;
-  mipLevelConstraints: TrackableMIPLevelConstraints;
-  activeMinMIPLevel?: TrackableValue<number|undefined>; // not needed for backend
+  renderScaleTarget: WatchableValueInterface<number>;
 }
 
 export function getTransformedSources<Source extends SliceViewChunkSource>(
@@ -350,17 +348,13 @@ export class SliceViewBase<Source extends SliceViewChunkSource,
       visibleSources.length = 0;
       const transformedSources = getTransformedSources(renderLayer);
       const numSources = transformedSources.length;
-      const {mipLevelConstraints} = renderLayer;
-      const { minScaleIndex, maxScaleIndex } = (mipLevelConstraints.numberLevels === undefined) ?
-        { minScaleIndex: 0, maxScaleIndex: numSources - 1 } : {
-          minScaleIndex: mipLevelConstraints.getDeFactoMinMIPLevel(),
-          maxScaleIndex: mipLevelConstraints.getDeFactoMaxMIPLevel()
-        };
       let scaleIndex: number;
 
       // At the smallest scale, all alternative sources must have the same voxel size, which is
       // considered to be the base voxel size.
       const smallestVoxelSize = transformedSources[0][0].voxelSize;
+
+      const renderScaleTarget = renderLayer.renderScaleTarget.value;
 
       /**
        * Determines whether we should continue to look for a finer-resolution source *after* one
@@ -371,14 +365,12 @@ export class SliceViewBase<Source extends SliceViewChunkSource,
           let size = voxelSize[i];
           // If size <= pixelSize, no need for improvement.
           // If size === smallestVoxelSize, also no need for improvement.
-          if (size > pixelSize && size > smallestVoxelSize[i]) {
+          if (size > pixelSize * renderScaleTarget && size > 1.01 * smallestVoxelSize[i]) {
             return true;
           }
         }
         return false;
       };
-
-      let highestResolutionIndex;
 
       /**
        * Registers a source as being visible.  This should be called with consecutively decreasing
@@ -396,31 +388,17 @@ export class SliceViewBase<Source extends SliceViewChunkSource,
               visibleChunkLayouts.set(chunkLayout, existingSources);
             }
             existingSources.set(source, sourceScaleIndex);
-            highestResolutionIndex = scaleIndex;
           };
 
-      // Here we start iterating from numSources - 1, instead of from the user
-      // specified maxMIPRendered, just in case the maxMIPRendered resolution
-      // is wasteful. In this case we only retrieve the min MIP level that is not
-      // wasteful. Otherwise we retrieve all the useful/not wasteful levels between
-      // minMIPLevelRendered and maxMIPLevelRendered.
-      for (scaleIndex = numSources - 1; scaleIndex >= minScaleIndex; --scaleIndex) {
+      scaleIndex = numSources - 1;
+      while (true) {
         const transformedSource = pickBestAlternativeSource(zAxis, transformedSources[scaleIndex]);
-        if (scaleIndex <= maxScaleIndex) {
-          addVisibleSource(transformedSource, (scaleIndex + 1) / numSources);
-        }
-        if (!canImproveOnVoxelSize(transformedSource.voxelSize)) {
-          if (scaleIndex > maxScaleIndex) {
-            addVisibleSource(transformedSource, (scaleIndex + 1) / numSources);
-          }
+        addVisibleSource(transformedSource, scaleIndex);
+        if (scaleIndex === 0 || !canImproveOnVoxelSize(transformedSource.voxelSize)) {
           break;
         }
+        --scaleIndex;
       }
-
-      if (renderLayer.activeMinMIPLevel) {
-        renderLayer.activeMinMIPLevel.value = highestResolutionIndex;
-      }
-
       // Reverse visibleSources list since we added sources from coarsest to finest resolution, but
       // we want them ordered from finest to coarsest.
       visibleSources.reverse();
