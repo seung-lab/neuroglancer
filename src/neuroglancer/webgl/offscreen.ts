@@ -259,14 +259,10 @@ export class FramebufferConfiguration<ColorBuffer extends TextureBuffer|Renderbu
     return tempPixelFloat32[0];
   }
 
-  readPixelsFloat32(
+  readPixelsFloat32IntoBuffer(
       textureIndex: number, glWindowX: number, glWindowY: number, width: number, height: number,
-      buffer?: Float32Array): Float32Array {
+      offset: number) {
     let {gl} = this;
-
-    if (!buffer) {
-      buffer = new Float32Array(width * height * 4);
-    }
 
     let left = glWindowX - (width >> 1);
     let bottom = glWindowY - (height >> 1);
@@ -277,36 +273,10 @@ export class FramebufferConfiguration<ColorBuffer extends TextureBuffer|Renderbu
       // implementations.  Using RGBA seems to have better compatibility.
       gl.readPixels(
           left, bottom, width, height, WebGL2RenderingContext.RGBA, WebGL2RenderingContext.FLOAT,
-          buffer);
+          offset);
     } finally {
       this.framebuffer.unbind();
     }
-
-    if (glWindowX >= 0 && glWindowX < gl.drawingBufferWidth && glWindowY >= 0 &&
-        glWindowY < gl.drawingBufferHeight) {
-      return buffer;
-    }
-
-    // According to the WebGL spec, if we are reading outside of the
-    // texture, those values are undefined so let's zero them out.
-    // https://www.khronos.org/registry/OpenGL-Refpages/es2.0/xhtml/glReadPixels.xml
-    // "Values for pixels that lie outside the window connected to the current GL context are
-    // undefined."
-
-    let i = 0;
-    for (let y = glWindowY; y < glWindowY + height; y++) {
-      for (let x = glWindowX; x < glWindowX + width; x++) {
-        if (x < 0 || y < 0 || x >= gl.drawingBufferWidth || y >= gl.drawingBufferHeight) {
-          buffer[4 * i + 0] = 0.0;
-          buffer[4 * i + 1] = 0.0;
-          buffer[4 * i + 2] = 0.0;
-          buffer[4 * i + 3] = 0.0;
-        }
-        i++;
-      }
-    }
-
-    return buffer;
   }
 
   verifyAttachment() {

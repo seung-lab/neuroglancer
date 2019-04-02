@@ -15,7 +15,6 @@
  */
 
 import debounce from 'lodash/debounce';
-import throttle from 'lodash/throttle';
 import {AnnotationLayerState} from 'neuroglancer/annotation/frontend';
 import {RenderedPanel} from 'neuroglancer/display_context';
 import {LayerListSpecification} from 'neuroglancer/layer_specification';
@@ -553,8 +552,6 @@ export class LayerManager extends RefCounted {
   }
 }
 
-const MOUSE_STATE_UPDATE_INTERVAL = 50;
-
 export enum ActionState {
   INACTIVE,
   FIRST,  // Selecting elements for the first group.
@@ -591,38 +588,32 @@ export class MouseSelectionState implements PickState {
   pageX: number;
   pageY: number;
 
-  updater: ((mouseState: MouseSelectionState) => boolean)|undefined = undefined;
+  private forcerFunction: (() => void)|undefined = undefined;
 
-  stale = false;
+  removeForcer(forcer: (() => void)) {
+    if (forcer === this.forcerFunction) {
+      this.forcerFunction = undefined;
+      this.setActive(false);
+    }
+  }
 
-  triggerUpdate = throttle(() => {
-    this.update();
-  }, MOUSE_STATE_UPDATE_INTERVAL, {leading: true, trailing: true});
+  setForcer(forcer: (() => void)|undefined) {
+    this.forcerFunction = forcer;
+    if (forcer === undefined) {
+      this.setActive(false);
+    }
+  }
 
-  updateUnconditionally() {
-    this.triggerUpdate.cancel();
-    this.update();
+  updateUnconditionally(): boolean {
+    const {forcerFunction} = this;
+    if (forcerFunction === undefined) {
+      return false;
+    }
+    forcerFunction();
     return this.active;
   }
 
-  updateIfStale() {
-    if (this.stale) {
-      this.update();
-    }
-  }
-
-  private update() {
-    let {updater} = this;
-    this.stale = false;
-    if (!updater) {
-      this.setActive(false);
-    } else {
-      this.setActive(updater(this));
-    }
-  }
-
   setActive(value: boolean) {
-    this.stale = false;
     if (this.active !== value || value === true) {
       this.active = value;
       this.changed.dispatch();
@@ -837,7 +828,7 @@ export class SelectedLayerState extends RefCounted implements Trackable {
   changed = new NullarySignal();
   visible_ = false;
   layer_: ManagedUserLayer|undefined;
-  size = new TrackableValue<number>(300, verifyPositiveInt)
+  size = new TrackableValue<number>(300, verifyPositiveInt);
 
   get layer() {
     return this.layer_;

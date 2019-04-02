@@ -302,9 +302,6 @@ export class Viewer extends RefCounted implements ViewerState {
     this.registerDisposer(display.updateStarted.add(() => {
       this.onUpdateDisplay();
     }));
-    this.registerDisposer(display.updateFinished.add(() => {
-      this.onUpdateDisplayFinished();
-    }));
 
     this.showDefaultAnnotations.changed.add(() => {
       if (this.showDefaultAnnotations.value) {
@@ -714,12 +711,6 @@ export class Viewer extends RefCounted implements ViewerState {
     }
   }
 
-  onUpdateDisplayFinished() {
-    if (this.visible) {
-      this.mouseState.updateIfStale();
-    }
-  }
-
   private handleNavigationStateChanged() {
     if (this.visible) {
       let {chunkQueueManager} = this.dataContext;
@@ -727,6 +718,5 @@ export class Viewer extends RefCounted implements ViewerState {
         chunkQueueManager.chunkUpdateDeadline = Date.now() + 10;
       }
     }
-    this.mouseState.stale = true;
   }
 }
