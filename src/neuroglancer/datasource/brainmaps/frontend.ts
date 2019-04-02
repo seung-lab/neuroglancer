@@ -229,11 +229,11 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
                     credentialsProvider: this.credentialsProvider,
                     spec,
                     parameters: {
-                      'instance': this.instance,
                       'volumeId': this.volumeId,
                       'changeSpec': this.changeSpec,
                       'scaleIndex': scaleIndex,
                       'encoding': encoding,
+                      'instance': this.instance,
                     }
                   });
                 }));
@@ -418,6 +418,7 @@ const MultiscaleAnnotationSourceBase = (WithParameters(
     AnnotationSourceParameters));
 
 export class BrainmapsAnnotationSource extends MultiscaleAnnotationSourceBase {
+  key: any;
   constructor(chunkManager: ChunkManager, options: {
     credentialsProvider: CredentialsProvider<Credentials>,
     parameters: AnnotationSourceParameters,
@@ -522,9 +523,9 @@ export class BrainmapsDataSource extends DataSource {
       throw new Error(`A changestack must be specified.`);
     }
     const parameters = {
-      instance: this.instance,
       volumeId,
       changestack: changeSpec.changeStackId,
+      instance: this.instance,
     };
     return chunkManager.memoize.getUncounted(
         {
