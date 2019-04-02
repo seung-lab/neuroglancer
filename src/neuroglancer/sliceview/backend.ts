@@ -16,7 +16,7 @@
 
 import {Chunk, ChunkConstructor, ChunkSource, withChunkManager} from 'neuroglancer/chunk_manager/backend';
 import {CoordinateTransform} from 'neuroglancer/coordinate_transform';
-import {RenderLayer as RenderLayerInterface, SLICEVIEW_ADD_VISIBLE_LAYER_RPC_ID, SLICEVIEW_REMOVE_VISIBLE_LAYER_RPC_ID, SLICEVIEW_RENDERLAYER_RPC_ID, SLICEVIEW_RENDERLAYER_UPDATE_TRANSFORM_RPC_ID, SLICEVIEW_RPC_ID, SLICEVIEW_UPDATE_VIEW_RPC_ID, SLICEVIEW_UPDATE_PREFETCHING_RPC_ID, SLICEVIEW_RENDERLAYER_UPDATE_MIP_LEVEL_CONSTRAINTS_RPC_ID, SliceViewBase, SliceViewChunkSource as SliceViewChunkSourceInterface, SliceViewChunkSpecification, GlobalCoordinateRectangle} from 'neuroglancer/sliceview/base';
+import {RenderLayer as RenderLayerInterface, SLICEVIEW_ADD_VISIBLE_LAYER_RPC_ID, SLICEVIEW_REMOVE_VISIBLE_LAYER_RPC_ID, SLICEVIEW_RENDERLAYER_RPC_ID, SLICEVIEW_RENDERLAYER_UPDATE_TRANSFORM_RPC_ID, SLICEVIEW_RPC_ID, SLICEVIEW_UPDATE_VIEW_RPC_ID, SLICEVIEW_UPDATE_PREFETCHING_RPC_ID, SLICEVIEW_RENDERLAYER_UPDATE_MIP_LEVEL_CONSTRAINTS_RPC_ID, SliceViewBase, SliceViewChunkSource as SliceViewChunkSourceInterface, SliceViewChunkSpecification, GlobalCoordinateRectangle, TransformedSource} from 'neuroglancer/sliceview/base';
 import {ChunkLayout} from 'neuroglancer/sliceview/chunk_layout';
 import {mat4, vec3, vec3Key} from 'neuroglancer/util/geom';
 import {NullarySignal} from 'neuroglancer/util/signal';
@@ -43,7 +43,7 @@ const prefetchDepthMovement = vec3.create();
 const tempChunkBound1 = vec3.create();
 const tempChunkBound2 = vec3.create();
 
-class SliceViewCounterpartBase extends SliceViewBase {
+class SliceViewCounterpartBase extends SliceViewBase<SliceViewChunkSource, RenderLayer> {
   constructor(rpc: RPC, options: any) {
     super();
     this.initializeSharedObject(rpc, options['id']);
@@ -53,7 +53,6 @@ class SliceViewCounterpartBase extends SliceViewBase {
 const SliceViewIntermediateBase = withSharedVisibility(withChunkManager(SliceViewCounterpartBase));
 @registerSharedObject(SLICEVIEW_RPC_ID)
 export class SliceView extends SliceViewIntermediateBase {
-  visibleLayers: Map<RenderLayer, {chunkLayout: ChunkLayout, source: SliceViewChunkSource}[]>;
   private prefetchingEnabled = true;
 
   constructor(rpc: RPC, options: any) {
@@ -361,12 +360,13 @@ export class SliceViewChunkSource extends ChunkSource implements SliceViewChunkS
 }
 
 @registerSharedObject(SLICEVIEW_RENDERLAYER_RPC_ID)
-export class RenderLayer extends SharedObjectCounterpart implements RenderLayerInterface {
+export class RenderLayer extends SharedObjectCounterpart implements
+    RenderLayerInterface<SliceViewChunkSource> {
   rpcId: number;
   sources: SliceViewChunkSource[][];
   layerChanged = new NullarySignal();
   transform = new CoordinateTransform();
-  transformedSources: {source: SliceViewChunkSource, chunkLayout: ChunkLayout}[][];
+  transformedSources: TransformedSource<SliceViewChunkSource>[][];
   transformedSourcesGeneration = -1;
   mipLevelConstraints: TrackableMIPLevelConstraints;
 

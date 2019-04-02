@@ -128,21 +128,23 @@ function areBoundsInvalid(lowerBound: vec3, upperBound: vec3) {
   return false;
 }
 
-interface TransformedSource {
-  source: SliceViewChunkSource;
+export interface TransformedSource<Source extends SliceViewChunkSource = SliceViewChunkSource> {
+  source: Source;
   chunkLayout: ChunkLayout;
+  voxelSize: vec3;
 }
 
-export interface RenderLayer {
-  sources: SliceViewChunkSource[][];
+export interface RenderLayer<Source extends SliceViewChunkSource> {
+  sources: Source[][];
   transform: CoordinateTransform;
-  transformedSources: TransformedSource[][]|undefined;
+  transformedSources: TransformedSource<Source>[][]|undefined;
   transformedSourcesGeneration: number;
   mipLevelConstraints: TrackableMIPLevelConstraints;
   activeMinMIPLevel?: TrackableValue<number|undefined>; // not needed for backend
 }
 
-export function getTransformedSources(renderLayer: RenderLayer) {
+export function getTransformedSources<Source extends SliceViewChunkSource>(
+    renderLayer: RenderLayer<Source>) {
   const {transform} = renderLayer;
   let {transformedSources} = renderLayer;
   const generation = transform.changed.count;
@@ -150,15 +152,21 @@ export function getTransformedSources(renderLayer: RenderLayer) {
     renderLayer.transformedSourcesGeneration = generation;
     if (mat4.equals(transform.transform, identityMat4)) {
       transformedSources = renderLayer.sources.map(
-          alternatives =>
-              alternatives.map(source => ({source, chunkLayout: source.spec.chunkLayout})));
+          alternatives => alternatives.map(source => ({
+                                             source,
+                                             chunkLayout: source.spec.chunkLayout,
+                                             voxelSize: source.spec.voxelSize
+                                           })));
     } else {
       transformedSources = renderLayer.sources.map(alternatives => alternatives.map(source => {
         const chunkLayout = source.spec.chunkLayout;
+        const transformedChunkLayout = ChunkLayout.get(
+            chunkLayout.size, getCombinedTransform(chunkLayout.transform, transform));
         return {
-          chunkLayout: ChunkLayout.get(
-              chunkLayout.size, getCombinedTransform(chunkLayout.transform, transform)),
+          chunkLayout: transformedChunkLayout,
           source,
+          voxelSize: transformedChunkLayout.localSpatialVectorToGlobal(
+              vec3.create(), source.spec.voxelSize),
         };
       }));
     }
@@ -167,8 +175,8 @@ export function getTransformedSources(renderLayer: RenderLayer) {
   return transformedSources!;
 }
 
-function pickBestAlternativeSource(
-    zAxis: vec3, alternatives: {source: SliceViewChunkSource, chunkLayout: ChunkLayout}[]) {
+function pickBestAlternativeSource<Source extends SliceViewChunkSource>(
+    zAxis: vec3, alternatives: TransformedSource<Source>[]) {
   let numAlternatives = alternatives.length;
   let bestAlternativeIndex = 0;
   if (DEBUG_VISIBLE_SOURCES) {
@@ -194,7 +202,8 @@ function pickBestAlternativeSource(
 
 const tempGlobalRectangle: GlobalCoordinateRectangle = [vec3.create(), vec3.create(), vec3.create(), vec3.create()];
 
-export class SliceViewBase extends SharedObject {
+export class SliceViewBase<Source extends SliceViewChunkSource,
+                                          RLayer extends RenderLayer<Source>> extends SharedObject {
   width = -1;
   height = -1;
   hasViewportToData = false;
@@ -227,12 +236,15 @@ export class SliceViewBase extends SharedObject {
    * Overall chunk priority ordering is based on a lexicographical ordering of (priorityIndex,
    * -distanceToCenter).
    */
-  visibleChunkLayouts = new Map<ChunkLayout, Map<SliceViewChunkSource, number>>();
+  visibleChunkLayouts = new Map<ChunkLayout, Map<Source, number>>();
 
-  visibleLayers = new Map<RenderLayer, TransformedSource[]>();
+  visibleLayers = new Map<RLayer, TransformedSource<Source>[]>();
 
   visibleSourcesStale = true;
 
+  /**
+   * Size in spatial units (nm) of a single pixel.
+   */
   pixelSize: number = 0;
 
   constructor() {
@@ -348,7 +360,7 @@ export class SliceViewBase extends SharedObject {
 
       // At the smallest scale, all alternative sources must have the same voxel size, which is
       // considered to be the base voxel size.
-      const smallestVoxelSize = transformedSources[0][0].source.spec.voxelSize;
+      const smallestVoxelSize = transformedSources[0][0].voxelSize;
 
       /**
        * Determines whether we should continue to look for a finer-resolution source *after* one
@@ -372,18 +384,20 @@ export class SliceViewBase extends SharedObject {
        * Registers a source as being visible.  This should be called with consecutively decreasing
        * values of scaleIndex.
        */
-      const addVisibleSource = (transformedSource: TransformedSource, sourceScaleIndex: number) => {
-        // Add to end of visibleSources list.  We will reverse the list after all sources are added.
-        const {source, chunkLayout} = transformedSource;
-        visibleSources[visibleSources.length++] = transformedSource;
-        let existingSources = visibleChunkLayouts.get(chunkLayout);
-        if (existingSources === undefined) {
-          existingSources = new Map<SliceViewChunkSource, number>();
-          visibleChunkLayouts.set(chunkLayout, existingSources);
-        }
-        existingSources.set(source, sourceScaleIndex);
-        highestResolutionIndex = scaleIndex;
-      };
+      const addVisibleSource =
+          (transformedSource: TransformedSource<Source>, sourceScaleIndex: number) => {
+            // Add to end of visibleSources list.  We will reverse the list after all sources are
+            // added.
+            const {source, chunkLayout} = transformedSource;
+            visibleSources[visibleSources.length++] = transformedSource;
+            let existingSources = visibleChunkLayouts.get(chunkLayout);
+            if (existingSources === undefined) {
+              existingSources = new Map<Source, number>();
+              visibleChunkLayouts.set(chunkLayout, existingSources);
+            }
+            existingSources.set(source, sourceScaleIndex);
+            highestResolutionIndex = scaleIndex;
+          };
 
       // Here we start iterating from numSources - 1, instead of from the user
       // specified maxMIPRendered, just in case the maxMIPRendered resolution
@@ -395,7 +409,7 @@ export class SliceViewBase extends SharedObject {
         if (scaleIndex <= maxScaleIndex) {
           addVisibleSource(transformedSource, (scaleIndex + 1) / numSources);
         }
-        if (!canImproveOnVoxelSize(transformedSource.source.spec.voxelSize)) {
+        if (!canImproveOnVoxelSize(transformedSource.voxelSize)) {
           if (scaleIndex > maxScaleIndex) {
             addVisibleSource(transformedSource, (scaleIndex + 1) / numSources);
           }
@@ -513,8 +527,9 @@ export class SliceViewBase extends SharedObject {
             computeSourcesChunkBounds(
                 sourcesLowerChunkBound, sourcesUpperChunkBound, visibleSources.keys());
             if (DEBUG_CHUNK_INTERSECTIONS) {
-              console.log(`Initial sources chunk bounds: ${vec3.str(sourcesLowerChunkBound)}, ${
-                  vec3.str(sourcesUpperChunkBound)}`);
+              console.log(
+                `Initial sources chunk bounds: ` +
+                `${vec3.str(sourcesLowerChunkBound)}, ${vec3.str(sourcesUpperChunkBound)}`);
             }
 
             chunkLayout.globalToLocalSpatialVector(planeNormal, this.viewportAxes[2]);
