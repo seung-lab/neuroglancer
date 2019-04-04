@@ -16,7 +16,7 @@
 
 import {WithParameters} from 'neuroglancer/chunk_manager/backend';
 import {ChunkedGraphSourceParameters, MeshSourceParameters, SkeletonSourceParameters, VolumeChunkEncoding, VolumeChunkSourceParameters} from 'neuroglancer/datasource/graphene/base';
-import {decodeJsonManifestChunk, decodeTriangleVertexPositionsAndIndices, decodeTriangleVertexPositionsAndIndicesDraco, FragmentChunk, ManifestChunk, MeshSource} from 'neuroglancer/mesh/backend';
+import {decodeJsonManifestChunk, decodeTriangleVertexPositionsAndIndices, decodeTriangleVertexPositionsAndIndicesDraco, FragmentChunk, ManifestChunk, MeshSource, assignMeshFragmentData} from 'neuroglancer/mesh/backend';
 import {decodeSkeletonVertexPositionsAndIndices, SkeletonChunk, SkeletonSource} from 'neuroglancer/skeleton/backend';
 import {VertexAttributeInfo} from 'neuroglancer/skeleton/base';
 import {ChunkDecoder} from 'neuroglancer/sliceview/backend_chunk_decoders';
@@ -97,12 +97,16 @@ export function decodeManifestChunk(chunk: ManifestChunk, response: any) {
 export function decodeFragmentChunk(chunk: FragmentChunk, response: ArrayBuffer) {
   let dv = new DataView(response);
   let numVertices = dv.getUint32(0, true);
-  decodeTriangleVertexPositionsAndIndices(
-    chunk, response, Endianness.LITTLE, /*vertexByteOffset=*/4, numVertices);
+  assignMeshFragmentData(
+    chunk,
+    decodeTriangleVertexPositionsAndIndices(
+        response, Endianness.LITTLE, /*vertexByteOffset=*/ 4, numVertices));
 }
 
 export function decodeDracoFragmentChunk(chunk: FragmentChunk, response: ArrayBuffer, decoderModule: any) {
-  decodeTriangleVertexPositionsAndIndicesDraco(chunk, response, decoderModule);
+  assignMeshFragmentData(
+    chunk,
+    decodeTriangleVertexPositionsAndIndicesDraco(response, decoderModule));
 }
 
 @registerSharedObject() export class GrapheneMeshSource extends
