@@ -31,7 +31,6 @@ const DEFAULT_FRAGMENT_MAIN = `void main() {
 }
 `;
 
-// const glsl_COLORMAPS = require<string>('neuroglancer/webgl/colormaps.glsl');
 
 export function getTrackableFragmentMain(value = DEFAULT_FRAGMENT_MAIN) {
   return makeTrackableFragmentMain(value);

@@ -19,6 +19,6 @@
  */
 
 declare module '*.glsl' {
-    const value: string;
-    export default value;
+  const value: string;
+  export default value;
 }
