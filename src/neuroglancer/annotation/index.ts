@@ -285,7 +285,7 @@ export class AnnotationSource extends RefCounted {
     this.annotationMap.set(annotation.id, annotation);
     reference.changed.dispatch();
     //this.changed.dispatch();
-    this.minorchange.dispatch(annotation.id, 1);
+    this.minorchange.dispatch(annotation);
   }
 
   [Symbol.iterator]() {
@@ -301,12 +301,11 @@ export class AnnotationSource extends RefCounted {
       return;
     }
     reference.value = null;
-    let annotation = this.annotationMap.get(reference.id);
     this.annotationMap.delete(reference.id);
     this.pending.delete(reference.id);
     reference.changed.dispatch();
     //this.changed.dispatch();
-    this.minorchange.dispatch(annotation, 2);
+    this.minorchange.dispatch(annotation);
   }
 
   getReference(id: AnnotationId): AnnotationReference {
