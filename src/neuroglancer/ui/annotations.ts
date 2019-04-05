@@ -381,7 +381,8 @@ export class AnnotationLayerView extends Tab {
   constructor(
       public layer: Borrowed<UserLayerWithAnnotations>,
       public state: Owned<SelectedAnnotationState>,
-      public annotationLayer: Owned<AnnotationLayerState>, public voxelSize: Owned<VoxelSize>,
+      public annotationLayer: Owned<AnnotationLayerState>,
+      public voxelSize: Owned<VoxelSize>,
       public setSpatialCoordinates: (point: vec3) => void) {
     super();
     this.element.classList.add('neuroglancer-annotation-layer-view');
@@ -394,7 +395,11 @@ export class AnnotationLayerView extends Tab {
       this.updated = false;
       this.updateView();
     };
+    const updateAnnotationElementView = (annotation:Annotation, action:number) => {
+      this.updateAnnotationElementView(annotation, action);
+    };
     this.registerDisposer(source.changed.add(updateView));
+    this.registerDisposer(source.minorchange.add(updateAnnotationElementView));
     this.registerDisposer(this.visibility.changed.add(() => this.updateView()));
     this.registerDisposer(annotationLayer.transform.changed.add(updateView));
     this.updateView();
@@ -550,9 +555,50 @@ export class AnnotationLayerView extends Tab {
     this.updateSelectionView();
   }
 
+  // action takes values 0 - add annotation, 1 - update, 2 - delete
+  private updateAnnotationElementView(annotation:Annotation, action:number) {
+
+    const {annotationLayer, annotationListContainer, annotationListElements} = this;
+    const {source} = annotationLayer;
+    const {objectToGlobal} = annotationLayer;
+    var element = undefined;
+
+    console.log(annotation);
+    
+    switch(action){
+      case 0:element = this.makeAnnotationListElement(annotation, objectToGlobal);
+      break;
+      case 1:
+      break;
+      case 2:break;
+    }
+    
+    removeChildren(annotationListContainer);
+    this.annotationListElements.clear();
+    for (const annotation of source) {
+      const element = this.makeAnnotationListElement(annotation, objectToGlobal);
+      annotationListContainer.appendChild(element);
+      annotationListElements.set(annotation.id, element);
+      element.addEventListener('mouseenter', () => {
+        this.annotationLayer.hoverState.value = {id: annotation.id, partIndex: 0};
+      });
+      element.addEventListener('click', () => {
+        this.state.value = {id: annotation.id, partIndex: 0};
+      });
+
+      element.addEventListener('mouseup', (event: MouseEvent) => {
+        if (event.button === 2) {
+          this.setSpatialCoordinates(
+              getCenterPosition(annotation, this.annotationLayer.objectToGlobal));
+        }
+      });
+    }
+  }
+
   private makeAnnotationListElement(annotation: Annotation, transform: mat4) {
     const element = document.createElement('li');
     element.title = 'Click to select, right click to recenter view.';
+    element.setAttribute("id", annotation.id);
 
     const icon = document.createElement('div');
     icon.className = 'neuroglancer-annotation-icon';

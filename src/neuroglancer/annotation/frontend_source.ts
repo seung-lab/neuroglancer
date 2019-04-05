@@ -25,7 +25,7 @@ import {StatusMessage} from 'neuroglancer/status';
 import {binarySearch} from 'neuroglancer/util/array';
 import {Borrowed, Owned} from 'neuroglancer/util/disposable';
 import {mat4} from 'neuroglancer/util/geom';
-import {NullarySignal} from 'neuroglancer/util/signal';
+import {Signal, NullarySignal} from 'neuroglancer/util/signal';
 import {Buffer} from 'neuroglancer/webgl/buffer';
 import {GL} from 'neuroglancer/webgl/context';
 import {registerRPC, registerSharedObjectOwner, RPC, SharedObject} from 'neuroglancer/worker_rpc';
@@ -591,6 +591,7 @@ export class MultiscaleAnnotationSource extends SharedObject implements
 
   // FIXME
   changed = new NullarySignal();
+  minorchange = new Signal<(annotation: Annotation, action:number) => void>();
   * [Symbol.iterator](): Iterator<Annotation> {}
   readonly = false;
 }

@@ -22,7 +22,7 @@ import {Borrowed, RefCounted} from 'neuroglancer/util/disposable';
 import {mat4, vec3} from 'neuroglancer/util/geom';
 import {parseArray, verify3dScale, verify3dVec, verifyEnumString, verifyObject, verifyObjectProperty, verifyOptionalString, verifyString} from 'neuroglancer/util/json';
 import {getRandomHexString} from 'neuroglancer/util/random';
-import {NullarySignal} from 'neuroglancer/util/signal';
+import {Signal, NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
 export type AnnotationId = string;
 
@@ -249,6 +249,7 @@ export class AnnotationSource extends RefCounted {
   private annotationMap = new Map<AnnotationId, Annotation>();
   changed = new NullarySignal();
   readonly = false;
+  minorchange = new Signal<(annotation: Annotation, action:number) => void>();
 
   private pending = new Set<AnnotationId>();
 
@@ -263,7 +264,8 @@ export class AnnotationSource extends RefCounted {
       throw new Error(`Annotation id already exists: ${JSON.stringify(annotation.id)}.`);
     }
     this.annotationMap.set(annotation.id, annotation);
-    this.changed.dispatch();
+    //this.changed.dispatch();
+    this.minorchange.dispatch(annotation.id, 0);
     if (!commit) {
       this.pending.add(annotation.id);
     }
@@ -282,14 +284,15 @@ export class AnnotationSource extends RefCounted {
     reference.value = annotation;
     this.annotationMap.set(annotation.id, annotation);
     reference.changed.dispatch();
-    this.changed.dispatch();
+    //this.changed.dispatch();
+    this.minorchange.dispatch(annotation.id, 1);
   }
 
   [Symbol.iterator]() {
     return this.annotationMap.values();
   }
 
-  get(id: AnnotationId) {
+  get(id: AnnotationId){
     return this.annotationMap.get(id);
   }
 
@@ -298,10 +301,12 @@ export class AnnotationSource extends RefCounted {
       return;
     }
     reference.value = null;
+    let annotation = this.annotationMap.get(reference.id);
     this.annotationMap.delete(reference.id);
     this.pending.delete(reference.id);
     reference.changed.dispatch();
-    this.changed.dispatch();
+    //this.changed.dispatch();
+    this.minorchange.dispatch(annotation, 2);
   }
 
   getReference(id: AnnotationId): AnnotationReference {
