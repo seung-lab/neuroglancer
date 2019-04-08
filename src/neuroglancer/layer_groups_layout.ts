@@ -352,7 +352,7 @@ function setupDropZone(
       event.stopPropagation();
       let dropState: any;
       try {
-        dropState = JSON.parse(event.dataTransfer.getData(viewerDragType));
+        dropState = JSON.parse(event.dataTransfer!.getData(viewerDragType));
       } catch (e) {
         return;
       }
@@ -361,7 +361,7 @@ function setupDropZone(
           /*newTarget=*/true);
       if (dropLayers !== undefined && dropLayers.finalize(event)) {
         event.preventDefault();
-        event.dataTransfer.dropEffect = getDropEffect();
+        event.dataTransfer!.dropEffect = getDropEffect();
         endLayerDrag(event);
         const layerGroupViewer = makeLayerGroupViewer();
         for (const newLayer of dropLayers.layers.keys()) {
@@ -379,7 +379,7 @@ function setupDropZone(
           /*newTarget=*/true);
       if (dropLayers !== undefined && dropLayers.finalize(event)) {
         event.preventDefault();
-        event.dataTransfer.dropEffect = getDropEffect();
+        event.dataTransfer!.dropEffect = getDropEffect();
         endLayerDrag(event);
         const layerGroupViewer = makeLayerGroupViewer();
         for (const newLayer of dropLayers.layers.keys()) {

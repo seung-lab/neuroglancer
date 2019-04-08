@@ -29,7 +29,6 @@ import {verifyObject, verifyObjectProperty, verifyStringArray} from 'neuroglance
 import {Uint64} from 'neuroglancer/util/uint64';
 import {getBasePriority, getPriorityTier} from 'neuroglancer/visibility_priority/backend';
 import {registerSharedObject, RPC} from 'neuroglancer/worker_rpc';
-const DracoLoader = require('dracoloader');
 
 const MESH_OBJECT_MANIFEST_CHUNK_PRIORITY = 100;
 const MESH_OBJECT_FRAGMENT_CHUNK_PRIORITY = 50;
@@ -37,8 +36,6 @@ const MESH_OBJECT_FRAGMENT_CHUNK_PRIORITY = 50;
 const DEBUG = false;
 
 export type FragmentId = string;
-
-const dracoLoader = DracoLoader.default;
 
 // Chunk that contains the list of fragments that make up a single object.
 export class ManifestChunk extends Chunk {
@@ -250,12 +247,7 @@ export function decodeTriangleVertexPositionsAndIndices(
 }
 
 export function decodeTriangleVertexPositionsAndIndicesDraco(
-  chunk: FragmentChunk, data: ArrayBuffer) {
-  if (!dracoLoader.moduleLoaded) {
-    // Should never happen
-    throw new Error('draco module not loaded');
-  }
-  const decoderModule = dracoLoader.decoderModule;
+  chunk: FragmentChunk, data: ArrayBuffer, decoderModule: any) {
   const decoder = new decoderModule.Decoder();
   const buffer = new decoderModule.DecoderBuffer();
   buffer.Init(new Int8Array(data), data.byteLength);

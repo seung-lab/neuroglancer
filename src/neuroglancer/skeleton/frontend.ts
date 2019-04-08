@@ -31,12 +31,11 @@ import {stableStringify, verifyString} from 'neuroglancer/util/json';
 import {getObjectId} from 'neuroglancer/util/object_id';
 import {NullarySignal} from 'neuroglancer/util/signal';
 import {Buffer} from 'neuroglancer/webgl/buffer';
+import glsl_COLORMAPS from 'neuroglancer/webgl/colormaps.glsl';
 import {GL} from 'neuroglancer/webgl/context';
 import {WatchableShaderError} from 'neuroglancer/webgl/dynamic_shader';
 import {ShaderBuilder, ShaderModule, ShaderProgram} from 'neuroglancer/webgl/shader';
 import {setVec4FromUint32} from 'neuroglancer/webgl/shader_lib';
-
-const glsl_COLORMAPS = require<string>('neuroglancer/webgl/colormaps.glsl');
 
 const tempMat2 = mat4.create();
 const tempPickID = new Float32Array(4);

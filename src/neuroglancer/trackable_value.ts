@@ -131,6 +131,7 @@ export class WatchableRefCounted<T extends RefCounted> extends RefCounted implem
     this.value_ = value;
     if (value_ !== undefined) {
       value_.dispose();
+      value_.unregisterDisposer(this.valueHandler!);
       this.valueHandler = undefined;
     }
     if (value !== undefined) {

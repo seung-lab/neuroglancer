@@ -29,6 +29,7 @@ import {DATA_TYPE_BYTES} from 'neuroglancer/util/data_type';
 import {convertEndian16, convertEndian32, Endianness} from 'neuroglancer/util/endian';
 import {openShardedHttpRequest, sendHttpRequest} from 'neuroglancer/util/http_request';
 import {registerSharedObject} from 'neuroglancer/worker_rpc';
+const DracoLoader = require('dracoloader');
 
 const chunkDecoders = new Map<VolumeChunkEncoding, ChunkDecoder>();
 chunkDecoders.set(VolumeChunkEncoding.RAW, decodeRawChunk);
@@ -68,8 +69,8 @@ export function decodeFragmentChunk(chunk: FragmentChunk, response: ArrayBuffer)
       chunk, response, Endianness.LITTLE, /*vertexByteOffset=*/4, numVertices);
 }
 
-export function decodeDracoFragmentChunk(chunk: FragmentChunk, response: ArrayBuffer) {
-  decodeTriangleVertexPositionsAndIndicesDraco(chunk, response);
+export function decodeDracoFragmentChunk(chunk: FragmentChunk, response: ArrayBuffer, decoderModule: any) {
+  decodeTriangleVertexPositionsAndIndicesDraco(chunk, response, decoderModule);
 }
 
 @registerSharedObject() export class PrecomputedMeshSource extends
@@ -85,18 +86,21 @@ export function decodeDracoFragmentChunk(chunk: FragmentChunk, response: ArrayBu
   downloadFragment(chunk: FragmentChunk, cancellationToken: CancellationToken) {
     let {parameters} = this;
     let requestPath = `${parameters.path}/${chunk.fragmentId}`;
-    return sendHttpRequest(
-      openShardedHttpRequest(parameters.baseUrls, requestPath), 'arraybuffer',
-      cancellationToken)
+    const fragmentDownloadPromise = sendHttpRequest(openShardedHttpRequest(parameters.baseUrls, requestPath), 'arraybuffer', cancellationToken);
+    const dracoModulePromise = DracoLoader.default;
+    const readyToDecode = Promise.all([fragmentDownloadPromise, dracoModulePromise]);
+    return readyToDecode
       .then(response => {
         try {
-          decodeDracoFragmentChunk(chunk, response);
+          decodeDracoFragmentChunk(chunk, response[0], response[1].decoderModule);
         } catch (err) {
           if (err instanceof TypeError) {
             // not a draco mesh
-            decodeFragmentChunk(chunk, response);
+            decodeFragmentChunk(chunk, response[0]);
           }
         }
+      }, error => {
+        Promise.reject(error);
       });
   }
 }
