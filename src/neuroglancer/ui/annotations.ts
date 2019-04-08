@@ -578,9 +578,24 @@ export class AnnotationLayerView extends Tab {
   }
 
   private updateAnnotationElement(annotation:Annotation) {
-    let element = this.annotationListElements.get(annotation.id);
-    if(element !== undefined && element.lastElementChild){
-      element.lastElementChild.innerHTML = annotation.description || '';
+    var element = this.annotationListElements.get(annotation.id);
+    if(!element){
+      return;
+    }
+    if(element.lastElementChild &&
+      element.children.length === 3){
+      if(!annotation.description){
+        element.removeChild(element.lastElementChild);
+      }
+      else{
+        element.lastElementChild.innerHTML = annotation.description || '';
+      }
+    }
+    else {
+      const description = document.createElement('div');
+      description.className = 'neuroglancer-annotation-description';
+      description.textContent = annotation.description || '';
+      element.appendChild(description);
     }
   }
 
