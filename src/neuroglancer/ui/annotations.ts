@@ -547,14 +547,13 @@ export class AnnotationLayerView extends Tab {
         }
       });
     }
-    this.previousSelectedId = undefined;
-    this.previousHoverId = undefined;
-    this.updated = true;
-    this.updateHoverView();
-    this.updateSelectionView();
+    this.resetOnUpdate();
   }
 
   private addAnnotationElement(annotation:Annotation) {
+    if (!this.visible) {
+      return;
+    }
     const {annotationLayer, annotationListContainer, annotationListElements} = this;
     const {objectToGlobal} = annotationLayer;
     const element = this.makeAnnotationListElement(annotation, objectToGlobal);
@@ -574,11 +573,13 @@ export class AnnotationLayerView extends Tab {
             getCenterPosition(annotation, this.annotationLayer.objectToGlobal));
       }
     });
-    this.updateHoverView();
-    this.updateSelectionView();
+    this.resetOnUpdate();
   }
 
   private updateAnnotationElement(annotation:Annotation) {
+    if (!this.visible) {
+      return;
+    }    
     var element = this.annotationListElements.get(annotation.id);
     if(!element){
       return;
@@ -598,16 +599,25 @@ export class AnnotationLayerView extends Tab {
       description.textContent = annotation.description || '';
       element.appendChild(description);
     }
-    this.updateHoverView();
-    this.updateSelectionView();
+    this.resetOnUpdate();
   }
 
   private deleteAnnotationElement(annotationId:string) {
+    if (!this.visible) {
+      return;
+    }
     let element = this.annotationListElements.get(annotationId);
     if(element){
       removeFromParent(element);
       this.annotationListElements.delete(annotationId);
     }
+    this.resetOnUpdate();
+  }
+
+  private resetOnUpdate(){
+    this.previousSelectedId = undefined;
+    this.previousHoverId = undefined;
+    this.updated = true;
     this.updateHoverView();
     this.updateSelectionView();
   }
