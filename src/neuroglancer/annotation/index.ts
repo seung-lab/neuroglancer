@@ -245,7 +245,14 @@ export function restoreAnnotation(obj: any, allowMissingId = false): Annotation 
   return result;
 }
 
-export class AnnotationSource extends RefCounted {
+export interface AnnotationSourceSignals {
+  changed:NullarySignal;
+  childAdded:Signal<(annotation: Annotation) => void>;
+  childUpdated:Signal<(annotation: Annotation) => void>;
+  childDeleted:Signal<(annotationId: string) => void>;
+}
+
+export class AnnotationSource extends RefCounted implements AnnotationSourceSignals {
   private annotationMap = new Map<AnnotationId, Annotation>();
   changed = new NullarySignal();
   readonly = false;
