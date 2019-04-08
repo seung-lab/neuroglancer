@@ -33,7 +33,7 @@ import {registerNested, TrackableValueInterface, WatchableRefCounted, WatchableV
 import {registerTool, Tool} from 'neuroglancer/ui/tool';
 import {TrackableRGB} from 'neuroglancer/util/color';
 import {Borrowed, Owned, RefCounted} from 'neuroglancer/util/disposable';
-import {removeChildren} from 'neuroglancer/util/dom';
+import {removeChildren, removeFromParent} from 'neuroglancer/util/dom';
 import {mat3, mat3FromMat4, mat4, transformVectorByMat4, vec3} from 'neuroglancer/util/geom';
 import {verifyObject, verifyObjectProperty, verifyOptionalInt, verifyOptionalString, verifyString} from 'neuroglancer/util/json';
 import {NullarySignal} from 'neuroglancer/util/signal';
@@ -578,18 +578,18 @@ export class AnnotationLayerView extends Tab {
   }
 
   private updateAnnotationElement(annotation:Annotation) {
-    const {annotationListElements} = this;
-    let element = annotationListElements.get(annotation.id);
+    let element = this.annotationListElements.get(annotation.id);
     if(element !== undefined && element.lastElementChild){
       element.lastElementChild.innerHTML = annotation.description || '';
     }
   }
 
   private deleteAnnotationElement(annotationId:string) {
-    console.log(annotationId);
-    const {annotationListContainer, annotationListElements} = this;
-    console.log(annotationListContainer);
-    annotationListElements.delete(annotationId);
+    this.annotationListElements.delete(annotationId);
+    let element = this.annotationListElements.get(annotationId);
+    if(element !== undefined){
+      removeFromParent(element);
+    }
   }
 
   private makeAnnotationListElement(annotation: Annotation, transform: mat4) {
