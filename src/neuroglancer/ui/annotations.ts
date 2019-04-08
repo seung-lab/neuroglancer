@@ -396,9 +396,9 @@ export class AnnotationLayerView extends Tab {
       this.updateView();
     };
     this.registerDisposer(source.changed.add(updateView));
-    this.registerDisposer(source.childAdded.add(() => this.addAnnotationElement));
-    this.registerDisposer(source.childUpdated.add(() => this.updateAnnotationElement));
-    this.registerDisposer(source.childDeleted.add(() => this.deleteAnnotationElement));
+    this.registerDisposer(source.childAdded.add((annotation) => this.addAnnotationElement(annotation)));
+    this.registerDisposer(source.childUpdated.add((annotation) => this.updateAnnotationElement(annotation)));
+    this.registerDisposer(source.childDeleted.add((annotationId) => this.deleteAnnotationElement(annotationId)));
     this.registerDisposer(this.visibility.changed.add(() => this.updateView()));
     this.registerDisposer(annotationLayer.transform.changed.add(updateView));
     this.updateView();
@@ -556,9 +556,6 @@ export class AnnotationLayerView extends Tab {
 
   private addAnnotationElement(annotation:Annotation) {
 
-    console.log(this);
-    console.log(annotation);
-
     const {annotationLayer, annotationListContainer, annotationListElements} = this;
     const {objectToGlobal} = annotationLayer;
     const element = this.makeAnnotationListElement(annotation, objectToGlobal);
@@ -582,6 +579,7 @@ export class AnnotationLayerView extends Tab {
 
   private updateAnnotationElement(annotation:Annotation) {
     console.log(annotation);
+    console.log(this);
   }
 
   private deleteAnnotationElement(annotationId:string) {
