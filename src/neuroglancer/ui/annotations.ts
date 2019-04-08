@@ -395,11 +395,10 @@ export class AnnotationLayerView extends Tab {
       this.updated = false;
       this.updateView();
     };
-    const updateAnnotationElementView = (annotation:Annotation, action:number) => {
-      this.updateAnnotationElementView(annotation, action);
-    };
     this.registerDisposer(source.changed.add(updateView));
-    this.registerDisposer(source.minorchange.add(updateAnnotationElementView));
+    this.registerDisposer(source.childAdded.add(this.addAnnotationElement));
+    this.registerDisposer(source.childUpdated.add(this.updateAnnotationElement));
+    this.registerDisposer(source.childDeleted.add(this.deleteAnnotationElement));
     this.registerDisposer(this.visibility.changed.add(() => this.updateView()));
     this.registerDisposer(annotationLayer.transform.changed.add(updateView));
     this.updateView();
@@ -557,117 +556,45 @@ export class AnnotationLayerView extends Tab {
 
   private addAnnotationElement(annotation:Annotation) {
 
-    const {annotationLayer, annotationListContainer, annotationListElements} = this;
-    const {source} = annotationLayer;
-    const {objectToGlobal} = annotationLayer;
-    var element = undefined;
-
+    console.log(this);
     console.log(annotation);
-    
-    removeChildren(annotationListContainer);
-    this.annotationListElements.clear();
-    for (const annotation of source) {
-      const element = this.makeAnnotationListElement(annotation, objectToGlobal);
-      annotationListContainer.appendChild(element);
-      annotationListElements.set(annotation.id, element);
-      element.addEventListener('mouseenter', () => {
-        this.annotationLayer.hoverState.value = {id: annotation.id, partIndex: 0};
-      });
-      element.addEventListener('click', () => {
-        this.state.value = {id: annotation.id, partIndex: 0};
-      });
 
-      element.addEventListener('mouseup', (event: MouseEvent) => {
-        if (event.button === 2) {
-          this.setSpatialCoordinates(
-              getCenterPosition(annotation, this.annotationLayer.objectToGlobal));
-        }
-      });
-    }
+    const {annotationLayer, annotationListContainer, annotationListElements} = this;
+    const {objectToGlobal} = annotationLayer;
+    const element = this.makeAnnotationListElement(annotation, objectToGlobal);
+    annotationListContainer.appendChild(element);
+    annotationListElements.set(annotation.id, element);
+
+    element.addEventListener('mouseenter', () => {
+      this.annotationLayer.hoverState.value = {id: annotation.id, partIndex: 0};
+    });
+    element.addEventListener('click', () => {
+      this.state.value = {id: annotation.id, partIndex: 0};
+    });
+
+    element.addEventListener('mouseup', (event: MouseEvent) => {
+      if (event.button === 2) {
+        this.setSpatialCoordinates(
+            getCenterPosition(annotation, this.annotationLayer.objectToGlobal));
+      }
+    });
   }
 
   private updateAnnotationElement(annotation:Annotation) {
-
-    const {annotationLayer, annotationListContainer, annotationListElements} = this;
-    const {source} = annotationLayer;
-    const {objectToGlobal} = annotationLayer;
-    var element = undefined;
-
     console.log(annotation);
-    
-    switch(action){
-      case 0:element = this.makeAnnotationListElement(annotation, objectToGlobal);
-      break;
-      case 1:
-      break;
-      case 2:break;
-    }
-    
-    removeChildren(annotationListContainer);
-    this.annotationListElements.clear();
-    for (const annotation of source) {
-      const element = this.makeAnnotationListElement(annotation, objectToGlobal);
-      annotationListContainer.appendChild(element);
-      annotationListElements.set(annotation.id, element);
-      element.addEventListener('mouseenter', () => {
-        this.annotationLayer.hoverState.value = {id: annotation.id, partIndex: 0};
-      });
-      element.addEventListener('click', () => {
-        this.state.value = {id: annotation.id, partIndex: 0};
-      });
-
-      element.addEventListener('mouseup', (event: MouseEvent) => {
-        if (event.button === 2) {
-          this.setSpatialCoordinates(
-              getCenterPosition(annotation, this.annotationLayer.objectToGlobal));
-        }
-      });
-    }
   }
 
-  private updateAnnotationElementView(annotation:Annotation, action:number) {
-
-    const {annotationLayer, annotationListContainer, annotationListElements} = this;
-    const {source} = annotationLayer;
-    const {objectToGlobal} = annotationLayer;
-    var element = undefined;
-
-    console.log(annotation);
-    
-    switch(action){
-      case 0:element = this.makeAnnotationListElement(annotation, objectToGlobal);
-      break;
-      case 1:
-      break;
-      case 2:break;
-    }
-    
-    removeChildren(annotationListContainer);
-    this.annotationListElements.clear();
-    for (const annotation of source) {
-      const element = this.makeAnnotationListElement(annotation, objectToGlobal);
-      annotationListContainer.appendChild(element);
-      annotationListElements.set(annotation.id, element);
-      element.addEventListener('mouseenter', () => {
-        this.annotationLayer.hoverState.value = {id: annotation.id, partIndex: 0};
-      });
-      element.addEventListener('click', () => {
-        this.state.value = {id: annotation.id, partIndex: 0};
-      });
-
-      element.addEventListener('mouseup', (event: MouseEvent) => {
-        if (event.button === 2) {
-          this.setSpatialCoordinates(
-              getCenterPosition(annotation, this.annotationLayer.objectToGlobal));
-        }
-      });
-    }
+  private deleteAnnotationElement(annotationId:string) {
+    console.log(annotationId);
+    const {annotationListContainer, annotationListElements} = this;
+    console.log(annotationListContainer);
+    annotationListElements.delete(annotationId);
   }
 
   private makeAnnotationListElement(annotation: Annotation, transform: mat4) {
     const element = document.createElement('li');
     element.title = 'Click to select, right click to recenter view.';
-    element.setAttribute("id", annotation.id);
+    element.setAttribute('id', annotation.id);
 
     const icon = document.createElement('div');
     icon.className = 'neuroglancer-annotation-icon';

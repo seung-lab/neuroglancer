@@ -591,9 +591,11 @@ export class MultiscaleAnnotationSource extends SharedObject implements
 
   // FIXME
   changed = new NullarySignal();
-  minorchange = new Signal<(annotation: Annotation, action:number) => void>();
   * [Symbol.iterator](): Iterator<Annotation> {}
   readonly = false;
+  childAdded = new Signal<(annotation: Annotation) => void>();
+  childUpdated = new Signal<(annotation: Annotation) => void>();
+  childDeleted = new Signal<(annotationId: string) => void>();
 }
 
 registerRPC(ANNOTATION_COMMIT_UPDATE_RESULT_RPC_ID, function(x) {
