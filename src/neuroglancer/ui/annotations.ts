@@ -578,8 +578,11 @@ export class AnnotationLayerView extends Tab {
   }
 
   private updateAnnotationElement(annotation:Annotation) {
-    console.log(annotation);
-    console.log(this);
+    const {annotationListElements} = this;
+    let element = annotationListElements.get(annotation.id);
+    if(element !== undefined && element.lastElementChild){
+      element.lastElementChild.innerHTML = annotation.description || '';
+    }
   }
 
   private deleteAnnotationElement(annotationId:string) {
