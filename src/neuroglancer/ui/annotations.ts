@@ -555,7 +555,6 @@ export class AnnotationLayerView extends Tab {
   }
 
   private addAnnotationElement(annotation:Annotation) {
-
     const {annotationLayer, annotationListContainer, annotationListElements} = this;
     const {objectToGlobal} = annotationLayer;
     const element = this.makeAnnotationListElement(annotation, objectToGlobal);
@@ -575,6 +574,8 @@ export class AnnotationLayerView extends Tab {
             getCenterPosition(annotation, this.annotationLayer.objectToGlobal));
       }
     });
+    this.updateHoverView();
+    this.updateSelectionView();
   }
 
   private updateAnnotationElement(annotation:Annotation) {
@@ -597,14 +598,18 @@ export class AnnotationLayerView extends Tab {
       description.textContent = annotation.description || '';
       element.appendChild(description);
     }
+    this.updateHoverView();
+    this.updateSelectionView();
   }
 
   private deleteAnnotationElement(annotationId:string) {
-    this.annotationListElements.delete(annotationId);
     let element = this.annotationListElements.get(annotationId);
-    if(element !== undefined){
+    if(element){
       removeFromParent(element);
+      this.annotationListElements.delete(annotationId);
     }
+    this.updateHoverView();
+    this.updateSelectionView();
   }
 
   private makeAnnotationListElement(annotation: Annotation, transform: mat4) {
