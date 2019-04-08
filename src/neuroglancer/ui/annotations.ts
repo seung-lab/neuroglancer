@@ -396,9 +396,9 @@ export class AnnotationLayerView extends Tab {
       this.updateView();
     };
     this.registerDisposer(source.changed.add(updateView));
-    this.registerDisposer(source.childAdded.add(this.addAnnotationElement));
-    this.registerDisposer(source.childUpdated.add(this.updateAnnotationElement));
-    this.registerDisposer(source.childDeleted.add(this.deleteAnnotationElement));
+    this.registerDisposer(source.childAdded.add(() => this.addAnnotationElement));
+    this.registerDisposer(source.childUpdated.add(() => this.updateAnnotationElement));
+    this.registerDisposer(source.childDeleted.add(() => this.deleteAnnotationElement));
     this.registerDisposer(this.visibility.changed.add(() => this.updateView()));
     this.registerDisposer(annotationLayer.transform.changed.add(updateView));
     this.updateView();
