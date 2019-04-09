@@ -517,45 +517,10 @@ export class AnnotationLayerView extends Tab {
     this.previousHoverId = newHoverId;
   }
 
-  private updateView() {
-    if (!this.visible) {
-      return;
-    }
-    if (this.updated) {
-      return;
-    }
-    const {annotationLayer, annotationListContainer, annotationListElements} = this;
-    const {source} = annotationLayer;
-    removeChildren(annotationListContainer);
-    this.annotationListElements.clear();
-    const {objectToGlobal} = annotationLayer;
-    for (const annotation of source) {
-      const element = this.makeAnnotationListElement(annotation, objectToGlobal);
-      annotationListContainer.appendChild(element);
-      annotationListElements.set(annotation.id, element);
-      element.addEventListener('mouseenter', () => {
-        this.annotationLayer.hoverState.value = {id: annotation.id, partIndex: 0};
-      });
-      element.addEventListener('click', () => {
-        this.state.value = {id: annotation.id, partIndex: 0};
-      });
-
-      element.addEventListener('mouseup', (event: MouseEvent) => {
-        if (event.button === 2) {
-          this.setSpatialCoordinates(
-              getCenterPosition(annotation, this.annotationLayer.objectToGlobal));
-        }
-      });
-    }
-    this.resetOnUpdate();
-  }
-
-  private addAnnotationElement(annotation:Annotation) {
-    if (!this.visible) {
-      return;
-    }
+  private addAnnotationElementHelper(annotation: Annotation) {
     const {annotationLayer, annotationListContainer, annotationListElements} = this;
     const {objectToGlobal} = annotationLayer;
+
     const element = this.makeAnnotationListElement(annotation, objectToGlobal);
     annotationListContainer.appendChild(element);
     annotationListElements.set(annotation.id, element);
@@ -573,6 +538,30 @@ export class AnnotationLayerView extends Tab {
             getCenterPosition(annotation, this.annotationLayer.objectToGlobal));
       }
     });
+  }
+
+  private updateView() {
+    if (!this.visible) {
+      return;
+    }
+    if (this.updated) {
+      return;
+    }
+    const {annotationLayer, annotationListContainer, annotationListElements} = this;
+    const {source} = annotationLayer;
+    removeChildren(annotationListContainer);
+    annotationListElements.clear();
+    for (const annotation of source) {
+      this.addAnnotationElementHelper(annotation);
+    }
+    this.resetOnUpdate();
+  }
+
+  private addAnnotationElement(annotation:Annotation) {
+    if (!this.visible) {
+      return;
+    }
+    this.addAnnotationElementHelper(annotation);
     this.resetOnUpdate();
   }
 
@@ -584,13 +573,12 @@ export class AnnotationLayerView extends Tab {
     if (!element) {
       return;
     }
-    if (element.lastElementChild &&
-      element.children.length === 3) {
+    if (element.lastElementChild && element.children.length === 3) {
       if (!annotation.description) {
         element.removeChild(element.lastElementChild);
       }
       else {
-        element.lastElementChild.innerHTML = annotation.description || '';
+        element.lastElementChild.innerHTML = annotation.description;
       }
     }
     else {
@@ -614,7 +602,7 @@ export class AnnotationLayerView extends Tab {
     this.resetOnUpdate();
   }
 
-  private resetOnUpdate(){
+  private resetOnUpdate() {
     this.previousSelectedId = undefined;
     this.previousHoverId = undefined;
     this.updated = true;
