@@ -593,9 +593,9 @@ export class MultiscaleAnnotationSource extends SharedObject implements
   changed = new NullarySignal();
   * [Symbol.iterator](): Iterator<Annotation> {}
   readonly = false;
-  childAdded = new Signal<(annotation: Annotation) => void>();
-  childUpdated = new Signal<(annotation: Annotation) => void>();
-  childDeleted = new Signal<(annotationId: string) => void>();
+  childAdded: Signal<(annotation: Annotation) => void>;
+  childUpdated: Signal<(annotation: Annotation) => void>;
+  childDeleted: Signal<(annotationId: string) => void>;
 }
 
 registerRPC(ANNOTATION_COMMIT_UPDATE_RESULT_RPC_ID, function(x) {

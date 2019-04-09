@@ -395,7 +395,7 @@ export class AnnotationLayerView extends Tab {
       this.updated = false;
       this.updateView();
     };
-    this.registerDisposer(source.changed.add(updateView));
+    // this.registerDisposer(source.changed.add(updateView));
     this.registerDisposer(source.childAdded.add((annotation) => this.addAnnotationElement(annotation)));
     this.registerDisposer(source.childUpdated.add((annotation) => this.updateAnnotationElement(annotation)));
     this.registerDisposer(source.childDeleted.add((annotationId) => this.deleteAnnotationElement(annotationId)));
@@ -579,17 +579,17 @@ export class AnnotationLayerView extends Tab {
   private updateAnnotationElement(annotation:Annotation) {
     if (!this.visible) {
       return;
-    }    
+    }
     var element = this.annotationListElements.get(annotation.id);
-    if(!element){
+    if (!element) {
       return;
     }
-    if(element.lastElementChild &&
-      element.children.length === 3){
-      if(!annotation.description){
+    if (element.lastElementChild &&
+      element.children.length === 3) {
+      if (!annotation.description) {
         element.removeChild(element.lastElementChild);
       }
-      else{
+      else {
         element.lastElementChild.innerHTML = annotation.description || '';
       }
     }
@@ -602,12 +602,12 @@ export class AnnotationLayerView extends Tab {
     this.resetOnUpdate();
   }
 
-  private deleteAnnotationElement(annotationId:string) {
+  private deleteAnnotationElement(annotationId: string) {
     if (!this.visible) {
       return;
     }
     let element = this.annotationListElements.get(annotationId);
-    if(element){
+    if (element) {
       removeFromParent(element);
       this.annotationListElements.delete(annotationId);
     }

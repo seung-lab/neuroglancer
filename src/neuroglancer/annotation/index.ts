@@ -273,7 +273,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
       throw new Error(`Annotation id already exists: ${JSON.stringify(annotation.id)}.`);
     }
     this.annotationMap.set(annotation.id, annotation);
-    // this.changed.dispatch();
+    this.changed.dispatch();
     this.childAdded.dispatch(annotation);
     if (!commit) {
       this.pending.add(annotation.id);
@@ -293,7 +293,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     reference.value = annotation;
     this.annotationMap.set(annotation.id, annotation);
     reference.changed.dispatch();
-    // this.changed.dispatch();
+    this.changed.dispatch();
     this.childUpdated.dispatch(annotation);
   }
 
@@ -313,7 +313,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     this.annotationMap.delete(reference.id);
     this.pending.delete(reference.id);
     reference.changed.dispatch();
-    // this.changed.dispatch();
+    this.changed.dispatch();
     this.childDeleted.dispatch(reference.id);
   }
 
