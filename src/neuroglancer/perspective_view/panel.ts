@@ -409,7 +409,7 @@ export class PerspectivePanel extends RenderedDataPanel {
     vec3.transformMat4(temp, orig, projectionMat);
     temp[0] -= 2 * deltaX / width;
     temp[1] -= -2 * deltaY / height;
-    return vec3.transformMat4(out, temp, this.inverseProjectionMat);
+    return vec3.transformMat4(out, temp, this.inverseModelViewProjectionMat);
   }
 
   private get transparentConfiguration() {
@@ -446,7 +446,7 @@ export class PerspectivePanel extends RenderedDataPanel {
     this.offscreenFramebuffer.bind(width, height);
 
     gl.disable(gl.SCISSOR_TEST);
-    this.gl.clearColor(0.0, 0.0, 0.0, 0.0);
+    this.gl.clearColor(1.0, 1.0, 1.0, 0.0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     gl.enable(gl.DEPTH_TEST);
@@ -539,7 +539,7 @@ export class PerspectivePanel extends RenderedDataPanel {
       // Compute accumulate and revealage textures.
       const {transparentConfiguration} = this;
       transparentConfiguration.bind(width, height);
-      this.gl.clearColor(0.0, 0.0, 0.0, 1.0);
+      this.gl.clearColor(1.0, 1.0, 1.0, 1.0);
       gl.clear(WebGL2RenderingContext.COLOR_BUFFER_BIT);
       renderContext.emitter = perspectivePanelEmitOIT;
       gl.blendFuncSeparate(

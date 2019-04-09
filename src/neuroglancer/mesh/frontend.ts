@@ -65,36 +65,26 @@ const vec3 ORANGE = vec3(1.0, 0.67, 0.43) * LIGHT_INTENSITY;
 const vec3 BLUE = vec3(0.54, 0.77, 1.0) * LIGHT_INTENSITY;
 const vec3 WHITE = vec3(1.2, 1.07, 0.98) * LIGHT_INTENSITY;
 
-vec3 normal = normalize(vNormal);
+vec3 xTangent = dFdx(vPositionEye);
+vec3 yTangent = dFdy(vPositionEye);
+vec3 normal = normalize(cross(xTangent, yTangent));
+
 vec3 eye = -normalize(vPositionEye.xyz);
 vec3 light = normalize(vec3(0.0, 1.0, 2.0));
 
-// Compute curvature for fake ambient occlusion
-vec3 dx = dFdx(normal);
-vec3 dy = dFdy(normal);
-vec3 xneg = normal - dx;
-vec3 xpos = normal + dx;
-vec3 yneg = normal - dy;
-vec3 ypos = normal + dy;
-float curv = cross(xneg, xpos).y - cross(yneg, ypos).x;
-
-// Bump mapping based on procedural noise texture
-vec3 noise = getNormal(vPositionWorld / 500.0);
-normal += 0.3*noise;
 normal = normalize(normal);
 
 float NdotL = dot(normal, light);
 float NdotE = dot(normal, eye);
 
-float ambient = clamp(0.25 + 0.6*curv, 0.0, 0.25);
+float ambient = 0.025;
 float diffuse = pow(abs(NdotL), 1.0 / 2.2);
-float fresnel = pow(1.0 - max(NdotE, 0.0), 2.5) * 0.45;
 
-float specular1 = pow(max(0.0, dot(light, reflect(-eye, normal))), 8.0) * 0.64;
+float specular1 = pow(max(0.0, dot(light, reflect(-eye, normal))), 8.0) * 0.0;
 normal = normalize(normal + light * 0.675);
-float specular2 = pow(max(0.0, dot(light, reflect(-eye, normal))), 80.0) * 1.5;
+float specular2 = pow(max(0.0, dot(light, reflect(-eye, normal))), 80.0) * 0.0;
 
-vec3 col = mix(ambient * uColor.rgb, vec3(1.0), fresnel) + 0.6 * diffuse * uColor.rgb + specular1 * WHITE + specular2 * WHITE;
+vec3 col = ambient * uColor.rgb + 0.9 * diffuse * uColor.rgb + specular1 * WHITE + specular2 * WHITE;
 
 col = clamp(col, 0.0, 1.0);
 emit(vec4(vec3(col), 1.0), uPickID);
