@@ -395,7 +395,6 @@ export class AnnotationLayerView extends Tab {
       this.updated = false;
       this.updateView();
     };
-    // this.registerDisposer(source.changed.add(updateView));
     this.registerDisposer(source.childAdded.add((annotation) => this.addAnnotationElement(annotation)));
     this.registerDisposer(source.childUpdated.add((annotation) => this.updateAnnotationElement(annotation)));
     this.registerDisposer(source.childDeleted.add((annotationId) => this.deleteAnnotationElement(annotationId)));
@@ -613,7 +612,6 @@ export class AnnotationLayerView extends Tab {
   private makeAnnotationListElement(annotation: Annotation, transform: mat4) {
     const element = document.createElement('li');
     element.title = 'Click to select, right click to recenter view.';
-    element.setAttribute('id', annotation.id);
 
     const icon = document.createElement('div');
     icon.className = 'neuroglancer-annotation-icon';
