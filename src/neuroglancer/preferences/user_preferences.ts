@@ -15,20 +15,24 @@ export class UserPreferencesDialog extends Overlay {
     let scroll = document.createElement('div');
     scroll.classList.add('user-preferences-container');
 
+    content.appendChild(scroll);
+
     const addCheckbox = (label: string, value: TrackableBoolean) => {
       const labelElement = document.createElement('label');
       labelElement.textContent = label;
-      const checkbox = content.registerDisposer(new TrackableBooleanCheckbox(value));
+      const checkbox = this.registerDisposer(new TrackableBooleanCheckbox(value));
       labelElement.appendChild(checkbox.element);
-      content.appendChild(labelElement);
+      scroll.appendChild(labelElement);
     };
-    addCheckbox('Show axis lines', viewer.showAxisLines);
 
     let header = document.createElement('h2');
     header.textContent = 'Preferences';
     scroll.appendChild(header);
     let dl = document.createElement('div');
     dl.className = 'dl';
+    scroll.appendChild(dl);
+
+    addCheckbox('Test checkbox', viewer.showAxisLines);
 
     let container = document.createElement('div');
     let container2 = document.createElement('div');
@@ -44,10 +48,6 @@ export class UserPreferencesDialog extends Overlay {
     container.appendChild(dd);
     dl.appendChild(container2);
     container2.appendChild(container);
-
-    scroll.appendChild(dl);
-
-    content.appendChild(scroll);
   }
 }
 
