@@ -1,5 +1,7 @@
 import {Overlay} from 'neuroglancer/overlay';
 import {Viewer} from 'neuroglancer/viewer';
+import {TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
+
 
 require('./user_preferences.css');
 
@@ -12,6 +14,15 @@ export class UserPreferencesDialog extends Overlay {
 
     let scroll = document.createElement('div');
     scroll.classList.add('user-preferences-container');
+
+    const addCheckbox = (label: string, value: TrackableBoolean) => {
+      const labelElement = document.createElement('label');
+      labelElement.textContent = label;
+      const checkbox = content.registerDisposer(new TrackableBooleanCheckbox(value));
+      labelElement.appendChild(checkbox.element);
+      content.appendChild(labelElement);
+    };
+    addCheckbox('Show axis lines', viewer.showAxisLines);
 
     let header = document.createElement('h2');
     header.textContent = 'Preferences';
