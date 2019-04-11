@@ -710,7 +710,7 @@ export class PerspectivePanel extends RenderedDataPanel {
     the spiral that are outside a given radius from the center,
     otherwise the cursor will be more sensitive along diagonals.
 */
-function spiralSequence(width: number, height: number) : Uint32Array {
+function spiralSequence(width: number, height: number): Uint32Array {
   const pixels = width * height;
   let sequence = new Uint32Array(pixels);
 
