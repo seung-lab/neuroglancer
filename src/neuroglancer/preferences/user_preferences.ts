@@ -18,6 +18,10 @@ export class UserPreferencesDialog extends Overlay {
 
     content.appendChild(scroll);
 
+    let header = document.createElement('h2');
+    header.textContent = 'Preferences';
+    scroll.appendChild(header);
+
     const addLimitWidget = (label: string, limit: TrackableValue<number>) => {
       const widget = this.registerDisposer(new NumberInputWidget(limit, {label}));
       widget.element.classList.add('user-preferences-limit-widget');
@@ -37,29 +41,7 @@ export class UserPreferencesDialog extends Overlay {
       scroll.appendChild(labelElement);
     };
 
-    let header = document.createElement('h2');
-    header.textContent = 'Preferences';
-    scroll.appendChild(header);
-    let dl = document.createElement('div');
-    dl.className = 'dl';
-    scroll.appendChild(dl);
-
     addCheckbox('Test checkbox', viewer.showAxisLines);
-
-    let container = document.createElement('div');
-    let container2 = document.createElement('div');
-    container2.className = 'definition-outer-container';
-    container.className = 'definition-container';
-    let dt = document.createElement('div');
-    dt.className = 'dt';
-    dt.textContent = 'hI THERE';
-    let dd = document.createElement('div');
-    dd.className = 'dd';
-    dd.textContent = 'action';
-    container.appendChild(dt);
-    container.appendChild(dd);
-    dl.appendChild(container2);
-    container2.appendChild(container);
   }
 }
 
