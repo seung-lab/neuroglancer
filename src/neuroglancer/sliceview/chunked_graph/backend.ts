@@ -199,6 +199,7 @@ export class ChunkedGraphLayer extends Base implements RenderLayerInterface<Slic
     this.rootSegments = <Uint64Set>rpc.get(options['rootSegments']);
     this.visibleSegments3D = <Uint64Set>rpc.get(options['visibleSegments3D']);
     this.segmentEquivalences = <SharedDisjointUint64Sets>rpc.get(options['segmentEquivalences']);
+    this.renderScaleTarget = rpc.get(options['renderScaleTarget']);
 
     this.sources = new Array<ChunkedGraphChunkSource[]>();
     for (const alternativeIds of options['sources']) {

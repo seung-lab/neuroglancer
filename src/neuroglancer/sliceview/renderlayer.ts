@@ -84,7 +84,7 @@ export abstract class RenderLayer extends GenericRenderLayer {
       renderScaleTarget:
           this.registerDisposer(SharedWatchableValue.makeFromExisting(rpc, this.renderScaleTarget))
               .rpcId,
-      rpcTransfer: {...this.rpcTransfer},
+      ...this.rpcTransfer,
     });
     this.rpcId = sharedObject.rpcId;
 
