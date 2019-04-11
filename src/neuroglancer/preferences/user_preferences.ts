@@ -18,7 +18,7 @@ export class UserPreferencesDialog extends Overlay {
 
     content.appendChild(scroll);
 
-    let header = document.createElement('h2');
+    let header = document.createElement('h3');
     header.textContent = 'Preferences';
     scroll.appendChild(header);
 
