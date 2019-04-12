@@ -18,15 +18,18 @@ import debounce from 'lodash/debounce';
 import {WatchableValueInterface} from 'neuroglancer/trackable_value';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {NullarySignal} from 'neuroglancer/util/signal';
-import {Trackable} from 'neuroglancer/util/trackable';
+import {TrackableWithLocalStorage} from 'neuroglancer/util/trackable';
 
-export class TrackableBoolean implements Trackable {
+export class TrackableBoolean implements TrackableWithLocalStorage {
   get value() {
     return this.value_;
   }
   set value(newValue: boolean) {
     if (newValue !== this.value_) {
       this.value_ = newValue;
+      if(this.saveLocally) {
+        localStorage.set(this.localStorageKey, newValue);
+      }
       this.changed.dispatch();
     }
   }
@@ -34,7 +37,10 @@ export class TrackableBoolean implements Trackable {
     this.value = !this.value;
   }
   changed = new NullarySignal();
-  constructor(private value_: boolean, public defaultValue: boolean = value_) {}
+  constructor(private value_: boolean,
+              public defaultValue: boolean = value_,
+              public saveLocally: boolean = false,
+              public localStorageKey:string = '') {}
   toJSON() {
     let {value_} = this;
     if (value_ === this.defaultValue) {
@@ -48,6 +54,9 @@ export class TrackableBoolean implements Trackable {
       return;
     }
     this.value = this.defaultValue;
+    if(this.saveLocally) {
+      this.value = JSON.parse(localStorage.get(this.localStorageKey) || 'false');
+    }
   }
   reset() {
     this.value = this.defaultValue;
