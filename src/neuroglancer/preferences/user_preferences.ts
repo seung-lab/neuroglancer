@@ -6,6 +6,19 @@ import {NumberInputWidget} from 'neuroglancer/widget/number_input_widget';
 
 require('./user_preferences.css');
 
+class UserPreferences {
+  renderMeshByDefault: TrackableBoolean;
+  constructor() {
+    this.renderMeshByDefault = new TrackableBoolean(true, true, true, 'renderMeshByDefault');
+  }
+}
+
+let userPreferences = new UserPreferences();
+
+export function getRenderMeshByDefault(): boolean {
+  return userPreferences.renderMeshByDefault.value;
+}
+
 export class UserPreferencesDialog extends Overlay {
   constructor(public viewer: Viewer) {
     super();
@@ -41,7 +54,7 @@ export class UserPreferencesDialog extends Overlay {
       scroll.appendChild(labelElement);
     };
 
-    addCheckbox('Test checkbox', viewer.showAxisLines);
+    addCheckbox('Render Mesh By Default', userPreferences.renderMeshByDefault);
   }
 }
 

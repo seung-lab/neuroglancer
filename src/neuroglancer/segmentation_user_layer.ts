@@ -46,6 +46,7 @@ import {SegmentSetWidget} from 'neuroglancer/widget/segment_set_widget';
 import {ShaderCodeWidget} from 'neuroglancer/widget/shader_code_widget';
 import {Tab} from 'neuroglancer/widget/tab_view';
 import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
+import {getRenderMeshByDefault} from 'neuroglancer/preferences/user_preferences';
 
 require('neuroglancer/noselect.css');
 require('./segmentation_user_layer.css');
@@ -195,11 +196,11 @@ export class SegmentationUserLayer extends Base {
         null :
         verifyOptionalString(specification[SKELETONS_JSON_KEY]);
     let remaining = 0;
-    if (meshPath != null) {
+    if (meshPath != null && getRenderMeshByDefault()) {
       ++remaining;
       this.manager.dataSourceProvider.getMeshSource(this.manager.chunkManager, meshPath)
           .then(meshSource => {
-            if (!this.wasDisposed) {
+            if (!this.wasDisposed && getRenderMeshByDefault()) {
               this.addMesh(meshSource);
               if (--remaining === 0) {
                 this.isReady = true;
@@ -254,7 +255,7 @@ export class SegmentationUserLayer extends Base {
             }
           }
           // Meshes
-          if (meshPath === undefined) {
+          if (meshPath === undefined && getRenderMeshByDefault()) {
             ++remaining;
             Promise.resolve(volume.getMeshSource()).then(meshSource => {
               if (this.wasDisposed) {

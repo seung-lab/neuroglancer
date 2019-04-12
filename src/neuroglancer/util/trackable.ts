@@ -29,6 +29,10 @@ export interface Trackable {
   toJSON: () => any;
 }
 
+export interface TrackableWithLocalStorage extends Trackable {
+  saveLocally: boolean;
+}
+
 export class CompoundTrackable extends RefCounted implements Trackable {
   children = new Map<string, Trackable>();
   changed = new NullarySignal();
