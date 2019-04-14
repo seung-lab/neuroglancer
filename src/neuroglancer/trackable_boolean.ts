@@ -28,7 +28,7 @@ export class TrackableBoolean implements TrackableWithLocalStorage {
     if (newValue !== this.value_) {
       this.value_ = newValue;
       if(this.saveLocally) {
-        localStorage.set(this.localStorageKey, newValue);
+        localStorage.setItem(this.localStorageKey, JSON.stringify(newValue));
       }
       this.changed.dispatch();
     }
@@ -55,7 +55,7 @@ export class TrackableBoolean implements TrackableWithLocalStorage {
     }
     this.value = this.defaultValue;
     if(this.saveLocally) {
-      this.value = JSON.parse(localStorage.get(this.localStorageKey) || 'false');
+      this.value = JSON.parse(localStorage.getItem(this.localStorageKey) || 'false');
     }
   }
   reset() {
