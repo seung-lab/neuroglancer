@@ -22,8 +22,13 @@ import {DataSourceProvider} from 'neuroglancer/datasource';
 import {getDefaultDataSourceProvider} from 'neuroglancer/datasource/default_provider';
 import {DisplayContext} from 'neuroglancer/display_context';
 import {InputEventBindingHelpDialog} from 'neuroglancer/help/input_event_bindings';
+<<<<<<< HEAD
 import {ActionMode, ActionState, allRenderLayerRoles, LayerManager, LayerSelectedValues, MouseSelectionState, RenderLayerRole, SelectedLayerState} from 'neuroglancer/layer';
 import {UserPreferencesDialog} from 'neuroglancer/preferences/user_preferences';
+=======
+import {UserPreferencesDialog} from 'neuroglancer/preferences/user_preferences';
+import {allRenderLayerRoles, LayerManager, LayerSelectedValues, MouseSelectionState, ActionState, ActionMode, RenderLayerRole, SelectedLayerState} from 'neuroglancer/layer';
+>>>>>>> 056bd5acb977f7fde2dc80cad5cc3406b27dc2ef
 import {LayerDialog} from 'neuroglancer/layer_dialog';
 import {RootLayoutContainer} from 'neuroglancer/layer_groups_layout';
 import {TopLevelLayerListSpecification} from 'neuroglancer/layer_specification';
