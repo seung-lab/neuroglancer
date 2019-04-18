@@ -28,8 +28,9 @@ import {VolumeChunk, VolumeChunkSource} from 'neuroglancer/sliceview/volume/back
 import {CancellationToken} from 'neuroglancer/util/cancellation';
 import {DATA_TYPE_BYTES} from 'neuroglancer/util/data_type';
 import {convertEndian16, convertEndian32, Endianness} from 'neuroglancer/util/endian';
-import {openShardedHttpRequest, sendHttpRequest} from 'neuroglancer/util/http_request';
+import {openShardedHttpRequest, sendHttpRequest, pickShard} from 'neuroglancer/util/http_request';
 import {registerSharedObject} from 'neuroglancer/worker_rpc';
+import {authFetch} from 'neuroglancer/authentication/backend.ts';
 
 const chunkDecoders = new Map<VolumeChunkEncoding, ChunkDecoder>();
 chunkDecoders.set(VolumeChunkEncoding.RAW, decodeRawChunk);
@@ -76,11 +77,11 @@ export function decodeChunkedGraphChunk(
     let promises = Array<Promise<void>>();
     for (const [key, val] of chunk.mappings!.entries()) {
       if (val === null) {
-        let requestPath = `${parameters.path}/${key}/leaves?bounds=${bounds}`;
-        promises.push(sendHttpRequest(
-                          openShardedHttpRequest(parameters.baseUrls, requestPath), 'arraybuffer',
-                          cancellationToken)
-                          .then(response => decodeChunkedGraphChunk(chunk, key, response)));
+        let requestPath = pickShard(parameters.baseUrls, `${parameters.path}/${key}/leaves?bounds=${bounds}`);
+        promises.push(
+          authFetch(requestPath, {}, cancellationToken)
+            .then(res => res.arrayBuffer())
+            .then(response => decodeChunkedGraphChunk(chunk, key, response)));
       }
     }
     return Promise.all(promises).then(() => {

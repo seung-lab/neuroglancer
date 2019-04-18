@@ -27,8 +27,9 @@ import {DataType, VolumeChunkSpecification, VolumeSourceOptions, VolumeType} fro
 import {MultiscaleVolumeChunkSource as GenericMultiscaleVolumeChunkSource, VolumeChunkSource} from 'neuroglancer/sliceview/volume/frontend';
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {mat4, vec3} from 'neuroglancer/util/geom';
-import {openHttpRequest, parseSpecialUrl, sendHttpRequest} from 'neuroglancer/util/http_request';
+import {parseSpecialUrl} from 'neuroglancer/util/http_request';
 import {parseArray, parseFixedLengthArray, parseIntVec, verifyEnumString, verifyFinitePositiveFloat, verifyObject, verifyObjectAsMap, verifyObjectProperty, verifyOptionalString, verifyPositiveInt, verifyString} from 'neuroglancer/util/json';
+import {authFetch} from 'neuroglancer/authentication/frontend.ts';
 
 class GrapheneVolumeChunkSource extends
 (WithParameters(VolumeChunkSource, VolumeChunkSourceParameters)) {}
@@ -236,8 +237,9 @@ export function getShardedMeshSource(chunkManager: ChunkManager, parameters: Mes
 export function getShardedVolume(chunkManager: ChunkManager, url: string) {
   return chunkManager.memoize.getUncounted(
       {'type': 'graphene:MultiscaleVolumeChunkSource', url},
-      () => sendHttpRequest(openHttpRequest(url + '/info'), 'json')
-                .then(response => new MultiscaleVolumeChunkSource(chunkManager, url, response)));
+      () => authFetch(`${url}/info`)
+              .then(res => res.json())
+              .then(response => new MultiscaleVolumeChunkSource(chunkManager, url, response)));
 }
 
 export function getMeshSource(chunkManager: ChunkManager, url: string) {
