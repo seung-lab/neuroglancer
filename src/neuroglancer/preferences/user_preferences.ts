@@ -10,9 +10,9 @@ class UserPreferences {
   renderMeshByDefault: TrackableBoolean;
   constructor() {
     // mesh rendering is enabled by default, unless user selects not to
-    this.renderMeshByDefault = new TrackableBoolean(true, true, true, 'renderMeshByDefault');
+    this.renderMeshByDefault = new TrackableBoolean(true, true, 'renderMeshByDefault');
     this.renderMeshByDefault.restoreState({});
-    this.renderMeshByDefault.changed.add(() => {location.reload(false)});
+    this.renderMeshByDefault.changed.add(() => {location.reload(false);});
   }
 }
 

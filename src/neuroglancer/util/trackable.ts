@@ -30,7 +30,7 @@ export interface Trackable {
 }
 
 export interface TrackableWithLocalStorage extends Trackable {
-  saveLocally: boolean;
+  localStorageKey: string;
 }
 
 export class CompoundTrackable extends RefCounted implements Trackable {
