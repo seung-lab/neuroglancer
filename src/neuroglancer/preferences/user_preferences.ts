@@ -1,7 +1,7 @@
 import {Overlay} from 'neuroglancer/overlay';
-import {Viewer} from 'neuroglancer/viewer';
 import {TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
 import {TrackableValue} from 'neuroglancer/trackable_value';
+import {Viewer} from 'neuroglancer/viewer';
 import {NumberInputWidget} from 'neuroglancer/widget/number_input_widget';
 
 require('./user_preferences.css');
@@ -12,7 +12,9 @@ class UserPreferences {
     // mesh rendering is enabled by default, unless user selects not to
     this.renderMeshByDefault = new TrackableBoolean(true, true, 'renderMeshByDefault');
     this.renderMeshByDefault.restoreState({});
-    this.renderMeshByDefault.changed.add(() => {location.reload(false);});
+    this.renderMeshByDefault.changed.add(() => {
+      location.reload(false);
+    });
   }
 }
 
@@ -45,7 +47,8 @@ export class UserPreferencesDialog extends Overlay {
       scroll.appendChild(document.createElement('br'));
     };
     addLimitWidget('GPU memory limit', viewer.chunkQueueManager.capacities.gpuMemory.sizeLimit);
-    addLimitWidget('System memory limit', viewer.chunkQueueManager.capacities.systemMemory.sizeLimit);
+    addLimitWidget(
+        'System memory limit', viewer.chunkQueueManager.capacities.systemMemory.sizeLimit);
     addLimitWidget(
         'Concurrent chunk requests', viewer.chunkQueueManager.capacities.download.itemLimit);
 
@@ -60,4 +63,3 @@ export class UserPreferencesDialog extends Overlay {
     addCheckbox('Render Mesh By Default', userPreferences.renderMeshByDefault);
   }
 }
-

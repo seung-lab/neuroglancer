@@ -27,7 +27,7 @@ export class TrackableBoolean implements TrackableWithLocalStorage {
   set value(newValue: boolean) {
     if (newValue !== this.value_) {
       this.value_ = newValue;
-      if(this.localStorageKey) {
+      if (this.localStorageKey) {
         localStorage.setItem(this.localStorageKey, JSON.stringify(newValue));
       }
       this.changed.dispatch();
@@ -37,13 +37,12 @@ export class TrackableBoolean implements TrackableWithLocalStorage {
     this.value = !this.value;
   }
   changed = new NullarySignal();
-  constructor(private value_: boolean,
-              public defaultValue: boolean = value_,
-              public localStorageKey = '') {
-                if(localStorageKey && !localStorage.getItem(this.localStorageKey)) {
-                  localStorage.setItem(this.localStorageKey, JSON.stringify(this.defaultValue));
-                }
-              }
+  constructor(
+      private value_: boolean, public defaultValue: boolean = value_, public localStorageKey = '') {
+    if (localStorageKey && !localStorage.getItem(this.localStorageKey)) {
+      localStorage.setItem(this.localStorageKey, JSON.stringify(this.defaultValue));
+    }
+  }
   toJSON() {
     let {value_} = this;
     if (value_ === this.defaultValue) {
@@ -57,11 +56,10 @@ export class TrackableBoolean implements TrackableWithLocalStorage {
       return;
     }
     this.value = this.defaultValue;
-    if(this.localStorageKey) {
-      try{
+    if (this.localStorageKey) {
+      try {
         this.value = JSON.parse(localStorage.getItem(this.localStorageKey)!);
-      }
-      catch(e){
+      } catch (e) {
         this.value = this.defaultValue;
       }
     }

@@ -14,17 +14,18 @@
  * limitations under the License.
  */
 
-import {SegmentSelection, ChunkedGraphLayer} from 'neuroglancer/sliceview/chunked_graph/frontend';
 import {UserLayer} from 'neuroglancer/layer';
 import {LayerListSpecification, registerLayerType, registerVolumeLayerType} from 'neuroglancer/layer_specification';
 import {MeshSource, MultiscaleMeshSource} from 'neuroglancer/mesh/frontend';
 import {MeshLayer, MultiscaleMeshLayer} from 'neuroglancer/mesh/frontend';
 import {Overlay} from 'neuroglancer/overlay';
+import {getRenderMeshByDefault} from 'neuroglancer/preferences/user_preferences';
 import {RenderScaleHistogram, trackableRenderScaleTarget} from 'neuroglancer/render_scale_statistics';
 import {SegmentColorHash} from 'neuroglancer/segment_color';
 import {SegmentSelectionState, Uint64MapEntry} from 'neuroglancer/segmentation_display_state/frontend';
 import {SharedDisjointUint64Sets} from 'neuroglancer/shared_disjoint_sets';
 import {FRAGMENT_MAIN_START as SKELETON_FRAGMENT_MAIN_START, getTrackableFragmentMain, PerspectiveViewSkeletonLayer, SkeletonLayer, SkeletonSource, SliceViewPanelSkeletonLayer} from 'neuroglancer/skeleton/frontend';
+import {ChunkedGraphLayer, SegmentSelection} from 'neuroglancer/sliceview/chunked_graph/frontend';
 import {VolumeType} from 'neuroglancer/sliceview/volume/base';
 import {SegmentationRenderLayer} from 'neuroglancer/sliceview/volume/segmentation_renderlayer';
 import {StatusMessage} from 'neuroglancer/status';
@@ -45,7 +46,6 @@ import {SegmentSetWidget} from 'neuroglancer/widget/segment_set_widget';
 import {ShaderCodeWidget} from 'neuroglancer/widget/shader_code_widget';
 import {Tab} from 'neuroglancer/widget/tab_view';
 import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
-import {getRenderMeshByDefault} from 'neuroglancer/preferences/user_preferences';
 
 require('neuroglancer/noselect.css');
 require('./segmentation_user_layer.css');
