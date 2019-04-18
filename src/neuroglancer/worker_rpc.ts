@@ -106,7 +106,13 @@ export class RPC {
       if (DEBUG_MESSAGES) {
         console.log('Received message', data);
       }
-      handlers.get(data.functionName)!.call(this, data);
+      const handler = handlers.get(data.functionName);
+
+      if (handler) {
+        handler.call(this, data);
+      } else {
+        console.error('missing handler for', data.functionName);
+      }
     };
   }
 

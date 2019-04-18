@@ -24,12 +24,12 @@ import {RenderLayer as RenderLayerInterface, TransformedSource} from 'neuroglanc
 import {CHUNKED_GRAPH_LAYER_RPC_ID, ChunkedGraphChunkSource as ChunkedGraphChunkSourceInterface, ChunkedGraphChunkSpecification} from 'neuroglancer/sliceview/chunked_graph/base';
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {mat4, vec3, vec3Key} from 'neuroglancer/util/geom';
-import {HttpError, openHttpRequest, sendHttpRequest} from 'neuroglancer/util/http_request';
+import {HttpError} from 'neuroglancer/util/http_request';
 import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {registerSharedObject, RPC, SharedObjectCounterpart} from 'neuroglancer/worker_rpc';
 import {WatchableValueInterface} from 'src/neuroglancer/trackable_value';
-import {reauthenticate} from 'neuroglancer/authentication';
+import {authFetch} from 'neuroglancer/authentication/backend.ts';
 
 const tempChunkDataSize = vec3.create();
 const tempChunkPosition = vec3.create();
@@ -234,15 +234,9 @@ export class ChunkedGraphLayer extends Base implements RenderLayerInterface<Slic
       return Promise.resolve([segment]);
     }
 
-    return reauthenticate().then((token) => {
-      const xhr = openHttpRequest(`${url}/segment/${segment}/children`);
-
-      xhr.setRequestHeader(
-          'Authorization',
-          `Bearer ${token}`);
-
-      const promise = sendHttpRequest(xhr, 'arraybuffer');
-      return promise.then(response => {
+    return authFetch(`${url}/segment/${segment}/children`)
+      .then(res => res.arrayBuffer())
+      .then((response) => {
         let uint32 = new Uint32Array(response);
         let final: Uint64[] = new Array(uint32.length / 2);
         for (let i = 0; i < uint32.length / 2; i++) {
@@ -254,7 +248,6 @@ export class ChunkedGraphLayer extends Base implements RenderLayerInterface<Slic
         console.error(e);
         return Promise.reject(e);
       });
-    });
   }
 
   private debouncedupdateDisplayState = debounce(() => {
