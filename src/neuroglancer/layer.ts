@@ -658,6 +658,10 @@ export class MouseSelectionState implements PickState {
       }
     }
   }
+
+  hasForcer() {
+    return !!this.forcerFunction;
+  }
 }
 
 export class LayerSelectedValues extends RefCounted {
