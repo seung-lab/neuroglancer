@@ -8,30 +8,29 @@ import {AUTHENTICATION_GET_SHARED_TOKEN_RPC_ID, AUTHENTICATION_REAUTHENTICATE_RP
 
 // generate a token with the neuroglancer-auth service using google oauth2
 async function authorize(auth_url: string) {
-	// establish session so that the websocket can be associated with this session
-	// and then used when google redirects to oauth2callback
-	// there may be a way to get around this additional request by modifying the websocket library on the server
-	await fetch(`https://${auth_url}/establish_session?origin=${encodeURI(window.location.origin)}`, {
+	const oauth_uri = await fetch(`https://${auth_url}/authorize?redirect=${encodeURI(window.location.origin + '/auth_redirect.html')}`, {
 		credentials: 'include'
+	}).then((res) => {
+		return res.text();
 	});
 
-	return await new Promise<string>((f, _r) => {
-		const socket = new WebSocket(`wss://${auth_url}/authorize`);
+	const auth_popup = window.open(oauth_uri);
 
-		let auth_popup: Window | null = null;
+	if (!auth_popup) {
+		alert('Allow popups on this page to authenticate');
+		throw new Error('Allow popups on this page to authenticate');
+	}
 
-		socket.onmessage = function (msg) {
-			if (msg.data.startsWith('http')) {
-				auth_popup = window.open(msg.data);
-
-				if (!auth_popup) {
-					alert('Allow popups on this page to authenticate');
-				}
-			} else {
-				auth_popup!.close();
-				f(msg.data);
+	return new Promise<string>((f, _r) => {
+		const tokenListener = (ev: MessageEvent) => {
+			if (ev.source === auth_popup) {
+				auth_popup.close();
+				window.removeEventListener("message", tokenListener);
+				f(ev.data.token);
 			}
 		}
+		
+		window.addEventListener("message", tokenListener);
 	});
 }
 
