@@ -48,7 +48,7 @@ export async function authFetchWithSharedValue(reauthenticate: ReauthFunction, a
 	return fetch(input, options).then((res) => {
 		cancelToken.remove(abort);
 
-		if ([400, 401].includes(res.status)) {
+		if (res.status === 400 || res.status === 401) {
 			const wwwAuth = res.headers.get('WWW-Authenticate');
 
 			if (wwwAuth) {
