@@ -1,0 +1,100 @@
+.omni-segment-table td {
+  text-align: center;
+  vertical-align: middle;
+  padding: 2px 5px;
+}
+
+#omni-segment-category-table-container {
+  height: 20vh;
+  overflow-y: auto;
+}
+
+.omni-segment-table-container {
+  height: 20vh;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.omni-segment-widget-element {
+  flex: 1;
+}
+
+.omni-segment-table th {
+  padding: 2px 5px;
+}
+
+#omni-segment-widget-filter {
+  width: 90px;
+}
+
+.omni-segment-widget-category-dropdown {
+  width: 90px;
+}
+
+#omni-segment-category-table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.segment-id-input {
+  width: 30%;
+}
+
+.category-name-wrapper {
+  overflow: auto;
+  width: 100%;
+}
+
+#omni-segment-category-table th:nth-child(1) {
+  width: 80%;
+  max-width: 80%;
+  text-align: left;
+  overflow: auto;
+}
+
+#omni-segment-category-table th:nth-child(2) {
+  width: 20%;
+  text-align: left;
+}
+
+#segment-category-input {
+  width: 45%;
+  margin-right: 7px;
+}
+
+#segment-category-input-button {
+  height: 20px;
+  vertical-align: bottom;
+}
+
+#toggle-segment-category-visibility {
+  margin-top: 40px;
+  margin-bottom: 5px;
+}
+
+#toggle-segment-table-visibility {
+  margin-top: 20px;
+}
+
+#toggle-segment-equivalence-visibility {
+  margin-top: 40px;
+  margin-bottom: 5px;
+}
+
+#add-segment-equivalence-label-div {
+  margin-top: 5px;
+  margin-bottom: 4px;
+}
+
+#add-segment-equivalence-input-div {
+  margin-bottom: 5px;
+}
+
+#segment-equivalence-table-div {
+  height: 40vh;
+  overflow-y: auto;
+}
+
+#filter-segment-equivalence-container {
+  margin-bottom: 12px;
+}

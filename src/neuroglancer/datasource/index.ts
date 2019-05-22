@@ -25,6 +25,7 @@ import {MultiscaleVolumeChunkSource} from 'neuroglancer/sliceview/volume/fronten
 import {CancellationToken, uncancelableToken} from 'neuroglancer/util/cancellation';
 import {applyCompletionOffset, CompletionWithDescription} from 'neuroglancer/util/completion';
 import {Owned, RefCounted} from 'neuroglancer/util/disposable';
+import {SegmentToVoxelCountMap} from 'neuroglancer/segment_metadata';
 
 export type Completion = CompletionWithDescription;
 
@@ -98,6 +99,10 @@ export interface DataSource {
   getAnnotationSource?
       (chunkManager: ChunkManager, path: string, cancellationToken: CancellationToken):
           Promise<MultiscaleAnnotationSource>|MultiscaleAnnotationSource;
+
+  getSegmentToVoxelCountMap?
+    (chunkManager: ChunkManager, path: string, cancellationToken: CancellationToken):
+    Promise<SegmentToVoxelCountMap>;
 
   /**
    * Returns a suggested layer name for the given volume source.
@@ -179,6 +184,13 @@ export class DataSourceProvider extends RefCounted {
     let [dataSource, path] = this.getDataSource(url);
     return new Promise<SkeletonSource>(resolve => {
       resolve(dataSource.getSkeletonSource!(chunkManager, path, cancellationToken));
+    });
+  }
+
+  getSegmentToVoxelCountMap(chunkManager: ChunkManager, url: string, cancellationToken = uncancelableToken) {
+    const [dataSource, path] = this.getDataSource(url);
+    return new Promise<SegmentToVoxelCountMap>(resolve => {
+      resolve(dataSource.getSegmentToVoxelCountMap!(chunkManager, path, cancellationToken));
     });
   }
 

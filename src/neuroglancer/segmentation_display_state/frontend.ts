@@ -23,6 +23,7 @@ import {VisibleSegmentsState} from 'neuroglancer/segmentation_display_state/base
 import {SharedWatchableValue} from 'neuroglancer/shared_watchable_value';
 import {TrackableAlphaValue} from 'neuroglancer/trackable_alpha';
 import {TrackableValue} from 'neuroglancer/trackable_value';
+import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {hsvToRgb, rgbToHsv} from 'neuroglancer/util/colorspace';
 import {RefCounted} from 'neuroglancer/util/disposable';
@@ -107,6 +108,7 @@ export interface SegmentationDisplayState extends VisibleSegmentsState {
   segmentColorHash: SegmentColorHash;
   saturation: TrackableAlphaValue;
   highlightedSegments: Uint64Set;
+  shatterSegmentEquivalences: TrackableBoolean;
 }
 
 export interface SegmentationDisplayStateWithAlpha extends SegmentationDisplayState {
@@ -149,6 +151,8 @@ export function registerRedrawWhenSegmentationDisplayState3DChanged(
       displayState.objectToDataTransform.changed.add(renderLayer.redrawNeeded.dispatch));
   renderLayer.registerDisposer(
       displayState.renderScaleTarget.changed.add(renderLayer.redrawNeeded.dispatch));
+  renderLayer.registerDisposer(
+      displayState.shatterSegmentEquivalences.changed.add(renderLayer.redrawNeeded.dispatch));
 }
 
 /**
