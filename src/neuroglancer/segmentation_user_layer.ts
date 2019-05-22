@@ -35,7 +35,7 @@ import {ComputedWatchableValue} from 'neuroglancer/trackable_value';
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {UserLayerWithVolumeSourceMixin} from 'neuroglancer/user_layer_with_volume_source';
 import {Borrowed} from 'neuroglancer/util/disposable';
-import {parseArray, verifyObjectProperty, verifyOptionalString} from 'neuroglancer/util/json';
+import {parseArray, verifyObjectProperty, verifyOptionalString, verifyArray, verifyObject, verifyPositiveInt} from 'neuroglancer/util/json';
 import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {makeWatchableShaderError} from 'neuroglancer/webgl/dynamic_shader';
@@ -46,6 +46,7 @@ import {SegmentSetWidget} from 'neuroglancer/widget/segment_set_widget';
 import {ShaderCodeWidget} from 'neuroglancer/widget/shader_code_widget';
 import {Tab} from 'neuroglancer/widget/tab_view';
 import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
+import {OmniSegmentWidget} from 'neuroglancer/widget/omni_segment_widget';
 
 require('neuroglancer/noselect.css');
 require('./segmentation_user_layer.css');
@@ -66,6 +67,9 @@ const SKELETON_SHADER_JSON_KEY = 'skeletonShader';
 const COLOR_SEED_JSON_KEY = 'colorSeed';
 const MESH_RENDER_SCALE_JSON_KEY = 'meshRenderScale';
 const SKELETONS_SHOW_NODES_JSON_KEY = 'showSkeletonNodes';
+const SEGMENTS_METADATA_JSON_KEY = 'segmentMetadata';
+const SEGMENT_ID_JSON_KEY = 'segmentId';
+const VOXEL_COUNT_JSON_KEY = 'voxelCount';
 
 const Base = UserLayerWithVolumeSourceMixin(UserLayer);
 export class SegmentationUserLayer extends Base {
@@ -101,6 +105,8 @@ export class SegmentationUserLayer extends Base {
   chunkedGraphLayer: Borrowed<ChunkedGraphLayer>|undefined;
   meshLayer: Borrowed<MeshLayer|MultiscaleMeshLayer>|undefined;
   skeletonLayer: Borrowed<SkeletonLayer>|undefined;
+  segmentToVoxelMap: Map<Uint64, number>|undefined;
+  segmentMetadataObj: any;
 
   // Dispatched when either meshLayer or skeletonLayer changes.
   objectLayerStateChanged = new NullarySignal();
@@ -168,6 +174,19 @@ export class SegmentationUserLayer extends Base {
     restoreSegmentsList(ROOT_SEGMENTS_JSON_KEY, this.displayState.rootSegments);
     restoreSegmentsList(HIDDEN_ROOT_SEGMENTS_JSON_KEY, this.displayState.hiddenRootSegments!);
     restoreSegmentsList(HIGHLIGHTS_JSON_KEY, this.displayState.highlightedSegments);
+
+    const segmentMetadataObj = this.segmentMetadataObj = specification[SEGMENTS_METADATA_JSON_KEY];
+    if (segmentMetadataObj !== undefined) {
+      verifyArray(segmentMetadataObj);
+      this.segmentToVoxelMap = new Map<Uint64, number>();
+      segmentMetadataObj.forEach((segmentObj: any) => {
+        verifyObject(segmentObj);
+        const segmentIdString = segmentObj[SEGMENT_ID_JSON_KEY];
+        const segmentId = Uint64.parseString(String(segmentIdString), 10);
+        const voxelCount = verifyPositiveInt(segmentObj[VOXEL_COUNT_JSON_KEY]);
+        this.segmentToVoxelMap!.set(segmentId, voxelCount);
+      });
+    }
 
     this.displayState.highlightedSegments.changed.add(() => {
       this.specificationChanged.dispatch();
@@ -341,6 +360,7 @@ export class SegmentationUserLayer extends Base {
     x[SKELETON_SHADER_JSON_KEY] = this.displayState.fragmentMain.toJSON();
     x[MESH_RENDER_SCALE_JSON_KEY] = this.displayState.renderScaleTarget.toJSON();
     x[SKELETONS_SHOW_NODES_JSON_KEY] = this.displayState.showSkeletonNodes.toJSON();
+    x[SEGMENTS_METADATA_JSON_KEY] = this.segmentMetadataObj;
     return x;
   }
 
@@ -613,6 +633,7 @@ class DisplayOptionsTab extends Tab {
   objectAlphaWidget = this.registerDisposer(new RangeWidget(this.layer.displayState.objectAlpha));
   codeWidget: ShaderCodeWidget|undefined;
   chunkedGraphWidget: ChunkedGraphWidget|undefined;
+  omniWidget: OmniSegmentWidget|undefined;
 
   constructor(public layer: SegmentationUserLayer) {
     super();
@@ -683,6 +704,11 @@ class DisplayOptionsTab extends Tab {
       }
     }));
     element.appendChild(this.registerDisposer(this.visibleSegmentWidget).element);
+
+    if (layer.segmentToVoxelMap) {
+      const omniSegmentWidget = this.registerDisposer(new OmniSegmentWidget(layer.displayState, layer.segmentToVoxelMap));
+      element.appendChild(omniSegmentWidget.element);
+    }
 
     const maybeAddSkeletonShaderUI = () => {
       if (this.codeWidget !== undefined) {

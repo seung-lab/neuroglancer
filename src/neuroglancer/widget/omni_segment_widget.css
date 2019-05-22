@@ -1,0 +1,19 @@
+.omni-segment-table td {
+  text-align: center;
+  vertical-align: middle;
+}
+
+.omni-segment-table-container {
+  height: 20vh;
+  overflow-y: auto;
+}
+
+/* .omni-segment-widget-element {
+  height: 20vh;
+  overflow-y: auto;
+} */
+
+/* td {
+  text-align: center;
+  vertical-align: middle;
+} */
