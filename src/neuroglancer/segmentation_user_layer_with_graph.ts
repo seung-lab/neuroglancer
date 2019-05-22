@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2016 Google Inc.
+ * Copyright 2019 The Neuroglancer Authors
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -14,47 +14,41 @@
  * limitations under the License.
  */
 
-import {UserLayer} from 'neuroglancer/layer';
 import {LayerListSpecification, registerLayerType, registerVolumeLayerType} from 'neuroglancer/layer_specification';
 import {MeshSource, MultiscaleMeshSource} from 'neuroglancer/mesh/frontend';
 import {MeshLayer, MultiscaleMeshLayer} from 'neuroglancer/mesh/frontend';
-import {Overlay} from 'neuroglancer/overlay';
+// import {Overlay} from 'neuroglancer/overlay';
 import {getRenderMeshByDefault} from 'neuroglancer/preferences/user_preferences';
-import {RenderScaleHistogram, trackableRenderScaleTarget} from 'neuroglancer/render_scale_statistics';
-import {SegmentColorHash} from 'neuroglancer/segment_color';
-import {SegmentSelectionState, Uint64MapEntry} from 'neuroglancer/segmentation_display_state/frontend';
+// import {RenderScaleHistogram, trackableRenderScaleTarget} from 'neuroglancer/render_scale_statistics';
+// import {SegmentColorHash} from 'neuroglancer/segment_color';
+// import {SegmentSelectionState, Uint64MapEntry} from 'neuroglancer/segmentation_display_state/frontend';
 import {SharedDisjointUint64Sets} from 'neuroglancer/shared_disjoint_sets';
-import {FRAGMENT_MAIN_START as SKELETON_FRAGMENT_MAIN_START, getTrackableFragmentMain, PerspectiveViewSkeletonLayer, SkeletonLayer, SkeletonSource, SliceViewPanelSkeletonLayer} from 'neuroglancer/skeleton/frontend';
-import {ChunkedGraphLayer, SegmentSelection} from 'neuroglancer/sliceview/chunked_graph/frontend';
+import {PerspectiveViewSkeletonLayer, SkeletonLayer, SkeletonSource, SliceViewPanelSkeletonLayer} from 'neuroglancer/skeleton/frontend';
+import {ChunkedGraphLayer} from 'neuroglancer/sliceview/chunked_graph/frontend';
 import {VolumeType} from 'neuroglancer/sliceview/volume/base';
 import {SegmentationRenderLayer} from 'neuroglancer/sliceview/volume/segmentation_renderlayer';
 import {StatusMessage} from 'neuroglancer/status';
-import {trackableAlphaValue} from 'neuroglancer/trackable_alpha';
-import {ElementVisibilityFromTrackableBoolean, TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
-import {ComputedWatchableValue} from 'neuroglancer/trackable_value';
+// import {trackableAlphaValue} from 'neuroglancer/trackable_alpha';
+// import {ElementVisibilityFromTrackableBoolean, TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
+// import {ComputedWatchableValue} from 'neuroglancer/trackable_value';
 import {Uint64Set} from 'neuroglancer/uint64_set';
-import {UserLayerWithVolumeSourceMixin} from 'neuroglancer/user_layer_with_volume_source';
 import {Borrowed} from 'neuroglancer/util/disposable';
 import {parseArray, verifyObjectProperty, verifyOptionalString} from 'neuroglancer/util/json';
 import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
-import {makeWatchableShaderError} from 'neuroglancer/webgl/dynamic_shader';
-import {ChunkedGraphWidget} from 'neuroglancer/widget/chunked_graph_widget';
-import {RangeWidget} from 'neuroglancer/widget/range';
-import {RenderScaleWidget} from 'neuroglancer/widget/render_scale_widget';
-import {SegmentSetWidget} from 'neuroglancer/widget/segment_set_widget';
-import {ShaderCodeWidget} from 'neuroglancer/widget/shader_code_widget';
-import {Tab} from 'neuroglancer/widget/tab_view';
-import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
+// import {makeWatchableShaderError} from 'neuroglancer/webgl/dynamic_shader';
+// import {ChunkedGraphWidget} from 'neuroglancer/widget/chunked_graph_widget';
+// import {RangeWidget} from 'neuroglancer/widget/range';
+// import {RenderScaleWidget} from 'neuroglancer/widget/render_scale_widget';
+// import {SegmentSetWidget} from 'neuroglancer/widget/segment_set_widget';
+// import {ShaderCodeWidget} from 'neuroglancer/widget/shader_code_widget';
+// import {Tab} from 'neuroglancer/widget/tab_view';
+// import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
+import { SegmentationUserLayer } from './segmentation_user_layer';
 
-require('neuroglancer/noselect.css');
-require('./segmentation_user_layer.css');
+// require('neuroglancer/noselect.css');
+// require('./segmentation_user_layer.css');
 
-const SELECTED_ALPHA_JSON_KEY = 'selectedAlpha';
-const NOT_SELECTED_ALPHA_JSON_KEY = 'notSelectedAlpha';
-const OBJECT_ALPHA_JSON_KEY = 'objectAlpha';
-const SATURATION_JSON_KEY = 'saturation';
-const HIDE_SEGMENT_ZERO_JSON_KEY = 'hideSegmentZero';
 const CHUNKED_GRAPH_JSON_KEY = 'chunkedGraph';
 const MESH_JSON_KEY = 'mesh';
 const SKELETONS_JSON_KEY = 'skeletons';
@@ -62,33 +56,15 @@ const ROOT_SEGMENTS_JSON_KEY = 'segments';
 const HIDDEN_ROOT_SEGMENTS_JSON_KEY = 'hiddenSegments';
 const HIGHLIGHTS_JSON_KEY = 'highlights';
 const EQUIVALENCES_JSON_KEY = 'equivalences';
-const SKELETON_SHADER_JSON_KEY = 'skeletonShader';
-const COLOR_SEED_JSON_KEY = 'colorSeed';
-const MESH_RENDER_SCALE_JSON_KEY = 'meshRenderScale';
-const SKELETONS_SHOW_NODES_JSON_KEY = 'showSkeletonNodes';
 
-const Base = UserLayerWithVolumeSourceMixin(UserLayer);
-export class SegmentationUserLayer extends Base {
+export class SegmentationUserLayerWithGraph extends SegmentationUserLayer {
   displayState = {
-    segmentColorHash: SegmentColorHash.getDefault(),
-    segmentSelectionState: new SegmentSelectionState(),
-    selectedAlpha: trackableAlphaValue(0.5),
-    saturation: trackableAlphaValue(1.0),
-    notSelectedAlpha: trackableAlphaValue(0),
-    objectAlpha: trackableAlphaValue(1.0),
-    hideSegmentZero: new TrackableBoolean(true, true),
+    ...super.displayState,
     rootSegments: Uint64Set.makeWithCounterpart(this.manager.worker),
     hiddenRootSegments: new Uint64Set(),
     visibleSegments2D: new Uint64Set(),
     visibleSegments3D: Uint64Set.makeWithCounterpart(this.manager.worker),
-    highlightedSegments: Uint64Set.makeWithCounterpart(this.manager.worker),
     segmentEquivalences: SharedDisjointUint64Sets.makeWithCounterpart(this.manager.worker),
-    objectToDataTransform: this.transform,
-    fragmentMain: getTrackableFragmentMain(),
-    shaderError: makeWatchableShaderError(),
-    renderScaleHistogram: new RenderScaleHistogram(),
-    renderScaleTarget: trackableRenderScaleTarget(1),
-    showSkeletonNodes: new TrackableBoolean(true, true),
   };
 
   /**
@@ -105,11 +81,6 @@ export class SegmentationUserLayer extends Base {
   // Dispatched when either meshLayer or skeletonLayer changes.
   objectLayerStateChanged = new NullarySignal();
 
-  protected pendingGraphMod: {
-    source: SegmentSelection[],
-    sink: SegmentSelection[],
-  };
-
   constructor(public manager: LayerListSpecification, x: any) {
     super(manager, x);
     this.displayState.rootSegments.changed.add((segmentId: Uint64|null, add: boolean) => {
@@ -117,37 +88,18 @@ export class SegmentationUserLayer extends Base {
     });
     this.displayState.visibleSegments2D!.changed.add(this.specificationChanged.dispatch);
     this.displayState.visibleSegments3D.changed.add(this.specificationChanged.dispatch);
-    this.displayState.segmentEquivalences.changed.add(this.specificationChanged.dispatch);
-    this.displayState.segmentSelectionState.bindTo(manager.layerSelectedValues, this);
-    this.displayState.selectedAlpha.changed.add(this.specificationChanged.dispatch);
-    this.displayState.saturation.changed.add(this.specificationChanged.dispatch);
-    this.displayState.notSelectedAlpha.changed.add(this.specificationChanged.dispatch);
-    this.displayState.objectAlpha.changed.add(this.specificationChanged.dispatch);
-    this.displayState.hideSegmentZero.changed.add(this.specificationChanged.dispatch);
-    this.displayState.fragmentMain.changed.add(this.specificationChanged.dispatch);
-    this.displayState.segmentColorHash.changed.add(this.specificationChanged.dispatch);
-    this.displayState.renderScaleTarget.changed.add(this.specificationChanged.dispatch);
-    this.displayState.showSkeletonNodes.changed.add(this.specificationChanged.dispatch);
-    this.tabs.add(
-        'rendering', {label: 'Rendering', order: -100, getter: () => new DisplayOptionsTab(this)});
+
+    // this.tabs.add(
+    //     'rendering', {label: 'Rendering', order: -100, getter: () => new DisplayOptionsTab(this)});
     this.tabs.default = 'rendering';
   }
 
   get volumeOptions() {
-    return {volumeType: VolumeType.SEGMENTATION};
+    return {volumeType: VolumeType.SEGMENTATION_WITH_GRAPH};
   }
 
   restoreState(specification: any) {
     super.restoreState(specification);
-    this.displayState.selectedAlpha.restoreState(specification[SELECTED_ALPHA_JSON_KEY]);
-    this.displayState.saturation.restoreState(specification[SATURATION_JSON_KEY]);
-    this.displayState.notSelectedAlpha.restoreState(specification[NOT_SELECTED_ALPHA_JSON_KEY]);
-    this.displayState.objectAlpha.restoreState(specification[OBJECT_ALPHA_JSON_KEY]);
-    this.displayState.hideSegmentZero.restoreState(specification[HIDE_SEGMENT_ZERO_JSON_KEY]);
-    this.displayState.fragmentMain.restoreState(specification[SKELETON_SHADER_JSON_KEY]);
-    this.displayState.segmentColorHash.restoreState(specification[COLOR_SEED_JSON_KEY]);
-    this.displayState.renderScaleTarget.restoreState(specification[MESH_RENDER_SCALE_JSON_KEY]);
-    this.displayState.showSkeletonNodes.restoreState(specification[SKELETONS_SHOW_NODES_JSON_KEY]);
 
     verifyObjectProperty(specification, EQUIVALENCES_JSON_KEY, y => {
       this.displayState.segmentEquivalences.restoreState(y);
@@ -262,6 +214,7 @@ export class SegmentationUserLayer extends Base {
               if ((meshSource instanceof MeshSource) ||
                   (meshSource instanceof MultiscaleMeshSource)) {
                 this.addMesh(meshSource);
+                this.objectLayerStateChanged.dispatch();
               }
             });
           }
@@ -279,6 +232,7 @@ export class SegmentationUserLayer extends Base {
               }
               if (skeletonSource) {
                 this.addSkeleton(skeletonSource);
+                this.objectLayerStateChanged.dispatch();
               }
             });
           }
@@ -298,7 +252,6 @@ export class SegmentationUserLayer extends Base {
           new MultiscaleMeshLayer(this.manager.chunkManager, meshSource, this.displayState);
     }
     this.addRenderLayer(this.meshLayer);
-    this.objectLayerStateChanged.dispatch();
   }
 
   addSkeleton(skeletonSource: SkeletonSource) {
@@ -307,7 +260,6 @@ export class SegmentationUserLayer extends Base {
     this.skeletonLayer = base;
     this.addRenderLayer(new PerspectiveViewSkeletonLayer(base.addRef()));
     this.addRenderLayer(new SliceViewPanelSkeletonLayer(/* transfer ownership */ base));
-    this.objectLayerStateChanged.dispatch();
   }
 
   toJSON() {
@@ -316,12 +268,7 @@ export class SegmentationUserLayer extends Base {
     x[MESH_JSON_KEY] = this.meshPath;
     x[SKELETONS_JSON_KEY] = this.skeletonsPath;
     x[CHUNKED_GRAPH_JSON_KEY] = this.chunkedGraphUrl;
-    x[SELECTED_ALPHA_JSON_KEY] = this.displayState.selectedAlpha.toJSON();
-    x[NOT_SELECTED_ALPHA_JSON_KEY] = this.displayState.notSelectedAlpha.toJSON();
-    x[SATURATION_JSON_KEY] = this.displayState.saturation.toJSON();
-    x[OBJECT_ALPHA_JSON_KEY] = this.displayState.objectAlpha.toJSON();
-    x[HIDE_SEGMENT_ZERO_JSON_KEY] = this.displayState.hideSegmentZero.toJSON();
-    x[COLOR_SEED_JSON_KEY] = this.displayState.segmentColorHash.toJSON();
+
     let {rootSegments} = this.displayState;
     if (rootSegments.size > 0) {
       x[ROOT_SEGMENTS_JSON_KEY] = rootSegments.toJSON();
@@ -338,36 +285,29 @@ export class SegmentationUserLayer extends Base {
     if (segmentEquivalences.size > 0 && !this.chunkedGraphUrl) { // Too many equivalences when using Chunked Graph
       x[EQUIVALENCES_JSON_KEY] = segmentEquivalences.toJSON();
     }
-    x[SKELETON_SHADER_JSON_KEY] = this.displayState.fragmentMain.toJSON();
-    x[MESH_RENDER_SCALE_JSON_KEY] = this.displayState.renderScaleTarget.toJSON();
-    x[SKELETONS_SHOW_NODES_JSON_KEY] = this.displayState.showSkeletonNodes.toJSON();
     return x;
   }
 
-  transformPickedValue(value: any) {
-    if (value == null) {
-      return value;
-    }
-    let {segmentEquivalences} = this.displayState;
-    if (segmentEquivalences.size === 0) {
-      return value;
-    }
-    if (typeof value === 'number') {
-      value = new Uint64(value, 0);
-    }
-    let mappedValue = segmentEquivalences.get(value);
-    if (Uint64.equal(mappedValue, value)) {
-      return value;
-    }
-    return new Uint64MapEntry(value, mappedValue);
-  }
+  // transformPickedValue(value: any) {
+  //   if (value == null) {
+  //     return value;
+  //   }
+  //   let {segmentEquivalences} = this.displayState;
+  //   if (segmentEquivalences.size === 0) {
+  //     return value;
+  //   }
+  //   if (typeof value === 'number') {
+  //     value = new Uint64(value, 0);
+  //   }
+  //   let mappedValue = segmentEquivalences.get(value);
+  //   if (Uint64.equal(mappedValue, value)) {
+  //     return value;
+  //   }
+  //   return new Uint64MapEntry(value, mappedValue);
+  // }
 
   handleAction(action: string) {
     switch (action) {
-      case 'recolor': {
-        this.displayState.segmentColorHash.randomize();
-        break;
-      }
       case 'clear-segments': {
         this.displayState.rootSegments.clear();
         this.displayState.visibleSegments2D!.clear();
@@ -376,22 +316,11 @@ export class SegmentationUserLayer extends Base {
         break;
       }
       case 'merge-selected': {
-        if (this.chunkedGraphLayer) {
-          StatusMessage.showTemporaryMessage(`Graph-enabled segmentation layers only support 2-point-merge.`, 3000);
-        } else {
-          const firstSeg = this.displayState.rootSegments.hashTable.keys().next().value;
-          for (const seg of this.displayState.rootSegments) {
-            this.displayState.segmentEquivalences.link(firstSeg, seg);
-          }
-        }
+        StatusMessage.showTemporaryMessage(`Graph-enabled segmentation layers only support 2-point-merge.`, 3000);
         break;
       }
       case 'cut-selected': {
-        if (this.chunkedGraphLayer) {
-          StatusMessage.showTemporaryMessage(`Graph-enabled segmentation layers only support 2-point-split.`, 3000);
-        } else {
-          this.displayState.segmentEquivalences.clear();
-        }
+        StatusMessage.showTemporaryMessage(`Graph-enabled segmentation layers only support 2-point-split.`, 3000);
         break;
       }
       case 'select': {
@@ -418,6 +347,9 @@ export class SegmentationUserLayer extends Base {
         this.splitSelectSecond();
         break;
       }
+      default:
+        super.handleAction(action);
+        break;
     }
   }
 
@@ -557,210 +489,177 @@ export class SegmentationUserLayer extends Base {
       let leafSegmentCount = this.displayState.visibleSegments2D!.size;
       this.displayState.visibleSegments2D!.clear();
       this.displayState.visibleSegments3D.clear();
-      if (this.chunkedGraphUrl) {
-        // When using graph server, clean up segment equivalences. Ensures that we always
-        // load the most recent equivalences from the server when user re-selects this object.
-        this.displayState.segmentEquivalences.clear();
-      }
+      this.displayState.segmentEquivalences.clear();
       StatusMessage.showTemporaryMessage(`Deselected all ${leafSegmentCount} segments.`, 3000);
     } else if (added) {
       this.displayState.visibleSegments3D.add(rootSegment!);
       this.displayState.visibleSegments2D!.add(rootSegment!);
-      if (!this.chunkedGraphUrl) {
-        // Without graph server, we need to explicitly add equivalent segments
-        // to the set of `visibleSegments3D`.
-        let segments = [...this.displayState.segmentEquivalences.setElements(rootSegment!)];
-        this.displayState.visibleSegments3D.add(segments);
-      }
     } else if (!added) {
       let segments = [...this.displayState.segmentEquivalences.setElements(rootSegment!)];
       let segmentCount = segments.length;  // Approximation
-
       this.displayState.visibleSegments2D!.delete(rootSegment!);
       this.displayState.visibleSegments3D.delete(segments);
-
-      if (this.chunkedGraphUrl) {
-        // When using graph server, clean up segment equivalences. Ensures that we always
-        // load the most recent equivalences from the server when user re-selects this object.
-        this.displayState.segmentEquivalences.deleteSet(rootSegment!);
-      } else {
-        // Without graph server, equivalent segments are also stored in `rootSegments`.
-        this.displayState.rootSegments.delete(segments);
-      }
-
+      this.displayState.segmentEquivalences.deleteSet(rootSegment!);
       StatusMessage.showTemporaryMessage(`Deselected ${segmentCount} segments.`);
     }
     this.specificationChanged.dispatch();
   }
 }
 
-function makeSkeletonShaderCodeWidget(layer: SegmentationUserLayer) {
-  return new ShaderCodeWidget({
-    fragmentMain: layer.displayState.fragmentMain,
-    shaderError: layer.displayState.shaderError,
-    fragmentMainStartLine: SKELETON_FRAGMENT_MAIN_START,
-  });
-}
+// function makeSkeletonShaderCodeWidget(layer: SegmentationUserLayer) {
+//   return new ShaderCodeWidget({
+//     fragmentMain: layer.displayState.fragmentMain,
+//     shaderError: layer.displayState.shaderError,
+//     fragmentMainStartLine: SKELETON_FRAGMENT_MAIN_START,
+//   });
+// }
 
-class DisplayOptionsTab extends Tab {
-  visibleSegmentWidget = this.registerDisposer(new SegmentSetWidget(this.layer.displayState));
-  addSegmentWidget = this.registerDisposer(new Uint64EntryWidget());
-  selectedAlphaWidget =
-      this.registerDisposer(new RangeWidget(this.layer.displayState.selectedAlpha));
-  notSelectedAlphaWidget =
-      this.registerDisposer(new RangeWidget(this.layer.displayState.notSelectedAlpha));
-  saturationWidget = this.registerDisposer(new RangeWidget(this.layer.displayState.saturation));
-  objectAlphaWidget = this.registerDisposer(new RangeWidget(this.layer.displayState.objectAlpha));
-  codeWidget: ShaderCodeWidget|undefined;
-  chunkedGraphWidget: ChunkedGraphWidget|undefined;
+// class DisplayOptionsTab extends Tab {
+//   visibleSegmentWidget = this.registerDisposer(new SegmentSetWidget(this.layer.displayState));
+//   addSegmentWidget = this.registerDisposer(new Uint64EntryWidget());
+//   selectedAlphaWidget =
+//       this.registerDisposer(new RangeWidget(this.layer.displayState.selectedAlpha));
+//   notSelectedAlphaWidget =
+//       this.registerDisposer(new RangeWidget(this.layer.displayState.notSelectedAlpha));
+//   saturationWidget = this.registerDisposer(new RangeWidget(this.layer.displayState.saturation));
+//   objectAlphaWidget = this.registerDisposer(new RangeWidget(this.layer.displayState.objectAlpha));
+//   codeWidget: ShaderCodeWidget|undefined;
+//   chunkedGraphWidget: ChunkedGraphWidget|undefined;
 
-  constructor(public layer: SegmentationUserLayer) {
-    super();
-    const {element} = this;
-    element.classList.add('segmentation-dropdown');
-    let {selectedAlphaWidget, notSelectedAlphaWidget, saturationWidget, objectAlphaWidget} = this;
-    selectedAlphaWidget.promptElement.textContent = 'Opacity (on)';
-    notSelectedAlphaWidget.promptElement.textContent = 'Opacity (off)';
-    saturationWidget.promptElement.textContent = 'Saturation';
-    objectAlphaWidget.promptElement.textContent = 'Opacity (3d)';
+//   constructor(public layer: SegmentationUserLayer) {
+//     super();
+//     const {element} = this;
+//     element.classList.add('segmentation-dropdown');
+//     let {selectedAlphaWidget, notSelectedAlphaWidget, saturationWidget, objectAlphaWidget} = this;
+//     selectedAlphaWidget.promptElement.textContent = 'Opacity (on)';
+//     notSelectedAlphaWidget.promptElement.textContent = 'Opacity (off)';
+//     saturationWidget.promptElement.textContent = 'Saturation';
+//     objectAlphaWidget.promptElement.textContent = 'Opacity (3d)';
 
-    if (this.layer.volumePath !== undefined) {
-      element.appendChild(this.selectedAlphaWidget.element);
-      element.appendChild(this.notSelectedAlphaWidget.element);
-      element.appendChild(this.saturationWidget.element);
+//     if (this.layer.volumePath !== undefined) {
+//       element.appendChild(this.selectedAlphaWidget.element);
+//       element.appendChild(this.notSelectedAlphaWidget.element);
+//       element.appendChild(this.saturationWidget.element);
 
-      {
-        const renderScaleWidget = this.registerDisposer(new RenderScaleWidget(
-            this.layer.sliceViewRenderScaleHistogram, this.layer.sliceViewRenderScaleTarget));
-        renderScaleWidget.label.textContent = 'Resolution (slice)';
-        element.appendChild(renderScaleWidget.element);
-      }
-    }
-    const has3dLayer = this.registerDisposer(new ComputedWatchableValue(
-        () => this.layer.meshPath || this.layer.meshLayer || this.layer.skeletonsPath ||
-                this.layer.skeletonLayer ?
-            true :
-            false,
-        this.layer.objectLayerStateChanged));
-    this.registerDisposer(
-        new ElementVisibilityFromTrackableBoolean(has3dLayer, this.objectAlphaWidget.element));
+//       {
+//         const renderScaleWidget = this.registerDisposer(new RenderScaleWidget(
+//             this.layer.sliceViewRenderScaleHistogram, this.layer.sliceViewRenderScaleTarget));
+//         renderScaleWidget.label.textContent = 'Resolution (slice)';
+//         element.appendChild(renderScaleWidget.element);
+//       }
+//     }
+//     const has3dLayer = this.registerDisposer(new ComputedWatchableValue(
+//         () => this.layer.meshPath || this.layer.meshLayer || this.layer.skeletonsPath ||
+//                 this.layer.skeletonLayer ?
+//             true :
+//             false,
+//         this.layer.objectLayerStateChanged));
+//     this.registerDisposer(
+//         new ElementVisibilityFromTrackableBoolean(has3dLayer, this.objectAlphaWidget.element));
 
-    {
-      const renderScaleWidget = this.registerDisposer(new RenderScaleWidget(
-          this.layer.displayState.renderScaleHistogram, this.layer.displayState.renderScaleTarget));
-      renderScaleWidget.label.textContent = 'Resolution (mesh)';
-      element.appendChild(renderScaleWidget.element);
-      this.registerDisposer(
-          new ElementVisibilityFromTrackableBoolean(has3dLayer, renderScaleWidget.element));
-    }
-    element.appendChild(this.objectAlphaWidget.element);
+//     {
+//       const renderScaleWidget = this.registerDisposer(new RenderScaleWidget(
+//           this.layer.displayState.renderScaleHistogram, this.layer.displayState.renderScaleTarget));
+//       renderScaleWidget.label.textContent = 'Resolution (mesh)';
+//       element.appendChild(renderScaleWidget.element);
+//       this.registerDisposer(
+//           new ElementVisibilityFromTrackableBoolean(has3dLayer, renderScaleWidget.element));
+//     }
+//     element.appendChild(this.objectAlphaWidget.element);
 
-    {
-      const checkbox =
-          this.registerDisposer(new TrackableBooleanCheckbox(layer.displayState.hideSegmentZero));
-      checkbox.element.className =
-          'neuroglancer-segmentation-dropdown-hide-segment-zero neuroglancer-noselect';
-      const label = document.createElement('label');
-      label.className =
-          'neuroglancer-segmentation-dropdown-hide-segment-zero neuroglancer-noselect';
-      label.appendChild(document.createTextNode('Hide segment ID 0'));
-      label.appendChild(checkbox.element);
-      element.appendChild(label);
-    }
+//     {
+//       const checkbox =
+//           this.registerDisposer(new TrackableBooleanCheckbox(layer.displayState.hideSegmentZero));
+//       checkbox.element.className =
+//           'neuroglancer-segmentation-dropdown-hide-segment-zero neuroglancer-noselect';
+//       const label = document.createElement('label');
+//       label.className =
+//           'neuroglancer-segmentation-dropdown-hide-segment-zero neuroglancer-noselect';
+//       label.appendChild(document.createTextNode('Hide segment ID 0'));
+//       label.appendChild(checkbox.element);
+//       element.appendChild(label);
+//     }
 
-    if (layer.chunkedGraphUrl && this.chunkedGraphWidget == null) {
-      const chunkedGraphWidget =
-          this.registerDisposer(new ChunkedGraphWidget({url: layer.chunkedGraphUrl || ''}));
-      element.appendChild(chunkedGraphWidget.element);
-    }
+//     if (layer.chunkedGraphUrl && this.chunkedGraphWidget == null) {
+//       const chunkedGraphWidget =
+//           this.registerDisposer(new ChunkedGraphWidget({url: layer.chunkedGraphUrl || ''}));
+//       element.appendChild(chunkedGraphWidget.element);
+//     }
 
-    this.addSegmentWidget.element.classList.add('add-segment');
-    this.addSegmentWidget.element.title = 'Add one or more segment IDs';
-    element.appendChild(this.registerDisposer(this.addSegmentWidget).element);
-    this.registerDisposer(this.addSegmentWidget.valuesEntered.add((values: Uint64[]) => {
-      for (const value of values) {
-        this.layer.displayState.rootSegments.add(value);
-      }
-    }));
-    element.appendChild(this.registerDisposer(this.visibleSegmentWidget).element);
+//     this.addSegmentWidget.element.classList.add('add-segment');
+//     this.addSegmentWidget.element.title = 'Add one or more segment IDs';
+//     element.appendChild(this.registerDisposer(this.addSegmentWidget).element);
+//     this.registerDisposer(this.addSegmentWidget.valuesEntered.add((values: Uint64[]) => {
+//       for (const value of values) {
+//         this.layer.displayState.rootSegments.add(value);
+//       }
+//     }));
+//     element.appendChild(this.registerDisposer(this.visibleSegmentWidget).element);
 
-    const maybeAddSkeletonShaderUI = () => {
-      if (this.codeWidget !== undefined) {
-        return;
-      }
-      if (this.layer.skeletonsPath === null || this.layer.skeletonLayer === undefined) {
-        return;
-      }
-      {
-        const checkbox = this.registerDisposer(
-            new TrackableBooleanCheckbox(layer.displayState.showSkeletonNodes));
-        checkbox.element.className =
-            'neuroglancer-segmentation-dropdown-show-skeleton-nodes neuroglancer-noselect';
-        const label = document.createElement('label');
-        label.className =
-            'neuroglancer-segmentation-dropdown-show-skeleton-nodes neuroglancer-noselect';
-        label.appendChild(document.createTextNode('Show skeleton nodes'));
-        label.appendChild(checkbox.element);
-        element.appendChild(label);
-      }
+//     const maybeAddSkeletonShaderUI = () => {
+//       if (this.codeWidget !== undefined) {
+//         return;
+//       }
+//       if (this.layer.skeletonsPath === null || this.layer.skeletonLayer === undefined) {
+//         return;
+//       }
+//       let topRow = document.createElement('div');
+//       topRow.className = 'neuroglancer-segmentation-dropdown-skeleton-shader-header';
+//       let label = document.createElement('div');
+//       label.style.flex = '1';
+//       label.textContent = 'Skeleton shader:';
+//       let helpLink = document.createElement('a');
+//       let helpButton = document.createElement('button');
+//       helpButton.type = 'button';
+//       helpButton.textContent = '?';
+//       helpButton.className = 'help-link';
+//       helpLink.appendChild(helpButton);
+//       helpLink.title = 'Documentation on skeleton rendering';
+//       helpLink.target = '_blank';
+//       helpLink.href =
+//           'https://github.com/google/neuroglancer/blob/master/src/neuroglancer/sliceview/image_layer_rendering.md';
 
-      let topRow = document.createElement('div');
-      topRow.className = 'neuroglancer-segmentation-dropdown-skeleton-shader-header';
-      let label = document.createElement('div');
-      label.style.flex = '1';
-      label.textContent = 'Skeleton shader:';
-      let helpLink = document.createElement('a');
-      let helpButton = document.createElement('button');
-      helpButton.type = 'button';
-      helpButton.textContent = '?';
-      helpButton.className = 'help-link';
-      helpLink.appendChild(helpButton);
-      helpLink.title = 'Documentation on skeleton rendering';
-      helpLink.target = '_blank';
-      helpLink.href =
-          'https://github.com/google/neuroglancer/blob/master/src/neuroglancer/sliceview/image_layer_rendering.md';
+//       let maximizeButton = document.createElement('button');
+//       maximizeButton.innerHTML = '&square;';
+//       maximizeButton.className = 'maximize-button';
+//       maximizeButton.title = 'Show larger editor view';
+//       this.registerEventListener(maximizeButton, 'click', () => {
+//         new ShaderCodeOverlay(this.layer);
+//       });
 
-      let maximizeButton = document.createElement('button');
-      maximizeButton.innerHTML = '&square;';
-      maximizeButton.className = 'maximize-button';
-      maximizeButton.title = 'Show larger editor view';
-      this.registerEventListener(maximizeButton, 'click', () => {
-        new ShaderCodeOverlay(this.layer);
-      });
+//       topRow.appendChild(label);
+//       topRow.appendChild(maximizeButton);
+//       topRow.appendChild(helpLink);
 
-      topRow.appendChild(label);
-      topRow.appendChild(maximizeButton);
-      topRow.appendChild(helpLink);
+//       element.appendChild(topRow);
 
-      element.appendChild(topRow);
+//       const codeWidget = this.codeWidget =
+//           this.registerDisposer(makeSkeletonShaderCodeWidget(this.layer));
+//       element.appendChild(codeWidget.element);
+//       codeWidget.textEditor.refresh();
+//     };
+//     this.registerDisposer(this.layer.objectLayerStateChanged.add(maybeAddSkeletonShaderUI));
+//     maybeAddSkeletonShaderUI();
 
-      const codeWidget = this.codeWidget =
-          this.registerDisposer(makeSkeletonShaderCodeWidget(this.layer));
-      element.appendChild(codeWidget.element);
-      codeWidget.textEditor.refresh();
-    };
-    this.registerDisposer(this.layer.objectLayerStateChanged.add(maybeAddSkeletonShaderUI));
-    maybeAddSkeletonShaderUI();
+//     this.visibility.changed.add(() => {
+//       if (this.visible) {
+//         if (this.codeWidget !== undefined) {
+//           this.codeWidget.textEditor.refresh();
+//         }
+//       }
+//     });
+//   }
+// }
 
-    this.visibility.changed.add(() => {
-      if (this.visible) {
-        if (this.codeWidget !== undefined) {
-          this.codeWidget.textEditor.refresh();
-        }
-      }
-    });
-  }
-}
+// class ShaderCodeOverlay extends Overlay {
+//   codeWidget = this.registerDisposer(makeSkeletonShaderCodeWidget(this.layer));
+//   constructor(public layer: SegmentationUserLayer) {
+//     super();
+//     this.content.classList.add('neuroglancer-segmentation-layer-skeleton-shader-overlay');
+//     this.content.appendChild(this.codeWidget.element);
+//     this.codeWidget.textEditor.refresh();
+//   }
+// }
 
-class ShaderCodeOverlay extends Overlay {
-  codeWidget = this.registerDisposer(makeSkeletonShaderCodeWidget(this.layer));
-  constructor(public layer: SegmentationUserLayer) {
-    super();
-    this.content.classList.add('neuroglancer-segmentation-layer-skeleton-shader-overlay');
-    this.content.appendChild(this.codeWidget.element);
-    this.codeWidget.textEditor.refresh();
-  }
-}
-
-registerLayerType('segmentation', SegmentationUserLayer);
-registerVolumeLayerType(VolumeType.SEGMENTATION, SegmentationUserLayer);
+registerLayerType('segmentation_with_graph', SegmentationUserLayerWithGraph);
+registerVolumeLayerType(VolumeType.SEGMENTATION_WITH_GRAPH, SegmentationUserLayerWithGraph);
