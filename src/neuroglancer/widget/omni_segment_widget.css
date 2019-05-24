@@ -6,6 +6,12 @@
 .omni-segment-table-container {
   height: 20vh;
   overflow-y: auto;
+  flex: 1;
+}
+
+.omni-segment-widget-element {
+  overflow-y: auto;
+  flex: 1;
 }
 
 /* .omni-segment-widget-element {

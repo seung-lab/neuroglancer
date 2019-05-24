@@ -88,10 +88,6 @@ export class SharedDisjointUint64Sets extends SharedObjectCounterpart {
     return this.disjointSets.get(x);
   }
 
-  isMaxElement(x: Uint64) {
-    return this.disjointSets.isMaxElement(x);
-  }
-
   clear() {
     if (this.disjointSets.clear()) {
       let {rpc} = this;

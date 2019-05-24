@@ -35,7 +35,7 @@ import {ComputedWatchableValue} from 'neuroglancer/trackable_value';
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {UserLayerWithVolumeSourceMixin} from 'neuroglancer/user_layer_with_volume_source';
 import {Borrowed} from 'neuroglancer/util/disposable';
-import {parseArray, verifyObjectProperty, verifyOptionalString, verifyArray, verifyObject, verifyPositiveInt} from 'neuroglancer/util/json';
+import {parseArray, verifyObjectProperty, verifyOptionalString, verifyArray} from 'neuroglancer/util/json';
 import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {makeWatchableShaderError} from 'neuroglancer/webgl/dynamic_shader';
@@ -68,8 +68,6 @@ const COLOR_SEED_JSON_KEY = 'colorSeed';
 const MESH_RENDER_SCALE_JSON_KEY = 'meshRenderScale';
 const SKELETONS_SHOW_NODES_JSON_KEY = 'showSkeletonNodes';
 const SEGMENTS_METADATA_JSON_KEY = 'segmentMetadata';
-const SEGMENT_ID_JSON_KEY = 'segmentId';
-const VOXEL_COUNT_JSON_KEY = 'voxelCount';
 
 const Base = UserLayerWithVolumeSourceMixin(UserLayer);
 export class SegmentationUserLayer extends Base {
@@ -105,8 +103,8 @@ export class SegmentationUserLayer extends Base {
   chunkedGraphLayer: Borrowed<ChunkedGraphLayer>|undefined;
   meshLayer: Borrowed<MeshLayer|MultiscaleMeshLayer>|undefined;
   skeletonLayer: Borrowed<SkeletonLayer>|undefined;
-  segmentToVoxelMap: Map<Uint64, number>|undefined;
-  segmentMetadataObj: any;
+  // segmentToVoxelMap: Map<Uint64, number>|undefined;
+  segmentMetadataObj: any[];
 
   // Dispatched when either meshLayer or skeletonLayer changes.
   objectLayerStateChanged = new NullarySignal();
@@ -175,17 +173,22 @@ export class SegmentationUserLayer extends Base {
     restoreSegmentsList(HIDDEN_ROOT_SEGMENTS_JSON_KEY, this.displayState.hiddenRootSegments!);
     restoreSegmentsList(HIGHLIGHTS_JSON_KEY, this.displayState.highlightedSegments);
 
-    const segmentMetadataObj = this.segmentMetadataObj = specification[SEGMENTS_METADATA_JSON_KEY];
+    // const segmentMetadataObj = this.segmentMetadataObj = specification[SEGMENTS_METADATA_JSON_KEY];
+    // if (segmentMetadataObj !== undefined) {
+    //   verifyArray(segmentMetadataObj);
+    //   this.segmentToVoxelMap = new Map<Uint64, number>();
+    //   segmentMetadataObj.forEach((segmentObj: any) => {
+    //     verifyObject(segmentObj);
+    //     const segmentIdString = segmentObj[SEGMENT_ID_JSON_KEY];
+    //     const segmentId = Uint64.parseString(String(segmentIdString), 10);
+    //     const voxelCount = verifyPositiveInt(segmentObj[VOXEL_COUNT_JSON_KEY]);
+    //     this.segmentToVoxelMap!.set(segmentId, voxelCount);
+    //   });
+    // }
+    const segmentMetadataObj = specification[SEGMENTS_METADATA_JSON_KEY];
     if (segmentMetadataObj !== undefined) {
       verifyArray(segmentMetadataObj);
-      this.segmentToVoxelMap = new Map<Uint64, number>();
-      segmentMetadataObj.forEach((segmentObj: any) => {
-        verifyObject(segmentObj);
-        const segmentIdString = segmentObj[SEGMENT_ID_JSON_KEY];
-        const segmentId = Uint64.parseString(String(segmentIdString), 10);
-        const voxelCount = verifyPositiveInt(segmentObj[VOXEL_COUNT_JSON_KEY]);
-        this.segmentToVoxelMap!.set(segmentId, voxelCount);
-      });
+      this.segmentMetadataObj = segmentMetadataObj;
     }
 
     this.displayState.highlightedSegments.changed.add(() => {
@@ -705,8 +708,8 @@ class DisplayOptionsTab extends Tab {
     }));
     element.appendChild(this.registerDisposer(this.visibleSegmentWidget).element);
 
-    if (layer.segmentToVoxelMap) {
-      const omniSegmentWidget = this.registerDisposer(new OmniSegmentWidget(layer.displayState, layer.segmentToVoxelMap));
+    if (layer.segmentMetadataObj) {
+      const omniSegmentWidget = this.registerDisposer(new OmniSegmentWidget(layer.displayState, layer.segmentMetadataObj, layer.specificationChanged));
       element.appendChild(omniSegmentWidget.element);
     }
 
