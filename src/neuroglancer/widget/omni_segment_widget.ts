@@ -3,15 +3,25 @@ import {RefCounted} from 'neuroglancer/util/disposable';
 import {Uint64} from 'neuroglancer/util/uint64';
 
 require('./omni_segment_widget.css');
+// const tablesort = require('tablesort');
 
 export class OmniSegmentWidget extends RefCounted {
   element = document.createElement('div');
   segmentTableContainer = document.createElement('div');
   segmentEquivalenceTableContainer = document.createElement('div');
-  // private segmentIDRemapping = new Map<Uint64, Uint64>();
+  private segmentIDToTableRowMap = new Map<Uint64, HTMLTableRowElement>();
+  private segmentIDRemapping = new Map<Uint64, Uint64>();
+  private mergedSegmentVoxelCount = new Map<Uint64, number>();
 
   constructor(displayState: SegmentationDisplayState, segmentToVoxelMap: Map<Uint64, number>) {
     super();
+    const {
+      element,
+      segmentTableContainer,
+      segmentIDToTableRowMap,
+      segmentIDRemapping,
+      mergedSegmentVoxelCount
+    } = this;
     // const segmentListHeader = document.createElement('div');
     this.element.className = 'omni-segment-widget-element';
     const statusOptions = ['Working', 'Valid', 'Uncertain'];
@@ -39,14 +49,23 @@ export class OmniSegmentWidget extends RefCounted {
     segmentTableHeader.appendChild(statusHeader);
     segmentTable.appendChild(segmentTableHeader);
     filterDropdown.addEventListener('change', () => {
-      let tableHeader = true;
-      for (const row of segmentTable.rows) {
-        if (tableHeader) {
-          tableHeader = false;
-          continue;
-        }
-        if ((<HTMLSelectElement>(row.cells[2].firstChild!)).selectedOptions[0].textContent ===
-            filterDropdown.selectedOptions[0].textContent) {
+      // let tableHeader = true;
+      // for (const row of segmentTable.rows) {
+      //   if (tableHeader) {
+      //     tableHeader = false;
+      //     continue;
+      //   }
+      //   if ((<HTMLSelectElement>(row.cells[2].firstChild!)).selectedOptions[0].textContent ===
+      //       filterDropdown.selectedOptions[0].textContent) {
+      //     row.style.display = 'table-row';
+      //   } else {
+      //     row.style.display = 'none';
+      //   }
+      // }
+      for (const [segmentID, row] of segmentIDToTableRowMap) {
+        if ((!segmentIDRemapping.has(segmentID)) &&
+            ((<HTMLSelectElement>(row.cells[2].firstChild!)).selectedOptions[0].textContent ===
+             filterDropdown.selectedOptions[0].textContent)) {
           row.style.display = 'table-row';
         } else {
           row.style.display = 'none';
@@ -70,11 +89,30 @@ export class OmniSegmentWidget extends RefCounted {
       segmentRow.appendChild(segmentIDElement);
       segmentRow.appendChild(voxelCountElement);
       segmentRow.appendChild(statusDropdownCell);
+      if (displayState.segmentEquivalences.has(segmentID)) {
+        const maxSegmentID = displayState.segmentEquivalences.get(segmentID);
+        const currentVoxelCount = mergedSegmentVoxelCount.get(maxSegmentID);
+        if (currentVoxelCount === undefined) {
+          mergedSegmentVoxelCount.set(maxSegmentID, voxelCount);
+        } else {
+          mergedSegmentVoxelCount.set(maxSegmentID, currentVoxelCount + voxelCount);
+        }
+        if (!Uint64.equal(segmentID, maxSegmentID)) {
+          segmentIDRemapping.set(segmentID, maxSegmentID);
+          segmentRow.style.display = 'none';
+        }
+      }
+      segmentIDToTableRowMap.set(segmentID, segmentRow);
       segmentTable.appendChild(segmentRow);
     }
-    this.segmentTableContainer.className = 'omni-segment-table-container';
-    this.segmentTableContainer.appendChild(segmentTable);
-    this.element.appendChild(this.segmentTableContainer);
+    for (const [segmentID, voxelCount] of mergedSegmentVoxelCount) {
+      const associatedRow = segmentIDToTableRowMap.get(segmentID)!;
+      associatedRow.cells[1].textContent = voxelCount.toString();
+    }
+    segmentTableContainer.className = 'omni-segment-table-container';
+    segmentTableContainer.appendChild(segmentTable);
+    // tablesort(segmentTable);
+    element.appendChild(segmentTableContainer);
     // this.element.appendChild(segmentTable);
     console.log(displayState);
   }
