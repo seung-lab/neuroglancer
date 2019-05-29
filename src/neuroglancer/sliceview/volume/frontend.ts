@@ -215,4 +215,6 @@ export interface MultiscaleVolumeChunkSource extends MultiscaleSliceViewChunkSou
   getChunkedGraphSources?: (options: ChunkedGraphSourceOptions, rootSegments: Uint64Set) => ChunkedGraphChunkSource[][] | null;
 
   getStaticAnnotations?: () => AnnotationSource;
+
+  getSegmentMetadata?: () => Promise<any|null> | null;
 }

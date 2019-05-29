@@ -71,8 +71,8 @@ export class OmniSegmentWidget extends RefCounted {
     });
     const stringToVoxelCountMap = new Map<string, number>();
     for (const segmentObj of segmentMetadataObj) {
-      const segmentIDString = segmentObj[SEGMENT_ID_JSON_KEY];
-      const segmentID = Uint64.parseString(String(segmentIDString), 10);
+      const segmentIDString = String(segmentObj[SEGMENT_ID_JSON_KEY]);
+      const segmentID = Uint64.parseString(segmentIDString, 10);
       const voxelCount = verifyPositiveInt(segmentObj[VOXEL_COUNT_JSON_KEY]);
       const description = verifyOptionalString(segmentObj[DESCRIPTION_JSON_KEY]);
       const statusIndex = verifyOptionalNonnegativeInt(segmentObj[STATUS_CODE_JSON_KEY]);

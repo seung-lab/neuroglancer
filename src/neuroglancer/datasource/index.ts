@@ -99,6 +99,10 @@ export interface DataSource {
       (chunkManager: ChunkManager, path: string, cancellationToken: CancellationToken):
           Promise<MultiscaleAnnotationSource>|MultiscaleAnnotationSource;
 
+  getSegmentMetadata?
+    (chunkManager: ChunkManager, path: string, cancellationToken: CancellationToken):
+    Promise<any> | any;
+
   /**
    * Returns a suggested layer name for the given volume source.
    */
@@ -179,6 +183,13 @@ export class DataSourceProvider extends RefCounted {
     let [dataSource, path] = this.getDataSource(url);
     return new Promise<SkeletonSource>(resolve => {
       resolve(dataSource.getSkeletonSource!(chunkManager, path, cancellationToken));
+    });
+  }
+
+  getSegmentMetadata(chunkManager: ChunkManager, url: string, cancellationToken = uncancelableToken) {
+    const [dataSource, path] = this.getDataSource(url);
+    return new Promise<any>(resolve => {
+      resolve(dataSource.getSegmentMetadata!(chunkManager, path, cancellationToken));
     });
   }
 

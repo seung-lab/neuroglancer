@@ -105,6 +105,7 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
   volumeType: VolumeType;
   mesh: string|undefined;
   skeletons: string|undefined;
+  segmentMetadata: string|undefined;
   scales: ScaleInfo[];
 
   getMeshSource() {
@@ -123,6 +124,14 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
     return null;
   }
 
+  getSegmentMetadata() {
+    const {segmentMetadata} = this;
+    if (segmentMetadata !== undefined) {
+      return getShardedSegmentMetadata(this.chunkManager, this.baseUrls, resolvePath(this.path, segmentMetadata));
+    }
+    return null;
+  }
+
   constructor(
       public chunkManager: ChunkManager, public baseUrls: string[], public path: string, obj: any) {
     verifyObject(obj);
@@ -136,6 +145,8 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
     this.mesh = verifyObjectProperty(obj, 'mesh', verifyOptionalString);
     this.skeletons = verifyObjectProperty(obj, 'skeletons', verifyOptionalString);
     this.scales = verifyObjectProperty(obj, 'scales', x => parseArray(x, y => new ScaleInfo(y)));
+    // this.segmentMetadata = verifyObjectProperty(obj, 'segmentMetadata', verifyOptionalString);
+    this.segmentMetadata = 'segment_metadata/segment_metadata.json';
   }
 
   getSources(volumeSourceOptions: VolumeSourceOptions) {
@@ -189,6 +200,12 @@ export function getShardedVolume(chunkManager: ChunkManager, baseUrls: string[],
                 .then(
                     response =>
                         new MultiscaleVolumeChunkSource(chunkManager, baseUrls, path, response)));
+}
+
+export function getShardedSegmentMetadata(chunkManager: ChunkManager, baseUrls: string[], path: string) {
+  return chunkManager.memoize.getUncounted(
+      {'type': 'precomputed:SegmentMetadata', baseUrls, path},
+      () => sendHttpRequest(openShardedHttpRequest(baseUrls, path), 'json'));
 }
 
 function parseTransform(data: any): mat4 {
@@ -338,6 +355,11 @@ export function getVolume(chunkManager: ChunkManager, url: string) {
   return getShardedVolume(chunkManager, baseUrls, path);
 }
 
+export function getSegmentMetadata(chunkManager: ChunkManager, url: string) {
+  const [baseUrls, path] = parseSpecialUrl(url);
+  return getShardedSegmentMetadata(chunkManager, baseUrls, path);
+}
+
 export class PrecomputedDataSource extends DataSource {
   get description() {
     return 'Precomputed file-backed data source';
@@ -352,5 +374,8 @@ export class PrecomputedDataSource extends DataSource {
   getSkeletonSource(chunkManager: ChunkManager, url: string) {
     const [baseUrls, path] = parseSpecialUrl(url);
     return getSkeletonSource(chunkManager, baseUrls, path);
+  }
+  getSegmentMetadata(chunkManager: ChunkManager, url: string) {
+    return getSegmentMetadata(chunkManager, url);
   }
 }

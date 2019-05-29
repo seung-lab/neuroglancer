@@ -205,6 +205,7 @@ export class SegmentationUserLayer extends Base {
     let skeletonsPath = this.skeletonsPath = specification[SKELETONS_JSON_KEY] === null ?
         null :
         verifyOptionalString(specification[SKELETONS_JSON_KEY]);
+    let segmentMetadataPath: string|undefined = undefined;
     let remaining = 0;
     if (meshPath != null && getRenderMeshByDefault()) {
       ++remaining;
@@ -301,6 +302,23 @@ export class SegmentationUserLayer extends Base {
               }
               if (skeletonSource) {
                 this.addSkeleton(skeletonSource);
+              }
+            });
+          }
+          if (segmentMetadataPath === undefined && volume.getSegmentMetadata) {
+            ++remaining;
+            Promise.resolve(volume.getSegmentMetadata()).then(segmentMetadata => {
+              // if (this.wasDisposed) {
+              //   if (skeletonSource !== null) {
+              //     skeletonSource.dispose();
+              //   }
+              //   return;
+              // }
+              if (--remaining === 0) {
+                this.isReady = true;
+              }
+              if (segmentMetadata) {
+                console.log(segmentMetadata);
               }
             });
           }
