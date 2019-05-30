@@ -25,6 +25,7 @@ import {MultiscaleVolumeChunkSource} from 'neuroglancer/sliceview/volume/fronten
 import {CancellationToken, uncancelableToken} from 'neuroglancer/util/cancellation';
 import {applyCompletionOffset, CompletionWithDescription} from 'neuroglancer/util/completion';
 import {Owned, RefCounted} from 'neuroglancer/util/disposable';
+import { SegmentMetadata } from '../segment_metadata';
 
 export type Completion = CompletionWithDescription;
 
@@ -101,7 +102,7 @@ export interface DataSource {
 
   getSegmentMetadata?
     (chunkManager: ChunkManager, path: string, cancellationToken: CancellationToken):
-    Promise<any> | any;
+    Promise<SegmentMetadata>;
 
   /**
    * Returns a suggested layer name for the given volume source.
@@ -188,7 +189,7 @@ export class DataSourceProvider extends RefCounted {
 
   getSegmentMetadata(chunkManager: ChunkManager, url: string, cancellationToken = uncancelableToken) {
     const [dataSource, path] = this.getDataSource(url);
-    return new Promise<any>(resolve => {
+    return new Promise<SegmentMetadata>(resolve => {
       resolve(dataSource.getSegmentMetadata!(chunkManager, path, cancellationToken));
     });
   }

@@ -35,7 +35,7 @@ import {ComputedWatchableValue} from 'neuroglancer/trackable_value';
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {UserLayerWithVolumeSourceMixin} from 'neuroglancer/user_layer_with_volume_source';
 import {Borrowed} from 'neuroglancer/util/disposable';
-import {parseArray, verifyObjectProperty, verifyOptionalString, verifyArray} from 'neuroglancer/util/json';
+import {parseArray, verifyObjectProperty, verifyOptionalString} from 'neuroglancer/util/json';
 import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {makeWatchableShaderError} from 'neuroglancer/webgl/dynamic_shader';
@@ -67,7 +67,8 @@ const SKELETON_SHADER_JSON_KEY = 'skeletonShader';
 const COLOR_SEED_JSON_KEY = 'colorSeed';
 const MESH_RENDER_SCALE_JSON_KEY = 'meshRenderScale';
 const SKELETONS_SHOW_NODES_JSON_KEY = 'showSkeletonNodes';
-const SEGMENTS_METADATA_JSON_KEY = 'segmentMetadata';
+// const SEGMENTS_METADATA_JSON_KEY = 'segmentMetadata';
+const SEGMENTS_METADATA_PATH_JSON_KEY = 'segmentMetadataPath';
 
 const Base = UserLayerWithVolumeSourceMixin(UserLayer);
 export class SegmentationUserLayer extends Base {
@@ -104,7 +105,7 @@ export class SegmentationUserLayer extends Base {
   meshLayer: Borrowed<MeshLayer|MultiscaleMeshLayer>|undefined;
   skeletonLayer: Borrowed<SkeletonLayer>|undefined;
   // segmentToVoxelMap: Map<Uint64, number>|undefined;
-  segmentMetadataObj: any[];
+  // segmentMetadataObj: any[];
 
   // Dispatched when either meshLayer or skeletonLayer changes.
   objectLayerStateChanged = new NullarySignal();
@@ -185,11 +186,11 @@ export class SegmentationUserLayer extends Base {
     //     this.segmentToVoxelMap!.set(segmentId, voxelCount);
     //   });
     // }
-    const segmentMetadataObj = specification[SEGMENTS_METADATA_JSON_KEY];
-    if (segmentMetadataObj !== undefined) {
-      verifyArray(segmentMetadataObj);
-      this.segmentMetadataObj = segmentMetadataObj;
-    }
+    // const segmentMetadataObj = specification[SEGMENTS_METADATA_JSON_KEY];
+    // if (segmentMetadataObj !== undefined) {
+    //   verifyArray(segmentMetadataObj);
+    //   this.segmentMetadataObj = segmentMetadataObj;
+    // }
 
     this.displayState.highlightedSegments.changed.add(() => {
       this.specificationChanged.dispatch();
@@ -205,7 +206,7 @@ export class SegmentationUserLayer extends Base {
     let skeletonsPath = this.skeletonsPath = specification[SKELETONS_JSON_KEY] === null ?
         null :
         verifyOptionalString(specification[SKELETONS_JSON_KEY]);
-    let segmentMetadataPath: string|undefined = undefined;
+    const segmentMetadataPath = verifyOptionalString(specification[SEGMENTS_METADATA_PATH_JSON_KEY]);
     let remaining = 0;
     if (meshPath != null && getRenderMeshByDefault()) {
       ++remaining;
@@ -230,6 +231,22 @@ export class SegmentationUserLayer extends Base {
                 this.isReady = true;
               }
             }
+          });
+    }
+
+    if (segmentMetadataPath) {
+      ++remaining;
+      this.manager.dataSourceProvider.getSegmentMetadata(this.manager.chunkManager, segmentMetadataPath)
+          .then(segmentMetadata => {
+            if (!this.wasDisposed) {
+              if (--remaining === 0) {
+                this.isReady = true;
+              }
+            }
+            if (segmentMetadata) {
+              console.log(segmentMetadata);
+            }
+            // this.restoreSegmentMetadata();
           });
     }
 
@@ -308,12 +325,9 @@ export class SegmentationUserLayer extends Base {
           if (segmentMetadataPath === undefined && volume.getSegmentMetadata) {
             ++remaining;
             Promise.resolve(volume.getSegmentMetadata()).then(segmentMetadata => {
-              // if (this.wasDisposed) {
-              //   if (skeletonSource !== null) {
-              //     skeletonSource.dispose();
-              //   }
-              //   return;
-              // }
+              if (this.wasDisposed) {
+                return;
+              }
               if (--remaining === 0) {
                 this.isReady = true;
               }
@@ -381,7 +395,7 @@ export class SegmentationUserLayer extends Base {
     x[SKELETON_SHADER_JSON_KEY] = this.displayState.fragmentMain.toJSON();
     x[MESH_RENDER_SCALE_JSON_KEY] = this.displayState.renderScaleTarget.toJSON();
     x[SKELETONS_SHOW_NODES_JSON_KEY] = this.displayState.showSkeletonNodes.toJSON();
-    x[SEGMENTS_METADATA_JSON_KEY] = this.segmentMetadataObj;
+    // x[SEGMENTS_METADATA_JSON_KEY] = this.segmentMetadataObj;
     return x;
   }
 
@@ -726,10 +740,14 @@ class DisplayOptionsTab extends Tab {
     }));
     element.appendChild(this.registerDisposer(this.visibleSegmentWidget).element);
 
-    if (layer.segmentMetadataObj) {
-      const omniSegmentWidget = this.registerDisposer(new OmniSegmentWidget(layer.displayState, layer.segmentMetadataObj, layer.specificationChanged));
-      element.appendChild(omniSegmentWidget.element);
-    }
+    // const maybeAddOmniSegmentWidget = () => {
+    //   if (this.omniWidget || (! ))
+    // };
+    // if (layer.segmentMetadataObj) {
+    //   const omniSegmentWidget = this.omniWidget = this.registerDisposer(new OmniSegmentWidget(
+    //       layer.displayState, layer.segmentMetadataObj, layer.specificationChanged));
+    //   element.appendChild(omniSegmentWidget.element);
+    // }
 
     const maybeAddSkeletonShaderUI = () => {
       if (this.codeWidget !== undefined) {
