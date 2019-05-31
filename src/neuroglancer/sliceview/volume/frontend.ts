@@ -29,7 +29,7 @@ import {vec3, vec3Key} from 'neuroglancer/util/geom';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {GL} from 'neuroglancer/webgl/context';
 import {ShaderBuilder, ShaderProgram} from 'neuroglancer/webgl/shader';
-import { SegmentMetadata } from 'src/neuroglancer/segment_metadata';
+import {SegmentToVoxelCountMap} from 'neuroglancer/segment_metadata';
 
 export type VolumeChunkKey = string;
 
@@ -217,5 +217,5 @@ export interface MultiscaleVolumeChunkSource extends MultiscaleSliceViewChunkSou
 
   getStaticAnnotations?: () => AnnotationSource;
 
-  getSegmentMetadata?: () => Promise<SegmentMetadata|null>|null;
+  getSegmentToVoxelCountMap?: () => Promise<SegmentToVoxelCountMap|null>|null;
 }

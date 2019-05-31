@@ -28,7 +28,8 @@ import {MultiscaleVolumeChunkSource as GenericMultiscaleVolumeChunkSource, Volum
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {mat4, vec3} from 'neuroglancer/util/geom';
 import {openHttpRequest, parseSpecialUrl, sendHttpRequest} from 'neuroglancer/util/http_request';
-import {parseArray, parseFixedLengthArray, parseIntVec, verifyEnumString, verifyFinitePositiveFloat, verifyObject, verifyObjectAsMap, verifyObjectProperty, verifyOptionalString, verifyPositiveInt, verifyString} from 'neuroglancer/util/json';
+import {parseArray, parseFixedLengthArray, parseIntVec, verifyEnumString, verifyFinitePositiveFloat, verifyObject, verifyObjectAsMap, verifyObjectProperty, verifyOptionalString, verifyPositiveInt, verifyString, verifyArray} from 'neuroglancer/util/json';
+import {SegmentToVoxelCountMap} from 'neuroglancer/segment_metadata';
 
 class GrapheneVolumeChunkSource extends
 (WithParameters(VolumeChunkSource, VolumeChunkSourceParameters)) {}
@@ -255,6 +256,29 @@ export function getVolume(chunkManager: ChunkManager, url: string) {
   return getShardedVolume(chunkManager, url);
 }
 
+function parseSegmentToVoxelCountMap(data: any) {
+  const segmentToVoxelCountMap = <SegmentToVoxelCountMap>new Map<string, number>();
+  verifyArray(data);
+  data.forEach((segment: any) => {
+    verifyObject(segment);
+    const segmentIDString = verifyObjectProperty(segment, 'segmentId', verifyString);
+    const voxelCount = verifyObjectProperty(segment, 'voxelCount', verifyPositiveInt);
+    segmentToVoxelCountMap.set(segmentIDString, voxelCount);
+  });
+  return segmentToVoxelCountMap;
+}
+
+export function getSegmentToVoxelCountMap(chunkManager: ChunkManager, baseUrls: string[], path: string): Promise<SegmentToVoxelCountMap> {
+  return chunkManager.memoize.getUncounted(
+    { 'type': 'precomputed:SegmentToVoxelCountMap', baseUrls, path },
+    () => fetch(baseUrls[0] + path).then(response => {
+      if (!response.ok) {
+        throw new Error('Request for segment to voxel count map failed');
+      }
+      return response.json().then(value => parseSegmentToVoxelCountMap(value));
+    }));
+}
+
 export class GrapheneDataSource extends DataSource {
   get description() {
     return 'Graph-backed data source';
@@ -267,5 +291,9 @@ export class GrapheneDataSource extends DataSource {
   }
   getSkeletonSource(chunkManager: ChunkManager, url: string) {
     return getSkeletonSource(chunkManager, url);
+  }
+  getSegmentToVoxelCountMap(chunkManager: ChunkManager, url: string) {
+    const [baseUrls, path] = parseSpecialUrl(url);
+    return getSegmentToVoxelCountMap(chunkManager, baseUrls, path);
   }
 }

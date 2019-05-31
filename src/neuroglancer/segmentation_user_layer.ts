@@ -47,6 +47,7 @@ import {ShaderCodeWidget} from 'neuroglancer/widget/shader_code_widget';
 import {Tab} from 'neuroglancer/widget/tab_view';
 import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
 import {OmniSegmentWidget} from 'neuroglancer/widget/omni_segment_widget';
+import {SegmentMetadata, SegmentToVoxelCountMap} from 'neuroglancer/segment_metadata';
 
 require('neuroglancer/noselect.css');
 require('./segmentation_user_layer.css');
@@ -68,7 +69,13 @@ const COLOR_SEED_JSON_KEY = 'colorSeed';
 const MESH_RENDER_SCALE_JSON_KEY = 'meshRenderScale';
 const SKELETONS_SHOW_NODES_JSON_KEY = 'showSkeletonNodes';
 // const SEGMENTS_METADATA_JSON_KEY = 'segmentMetadata';
-const SEGMENTS_METADATA_PATH_JSON_KEY = 'segmentMetadataPath';
+
+const SEGMENTS_TO_VOXEL_COUNT_MAP_PATH_JSON_KEY = 'segmentToVoxelCountMapPath';
+const SEGMENT_CATEGORIES_JSON_KEY = 'segmentCategories';
+// const SEGMENT_CATEGORY_ID_JSON_KEY = 'id';
+// const SEGMENT_CATEGORY_NAME_JSON_KEY = 'name';
+const CATEGORIZED_SEGMENTS_JSON_KEY = 'categorizedSegments';
+// const SEGMENT_
 
 const Base = UserLayerWithVolumeSourceMixin(UserLayer);
 export class SegmentationUserLayer extends Base {
@@ -101,9 +108,11 @@ export class SegmentationUserLayer extends Base {
   chunkedGraphUrl: string|null|undefined;
   meshPath: string|null|undefined;
   skeletonsPath: string|null|undefined;
+  segmentToVoxelCountMapPath: string|undefined;
   chunkedGraphLayer: Borrowed<ChunkedGraphLayer>|undefined;
   meshLayer: Borrowed<MeshLayer|MultiscaleMeshLayer>|undefined;
   skeletonLayer: Borrowed<SkeletonLayer>|undefined;
+  segmentMetadata: Borrowed<SegmentMetadata>|undefined;
   // segmentToVoxelMap: Map<Uint64, number>|undefined;
   // segmentMetadataObj: any[];
 
@@ -206,7 +215,8 @@ export class SegmentationUserLayer extends Base {
     let skeletonsPath = this.skeletonsPath = specification[SKELETONS_JSON_KEY] === null ?
         null :
         verifyOptionalString(specification[SKELETONS_JSON_KEY]);
-    const segmentMetadataPath = verifyOptionalString(specification[SEGMENTS_METADATA_PATH_JSON_KEY]);
+    const segmentToVoxelCountMapPath = this.segmentToVoxelCountMapPath =
+        verifyOptionalString(specification[SEGMENTS_TO_VOXEL_COUNT_MAP_PATH_JSON_KEY]);
     let remaining = 0;
     if (meshPath != null && getRenderMeshByDefault()) {
       ++remaining;
@@ -224,30 +234,35 @@ export class SegmentationUserLayer extends Base {
     if (skeletonsPath != null) {
       ++remaining;
       this.manager.dataSourceProvider.getSkeletonSource(this.manager.chunkManager, skeletonsPath)
-          .then(skeletonSource => {
-            if (!this.wasDisposed) {
-              this.addSkeleton(skeletonSource);
-              if (--remaining === 0) {
-                this.isReady = true;
-              }
+        .then(skeletonSource => {
+          if (!this.wasDisposed) {
+            this.addSkeleton(skeletonSource);
+            if (--remaining === 0) {
+              this.isReady = true;
             }
-          });
+          }
+        });
     }
 
-    if (segmentMetadataPath) {
+    if (segmentToVoxelCountMapPath) {
       ++remaining;
-      this.manager.dataSourceProvider.getSegmentMetadata(this.manager.chunkManager, segmentMetadataPath)
-          .then(segmentMetadata => {
-            if (!this.wasDisposed) {
-              if (--remaining === 0) {
-                this.isReady = true;
-              }
+      this.manager.dataSourceProvider.getSegmentToVoxelCountMap(this.manager.chunkManager, segmentToVoxelCountMapPath)
+        .then(segmentToVoxelCountMap => {
+          if (!this.wasDisposed) {
+            if (--remaining === 0) {
+              this.isReady = true;
             }
-            if (segmentMetadata) {
-              console.log(segmentMetadata);
-            }
-            // this.restoreSegmentMetadata();
-          });
+          }
+          if (segmentToVoxelCountMap) {
+            this.restoreSegmentMetadata(
+              segmentToVoxelCountMap, specification[SEGMENT_CATEGORIES_JSON_KEY],
+              specification[CATEGORIZED_SEGMENTS_JSON_KEY]);
+          } else {
+            StatusMessage.showTemporaryMessage(
+              'Segment metadata file specified in JSON state does not exist so omni segment widget won\'t be shown',
+              6000);
+          }
+        });
     }
 
     if (multiscaleSource !== undefined) {
@@ -322,17 +337,23 @@ export class SegmentationUserLayer extends Base {
               }
             });
           }
-          if (segmentMetadataPath === undefined && volume.getSegmentMetadata) {
+          if (segmentToVoxelCountMapPath === undefined && volume.getSegmentToVoxelCountMap) {
             ++remaining;
-            Promise.resolve(volume.getSegmentMetadata()).then(segmentMetadata => {
+            Promise.resolve(volume.getSegmentToVoxelCountMap()).then(segmentToVoxelCountMap => {
               if (this.wasDisposed) {
                 return;
               }
               if (--remaining === 0) {
                 this.isReady = true;
               }
-              if (segmentMetadata) {
-                console.log(segmentMetadata);
+              if (segmentToVoxelCountMap) {
+                this.restoreSegmentMetadata(
+                  segmentToVoxelCountMap, specification[SEGMENT_CATEGORIES_JSON_KEY],
+                  specification[CATEGORIZED_SEGMENTS_JSON_KEY]);
+              } else {
+                StatusMessage.showTemporaryMessage(
+                  'Segment metadata file specified in info does not exist so omni segment widget won\'t be shown',
+                  6000);
               }
             });
           }
@@ -395,7 +416,17 @@ export class SegmentationUserLayer extends Base {
     x[SKELETON_SHADER_JSON_KEY] = this.displayState.fragmentMain.toJSON();
     x[MESH_RENDER_SCALE_JSON_KEY] = this.displayState.renderScaleTarget.toJSON();
     x[SKELETONS_SHOW_NODES_JSON_KEY] = this.displayState.showSkeletonNodes.toJSON();
-    // x[SEGMENTS_METADATA_JSON_KEY] = this.segmentMetadataObj;
+    x[SEGMENTS_TO_VOXEL_COUNT_MAP_PATH_JSON_KEY] = this.segmentToVoxelCountMapPath;
+    if (this.segmentMetadata) {
+      const segmentCategories = this.segmentMetadata.segmentCategoriesToJSON();
+      if (segmentCategories.length > 0) {
+        x[SEGMENT_CATEGORIES_JSON_KEY] = segmentCategories;
+        const categorizedSegments = this.segmentMetadata.categorizedSegmentsToJSON();
+        if (categorizedSegments.length > 0) {
+          x[CATEGORIZED_SEGMENTS_JSON_KEY] = categorizedSegments;
+        }
+      }
+    }
     return x;
   }
 
@@ -647,6 +678,14 @@ export class SegmentationUserLayer extends Base {
     }
     this.specificationChanged.dispatch();
   }
+
+  restoreSegmentMetadata(
+      segmentToVoxelCountMap: SegmentToVoxelCountMap, segmentCategoriesObj: any,
+      categorizedSegmentsObj: any) {
+    this.segmentMetadata = SegmentMetadata.restoreState(
+        segmentToVoxelCountMap, segmentCategoriesObj, categorizedSegmentsObj);
+    this.objectLayerStateChanged.dispatch();
+  }
 }
 
 function makeSkeletonShaderCodeWidget(layer: SegmentationUserLayer) {
@@ -740,9 +779,16 @@ class DisplayOptionsTab extends Tab {
     }));
     element.appendChild(this.registerDisposer(this.visibleSegmentWidget).element);
 
-    // const maybeAddOmniSegmentWidget = () => {
-    //   if (this.omniWidget || (! ))
-    // };
+    const maybeAddOmniSegmentWidget = () => {
+      if (this.omniWidget || (!layer.segmentMetadata)) {
+        return;
+      }
+      {
+        this.omniWidget = this.registerDisposer(new OmniSegmentWidget(
+            layer.displayState, layer.segmentMetadata, layer.specificationChanged));
+        element.appendChild(this.omniWidget.element);
+      }
+    };
     // if (layer.segmentMetadataObj) {
     //   const omniSegmentWidget = this.omniWidget = this.registerDisposer(new OmniSegmentWidget(
     //       layer.displayState, layer.segmentMetadataObj, layer.specificationChanged));
@@ -805,6 +851,7 @@ class DisplayOptionsTab extends Tab {
       codeWidget.textEditor.refresh();
     };
     this.registerDisposer(this.layer.objectLayerStateChanged.add(maybeAddSkeletonShaderUI));
+    this.registerDisposer(this.layer.objectLayerStateChanged.add(maybeAddOmniSegmentWidget));
     maybeAddSkeletonShaderUI();
 
     this.visibility.changed.add(() => {

@@ -27,7 +27,7 @@ import {MultiscaleVolumeChunkSource as GenericMultiscaleVolumeChunkSource, Volum
 import {mat4, vec3} from 'neuroglancer/util/geom';
 import {HttpError, openShardedHttpRequest, parseSpecialUrl, sendHttpRequest} from 'neuroglancer/util/http_request';
 import {parseArray, parseFixedLengthArray, parseIntVec, verifyEnumString, verifyFiniteFloat, verifyFinitePositiveFloat, verifyInt, verifyObject, verifyObjectProperty, verifyOptionalString, verifyPositiveInt, verifyString, verifyArray} from 'neuroglancer/util/json';
-import { SegmentMetadata } from 'src/neuroglancer/segment_metadata';
+import {SegmentToVoxelCountMap} from 'neuroglancer/segment_metadata';
 
 class PrecomputedVolumeChunkSource extends
 (WithParameters(VolumeChunkSource, VolumeChunkSourceParameters)) {}
@@ -125,10 +125,10 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
     return null;
   }
 
-  getSegmentMetadata() {
+  getSegmentToVoxelCountMap() {
     const {segmentMetadata} = this;
     if (segmentMetadata !== undefined) {
-      return getSegmentMetadata(this.chunkManager, this.baseUrls, resolvePath(this.path, segmentMetadata));
+      return getSegmentToVoxelCountMap(this.chunkManager, this.baseUrls, resolvePath(this.path, segmentMetadata));
     }
     return null;
   }
@@ -202,12 +202,6 @@ export function getShardedVolume(chunkManager: ChunkManager, baseUrls: string[],
                     response =>
                         new MultiscaleVolumeChunkSource(chunkManager, baseUrls, path, response)));
 }
-
-// export function getShardedSegmentMetadata(chunkManager: ChunkManager, baseUrls: string[], path: string) {
-//   return chunkManager.memoize.getUncounted(
-//       {'type': 'precomputed:SegmentMetadata', baseUrls, path},
-//       () => sendHttpRequest(openShardedHttpRequest(baseUrls, path), 'json'));
-// }
 
 function parseTransform(data: any): mat4 {
   return verifyObjectProperty(data, 'transform', value => {
@@ -356,31 +350,27 @@ export function getVolume(chunkManager: ChunkManager, url: string) {
   return getShardedVolume(chunkManager, baseUrls, path);
 }
 
-function parseSegmentMetadata(data: any) {
-  const segmentMetadata = <SegmentMetadata>new Map<string, {voxelCount: number, categoryID?: number}>();
+function parseSegmentToVoxelCountMap(data: any) {
+  const segmentToVoxelCountMap = <SegmentToVoxelCountMap>new Map<string, number>();
   verifyArray(data);
   data.forEach((segment: any) => {
     verifyObject(segment);
     const segmentIDString = verifyObjectProperty(segment, 'segmentId', verifyString);
     const voxelCount = verifyObjectProperty(segment, 'voxelCount', verifyPositiveInt);
-    segmentMetadata.set(segmentIDString, {voxelCount});
+    segmentToVoxelCountMap.set(segmentIDString, voxelCount);
   });
-  return segmentMetadata;
+  return segmentToVoxelCountMap;
 }
 
-export function getSegmentMetadata(chunkManager: ChunkManager, baseUrls: string[], path: string): Promise<SegmentMetadata> {
+export function getSegmentToVoxelCountMap(chunkManager: ChunkManager, baseUrls: string[], path: string): Promise<SegmentToVoxelCountMap> {
   return chunkManager.memoize.getUncounted(
-    { 'type': 'precomputed:SegmentMetadata', baseUrls, path },
-    // () => sendHttpRequest(openShardedHttpRequest(baseUrls, path), 'json'));
+    { 'type': 'precomputed:SegmentToVoxelCountMap', baseUrls, path },
     () => fetch(baseUrls[0] + path).then(response => {
       if (!response.ok) {
-        throw new Error('Request for segment metadata failed');
+        throw new Error('Request for segment to voxel count map failed');
       }
-      // return response.json().then(value => parseSegmentMetadata(value));
-      return response.json().then(value => parseSegmentMetadata(value));
-      // return Promise.resolve(parseSegmentMetadata(response));
+      return response.json().then(value => parseSegmentToVoxelCountMap(value));
     }));
-  // return getShardedSegmentMetadata(chunkManager, baseUrls, path);
 }
 
 export class PrecomputedDataSource extends DataSource {
@@ -398,8 +388,8 @@ export class PrecomputedDataSource extends DataSource {
     const [baseUrls, path] = parseSpecialUrl(url);
     return getSkeletonSource(chunkManager, baseUrls, path);
   }
-  getSegmentMetadata(chunkManager: ChunkManager, url: string) {
+  getSegmentToVoxelCountMap(chunkManager: ChunkManager, url: string) {
     const [baseUrls, path] = parseSpecialUrl(url);
-    return getSegmentMetadata(chunkManager, baseUrls, path);
+    return getSegmentToVoxelCountMap(chunkManager, baseUrls, path);
   }
 }
