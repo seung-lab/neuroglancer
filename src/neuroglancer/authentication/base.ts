@@ -64,7 +64,7 @@ export async function authFetchWithSharedValue(reauthenticate: ReauthFunction, a
 						}
 					}
 
-					throw new Error(`status ${res.status} auth error - ${wwwAuthMap.get("error")} + " Reason: ${wwwAuthMap.get("reason")}`);
+					throw new Error(`status ${res.status} auth error - ${wwwAuthMap.get("error")} + " Reason: ${wwwAuthMap.get("error_description")}`);
 				}
 			}
 		}
