@@ -684,6 +684,7 @@ export class SegmentationUserLayer extends Base {
       categorizedSegmentsObj: any) {
     this.segmentMetadata = SegmentMetadata.restoreState(
         segmentToVoxelCountMap, segmentCategoriesObj, categorizedSegmentsObj);
+    this.segmentMetadata.changed.add(this.specificationChanged.dispatch);
     this.objectLayerStateChanged.dispatch();
   }
 }
@@ -785,7 +786,7 @@ class DisplayOptionsTab extends Tab {
       }
       {
         this.omniWidget = this.registerDisposer(new OmniSegmentWidget(
-            layer.displayState, layer.segmentMetadata, layer.specificationChanged));
+            layer.displayState, layer.segmentMetadata));
         element.appendChild(this.omniWidget.element);
       }
     };

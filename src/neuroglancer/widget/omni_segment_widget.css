@@ -1,6 +1,18 @@
 .omni-segment-table td {
   text-align: center;
   vertical-align: middle;
+  padding: 2px 5px;
+}
+
+/* #omni-segment-category-table-container {
+  text-align: center;
+  vertical-align: middle;
+  justify-content: center;
+} */
+
+#omni-segment-category-table-container {
+  height: 20vh;
+  overflow-y: auto;
 }
 
 .omni-segment-table-container {
@@ -10,9 +22,103 @@
 }
 
 .omni-segment-widget-element {
-  overflow-y: auto;
+  /* overflow-y: auto; */
   flex: 1;
 }
+
+.omni-segment-table th {
+  padding: 2px 5px;
+}
+
+/* .omni-segment-table > tr > td {
+  padding: 2px 5px;
+} */
+
+#omni-segment-widget-filter {
+  width: 90px;
+}
+
+.omni-segment-widget-category-dropdown {
+  width: 90px;
+}
+
+#omni-segment-category-table {
+  /* justify-content: center; */
+  width: 100%;
+  /* max-width: 50%; */
+  /* margin: auto; */
+  /* align-self: center; */
+  /* overflow-x: auto; */
+  table-layout: fixed;
+}
+
+#omni-segment-category-table td {
+  /* text-align: center; */
+  /* vertical-align: middle; */
+  /* padding: 2px 10px; */
+  /* max-width: 20%; */
+  /* width: 60%; */
+  /* table-layout: fixed; */
+  /* overflow-x: auto; */
+  overflow: auto;
+}
+
+#omni-segment-category-table th:nth-child(1) {
+  width: 20%;
+  text-align: left;
+}
+
+#omni-segment-category-table th:nth-child(2) {
+  width: 80%;
+  text-align: left;
+}
+
+#segment-category-input {
+  width: 45%;
+  margin-right: 7px;
+}
+
+#segment-category-input-button {
+  height: 20px;
+  /* width: 25%; */
+  vertical-align: bottom;
+}
+
+/* #add-segment-category-div {
+  text-align: center;
+  vertical-align: middle;
+  margin: auto;
+} */
+
+#toggle-segment-category-visibility {
+  margin-top: 35px;
+  margin-bottom: 5px;
+}
+
+#toggle-segment-table-visibility {
+  margin-top: 20px;
+}
+
+/*#segment-category-input {
+  width: 30%;
+}
+
+#omni-segment-category-table-container table {
+  display: inline;
+  float: left
+} */
+
+/* #omni-segment-category-table {
+  float: left;
+}
+
+#segment-category-input {
+  float: left;
+}
+
+#segment-category-input-button {
+  float: left;
+} */
 
 /* .omni-segment-widget-element {
   height: 20vh;

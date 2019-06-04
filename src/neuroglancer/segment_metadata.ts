@@ -1,6 +1,7 @@
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {verifyObjectProperty, verifyArray, verifyObject, verifyPositiveInt, verifyString} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
+import {NullarySignal} from 'neuroglancer/util/signal';
 
 export type SegmentToVoxelCountMap = Map<string, number>;
 
@@ -9,11 +10,13 @@ export type SegmentToVoxelCountMap = Map<string, number>;
 // export type CategorizedSegments = Map<string, number>;
 
 export class SegmentMetadata extends RefCounted {
+  changed = new NullarySignal();
 
   private constructor(
       public segmentToVoxelCountMap: SegmentToVoxelCountMap,
       public segmentCategories: Map<number, string>,
-      public categorizedSegments: Map<string, number>) {
+      public categorizedSegments: Map<string, number>,
+      private maxCategoryId: number) {
     super();
   }
 
@@ -22,11 +25,15 @@ export class SegmentMetadata extends RefCounted {
   static restoreState(segmentToVoxelCountMap: SegmentToVoxelCountMap, segmentCategoriesObj: any, categorizedSegmentsObj: any) {
     const segmentCategories = new Map<number, string>();
     const categorizedSegments = new Map<string, number>();
+    let maxCategoryId = 0;
     if (segmentCategoriesObj) {
       verifyArray(segmentCategoriesObj);
       segmentCategoriesObj.forEach((category: any) => {
         verifyObject(category);
         const categoryId = verifyObjectProperty(category, 'id', verifyPositiveInt);
+        if (categoryId > maxCategoryId) {
+          maxCategoryId = categoryId;
+        }
         const categoryName = verifyObjectProperty(category, 'name', verifyString);
         if (segmentCategories.has(categoryId)) {
           throw new Error('Duplicate segment category id in JSON state');
@@ -51,7 +58,14 @@ export class SegmentMetadata extends RefCounted {
         categorizedSegments.set(segmentIdString, categoryId);
       });
     }
-    return new SegmentMetadata(segmentToVoxelCountMap, segmentCategories, categorizedSegments);
+    return new SegmentMetadata(segmentToVoxelCountMap, segmentCategories, categorizedSegments, maxCategoryId);
+  }
+
+  addNewCategory(name: string) {
+    this.maxCategoryId++;
+    this.segmentCategories.set(this.maxCategoryId, name);
+    this.changed.dispatch();
+    return this.maxCategoryId;
   }
 
   segmentCategoriesToJSON() {
