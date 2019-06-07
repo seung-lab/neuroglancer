@@ -1,8 +1,10 @@
+// import {verifyPositiveInt, verifyOptionalString, verifyOptionalNonnegativeInt} from
+// 'neuroglancer/util/json';
+import {SegmentMetadata} from 'neuroglancer/segment_metadata';
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {Uint64} from 'neuroglancer/util/uint64';
-// import {verifyPositiveInt, verifyOptionalString, verifyOptionalNonnegativeInt} from 'neuroglancer/util/json';
-import {SegmentMetadata} from 'neuroglancer/segment_metadata';
+
 // import {getObjectKey} from 'neuroglancer/segmentation_display_state/base';
 
 require('./omni_segment_widget.css');
@@ -16,19 +18,15 @@ export class OmniSegmentWidget extends RefCounted {
   element = document.createElement('div');
   segmentTableContainer = document.createElement('div');
   segmentEquivalenceTableContainer = document.createElement('div');
-  segmentCategoryTableContainer = document.createElement('div');
+  categoryListContainer = document.createElement('div');
   private segmentIDToTableRowMap = new Map<string, HTMLTableRowElement>();
   private segmentIDRemapping = new Map<string, string>();
   private mergedSegmentVoxelCount = new Map<string, number>();
 
   constructor(displayState: SegmentationDisplayState, segmentMetadata: SegmentMetadata) {
     super();
-    const {
-      element,
-      segmentTableContainer,
-      segmentIDToTableRowMap,
-      segmentCategoryTableContainer
-    } = this;
+    const {element, segmentTableContainer, segmentIDToTableRowMap, categoryListContainer} =
+        this;
     let {segmentIDRemapping, mergedSegmentVoxelCount} = this;
     this.element.className = 'omni-segment-widget-element';
     const filterDropdownLabel = document.createElement('label');
@@ -49,31 +47,31 @@ export class OmniSegmentWidget extends RefCounted {
     const filterDropdownDiv = document.createElement('div');
     filterDropdownDiv.appendChild(filterDropdownLabel);
     let showSegmentTable = false;
-    const toggleSegmentTableVisibility = document.createElement('button');
-    const toggleSegmentTableVisibilityDiv = document.createElement('div');
-    toggleSegmentTableVisibilityDiv.id = 'toggle-segment-table-visibility';
-    toggleSegmentTableVisibility.textContent = 'Hide segment table';
-    toggleSegmentTableVisibility.addEventListener('click', () => {
+    const hideSegmentTableButton = document.createElement('button');
+    const hideSegmentTableButtonContainer = document.createElement('div');
+    hideSegmentTableButtonContainer.id = 'toggle-segment-table-visibility';
+    hideSegmentTableButton.textContent = 'Hide segment table';
+    hideSegmentTableButton.addEventListener('click', () => {
       if (showSegmentTable) {
-        toggleSegmentTableVisibility.textContent = 'Hide segment table';
-        segmentTableContainer.style.display = 'flex';
-        filterDropdownDiv.style.display = 'flex';
+        hideSegmentTableButton.textContent = 'Hide segment table';
+        segmentTableContainer.style.display = '';
+        filterDropdownDiv.style.display = '';
       } else {
-        toggleSegmentTableVisibility.textContent = 'Show segment table';
+        hideSegmentTableButton.textContent = 'Show segment table';
         segmentTableContainer.style.display = 'none';
         filterDropdownDiv.style.display = 'none';
       }
       showSegmentTable = !showSegmentTable;
     });
-    toggleSegmentTableVisibilityDiv.appendChild(toggleSegmentTableVisibility);
-    element.appendChild(toggleSegmentTableVisibilityDiv);
+    hideSegmentTableButtonContainer.appendChild(hideSegmentTableButton);
+    element.appendChild(hideSegmentTableButtonContainer);
     element.appendChild(filterDropdownDiv);
     // segmentTableContainer.appendChild(filterDropdownLabel);
     const segmentTable = document.createElement('table');
     segmentTable.className = 'omni-segment-table';
     const segmentTableHeader = document.createElement('tr');
     // const sortedStatusToButtonText = {
-    //   'segUnsorted': 
+    //   'segUnsorted':
     // };
     const segmentIDColumnHeader = document.createElement('th');
     const sortBySegmentIDButton = document.createElement('button');
@@ -128,7 +126,8 @@ export class OmniSegmentWidget extends RefCounted {
       }
       if (sortedByVoxelCount && sortedByVCAscending) {
         segmentTableRows.sort((a, b) => {
-          return parseInt(b.children[1].textContent!, 10) - parseInt(a.children[1].textContent!, 10);
+          return parseInt(b.children[1].textContent!, 10) -
+              parseInt(a.children[1].textContent!, 10);
         });
         sortedByVoxelCount = true;
         sortedByVCAscending = false;
@@ -138,7 +137,8 @@ export class OmniSegmentWidget extends RefCounted {
         sortByVoxelCountButton.textContent = 'Voxel Count ▼';
       } else {
         segmentTableRows.sort((a, b) => {
-          return parseInt(a.children[1].textContent!, 10) - parseInt(b.children[1].textContent!, 10);
+          return parseInt(a.children[1].textContent!, 10) -
+              parseInt(b.children[1].textContent!, 10);
         });
         sortedByVoxelCount = true;
         sortedByVCAscending = true;
@@ -162,8 +162,9 @@ export class OmniSegmentWidget extends RefCounted {
     filterDropdown.addEventListener('change', () => {
       for (const [segmentID, row] of segmentIDToTableRowMap) {
         if ((!segmentIDRemapping.has(segmentID)) &&
-            (filterDropdown.selectedOptions[0].value === '0' || (<HTMLSelectElement>(row.cells[2].firstChild!)).selectedIndex ===
-             filterDropdown.selectedIndex)) {
+            (filterDropdown.selectedOptions[0].value === '0' ||
+             (<HTMLSelectElement>(row.cells[2].firstChild!)).selectedIndex ===
+                 filterDropdown.selectedIndex)) {
           row.style.display = 'table-row';
         } else {
           row.style.display = 'none';
@@ -181,7 +182,8 @@ export class OmniSegmentWidget extends RefCounted {
       // segmentIDElement.textContent = segmentIDString;
       const addSegmentToRootSegments = document.createElement('button');
       addSegmentToRootSegments.textContent = segmentIDString;
-      addSegmentToRootSegments.style.backgroundColor = displayState.segmentColorHash.computeCssColor(segmentID);
+      addSegmentToRootSegments.style.backgroundColor =
+          displayState.segmentColorHash.computeCssColor(segmentID);
       addSegmentToRootSegments.addEventListener('click', () => {
         if (displayState.rootSegments.has(segmentID)) {
           displayState.rootSegments.delete(segmentID);
@@ -245,6 +247,108 @@ export class OmniSegmentWidget extends RefCounted {
     segmentTableContainer.className = 'omni-segment-table-container';
     segmentTableContainer.appendChild(segmentTable);
     element.appendChild(segmentTableContainer);
+    const segmentEquivalenceTable = document.createElement('table');
+    const segmentEquivalenceTableHeader = document.createElement('tr');
+    const segmentEquivanceIDHeader = document.createElement('th');
+    segmentEquivanceIDHeader.textContent = 'ID';
+    const segmentEquivalenceEquivalentSegmentsHeader = document.createElement('th');
+    segmentEquivalenceEquivalentSegmentsHeader.textContent = 'Equivalent IDs';
+    // const toggleEquivalenceHeader = document.createElement('th');
+    // toggleEquivalenceHeader.textContent = 'Toggle';
+    segmentEquivalenceTableHeader.appendChild(segmentEquivanceIDHeader);
+    segmentEquivalenceTableHeader.appendChild(segmentEquivalenceEquivalentSegmentsHeader);
+    // segmentEquivalenceTableHeader.appendChild(toggleEquivalenceHeader);
+    segmentEquivalenceTable.appendChild(segmentEquivalenceTableHeader);
+    // let segmentEquivalenceChangedFromTable = false;
+    const makeSegmentEquivalenceTable = () => {
+      // if (!segmentEquivalenceChangedFromTable) {
+      const segmentEquivalenceMap = new Map<string, string[]>();
+      for (const [segmentID, maxSegmentID] of segmentIDRemapping) {
+        const listOfEquivalentSegments = segmentEquivalenceMap.get(maxSegmentID);
+        if (listOfEquivalentSegments === undefined) {
+          segmentEquivalenceMap.set(maxSegmentID, [segmentID]);
+        } else {
+          listOfEquivalentSegments.push(segmentID);
+        }
+      }
+      while (segmentEquivalenceTable.rows.length > 1) {
+        segmentEquivalenceTable.deleteRow(1);
+      }
+      for (const [segmentID, listOfEquivalentSegments] of segmentEquivalenceMap) {
+        const currentRow = document.createElement('tr');
+        const segmentIDCell = document.createElement('td');
+        // segmentIDCell.textContent = segmentID;
+        const segmentIDCellButton = document.createElement('button');
+        segmentIDCellButton.textContent = segmentID;
+        segmentIDCellButton.title = `Show/hide segment ID ${segmentID}`;
+        segmentIDCellButton.addEventListener('click', () => {
+          const segmentIDU64 = Uint64.parseString(segmentID, 10);
+          if (displayState.rootSegments.has(segmentIDU64)) {
+            displayState.rootSegments.delete(segmentIDU64);
+          } else {
+            displayState.rootSegments.add(segmentIDU64);
+          }
+        });
+        segmentIDCell.appendChild(segmentIDCellButton);
+        currentRow.appendChild(segmentIDCell);
+        const segmentListCell = document.createElement('td');
+        // segmentListCell.textContent = listOfEquivalentSegments.join();
+        const removeEquivalenceButton = document.createElement('button');
+        removeEquivalenceButton.textContent = 'x';
+        removeEquivalenceButton.title = 'Delete this equivalence';
+        removeEquivalenceButton.addEventListener('click', () => {
+          const confirmed = confirm('Are you sure you want to delete this equivalence?');
+          if (confirmed) {
+            displayState.segmentEquivalences.deleteSet(Uint64.parseString(segmentID, 10));
+          }
+        });
+        segmentListCell.appendChild(removeEquivalenceButton);
+        listOfEquivalentSegments.forEach(equivalentSegment => {
+          const currentButton = document.createElement('button');
+          currentButton.textContent = equivalentSegment;
+          segmentListCell.appendChild(currentButton);
+        });
+        currentRow.appendChild(segmentIDCell);
+        currentRow.appendChild(segmentListCell);
+        // const toggleEquivalenceCheckbox = document.createElement('input');
+        // toggleEquivalenceCheckbox.type = 'checkbox';
+        // toggleEquivalenceCheckbox.checked = true;
+        // const toggleEquivalenceButton = document.createElement('button');
+        // let equivalenceIsOn = true;
+        // toggleEquivalenceButton.textContent = 'x';
+        // toggleEquivalenceButton.style.backgroundImage
+        // toggleEquivalenceCheckbox.addEventListener('change', () => {
+        // segmentEquivalenceChangedFromTable = true;
+        // if (toggleEquivalenceCheckbox.checked) {
+        // }
+        // displayState.segmentEquivalences.deleteSet(Uint64.parseString(segmentID, 10));
+        // segmentEquivalenceTable.removeChild(currentRow);
+        // segmentEquivalenceChangedFromTable = false;
+        // });
+        // currentRow.appendChild(toggleEquivalenceCheckbox);
+        segmentEquivalenceTable.appendChild(currentRow);
+      }
+      // }
+    };
+    makeSegmentEquivalenceTable();
+    let showSegmentEquivalenceTable = false;
+    const hideSegmentEquivalenceTableButton = document.createElement('button');
+    hideSegmentEquivalenceTableButton.id = 'toggle-segment-equivalence-visibility';
+    hideSegmentEquivalenceTableButton.textContent = 'Hide segment equivalence table';
+    hideSegmentEquivalenceTableButton.addEventListener('click', () => {
+      if (showSegmentEquivalenceTable) {
+        hideSegmentEquivalenceTableButton.textContent =
+            'Hide segment equivalence table';
+        segmentEquivalenceTable.style.display = '';
+        // filterDropdownDiv.style.display = 'flex';
+      } else {
+        hideSegmentEquivalenceTableButton.textContent =
+            'Show segment equivalence table';
+        segmentEquivalenceTable.style.display = 'none';
+        // filterDropdownDiv.style.display = 'none';
+      }
+      showSegmentEquivalenceTable = !showSegmentEquivalenceTable;
+    });
     displayState.segmentEquivalences.changed.add(() => {
       const newSegmentIDRemapping = new Map<string, string>();
       const newMergedSegmentVoxelCount = new Map<string, number>();
@@ -278,83 +382,89 @@ export class OmniSegmentWidget extends RefCounted {
       }
       segmentIDRemapping = newSegmentIDRemapping;
       mergedSegmentVoxelCount = newMergedSegmentVoxelCount;
+      makeSegmentEquivalenceTable();
     });
-    segmentCategoryTableContainer.id = 'omni-segment-category-table-container';
-    const segmentCategoryTable = document.createElement('table');
-    segmentCategoryTable.id = 'omni-segment-category-table';
-    const segmentCategoryTableHeader = document.createElement('tr');
-    const categoryIDColumnHeader = document.createElement('th');
-    categoryIDColumnHeader.textContent = 'ID';
-    const categoryNameHeader = document.createElement('th');
-    categoryNameHeader.textContent = 'Name';
-    segmentCategoryTableHeader.appendChild(categoryIDColumnHeader);
-    segmentCategoryTableHeader.appendChild(categoryNameHeader);
-    segmentCategoryTable.appendChild(segmentCategoryTableHeader);
-    for (const [categoryId, categoryName] of segmentMetadata.segmentCategories) {
-      const segmentCategoryRow = document.createElement('tr');
-      const categoryIdCell = document.createElement('td');
-      categoryIdCell.textContent = String(categoryId);
-      const categoryNameCell = document.createElement('td');
-      categoryNameCell.textContent = categoryName;
-      segmentCategoryRow.appendChild(categoryIdCell);
-      segmentCategoryRow.appendChild(categoryNameCell);
-      segmentCategoryTable.appendChild(segmentCategoryRow);
+    categoryListContainer.id = 'omni-segment-category-table-container';
+    const segmentCategoryList = document.createElement('ul');
+    segmentCategoryList.id = 'omni-segment-category-table';
+    // const segmentCategoryTableHeader = document.createElement('tr');
+    // const categoryIDColumnHeader = document.createElement('th');
+    // categoryIDColumnHeader.textContent = 'ID';
+    // const categoryNameHeader = document.createElement('th');
+    // categoryNameHeader.textContent = 'Categories';
+    // segmentCategoryTableHeader.appendChild(categoryIDColumnHeader);
+    // segmentCategoryTableHeader.appendChild(categoryNameHeader);
+    // segmentCategoryList.appendChild(segmentCategoryTableHeader);
+    for (const categoryName of segmentMetadata.segmentCategories.values()) {
+      // const segmentCategoryRow = document.createElement('tr');
+      // const categoryIdCell = document.createElement('td');
+      // categoryIdCell.textContent = String(categoryId);
+      // const categoryNameCell = document.createElement('td');
+      // categoryNameCell.textContent = categoryName;
+      // segmentCategoryRow.appendChild(categoryIdCell);
+      const categoryItem = document.createElement('li');
+      categoryItem.textContent = categoryName;
+      // segmentCategoryRow.appendChild(categoryNameCell);
+      segmentCategoryList.appendChild(categoryItem);
     }
-    const categoryNameInput = document.createElement('input');
-    categoryNameInput.id = 'segment-category-input';
+    const categoryInput = document.createElement('input');
+    categoryInput.id = 'segment-category-input';
     // const categoryNameInputLabel = document.createElement('label');
     // categoryNameInputLabel.textContent = 'Enter your category name';
     // categoryNameInput.appendChild(categoryNameInputLabel);
-    categoryNameInput.placeholder = 'Enter your category';
-    categoryNameInput.title = 'Enter the category you wish to add';
+    categoryInput.placeholder = 'Enter your category';
+    categoryInput.title = 'Enter the category you wish to add';
     const categoryNameInputButton = document.createElement('button');
     categoryNameInputButton.id = 'segment-category-input-button';
     categoryNameInputButton.textContent = 'Add category';
     categoryNameInputButton.addEventListener('click', () => {
-      if (categoryNameInput.value === '') {
+      if (categoryInput.value === '') {
         alert('Category name cannot be empty');
       } else {
-        const categoryId = segmentMetadata.addNewCategory(categoryNameInput.value);
+        const categoryId = segmentMetadata.addNewCategory(categoryInput.value);
         const segmentCategoryRow = document.createElement('tr');
         const categoryIdCell = document.createElement('td');
         categoryIdCell.textContent = String(categoryId);
         const categoryNameCell = document.createElement('td');
-        categoryNameCell.textContent = categoryNameInput.value;
+        categoryNameCell.textContent = categoryInput.value;
         segmentCategoryRow.appendChild(categoryIdCell);
         segmentCategoryRow.appendChild(categoryNameCell);
-        segmentCategoryTable.appendChild(segmentCategoryRow);
-        categoryNameInput.value = '';
+        segmentCategoryList.appendChild(segmentCategoryRow);
+        categoryInput.value = '';
       }
     });
-    let showCategoryTable = false;
-    const toggleSegmentCategoryTableVisibilityDiv = document.createElement('div');
-    toggleSegmentCategoryTableVisibilityDiv.id = 'toggle-segment-category-visibility';
-    const toggleSegmentCategoryTableVisibility = document.createElement('button');
-    toggleSegmentCategoryTableVisibility.textContent = 'Hide category table';
-    toggleSegmentCategoryTableVisibility.addEventListener('click', () => {
-      if (showCategoryTable) {
-        toggleSegmentCategoryTableVisibility.textContent = 'Hide category table';
-        segmentCategoryTableContainer.style.display = 'flex';
+    let showCategoryList = false;
+    const hideCategoryListButtonContainer = document.createElement('div');
+    hideCategoryListButtonContainer.id = 'toggle-segment-category-visibility';
+    const hideCategoryListButton = document.createElement('button');
+    hideCategoryListButton.textContent = 'Hide category list';
+    hideCategoryListButton.addEventListener('click', () => {
+      if (showCategoryList) {
+        hideCategoryListButton.textContent = 'Hide category list';
+        categoryListContainer.style.display = 'flex';
         addCategoryDiv.style.display = 'flex';
       } else {
-        toggleSegmentCategoryTableVisibility.textContent = 'Show category table';
-        segmentCategoryTableContainer.style.display = 'none';
+        hideCategoryListButton.textContent = 'Show category list';
+        categoryListContainer.style.display = 'none';
         addCategoryDiv.style.display = 'none';
       }
-      showCategoryTable = !showCategoryTable;
+      showCategoryList = !showCategoryList;
     });
     const addCategoryDiv = document.createElement('div');
     addCategoryDiv.id = 'add-segment-category-div';
-    addCategoryDiv.appendChild(categoryNameInput);
+    addCategoryDiv.appendChild(categoryInput);
     addCategoryDiv.appendChild(categoryNameInputButton);
     // segmentCategoryTableContainer.appendChild(categoryNameInput);
     // segmentCategoryTableContainer.appendChild(categoryNameInputButton);
-    segmentCategoryTableContainer.appendChild(segmentCategoryTable);
-    toggleSegmentCategoryTableVisibilityDiv.appendChild(toggleSegmentCategoryTableVisibility);
-    element.appendChild(toggleSegmentCategoryTableVisibilityDiv);
+    categoryListContainer.appendChild(segmentCategoryList);
+    hideCategoryListButtonContainer.appendChild(hideCategoryListButton);
+    element.appendChild(hideCategoryListButtonContainer);
     element.appendChild(addCategoryDiv);
-    element.appendChild(segmentCategoryTableContainer);
-    // const segmentEquivalenceList = document.createElement('ul');
+    element.appendChild(categoryListContainer);
+    element.appendChild(hideSegmentEquivalenceTableButton);
+    element.appendChild(segmentEquivalenceTable);
+    // const segmentEquivalenceTable = document.createElement('ta');
+
     // displayState.segmentEquivalences.toJSON
   }
 }

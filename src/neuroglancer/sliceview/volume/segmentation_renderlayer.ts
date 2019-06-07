@@ -167,7 +167,7 @@ uint64_t getMappedObjectId() {
   } else if (!has) {
     alpha = uNotSelectedAlpha;
   }
-  vec3 rgb = segmentColorHash(value);
+  vec3 rgb = segmentColorHash(rawValue);
 `;
 
     // Override color for all highlighted segments.
