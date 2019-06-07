@@ -469,6 +469,9 @@ export class SegmentationUserLayer extends Base {
           for (const seg of this.displayState.rootSegments) {
             this.displayState.segmentEquivalences.link(firstSeg, seg);
           }
+          // const maxSeg = this.displayState.segmentEquivalences.get(firstSeg);
+          // this.displayState.rootSegments.delete(maxSeg);
+          // this.displayState.rootSegments.add(maxSeg);
         }
         break;
       }

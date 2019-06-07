@@ -4,6 +4,7 @@ import {SegmentMetadata} from 'neuroglancer/segment_metadata';
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {Uint64} from 'neuroglancer/util/uint64';
+import { StatusMessage } from '../status';
 
 // import {getObjectKey} from 'neuroglancer/segmentation_display_state/base';
 
@@ -25,8 +26,7 @@ export class OmniSegmentWidget extends RefCounted {
 
   constructor(displayState: SegmentationDisplayState, segmentMetadata: SegmentMetadata) {
     super();
-    const {element, segmentTableContainer, segmentIDToTableRowMap, categoryListContainer} =
-        this;
+    const {element, segmentTableContainer, segmentIDToTableRowMap, categoryListContainer} = this;
     let {segmentIDRemapping, mergedSegmentVoxelCount} = this;
     this.element.className = 'omni-segment-widget-element';
     const filterDropdownLabel = document.createElement('label');
@@ -249,32 +249,55 @@ export class OmniSegmentWidget extends RefCounted {
     element.appendChild(segmentTableContainer);
     const segmentEquivalenceTable = document.createElement('table');
     const segmentEquivalenceTableHeader = document.createElement('tr');
-    const segmentEquivanceIDHeader = document.createElement('th');
-    segmentEquivanceIDHeader.textContent = 'ID';
+    const segmentEquivalenceIDHeader = document.createElement('th');
+    segmentEquivalenceIDHeader.textContent = 'ID';
     const segmentEquivalenceEquivalentSegmentsHeader = document.createElement('th');
     segmentEquivalenceEquivalentSegmentsHeader.textContent = 'Equivalent IDs';
     // const toggleEquivalenceHeader = document.createElement('th');
     // toggleEquivalenceHeader.textContent = 'Toggle';
-    segmentEquivalenceTableHeader.appendChild(segmentEquivanceIDHeader);
+    segmentEquivalenceTableHeader.appendChild(segmentEquivalenceIDHeader);
     segmentEquivalenceTableHeader.appendChild(segmentEquivalenceEquivalentSegmentsHeader);
     // segmentEquivalenceTableHeader.appendChild(toggleEquivalenceHeader);
     segmentEquivalenceTable.appendChild(segmentEquivalenceTableHeader);
-    // let segmentEquivalenceChangedFromTable = false;
+    let segmentEquivalenceChangedFromTable = false;
+    const enableEquivalentSegmentsRemovalLabel = document.createElement('label');
+    enableEquivalentSegmentsRemovalLabel.textContent =
+        'Equivalent ID buttons remove from equivalence: ';
+    const enableEquivalentSegmentsRemoval = document.createElement('input');
+    enableEquivalentSegmentsRemoval.checked = false;
+    enableEquivalentSegmentsRemoval.type = 'checkbox';
+    enableEquivalentSegmentsRemovalLabel.appendChild(enableEquivalentSegmentsRemoval);
+    const enableEquivalentSegmentsContainer = document.createElement('div');
+    enableEquivalentSegmentsContainer.appendChild(enableEquivalentSegmentsRemovalLabel);
+    // let doNotConfirmAgain = false;
     const makeSegmentEquivalenceTable = () => {
-      // if (!segmentEquivalenceChangedFromTable) {
-      const segmentEquivalenceMap = new Map<string, string[]>();
+      const segmentEquivalenceMap = new Map<string, Uint64[]>();
       for (const [segmentID, maxSegmentID] of segmentIDRemapping) {
         const listOfEquivalentSegments = segmentEquivalenceMap.get(maxSegmentID);
+        const segmentIDU64 = Uint64.parseString(segmentID, 10);
         if (listOfEquivalentSegments === undefined) {
-          segmentEquivalenceMap.set(maxSegmentID, [segmentID]);
+          segmentEquivalenceMap.set(maxSegmentID, [segmentIDU64]);
         } else {
-          listOfEquivalentSegments.push(segmentID);
+          listOfEquivalentSegments.push(segmentIDU64);
         }
       }
       while (segmentEquivalenceTable.rows.length > 1) {
         segmentEquivalenceTable.deleteRow(1);
       }
-      for (const [segmentID, listOfEquivalentSegments] of segmentEquivalenceMap) {
+      const segmentIDs = Array.from(segmentEquivalenceMap.keys());
+      const segmentIDsU64s = segmentIDs.map(sid => Uint64.parseString(sid, 10));
+      segmentIDsU64s.sort((a, b) => {
+        return Uint64.compare(a, b);
+      });
+      // for (const [segmentID, listOfEquivalentSegments] of segmentEquivalenceMap) {
+      for (const segmentIDU64 of segmentIDsU64s) {
+        const segmentID = segmentIDU64.toString();
+        const listOfEquivalentSegments = segmentEquivalenceMap.get(segmentID)!;
+        listOfEquivalentSegments.sort((a, b) => {
+          // const aU64 = Uint64.parseString(a, 10);
+          // const bU64 = Uint64.parseString(b, 10);
+          return Uint64.compare(a, b);
+        });
         const currentRow = document.createElement('tr');
         const segmentIDCell = document.createElement('td');
         // segmentIDCell.textContent = segmentID;
@@ -282,7 +305,6 @@ export class OmniSegmentWidget extends RefCounted {
         segmentIDCellButton.textContent = segmentID;
         segmentIDCellButton.title = `Show/hide segment ID ${segmentID}`;
         segmentIDCellButton.addEventListener('click', () => {
-          const segmentIDU64 = Uint64.parseString(segmentID, 10);
           if (displayState.rootSegments.has(segmentIDU64)) {
             displayState.rootSegments.delete(segmentIDU64);
           } else {
@@ -299,13 +321,51 @@ export class OmniSegmentWidget extends RefCounted {
         removeEquivalenceButton.addEventListener('click', () => {
           const confirmed = confirm('Are you sure you want to delete this equivalence?');
           if (confirmed) {
+            if (displayState.rootSegments.has(segmentIDU64)) {
+              listOfEquivalentSegments.forEach(equivalentSegment => {
+                displayState.rootSegments.add(equivalentSegment);
+              });
+            }
             displayState.segmentEquivalences.deleteSet(Uint64.parseString(segmentID, 10));
           }
         });
         segmentListCell.appendChild(removeEquivalenceButton);
-        listOfEquivalentSegments.forEach(equivalentSegment => {
+        listOfEquivalentSegments.forEach(equivalentSegmentU64 => {
+          const equivalentSegment = equivalentSegmentU64.toString();
           const currentButton = document.createElement('button');
           currentButton.textContent = equivalentSegment;
+          currentButton.addEventListener('click', () => {
+            if (enableEquivalentSegmentsRemoval.checked) {
+              segmentEquivalenceChangedFromTable = true;
+              displayState.segmentEquivalences.deleteSet(segmentIDU64);
+              listOfEquivalentSegments.forEach(equivSegmentU64 => {
+                if (!Uint64.equal(equivalentSegmentU64, equivSegmentU64)) {
+                  displayState.segmentEquivalences.link(equivSegmentU64, segmentIDU64);
+                }
+              });
+              segmentEquivalenceChangedFromTable = false;
+              // displayState.segmentEquivalences.changed.dispatch();
+              segmentListCell.removeChild(currentButton);
+              segmentIDRemapping.delete(equivalentSegment);
+              // private segmentIDToTableRowMap = new Map<string, HTMLTableRowElement>();
+              // private segmentIDRemapping = new Map<string, string>();
+              // private mergedSegmentVoxelCount = new Map<string, number>();
+              segmentIDToTableRowMap.get(equivalentSegment)!.style.display = '';
+              const oldCount = mergedSegmentVoxelCount.get(segmentID);
+              const newCount = oldCount! - segmentMetadata.segmentToVoxelCountMap.get(equivalentSegment)!;
+              mergedSegmentVoxelCount.set(segmentID, newCount);
+              const associatedRow = segmentIDToTableRowMap.get(segmentID)!;
+              associatedRow.cells[1].textContent = newCount.toString();
+              if (listOfEquivalentSegments.length === 1) {
+                segmentEquivalenceTable.removeChild(currentRow);
+                mergedSegmentVoxelCount.delete(segmentID);
+              }
+              if (displayState.rootSegments.has(segmentIDU64)) {
+                displayState.rootSegments.add(equivalentSegmentU64);
+              }
+              StatusMessage.showTemporaryMessage(`Removed segment ${equivalentSegment} from equivalence for segment ${segmentID}`, 7000);
+            }
+          });
           segmentListCell.appendChild(currentButton);
         });
         currentRow.appendChild(segmentIDCell);
@@ -328,7 +388,6 @@ export class OmniSegmentWidget extends RefCounted {
         // currentRow.appendChild(toggleEquivalenceCheckbox);
         segmentEquivalenceTable.appendChild(currentRow);
       }
-      // }
     };
     makeSegmentEquivalenceTable();
     let showSegmentEquivalenceTable = false;
@@ -337,52 +396,52 @@ export class OmniSegmentWidget extends RefCounted {
     hideSegmentEquivalenceTableButton.textContent = 'Hide segment equivalence table';
     hideSegmentEquivalenceTableButton.addEventListener('click', () => {
       if (showSegmentEquivalenceTable) {
-        hideSegmentEquivalenceTableButton.textContent =
-            'Hide segment equivalence table';
+        hideSegmentEquivalenceTableButton.textContent = 'Hide segment equivalence table';
         segmentEquivalenceTable.style.display = '';
         // filterDropdownDiv.style.display = 'flex';
       } else {
-        hideSegmentEquivalenceTableButton.textContent =
-            'Show segment equivalence table';
+        hideSegmentEquivalenceTableButton.textContent = 'Show segment equivalence table';
         segmentEquivalenceTable.style.display = 'none';
         // filterDropdownDiv.style.display = 'none';
       }
       showSegmentEquivalenceTable = !showSegmentEquivalenceTable;
     });
     displayState.segmentEquivalences.changed.add(() => {
-      const newSegmentIDRemapping = new Map<string, string>();
-      const newMergedSegmentVoxelCount = new Map<string, number>();
-      for (const [segmentID, maxSegmentID] of displayState.segmentEquivalences.disjointSets) {
-        const maxSegmentIDString = maxSegmentID.toString();
-        const currentVoxelCount = newMergedSegmentVoxelCount.get(maxSegmentIDString);
-        const segmentIDString = segmentID.toString();
-        const voxelCount = stringToVoxelCountMap.get(segmentIDString)!;
-        if (currentVoxelCount === undefined) {
-          newMergedSegmentVoxelCount.set(maxSegmentIDString, voxelCount);
-        } else {
-          newMergedSegmentVoxelCount.set(maxSegmentIDString, currentVoxelCount + voxelCount);
-        }
-        const segmentRow = segmentIDToTableRowMap.get(segmentIDString)!;
-        if (!Uint64.equal(segmentID, maxSegmentID)) {
-          newSegmentIDRemapping.set(segmentIDString, maxSegmentIDString);
-          segmentRow.style.display = 'none';
-        } else {
-          segmentRow.style.display = 'table-row';
-        }
-      }
-      for (const [segmentIDString, voxelCount] of newMergedSegmentVoxelCount) {
-        const associatedRow = segmentIDToTableRowMap.get(segmentIDString)!;
-        associatedRow.cells[1].textContent = voxelCount.toString();
-      }
-      for (const segmentIDString of segmentIDRemapping.keys()) {
-        if (!newSegmentIDRemapping.has(segmentIDString)) {
+      if (!segmentEquivalenceChangedFromTable) {
+        const newSegmentIDRemapping = new Map<string, string>();
+        const newMergedSegmentVoxelCount = new Map<string, number>();
+        for (const [segmentID, maxSegmentID] of displayState.segmentEquivalences.disjointSets) {
+          const maxSegmentIDString = maxSegmentID.toString();
+          const currentVoxelCount = newMergedSegmentVoxelCount.get(maxSegmentIDString);
+          const segmentIDString = segmentID.toString();
+          const voxelCount = stringToVoxelCountMap.get(segmentIDString)!;
+          if (currentVoxelCount === undefined) {
+            newMergedSegmentVoxelCount.set(maxSegmentIDString, voxelCount);
+          } else {
+            newMergedSegmentVoxelCount.set(maxSegmentIDString, currentVoxelCount + voxelCount);
+          }
           const segmentRow = segmentIDToTableRowMap.get(segmentIDString)!;
-          segmentRow.style.display = 'table-row';
+          if (!Uint64.equal(segmentID, maxSegmentID)) {
+            newSegmentIDRemapping.set(segmentIDString, maxSegmentIDString);
+            segmentRow.style.display = 'none';
+          } else {
+            segmentRow.style.display = 'table-row';
+          }
         }
+        for (const [segmentIDString, voxelCount] of newMergedSegmentVoxelCount) {
+          const associatedRow = segmentIDToTableRowMap.get(segmentIDString)!;
+          associatedRow.cells[1].textContent = voxelCount.toString();
+        }
+        for (const segmentIDString of segmentIDRemapping.keys()) {
+          if (!newSegmentIDRemapping.has(segmentIDString)) {
+            const segmentRow = segmentIDToTableRowMap.get(segmentIDString)!;
+            segmentRow.style.display = 'table-row';
+          }
+        }
+        segmentIDRemapping = newSegmentIDRemapping;
+        mergedSegmentVoxelCount = newMergedSegmentVoxelCount;
+        makeSegmentEquivalenceTable();
       }
-      segmentIDRemapping = newSegmentIDRemapping;
-      mergedSegmentVoxelCount = newMergedSegmentVoxelCount;
-      makeSegmentEquivalenceTable();
     });
     categoryListContainer.id = 'omni-segment-category-table-container';
     const segmentCategoryList = document.createElement('ul');
@@ -462,6 +521,38 @@ export class OmniSegmentWidget extends RefCounted {
     element.appendChild(addCategoryDiv);
     element.appendChild(categoryListContainer);
     element.appendChild(hideSegmentEquivalenceTableButton);
+    const addSegmentEquivalenceLabel = document.createElement('label');
+    addSegmentEquivalenceLabel.textContent = 'Add segment equivalence:';
+    const firstSegmentInput = document.createElement('input');
+    firstSegmentInput.className = 'segment-id-input';
+    firstSegmentInput.placeholder = 'Segment 1';
+    const secondSegmentInput = document.createElement('input');
+    secondSegmentInput.placeholder = 'Segment 2';
+    secondSegmentInput.className = 'segment-id-input';
+    const addSegmentEquivalenceButton = document.createElement('button');
+    addSegmentEquivalenceButton.addEventListener('click', () => {
+      const firstSegmentIDString = firstSegmentInput.value;
+      if (segmentMetadata.segmentToVoxelCountMap.has(firstSegmentIDString)) {
+        const secondSegmentIDString = secondSegmentInput.value;
+        if (segmentMetadata.segmentToVoxelCountMap.has(secondSegmentIDString)) {
+          const firstSegmentID = Uint64.parseString(firstSegmentIDString);
+          const secondSegmentID = Uint64.parseString(secondSegmentIDString);
+          displayState.segmentEquivalences.link(firstSegmentID, secondSegmentID);
+        } else {
+          alert(`${secondSegmentIDString} is not a valid segment ID`);
+        }
+      } else {
+        alert(`${firstSegmentIDString} is not a valid segment ID`);
+      }
+    });
+    addSegmentEquivalenceButton.textContent = 'Add';
+    element.appendChild(enableEquivalentSegmentsContainer);
+    element.appendChild(addSegmentEquivalenceLabel);
+    element.appendChild(firstSegmentInput);
+    element.appendChild(secondSegmentInput);
+    element.appendChild(addSegmentEquivalenceButton);
+    // element.appendChild(enableEquivalentSegmentsRemovalLabel);
+    // element.appendChild(enableEquivalentSegmentsRemoval);
     element.appendChild(segmentEquivalenceTable);
     // const segmentEquivalenceTable = document.createElement('ta');
 

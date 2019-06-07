@@ -63,6 +63,10 @@
   overflow: auto;
 }
 
+.segment-id-input {
+  width: 30%;
+}
+
 /* #omni-segment-category-table th:nth-child(1) {
   width: 20%;
   text-align: left;
