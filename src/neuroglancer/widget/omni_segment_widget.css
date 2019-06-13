@@ -4,12 +4,6 @@
   padding: 2px 5px;
 }
 
-/* #omni-segment-category-table-container {
-  text-align: center;
-  vertical-align: middle;
-  justify-content: center;
-} */
-
 #omni-segment-category-table-container {
   height: 20vh;
   overflow-y: auto;
@@ -22,17 +16,12 @@
 }
 
 .omni-segment-widget-element {
-  /* overflow-y: auto; */
   flex: 1;
 }
 
 .omni-segment-table th {
   padding: 2px 5px;
 }
-
-/* .omni-segment-table > tr > td {
-  padding: 2px 5px;
-} */
 
 #omni-segment-widget-filter {
   width: 90px;
@@ -43,39 +32,30 @@
 }
 
 #omni-segment-category-table {
-  /* justify-content: center; */
   width: 100%;
-  /* max-width: 50%; */
-  /* margin: auto; */
-  /* align-self: center; */
-  /* overflow-x: auto; */
   table-layout: fixed;
-}
-
-#omni-segment-category-table td {
-  /* text-align: center; */
-  /* vertical-align: middle; */
-  /* padding: 2px 10px; */
-  /* max-width: 20%; */
-  /* width: 60%; */
-  /* table-layout: fixed; */
-  /* overflow-x: auto; */
-  overflow: auto;
 }
 
 .segment-id-input {
   width: 30%;
 }
 
-/* #omni-segment-category-table th:nth-child(1) {
-  width: 20%;
+.category-name-wrapper {
+  overflow: auto;
+  width: 100%;
+}
+
+#omni-segment-category-table th:nth-child(1) {
+  width: 80%;
+  max-width: 80%;
   text-align: left;
+  overflow: auto;
 }
 
 #omni-segment-category-table th:nth-child(2) {
-  width: 80%;
+  width: 20%;
   text-align: left;
-} */
+}
 
 #segment-category-input {
   width: 45%;
@@ -84,15 +64,8 @@
 
 #segment-category-input-button {
   height: 20px;
-  /* width: 25%; */
   vertical-align: bottom;
 }
-
-/* #add-segment-category-div {
-  text-align: center;
-  vertical-align: middle;
-  margin: auto;
-} */
 
 #toggle-segment-category-visibility {
   margin-top: 40px;
@@ -108,33 +81,20 @@
   margin-bottom: 5px;
 }
 
-/*#segment-category-input {
-  width: 30%;
+#add-segment-equivalence-label-div {
+  margin-top: 5px;
+  margin-bottom: 4px;
 }
 
-#omni-segment-category-table-container table {
-  display: inline;
-  float: left
-} */
-
-/* #omni-segment-category-table {
-  float: left;
+#add-segment-equivalence-input-div {
+  margin-bottom: 5px;
 }
 
-#segment-category-input {
-  float: left;
-}
-
-#segment-category-input-button {
-  float: left;
-} */
-
-/* .omni-segment-widget-element {
-  height: 20vh;
+#segment-equivalence-table-div {
+  height: 40vh;
   overflow-y: auto;
-} */
+}
 
-/* td {
-  text-align: center;
-  vertical-align: middle;
-} */
+#filter-segment-equivalence-container {
+  margin-bottom: 12px;
+}

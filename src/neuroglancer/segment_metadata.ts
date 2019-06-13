@@ -1,16 +1,14 @@
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {verifyObjectProperty, verifyArray, verifyObject, verifyPositiveInt, verifyString} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
-import {NullarySignal} from 'neuroglancer/util/signal';
+import {NullarySignal, Signal} from 'neuroglancer/util/signal';
 
 export type SegmentToVoxelCountMap = Map<string, number>;
 
-// export type SegmentCategories = Map<number, string>;
-
-// export type CategorizedSegments = Map<string, number>;
-
 export class SegmentMetadata extends RefCounted {
   changed = new NullarySignal();
+  categoryAdded = new Signal<(id: number, name: string) => void>();
+  categoryDeleted = new Signal<(id: number) => void>();
 
   private constructor(
       public segmentToVoxelCountMap: SegmentToVoxelCountMap,
@@ -64,8 +62,15 @@ export class SegmentMetadata extends RefCounted {
   addNewCategory(name: string) {
     this.maxCategoryId++;
     this.segmentCategories.set(this.maxCategoryId, name);
+    this.categoryAdded.dispatch(this.maxCategoryId, name);
     this.changed.dispatch();
     return this.maxCategoryId;
+  }
+
+  removeCategory(id: number) {
+    this.segmentCategories.delete(id);
+    this.categoryDeleted.dispatch(id);
+    this.changed.dispatch();
   }
 
   segmentCategoriesToJSON() {

@@ -563,7 +563,9 @@ export class Viewer extends RefCounted implements ViewerState {
    * Called once by the constructor to register the action listeners.
    */
   private registerActionListeners() {
-    for (const action of ['recolor', 'clear-segments', 'merge-selected', 'cut-selected']) {
+    for (const action
+             of ['recolor', 'clear-segments', 'merge-selected', 'cut-selected',
+                 'shatter-segment-equivalences']) {
       this.bindAction(action, () => {
         this.layerManager.invokeAction(action);
       });

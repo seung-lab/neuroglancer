@@ -75,6 +75,7 @@ const SEGMENT_CATEGORIES_JSON_KEY = 'segmentCategories';
 // const SEGMENT_CATEGORY_ID_JSON_KEY = 'id';
 // const SEGMENT_CATEGORY_NAME_JSON_KEY = 'name';
 const CATEGORIZED_SEGMENTS_JSON_KEY = 'categorizedSegments';
+const SHATTER_SEGMENT_EQUIVALENCES_JSON_KEY = 'shatterSegmentEquivalences';
 // const SEGMENT_
 
 const Base = UserLayerWithVolumeSourceMixin(UserLayer);
@@ -99,6 +100,7 @@ export class SegmentationUserLayer extends Base {
     renderScaleHistogram: new RenderScaleHistogram(),
     renderScaleTarget: trackableRenderScaleTarget(1),
     showSkeletonNodes: new TrackableBoolean(true, true),
+    shatterSegmentEquivalences: new TrackableBoolean(false, false)
   };
 
   /**
@@ -142,6 +144,7 @@ export class SegmentationUserLayer extends Base {
     this.displayState.segmentColorHash.changed.add(this.specificationChanged.dispatch);
     this.displayState.renderScaleTarget.changed.add(this.specificationChanged.dispatch);
     this.displayState.showSkeletonNodes.changed.add(this.specificationChanged.dispatch);
+    this.displayState.shatterSegmentEquivalences.changed.add(this.specificationChanged.dispatch);
     this.tabs.add(
         'rendering', {label: 'Rendering', order: -100, getter: () => new DisplayOptionsTab(this)});
     this.tabs.default = 'rendering';
@@ -162,6 +165,7 @@ export class SegmentationUserLayer extends Base {
     this.displayState.segmentColorHash.restoreState(specification[COLOR_SEED_JSON_KEY]);
     this.displayState.renderScaleTarget.restoreState(specification[MESH_RENDER_SCALE_JSON_KEY]);
     this.displayState.showSkeletonNodes.restoreState(specification[SKELETONS_SHOW_NODES_JSON_KEY]);
+    this.displayState.shatterSegmentEquivalences.restoreState(specification[SHATTER_SEGMENT_EQUIVALENCES_JSON_KEY]);
 
     verifyObjectProperty(specification, EQUIVALENCES_JSON_KEY, y => {
       this.displayState.segmentEquivalences.restoreState(y);
@@ -427,6 +431,7 @@ export class SegmentationUserLayer extends Base {
         }
       }
     }
+    x[SHATTER_SEGMENT_EQUIVALENCES_JSON_KEY] = this.displayState.shatterSegmentEquivalences.toJSON();
     return x;
   }
 
@@ -505,6 +510,18 @@ export class SegmentationUserLayer extends Base {
       }
       case 'split-select-second': {
         this.splitSelectSecond();
+        break;
+      }
+      case 'shatter-segment-equivalences': {
+    // this.displayState.shatterSegmentEquivalences.restoreState(specification[SHATTER_SEGMENT_EQUIVALENCES_JSON_KEY]);
+        if (this.chunkedGraphLayer) {
+          StatusMessage.showTemporaryMessage(
+              'Shattering segment equivalences not supported for graph-enabled segmentation layers',
+              5000);
+        } else {
+          this.displayState.shatterSegmentEquivalences.value =
+              !this.displayState.shatterSegmentEquivalences.value;
+        }
         break;
       }
     }
