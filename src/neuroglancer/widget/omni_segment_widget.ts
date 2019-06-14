@@ -47,7 +47,7 @@ export class OmniSegmentWidget extends RefCounted {
       segmentMetadata,
       segmentIDToVoxelCountMap,
       mergedSegmentVoxelCount,
-      segmentIDToTableRowMap,
+      segmentIDRemapping,
       segmentEquivalenceToRowMap,
       element
     } = this;
@@ -56,34 +56,36 @@ export class OmniSegmentWidget extends RefCounted {
 
     const exportToCSV = () => {
       const filename = 'segmentation_data.csv';
-      const headerRows = ['Segment ID (Merged)','Voxel Count','Category','','Segment ID (Unmerged)','Voxel Count','Category','','Segment ID','Equivalent Segments','','Categories'];
-      // const headerString =
-          // 'Segment ID (Merged),Voxel Count,Category,,Segment ID (Unmerged),Voxel Count,Category,,Segment ID,Equivalent Segments,,Categories';
-      // const stringsToAdd: string[][] = [headerRows];
-      // const rowsToAddToCSV: string[][] = [headerRows];
-      const csvTablesList: string[][][] = [[],[],[],[]];
+      const tableHeaderRow = [
+        'Segments table', '', '', '', 'Base segments table', '', '', '',
+        'Equivalence of merged segments', '', '', 'List of categories'
+      ];
+      const tableColumnHeaderRow = [
+        'Segment ID', 'Voxel Count', 'Category', '', 'Segment ID (Unmerged)', 'Voxel Count',
+        'Category', '', 'Segment ID', 'Equivalent Segments', '', 'Categories'
+      ];
+      const csvTablesList: string[][][] = [[], [], [], []];
       let maxTableRows = 0;
       let i = 0;
-      for (const segmentID of segmentIDToTableRowMap.keys()) {
-        const currentRow = [segmentID];
-        // let stringForRow = segmentID + ',';
-        const voxelCount = mergedSegmentVoxelCount.get(segmentID);
-        if (voxelCount) {
-          // stringForRow += voxelCount + ',';
-          currentRow.push(String(voxelCount));
-        } else {
-          // stringForRow += segmentIDToVoxelCountMap.get(segmentID) + ',';
-          currentRow.push(String(segmentIDToVoxelCountMap.get(segmentID)));
-        }
-        const segmentCategory = segmentMetadata.categorizedSegments.get(segmentID);
-        if (segmentCategory) {
-          currentRow.push(segmentMetadata.segmentCategories.get(segmentCategory)!);
-        } else {
+      for (const segmentID of segmentIDToVoxelCountMap.keys()) {
+        if (!segmentIDRemapping.get(segmentID)) {
+          const currentRow = [segmentID];
+          const voxelCount = mergedSegmentVoxelCount.get(segmentID);
+          if (voxelCount) {
+            currentRow.push(String(voxelCount));
+          } else {
+            currentRow.push(String(segmentIDToVoxelCountMap.get(segmentID)));
+          }
+          const segmentCategory = segmentMetadata.categorizedSegments.get(segmentID);
+          if (segmentCategory) {
+            currentRow.push(segmentMetadata.segmentCategories.get(segmentCategory)!);
+          } else {
+            currentRow.push('');
+          }
           currentRow.push('');
+          i++;
+          csvTablesList[0].push(currentRow);
         }
-        currentRow.push('');
-        i++;
-        csvTablesList[0].push(currentRow);
       }
       if (i > maxTableRows) {
         maxTableRows = i;
@@ -133,12 +135,12 @@ export class OmniSegmentWidget extends RefCounted {
           csvTablesList[table][tableRow] = emptyRow;
         }
       }
-      const csvStringsList = [[headerRows]];
+      const csvStringsList = [tableHeaderRow, tableColumnHeaderRow];
       for (i = 0; i < maxTableRows; i++) {
-        csvStringsList.push(csvTablesList[0].concat(csvTablesList[1], csvTablesList[2], csvTablesList[3]));
+        csvStringsList.push(csvTablesList[0][i].concat(
+            csvTablesList[1][i], csvTablesList[2][i], csvTablesList[3][i]));
       }
       const csvString = csvStringsList.map(row => row.join(',')).join('\n');
-      // const csvString = rowsToAddToCSV.join('\n');
       const blob = new Blob([csvString], {type: 'text/csv;charset=utf-8;'});
       const link = document.createElement('a');
       const url = URL.createObjectURL(blob);
@@ -147,136 +149,6 @@ export class OmniSegmentWidget extends RefCounted {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      // for (const segmentID of segmentIDToTableRowMap.keys()) {
-      //   const currentRow = [segmentID];
-      //   // let stringForRow = segmentID + ',';
-      //   const voxelCount = mergedSegmentVoxelCount.get(segmentID);
-      //   if (voxelCount) {
-      //     // stringForRow += voxelCount + ',';
-      //     currentRow.push(String(voxelCount));
-      //   } else {
-      //     // stringForRow += segmentIDToVoxelCountMap.get(segmentID) + ',';
-      //     currentRow.push(String(segmentIDToVoxelCountMap.get(segmentID)));
-      //   }
-      //   const segmentCategory = segmentMetadata.categorizedSegments.get(segmentID);
-      //   if (segmentCategory) {
-      //     currentRow.push(segmentMetadata.segmentCategories.get(segmentCategory)!);
-      //   } else {
-      //     currentRow.push('');
-      //   }
-      //   i++;
-      //   rowsToAddToCSV.push(currentRow);
-      // }
-      // const emptyColumnsToAdd = [4, 8, 11];
-      // let rowIndex = 1;
-      // const getCurrentRow = (tableIndex: number) => {
-      //   let currentRow = rowsToAddToCSV[rowIndex];
-      //   if (! currentRow) {
-      //     rowsToAddToCSV[rowIndex] = currentRow = [];
-      //     for (let i = 0; i < emptyColumnsToAdd[tableIndex]; i++) {
-      //       currentRow.push('');
-      //     }
-      //   }
-      //   return currentRow;
-      // };
-      // for (const segmentID of segmentIDToTableRowMap.keys()) {
-      //   const currentRow = [segmentID];
-      //   // let stringForRow = segmentID + ',';
-      //   const voxelCount = mergedSegmentVoxelCount.get(segmentID);
-      //   if (voxelCount) {
-      //     // stringForRow += voxelCount + ',';
-      //     currentRow.push(String(voxelCount));
-      //   } else {
-      //     // stringForRow += segmentIDToVoxelCountMap.get(segmentID) + ',';
-      //     currentRow.push(String(segmentIDToVoxelCountMap.get(segmentID)));
-      //   }
-      //   const segmentCategory = segmentMetadata.categorizedSegments.get(segmentID);
-      //   if (segmentCategory) {
-      //     currentRow.push(segmentMetadata.segmentCategories.get(segmentCategory)!);
-      //   } else {
-      //     currentRow.push('');
-      //   }
-      //   rowsToAddToCSV.push(currentRow);
-      // }
-      // for (const [segmentID, voxelCount] of segmentIDToVoxelCountMap) {
-      //   let currentRow = getCurrentRow(0);
-      //   currentRow.push(segmentID);
-      //   currentRow.push(String(voxelCount));
-      //   const segmentCategory = segmentMetadata.categorizedSegments.get(segmentID);
-      //   if (segmentCategory) {
-      //     currentRow.push(segmentMetadata.segmentCategories.get(segmentCategory)!);
-      //   } else {
-      //     currentRow.push('');
-      //   }
-      //   rowIndex++;
-      // }
-      // rowIndex = 1;
-      // for (const [segmentID, {equivalentSegments}] of segmentEquivalenceToRowMap) {
-      //   let currentRow = getCurrentRow(1);
-      //   currentRow.push(segmentID);
-      //   currentRow.push('"' + equivalentSegments.join(',') + '"');
-      //   rowIndex++;
-      // }
-      // for (const segmentID of segmentIDToTableRowMap.keys()) {
-      //   let stringForRow = segmentID + ',';
-      //   const voxelCount = mergedSegmentVoxelCount.get(segmentID);
-      //   if (voxelCount) {
-      //     stringForRow += voxelCount + ',';
-      //   } else {
-      //     stringForRow += segmentIDToVoxelCountMap.get(segmentID) + ',';
-      //   }
-      //   const segmentCategory = segmentMetadata.categorizedSegments.get(segmentID);
-      //   if (segmentCategory) {
-      //     stringForRow += segmentCategory;
-      //   }
-      //   stringForRow += ',,';
-      //   stringsToAdd.push(stringForRow);
-      // }
-      // let i = 1;
-      // for (const [segmentID, voxelCount] of segmentIDToVoxelCountMap) {
-      //   let stringForRow = stringsToAdd[i] || ',,,,';
-      //   stringForRow += segmentID + ',';
-      //   stringForRow += voxelCount + ',';
-      //   const segmentCategory = segmentMetadata.categorizedSegments.get(segmentID);
-      //   if (segmentCategory) {
-      //     stringForRow += segmentCategory;
-      //   }
-      //   stringForRow += ',,';
-      //   stringsToAdd[i] = stringForRow;
-      //   i++;
-      // }
-      // let i = 1;
-      // for (const [segmentID, {equivalentSegments}] of segmentEquivalenceToRowMap) {
-      //   let stringForRow = stringsToAdd[i] || ',,,,,,,,';
-
-      // }
-      // let csvString = 'Segment ID (Merged),Voxel Count,Category\n';
-      // for (const segmentID of segmentIDToTableRowMap) {
-
-      // }
-      // csvString += '\nSegment ID (Unmerged),Voxel Count,Category\n';
-      // for (const [segmentID, voxelCount] of segmentIDToVoxelCountMap) {
-      //   csvString += segmentID + ',' + voxelCount + ',';
-      //   const segmentCategory = segmentMetadata.categorizedSegments.get(segmentID);
-      //   if (segmentCategory) {
-      //     csvString += segmentCategory;
-      //   }
-      //   csvString += '\n';
-      // }
-      // csvString += '\nSegment,Equivalent Segments\n';
-      // csvString += '\nCategories\n';
-      // const csvString =
-      // 'Segment ID (Merged),Voxel Count,Category,,Segment ID (Unmerged),Voxel
-      // Count,Category,,Segment ID,Equivalent Segments,,Categories\n' + ;
-      // const csvString = rowsToAddToCSV.join('\n');
-      // const blob = new Blob([csvString], {type: 'text/csv;charset=utf-8;'});
-      // const link = document.createElement('a');
-      // const url = URL.createObjectURL(blob);
-      // link.setAttribute('href', url);
-      // link.setAttribute('download', filename);
-      // document.body.appendChild(link);
-      // link.click();
-      // document.body.removeChild(link);
     };
 
     exportToCSVButton.addEventListener('click', exportToCSV);
@@ -829,9 +701,10 @@ export class OmniSegmentWidget extends RefCounted {
         if (listOfEquivalentSegmentsStrings === undefined) {
           const tableRowForSegmentID = document.createElement('tr');
           segmentEquivalenceToRowMap.set(
-              maxSegmentID, {equivalentSegments: [segmentID], row: tableRowForSegmentID});
+              maxSegmentID,
+              {equivalentSegments: [maxSegmentID, segmentID], row: tableRowForSegmentID});
         } else {
-          listOfEquivalentSegmentsStrings.equivalentSegments.push(maxSegmentID);
+          // listOfEquivalentSegmentsStrings.equivalentSegments.push(maxSegmentID);
           listOfEquivalentSegmentsStrings.equivalentSegments.push(segmentID);
         }
       }

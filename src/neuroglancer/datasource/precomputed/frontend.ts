@@ -146,8 +146,7 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
     this.mesh = verifyObjectProperty(obj, 'mesh', verifyOptionalString);
     this.skeletons = verifyObjectProperty(obj, 'skeletons', verifyOptionalString);
     this.scales = verifyObjectProperty(obj, 'scales', x => parseArray(x, y => new ScaleInfo(y)));
-    // this.segmentMetadata = verifyObjectProperty(obj, 'segmentMetadata', verifyOptionalString);
-    this.segmentMetadata = 'segment_metadata/segment_metadata2.json';
+    this.segmentMetadata = verifyObjectProperty(obj, 'segmentMetadata', verifyOptionalString);
   }
 
   getSources(volumeSourceOptions: VolumeSourceOptions) {

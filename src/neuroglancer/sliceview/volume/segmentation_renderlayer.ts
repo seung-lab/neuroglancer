@@ -223,8 +223,6 @@ uint64_t getMappedObjectId() {
     gl.uniform1ui(
         shader.uniform('uShatterSegmentEquivalences'),
         this.displayState.shatterSegmentEquivalences.value ? 1 : 0);
-    // builder.addUniform('bool', 'uShatterSegmentEquivalences');
-
     this.hashTableManager.enable(gl, shader, this.gpuHashTable);
     this.hashTableManagerHighlighted.enable(gl, shader, this.gpuHashTableHighlighted);
     if (this.hasEquivalences) {

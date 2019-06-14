@@ -68,15 +68,10 @@ const SKELETON_SHADER_JSON_KEY = 'skeletonShader';
 const COLOR_SEED_JSON_KEY = 'colorSeed';
 const MESH_RENDER_SCALE_JSON_KEY = 'meshRenderScale';
 const SKELETONS_SHOW_NODES_JSON_KEY = 'showSkeletonNodes';
-// const SEGMENTS_METADATA_JSON_KEY = 'segmentMetadata';
-
-const SEGMENTS_TO_VOXEL_COUNT_MAP_PATH_JSON_KEY = 'segmentToVoxelCountMapPath';
+const SEGMENTS_TO_VOXEL_COUNT_MAP_PATH_JSON_KEY = 'segmentMetadata';
 const SEGMENT_CATEGORIES_JSON_KEY = 'segmentCategories';
-// const SEGMENT_CATEGORY_ID_JSON_KEY = 'id';
-// const SEGMENT_CATEGORY_NAME_JSON_KEY = 'name';
 const CATEGORIZED_SEGMENTS_JSON_KEY = 'categorizedSegments';
 const SHATTER_SEGMENT_EQUIVALENCES_JSON_KEY = 'shatterSegmentEquivalences';
-// const SEGMENT_
 
 const Base = UserLayerWithVolumeSourceMixin(UserLayer);
 export class SegmentationUserLayer extends Base {
@@ -115,8 +110,6 @@ export class SegmentationUserLayer extends Base {
   meshLayer: Borrowed<MeshLayer|MultiscaleMeshLayer>|undefined;
   skeletonLayer: Borrowed<SkeletonLayer>|undefined;
   segmentMetadata: Borrowed<SegmentMetadata>|undefined;
-  // segmentToVoxelMap: Map<Uint64, number>|undefined;
-  // segmentMetadataObj: any[];
 
   // Dispatched when either meshLayer or skeletonLayer changes.
   objectLayerStateChanged = new NullarySignal();
@@ -186,24 +179,6 @@ export class SegmentationUserLayer extends Base {
     restoreSegmentsList(ROOT_SEGMENTS_JSON_KEY, this.displayState.rootSegments);
     restoreSegmentsList(HIDDEN_ROOT_SEGMENTS_JSON_KEY, this.displayState.hiddenRootSegments!);
     restoreSegmentsList(HIGHLIGHTS_JSON_KEY, this.displayState.highlightedSegments);
-
-    // const segmentMetadataObj = this.segmentMetadataObj = specification[SEGMENTS_METADATA_JSON_KEY];
-    // if (segmentMetadataObj !== undefined) {
-    //   verifyArray(segmentMetadataObj);
-    //   this.segmentToVoxelMap = new Map<Uint64, number>();
-    //   segmentMetadataObj.forEach((segmentObj: any) => {
-    //     verifyObject(segmentObj);
-    //     const segmentIdString = segmentObj[SEGMENT_ID_JSON_KEY];
-    //     const segmentId = Uint64.parseString(String(segmentIdString), 10);
-    //     const voxelCount = verifyPositiveInt(segmentObj[VOXEL_COUNT_JSON_KEY]);
-    //     this.segmentToVoxelMap!.set(segmentId, voxelCount);
-    //   });
-    // }
-    // const segmentMetadataObj = specification[SEGMENTS_METADATA_JSON_KEY];
-    // if (segmentMetadataObj !== undefined) {
-    //   verifyArray(segmentMetadataObj);
-    //   this.segmentMetadataObj = segmentMetadataObj;
-    // }
 
     this.displayState.highlightedSegments.changed.add(() => {
       this.specificationChanged.dispatch();
@@ -354,10 +329,6 @@ export class SegmentationUserLayer extends Base {
                 this.restoreSegmentMetadata(
                   segmentToVoxelCountMap, specification[SEGMENT_CATEGORIES_JSON_KEY],
                   specification[CATEGORIZED_SEGMENTS_JSON_KEY]);
-              } else {
-                StatusMessage.showTemporaryMessage(
-                  'Segment metadata file specified in info does not exist so omni segment widget won\'t be shown',
-                  6000);
               }
             });
           }
@@ -474,9 +445,6 @@ export class SegmentationUserLayer extends Base {
           for (const seg of this.displayState.rootSegments) {
             this.displayState.segmentEquivalences.link(firstSeg, seg);
           }
-          // const maxSeg = this.displayState.segmentEquivalences.get(firstSeg);
-          // this.displayState.rootSegments.delete(maxSeg);
-          // this.displayState.rootSegments.add(maxSeg);
         }
         break;
       }
@@ -513,7 +481,6 @@ export class SegmentationUserLayer extends Base {
         break;
       }
       case 'shatter-segment-equivalences': {
-    // this.displayState.shatterSegmentEquivalences.restoreState(specification[SHATTER_SEGMENT_EQUIVALENCES_JSON_KEY]);
         if (this.chunkedGraphLayer) {
           StatusMessage.showTemporaryMessage(
               'Shattering segment equivalences not supported for graph-enabled segmentation layers',
@@ -810,11 +777,6 @@ class DisplayOptionsTab extends Tab {
         element.appendChild(this.omniWidget.element);
       }
     };
-    // if (layer.segmentMetadataObj) {
-    //   const omniSegmentWidget = this.omniWidget = this.registerDisposer(new OmniSegmentWidget(
-    //       layer.displayState, layer.segmentMetadataObj, layer.specificationChanged));
-    //   element.appendChild(omniSegmentWidget.element);
-    // }
 
     const maybeAddSkeletonShaderUI = () => {
       if (this.codeWidget !== undefined) {
