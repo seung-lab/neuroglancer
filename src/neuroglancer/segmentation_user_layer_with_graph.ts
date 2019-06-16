@@ -14,21 +14,34 @@
  * limitations under the License.
  */
 
+import {LocalAnnotationSource} from 'neuroglancer/annotation';
+import {AnnotationLayer, AnnotationLayerState, SliceViewAnnotationLayer} from 'neuroglancer/annotation/frontend';
+import {PerspectiveViewAnnotationLayer} from 'neuroglancer/annotation/renderlayer';
+import {setAnnotationHoverStateFromMouseState} from 'neuroglancer/annotation/selection';
+import {GraphOperationLayerState} from 'neuroglancer/graph/graph_operation_layer_state';
+import {RenderLayerRole} from 'neuroglancer/layer';
 import {registerLayerType, registerVolumeLayerType} from 'neuroglancer/layer_specification';
+import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
+import {SegmentationUserLayer} from 'neuroglancer/segmentation_user_layer';
 import {ChunkedGraphLayer, SegmentSelection} from 'neuroglancer/sliceview/chunked_graph/frontend';
 import {VolumeType} from 'neuroglancer/sliceview/volume/base';
 import {StatusMessage} from 'neuroglancer/status';
+import {trackableAlphaValue} from 'neuroglancer/trackable_alpha';
+import {WatchableRefCounted, WatchableValue} from 'neuroglancer/trackable_value';
+import {GraphOperationTab, SelectedGraphOperationState} from 'neuroglancer/ui/graph_multicut';
+import {TrackableRGB} from 'neuroglancer/util/color';
 import {Borrowed} from 'neuroglancer/util/disposable';
 import {vec3} from 'neuroglancer/util/geom';
 import {parseArray, verifyObjectProperty, verifyOptionalString} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
-import {SegmentationUserLayer} from './segmentation_user_layer';
 
 // Already defined in segmentation_user_layer.ts
 const EQUIVALENCES_JSON_KEY = 'equivalences';
 
 const CHUNKED_GRAPH_JSON_KEY = 'chunkedGraph';
 const ROOT_SEGMENTS_JSON_KEY = 'segments';
+const GRAPH_OPERATION_MARKER_JSON_KEY = 'graphOperationMarker';
+const ANNOTATIONS_JSON_KEY = 'annotations';
 
 const lastSegmentSelection: SegmentSelection = {
   segmentId: new Uint64(),
@@ -44,9 +57,74 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
   class C extends Base implements SegmentationUserLayerWithGraph {
     chunkedGraphUrl: string|null|undefined;
     chunkedGraphLayer: Borrowed<ChunkedGraphLayer>|undefined;
+    private annotationLayerStateA =
+        this.registerDisposer(new WatchableRefCounted<AnnotationLayerState>());
+    private annotationLayerStateB =
+        this.registerDisposer(new WatchableRefCounted<AnnotationLayerState>());
+
+    graphOperationLayerState =
+        this.registerDisposer(new WatchableRefCounted<GraphOperationLayerState>());
+    selectedGraphOperationElement = this.registerDisposer(
+        new SelectedGraphOperationState(this.graphOperationLayerState.addRef()));
 
     constructor(...args: any[]) {
       super(...args);
+      this.tabs.add('graph', {
+        label: 'Graph',
+        order: -75,
+        getter: () => new GraphOperationTab(
+            this, this.selectedGraphOperationElement.addRef(), this.manager.voxelSize.addRef(),
+            point => this.manager.setSpatialCoordinates(point))
+      });
+
+      this.annotationLayerStateA.changed.add(() => {
+        const state = this.annotationLayerStateA.value;
+        if (state !== undefined) {
+          const annotationLayer = new AnnotationLayer(this.manager.chunkManager, state.addRef());
+          setAnnotationHoverStateFromMouseState(state, this.manager.layerSelectedValues.mouseState);
+          this.addRenderLayer(new SliceViewAnnotationLayer(annotationLayer));
+          this.addRenderLayer(new PerspectiveViewAnnotationLayer(annotationLayer.addRef()));
+        }
+      });
+
+      this.annotationLayerStateB.changed.add(() => {
+        const state = this.annotationLayerStateB.value;
+        if (state !== undefined) {
+          const annotationLayer = new AnnotationLayer(this.manager.chunkManager, state.addRef());
+          setAnnotationHoverStateFromMouseState(state, this.manager.layerSelectedValues.mouseState);
+          this.addRenderLayer(new SliceViewAnnotationLayer(annotationLayer));
+          this.addRenderLayer(new PerspectiveViewAnnotationLayer(annotationLayer.addRef()));
+        }
+      });
+
+      const fillOpacity = trackableAlphaValue(1.0);
+      const segmentationState = new WatchableValue<SegmentationDisplayState>(this.displayState);
+
+      this.graphOperationLayerState.value = new GraphOperationLayerState({
+        transform: this.transform,
+        sourceA: this.registerDisposer(new LocalAnnotationSource()),
+        sourceB: this.registerDisposer(new LocalAnnotationSource()),
+        segmentationState: segmentationState,
+      });
+
+      this.annotationLayerStateA.value = new AnnotationLayerState({
+        transform: this.graphOperationLayerState.value.transform,
+        source: this.graphOperationLayerState.value.sourceA.addRef(),
+        role: RenderLayerRole.GRAPH_MODIFICATION_MARKER,
+        fillOpacity: fillOpacity,
+        color: new TrackableRGB(vec3.fromValues(1.0, 0.0, 0.0)),
+        segmentationState: segmentationState,
+      });
+
+      this.annotationLayerStateB.value = new AnnotationLayerState({
+        transform: this.graphOperationLayerState.value.transform,
+        source: this.graphOperationLayerState.value.sourceB.addRef(),
+        role: RenderLayerRole.GRAPH_MODIFICATION_MARKER,
+        fillOpacity: fillOpacity,
+        color: new TrackableRGB(vec3.fromValues(0.0, 0.0, 1.0)),
+        segmentationState: segmentationState,
+      });
+
       this.tabs.default = 'rendering';
     }
 
@@ -104,12 +182,26 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
           }
         });
       }
+
+      if (this.graphOperationLayerState.value && specification[GRAPH_OPERATION_MARKER_JSON_KEY]) {
+        this.graphOperationLayerState.value!.sourceA.restoreState(
+            specification[GRAPH_OPERATION_MARKER_JSON_KEY]['A'][ANNOTATIONS_JSON_KEY], []);
+        this.graphOperationLayerState.value!.sourceB.restoreState(
+            specification[GRAPH_OPERATION_MARKER_JSON_KEY]['B'][ANNOTATIONS_JSON_KEY], []);
+      }
     }
 
     toJSON() {
       const x = super.toJSON();
       x['type'] = 'segmentation_with_graph';
       x[CHUNKED_GRAPH_JSON_KEY] = this.chunkedGraphUrl;
+
+      if (this.graphOperationLayerState.value) {
+        x[GRAPH_OPERATION_MARKER_JSON_KEY] = {
+          'A': this.graphOperationLayerState.value.sourceA.toJSON(),
+          'B': this.graphOperationLayerState.value.sourceB.toJSON(),
+        };
+      }
 
       // Graph equivalences can contain million of supervoxel IDs - don't store them in the state.
       delete x[EQUIVALENCES_JSON_KEY];
@@ -315,6 +407,8 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
 export interface SegmentationUserLayerWithGraph extends SegmentationUserLayer {
   chunkedGraphUrl: string|null|undefined;
   chunkedGraphLayer: Borrowed<ChunkedGraphLayer>|undefined;
+  graphOperationLayerState: WatchableRefCounted<GraphOperationLayerState>;
+  selectedGraphOperationElement: SelectedGraphOperationState;
 }
 
 /**
