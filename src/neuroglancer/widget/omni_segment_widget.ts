@@ -64,6 +64,7 @@ export class OmniSegmentWidget extends RefCounted {
         'Segment ID', 'Voxel Count', 'Category', '', 'Segment ID (Unmerged)', 'Voxel Count',
         'Category', '', 'Segment ID', 'Equivalent Segments', '', 'Categories'
       ];
+      const columnsPerTable = [4, 4, 3, 1];
       const csvTablesList: string[][][] = [[], [], [], []];
       let maxTableRows = 0;
       let i = 0;
@@ -129,7 +130,7 @@ export class OmniSegmentWidget extends RefCounted {
       for (let table = 0; table < csvTablesList.length; table++) {
         for (let tableRow = csvTablesList[table].length; tableRow < maxTableRows; tableRow++) {
           const emptyRow = [];
-          for (let column = 0; column < csvTablesList[table][0].length; column++) {
+          for (let column = 0; column < columnsPerTable[table]; column++) {
             emptyRow.push('');
           }
           csvTablesList[table][tableRow] = emptyRow;
