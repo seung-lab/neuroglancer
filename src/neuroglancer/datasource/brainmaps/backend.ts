@@ -22,7 +22,8 @@ import {CredentialsProvider} from 'neuroglancer/credentials_provider';
 import {WithSharedCredentialsProviderCounterpart} from 'neuroglancer/credentials_provider/shared_counterpart';
 import {BatchMeshFragment, BatchMeshFragmentPayload, BrainmapsInstance, ChangeStackAwarePayload, Credentials, makeRequest, SkeletonPayload, SubvolumePayload} from 'neuroglancer/datasource/brainmaps/api';
 import {AnnotationSourceParameters, ChangeSpec, MeshSourceParameters, MultiscaleMeshSourceParameters, SkeletonSourceParameters, VolumeChunkEncoding, VolumeSourceParameters} from 'neuroglancer/datasource/brainmaps/base';
-import {assignMeshFragmentData, assignMultiscaleMeshFragmentData, FragmentChunk, ManifestChunk, MeshSource, MultiscaleFragmentChunk, MultiscaleManifestChunk, MultiscaleMeshSource} from 'neuroglancer/mesh/backend';
+import {assignMeshFragmentData, assignMultiscaleMeshFragmentData, FragmentChunk, generateHigherOctreeLevel, ManifestChunk, MeshSource, MultiscaleFragmentChunk, MultiscaleManifestChunk, MultiscaleMeshSource} from 'neuroglancer/mesh/backend';
+import {VertexPositionFormat} from 'neuroglancer/mesh/base';
 import {MultiscaleMeshManifest} from 'neuroglancer/mesh/multiscale';
 import {decodeSkeletonVertexPositionsAndIndices, SkeletonChunk, SkeletonSource} from 'neuroglancer/skeleton/backend';
 import {decodeCompressedSegmentationChunk} from 'neuroglancer/sliceview/backend_chunk_decoders/compressed_segmentation';
@@ -34,7 +35,7 @@ import {convertEndian32, Endianness} from 'neuroglancer/util/endian';
 import {kInfinityVec, kZeroVec, vec3, vec3Key} from 'neuroglancer/util/geom';
 import {parseArray, parseFixedLengthArray, verifyObject, verifyObjectProperty, verifyOptionalString, verifyString, verifyStringArray} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
-import {decodeZIndexCompressed, zorder3LessThan} from 'neuroglancer/util/zorder';
+import { decodeZIndexCompressed, getOctreeChildIndex, zorder3LessThan, encodeZIndexCompressed} from 'neuroglancer/util/zorder';
 import {registerSharedObject, SharedObject} from 'neuroglancer/worker_rpc';
 
 const CHUNK_DECODERS = new Map([
@@ -70,6 +71,8 @@ function BrainmapsSource<Parameters, TBase extends {new (...args: any[]): Shared
       WithSharedCredentialsProviderCounterpart<Credentials>()(Base), parametersConstructor);
 }
 
+const tempUint64 = new Uint64();
+
 @registerSharedObject()
 export class BrainmapsVolumeChunkSource extends
 (BrainmapsSource(VolumeChunkSource, VolumeSourceParameters)) {
@@ -99,7 +102,7 @@ export class BrainmapsVolumeChunkSource extends
     }
   }
 
-  download(chunk: VolumeChunk, cancellationToken: CancellationToken) {
+  async download(chunk: VolumeChunk, cancellationToken: CancellationToken) {
     let {parameters} = this;
     let path: string;
 
@@ -120,15 +123,15 @@ export class BrainmapsVolumeChunkSource extends
     this.applyEncodingParams(payload);
     applyChangeStack(parameters.changeSpec, payload);
 
-    return makeRequest(
-               parameters['instance'], this.credentialsProvider, {
-                 method: 'POST',
-                 payload: JSON.stringify(payload),
-                 path,
-                 responseType: 'arraybuffer',
-               },
-               cancellationToken)
-        .then(response => this.chunkDecoder(chunk, response));
+    const response = await makeRequest(
+        parameters['instance'], this.credentialsProvider, {
+          method: 'POST',
+          payload: JSON.stringify(payload),
+          path,
+          responseType: 'arraybuffer',
+        },
+        cancellationToken);
+    await this.chunkDecoder(chunk, cancellationToken, response);
   }
 }
 
@@ -163,9 +166,8 @@ function decodeMultiscaleManifestChunk(chunk: BrainmapsMultiscaleManifestChunk, 
     }
     ids.push(supervoxelIds[i]);
   });
-  const {chunkShape, gridShape} = source.parameters.info;
-  const chunkCoordinates = new Uint32Array(3 * fragmentSupervoxelIds.size);
-
+  const {chunkShape} = source.parameters.info;
+  const gridShape = source.parameters.info.lods[0].gridShape;
   const xBits = Math.ceil(Math.log2(gridShape[0])), yBits = Math.ceil(Math.log2(gridShape[1])),
         zBits = Math.ceil(Math.log2(gridShape[2]));
   const fragmentIdAndCorners =
@@ -183,45 +185,59 @@ function decodeMultiscaleManifestChunk(chunk: BrainmapsMultiscaleManifestChunk, 
   });
   let clipLowerBound: vec3, clipUpperBound: vec3;
   let minNumLods = 0;
+  let octree: Uint32Array;
   if (length === 0) {
     clipLowerBound = clipUpperBound = kZeroVec;
+    octree = Uint32Array.of(0, 0, 0, 0, 0x80000000);
   } else {
     const minCoord = vec3.clone(kInfinityVec);
     const maxCoord = vec3.clone(kZeroVec);
-    fragmentIdAndCorners.forEach((x, i) => {
+    fragmentIdAndCorners.forEach(x => {
       const {corner} = x;
-      chunkCoordinates.set(corner, i * 3);
       for (let i = 0; i < 3; ++i) {
         minCoord[i] = Math.min(minCoord[i], corner[i]);
         maxCoord[i] = Math.max(maxCoord[i], corner[i]);
       }
     });
-    let maxCoordValue = Math.max(...maxCoord);
     minNumLods = 1;
-    while (maxCoordValue !== 0) {
-      maxCoordValue >>>= 1;
+    while ((maxCoord[0] >>> (minNumLods - 1)) != (minCoord[0] >>> (minNumLods - 1)) ||
+           (maxCoord[1] >>> (minNumLods - 1)) != (minCoord[1] >>> (minNumLods - 1)) ||
+           (maxCoord[2] >>> (minNumLods - 1)) != (minCoord[2] >>> (minNumLods - 1))) {
       ++minNumLods;
     }
     clipLowerBound = vec3.multiply(minCoord, minCoord, chunkShape);
     clipUpperBound = vec3.add(maxCoord, vec3.multiply(maxCoord, maxCoord, chunkShape), chunkShape);
   }
-  const lodScales: number[] = [];
   const {lods} = source.parameters.info;
-  for (const lodInfo of lods) {
-    lodScales[lodInfo.lod] = lodInfo.scale;
+  const lodScales = new Float32Array(Math.max(lods.length, minNumLods));
+  for (let lodIndex = 0; lodIndex < lods.length; ++lodIndex) {
+    lodScales[lodIndex] = lods[lodIndex].scale;
   }
-  for (let lod = 0; lod < Math.max(lodScales.length, minNumLods); ++lod) {
-    if (lodScales[lod] === undefined) {
-      lodScales[lod] = 0;
+
+  if (length !== 0) {
+    const octreeTemp = new Uint32Array(fragmentIdAndCorners.length * lodScales.length * 5);
+    fragmentIdAndCorners.forEach((x, i) => {
+      octreeTemp.set(x.corner, i * 5);
+      octreeTemp[i * 5] = x.corner[0];
+    });
+    let priorStart = 0;
+    let priorEnd = fragmentIdAndCorners.length;
+    for (let lod = 1; lod < lodScales.length; ++lod) {
+      const curEnd = generateHigherOctreeLevel(octreeTemp, priorStart, priorEnd);
+      priorStart = priorEnd;
+      priorEnd = curEnd;
     }
+    octree = octreeTemp.slice(0, priorEnd * 5);
   }
+
   const manifest: MultiscaleMeshManifest = {
     chunkShape,
     chunkGridSpatialOrigin: kZeroVec,
     clipLowerBound,
     clipUpperBound,
-    chunkCoordinates,
-    lodScales,
+    octree: octree!,
+    lodScales: lodScales,
+    vertexOffsets: new Float32Array(lodScales.length * 3),
   };
   chunk.manifest = manifest;
   chunk.fragmentSupervoxelIds = fragmentIdAndCorners;
@@ -379,50 +395,71 @@ function makeBatchMeshRequest(
   }
 
   downloadFragment(chunk: MultiscaleFragmentChunk, cancellationToken: CancellationToken) {
-    let {parameters} = this;
+    const {parameters} = this;
 
-    const idArray: [string, number][] = [];
     const manifestChunk = chunk.manifestChunk! as BrainmapsMultiscaleManifestChunk;
     const {fragmentSupervoxelIds} = manifestChunk;
     const manifest = manifestChunk.manifest!;
     const {lod} = chunk;
-    const startChunkIndex = chunk.chunkIndex;
-    const {chunkCoordinates} = manifest;
-    const xGrid = chunkCoordinates[startChunkIndex * 3] >>> lod,
-          yGrid = chunkCoordinates[startChunkIndex * 3 + 1] >>> lod,
-          zGrid = chunkCoordinates[startChunkIndex * 3 + 2] >>> lod;
-    let endChunkIndex = startChunkIndex;
-    {
-      let chunkIndex, maxChunkIndex = fragmentSupervoxelIds.length;
-      for (chunkIndex = startChunkIndex; chunkIndex < maxChunkIndex; ++chunkIndex) {
-        if ((chunkCoordinates[chunkIndex * 3] >>> lod) != xGrid ||
-            (chunkCoordinates[chunkIndex * 3 + 1] >>> lod) != yGrid ||
-            (chunkCoordinates[chunkIndex * 3 + 2] >>> lod) != zGrid) {
-          break;
-        }
-        const entry = fragmentSupervoxelIds[chunkIndex];
-        for (const supervoxelId of entry.supervoxelIds) {
-          idArray.push([supervoxelId + '\0' + entry.fragmentId, chunkIndex]);
-        }
-      }
-      endChunkIndex = chunkIndex;
+    const {octree} = manifest;
+    const numBaseChunks = fragmentSupervoxelIds.length;
+    const row = chunk.chunkIndex;
+    let startChunkIndex = row;
+    while (startChunkIndex >= numBaseChunks) {
+      startChunkIndex = octree[startChunkIndex * 5 + 3];
     }
+    let endChunkIndex = row + 1;
+    while (endChunkIndex > numBaseChunks) {
+      endChunkIndex = octree[endChunkIndex * 5 - 1] & 0x7FFFFFFF;
+    }
+    const {relativeBlockShape, gridShape} = parameters.info.lods[lod];
+    const xBits = Math.ceil(Math.log2(gridShape[0])), yBits = Math.ceil(Math.log2(gridShape[1])),
+          zBits = Math.ceil(Math.log2(gridShape[2]));
+
+    let ids = new Map<string, number>();
+    for (let chunkIndex = startChunkIndex; chunkIndex < endChunkIndex; ++chunkIndex) {
+      // Determine number of x, y, and z bits to skip.
+      const gridX = Math.floor(octree[chunkIndex * 5] / relativeBlockShape[0]),
+            gridY = Math.floor(octree[chunkIndex * 5 + 1] / relativeBlockShape[1]),
+            gridZ = Math.floor(octree[chunkIndex * 5 + 2] / relativeBlockShape[2]);
+      const fragmentKey =
+          encodeZIndexCompressed(tempUint64, xBits, yBits, zBits, gridX, gridY, gridZ)
+              .toString(16)
+              .padStart(16, '0');
+      const entry = fragmentSupervoxelIds[chunkIndex];
+      for (const supervoxelId of entry.supervoxelIds) {
+        ids.set(supervoxelId + '\0' + fragmentKey, chunkIndex);
+      }
+    }
+
+    let prevLod = Math.max(0, lod - 1);
 
     let fragments: (BatchMeshResponseFragment&{chunkIndex: number})[] = [];
 
+    const idArray = Array.from(ids);
     idArray.sort((a, b) => a[0].localeCompare(b[0]));
-    const ids = new Map(idArray);
+    ids = new Map(idArray);
 
     function copyMeshData() {
       fragments.sort((a, b) => a.chunkIndex - b.chunkIndex);
       let indexOffset = 0;
-      const subChunkOffsets = new Uint32Array(endChunkIndex - startChunkIndex + 1);
+      const numSubChunks = 1 << (3 * (lod - prevLod));
+      const subChunkOffsets = new Uint32Array(numSubChunks + 1);
+      let prevSubChunkIndex = 0;
       for (const fragment of fragments) {
+        const row = fragment.chunkIndex;
+        const subChunkIndex = getOctreeChildIndex(
+                                  octree[row * 5] >>> prevLod, octree[row * 5 + 1] >>> prevLod,
+                                  octree[row * 5 + 2] >>> prevLod) &
+            (numSubChunks - 1);
+        subChunkOffsets.fill(indexOffset, prevSubChunkIndex + 1, subChunkIndex + 1);
+        prevSubChunkIndex = subChunkIndex;
         indexOffset += fragment.numIndices;
-        subChunkOffsets[fragment.chunkIndex - startChunkIndex + 1] = indexOffset;
       }
+      subChunkOffsets.fill(indexOffset, prevSubChunkIndex + 1, numSubChunks + 1);
       assignMultiscaleMeshFragmentData(
-          chunk, {...combineBatchMeshFragments(fragments), subChunkOffsets});
+          chunk, {...combineBatchMeshFragments(fragments), subChunkOffsets},
+          VertexPositionFormat.float32);
     }
     function decodeResponse(response: ArrayBuffer): Promise<void>|void {
       decodeBatchMeshResponse(
@@ -445,7 +482,7 @@ function makeBatchMeshRequest(
 
     const {credentialsProvider} = this;
 
-    const meshName = parameters.info.lods.find(x => x.lod === lod)!.info.name;
+    const meshName = parameters.info.lods[lod].info.name;
 
     function makeBatchRequest(): Promise<void> {
       return makeBatchMeshRequest(

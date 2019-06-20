@@ -28,6 +28,8 @@
   overflow-y: auto;
   height: 0px;
   flex: 1;
+  flex-basis: 0px;
+  min-height: 0px;
 }
 
 .neuroglancer-annotation-layer-view {
@@ -44,12 +46,6 @@
 .neuroglancer-annotation-icon {
   position: absolute;
   left: 0px;
-}
-
-.neuroglancer-annotation-description {
-  text-overflow: ellipsis;
-  overflow: hidden;
-  white-space: nowrap;
 }
 
 .neuroglancer-annotation-hover {
@@ -131,4 +127,12 @@
 
 .neuroglancer-annotation-segment-item {
   color: black;
+}
+
+#exportToCSVButton {
+  width: 110px;
+}
+
+#annotation-tag-filter {
+  width: 125px;
 }

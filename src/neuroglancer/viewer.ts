@@ -22,7 +22,7 @@ import {DataSourceProvider} from 'neuroglancer/datasource';
 import {getDefaultDataSourceProvider} from 'neuroglancer/datasource/default_provider';
 import {DisplayContext} from 'neuroglancer/display_context';
 import {InputEventBindingHelpDialog} from 'neuroglancer/help/input_event_bindings';
-import {ActionMode, ActionState, allRenderLayerRoles, LayerManager, LayerSelectedValues, MouseSelectionState, RenderLayerRole, SelectedLayerState} from 'neuroglancer/layer';
+import {allRenderLayerRoles, LayerManager, LayerSelectedValues, MouseSelectionState, ActionState, ActionMode, RenderLayerRole, SelectedLayerState, UserLayer, ManagedUserLayer} from 'neuroglancer/layer';
 import {LayerDialog} from 'neuroglancer/layer_dialog';
 import {RootLayoutContainer} from 'neuroglancer/layer_groups_layout';
 import {TopLevelLayerListSpecification} from 'neuroglancer/layer_specification';
@@ -46,7 +46,7 @@ import {Borrowed, Owned, RefCounted} from 'neuroglancer/util/disposable';
 import {removeFromParent} from 'neuroglancer/util/dom';
 import {registerActionListener} from 'neuroglancer/util/event_action_map';
 import {vec3} from 'neuroglancer/util/geom';
-import {openHttpRequest, sendHttpJsonPostRequest, sendHttpRequest} from 'neuroglancer/util/http_request';
+import {cancellableFetchOk, responseJson} from 'neuroglancer/util/http_request';
 import {EventActionMap, KeyboardEventBinder} from 'neuroglancer/util/keyboard_bindings';
 import {NullarySignal} from 'neuroglancer/util/signal';
 import {CompoundTrackable} from 'neuroglancer/util/trackable';
@@ -60,6 +60,7 @@ import {TrackableScaleBarOptions} from 'neuroglancer/widget/scale_bar';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
 import {RPC} from 'neuroglancer/worker_rpc';
 import {initAuthTokenSharedValue} from 'neuroglancer/authentication/frontend';
+import {AnnotationUserLayer} from 'neuroglancer/annotation/user_layer';
 
 require('./viewer.css');
 require('neuroglancer/noselect.css');
@@ -274,6 +275,7 @@ export class Viewer extends RefCounted implements ViewerState {
     this.visibility = visibility;
     this.inputEventBindings = inputEventBindings;
     this.element = element;
+    this.element.id = 'neuroglancerViewer';
     this.dataSourceProvider = dataSourceProvider;
     this.uiConfiguration = uiConfiguration;
 
@@ -400,6 +402,9 @@ export class Viewer extends RefCounted implements ViewerState {
         this.mouseState, this.layerManager, this.navigationState.voxelSize));
 
     initAuthTokenSharedValue(this.dataContext.rpc);
+
+    const maybeAddOrRemoveAnnotationShortcuts = this.annotationShortcutControllerFactory();
+    this.registerDisposer(this.selectedLayer.changed.add(() => maybeAddOrRemoveAnnotationShortcuts()));
   }
 
   private updateShowBorders() {
@@ -658,11 +663,11 @@ export class Viewer extends RefCounted implements ViewerState {
   loadFromJsonUrl() {
     var urlParams = new URLSearchParams(window.location.search);
     if (urlParams.has('json_url')) {
-      let json_url = urlParams.get('json_url');
+      let json_url = urlParams.get('json_url')!;
       history.replaceState(null, '', removeParameterFromUrl(window.location.href, 'json_url'));
       StatusMessage
       .forPromise(
-        sendHttpRequest(openHttpRequest(json_url!), 'json')
+        cancellableFetchOk(json_url, {}, responseJson)
           .then(response => {
             this.state.restoreState(response);
           }),
@@ -692,9 +697,10 @@ export class Viewer extends RefCounted implements ViewerState {
 
     // upload state to jsonStateServer (only if it's defined)
     if (this.jsonStateServer.value) {
-        StatusMessage.showTemporaryMessage(`Posting state to ${this.jsonStateServer.value}.`);
-        sendHttpJsonPostRequest(
-          openHttpRequest(this.jsonStateServer.value, 'POST'), this.state.toJSON(), 'json')
+      StatusMessage.showTemporaryMessage(`Posting state to ${this.jsonStateServer.value}.`);
+      cancellableFetchOk(
+          this.jsonStateServer.value, {method: 'POST', body: JSON.stringify(this.state.toJSON())},
+          responseJson)
           .then(response => {
             history.replaceState(
                 null, '',
@@ -738,5 +744,27 @@ export class Viewer extends RefCounted implements ViewerState {
         chunkQueueManager.chunkUpdateDeadline = Date.now() + 10;
       }
     }
+  }
+
+  private annotationShortcutControllerFactory() {
+    let lastLayerSelected: UserLayer|null = null;
+    let lastManagerLayerSelected: ManagedUserLayer|undefined;
+    const maybeAddOrRemoveAnnotationShortcuts = () => {
+      if (this.selectedLayer.layer !== lastManagerLayerSelected) {
+        if (lastLayerSelected && lastLayerSelected instanceof AnnotationUserLayer) {
+          lastLayerSelected.disableAnnotationShortcuts();
+        }
+        const selectedLayer = this.selectedLayer.layer;
+        if (selectedLayer) {
+          const userLayer = selectedLayer.layer;
+          if (userLayer instanceof AnnotationUserLayer) {
+            userLayer.enableAnnotationShortcuts();
+          }
+          lastLayerSelected = userLayer;
+        }
+        lastManagerLayerSelected = this.selectedLayer.layer;
+      }
+    };
+    return maybeAddOrRemoveAnnotationShortcuts;
   }
 }

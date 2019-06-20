@@ -14,23 +14,24 @@
  * limitations under the License.
  */
 
+import {authFetch} from 'neuroglancer/authentication/frontend.ts';
 import {ChunkManager} from 'neuroglancer/chunk_manager/frontend';
-import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
+import {VisibleSegmentsState} from 'neuroglancer/segmentation_display_state/base';
 import {CHUNKED_GRAPH_LAYER_RPC_ID, ChunkedGraphChunkSource as ChunkedGraphChunkSourceInterface, ChunkedGraphChunkSpecification} from 'neuroglancer/sliceview/chunked_graph/base';
 import {SliceViewChunkSource} from 'neuroglancer/sliceview/frontend';
-import {RenderLayer as GenericSliceViewRenderLayer} from 'neuroglancer/sliceview/renderlayer';
+import {RenderLayer as GenericSliceViewRenderLayer, RenderLayerOptions} from 'neuroglancer/sliceview/renderlayer';
 import {StatusMessage} from 'neuroglancer/status';
 import {Uint64Set} from 'neuroglancer/uint64_set';
+import {vec3} from 'neuroglancer/util/geom';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {RPC} from 'neuroglancer/worker_rpc';
-import {authFetch} from 'neuroglancer/authentication/frontend.ts';
 
 export const GRAPH_SERVER_NOT_SPECIFIED = Symbol('Graph Server Not Specified.');
 
 export interface SegmentSelection {
   segmentId: Uint64;
   rootId: Uint64;
-  position: number[];
+  position: vec3;
 }
 
 export class ChunkedGraphChunkSource extends SliceViewChunkSource implements
@@ -57,7 +58,7 @@ export class ChunkedGraphLayer extends GenericSliceViewRenderLayer {
 
   constructor(
       chunkManager: ChunkManager, url: string, public sources: ChunkedGraphChunkSource[][],
-      displayState: SegmentationDisplayState) {
+      displayState: VisibleSegmentsState&RenderLayerOptions) {
     super(chunkManager, sources, {
       rpcTransfer: {
         'chunkManager': chunkManager.rpcId,
@@ -66,7 +67,8 @@ export class ChunkedGraphLayer extends GenericSliceViewRenderLayer {
         'visibleSegments3D': displayState.visibleSegments3D.rpcId,
         'segmentEquivalences': displayState.segmentEquivalences.rpcId
       },
-      rpcType: CHUNKED_GRAPH_LAYER_RPC_ID
+      rpcType: CHUNKED_GRAPH_LAYER_RPC_ID,
+      transform: displayState.transform,
     });
     this.graphurl = url;
   }
@@ -75,82 +77,70 @@ export class ChunkedGraphLayer extends GenericSliceViewRenderLayer {
     return this.graphurl;
   }
 
-  getRoot(selection: SegmentSelection): Promise<Uint64> {
+  async getRoot(selection: SegmentSelection): Promise<Uint64> {
     const {url} = this;
     if (url === '') {
       return Promise.resolve(selection.segmentId);
     }
 
     const request = authFetch(`${url}/graph/${String(selection.segmentId)}/root`)
-      .then(res => res.arrayBuffer());
-
-    return this
-      .withErrorMessage(request, {
-        initialMessage: `Retrieving root for segment ${selection.segmentId}`,
-        errorPrefix: `Could not fetch root: `
-      })
-      .then(response => {
-        let uint32 = new Uint32Array(response);
-        return new Uint64(uint32[0], uint32[1]);
-      });
+                        .then(res => res.arrayBuffer());
+    const response = await this.withErrorMessage(request, {
+      initialMessage: `Retrieving root for segment ${selection.segmentId}`,
+      errorPrefix: `Could not fetch root: `
+    });
+    const uint32 = new Uint32Array(response);
+    return new Uint64(uint32[0], uint32[1]);
   }
 
-  mergeSegments(first: SegmentSelection, second: SegmentSelection): Promise<Uint64> {
+  async mergeSegments(first: SegmentSelection, second: SegmentSelection): Promise<Uint64> {
     const {url} = this;
     if (url === '') {
       return Promise.reject(GRAPH_SERVER_NOT_SPECIFIED);
     }
 
-    const request = authFetch(`${url}/graph/merge`,
-        {
-          method: 'POST',
-          body: JSON.stringify([
-            [String(first.segmentId), ...first.position],
-            [String(second.segmentId), ...second.position]
-          ])
-        })
-      .then(res => res.arrayBuffer());
+    const promise = authFetch(`${url}/graph/merge`, {
+                      method: 'POST',
+                      body: JSON.stringify([
+                        [String(first.segmentId), ...first.position.values()],
+                        [String(second.segmentId), ...second.position.values()]
+                      ])
+                    }).then(res => res.arrayBuffer());
 
-    return this
-      .withErrorMessage(request, {
-        initialMessage: `Merging ${first.segmentId} and ${second.segmentId}`,
-        errorPrefix: 'Merge failed: '
-      })
-      .then(response => {
-        let uint32 = new Uint32Array(response);
-        return new Uint64(uint32[0], uint32[1]);
-      });
+    const response = await this.withErrorMessage(promise, {
+      initialMessage: `Merging ${first.segmentId} and ${second.segmentId}`,
+      errorPrefix: 'Merge failed: '
+    });
+
+    const uint32 = new Uint32Array(response);
+    return new Uint64(uint32[0], uint32[1]);
   }
 
-  splitSegments(first: SegmentSelection[], second: SegmentSelection[]): Promise<Uint64[]> {
+  async splitSegments(first: SegmentSelection[], second: SegmentSelection[]): Promise<Uint64[]> {
     const {url} = this;
     if (url === '') {
       return Promise.reject(GRAPH_SERVER_NOT_SPECIFIED);
     }
 
-    const request = authFetch(`${url}/graph/split`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            'sources': first.map(x => [String(x.segmentId), ...x.position]),
-            'sinks': second.map(x => [String(x.segmentId), ...x.position])
-          })
-        })
-      .then(res => res.arrayBuffer());
+    const promise = authFetch(`${url}/graph/split`, {
+                      method: 'POST',
+                      body: JSON.stringify({
+                        'sources': first.map(x => [String(x.segmentId), ...x.position.values()]),
+                        'sinks': second.map(x => [String(x.segmentId), ...x.position.values()])
+                      })
+                    }).then(res => res.arrayBuffer());
 
-    return this
-      .withErrorMessage(request, {
-        initialMessage: `Splitting ${first.length} sinks from ${second.length} sources`,
-        errorPrefix: 'Split failed: '
-      })
-      .then(response => {
-        let uint32 = new Uint32Array(response);
-        let final: Uint64[] = new Array(uint32.length / 2);
-        for (let i = 0; i < uint32.length / 2; i++) {
-          final[i] = new Uint64(uint32[2 * i], uint32[2 * i + 1]);
-        }
-        return final;
-      });
+    const response = await this.withErrorMessage(promise, {
+      initialMessage: `Splitting ${first.length} sinks from ${second.length} sources`,
+      errorPrefix: 'Split failed: '
+    });
+
+    const uint32 = new Uint32Array(response);
+    let final: Uint64[] = new Array(uint32.length / 2);
+    for (let i = 0; i < uint32.length / 2; i++) {
+      final[i] = new Uint64(uint32[2 * i], uint32[2 * i + 1]);
+    }
+    return final;
   }
 
   draw() {}
