@@ -32,7 +32,7 @@ import {SegmentSelection} from 'neuroglancer/sliceview/chunked_graph/frontend';
 import {StatusMessage} from 'neuroglancer/status';
 import {WatchableRefCounted, WatchableValue} from 'neuroglancer/trackable_value';
 import {getPositionSummary} from 'neuroglancer/ui/annotations';
-import {registerTool, Tool} from 'neuroglancer/ui/tool';
+import {Tool} from 'neuroglancer/ui/tool';
 import {Borrowed, Owned, RefCounted} from 'neuroglancer/util/disposable';
 import {removeChildren} from 'neuroglancer/util/dom';
 import {mat4, vec3} from 'neuroglancer/util/geom';
@@ -331,8 +331,7 @@ export class GraphOperationLayerView extends Tab {
         for (const annotation of sourceA) {
           if (annotation.type === AnnotationType.POINT && annotation.segments &&
               annotation.segments.length === 2) {
-            const spatialPoint =
-                vec3.transformMat4(vec3.create(), annotation.point, objectToLocal);
+            const spatialPoint = vec3.transformMat4(vec3.create(), annotation.point, objectToLocal);
             const segment = annotation.segments[0];
             const root = annotation.segments[1];
             sources.push({segmentId: segment, rootId: root, position: spatialPoint});
@@ -341,8 +340,7 @@ export class GraphOperationLayerView extends Tab {
         for (const annotation of sourceB) {
           if (annotation.type === AnnotationType.POINT && annotation.segments &&
               annotation.segments.length === 2) {
-            const spatialPoint =
-                vec3.transformMat4(vec3.create(), annotation.point, objectToLocal);
+            const spatialPoint = vec3.transformMat4(vec3.create(), annotation.point, objectToLocal);
             const segment = annotation.segments[0];
             const root = annotation.segments[1];
             sinks.push({segmentId: segment, rootId: root, position: spatialPoint});
@@ -698,8 +696,6 @@ abstract class PlaceGraphOperationTool extends Tool {
   }
 }
 
-const GRAPHOPERATION_MARKER_TOOL_ID = 'graphoperationMarker';
-
 export class PlaceGraphOperationMarkerTool extends PlaceGraphOperationTool {
   constructor(layer: SegmentationUserLayerWithGraph, options: any) {
     super(layer, options);
@@ -731,11 +727,8 @@ export class PlaceGraphOperationMarkerTool extends PlaceGraphOperationTool {
   }
 
   toJSON() {
-    return GRAPHOPERATION_MARKER_TOOL_ID;
+    // Don't register the tool, it's not that important to restore and likely to cause compatibity
+    // issues in the future if cluttering the state
+    return;
   }
 }
-
-registerTool(
-    GRAPHOPERATION_MARKER_TOOL_ID,
-    (layer, options) =>
-        new PlaceGraphOperationMarkerTool(<SegmentationUserLayerWithGraph>layer, options));
