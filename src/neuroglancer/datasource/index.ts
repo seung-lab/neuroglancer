@@ -17,6 +17,7 @@
 import {MultiscaleAnnotationSource} from 'neuroglancer/annotation/frontend_source';
 import {ChunkManager} from 'neuroglancer/chunk_manager/frontend';
 import {MeshSource, MultiscaleMeshSource} from 'neuroglancer/mesh/frontend';
+import {SegmentToVoxelCountMap} from 'neuroglancer/segment_metadata';
 import {SkeletonSource} from 'neuroglancer/skeleton/frontend';
 import {VectorGraphicsType} from 'neuroglancer/sliceview/vector_graphics/base';
 import {MultiscaleVectorGraphicsChunkSource} from 'neuroglancer/sliceview/vector_graphics/frontend';
@@ -25,7 +26,6 @@ import {MultiscaleVolumeChunkSource} from 'neuroglancer/sliceview/volume/fronten
 import {CancellationToken, uncancelableToken} from 'neuroglancer/util/cancellation';
 import {applyCompletionOffset, CompletionWithDescription} from 'neuroglancer/util/completion';
 import {Owned, RefCounted} from 'neuroglancer/util/disposable';
-import {SegmentToVoxelCountMap} from 'neuroglancer/segment_metadata';
 
 export type Completion = CompletionWithDescription;
 
@@ -101,8 +101,8 @@ export interface DataSource {
           Promise<MultiscaleAnnotationSource>|MultiscaleAnnotationSource;
 
   getSegmentToVoxelCountMap?
-    (chunkManager: ChunkManager, path: string, cancellationToken: CancellationToken):
-    Promise<SegmentToVoxelCountMap>;
+      (chunkManager: ChunkManager, path: string, cancellationToken: CancellationToken):
+          Promise<SegmentToVoxelCountMap>;
 
   /**
    * Returns a suggested layer name for the given volume source.
@@ -187,7 +187,8 @@ export class DataSourceProvider extends RefCounted {
     });
   }
 
-  getSegmentToVoxelCountMap(chunkManager: ChunkManager, url: string, cancellationToken = uncancelableToken) {
+  getSegmentToVoxelCountMap(
+      chunkManager: ChunkManager, url: string, cancellationToken = uncancelableToken) {
     const [dataSource, path] = this.getDataSource(url);
     return new Promise<SegmentToVoxelCountMap>(resolve => {
       resolve(dataSource.getSegmentToVoxelCountMap!(chunkManager, path, cancellationToken));

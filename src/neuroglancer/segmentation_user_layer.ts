@@ -25,6 +25,7 @@ import {Overlay} from 'neuroglancer/overlay';
 import {getRenderMeshByDefault} from 'neuroglancer/preferences/user_preferences';
 import {RenderScaleHistogram, trackableRenderScaleTarget} from 'neuroglancer/render_scale_statistics';
 import {SegmentColorHash} from 'neuroglancer/segment_color';
+import {SegmentMetadata, SegmentToVoxelCountMap} from 'neuroglancer/segment_metadata';
 import {SegmentSelectionState, Uint64MapEntry} from 'neuroglancer/segmentation_display_state/frontend';
 import {SharedDisjointUint64Sets} from 'neuroglancer/shared_disjoint_sets';
 import {FRAGMENT_MAIN_START as SKELETON_FRAGMENT_MAIN_START, PerspectiveViewSkeletonLayer, SkeletonLayer, SkeletonRenderingOptions, SkeletonSource, SliceViewPanelSkeletonLayer, ViewSpecificSkeletonRenderingOptions} from 'neuroglancer/skeleton/frontend';
@@ -42,14 +43,13 @@ import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {makeWatchableShaderError} from 'neuroglancer/webgl/dynamic_shader';
 import {EnumSelectWidget} from 'neuroglancer/widget/enum_widget';
+import {OmniSegmentWidget} from 'neuroglancer/widget/omni_segment_widget';
 import {RangeWidget} from 'neuroglancer/widget/range';
 import {RenderScaleWidget} from 'neuroglancer/widget/render_scale_widget';
 import {SegmentSetWidget} from 'neuroglancer/widget/segment_set_widget';
 import {ShaderCodeWidget} from 'neuroglancer/widget/shader_code_widget';
 import {Tab} from 'neuroglancer/widget/tab_view';
 import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
-import {OmniSegmentWidget} from 'neuroglancer/widget/omni_segment_widget';
-import {SegmentMetadata, SegmentToVoxelCountMap} from 'neuroglancer/segment_metadata';
 
 const SELECTED_ALPHA_JSON_KEY = 'selectedAlpha';
 const NOT_SELECTED_ALPHA_JSON_KEY = 'notSelectedAlpha';
@@ -155,7 +155,8 @@ export class SegmentationUserLayer extends Base {
     }
     this.displayState.segmentColorHash.restoreState(specification[COLOR_SEED_JSON_KEY]);
     this.displayState.renderScaleTarget.restoreState(specification[MESH_RENDER_SCALE_JSON_KEY]);
-    this.displayState.shatterSegmentEquivalences.restoreState(specification[SHATTER_SEGMENT_EQUIVALENCES_JSON_KEY]);
+    this.displayState.shatterSegmentEquivalences.restoreState(
+        specification[SHATTER_SEGMENT_EQUIVALENCES_JSON_KEY]);
 
     verifyObjectProperty(specification, EQUIVALENCES_JSON_KEY, y => {
       this.displayState.segmentEquivalences.restoreState(y);
@@ -207,35 +208,36 @@ export class SegmentationUserLayer extends Base {
     if (skeletonsPath != null) {
       ++remaining;
       this.manager.dataSourceProvider.getSkeletonSource(this.manager.chunkManager, skeletonsPath)
-        .then(skeletonSource => {
-          if (!this.wasDisposed) {
-            this.addSkeleton(skeletonSource);
-            if (--remaining === 0) {
-              this.isReady = true;
+          .then(skeletonSource => {
+            if (!this.wasDisposed) {
+              this.addSkeleton(skeletonSource);
+              if (--remaining === 0) {
+                this.isReady = true;
+              }
             }
-          }
-        });
+          });
     }
 
     if (segmentToVoxelCountMapPath) {
       ++remaining;
-      this.manager.dataSourceProvider.getSegmentToVoxelCountMap(this.manager.chunkManager, segmentToVoxelCountMapPath)
-        .then(segmentToVoxelCountMap => {
-          if (!this.wasDisposed) {
-            if (--remaining === 0) {
-              this.isReady = true;
+      this.manager.dataSourceProvider
+          .getSegmentToVoxelCountMap(this.manager.chunkManager, segmentToVoxelCountMapPath)
+          .then(segmentToVoxelCountMap => {
+            if (!this.wasDisposed) {
+              if (--remaining === 0) {
+                this.isReady = true;
+              }
             }
-          }
-          if (segmentToVoxelCountMap) {
-            this.restoreSegmentMetadata(
-              segmentToVoxelCountMap, specification[SEGMENT_CATEGORIES_JSON_KEY],
-              specification[CATEGORIZED_SEGMENTS_JSON_KEY]);
-          } else {
-            StatusMessage.showTemporaryMessage(
-              'Segment metadata file specified in JSON state does not exist so omni segment widget won\'t be shown',
-              6000);
-          }
-        });
+            if (segmentToVoxelCountMap) {
+              this.restoreSegmentMetadata(
+                  segmentToVoxelCountMap, specification[SEGMENT_CATEGORIES_JSON_KEY],
+                  specification[CATEGORIZED_SEGMENTS_JSON_KEY]);
+            } else {
+              StatusMessage.showTemporaryMessage(
+                  'Segment metadata file specified in JSON state does not exist so omni segment widget won\'t be shown',
+                  6000);
+            }
+          });
     }
 
     if (multiscaleSource !== undefined) {
@@ -296,8 +298,8 @@ export class SegmentationUserLayer extends Base {
               }
               if (segmentToVoxelCountMap) {
                 this.restoreSegmentMetadata(
-                  segmentToVoxelCountMap, specification[SEGMENT_CATEGORIES_JSON_KEY],
-                  specification[CATEGORIZED_SEGMENTS_JSON_KEY]);
+                    segmentToVoxelCountMap, specification[SEGMENT_CATEGORIES_JSON_KEY],
+                    specification[CATEGORIZED_SEGMENTS_JSON_KEY]);
               }
             });
           }
@@ -369,7 +371,8 @@ export class SegmentationUserLayer extends Base {
         }
       }
     }
-    x[SHATTER_SEGMENT_EQUIVALENCES_JSON_KEY] = this.displayState.shatterSegmentEquivalences.toJSON();
+    x[SHATTER_SEGMENT_EQUIVALENCES_JSON_KEY] =
+        this.displayState.shatterSegmentEquivalences.toJSON();
     return x;
   }
 
@@ -441,7 +444,7 @@ export class SegmentationUserLayer extends Base {
       }
       case 'shatter-segment-equivalences': {
         this.displayState.shatterSegmentEquivalences.value =
-          !this.displayState.shatterSegmentEquivalences.value;
+            !this.displayState.shatterSegmentEquivalences.value;
         break;
       }
     }
@@ -615,8 +618,8 @@ class DisplayOptionsTab extends Tab {
         return;
       }
       {
-        this.omniWidget = this.registerDisposer(new OmniSegmentWidget(
-            layer.displayState, layer.segmentMetadata));
+        this.omniWidget =
+            this.registerDisposer(new OmniSegmentWidget(layer.displayState, layer.segmentMetadata));
         element.appendChild(this.omniWidget.element);
       }
     };

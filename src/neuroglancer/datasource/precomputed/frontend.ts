@@ -20,14 +20,14 @@ import {DataSource} from 'neuroglancer/datasource';
 import {DataEncoding, MeshSourceParameters, MultiscaleMeshMetadata, MultiscaleMeshSourceParameters, ShardingHashFunction, ShardingParameters, SkeletonMetadata, SkeletonSourceParameters, VolumeChunkEncoding, VolumeChunkSourceParameters} from 'neuroglancer/datasource/precomputed/base';
 import {VertexPositionFormat} from 'neuroglancer/mesh/base';
 import {MeshSource, MultiscaleMeshSource} from 'neuroglancer/mesh/frontend';
+import {SegmentToVoxelCountMap} from 'neuroglancer/segment_metadata';
 import {VertexAttributeInfo} from 'neuroglancer/skeleton/base';
 import {SkeletonSource} from 'neuroglancer/skeleton/frontend';
 import {DataType, VolumeChunkSpecification, VolumeSourceOptions, VolumeType} from 'neuroglancer/sliceview/volume/base';
 import {MultiscaleVolumeChunkSource as GenericMultiscaleVolumeChunkSource, VolumeChunkSource} from 'neuroglancer/sliceview/volume/frontend';
 import {mat4, vec3} from 'neuroglancer/util/geom';
 import {fetchOk, parseSpecialUrl} from 'neuroglancer/util/http_request';
-import {parseArray, parseFixedLengthArray, parseIntVec, verifyEnumString, verifyFiniteFloat, verifyFinitePositiveFloat, verifyInt, verifyObject, verifyObjectProperty, verifyOptionalString, verifyPositiveInt, verifyString, verifyArray} from 'neuroglancer/util/json';
-import {SegmentToVoxelCountMap} from 'neuroglancer/segment_metadata';
+import {parseArray, parseFixedLengthArray, parseIntVec, verifyArray, verifyEnumString, verifyFiniteFloat, verifyFinitePositiveFloat, verifyInt, verifyObject, verifyObjectProperty, verifyOptionalString, verifyPositiveInt, verifyString} from 'neuroglancer/util/json';
 
 class PrecomputedVolumeChunkSource extends
 (WithParameters(VolumeChunkSource, VolumeChunkSourceParameters)) {}
@@ -351,15 +351,15 @@ function parseSegmentToVoxelCountMap(data: any) {
   return segmentToVoxelCountMap;
 }
 
-export function getSegmentToVoxelCountMap(chunkManager: ChunkManager, url: string): Promise<SegmentToVoxelCountMap> {
+export function getSegmentToVoxelCountMap(
+    chunkManager: ChunkManager, url: string): Promise<SegmentToVoxelCountMap> {
   return chunkManager.memoize.getUncounted(
-    { 'type': 'precomputed:SegmentToVoxelCountMap', url},
-    () => fetchOk(url).then(response => {
-      if (!response.ok) {
-        throw new Error('Request for segment to voxel count map failed');
-      }
-      return response.json().then(value => parseSegmentToVoxelCountMap(value));
-    }));
+      {'type': 'precomputed:SegmentToVoxelCountMap', url}, () => fetchOk(url).then(response => {
+        if (!response.ok) {
+          throw new Error('Request for segment to voxel count map failed');
+        }
+        return response.json().then(value => parseSegmentToVoxelCountMap(value));
+      }));
 }
 
 export class PrecomputedDataSource extends DataSource {

@@ -17,6 +17,7 @@
 import {AnnotationSource} from 'neuroglancer/annotation';
 import {ChunkManager} from 'neuroglancer/chunk_manager/frontend';
 import {MeshSource, MultiscaleMeshSource} from 'neuroglancer/mesh/frontend';
+import {SegmentToVoxelCountMap} from 'neuroglancer/segment_metadata';
 import {SkeletonSource} from 'neuroglancer/skeleton/frontend';
 import {DataType} from 'neuroglancer/sliceview/base';
 import {ChunkedGraphSourceOptions} from 'neuroglancer/sliceview/chunked_graph/base';
@@ -29,7 +30,6 @@ import {vec3, vec3Key} from 'neuroglancer/util/geom';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {GL} from 'neuroglancer/webgl/context';
 import {ShaderBuilder, ShaderProgram} from 'neuroglancer/webgl/shader';
-import {SegmentToVoxelCountMap} from 'neuroglancer/segment_metadata';
 
 export type VolumeChunkKey = string;
 
@@ -197,14 +197,15 @@ export interface MultiscaleVolumeChunkSource extends MultiscaleSliceViewChunkSou
    *
    * This only makes sense if volumeType === VolumeType.SEGMENTATION.
    */
-  getMeshSource: () => Promise<MeshSource|MultiscaleMeshSource|null> | MeshSource | MultiscaleMeshSource | null;
+  getMeshSource: () => Promise<MeshSource|MultiscaleMeshSource|null>| MeshSource
+      | MultiscaleMeshSource | null;
 
   /**
    * Returns the associated skeleton source, if there is one.
    *
    * This only makes sense if volumeType === VolumeType.SEGMENTATION.
    */
-  getSkeletonSource?: () => Promise<SkeletonSource|null> | SkeletonSource | null;
+  getSkeletonSource?: () => Promise<SkeletonSource|null>| SkeletonSource | null;
 
   /**
    * Returns the associated chunked graph url, if there is one.
@@ -213,9 +214,11 @@ export interface MultiscaleVolumeChunkSource extends MultiscaleSliceViewChunkSou
    */
 
   getChunkedGraphUrl?: () => string | null;
-  getChunkedGraphSources?: (options: ChunkedGraphSourceOptions, rootSegments: Uint64Set) => ChunkedGraphChunkSource[][] | null;
+  getChunkedGraphSources?:
+      (options: ChunkedGraphSourceOptions,
+       rootSegments: Uint64Set) => ChunkedGraphChunkSource[][] | null;
 
   getStaticAnnotations?: () => AnnotationSource;
 
-  getSegmentToVoxelCountMap?: () => Promise<SegmentToVoxelCountMap|null>|null;
+  getSegmentToVoxelCountMap?: () => Promise<SegmentToVoxelCountMap|null>| null;
 }

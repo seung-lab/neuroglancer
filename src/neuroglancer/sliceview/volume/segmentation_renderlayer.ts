@@ -218,7 +218,8 @@ uint64_t getMappedObjectId() {
     gl.uniform1f(shader.uniform('uSaturation'), this.displayState.saturation.value);
     gl.uniform1f(shader.uniform('uNotSelectedAlpha'), this.displayState.notSelectedAlpha.value);
     gl.uniform2ui(shader.uniform('uSelectedSegment'), selectedSegmentLow, selectedSegmentHigh);
-    gl.uniform2ui(shader.uniform('uRawSelectedSegment'), rawSelectedSegmentLow, rawSelectedSegmentHigh);
+    gl.uniform2ui(
+        shader.uniform('uRawSelectedSegment'), rawSelectedSegmentLow, rawSelectedSegmentHigh);
     gl.uniform1ui(shader.uniform('uShowAllSegments'), rootSegments.hashTable.size ? 0 : 1);
     gl.uniform1ui(
         shader.uniform('uShatterSegmentEquivalences'),
