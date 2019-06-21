@@ -325,14 +325,14 @@ export class GraphOperationLayerView extends Tab {
       confirmButton.textContent = '✔️';
       confirmButton.title = 'Perform Multi-Cut';
       confirmButton.addEventListener('click', () => {
-        const {objectToGlobal} = annotationLayer;
+        const {objectToLocal} = annotationLayer.sourceA;
         let sources = Array<SegmentSelection>();
         let sinks = Array<SegmentSelection>();
         for (const annotation of sourceA) {
           if (annotation.type === AnnotationType.POINT && annotation.segments &&
               annotation.segments.length === 2) {
             const spatialPoint =
-                vec3.transformMat4(vec3.create(), annotation.point, objectToGlobal);
+                vec3.transformMat4(vec3.create(), annotation.point, objectToLocal);
             const segment = annotation.segments[0];
             const root = annotation.segments[1];
             sources.push({segmentId: segment, rootId: root, position: spatialPoint});
@@ -342,7 +342,7 @@ export class GraphOperationLayerView extends Tab {
           if (annotation.type === AnnotationType.POINT && annotation.segments &&
               annotation.segments.length === 2) {
             const spatialPoint =
-                vec3.transformMat4(vec3.create(), annotation.point, objectToGlobal);
+                vec3.transformMat4(vec3.create(), annotation.point, objectToLocal);
             const segment = annotation.segments[0];
             const root = annotation.segments[1];
             sinks.push({segmentId: segment, rootId: root, position: spatialPoint});
