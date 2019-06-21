@@ -15,12 +15,16 @@
  */
 
 import {AnnotationId, AnnotationReference, LocalAnnotationSource} from 'neuroglancer/annotation';
+import {AnnotationLayerState} from 'neuroglancer/annotation/frontend';
 import {CoordinateTransform} from 'neuroglancer/coordinate_transform';
 import {RenderLayerRole} from 'neuroglancer/layer';
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
-import {WatchableValue} from 'neuroglancer/trackable_value';
-import {Owned, RefCounted} from 'neuroglancer/util/disposable';
+import {trackableAlphaValue} from 'neuroglancer/trackable_alpha';
+import {WatchableRefCounted, WatchableValue} from 'neuroglancer/trackable_value';
+import {TrackableRGB} from 'neuroglancer/util/color';
+import {Borrowed, Owned, RefCounted} from 'neuroglancer/util/disposable';
 import {mat4} from 'neuroglancer/util/geom';
+import {vec3} from 'neuroglancer/util/geom';
 import {verifyArray} from 'neuroglancer/util/json';
 import {NullarySignal} from 'neuroglancer/util/signal';
 
@@ -33,7 +37,7 @@ export class GraphOperationLayerState extends RefCounted {
   transform: CoordinateTransform;
   sourceA: Owned<LocalAnnotationSource>;
   sourceB: Owned<LocalAnnotationSource>;
-  activeSource: Owned<LocalAnnotationSource>;
+  activeSource: Borrowed<LocalAnnotationSource>;
 
   hoverState: GraphOperationHoverState;
   role: RenderLayerRole;
@@ -46,6 +50,10 @@ export class GraphOperationLayerState extends RefCounted {
   private transformCacheGeneration = -1;
   private cachedObjectToGlobal = mat4.create();
   private cachedGlobalToObject = mat4.create();
+  private annotationLayerStateA =
+      this.registerDisposer(new WatchableRefCounted<AnnotationLayerState>());
+  private annotationLayerStateB =
+      this.registerDisposer(new WatchableRefCounted<AnnotationLayerState>());
 
   private updateTransforms() {
     const {transform, transformCacheGeneration} = this;
@@ -68,28 +76,51 @@ export class GraphOperationLayerState extends RefCounted {
     return this.cachedGlobalToObject;
   }
 
+  get stateA() {
+    return this.annotationLayerStateA.value;
+  }
+
+  get stateB() {
+    return this.annotationLayerStateB.value;
+  }
+
   constructor(options: {
-    transform?: CoordinateTransform,
-             sourceA: Owned<LocalAnnotationSource>,
-             sourceB: Owned<LocalAnnotationSource>,
+    transform: CoordinateTransform,
+    segmentationState: WatchableValue<SegmentationDisplayState>,
     hoverState?: GraphOperationHoverState,
-              segmentationState: WatchableValue<SegmentationDisplayState>,
   }) {
     super();
     const {
       transform = new CoordinateTransform(),
-      sourceA,
-      sourceB,
-      hoverState = new GraphOperationHoverState(undefined),
       segmentationState,
+      hoverState = new GraphOperationHoverState(undefined),
     } = options;
     this.transform = transform;
-    this.sourceA = this.registerDisposer(sourceA);
-    this.sourceB = this.registerDisposer(sourceB);
-    this.activeSource = this.sourceA.addRef();
+    this.sourceA = this.registerDisposer(new LocalAnnotationSource());
+    this.sourceB = this.registerDisposer(new LocalAnnotationSource());
+    this.activeSource = this.sourceA;
     this.hoverState = hoverState;
     this.role = RenderLayerRole.GRAPH_MODIFICATION_MARKER;
     this.segmentationState = segmentationState;
+
+    const fillOpacity = trackableAlphaValue(1.0);
+    this.annotationLayerStateA.value = new AnnotationLayerState({
+      transform: this.transform,
+      source: this.sourceA.addRef(),
+      role: RenderLayerRole.GRAPH_MODIFICATION_MARKER,
+      fillOpacity: fillOpacity,
+      color: new TrackableRGB(vec3.fromValues(1.0, 0.0, 0.0)),
+      segmentationState: segmentationState,
+    });
+
+    this.annotationLayerStateB.value = new AnnotationLayerState({
+      transform: this.transform,
+      source: this.sourceB.addRef(),
+      role: RenderLayerRole.GRAPH_MODIFICATION_MARKER,
+      fillOpacity: fillOpacity,
+      color: new TrackableRGB(vec3.fromValues(0.0, 0.0, 1.0)),
+      segmentationState: segmentationState,
+    });
 
     this.sourceA.changed.add(() => this.changed.dispatch());
     this.sourceB.changed.add(() => this.changed.dispatch());
@@ -97,9 +128,9 @@ export class GraphOperationLayerState extends RefCounted {
 
   toggleSource() {
     if (this.activeSource === this.sourceA) {
-      this.activeSource = this.sourceB.addRef();
+      this.activeSource = this.sourceB;
     } else {
-      this.activeSource = this.sourceA.addRef();
+      this.activeSource = this.sourceA;
     }
   }
 
