@@ -21,11 +21,15 @@ import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/
 import {WatchableValue} from 'neuroglancer/trackable_value';
 import {Owned, RefCounted} from 'neuroglancer/util/disposable';
 import {mat4} from 'neuroglancer/util/geom';
+import {verifyArray} from 'neuroglancer/util/json';
+import {NullarySignal} from 'neuroglancer/util/signal';
 
-export class GraphOperationHoverState extends
-    WatchableValue<{id: string}|undefined> {}
+const ANNOTATIONS_JSON_KEY = 'annotations';
+
+export class GraphOperationHoverState extends WatchableValue<{id: string}|undefined> {}
 
 export class GraphOperationLayerState extends RefCounted {
+  changed = new NullarySignal();
   transform: CoordinateTransform;
   sourceA: Owned<LocalAnnotationSource>;
   sourceB: Owned<LocalAnnotationSource>;
@@ -86,6 +90,9 @@ export class GraphOperationLayerState extends RefCounted {
     this.hoverState = hoverState;
     this.role = RenderLayerRole.GRAPH_MODIFICATION_MARKER;
     this.segmentationState = segmentationState;
+
+    this.sourceA.changed.add(() => this.changed.dispatch());
+    this.sourceB.changed.add(() => this.changed.dispatch());
   }
 
   toggleSource() {
@@ -110,5 +117,22 @@ export class GraphOperationLayerState extends RefCounted {
     } else {
       this.sourceB.delete(reference);
     }
+  }
+
+  restoreState(spec: any) {
+    const groups = verifyArray(spec);
+    if (groups.length > 0) {
+      this.sourceA.restoreState(spec[0][ANNOTATIONS_JSON_KEY], []);
+    }
+    if (groups.length > 1) {
+      this.sourceB.restoreState(spec[1][ANNOTATIONS_JSON_KEY], []);
+    }
+  }
+
+  toJSON() {
+    return [
+      this.sourceA.toJSON(),
+      this.sourceB.toJSON(),
+    ];
   }
 }

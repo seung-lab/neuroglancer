@@ -41,7 +41,6 @@ const EQUIVALENCES_JSON_KEY = 'equivalences';
 const CHUNKED_GRAPH_JSON_KEY = 'chunkedGraph';
 const ROOT_SEGMENTS_JSON_KEY = 'segments';
 const GRAPH_OPERATION_MARKER_JSON_KEY = 'graphOperationMarker';
-const ANNOTATIONS_JSON_KEY = 'annotations';
 
 const lastSegmentSelection: SegmentSelection = {
   segmentId: new Uint64(),
@@ -125,6 +124,8 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
         segmentationState: segmentationState,
       });
 
+      this.graphOperationLayerState.value.changed.add(() => this.specificationChanged.dispatch());
+
       this.tabs.default = 'rendering';
     }
 
@@ -184,10 +185,8 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
       }
 
       if (this.graphOperationLayerState.value && specification[GRAPH_OPERATION_MARKER_JSON_KEY]) {
-        this.graphOperationLayerState.value!.sourceA.restoreState(
-            specification[GRAPH_OPERATION_MARKER_JSON_KEY]['A'][ANNOTATIONS_JSON_KEY], []);
-        this.graphOperationLayerState.value!.sourceB.restoreState(
-            specification[GRAPH_OPERATION_MARKER_JSON_KEY]['B'][ANNOTATIONS_JSON_KEY], []);
+        this.graphOperationLayerState.value!.restoreState(
+            specification[GRAPH_OPERATION_MARKER_JSON_KEY]);
       }
     }
 
@@ -197,10 +196,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
       x[CHUNKED_GRAPH_JSON_KEY] = this.chunkedGraphUrl;
 
       if (this.graphOperationLayerState.value) {
-        x[GRAPH_OPERATION_MARKER_JSON_KEY] = {
-          'A': this.graphOperationLayerState.value.sourceA.toJSON(),
-          'B': this.graphOperationLayerState.value.sourceB.toJSON(),
-        };
+        x[GRAPH_OPERATION_MARKER_JSON_KEY] = this.graphOperationLayerState.value!.toJSON();
       }
 
       // Graph equivalences can contain million of supervoxel IDs - don't store them in the state.
