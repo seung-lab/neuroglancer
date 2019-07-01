@@ -32,6 +32,7 @@ import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {withSharedVisibility} from 'neuroglancer/visibility_priority/frontend';
 import {SharedObject} from 'neuroglancer/worker_rpc';
+import { TrackableRGB } from '../util/color';
 
 export class Uint64MapEntry {
   constructor(public key: Uint64, public value: Uint64) {}
@@ -113,6 +114,7 @@ export interface SegmentationDisplayState extends VisibleSegmentsState {
 
 export interface SegmentationDisplayStateWithAlpha extends SegmentationDisplayState {
   objectAlpha: TrackableAlphaValue;
+  objectColor: TrackableRGB;
 }
 
 export interface SegmentationDisplayState3D extends SegmentationDisplayStateWithAlpha {
@@ -141,6 +143,8 @@ export function registerRedrawWhenSegmentationDisplayStateWithAlphaChanged(
   registerRedrawWhenSegmentationDisplayStateChanged(displayState, renderLayer);
   renderLayer.registerDisposer(
       displayState.objectAlpha.changed.add(renderLayer.redrawNeeded.dispatch));
+  renderLayer.registerDisposer(
+      displayState.objectColor.changed.add(renderLayer.redrawNeeded.dispatch));
 }
 
 export function registerRedrawWhenSegmentationDisplayState3DChanged(
@@ -164,10 +168,17 @@ const tempColor = vec4.create();
  * Returns the alpha-premultiplied color to use.
  */
 export function getObjectColor(
-    displayState: SegmentationDisplayState, objectId: Uint64, alpha: number = 1) {
+    displayState: SegmentationDisplayStateWithAlpha, objectId: Uint64, alpha: number = 1) {
   const color = tempColor;
   color[3] = alpha;
-  displayState.segmentColorHash.compute(color, objectId);
+  let col = displayState.objectColor.value;
+  if (col[0] > 0 || col[1] > 0 || col[2] > 0) {
+    color[0] = col[0];
+    color[1] = col[1];
+    color[2] = col[2];
+  } else {
+    displayState.segmentColorHash.compute(color, objectId);
+  }
   if (displayState.segmentSelectionState.isSelected(objectId)) {
     for (let i = 0; i < 3; ++i) {
       color[i] = color[i] * 0.5 + 0.5;

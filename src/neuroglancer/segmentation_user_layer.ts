@@ -37,11 +37,14 @@ import {ElementVisibilityFromTrackableBoolean, TrackableBoolean, TrackableBoolea
 import {ComputedWatchableValue} from 'neuroglancer/trackable_value';
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {UserLayerWithVolumeSourceMixin} from 'neuroglancer/user_layer_with_volume_source';
+import {TrackableRGB} from 'neuroglancer/util/color';
 import {Borrowed} from 'neuroglancer/util/disposable';
+import {vec3} from 'neuroglancer/util/geom';
 import {parseArray, verifyObjectProperty, verifyOptionalString} from 'neuroglancer/util/json';
 import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {makeWatchableShaderError} from 'neuroglancer/webgl/dynamic_shader';
+import {ColorWidget} from 'neuroglancer/widget/color';
 import {EnumSelectWidget} from 'neuroglancer/widget/enum_widget';
 import {MinimizableGroupWidget} from 'neuroglancer/widget/minimizable_group';
 import {OmniSegmentWidget} from 'neuroglancer/widget/omni_segment_widget';
@@ -84,6 +87,7 @@ export class SegmentationUserLayer extends Base {
     saturation: trackableAlphaValue(1.0),
     notSelectedAlpha: trackableAlphaValue(0),
     objectAlpha: trackableAlphaValue(1.0),
+    objectColor: new TrackableRGB(vec3.fromValues(0.0, 0.0, 0.0)),
     hideSegmentZero: new TrackableBoolean(true, true),
     rootSegments: Uint64Set.makeWithCounterpart(this.manager.worker),
     hiddenRootSegments: new Uint64Set(),
@@ -126,6 +130,7 @@ export class SegmentationUserLayer extends Base {
     this.displayState.saturation.changed.add(this.specificationChanged.dispatch);
     this.displayState.notSelectedAlpha.changed.add(this.specificationChanged.dispatch);
     this.displayState.objectAlpha.changed.add(this.specificationChanged.dispatch);
+    this.displayState.objectColor.changed.add(this.specificationChanged.dispatch);
     this.displayState.hideSegmentZero.changed.add(this.specificationChanged.dispatch);
     this.displayState.skeletonRenderingOptions.changed.add(this.specificationChanged.dispatch);
     this.displayState.segmentColorHash.changed.add(this.specificationChanged.dispatch);
@@ -541,7 +546,8 @@ function makeSkeletonShaderCodeWidget(layer: SegmentationUserLayer) {
 class DisplayOptionsTab extends Tab {
   private group2D = this.registerDisposer(new MinimizableGroupWidget('2D Visualization'));
   private group3D = this.registerDisposer(new MinimizableGroupWidget('3D Visualization'));
-  private groupSegmentSelection = this.registerDisposer(new MinimizableGroupWidget('Segment Selection'));
+  private groupSegmentSelection =
+      this.registerDisposer(new MinimizableGroupWidget('Segment Selection'));
   private groupOmniInfo = this.registerDisposer(new MinimizableGroupWidget('Omni Segment Info'));
   visibleSegmentWidget = this.registerDisposer(new SegmentSetWidget(this.layer.displayState));
   addSegmentWidget = this.registerDisposer(new Uint64EntryWidget());
@@ -551,6 +557,7 @@ class DisplayOptionsTab extends Tab {
       this.registerDisposer(new RangeWidget(this.layer.displayState.notSelectedAlpha));
   saturationWidget = this.registerDisposer(new RangeWidget(this.layer.displayState.saturation));
   objectAlphaWidget = this.registerDisposer(new RangeWidget(this.layer.displayState.objectAlpha));
+  objectColorWidget = this.registerDisposer(new ColorWidget(this.layer.displayState.objectColor));
   codeWidget: ShaderCodeWidget|undefined;
   omniWidget: OmniSegmentWidget|undefined;
 
@@ -559,11 +566,18 @@ class DisplayOptionsTab extends Tab {
     const {element} = this;
     element.classList.add('segmentation-dropdown');
     const {group2D, group3D, groupSegmentSelection, groupOmniInfo} = this;
-    let {selectedAlphaWidget, notSelectedAlphaWidget, saturationWidget, objectAlphaWidget} = this;
+    let {
+      selectedAlphaWidget,
+      notSelectedAlphaWidget,
+      saturationWidget,
+      objectAlphaWidget,
+      objectColorWidget
+    } = this;
     selectedAlphaWidget.promptElement.textContent = 'Opacity (on)';
     notSelectedAlphaWidget.promptElement.textContent = 'Opacity (off)';
     saturationWidget.promptElement.textContent = 'Saturation';
     objectAlphaWidget.promptElement.textContent = 'Opacity (3d)';
+    objectColorWidget.element.textContent = 'Color Override (3d)';
 
     if (this.layer.volumePath !== undefined) {
       group2D.appendFixedChild(this.selectedAlphaWidget.element);
@@ -585,6 +599,8 @@ class DisplayOptionsTab extends Tab {
         this.layer.objectLayerStateChanged));
     this.registerDisposer(
         new ElementVisibilityFromTrackableBoolean(has3dLayer, this.objectAlphaWidget.element));
+    this.registerDisposer(
+        new ElementVisibilityFromTrackableBoolean(has3dLayer, this.objectColorWidget.element));
 
     {
       const renderScaleWidget = this.registerDisposer(new RenderScaleWidget(
@@ -595,6 +611,7 @@ class DisplayOptionsTab extends Tab {
           new ElementVisibilityFromTrackableBoolean(has3dLayer, renderScaleWidget.element));
     }
     group3D.appendFixedChild(this.objectAlphaWidget.element);
+    group3D.appendFixedChild(this.objectColorWidget.element);
 
     {
       const checkbox =
@@ -617,7 +634,8 @@ class DisplayOptionsTab extends Tab {
         this.layer.displayState.rootSegments.add(value);
       }
     }));
-    groupSegmentSelection.appendFlexibleChild(this.registerDisposer(this.visibleSegmentWidget).element);
+    groupSegmentSelection.appendFlexibleChild(
+        this.registerDisposer(this.visibleSegmentWidget).element);
 
     const maybeAddOmniSegmentWidget = () => {
       if (this.omniWidget || (!layer.segmentMetadata)) {
