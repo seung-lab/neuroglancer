@@ -208,7 +208,7 @@ export class SegmentSetWidget extends RefCounted {
       this.disabledItems.set(segmentIDString, itemElement);
     }
   }
-
+// TODO: Item Button
   private createItemButton = (segmentIDString: string):
       HTMLButtonElement => {
         const widget = this;

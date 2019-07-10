@@ -61,6 +61,7 @@ import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
 import {RPC} from 'neuroglancer/worker_rpc';
 import {initAuthTokenSharedValue} from 'neuroglancer/authentication/frontend';
 import {AnnotationUserLayer} from 'neuroglancer/annotation/user_layer';
+import {UserReportDialog} from 'neuroglancer/user_report/user_report';
 
 require('./viewer.css');
 require('neuroglancer/noselect.css');
@@ -98,7 +99,8 @@ export class InputEventBindings extends DataPanelInputEventBindings {
 
 const viewerUiControlOptionKeys: (keyof ViewerUIControlConfiguration)[] = [
   'showHelpButton', 'showEditStateButton', 'showLayerPanel', 'showLocation',
-  'showAnnotationToolStatus', 'showJsonPostButton', 'showUserPreferencesButton'
+  'showAnnotationToolStatus', 'showJsonPostButton', 'showUserPreferencesButton',
+  'showBugButton'
 ];
 
 const viewerOptionKeys: (keyof ViewerUIOptions)[] =
@@ -109,6 +111,7 @@ export class ViewerUIControlConfiguration {
   showEditStateButton = new TrackableBoolean(true);
   showJsonPostButton = new TrackableBoolean(true);
   showUserPreferencesButton = new TrackableBoolean(true);
+  showBugButton = new TrackableBoolean(true);
   showLayerPanel = new TrackableBoolean(true);
   showLocation = new TrackableBoolean(true);
   showAnnotationToolStatus = new TrackableBoolean(true);
@@ -143,6 +146,7 @@ interface ViewerUIOptions {
   showAnnotationToolStatus: boolean;
   showJsonPostButton: boolean;
   showUserPreferencesButton: boolean;
+  showBugButton: boolean;
 }
 
 export interface ViewerOptions extends ViewerUIOptions, VisibilityPrioritySpecification {
@@ -496,6 +500,18 @@ export class Viewer extends RefCounted implements ViewerState {
       topRow.appendChild(button);
     }
 
+    {
+      const button = makeTextIconButton('🐞', 'Bug?');
+      this.registerEventListener(button, 'click', async () => {
+        let raw_ss = (await require('html2canvas')(document.body)).toDataURL();
+        let image = raw_ss.slice(raw_ss.indexOf('data:image/png;base64,') + 22);
+        this.showReportDialog(image);
+      });
+      this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
+          this.uiControlVisibility.showBugButton, button));
+      topRow.appendChild(button);
+    }
+
     this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
         makeDerivedWatchableValue(
             (...values: boolean[]) => values.reduce((a, b) => a || b, false),
@@ -677,6 +693,10 @@ export class Viewer extends RefCounted implements ViewerState {
               });
       }
 
+  }
+
+  showReportDialog(image: string) {
+    new UserReportDialog(this, image);
   }
 
   promptJsonStateServer(message: string): void {
