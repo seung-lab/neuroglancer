@@ -58,6 +58,7 @@ import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
 const SELECTED_ALPHA_JSON_KEY = 'selectedAlpha';
 const NOT_SELECTED_ALPHA_JSON_KEY = 'notSelectedAlpha';
 const OBJECT_ALPHA_JSON_KEY = 'objectAlpha';
+const OBJECT_COLOR_JSON_KEY = 'objectColor';
 const SATURATION_JSON_KEY = 'saturation';
 const HIDE_SEGMENT_ZERO_JSON_KEY = 'hideSegmentZero';
 const MESH_JSON_KEY = 'mesh';
@@ -151,6 +152,7 @@ export class SegmentationUserLayer extends Base {
     this.displayState.saturation.restoreState(specification[SATURATION_JSON_KEY]);
     this.displayState.notSelectedAlpha.restoreState(specification[NOT_SELECTED_ALPHA_JSON_KEY]);
     this.displayState.objectAlpha.restoreState(specification[OBJECT_ALPHA_JSON_KEY]);
+    this.displayState.objectColor.restoreState(specification[OBJECT_COLOR_JSON_KEY]);
     this.displayState.hideSegmentZero.restoreState(specification[HIDE_SEGMENT_ZERO_JSON_KEY]);
 
     const {skeletonRenderingOptions} = this.displayState;
@@ -346,6 +348,7 @@ export class SegmentationUserLayer extends Base {
     x[NOT_SELECTED_ALPHA_JSON_KEY] = this.displayState.notSelectedAlpha.toJSON();
     x[SATURATION_JSON_KEY] = this.displayState.saturation.toJSON();
     x[OBJECT_ALPHA_JSON_KEY] = this.displayState.objectAlpha.toJSON();
+    x[OBJECT_COLOR_JSON_KEY] = this.displayState.objectColor.toJSON();
     x[HIDE_SEGMENT_ZERO_JSON_KEY] = this.displayState.hideSegmentZero.toJSON();
     x[COLOR_SEED_JSON_KEY] = this.displayState.segmentColorHash.toJSON();
     let {rootSegments} = this.displayState;
