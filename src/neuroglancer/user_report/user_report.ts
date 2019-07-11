@@ -1,44 +1,12 @@
 import axios from 'axios';
 import validator from 'validator';
 import {Overlay} from 'neuroglancer/overlay';
-// import {TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
-// import {TrackableValue} from 'neuroglancer/trackable_value';
 import {Viewer} from 'neuroglancer/viewer';
-// import {NumberInputWidget} from 'neuroglancer/widget/number_input_widget';
 
 // TODO: Clean up
 // TODO: css
-/*require('./user_report.css');
+// require('./user_report.css');
 
-class UserPreferences {
-  renderMeshByDefault: TrackableBoolean;
-  prefetchSliceViewChunks: TrackableBoolean;
-  constructor() {
-    // mesh rendering is enabled by default, unless user selects not to
-    this.renderMeshByDefault = new TrackableBoolean(true, true, 'renderMeshByDefault');
-    // prefetching disabled by default, as it uses a lot of additional memory/bandwidth
-    this.prefetchSliceViewChunks = new TrackableBoolean(false, false, 'prefetchSliceViewChunks');
-
-    this.renderMeshByDefault.restoreState({});
-    this.prefetchSliceViewChunks.restoreState({});
-
-    this.renderMeshByDefault.changed.add(() => {
-      location.reload(false);
-    });
-  }
-}
-
-let userPreferences = new UserPreferences();
-
-export function getRenderMeshByDefault(): boolean {
-  return userPreferences.renderMeshByDefault.value;
-}
-
-export function getPrefetchSliceViewChunks(): TrackableBoolean {
-  return userPreferences.prefetchSliceViewChunks;
-}*/
-
-// TODO: Sanitize + Validate input
 interface LooseObject {
   [key: string]: any;
 }
@@ -47,10 +15,8 @@ export class UserReportDialog extends Overlay {
     super();
     let {content} = this;
     this.image = img;
-    // content.classList.add('user-preferences');
 
     let modal = document.createElement('div');
-    // scroll.classList.add('user-preferences-container');
 
     content.appendChild(modal);
 
@@ -193,19 +159,8 @@ export class UserReportDialog extends Overlay {
       }
     };
     modal.appendChild(submit);
-    /*
-    const addCheckbox = (label: string, value: TrackableBoolean) => {
-      const labelElement = document.createElement('label');
-      labelElement.textContent = label;
-      const checkbox = this.registerDisposer(new TrackableBooleanCheckbox(value));
-      labelElement.appendChild(checkbox.element);
-      scroll.appendChild(labelElement);
-    };
-
-    addCheckbox('Render Mesh By Default', userPreferences.renderMeshByDefault);
-    addCheckbox('Prefetch SliceView Chunks', userPreferences.prefetchSliceViewChunks);*/
   }
-  // TODO: Take screenshot when report button is pressed not submit button
+
   image = '';
   complete: LooseObject = {};
   async submit() {
