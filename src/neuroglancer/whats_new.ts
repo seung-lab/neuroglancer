@@ -6,7 +6,15 @@ import {Viewer} from 'neuroglancer/viewer';
 // TODO: Clean up
 // TODO: css
 // require('./whats_new.css');
-
+const generateWhatsNew = (GHCommits: string[] = []) => {
+  let WNCommits = JSON.parse(localStorage.getItem('WNCommits') || '[]');
+  let newCommits = (GHCommits.length) ? GHCommits.slice(0, GHCommits.length - WNCommits.length) : WNCommits;
+  let currentDes = (require('neuroglancer/whatsnew.md')) || '';
+  let description = newCommits.reduce((acc: string, cur: any, i: number) => `${acc}\n#### ${cur.commit.message}\n${
+    !i ? `${currentDes}` : `[More...](https://github.com/ogewan/neuroglancer/blob/${cur.commit.sha}/whatsnew.md`}`);
+  return description;
+}
+// TODO: store data in local storage and pull from it
 export const snoopWhatsNew = async (viewer: Viewer) => {
   let
       url = `https://script.google.com/macros/s/AKfycbzmPIJMb9z_o0_2vFdNeTIgrur_b_2tFO2A3pP9w9r7RVzub5E/exec`,
@@ -22,9 +30,8 @@ export const snoopWhatsNew = async (viewer: Viewer) => {
   let GHCommits = JSON.parse((await axios({ method: 'post', headers, url, data })).data);
 
   if (GHCommits.length > WNCommits.length) {
-    let newCommits = GHCommits.slice(0, GHCommits.length - WNCommits.length);
-    let description = newCommits.reduce((acc, cur) => )
-    return new WhatsNewDialog(viewer, description);
+    generateWhatsNew(GHCommits);
+    // return new WhatsNewDialog(viewer, description);
   }
 };
 
