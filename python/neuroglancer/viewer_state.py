@@ -144,6 +144,11 @@ class NavigationState(JsonObjectWrapper):
         c.zoom_factor = interpolate_zoom(a.zoom_factor, b.zoom_factor, t)
         return c
 
+@export
+class SkeletonRenderingState(JsonObjectWrapper):
+    __slots__ = ()
+    mode2d = wrapped_property('mode2d', optional(text_type))
+    mode3d = wrapped_property('mode3d', optional(text_type))
 
 @export
 class Layer(JsonObjectWrapper):
@@ -218,8 +223,8 @@ class SegmentationLayerBase(Layer, _AnnotationLayerOptions):
     selected_alpha = selectedAlpha = wrapped_property('selectedAlpha', optional(float, 0.5))
     not_selected_alpha = notSelectedAlpha = wrapped_property('notSelectedAlpha', optional(float, 0))
     object_alpha = objectAlpha = wrapped_property('objectAlpha', optional(float, 1.0))
-    object_color = objectColor = wrapped_property('objectColor', optional(text_type))
     skeleton_shader = skeletonShader = wrapped_property('skeletonShader', text_type)
+    skeleton_rendering = skeletonRendering = wrapped_property('skeletonRendering', SkeletonRenderingState)
     color_seed = colorSeed = wrapped_property('colorSeed', optional(int, 0))
     cross_section_render_scale = crossSectionRenderScale = wrapped_property(
         'crossSectionRenderScale', optional(float, 1))
