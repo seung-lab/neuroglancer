@@ -223,6 +223,7 @@ class SegmentationLayerBase(Layer, _AnnotationLayerOptions):
     selected_alpha = selectedAlpha = wrapped_property('selectedAlpha', optional(float, 0.5))
     not_selected_alpha = notSelectedAlpha = wrapped_property('notSelectedAlpha', optional(float, 0))
     object_alpha = objectAlpha = wrapped_property('objectAlpha', optional(float, 1.0))
+    object_color = objectColor = wrapped_property('objectColor', optional(text_type))
     skeleton_shader = skeletonShader = wrapped_property('skeletonShader', text_type)
     skeleton_rendering = skeletonRendering = wrapped_property('skeletonRendering', SkeletonRenderingState)
     color_seed = colorSeed = wrapped_property('colorSeed', optional(int, 0))
