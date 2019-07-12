@@ -11,7 +11,7 @@ const generateWhatsNew = (GHCommits: string[] = []) => {
       (GHCommits.length) ? GHCommits.slice(0, GHCommits.length - WNCommits.length) : WNCommits;
 
   if (!newCommits.length) {
-    newCommits.append('');
+    newCommits.push('');
   }
 
   let currentDes = (require('neuroglancer/whats_new.md')) || '';
@@ -33,7 +33,7 @@ export const findWhatsNew = async (viewer: Viewer) => {
         'Content-Type': 'text/plain;charset=utf-8',
       },
       data = JSON.stringify({
-        path: 'whats_new.md',
+        path: 'src/neuroglancer/whats_new.md',
         sha: 'seun-whats_new_dialog'
         // since: (WNCommits.length) ? WNCommits[0].commit.author.date : void(0)
       });
