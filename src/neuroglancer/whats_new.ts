@@ -20,7 +20,7 @@ const generateWhatsNew = (GHCommits: string[] = []) => {
           (acc: string, cur: any, i: number) =>
               `${acc}\n<li><h4>${(cur.commit) ? cur.commit.message : ''}</h4>\n${
                   !i ? `${currentDes}` :
-                       `<a target="_blank" href='https://github.com/ogewan/fakeglancer/blob/${
+                       `<a target="_blank" href='https://github.com/seung-lab/neuroglancer/blob/${
                            cur.sha}/whats_new.md'>More...</a>`}</li>`, '')}</ul>`;
 
   return description;
@@ -34,6 +34,7 @@ export const findWhatsNew = async (viewer: Viewer) => {
       },
       data = JSON.stringify({
         path: 'whats_new.md',
+        sha: 'seun-whats_new_dialog'
         // since: (WNCommits.length) ? WNCommits[0].commit.author.date : void(0)
       });
 
