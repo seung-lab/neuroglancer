@@ -32,10 +32,6 @@ export function initializeWebGL(canvas: HTMLCanvasElement) {
     'stencil': true,
   };
   options['preserveDrawingBuffer'] = true;
-  /*if (DEBUG_SHADERS) {
-    console.log('DEBUGGING via preserveDrawingBuffer');
-    options['preserveDrawingBuffer'] = true;
-  }*/
   let gl =
       <GL>canvas.getContext('webgl2', options);
   if (gl == null) {

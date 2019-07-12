@@ -72,8 +72,6 @@ export class UserReportDialog extends Overlay {
         return chkbox;
     };
     const unDisable = () => {
-      // let submit = document.querySelector('#complain');
-
       if (submit) {
         if (Object.values(this.complete).every(b => b)) {
           submit.disabled = false;
