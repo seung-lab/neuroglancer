@@ -703,7 +703,7 @@ export class Viewer extends RefCounted implements ViewerState {
           .then(response => {
             history.replaceState(
                 null, '',
-                window.location.origin + window.location.pathname + '?json_url=' + response);
+                window.location.origin + window.location.pathname + '?json_url=' + response.uri);
           })
           // catch errors with upload and prompt the user if there was an error
           .catch(() => {
