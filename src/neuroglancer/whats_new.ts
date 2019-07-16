@@ -1,4 +1,3 @@
-import axios from 'axios';
 import {Overlay} from 'neuroglancer/overlay';
 import {Viewer} from 'neuroglancer/viewer';
 
@@ -14,15 +13,13 @@ const generateWhatsNew = (GHCommits: string[] = []) => {
   }
 
   let currentDes = (require('neuroglancer/whats_new.md')) || '';
-  let description: string = `<ul>${
-      newCommits.reduce(
-          (acc: string, cur: any, i: number) =>
-              `${acc}\n<li><h4>${(cur.commit) ? cur.commit.message : ''}</h4>\n${
-                  !i ? `${currentDes}` :
-                       `<a target="_blank" href='https://github.com/seung-lab/neuroglancer/blob/${
-                           cur.sha}/whats_new.md'>More...</a>`}</li>`,
-          '')}</ul>`;
-                  return description;
+  let description: string = `<ul>${newCommits.reduce((acc: string, cur: any, i: number) => {
+    return `${acc}\n<li><h4>${(cur.commit) ? cur.commit.message : ''}</h4>\n${
+    !i ? `${currentDes}` :
+         `<a target="_blank" href='https://github.com/seung-lab/neuroglancer/blob/${
+             cur.sha}/whats_new.md'>More...</a>`}</li>`;
+  }, '')}</ul>`;
+  return description;
 };
 
 export const findWhatsNew = async (viewer: Viewer) => {
