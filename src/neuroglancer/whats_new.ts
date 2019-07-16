@@ -2,9 +2,8 @@ import axios from 'axios';
 import {Overlay} from 'neuroglancer/overlay';
 import {Viewer} from 'neuroglancer/viewer';
 
-// TODO: Clean up
-// TODO: css
-// require('./whats_new.css');
+require('./whats_new.css');
+
 const generateWhatsNew = (GHCommits: string[] = []) => {
   let WNCommits = JSON.parse(localStorage.getItem('WNCommits') || '[]');
   let newCommits =
@@ -21,9 +20,9 @@ const generateWhatsNew = (GHCommits: string[] = []) => {
               `${acc}\n<li><h4>${(cur.commit) ? cur.commit.message : ''}</h4>\n${
                   !i ? `${currentDes}` :
                        `<a target="_blank" href='https://github.com/seung-lab/neuroglancer/blob/${
-                           cur.sha}/whats_new.md'>More...</a>`}</li>`, '')}</ul>`;
-
-  return description;
+                           cur.sha}/whats_new.md'>More...</a>`}</li>`,
+          '')}</ul>`;
+                  return description;
 };
 
 export const findWhatsNew = async (viewer: Viewer) => {
@@ -32,13 +31,22 @@ export const findWhatsNew = async (viewer: Viewer) => {
       WNCommits = JSON.parse(localStorage.getItem('WNCommits') || '[]'), headers = {
         'Content-Type': 'text/plain;charset=utf-8',
       },
-      data = JSON.stringify({
-        path: 'src/neuroglancer/whats_new.md',
-        sha: 'seun-whats_new_dialog'
+      body = JSON.stringify({
+        path: 'tsconfig.json'  // 'src/neuroglancer/whats_new.md',
+        // sha: 'seun-whats_new_dialog'
         // since: (WNCommits.length) ? WNCommits[0].commit.author.date : void(0)
       });
 
-  let GHCommits = JSON.parse((await axios({method: 'post', headers, url, data})).data);
+  let GHRes = await fetch(url, {method: 'post', headers, body});
+  let GHCommits = JSON.parse(await GHRes.json());
+  let axiosVer = JSON.parse((await axios({method: 'post', headers, url, data: body})).data);
+  console.log(axiosVer);
+
+  if (GHCommits.length < WNCommits.length) {
+    // commits do not disappear, unless using the since parameter GHCommits should only be <=
+    // WNCommits
+    localStorage.removeItem('WNCommits');
+  }
 
   if (GHCommits.length > WNCommits.length) {
     let description = generateWhatsNew(GHCommits);
