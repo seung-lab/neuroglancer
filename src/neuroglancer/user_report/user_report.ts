@@ -7,21 +7,86 @@ import {Viewer} from 'neuroglancer/viewer';
 interface LooseObject {
   [key: string]: any;
 }
+interface InputConfig {
+  placeholder?: string;
+  required?: boolean;
+  onblur?: ((this: GlobalEventHandlers, ev: FocusEvent) => any)|null;
+  type?: string;
+}
+interface ItemConfig {
+  type?: string;
+  id?: string;
+  className?: string;
+}
+
+const br = () => document.createElement('br');
+const simpleItem =
+    (value: string, config: ItemConfig = {
+      type: 'checkbox'
+    },
+     checked?: boolean) => {
+      const chkbox = document.createElement('input');
+      const {id, className, type} = config;
+
+      if (id) {
+        chkbox.id = id;
+      }
+      if (className) {
+        chkbox.className += className;
+      }
+      chkbox.value = value;
+      chkbox.type = type || 'checkbox';
+
+      if (type === 'radio') {
+        chkbox.name = className || id || '';
+      }
+
+      if (checked) {
+        chkbox.checked = true;
+      }
+
+      return chkbox;
+    };
+const isVerifier = (s: string, reg: RegExp) => {
+  let match = s.match(reg);
+
+  if (match) {
+    return match[0] === s;
+  }
+  return false;
+};
+const isAlphaWithSpace = (s: string) => isVerifier(s, /[a-zA-Z][a-zA-Z .']+/g);
+const isAlphaNumWithSpace = (s: string) => isVerifier(s, /[a-zA-Z\d][a-zA-Z\d .'&]+/g);
+const isEmail = (s: string) => isVerifier(s, /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,4}/);
+const genRow = (elements: (HTMLElement|string)[]) => {
+  let parent = document.createElement('tr');
+
+  for (let element of elements) {
+    let child = document.createElement('td');
+    child.append(element);
+    parent.appendChild(child);
+  }
+  return parent;
+};
+const simpleSelect = (id: string, options: [string, string][]) => {
+  let select = document.createElement('select');
+  select.id = id;
+
+  for (let opt of options) {
+    let option = document.createElement('option');
+    option.value = opt[0];
+    option.innerText = opt[1];
+    select.appendChild(option);
+  }
+  return select;
+};
+
 export class UserReportDialog extends Overlay {
   constructor(public viewer: Viewer, img: string = '') {
     super();
     let {content} = this;
     this.image = img;
 
-    let modal = document.createElement('div');
-
-    content.appendChild(modal);
-
-    let header = document.createElement('h3');
-    header.textContent = 'Send Feedback';
-    modal.appendChild(header);
-
-    const br = () => document.createElement('br');
     const labelWrap = (label: string, element?: (HTMLElement|string)[]) => {
       const labelElement = document.createElement('label');
 
@@ -33,12 +98,7 @@ export class UserReportDialog extends Overlay {
       modal.appendChild(br());
       modal.appendChild(br());
     };
-    interface InputConfig {
-      placeholder?: string;
-      required?: boolean;
-      onblur?: ((this: GlobalEventHandlers, ev: FocusEvent) => any)|null;
-      type?: string;
-    }
+
     const simpleInput = (label: string, id: string, config?: InputConfig) => {
       const textbox = document.createElement('input');
       let req = document.createElement('span');
@@ -61,35 +121,6 @@ export class UserReportDialog extends Overlay {
       textbox.type = 'text';
       labelWrap(label, [req, ' ', textbox]);
     };
-    interface ItemConfig {
-      type?: string;
-      id?: string;
-      className?: string;
-    }
-    const simpleItem =
-        (value: string, config: ItemConfig = {type: 'checkbox'}, checked?: boolean) => {
-          const chkbox = document.createElement('input');
-          const {id, className, type} = config;
-
-          if (id) {
-            chkbox.id = id;
-          }
-          if (className) {
-            chkbox.className += className;
-          }
-          chkbox.value = value;
-          chkbox.type = type || 'checkbox';
-
-          if (type === 'radio') {
-            chkbox.name = className || id || '';
-          }
-
-          if (checked) {
-            chkbox.checked = true;
-          }
-
-          return chkbox;
-        };
     const unDisable = () => {
       if (submit) {
         if (Object.values(this.complete).every(b => b)) {
@@ -99,18 +130,6 @@ export class UserReportDialog extends Overlay {
         }
       }
     };
-    const isVerifier = (s: string, reg: RegExp) => {
-      let match = s.match(reg);
-
-      if (match) {
-        return match[0] === s;
-      }
-      return false;
-    };
-    const isAlphaWithSpace = (s: string) => isVerifier(s, /[a-zA-Z][a-zA-Z .']+/g);
-    const isAlphaNumWithSpace = (s: string) => isVerifier(s, /[a-zA-Z\d][a-zA-Z\d .'&]+/g);
-    const isEmail = (s: string) => isVerifier(s, /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,4}/);
-
     const genericBlur = (e: Event) => {
       let self: HTMLInputElement = <HTMLInputElement>e.target;
       let label = self.getAttribute('sName') || '';
@@ -125,9 +144,14 @@ export class UserReportDialog extends Overlay {
       } else {
         self.value = self.getAttribute('oldVal') || '';
       }
-
       unDisable();
     };
+
+    let modal = document.createElement('div');
+    content.appendChild(modal);
+    let header = document.createElement('h3');
+    header.textContent = 'Send Feedback';
+    modal.appendChild(header);
 
     simpleInput('Name', 'form_name', {required: true, onblur: genericBlur});
     simpleInput('Email', 'form_email', {
@@ -162,7 +186,6 @@ export class UserReportDialog extends Overlay {
       } else {
         this.complete['description'] = false;
       }
-
       unDisable();
     };
     description.rows = 5;
@@ -172,28 +195,16 @@ export class UserReportDialog extends Overlay {
     this.complete.description = false;
     labelWrap('Description', [asterisk, br(), description]);
 
-    let osRadioConfig = {type: 'radio', className: 'form_os'};
-    let brRadioConfig = {type: 'radio', className: 'form_brw'};
-
     // TODO: Auto detect environment, nice extra not really necessary
     let envTable = document.createElement('table');
-    let genRow = (elements: (HTMLElement|string)[]) => {
-      let parent = document.createElement('tr');
-
-      for (let element of elements) {
-        let child = document.createElement('td');
-        child.append(element);
-        parent.appendChild(child);
-      }
-      return parent;
-    };
     let osRow = genRow([
-      'OS: ', 'Linux', simpleItem('lin', osRadioConfig, true), 'Mac OS X',
-      simpleItem('mac', osRadioConfig), 'Windows', simpleItem('win', osRadioConfig)
+      'OS: ',
+      simpleSelect(
+          'form_os', [['Linux', 'Linux'], ['Mac OS X', 'Mac OS X'], ['Windows', 'Windows']])
     ]);
     let brwRow = genRow([
-      'Browser: ', 'Chrome', simpleItem('chr', brRadioConfig, true), 'Firefox',
-      simpleItem('fir', brRadioConfig), 'Safari', simpleItem('saf', brRadioConfig)
+      'Browser: ',
+      simpleSelect('form_brw', [['Chrome', 'Chrome'], ['Firefox', 'Firefox'], ['Safari', 'Safari']])
     ]);
     envTable.appendChild(osRow);
     envTable.appendChild(brwRow);
@@ -237,12 +248,8 @@ export class UserReportDialog extends Overlay {
           des: encodeURIComponent((<HTMLInputElement>document.querySelector('#form_des')).value),
           title: (<HTMLInputElement>document.querySelector('#form_title')).value,
           image,
-          os: (<HTMLInputElement>Array.from(document.querySelectorAll('.form_os'))
-                   .find(e => (<HTMLInputElement>e).checked))
-                  .value,
-          brw: (<HTMLInputElement>Array.from(document.querySelectorAll('.form_brw'))
-                    .find(e => (<HTMLInputElement>e).checked))
-                   .value,
+          os: (<HTMLInputElement>document.querySelector('#form_os')).value,
+          brw: (<HTMLInputElement>document.querySelector('#form_brw')).value,
           surl: (<HTMLInputElement>document.querySelector('#form_surl')).checked ?
               window.location.href :
               0
