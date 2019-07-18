@@ -12,7 +12,7 @@ const generateWhatsNew = (GHCommits: string[] = []) => {
     newCommits.push('');
   }
 
-  let currentDes = (require('neuroglancer/whats_new.md')) || '';
+  let currentDes = (require('../../../WHATS_NEW.md')) || '';
   let description: string = `<ul>${newCommits.reduce((acc: string, cur: any, i: number) => {
     return `${acc}\n<li><h4>${(cur.commit) ? cur.commit.message : ''}</h4>\n${
     !i ? `${currentDes}` :

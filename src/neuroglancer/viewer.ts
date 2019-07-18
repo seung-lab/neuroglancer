@@ -42,6 +42,7 @@ import {setupPositionDropHandlers} from 'neuroglancer/ui/position_drag_and_drop'
 import {StateEditorDialog} from 'neuroglancer/ui/state_editor';
 import {StatisticsDisplayState, StatisticsPanel} from 'neuroglancer/ui/statistics';
 import {removeParameterFromUrl} from 'neuroglancer/ui/url_hash_binding';
+import {UserReportDialog} from 'neuroglancer/user_report/user_report';
 import {AutomaticallyFocusedElement} from 'neuroglancer/util/automatic_focus';
 import {TrackableRGB} from 'neuroglancer/util/color';
 import {Borrowed, Owned, RefCounted} from 'neuroglancer/util/disposable';
@@ -61,7 +62,6 @@ import {MousePositionWidget, PositionWidget, VoxelSizeWidget} from 'neuroglancer
 import {TrackableScaleBarOptions} from 'neuroglancer/widget/scale_bar';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
 import {RPC} from 'neuroglancer/worker_rpc';
-
 import {findWhatsNew, WhatsNewDialog} from './whats_new/whats_new';
 
 require('./viewer.css');
@@ -101,7 +101,7 @@ export class InputEventBindings extends DataPanelInputEventBindings {
 const viewerUiControlOptionKeys: (keyof ViewerUIControlConfiguration)[] = [
   'showHelpButton', 'showEditStateButton', 'showLayerPanel', 'showLocation',
   'showAnnotationToolStatus', 'showJsonPostButton', 'showUserPreferencesButton',
-  'showUserWhatsNewButton'
+  'showUserWhatsNewButton', 'showBugButton'
 ];
 
 const viewerOptionKeys: (keyof ViewerUIOptions)[] =
@@ -112,6 +112,7 @@ export class ViewerUIControlConfiguration {
   showEditStateButton = new TrackableBoolean(true);
   showJsonPostButton = new TrackableBoolean(true);
   showUserPreferencesButton = new TrackableBoolean(true);
+  showBugButton = new TrackableBoolean(true);
   showLayerPanel = new TrackableBoolean(true);
   showLocation = new TrackableBoolean(true);
   showAnnotationToolStatus = new TrackableBoolean(true);
@@ -148,6 +149,7 @@ interface ViewerUIOptions {
   showJsonPostButton: boolean;
   showUserPreferencesButton: boolean;
   showUserWhatsNewButton: boolean;
+  showBugButton: boolean;
 }
 
 export interface ViewerOptions extends ViewerUIOptions, VisibilityPrioritySpecification {
@@ -510,6 +512,18 @@ export class Viewer extends RefCounted implements ViewerState {
       });
       this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
           this.uiControlVisibility.showUserWhatsNewButton, button));
+    }
+
+    {
+      const button = makeTextIconButton('🐞', 'Feedback');
+      this.registerEventListener(button, 'click', async () => {
+        this.display.draw();
+        let raw_ss = (await require('html2canvas')(document.body)).toDataURL();
+        let image = raw_ss.slice(raw_ss.indexOf('data:image/png;base64,') + 22);
+        this.showReportDialog(image);
+      });
+      this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
+          this.uiControlVisibility.showBugButton, button));
       topRow.appendChild(button);
     }
 
@@ -695,6 +709,10 @@ export class Viewer extends RefCounted implements ViewerState {
             errorPrefix: `Error retrieving state: `,
           });
     }
+  }
+
+  showReportDialog(image: string) {
+    new UserReportDialog(this, image);
   }
 
   promptJsonStateServer(message: string): void {
