@@ -16,6 +16,7 @@
 
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
 import {RefCounted} from 'neuroglancer/util/disposable';
+import {vec3} from 'neuroglancer/util/geom';
 import {Uint64} from 'neuroglancer/util/uint64';
 
 require('neuroglancer/noselect.css');
@@ -56,7 +57,7 @@ export class SegmentSetWidget extends RefCounted {
   constructor(public displayState: SegmentationDisplayState) {
     super();
     this.createTopButtons();
-
+    // TODO: Handlers for button hover to highlight corresponding segments
     this.registerDisposer(displayState.rootSegments.changed.add((x, add) => {
       this.handleEnabledSetChanged(x, add);
     }));
@@ -65,6 +66,34 @@ export class SegmentSetWidget extends RefCounted {
     }));
     this.registerDisposer(displayState.segmentColorHash.changed.add(() => {
       this.handleColorChanged();
+    }));
+    this.registerDisposer(displayState.segmentSelectionState.changed.add(() => {
+      const segmentID = this.segmentSelectionState.selectedSegment.toString();
+      const segmentButton = <HTMLElement>(
+          document.querySelector('.segment-button.segSelected') ||
+          Array.from(document.querySelectorAll('.segment-button'))
+              .find(e => e.textContent === segmentID));
+      const white = vec3.fromValues(255, 255, 255);
+      const saturation = 0.5;
+      let rgbArray = [0, 0, 0];
+
+      if (segmentButton) {
+        if (segmentButton.style.backgroundColor &&
+            segmentButton.className.indexOf('segSelected') === -1) {
+          let base = segmentButton.style.backgroundColor;
+          rgbArray = base.replace(/[^\d,.%]/g, '').split(',').map(v => parseFloat(v));
+          let highlight = vec3.lerp(vec3.fromValues(0, 0, 0), white, rgbArray, saturation);
+          let highFrame = `rgb(${highlight.join(',')})`;
+          // segmentButton.style.backgroundColor = `rgb(${highlight.join(',')})`;
+          segmentButton.className += ' segSelected';
+          segmentButton.style.setProperty('--defBtnColor', base);
+          segmentButton.style.setProperty('--actBtnColor', highFrame);
+        } else {
+          // revert color
+          segmentButton.className =
+              segmentButton.className.slice(segmentButton.className.indexOf('segSelected'));
+        }
+      }
     }));
 
     for (const x of displayState.rootSegments) {
@@ -333,8 +362,7 @@ export class SegmentSetWidget extends RefCounted {
           widget.rootSegments.add(x);
         }
         toggleItemsCheckbox.title = 'Uncheck to hide all segments';
-      }
-      else {
+      } else {
         for (const x of widget.rootSegments) {
           widget.hiddenRootSegments!.add(x);
         }
