@@ -27,7 +27,6 @@
   },
   "devDependencies": {
     "@types/jasmine": "^3.3.12",
-    "@types/validator": "^10.11.1",
     "benchmark": "^2.1.4",
     "clang-format": "^1.2.4",
     "copy-webpack-plugin": "^5.0.2",
