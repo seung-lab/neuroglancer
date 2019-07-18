@@ -62,7 +62,7 @@ import {TrackableScaleBarOptions} from 'neuroglancer/widget/scale_bar';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
 import {RPC} from 'neuroglancer/worker_rpc';
 
-import {findWhatsNew, WhatsNewDialog} from './whats_new';
+import {findWhatsNew, WhatsNewDialog} from './whats_new/whats_new';
 
 require('./viewer.css');
 require('neuroglancer/noselect.css');

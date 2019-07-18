@@ -29,15 +29,12 @@ export const findWhatsNew = async (viewer: Viewer) => {
         'Content-Type': 'text/plain;charset=utf-8',
       },
       body = JSON.stringify({
-        path: 'tsconfig.json'  // 'src/neuroglancer/whats_new.md',
-        // sha: 'seun-whats_new_dialog'
+        path: 'whats_new.md'
         // since: (WNCommits.length) ? WNCommits[0].commit.author.date : void(0)
       });
 
   let GHRes = await fetch(url, {method: 'post', headers, body});
   let GHCommits = JSON.parse(await GHRes.json());
-  let axiosVer = JSON.parse((await axios({method: 'post', headers, url, data: body})).data);
-  console.log(axiosVer);
 
   if (GHCommits.length < WNCommits.length) {
     // commits do not disappear, unless using the since parameter GHCommits should only be <=
