@@ -267,6 +267,7 @@ class AnnotationBase(JsonObjectWrapper):
     type = wrapped_property('type', text_type)
     description = wrapped_property('description', optional(text_type))
     segments = wrapped_property('segments', optional(typed_list(np.uint64)))
+    tag_ids = tagIds = wrapped_property('tagIds', optional(typed_list(np.uint64)))
 
 
 @export
@@ -334,6 +335,25 @@ annotation.supports_readonly = True
 
 
 @export
+class AnnotationTag(JsonObjectWrapper):
+    __slots__ = ()
+
+    id = wrapped_property('id', int)  # pylint: disable=invalid-name
+    label = wrapped_property('label', optional(text_type))
+
+
+def annotation_tags(obj, _readonly=False):
+    if isinstance(obj, AnnotationTag):
+        obj = obj.to_json()
+    elif not isinstance(obj, dict):
+        raise TypeError
+    return AnnotationTag(obj, _readonly=_readonly)
+
+
+annotation_tags.supports_readonly = True
+
+
+@export
 class AnnotationLayer(Layer, _AnnotationLayerOptions):
     __slots__ = ()
 
@@ -343,6 +363,7 @@ class AnnotationLayer(Layer, _AnnotationLayerOptions):
     source = wrapped_property('source', optional(volume_source))
     voxel_size = voxelSize = wrapped_property('voxelSize', optional(array_wrapper(np.float32, 3)))
     annotations = wrapped_property('annotations', typed_list(annotation))
+    annotation_tags = annotationTags = wrapped_property('annotationTags', optional(typed_list(annotation_tags)))
     linked_segmentation_layer = linkedSegmentationLayer = wrapped_property('linkedSegmentationLayer', optional(text_type))
     filter_by_segmentation = filterBySegmentation = wrapped_property('filterBySegmentation', optional(bool, False))
 
