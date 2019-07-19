@@ -101,7 +101,7 @@ export class InputEventBindings extends DataPanelInputEventBindings {
 const viewerUiControlOptionKeys: (keyof ViewerUIControlConfiguration)[] = [
   'showHelpButton', 'showEditStateButton', 'showLayerPanel', 'showLocation',
   'showAnnotationToolStatus', 'showJsonPostButton', 'showUserPreferencesButton',
-  'showUserWhatsNewButton', 'showBugButton'
+  'showWhatsNewButton', 'showBugButton'
 ];
 
 const viewerOptionKeys: (keyof ViewerUIOptions)[] =
@@ -116,7 +116,7 @@ export class ViewerUIControlConfiguration {
   showLayerPanel = new TrackableBoolean(true);
   showLocation = new TrackableBoolean(true);
   showAnnotationToolStatus = new TrackableBoolean(true);
-  showUserWhatsNewButton = new TrackableBoolean(true);
+  showWhatsNewButton = new TrackableBoolean(true);
 }
 
 export class ViewerUIConfiguration extends ViewerUIControlConfiguration {
@@ -148,7 +148,7 @@ interface ViewerUIOptions {
   showAnnotationToolStatus: boolean;
   showJsonPostButton: boolean;
   showUserPreferencesButton: boolean;
-  showUserWhatsNewButton: boolean;
+  showWhatsNewButton: boolean;
   showBugButton: boolean;
 }
 
@@ -511,7 +511,8 @@ export class Viewer extends RefCounted implements ViewerState {
         this.showWhatsNewDialog();
       });
       this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
-          this.uiControlVisibility.showUserWhatsNewButton, button));
+          this.uiControlVisibility.showWhatsNewButton, button));
+      topRow.appendChild(button);
     }
 
     {

@@ -29,7 +29,7 @@ export const findWhatsNew = async (viewer: Viewer) => {
         'Content-Type': 'text/plain;charset=utf-8',
       },
       body = JSON.stringify({
-        path: 'whats_new.md'
+        path: 'WHATS_NEW.md'
         // since: (WNCommits.length) ? WNCommits[0].commit.author.date : void(0)
       });
 
