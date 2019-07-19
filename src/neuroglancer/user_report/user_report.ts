@@ -163,6 +163,7 @@ export class UserReportDialog extends Overlay {
       reminder.innerHTML =
           `Please do not post duplicate reports.<br>Your previous report is <a href='${
               lastIssue}'>here</a>.`;
+      disclaimer.appendChild(br());
       disclaimer.appendChild(reminder);
     }
     modal.appendChild(disclaimer);
@@ -265,8 +266,9 @@ export class UserReportDialog extends Overlay {
 
     try {
       let response = await fetch(url, {method: 'post', headers, body});
-      console.log(response);
-      alert(`Feedback received!`);
+      let ghData = JSON.parse(await response.json());
+      localStorage.setItem('lastIssue', ghData.html_url);
+      alert(`Feedback received!\nYour report is posted here:\n${ghData.html_url}`);
     } catch (e) {
       alert('Ruh roh :(\n' + e);
       throw (e);
