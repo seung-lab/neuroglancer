@@ -120,7 +120,7 @@ export interface SegmentationDisplayState3D extends SegmentationDisplayStateWith
   renderScaleHistogram: RenderScaleHistogram;
   renderScaleTarget: TrackableValue<number>;
 }
-// TODO: is it this?
+
 export function registerRedrawWhenSegmentationDisplayStateChanged(
     displayState: SegmentationDisplayState, renderLayer: {redrawNeeded: NullarySignal}&RefCounted) {
   const dispatchRedrawNeeded = renderLayer.redrawNeeded.dispatch;
