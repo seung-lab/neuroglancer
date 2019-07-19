@@ -66,3 +66,9 @@
   animation-duration: 0.5s;
   animation-iteration-count: infinite;
 }
+
+.segment-set-widget button.segment-button.selectedSeg {
+  animation-name: pulse;
+  animation-duration: 2.5s;
+  animation-iteration-count: infinite;
+}

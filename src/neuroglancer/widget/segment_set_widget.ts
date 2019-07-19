@@ -57,7 +57,6 @@ export class SegmentSetWidget extends RefCounted {
   constructor(public displayState: SegmentationDisplayState) {
     super();
     this.createTopButtons();
-    // TODO: Handlers for button hover to highlight corresponding segments
     this.registerDisposer(displayState.rootSegments.changed.add((x, add) => {
       this.handleEnabledSetChanged(x, add);
     }));
@@ -69,30 +68,39 @@ export class SegmentSetWidget extends RefCounted {
     }));
     this.registerDisposer(displayState.segmentSelectionState.changed.add(() => {
       const segmentID = this.segmentSelectionState.selectedSegment.toString();
-      const segmentButton = <HTMLElement>(
-          document.querySelector('.segment-button.segSelected') ||
-          Array.from(document.querySelectorAll('.segment-button'))
-              .find(e => e.textContent === segmentID));
+      const segmentButton = <HTMLElement>document.querySelector(`[data-segID="${segmentID}"]`);
+      const existingHlight = document.querySelectorAll(`.segSelected`);
       const white = vec3.fromValues(255, 255, 255);
       const saturation = 0.5;
+      const removeClass_seg = (e: HTMLElement) => {
+        let eClasses = Array.from(e.classList);
+        let target = eClasses.indexOf('segSelected');
+        eClasses[target] = '';
+        e.className = eClasses.filter(v => v !== '').join(' ');
+      };
       let rgbArray = [0, 0, 0];
 
       if (segmentButton) {
-        if (segmentButton.style.backgroundColor &&
-            segmentButton.className.indexOf('segSelected') === -1) {
-          let base = segmentButton.style.backgroundColor;
+        let classes = Array.from(segmentButton.classList);
+        if (!classes.includes('segSelected')) {
+          let base = segmentButton.style.backgroundColor || '';
           rgbArray = base.replace(/[^\d,.%]/g, '').split(',').map(v => parseFloat(v));
           let highlight = vec3.lerp(vec3.fromValues(0, 0, 0), white, rgbArray, saturation);
           let highFrame = `rgb(${highlight.join(',')})`;
           // segmentButton.style.backgroundColor = `rgb(${highlight.join(',')})`;
-          segmentButton.className += ' segSelected';
+
+          classes.push('segSelected');
           segmentButton.style.setProperty('--defBtnColor', base);
           segmentButton.style.setProperty('--actBtnColor', highFrame);
-        } else {
+          segmentButton.className = classes.join(' ');
+        } else if (classes.includes('segSelected')) {
           // revert color
-          segmentButton.className =
-              segmentButton.className.slice(segmentButton.className.indexOf('segSelected'));
+          removeClass_seg(segmentButton);
         }
+      }
+      if (existingHlight) {
+        let extras = Array.from(existingHlight);
+        extras.map(removeClass_seg);
       }
     }));
 
@@ -245,6 +253,7 @@ export class SegmentSetWidget extends RefCounted {
         itemButton.className = 'segment-button';
         itemButton.textContent = segmentIDString;
         itemButton.title = `Remove segment ID ${segmentIDString}`;
+        itemButton.setAttribute('data-segID', segmentIDString);
         itemButton.addEventListener('click', function(this: HTMLButtonElement) {
           temp.tryParseString(this.textContent!);
           widget.rootSegments.delete(temp);
@@ -253,10 +262,21 @@ export class SegmentSetWidget extends RefCounted {
         itemButton.addEventListener('mouseenter', function(this: HTMLButtonElement) {
           temp.tryParseString(this.textContent!);
           widget.segmentSelectionState.set(temp);
+          widget.segmentSelectionState.setRaw(temp);
+          const segmentButton =
+              <HTMLElement>document.querySelector(`[data-segID="${temp.toString()}"]`);
+          segmentButton.className += ' selectedSeg';
         });
         itemButton.addEventListener('mouseleave', function(this: HTMLButtonElement) {
           temp.tryParseString(this.textContent!);
           widget.segmentSelectionState.set(null);
+          widget.segmentSelectionState.setRaw(null);
+          const segmentButton =
+              <HTMLElement>document.querySelector(`[data-segID="${temp.toString()}"]`);
+          let classes = Array.from(segmentButton.classList);
+          let target = classes.indexOf('selectedSeg');
+          classes[target] = '';
+          segmentButton.className = classes.filter(v => v !== '').join(' ');
         });
         return itemButton;
       }
