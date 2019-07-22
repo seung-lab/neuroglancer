@@ -27,7 +27,6 @@
   },
   "devDependencies": {
     "@types/jasmine": "^3.3.12",
-    "@types/showdown": "^1.9.3",
     "benchmark": "^2.1.4",
     "clang-format": "^1.2.4",
     "copy-webpack-plugin": "^5.0.2",
