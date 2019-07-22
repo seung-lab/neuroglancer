@@ -68,39 +68,23 @@ export class SegmentSetWidget extends RefCounted {
     }));
     this.registerDisposer(displayState.segmentSelectionState.changed.add(() => {
       const segmentID = this.segmentSelectionState.selectedSegment.toString();
-      const segmentButton = <HTMLElement>document.querySelector(`[data-segID="${segmentID}"]`);
-      const existingHlight = document.querySelectorAll(`.segSelected`);
+      const segmentButton = <HTMLElement>this.element.querySelector(`[data-segID="${segmentID}"]`);
       const white = vec3.fromValues(255, 255, 255);
       const saturation = 0.5;
-      const removeClass_seg = (e: HTMLElement) => {
-        let eClasses = Array.from(e.classList);
-        let target = eClasses.indexOf('segSelected');
-        eClasses[target] = '';
-        e.className = eClasses.filter(v => v !== '').join(' ');
-      };
       let rgbArray = [0, 0, 0];
 
       if (segmentButton) {
-        let classes = Array.from(segmentButton.classList);
-        if (!classes.includes('segSelected')) {
+        const segBtnClass = segmentButton.classList;
+        if (segBtnClass.toggle('selectedSeg')) {
           let base = segmentButton.style.backgroundColor || '';
           rgbArray = base.replace(/[^\d,.%]/g, '').split(',').map(v => parseFloat(v));
           let highlight = vec3.lerp(vec3.fromValues(0, 0, 0), white, rgbArray, saturation);
           let highFrame = `rgb(${highlight.join(',')})`;
-          // segmentButton.style.backgroundColor = `rgb(${highlight.join(',')})`;
 
-          classes.push('segSelected');
           segmentButton.style.setProperty('--defBtnColor', base);
           segmentButton.style.setProperty('--actBtnColor', highFrame);
-          segmentButton.className = classes.join(' ');
-        } else if (classes.includes('segSelected')) {
-          // revert color
-          removeClass_seg(segmentButton);
+          segmentButton.style.setProperty('--pulseSpeed', '0.5s');
         }
-      }
-      if (existingHlight) {
-        let extras = Array.from(existingHlight);
-        extras.map(removeClass_seg);
       }
     }));
 
@@ -263,20 +247,14 @@ export class SegmentSetWidget extends RefCounted {
           temp.tryParseString(this.textContent!);
           widget.segmentSelectionState.set(temp);
           widget.segmentSelectionState.setRaw(temp);
-          const segmentButton =
-              <HTMLElement>document.querySelector(`[data-segID="${temp.toString()}"]`);
-          segmentButton.className += ' selectedSeg';
+          this.classList.add('selectedSeg');
+          this.style.setProperty('--pulseSpeed', '2.5s');
         });
         itemButton.addEventListener('mouseleave', function(this: HTMLButtonElement) {
           temp.tryParseString(this.textContent!);
           widget.segmentSelectionState.set(null);
           widget.segmentSelectionState.setRaw(null);
-          const segmentButton =
-              <HTMLElement>document.querySelector(`[data-segID="${temp.toString()}"]`);
-          let classes = Array.from(segmentButton.classList);
-          let target = classes.indexOf('selectedSeg');
-          classes[target] = '';
-          segmentButton.className = classes.filter(v => v !== '').join(' ');
+          this.classList.remove('selectedSeg');
         });
         return itemButton;
       }
