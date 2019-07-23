@@ -69,6 +69,7 @@ export class SegmentSetWidget extends RefCounted {
     this.registerDisposer(displayState.segmentSelectionState.changed.add(() => {
       const segmentID = this.segmentSelectionState.selectedSegment.toString();
       const segmentButton = <HTMLElement>this.element.querySelector(`[data-segID="${segmentID}"]`);
+      const existingHighlight = Array.from(this.element.getElementsByClassName('selectedSeg'));
       const white = vec3.fromValues(255, 255, 255);
       const saturation = 0.5;
       let rgbArray = [0, 0, 0];
@@ -85,6 +86,9 @@ export class SegmentSetWidget extends RefCounted {
           segmentButton.style.setProperty('--actBtnColor', highFrame);
           segmentButton.style.setProperty('--pulseSpeed', '0.5s');
         }
+      }
+      if (existingHighlight) {
+        existingHighlight.map(e => e.classList.remove('selectedSeg'));
       }
     }));
 
