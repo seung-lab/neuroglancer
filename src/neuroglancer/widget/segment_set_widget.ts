@@ -68,7 +68,7 @@ export class SegmentSetWidget extends RefCounted {
     }));
     this.registerDisposer(displayState.segmentSelectionState.changed.add(() => {
       const segmentID = this.segmentSelectionState.selectedSegment.toString();
-      const segmentButton = <HTMLElement>this.element.querySelector(`[data-segID="${segmentID}"]`);
+      const segmentButton = <HTMLElement>this.element.querySelector(`[data-seg-id="${segmentID}"]`);
       const existingHighlight = Array.from(this.element.getElementsByClassName('selectedSeg'));
       const white = vec3.fromValues(255, 255, 255);
       const saturation = 0.5;
@@ -241,7 +241,7 @@ export class SegmentSetWidget extends RefCounted {
         itemButton.className = 'segment-button';
         itemButton.textContent = segmentIDString;
         itemButton.title = `Remove segment ID ${segmentIDString}`;
-        itemButton.setAttribute('data-segID', segmentIDString);
+        itemButton.dataset.segId = segmentIDString;
         itemButton.addEventListener('click', function(this: HTMLButtonElement) {
           temp.tryParseString(this.textContent!);
           widget.rootSegments.delete(temp);
