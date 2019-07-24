@@ -28,6 +28,7 @@ import {getDropEffect, preventDrag, setDropEffect} from 'neuroglancer/util/drag_
 import {float32ToString} from 'neuroglancer/util/float32_to_string';
 import {makeCloseButton} from 'neuroglancer/widget/close_button';
 import {PositionWidget} from 'neuroglancer/widget/position_widget';
+import {AnnotationUserLayer} from './annotation/user_layer';
 
 require('neuroglancer/noselect.css');
 require('./layer_panel.css');
@@ -171,6 +172,13 @@ class LayerWidget extends RefCounted {
     element.title = 'Control+click for layer options, drag to move/copy.';
     element.className = 'neuroglancer-layer-item neuroglancer-noselect';
     element.dataset.type = layer.initialSpecification.type;
+    element.style.backgroundColor = layer.initialSpecification.annotationColor || '0';
+    if (layer.layer !== null) {
+      let managedUserLayer = <AnnotationUserLayer>layer.layer;
+      managedUserLayer.annotationColor.changed.add(() => {
+        element.style.backgroundColor = managedUserLayer.annotationColor.toJSON() || '0';
+      });
+    }
     let labelElement = this.labelElement = document.createElement('span');
     labelElement.className = 'neuroglancer-layer-item-label';
     let layerNumberElement = this.layerNumberElement = document.createElement('span');
