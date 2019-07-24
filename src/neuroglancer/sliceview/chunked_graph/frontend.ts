@@ -111,8 +111,8 @@ export class ChunkedGraphLayer extends GenericSliceViewRenderLayer {
       initialMessage: `Merging ${first.segmentId} and ${second.segmentId}`,
       errorPrefix: 'Merge failed: '
     });
-    const uint32 = new Uint32Array(await response.arrayBuffer());
-    return new Uint64(uint32[0], uint32[1]);
+    const jsonResp = await response.json();
+    return Uint64.parseString(jsonResp['new_root_ids_str'][0]);
   }
 
   async splitSegments(first: SegmentSelection[], second: SegmentSelection[]): Promise<Uint64[]> {
@@ -133,10 +133,10 @@ export class ChunkedGraphLayer extends GenericSliceViewRenderLayer {
       initialMessage: `Splitting ${first.length} sinks from ${second.length} sources`,
       errorPrefix: 'Split failed: '
     });
-    const uint32 = new Uint32Array(await response.arrayBuffer());
-    const final: Uint64[] = new Array(uint32.length / 2);
-    for (let i = 0; i < uint32.length / 2; i++) {
-      final[i] = new Uint64(uint32[2 * i], uint32[2 * i + 1]);
+    const jsonResp = await response.json();
+    const final: Uint64[] = new Array(jsonResp['new_root_ids_str'].length);
+    for (let i = 0; i < final.length; ++i) {
+      final[i] = Uint64.parseString(jsonResp['new_root_ids_str'][i]);
     }
     return final;
   }
