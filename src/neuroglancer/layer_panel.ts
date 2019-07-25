@@ -172,11 +172,14 @@ class LayerWidget extends RefCounted {
     element.title = 'Control+click for layer options, drag to move/copy.';
     element.className = 'neuroglancer-layer-item neuroglancer-noselect';
     element.dataset.type = layer.initialSpecification.type;
-    element.style.backgroundColor = layer.initialSpecification.annotationColor || '0';
-    if (layer.layer !== null) {
+    element.style.backgroundColor = layer.initialSpecification.annotationColor || '';
+    if (layer.layer !== null && element.dataset.type === 'annotation') {
       let managedUserLayer = <AnnotationUserLayer>layer.layer;
+      if (element.style.backgroundColor === '') {
+        element.style.backgroundColor = managedUserLayer.annotationColor.toString();
+      }
       managedUserLayer.annotationColor.changed.add(() => {
-        element.style.backgroundColor = managedUserLayer.annotationColor.toJSON() || '0';
+        element.style.backgroundColor = managedUserLayer.annotationColor.toString();
       });
     }
     let labelElement = this.labelElement = document.createElement('span');
