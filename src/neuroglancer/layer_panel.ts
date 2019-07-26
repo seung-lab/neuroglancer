@@ -28,13 +28,12 @@ import {getDropEffect, preventDrag, setDropEffect} from 'neuroglancer/util/drag_
 import {float32ToString} from 'neuroglancer/util/float32_to_string';
 import {makeCloseButton} from 'neuroglancer/widget/close_button';
 import {PositionWidget} from 'neuroglancer/widget/position_widget';
-
-import {AnnotationUserLayer} from './annotation/user_layer';
-import {ColorWidget} from './widget/color';
-import {makeTextIconButton} from './widget/text_icon_button';
+import {AnnotationUserLayer} from 'neuroglancer//annotation/user_layer';
+import {ColorWidget} from 'neuroglancer//widget/color';
+import {makeTextIconButton} from 'neuroglancer//widget/text_icon_button';
 
 require('neuroglancer/noselect.css');
-require('./layer_panel.css');
+require('neuroglancer//layer_panel.css');
 require('neuroglancer/ui/button.css');
 
 function destroyDropLayers(
