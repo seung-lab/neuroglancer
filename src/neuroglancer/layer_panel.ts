@@ -28,7 +28,10 @@ import {getDropEffect, preventDrag, setDropEffect} from 'neuroglancer/util/drag_
 import {float32ToString} from 'neuroglancer/util/float32_to_string';
 import {makeCloseButton} from 'neuroglancer/widget/close_button';
 import {PositionWidget} from 'neuroglancer/widget/position_widget';
+
 import {AnnotationUserLayer} from './annotation/user_layer';
+import {ColorWidget} from './widget/color';
+import {makeTextIconButton} from './widget/text_icon_button';
 
 require('neuroglancer/noselect.css');
 require('./layer_panel.css');
@@ -172,16 +175,6 @@ class LayerWidget extends RefCounted {
     element.title = 'Control+click for layer options, drag to move/copy.';
     element.className = 'neuroglancer-layer-item neuroglancer-noselect';
     element.dataset.type = layer.initialSpecification.type;
-    element.style.backgroundColor = layer.initialSpecification.annotationColor || '';
-    if (layer.layer !== null && element.dataset.type === 'annotation') {
-      let managedUserLayer = <AnnotationUserLayer>layer.layer;
-      if (element.style.backgroundColor === '') {
-        element.style.backgroundColor = managedUserLayer.annotationColor.toString();
-      }
-      managedUserLayer.annotationColor.changed.add(() => {
-        element.style.backgroundColor = managedUserLayer.annotationColor.toString();
-      });
-    }
     let labelElement = this.labelElement = document.createElement('span');
     labelElement.className = 'neuroglancer-layer-item-label';
     let layerNumberElement = this.layerNumberElement = document.createElement('span');
@@ -194,6 +187,32 @@ class LayerWidget extends RefCounted {
       this.panel.layerManager.removeManagedLayer(this.layer);
       event.stopPropagation();
     });
+    const initColor = layer.initialSpecification.annotationColor || '';
+    const colorElement = makeTextIconButton('█', initColor);
+    colorElement.style.color = initColor;
+    if (layer.layer !== null) {
+      let managedUserLayer = <AnnotationUserLayer>layer.layer;
+      if (colorElement.style.color === '') {
+        let setColor = managedUserLayer.annotationColor.toString();
+        colorElement.style.color = setColor;
+        colorElement.title = setColor;
+      }
+      managedUserLayer.annotationColor.changed.add(() => {
+        let changedColor = managedUserLayer.annotationColor.toString();
+        colorElement.style.color = changedColor;
+        colorElement.title = changedColor;
+      });
+    }
+    colorElement.classList.add('color');
+    const internalColorPicker = this.registerDisposer(
+        new ColorWidget((<AnnotationUserLayer>this.layer.layer).annotationColor));
+    internalColorPicker.element.style.display = 'none';
+    colorElement.appendChild(internalColorPicker.element);
+    this.registerEventListener(colorElement, 'click', (event: MouseEvent) => {
+      internalColorPicker.element.click();
+      event.stopPropagation();
+    });
+    element.appendChild(colorElement);
     element.appendChild(layerNumberElement);
     element.appendChild(labelElement);
     element.appendChild(valueElement);
