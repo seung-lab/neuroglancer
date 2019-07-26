@@ -77,7 +77,7 @@ export class ChunkedGraphLayer extends GenericSliceViewRenderLayer {
     return this.graphurl;
   }
 
-  async getRoot(selection: SegmentSelection, timestamp?:): Promise<Uint64> {
+  async getRoot(selection: SegmentSelection, timestamp?: string): Promise<Uint64> {
     const {url} = this;
     if (url === '') {
       return Promise.resolve(selection.segmentId);
