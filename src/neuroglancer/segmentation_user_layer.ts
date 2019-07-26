@@ -50,6 +50,7 @@ import {RenderScaleWidget} from 'neuroglancer/widget/render_scale_widget';
 import {SegmentSetWidget} from 'neuroglancer/widget/segment_set_widget';
 import {ShaderCodeWidget} from 'neuroglancer/widget/shader_code_widget';
 import {Tab} from 'neuroglancer/widget/tab_view';
+import {TimeSegmentWidget} from 'neuroglancer/widget/time_segment_widget';
 import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
 
 const SELECTED_ALPHA_JSON_KEY = 'selectedAlpha';
@@ -586,6 +587,7 @@ class DisplayOptionsTab extends Tab {
   private groupSegmentSelection =
       this.registerDisposer(new MinimizableGroupWidget('Segment Selection'));
   private groupOmniInfo = this.registerDisposer(new MinimizableGroupWidget('Omni Segment Info'));
+  private groupTimeCtrl = this.registerDisposer(new MinimizableGroupWidget('Time Control'));
   visibleSegmentWidget = this.registerDisposer(new SegmentSetWidget(this.layer.displayState));
   addSegmentWidget = this.registerDisposer(new Uint64EntryWidget());
   selectedAlphaWidget =
@@ -596,12 +598,13 @@ class DisplayOptionsTab extends Tab {
   objectAlphaWidget = this.registerDisposer(new RangeWidget(this.layer.displayState.objectAlpha));
   codeWidget: ShaderCodeWidget|undefined;
   omniWidget: OmniSegmentWidget|undefined;
+  timeWidget: TimeSegmentWidget|undefined;
 
   constructor(public layer: SegmentationUserLayer) {
     super();
     const {element} = this;
     element.classList.add('segmentation-dropdown');
-    const {group2D, group3D, groupSegmentSelection, groupOmniInfo} = this;
+    const {group2D, group3D, groupSegmentSelection, groupOmniInfo, groupTimeCtrl} = this;
     let {selectedAlphaWidget, notSelectedAlphaWidget, saturationWidget, objectAlphaWidget} = this;
     selectedAlphaWidget.promptElement.textContent = 'Opacity (on)';
     notSelectedAlphaWidget.promptElement.textContent = 'Opacity (off)';
@@ -662,6 +665,16 @@ class DisplayOptionsTab extends Tab {
     }));
     groupSegmentSelection.appendFlexibleChild(
         this.registerDisposer(this.visibleSegmentWidget).element);
+
+    const maybeAddTimeSegmentWidget = () => {
+      if (this.timeWidget) {
+        return;
+      }
+      {
+        this.timeWidget = this.registerDisposer(new TimeSegmentWidget());
+        groupTimeCtrl.appendFlexibleChild(this.timeWidget.element);
+      }
+    };
 
     const maybeAddOmniSegmentWidget = () => {
       if (this.omniWidget || (!layer.segmentMetadata)) {
@@ -740,12 +753,14 @@ class DisplayOptionsTab extends Tab {
     };
     this.registerDisposer(this.layer.objectLayerStateChanged.add(maybeAddSkeletonShaderUI));
     this.registerDisposer(this.layer.objectLayerStateChanged.add(maybeAddOmniSegmentWidget));
+    this.registerDisposer(this.layer.objectLayerStateChanged.add(maybeAddTimeSegmentWidget));
     maybeAddSkeletonShaderUI();
 
     element.appendChild(group2D.element);
     element.appendChild(group3D.element);
     element.appendChild(groupSegmentSelection.element);
     element.appendChild(groupOmniInfo.element);
+    element.appendChild(groupTimeCtrl.element);
 
     this.visibility.changed.add(() => {
       if (this.visible) {
