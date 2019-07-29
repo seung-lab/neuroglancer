@@ -172,7 +172,6 @@ class LayerWidget extends RefCounted {
     let element = this.element = document.createElement('div');
     element.title = 'Control+click for layer options, drag to move/copy.';
     element.className = 'neuroglancer-layer-item neuroglancer-noselect';
-    element.dataset.type = layer.initialSpecification.type;
     let labelElement = this.labelElement = document.createElement('span');
     labelElement.className = 'neuroglancer-layer-item-label';
     let layerNumberElement = this.layerNumberElement = document.createElement('span');

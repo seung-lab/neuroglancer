@@ -14,4 +14,4 @@
     * Annotation color can be changed from this button as well.
     * For non-annotation tabs, this displays and controls the color of the segmentation bounding box.
     
-    ![](https://snag.gy/lzAtQT.jpg)
+    ![](https://i.imgur.com/0wYK5Ly.png)
