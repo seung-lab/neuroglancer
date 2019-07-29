@@ -28,6 +28,7 @@ import {getDropEffect, preventDrag, setDropEffect} from 'neuroglancer/util/drag_
 import {float32ToString} from 'neuroglancer/util/float32_to_string';
 import {makeCloseButton} from 'neuroglancer/widget/close_button';
 import {PositionWidget} from 'neuroglancer/widget/position_widget';
+import {makeTextIconButton} from './widget/text_icon_button';
 
 require('neuroglancer/noselect.css');
 require('./layer_panel.css');
@@ -182,9 +183,19 @@ class LayerWidget extends RefCounted {
       this.panel.layerManager.removeManagedLayer(this.layer);
       event.stopPropagation();
     });
+    let timeWarningElement = makeTextIconButton(
+        '🕘', `This segmentation is currently in an older state.\nClick to return to current form.`);
+    timeWarningElement.style.color = 'red';
+    // timeWarningElement.style.display = 'none';
+    timeWarningElement.classList.add('neuroglancer-layer-time-reset');
+    this.registerEventListener(timeWarningElement, 'click', (event: MouseEvent) => {
+      event.stopPropagation();
+    });
+
     element.appendChild(layerNumberElement);
     element.appendChild(labelElement);
     element.appendChild(valueElement);
+    element.appendChild(timeWarningElement);
     element.appendChild(closeElement);
     this.registerEventListener(element, 'click', (event: MouseEvent) => {
       if (event.ctrlKey) {
