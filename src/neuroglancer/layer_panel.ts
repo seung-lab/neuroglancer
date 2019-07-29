@@ -27,13 +27,12 @@ import {removeFromParent} from 'neuroglancer/util/dom';
 import {getDropEffect, preventDrag, setDropEffect} from 'neuroglancer/util/drag_and_drop';
 import {float32ToString} from 'neuroglancer/util/float32_to_string';
 import {makeCloseButton} from 'neuroglancer/widget/close_button';
+import {ColorWidget} from 'neuroglancer/widget/color';
 import {PositionWidget} from 'neuroglancer/widget/position_widget';
-import {AnnotationUserLayer} from 'neuroglancer//annotation/user_layer';
-import {ColorWidget} from 'neuroglancer//widget/color';
-import {makeTextIconButton} from 'neuroglancer//widget/text_icon_button';
+import {UserLayerWithAnnotations} from './ui/annotations';
 
 require('neuroglancer/noselect.css');
-require('neuroglancer//layer_panel.css');
+require('neuroglancer/layer_panel.css');
 require('neuroglancer/ui/button.css');
 
 function destroyDropLayers(
@@ -186,32 +185,21 @@ class LayerWidget extends RefCounted {
       this.panel.layerManager.removeManagedLayer(this.layer);
       event.stopPropagation();
     });
-    const initColor = layer.initialSpecification.annotationColor || '';
-    const colorElement = makeTextIconButton('█', initColor);
-    colorElement.style.color = initColor;
+    const colorWidget = this.registerDisposer(
+        new ColorWidget((<UserLayerWithAnnotations>this.layer.layer).annotationColor));
+    colorWidget.element.title = layer.initialSpecification.annotationColor || '';
+
     if (layer.layer !== null) {
-      let managedUserLayer = <AnnotationUserLayer>layer.layer;
-      if (colorElement.style.color === '') {
-        let setColor = managedUserLayer.annotationColor.toString();
-        colorElement.style.color = setColor;
-        colorElement.title = setColor;
+      let managedUserLayer = <UserLayerWithAnnotations>layer.layer;
+      if (colorWidget.element.style.color === '') {
+        colorWidget.element.title = managedUserLayer.annotationColor.toString();
       }
-      managedUserLayer.annotationColor.changed.add(() => {
-        let changedColor = managedUserLayer.annotationColor.toString();
-        colorElement.style.color = changedColor;
-        colorElement.title = changedColor;
-      });
     }
-    colorElement.classList.add('color');
-    const internalColorPicker = this.registerDisposer(
-        new ColorWidget((<AnnotationUserLayer>this.layer.layer).annotationColor));
-    internalColorPicker.element.style.display = 'none';
-    colorElement.appendChild(internalColorPicker.element);
-    this.registerEventListener(colorElement, 'click', (event: MouseEvent) => {
-      internalColorPicker.element.click();
+    colorWidget.element.classList.add('color-special');
+    this.registerEventListener(colorWidget.element, 'click', (event: MouseEvent) => {
       event.stopPropagation();
     });
-    element.appendChild(colorElement);
+    element.appendChild(colorWidget.element);
     element.appendChild(layerNumberElement);
     element.appendChild(labelElement);
     element.appendChild(valueElement);
