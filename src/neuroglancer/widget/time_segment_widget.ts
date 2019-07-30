@@ -1,3 +1,4 @@
+import {SegmentationDisplayState} from '../segmentation_display_state/frontend';
 import {TrackableValueInterface} from '../trackable_value';
 import {RefCounted} from '../util/disposable';
 import {removeFromParent} from '../util/dom';
@@ -6,10 +7,14 @@ import {removeFromParent} from '../util/dom';
 
 export class TimeSegmentWidget extends RefCounted {
   element = <HTMLInputElement>document.createElement('input');
+  model: TrackableValueInterface<string>;
+  preValue: string;
 
-  constructor(public model: TrackableValueInterface<string>) {
+  constructor(private displayState: SegmentationDisplayState) {
     super();
-    const {element} = this;
+    this.model = displayState.timestamp;
+    const {element, model} = this;
+    this.preValue = '';
     element.classList.add('neuroglancer-time-widget');
     element.type = 'datetime-local';
     element.addEventListener('change', () => this.updateModel());
@@ -24,6 +29,11 @@ export class TimeSegmentWidget extends RefCounted {
   }
   private updateView() {
     this.element.value = this.dateFormat(this.model.value);
+    if (this.element.value !== '' || this.preValue !== '') {
+      this.displayState.rootSegments.clear();
+      this.displayState.hiddenRootSegments!.clear();
+    }
+    this.preValue = this.element.value;
   }
   private updateModel() {
     this.model.restoreState(this.element.value);

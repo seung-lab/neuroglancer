@@ -223,7 +223,8 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
       let {segmentSelectionState} = this.displayState;
       if (segmentSelectionState.hasSelectedSegment) {
         let segment = segmentSelectionState.selectedSegment;
-        let {rootSegments} = this.displayState;
+        let {rootSegments, timestamp} = this.displayState;
+        let tsValue = (timestamp.value !== '') ? timestamp.value : void(0);
         if (rootSegments.has(segment)) {
           rootSegments.delete(segment);
         } else if (this.chunkedGraphLayer) {
@@ -235,7 +236,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
                 this.transform.inverse)
           };
 
-          this.chunkedGraphLayer.getRoot(currentSegmentSelection)
+          this.chunkedGraphLayer.getRoot(currentSegmentSelection, tsValue)
               .then(rootSegment => {
                 rootSegments.add(rootSegment);
               })

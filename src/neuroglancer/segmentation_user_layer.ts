@@ -672,7 +672,7 @@ class DisplayOptionsTab extends Tab {
         return;
       }
       {
-        this.timeWidget = this.registerDisposer(new TimeSegmentWidget(layer.displayState.timestamp));
+        this.timeWidget = this.registerDisposer(new TimeSegmentWidget(layer.displayState));
         groupTimeCtrl.appendFlexibleChild(this.timeWidget.element);
       }
     };

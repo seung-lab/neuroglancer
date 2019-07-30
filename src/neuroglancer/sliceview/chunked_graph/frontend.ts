@@ -84,7 +84,7 @@ export class ChunkedGraphLayer extends GenericSliceViewRenderLayer {
     }
 
     const promise = authFetch(`${url}/graph/${String(selection.segmentId)}/root${
-        timestamp ? `/?timestamp=${timestamp}` : ``}`);
+        timestamp ? `?timestamp=${timestamp}` : ``}`);
 
     const response = await this.withErrorMessage(promise, {
       initialMessage: `Retrieving root for segment ${selection.segmentId}`,
