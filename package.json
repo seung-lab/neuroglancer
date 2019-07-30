@@ -48,6 +48,7 @@
     "markdown-loader": "^5.0.0",
     "minimist": "^1.2.0",
     "nunjucks": "^3.2.0",
+    "papaparse": "^5.0.1",
     "tslint": "^5.15.0",
     "tslint-eslint-rules": "^5.4.0",
     "webpack-cli": "^3.3.0",

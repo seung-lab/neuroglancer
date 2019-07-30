@@ -48,6 +48,7 @@ import {StackView, Tab} from 'neuroglancer/widget/tab_view';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
 import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
 import {TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
+const Papa = require('papaparse');
 
 type AnnotationIdAndPart = {
   id: string,
@@ -719,67 +720,76 @@ export class AnnotationLayerView extends Tab {
 
   private exportToCSV() {
     const filename = 'annotations.csv';
-    let csvString = 'Coordinates,Tags,Description,Segment IDs\n';
     const pointToCoordinateText = (point: vec3, transform: mat4) => {
       const spatialPoint = vec3.transformMat4(vec3.create(), point, transform);
       return formatIntegerPoint(this.voxelSize.voxelFromSpatial(tempVec3, spatialPoint));
     };
+    const columnHeaders = ['Coordinate 1','Coordinate 2 (if applicable)','Ellipsoid Dimensions (if applicable)','Tags','Description','Segment IDs'];
+    const csvData: string[][] = [];
     for (const annotation of this.annotationLayer.source) {
-      let annotationString = '';
-      let coordinatesString = '"';
+      const annotationRow = [];
+      let coordinate1String = '';
+      let coordinate2String = '';
+      let ellipsoidDimensions = '';
       switch (annotation.type) {
         case AnnotationType.AXIS_ALIGNED_BOUNDING_BOX:
         case AnnotationType.LINE:
-          coordinatesString += pointToCoordinateText(annotation.pointA, this.annotationLayer.objectToGlobal) + '-';
-          coordinatesString += pointToCoordinateText(annotation.pointB, this.annotationLayer.objectToGlobal);
+          coordinate1String = pointToCoordinateText(annotation.pointA, this.annotationLayer.objectToGlobal);
+          coordinate2String = pointToCoordinateText(annotation.pointB, this.annotationLayer.objectToGlobal);
           break;
         case AnnotationType.POINT:
-          coordinatesString += pointToCoordinateText(annotation.point, this.annotationLayer.objectToGlobal);
+          coordinate1String = pointToCoordinateText(annotation.point, this.annotationLayer.objectToGlobal);
           break;
         case AnnotationType.ELLIPSOID:
-          coordinatesString += pointToCoordinateText(annotation.center, this.annotationLayer.objectToGlobal);
+          coordinate1String = pointToCoordinateText(annotation.center, this.annotationLayer.objectToGlobal);
           const transformedRadii = transformVectorByMat4(tempVec3, annotation.radii, this.annotationLayer.objectToGlobal);
           this.voxelSize.voxelFromSpatial(transformedRadii, transformedRadii);
-          coordinatesString += '±' + formatIntegerBounds(transformedRadii);
+          ellipsoidDimensions = formatIntegerBounds(transformedRadii);
           break;
       }
-      annotationString += coordinatesString + '",';
+      annotationRow.push(coordinate1String);
+      annotationRow.push(coordinate2String);
+      annotationRow.push(ellipsoidDimensions);
       if (this.annotationLayer.source instanceof AnnotationSource && annotation.tagIds) {
-        let tagString = '"';
-        let firstTag = true;
+        // Papa.unparse expects an array of arrays even though here we only want to create a csv for one row of tags
+        const annotationTags: string[][] = [[]];
         annotation.tagIds.forEach(tagId => {
           const tag = (<AnnotationSource>this.annotationLayer.source).getTag(tagId);
           if (tag) {
-            if (firstTag) {
-              firstTag = false;
-            } else {
-              tagString += ',';
-            }
-            tagString += '#' + tag.label;
+            annotationTags[0].push(tag.label);
           }
         });
-        annotationString += tagString + '"';
+        if (annotationTags[0].length > 0) {
+          annotationRow.push(Papa.unparse(annotationTags));
+        } else {
+          annotationRow.push('');
+        }
+      } else {
+        annotationRow.push('');
       }
-      annotationString += ',';
       if (annotation.description) {
-        annotationString += annotation.description;
+        annotationRow.push(annotation.description);
+      } else {
+        annotationRow.push('');
       }
-      annotationString += ',';
       if (annotation.segments) {
-        let segmentString = '"';
-        let firstSegment = true;
+        // Papa.unparse expects an array of arrays even though here we only want to create a csv for one row of segments
+        const annotationSegments: string[][] = [[]];
         annotation.segments.forEach(segmentID => {
-          if (firstSegment) {
-            firstSegment = false;
-          } else {
-            segmentString += ',';
-          }
-          segmentString += segmentID.toString();
+          annotationSegments[0].push(segmentID.toString());
         });
-        annotationString += segmentString + '"';
+        if (annotationSegments[0].length > 0) {
+          annotationRow.push(Papa.unparse(annotationSegments));
+        } else {
+          annotationRow.push('');
+        }
       }
-      csvString += annotationString + '\n';
+      csvData.push(annotationRow);
     }
+    const csvString = Papa.unparse({
+      'fields': columnHeaders,
+      'data': csvData
+    });
     const blob = new Blob([csvString],  { type: 'text/csv;charset=utf-8;'});
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
