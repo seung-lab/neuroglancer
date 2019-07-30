@@ -15,7 +15,7 @@
  */
 
 import {DisplayContext} from 'neuroglancer/display_context';
-import {ManagedUserLayer, SelectedLayerState,} from 'neuroglancer/layer';
+import {ManagedUserLayer, SelectedLayerState} from 'neuroglancer/layer';
 import {LayerDialog} from 'neuroglancer/layer_dialog';
 import {LinkedViewerNavigationState} from 'neuroglancer/layer_group_viewer';
 import {LayerListSpecification, ManagedUserLayerWithSpecification} from 'neuroglancer/layer_specification';
@@ -28,10 +28,11 @@ import {getDropEffect, preventDrag, setDropEffect} from 'neuroglancer/util/drag_
 import {float32ToString} from 'neuroglancer/util/float32_to_string';
 import {makeCloseButton} from 'neuroglancer/widget/close_button';
 import {PositionWidget} from 'neuroglancer/widget/position_widget';
-import {makeTextIconButton} from './widget/text_icon_button';
+import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
+import { SegmentationUserLayer } from 'neuroglancer/segmentation_user_layer';
 
 require('neuroglancer/noselect.css');
-require('./layer_panel.css');
+require('neuroglancer/layer_panel.css');
 require('neuroglancer/ui/button.css');
 
 function destroyDropLayers(
@@ -186,12 +187,21 @@ class LayerWidget extends RefCounted {
     let timeWarningElement = makeTextIconButton(
         '🕘', `This segmentation is currently in an older state.\nClick to return to current form.`);
     timeWarningElement.style.color = 'red';
-    // timeWarningElement.style.display = 'none';
+    timeWarningElement.style.display = 'none';
     timeWarningElement.classList.add('neuroglancer-layer-time-reset');
     this.registerEventListener(timeWarningElement, 'click', (event: MouseEvent) => {
       event.stopPropagation();
     });
-
+    if (layer.layer !== null) {
+      let displayState = (<SegmentationUserLayer> layer.layer).displayState;
+      displayState.timestamp.changed.add(() => {
+        if (displayState.timestamp.value !== '') {
+          timeWarningElement.style.display = 'block';
+        } else {
+          timeWarningElement.style.display = 'none';
+        }
+      });
+    }
     element.appendChild(layerNumberElement);
     element.appendChild(labelElement);
     element.appendChild(valueElement);

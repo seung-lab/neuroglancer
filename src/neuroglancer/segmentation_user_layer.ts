@@ -668,9 +668,9 @@ class DisplayOptionsTab extends Tab {
         this.registerDisposer(this.visibleSegmentWidget).element);
 
     const maybeAddTimeSegmentWidget = () => {
-      if (this.timeWidget) {
+      /* if (this.timeWidget) {
         return;
-      }
+      }*/
       {
         this.timeWidget = this.registerDisposer(new TimeSegmentWidget(layer.displayState));
         groupTimeCtrl.appendFlexibleChild(this.timeWidget.element);
@@ -754,7 +754,8 @@ class DisplayOptionsTab extends Tab {
     };
     this.registerDisposer(this.layer.objectLayerStateChanged.add(maybeAddSkeletonShaderUI));
     this.registerDisposer(this.layer.objectLayerStateChanged.add(maybeAddOmniSegmentWidget));
-    this.registerDisposer(this.layer.objectLayerStateChanged.add(maybeAddTimeSegmentWidget));
+    // this.registerDisposer(this.layer.objectLayerStateChanged.add(maybeAddTimeSegmentWidget));
+    maybeAddTimeSegmentWidget();
     maybeAddSkeletonShaderUI();
 
     element.appendChild(group2D.element);

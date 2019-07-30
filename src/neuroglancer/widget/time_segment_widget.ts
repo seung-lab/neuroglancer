@@ -1,7 +1,7 @@
-import {SegmentationDisplayState} from '../segmentation_display_state/frontend';
-import {TrackableValueInterface} from '../trackable_value';
-import {RefCounted} from '../util/disposable';
-import {removeFromParent} from '../util/dom';
+import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
+import {TrackableValueInterface} from 'neuroglancer/trackable_value';
+import {RefCounted} from 'neuroglancer/util/disposable';
+import {removeFromParent} from 'neuroglancer/util/dom';
 
 // require('./time_segment_widget.css');
 
