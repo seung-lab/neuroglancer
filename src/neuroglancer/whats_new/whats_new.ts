@@ -13,12 +13,12 @@ const generateWhatsNew = (GHCommits: string[] = []) => {
     newCommits.push('');
   }
 
-  let currentDes = (require(`../../../${updateFName}`)) || '';
+  let currentDes = (require('../../../WHATS_NEW.md')) || '';
   let description: string = `<ul>${newCommits.reduce((acc: string, cur: any, i: number) => {
     return `${acc}\n<li><h4>${(cur.commit) ? cur.commit.message : ''}</h4>\n${
     !i ? `${currentDes}` :
-         `<a target="_blank" href='https://github.com/seung-lab/neuroglancer/blob/${
-             cur.sha}/${updateFName}'>More...</a>`}</li>`;
+         `<a target="_blank" href='https://github.com/seung-lab/neuroglancer/blob/${cur.sha}/${
+             updateFName}'>More...</a>`}</li>`;
   }, '')}</ul>`;
   return description;
 };
