@@ -400,6 +400,16 @@ export class GraphOperationLayerView extends Tab {
     const displayState = (<GraphOperationLayerState>annotationLayer).segmentationState.value;
     if (displayState) {
       this.timeWidget = this.registerDisposer(new TimeSegmentWidget(displayState));
+      displayState.timestamp.changed.add(() => {
+        Array.from(toolbox.children).forEach((ele: HTMLButtonElement) => {
+          if (displayState.timestamp.value === '') {
+            ele.disabled = false;
+          }
+          else {
+            ele.disabled = true;
+          }
+        });
+      });
       this.timectrlGroup.appendFlexibleChild(this.timeWidget.element);
       this.element.appendChild(this.timectrlGroup.element);
     }
