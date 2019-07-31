@@ -115,3 +115,9 @@
   display: inline-block;
   flex: 1;
 }
+
+.time-displaced {
+  outline-style: solid;
+  outline-color: red;
+  outline-width: thick;
+}

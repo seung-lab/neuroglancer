@@ -20,6 +20,7 @@ import {LayerDialog} from 'neuroglancer/layer_dialog';
 import {LinkedViewerNavigationState} from 'neuroglancer/layer_group_viewer';
 import {LayerListSpecification, ManagedUserLayerWithSpecification} from 'neuroglancer/layer_specification';
 import {NavigationLinkType} from 'neuroglancer/navigation_state';
+import {SegmentationUserLayer} from 'neuroglancer/segmentation_user_layer';
 import {DropLayers, endLayerDrag, getDropLayers, getLayerDropEffect, startLayerDrag} from 'neuroglancer/ui/layer_drag_and_drop';
 import {animationFrameDebounce} from 'neuroglancer/util/animation_frame_debounce';
 import {RefCounted, registerEventListener} from 'neuroglancer/util/disposable';
@@ -29,7 +30,6 @@ import {float32ToString} from 'neuroglancer/util/float32_to_string';
 import {makeCloseButton} from 'neuroglancer/widget/close_button';
 import {PositionWidget} from 'neuroglancer/widget/position_widget';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
-import { SegmentationUserLayer } from 'neuroglancer/segmentation_user_layer';
 
 require('neuroglancer/noselect.css');
 require('neuroglancer/layer_panel.css');
@@ -189,18 +189,23 @@ class LayerWidget extends RefCounted {
     timeWarningElement.style.color = 'red';
     timeWarningElement.style.display = 'none';
     timeWarningElement.classList.add('neuroglancer-layer-time-reset');
-    this.registerEventListener(timeWarningElement, 'click', (event: MouseEvent) => {
-      event.stopPropagation();
-    });
     if (layer.layer !== null) {
-      let displayState = (<SegmentationUserLayer> layer.layer).displayState;
-      displayState.timestamp.changed.add(() => {
-        if (displayState.timestamp.value !== '') {
-          timeWarningElement.style.display = 'block';
-        } else {
-          timeWarningElement.style.display = 'none';
-        }
-      });
+      let displayState = (<SegmentationUserLayer>layer.layer).displayState;
+      if (displayState) {
+        displayState.timestamp.changed.add(() => {
+          if (displayState.timestamp.value !== '') {
+            timeWarningElement.style.display = 'inherit';
+            this.element.classList.add('time-displaced');
+          } else {
+            timeWarningElement.style.display = 'none';
+            this.element.classList.remove('time-displaced');
+          }
+        });
+        this.registerEventListener(timeWarningElement, 'click', (event: MouseEvent) => {
+          displayState.timestamp.value = '';
+          event.stopPropagation();
+        });
+      }
     }
     element.appendChild(layerNumberElement);
     element.appendChild(labelElement);
