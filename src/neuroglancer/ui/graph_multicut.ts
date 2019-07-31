@@ -45,6 +45,7 @@ import {makeCloseButton} from 'neuroglancer/widget/close_button';
 import {MinimizableGroupWidget} from 'neuroglancer/widget/minimizable_group';
 import {StackView, Tab} from 'neuroglancer/widget/tab_view';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
+import {TimeSegmentWidget} from '../widget/time_segment_widget';
 
 type GraphOperationMarkerId = {
   id: string,
@@ -275,6 +276,8 @@ export class GraphOperationLayerView extends Tab {
   private previousHoverId: string|undefined;
   private updated = false;
   multicutGroup = this.registerDisposer(new MinimizableGroupWidget('Multicut'));
+  timectrlGroup = this.registerDisposer(new MinimizableGroupWidget('Time Control'));
+  timeWidget: TimeSegmentWidget|undefined;
 
   constructor(
       public wrapper: Borrowed<SegmentationUserLayerWithGraph>,
@@ -393,6 +396,13 @@ export class GraphOperationLayerView extends Tab {
     this.multicutGroup.appendFixedChild(toolbox);
     this.multicutGroup.appendFlexibleChild(this.annotationListContainer);
     this.element.appendChild(this.multicutGroup.element);
+
+    const displayState = (<GraphOperationLayerState>annotationLayer).segmentationState.value;
+    if (displayState) {
+      this.timeWidget = this.registerDisposer(new TimeSegmentWidget(displayState));
+      this.timectrlGroup.appendFlexibleChild(this.timeWidget.element);
+      this.element.appendChild(this.timectrlGroup.element);
+    }
 
     this.annotationListContainer.addEventListener('mouseleave', () => {
       this.annotationLayer.hoverState.value = undefined;

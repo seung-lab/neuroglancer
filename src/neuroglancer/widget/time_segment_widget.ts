@@ -32,6 +32,7 @@ export class TimeSegmentWidget extends RefCounted {
     if (this.element.value !== '' || this.preValue !== '') {
       this.displayState.rootSegments.clear();
       this.displayState.hiddenRootSegments!.clear();
+      // document.querySelectorAll('.neuroglancer-graphoperation-toolbox button').forEach(e => e.disabled = true)
     }
     this.preValue = this.element.value;
   }
