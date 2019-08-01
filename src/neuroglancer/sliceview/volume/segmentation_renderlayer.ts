@@ -224,6 +224,10 @@ uint64_t getMappedObjectId() {
     gl.uniform1ui(
         shader.uniform('uShatterSegmentEquivalences'),
         this.displayState.shatterSegmentEquivalences.value ? 1 : 0);
+    // if (this.displayState.colorOverride) {
+    //   this.displayState.colorOverride.value
+    // }
+    // gl.uniform1ui(shader.uniform('uColorOverride'), this.displayState.colorOverride ? this.displayState.colorOverride.value : 0);
     this.hashTableManager.enable(gl, shader, this.gpuHashTable);
     this.hashTableManagerHighlighted.enable(gl, shader, this.gpuHashTableHighlighted);
     if (this.hasEquivalences) {

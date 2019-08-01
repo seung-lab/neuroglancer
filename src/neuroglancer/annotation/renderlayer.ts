@@ -18,6 +18,7 @@ import 'neuroglancer/annotation/bounding_box';
 import 'neuroglancer/annotation/line';
 import 'neuroglancer/annotation/point';
 import 'neuroglancer/annotation/ellipsoid';
+import 'neuroglancer/annotation/supervoxel';
 
 import {AnnotationBase, AnnotationSource, annotationTypes} from 'neuroglancer/annotation';
 import {AnnotationLayerState} from 'neuroglancer/annotation/annotation_layer_state';
