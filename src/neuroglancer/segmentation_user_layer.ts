@@ -34,7 +34,7 @@ import {SegmentationRenderLayer} from 'neuroglancer/sliceview/volume/segmentatio
 import {StatusMessage} from 'neuroglancer/status';
 import {trackableAlphaValue} from 'neuroglancer/trackable_alpha';
 import {ElementVisibilityFromTrackableBoolean, TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
-import {ComputedWatchableValue, TrackableValue} from 'neuroglancer/trackable_value';
+import {ComputedWatchableValue, LockableValue} from 'neuroglancer/trackable_value';
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {UserLayerWithVolumeSourceMixin} from 'neuroglancer/user_layer_with_volume_source';
 import {Borrowed} from 'neuroglancer/util/disposable';
@@ -50,7 +50,6 @@ import {RenderScaleWidget} from 'neuroglancer/widget/render_scale_widget';
 import {SegmentSetWidget} from 'neuroglancer/widget/segment_set_widget';
 import {ShaderCodeWidget} from 'neuroglancer/widget/shader_code_widget';
 import {Tab} from 'neuroglancer/widget/tab_view';
-import {TimeSegmentWidget} from 'neuroglancer/widget/time_segment_widget';
 import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
 
 const SELECTED_ALPHA_JSON_KEY = 'selectedAlpha';
@@ -98,7 +97,7 @@ export class SegmentationUserLayer extends Base {
     renderScaleHistogram: new RenderScaleHistogram(),
     renderScaleTarget: trackableRenderScaleTarget(1),
     shatterSegmentEquivalences: new TrackableBoolean(false, false),
-    timestamp: new TrackableValue('', date => ((new Date(date)).valueOf() / 1000).toString())
+    timestamp: new LockableValue('', date => ((new Date(date)).valueOf() / 1000).toString())
   };
 
   /**
@@ -598,7 +597,6 @@ class DisplayOptionsTab extends Tab {
   objectAlphaWidget = this.registerDisposer(new RangeWidget(this.layer.displayState.objectAlpha));
   codeWidget: ShaderCodeWidget|undefined;
   omniWidget: OmniSegmentWidget|undefined;
-  timeWidget: TimeSegmentWidget|undefined;
 
   constructor(public layer: SegmentationUserLayer) {
     super();

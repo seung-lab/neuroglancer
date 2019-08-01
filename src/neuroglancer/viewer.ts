@@ -31,6 +31,7 @@ import {ManagedUserLayerWithSpecification, TopLevelLayerListSpecification} from 
 import {NavigationState, Pose} from 'neuroglancer/navigation_state';
 import {overlaysOpen} from 'neuroglancer/overlay';
 import {UserPreferencesDialog} from 'neuroglancer/preferences/user_preferences';
+import {SegmentationUserLayer} from 'neuroglancer/segmentation_user_layer';
 import {StatusMessage} from 'neuroglancer/status';
 import {ElementVisibilityFromTrackableBoolean, TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
 import {makeDerivedWatchableValue, TrackableValue, WatchableValueInterface} from 'neuroglancer/trackable_value';
@@ -56,6 +57,7 @@ import {CompoundTrackable} from 'neuroglancer/util/trackable';
 import {ViewerState, VisibilityPrioritySpecification} from 'neuroglancer/viewer_state';
 import {WatchableVisibilityPriority} from 'neuroglancer/visibility_priority/frontend';
 import {GL} from 'neuroglancer/webgl/context';
+import {findWhatsNew, WhatsNewDialog} from 'neuroglancer/whats_new/whats_new';
 import {AnnotationToolStatusWidget} from 'neuroglancer/widget/annotation_tool_status';
 import {NumberInputWidget} from 'neuroglancer/widget/number_input_widget';
 import {MousePositionWidget, PositionWidget, VoxelSizeWidget} from 'neuroglancer/widget/position_widget';
@@ -63,10 +65,7 @@ import {TrackableScaleBarOptions} from 'neuroglancer/widget/scale_bar';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
 import {RPC} from 'neuroglancer/worker_rpc';
 
-import {SegmentationUserLayer} from './segmentation_user_layer';
-import {findWhatsNew, WhatsNewDialog} from './whats_new/whats_new';
-
-require('./viewer.css');
+require('neuroglancer/viewer.css');
 require('neuroglancer/noselect.css');
 require('neuroglancer/ui/button.css');
 
@@ -620,18 +619,37 @@ export class Viewer extends RefCounted implements ViewerState {
       return displayState && displayState.timestamp.value !== '';
     };
 
+    const timeLock = (e: ManagedUserLayerWithSpecification, lock: boolean) => {
+      let displayState = (<SegmentationUserLayer>e.layer).displayState;
+
+      if (displayState) {
+        displayState.timestamp.lock = lock;
+        return true;
+      }
+      return false;
+    };
+
+    const tLock = (e: ManagedUserLayerWithSpecification) => {
+      timeLock(e, true);
+    };
+    const tUnlock = (e: ManagedUserLayerWithSpecification) => {
+      timeLock(e, false);
+    };
+
     this.bindAction('two-point-merge', () => {
       this.mouseState.toggleAction();
       const timeDisplaced = this.layerManager.managedLayers.some(isTimeDisplaced);
       if (this.mouseState.actionState === ActionState.INACTIVE && !timeDisplaced) {
         this.mouseState.setMode(ActionMode.NONE);
         StatusMessage.showTemporaryMessage('Merge mode deactivated.');
+        this.layerManager.managedLayers.map(tUnlock);
       } else if (timeDisplaced) {
         StatusMessage.showTemporaryMessage(
             'Merge mode can not be activated with a segmentation at an older state.');
       } else {
         this.mouseState.setMode(ActionMode.MERGE);
         StatusMessage.showTemporaryMessage('Merge mode activated.');
+        this.layerManager.managedLayers.map(tLock);
       }
     });
 
@@ -641,12 +659,14 @@ export class Viewer extends RefCounted implements ViewerState {
       if (this.mouseState.actionState === ActionState.INACTIVE && !timeDisplaced) {
         this.mouseState.setMode(ActionMode.NONE);
         StatusMessage.showTemporaryMessage('Split mode deactivated.');
+        this.layerManager.managedLayers.map(tUnlock);
       } else if (timeDisplaced) {
         StatusMessage.showTemporaryMessage(
             'Split mode can not be activated with a segmentation at an older state.');
       } else {
         this.mouseState.setMode(ActionMode.SPLIT);
         StatusMessage.showTemporaryMessage('Split mode activated.');
+        this.layerManager.managedLayers.map(tLock);
       }
     });
 

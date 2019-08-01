@@ -1,5 +1,6 @@
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
-import {TrackableValueInterface} from 'neuroglancer/trackable_value';
+import {StatusMessage} from 'neuroglancer/status';
+import {LockableValueInterface} from 'neuroglancer/trackable_value';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {removeFromParent} from 'neuroglancer/util/dom';
 
@@ -7,7 +8,7 @@ import {removeFromParent} from 'neuroglancer/util/dom';
 
 export class TimeSegmentWidget extends RefCounted {
   element = <HTMLInputElement>document.createElement('input');
-  model: TrackableValueInterface<string>;
+  model: LockableValueInterface<string>;
   preValue: string;
 
   constructor(private displayState: SegmentationDisplayState) {
@@ -28,11 +29,15 @@ export class TimeSegmentWidget extends RefCounted {
     return ((new Date(parseInt(value, 10) * 1000)).toISOString()).slice(0, -1);
   }
   private updateView() {
+    if (this.model.lock && this.model.value !== '') {
+      this.model.value = '';
+      StatusMessage.showTemporaryMessage(
+          'Cannot view an older segmentation while Merge/Split mode is active.');
+    }
     this.element.value = this.dateFormat(this.model.value);
     if (this.element.value !== '' || this.preValue !== '') {
       this.displayState.rootSegments.clear();
       this.displayState.hiddenRootSegments!.clear();
-      // document.querySelectorAll('.neuroglancer-graphoperation-toolbox button').forEach(e => e.disabled = true)
     }
     this.preValue = this.element.value;
   }

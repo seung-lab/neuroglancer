@@ -28,6 +28,7 @@ import {GraphOperationLayerState} from 'neuroglancer/graph/graph_operation_layer
 import {MouseSelectionState} from 'neuroglancer/layer';
 import {VoxelSize} from 'neuroglancer/navigation_state';
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
+import {SegmentationUserLayer} from 'neuroglancer/segmentation_user_layer';
 import {SegmentationUserLayerWithGraph} from 'neuroglancer/segmentation_user_layer_with_graph';
 import {SegmentSelection} from 'neuroglancer/sliceview/chunked_graph/frontend';
 import {StatusMessage} from 'neuroglancer/status';
@@ -45,7 +46,7 @@ import {makeCloseButton} from 'neuroglancer/widget/close_button';
 import {MinimizableGroupWidget} from 'neuroglancer/widget/minimizable_group';
 import {StackView, Tab} from 'neuroglancer/widget/tab_view';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
-import {TimeSegmentWidget} from '../widget/time_segment_widget';
+import {TimeSegmentWidget} from 'neuroglancer/widget/time_segment_widget';
 
 type GraphOperationMarkerId = {
   id: string,
@@ -402,10 +403,10 @@ export class GraphOperationLayerView extends Tab {
       this.timeWidget = this.registerDisposer(new TimeSegmentWidget(displayState));
       displayState.timestamp.changed.add(() => {
         Array.from(toolbox.children).forEach((ele: HTMLButtonElement) => {
+          // TODO: disable only if perform multicut button
           if (displayState.timestamp.value === '') {
             ele.disabled = false;
-          }
-          else {
+          } else {
             ele.disabled = true;
           }
         });
@@ -729,6 +730,14 @@ export class PlaceGraphOperationMarkerTool extends PlaceGraphOperationTool {
       // Not yet ready.
       return;
     }
+
+    let displayState = (<SegmentationUserLayer>this.layer).displayState;
+    if (displayState && displayState.timestamp.value !== '') {
+      StatusMessage.showTemporaryMessage(
+          'Operation can not be performed with the segmentation at an older state.');
+      return;
+    }
+
     if (mouseState.active) {
       const annotation: Annotation = {
         id: '',
