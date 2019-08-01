@@ -27,7 +27,7 @@ import {InputEventBindingHelpDialog} from 'neuroglancer/help/input_event_binding
 import {ActionMode, ActionState, allRenderLayerRoles, LayerManager, LayerSelectedValues, ManagedUserLayer, MouseSelectionState, RenderLayerRole, SelectedLayerState, UserLayer} from 'neuroglancer/layer';
 import {LayerDialog} from 'neuroglancer/layer_dialog';
 import {RootLayoutContainer} from 'neuroglancer/layer_groups_layout';
-import {TopLevelLayerListSpecification} from 'neuroglancer/layer_specification';
+import {ManagedUserLayerWithSpecification, TopLevelLayerListSpecification} from 'neuroglancer/layer_specification';
 import {NavigationState, Pose} from 'neuroglancer/navigation_state';
 import {overlaysOpen} from 'neuroglancer/overlay';
 import {UserPreferencesDialog} from 'neuroglancer/preferences/user_preferences';
@@ -62,6 +62,8 @@ import {MousePositionWidget, PositionWidget, VoxelSizeWidget} from 'neuroglancer
 import {TrackableScaleBarOptions} from 'neuroglancer/widget/scale_bar';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
 import {RPC} from 'neuroglancer/worker_rpc';
+
+import {SegmentationUserLayer} from './segmentation_user_layer';
 import {findWhatsNew, WhatsNewDialog} from './whats_new/whats_new';
 
 require('./viewer.css');
@@ -613,11 +615,20 @@ export class Viewer extends RefCounted implements ViewerState {
       });
     }
 
+    const isTimeDisplaced = (e: ManagedUserLayerWithSpecification) => {
+      let displayState = (<SegmentationUserLayer>e.layer).displayState;
+      return displayState && displayState.timestamp.value !== '';
+    };
+
     this.bindAction('two-point-merge', () => {
       this.mouseState.toggleAction();
-      if (this.mouseState.actionState === ActionState.INACTIVE) {
+      const timeDisplaced = this.layerManager.managedLayers.some(isTimeDisplaced);
+      if (this.mouseState.actionState === ActionState.INACTIVE && !timeDisplaced) {
         this.mouseState.setMode(ActionMode.NONE);
         StatusMessage.showTemporaryMessage('Merge mode deactivated.');
+      } else if (timeDisplaced) {
+        StatusMessage.showTemporaryMessage(
+            'Merge mode can not be activated with a segmentation at an older state.');
       } else {
         this.mouseState.setMode(ActionMode.MERGE);
         StatusMessage.showTemporaryMessage('Merge mode activated.');
@@ -626,9 +637,13 @@ export class Viewer extends RefCounted implements ViewerState {
 
     this.bindAction('two-point-cut', () => {
       this.mouseState.toggleAction();
-      if (this.mouseState.actionState === ActionState.INACTIVE) {
+      const timeDisplaced = this.layerManager.managedLayers.some(isTimeDisplaced);
+      if (this.mouseState.actionState === ActionState.INACTIVE && !timeDisplaced) {
         this.mouseState.setMode(ActionMode.NONE);
         StatusMessage.showTemporaryMessage('Split mode deactivated.');
+      } else if (timeDisplaced) {
+        StatusMessage.showTemporaryMessage(
+            'Split mode can not be activated with a segmentation at an older state.');
       } else {
         this.mouseState.setMode(ActionMode.SPLIT);
         StatusMessage.showTemporaryMessage('Split mode activated.');
