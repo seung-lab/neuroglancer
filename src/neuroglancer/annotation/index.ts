@@ -45,6 +45,7 @@ export enum AnnotationType {
   LINE,
   AXIS_ALIGNED_BOUNDING_BOX,
   ELLIPSOID,
+  SUPERVOXEL
 }
 
 export const annotationTypes = [
@@ -52,6 +53,7 @@ export const annotationTypes = [
   AnnotationType.LINE,
   AnnotationType.AXIS_ALIGNED_BOUNDING_BOX,
   AnnotationType.ELLIPSOID,
+  AnnotationType.SUPERVOXEL
 ];
 
 export interface AnnotationBase {
@@ -91,7 +93,12 @@ export interface Ellipsoid extends AnnotationBase {
   type: AnnotationType.ELLIPSOID;
 }
 
-export type Annotation = Line|Point|AxisAlignedBoundingBox|Ellipsoid;
+export interface Supervoxel extends AnnotationBase {
+  point: vec3;
+  type: AnnotationType.SUPERVOXEL;
+}
+
+export type Annotation = Line|Point|AxisAlignedBoundingBox|Ellipsoid|Supervoxel;
 
 export interface AnnotationTag {
   id: number;
@@ -679,7 +686,7 @@ export function serializeAnnotations(allAnnotations: Annotation[][]): Serialized
 }
 
 export class AnnotationSerializer {
-  annotations: [Point[], Line[], AxisAlignedBoundingBox[], Ellipsoid[]] = [[], [], [], []];
+  annotations: [Point[], Line[], AxisAlignedBoundingBox[], Ellipsoid[], Supervoxel[]] = [[], [], [], [], []];
   add(annotation: Annotation) {
     (<Annotation[]>this.annotations[annotation.type]).push(annotation);
   }

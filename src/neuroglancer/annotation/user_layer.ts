@@ -89,6 +89,8 @@ function getPointFromAnnotation(annotation: Annotation) {
       return annotation.point;
     case AnnotationType.ELLIPSOID:
       return annotation.center;
+    case AnnotationType.SUPERVOXEL:
+      return annotation.point;
   }
 }
 

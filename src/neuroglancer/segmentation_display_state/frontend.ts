@@ -32,6 +32,7 @@ import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {withSharedVisibility} from 'neuroglancer/visibility_priority/frontend';
 import {SharedObject} from 'neuroglancer/worker_rpc';
+import {TrackableRGB} from 'neuroglancer/util/color';
 
 export class Uint64MapEntry {
   constructor(public key: Uint64, public value: Uint64) {}
@@ -109,6 +110,7 @@ export interface SegmentationDisplayState extends VisibleSegmentsState {
   saturation: TrackableAlphaValue;
   highlightedSegments: Uint64Set;
   shatterSegmentEquivalences: TrackableBoolean;
+  colorOverride?: TrackableRGB;
 }
 
 export interface SegmentationDisplayStateWithAlpha extends SegmentationDisplayState {
