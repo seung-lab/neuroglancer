@@ -48,6 +48,7 @@ export interface PerspectiveViewerState extends RenderedDataViewerState {
   showSliceViewsCheckbox?: boolean;
   crossSectionBackgroundColor: TrackableRGB;
   perspectiveViewBackgroundColor: TrackableRGB;
+  cursorOnMousedrag?: TrackableBoolean;
   rpc: RPC;
 }
 
@@ -247,7 +248,10 @@ export class PerspectivePanel extends RenderedDataPanel {
         });
 
     registerActionListener(element, 'rotate-via-mouse-drag', (e: ActionEvent<MouseEvent>) => {
-      this.element.requestPointerLock();
+      const canLock = viewer.cursorOnMousedrag;
+      if (canLock) {
+        this.element.requestPointerLock();
+      }
       startRelativeMouseDrag(
           e.detail,
           (_event, deltaX, deltaY) => {
@@ -255,7 +259,9 @@ export class PerspectivePanel extends RenderedDataPanel {
             this.navigationState.pose.rotateRelative(kAxes[0], -deltaY / 4.0 * Math.PI / 180.0);
           },
           () => {
-            document.exitPointerLock();
+            if (canLock) {
+              document.exitPointerLock();
+            }
           });
     });
 
