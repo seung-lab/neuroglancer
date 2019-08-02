@@ -403,7 +403,6 @@ export class GraphOperationLayerView extends Tab {
       this.timeWidget = this.registerDisposer(new TimeSegmentWidget(displayState));
       displayState.timestamp.changed.add(() => {
         Array.from(toolbox.children).forEach((ele: HTMLButtonElement) => {
-          // TODO: disable only if perform multicut button
           if (displayState.timestamp.value === '' || ele.title !== 'Perform Multi-Cut') {
             ele.disabled = false;
           } else {
