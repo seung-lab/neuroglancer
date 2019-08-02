@@ -189,7 +189,6 @@ function makeViewerContextMenu(viewer: Viewer) {
   addCheckbox('Show cross sections in 3-d', viewer.showPerspectiveSliceViews);
   addCheckbox('Show default annotations', viewer.showDefaultAnnotations);
   addCheckbox('Show chunk statistics', viewer.statisticsDisplayState.visible);
-  addCheckbox('Show cursor on mouse drag', viewer.cursorOnMousedrag);
   return menu;
 }
 
@@ -210,7 +209,6 @@ export class Viewer extends RefCounted implements ViewerState {
   scaleBarOptions = new TrackableScaleBarOptions();
   contextMenu: ContextMenu;
   statisticsDisplayState = new StatisticsDisplayState();
-  cursorOnMousedrag = new TrackableBoolean(false, false);
 
   layerSelectedValues =
       this.registerDisposer(new LayerSelectedValues(this.layerManager, this.mouseState));

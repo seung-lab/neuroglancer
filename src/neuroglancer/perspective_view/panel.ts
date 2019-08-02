@@ -36,9 +36,10 @@ import {DepthBuffer, FramebufferConfiguration, makeTextureBuffers, OffscreenCopy
 import {ShaderBuilder} from 'neuroglancer/webgl/shader';
 import {ScaleBarOptions, ScaleBarTexture} from 'neuroglancer/widget/scale_bar';
 import {RPC, SharedObject} from 'neuroglancer/worker_rpc';
+import {getCursorOnMousedrag} from 'neuroglancer/preferences/user_preferences';
 
 require('neuroglancer/noselect.css');
-require('./panel.css');
+require('neuroglancer/perspective_view/panel.css');
 
 export interface PerspectiveViewerState extends RenderedDataViewerState {
   orthographicProjection: TrackableBoolean;
@@ -48,7 +49,6 @@ export interface PerspectiveViewerState extends RenderedDataViewerState {
   showSliceViewsCheckbox?: boolean;
   crossSectionBackgroundColor: TrackableRGB;
   perspectiveViewBackgroundColor: TrackableRGB;
-  cursorOnMousedrag?: TrackableBoolean;
   rpc: RPC;
 }
 
@@ -248,8 +248,8 @@ export class PerspectivePanel extends RenderedDataPanel {
         });
 
     registerActionListener(element, 'rotate-via-mouse-drag', (e: ActionEvent<MouseEvent>) => {
-      const canLock = viewer.cursorOnMousedrag;
-      if (canLock) {
+      const showCursor = getCursorOnMousedrag().value;
+      if (!showCursor) {
         this.element.requestPointerLock();
       }
       startRelativeMouseDrag(
@@ -259,7 +259,7 @@ export class PerspectivePanel extends RenderedDataPanel {
             this.navigationState.pose.rotateRelative(kAxes[0], -deltaY / 4.0 * Math.PI / 180.0);
           },
           () => {
-            if (canLock) {
+            if (!showCursor) {
               document.exitPointerLock();
             }
           });

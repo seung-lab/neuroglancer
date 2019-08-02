@@ -34,6 +34,7 @@ import {startRelativeMouseDrag} from 'neuroglancer/util/mouse_drag';
 import {TouchEventBinder, TouchPinchInfo, TouchTranslateInfo} from 'neuroglancer/util/touch_bindings';
 import {getWheelZoomAmount} from 'neuroglancer/util/wheel_zoom';
 import {ViewerState} from 'neuroglancer/viewer_state';
+import {getCursorOnMousedrag} from 'neuroglancer/preferences/user_preferences';
 
 const tempVec3 = vec3.create();
 
@@ -461,7 +462,8 @@ export abstract class RenderedDataPanel extends RenderedPanel {
     });
 
     registerActionListener(element, 'translate-via-mouse-drag', (e: ActionEvent<MouseEvent>) => {
-      if (1) {// !viewer.cursorOnMousedrag) {
+      const showCursor = getCursorOnMousedrag().value;
+      if (!showCursor) {
         this.element.requestPointerLock();
       }
       startRelativeMouseDrag(
@@ -470,7 +472,7 @@ export abstract class RenderedDataPanel extends RenderedPanel {
             this.translateByViewportPixels(deltaX, deltaY);
           },
           () => {
-            if (1) {// !viewer.cursorOnMousedrag) {
+            if (!showCursor) {
               document.exitPointerLock();
             }
           });
