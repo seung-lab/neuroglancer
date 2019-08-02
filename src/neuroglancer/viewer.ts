@@ -636,38 +636,58 @@ export class Viewer extends RefCounted implements ViewerState {
       timeLock(e, false);
     };
 
-    this.bindAction('two-point-merge', () => {
-      this.mouseState.toggleAction();
+    const handleModeChange = (merge: boolean) => {
       const timeDisplaced = this.layerManager.managedLayers.some(isTimeDisplaced);
-      if (this.mouseState.actionState === ActionState.INACTIVE && !timeDisplaced) {
-        this.mouseState.setMode(ActionMode.NONE);
-        StatusMessage.showTemporaryMessage('Merge mode deactivated.');
-        this.layerManager.managedLayers.map(tUnlock);
-      } else if (timeDisplaced) {
+      if (timeDisplaced) {
         StatusMessage.showTemporaryMessage(
-            'Merge mode can not be activated with a segmentation at an older state.');
+            `${merge?'Merge':'Split'} mode can not be activated with a segmentation at an older state.`);
       } else {
-        this.mouseState.setMode(ActionMode.MERGE);
-        StatusMessage.showTemporaryMessage('Merge mode activated.');
-        this.layerManager.managedLayers.map(tLock);
+        this.mouseState.toggleAction();
+
+        const mergeWhileInSplit = merge && this.mouseState.actionMode === ActionMode.SPLIT;
+        const splitWhileInMerge = !merge && this.mouseState.actionMode === ActionMode.MERGE;
+        const mergeOn = () => StatusMessage.showTemporaryMessage('Merge mode activated.');
+        const splitOn = () => StatusMessage.showTemporaryMessage('Split mode activated.');
+        const mergeOff = () => StatusMessage.showTemporaryMessage('Merge mode deactivated.');
+        const splitOff = () => StatusMessage.showTemporaryMessage('Split mode deactivated.');
+
+        if (mergeWhileInSplit) {
+          this.mouseState.setMode(ActionMode.MERGE);
+          mergeOn();
+          splitOff();
+          this.mouseState.toggleAction();
+        } else if (splitWhileInMerge) {
+          this.mouseState.setMode(ActionMode.SPLIT);
+          splitOn();
+          mergeOff();
+          this.mouseState.toggleAction();
+        } else if (this.mouseState.actionState === ActionState.INACTIVE) {
+          this.layerManager.managedLayers.map(tUnlock);
+          if (this.mouseState.actionMode === ActionMode.MERGE) {
+            mergeOff();
+          } else {
+            splitOff();
+          }
+          this.mouseState.setMode(ActionMode.NONE);
+        } else {
+          this.layerManager.managedLayers.map(tLock);
+          if (merge) {
+            this.mouseState.setMode(ActionMode.MERGE);
+            mergeOn();
+          } else {
+            this.mouseState.setMode(ActionMode.SPLIT);
+            splitOn();
+          }
+        }
       }
+    };
+
+    this.bindAction('two-point-merge', () => {
+      handleModeChange(true);
     });
 
     this.bindAction('two-point-cut', () => {
-      this.mouseState.toggleAction();
-      const timeDisplaced = this.layerManager.managedLayers.some(isTimeDisplaced);
-      if (this.mouseState.actionState === ActionState.INACTIVE && !timeDisplaced) {
-        this.mouseState.setMode(ActionMode.NONE);
-        StatusMessage.showTemporaryMessage('Split mode deactivated.');
-        this.layerManager.managedLayers.map(tUnlock);
-      } else if (timeDisplaced) {
-        StatusMessage.showTemporaryMessage(
-            'Split mode can not be activated with a segmentation at an older state.');
-      } else {
-        this.mouseState.setMode(ActionMode.SPLIT);
-        StatusMessage.showTemporaryMessage('Split mode activated.');
-        this.layerManager.managedLayers.map(tLock);
-      }
+      handleModeChange(false);
     });
 
     this.bindAction('help', () => this.showHelpDialog());
