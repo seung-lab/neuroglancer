@@ -1,9 +1,12 @@
+import flatpickr from 'flatpickr';
+import minMaxTimePlugin from 'flatpickr/dist/plugins/minMaxTimePlugin';
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
 import {StatusMessage} from 'neuroglancer/status';
 import {LockableValueInterface} from 'neuroglancer/trackable_value';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {removeFromParent} from 'neuroglancer/util/dom';
 
+require('flatpickr/dist/flatpickr.min.css');
 // require('./time_segment_widget.css');
 
 export class TimeSegmentWidget extends RefCounted {
@@ -18,6 +21,20 @@ export class TimeSegmentWidget extends RefCounted {
     this.preValue = '';
     element.classList.add('neuroglancer-time-widget');
     element.type = 'datetime-local';
+    flatpickr(element, {
+      enableTime: true,
+      enableSeconds: true,
+      'disable': [(date) => (date.valueOf() >= Date.now())],
+      plugins: [minMaxTimePlugin({
+        getTimeLimits: () => {
+          const now = new Date();
+          return {
+            minTime: `00:00`,
+            maxTime: `${now.getHours()}:${now.getMinutes()}:${now.getSeconds()}`
+          };
+        }
+      })]
+    });
     element.addEventListener('change', () => this.updateModel());
     this.registerDisposer(model.changed.add(() => this.updateView()));
     this.updateView();
