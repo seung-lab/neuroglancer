@@ -172,6 +172,7 @@ class LayerWidget extends RefCounted {
     let element = this.element = document.createElement('div');
     element.title = 'Control+click for layer options, drag to move/copy.';
     element.className = 'neuroglancer-layer-item neuroglancer-noselect';
+    element.dataset.type = layer.initialSpecification.type;
     let labelElement = this.labelElement = document.createElement('span');
     labelElement.className = 'neuroglancer-layer-item-label';
     let layerNumberElement = this.layerNumberElement = document.createElement('span');
@@ -186,9 +187,15 @@ class LayerWidget extends RefCounted {
     });
     let timeWarningElement = makeTextIconButton(
         '🕘', `This segmentation is currently in an older state.\nClick to return to current form.`);
-    timeWarningElement.style.color = 'red';
-    timeWarningElement.style.display = 'none';
     timeWarningElement.classList.add('neuroglancer-layer-time-reset');
+    if (element.dataset.type === 'annotation') {
+      timeWarningElement.classList.add('annotation-time');
+      timeWarningElement.title =
+          `This annotation is currently in an older state.\nClick to return to current form.`;
+    } else {
+      timeWarningElement.classList.add('segmentation-time');
+    }
+    timeWarningElement.style.display = 'none';
     if (layer.layer !== null) {
       let displayState = (<SegmentationUserLayer>layer.layer).displayState;
       if (displayState) {
