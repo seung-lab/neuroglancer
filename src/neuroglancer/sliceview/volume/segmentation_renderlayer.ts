@@ -148,6 +148,10 @@ uint64_t getMappedObjectId() {
     builder.addUniform('highp float', 'uNotSelectedAlpha');
     builder.addUniform('highp float', 'uSaturation');
     builder.addUniform('highp uint', 'uShatterSegmentEquivalences');
+    builder.addUniform('highp uint', 'uColorOverriden');
+    builder.addUniform('highp float', 'uRedValueOverride');
+    builder.addUniform('highp float', 'uGreenValueOverride');
+    builder.addUniform('highp float', 'uBlueValueOverride');
     let fragmentMain = `
   uint64_t value = getMappedObjectId();
   uint64_t rawValue = getUint64DataValue();
@@ -174,7 +178,16 @@ uint64_t getMappedObjectId() {
     alpha = uNotSelectedAlpha;
   }
   vec3 rgb;
-  if (uShatterSegmentEquivalences == 1u) {
+  `;
+    fragmentMain += `
+  if (uColorOverriden == 1u) {
+    // emit(vec4(uRedValueOverride, uGreenValueOverride, uBlueValueOverride, alpha));
+    // return;
+    rgb = vec3(uRedValueOverride, uGreenValueOverride, uBlueValueOverride);
+  }
+  `;
+    fragmentMain += `
+  else if (uShatterSegmentEquivalences == 1u) {
     rgb = segmentColorHash(rawValue);
   } else {
     rgb = segmentColorHash(value);
@@ -224,10 +237,17 @@ uint64_t getMappedObjectId() {
     gl.uniform1ui(
         shader.uniform('uShatterSegmentEquivalences'),
         this.displayState.shatterSegmentEquivalences.value ? 1 : 0);
-    // if (this.displayState.colorOverride) {
-    //   this.displayState.colorOverride.value
-    // }
-    // gl.uniform1ui(shader.uniform('uColorOverride'), this.displayState.colorOverride ? this.displayState.colorOverride.value : 0);
+    if (this.displayState.colorOverride) {
+      gl.uniform1ui(shader.uniform('uColorOverriden'), 1);
+      gl.uniform1f(shader.uniform('uRedValueOverride'), this.displayState.colorOverride.value[0]);
+      gl.uniform1f(shader.uniform('uGreenValueOverride'), this.displayState.colorOverride.value[1]);
+      gl.uniform1f(shader.uniform('uBlueValueOverride'), this.displayState.colorOverride.value[2]);
+    } else {
+      gl.uniform1ui(shader.uniform('uColorOverriden'), 0);
+      gl.uniform1f(shader.uniform('uRedValueOverride'), 0);
+      gl.uniform1f(shader.uniform('uGreenValueOverride'), 0);
+      gl.uniform1f(shader.uniform('uBlueValueOverride'), 0);
+    }
     this.hashTableManager.enable(gl, shader, this.gpuHashTable);
     this.hashTableManagerHighlighted.enable(gl, shader, this.gpuHashTableHighlighted);
     if (this.hasEquivalences) {

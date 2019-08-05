@@ -45,8 +45,6 @@ import {makeCloseButton} from 'neuroglancer/widget/close_button';
 import {MinimizableGroupWidget} from 'neuroglancer/widget/minimizable_group';
 import {StackView, Tab} from 'neuroglancer/widget/tab_view';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
-import {Uint64Set} from 'neuroglancer/uint64_set';
-
 
 type GraphOperationMarkerId = {
   id: string,
@@ -282,7 +280,7 @@ export class GraphOperationLayerView extends Tab {
       public wrapper: Borrowed<SegmentationUserLayerWithGraph>,
       public state: Owned<SelectedGraphOperationState>,
       public annotationLayer: Owned<GraphOperationLayerState>, public voxelSize: Owned<VoxelSize>,
-      public setSpatialCoordinates: (point: vec3) => void, multicutVisibleSegments2D: Uint64Set) {
+      public setSpatialCoordinates: (point: vec3) => void) {
     super();
     this.element.classList.add('neuroglancer-annotation-layer-view');
     this.annotationListContainer.classList.add('neuroglancer-graphoperations-list');
@@ -308,7 +306,7 @@ export class GraphOperationLayerView extends Tab {
       pointButton.textContent = getAnnotationTypeHandler(AnnotationType.POINT).icon;
       pointButton.title = 'Set split point';
       pointButton.addEventListener('click', () => {
-        this.wrapper.tool.value = new PlaceGraphOperationMarkerTool(this.wrapper, multicutVisibleSegments2D, {});
+        this.wrapper.tool.value = new PlaceGraphOperationMarkerTool(this.wrapper, {});
       });
       toolbox.appendChild(pointButton);
     }
@@ -638,14 +636,14 @@ export class GraphOperationTab extends Tab {
       new StackView<GraphOperationLayerState, GraphOperationLayerView>(annotationLayerState => {
         return new GraphOperationLayerView(
             this.layer, this.state.addRef(), annotationLayerState.addRef(), this.voxelSize.addRef(),
-            this.setSpatialCoordinates, this.multicutVisibleSegments2D);
+            this.setSpatialCoordinates);
       }, this.visibility));
   private detailsTab = this.registerDisposer(new GraphOperationDetailsTab(
       this.state, this.voxelSize.addRef(), this.setSpatialCoordinates));
   constructor(
       public layer: Borrowed<SegmentationUserLayerWithGraph>,
       public state: Owned<SelectedGraphOperationState>, public voxelSize: Owned<VoxelSize>,
-      public setSpatialCoordinates: (point: vec3) => void, private multicutVisibleSegments2D: Owned<Uint64Set>) {
+      public setSpatialCoordinates: (point: vec3) => void) {
     super();
     this.registerDisposer(state);
     this.registerDisposer(voxelSize);
@@ -701,7 +699,7 @@ abstract class PlaceGraphOperationTool extends Tool {
 }
 
 export class PlaceGraphOperationMarkerTool extends PlaceGraphOperationTool {
-  constructor(layer: SegmentationUserLayerWithGraph, private multicutVisibleSegments2D: Uint64Set, options: any) {
+  constructor(layer: SegmentationUserLayerWithGraph, options: any) {
     super(layer, options);
   }
 
@@ -719,11 +717,12 @@ export class PlaceGraphOperationMarkerTool extends PlaceGraphOperationTool {
         segments: associatedSegments,
         point: vec3.transformMat4(
             vec3.create(), mouseState.position, graphOperationLayer.globalToObject),
-        // type: AnnotationType.POINT,
-        type: AnnotationType.SUPERVOXEL,
+        type: AnnotationType.POINT,
+        // type: AnnotationType.SUPERVOXEL,
       };
       if (associatedSegments !== undefined && associatedSegments.length > 0) {
-        this.multicutVisibleSegments2D.add(associatedSegments[0]);
+        // this.multicutVisibleSegments2D.add(associatedSegments[0]);
+        graphOperationLayer.activeSupervoxelSet.add(associatedSegments[0]);
       }
       const reference = graphOperationLayer.activeSource.add(annotation, /*commit=*/true);
       this.layer.selectedGraphOperationElement.value = {id: reference.id};
