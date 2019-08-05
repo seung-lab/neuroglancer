@@ -27,6 +27,7 @@ import {mat4} from 'neuroglancer/util/geom';
 import {vec3} from 'neuroglancer/util/geom';
 import {verifyArray} from 'neuroglancer/util/json';
 import {NullarySignal} from 'neuroglancer/util/signal';
+import { Uint64Set } from '../uint64_set';
 
 const ANNOTATIONS_JSON_KEY = 'annotations';
 
@@ -38,6 +39,7 @@ export class GraphOperationLayerState extends RefCounted {
   sourceA: Owned<LocalAnnotationSource>;
   sourceB: Owned<LocalAnnotationSource>;
   activeSource: Borrowed<LocalAnnotationSource>;
+  activeSupervoxelSet: Uint64Set;
 
   hoverState: GraphOperationHoverState;
   role: RenderLayerRole;
@@ -46,6 +48,9 @@ export class GraphOperationLayerState extends RefCounted {
    * undefined means may have a segmentation state.
    */
   segmentationState: WatchableValue<SegmentationDisplayState|undefined>;
+
+  selectedSupervoxelSetA = this.registerDisposer(new Uint64Set());
+  selectedSupervoxelSetB = this.registerDisposer(new Uint64Set());
 
   private transformCacheGeneration = -1;
   private cachedObjectToGlobal = mat4.create();
@@ -99,6 +104,7 @@ export class GraphOperationLayerState extends RefCounted {
     this.sourceA = this.registerDisposer(new LocalAnnotationSource());
     this.sourceB = this.registerDisposer(new LocalAnnotationSource());
     this.activeSource = this.sourceA;
+    this.activeSupervoxelSet = this.selectedSupervoxelSetA;
     this.hoverState = hoverState;
     this.role = RenderLayerRole.GRAPH_MODIFICATION_MARKER;
     this.segmentationState = segmentationState;
@@ -129,8 +135,10 @@ export class GraphOperationLayerState extends RefCounted {
   toggleSource() {
     if (this.activeSource === this.sourceA) {
       this.activeSource = this.sourceB;
+      this.activeSupervoxelSet = this.selectedSupervoxelSetB;
     } else {
       this.activeSource = this.sourceA;
+      this.activeSupervoxelSet = this.selectedSupervoxelSetA;
     }
   }
 

@@ -31,8 +31,8 @@ import {vec3} from 'neuroglancer/util/geom';
 import {parseArray, verifyObjectProperty, verifyOptionalString} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {SegmentationRenderLayer} from 'neuroglancer/sliceview/volume/segmentation_renderlayer';
-import {Uint64Set} from 'neuroglancer/uint64_set';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
+import {TrackableRGB} from 'neuroglancer/util/color';
 
 // Already defined in segmentation_user_layer.ts
 const EQUIVALENCES_JSON_KEY = 'equivalences';
@@ -60,7 +60,9 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
         this.registerDisposer(new WatchableRefCounted<GraphOperationLayerState>());
     selectedGraphOperationElement = this.registerDisposer(
         new SelectedGraphOperationState(this.graphOperationLayerState.addRef()));
-    private multicutVisibleSegments2D = new Uint64Set();
+    // private multicutVisibleSegments2DGroupA = new Uint64Set();
+    // private multicutVisibleSegments2DGroupB = new Uint64Set();
+
     // displayState = {
     //   ...super.displayState,
     //   additionalProp:1
@@ -73,7 +75,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
         order: -75,
         getter: () => new GraphOperationTab(
             this, this.selectedGraphOperationElement.addRef(), this.manager.voxelSize.addRef(),
-            point => this.manager.setSpatialCoordinates(point), this.multicutVisibleSegments2D.addRef())
+            point => this.manager.setSpatialCoordinates(point))
       });
 
       const segmentationState = new WatchableValue<SegmentationDisplayState>(this.displayState);
@@ -151,13 +153,22 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
             }
             this.addRenderLayer(new SegmentationRenderLayer(volume, {
               ...this.displayState,
-              visibleSegments2D: this.multicutVisibleSegments2D,
+              visibleSegments2D: this.graphOperationLayerState.value!.selectedSupervoxelSetA,
+              colorOverride: new TrackableRGB(vec3.fromValues(1.0, 0.0, 0.0)),
               shatterSegmentEquivalences: new TrackableBoolean(true, true),
               transform: this.displayState.objectToDataTransform,
               renderScaleHistogram: this.sliceViewRenderScaleHistogram,
               renderScaleTarget: this.sliceViewRenderScaleTarget,
             }));
-            // registerRedrawWhenSegmentationDisplayStateChanged?
+            this.addRenderLayer(new SegmentationRenderLayer(volume, {
+              ...this.displayState,
+              visibleSegments2D: this.graphOperationLayerState.value!.selectedSupervoxelSetB,
+              colorOverride: new TrackableRGB(vec3.fromValues(0.0, 0.0, 1.0)),
+              shatterSegmentEquivalences: new TrackableBoolean(true, true),
+              transform: this.displayState.objectToDataTransform,
+              renderScaleHistogram: this.sliceViewRenderScaleHistogram,
+              renderScaleTarget: this.sliceViewRenderScaleTarget,
+            }));
             if (--remaining === 0) {
               this.isReady = true;
             }
