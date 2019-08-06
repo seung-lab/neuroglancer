@@ -110,7 +110,6 @@ export interface SegmentationDisplayState extends VisibleSegmentsState {
   saturation: TrackableAlphaValue;
   highlightedSegments: Uint64Set;
   shatterSegmentEquivalences: TrackableBoolean;
-  colorOverride?: TrackableRGB;
 }
 
 export interface SegmentationDisplayStateWithAlpha extends SegmentationDisplayState {

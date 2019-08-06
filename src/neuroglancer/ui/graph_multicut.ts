@@ -668,7 +668,7 @@ export class GraphOperationTab extends Tab {
   }
 }
 
-function getSelectedAssociatedSegment(annotationLayer: GraphOperationLayerState) {
+export function getSelectedAssociatedSegment(annotationLayer: GraphOperationLayerState) {
   let segments: Uint64[]|undefined;
   const segmentationState = annotationLayer.segmentationState.value;
   if (segmentationState != null) {
@@ -711,22 +711,28 @@ export class PlaceGraphOperationMarkerTool extends PlaceGraphOperationTool {
     }
     if (mouseState.active) {
       const associatedSegments = getSelectedAssociatedSegment(graphOperationLayer);
-      const annotation: Annotation = {
-        id: '',
-        description: '',
-        segments: associatedSegments,
-        point: vec3.transformMat4(
-            vec3.create(), mouseState.position, graphOperationLayer.globalToObject),
-        type: AnnotationType.POINT,
-        // type: AnnotationType.SUPERVOXEL,
-      };
-      if (associatedSegments !== undefined && associatedSegments.length > 0) {
-        // this.multicutVisibleSegments2D.add(associatedSegments[0]);
-        graphOperationLayer.activeSupervoxelSet.add(associatedSegments[0]);
+      if (! associatedSegments) {
+        StatusMessage.showTemporaryMessage('The selected point is not associated with any segment', 7000);
+      } else if (! this.layer.displayState.rootSegments.has(associatedSegments[1])) {
+        StatusMessage.showTemporaryMessage('The selected supervoxel is of an unselected segment', 7000);
+      } else if (graphOperationLayer.selectedRoot && (! Uint64.equal(graphOperationLayer.selectedRoot, associatedSegments[1]))) {
+        StatusMessage.showTemporaryMessage('The selected supervoxel is of a different segment than the supervoxels already selected', 12000);
+      } else {
+        const annotation: Annotation = {
+          id: '',
+          description: '',
+          segments: associatedSegments,
+          point: vec3.transformMat4(
+              vec3.create(), mouseState.position, graphOperationLayer.globalToObject),
+          type: AnnotationType.POINT,
+        };
+        // if (! graphOperationLayer.selectedRoot) {
+        //   graphOperationLayer.selectedRoot = associatedSegments[1];
+        // }
+        const reference = graphOperationLayer.activeSource.add(annotation, /*commit=*/true);
+        this.layer.selectedGraphOperationElement.value = {id: reference.id};
+        reference.dispose();
       }
-      const reference = graphOperationLayer.activeSource.add(annotation, /*commit=*/true);
-      this.layer.selectedGraphOperationElement.value = {id: reference.id};
-      reference.dispose();
     }
   }
 
