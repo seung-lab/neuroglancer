@@ -27,6 +27,7 @@ import {TrackableAlphaValue} from 'neuroglancer/trackable_alpha';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {DisjointUint64Sets} from 'neuroglancer/util/disjoint_sets';
 import {ShaderBuilder, ShaderProgram} from 'neuroglancer/webgl/shader';
+import { TrackableRGB } from 'src/neuroglancer/util/color';
 
 export class EquivalencesHashMap {
   generation = Number.NaN;
@@ -148,10 +149,6 @@ uint64_t getMappedObjectId() {
     builder.addUniform('highp float', 'uNotSelectedAlpha');
     builder.addUniform('highp float', 'uSaturation');
     builder.addUniform('highp uint', 'uShatterSegmentEquivalences');
-    builder.addUniform('highp uint', 'uColorOverriden');
-    builder.addUniform('highp float', 'uRedValueOverride');
-    builder.addUniform('highp float', 'uGreenValueOverride');
-    builder.addUniform('highp float', 'uBlueValueOverride');
     let fragmentMain = `
   uint64_t value = getMappedObjectId();
   uint64_t rawValue = getUint64DataValue();
@@ -180,14 +177,7 @@ uint64_t getMappedObjectId() {
   vec3 rgb;
   `;
     fragmentMain += `
-  if (uColorOverriden == 1u) {
-    // emit(vec4(uRedValueOverride, uGreenValueOverride, uBlueValueOverride, alpha));
-    // return;
-    rgb = vec3(uRedValueOverride, uGreenValueOverride, uBlueValueOverride);
-  }
-  `;
-    fragmentMain += `
-  else if (uShatterSegmentEquivalences == 1u) {
+  if (uShatterSegmentEquivalences == 1u) {
     rgb = segmentColorHash(rawValue);
   } else {
     rgb = segmentColorHash(value);
@@ -237,17 +227,6 @@ uint64_t getMappedObjectId() {
     gl.uniform1ui(
         shader.uniform('uShatterSegmentEquivalences'),
         this.displayState.shatterSegmentEquivalences.value ? 1 : 0);
-    if (this.displayState.colorOverride) {
-      gl.uniform1ui(shader.uniform('uColorOverriden'), 1);
-      gl.uniform1f(shader.uniform('uRedValueOverride'), this.displayState.colorOverride.value[0]);
-      gl.uniform1f(shader.uniform('uGreenValueOverride'), this.displayState.colorOverride.value[1]);
-      gl.uniform1f(shader.uniform('uBlueValueOverride'), this.displayState.colorOverride.value[2]);
-    } else {
-      gl.uniform1ui(shader.uniform('uColorOverriden'), 0);
-      gl.uniform1f(shader.uniform('uRedValueOverride'), 0);
-      gl.uniform1f(shader.uniform('uGreenValueOverride'), 0);
-      gl.uniform1f(shader.uniform('uBlueValueOverride'), 0);
-    }
     this.hashTableManager.enable(gl, shader, this.gpuHashTable);
     this.hashTableManagerHighlighted.enable(gl, shader, this.gpuHashTableHighlighted);
     if (this.hasEquivalences) {
@@ -262,6 +241,94 @@ uint64_t getMappedObjectId() {
     let {gl} = this;
     this.hashTableManager.disable(gl, shader);
     this.hashTableManagerHighlighted.disable(gl, shader);
+    super.endSlice(shader);
+  }
+}
+
+interface SliceViewSupervoxelDisplayState extends SliceViewSegmentationDisplayState {
+  supervoxelColor: TrackableRGB;
+}
+
+export class SupervoxelRenderLayer extends RenderLayer {
+  private hashTableManager = new HashSetShaderManager('visibleSegments2D');
+  private gpuHashTable = GPUHashTable.get(this.gl, this.displayState.visibleSegments2D!.hashTable);
+
+  constructor(
+      multiscaleSource: MultiscaleVolumeChunkSource,
+      public displayState: SliceViewSupervoxelDisplayState) {
+    super(multiscaleSource, {
+      sourceOptions: displayState.volumeSourceOptions,
+      transform: displayState.transform,
+      renderScaleHistogram: displayState.renderScaleHistogram,
+      renderScaleTarget: displayState.renderScaleTarget,
+    });
+    registerRedrawWhenSegmentationDisplayStateChanged(displayState, this);
+  }
+
+  getShaderKey() {
+    // The shader to use depends on whether there are any equivalences, and on whether we are hiding
+    // segment ID 0.
+    return 'sliceview.SupervoxelRenderLayer';
+  }
+
+  defineShader(builder: ShaderBuilder) {
+    super.defineShader(builder);
+    this.hashTableManager.defineShader(builder);
+    builder.addFragmentCode(`
+uint64_t getUint64DataValue() {
+  return toUint64(getDataValue());
+}
+`);
+    builder.addFragmentCode(`
+uint64_t getMappedObjectId() {
+  return getUint64DataValue();
+}
+`);
+    builder.addUniform('highp uint', 'uColorOverriden');
+    builder.addUniform('highp float', 'uSupervoxelRedValue');
+    builder.addUniform('highp float', 'uSupervoxelGreenValue');
+    builder.addUniform('highp float', 'uSupervoxelBlueValue');
+    let fragmentMain = `
+  uint64_t value = getMappedObjectId();
+  uint64_t rawValue = getUint64DataValue();
+`;
+    if (this.displayState.hideSegmentZero.value) {
+      fragmentMain += `
+  if (value.value[0] == 0u && value.value[1] == 0u) {
+    emit(vec4(vec4(0, 0, 0, 0)));
+    return;
+  }
+`;
+    }
+    fragmentMain += `
+  bool has = ${this.hashTableManager.hasFunctionName}(value);
+  `;
+    fragmentMain += `
+  if (has) {
+    emit(vec4(uSupervoxelRedValue, uSupervoxelGreenValue, uSupervoxelBlueValue, 1.0));
+  }
+  `;
+    builder.setFragmentMain(fragmentMain);
+  }
+
+  beginSlice(sliceView: SliceView) {
+    let shader = super.beginSlice(sliceView);
+    if (shader === undefined) {
+      return undefined;
+    }
+    const gl = this.gl;
+
+    const {displayState} = this;
+    gl.uniform1f(shader.uniform('uSupervoxelRedValue'), displayState.supervoxelColor.value[0]);
+    gl.uniform1f(shader.uniform('uSupervoxelGreenValue'), displayState.supervoxelColor.value[1]);
+    gl.uniform1f(shader.uniform('uSupervoxelBlueValue'), displayState.supervoxelColor.value[2]);
+    this.hashTableManager.enable(gl, shader, this.gpuHashTable);
+    return shader;
+  }
+
+  endSlice(shader: ShaderProgram) {
+    let {gl} = this;
+    this.hashTableManager.disable(gl, shader);
     super.endSlice(shader);
   }
 }

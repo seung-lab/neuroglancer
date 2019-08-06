@@ -30,7 +30,7 @@ import {Borrowed} from 'neuroglancer/util/disposable';
 import {vec3} from 'neuroglancer/util/geom';
 import {parseArray, verifyObjectProperty, verifyOptionalString} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
-import {SegmentationRenderLayer} from 'neuroglancer/sliceview/volume/segmentation_renderlayer';
+import {SegmentationRenderLayer, SupervoxelRenderLayer} from 'neuroglancer/sliceview/volume/segmentation_renderlayer';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {TrackableRGB} from 'neuroglancer/util/color';
 
@@ -101,6 +101,13 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
       }
 
       this.tabs.default = 'rendering';
+      const tempU = Uint64.parseString('94074244937305770');
+      const tempU2 = Uint64.parseString('94074244937307054');
+      const tempU3 = Uint64.parseString('94074244937307053');
+      this.graphOperationLayerState.value!.selectedSupervoxelSetA.add(tempU);
+      this.graphOperationLayerState.value!.selectedSupervoxelSetA.add(tempU2);
+      this.graphOperationLayerState.value!.selectedSupervoxelSetA.add(tempU3);
+      // this.displayState.visibleSegments2D.add(tempU);
     }
 
     get volumeOptions() {
@@ -151,19 +158,19 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
                 });
               }
             }
-            this.addRenderLayer(new SegmentationRenderLayer(volume, {
+            this.addRenderLayer(new SupervoxelRenderLayer(volume, {
               ...this.displayState,
               visibleSegments2D: this.graphOperationLayerState.value!.selectedSupervoxelSetA,
-              colorOverride: new TrackableRGB(vec3.fromValues(1.0, 0.0, 0.0)),
+              supervoxelColor: new TrackableRGB(vec3.fromValues(1.0, 0.0, 0.0)),
               shatterSegmentEquivalences: new TrackableBoolean(true, true),
               transform: this.displayState.objectToDataTransform,
               renderScaleHistogram: this.sliceViewRenderScaleHistogram,
               renderScaleTarget: this.sliceViewRenderScaleTarget,
             }));
-            this.addRenderLayer(new SegmentationRenderLayer(volume, {
+            this.addRenderLayer(new SupervoxelRenderLayer(volume, {
               ...this.displayState,
               visibleSegments2D: this.graphOperationLayerState.value!.selectedSupervoxelSetB,
-              colorOverride: new TrackableRGB(vec3.fromValues(0.0, 0.0, 1.0)),
+              supervoxelColor: new TrackableRGB(vec3.fromValues(0.0, 0.0, 1.0)),
               shatterSegmentEquivalences: new TrackableBoolean(true, true),
               transform: this.displayState.objectToDataTransform,
               renderScaleHistogram: this.sliceViewRenderScaleHistogram,

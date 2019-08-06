@@ -16,18 +16,21 @@
 
 import {AnnotationId, AnnotationReference, LocalAnnotationSource} from 'neuroglancer/annotation';
 import {AnnotationLayerState} from 'neuroglancer/annotation/frontend';
+import {Annotation} from 'neuroglancer/annotation/index';
 import {CoordinateTransform} from 'neuroglancer/coordinate_transform';
 import {RenderLayerRole} from 'neuroglancer/layer';
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
 import {trackableAlphaValue} from 'neuroglancer/trackable_alpha';
 import {WatchableRefCounted, WatchableValue} from 'neuroglancer/trackable_value';
+import {getSelectedAssociatedSegment} from 'neuroglancer/ui/graph_multicut';
+import {Uint64Set} from 'neuroglancer/uint64_set';
 import {TrackableRGB} from 'neuroglancer/util/color';
 import {Borrowed, Owned, RefCounted} from 'neuroglancer/util/disposable';
 import {mat4} from 'neuroglancer/util/geom';
 import {vec3} from 'neuroglancer/util/geom';
 import {verifyArray} from 'neuroglancer/util/json';
 import {NullarySignal} from 'neuroglancer/util/signal';
-import { Uint64Set } from '../uint64_set';
+import {Uint64} from 'neuroglancer/util/uint64';
 
 const ANNOTATIONS_JSON_KEY = 'annotations';
 
@@ -39,7 +42,10 @@ export class GraphOperationLayerState extends RefCounted {
   sourceA: Owned<LocalAnnotationSource>;
   sourceB: Owned<LocalAnnotationSource>;
   activeSource: Borrowed<LocalAnnotationSource>;
+  selectedSupervoxelSetA: Owned<Uint64Set>;
+  selectedSupervoxelSetB: Owned<Uint64Set>;
   activeSupervoxelSet: Uint64Set;
+  selectedRoot: Uint64|undefined;
 
   hoverState: GraphOperationHoverState;
   role: RenderLayerRole;
@@ -48,9 +54,6 @@ export class GraphOperationLayerState extends RefCounted {
    * undefined means may have a segmentation state.
    */
   segmentationState: WatchableValue<SegmentationDisplayState|undefined>;
-
-  selectedSupervoxelSetA = this.registerDisposer(new Uint64Set());
-  selectedSupervoxelSetB = this.registerDisposer(new Uint64Set());
 
   private transformCacheGeneration = -1;
   private cachedObjectToGlobal = mat4.create();
@@ -104,6 +107,8 @@ export class GraphOperationLayerState extends RefCounted {
     this.sourceA = this.registerDisposer(new LocalAnnotationSource());
     this.sourceB = this.registerDisposer(new LocalAnnotationSource());
     this.activeSource = this.sourceA;
+    this.selectedSupervoxelSetA = this.registerDisposer(new Uint64Set());
+    this.selectedSupervoxelSetB = this.registerDisposer(new Uint64Set());
     this.activeSupervoxelSet = this.selectedSupervoxelSetA;
     this.hoverState = hoverState;
     this.role = RenderLayerRole.GRAPH_MODIFICATION_MARKER;
@@ -128,8 +133,38 @@ export class GraphOperationLayerState extends RefCounted {
       segmentationState: segmentationState,
     });
 
+    this.addSupervoxelFromAnnotationEvents(this.sourceA, this.selectedSupervoxelSetA);
+    this.addSupervoxelFromAnnotationEvents(this.sourceB, this.selectedSupervoxelSetB);
+
     this.sourceA.changed.add(() => this.changed.dispatch());
     this.sourceB.changed.add(() => this.changed.dispatch());
+  }
+
+  private addSupervoxelFromAnnotationEvents(annotationSource: LocalAnnotationSource, supervoxelSet: Uint64Set) {
+    annotationSource.childAdded.add(() => {
+      const associatedSegments = getSelectedAssociatedSegment(this);
+      if (associatedSegments) {
+        if (! this.selectedRoot) {
+          this.selectedRoot = associatedSegments[1];
+        }
+        supervoxelSet.add(associatedSegments[0]);
+      } else {
+        // Should never happen (unless user mangles state from the state editor)
+        throw Error('Graph Layer Operation State\'s annotations should always have associated segments');
+      }
+    });
+    annotationSource.childDeleted.add(() => {
+      const associatedSegments = getSelectedAssociatedSegment(this);
+      if (associatedSegments) {
+        supervoxelSet.delete(associatedSegments[0]);
+        if (supervoxelSet.size === 0) {
+          this.selectedRoot = undefined;
+        }
+      } else {
+        // Should never happen (unless user mangles state from the state editor)
+        throw Error('Graph Layer Operation State\'s annotations should always have associated segments');
+      }
+    });
   }
 
   toggleSource() {
