@@ -34,6 +34,40 @@ import {Uint64} from 'neuroglancer/util/uint64';
 
 const ANNOTATIONS_JSON_KEY = 'annotations';
 
+class AnnotationToSupervoxelHandler extends RefCounted {
+  annotationToSupervoxelMap: Map<AnnotationId, Uint64> = new Map<AnnotationId, Uint64>();
+  supervoxelSet: Uint64Set = this.registerDisposer(new Uint64Set());
+
+  restoreState(annotationSource: LocalAnnotationSource) {
+    for (const annotation of annotationSource) {
+      if ((!annotation.segments) || (annotation.segments.length < 2)) {
+        // Should never happen (unless user mangles state from state editor)
+        throw Error(
+            'Annotations in Graph Operation Layer State must have 2 segments associated with them');
+      } else {
+        this.add(annotation.id, annotation.segments[0]);
+      }
+    }
+  }
+
+  add(annotationId: AnnotationId, supervoxel: Uint64) {
+    this.annotationToSupervoxelMap.set(annotationId, supervoxel);
+    this.supervoxelSet.add(supervoxel);
+  }
+
+  delete(annotationId: AnnotationId) {
+    const supervoxel = this.annotationToSupervoxelMap.get(annotationId);
+    this.annotationToSupervoxelMap.delete(annotationId);
+    if (supervoxel) {
+      this.supervoxelSet.delete(supervoxel);
+    }
+  }
+
+  hasSupervoxel(supervoxel: Uint64) {
+    return this.supervoxelSet.has(supervoxel);
+  }
+}
+
 export class GraphOperationHoverState extends WatchableValue<{id: string}|undefined> {}
 
 export class GraphOperationLayerState extends RefCounted {
@@ -42,9 +76,9 @@ export class GraphOperationLayerState extends RefCounted {
   sourceA: Owned<LocalAnnotationSource>;
   sourceB: Owned<LocalAnnotationSource>;
   activeSource: Borrowed<LocalAnnotationSource>;
-  selectedSupervoxelSetA: Owned<Uint64Set>;
-  selectedSupervoxelSetB: Owned<Uint64Set>;
-  activeSupervoxelSet: Uint64Set;
+  annotationToSupervoxelA: Owned<AnnotationToSupervoxelHandler>;
+  annotationToSupervoxelB: Owned<AnnotationToSupervoxelHandler>;
+  activeAnnotationToSupervoxel: Borrowed<AnnotationToSupervoxelHandler>;
   selectedRoot: Uint64|undefined;
 
   hoverState: GraphOperationHoverState;
@@ -107,9 +141,9 @@ export class GraphOperationLayerState extends RefCounted {
     this.sourceA = this.registerDisposer(new LocalAnnotationSource());
     this.sourceB = this.registerDisposer(new LocalAnnotationSource());
     this.activeSource = this.sourceA;
-    this.selectedSupervoxelSetA = this.registerDisposer(new Uint64Set());
-    this.selectedSupervoxelSetB = this.registerDisposer(new Uint64Set());
-    this.activeSupervoxelSet = this.selectedSupervoxelSetA;
+    this.annotationToSupervoxelA = this.registerDisposer(new AnnotationToSupervoxelHandler());
+    this.annotationToSupervoxelB = this.registerDisposer(new AnnotationToSupervoxelHandler());
+    this.activeAnnotationToSupervoxel = this.annotationToSupervoxelA;
     this.hoverState = hoverState;
     this.role = RenderLayerRole.GRAPH_MODIFICATION_MARKER;
     this.segmentationState = segmentationState;
@@ -133,47 +167,20 @@ export class GraphOperationLayerState extends RefCounted {
       segmentationState: segmentationState,
     });
 
-    this.addSupervoxelFromAnnotationEvents(this.sourceA, this.selectedSupervoxelSetA);
-    this.addSupervoxelFromAnnotationEvents(this.sourceB, this.selectedSupervoxelSetB);
+    this.addSupervoxelFromAnnotationEvents(this.sourceA, this.annotationToSupervoxelA);
+    this.addSupervoxelFromAnnotationEvents(this.sourceB, this.annotationToSupervoxelB);
 
     this.sourceA.changed.add(() => this.changed.dispatch());
     this.sourceB.changed.add(() => this.changed.dispatch());
   }
 
-  private addSupervoxelFromAnnotationEvents(annotationSource: LocalAnnotationSource, supervoxelSet: Uint64Set) {
-    annotationSource.childAdded.add(() => {
-      const associatedSegments = getSelectedAssociatedSegment(this);
-      if (associatedSegments) {
-        if (! this.selectedRoot) {
-          this.selectedRoot = associatedSegments[1];
-        }
-        supervoxelSet.add(associatedSegments[0]);
-      } else {
-        // Should never happen (unless user mangles state from the state editor)
-        throw Error('Graph Layer Operation State\'s annotations should always have associated segments');
-      }
-    });
-    annotationSource.childDeleted.add(() => {
-      const associatedSegments = getSelectedAssociatedSegment(this);
-      if (associatedSegments) {
-        supervoxelSet.delete(associatedSegments[0]);
-        if (supervoxelSet.size === 0) {
-          this.selectedRoot = undefined;
-        }
-      } else {
-        // Should never happen (unless user mangles state from the state editor)
-        throw Error('Graph Layer Operation State\'s annotations should always have associated segments');
-      }
-    });
-  }
-
   toggleSource() {
     if (this.activeSource === this.sourceA) {
       this.activeSource = this.sourceB;
-      this.activeSupervoxelSet = this.selectedSupervoxelSetB;
+      this.activeAnnotationToSupervoxel = this.annotationToSupervoxelA;
     } else {
       this.activeSource = this.sourceA;
-      this.activeSupervoxelSet = this.selectedSupervoxelSetA;
+      this.activeAnnotationToSupervoxel = this.annotationToSupervoxelB;
     }
   }
 
@@ -197,9 +204,11 @@ export class GraphOperationLayerState extends RefCounted {
     const groups = verifyArray(spec);
     if (groups.length > 0) {
       this.sourceA.restoreState(spec[0][ANNOTATIONS_JSON_KEY], []);
+      this.annotationToSupervoxelA.restoreState(this.sourceA);
     }
     if (groups.length > 1) {
       this.sourceB.restoreState(spec[1][ANNOTATIONS_JSON_KEY], []);
+      this.annotationToSupervoxelB.restoreState(this.sourceB);
     }
   }
 
@@ -208,5 +217,45 @@ export class GraphOperationLayerState extends RefCounted {
       this.sourceA.toJSON(),
       this.sourceB.toJSON(),
     ];
+  }
+
+  private addSupervoxelFromAnnotationEvents(
+      annotationSource: LocalAnnotationSource,
+      annotationToSupervoxelHandler: AnnotationToSupervoxelHandler) {
+    const addAnnotation = (annotation: Annotation) => {
+      if (annotation.segments && annotation.segments.length >= 2) {
+        if (!this.selectedRoot) {
+          this.selectedRoot = annotation.segments[1];
+        }
+        annotationToSupervoxelHandler.add(annotation.id, annotation.segments[0]);
+      } else {
+        // Should never happen
+        throw Error(
+            'Graph Layer Operation State\'s annotations should always have 2 associated segments');
+      }
+    };
+    const deleteAnnotation = (annotationId: AnnotationId) => {
+      annotationToSupervoxelHandler.delete(annotationId);
+      if (this.annotationToSupervoxelA.supervoxelSet.size === 0 &&
+          this.annotationToSupervoxelB.supervoxelSet.size === 0) {
+        this.selectedRoot = undefined;
+      }
+    };
+    annotationSource.childAdded.add((annotation: Annotation) => {
+      addAnnotation(annotation);
+    });
+    annotationSource.childDeleted.add((annotationId: AnnotationId) => {
+      deleteAnnotation(annotationId);
+    });
+    // Triggers when user moves an annotation
+    annotationSource.childUpdated.add((annotation: Annotation) => {
+      deleteAnnotation(annotation.id);
+      addAnnotation(annotation);
+    });
+  }
+
+  supervoxelSelected(supervoxel: Uint64) {
+    return this.annotationToSupervoxelA.hasSupervoxel(supervoxel) ||
+        this.annotationToSupervoxelB.hasSupervoxel(supervoxel);
   }
 }
