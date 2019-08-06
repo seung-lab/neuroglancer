@@ -23,16 +23,16 @@ import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/
 import {SegmentationUserLayer} from 'neuroglancer/segmentation_user_layer';
 import {ChunkedGraphLayer, SegmentSelection} from 'neuroglancer/sliceview/chunked_graph/frontend';
 import {VolumeType} from 'neuroglancer/sliceview/volume/base';
+import {SupervoxelRenderLayer} from 'neuroglancer/sliceview/volume/supervoxel_renderlayer';
 import {StatusMessage} from 'neuroglancer/status';
+import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {WatchableRefCounted, WatchableValue} from 'neuroglancer/trackable_value';
 import {GraphOperationTab, SelectedGraphOperationState} from 'neuroglancer/ui/graph_multicut';
+import {TrackableRGB} from 'neuroglancer/util/color';
 import {Borrowed} from 'neuroglancer/util/disposable';
 import {vec3} from 'neuroglancer/util/geom';
 import {parseArray, verifyObjectProperty, verifyOptionalString} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
-import {SegmentationRenderLayer, SupervoxelRenderLayer} from 'neuroglancer/sliceview/volume/segmentation_renderlayer';
-import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
-import {TrackableRGB} from 'neuroglancer/util/color';
 
 // Already defined in segmentation_user_layer.ts
 const EQUIVALENCES_JSON_KEY = 'equivalences';
@@ -60,13 +60,6 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
         this.registerDisposer(new WatchableRefCounted<GraphOperationLayerState>());
     selectedGraphOperationElement = this.registerDisposer(
         new SelectedGraphOperationState(this.graphOperationLayerState.addRef()));
-    // private multicutVisibleSegments2DGroupA = new Uint64Set();
-    // private multicutVisibleSegments2DGroupB = new Uint64Set();
-
-    // displayState = {
-    //   ...super.displayState,
-    //   additionalProp:1
-    // };
 
     constructor(...args: any[]) {
       super(...args);
@@ -101,13 +94,6 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
       }
 
       this.tabs.default = 'rendering';
-      const tempU = Uint64.parseString('94074244937305770');
-      const tempU2 = Uint64.parseString('94074244937307054');
-      const tempU3 = Uint64.parseString('94074244937307053');
-      this.graphOperationLayerState.value!.selectedSupervoxelSetA.add(tempU);
-      this.graphOperationLayerState.value!.selectedSupervoxelSetA.add(tempU2);
-      this.graphOperationLayerState.value!.selectedSupervoxelSetA.add(tempU3);
-      // this.displayState.visibleSegments2D.add(tempU);
     }
 
     get volumeOptions() {
@@ -160,7 +146,8 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
             }
             this.addRenderLayer(new SupervoxelRenderLayer(volume, {
               ...this.displayState,
-              visibleSegments2D: this.graphOperationLayerState.value!.selectedSupervoxelSetA,
+              visibleSegments2D:
+                  this.graphOperationLayerState.value!.annotationToSupervoxelA.supervoxelSet,
               supervoxelColor: new TrackableRGB(vec3.fromValues(1.0, 0.0, 0.0)),
               shatterSegmentEquivalences: new TrackableBoolean(true, true),
               transform: this.displayState.objectToDataTransform,
@@ -169,7 +156,8 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
             }));
             this.addRenderLayer(new SupervoxelRenderLayer(volume, {
               ...this.displayState,
-              visibleSegments2D: this.graphOperationLayerState.value!.selectedSupervoxelSetB,
+              visibleSegments2D:
+                  this.graphOperationLayerState.value!.annotationToSupervoxelB.supervoxelSet,
               supervoxelColor: new TrackableRGB(vec3.fromValues(0.0, 0.0, 1.0)),
               shatterSegmentEquivalences: new TrackableBoolean(true, true),
               transform: this.displayState.objectToDataTransform,
