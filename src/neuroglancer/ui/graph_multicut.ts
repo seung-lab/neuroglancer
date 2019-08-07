@@ -501,7 +501,13 @@ export class GraphOperationLayerView extends Tab {
 
     const position = document.createElement('div');
     position.className = 'neuroglancer-annotation-position';
-    getPositionSummary(position, annotation, transform, this.voxelSize, this.setSpatialCoordinates);
+    if (annotation.segments && annotation.segments.length >= 2) {
+      getPositionSummary(position, annotation, transform, this.voxelSize, this.setSpatialCoordinates, annotation.segments[0].toString());
+      // position.firstElementChild.style.colo
+    } else {
+      // Should never happen
+      throw Error('Graph multicut point not associated with both a supervoxel and a root segment');
+    }
     element.appendChild(position);
 
     return element;
@@ -660,6 +666,10 @@ export class GraphOperationTab extends Tab {
     };
     this.registerDisposer(this.state.changed.add(updateDetailsVisibility));
     this.registerDisposer(this.visibility.changed.add(updateDetailsVisibility));
+    this.layer.displayState.performingMulticut.value = true;
+    this.registerDisposer(this.visibility.changed.add(() => {
+      this.layer.displayState.performingMulticut.value = (this.visibility.visible) ? true : false;
+    }));
     const setGraphOperationLayerView = () => {
       this.stack.selected = this.state.annotationLayerState.value;
     };
@@ -735,7 +745,7 @@ export class PlaceGraphOperationMarkerTool extends PlaceGraphOperationTool {
       } else {
         const annotation: Annotation = {
           id: '',
-          description: '',
+          description: associatedSegments[0].toString(),
           segments: associatedSegments,
           point: vec3.transformMat4(
               vec3.create(), mouseState.position, graphOperationLayer.globalToObject),

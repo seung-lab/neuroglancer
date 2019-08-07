@@ -31,24 +31,26 @@ import {vec3} from 'neuroglancer/util/geom';
 import {verifyArray} from 'neuroglancer/util/json';
 import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
+import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 
 const ANNOTATIONS_JSON_KEY = 'annotations';
 
 class AnnotationToSupervoxelHandler extends RefCounted {
   annotationToSupervoxelMap: Map<AnnotationId, Uint64> = new Map<AnnotationId, Uint64>();
   supervoxelSet: Uint64Set = this.registerDisposer(new Uint64Set());
+  isActive = new TrackableBoolean(false, false);
 
-  restoreState(annotationSource: LocalAnnotationSource) {
-    for (const annotation of annotationSource) {
-      if ((!annotation.segments) || (annotation.segments.length < 2)) {
-        // Should never happen (unless user mangles state from state editor)
-        throw Error(
-            'Annotations in Graph Operation Layer State must have 2 segments associated with them');
-      } else {
-        this.add(annotation.id, annotation.segments[0]);
-      }
-    }
-  }
+  // restoreState(annotationSource: LocalAnnotationSource) {
+  //   for (const annotation of annotationSource) {
+  //     if ((!annotation.segments) || (annotation.segments.length < 2)) {
+  //       // Should never happen (unless user mangles state from state editor)
+  //       throw Error(
+  //           'Annotations in Graph Operation Layer State must have 2 segments associated with them');
+  //     } else {
+  //       this.add(annotation.id, annotation.segments[0]);
+  //     }
+  //   }
+  // }
 
   add(annotationId: AnnotationId, supervoxel: Uint64) {
     this.annotationToSupervoxelMap.set(annotationId, supervoxel);
@@ -78,7 +80,6 @@ export class GraphOperationLayerState extends RefCounted {
   activeSource: Borrowed<LocalAnnotationSource>;
   annotationToSupervoxelA: Owned<AnnotationToSupervoxelHandler>;
   annotationToSupervoxelB: Owned<AnnotationToSupervoxelHandler>;
-  activeAnnotationToSupervoxel: Borrowed<AnnotationToSupervoxelHandler>;
   selectedRoot: Uint64|undefined;
 
   hoverState: GraphOperationHoverState;
@@ -143,7 +144,8 @@ export class GraphOperationLayerState extends RefCounted {
     this.activeSource = this.sourceA;
     this.annotationToSupervoxelA = this.registerDisposer(new AnnotationToSupervoxelHandler());
     this.annotationToSupervoxelB = this.registerDisposer(new AnnotationToSupervoxelHandler());
-    this.activeAnnotationToSupervoxel = this.annotationToSupervoxelA;
+    // this.activeAnnotationToSupervoxel = this.annotationToSupervoxelA;
+    this.annotationToSupervoxelA.isActive.value = true;
     this.hoverState = hoverState;
     this.role = RenderLayerRole.GRAPH_MODIFICATION_MARKER;
     this.segmentationState = segmentationState;
@@ -177,10 +179,12 @@ export class GraphOperationLayerState extends RefCounted {
   toggleSource() {
     if (this.activeSource === this.sourceA) {
       this.activeSource = this.sourceB;
-      this.activeAnnotationToSupervoxel = this.annotationToSupervoxelA;
+      this.annotationToSupervoxelA.isActive.value = false;
+      this.annotationToSupervoxelB.isActive.value = true;
     } else {
       this.activeSource = this.sourceA;
-      this.activeAnnotationToSupervoxel = this.annotationToSupervoxelB;
+      this.annotationToSupervoxelA.isActive.value = true;
+      this.annotationToSupervoxelB.isActive.value = false;
     }
   }
 
@@ -204,11 +208,15 @@ export class GraphOperationLayerState extends RefCounted {
     const groups = verifyArray(spec);
     if (groups.length > 0) {
       this.sourceA.restoreState(spec[0][ANNOTATIONS_JSON_KEY], []);
-      this.annotationToSupervoxelA.restoreState(this.sourceA);
+      for (const annotation of this.sourceA) {
+        this.addAnnotation(annotation, this.annotationToSupervoxelA);
+      }
     }
     if (groups.length > 1) {
       this.sourceB.restoreState(spec[1][ANNOTATIONS_JSON_KEY], []);
-      this.annotationToSupervoxelB.restoreState(this.sourceB);
+      for (const annotation of this.sourceB) {
+        this.addAnnotation(annotation, this.annotationToSupervoxelB);
+      }
     }
   }
 
@@ -219,21 +227,34 @@ export class GraphOperationLayerState extends RefCounted {
     ];
   }
 
+  private addAnnotation(annotation: Annotation, annotationToSupervoxelHandler: AnnotationToSupervoxelHandler) {
+    if (annotation.segments && annotation.segments.length >= 2) {
+      if (!this.selectedRoot) {
+        this.selectedRoot = annotation.segments[1];
+      }
+      annotationToSupervoxelHandler.add(annotation.id, annotation.segments[0]);
+    } else {
+      // Should never happen
+      throw Error(
+          'Graph Layer Operation State\'s annotations should always have 2 associated segments');
+    }
+  }
+
   private addSupervoxelFromAnnotationEvents(
       annotationSource: LocalAnnotationSource,
       annotationToSupervoxelHandler: AnnotationToSupervoxelHandler) {
-    const addAnnotation = (annotation: Annotation) => {
-      if (annotation.segments && annotation.segments.length >= 2) {
-        if (!this.selectedRoot) {
-          this.selectedRoot = annotation.segments[1];
-        }
-        annotationToSupervoxelHandler.add(annotation.id, annotation.segments[0]);
-      } else {
-        // Should never happen
-        throw Error(
-            'Graph Layer Operation State\'s annotations should always have 2 associated segments');
-      }
-    };
+    // const addAnnotation = (annotation: Annotation) => {
+    //   if (annotation.segments && annotation.segments.length >= 2) {
+    //     if (!this.selectedRoot) {
+    //       this.selectedRoot = annotation.segments[1];
+    //     }
+    //     annotationToSupervoxelHandler.add(annotation.id, annotation.segments[0]);
+    //   } else {
+    //     // Should never happen
+    //     throw Error(
+    //         'Graph Layer Operation State\'s annotations should always have 2 associated segments');
+    //   }
+    // };
     const deleteAnnotation = (annotationId: AnnotationId) => {
       annotationToSupervoxelHandler.delete(annotationId);
       if (this.annotationToSupervoxelA.supervoxelSet.size === 0 &&
@@ -242,7 +263,7 @@ export class GraphOperationLayerState extends RefCounted {
       }
     };
     annotationSource.childAdded.add((annotation: Annotation) => {
-      addAnnotation(annotation);
+      this.addAnnotation(annotation, annotationToSupervoxelHandler);
     });
     annotationSource.childDeleted.add((annotationId: AnnotationId) => {
       deleteAnnotation(annotationId);
@@ -250,7 +271,7 @@ export class GraphOperationLayerState extends RefCounted {
     // Triggers when user moves an annotation
     annotationSource.childUpdated.add((annotation: Annotation) => {
       deleteAnnotation(annotation.id);
-      addAnnotation(annotation);
+      this.addAnnotation(annotation, annotationToSupervoxelHandler);
     });
   }
 
