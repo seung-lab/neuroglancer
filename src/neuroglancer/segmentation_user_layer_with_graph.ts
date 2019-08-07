@@ -60,6 +60,11 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
         this.registerDisposer(new WatchableRefCounted<GraphOperationLayerState>());
     selectedGraphOperationElement = this.registerDisposer(
         new SelectedGraphOperationState(this.graphOperationLayerState.addRef()));
+    // displayState = {
+    //   ...super.displayState,
+    //   performingMulticut: new TrackableBoolean(false, false)
+    // };
+    // performingMulticut = new TrackableBoolean(false, false);
 
     constructor(...args: any[]) {
       super(...args);
@@ -153,6 +158,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
               transform: this.displayState.objectToDataTransform,
               renderScaleHistogram: this.sliceViewRenderScaleHistogram,
               renderScaleTarget: this.sliceViewRenderScaleTarget,
+              isActive: this.graphOperationLayerState.value!.annotationToSupervoxelA.isActive
             }));
             this.addRenderLayer(new SupervoxelRenderLayer(volume, {
               ...this.displayState,
@@ -163,6 +169,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
               transform: this.displayState.objectToDataTransform,
               renderScaleHistogram: this.sliceViewRenderScaleHistogram,
               renderScaleTarget: this.sliceViewRenderScaleTarget,
+              isActive: this.graphOperationLayerState.value!.annotationToSupervoxelB.isActive
             }));
             if (--remaining === 0) {
               this.isReady = true;
@@ -398,6 +405,10 @@ export interface SegmentationUserLayerWithGraph extends SegmentationUserLayer {
   chunkedGraphLayer: Borrowed<ChunkedGraphLayer>|undefined;
   graphOperationLayerState: WatchableRefCounted<GraphOperationLayerState>;
   selectedGraphOperationElement: SelectedGraphOperationState;
+  // displayState: {
+  //   ...super.displayState,
+  //   performingMulticut: TrackableBoolean
+  // };
 }
 
 /**

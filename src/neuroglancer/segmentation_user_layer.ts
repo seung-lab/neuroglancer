@@ -96,7 +96,8 @@ export class SegmentationUserLayer extends Base {
     shaderError: makeWatchableShaderError(),
     renderScaleHistogram: new RenderScaleHistogram(),
     renderScaleTarget: trackableRenderScaleTarget(1),
-    shatterSegmentEquivalences: new TrackableBoolean(false, false)
+    shatterSegmentEquivalences: new TrackableBoolean(false, false),
+    performingMulticut: new TrackableBoolean(false, false)
   };
 
   /**

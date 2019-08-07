@@ -52,6 +52,7 @@ export interface SliceViewSegmentationDisplayState extends SegmentationDisplaySt
   notSelectedAlpha: TrackableAlphaValue;
   volumeSourceOptions?: VolumeSourceOptions;
   hideSegmentZero: TrackableBoolean;
+  performingMulticut?: TrackableBoolean;
 }
 
 export class SegmentationRenderLayer extends RenderLayer {
@@ -87,6 +88,11 @@ export class SegmentationRenderLayer extends RenderLayer {
     }));
     if (displayState.shatterSegmentEquivalences) {
       this.registerDisposer(displayState.shatterSegmentEquivalences.changed.add(() => {
+        this.redrawNeeded.dispatch();
+      }));
+    }
+    if (displayState.performingMulticut) {
+      this.registerDisposer(displayState.performingMulticut.changed.add(() => {
         this.redrawNeeded.dispatch();
       }));
     }
@@ -148,6 +154,7 @@ uint64_t getMappedObjectId() {
     builder.addUniform('highp float', 'uNotSelectedAlpha');
     builder.addUniform('highp float', 'uSaturation');
     builder.addUniform('highp uint', 'uShatterSegmentEquivalences');
+    builder.addUniform('highp uint', 'uPerformingMulticut');
     let fragmentMain = `
   uint64_t value = getMappedObjectId();
   uint64_t rawValue = getUint64DataValue();
@@ -164,35 +171,50 @@ uint64_t getMappedObjectId() {
 `;
     }
     fragmentMain += `
-  bool has = uShowAllSegments != 0u ? true : ${this.hashTableManager.hasFunctionName}(value);
-  if (uSelectedSegment == value.value) {
-    saturation = has ? 0.5 : 0.75;
-    if (uRawSelectedSegment == rawValue.value) {
-      saturation *= 1.0/4.0;
+  if (uPerformingMulticut == 1u) {
+    bool has = uShowAllSegments != 0u ? true : ${this.hashTableManager.hasFunctionName}(value);
+    if (!has) {
+      emit(vec4(0.0, 0.0, 0.0, 0.5));
+    } else {
+      emit(vec4(0.0, 0.0, 0.0, 0.0));
     }
-  } else if (!has) {
-    alpha = uNotSelectedAlpha;
-  }
-  vec3 rgb;
+    return;
+  } else {
+`;
+    fragmentMain += `
+    bool has = uShowAllSegments != 0u ? true : ${this.hashTableManager.hasFunctionName}(value);
+    if (uSelectedSegment == value.value) {
+      saturation = has ? 0.5 : 0.75;
+      if (uRawSelectedSegment == rawValue.value) {
+        saturation *= 1.0/4.0;
+      }
+    } else if (!has) {
+      alpha = uNotSelectedAlpha;
+    }
+    vec3 rgb;
   `;
     fragmentMain += `
-  if (uShatterSegmentEquivalences == 1u) {
-    rgb = segmentColorHash(rawValue);
-  } else {
-    rgb = segmentColorHash(value);
-  }
-`;
+    if (uShatterSegmentEquivalences == 1u) {
+      rgb = segmentColorHash(rawValue);
+    } else {
+      rgb = segmentColorHash(value);
+    }
+  `;
 
     // Override color for all highlighted segments.
     fragmentMain += `
-  if(${this.hashTableManagerHighlighted.hasFunctionName}(value)) {
-    rgb = vec3(0.2,0.2,2.0);
-    saturation = 1.0;
-  };
-`;
+    if(${this.hashTableManagerHighlighted.hasFunctionName}(value)) {
+      rgb = vec3(0.2,0.2,2.0);
+      saturation = 1.0;
+    };
+  `;
 
     fragmentMain += `
-  emit(vec4(mix(vec3(1.0,1.0,1.0), rgb, saturation), alpha));
+    emit(vec4(mix(vec3(1.0,1.0,1.0), rgb, saturation), alpha));
+  `;
+
+    fragmentMain += `
+  }
 `;
     builder.setFragmentMain(fragmentMain);
   }
@@ -226,6 +248,11 @@ uint64_t getMappedObjectId() {
     gl.uniform1ui(
         shader.uniform('uShatterSegmentEquivalences'),
         this.displayState.shatterSegmentEquivalences.value ? 1 : 0);
+    // Boolean that represents whether the user is performing a multicut
+    // for a segmentation layer with graph
+    gl.uniform1ui(
+        shader.uniform('uPerformingMulticut'),
+        this.displayState.performingMulticut && this.displayState.performingMulticut.value ? 1 : 0);
     this.hashTableManager.enable(gl, shader, this.gpuHashTable);
     this.hashTableManagerHighlighted.enable(gl, shader, this.gpuHashTableHighlighted);
     if (this.hasEquivalences) {
