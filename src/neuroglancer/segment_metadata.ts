@@ -69,10 +69,6 @@ export class SegmentMetadata extends RefCounted {
         const categoryId = verifyObjectProperty(segment, 'categoryId', verifyNonnegativeInt);
         if (segmentCategories.has(categoryId)) {
           categorizedSegments.set(segmentIdString, categoryId);
-        } else {
-          console.log(`Not categorizing segment id ${
-              segmentIdString} because it is mapped to unknown category id ${
-              categoryId} in JSON state`);
         }
       });
     }
