@@ -67,9 +67,9 @@ export function getDefaultRenderedDataPanelBindings() {
           'shift+arrowup': 'rotate-relative-x+',
           'shift+arrowleft': 'rotate-relative-y-',
           'shift+arrowright': 'rotate-relative-y+',
-          'keym': 'two-point-merge', //
+          'keym': 'two-point-merge',
           'control+keym': 'merge-selected',
-          'keyc': 'two-point-cut', //
+          'keyc': 'two-point-cut',
           'control+keyc': 'cut-selected',
           'control+keys': 'shatter-segment-equivalences',
           'at:control+wheel': {action: 'zoom-via-wheel', preventDefault: true},
