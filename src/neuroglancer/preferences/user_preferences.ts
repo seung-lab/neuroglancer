@@ -15,7 +15,7 @@ class UserPreferences {
     this.renderMeshByDefault = new TrackableBoolean(true, true, 'renderMeshByDefault');
     // prefetching disabled by default, as it uses a lot of additional memory/bandwidth
     this.prefetchSliceViewChunks = new TrackableBoolean(false, false, 'prefetchSliceViewChunks');
-    this.cursorOnMousedrag = new TrackableBoolean(false, false, 'cursorOnMousedrag');
+    this.cursorOnMousedrag = new TrackableBoolean(true, true, 'cursorOnMousedrag');
 
     this.renderMeshByDefault.restoreState({});
     this.prefetchSliceViewChunks.restoreState({});
