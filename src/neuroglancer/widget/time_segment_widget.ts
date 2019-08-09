@@ -10,18 +10,24 @@ require('flatpickr/dist/flatpickr.min.css');
 // require('./time_segment_widget.css');
 
 export class TimeSegmentWidget extends RefCounted {
-  element = <HTMLInputElement>document.createElement('input');
+  element = document.createElement('div');
+  input = <HTMLInputElement>document.createElement('input');
   model: LockableValueInterface<string>;
   preValue: string;
 
   constructor(private displayState: SegmentationDisplayState) {
     super();
     this.model = displayState.timestamp;
-    const {element, model} = this;
+    const {element, input, model} = this;
+    const cancelButton = document.createElement('button');
+    const nothingButton = document.createElement('button');
+    nothingButton.textContent = '✔️';
+    nothingButton.title =
+        `Actually, this button doesn't do anything at all. Click anywhere to close the time select.`;
     this.preValue = '';
     element.classList.add('neuroglancer-time-widget');
-    element.type = 'datetime-local';
-    flatpickr(element, {
+    input.type = 'datetime-local';
+    flatpickr(input, {
       enableTime: true,
       enableSeconds: true,
       'disable': [(date) => (date.valueOf() >= Date.now())],
@@ -35,7 +41,15 @@ export class TimeSegmentWidget extends RefCounted {
         }
       })]
     });
-    element.addEventListener('change', () => this.updateModel());
+    input.addEventListener('change', () => this.updateModel());
+    cancelButton.textContent = '❌';
+    cancelButton.title = 'Reset Time';
+    cancelButton.addEventListener('click', () => {
+      this.model.value = '';
+    });
+    element.appendChild(input);
+    element.appendChild(nothingButton);
+    element.appendChild(cancelButton);
     this.registerDisposer(model.changed.add(() => this.updateView()));
     this.updateView();
   }
@@ -51,15 +65,15 @@ export class TimeSegmentWidget extends RefCounted {
       StatusMessage.showTemporaryMessage(
           'Cannot view an older segmentation while Merge/Split mode is active.');
     }
-    this.element.value = this.dateFormat(this.model.value);
-    if (this.element.value !== '' || this.preValue !== '') {
+    this.input.value = this.dateFormat(this.model.value);
+    if (this.input.value !== '' || this.preValue !== '') {
       this.displayState.rootSegments.clear();
       this.displayState.hiddenRootSegments!.clear();
     }
-    this.preValue = this.element.value;
+    this.preValue = this.input.value;
   }
   private updateModel() {
-    this.model.restoreState(this.element.value);
+    this.model.restoreState(this.input.value);
   }
 
   disposed() {
