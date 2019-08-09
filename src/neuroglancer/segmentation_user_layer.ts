@@ -97,7 +97,8 @@ export class SegmentationUserLayer extends Base {
     renderScaleHistogram: new RenderScaleHistogram(),
     renderScaleTarget: trackableRenderScaleTarget(1),
     shatterSegmentEquivalences: new TrackableBoolean(false, false),
-    timestamp: new LockableValue('', date => ((new Date(date)).valueOf() / 1000).toString())
+    timestamp: new LockableValue('', date => ((new Date(date)).valueOf() / 1000).toString()),
+    timestampLimit: ''
   };
 
   /**

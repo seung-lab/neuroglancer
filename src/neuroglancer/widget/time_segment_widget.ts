@@ -12,13 +12,16 @@ require('flatpickr/dist/flatpickr.min.css');
 export class TimeSegmentWidget extends RefCounted {
   element = document.createElement('div');
   input = <HTMLInputElement>document.createElement('input');
+  limit: string;
   model: LockableValueInterface<string>;
   preValue: string;
 
   constructor(private displayState: SegmentationDisplayState) {
     super();
     this.model = displayState.timestamp;
+    this.limit = displayState.timestampLimit;
     const {element, input, model} = this;
+    const earliest = this.limit !== '' ? new Date(this.limit) : null;
     const cancelButton = document.createElement('button');
     const nothingButton = document.createElement('button');
     nothingButton.textContent = '✔️';
@@ -30,7 +33,18 @@ export class TimeSegmentWidget extends RefCounted {
     flatpickr(input, {
       enableTime: true,
       enableSeconds: true,
-      'disable': [(date) => (date.valueOf() >= Date.now())],
+      'disable': [(date) => {
+        const target = date.valueOf();
+        const future = Date.now();
+
+        if (earliest) {
+          const past = earliest.valueOf();
+          return past > target && target >= future;
+        } else {
+          return date.valueOf() >= Date.now();
+        }
+      }],
+      // TODO: Fix timelimits
       plugins: [minMaxTimePlugin({
         getTimeLimits: () => {
           const now = new Date();

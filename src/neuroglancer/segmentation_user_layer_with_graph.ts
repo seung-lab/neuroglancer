@@ -30,6 +30,7 @@ import {Borrowed} from 'neuroglancer/util/disposable';
 import {vec3} from 'neuroglancer/util/geom';
 import {parseArray, verifyObjectProperty, verifyOptionalString} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
+import { authFetch } from './authentication/frontend';
 
 // Already defined in segmentation_user_layer.ts
 const EQUIVALENCES_JSON_KEY = 'equivalences';
@@ -73,6 +74,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
         transform: this.transform,
         segmentationState: segmentationState,
       });
+      segmentationState.value.timestampLimit = '';
 
       graphOpState.changed.add(() => this.specificationChanged.dispatch());
 
@@ -97,6 +99,14 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
       return {volumeType: VolumeType.SEGMENTATION_WITH_GRAPH};
     }
 
+    async setTimestampLimit(url: string|null|undefined) {
+      if (url) {
+        const response = await authFetch(`${url}/graph/oldest_timestamp`);
+        this.displayState.timestampLimit = await response.text();
+        console.log(this.displayState.timestampLimit);
+      }
+    }
+
     restoreState(specification: any) {
       super.restoreState(specification);
 
@@ -108,6 +118,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
           null :
           verifyOptionalString(specification[CHUNKED_GRAPH_JSON_KEY]);
 
+      this.setTimestampLimit(this.chunkedGraphUrl);
       let remaining = 0;
       if (multiscaleSource !== undefined) {
         ++remaining;
