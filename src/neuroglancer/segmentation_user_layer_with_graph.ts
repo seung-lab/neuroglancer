@@ -74,7 +74,6 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
         transform: this.transform,
         segmentationState: segmentationState,
       });
-      segmentationState.value.timestampLimit = '';
 
       graphOpState.changed.add(() => this.specificationChanged.dispatch());
 
@@ -102,8 +101,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
     async setTimestampLimit(url: string|null|undefined) {
       if (url) {
         const response = await authFetch(`${url}/graph/oldest_timestamp`);
-        this.displayState.timestampLimit = await response.text();
-        console.log(this.displayState.timestampLimit);
+        this.displayState.timestampLimit.restoreState(await response.text());
       }
     }
 

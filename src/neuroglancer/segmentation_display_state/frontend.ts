@@ -23,7 +23,7 @@ import {VisibleSegmentsState} from 'neuroglancer/segmentation_display_state/base
 import {SharedWatchableValue} from 'neuroglancer/shared_watchable_value';
 import {TrackableAlphaValue} from 'neuroglancer/trackable_alpha';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
-import {TrackableValue, LockableValueInterface} from 'neuroglancer/trackable_value';
+import {TrackableValue, LockableValueInterface, TrackableValueInterface} from 'neuroglancer/trackable_value';
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {hsvToRgb, rgbToHsv} from 'neuroglancer/util/colorspace';
 import {RefCounted} from 'neuroglancer/util/disposable';
@@ -110,7 +110,7 @@ export interface SegmentationDisplayState extends VisibleSegmentsState {
   highlightedSegments: Uint64Set;
   shatterSegmentEquivalences: TrackableBoolean;
   timestamp: LockableValueInterface<string>;
-  timestampLimit: string;
+  timestampLimit: TrackableValueInterface<string>;
 }
 
 export interface SegmentationDisplayStateWithAlpha extends SegmentationDisplayState {

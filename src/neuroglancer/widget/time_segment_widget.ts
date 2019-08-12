@@ -2,7 +2,7 @@ import flatpickr from 'flatpickr';
 import minMaxTimePlugin from 'flatpickr/dist/plugins/minMaxTimePlugin';
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
 import {StatusMessage} from 'neuroglancer/status';
-import {LockableValueInterface} from 'neuroglancer/trackable_value';
+import {LockableValueInterface, TrackableValueInterface} from 'neuroglancer/trackable_value';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {removeFromParent} from 'neuroglancer/util/dom';
 
@@ -12,7 +12,7 @@ require('flatpickr/dist/flatpickr.min.css');
 export class TimeSegmentWidget extends RefCounted {
   element = document.createElement('div');
   input = <HTMLInputElement>document.createElement('input');
-  limit: string;
+  limit: TrackableValueInterface<string>;
   model: LockableValueInterface<string>;
   preValue: string;
 
@@ -21,7 +21,6 @@ export class TimeSegmentWidget extends RefCounted {
     this.model = displayState.timestamp;
     this.limit = displayState.timestampLimit;
     const {element, input, model} = this;
-    const earliest = this.limit !== '' ? new Date(this.limit) : null;
     const cancelButton = document.createElement('button');
     const nothingButton = document.createElement('button');
     nothingButton.textContent = '✔️';
@@ -30,31 +29,8 @@ export class TimeSegmentWidget extends RefCounted {
     this.preValue = '';
     element.classList.add('neuroglancer-time-widget');
     input.type = 'datetime-local';
-    flatpickr(input, {
-      enableTime: true,
-      enableSeconds: true,
-      'disable': [(date) => {
-        const target = date.valueOf();
-        const future = Date.now();
-
-        if (earliest) {
-          const past = earliest.valueOf();
-          return past > target && target >= future;
-        } else {
-          return date.valueOf() >= Date.now();
-        }
-      }],
-      // TODO: Fix timelimits
-      plugins: [minMaxTimePlugin({
-        getTimeLimits: () => {
-          const now = new Date();
-          return {
-            minTime: `00:00`,
-            maxTime: `${now.getHours()}:${now.getMinutes()}:${now.getSeconds()}`
-          };
-        }
-      })]
-    });
+    this.buildFlatpickr(input);
+    this.limit.changed.add(() => this.buildFlatpickr(input));
     input.addEventListener('change', () => this.updateModel());
     cancelButton.textContent = '❌';
     cancelButton.title = 'Reset Time';
@@ -88,6 +64,41 @@ export class TimeSegmentWidget extends RefCounted {
   }
   private updateModel() {
     this.model.restoreState(this.input.value);
+  }
+  private buildFlatpickr(ele: HTMLInputElement) {
+    return flatpickr(ele, {
+      enableTime: true,
+      enableSeconds: true,
+      'disable': [(date) => {
+        const target = date.valueOf();
+        const future = Date.now();
+        // note: this is fine b/c we are dealing with epoch time (date shenangins are irrelevant
+        // here)
+        const past = parseInt(this.limit.value || '0', 10) - (24 * 60 * 60 * 1000);
+
+        if (past) {
+          return past > target || target >= future;
+        } else {
+          return target >= future;
+        }
+      }],
+      plugins: [minMaxTimePlugin({
+        getTimeLimits: (date) => {
+          const now = new Date();
+          const past = new Date(parseInt(this.limit.value || '0', 10));
+          let minmax = {minTime: `00:00:00`, maxTime: `23:59:59`};
+
+          if (date.toDateString() === now.toDateString()) {
+            minmax.maxTime = `${now.getHours()}:${now.getMinutes()}:${now.getSeconds()}`;
+          } else if (date.toDateString() === past.toDateString()) {
+            // Flatpickr does not support millisecond res, must round up to nearest second
+            // Currently, the minMaxTimePlugin doesn't properly handle seconds
+            minmax.minTime = `${past.getHours()}:${past.getMinutes() + 1}:${past.getSeconds() + 1}`;
+          }
+          return minmax;
+        }
+      })]
+    });
   }
 
   disposed() {
