@@ -33,6 +33,7 @@ import {Borrowed} from 'neuroglancer/util/disposable';
 import {vec3} from 'neuroglancer/util/geom';
 import {parseArray, verifyObjectProperty, verifyOptionalString} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
+import {Uint64Set} from 'neuroglancer/uint64_set';
 
 // Already defined in segmentation_user_layer.ts
 const EQUIVALENCES_JSON_KEY = 'equivalences';
@@ -60,11 +61,10 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
         this.registerDisposer(new WatchableRefCounted<GraphOperationLayerState>());
     selectedGraphOperationElement = this.registerDisposer(
         new SelectedGraphOperationState(this.graphOperationLayerState.addRef()));
-    // displayState = {
-    //   ...super.displayState,
-    //   performingMulticut: new TrackableBoolean(false, false)
-    // };
-    // performingMulticut = new TrackableBoolean(false, false);
+    displayState = {
+      ...super.displayState,
+      multicutSegments: new Uint64Set()
+    };
 
     constructor(...args: any[]) {
       super(...args);
@@ -80,6 +80,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
       const graphOpState = this.graphOperationLayerState.value = new GraphOperationLayerState({
         transform: this.transform,
         segmentationState: segmentationState,
+        multicutSegments: this.displayState.multicutSegments,
       });
 
       graphOpState.changed.add(() => this.specificationChanged.dispatch());
@@ -405,10 +406,6 @@ export interface SegmentationUserLayerWithGraph extends SegmentationUserLayer {
   chunkedGraphLayer: Borrowed<ChunkedGraphLayer>|undefined;
   graphOperationLayerState: WatchableRefCounted<GraphOperationLayerState>;
   selectedGraphOperationElement: SelectedGraphOperationState;
-  // displayState: {
-  //   ...super.displayState,
-  //   performingMulticut: TrackableBoolean
-  // };
 }
 
 /**

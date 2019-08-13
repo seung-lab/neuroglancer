@@ -90,6 +90,7 @@ export class SegmentationUserLayer extends Base {
     visibleSegments2D: new Uint64Set(),
     visibleSegments3D: Uint64Set.makeWithCounterpart(this.manager.worker),
     highlightedSegments: Uint64Set.makeWithCounterpart(this.manager.worker),
+    highlightedRawSegments: Uint64Set.makeWithCounterpart(this.manager.worker),
     segmentEquivalences: SharedDisjointUint64Sets.makeWithCounterpart(this.manager.worker),
     objectToDataTransform: this.transform,
     skeletonRenderingOptions: new SkeletonRenderingOptions(),
@@ -97,7 +98,6 @@ export class SegmentationUserLayer extends Base {
     renderScaleHistogram: new RenderScaleHistogram(),
     renderScaleTarget: trackableRenderScaleTarget(1),
     shatterSegmentEquivalences: new TrackableBoolean(false, false),
-    performingMulticut: new TrackableBoolean(false, false)
   };
 
   /**
