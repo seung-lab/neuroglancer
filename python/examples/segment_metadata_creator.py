@@ -13,7 +13,8 @@ class NumpyEncoder(json.JSONEncoder):
             return obj.tolist()
         return json.JSONEncoder.default(self, obj)
 
-def create_segment_metadata_file(cv_input_path, cv_output_path, output_filename, override_default_size_limit, mip=0):
+def create_segment_metadata_file(cv_input_path, cv_output_path, output_filename, override_default_size_limit):
+    mip = 0
     cv = CloudVolume(cv_input_path, mip)
     max_allowed_size = np.int64(3000000000)
     vol_size = np.prod(cv.volume_size)
@@ -48,13 +49,10 @@ if __name__ == '__main__':
         help='Output filename (default is segment_metadata.json)')
     ap.add_argument('--override-max-allowed-volume-size', action='store_true',
         required=False, help='Override volume voxel size limit of 3 billion')
-    ap.add_argument('--mip', required=False)
     args = ap.parse_args()
     if not args.output_path:
         args.output_path = f'{args.segmentation_path}/segment_metadata'
     if not args.output_filename:
         args.output_filename = 'segment_metadata.json'
-    if not args.mip:
-        args.mip = 0
     create_segment_metadata_file(args.segmentation_path, args.output_path,
-        args.output_filename, args.override_max_allowed_volume_size, int(args.mip))
+        args.output_filename, args.override_max_allowed_volume_size)
