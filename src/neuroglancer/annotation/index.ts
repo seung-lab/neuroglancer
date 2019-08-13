@@ -44,14 +44,14 @@ export enum AnnotationType {
   POINT,
   LINE,
   AXIS_ALIGNED_BOUNDING_BOX,
-  ELLIPSOID
+  ELLIPSOID,
 }
 
 export const annotationTypes = [
   AnnotationType.POINT,
   AnnotationType.LINE,
   AnnotationType.AXIS_ALIGNED_BOUNDING_BOX,
-  AnnotationType.ELLIPSOID
+  AnnotationType.ELLIPSOID,
 ];
 
 export interface AnnotationBase {

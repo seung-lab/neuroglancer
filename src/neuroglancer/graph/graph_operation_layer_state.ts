@@ -21,8 +21,8 @@ import {CoordinateTransform} from 'neuroglancer/coordinate_transform';
 import {RenderLayerRole} from 'neuroglancer/layer';
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
 import {trackableAlphaValue} from 'neuroglancer/trackable_alpha';
+import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {WatchableRefCounted, WatchableValue} from 'neuroglancer/trackable_value';
-import {getSelectedAssociatedSegment} from 'neuroglancer/ui/graph_multicut';
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {TrackableRGB} from 'neuroglancer/util/color';
 import {Borrowed, Owned, RefCounted} from 'neuroglancer/util/disposable';
@@ -31,7 +31,6 @@ import {vec3} from 'neuroglancer/util/geom';
 import {verifyArray} from 'neuroglancer/util/json';
 import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
-import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 
 const ANNOTATIONS_JSON_KEY = 'annotations';
 
@@ -136,7 +135,6 @@ export class GraphOperationLayerState extends RefCounted {
     this.activeSource = this.sourceA;
     this.annotationToSupervoxelA = this.registerDisposer(new AnnotationToSupervoxelHandler());
     this.annotationToSupervoxelB = this.registerDisposer(new AnnotationToSupervoxelHandler());
-    // this.activeAnnotationToSupervoxel = this.annotationToSupervoxelA;
     this.annotationToSupervoxelA.isActive.value = true;
     this.hoverState = hoverState;
     this.role = RenderLayerRole.GRAPH_MODIFICATION_MARKER;
@@ -219,7 +217,8 @@ export class GraphOperationLayerState extends RefCounted {
     ];
   }
 
-  private addAnnotation(annotation: Annotation, annotationToSupervoxelHandler: AnnotationToSupervoxelHandler) {
+  private addAnnotation(
+      annotation: Annotation, annotationToSupervoxelHandler: AnnotationToSupervoxelHandler) {
     if (annotation.segments && annotation.segments.length >= 2) {
       if (!this.selectedRoot) {
         this.selectedRoot = annotation.segments[1];

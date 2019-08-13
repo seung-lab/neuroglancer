@@ -20,10 +20,10 @@ import {SliceView} from 'neuroglancer/sliceview/frontend';
 import {MultiscaleVolumeChunkSource} from 'neuroglancer/sliceview/volume/frontend';
 import {RenderLayer} from 'neuroglancer/sliceview/volume/renderlayer';
 import {SliceViewSegmentationDisplayState} from 'neuroglancer/sliceview/volume/segmentation_renderlayer';
-import {TrackableRGB} from 'neuroglancer/util/color';
-import {ShaderBuilder, ShaderProgram} from 'neuroglancer/webgl/shader';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {Uint64Set} from 'neuroglancer/uint64_set';
+import {TrackableRGB} from 'neuroglancer/util/color';
+import {ShaderBuilder, ShaderProgram} from 'neuroglancer/webgl/shader';
 
 
 interface SliceViewSupervoxelDisplayState extends SliceViewSegmentationDisplayState {

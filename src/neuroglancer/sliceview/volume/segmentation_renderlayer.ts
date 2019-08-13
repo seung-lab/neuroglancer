@@ -27,7 +27,7 @@ import {TrackableAlphaValue} from 'neuroglancer/trackable_alpha';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {DisjointUint64Sets} from 'neuroglancer/util/disjoint_sets';
 import {ShaderBuilder, ShaderProgram} from 'neuroglancer/webgl/shader';
-import { Uint64Set } from 'src/neuroglancer/uint64_set';
+import {Uint64Set} from 'neuroglancer/uint64_set';
 
 export class EquivalencesHashMap {
   generation = Number.NaN;

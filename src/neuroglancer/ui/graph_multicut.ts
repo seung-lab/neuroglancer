@@ -409,8 +409,10 @@ export class GraphOperationLayerView extends Tab {
     // in the list is highlighted.
     this.registerDisposer(wrapper.displayState.segmentSelectionState.changed.add(() => {
       const supervoxelID = wrapper.displayState.segmentSelectionState.rawSelectedSegment.toString();
-      const supervoxelListElement = <HTMLElement>this.annotationListContainer.querySelector(`[data-seg-id="${supervoxelID}"]`);
-      const existingHighlight = Array.from(this.annotationListContainer.getElementsByClassName('selectedSupervoxel'));
+      const supervoxelListElement = <HTMLElement>this.annotationListContainer.querySelector(
+          `[data-seg-id="${supervoxelID}"]`);
+      const existingHighlight =
+          Array.from(this.annotationListContainer.getElementsByClassName('selectedSupervoxel'));
       if (supervoxelListElement) {
         const supervoxelClass = supervoxelListElement.classList;
         if (supervoxelClass.toggle('selectedSupervoxel')) {

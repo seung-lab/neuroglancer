@@ -28,12 +28,12 @@ import {StatusMessage} from 'neuroglancer/status';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {WatchableRefCounted, WatchableValue} from 'neuroglancer/trackable_value';
 import {GraphOperationTab, SelectedGraphOperationState} from 'neuroglancer/ui/graph_multicut';
+import {Uint64Set} from 'neuroglancer/uint64_set';
 import {TrackableRGB} from 'neuroglancer/util/color';
 import {Borrowed} from 'neuroglancer/util/disposable';
 import {vec3} from 'neuroglancer/util/geom';
 import {parseArray, verifyObjectProperty, verifyOptionalString} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
-import {Uint64Set} from 'neuroglancer/uint64_set';
 
 // Already defined in segmentation_user_layer.ts
 const EQUIVALENCES_JSON_KEY = 'equivalences';
@@ -61,10 +61,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
         this.registerDisposer(new WatchableRefCounted<GraphOperationLayerState>());
     selectedGraphOperationElement = this.registerDisposer(
         new SelectedGraphOperationState(this.graphOperationLayerState.addRef()));
-    displayState: any = {
-      ...this.displayState,
-      multicutSegments: new Uint64Set()
-    };
+    displayState: any = {...this.displayState, multicutSegments: new Uint64Set()};
 
     constructor(...args: any[]) {
       super(...args);
