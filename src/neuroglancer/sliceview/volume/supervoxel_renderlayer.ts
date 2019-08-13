@@ -23,11 +23,13 @@ import {SliceViewSegmentationDisplayState} from 'neuroglancer/sliceview/volume/s
 import {TrackableRGB} from 'neuroglancer/util/color';
 import {ShaderBuilder, ShaderProgram} from 'neuroglancer/webgl/shader';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
+import {Uint64Set} from 'neuroglancer/uint64_set';
 
 
 interface SliceViewSupervoxelDisplayState extends SliceViewSegmentationDisplayState {
   supervoxelColor: TrackableRGB;
   isActive: TrackableBoolean;
+  highlightedSupervoxels?: Uint64Set;
 }
 
 export class SupervoxelRenderLayer extends RenderLayer {
@@ -86,11 +88,18 @@ export class SupervoxelRenderLayer extends RenderLayer {
     fragmentMain += `
     bool has = ${this.hashTableManager.hasFunctionName}(value);
     `;
+    // fragmentMain += `
+    // if (has) {
+    //   emit(vec4(uSupervoxelRedValue, uSupervoxelGreenValue, uSupervoxelBlueValue, 0.5));
+    // } else if (uIsActive == 1u && uRawSelectedSegment == rawValue.value) {
+    //   emit(vec4(uSupervoxelRedValue, uSupervoxelGreenValue, uSupervoxelBlueValue, 0.25));
+    // }
+    // `;
     fragmentMain += `
-    if (has) {
-      emit(vec4(uSupervoxelRedValue, uSupervoxelGreenValue, uSupervoxelBlueValue, 0.5));
-    } else if (uIsActive == 1u && uRawSelectedSegment == rawValue.value) {
+    if (uIsActive == 1u && uRawSelectedSegment == rawValue.value) {
       emit(vec4(uSupervoxelRedValue, uSupervoxelGreenValue, uSupervoxelBlueValue, 0.25));
+    } else if (has) {
+      emit(vec4(uSupervoxelRedValue, uSupervoxelGreenValue, uSupervoxelBlueValue, 0.5));
     }
     `;
     builder.setFragmentMain(fragmentMain);

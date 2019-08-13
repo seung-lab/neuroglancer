@@ -40,18 +40,6 @@ class AnnotationToSupervoxelHandler extends RefCounted {
   supervoxelSet: Uint64Set = this.registerDisposer(new Uint64Set());
   isActive = new TrackableBoolean(false, false);
 
-  // restoreState(annotationSource: LocalAnnotationSource) {
-  //   for (const annotation of annotationSource) {
-  //     if ((!annotation.segments) || (annotation.segments.length < 2)) {
-  //       // Should never happen (unless user mangles state from state editor)
-  //       throw Error(
-  //           'Annotations in Graph Operation Layer State must have 2 segments associated with them');
-  //     } else {
-  //       this.add(annotation.id, annotation.segments[0]);
-  //     }
-  //   }
-  // }
-
   add(annotationId: AnnotationId, supervoxel: Uint64) {
     this.annotationToSupervoxelMap.set(annotationId, supervoxel);
     this.supervoxelSet.add(supervoxel);
@@ -81,6 +69,7 @@ export class GraphOperationLayerState extends RefCounted {
   annotationToSupervoxelA: Owned<AnnotationToSupervoxelHandler>;
   annotationToSupervoxelB: Owned<AnnotationToSupervoxelHandler>;
   selectedRoot: Uint64|undefined;
+  multicutSegments: Uint64Set;
 
   hoverState: GraphOperationHoverState;
   role: RenderLayerRole;
@@ -130,15 +119,18 @@ export class GraphOperationLayerState extends RefCounted {
   constructor(options: {
     transform: CoordinateTransform,
     segmentationState: WatchableValue<SegmentationDisplayState>,
+    multicutSegments: Uint64Set,
     hoverState?: GraphOperationHoverState,
   }) {
     super();
     const {
       transform = new CoordinateTransform(),
       segmentationState,
+      multicutSegments,
       hoverState = new GraphOperationHoverState(undefined),
     } = options;
     this.transform = transform;
+    this.multicutSegments = multicutSegments;
     this.sourceA = this.registerDisposer(new LocalAnnotationSource());
     this.sourceB = this.registerDisposer(new LocalAnnotationSource());
     this.activeSource = this.sourceA;
@@ -231,6 +223,7 @@ export class GraphOperationLayerState extends RefCounted {
     if (annotation.segments && annotation.segments.length >= 2) {
       if (!this.selectedRoot) {
         this.selectedRoot = annotation.segments[1];
+        this.multicutSegments.add(this.selectedRoot);
       }
       annotationToSupervoxelHandler.add(annotation.id, annotation.segments[0]);
     } else {
@@ -243,23 +236,12 @@ export class GraphOperationLayerState extends RefCounted {
   private addSupervoxelFromAnnotationEvents(
       annotationSource: LocalAnnotationSource,
       annotationToSupervoxelHandler: AnnotationToSupervoxelHandler) {
-    // const addAnnotation = (annotation: Annotation) => {
-    //   if (annotation.segments && annotation.segments.length >= 2) {
-    //     if (!this.selectedRoot) {
-    //       this.selectedRoot = annotation.segments[1];
-    //     }
-    //     annotationToSupervoxelHandler.add(annotation.id, annotation.segments[0]);
-    //   } else {
-    //     // Should never happen
-    //     throw Error(
-    //         'Graph Layer Operation State\'s annotations should always have 2 associated segments');
-    //   }
-    // };
     const deleteAnnotation = (annotationId: AnnotationId) => {
       annotationToSupervoxelHandler.delete(annotationId);
       if (this.annotationToSupervoxelA.supervoxelSet.size === 0 &&
           this.annotationToSupervoxelB.supervoxelSet.size === 0) {
         this.selectedRoot = undefined;
+        this.multicutSegments.clear();
       }
     };
     annotationSource.childAdded.add((annotation: Annotation) => {

@@ -315,13 +315,13 @@ const tempVec3 = vec3.create();
 
 function makePointLink(
     point: vec3, transform: mat4, voxelSize: VoxelSize,
-    setSpatialCoordinates?: (point: vec3) => void, customTextContent?: string) {
+    setSpatialCoordinates?: (point: vec3) => void) {
   const spatialPoint = vec3.transformMat4(vec3.create(), point, transform);
   const positionText = formatIntegerPoint(voxelSize.voxelFromSpatial(tempVec3, spatialPoint));
   if (setSpatialCoordinates !== undefined) {
     const element = document.createElement('span');
     element.className = 'neuroglancer-voxel-coordinates-link';
-    element.textContent = (customTextContent) ? customTextContent : positionText;
+    element.textContent = positionText;
     element.title = `Center view on voxel coordinates ${positionText}.`;
     element.addEventListener('click', () => {
       setSpatialCoordinates(spatialPoint);
@@ -334,9 +334,9 @@ function makePointLink(
 
 export function getPositionSummary(
     element: HTMLElement, annotation: Annotation, transform: mat4, voxelSize: VoxelSize,
-    setSpatialCoordinates?: (point: vec3) => void, customTextContent?: string) {
+    setSpatialCoordinates?: (point: vec3) => void) {
   const makePointLinkWithTransform = (point: vec3) =>
-      makePointLink(point, transform, voxelSize, setSpatialCoordinates, customTextContent);
+      makePointLink(point, transform, voxelSize, setSpatialCoordinates);
 
   switch (annotation.type) {
     case AnnotationType.AXIS_ALIGNED_BOUNDING_BOX:

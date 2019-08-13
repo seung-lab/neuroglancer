@@ -27,6 +27,7 @@ import {TrackableAlphaValue} from 'neuroglancer/trackable_alpha';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {DisjointUint64Sets} from 'neuroglancer/util/disjoint_sets';
 import {ShaderBuilder, ShaderProgram} from 'neuroglancer/webgl/shader';
+import { Uint64Set } from 'src/neuroglancer/uint64_set';
 
 export class EquivalencesHashMap {
   generation = Number.NaN;
@@ -52,7 +53,7 @@ export interface SliceViewSegmentationDisplayState extends SegmentationDisplaySt
   notSelectedAlpha: TrackableAlphaValue;
   volumeSourceOptions?: VolumeSourceOptions;
   hideSegmentZero: TrackableBoolean;
-  performingMulticut?: TrackableBoolean;
+  multicutSegments?: Uint64Set;
 }
 
 export class SegmentationRenderLayer extends RenderLayer {
@@ -62,6 +63,9 @@ export class SegmentationRenderLayer extends RenderLayer {
   private hashTableManagerHighlighted = new HashSetShaderManager('highlightedSegments');
   private gpuHashTableHighlighted =
       GPUHashTable.get(this.gl, this.displayState.highlightedSegments.hashTable);
+  private hashTableManagerMulticut = new HashSetShaderManager('multicutSegments');
+  private gpuHashTableMulticut = (this.displayState.multicutSegments) ?
+      GPUHashTable.get(this.gl, this.displayState.multicutSegments.hashTable) : undefined;
 
   private equivalencesShaderManager = new HashMapShaderManager('equivalences');
   private equivalencesHashMap =
@@ -91,8 +95,8 @@ export class SegmentationRenderLayer extends RenderLayer {
         this.redrawNeeded.dispatch();
       }));
     }
-    if (displayState.performingMulticut) {
-      this.registerDisposer(displayState.performingMulticut.changed.add(() => {
+    if (displayState.multicutSegments) {
+      this.registerDisposer(displayState.multicutSegments.changed.add(() => {
         this.redrawNeeded.dispatch();
       }));
     }
@@ -122,6 +126,7 @@ export class SegmentationRenderLayer extends RenderLayer {
     super.defineShader(builder);
     this.hashTableManager.defineShader(builder);
     this.hashTableManagerHighlighted.defineShader(builder);
+    this.hashTableManagerMulticut.defineShader(builder);
     builder.addFragmentCode(`
 uint64_t getUint64DataValue() {
   return toUint64(getDataValue());
@@ -172,7 +177,7 @@ uint64_t getMappedObjectId() {
     }
     fragmentMain += `
   if (uPerformingMulticut == 1u) {
-    bool has = uShowAllSegments != 0u ? true : ${this.hashTableManager.hasFunctionName}(value);
+    bool has = uShowAllSegments != 0u ? true : ${this.hashTableManagerMulticut.hasFunctionName}(value);
     if (!has) {
       emit(vec4(0.0, 0.0, 0.0, 0.5));
     } else {
@@ -252,9 +257,12 @@ uint64_t getMappedObjectId() {
     // for a segmentation layer with graph
     gl.uniform1ui(
         shader.uniform('uPerformingMulticut'),
-        this.displayState.performingMulticut && this.displayState.performingMulticut.value ? 1 : 0);
+        this.displayState.multicutSegments && this.displayState.multicutSegments.size > 0 ? 1 : 0);
     this.hashTableManager.enable(gl, shader, this.gpuHashTable);
     this.hashTableManagerHighlighted.enable(gl, shader, this.gpuHashTableHighlighted);
+    if (this.gpuHashTableMulticut) {
+      this.hashTableManagerMulticut.enable(gl, shader, this.gpuHashTableMulticut);
+    }
     if (this.hasEquivalences) {
       this.equivalencesHashMap.update();
       this.equivalencesShaderManager.enable(gl, shader, this.gpuEquivalencesHashTable);
@@ -267,6 +275,9 @@ uint64_t getMappedObjectId() {
     let {gl} = this;
     this.hashTableManager.disable(gl, shader);
     this.hashTableManagerHighlighted.disable(gl, shader);
+    if (this.gpuHashTableMulticut) {
+      this.hashTableManagerMulticut.disable(gl, shader);
+    }
     super.endSlice(shader);
   }
 }
