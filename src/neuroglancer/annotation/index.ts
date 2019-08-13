@@ -45,6 +45,7 @@ export enum AnnotationType {
   LINE,
   AXIS_ALIGNED_BOUNDING_BOX,
   ELLIPSOID,
+  COLLECTION
 }
 
 export const annotationTypes = [
@@ -52,6 +53,7 @@ export const annotationTypes = [
   AnnotationType.LINE,
   AnnotationType.AXIS_ALIGNED_BOUNDING_BOX,
   AnnotationType.ELLIPSOID,
+  AnnotationType.COLLECTION
 ];
 
 export interface AnnotationBase {
@@ -68,6 +70,14 @@ export interface AnnotationBase {
   segments?: Uint64[];
 }
 
+export interface Collection extends AnnotationBase {
+  entries: Annotation[];
+  type: AnnotationType.COLLECTION;
+}
+export interface MultiPoint extends Collection {
+  entries: Point[];
+  type: AnnotationType.COLLECTION;
+}
 export interface Line extends AnnotationBase {
   pointA: vec3;
   pointB: vec3;
