@@ -61,8 +61,8 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
         this.registerDisposer(new WatchableRefCounted<GraphOperationLayerState>());
     selectedGraphOperationElement = this.registerDisposer(
         new SelectedGraphOperationState(this.graphOperationLayerState.addRef()));
-    displayState = {
-      ...super.displayState,
+    displayState: any = {
+      ...this.displayState,
       multicutSegments: new Uint64Set()
     };
 
