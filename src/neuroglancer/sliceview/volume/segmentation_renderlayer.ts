@@ -25,9 +25,9 @@ import {MultiscaleVolumeChunkSource} from 'neuroglancer/sliceview/volume/fronten
 import {RenderLayer} from 'neuroglancer/sliceview/volume/renderlayer';
 import {TrackableAlphaValue} from 'neuroglancer/trackable_alpha';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
+import {Uint64Set} from 'neuroglancer/uint64_set';
 import {DisjointUint64Sets} from 'neuroglancer/util/disjoint_sets';
 import {ShaderBuilder, ShaderProgram} from 'neuroglancer/webgl/shader';
-import {Uint64Set} from 'neuroglancer/uint64_set';
 
 export class EquivalencesHashMap {
   generation = Number.NaN;
@@ -54,6 +54,7 @@ export interface SliceViewSegmentationDisplayState extends SegmentationDisplaySt
   volumeSourceOptions?: VolumeSourceOptions;
   hideSegmentZero: TrackableBoolean;
   multicutSegments?: Uint64Set;
+  performingMulticut?: TrackableBoolean;
 }
 
 export class SegmentationRenderLayer extends RenderLayer {
@@ -65,7 +66,8 @@ export class SegmentationRenderLayer extends RenderLayer {
       GPUHashTable.get(this.gl, this.displayState.highlightedSegments.hashTable);
   private hashTableManagerMulticut = new HashSetShaderManager('multicutSegments');
   private gpuHashTableMulticut = (this.displayState.multicutSegments) ?
-      GPUHashTable.get(this.gl, this.displayState.multicutSegments.hashTable) : undefined;
+      GPUHashTable.get(this.gl, this.displayState.multicutSegments.hashTable) :
+      undefined;
 
   private equivalencesShaderManager = new HashMapShaderManager('equivalences');
   private equivalencesHashMap =
@@ -177,7 +179,8 @@ uint64_t getMappedObjectId() {
     }
     fragmentMain += `
   if (uPerformingMulticut == 1u) {
-    bool has = uShowAllSegments != 0u ? true : ${this.hashTableManagerMulticut.hasFunctionName}(value);
+    bool has = uShowAllSegments != 0u ? true : ${
+        this.hashTableManagerMulticut.hasFunctionName}(value);
     if (!has) {
       emit(vec4(0.0, 0.0, 0.0, 0.5));
     } else {
@@ -257,7 +260,10 @@ uint64_t getMappedObjectId() {
     // for a segmentation layer with graph
     gl.uniform1ui(
         shader.uniform('uPerformingMulticut'),
-        this.displayState.multicutSegments && this.displayState.multicutSegments.size > 0 ? 1 : 0);
+        this.displayState.performingMulticut && this.displayState.performingMulticut.value &&
+                this.displayState.multicutSegments && this.displayState.multicutSegments.size > 0 ?
+            1 :
+            0);
     this.hashTableManager.enable(gl, shader, this.gpuHashTable);
     this.hashTableManagerHighlighted.enable(gl, shader, this.gpuHashTableHighlighted);
     if (this.gpuHashTableMulticut) {

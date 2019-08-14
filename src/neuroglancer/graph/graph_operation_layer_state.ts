@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {AnnotationId, AnnotationReference, LocalAnnotationSource} from 'neuroglancer/annotation';
+import {AnnotationId, AnnotationReference, LocalAnnotationSource, restoreAnnotation} from 'neuroglancer/annotation';
 import {AnnotationLayerState} from 'neuroglancer/annotation/frontend';
 import {Annotation} from 'neuroglancer/annotation/index';
 import {CoordinateTransform} from 'neuroglancer/coordinate_transform';
@@ -28,7 +28,7 @@ import {TrackableRGB} from 'neuroglancer/util/color';
 import {Borrowed, Owned, RefCounted} from 'neuroglancer/util/disposable';
 import {mat4} from 'neuroglancer/util/geom';
 import {vec3} from 'neuroglancer/util/geom';
-import {verifyArray} from 'neuroglancer/util/json';
+import {parseArray, verifyArray} from 'neuroglancer/util/json';
 import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
 
@@ -69,6 +69,7 @@ export class GraphOperationLayerState extends RefCounted {
   annotationToSupervoxelB: Owned<AnnotationToSupervoxelHandler>;
   selectedRoot: Uint64|undefined;
   multicutSegments: Uint64Set;
+  performingMulticut: TrackableBoolean;
 
   hoverState: GraphOperationHoverState;
   role: RenderLayerRole;
@@ -119,6 +120,7 @@ export class GraphOperationLayerState extends RefCounted {
     transform: CoordinateTransform,
     segmentationState: WatchableValue<SegmentationDisplayState>,
     multicutSegments: Uint64Set,
+    performingMulticut: TrackableBoolean,
     hoverState?: GraphOperationHoverState,
   }) {
     super();
@@ -126,10 +128,12 @@ export class GraphOperationLayerState extends RefCounted {
       transform = new CoordinateTransform(),
       segmentationState,
       multicutSegments,
+      performingMulticut,
       hoverState = new GraphOperationHoverState(undefined),
     } = options;
     this.transform = transform;
     this.multicutSegments = multicutSegments;
+    this.performingMulticut = performingMulticut;
     this.sourceA = this.registerDisposer(new LocalAnnotationSource());
     this.sourceB = this.registerDisposer(new LocalAnnotationSource());
     this.activeSource = this.sourceA;
@@ -196,14 +200,15 @@ export class GraphOperationLayerState extends RefCounted {
 
   restoreState(spec: any) {
     const groups = verifyArray(spec);
+    const validatedGroups = this.validateAnnotations(groups);
     if (groups.length > 0) {
-      this.sourceA.restoreState(spec[0][ANNOTATIONS_JSON_KEY], []);
+      this.sourceA.restoreState(validatedGroups[0], []);
       for (const annotation of this.sourceA) {
         this.addAnnotation(annotation, this.annotationToSupervoxelA);
       }
     }
     if (groups.length > 1) {
-      this.sourceB.restoreState(spec[1][ANNOTATIONS_JSON_KEY], []);
+      this.sourceB.restoreState(validatedGroups[1], []);
       for (const annotation of this.sourceB) {
         this.addAnnotation(annotation, this.annotationToSupervoxelB);
       }
@@ -219,16 +224,17 @@ export class GraphOperationLayerState extends RefCounted {
 
   private addAnnotation(
       annotation: Annotation, annotationToSupervoxelHandler: AnnotationToSupervoxelHandler) {
+    // Ignore annotations that do not have segment information
     if (annotation.segments && annotation.segments.length >= 2) {
       if (!this.selectedRoot) {
         this.selectedRoot = annotation.segments[1];
         this.multicutSegments.add(this.selectedRoot);
+        this.performingMulticut.value = true;
+        annotationToSupervoxelHandler.add(annotation.id, annotation.segments[0]);
+      } else if (Uint64.equal(this.selectedRoot, annotation.segments[1])) {
+        annotationToSupervoxelHandler.add(annotation.id, annotation.segments[0]);
       }
-      annotationToSupervoxelHandler.add(annotation.id, annotation.segments[0]);
-    } else {
-      // Should never happen
-      throw Error(
-          'Graph Layer Operation State\'s annotations should always have 2 associated segments');
+      // Ignore annotations that have a different root segment
     }
   }
 
@@ -240,6 +246,7 @@ export class GraphOperationLayerState extends RefCounted {
       if (this.annotationToSupervoxelA.supervoxelSet.size === 0 &&
           this.annotationToSupervoxelB.supervoxelSet.size === 0) {
         this.selectedRoot = undefined;
+        this.performingMulticut.value = false;
         this.multicutSegments.clear();
       }
     };
@@ -259,5 +266,45 @@ export class GraphOperationLayerState extends RefCounted {
   supervoxelSelected(supervoxel: Uint64) {
     return this.annotationToSupervoxelA.hasSupervoxel(supervoxel) ||
         this.annotationToSupervoxelB.hasSupervoxel(supervoxel);
+  }
+
+  private validateAnnotations(spec: Array<any>) {
+    const annotationMapA = new Map<string, Array<any>>();
+    const annotationMapB = new Map<string, Array<any>>();
+    const rootSegmentCountMap = new Map<string, number>();
+    let maxRootSegment = '';
+    let maxRootSegmentCount = 0;
+    const processAnnotation = (x: any, annotationMap: Map<string, Array<any>>) => {
+      const annotation = restoreAnnotation(x);
+      if (annotation.segments && annotation.segments.length >= 2) {
+        const rootSegmentIDString = annotation.segments[1].toString();
+        if (maxRootSegment === '') {
+          maxRootSegment = rootSegmentIDString;
+          maxRootSegmentCount = 1;
+          annotationMap.set(rootSegmentIDString, [x]);
+          rootSegmentCountMap.set(rootSegmentIDString, 1);
+        } else {
+          let rootSegmentList = annotationMap.get(rootSegmentIDString);
+          if (!rootSegmentList) {
+            rootSegmentList = [];
+            annotationMap.set(rootSegmentIDString, rootSegmentList);
+          }
+          rootSegmentList.push(x);
+          const rootSegmentCount = rootSegmentCountMap.get(rootSegmentIDString) || 0;
+          rootSegmentCountMap.set(rootSegmentIDString, rootSegmentCount + 1);
+          if (rootSegmentCount + 1 > maxRootSegmentCount) {
+            maxRootSegment = rootSegmentIDString;
+            maxRootSegmentCount = rootSegmentCount + 1;
+          }
+        }
+      }
+    };
+    parseArray(spec[0][ANNOTATIONS_JSON_KEY], x => {
+      processAnnotation(x, annotationMapA);
+    });
+    parseArray(spec[1][ANNOTATIONS_JSON_KEY], x => {
+      processAnnotation(x, annotationMapB);
+    });
+    return [annotationMapA.get(maxRootSegment) || [], annotationMapB.get(maxRootSegment) || []];
   }
 }

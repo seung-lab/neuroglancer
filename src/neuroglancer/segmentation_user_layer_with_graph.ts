@@ -20,7 +20,7 @@ import {setAnnotationHoverStateFromMouseState} from 'neuroglancer/annotation/sel
 import {GraphOperationLayerState} from 'neuroglancer/graph/graph_operation_layer_state';
 import {registerLayerType, registerVolumeLayerType} from 'neuroglancer/layer_specification';
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
-import {SegmentationUserLayer} from 'neuroglancer/segmentation_user_layer';
+import {SegmentationUserLayer, SegmentationUserLayerDisplayState} from 'neuroglancer/segmentation_user_layer';
 import {ChunkedGraphLayer, SegmentSelection} from 'neuroglancer/sliceview/chunked_graph/frontend';
 import {VolumeType} from 'neuroglancer/sliceview/volume/base';
 import {SupervoxelRenderLayer} from 'neuroglancer/sliceview/volume/supervoxel_renderlayer';
@@ -48,6 +48,11 @@ const lastSegmentSelection: SegmentSelection = {
   position: vec3.create(),
 };
 
+type SegmentationUserLayerWithGraphDisplayState = SegmentationUserLayerDisplayState&{
+  multicutSegments: Uint64Set;
+  performingMulticut: TrackableBoolean;
+};
+
 interface BaseConstructor {
   new(...args: any[]): SegmentationUserLayer;
 }
@@ -61,7 +66,11 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
         this.registerDisposer(new WatchableRefCounted<GraphOperationLayerState>());
     selectedGraphOperationElement = this.registerDisposer(
         new SelectedGraphOperationState(this.graphOperationLayerState.addRef()));
-    displayState: any = {...this.displayState, multicutSegments: new Uint64Set()};
+    displayState: SegmentationUserLayerWithGraphDisplayState = {
+      ...this.displayState,
+      multicutSegments: new Uint64Set(),
+      performingMulticut: new TrackableBoolean(false, false)
+    };
 
     constructor(...args: any[]) {
       super(...args);
@@ -78,6 +87,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
         transform: this.transform,
         segmentationState: segmentationState,
         multicutSegments: this.displayState.multicutSegments,
+        performingMulticut: this.displayState.performingMulticut
       });
 
       graphOpState.changed.add(() => this.specificationChanged.dispatch());
@@ -156,7 +166,8 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
               transform: this.displayState.objectToDataTransform,
               renderScaleHistogram: this.sliceViewRenderScaleHistogram,
               renderScaleTarget: this.sliceViewRenderScaleTarget,
-              isActive: this.graphOperationLayerState.value!.annotationToSupervoxelA.isActive
+              isActive: this.graphOperationLayerState.value!.annotationToSupervoxelA.isActive,
+              performingMulticut: this.graphOperationLayerState.value!.performingMulticut
             }));
             this.addRenderLayer(new SupervoxelRenderLayer(volume, {
               ...this.displayState,
@@ -167,7 +178,8 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
               transform: this.displayState.objectToDataTransform,
               renderScaleHistogram: this.sliceViewRenderScaleHistogram,
               renderScaleTarget: this.sliceViewRenderScaleTarget,
-              isActive: this.graphOperationLayerState.value!.annotationToSupervoxelB.isActive
+              isActive: this.graphOperationLayerState.value!.annotationToSupervoxelB.isActive,
+              performingMulticut: this.graphOperationLayerState.value!.performingMulticut
             }));
             if (--remaining === 0) {
               this.isReady = true;

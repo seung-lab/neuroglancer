@@ -492,22 +492,23 @@ export class GraphOperationLayerView extends Tab {
     this.annotationListElements.clear();
     const {objectToGlobal} = annotationLayer;
     const annotationListElementCreator = (annotation: Annotation, color: string) => {
-      const element = this.makeAnnotationListElement(annotation, objectToGlobal, color);
-      annotationListContainer.appendChild(element);
-      annotationListElements.set(annotation.id, element);
-      element.addEventListener('mouseenter', () => {
-        this.annotationLayer.hoverState.value = {id: annotation.id};
-      });
-      element.addEventListener('click', () => {
-        this.state.value = {id: annotation.id};
-      });
-
-      element.addEventListener('mouseup', (event: MouseEvent) => {
-        if (event.button === 2) {
-          this.setSpatialCoordinates(
-              getCenterPosition(annotation, this.annotationLayer.objectToGlobal));
-        }
-      });
+      if (annotation.segments && annotation.segments.length >= 2) {
+        const element = this.makeAnnotationListElement(annotation, objectToGlobal, color);
+        annotationListContainer.appendChild(element);
+        annotationListElements.set(annotation.id, element);
+        element.addEventListener('mouseenter', () => {
+          this.annotationLayer.hoverState.value = {id: annotation.id};
+        });
+        element.addEventListener('click', () => {
+          this.state.value = {id: annotation.id};
+        });
+        element.addEventListener('mouseup', (event: MouseEvent) => {
+          if (event.button === 2) {
+            this.setSpatialCoordinates(
+                getCenterPosition(annotation, this.annotationLayer.objectToGlobal));
+          }
+        });
+      }
     };
     for (const annotation of [...sourceA]) {
       annotationListElementCreator(annotation, sourceAListColor);
@@ -744,6 +745,19 @@ export class GraphOperationTab extends Tab {
     };
     this.registerDisposer(this.state.changed.add(updateDetailsVisibility));
     this.registerDisposer(this.visibility.changed.add(updateDetailsVisibility));
+
+    this.registerDisposer(this.visibility.changed.add(() => {
+      const graphOperationLayerState = this.layer.graphOperationLayerState.value!;
+      if (this.visibility.visible) {
+        const hasMulticutSegments =
+            graphOperationLayerState.annotationToSupervoxelA.supervoxelSet.size > 0 ||
+            graphOperationLayerState.annotationToSupervoxelB.supervoxelSet.size > 0;
+        this.layer.displayState.performingMulticut!.value = hasMulticutSegments;
+      } else {
+        this.layer.displayState.performingMulticut!.value = false;
+      }
+    }));
+
     const setGraphOperationLayerView = () => {
       this.stack.selected = this.state.annotationLayerState.value;
     };

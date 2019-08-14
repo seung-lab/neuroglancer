@@ -21,7 +21,6 @@ import {MultiscaleVolumeChunkSource} from 'neuroglancer/sliceview/volume/fronten
 import {RenderLayer} from 'neuroglancer/sliceview/volume/renderlayer';
 import {SliceViewSegmentationDisplayState} from 'neuroglancer/sliceview/volume/segmentation_renderlayer';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
-import {Uint64Set} from 'neuroglancer/uint64_set';
 import {TrackableRGB} from 'neuroglancer/util/color';
 import {ShaderBuilder, ShaderProgram} from 'neuroglancer/webgl/shader';
 
@@ -29,7 +28,7 @@ import {ShaderBuilder, ShaderProgram} from 'neuroglancer/webgl/shader';
 interface SliceViewSupervoxelDisplayState extends SliceViewSegmentationDisplayState {
   supervoxelColor: TrackableRGB;
   isActive: TrackableBoolean;
-  highlightedSupervoxels?: Uint64Set;
+  performingMulticut: TrackableBoolean;
 }
 
 export class SupervoxelRenderLayer extends RenderLayer {
@@ -73,13 +72,14 @@ export class SupervoxelRenderLayer extends RenderLayer {
     builder.addUniform('highp float', 'uSupervoxelBlueValue');
     builder.addUniform('highp uvec2', 'uRawSelectedSegment');
     builder.addUniform('highp uint', 'uIsActive');
+    builder.addUniform('highp uint', 'uPerformingMulticut');
     let fragmentMain = `
     uint64_t value = getMappedObjectId();
     uint64_t rawValue = getUint64DataValue();
   `;
     if (this.displayState.hideSegmentZero.value) {
       fragmentMain += `
-    if (value.value[0] == 0u && value.value[1] == 0u) {
+    if ((value.value[0] == 0u && value.value[1] == 0u) || uPerformingMulticut == 0u) {
       emit(vec4(vec4(0, 0, 0, 0)));
       return;
     }
@@ -88,18 +88,11 @@ export class SupervoxelRenderLayer extends RenderLayer {
     fragmentMain += `
     bool has = ${this.hashTableManager.hasFunctionName}(value);
     `;
-    // fragmentMain += `
-    // if (has) {
-    //   emit(vec4(uSupervoxelRedValue, uSupervoxelGreenValue, uSupervoxelBlueValue, 0.5));
-    // } else if (uIsActive == 1u && uRawSelectedSegment == rawValue.value) {
-    //   emit(vec4(uSupervoxelRedValue, uSupervoxelGreenValue, uSupervoxelBlueValue, 0.25));
-    // }
-    // `;
     fragmentMain += `
     if (uIsActive == 1u && uRawSelectedSegment == rawValue.value) {
-      emit(vec4(uSupervoxelRedValue, uSupervoxelGreenValue, uSupervoxelBlueValue, 0.25));
+      emit(vec4(uSupervoxelRedValue, uSupervoxelGreenValue, uSupervoxelBlueValue, 0.3));
     } else if (has) {
-      emit(vec4(uSupervoxelRedValue, uSupervoxelGreenValue, uSupervoxelBlueValue, 0.5));
+      emit(vec4(uSupervoxelRedValue, uSupervoxelGreenValue, uSupervoxelBlueValue, 0.6));
     }
     `;
     builder.setFragmentMain(fragmentMain);
@@ -114,17 +107,15 @@ export class SupervoxelRenderLayer extends RenderLayer {
 
     const {displayState} = this;
     const {segmentSelectionState} = displayState;
-    // let selectedSegmentLow = 0, selectedSegmentHigh = 0;
     let rawSelectedSegmentLow = 0, rawSelectedSegmentHigh = 0;
     if (segmentSelectionState.hasSelectedSegment) {
-      //   let seg = segmentSelectionState.selectedSegment;
-      //   selectedSegmentLow = seg.low;
-      //   selectedSegmentHigh = seg.high;
       let rawSeg = segmentSelectionState.rawSelectedSegment;
       rawSelectedSegmentLow = rawSeg.low;
       rawSelectedSegmentHigh = rawSeg.high;
     }
     gl.uniform1ui(shader.uniform('uIsActive'), displayState.isActive.value ? 1 : 0);
+    gl.uniform1ui(
+        shader.uniform('uPerformingMulticut'), displayState.performingMulticut.value ? 1 : 0);
     gl.uniform2ui(
         shader.uniform('uRawSelectedSegment'), rawSelectedSegmentLow, rawSelectedSegmentHigh);
     gl.uniform1f(shader.uniform('uSupervoxelRedValue'), displayState.supervoxelColor.value[0]);
