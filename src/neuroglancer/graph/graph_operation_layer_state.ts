@@ -268,6 +268,10 @@ export class GraphOperationLayerState extends RefCounted {
         this.annotationToSupervoxelB.hasSupervoxel(supervoxel);
   }
 
+  /**
+   * For backwards compatibility, only restore annotations that are associated
+   * with the most common root segment of all the annotations
+   */
   private validateAnnotations(spec: Array<any>) {
     const annotationMapA = new Map<string, Array<any>>();
     const annotationMapB = new Map<string, Array<any>>();
