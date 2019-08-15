@@ -92,8 +92,10 @@ export class TimeSegmentWidget extends RefCounted {
             minmax.maxTime = `${now.getHours()}:${now.getMinutes()}:${now.getSeconds()}`;
           } else if (date.toDateString() === past.toDateString()) {
             // Flatpickr does not support millisecond res, must round up to nearest second
-            // Currently, the minMaxTimePlugin doesn't properly handle seconds
-            minmax.minTime = `${past.getHours()}:${(past.getMinutes() + 1) % 60}:${(past.getSeconds() + 1) % 60}`;
+            // TODO: Seconds fixed has been merged in, remove + 1 to minutes when flatpickr is
+            // updated
+            minmax.minTime = `${past.getHours()}:${(past.getMinutes() + 1) % 60}:${
+                (past.getSeconds() + 1) % 60}`;
           }
           return minmax;
         }

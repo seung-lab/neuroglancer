@@ -21,6 +21,7 @@ import {LinkedViewerNavigationState} from 'neuroglancer/layer_group_viewer';
 import {LayerListSpecification, ManagedUserLayerWithSpecification} from 'neuroglancer/layer_specification';
 import {NavigationLinkType} from 'neuroglancer/navigation_state';
 import {SegmentationUserLayer} from 'neuroglancer/segmentation_user_layer';
+import {UserLayerWithAnnotations} from 'neuroglancer/ui/annotations';
 import {DropLayers, endLayerDrag, getDropLayers, getLayerDropEffect, startLayerDrag} from 'neuroglancer/ui/layer_drag_and_drop';
 import {animationFrameDebounce} from 'neuroglancer/util/animation_frame_debounce';
 import {RefCounted, registerEventListener} from 'neuroglancer/util/disposable';
@@ -28,6 +29,7 @@ import {removeFromParent} from 'neuroglancer/util/dom';
 import {getDropEffect, preventDrag, setDropEffect} from 'neuroglancer/util/drag_and_drop';
 import {float32ToString} from 'neuroglancer/util/float32_to_string';
 import {makeCloseButton} from 'neuroglancer/widget/close_button';
+import {ColorWidget} from 'neuroglancer/widget/color';
 import {PositionWidget} from 'neuroglancer/widget/position_widget';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
 
@@ -214,6 +216,21 @@ class LayerWidget extends RefCounted {
         });
       }
     }
+    const colorWidget = this.registerDisposer(
+        new ColorWidget((<UserLayerWithAnnotations>this.layer.layer).annotationColor));
+    colorWidget.element.title = layer.initialSpecification.annotationColor || '';
+
+    if (layer.layer !== null) {
+      let managedUserLayer = <UserLayerWithAnnotations>layer.layer;
+      if (colorWidget.element.style.color === '') {
+        colorWidget.element.title = managedUserLayer.annotationColor.toString();
+      }
+    }
+    colorWidget.element.classList.add('color-special');
+    this.registerEventListener(colorWidget.element, 'click', (event: MouseEvent) => {
+      event.stopPropagation();
+    });
+    element.appendChild(colorWidget.element);
     element.appendChild(layerNumberElement);
     element.appendChild(labelElement);
     element.appendChild(valueElement);

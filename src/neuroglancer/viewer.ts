@@ -54,6 +54,7 @@ import {cancellableFetchOk, responseJson} from 'neuroglancer/util/http_request';
 import {EventActionMap, KeyboardEventBinder} from 'neuroglancer/util/keyboard_bindings';
 import {NullarySignal} from 'neuroglancer/util/signal';
 import {CompoundTrackable} from 'neuroglancer/util/trackable';
+import {getCachedJson} from 'neuroglancer/util/trackable';
 import {ViewerState, VisibilityPrioritySpecification} from 'neuroglancer/viewer_state';
 import {WatchableVisibilityPriority} from 'neuroglancer/visibility_priority/frontend';
 import {GL} from 'neuroglancer/webgl/context';
@@ -201,7 +202,7 @@ export class Viewer extends RefCounted implements ViewerState {
   navigationState = this.registerDisposer(new NavigationState());
   perspectiveNavigationState = new NavigationState(new Pose(this.navigationState.position), 1);
   mouseState = new MouseSelectionState();
-  layerManager = this.registerDisposer(new LayerManager());
+  layerManager = this.registerDisposer(new LayerManager(this.getStateRevertingFunction.bind(this)));
   selectedLayer = this.registerDisposer(new SelectedLayerState(this.layerManager.addRef()));
   showAxisLines = new TrackableBoolean(true, true);
   showScaleBar = new TrackableBoolean(true, true);
@@ -829,6 +830,13 @@ export class Viewer extends RefCounted implements ViewerState {
     if (this.visible) {
       this.dataContext.chunkQueueManager.chunkUpdateDeadline = null;
     }
+  }
+
+  private getStateRevertingFunction() {
+    const currentState = getCachedJson(this.state).value;
+    return () => {
+      this.state.restoreState(currentState);
+    };
   }
 
   private handleNavigationStateChanged() {
