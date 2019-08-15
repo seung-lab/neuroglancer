@@ -18,7 +18,7 @@
  * @file Support for rendering line annotations.
  */
 
-import {AnnotationType, Line} from 'neuroglancer/annotation';
+import {AnnotationType, Line, /* Collection*/} from 'neuroglancer/annotation';
 import {AnnotationRenderContext, AnnotationRenderHelper, registerAnnotationTypeRenderHandler} from 'neuroglancer/annotation/type_handler';
 import {tile2dArray} from 'neuroglancer/util/array';
 import {mat4, projectPointToLineSegment, vec3} from 'neuroglancer/util/geom';
