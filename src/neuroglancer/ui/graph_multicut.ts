@@ -28,7 +28,7 @@ import {GraphOperationLayerState} from 'neuroglancer/graph/graph_operation_layer
 import {MouseSelectionState} from 'neuroglancer/layer';
 import {VoxelSize} from 'neuroglancer/navigation_state';
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
-import {SegmentationUserLayer} from 'neuroglancer/segmentation_user_layer';
+// import {SegmentationUserLayer} from 'neuroglancer/segmentation_user_layer';
 import {SegmentationUserLayerWithGraph} from 'neuroglancer/segmentation_user_layer_with_graph';
 import {SegmentSelection} from 'neuroglancer/sliceview/chunked_graph/frontend';
 import {StatusMessage} from 'neuroglancer/status';
@@ -399,11 +399,16 @@ export class GraphOperationLayerView extends Tab {
     this.element.appendChild(this.multicutGroup.element);
 
     const displayState = (<GraphOperationLayerState>annotationLayer).segmentationState.value;
-    if (displayState) {
-      this.timeWidget = this.registerDisposer(new TimeSegmentWidget(displayState));
-      displayState.timestamp.changed.add(() => {
+    const segLayer = this.wrapper;
+
+    if (displayState && segLayer.timestamp) {
+      this.timeWidget = this.registerDisposer(
+          // new TimeSegmentWidget(segLayer.timestamp, segLayer.timestampLimit, displayState));
+          new TimeSegmentWidget(segLayer, displayState));
+      segLayer.timestamp.changed.add(() => {
+        // TODO: add timeStamp to state
         Array.from(toolbox.children).forEach((ele: HTMLButtonElement) => {
-          if (displayState.timestamp.value === '' || ele.title !== 'Perform Multi-Cut') {
+          if (segLayer.timestamp.value === '' || ele.title !== 'Perform Multi-Cut') {
             ele.disabled = false;
           } else {
             ele.disabled = true;
@@ -730,8 +735,7 @@ export class PlaceGraphOperationMarkerTool extends PlaceGraphOperationTool {
       return;
     }
 
-    let displayState = (<SegmentationUserLayer>this.layer).displayState;
-    if (displayState && displayState.timestamp.value !== '') {
+    if (this.layer.timestamp.value !== '') {
       StatusMessage.showTemporaryMessage(
           'Operation can not be performed with the segmentation at an older state.');
       return;

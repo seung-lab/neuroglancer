@@ -17,6 +17,7 @@
 import {AnnotationLayer, SliceViewAnnotationLayer} from 'neuroglancer/annotation/frontend';
 import {PerspectiveViewAnnotationLayer} from 'neuroglancer/annotation/renderlayer';
 import {setAnnotationHoverStateFromMouseState} from 'neuroglancer/annotation/selection';
+import {authFetch} from 'neuroglancer/authentication/frontend';
 import {GraphOperationLayerState} from 'neuroglancer/graph/graph_operation_layer_state';
 import {registerLayerType, registerVolumeLayerType} from 'neuroglancer/layer_specification';
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
@@ -24,13 +25,12 @@ import {SegmentationUserLayer} from 'neuroglancer/segmentation_user_layer';
 import {ChunkedGraphLayer, SegmentSelection} from 'neuroglancer/sliceview/chunked_graph/frontend';
 import {VolumeType} from 'neuroglancer/sliceview/volume/base';
 import {StatusMessage} from 'neuroglancer/status';
-import {WatchableRefCounted, WatchableValue} from 'neuroglancer/trackable_value';
+import {LockableValue, LockableValueInterface, TrackableValue, TrackableValueInterface, WatchableRefCounted, WatchableValue} from 'neuroglancer/trackable_value';
 import {GraphOperationTab, SelectedGraphOperationState} from 'neuroglancer/ui/graph_multicut';
 import {Borrowed} from 'neuroglancer/util/disposable';
 import {vec3} from 'neuroglancer/util/geom';
 import {parseArray, verifyObjectProperty, verifyOptionalString} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
-import { authFetch } from './authentication/frontend';
 
 // Already defined in segmentation_user_layer.ts
 const EQUIVALENCES_JSON_KEY = 'equivalences';
@@ -53,7 +53,8 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
   class C extends Base implements SegmentationUserLayerWithGraph {
     chunkedGraphUrl: string|null|undefined;
     chunkedGraphLayer: Borrowed<ChunkedGraphLayer>|undefined;
-
+    timestamp: LockableValue<string>;
+    timestampLimit: TrackableValue<string>;
     graphOperationLayerState =
         this.registerDisposer(new WatchableRefCounted<GraphOperationLayerState>());
     selectedGraphOperationElement = this.registerDisposer(
@@ -92,6 +93,12 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
       }
 
       this.tabs.default = 'rendering';
+      this.timestamp =
+          new LockableValue('', date => ((new Date(date)).valueOf() / 1000).toString());
+      this.timestampLimit = new TrackableValue('', date => {
+        let limit = new Date(date).valueOf().toString();
+        return limit === 'NaN' ? '' : limit;
+      }, '');
     }
 
     get volumeOptions() {
@@ -101,7 +108,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
     async setTimestampLimit(url: string|null|undefined) {
       if (url) {
         const response = await authFetch(`${url}/graph/oldest_timestamp`);
-        this.displayState.timestampLimit.restoreState(await response.text());
+        this.timestampLimit.restoreState(await response.text());
       }
     }
 
@@ -232,8 +239,9 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
       let {segmentSelectionState} = this.displayState;
       if (segmentSelectionState.hasSelectedSegment) {
         let segment = segmentSelectionState.selectedSegment;
-        let {rootSegments, timestamp} = this.displayState;
-        let tsValue = (timestamp.value !== '') ? timestamp.value : void(0);
+        let {rootSegments} = this.displayState;
+        let {timestamp} = this;
+        let tsValue = (timestamp.value !== '') ? timestamp.value : void (0);
         if (rootSegments.has(segment)) {
           rootSegments.delete(segment);
         } else if (this.chunkedGraphLayer) {
@@ -351,7 +359,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
 
     rootSegmentChange(rootSegments: Uint64[]|null, added: boolean) {
       if (rootSegments === null) {
-        if (added) {
+        if (added) {LockableValue
           return;
         } else {
           // Clear all segment sets
@@ -385,6 +393,8 @@ export interface SegmentationUserLayerWithGraph extends SegmentationUserLayer {
   chunkedGraphLayer: Borrowed<ChunkedGraphLayer>|undefined;
   graphOperationLayerState: WatchableRefCounted<GraphOperationLayerState>;
   selectedGraphOperationElement: SelectedGraphOperationState;
+  timestamp: LockableValueInterface<string>;
+  timestampLimit: TrackableValueInterface<string>;
 }
 
 /**

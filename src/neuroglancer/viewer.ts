@@ -31,7 +31,7 @@ import {ManagedUserLayerWithSpecification, TopLevelLayerListSpecification} from 
 import {NavigationState, Pose} from 'neuroglancer/navigation_state';
 import {overlaysOpen} from 'neuroglancer/overlay';
 import {UserPreferencesDialog} from 'neuroglancer/preferences/user_preferences';
-import {SegmentationUserLayer} from 'neuroglancer/segmentation_user_layer';
+// import {SegmentationUserLayer} from 'neuroglancer/segmentation_user_layer';
 import {StatusMessage} from 'neuroglancer/status';
 import {ElementVisibilityFromTrackableBoolean, TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
 import {makeDerivedWatchableValue, TrackableValue, WatchableValueInterface} from 'neuroglancer/trackable_value';
@@ -65,6 +65,7 @@ import {MousePositionWidget, PositionWidget, VoxelSizeWidget} from 'neuroglancer
 import {TrackableScaleBarOptions} from 'neuroglancer/widget/scale_bar';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
 import {RPC} from 'neuroglancer/worker_rpc';
+import { SegmentationUserLayerWithGraph } from './segmentation_user_layer_with_graph';
 
 require('neuroglancer/viewer.css');
 require('neuroglancer/noselect.css');
@@ -202,7 +203,7 @@ export class Viewer extends RefCounted implements ViewerState {
   navigationState = this.registerDisposer(new NavigationState());
   perspectiveNavigationState = new NavigationState(new Pose(this.navigationState.position), 1);
   mouseState = new MouseSelectionState();
-  layerManager = this.registerDisposer(new LayerManager(this.getStateRevertingFunction.bind(this)));
+  layerManager = this.registerDisposer(new LayerManager(this.messageWithUndo.bind(this)));
   selectedLayer = this.registerDisposer(new SelectedLayerState(this.layerManager.addRef()));
   showAxisLines = new TrackableBoolean(true, true);
   showScaleBar = new TrackableBoolean(true, true);
@@ -616,15 +617,15 @@ export class Viewer extends RefCounted implements ViewerState {
     }
 
     const isTimeDisplaced = (e: ManagedUserLayerWithSpecification) => {
-      let displayState = (<SegmentationUserLayer>e.layer).displayState;
-      return displayState && displayState.timestamp.value !== '';
+      let segLayer = (<SegmentationUserLayerWithGraph>e.layer);
+      return segLayer && segLayer.timestamp.value !== '';
     };
 
     const timeLock = (e: ManagedUserLayerWithSpecification, lock: boolean) => {
-      let displayState = (<SegmentationUserLayer>e.layer).displayState;
+      let segLayer = (<SegmentationUserLayerWithGraph>e.layer);
 
-      if (displayState) {
-        displayState.timestamp.lock = lock;
+      if (segLayer) {
+        segLayer.timestamp.lock = lock;
         return true;
       }
       return false;
@@ -640,8 +641,9 @@ export class Viewer extends RefCounted implements ViewerState {
     const handleModeChange = (merge: boolean) => {
       const timeDisplaced = this.layerManager.managedLayers.some(isTimeDisplaced);
       if (timeDisplaced) {
-        StatusMessage.showTemporaryMessage(
-            `${merge?'Merge':'Split'} mode can not be activated with a segmentation at an older state.`);
+        StatusMessage.showTemporaryMessage(`${
+            merge ? 'Merge' :
+                    'Split'} mode can not be activated with a segmentation at an older state.`);
       } else {
         this.mouseState.toggleAction();
 
@@ -831,6 +833,12 @@ export class Viewer extends RefCounted implements ViewerState {
       this.dataContext.chunkQueueManager.chunkUpdateDeadline = null;
     }
   }
+
+  messageWithUndo(message: string, actionMessage: string, closeAfter: number = 10000) {
+    const undo = this.getStateRevertingFunction();
+    StatusMessage.messageWithAction(message, actionMessage, undo, closeAfter);
+  }
+
 
   private getStateRevertingFunction() {
     const currentState = getCachedJson(this.state).value;

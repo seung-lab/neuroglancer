@@ -34,7 +34,7 @@ import {SegmentationRenderLayer} from 'neuroglancer/sliceview/volume/segmentatio
 import {StatusMessage} from 'neuroglancer/status';
 import {trackableAlphaValue} from 'neuroglancer/trackable_alpha';
 import {ElementVisibilityFromTrackableBoolean, TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
-import {ComputedWatchableValue, LockableValue, TrackableValue} from 'neuroglancer/trackable_value';
+import {ComputedWatchableValue} from 'neuroglancer/trackable_value';
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {UserLayerWithVolumeSourceMixin} from 'neuroglancer/user_layer_with_volume_source';
 import {Borrowed} from 'neuroglancer/util/disposable';
@@ -97,8 +97,13 @@ export class SegmentationUserLayer extends Base {
     renderScaleHistogram: new RenderScaleHistogram(),
     renderScaleTarget: trackableRenderScaleTarget(1),
     shatterSegmentEquivalences: new TrackableBoolean(false, false),
+    /*
     timestamp: new LockableValue('', date => ((new Date(date)).valueOf() / 1000).toString()),
-    timestampLimit: new TrackableValue('', date => new Date(date).valueOf().toString(), ''),
+    timestampLimit: new TrackableValue('', date => {
+      let limit = new Date(date).valueOf().toString();
+      return limit === 'NaN'? '' : limit;
+    }, ''),
+    */
   };
 
   /**

@@ -5,6 +5,7 @@ import {StatusMessage} from 'neuroglancer/status';
 import {LockableValueInterface, TrackableValueInterface} from 'neuroglancer/trackable_value';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {removeFromParent} from 'neuroglancer/util/dom';
+import {SegmentationUserLayerWithGraph} from '../segmentation_user_layer_with_graph';
 
 require('flatpickr/dist/flatpickr.min.css');
 // require('./time_segment_widget.css');
@@ -16,10 +17,12 @@ export class TimeSegmentWidget extends RefCounted {
   model: LockableValueInterface<string>;
   preValue: string;
 
-  constructor(private displayState: SegmentationDisplayState) {
+  constructor(
+      // timestamp: LockableValue<string>, tsLimit: TrackableValue<string>,
+      s: SegmentationUserLayerWithGraph, private displayState: SegmentationDisplayState) {
     super();
-    this.model = displayState.timestamp;
-    this.limit = displayState.timestampLimit;
+    this.model = s.timestamp;
+    this.limit = s.timestampLimit;
     const {element, input, model} = this;
     const cancelButton = document.createElement('button');
     const nothingButton = document.createElement('button');
@@ -72,7 +75,7 @@ export class TimeSegmentWidget extends RefCounted {
       'disable': [(date) => {
         const target = date.valueOf();
         const future = Date.now();
-        // note: this is fine b/c we are dealing with epoch time (date shenangins are irrelevant
+        // note: this is fine b/c we are dealing with epoch time (date sheNaNigans are irrelevant
         // here)
         const past = parseInt(this.limit.value || '0', 10) - (24 * 60 * 60 * 1000);
 
