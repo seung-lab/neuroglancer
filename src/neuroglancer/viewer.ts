@@ -31,7 +31,7 @@ import {ManagedUserLayerWithSpecification, TopLevelLayerListSpecification} from 
 import {NavigationState, Pose} from 'neuroglancer/navigation_state';
 import {overlaysOpen} from 'neuroglancer/overlay';
 import {UserPreferencesDialog} from 'neuroglancer/preferences/user_preferences';
-// import {SegmentationUserLayer} from 'neuroglancer/segmentation_user_layer';
+import {SegmentationUserLayerWithGraph, SegmentationUserLayerWithGraphDisplayState} from 'neuroglancer/segmentation_user_layer_with_graph';
 import {StatusMessage} from 'neuroglancer/status';
 import {ElementVisibilityFromTrackableBoolean, TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
 import {makeDerivedWatchableValue, TrackableValue, WatchableValueInterface} from 'neuroglancer/trackable_value';
@@ -65,7 +65,6 @@ import {MousePositionWidget, PositionWidget, VoxelSizeWidget} from 'neuroglancer
 import {TrackableScaleBarOptions} from 'neuroglancer/widget/scale_bar';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
 import {RPC} from 'neuroglancer/worker_rpc';
-import { SegmentationUserLayerWithGraph } from './segmentation_user_layer_with_graph';
 
 require('neuroglancer/viewer.css');
 require('neuroglancer/noselect.css');
@@ -617,15 +616,19 @@ export class Viewer extends RefCounted implements ViewerState {
     }
 
     const isTimeDisplaced = (e: ManagedUserLayerWithSpecification) => {
-      let segLayer = (<SegmentationUserLayerWithGraph>e.layer);
-      return segLayer && segLayer.timestamp.value !== '';
+      let displayState =
+          <SegmentationUserLayerWithGraphDisplayState>(<SegmentationUserLayerWithGraph>e.layer)
+              .displayState;
+      return displayState && displayState.timestamp.value !== '';
     };
 
     const timeLock = (e: ManagedUserLayerWithSpecification, lock: boolean) => {
-      let segLayer = (<SegmentationUserLayerWithGraph>e.layer);
+      let displayState =
+          <SegmentationUserLayerWithGraphDisplayState>(<SegmentationUserLayerWithGraph>e.layer)
+              .displayState;
 
-      if (segLayer) {
-        segLayer.timestamp.lock = lock;
+      if (displayState) {
+        displayState.timestamp.lock = lock;
         return true;
       }
       return false;

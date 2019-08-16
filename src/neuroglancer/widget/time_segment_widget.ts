@@ -1,11 +1,10 @@
 import flatpickr from 'flatpickr';
 import minMaxTimePlugin from 'flatpickr/dist/plugins/minMaxTimePlugin';
-import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
+import {SegmentationUserLayerWithGraphDisplayState} from 'neuroglancer/segmentation_user_layer_with_graph';
 import {StatusMessage} from 'neuroglancer/status';
 import {LockableValueInterface, TrackableValueInterface} from 'neuroglancer/trackable_value';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {removeFromParent} from 'neuroglancer/util/dom';
-import {SegmentationUserLayerWithGraph} from '../segmentation_user_layer_with_graph';
 
 require('flatpickr/dist/flatpickr.min.css');
 // require('./time_segment_widget.css');
@@ -17,12 +16,10 @@ export class TimeSegmentWidget extends RefCounted {
   model: LockableValueInterface<string>;
   preValue: string;
 
-  constructor(
-      // timestamp: LockableValue<string>, tsLimit: TrackableValue<string>,
-      s: SegmentationUserLayerWithGraph, private displayState: SegmentationDisplayState) {
+  constructor(private displayState: SegmentationUserLayerWithGraphDisplayState) {
     super();
-    this.model = s.timestamp;
-    this.limit = s.timestampLimit;
+    this.model = displayState.timestamp;
+    this.limit = displayState.timestampLimit;
     const {element, input, model} = this;
     const cancelButton = document.createElement('button');
     const nothingButton = document.createElement('button');

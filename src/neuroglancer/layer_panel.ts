@@ -20,7 +20,7 @@ import {LayerDialog} from 'neuroglancer/layer_dialog';
 import {LinkedViewerNavigationState} from 'neuroglancer/layer_group_viewer';
 import {LayerListSpecification, ManagedUserLayerWithSpecification} from 'neuroglancer/layer_specification';
 import {NavigationLinkType} from 'neuroglancer/navigation_state';
-// import {SegmentationUserLayer} from 'neuroglancer/segmentation_user_layer';
+import {SegmentationUserLayerWithGraph, SegmentationUserLayerWithGraphDisplayState} from 'neuroglancer/segmentation_user_layer_with_graph';
 import {UserLayerWithAnnotations} from 'neuroglancer/ui/annotations';
 import {DropLayers, endLayerDrag, getDropLayers, getLayerDropEffect, startLayerDrag} from 'neuroglancer/ui/layer_drag_and_drop';
 import {animationFrameDebounce} from 'neuroglancer/util/animation_frame_debounce';
@@ -32,7 +32,6 @@ import {makeCloseButton} from 'neuroglancer/widget/close_button';
 import {ColorWidget} from 'neuroglancer/widget/color';
 import {PositionWidget} from 'neuroglancer/widget/position_widget';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
-import {SegmentationUserLayerWithGraph} from './segmentation_user_layer_with_graph';
 
 require('neuroglancer/noselect.css');
 require('neuroglancer/layer_panel.css');
@@ -200,10 +199,12 @@ class LayerWidget extends RefCounted {
     }
     timeWarningElement.style.display = 'none';
     if (layer.layer !== null) {
-      let segLayer = (<SegmentationUserLayerWithGraph>layer.layer);
-      if (segLayer.timestamp) {
-        segLayer.timestamp.changed.add(() => {
-          if (segLayer.timestamp.value !== '') {
+      let displayState =
+          <SegmentationUserLayerWithGraphDisplayState>(<SegmentationUserLayerWithGraph>layer.layer)
+              .displayState;
+      if (displayState) {
+        displayState.timestamp.changed.add(() => {
+          if (displayState.timestamp.value !== '') {
             timeWarningElement.style.display = 'inherit';
             this.element.classList.add('time-displaced');
           } else {
@@ -212,7 +213,7 @@ class LayerWidget extends RefCounted {
           }
         });
         this.registerEventListener(timeWarningElement, 'click', (event: MouseEvent) => {
-          segLayer.timestamp.value = '';
+          displayState.timestamp.value = '';
           event.stopPropagation();
         });
       }

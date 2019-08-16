@@ -26,8 +26,8 @@ import {ChunkedGraphLayer, SegmentSelection} from 'neuroglancer/sliceview/chunke
 import {VolumeType} from 'neuroglancer/sliceview/volume/base';
 import {SupervoxelRenderLayer} from 'neuroglancer/sliceview/volume/supervoxel_renderlayer';
 import {StatusMessage} from 'neuroglancer/status';
-import {LockableValue, LockableValueInterface, TrackableValue, TrackableValueInterface, WatchableRefCounted, WatchableValue} from 'neuroglancer/trackable_value';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
+import {LockableValue, TrackableValue, WatchableRefCounted, WatchableValue} from 'neuroglancer/trackable_value';
 import {GraphOperationTab, SelectedGraphOperationState} from 'neuroglancer/ui/graph_multicut';
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {TrackableRGB} from 'neuroglancer/util/color';
@@ -49,9 +49,11 @@ const lastSegmentSelection: SegmentSelection = {
   position: vec3.create(),
 };
 
-type SegmentationUserLayerWithGraphDisplayState = SegmentationUserLayerDisplayState&{
+export type SegmentationUserLayerWithGraphDisplayState = SegmentationUserLayerDisplayState&{
   multicutSegments: Uint64Set;
   performingMulticut: TrackableBoolean;
+  timestamp: LockableValue<string>;
+  timestampLimit: TrackableValue<string>;
 };
 
 interface BaseConstructor {
@@ -62,20 +64,27 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
   class C extends Base implements SegmentationUserLayerWithGraph {
     chunkedGraphUrl: string|null|undefined;
     chunkedGraphLayer: Borrowed<ChunkedGraphLayer>|undefined;
-    timestamp: LockableValue<string>;
-    timestampLimit: TrackableValue<string>;
     graphOperationLayerState =
         this.registerDisposer(new WatchableRefCounted<GraphOperationLayerState>());
     selectedGraphOperationElement = this.registerDisposer(
         new SelectedGraphOperationState(this.graphOperationLayerState.addRef()));
-    displayState: SegmentationUserLayerWithGraphDisplayState = {
-      ...this.displayState,
-      multicutSegments: new Uint64Set(),
-      performingMulticut: new TrackableBoolean(false, false)
-    };
-
+    displayState: SegmentationUserLayerWithGraphDisplayState;
     constructor(...args: any[]) {
       super(...args);
+      this.displayState = {
+        ...this.displayState,
+        multicutSegments: new Uint64Set(),
+        performingMulticut: new TrackableBoolean(false, false),
+        timestamp: new LockableValue('', date => ((new Date(date)).valueOf() / 1000).toString()),
+        timestampLimit: new TrackableValue(
+            '',
+            date => {
+              let limit = new Date(date).valueOf().toString();
+              return limit === 'NaN' ? '' : limit;
+            },
+            '')
+      };
+
       this.tabs.add('graph', {
         label: 'Graph',
         order: -75,
@@ -109,12 +118,6 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
       }
 
       this.tabs.default = 'rendering';
-      this.timestamp =
-          new LockableValue('', date => ((new Date(date)).valueOf() / 1000).toString());
-      this.timestampLimit = new TrackableValue('', date => {
-        let limit = new Date(date).valueOf().toString();
-        return limit === 'NaN' ? '' : limit;
-      }, '');
     }
 
     get volumeOptions() {
@@ -124,7 +127,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
     async setTimestampLimit(url: string|null|undefined) {
       if (url) {
         const response = await authFetch(`${url}/graph/oldest_timestamp`);
-        this.timestampLimit.restoreState(await response.text());
+        this.displayState.timestampLimit.restoreState(await response.text());
       }
     }
 
@@ -279,8 +282,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
       let {segmentSelectionState} = this.displayState;
       if (segmentSelectionState.hasSelectedSegment) {
         let segment = segmentSelectionState.selectedSegment;
-        let {rootSegments} = this.displayState;
-        let {timestamp} = this;
+        let {rootSegments, timestamp} = this.displayState;
         let tsValue = (timestamp.value !== '') ? timestamp.value : void (0);
         if (rootSegments.has(segment)) {
           rootSegments.delete(segment);
@@ -433,8 +435,6 @@ export interface SegmentationUserLayerWithGraph extends SegmentationUserLayer {
   chunkedGraphLayer: Borrowed<ChunkedGraphLayer>|undefined;
   graphOperationLayerState: WatchableRefCounted<GraphOperationLayerState>;
   selectedGraphOperationElement: SelectedGraphOperationState;
-  timestamp: LockableValueInterface<string>;
-  timestampLimit: TrackableValueInterface<string>;
 }
 
 /**
