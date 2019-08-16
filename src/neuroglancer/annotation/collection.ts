@@ -18,7 +18,7 @@
  * @file Support for rendering line annotations.
  */
 
-import {AnnotationType, Line, /* Collection*/} from 'neuroglancer/annotation';
+import {AnnotationType, Line, LineStrip, Point, /* Collection*/} from 'neuroglancer/annotation';
 import {AnnotationRenderContext, AnnotationRenderHelper, registerAnnotationTypeRenderHandler} from 'neuroglancer/annotation/type_handler';
 import {tile2dArray} from 'neuroglancer/util/array';
 import {mat4, projectPointToLineSegment, vec3} from 'neuroglancer/util/geom';
@@ -163,6 +163,67 @@ registerAnnotationTypeRenderHandler(AnnotationType.COLLECTION, {
       coordinates[coordinateOffset + 3] = pointB[0];
       coordinates[coordinateOffset + 4] = pointB[1];
       coordinates[coordinateOffset + 5] = pointB[2];
+    };
+  },
+  sliceViewRenderHelper: RenderHelper,
+  perspectiveViewRenderHelper: RenderHelper,
+  pickIdsPerInstance: PICK_IDS_PER_INSTANCE,
+  snapPosition: (position, objectToData, data, offset, partIndex) => {
+    const endpoints = new Float32Array(data, offset, 6);
+    if (partIndex === FULL_OBJECT_PICK_OFFSET) {
+      snapPositionToLine(position, objectToData, endpoints);
+    } else {
+      snapPositionToEndpoint(position, objectToData, endpoints, partIndex - ENDPOINTS_PICK_OFFSET);
+    }
+  },
+  getRepresentativePoint: (objectToData, ann, partIndex) => {
+    let repPoint = vec3.create();
+    // if the full object is selected just pick the first point as representative
+    if (partIndex === FULL_OBJECT_PICK_OFFSET) {
+      vec3.transformMat4(repPoint, ann.pointA, objectToData);
+    } else {
+      if ((partIndex - ENDPOINTS_PICK_OFFSET) === 0) {
+        vec3.transformMat4(repPoint, ann.pointA, objectToData);
+      } else {
+        vec3.transformMat4(repPoint, ann.pointB, objectToData);
+      }
+    }
+    return repPoint;
+  },
+  updateViaRepresentativePoint: (oldAnnotation, position, dataToObject, partIndex) => {
+    let newPt = vec3.transformMat4(vec3.create(), position, dataToObject);
+    let baseLine = {...oldAnnotation};
+    switch (partIndex) {
+      case FULL_OBJECT_PICK_OFFSET:
+        let delta = vec3.sub(vec3.create(), oldAnnotation.pointB, oldAnnotation.pointA);
+        baseLine.pointA = newPt;
+        baseLine.pointB = vec3.add(vec3.create(), newPt, delta);
+        break;
+      case FULL_OBJECT_PICK_OFFSET + 1:
+        baseLine.pointA = newPt;
+        baseLine.pointB = oldAnnotation.pointB;
+        break;
+      case FULL_OBJECT_PICK_OFFSET + 2:
+        baseLine.pointA = oldAnnotation.pointA;
+        baseLine.pointB = newPt;
+    }
+    return baseLine;
+  }
+});
+
+registerAnnotationTypeRenderHandler(AnnotationType.LINE_STRIP, {
+  bytes: 6 * 4,
+  serializer: (buffer: ArrayBuffer, offset: number, numAnnotations: number) => {
+    const coordinates = new Float32Array(buffer, offset, numAnnotations * 6);
+    return (annotation: LineStrip, index: number) => {
+      const {entries} = annotation;
+      const coordinateOffset = index * 6;
+      entries.forEach((e: Point, i) => {
+        const {point} = e;
+        coordinates[coordinateOffset + i] = point[0];
+        coordinates[coordinateOffset + i + 1] = point[1];
+        coordinates[coordinateOffset + i + 2] = point[2];
+      });
     };
   },
   sliceViewRenderHelper: RenderHelper,
