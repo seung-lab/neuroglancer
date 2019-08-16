@@ -87,6 +87,7 @@ export function getDefaultRenderedDataPanelBindings() {
           'at:touchhold1': 'move-to-mouse-position',
           'at:touchtap1x2': 'select',
           'at:touchtap2x3': 'snap',
+          'escape': 'cancel'
         },
         {label: 'All Data Panels'});
   }

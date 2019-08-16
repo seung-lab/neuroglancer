@@ -45,7 +45,8 @@ export enum AnnotationType {
   LINE,
   AXIS_ALIGNED_BOUNDING_BOX,
   ELLIPSOID,
-  COLLECTION
+  COLLECTION,
+  LINE_STRIP
 }
 
 export const annotationTypes = [
@@ -53,7 +54,8 @@ export const annotationTypes = [
   AnnotationType.LINE,
   AnnotationType.AXIS_ALIGNED_BOUNDING_BOX,
   AnnotationType.ELLIPSOID,
-  AnnotationType.COLLECTION
+  AnnotationType.COLLECTION,
+  AnnotationType.LINE_STRIP
 ];
 
 export interface AnnotationBase {
@@ -72,18 +74,18 @@ export interface AnnotationBase {
 
 export interface Collection extends AnnotationBase {
   entries: Annotation[];
-  type: AnnotationType.COLLECTION;
+  type: AnnotationType.COLLECTION | AnnotationType.LINE_STRIP;
 }
-export interface MultiPoint extends Collection {
+export interface LineStrip extends Collection {
   entries: Point[];
-  type: AnnotationType.COLLECTION;
+  looped: boolean;
+  type: AnnotationType.LINE_STRIP;
 }
 export interface Line extends AnnotationBase {
   pointA: vec3;
   pointB: vec3;
   type: AnnotationType.LINE;
 }
-
 export interface Point extends AnnotationBase {
   point: vec3;
   type: AnnotationType.POINT;
@@ -101,7 +103,7 @@ export interface Ellipsoid extends AnnotationBase {
   type: AnnotationType.ELLIPSOID;
 }
 
-export type Annotation = Line|Point|AxisAlignedBoundingBox|Ellipsoid;
+export type Annotation = Line|Point|AxisAlignedBoundingBox|Ellipsoid|Collection|LineStrip;
 
 export interface AnnotationTag {
   id: number;
@@ -232,6 +234,56 @@ typeHandlers.set(AnnotationType.ELLIPSOID, {
       const coordinateOffset = index * 6;
       coordinates.set(center, coordinateOffset);
       coordinates.set(radii, coordinateOffset + 3);
+    };
+  },
+});
+
+typeHandlers.set(AnnotationType.COLLECTION, {
+  icon: '*',
+  description: 'Collection',
+  toJSON: (annotation: Collection) => {
+    return {
+      entries: Array.from(annotation.entries)
+    };
+  },
+  restoreState: (annotation: Collection, obj: any[]) => {
+    annotation.entries = obj.map(() => verifyObjectProperty(obj, 'entries', () => <Annotation> {}));
+  },
+  // TODO: Figure this out
+  serializedBytes: 6 * 4,
+  serializer: (buffer: ArrayBuffer, offset: number, numAnnotations: number) => {
+    const coordinates = new Float32Array(buffer, offset, numAnnotations * 6);
+    return (annotation: Collection, index: number) => {
+      const {entries} = annotation;
+      const coordinateOffset = index * 6;
+      console.log(coordinateOffset, entries, coordinates);
+      // entries.forEach((e, i) => coordinates.set(center, coordinateOffset);
+      // coordinates.set(radii, coordinateOffset + 3);
+    };
+  },
+});
+
+typeHandlers.set(AnnotationType.LINE_STRIP, {
+  icon: '⚹',
+  description: 'Line Strip',
+  toJSON: (annotation: LineStrip) => {
+    return {
+      entries: Array.from(annotation.entries)
+    };
+  },
+  restoreState: (annotation: LineStrip, obj: any[]) => {
+    annotation.entries = obj.map(() => verifyObjectProperty(obj, 'entries', () => <Point> {}));
+  },
+  // TODO: Figure this out
+  serializedBytes: 6 * 4,
+  serializer: (buffer: ArrayBuffer, offset: number, numAnnotations: number) => {
+    const coordinates = new Float32Array(buffer, offset, numAnnotations * 6);
+    return (annotation: LineStrip, index: number) => {
+      const {entries} = annotation;
+      const coordinateOffset = index * 6;
+      console.log(coordinateOffset, entries, coordinates);
+      // entries.forEach((e, i) => coordinates.set(center, coordinateOffset);
+      // coordinates.set(radii, coordinateOffset + 3);
     };
   },
 });
@@ -689,7 +741,7 @@ export function serializeAnnotations(allAnnotations: Annotation[][]): Serialized
 }
 
 export class AnnotationSerializer {
-  annotations: [Point[], Line[], AxisAlignedBoundingBox[], Ellipsoid[]] = [[], [], [], []];
+  annotations: [Point[], Line[], AxisAlignedBoundingBox[], Ellipsoid[], Collection[], LineStrip[]] = [[], [], [], [], [], []];
   add(annotation: Annotation) {
     (<Annotation[]>this.annotations[annotation.type]).push(annotation);
   }

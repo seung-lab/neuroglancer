@@ -461,6 +461,14 @@ export class AnnotationLayerView extends Tab {
         this.layer.tool.value = new PlaceSphereTool(this.layer, {});
       });
       toolbox.appendChild(ellipsoidButton);
+
+      const multipointButton = document.createElement('button');
+      multipointButton.textContent = getAnnotationTypeHandler(AnnotationType.LINE_STRIP).icon;
+      multipointButton.title = 'Annotate multiple connected points';
+      multipointButton.addEventListener('click', () => {
+        // this.layer.tool.value = new PlaceSphereTool(this.layer, {});
+      });
+      toolbox.appendChild(multipointButton);
     }
 
     {

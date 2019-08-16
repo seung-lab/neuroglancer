@@ -80,7 +80,7 @@ function getSegmentationDisplayState(layer: ManagedUserLayer|undefined): Segment
   return userLayer.displayState;
 }
 
-function getPointFromAnnotation(annotation: Annotation) {
+function getPointFromAnnotation(annotation: Annotation): vec3 {
   switch (annotation.type) {
     case AnnotationType.AXIS_ALIGNED_BOUNDING_BOX:
     case AnnotationType.LINE:
@@ -89,6 +89,10 @@ function getPointFromAnnotation(annotation: Annotation) {
       return annotation.point;
     case AnnotationType.ELLIPSOID:
       return annotation.center;
+    // Collection is an array of any annotation
+    case AnnotationType.LINE_STRIP:
+    case AnnotationType.COLLECTION:
+      return getPointFromAnnotation(annotation.entries[0]);
   }
 }
 
