@@ -831,7 +831,7 @@ export class PlaceGraphOperationMarkerTool extends PlaceGraphOperationTool {
           graphOperationLayer.supervoxelSelected(associatedSegments[0]) &&
           (!Uint64.equal(graphOperationLayer.selectedRoot!, associatedSegments[0]))) {
         StatusMessage.showTemporaryMessage(
-            `Supervoxel ${associatedSegments[1].toString()} has already been selected`, 7000);
+            `Supervoxel ${associatedSegments[0].toString()} has already been selected`, 7000);
       } else {
         const annotation: Annotation = {
           id: '',
