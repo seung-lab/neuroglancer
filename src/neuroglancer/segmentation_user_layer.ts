@@ -26,11 +26,11 @@ import {getRenderMeshByDefault} from 'neuroglancer/preferences/user_preferences'
 import {RenderScaleHistogram, trackableRenderScaleTarget} from 'neuroglancer/render_scale_statistics';
 import {SegmentColorHash} from 'neuroglancer/segment_color';
 import {SegmentMetadata, SegmentToVoxelCountMap} from 'neuroglancer/segment_metadata';
-import {SegmentSelectionState, Uint64MapEntry} from 'neuroglancer/segmentation_display_state/frontend';
+import {SegmentSelectionState, Uint64MapEntry, SegmentationDisplayState3D} from 'neuroglancer/segmentation_display_state/frontend';
 import {SharedDisjointUint64Sets} from 'neuroglancer/shared_disjoint_sets';
-import {FRAGMENT_MAIN_START as SKELETON_FRAGMENT_MAIN_START, PerspectiveViewSkeletonLayer, SkeletonLayer, SkeletonRenderingOptions, SkeletonSource, SliceViewPanelSkeletonLayer, ViewSpecificSkeletonRenderingOptions} from 'neuroglancer/skeleton/frontend';
+import {FRAGMENT_MAIN_START as SKELETON_FRAGMENT_MAIN_START, PerspectiveViewSkeletonLayer, SkeletonLayer, SkeletonRenderingOptions, SkeletonSource, SliceViewPanelSkeletonLayer, ViewSpecificSkeletonRenderingOptions, SkeletonLayerDisplayState} from 'neuroglancer/skeleton/frontend';
 import {VolumeType} from 'neuroglancer/sliceview/volume/base';
-import {SegmentationRenderLayer} from 'neuroglancer/sliceview/volume/segmentation_renderlayer';
+import {SegmentationRenderLayer, SliceViewSegmentationDisplayState} from 'neuroglancer/sliceview/volume/segmentation_renderlayer';
 import {StatusMessage} from 'neuroglancer/status';
 import {trackableAlphaValue} from 'neuroglancer/trackable_alpha';
 import {ElementVisibilityFromTrackableBoolean, TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
@@ -73,11 +73,14 @@ const SEGMENT_CATEGORIES_JSON_KEY = 'segmentCategories';
 const CATEGORIZED_SEGMENTS_JSON_KEY = 'categorizedSegments';
 const SHATTER_SEGMENT_EQUIVALENCES_JSON_KEY = 'shatterSegmentEquivalences';
 
+export type SegmentationUserLayerDisplayState =
+    SliceViewSegmentationDisplayState&SkeletonLayerDisplayState&SegmentationDisplayState3D;
+
 const lastSegmentSelection = new Uint64();
 
 const Base = UserLayerWithVolumeSourceMixin(UserLayer);
 export class SegmentationUserLayer extends Base {
-  displayState = {
+  displayState: SegmentationUserLayerDisplayState = {
     segmentColorHash: SegmentColorHash.getDefault(),
     segmentSelectionState: new SegmentSelectionState(),
     selectedAlpha: trackableAlphaValue(0.5),
@@ -97,13 +100,6 @@ export class SegmentationUserLayer extends Base {
     renderScaleHistogram: new RenderScaleHistogram(),
     renderScaleTarget: trackableRenderScaleTarget(1),
     shatterSegmentEquivalences: new TrackableBoolean(false, false),
-    /*
-    timestamp: new LockableValue('', date => ((new Date(date)).valueOf() / 1000).toString()),
-    timestampLimit: new TrackableValue('', date => {
-      let limit = new Date(date).valueOf().toString();
-      return limit === 'NaN'? '' : limit;
-    }, ''),
-    */
   };
 
   /**
