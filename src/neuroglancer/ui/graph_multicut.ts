@@ -39,13 +39,13 @@ import {removeChildren} from 'neuroglancer/util/dom';
 import {mat4, vec3} from 'neuroglancer/util/geom';
 import {verifyObjectProperty, verifyOptionalString, verifyString} from 'neuroglancer/util/json';
 import {NullarySignal} from 'neuroglancer/util/signal';
+import {formatIntegerPoint} from 'neuroglancer/util/spatial_units';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {WatchableVisibilityPriority} from 'neuroglancer/visibility_priority/frontend';
 import {makeCloseButton} from 'neuroglancer/widget/close_button';
 import {MinimizableGroupWidget} from 'neuroglancer/widget/minimizable_group';
 import {StackView, Tab} from 'neuroglancer/widget/tab_view';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
-import {formatIntegerPoint} from '../util/spatial_units';
 
 type GraphOperationMarkerId = {
   id: string,
@@ -827,7 +827,9 @@ export class PlaceGraphOperationMarkerTool extends PlaceGraphOperationTool {
                 associatedSegments[1].toString()}, but the supervoxels already selected have root ${
                 graphOperationLayer.selectedRoot.toString()}`,
             12000);
-      } else if (graphOperationLayer.supervoxelSelected(associatedSegments[0])) {
+      } else if (
+          graphOperationLayer.supervoxelSelected(associatedSegments[0]) &&
+          (!Uint64.equal(graphOperationLayer.selectedRoot!, associatedSegments[0]))) {
         StatusMessage.showTemporaryMessage(
             `Supervoxel ${associatedSegments[1].toString()} has already been selected`, 7000);
       } else {
