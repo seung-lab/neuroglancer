@@ -28,6 +28,7 @@ import {RPC} from 'neuroglancer/worker_rpc';
 
 export const GRAPH_SERVER_NOT_SPECIFIED = Symbol('Graph Server Not Specified.');
 
+const SCREEN_PIXEL_SIZE_TO_SOURCE_VOXEL_SIZE_RATIO_RENDER_LIMIT = 1.0;
 export interface SegmentSelection {
   segmentId: Uint64;
   rootId: Uint64;
@@ -55,6 +56,7 @@ export class ChunkedGraphChunkSource extends SliceViewChunkSource implements
 
 export class ChunkedGraphLayer extends GenericSliceViewRenderLayer {
   private graphurl: string;
+  private _screenPixelSizeToSourceVoxelSizeRatioRenderLimit: number;
 
   constructor(
       chunkManager: ChunkManager, url: string, public sources: ChunkedGraphChunkSource[][],
@@ -65,16 +67,22 @@ export class ChunkedGraphLayer extends GenericSliceViewRenderLayer {
         'url': url,
         'rootSegments': displayState.rootSegments.rpcId,
         'visibleSegments3D': displayState.visibleSegments3D.rpcId,
-        'segmentEquivalences': displayState.segmentEquivalences.rpcId
+        'segmentEquivalences': displayState.segmentEquivalences.rpcId,
+        'screenPixelSizeToSourceVoxelSizeRatioRenderLimit': SCREEN_PIXEL_SIZE_TO_SOURCE_VOXEL_SIZE_RATIO_RENDER_LIMIT
       },
       rpcType: CHUNKED_GRAPH_LAYER_RPC_ID,
       transform: displayState.transform,
     });
+    this._screenPixelSizeToSourceVoxelSizeRatioRenderLimit = SCREEN_PIXEL_SIZE_TO_SOURCE_VOXEL_SIZE_RATIO_RENDER_LIMIT;
     this.graphurl = url;
   }
 
   get url() {
     return this.graphurl;
+  }
+
+  get screenPixelSizeToSourceVoxelSizeRatioRenderLimit() {
+    return this._screenPixelSizeToSourceVoxelSizeRatioRenderLimit;
   }
 
   async getRoot(selection: SegmentSelection): Promise<Uint64> {

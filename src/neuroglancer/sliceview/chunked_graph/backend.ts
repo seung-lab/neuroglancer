@@ -191,6 +191,7 @@ export class ChunkedGraphLayer extends Base implements RenderLayerInterface<Slic
   rootSegments: Uint64Set;
   visibleSegments3D: Uint64Set;
   segmentEquivalences: SharedDisjointUint64Sets;
+  screenPixelSizeToSourceVoxelSizeRatioRenderLimit: number;
 
 
   constructor(rpc: RPC, options: any) {
@@ -200,6 +201,7 @@ export class ChunkedGraphLayer extends Base implements RenderLayerInterface<Slic
     this.visibleSegments3D = <Uint64Set>rpc.get(options['visibleSegments3D']);
     this.segmentEquivalences = <SharedDisjointUint64Sets>rpc.get(options['segmentEquivalences']);
     this.renderScaleTarget = rpc.get(options['renderScaleTarget']);
+    this.screenPixelSizeToSourceVoxelSizeRatioRenderLimit = options['screenPixelSizeToSourceVoxelSizeRatioRenderLimit'];
 
     this.sources = new Array<ChunkedGraphChunkSource[]>();
     for (const alternativeIds of options['sources']) {

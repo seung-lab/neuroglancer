@@ -139,6 +139,7 @@ export interface RenderLayer<Source extends SliceViewChunkSource> {
   transformedSources: TransformedSource<Source>[][]|undefined;
   transformedSourcesGeneration: number;
   renderScaleTarget: WatchableValueInterface<number>;
+  screenPixelSizeToSourceVoxelSizeRatioRenderLimit?: number;
 }
 
 export function getTransformedSources<Source extends SliceViewChunkSource>(
@@ -353,6 +354,13 @@ export class SliceViewBase<Source extends SliceViewChunkSource,
       // At the smallest scale, all alternative sources must have the same voxel size, which is
       // considered to be the base voxel size.
       const smallestVoxelSize = transformedSources[0][0].voxelSize;
+
+      const ratioLimit = renderLayer.screenPixelSizeToSourceVoxelSizeRatioRenderLimit;
+      if (ratioLimit !== undefined) {
+        if (ratioLimit < (pixelSize / vec3.length(smallestVoxelSize))) {
+          continue;
+        }
+      }
 
       const renderScaleTarget = renderLayer.renderScaleTarget.value;
 
