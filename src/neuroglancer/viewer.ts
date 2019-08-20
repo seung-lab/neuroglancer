@@ -623,9 +623,7 @@ export class Viewer extends RefCounted implements ViewerState {
     };
 
     const timeLock = (e: ManagedUserLayerWithSpecification, lock: boolean) => {
-      let displayState =
-          <SegmentationUserLayerWithGraphDisplayState>(<SegmentationUserLayerWithGraph>e.layer)
-              .displayState;
+      let displayState = <SegmentationUserLayerWithGraphDisplayState>(<SegmentationUserLayerWithGraph>e.layer).displayState;
 
       if (displayState) {
         displayState.timestamp.lock = lock;

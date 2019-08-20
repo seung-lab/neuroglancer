@@ -203,6 +203,11 @@ class LayerWidget extends RefCounted {
           <SegmentationUserLayerWithGraphDisplayState>(<SegmentationUserLayerWithGraph>layer.layer)
               .displayState;
       if (displayState) {
+        if (displayState.timestamp.value !== '') {
+          timeWarningElement.style.display = 'inherit';
+          this.element.classList.add('time-displaced');
+        }
+
         displayState.timestamp.changed.add(() => {
           if (displayState.timestamp.value !== '') {
             timeWarningElement.style.display = 'inherit';
@@ -213,6 +218,7 @@ class LayerWidget extends RefCounted {
           }
         });
         this.registerEventListener(timeWarningElement, 'click', (event: MouseEvent) => {
+          layer.manager.layerManager.messageWithUndo('Resetting Timestamp deselects selected segments.', 'Undo?');
           displayState.timestamp.value = '';
           event.stopPropagation();
         });

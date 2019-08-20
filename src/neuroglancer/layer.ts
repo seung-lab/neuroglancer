@@ -281,7 +281,7 @@ export class LayerManager extends RefCounted {
   private renderLayerToManagedLayerMapGeneration = -1;
   private renderLayerToManagedLayerMap_ = new Map<RenderLayer, ManagedUserLayer>();
 
-  constructor(private messageWithUndo: (message: string, action: string) => void) {
+  constructor(public messageWithUndo: (message: string, action: string) => void) {
     super();
     this.layersChanged.add(this.scheduleRemoveLayersWithSingleRef);
   }

@@ -109,8 +109,6 @@ export interface SegmentationDisplayState extends VisibleSegmentsState {
   saturation: TrackableAlphaValue;
   highlightedSegments: Uint64Set;
   shatterSegmentEquivalences: TrackableBoolean;
-  // timestamp: LockableValueInterface<string>;
-  // timestampLimit: TrackableValueInterface<string>;
 }
 
 export interface SegmentationDisplayStateWithAlpha extends SegmentationDisplayState {

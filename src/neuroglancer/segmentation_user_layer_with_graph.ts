@@ -42,6 +42,7 @@ const EQUIVALENCES_JSON_KEY = 'equivalences';
 const CHUNKED_GRAPH_JSON_KEY = 'chunkedGraph';
 const ROOT_SEGMENTS_JSON_KEY = 'segments';
 const GRAPH_OPERATION_MARKER_JSON_KEY = 'graphOperationMarker';
+const TIMESTAMP_JSON_KEY = 'timestamp';
 
 const lastSegmentSelection: SegmentSelection = {
   segmentId: new Uint64(),
@@ -102,6 +103,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
       });
 
       graphOpState.changed.add(() => this.specificationChanged.dispatch());
+      this.displayState.timestamp.changed.add(() => this.specificationChanged.dispatch());
 
       const {stateA, stateB} = graphOpState;
       if (stateA !== undefined) {
@@ -211,6 +213,9 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
         this.graphOperationLayerState.value.restoreState(
             specification[GRAPH_OPERATION_MARKER_JSON_KEY]);
       }
+      if (this.displayState.timestamp && specification[TIMESTAMP_JSON_KEY]) {
+        this.displayState.timestamp.value = (specification[TIMESTAMP_JSON_KEY]);
+      }
     }
 
     toJSON() {
@@ -218,6 +223,9 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
       x['type'] = 'segmentation_with_graph';
       x[CHUNKED_GRAPH_JSON_KEY] = this.chunkedGraphUrl;
 
+      if (this.displayState.timestamp.value) {
+        x[TIMESTAMP_JSON_KEY] = this.displayState.timestamp.value;
+      }
       if (this.graphOperationLayerState.value) {
         x[GRAPH_OPERATION_MARKER_JSON_KEY] = this.graphOperationLayerState.value.toJSON();
       }

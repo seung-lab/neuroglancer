@@ -2,21 +2,21 @@ import flatpickr from 'flatpickr';
 import minMaxTimePlugin from 'flatpickr/dist/plugins/minMaxTimePlugin';
 import {SegmentationUserLayerWithGraphDisplayState} from 'neuroglancer/segmentation_user_layer_with_graph';
 import {StatusMessage} from 'neuroglancer/status';
-import {LockableValueInterface, TrackableValueInterface} from 'neuroglancer/trackable_value';
+import {LockableValue, TrackableValue} from 'neuroglancer/trackable_value';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {removeFromParent} from 'neuroglancer/util/dom';
 
 require('flatpickr/dist/flatpickr.min.css');
-// require('./time_segment_widget.css');
 
 export class TimeSegmentWidget extends RefCounted {
   element = document.createElement('div');
   input = <HTMLInputElement>document.createElement('input');
-  limit: TrackableValueInterface<string>;
-  model: LockableValueInterface<string>;
-  preValue: string;
+  limit: TrackableValue<string>;
+  model: LockableValue<string>;
 
-  constructor(private displayState: SegmentationUserLayerWithGraphDisplayState) {
+  constructor(
+      private displayState: SegmentationUserLayerWithGraphDisplayState,
+      private undo?: (message: string, action: string) => void) {
     super();
     this.model = displayState.timestamp;
     this.limit = displayState.timestampLimit;
@@ -26,22 +26,23 @@ export class TimeSegmentWidget extends RefCounted {
     nothingButton.textContent = '✔️';
     nothingButton.title =
         `Actually, this button doesn't do anything at all. Click anywhere to close the time select.`;
-    this.preValue = '';
     element.classList.add('neuroglancer-time-widget');
     input.type = 'datetime-local';
-    this.buildFlatpickr(input);
-    this.limit.changed.add(() => this.buildFlatpickr(input));
-    input.addEventListener('change', () => this.updateModel());
+    const maybeInitial = this.dateFormat(model.value);
+    this.buildFlatpickr(input, (maybeInitial !== '') ? `${maybeInitial}Z` : void (0));
+    this.limit.changed.add(() => this.buildFlatpickr(input, input.value));
     cancelButton.textContent = '❌';
     cancelButton.title = 'Reset Time';
     cancelButton.addEventListener('click', () => {
+      this.revert();
       this.model.value = '';
     });
     element.appendChild(input);
     element.appendChild(nothingButton);
     element.appendChild(cancelButton);
+    input.addEventListener('change', () => this.updateModel());
     this.registerDisposer(model.changed.add(() => this.updateView()));
-    this.updateView();
+    // this.updateView();
   }
   private dateFormat(value: string) {
     if (value === '') {
@@ -49,24 +50,37 @@ export class TimeSegmentWidget extends RefCounted {
     }
     return ((new Date(parseInt(value, 10) * 1000)).toISOString()).slice(0, -1);
   }
+  private revert() {
+    if (this.undo) {
+      this.undo('Enabling Timestamp deselects selected segments.', 'Undo?');
+    }
+  }
+
   private updateView() {
-    if (this.model.lock && this.model.value !== '') {
-      this.model.value = '';
+    const formatted = this.dateFormat(this.model.value);
+    const inputFormatted = new Date(this.input.value).toISOString().slice(0, -1);
+    if (formatted !== inputFormatted || this.input.value === '') {
+      this.input.value = this.dateFormat(this.model.value);
+      this.updateModel(true);
+    }
+  }
+  private updateModel(view?: boolean) {
+    if (!this.model.lock) {
+      this.displayState.rootSegments.clear();
+      this.displayState.hiddenRootSegments!.clear();
+      if (!view) {
+        this.revert();
+        this.model.restoreState(this.input.value);
+      }
+    } else {
       StatusMessage.showTemporaryMessage(
           'Cannot view an older segmentation while Merge/Split mode is active.');
     }
-    this.input.value = this.dateFormat(this.model.value);
-    if (this.input.value !== '' || this.preValue !== '') {
-      this.displayState.rootSegments.clear();
-      this.displayState.hiddenRootSegments!.clear();
-    }
-    this.preValue = this.input.value;
   }
-  private updateModel() {
-    this.model.restoreState(this.input.value);
-  }
-  private buildFlatpickr(ele: HTMLInputElement) {
+
+  private buildFlatpickr(ele: HTMLInputElement, defaultDate?: string|Date) {
     return flatpickr(ele, {
+      defaultDate,
       enableTime: true,
       enableSeconds: true,
       'disable': [(date) => {
