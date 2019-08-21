@@ -34,7 +34,7 @@ export class TimeSegmentWidget extends RefCounted {
     cancelButton.textContent = '❌';
     cancelButton.title = 'Reset Time';
     cancelButton.addEventListener('click', () => {
-      this.revert();
+      this.revert(true);
       this.model.value = '';
     });
     element.appendChild(input);
@@ -42,7 +42,6 @@ export class TimeSegmentWidget extends RefCounted {
     element.appendChild(cancelButton);
     input.addEventListener('change', () => this.updateModel());
     this.registerDisposer(model.changed.add(() => this.updateView()));
-    // this.updateView();
   }
   private dateFormat(value: string) {
     if (value === '') {
@@ -50,9 +49,9 @@ export class TimeSegmentWidget extends RefCounted {
     }
     return ((new Date(parseInt(value, 10) * 1000)).toISOString()).slice(0, -1);
   }
-  private revert() {
+  private revert(reset?: boolean) {
     if (this.undo) {
-      this.undo('Enabling Timestamp deselects selected segments.', 'Undo?');
+      this.undo(`${reset?'Resetting':'Enabling'} Timestamp deselects selected segments.`, 'Undo?');
     }
   }
 

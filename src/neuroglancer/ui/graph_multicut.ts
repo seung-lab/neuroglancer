@@ -329,8 +329,8 @@ export class GraphOperationLayerView extends Tab {
       toolbox.appendChild(toggleGroupButton);
     }
 
+    const confirmButton = document.createElement('button');
     {
-      const confirmButton = document.createElement('button');
       confirmButton.textContent = '✔️';
       confirmButton.title = 'Perform Multi-Cut';
       confirmButton.addEventListener('click', () => {
@@ -406,18 +406,17 @@ export class GraphOperationLayerView extends Tab {
             .segmentationState.value;
 
     if (displayState && displayState.timestamp) {
-      this.timeWidget = this.registerDisposer(new TimeSegmentWidget(displayState, wrapper.manager.layerManager.messageWithUndo));
-      const disableToolbar = () => {
-        Array.from(toolbox.children).forEach((ele: HTMLButtonElement) => {
-          if (displayState.timestamp.value === '' || ele.title !== 'Perform Multi-Cut') {
-            ele.disabled = false;
-          } else {
-            ele.disabled = true;
-          }
-        });
+      this.timeWidget = this.registerDisposer(
+          new TimeSegmentWidget(displayState, wrapper.manager.layerManager.messageWithUndo));
+      const disableConfirm = () => {
+        if (displayState.timestamp.value === '') {
+          confirmButton.disabled = false;
+        } else {
+          confirmButton.disabled = true;
+        }
       };
-      disableToolbar();
-      displayState.timestamp.changed.add(disableToolbar);
+      disableConfirm();
+      displayState.timestamp.changed.add(disableConfirm);
       this.timectrlGroup.appendFlexibleChild(this.timeWidget.element);
       this.element.appendChild(this.timectrlGroup.element);
     }
