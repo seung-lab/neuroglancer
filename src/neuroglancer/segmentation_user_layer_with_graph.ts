@@ -321,7 +321,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
     safeToSubmit(action: string, callback: Function) {
       if (this.displayState.timestamp.value !== '') {
         const oopsie = Math.random();
-        const snark = oopsie < .33 ? '' : (oopsie < .66 ? ' Maybe you should try again?' : ' Better luck next time');
+        const snark = oopsie < .33 ? '' : (oopsie < .66 ? ' Try again?' : ' Better luck next time?');
         StatusMessage.showTemporaryMessage(
             `${action} can not be performed with a segmentation at an older state.${snark}`);
         return;
