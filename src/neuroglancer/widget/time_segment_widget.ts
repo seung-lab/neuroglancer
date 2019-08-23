@@ -1,8 +1,7 @@
 import flatpickr from 'flatpickr';
 import minMaxTimePlugin from 'flatpickr/dist/plugins/minMaxTimePlugin';
 import {SegmentationUserLayerWithGraphDisplayState} from 'neuroglancer/segmentation_user_layer_with_graph';
-import {StatusMessage} from 'neuroglancer/status';
-import {LockableValue, TrackableValue} from 'neuroglancer/trackable_value';
+import {TrackableValue} from 'neuroglancer/trackable_value';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {removeFromParent} from 'neuroglancer/util/dom';
 
@@ -12,7 +11,7 @@ export class TimeSegmentWidget extends RefCounted {
   element = document.createElement('div');
   input = <HTMLInputElement>document.createElement('input');
   limit: TrackableValue<string>;
-  model: LockableValue<string>;
+  model: TrackableValue<string>;
 
   constructor(
       private displayState: SegmentationUserLayerWithGraphDisplayState,
@@ -51,7 +50,8 @@ export class TimeSegmentWidget extends RefCounted {
   }
   private revert(reset?: boolean) {
     if (this.undo) {
-      this.undo(`${reset?'Resetting':'Enabling'} Timestamp deselects selected segments.`, 'Undo?');
+      this.undo(
+          `${reset ? 'Resetting' : 'Enabling'} Timestamp deselects selected segments.`, 'Undo?');
     }
   }
 
@@ -64,16 +64,11 @@ export class TimeSegmentWidget extends RefCounted {
     }
   }
   private updateModel(view?: boolean) {
-    if (!this.model.lock) {
-      this.displayState.rootSegments.clear();
-      this.displayState.hiddenRootSegments!.clear();
-      if (!view) {
-        this.revert();
-        this.model.restoreState(this.input.value);
-      }
-    } else {
-      StatusMessage.showTemporaryMessage(
-          'Cannot view an older segmentation while Merge/Split mode is active.');
+    this.displayState.rootSegments.clear();
+    this.displayState.hiddenRootSegments!.clear();
+    if (!view) {
+      this.revert();
+      this.model.restoreState(this.input.value);
     }
   }
 

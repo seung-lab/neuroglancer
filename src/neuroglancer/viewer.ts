@@ -27,11 +27,10 @@ import {InputEventBindingHelpDialog} from 'neuroglancer/help/input_event_binding
 import {ActionMode, ActionState, allRenderLayerRoles, LayerManager, LayerSelectedValues, ManagedUserLayer, MouseSelectionState, RenderLayerRole, SelectedLayerState, UserLayer} from 'neuroglancer/layer';
 import {LayerDialog} from 'neuroglancer/layer_dialog';
 import {RootLayoutContainer} from 'neuroglancer/layer_groups_layout';
-import {ManagedUserLayerWithSpecification, TopLevelLayerListSpecification} from 'neuroglancer/layer_specification';
+import {TopLevelLayerListSpecification} from 'neuroglancer/layer_specification';
 import {NavigationState, Pose} from 'neuroglancer/navigation_state';
 import {overlaysOpen} from 'neuroglancer/overlay';
 import {UserPreferencesDialog} from 'neuroglancer/preferences/user_preferences';
-import {SegmentationUserLayerWithGraph, SegmentationUserLayerWithGraphDisplayState} from 'neuroglancer/segmentation_user_layer_with_graph';
 import {StatusMessage} from 'neuroglancer/status';
 import {ElementVisibilityFromTrackableBoolean, TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
 import {makeDerivedWatchableValue, TrackableValue, WatchableValueInterface} from 'neuroglancer/trackable_value';
@@ -615,73 +614,40 @@ export class Viewer extends RefCounted implements ViewerState {
       });
     }
 
-    const isTimeDisplaced = (e: ManagedUserLayerWithSpecification) => {
-      let displayState =
-          <SegmentationUserLayerWithGraphDisplayState>(<SegmentationUserLayerWithGraph>e.layer)
-              .displayState;
-      return displayState && displayState.timestamp.value !== '';
-    };
-
-    const timeLock = (e: ManagedUserLayerWithSpecification, lock: boolean) => {
-      let displayState = <SegmentationUserLayerWithGraphDisplayState>(<SegmentationUserLayerWithGraph>e.layer).displayState;
-
-      if (displayState) {
-        displayState.timestamp.lock = lock;
-        return true;
-      }
-      return false;
-    };
-
-    const tLock = (e: ManagedUserLayerWithSpecification) => {
-      timeLock(e, true);
-    };
-    const tUnlock = (e: ManagedUserLayerWithSpecification) => {
-      timeLock(e, false);
-    };
-
     const handleModeChange = (merge: boolean) => {
-      const timeDisplaced = this.layerManager.managedLayers.some(isTimeDisplaced);
-      if (timeDisplaced) {
-        StatusMessage.showTemporaryMessage(`${
-            merge ? 'Merge' :
-                    'Split'} mode can not be activated with a segmentation at an older state.`);
-      } else {
+      this.mouseState.toggleAction();
+
+      const mergeWhileInSplit = merge && this.mouseState.actionMode === ActionMode.SPLIT;
+      const splitWhileInMerge = !merge && this.mouseState.actionMode === ActionMode.MERGE;
+      const mergeOn = () => StatusMessage.showTemporaryMessage('Merge mode activated.');
+      const splitOn = () => StatusMessage.showTemporaryMessage('Split mode activated.');
+      const mergeOff = () => StatusMessage.showTemporaryMessage('Merge mode deactivated.');
+      const splitOff = () => StatusMessage.showTemporaryMessage('Split mode deactivated.');
+
+      if (mergeWhileInSplit) {
+        this.mouseState.setMode(ActionMode.MERGE);
+        mergeOn();
+        splitOff();
         this.mouseState.toggleAction();
-
-        const mergeWhileInSplit = merge && this.mouseState.actionMode === ActionMode.SPLIT;
-        const splitWhileInMerge = !merge && this.mouseState.actionMode === ActionMode.MERGE;
-        const mergeOn = () => StatusMessage.showTemporaryMessage('Merge mode activated.');
-        const splitOn = () => StatusMessage.showTemporaryMessage('Split mode activated.');
-        const mergeOff = () => StatusMessage.showTemporaryMessage('Merge mode deactivated.');
-        const splitOff = () => StatusMessage.showTemporaryMessage('Split mode deactivated.');
-
-        if (mergeWhileInSplit) {
+      } else if (splitWhileInMerge) {
+        this.mouseState.setMode(ActionMode.SPLIT);
+        splitOn();
+        mergeOff();
+        this.mouseState.toggleAction();
+      } else if (this.mouseState.actionState === ActionState.INACTIVE) {
+        if (this.mouseState.actionMode === ActionMode.MERGE) {
+          mergeOff();
+        } else {
+          splitOff();
+        }
+        this.mouseState.setMode(ActionMode.NONE);
+      } else {
+        if (merge) {
           this.mouseState.setMode(ActionMode.MERGE);
           mergeOn();
-          splitOff();
-          this.mouseState.toggleAction();
-        } else if (splitWhileInMerge) {
+        } else {
           this.mouseState.setMode(ActionMode.SPLIT);
           splitOn();
-          mergeOff();
-          this.mouseState.toggleAction();
-        } else if (this.mouseState.actionState === ActionState.INACTIVE) {
-          this.layerManager.managedLayers.map(tUnlock);
-          if (this.mouseState.actionMode === ActionMode.MERGE) {
-            mergeOff();
-          } else {
-            splitOff();
-          }
-          this.mouseState.setMode(ActionMode.NONE);
-        } else {
-          this.layerManager.managedLayers.map(tLock);
-          if (merge) {
-            this.mouseState.setMode(ActionMode.MERGE);
-            mergeOn();
-          } else {
-            this.mouseState.setMode(ActionMode.SPLIT);
-            splitOn();
-          }
         }
       }
     };
