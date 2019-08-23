@@ -202,7 +202,7 @@ class LayerWidget extends RefCounted {
       let displayState =
           <SegmentationUserLayerWithGraphDisplayState>(<SegmentationUserLayerWithGraph>layer.layer)
               .displayState;
-      if (displayState) {
+      if (displayState && displayState.timestamp) {
         if (displayState.timestamp.value !== '') {
           timeWarningElement.style.display = 'inherit';
           this.element.classList.add('time-displaced');
