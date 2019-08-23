@@ -320,13 +320,13 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
 
     safeToSubmit(action: string, callback: Function) {
       if (this.displayState.timestamp.value !== '') {
-        const sorryVal = Math.random();
-        const sorry = sorryVal < .33 ? '' : (sorryVal < .66 ? ' Sorry...' : ' Sooo Sooorrryyy...');
+        const oopsie = Math.random();
+        const snark = oopsie < .33 ? '' : (oopsie < .66 ? ' Maybe you should try again?' : ' Better luck next time');
         StatusMessage.showTemporaryMessage(
-            `${action} can not be performed with a segmentation at an older state.${sorry}`);
+            `${action} can not be performed with a segmentation at an older state.${snark}`);
         return;
       }
-      return callback;
+      return callback();
     }
 
     mergeSelectFirst() {
