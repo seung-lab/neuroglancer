@@ -22,6 +22,7 @@ import {approxEqual} from 'neuroglancer/util/compare';
 import {DATA_TYPE_BYTES, DataType} from 'neuroglancer/util/data_type';
 import {effectiveScalingFactorFromMat4, identityMat4, kAxes, kInfinityVec, kZeroVec, mat4, rectifyTransformMatrixIfAxisAligned, transformVectorByMat4, vec3} from 'neuroglancer/util/geom';
 import {SharedObject} from 'neuroglancer/worker_rpc';
+import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 
 export {DATA_TYPE_BYTES, DataType};
 export type GlobalCoordinateRectangle = [vec3, vec3, vec3, vec3];
@@ -139,7 +140,8 @@ export interface RenderLayer<Source extends SliceViewChunkSource> {
   transformedSources: TransformedSource<Source>[][]|undefined;
   transformedSourcesGeneration: number;
   renderScaleTarget: WatchableValueInterface<number>;
-  screenPixelSizeToSourceVoxelSizeRatioRenderLimit?: number;
+  renderRatioLimit?: number;
+  leafRequestsActive?: TrackableBoolean;
 }
 
 export function getTransformedSources<Source extends SliceViewChunkSource>(
@@ -355,10 +357,22 @@ export class SliceViewBase<Source extends SliceViewChunkSource,
       // considered to be the base voxel size.
       const smallestVoxelSize = transformedSources[0][0].voxelSize;
 
-      const ratioLimit = renderLayer.screenPixelSizeToSourceVoxelSizeRatioRenderLimit;
-      if (ratioLimit !== undefined) {
-        if (ratioLimit < (pixelSize / vec3.length(smallestVoxelSize))) {
+      if (renderLayer.renderRatioLimit !== undefined) {
+        // tempVec3 represents diagonal across one highest-resolution voxel in slice
+        vec3.add(tempVec3, this.viewportAxes[0], this.viewportAxes[1]);
+        vec3.mul(tempVec3, tempVec3, smallestVoxelSize);
+        // If the pixel nm size in the slice is bigger than this diagonal by
+        // a certain ratio (right now semi-arbitarily set as a constant in chunked_graph/base.ts)
+        // we do not request the ChunkedGraph for root -> supervoxel mappings, and
+        // instead display a message to the user
+        if (renderLayer.renderRatioLimit < (pixelSize / Math.min(...smallestVoxelSize))) {
+          if (renderLayer.leafRequestsActive !== undefined) {
+            renderLayer.leafRequestsActive.value = false;
+          }
           continue;
+        }
+        if (renderLayer.leafRequestsActive !== undefined) {
+          renderLayer.leafRequestsActive.value = true;
         }
       }
 

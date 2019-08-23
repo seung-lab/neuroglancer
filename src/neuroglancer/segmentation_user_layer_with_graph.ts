@@ -267,6 +267,8 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
         if (rootSegments.has(segment)) {
           rootSegments.delete(segment);
         } else if (this.chunkedGraphLayer) {
+          StatusMessage.showTemporaryMessage(
+              'The selected segment will not be displayed in 2D at this current zoom level. ');
           const currentSegmentSelection: SegmentSelection = {
             segmentId: segmentSelectionState.selectedSegment.clone(),
             rootId: segmentSelectionState.selectedSegment.clone(),
