@@ -358,9 +358,6 @@ export class SliceViewBase<Source extends SliceViewChunkSource,
       const smallestVoxelSize = transformedSources[0][0].voxelSize;
 
       if (renderLayer.renderRatioLimit !== undefined) {
-        // tempVec3 represents diagonal across one highest-resolution voxel in slice
-        vec3.add(tempVec3, this.viewportAxes[0], this.viewportAxes[1]);
-        vec3.mul(tempVec3, tempVec3, smallestVoxelSize);
         // If the pixel nm size in the slice is bigger than this diagonal by
         // a certain ratio (right now semi-arbitarily set as a constant in chunked_graph/base.ts)
         // we do not request the ChunkedGraph for root -> supervoxel mappings, and
