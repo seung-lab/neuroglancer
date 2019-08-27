@@ -1,5 +1,5 @@
 import {Overlay} from 'neuroglancer/overlay';
-// import {TrackableValue} from 'neuroglancer/trackable_value';
+import {getAutoConnect} from 'neuroglancer/preferences/user_preferences';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {removeFromParent} from 'neuroglancer/util/dom';
 import {Viewer} from 'neuroglancer/viewer';
@@ -9,14 +9,14 @@ require('./net_widget.css');
 
 interface User {
   id: number;
-  channel?: number;
+  chan: number;
   name?: string;
 }
-interface ItemConfig {
+/*interface ItemConfig {
   type?: string;
   id?: string;
   className?: string;
-}
+}*/
 
 interface NetworkPrefs {
   host: string;
@@ -49,7 +49,7 @@ class NetworkConfiguration extends Overlay {
       labelWrap(label, [' ', textbox, ...(element ? element : [])]);
     };
 
-    const simpleItem =
+    /*const simpleItem =
         (value: string, config: ItemConfig = {type: 'checkbox'}, checked?: boolean) => {
           const chkbox = document.createElement('input');
           const {id, className, type} = config;
@@ -72,7 +72,7 @@ class NetworkConfiguration extends Overlay {
           }
 
           return chkbox;
-        };
+        };*/
 
     let modal = document.createElement('div');
     content.appendChild(modal);
@@ -91,22 +91,26 @@ class NetworkConfiguration extends Overlay {
     simpleInput('Host', 'net-hostaddr', [' ', connectBtn]);
     const applyBtn = document.createElement('button');
     applyBtn.innerHTML = 'Apply Changes';
-    applyBtn.addEventListener('click', () => {});
+    applyBtn.addEventListener('click', () => this.apply());
     modal.appendChild(applyBtn);
     modal.appendChild(br());
     modal.appendChild(br());
     simpleInput('Channel ID', 'net-cid');
     simpleInput('Nickname', 'net-nick');
 
-    let issueTypeConfig = {type: 'checkbox', className: 'form_type'};
+    // let issueTypeConfig = {type: 'checkbox', className: 'form_type'};
     labelWrap('Sync Settings', [
-      br(), simpleItem('1', issueTypeConfig), ' Bug ', simpleItem('2', issueTypeConfig),
-      ' Suggestion'
+      /*br(), simpleItem('1', issueTypeConfig), ' Bug ', simpleItem('2', issueTypeConfig),
+      ' Suggestion'*/
     ]);
 
     const uid = (<HTMLInputElement>document.getElementById('net-uid')!);
     uid.disabled = true;
     uid.value = net.settings.user.id.toString();
+    (<HTMLInputElement>document.getElementById('net-hostaddr')!).value = net.settings.host;
+    (<HTMLInputElement>document.getElementById('net-cid')!).value =
+        net.settings.user.chan.toString();
+    (<HTMLInputElement>document.getElementById('net-nick')!).value = net.settings.user.name || '';
   }
 
   apply() {
@@ -115,12 +119,12 @@ class NetworkConfiguration extends Overlay {
       nick: (<HTMLInputElement>document.getElementById('net-nick')!).value
     };
 
-    if (opts.cid !== '') {
-      this.net.settings.user.channel = parseInt(opts.cid, 10);
+    if (opts.cid !== '' && parseInt(opts.cid, 10) !== this.net.settings.user.chan) {
+      this.net.settings.user.chan = parseInt(opts.cid, 10);
       this.net.channel();
     }
 
-    if (opts.nick !== '') {
+    if (opts.nick !== '' && opts.nick !== this.net.settings.user.name) {
       this.net.settings.user.name = opts.nick;
       this.net.nickname();
     }
@@ -203,8 +207,8 @@ class NetworkChatWidget extends RefCounted {
 
 export class Network {
   settings: NetworkPrefs = {
-    host: '',
-    user: {id: -1}
+    host: 'ws://seungissues-wbsimp-test3.herokuapp.com/',
+    user: JSON.parse(localStorage.getItem('wbsUser') || '{"id": -1, "chan": 0}')
   };
   chatWindow: NetworkChatWidget;
   ws: WebSocket;
@@ -240,13 +244,13 @@ export class Network {
 
   channel() {
     if (this.ws) {
-      this.ws.send(JSON.stringify({message: this.settings.user.channel, method: 'channel'}));
+      this.ws.send(JSON.stringify({message: this.settings.user.chan, method: 'channel'}));
     }
   }
 
   nickname() {
     if (this.ws) {
-      this.ws.send(JSON.stringify({message: this.settings.user.name, method: 'nick'}));
+      this.ws.send(JSON.stringify({message: this.settings.user.name, method: 'name'}));
     }
   }
 
@@ -257,8 +261,6 @@ export class Network {
       const ws = this.ws;
 
       ws.addEventListener('open', () => {
-        const raw = localStorage.getItem('wbsUser');
-        this.settings.user = raw ? JSON.parse(raw) : void (0);
         ws.send(JSON.stringify({method: 'init', user: this.settings.user}));
       });
 
@@ -285,18 +287,21 @@ export class Network {
         status.remove('neuroglancer-net-status-connected');
         status.remove('neuroglancer-net-status-pending');
         this.chatWindow.viewport.textContent += `\nDisconnected!`;
-        delete(this.ws);
+        delete (this.ws);
       });
     }
   }
 
   createNetworkButton() {
     this.netButton = makeTextIconButton('🔁', 'Connect');
-    // button.classList.add('neuroglancer-net-status-pending');
     this.viewer.registerEventListener(this.netButton, 'click', async () => {
       const shown = this.chatWindow.element.style.display !== 'none';
       this.chatWindow.element.style.display = shown ? 'none' : 'block';
     });
+    const autoConnect = getAutoConnect().value;
+    if (autoConnect) {
+      this.connect();
+    }
     return this.netButton;
   }
 }

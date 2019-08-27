@@ -10,16 +10,19 @@ class UserPreferences {
   renderMeshByDefault: TrackableBoolean;
   prefetchSliceViewChunks: TrackableBoolean;
   cursorOnMousedrag: TrackableBoolean;
+  autoConnect: TrackableBoolean;
   constructor() {
     // mesh rendering is enabled by default, unless user selects not to
     this.renderMeshByDefault = new TrackableBoolean(true, true, 'renderMeshByDefault');
     // prefetching disabled by default, as it uses a lot of additional memory/bandwidth
     this.prefetchSliceViewChunks = new TrackableBoolean(false, false, 'prefetchSliceViewChunks');
     this.cursorOnMousedrag = new TrackableBoolean(true, true, 'cursorOnMousedrag');
+    this.autoConnect = new TrackableBoolean(false, false, 'net-autoConnect');
 
     this.renderMeshByDefault.restoreState({});
     this.prefetchSliceViewChunks.restoreState({});
     this.cursorOnMousedrag.restoreState({});
+    this.autoConnect.restoreState({});
 
     this.renderMeshByDefault.changed.add(() => {
       location.reload(false);
@@ -41,6 +44,9 @@ export function getCursorOnMousedrag(): TrackableBoolean {
   return userPreferences.cursorOnMousedrag;
 }
 
+export function getAutoConnect(): TrackableBoolean {
+  return userPreferences.autoConnect;
+}
 export class UserPreferencesDialog extends Overlay {
   constructor(public viewer: Viewer) {
     super();
@@ -80,5 +86,6 @@ export class UserPreferencesDialog extends Overlay {
     addCheckbox('Render Mesh By Default', userPreferences.renderMeshByDefault);
     addCheckbox('Prefetch SliceView Chunks', userPreferences.prefetchSliceViewChunks);
     addCheckbox('Show cursor on mouse drag', userPreferences.cursorOnMousedrag);
+    addCheckbox('Auto connect to server on startup', userPreferences.autoConnect);
   }
 }
