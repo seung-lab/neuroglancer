@@ -213,11 +213,23 @@ export class Network {
   chatWindow: NetworkChatWidget;
   ws: WebSocket;
   netButton: HTMLDivElement;
+  remoteStateQueue: [];
 
   constructor(public viewer: Viewer) {
     // super();
     this.chatWindow = new NetworkChatWidget(this);
     document.body.appendChild(this.chatWindow.element);
+
+    const net = this;
+    this.viewer.state.changed.add(() => {
+      if (net.ws && net.ws.readyState === net.ws.OPEN) {
+        // send state
+        net.ws.send(JSON.stringify({
+          method: 'state',
+          state: this.viewer.state.toJSON()
+        }));
+      }
+    });
 
     this.chatWindow.input.addEventListener('keyup', (e) => {
       if (e.code === 'Enter' && this.ws) {
@@ -259,6 +271,7 @@ export class Network {
       this.netButton.classList.add('neuroglancer-net-status-pending');
       this.ws = new WebSocket(this.settings.host);
       const ws = this.ws;
+      const id = this.settings.user.id;
 
       ws.addEventListener('open', () => {
         ws.send(JSON.stringify({method: 'init', user: this.settings.user}));
@@ -273,6 +286,10 @@ export class Network {
         const data = JSON.parse(pack.data);
         if (data.state) {
           // state negotiation
+          if (data.user.id !== id) {
+            // ignore own state change
+            this.viewer.state.restoreState(data.state);
+          }
         } else {
           this.chatWindow.viewport.textContent += `\n${data.message || data.server}`;
           if (data.server && data.user) {
