@@ -16,15 +16,16 @@
 
 import {CoordinateTransform} from 'neuroglancer/coordinate_transform';
 import {ChunkLayout} from 'neuroglancer/sliceview/chunk_layout';
+import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {WatchableValueInterface} from 'neuroglancer/trackable_value';
 import {partitionArray} from 'neuroglancer/util/array';
 import {approxEqual} from 'neuroglancer/util/compare';
 import {DATA_TYPE_BYTES, DataType} from 'neuroglancer/util/data_type';
 import {effectiveScalingFactorFromMat4, identityMat4, kAxes, kInfinityVec, kZeroVec, mat4, rectifyTransformMatrixIfAxisAligned, transformVectorByMat4, vec3} from 'neuroglancer/util/geom';
 import {SharedObject} from 'neuroglancer/worker_rpc';
-import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 
 export {DATA_TYPE_BYTES, DataType};
+
 export type GlobalCoordinateRectangle = [vec3, vec3, vec3, vec3];
 
 const DEBUG_CHUNK_INTERSECTIONS = false;
@@ -358,11 +359,13 @@ export class SliceViewBase<Source extends SliceViewChunkSource,
       const smallestVoxelSize = transformedSources[0][0].voxelSize;
 
       if (renderLayer.renderRatioLimit !== undefined) {
-        // If the pixel nm size in the slice is bigger than this diagonal by
+        // If the pixel nm size in the slice is bigger than the smallest dimension of the
+        // highest resolution voxel size (e.g. 4nm if the highest res is 4x4x40nm) by
         // a certain ratio (right now semi-arbitarily set as a constant in chunked_graph/base.ts)
         // we do not request the ChunkedGraph for root -> supervoxel mappings, and
         // instead display a message to the user
-        if (renderLayer.renderRatioLimit < (pixelSize / Math.min(...smallestVoxelSize))) {
+        const chunkedGraphVoxelSize = renderLayer.sources[0][0].spec.voxelSize;
+        if (renderLayer.renderRatioLimit < (pixelSize / Math.min(...chunkedGraphVoxelSize))) {
           if (renderLayer.leafRequestsActive !== undefined) {
             renderLayer.leafRequestsActive.value = false;
           }
