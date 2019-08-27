@@ -289,6 +289,7 @@ export class Viewer extends RefCounted implements ViewerState {
     this.element.id = 'neuroglancerViewer';
     this.dataSourceProvider = dataSourceProvider;
     this.uiConfiguration = uiConfiguration;
+    this.network = new Network(this);
 
     this.registerDisposer(() => removeFromParent(this.element));
 
@@ -418,7 +419,6 @@ export class Viewer extends RefCounted implements ViewerState {
     this.registerDisposer(
         this.selectedLayer.changed.add(() => maybeAddOrRemoveAnnotationShortcuts()));
     findWhatsNew(this);
-    this.network = new Network(this);
   }
 
   private updateShowBorders() {
