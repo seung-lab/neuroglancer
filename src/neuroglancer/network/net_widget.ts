@@ -194,6 +194,7 @@ export class Network {
     // super();
     this.preferences = new NetworkPrefs(viewer, this.connect);
     this.chatWindow = new NetworkChatWidget(this.preferences);
+    document.body.appendChild(this.chatWindow.element);
 
     this.chatWindow.input.addEventListener('keyup', (e) => {
       if (e.code === 'Enter' && this.ws) {
