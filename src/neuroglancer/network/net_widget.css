@@ -1,0 +1,23 @@
+.neuroglancer-net-chatWindow {
+    position: absolute;
+    z-index: 9;
+    background-color: #f1f1f1;
+    border: 1px solid #d3d3d3;
+    text-align: center;
+}
+
+.neuroglancer-net-chatHeader {
+    padding: 10px;
+    cursor: move;
+    z-index: 10;
+    background-color: #2196F3;
+    color: #fff;
+}
+
+.neuroglancer-net-status-connected {
+    background-color: #2196F3
+}
+
+.neuroglancer-net-status-pending {
+    background-color: rgb(243, 229, 33)
+}

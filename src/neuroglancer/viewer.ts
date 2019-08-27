@@ -29,6 +29,7 @@ import {LayerDialog} from 'neuroglancer/layer_dialog';
 import {RootLayoutContainer} from 'neuroglancer/layer_groups_layout';
 import {TopLevelLayerListSpecification} from 'neuroglancer/layer_specification';
 import {NavigationState, Pose} from 'neuroglancer/navigation_state';
+import {Network} from 'neuroglancer/network/net_widget';
 import {overlaysOpen} from 'neuroglancer/overlay';
 import {UserPreferencesDialog} from 'neuroglancer/preferences/user_preferences';
 import {StatusMessage} from 'neuroglancer/status';
@@ -102,7 +103,7 @@ export class InputEventBindings extends DataPanelInputEventBindings {
 const viewerUiControlOptionKeys: (keyof ViewerUIControlConfiguration)[] = [
   'showHelpButton', 'showEditStateButton', 'showLayerPanel', 'showLocation',
   'showAnnotationToolStatus', 'showJsonPostButton', 'showUserPreferencesButton',
-  'showWhatsNewButton', 'showBugButton'
+  'showWhatsNewButton', 'showBugButton', 'showConnectButton'
 ];
 
 const viewerOptionKeys: (keyof ViewerUIOptions)[] =
@@ -118,6 +119,7 @@ export class ViewerUIControlConfiguration {
   showLocation = new TrackableBoolean(true);
   showAnnotationToolStatus = new TrackableBoolean(true);
   showWhatsNewButton = new TrackableBoolean(true);
+  showConnectButton = new TrackableBoolean(true);
 }
 
 export class ViewerUIConfiguration extends ViewerUIControlConfiguration {
@@ -151,6 +153,7 @@ interface ViewerUIOptions {
   showUserPreferencesButton: boolean;
   showWhatsNewButton: boolean;
   showBugButton: boolean;
+  showConnectButton: boolean;
 }
 
 export interface ViewerOptions extends ViewerUIOptions, VisibilityPrioritySpecification {
@@ -214,6 +217,7 @@ export class Viewer extends RefCounted implements ViewerState {
   scaleBarOptions = new TrackableScaleBarOptions();
   contextMenu: ContextMenu;
   statisticsDisplayState = new StatisticsDisplayState();
+  network: Network;
 
   layerSelectedValues =
       this.registerDisposer(new LayerSelectedValues(this.layerManager, this.mouseState));
@@ -414,6 +418,7 @@ export class Viewer extends RefCounted implements ViewerState {
     this.registerDisposer(
         this.selectedLayer.changed.add(() => maybeAddOrRemoveAnnotationShortcuts()));
     findWhatsNew(this);
+    this.network = new Network(this);
   }
 
   private updateShowBorders() {
@@ -527,6 +532,13 @@ export class Viewer extends RefCounted implements ViewerState {
       });
       this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
           this.uiControlVisibility.showBugButton, button));
+      topRow.appendChild(button);
+    }
+
+    {
+      const button = this.network.createNetworkButton();
+      this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
+          this.uiControlVisibility.showConnectButton, button));
       topRow.appendChild(button);
     }
 
