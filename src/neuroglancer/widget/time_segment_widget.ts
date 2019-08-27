@@ -63,12 +63,17 @@ export class TimeSegmentWidget extends RefCounted {
       this.updateModel(true);
     }
   }
-  private updateModel(view?: boolean) {
+  private clearSeg() {
     this.displayState.rootSegments.clear();
     this.displayState.hiddenRootSegments!.clear();
+  }
+  private updateModel(view?: boolean) {
     if (!view) {
       this.revert();
+      this.clearSeg();
       this.model.restoreState(this.input.value);
+    } else {
+      this.clearSeg();
     }
   }
 

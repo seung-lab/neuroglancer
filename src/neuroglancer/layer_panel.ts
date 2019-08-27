@@ -187,43 +187,47 @@ class LayerWidget extends RefCounted {
       this.panel.layerManager.removeManagedLayer(this.layer);
       event.stopPropagation();
     });
-    let timeWarningElement = makeTextIconButton(
-        '🕘', `This segmentation is currently in an older state.\nClick to return to current form.`);
-    timeWarningElement.classList.add('neuroglancer-layer-time-reset');
-    if (element.dataset.type === 'annotation') {
-      timeWarningElement.classList.add('annotation-time');
-      timeWarningElement.title =
-          `This annotation is currently in an older state.\nClick to return to current form.`;
-    } else {
-      timeWarningElement.classList.add('segmentation-time');
-    }
-    timeWarningElement.style.display = 'none';
-    if (layer.layer !== null) {
-      let displayState =
-          <SegmentationUserLayerWithGraphDisplayState>(<SegmentationUserLayerWithGraph>layer.layer)
-              .displayState;
-      if (displayState && displayState.timestamp) {
-        if (displayState.timestamp.value !== '') {
-          timeWarningElement.style.display = 'inherit';
-          this.element.classList.add('time-displaced');
-        }
 
-        displayState.timestamp.changed.add(() => {
+    const {type} = element.dataset;
+    let timeWarningElement: HTMLDivElement|undefined;
+    if (['segmentation_with_graph', 'annotation'].includes(type!)) {
+      const useType = type === 'segmentation_with_graph' ? 'segmentation' : type;
+      const tooltip =
+          `This ${useType} is currently in an older state.\nClick to return to current form.`;
+      timeWarningElement = makeTextIconButton('🕘', tooltip);
+      timeWarningElement.classList.add('neuroglancer-layer-time-reset');
+      timeWarningElement.classList.add(`${useType}-time`);
+
+      timeWarningElement.style.display = 'none';
+      if (layer.layer !== null) {
+        let displayState = <SegmentationUserLayerWithGraphDisplayState>(
+                               <SegmentationUserLayerWithGraph>layer.layer)
+                               .displayState;
+        if (displayState && displayState.timestamp) {
           if (displayState.timestamp.value !== '') {
             timeWarningElement.style.display = 'inherit';
             this.element.classList.add('time-displaced');
-          } else {
-            timeWarningElement.style.display = 'none';
-            this.element.classList.remove('time-displaced');
           }
-        });
-        this.registerEventListener(timeWarningElement, 'click', (event: MouseEvent) => {
-          layer.manager.layerManager.messageWithUndo('Resetting Timestamp deselects selected segments.', 'Undo?');
-          displayState.timestamp.value = '';
-          event.stopPropagation();
-        });
+
+          displayState.timestamp.changed.add(() => {
+            if (displayState.timestamp.value !== '') {
+              timeWarningElement!.style.display = 'inherit';
+              this.element.classList.add('time-displaced');
+            } else {
+              timeWarningElement!.style.display = 'none';
+              this.element.classList.remove('time-displaced');
+            }
+          });
+          this.registerEventListener(timeWarningElement, 'click', (event: MouseEvent) => {
+            layer.manager.layerManager.messageWithUndo(
+                'Resetting Timestamp deselects selected segments.', 'Undo?');
+            displayState.timestamp.value = '';
+            event.stopPropagation();
+          });
+        }
       }
     }
+
     const colorWidget = this.registerDisposer(
         new ColorWidget((<UserLayerWithAnnotations>this.layer.layer).annotationColor));
     colorWidget.element.title = layer.initialSpecification.annotationColor || '';
@@ -242,7 +246,9 @@ class LayerWidget extends RefCounted {
     element.appendChild(layerNumberElement);
     element.appendChild(labelElement);
     element.appendChild(valueElement);
-    element.appendChild(timeWarningElement);
+    if (timeWarningElement) {
+      element.appendChild(timeWarningElement);
+    }
     element.appendChild(closeElement);
     this.registerEventListener(element, 'click', (event: MouseEvent) => {
       if (event.ctrlKey) {

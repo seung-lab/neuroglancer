@@ -17,7 +17,6 @@
 import {AnnotationLayer, SliceViewAnnotationLayer} from 'neuroglancer/annotation/frontend';
 import {PerspectiveViewAnnotationLayer} from 'neuroglancer/annotation/renderlayer';
 import {setAnnotationHoverStateFromMouseState} from 'neuroglancer/annotation/selection';
-import {authFetch} from 'neuroglancer/authentication/frontend';
 import {GraphOperationLayerState} from 'neuroglancer/graph/graph_operation_layer_state';
 import {registerLayerType, registerVolumeLayerType} from 'neuroglancer/layer_specification';
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
@@ -126,12 +125,6 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
       return {volumeType: VolumeType.SEGMENTATION_WITH_GRAPH};
     }
 
-    async setTimestampLimit(url: string|null|undefined) {
-      if (url) {
-        const response = await authFetch(`${url}/graph/oldest_timestamp`);
-        this.displayState.timestampLimit.restoreState(await response.text());
-      }
-    }
 
     restoreState(specification: any) {
       super.restoreState(specification);
@@ -144,13 +137,17 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
           null :
           verifyOptionalString(specification[CHUNKED_GRAPH_JSON_KEY]);
 
-      this.setTimestampLimit(this.chunkedGraphUrl);
       let remaining = 0;
       if (multiscaleSource !== undefined) {
         ++remaining;
         multiscaleSource.then(volume => {
           const {displayState} = this;
           if (!this.wasDisposed) {
+            if (volume.getTimestampLimit) {
+              volume.getTimestampLimit().then((limit) => {
+                this.displayState.timestampLimit.restoreState(limit);
+              });
+            }
             // Chunked Graph Server
             if (this.chunkedGraphUrl === undefined && volume.getChunkedGraphUrl) {
               this.chunkedGraphUrl = volume.getChunkedGraphUrl();
@@ -320,10 +317,8 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
 
     safeToSubmit(action: string, callback: Function) {
       if (this.displayState.timestamp.value !== '') {
-        const oopsie = Math.random();
-        const snark = oopsie < .33 ? '' : (oopsie < .66 ? ' Try again?' : ' Better luck next time?');
         StatusMessage.showTemporaryMessage(
-            `${action} can not be performed with a segmentation at an older state.${snark}`);
+            `${action} can not be performed with a segmentation at an older state.`);
         return;
       }
       return callback();
