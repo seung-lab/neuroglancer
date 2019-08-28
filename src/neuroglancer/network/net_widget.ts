@@ -4,6 +4,7 @@ import {RefCounted} from 'neuroglancer/util/disposable';
 import {removeFromParent} from 'neuroglancer/util/dom';
 import {Viewer} from 'neuroglancer/viewer';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
+// import {removeParameterFromUrl} from '../ui/url_hash_binding';
 
 require('./net_widget.css');
 
@@ -21,6 +22,7 @@ interface User {
 interface NetworkPrefs {
   host: string;
   user: User;
+  syncables: Object;
 }
 
 const br = () => document.createElement('br');
@@ -208,12 +210,21 @@ class NetworkChatWidget extends RefCounted {
 export class Network {
   settings: NetworkPrefs = {
     host: 'ws://seungissues-wbsimp-test3.herokuapp.com/',
-    user: JSON.parse(localStorage.getItem('wbsUser') || '{"id": -1, "chan": 0}')
+    user: JSON.parse(localStorage.getItem('wbsUser') || '{"id": -1, "chan": 0}'),
+    syncables: {}
   };
   chatWindow: NetworkChatWidget;
   ws: WebSocket;
   netButton: HTMLDivElement;
-  remoteStateQueue: [];
+  lastRemoteStateString: string;
+  lastLocalStateString: string;
+  lastSentStateString: string;
+
+  stateFromUrl =
+      () => {
+        const rawState = window.location.hash;
+        return JSON.parse(decodeURIComponent(rawState).substring(2));
+      }
 
   constructor(public viewer: Viewer) {
     // super();
@@ -221,15 +232,25 @@ export class Network {
     document.body.appendChild(this.chatWindow.element);
 
     const net = this;
-    this.viewer.state.changed.add(() => {
+    const repState = window.history.replaceState.bind(window.history);
+    const stateChangeHandler = () => {
       if (net.ws && net.ws.readyState === net.ws.OPEN) {
-        // send state
-        net.ws.send(JSON.stringify({
-          method: 'state',
-          state: this.viewer.state.toJSON()
-        }));
+        // Do not send state if it was from remote
+        const state = this.viewer.state.toJSON();  // this.stateFromUrl();
+        const stateString = JSON.stringify(state);
+        if (stateString !== net.lastRemoteStateString /*&& stateString !== net.lastLocalStateString*/ &&
+            stateString !== net.lastSentStateString) {
+          // console.log(this.diff(stateString, net.lastRemoteStateString || ''));
+          net.lastSentStateString = stateString;
+          net.ws.send(JSON.stringify({method: 'state', state}));
+        }
       }
-    });
+    };
+    window.history.replaceState = (...args) => {
+      repState.apply(window.history, args)
+      stateChangeHandler();
+    };
+    // this.viewer.state.changed.add(stateChangeHandler);
 
     this.chatWindow.input.addEventListener('keyup', (e) => {
       if (e.code === 'Enter' && this.ws) {
@@ -266,6 +287,29 @@ export class Network {
     }
   }
 
+  diff(a: string, b: string) {
+    let arr = a.split('');
+    let brr = b.split('');
+    let crr = [];
+    let Arr = (a.length >= b.length) ? arr : brr;
+    let Brr = (a.length === Arr.length) ? brr : arr;
+
+    for (var i = 0; i < Brr.length; i++) {
+      if (Arr[i] !== Brr[i]) {
+        crr.push(Arr[i]);
+      }
+    }
+    if (i < Arr.length) {
+      crr = [...crr, ...Arr.splice(i)];
+    }
+    return crr.join('');
+  }
+
+  filter(state: any) {
+    const filter = this.settings.syncables;
+    return {...state, ...filter};
+  }
+
   connect() {
     if (this.settings.host !== '') {
       this.netButton.classList.add('neuroglancer-net-status-pending');
@@ -274,6 +318,9 @@ export class Network {
       const id = this.settings.user.id;
 
       ws.addEventListener('open', () => {
+        if (this.settings.user.id === -1) {
+          delete this.settings.user.id;
+        }
         ws.send(JSON.stringify({method: 'init', user: this.settings.user}));
       });
 
@@ -288,8 +335,13 @@ export class Network {
           // state negotiation
           if (data.user.id !== id) {
             // ignore own state change
-            this.viewer.state.restoreState(data.state);
+            const safeState = this.filter(data.state);
+            this.lastLocalStateString =
+                JSON.stringify(this.viewer.state.toJSON());  // JSON.stringify(this.stateFromUrl());
+            this.lastRemoteStateString = JSON.stringify(safeState);
+            this.viewer.state.restoreState(safeState);
           }
+        } else if (data.heartbeat) {
         } else {
           this.chatWindow.viewport.textContent += `\n${data.message || data.server}`;
           if (data.server && data.user) {
