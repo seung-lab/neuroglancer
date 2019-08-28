@@ -83,6 +83,7 @@ class NetworkConfiguration extends Overlay {
     modal.appendChild(header);
 
     const connectBtn = document.createElement('button');
+    connectBtn.id = 'net-connect-button';
     connectBtn.innerHTML = 'Connect';
     connectBtn.addEventListener('click', () => {
       const host = <HTMLInputElement>document.getElementById('net-hostaddr');
@@ -238,8 +239,9 @@ export class Network {
         // Do not send state if it was from remote
         const state = this.viewer.state.toJSON();  // this.stateFromUrl();
         const stateString = JSON.stringify(state);
-        if (stateString !== net.lastRemoteStateString /*&& stateString !== net.lastLocalStateString*/ &&
-            stateString !== net.lastSentStateString) {
+        if (stateString !==
+                net.lastRemoteStateString /*&& stateString !== net.lastLocalStateString*/
+            && stateString !== net.lastSentStateString) {
           // console.log(this.diff(stateString, net.lastRemoteStateString || ''));
           net.lastSentStateString = stateString;
           net.ws.send(JSON.stringify({method: 'state', state}));
@@ -259,11 +261,17 @@ export class Network {
         let method;
         if (message.length && message[0] === '\\') {
           message = message.split('');
-          method = message.splice(0, message.indexOf(' '));
-          message.shift();
+          const cmdend = message.indexOf(' ');
+          if (cmdend > -1) {
+            method = message.splice(0, message.indexOf(' '));
+            message.shift();
+            message = message.join('');
+          } else {
+            method = message;
+            message = '';
+          }
           method.shift();
           method = method.join('');
-          message = message.join('');
         }
         this.ws.send(JSON.stringify({message, method}));
         input.value = '';
@@ -316,8 +324,23 @@ export class Network {
       this.ws = new WebSocket(this.settings.host);
       const ws = this.ws;
       const id = this.settings.user.id;
+      const connectBtn = <HTMLInputElement>document.getElementById('net-connect-button');
+      if (connectBtn) {
+        connectBtn.disabled = true;
+      }
+
+      ws.addEventListener('close', () => {
+        const status = this.netButton.classList;
+        status.remove('neuroglancer-net-status-connected');
+        if (connectBtn) {
+          connectBtn.disabled = false;
+        }
+      });
 
       ws.addEventListener('open', () => {
+        const status = this.netButton.classList;
+        status.remove('neuroglancer-net-status-pending');
+        status.add('neuroglancer-net-status-connected');
         if (this.settings.user.id === -1) {
           delete this.settings.user.id;
         }
@@ -325,11 +348,6 @@ export class Network {
       });
 
       ws.addEventListener('message', (pack) => {
-        const status = this.netButton.classList;
-        if (status.contains('neuroglancer-net-status-pending')) {
-          status.remove('neuroglancer-net-status-pending');
-          status.add('neuroglancer-net-status-connected');
-        }
         const data = JSON.parse(pack.data);
         if (data.state) {
           // state negotiation
