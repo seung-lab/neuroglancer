@@ -362,6 +362,7 @@ export class Network {
         } else if (data.heartbeat) {
         } else {
           this.chatWindow.viewport.textContent += `\n${data.message || data.server}`;
+          this.chatWindow.viewport.scrollTop = this.chatWindow.viewport.scrollHeight;
           if (data.server && data.user) {
             this.settings.user = data.user;
             localStorage.setItem('wbsUser', JSON.stringify(this.settings.user));
