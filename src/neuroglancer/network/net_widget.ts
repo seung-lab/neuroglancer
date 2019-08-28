@@ -210,7 +210,7 @@ class NetworkChatWidget extends RefCounted {
 
 export class Network {
   settings: NetworkPrefs = {
-    host: 'ws://seungissues-wbsimp-test3.herokuapp.com/',
+    host: 'wss://seungissues-wbsimp-test3.herokuapp.com/',
     user: JSON.parse(localStorage.getItem('wbsUser') || '{"id": -1, "chan": 0}'),
     syncables: {}
   };
@@ -249,7 +249,7 @@ export class Network {
       }
     };
     window.history.replaceState = (...args) => {
-      repState.apply(window.history, args)
+      repState.apply(window.history, args);
       stateChangeHandler();
     };
     // this.viewer.state.changed.add(stateChangeHandler);
