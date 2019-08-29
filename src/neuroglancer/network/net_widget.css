@@ -13,6 +13,23 @@
     background-color: #2196F3;
     color: #fff;
 }
+.neuroglancer-net-chatHeader .neuroglancer-icon-button{
+    float: left;
+}
+
+.neuroglancer-net-input {
+    width: 75%
+}
+
+.neuroglancer-net-channel {
+    width: 20%
+}
+
+.neuroglancer-net-chatHeader .neuroglancer-icon-button.empty-button{
+    float: none;
+    cursor: unset;
+}
+
 
 .neuroglancer-net-status-connected {
     background-color: #2196F3

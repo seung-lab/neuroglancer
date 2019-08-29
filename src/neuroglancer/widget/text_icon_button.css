@@ -29,6 +29,11 @@
   font-weight: 900;
 }
 
+
+.neuroglancer-icon-button.empty-button:hover {
+  background-color: unset;
+}
+
 .neuroglancer-icon-button:hover {
   background-color: #db4437;
 }
