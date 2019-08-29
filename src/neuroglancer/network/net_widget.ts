@@ -10,7 +10,7 @@ require('./net_widget.css');
 
 interface User {
   id: number;
-  chan: number;
+  chan: Object;
   name?: string;
 }
 /*interface ItemConfig {
@@ -31,16 +31,24 @@ class NetworkConfiguration extends Overlay {
     super();
     let {content} = this;
 
-    const labelWrap = (label: string, element?: (HTMLElement|string)[]) => {
+    const labelWrap = (label: string, element?: (HTMLElement|string)[], id?: string, ret?: boolean) => {
       const labelElement = document.createElement('label');
+      if (id) {
+        labelElement.id = id;
+      }
 
       labelElement.textContent = label;
       if (element) {
         element.map(e => labelElement.append(e));
       }
-      modal.appendChild(labelElement);
-      modal.appendChild(br());
-      modal.appendChild(br());
+      if (ret) {
+        return labelElement;
+      } else {
+        modal.appendChild(labelElement);
+        modal.appendChild(br());
+        modal.appendChild(br());
+        return;
+      }
     };
 
     const simpleInput = (label: string, id: string, element?: (HTMLElement|string)[]) => {
@@ -49,6 +57,14 @@ class NetworkConfiguration extends Overlay {
       textbox.id = id;
       textbox.type = 'text';
       labelWrap(label, [' ', textbox, ...(element ? element : [])]);
+    };
+
+    const simpleInputReal = (label: string, id: string, element?: (HTMLElement|string)[]) => {
+      const textbox = document.createElement('input');
+
+      textbox.id = id;
+      textbox.type = 'text';
+      return <HTMLLabelElement> labelWrap(label, [' ', textbox, ...(element ? element : [])], void(0), true);
     };
 
     /*const simpleItem =
@@ -98,8 +114,18 @@ class NetworkConfiguration extends Overlay {
     modal.appendChild(applyBtn);
     modal.appendChild(br());
     modal.appendChild(br());
-    simpleInput('Channel ID', 'net-cid');
     simpleInput('Nickname', 'net-nick');
+    const newChannel = document.createElement('button');
+    //Function to create new row of channel with - button except for the first one
+    newChannel.id = 'net-addchannel-button';
+    newChannel.innerHTML = '+';
+    newChannel.addEventListener('click', () => {
+      const host = <HTMLInputElement>document.getElementById('net-hostaddr');
+      net.settings.host = host.value;
+      net.connect();
+    });
+    const channelArr = [];
+    labelWrap('Channels', [br(), simpleInputReal('', 'net-cid-0')]);
 
     // let issueTypeConfig = {type: 'checkbox', className: 'form_type'};
     labelWrap('Sync Settings', [
