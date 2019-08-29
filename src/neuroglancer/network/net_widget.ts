@@ -115,6 +115,12 @@ class NetworkConfiguration extends Overlay {
     modal.appendChild(br());
     modal.appendChild(br());
     simpleInput('Nickname', 'net-nick');
+    const addChan = () => {
+      const textbox = document.createElement('input');
+      textbox.classList.add('net-cid');
+      textbox.type = 'text';
+      return textbox;
+    };
     const newChannel = document.createElement('button');
     //Function to create new row of channel with - button except for the first one
     newChannel.id = 'net-addchannel-button';
@@ -125,6 +131,7 @@ class NetworkConfiguration extends Overlay {
       net.connect();
     });
     const channelArr = [];
+    //loop channel add
     labelWrap('Channels', [br(), simpleInputReal('', 'net-cid-0')]);
 
     // let issueTypeConfig = {type: 'checkbox', className: 'form_type'};
