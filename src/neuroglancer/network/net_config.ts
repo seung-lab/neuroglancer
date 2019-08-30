@@ -44,6 +44,7 @@ export class NetworkConfiguration extends NetworkOverlay {
         (<HTMLInputElement>chanFields.firstChild).dataset['prev'] = cid;
         chanFields.appendChild(br());
         chanArr = [...chanArr, chanFields];
+        iter++;
       }
       const chanGroup = labelWrap('Channels', chanArr, {id: 'net-channels-group'});
       const newChannel = document.createElement('button');
@@ -89,15 +90,17 @@ export class NetworkConfiguration extends NetworkOverlay {
           remove.innerHTML = '-';
           remove.classList.add('net-remchannel-button');
           remove.addEventListener('click', () => {
-            const target = <HTMLInputElement>document.getElementById(id);
-            const key = target.dataset['prev']!;
-            if (key) {
-              this.net.channel(key, false);
-              delete this.net.settings.user.chan[key];
-            }
-            const chanGroup = <HTMLInputElement> document.getElementById('net-channels-group');
-            const container = target.parentElement!;
-            chanGroup.removeChild(container);
+              if (this.net.ws) {
+                const target = <HTMLInputElement>document.getElementById(id);
+                const key = target.dataset['prev']!;
+                if (key) {
+                  this.net.channel(key, false);
+                  delete this.net.settings.user.chan[key];
+                }
+                const chanGroup = <HTMLInputElement> document.getElementById('net-channels-group');
+                const container = target.parentElement!;
+                chanGroup.removeChild(container);
+              }
           });
           return remove;
         }

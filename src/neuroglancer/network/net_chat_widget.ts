@@ -22,10 +22,7 @@ export class NetworkChatWidget extends RefCounted {
       viewport.cols = 40;
       input.className = 'neuroglancer-net-input';
       input.type = 'text';
-      const defopt = document.createElement('option');
-      defopt.value = '0';
-      defopt.innerHTML = '0(All)';
-      activeCh.appendChild(defopt);
+      activeCh.append(...net.genOptions());
       activeCh.className = '.neuroglancer-net-channel';
 
       const config = makeTextIconButton('⚙', 'Net Config');
@@ -101,4 +98,4 @@ export class NetworkChatWidget extends RefCounted {
       super.disposed();
     }
   }
-
+  

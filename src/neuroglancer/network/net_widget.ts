@@ -159,6 +159,17 @@ export class Network {
     return {...state, ...filter};
   }
 
+  genOptions() {
+    const options = [];
+    for (let chan in this.settings.user.chan) {
+      const opt = document.createElement('option');
+      opt.value = chan;
+      opt.innerHTML = (chan === '0') ?  '0(All)' : chan;
+      options.push(opt);
+    }
+    return options;
+  }
+
   connect() {
     if (this.settings.host !== '') {
       this.netButton.classList.add('neuroglancer-net-status-pending');
@@ -196,7 +207,7 @@ export class Network {
             // ignore own state change
             const safeState = this.filter(data.state);
             this.lastLocalStateString =
-                JSON.stringify(this.viewer.state.toJSON());  // JSON.stringify(this.stateFromUrl());
+                JSON.stringify(this.viewer.state.toJSON());
             this.lastRemoteStateString = JSON.stringify(safeState);
             this.viewer.state.restoreState(safeState);
           }
@@ -207,6 +218,10 @@ export class Network {
           if (data.server && data.user) {
             this.settings.user = data.user;
             localStorage.setItem('wbsUser', JSON.stringify(this.settings.user));
+            // rebuild the active channel select
+            this.chatWindow.activeCh.innerHTML = '';
+            this.chatWindow.activeCh.append(...this.genOptions());
+            // TODO: Change to new channel, requires server sending back new channel
           }
         }
       });
