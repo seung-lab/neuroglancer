@@ -1,0 +1,18 @@
+TODO:
+    Implement Sync Settings
+        select sync channel (send/recieve)
+            use getOptions to generate group of channels to select from
+        generate and select filter options
+TODO:
+    Implement Sync Mode
+        many to many
+        one to many (broadcaster)
+TODO:
+    Implement User Roles
+TODO:
+    Channel Ownership
+TODO:
+    persistent accounts/session/channel
+
+TODO:
+    Combine with chunk graph server broadcast

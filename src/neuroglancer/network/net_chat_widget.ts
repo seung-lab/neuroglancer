@@ -98,4 +98,3 @@ export class NetworkChatWidget extends RefCounted {
       super.disposed();
     }
   }
-  
