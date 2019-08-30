@@ -1,6 +1,6 @@
+import {InputConfig, Network} from 'neuroglancer/network/net_widget';
 import {Overlay} from 'neuroglancer/overlay';
-import { Network, InputConfig } from 'neuroglancer/network/net_widget';
-import { Viewer } from 'neuroglancer/viewer';
+import {Viewer} from 'neuroglancer/viewer';
 
 export abstract class NetworkOverlay extends Overlay {
   constructor(public viewer: Viewer, public net: Network) {

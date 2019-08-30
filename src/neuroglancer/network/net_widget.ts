@@ -1,10 +1,10 @@
+import {NetworkChatWidget} from 'neuroglancer/network/net_chat_widget';
+import {NetworkConfiguration} from 'neuroglancer/network/net_config';
+import {NetworkHelp} from 'neuroglancer/network/net_help';
+import {NetworkSearch} from 'neuroglancer/network/net_search';
 import {getAutoConnect} from 'neuroglancer/preferences/user_preferences';
 import {Viewer} from 'neuroglancer/viewer';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
-import { NetworkConfiguration } from 'neuroglancer/network/net_config';
-import { NetworkChatWidget } from 'neuroglancer/network/net_chat_widget';
-import { NetworkHelp } from 'neuroglancer/network/net_help';
-import { NetworkSearch } from 'neuroglancer/network/net_search';
 
 require('./net_widget.css');
 
@@ -164,7 +164,7 @@ export class Network {
     for (let chan in this.settings.user.chan) {
       const opt = document.createElement('option');
       opt.value = chan;
-      opt.innerHTML = (chan === '0') ?  '0(All)' : chan;
+      opt.innerHTML = (chan === '0') ? '0(All)' : chan;
       options.push(opt);
     }
     return options;
@@ -206,8 +206,7 @@ export class Network {
           if (data.user.id !== id) {
             // ignore own state change
             const safeState = this.filter(data.state);
-            this.lastLocalStateString =
-                JSON.stringify(this.viewer.state.toJSON());
+            this.lastLocalStateString = JSON.stringify(this.viewer.state.toJSON());
             this.lastRemoteStateString = JSON.stringify(safeState);
             this.viewer.state.restoreState(safeState);
           }
