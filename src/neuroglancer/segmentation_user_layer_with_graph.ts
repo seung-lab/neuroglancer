@@ -23,6 +23,7 @@ import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/
 import {SegmentationUserLayer, SegmentationUserLayerDisplayState} from 'neuroglancer/segmentation_user_layer';
 import {ChunkedGraphChunkSource, ChunkedGraphLayer, SegmentSelection} from 'neuroglancer/sliceview/chunked_graph/frontend';
 import {VolumeType} from 'neuroglancer/sliceview/volume/base';
+import {MultiscaleVolumeChunkSource} from 'neuroglancer/sliceview/volume/frontend';
 import {SupervoxelRenderLayer} from 'neuroglancer/sliceview/volume/supervoxel_renderlayer';
 import {StatusMessage} from 'neuroglancer/status';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
@@ -70,6 +71,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
     selectedGraphOperationElement = this.registerDisposer(
         new SelectedGraphOperationState(this.graphOperationLayerState.addRef()));
     displayState: SegmentationUserLayerWithGraphDisplayState;
+    private multiscaleVolumeChunkSource: MultiscaleVolumeChunkSource|undefined;
     constructor(...args: any[]) {
       super(...args);
       this.displayState = {
@@ -138,6 +140,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
       if (multiscaleSource !== undefined) {
         ++remaining;
         multiscaleSource.then(volume => {
+          this.multiscaleVolumeChunkSource = volume;
           const {displayState} = this;
           if (!this.wasDisposed) {
             if (volume.getTimestampLimit) {
@@ -173,30 +176,20 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
                 });
               }
             }
-            this.addRenderLayer(new SupervoxelRenderLayer(volume, {
-              ...this.displayState,
-              visibleSegments2D:
+            this.addSupervoxelRenderLayer({
+              supervoxelSet:
                   this.graphOperationLayerState.value!.annotationToSupervoxelA.supervoxelSet,
               supervoxelColor: new TrackableRGB(vec3.fromValues(1.0, 0.0, 0.0)),
-              shatterSegmentEquivalences: new TrackableBoolean(true, true),
-              transform: this.displayState.objectToDataTransform,
-              renderScaleHistogram: this.sliceViewRenderScaleHistogram,
-              renderScaleTarget: this.sliceViewRenderScaleTarget,
               isActive: this.graphOperationLayerState.value!.annotationToSupervoxelA.isActive,
               performingMulticut: this.graphOperationLayerState.value!.performingMulticut
-            }));
-            this.addRenderLayer(new SupervoxelRenderLayer(volume, {
-              ...this.displayState,
-              visibleSegments2D:
+            });
+            this.addSupervoxelRenderLayer({
+              supervoxelSet:
                   this.graphOperationLayerState.value!.annotationToSupervoxelB.supervoxelSet,
               supervoxelColor: new TrackableRGB(vec3.fromValues(0.0, 0.0, 1.0)),
-              shatterSegmentEquivalences: new TrackableBoolean(true, true),
-              transform: this.displayState.objectToDataTransform,
-              renderScaleHistogram: this.sliceViewRenderScaleHistogram,
-              renderScaleTarget: this.sliceViewRenderScaleTarget,
               isActive: this.graphOperationLayerState.value!.annotationToSupervoxelB.isActive,
               performingMulticut: this.graphOperationLayerState.value!.performingMulticut
-            }));
+            });
             if (--remaining === 0) {
               this.isReady = true;
             }
@@ -458,6 +451,32 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
         });
       });
     }
+
+    addSupervoxelRenderLayer({supervoxelSet, supervoxelColor, isActive, performingMulticut}: {
+      supervoxelSet: Uint64Set,
+      supervoxelColor: TrackableRGB,
+      isActive: TrackableBoolean,
+      performingMulticut: TrackableBoolean
+    }): SupervoxelRenderLayer {
+      if (!this.multiscaleVolumeChunkSource) {
+        // Should never happen
+        throw new Error(
+            'Attempt to add Supervoxel Render Layer before segmentation volume retrieved');
+      }
+      const supervoxelRenderLayer = new SupervoxelRenderLayer(this.multiscaleVolumeChunkSource, {
+        ...this.displayState,
+        visibleSegments2D: supervoxelSet,
+        supervoxelColor,
+        shatterSegmentEquivalences: new TrackableBoolean(true, true),
+        transform: this.displayState.objectToDataTransform,
+        renderScaleHistogram: this.sliceViewRenderScaleHistogram,
+        renderScaleTarget: this.sliceViewRenderScaleTarget,
+        isActive,
+        performingMulticut
+      });
+      this.addRenderLayer(supervoxelRenderLayer);
+      return supervoxelRenderLayer;
+    }
   }
   return C;
 }
@@ -467,6 +486,12 @@ export interface SegmentationUserLayerWithGraph extends SegmentationUserLayer {
   chunkedGraphLayer: Borrowed<ChunkedGraphLayer>|undefined;
   graphOperationLayerState: WatchableRefCounted<GraphOperationLayerState>;
   selectedGraphOperationElement: SelectedGraphOperationState;
+  addSupervoxelRenderLayer: ({supervoxelSet, supervoxelColor, isActive, performingMulticut}: {
+    supervoxelSet: Uint64Set,
+    supervoxelColor: TrackableRGB,
+    isActive: TrackableBoolean,
+    performingMulticut: TrackableBoolean
+  }) => SupervoxelRenderLayer;
 }
 
 /**

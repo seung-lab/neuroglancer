@@ -30,10 +30,14 @@ import {VoxelSize} from 'neuroglancer/navigation_state';
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
 import {SegmentationUserLayerWithGraph, SegmentationUserLayerWithGraphDisplayState} from 'neuroglancer/segmentation_user_layer_with_graph';
 import {SegmentSelection} from 'neuroglancer/sliceview/chunked_graph/frontend';
+import {SupervoxelRenderLayer} from 'neuroglancer/sliceview/volume/supervoxel_renderlayer';
 import {StatusMessage} from 'neuroglancer/status';
+import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {WatchableRefCounted, WatchableValue} from 'neuroglancer/trackable_value';
 import {getPositionSummary} from 'neuroglancer/ui/annotations';
 import {Tool} from 'neuroglancer/ui/tool';
+import {Uint64Set} from 'neuroglancer/uint64_set';
+import {TrackableRGB} from 'neuroglancer/util/color';
 import {Borrowed, Owned, RefCounted} from 'neuroglancer/util/disposable';
 import {removeChildren} from 'neuroglancer/util/dom';
 import {mat4, vec3} from 'neuroglancer/util/geom';
@@ -334,28 +338,7 @@ export class GraphOperationLayerView extends Tab {
       confirmButton.textContent = '✔️';
       confirmButton.title = 'Perform Multi-Cut';
       confirmButton.addEventListener('click', () => {
-        const {objectToLocal} = annotationLayer.sourceA;
-        let sources = Array<SegmentSelection>();
-        let sinks = Array<SegmentSelection>();
-        for (const annotation of sourceA) {
-          if (annotation.type === AnnotationType.POINT && annotation.segments &&
-              annotation.segments.length === 2) {
-            const spatialPoint = vec3.transformMat4(vec3.create(), annotation.point, objectToLocal);
-            const segment = annotation.segments[0];
-            const root = annotation.segments[1];
-            sources.push({segmentId: segment, rootId: root, position: spatialPoint});
-          }
-        }
-        for (const annotation of sourceB) {
-          if (annotation.type === AnnotationType.POINT && annotation.segments &&
-              annotation.segments.length === 2) {
-            const spatialPoint = vec3.transformMat4(vec3.create(), annotation.point, objectToLocal);
-            const segment = annotation.segments[0];
-            const root = annotation.segments[1];
-            sinks.push({segmentId: segment, rootId: root, position: spatialPoint});
-          }
-        }
-
+        const {sources, sinks} = this.getSourcesAndSinks();
         this.wrapper.chunkedGraphLayer!.splitSegments(sources, sinks).then((splitRoots) => {
           if (splitRoots.length === 0) {
             StatusMessage.showTemporaryMessage(`No split found.`, 3000);
@@ -396,6 +379,8 @@ export class GraphOperationLayerView extends Tab {
       });
       toolbox.appendChild(cancelButton);
     }
+
+    { toolbox.appendChild(this.createSplitPreviewButton()); }
 
     this.multicutGroup.appendFixedChild(toolbox);
     this.multicutGroup.appendFlexibleChild(this.annotationListContainer);
@@ -613,6 +598,146 @@ export class GraphOperationLayerView extends Tab {
       // Should never happen
       throw new Error('Multicut annotation not of type point');
     }
+  }
+
+  private getSourcesAndSinks() {
+    let sources = Array<SegmentSelection>();
+    let sinks = Array<SegmentSelection>();
+    const {sourceA, sourceB} = this.annotationLayer;
+    const {objectToLocal} = sourceA;
+    for (const annotation of sourceA) {
+      if (annotation.type === AnnotationType.POINT && annotation.segments &&
+          annotation.segments.length === 2) {
+        const spatialPoint = vec3.transformMat4(vec3.create(), annotation.point, objectToLocal);
+        const segment = annotation.segments[0];
+        const root = annotation.segments[1];
+        sources.push({segmentId: segment, rootId: root, position: spatialPoint});
+      }
+    }
+    for (const annotation of sourceB) {
+      if (annotation.type === AnnotationType.POINT && annotation.segments &&
+          annotation.segments.length === 2) {
+        const spatialPoint = vec3.transformMat4(vec3.create(), annotation.point, objectToLocal);
+        const segment = annotation.segments[0];
+        const root = annotation.segments[1];
+        sinks.push({segmentId: segment, rootId: root, position: spatialPoint});
+      }
+    }
+    return {sources, sinks};
+  }
+
+  private createSplitPreviewButton() {
+    const {sourceA, sourceB} = this.annotationLayer;
+    const previewButton = document.createElement('button');
+    previewButton.textContent = '🔮';
+    previewButton.title = 'Split preview';
+    let inPreviewMode = false;
+    let splitPreviewRenderLayers: SupervoxelRenderLayer[] = [];
+    let cachedPreviewConnectedComponents: Uint64Set[] = [];
+    let removeStatusMessages: (() => void)|undefined;
+    const enablePreview = (isSplitIllegal: boolean) => {
+      if (isSplitIllegal) {
+        const illegalSplitWarning = StatusMessage.showMessage(
+            'This split is illegal because it separates either the sources or the sinks. You can view the preview, but the split won\'t be accepted.');
+        const statusMessage = StatusMessage.messageWithAction(
+            'In split preview mode. Exit and return to multicut tool? ', 'Yes', () => {
+              disablePreview();
+              illegalSplitWarning.dispose();
+            });
+        removeStatusMessages = () => {
+          illegalSplitWarning.dispose();
+          statusMessage.dispose();
+        };
+      } else {
+        const statusMessage = StatusMessage.messageWithAction(
+            'In split preview mode. Exit and return to multicut tool? ', 'Yes', disablePreview);
+        removeStatusMessages = () => {
+          statusMessage.dispose();
+        };
+      }
+      // Disable multicut layers while in preview
+      this.wrapper.graphOperationLayerState.value!.performingMulticut.value = false;
+      this.wrapper.graphOperationLayerState.value!.performingMulticut.value = false;
+      // Usually we will only have two groups but occasionally we will have more
+      const supervoxelCCColors: number[][] =
+          [[1, 0, 0], [0, 0, 1], [0.9, 0.9, 0], [1, 140 / 255, 0], [1, 0, 1]];
+      cachedPreviewConnectedComponents.forEach((connectedComponent, i) => {
+        const currentColor = (i >= supervoxelCCColors.length) ?
+            [Math.random(), Math.random(), Math.random()] :
+            supervoxelCCColors[i];
+        splitPreviewRenderLayers.push(this.wrapper.addSupervoxelRenderLayer({
+          supervoxelSet: connectedComponent,
+          supervoxelColor:
+              new TrackableRGB(vec3.fromValues(currentColor[0], currentColor[1], currentColor[2])),
+          isActive: new TrackableBoolean(false, false),
+          performingMulticut: new TrackableBoolean(true, true)
+        }));
+      });
+    };
+    const revertPreviewButton = () => {
+      previewButton.title = 'Split preview';
+      previewButton.style.borderStyle = '';
+      previewButton.style.filter = '';
+      previewButton.style.webkitFilter = '';
+    };
+    const disablePreview = () => {
+      inPreviewMode = false;
+      revertPreviewButton();
+      // Remove preview render layers
+      splitPreviewRenderLayers.forEach(renderLayer => {
+        this.wrapper.removeRenderLayer(renderLayer);
+      });
+      splitPreviewRenderLayers = [];
+      // Exiting preview, renable multicut layers
+      this.wrapper.graphOperationLayerState.value!.performingMulticut.value = true;
+      this.wrapper.graphOperationLayerState.value!.performingMulticut.value = true;
+      if (removeStatusMessages) {
+        removeStatusMessages();
+        removeStatusMessages = undefined;
+      }
+    };
+    let previewPending = false;
+    let cachedPreview = false;
+    let cachedLegality = false;
+    this.registerDisposer(sourceA.changed.add(() => {
+      cachedPreview = false;
+    }));
+    this.registerDisposer(sourceB.changed.add(() => {
+      cachedPreview = false;
+    }));
+    previewButton.addEventListener('click', () => {
+      if (!previewPending) {
+        if (inPreviewMode) {
+          disablePreview();
+        } else {
+          inPreviewMode = true;
+          previewButton.title = 'Turn off split preview';
+          previewButton.style.borderStyle = 'inset';
+          previewButton.style.filter = 'invert(0.15)';
+          previewButton.style.webkitFilter = 'invert(0.15)';
+          if (cachedPreview) {
+            enablePreview(cachedLegality);
+          } else {
+            const {sources, sinks} = this.getSourcesAndSinks();
+            previewPending = true;
+            this.wrapper.chunkedGraphLayer!.splitPreview(sources, sinks)
+                .then(({supervoxelConnectedComponents, isSplitIllegal}) => {
+                  previewPending = false;
+                  // Cache results in case the user wants to toggle looking at preview and multicut
+                  cachedPreview = true;
+                  cachedPreviewConnectedComponents = supervoxelConnectedComponents;
+                  cachedLegality = isSplitIllegal;
+                  enablePreview(isSplitIllegal);
+                })
+                .catch(() => {
+                  revertPreviewButton();
+                  previewPending = false;
+                });
+          }
+        }
+      }
+    });
+    return previewButton;
   }
 }
 
