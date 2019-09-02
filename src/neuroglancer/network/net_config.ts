@@ -64,6 +64,16 @@ export class NetworkConfiguration extends NetworkOverlay {
       ...brp(newChannel), ...brp(syncField)
     ];
     modal.append(...buildArr);
+
+    const oldNgBtn = document.createElement('button');
+    oldNgBtn.id = '?-goBackButton';
+    oldNgBtn.innerHTML = 'Return to Old Neuroglancer';
+    oldNgBtn.addEventListener('click', () => {
+      if (!window.location.host.includes('localhost')) {
+        window.location.host = 'www.neuromancer-seung-import.appspot.com';
+      }
+    });
+    modal.append(oldNgBtn);
   }
 
   apply() {
