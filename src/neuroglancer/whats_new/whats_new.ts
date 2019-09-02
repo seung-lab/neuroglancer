@@ -43,7 +43,7 @@ export const findWhatsNew = async (viewer: Viewer) => {
     localStorage.removeItem('WNCommits');
   }
 
-  if (GHCommits.length > WNCommits.length) {
+  if (GHCommits.length > WNCommits.length || 1) {
     let description = generateWhatsNew(GHCommits);
     localStorage.setItem('WNCommits', JSON.stringify(GHCommits));
     return new WhatsNewDialog(viewer, description);
@@ -65,7 +65,7 @@ export class WhatsNewDialog extends Overlay {
     content.appendChild(modal);
 
     let header = document.createElement('h3');
-    header.textContent = `What's New`;
+    header.textContent = '⚠️E X P E R I M E N T A L⚠️';// `What's New`;
     modal.appendChild(header);
 
     let body = document.createElement('p');
@@ -73,7 +73,7 @@ export class WhatsNewDialog extends Overlay {
     modal.appendChild(body);
 
     let okBtn = document.createElement('button');
-    okBtn.textContent = 'Ok';
+    okBtn.textContent = `I understand.`;// 'Ok';
     okBtn.onclick = () => this.dispose();
 
     modal.appendChild(okBtn);
