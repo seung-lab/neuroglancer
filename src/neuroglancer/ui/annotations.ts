@@ -21,7 +21,7 @@
 import './annotations.css';
 
 import debounce from 'lodash/debounce';
-import {Annotation, AnnotationReference, AnnotationSource, AnnotationTag, AnnotationType, AxisAlignedBoundingBox, Ellipsoid, getAnnotationTypeHandler, Line} from 'neuroglancer/annotation';
+import {Annotation, AnnotationReference, AnnotationSource, AnnotationTag, AnnotationType, AxisAlignedBoundingBox, Ellipsoid, getAnnotationTypeHandler, Line, LineStrip, Point} from 'neuroglancer/annotation';
 import {AnnotationLayer, AnnotationLayerState, PerspectiveViewAnnotationLayer, SliceViewAnnotationLayer} from 'neuroglancer/annotation/frontend';
 import {DataFetchSliceViewRenderLayer, MultiscaleAnnotationSource} from 'neuroglancer/annotation/frontend_source';
 import {setAnnotationHoverStateFromMouseState} from 'neuroglancer/annotation/selection';
@@ -462,13 +462,34 @@ export class AnnotationLayerView extends Tab {
       });
       toolbox.appendChild(ellipsoidButton);
 
+      // Collections //
+      const collectionButton = document.createElement('button');
+      collectionButton.textContent = getAnnotationTypeHandler(AnnotationType.COLLECTION).icon;
+      collectionButton.title = 'Group together multiple annotations';
+      collectionButton.addEventListener('click', () => {});
+      toolbox.appendChild(collectionButton);
+
       const multipointButton = document.createElement('button');
       multipointButton.textContent = getAnnotationTypeHandler(AnnotationType.LINE_STRIP).icon;
       multipointButton.title = 'Annotate multiple connected points';
-      multipointButton.addEventListener('click', () => {
-        // this.layer.tool.value = new PlaceSphereTool(this.layer, {});
-      });
+      multipointButton.addEventListener(
+          'click',
+          () => {
+              // this.layer.tool.value = new (this.layer, {});
+          });
       toolbox.appendChild(multipointButton);
+
+      const undoMultiButton = document.createElement('button');
+      undoMultiButton.textContent = '↩';
+      undoMultiButton.title = 'Undo previous step';
+      const confirmMultiButton = document.createElement('button');
+      confirmMultiButton.textContent = '✔️';
+      confirmMultiButton.title = 'Confirm multi step annotation';
+      const abortMultiButton = document.createElement('button');
+      abortMultiButton.textContent = '❌';
+      abortMultiButton.title = 'Abort multi step annotation';
+
+      toolbox.append(undoMultiButton, confirmMultiButton, abortMultiButton);
     }
 
     {
@@ -1163,7 +1184,6 @@ abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
   }
 }
 
-
 abstract class PlaceTwoCornerAnnotationTool extends TwoStepAnnotationTool {
   annotationType: AnnotationType.LINE|AnnotationType.AXIS_ALIGNED_BOUNDING_BOX;
 
@@ -1184,6 +1204,82 @@ abstract class PlaceTwoCornerAnnotationTool extends TwoStepAnnotationTool {
       annotationLayer: AnnotationLayerState): Annotation {
     const point = getMousePositionInAnnotationCoordinates(mouseState, annotationLayer);
     return {...oldAnnotation, pointB: point};
+  }
+}
+
+abstract class MultiStepAnnotationTool extends TwoStepAnnotationTool {
+  annotationType: AnnotationType.LINE_STRIP;
+
+  createChildPointAnnotation(mouseState: MouseSelectionState, annotationLayer: AnnotationLayerState): Point {
+    return <Point>{
+      id: '',
+      description: '',
+      segments: getSelectedAssocatedSegment(annotationLayer),
+      point:
+          vec3.transformMat4(vec3.create(), mouseState.position, annotationLayer.globalToObject),
+      type: AnnotationType.POINT,
+    };
+  }
+
+  getInitialAnnotation(mouseState: MouseSelectionState, annotationLayer: AnnotationLayerState):
+      Annotation {
+    const point = this.createChildPointAnnotation(mouseState, annotationLayer);
+    return <LineStrip>{
+      id: '',
+      type: this.annotationType,
+      description: '',
+      entries: [point],
+      looped: false
+    };
+  }
+
+  getUpdatedAnnotation(
+      oldAnnotation: LineStrip, mouseState: MouseSelectionState,
+      annotationLayer: AnnotationLayerState): Annotation {
+    const point = this.createChildPointAnnotation(mouseState, annotationLayer);
+
+    oldAnnotation.entries.push(point);
+    return oldAnnotation;
+  }
+
+  trigger(mouseState: MouseSelectionState) {
+    const {annotationLayer} = this;
+    if (annotationLayer === undefined) {
+      // Not yet ready.
+      return;
+    }
+    if (mouseState.active) {
+      const updatePointB = () => {
+        const state = this.inProgressAnnotation!;
+        const reference = state.reference;
+        const newAnnotation =
+            this.getUpdatedAnnotation(reference.value!, mouseState, annotationLayer);
+        state.annotationLayer.source.update(reference, newAnnotation);
+        this.layer.selectedAnnotation.value = {id: reference.id};
+      };
+
+      if (this.inProgressAnnotation === undefined) {
+        const reference = annotationLayer.source.add(
+            this.getInitialAnnotation(mouseState, annotationLayer), /*commit=*/false);
+        this.layer.selectedAnnotation.value = {id: reference.id};
+        const mouseDisposer = mouseState.changed.add(updatePointB);
+        const disposer = () => {
+          mouseDisposer();
+          reference.dispose();
+        };
+        this.inProgressAnnotation = {
+          annotationLayer,
+          reference,
+          disposer,
+        };
+      } else {
+        updatePointB();
+        this.inProgressAnnotation.annotationLayer.source.commit(
+            this.inProgressAnnotation.reference);
+        this.inProgressAnnotation.disposer();
+        this.inProgressAnnotation = undefined;
+      }
+    }
   }
 }
 

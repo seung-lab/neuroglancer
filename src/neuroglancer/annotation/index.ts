@@ -72,15 +72,6 @@ export interface AnnotationBase {
   segments?: Uint64[];
 }
 
-export interface Collection extends AnnotationBase {
-  entries: Annotation[];
-  type: AnnotationType.COLLECTION | AnnotationType.LINE_STRIP;
-}
-export interface LineStrip extends Collection {
-  entries: Point[];
-  looped: boolean;
-  type: AnnotationType.LINE_STRIP;
-}
 export interface Line extends AnnotationBase {
   pointA: vec3;
   pointB: vec3;
@@ -103,6 +94,15 @@ export interface Ellipsoid extends AnnotationBase {
   type: AnnotationType.ELLIPSOID;
 }
 
+export interface Collection extends AnnotationBase {
+  entries: Annotation[];
+  type: AnnotationType.COLLECTION | AnnotationType.LINE_STRIP;
+}
+export interface LineStrip extends Collection {
+  entries: Point[];
+  looped: boolean;
+  type: AnnotationType.LINE_STRIP;
+}
 export type Annotation = Line|Point|AxisAlignedBoundingBox|Ellipsoid|Collection|LineStrip;
 
 export interface AnnotationTag {
@@ -239,7 +239,7 @@ typeHandlers.set(AnnotationType.ELLIPSOID, {
 });
 
 typeHandlers.set(AnnotationType.COLLECTION, {
-  icon: '*',
+  icon: '⚄',
   description: 'Collection',
   toJSON: (annotation: Collection) => {
     return {

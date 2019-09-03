@@ -15,7 +15,7 @@
  */
 
 /**
- * @file Support for rendering line annotations.
+ * @file Support for rendering line strip annotations.
  */
 
 import {AnnotationType, Line, /*LineStrip,*/ Point, /* Collection*/} from 'neuroglancer/annotation';
@@ -150,19 +150,20 @@ function snapPositionToEndpoint(
   vec3.transformMat4(position, point, objectToData);
 }
 
-registerAnnotationTypeRenderHandler(AnnotationType.COLLECTION, {
+registerAnnotationTypeRenderHandler(AnnotationType.LINE_STRIP, {
   bytes: 6 * 4,
   serializer: (buffer: ArrayBuffer, offset: number, numAnnotations: number) => {
     const coordinates = new Float32Array(buffer, offset, numAnnotations * 6);
     return (annotation: Line, index: number) => {
-      const {pointA, pointB} = annotation;
+      console.log(annotation);
+      const {entries} = {entries: []};// = annotation;
       const coordinateOffset = index * 6;
-      coordinates[coordinateOffset] = pointA[0];
-      coordinates[coordinateOffset + 1] = pointA[1];
-      coordinates[coordinateOffset + 2] = pointA[2];
-      coordinates[coordinateOffset + 3] = pointB[0];
-      coordinates[coordinateOffset + 4] = pointB[1];
-      coordinates[coordinateOffset + 5] = pointB[2];
+      entries.forEach((e: Point, i) => {
+        const {point} = e;
+        coordinates[coordinateOffset + i] = point[0];
+        coordinates[coordinateOffset + i + 1] = point[1];
+        coordinates[coordinateOffset + i + 2] = point[2];
+      });
     };
   },
   sliceViewRenderHelper: RenderHelper,
