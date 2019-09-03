@@ -21,33 +21,33 @@
 import './annotations.css';
 
 import debounce from 'lodash/debounce';
-import {Annotation, AnnotationReference, AnnotationSource, AnnotationTag, AnnotationType, AxisAlignedBoundingBox, Ellipsoid, getAnnotationTypeHandler, Line, LineStrip, Point} from 'neuroglancer/annotation';
-import {AnnotationLayer, AnnotationLayerState, PerspectiveViewAnnotationLayer, SliceViewAnnotationLayer} from 'neuroglancer/annotation/frontend';
-import {DataFetchSliceViewRenderLayer, MultiscaleAnnotationSource} from 'neuroglancer/annotation/frontend_source';
-import {setAnnotationHoverStateFromMouseState} from 'neuroglancer/annotation/selection';
-import {MouseSelectionState, UserLayer} from 'neuroglancer/layer';
-import {VoxelSize} from 'neuroglancer/navigation_state';
-import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
-import {TrackableAlphaValue, trackableAlphaValue} from 'neuroglancer/trackable_alpha';
-import {TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
-import {registerNested, TrackableValueInterface, WatchableRefCounted, WatchableValue} from 'neuroglancer/trackable_value';
-import {registerTool, Tool} from 'neuroglancer/ui/tool';
-import {TrackableRGB} from 'neuroglancer/util/color';
-import {Borrowed, Owned, RefCounted} from 'neuroglancer/util/disposable';
-import {removeChildren, removeFromParent} from 'neuroglancer/util/dom';
-import {mat3, mat3FromMat4, mat4, transformVectorByMat4, vec3} from 'neuroglancer/util/geom';
-import {verifyObject, verifyObjectProperty, verifyOptionalInt, verifyOptionalString, verifyString} from 'neuroglancer/util/json';
-import {NullarySignal} from 'neuroglancer/util/signal';
-import {formatBoundingBoxVolume, formatIntegerBounds, formatIntegerPoint, formatLength} from 'neuroglancer/util/spatial_units';
-import {Uint64} from 'neuroglancer/util/uint64';
-import {WatchableVisibilityPriority} from 'neuroglancer/visibility_priority/frontend';
-import {makeCloseButton} from 'neuroglancer/widget/close_button';
-import {ColorWidget} from 'neuroglancer/widget/color';
-import {MinimizableGroupWidget} from 'neuroglancer/widget/minimizable_group';
-import {RangeWidget} from 'neuroglancer/widget/range';
-import {StackView, Tab} from 'neuroglancer/widget/tab_view';
-import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
-import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
+import { Annotation, AnnotationReference, AnnotationSource, AnnotationTag, AnnotationType, AxisAlignedBoundingBox, Ellipsoid, getAnnotationTypeHandler, Line, LineStrip, Point } from 'neuroglancer/annotation';
+import { AnnotationLayer, AnnotationLayerState, PerspectiveViewAnnotationLayer, SliceViewAnnotationLayer } from 'neuroglancer/annotation/frontend';
+import { DataFetchSliceViewRenderLayer, MultiscaleAnnotationSource } from 'neuroglancer/annotation/frontend_source';
+import { setAnnotationHoverStateFromMouseState } from 'neuroglancer/annotation/selection';
+import { MouseSelectionState, UserLayer } from 'neuroglancer/layer';
+import { VoxelSize } from 'neuroglancer/navigation_state';
+import { SegmentationDisplayState } from 'neuroglancer/segmentation_display_state/frontend';
+import { TrackableAlphaValue, trackableAlphaValue } from 'neuroglancer/trackable_alpha';
+import { TrackableBooleanCheckbox } from 'neuroglancer/trackable_boolean';
+import { registerNested, TrackableValueInterface, WatchableRefCounted, WatchableValue } from 'neuroglancer/trackable_value';
+import { registerTool, Tool } from 'neuroglancer/ui/tool';
+import { TrackableRGB } from 'neuroglancer/util/color';
+import { Borrowed, Owned, RefCounted } from 'neuroglancer/util/disposable';
+import { removeChildren, removeFromParent } from 'neuroglancer/util/dom';
+import { mat3, mat3FromMat4, mat4, transformVectorByMat4, vec3 } from 'neuroglancer/util/geom';
+import { verifyObject, verifyObjectProperty, verifyOptionalInt, verifyOptionalString, verifyString } from 'neuroglancer/util/json';
+import { NullarySignal } from 'neuroglancer/util/signal';
+import { formatBoundingBoxVolume, formatIntegerBounds, formatIntegerPoint, formatLength } from 'neuroglancer/util/spatial_units';
+import { Uint64 } from 'neuroglancer/util/uint64';
+import { WatchableVisibilityPriority } from 'neuroglancer/visibility_priority/frontend';
+import { makeCloseButton } from 'neuroglancer/widget/close_button';
+import { ColorWidget } from 'neuroglancer/widget/color';
+import { MinimizableGroupWidget } from 'neuroglancer/widget/minimizable_group';
+import { RangeWidget } from 'neuroglancer/widget/range';
+import { StackView, Tab } from 'neuroglancer/widget/tab_view';
+import { makeTextIconButton } from 'neuroglancer/widget/text_icon_button';
+import { Uint64EntryWidget } from 'neuroglancer/widget/uint64_entry_widget';
 
 const Papa = require('papaparse');
 
@@ -59,14 +59,14 @@ type AnnotationIdAndPart = {
 export class AnnotationSegmentListWidget extends RefCounted {
   element = document.createElement('div');
   private addSegmentWidget = this.registerDisposer(new Uint64EntryWidget());
-  private segmentationState: SegmentationDisplayState|undefined|null;
+  private segmentationState: SegmentationDisplayState | undefined | null;
   private debouncedUpdateView = debounce(() => this.updateView(), 0);
   constructor(
-      public reference: Borrowed<AnnotationReference>,
-      public annotationLayer: AnnotationLayerState) {
+    public reference: Borrowed<AnnotationReference>,
+    public annotationLayer: AnnotationLayerState) {
     super();
     this.element.className = 'neuroglancer-annotation-segment-list';
-    const {addSegmentWidget} = this;
+    const { addSegmentWidget } = this;
     addSegmentWidget.element.style.display = 'inline-block';
     addSegmentWidget.element.title = 'Associate segments';
     this.element.appendChild(addSegmentWidget.element);
@@ -79,7 +79,7 @@ export class AnnotationSegmentListWidget extends RefCounted {
       }
       const existingSegments = annotation.segments;
       const segments = [...(existingSegments || []), ...values];
-      const newAnnotation = {...annotation, segments};
+      const newAnnotation = { ...annotation, segments };
       this.annotationLayer.source.update(this.reference, newAnnotation);
       this.annotationLayer.source.commit(this.reference);
     }));
@@ -88,7 +88,7 @@ export class AnnotationSegmentListWidget extends RefCounted {
   }
 
   private unregisterSegmentationState() {
-    const {segmentationState} = this;
+    const { segmentationState } = this;
     if (segmentationState != null) {
       segmentationState.rootSegments.changed.remove(this.debouncedUpdateView);
       segmentationState.segmentColorHash.changed.remove(this.debouncedUpdateView);
@@ -109,7 +109,7 @@ export class AnnotationSegmentListWidget extends RefCounted {
       }
     }
 
-    const {element} = this;
+    const { element } = this;
     // Remove existing segment representations.
     for (let child = this.addSegmentWidget.element.nextElementSibling; child !== null;) {
       const next = child.nextElementSibling;
@@ -136,7 +136,7 @@ export class AnnotationSegmentListWidget extends RefCounted {
       }
       const child = document.createElement('span');
       child.title =
-          'Double click to toggle segment visibility, control+click to disassociate segment from annotation.';
+        'Double click to toggle segment visibility, control+click to disassociate segment from annotation.';
       child.className = 'neuroglancer-annotation-segment-item';
       child.textContent = segment.toString();
       if (segmentationState !== undefined) {
@@ -164,7 +164,7 @@ export class AnnotationSegmentListWidget extends RefCounted {
         }
         const existingSegments = annotation.segments || [];
         const newSegments = existingSegments.filter(x => !Uint64.equal(segment, x));
-        const newAnnotation = {...annotation, segments: newSegments ? newSegments : undefined};
+        const newAnnotation = { ...annotation, segments: newSegments ? newSegments : undefined };
         this.annotationLayer.source.update(this.reference, newAnnotation);
         this.annotationLayer.source.commit(this.reference);
       });
@@ -174,12 +174,12 @@ export class AnnotationSegmentListWidget extends RefCounted {
 }
 
 export class SelectedAnnotationState extends RefCounted implements
-    TrackableValueInterface<AnnotationIdAndPart|undefined> {
-  private value_: AnnotationIdAndPart|undefined;
+  TrackableValueInterface<AnnotationIdAndPart | undefined> {
+  private value_: AnnotationIdAndPart | undefined;
   changed = new NullarySignal();
 
-  private annotationLayer: AnnotationLayerState|undefined;
-  private reference_: Owned<AnnotationReference>|undefined;
+  private annotationLayer: AnnotationLayerState | undefined;
+  private reference_: Owned<AnnotationReference> | undefined;
 
   get reference() {
     return this.reference_;
@@ -202,7 +202,7 @@ export class SelectedAnnotationState extends RefCounted implements
     return this.annotationLayer && this.value_;
   }
 
-  set value(value: AnnotationIdAndPart|undefined) {
+  set value(value: AnnotationIdAndPart | undefined) {
     this.value_ = value;
     const reference = this.reference_;
     if (reference !== undefined) {
@@ -255,7 +255,7 @@ export class SelectedAnnotationState extends RefCounted implements
 
   private validate = (() => {
     const updatedLayer = this.updateAnnotationLayer();
-    const {annotationLayer} = this;
+    const { annotationLayer } = this;
     if (annotationLayer !== undefined) {
       const value = this.value_;
       if (value !== undefined) {
@@ -300,7 +300,7 @@ export class SelectedAnnotationState extends RefCounted implements
       return;
     }
     if (typeof x === 'string') {
-      this.value = {'id': x, 'partIndex': 0};
+      this.value = { 'id': x, 'partIndex': 0 };
       return;
     }
     verifyObject(x);
@@ -314,8 +314,8 @@ export class SelectedAnnotationState extends RefCounted implements
 const tempVec3 = vec3.create();
 
 function makePointLink(
-    point: vec3, transform: mat4, voxelSize: VoxelSize,
-    setSpatialCoordinates?: (point: vec3) => void) {
+  point: vec3, transform: mat4, voxelSize: VoxelSize,
+  setSpatialCoordinates?: (point: vec3) => void) {
   const spatialPoint = vec3.transformMat4(vec3.create(), point, transform);
   const positionText = formatIntegerPoint(voxelSize.voxelFromSpatial(tempVec3, spatialPoint));
   if (setSpatialCoordinates !== undefined) {
@@ -333,10 +333,10 @@ function makePointLink(
 }
 
 export function getPositionSummary(
-    element: HTMLElement, annotation: Annotation, transform: mat4, voxelSize: VoxelSize,
-    setSpatialCoordinates?: (point: vec3) => void) {
+  element: HTMLElement, annotation: Annotation, transform: mat4, voxelSize: VoxelSize,
+  setSpatialCoordinates?: (point: vec3) => void) {
   const makePointLinkWithTransform = (point: vec3) =>
-      makePointLink(point, transform, voxelSize, setSpatialCoordinates);
+    makePointLink(point, transform, voxelSize, setSpatialCoordinates);
 
   switch (annotation.type) {
     case AnnotationType.AXIS_ALIGNED_BOUNDING_BOX:
@@ -379,34 +379,34 @@ export class AnnotationLayerView extends Tab {
   private annotationListContainer = document.createElement('ul');
   private annotationListElements = new Map<string, HTMLElement>();
   private annotationTags = new Map<number, HTMLOptionElement>();
-  private previousSelectedId: string|undefined;
-  private previousHoverId: string|undefined;
+  private previousSelectedId: string | undefined;
+  private previousHoverId: string | undefined;
   private updated = false;
   groupVisualization = this.registerDisposer(new MinimizableGroupWidget('Visualization'));
   groupAnnotations = this.registerDisposer(new MinimizableGroupWidget('Annotations'));
 
   constructor(
-      public layer: Borrowed<UserLayerWithAnnotations>,
-      public state: Owned<SelectedAnnotationState>,
-      public annotationLayer: Owned<AnnotationLayerState>, public voxelSize: Owned<VoxelSize>,
-      public setSpatialCoordinates: (point: vec3) => void) {
+    public layer: Borrowed<UserLayerWithAnnotations>,
+    public state: Owned<SelectedAnnotationState>,
+    public annotationLayer: Owned<AnnotationLayerState>, public voxelSize: Owned<VoxelSize>,
+    public setSpatialCoordinates: (point: vec3) => void) {
     super();
     this.element.classList.add('neuroglancer-annotation-layer-view');
     this.annotationListContainer.classList.add('neuroglancer-annotation-list');
     this.registerDisposer(state);
     this.registerDisposer(voxelSize);
     this.registerDisposer(annotationLayer);
-    const {source} = annotationLayer;
+    const { source } = annotationLayer;
     const updateView = () => {
       this.updated = false;
       this.updateView();
     };
     this.registerDisposer(
-        source.childAdded.add((annotation) => this.addAnnotationElement(annotation)));
+      source.childAdded.add((annotation) => this.addAnnotationElement(annotation)));
     this.registerDisposer(
-        source.childUpdated.add((annotation) => this.updateAnnotationElement(annotation)));
+      source.childUpdated.add((annotation) => this.updateAnnotationElement(annotation)));
     this.registerDisposer(
-        source.childDeleted.add((annotationId) => this.deleteAnnotationElement(annotationId)));
+      source.childDeleted.add((annotationId) => this.deleteAnnotationElement(annotationId)));
     this.registerDisposer(this.visibility.changed.add(() => this.updateView()));
     this.registerDisposer(annotationLayer.transform.changed.add(updateView));
     this.updateView();
@@ -437,7 +437,7 @@ export class AnnotationLayerView extends Tab {
 
       const boundingBoxButton = document.createElement('button');
       boundingBoxButton.textContent =
-          getAnnotationTypeHandler(AnnotationType.AXIS_ALIGNED_BOUNDING_BOX).icon;
+        getAnnotationTypeHandler(AnnotationType.AXIS_ALIGNED_BOUNDING_BOX).icon;
       boundingBoxButton.title = 'Annotate bounding box';
       boundingBoxButton.addEventListener('click', () => {
         this.layer.tool.value = new PlaceBoundingBoxTool(this.layer, {});
@@ -466,17 +466,17 @@ export class AnnotationLayerView extends Tab {
       const collectionButton = document.createElement('button');
       collectionButton.textContent = getAnnotationTypeHandler(AnnotationType.COLLECTION).icon;
       collectionButton.title = 'Group together multiple annotations';
-      collectionButton.addEventListener('click', () => {});
+      collectionButton.addEventListener('click', () => { });
       toolbox.appendChild(collectionButton);
 
       const multipointButton = document.createElement('button');
       multipointButton.textContent = getAnnotationTypeHandler(AnnotationType.LINE_STRIP).icon;
       multipointButton.title = 'Annotate multiple connected points';
       multipointButton.addEventListener(
-          'click',
-          () => {
-              // this.layer.tool.value = new (this.layer, {});
-          });
+        'click',
+        () => {
+          // this.layer.tool.value = new (this.layer, {});
+        });
       toolbox.appendChild(multipointButton);
 
       const undoMultiButton = document.createElement('button');
@@ -494,7 +494,7 @@ export class AnnotationLayerView extends Tab {
 
     {
       const jumpingShowsSegmentationCheckbox = this.registerDisposer(
-          new TrackableBooleanCheckbox(this.annotationLayer.annotationJumpingDisplaysSegmentation));
+        new TrackableBooleanCheckbox(this.annotationLayer.annotationJumpingDisplaysSegmentation));
       const label = document.createElement('label');
       label.textContent = 'Bracket shortcuts show segmentation: ';
       label.appendChild(jumpingShowsSegmentationCheckbox.element);
@@ -564,17 +564,17 @@ export class AnnotationLayerView extends Tab {
       this.annotationLayer.hoverState.value = undefined;
     });
     this.registerDisposer(
-        this.annotationLayer.hoverState.changed.add(() => this.updateHoverView()));
+      this.annotationLayer.hoverState.changed.add(() => this.updateHoverView()));
     this.registerDisposer(this.state.changed.add(() => this.updateSelectionView()));
   }
 
   private updateSelectionView() {
     const selectedValue = this.state.value;
-    let newSelectedId: string|undefined;
+    let newSelectedId: string | undefined;
     if (selectedValue !== undefined) {
       newSelectedId = selectedValue.id;
     }
-    const {previousSelectedId} = this;
+    const { previousSelectedId } = this;
     if (newSelectedId === previousSelectedId) {
       return;
     }
@@ -598,11 +598,11 @@ export class AnnotationLayerView extends Tab {
 
   private updateHoverView() {
     const selectedValue = this.annotationLayer.hoverState.value;
-    let newHoverId: string|undefined;
+    let newHoverId: string | undefined;
     if (selectedValue !== undefined) {
       newHoverId = selectedValue.id;
     }
-    const {previousHoverId} = this;
+    const { previousHoverId } = this;
     if (newHoverId === previousHoverId) {
       return;
     }
@@ -622,24 +622,24 @@ export class AnnotationLayerView extends Tab {
   }
 
   private addAnnotationElementHelper(annotation: Annotation) {
-    const {annotationLayer, annotationListContainer, annotationListElements} = this;
-    const {objectToGlobal} = annotationLayer;
+    const { annotationLayer, annotationListContainer, annotationListElements } = this;
+    const { objectToGlobal } = annotationLayer;
 
     const element = this.makeAnnotationListElement(annotation, objectToGlobal);
     annotationListContainer.appendChild(element);
     annotationListElements.set(annotation.id, element);
 
     element.addEventListener('mouseenter', () => {
-      this.annotationLayer.hoverState.value = {id: annotation.id, partIndex: 0};
+      this.annotationLayer.hoverState.value = { id: annotation.id, partIndex: 0 };
     });
     element.addEventListener('click', () => {
-      this.state.value = {id: annotation.id, partIndex: 0};
+      this.state.value = { id: annotation.id, partIndex: 0 };
     });
 
     element.addEventListener('mouseup', (event: MouseEvent) => {
       if (event.button === 2) {
         this.setSpatialCoordinates(
-            getCenterPosition(annotation, this.annotationLayer.objectToGlobal));
+          getCenterPosition(annotation, this.annotationLayer.objectToGlobal));
       }
     });
   }
@@ -651,8 +651,8 @@ export class AnnotationLayerView extends Tab {
     if (this.updated) {
       return;
     }
-    const {annotationLayer, annotationListContainer, annotationListElements} = this;
-    const {source} = annotationLayer;
+    const { annotationLayer, annotationListContainer, annotationListElements } = this;
+    const { source } = annotationLayer;
     removeChildren(annotationListContainer);
     annotationListElements.clear();
     for (const annotation of source) {
@@ -729,7 +729,7 @@ export class AnnotationLayerView extends Tab {
   }
 
   private createAnnotationDescriptionElement(
-      annotationElement: HTMLElement, annotation: Annotation) {
+    annotationElement: HTMLElement, annotation: Annotation) {
     const annotationText = this.layer.getAnnotationText(annotation);
     if (annotationText) {
       const description = document.createElement('div');
@@ -742,7 +742,7 @@ export class AnnotationLayerView extends Tab {
   private filterAnnotationsByTag(tagId: number) {
     for (const [annotationId, annotationElement] of this.annotationListElements) {
       if (tagId === 0 ||
-          this.annotationLayer.source.isAnnotationTaggedWithTag(annotationId, tagId)) {
+        this.annotationLayer.source.isAnnotationTaggedWithTag(annotationId, tagId)) {
         annotationElement.style.display = 'list-item';
       } else {
         annotationElement.style.display = 'none';
@@ -770,19 +770,19 @@ export class AnnotationLayerView extends Tab {
         case AnnotationType.AXIS_ALIGNED_BOUNDING_BOX:
         case AnnotationType.LINE:
           coordinate1String =
-              pointToCoordinateText(annotation.pointA, this.annotationLayer.objectToGlobal);
+            pointToCoordinateText(annotation.pointA, this.annotationLayer.objectToGlobal);
           coordinate2String =
-              pointToCoordinateText(annotation.pointB, this.annotationLayer.objectToGlobal);
+            pointToCoordinateText(annotation.pointB, this.annotationLayer.objectToGlobal);
           break;
         case AnnotationType.POINT:
           coordinate1String =
-              pointToCoordinateText(annotation.point, this.annotationLayer.objectToGlobal);
+            pointToCoordinateText(annotation.point, this.annotationLayer.objectToGlobal);
           break;
         case AnnotationType.ELLIPSOID:
           coordinate1String =
-              pointToCoordinateText(annotation.center, this.annotationLayer.objectToGlobal);
+            pointToCoordinateText(annotation.center, this.annotationLayer.objectToGlobal);
           const transformedRadii = transformVectorByMat4(
-              tempVec3, annotation.radii, this.annotationLayer.objectToGlobal);
+            tempVec3, annotation.radii, this.annotationLayer.objectToGlobal);
           this.voxelSize.voxelFromSpatial(transformedRadii, transformedRadii);
           ellipsoidDimensions = formatIntegerBounds(transformedRadii);
           break;
@@ -828,8 +828,8 @@ export class AnnotationLayerView extends Tab {
       }
       csvData.push(annotationRow);
     }
-    const csvString = Papa.unparse({'fields': columnHeaders, 'data': csvData});
-    const blob = new Blob([csvString], {type: 'text/csv;charset=utf-8;'});
+    const csvString = Papa.unparse({ 'fields': columnHeaders, 'data': csvData });
+    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
@@ -843,11 +843,11 @@ export class AnnotationLayerView extends Tab {
 export class AnnotationDetailsTab extends Tab {
   private valid = false;
   private mouseEntered = false;
-  private hoverState: WatchableValue<{id: string, partIndex?: number}|undefined>|undefined;
-  private segmentListWidget: AnnotationSegmentListWidget|undefined;
+  private hoverState: WatchableValue<{ id: string, partIndex?: number } | undefined> | undefined;
+  private segmentListWidget: AnnotationSegmentListWidget | undefined;
   constructor(
-      public state: Owned<SelectedAnnotationState>, public voxelSize: VoxelSize,
-      public setSpatialCoordinates: (point: vec3) => void) {
+    public state: Owned<SelectedAnnotationState>, public voxelSize: VoxelSize,
+    public setSpatialCoordinates: (point: vec3) => void) {
     super();
     this.element.classList.add('neuroglancer-annotation-details');
     this.registerDisposer(state);
@@ -886,10 +886,10 @@ export class AnnotationDetailsTab extends Tab {
     if (this.valid) {
       return;
     }
-    const {element} = this;
+    const { element } = this;
     removeChildren(element);
     this.valid = true;
-    const {reference} = this.state;
+    const { reference } = this.state;
     if (reference === undefined) {
       return;
     }
@@ -904,8 +904,8 @@ export class AnnotationDetailsTab extends Tab {
       this.hoverState.value = value;
     }
 
-    const {objectToGlobal} = annotationLayer;
-    const {voxelSize} = this;
+    const { objectToGlobal } = annotationLayer;
+    const { voxelSize } = this;
 
     const handler = getAnnotationTypeHandler(annotation.type);
 
@@ -953,12 +953,12 @@ export class AnnotationDetailsTab extends Tab {
       const volume = document.createElement('div');
       volume.className = 'neuroglancer-annotation-details-volume';
       volume.textContent =
-          formatBoundingBoxVolume(annotation.pointA, annotation.pointB, objectToGlobal);
+        formatBoundingBoxVolume(annotation.pointA, annotation.pointB, objectToGlobal);
       element.appendChild(volume);
 
       // FIXME: only do this if it is axis aligned
       const spatialOffset = transformVectorByMat4(
-          tempVec3, vec3.subtract(tempVec3, annotation.pointA, annotation.pointB), objectToGlobal);
+        tempVec3, vec3.subtract(tempVec3, annotation.pointA, annotation.pointB), objectToGlobal);
       const voxelVolume = document.createElement('div');
       voxelVolume.className = 'neuroglancer-annotation-details-volume-in-voxels';
       const voxelOffset = voxelSize.voxelFromSpatial(tempVec3, spatialOffset);
@@ -966,7 +966,7 @@ export class AnnotationDetailsTab extends Tab {
       element.appendChild(voxelVolume);
     } else if (annotation.type === AnnotationType.LINE) {
       const spatialOffset = transformVectorByMat4(
-          tempVec3, vec3.subtract(tempVec3, annotation.pointA, annotation.pointB), objectToGlobal);
+        tempVec3, vec3.subtract(tempVec3, annotation.pointA, annotation.pointB), objectToGlobal);
       const length = document.createElement('div');
       length.className = 'neuroglancer-annotation-details-length';
       const spatialLengthText = formatLength(vec3.length(spatialOffset));
@@ -979,7 +979,7 @@ export class AnnotationDetailsTab extends Tab {
       element.appendChild(length);
     }
 
-    let {segmentListWidget} = this;
+    let { segmentListWidget } = this;
     if (segmentListWidget !== undefined) {
       if (segmentListWidget.reference !== reference) {
         segmentListWidget.dispose();
@@ -989,7 +989,7 @@ export class AnnotationDetailsTab extends Tab {
     }
     if (segmentListWidget === undefined) {
       this.segmentListWidget = segmentListWidget =
-          this.registerDisposer(new AnnotationSegmentListWidget(reference, annotationLayer));
+        this.registerDisposer(new AnnotationSegmentListWidget(reference, annotationLayer));
     }
     element.appendChild(segmentListWidget.element);
 
@@ -1003,7 +1003,7 @@ export class AnnotationDetailsTab extends Tab {
     } else {
       description.addEventListener('change', () => {
         const x = description.value;
-        annotationLayer.source.update(reference, {...annotation, description: x ? x : undefined});
+        annotationLayer.source.update(reference, { ...annotation, description: x ? x : undefined });
         annotationLayer.source.commit(reference);
       });
     }
@@ -1013,29 +1013,29 @@ export class AnnotationDetailsTab extends Tab {
 
 export class AnnotationTab extends Tab {
   private stack = this.registerDisposer(
-      new StackView<AnnotationLayerState, AnnotationLayerView>(annotationLayerState => {
-        return new AnnotationLayerView(
-            this.layer, this.state.addRef(), annotationLayerState.addRef(), this.voxelSize.addRef(),
-            this.setSpatialCoordinates);
-      }, this.visibility));
+    new StackView<AnnotationLayerState, AnnotationLayerView>(annotationLayerState => {
+      return new AnnotationLayerView(
+        this.layer, this.state.addRef(), annotationLayerState.addRef(), this.voxelSize.addRef(),
+        this.setSpatialCoordinates);
+    }, this.visibility));
   private detailsTab = this.registerDisposer(
-      new AnnotationDetailsTab(this.state, this.voxelSize.addRef(), this.setSpatialCoordinates));
+    new AnnotationDetailsTab(this.state, this.voxelSize.addRef(), this.setSpatialCoordinates));
   constructor(
-      public layer: Borrowed<UserLayerWithAnnotations>,
-      public state: Owned<SelectedAnnotationState>, public voxelSize: Owned<VoxelSize>,
-      public setSpatialCoordinates: (point: vec3) => void) {
+    public layer: Borrowed<UserLayerWithAnnotations>,
+    public state: Owned<SelectedAnnotationState>, public voxelSize: Owned<VoxelSize>,
+    public setSpatialCoordinates: (point: vec3) => void) {
     super();
     this.registerDisposer(state);
     this.registerDisposer(voxelSize);
-    const {element} = this;
+    const { element } = this;
     element.classList.add('neuroglancer-annotations-tab');
     this.stack.element.classList.add('neuroglancer-annotations-stack');
     element.appendChild(this.stack.element);
     element.appendChild(this.detailsTab.element);
     const updateDetailsVisibility = () => {
       this.detailsTab.visibility.value = this.state.validValue !== undefined && this.visible ?
-          WatchableVisibilityPriority.VISIBLE :
-          WatchableVisibilityPriority.IGNORED;
+        WatchableVisibilityPriority.VISIBLE :
+        WatchableVisibilityPriority.IGNORED;
     };
     this.registerDisposer(this.state.changed.add(updateDetailsVisibility));
     this.registerDisposer(this.visibility.changed.add(updateDetailsVisibility));
@@ -1048,7 +1048,7 @@ export class AnnotationTab extends Tab {
 }
 
 function getSelectedAssocatedSegment(annotationLayer: AnnotationLayerState) {
-  let segments: Uint64[]|undefined;
+  let segments: Uint64[] | undefined;
   const segmentationState = annotationLayer.segmentationState.value;
   if (segmentationState != null) {
     if (segmentationState.segmentSelectionState.hasSelectedSegment) {
@@ -1060,7 +1060,7 @@ function getSelectedAssocatedSegment(annotationLayer: AnnotationLayerState) {
 
 abstract class PlaceAnnotationTool extends Tool {
   group: string;
-  annotationDescription: string|undefined;
+  annotationDescription: string | undefined;
   constructor(public layer: UserLayerWithAnnotations, options: any) {
     super();
     if (layer.annotationLayerState === undefined) {
@@ -1076,6 +1076,7 @@ abstract class PlaceAnnotationTool extends Tool {
 
 const ANNOTATE_POINT_TOOL_ID = 'annotatePoint';
 const ANNOTATE_LINE_TOOL_ID = 'annotateLine';
+const ANNOTATE_LINE_STRIP_TOOL_ID = 'annotateLineStrip';
 const ANNOTATE_BOUNDING_BOX_TOOL_ID = 'annotateBoundingBox';
 const ANNOTATE_ELLIPSOID_TOOL_ID = 'annotateSphere';
 
@@ -1085,7 +1086,7 @@ export class PlacePointTool extends PlaceAnnotationTool {
   }
 
   trigger(mouseState: MouseSelectionState) {
-    const {annotationLayer} = this;
+    const { annotationLayer } = this;
     if (annotationLayer === undefined) {
       // Not yet ready.
       return;
@@ -1096,11 +1097,11 @@ export class PlacePointTool extends PlaceAnnotationTool {
         description: '',
         segments: getSelectedAssocatedSegment(annotationLayer),
         point:
-            vec3.transformMat4(vec3.create(), mouseState.position, annotationLayer.globalToObject),
+          vec3.transformMat4(vec3.create(), mouseState.position, annotationLayer.globalToObject),
         type: AnnotationType.POINT,
       };
       const reference = annotationLayer.source.add(annotation, /*commit=*/true);
-      this.layer.selectedAnnotation.value = {id: reference.id};
+      this.layer.selectedAnnotation.value = { id: reference.id };
       reference.dispose();
     }
   }
@@ -1115,23 +1116,23 @@ export class PlacePointTool extends PlaceAnnotationTool {
 }
 
 function getMousePositionInAnnotationCoordinates(
-    mouseState: MouseSelectionState, annotationLayer: AnnotationLayerState) {
+  mouseState: MouseSelectionState, annotationLayer: AnnotationLayerState) {
   return vec3.transformMat4(vec3.create(), mouseState.position, annotationLayer.globalToObject);
 }
 
 abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
   inProgressAnnotation:
-      {annotationLayer: AnnotationLayerState, reference: AnnotationReference, disposer: () => void}|
-      undefined;
+    { annotationLayer: AnnotationLayerState, reference: AnnotationReference, disposer: () => void } |
+    undefined;
 
   abstract getInitialAnnotation(
-      mouseState: MouseSelectionState, annotationLayer: AnnotationLayerState): Annotation;
+    mouseState: MouseSelectionState, annotationLayer: AnnotationLayerState): Annotation;
   abstract getUpdatedAnnotation(
-      oldAnnotation: Annotation, mouseState: MouseSelectionState,
-      annotationLayer: AnnotationLayerState): Annotation;
+    oldAnnotation: Annotation, mouseState: MouseSelectionState,
+    annotationLayer: AnnotationLayerState): Annotation;
 
   trigger(mouseState: MouseSelectionState) {
-    const {annotationLayer} = this;
+    const { annotationLayer } = this;
     if (annotationLayer === undefined) {
       // Not yet ready.
       return;
@@ -1141,15 +1142,15 @@ abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
         const state = this.inProgressAnnotation!;
         const reference = state.reference;
         const newAnnotation =
-            this.getUpdatedAnnotation(reference.value!, mouseState, annotationLayer);
+          this.getUpdatedAnnotation(reference.value!, mouseState, annotationLayer);
         state.annotationLayer.source.update(reference, newAnnotation);
-        this.layer.selectedAnnotation.value = {id: reference.id};
+        this.layer.selectedAnnotation.value = { id: reference.id };
       };
 
       if (this.inProgressAnnotation === undefined) {
         const reference = annotationLayer.source.add(
-            this.getInitialAnnotation(mouseState, annotationLayer), /*commit=*/false);
-        this.layer.selectedAnnotation.value = {id: reference.id};
+          this.getInitialAnnotation(mouseState, annotationLayer), /*commit=*/false);
+        this.layer.selectedAnnotation.value = { id: reference.id };
         const mouseDisposer = mouseState.changed.add(updatePointB);
         const disposer = () => {
           mouseDisposer();
@@ -1163,7 +1164,7 @@ abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
       } else {
         updatePointB();
         this.inProgressAnnotation.annotationLayer.source.commit(
-            this.inProgressAnnotation.reference);
+          this.inProgressAnnotation.reference);
         this.inProgressAnnotation.disposer();
         this.inProgressAnnotation = undefined;
       }
@@ -1185,12 +1186,12 @@ abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
 }
 
 abstract class PlaceTwoCornerAnnotationTool extends TwoStepAnnotationTool {
-  annotationType: AnnotationType.LINE|AnnotationType.AXIS_ALIGNED_BOUNDING_BOX;
+  annotationType: AnnotationType.LINE | AnnotationType.AXIS_ALIGNED_BOUNDING_BOX;
 
   getInitialAnnotation(mouseState: MouseSelectionState, annotationLayer: AnnotationLayerState):
-      Annotation {
+    Annotation {
     const point = getMousePositionInAnnotationCoordinates(mouseState, annotationLayer);
-    return <AxisAlignedBoundingBox|Line>{
+    return <AxisAlignedBoundingBox | Line>{
       id: '',
       type: this.annotationType,
       description: '',
@@ -1200,10 +1201,10 @@ abstract class PlaceTwoCornerAnnotationTool extends TwoStepAnnotationTool {
   }
 
   getUpdatedAnnotation(
-      oldAnnotation: AxisAlignedBoundingBox|Line, mouseState: MouseSelectionState,
-      annotationLayer: AnnotationLayerState): Annotation {
+    oldAnnotation: AxisAlignedBoundingBox | Line, mouseState: MouseSelectionState,
+    annotationLayer: AnnotationLayerState): Annotation {
     const point = getMousePositionInAnnotationCoordinates(mouseState, annotationLayer);
-    return {...oldAnnotation, pointB: point};
+    return { ...oldAnnotation, pointB: point };
   }
 }
 
@@ -1216,13 +1217,13 @@ abstract class MultiStepAnnotationTool extends TwoStepAnnotationTool {
       description: '',
       segments: getSelectedAssocatedSegment(annotationLayer),
       point:
-          vec3.transformMat4(vec3.create(), mouseState.position, annotationLayer.globalToObject),
+        vec3.transformMat4(vec3.create(), mouseState.position, annotationLayer.globalToObject),
       type: AnnotationType.POINT,
     };
   }
 
   getInitialAnnotation(mouseState: MouseSelectionState, annotationLayer: AnnotationLayerState):
-      Annotation {
+    Annotation {
     const point = this.createChildPointAnnotation(mouseState, annotationLayer);
     return <LineStrip>{
       id: '',
@@ -1234,8 +1235,8 @@ abstract class MultiStepAnnotationTool extends TwoStepAnnotationTool {
   }
 
   getUpdatedAnnotation(
-      oldAnnotation: LineStrip, mouseState: MouseSelectionState,
-      annotationLayer: AnnotationLayerState): Annotation {
+    oldAnnotation: LineStrip, mouseState: MouseSelectionState,
+    annotationLayer: AnnotationLayerState): Annotation {
     const point = this.createChildPointAnnotation(mouseState, annotationLayer);
 
     oldAnnotation.entries.push(point);
@@ -1243,7 +1244,7 @@ abstract class MultiStepAnnotationTool extends TwoStepAnnotationTool {
   }
 
   trigger(mouseState: MouseSelectionState) {
-    const {annotationLayer} = this;
+    const { annotationLayer } = this;
     if (annotationLayer === undefined) {
       // Not yet ready.
       return;
@@ -1253,15 +1254,15 @@ abstract class MultiStepAnnotationTool extends TwoStepAnnotationTool {
         const state = this.inProgressAnnotation!;
         const reference = state.reference;
         const newAnnotation =
-            this.getUpdatedAnnotation(reference.value!, mouseState, annotationLayer);
+          this.getUpdatedAnnotation(<LineStrip>reference.value!, mouseState, annotationLayer);
         state.annotationLayer.source.update(reference, newAnnotation);
-        this.layer.selectedAnnotation.value = {id: reference.id};
+        this.layer.selectedAnnotation.value = { id: reference.id };
       };
 
       if (this.inProgressAnnotation === undefined) {
         const reference = annotationLayer.source.add(
-            this.getInitialAnnotation(mouseState, annotationLayer), /*commit=*/false);
-        this.layer.selectedAnnotation.value = {id: reference.id};
+          this.getInitialAnnotation(mouseState, annotationLayer), /*commit=*/false);
+        this.layer.selectedAnnotation.value = { id: reference.id };
         const mouseDisposer = mouseState.changed.add(updatePointB);
         const disposer = () => {
           mouseDisposer();
@@ -1274,10 +1275,10 @@ abstract class MultiStepAnnotationTool extends TwoStepAnnotationTool {
         };
       } else {
         updatePointB();
-        this.inProgressAnnotation.annotationLayer.source.commit(
+        /*this.inProgressAnnotation.annotationLayer.source.commit(
             this.inProgressAnnotation.reference);
         this.inProgressAnnotation.disposer();
-        this.inProgressAnnotation = undefined;
+        this.inProgressAnnotation = undefined;*/
       }
     }
   }
@@ -1300,15 +1301,15 @@ export class PlaceLineTool extends PlaceTwoCornerAnnotationTool {
   }
 
   getInitialAnnotation(mouseState: MouseSelectionState, annotationLayer: AnnotationLayerState):
-      Annotation {
+    Annotation {
     const result = super.getInitialAnnotation(mouseState, annotationLayer);
     result.segments = getSelectedAssocatedSegment(annotationLayer);
     return result;
   }
 
   getUpdatedAnnotation(
-      oldAnnotation: Line|AxisAlignedBoundingBox, mouseState: MouseSelectionState,
-      annotationLayer: AnnotationLayerState) {
+    oldAnnotation: Line | AxisAlignedBoundingBox, mouseState: MouseSelectionState,
+    annotationLayer: AnnotationLayerState) {
     const result = super.getUpdatedAnnotation(oldAnnotation, mouseState, annotationLayer);
     const segments = result.segments;
     if (segments !== undefined && segments.length > 0) {
@@ -1330,7 +1331,7 @@ PlaceLineTool.prototype.annotationType = AnnotationType.LINE;
 
 class PlaceSphereTool extends TwoStepAnnotationTool {
   getInitialAnnotation(mouseState: MouseSelectionState, annotationLayer: AnnotationLayerState):
-      Annotation {
+    Annotation {
     const point = getMousePositionInAnnotationCoordinates(mouseState, annotationLayer);
 
     return <Ellipsoid>{
@@ -1344,10 +1345,10 @@ class PlaceSphereTool extends TwoStepAnnotationTool {
   }
 
   getUpdatedAnnotation(
-      oldAnnotation: Ellipsoid, mouseState: MouseSelectionState,
-      annotationLayer: AnnotationLayerState) {
+    oldAnnotation: Ellipsoid, mouseState: MouseSelectionState,
+    annotationLayer: AnnotationLayerState) {
     const spatialCenter =
-        vec3.transformMat4(vec3.create(), oldAnnotation.center, annotationLayer.objectToGlobal);
+      vec3.transformMat4(vec3.create(), oldAnnotation.center, annotationLayer.objectToGlobal);
 
     const radius = vec3.distance(spatialCenter, mouseState.position);
 
@@ -1356,7 +1357,7 @@ class PlaceSphereTool extends TwoStepAnnotationTool {
 
 
     const objectToGlobalLinearTransform =
-        mat3FromMat4(mat3.create(), annotationLayer.objectToGlobal);
+      mat3FromMat4(mat3.create(), annotationLayer.objectToGlobal);
     mat3.multiply(tempMatrix, tempMatrix, objectToGlobalLinearTransform);
     mat3.transpose(objectToGlobalLinearTransform, objectToGlobalLinearTransform);
     mat3.multiply(tempMatrix, objectToGlobalLinearTransform, tempMatrix);
@@ -1364,7 +1365,7 @@ class PlaceSphereTool extends TwoStepAnnotationTool {
     return <Ellipsoid>{
       ...oldAnnotation,
       radii: vec3.fromValues(
-          1 / Math.sqrt(tempMatrix[0]), 1 / Math.sqrt(tempMatrix[4]), 1 / Math.sqrt(tempMatrix[8])),
+        1 / Math.sqrt(tempMatrix[0]), 1 / Math.sqrt(tempMatrix[4]), 1 / Math.sqrt(tempMatrix[8])),
     };
   }
   get description() {
@@ -1376,18 +1377,55 @@ class PlaceSphereTool extends TwoStepAnnotationTool {
   }
 }
 
+export class PlaceLineStripTool extends MultiStepAnnotationTool {
+  get description() {
+    return `annotate line`;
+  }
+
+  getInitialAnnotation(mouseState: MouseSelectionState, annotationLayer: AnnotationLayerState):
+    Annotation {
+    const result = super.getInitialAnnotation(mouseState, annotationLayer);
+    result.segments = getSelectedAssocatedSegment(annotationLayer);
+    return result;
+  }
+
+  getUpdatedAnnotation(
+    oldAnnotation: LineStrip, mouseState: MouseSelectionState,
+    annotationLayer: AnnotationLayerState) {
+    const result = super.getUpdatedAnnotation(oldAnnotation, mouseState, annotationLayer);
+    const segments = result.segments;
+    if (segments !== undefined && segments.length > 0) {
+      segments.length = 1;
+    }
+    let newSegments = getSelectedAssocatedSegment(annotationLayer);
+    if (newSegments && segments) {
+      newSegments = newSegments.filter(x => segments.findIndex(y => Uint64.equal(x, y)) === -1);
+    }
+    result.segments = [...(segments || []), ...(newSegments || [])] || undefined;
+    return result;
+  }
+
+  toJSON() {
+    return ANNOTATE_LINE_STRIP_TOOL_ID;
+  }
+}
+PlaceLineStripTool.prototype.annotationType = AnnotationType.LINE_STRIP;
+
 registerTool(
-    ANNOTATE_POINT_TOOL_ID,
-    (layer, options) => new PlacePointTool(<UserLayerWithAnnotations>layer, options));
+  ANNOTATE_POINT_TOOL_ID,
+  (layer, options) => new PlacePointTool(<UserLayerWithAnnotations>layer, options));
 registerTool(
-    ANNOTATE_BOUNDING_BOX_TOOL_ID,
-    (layer, options) => new PlaceBoundingBoxTool(<UserLayerWithAnnotations>layer, options));
+  ANNOTATE_BOUNDING_BOX_TOOL_ID,
+  (layer, options) => new PlaceBoundingBoxTool(<UserLayerWithAnnotations>layer, options));
 registerTool(
-    ANNOTATE_LINE_TOOL_ID,
-    (layer, options) => new PlaceLineTool(<UserLayerWithAnnotations>layer, options));
+  ANNOTATE_LINE_TOOL_ID,
+  (layer, options) => new PlaceLineTool(<UserLayerWithAnnotations>layer, options));
 registerTool(
-    ANNOTATE_ELLIPSOID_TOOL_ID,
-    (layer, options) => new PlaceSphereTool(<UserLayerWithAnnotations>layer, options));
+  ANNOTATE_ELLIPSOID_TOOL_ID,
+  (layer, options) => new PlaceSphereTool(<UserLayerWithAnnotations>layer, options));
+registerTool(
+  ANNOTATE_LINE_STRIP_TOOL_ID,
+  (layer, options) => new PlaceLineStripTool(<UserLayerWithAnnotations>layer, options));
 
 export interface UserLayerWithAnnotations extends UserLayer {
   annotationLayerState: WatchableRefCounted<AnnotationLayerState>;
@@ -1399,18 +1437,18 @@ export interface UserLayerWithAnnotations extends UserLayer {
 }
 
 export function getAnnotationRenderOptions(userLayer: UserLayerWithAnnotations) {
-  return {color: userLayer.annotationColor, fillOpacity: userLayer.annotationFillOpacity};
+  return { color: userLayer.annotationColor, fillOpacity: userLayer.annotationFillOpacity };
 }
 
 const SELECTED_ANNOTATION_JSON_KEY = 'selectedAnnotation';
 const ANNOTATION_COLOR_JSON_KEY = 'annotationColor';
 const ANNOTATION_FILL_OPACITY_JSON_KEY = 'annotationFillOpacity';
-export function UserLayerWithAnnotationsMixin<TBase extends {new (...args: any[]): UserLayer}>(
-    Base: TBase) {
+export function UserLayerWithAnnotationsMixin<TBase extends { new(...args: any[]): UserLayer }>(
+  Base: TBase) {
   abstract class C extends Base implements UserLayerWithAnnotations {
     annotationLayerState = this.registerDisposer(new WatchableRefCounted<AnnotationLayerState>());
     selectedAnnotation =
-        this.registerDisposer(new SelectedAnnotationState(this.annotationLayerState.addRef()));
+      this.registerDisposer(new SelectedAnnotationState(this.annotationLayerState.addRef()));
     annotationColor = new TrackableRGB(vec3.fromValues(1, 1, 0));
     annotationFillOpacity = trackableAlphaValue(0.0);
     constructor(...args: any[]) {
@@ -1422,8 +1460,8 @@ export function UserLayerWithAnnotationsMixin<TBase extends {new (...args: any[]
         label: 'Annotations',
         order: 10,
         getter: () => new AnnotationTab(
-            this, this.selectedAnnotation.addRef(), this.manager.voxelSize.addRef(),
-            point => this.manager.setSpatialCoordinates(point))
+          this, this.selectedAnnotation.addRef(), this.manager.voxelSize.addRef(),
+          point => this.manager.setSpatialCoordinates(point))
       });
       this.annotationLayerState.changed.add(() => {
         const state = this.annotationLayerState.value;
@@ -1434,7 +1472,7 @@ export function UserLayerWithAnnotationsMixin<TBase extends {new (...args: any[]
           this.addRenderLayer(new PerspectiveViewAnnotationLayer(annotationLayer.addRef()));
           if (annotationLayer.source instanceof MultiscaleAnnotationSource) {
             const dataFetchLayer = this.registerDisposer(
-                new DataFetchSliceViewRenderLayer(annotationLayer.source.addRef()));
+              new DataFetchSliceViewRenderLayer(annotationLayer.source.addRef()));
             this.registerDisposer(registerNested(state.filterBySegmentation, (context, value) => {
               if (!value) {
                 this.addRenderLayer(dataFetchLayer.addRef());
