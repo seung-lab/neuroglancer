@@ -18,7 +18,7 @@
  * @file Support for rendering line strip annotations.
  */
 
-import {AnnotationType, Line, /*LineStrip,*/ Point, /* Collection*/} from 'neuroglancer/annotation';
+import {AnnotationType, LineStrip, Point, /* Collection*/} from 'neuroglancer/annotation';
 import {AnnotationRenderContext, AnnotationRenderHelper, registerAnnotationTypeRenderHandler} from 'neuroglancer/annotation/type_handler';
 import {tile2dArray} from 'neuroglancer/util/array';
 import {mat4, projectPointToLineSegment, vec3} from 'neuroglancer/util/geom';
@@ -153,10 +153,11 @@ function snapPositionToEndpoint(
 registerAnnotationTypeRenderHandler(AnnotationType.LINE_STRIP, {
   bytes: 6 * 4,
   serializer: (buffer: ArrayBuffer, offset: number, numAnnotations: number) => {
-    const coordinates = new Float32Array(buffer, offset, numAnnotations * 6);
-    return (annotation: Line, index: number) => {
+    return () => { buffer; offset; numAnnotations; };
+    /*const coordinates = new Float32Array(buffer, offset, numAnnotations * 6);
+    return (annotation: LineStrip, index: number) => {
       console.log(annotation);
-      const {entries} = {entries: []};// = annotation;
+      const {entries} = annotation;
       const coordinateOffset = index * 6;
       entries.forEach((e: Point, i) => {
         const {point} = e;
@@ -164,7 +165,7 @@ registerAnnotationTypeRenderHandler(AnnotationType.LINE_STRIP, {
         coordinates[coordinateOffset + i + 1] = point[1];
         coordinates[coordinateOffset + i + 2] = point[2];
       });
-    };
+    };*/
   },
   sliceViewRenderHelper: RenderHelper,
   perspectiveViewRenderHelper: RenderHelper,
@@ -181,12 +182,12 @@ registerAnnotationTypeRenderHandler(AnnotationType.LINE_STRIP, {
     let repPoint = vec3.create();
     // if the full object is selected just pick the first point as representative
     if (partIndex === FULL_OBJECT_PICK_OFFSET) {
-      vec3.transformMat4(repPoint, ann.pointA, objectToData);
+      vec3.transformMat4(repPoint, ann.entries[0].point, objectToData);
     } else {
       if ((partIndex - ENDPOINTS_PICK_OFFSET) === 0) {
-        vec3.transformMat4(repPoint, ann.pointA, objectToData);
+        vec3.transformMat4(repPoint, ann.entries[0].point, objectToData);
       } else {
-        vec3.transformMat4(repPoint, ann.pointB, objectToData);
+        vec3.transformMat4(repPoint, ann.entries[0].point, objectToData);
       }
     }
     return repPoint;
@@ -196,17 +197,17 @@ registerAnnotationTypeRenderHandler(AnnotationType.LINE_STRIP, {
     let baseLine = {...oldAnnotation};
     switch (partIndex) {
       case FULL_OBJECT_PICK_OFFSET:
-        let delta = vec3.sub(vec3.create(), oldAnnotation.pointB, oldAnnotation.pointA);
-        baseLine.pointA = newPt;
-        baseLine.pointB = vec3.add(vec3.create(), newPt, delta);
+        let delta = vec3.sub(vec3.create(), oldAnnotation.entries[0].point, oldAnnotation.entries[1].point);
+        baseLine.entries[0].point = newPt;
+        baseLine.entries[1].point = vec3.add(vec3.create(), newPt, delta);
         break;
       case FULL_OBJECT_PICK_OFFSET + 1:
-        baseLine.pointA = newPt;
-        baseLine.pointB = oldAnnotation.pointB;
+        baseLine.entries[0].point = newPt;
+        baseLine.entries[1].point = oldAnnotation.entries[1].point;
         break;
       case FULL_OBJECT_PICK_OFFSET + 2:
-        baseLine.pointA = oldAnnotation.pointA;
-        baseLine.pointB = newPt;
+        baseLine.entries[0].point = oldAnnotation.entries[0].point;
+        baseLine.entries[1].point = newPt;
     }
     return baseLine;
   }

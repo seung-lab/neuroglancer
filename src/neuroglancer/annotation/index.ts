@@ -96,10 +96,13 @@ export interface Ellipsoid extends AnnotationBase {
 
 export interface Collection extends AnnotationBase {
   entries: Annotation[];
+  last: Annotation;
   type: AnnotationType.COLLECTION | AnnotationType.LINE_STRIP;
 }
+
 export interface LineStrip extends Collection {
   entries: Point[];
+  last: Point;
   looped: boolean;
   type: AnnotationType.LINE_STRIP;
 }
