@@ -466,6 +466,7 @@ export class AnnotationLayerView extends Tab {
       const collectionButton = document.createElement('button');
       collectionButton.textContent = getAnnotationTypeHandler(AnnotationType.COLLECTION).icon;
       collectionButton.title = 'Group together multiple annotations';
+      collectionButton.disabled = true;
       collectionButton.addEventListener('click', () => {});
       toolbox.appendChild(collectionButton);
 

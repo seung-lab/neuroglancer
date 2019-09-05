@@ -153,19 +153,19 @@ function snapPositionToEndpoint(
 registerAnnotationTypeRenderHandler(AnnotationType.LINE_STRIP, {
   bytes: 6 * 4,
   serializer: (buffer: ArrayBuffer, offset: number, numAnnotations: number) => {
-    return () => { buffer; offset; numAnnotations; };
-    /*const coordinates = new Float32Array(buffer, offset, numAnnotations * 6);
+    // const coordinates = new Float32Array(buffer, offset, numAnnotations * 6);
     return (annotation: LineStrip, index: number) => {
-      console.log(annotation);
+      // console.log(annotation);
       const {entries} = annotation;
       const coordinateOffset = index * 6;
       entries.forEach((e: Point, i) => {
         const {point} = e;
-        coordinates[coordinateOffset + i] = point[0];
+        buffer; offset; numAnnotations; coordinateOffset; point; i;
+        /*coordinates[coordinateOffset + i] = point[0];
         coordinates[coordinateOffset + i + 1] = point[1];
-        coordinates[coordinateOffset + i + 2] = point[2];
+        coordinates[coordinateOffset + i + 2] = point[2];*/
       });
-    };*/
+    };
   },
   sliceViewRenderHelper: RenderHelper,
   perspectiveViewRenderHelper: RenderHelper,
