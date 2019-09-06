@@ -168,36 +168,68 @@ export class SliceView extends SliceViewIntermediateBase {
               vec3.copy(rectangleOut[i], rectangleIn[i]);
             }
           };
-      const setPrefetchBounds = (prefetchingIntoPlane: boolean) => {
-        const direction = (prefetchingIntoPlane) ? 1 : -1;
+      const setPrefetchBounds = () => {
+        // const direction = (prefetchingIntoPlane) ? 1 : -1;
         return (chunkLayout: ChunkLayout, rectangleOut: GlobalCoordinateRectangle,
                 lowerBoundOut: vec3, upperBoundOut: vec3, voxelSize: vec3) => {
-          vec3.multiply(prefetchDepthMovement, voxelSize, viewportAxes[2]);
-          SliceViewBase.getChunkBoundsForRectangle(
-              chunkLayout, rectangleOut, tempChunkBound1, tempChunkBound2);
-          const visibleLowerChunkBound = tempChunkBound1;
-          const visibleUpperChunkBound = tempChunkBound2;
-          let i = 1;
-          while (true) {
+          const findPrefetchDistance = (prefetchingIntoPlane: boolean) => {
+            const direction = (prefetchingIntoPlane) ? 1 : -1;
+            vec3.multiply(prefetchDepthMovement, voxelSize, viewportAxes[2]);
+            SliceViewBase.getChunkBoundsForRectangle(
+                chunkLayout, rectangleOut, tempChunkBound1, tempChunkBound2);
+            const visibleLowerChunkBound = tempChunkBound1;
+            const visibleUpperChunkBound = tempChunkBound2;
+            let i = 1;
+            while (true) {
+              for (let j = 0; j < 4; ++j) {
+                moveVertex(
+                    rectangleOut[j], visibleRectangle[j], prefetchDepthMovement, i * direction);
+              }
+              SliceViewBase.getChunkBoundsForRectangle(
+                  chunkLayout, rectangleOut, lowerBoundOut, upperBoundOut);
+              if ((!vec3.exactEquals(lowerBoundOut, visibleLowerChunkBound) ||
+                  (!vec3.exactEquals(upperBoundOut, visibleUpperChunkBound)))) {
+                break;
+              }
+              ++i;
+            }
+            return i;
+          };
+          const intoPlaneDistance = findPrefetchDistance(true);
+          const outFromPlaneDistance = findPrefetchDistance(false);
+          if (intoPlaneDistance < outFromPlaneDistance) {
             for (let j = 0; j < 4; ++j) {
               moveVertex(
-                  rectangleOut[j], visibleRectangle[j], prefetchDepthMovement, i * direction);
+                  rectangleOut[j], visibleRectangle[j], prefetchDepthMovement, intoPlaneDistance);
             }
-            SliceViewBase.getChunkBoundsForRectangle(
-                chunkLayout, rectangleOut, lowerBoundOut, upperBoundOut);
-            if ((!vec3.exactEquals(lowerBoundOut, visibleLowerChunkBound) ||
-                 (!vec3.exactEquals(upperBoundOut, visibleUpperChunkBound)))) {
-              break;
-            }
-            ++i;
           }
+          // vec3.multiply(prefetchDepthMovement, voxelSize, viewportAxes[2]);
+          // SliceViewBase.getChunkBoundsForRectangle(
+          //     chunkLayout, rectangleOut, tempChunkBound1, tempChunkBound2);
+          // const visibleLowerChunkBound = tempChunkBound1;
+          // const visibleUpperChunkBound = tempChunkBound2;
+          // let i = 1;
+          // while (true) {
+          //   for (let j = 0; j < 4; ++j) {
+          //     moveVertex(
+          //         rectangleOut[j], visibleRectangle[j], prefetchDepthMovement, i * direction);
+          //   }
+          //   SliceViewBase.getChunkBoundsForRectangle(
+          //       chunkLayout, rectangleOut, lowerBoundOut, upperBoundOut);
+          //   if ((!vec3.exactEquals(lowerBoundOut, visibleLowerChunkBound) ||
+          //        (!vec3.exactEquals(upperBoundOut, visibleUpperChunkBound)))) {
+          //     break;
+          //   }
+          //   ++i;
+          // }
+          // return i;
         };
       };
       const prefetchRectangle = tempRectangle2;
+      // copyRectangle(prefetchRectangle, visibleRectangle);
+      // this.computeChunksWithinRectangle(getLayoutObject, addPrefetchChunk, prefetchRectangle, setPrefetchBounds());
       copyRectangle(prefetchRectangle, visibleRectangle);
-      this.computeChunksWithinRectangle(getLayoutObject, addPrefetchChunk, prefetchRectangle, setPrefetchBounds(true));
-      copyRectangle(prefetchRectangle, visibleRectangle);
-      this.computeChunksWithinRectangle(getLayoutObject, addPrefetchChunk, prefetchRectangle, setPrefetchBounds(false));
+      this.computeChunksWithinRectangle(getLayoutObject, addPrefetchChunk, prefetchRectangle, setPrefetchBounds());
     };
 
     // computePrefetchChunksWithinPlane selects prefetch chunks by taking current viewport rectangle
