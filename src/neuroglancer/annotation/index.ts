@@ -94,17 +94,19 @@ export interface Ellipsoid extends AnnotationBase {
   type: AnnotationType.ELLIPSOID;
 }
 
+// Collections //
 export interface Collection extends AnnotationBase {
+  last: Line | Point | AxisAlignedBoundingBox | Ellipsoid | null | undefined;
   entries: Annotation[];
-  last: Annotation;
   type: AnnotationType.COLLECTION | AnnotationType.LINE_STRIP;
+  connected: boolean;
 }
 
 export interface LineStrip extends Collection {
-  entries: Point[];
-  last: Point;
+  entries: Line[];
   looped: boolean;
   type: AnnotationType.LINE_STRIP;
+  connected: true;
 }
 export type Annotation = Line|Point|AxisAlignedBoundingBox|Ellipsoid|Collection|LineStrip;
 
@@ -275,7 +277,7 @@ typeHandlers.set(AnnotationType.LINE_STRIP, {
     };
   },
   restoreState: (annotation: LineStrip, obj: any[]) => {
-    annotation.entries = obj.map(() => verifyObjectProperty(obj, 'entries', () => <Point> {}));
+    annotation.entries = obj.map(() => verifyObjectProperty(obj, 'entries', () => <Line> {}));
   },
   // TODO: Figure this out
   serializedBytes: 6 * 4,

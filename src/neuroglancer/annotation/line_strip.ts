@@ -18,7 +18,7 @@
  * @file Support for rendering line strip annotations.
  */
 
-import {AnnotationType, LineStrip, Point, /* Collection*/} from 'neuroglancer/annotation';
+import {AnnotationType, LineStrip, Line} from 'neuroglancer/annotation';
 import {AnnotationRenderContext, AnnotationRenderHelper, registerAnnotationTypeRenderHandler} from 'neuroglancer/annotation/type_handler';
 import {tile2dArray} from 'neuroglancer/util/array';
 import {mat4, projectPointToLineSegment, vec3} from 'neuroglancer/util/geom';
@@ -158,9 +158,8 @@ registerAnnotationTypeRenderHandler(AnnotationType.LINE_STRIP, {
       // console.log(annotation);
       const {entries} = annotation;
       const coordinateOffset = index * 6;
-      entries.forEach((e: Point, i) => {
-        const {point} = e;
-        buffer; offset; numAnnotations; coordinateOffset; point; i;
+      entries.forEach((e: Line, i) => {
+        e; buffer; offset; numAnnotations; coordinateOffset; i;
         /*coordinates[coordinateOffset + i] = point[0];
         coordinates[coordinateOffset + i + 1] = point[1];
         coordinates[coordinateOffset + i + 2] = point[2];*/
@@ -178,37 +177,40 @@ registerAnnotationTypeRenderHandler(AnnotationType.LINE_STRIP, {
       snapPositionToEndpoint(position, objectToData, endpoints, partIndex - ENDPOINTS_PICK_OFFSET);
     }
   },
-  getRepresentativePoint: (objectToData, ann, partIndex) => {
+  getRepresentativePoint: (objectToData, cann, partIndex) => {
     let repPoint = vec3.create();
+    const ann = cann.entries[0];
     // if the full object is selected just pick the first point as representative
     if (partIndex === FULL_OBJECT_PICK_OFFSET) {
-      vec3.transformMat4(repPoint, ann.entries[0].point, objectToData);
+      vec3.transformMat4(repPoint, ann.pointA, objectToData);
     } else {
       if ((partIndex - ENDPOINTS_PICK_OFFSET) === 0) {
-        vec3.transformMat4(repPoint, ann.entries[0].point, objectToData);
+        vec3.transformMat4(repPoint, ann.pointA, objectToData);
       } else {
-        vec3.transformMat4(repPoint, ann.entries[0].point, objectToData);
+        vec3.transformMat4(repPoint, ann.pointB, objectToData);
       }
     }
     return repPoint;
   },
-  updateViaRepresentativePoint: (oldAnnotation, position, dataToObject, partIndex) => {
+  updateViaRepresentativePoint: (oldAnnotationList, position, dataToObject, partIndex) => {
     let newPt = vec3.transformMat4(vec3.create(), position, dataToObject);
+    let oldAnnotation = oldAnnotationList.entries[0];
     let baseLine = {...oldAnnotation};
     switch (partIndex) {
       case FULL_OBJECT_PICK_OFFSET:
-        let delta = vec3.sub(vec3.create(), oldAnnotation.entries[0].point, oldAnnotation.entries[1].point);
-        baseLine.entries[0].point = newPt;
-        baseLine.entries[1].point = vec3.add(vec3.create(), newPt, delta);
+        let delta = vec3.sub(vec3.create(), oldAnnotation.pointB, oldAnnotation.pointA);
+        baseLine.pointA = newPt;
+        baseLine.pointB = vec3.add(vec3.create(), newPt, delta);
         break;
       case FULL_OBJECT_PICK_OFFSET + 1:
-        baseLine.entries[0].point = newPt;
-        baseLine.entries[1].point = oldAnnotation.entries[1].point;
+        baseLine.pointA = newPt;
+        baseLine.pointB = oldAnnotation.pointB;
         break;
       case FULL_OBJECT_PICK_OFFSET + 2:
-        baseLine.entries[0].point = oldAnnotation.entries[0].point;
-        baseLine.entries[1].point = newPt;
+        baseLine.pointA = oldAnnotation.pointA;
+        baseLine.pointB = newPt;
     }
-    return baseLine;
+    oldAnnotationList.entries[0] = baseLine;
+    return oldAnnotationList;
   }
 });

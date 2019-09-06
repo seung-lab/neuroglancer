@@ -21,7 +21,7 @@
 import './annotations.css';
 
 import debounce from 'lodash/debounce';
-import {Annotation, AnnotationReference, AnnotationSource, AnnotationTag, AnnotationType, AxisAlignedBoundingBox, Ellipsoid, getAnnotationTypeHandler, Line, LineStrip, Point} from 'neuroglancer/annotation';
+import {Annotation, AnnotationReference, AnnotationSource, AnnotationTag, AnnotationType, AxisAlignedBoundingBox, Collection, Ellipsoid, getAnnotationTypeHandler, Line, LineStrip, Point} from 'neuroglancer/annotation';
 import {AnnotationLayer, AnnotationLayerState, PerspectiveViewAnnotationLayer, SliceViewAnnotationLayer} from 'neuroglancer/annotation/frontend';
 import {DataFetchSliceViewRenderLayer, MultiscaleAnnotationSource} from 'neuroglancer/annotation/frontend_source';
 import {setAnnotationHoverStateFromMouseState} from 'neuroglancer/annotation/selection';
@@ -463,6 +463,17 @@ export class AnnotationLayerView extends Tab {
       toolbox.appendChild(ellipsoidButton);
 
       // Collections //
+      const togglable =
+          (element: HTMLElement, tglclass: string, resolve: Function, reject: Function) => {
+            return () => {
+              if (element.classList.contains(tglclass)) {
+                resolve();
+              } else {
+                reject();
+              }
+            };
+          };
+      const mskey = 'activeMultiStep';
       const collectionButton = document.createElement('button');
       collectionButton.textContent = getAnnotationTypeHandler(AnnotationType.COLLECTION).icon;
       collectionButton.title = 'Group together multiple annotations';
@@ -473,9 +484,15 @@ export class AnnotationLayerView extends Tab {
       const multipointButton = document.createElement('button');
       multipointButton.textContent = getAnnotationTypeHandler(AnnotationType.LINE_STRIP).icon;
       multipointButton.title = 'Annotate multiple connected points';
-      multipointButton.addEventListener('click', () => {
-        this.layer.tool.value = new PlaceLineStripTool(this.layer, {});
-      });
+      multipointButton.addEventListener(
+          'click',
+          togglable(
+              multipointButton, mskey,
+              () => {
+                  // this.layer.tool.value = new PlaceLineStripTool(this.layer, {});
+              },
+              () => {}));
+
       toolbox.appendChild(multipointButton);
 
       const undoMultiButton = document.createElement('button');
@@ -1208,35 +1225,44 @@ abstract class PlaceTwoCornerAnnotationTool extends TwoStepAnnotationTool {
 }
 
 abstract class MultiStepAnnotationTool extends TwoStepAnnotationTool {
-  annotationType: AnnotationType.LINE_STRIP;
+  annotationType: AnnotationType.COLLECTION|AnnotationType.LINE_STRIP;
+  childTool: PlacePointTool|PlaceBoundingBoxTool|PlaceLineTool|PlaceSphereTool;
 
-  createChildPointAnnotation(
-      mouseState: MouseSelectionState, annotationLayer: AnnotationLayerState): Point {
-    return <Point>{
-      id: '',
-      description: '',
-      segments: getSelectedAssocatedSegment(annotationLayer),
-      point: vec3.transformMat4(vec3.create(), mouseState.position, annotationLayer.globalToObject),
-      type: AnnotationType.POINT,
-    };
-  }
+  initAnnotation(): Annotation {
+    let child: Line | Point | AxisAlignedBoundingBox | Ellipsoid | null | undefined;
+    if (this.childTool instanceof PlacePointTool) {
+    } else {
+      const inProgressAnnotation = (<PlaceBoundingBoxTool|PlaceLineTool|PlaceSphereTool>this.childTool)
+      .inProgressAnnotation;
+      // Child should not be a collection
+      child = <any> inProgressAnnotation!.reference.value;
+      const disposer = inProgressAnnotation!.disposer;
+      inProgressAnnotation!.disposer = () => {
+        // for every child annotation, redefine its disposer to call the parent to push to the entry list
+        disposer();
+      };
+    }
 
-  getInitialAnnotation(mouseState: MouseSelectionState, annotationLayer: AnnotationLayerState):
-      Annotation {
-    const point = this.createChildPointAnnotation(mouseState, annotationLayer);
-    return <LineStrip>{
+    const ann = <Collection>{
       id: '',
       type: this.annotationType,
       description: '',
-      entries: [point],
-      looped: false
+      entries: [],
+      looped: false,
+      connected: false,
+      last: undefined
     };
+
+    if (child) {
+      ann.entries.push(child);
+      ann.last = child;
+    }
+    return ann;
   }
 
   getUpdatedAnnotation(
       oldAnnotation: LineStrip, mouseState: MouseSelectionState,
       annotationLayer: AnnotationLayerState, add?: boolean): Annotation {
-    const point = this.createChildPointAnnotation(mouseState, annotationLayer);
 
     if (add) {
       oldAnnotation.entries.push(point);
@@ -1250,19 +1276,22 @@ abstract class MultiStepAnnotationTool extends TwoStepAnnotationTool {
       // Not yet ready.
       return;
     }
+    if (!this.childTool) {
+      return;
+    }
     if (mouseState.active) {
-      const updatePointB = (add?: boolean) => {
+      const updatePointB = () => {
         const state = this.inProgressAnnotation!;
         const reference = state.reference;
-        const newAnnotation =
-            this.getUpdatedAnnotation(<LineStrip>reference.value!, mouseState, annotationLayer, add);
+        const newAnnotation = this.getUpdatedAnnotation(
+            <LineStrip>reference.value!, mouseState, annotationLayer, add);
         state.annotationLayer.source.update(reference, newAnnotation);
         this.layer.selectedAnnotation.value = {id: reference.id};
       };
 
       if (this.inProgressAnnotation === undefined) {
-        const reference = annotationLayer.source.add(
-            this.getInitialAnnotation(mouseState, annotationLayer), /*commit=*/false);
+        this.childTool.trigger(mouseState);
+        const reference = annotationLayer.source.add(this.initAnnotation(), /*commit=*/false);
         this.layer.selectedAnnotation.value = {id: reference.id};
         const mouseDisposer = mouseState.changed.add(updatePointB);
         const disposer = () => {
@@ -1284,6 +1313,45 @@ abstract class MultiStepAnnotationTool extends TwoStepAnnotationTool {
     }
   }
 }
+
+export class PlaceLineStripTool extends MultiStepAnnotationTool {
+  constructor(public layer: UserLayerWithAnnotations, options: any) {
+    super(layer, options);
+    this.childTool = new PlaceLineTool(layer, options);
+  }
+
+  get description() {
+    return `annotate line strip`;
+  }
+
+  getInitialAnnotation(mouseState: MouseSelectionState, annotationLayer: AnnotationLayerState):
+      Annotation {
+    const result = super.getInitialAnnotation(mouseState, annotationLayer);
+    result.segments = getSelectedAssocatedSegment(annotationLayer);
+    return result;
+  }
+
+  getUpdatedAnnotation(
+      oldAnnotation: LineStrip, mouseState: MouseSelectionState,
+      annotationLayer: AnnotationLayerState, add?: boolean) {
+    const result = super.getUpdatedAnnotation(oldAnnotation, mouseState, annotationLayer, add);
+    const segments = result.segments;
+    if (segments !== undefined && segments.length > 0) {
+      segments.length = 1;
+    }
+    let newSegments = getSelectedAssocatedSegment(annotationLayer);
+    if (newSegments && segments) {
+      newSegments = newSegments.filter(x => segments.findIndex(y => Uint64.equal(x, y)) === -1);
+    }
+    result.segments = [...(segments || []), ...(newSegments || [])] || undefined;
+    return result;
+  }
+
+  toJSON() {
+    return ANNOTATE_LINE_STRIP_TOOL_ID;
+  }
+}
+PlaceLineStripTool.prototype.annotationType = AnnotationType.LINE_STRIP;
 
 export class PlaceBoundingBoxTool extends PlaceTwoCornerAnnotationTool {
   get description() {
@@ -1378,40 +1446,6 @@ class PlaceSphereTool extends TwoStepAnnotationTool {
   }
 }
 
-export class PlaceLineStripTool extends MultiStepAnnotationTool {
-  get description() {
-    return `annotate line`;
-  }
-
-  getInitialAnnotation(mouseState: MouseSelectionState, annotationLayer: AnnotationLayerState):
-      Annotation {
-    const result = super.getInitialAnnotation(mouseState, annotationLayer);
-    result.segments = getSelectedAssocatedSegment(annotationLayer);
-    return result;
-  }
-
-  getUpdatedAnnotation(
-      oldAnnotation: LineStrip, mouseState: MouseSelectionState,
-      annotationLayer: AnnotationLayerState, add?: boolean) {
-    const result = super.getUpdatedAnnotation(oldAnnotation, mouseState, annotationLayer, add);
-    const segments = result.segments;
-    if (segments !== undefined && segments.length > 0) {
-      segments.length = 1;
-    }
-    let newSegments = getSelectedAssocatedSegment(annotationLayer);
-    if (newSegments && segments) {
-      newSegments = newSegments.filter(x => segments.findIndex(y => Uint64.equal(x, y)) === -1);
-    }
-    result.segments = [...(segments || []), ...(newSegments || [])] || undefined;
-    return result;
-  }
-
-  toJSON() {
-    return ANNOTATE_LINE_STRIP_TOOL_ID;
-  }
-}
-PlaceLineStripTool.prototype.annotationType = AnnotationType.LINE_STRIP;
-
 registerTool(
     ANNOTATE_POINT_TOOL_ID,
     (layer, options) => new PlacePointTool(<UserLayerWithAnnotations>layer, options));
@@ -1424,9 +1458,9 @@ registerTool(
 registerTool(
     ANNOTATE_ELLIPSOID_TOOL_ID,
     (layer, options) => new PlaceSphereTool(<UserLayerWithAnnotations>layer, options));
-registerTool(
+/*registerTool(
     ANNOTATE_LINE_STRIP_TOOL_ID,
-    (layer, options) => new PlaceLineStripTool(<UserLayerWithAnnotations>layer, options));
+    (layer, options) => new PlaceCollectionTool(<UserLayerWithAnnotations>layer, options));*/
 registerTool(
     ANNOTATE_LINE_STRIP_TOOL_ID,
     (layer, options) => new PlaceLineStripTool(<UserLayerWithAnnotations>layer, options));
