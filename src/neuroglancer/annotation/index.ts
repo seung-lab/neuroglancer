@@ -96,7 +96,7 @@ export interface Ellipsoid extends AnnotationBase {
 
 // Collections //
 export interface Collection extends AnnotationBase {
-  last: Line | Point | AxisAlignedBoundingBox | Ellipsoid | null | undefined;
+  last?: AnnotationReference;
   entries: Annotation[];
   type: AnnotationType.COLLECTION | AnnotationType.LINE_STRIP;
   connected: boolean;
