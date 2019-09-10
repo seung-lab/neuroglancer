@@ -148,7 +148,7 @@ export class ChunkedGraphLayer extends GenericSliceViewRenderLayer {
     });
 
     const response = await this.withErrorMessage(promise, {
-      initialMessage: `Splitting ${second.length} sinks from ${first.length} sources`,
+      initialMessage: `Splitting ${first.length} sources from ${second.length} sinks`,
       errorPrefix: 'Split failed: '
     });
     const jsonResp = await response.json();
@@ -176,7 +176,7 @@ export class ChunkedGraphLayer extends GenericSliceViewRenderLayer {
 
     const response = await this.withErrorMessage(promise, {
       initialMessage:
-          `Calculating split preview: ${second.length} sinks, and ${first.length} sources`,
+          `Calculating split preview: ${first.length} sources, and ${second.length} sinks`,
       errorPrefix: 'Split preview failed: '
     });
     const jsonResp = await response.json();
