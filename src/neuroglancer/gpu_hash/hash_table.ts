@@ -414,19 +414,11 @@ HashSetUint64.prototype.entryStride = 2;
 let pendingValueLow = 0, pendingValueHigh = 0, backupPendingValueLow = 0,
     backupPendingValueHigh = 0;
 
-const temp = new Uint64();
-
 export class HashMapUint64 extends HashTableBase {
   set(key: Uint64, value: Uint64) {
     let {low, high} = key;
-    if (this.get(key, temp)) {
-      if (Uint64.equal(value, temp)) {
-        return false;
-      }
-      const h = this.indexOf(key);
-      this.table[h + 2] = value.low;
-      this.table[h + 3] = value.high;
-      return true;
+    if (this.hasPair(low, high)) {
+      return false;
     }
     if (DEBUG) {
       console.log(`add: ${low},${high} -> ${value.low},${value.high}`);

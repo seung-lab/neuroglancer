@@ -15,11 +15,11 @@
  */
 
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
+import {packColor, TrackableRGB} from 'neuroglancer/util/color';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {vec3} from 'neuroglancer/util/geom';
 import {Uint64} from 'neuroglancer/util/uint64';
-import { TrackableRGB, packColor } from '../util/color';
-import { ColorWidget } from './color';
+import {ColorWidget} from 'neuroglancer/widget/color';
 
 require('neuroglancer/noselect.css');
 require('./segment_set_widget.css');
@@ -37,7 +37,7 @@ export class SegmentSetWidget extends RefCounted {
   private enabledItems = new Map<string, ItemElement>();
   private disabledItems = new Map<string, ItemElement>();
   private segmentColors = new Map<string, TrackableRGB>();
-  private stopMessages = false;
+  private colorChangeEventsEnabled = true;
 
   // A segment ID will only be a key in either the enabledItems
   // or the disableItems map, in which case it is displayed or
@@ -97,11 +97,8 @@ export class SegmentSetWidget extends RefCounted {
         existingHighlight.map(e => e.classList.remove('selectedSeg'));
       }
     }));
-    // for (const [segmentID, color] of displayState.segmentStatedColors) {
-    //   this
-    // }
     this.registerDisposer(displayState.segmentStatedColors.changed.add((x, add) => {
-      if (!this.stopMessages) {
+      if (this.colorChangeEventsEnabled) {
         this.handleSegmentColorChanged(x, add);
       }
     }));
@@ -238,7 +235,7 @@ export class SegmentSetWidget extends RefCounted {
     itemElement.className = 'segment-div';
     itemElement.appendChild(this.createItemButton(segmentIDString));
     itemElement.appendChild(this.createItemCopyIDButton(segmentIDString));
-    itemElement.appendChild(this.createItemColorSelection(segmentIDString));
+    itemElement.appendChild(this.createItemColorSelection(segmentIDString, itemElement));
     itemElement.appendChild(this.createItemCheckbox(segmentEnabled, segmentIDString));
     this.setItemButtonColor(itemElement);
     this.itemContainer.appendChild(itemElement);
@@ -261,6 +258,7 @@ export class SegmentSetWidget extends RefCounted {
           temp.tryParseString(this.textContent!);
           widget.rootSegments.delete(temp);
           widget.hiddenRootSegments!.delete(temp);
+          widget.segmentColors.delete(segmentIDString);
         });
         itemButton.addEventListener('mouseenter', function(this: HTMLButtonElement) {
           temp.tryParseString(this.textContent!);
@@ -278,45 +276,47 @@ export class SegmentSetWidget extends RefCounted {
         return itemButton;
       }
 
-  private Uint64ToColor(x: Uint64) {
+  private static Uint64ToCSSColor(x: Uint64) {
     return '#' + x.toString(16).padStart(6, '0');
   }
 
-  private createItemColorSelection = (segmentIDString: string): HTMLInputElement => {
-    temp.tryParseString(segmentIDString, 10);
-    const trackableRGB = new TrackableRGB(vec3.fromValues(0, 0, 0));
-    if (this.displayState.segmentStatedColors.has(temp)) {
-      this.displayState.segmentStatedColors.get(temp, temp);
-      trackableRGB.restoreState(this.Uint64ToColor(temp));
-    } else {
-      trackableRGB.restoreState(this.segmentColorHash.computeCssColor(temp));
-    }
-    this.segmentColors.set(segmentIDString, trackableRGB);
-    const colorWidget = new ColorWidget(trackableRGB);
-    trackableRGB.changed.add(() => {
-      temp.tryParseString(segmentIDString, 10);
-      const testU = new Uint64(packColor(trackableRGB.value));
-      this.stopMessages = true;
-      this.displayState.segmentStatedColors.delete(temp);
-      this.displayState.segmentStatedColors.set(temp, testU);
-      this.stopMessages = false;
-    });
-    return colorWidget.element;
-    // if (this.displayState.segmentStatedColors.has(temp)) {
-    //   this.displayState.segmentStatedColors.get(temp, temp);
-    //   const trackableRGB = new TrackableRGB(vec3.fromValues(0, 0, 0));
-    //   trackableRGB.restoreState(this.Uint64ToColor(temp));
-    //   const colorWidget = new LazyColorWidget(trackableRGB);
-    //   this.segmentStatedColors.set(segmentIDString, trackableRGB);
-    //   return colorWidget.element;
-    // } else {
-    //   const colorWidget = new LazyColorWidget(this.segmentColorHash.computeCssColor(temp));
-    //   return colorWidget.element;
-    // }
+  private getSegmentColor(segmentIDString: string) {
+    const trackableRGB = this.segmentColors.get(segmentIDString)!;
+    const tempUint64 = new Uint64(packColor(trackableRGB.value));
+    return SegmentSetWidget.Uint64ToCSSColor(tempUint64);
   }
 
-  private handleSegmentColorChanged(x:Uint64|null, added: boolean) {
+  private createItemColorSelection = (segmentIDString: string, itemElement: ItemElement):
+      HTMLInputElement => {
+        temp.tryParseString(segmentIDString, 10);
+        const trackableRGB = new TrackableRGB(vec3.fromValues(0, 0, 0));
+        if (this.displayState.segmentStatedColors.has(temp)) {
+          this.displayState.segmentStatedColors.get(temp, temp);
+          trackableRGB.restoreState(SegmentSetWidget.Uint64ToCSSColor(temp));
+        } else {
+          trackableRGB.restoreState(this.segmentColorHash.computeCssColor(temp));
+        }
+        this.segmentColors.set(segmentIDString, trackableRGB);
+        const colorWidget = new ColorWidget(trackableRGB);
+        trackableRGB.changed.add(() => {
+          if (this.colorChangeEventsEnabled) {
+            temp.tryParseString(segmentIDString, 10);
+            const testU = new Uint64(packColor(trackableRGB.value));
+            // Disable signal to stop cycle of firing events
+            this.colorChangeEventsEnabled = false;
+            this.displayState.segmentStatedColors.delete(temp);
+            this.displayState.segmentStatedColors.set(temp, testU);
+            this.colorChangeEventsEnabled = true;
+            this.setItemButtonColor(itemElement);
+          }
+        });
+        colorWidget.element.classList.add('segment-color-selector');
+        return colorWidget.element;
+      }
+
+  private handleSegmentColorChanged(x: Uint64|null, added: boolean) {
     if (x === null) {
+      // Custom segment colors cleared.
       for (const [segmentIDString, trackableRGB] of this.segmentColors) {
         temp.tryParseString(segmentIDString, 10);
         trackableRGB.restoreState(this.segmentColorHash.computeCssColor(temp));
@@ -325,13 +325,16 @@ export class SegmentSetWidget extends RefCounted {
       const segmentIDString = x.toString();
       const segmentColor = this.segmentColors.get(segmentIDString);
       if (segmentColor) {
+        // A selected segment's color has been updated
         this.displayState.segmentStatedColors.get(x, temp);
-        segmentColor.restoreState(this.Uint64ToColor(temp));
+        segmentColor.restoreState(SegmentSetWidget.Uint64ToCSSColor(temp));
       }
     } else {
       const segmentIDString = x.toString();
       const segmentColor = this.segmentColors.get(segmentIDString);
       if (segmentColor) {
+        // A selected segment's specified color has been deleted, reset its
+        // color to the one specified by the hash
         segmentColor.restoreState(this.segmentColorHash.computeCssColor(x));
       }
     }
@@ -374,11 +377,27 @@ export class SegmentSetWidget extends RefCounted {
 
   private setItemButtonColor(itemElement: ItemElement) {
     const itemButton = <HTMLElement>(itemElement.getElementsByClassName('segment-button')[0]);
-    temp.tryParseString(itemButton.textContent!);
-    itemButton.style.backgroundColor = this.segmentColorHash.computeCssColor(temp);
+    const segmentIDString = itemButton.textContent!;
+    itemButton.style.backgroundColor = this.getSegmentColor(segmentIDString);
+  }
+
+  private updateSegmentColorsFromHash() {
+    // Disable signal as we are only setting colors to defaults,
+    // not specifying a custom color
+    this.colorChangeEventsEnabled = false;
+    for (const [segmentIDString, trackableRGB] of this.segmentColors) {
+      temp.tryParseString(segmentIDString, 10);
+      // Selected segments that do not have specified colors get set
+      // to the color specified by the hash
+      if (!this.displayState.segmentStatedColors.has(temp)) {
+        trackableRGB.restoreState(this.segmentColorHash.computeCssColor(temp));
+      }
+    }
+    this.colorChangeEventsEnabled = true;
   }
 
   private handleColorHashChanged() {
+    this.updateSegmentColorsFromHash();
     this.enabledItems.forEach(itemElement => {
       this.setItemButtonColor(itemElement);
     });
