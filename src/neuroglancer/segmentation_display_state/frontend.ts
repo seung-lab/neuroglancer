@@ -135,6 +135,7 @@ export function registerRedrawWhenSegmentationDisplayStateChanged(
   renderLayer.registerDisposer(displayState.segmentEquivalences.changed.add(dispatchRedrawNeeded));
   renderLayer.registerDisposer(
       displayState.segmentSelectionState.changed.add(dispatchRedrawNeeded));
+  renderLayer.registerDisposer(displayState.segmentStatedColors.changed.add(dispatchRedrawNeeded));
 }
 
 export function registerRedrawWhenSegmentationDisplayStateWithAlphaChanged(

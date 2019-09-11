@@ -18,6 +18,8 @@ import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {vec3} from 'neuroglancer/util/geom';
 import {Uint64} from 'neuroglancer/util/uint64';
+import { TrackableRGB, packColor } from '../util/color';
+import { ColorWidget } from './color';
 
 require('neuroglancer/noselect.css');
 require('./segment_set_widget.css');
@@ -34,6 +36,8 @@ export class SegmentSetWidget extends RefCounted {
   private itemContainer = document.createElement('div');
   private enabledItems = new Map<string, ItemElement>();
   private disabledItems = new Map<string, ItemElement>();
+  private segmentColors = new Map<string, TrackableRGB>();
+  private stopMessages = false;
 
   // A segment ID will only be a key in either the enabledItems
   // or the disableItems map, in which case it is displayed or
@@ -64,7 +68,7 @@ export class SegmentSetWidget extends RefCounted {
       this.handleDisabledSetChanged(x, add);
     }));
     this.registerDisposer(displayState.segmentColorHash.changed.add(() => {
-      this.handleColorChanged();
+      this.handleColorHashChanged();
     }));
     this.registerDisposer(displayState.segmentSelectionState.changed.add(() => {
       const segmentID = this.segmentSelectionState.selectedSegment.toString();
@@ -91,6 +95,14 @@ export class SegmentSetWidget extends RefCounted {
       }
       if (existingHighlight) {
         existingHighlight.map(e => e.classList.remove('selectedSeg'));
+      }
+    }));
+    // for (const [segmentID, color] of displayState.segmentStatedColors) {
+    //   this
+    // }
+    this.registerDisposer(displayState.segmentStatedColors.changed.add((x, add) => {
+      if (!this.stopMessages) {
+        this.handleSegmentColorChanged(x, add);
       }
     }));
 
@@ -226,6 +238,7 @@ export class SegmentSetWidget extends RefCounted {
     itemElement.className = 'segment-div';
     itemElement.appendChild(this.createItemButton(segmentIDString));
     itemElement.appendChild(this.createItemCopyIDButton(segmentIDString));
+    itemElement.appendChild(this.createItemColorSelection(segmentIDString));
     itemElement.appendChild(this.createItemCheckbox(segmentEnabled, segmentIDString));
     this.setItemButtonColor(itemElement);
     this.itemContainer.appendChild(itemElement);
@@ -264,6 +277,65 @@ export class SegmentSetWidget extends RefCounted {
         });
         return itemButton;
       }
+
+  private Uint64ToColor(x: Uint64) {
+    return '#' + x.toString(16).padStart(6, '0');
+  }
+
+  private createItemColorSelection = (segmentIDString: string): HTMLInputElement => {
+    temp.tryParseString(segmentIDString, 10);
+    const trackableRGB = new TrackableRGB(vec3.fromValues(0, 0, 0));
+    if (this.displayState.segmentStatedColors.has(temp)) {
+      this.displayState.segmentStatedColors.get(temp, temp);
+      trackableRGB.restoreState(this.Uint64ToColor(temp));
+    } else {
+      trackableRGB.restoreState(this.segmentColorHash.computeCssColor(temp));
+    }
+    this.segmentColors.set(segmentIDString, trackableRGB);
+    const colorWidget = new ColorWidget(trackableRGB);
+    trackableRGB.changed.add(() => {
+      temp.tryParseString(segmentIDString, 10);
+      const testU = new Uint64(packColor(trackableRGB.value));
+      this.stopMessages = true;
+      this.displayState.segmentStatedColors.delete(temp);
+      this.displayState.segmentStatedColors.set(temp, testU);
+      this.stopMessages = false;
+    });
+    return colorWidget.element;
+    // if (this.displayState.segmentStatedColors.has(temp)) {
+    //   this.displayState.segmentStatedColors.get(temp, temp);
+    //   const trackableRGB = new TrackableRGB(vec3.fromValues(0, 0, 0));
+    //   trackableRGB.restoreState(this.Uint64ToColor(temp));
+    //   const colorWidget = new LazyColorWidget(trackableRGB);
+    //   this.segmentStatedColors.set(segmentIDString, trackableRGB);
+    //   return colorWidget.element;
+    // } else {
+    //   const colorWidget = new LazyColorWidget(this.segmentColorHash.computeCssColor(temp));
+    //   return colorWidget.element;
+    // }
+  }
+
+  private handleSegmentColorChanged(x:Uint64|null, added: boolean) {
+    if (x === null) {
+      for (const [segmentIDString, trackableRGB] of this.segmentColors) {
+        temp.tryParseString(segmentIDString, 10);
+        trackableRGB.restoreState(this.segmentColorHash.computeCssColor(temp));
+      }
+    } else if (added) {
+      const segmentIDString = x.toString();
+      const segmentColor = this.segmentColors.get(segmentIDString);
+      if (segmentColor) {
+        this.displayState.segmentStatedColors.get(x, temp);
+        segmentColor.restoreState(this.Uint64ToColor(temp));
+      }
+    } else {
+      const segmentIDString = x.toString();
+      const segmentColor = this.segmentColors.get(segmentIDString);
+      if (segmentColor) {
+        segmentColor.restoreState(this.segmentColorHash.computeCssColor(x));
+      }
+    }
+  }
 
   private createItemCheckbox = (segmentEnabled: boolean, segmentIDString: string):
       HTMLInputElement => {
@@ -306,7 +378,7 @@ export class SegmentSetWidget extends RefCounted {
     itemButton.style.backgroundColor = this.segmentColorHash.computeCssColor(temp);
   }
 
-  private handleColorChanged() {
+  private handleColorHashChanged() {
     this.enabledItems.forEach(itemElement => {
       this.setItemButtonColor(itemElement);
     });
