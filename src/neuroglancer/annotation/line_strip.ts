@@ -18,7 +18,7 @@
  * @file Support for rendering line strip annotations.
  */
 
-import {AnnotationType, LineStrip, Line} from 'neuroglancer/annotation';
+import {AnnotationType, LineStrip/*, Line*/} from 'neuroglancer/annotation';
 import {AnnotationRenderContext, AnnotationRenderHelper, registerAnnotationTypeRenderHandler} from 'neuroglancer/annotation/type_handler';
 import {tile2dArray} from 'neuroglancer/util/array';
 import {mat4, projectPointToLineSegment, vec3} from 'neuroglancer/util/geom';
@@ -158,7 +158,7 @@ registerAnnotationTypeRenderHandler(AnnotationType.LINE_STRIP, {
       // console.log(annotation);
       const {entries} = annotation;
       const coordinateOffset = index * 6;
-      entries.forEach((e: Line, i) => {
+      entries.forEach((e: string, i) => {
         e; buffer; offset; numAnnotations; coordinateOffset; i;
         /*coordinates[coordinateOffset + i] = point[0];
         coordinates[coordinateOffset + i + 1] = point[1];
@@ -179,9 +179,10 @@ registerAnnotationTypeRenderHandler(AnnotationType.LINE_STRIP, {
   },
   getRepresentativePoint: (objectToData, cann, partIndex) => {
     let repPoint = vec3.create();
-    const ann = cann.entries[0];
+    console.log(objectToData, cann, partIndex);
+    // const ann = cann.entries[0];
     // if the full object is selected just pick the first point as representative
-    if (partIndex === FULL_OBJECT_PICK_OFFSET) {
+    /*if (partIndex === FULL_OBJECT_PICK_OFFSET) {
       vec3.transformMat4(repPoint, ann.pointA, objectToData);
     } else {
       if ((partIndex - ENDPOINTS_PICK_OFFSET) === 0) {
@@ -189,11 +190,12 @@ registerAnnotationTypeRenderHandler(AnnotationType.LINE_STRIP, {
       } else {
         vec3.transformMat4(repPoint, ann.pointB, objectToData);
       }
-    }
+    }*/
     return repPoint;
   },
   updateViaRepresentativePoint: (oldAnnotationList, position, dataToObject, partIndex) => {
-    let newPt = vec3.transformMat4(vec3.create(), position, dataToObject);
+    console.log(position, dataToObject, partIndex);
+    /* let newPt = vec3.transformMat4(vec3.create(), position, dataToObject);
     let oldAnnotation = oldAnnotationList.entries[0];
     let baseLine = {...oldAnnotation};
     switch (partIndex) {
@@ -210,7 +212,7 @@ registerAnnotationTypeRenderHandler(AnnotationType.LINE_STRIP, {
         baseLine.pointA = oldAnnotation.pointA;
         baseLine.pointB = newPt;
     }
-    oldAnnotationList.entries[0] = baseLine;
+    oldAnnotationList.entries[0] = baseLine;*/
     return oldAnnotationList;
   }
 });

@@ -134,3 +134,7 @@
 #annotation-tag-filter {
   width: 125px;
 }
+
+.activeMultiStep {
+  box-shadow: inset -3px -3px 10px 0px #396125;
+}

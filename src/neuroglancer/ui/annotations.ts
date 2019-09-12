@@ -477,6 +477,12 @@ export class AnnotationLayerView extends Tab {
           };
       const mskey = 'activeMultiStep';
       const collectionButton = document.createElement('button');
+      const remActiveTool = () => {
+        const keyElement = document.querySelector(`.${mskey}`);
+        if (keyElement) {
+          keyElement!.classList.remove(mskey);
+        }
+      };
       collectionButton.textContent = getAnnotationTypeHandler(AnnotationType.COLLECTION).icon;
       collectionButton.title = 'Group together multiple annotations';
       collectionButton.disabled = true;
@@ -494,23 +500,42 @@ export class AnnotationLayerView extends Tab {
       toolbox.appendChild(multipointButton);
 
       const undoMultiButton = document.createElement('button');
-      undoMultiButton.textContent = '↩';
-      undoMultiButton.title = 'Undo previous step';
+      {
+        undoMultiButton.textContent = '↩';
+        undoMultiButton.title = 'Undo previous step';
+        undoMultiButton.disabled = true;
+      }
+
       const confirmMultiButton = document.createElement('button');
-      confirmMultiButton.textContent = '✔️';
-      confirmMultiButton.title = 'Confirm multi step annotation';
+      {
+        confirmMultiButton.textContent = '✔️';
+        confirmMultiButton.title = 'Confirm Annotation';
+        confirmMultiButton.addEventListener('click', () => {
+          if (this.layer.tool.value) {
+            (<PlaceAnnotationTool>this.layer.tool.value).complete();
+          }
+        });
+      }
+
       const abortMultiButton = document.createElement('button');
-      abortMultiButton.textContent = '❌';
-      abortMultiButton.title = 'Abort multi step annotation';
-      abortMultiButton.addEventListener('click', () => {
-        if (this.layer.tool.value) {
-          StatusMessage.showTemporaryMessage(`Annotation cancelled`, 3000);
-          this.layer.tool.dispose();
-          // this.layer.getAnnotationText();
-        }
-        // this.layer.tool.value = void (0);
-        console.log();
-      });
+      {
+        abortMultiButton.textContent = '❌';
+        abortMultiButton.title = 'Abort Annotation';
+        abortMultiButton.addEventListener('click', () => {
+          if (this.layer.tool.value) {
+            remActiveTool();
+            // Not undo able, does not change state? it might but it hasn't been investigated
+            StatusMessage.showTemporaryMessage(`Annotation cancelled.`, 3000);
+            // HACK: force < 1 = 1
+            // Expected behavior is to cancel any in progress annotations and deactivate the tool
+            if (this.layer.tool.refCount < 1) {
+              this.layer.tool.refCount = 1;
+            }
+            this.layer.tool.dispose();
+            this.layer.tool.changed.dispatch();
+          }
+        });
+      }
 
       toolbox.append(undoMultiButton, confirmMultiButton, abortMultiButton);
     }
@@ -1082,6 +1107,7 @@ function getSelectedAssocatedSegment(annotationLayer: AnnotationLayerState) {
 }
 
 abstract class PlaceAnnotationTool extends Tool {
+  temp?: Annotation;
   group: string;
   annotationDescription: string|undefined;
   constructor(public layer: UserLayerWithAnnotations, options: any) {
@@ -1094,6 +1120,10 @@ abstract class PlaceAnnotationTool extends Tool {
 
   get annotationLayer() {
     return this.layer.annotationLayerState.value;
+  }
+
+  complete() {
+    StatusMessage.showTemporaryMessage(`Only supported in collection annotations.`, 3000);
   }
 }
 
@@ -1108,7 +1138,7 @@ export class PlacePointTool extends PlaceAnnotationTool {
     super(layer, options);
   }
 
-  trigger(mouseState: MouseSelectionState) {
+  trigger(mouseState: MouseSelectionState, child?: boolean) {
     const {annotationLayer} = this;
     if (annotationLayer === undefined) {
       // Not yet ready.
@@ -1123,9 +1153,13 @@ export class PlacePointTool extends PlaceAnnotationTool {
             vec3.transformMat4(vec3.create(), mouseState.position, annotationLayer.globalToObject),
         type: AnnotationType.POINT,
       };
-      const reference = annotationLayer.source.add(annotation, /*commit=*/true);
-      this.layer.selectedAnnotation.value = {id: reference.id};
-      reference.dispose();
+      if (child) {
+        this.temp = annotation;
+      } else {
+        const reference = annotationLayer.source.add(annotation, /*commit=*/true);
+        this.layer.selectedAnnotation.value = {id: reference.id};
+        reference.dispose();
+      }
     }
   }
 
@@ -1154,7 +1188,7 @@ abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
       oldAnnotation: Annotation, mouseState: MouseSelectionState,
       annotationLayer: AnnotationLayerState): Annotation;
 
-  trigger(mouseState: MouseSelectionState) {
+  trigger(mouseState: MouseSelectionState, child?: boolean) {
     const {annotationLayer} = this;
     if (annotationLayer === undefined) {
       // Not yet ready.
@@ -1170,26 +1204,33 @@ abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
         this.layer.selectedAnnotation.value = {id: reference.id};
       };
 
-      if (this.inProgressAnnotation === undefined) {
-        const reference = annotationLayer.source.add(
-            this.getInitialAnnotation(mouseState, annotationLayer), /*commit=*/false);
-        this.layer.selectedAnnotation.value = {id: reference.id};
+      if (this.inProgressAnnotation === undefined && this.temp === void(0)) {
+        const annotation = this.getInitialAnnotation(mouseState, annotationLayer);
+        let reference: AnnotationReference;
+        if (child) {
+          this.temp = annotation;
+        } else {
+          reference = annotationLayer.source.add(annotation, /*commit=*/false);
+          this.layer.selectedAnnotation.value = {id: reference.id};
+          const disposer = () => {
+            mouseDisposer();
+            reference.dispose();
+          };
+          this.inProgressAnnotation = {
+            annotationLayer,
+            reference,
+            disposer,
+          };
+        }
         const mouseDisposer = mouseState.changed.add(updatePointB);
-        const disposer = () => {
-          mouseDisposer();
-          reference.dispose();
-        };
-        this.inProgressAnnotation = {
-          annotationLayer,
-          reference,
-          disposer,
-        };
       } else {
         updatePointB();
-        this.inProgressAnnotation.annotationLayer.source.commit(
-            this.inProgressAnnotation.reference);
-        this.inProgressAnnotation.disposer();
-        this.inProgressAnnotation = undefined;
+        if (this.inProgressAnnotation) {
+          this.inProgressAnnotation.annotationLayer.source.commit(
+              this.inProgressAnnotation.reference);
+          this.inProgressAnnotation.disposer();
+          this.inProgressAnnotation = undefined;
+        }
       }
     }
   }
@@ -1278,7 +1319,7 @@ abstract class MultiStepAnnotationTool extends TwoStepAnnotationTool {
 
     let child = this.initChildAnnotation();
     if (child) {
-      ann.entries.push(child.value!);
+      ann.entries.push(child.value!.id);
       ann.last = child;
     }
     return ann;
@@ -1297,12 +1338,26 @@ abstract class MultiStepAnnotationTool extends TwoStepAnnotationTool {
     let last = this.initChildAnnotation();
     if (last) {
       // for LineStrip, last.value will be only line
-      oldAnnotation.entries.push(<any>last.value);
+      oldAnnotation.entries.push(last.value!.id);
     }
     return {...oldAnnotation, last};
   }
 
+
+  complete() {
+    if (this.inProgressAnnotation) {
+      (<Collection>this.inProgressAnnotation.reference.value!).entries.pop();
+      this.inProgressAnnotation.annotationLayer.source.commit(this.inProgressAnnotation.reference);
+      this.inProgressAnnotation.disposer();
+      this.inProgressAnnotation = undefined;
+      this.childTool.dispose();
+    } else {
+      StatusMessage.showTemporaryMessage(`No annotation has been made.`, 3000);
+    }
+  }
+
   trigger(mouseState: MouseSelectionState) {
+    // TODO: Move to line strip
     const {annotationLayer} = this;
     if (annotationLayer === undefined) {
       // Not yet ready.
@@ -1323,7 +1378,7 @@ abstract class MultiStepAnnotationTool extends TwoStepAnnotationTool {
       };
 
       if (this.inProgressAnnotation === undefined) {
-        this.childTool.trigger(mouseState);
+        this.childTool.trigger(mouseState, /*child=*/true);
         const reference = annotationLayer.source.add(
             this.getInitialAnnotation(mouseState, annotationLayer), /*commit=*/false);
         this.layer.selectedAnnotation.value = {id: reference.id};
@@ -1341,7 +1396,7 @@ abstract class MultiStepAnnotationTool extends TwoStepAnnotationTool {
           disposer,
         };
       } else {
-        this.childTool.trigger(mouseState);
+        this.childTool.trigger(mouseState, true);
         this.appendNewChildAnnotation(
             <Collection>this.inProgressAnnotation.reference!.value!, mouseState, annotationLayer);
         // updateChild();
