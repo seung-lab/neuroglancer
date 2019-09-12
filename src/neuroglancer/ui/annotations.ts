@@ -1196,15 +1196,23 @@ abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
     }
     if (mouseState.active) {
       const updatePointB = () => {
+        let annotation: Annotation;
+        let reference: AnnotationReference | undefined;
         const state = this.inProgressAnnotation!;
-        const reference = state.reference;
-        const newAnnotation =
-            this.getUpdatedAnnotation(reference.value!, mouseState, annotationLayer);
-        state.annotationLayer.source.update(reference, newAnnotation);
-        this.layer.selectedAnnotation.value = {id: reference.id};
+        if (!this.temp) {
+          reference = state.reference;
+          annotation = reference.value!;
+        } else {
+          annotation = this.temp;
+        }
+        const newAnnotation = this.getUpdatedAnnotation(annotation, mouseState, annotationLayer);
+        if (reference) {
+          state.annotationLayer.source.update(reference, newAnnotation);
+          this.layer.selectedAnnotation.value = {id: reference.id};
+        }
       };
 
-      if (this.inProgressAnnotation === undefined && this.temp === void(0)) {
+      if (this.inProgressAnnotation === undefined && this.temp === void (0)) {
         const annotation = this.getInitialAnnotation(mouseState, annotationLayer);
         let reference: AnnotationReference;
         if (child) {
@@ -1367,25 +1375,13 @@ abstract class MultiStepAnnotationTool extends TwoStepAnnotationTool {
       return;
     }
     if (mouseState.active) {
-      const updateChild = () => {
-        // const state = this.inProgressAnnotation!;
-        const that = <TwoStepAnnotationTool>this.childTool;
-        const state = that.inProgressAnnotation;
-        const reference = state!.reference;
-        const newChild = that.getUpdatedAnnotation(reference!.value!, mouseState, annotationLayer);
-        state!.annotationLayer.source.update(reference!, newChild);
-        that.layer.selectedAnnotation.value = {id: reference!.id};
-      };
-
       if (this.inProgressAnnotation === undefined) {
         this.childTool.trigger(mouseState, /*child=*/true);
         const reference = annotationLayer.source.add(
             this.getInitialAnnotation(mouseState, annotationLayer), /*commit=*/false);
         this.layer.selectedAnnotation.value = {id: reference.id};
 
-        const mouseDisposer = (!(this.childTool instanceof PlacePointTool)) ?
-            mouseState.changed.add(updateChild) :
-            () => {};
+        const mouseDisposer = () => {};
         const disposer = () => {
           mouseDisposer();
           reference.dispose();
