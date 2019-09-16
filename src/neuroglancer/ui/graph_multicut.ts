@@ -334,6 +334,7 @@ export class GraphOperationLayerView extends Tab {
       toolbox.appendChild(toggleGroupButton);
     }
 
+    const splitPreviewWrapper = new SplitPreview(this.wrapper, this.annotationLayer);
     const confirmButton = document.createElement('button');
     {
       confirmButton.textContent = '✔️';
@@ -341,6 +342,7 @@ export class GraphOperationLayerView extends Tab {
       confirmButton.addEventListener('click', () => {
         const {sources, sinks} = this.annotationLayer.getSourcesAndSinks();
         this.wrapper.chunkedGraphLayer!.splitSegments(sources, sinks).then((splitRoots) => {
+          splitPreviewWrapper.disablePreview();
           if (splitRoots.length === 0) {
             StatusMessage.showTemporaryMessage(`No split found.`, 3000);
           } else {
@@ -381,10 +383,7 @@ export class GraphOperationLayerView extends Tab {
       toolbox.appendChild(cancelButton);
     }
 
-    {
-      const splitPreviewWrapper = new SplitPreview(this.wrapper, this.annotationLayer);
-      toolbox.appendChild(splitPreviewWrapper.button);
-    }
+    { toolbox.appendChild(splitPreviewWrapper.button); }
 
     this.multicutGroup.appendFixedChild(toolbox);
     this.multicutGroup.appendFlexibleChild(this.annotationListContainer);
@@ -663,6 +662,8 @@ class SplitPreview extends RefCounted {
                   this.enablePreview();
                 })
                 .catch(() => {
+                  StatusMessage.messageWithAction(
+                      'Split preview is not supported for this dataset. ', 'Ok', () => {});
                   this.revertPreviewButton();
                   this.previewPending = false;
                 });
@@ -719,7 +720,7 @@ class SplitPreview extends RefCounted {
         });
       }
 
-  private disablePreview =
+  public disablePreview =
       () => {
         this.inPreviewMode = false;
         this.revertPreviewButton();
