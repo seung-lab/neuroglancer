@@ -20,7 +20,7 @@
 
 import {Borrowed, RefCounted} from 'neuroglancer/util/disposable';
 import {mat4, vec3} from 'neuroglancer/util/geom';
-import {parseArray, verify3dScale, verify3dVec, verifyEnumString, verifyObject, verifyObjectProperty, verifyOptionalString, verifyPositiveInt, verifyString} from 'neuroglancer/util/json';
+import {parseArray, verify3dScale, verify3dVec, verifyEnumString, verifyObject, verifyObjectProperty, verifyOptionalString, verifyPositiveInt, verifyString, verifyOptionalNonnegativeInt} from 'neuroglancer/util/json';
 import {getRandomHexString} from 'neuroglancer/util/random';
 import {NullarySignal, Signal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
@@ -67,6 +67,9 @@ export interface AnnotationBase {
   type: AnnotationType;
 
   segments?: Uint64[];
+
+  pid?: string;
+  cix?: number;
 }
 
 export interface Line extends AnnotationBase {
@@ -94,9 +97,11 @@ export interface Ellipsoid extends AnnotationBase {
 // Collections //
 export interface Collection extends AnnotationBase {
   last?: AnnotationReference;
-  entries: string[]; /*annotation.id */
+  entries: string[];
   type: AnnotationType.COLLECTION|AnnotationType.LINE_STRIP;
   connected: boolean;
+  source: vec3;
+  entry: Function;
 }
 
 export interface LineStrip extends Collection {
@@ -131,7 +136,7 @@ const typeHandlers = new Map<AnnotationType, AnnotationTypeHandler<Annotation>>(
 export function getAnnotationTypeHandler(type: AnnotationType) {
   return typeHandlers.get(type)!;
 }
-
+//TODO: How does base properties like segment and id get put in annotation data
 typeHandlers.set(AnnotationType.LINE, {
   icon: 'ꕹ',
   description: 'Line',
@@ -239,50 +244,35 @@ typeHandlers.set(AnnotationType.ELLIPSOID, {
   },
 });
 
-typeHandlers.set(AnnotationType.COLLECTION, {
+const collTypeSet = {
   icon: '⚄',
   description: 'Collection',
   toJSON: (annotation: Collection) => {
-    return {entries: Array.from(annotation.entries)};
+    return {source: Array.from(annotation.source), entries: Array.from(annotation.entries)};
   },
-  restoreState: (annotation: Collection, obj: any[]) => {
-    annotation.entries = obj.map(() => verifyObjectProperty(obj, 'entries', () => <string>{}));
+  restoreState: (annotation: Collection, obj: any) => {
+    annotation.source = verifyObjectProperty(obj, 'source', verify3dVec);
+    annotation.entries = obj.entries.filter((v: any) => typeof v === 'string');
   },
-  // TODO: Figure this out
-  serializedBytes: 6 * 4,
+  serializedBytes: 3 * 4,
   serializer: (buffer: ArrayBuffer, offset: number, numAnnotations: number) => {
-    const coordinates = new Float32Array(buffer, offset, numAnnotations * 6);
+    const coordinates = new Float32Array(buffer, offset, numAnnotations * 3);
     return (annotation: Collection, index: number) => {
-      const {entries} = annotation;
-      const coordinateOffset = index * 6;
-      console.log(coordinateOffset, entries, coordinates);
-      // entries.forEach((e, i) => coordinates.set(center, coordinateOffset);
-      // coordinates.set(radii, coordinateOffset + 3);
+      const {source} = annotation;
+      const coordinateOffset = index * 3;
+      coordinates[coordinateOffset] = source[0];
+      coordinates[coordinateOffset + 1] = source[1];
+      coordinates[coordinateOffset + 2] = source[2];
     };
   },
-});
+};
+
+typeHandlers.set(AnnotationType.COLLECTION, collTypeSet);
 
 typeHandlers.set(AnnotationType.LINE_STRIP, {
+  ...collTypeSet,
   icon: '⚹',
   description: 'Line Strip',
-  toJSON: (annotation: LineStrip) => {
-    return {entries: Array.from(annotation.entries)};
-  },
-  restoreState: (annotation: LineStrip, obj: any[]) => {
-    annotation.entries = obj.map(() => verifyObjectProperty(obj, 'entries', () => <string>{}));
-  },
-  // TODO: Figure this out
-  serializedBytes: 6 * 4,
-  serializer: (buffer: ArrayBuffer, offset: number, numAnnotations: number) => {
-    const coordinates = new Float32Array(buffer, offset, numAnnotations * 6);
-    return (annotation: LineStrip, index: number) => {
-      const {entries} = annotation;
-      const coordinateOffset = index * 6;
-      console.log(coordinateOffset, entries, coordinates);
-      // entries.forEach((e, i) => coordinates.set(center, coordinateOffset);
-      // coordinates.set(radii, coordinateOffset + 3);
-    };
-  },
 });
 
 function restoreAnnotationsTags(tagsObj: any) {
@@ -301,6 +291,8 @@ export function annotationToJson(annotation: Annotation) {
   result.id = annotation.id;
   result.description = annotation.description || undefined;
   result.tagIds = (annotation.tagIds) ? [...annotation.tagIds] : undefined;
+  result.pid = annotation.pid || undefined;
+  result.cix = (typeof annotation.cix === 'number') ? annotation.cix : undefined;
   const {segments} = annotation;
   if (segments !== undefined && segments.length > 0) {
     result.segments = segments.map(x => x.toString());
@@ -323,6 +315,8 @@ export function restoreAnnotation(obj: any, allowMissingId = false): Annotation 
         obj, 'segments',
         x => x === undefined ? undefined : parseArray(x, y => Uint64.parseString(y))),
     type,
+    pid: verifyObjectProperty(obj, 'pid', verifyOptionalString),
+    cix: verifyObjectProperty(obj, 'cix', verifyOptionalNonnegativeInt)
   };
   getAnnotationTypeHandler(type).restoreState(result, obj);
   return result;
@@ -437,6 +431,11 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
         annotationNode = <AnnotationNode>annotationNode;
       }
       this.lastAnnotationNode = annotationNode;
+    }
+    if (annotation.type === AnnotationType.COLLECTION ||
+        annotation.type === AnnotationType.LINE_STRIP) {
+      annotationNode.entry = (index: number) =>
+          this.get(annotationNode.entries[index]);
     }
     this.annotationMap.set(annotation.id, annotationNode);
   }
