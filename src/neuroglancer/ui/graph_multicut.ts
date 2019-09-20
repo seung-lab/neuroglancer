@@ -43,6 +43,7 @@ import {formatIntegerPoint} from 'neuroglancer/util/spatial_units';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {WatchableVisibilityPriority} from 'neuroglancer/visibility_priority/frontend';
 import {makeCloseButton} from 'neuroglancer/widget/close_button';
+import {FindPathWidget} from 'neuroglancer/widget/find_path_widget';
 import {MinimizableGroupWidget} from 'neuroglancer/widget/minimizable_group';
 import {StackView, Tab} from 'neuroglancer/widget/tab_view';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
@@ -281,6 +282,7 @@ export class GraphOperationLayerView extends Tab {
   private updated = false;
   multicutGroup = this.registerDisposer(new MinimizableGroupWidget('Multicut'));
   timectrlGroup = this.registerDisposer(new MinimizableGroupWidget('Time Control'));
+  findPathGroup = this.registerDisposer(new MinimizableGroupWidget('Find Path'));
   timeWidget: TimeSegmentWidget|undefined;
 
   constructor(
@@ -420,6 +422,8 @@ export class GraphOperationLayerView extends Tab {
       this.timectrlGroup.appendFlexibleChild(this.timeWidget.element);
       this.element.appendChild(this.timectrlGroup.element);
     }
+
+    this.createPathFindingWidget();
 
     this.annotationListContainer.addEventListener('mouseleave', () => {
       this.annotationLayer.hoverState.value = undefined;
@@ -613,6 +617,13 @@ export class GraphOperationLayerView extends Tab {
       // Should never happen
       throw new Error('Multicut annotation not of type point');
     }
+  }
+
+  private createPathFindingWidget() {
+    this.registerDisposer(new FindPathWidget(
+        this.findPathGroup, this.wrapper, this.state, this.annotationLayer, this.voxelSize,
+        this.setSpatialCoordinates));
+    this.element.appendChild(this.findPathGroup.element);
   }
 }
 
