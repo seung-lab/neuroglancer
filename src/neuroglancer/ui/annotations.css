@@ -61,7 +61,8 @@
 }
 
 .neuroglancer-child-annotation {
-  display: none;
+  /*TODO: https://stackoverflow.com/questions/29231733/html-css-add-5px-to-margin-left-for-every-next-nested-ul-li-in-hierarchy*/
+  left: 20px;
 }
 
 .neuroglancer-tab-content.neuroglancer-annotation-details {

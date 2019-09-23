@@ -24,6 +24,7 @@ import {parseArray, verify3dScale, verify3dVec, verifyEnumString, verifyObject, 
 import {getRandomHexString} from 'neuroglancer/util/random';
 import {NullarySignal, Signal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
+import { TrackableBoolean } from '../trackable_boolean';
 
 export type AnnotationId = string;
 
@@ -102,6 +103,7 @@ export interface Collection extends AnnotationBase {
   connected: boolean;
   source: vec3;
   entry: Function;
+  cVis: TrackableBoolean;
 }
 
 export interface LineStrip extends Collection {
@@ -136,7 +138,7 @@ const typeHandlers = new Map<AnnotationType, AnnotationTypeHandler<Annotation>>(
 export function getAnnotationTypeHandler(type: AnnotationType) {
   return typeHandlers.get(type)!;
 }
-//TODO: How does base properties like segment and id get put in annotation data
+
 typeHandlers.set(AnnotationType.LINE, {
   icon: 'ꕹ',
   description: 'Line',
@@ -248,11 +250,12 @@ const collTypeSet = {
   icon: '⚄',
   description: 'Collection',
   toJSON: (annotation: Collection) => {
-    return {source: Array.from(annotation.source), entries: Array.from(annotation.entries)};
+    return {source: Array.from(annotation.source), entries: Array.from(annotation.entries), cVis: annotation.cVis.value};
   },
   restoreState: (annotation: Collection, obj: any) => {
     annotation.source = verifyObjectProperty(obj, 'source', verify3dVec);
     annotation.entries = obj.entries.filter((v: any) => typeof v === 'string');
+    annotation.cVis = new TrackableBoolean(obj.cVis, true);
   },
   serializedBytes: 3 * 4,
   serializer: (buffer: ArrayBuffer, offset: number, numAnnotations: number) => {

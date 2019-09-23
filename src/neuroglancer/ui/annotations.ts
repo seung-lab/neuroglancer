@@ -30,7 +30,7 @@ import {VoxelSize} from 'neuroglancer/navigation_state';
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
 import {StatusMessage} from 'neuroglancer/status';
 import {TrackableAlphaValue, trackableAlphaValue} from 'neuroglancer/trackable_alpha';
-import {TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
+import {TrackableBooleanCheckbox, TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {registerNested, TrackableValueInterface, WatchableRefCounted, WatchableValue} from 'neuroglancer/trackable_value';
 import {registerTool, Tool} from 'neuroglancer/ui/tool';
 import {TrackableRGB} from 'neuroglancer/util/color';
@@ -355,30 +355,9 @@ export function getPositionSummary(
       voxelSize.voxelFromSpatial(transformedRadii, transformedRadii);
       element.appendChild(document.createTextNode('±' + formatIntegerBounds(transformedRadii)));
       break;
+    case AnnotationType.LINE_STRIP:
     case AnnotationType.COLLECTION: {
-      element.append('[');
-      const amount = annotation.entries.length;
-      for (let i = 0; i < amount; i++) {
-        const ann = annotation.entry(i);
-        getPositionSummary(element, ann, transform, voxelSize);
-        if (i === amount - 1) {
-          element.append(';');
-        }
-      }
-      element.append(']');
-      break;
-    }
-    case AnnotationType.LINE_STRIP: {
-      element.append('[');
-      const amount = annotation.entries.length;
-      for (let i = 0; i < amount; i++) {
-        const ann = annotation.entry(i);
-        element.append(makePointLinkWithTransform(ann.pointA), '–');
-        if (i === amount - 1) {
-          element.append(makePointLinkWithTransform(ann.pointB));
-        }
-      }
-      element.append(']');
+      element.appendChild(makePointLinkWithTransform(annotation.source));
       break;
     }
   }
@@ -711,7 +690,16 @@ export class AnnotationLayerView extends Tab {
     const {objectToGlobal} = annotationLayer;
 
     const element = this.makeAnnotationListElement(annotation, objectToGlobal);
-    annotationListContainer.appendChild(element);
+    if (element.dataset.parent) {
+      const parent = annotationListContainer.querySelector(`[data-id="${element.dataset.parent}"]`);
+      if (parent) {
+        parent.appendChild(element);
+      } else {
+        throw new Error(`Parent ${element.dataset.parent} does not exist`);
+      }
+    } else {
+      annotationListContainer.appendChild(element);
+    }
     annotationListElements.set(annotation.id, element);
 
     element.addEventListener('mouseenter', () => {
@@ -723,8 +711,18 @@ export class AnnotationLayerView extends Tab {
 
     element.addEventListener('mouseup', (event: MouseEvent) => {
       if (event.button === 2) {
-        this.setSpatialCoordinates(
-            getCenterPosition(annotation, this.annotationLayer.objectToGlobal));
+        if ((<Collection>annotation).entries) {
+          const children = element.querySelector('.neuroglancer-annotation-children');
+          const style = (<HTMLUListElement>children)!.style;
+          style.display = (style.display !== 'none') ? 'none' : 'block';
+          (<Collection>annotation).cVis.value = false;
+        } else {
+          // TODO: Fix this, need to center position without collapsing
+          // event.stopImmediatePropagation();
+          this.setSpatialCoordinates(
+              getCenterPosition(annotation, this.annotationLayer.objectToGlobal));
+          // event.stopPropagation();
+        }
       }
     });
   }
@@ -769,12 +767,14 @@ export class AnnotationLayerView extends Tab {
           position, annotation, this.annotationLayer.objectToGlobal, this.voxelSize,
           this.setSpatialCoordinates);
     }
-    if (element.lastElementChild && element.children.length === 3) {
+    // TODO: Add Child Annotations as child elements of parent annotation's annotationElement
+    const description = <HTMLElement>element.querySelector('.neuroglancer-annotation-description');
+    if (description) {
       const annotationText = this.layer.getAnnotationText(annotation);
       if (!annotationText) {
-        element.removeChild(element.lastElementChild);
+        element.removeChild(description);
       } else {
-        element.lastElementChild.innerHTML = annotationText;
+        description.innerHTML = annotationText;
       }
     } else {
       this.createAnnotationDescriptionElement(element, annotation);
@@ -820,6 +820,14 @@ export class AnnotationLayerView extends Tab {
       element.classList.add('neuroglancer-child-annotation');
     }
     this.createAnnotationDescriptionElement(element, annotation);
+    if ((<Collection>annotation).entries) {
+      element.title = 'Click to select, right click to toggle children.';
+      const childs = document.createElement('ul');
+      childs.className = 'neuroglancer-annotation-children';
+      childs.style.display = ((<Collection>annotation).cVis.value) ? 'block' : 'none';
+      childs.dataset.id = annotation.id;
+      element.appendChild(childs);
+    }
 
     return element;
   }
@@ -1326,6 +1334,8 @@ abstract class PlaceTwoCornerAnnotationTool extends TwoStepAnnotationTool {
 }
 
 abstract class MultiStepAnnotationTool extends TwoStepAnnotationTool {
+  // TODO: Evalulate if multistep needs to extend TwoStep, I don't think it does, since internally
+  // it is a point that triggers a two step
   annotationType: AnnotationType.COLLECTION|AnnotationType.LINE_STRIP;
   toolset: typeof PlacePointTool|typeof PlaceBoundingBoxTool|typeof PlaceLineTool|
       typeof PlaceSphereTool;
@@ -1367,7 +1377,8 @@ abstract class MultiStepAnnotationTool extends TwoStepAnnotationTool {
       connected: false,
       source:
           vec3.transformMat4(vec3.create(), mouseState.position, annotationLayer.globalToObject),
-      entry: () => {}
+      entry: () => {},
+      cVis: new TrackableBoolean(true, true)
     };
     coll.entry = (index: number) =>
         (<LocalAnnotationSource>annotationLayer.source).get(coll.entries[index]);
@@ -1391,11 +1402,19 @@ abstract class MultiStepAnnotationTool extends TwoStepAnnotationTool {
     return {...oldAnnotation, last};
   }
 
+  // TODO: This is unneeded because multistep acts like point
+  update =
+      (newAnnotation: Annotation) => {
+        const state = this.inProgressAnnotation!;
+        const reference = state.reference;
+        state.annotationLayer.source.update(reference, newAnnotation);
+      }
 
   complete() {
     if (this.inProgressAnnotation) {
       (<Collection>this.inProgressAnnotation.reference.value!).entries.pop();
       this.inProgressAnnotation.annotationLayer.source.commit(this.inProgressAnnotation.reference);
+      // this.update(this.inProgressAnnotation.reference.value!);
       this.inProgressAnnotation.disposer();
       this.inProgressAnnotation = undefined;
       this.childTool.dispose();
@@ -1420,8 +1439,6 @@ abstract class MultiStepAnnotationTool extends TwoStepAnnotationTool {
             this.getInitialAnnotation(mouseState, annotationLayer), /*commit=*/false);
         this.layer.selectedAnnotation.value = {id: reference.id};
         this.childTool.trigger(mouseState, /*child=*/reference);
-
-        const mouseDisposer = () => {};
         const disposer = () => {
           mouseDisposer();
           reference.dispose();
@@ -1431,11 +1448,17 @@ abstract class MultiStepAnnotationTool extends TwoStepAnnotationTool {
           reference,
           disposer,
         };
+        // const posUp = () => this.update(reference.value!);
+        // const mouseDisposer = mouseState.changed.add(posUp);
+        const mouseDisposer = () => {};
+        // posUp();
       } else {
         this.childTool.trigger(mouseState, this.inProgressAnnotation.reference);
+        /*const newAnnotation = this.appendNewChildAnnotation(
+            this.inProgressAnnotation.reference!, mouseState, annotationLayer);*/
         this.appendNewChildAnnotation(
             this.inProgressAnnotation.reference!, mouseState, annotationLayer);
-        // updateChild();
+        // this.update(newAnnotation);
       }
     }
   }
