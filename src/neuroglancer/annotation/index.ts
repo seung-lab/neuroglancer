@@ -262,7 +262,7 @@ const collTypeSet = {
     annotation.source = verifyObjectProperty(obj, 'source', verify3dVec);
     annotation.entries = obj.entries.filter((v: any) => typeof v === 'string');
     annotation.cVis = new TrackableBoolean(obj.cVis, true);
-    (<LineStrip>annotation).looped = verifyObjectProperty(obj, 'source', verifyOptionalBoolean);
+    (<LineStrip>annotation).looped = verifyObjectProperty(obj, 'looped', verifyOptionalBoolean);
   },
   serializedBytes: 3 * 4,
   serializer: (buffer: ArrayBuffer, offset: number, numAnnotations: number) => {

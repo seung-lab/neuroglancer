@@ -776,7 +776,6 @@ export class AnnotationLayerView extends Tab {
           position, annotation, this.annotationLayer.objectToGlobal, this.voxelSize,
           this.setSpatialCoordinates);
     }
-    // TODO: Add Child Annotations as child elements of parent annotation's annotationElement
     const description = <HTMLElement>element.querySelector('.neuroglancer-annotation-description');
     if (description) {
       const annotationText = this.layer.getAnnotationText(annotation);
@@ -1342,22 +1341,14 @@ abstract class PlaceTwoCornerAnnotationTool extends TwoStepAnnotationTool {
   }
 }
 
-abstract class MultiStepAnnotationTool extends TwoStepAnnotationTool {
-  // TODO: Evalulate if multistep needs to extend TwoStep, I don't think it does, since internally
-  // it is a point that triggers a two step
+abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
+  inProgressAnnotation:
+      {annotationLayer: AnnotationLayerState, reference: AnnotationReference, disposer: () => void}|
+      undefined;
   annotationType: AnnotationType.COLLECTION|AnnotationType.LINE_STRIP;
   toolset: typeof PlacePointTool|typeof PlaceBoundingBoxTool|typeof PlaceLineTool|
       typeof PlaceSphereTool;
   childTool: PlacePointTool|PlaceBoundingBoxTool|PlaceLineTool|PlaceSphereTool;
-
-  getUpdatedAnnotation(
-      oldAnnotation: LineStrip, mouseState: MouseSelectionState,
-      annotationLayer: AnnotationLayerState) {
-    if (0) {
-      console.log(oldAnnotation, mouseState, annotationLayer);
-    }
-    return oldAnnotation;
-  }
 
   initChildAnnotation() {
     if (!(this.childTool instanceof PlacePointTool)) {
@@ -1394,36 +1385,20 @@ abstract class MultiStepAnnotationTool extends TwoStepAnnotationTool {
     return coll;
   }
 
-  appendNewChildAnnotation(
-      oldAnnotationRef: AnnotationReference, mouseState: MouseSelectionState,
-      annotationLayer: AnnotationLayerState): Annotation {
-    if (0) {
-      console.log(mouseState, annotationLayer);
-    }
-
+  appendNewChildAnnotation(oldAnnotationRef: AnnotationReference, mouseState: MouseSelectionState):
+      Annotation {
     const oldAnnotation = <Collection>oldAnnotationRef!.value!;
     this.childTool = new this.toolset(this.layer, {});
     this.childTool.trigger(mouseState, oldAnnotationRef);
 
-    // append new annotation into last
     let last = this.initChildAnnotation();
-    // TODO: Evaluate
     return {...oldAnnotation, last};
   }
-
-  // TODO: This is unneeded because multistep acts like point
-  update =
-      (newAnnotation: Annotation) => {
-        const state = this.inProgressAnnotation!;
-        const reference = state.reference;
-        state.annotationLayer.source.update(reference, newAnnotation);
-      }
 
   complete() {
     if (this.inProgressAnnotation) {
       (<Collection>this.inProgressAnnotation.reference.value!).entries.pop();
       this.inProgressAnnotation.annotationLayer.source.commit(this.inProgressAnnotation.reference);
-      // this.update(this.inProgressAnnotation.reference.value!);
       this.inProgressAnnotation.disposer();
       this.inProgressAnnotation = undefined;
       this.childTool.dispose();
@@ -1433,7 +1408,6 @@ abstract class MultiStepAnnotationTool extends TwoStepAnnotationTool {
   }
 
   trigger(mouseState: MouseSelectionState) {
-    // TODO: Move to line strip
     const {annotationLayer} = this;
     if (annotationLayer === undefined) {
       // Not yet ready.
@@ -1457,17 +1431,9 @@ abstract class MultiStepAnnotationTool extends TwoStepAnnotationTool {
           reference,
           disposer,
         };
-        // const posUp = () => this.update(reference.value!);
-        // const mouseDisposer = mouseState.changed.add(posUp);
         const mouseDisposer = () => {};
-        // posUp();
       } else {
         this.childTool.trigger(mouseState, this.inProgressAnnotation.reference);
-        /*const newAnnotation = this.appendNewChildAnnotation(
-            this.inProgressAnnotation.reference!, mouseState, annotationLayer);*/
-        this.appendNewChildAnnotation(
-            this.inProgressAnnotation.reference!, mouseState, annotationLayer);
-        // this.update(newAnnotation);
       }
     }
   }
@@ -1484,11 +1450,17 @@ export class PlaceLineStripTool extends MultiStepAnnotationTool {
   }
 
   trigger(mouseState: MouseSelectionState) {
-    if (mouseState.active && this.inProgressAnnotation === undefined) {
-      this.initMouseState = <MouseSelectionState>{...mouseState};
-      this.initPos = mouseState.position.slice();
+    if (mouseState.active) {
+      if (this.inProgressAnnotation === undefined) {
+        this.initMouseState = <MouseSelectionState>{...mouseState};
+        this.initPos = mouseState.position.slice();
+        super.trigger(mouseState);
+      } else {
+        super.trigger(mouseState);
+        // Start new annotation automatically
+        this.appendNewChildAnnotation(this.inProgressAnnotation.reference!, mouseState);
+      }
     }
-    super.trigger(mouseState);
   }
 
   complete() {
