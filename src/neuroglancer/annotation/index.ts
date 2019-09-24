@@ -20,11 +20,12 @@
 
 import {Borrowed, RefCounted} from 'neuroglancer/util/disposable';
 import {mat4, vec3} from 'neuroglancer/util/geom';
-import {parseArray, verify3dScale, verify3dVec, verifyEnumString, verifyObject, verifyObjectProperty, verifyOptionalString, verifyPositiveInt, verifyString, verifyOptionalNonnegativeInt} from 'neuroglancer/util/json';
+import {parseArray, verify3dScale, verify3dVec, verifyEnumString, verifyObject, verifyObjectProperty, verifyOptionalBoolean, verifyOptionalNonnegativeInt, verifyOptionalString, verifyPositiveInt, verifyString} from 'neuroglancer/util/json';
 import {getRandomHexString} from 'neuroglancer/util/random';
 import {NullarySignal, Signal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
-import { TrackableBoolean } from '../trackable_boolean';
+
+import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 
 export type AnnotationId = string;
 
@@ -107,7 +108,7 @@ export interface Collection extends AnnotationBase {
 }
 
 export interface LineStrip extends Collection {
-  looped: boolean;
+  looped?: boolean;
   type: AnnotationType.LINE_STRIP;
   connected: true;
 }
@@ -250,12 +251,18 @@ const collTypeSet = {
   icon: '⚄',
   description: 'Collection',
   toJSON: (annotation: Collection) => {
-    return {source: Array.from(annotation.source), entries: Array.from(annotation.entries), cVis: annotation.cVis.value};
+    return {
+      source: Array.from(annotation.source),
+      entries: Array.from(annotation.entries),
+      cVis: annotation.cVis.value,
+      looped: (<LineStrip>annotation).looped
+    };
   },
   restoreState: (annotation: Collection, obj: any) => {
     annotation.source = verifyObjectProperty(obj, 'source', verify3dVec);
     annotation.entries = obj.entries.filter((v: any) => typeof v === 'string');
     annotation.cVis = new TrackableBoolean(obj.cVis, true);
+    (<LineStrip>annotation).looped = verifyObjectProperty(obj, 'source', verifyOptionalBoolean);
   },
   serializedBytes: 3 * 4,
   serializer: (buffer: ArrayBuffer, offset: number, numAnnotations: number) => {
@@ -437,8 +444,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     }
     if (annotation.type === AnnotationType.COLLECTION ||
         annotation.type === AnnotationType.LINE_STRIP) {
-      annotationNode.entry = (index: number) =>
-          this.get(annotationNode.entries[index]);
+      annotationNode.entry = (index: number) => this.get(annotationNode.entries[index]);
     }
     this.annotationMap.set(annotation.id, annotationNode);
   }

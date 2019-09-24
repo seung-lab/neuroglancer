@@ -140,6 +140,10 @@
   width: 125px;
 }
 
+.activeMultiStep.neuroglancer-linestrip-looped {
+  box-shadow: inset -3px -3px 10px 0px #57c6ca;
+}
+
 .activeMultiStep {
   box-shadow: inset -3px -3px 10px 0px #396125;
 }

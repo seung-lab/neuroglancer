@@ -30,7 +30,7 @@ import {VoxelSize} from 'neuroglancer/navigation_state';
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
 import {StatusMessage} from 'neuroglancer/status';
 import {TrackableAlphaValue, trackableAlphaValue} from 'neuroglancer/trackable_alpha';
-import {TrackableBooleanCheckbox, TrackableBoolean} from 'neuroglancer/trackable_boolean';
+import {TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
 import {registerNested, TrackableValueInterface, WatchableRefCounted, WatchableValue} from 'neuroglancer/trackable_value';
 import {registerTool, Tool} from 'neuroglancer/ui/tool';
 import {TrackableRGB} from 'neuroglancer/util/color';
@@ -510,9 +510,17 @@ export class AnnotationLayerView extends Tab {
             remActiveTool();
             dechange();
           });
+        } else {
+          // toggled - defaults to false
+          multipointButton.classList.toggle('neuroglancer-linestrip-looped');
+          (<PlaceLineStripTool>this.layer.tool.value!).looped =
+              !(<PlaceLineStripTool>this.layer.tool.value!).looped;
         }
       });
-
+      if (this.layer.tool.value &&
+          (<PlaceLineStripTool>this.layer.tool.value).looped !== void (0)) {
+        multipointButton.classList.add(mskey);
+      }
       toolbox.appendChild(multipointButton);
 
       const undoMultiButton = document.createElement('button');
@@ -715,7 +723,8 @@ export class AnnotationLayerView extends Tab {
           const children = element.querySelector('.neuroglancer-annotation-children');
           const style = (<HTMLUListElement>children)!.style;
           style.display = (style.display !== 'none') ? 'none' : 'block';
-          (<Collection>annotation).cVis.value = false;
+          (<Collection>annotation).cVis.value = !(<Collection>annotation).cVis.value;
+          this.annotationLayer.source.changed.dispatch();
         } else {
           // TODO: Fix this, need to center position without collapsing
           // event.stopImmediatePropagation();
@@ -1466,9 +1475,29 @@ abstract class MultiStepAnnotationTool extends TwoStepAnnotationTool {
 
 export class PlaceLineStripTool extends MultiStepAnnotationTool {
   toolset = PlaceLineTool;
+  looped = false;
+  initMouseState: MouseSelectionState;
+  initPos: any;
   constructor(public layer: UserLayerWithAnnotations, options: any) {
     super(layer, options);
     this.childTool = new this.toolset(layer, options);
+  }
+
+  trigger(mouseState: MouseSelectionState) {
+    if (mouseState.active && this.inProgressAnnotation === undefined) {
+      this.initMouseState = <MouseSelectionState>{...mouseState};
+      this.initPos = mouseState.position.slice();
+    }
+    super.trigger(mouseState);
+  }
+
+  complete() {
+    if (this.inProgressAnnotation && this.looped) {
+      const fakeMouse = <MouseSelectionState>{...this.initMouseState, position: this.initPos};
+      (<LineStrip>this.inProgressAnnotation.reference.value!).looped = true;
+      this.childTool.trigger(fakeMouse, this.inProgressAnnotation.reference);
+    }
+    super.complete();
   }
 
   get description() {
