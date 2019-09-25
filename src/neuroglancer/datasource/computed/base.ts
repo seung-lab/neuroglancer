@@ -63,5 +63,7 @@ export function getArrayView(buffer: ArrayBuffer, type: DataType) {
       return new Uint32Array(buffer);
     case DataType.FLOAT32:
       return new Float32Array(buffer);
+    case DataType.INT16:
+      return new Int16Array(buffer);
   }
 }

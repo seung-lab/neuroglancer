@@ -264,6 +264,8 @@ function getShaderCodeForDataType(dataType: DataType): ShaderCodePart {
       return glsl_uint64;
     case DataType.FLOAT32:
       return glsl_float;
+    case DataType.INT16:
+      return glsl_uint16;
   }
 }
 
