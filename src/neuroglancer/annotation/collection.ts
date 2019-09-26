@@ -17,7 +17,8 @@
 /**
  * @file Support for rendering line annotations.
  */
-
+//TODO: SHADERS ARE INCORRECT, THIS FILE SHOULD BE BASED OFF OF POINT NOT LINE
+throw
 import {AnnotationType, Collection} from 'neuroglancer/annotation';
 import {AnnotationRenderContext, AnnotationRenderHelper, registerAnnotationTypeRenderHandler} from 'neuroglancer/annotation/type_handler';
 import {tile2dArray} from 'neuroglancer/util/array';

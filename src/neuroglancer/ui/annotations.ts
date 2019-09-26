@@ -584,13 +584,6 @@ export class AnnotationLayerView extends Tab {
       });
       toolbox.appendChild(multipointButton);
 
-      const undoMultiButton = document.createElement('button');
-      {
-        undoMultiButton.textContent = '↩';
-        undoMultiButton.title = 'Undo previous step';
-        undoMultiButton.disabled = true;
-      }
-
       const confirmMultiButton = document.createElement('button');
       {
         confirmMultiButton.textContent = '✔️';
@@ -604,6 +597,7 @@ export class AnnotationLayerView extends Tab {
 
       const abortMultiButton = document.createElement('button');
       {
+        abortMultiButton.disabled = true;
         abortMultiButton.textContent = '❌';
         abortMultiButton.title = 'Abort Annotation';
         abortMultiButton.addEventListener('click', () => {
@@ -623,7 +617,7 @@ export class AnnotationLayerView extends Tab {
         });
       }
 
-      toolbox.append(undoMultiButton, confirmMultiButton, abortMultiButton);
+      toolbox.append(confirmMultiButton, abortMultiButton);
     }
 
     {
@@ -788,8 +782,7 @@ export class AnnotationLayerView extends Tab {
           (<Collection>annotation).cVis.value = !(<Collection>annotation).cVis.value;
           this.annotationLayer.source.changed.dispatch();
         } else {
-          // TODO: Fix this, need to center position without collapsing
-          // event.stopImmediatePropagation();
+          // TODO: Fix this, need to center position without collapsing (fixed?)
           this.setSpatialCoordinates(
               getCenterPosition(annotation, this.annotationLayer.objectToGlobal));
         }
@@ -1440,48 +1433,33 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
         (<LocalAnnotationSource>annotationLayer.source).get(coll.entries[index]);
     return coll;
   }
-
-  verify() {
-    if (this.inProgressAnnotation) {
-      const raw = (<Collection>this.inProgressAnnotation.reference.value);
-      if (raw.entries.length === 1) {
-        // verify entry exists
-        const child = this.annotationLayer!.source.getReference(raw.entries[0]);
-        if (!child) {
-          return false;
-        }
-      } else if (!raw.entries.length) {
-        return false;
-      }
-      return true;
-    } else {
-      return false;
-    }
-  }
-
   complete() {
-    if (this.verify()) {
+    if (this.inProgressAnnotation && this.childTool) {
+      const childInProgress = (<MultiStepAnnotationTool|TwoStepAnnotationTool>this.childTool!).inProgressAnnotation;
+      const childCount = (<Collection>this.inProgressAnnotation!.reference.value!).entries.length;
       if (this.childTool && (<PlaceLineStripTool>this.childTool!).toolset) {
-        this.childTool!.complete();
-        this.childTool!.dispose();
-        this.childTool = undefined;
-        this.layer.tool.changed.dispatch();
-      } else {
-        if (this.childTool) {
+        if ((<LineStrip>childInProgress!.reference.value!).entries.length > 1) {
+          this.childTool!.complete();
           this.childTool!.dispose();
-        }
-        // TODO: Refactor, shouldnt need to call verify so much
-        if (this.verify()) {
-          this.inProgressAnnotation!.annotationLayer.source.commit(
-              this.inProgressAnnotation!.reference);
-          this.inProgressAnnotation!.disposer();
-          this.inProgressAnnotation = undefined;
-        } else {
+          this.childTool = undefined;
           this.layer.tool.changed.dispatch();
+        } else {
+          // see line 1623
           StatusMessage.showTemporaryMessage(`No annotation has been made.`, 3000);
         }
+      } else if ((!childInProgress && childCount === 1) || childCount > 1) {
+        this.childTool!.dispose();
+        this.inProgressAnnotation!.annotationLayer.source.commit(this.inProgressAnnotation!.reference);
+        this.inProgressAnnotation!.disposer();
+        this.inProgressAnnotation = undefined;
+      } else {
+        StatusMessage.showTemporaryMessage(`No annotation has been made.`, 3000);
       }
     } else {
+      // if child tool has a toolset, its a lineStrip, and we apply the lineStrip test b4 continuing
+      // if child tool is a base annotation, it must have at least one complete annotation
+      // an annotation is complete if the child tool has no inProgressAnnotation
+      // if there are more than two annotations in entries, the first one is guaranteed to be complete
       StatusMessage.showTemporaryMessage(`No annotation has been made.`, 3000);
     }
   }
@@ -1512,7 +1490,7 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
           }
         }
         this.layer.selectedAnnotation.value = {id: reference.id};
-        this.childTool.trigger(mouseState, /*child=*/reference);
+        // this.childTool.trigger(mouseState, /*child=*/reference);
         const disposer = () => {
           mouseDisposer();
           reference.dispose();
@@ -1604,18 +1582,21 @@ export class PlaceLineStripTool extends MultiStepAnnotationTool {
   }
 
   complete() {
-    if (this.verify()) {
-      if (this.looped) {
-        const fakeMouse = <MouseSelectionState>{...this.initMouseState, position: this.initPos};
-        (<LineStrip>this.inProgressAnnotation!.reference.value!).looped = true;
-        this.childTool!.trigger(fakeMouse, this.inProgressAnnotation!.reference);
-      }
+    if (this.inProgressAnnotation) {
       const innerEntries = (<LineStrip>this.inProgressAnnotation!.reference.value!).entries;
       if (innerEntries.length > 1) {
-        innerEntries.pop();
+        if (this.looped) {
+          const fakeMouse = <MouseSelectionState>{...this.initMouseState, position: this.initPos};
+          (<LineStrip>this.inProgressAnnotation!.reference.value!).looped = true;
+          this.childTool!.trigger(fakeMouse, this.inProgressAnnotation!.reference);
+        }
+        super.complete();
+      } else {
+        // for LineStrip, a second annotation is created automatically after the first is done
+        // if entries.length is less than 2, the first annotation is not confirmed
+        StatusMessage.showTemporaryMessage(`No annotation has been made.`, 3000);
       }
     }
-    super.complete();
   }
 
   get description() {

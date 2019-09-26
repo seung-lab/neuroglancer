@@ -425,23 +425,21 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     }
   }
 
-  private insertAnnotationNode(annotation: Annotation, unlisted?: boolean) {
+  private insertAnnotationNode(annotation: Annotation) {
     this.validateTags(annotation);
     let annotationNode: any = {...annotation, prev: null, next: null};
-    if (unlisted) {
+    if (this.lastAnnotationNode) {
+      annotationNode.prev = this.lastAnnotationNode;
+      annotationNode.next = this.lastAnnotationNode.next;
+      annotationNode = <AnnotationNode>annotationNode;
+      this.lastAnnotationNode.next = annotationNode;
+      annotationNode.next.prev = annotationNode;
     } else {
-      if (this.lastAnnotationNode) {
-        annotationNode.prev = this.lastAnnotationNode;
-        annotationNode.next = this.lastAnnotationNode.next;
-        annotationNode = <AnnotationNode>annotationNode;
-        this.lastAnnotationNode.next = annotationNode;
-        annotationNode.next.prev = annotationNode;
-      } else {
-        annotationNode.prev = annotationNode.next = annotationNode;
-        annotationNode = <AnnotationNode>annotationNode;
-      }
-      this.lastAnnotationNode = annotationNode;
+      annotationNode.prev = annotationNode.next = annotationNode;
+      annotationNode = <AnnotationNode>annotationNode;
     }
+    this.lastAnnotationNode = annotationNode;
+
     if (annotation.type === AnnotationType.COLLECTION ||
         annotation.type === AnnotationType.LINE_STRIP) {
       annotationNode.entry = (index: number) => this.get(annotationNode.entries[index]);
@@ -482,13 +480,13 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     return;
   }
   // TODO: deal with annotation node
-  add(annotation: Annotation, commit: boolean = true, denode?: boolean): AnnotationReference {
+  add(annotation: Annotation, commit: boolean = true): AnnotationReference {
     if (!annotation.id) {
       annotation.id = makeAnnotationId();
     } else if (this.annotationMap.has(annotation.id)) {
       throw new Error(`Annotation id already exists: ${JSON.stringify(annotation.id)}.`);
     }
-    this.insertAnnotationNode(annotation, denode);
+    this.insertAnnotationNode(annotation);
     this.changed.dispatch();
     this.childAdded.dispatch(annotation);
     if (!commit) {
