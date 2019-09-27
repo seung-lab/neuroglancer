@@ -21,7 +21,7 @@
 import './annotations.css';
 
 import debounce from 'lodash/debounce';
-import {Annotation, AnnotationReference, AnnotationSource, AnnotationTag, AnnotationType, AxisAlignedBoundingBox, Collection, Ellipsoid, getAnnotationTypeHandler, Line, LineStrip, LocalAnnotationSource} from 'neuroglancer/annotation';
+import {Annotation, AnnotationReference, AnnotationSource, AnnotationTag, AnnotationType, AxisAlignedBoundingBox, Collection, Ellipsoid, getAnnotationTypeHandler, Line, LineStrip, LocalAnnotationSource, makeAnnotationId, Point} from 'neuroglancer/annotation';
 import {AnnotationLayer, AnnotationLayerState, PerspectiveViewAnnotationLayer, SliceViewAnnotationLayer} from 'neuroglancer/annotation/frontend';
 import {DataFetchSliceViewRenderLayer, MultiscaleAnnotationSource} from 'neuroglancer/annotation/frontend_source';
 import {setAnnotationHoverStateFromMouseState} from 'neuroglancer/annotation/selection';
@@ -682,6 +682,18 @@ export class AnnotationLayerView extends Tab {
       });
       this.groupAnnotations.appendFixedChild(exportToCSVButton);
     }
+    {
+      const importCSVButton = document.createElement('input');
+      importCSVButton.id = 'importCSVButton';
+      importCSVButton.type = 'file';
+      importCSVButton.accept = 'text/csv';
+      importCSVButton.multiple = true;
+      importCSVButton.textContent = 'Import from CSV';
+      importCSVButton.addEventListener('change', () => {
+        this.importCSV(importCSVButton.files);
+      });
+      this.groupAnnotations.appendFixedChild(importCSVButton);
+    }
 
     this.groupAnnotations.appendFixedChild(toolbox);
     this.groupAnnotations.appendFlexibleChild(this.annotationListContainer);
@@ -769,8 +781,9 @@ export class AnnotationLayerView extends Tab {
     element.addEventListener('mouseenter', () => {
       this.annotationLayer.hoverState.value = {id: annotation.id, partIndex: 0};
     });
-    element.addEventListener('click', () => {
+    element.addEventListener('click', (event: MouseEvent) => {
       this.state.value = {id: annotation.id, partIndex: 0};
+      event.stopPropagation();
     });
 
     element.addEventListener('mouseup', (event: MouseEvent) => {
@@ -924,8 +937,8 @@ export class AnnotationLayerView extends Tab {
       return formatIntegerPoint(this.voxelSize.voxelFromSpatial(tempVec3, spatialPoint));
     };
     const columnHeaders = [
-      'Coordinate 1', 'Coordinate 2 (if applicable)', 'Ellipsoid Dimensions (if applicable)',
-      'Tags', 'Description', 'Segment IDs'
+      'Coordinate 1', 'Coordinate 2', 'Ellipsoid Dimensions', 'Tags', 'Description', 'Segment IDs',
+      'Parent ID', 'Type', 'ID'
     ];
     const csvData: string[][] = [];
     for (const annotation of this.annotationLayer.source) {
@@ -933,19 +946,24 @@ export class AnnotationLayerView extends Tab {
       let coordinate1String = '';
       let coordinate2String = '';
       let ellipsoidDimensions = '';
+      let stringType = '';
+      let collectionID = '';
       switch (annotation.type) {
         case AnnotationType.AXIS_ALIGNED_BOUNDING_BOX:
         case AnnotationType.LINE:
+          stringType = annotation.type === AnnotationType.LINE ? 'Line' : 'AABB';
           coordinate1String =
               pointToCoordinateText(annotation.pointA, this.annotationLayer.objectToGlobal);
           coordinate2String =
               pointToCoordinateText(annotation.pointB, this.annotationLayer.objectToGlobal);
           break;
         case AnnotationType.POINT:
+          stringType = 'Point';
           coordinate1String =
               pointToCoordinateText(annotation.point, this.annotationLayer.objectToGlobal);
           break;
         case AnnotationType.ELLIPSOID:
+          stringType = 'Ellipsoid';
           coordinate1String =
               pointToCoordinateText(annotation.center, this.annotationLayer.objectToGlobal);
           const transformedRadii = transformVectorByMat4(
@@ -953,10 +971,20 @@ export class AnnotationLayerView extends Tab {
           this.voxelSize.voxelFromSpatial(transformedRadii, transformedRadii);
           ellipsoidDimensions = formatIntegerBounds(transformedRadii);
           break;
+        case AnnotationType.LINE_STRIP:
+        case AnnotationType.COLLECTION:
+          stringType = annotation.type === AnnotationType.LINE_STRIP ?
+              ((<LineStrip>annotation).looped ? 'Line Strip*' : 'Line Strip') :
+              'Collection';
+          coordinate1String =
+              pointToCoordinateText(annotation.source, this.annotationLayer.objectToGlobal);
+          collectionID = annotation.id;
+          break;
       }
       annotationRow.push(coordinate1String);
       annotationRow.push(coordinate2String);
       annotationRow.push(ellipsoidDimensions);
+      // Tags
       if (this.annotationLayer.source instanceof AnnotationSource && annotation.tagIds) {
         // Papa.unparse expects an array of arrays even though here we only want to create a csv
         // for one row of tags
@@ -975,11 +1003,13 @@ export class AnnotationLayerView extends Tab {
       } else {
         annotationRow.push('');
       }
+      // Description
       if (annotation.description) {
         annotationRow.push(annotation.description);
       } else {
         annotationRow.push('');
       }
+      // Segment IDs
       if (annotation.segments) {
         // Papa.unparse expects an array of arrays even though here we only want to create a csv
         // for one row of segments
@@ -992,7 +1022,16 @@ export class AnnotationLayerView extends Tab {
         } else {
           annotationRow.push('');
         }
+      } else {
+        annotationRow.push('');
       }
+      // Parent ID
+      annotationRow.push(annotation.pid || '');
+      // Type
+      annotationRow.push(stringType);
+      // ID
+      annotationRow.push(collectionID);
+
       csvData.push(annotationRow);
     }
     const csvString = Papa.unparse({'fields': columnHeaders, 'data': csvData});
@@ -1004,6 +1043,166 @@ export class AnnotationLayerView extends Tab {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  }
+
+  /*private readUploadedFileAsText = (inputFile: File|Blob): Promise<string|null> => {
+    //
+  https://gist.github.com/Anveio/05d65f759e3ab0ecd97542b04192deb4#file-readuploadedfileastext-js
+    const temporaryFileReader = new FileReader();
+
+    return new Promise((resolve, reject) => {
+      temporaryFileReader.onerror = () => {
+        temporaryFileReader.abort();
+        reject(new DOMException('Problem parsing input file.'));
+      };
+
+      temporaryFileReader.onload = () => {
+        resolve(<string|null|undefined>temporaryFileReader.result);
+      };
+      temporaryFileReader.readAsText(inputFile);
+    });
+  }*/
+
+  // TODO: pull request to papa repo
+  private betterPapa = (inputFile: File|Blob): Promise<any> => {
+    return new Promise((resolve) => {
+      Papa.parse(inputFile, {
+        complete: (results: any) => {
+          resolve(results);
+        }
+      });
+    });
+  }
+
+  private stringToVec3 = (input: string): vec3 => {
+    // format: (x, y, z)
+    let raw = input.split('');
+    raw.shift();
+    raw.pop();
+    let list = raw.join('');
+    let val = list.split(',').map(v => parseInt(v, 10));
+    return vec3.fromValues(val[0], val[1], val[2]);
+  }
+
+  /*private clean = (input: string[]|string): string => {
+    const raw = ((<any>input).join) ? (<any>input).join('') : input;
+    return raw.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, '').trim();
+  }*/
+
+  private async importCSV(files: FileList|null) {
+    const rawAnnotations = <Annotation[]>[];
+
+    if (!files) {
+      return;
+    }
+
+    for (const file of files) {
+      const rawData = await this.betterPapa(file);
+      if (!rawData.data.length) {
+        continue;
+      }
+      const annStrings = rawData.data;
+      annStrings.shift();
+      const registry = <any>{};
+      for (const annProps of annStrings) {
+        const type = annProps[7];
+        const pid = annProps[6];
+        const cid = annProps[8];
+        const tags = annProps[3];
+        let raw = <Annotation><any>{id: makeAnnotationId(), description: annProps[4]};
+
+        if (cid !== '') {
+          if (!registry[cid]) {
+            registry[cid] = raw;
+            (<Collection>raw).entries = [];
+          } else {
+            raw = {...raw, ...registry[cid]};
+            registry[cid] = raw;
+            (<Collection>raw).entries.forEach((ann: any) => {
+              ann.pid = raw.id;
+              return ann.id;
+            });
+          }
+        }
+        if (pid !== '') {
+          if (registry[pid]) {
+            const parent = registry[pid];
+            if (parent.id) {
+              parent.entries.push(raw.id);
+              raw.pid = parent.id;
+            } else {
+              parent.entries.push(raw);
+            }
+          } else {
+            registry[pid] = {entries: [raw]};
+          }
+        }
+        if (tags !== '') {
+          raw.tagIds = new Set();
+          const labels = tags.split(',');
+          const alayer = (<AnnotationSource>this.annotationLayer.source);
+          const currentTags = Array.from(alayer.getTags());
+          labels.forEach((label: string) => {
+            const tagId = (currentTags.find(tag => tag.label === label) || <any>{}).id ||
+                alayer.addTag(label);
+            raw.tagIds!.add(tagId);
+          });
+        }
+        // TODO: Is this transferable?
+        // raw.segments = getSelectedAssocatedSegment(annotationLayer),
+
+        switch (type) {
+          case 'AABB':
+          case 'Line':
+            raw.type =
+                type === 'Line' ? AnnotationType.LINE : AnnotationType.AXIS_ALIGNED_BOUNDING_BOX;
+            (<Line>raw).pointA = vec3.transformMat4(
+                vec3.create(), this.stringToVec3(annProps[0]), this.annotationLayer.globalToObject);
+            (<Line>raw).pointB = vec3.transformMat4(
+                vec3.create(), this.stringToVec3(annProps[1]), this.annotationLayer.globalToObject);
+            break;
+          case 'Point':
+            raw.type = AnnotationType.POINT;
+            (<Point>raw).point = vec3.transformMat4(
+                vec3.create(), this.stringToVec3(annProps[0]), this.annotationLayer.globalToObject);
+            break;
+          case 'Ellipsoid':
+            raw.type = AnnotationType.ELLIPSOID;
+            (<Ellipsoid>raw).center = vec3.transformMat4(
+                vec3.create(), this.stringToVec3(annProps[0]), this.annotationLayer.globalToObject);
+            // TODO: Check that this is correct
+            (<Ellipsoid>raw).radii = vec3.transformMat4(
+                vec3.create(), this.stringToVec3(annProps[2]), this.annotationLayer.globalToObject);
+            break;
+          case 'Line Strip':
+          case 'Line Strip*':
+          case 'Collection':
+            if (type === 'Line Strip' || type === 'Line Strip*') {
+              raw.type = AnnotationType.LINE_STRIP;
+              (<LineStrip>raw).connected = true;
+              (<LineStrip>raw).looped = type === 'Line Strip*';
+            } else {
+              raw.type = AnnotationType.COLLECTION;
+              (<Collection>raw).connected = false;
+            }
+            (<Collection>raw).cVis = new TrackableBoolean(false, true);
+            (<Collection>raw).source = vec3.transformMat4(
+                vec3.create(), this.stringToVec3(annProps[0]), this.annotationLayer.globalToObject);
+            (<Collection>raw).entry = (index: number) =>
+                (<LocalAnnotationSource>this.annotationLayer.source)
+                    .get((<Collection>raw).entries[index]);
+            break;
+        }
+
+        rawAnnotations.push(raw);
+      }
+    }
+
+    for (const annotation of rawAnnotations) {
+      this.annotationLayer.source.add(annotation, /*commit=*/true);
+    }
+    // TODO: Undoable
+    StatusMessage.showTemporaryMessage(`Imported ${files.length} csv(s).`, 3000);
   }
 }
 
@@ -1089,12 +1288,67 @@ export class AnnotationDetailsTab extends Tab {
     title.appendChild(icon);
     title.appendChild(titleText);
 
-    if (!annotationLayer.source.readonly) {
+    let isLineSegment: boolean|undefined;
+    let isChild: boolean|undefined;
+    let isSingleton: boolean|undefined;
+    let parent: Collection|undefined;
+    const ann = annotationLayer.source.getReference(value.id).value!;
+    const annPid = ann.pid;
+    if (annPid && annotationLayer.source.getReference(annPid)) {
+      parent = <Collection>annotationLayer.source.getReference(annPid).value!;
+      isLineSegment = parent.type === AnnotationType.LINE_STRIP;
+      isChild = true;
+      isSingleton = (parent.entries.length === 1);
+    }
+    if (isLineSegment) {
+      titleText.textContent = 'Line (segment)';
+    }
+    if (!annotationLayer.source.readonly && !isLineSegment) {
+      const groupButton = isChild ? makeTextIconButton('✂️', 'Remove from collection') :
+                                    makeTextIconButton('⚄', 'Create collection');
+      groupButton.addEventListener('click', () => {
+        // Parent can be different, so must get it again
+        // Actually, this is recreated everytime so it might not be a concern
+        // test it anyway :TODO:
+        if (isSingleton) {
+          const ref = annotationLayer.source.getReference(annPid!);
+          // FIXME:DRY: ungroup
+          try {
+            annotationLayer.source.delete(ref);
+          } finally {
+            ref.dispose();
+          }
+        } else {
+          
+        }
+        /*const ref = annotationLayer.source.getReference(value.id);
+        try {
+          annotationLayer.source.delete(ref);
+        } finally {
+          ref.dispose();
+        }*/
+      });
+      title.appendChild(groupButton);
+      if (ann.type === AnnotationType.COLLECTION || ann.type === AnnotationType.LINE_STRIP) {
+        const ungroupButton = makeTextIconButton('💥', 'Free annotation');
+        ungroupButton.addEventListener('click', () => {
+          // Delete annotation and send its children to an ancestor or root
+          // TODO: works partially but need to recreate parenrt element
+          const ref = annotationLayer.source.getReference(value.id);
+          try {
+            annotationLayer.source.delete(ref);
+          } finally {
+            ref.dispose();
+          }
+        });
+        title.appendChild(ungroupButton);
+      }
       const deleteButton = makeTextIconButton('🗑', 'Delete annotation');
       deleteButton.addEventListener('click', () => {
         const ref = annotationLayer.source.getReference(value.id);
         try {
-          annotationLayer.source.delete(ref);
+          // Delete annotation and all its children
+          annotationLayer.source.delete(ref, true);
         } finally {
           ref.dispose();
         }
@@ -1275,7 +1529,6 @@ export class PlacePointTool extends PlaceAnnotationTool {
       };
       if (parentRef) {
         annotation.pid = parentRef.id;
-        annotation.cix = (<Collection>parentRef.value!).entries.length;
       }
       const reference = annotationLayer.source.add(annotation, /*commit=*/true);
       this.layer.selectedAnnotation.value = {id: reference.id};
@@ -1335,7 +1588,6 @@ abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
         const annotation = this.getInitialAnnotation(mouseState, annotationLayer);
         if (parentRef) {
           annotation.pid = parentRef.id;
-          annotation.cix = (<Collection>parentRef.value!).entries.length;
         }
         const reference = annotationLayer.source.add(annotation, /*commit=*/false);
         if (parentRef) {
@@ -1435,7 +1687,8 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
   }
   complete() {
     if (this.inProgressAnnotation && this.childTool) {
-      const childInProgress = (<MultiStepAnnotationTool|TwoStepAnnotationTool>this.childTool!).inProgressAnnotation;
+      const childInProgress =
+          (<MultiStepAnnotationTool|TwoStepAnnotationTool>this.childTool!).inProgressAnnotation;
       const childCount = (<Collection>this.inProgressAnnotation!.reference.value!).entries.length;
       if (this.childTool && (<PlaceLineStripTool>this.childTool!).toolset) {
         if ((<LineStrip>childInProgress!.reference.value!).entries.length > 1) {
@@ -1449,17 +1702,19 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
         }
       } else if ((!childInProgress && childCount === 1) || childCount > 1) {
         this.childTool!.dispose();
-        this.inProgressAnnotation!.annotationLayer.source.commit(this.inProgressAnnotation!.reference);
+        this.inProgressAnnotation!.annotationLayer.source.commit(
+            this.inProgressAnnotation!.reference);
         this.inProgressAnnotation!.disposer();
         this.inProgressAnnotation = undefined;
       } else {
         StatusMessage.showTemporaryMessage(`No annotation has been made.`, 3000);
       }
     } else {
-      // if child tool has a toolset, its a lineStrip, and we apply the lineStrip test b4 continuing
-      // if child tool is a base annotation, it must have at least one complete annotation
-      // an annotation is complete if the child tool has no inProgressAnnotation
-      // if there are more than two annotations in entries, the first one is guaranteed to be complete
+      // if child tool has a toolset, its a lineStrip, and we apply the lineStrip test b4
+      // continuing if child tool is a base annotation, it must have at least one complete
+      // annotation an annotation is complete if the child tool has no inProgressAnnotation if
+      // there are more than two annotations in entries, the first one is guaranteed to be
+      // complete
       StatusMessage.showTemporaryMessage(`No annotation has been made.`, 3000);
     }
   }
@@ -1479,7 +1734,6 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
         const annotation = this.getInitialAnnotation(mouseState, annotationLayer);
         if (parentRef) {
           annotation.pid = parentRef.id;
-          annotation.cix = (<Collection>parentRef.value!).entries.length;
         }
         const reference = annotationLayer.source.add(annotation, /*commit=*/false);
         if (parentRef) {
@@ -1490,7 +1744,7 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
           }
         }
         this.layer.selectedAnnotation.value = {id: reference.id};
-        // this.childTool.trigger(mouseState, /*child=*/reference);
+        this.childTool.trigger(mouseState, /*child=*/reference);
         const disposer = () => {
           mouseDisposer();
           reference.dispose();

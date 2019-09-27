@@ -18,14 +18,13 @@
  * @file Basic annotation data structures.
  */
 
+import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {Borrowed, RefCounted} from 'neuroglancer/util/disposable';
 import {mat4, vec3} from 'neuroglancer/util/geom';
-import {parseArray, verify3dScale, verify3dVec, verifyEnumString, verifyObject, verifyObjectProperty, verifyOptionalBoolean, verifyOptionalNonnegativeInt, verifyOptionalString, verifyPositiveInt, verifyString} from 'neuroglancer/util/json';
+import {parseArray, verify3dScale, verify3dVec, verifyEnumString, verifyObject, verifyObjectProperty, verifyOptionalBoolean, verifyOptionalString, verifyPositiveInt, verifyString} from 'neuroglancer/util/json';
 import {getRandomHexString} from 'neuroglancer/util/random';
 import {NullarySignal, Signal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
-
-import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 
 export type AnnotationId = string;
 
@@ -71,7 +70,6 @@ export interface AnnotationBase {
   segments?: Uint64[];
 
   pid?: string;
-  cix?: number;
 }
 
 export interface Line extends AnnotationBase {
@@ -302,7 +300,6 @@ export function annotationToJson(annotation: Annotation) {
   result.description = annotation.description || undefined;
   result.tagIds = (annotation.tagIds) ? [...annotation.tagIds] : undefined;
   result.pid = annotation.pid || undefined;
-  result.cix = (typeof annotation.cix === 'number') ? annotation.cix : undefined;
   const {segments} = annotation;
   if (segments !== undefined && segments.length > 0) {
     result.segments = segments.map(x => x.toString());
@@ -326,7 +323,6 @@ export function restoreAnnotation(obj: any, allowMissingId = false): Annotation 
         x => x === undefined ? undefined : parseArray(x, y => Uint64.parseString(y))),
     type,
     pid: verifyObjectProperty(obj, 'pid', verifyOptionalString),
-    cix: verifyObjectProperty(obj, 'cix', verifyOptionalNonnegativeInt)
   };
   getAnnotationTypeHandler(type).restoreState(result, obj);
   return result;
@@ -537,9 +533,45 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     return this.annotationMap.get(id);
   }
 
-  delete(reference: AnnotationReference) {
+  delete(reference: AnnotationReference, flush?: boolean) {
     if (reference.value === null) {
       return;
+    }
+    // if parent
+    if ((<Collection>reference.value).entries.length) {
+      if (flush) {
+        // flush children away
+        (<Collection>reference.value).entries.forEach((id: string) => {
+          const target = this.getReference(id);
+          // If child is a collection, this will nuke the grandchildren too
+          this.delete(target, true);
+        });
+      } else {
+        // give children to grandparents
+        if (reference.value!.pid) {
+          (<Collection>reference.value).entries.forEach((id: string) => {
+            const target = this.getReference(id);
+            // assign child pid to parent pid
+            target.value!.pid = reference.value!.pid;
+            // get grandparent by ref via parent's pid and add to grandparent entry list
+            const grandparent = (<Collection>this.getReference(reference.value!.pid!).value);
+            grandparent.entries.push(target.value!.id);
+          });
+        }
+        else {
+          // turn into orphans
+          (<Collection>reference.value).entries.forEach((id: string) => {
+            const target = this.getReference(id);
+            target.value!.pid = undefined;
+          });
+        }
+      }
+    }
+    if (reference.value!.pid) {
+      // Remove child from parent entries
+      const target = this.getReference(reference.value!.pid);
+      // This will fail if parent doesn't exist, but parent should not be deleted before its children
+      (<Collection>target.value).entries.filter(v => v !== reference.value!.id);
     }
     reference.value = null;
     this.deleteAnnotationNode(reference.id);
