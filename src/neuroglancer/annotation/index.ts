@@ -533,44 +533,81 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     return this.annotationMap.get(id);
   }
 
+  cps(reference: AnnotationReference|null, surrogate?: AnnotationReference|null,
+      targets?: string[]): AnnotationReference[] {
+    // Child Protective Services
+    const emptynesters = <AnnotationReference[]>[];
+    const annotation = reference ? (<Collection>reference.value) : void (0);
+    if (!targets && (!annotation || !annotation.entries)) {
+      // Not a collection/no targets
+      return [];
+    }
+    const parentID = annotation ? annotation.pid : void (0);
+    const adopter = surrogate ?
+        surrogate.value :
+        void (0) || parentID ? this.getReference(parentID!).value : void (0);
+    const entries = targets || annotation!.entries;
+    entries.forEach((id: string) => {
+      const target = this.getReference(id).value!;
+      // remove child from parent
+      let parent;
+      if (target.pid) {
+        parent = <Collection>this.getReference(target.pid).value!;
+        parent.entries.filter(v => v !== target.id);
+        if (!parent.entries.length) {
+          emptynesters.push(this.getReference(target.pid));
+        }
+      }
+      // reassign/orphan child
+      if (adopter) {
+        const newFamily = <Collection>adopter;
+        target.pid = newFamily.id;
+        newFamily.entries.push(target.id);
+      } else {
+        target.pid = undefined;
+      }
+      this.childDeleted.dispatch(target.id);
+      // TODO: CHILD MOVE signal, move the child to a different element rather than deleting and readding, because this cant rebuild children
+      this.childAdded.dispatch(target);
+    });
+
+    if (reference) {
+      reference.changed.dispatch();
+    }
+    if (surrogate) {
+      surrogate.changed.dispatch();
+    }
+    this.changed.dispatch();
+    if (reference) {
+      this.childUpdated.dispatch(reference.value!);
+    }
+    if (surrogate) {
+      this.childUpdated.dispatch(surrogate.value!);
+    }
+    return emptynesters;
+  }
+
   delete(reference: AnnotationReference, flush?: boolean) {
     if (reference.value === null) {
       return;
     }
-    // if parent
-    if ((<Collection>reference.value).entries.length) {
+    const isParent = <boolean>!!(<Collection>reference.value).entries;
+    const isChild = !!reference.value!.pid;
+    if (isParent) {
       if (flush) {
-        // flush children away
         (<Collection>reference.value).entries.forEach((id: string) => {
           const target = this.getReference(id);
           // If child is a collection, this will nuke the grandchildren too
           this.delete(target, true);
         });
       } else {
-        // give children to grandparents
-        if (reference.value!.pid) {
-          (<Collection>reference.value).entries.forEach((id: string) => {
-            const target = this.getReference(id);
-            // assign child pid to parent pid
-            target.value!.pid = reference.value!.pid;
-            // get grandparent by ref via parent's pid and add to grandparent entry list
-            const grandparent = (<Collection>this.getReference(reference.value!.pid!).value);
-            grandparent.entries.push(target.value!.id);
-          });
-        }
-        else {
-          // turn into orphans
-          (<Collection>reference.value).entries.forEach((id: string) => {
-            const target = this.getReference(id);
-            target.value!.pid = undefined;
-          });
-        }
+        this.cps(reference);
       }
     }
-    if (reference.value!.pid) {
-      // Remove child from parent entries
-      const target = this.getReference(reference.value!.pid);
-      // This will fail if parent doesn't exist, but parent should not be deleted before its children
+    if (isChild) {
+      // Remove child from parent entries on deletion
+      const target = this.getReference(reference.value!.pid!);
+      // parent should not be deleted before its children
       (<Collection>target.value).entries.filter(v => v !== reference.value!.id);
     }
     reference.value = null;

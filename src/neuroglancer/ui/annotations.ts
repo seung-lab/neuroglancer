@@ -54,7 +54,9 @@ const Papa = require('papaparse');
 
 type AnnotationIdAndPart = {
   id: string,
-  partIndex?: number
+  partIndex?: number,
+  multiple?: Set<string>,
+  ungroupable?: boolean
 };
 
 export class AnnotationSegmentListWidget extends RefCounted {
@@ -771,7 +773,13 @@ export class AnnotationLayerView extends Tab {
       if (parent) {
         parent.appendChild(element);
       } else {
-        throw new Error(`Parent ${element.dataset.parent} does not exist`);
+        // throw new Error(`Parent ${element.dataset.parent} does not exist`);
+        // create virtual parent
+        const childs = document.createElement('ul');
+        childs.className = 'neuroglancer-annotation-children';
+        childs.style.display = 'block';
+        childs.dataset.id = element.dataset.parent;
+        annotationListContainer.appendChild(childs);
       }
     } else {
       annotationListContainer.appendChild(element);
@@ -782,11 +790,27 @@ export class AnnotationLayerView extends Tab {
       this.annotationLayer.hoverState.value = {id: annotation.id, partIndex: 0};
     });
     element.addEventListener('click', (event: MouseEvent) => {
-      this.state.value = {id: annotation.id, partIndex: 0};
+      if (event.ctrlKey || event.metaKey) {
+        let multiple = new Set<string>();
+        if (this.state.value) {
+          if (this.state.value.multiple) {
+            multiple = this.state.value.multiple;
+          } else if (this.state.value.ungroupable) {
+            // Cannot select line segment for group
+          } else {
+            multiple.add(this.state.value.id);
+          }
+        }
+        multiple.add(annotation.id);
+        this.state.value = {id: annotation.id, partIndex: 0, multiple};
+      } else {
+        this.state.value = {id: annotation.id, partIndex: 0};
+      }
       event.stopPropagation();
     });
 
     element.addEventListener('mouseup', (event: MouseEvent) => {
+      // TODO: Test on Mac, possibly same problem as creating annotation tab on mac
       if (event.button === 2) {
         if ((<Collection>annotation).entries) {
           const children = element.querySelector('.neuroglancer-annotation-children');
@@ -897,12 +921,19 @@ export class AnnotationLayerView extends Tab {
     }
     this.createAnnotationDescriptionElement(element, annotation);
     if ((<Collection>annotation).entries) {
-      element.title = 'Click to select, right click to toggle children.';
-      const childs = document.createElement('ul');
-      childs.className = 'neuroglancer-annotation-children';
-      childs.style.display = ((<Collection>annotation).cVis.value) ? 'block' : 'none';
-      childs.dataset.id = annotation.id;
-      element.appendChild(childs);
+      // search for the child bin belonging to my ID
+      const reclaim = document.querySelector(`[data-id="${annotation.id}"]`);
+      if (reclaim) {
+        reclaim.parentElement!.removeChild(reclaim);
+        element.appendChild(reclaim);
+      } else {
+        element.title = 'Click to select, right click to toggle children.';
+        const childs = document.createElement('ul');
+        childs.className = 'neuroglancer-annotation-children';
+        childs.style.display = ((<Collection>annotation).cVis.value) ? 'block' : 'none';
+        childs.dataset.id = annotation.id;
+        element.appendChild(childs);
+      }
     }
 
     return element;
@@ -1045,24 +1076,6 @@ export class AnnotationLayerView extends Tab {
     document.body.removeChild(link);
   }
 
-  /*private readUploadedFileAsText = (inputFile: File|Blob): Promise<string|null> => {
-    //
-  https://gist.github.com/Anveio/05d65f759e3ab0ecd97542b04192deb4#file-readuploadedfileastext-js
-    const temporaryFileReader = new FileReader();
-
-    return new Promise((resolve, reject) => {
-      temporaryFileReader.onerror = () => {
-        temporaryFileReader.abort();
-        reject(new DOMException('Problem parsing input file.'));
-      };
-
-      temporaryFileReader.onload = () => {
-        resolve(<string|null|undefined>temporaryFileReader.result);
-      };
-      temporaryFileReader.readAsText(inputFile);
-    });
-  }*/
-
   // TODO: pull request to papa repo
   private betterPapa = (inputFile: File|Blob): Promise<any> => {
     return new Promise((resolve) => {
@@ -1083,11 +1096,6 @@ export class AnnotationLayerView extends Tab {
     let val = list.split(',').map(v => parseInt(v, 10));
     return vec3.fromValues(val[0], val[1], val[2]);
   }
-
-  /*private clean = (input: string[]|string): string => {
-    const raw = ((<any>input).join) ? (<any>input).join('') : input;
-    return raw.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, '').trim();
-  }*/
 
   private async importCSV(files: FileList|null) {
     const rawAnnotations = <Annotation[]>[];
@@ -1293,47 +1301,117 @@ export class AnnotationDetailsTab extends Tab {
     let isSingleton: boolean|undefined;
     let parent: Collection|undefined;
     const ann = annotationLayer.source.getReference(value.id).value!;
-    const annPid = ann.pid;
-    if (annPid && annotationLayer.source.getReference(annPid)) {
-      parent = <Collection>annotationLayer.source.getReference(annPid).value!;
+
+    if (ann.pid && annotationLayer.source.getReference(ann.pid)) {
+      // set child like properties
+      parent = <Collection>annotationLayer.source.getReference(ann.pid).value!;
       isLineSegment = parent.type === AnnotationType.LINE_STRIP;
       isChild = true;
       isSingleton = (parent.entries.length === 1);
     }
     if (isLineSegment) {
       titleText.textContent = 'Line (segment)';
+      // not allowed to multi select line segments
+      value.multiple = void (0);
+      value.ungroupable = true;
+    }
+    if (value.multiple) {
+      titleText.textContent = `${value.multiple.size} annotations selected`;
+      icon.textContent = '~';
     }
     if (!annotationLayer.source.readonly && !isLineSegment) {
-      const groupButton = isChild ? makeTextIconButton('✂️', 'Remove from collection') :
-                                    makeTextIconButton('⚄', 'Create collection');
-      groupButton.addEventListener('click', () => {
-        // Parent can be different, so must get it again
-        // Actually, this is recreated everytime so it might not be a concern
-        // test it anyway :TODO:
-        if (isSingleton) {
-          const ref = annotationLayer.source.getReference(annPid!);
-          // FIXME:DRY: ungroup
-          try {
-            annotationLayer.source.delete(ref);
-          } finally {
-            ref.dispose();
+      // Evict
+      if (isChild && !value.multiple) {
+        const evictButton = makeTextIconButton('✂️', 'Remove from collection');
+        evictButton.addEventListener('click', () => {
+          const ref = annotationLayer.source.getReference(ann.pid!);
+          if (isSingleton) {
+            // DRY: ungroup
+            try {
+              annotationLayer.source.delete(ref);
+            } finally {
+              ref.dispose();
+            }
+          } else {
+            (<AnnotationSource>annotationLayer.source).cps(ref, null, [ann.id]);
           }
-        } else {
-          
-        }
-        /*const ref = annotationLayer.source.getReference(value.id);
-        try {
-          annotationLayer.source.delete(ref);
-        } finally {
-          ref.dispose();
-        }*/
-      });
-      title.appendChild(groupButton);
-      if (ann.type === AnnotationType.COLLECTION || ann.type === AnnotationType.LINE_STRIP) {
-        const ungroupButton = makeTextIconButton('💥', 'Free annotation');
+          this.state.value = {id: ref.id};
+        });
+        title.appendChild(evictButton);
+      }
+      // Group
+      {
+        // For now, only group will support multiple
+        const groupButton = makeTextIconButton('⚄', 'Create collection');
+        groupButton.addEventListener('click', () => {
+          // Create a new collection with annotations in value.multiple
+          let target: string[];
+          if (value.multiple) {
+            target = Array.from(value.multiple);
+          } else {
+            target = [value.id];
+          }
+          const first = annotationLayer.source.getReference(target[0]).value!;
+          let srcpt;
+          switch (first.type) {
+            case AnnotationType.AXIS_ALIGNED_BOUNDING_BOX:
+            case AnnotationType.LINE:
+              srcpt = (<Line|AxisAlignedBoundingBox>annotation).pointA;
+              break;
+            case AnnotationType.POINT:
+              srcpt = (<Point>annotation).point;
+              break;
+            case AnnotationType.ELLIPSOID:
+              srcpt = (<Ellipsoid>annotation).center;
+              break;
+            case AnnotationType.LINE_STRIP:
+            case AnnotationType.COLLECTION:
+              srcpt = (<LineStrip>annotation).source;
+              break;
+          }
+
+          const coll = <Collection>{
+            id: '',
+            type: AnnotationType.COLLECTION,
+            description: '',
+            entries: [],  // identical totarget
+            segments: [],
+            connected: false,
+            source: srcpt,
+            entry: () => {},
+            cVis: new TrackableBoolean(true, true)
+          };
+          coll.entry = (index: number) =>
+              (<LocalAnnotationSource>annotationLayer.source).get(coll.entries[index]);
+
+          const ref = (<AnnotationSource>annotationLayer.source).add(coll, true);
+          if (first.pid) {
+            const firstParent = (<AnnotationSource>annotationLayer.source).getReference(first.pid);
+            (<AnnotationSource>annotationLayer.source).cps(null, firstParent, [ref.value!.id]);
+          }
+          const emptyColl = (<AnnotationSource>annotationLayer.source).cps(null, ref, target);
+
+          // It shouldn't be possible for a collection to be empty twice, that is the child says the
+          // parent is empty and then a subsequent child says the same
+          emptyColl.forEach((reff: AnnotationReference) => {
+            try {
+              // Delete annotation and all its children
+              annotationLayer.source.delete(reff);
+            } finally {
+              reff.dispose();
+            }
+          });
+          this.state.value = {id: ref.id};
+        });
+        title.appendChild(groupButton);
+      }
+      // Ungroup
+      if ((ann.type === AnnotationType.COLLECTION || ann.type === AnnotationType.LINE_STRIP) &&
+          !value.multiple) {
+        const ungroupButton = makeTextIconButton('💥', 'Free annotations');
         ungroupButton.addEventListener('click', () => {
           // Delete annotation and send its children to an ancestor or root
-          // TODO: works partially but need to recreate parenrt element
+          // TODO: works partially but need to recreate parent element
           const ref = annotationLayer.source.getReference(value.id);
           try {
             annotationLayer.source.delete(ref);
@@ -1343,17 +1421,20 @@ export class AnnotationDetailsTab extends Tab {
         });
         title.appendChild(ungroupButton);
       }
-      const deleteButton = makeTextIconButton('🗑', 'Delete annotation');
-      deleteButton.addEventListener('click', () => {
-        const ref = annotationLayer.source.getReference(value.id);
-        try {
-          // Delete annotation and all its children
-          annotationLayer.source.delete(ref, true);
-        } finally {
-          ref.dispose();
-        }
-      });
-      title.appendChild(deleteButton);
+      // Delete
+      if (!value.multiple) {
+        const deleteButton = makeTextIconButton('🗑', 'Delete annotation');
+        deleteButton.addEventListener('click', () => {
+          const ref = annotationLayer.source.getReference(value.id);
+          try {
+            // Delete annotation and all its children
+            annotationLayer.source.delete(ref, true);
+          } finally {
+            ref.dispose();
+          }
+        });
+        title.appendChild(deleteButton);
+      }
     }
 
     const closeButton = makeCloseButton();
@@ -1365,39 +1446,44 @@ export class AnnotationDetailsTab extends Tab {
 
     element.appendChild(title);
 
-    const position = document.createElement('div');
-    position.className = 'neuroglancer-annotation-details-position';
-    getPositionSummary(position, annotation, objectToGlobal, voxelSize, this.setSpatialCoordinates);
-    element.appendChild(position);
+    if (!value.multiple) {
+      const position = document.createElement('div');
+      position.className = 'neuroglancer-annotation-details-position';
+      getPositionSummary(
+          position, annotation, objectToGlobal, voxelSize, this.setSpatialCoordinates);
+      element.appendChild(position);
 
-    if (annotation.type === AnnotationType.AXIS_ALIGNED_BOUNDING_BOX) {
-      const volume = document.createElement('div');
-      volume.className = 'neuroglancer-annotation-details-volume';
-      volume.textContent =
-          formatBoundingBoxVolume(annotation.pointA, annotation.pointB, objectToGlobal);
-      element.appendChild(volume);
+      if (annotation.type === AnnotationType.AXIS_ALIGNED_BOUNDING_BOX) {
+        const volume = document.createElement('div');
+        volume.className = 'neuroglancer-annotation-details-volume';
+        volume.textContent =
+            formatBoundingBoxVolume(annotation.pointA, annotation.pointB, objectToGlobal);
+        element.appendChild(volume);
 
-      // FIXME: only do this if it is axis aligned
-      const spatialOffset = transformVectorByMat4(
-          tempVec3, vec3.subtract(tempVec3, annotation.pointA, annotation.pointB), objectToGlobal);
-      const voxelVolume = document.createElement('div');
-      voxelVolume.className = 'neuroglancer-annotation-details-volume-in-voxels';
-      const voxelOffset = voxelSize.voxelFromSpatial(tempVec3, spatialOffset);
-      voxelVolume.textContent = `${formatIntegerBounds(voxelOffset)}`;
-      element.appendChild(voxelVolume);
-    } else if (annotation.type === AnnotationType.LINE) {
-      const spatialOffset = transformVectorByMat4(
-          tempVec3, vec3.subtract(tempVec3, annotation.pointA, annotation.pointB), objectToGlobal);
-      const length = document.createElement('div');
-      length.className = 'neuroglancer-annotation-details-length';
-      const spatialLengthText = formatLength(vec3.length(spatialOffset));
-      let voxelLengthText = '';
-      if (voxelSize.valid) {
-        const voxelLength = vec3.length(voxelSize.voxelFromSpatial(tempVec3, spatialOffset));
-        voxelLengthText = `, ${Math.round(voxelLength)} vx`;
+        // FIXME: only do this if it is axis aligned
+        const spatialOffset = transformVectorByMat4(
+            tempVec3, vec3.subtract(tempVec3, annotation.pointA, annotation.pointB),
+            objectToGlobal);
+        const voxelVolume = document.createElement('div');
+        voxelVolume.className = 'neuroglancer-annotation-details-volume-in-voxels';
+        const voxelOffset = voxelSize.voxelFromSpatial(tempVec3, spatialOffset);
+        voxelVolume.textContent = `${formatIntegerBounds(voxelOffset)}`;
+        element.appendChild(voxelVolume);
+      } else if (annotation.type === AnnotationType.LINE) {
+        const spatialOffset = transformVectorByMat4(
+            tempVec3, vec3.subtract(tempVec3, annotation.pointA, annotation.pointB),
+            objectToGlobal);
+        const length = document.createElement('div');
+        length.className = 'neuroglancer-annotation-details-length';
+        const spatialLengthText = formatLength(vec3.length(spatialOffset));
+        let voxelLengthText = '';
+        if (voxelSize.valid) {
+          const voxelLength = vec3.length(voxelSize.voxelFromSpatial(tempVec3, spatialOffset));
+          voxelLengthText = `, ${Math.round(voxelLength)} vx`;
+        }
+        length.textContent = spatialLengthText + voxelLengthText;
+        element.appendChild(length);
       }
-      length.textContent = spatialLengthText + voxelLengthText;
-      element.appendChild(length);
     }
 
     let {segmentListWidget} = this;
@@ -1414,21 +1500,23 @@ export class AnnotationDetailsTab extends Tab {
     }
     element.appendChild(segmentListWidget.element);
 
-    const description = document.createElement('textarea');
-    description.value = annotation.description || '';
-    description.rows = 3;
-    description.className = 'neuroglancer-annotation-details-description';
-    description.placeholder = 'Description';
-    if (annotationLayer.source.readonly) {
-      description.readOnly = true;
-    } else {
-      description.addEventListener('change', () => {
-        const x = description.value;
-        annotationLayer.source.update(reference, {...annotation, description: x ? x : undefined});
-        annotationLayer.source.commit(reference);
-      });
+    if (!value.multiple) {
+      const description = document.createElement('textarea');
+      description.value = annotation.description || '';
+      description.rows = 3;
+      description.className = 'neuroglancer-annotation-details-description';
+      description.placeholder = 'Description';
+      if (annotationLayer.source.readonly) {
+        description.readOnly = true;
+      } else {
+        description.addEventListener('change', () => {
+          const x = description.value;
+          annotationLayer.source.update(reference, {...annotation, description: x ? x : undefined});
+          annotationLayer.source.commit(reference);
+        });
+      }
+      element.appendChild(description);
     }
-    element.appendChild(description);
   }
 }
 
