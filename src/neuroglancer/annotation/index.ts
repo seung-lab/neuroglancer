@@ -52,8 +52,12 @@ export enum AnnotationType {
 }
 
 export const annotationTypes = [
-  AnnotationType.POINT, AnnotationType.LINE, AnnotationType.AXIS_ALIGNED_BOUNDING_BOX,
-  AnnotationType.ELLIPSOID, AnnotationType.COLLECTION, AnnotationType.LINE_STRIP
+  AnnotationType.POINT,
+  AnnotationType.LINE,
+  AnnotationType.AXIS_ALIGNED_BOUNDING_BOX,
+  AnnotationType.ELLIPSOID,
+  AnnotationType.COLLECTION,
+  AnnotationType.LINE_STRIP
 ];
 
 export interface AnnotationBase {
@@ -475,7 +479,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     }
     return;
   }
-  // TODO: deal with annotation node
+
   add(annotation: Annotation, commit: boolean = true): AnnotationReference {
     if (!annotation.id) {
       annotation.id = makeAnnotationId();
@@ -533,36 +537,37 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     return this.annotationMap.get(id);
   }
 
-  cps(reference: AnnotationReference|null, surrogate?: AnnotationReference|null,
-      targets?: string[]): AnnotationReference[] {
+  orphan(reference: AnnotationReference, surrogate?: AnnotationReference): AnnotationReference[] {
+    const targets = (<Collection>reference.value)!.entries;
+    if (targets) {
+      return this.cps(targets, surrogate);
+    }
+    return [];
+  }
+
+  cps(targets: string[], surrogate?: AnnotationReference): AnnotationReference[] {
     // Child Protective Services
     const emptynesters = <AnnotationReference[]>[];
-    const annotation = reference ? (<Collection>reference.value) : void (0);
-    if (!targets && (!annotation || !annotation.entries)) {
-      // Not a collection/no targets
-      return [];
-    }
-    const parentID = annotation ? annotation.pid : void (0);
-    const adopter = surrogate ?
-        surrogate.value :
-        void (0) || parentID ? this.getReference(parentID!).value : void (0);
-    const entries = targets || annotation!.entries;
-    entries.forEach((id: string) => {
+    let adopter = surrogate ? <Collection>surrogate.value : void(0);
+
+    targets.forEach((id: string) => {
       const target = this.getReference(id).value!;
       // remove child from parent
       let parent;
       if (target.pid) {
         parent = <Collection>this.getReference(target.pid).value!;
-        parent.entries.filter(v => v !== target.id);
+        parent.entries = parent.entries.filter(v => v !== target.id);
+        if (parent.pid && !adopter) {
+          adopter = <Collection>this.getReference(parent.pid).value!;
+        }
         if (!parent.entries.length) {
           emptynesters.push(this.getReference(target.pid));
         }
       }
       // reassign/orphan child
       if (adopter) {
-        const newFamily = <Collection>adopter;
-        target.pid = newFamily.id;
-        newFamily.entries.push(target.id);
+        target.pid = adopter.id;
+        adopter.entries.push(target.id);
       } else {
         target.pid = undefined;
       }
@@ -571,16 +576,10 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
       this.childAdded.dispatch(target);
     });
 
-    if (reference) {
-      reference.changed.dispatch();
-    }
     if (surrogate) {
       surrogate.changed.dispatch();
     }
     this.changed.dispatch();
-    if (reference) {
-      this.childUpdated.dispatch(reference.value!);
-    }
     if (surrogate) {
       this.childUpdated.dispatch(surrogate.value!);
     }
@@ -601,14 +600,14 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
           this.delete(target, true);
         });
       } else {
-        this.cps(reference);
+        this.orphan(reference);
       }
     }
     if (isChild) {
       // Remove child from parent entries on deletion
-      const target = this.getReference(reference.value!.pid!);
+      const target = <Collection>this.getReference(reference.value!.pid!).value;
       // parent should not be deleted before its children
-      (<Collection>target.value).entries.filter(v => v !== reference.value!.id);
+      target.entries = target.entries.filter(v => v !== reference.value!.id);
     }
     reference.value = null;
     this.deleteAnnotationNode(reference.id);

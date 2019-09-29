@@ -394,10 +394,9 @@ export class AnnotationLayerView extends Tab {
   private previousSelectedId: string|undefined;
   private previousHoverId: string|undefined;
   private updated = false;
+  private toolLock = false;
   groupVisualization = this.registerDisposer(new MinimizableGroupWidget('Visualization'));
   groupAnnotations = this.registerDisposer(new MinimizableGroupWidget('Annotations'));
-  // TODO: private?
-  toolLock = false;
 
   constructor(
       public layer: Borrowed<UserLayerWithAnnotations>,
@@ -516,8 +515,9 @@ export class AnnotationLayerView extends Tab {
           keyChild!.classList.remove(childms);
         }
       };
-      if (this.layer.tool.value) {
-        if ((<PlaceLineStripTool>this.layer.tool.value).looped !== void (0)) {
+      const activeTool = (<PlaceLineStripTool>this.layer.tool.value);
+      if (activeTool && (activeTool.annotationType === AnnotationType.LINE_STRIP || activeTool.annotationType === AnnotationType.COLLECTION)) {
+        if (activeTool.looped !== void (0)) {
           multipointButton.classList.add(mskey);
         } else {
           collectionButton.classList.add(mskey);
@@ -525,7 +525,9 @@ export class AnnotationLayerView extends Tab {
         }
         const dechange = this.layer.tool.changed.add(() => {
           remActiveTool();
-          dechange();
+          if (!this.toolLock) {
+            dechange();
+          }
         });
       }
       const separator = document.createElement('button');
@@ -545,7 +547,9 @@ export class AnnotationLayerView extends Tab {
           this.layer.tool.value = new MultiStepAnnotationTool(this.layer, {});
           const dechange = this.layer.tool.changed.add(() => {
             remActiveTool();
-            dechange();
+            if (!this.toolLock) {
+              dechange();
+            }
           });
         }
       });
@@ -599,7 +603,6 @@ export class AnnotationLayerView extends Tab {
 
       const abortMultiButton = document.createElement('button');
       {
-        abortMultiButton.disabled = true;
         abortMultiButton.textContent = '❌';
         abortMultiButton.title = 'Abort Annotation';
         abortMultiButton.addEventListener('click', () => {
@@ -610,10 +613,12 @@ export class AnnotationLayerView extends Tab {
             StatusMessage.showTemporaryMessage(`Annotation cancelled.`, 3000);
             // HACK: force < 1 = 1
             // Expected behavior is to cancel any in progress annotations and deactivate the tool
-            if (this.layer.tool.refCount < 1) {
+            /*if (this.layer.tool.refCount < 1) {
               this.layer.tool.refCount = 1;
-            }
-            this.layer.tool.dispose();
+            }*/
+            // debugger;
+            // this.layer.tool.dispose();
+            this.layer.tool.value.dispose();
             this.layer.tool.changed.dispatch();
           }
         });
@@ -677,24 +682,29 @@ export class AnnotationLayerView extends Tab {
 
     {
       const exportToCSVButton = document.createElement('button');
+      const importCSVButton = document.createElement('button');
+      const importCSVForm = document.createElement('input');
       exportToCSVButton.id = 'exportToCSVButton';
       exportToCSVButton.textContent = 'Export to CSV';
       exportToCSVButton.addEventListener('click', () => {
         this.exportToCSV();
       });
-      this.groupAnnotations.appendFixedChild(exportToCSVButton);
-    }
-    {
-      const importCSVButton = document.createElement('input');
-      importCSVButton.id = 'importCSVButton';
-      importCSVButton.type = 'file';
-      importCSVButton.accept = 'text/csv';
-      importCSVButton.multiple = true;
+      importCSVForm.id = 'importCSVForm';
+      importCSVForm.type = 'file';
+      importCSVForm.accept = 'text/csv';
+      importCSVForm.multiple = true;
+      importCSVForm.style.display = 'none';
       importCSVButton.textContent = 'Import from CSV';
-      importCSVButton.addEventListener('change', () => {
-        this.importCSV(importCSVButton.files);
+      importCSVButton.addEventListener('click', () => {
+        importCSVForm.click();
       });
-      this.groupAnnotations.appendFixedChild(importCSVButton);
+      importCSVForm.addEventListener('change', () => {
+        this.importCSV(importCSVForm.files);
+        importCSVForm.files = null;
+      });
+      const csvContainer = document.createElement('span');
+      csvContainer.append(exportToCSVButton, importCSVButton, importCSVForm);
+      this.groupAnnotations.appendFixedChild(csvContainer);
     }
 
     this.groupAnnotations.appendFixedChild(toolbox);
@@ -777,8 +787,8 @@ export class AnnotationLayerView extends Tab {
         // create virtual parent
         const childs = document.createElement('ul');
         childs.className = 'neuroglancer-annotation-children';
-        childs.style.display = 'block';
         childs.dataset.id = element.dataset.parent;
+        childs.appendChild(element);
         annotationListContainer.appendChild(childs);
       }
     } else {
@@ -813,10 +823,8 @@ export class AnnotationLayerView extends Tab {
       // TODO: Test on Mac, possibly same problem as creating annotation tab on mac
       if (event.button === 2) {
         if ((<Collection>annotation).entries) {
-          const children = element.querySelector('.neuroglancer-annotation-children');
-          const style = (<HTMLUListElement>children)!.style;
-          style.display = (style.display !== 'none') ? 'none' : 'block';
           (<Collection>annotation).cVis.value = !(<Collection>annotation).cVis.value;
+          element.classList.toggle('neuroglancer-parent-viewable');
           this.annotationLayer.source.changed.dispatch();
         } else {
           // TODO: Fix this, need to center position without collapsing (fixed?)
@@ -888,6 +896,15 @@ export class AnnotationLayerView extends Tab {
     }
     let element = this.annotationListElements.get(annotationId);
     if (element) {
+      const children = element.querySelector('.neuroglancer-annotation-children');
+      if (children) {
+        // If there are children, move the child container
+        element.removeChild(children!);
+        if (children.children.length) {
+          this.annotationListContainer.appendChild(children);
+        }
+      }
+
       removeFromParent(element);
       this.annotationListElements.delete(annotationId);
     }
@@ -917,20 +934,21 @@ export class AnnotationLayerView extends Tab {
     element.appendChild(position);
     if (annotation.pid) {
       element.dataset.parent = annotation.pid;
-      element.classList.add('neuroglancer-child-annotation');
     }
     this.createAnnotationDescriptionElement(element, annotation);
     if ((<Collection>annotation).entries) {
       // search for the child bin belonging to my ID
       const reclaim = document.querySelector(`[data-id="${annotation.id}"]`);
+      if ((<Collection>annotation).cVis.value) {
+        element.classList.add('neuroglancer-parent-viewable');
+      }
       if (reclaim) {
         reclaim.parentElement!.removeChild(reclaim);
         element.appendChild(reclaim);
       } else {
         element.title = 'Click to select, right click to toggle children.';
         const childs = document.createElement('ul');
-        childs.className = 'neuroglancer-annotation-children';
-        childs.style.display = ((<Collection>annotation).cVis.value) ? 'block' : 'none';
+        childs.classList.add('neuroglancer-annotation-children');
         childs.dataset.id = annotation.id;
         element.appendChild(childs);
       }
@@ -1099,6 +1117,7 @@ export class AnnotationLayerView extends Tab {
 
   private async importCSV(files: FileList|null) {
     const rawAnnotations = <Annotation[]>[];
+    let successfulImport = 0;
 
     if (!files) {
       return;
@@ -1106,6 +1125,8 @@ export class AnnotationLayerView extends Tab {
 
     for (const file of files) {
       const rawData = await this.betterPapa(file);
+      rawData.data.shift();
+      rawData.data = rawData.data.filter((v:any) => v.join('').length);
       if (!rawData.data.length) {
         continue;
       }
@@ -1119,7 +1140,7 @@ export class AnnotationLayerView extends Tab {
         const tags = annProps[3];
         let raw = <Annotation><any>{id: makeAnnotationId(), description: annProps[4]};
 
-        if (cid !== '') {
+        if (cid) {
           if (!registry[cid]) {
             registry[cid] = raw;
             (<Collection>raw).entries = [];
@@ -1132,7 +1153,7 @@ export class AnnotationLayerView extends Tab {
             });
           }
         }
-        if (pid !== '') {
+        if (pid) {
           if (registry[pid]) {
             const parent = registry[pid];
             if (parent.id) {
@@ -1145,7 +1166,7 @@ export class AnnotationLayerView extends Tab {
             registry[pid] = {entries: [raw]};
           }
         }
-        if (tags !== '') {
+        if (tags) {
           raw.tagIds = new Set();
           const labels = tags.split(',');
           const alayer = (<AnnotationSource>this.annotationLayer.source);
@@ -1204,13 +1225,14 @@ export class AnnotationLayerView extends Tab {
 
         rawAnnotations.push(raw);
       }
+      successfulImport++;
     }
 
     for (const annotation of rawAnnotations) {
       this.annotationLayer.source.add(annotation, /*commit=*/true);
     }
     // TODO: Undoable
-    StatusMessage.showTemporaryMessage(`Imported ${files.length} csv(s).`, 3000);
+    StatusMessage.showTemporaryMessage(`Imported ${successfulImport} csv(s).`, 3000);
   }
 }
 
@@ -1301,10 +1323,10 @@ export class AnnotationDetailsTab extends Tab {
     let isSingleton: boolean|undefined;
     let parent: Collection|undefined;
     const ann = annotationLayer.source.getReference(value.id).value!;
-
-    if (ann.pid && annotationLayer.source.getReference(ann.pid)) {
+    const parref = ann.pid ? annotationLayer.source.getReference(ann.pid) : null;
+    if (ann.pid && parref && parref.value) {
       // set child like properties
-      parent = <Collection>annotationLayer.source.getReference(ann.pid).value!;
+      parent = <Collection>parref.value;
       isLineSegment = parent.type === AnnotationType.LINE_STRIP;
       isChild = true;
       isSingleton = (parent.entries.length === 1);
@@ -1324,18 +1346,18 @@ export class AnnotationDetailsTab extends Tab {
       if (isChild && !value.multiple) {
         const evictButton = makeTextIconButton('✂️', 'Remove from collection');
         evictButton.addEventListener('click', () => {
-          const ref = annotationLayer.source.getReference(ann.pid!);
+          const parent_ref = annotationLayer.source.getReference(ann.pid!);
           if (isSingleton) {
             // DRY: ungroup
             try {
-              annotationLayer.source.delete(ref);
+              annotationLayer.source.delete(parent_ref);
             } finally {
-              ref.dispose();
+              parent_ref.dispose();
             }
           } else {
-            (<AnnotationSource>annotationLayer.source).cps(ref, null, [ann.id]);
+            (<AnnotationSource>annotationLayer.source).cps([ann.id]);
           }
-          this.state.value = {id: ref.id};
+          this.state.value = void(0);
         });
         title.appendChild(evictButton);
       }
@@ -1387,9 +1409,9 @@ export class AnnotationDetailsTab extends Tab {
           const ref = (<AnnotationSource>annotationLayer.source).add(coll, true);
           if (first.pid) {
             const firstParent = (<AnnotationSource>annotationLayer.source).getReference(first.pid);
-            (<AnnotationSource>annotationLayer.source).cps(null, firstParent, [ref.value!.id]);
+            (<AnnotationSource>annotationLayer.source).cps([ref.value!.id], firstParent);
           }
-          const emptyColl = (<AnnotationSource>annotationLayer.source).cps(null, ref, target);
+          const emptyColl = (<AnnotationSource>annotationLayer.source).cps(target, ref);
 
           // It shouldn't be possible for a collection to be empty twice, that is the child says the
           // parent is empty and then a subsequent child says the same
@@ -1785,7 +1807,7 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
           this.childTool = undefined;
           this.layer.tool.changed.dispatch();
         } else {
-          // see line 1623
+          // see line 1960
           StatusMessage.showTemporaryMessage(`No annotation has been made.`, 3000);
         }
       } else if ((!childInProgress && childCount === 1) || childCount > 1) {
@@ -1856,6 +1878,20 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
 
   toJSON() {
     return ANNOTATE_COLLECTION_TOOL_ID;
+  }
+
+  dispose() {
+    if (this.childTool) {
+      this.childTool!.dispose();
+    }
+    if (this.inProgressAnnotation) {
+      // completely delete the annotation
+      const annotation_ref = this.inProgressAnnotation.reference;
+      this.annotationLayer!.source.delete(annotation_ref, true);
+      //  childDeleted.dispatch(annotation_ref.value!.id);
+      this.inProgressAnnotation!.disposer();
+    }
+    super.dispose();
   }
 }
 MultiStepAnnotationTool.prototype.annotationType = AnnotationType.COLLECTION;

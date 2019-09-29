@@ -42,8 +42,10 @@
 }
 
 .neuroglancer-annotation-icon {
-  position: absolute;
-  left: 0px;
+  /* position: absolute;
+  left: 0px; */
+  display: inline;
+  margin-right: 10px;
 }
 
 .neuroglancer-annotation-hover {
@@ -57,12 +59,7 @@
 .neuroglancer-annotation-list > li {
   cursor: pointer;
   position: relative;
-  padding-left: 1.5em;
-}
-
-.neuroglancer-child-annotation {
-  /*TODO: https://stackoverflow.com/questions/29231733/html-css-add-5px-to-margin-left-for-every-next-nested-ul-li-in-hierarchy*/
-  left: 20px;
+  padding-left: 0.5em;
 }
 
 .neuroglancer-tab-content.neuroglancer-annotation-details {
@@ -152,7 +149,18 @@
   box-shadow: inset -3px -3px 10px 0px #dac320;
 }
 
-
 .neuroglancer-child-collection-tool.neuroglancer-linestrip-looped {
   box-shadow: inset -3px -3px 10px 0px #df5959;
+}
+
+.neuroglancer-parent-viewable .neuroglancer-annotation-children  {
+  display: block !important; 
+}
+
+.neuroglancer-annotation-children {
+  display: none;
+  list-style-type: none;
+}
+.neuroglancer-annotation-position {
+  display: inline;
 }

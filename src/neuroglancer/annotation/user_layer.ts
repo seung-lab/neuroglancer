@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-import {Annotation, AnnotationId, AnnotationType, LocalAnnotationSource, AnnotationSource} from 'neuroglancer/annotation';
-import {AnnotationLayerState, MultiscaleAnnotationSource} from 'neuroglancer/annotation/frontend';
+import {Annotation, AnnotationId, AnnotationType, LocalAnnotationSource} from 'neuroglancer/annotation';
+import {AnnotationLayerState} from 'neuroglancer/annotation/frontend';
 import {CoordinateTransform, makeDerivedCoordinateTransform} from 'neuroglancer/coordinate_transform';
 import {LayerReference, ManagedUserLayer, UserLayer} from 'neuroglancer/layer';
 import {LayerListSpecification, registerLayerType} from 'neuroglancer/layer_specification';
@@ -80,8 +80,7 @@ function getSegmentationDisplayState(layer: ManagedUserLayer|undefined): Segment
   return userLayer.displayState;
 }
 
-function getPointFromAnnotation(
-    annotation: Annotation, source: AnnotationSource|MultiscaleAnnotationSource): vec3 {
+function getPointFromAnnotation(annotation: Annotation): vec3 {
   switch (annotation.type) {
     case AnnotationType.AXIS_ALIGNED_BOUNDING_BOX:
     case AnnotationType.LINE:
@@ -93,7 +92,7 @@ function getPointFromAnnotation(
     // Collection is an array of any annotation
     case AnnotationType.LINE_STRIP:
     case AnnotationType.COLLECTION:
-      return getPointFromAnnotation(source!.getReference(annotation.entries[0]).value!, source);
+      return annotation.source;
   }
 }
 
@@ -274,7 +273,7 @@ export class AnnotationUserLayer extends Base {
         const selectedTagId = this.annotationLayerState.value.selectedAnnotationTagId.value;
         if (selectedTagId === 0 || (annotation.tagIds && annotation.tagIds.has(selectedTagId))) {
           this.selectedAnnotation.value = {id: annotation.id, partIndex: 0};
-          const point = getPointFromAnnotation(annotation, this.annotationLayerState.value.source);
+          const point = getPointFromAnnotation(annotation);
           const spatialPoint = vec3.create();
           vec3.transformMat4(spatialPoint, point, this.annotationLayerState.value.objectToGlobal);
           this.manager.setSpatialCoordinates(spatialPoint);
