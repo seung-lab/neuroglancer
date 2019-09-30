@@ -1363,7 +1363,6 @@ export class AnnotationDetailsTab extends Tab {
       }
       // Group
       {
-        // For now, only group will support multiple
         const groupButton = makeTextIconButton('⚄', 'Create collection');
         groupButton.addEventListener('click', () => {
           // Create a new collection with annotations in value.multiple
@@ -1378,17 +1377,17 @@ export class AnnotationDetailsTab extends Tab {
           switch (first.type) {
             case AnnotationType.AXIS_ALIGNED_BOUNDING_BOX:
             case AnnotationType.LINE:
-              srcpt = (<Line|AxisAlignedBoundingBox>annotation).pointA;
+              srcpt = (<Line|AxisAlignedBoundingBox>first).pointA;
               break;
             case AnnotationType.POINT:
-              srcpt = (<Point>annotation).point;
+              srcpt = (<Point>first).point;
               break;
             case AnnotationType.ELLIPSOID:
-              srcpt = (<Ellipsoid>annotation).center;
+              srcpt = (<Ellipsoid>first).center;
               break;
             case AnnotationType.LINE_STRIP:
             case AnnotationType.COLLECTION:
-              srcpt = (<LineStrip>annotation).source;
+              srcpt = (<LineStrip>first).source;
               break;
           }
 
@@ -1444,16 +1443,24 @@ export class AnnotationDetailsTab extends Tab {
         title.appendChild(ungroupButton);
       }
       // Delete
-      if (!value.multiple) {
+      {
         const deleteButton = makeTextIconButton('🗑', 'Delete annotation');
         deleteButton.addEventListener('click', () => {
-          const ref = annotationLayer.source.getReference(value.id);
-          try {
-            // Delete annotation and all its children
-            annotationLayer.source.delete(ref, true);
-          } finally {
-            ref.dispose();
+          let target: string[];
+          if (value.multiple) {
+            target = Array.from(value.multiple);
+          } else {
+            target = [value.id];
           }
+          target.forEach((id: string) => {
+            const ref = annotationLayer.source.getReference(id);
+            try {
+              // Delete annotation and all its children
+              annotationLayer.source.delete(ref, true);
+            } finally {
+              ref.dispose();
+            }
+          });
         });
         title.appendChild(deleteButton);
       }
