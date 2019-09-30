@@ -59,6 +59,9 @@ type AnnotationIdAndPart = {
   ungroupable?: boolean
 };
 
+type MultiTool = typeof PlacePointTool|typeof PlaceBoundingBoxTool|typeof PlaceLineTool|
+    typeof PlaceSphereTool|typeof PlaceLineStripTool|typeof MultiStepAnnotationTool;
+
 export class AnnotationSegmentListWidget extends RefCounted {
   element = document.createElement('div');
   private addSegmentWidget = this.registerDisposer(new Uint64EntryWidget());
@@ -394,7 +397,6 @@ export class AnnotationLayerView extends Tab {
   private previousSelectedId: string|undefined;
   private previousHoverId: string|undefined;
   private updated = false;
-  private toolLock = false;
   groupVisualization = this.registerDisposer(new MinimizableGroupWidget('Visualization'));
   groupAnnotations = this.registerDisposer(new MinimizableGroupWidget('Annotations'));
 
@@ -443,13 +445,7 @@ export class AnnotationLayerView extends Tab {
       pointButton.textContent = getAnnotationTypeHandler(AnnotationType.POINT).icon;
       pointButton.title = 'Annotate point';
       pointButton.addEventListener('click', () => {
-        if (this.toolLock) {
-          (<MultiStepAnnotationTool>this.layer.tool.value!).childTool =
-              new PlacePointTool(this.layer, {});
-          this.layer.tool.changed.dispatch();
-        } else {
-          this.layer.tool.value = new PlacePointTool(this.layer, {});
-        }
+        changeTool(AnnotationType.POINT);
       });
       toolbox.appendChild(pointButton);
 
@@ -459,13 +455,7 @@ export class AnnotationLayerView extends Tab {
           getAnnotationTypeHandler(AnnotationType.AXIS_ALIGNED_BOUNDING_BOX).icon;
       boundingBoxButton.title = 'Annotate bounding box';
       boundingBoxButton.addEventListener('click', () => {
-        if (this.toolLock) {
-          (<MultiStepAnnotationTool>this.layer.tool.value!).childTool =
-              new PlaceBoundingBoxTool(this.layer, {});
-          this.layer.tool.changed.dispatch();
-        } else {
-          this.layer.tool.value = new PlaceBoundingBoxTool(this.layer, {});
-        }
+        changeTool(AnnotationType.AXIS_ALIGNED_BOUNDING_BOX);
       });
       toolbox.appendChild(boundingBoxButton);
 
@@ -474,13 +464,7 @@ export class AnnotationLayerView extends Tab {
       lineButton.textContent = getAnnotationTypeHandler(AnnotationType.LINE).icon;
       lineButton.title = 'Annotate line';
       lineButton.addEventListener('click', () => {
-        if (this.toolLock) {
-          (<MultiStepAnnotationTool>this.layer.tool.value!).childTool =
-              new PlaceLineTool(this.layer, {});
-          this.layer.tool.changed.dispatch();
-        } else {
-          this.layer.tool.value = new PlaceLineTool(this.layer, {});
-        }
+        changeTool(AnnotationType.LINE);
       });
       toolbox.appendChild(lineButton);
 
@@ -489,46 +473,116 @@ export class AnnotationLayerView extends Tab {
       ellipsoidButton.textContent = getAnnotationTypeHandler(AnnotationType.ELLIPSOID).icon;
       ellipsoidButton.title = 'Annotate ellipsoid';
       ellipsoidButton.addEventListener('click', () => {
-        if (this.toolLock) {
-          (<MultiStepAnnotationTool>this.layer.tool.value!).childTool =
-              new PlaceSphereTool(this.layer, {});
-          this.layer.tool.changed.dispatch();
-        } else {
-          this.layer.tool.value = new PlaceSphereTool(this.layer, {});
-        }
+        changeTool(AnnotationType.ELLIPSOID);
       });
       toolbox.appendChild(ellipsoidButton);
 
       // Collections //
-      const mskey = 'activeMultiStep';
+      const mskey = 'neuroglancer-collection-tool';
       const childms = 'neuroglancer-child-collection-tool';
       const collectionButton = document.createElement('button');
       const multipointButton = document.createElement('button');
-      const remActiveTool = () => {
-        const keyActive = document.querySelector(`.${mskey}`);
-        const keyChild = document.querySelector(`.${childms}`);
-        // Do not remove active tool if tool lock set
-        if (keyActive && !this.toolLock) {
-          keyActive!.classList.remove(mskey);
-        }
-        if (keyChild) {
-          keyChild!.classList.remove(childms);
+      const changeTool = (toolset?: AnnotationType) => {
+        const currentTool = <PlaceAnnotationTool>this.layer.tool.value;
+        const toLineStrip = toolset === AnnotationType.LINE_STRIP;
+        const toCollection = toolset === AnnotationType.COLLECTION;
+        const keyRemoveGen = (typekey: string) => () => {
+          //FIXME: Scoped Globally
+          let key = document.querySelector(`.${typekey}`);
+          if (key) {
+            key.classList.remove(typekey);
+          }
+        };
+        const remActive = keyRemoveGen(mskey);
+        const remChild = keyRemoveGen(childms);
+        const activeKey = () => {
+          if (toLineStrip) {
+            multipointButton.classList.add(mskey);
+          } else if (toCollection) {
+            collectionButton.classList.add(mskey);
+          }
+        };
+        const setTool = (parent?: any) => {
+          let tool;
+          switch (toolset) {
+            case AnnotationType.POINT:
+              tool = PlacePointTool;
+              break;
+            case AnnotationType.LINE:
+              tool = PlaceLineTool;
+              break;
+            case AnnotationType.AXIS_ALIGNED_BOUNDING_BOX:
+              tool = PlaceBoundingBoxTool;
+              break;
+            case AnnotationType.ELLIPSOID:
+              tool = PlaceSphereTool;
+              break;
+            case AnnotationType.LINE_STRIP:
+              tool = PlaceLineStripTool;
+              break;
+            case AnnotationType.COLLECTION:
+              tool = MultiStepAnnotationTool;
+              break;
+          }
+          if (parent) {
+            if (parent.childTool) {
+              parent.childTool.dispose();
+            }
+            parent.childTool = new (<any>tool)(this.layer, {});
+          } else {
+            this.layer.tool.value = tool ? new tool(this.layer, {}) : void (0);
+          }
+        };
+
+        if (currentTool && toolset !== void (0)) {
+          const isLineStrip = currentTool.annotationType === AnnotationType.LINE_STRIP;
+          const isCollection = currentTool.annotationType === AnnotationType.COLLECTION;
+          const multitool = <any>this.layer.tool.value!;
+
+          if (isCollection && !toCollection) {
+            const {childTool} = multitool;
+            const isChildLineStrip =
+                childTool ? childTool.annotationType === AnnotationType.LINE_STRIP : void (0);
+
+            if (isChildLineStrip && toLineStrip) {
+              multipointButton.classList.toggle('neuroglancer-linestrip-looped');
+              childTool.looped = !childTool.looped;
+            } else {
+              remChild();
+              if (toLineStrip) {
+                multipointButton.classList.add(childms);
+              }
+              // trust me, it work
+              setTool(/*parent=*/multitool);
+            }
+            this.layer.tool.changed.dispatch();
+          } else if (isCollection && toCollection) {
+            // noop
+          } else if (isLineStrip && toLineStrip) {
+            multipointButton.classList.toggle('neuroglancer-linestrip-looped');
+            multitool.looped = !multitool.looped;
+            this.layer.tool.changed.dispatch();
+          } else {
+            remActive();
+            activeKey();
+            setTool();
+          }
+        } else {
+          remActive();
+          remChild();
+          activeKey();
+          setTool();
         }
       };
       const activeTool = (<PlaceLineStripTool>this.layer.tool.value);
-      if (activeTool && (activeTool.annotationType === AnnotationType.LINE_STRIP || activeTool.annotationType === AnnotationType.COLLECTION)) {
+      if (activeTool &&
+          (activeTool.annotationType === AnnotationType.LINE_STRIP ||
+           activeTool.annotationType === AnnotationType.COLLECTION)) {
         if (activeTool.looped !== void (0)) {
           multipointButton.classList.add(mskey);
         } else {
           collectionButton.classList.add(mskey);
-          this.toolLock = true;
         }
-        const dechange = this.layer.tool.changed.add(() => {
-          remActiveTool();
-          if (!this.toolLock) {
-            dechange();
-          }
-        });
       }
       const separator = document.createElement('button');
       separator.disabled = true;
@@ -537,56 +591,15 @@ export class AnnotationLayerView extends Tab {
       toolbox.append(separator);
       collectionButton.textContent = getAnnotationTypeHandler(AnnotationType.COLLECTION).icon;
       collectionButton.title = 'Group together multiple annotations';
-      // collectionButton.disabled = true;
       collectionButton.addEventListener('click', () => {
-        if (!collectionButton.classList.contains(mskey)) {
-          // TODO: Generic collection implements a tool lock to select its intermediate tools
-          remActiveTool();
-          this.toolLock = true;
-          collectionButton.classList.add(mskey);
-          this.layer.tool.value = new MultiStepAnnotationTool(this.layer, {});
-          const dechange = this.layer.tool.changed.add(() => {
-            remActiveTool();
-            if (!this.toolLock) {
-              dechange();
-            }
-          });
-        }
+        changeTool(AnnotationType.COLLECTION);
       });
       toolbox.appendChild(collectionButton);
 
       multipointButton.textContent = getAnnotationTypeHandler(AnnotationType.LINE_STRIP).icon;
       multipointButton.title = 'Annotate multiple connected points';
       multipointButton.addEventListener('click', () => {
-        const unselected = !multipointButton.classList.contains(mskey) &&
-            !multipointButton.classList.contains(childms);
-        if (unselected) {
-          remActiveTool();
-          if (this.toolLock) {
-            (<MultiStepAnnotationTool>this.layer.tool.value!).childTool =
-                new PlaceLineStripTool(this.layer, {});
-            this.layer.tool.changed.dispatch();
-            multipointButton.classList.add(childms);
-          } else {
-            this.layer.tool.value = new PlaceLineStripTool(this.layer, {});
-            multipointButton.classList.add(mskey);
-          }
-          const dechange = this.layer.tool.changed.add(() => {
-            remActiveTool();
-            dechange();
-          });
-        } else {
-          // toggled - defaults to false
-          multipointButton.classList.toggle('neuroglancer-linestrip-looped');
-          if (this.toolLock) {
-            const grandchild =
-                (<PlaceLineStripTool>(<MultiStepAnnotationTool>this.layer.tool.value!).childTool!);
-            grandchild.looped = !grandchild.looped;
-          } else {
-            const child = (<PlaceLineStripTool>this.layer.tool.value!);
-            child.looped = !child.looped;
-          }
-        }
+        changeTool(AnnotationType.LINE_STRIP);
       });
       toolbox.appendChild(multipointButton);
 
@@ -607,8 +620,6 @@ export class AnnotationLayerView extends Tab {
         abortMultiButton.title = 'Abort Annotation';
         abortMultiButton.addEventListener('click', () => {
           if (this.layer.tool.value) {
-            this.toolLock = false;
-            // remActiveTool();
             // Not undo able, does not change state? it might but it hasn't been investigated
             StatusMessage.showTemporaryMessage(`Annotation cancelled.`, 3000);
             // HACK: force < 1 = 1
@@ -618,7 +629,8 @@ export class AnnotationLayerView extends Tab {
             }*/
             // debugger;
             // this.layer.tool.dispose();
-            this.layer.tool.value.dispose();
+            changeTool();
+            // this.layer.tool.value.dispose();
             this.layer.tool.changed.dispatch();
           }
         });
@@ -869,14 +881,18 @@ export class AnnotationLayerView extends Tab {
     if (!element) {
       return;
     }
+    // FIXME: :scope is not supported in IE and Edge
+    // https://stackoverflow.com/questions/52955799/scope-pseudo-selector-in-ms-edge
     {
-      const position = <HTMLElement>element.querySelector('.neuroglancer-annotation-position');
+      const position =
+          <HTMLElement>element.querySelector(':scope > .neuroglancer-annotation-position');
       position.innerHTML = '';
       getPositionSummary(
           position, annotation, this.annotationLayer.objectToGlobal, this.voxelSize,
           this.setSpatialCoordinates);
     }
-    const description = <HTMLElement>element.querySelector('.neuroglancer-annotation-description');
+    const description =
+        <HTMLElement>element.querySelector(':scope > .neuroglancer-annotation-description');
     if (description) {
       const annotationText = this.layer.getAnnotationText(annotation);
       if (!annotationText) {
@@ -1126,7 +1142,7 @@ export class AnnotationLayerView extends Tab {
     for (const file of files) {
       const rawData = await this.betterPapa(file);
       rawData.data.shift();
-      rawData.data = rawData.data.filter((v:any) => v.join('').length);
+      rawData.data = rawData.data.filter((v: any) => v.join('').length);
       if (!rawData.data.length) {
         continue;
       }
@@ -1321,9 +1337,13 @@ export class AnnotationDetailsTab extends Tab {
     let isLineSegment: boolean|undefined;
     let isChild: boolean|undefined;
     let isSingleton: boolean|undefined;
+    // TODO: MultiScaleAnnotationSource
+    let isInProgress = (<AnnotationSource>annotationLayer.source).isPending(value.id);
     let parent: Collection|undefined;
+
     const ann = annotationLayer.source.getReference(value.id).value!;
     const parref = ann.pid ? annotationLayer.source.getReference(ann.pid) : null;
+
     if (ann.pid && parref && parref.value) {
       // set child like properties
       parent = <Collection>parref.value;
@@ -1337,11 +1357,18 @@ export class AnnotationDetailsTab extends Tab {
       value.multiple = void (0);
       value.ungroupable = true;
     }
+    if (isInProgress) {
+      // TODO: Reset details layer value on annotation completion/ or just call dispatch for update view
+      titleText.textContent = `${titleText.textContent} (in progress)`;
+      // not allowed to multi select line segments
+      value.multiple = void (0);
+      value.ungroupable = true;
+    }
     if (value.multiple) {
       titleText.textContent = `${value.multiple.size} annotations selected`;
       icon.textContent = '~';
     }
-    if (!annotationLayer.source.readonly && !isLineSegment) {
+    if (!annotationLayer.source.readonly && !isLineSegment && !isInProgress) {
       // Evict
       if (isChild && !value.multiple) {
         const evictButton = makeTextIconButton('✂️', 'Remove from collection');
@@ -1357,7 +1384,7 @@ export class AnnotationDetailsTab extends Tab {
           } else {
             (<AnnotationSource>annotationLayer.source).cps([ann.id]);
           }
-          this.state.value = void(0);
+          this.state.value = void (0);
         });
         title.appendChild(evictButton);
       }
@@ -1600,6 +1627,9 @@ abstract class PlaceAnnotationTool extends Tool {
   temp?: Annotation;
   group: string;
   annotationDescription: string|undefined;
+  annotationType: AnnotationType.POINT|AnnotationType.LINE|
+      AnnotationType.AXIS_ALIGNED_BOUNDING_BOX|AnnotationType.ELLIPSOID|
+      AnnotationType.COLLECTION|AnnotationType.LINE_STRIP;
   constructor(public layer: UserLayerWithAnnotations, options: any) {
     super();
     if (layer.annotationLayerState === undefined) {
@@ -1625,6 +1655,7 @@ const ANNOTATE_BOUNDING_BOX_TOOL_ID = 'annotateBoundingBox';
 const ANNOTATE_ELLIPSOID_TOOL_ID = 'annotateSphere';
 
 export class PlacePointTool extends PlaceAnnotationTool {
+  annotationType: AnnotationType.POINT;
   constructor(layer: UserLayerWithAnnotations, options: any) {
     super(layer, options);
   }
@@ -1732,6 +1763,7 @@ abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
               this.inProgressAnnotation.reference);
           this.inProgressAnnotation.disposer();
           this.inProgressAnnotation = undefined;
+          this.layer.selectedAnnotation.changed.dispatch();
         }
       }
     }
@@ -1779,8 +1811,7 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
       {annotationLayer: AnnotationLayerState, reference: AnnotationReference, disposer: () => void}|
       undefined;
   annotationType: AnnotationType.COLLECTION|AnnotationType.LINE_STRIP;
-  toolset: typeof PlacePointTool|typeof PlaceBoundingBoxTool|typeof PlaceLineTool|
-      typeof PlaceSphereTool|typeof PlaceLineStripTool;
+  toolset: MultiTool;
   childTool: PlacePointTool|PlaceBoundingBoxTool|PlaceLineTool|PlaceSphereTool|PlaceLineStripTool|
       undefined;
 
@@ -1813,6 +1844,13 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
           this.childTool!.dispose();
           this.childTool = undefined;
           this.layer.tool.changed.dispatch();
+          this.layer.selectedAnnotation.changed.dispatch();
+
+          //FIXME: Scoped Globally
+          let key = document.querySelector(`.${'neuroglancer-child-collection-tool'}`);
+          if (key) {
+            key.classList.remove('neuroglancer-child-collection-tool');
+          }
         } else {
           // see line 1960
           StatusMessage.showTemporaryMessage(`No annotation has been made.`, 3000);
@@ -1823,6 +1861,7 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
             this.inProgressAnnotation!.reference);
         this.inProgressAnnotation!.disposer();
         this.inProgressAnnotation = undefined;
+        this.layer.selectedAnnotation.changed.dispatch();
       } else {
         StatusMessage.showTemporaryMessage(`No annotation has been made.`, 3000);
       }
@@ -1985,7 +2024,7 @@ export class PlaceLineStripTool extends MultiStepAnnotationTool {
   }
 
   get description() {
-    return `annotate line strip`;
+    return `annotate line strip ${this.looped ? '(loop)' : ''}`;
   }
 
   toJSON() {

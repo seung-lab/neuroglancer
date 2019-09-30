@@ -500,6 +500,10 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     this.pending.delete(id);
   }
 
+  isPending(id: AnnotationId) {
+    return this.pending.has(id);
+  }
+
   update(reference: AnnotationReference, annotation: Annotation) {
     if (reference.value === null) {
       throw new Error(`Annotation already deleted.`);
