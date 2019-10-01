@@ -610,9 +610,13 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     }
     if (isChild) {
       // Remove child from parent entries on deletion
-      const target = <Collection>this.getReference(reference.value!.pid!).value;
+      const target = this.getReference(reference.value!.pid!);
+      const value = <Collection>target.value;
       // parent should not be deleted before its children
-      target.entries = target.entries.filter(v => v !== reference.value!.id);
+      value.entries = value.entries.filter(v => v !== reference.value!.id);
+      if (!value.entries.length && !this.isPending(value.id)) {
+        this.delete(target);
+      }
     }
     reference.value = null;
     this.deleteAnnotationNode(reference.id);
