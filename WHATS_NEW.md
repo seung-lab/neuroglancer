@@ -1,5 +1,8 @@
-### September 12 2019
-# Select segment colors
-* In the segment set widget, a new button allows you to control the color of each segment you select.
-* The button is right next to the segment's visibility checkbox, it is a rectangle whose color is that of the segment.
-* The selected colors are saved in the URL.
+### October 1 2019
+# Find a path between two points in a segment
+* A new feature helps users find locations of mergers.
+* For graphene segmentation layers, a new widget has been added to the "Graph" tab. It is labeled "Find Path."
+* One can select the point selection button, select a source and target point and hit the check mark to request a path between the points.
+* The ChunkedGraph server will then compute a path and it will be shown in Neuroglancer.
+* One can imagine a workflow to break up complex mergers of labeling two points clearly in different segments, finding a path
+between them, splitting them, and repeating the process.
