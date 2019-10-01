@@ -397,6 +397,7 @@ export class AnnotationLayerView extends Tab {
   private previousSelectedId: string|undefined;
   private previousHoverId: string|undefined;
   private updated = false;
+  public toolbox: HTMLDivElement;
   groupVisualization = this.registerDisposer(new MinimizableGroupWidget('Visualization'));
   groupAnnotations = this.registerDisposer(new MinimizableGroupWidget('Annotations'));
 
@@ -426,7 +427,8 @@ export class AnnotationLayerView extends Tab {
     this.registerDisposer(annotationLayer.transform.changed.add(updateView));
     this.updateView();
 
-    const toolbox = document.createElement('div');
+    this.toolbox = document.createElement('div');
+    const {toolbox} = this;
     toolbox.className = 'neuroglancer-annotation-toolbox';
 
     layer.initializeAnnotationLayerViewTab(this);
@@ -487,8 +489,7 @@ export class AnnotationLayerView extends Tab {
         const toLineStrip = toolset === AnnotationType.LINE_STRIP;
         const toCollection = toolset === AnnotationType.COLLECTION;
         const keyRemoveGen = (typekey: string) => () => {
-          //FIXME: Scoped Globally
-          let key = document.querySelector(`.${typekey}`);
+          let key = toolbox.querySelector(`.${typekey}`);
           if (key) {
             key.classList.remove(typekey);
           }
@@ -528,9 +529,9 @@ export class AnnotationLayerView extends Tab {
             if (parent.childTool) {
               parent.childTool.dispose();
             }
-            parent.childTool = new (<any>tool)(this.layer, {});
+            parent.childTool = new (<any>tool)(this.layer, {toolbox});
           } else {
-            this.layer.tool.value = tool ? new tool(this.layer, {}) : void (0);
+            this.layer.tool.value = tool ? new tool(this.layer, {toolbox}) : void (0);
           }
         };
 
@@ -578,6 +579,7 @@ export class AnnotationLayerView extends Tab {
       if (activeTool &&
           (activeTool.annotationType === AnnotationType.LINE_STRIP ||
            activeTool.annotationType === AnnotationType.COLLECTION)) {
+        activeTool.toolbox = toolbox;
         if (activeTool.looped !== void (0)) {
           multipointButton.classList.add(mskey);
         } else {
@@ -607,6 +609,7 @@ export class AnnotationLayerView extends Tab {
       {
         confirmMultiButton.textContent = '✔️';
         confirmMultiButton.title = 'Confirm Annotation';
+        confirmMultiButton.className = 'neuroglancer-multistep-confirm-button';
         confirmMultiButton.addEventListener('click', () => {
           if (this.layer.tool.value) {
             (<PlaceAnnotationTool>this.layer.tool.value).complete();
@@ -954,7 +957,7 @@ export class AnnotationLayerView extends Tab {
     this.createAnnotationDescriptionElement(element, annotation);
     if ((<Collection>annotation).entries) {
       // search for the child bin belonging to my ID
-      const reclaim = document.querySelector(`[data-id="${annotation.id}"]`);
+      const reclaim = this.annotationListContainer.querySelector(`[data-id="${annotation.id}"]`);
       if ((<Collection>annotation).cVis.value) {
         element.classList.add('neuroglancer-parent-viewable');
       }
@@ -1812,8 +1815,13 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
       undefined;
   annotationType: AnnotationType.COLLECTION|AnnotationType.LINE_STRIP;
   toolset: MultiTool;
+  toolbox: HTMLDivElement;
   childTool: PlacePointTool|PlaceBoundingBoxTool|PlaceLineTool|PlaceSphereTool|PlaceLineStripTool|
       undefined;
+  constructor(public layer: UserLayerWithAnnotations, options: any) {
+    super(layer, options);
+    this.toolbox = options.toolbox;
+  }
 
   getInitialAnnotation(mouseState: MouseSelectionState, annotationLayer: AnnotationLayerState):
       Annotation {
@@ -1842,14 +1850,18 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
         if ((<LineStrip>childInProgress!.reference.value!).entries.length > 1) {
           this.childTool!.complete();
           this.childTool!.dispose();
+          StatusMessage.showTemporaryMessage(`Child annotation ${childInProgress!.reference.value!.id} complete.`);
           this.childTool = undefined;
           this.layer.tool.changed.dispatch();
           this.layer.selectedAnnotation.changed.dispatch();
 
-          //FIXME: Scoped Globally
-          let key = document.querySelector(`.${'neuroglancer-child-collection-tool'}`);
+          let key = this.toolbox.querySelector('.neuroglancer-child-collection-tool');
           if (key) {
             key.classList.remove('neuroglancer-child-collection-tool');
+          }
+          let confirm = this.toolbox.querySelector('.neuroglancer-multistep-confirm-button');
+          if (confirm) {
+            confirm.classList.remove('neuroglancer-linestrip-confirm');
           }
         } else {
           // see line 1960
@@ -1859,9 +1871,14 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
         this.childTool!.dispose();
         this.inProgressAnnotation!.annotationLayer.source.commit(
             this.inProgressAnnotation!.reference);
+        StatusMessage.showTemporaryMessage(`Annotation ${this.inProgressAnnotation!.reference.value!.id} complete.`);
         this.inProgressAnnotation!.disposer();
         this.inProgressAnnotation = undefined;
         this.layer.selectedAnnotation.changed.dispatch();
+        let confirm = this.toolbox.querySelector('.neuroglancer-multistep-confirm-button');
+        if (confirm) {
+          confirm.classList.remove('neuroglancer-collection-confirm');
+        }
       } else {
         StatusMessage.showTemporaryMessage(`No annotation has been made.`, 3000);
       }
@@ -1886,6 +1903,7 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
       return;
     }
     if (mouseState.active) {
+      const confirm = this.toolbox.querySelector('.neuroglancer-multistep-confirm-button');
       if (this.inProgressAnnotation === undefined) {
         const annotation = this.getInitialAnnotation(mouseState, annotationLayer);
         if (parentRef) {
@@ -1901,6 +1919,9 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
         }
         this.layer.selectedAnnotation.value = {id: reference.id};
         this.childTool.trigger(mouseState, /*child=*/reference);
+        if (!(<any>this.childTool).inProgressAnnotation) {
+          confirm!.classList.add('neuroglancer-collection-confirm');
+        }
         const disposer = () => {
           mouseDisposer();
           reference.dispose();
@@ -1913,6 +1934,7 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
         const mouseDisposer = () => {};
       } else {
         this.childTool.trigger(mouseState, this.inProgressAnnotation.reference);
+        confirm!.classList.add('neuroglancer-collection-confirm');
       }
     }
   }
@@ -1951,7 +1973,8 @@ export class PlaceLineStripTool extends MultiStepAnnotationTool {
   constructor(public layer: UserLayerWithAnnotations, options: any) {
     super(layer, options);
     this.childTool = new this.toolset(layer, options);
-    if (document.querySelector('.neuroglancer-linestrip-looped')) {
+    this.toolbox = options.toolbox;
+    if (this.toolbox.querySelector('.neuroglancer-linestrip-looped')) {
       this.looped = true;
     }
   }
@@ -1998,6 +2021,8 @@ export class PlaceLineStripTool extends MultiStepAnnotationTool {
         this.initPos = mouseState.position.slice();
         super.trigger(mouseState, parentRef);
       } else {
+        const confirm = this.toolbox.querySelector('.neuroglancer-multistep-confirm-button');
+        confirm!.classList.add('neuroglancer-linestrip-confirm');
         super.trigger(mouseState, parentRef);
         // Start new annotation automatically
         this.appendNewChildAnnotation(this.inProgressAnnotation.reference!, mouseState);
@@ -2013,6 +2038,10 @@ export class PlaceLineStripTool extends MultiStepAnnotationTool {
           const fakeMouse = <MouseSelectionState>{...this.initMouseState, position: this.initPos};
           (<LineStrip>this.inProgressAnnotation!.reference.value!).looped = true;
           this.childTool!.trigger(fakeMouse, this.inProgressAnnotation!.reference);
+        }
+        let confirm = this.toolbox.querySelector('.neuroglancer-multistep-confirm-button');
+        if (confirm) {
+          confirm.classList.remove('neuroglancer-linestrip-confirm');
         }
         super.complete();
       } else {

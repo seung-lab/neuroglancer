@@ -157,6 +157,13 @@
   display: block !important; 
 }
 
+.neuroglancer-linestrip-confirm,.neuroglancer-collection-confirm {
+  box-shadow: inset -3px -3px 10px 0px #396125;
+}
+
+.neuroglancer-linestrip-confirm.neuroglancer-collection-confirm {
+  box-shadow: inset -3px -3px 10px 0px #dac320;
+}
 .neuroglancer-annotation-children {
   display: none;
   list-style-type: none;
