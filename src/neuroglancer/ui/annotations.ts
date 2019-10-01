@@ -898,6 +898,8 @@ export class AnnotationLayerView extends Tab {
     if (!element) {
       return;
     }
+    let isInProgress = (<AnnotationSource>this.annotationLayer.source).isPending(annotation.id);
+    element.classList.toggle('neuroglancer-annotation-inprogress', isInProgress);
     // FIXME: :scope is not supported in IE and Edge
     // https://stackoverflow.com/questions/52955799/scope-pseudo-selector-in-ms-edge
     {
@@ -955,6 +957,8 @@ export class AnnotationLayerView extends Tab {
   private makeAnnotationListElement(annotation: Annotation, transform: mat4) {
     const element = document.createElement('li');
     element.title = 'Click to select, right click to recenter view.';
+    let isInProgress = (<AnnotationSource>this.annotationLayer.source).isPending(annotation.id);
+    element.classList.toggle('neuroglancer-annotation-inprogress', isInProgress);
 
     const icon = document.createElement('div');
     icon.className = 'neuroglancer-annotation-icon';

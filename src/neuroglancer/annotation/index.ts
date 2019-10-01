@@ -484,16 +484,19 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     }
     this.insertAnnotationNode(annotation);
     this.changed.dispatch();
-    this.childAdded.dispatch(annotation);
     if (!commit) {
       this.pending.add(annotation.id);
     }
+    this.childAdded.dispatch(annotation);
     return this.getReference(annotation.id);
   }
 
   commit(reference: AnnotationReference): void {
-    const id = reference.id;
+    const {id, value} = reference;
     this.pending.delete(id);
+    if (value) {
+      this.childUpdated.dispatch(value);
+    }
   }
 
   isPending(id: AnnotationId) {
