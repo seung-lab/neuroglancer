@@ -738,8 +738,10 @@ export class AnnotationLayerView extends Tab {
   private updateSelectionView() {
     const selectedValue = this.state.value;
     let newSelectedId: string|undefined;
+    let multiple: string[]|undefined;
     if (selectedValue !== undefined) {
       newSelectedId = selectedValue.id;
+      multiple = selectedValue.multiple ? Array.from(selectedValue.multiple) : void (0);
     }
     const {previousSelectedId} = this;
     if (newSelectedId === previousSelectedId) {
@@ -749,6 +751,9 @@ export class AnnotationLayerView extends Tab {
       const element = this.annotationListElements.get(previousSelectedId);
       if (element !== undefined) {
         element.classList.remove('neuroglancer-annotation-selected');
+        if (multiple && multiple.length && multiple.includes(previousSelectedId)) {
+          element.classList.add('neuroglancer-annotation-multiple');
+        }
       }
     }
     if (newSelectedId !== undefined) {
@@ -758,9 +763,18 @@ export class AnnotationLayerView extends Tab {
         element.scrollIntoView();
         // Scrolls just a pixel too far, this makes it look prettier
         this.annotationListContainer.scrollTop -= 1;
+        if (multiple && multiple.length) {
+          element.classList.add('neuroglancer-annotation-multiple');
+        }
       }
     }
     this.previousSelectedId = newSelectedId;
+    if (!multiple) {
+      const multiselected = Array.from(
+          this.annotationListContainer.querySelectorAll('.neuroglancer-annotation-multiple'));
+      multiselected.forEach(
+          (e: HTMLElement) => e.classList.remove('neuroglancer-annotation-multiple'));
+    }
   }
 
   private updateHoverView() {
@@ -1361,7 +1375,8 @@ export class AnnotationDetailsTab extends Tab {
       value.ungroupable = true;
     }
     if (isInProgress) {
-      // TODO: Reset details layer value on annotation completion/ or just call dispatch for update view
+      // TODO: Reset details layer value on annotation completion/ or just call dispatch for update
+      // view
       titleText.textContent = `${titleText.textContent} (in progress)`;
       // not allowed to multi select line segments
       value.multiple = void (0);
@@ -1842,15 +1857,19 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
     return coll;
   }
   complete() {
-    if (this.inProgressAnnotation && this.childTool) {
-      const childInProgress =
-          (<MultiStepAnnotationTool|TwoStepAnnotationTool>this.childTool!).inProgressAnnotation;
+    if ((this.inProgressAnnotation && this.childTool) ||
+        (this.inProgressAnnotation && this.inProgressAnnotation!.reference.value! &&
+         (<Collection>this.inProgressAnnotation!.reference.value!).entries.length)) {
+      const childInProgress = this.childTool ?
+          (<MultiStepAnnotationTool|TwoStepAnnotationTool>this.childTool!).inProgressAnnotation :
+          void (0);
       const childCount = (<Collection>this.inProgressAnnotation!.reference.value!).entries.length;
       if (this.childTool && (<PlaceLineStripTool>this.childTool!).toolset) {
         if ((<LineStrip>childInProgress!.reference.value!).entries.length > 1) {
           this.childTool!.complete();
           this.childTool!.dispose();
-          StatusMessage.showTemporaryMessage(`Child annotation ${childInProgress!.reference.value!.id} complete.`);
+          StatusMessage.showTemporaryMessage(
+              `Child annotation ${childInProgress!.reference.value!.id} complete.`);
           this.childTool = undefined;
           this.layer.tool.changed.dispatch();
           this.layer.selectedAnnotation.changed.dispatch();
@@ -1859,26 +1878,21 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
           if (key) {
             key.classList.remove('neuroglancer-child-collection-tool');
           }
-          let confirm = this.toolbox.querySelector('.neuroglancer-multistep-confirm-button');
-          if (confirm) {
-            confirm.classList.remove('neuroglancer-linestrip-confirm');
-          }
         } else {
           // see line 1960
           StatusMessage.showTemporaryMessage(`No annotation has been made.`, 3000);
         }
       } else if ((!childInProgress && childCount === 1) || childCount > 1) {
-        this.childTool!.dispose();
+        if (this.childTool) {
+          this.childTool!.dispose();
+        }
         this.inProgressAnnotation!.annotationLayer.source.commit(
             this.inProgressAnnotation!.reference);
-        StatusMessage.showTemporaryMessage(`Annotation ${this.inProgressAnnotation!.reference.value!.id} complete.`);
+        StatusMessage.showTemporaryMessage(
+            `Annotation ${this.inProgressAnnotation!.reference.value!.id} complete.`);
         this.inProgressAnnotation!.disposer();
         this.inProgressAnnotation = undefined;
         this.layer.selectedAnnotation.changed.dispatch();
-        let confirm = this.toolbox.querySelector('.neuroglancer-multistep-confirm-button');
-        if (confirm) {
-          confirm.classList.remove('neuroglancer-collection-confirm');
-        }
       } else {
         StatusMessage.showTemporaryMessage(`No annotation has been made.`, 3000);
       }
@@ -1903,7 +1917,6 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
       return;
     }
     if (mouseState.active) {
-      const confirm = this.toolbox.querySelector('.neuroglancer-multistep-confirm-button');
       if (this.inProgressAnnotation === undefined) {
         const annotation = this.getInitialAnnotation(mouseState, annotationLayer);
         if (parentRef) {
@@ -1919,9 +1932,6 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
         }
         this.layer.selectedAnnotation.value = {id: reference.id};
         this.childTool.trigger(mouseState, /*child=*/reference);
-        if (!(<any>this.childTool).inProgressAnnotation) {
-          confirm!.classList.add('neuroglancer-collection-confirm');
-        }
         const disposer = () => {
           mouseDisposer();
           reference.dispose();
@@ -1934,7 +1944,6 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
         const mouseDisposer = () => {};
       } else {
         this.childTool.trigger(mouseState, this.inProgressAnnotation.reference);
-        confirm!.classList.add('neuroglancer-collection-confirm');
       }
     }
   }
@@ -2021,8 +2030,6 @@ export class PlaceLineStripTool extends MultiStepAnnotationTool {
         this.initPos = mouseState.position.slice();
         super.trigger(mouseState, parentRef);
       } else {
-        const confirm = this.toolbox.querySelector('.neuroglancer-multistep-confirm-button');
-        confirm!.classList.add('neuroglancer-linestrip-confirm');
         super.trigger(mouseState, parentRef);
         // Start new annotation automatically
         this.appendNewChildAnnotation(this.inProgressAnnotation.reference!, mouseState);
@@ -2038,10 +2045,6 @@ export class PlaceLineStripTool extends MultiStepAnnotationTool {
           const fakeMouse = <MouseSelectionState>{...this.initMouseState, position: this.initPos};
           (<LineStrip>this.inProgressAnnotation!.reference.value!).looped = true;
           this.childTool!.trigger(fakeMouse, this.inProgressAnnotation!.reference);
-        }
-        let confirm = this.toolbox.querySelector('.neuroglancer-multistep-confirm-button');
-        if (confirm) {
-          confirm.classList.remove('neuroglancer-linestrip-confirm');
         }
         super.complete();
       } else {

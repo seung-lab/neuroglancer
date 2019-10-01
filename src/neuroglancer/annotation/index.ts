@@ -52,12 +52,8 @@ export enum AnnotationType {
 }
 
 export const annotationTypes = [
-  AnnotationType.POINT,
-  AnnotationType.LINE,
-  AnnotationType.AXIS_ALIGNED_BOUNDING_BOX,
-  AnnotationType.ELLIPSOID,
-  AnnotationType.COLLECTION,
-  AnnotationType.LINE_STRIP
+  AnnotationType.POINT, AnnotationType.LINE, AnnotationType.AXIS_ALIGNED_BOUNDING_BOX,
+  AnnotationType.ELLIPSOID, AnnotationType.COLLECTION, AnnotationType.LINE_STRIP
 ];
 
 export interface AnnotationBase {
@@ -552,7 +548,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
   cps(targets: string[], surrogate?: AnnotationReference): AnnotationReference[] {
     // Child Protective Services
     const emptynesters = <AnnotationReference[]>[];
-    let adopter = surrogate ? <Collection>surrogate.value : void(0);
+    let adopter = surrogate ? <Collection>surrogate.value : void (0);
 
     targets.forEach((id: string) => {
       const target = this.getReference(id).value!;
@@ -568,15 +564,17 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
           emptynesters.push(this.getReference(target.pid));
         }
       }
-      // reassign/orphan child
-      if (adopter) {
+      // reassign/orphan child | parent cannot be child of child
+      if ((adopter && !(<any>target).entries) ||
+          (adopter && (<any>target).entries && !(<any>target).entries.includes(adopter.id))) {
         target.pid = adopter.id;
         adopter.entries.push(target.id);
       } else {
         target.pid = undefined;
       }
       this.childDeleted.dispatch(target.id);
-      // TODO: CHILD MOVE signal, move the child to a different element rather than deleting and readding, because this cant rebuild children
+      // TODO: CHILD MOVE signal, move the child to a different element rather than deleting and
+      // readding, because this cant rebuild children
       this.childAdded.dispatch(target);
     });
 
