@@ -18,16 +18,22 @@
  * @file Support for rendering point annotations.
  */
 
-import {AnnotationType, Point} from 'neuroglancer/annotation';
+import {Annotation, AnnotationReference, AnnotationType, Collection, Point} from 'neuroglancer/annotation';
+import {getSelectedAssocatedSegment, PlaceAnnotationTool} from 'neuroglancer/annotation/annotation';
 import {AnnotationRenderContext, AnnotationRenderHelper, registerAnnotationTypeRenderHandler} from 'neuroglancer/annotation/type_handler';
+import {MouseSelectionState} from 'neuroglancer/layer';
+import {UserLayerWithAnnotations} from 'neuroglancer/ui/annotations';
+import {registerTool} from 'neuroglancer/ui/tool';
 import {mat4, vec3} from 'neuroglancer/util/geom';
 import {CircleShader} from 'neuroglancer/webgl/circles';
 import {emitterDependentShaderGetter, ShaderBuilder} from 'neuroglancer/webgl/shader';
 
+const ANNOTATE_POINT_TOOL_ID = 'annotatePoint';
+
 class RenderHelper extends AnnotationRenderHelper {
   private circleShader = this.registerDisposer(new CircleShader(this.gl));
-  private shaderGetter =
-      emitterDependentShaderGetter(this, this.gl, (builder: ShaderBuilder) => this.defineShader(builder));
+  private shaderGetter = emitterDependentShaderGetter(
+      this, this.gl, (builder: ShaderBuilder) => this.defineShader(builder));
 
   defineShader(builder: ShaderBuilder) {
     super.defineShader(builder);
@@ -94,3 +100,53 @@ registerAnnotationTypeRenderHandler(AnnotationType.POINT, {
     return annotation;
   }
 });
+
+export class PlacePointTool extends PlaceAnnotationTool {
+  annotationType: AnnotationType.POINT;
+  constructor(layer: UserLayerWithAnnotations, options: any) {
+    super(layer, options);
+  }
+
+  trigger(mouseState: MouseSelectionState, parentRef?: AnnotationReference) {
+    const {annotationLayer} = this;
+    if (annotationLayer === undefined) {
+      // Not yet ready.
+      return;
+    }
+    if (mouseState.active) {
+      const annotation: Annotation = {
+        id: '',
+        description: '',
+        segments: getSelectedAssocatedSegment(annotationLayer),
+        point:
+            vec3.transformMat4(vec3.create(), mouseState.position, annotationLayer.globalToObject),
+        type: AnnotationType.POINT,
+      };
+      if (parentRef) {
+        annotation.pid = parentRef.id;
+      }
+      const reference = annotationLayer.source.add(annotation, /*commit=*/true);
+      this.layer.selectedAnnotation.value = {id: reference.id};
+      if (parentRef) {
+        const parent = (<Collection>parentRef.value!);
+        parent.entries.push(reference.id);
+        if (parent.segments && annotation.segments) {
+          parent.segments = [...parent.segments!, ...annotation.segments!];
+        }
+      }
+      reference.dispose();
+    }
+  }
+
+  get description() {
+    return `annotate point`;
+  }
+
+  toJSON() {
+    return ANNOTATE_POINT_TOOL_ID;
+  }
+}
+
+registerTool(
+    ANNOTATE_POINT_TOOL_ID,
+    (layer, options) => new PlacePointTool(<UserLayerWithAnnotations>layer, options));

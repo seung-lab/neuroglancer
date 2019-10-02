@@ -153,7 +153,7 @@
   box-shadow: inset -3px -3px 10px 0px #df5959;
 }
 
-.neuroglancer-parent-viewable .neuroglancer-annotation-children  {
+.neuroglancer-parent-viewable > .neuroglancer-annotation-children  {
   display: block !important; 
 }
 
