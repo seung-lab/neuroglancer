@@ -144,6 +144,11 @@ export class HidingList {
     this.updateScrollAreaPos();
   }
 
+  replaceElement(newElement: HTMLElement, element: HTMLElement) {
+    this.removeElement(element);
+    this.addElement(newElement);
+  }
+
   removeAll() {
     for (const [element] of this.elementIndices) {
       this.scrollArea.removeChild(element);
