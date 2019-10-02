@@ -178,7 +178,7 @@ export class ChunkedGraphLayer extends GenericSliceViewRenderLayer {
       return Promise.reject(GRAPH_SERVER_NOT_SPECIFIED);
     }
 
-    const promise = authFetch(`${url}/graph/find_path`, {
+    const promise = authFetch(`${url}/graph/find_path?int64_as_str=1`, {
       method: 'POST',
       body: JSON.stringify([
         [String(first.segmentId), ...first.position.values()],
