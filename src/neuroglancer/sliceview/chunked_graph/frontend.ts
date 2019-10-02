@@ -180,7 +180,7 @@ export class ChunkedGraphLayer extends GenericSliceViewRenderLayer {
       errorPrefix: 'Split preview failed: '
     });
     const jsonResp = await response.json();
-    const jsonCCKey = 'supervoxel_connected_components_string';
+    const jsonCCKey = 'supervoxel_connected_components';
     const supervoxelConnectedComponents: Uint64Set[] = new Array(jsonResp[jsonCCKey].length);
     for (let i = 0; i < supervoxelConnectedComponents.length; i++) {
       const connectedComponent = new Array(jsonResp[jsonCCKey][i].length);
