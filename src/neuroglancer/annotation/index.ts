@@ -48,12 +48,13 @@ export enum AnnotationType {
   AXIS_ALIGNED_BOUNDING_BOX,
   ELLIPSOID,
   COLLECTION,
-  LINE_STRIP
+  LINE_STRIP,
+  SPOKE
 }
 
 export const annotationTypes = [
   AnnotationType.POINT, AnnotationType.LINE, AnnotationType.AXIS_ALIGNED_BOUNDING_BOX,
-  AnnotationType.ELLIPSOID, AnnotationType.COLLECTION, AnnotationType.LINE_STRIP
+  AnnotationType.ELLIPSOID, AnnotationType.COLLECTION, AnnotationType.LINE_STRIP, AnnotationType.SPOKE
 ];
 
 export interface AnnotationBase {
@@ -96,9 +97,10 @@ export interface Ellipsoid extends AnnotationBase {
 
 // Collections //
 export interface Collection extends AnnotationBase {
-  last?: AnnotationReference;
+  lastA?: AnnotationReference;
+  lastB?: AnnotationReference;
   entries: string[];
-  type: AnnotationType.COLLECTION|AnnotationType.LINE_STRIP;
+  type: AnnotationType.COLLECTION|AnnotationType.LINE_STRIP|AnnotationType.SPOKE;
   connected: boolean;
   source: vec3;
   entry: Function;
@@ -110,7 +112,14 @@ export interface LineStrip extends Collection {
   type: AnnotationType.LINE_STRIP;
   connected: true;
 }
-export type Annotation = Line|Point|AxisAlignedBoundingBox|Ellipsoid|Collection|LineStrip;
+
+export interface Spoke extends Collection {
+  wheeled?: boolean;
+  type: AnnotationType.SPOKE;
+  connected: true;
+}
+
+export type Annotation = Line|Point|AxisAlignedBoundingBox|Ellipsoid|Collection|LineStrip|Spoke;
 
 export interface AnnotationTag {
   id: number;
@@ -279,8 +288,14 @@ typeHandlers.set(AnnotationType.COLLECTION, collTypeSet);
 
 typeHandlers.set(AnnotationType.LINE_STRIP, {
   ...collTypeSet,
-  icon: '⚹',
+  icon: 'ʌ',
   description: 'Line Strip',
+});
+
+typeHandlers.set(AnnotationType.SPOKE, {
+  ...collTypeSet,
+  icon: '⚹',
+  description: 'Spoke',
 });
 
 function restoreAnnotationsTags(tagsObj: any) {
@@ -437,7 +452,8 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     this.lastAnnotationNode = annotationNode;
 
     if (annotation.type === AnnotationType.COLLECTION ||
-        annotation.type === AnnotationType.LINE_STRIP) {
+        annotation.type === AnnotationType.LINE_STRIP ||
+        annotation.type === AnnotationType.SPOKE) {
       annotationNode.entry = (index: number) => this.get(annotationNode.entries[index]);
     }
     this.annotationMap.set(annotation.id, annotationNode);
@@ -812,8 +828,8 @@ export function serializeAnnotations(allAnnotations: Annotation[][]): Serialized
 }
 
 export class AnnotationSerializer {
-  annotations: [Point[], Line[], AxisAlignedBoundingBox[], Ellipsoid[], Collection[], LineStrip[]] =
-      [[], [], [], [], [], []];
+  annotations: [Point[], Line[], AxisAlignedBoundingBox[], Ellipsoid[], Collection[], LineStrip[], Spoke[]] =
+      [[], [], [], [], [], [], []];
   add(annotation: Annotation) {
     (<Annotation[]>this.annotations[annotation.type]).push(annotation);
   }

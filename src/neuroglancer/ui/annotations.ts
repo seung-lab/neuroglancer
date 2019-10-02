@@ -21,7 +21,7 @@
 import './annotations.css';
 
 import debounce from 'lodash/debounce';
-import {Annotation, AnnotationReference, AnnotationSource, AnnotationTag, AnnotationType, AxisAlignedBoundingBox, Collection, Ellipsoid, getAnnotationTypeHandler, Line, LineStrip, LocalAnnotationSource, makeAnnotationId, Point} from 'neuroglancer/annotation';
+import {Annotation, AnnotationReference, AnnotationSource, AnnotationTag, AnnotationType, AxisAlignedBoundingBox, Collection, Ellipsoid, getAnnotationTypeHandler, Line, LineStrip, LocalAnnotationSource, makeAnnotationId, Point, Spoke} from 'neuroglancer/annotation';
 import {PlaceAnnotationTool} from 'neuroglancer/annotation/annotation';
 import {PlaceBoundingBoxTool} from 'neuroglancer/annotation/bounding_box';
 import {MultiStepAnnotationTool} from 'neuroglancer/annotation/collection';
@@ -55,6 +55,7 @@ import {RangeWidget} from 'neuroglancer/widget/range';
 import {StackView, Tab} from 'neuroglancer/widget/tab_view';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
 import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
+import {PlaceSpokeTool} from '../annotation/spoke';
 
 const Papa = require('papaparse');
 
@@ -362,6 +363,7 @@ export function getPositionSummary(
       voxelSize.voxelFromSpatial(transformedRadii, transformedRadii);
       element.appendChild(document.createTextNode('±' + formatIntegerBounds(transformedRadii)));
       break;
+    case AnnotationType.SPOKE:
     case AnnotationType.LINE_STRIP:
     case AnnotationType.COLLECTION: {
       element.appendChild(makePointLinkWithTransform(annotation.source));
@@ -384,6 +386,7 @@ function getCenterPosition(annotation: Annotation, transform: mat4) {
     case AnnotationType.ELLIPSOID:
       vec3.copy(center, annotation.center);
       break;
+    case AnnotationType.SPOKE:
     case AnnotationType.LINE_STRIP:
     case AnnotationType.COLLECTION:
       vec3.copy(center, annotation.source);
@@ -486,8 +489,10 @@ export class AnnotationLayerView extends Tab {
       const childms = 'neuroglancer-child-collection-tool';
       const collectionButton = document.createElement('button');
       const multipointButton = document.createElement('button');
+      const spokeButton = document.createElement('button');
       const changeTool = (toolset?: AnnotationType) => {
         const currentTool = <PlaceAnnotationTool>this.layer.tool.value;
+        const toSpoke = toolset === AnnotationType.SPOKE;
         const toLineStrip = toolset === AnnotationType.LINE_STRIP;
         const toCollection = toolset === AnnotationType.COLLECTION;
         const keyRemoveGen = (typekey: string) => () => {
@@ -501,6 +506,8 @@ export class AnnotationLayerView extends Tab {
         const activeKey = () => {
           if (toLineStrip) {
             multipointButton.classList.add(mskey);
+          } else if (toSpoke) {
+            spokeButton.classList.add(mskey);
           } else if (toCollection) {
             collectionButton.classList.add(mskey);
           }
@@ -520,6 +527,9 @@ export class AnnotationLayerView extends Tab {
             case AnnotationType.ELLIPSOID:
               tool = PlaceSphereTool;
               break;
+            case AnnotationType.SPOKE:
+              tool = PlaceSpokeTool;
+              break;
             case AnnotationType.LINE_STRIP:
               tool = PlaceLineStripTool;
               break;
@@ -538,6 +548,7 @@ export class AnnotationLayerView extends Tab {
         };
 
         if (currentTool && toolset !== void (0)) {
+          const isSpoke = currentTool.annotationType === AnnotationType.SPOKE;
           const isLineStrip = currentTool.annotationType === AnnotationType.LINE_STRIP;
           const isCollection = currentTool.annotationType === AnnotationType.COLLECTION;
           const multitool = <any>this.layer.tool.value!;
@@ -546,14 +557,21 @@ export class AnnotationLayerView extends Tab {
             const {childTool} = multitool;
             const isChildLineStrip =
                 childTool ? childTool.annotationType === AnnotationType.LINE_STRIP : void (0);
+            const isChildSpoke =
+                childTool ? childTool.annotationType === AnnotationType.SPOKE : void (0);
 
             if (isChildLineStrip && toLineStrip) {
               multipointButton.classList.toggle('neuroglancer-linestrip-looped');
               childTool.looped = !childTool.looped;
+            } else if (isChildSpoke && toSpoke) {
+              spokeButton.classList.toggle('neuroglancer-spoke-wheeled');
+              childTool.wheeled = !childTool.wheeled;
             } else {
               remChild();
               if (toLineStrip) {
                 multipointButton.classList.add(childms);
+              } else if (toSpoke) {
+                spokeButton.classList.add(childms);
               }
               // trust me, it work
               setTool(/*parent=*/multitool);
@@ -564,6 +582,10 @@ export class AnnotationLayerView extends Tab {
           } else if (isLineStrip && toLineStrip) {
             multipointButton.classList.toggle('neuroglancer-linestrip-looped');
             multitool.looped = !multitool.looped;
+            this.layer.tool.changed.dispatch();
+          } else if (isSpoke && toSpoke) {
+            spokeButton.classList.toggle('neuroglancer-spoke-wheeled');
+            multitool.wheeled = !multitool.wheeled;
             this.layer.tool.changed.dispatch();
           } else {
             remActive();
@@ -577,13 +599,16 @@ export class AnnotationLayerView extends Tab {
           setTool();
         }
       };
-      const activeTool = (<PlaceLineStripTool>this.layer.tool.value);
+      const activeTool = (<any>this.layer.tool.value);
       if (activeTool &&
-          (activeTool.annotationType === AnnotationType.LINE_STRIP ||
+          (activeTool.annotationType === AnnotationType.SPOKE ||
+           activeTool.annotationType === AnnotationType.LINE_STRIP ||
            activeTool.annotationType === AnnotationType.COLLECTION)) {
         activeTool.toolbox = toolbox;
         if (activeTool.looped !== void (0)) {
           multipointButton.classList.add(mskey);
+        } else if (activeTool.wheeled !== void (0)) {
+          spokeButton.classList.add(mskey);
         } else {
           collectionButton.classList.add(mskey);
         }
@@ -593,6 +618,7 @@ export class AnnotationLayerView extends Tab {
       separator.style.padding = '1px';
       separator.style.border = '1px';
       toolbox.append(separator);
+
       collectionButton.textContent = getAnnotationTypeHandler(AnnotationType.COLLECTION).icon;
       collectionButton.title = 'Group together multiple annotations';
       collectionButton.addEventListener('click', () => {
@@ -606,6 +632,13 @@ export class AnnotationLayerView extends Tab {
         changeTool(AnnotationType.LINE_STRIP);
       });
       toolbox.appendChild(multipointButton);
+
+      spokeButton.textContent = getAnnotationTypeHandler(AnnotationType.SPOKE).icon;
+      spokeButton.title = 'Annotate radially connected points';
+      spokeButton.addEventListener('click', () => {
+        changeTool(AnnotationType.SPOKE);
+      });
+      toolbox.appendChild(spokeButton);
 
       const confirmMultiButton = document.createElement('button');
       {
@@ -1059,11 +1092,17 @@ export class AnnotationLayerView extends Tab {
           this.voxelSize.voxelFromSpatial(transformedRadii, transformedRadii);
           ellipsoidDimensions = formatIntegerBounds(transformedRadii);
           break;
+        case AnnotationType.SPOKE:
         case AnnotationType.LINE_STRIP:
         case AnnotationType.COLLECTION:
-          stringType = annotation.type === AnnotationType.LINE_STRIP ?
-              ((<LineStrip>annotation).looped ? 'Line Strip*' : 'Line Strip') :
-              'Collection';
+          switch (annotation.type) {
+            case AnnotationType.SPOKE:
+              stringType = (<Spoke>annotation).wheeled ? 'Spoke*' : 'Spoke';
+            case AnnotationType.LINE_STRIP:
+              stringType = (<LineStrip>annotation).looped ? 'Line Strip*' : 'Line Strip';
+            default:
+              stringType = 'Collection';
+          }
           coordinate1String =
               pointToCoordinateText(annotation.source, this.annotationLayer.objectToGlobal);
           collectionID = annotation.id;
@@ -1244,11 +1283,17 @@ export class AnnotationLayerView extends Tab {
             break;
           case 'Line Strip':
           case 'Line Strip*':
+          case 'Spoke':
+          case 'Spoke*':
           case 'Collection':
             if (type === 'Line Strip' || type === 'Line Strip*') {
               raw.type = AnnotationType.LINE_STRIP;
               (<LineStrip>raw).connected = true;
               (<LineStrip>raw).looped = type === 'Line Strip*';
+            } else if (type === 'Spoke' || type === 'Spoke*') {
+              raw.type = AnnotationType.SPOKE;
+              (<Spoke>raw).connected = true;
+              (<Spoke>raw).wheeled = type === 'Spoke*';
             } else {
               raw.type = AnnotationType.COLLECTION;
               (<Collection>raw).connected = false;
@@ -1358,6 +1403,7 @@ export class AnnotationDetailsTab extends Tab {
     title.appendChild(titleText);
 
     let isLineSegment: boolean|undefined;
+    let isSpoke: boolean|undefined;
     let isChild: boolean|undefined;
     let isSingleton: boolean|undefined;
     // TODO: MultiScaleAnnotationSource
@@ -1371,8 +1417,13 @@ export class AnnotationDetailsTab extends Tab {
       // set child like properties
       parent = <Collection>parref.value;
       isLineSegment = parent.type === AnnotationType.LINE_STRIP;
+      isSpoke = parent.type === AnnotationType.SPOKE;
       isChild = true;
       isSingleton = (parent.entries.length === 1);
+    }
+    if (isSpoke) {
+      // FIXME: Currently Spokes are mutable collections, since order doesn't matter even though
+      // they are connected
     }
     if (isLineSegment) {
       titleText.textContent = 'Line (segment)';
@@ -1437,6 +1488,7 @@ export class AnnotationDetailsTab extends Tab {
               srcpt = (<Ellipsoid>first).center;
               break;
             case AnnotationType.LINE_STRIP:
+            case AnnotationType.SPOKE:
             case AnnotationType.COLLECTION:
               srcpt = (<LineStrip>first).source;
               break;
@@ -1478,7 +1530,8 @@ export class AnnotationDetailsTab extends Tab {
         title.appendChild(groupButton);
       }
       // Ungroup
-      if ((ann.type === AnnotationType.COLLECTION || ann.type === AnnotationType.LINE_STRIP) &&
+      if ((ann.type === AnnotationType.COLLECTION || ann.type === AnnotationType.LINE_STRIP ||
+           ann.type === AnnotationType.SPOKE) &&
           !value.multiple) {
         const ungroupButton = makeTextIconButton('💥', 'Free annotations');
         ungroupButton.addEventListener('click', () => {

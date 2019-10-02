@@ -700,6 +700,26 @@ export class Viewer extends RefCounted implements ViewerState {
       userLayer.tool.value.trigger(this.mouseState);
     });
 
+    this.bindAction('complete-annotation', () => {
+      const selectedLayer = this.selectedLayer.layer;
+      if (selectedLayer === undefined) {
+        StatusMessage.showTemporaryMessage('The complete annotate command requires a layer to be selected.');
+        return;
+      }
+      const userLayer = selectedLayer.layer;
+      if (userLayer === null || userLayer.tool.value === undefined) {
+        StatusMessage.showTemporaryMessage(`The selected layer (${
+            JSON.stringify(selectedLayer.name)}) does not have an active annotation tool.`);
+        return;
+      }
+      if (!(<any>userLayer.tool.value).complete) {
+        StatusMessage.showTemporaryMessage(`The selected layer (${
+            JSON.stringify(selectedLayer.name)}) does not support annotation completion operation.`);
+        return;
+      }
+      (<any>userLayer.tool.value).complete(true);
+    });
+
     this.bindAction('toggle-axis-lines', () => this.showAxisLines.toggle());
     this.bindAction('toggle-scale-bar', () => this.showScaleBar.toggle());
     this.bindAction('toggle-default-annotations', () => this.showDefaultAnnotations.toggle());

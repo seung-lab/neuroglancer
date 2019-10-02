@@ -30,7 +30,7 @@ export abstract class PlaceAnnotationTool extends Tool {
   annotationDescription: string|undefined;
   annotationType: AnnotationType.POINT|AnnotationType.LINE|
       AnnotationType.AXIS_ALIGNED_BOUNDING_BOX|AnnotationType.ELLIPSOID|
-      AnnotationType.COLLECTION|AnnotationType.LINE_STRIP;
+      AnnotationType.COLLECTION|AnnotationType.LINE_STRIP|AnnotationType.SPOKE;
   constructor(public layer: UserLayerWithAnnotations, options: any) {
     super();
     if (layer.annotationLayerState === undefined) {
@@ -59,7 +59,7 @@ export abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
       oldAnnotation: Annotation, mouseState: MouseSelectionState,
       annotationLayer: AnnotationLayerState): Annotation;
 
-  trigger(mouseState: MouseSelectionState, parentRef?: AnnotationReference) {
+  trigger(mouseState: MouseSelectionState, parentRef?: AnnotationReference, spoofMouse?: MouseSelectionState) {
     const {annotationLayer} = this;
     if (annotationLayer === undefined) {
       // Not yet ready.
@@ -76,7 +76,7 @@ export abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
       };
 
       if (this.inProgressAnnotation === undefined) {
-        const annotation = this.getInitialAnnotation(mouseState, annotationLayer);
+        const annotation = this.getInitialAnnotation(spoofMouse || mouseState, annotationLayer);
         if (parentRef) {
           annotation.pid = parentRef.id;
         }

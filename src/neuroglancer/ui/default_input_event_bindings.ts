@@ -77,6 +77,7 @@ export function getDefaultRenderedDataPanelBindings() {
           'at:shift+wheel': {action: 'z+10-via-wheel', preventDefault: true},
           'at:dblclick0': 'select',
           'at:control+mousedown0': 'annotate',
+          'at:control+dblclick0': 'complete-annotation',
           'at:mousedown2': 'move-to-mouse-position',
           'at:control+mousedown2': 'select-annotation',
           'at:alt+mousedown0': 'move-annotation',

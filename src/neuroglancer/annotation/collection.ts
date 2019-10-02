@@ -18,7 +18,7 @@
  * @file Support for rendering collections.
  */
 
-import {Annotation, AnnotationReference, AnnotationType, Collection, LineStrip, LocalAnnotationSource} from 'neuroglancer/annotation';
+import {Annotation, AnnotationReference, AnnotationType, Collection, LocalAnnotationSource} from 'neuroglancer/annotation';
 import {PlaceAnnotationTool, TwoStepAnnotationTool} from 'neuroglancer/annotation/annotation';
 import {PlaceBoundingBoxTool} from 'neuroglancer/annotation/bounding_box';
 import {PlaceSphereTool} from 'neuroglancer/annotation/ellipsoid';
@@ -26,6 +26,7 @@ import {AnnotationLayerState} from 'neuroglancer/annotation/frontend';
 import {PlaceLineTool} from 'neuroglancer/annotation/line';
 import {PlaceLineStripTool} from 'neuroglancer/annotation/line_strip';
 import {PlacePointTool} from 'neuroglancer/annotation/point';
+import {PlaceSpokeTool} from 'neuroglancer/annotation/spoke';
 import {AnnotationRenderContext, AnnotationRenderHelper, registerAnnotationTypeRenderHandler} from 'neuroglancer/annotation/type_handler';
 import {MouseSelectionState} from 'neuroglancer/layer';
 import {StatusMessage} from 'neuroglancer/status';
@@ -110,22 +111,59 @@ registerAnnotationTypeRenderHandler(AnnotationType.COLLECTION, {
   }
 });
 
-export type MultiTool = typeof PlacePointTool|typeof PlaceBoundingBoxTool|typeof PlaceLineTool|
-    typeof PlaceSphereTool|typeof PlaceLineStripTool|typeof MultiStepAnnotationTool;
+export type MultiTool =
+    typeof PlacePointTool|typeof PlaceBoundingBoxTool|typeof PlaceLineTool|typeof PlaceSphereTool|
+    typeof PlaceLineStripTool|typeof PlaceSpokeTool|typeof MultiStepAnnotationTool;
 
 
 export class MultiStepAnnotationTool extends PlaceAnnotationTool {
   inProgressAnnotation:
       {annotationLayer: AnnotationLayerState, reference: AnnotationReference, disposer: () => void}|
       undefined;
-  annotationType: AnnotationType.COLLECTION|AnnotationType.LINE_STRIP;
+  annotationType: AnnotationType.COLLECTION|AnnotationType.LINE_STRIP|AnnotationType.SPOKE;
   toolset: MultiTool;
   toolbox: HTMLDivElement;
   childTool: PlacePointTool|PlaceBoundingBoxTool|PlaceLineTool|PlaceSphereTool|PlaceLineStripTool|
-      undefined;
+      PlaceSpokeTool|undefined;
   constructor(public layer: UserLayerWithAnnotations, options: any) {
     super(layer, options);
     this.toolbox = options.toolbox;
+  }
+
+  updateLast() {
+    const inprogress = this.inProgressAnnotation;
+    if (inprogress) {
+      const oldAnnotation = <Collection> inprogress.reference.value!;
+      const lastB = oldAnnotation.lastA;
+      const lastA = this.getChildRef();
+      const newAnnotation = {...oldAnnotation, lastA, lastB};
+      inprogress.annotationLayer.source.update(inprogress.reference, newAnnotation);
+    }
+  }
+
+  getChildRef() {
+    /*if (this.childTool && (<any>this.childTool).inProgressAnnotation) {
+      const inProgressAnnotation = (<TwoStepAnnotationTool>this.childTool).inProgressAnnotation;
+      // Child should not be a collection
+      const child = inProgressAnnotation!.reference;
+      return child;
+    }
+    return;*/
+    if (this.childTool && this.inProgressAnnotation) {
+      const {entries} = <Collection>this.inProgressAnnotation.reference!.value!;
+      return this.inProgressAnnotation.annotationLayer.source.getReference(
+          entries[entries.length - 1]);
+    }
+    return;
+  }
+
+  appendNewChildAnnotation(
+      oldAnnotationRef: AnnotationReference, mouseState: MouseSelectionState,
+      spoofMouse?: MouseSelectionState) {
+    // This function is only called by Collection Sub Classes with auto build: Spoke, LineStrip
+    this.childTool = <any>new this.toolset(this.layer, {});
+    this.childTool!.trigger(mouseState, oldAnnotationRef, spoofMouse);
+    this.updateLast();
   }
 
   getInitialAnnotation(mouseState: MouseSelectionState, annotationLayer: AnnotationLayerState):
@@ -146,7 +184,52 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
         (<LocalAnnotationSource>annotationLayer.source).get(coll.entries[index]);
     return coll;
   }
-  complete() {
+
+  trigger(mouseState: MouseSelectionState, parentRef?: AnnotationReference) {
+    const {annotationLayer} = this;
+    if (annotationLayer === undefined) {
+      // Not yet ready.
+      return;
+    }
+    if (!this.childTool) {
+      // StatusMessage.showTemporaryMessage(`Collections require a child tool.`);
+      return;
+    }
+    if (mouseState.active) {
+      if (this.inProgressAnnotation === undefined) {
+        const annotation = this.getInitialAnnotation(mouseState, annotationLayer);
+        if (parentRef) {
+          annotation.pid = parentRef.id;
+        }
+        const reference = annotationLayer.source.add(annotation, /*commit=*/false);
+        if (parentRef) {
+          const parent = (<Collection>parentRef.value!);
+          parent.entries.push(reference.id);
+          if (parent.segments && annotation.segments) {
+            parent.segments = [...parent.segments!, ...annotation.segments!];
+          }
+        }
+        this.layer.selectedAnnotation.value = {id: reference.id};
+        this.childTool.trigger(mouseState, /*child=*/reference);
+        this.updateLast();
+        const disposer = () => {
+          mouseDisposer();
+          reference.dispose();
+        };
+        this.inProgressAnnotation = {
+          annotationLayer,
+          reference,
+          disposer,
+        };
+        const mouseDisposer = () => {};
+      } else {
+        this.childTool.trigger(mouseState, this.inProgressAnnotation.reference);
+        this.updateLast();
+      }
+    }
+  }
+
+  complete(shortcut?: boolean) {
     if ((this.inProgressAnnotation && this.childTool) ||
         (this.inProgressAnnotation && this.inProgressAnnotation!.reference.value! &&
          (<Collection>this.inProgressAnnotation!.reference.value!).entries.length)) {
@@ -155,8 +238,8 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
           void (0);
       const childCount = (<Collection>this.inProgressAnnotation!.reference.value!).entries.length;
       if (this.childTool && (<PlaceLineStripTool>this.childTool!).toolset) {
-        if ((<LineStrip>childInProgress!.reference.value!).entries.length > 1) {
-          this.childTool!.complete();
+        if ((<Collection>childInProgress!.reference.value!).entries.length > 1) {
+          this.childTool!.complete(shortcut);
           this.childTool!.dispose();
           StatusMessage.showTemporaryMessage(
               `Child annotation ${childInProgress!.reference.value!.id} complete.`);
@@ -176,6 +259,15 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
         if (this.childTool) {
           this.childTool!.dispose();
         }
+        if (shortcut) {
+          const {lastA, lastB} = <Collection>this.inProgressAnnotation!.reference!.value!;
+          if (lastA && lastA.value && !(<any>lastA.value).entries) {
+            this.inProgressAnnotation!.annotationLayer!.source.delete(lastA);
+          }
+          if (lastB && lastB.value && !(<any>lastB.value).entries) {
+            this.inProgressAnnotation!.annotationLayer!.source.delete(lastB);
+          }
+        }
         this.inProgressAnnotation!.annotationLayer.source.commit(
             this.inProgressAnnotation!.reference);
         StatusMessage.showTemporaryMessage(
@@ -187,54 +279,12 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
         StatusMessage.showTemporaryMessage(`No annotation has been made.`, 3000);
       }
     } else {
-      // if child tool has a toolset, its a lineStrip, and we apply the lineStrip test b4
-      // continuing if child tool is a base annotation, it must have at least one complete
-      // annotation an annotation is complete if the child tool has no inProgressAnnotation if
-      // there are more than two annotations in entries, the first one is guaranteed to be
+      // if child tool has a toolset, its an auto collection(spoke/linestrip), and we apply the auto
+      // collection test b4 continuing if child tool is a base annotation, it must have at least one
+      // complete annotation an annotation is complete if the child tool has no inProgressAnnotation
+      // if there are more than two annotations in entries, the first one is guaranteed to be
       // complete
       StatusMessage.showTemporaryMessage(`No annotation has been made.`, 3000);
-    }
-  }
-
-  trigger(mouseState: MouseSelectionState, parentRef?: AnnotationReference) {
-    const {annotationLayer} = this;
-    if (annotationLayer === undefined) {
-      // Not yet ready.
-      return;
-    }
-    if (!this.childTool) {
-      StatusMessage.showTemporaryMessage(`Collections require a child tool.`);
-      return;
-    }
-    if (mouseState.active) {
-      if (this.inProgressAnnotation === undefined) {
-        const annotation = this.getInitialAnnotation(mouseState, annotationLayer);
-        if (parentRef) {
-          annotation.pid = parentRef.id;
-        }
-        const reference = annotationLayer.source.add(annotation, /*commit=*/false);
-        if (parentRef) {
-          const parent = (<Collection>parentRef.value!);
-          parent.entries.push(reference.id);
-          if (parent.segments && annotation.segments) {
-            parent.segments = [...parent.segments!, ...annotation.segments!];
-          }
-        }
-        this.layer.selectedAnnotation.value = {id: reference.id};
-        this.childTool.trigger(mouseState, /*child=*/reference);
-        const disposer = () => {
-          mouseDisposer();
-          reference.dispose();
-        };
-        this.inProgressAnnotation = {
-          annotationLayer,
-          reference,
-          disposer,
-        };
-        const mouseDisposer = () => {};
-      } else {
-        this.childTool.trigger(mouseState, this.inProgressAnnotation.reference);
-      }
     }
   }
 

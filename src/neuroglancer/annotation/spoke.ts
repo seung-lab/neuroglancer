@@ -18,21 +18,20 @@
  * @file Support for rendering line strip annotations.
  */
 
-import {Annotation, AnnotationReference, AnnotationType, LineStrip} from 'neuroglancer/annotation';
+import {Annotation, AnnotationReference, AnnotationType, Spoke} from 'neuroglancer/annotation';
 import {MultiStepAnnotationTool} from 'neuroglancer/annotation/collection';
 import {AnnotationLayerState} from 'neuroglancer/annotation/frontend';
-import {PlaceLineTool} from 'neuroglancer/annotation/line';
 import {AnnotationRenderContext, AnnotationRenderHelper, registerAnnotationTypeRenderHandler} from 'neuroglancer/annotation/type_handler';
 import {MouseSelectionState} from 'neuroglancer/layer';
-import {StatusMessage} from 'neuroglancer/status';
 import {UserLayerWithAnnotations} from 'neuroglancer/ui/annotations';
 import {registerTool} from 'neuroglancer/ui/tool';
 import {mat4, vec3} from 'neuroglancer/util/geom';
 import {CircleShader} from 'neuroglancer/webgl/circles';
 import {emitterDependentShaderGetter, ShaderBuilder} from 'neuroglancer/webgl/shader';
+import {PlaceLineTool} from './line';
 // TODO: Collection annotations should not be rendered at all, if possible remove drawing code
 
-const ANNOTATE_LINE_STRIP_TOOL_ID = 'annotateLineStrip';
+const ANNOTATE_SPOKE_TOOL_ID = 'annotateSpoke';
 
 class RenderHelper extends AnnotationRenderHelper {
   private circleShader = this.registerDisposer(new CircleShader(this.gl));
@@ -74,11 +73,11 @@ emitAnnotation(getCircleColor(vColor, borderColor));
   }
 }
 
-registerAnnotationTypeRenderHandler(AnnotationType.LINE_STRIP, {
+registerAnnotationTypeRenderHandler(AnnotationType.SPOKE, {
   bytes: 3 * 4,
   serializer: (buffer: ArrayBuffer, offset: number, numAnnotations: number) => {
     const coordinates = new Float32Array(buffer, offset, numAnnotations * 3);
-    return (annotation: LineStrip, index: number) => {
+    return (annotation: Spoke, index: number) => {
       const {source} = annotation;
       const coordinateOffset = index * 3;
       coordinates[coordinateOffset] = source[0];
@@ -105,26 +104,28 @@ registerAnnotationTypeRenderHandler(AnnotationType.LINE_STRIP, {
   }
 });
 
-export class PlaceLineStripTool extends MultiStepAnnotationTool {
-  annotationType: AnnotationType.LINE_STRIP;
+export class PlaceSpokeTool extends MultiStepAnnotationTool {
+  annotationType: AnnotationType.SPOKE;
   toolset = PlaceLineTool;
-  looped = false;
   initMouseState: MouseSelectionState;
   initPos: any;
+  wheeled = false;
+  lastMouseState: MouseSelectionState;
+  lastPos: any;
   constructor(public layer: UserLayerWithAnnotations, options: any) {
     super(layer, options);
     this.childTool = new this.toolset(layer, options);
     this.toolbox = options.toolbox;
-    if (this.toolbox && this.toolbox.querySelector('.neuroglancer-linestrip-looped')) {
-      this.looped = true;
+    if (this.toolbox && this.toolbox.querySelector('.neuroglancer-spoke-wheeled')) {
+      this.wheeled = true;
     }
   }
 
   getInitialAnnotation(mouseState: MouseSelectionState, annotationLayer: AnnotationLayerState):
       Annotation {
-    const result = <LineStrip>super.getInitialAnnotation(mouseState, annotationLayer);
+    const result = <Spoke>super.getInitialAnnotation(mouseState, annotationLayer);
     result.connected = true;
-    result.looped = this.looped;
+    result.wheeled = this.wheeled;
     result.type = this.annotationType;
     return result;
   }
@@ -137,45 +138,32 @@ export class PlaceLineStripTool extends MultiStepAnnotationTool {
         super.trigger(mouseState, parentRef);
       } else {
         super.trigger(mouseState, parentRef);
-        // Start new annotation automatically
-        this.appendNewChildAnnotation(this.inProgressAnnotation.reference!, mouseState);
-      }
-    }
-  }
-
-  complete(shortcut?: boolean) {
-    if (this.inProgressAnnotation) {
-      const innerEntries = (<LineStrip>this.inProgressAnnotation!.reference.value!).entries;
-      if (shortcut) {
-        const {lastA, lastB} = <any>this.inProgressAnnotation!.reference!.value!;
-        this.inProgressAnnotation!.annotationLayer!.source.delete(lastA!);
-        this.inProgressAnnotation!.annotationLayer!.source.delete(lastB!);
-      }
-      if (innerEntries.length > 1) {
-        if (this.looped) {
-          const fakeMouse = <MouseSelectionState>{...this.initMouseState, position: this.initPos};
-          (<LineStrip>this.inProgressAnnotation!.reference.value!).looped = true;
-          this.childTool!.trigger(fakeMouse, this.inProgressAnnotation!.reference);
+        // Start new annotation automatically at source point
+        const source = <MouseSelectionState>{...this.initMouseState, position: this.initPos};
+        if (this.wheeled && this.lastMouseState && this.lastPos) {
+          // Connect the current completed and last completed points
+          const intermediate =
+              <MouseSelectionState>{...this.lastMouseState, position: this.lastPos};
+          this.appendNewChildAnnotation(this.inProgressAnnotation.reference!, intermediate);
+          super.trigger(mouseState, parentRef);
         }
-        super.complete();
-      } else {
-        // for LineStrip, a second annotation is created automatically after the first is done
-        // if entries.length is less than 2, the first annotation is not confirmed
-        StatusMessage.showTemporaryMessage(`No annotation has been made.`, 3000);
+        this.appendNewChildAnnotation(this.inProgressAnnotation.reference!, mouseState, source);
+        this.lastMouseState = <MouseSelectionState>{...mouseState};
+        this.lastPos = mouseState.position.slice();
       }
     }
   }
 
   get description() {
-    return `annotate line strip ${this.looped ? '(loop)' : ''}`;
+    return `annotate spoke ${this.wheeled ? '(wheel)' : ''}`;
   }
 
   toJSON() {
-    return ANNOTATE_LINE_STRIP_TOOL_ID;
+    return ANNOTATE_SPOKE_TOOL_ID;
   }
 }
-PlaceLineStripTool.prototype.annotationType = AnnotationType.LINE_STRIP;
+PlaceSpokeTool.prototype.annotationType = AnnotationType.SPOKE;
 
 registerTool(
-    ANNOTATE_LINE_STRIP_TOOL_ID,
-    (layer, options) => new PlaceLineStripTool(<UserLayerWithAnnotations>layer, options));
+    ANNOTATE_SPOKE_TOOL_ID,
+    (layer, options) => new PlaceSpokeTool(<UserLayerWithAnnotations>layer, options));

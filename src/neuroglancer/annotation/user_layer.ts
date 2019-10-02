@@ -90,6 +90,7 @@ function getPointFromAnnotation(annotation: Annotation): vec3 {
     case AnnotationType.ELLIPSOID:
       return annotation.center;
     // Collection is an array of any annotation
+    case AnnotationType.SPOKE:
     case AnnotationType.LINE_STRIP:
     case AnnotationType.COLLECTION:
       return annotation.source;
