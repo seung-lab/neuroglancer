@@ -59,3 +59,54 @@ export class MinimizableGroupWidget extends RefCounted {
     this.content.appendChild(container);
   }
 }
+
+/**
+ * The same as MinimizableGroupWidget except you can pass a list of HTMLElements to place in the
+ * header.
+ */
+export class MinimizableGroupWidgetWithHeader extends RefCounted {
+  element = document.createElement('div');
+  private header = document.createElement('div');
+  private content = document.createElement('div');
+  constructor(title: string, addons: HTMLElement[] = []) {
+    super();
+    const {header, content, element} = this;
+
+    const label = document.createElement('span');
+
+    label.textContent = title;
+    label.className = 'neuroglancer-minimizable-group-title';
+    label.addEventListener('click', () => {
+      content.classList.toggle('minimized');
+      label.classList.toggle('minimized');
+    });
+
+    header.appendChild(label);
+    addons.forEach(addon => header.appendChild(addon));
+    header.className = 'neuroglancer-minimizable-group-header';
+
+    content.className = 'neuroglancer-minimizable-group-content';
+    element.className = 'neuroglancer-minimizable-group';
+    element.appendChild(header);
+    element.appendChild(content);
+  }
+
+  disposed() {
+    removeFromParent(this.element);
+    super.disposed();
+  }
+
+  appendFixedChild(el: HTMLElement) {
+    const container = document.createElement('div');
+    container.className = 'neuroglancer-minimizable-group-fixed';
+    container.appendChild(el);
+    this.content.appendChild(container);
+  }
+
+  appendFlexibleChild(el: HTMLElement) {
+    const container = document.createElement('div');
+    container.className = 'neuroglancer-minimizable-group-flexible';
+    container.appendChild(el);
+    this.content.appendChild(container);
+  }
+}

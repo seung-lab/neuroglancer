@@ -62,3 +62,7 @@
   flex: 0 1 auto;
   overflow-y: auto;
 }
+
+.neuroglancer-minimizable-group-header {
+  box-sizing: content-box;
+}

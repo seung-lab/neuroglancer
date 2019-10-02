@@ -23,7 +23,9 @@ import './annotations.css';
 import './graph.css';
 
 import debounce from 'lodash/debounce';
-import {Annotation, AnnotationReference, AnnotationType, getAnnotationTypeHandler} from 'neuroglancer/annotation';
+import {Annotation, AnnotationReference, AnnotationType, getAnnotationTypeHandler, Point} from 'neuroglancer/annotation';
+import {SpontaneousAnnotationLayer} from 'neuroglancer/annotation/spontaneous_annotation_layer';
+import {PairwiseContactSites} from 'neuroglancer/graph/contact_sites';
 import {GraphOperationLayerState} from 'neuroglancer/graph/graph_operation_layer_state';
 import {MouseSelectionState} from 'neuroglancer/layer';
 import {VoxelSize} from 'neuroglancer/navigation_state';
@@ -46,8 +48,9 @@ import {formatIntegerPoint} from 'neuroglancer/util/spatial_units';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {WatchableVisibilityPriority} from 'neuroglancer/visibility_priority/frontend';
 import {makeCloseButton} from 'neuroglancer/widget/close_button';
+import {PairwiseContactSitesWidget} from 'neuroglancer/widget/contact_sites_widget';
 import {FindPathWidget} from 'neuroglancer/widget/find_path_widget';
-import {MinimizableGroupWidget} from 'neuroglancer/widget/minimizable_group';
+import {MinimizableGroupWidget, MinimizableGroupWidgetWithHeader} from 'neuroglancer/widget/minimizable_group';
 import {RangeWidget} from 'neuroglancer/widget/range';
 import {StackView, Tab} from 'neuroglancer/widget/tab_view';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
@@ -391,7 +394,7 @@ export class GraphOperationLayerView extends Tab {
     this.multicutGroup.appendFlexibleChild(this.annotationListContainer);
     this.element.appendChild(this.multicutGroup.element);
 
-    const displayState = <SegmentationUserLayerWithGraphDisplayState>(this.wrapper.displayState);
+    const displayState = this.wrapper.displayState;
 
     const otherSegmentsAlphaWidget = this.registerDisposer(
         new RangeWidget(displayState.multicutDisplayInformation.otherSegmentsAlpha));
@@ -443,6 +446,52 @@ export class GraphOperationLayerView extends Tab {
         });
       }
     }));
+
+    const pairwiseContactSitesWidget = this.registerDisposer(
+        new PairwiseContactSitesWidget(this.wrapper, this.addPointsFromContactSites.bind(this)));
+    this.element.appendChild(pairwiseContactSitesWidget.groupElement.element);
+  }
+
+  private addPointsFromContactSites(
+      pairwiseContactSiteGroup: PairwiseContactSites,
+      minimizableGroupForContactSitesPair: MinimizableGroupWidgetWithHeader,
+      annotationLayerForContactSitesPair: SpontaneousAnnotationLayer, segment1: Uint64,
+      segment2: Uint64): HTMLElement[] {
+    const annotationList = document.createElement('ul');
+    const elementsList: HTMLElement[] = [];
+    pairwiseContactSiteGroup.contactSites.forEach(contactSite => {
+      const contactSitePoint: Point = {
+        id: '',
+        segments: [segment1, segment2],
+        description: `Area = ${contactSite.area} vx`,
+        point: contactSite.coordinate,
+        type: AnnotationType.POINT
+      };
+      annotationLayerForContactSitesPair.source.add(contactSitePoint);
+      const element = this.makeAnnotationListElement(
+          contactSitePoint, annotationLayerForContactSitesPair.transform.transform,
+          annotationLayerForContactSitesPair.color.toString(), false);
+      element.addEventListener('mouseenter', () => {
+        this.annotationLayer.hoverState.value = {id: contactSitePoint.id};
+      });
+      element.addEventListener('click', () => {
+        this.state.value = {id: contactSitePoint.id};
+      });
+      element.addEventListener('mouseup', (event: MouseEvent) => {
+        if (event.button === 2) {
+          this.setSpatialCoordinates(
+              getCenterPosition(contactSitePoint, this.annotationLayer.objectToGlobal));
+        }
+      });
+      const description = document.createElement('div');
+      description.className = 'neuroglancer-annotation-description';
+      description.textContent = `Area = ${contactSite.area}`;
+      element.appendChild(description);
+      annotationList.appendChild(element);
+      elementsList.push(element);
+    });
+    minimizableGroupForContactSitesPair.appendFixedChild(annotationList);
+    return elementsList;
   }
 
   private updateSelectionView() {
@@ -510,7 +559,7 @@ export class GraphOperationLayerView extends Tab {
     const {objectToGlobal} = annotationLayer;
     const annotationListElementCreator = (annotation: Annotation, color: string) => {
       if (annotation.segments && annotation.segments.length >= 2) {
-        const element = this.makeAnnotationListElement(annotation, objectToGlobal, color);
+        const element = this.makeAnnotationListElement(annotation, objectToGlobal, color, true);
         annotationListContainer.appendChild(element);
         annotationListElements.set(annotation.id, element);
         element.addEventListener('mouseenter', () => {
@@ -540,7 +589,8 @@ export class GraphOperationLayerView extends Tab {
     this.updateSelectionView();
   }
 
-  private makeAnnotationListElement(annotation: Annotation, transform: mat4, color: string) {
+  private makeAnnotationListElement(
+      annotation: Annotation, transform: mat4, color: string, multicutElement: boolean) {
     const element = document.createElement('li');
     element.title = 'Click to select, right click to recenter view.';
 
@@ -553,7 +603,8 @@ export class GraphOperationLayerView extends Tab {
     position.className = 'neuroglancer-annotation-position';
     if (annotation.segments && annotation.segments.length >= 2) {
       this.makePositionElement(
-          position, annotation, transform, this.voxelSize, this.setSpatialCoordinates, color);
+          position, annotation, transform, this.voxelSize, this.setSpatialCoordinates, color,
+          multicutElement);
     } else {
       // Should never happen
       throw Error('Graph multicut point not associated with both a supervoxel and a root segment');
@@ -565,17 +616,10 @@ export class GraphOperationLayerView extends Tab {
 
   private makePositionElement(
       position: HTMLElement, annotation: Annotation, transform: mat4, voxelSize: VoxelSize,
-      setSpatialCoordinates: (point: vec3) => void, color: string) {
+      setSpatialCoordinates: (point: vec3) => void, color: string, multicutElement: boolean) {
     if (annotation.type === AnnotationType.POINT) {
-      const swapActiveSets = () => {
-        const tempActive = this.annotationLayer.annotationToSupervoxelA.isActive.value;
-        this.annotationLayer.annotationToSupervoxelA.isActive.value =
-            this.annotationLayer.annotationToSupervoxelB.isActive.value;
-        this.annotationLayer.annotationToSupervoxelB.isActive.value = tempActive;
-      };
       const spatialPoint = vec3.transformMat4(vec3.create(), annotation.point, transform);
       const positionText = formatIntegerPoint(voxelSize.voxelFromSpatial(tempVec3, spatialPoint));
-      let swapBack = false;
       const element = document.createElement('span');
       element.className = 'neuroglancer-multicut-voxel-coordinates-link';
       element.textContent = positionText;
@@ -585,23 +629,32 @@ export class GraphOperationLayerView extends Tab {
       element.addEventListener('click', () => {
         setSpatialCoordinates(spatialPoint);
       });
-      element.addEventListener('mouseenter', () => {
-        if ((this.annotationLayer.annotationToSupervoxelA.isActive.value &&
-             color === sourceBListColor) ||
-            (this.annotationLayer.annotationToSupervoxelB.isActive.value &&
-             color === sourceAListColor)) {
-          swapActiveSets();
-          swapBack = true;
-        }
-        this.wrapper.displayState.segmentSelectionState.setRaw(annotation.segments![0]);
-      });
-      element.addEventListener('mouseleave', () => {
-        if (swapBack) {
-          swapActiveSets();
-          swapBack = false;
-        }
-        this.wrapper.displayState.segmentSelectionState.setRaw(null);
-      });
+      if (multicutElement) {
+        let swapBack = false;
+        const swapActiveSets = () => {
+          const tempActive = this.annotationLayer.annotationToSupervoxelA.isActive.value;
+          this.annotationLayer.annotationToSupervoxelA.isActive.value =
+              this.annotationLayer.annotationToSupervoxelB.isActive.value;
+          this.annotationLayer.annotationToSupervoxelB.isActive.value = tempActive;
+        };
+        element.addEventListener('mouseenter', () => {
+          if ((this.annotationLayer.annotationToSupervoxelA.isActive.value &&
+               color === sourceBListColor) ||
+              (this.annotationLayer.annotationToSupervoxelB.isActive.value &&
+               color === sourceAListColor)) {
+            swapActiveSets();
+            swapBack = true;
+          }
+          this.wrapper.displayState.segmentSelectionState.setRaw(annotation.segments![0]);
+        });
+        element.addEventListener('mouseleave', () => {
+          if (swapBack) {
+            swapActiveSets();
+            swapBack = false;
+          }
+          this.wrapper.displayState.segmentSelectionState.setRaw(null);
+        });
+      }
       position.appendChild(element);
     } else {
       // Should never happen
@@ -684,7 +737,8 @@ class SplitPreview extends RefCounted {
                   });
             } else {
               StatusMessage.showTemporaryMessage(
-                  'You must select at least one source and one sink to perform a split preview.', 5000);
+                  'You must select at least one source and one sink to perform a split preview.',
+                  5000);
             }
           }
         }
@@ -1021,7 +1075,7 @@ export class PlaceGraphOperationMarkerTool extends PlaceGraphOperationTool {
               vec3.create(), mouseState.position, graphOperationLayer.globalToObject),
           type: AnnotationType.POINT,
         };
-        const reference = graphOperationLayer.activeSource.add(annotation, /*commit=*/true);
+        const reference = graphOperationLayer.activeSource.add(annotation, /*commit=*/ true);
         this.layer.selectedGraphOperationElement.value = {id: reference.id};
         reference.dispose();
       }

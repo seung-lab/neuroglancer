@@ -1,0 +1,22 @@
+#add-segment-for-contact-site-lookup {
+    display: inline-block;
+}
+
+.neuroglancer-contact-site-color-select {
+    height: 1.3em;
+    width: 1.5em;
+    top: -10%;
+}
+
+.neuroglancer-toggle-contact-site-visibility {
+    transform: scale(1.7);
+    vertical-align: bottom;
+}
+
+.neuroglancer-delete-contact-site-group {
+    vertical-align: bottom;
+}
+
+.neuroglancer-contact-site-group {
+    margin-left: 6%;
+}

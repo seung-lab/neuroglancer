@@ -27,6 +27,7 @@ import {vec3} from 'neuroglancer/util/geom';
 import {verify3dVec, verifyObjectProperty} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {RPC} from 'neuroglancer/worker_rpc';
+import {ContactSite} from 'src/neuroglancer/graph/contact_sites';
 
 export const GRAPH_SERVER_NOT_SPECIFIED = Symbol('Graph Server Not Specified.');
 
@@ -237,6 +238,67 @@ export class ChunkedGraphLayer extends GenericSliceViewRenderLayer {
     }
     return centroids;
   }
+
+  async getContactSitesForPair(firstSegment: Uint64, secondSegment: Uint64, timestamp?: string):
+      Promise<ContactSite[]> {
+    const {url} = this;
+    if (url === '') {
+      return Promise.reject(GRAPH_SERVER_NOT_SPECIFIED);
+    }
+
+    const promise = authFetch(`${url}/node/contact_sites_pair/${String(firstSegment)}/${
+        String(secondSegment)}?int64_as_str=1&exact_location=1${
+        timestamp ? `&timestamp=${timestamp}` : ``}`);
+
+    const response = await this.withErrorMessage(promise, {
+      initialMessage: `Retrieving exact contact sites for segments ${firstSegment} and ${
+          secondSegment} (can take 1-3 minutes)`,
+      errorPrefix: `Could not get contact sites: `
+    });
+
+    const contactSitesObject = await response.json();
+    const contactSitesList = contactSitesObject['contact_sites'];
+    const contactSites: ContactSite[] = [];
+    for (let i = 0; i < contactSitesList.length; i++) {
+      const coordinateList = (contactSitesList[i][0]).map((x: any) => parseInt(x, 10));
+      const coordinate = vec3.fromValues(coordinateList[0], coordinateList[1], coordinateList[2]);
+      const area = contactSitesList[i][1];
+      const contactSite: ContactSite = {coordinate, area};
+      contactSites.push(contactSite);
+    }
+    return contactSites;
+  }
+
+  // The below commented out code is for an abandoned feature (Finding all contact partners
+  // that a root has in a dataset). I found that there are simply too many partners for this to be
+  // useful and easy to display in Neuroglancer. Leaving this code in here in case we want to be
+  // pick this up again at some point. - Manuel 11/2019
+
+  // async getContactPartnersForRoot(root: Uint64, timestamp?: string):
+  //     Promise<Map<Uint64, number[]>> {
+  //   const {url} = this;
+  //   if (url === '') {
+  //     return Promise.reject(GRAPH_SERVER_NOT_SPECIFIED);
+  //   }
+
+  //   const promise = authFetch(`${url}/node/${
+  //       String(root)}/contact_sites?int64_as_str=1&partners=1&as_list=1&areas_only=1${
+  //       timestamp ? `&timestamp=${timestamp}` : ``}`);
+
+  //   const response = await this.withErrorMessage(promise, {
+  //     initialMessage: `Retrieving all contact partners for ${root} (can take 3-10 minutes)`,
+  //     errorPrefix: `Could not get contact partners: `
+  //   });
+
+  //   const contactPartnersList = await response.json();
+  //   const contactPartners = new Map<Uint64, number[]>();
+  //   for (let i = 0; i < contactPartnersList.length; i++) {
+  //     const contactPartnerObj = contactPartnersList[i];
+  //     const partner = Uint64.parseString(contactPartnerObj['segment_id'], 10);
+  //     contactPartners.set(partner, contactPartnerObj['contact_site_areas']);
+  //   }
+  //   return contactPartners;
+  // }
 
   draw() {}
 
