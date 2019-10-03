@@ -56,21 +56,7 @@ emitAnnotation(getCircleColor(vColor, borderColor));
 
   draw(context: AnnotationRenderContext) {
     const shader = this.shaderGetter(context.renderContext.emitter);
-    this.enable(shader, context, () => {
-      const {gl} = this;
-      const aVertexPosition = shader.attribute('aVertexPosition');
-      context.buffer.bindToVertexAttrib(
-          aVertexPosition, /*components=*/3, /*attributeType=*/WebGL2RenderingContext.FLOAT,
-          /*normalized=*/false,
-          /*stride=*/0, /*offset=*/context.bufferOffset);
-      gl.vertexAttribDivisor(aVertexPosition, 1);
-      this.circleShader.draw(
-          shader, context.renderContext,
-          {interiorRadiusInPixels: 6, borderWidthInPixels: 2, featherWidthInPixels: 1},
-          context.count);
-      gl.vertexAttribDivisor(aVertexPosition, 0);
-      gl.disableVertexAttribArray(aVertexPosition);
-    });
+    this.enable(shader, context, () => {});
   }
 }
 
@@ -148,8 +134,8 @@ export class PlaceLineStripTool extends MultiStepAnnotationTool {
       const innerEntries = (<LineStrip>this.inProgressAnnotation!.reference.value!).entries;
       if (shortcut) {
         const {lastA, lastB} = <any>this.inProgressAnnotation!.reference!.value!;
-        this.inProgressAnnotation!.annotationLayer!.source.delete(lastA!);
-        this.inProgressAnnotation!.annotationLayer!.source.delete(lastB!);
+        this.safeDelete(lastA);
+        this.safeDelete(lastB);
       }
       if (innerEntries.length > 1) {
         if (this.looped) {

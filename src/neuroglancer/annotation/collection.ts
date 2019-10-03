@@ -18,7 +18,7 @@
  * @file Support for rendering collections.
  */
 
-import {Annotation, AnnotationReference, AnnotationType, Collection, LocalAnnotationSource} from 'neuroglancer/annotation';
+import {Annotation, AnnotationReference, AnnotationType, Collection, LocalAnnotationSource, AnnotationSource} from 'neuroglancer/annotation';
 import {PlaceAnnotationTool, TwoStepAnnotationTool} from 'neuroglancer/annotation/annotation';
 import {PlaceBoundingBoxTool} from 'neuroglancer/annotation/bounding_box';
 import {PlaceSphereTool} from 'neuroglancer/annotation/ellipsoid';
@@ -62,21 +62,7 @@ class RenderHelper extends AnnotationRenderHelper {
 
   draw(context: AnnotationRenderContext) {
     const shader = this.shaderGetter(context.renderContext.emitter);
-    this.enable(shader, context, () => {
-      const {gl} = this;
-      const aVertexPosition = shader.attribute('aVertexPosition');
-      context.buffer.bindToVertexAttrib(
-          aVertexPosition, /*components=*/3, /*attributeType=*/WebGL2RenderingContext.FLOAT,
-          /*normalized=*/false,
-          /*stride=*/0, /*offset=*/context.bufferOffset);
-      gl.vertexAttribDivisor(aVertexPosition, 1);
-      this.circleShader.draw(
-          shader, context.renderContext,
-          {interiorRadiusInPixels: 6, borderWidthInPixels: 2, featherWidthInPixels: 1},
-          context.count);
-      gl.vertexAttribDivisor(aVertexPosition, 0);
-      gl.disableVertexAttribArray(aVertexPosition);
-    });
+    this.enable(shader, context, () => {});
   }
 }
 
@@ -133,7 +119,7 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
   updateLast() {
     const inprogress = this.inProgressAnnotation;
     if (inprogress) {
-      const oldAnnotation = <Collection> inprogress.reference.value!;
+      const oldAnnotation = <Collection>inprogress.reference.value!;
       const lastB = oldAnnotation.lastA;
       const lastA = this.getChildRef();
       const newAnnotation = {...oldAnnotation, lastA, lastB};
@@ -142,13 +128,6 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
   }
 
   getChildRef() {
-    /*if (this.childTool && (<any>this.childTool).inProgressAnnotation) {
-      const inProgressAnnotation = (<TwoStepAnnotationTool>this.childTool).inProgressAnnotation;
-      // Child should not be a collection
-      const child = inProgressAnnotation!.reference;
-      return child;
-    }
-    return;*/
     if (this.childTool && this.inProgressAnnotation) {
       const {entries} = <Collection>this.inProgressAnnotation.reference!.value!;
       return this.inProgressAnnotation.annotationLayer.source.getReference(
@@ -229,10 +208,26 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
     }
   }
 
+  safeDelete(target: AnnotationReference) {
+    const source = <AnnotationSource>this.inProgressAnnotation!.annotationLayer!.source;
+    if (target) {
+      if (source.isPending(target.id)) {
+        target.dispose();
+      } else {
+        source.delete(target);
+      }
+    }
+  }
+
   complete(shortcut?: boolean) {
     if ((this.inProgressAnnotation && this.childTool) ||
         (this.inProgressAnnotation && this.inProgressAnnotation!.reference.value! &&
          (<Collection>this.inProgressAnnotation!.reference.value!).entries.length)) {
+      if (shortcut) {
+        const {lastA, lastB} = <any>this.inProgressAnnotation!.reference!.value!;
+        this.safeDelete(lastA);
+        this.safeDelete(lastB);
+      }
       const childInProgress = this.childTool ?
           (<MultiStepAnnotationTool|TwoStepAnnotationTool>this.childTool!).inProgressAnnotation :
           void (0);
@@ -258,15 +253,6 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
       } else if ((!childInProgress && childCount === 1) || childCount > 1) {
         if (this.childTool) {
           this.childTool!.dispose();
-        }
-        if (shortcut) {
-          const {lastA, lastB} = <Collection>this.inProgressAnnotation!.reference!.value!;
-          if (lastA && lastA.value && !(<any>lastA.value).entries) {
-            this.inProgressAnnotation!.annotationLayer!.source.delete(lastA);
-          }
-          if (lastB && lastB.value && !(<any>lastB.value).entries) {
-            this.inProgressAnnotation!.annotationLayer!.source.delete(lastB);
-          }
         }
         this.inProgressAnnotation!.annotationLayer.source.commit(
             this.inProgressAnnotation!.reference);

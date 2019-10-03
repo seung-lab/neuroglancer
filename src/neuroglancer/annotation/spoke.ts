@@ -55,21 +55,7 @@ emitAnnotation(getCircleColor(vColor, borderColor));
 
   draw(context: AnnotationRenderContext) {
     const shader = this.shaderGetter(context.renderContext.emitter);
-    this.enable(shader, context, () => {
-      const {gl} = this;
-      const aVertexPosition = shader.attribute('aVertexPosition');
-      context.buffer.bindToVertexAttrib(
-          aVertexPosition, /*components=*/3, /*attributeType=*/WebGL2RenderingContext.FLOAT,
-          /*normalized=*/false,
-          /*stride=*/0, /*offset=*/context.bufferOffset);
-      gl.vertexAttribDivisor(aVertexPosition, 1);
-      this.circleShader.draw(
-          shader, context.renderContext,
-          {interiorRadiusInPixels: 6, borderWidthInPixels: 2, featherWidthInPixels: 1},
-          context.count);
-      gl.vertexAttribDivisor(aVertexPosition, 0);
-      gl.disableVertexAttribArray(aVertexPosition);
-    });
+    this.enable(shader, context, () => {});
   }
 }
 
@@ -110,8 +96,8 @@ export class PlaceSpokeTool extends MultiStepAnnotationTool {
   initMouseState: MouseSelectionState;
   initPos: any;
   wheeled = false;
-  lastMouseState: MouseSelectionState;
-  lastPos: any;
+  lastMouseState?: MouseSelectionState;
+  lastPos?: any;
   constructor(public layer: UserLayerWithAnnotations, options: any) {
     super(layer, options);
     this.childTool = new this.toolset(layer, options);
@@ -136,6 +122,8 @@ export class PlaceSpokeTool extends MultiStepAnnotationTool {
         this.initMouseState = <MouseSelectionState>{...mouseState};
         this.initPos = mouseState.position.slice();
         super.trigger(mouseState, parentRef);
+        this.lastMouseState = void(0);
+        this.lastPos = void(0);
       } else {
         super.trigger(mouseState, parentRef);
         // Start new annotation automatically at source point
