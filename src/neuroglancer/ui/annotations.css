@@ -137,11 +137,11 @@
   width: 125px;
 }
 
-.neuroglancer-collection-tool.neuroglancer-linestrip-looped, .neuroglancer-collection-tool.neuroglancer-spoke-wheeled {
+.neuroglancer-active-tool.neuroglancer-linestrip-looped, .neuroglancer-active-tool.neuroglancer-spoke-wheeled {
   box-shadow: inset -3px -3px 10px 0px #57c6ca;
 }
 
-.neuroglancer-collection-tool {
+.neuroglancer-active-tool {
   box-shadow: inset -3px -3px 10px 0px #396125;
 }
 

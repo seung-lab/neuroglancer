@@ -454,8 +454,6 @@ export class AnnotationLayerView extends Tab {
       pointButton.addEventListener('click', () => {
         changeTool(AnnotationType.POINT);
       });
-      toolbox.appendChild(pointButton);
-
 
       const boundingBoxButton = document.createElement('button');
       boundingBoxButton.textContent =
@@ -464,8 +462,6 @@ export class AnnotationLayerView extends Tab {
       boundingBoxButton.addEventListener('click', () => {
         changeTool(AnnotationType.AXIS_ALIGNED_BOUNDING_BOX);
       });
-      toolbox.appendChild(boundingBoxButton);
-
 
       const lineButton = document.createElement('button');
       lineButton.textContent = getAnnotationTypeHandler(AnnotationType.LINE).icon;
@@ -473,8 +469,6 @@ export class AnnotationLayerView extends Tab {
       lineButton.addEventListener('click', () => {
         changeTool(AnnotationType.LINE);
       });
-      toolbox.appendChild(lineButton);
-
 
       const ellipsoidButton = document.createElement('button');
       ellipsoidButton.textContent = getAnnotationTypeHandler(AnnotationType.ELLIPSOID).icon;
@@ -482,36 +476,47 @@ export class AnnotationLayerView extends Tab {
       ellipsoidButton.addEventListener('click', () => {
         changeTool(AnnotationType.ELLIPSOID);
       });
-      toolbox.appendChild(ellipsoidButton);
 
       // Collections //
-      const mskey = 'neuroglancer-collection-tool';
+      const mskey = 'neuroglancer-active-tool';
       const childms = 'neuroglancer-child-tool';
       const collectionButton = document.createElement('button');
       const multipointButton = document.createElement('button');
       const spokeButton = document.createElement('button');
+      const highlButton = (typekey: string, toolset?: AnnotationType) => {
+        let target = toolbox.querySelector(`.${typekey}`);
+        if (target) {
+          target.classList.remove(typekey);
+        }
+        switch (toolset) {
+          case AnnotationType.POINT:
+            pointButton.classList.add(typekey);
+            break;
+          case AnnotationType.LINE:
+            lineButton.classList.add(typekey);
+            break;
+          case AnnotationType.AXIS_ALIGNED_BOUNDING_BOX:
+            boundingBoxButton.classList.add(typekey);
+            break;
+          case AnnotationType.ELLIPSOID:
+            ellipsoidButton.classList.add(typekey);
+            break;
+          case AnnotationType.SPOKE:
+            spokeButton.classList.add(typekey);
+            break;
+          case AnnotationType.LINE_STRIP:
+            multipointButton.classList.add(typekey);
+            break;
+          case AnnotationType.COLLECTION:
+            collectionButton.classList.add(typekey);
+            break;
+        }
+      };
       const changeTool = (toolset?: AnnotationType) => {
         const currentTool = <PlaceAnnotationTool>this.layer.tool.value;
         const toSpoke = toolset === AnnotationType.SPOKE;
         const toLineStrip = toolset === AnnotationType.LINE_STRIP;
         const toCollection = toolset === AnnotationType.COLLECTION;
-        const keyRemoveGen = (typekey: string) => () => {
-          let key = toolbox.querySelector(`.${typekey}`);
-          if (key) {
-            key.classList.remove(typekey);
-          }
-        };
-        const remActive = keyRemoveGen(mskey);
-        const remChild = keyRemoveGen(childms);
-        const activeKey = () => {
-          if (toLineStrip) {
-            multipointButton.classList.add(mskey);
-          } else if (toSpoke) {
-            spokeButton.classList.add(mskey);
-          } else if (toCollection) {
-            collectionButton.classList.add(mskey);
-          }
-        };
         const setTool = (parent?: any) => {
           let tool;
           switch (toolset) {
@@ -541,167 +546,112 @@ export class AnnotationLayerView extends Tab {
             if (parent.childTool) {
               parent.childTool.dispose();
             }
-            parent.childTool = new (<any>tool)(this.layer, {toolbox});
+            parent.childTool = tool ? new (<any>tool)(this.layer, {toolbox}) : void (0);
+            this.layer.tool.changed.dispatch();
           } else {
             this.layer.tool.value = tool ? new tool(this.layer, {toolbox}) : void (0);
           }
         };
 
         if (currentTool && toolset !== void (0)) {
-          const isSpoke = currentTool.annotationType === AnnotationType.SPOKE;
-          const isLineStrip = currentTool.annotationType === AnnotationType.LINE_STRIP;
           const isCollection = currentTool.annotationType === AnnotationType.COLLECTION;
-          const multitool = <any>this.layer.tool.value!;
-
+          const multiTool = <MultiStepAnnotationTool>currentTool;
           if (isCollection && !toCollection) {
-            const {childTool} = multitool;
-            const isChildLineStrip =
-                childTool ? childTool.annotationType === AnnotationType.LINE_STRIP : void (0);
-            const isChildSpoke =
-                childTool ? childTool.annotationType === AnnotationType.SPOKE : void (0);
-
-            if (isChildLineStrip && toLineStrip) {
-              /*
-              multipointButton.classList.toggle('neuroglancer-linestrip-looped');
-              childTool.looped = !childTool.looped;*/
-
-            } else if (isChildSpoke && toSpoke) {
-            } else {
-              remChild();
-              if (toLineStrip) {
-                multipointButton.classList.add(childms);
-              } else if (toSpoke) {
-                spokeButton.classList.add(childms);
+            const {childTool} = multiTool;
+            if (childTool && childTool.annotationType === toolset) {
+              highlButton(childms);
+              if (toSpoke || toLineStrip) {
+                multiTool.complete(undefined, true);
               }
-              // trust me, it work
-              setTool(/*parent=*/multitool);
+              toolset = void (0);
+            } else {
+              highlButton(childms, toolset);
             }
+            // trust me, it work
+            setTool(/*parent=*/currentTool);
             this.layer.tool.changed.dispatch();
-          } else if (isCollection && toCollection) {
-            // noop
-          } else if (isLineStrip && toLineStrip) {
-            multipointButton.classList.toggle('neuroglancer-linestrip-looped');
-            multitool.looped = !multitool.looped;
-            this.layer.tool.changed.dispatch();
-          } else if (isSpoke && toSpoke) {
-            spokeButton.classList.toggle('neuroglancer-spoke-wheeled');
-            multitool.wheeled = !multitool.wheeled;
-            this.layer.tool.changed.dispatch();
+          } else if (currentTool.annotationType === toolset) {
+            if (toSpoke || toLineStrip || toCollection) {
+              multiTool.complete();
+            }
+            toolset = void (0);
+            highlButton(mskey);
+            highlButton(childms);
+            setTool();
           } else {
-            remActive();
-            activeKey();
+            highlButton(mskey, toolset);
             setTool();
           }
         } else {
-          remActive();
-          remChild();
-          activeKey();
+          highlButton(mskey, toolset);
+          highlButton(childms);
           setTool();
         }
       };
       const getActiveToolByType = (toolset?: AnnotationType): PlaceAnnotationTool|undefined => {
         const tool = <MultiStepAnnotationTool>this.layer.tool.value!;
-        const {annotationType, childTool} = tool;
-        if (annotationType === toolset) {
-          return tool;
-        } else if (childTool) {
-          const childType = childTool.annotationType;
-          if (childType === toolset) {
-            return childTool;
+        if (tool) {
+          const {annotationType, childTool} = tool;
+          if (annotationType === toolset) {
+            return tool;
+          } else if (childTool) {
+            const childType = childTool.annotationType;
+            if (childType === toolset) {
+              return childTool;
+            }
           }
         }
         return;
       };
       const activeTool = (<any>this.layer.tool.value);
-      if (activeTool &&
-          (activeTool.annotationType === AnnotationType.SPOKE ||
-           activeTool.annotationType === AnnotationType.LINE_STRIP ||
-           activeTool.annotationType === AnnotationType.COLLECTION)) {
+      if (activeTool) {
         activeTool.toolbox = toolbox;
-        if (activeTool.looped !== void (0)) {
-          multipointButton.classList.add(mskey);
-        } else if (activeTool.wheeled !== void (0)) {
-          spokeButton.classList.add(mskey);
-        } else {
-          collectionButton.classList.add(mskey);
-        }
+        highlButton(mskey, activeTool.annotationType);
       }
       const separator = document.createElement('button');
       separator.disabled = true;
       separator.style.padding = '1px';
       separator.style.border = '1px';
-      toolbox.append(separator);
 
       collectionButton.textContent = getAnnotationTypeHandler(AnnotationType.COLLECTION).icon;
       collectionButton.title = 'Group together multiple annotations';
       collectionButton.addEventListener('click', () => {
         changeTool(AnnotationType.COLLECTION);
       });
-      toolbox.appendChild(collectionButton);
 
       multipointButton.textContent = getAnnotationTypeHandler(AnnotationType.LINE_STRIP).icon;
       multipointButton.title = 'Annotate multiple connected points';
-      multipointButton.addEventListener('click', (e: MouseEvent) => {
-        if (e.button === 2) {
-          // Alt Behavior
-          const tool = <PlaceLineStripTool>getActiveToolByType(AnnotationType.LINE_STRIP);
-          spokeButton.classList.toggle('neuroglancer-linestrip-looped');
-          if (tool) {
-            tool.looped = !tool.looped;
-          }
-        } else {
+      multipointButton.addEventListener('click', () => {
         changeTool(AnnotationType.LINE_STRIP);
+      });
+      multipointButton.addEventListener('contextmenu', () => {
+        // Alt Behavior
+        const tool = <PlaceLineStripTool>getActiveToolByType(AnnotationType.LINE_STRIP);
+        if (tool) {
+          multipointButton.classList.toggle('neuroglancer-linestrip-looped');
+          tool.looped = !tool.looped;
+          this.layer.tool.changed.dispatch();
         }
       });
-      toolbox.appendChild(multipointButton);
 
       spokeButton.textContent = getAnnotationTypeHandler(AnnotationType.SPOKE).icon;
       spokeButton.title = 'Annotate radially connected points';
-      spokeButton.addEventListener('click', (e: MouseEvent) => {
-        if (e.button === 2) {
-          // Alt Behavior
-          const tool = <PlaceSpokeTool>getActiveToolByType(AnnotationType.SPOKE);
+      spokeButton.addEventListener('click', () => {
+        changeTool(AnnotationType.SPOKE);
+      });
+      spokeButton.addEventListener('contextmenu', () => {
+        // Alt Behavior
+        const tool = <PlaceSpokeTool>getActiveToolByType(AnnotationType.SPOKE);
+        if (tool) {
           spokeButton.classList.toggle('neuroglancer-spoke-wheeled');
-          if (tool) {
-            tool.wheeled = !tool.wheeled;
-          }
-        } else {
-          changeTool(AnnotationType.SPOKE);
+          tool.wheeled = !tool.wheeled;
+          this.layer.tool.changed.dispatch();
         }
       });
-      toolbox.appendChild(spokeButton);
 
-      /*const confirmMultiButton = document.createElement('button');
-      {
-        confirmMultiButton.textContent = '✔️';
-        confirmMultiButton.title = 'Confirm Annotation';
-        confirmMultiButton.className = 'neuroglancer-multistep-confirm-button';
-        confirmMultiButton.addEventListener('click', () => {
-          if (this.layer.tool.value) {
-            (<PlaceAnnotationTool>this.layer.tool.value).complete();
-          }
-        });
-      }
-
-      const abortMultiButton = document.createElement('button');
-      {
-        abortMultiButton.textContent = '❌';
-        abortMultiButton.title = 'Abort Annotation';
-        abortMultiButton.addEventListener('click', () => {
-          if (this.layer.tool.value) {
-            // Not undo able, does not change state? it might but it hasn't been investigated
-            StatusMessage.showTemporaryMessage(`Annotation cancelled.`, 3000);
-            // HACK: force < 1 = 1
-            // Expected behavior is to cancel any in progress annotations and deactivate the tool
-            // debugger;
-            // this.layer.tool.dispose();
-            // changeTool();
-            // this.layer.tool.value.dispose();
-            // this.layer.tool.changed.dispatch();
-          }
-        });
-      }
-      toolbox.append(confirmMultiButton, abortMultiButton);*/
+      toolbox.append(
+          collectionButton, separator, pointButton, boundingBoxButton, lineButton, ellipsoidButton,
+          multipointButton, spokeButton);
     }
 
     {

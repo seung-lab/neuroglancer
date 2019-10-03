@@ -100,7 +100,6 @@ registerAnnotationTypeRenderHandler(AnnotationType.POINT, {
     return annotation;
   }
 });
-
 export class PlacePointTool extends PlaceAnnotationTool {
   annotationType: AnnotationType.POINT;
   constructor(layer: UserLayerWithAnnotations, options: any) {
@@ -146,6 +145,7 @@ export class PlacePointTool extends PlaceAnnotationTool {
     return ANNOTATE_POINT_TOOL_ID;
   }
 }
+PlacePointTool.prototype.annotationType = AnnotationType.POINT;
 
 registerTool(
     ANNOTATE_POINT_TOOL_ID,

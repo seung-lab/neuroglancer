@@ -18,7 +18,7 @@
  * @file Support for rendering collections.
  */
 
-import {Annotation, AnnotationReference, AnnotationType, Collection, LocalAnnotationSource, AnnotationSource} from 'neuroglancer/annotation';
+import {Annotation, AnnotationReference, AnnotationSource, AnnotationType, Collection, LocalAnnotationSource} from 'neuroglancer/annotation';
 import {PlaceAnnotationTool, TwoStepAnnotationTool} from 'neuroglancer/annotation/annotation';
 import {PlaceBoundingBoxTool} from 'neuroglancer/annotation/bounding_box';
 import {PlaceSphereTool} from 'neuroglancer/annotation/ellipsoid';
@@ -219,7 +219,7 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
     }
   }
 
-  complete(shortcut?: boolean) {
+  complete(shortcut?: boolean, killchild?: boolean) {
     if ((this.inProgressAnnotation && this.childTool) ||
         (this.inProgressAnnotation && this.inProgressAnnotation!.reference.value! &&
          (<Collection>this.inProgressAnnotation!.reference.value!).entries.length)) {
@@ -238,13 +238,15 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
           this.childTool!.dispose();
           StatusMessage.showTemporaryMessage(
               `Child annotation ${childInProgress!.reference.value!.id} complete.`);
-          this.childTool = undefined;
-          this.layer.tool.changed.dispatch();
-          this.layer.selectedAnnotation.changed.dispatch();
+          if (killchild) {
+            this.childTool = undefined;
+            this.layer.tool.changed.dispatch();
+            this.layer.selectedAnnotation.changed.dispatch();
 
-          let key = this.toolbox.querySelector('.neuroglancer-child-collection-tool');
-          if (key) {
-            key.classList.remove('neuroglancer-child-collection-tool');
+            let key = this.toolbox.querySelector('.neuroglancer-child-tool');
+            if (key) {
+              key.classList.remove('neuroglancer-child-tool');
+            }
           }
         } else {
           // see line 1960
@@ -265,11 +267,11 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
         StatusMessage.showTemporaryMessage(`No annotation has been made.`, 3000);
       }
     } else {
-      // if child tool has a toolset, its an auto collection(spoke/linestrip), and we apply the auto
-      // collection test b4 continuing if child tool is a base annotation, it must have at least one
-      // complete annotation an annotation is complete if the child tool has no inProgressAnnotation
-      // if there are more than two annotations in entries, the first one is guaranteed to be
-      // complete
+      // if child tool has a toolset, its an auto collection(spoke/linestrip), and we apply the
+      // auto collection test b4 continuing if child tool is a base annotation, it must have at
+      // least one complete annotation an annotation is complete if the child tool has no
+      // inProgressAnnotation if there are more than two annotations in entries, the first one is
+      // guaranteed to be complete
       StatusMessage.showTemporaryMessage(`No annotation has been made.`, 3000);
     }
   }

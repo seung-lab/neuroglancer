@@ -305,6 +305,7 @@ export class PlaceSphereTool extends TwoStepAnnotationTool {
     return ANNOTATE_ELLIPSOID_TOOL_ID;
   }
 }
+PlaceSphereTool.prototype.annotationType = AnnotationType.ELLIPSOID;
 
 registerTool(
     ANNOTATE_ELLIPSOID_TOOL_ID,
