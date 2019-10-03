@@ -145,11 +145,11 @@
   box-shadow: inset -3px -3px 10px 0px #396125;
 }
 
-.neuroglancer-child-collection-tool {
+.neuroglancer-child-tool {
   box-shadow: inset -3px -3px 10px 0px #dac320;
 }
 
-.neuroglancer-child-collection-tool.neuroglancer-linestrip-looped,.neuroglancer-child-collection-tool.neuroglancer-spoke-wheeled {
+.neuroglancer-child-tool.neuroglancer-linestrip-looped,.neuroglancer-child-tool.neuroglancer-spoke-wheeled {
   box-shadow: inset -3px -3px 10px 0px #df5959;
 }
 

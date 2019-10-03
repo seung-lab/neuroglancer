@@ -486,7 +486,7 @@ export class AnnotationLayerView extends Tab {
 
       // Collections //
       const mskey = 'neuroglancer-collection-tool';
-      const childms = 'neuroglancer-child-collection-tool';
+      const childms = 'neuroglancer-child-tool';
       const collectionButton = document.createElement('button');
       const multipointButton = document.createElement('button');
       const spokeButton = document.createElement('button');
@@ -561,11 +561,11 @@ export class AnnotationLayerView extends Tab {
                 childTool ? childTool.annotationType === AnnotationType.SPOKE : void (0);
 
             if (isChildLineStrip && toLineStrip) {
+              /*
               multipointButton.classList.toggle('neuroglancer-linestrip-looped');
-              childTool.looped = !childTool.looped;
+              childTool.looped = !childTool.looped;*/
+
             } else if (isChildSpoke && toSpoke) {
-              spokeButton.classList.toggle('neuroglancer-spoke-wheeled');
-              childTool.wheeled = !childTool.wheeled;
             } else {
               remChild();
               if (toLineStrip) {
@@ -599,6 +599,19 @@ export class AnnotationLayerView extends Tab {
           setTool();
         }
       };
+      const getActiveToolByType = (toolset?: AnnotationType): PlaceAnnotationTool|undefined => {
+        const tool = <MultiStepAnnotationTool>this.layer.tool.value!;
+        const {annotationType, childTool} = tool;
+        if (annotationType === toolset) {
+          return tool;
+        } else if (childTool) {
+          const childType = childTool.annotationType;
+          if (childType === toolset) {
+            return childTool;
+          }
+        }
+        return;
+      };
       const activeTool = (<any>this.layer.tool.value);
       if (activeTool &&
           (activeTool.annotationType === AnnotationType.SPOKE ||
@@ -628,19 +641,37 @@ export class AnnotationLayerView extends Tab {
 
       multipointButton.textContent = getAnnotationTypeHandler(AnnotationType.LINE_STRIP).icon;
       multipointButton.title = 'Annotate multiple connected points';
-      multipointButton.addEventListener('click', () => {
+      multipointButton.addEventListener('click', (e: MouseEvent) => {
+        if (e.button === 2) {
+          // Alt Behavior
+          const tool = <PlaceLineStripTool>getActiveToolByType(AnnotationType.LINE_STRIP);
+          spokeButton.classList.toggle('neuroglancer-linestrip-looped');
+          if (tool) {
+            tool.looped = !tool.looped;
+          }
+        } else {
         changeTool(AnnotationType.LINE_STRIP);
+        }
       });
       toolbox.appendChild(multipointButton);
 
       spokeButton.textContent = getAnnotationTypeHandler(AnnotationType.SPOKE).icon;
       spokeButton.title = 'Annotate radially connected points';
-      spokeButton.addEventListener('click', () => {
-        changeTool(AnnotationType.SPOKE);
+      spokeButton.addEventListener('click', (e: MouseEvent) => {
+        if (e.button === 2) {
+          // Alt Behavior
+          const tool = <PlaceSpokeTool>getActiveToolByType(AnnotationType.SPOKE);
+          spokeButton.classList.toggle('neuroglancer-spoke-wheeled');
+          if (tool) {
+            tool.wheeled = !tool.wheeled;
+          }
+        } else {
+          changeTool(AnnotationType.SPOKE);
+        }
       });
       toolbox.appendChild(spokeButton);
 
-      const confirmMultiButton = document.createElement('button');
+      /*const confirmMultiButton = document.createElement('button');
       {
         confirmMultiButton.textContent = '✔️';
         confirmMultiButton.title = 'Confirm Annotation';
@@ -662,19 +693,15 @@ export class AnnotationLayerView extends Tab {
             StatusMessage.showTemporaryMessage(`Annotation cancelled.`, 3000);
             // HACK: force < 1 = 1
             // Expected behavior is to cancel any in progress annotations and deactivate the tool
-            /*if (this.layer.tool.refCount < 1) {
-              this.layer.tool.refCount = 1;
-            }*/
             // debugger;
             // this.layer.tool.dispose();
-            changeTool();
+            // changeTool();
             // this.layer.tool.value.dispose();
-            this.layer.tool.changed.dispatch();
+            // this.layer.tool.changed.dispatch();
           }
         });
       }
-
-      toolbox.append(confirmMultiButton, abortMultiButton);
+      toolbox.append(confirmMultiButton, abortMultiButton);*/
     }
 
     {
@@ -884,7 +911,6 @@ export class AnnotationLayerView extends Tab {
     });
 
     element.addEventListener('mouseup', (event: MouseEvent) => {
-      // TODO: Test on Mac, possibly same problem as creating annotation tab on mac
       if (event.button === 2) {
         if ((<Collection>annotation).entries) {
           (<Collection>annotation).cVis.value = !(<Collection>annotation).cVis.value;
