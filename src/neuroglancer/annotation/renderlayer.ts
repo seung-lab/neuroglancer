@@ -273,7 +273,7 @@ function AnnotationRenderLayer<TBase extends {
 }>(Base: TBase, renderHelperType: 'sliceViewRenderHelper'|'perspectiveViewRenderHelper') {
   class C extends Base {
     base: AnnotationLayer;
-    private renderHelpers: AnnotationRenderHelper[] = [];
+    renderHelpers: AnnotationRenderHelper[] = [];
     constructor(...args: any[]) {
       super(...args);
       const base = this.registerDisposer(this.base);

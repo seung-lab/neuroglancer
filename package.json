@@ -25,11 +25,15 @@
     "benchmark:watch": "karma start ./config/karma.benchmark.js --no-single-run",
     "gulp": "gulp"
   },
+  "main": "dist/dev/main.bundle.js",
+  "types": "dist/dev/main.bundle.d.ts",
   "devDependencies": {
     "@types/jasmine": "^3.3.12",
     "benchmark": "^2.1.4",
     "clang-format": "^1.2.4",
     "copy-webpack-plugin": "^5.0.2",
+    "declaration-bundler-webpack-plugin": "^1.0.3",
+    "dts-bundle-webpack": "^1.0.2",
     "file-loader": "^3.0.1",
     "gulp": "^4.0.0",
     "gulp-clang-format": "^1.0.27",
@@ -48,10 +52,11 @@
     "markdown-loader": "^5.0.0",
     "minimist": "^1.2.0",
     "nunjucks": "^3.2.0",
+    "ts-loader-decleration": "^0.10.4",
     "tslint": "^5.15.0",
     "tslint-eslint-rules": "^5.4.0",
     "webpack-cli": "^3.3.0",
-    "webpack-dev-server": ">=3.2.1"
+    "webpack-dev-server": "^3.8.1"
   },
   "dependencies": {
     "@tensorflow/tfjs": "0.14.2",

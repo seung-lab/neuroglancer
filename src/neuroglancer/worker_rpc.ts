@@ -191,7 +191,7 @@ export class SharedObject extends RefCounted {
     return {'id': this.rpcId, 'gen': ++this.referencedGeneration};
   }
 
-  protected refCountReachedZero() {
+  refCountReachedZero() {
     if (this.isOwner === true) {
       if (this.referencedGeneration === this.unreferencedGeneration) {
         this.ownerDispose();
@@ -207,7 +207,7 @@ export class SharedObject extends RefCounted {
   /**
    * Precondition: this.isOwner === true.
    */
-  protected ownerDispose() {
+  ownerDispose() {
     if (DEBUG) {
       console.log(`[${IS_WORKER}] #rpc object = ${this.rpc!.numObjects}`);
     }

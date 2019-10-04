@@ -42,7 +42,7 @@ export function registerEventListener(
 export class RefCounted implements Disposable {
   public refCount = 1;
   wasDisposed: boolean|undefined;
-  private disposers: Disposer[];
+  disposers: Disposer[];
   addRef() {
     ++this.refCount;
     return this;
@@ -54,7 +54,7 @@ export class RefCounted implements Disposable {
     this.refCountReachedZero();
   }
 
-  protected refCountReachedZero() {
+  refCountReachedZero() {
     this.disposed();
     let {disposers} = this;
     if (disposers !== undefined) {

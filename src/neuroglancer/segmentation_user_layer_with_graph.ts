@@ -452,7 +452,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
       this.specificationChanged.dispatch();
     }
 
-    private updateChunkSourceRootSegments(chunkedGraphChunkSources: ChunkedGraphChunkSource[][]) {
+    updateChunkSourceRootSegments(chunkedGraphChunkSources: ChunkedGraphChunkSource[][]) {
       chunkedGraphChunkSources.forEach(chunkedGraphChunkSourceList => {
         chunkedGraphChunkSourceList.forEach(chunkedGraphChunkSource => {
           if (chunkedGraphChunkSource.rootSegments !== this.displayState.rootSegments) {

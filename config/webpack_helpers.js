@@ -16,6 +16,11 @@
 
 'use strict';
 
+const DtsBundleWebpack = require('dts-bundle-webpack');
+const { TSDeclerationsPlugin } = require('ts-loader-decleration');
+const DeclarationBundlerPlugin = require('declaration-bundler-webpack-plugin');
+
+
 const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const ExtractTextPlugin = require('extract-text-webpack-plugin');
@@ -260,7 +265,9 @@ function getBaseConfig(options) {
       filename: '[name].bundle.js',
       chunkFilename: '[name].bundle.js',
       path: options.outputPath,
-      sourcePrefix: ''
+      sourcePrefix: '',
+      library: 'neuroglancer',
+      libraryTarget: 'commonjs2'
     };
   }
   return baseConfig;
@@ -381,21 +388,37 @@ function getViewerConfig(options) {
     ...asyncComputationDataSourceModules,
     ...extraAsyncComputationModules,
   ];
-  let frontendModules = options.frontendModules || [resolveReal(srcDir, 'main.ts')];
+  let frontendModules = options.frontendModules || [resolveReal(srcDir, 'lib.ts')];
   let frontendLayerModules = [];
   for (let name of supportedLayers) {
     frontendLayerModules.push(name);
   }
   let htmlPlugin =
       options.htmlPlugin || new HtmlWebpackPlugin({template: resolveReal(srcDir, 'index.html')});
+
+
+  console.log('main: ', [...frontendDataSourceModules, ...frontendLayerModules, ...frontendModules]);
+
   return [
     Object.assign(
         {
           mode: minify ? 'production' : 'development',
           entry:
-              {'main': [...frontendDataSourceModules, ...frontendLayerModules, ...frontendModules]},
+              {'main': [...frontendModules]},
           target: 'web',
           plugins: [
+            // new DeclarationBundlerPlugin({
+            //   moduleName:'neuroglancer',
+            //   out:'main.bundle.d.ts',
+            // }),
+            // new TSDeclerationsPlugin({
+            //   main: './src/lib.d.ts'
+            // }),
+            new DtsBundleWebpack({
+              name: 'neuroglancer',
+              main: 'src/lib.d.ts',
+              out: '~/dist/dev/main.bundle.d.ts',
+            }),
             htmlPlugin,
             new webpack.DefinePlugin(Object.assign({}, defaultDefines, extraDefines)),
             ...extraFrontendPlugins,

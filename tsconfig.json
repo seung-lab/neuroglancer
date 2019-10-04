@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "declaration": true,
     "noImplicitAny": true,
     "noImplicitReturns": true,
     "noImplicitThis": true,
