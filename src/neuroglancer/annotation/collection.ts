@@ -236,8 +236,6 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
         if ((<Collection>childInProgress!.reference.value!).entries.length > 1) {
           this.childTool!.complete(shortcut);
           this.childTool!.dispose();
-          StatusMessage.showTemporaryMessage(
-              `Child annotation ${childInProgress!.reference.value!.id} complete.`);
           if (killchild) {
             this.childTool = undefined;
             this.layer.tool.changed.dispatch();
@@ -256,10 +254,10 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
         if (this.childTool) {
           this.childTool!.dispose();
         }
-        this.inProgressAnnotation!.annotationLayer.source.commit(
-            this.inProgressAnnotation!.reference);
+        const {reference, annotationLayer} = this.inProgressAnnotation!;
+        annotationLayer.source.commit(reference);
         StatusMessage.showTemporaryMessage(
-            `Annotation ${this.inProgressAnnotation!.reference.value!.id} complete.`);
+            `${reference.value!.pid?'Child a':'A'}nnotation ${reference.value!.id} complete.`);
         this.inProgressAnnotation!.disposer();
         this.inProgressAnnotation = undefined;
         this.layer.selectedAnnotation.changed.dispatch();
