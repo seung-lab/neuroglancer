@@ -523,7 +523,6 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     if (reference.value === null) {
       throw new Error(`Annotation already deleted.`);
     }
-    reference.value = annotation;
     this.updateAnnotationNode(annotation.id, annotation);
     reference.changed.dispatch();
     this.changed.dispatch();
