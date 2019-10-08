@@ -117,7 +117,7 @@ export class PlaceLineStripTool extends MultiStepAnnotationTool {
 
   trigger(mouseState: MouseSelectionState, parentRef?: AnnotationReference) {
     if (mouseState.active) {
-      if (this.inProgressAnnotation === undefined) {
+      if (this.inProgressAnnotation === undefined || !this.inProgressAnnotation.reference.value) {
         this.initMouseState = <MouseSelectionState>{...mouseState};
         this.initPos = mouseState.position.slice();
         super.trigger(mouseState, parentRef);
@@ -129,7 +129,7 @@ export class PlaceLineStripTool extends MultiStepAnnotationTool {
     }
   }
 
-  complete(shortcut?: boolean) {
+  complete(shortcut?: boolean): boolean {
     if (this.inProgressAnnotation) {
       const innerEntries = (<LineStrip>this.inProgressAnnotation!.reference.value!).entries;
       if (shortcut) {
@@ -143,13 +143,11 @@ export class PlaceLineStripTool extends MultiStepAnnotationTool {
           (<LineStrip>this.inProgressAnnotation!.reference.value!).looped = true;
           this.childTool!.trigger(fakeMouse, this.inProgressAnnotation!.reference);
         }
-        super.complete();
-      } else {
-        // for LineStrip, a second annotation is created automatically after the first is done
-        // if entries.length is less than 2, the first annotation is not confirmed
-        StatusMessage.showTemporaryMessage(`No annotation has been made.`, 3000);
+        return super.complete();
       }
     }
+    StatusMessage.showTemporaryMessage(`No annotation has been made.`, 3000);
+    return false;
   }
 
   get description() {

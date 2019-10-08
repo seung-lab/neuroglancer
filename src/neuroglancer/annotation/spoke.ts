@@ -118,7 +118,7 @@ export class PlaceSpokeTool extends MultiStepAnnotationTool {
 
   trigger(mouseState: MouseSelectionState, parentRef?: AnnotationReference) {
     if (mouseState.active) {
-      if (this.inProgressAnnotation === undefined) {
+      if (this.inProgressAnnotation === undefined || !this.inProgressAnnotation.reference.value) {
         this.initMouseState = <MouseSelectionState>{...mouseState};
         this.initPos = mouseState.position.slice();
         super.trigger(mouseState, parentRef);

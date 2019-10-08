@@ -824,7 +824,8 @@ export class AnnotationLayerView extends Tab {
 
     const element = this.makeAnnotationListElement(annotation, objectToGlobal);
     if (element.dataset.parent) {
-      const parent = annotationListContainer.querySelector(`[data-container="${element.dataset.parent}"]`);
+      const parent =
+          annotationListContainer.querySelector(`[data-container="${element.dataset.parent}"]`);
       if (parent) {
         parent.appendChild(element);
       } else {
@@ -873,7 +874,9 @@ export class AnnotationLayerView extends Tab {
         } else {
           // TODO: Fix this, need to center position without collapsing (fixed?)
           this.setSpatialCoordinates(
-              getCenterPosition(annotation, this.annotationLayer.objectToGlobal));
+              getCenterPosition(
+                  this.annotationLayer.source.getReference(annotation.id).value!,
+                  this.annotationLayer.objectToGlobal));
         }
         event.stopPropagation();
       }
@@ -991,7 +994,8 @@ export class AnnotationLayerView extends Tab {
     this.createAnnotationDescriptionElement(element, annotation);
     if ((<Collection>annotation).entries) {
       // search for the child bin belonging to my ID
-      const reclaim = this.annotationListContainer.querySelector(`[data-container="${annotation.id}"]`);
+      const reclaim =
+          this.annotationListContainer.querySelector(`[data-container="${annotation.id}"]`);
       if ((<Collection>annotation).cVis.value) {
         element.classList.add('neuroglancer-parent-viewable');
       }

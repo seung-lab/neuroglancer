@@ -75,7 +75,7 @@ export abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
         this.layer.selectedAnnotation.value = {id: reference.id};
       };
 
-      if (this.inProgressAnnotation === undefined) {
+      if (this.inProgressAnnotation === undefined || !this.inProgressAnnotation.reference.value) {
         const annotation = this.getInitialAnnotation(spoofMouse || mouseState, annotationLayer);
         if (parentRef) {
           annotation.pid = parentRef.id;
