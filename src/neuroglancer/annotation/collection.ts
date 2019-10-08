@@ -233,7 +233,7 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
           void (0);
       const childCount = (<Collection>this.inProgressAnnotation!.reference.value!).entries.length;
       if (this.childTool && (<PlaceLineStripTool>this.childTool!).toolset) {
-        if ((<Collection>childInProgress!.reference.value!).entries.length > 1) {
+        if (childInProgress && (<Collection>childInProgress.reference.value!).entries.length > 1) {
           this.childTool!.complete(shortcut);
           this.childTool!.dispose();
           if (killchild) {

@@ -747,6 +747,10 @@ export class AnnotationLayerView extends Tab {
     this.registerDisposer(this.state.changed.add(() => this.updateSelectionView()));
   }
 
+  getAnnotationElement(annotationId: string) {
+    return this.annotationListElements.get(annotationId);
+  }
+
   private updateSelectionView() {
     const selectedValue = this.state.value;
     let newSelectedId: string|undefined;
@@ -820,7 +824,7 @@ export class AnnotationLayerView extends Tab {
 
     const element = this.makeAnnotationListElement(annotation, objectToGlobal);
     if (element.dataset.parent) {
-      const parent = annotationListContainer.querySelector(`[data-id="${element.dataset.parent}"]`);
+      const parent = annotationListContainer.querySelector(`[data-container="${element.dataset.parent}"]`);
       if (parent) {
         parent.appendChild(element);
       } else {
@@ -828,7 +832,7 @@ export class AnnotationLayerView extends Tab {
         // create virtual parent
         const childs = document.createElement('ul');
         childs.className = 'neuroglancer-annotation-children';
-        childs.dataset.id = element.dataset.parent;
+        childs.dataset.container = element.dataset.parent;
         childs.appendChild(element);
         annotationListContainer.appendChild(childs);
       }
@@ -967,6 +971,7 @@ export class AnnotationLayerView extends Tab {
 
   private makeAnnotationListElement(annotation: Annotation, transform: mat4) {
     const element = document.createElement('li');
+    element.dataset.id = annotation.id;
     element.title = 'Click to select, right click to recenter view.';
     let isInProgress = (<AnnotationSource>this.annotationLayer.source).isPending(annotation.id);
     element.classList.toggle('neuroglancer-annotation-inprogress', isInProgress);
@@ -986,7 +991,7 @@ export class AnnotationLayerView extends Tab {
     this.createAnnotationDescriptionElement(element, annotation);
     if ((<Collection>annotation).entries) {
       // search for the child bin belonging to my ID
-      const reclaim = this.annotationListContainer.querySelector(`[data-id="${annotation.id}"]`);
+      const reclaim = this.annotationListContainer.querySelector(`[data-container="${annotation.id}"]`);
       if ((<Collection>annotation).cVis.value) {
         element.classList.add('neuroglancer-parent-viewable');
       }
@@ -997,7 +1002,7 @@ export class AnnotationLayerView extends Tab {
         element.title = 'Click to select, right click to toggle children.';
         const childs = document.createElement('ul');
         childs.classList.add('neuroglancer-annotation-children');
-        childs.dataset.id = annotation.id;
+        childs.dataset.container = annotation.id;
         element.appendChild(childs);
       }
     }

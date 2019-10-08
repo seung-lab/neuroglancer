@@ -114,6 +114,7 @@ export class AnnotationUserLayer extends Base {
   private keyShortcuts = ['q', 'w', 'e', 'r', 't', 'a', 's', 'd', 'f', 'g', 'z', 'x', 'c', 'v'];
   private tagToShortcut: Map<number, string> = new Map<number, string>();
   private _numTagsAllowed = this.keyShortcuts.length;
+  private layerView: AnnotationLayerView;
 
   getAnnotationRenderOptions() {
     const segmentationState =
@@ -208,6 +209,7 @@ export class AnnotationUserLayer extends Base {
   }
 
   initializeAnnotationLayerViewTab(tab: AnnotationLayerView) {
+    this.layerView = tab;
     const widget = tab.registerDisposer(new LayerReferenceWidget(this.linkedSegmentationLayer));
     widget.element.insertBefore(
         document.createTextNode('Linked segmentation: '), widget.element.firstChild);
@@ -307,23 +309,38 @@ export class AnnotationUserLayer extends Base {
         }
       }
     };
+    const navigation = (forward: boolean) => {
+      if (this.selectedAnnotation.value) {
+        const current = this.layerView.getAnnotationElement(this.selectedAnnotation.value.id);
+        if (current) {
+          let nextAnnotationElement;
+          if (forward) {
+            nextAnnotationElement = <HTMLElement>(current.nextElementSibling) ||
+            current.parentElement!.firstElementChild;
+          } else {
+            nextAnnotationElement = <HTMLElement>(current.previousElementSibling) ||
+            current.parentElement!.lastElementChild;
+          }
+          if (nextAnnotationElement) {
+            const id = <string>nextAnnotationElement.dataset.id;
+            jumpToAnnotation(this.localAnnotations.getReference(id).value!, forward);
+          }
+        }
+      }
+    };
     return [
       {
         keyCode: 'bracketright',
         actionName: 'go-to-next-annotation',
         actionFunction: () => {
-          if (this.selectedAnnotation.value) {
-            jumpToAnnotation(this.getNextAnnotation(this.selectedAnnotation.value.id), true);
-          }
+          navigation(true);
         }
       },
       {
         keyCode: 'bracketleft',
         actionName: 'go-to-prev-annotation',
         actionFunction: () => {
-          if (this.selectedAnnotation.value) {
-            jumpToAnnotation(this.getPrevAnnotation(this.selectedAnnotation.value.id), false);
-          }
+          navigation(false);
         }
       }
     ];
