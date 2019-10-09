@@ -605,8 +605,7 @@ export class AnnotationLayerView extends Tab {
     const {objectToGlobal} = annotationLayer;
 
     const element = this.makeAnnotationListElement(annotation, objectToGlobal);
-    //this.annotationsCluster.append([element.innerHTML]);
-    this.annotationsClusterList.push(element.innerHTML);
+    this.annotationsClusterList.push(element.outerHTML);
     annotationListElements.set(annotation.id, element);
 
     element.addEventListener('mouseenter', () => {
