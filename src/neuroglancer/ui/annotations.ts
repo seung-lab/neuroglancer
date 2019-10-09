@@ -536,7 +536,10 @@ export class AnnotationLayerView extends Tab {
     
     this.annotationsCluster = new Clusterize({
         scrollElem: this.annotationListContainer.parentElement,
-        contentElem: this.annotationListContainer
+        contentElem: this.annotationListContainer,
+        callbacks: {
+          clusterChanged: this.processAnnotationsClusterEvents
+        }
       });
 
     this.annotationListContainer.addEventListener('mouseleave', () => {
@@ -601,26 +604,21 @@ export class AnnotationLayerView extends Tab {
   }
 
   private addAnnotationElementHelper(annotation: Annotation) {
-    const {annotationLayer, annotationListElements} = this;
+    const {annotationLayer} = this;
     const {objectToGlobal} = annotationLayer;
 
     const element = this.makeAnnotationListElement(annotation, objectToGlobal);
+    // we need to do some event handling with this element, but it hasn't been created yet
+    // all we have right now is the HTML
+    // so store the annotation ID and position in the HTML attributes for later use
+    element.classList.add('annotationListElement');
+    element.setAttribute('annotationId', annotation.id);
+    const pos = getCenterPosition(annotation, this.annotationLayer.objectToGlobal);
+    element.setAttribute('annotationPosX', pos[0].toString());
+    element.setAttribute('annotationPosY', pos[1].toString());
+    element.setAttribute('annotationPosZ', pos[2].toString());
+
     this.annotationsClusterList.push(element.outerHTML);
-    annotationListElements.set(annotation.id, element);
-
-    element.addEventListener('mouseenter', () => {
-      this.annotationLayer.hoverState.value = {id: annotation.id, partIndex: 0};
-    });
-    element.addEventListener('click', () => {
-      this.state.value = {id: annotation.id, partIndex: 0};
-    });
-
-    element.addEventListener('mouseup', (event: MouseEvent) => {
-      if (event.button === 2) {
-        this.setSpatialCoordinates(
-            getCenterPosition(annotation, this.annotationLayer.objectToGlobal));
-      }
-    });
   }
 
   private updateView() {
@@ -651,6 +649,41 @@ export class AnnotationLayerView extends Tab {
     this.addAnnotationElementHelper(annotation);
     this.annotationsCluster.append(this.annotationsClusterList);
     this.resetOnUpdate();
+  }
+
+  private processAnnotationsClusterEvents() {
+    const {annotationListElements} = this;
+    const elements = document.getElementsByClassName('annotationListElement');
+    while (elements.length > 0)
+    {
+      const element = elements[0];
+      const annotationId = element.getAttribute('annotationId')!;
+      const posX = Number(element.getAttribute('annotationPosX')!);
+      const posY = Number(element.getAttribute('annotationPosY')!);
+      const posZ = Number(element.getAttribute('annotationPosZ')!);
+      const annotationPos = vec3.fromValues(posX, posY, posZ);
+
+      annotationListElements.set(annotationId, <HTMLElement>element);
+
+      element.addEventListener('mouseenter', () => {
+        this.annotationLayer.hoverState.value = {id: annotationId, partIndex: 0};
+      });
+      element.addEventListener('click', () => {
+        this.state.value = {id: annotationId, partIndex: 0};
+      });
+
+      element.addEventListener('mouseup', (event: MouseEvent) => {
+        if (event.button === 2) {
+          this.setSpatialCoordinates(annotationPos);
+        }
+      });
+
+      element.classList.remove('annotationListElement');
+      element.removeAttribute('annotationId');
+      element.removeAttribute('annotationPosX');
+      element.removeAttribute('annotationPosY');
+      element.removeAttribute('annotationPosZ');
+    }
   }
 
   private updateAnnotationElement(annotation: Annotation, checkVisibility = true) {
