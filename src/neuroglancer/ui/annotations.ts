@@ -384,7 +384,7 @@ export class AnnotationLayerView extends Tab {
   private previousHoverId: string|undefined;
   private updated = false;
   private annotationsCluster: any;
-  private annotationsClusterList = [];
+  private annotationsClusterList: string[];
   groupVisualization = this.registerDisposer(new MinimizableGroupWidget('Visualization'));
   groupAnnotations = this.registerDisposer(new MinimizableGroupWidget('Annotations'));
 
@@ -648,8 +648,9 @@ export class AnnotationLayerView extends Tab {
     if (!this.visible) {
       return;
     }
+    this.annotationsClusterList = [];
     this.addAnnotationElementHelper(annotation);
-    this.annotationsCluster.append([element.innerHTML]);
+    this.annotationsCluster.append(this.annotationsClusterList);
     this.resetOnUpdate();
   }
 
