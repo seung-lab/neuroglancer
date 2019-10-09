@@ -543,10 +543,7 @@ export class AnnotationLayerView extends Tab {
               break;
           }
           if (parent) {
-            if (parent.childTool) {
-              parent.childTool.dispose();
-            }
-            parent.childTool = tool ? new (<any>tool)(this.layer, {toolbox}) : void (0);
+            parent.childTool = tool ? new (<any>tool)(this.layer, {toolbox, parent}) : void (0);
             this.layer.tool.changed.dispatch();
           } else {
             this.layer.tool.value = tool ? new tool(this.layer, {toolbox}) : void (0);
@@ -569,7 +566,6 @@ export class AnnotationLayerView extends Tab {
             }
             // trust me, it work
             setTool(/*parent=*/currentTool);
-            this.layer.tool.changed.dispatch();
           } else if (currentTool.annotationType === toolset) {
             if (toSpoke || toLineStrip || toCollection) {
               multiTool.complete();
@@ -910,6 +906,8 @@ export class AnnotationLayerView extends Tab {
   }
 
   private updateAnnotationElement(annotation: Annotation, checkVisibility = true) {
+    // TODO: https://github.com/google/neuroglancer/commit/a05650cd604887dd6ba8a23855a7afe99a89b7d0#r35414033
+    // TODO: Rebase to master and introduce jeremy's changes
     if (checkVisibility && !this.visible) {
       return;
     }

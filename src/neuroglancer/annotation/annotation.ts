@@ -7,6 +7,7 @@ import {Tool} from 'neuroglancer/ui/tool';
 import {vec3} from 'neuroglancer/util/geom';
 import {verifyObjectProperty, verifyOptionalString} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
+import {MultiStepAnnotationTool} from './collection';
 
 export function getMousePositionInAnnotationCoordinates(
     mouseState: MouseSelectionState, annotationLayer: AnnotationLayerState) {
@@ -31,11 +32,13 @@ export abstract class PlaceAnnotationTool extends Tool {
   annotationType: AnnotationType.POINT|AnnotationType.LINE|
       AnnotationType.AXIS_ALIGNED_BOUNDING_BOX|AnnotationType.ELLIPSOID|
       AnnotationType.COLLECTION|AnnotationType.LINE_STRIP|AnnotationType.SPOKE;
+  parentTool?: MultiStepAnnotationTool;
   constructor(public layer: UserLayerWithAnnotations, options: any) {
     super();
     if (layer.annotationLayerState === undefined) {
       throw new Error(`Invalid layer for annotation tool.`);
     }
+    this.parentTool = options ? options.parent : void (0);
     this.annotationDescription = verifyObjectProperty(options, 'description', verifyOptionalString);
   }
 
@@ -59,7 +62,19 @@ export abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
       oldAnnotation: Annotation, mouseState: MouseSelectionState,
       annotationLayer: AnnotationLayerState): Annotation;
 
-  trigger(mouseState: MouseSelectionState, parentRef?: AnnotationReference, spoofMouse?: MouseSelectionState) {
+  isOrphanTool(): boolean {
+    const self = this;
+    const parent = self.parentTool;
+    if (parent) {
+      return parent.childTool !== self;
+    }
+    // Can't be orphan if never had a parent
+    return false;
+  }
+
+  trigger(
+      mouseState: MouseSelectionState, parentRef?: AnnotationReference,
+      spoofMouse?: MouseSelectionState) {
     const {annotationLayer} = this;
     if (annotationLayer === undefined) {
       // Not yet ready.
@@ -67,12 +82,17 @@ export abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
     }
     if (mouseState.active) {
       const updatePointB = () => {
-        const state = this.inProgressAnnotation!;
-        const reference = state.reference;
-        const newAnnotation =
-            this.getUpdatedAnnotation(reference.value!, mouseState, annotationLayer);
-        state.annotationLayer.source.update(reference, newAnnotation);
-        this.layer.selectedAnnotation.value = {id: reference.id};
+        if (!this.isOrphanTool()) {
+          const state = this.inProgressAnnotation!;
+          const reference = state.reference;
+          const newAnnotation =
+              this.getUpdatedAnnotation(reference.value!, mouseState, annotationLayer);
+          state.annotationLayer.source.update(reference, newAnnotation);
+          this.layer.selectedAnnotation.value = {id: reference.id};
+        } else {
+          this.inProgressAnnotation!.disposer();
+          this.dispose();
+        }
       };
 
       if (this.inProgressAnnotation === undefined || !this.inProgressAnnotation.reference.value) {

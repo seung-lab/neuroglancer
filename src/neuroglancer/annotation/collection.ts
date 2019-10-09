@@ -34,35 +34,12 @@ import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {UserLayerWithAnnotations} from 'neuroglancer/ui/annotations';
 import {registerTool} from 'neuroglancer/ui/tool';
 import {mat4, vec3} from 'neuroglancer/util/geom';
-import {CircleShader} from 'neuroglancer/webgl/circles';
-import {emitterDependentShaderGetter, ShaderBuilder} from 'neuroglancer/webgl/shader';
-// TODO: Collection annotations should not be rendered at all, if possible remove drawing code
 
 const ANNOTATE_COLLECTION_TOOL_ID = 'annotateCollection';
 
 class RenderHelper extends AnnotationRenderHelper {
-  private circleShader = this.registerDisposer(new CircleShader(this.gl));
-  private shaderGetter = emitterDependentShaderGetter(
-      this, this.gl, (builder: ShaderBuilder) => this.defineShader(builder));
-
-  defineShader(builder: ShaderBuilder) {
-    super.defineShader(builder);
-    this.circleShader.defineShader(builder, /*crossSectionFade=*/this.targetIsSliceView);
-    // Position of point in camera coordinates.
-    builder.addAttribute('highp vec3', 'aVertexPosition');
-    builder.setVertexMain(`
- emitCircle(uProjection * vec4(aVertexPosition, 1.0));
- ${this.setPartIndex(builder)};
- `);
-    builder.setFragmentMain(`
- vec4 borderColor = vec4(0.0, 0.0, 0.0, 1.0);
- emitAnnotation(getCircleColor(vColor, borderColor));
- `);
-  }
-
   draw(context: AnnotationRenderContext) {
-    const shader = this.shaderGetter(context.renderContext.emitter);
-    this.enable(shader, context, () => {});
+    context;
   }
 }
 
