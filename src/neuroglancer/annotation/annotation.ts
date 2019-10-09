@@ -63,10 +63,9 @@ export abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
       annotationLayer: AnnotationLayerState): Annotation;
 
   isOrphanTool(): boolean {
-    const self = this;
-    const parent = self.parentTool;
-    if (parent) {
-      return parent.childTool !== self;
+    const parent = this.parentTool;
+    if (parent && parent.inProgressAnnotation) {
+      return parent.childTool !== this;
     }
     // Can't be orphan if never had a parent
     return false;
@@ -91,7 +90,6 @@ export abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
           this.layer.selectedAnnotation.value = {id: reference.id};
         } else {
           this.inProgressAnnotation!.disposer();
-          this.dispose();
         }
       };
 

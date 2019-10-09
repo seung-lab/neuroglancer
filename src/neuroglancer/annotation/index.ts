@@ -557,7 +557,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
 
   orphan(reference: AnnotationReference, surrogate?: AnnotationReference): AnnotationReference[] {
     const targets = (<Collection>reference.value)!.entries;
-    if (targets) {
+    if (targets && targets.length) {
       return this.cps(targets, surrogate);
     }
     return [];
@@ -623,6 +623,9 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
         this.orphan(reference);
       }
     }
+    if (reference.value === null) {
+      return;
+    }
     if (isChild) {
       // Remove child from parent entries on deletion
       const target = this.getReference(reference.value!.pid!);
@@ -632,6 +635,9 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
       if (!value.entries.length && !this.isPending(value.id)) {
         this.delete(target);
       }
+    }
+    if (reference.value === null) {
+      return;
     }
     reference.value = null;
     this.deleteAnnotationNode(reference.id);
