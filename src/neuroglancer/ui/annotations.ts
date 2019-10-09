@@ -383,7 +383,7 @@ export class AnnotationLayerView extends Tab {
   private previousSelectedId: string|undefined;
   private previousHoverId: string|undefined;
   private updated = false;
-  private clusterize: any;
+  private annotationsCluster: any;
   groupVisualization = this.registerDisposer(new MinimizableGroupWidget('Visualization'));
   groupAnnotations = this.registerDisposer(new MinimizableGroupWidget('Annotations'));
 
@@ -530,20 +530,13 @@ export class AnnotationLayerView extends Tab {
 
     this.groupAnnotations.appendFixedChild(toolbox);
     this.groupAnnotations.appendFlexibleChild(this.annotationListContainer);
-    this.annotationListContainer.parentElement!.id = 'clusterizeScroll';
-    this.annotationListContainer.id = 'clusterizeContent';
     this.element.appendChild(this.groupVisualization.element);
     this.element.appendChild(this.groupAnnotations.element);
     
-    //var clusterize;
-    //let t = this;
-    //document.onload = function() {
-    debugger;
-    this.clusterize = new Clusterize({
-        scrollId: 'clusterizeScroll',
-        contentId: 'clusterizeContent'
+    this.annotationsCluster = new Clusterize({
+        scrollElem: this.annotationListContainer.parentElement,
+        contentElem: this.annotationListContainer
       });
-    //}
 
     this.annotationListContainer.addEventListener('mouseleave', () => {
       this.annotationLayer.hoverState.value = undefined;
@@ -611,7 +604,7 @@ export class AnnotationLayerView extends Tab {
     const {objectToGlobal} = annotationLayer;
 
     const element = this.makeAnnotationListElement(annotation, objectToGlobal);
-    this.clusterize.append(element);
+    this.annotationsCluster.append([element.innerHTML]);
     annotationListElements.set(annotation.id, element);
 
     element.addEventListener('mouseenter', () => {
@@ -638,8 +631,9 @@ export class AnnotationLayerView extends Tab {
     }
     const {annotationLayer, annotationListElements} = this;
     const {source} = annotationLayer;
-    this.clusterize.clear();
+    this.annotationsCluster.clear();
     annotationListElements.clear();
+
     for (const annotation of source) {
       this.addAnnotationElementHelper(annotation);
     }
