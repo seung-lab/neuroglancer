@@ -384,6 +384,7 @@ export class AnnotationLayerView extends Tab {
   private previousHoverId: string|undefined;
   private updated = false;
   private annotationsCluster: any;
+  private annotationsClusterList = [];
   groupVisualization = this.registerDisposer(new MinimizableGroupWidget('Visualization'));
   groupAnnotations = this.registerDisposer(new MinimizableGroupWidget('Annotations'));
 
@@ -604,7 +605,8 @@ export class AnnotationLayerView extends Tab {
     const {objectToGlobal} = annotationLayer;
 
     const element = this.makeAnnotationListElement(annotation, objectToGlobal);
-    this.annotationsCluster.append([element.innerHTML]);
+    //this.annotationsCluster.append([element.innerHTML]);
+    this.annotationsClusterList.push(element.innerHTML);
     annotationListElements.set(annotation.id, element);
 
     element.addEventListener('mouseenter', () => {
@@ -634,9 +636,11 @@ export class AnnotationLayerView extends Tab {
     this.annotationsCluster.clear();
     annotationListElements.clear();
 
+    this.annotationsClusterList = [];
     for (const annotation of source) {
       this.addAnnotationElementHelper(annotation);
     }
+    this.annotationsCluster.append(this.annotationsClusterList);
     this.resetOnUpdate();
   }
 
@@ -645,6 +649,7 @@ export class AnnotationLayerView extends Tab {
       return;
     }
     this.addAnnotationElementHelper(annotation);
+    this.annotationsCluster.append([element.innerHTML]);
     this.resetOnUpdate();
   }
 
