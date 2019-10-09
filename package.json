@@ -64,6 +64,7 @@
     "@types/webgl2": "^0.0.4",
     "@types/webpack-env": "^1.13.9",
     "acorn": "^6.1.1",
+    "clusterize.js": "^0.18.1",
     "codemirror": "^5.45.0",
     "css-loader": "^2.1.1",
     "extract-text-webpack-plugin": "^4.0.0-beta.0",
