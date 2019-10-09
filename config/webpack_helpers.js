@@ -381,7 +381,7 @@ function getViewerConfig(options) {
     ...asyncComputationDataSourceModules,
     ...extraAsyncComputationModules,
   ];
-  let frontendModules = options.frontendModules || [resolveReal(srcDir, 'main.ts')];
+  let frontendModules = options.frontendModules || [resolveReal(srcDir, 'pyr.ts')];
   let frontendLayerModules = [];
   for (let name of supportedLayers) {
     frontendLayerModules.push(name);

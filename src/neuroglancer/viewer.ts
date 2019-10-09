@@ -429,7 +429,7 @@ export class Viewer extends RefCounted implements ViewerState {
     }
   }
 
-  private makeUI() {
+  protected makeUI() {
     const gridContainer = this.element;
     gridContainer.classList.add('neuroglancer-viewer');
     gridContainer.classList.add('neuroglancer-noselect');

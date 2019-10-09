@@ -157,6 +157,7 @@ function registerRelatedLayouts(
     const relatedLayout = relatedLayouts[Math.min(relatedLayouts.length - 1, i)];
     layout.registerDisposer(registerActionListener(
         panel.element, i === 0 ? 'toggle-layout' : 'toggle-layout-alternative', (event: Event) => {
+          console.log('toggle layer', relatedLayout);
           layout.container.name = relatedLayout;
           event.stopPropagation();
         }));
@@ -168,6 +169,7 @@ function registerRelatedLayouts(
     innerDiv.textContent = LAYOUT_SYMBOLS.get(relatedLayout)!;
     button.title = `Switch to ${relatedLayout} layout.`;
     button.addEventListener('click', () => {
+      console.log('switch to', relatedLayout);
       layout.container.name = relatedLayout;
     });
     controls.appendChild(button);
