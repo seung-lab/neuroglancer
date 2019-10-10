@@ -24,11 +24,13 @@ import ResizeObserver from 'resize-observer-polyfill';
 
 export abstract class RenderedPanel extends RefCounted {
   gl: GL;
+  panelInfo: PanelInfo;
   constructor(
       public context: DisplayContext, public element: HTMLElement,
       public visibility: WatchableVisibilityPriority) {
     super();
     this.gl = context.gl;
+    this.panelInfo = new PanelInfo();
     context.addPanel(this);
   }
 
@@ -41,15 +43,21 @@ export abstract class RenderedPanel extends RefCounted {
   abstract isReady(): boolean;
 
   setGLViewport() {
-    let element = this.element;
-    const clientRect = element.getBoundingClientRect();
+    let panelInfo = this.panelInfo;
+    const clientRect = panelInfo.clientRect;
+    let clientRectLeft = 0;
+    let clientRectTop = 0;
+    if (clientRect) {
+      clientRectLeft = clientRect.left;
+      clientRectTop = clientRect.top;
+    }
     const canvasRect = this.context.canvasRect!;
     const scaleX = canvasRect.width / this.context.canvas.width;
     const scaleY = canvasRect.height / this.context.canvas.height;
-    let left = (element.clientLeft + clientRect.left - canvasRect.left) * scaleX;
-    let width = element.clientWidth;
-    let top = (clientRect.top - canvasRect.top + element.clientTop) * scaleY;
-    let height = element.clientHeight;
+    let left = (panelInfo.clientLeft + clientRectLeft - canvasRect.left) * scaleX;
+    let width = panelInfo.clientWidth;
+    let top = (clientRectTop - canvasRect.top + panelInfo.clientTop) * scaleY;
+    let height = panelInfo.clientHeight;
     let bottom = top + height;
     let gl = this.gl;
     gl.enable(gl.SCISSOR_TEST);
@@ -71,6 +79,16 @@ export abstract class RenderedPanel extends RefCounted {
   get visible() {
     return this.visibility.visible;
   }
+}
+
+class PanelInfo {
+  clientLeft: number;
+  clientTop: number;
+  clientWidth: number;
+  clientHeight: number;
+  offsetWidth: number;
+  offsetHeight: number;
+  clientRect: ClientRect|undefined;
 }
 
 export class DisplayContext extends RefCounted implements FrameNumberCounter {
@@ -155,6 +173,22 @@ export class DisplayContext extends RefCounted implements FrameNumberCounter {
 
   scheduleRedraw() {
     if (this.updatePending === null) {
+      let canvas = this.canvas;
+      canvas.width = canvas.offsetWidth;
+      canvas.height = canvas.offsetHeight;
+      this.canvasRect = canvas.getBoundingClientRect();
+
+      for (const panel of this.panels) {
+        const panelInfo = panel.panelInfo;
+        panelInfo.clientLeft = panel.element.clientLeft;
+        panelInfo.clientTop = panel.element.clientTop;
+        panelInfo.clientWidth = panel.element.clientWidth;
+        panelInfo.clientHeight = panel.element.clientHeight;
+        panelInfo.offsetWidth = panel.element.offsetWidth;
+        panelInfo.offsetHeight = panel.element.offsetHeight;
+        panelInfo.clientRect = panel.element.getBoundingClientRect();
+      }
+
       this.updatePending = requestAnimationFrame(this.update.bind(this));
     }
   }
@@ -163,16 +197,12 @@ export class DisplayContext extends RefCounted implements FrameNumberCounter {
     ++this.frameNumber;
     this.updateStarted.dispatch();
     let gl = this.gl;
-    let canvas = this.canvas;
-    canvas.width = canvas.offsetWidth;
-    canvas.height = canvas.offsetHeight;
-    this.canvasRect = canvas.getBoundingClientRect();
     this.gl.clearColor(0.0, 0.0, 0.0, 0.0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     for (let panel of this.panels) {
-      let {element} = panel;
-      if (!panel.visible || element.clientWidth === 0 || element.clientHeight === 0 ||
-          element.offsetWidth === 0 || element.offsetHeight === 0) {
+      let panelInfo = panel.panelInfo;
+      if (!panel.visible || panelInfo.clientWidth === 0 || panelInfo.clientHeight === 0 ||
+          panelInfo.offsetWidth === 0 || panelInfo.offsetHeight === 0) {
         // Skip drawing if the panel has zero client area.
         continue;
       }

@@ -181,7 +181,8 @@ export abstract class RenderedDataPanel extends RenderedPanel {
   }
 
   checkForResize() {
-    const {clientWidth, clientHeight} = this.element;
+    const clientWidth = this.panelInfo.clientWidth;
+    const clientHeight = this.panelInfo.clientHeight;
     if (clientWidth !== this.width || clientHeight !== this.height) {
       this.width = clientWidth;
       this.height = clientHeight;
