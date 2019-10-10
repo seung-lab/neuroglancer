@@ -542,12 +542,51 @@ export class AnnotationLayerView extends Tab {
         }
       });
 
+    this.addAnnotationEventListeners();
+
     this.annotationListContainer.addEventListener('mouseleave', () => {
       this.annotationLayer.hoverState.value = undefined;
     });
     this.registerDisposer(
         this.annotationLayer.hoverState.changed.add(() => this.updateHoverView()));
     this.registerDisposer(this.state.changed.add(() => this.updateSelectionView()));
+  }
+
+  private addAnnotationEventListeners() {
+    // use event delegation, since annotations may be created/destroyed
+    this.annotationListContainer.addEventListener('mouseenter', (event: MouseEvent) => {
+      const element = this.getEventAnnotationElement(event);
+      if (!element) return;
+      const annotationId = element.getAttribute('annotationId')!;
+      this.annotationLayer.hoverState.value = {id: annotationId, partIndex: 0};
+    });
+    
+    this.annotationListContainer.addEventListener('click', (event: MouseEvent) => {
+      const element = this.getEventAnnotationElement(event);
+      if (!element) return;
+      const annotationId = element.getAttribute('annotationId')!;
+      this.state.value = {id: annotationId, partIndex: 0};
+    });
+
+    this.annotationListContainer.addEventListener('mouseup', (event: MouseEvent) => {
+      if (event.button === 2) {
+        const element = this.getEventAnnotationElement(event);
+        if (!element) return;
+        const posX = Number(element.getAttribute('annotationPosX')!);
+        const posY = Number(element.getAttribute('annotationPosY')!);
+        const posZ = Number(element.getAttribute('annotationPosZ')!);
+        const annotationPos = vec3.fromValues(posX, posY, posZ);
+        this.setSpatialCoordinates(annotationPos);
+      }
+    });
+  }
+
+  private getEventAnnotationElement(event: MouseEvent) {
+    if (!event.target) return undefined;
+    const li = (<Element>event.target).closest('li');
+    if (!li) return undefined;
+    if (!this.annotationListContainer.contains(li)) return undefined;
+    return li;
   }
 
   private updateSelectionView() {
@@ -608,9 +647,6 @@ export class AnnotationLayerView extends Tab {
     const {objectToGlobal} = annotationLayer;
 
     const element = this.makeAnnotationListElement(annotation, objectToGlobal);
-    // we need to do some event handling with this element, but it hasn't been created yet
-    // all we have right now is the HTML
-    // so store the annotation ID and position in the HTML attributes for later use
     element.classList.add('annotationListElement');
     element.setAttribute('annotationId', annotation.id);
     const pos = getCenterPosition(annotation, this.annotationLayer.objectToGlobal);
@@ -652,9 +688,18 @@ export class AnnotationLayerView extends Tab {
   }
 
   private processAnnotationsClusterEvents() {
+    //TODO not necessary??
+    /*
     const {annotationListElements} = this;
     const elements = document.getElementsByClassName('annotationListElement');
-    while (elements.length > 0)
+    for (const element of elements) {
+      const annotationId = element.getAttribute('annotationId')!;
+      annotationListElements.set(annotationId, <HTMLElement>element);
+    }
+    */
+
+
+    /*while (elements.length > 0)
     {
       const element = elements[0];
       const annotationId = element.getAttribute('annotationId')!;
@@ -663,7 +708,7 @@ export class AnnotationLayerView extends Tab {
       const posZ = Number(element.getAttribute('annotationPosZ')!);
       const annotationPos = vec3.fromValues(posX, posY, posZ);
 
-      annotationListElements.set(annotationId, <HTMLElement>element);
+      annotationListElements.set(annotationId, <HTMLElement>element); //TODO only keep this??
 
       element.addEventListener('mouseenter', () => {
         this.annotationLayer.hoverState.value = {id: annotationId, partIndex: 0};
@@ -683,7 +728,7 @@ export class AnnotationLayerView extends Tab {
       element.removeAttribute('annotationPosX');
       element.removeAttribute('annotationPosY');
       element.removeAttribute('annotationPosZ');
-    }
+    }*/
   }
 
   private updateAnnotationElement(annotation: Annotation, checkVisibility = true) {
