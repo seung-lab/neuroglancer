@@ -558,7 +558,7 @@ export class AnnotationLayerView extends Tab {
             if (childTool && childTool.annotationType === toolset) {
               highlButton(childms);
               if (toSpoke || toLineStrip) {
-                multiTool.complete(undefined, true);
+                multiTool.complete();
               }
               toolset = void (0);
             } else {
@@ -568,7 +568,7 @@ export class AnnotationLayerView extends Tab {
             setTool(/*parent=*/currentTool);
           } else if (currentTool.annotationType === toolset) {
             if (toSpoke || toLineStrip || toCollection) {
-              multiTool.complete();
+              multiTool.complete(undefined, true);
             }
             toolset = void (0);
             highlButton(mskey);

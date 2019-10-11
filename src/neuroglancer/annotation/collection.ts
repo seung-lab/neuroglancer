@@ -196,7 +196,7 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
     }
   }
 
-  complete(shortcut?: boolean, killchild?: boolean): boolean {
+  complete(shortcut?: boolean, endChild?: boolean): boolean {
     let isChildToolSet = false, hasChildren = false;
     if (this.inProgressAnnotation) {
       isChildToolSet = <boolean>!!this.childTool;
@@ -214,14 +214,15 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
       const childInProgress = nonPointTool ? nonPointTool.inProgressAnnotation : void (0);
       const childCount = (<Collection>this.inProgressAnnotation!.reference.value!).entries.length;
       let isChildInProgressCollection = false;
+      let success = false;
       let collection: Collection;
       if (childInProgress) {
         collection = <Collection>childInProgress!.reference.value!;
         isChildInProgressCollection = <boolean>!!(collection && collection.entries);
       }
       const completeChild = (): boolean => {
-        const success = (<MultiStepAnnotationTool>this.childTool!).complete(shortcut);
-        if (killchild) {
+        const successful = (<MultiStepAnnotationTool>this.childTool!).complete(shortcut);
+        if (endChild) {
           this.childTool!.dispose();
           this.childTool = undefined;
           this.layer.tool.changed.dispatch();
@@ -232,19 +233,20 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
             key.classList.remove('neuroglancer-child-tool');
           }
         }
-        return success;
+        return successful;
       };
 
       if (isChildInProgressCollection) {
         if (collection!.entries.length > 1) {
-          const success = completeChild();
-          if (success) {
+          success = completeChild();
+          if (success && !endChild) {
             return success;
           }
         }
       }
 
-      if ((!childInProgress && childCount === 1) || childCount > 1) {
+      // success is true if, child annotation is a completed collection
+      if (((!childInProgress || success) && childCount === 1) || childCount > 1) {
         if (this.childTool) {
           this.childTool!.dispose();
         }
