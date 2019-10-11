@@ -44,19 +44,12 @@ export abstract class RenderedPanel extends RefCounted {
 
   setGLViewport() {
     let panelInfo = this.panelInfo;
-    const clientRect = panelInfo.clientRect;
-    let clientRectLeft = 0;
-    let clientRectTop = 0;
-    if (clientRect) {
-      clientRectLeft = clientRect.left;
-      clientRectTop = clientRect.top;
-    }
     const canvasRect = this.context.canvasRect!;
     const scaleX = canvasRect.width / this.context.canvas.width;
     const scaleY = canvasRect.height / this.context.canvas.height;
-    let left = (panelInfo.clientLeft + clientRectLeft - canvasRect.left) * scaleX;
+    let left = (panelInfo.clientLeft + panelInfo.clientRectLeft - canvasRect.left) * scaleX;
     let width = panelInfo.clientWidth;
-    let top = (clientRectTop - canvasRect.top + panelInfo.clientTop) * scaleY;
+    let top = (panelInfo.clientRectTop - canvasRect.top + panelInfo.clientTop) * scaleY;
     let height = panelInfo.clientHeight;
     let bottom = top + height;
     let gl = this.gl;
@@ -82,13 +75,14 @@ export abstract class RenderedPanel extends RefCounted {
 }
 
 class PanelInfo {
-  clientLeft: number;
-  clientTop: number;
-  clientWidth: number;
-  clientHeight: number;
-  offsetWidth: number;
-  offsetHeight: number;
-  clientRect: ClientRect|undefined;
+  clientLeft = 0;
+  clientTop = 0;
+  clientWidth = 0;
+  clientHeight = 0;
+  offsetWidth = 0;
+  offsetHeight = 0;
+  clientRectLeft = 0;
+  clientRectTop = 0;
 }
 
 export class DisplayContext extends RefCounted implements FrameNumberCounter {
@@ -171,23 +165,29 @@ export class DisplayContext extends RefCounted implements FrameNumberCounter {
     this.scheduleRedraw();
   }
 
+  private updatePanelInfo() {
+    let canvas = this.canvas;
+    canvas.width = canvas.offsetWidth;
+    canvas.height = canvas.offsetHeight;
+    this.canvasRect = canvas.getBoundingClientRect();
+
+    for (const panel of this.panels) {
+      const panelInfo = panel.panelInfo;
+      const clientRect = panel.element.getBoundingClientRect();
+      panelInfo.clientLeft = panel.element.clientLeft;
+      panelInfo.clientTop = panel.element.clientTop;
+      panelInfo.clientWidth = panel.element.clientWidth;
+      panelInfo.clientHeight = panel.element.clientHeight;
+      panelInfo.offsetWidth = panel.element.offsetWidth;
+      panelInfo.offsetHeight = panel.element.offsetHeight;
+      panelInfo.clientRectLeft = clientRect.left;
+      panelInfo.clientRectTop = clientRect.top;
+    }
+  }
+
   scheduleRedraw() {
     if (this.updatePending === null) {
-      let canvas = this.canvas;
-      canvas.width = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
-      this.canvasRect = canvas.getBoundingClientRect();
-
-      for (const panel of this.panels) {
-        const panelInfo = panel.panelInfo;
-        panelInfo.clientLeft = panel.element.clientLeft;
-        panelInfo.clientTop = panel.element.clientTop;
-        panelInfo.clientWidth = panel.element.clientWidth;
-        panelInfo.clientHeight = panel.element.clientHeight;
-        panelInfo.offsetWidth = panel.element.offsetWidth;
-        panelInfo.offsetHeight = panel.element.offsetHeight;
-        panelInfo.clientRect = panel.element.getBoundingClientRect();
-      }
+      this.updatePanelInfo();
 
       this.updatePending = requestAnimationFrame(this.update.bind(this));
     }
