@@ -637,36 +637,46 @@ class SplitPreview extends RefCounted {
     const button = document.createElement('button');
     button.textContent = '🔮';
     button.title = 'Split preview';
+    const enablePreviewStyles = () => {
+      this.inPreviewMode = true;
+      button.title = 'Turn off split preview';
+      button.style.borderStyle = 'inset';
+      button.style.filter = 'invert(0.15)';
+      button.style.webkitFilter = 'invert(0.15)';
+    };
     button.addEventListener('click', () => {
       if (!this.previewPending) {
         if (this.inPreviewMode) {
           this.disablePreview();
         } else {
-          this.inPreviewMode = true;
-          button.title = 'Turn off split preview';
-          button.style.borderStyle = 'inset';
-          button.style.filter = 'invert(0.15)';
-          button.style.webkitFilter = 'invert(0.15)';
           if (this.cachedPreview) {
+            enablePreviewStyles();
             this.enablePreview();
           } else {
             const {sources, sinks} = this.annotationLayer.getSourcesAndSinks();
-            this.previewPending = true;
-            this.wrapper.chunkedGraphLayer!.splitPreview(sources, sinks)
-                .then(({supervoxelConnectedComponents, isSplitIllegal}) => {
-                  this.previewPending = false;
-                  // Cache results in case the user wants to toggle looking at preview and multicut
-                  this.cachedPreview = true;
-                  this.cachedPreviewConnectedComponents = supervoxelConnectedComponents;
-                  this.cachedLegality = isSplitIllegal;
-                  this.enablePreview();
-                })
-                .catch(() => {
-                  StatusMessage.messageWithAction(
-                      'Split preview is not supported for this dataset. ', 'Ok', () => {});
-                  this.revertPreviewButton();
-                  this.previewPending = false;
-                });
+            if (sources.length && sinks.length) {
+              this.previewPending = true;
+              enablePreviewStyles();
+              this.wrapper.chunkedGraphLayer!.splitPreview(sources, sinks)
+                  .then(({supervoxelConnectedComponents, isSplitIllegal}) => {
+                    this.previewPending = false;
+                    // Cache results in case the user wants to toggle looking at preview and
+                    // multicut
+                    this.cachedPreview = true;
+                    this.cachedPreviewConnectedComponents = supervoxelConnectedComponents;
+                    this.cachedLegality = isSplitIllegal;
+                    this.enablePreview();
+                  })
+                  .catch(() => {
+                    StatusMessage.messageWithAction(
+                        'Split preview is not supported for this dataset. ', 'Ok', () => {});
+                    this.revertPreviewButton();
+                    this.previewPending = false;
+                  });
+            } else {
+              StatusMessage.showTemporaryMessage(
+                  'You must select at least one source and one sink to perform a split preview.', 5000);
+            }
           }
         }
       }
