@@ -544,6 +544,7 @@ export class AnnotationLayerView extends Tab {
           }
           if (parent) {
             parent.childTool = tool ? new (<any>tool)(this.layer, {toolbox, parent}) : void (0);
+            parent.toolset = tool;
             this.layer.tool.changed.dispatch();
           } else {
             this.layer.tool.value = tool ? new tool(this.layer, {toolbox}) : void (0);

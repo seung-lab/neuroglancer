@@ -88,9 +88,11 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
   toolbox: HTMLDivElement;
   childTool: PlacePointTool|PlaceBoundingBoxTool|PlaceLineTool|PlaceSphereTool|PlaceLineStripTool|
       PlaceSpokeTool|undefined;
+  initObject: any;
   constructor(public layer: UserLayerWithAnnotations, options: any) {
     super(layer, options);
     this.toolbox = options.toolbox;
+    this.initObject = options;
   }
 
   updateLast() {
@@ -113,11 +115,15 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
     return;
   }
 
+  reInitChild() {
+    this.childTool = <any>new this.toolset(this.layer, {...this.initObject, parent: this});
+  }
+
   appendNewChildAnnotation(
       oldAnnotationRef: AnnotationReference, mouseState: MouseSelectionState,
       spoofMouse?: MouseSelectionState) {
     // This function is only called by Collection Sub Classes with auto build: Spoke, LineStrip
-    this.childTool = <any>new this.toolset(this.layer, {});
+    // this.childTool = <any>new this.toolset(this.layer, {});
     this.childTool!.trigger(mouseState, oldAnnotationRef, spoofMouse);
     this.updateLast();
   }
@@ -248,8 +254,12 @@ export class MultiStepAnnotationTool extends PlaceAnnotationTool {
       // success is true if, child annotation is a completed collection
       if (((!childInProgress || success) && childCount === 1) || childCount > 1) {
         if (this.childTool) {
-          this.childTool!.dispose();
+          this.childTool.dispose();
+          if (!endChild) {
+            this.reInitChild();
+          }
         }
+
         const {reference, annotationLayer} = this.inProgressAnnotation!;
         annotationLayer.source.commit(reference);
         StatusMessage.showTemporaryMessage(
