@@ -32,9 +32,10 @@ import {TrackableAlphaValue, trackableAlphaValue} from 'neuroglancer/trackable_a
 import {TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
 import {registerNested, TrackableValueInterface, WatchableRefCounted, WatchableValue} from 'neuroglancer/trackable_value';
 import {registerTool, Tool} from 'neuroglancer/ui/tool';
+import {VoidScroll} from 'neuroglancer/ui/voidscroll';
 import {TrackableRGB} from 'neuroglancer/util/color';
 import {Borrowed, Owned, RefCounted} from 'neuroglancer/util/disposable';
-import {removeChildren, removeFromParent} from 'neuroglancer/util/dom';
+import {removeChildren} from 'neuroglancer/util/dom';
 import {mat3, mat3FromMat4, mat4, transformVectorByMat4, vec3} from 'neuroglancer/util/geom';
 import {verifyObject, verifyObjectProperty, verifyOptionalInt, verifyOptionalString, verifyString} from 'neuroglancer/util/json';
 import {NullarySignal} from 'neuroglancer/util/signal';
@@ -378,6 +379,8 @@ function getCenterPosition(annotation: Annotation, transform: mat4) {
 export class AnnotationLayerView extends Tab {
   private annotationListContainer = document.createElement('ul');
   private annotationListElements = new Map<string, HTMLElement>();
+  private annotationVoidScroll: VoidScroll;
+  private annotationsToAdd: HTMLElement[] = [];
   private annotationTags = new Map<number, HTMLOptionElement>();
   private previousSelectedId: string|undefined;
   private previousHoverId: string|undefined;
@@ -537,6 +540,21 @@ export class AnnotationLayerView extends Tab {
     this.registerDisposer(
         this.annotationLayer.hoverState.changed.add(() => this.updateHoverView()));
     this.registerDisposer(this.state.changed.add(() => this.updateSelectionView()));
+
+    this.annotationListContainer.style.position = 'relative';
+    this.annotationListContainer.style.overflow = 'hidden';
+    const scrollArea = document.createElement('div');
+    scrollArea.style.position = 'absolute';
+    this.annotationListContainer.appendChild(scrollArea);
+    const scrollbar = document.createElement('div');
+    scrollbar.style.width = '100%;'
+    scrollbar.style.height = '100%;'
+    scrollbar.style.overflow = 'auto';
+    const scrollbarFiller = document.createElement('div');
+    scrollbar.appendChild(scrollbarFiller);
+    this.annotationListContainer.appendChild(scrollbar);
+    this.annotationVoidScroll =
+        new VoidScroll(scrollArea, scrollbar, scrollbarFiller, this.groupAnnotations.element);
   }
 
   private updateSelectionView() {
@@ -559,7 +577,7 @@ export class AnnotationLayerView extends Tab {
       const element = this.annotationListElements.get(newSelectedId);
       if (element !== undefined) {
         element.classList.add('neuroglancer-annotation-selected');
-        element.scrollIntoView();
+        element.scrollIntoView(); //TODO: use the voidscroll
         // Scrolls just a pixel too far, this makes it look prettier
         this.annotationListContainer.scrollTop -= 1;
       }
@@ -593,11 +611,11 @@ export class AnnotationLayerView extends Tab {
   }
 
   private addAnnotationElementHelper(annotation: Annotation) {
-    const {annotationLayer, annotationListContainer, annotationListElements} = this;
+    const {annotationLayer, annotationListElements} = this;
     const {objectToGlobal} = annotationLayer;
 
     const element = this.makeAnnotationListElement(annotation, objectToGlobal);
-    annotationListContainer.appendChild(element);
+    this.annotationsToAdd.push(element);
     annotationListElements.set(annotation.id, element);
 
     element.addEventListener('mouseenter', () => {
@@ -622,13 +640,15 @@ export class AnnotationLayerView extends Tab {
     if (this.updated) {
       return;
     }
-    const {annotationLayer, annotationListContainer, annotationListElements} = this;
+    const {annotationLayer, annotationListElements} = this;
     const {source} = annotationLayer;
-    removeChildren(annotationListContainer);
+    this.annotationVoidScroll.removeAll();
     annotationListElements.clear();
+    this.annotationsToAdd = [];
     for (const annotation of source) {
       this.addAnnotationElementHelper(annotation);
     }
+    this.annotationVoidScroll.addElements(this.annotationsToAdd);
     this.resetOnUpdate();
   }
 
@@ -636,7 +656,9 @@ export class AnnotationLayerView extends Tab {
     if (!this.visible) {
       return;
     }
+    this.annotationsToAdd = [];
     this.addAnnotationElementHelper(annotation);
+    this.annotationVoidScroll.addElement(this.annotationsToAdd[0]);
     this.resetOnUpdate();
   }
 
@@ -674,7 +696,7 @@ export class AnnotationLayerView extends Tab {
     }
     let element = this.annotationListElements.get(annotationId);
     if (element) {
-      removeFromParent(element);
+      this.annotationVoidScroll.removeElement(element);
       this.annotationListElements.delete(annotationId);
     }
     this.resetOnUpdate();
@@ -718,6 +740,7 @@ export class AnnotationLayerView extends Tab {
   }
 
   private filterAnnotationsByTag(tagId: number) {
+    //TODO: update this to work with voidscroll
     for (const [annotationId, annotationElement] of this.annotationListElements) {
       if (tagId === 0 ||
           this.annotationLayer.source.isAnnotationTaggedWithTag(annotationId, tagId)) {
