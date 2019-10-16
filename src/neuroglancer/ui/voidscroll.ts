@@ -16,7 +16,6 @@ export class VoidScroll {
     this.scrollbarFiller = scrollbarFiller;
     this.sizeParent = sizeParent;
 
-    //TODO: these aren't working...
     scrollArea.addEventListener('wheel', function(this: VoidScroll, event: WheelEvent) {
       scrollbar.scrollTop += event.deltaY;
       this.updateScrollAreaPos();
@@ -46,8 +45,8 @@ export class VoidScroll {
     const startH = this.heights[startI];
     const offset = startH - h;
     this.scrollArea.style.top = offset + 'px';
-    console.log(
-        'startI: ' + startI + ', endI: ' + endI + ', height: ' + this.sizeParent.offsetHeight);
+    //console.log(
+    //    'startI: ' + startI + ', endI: ' + endI + ', height: ' + this.sizeParent.offsetHeight);
   }
 
   private addElementHelper(element: HTMLElement) {

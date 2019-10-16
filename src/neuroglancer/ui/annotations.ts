@@ -543,13 +543,15 @@ export class AnnotationLayerView extends Tab {
 
     this.annotationListContainer.style.position = 'relative';
     this.annotationListContainer.style.overflow = 'hidden';
+    this.annotationListContainer.style.height = '100%';
     const scrollArea = document.createElement('div');
     scrollArea.style.position = 'absolute';
     this.annotationListContainer.appendChild(scrollArea);
     const scrollbar = document.createElement('div');
-    scrollbar.style.width = '100%;'
-    scrollbar.style.height = '100%;'
+    scrollbar.style.width = '100%';
+    scrollbar.style.height = '100%';
     scrollbar.style.overflow = 'auto';
+    scrollbar.style.zIndex = '100'; //TODO ughhhh
     const scrollbarFiller = document.createElement('div');
     scrollbar.appendChild(scrollbarFiller);
     this.annotationListContainer.appendChild(scrollbar);
@@ -577,7 +579,7 @@ export class AnnotationLayerView extends Tab {
       const element = this.annotationListElements.get(newSelectedId);
       if (element !== undefined) {
         element.classList.add('neuroglancer-annotation-selected');
-        element.scrollIntoView(); //TODO: use the voidscroll
+        element.scrollIntoView();  // TODO: use the voidscroll
         // Scrolls just a pixel too far, this makes it look prettier
         this.annotationListContainer.scrollTop -= 1;
       }
@@ -740,7 +742,7 @@ export class AnnotationLayerView extends Tab {
   }
 
   private filterAnnotationsByTag(tagId: number) {
-    //TODO: update this to work with voidscroll
+    // TODO: update this to work with voidscroll
     for (const [annotationId, annotationElement] of this.annotationListElements) {
       if (tagId === 0 ||
           this.annotationLayer.source.isAnnotationTaggedWithTag(annotationId, tagId)) {
