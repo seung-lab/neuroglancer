@@ -16,12 +16,12 @@ export class VoidScroll {
     this.scrollbarFiller = scrollbarFiller;
     this.sizeParent = sizeParent;
 
-    scrollArea.addEventListener('wheel', function(this: VoidScroll, event: WheelEvent) {
-      scrollbar.scrollTop += event.deltaY;
+    this.scrollArea.addEventListener('wheel', function(this: VoidScroll, event: WheelEvent) {
+      this.scrollbar.scrollTop += event.deltaY;
       this.updateScrollAreaPos();
     }.bind(this));
 
-    scrollbar.addEventListener('scroll', function(this: VoidScroll) {
+    this.scrollbar.addEventListener('scroll', function(this: VoidScroll) {
       this.updateScrollAreaPos();
     }.bind(this));
   }
@@ -108,6 +108,19 @@ export class VoidScroll {
     this.heightMap = new Map<number, HTMLElement>();
     this.totalH = 0;
     this.loadedElements = [];
+  }
+
+  scrollTo(element: HTMLElement) {
+    let h = 0;
+    for (const [hKey, elem] of this.heightMap) {
+      if (elem === element) {
+        h = hKey;
+        break;
+      }
+    }
+    // Scrolls just a pixel too far, this makes it look prettier
+    this.scrollbar.scrollTop = h - 1;
+    this.updateScrollAreaPos();
   }
 
   private updateScrollHeight() {

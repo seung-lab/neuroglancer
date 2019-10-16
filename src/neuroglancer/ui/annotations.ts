@@ -579,9 +579,7 @@ export class AnnotationLayerView extends Tab {
       const element = this.annotationListElements.get(newSelectedId);
       if (element !== undefined) {
         element.classList.add('neuroglancer-annotation-selected');
-        element.scrollIntoView();  // TODO: use the voidscroll
-        // Scrolls just a pixel too far, this makes it look prettier
-        this.annotationListContainer.scrollTop -= 1;
+        this.annotationVoidScroll.scrollTo(element);
       }
     }
     this.previousSelectedId = newSelectedId;
