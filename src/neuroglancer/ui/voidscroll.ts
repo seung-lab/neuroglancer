@@ -1,3 +1,5 @@
+import ResizeObserver from "resize-observer-polyfill";
+
 export class VoidScroll {
   private scrollArea: HTMLElement;
   private scrollbar: HTMLElement;
@@ -24,6 +26,9 @@ export class VoidScroll {
     this.scrollbar.addEventListener('scroll', function(this: VoidScroll) {
       this.updateScrollAreaPos();
     }.bind(this));
+
+    const resizeObserver = new ResizeObserver(this.updateScrollAreaPos.bind(this));
+    resizeObserver.observe(this.sizeParent);
   }
 
   private updateScrollAreaPos() {
@@ -45,8 +50,6 @@ export class VoidScroll {
     const startH = this.heights[startI];
     const offset = startH - h;
     this.scrollArea.style.top = offset + 'px';
-    //console.log(
-    //    'startI: ' + startI + ', endI: ' + endI + ', height: ' + this.sizeParent.offsetHeight);
   }
 
   private addElementHelper(element: HTMLElement) {
