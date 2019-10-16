@@ -541,17 +541,13 @@ export class AnnotationLayerView extends Tab {
         this.annotationLayer.hoverState.changed.add(() => this.updateHoverView()));
     this.registerDisposer(this.state.changed.add(() => this.updateSelectionView()));
 
-    this.annotationListContainer.style.position = 'relative';
-    this.annotationListContainer.style.overflow = 'hidden';
-    this.annotationListContainer.style.height = '100%';
+    this.annotationListContainer.parentElement!.classList.add('neuroglancer-annotation-hiding-list-parent');
+    this.annotationListContainer.classList.add('neuroglancer-annotation-hiding-list-container');
     const scrollArea = document.createElement('div');
-    scrollArea.style.position = 'absolute';
+    scrollArea.classList.add('neuroglancer-annotation-hiding-list-scrollarea');
     this.annotationListContainer.appendChild(scrollArea);
     const scrollbar = document.createElement('div');
-    scrollbar.style.width = '100%';
-    scrollbar.style.height = '100%';
-    scrollbar.style.overflow = 'auto';
-    scrollbar.style.zIndex = '100'; //TODO ughhhh
+    scrollbar.classList.add('neuroglancer-annotation-hiding-list-scrollbar');
     const scrollbarFiller = document.createElement('div');
     scrollbar.appendChild(scrollbarFiller);
     this.annotationListContainer.appendChild(scrollbar);
