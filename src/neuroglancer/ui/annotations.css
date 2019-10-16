@@ -24,8 +24,8 @@
 .neuroglancer-annotation-list { 
   list-style-type: none;
   margin: 0px;
-  padding: 5px;
   overflow-y: auto;
+  padding: 0px;
   flex: 1;
   min-height: 0px;
 }
@@ -139,6 +139,7 @@
 
 .neuroglancer-annotation-hiding-list-scrollarea {
   position: absolute;
+  padding: 5px;
 }
 
 .neuroglancer-annotation-hiding-list-scrollbar {

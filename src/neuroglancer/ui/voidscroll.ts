@@ -1,4 +1,4 @@
-import ResizeObserver from "resize-observer-polyfill";
+import ResizeObserver from 'resize-observer-polyfill';
 
 export class VoidScroll {
   private scrollArea: HTMLElement;
@@ -50,6 +50,8 @@ export class VoidScroll {
     const startH = this.heights[startI];
     const offset = startH - h;
     this.scrollArea.style.top = offset + 'px';
+    this.scrollArea.style.right = (this.scrollbar.offsetWidth - this.scrollbar.clientWidth) + 'px';
+    this.scrollArea.style.left = '0px';
   }
 
   private addElementHelper(element: HTMLElement) {
