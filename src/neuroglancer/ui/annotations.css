@@ -140,6 +140,7 @@
 .neuroglancer-annotation-hiding-list-scrollarea {
   position: absolute;
   padding: 5px;
+  left: 0px;
 }
 
 .neuroglancer-annotation-hiding-list-scrollbar {
@@ -147,6 +148,10 @@
   height: 100%;
   overflow: auto;
   z-index: 100;
+}
+
+.neuroglancer-annotation-hiding-list-hiddenitem {
+  display: none;
 }
 
 #exportToCSVButton {
