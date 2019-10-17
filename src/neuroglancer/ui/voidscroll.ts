@@ -20,8 +20,10 @@ export class VoidScroll {
     this.sizeParent = sizeParent;
 
     this.scrollArea.addEventListener('wheel', function(this: VoidScroll, event: WheelEvent) {
-      this.scrollbar.scrollTop += event.deltaY;
-      this.updateScrollAreaPos();
+      this.scrollbar.scrollBy({
+        top: event.deltaY,
+        behavior: 'auto'
+      });
     }.bind(this));
 
     this.scrollbar.addEventListener('scroll', function(this: VoidScroll) {
