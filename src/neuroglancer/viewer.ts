@@ -15,6 +15,7 @@
  */
 
 import debounce from 'lodash/debounce';
+import {MultiStepAnnotationTool, PlaceAnnotationTool} from 'neuroglancer/annotation/annotation';
 import {AnnotationUserLayer} from 'neuroglancer/annotation/user_layer';
 import {initAuthTokenSharedValue} from 'neuroglancer/authentication/frontend';
 import {CapacitySpecification, ChunkManager, ChunkQueueManager, FrameNumberCounter} from 'neuroglancer/chunk_manager/frontend';
@@ -165,11 +166,12 @@ export interface ViewerOptions extends ViewerUIOptions, VisibilityPrioritySpecif
   resetStateWhenEmpty: boolean;
 }
 
-const defaultViewerOptions = "undefined" !== typeof NEUROGLANCER_OVERRIDE_DEFAULT_VIEWER_OPTIONS ?
-  NEUROGLANCER_OVERRIDE_DEFAULT_VIEWER_OPTIONS : {
-    showLayerDialog: true,
-    resetStateWhenEmpty: true,
-  };
+const defaultViewerOptions = 'undefined' !== typeof NEUROGLANCER_OVERRIDE_DEFAULT_VIEWER_OPTIONS ?
+    NEUROGLANCER_OVERRIDE_DEFAULT_VIEWER_OPTIONS :
+    {
+      showLayerDialog: true,
+      resetStateWhenEmpty: true,
+    };
 
 function makeViewerContextMenu(viewer: Viewer) {
   const menu = new ContextMenu();
@@ -703,7 +705,8 @@ export class Viewer extends RefCounted implements ViewerState {
     this.bindAction('complete-annotation', () => {
       const selectedLayer = this.selectedLayer.layer;
       if (selectedLayer === undefined) {
-        StatusMessage.showTemporaryMessage('The complete annotate command requires a layer to be selected.');
+        StatusMessage.showTemporaryMessage(
+            'The complete annotate command requires a layer to be selected.');
         return;
       }
       const userLayer = selectedLayer.layer;
@@ -712,12 +715,13 @@ export class Viewer extends RefCounted implements ViewerState {
             JSON.stringify(selectedLayer.name)}) does not have an active annotation tool.`);
         return;
       }
-      if (!(<any>userLayer.tool.value).complete) {
+      if (!(<PlaceAnnotationTool>userLayer.tool.value).complete) {
         StatusMessage.showTemporaryMessage(`The selected layer (${
-            JSON.stringify(selectedLayer.name)}) does not support annotation completion operation.`);
+            JSON.stringify(
+                selectedLayer.name)}) does not support annotation completion operation.`);
         return;
       }
-      (<any>userLayer.tool.value).complete(true);
+      (<MultiStepAnnotationTool>userLayer.tool.value).complete(true);
     });
 
     this.bindAction('toggle-axis-lines', () => this.showAxisLines.toggle());
