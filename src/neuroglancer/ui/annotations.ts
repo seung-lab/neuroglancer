@@ -1388,57 +1388,57 @@ export class AnnotationDetailsTab extends Tab {
         target = [value.id];
       }
       const first = annotationLayer.source.getReference(target[0]).value!;
-      let srcpt;
+      let sourcePoint;
       switch (first.type) {
         case AnnotationType.AXIS_ALIGNED_BOUNDING_BOX:
         case AnnotationType.LINE:
-          srcpt = (<Line|AxisAlignedBoundingBox>first).pointA;
+          sourcePoint = (<Line|AxisAlignedBoundingBox>first).pointA;
           break;
         case AnnotationType.POINT:
-          srcpt = (<Point>first).point;
+          sourcePoint = (<Point>first).point;
           break;
         case AnnotationType.ELLIPSOID:
-          srcpt = (<Ellipsoid>first).center;
+          sourcePoint = (<Ellipsoid>first).center;
           break;
         case AnnotationType.LINE_STRIP:
         case AnnotationType.SPOKE:
         case AnnotationType.COLLECTION:
-          srcpt = (<LineStrip>first).source;
+          sourcePoint = (<LineStrip>first).source;
           break;
       }
 
-      const coll = <Collection>{
+      const collection = <Collection>{
         id: '',
         type: AnnotationType.COLLECTION,
         description: '',
         entries: [],  // identical totarget
         segments: [],
         connected: false,
-        source: srcpt,
+        source: sourcePoint,
         entry: () => {},
         childrenVisible: new TrackableBoolean(true, true)
       };
-      coll.entry = (index: number) =>
-          (<LocalAnnotationSource>annotationLayer.source).get(coll.entries[index]);
+      collection.entry = (index: number) =>
+          (<LocalAnnotationSource>annotationLayer.source).get(collection.entries[index]);
 
-      const ref = (<AnnotationSource>annotationLayer.source).add(coll, true);
+      const collectionreference = (<AnnotationSource>annotationLayer.source).add(collection, true);
       if (first.parentId) {
         const firstParent = (<AnnotationSource>annotationLayer.source).getReference(first.parentId);
-        (<AnnotationSource>annotationLayer.source).childReassignment([ref.value!.id], firstParent);
+        (<AnnotationSource>annotationLayer.source).childReassignment([collectionreference.value!.id], firstParent);
       }
-      const emptyColl = (<AnnotationSource>annotationLayer.source).childReassignment(target, ref);
+      const emptyCollection = (<AnnotationSource>annotationLayer.source).childReassignment(target, collectionreference);
 
       // It shouldn't be possible for a collection to be empty twice, that is the child says the
       // parent is empty and then a subsequent child says the same
-      emptyColl.forEach((reff: AnnotationReference) => {
+      emptyCollection.forEach((annotationReference: AnnotationReference) => {
         try {
           // Delete annotation and all its children
-          annotationLayer.source.delete(reff);
+          annotationLayer.source.delete(annotationReference);
         } finally {
-          reff.dispose();
+          annotationReference.dispose();
         }
       });
-      this.state.value = {id: ref.id};
+      this.state.value = {id: collectionreference.id};
     });
     return button;
   }
@@ -1448,13 +1448,11 @@ export class AnnotationDetailsTab extends Tab {
     const value = this.state.value!;
     const button = makeTextIconButton('💥', 'Free annotations');
     button.addEventListener('click', () => {
-      // Delete annotation and send its children to an ancestor or root
-      // TODO: works partially but need to recreate parent element
-      const ref = annotationLayer.source.getReference(value.id);
+      const reference = annotationLayer.source.getReference(value.id);
       try {
-        annotationLayer.source.delete(ref);
+        annotationLayer.source.delete(reference);
       } finally {
-        ref.dispose();
+        reference.dispose();
       }
     });
     return button;
@@ -1472,12 +1470,12 @@ export class AnnotationDetailsTab extends Tab {
         target = [value.id];
       }
       target.forEach((id: string) => {
-        const ref = annotationLayer.source.getReference(id);
+        const reference = annotationLayer.source.getReference(id);
         try {
           // Delete annotation and all its children
-          annotationLayer.source.delete(ref, true);
+          annotationLayer.source.delete(reference, true);
         } finally {
-          ref.dispose();
+          reference.dispose();
         }
       });
     });
