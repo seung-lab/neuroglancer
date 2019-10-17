@@ -5,8 +5,6 @@ export class VoidScroll {
   private scrollbar: HTMLElement;
   private scrollbarFiller: HTMLElement;
   private sizeParent: HTMLElement;
-  //private heights: number[] = [];
-  //private heightMap = new TwoWayMap<number, HTMLElement>();
   private elementHeights: [HTMLElement, number][] = [];
   private elementIndices = new Map<HTMLElement, number>();
   private totalH = 0;
@@ -37,39 +35,28 @@ export class VoidScroll {
         new ResizeObserver(function(this: VoidScroll, entries: ResizeObserverEntry[]) {
           for (const entry of entries) {
             // on annotation resize, update all subsequent annotation heights
-            // TODO: make sure this catches resize due to sidebar adjusted
+
             const element = <HTMLElement>entry.target;
             const i = this.elementIndices.get(element)!;
-            let nextHeight = 0;
-            if (i + 1 === this.elementHeights.length) {
-              nextHeight = this.totalH;
-            }
-            else {
-              nextHeight = this.elementHeights[i + 1][1];
-            }
+            const nextHeight = (i + 1 === this.elementHeights.length) ?
+                this.totalH :
+                this.elementHeights[i + 1][1];
             const oldHeight = nextHeight - this.elementHeights[i][1];
             const newHeight = element.offsetHeight;
             const delta = newHeight - oldHeight;
-            this.shiftHeightsAfter(i + 1, delta);
-            
-            this.totalH += delta;
-            this.updateScrollHeight();
-            this.updateScrollAreaPos();
+            if (delta === 0 ||
+                element.classList.contains('neuroglancer-annotation-hiding-list-hiddenitem')) {
+              // Don't worry about elements that didn't change vertical size, or changed vertical
+              // size because they were hidden
+              continue;
+            }
 
-            /*const h = this.heightMap.revGet(element)!; // TODO: make sure the reference is always the same
-            const nextI = this.findHeight(h) + 1;
-            if (nextI == this.heights.length) continue;
-            const oldHeight = this.heights[nextI];
-            const newHeight = element.offsetHeight;
-            const deltaH = newHeight - oldHeight;
-            console.log("Updating " + element.innerHTML + " at h=" + h + ": old height " + oldHeight + ", new height " + newHeight);
-            for (let i = nextI; i < this.heights.length; i++) {
-              var oldH = this.heights[i];
-              this.heights[i] = oldH + deltaH;
-              this.heightMap.set(oldH + deltaH, this.heightMap.get(oldH)!);
-              this.heightMap.delete(oldH);
-            }*/
+            this.shiftHeightsAfter(i + 1, delta);
+
+            this.totalH += delta;
           }
+          this.updateScrollHeight();
+          this.updateScrollAreaPos();
         }.bind(this));
   }
 
@@ -83,7 +70,7 @@ export class VoidScroll {
     const startI = this.findHeight(h);
     const endI = this.findHeight(h + this.sizeParent.offsetHeight);
     for (var i = startI; i <= endI; i++) {
-      const element = this.elementHeights[i][0];  
+      const element = this.elementHeights[i][0];
       element.classList.remove('neuroglancer-annotation-hiding-list-hiddenitem');
       this.loadedElements.push(element);
     }
@@ -127,29 +114,12 @@ export class VoidScroll {
     this.elementHeights.splice(i, 1);
     this.elementIndices.delete(element);
     this.shiftHeightsAfter(i, -h);
-    //for all in elementIndices, if element came after removed, then decrement its index
+    // shift indices of elements that came after the removed one
     for (const [el, ind] of this.elementIndices) {
       if (this.elementHeights[ind][1] > i) {
         this.elementIndices.set(el, ind - 1);
       }
     }
-
-    // TODO change
-    /*for (var i = 0; i < this.heights.length; i++) {
-      const hi = this.heights[i];
-      const hElem = this.heightMap.get(hi);
-      if (hElem === element) {
-        this.heightMap.delete(hi);
-        this.heights.splice(i, 1);
-        for (var j = i; j < this.heights.length; j++) {
-          var oldH = this.heights[j];
-          this.heights[j] = oldH - h;
-          this.heightMap.set(oldH - h, this.heightMap.get(oldH)!);
-          this.heightMap.delete(oldH);
-        }
-        break;
-      }
-    }*/
 
     this.totalH -= h;
     this.scrollArea.removeChild(element);
@@ -165,21 +135,11 @@ export class VoidScroll {
     this.elementHeights = [];
     this.elementIndices = new Map<HTMLElement, number>();
 
-    //this.heights = [];
-    //this.heightMap = new TwoWayMap<number, HTMLElement>();
     this.totalH = 0;
     this.loadedElements = [];
   }
 
   scrollTo(element: HTMLElement) {
-    /*let h = 0;
-    const map = this.heightMap.getMap();
-    for (const [hKey, elem] of map) {
-      if (elem === element) {
-        h = hKey;
-        break;
-      }
-    }*/
     const h = this.elementHeights[this.elementIndices.get(element)!][1];
     // Scrolls just a pixel too far, this makes it look prettier
     this.scrollbar.scrollTop = h - 1;
@@ -187,7 +147,8 @@ export class VoidScroll {
   }
 
   private updateScrollHeight() {
-    this.scrollbarFiller.style.height = this.totalH + 'px';
+    // Add some extra padding on the bottom
+    this.scrollbarFiller.style.height = (this.totalH + 10) + 'px';
   }
 
   private shiftHeightsAfter(startIndex: number, delta: number) {
@@ -214,40 +175,3 @@ export class VoidScroll {
     return r;
   }
 }
-
-/*class TwoWayMap<T, U> {
-  private map = new Map<T, U>();
-  private revMap = new Map<U, T>();
-
-  set(key: T, value: U) {
-    if (this.map.has(key)) {
-      console.log("KEY " + key + " IS ALREADY IN MAP");
-    }
-    this.map.set(key, value);
-    this.revMap.set(value, key);
-  }
-
-  get(key: T) {
-    return this.map.get(key);
-  }
-
-  revGet(value: U) {
-    return this.revMap.get(value);
-  }
-
-  delete(key: T) {
-    const value = this.get(key);
-    const wasIn = this.map.delete(key);
-    if (wasIn) {
-      this.revMap.delete(value!);
-    }
-  }
-
-  forEach(func: (value: U, key: T, map: Map<T, U>) => void) {
-    this.map.forEach(func);
-  }
-
-  getMap() {
-    return this.map;
-  }
-}*/
