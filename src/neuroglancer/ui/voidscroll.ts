@@ -150,7 +150,9 @@ export class VoidScroll {
 
   recalculateHeights() {
     this.totalH = 0;
+    this.scrollbar.scrollTop = 0;
     for (const [element, i] of this.elementIndices) {
+      element.classList.remove('neuroglancer-annotation-hiding-list-hiddenitem');
       const h = element.offsetHeight;
       this.elementHeights[i][1] = this.totalH;
       this.totalH += h;
