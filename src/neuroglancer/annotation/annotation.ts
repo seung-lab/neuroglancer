@@ -1,13 +1,20 @@
-import {Annotation, AnnotationReference, AnnotationType, AxisAlignedBoundingBox, Collection, Line} from 'neuroglancer/annotation';
+import {Annotation, AnnotationReference, AnnotationSource, AnnotationType, AxisAlignedBoundingBox, Collection, Line, LocalAnnotationSource} from 'neuroglancer/annotation';
+import {PlaceBoundingBoxTool} from 'neuroglancer/annotation/bounding_box';
+import {PlaceCollectionTool} from 'neuroglancer/annotation/collection';
+import {PlaceSphereTool} from 'neuroglancer/annotation/ellipsoid';
 import {AnnotationLayerState} from 'neuroglancer/annotation/frontend';
+import {PlaceLineTool} from 'neuroglancer/annotation/line';
+import {PlaceLineStripTool} from 'neuroglancer/annotation/line_strip';
+import {PlacePointTool} from 'neuroglancer/annotation/point';
+import {PlaceSpokeTool} from 'neuroglancer/annotation/spoke';
 import {MouseSelectionState} from 'neuroglancer/layer';
 import {StatusMessage} from 'neuroglancer/status';
+import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {UserLayerWithAnnotations} from 'neuroglancer/ui/annotations';
 import {Tool} from 'neuroglancer/ui/tool';
 import {vec3} from 'neuroglancer/util/geom';
 import {verifyObjectProperty, verifyOptionalString} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
-import {MultiStepAnnotationTool} from './collection';
 
 export function getMousePositionInAnnotationCoordinates(
     mouseState: MouseSelectionState, annotationLayer: AnnotationLayerState) {
@@ -26,7 +33,6 @@ export function getSelectedAssocatedSegment(annotationLayer: AnnotationLayerStat
 }
 
 export abstract class PlaceAnnotationTool extends Tool {
-  temp?: Annotation;
   group: string;
   annotationDescription: string|undefined;
   annotationType: AnnotationType.POINT|AnnotationType.LINE|
@@ -38,7 +44,7 @@ export abstract class PlaceAnnotationTool extends Tool {
     if (layer.annotationLayerState === undefined) {
       throw new Error(`Invalid layer for annotation tool.`);
     }
-    this.parentTool = options ? options.parent : void (0);
+    this.parentTool = options ? options.parent : undefined;
     this.annotationDescription = verifyObjectProperty(options, 'description', verifyOptionalString);
   }
 
@@ -46,9 +52,24 @@ export abstract class PlaceAnnotationTool extends Tool {
     return this.layer.annotationLayerState.value;
   }
 
-  complete() {
-    StatusMessage.showTemporaryMessage(`Only supported in collection annotations.`, 3000);
+  protected assignToParent(reference: AnnotationReference, parentReference?: AnnotationReference) {
+    if (!parentReference) {
+      return;
+    }
+    const parent = (<Collection>parentReference.value);
+    const annotation = reference.value;
+    if (!annotation || !parent) {
+      throw `Invalid reference for assignment: ${!annotation ? 'Child' : 'Parent'} has no value`;
+    }
+    // Directly changing reference values, AnnotationSource.update instead?
+    annotation.parentId = parentReference.id;
+    parent.entries.push(reference.id);
+    if (parent.segments && annotation.segments) {
+      parent.segments = [...parent.segments!, ...annotation.segments!];
+    }
   }
+
+  complete() {}
 }
 
 export abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
@@ -62,7 +83,7 @@ export abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
       oldAnnotation: Annotation, mouseState: MouseSelectionState,
       annotationLayer: AnnotationLayerState): Annotation;
 
-  isOrphanTool(): boolean {
+  private isOrphanTool(): boolean {
     const parent = this.parentTool;
     if (parent && parent.inProgressAnnotation) {
       return parent.childTool !== this;
@@ -96,7 +117,7 @@ export abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
       if (this.inProgressAnnotation === undefined || !this.inProgressAnnotation.reference.value) {
         const annotation = this.getInitialAnnotation(spoofMouse || mouseState, annotationLayer);
         if (parentRef) {
-          annotation.pid = parentRef.id;
+          annotation.parentId = parentRef.id;
         }
         const reference = annotationLayer.source.add(annotation, /*commit=*/false);
         if (parentRef) {
@@ -117,6 +138,7 @@ export abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
           disposer,
         };
         const mouseDisposer = mouseState.changed.add(updatePointB);
+        this.assignToParent(reference, parentRef);
       } else {
         updatePointB();
         if (this.inProgressAnnotation) {
@@ -165,4 +187,220 @@ export abstract class PlaceTwoCornerAnnotationTool extends TwoStepAnnotationTool
     const point = getMousePositionInAnnotationCoordinates(mouseState, annotationLayer);
     return {...oldAnnotation, pointB: point};
   }
+}
+
+export type SubAnnotationTool = PlacePointTool|PlaceBoundingBoxTool|PlaceLineTool|PlaceSphereTool|
+    PlaceLineStripTool|PlaceSpokeTool;
+type DiscreteAnnotationTool =
+    typeof PlacePointTool|typeof PlaceBoundingBoxTool|typeof PlaceLineTool|typeof PlaceSphereTool;
+type ContinuousAnnotationTool =
+    typeof PlaceCollectionTool|typeof PlaceLineStripTool|typeof PlaceSpokeTool;
+export type AnnotationTool = DiscreteAnnotationTool|ContinuousAnnotationTool;
+
+export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
+  inProgressAnnotation:
+      {annotationLayer: AnnotationLayerState, reference: AnnotationReference, disposer: () => void}|
+      undefined;
+  annotationType: AnnotationType.COLLECTION|AnnotationType.LINE_STRIP|AnnotationType.SPOKE;
+  toolset?: AnnotationTool;
+  toolbox: HTMLDivElement;
+  childTool: SubAnnotationTool|undefined;
+  initialOptions: any;
+  constructor(public layer: UserLayerWithAnnotations, options: any) {
+    super(layer, options);
+    this.toolbox = options.toolbox;
+    this.initialOptions = options;
+  }
+
+  private updateLast() {
+    const inprogress = this.inProgressAnnotation;
+    if (inprogress && inprogress.reference.value) {
+      const oldAnnotation = <Collection>inprogress.reference.value!;
+      const lastB = oldAnnotation.lastA;
+      const lastA = this.getChildRef();
+      const newAnnotation = {...oldAnnotation, lastA, lastB};
+      inprogress.annotationLayer.source.update(inprogress.reference, newAnnotation);
+    }
+  }
+
+  private getChildRef() {
+    if (this.childTool && this.inProgressAnnotation) {
+      const {entries} = <Collection>this.inProgressAnnotation.reference!.value!;
+      return this.inProgressAnnotation.annotationLayer.source.getReference(
+          entries[entries.length - 1]);
+    }
+    return;
+  }
+
+  protected reInitChild() {
+    if (!this.toolset) {
+      return;
+    }
+    this.childTool = <any>new this.toolset(this.layer, {...this.initialOptions, parent: this});
+  }
+
+  protected appendNewChildAnnotation(
+      oldAnnotationRef: AnnotationReference, mouseState: MouseSelectionState,
+      spoofMouse?: MouseSelectionState) {
+    this.childTool!.trigger(mouseState, oldAnnotationRef, spoofMouse);
+    this.updateLast();
+  }
+
+  protected getInitialAnnotation(
+      mouseState: MouseSelectionState, annotationLayer: AnnotationLayerState): Annotation {
+    const coll = <Collection>{
+      id: '',
+      type: this.annotationType,
+      description: '',
+      entries: [],
+      segments: [],
+      connected: false,
+      source:
+          vec3.transformMat4(vec3.create(), mouseState.position, annotationLayer.globalToObject),
+      entry: () => {},
+      childrenVisible: new TrackableBoolean(true, true)
+    };
+    coll.entry = (index: number) =>
+        (<LocalAnnotationSource>annotationLayer.source).get(coll.entries[index]);
+    return coll;
+  }
+
+  protected safeDelete(target: AnnotationReference) {
+    const source = <AnnotationSource>this.inProgressAnnotation!.annotationLayer!.source;
+    if (target) {
+      if (source.isPending(target.id)) {
+        target.dispose();
+      } else {
+        source.delete(target);
+      }
+    }
+  }
+
+  trigger(mouseState: MouseSelectionState, parentRef?: AnnotationReference) {
+    const {annotationLayer} = this;
+    if (annotationLayer === undefined || !this.childTool) {
+      // Not yet ready.
+      return;
+    }
+    if (mouseState.active) {
+      if (this.inProgressAnnotation === undefined || !this.inProgressAnnotation.reference.value) {
+        const annotation = this.getInitialAnnotation(mouseState, annotationLayer);
+        if (parentRef) {
+          annotation.parentId = parentRef.id;
+        }
+        const reference = annotationLayer.source.add(annotation, /*commit=*/false);
+        this.layer.selectedAnnotation.value = {id: reference.id};
+        this.childTool.trigger(mouseState, /*child=*/reference);
+        this.updateLast();
+        const disposer = () => {
+          mouseDisposer();
+          reference.dispose();
+        };
+        this.inProgressAnnotation = {
+          annotationLayer,
+          reference,
+          disposer,
+        };
+        const mouseDisposer = () => {};
+      } else {
+        this.childTool.trigger(mouseState, this.inProgressAnnotation.reference);
+        this.updateLast();
+      }
+    }
+  }
+
+  complete(shortcut?: boolean, endChild?: boolean): boolean {
+    let isChildToolSet = false, hasChildren = false;
+    if (this.inProgressAnnotation) {
+      isChildToolSet = <boolean>!!this.childTool;
+      const value = <any>this.inProgressAnnotation.reference.value;
+      hasChildren = value && value.entries.length;
+    }
+
+    if (isChildToolSet || hasChildren) {
+      if (shortcut) {
+        const {lastA, lastB} = <any>this.inProgressAnnotation!.reference!.value!;
+        this.safeDelete(lastA);
+        this.safeDelete(lastB);
+      }
+      const nonPointTool = (<MultiStepAnnotationTool|TwoStepAnnotationTool>this.childTool!);
+      const childInProgress = nonPointTool ? nonPointTool.inProgressAnnotation : undefined;
+      const childCount = (<Collection>this.inProgressAnnotation!.reference.value!).entries.length;
+      let isChildInProgressCollection = false;
+      let success = false;
+      let collection: Collection;
+      if (childInProgress) {
+        collection = <Collection>childInProgress!.reference.value!;
+        isChildInProgressCollection = <boolean>!!(collection && collection.entries);
+      }
+      const completeChild = (): boolean => {
+        const successful = (<SubAnnotationTool>this.childTool!).complete(shortcut);
+        if (endChild) {
+          this.childTool!.dispose();
+          this.childTool = undefined;
+          this.layer.tool.changed.dispatch();
+          this.layer.selectedAnnotation.changed.dispatch();
+
+          let key = this.toolbox.querySelector('.neuroglancer-child-tool');
+          if (key) {
+            key.classList.remove('neuroglancer-child-tool');
+          }
+        }
+        return !!successful;
+      };
+
+      if (isChildInProgressCollection) {
+        if (collection!.entries.length > 1) {
+          success = completeChild();
+          if (success && !endChild) {
+            return success;
+          }
+        }
+      }
+
+      // success is true if, child annotation is a completed collection
+      if (((!childInProgress || success) && childCount === 1) || childCount > 1) {
+        if (this.childTool) {
+          this.childTool.dispose();
+          if (!endChild) {
+            this.reInitChild();
+          }
+        }
+
+        const {reference, annotationLayer} = this.inProgressAnnotation!;
+        annotationLayer.source.commit(reference);
+        StatusMessage.showTemporaryMessage(`${
+            reference.value!.parentId ? 'Child a' :
+                                        'A'}nnotation ${reference.value!.id} complete.`);
+        this.inProgressAnnotation!.disposer();
+        this.inProgressAnnotation = undefined;
+        this.layer.selectedAnnotation.changed.dispatch();
+        return true;
+      }
+    }
+    // To complete a collection, it must have at least one completed annotation. An annotation is
+    // complete if it is not inProgress/pending or it is a point.
+    // If the child tool is a collection, it is completed first. Once the child collection is
+    // complete or cannot be completed (in which case it is ignored), then the collection can be
+    // completed.
+    StatusMessage.showTemporaryMessage(`No annotation has been made.`, 3000);
+    return false;
+  }
+
+  dispose() {
+    if (this.childTool) {
+      this.childTool!.dispose();
+    }
+    if (this.inProgressAnnotation) {
+      // completely delete the annotation
+      const annotation_ref = this.inProgressAnnotation.reference;
+      this.annotationLayer!.source.delete(annotation_ref, true);
+      this.inProgressAnnotation!.disposer();
+    }
+    super.dispose();
+  }
+
+  abstract get description(): string;
+
+  abstract toJSON(): string;
 }

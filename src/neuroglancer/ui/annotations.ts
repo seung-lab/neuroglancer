@@ -22,9 +22,8 @@ import './annotations.css';
 
 import debounce from 'lodash/debounce';
 import {Annotation, AnnotationReference, AnnotationSource, AnnotationTag, AnnotationType, AxisAlignedBoundingBox, Collection, Ellipsoid, getAnnotationTypeHandler, Line, LineStrip, LocalAnnotationSource, makeAnnotationId, Point, Spoke} from 'neuroglancer/annotation';
-import {PlaceAnnotationTool} from 'neuroglancer/annotation/annotation';
+import {MultiStepAnnotationTool, PlaceAnnotationTool, SubAnnotationTool} from 'neuroglancer/annotation/annotation';
 import {PlaceBoundingBoxTool} from 'neuroglancer/annotation/bounding_box';
-import {MultiStepAnnotationTool} from 'neuroglancer/annotation/collection';
 import {PlaceSphereTool} from 'neuroglancer/annotation/ellipsoid';
 import {AnnotationLayer, AnnotationLayerState, PerspectiveViewAnnotationLayer, SliceViewAnnotationLayer} from 'neuroglancer/annotation/frontend';
 import {DataFetchSliceViewRenderLayer, MultiscaleAnnotationSource} from 'neuroglancer/annotation/frontend_source';
@@ -32,6 +31,7 @@ import {PlaceLineTool} from 'neuroglancer/annotation/line';
 import {PlaceLineStripTool} from 'neuroglancer/annotation/line_strip';
 import {PlacePointTool} from 'neuroglancer/annotation/point';
 import {setAnnotationHoverStateFromMouseState} from 'neuroglancer/annotation/selection';
+import {PlaceSpokeTool} from 'neuroglancer/annotation/spoke';
 import {UserLayer} from 'neuroglancer/layer';
 import {VoxelSize} from 'neuroglancer/navigation_state';
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
@@ -55,7 +55,7 @@ import {RangeWidget} from 'neuroglancer/widget/range';
 import {StackView, Tab} from 'neuroglancer/widget/tab_view';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
 import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
-import {PlaceSpokeTool} from '../annotation/spoke';
+import {PlaceCollectionTool} from '../annotation/collection';
 
 const Papa = require('papaparse');
 
@@ -402,9 +402,258 @@ export class AnnotationLayerView extends Tab {
   private previousSelectedId: string|undefined;
   private previousHoverId: string|undefined;
   private updated = false;
-  public toolbox: HTMLDivElement;
+  private toolbox: HTMLDivElement;
+  private buttonMap: any = {};
   groupVisualization = this.registerDisposer(new MinimizableGroupWidget('Visualization'));
   groupAnnotations = this.registerDisposer(new MinimizableGroupWidget('Annotations'));
+
+  private highlightButton(typekey: string, toolset?: AnnotationType) {
+    let target = this.toolbox.querySelector(`.${typekey}`);
+    if (target) {
+      target.classList.remove(typekey);
+    }
+    if (toolset !== undefined) {
+      this.buttonMap[toolset].classList.add(typekey);
+    }
+  }
+
+  private changeTool(toolset?: AnnotationType) {
+    const activeToolkey = 'neuroglancer-active-tool';
+    const activeChildToolKey = 'neuroglancer-child-tool';
+    const currentTool = <PlaceAnnotationTool>this.layer.tool.value;
+    const toCollection = toolset === AnnotationType.COLLECTION;
+    const setTool = (parent?: MultiStepAnnotationTool) => {
+      let tool;
+      switch (toolset) {
+        case AnnotationType.POINT:
+          tool = PlacePointTool;
+          break;
+        case AnnotationType.LINE:
+          tool = PlaceLineTool;
+          break;
+        case AnnotationType.AXIS_ALIGNED_BOUNDING_BOX:
+          tool = PlaceBoundingBoxTool;
+          break;
+        case AnnotationType.ELLIPSOID:
+          tool = PlaceSphereTool;
+          break;
+        case AnnotationType.SPOKE:
+          tool = PlaceSpokeTool;
+          break;
+        case AnnotationType.LINE_STRIP:
+          tool = PlaceLineStripTool;
+          break;
+        case AnnotationType.COLLECTION:
+          tool = PlaceCollectionTool;
+          break;
+      }
+      const {toolbox} = this;
+      if (parent) {
+        parent.childTool =
+            tool ? <SubAnnotationTool>new tool(this.layer, {toolbox, parent}) : undefined;
+        parent.toolset = tool;
+        this.layer.tool.changed.dispatch();
+      } else {
+        this.layer.tool.value = tool ? new tool(this.layer, {toolbox}) : undefined;
+      }
+    };
+
+    if (currentTool && toolset !== undefined) {
+      const isCollection = currentTool.annotationType === AnnotationType.COLLECTION;
+      const multiTool = <MultiStepAnnotationTool>currentTool;
+      if (isCollection && !toCollection) {
+        const {childTool} = multiTool;
+        if (childTool) {
+          if (childTool.annotationType === toolset) {
+            toolset = undefined;
+          }
+          const {COLLECTION, LINE_STRIP, SPOKE} = AnnotationType;
+          const multiStepTypes = <(AnnotationType | undefined)[]>[COLLECTION, LINE_STRIP, SPOKE];
+          if (multiStepTypes.includes(toolset)) {
+            multiTool.complete();
+          }
+        }
+        this.highlightButton(activeChildToolKey, toolset);
+        setTool(/*parent=*/multiTool);
+      } else if (currentTool.annotationType === toolset) {
+        multiTool.complete(undefined, true);
+        toolset = undefined;
+        this.highlightButton(activeToolkey);
+        this.highlightButton(activeChildToolKey);
+        setTool();
+      } else {
+        this.highlightButton(activeToolkey, toolset);
+        setTool();
+      }
+    } else {
+      this.highlightButton(activeToolkey, toolset);
+      this.highlightButton(activeChildToolKey);
+      setTool();
+    }
+  }
+
+  private buttonFactory(type: AnnotationType): HTMLButtonElement {
+    const button = document.createElement('button');
+    button.textContent = getAnnotationTypeHandler(type).icon;
+    button.title = 'Annotate point';
+    button.addEventListener('click', () => {
+      this.changeTool(type);
+    });
+    this.buttonMap[type] = button;
+    return button;
+  }
+
+  private annotationToolboxSetup() {
+    if (!this.annotationLayer.source.readonly) {
+      const annotationTypes =
+          <AnnotationType[]>Object.values(AnnotationType).filter(enu => !isNaN(Number(enu)));
+      const annotationButtons = annotationTypes.map((value) => this.buttonFactory(value));
+      const getActiveToolByType = (toolset?: AnnotationType): PlaceAnnotationTool|undefined => {
+        const tool = <MultiStepAnnotationTool>this.layer.tool.value!;
+        if (tool) {
+          const {annotationType, childTool} = tool;
+          if (annotationType === toolset) {
+            return tool;
+          } else if (childTool) {
+            const childType = childTool.annotationType;
+            if (childType === toolset) {
+              return childTool;
+            }
+          }
+        }
+        return;
+      };
+      const activeTool = <MultiStepAnnotationTool>this.layer.tool.value;
+      const separator = document.createElement('button');
+      separator.disabled = true;
+      separator.style.padding = '1px';
+      separator.style.border = '1px';
+      [annotationButtons[0], annotationButtons[4]] = [annotationButtons[4], annotationButtons[0]];
+      annotationButtons.splice(1, 0, separator);
+
+      if (activeTool) {
+        activeTool.toolbox = this.toolbox;
+        this.highlightButton('neuroglancer-active-tool', activeTool.annotationType);
+      }
+
+      this.buttonMap[AnnotationType.LINE_STRIP].addEventListener('contextmenu', () => {
+        // Alt Behavior
+        const tool = <PlaceLineStripTool>getActiveToolByType(AnnotationType.LINE_STRIP);
+        if (tool) {
+          this.buttonMap[AnnotationType.LINE_STRIP].classList.toggle(
+              'neuroglancer-linestrip-looped');
+          tool.looped = !tool.looped;
+          this.layer.tool.changed.dispatch();
+        }
+      });
+
+      this.buttonMap[AnnotationType.SPOKE].addEventListener('contextmenu', () => {
+        // Alt Behavior
+        const tool = <PlaceSpokeTool>getActiveToolByType(AnnotationType.SPOKE);
+        if (tool) {
+          this.buttonMap[AnnotationType.SPOKE].classList.toggle('neuroglancer-spoke-wheeled');
+          tool.wheeled = !tool.wheeled;
+          this.layer.tool.changed.dispatch();
+        }
+      });
+
+      this.toolbox.append(...annotationButtons);
+    }
+  }
+
+  private addOpacitySlider() {
+    const widget = this.registerDisposer(new RangeWidget(this.annotationLayer.fillOpacity));
+    widget.promptElement.textContent = 'Fill opacity';
+    this.groupVisualization.appendFixedChild(widget.element);
+  }
+
+  private addColorPicker() {
+    const colorPicker = this.registerDisposer(new ColorWidget(this.annotationLayer.color));
+    colorPicker.element.title = 'Change annotation display color';
+    this.toolbox.appendChild(colorPicker.element);
+  }
+
+  private bracketShortcutCheckbox() {
+    const jumpingShowsSegmentationCheckbox = this.registerDisposer(
+        new TrackableBooleanCheckbox(this.annotationLayer.annotationJumpingDisplaysSegmentation));
+    const label = document.createElement('label');
+    label.textContent = 'Bracket shortcuts show segmentation: ';
+    label.appendChild(jumpingShowsSegmentationCheckbox.element);
+    this.groupVisualization.appendFixedChild(label);
+  }
+
+  private filterAnnotationByTagControl() {
+    const annotationTagFilter = document.createElement('select');
+    const {source} = this.annotationLayer;
+    annotationTagFilter.id = 'annotation-tag-filter';
+    annotationTagFilter.add(new Option('View all', '0', true, true));
+    const createOptionText = (tag: AnnotationTag) => {
+      return '#' + tag.label + ' (id: ' + tag.id.toString() + ')';
+    };
+    for (const tag of source.getTags()) {
+      const option = new Option(createOptionText(tag), tag.id.toString(), false, false);
+      this.annotationTags.set(tag.id, option);
+      annotationTagFilter.add(option);
+    }
+    this.registerDisposer(source.tagAdded.add((tag) => {
+      const option = new Option(createOptionText(tag), tag.id.toString(), false, false);
+      this.annotationTags.set(tag.id, option);
+      annotationTagFilter.add(option);
+    }));
+    this.registerDisposer(source.tagUpdated.add((tag) => {
+      const option = this.annotationTags.get(tag.id)!;
+      option.text = createOptionText(tag);
+      for (const annotation of source) {
+        if (this.annotationLayer.source.isAnnotationTaggedWithTag(annotation.id, tag.id)) {
+          this.updateAnnotationElement(annotation, false);
+        }
+      }
+    }));
+    this.registerDisposer(source.tagDeleted.add((tagId) => {
+      annotationTagFilter.removeChild(this.annotationTags.get(tagId)!);
+      this.annotationTags.delete(tagId);
+      for (const annotation of source) {
+        this.updateAnnotationElement(annotation, false);
+      }
+    }));
+    annotationTagFilter.addEventListener('change', () => {
+      const tagIdSelected = parseInt(annotationTagFilter.selectedOptions[0].value, 10);
+      this.annotationLayer.selectedAnnotationTagId.value = tagIdSelected;
+      this.filterAnnotationsByTag(tagIdSelected);
+    });
+    const label = document.createElement('label');
+    label.textContent = 'Filter annotation list by tag: ';
+    label.appendChild(annotationTagFilter);
+    this.groupVisualization.appendFixedChild(label);
+  }
+
+  private csvToolboxSetup() {
+    const exportToCSVButton = document.createElement('button');
+    const importCSVButton = document.createElement('button');
+    importCSVButton.disabled = true;
+    const importCSVForm = document.createElement('input');
+    exportToCSVButton.id = 'exportToCSVButton';
+    exportToCSVButton.textContent = 'Export to CSV';
+    exportToCSVButton.addEventListener('click', () => {
+      this.exportToCSV();
+    });
+    importCSVForm.id = 'importCSVForm';
+    importCSVForm.type = 'file';
+    importCSVForm.accept = 'text/csv';
+    importCSVForm.multiple = true;
+    importCSVForm.style.display = 'none';
+    importCSVButton.textContent = 'Import from CSV';
+    importCSVButton.addEventListener('click', () => {
+      importCSVForm.click();
+    });
+    importCSVForm.addEventListener('change', () => {
+      this.importCSV(importCSVForm.files);
+      importCSVForm.files = null;
+    });
+    const csvContainer = document.createElement('span');
+    csvContainer.append(exportToCSVButton, importCSVButton, importCSVForm);
+    this.groupAnnotations.appendFixedChild(csvContainer);
+  }
 
   constructor(
       public layer: Borrowed<UserLayerWithAnnotations>,
@@ -438,299 +687,14 @@ export class AnnotationLayerView extends Tab {
 
     layer.initializeAnnotationLayerViewTab(this);
 
-    {
-      const widget = this.registerDisposer(new RangeWidget(this.annotationLayer.fillOpacity));
-      widget.promptElement.textContent = 'Fill opacity';
-      this.groupVisualization.appendFixedChild(widget.element);
-    }
-
-    const colorPicker = this.registerDisposer(new ColorWidget(this.annotationLayer.color));
-    colorPicker.element.title = 'Change annotation display color';
-    toolbox.appendChild(colorPicker.element);
-    if (!annotationLayer.source.readonly) {
-      const pointButton = document.createElement('button');
-      pointButton.textContent = getAnnotationTypeHandler(AnnotationType.POINT).icon;
-      pointButton.title = 'Annotate point';
-      pointButton.addEventListener('click', () => {
-        changeTool(AnnotationType.POINT);
-      });
-
-      const boundingBoxButton = document.createElement('button');
-      boundingBoxButton.textContent =
-          getAnnotationTypeHandler(AnnotationType.AXIS_ALIGNED_BOUNDING_BOX).icon;
-      boundingBoxButton.title = 'Annotate bounding box';
-      boundingBoxButton.addEventListener('click', () => {
-        changeTool(AnnotationType.AXIS_ALIGNED_BOUNDING_BOX);
-      });
-
-      const lineButton = document.createElement('button');
-      lineButton.textContent = getAnnotationTypeHandler(AnnotationType.LINE).icon;
-      lineButton.title = 'Annotate line';
-      lineButton.addEventListener('click', () => {
-        changeTool(AnnotationType.LINE);
-      });
-
-      const ellipsoidButton = document.createElement('button');
-      ellipsoidButton.textContent = getAnnotationTypeHandler(AnnotationType.ELLIPSOID).icon;
-      ellipsoidButton.title = 'Annotate ellipsoid';
-      ellipsoidButton.addEventListener('click', () => {
-        changeTool(AnnotationType.ELLIPSOID);
-      });
-
-      // Collections //
-      const mskey = 'neuroglancer-active-tool';
-      const childms = 'neuroglancer-child-tool';
-      const collectionButton = document.createElement('button');
-      const multipointButton = document.createElement('button');
-      const spokeButton = document.createElement('button');
-      const highlButton = (typekey: string, toolset?: AnnotationType) => {
-        let target = toolbox.querySelector(`.${typekey}`);
-        if (target) {
-          target.classList.remove(typekey);
-        }
-        switch (toolset) {
-          case AnnotationType.POINT:
-            pointButton.classList.add(typekey);
-            break;
-          case AnnotationType.LINE:
-            lineButton.classList.add(typekey);
-            break;
-          case AnnotationType.AXIS_ALIGNED_BOUNDING_BOX:
-            boundingBoxButton.classList.add(typekey);
-            break;
-          case AnnotationType.ELLIPSOID:
-            ellipsoidButton.classList.add(typekey);
-            break;
-          case AnnotationType.SPOKE:
-            spokeButton.classList.add(typekey);
-            break;
-          case AnnotationType.LINE_STRIP:
-            multipointButton.classList.add(typekey);
-            break;
-          case AnnotationType.COLLECTION:
-            collectionButton.classList.add(typekey);
-            break;
-        }
-      };
-      const changeTool = (toolset?: AnnotationType) => {
-        const currentTool = <PlaceAnnotationTool>this.layer.tool.value;
-        const toSpoke = toolset === AnnotationType.SPOKE;
-        const toLineStrip = toolset === AnnotationType.LINE_STRIP;
-        const toCollection = toolset === AnnotationType.COLLECTION;
-        const setTool = (parent?: any) => {
-          let tool;
-          switch (toolset) {
-            case AnnotationType.POINT:
-              tool = PlacePointTool;
-              break;
-            case AnnotationType.LINE:
-              tool = PlaceLineTool;
-              break;
-            case AnnotationType.AXIS_ALIGNED_BOUNDING_BOX:
-              tool = PlaceBoundingBoxTool;
-              break;
-            case AnnotationType.ELLIPSOID:
-              tool = PlaceSphereTool;
-              break;
-            case AnnotationType.SPOKE:
-              tool = PlaceSpokeTool;
-              break;
-            case AnnotationType.LINE_STRIP:
-              tool = PlaceLineStripTool;
-              break;
-            case AnnotationType.COLLECTION:
-              tool = MultiStepAnnotationTool;
-              break;
-          }
-          if (parent) {
-            parent.childTool = tool ? new (<any>tool)(this.layer, {toolbox, parent}) : void (0);
-            parent.toolset = tool;
-            this.layer.tool.changed.dispatch();
-          } else {
-            this.layer.tool.value = tool ? new tool(this.layer, {toolbox}) : void (0);
-          }
-        };
-
-        if (currentTool && toolset !== void (0)) {
-          const isCollection = currentTool.annotationType === AnnotationType.COLLECTION;
-          const multiTool = <MultiStepAnnotationTool>currentTool;
-          if (isCollection && !toCollection) {
-            const {childTool} = multiTool;
-            if (childTool && childTool.annotationType === toolset) {
-              highlButton(childms);
-              if (toSpoke || toLineStrip) {
-                multiTool.complete();
-              }
-              toolset = void (0);
-            } else {
-              highlButton(childms, toolset);
-            }
-            // trust me, it work
-            setTool(/*parent=*/currentTool);
-          } else if (currentTool.annotationType === toolset) {
-            if (toSpoke || toLineStrip || toCollection) {
-              multiTool.complete(undefined, true);
-            }
-            toolset = void (0);
-            highlButton(mskey);
-            highlButton(childms);
-            setTool();
-          } else {
-            highlButton(mskey, toolset);
-            setTool();
-          }
-        } else {
-          highlButton(mskey, toolset);
-          highlButton(childms);
-          setTool();
-        }
-      };
-      const getActiveToolByType = (toolset?: AnnotationType): PlaceAnnotationTool|undefined => {
-        const tool = <MultiStepAnnotationTool>this.layer.tool.value!;
-        if (tool) {
-          const {annotationType, childTool} = tool;
-          if (annotationType === toolset) {
-            return tool;
-          } else if (childTool) {
-            const childType = childTool.annotationType;
-            if (childType === toolset) {
-              return childTool;
-            }
-          }
-        }
-        return;
-      };
-      const activeTool = (<any>this.layer.tool.value);
-      if (activeTool) {
-        activeTool.toolbox = toolbox;
-        highlButton(mskey, activeTool.annotationType);
-      }
-      const separator = document.createElement('button');
-      separator.disabled = true;
-      separator.style.padding = '1px';
-      separator.style.border = '1px';
-
-      collectionButton.textContent = getAnnotationTypeHandler(AnnotationType.COLLECTION).icon;
-      collectionButton.title = 'Group together multiple annotations';
-      collectionButton.addEventListener('click', () => {
-        changeTool(AnnotationType.COLLECTION);
-      });
-
-      multipointButton.textContent = getAnnotationTypeHandler(AnnotationType.LINE_STRIP).icon;
-      multipointButton.title = 'Annotate multiple connected points';
-      multipointButton.addEventListener('click', () => {
-        changeTool(AnnotationType.LINE_STRIP);
-      });
-      multipointButton.addEventListener('contextmenu', () => {
-        // Alt Behavior
-        const tool = <PlaceLineStripTool>getActiveToolByType(AnnotationType.LINE_STRIP);
-        if (tool) {
-          multipointButton.classList.toggle('neuroglancer-linestrip-looped');
-          tool.looped = !tool.looped;
-          this.layer.tool.changed.dispatch();
-        }
-      });
-
-      spokeButton.textContent = getAnnotationTypeHandler(AnnotationType.SPOKE).icon;
-      spokeButton.title = 'Annotate radially connected points';
-      spokeButton.addEventListener('click', () => {
-        changeTool(AnnotationType.SPOKE);
-      });
-      spokeButton.addEventListener('contextmenu', () => {
-        // Alt Behavior
-        const tool = <PlaceSpokeTool>getActiveToolByType(AnnotationType.SPOKE);
-        if (tool) {
-          spokeButton.classList.toggle('neuroglancer-spoke-wheeled');
-          tool.wheeled = !tool.wheeled;
-          this.layer.tool.changed.dispatch();
-        }
-      });
-
-      toolbox.append(
-          collectionButton, separator, pointButton, boundingBoxButton, lineButton, ellipsoidButton,
-          multipointButton, spokeButton);
-    }
-
-    {
-      const jumpingShowsSegmentationCheckbox = this.registerDisposer(
-          new TrackableBooleanCheckbox(this.annotationLayer.annotationJumpingDisplaysSegmentation));
-      const label = document.createElement('label');
-      label.textContent = 'Bracket shortcuts show segmentation: ';
-      label.appendChild(jumpingShowsSegmentationCheckbox.element);
-      this.groupVisualization.appendFixedChild(label);
-    }
-
-    {
-      const annotationTagFilter = document.createElement('select');
-      annotationTagFilter.id = 'annotation-tag-filter';
-      annotationTagFilter.add(new Option('View all', '0', true, true));
-      const createOptionText = (tag: AnnotationTag) => {
-        return '#' + tag.label + ' (id: ' + tag.id.toString() + ')';
-      };
-      for (const tag of source.getTags()) {
-        const option = new Option(createOptionText(tag), tag.id.toString(), false, false);
-        this.annotationTags.set(tag.id, option);
-        annotationTagFilter.add(option);
-      }
-      this.registerDisposer(source.tagAdded.add((tag) => {
-        const option = new Option(createOptionText(tag), tag.id.toString(), false, false);
-        this.annotationTags.set(tag.id, option);
-        annotationTagFilter.add(option);
-      }));
-      this.registerDisposer(source.tagUpdated.add((tag) => {
-        const option = this.annotationTags.get(tag.id)!;
-        option.text = createOptionText(tag);
-        for (const annotation of source) {
-          if (this.annotationLayer.source.isAnnotationTaggedWithTag(annotation.id, tag.id)) {
-            this.updateAnnotationElement(annotation, false);
-          }
-        }
-      }));
-      this.registerDisposer(source.tagDeleted.add((tagId) => {
-        annotationTagFilter.removeChild(this.annotationTags.get(tagId)!);
-        this.annotationTags.delete(tagId);
-        for (const annotation of source) {
-          this.updateAnnotationElement(annotation, false);
-        }
-      }));
-      annotationTagFilter.addEventListener('change', () => {
-        const tagIdSelected = parseInt(annotationTagFilter.selectedOptions[0].value, 10);
-        this.annotationLayer.selectedAnnotationTagId.value = tagIdSelected;
-        this.filterAnnotationsByTag(tagIdSelected);
-      });
-      const label = document.createElement('label');
-      label.textContent = 'Filter annotation list by tag: ';
-      label.appendChild(annotationTagFilter);
-      this.groupVisualization.appendFixedChild(label);
-    }
-
-    {
-      const exportToCSVButton = document.createElement('button');
-      const importCSVButton = document.createElement('button');
-      importCSVButton.disabled = true;
-      const importCSVForm = document.createElement('input');
-      exportToCSVButton.id = 'exportToCSVButton';
-      exportToCSVButton.textContent = 'Export to CSV';
-      exportToCSVButton.addEventListener('click', () => {
-        this.exportToCSV();
-      });
-      importCSVForm.id = 'importCSVForm';
-      importCSVForm.type = 'file';
-      importCSVForm.accept = 'text/csv';
-      importCSVForm.multiple = true;
-      importCSVForm.style.display = 'none';
-      importCSVButton.textContent = 'Import from CSV';
-      importCSVButton.addEventListener('click', () => {
-        importCSVForm.click();
-      });
-      importCSVForm.addEventListener('change', () => {
-        this.importCSV(importCSVForm.files);
-        importCSVForm.files = null;
-      });
-      const csvContainer = document.createElement('span');
-      csvContainer.append(exportToCSVButton, importCSVButton, importCSVForm);
-      this.groupAnnotations.appendFixedChild(csvContainer);
-    }
+    // Visualization Group
+    this.addOpacitySlider();
+    this.bracketShortcutCheckbox();
+    this.filterAnnotationByTagControl();
+    // Annotations Group
+    this.addColorPicker();
+    this.annotationToolboxSetup();
+    this.csvToolboxSetup();
 
     this.groupAnnotations.appendFixedChild(toolbox);
     this.groupAnnotations.appendFlexibleChild(this.annotationListContainer);
@@ -755,7 +719,7 @@ export class AnnotationLayerView extends Tab {
     let multiple: string[]|undefined;
     if (selectedValue !== undefined) {
       newSelectedId = selectedValue.id;
-      multiple = selectedValue.multiple ? Array.from(selectedValue.multiple) : void (0);
+      multiple = selectedValue.multiple ? Array.from(selectedValue.multiple) : undefined;
     }
     const {previousSelectedId} = this;
     if (newSelectedId === previousSelectedId) {
@@ -827,7 +791,6 @@ export class AnnotationLayerView extends Tab {
       if (parent) {
         parent.appendChild(element);
       } else {
-        // throw new Error(`Parent ${element.dataset.parent} does not exist`);
         // create virtual parent
         const childs = document.createElement('ul');
         childs.className = 'neuroglancer-annotation-children';
@@ -866,15 +829,14 @@ export class AnnotationLayerView extends Tab {
     element.addEventListener('mouseup', (event: MouseEvent) => {
       if (event.button === 2) {
         if ((<Collection>annotation).entries) {
-          (<Collection>annotation).cVis.value = !(<Collection>annotation).cVis.value;
+          (<Collection>annotation).childrenVisible.value =
+              !(<Collection>annotation).childrenVisible.value;
           element.classList.toggle('neuroglancer-parent-viewable');
           this.annotationLayer.source.changed.dispatch();
         } else {
-          // TODO: Fix this, need to center position without collapsing (fixed?)
-          this.setSpatialCoordinates(
-              getCenterPosition(
-                  this.annotationLayer.source.getReference(annotation.id).value!,
-                  this.annotationLayer.objectToGlobal));
+          this.setSpatialCoordinates(getCenterPosition(
+              this.annotationLayer.source.getReference(annotation.id).value!,
+              this.annotationLayer.objectToGlobal));
         }
         event.stopPropagation();
       }
@@ -907,7 +869,8 @@ export class AnnotationLayerView extends Tab {
   }
 
   private updateAnnotationElement(annotation: Annotation, checkVisibility = true) {
-    // TODO: https://github.com/google/neuroglancer/commit/a05650cd604887dd6ba8a23855a7afe99a89b7d0#r35414033
+    // TODO:
+    // https://github.com/google/neuroglancer/commit/a05650cd604887dd6ba8a23855a7afe99a89b7d0#r35414033
     // TODO: Rebase to master and introduce jeremy's changes
     if (checkVisibility && !this.visible) {
       return;
@@ -988,15 +951,15 @@ export class AnnotationLayerView extends Tab {
     position.className = 'neuroglancer-annotation-position';
     getPositionSummary(position, annotation, transform, this.voxelSize, this.setSpatialCoordinates);
     element.appendChild(position);
-    if (annotation.pid) {
-      element.dataset.parent = annotation.pid;
+    if (annotation.parentId) {
+      element.dataset.parent = annotation.parentId;
     }
     this.createAnnotationDescriptionElement(element, annotation);
     if ((<Collection>annotation).entries) {
       // search for the child bin belonging to my ID
       const reclaim =
           this.annotationListContainer.querySelector(`[data-container="${annotation.id}"]`);
-      if ((<Collection>annotation).cVis.value) {
+      if ((<Collection>annotation).childrenVisible.value) {
         element.classList.add('neuroglancer-parent-viewable');
       }
       if (reclaim) {
@@ -1138,7 +1101,7 @@ export class AnnotationLayerView extends Tab {
         annotationRow.push('');
       }
       // Parent ID
-      annotationRow.push(annotation.pid || '');
+      annotationRow.push(annotation.parentId || '');
       // Type
       annotationRow.push(stringType);
       // ID
@@ -1198,10 +1161,10 @@ export class AnnotationLayerView extends Tab {
       const registry = <any>{};
       for (const annProps of annStrings) {
         const type = annProps[7];
-        const pid = annProps[6];
+        const parentId = annProps[6];
         const cid = annProps[8];
         const tags = annProps[3];
-        let raw = <Annotation><any>{id: makeAnnotationId(), description: annProps[4]};
+        let raw = <Annotation>{id: makeAnnotationId(), description: annProps[4]};
 
         if (cid) {
           if (!registry[cid]) {
@@ -1211,22 +1174,22 @@ export class AnnotationLayerView extends Tab {
             raw = {...raw, ...registry[cid]};
             registry[cid] = raw;
             (<Collection>raw).entries.forEach((ann: any) => {
-              ann.pid = raw.id;
+              ann.parentId = raw.id;
               return ann.id;
             });
           }
         }
-        if (pid) {
-          if (registry[pid]) {
-            const parent = registry[pid];
+        if (parentId) {
+          if (registry[parentId]) {
+            const parent = registry[parentId];
             if (parent.id) {
               parent.entries.push(raw.id);
-              raw.pid = parent.id;
+              raw.parentId = parent.id;
             } else {
               parent.entries.push(raw);
             }
           } else {
-            registry[pid] = {entries: [raw]};
+            registry[parentId] = {entries: [raw]};
           }
         }
         if (tags) {
@@ -1283,7 +1246,7 @@ export class AnnotationLayerView extends Tab {
               raw.type = AnnotationType.COLLECTION;
               (<Collection>raw).connected = false;
             }
-            (<Collection>raw).cVis = new TrackableBoolean(false, true);
+            (<Collection>raw).childrenVisible = new TrackableBoolean(false, true);
             (<Collection>raw).source = vec3.transformMat4(
                 vec3.create(), this.stringToVec3(annProps[0]), this.annotationLayer.globalToObject);
             (<Collection>raw).entry = (index: number) =>
@@ -1396,11 +1359,11 @@ export class AnnotationDetailsTab extends Tab {
     let parent: Collection|undefined;
 
     const ann = annotationLayer.source.getReference(value.id).value!;
-    const parref = ann.pid ? annotationLayer.source.getReference(ann.pid) : null;
+    const parentReference = ann.parentId ? annotationLayer.source.getReference(ann.parentId) : null;
 
-    if (ann.pid && parref && parref.value) {
+    if (ann.parentId && parentReference && parentReference.value) {
       // set child like properties
-      parent = <Collection>parref.value;
+      parent = <Collection>parentReference.value;
       isLineSegment = parent.type === AnnotationType.LINE_STRIP;
       isSpoke = parent.type === AnnotationType.SPOKE;
       isChild = true;
@@ -1413,7 +1376,7 @@ export class AnnotationDetailsTab extends Tab {
     if (isLineSegment) {
       titleText.textContent = 'Line (segment)';
       // not allowed to multi select line segments
-      value.multiple = void (0);
+      value.multiple = undefined;
       value.ungroupable = true;
     }
     if (isInProgress) {
@@ -1421,7 +1384,7 @@ export class AnnotationDetailsTab extends Tab {
       // view
       titleText.textContent = `${titleText.textContent} (in progress)`;
       // not allowed to multi select line segments
-      value.multiple = void (0);
+      value.multiple = undefined;
       value.ungroupable = true;
     }
     if (value.multiple) {
@@ -1433,7 +1396,7 @@ export class AnnotationDetailsTab extends Tab {
       if (isChild && !value.multiple) {
         const evictButton = makeTextIconButton('✂️', 'Remove from collection');
         evictButton.addEventListener('click', () => {
-          const parent_ref = annotationLayer.source.getReference(ann.pid!);
+          const parent_ref = annotationLayer.source.getReference(ann.parentId!);
           if (isSingleton) {
             // DRY: ungroup
             try {
@@ -1442,9 +1405,9 @@ export class AnnotationDetailsTab extends Tab {
               parent_ref.dispose();
             }
           } else {
-            (<AnnotationSource>annotationLayer.source).cps([ann.id]);
+            (<AnnotationSource>annotationLayer.source).childReassignment([ann.id]);
           }
-          this.state.value = void (0);
+          this.state.value = undefined;
         });
         title.appendChild(evictButton);
       }
@@ -1488,17 +1451,20 @@ export class AnnotationDetailsTab extends Tab {
             connected: false,
             source: srcpt,
             entry: () => {},
-            cVis: new TrackableBoolean(true, true)
+            childrenVisible: new TrackableBoolean(true, true)
           };
           coll.entry = (index: number) =>
               (<LocalAnnotationSource>annotationLayer.source).get(coll.entries[index]);
 
           const ref = (<AnnotationSource>annotationLayer.source).add(coll, true);
-          if (first.pid) {
-            const firstParent = (<AnnotationSource>annotationLayer.source).getReference(first.pid);
-            (<AnnotationSource>annotationLayer.source).cps([ref.value!.id], firstParent);
+          if (first.parentId) {
+            const firstParent =
+                (<AnnotationSource>annotationLayer.source).getReference(first.parentId);
+            (<AnnotationSource>annotationLayer.source)
+                .childReassignment([ref.value!.id], firstParent);
           }
-          const emptyColl = (<AnnotationSource>annotationLayer.source).cps(target, ref);
+          const emptyColl =
+              (<AnnotationSource>annotationLayer.source).childReassignment(target, ref);
 
           // It shouldn't be possible for a collection to be empty twice, that is the child says the
           // parent is empty and then a subsequent child says the same
@@ -1673,7 +1639,6 @@ export class AnnotationTab extends Tab {
     setAnnotationLayerView();
   }
 }
-
 
 export interface UserLayerWithAnnotations extends UserLayer {
   annotationLayerState: WatchableRefCounted<AnnotationLayerState>;

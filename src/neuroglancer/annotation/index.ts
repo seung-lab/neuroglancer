@@ -70,7 +70,7 @@ export interface AnnotationBase {
 
   segments?: Uint64[];
 
-  pid?: string;
+  parentId?: string;
 }
 
 export interface Line extends AnnotationBase {
@@ -104,7 +104,7 @@ export interface Collection extends AnnotationBase {
   connected: boolean;
   source: vec3;
   entry: Function;
-  cVis: TrackableBoolean;
+  childrenVisible: TrackableBoolean;
 }
 
 export interface LineStrip extends Collection {
@@ -254,21 +254,21 @@ typeHandlers.set(AnnotationType.ELLIPSOID, {
   },
 });
 
-const collTypeSet = {
+const collectionTypeSet = {
   icon: '⚄',
   description: 'Collection',
   toJSON: (annotation: Collection) => {
     return {
       source: Array.from(annotation.source),
       entries: Array.from(annotation.entries),
-      cVis: annotation.cVis.value,
+      childrenVisible: annotation.childrenVisible.value,
       looped: (<LineStrip>annotation).looped
     };
   },
   restoreState: (annotation: Collection, obj: any) => {
     annotation.source = verifyObjectProperty(obj, 'source', verify3dVec);
     annotation.entries = obj.entries.filter((v: any) => typeof v === 'string');
-    annotation.cVis = new TrackableBoolean(obj.cVis, true);
+    annotation.childrenVisible = new TrackableBoolean(obj.childrenVisible, true);
     (<LineStrip>annotation).looped = verifyObjectProperty(obj, 'looped', verifyOptionalBoolean);
   },
   serializedBytes: 3 * 4,
@@ -284,16 +284,16 @@ const collTypeSet = {
   },
 };
 
-typeHandlers.set(AnnotationType.COLLECTION, collTypeSet);
+typeHandlers.set(AnnotationType.COLLECTION, collectionTypeSet);
 
 typeHandlers.set(AnnotationType.LINE_STRIP, {
-  ...collTypeSet,
+  ...collectionTypeSet,
   icon: 'ʌ',
   description: 'Line Strip',
 });
 
 typeHandlers.set(AnnotationType.SPOKE, {
-  ...collTypeSet,
+  ...collectionTypeSet,
   icon: '⚹',
   description: 'Spoke',
 });
@@ -314,7 +314,7 @@ export function annotationToJson(annotation: Annotation) {
   result.id = annotation.id;
   result.description = annotation.description || undefined;
   result.tagIds = (annotation.tagIds) ? [...annotation.tagIds] : undefined;
-  result.pid = annotation.pid || undefined;
+  result.parentId = annotation.parentId || undefined;
   const {segments} = annotation;
   if (segments !== undefined && segments.length > 0) {
     result.segments = segments.map(x => x.toString());
@@ -337,7 +337,7 @@ export function restoreAnnotation(obj: any, allowMissingId = false): Annotation 
         obj, 'segments',
         x => x === undefined ? undefined : parseArray(x, y => Uint64.parseString(y))),
     type,
-    pid: verifyObjectProperty(obj, 'pid', verifyOptionalString),
+    parentId: verifyObjectProperty(obj, 'parentId', verifyOptionalString),
   };
   getAnnotationTypeHandler(type).restoreState(result, obj);
   return result;
@@ -558,13 +558,12 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
   orphan(reference: AnnotationReference, surrogate?: AnnotationReference): AnnotationReference[] {
     const targets = (<Collection>reference.value)!.entries;
     if (targets && targets.length) {
-      return this.cps(targets, surrogate);
+      return this.childReassignment(targets, surrogate);
     }
     return [];
   }
 
-  cps(targets: string[], surrogate?: AnnotationReference): AnnotationReference[] {
-    // Child Protective Services
+  childReassignment(targets: string[], surrogate?: AnnotationReference): AnnotationReference[] {
     const emptynesters = <AnnotationReference[]>[];
     let adopter = surrogate ? <Collection>surrogate.value : void (0);
 
@@ -572,23 +571,23 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
       const target = this.getReference(id).value!;
       // remove child from parent
       let parent;
-      if (target.pid) {
-        parent = <Collection>this.getReference(target.pid).value!;
+      if (target.parentId) {
+        parent = <Collection>this.getReference(target.parentId).value!;
         parent.entries = parent.entries.filter(v => v !== target.id);
-        if (parent.pid && !adopter) {
-          adopter = <Collection>this.getReference(parent.pid).value!;
+        if (parent.parentId && !adopter) {
+          adopter = <Collection>this.getReference(parent.parentId).value!;
         }
         if (!parent.entries.length) {
-          emptynesters.push(this.getReference(target.pid));
+          emptynesters.push(this.getReference(target.parentId));
         }
       }
       // reassign/orphan child | parent cannot be child of child
       if ((adopter && !(<any>target).entries) ||
           (adopter && (<any>target).entries && !(<any>target).entries.includes(adopter.id))) {
-        target.pid = adopter.id;
+        target.parentId = adopter.id;
         adopter.entries.push(target.id);
       } else {
-        target.pid = undefined;
+        target.parentId = undefined;
       }
       this.childDeleted.dispatch(target.id);
       // TODO: CHILD MOVE signal, move the child to a different element rather than deleting and
@@ -611,7 +610,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
       return;
     }
     const isParent = <boolean>!!(<Collection>reference.value).entries;
-    const isChild = !!reference.value!.pid;
+    const isChild = !!reference.value!.parentId;
     if (isParent) {
       if (flush) {
         (<Collection>reference.value).entries.forEach((id: string) => {
@@ -628,7 +627,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     }
     if (isChild) {
       // Remove child from parent entries on deletion
-      const target = this.getReference(reference.value!.pid!);
+      const target = this.getReference(reference.value!.parentId!);
       const value = <Collection>target.value;
       // parent should not be deleted before its children
       value.entries = value.entries.filter(v => v !== reference.value!.id);

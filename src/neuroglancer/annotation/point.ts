@@ -122,7 +122,7 @@ export class PlacePointTool extends PlaceAnnotationTool {
         type: AnnotationType.POINT,
       };
       if (parentRef) {
-        annotation.pid = parentRef.id;
+        annotation.parentId = parentRef.id;
       }
       const reference = annotationLayer.source.add(annotation, /*commit=*/true);
       this.layer.selectedAnnotation.value = {id: reference.id};
@@ -133,6 +133,7 @@ export class PlacePointTool extends PlaceAnnotationTool {
           parent.segments = [...parent.segments!, ...annotation.segments!];
         }
       }
+      this.assignToParent(reference, parentRef);
       reference.dispose();
     }
   }

@@ -1,25 +1,9 @@
 /**
- * @license
- * Copyright 2018 Google Inc.
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-/**
  * @file Support for rendering line strip annotations.
  */
 
 import {Annotation, AnnotationReference, AnnotationType, LineStrip} from 'neuroglancer/annotation';
-import {MultiStepAnnotationTool} from 'neuroglancer/annotation/collection';
+import {MultiStepAnnotationTool} from 'neuroglancer/annotation/annotation';
 import {AnnotationLayerState} from 'neuroglancer/annotation/frontend';
 import {PlaceLineTool} from 'neuroglancer/annotation/line';
 import {AnnotationRenderContext, AnnotationRenderHelper, registerAnnotationTypeRenderHandler} from 'neuroglancer/annotation/type_handler';
@@ -63,7 +47,6 @@ registerAnnotationTypeRenderHandler(AnnotationType.LINE_STRIP, {
   updateViaRepresentativePoint: (oldAnnotation, position: vec3, dataToObject: mat4) => {
     let annotation = {...oldAnnotation};
     annotation.source = vec3.transformMat4(vec3.create(), position, dataToObject);
-    // annotation.id = '';
     return annotation;
   }
 });
@@ -98,6 +81,7 @@ export class PlaceLineStripTool extends MultiStepAnnotationTool {
         this.initMouseState = <MouseSelectionState>{...mouseState};
         this.initPos = mouseState.position.slice();
         super.trigger(mouseState, parentRef);
+        this.assignToParent(this.inProgressAnnotation!.reference, parentRef);
       } else {
         super.trigger(mouseState, parentRef);
         // Start new annotation automatically
