@@ -130,9 +130,9 @@ export class VoidScroll {
   }
 
   removeAll() {
-    this.elementIndices.forEach((_: number, element: HTMLElement) => {
+    for (const [element] of this.elementIndices) {
       this.scrollArea.removeChild(element);
-    });
+    }
 
     this.elementHeights = [];
     this.elementIndices = new Map<HTMLElement, number>();
@@ -145,6 +145,17 @@ export class VoidScroll {
     const h = this.elementHeights[this.elementIndices.get(element)!][1];
     // Scrolls just a pixel too far, this makes it look prettier
     this.scrollbar.scrollTop = h - 1;
+    this.updateScrollAreaPos();
+  }
+
+  recalculateHeights() {
+    this.totalH = 0;
+    for (const [element, i] of this.elementIndices) {
+      const h = element.offsetHeight;
+      this.elementHeights[i][1] = this.totalH;
+      this.totalH += h;
+    }
+    this.updateScrollHeight();
     this.updateScrollAreaPos();
   }
 

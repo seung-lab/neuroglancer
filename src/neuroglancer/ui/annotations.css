@@ -150,7 +150,15 @@
 }
 
 .neuroglancer-annotation-hiding-list-hiddenitem {
+  display: none !important;
+}
+
+.neuroglancer-annotation-hiding-list-tagged-hidden {
   display: none;
+}
+
+.neuroglancer-annotation-hiding-list-tagged-shown {
+  display: list-item;
 }
 
 #exportToCSVButton {

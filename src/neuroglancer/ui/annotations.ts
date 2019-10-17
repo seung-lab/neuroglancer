@@ -736,15 +736,15 @@ export class AnnotationLayerView extends Tab {
   }
 
   private filterAnnotationsByTag(tagId: number) {
-    // TODO: update this to work with voidscroll
     for (const [annotationId, annotationElement] of this.annotationListElements) {
       if (tagId === 0 ||
           this.annotationLayer.source.isAnnotationTaggedWithTag(annotationId, tagId)) {
-        annotationElement.style.display = 'list-item';
+        annotationElement.classList.add('neuroglancer-annotation-hiding-list-tagged-shown');
       } else {
-        annotationElement.style.display = 'none';
+        annotationElement.classList.add('neuroglancer-annotation-hiding-list-tagged-hidden');
       }
     }
+    this.annotationVoidScroll.recalculateHeights();
   }
 
   private exportToCSV() {
