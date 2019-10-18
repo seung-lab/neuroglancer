@@ -32,7 +32,7 @@ import {TrackableAlphaValue, trackableAlphaValue} from 'neuroglancer/trackable_a
 import {TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
 import {registerNested, TrackableValueInterface, WatchableRefCounted, WatchableValue} from 'neuroglancer/trackable_value';
 import {registerTool, Tool} from 'neuroglancer/ui/tool';
-import {VoidScroll} from 'neuroglancer/ui/voidscroll';
+import {HidingList} from 'neuroglancer/ui/hidinglist';
 import {TrackableRGB} from 'neuroglancer/util/color';
 import {Borrowed, Owned, RefCounted} from 'neuroglancer/util/disposable';
 import {removeChildren} from 'neuroglancer/util/dom';
@@ -379,7 +379,7 @@ function getCenterPosition(annotation: Annotation, transform: mat4) {
 export class AnnotationLayerView extends Tab {
   private annotationListContainer = document.createElement('ul');
   private annotationListElements = new Map<string, HTMLElement>();
-  private annotationVoidScroll: VoidScroll;
+  private annotationHidingList: HidingList;
   private annotationsToAdd: HTMLElement[] = [];
   private annotationTags = new Map<number, HTMLOptionElement>();
   private previousSelectedId: string|undefined;
@@ -552,8 +552,8 @@ export class AnnotationLayerView extends Tab {
     const scrollbarFiller = document.createElement('div');
     scrollbar.appendChild(scrollbarFiller);
     this.annotationListContainer.appendChild(scrollbar);
-    this.annotationVoidScroll =
-        new VoidScroll(scrollArea, scrollbar, scrollbarFiller, this.groupAnnotations.element);
+    this.annotationHidingList =
+        new HidingList(scrollArea, scrollbar, scrollbarFiller, this.groupAnnotations.element);
   }
 
   private updateSelectionView() {
@@ -576,7 +576,7 @@ export class AnnotationLayerView extends Tab {
       const element = this.annotationListElements.get(newSelectedId);
       if (element !== undefined) {
         element.classList.add('neuroglancer-annotation-selected');
-        this.annotationVoidScroll.scrollTo(element);
+        this.annotationHidingList.scrollTo(element);
       }
     }
     this.previousSelectedId = newSelectedId;
@@ -639,13 +639,13 @@ export class AnnotationLayerView extends Tab {
     }
     const {annotationLayer, annotationListElements} = this;
     const {source} = annotationLayer;
-    this.annotationVoidScroll.removeAll();
+    this.annotationHidingList.removeAll();
     annotationListElements.clear();
     this.annotationsToAdd = [];
     for (const annotation of source) {
       this.addAnnotationElementHelper(annotation);
     }
-    this.annotationVoidScroll.addElements(this.annotationsToAdd);
+    this.annotationHidingList.addElements(this.annotationsToAdd);
     this.resetOnUpdate();
   }
 
@@ -655,7 +655,7 @@ export class AnnotationLayerView extends Tab {
     }
     this.annotationsToAdd = [];
     this.addAnnotationElementHelper(annotation);
-    this.annotationVoidScroll.addElement(this.annotationsToAdd[0]);
+    this.annotationHidingList.addElement(this.annotationsToAdd[0]);
     this.resetOnUpdate();
   }
 
@@ -693,7 +693,7 @@ export class AnnotationLayerView extends Tab {
     }
     let element = this.annotationListElements.get(annotationId);
     if (element) {
-      this.annotationVoidScroll.removeElement(element);
+      this.annotationHidingList.removeElement(element);
       this.annotationListElements.delete(annotationId);
     }
     this.resetOnUpdate();
@@ -747,7 +747,7 @@ export class AnnotationLayerView extends Tab {
         annotationElement.classList.add('neuroglancer-annotation-hiding-list-tagged-hidden');
       }
     }
-    this.annotationVoidScroll.recalculateHeights();
+    this.annotationHidingList.recalculateHeights();
   }
 
   private exportToCSV() {

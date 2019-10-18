@@ -1,6 +1,6 @@
 import ResizeObserver from 'resize-observer-polyfill';
 
-export class VoidScroll {
+export class HidingList {
   private scrollArea: HTMLElement;
   private scrollbar: HTMLElement;
   private scrollbarFiller: HTMLElement;
@@ -19,11 +19,11 @@ export class VoidScroll {
     this.scrollbarFiller = scrollbarFiller;
     this.sizeParent = sizeParent;
 
-    this.scrollArea.addEventListener('wheel', function(this: VoidScroll, event: WheelEvent) {
+    this.scrollArea.addEventListener('wheel', function(this: HidingList, event: WheelEvent) {
       this.scrollbar.scrollBy({top: event.deltaY, behavior: 'auto'});
     }.bind(this));
 
-    this.scrollbar.addEventListener('scroll', function(this: VoidScroll) {
+    this.scrollbar.addEventListener('scroll', function(this: HidingList) {
       this.updateScrollAreaPos();
     }.bind(this));
 
@@ -31,7 +31,7 @@ export class VoidScroll {
     parentResizeObserver.observe(this.sizeParent);
 
     this.resizeObserver =
-        new ResizeObserver(function(this: VoidScroll, entries: ResizeObserverEntry[]) {
+        new ResizeObserver(function(this: HidingList, entries: ResizeObserverEntry[]) {
           for (const entry of entries) {
             // on annotation resize, update all subsequent annotation heights
 
