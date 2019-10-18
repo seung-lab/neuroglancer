@@ -117,10 +117,10 @@ export class VoidScroll {
     this.elementIndices.delete(element);
     this.shiftHeightsAfter(i, -h);
     // shift indices of elements that came after the removed one
-    for (const [el, ind] of this.elementIndices) {
-      if (this.elementHeights[ind][1] > i) {
-        this.elementIndices.set(el, ind - 1);
-      }
+    for (let j = i; j < this.elementHeights.length; j++) {
+      const el = this.elementHeights[j][0];
+      const oldInd = this.elementIndices.get(el)!;
+      this.elementIndices.set(el, oldInd - 1);
     }
 
     this.totalH -= h;
