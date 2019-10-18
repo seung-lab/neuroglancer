@@ -32,7 +32,7 @@ import {TrackableAlphaValue, trackableAlphaValue} from 'neuroglancer/trackable_a
 import {TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
 import {registerNested, TrackableValueInterface, WatchableRefCounted, WatchableValue} from 'neuroglancer/trackable_value';
 import {registerTool, Tool} from 'neuroglancer/ui/tool';
-import {HidingList} from 'neuroglancer/ui/hidinglist';
+import {HidingList} from 'neuroglancer/ui/hiding_list';
 import {TrackableRGB} from 'neuroglancer/util/color';
 import {Borrowed, Owned, RefCounted} from 'neuroglancer/util/disposable';
 import {removeChildren} from 'neuroglancer/util/dom';
