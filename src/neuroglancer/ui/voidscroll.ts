@@ -20,10 +20,7 @@ export class VoidScroll {
     this.sizeParent = sizeParent;
 
     this.scrollArea.addEventListener('wheel', function(this: VoidScroll, event: WheelEvent) {
-      this.scrollbar.scrollBy({
-        top: event.deltaY,
-        behavior: 'auto'
-      });
+      this.scrollbar.scrollBy({top: event.deltaY, behavior: 'auto'});
     }.bind(this));
 
     this.scrollbar.addEventListener('scroll', function(this: VoidScroll) {
@@ -64,7 +61,7 @@ export class VoidScroll {
 
   private updateScrollAreaPos() {
     for (const e of this.loadedElements) {
-      e.classList.add('neuroglancer-annotation-hiding-list-hiddenitem');
+      this.hideElement(e);
     }
     this.loadedElements = [];
 
@@ -73,7 +70,7 @@ export class VoidScroll {
     const endI = this.findHeight(h + this.sizeParent.offsetHeight);
     for (var i = startI; i <= endI; i++) {
       const element = this.elementHeights[i][0];
-      element.classList.remove('neuroglancer-annotation-hiding-list-hiddenitem');
+      this.unhideElement(element);
       this.loadedElements.push(element);
     }
     const startH = this.elementHeights[startI][1];
@@ -88,7 +85,7 @@ export class VoidScroll {
     this.elementIndices.set(element, this.elementHeights.length);
     this.elementHeights.push([element, this.totalH]);
     this.totalH += h;
-    element.classList.add('neuroglancer-annotation-hiding-list-hiddenitem');
+    this.hideElement(element);
     this.resizeObserver.observe(element);
   }
 
@@ -109,7 +106,7 @@ export class VoidScroll {
 
   removeElement(element: HTMLElement) {
     this.resizeObserver.unobserve(element);
-    element.classList.remove('neuroglancer-annotation-hiding-list-hiddenitem');
+    this.unhideElement(element);
     const h = element.offsetHeight;
 
     const i = this.elementIndices.get(element)!;
@@ -119,8 +116,7 @@ export class VoidScroll {
     // shift indices of elements that came after the removed one
     for (let j = i; j < this.elementHeights.length; j++) {
       const el = this.elementHeights[j][0];
-      const oldInd = this.elementIndices.get(el)!;
-      this.elementIndices.set(el, oldInd - 1);
+      this.elementIndices.set(el, j);
     }
 
     this.totalH -= h;
@@ -152,13 +148,21 @@ export class VoidScroll {
     this.totalH = 0;
     this.scrollbar.scrollTop = 0;
     for (const [element, i] of this.elementIndices) {
-      element.classList.remove('neuroglancer-annotation-hiding-list-hiddenitem');
+      this.unhideElement(element);
       const h = element.offsetHeight;
       this.elementHeights[i][1] = this.totalH;
       this.totalH += h;
     }
     this.updateScrollHeight();
     this.updateScrollAreaPos();
+  }
+
+  private hideElement(element: HTMLElement) {
+    element.classList.add('neuroglancer-annotation-hiding-list-hiddenitem');
+  }
+
+  private unhideElement(element: HTMLElement) {
+    element.classList.remove('neuroglancer-annotation-hiding-list-hiddenitem');
   }
 
   private updateScrollHeight() {
