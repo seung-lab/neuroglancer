@@ -500,11 +500,15 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     return;
   }
 
-  add(annotation: Annotation, commit: boolean = true): AnnotationReference {
+  add(annotation: Annotation, commit: boolean = true,
+      parentReference?: AnnotationReference): AnnotationReference {
     if (!annotation.id) {
       annotation.id = makeAnnotationId();
     } else if (this.annotationMap.has(annotation.id)) {
       throw new Error(`Annotation id already exists: ${JSON.stringify(annotation.id)}.`);
+    }
+    if (parentReference) {
+      annotation.parentId = parentReference.id;
     }
     this.insertAnnotationNode(annotation);
     this.changed.dispatch();

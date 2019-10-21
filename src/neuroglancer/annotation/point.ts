@@ -106,7 +106,7 @@ export class PlacePointTool extends PlaceAnnotationTool {
     super(layer, options);
   }
 
-  trigger(mouseState: MouseSelectionState, parentRef?: AnnotationReference) {
+  trigger(mouseState: MouseSelectionState, parentReference?: AnnotationReference) {
     const {annotationLayer} = this;
     if (annotationLayer === undefined) {
       // Not yet ready.
@@ -121,9 +121,9 @@ export class PlacePointTool extends PlaceAnnotationTool {
             vec3.transformMat4(vec3.create(), mouseState.position, annotationLayer.globalToObject),
         type: AnnotationType.POINT,
       };
-      const reference = annotationLayer.source.add(annotation, /*commit=*/true);
+      const reference = annotationLayer.source.add(annotation, /*commit=*/true, parentReference);
       this.layer.selectedAnnotation.value = {id: reference.id};
-      this.assignToParent(reference, parentRef);
+      this.assignToParent(reference, parentReference);
       reference.dispose();
     }
   }

@@ -76,15 +76,15 @@ export class PlaceLineStripTool extends MultiStepAnnotationTool {
     return result;
   }
 
-  trigger(mouseState: MouseSelectionState, parentRef?: AnnotationReference) {
+  trigger(mouseState: MouseSelectionState, parentReference?: AnnotationReference) {
     if (mouseState.active) {
       if (this.inProgressAnnotation === undefined || !this.inProgressAnnotation.reference.value) {
         this.initMouseState = <MouseSelectionState>{...mouseState};
         this.initPos = mouseState.position.slice();
-        super.trigger(mouseState, parentRef);
-        this.assignToParent(this.inProgressAnnotation!.reference, parentRef);
+        super.trigger(mouseState, parentReference);
+        this.assignToParent(this.inProgressAnnotation!.reference, parentReference);
       } else {
-        super.trigger(mouseState, parentRef);
+        super.trigger(mouseState, parentReference);
         // Start new annotation automatically
         this.appendNewChildAnnotation(this.inProgressAnnotation.reference!, mouseState);
       }

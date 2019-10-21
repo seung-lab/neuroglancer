@@ -77,17 +77,17 @@ export class PlaceSpokeTool extends MultiStepAnnotationTool {
     return result;
   }
 
-  trigger(mouseState: MouseSelectionState, parentRef?: AnnotationReference) {
+  trigger(mouseState: MouseSelectionState,  parentReference?: AnnotationReference) {
     if (mouseState.active) {
       if (this.inProgressAnnotation === undefined || !this.inProgressAnnotation.reference.value) {
         this.initMouseState = <MouseSelectionState>{...mouseState};
         this.initPos = mouseState.position.slice();
-        super.trigger(mouseState, parentRef);
+        super.trigger(mouseState, parentReference);
         this.lastMouseState = void (0);
         this.lastPos = void (0);
-        this.assignToParent(this.inProgressAnnotation!.reference, parentRef);
+        this.assignToParent(this.inProgressAnnotation!.reference,  parentReference);
       } else {
-        super.trigger(mouseState, parentRef);
+        super.trigger(mouseState, parentReference);
         // Start new annotation automatically at source point
         const source = <MouseSelectionState>{...this.initMouseState, position: this.initPos};
         if (this.wheeled && this.lastMouseState && this.lastPos) {
@@ -95,7 +95,7 @@ export class PlaceSpokeTool extends MultiStepAnnotationTool {
           const intermediate =
               <MouseSelectionState>{...this.lastMouseState, position: this.lastPos};
           this.appendNewChildAnnotation(this.inProgressAnnotation.reference!, intermediate);
-          super.trigger(mouseState, parentRef);
+          super.trigger(mouseState, parentReference);
         }
         this.appendNewChildAnnotation(this.inProgressAnnotation.reference!, mouseState, source);
         this.lastMouseState = <MouseSelectionState>{...mouseState};

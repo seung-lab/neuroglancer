@@ -60,15 +60,6 @@ import {PlaceCollectionTool} from '../annotation/collection';
 
 const Papa = require('papaparse');
 
-const mismatchCheck =
-    (source: AnnotationSource|MultiscaleAnnotationSource, annotation: Annotation) => {
-      const reference = source.getReference(annotation.id);
-      if (annotation && reference.value) {
-        throw new Error(`AnnotationReference for ID:${
-            annotation.id} does not refer to the value stored in AnnotationMap.`);
-      }
-    };
-
 type AnnotationIdAndPart = {
   id: string,
   partIndex?: number,
@@ -459,6 +450,9 @@ export class AnnotationLayerView extends Tab {
       }
       const {toolbox} = this;
       if (parent) {
+        if (parent.childTool) {
+          parent.childTool.dispose();
+        }
         parent.childTool =
             tool ? <SubAnnotationTool>new tool(this.layer, {toolbox, parent}) : undefined;
         parent.toolset = <AnnotationTool>tool;
@@ -479,19 +473,22 @@ export class AnnotationLayerView extends Tab {
           }
           const {COLLECTION, LINE_STRIP, SPOKE} = AnnotationType;
           const multiStepTypes = <(AnnotationType | undefined)[]>[COLLECTION, LINE_STRIP, SPOKE];
-          if (multiStepTypes.includes(toolset)) {
+          if (multiStepTypes.includes(childTool.annotationType)) {
             multiTool.complete();
           }
         }
         this.highlightButton(activeChildToolKey, toolset);
         setTool(/*parent=*/multiTool);
       } else if (currentTool.annotationType === toolset) {
-        multiTool.complete(undefined, true);
+        multiTool.complete(false, true);
         toolset = undefined;
         this.highlightButton(activeToolkey);
         this.highlightButton(activeChildToolKey);
         setTool();
       } else {
+        if (!isCollection) {
+          multiTool.complete();
+        }
         this.highlightButton(activeToolkey, toolset);
         setTool();
       }
@@ -845,17 +842,12 @@ export class AnnotationLayerView extends Tab {
           element.classList.toggle('neuroglancer-parent-viewable');
           this.annotationLayer.source.changed.dispatch();
         } else {
-          this.mismatchCheck(collection);
           this.setSpatialCoordinates(
               getCenterPosition(collection, this.annotationLayer.objectToGlobal));
         }
         event.stopPropagation();
       }
     });
-  }
-
-  mismatchCheck(annotation: Annotation) {
-    mismatchCheck(this.annotationLayer.source, annotation);
   }
 
   private updateView() {

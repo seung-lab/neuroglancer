@@ -60,9 +60,7 @@ export abstract class PlaceAnnotationTool extends Tool {
     if (!annotation || !parent) {
       throw `Invalid reference for assignment: ${!annotation ? 'Child' : 'Parent'} has no value`;
     }
-    // Directly changing reference values, AnnotationSource.update instead?
-    annotation.parentId = parentReference.id;
-    parent.entries.push(reference.id);
+    parent.entries.push(annotation.id);
     if (parent.segments && annotation.segments) {
       parent.segments = [...parent.segments, ...annotation.segments];
     }
@@ -117,7 +115,7 @@ export abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
 
     if (!this.inProgressAnnotation || !this.inProgressAnnotation.reference.value) {
       const annotation = this.getInitialAnnotation(spoofMouse || mouseState, annotationLayer);
-      const reference = annotationLayer.source.add(annotation, /*commit=*/false);
+      const reference = annotationLayer.source.add(annotation, /*commit=*/false, parentReference);
       this.layer.selectedAnnotation.value = {id: reference.id};
       const disposer = () => {
         mouseDisposer();
@@ -277,10 +275,7 @@ export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
     if (mouseState.active) {
       if (this.inProgressAnnotation === undefined || !this.inProgressAnnotation.reference.value) {
         const annotation = this.getInitialAnnotation(mouseState, annotationLayer);
-        if (parentReference) {
-          annotation.parentId = parentReference.id;
-        }
-        const reference = annotationLayer.source.add(annotation, /*commit=*/false);
+        const reference = annotationLayer.source.add(annotation, /*commit=*/false, parentReference);
         this.layer.selectedAnnotation.value = {id: reference.id};
         this.childTool.trigger(mouseState, /*child=*/reference);
         this.updateLast();
