@@ -668,8 +668,6 @@ class SplitPreview extends RefCounted {
                     this.enablePreview();
                   })
                   .catch(() => {
-                    StatusMessage.messageWithAction(
-                        'Split preview is not supported for this dataset. ', 'Ok', () => {});
                     this.revertPreviewButton();
                     this.previewPending = false;
                   });
