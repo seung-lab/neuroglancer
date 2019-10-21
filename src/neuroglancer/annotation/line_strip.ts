@@ -57,6 +57,7 @@ export class PlaceLineStripTool extends MultiStepAnnotationTool {
   looped = false;
   initMouseState: MouseSelectionState;
   initPos: any;
+  childTool: PlaceLineTool;
   constructor(public layer: UserLayerWithAnnotations, options: any) {
     super(layer, options);
     this.childTool = new this.toolset(layer, {...options, parent: this});
@@ -91,21 +92,23 @@ export class PlaceLineStripTool extends MultiStepAnnotationTool {
   }
 
   complete(shortcut?: boolean): boolean {
-    if (this.inProgressAnnotation) {
-      const innerEntries = (<LineStrip>this.inProgressAnnotation!.reference.value!).entries;
-      if (shortcut) {
-        const {lastA, lastB} = <any>this.inProgressAnnotation!.reference!.value!;
-        this.safeDelete(lastA);
-        this.safeDelete(lastB);
+    if (!this.inProgressAnnotation) {
+      return false;
+    }
+    const value = <LineStrip>this.inProgressAnnotation.reference.value;
+    const innerEntries = value.entries;
+    if (shortcut) {
+      const {lastA, lastB} = value;
+      this.safeDelete(lastA);
+      this.safeDelete(lastB);
+    }
+    if (innerEntries.length > 1) {
+      if (this.looped) {
+        const fakeMouse = <MouseSelectionState>{...this.initMouseState, position: this.initPos};
+        value.looped = true;
+        this.childTool.trigger(fakeMouse, this.inProgressAnnotation.reference);
       }
-      if (innerEntries.length > 1) {
-        if (this.looped) {
-          const fakeMouse = <MouseSelectionState>{...this.initMouseState, position: this.initPos};
-          (<LineStrip>this.inProgressAnnotation!.reference.value!).looped = true;
-          this.childTool!.trigger(fakeMouse, this.inProgressAnnotation!.reference);
-        }
-        return super.complete();
-      }
+      return super.complete();
     }
     StatusMessage.showTemporaryMessage(`No annotation has been made.`, 3000);
     return false;

@@ -55,6 +55,7 @@ export class PlaceSpokeTool extends MultiStepAnnotationTool {
   toolset = PlaceLineTool;
   initMouseState: MouseSelectionState;
   initPos: any;
+  childTool: PlaceLineTool;
   wheeled = false;
   lastMouseState?: MouseSelectionState;
   lastPos?: any;

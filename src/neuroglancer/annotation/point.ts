@@ -18,7 +18,7 @@
  * @file Support for rendering point annotations.
  */
 
-import {Annotation, AnnotationReference, AnnotationType, Collection, Point} from 'neuroglancer/annotation';
+import {Annotation, AnnotationReference, AnnotationType, Point} from 'neuroglancer/annotation';
 import {getSelectedAssocatedSegment, PlaceAnnotationTool} from 'neuroglancer/annotation/annotation';
 import {AnnotationRenderContext, AnnotationRenderHelper, registerAnnotationTypeRenderHandler} from 'neuroglancer/annotation/type_handler';
 import {MouseSelectionState} from 'neuroglancer/layer';
@@ -121,18 +121,8 @@ export class PlacePointTool extends PlaceAnnotationTool {
             vec3.transformMat4(vec3.create(), mouseState.position, annotationLayer.globalToObject),
         type: AnnotationType.POINT,
       };
-      if (parentRef) {
-        annotation.parentId = parentRef.id;
-      }
       const reference = annotationLayer.source.add(annotation, /*commit=*/true);
       this.layer.selectedAnnotation.value = {id: reference.id};
-      if (parentRef) {
-        const parent = (<Collection>parentRef.value!);
-        parent.entries.push(reference.id);
-        if (parent.segments && annotation.segments) {
-          parent.segments = [...parent.segments!, ...annotation.segments!];
-        }
-      }
       this.assignToParent(reference, parentRef);
       reference.dispose();
     }

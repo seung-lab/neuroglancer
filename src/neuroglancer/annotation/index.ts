@@ -54,7 +54,8 @@ export enum AnnotationType {
 
 export const annotationTypes = [
   AnnotationType.POINT, AnnotationType.LINE, AnnotationType.AXIS_ALIGNED_BOUNDING_BOX,
-  AnnotationType.ELLIPSOID, AnnotationType.COLLECTION, AnnotationType.LINE_STRIP, AnnotationType.SPOKE
+  AnnotationType.ELLIPSOID, AnnotationType.COLLECTION, AnnotationType.LINE_STRIP,
+  AnnotationType.SPOKE
 ];
 
 export interface AnnotationBase {
@@ -134,6 +135,7 @@ type AnnotationNode = Annotation&{
 export interface AnnotationTypeHandler<T extends Annotation> {
   icon: string;
   description: string;
+  title: string;
   toJSON: (annotation: T) => any;
   restoreState: (annotation: T, obj: any) => void;
   serializedBytes: number;
@@ -150,6 +152,7 @@ export function getAnnotationTypeHandler(type: AnnotationType) {
 typeHandlers.set(AnnotationType.LINE, {
   icon: 'ꕹ',
   description: 'Line',
+  title: 'Annotate line',
   toJSON: (annotation: Line) => {
     return {
       pointA: Array.from(annotation.pointA),
@@ -179,6 +182,7 @@ typeHandlers.set(AnnotationType.LINE, {
 typeHandlers.set(AnnotationType.POINT, {
   icon: '⚬',
   description: 'Point',
+  title: 'Annotate Point',
   toJSON: (annotation: Point) => {
     return {
       point: Array.from(annotation.point),
@@ -203,6 +207,7 @@ typeHandlers.set(AnnotationType.POINT, {
 typeHandlers.set(AnnotationType.AXIS_ALIGNED_BOUNDING_BOX, {
   icon: '❑',
   description: 'Bounding Box',
+  title: 'Annotate bounding box',
   toJSON: (annotation: AxisAlignedBoundingBox) => {
     return {
       pointA: Array.from(annotation.pointA),
@@ -232,6 +237,7 @@ typeHandlers.set(AnnotationType.AXIS_ALIGNED_BOUNDING_BOX, {
 typeHandlers.set(AnnotationType.ELLIPSOID, {
   icon: '◎',
   description: 'Ellipsoid',
+  title: 'Annotate Ellipsoid',
   toJSON: (annotation: Ellipsoid) => {
     return {
       center: Array.from(annotation.center),
@@ -257,6 +263,7 @@ typeHandlers.set(AnnotationType.ELLIPSOID, {
 const collectionTypeSet = {
   icon: '⚄',
   description: 'Collection',
+  title: 'Group together multiple annotations',
   toJSON: (annotation: Collection) => {
     return {
       source: Array.from(annotation.source),
@@ -288,12 +295,14 @@ typeHandlers.set(AnnotationType.COLLECTION, collectionTypeSet);
 
 typeHandlers.set(AnnotationType.LINE_STRIP, {
   ...collectionTypeSet,
+  title: 'Annotate multiple connected points',
   icon: 'ʌ',
   description: 'Line Strip',
 });
 
 typeHandlers.set(AnnotationType.SPOKE, {
   ...collectionTypeSet,
+  title: 'Annotate radially connected points',
   icon: '⚹',
   description: 'Spoke',
 });
@@ -452,8 +461,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     this.lastAnnotationNode = annotationNode;
 
     if (annotation.type === AnnotationType.COLLECTION ||
-        annotation.type === AnnotationType.LINE_STRIP ||
-        annotation.type === AnnotationType.SPOKE) {
+        annotation.type === AnnotationType.LINE_STRIP || annotation.type === AnnotationType.SPOKE) {
       annotationNode.entry = (index: number) => this.get(annotationNode.entries[index]);
     }
     this.annotationMap.set(annotation.id, annotationNode);
@@ -565,7 +573,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
 
   childReassignment(targets: string[], surrogate?: AnnotationReference): AnnotationReference[] {
     const emptynesters = <AnnotationReference[]>[];
-    let adopter = surrogate ? <Collection>surrogate.value : void (0);
+    let adopter = surrogate ? <Collection>surrogate.value : null;
 
     targets.forEach((id: string) => {
       const target = this.getReference(id).value!;
@@ -739,12 +747,19 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     return this.tags.values();
   }
 
-  isAnnotationTaggedWithTag(annotationId: AnnotationId, tagId: number) {
+  isAnnotationTaggedWithTag(annotationId: AnnotationId, tagId: number): boolean {
     const annotation = this.annotationMap.get(annotationId);
     if (annotation) {
-      return annotation.tagIds && annotation.tagIds.has(tagId);
+      const collection = <Collection>annotation;
+      const selfTag = <boolean>(annotation.tagIds && annotation.tagIds.has(tagId));
+      if (collection.entries && !selfTag) {
+        return collection.entries.some((child: AnnotationId) => {
+          return this.isAnnotationTaggedWithTag(child, tagId);
+        });
+      }
+      return selfTag;
     }
-    return;
+    return false;
   }
 }
 
@@ -832,8 +847,9 @@ export function serializeAnnotations(allAnnotations: Annotation[][]): Serialized
 }
 
 export class AnnotationSerializer {
-  annotations: [Point[], Line[], AxisAlignedBoundingBox[], Ellipsoid[], Collection[], LineStrip[], Spoke[]] =
-      [[], [], [], [], [], [], []];
+  annotations:
+      [Point[], Line[], AxisAlignedBoundingBox[], Ellipsoid[], Collection[], LineStrip[], Spoke[]] =
+          [[], [], [], [], [], [], []];
   add(annotation: Annotation) {
     (<Annotation[]>this.annotations[annotation.type]).push(annotation);
   }

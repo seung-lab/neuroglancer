@@ -20,6 +20,7 @@ import 'neuroglancer/annotation/point';
 import 'neuroglancer/annotation/ellipsoid';
 import 'neuroglancer/annotation/collection';
 import 'neuroglancer/annotation/line_strip';
+import 'neuroglancer/annotation/spoke';
 
 import {AnnotationBase, AnnotationSource, annotationTypes} from 'neuroglancer/annotation';
 import {AnnotationLayerState} from 'neuroglancer/annotation/annotation_layer_state';

@@ -22,7 +22,7 @@ import './annotations.css';
 
 import debounce from 'lodash/debounce';
 import {Annotation, AnnotationReference, AnnotationSource, AnnotationTag, AnnotationType, AxisAlignedBoundingBox, Collection, Ellipsoid, getAnnotationTypeHandler, Line, LineStrip, LocalAnnotationSource, makeAnnotationId, Point, Spoke} from 'neuroglancer/annotation';
-import {MultiStepAnnotationTool, PlaceAnnotationTool, SubAnnotationTool} from 'neuroglancer/annotation/annotation';
+import {AnnotationTool, MultiStepAnnotationTool, PlaceAnnotationTool, SubAnnotationTool} from 'neuroglancer/annotation/annotation';
 import {PlaceBoundingBoxTool} from 'neuroglancer/annotation/bounding_box';
 import {PlaceSphereTool} from 'neuroglancer/annotation/ellipsoid';
 import {AnnotationLayer, AnnotationLayerState, PerspectiveViewAnnotationLayer, SliceViewAnnotationLayer} from 'neuroglancer/annotation/frontend';
@@ -55,9 +55,19 @@ import {RangeWidget} from 'neuroglancer/widget/range';
 import {StackView, Tab} from 'neuroglancer/widget/tab_view';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
 import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
+
 import {PlaceCollectionTool} from '../annotation/collection';
 
 const Papa = require('papaparse');
+
+const mismatchCheck =
+    (source: AnnotationSource|MultiscaleAnnotationSource, annotation: Annotation) => {
+      const reference = source.getReference(annotation.id);
+      if (annotation && reference.value) {
+        throw new Error(`AnnotationReference for ID:${
+            annotation.id} does not refer to the value stored in AnnotationMap.`);
+      }
+    };
 
 type AnnotationIdAndPart = {
   id: string,
@@ -451,7 +461,7 @@ export class AnnotationLayerView extends Tab {
       if (parent) {
         parent.childTool =
             tool ? <SubAnnotationTool>new tool(this.layer, {toolbox, parent}) : undefined;
-        parent.toolset = tool;
+        parent.toolset = <AnnotationTool>tool;
         this.layer.tool.changed.dispatch();
       } else {
         this.layer.tool.value = tool ? new tool(this.layer, {toolbox}) : undefined;
@@ -494,8 +504,9 @@ export class AnnotationLayerView extends Tab {
 
   private buttonFactory(type: AnnotationType): HTMLButtonElement {
     const button = document.createElement('button');
-    button.textContent = getAnnotationTypeHandler(type).icon;
-    button.title = 'Annotate point';
+    const annotationType = getAnnotationTypeHandler(type);
+    button.textContent = annotationType.icon;
+    button.title = annotationType.title;
     button.addEventListener('click', () => {
       this.changeTool(type);
     });
@@ -509,7 +520,7 @@ export class AnnotationLayerView extends Tab {
           <AnnotationType[]>Object.values(AnnotationType).filter(enu => !isNaN(Number(enu)));
       const annotationButtons = annotationTypes.map((value) => this.buttonFactory(value));
       const getActiveToolByType = (toolset?: AnnotationType): PlaceAnnotationTool|undefined => {
-        const tool = <MultiStepAnnotationTool>this.layer.tool.value!;
+        const tool = <MultiStepAnnotationTool>this.layer.tool.value;
         if (tool) {
           const {annotationType, childTool} = tool;
           if (annotationType === toolset) {
@@ -827,20 +838,24 @@ export class AnnotationLayerView extends Tab {
     });
 
     element.addEventListener('mouseup', (event: MouseEvent) => {
+      const collection = <Collection>annotation;
       if (event.button === 2) {
-        if ((<Collection>annotation).entries) {
-          (<Collection>annotation).childrenVisible.value =
-              !(<Collection>annotation).childrenVisible.value;
+        if (collection.entries) {
+          collection.childrenVisible.value = !collection.childrenVisible.value;
           element.classList.toggle('neuroglancer-parent-viewable');
           this.annotationLayer.source.changed.dispatch();
         } else {
-          this.setSpatialCoordinates(getCenterPosition(
-              this.annotationLayer.source.getReference(annotation.id).value!,
-              this.annotationLayer.objectToGlobal));
+          this.mismatchCheck(collection);
+          this.setSpatialCoordinates(
+              getCenterPosition(collection, this.annotationLayer.objectToGlobal));
         }
         event.stopPropagation();
       }
     });
+  }
+
+  mismatchCheck(annotation: Annotation) {
+    mismatchCheck(this.annotationLayer.source, annotation);
   }
 
   private updateView() {
@@ -881,8 +896,6 @@ export class AnnotationLayerView extends Tab {
     }
     let isInProgress = (<AnnotationSource>this.annotationLayer.source).isPending(annotation.id);
     element.classList.toggle('neuroglancer-annotation-inprogress', isInProgress);
-    // FIXME: :scope is not supported in IE and Edge
-    // https://stackoverflow.com/questions/52955799/scope-pseudo-selector-in-ms-edge
     {
       const position =
           <HTMLElement>element.querySelector(':scope > .neuroglancer-annotation-position');
@@ -915,7 +928,7 @@ export class AnnotationLayerView extends Tab {
       const children = element.querySelector('.neuroglancer-annotation-children');
       if (children) {
         // If there are children, move the child container
-        element.removeChild(children!);
+        element.removeChild(children);
         if (children.children.length) {
           this.annotationListContainer.appendChild(children);
         }
@@ -1225,7 +1238,6 @@ export class AnnotationLayerView extends Tab {
             raw.type = AnnotationType.ELLIPSOID;
             (<Ellipsoid>raw).center = vec3.transformMat4(
                 vec3.create(), this.stringToVec3(annProps[0]), this.annotationLayer.globalToObject);
-            // TODO: Check that this is correct
             (<Ellipsoid>raw).radii = vec3.transformMat4(
                 vec3.create(), this.stringToVec3(annProps[2]), this.annotationLayer.globalToObject);
             break;
@@ -1309,8 +1321,7 @@ export class AnnotationDetailsTab extends Tab {
     const info = <any>{};
     const annotationLayer = this.state.annotationLayerState.value;
     if (annotationLayer) {
-      // TODO: MultiScaleAnnotationSource
-      info.isInProgress = (<AnnotationSource>annotationLayer.source).isPending(value.id);
+      info.isInProgress = annotationLayer.source.isPending(value.id);
       const annotation = annotationLayer.source.getReference(value.id).value!;
       const parent = annotation.parentId ?
           <Collection>annotationLayer.source.getReference(annotation.parentId).value :
@@ -1361,7 +1372,6 @@ export class AnnotationDetailsTab extends Tab {
     button.addEventListener('click', () => {
       const parentReference = annotationLayer.source.getReference(annotation.parentId!);
       if (isSingleton) {
-        // DRY: ungroup
         try {
           annotationLayer.source.delete(parentReference);
         } finally {
@@ -1421,12 +1431,14 @@ export class AnnotationDetailsTab extends Tab {
       collection.entry = (index: number) =>
           (<LocalAnnotationSource>annotationLayer.source).get(collection.entries[index]);
 
-      const collectionreference = (<AnnotationSource>annotationLayer.source).add(collection, true);
+      const collectionReference = (<AnnotationSource>annotationLayer.source).add(collection, true);
       if (first.parentId) {
         const firstParent = (<AnnotationSource>annotationLayer.source).getReference(first.parentId);
-        (<AnnotationSource>annotationLayer.source).childReassignment([collectionreference.value!.id], firstParent);
+        (<AnnotationSource>annotationLayer.source)
+            .childReassignment([collectionReference.value!.id], firstParent);
       }
-      const emptyCollection = (<AnnotationSource>annotationLayer.source).childReassignment(target, collectionreference);
+      const emptyCollection =
+          (<AnnotationSource>annotationLayer.source).childReassignment(target, collectionReference);
 
       // It shouldn't be possible for a collection to be empty twice, that is the child says the
       // parent is empty and then a subsequent child says the same
@@ -1438,7 +1450,7 @@ export class AnnotationDetailsTab extends Tab {
           annotationReference.dispose();
         }
       });
-      this.state.value = {id: collectionreference.id};
+      this.state.value = {id: collectionReference.id};
     });
     return button;
   }
@@ -1535,10 +1547,10 @@ export class AnnotationDetailsTab extends Tab {
   }
 
   private annotationDetailsDescription() {
-    const annotation = this.state.reference!.value!;
-    const annotationLayer = this.state.annotationLayerState.value!;
+    const reference = <AnnotationReference>this.state.reference;
+    const annotation = <Annotation>reference.value;
+    const annotationLayer = <AnnotationLayerState>this.state.annotationLayerState.value;
     const description = document.createElement('textarea');
-    const reference = this.state.reference!;
     description.value = annotation.description || '';
     description.rows = 3;
     description.className = 'neuroglancer-annotation-details-description';
