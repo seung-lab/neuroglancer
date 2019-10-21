@@ -5,9 +5,9 @@ export class HidingList {
   private scrollbar: HTMLElement;
   private scrollbarFiller: HTMLElement;
   private sizeParent: HTMLElement;
-  private elementHeights: [HTMLElement, number][] = [];
-  private elementIndices = new Map<HTMLElement, number>();
-  private totalH = 0;
+  private elementYs: [HTMLElement, number][] = [];          // [element, its Y position] sorted by Y
+  private elementIndices = new Map<HTMLElement, number>();  // {element: its index in elementYs}
+  private totalHeight = 0;
   private loadedElements: HTMLElement[] = [];
   private resizeObserver: ResizeObserver;
 
@@ -33,14 +33,14 @@ export class HidingList {
     this.resizeObserver =
         new ResizeObserver(function(this: HidingList, entries: ResizeObserverEntry[]) {
           for (const entry of entries) {
-            // on annotation resize, update all subsequent annotation heights
+            // On annotation resize, update all subsequent annotation Ys
 
             const element = <HTMLElement>entry.target;
-            const i = this.elementIndices.get(element)!;
-            const nextHeight = (i + 1 === this.elementHeights.length) ?
-                this.totalH :
-                this.elementHeights[i + 1][1];
-            const oldHeight = nextHeight - this.elementHeights[i][1];
+            const elementIndex = this.elementIndices.get(element)!;
+            const nextY = (elementIndex + 1 === this.elementYs.length) ?
+                this.totalHeight :
+                this.elementYs[elementIndex + 1][1];
+            const oldHeight = nextY - this.elementYs[elementIndex][1];
             const newHeight = element.offsetHeight;
             const delta = newHeight - oldHeight;
             if (delta === 0 ||
@@ -50,11 +50,11 @@ export class HidingList {
               continue;
             }
 
-            this.shiftHeightsAfter(i + 1, delta);
+            this.shiftYsAfter(elementIndex + 1, delta);
 
-            this.totalH += delta;
+            this.totalHeight += delta;
           }
-          this.updateScrollHeight();
+          this.updateScrollbarHeight();
           this.updateScrollAreaPos();
         }.bind(this));
   }
@@ -65,63 +65,66 @@ export class HidingList {
     }
     this.loadedElements = [];
 
-    const h = this.scrollbar.scrollTop;
-    const startI = this.findHeight(h);
-    const endI = this.findHeight(h + this.sizeParent.offsetHeight);
-    for (var i = startI; i <= endI; i++) {
-      const element = this.elementHeights[i][0];
+    const viewportTop = this.scrollbar.scrollTop;
+    const firstOnscreenIndex = this.findIndex(viewportTop);
+    const lastOnscreenIndex = this.findIndex(viewportTop + this.sizeParent.offsetHeight);
+    for (let i = firstOnscreenIndex; i <= lastOnscreenIndex; i++) {
+      const element = this.elementYs[i][0];
       this.unhideElement(element);
       this.loadedElements.push(element);
     }
-    const startH = this.elementHeights[startI][1];
-    const offset = startH - h;
+    // Calculate offset so that the first element is partially offscreen, making it look like the
+    // list is actually being scrolled
+    const startY = this.elementYs[firstOnscreenIndex][1];
+    const offset = startY - viewportTop;
     this.scrollArea.style.top = offset + 'px';
     this.scrollArea.style.right = (this.scrollbar.offsetWidth - this.scrollbar.clientWidth) + 'px';
   }
 
   private addElementHelper(element: HTMLElement) {
     this.scrollArea.appendChild(element);
-    const h = element.offsetHeight;
-    this.elementIndices.set(element, this.elementHeights.length);
-    this.elementHeights.push([element, this.totalH]);
-    this.totalH += h;
+    const elementHeight = element.offsetHeight;
+    this.elementIndices.set(element, this.elementYs.length);
+    this.elementYs.push([element, this.totalHeight]);
+    this.totalHeight += elementHeight;
     this.hideElement(element);
     this.resizeObserver.observe(element);
   }
 
   addElements(elements: HTMLElement[]) {
-    // append many at once for better performance
+    // Append many at once for better performance, this should be used instead of addElement
+    // whenever possible
     for (const element of elements) {
       this.addElementHelper(element);
     }
-    this.updateScrollHeight();
+    this.updateScrollbarHeight();
     this.updateScrollAreaPos();
   }
 
   addElement(element: HTMLElement) {
     this.addElementHelper(element);
-    this.updateScrollHeight();
+    this.updateScrollbarHeight();
     this.updateScrollAreaPos();
   }
 
   removeElement(element: HTMLElement) {
     this.resizeObserver.unobserve(element);
     this.unhideElement(element);
-    const h = element.offsetHeight;
+    const elementHeight = element.offsetHeight;
 
-    const i = this.elementIndices.get(element)!;
-    this.elementHeights.splice(i, 1);
+    const elementIndex = this.elementIndices.get(element)!;
+    this.elementYs.splice(elementIndex, 1);
     this.elementIndices.delete(element);
-    this.shiftHeightsAfter(i, -h);
-    // shift indices of elements that came after the removed one
-    for (let j = i; j < this.elementHeights.length; j++) {
-      const el = this.elementHeights[j][0];
+    this.shiftYsAfter(elementIndex, -elementHeight);
+    // Shift indices of elements that came after the removed one
+    for (let j = elementIndex; j < this.elementYs.length; j++) {
+      const el = this.elementYs[j][0];
       this.elementIndices.set(el, j);
     }
 
-    this.totalH -= h;
+    this.totalHeight -= elementHeight;
     this.scrollArea.removeChild(element);
-    this.updateScrollHeight();
+    this.updateScrollbarHeight();
     this.updateScrollAreaPos();
   }
 
@@ -130,30 +133,30 @@ export class HidingList {
       this.scrollArea.removeChild(element);
     }
 
-    this.elementHeights = [];
+    this.elementYs = [];
     this.elementIndices = new Map<HTMLElement, number>();
 
-    this.totalH = 0;
+    this.totalHeight = 0;
     this.loadedElements = [];
   }
 
   scrollTo(element: HTMLElement) {
-    const h = this.elementHeights[this.elementIndices.get(element)!][1];
+    const elementY = this.elementYs[this.elementIndices.get(element)!][1];
     // Scrolls just a pixel too far, this makes it look prettier
-    this.scrollbar.scrollTop = h - 1;
+    this.scrollbar.scrollTop = elementY - 1;
     this.updateScrollAreaPos();
   }
 
   recalculateHeights() {
-    this.totalH = 0;
+    this.totalHeight = 0;
     this.scrollbar.scrollTop = 0;
     for (const [element, i] of this.elementIndices) {
       this.unhideElement(element);
-      const h = element.offsetHeight;
-      this.elementHeights[i][1] = this.totalH;
-      this.totalH += h;
+      const elementHeight = element.offsetHeight;
+      this.elementYs[i][1] = this.totalHeight;
+      this.totalHeight += elementHeight;
     }
-    this.updateScrollHeight();
+    this.updateScrollbarHeight();
     this.updateScrollAreaPos();
   }
 
@@ -165,32 +168,36 @@ export class HidingList {
     element.classList.remove('neuroglancer-annotation-hiding-list-hiddenitem');
   }
 
-  private updateScrollHeight() {
+  private updateScrollbarHeight() {
     // Add some extra padding on the bottom
-    this.scrollbarFiller.style.height = (this.totalH + 10) + 'px';
+    this.scrollbarFiller.style.height = (this.totalHeight + 10) + 'px';
   }
 
-  private shiftHeightsAfter(startIndex: number, delta: number) {
-    for (let i = startIndex; i < this.elementHeights.length; i++) {
-      this.elementHeights[i][1] += delta;
+  private shiftYsAfter(startIndex: number, delta: number) {
+    for (let i = startIndex; i < this.elementYs.length; i++) {
+      this.elementYs[i][1] += delta;
     }
   }
 
-  private findHeight(h: number) {
-    // find the position in the heights array of the equal or lower height
-    let l = 0;
-    let r = this.elementHeights.length - 1;
-    while (l <= r) {
-      const m = Math.floor((l + r) / 2);
-      const val = this.elementHeights[m][1];
-      if (val < h) {
-        l = m + 1;
-      } else if (val > h) {
-        r = m - 1;
+  private findIndex(targetY: number) {
+    // This is used for getting the first/last element to show on screen.
+    // When the scrollbar is at position h, the first element we want to show is the one with the
+    // closest Y position that is equal to or less than h. Since elementYs is sorted by Y position,
+    // we use a binary search to find this, modified so that instead of failing upon not finding h,
+    // it returns the next lower index.
+    let left = 0;
+    let right = this.elementYs.length - 1;
+    while (left <= right) {
+      const mid = Math.floor((left + right) / 2);
+      const val = this.elementYs[mid][1];
+      if (val < targetY) {
+        left = mid + 1;
+      } else if (val > targetY) {
+        right = mid - 1;
       } else {
-        return m;
+        return mid;
       }
     }
-    return r;
+    return right;  // right < left in this case, so right is the next lower index
   }
 }
