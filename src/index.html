@@ -3,8 +3,19 @@
   <head>
     <meta charset="UTF-8">
     <title>neuroglancer</title>
+    <script src="https://unpkg.com/vue/dist/vue.js"></script>
+    <link rel="stylesheet" type="text/css" href="src/neuroglancer/ui/default_viewer.css">
+    <link rel="stylesheet" type="text/css" href="src/extend/ui/main.css">
   </head>
   <body>
+    <div id="vueApp">
+      <div v-cloak>
+        <div v-if="loggedInUser" id="loggedInUserBar">
+          <div>{{ loggedInUser.name }} ({{ loggedInUser.email }})</div>
+          <button @click="logout">Logout</button>
+        </div>
+      </div>
+    </div>
     <div id="neuroglancer-container"></div>
   </body>
 </html>

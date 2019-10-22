@@ -47,6 +47,7 @@ export abstract class RenderedPanel extends RefCounted {
     const scaleX = canvasRect.width / this.context.canvas.width;
     const scaleY = canvasRect.height / this.context.canvas.height;
     let left = (element.clientLeft + clientRect.left - canvasRect.left) * scaleX;
+    // console.log('panel.setGLViewport', this, 'left', left);
     let width = element.clientWidth;
     let top = (clientRect.top - canvasRect.top + element.clientTop) * scaleY;
     let height = element.clientHeight;
@@ -160,6 +161,7 @@ export class DisplayContext extends RefCounted implements FrameNumberCounter {
   }
 
   draw() {
+    console.log('context draw');
     ++this.frameNumber;
     this.updateStarted.dispatch();
     let gl = this.gl;

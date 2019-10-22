@@ -353,6 +353,8 @@ export class LayerManager extends RefCounted {
    * Assumes ownership of an existing reference to managedLayer.
    */
   addManagedLayer(managedLayer: ManagedUserLayer, index?: number|undefined) {
+    console.log('addManagedLayer');
+
     this.updateSignalBindings(managedLayer, addSignalBinding);
     this.layerSet.add(managedLayer);
     if (index === undefined) {
@@ -368,6 +370,7 @@ export class LayerManager extends RefCounted {
    * Assumes ownership of an existing reference to userLayer.
    */
   addUserLayer(name: string, userLayer: UserLayer, visible: boolean) {
+    console.log('addUserLayer', name);
     let managedLayer = new ManagedUserLayer(name, userLayer, visible);
     return this.addManagedLayer(managedLayer);
   }

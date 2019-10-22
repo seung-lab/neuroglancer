@@ -197,6 +197,9 @@ function getBaseConfig(options) {
       plugins: [
         new AliasPlugin(aliasMappings, 'described-resolve', 'resolve'),
       ],
+      alias: {
+        'vue$': 'vue/dist/vue.esm.js',
+      },
     },
     resolveLoader: {
       alias: Object.assign(
@@ -381,7 +384,7 @@ function getViewerConfig(options) {
     ...asyncComputationDataSourceModules,
     ...extraAsyncComputationModules,
   ];
-  let frontendModules = options.frontendModules || [resolveReal(srcDir, 'pyr.ts')];
+  let frontendModules = options.frontendModules || [resolveReal(srcDir, 'extend.ts')];
   let frontendLayerModules = [];
   for (let name of supportedLayers) {
     frontendLayerModules.push(name);

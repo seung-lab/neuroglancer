@@ -1,0 +1,12 @@
+[v-cloak] {
+    display: none;
+}
+
+#loggedInUserBar {
+    display: flex;
+    justify-content: flex-end;
+}
+
+#loggedInUserBar > button {
+    margin-left: 10px;
+}

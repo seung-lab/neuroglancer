@@ -18,7 +18,8 @@
     "paths": {
       "*": ["*"],
       "neuroglancer/*": ["src/neuroglancer/*"],
-      "pyr/*": ["src/pyr/*"]
+      "pyr/*": ["src/pyr/*"],
+      "extend/*": ["src/extend/*"]
     },
     "typeRoots": [],
     "module": "ESNext"

@@ -24,6 +24,7 @@ import {RootLayoutContainer} from 'neuroglancer/layer_groups_layout';
 
 
 import {Viewer} from 'neuroglancer/viewer';
+// import { vec3 } from 'gl-matrix';
 
 export class PyrViewer extends Viewer {
     constructor(public display: DisplayContext) {
@@ -32,6 +33,16 @@ export class PyrViewer extends Viewer {
             showPanelBorders: false,
             showLayerDialog: false,
         });
+
+        // change tile
+        // setInterval(() => {
+        //     this.navigationState.pose.translateVoxelsRelative(vec3.fromValues(0, 0, -1));
+        // }, 200);
+
+        // change layout
+        // setTimeout(() => {
+        //     this.layout.restoreState('3d');
+        // }, 2000);
     }
 
     protected makeUI() {
@@ -47,31 +58,26 @@ export class PyrViewer extends Viewer {
         layoutAndSidePanel.style.flexDirection = 'row';
         this.layout = this.registerDisposer(new RootLayoutContainer(this, 'xy-3d'));
 
-        // setTimeout(() => {
-        //     this.layout.restoreState('3d');
-        // }, 2000);
-
+        this.showPerspectiveSliceViews.value = false;
 
         layoutAndSidePanel.appendChild(this.layout.element);
         gridContainer.appendChild(layoutAndSidePanel);
 
 
-        // this.selectedLayer.layerManager.
+        const em_layer = this.layerSpecification.getLayer("image_stitch_v02", {
+            source: "precomputed://gs://neuroglancer-public-data/kasthuri2011/image_color_corrected",
+            type: "image",
+            name: "whatever"
+        });
 
-        // const layerInfoPanel =
-        //     this.registerDisposer(new LayerInfoPanelContainer(this.selectedLayer.addRef()));
-        // layoutAndSidePanel.appendChild(layerInfoPanel.element);
-        // const self = this;
-        // layerInfoPanel.registerDisposer(new DragResizablePanel(
-        //     layerInfoPanel.element, {
-        //     changed: self.selectedLayer.changed,
-        //     get value() {
-        //         return self.selectedLayer.visible;
-        //     },
-        //     set value(visible: boolean) {
-        //         self.selectedLayer.visible = visible;
-        //     }
-        //     },
-        //     this.selectedLayer.size, 'horizontal', 290));
+        this.selectedLayer.layerManager.addManagedLayer(em_layer);
+
+        const segmentation_layer = this.layerSpecification.getLayer("whatever2", {
+            source: "precomputed://gs://neuroglancer-public-data/kasthuri2011/ground_truth",
+            type: "segmentation",
+            name: "whatever2"
+        });
+
+        this.selectedLayer.layerManager.addManagedLayer(segmentation_layer);
     }
 }

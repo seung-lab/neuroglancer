@@ -303,6 +303,7 @@ export abstract class RenderedDataPanel extends RenderedPanel {
   }
 
   draw() {
+    // console.log('draw', this);
     this.checkForResize();
     const {width, height} = this;
     if (width === 0 || height === 0) return;
@@ -616,6 +617,7 @@ export abstract class RenderedDataPanel extends RenderedPanel {
   }
 
   onMousemove(event: MouseEvent) {
+    // console.log('onMousemove');
     let {element} = this;
     if (event.target !== element) {
       return;

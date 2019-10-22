@@ -85,6 +85,7 @@
     "ts-loader": "^5.3.3",
     "typescript": "3.4.5",
     "url-loader": "^1.1.2",
+    "vue": "^2.6.10",
     "webpack": "^4.29.6"
   }
 }

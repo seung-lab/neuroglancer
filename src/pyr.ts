@@ -7,7 +7,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
 // import {StatusMessage} from 'neuroglancer/status';
 // import {bindDefaultCopyHandler, bindDefaultPasteHandler} from 'neuroglancer/ui/default_clipboard_handling';
-// import {setDefaultInputEventBindings} from 'neuroglancer/ui/default_input_event_bindings';
+import {setDefaultInputEventBindings} from 'neuroglancer/ui/default_input_event_bindings';
 import { makePyrViewer } from './pyr/ui/pyr_default_viewer';
 // import {UrlHashBinding} from 'neuroglancer/ui/url_hash_binding';
 
@@ -16,7 +16,7 @@ import { makePyrViewer } from './pyr/ui/pyr_default_viewer';
  */
 function setupPyrViewer() {
   let viewer = (<any>window)['viewer'] = makePyrViewer();
-  // setDefaultInputEventBindings(viewer.inputEventBindings);
+  setDefaultInputEventBindings(viewer.inputEventBindings);
 
   // bindDefaultCopyHandler(viewer);
   // bindDefaultPasteHandler(viewer);
