@@ -647,10 +647,10 @@ export class AnnotationLayerView extends Tab {
       this.updated = false;
       return;
     }
-    if (!this.updated) {
-      this.updateView();
-      return;
-    }
+    // if (!this.updated) {
+    //   this.updateView();
+    //   return;
+    // }
     this.annotationsToAdd = [];
     this.addAnnotationElementHelper(annotation);
     this.annotationHidingList.addElement(this.annotationsToAdd[0]);
@@ -662,10 +662,10 @@ export class AnnotationLayerView extends Tab {
       this.updated = false;
       return;
     }
-    if (!this.updated) {
-      this.updateView();
-      return;
-    }
+    // if (!this.updated) {
+    //   this.updateView();
+    //   return;
+    // }
     const {annotationListElements} = this;
     const element = annotationListElements.get(annotation.id);
     if (!element) {
@@ -683,10 +683,10 @@ export class AnnotationLayerView extends Tab {
       this.updated = false;
       return;
     }
-    if (!this.updated) {
-      this.updateView();
-      return;
-    }
+    // if (!this.updated) {
+    //   this.updateView();
+    //   return;
+    // }
     let element = this.annotationListElements.get(annotationId);
     if (element) {
       this.annotationHidingList.removeElement(element);
@@ -735,7 +735,6 @@ export class AnnotationLayerView extends Tab {
             getCenterPosition(annotation, this.annotationLayer.objectToGlobal));
       }
     });
-    this.annotationsToAdd.push(element);
     return element;
   }
 
