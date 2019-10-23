@@ -18,12 +18,14 @@
  * @file Basic annotation data structures.
  */
 
+import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {Borrowed, RefCounted} from 'neuroglancer/util/disposable';
 import {mat4, vec3} from 'neuroglancer/util/geom';
-import {parseArray, verify3dScale, verify3dVec, verifyEnumString, verifyObject, verifyObjectProperty, verifyOptionalString, verifyString, verifyPositiveInt} from 'neuroglancer/util/json';
+import {parseArray, verify3dScale, verify3dVec, verifyEnumString, verifyObject, verifyObjectProperty, verifyOptionalBoolean, verifyOptionalString, verifyPositiveInt, verifyString} from 'neuroglancer/util/json';
 import {getRandomHexString} from 'neuroglancer/util/random';
-import {Signal, NullarySignal} from 'neuroglancer/util/signal';
+import {NullarySignal, Signal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
+
 export type AnnotationId = string;
 
 export class AnnotationReference extends RefCounted {
@@ -45,13 +47,15 @@ export enum AnnotationType {
   LINE,
   AXIS_ALIGNED_BOUNDING_BOX,
   ELLIPSOID,
+  COLLECTION,
+  LINE_STRIP,
+  SPOKE
 }
 
 export const annotationTypes = [
-  AnnotationType.POINT,
-  AnnotationType.LINE,
-  AnnotationType.AXIS_ALIGNED_BOUNDING_BOX,
-  AnnotationType.ELLIPSOID,
+  AnnotationType.POINT, AnnotationType.LINE, AnnotationType.AXIS_ALIGNED_BOUNDING_BOX,
+  AnnotationType.ELLIPSOID, AnnotationType.COLLECTION, AnnotationType.LINE_STRIP,
+  AnnotationType.SPOKE
 ];
 
 export interface AnnotationBase {
@@ -66,6 +70,8 @@ export interface AnnotationBase {
   type: AnnotationType;
 
   segments?: Uint64[];
+
+  parentId?: string;
 }
 
 export interface Line extends AnnotationBase {
@@ -73,7 +79,6 @@ export interface Line extends AnnotationBase {
   pointB: vec3;
   type: AnnotationType.LINE;
 }
-
 export interface Point extends AnnotationBase {
   point: vec3;
   type: AnnotationType.POINT;
@@ -91,14 +96,38 @@ export interface Ellipsoid extends AnnotationBase {
   type: AnnotationType.ELLIPSOID;
 }
 
-export type Annotation = Line|Point|AxisAlignedBoundingBox|Ellipsoid;
+// Collections //
+export interface Collection extends AnnotationBase {
+  lastA?: AnnotationReference;
+  lastB?: AnnotationReference;
+  entries: string[];
+  type: AnnotationType.COLLECTION|AnnotationType.LINE_STRIP|AnnotationType.SPOKE;
+  connected: boolean;
+  source: vec3;
+  entry: Function;
+  childrenVisible: TrackableBoolean;
+}
+
+export interface LineStrip extends Collection {
+  looped?: boolean;
+  type: AnnotationType.LINE_STRIP;
+  connected: true;
+}
+
+export interface Spoke extends Collection {
+  wheeled?: boolean;
+  type: AnnotationType.SPOKE;
+  connected: true;
+}
+
+export type Annotation = Line|Point|AxisAlignedBoundingBox|Ellipsoid|Collection|LineStrip|Spoke;
 
 export interface AnnotationTag {
   id: number;
   label: string;
 }
 
-type AnnotationNode = Annotation & {
+type AnnotationNode = Annotation&{
   prev: AnnotationNode;
   next: AnnotationNode;
 };
@@ -106,6 +135,7 @@ type AnnotationNode = Annotation & {
 export interface AnnotationTypeHandler<T extends Annotation> {
   icon: string;
   description: string;
+  title: string;
   toJSON: (annotation: T) => any;
   restoreState: (annotation: T, obj: any) => void;
   serializedBytes: number;
@@ -122,6 +152,7 @@ export function getAnnotationTypeHandler(type: AnnotationType) {
 typeHandlers.set(AnnotationType.LINE, {
   icon: 'ꕹ',
   description: 'Line',
+  title: 'Annotate line',
   toJSON: (annotation: Line) => {
     return {
       pointA: Array.from(annotation.pointA),
@@ -151,6 +182,7 @@ typeHandlers.set(AnnotationType.LINE, {
 typeHandlers.set(AnnotationType.POINT, {
   icon: '⚬',
   description: 'Point',
+  title: 'Annotate Point',
   toJSON: (annotation: Point) => {
     return {
       point: Array.from(annotation.point),
@@ -175,6 +207,7 @@ typeHandlers.set(AnnotationType.POINT, {
 typeHandlers.set(AnnotationType.AXIS_ALIGNED_BOUNDING_BOX, {
   icon: '❑',
   description: 'Bounding Box',
+  title: 'Annotate bounding box',
   toJSON: (annotation: AxisAlignedBoundingBox) => {
     return {
       pointA: Array.from(annotation.pointA),
@@ -204,6 +237,7 @@ typeHandlers.set(AnnotationType.AXIS_ALIGNED_BOUNDING_BOX, {
 typeHandlers.set(AnnotationType.ELLIPSOID, {
   icon: '◎',
   description: 'Ellipsoid',
+  title: 'Annotate Ellipsoid',
   toJSON: (annotation: Ellipsoid) => {
     return {
       center: Array.from(annotation.center),
@@ -226,6 +260,53 @@ typeHandlers.set(AnnotationType.ELLIPSOID, {
   },
 });
 
+const collectionTypeSet = {
+  icon: '⚄',
+  description: 'Collection',
+  title: 'Group together multiple annotations',
+  toJSON: (annotation: Collection) => {
+    return {
+      source: Array.from(annotation.source),
+      entries: Array.from(annotation.entries),
+      childrenVisible: annotation.childrenVisible.value,
+      looped: (<LineStrip>annotation).looped
+    };
+  },
+  restoreState: (annotation: Collection, obj: any) => {
+    annotation.source = verifyObjectProperty(obj, 'source', verify3dVec);
+    annotation.entries = obj.entries.filter((v: any) => typeof v === 'string');
+    annotation.childrenVisible = new TrackableBoolean(obj.childrenVisible, true);
+    (<LineStrip>annotation).looped = verifyObjectProperty(obj, 'looped', verifyOptionalBoolean);
+  },
+  serializedBytes: 3 * 4,
+  serializer: (buffer: ArrayBuffer, offset: number, numAnnotations: number) => {
+    const coordinates = new Float32Array(buffer, offset, numAnnotations * 3);
+    return (annotation: Collection, index: number) => {
+      const {source} = annotation;
+      const coordinateOffset = index * 3;
+      coordinates[coordinateOffset] = source[0];
+      coordinates[coordinateOffset + 1] = source[1];
+      coordinates[coordinateOffset + 2] = source[2];
+    };
+  },
+};
+
+typeHandlers.set(AnnotationType.COLLECTION, collectionTypeSet);
+
+typeHandlers.set(AnnotationType.LINE_STRIP, {
+  ...collectionTypeSet,
+  title: 'Annotate multiple connected points',
+  icon: 'ʌ',
+  description: 'Line Strip',
+});
+
+typeHandlers.set(AnnotationType.SPOKE, {
+  ...collectionTypeSet,
+  title: 'Annotate radially connected points',
+  icon: '⚹',
+  description: 'Spoke',
+});
+
 function restoreAnnotationsTags(tagsObj: any) {
   const tagIds = new Set<number>();
   if (tagsObj !== undefined) {
@@ -242,6 +323,7 @@ export function annotationToJson(annotation: Annotation) {
   result.id = annotation.id;
   result.description = annotation.description || undefined;
   result.tagIds = (annotation.tagIds) ? [...annotation.tagIds] : undefined;
+  result.parentId = annotation.parentId || undefined;
   const {segments} = annotation;
   if (segments !== undefined && segments.length > 0) {
     result.segments = segments.map(x => x.toString());
@@ -264,25 +346,26 @@ export function restoreAnnotation(obj: any, allowMissingId = false): Annotation 
         obj, 'segments',
         x => x === undefined ? undefined : parseArray(x, y => Uint64.parseString(y))),
     type,
+    parentId: verifyObjectProperty(obj, 'parentId', verifyOptionalString),
   };
   getAnnotationTypeHandler(type).restoreState(result, obj);
   return result;
 }
 
 export interface AnnotationSourceSignals {
-  changed:NullarySignal;
-  childAdded:Signal<(annotation: Annotation) => void>;
-  childUpdated:Signal<(annotation: Annotation) => void>;
-  childDeleted:Signal<(annotationId: string) => void>;
-  tagAdded:Signal<(tag: AnnotationTag) => void>;
-  tagUpdated:Signal<(tag: AnnotationTag) => void>;
-  tagDeleted:Signal<(tagId: number) => void>;
-  getTags:()=>Iterable<AnnotationTag>;
+  changed: NullarySignal;
+  childAdded: Signal<(annotation: Annotation) => void>;
+  childUpdated: Signal<(annotation: Annotation) => void>;
+  childDeleted: Signal<(annotationId: string) => void>;
+  tagAdded: Signal<(tag: AnnotationTag) => void>;
+  tagUpdated: Signal<(tag: AnnotationTag) => void>;
+  tagDeleted: Signal<(tagId: number) => void>;
+  getTags: () => Iterable<AnnotationTag>;
 }
 
 function restoreAnnotationTag(obj: any): AnnotationTag {
   verifyObject(obj);
-  const result: AnnotationTag = <any> {
+  const result: AnnotationTag = <any>{
     id: verifyObjectProperty(obj, 'id', verifyPositiveInt),
     label: verifyObjectProperty(obj, 'label', verifyString)
   };
@@ -311,9 +394,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
 
   addTag(label: string) {
     this.maxTagId++;
-    const tag = <AnnotationTag> {
-      id: this.maxTagId, label
-    };
+    const tag = <AnnotationTag>{id: this.maxTagId, label};
     this.tags.set(this.maxTagId, tag);
     this.changed.dispatch();
     this.tagAdded.dispatch(tag);
@@ -348,7 +429,8 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
       annotation.tagIds.forEach(tagId => {
         const annotationTag = this.tags.get(tagId);
         if (!annotationTag) {
-          throw new Error(`AnnotationTag id ${tagId} listed for Annotation ${annotation.id} does not exist`);
+          throw new Error(
+              `AnnotationTag id ${tagId} listed for Annotation ${annotation.id} does not exist`);
         }
       });
     }
@@ -365,11 +447,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
 
   private insertAnnotationNode(annotation: Annotation) {
     this.validateTags(annotation);
-    let annotationNode: any = {
-      ...annotation,
-      prev: null,
-      next: null
-    };
+    let annotationNode: any = {...annotation, prev: null, next: null};
     if (this.lastAnnotationNode) {
       annotationNode.prev = this.lastAnnotationNode;
       annotationNode.next = this.lastAnnotationNode.next;
@@ -381,6 +459,11 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
       annotationNode = <AnnotationNode>annotationNode;
     }
     this.lastAnnotationNode = annotationNode;
+
+    if (annotation.type === AnnotationType.COLLECTION ||
+        annotation.type === AnnotationType.LINE_STRIP || annotation.type === AnnotationType.SPOKE) {
+      annotationNode.entry = (index: number) => this.get(annotationNode.entries[index]);
+    }
     this.annotationMap.set(annotation.id, annotationNode);
   }
 
@@ -417,31 +500,41 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     return;
   }
 
-  add(annotation: Annotation, commit: boolean = true): AnnotationReference {
+  add(annotation: Annotation, commit: boolean = true,
+      parentReference?: AnnotationReference): AnnotationReference {
     if (!annotation.id) {
       annotation.id = makeAnnotationId();
     } else if (this.annotationMap.has(annotation.id)) {
       throw new Error(`Annotation id already exists: ${JSON.stringify(annotation.id)}.`);
     }
+    if (parentReference) {
+      annotation.parentId = parentReference.id;
+    }
     this.insertAnnotationNode(annotation);
     this.changed.dispatch();
-    this.childAdded.dispatch(annotation);
     if (!commit) {
       this.pending.add(annotation.id);
     }
+    this.childAdded.dispatch(annotation);
     return this.getReference(annotation.id);
   }
 
   commit(reference: AnnotationReference): void {
-    const id = reference.id;
+    const {id, value} = reference;
     this.pending.delete(id);
+    if (value) {
+      this.childUpdated.dispatch(value);
+    }
+  }
+
+  isPending(id: AnnotationId) {
+    return this.pending.has(id);
   }
 
   update(reference: AnnotationReference, annotation: Annotation) {
     if (reference.value === null) {
       throw new Error(`Annotation already deleted.`);
     }
-    reference.value = annotation;
     this.updateAnnotationNode(annotation.id, annotation);
     reference.changed.dispatch();
     this.changed.dispatch();
@@ -474,7 +567,86 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     return this.annotationMap.get(id);
   }
 
-  delete(reference: AnnotationReference) {
+  orphan(reference: AnnotationReference, surrogate?: AnnotationReference): AnnotationReference[] {
+    const targets = (<Collection>reference.value)!.entries;
+    if (targets && targets.length) {
+      return this.childReassignment(targets, surrogate);
+    }
+    return [];
+  }
+
+  childReassignment(targets: string[], surrogate?: AnnotationReference): AnnotationReference[] {
+    const emptynesters = <AnnotationReference[]>[];
+    let adopter = surrogate ? <Collection>surrogate.value : null;
+
+    targets.forEach((id: string) => {
+      const target = this.getReference(id).value!;
+      // remove child from parent
+      let parent;
+      if (target.parentId) {
+        parent = <Collection>this.getReference(target.parentId).value!;
+        parent.entries = parent.entries.filter(v => v !== target.id);
+        if (parent.parentId && !adopter) {
+          adopter = <Collection>this.getReference(parent.parentId).value!;
+        }
+        if (!parent.entries.length) {
+          emptynesters.push(this.getReference(target.parentId));
+        }
+      }
+      // reassign/orphan child | parent cannot be child of child
+      if ((adopter && !(<any>target).entries) ||
+          (adopter && (<any>target).entries && !(<any>target).entries.includes(adopter.id))) {
+        target.parentId = adopter.id;
+        adopter.entries.push(target.id);
+      } else {
+        target.parentId = undefined;
+      }
+      this.childDeleted.dispatch(target.id);
+      // TODO: CHILD MOVE signal, move the child to a different element rather than deleting and
+      // readding, because this cant rebuild children
+      this.childAdded.dispatch(target);
+    });
+
+    if (surrogate) {
+      surrogate.changed.dispatch();
+    }
+    this.changed.dispatch();
+    if (surrogate) {
+      this.childUpdated.dispatch(surrogate.value!);
+    }
+    return emptynesters;
+  }
+
+  delete(reference: AnnotationReference, flush?: boolean) {
+    if (reference.value === null) {
+      return;
+    }
+    const isParent = <boolean>!!(<Collection>reference.value).entries;
+    const isChild = !!reference.value!.parentId;
+    if (isParent) {
+      if (flush) {
+        (<Collection>reference.value).entries.forEach((id: string) => {
+          const target = this.getReference(id);
+          // If child is a collection, this will nuke the grandchildren too
+          this.delete(target, true);
+        });
+      } else {
+        this.orphan(reference);
+      }
+    }
+    if (reference.value === null) {
+      return;
+    }
+    if (isChild) {
+      // Remove child from parent entries on deletion
+      const target = this.getReference(reference.value!.parentId!);
+      const value = <Collection>target.value;
+      // parent should not be deleted before its children
+      value.entries = value.entries.filter(v => v !== reference.value!.id);
+      if (!value.entries.length && !this.isPending(value.id)) {
+        this.delete(target);
+      }
+    }
     if (reference.value === null) {
       return;
     }
@@ -514,15 +686,9 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
       annotationResult.push(annotationToJson(annotation));
     }
     for (const tag of this.tags.values()) {
-      tagResult.push({
-        id: tag.id,
-        label: tag.label
-      });
+      tagResult.push({id: tag.id, label: tag.label});
     }
-    const result = {
-      annotations: annotationResult,
-      tags: tagResult
-    };
+    const result = {annotations: annotationResult, tags: tagResult};
     return result;
   }
 
@@ -585,14 +751,20 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     return this.tags.values();
   }
 
-  isAnnotationTaggedWithTag(annotationId: AnnotationId, tagId: number) {
+  isAnnotationTaggedWithTag(annotationId: AnnotationId, tagId: number): boolean {
     const annotation = this.annotationMap.get(annotationId);
     if (annotation) {
-      return annotation.tagIds && annotation.tagIds.has(tagId);
+      const collection = <Collection>annotation;
+      const selfTag = <boolean>(annotation.tagIds && annotation.tagIds.has(tagId));
+      if (collection.entries && !selfTag) {
+        return collection.entries.some((child: AnnotationId) => {
+          return this.isAnnotationTaggedWithTag(child, tagId);
+        });
+      }
+      return selfTag;
     }
-    return;
+    return false;
   }
-
 }
 
 export class LocalAnnotationSource extends AnnotationSource {}
@@ -679,7 +851,9 @@ export function serializeAnnotations(allAnnotations: Annotation[][]): Serialized
 }
 
 export class AnnotationSerializer {
-  annotations: [Point[], Line[], AxisAlignedBoundingBox[], Ellipsoid[]] = [[], [], [], []];
+  annotations:
+      [Point[], Line[], AxisAlignedBoundingBox[], Ellipsoid[], Collection[], LineStrip[], Spoke[]] =
+          [[], [], [], [], [], [], []];
   add(annotation: Annotation) {
     (<Annotation[]>this.annotations[annotation.type]).push(annotation);
   }
