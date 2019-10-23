@@ -42,7 +42,7 @@ import {registerNested, TrackableValueInterface, WatchableRefCounted, WatchableV
 import {HidingList} from 'neuroglancer/ui/hiding_list';
 import {TrackableRGB} from 'neuroglancer/util/color';
 import {Borrowed, Owned, RefCounted} from 'neuroglancer/util/disposable';
-import {removeChildren, removeFromParent} from 'neuroglancer/util/dom';
+import {removeChildren} from 'neuroglancer/util/dom';
 import {mat4, transformVectorByMat4, vec3} from 'neuroglancer/util/geom';
 import {verifyObject, verifyObjectProperty, verifyOptionalInt, verifyString} from 'neuroglancer/util/json';
 import {NullarySignal} from 'neuroglancer/util/signal';
@@ -734,6 +734,19 @@ export class AnnotationLayerView extends Tab {
         new HidingList(scrollArea, scrollbar, scrollbarFiller, this.groupAnnotations.element);
   }
 
+  private handleMultiple() {
+    const selectedValue = this.state.value;
+    const {previousSelectedId} = this;
+    if (!selectedValue || !selectedValue.multiple || !previousSelectedId) {
+      return;
+    }
+    const element = this.annotationListElements.get(previousSelectedId);
+    const multiple = Array.from(selectedValue.multiple);
+    if (element !== undefined && multiple.length && multiple.includes(previousSelectedId)) {
+      element.classList.add('neuroglancer-annotation-multiple');
+    }
+  }
+
   private clearSelectionClass() {
     const {previousSelectedId} = this;
     if (previousSelectedId !== undefined) {
@@ -772,33 +785,18 @@ export class AnnotationLayerView extends Tab {
     if (newSelectedId === previousSelectedId) {
       return;
     }
-    // <<<<<<< HEAD
-    if (previousSelectedId !== undefined) {
-      const element = this.annotationListElements.get(previousSelectedId);
-      if (element !== undefined) {
-        element.classList.remove('neuroglancer-annotation-selected');
-        if (multiple && multiple.length && multiple.includes(previousSelectedId)) {
-          element.classList.add('neuroglancer-annotation-multiple');
-        }
-      }
-    }
-    // =======
+    this.handleMultiple();
     this.clearSelectionClass();
-    // >>>>>>> a7196bb237facf8cc37233cfc0926c14be0a7db3
+
     if (newSelectedId !== undefined) {
       const element = this.annotationListElements.get(newSelectedId);
       if (element !== undefined) {
         element.classList.add('neuroglancer-annotation-selected');
-        // <<<<<<< HEAD
-        element.scrollIntoView();
-        // Scrolls just a pixel too far, this makes it look prettier
-        this.annotationListContainer.scrollTop -= 1;
         if (multiple && multiple.length) {
           element.classList.add('neuroglancer-annotation-multiple');
         }
-        // =======
+
         this.annotationHidingList.scrollTo(element);
-        // >>>>>>> a7196bb237facf8cc37233cfc0926c14be0a7db3
       }
     }
     this.previousSelectedId = newSelectedId;
@@ -831,11 +829,8 @@ export class AnnotationLayerView extends Tab {
   }
 
   private addAnnotationElementHelper(annotation: Annotation) {
-    // <<<<<<< HEAD
-    const {annotationListContainer, annotationListElements} = this;
-
-    const element = this.makeAnnotationListElement(annotation);
-    if (element.dataset.parent) {
+    // INCOMPATIBLE
+    /*if (element.dataset.parent) {
       const parent =
           annotationListContainer.querySelector(`[data-container="${element.dataset.parent}"]`);
       if (parent) {
@@ -851,48 +846,8 @@ export class AnnotationLayerView extends Tab {
     } else {
       annotationListContainer.appendChild(element);
     }
-    annotationListElements.set(annotation.id, element);
-
-    element.addEventListener('mouseenter', () => {
-      this.annotationLayer.hoverState.value = {id: annotation.id, partIndex: 0};
-    });
-    element.addEventListener('click', (event: MouseEvent) => {
-      if (event.ctrlKey || event.metaKey) {
-        let multiple = new Set<string>();
-        if (this.state.value) {
-          if (this.state.value.multiple) {
-            multiple = this.state.value.multiple;
-          } else if (this.state.value.ungroupable) {
-            // Cannot select line segment for group
-          } else {
-            multiple.add(this.state.value.id);
-          }
-        }
-        multiple.add(annotation.id);
-        this.state.value = {id: annotation.id, partIndex: 0, multiple};
-      } else {
-        this.state.value = {id: annotation.id, partIndex: 0};
-      }
-      event.stopPropagation();
-    });
-
-    element.addEventListener('mouseup', (event: MouseEvent) => {
-      const collection = <Collection>annotation;
-      if (event.button === 2) {
-        if (collection.entries) {
-          collection.childrenVisible.value = !collection.childrenVisible.value;
-          element.classList.toggle('neuroglancer-parent-viewable');
-          this.annotationLayer.source.changed.dispatch();
-        } else {
-          this.setSpatialCoordinates(
-              getCenterPosition(collection, this.annotationLayer.objectToGlobal));
-        }
-        event.stopPropagation();
-      }
-    });
-    // =======
+    */
     this.annotationsToAdd.push(this.makeAnnotationListElement(annotation));
-    // >>>>>>> a7196bb237facf8cc37233cfc0926c14be0a7db3
   }
 
   private updateView() {
@@ -938,42 +893,17 @@ export class AnnotationLayerView extends Tab {
       this.updateView();
       return;
     }
-    // <<<<<<< HEAD
-    const {element} = this;
-    let isInProgress = (<AnnotationSource>this.annotationLayer.source).isPending(annotation.id);
-    element.classList.toggle('neuroglancer-annotation-inprogress', isInProgress);
-    {
-      const position =
-          <HTMLElement>element.querySelector(':scope > .neuroglancer-annotation-position');
-      position.innerHTML = '';
-      getPositionSummary(
-          position, annotation, this.annotationLayer.objectToGlobal, this.voxelSize,
-          this.setSpatialCoordinates);
+
+    const {annotationListElements} = this;
+    const element = annotationListElements.get(annotation.id);
+    if (!element) {
+      return;
     }
-    const description =
-        <HTMLElement>element.querySelector(':scope > .neuroglancer-annotation-description');
-    if (description) {
-      const annotationText = this.layer.getAnnotationText(annotation);
-      if (!annotationText) {
-        element.removeChild(description);
-      } else {
-        description.innerHTML = annotationText;
-      }
-    } else {
-      this.createAnnotationDescriptionElement(element, annotation);
-      // =======
-      const {annotationListElements} = this;
-      const element = annotationListElements.get(annotation.id);
-      if (!element) {
-        return;
-        // >>>>>>> a7196bb237facf8cc37233cfc0926c14be0a7db3
-      }
-      const {annotationHidingList} = this;
-      const newElement = this.makeAnnotationListElement(annotation);
-      annotationHidingList.replaceElement(newElement, element);
-      annotationListElements.set(annotation.id, newElement);
-      this.resetOnUpdate();
-    }
+    const {annotationHidingList} = this;
+    const newElement = this.makeAnnotationListElement(annotation);
+    annotationHidingList.replaceElement(newElement, element);
+    annotationListElements.set(annotation.id, newElement);
+    this.resetOnUpdate();
   }
 
   private deleteAnnotationElement(annotationId: string) {
@@ -987,20 +917,16 @@ export class AnnotationLayerView extends Tab {
     }
     let element = this.annotationListElements.get(annotationId);
     if (element) {
-      // <<<<<<< HEAD
-      const children = element.querySelector('.neuroglancer-annotation-children');
+      // INCOMPATIBLE
+      /*const children = element.querySelector('.neuroglancer-annotation-children');
       if (children) {
         // If there are children, move the child container
         element.removeChild(children);
         if (children.children.length) {
           this.annotationListContainer.appendChild(children);
         }
-      }
-
-      removeFromParent(element);
-      // =======
+      }*/
       this.annotationHidingList.removeElement(element);
-      // >>>>>>> a7196bb237facf8cc37233cfc0926c14be0a7db3
       this.annotationListElements.delete(annotationId);
     }
     this.resetOnUpdate();
@@ -1035,7 +961,8 @@ export class AnnotationLayerView extends Tab {
       element.dataset.parent = annotation.parentId;
     }
     this.createAnnotationDescriptionElement(element, annotation);
-    if ((<Collection>annotation).entries) {
+    // TODO: Incompatible
+    /*if ((<Collection>annotation).entries) {
       // search for the child bin belonging to my ID
       const reclaim =
           this.annotationListContainer.querySelector(`[data-container="${annotation.id}"]`);
@@ -1053,22 +980,49 @@ export class AnnotationLayerView extends Tab {
         element.appendChild(childs);
       }
     }
+    */
 
     this.annotationListElements.set(annotation.id, element);
 
     element.addEventListener('mouseenter', () => {
       this.annotationLayer.hoverState.value = {id: annotation.id, partIndex: 0};
     });
-    element.addEventListener('click', () => {
-      this.state.value = {id: annotation.id, partIndex: 0};
+
+    element.addEventListener('click', (event: MouseEvent) => {
+      if (event.ctrlKey || event.metaKey) {
+        let multiple = new Set<string>();
+        if (this.state.value) {
+          if (this.state.value.multiple) {
+            multiple = this.state.value.multiple;
+          } else if (this.state.value.ungroupable) {
+            // Cannot select line segment for group
+          } else {
+            multiple.add(this.state.value.id);
+          }
+        }
+        multiple.add(annotation.id);
+        this.state.value = {id: annotation.id, partIndex: 0, multiple};
+      } else {
+        this.state.value = {id: annotation.id, partIndex: 0};
+      }
+      event.stopPropagation();
     });
 
     element.addEventListener('mouseup', (event: MouseEvent) => {
+      const collection = <Collection>annotation;
       if (event.button === 2) {
-        this.setSpatialCoordinates(
-            getCenterPosition(annotation, this.annotationLayer.objectToGlobal));
+        if (collection.entries) {
+          collection.childrenVisible.value = !collection.childrenVisible.value;
+          element.classList.toggle('neuroglancer-parent-viewable');
+          this.annotationLayer.source.changed.dispatch();
+        } else {
+          this.setSpatialCoordinates(
+              getCenterPosition(collection, this.annotationLayer.objectToGlobal));
+        }
+        event.stopPropagation();
       }
     });
+
     return element;
   }
 
