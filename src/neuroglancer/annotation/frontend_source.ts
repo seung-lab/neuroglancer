@@ -443,6 +443,10 @@ export class MultiscaleAnnotationSource extends SharedObject implements
     this.applyLocalUpdate(reference, /*existing=*/ true, /*commit=*/ true, reference.value!);
   }
 
+  isPending(id: AnnotationId) {
+    return !!this.localUpdates.get(id);
+  }
+
   getReference(id: AnnotationId): Owned<AnnotationReference> {
     let existing = this.references.get(id);
     if (existing !== undefined) {
