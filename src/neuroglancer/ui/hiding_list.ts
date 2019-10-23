@@ -81,6 +81,9 @@ export class HidingList {
     }
     this.loadedElements = [];
 
+    if (this.elementYs.length == 0) {
+      return;
+    }
     const viewportTop = this.scrollbar.scrollTop;
     const firstOnscreenIndex = this.findIndex(viewportTop);
     const lastOnscreenIndex = this.findIndex(viewportTop + this.sizeParent.offsetHeight);
