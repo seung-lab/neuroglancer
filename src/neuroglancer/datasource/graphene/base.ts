@@ -17,6 +17,8 @@
 import {VertexAttributeInfo} from 'neuroglancer/skeleton/base';
 import {mat4} from 'neuroglancer/util/geom';
 
+export const PYCG_APP_VERSION = 1;
+
 export enum VolumeChunkEncoding {
   RAW,
   JPEG,

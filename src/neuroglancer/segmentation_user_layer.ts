@@ -59,6 +59,7 @@ const NOT_SELECTED_ALPHA_JSON_KEY = 'notSelectedAlpha';
 const OBJECT_ALPHA_JSON_KEY = 'objectAlpha';
 const SATURATION_JSON_KEY = 'saturation';
 const HIDE_SEGMENT_ZERO_JSON_KEY = 'hideSegmentZero';
+const IGNORE_SEGMENT_INTERACTIONS_JSON_KEY = 'ignoreSegmentInteractions';
 const MESH_JSON_KEY = 'mesh';
 const SKELETONS_JSON_KEY = 'skeletons';
 const ROOT_SEGMENTS_JSON_KEY = 'segments';
@@ -120,6 +121,9 @@ export class SegmentationUserLayer extends Base {
   // Dispatched when either meshLayer or skeletonLayer changes.
   objectLayerStateChanged = new NullarySignal();
 
+  // Whether to ignore selection/merge/split operations for this layer.
+  ignoreSegmentInteractions = new TrackableBoolean(false, false);
+
   constructor(public manager: LayerListSpecification, x: any) {
     super(manager, x);
     this.displayState.rootSegments.changed.add((segmentIds: Uint64[]|Uint64|null, add: boolean) => {
@@ -142,6 +146,7 @@ export class SegmentationUserLayer extends Base {
     this.displayState.segmentStatedColors.changed.add(this.specificationChanged.dispatch);
     this.displayState.renderScaleTarget.changed.add(this.specificationChanged.dispatch);
     this.displayState.shatterSegmentEquivalences.changed.add(this.specificationChanged.dispatch);
+    this.ignoreSegmentInteractions.changed.add(this.specificationChanged.dispatch);
     this.tabs.add(
         'rendering', {label: 'Rendering', order: -100, getter: () => new DisplayOptionsTab(this)});
     this.tabs.default = 'rendering';
@@ -158,6 +163,8 @@ export class SegmentationUserLayer extends Base {
     this.displayState.notSelectedAlpha.restoreState(specification[NOT_SELECTED_ALPHA_JSON_KEY]);
     this.displayState.objectAlpha.restoreState(specification[OBJECT_ALPHA_JSON_KEY]);
     this.displayState.hideSegmentZero.restoreState(specification[HIDE_SEGMENT_ZERO_JSON_KEY]);
+    this.ignoreSegmentInteractions.restoreState(
+        specification[IGNORE_SEGMENT_INTERACTIONS_JSON_KEY]);
 
     const {skeletonRenderingOptions} = this.displayState;
     skeletonRenderingOptions.restoreState(specification[SKELETON_RENDERING_JSON_KEY]);
@@ -365,6 +372,7 @@ export class SegmentationUserLayer extends Base {
     x[SATURATION_JSON_KEY] = this.displayState.saturation.toJSON();
     x[OBJECT_ALPHA_JSON_KEY] = this.displayState.objectAlpha.toJSON();
     x[HIDE_SEGMENT_ZERO_JSON_KEY] = this.displayState.hideSegmentZero.toJSON();
+    x[IGNORE_SEGMENT_INTERACTIONS_JSON_KEY] = this.ignoreSegmentInteractions.toJSON();
     x[COLOR_SEED_JSON_KEY] = this.displayState.segmentColorHash.toJSON();
     let {segmentStatedColors} = this.displayState;
     if (segmentStatedColors.size > 0) {
@@ -426,6 +434,9 @@ export class SegmentationUserLayer extends Base {
   }
 
   handleAction(action: string) {
+    if (this.ignoreSegmentInteractions.value) {
+      return;
+    }
     switch (action) {
       case 'recolor': {
         this.displayState.segmentColorHash.randomize();
@@ -689,6 +700,19 @@ class DisplayOptionsTab extends Tab {
     }));
     groupSegmentSelection.appendFlexibleChild(
         this.registerDisposer(this.visibleSegmentWidget).element);
+
+    {
+      const checkbox =
+          this.registerDisposer(new TrackableBooleanCheckbox(layer.ignoreSegmentInteractions));
+      checkbox.element.className =
+          'neuroglancer-segmentation-dropdown-ignore-segment-interactions neuroglancer-noselect';
+      const label = document.createElement('label');
+      label.className =
+          'neuroglancer-segmentation-dropdown-ignore-segment-interactions neuroglancer-noselect';
+      label.appendChild(document.createTextNode('Ignore segment interactions'));
+      label.appendChild(checkbox.element);
+      groupSegmentSelection.appendFixedChild(label);
+    }
 
     const maybeAddOmniSegmentWidget = () => {
       if (this.omniWidget || (!layer.segmentMetadata)) {
