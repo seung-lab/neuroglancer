@@ -828,7 +828,7 @@ export class AnnotationLayerView extends Tab {
     this.previousHoverId = newHoverId;
   }
 
-  private addAnnotationElementHelper(annotation: Annotation) {
+  /*private addAnnotationElementHelper(annotation: Annotation) {
     // INCOMPATIBLE
     /*if (element.dataset.parent) {
       const parent =
@@ -846,10 +846,8 @@ export class AnnotationLayerView extends Tab {
     } else {
       annotationListContainer.appendChild(element);
     }
-    */
-    const element = this.makeAnnotationListElement(annotation);
-    this.annotationsToAdd.push(element);
-  }
+    * /
+  }*/
 
   private updateView() {
     if (!this.visible) {
@@ -865,12 +863,57 @@ export class AnnotationLayerView extends Tab {
     annotationListElements.clear();
     this.annotationsToAdd = [];
     for (const annotation of source) {
-      this.addAnnotationElementHelper(annotation);
+      this.annotationsToAdd.push(this.makeAnnotationListElement(annotation));
     }
+    this.arrangeAnnotationsToAdd();
     this.annotationHidingList.addElements(this.annotationsToAdd);
-    // TODO INCOMP: reorder annotations once per parent now that all have been added, and set
-    // indentation
     this.resetOnUpdate();
+  }
+
+  private arrangeAnnotationsToAdd() {
+    // Sort this.annotationsToAdd into a tree, then flatten back into a list with the proper order
+    // Based on https://stackoverflow.com/a/444303
+    class TreeNode {
+      element: HTMLElement;
+      children: TreeNode[];
+      
+      constructor(element: HTMLElement) {
+        this.element = element;
+        this.children = [];
+      }
+    }
+
+    const idNodes = new Map<string, TreeNode>();
+    for (const element of this.annotationsToAdd) {
+      idNodes.set(element.dataset.id!, new TreeNode(element));
+    }
+
+    for (const element of this.annotationsToAdd) {
+      if (element.dataset.parent) {
+        const parentNode = idNodes.get(element.dataset.parent)!;
+        const elementNode = idNodes.get(element.dataset.id!)!;
+        parentNode.children.push(elementNode);
+      }
+    }
+
+    const orderedAnnotations: HTMLElement[] = [];
+
+    function addFlattenedElement(node: TreeNode, depth: number) {
+      const element = node.element;
+      //TODO: set indentation from depth
+      orderedAnnotations.push(element);
+      for (const child of node.children) {
+        addFlattenedElement(child, depth + 1);
+      }
+    }
+
+    for (const element of this.annotationsToAdd) {
+      if (!element.dataset.parent) {
+        addFlattenedElement(idNodes.get(element.dataset.id!)!, 0);
+      }
+    }
+    debugger;
+    this.annotationsToAdd = orderedAnnotations;
   }
 
   private addAnnotationElement(annotation: Annotation) {
@@ -882,11 +925,10 @@ export class AnnotationLayerView extends Tab {
       this.updateView();
       return;
     }
-    this.annotationsToAdd = [];
-    this.addAnnotationElementHelper(annotation);
-    this.annotationHidingList.addElement(this.annotationsToAdd[0]);
-    // TODO INCOMP: can it have been created as a child of another one at this point? if so order &
-    // indent it
+    this.annotationHidingList.addElement(this.makeAnnotationListElement(annotation));
+    // TODO INCOMP: if it was created as a child of another one (has parent), order & indent it
+    // it doesn't matter if it was created as a parent since the children will be deleted & recreated
+    console.log("addElement single for " + annotation.id);
     this.resetOnUpdate();
   }
 
