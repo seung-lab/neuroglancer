@@ -832,7 +832,7 @@ export class AnnotationLayerView extends Tab {
     // INCOMPATIBLE
     /*if (element.dataset.parent) {
       const parent =
-          annotationListContainer.querySelector(`[data-container="${element.dataset.parent}"]`);
+          annotationListContainer.querySelector(`[data-id="${element.dataset.parent}"]`);
       if (parent) {
         parent.appendChild(element);
       } else {
@@ -847,7 +847,8 @@ export class AnnotationLayerView extends Tab {
       annotationListContainer.appendChild(element);
     }
     */
-    this.annotationsToAdd.push(this.makeAnnotationListElement(annotation));
+    const element = this.makeAnnotationListElement(annotation);
+    this.annotationsToAdd.push(element);
   }
 
   private updateView() {
@@ -857,6 +858,7 @@ export class AnnotationLayerView extends Tab {
     if (this.updated) {
       return;
     }
+
     const {annotationLayer, annotationListElements} = this;
     const {source} = annotationLayer;
     this.annotationHidingList.removeAll();
@@ -866,6 +868,8 @@ export class AnnotationLayerView extends Tab {
       this.addAnnotationElementHelper(annotation);
     }
     this.annotationHidingList.addElements(this.annotationsToAdd);
+    // TODO INCOMP: reorder annotations once per parent now that all have been added, and set
+    // indentation
     this.resetOnUpdate();
   }
 
@@ -881,6 +885,8 @@ export class AnnotationLayerView extends Tab {
     this.annotationsToAdd = [];
     this.addAnnotationElementHelper(annotation);
     this.annotationHidingList.addElement(this.annotationsToAdd[0]);
+    // TODO INCOMP: can it have been created as a child of another one at this point? if so order &
+    // indent it
     this.resetOnUpdate();
   }
 
@@ -961,7 +967,13 @@ export class AnnotationLayerView extends Tab {
       element.dataset.parent = annotation.parentId;
     }
     this.createAnnotationDescriptionElement(element, annotation);
-    // TODO: Incompatible
+
+    if ((<Collection>annotation).entries) {
+      element.title = 'Click to select, right click to toggle children.';
+    }
+
+    // TODO: Incompatible- reorder annotations once per parent once all have been added, and set
+    // indentation there too
     /*if ((<Collection>annotation).entries) {
       // search for the child bin belonging to my ID
       const reclaim =
@@ -1013,7 +1025,7 @@ export class AnnotationLayerView extends Tab {
       if (event.button === 2) {
         if (collection.entries) {
           collection.childrenVisible.value = !collection.childrenVisible.value;
-          element.classList.toggle('neuroglancer-parent-viewable');
+          this.setChildrenVisible(element.dataset.id!, collection.childrenVisible.value);
           this.annotationLayer.source.changed.dispatch();
         } else {
           this.setSpatialCoordinates(
@@ -1024,6 +1036,20 @@ export class AnnotationLayerView extends Tab {
     });
 
     return element;
+  }
+
+  private setChildrenVisible(elementId: string, visible: boolean) {
+    const children = this.annotationListContainer.querySelectorAll(`[data-parent="${elementId}"]`);
+    for (const child of children) {
+      if (visible) {
+        // showing: reveal only direct children
+        child.classList.remove('neuroglancer-annotation-child-hidden');
+      } else {
+        // hiding: hide all children recursively
+        child.classList.add('neuroglancer-annotation-child-hidden');
+        this.setChildrenVisible((<HTMLElement>child).dataset.id!, false);
+      }
+    }
   }
 
   private createAnnotationDescriptionElement(
