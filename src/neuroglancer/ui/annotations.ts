@@ -917,7 +917,7 @@ export class AnnotationLayerView extends Tab {
   }
 
   private setPadding(element: HTMLElement, depth: number) {
-    element.style.paddingLeft = (depth / 1 + 0.5) + "em";
+    element.style.paddingLeft = (depth + 0.5) + "em";
   }
 
   private addAnnotationElement(annotation: Annotation) {
@@ -960,6 +960,15 @@ export class AnnotationLayerView extends Tab {
     }
     const {annotationHidingList} = this;
     const newElement = this.makeAnnotationListElement(annotation);
+    let depth = 0;
+    let parent = undefined;
+    let checkElement: HTMLElement = newElement;
+    while (checkElement.dataset.parent) {
+      parent = this.annotationListElements.get(checkElement.dataset.parent);
+      checkElement = parent!;
+      depth++;
+    }
+    this.setPadding(newElement, depth);
     annotationHidingList.replaceElement(newElement, element);
     annotationListElements.set(annotation.id, newElement);
     this.resetOnUpdate();
