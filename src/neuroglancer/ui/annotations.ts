@@ -828,27 +828,6 @@ export class AnnotationLayerView extends Tab {
     this.previousHoverId = newHoverId;
   }
 
-  /*private addAnnotationElementHelper(annotation: Annotation) {
-    // INCOMPATIBLE
-    /*if (element.dataset.parent) {
-      const parent =
-          annotationListContainer.querySelector(`[data-id="${element.dataset.parent}"]`);
-      if (parent) {
-        parent.appendChild(element);
-      } else {
-        // create virtual parent
-        const childs = document.createElement('ul');
-        childs.className = 'neuroglancer-annotation-children';
-        childs.dataset.container = element.dataset.parent;
-        childs.appendChild(element);
-        annotationListContainer.appendChild(childs);
-      }
-    } else {
-      annotationListContainer.appendChild(element);
-    }
-    * /
-  }*/
-
   private updateView() {
     if (!this.visible) {
       return;
@@ -985,15 +964,6 @@ export class AnnotationLayerView extends Tab {
     }
     let element = this.annotationListElements.get(annotationId);
     if (element) {
-      // INCOMPATIBLE
-      /*const children = element.querySelector('.neuroglancer-annotation-children');
-      if (children) {
-        // If there are children, move the child container
-        element.removeChild(children);
-        if (children.children.length) {
-          this.annotationListContainer.appendChild(children);
-        }
-      }*/
       this.annotationHidingList.removeElement(element);
       this.annotationListElements.delete(annotationId);
     }
@@ -1033,28 +1003,6 @@ export class AnnotationLayerView extends Tab {
     if ((<Collection>annotation).entries) {
       element.title = 'Click to select, right click to toggle children.';
     }
-
-    // TODO: Incompatible- reorder annotations once per parent once all have been added, and set
-    // indentation there too
-    /*if ((<Collection>annotation).entries) {
-      // search for the child bin belonging to my ID
-      const reclaim =
-          this.annotationListContainer.querySelector(`[data-container="${annotation.id}"]`);
-      if ((<Collection>annotation).childrenVisible.value) {
-        element.classList.add('neuroglancer-parent-viewable');
-      }
-      if (reclaim) {
-        reclaim.parentElement!.removeChild(reclaim);
-        element.appendChild(reclaim);
-      } else {
-        element.title = 'Click to select, right click to toggle children.';
-        const childs = document.createElement('ul');
-        childs.classList.add('neuroglancer-annotation-children');
-        childs.dataset.container = annotation.id;
-        element.appendChild(childs);
-      }
-    }
-    */
 
     this.annotationListElements.set(annotation.id, element);
 
