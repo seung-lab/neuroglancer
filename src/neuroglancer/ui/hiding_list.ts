@@ -135,6 +135,13 @@ export class HidingList {
     return undefined;
   }
 
+  private refreshIndicesAfter(startIndex: number) {
+    for (let i = startIndex; i < this.elementYs.length; i++) {
+      const el = this.elementYs[i][0];
+      this.elementIndices.set(el, i);
+    }
+  }
+
   private insertElementBefore(element: HTMLElement, nextElement: HTMLElement) {
     this.scrollArea.insertBefore(element, nextElement);
     const elementHeight = element.offsetHeight;
@@ -143,10 +150,7 @@ export class HidingList {
     this.elementIndices.set(element, elementIndex);
     this.elementYs.splice(elementIndex, 0, [element, elementY]);
     this.shiftYsAfter(elementIndex + 1, elementHeight);
-    for (let j = elementIndex + 1; j < this.elementYs.length; j++) {
-      const el = this.elementYs[j][0];
-      this.elementIndices.set(el, j);
-    }
+    this.refreshIndicesAfter(elementIndex + 1);
     this.totalHeight += elementHeight;
     this.hideElement(element);
     this.resizeObserver.observe(element);
@@ -176,11 +180,7 @@ export class HidingList {
     this.elementYs.splice(elementIndex, 1);
     this.elementIndices.delete(element);
     this.shiftYsAfter(elementIndex, -elementHeight);
-    // Shift indices of elements that came after the removed one
-    for (let j = elementIndex; j < this.elementYs.length; j++) {
-      const el = this.elementYs[j][0];
-      this.elementIndices.set(el, j);
-    }
+    this.refreshIndicesAfter(elementIndex);
 
     this.totalHeight -= elementHeight;
     this.scrollArea.removeChild(element);

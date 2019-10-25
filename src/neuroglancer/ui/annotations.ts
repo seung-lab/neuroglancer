@@ -940,7 +940,6 @@ export class AnnotationLayerView extends Tab {
     }
     this.setPadding(element, depth);
     this.annotationHidingList.insertElement(element, parent);
-    console.log("addElement single for " + annotation.id);
     this.resetOnUpdate();
   }
 
@@ -1101,7 +1100,13 @@ export class AnnotationLayerView extends Tab {
       } else {
         // hiding: hide all children recursively
         child.classList.add('neuroglancer-annotation-child-hidden');
-        this.setChildrenVisible((<HTMLElement>child).dataset.id!, false);
+        const childId = (<HTMLElement>child).dataset.id!;
+        const annotation = this.annotationLayer.source.getReference(childId).value;
+        const collection = <Collection>annotation;
+        if (collection.entries) {
+          collection.childrenVisible.value = false;
+        }
+        this.setChildrenVisible(childId, false);
       }
     }
   }
