@@ -120,8 +120,49 @@ export class HidingList {
     this.updateScrollAreaPos();
   }
 
-  addElement(element: HTMLElement) {
-    this.addElementHelper(element);
+  private findFirstNonDescendant(parent: HTMLElement): HTMLElement | undefined {
+    const possibleParents = new Set<string>();
+    possibleParents.add(parent.dataset.id!);
+    const startIndex = this.elementIndices.get(parent)! + 1;
+    for (let i = startIndex; i < this.elementYs.length; i++) {
+      const element = this.elementYs[i][0];
+      if (!element.dataset.parent || !possibleParents.has(element.dataset.parent)) {
+        return element;
+      }
+      possibleParents.add(element.dataset.id!);
+    }
+    
+    return undefined;
+  }
+
+  private insertElementBefore(element: HTMLElement, nextElement: HTMLElement) {
+    this.scrollArea.insertBefore(element, nextElement);
+    const elementHeight = element.offsetHeight;
+    const elementIndex = this.elementIndices.get(nextElement)!;
+    const elementY = this.elementYs[elementIndex][1];
+    this.elementIndices.set(element, elementIndex);
+    this.elementYs.splice(elementIndex, 0, [element, elementY]);
+    this.shiftYsAfter(elementIndex + 1, elementHeight);
+    for (let j = elementIndex + 1; j < this.elementYs.length; j++) {
+      const el = this.elementYs[j][0];
+      this.elementIndices.set(el, j);
+    }
+    this.totalHeight += elementHeight;
+    this.hideElement(element);
+    this.resizeObserver.observe(element);
+  }
+
+  insertElement(element: HTMLElement, parent: HTMLElement | undefined) {
+    let nextElement = undefined;
+    if (parent) {
+      nextElement = this.findFirstNonDescendant(parent);
+    }
+    if (nextElement) {
+      this.insertElementBefore(element, nextElement);
+    }
+    else {
+      this.addElementHelper(element);
+    }
     this.updateScrollbarHeight();
     this.updateScrollAreaPos();
   }

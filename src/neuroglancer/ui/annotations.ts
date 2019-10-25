@@ -898,9 +898,10 @@ export class AnnotationLayerView extends Tab {
 
     const orderedAnnotations: HTMLElement[] = [];
 
+    const self = this;
     function addFlattenedElement(node: TreeNode, depth: number) {
       const element = node.element;
-      //TODO: set indentation from depth
+      self.setPadding(element, depth);
       orderedAnnotations.push(element);
       for (const child of node.children) {
         addFlattenedElement(child, depth + 1);
@@ -912,8 +913,11 @@ export class AnnotationLayerView extends Tab {
         addFlattenedElement(idNodes.get(element.dataset.id!)!, 0);
       }
     }
-    debugger;
     this.annotationsToAdd = orderedAnnotations;
+  }
+
+  private setPadding(element: HTMLElement, depth: number) {
+    element.style.paddingLeft = (depth / 1 + 0.5) + "em";
   }
 
   private addAnnotationElement(annotation: Annotation) {
@@ -925,9 +929,17 @@ export class AnnotationLayerView extends Tab {
       this.updateView();
       return;
     }
-    this.annotationHidingList.addElement(this.makeAnnotationListElement(annotation));
-    // TODO INCOMP: if it was created as a child of another one (has parent), order & indent it
-    // it doesn't matter if it was created as a parent since the children will be deleted & recreated
+    const element = this.makeAnnotationListElement(annotation);
+    let depth = 0;
+    let parent = undefined;
+    let checkElement: HTMLElement = element;
+    while (checkElement.dataset.parent) {
+      parent = this.annotationListElements.get(checkElement.dataset.parent);
+      checkElement = parent!;
+      depth++;
+    }
+    this.setPadding(element, depth);
+    this.annotationHidingList.insertElement(element, parent);
     console.log("addElement single for " + annotation.id);
     this.resetOnUpdate();
   }
