@@ -1094,18 +1094,17 @@ export class AnnotationLayerView extends Tab {
   private setChildrenVisible(elementId: string, visible: boolean) {
     const children = this.annotationListContainer.querySelectorAll(`[data-parent="${elementId}"]`);
     for (const child of children) {
+      const childId = (<HTMLElement>child).dataset.id!;
       if (visible) {
-        // showing: reveal only direct children
         child.classList.remove('neuroglancer-annotation-child-hidden');
-      } else {
-        // hiding: hide all children recursively
-        child.classList.add('neuroglancer-annotation-child-hidden');
-        const childId = (<HTMLElement>child).dataset.id!;
         const annotation = this.annotationLayer.source.getReference(childId).value;
         const collection = <Collection>annotation;
-        if (collection.entries) {
-          collection.childrenVisible.value = false;
+        //expand the children if they had been shown before collapsing this
+        if (collection.entries && collection.childrenVisible.value) {
+          this.setChildrenVisible(childId, true);
         }
+      } else {
+        child.classList.add('neuroglancer-annotation-child-hidden');
         this.setChildrenVisible(childId, false);
       }
     }
