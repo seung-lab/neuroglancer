@@ -605,6 +605,12 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
       // TODO: CHILD MOVE signal, move the child to a different element rather than deleting and
       // readding, because this cant rebuild children
       this.childAdded.dispatch(target);
+      // move all descendants of target as well
+      const collection = <Collection>target;
+      if (collection.entries) {
+        const targetRef = this.getReference(target.id);
+        this.childReassignment(collection.entries, targetRef);
+      }
     });
 
     if (surrogate) {
