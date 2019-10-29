@@ -239,7 +239,8 @@ export class HidingList {
   recalculateHeights() {
     this.totalHeight = 0;
     this.scrollbar.scrollTop = 0;
-    for (const [element, i] of this.elementIndices) {
+    for (let i = 0; i < this.elementYs.length; i++) {
+      const element = this.elementYs[i][0];
       this.unhideElement(element);
       const elementHeight = element.offsetHeight;
       this.elementYs[i][1] = this.totalHeight;
