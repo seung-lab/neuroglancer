@@ -120,18 +120,43 @@ export class HidingList {
     this.updateScrollAreaPos();
   }
 
-  private findFirstNonDescendant(parent: HTMLElement): HTMLElement | undefined {
+  private findFirstNonDescendant(currentElement: HTMLElement, parent: HTMLElement): HTMLElement
+      |undefined {
+    // currentElement is the one being inserted, in case it is being moved and has descendants
     const possibleParents = new Set<string>();
+    possibleParents.add(currentElement.dataset.id!);
     possibleParents.add(parent.dataset.id!);
     const startIndex = this.elementIndices.get(parent)! + 1;
     for (let i = startIndex; i < this.elementYs.length; i++) {
       const element = this.elementYs[i][0];
+      possibleParents.add(element.dataset.id!);
       if (!element.dataset.parent || !possibleParents.has(element.dataset.parent)) {
+        // not found yet- try iterating up through the annotation's parent hierarchy
+        let isInHierarchy = false;
+        let elementToCheck = element;
+        while (elementToCheck.dataset.parent) {
+          if (possibleParents.has(elementToCheck.dataset.parent)) {
+            isInHierarchy = true;
+            break;
+          }
+          elementToCheck = this.findElementWithId(elementToCheck.dataset.parent)!;
+        }
+        if (!isInHierarchy) {
+          return element;
+        }
+      }
+    }
+
+    return undefined;
+  }
+
+  private findElementWithId(id: string): HTMLElement|undefined {
+    for (const entry of this.elementYs) {
+      const element = entry[0];
+      if (element.dataset.id === id) {
         return element;
       }
-      possibleParents.add(element.dataset.id!);
     }
-    
     return undefined;
   }
 
@@ -156,15 +181,14 @@ export class HidingList {
     this.resizeObserver.observe(element);
   }
 
-  insertElement(element: HTMLElement, parent: HTMLElement | undefined) {
+  insertElement(element: HTMLElement, parent: HTMLElement|undefined) {
     let nextElement = undefined;
     if (parent) {
-      nextElement = this.findFirstNonDescendant(parent);
+      nextElement = this.findFirstNonDescendant(element, parent);
     }
     if (nextElement) {
       this.insertElementBefore(element, nextElement);
-    }
-    else {
+    } else {
       this.addElementHelper(element);
     }
     this.updateScrollbarHeight();
