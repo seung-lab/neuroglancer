@@ -61,6 +61,7 @@ const SATURATION_JSON_KEY = 'saturation';
 const HIDE_SEGMENT_ZERO_JSON_KEY = 'hideSegmentZero';
 const IGNORE_SEGMENT_INTERACTIONS_JSON_KEY = 'ignoreSegmentInteractions';
 const LOAD_MESHES_JSON_KEY = 'loadMeshes';
+const LOAD_SKELETONS_JSON_KEY = 'loadSkeletons';
 const MESH_JSON_KEY = 'mesh';
 const SKELETONS_JSON_KEY = 'skeletons';
 const ROOT_SEGMENTS_JSON_KEY = 'segments';
@@ -127,6 +128,9 @@ export class SegmentationUserLayer extends Base {
 
   // Whether to load meshes for this layer.
   loadMeshes = new TrackableBoolean(true, true);
+  
+  // Whether to load skeletons for this layer.
+  loadSkeletons = new TrackableBoolean(true, true);
 
   constructor(public manager: LayerListSpecification, x: any) {
     super(manager, x);
@@ -152,6 +156,7 @@ export class SegmentationUserLayer extends Base {
     this.displayState.shatterSegmentEquivalences.changed.add(this.specificationChanged.dispatch);
     this.ignoreSegmentInteractions.changed.add(this.specificationChanged.dispatch);
     this.loadMeshes.changed.add(this.specificationChanged.dispatch);
+    this.loadSkeletons.changed.add(this.specificationChanged.dispatch);
     this.tabs.add(
         'rendering', {label: 'Rendering', order: -100, getter: () => new DisplayOptionsTab(this)});
     this.tabs.default = 'rendering';
@@ -171,6 +176,7 @@ export class SegmentationUserLayer extends Base {
     this.ignoreSegmentInteractions.restoreState(
         specification[IGNORE_SEGMENT_INTERACTIONS_JSON_KEY]);
     this.loadMeshes.restoreState(specification[LOAD_MESHES_JSON_KEY]);
+    this.loadSkeletons.restoreState(specification[LOAD_SKELETONS_JSON_KEY]);
 
     const {skeletonRenderingOptions} = this.displayState;
     skeletonRenderingOptions.restoreState(specification[SKELETON_RENDERING_JSON_KEY]);
@@ -242,7 +248,7 @@ export class SegmentationUserLayer extends Base {
           });
     }
 
-    if (skeletonsPath != null) {
+    if (skeletonsPath != null && this.shouldRenderSkeletons()) {
       ++remaining;
       this.manager.dataSourceProvider.getSkeletonSource(this.manager.chunkManager, skeletonsPath)
           .then(skeletonSource => {
@@ -307,7 +313,7 @@ export class SegmentationUserLayer extends Base {
               }
             });
           }
-          if (skeletonsPath === undefined && volume.getSkeletonSource) {
+          if (skeletonsPath === undefined && volume.getSkeletonSource && this.shouldRenderSkeletons()) {
             ++remaining;
             Promise.resolve(volume.getSkeletonSource()).then(skeletonSource => {
               if (this.wasDisposed) {
@@ -352,6 +358,10 @@ export class SegmentationUserLayer extends Base {
     return getRenderMeshByDefault() && this.loadMeshes.value;
   }
 
+  private shouldRenderSkeletons() : boolean {
+    return this.loadSkeletons.value;
+  }
+
   addMesh(meshSource: MeshSource|MultiscaleMeshSource) {
     if (meshSource instanceof MeshSource) {
       this.meshLayer = new MeshLayer(this.manager.chunkManager, meshSource, this.displayState);
@@ -384,6 +394,7 @@ export class SegmentationUserLayer extends Base {
     x[HIDE_SEGMENT_ZERO_JSON_KEY] = this.displayState.hideSegmentZero.toJSON();
     x[IGNORE_SEGMENT_INTERACTIONS_JSON_KEY] = this.ignoreSegmentInteractions.toJSON();
     x[LOAD_MESHES_JSON_KEY] = this.loadMeshes.toJSON();
+    x[LOAD_SKELETONS_JSON_KEY] = this.loadSkeletons.toJSON();
     x[COLOR_SEED_JSON_KEY] = this.displayState.segmentColorHash.toJSON();
     let {segmentStatedColors} = this.displayState;
     if (segmentStatedColors.size > 0) {
@@ -697,6 +708,19 @@ class DisplayOptionsTab extends Tab {
       label.className =
           'neuroglancer-segmentation-dropdown-load-meshes neuroglancer-noselect';
       label.appendChild(document.createTextNode('Load layer meshes (requires refresh)'));
+      label.appendChild(checkbox.element);
+      group3D.appendFixedChild(label);
+    }
+
+    {
+      const checkbox =
+          this.registerDisposer(new TrackableBooleanCheckbox(layer.loadSkeletons));
+      checkbox.element.className =
+          'neuroglancer-segmentation-dropdown-load-skeletons neuroglancer-noselect';
+      const label = document.createElement('label');
+      label.className =
+          'neuroglancer-segmentation-dropdown-load-skeletons neuroglancer-noselect';
+      label.appendChild(document.createTextNode('Load layer skeletons (requires refresh)'));
       label.appendChild(checkbox.element);
       group3D.appendFixedChild(label);
     }
