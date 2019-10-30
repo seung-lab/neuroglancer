@@ -60,6 +60,7 @@ const OBJECT_ALPHA_JSON_KEY = 'objectAlpha';
 const SATURATION_JSON_KEY = 'saturation';
 const HIDE_SEGMENT_ZERO_JSON_KEY = 'hideSegmentZero';
 const IGNORE_SEGMENT_INTERACTIONS_JSON_KEY = 'ignoreSegmentInteractions';
+const LOAD_MESHES_JSON_KEY = 'loadMeshes';
 const MESH_JSON_KEY = 'mesh';
 const SKELETONS_JSON_KEY = 'skeletons';
 const ROOT_SEGMENTS_JSON_KEY = 'segments';
@@ -124,6 +125,9 @@ export class SegmentationUserLayer extends Base {
   // Whether to ignore selection/merge/split operations for this layer.
   ignoreSegmentInteractions = new TrackableBoolean(false, false);
 
+  // Whether to load meshes for this layer.
+  loadMeshes = new TrackableBoolean(true, true);
+
   constructor(public manager: LayerListSpecification, x: any) {
     super(manager, x);
     this.displayState.rootSegments.changed.add((segmentIds: Uint64[]|Uint64|null, add: boolean) => {
@@ -147,6 +151,7 @@ export class SegmentationUserLayer extends Base {
     this.displayState.renderScaleTarget.changed.add(this.specificationChanged.dispatch);
     this.displayState.shatterSegmentEquivalences.changed.add(this.specificationChanged.dispatch);
     this.ignoreSegmentInteractions.changed.add(this.specificationChanged.dispatch);
+    this.loadMeshes.changed.add(this.specificationChanged.dispatch);
     this.tabs.add(
         'rendering', {label: 'Rendering', order: -100, getter: () => new DisplayOptionsTab(this)});
     this.tabs.default = 'rendering';
@@ -165,6 +170,7 @@ export class SegmentationUserLayer extends Base {
     this.displayState.hideSegmentZero.restoreState(specification[HIDE_SEGMENT_ZERO_JSON_KEY]);
     this.ignoreSegmentInteractions.restoreState(
         specification[IGNORE_SEGMENT_INTERACTIONS_JSON_KEY]);
+    this.loadMeshes.restoreState(specification[LOAD_MESHES_JSON_KEY]);
 
     const {skeletonRenderingOptions} = this.displayState;
     skeletonRenderingOptions.restoreState(specification[SKELETON_RENDERING_JSON_KEY]);
@@ -223,11 +229,11 @@ export class SegmentationUserLayer extends Base {
     const segmentToVoxelCountMapPath = this.segmentToVoxelCountMapPath =
         verifyOptionalString(specification[SEGMENTS_TO_VOXEL_COUNT_MAP_PATH_JSON_KEY]);
     let remaining = 0;
-    if (meshPath != null && getRenderMeshByDefault()) {
+    if (meshPath != null && this.shouldRenderMesh()) {
       ++remaining;
       this.manager.dataSourceProvider.getMeshSource(this.manager.chunkManager, meshPath)
           .then(meshSource => {
-            if (!this.wasDisposed && getRenderMeshByDefault()) {
+            if (!this.wasDisposed && this.shouldRenderMesh()) {
               this.addMesh(meshSource);
               if (--remaining === 0) {
                 this.isReady = true;
@@ -283,7 +289,7 @@ export class SegmentationUserLayer extends Base {
             renderScaleTarget: this.sliceViewRenderScaleTarget,
           }));
           // Meshes
-          if (meshPath === undefined && getRenderMeshByDefault()) {
+          if (meshPath === undefined && this.shouldRenderMesh()) {
             ++remaining;
             Promise.resolve(volume.getMeshSource()).then(meshSource => {
               if (this.wasDisposed) {
@@ -342,6 +348,10 @@ export class SegmentationUserLayer extends Base {
     }
   }
 
+  private shouldRenderMesh() : boolean {
+    return getRenderMeshByDefault() && this.loadMeshes.value;
+  }
+
   addMesh(meshSource: MeshSource|MultiscaleMeshSource) {
     if (meshSource instanceof MeshSource) {
       this.meshLayer = new MeshLayer(this.manager.chunkManager, meshSource, this.displayState);
@@ -373,6 +383,7 @@ export class SegmentationUserLayer extends Base {
     x[OBJECT_ALPHA_JSON_KEY] = this.displayState.objectAlpha.toJSON();
     x[HIDE_SEGMENT_ZERO_JSON_KEY] = this.displayState.hideSegmentZero.toJSON();
     x[IGNORE_SEGMENT_INTERACTIONS_JSON_KEY] = this.ignoreSegmentInteractions.toJSON();
+    x[LOAD_MESHES_JSON_KEY] = this.loadMeshes.toJSON();
     x[COLOR_SEED_JSON_KEY] = this.displayState.segmentColorHash.toJSON();
     let {segmentStatedColors} = this.displayState;
     if (segmentStatedColors.size > 0) {
@@ -710,6 +721,19 @@ class DisplayOptionsTab extends Tab {
       label.className =
           'neuroglancer-segmentation-dropdown-ignore-segment-interactions neuroglancer-noselect';
       label.appendChild(document.createTextNode('Ignore segment interactions'));
+      label.appendChild(checkbox.element);
+      groupSegmentSelection.appendFixedChild(label);
+    }
+
+    {
+      const checkbox =
+          this.registerDisposer(new TrackableBooleanCheckbox(layer.loadMeshes));
+      checkbox.element.className =
+          'neuroglancer-segmentation-dropdown-load-meshes neuroglancer-noselect';
+      const label = document.createElement('label');
+      label.className =
+          'neuroglancer-segmentation-dropdown-load-meshes neuroglancer-noselect';
+      label.appendChild(document.createTextNode('Load layer meshes (requires refresh)'));
       label.appendChild(checkbox.element);
       groupSegmentSelection.appendFixedChild(label);
     }
