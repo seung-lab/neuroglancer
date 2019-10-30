@@ -690,30 +690,6 @@ class DisplayOptionsTab extends Tab {
 
     {
       const checkbox =
-          this.registerDisposer(new TrackableBooleanCheckbox(layer.displayState.hideSegmentZero));
-      checkbox.element.className =
-          'neuroglancer-segmentation-dropdown-hide-segment-zero neuroglancer-noselect';
-      const label = document.createElement('label');
-      label.className =
-          'neuroglancer-segmentation-dropdown-hide-segment-zero neuroglancer-noselect';
-      label.appendChild(document.createTextNode('Hide segment ID 0'));
-      label.appendChild(checkbox.element);
-      groupSegmentSelection.appendFixedChild(label);
-    }
-
-    this.addSegmentWidget.element.classList.add('add-segment');
-    this.addSegmentWidget.element.title = 'Add one or more segment IDs';
-    groupSegmentSelection.appendFixedChild(this.registerDisposer(this.addSegmentWidget).element);
-    this.registerDisposer(this.addSegmentWidget.valuesEntered.add((values: Uint64[]) => {
-      for (const value of values) {
-        this.layer.displayState.rootSegments.add(value);
-      }
-    }));
-    groupSegmentSelection.appendFlexibleChild(
-        this.registerDisposer(this.visibleSegmentWidget).element);
-
-    {
-      const checkbox =
           this.registerDisposer(new TrackableBooleanCheckbox(layer.ignoreSegmentInteractions));
       checkbox.element.className =
           'neuroglancer-segmentation-dropdown-ignore-segment-interactions neuroglancer-noselect';
@@ -737,6 +713,30 @@ class DisplayOptionsTab extends Tab {
       label.appendChild(checkbox.element);
       groupSegmentSelection.appendFixedChild(label);
     }
+
+    {
+      const checkbox =
+          this.registerDisposer(new TrackableBooleanCheckbox(layer.displayState.hideSegmentZero));
+      checkbox.element.className =
+          'neuroglancer-segmentation-dropdown-hide-segment-zero neuroglancer-noselect';
+      const label = document.createElement('label');
+      label.className =
+          'neuroglancer-segmentation-dropdown-hide-segment-zero neuroglancer-noselect';
+      label.appendChild(document.createTextNode('Hide segment ID 0'));
+      label.appendChild(checkbox.element);
+      groupSegmentSelection.appendFixedChild(label);
+    }
+
+    this.addSegmentWidget.element.classList.add('add-segment');
+    this.addSegmentWidget.element.title = 'Add one or more segment IDs';
+    groupSegmentSelection.appendFixedChild(this.registerDisposer(this.addSegmentWidget).element);
+    this.registerDisposer(this.addSegmentWidget.valuesEntered.add((values: Uint64[]) => {
+      for (const value of values) {
+        this.layer.displayState.rootSegments.add(value);
+      }
+    }));
+    groupSegmentSelection.appendFlexibleChild(
+        this.registerDisposer(this.visibleSegmentWidget).element);
 
     const maybeAddOmniSegmentWidget = () => {
       if (this.omniWidget || (!layer.segmentMetadata)) {
