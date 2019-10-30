@@ -690,19 +690,6 @@ class DisplayOptionsTab extends Tab {
 
     {
       const checkbox =
-          this.registerDisposer(new TrackableBooleanCheckbox(layer.ignoreSegmentInteractions));
-      checkbox.element.className =
-          'neuroglancer-segmentation-dropdown-ignore-segment-interactions neuroglancer-noselect';
-      const label = document.createElement('label');
-      label.className =
-          'neuroglancer-segmentation-dropdown-ignore-segment-interactions neuroglancer-noselect';
-      label.appendChild(document.createTextNode('Ignore segment interactions'));
-      label.appendChild(checkbox.element);
-      groupSegmentSelection.appendFixedChild(label);
-    }
-
-    {
-      const checkbox =
           this.registerDisposer(new TrackableBooleanCheckbox(layer.loadMeshes));
       checkbox.element.className =
           'neuroglancer-segmentation-dropdown-load-meshes neuroglancer-noselect';
@@ -710,6 +697,19 @@ class DisplayOptionsTab extends Tab {
       label.className =
           'neuroglancer-segmentation-dropdown-load-meshes neuroglancer-noselect';
       label.appendChild(document.createTextNode('Load layer meshes (requires refresh)'));
+      label.appendChild(checkbox.element);
+      group3D.appendFixedChild(label);
+    }
+
+    {
+      const checkbox =
+          this.registerDisposer(new TrackableBooleanCheckbox(layer.ignoreSegmentInteractions));
+      checkbox.element.className =
+          'neuroglancer-segmentation-dropdown-ignore-segment-interactions neuroglancer-noselect';
+      const label = document.createElement('label');
+      label.className =
+          'neuroglancer-segmentation-dropdown-ignore-segment-interactions neuroglancer-noselect';
+      label.appendChild(document.createTextNode('Ignore segment interactions'));
       label.appendChild(checkbox.element);
       groupSegmentSelection.appendFixedChild(label);
     }
