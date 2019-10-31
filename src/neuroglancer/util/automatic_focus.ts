@@ -17,7 +17,6 @@
 import debounce from 'lodash/debounce';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import LinkedListOperations from 'neuroglancer/util/linked_list.0';
-import { PositionWidget } from '../widget/position_widget';
 
 class AutomaticFocusList {
   next0: AutomaticallyFocusedElement|null;
@@ -49,6 +48,8 @@ window.addEventListener('blur', () => {
 }, true);
 
 export class AutomaticallyFocusedElement extends RefCounted {
+  static anyTextboxSelected: boolean;
+
   prev0: AutomaticallyFocusedElement|null = null;
   next0: AutomaticallyFocusedElement|null = null;
 
@@ -61,8 +62,8 @@ export class AutomaticallyFocusedElement extends RefCounted {
       // Never steal focus from descendant.
       return;
     }
-    if (PositionWidget.anySelected) {
-      // Don't steal focus from a position widget currently being typed in.
+    if (AutomaticallyFocusedElement.anyTextboxSelected) {
+      // Don't steal focus from a widget currently being typed in.
       return;
     }
     if (activeElement != null &&
@@ -84,7 +85,7 @@ export class AutomaticallyFocusedElement extends RefCounted {
     });
     this.registerEventListener(element, 'mousedown', () => {
       if (element.classList.contains('neuroglancer-panel')) {
-        PositionWidget.anySelected = false;
+        AutomaticallyFocusedElement.anyTextboxSelected = false;
         this.scheduleUpdateFocus();
       }
     });
