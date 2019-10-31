@@ -82,6 +82,12 @@ export class AutomaticallyFocusedElement extends RefCounted {
     this.registerEventListener(element, 'mouseleave', () => {
       this.scheduleUpdateFocus.cancel();
     });
+    this.registerEventListener(element, 'mousedown', () => {
+      if (element.classList.contains('neuroglancer-panel')) {
+        PositionWidget.anySelected = false;
+        this.scheduleUpdateFocus();
+      }
+    });
     // Insert at the end of the list.
     LinkedListOperations.insertBefore(<any>automaticFocusList, this);
     this.registerEventListener(element, 'focus', () => {
