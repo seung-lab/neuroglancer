@@ -48,6 +48,8 @@ const normalizedPrefixString = '  ';
 const normalizedSeparatorString = ',   ';
 
 export class PositionWidget extends RefCounted {
+  static anySelected: boolean;
+  
   element = document.createElement('div');
   inputContainer = document.createElement('div');
   inputElement = document.createElement('input');
@@ -103,7 +105,10 @@ export class PositionWidget extends RefCounted {
     this.registerDisposer(new MouseEventBinder(inputElement, inputEventMap));
 
     this.registerEventListener(inputElement, 'change', () => this.updatePosition());
-    this.registerEventListener(inputElement, 'blur', () => this.updatePosition());
+    this.registerEventListener(inputElement, 'blur', () => {
+      this.updatePosition();
+      PositionWidget.anySelected = false;
+    });
     this.registerEventListener(inputElement, 'input', () => this.cleanInput());
     this.registerEventListener(inputElement, 'keydown', this.updateHintScrollPosition);
     this.registerEventListener(inputElement, 'copy', (event: ClipboardEvent) => {
@@ -120,6 +125,7 @@ export class PositionWidget extends RefCounted {
     let wasFocused = false;
     this.registerEventListener(inputElement, 'mousedown', () => {
       wasFocused = document.activeElement === inputElement;
+      PositionWidget.anySelected = true;
     });
 
     this.registerDisposer(
@@ -183,6 +189,7 @@ export class PositionWidget extends RefCounted {
     this.registerDisposer(registerActionListener(inputElement, 'cancel', () => {
       this.updateView();
       this.inputElement.blur();
+      PositionWidget.anySelected = false;
     }));
 
     this.registerDisposer(

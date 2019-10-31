@@ -17,6 +17,7 @@
 import debounce from 'lodash/debounce';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import LinkedListOperations from 'neuroglancer/util/linked_list.0';
+import { PositionWidget } from '../widget/position_widget';
 
 class AutomaticFocusList {
   next0: AutomaticallyFocusedElement|null;
@@ -58,6 +59,10 @@ export class AutomaticallyFocusedElement extends RefCounted {
     const {element} = this;
     if (element.contains(activeElement)) {
       // Never steal focus from descendant.
+      return;
+    }
+    if (PositionWidget.anySelected) {
+      // Don't steal focus from a position widget currently being typed in.
       return;
     }
     if (activeElement != null &&
