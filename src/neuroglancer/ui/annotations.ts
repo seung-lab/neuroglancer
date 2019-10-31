@@ -855,7 +855,7 @@ export class AnnotationLayerView extends Tab {
     class TreeNode {
       element: HTMLElement;
       children: TreeNode[];
-      
+
       constructor(element: HTMLElement) {
         this.element = element;
         this.children = [];
@@ -896,7 +896,7 @@ export class AnnotationLayerView extends Tab {
   }
 
   private setPadding(element: HTMLElement, depth: number) {
-    element.style.paddingLeft = (depth + 0.5) + "em";
+    element.style.paddingLeft = (depth + 0.5) + 'em';
   }
 
   private addAnnotationElement(annotation: Annotation) {
@@ -1056,7 +1056,7 @@ export class AnnotationLayerView extends Tab {
         child.classList.remove('neuroglancer-annotation-child-hidden');
         const annotation = this.annotationLayer.source.getReference(childId).value;
         const collection = <Collection>annotation;
-        //expand the children if they had been shown before collapsing this
+        // expand the children if they had been shown before collapsing this
         if (collection.entries && collection.childrenVisible.value) {
           this.setChildrenVisible(childId, true);
         }

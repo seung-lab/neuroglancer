@@ -582,15 +582,11 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     targets.forEach((id: string) => {
       const target = this.getReference(id).value!;
       // remove child from parent
-      let parent;
+      let oldParent;
       if (target.parentId) {
-        parent = <Collection>this.getReference(target.parentId).value!;
-        parent.entries = parent.entries.filter(v => v !== target.id);
-        if (parent.parentId && !adopter) {
-          adopter = <Collection>this.getReference(parent.parentId).value!;
-        }
-        if (!parent.entries.length) {
-          emptynesters.push(this.getReference(target.parentId));
+        oldParent = <Collection>this.getReference(target.parentId).value!;
+        if (oldParent.parentId && !adopter) {
+          adopter = <Collection>this.getReference(oldParent.parentId).value!;
         }
       }
       // reassign/orphan child | parent cannot be child of child
@@ -598,12 +594,21 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
           (adopter && (<any>target).entries && !(<any>target).entries.includes(adopter.id))) {
         target.parentId = adopter.id;
         adopter.entries.push(target.id);
+      } else if (adopter && (<any>target).entries && (<any>target).entries.includes(adopter.id)) {
       } else {
         target.parentId = undefined;
       }
+
+      if (oldParent) {
+        oldParent.entries = oldParent.entries.filter(v => v !== target.id);
+        if (!oldParent.entries.length) {
+          emptynesters.push(this.getReference(oldParent.id));
+        }
+      }
+
       this.childDeleted.dispatch(target.id);
       // TODO: CHILD MOVE signal, move the child to a different element rather than deleting and
-      // readding, because this cant rebuild children
+      // re adding, because this cant rebuild children
       this.childAdded.dispatch(target);
       // move all descendants of target as well
       const collection = <Collection>target;
