@@ -589,20 +589,22 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
           adopter = <Collection>this.getReference(oldParent.parentId).value!;
         }
       }
-      // reassign/orphan child | parent cannot be child of child
-      if ((adopter && !(<any>target).entries) ||
-          (adopter && (<any>target).entries && !(<any>target).entries.includes(adopter.id))) {
-        target.parentId = adopter.id;
-        adopter.entries.push(target.id);
-      } else if (adopter && (<any>target).entries && (<any>target).entries.includes(adopter.id)) {
-      } else {
-        target.parentId = undefined;
-      }
 
-      if (oldParent) {
-        oldParent.entries = oldParent.entries.filter(v => v !== target.id);
-        if (!oldParent.entries.length) {
-          emptynesters.push(this.getReference(oldParent.id));
+      if (adopter != oldParent) {
+        // reassign/orphan child | parent cannot be child of child
+        if (adopter && (!(<any>target).entries || !(<any>target).entries.includes(adopter.id))) {
+          target.parentId = adopter.id;
+          adopter.entries.push(target.id);
+        } else if (adopter && (<any>target).entries && (<any>target).entries.includes(adopter.id)) {
+        } else {
+          target.parentId = undefined;
+        }
+
+        if (oldParent) {
+          oldParent.entries = oldParent.entries.filter(v => v !== target.id);
+          if (!oldParent.entries.length) {
+            emptynesters.push(this.getReference(oldParent.id));
+          }
         }
       }
 
