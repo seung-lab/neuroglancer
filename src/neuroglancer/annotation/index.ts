@@ -591,14 +591,19 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
       }
 
       if (adopter !== oldParent) {
-        // reassign/orphan child | parent cannot be child of child
-        if (adopter && (!(<any>target).entries || !(<any>target).entries.includes(adopter.id))) {
+        // reassign/orphan child
+        if (!adopter) {
+          // no adopter- clear parent
+          target.parentId = undefined;
+        }
+        else if (this.isAncestor(target, adopter)) {
+          // ancestor cannot be adopted by its descendant- skip this one
+          return;
+        }
+        else {
+          // adopt normally
           target.parentId = adopter.id;
           adopter.entries.push(target.id);
-        } else if (adopter && (<any>target).entries && (<any>target).entries.includes(adopter.id)) {
-          return;
-        } else {
-          target.parentId = undefined;
         }
 
         if (oldParent) {
@@ -629,6 +634,19 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
       this.childUpdated.dispatch(surrogate.value!);
     }
     return emptynesters;
+  }
+
+  private isAncestor(potentialAncestor: Annotation, potentialDescendant: Annotation): boolean {
+    if (!potentialDescendant.parentId) {
+      return false;
+    }
+
+    const parent = this.getReference(potentialDescendant.parentId).value!
+    if (parent.id === potentialAncestor.id) {
+      return true;
+    }
+
+    return this.isAncestor(potentialAncestor, parent);
   }
 
   delete(reference: AnnotationReference, flush?: boolean) {
