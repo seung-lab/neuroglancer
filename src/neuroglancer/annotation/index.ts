@@ -590,12 +590,13 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
         }
       }
 
-      if (adopter != oldParent) {
+      if (adopter !== oldParent) {
         // reassign/orphan child | parent cannot be child of child
         if (adopter && (!(<any>target).entries || !(<any>target).entries.includes(adopter.id))) {
           target.parentId = adopter.id;
           adopter.entries.push(target.id);
         } else if (adopter && (<any>target).entries && (<any>target).entries.includes(adopter.id)) {
+          return;
         } else {
           target.parentId = undefined;
         }
