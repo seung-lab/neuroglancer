@@ -127,26 +127,32 @@ export class HidingList {
 
   private findFirstNonDescendant(currentElement: HTMLElement, parent: HTMLElement): HTMLElement
       |undefined {
-    // currentElement is the one being inserted, in case it is being moved and has descendants
-    const possibleParents = new Set<string>();
-    possibleParents.add(currentElement.dataset.id!);
-    possibleParents.add(parent.dataset.id!);
+    // Returns the first element that is not a descendant of parent.
+    // This is necessary so that when a new element is added to its parent group, it can go at the
+    // "end" of the group (after all existing children of the parent). If there is no such element
+    // (i.e. the parent group is at the end of the list), this will return undefined.
+    // currentElement is the one being inserted, in case it is being moved and has descendants.
+    const visitedElements = new Set<string>(); // will be filled with parent & all its descendants
+    visitedElements.add(currentElement.dataset.id!);
+    visitedElements.add(parent.dataset.id!);
     const startIndex = this.elementIndices.get(parent)! + 1;
     for (let i = startIndex; i < this.elementYs.length; i++) {
       const element = this.elementYs[i][0];
-      possibleParents.add(element.dataset.id!);
-      if (!element.dataset.parent || !possibleParents.has(element.dataset.parent)) {
-        // not found yet- try iterating up through the annotation's parent hierarchy
+      visitedElements.add(element.dataset.id!);
+      if (!element.dataset.parent || !visitedElements.has(element.dataset.parent)) {
+        // element's parent has not yet been visited
+        // try iterating up through the annotation's parent hierarchy, in case they're out of order
         let isInHierarchy = false;
         let elementToCheck = element;
         while (elementToCheck.dataset.parent) {
-          if (possibleParents.has(elementToCheck.dataset.parent)) {
+          if (visitedElements.has(elementToCheck.dataset.parent)) {
             isInHierarchy = true;
             break;
           }
           elementToCheck = this.findElementWithId(elementToCheck.dataset.parent)!;
         }
         if (!isInHierarchy) {
+          // element is not a descendant of parent- this is the one we want
           return element;
         }
       }
