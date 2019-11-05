@@ -15,7 +15,7 @@
  */
 
 import debounce from 'lodash/debounce';
-import {MultiStepAnnotationTool, PlaceAnnotationTool} from 'neuroglancer/annotation/annotation';
+import {MultiStepAnnotationTool} from 'neuroglancer/annotation/annotation';
 import {AnnotationUserLayer} from 'neuroglancer/annotation/user_layer';
 import {initAuthTokenSharedValue} from 'neuroglancer/authentication/frontend';
 import {CapacitySpecification, ChunkManager, ChunkQueueManager, FrameNumberCounter} from 'neuroglancer/chunk_manager/frontend';

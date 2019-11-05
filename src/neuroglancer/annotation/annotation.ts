@@ -222,7 +222,7 @@ export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
     return;
   }
 
-  protected reInitChildTool() {
+  private reInitChildTool() {
     // This function prevents tool.refcount < 0, by reintializing the tool when the child annotation
     // is completed. Tool.refcount is always decremented when dispose is called, which is done on
     // completion
