@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import './layer_dialog.css';
+
 import {LayerListSpecification, ManagedUserLayerWithSpecification} from 'neuroglancer/layer_specification';
 import {Overlay} from 'neuroglancer/overlay';
 import {DataType, VolumeType} from 'neuroglancer/sliceview/volume/base';
@@ -21,8 +23,6 @@ import {CancellationToken, CancellationTokenSource} from 'neuroglancer/util/canc
 import {associateLabelWithElement} from 'neuroglancer/widget/associate_label';
 import {AutocompleteTextInput, makeCompletionElementWithDescription} from 'neuroglancer/widget/autocomplete';
 import {makeHiddenSubmitButton} from 'neuroglancer/widget/hidden_submit_button';
-
-import './layer_dialog.css';
 
 export class LayerDialog extends Overlay {
   /**
@@ -34,6 +34,7 @@ export class LayerDialog extends Overlay {
   submitElement = document.createElement('button');
   namePromptElement = document.createElement('label');
   nameInputElement = document.createElement('input');
+  radioInputElement = document.createElement('input');
   volumeCancellationSource: CancellationTokenSource|undefined = undefined;
   sourceValid: boolean = false;
   nameValid: boolean = true;
@@ -88,7 +89,8 @@ export class LayerDialog extends Overlay {
 
     dialogElement.appendChild(sourceForm);
 
-    let {statusElement, namePromptElement, nameInputElement, submitElement} = this;
+    let {statusElement, namePromptElement, nameInputElement, submitElement, radioInputElement} =
+        this;
     statusElement.className = 'dialog-status';
 
     let nameForm = document.createElement('form');
@@ -99,6 +101,30 @@ export class LayerDialog extends Overlay {
     nameInputElement.spellcheck = false;
 
     nameInputElement.type = 'text';
+
+    //
+    const typeForm = document.createElement('form');
+    const segmentationOption = document.createElement('input');
+    const segmentationOptionLabel = document.createElement('label');
+    segmentationOptionLabel.setAttribute('for', 'neuroglancer-layer-form-segmentation');
+    segmentationOption.id = 'neuroglancer-layer-form-segmentation';
+    segmentationOption.type = 'radio';
+    segmentationOption.name = 'layerType';
+    segmentationOption.value = 'segmentation';
+    segmentationOption.checked = true;
+    segmentationOptionLabel.innerText = 'Segmentation';
+    segmentationOptionLabel.id = 'neuroglancer-layer-form-segmentation-layer';
+    const annotationOption = document.createElement('input');
+    const annotationOptionLabel = document.createElement('label');
+    annotationOptionLabel.setAttribute('for', 'neuroglancer-layer-form-annotation');
+    annotationOption.id = 'neuroglancer-layer-form-annotation';
+    annotationOption.type = 'radio';
+    annotationOption.name = 'layerType';
+    annotationOption.value = 'annotation';
+    annotationOptionLabel.innerText = 'Annotation';
+    annotationOptionLabel.id = 'neuroglancer-layer-form-annotation-layer';
+    typeForm.append(segmentationOptionLabel, segmentationOption, annotationOptionLabel, annotationOption);
+    //
 
     this.registerEventListener(nameInputElement, 'input', () => {
       this.validateName();
@@ -111,7 +137,9 @@ export class LayerDialog extends Overlay {
     nameForm.appendChild(namePromptElement);
     nameForm.appendChild(nameInputElement);
     nameForm.appendChild(submitElement);
+    nameForm.appendChild(radioInputElement);
     dialogElement.appendChild(nameForm);
+    dialogElement.appendChild(typeForm);
 
     dialogElement.appendChild(statusElement);
 
@@ -216,8 +244,7 @@ export class LayerDialog extends Overlay {
     this.setInfo('Validating volume source...');
     const token = this.volumeCancellationSource = new CancellationTokenSource();
     this.manager.dataSourceProvider
-        .getVolume(
-            this.manager.chunkManager, url, /*options=*/undefined, token)
+        .getVolume(this.manager.chunkManager, url, /*options=*/undefined, token)
         .then(source => {
           if (token.isCanceled) {
             return;

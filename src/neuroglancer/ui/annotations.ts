@@ -849,6 +849,201 @@ export class AnnotationLayerView extends Tab {
     link.click();
     document.body.removeChild(link);
   }
+
+  // TODO: pull request to papa repo
+  private betterPapa = (inputFile: File|Blob): Promise<any> => {
+    return new Promise((resolve) => {
+      Papa.parse(inputFile, {
+        complete: (results: any) => {
+          resolve(results);
+        }
+      });
+    });
+  }
+
+  private stringToVec3 = (input: string): vec3 => {
+    // format: (x, y, z)
+    let raw = input.split('');
+    raw.shift();
+    raw.pop();
+    let list = raw.join('');
+    let val = list.split(',').map(v => parseInt(v, 10));
+    return vec3.fromValues(val[0], val[1], val[2]);
+  }
+
+  private async importCSV(files: FileList|null) {
+    const rawAnnotations = <Annotation[]>[];
+    let successfulImport = 0;
+
+    if (!files) {
+      return;
+    }
+
+    for (const file of files) {
+      const rawData = await this.betterPapa(file);
+      rawData.data.shift();
+      rawData.data = rawData.data.filter((v: any) => v.join('').length);
+      if (!rawData.data.length) {
+        continue;
+      }
+      const annStrings = rawData.data;
+      annStrings.shift();
+      const registry = <any>{};
+      for (const annProps of annStrings) {
+        const type = annProps[7];
+        const parentId = annProps[6];
+        const cid = annProps[8];
+        const tags = annProps[3];
+        let raw = <Annotation>{id: makeAnnotationId(), description: annProps[4]};
+
+        if (cid) {
+          if (!registry[cid]) {
+            registry[cid] = raw;
+            (<Collection>raw).entries = [];
+          } else {
+            raw = {...raw, ...registry[cid]};
+            registry[cid] = raw;
+            (<Collection>raw).entries.forEach((ann: any) => {
+              ann.parentId = raw.id;
+              return ann.id;
+            });
+          }
+        }
+        if (parentId) {
+          if (registry[parentId]) {
+            const parent = registry[parentId];
+            if (parent.id) {
+              parent.entries.push(raw.id);
+              raw.parentId = parent.id;
+            } else {
+              parent.entries.push(raw);
+            }
+          } else {
+            registry[parentId] = {entries: [raw]};
+          }
+        }
+        if (tags) {
+          raw.tagIds = new Set();
+          const labels = tags.split(',');
+          const alayer = (<AnnotationSource>this.annotationLayer.source);
+          const currentTags = Array.from(alayer.getTags());
+          labels.forEach((label: string) => {
+            const tagId = (currentTags.find(tag => tag.label === label) || <any>{}).id ||
+                alayer.addTag(label);
+            raw.tagIds!.add(tagId);
+          });
+        }
+        // TODO: Is this transferable?
+        // raw.segments = getSelectedAssocatedSegment(annotationLayer),
+
+        switch (type) {
+          case 'AABB':
+          case 'Line':
+            raw.type =
+                type === 'Line' ? AnnotationType.LINE : AnnotationType.AXIS_ALIGNED_BOUNDING_BOX;
+            (<Line>raw).pointA = vec3.transformMat4(
+                vec3.create(), this.stringToVec3(annProps[0]), this.annotationLayer.globalToObject);
+            (<Line>raw).pointB = vec3.transformMat4(
+                vec3.create(), this.stringToVec3(annProps[1]), this.annotationLayer.globalToObject);
+            break;
+          case 'Point':
+            raw.type = AnnotationType.POINT;
+            (<Point>raw).point = vec3.transformMat4(
+                vec3.create(), this.stringToVec3(annProps[0]), this.annotationLayer.globalToObject);
+            break;
+          case 'Ellipsoid':
+            raw.type = AnnotationType.ELLIPSOID;
+            (<Ellipsoid>raw).center = vec3.transformMat4(
+                vec3.create(), this.stringToVec3(annProps[0]), this.annotationLayer.globalToObject);
+            (<Ellipsoid>raw).radii = vec3.transformMat4(
+                vec3.create(), this.stringToVec3(annProps[2]), this.annotationLayer.globalToObject);
+            break;
+          case 'Line Strip':
+          case 'Line Strip*':
+          case 'Spoke':
+          case 'Spoke*':
+          case 'Collection':
+            if (type === 'Line Strip' || type === 'Line Strip*') {
+              raw.type = AnnotationType.LINE_STRIP;
+              (<LineStrip>raw).connected = true;
+              (<LineStrip>raw).looped = type === 'Line Strip*';
+            } else if (type === 'Spoke' || type === 'Spoke*') {
+              raw.type = AnnotationType.SPOKE;
+              (<Spoke>raw).connected = true;
+              (<Spoke>raw).wheeled = type === 'Spoke*';
+            } else {
+              raw.type = AnnotationType.COLLECTION;
+              (<Collection>raw).connected = false;
+            }
+            (<Collection>raw).childrenVisible = new TrackableBoolean(false, true);
+            (<Collection>raw).source = vec3.transformMat4(
+                vec3.create(), this.stringToVec3(annProps[0]), this.annotationLayer.globalToObject);
+            (<Collection>raw).entry = (index: number) =>
+                (<LocalAnnotationSource>this.annotationLayer.source)
+                    .get((<Collection>raw).entries[index]);
+            break;
+        }
+
+        rawAnnotations.push(raw);
+      }
+      successfulImport++;
+    }
+
+    for (const annotation of rawAnnotations) {
+      this.annotationLayer.source.add(annotation, /*commit=*/true);
+    }
+    // TODO: Undoable
+    StatusMessage.showTemporaryMessage(`Imported ${successfulImport} csv(s).`, 3000);
+  }
+
+  async synapseBuilder(synapses: any[]) {
+    type Coordinate = [number, number, number];
+    synapses.forEach((synapse) => {
+      const prePoint = vec3.transformMat4(
+          vec3.create(), vec3.fromValues(...(<Coordinate>synapse.pre_pt_position.coordinates)),
+          this.annotationLayer.globalToObject);
+      const ctrPoint = vec3.transformMat4(
+          vec3.create(), vec3.fromValues(...(<Coordinate>synapse.ctr_pt_position.coordinates)),
+          this.annotationLayer.globalToObject);
+      const postPoint = vec3.transformMat4(
+          vec3.create(), vec3.fromValues(...(<Coordinate>synapse.post_pt_position.coordinates)),
+          this.annotationLayer.globalToObject);
+      const pre_pos = <Line>{
+        id: makeAnnotationId(),
+        type: AnnotationType.LINE,
+        description: 'pre_pt_position -> center_pt_position',
+        segments: [],
+        pointA: prePoint,
+        pointB: ctrPoint
+      };
+      const post_pos = <Line>{
+        id: makeAnnotationId(),
+        type: AnnotationType.LINE,
+        description: 'center_pt_position -> post_pt_position',
+        segments: [],
+        pointA: ctrPoint,
+        pointB: postPoint
+      };
+
+      const annotation = <LineStrip>{
+        id: makeAnnotationId(),
+        type: AnnotationType.LINE_STRIP,
+        description: 'synapse',
+        entries: [pre_pos.id, post_pos.id],
+        segments: [],
+        connected: true,
+        childrenVisible: new TrackableBoolean(false, true),
+        source: ctrPoint,
+        entry: () => {}
+      };
+      annotation.entry = (index: number) =>
+          (<LocalAnnotationSource>this.annotationLayer.source).get(annotation.entries[index]);
+
+      this.annotationLayer.source.add(pre_pos, /*commit=*/true);
+      this.annotationLayer.source.add(post_pos, /*commit=*/true);
+      this.annotationLayer.source.add(annotation, /*commit=*/true);
+    });
+  }
 }
 
 export class AnnotationDetailsTab extends Tab {
