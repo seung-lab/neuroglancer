@@ -1407,7 +1407,56 @@ export class AnnotationLayerView extends Tab {
 
     this.annotationLayer.source.addAll(rawAnnotations, true);
     // TODO: Undoable
-    StatusMessage.showTemporaryMessage(`Imported ${successfulImport} csv(s).`, 3000);
+    StatusMessage.showTemporaryMessage(`Imported ${successfulImport} csv(s).`, 3000)
+  }
+
+  async synapseBuilder(synapses: any[]) {
+    type Coordinate = [number, number, number];
+    synapses.forEach((synapse) => {
+      const prePoint = vec3.transformMat4(
+          vec3.create(), vec3.fromValues(...(<Coordinate>synapse.pre_pt_position.coordinates)),
+          this.annotationLayer.globalToObject);
+      const ctrPoint = vec3.transformMat4(
+          vec3.create(), vec3.fromValues(...(<Coordinate>synapse.ctr_pt_position.coordinates)),
+          this.annotationLayer.globalToObject);
+      const postPoint = vec3.transformMat4(
+          vec3.create(), vec3.fromValues(...(<Coordinate>synapse.post_pt_position.coordinates)),
+          this.annotationLayer.globalToObject);
+      const pre_pos = <Line>{
+        id: makeAnnotationId(),
+        type: AnnotationType.LINE,
+        description: 'pre_pt_position -> center_pt_position',
+        segments: [],
+        pointA: prePoint,
+        pointB: ctrPoint
+      };
+      const post_pos = <Line>{
+        id: makeAnnotationId(),
+        type: AnnotationType.LINE,
+        description: 'center_pt_position -> post_pt_position',
+        segments: [],
+        pointA: ctrPoint,
+        pointB: postPoint
+      };
+
+      const annotation = <LineStrip>{
+        id: makeAnnotationId(),
+        type: AnnotationType.LINE_STRIP,
+        description: 'synapse',
+        entries: [pre_pos.id, post_pos.id],
+        segments: [],
+        connected: true,
+        childrenVisible: new TrackableBoolean(false, true),
+        source: ctrPoint,
+        entry: () => {}
+      };
+      annotation.entry = (index: number) =>
+          (<LocalAnnotationSource>this.annotationLayer.source).get(annotation.entries[index]);
+
+      this.annotationLayer.source.add(pre_pos, /*commit=*/true);
+      this.annotationLayer.source.add(post_pos, /*commit=*/true);
+      this.annotationLayer.source.add(annotation, /*commit=*/true);
+    });
   }
 }
 

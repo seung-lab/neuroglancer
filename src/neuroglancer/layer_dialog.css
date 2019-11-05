@@ -14,6 +14,10 @@
  * limitations under the License.
  */
 
+#neuroglancer-layer-form-annotation-layer, #neuroglancer-layer-form-segmentation-layer {
+  margin-right: 0em;
+}
+
 .add-layer-overlay {
   width: 80vw;
 }
