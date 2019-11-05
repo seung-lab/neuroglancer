@@ -715,12 +715,6 @@ export class Viewer extends RefCounted implements ViewerState {
             JSON.stringify(selectedLayer.name)}) does not have an active annotation tool.`);
         return;
       }
-      if (!(<PlaceAnnotationTool>userLayer.tool.value).complete) {
-        StatusMessage.showTemporaryMessage(`The selected layer (${
-            JSON.stringify(
-                selectedLayer.name)}) does not support annotation completion operation.`);
-        return;
-      }
       (<MultiStepAnnotationTool>userLayer.tool.value).complete(true);
     });
 
