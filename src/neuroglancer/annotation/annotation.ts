@@ -201,7 +201,9 @@ export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
   }
 
   private updateLast() {
-    // Reserves the last two annotations created in a collection
+    // Reserves the last two annotations created in a collection. In the case that the user
+    // completes an annotation via double click, these two annotations are deleted because they
+    // would be created by the the doubleclick action.
     const inprogress = this.inProgressAnnotation;
     if (inprogress && inprogress.reference.value) {
       const oldAnnotation = <Collection>inprogress.reference.value;
