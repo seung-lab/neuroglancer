@@ -15,7 +15,7 @@
  */
 
 import debounce from 'lodash/debounce';
-import {MultiStepAnnotationTool, PlaceAnnotationTool} from 'neuroglancer/annotation/annotation';
+import {MultiStepAnnotationTool} from 'neuroglancer/annotation/annotation';
 import {AnnotationUserLayer} from 'neuroglancer/annotation/user_layer';
 import {initAuthTokenSharedValue} from 'neuroglancer/authentication/frontend';
 import {CapacitySpecification, ChunkManager, ChunkQueueManager, FrameNumberCounter} from 'neuroglancer/chunk_manager/frontend';
@@ -713,12 +713,6 @@ export class Viewer extends RefCounted implements ViewerState {
       if (userLayer === null || userLayer.tool.value === undefined) {
         StatusMessage.showTemporaryMessage(`The selected layer (${
             JSON.stringify(selectedLayer.name)}) does not have an active annotation tool.`);
-        return;
-      }
-      if (!(<PlaceAnnotationTool>userLayer.tool.value).complete) {
-        StatusMessage.showTemporaryMessage(`The selected layer (${
-            JSON.stringify(
-                selectedLayer.name)}) does not support annotation completion operation.`);
         return;
       }
       (<MultiStepAnnotationTool>userLayer.tool.value).complete(true);

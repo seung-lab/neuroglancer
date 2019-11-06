@@ -67,6 +67,7 @@ export abstract class PlaceAnnotationTool extends Tool {
   }
 
   complete() {
+    // True if an annotation has been created via this method
     return false;
   }
 }
@@ -200,6 +201,9 @@ export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
   }
 
   private updateLast() {
+    // Reserves the last two annotations created in a collection. In the case that the user
+    // completes an annotation via double click, these two annotations are deleted because they
+    // would be created by the the doubleclick action.
     const inprogress = this.inProgressAnnotation;
     if (inprogress && inprogress.reference.value) {
       const oldAnnotation = <Collection>inprogress.reference.value;
@@ -211,6 +215,7 @@ export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
   }
 
   private getChildRef() {
+    // Helper for updateLast, gets the reference of the last annotation added to the collection
     const inprogress = this.inProgressAnnotation;
     if (this.childTool && inprogress && inprogress.reference.value) {
       const {entries} = <Collection>inprogress.reference.value;
@@ -219,7 +224,10 @@ export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
     return;
   }
 
-  protected reInitChild() {
+  private reInitChildTool() {
+    // This function prevents tool.refcount < 0, by reintializing the tool when the child annotation
+    // is completed. Tool.refcount is always decremented when dispose is called, which is done on
+    // completion
     if (!this.toolset) {
       return;
     }
@@ -358,7 +366,7 @@ export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
       if (this.childTool) {
         this.childTool.dispose();
         if (!endChild) {
-          this.reInitChild();
+          this.reInitChildTool();
         }
       }
 
