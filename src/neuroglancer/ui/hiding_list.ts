@@ -67,7 +67,7 @@ export class HidingList {
             if (delta === 0 ||
                 element.classList.contains('neuroglancer-annotation-hiding-list-hiddenitem')) {
               // Don't worry about elements that didn't change vertical size, or changed vertical
-              // size because they were hidden
+              // size because they were hidden offscreen
               continue;
             }
 
@@ -75,6 +75,7 @@ export class HidingList {
 
             this.totalHeight += delta;
           }
+
           this.updateScrollbarHeight();
           this.updateScrollAreaPos();
         }.bind(this));
@@ -249,10 +250,11 @@ export class HidingList {
 
   recalculateHeights() {
     this.totalHeight = 0;
-    this.scrollbar.scrollTop = 0;
+    this.loadedElements = [];
     for (let i = 0; i < this.elementYs.length; i++) {
       const element = this.elementYs[i][0];
       this.unhideElement(element);
+      this.loadedElements.push(element);
       const elementHeight = element.offsetHeight;
       this.elementYs[i][1] = this.totalHeight;
       this.totalHeight += elementHeight;

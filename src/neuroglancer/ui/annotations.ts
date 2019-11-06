@@ -1036,6 +1036,7 @@ export class AnnotationLayerView extends Tab {
         if (collection.entries) {
           collection.childrenVisible.value = !collection.childrenVisible.value;
           this.setChildrenVisible(element.dataset.id!, collection.childrenVisible.value);
+          this.annotationHidingList.recalculateHeights();
           this.annotationLayer.source.changed.dispatch();
         } else {
           this.setSpatialCoordinates(
