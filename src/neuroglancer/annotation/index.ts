@@ -105,6 +105,7 @@ export interface Collection extends AnnotationBase {
   connected: boolean;
   source: vec3;
   entry: Function;
+  segmentSet: Function;
   childrenVisible: TrackableBoolean;
 }
 
@@ -581,7 +582,6 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
 
     targets.forEach((id: string) => {
       const target = this.getReference(id).value!;
-      // remove child from parent
       let oldParent;
       if (target.parentId) {
         oldParent = <Collection>this.getReference(target.parentId).value!;
@@ -607,6 +607,11 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
         }
 
         if (oldParent) {
+          if (oldParent.segments && target.segments) {
+            // remove segments from target
+            const oldSegments = target.segments;
+            oldParent.segments = oldParent.segments.filter(v => !oldSegments.includes(v));
+          }
           oldParent.entries = oldParent.entries.filter(v => v !== target.id);
           if (!oldParent.entries.length) {
             emptynesters.push(this.getReference(oldParent.id));
@@ -641,7 +646,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
       return false;
     }
 
-    const parent = this.getReference(potentialDescendant.parentId).value!
+    const parent = this.getReference(potentialDescendant.parentId).value!;
     if (parent.id === potentialAncestor.id) {
       return true;
     }
