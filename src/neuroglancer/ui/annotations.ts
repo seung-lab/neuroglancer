@@ -1138,8 +1138,10 @@ export class AnnotationLayerView extends Tab {
           switch (annotation.type) {
             case AnnotationType.SPOKE:
               stringType = (<Spoke>annotation).wheeled ? 'Spoke*' : 'Spoke';
+              break;
             case AnnotationType.LINE_STRIP:
               stringType = (<LineStrip>annotation).looped ? 'Line Strip*' : 'Line Strip';
+              break;
             default:
               stringType = 'Collection';
           }

@@ -92,9 +92,7 @@ export abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
     return false;
   }
 
-  trigger(
-      mouseState: MouseSelectionState, parentReference?: AnnotationReference,
-      spoofMouse?: MouseSelectionState) {
+  trigger(mouseState: MouseSelectionState, parentReference?: AnnotationReference, spoof?: Spoof) {
     const {annotationLayer} = this;
     if (annotationLayer === undefined || !mouseState.active) {
       // Not yet ready.
@@ -115,7 +113,11 @@ export abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
     };
 
     if (!this.inProgressAnnotation || !this.inProgressAnnotation.reference.value) {
-      const annotation = this.getInitialAnnotation(spoofMouse || mouseState, annotationLayer);
+      const mouse = (spoof ? spoof.mouse : null) || mouseState;
+      const annotation = this.getInitialAnnotation(mouse, annotationLayer);
+      if (spoof && spoof.segments) {
+        annotation.segments = spoof.segments;
+      }
       const reference = annotationLayer.source.add(annotation, /*commit=*/false, parentReference);
       this.layer.selectedAnnotation.value = {id: reference.id};
       const disposer = () => {
@@ -178,6 +180,10 @@ export abstract class PlaceTwoCornerAnnotationTool extends TwoStepAnnotationTool
   }
 }
 
+export type Spoof = {
+  mouse?: MouseSelectionState,
+  segments?: Uint64[]
+};
 export type SubAnnotationTool = PlacePointTool|PlaceBoundingBoxTool|PlaceLineTool|PlaceSphereTool|
     PlaceLineStripTool|PlaceSpokeTool;
 type DiscreteAnnotationTool =
@@ -236,8 +242,8 @@ export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
 
   protected appendNewChildAnnotation(
       oldAnnotationRef: AnnotationReference, mouseState: MouseSelectionState,
-      spoofMouse?: MouseSelectionState) {
-    this.childTool!.trigger(mouseState, oldAnnotationRef, spoofMouse);
+      spoof?: Spoof) {
+    this.childTool!.trigger(mouseState, oldAnnotationRef, spoof);
     this.updateLast();
   }
 

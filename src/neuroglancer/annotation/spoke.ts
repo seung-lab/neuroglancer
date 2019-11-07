@@ -3,7 +3,7 @@
  */
 
 import {Annotation, AnnotationReference, AnnotationType, Spoke} from 'neuroglancer/annotation';
-import {MultiStepAnnotationTool} from 'neuroglancer/annotation/annotation';
+import {getSelectedAssocatedSegment, MultiStepAnnotationTool, Spoof} from 'neuroglancer/annotation/annotation';
 import {AnnotationLayerState} from 'neuroglancer/annotation/frontend';
 import {PlaceLineTool} from 'neuroglancer/annotation/line';
 import {AnnotationRenderContext, AnnotationRenderHelper, registerAnnotationTypeRenderHandler} from 'neuroglancer/annotation/type_handler';
@@ -11,6 +11,7 @@ import {MouseSelectionState} from 'neuroglancer/layer';
 import {UserLayerWithAnnotations} from 'neuroglancer/ui/annotations';
 import {registerTool} from 'neuroglancer/ui/tool';
 import {mat4, vec3} from 'neuroglancer/util/geom';
+import {Uint64} from 'neuroglancer/util/uint64';
 
 const ANNOTATE_SPOKE_TOOL_ID = 'annotateSpoke';
 
@@ -59,6 +60,8 @@ export class PlaceSpokeTool extends MultiStepAnnotationTool {
   wheeled = false;
   lastMouseState?: MouseSelectionState;
   lastPos?: any;
+  initSegments?: Uint64[]|null;
+  lastSegments: any;
   constructor(public layer: UserLayerWithAnnotations, options: any) {
     super(layer, options);
     this.childTool = new this.toolset(layer, {...options, parent: this});
@@ -77,29 +80,38 @@ export class PlaceSpokeTool extends MultiStepAnnotationTool {
     return result;
   }
 
-  trigger(mouseState: MouseSelectionState,  parentReference?: AnnotationReference) {
+  trigger(mouseState: MouseSelectionState, parentReference?: AnnotationReference) {
     if (mouseState.active) {
       if (this.inProgressAnnotation === undefined || !this.inProgressAnnotation.reference.value) {
         this.initMouseState = <MouseSelectionState>{...mouseState};
         this.initPos = mouseState.position.slice();
+        if (this.annotationLayer) {
+          this.initSegments = getSelectedAssocatedSegment(this.annotationLayer);
+        }
         super.trigger(mouseState, parentReference);
-        this.lastMouseState = void (0);
-        this.lastPos = void (0);
-        this.assignToParent(this.inProgressAnnotation!.reference,  parentReference);
+        this.assignToParent(this.inProgressAnnotation!.reference, parentReference);
       } else {
         super.trigger(mouseState, parentReference);
         // Start new annotation automatically at source point
-        const source = <MouseSelectionState>{...this.initMouseState, position: this.initPos};
+        const mouse = <MouseSelectionState>{...this.initMouseState, position: this.initPos};
+        const segments = this.initSegments;
         if (this.wheeled && this.lastMouseState && this.lastPos) {
           // Connect the current completed and last completed points
-          const intermediate =
-              <MouseSelectionState>{...this.lastMouseState, position: this.lastPos};
-          this.appendNewChildAnnotation(this.inProgressAnnotation.reference!, intermediate);
+          const intermediate = <Spoof>{
+            mouse: <MouseSelectionState>{...this.lastMouseState, position: this.lastPos},
+            segments: this.lastSegments
+          };
+          this.appendNewChildAnnotation(
+              this.inProgressAnnotation.reference!, mouseState, intermediate);
           super.trigger(mouseState, parentReference);
         }
-        this.appendNewChildAnnotation(this.inProgressAnnotation.reference!, mouseState, source);
+        this.appendNewChildAnnotation(
+            this.inProgressAnnotation.reference!, mouseState, <Spoof>{mouse, segments});
         this.lastMouseState = <MouseSelectionState>{...mouseState};
         this.lastPos = mouseState.position.slice();
+        if (this.annotationLayer) {
+          this.lastSegments = getSelectedAssocatedSegment(this.annotationLayer);
+        }
       }
     }
   }
