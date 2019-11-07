@@ -232,8 +232,8 @@ export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
 
   private reInitChildTool() {
     // This function prevents tool.refcount < 0, by reintializing the tool when the child annotation
-    // is completed. Tool.refcount is always decremented when dispose is called, which is done on
-    // completion
+    // is completed as a result of the main tool being complete. Tool.refcount is always decremented
+    // when dispose is called, which is done on completion
     if (!this.toolset) {
       return;
     }
@@ -241,8 +241,7 @@ export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
   }
 
   protected appendNewChildAnnotation(
-      oldAnnotationRef: AnnotationReference, mouseState: MouseSelectionState,
-      spoof?: Spoof) {
+      oldAnnotationRef: AnnotationReference, mouseState: MouseSelectionState, spoof?: Spoof) {
     this.childTool!.trigger(mouseState, oldAnnotationRef, spoof);
     this.updateLast();
   }
@@ -259,10 +258,23 @@ export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
       source:
           vec3.transformMat4(vec3.create(), mouseState.position, annotationLayer.globalToObject),
       entry: () => {},
+      segmentSet: () => {},
       childrenVisible: new TrackableBoolean(true, true)
     };
     coll.entry = (index: number) =>
         (<LocalAnnotationSource>annotationLayer.source).get(coll.entries[index]);
+    coll.segmentSet = () => {
+      coll.entries.forEach((ref, index) => {
+        ref;
+        const child = <Annotation>coll.entry(index);
+        if (coll.segments && child.segments) {
+          coll.segments = [...coll.segments!, ...child.segments];
+        }
+      });
+      if (coll.segments) {
+        coll.segments = Array.from(new Set(coll.segments));
+      }
+    };
     return coll;
   }
 
@@ -377,7 +389,9 @@ export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
       }
 
       const {reference, annotationLayer} = this.inProgressAnnotation;
-      const annotation = <Annotation>reference.value;
+      const annotation = <Collection>reference.value;
+      // assign segments
+      annotation.segmentSet();
       annotationLayer.source.commit(reference);
       StatusMessage.showTemporaryMessage(
           `${annotation.parentId ? 'Child a' : 'A'}nnotation ${annotation.id} complete.`);
