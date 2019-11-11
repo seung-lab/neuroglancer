@@ -1449,7 +1449,7 @@ export class AnnotationDetailsTab extends Tab {
 
   private evictButton(annotation: Annotation, isSingleton?: boolean) {
     const annotationLayer = this.state.annotationLayerState.value!;
-    const button = makeTextIconButton('✂️', 'Remove from collection');
+    const button = makeTextIconButton('✂️', 'Extract from collection');
     button.addEventListener('click', () => {
       const parentReference = annotationLayer.source.getReference(annotation.parentId!);
       if (isSingleton) {
@@ -1513,6 +1513,7 @@ export class AnnotationDetailsTab extends Tab {
       collection.entry = (index: number) =>
           (<LocalAnnotationSource>annotationLayer.source).get(collection.entries[index]);
       collection.segmentSet = () => {
+        collection.segments = [];
         collection.entries.forEach((ref, index) => {
           ref;
           const child = <Annotation>collection.entry(index);
@@ -1521,25 +1522,27 @@ export class AnnotationDetailsTab extends Tab {
           }
         });
         if (collection.segments) {
-          collection.segments = Array.from(new Set(collection.segments));
+          collection.segments = [...new Set(collection.segments.map((e) => e.toString()))].map((s) => Uint64.parseString(s));
         }
+        // return collection.segments;
       };
 
       const collectionReference = (<AnnotationSource>annotationLayer.source).add(collection, true);
-      let grandParent;
+      // let grandParent;
       if (first.parentId) {
         const firstParent = (<AnnotationSource>annotationLayer.source).getReference(first.parentId);
-        grandParent = firstParent.value;
+        // grandParent = firstParent.value;
         (<AnnotationSource>annotationLayer.source)
             .childReassignment([collectionReference.value!.id], firstParent);
       }
       const emptyCollection =
           (<AnnotationSource>annotationLayer.source).childReassignment(target, collectionReference);
-
-      (<Collection>collectionReference.value).segmentSet();
+      
+      /* const newCollection = <Collection>collectionReference.value;
+      newCollection.segments = newCollection.segmentSet();
       if (grandParent) {
-        (<Collection>grandParent).segmentSet();
-      }
+        grandParent.segments = (<Collection>grandParent).segmentSet();
+      } */
       // It shouldn't be possible for a collection to be empty twice, that is the child says the
       // parent is empty and then a subsequent child says the same
       emptyCollection.forEach((annotationReference: AnnotationReference) => {
@@ -1558,7 +1561,7 @@ export class AnnotationDetailsTab extends Tab {
   private ungroupButton() {
     const annotationLayer = this.state.annotationLayerState.value!;
     const value = this.state.value!;
-    const button = makeTextIconButton('💥', 'Free annotations');
+    const button = makeTextIconButton('💥', 'Extract all annotations');
     button.addEventListener('click', () => {
       const reference = annotationLayer.source.getReference(value.id);
       try {
