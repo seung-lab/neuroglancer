@@ -61,9 +61,6 @@ export abstract class PlaceAnnotationTool extends Tool {
       throw `Invalid reference for assignment: ${!annotation ? 'Child' : 'Parent'} has no value`;
     }
     parent.entries.push(annotation.id);
-    if (parent.segments && annotation.segments) {
-      parent.segments = [...parent.segments, ...annotation.segments];
-    }
   }
 
   complete() {
@@ -264,15 +261,16 @@ export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
     coll.entry = (index: number) =>
         (<LocalAnnotationSource>annotationLayer.source).get(coll.entries[index]);
     coll.segmentSet = () => {
+      coll.segments = [];
       coll.entries.forEach((ref, index) => {
         ref;
         const child = <Annotation>coll.entry(index);
-        if (coll.segments && child.segments) {
+        if (coll.segments && child && child.segments) {
           coll.segments = [...coll.segments!, ...child.segments];
         }
       });
       if (coll.segments) {
-        coll.segments = Array.from(new Set(coll.segments));
+        coll.segments = [...new Set(coll.segments.map((e) => e.toString()))].map((s) => Uint64.parseString(s));
       }
     };
     return coll;
@@ -391,6 +389,7 @@ export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
       const {reference, annotationLayer} = this.inProgressAnnotation;
       const annotation = <Collection>reference.value;
       // assign segments
+      // annotation.segments = 
       annotation.segmentSet();
       annotationLayer.source.commit(reference);
       StatusMessage.showTemporaryMessage(

@@ -464,6 +464,21 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     if (annotation.type === AnnotationType.COLLECTION ||
         annotation.type === AnnotationType.LINE_STRIP || annotation.type === AnnotationType.SPOKE) {
       annotationNode.entry = (index: number) => this.get(annotationNode.entries[index]);
+
+      annotationNode.segmentSet = () => {
+        annotationNode.segments = [];
+        annotationNode.entries.forEach((ref:any, index: number) => {
+          ref;
+          const child = <Annotation>annotationNode.entry(index);
+          if (annotationNode.segments && child.segments) {
+            annotationNode.segments = [...annotationNode.segments!, ...child.segments];
+          }
+        });
+        if (annotationNode.segments) {
+          annotationNode.segments = [...new Set(annotationNode.segments.map((e: Uint64) => e.toString()))].map((s: string) => Uint64.parseString(s));
+        }
+        return annotationNode.segments;
+      };
     }
     this.annotationMap.set(annotation.id, annotationNode);
   }
@@ -606,12 +621,14 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
           adopter.entries.push(target.id);
         }
 
+        if (adopter) {
+          // adopter.segments = 
+          adopter.segmentSet();
+        }
+
         if (oldParent) {
-          if (oldParent.segments && target.segments) {
-            // remove segments from target
-            const oldSegments = target.segments;
-            oldParent.segments = oldParent.segments.filter(v => !oldSegments.includes(v));
-          }
+          // oldParent.segments = 
+          oldParent.segmentSet();
           oldParent.entries = oldParent.entries.filter(v => v !== target.id);
           if (!oldParent.entries.length) {
             emptynesters.push(this.getReference(oldParent.id));
@@ -680,6 +697,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
       const value = <Collection>target.value;
       // parent should not be deleted before its children
       value.entries = value.entries.filter(v => v !== reference.value!.id);
+      value.segmentSet();
       if (!value.entries.length && !this.isPending(value.id)) {
         this.delete(target);
       }
