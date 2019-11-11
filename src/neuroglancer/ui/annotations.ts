@@ -1502,7 +1502,7 @@ export class AnnotationDetailsTab extends Tab {
         id: '',
         type: AnnotationType.COLLECTION,
         description: '',
-        entries: [],  // identical totarget
+        entries: [],  // identical to target
         segments: [],
         connected: false,
         source: sourcePoint,
@@ -1524,25 +1524,17 @@ export class AnnotationDetailsTab extends Tab {
         if (collection.segments) {
           collection.segments = [...new Set(collection.segments.map((e) => e.toString()))].map((s) => Uint64.parseString(s));
         }
-        // return collection.segments;
       };
 
       const collectionReference = (<AnnotationSource>annotationLayer.source).add(collection, true);
-      // let grandParent;
       if (first.parentId) {
         const firstParent = (<AnnotationSource>annotationLayer.source).getReference(first.parentId);
-        // grandParent = firstParent.value;
         (<AnnotationSource>annotationLayer.source)
             .childReassignment([collectionReference.value!.id], firstParent);
       }
       const emptyCollection =
           (<AnnotationSource>annotationLayer.source).childReassignment(target, collectionReference);
       
-      /* const newCollection = <Collection>collectionReference.value;
-      newCollection.segments = newCollection.segmentSet();
-      if (grandParent) {
-        grandParent.segments = (<Collection>grandParent).segmentSet();
-      } */
       // It shouldn't be possible for a collection to be empty twice, that is the child says the
       // parent is empty and then a subsequent child says the same
       emptyCollection.forEach((annotationReference: AnnotationReference) => {
