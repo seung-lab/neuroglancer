@@ -102,6 +102,9 @@ export abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
         const reference = state.reference;
         const newAnnotation =
             this.getUpdatedAnnotation(reference.value!, mouseState, annotationLayer);
+        if (spoof && spoof.segments) {
+          newAnnotation.segments = [...(newAnnotation.segments||[]), ...spoof.segments];
+        }
         state.annotationLayer.source.update(reference, newAnnotation);
         this.layer.selectedAnnotation.value = {id: reference.id};
       } else {

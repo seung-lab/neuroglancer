@@ -3,7 +3,7 @@
  */
 
 import {Annotation, AnnotationReference, AnnotationType, LineStrip} from 'neuroglancer/annotation';
-import {MultiStepAnnotationTool} from 'neuroglancer/annotation/annotation';
+import {MultiStepAnnotationTool, getSelectedAssocatedSegment, Spoof} from 'neuroglancer/annotation/annotation';
 import {AnnotationLayerState} from 'neuroglancer/annotation/frontend';
 import {PlaceLineTool} from 'neuroglancer/annotation/line';
 import {AnnotationRenderContext, AnnotationRenderHelper, registerAnnotationTypeRenderHandler} from 'neuroglancer/annotation/type_handler';
@@ -12,6 +12,7 @@ import {StatusMessage} from 'neuroglancer/status';
 import {UserLayerWithAnnotations} from 'neuroglancer/ui/annotations';
 import {registerTool} from 'neuroglancer/ui/tool';
 import {mat4, vec3} from 'neuroglancer/util/geom';
+import { Uint64 } from 'neuroglancer/util/uint64';
 
 const ANNOTATE_LINE_STRIP_TOOL_ID = 'annotateLineStrip';
 
@@ -58,6 +59,7 @@ export class PlaceLineStripTool extends MultiStepAnnotationTool {
   initMouseState: MouseSelectionState;
   initPos: any;
   childTool: PlaceLineTool;
+  initSegments?: Uint64[]|null;
   constructor(public layer: UserLayerWithAnnotations, options: any) {
     super(layer, options);
     this.childTool = new this.toolset(layer, {...options, parent: this});
@@ -82,6 +84,9 @@ export class PlaceLineStripTool extends MultiStepAnnotationTool {
         this.initMouseState = <MouseSelectionState>{...mouseState};
         this.initPos = mouseState.position.slice();
         super.trigger(mouseState, parentReference);
+        if (this.annotationLayer) {
+          this.initSegments = getSelectedAssocatedSegment(this.annotationLayer);
+        }
         this.assignToParent(this.inProgressAnnotation!.reference, parentReference);
       } else {
         super.trigger(mouseState, parentReference);
@@ -104,9 +109,12 @@ export class PlaceLineStripTool extends MultiStepAnnotationTool {
     }
     if (innerEntries.length > 1) {
       if (this.looped) {
-        const fakeMouse = <MouseSelectionState>{...this.initMouseState, position: this.initPos};
+        const mouse = <MouseSelectionState>{...this.initMouseState, position: this.initPos};
+        const initial = <Spoof>{
+          mouse, segments: this.initSegments
+        };
         value.looped = true;
-        this.childTool.trigger(fakeMouse, this.inProgressAnnotation.reference);
+        this.childTool.trigger(mouse, this.inProgressAnnotation.reference, initial);
       }
       return super.complete();
     }
