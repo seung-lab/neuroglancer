@@ -103,7 +103,7 @@ export abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
         const newAnnotation =
             this.getUpdatedAnnotation(reference.value!, mouseState, annotationLayer);
         if (spoof && spoof.segments) {
-          newAnnotation.segments = [...(newAnnotation.segments||[]), ...spoof.segments];
+          newAnnotation.segments = [...(newAnnotation.segments || []), ...spoof.segments];
         }
         state.annotationLayer.source.update(reference, newAnnotation);
         this.layer.selectedAnnotation.value = {id: reference.id};
@@ -273,7 +273,8 @@ export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
         }
       });
       if (coll.segments) {
-        coll.segments = [...new Set(coll.segments.map((e) => e.toString()))].map((s) => Uint64.parseString(s));
+        coll.segments =
+            [...new Set(coll.segments.map((e) => e.toString()))].map((s) => Uint64.parseString(s));
       }
     };
     return coll;
@@ -392,7 +393,6 @@ export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
       const {reference, annotationLayer} = this.inProgressAnnotation;
       const annotation = <Collection>reference.value;
       // assign segments
-      // annotation.segments = 
       annotation.segmentSet();
       annotationLayer.source.commit(reference);
       StatusMessage.showTemporaryMessage(
