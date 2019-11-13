@@ -377,7 +377,8 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
   private annotationMap = new Map<AnnotationId, AnnotationNode>();
   private tags = new Map<number, AnnotationTag>();
   private maxTagId = 0;
-  private lastAnnotationNode: AnnotationNode|null = null;
+  private lastAnnotationNodeMap =
+      new Map<AnnotationId|undefined, AnnotationNode|null>([[undefined, null]]);
   changed = new NullarySignal();
   readonly = false;
   childAdded = new Signal<(annotation: Annotation) => void>();
@@ -449,17 +450,19 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
   private insertAnnotationNode(annotation: Annotation) {
     this.validateTags(annotation);
     let annotationNode: any = {...annotation, prev: null, next: null};
-    if (this.lastAnnotationNode) {
-      annotationNode.prev = this.lastAnnotationNode;
-      annotationNode.next = this.lastAnnotationNode.next;
+    const parentNodeId = <AnnotationId|undefined>annotationNode.parentId;
+    const matchingAnnotationNode = this.lastAnnotationNodeMap.get(parentNodeId);
+    if (matchingAnnotationNode) {
+      annotationNode.prev = matchingAnnotationNode;
+      annotationNode.next = matchingAnnotationNode.next;
       annotationNode = <AnnotationNode>annotationNode;
-      this.lastAnnotationNode.next = annotationNode;
+      matchingAnnotationNode.next = annotationNode;
       annotationNode.next.prev = annotationNode;
     } else {
       annotationNode.prev = annotationNode.next = annotationNode;
       annotationNode = <AnnotationNode>annotationNode;
     }
-    this.lastAnnotationNode = annotationNode;
+    this.lastAnnotationNodeMap.set(annotationNode.parentId, annotationNode);
 
     if (annotation.type === AnnotationType.COLLECTION ||
         annotation.type === AnnotationType.LINE_STRIP || annotation.type === AnnotationType.SPOKE) {
@@ -467,7 +470,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
 
       annotationNode.segmentSet = () => {
         annotationNode.segments = [];
-        annotationNode.entries.forEach((ref:any, index: number) => {
+        annotationNode.entries.forEach((ref: any, index: number) => {
           ref;
           const child = <Annotation>annotationNode.entry(index);
           if (annotationNode.segments && child.segments) {
@@ -475,7 +478,9 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
           }
         });
         if (annotationNode.segments) {
-          annotationNode.segments = [...new Set(annotationNode.segments.map((e: Uint64) => e.toString()))].map((s: string) => Uint64.parseString(s));
+          annotationNode.segments =
+              [...new Set(annotationNode.segments.map((e: Uint64) => e.toString()))].map(
+                  (s: string) => Uint64.parseString(s));
         }
         return annotationNode.segments;
       };
@@ -486,15 +491,17 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
   private deleteAnnotationNode(id: AnnotationId) {
     const existingAnnotation = this.annotationMap.get(id);
     if (existingAnnotation) {
+      const parentNodeId = <AnnotationId|undefined>existingAnnotation.parentId;
+      const matchingAnnotationNode = this.lastAnnotationNodeMap.get(parentNodeId);
       this.annotationMap.delete(id);
       if (this.annotationMap.size > 0) {
         existingAnnotation.prev.next = existingAnnotation.next;
         existingAnnotation.next.prev = existingAnnotation.prev;
-        if (this.lastAnnotationNode === existingAnnotation) {
-          this.lastAnnotationNode = existingAnnotation.prev;
+        if (matchingAnnotationNode === existingAnnotation) {
+          this.lastAnnotationNodeMap.set(parentNodeId, existingAnnotation.prev);
         }
       } else {
-        this.lastAnnotationNode = null;
+        this.lastAnnotationNodeMap.set(parentNodeId, null);
       }
     }
     return existingAnnotation;
@@ -610,24 +617,20 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
         if (!adopter) {
           // no adopter- clear parent
           target.parentId = undefined;
-        }
-        else if (this.isAncestor(target, adopter)) {
+        } else if (this.isAncestor(target, adopter)) {
           // ancestor cannot be adopted by its descendant- skip this one
           return;
-        }
-        else {
+        } else {
           // adopt normally
           target.parentId = adopter.id;
           adopter.entries.push(target.id);
         }
 
         if (adopter) {
-          // adopter.segments = 
           adopter.segmentSet();
         }
 
         if (oldParent) {
-          // oldParent.segments = 
           oldParent.segmentSet();
           oldParent.entries = oldParent.entries.filter(v => v !== target.id);
           if (!oldParent.entries.length) {
@@ -751,7 +754,8 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     this.tags.clear();
     this.maxTagId = 0;
     this.annotationMap.clear();
-    this.lastAnnotationNode = null;
+    this.lastAnnotationNodeMap.clear();
+    this.lastAnnotationNodeMap.set(undefined, null);
     this.pending.clear();
     this.changed.dispatch();
   }
@@ -760,7 +764,8 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     const {annotationMap, tags: annotationTags} = this;
     annotationTags.clear();
     annotationMap.clear();
-    this.lastAnnotationNode = null;
+    this.lastAnnotationNodeMap.clear();
+    this.lastAnnotationNodeMap.set(undefined, null);
     this.maxTagId = 0;
     this.pending.clear();
     if (annotationTagObj !== undefined) {
