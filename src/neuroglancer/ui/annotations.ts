@@ -641,7 +641,7 @@ export class AnnotationLayerView extends Tab {
   private csvToolboxSetup() {
     const exportToCSVButton = document.createElement('button');
     const importCSVButton = document.createElement('button');
-    importCSVButton.disabled = true;
+    // importCSVButton.disabled = true;
     const importCSVForm = document.createElement('input');
     exportToCSVButton.id = 'exportToCSVButton';
     exportToCSVButton.textContent = 'Export to CSV';
