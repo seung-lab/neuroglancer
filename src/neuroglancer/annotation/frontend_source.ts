@@ -351,6 +351,12 @@ export class MultiscaleAnnotationSource extends SharedObject implements
     return reference;
   }
 
+  addAll(annotations: Annotation[], commit: boolean = true) {
+    for (const annotation of annotations) {
+      this.add(annotation, commit);
+    }
+  }
+
   private applyLocalUpdate(
       reference: Borrowed<AnnotationReference>, existing: boolean, commit: boolean,
       newAnnotation: Annotation|null): void {
@@ -604,6 +610,7 @@ export class MultiscaleAnnotationSource extends SharedObject implements
   }
   readonly = false;
   childAdded: Signal<(annotation: Annotation) => void>;
+  childrenAdded: Signal<(annotations: Annotation[]) => void>;
   childUpdated: Signal<(annotation: Annotation) => void>;
   childDeleted: Signal<(annotationId: string) => void>;
   tagAdded:Signal<(tag: AnnotationTag) => void>;

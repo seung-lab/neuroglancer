@@ -685,6 +685,8 @@ export class AnnotationLayerView extends Tab {
     this.registerDisposer(
         source.childAdded.add((annotation) => this.addAnnotationElement(annotation)));
     this.registerDisposer(
+        source.childrenAdded.add((annotations) => this.addAnnotationElements(annotations)));
+    this.registerDisposer(
         source.childUpdated.add((annotation) => this.updateAnnotationElement(annotation)));
     this.registerDisposer(
         source.childDeleted.add((annotationId) => this.deleteAnnotationElement(annotationId)));
@@ -842,7 +844,7 @@ export class AnnotationLayerView extends Tab {
     annotationListElements.clear();
     this.annotationsToAdd = [];
     for (const annotation of source) {
-      this.annotationsToAdd.push(this.makeAnnotationListElement(annotation));
+      this.annotationsToAdd.push(this.makeAnnotationListElement(annotation, false));
     }
     this.arrangeAnnotationsToAdd();
     this.annotationHidingList.addElements(this.annotationsToAdd);
@@ -909,16 +911,25 @@ export class AnnotationLayerView extends Tab {
       return;
     }
     const element = this.makeAnnotationListElement(annotation);
-    let depth = 0;
-    let parent = undefined;
-    let checkElement: HTMLElement = element;
-    while (checkElement.dataset.parent) {
-      parent = this.annotationListElements.get(checkElement.dataset.parent);
-      checkElement = parent!;
-      depth++;
-    }
-    this.setPadding(element, depth);
+    const parent = element.dataset.parent ? this.annotationListElements.get(element.dataset.parent) : undefined;
     this.annotationHidingList.insertElement(element, parent);
+    this.resetOnUpdate();
+  }
+
+  private addAnnotationElements(annotations: Annotation[]) {
+    if (!this.visible) {
+      this.updated = false;
+      return;
+    }
+    if (!this.updated) {
+      this.updateView();
+      return;
+    }
+    const annotationElems = [];
+    for (const annotation of annotations) {
+      annotationElems.push(this.makeAnnotationListElement(annotation));
+    }
+    this.annotationHidingList.addElements(annotationElems);
     this.resetOnUpdate();
   }
 
@@ -939,15 +950,6 @@ export class AnnotationLayerView extends Tab {
     }
     const {annotationHidingList} = this;
     const newElement = this.makeAnnotationListElement(annotation);
-    let depth = 0;
-    let parent = undefined;
-    let checkElement: HTMLElement = newElement;
-    while (checkElement.dataset.parent) {
-      parent = this.annotationListElements.get(checkElement.dataset.parent);
-      checkElement = parent!;
-      depth++;
-    }
-    this.setPadding(newElement, depth);
     annotationHidingList.replaceElement(newElement, element);
     annotationListElements.set(annotation.id, newElement);
     this.resetOnUpdate();
@@ -978,7 +980,7 @@ export class AnnotationLayerView extends Tab {
     this.updateSelectionView();
   }
 
-  private makeAnnotationListElement(annotation: Annotation) {
+  private makeAnnotationListElement(annotation: Annotation, doPadding: boolean = true) {
     const transform = this.annotationLayer.objectToGlobal;
     const element = document.createElement('li');
     element.dataset.id = annotation.id;
@@ -1006,6 +1008,18 @@ export class AnnotationLayerView extends Tab {
 
     this.annotationListElements.set(annotation.id, element);
 
+    if (doPadding) {
+      let depth = 0;
+      let parent = undefined;
+      let checkElement: HTMLElement = element;
+      while (checkElement.dataset.parent) {
+        parent = this.annotationListElements.get(checkElement.dataset.parent);
+        checkElement = parent!;
+        depth++;
+      }
+      this.setPadding(element, depth);
+    }
+    
     element.addEventListener('mouseenter', () => {
       this.annotationLayer.hoverState.value = {id: annotation.id, partIndex: 0};
     });
@@ -1353,9 +1367,7 @@ export class AnnotationLayerView extends Tab {
       successfulImport++;
     }
 
-    for (const annotation of rawAnnotations) {
-      this.annotationLayer.source.add(annotation, /*commit=*/true);
-    }
+    this.annotationLayer.source.addAll(rawAnnotations, true);
     // TODO: Undoable
     StatusMessage.showTemporaryMessage(`Imported ${successfulImport} csv(s).`, 3000);
   }
