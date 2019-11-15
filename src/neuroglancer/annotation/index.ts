@@ -525,7 +525,8 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     return;
   }
 
-  private addHelper(annotation: Annotation, commit: boolean, parentReference?: AnnotationReference): AnnotationReference {
+  private addHelper(annotation: Annotation, commit: boolean, parentReference?: AnnotationReference):
+      AnnotationReference {
     if (!annotation.id) {
       annotation.id = makeAnnotationId();
     } else if (this.annotationMap.has(annotation.id)) {
@@ -550,8 +551,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     return reference;
   }
 
-  addAll(annotations: Annotation[], commit: boolean = true,
-      parentReference?: AnnotationReference) {
+  addAll(annotations: Annotation[], commit: boolean = true, parentReference?: AnnotationReference) {
     for (const annotation of annotations) {
       this.addHelper(annotation, commit, parentReference);
     }
