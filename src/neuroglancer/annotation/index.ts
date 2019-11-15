@@ -356,6 +356,7 @@ export function restoreAnnotation(obj: any, allowMissingId = false): Annotation 
 export interface AnnotationSourceSignals {
   changed: NullarySignal;
   childAdded: Signal<(annotation: Annotation) => void>;
+  childrenAdded: Signal<(annotations: Annotation[]) => void>;
   childUpdated: Signal<(annotation: Annotation) => void>;
   childDeleted: Signal<(annotationId: string) => void>;
   tagAdded: Signal<(tag: AnnotationTag) => void>;
@@ -382,6 +383,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
   changed = new NullarySignal();
   readonly = false;
   childAdded = new Signal<(annotation: Annotation) => void>();
+  childrenAdded = new Signal<(annotations: Annotation[]) => void>();
   childUpdated = new Signal<(annotation: Annotation) => void>();
   childDeleted = new Signal<(annotationId: string) => void>();
   tagAdded = new Signal<(tag: AnnotationTag) => void>();
@@ -523,8 +525,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     return;
   }
 
-  add(annotation: Annotation, commit: boolean = true,
-      parentReference?: AnnotationReference): AnnotationReference {
+  private addHelper(annotation: Annotation, commit: boolean, parentReference?: AnnotationReference): AnnotationReference {
     if (!annotation.id) {
       annotation.id = makeAnnotationId();
     } else if (this.annotationMap.has(annotation.id)) {
@@ -538,8 +539,23 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     if (!commit) {
       this.pending.add(annotation.id);
     }
-    this.childAdded.dispatch(annotation);
+
     return this.getReference(annotation.id);
+  }
+
+  add(annotation: Annotation, commit: boolean = true,
+      parentReference?: AnnotationReference): AnnotationReference {
+    const reference = this.addHelper(annotation, commit, parentReference);
+    this.childAdded.dispatch(annotation);
+    return reference;
+  }
+
+  addAll(annotations: Annotation[], commit: boolean = true,
+      parentReference?: AnnotationReference) {
+    for (const annotation of annotations) {
+      this.addHelper(annotation, commit, parentReference);
+    }
+    this.childrenAdded.dispatch(annotations);
   }
 
   commit(reference: AnnotationReference): void {
