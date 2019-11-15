@@ -911,7 +911,9 @@ export class AnnotationLayerView extends Tab {
       return;
     }
     const element = this.makeAnnotationListElement(annotation);
-    const parent = element.dataset.parent ? this.annotationListElements.get(element.dataset.parent) : undefined;
+    const parent = element.dataset.parent ?
+        this.annotationListElements.get(element.dataset.parent) :
+        undefined;
     this.annotationHidingList.insertElement(element, parent);
     this.resetOnUpdate();
   }
@@ -1019,7 +1021,7 @@ export class AnnotationLayerView extends Tab {
       }
       this.setPadding(element, depth);
     }
-    
+
     element.addEventListener('mouseenter', () => {
       this.annotationLayer.hoverState.value = {id: annotation.id, partIndex: 0};
     });
@@ -1367,7 +1369,7 @@ export class AnnotationLayerView extends Tab {
       successfulImport++;
     }
 
-    this.annotationLayer.source.addAll(rawAnnotations, true);
+    (<AnnotationSource>this.annotationLayer.source).addAll(rawAnnotations, true);
     // TODO: Undoable
     StatusMessage.showTemporaryMessage(`Imported ${successfulImport} csv(s).`, 3000);
   }
@@ -1534,7 +1536,8 @@ export class AnnotationDetailsTab extends Tab {
           }
         });
         if (collection.segments) {
-          collection.segments = [...new Set(collection.segments.map((e) => e.toString()))].map((s) => Uint64.parseString(s));
+          collection.segments = [...new Set(collection.segments.map((e) => e.toString()))].map(
+              (s) => Uint64.parseString(s));
         }
       };
 
@@ -1546,7 +1549,7 @@ export class AnnotationDetailsTab extends Tab {
       }
       const emptyCollection =
           (<AnnotationSource>annotationLayer.source).childReassignment(target, collectionReference);
-      
+
       // It shouldn't be possible for a collection to be empty twice, that is the child says the
       // parent is empty and then a subsequent child says the same
       emptyCollection.forEach((annotationReference: AnnotationReference) => {

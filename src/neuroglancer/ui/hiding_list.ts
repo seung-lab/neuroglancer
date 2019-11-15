@@ -87,7 +87,7 @@ export class HidingList {
     }
     this.loadedElements = [];
 
-    if (this.elementYs.length == 0) {
+    if (this.elementYs.length === 0) {
       return;
     }
     const viewportTop = this.scrollbar.scrollTop;
