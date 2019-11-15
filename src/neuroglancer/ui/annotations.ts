@@ -798,6 +798,7 @@ export class AnnotationLayerView extends Tab {
           element.classList.add('neuroglancer-annotation-multiple');
         }
 
+        // TODO: Why? This is a anti user ui pattern
         this.annotationHidingList.scrollTo(element);
       }
     }

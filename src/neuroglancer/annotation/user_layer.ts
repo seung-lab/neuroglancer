@@ -316,7 +316,7 @@ export class AnnotationUserLayer extends Base {
         actionName: 'go-to-next-annotation',
         actionFunction: () => {
           if (this.selectedAnnotation.value) {
-            jumpToAnnotation(this.getPrevAnnotation(this.selectedAnnotation.value.id), true);
+            jumpToAnnotation(this.getNextAnnotation(this.selectedAnnotation.value.id), true);
           }
         }
       },
