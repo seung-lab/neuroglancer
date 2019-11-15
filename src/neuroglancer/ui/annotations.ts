@@ -1261,13 +1261,11 @@ export class AnnotationLayerView extends Tab {
 
     for (const file of files) {
       const rawData = await this.betterPapa(file);
-      rawData.data.shift();
       rawData.data = rawData.data.filter((v: any) => v.join('').length);
       if (!rawData.data.length) {
         continue;
       }
       const annStrings = rawData.data;
-      annStrings.shift();
       const registry = <any>{};
       for (const annProps of annStrings) {
         const type = annProps[7];
@@ -1275,46 +1273,6 @@ export class AnnotationLayerView extends Tab {
         const cid = annProps[8];
         const tags = annProps[3];
         let raw = <Annotation>{id: makeAnnotationId(), description: annProps[4]};
-
-        if (cid) {
-          if (!registry[cid]) {
-            registry[cid] = raw;
-            (<Collection>raw).entries = [];
-          } else {
-            raw = {...raw, ...registry[cid]};
-            registry[cid] = raw;
-            (<Collection>raw).entries.forEach((ann: any) => {
-              ann.parentId = raw.id;
-              return ann.id;
-            });
-          }
-        }
-        if (parentId) {
-          if (registry[parentId]) {
-            const parent = registry[parentId];
-            if (parent.id) {
-              parent.entries.push(raw.id);
-              raw.parentId = parent.id;
-            } else {
-              parent.entries.push(raw);
-            }
-          } else {
-            registry[parentId] = {entries: [raw]};
-          }
-        }
-        if (tags) {
-          raw.tagIds = new Set();
-          const labels = tags.split(',');
-          const alayer = (<AnnotationSource>this.annotationLayer.source);
-          const currentTags = Array.from(alayer.getTags());
-          labels.forEach((label: string) => {
-            const tagId = (currentTags.find(tag => tag.label === label) || <any>{}).id ||
-                alayer.addTag(label);
-            raw.tagIds!.add(tagId);
-          });
-        }
-        // TODO: Is this transferable?
-        // raw.segments = getSelectedAssocatedSegment(annotationLayer),
 
         switch (type) {
           case 'AABB':
@@ -1362,7 +1320,49 @@ export class AnnotationLayerView extends Tab {
                 (<LocalAnnotationSource>this.annotationLayer.source)
                     .get((<Collection>raw).entries[index]);
             break;
+          default:
+              // Do not add annotation row, if it has unexpected type
+            continue;
         }
+
+        if (cid) {
+          if (!registry[cid]) {
+            registry[cid] = raw;
+            (<Collection>raw).entries = [];
+          } else {
+            raw = {...raw, ...registry[cid]};
+            registry[cid] = raw;
+            (<Collection>raw).entries.forEach((ann: any) => {
+              ann.parentId = raw.id;
+              return ann.id;
+            });
+          }
+        }
+        if (parentId) {
+          if (registry[parentId]) {
+            const parent = registry[parentId];
+            if (parent.id) {
+              parent.entries.push(raw.id);
+              raw.parentId = parent.id;
+            } else {
+              parent.entries.push(raw);
+            }
+          } else {
+            registry[parentId] = {entries: [raw]};
+          }
+        }
+        if (tags) {
+          raw.tagIds = new Set();
+          const labels = tags.split(',');
+          const alayer = (<AnnotationSource>this.annotationLayer.source);
+          const currentTags = Array.from(alayer.getTags());
+          labels.forEach((label: string) => {
+            const tagId = (currentTags.find(tag => tag.label === label) || <any>{}).id ||
+                alayer.addTag(label);
+            raw.tagIds!.add(tagId);
+          });
+        }
+        // Segments not supported
 
         rawAnnotations.push(raw);
       }
