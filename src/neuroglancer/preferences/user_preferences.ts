@@ -10,16 +10,19 @@ class UserPreferences {
   renderMeshByDefault: TrackableBoolean;
   prefetchSliceViewChunks: TrackableBoolean;
   cursorOnMousedrag: TrackableBoolean;
+  urlAutoSave: TrackableBoolean;
   constructor() {
     // mesh rendering is enabled by default, unless user selects not to
     this.renderMeshByDefault = new TrackableBoolean(true, true, 'renderMeshByDefault');
     // prefetching disabled by default, as it uses a lot of additional memory/bandwidth
     this.prefetchSliceViewChunks = new TrackableBoolean(false, false, 'prefetchSliceViewChunks');
     this.cursorOnMousedrag = new TrackableBoolean(true, true, 'cursorOnMousedrag');
+    this.urlAutoSave = new TrackableBoolean(true, true, 'urlAutoSave');
 
     this.renderMeshByDefault.restoreState({});
     this.prefetchSliceViewChunks.restoreState({});
     this.cursorOnMousedrag.restoreState({});
+    this.urlAutoSave.restoreState({});
 
     this.renderMeshByDefault.changed.add(() => {
       location.reload(false);
@@ -39,6 +42,10 @@ export function getPrefetchSliceViewChunks(): TrackableBoolean {
 
 export function getCursorOnMousedrag(): TrackableBoolean {
   return userPreferences.cursorOnMousedrag;
+}
+
+export function getUrlAutoSave(): TrackableBoolean {
+  return userPreferences.urlAutoSave;
 }
 
 export class UserPreferencesDialog extends Overlay {
@@ -80,5 +87,6 @@ export class UserPreferencesDialog extends Overlay {
     addCheckbox('Render Mesh By Default', userPreferences.renderMeshByDefault);
     addCheckbox('Prefetch SliceView Chunks', userPreferences.prefetchSliceViewChunks);
     addCheckbox('Show cursor on mouse drag', userPreferences.cursorOnMousedrag);
+    addCheckbox('Auto Save', userPreferences.urlAutoSave);
   }
 }
