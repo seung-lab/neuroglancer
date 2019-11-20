@@ -98,7 +98,8 @@ function serializeAnnotationSet(
 }
 
 @registerSharedObjectOwner(ANNOTATION_RENDER_LAYER_RPC_ID)
-class AnnotationLayerSharedObject extends withSharedVisibility(SharedObject) {
+class AnnotationLayerSharedObject extends
+withSharedVisibility(SharedObject) {
   constructor(
       public chunkManager: Borrowed<ChunkManager>,
       public source: Borrowed<MultiscaleAnnotationSource>,
@@ -412,10 +413,11 @@ function AnnotationRenderLayer<TBase extends {
           mouseState.pickedAnnotationLayer = this.base.state;
           mouseState.pickedOffset = partIndex;
           mouseState.pickedAnnotationBuffer = chunk.data!.buffer;
-          mouseState.pickedAnnotationBufferOffset = chunk.data!.byteOffset + typeToOffset[annotationType] + instanceIndex * handler.bytes;
+          mouseState.pickedAnnotationBufferOffset =
+              chunk.data!.byteOffset + typeToOffset[annotationType] + instanceIndex * handler.bytes;
           handler.snapPosition(
-              mouseState.position, this.base.state.objectToGlobal, mouseState.pickedAnnotationBuffer,
-              mouseState.pickedAnnotationBufferOffset,
+              mouseState.position, this.base.state.objectToGlobal,
+              mouseState.pickedAnnotationBuffer, mouseState.pickedAnnotationBufferOffset,
               partIndex);
           return;
         }

@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import './user_layer.css';
+
 import {Annotation, AnnotationId, AnnotationType, LocalAnnotationSource} from 'neuroglancer/annotation';
 import {AnnotationLayerState} from 'neuroglancer/annotation/frontend';
 import {CoordinateTransform, makeDerivedCoordinateTransform} from 'neuroglancer/coordinate_transform';
@@ -34,8 +36,6 @@ import {parseArray, verify3dVec} from 'neuroglancer/util/json';
 import {KeyboardEventBinder} from 'neuroglancer/util/keyboard_bindings';
 import {LayerReferenceWidget} from 'neuroglancer/widget/layer_reference';
 import {Tab} from 'neuroglancer/widget/tab_view';
-
-import './user_layer.css';
 
 const POINTS_JSON_KEY = 'points';
 const ANNOTATIONS_JSON_KEY = 'annotations';
@@ -114,7 +114,6 @@ export class AnnotationUserLayer extends Base {
   private keyShortcuts = ['q', 'w', 'e', 'r', 't', 'a', 's', 'd', 'f', 'g', 'z', 'x', 'c', 'v'];
   private tagToShortcut: Map<number, string> = new Map<number, string>();
   private _numTagsAllowed = this.keyShortcuts.length;
-  // private layerView: AnnotationLayerView;
 
   getAnnotationRenderOptions() {
     const segmentationState =
@@ -209,7 +208,6 @@ export class AnnotationUserLayer extends Base {
   }
 
   initializeAnnotationLayerViewTab(tab: AnnotationLayerView) {
-    // this.layerView = tab;
     const widget = tab.registerDisposer(new LayerReferenceWidget(this.linkedSegmentationLayer));
     widget.element.insertBefore(
         document.createTextNode('Linked segmentation: '), widget.element.firstChild);

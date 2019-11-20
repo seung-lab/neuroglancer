@@ -1,10 +1,10 @@
+import 'neuroglancer/preferences/user_preferences.css';
+
 import {Overlay} from 'neuroglancer/overlay';
 import {TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
 import {TrackableValue} from 'neuroglancer/trackable_value';
 import {Viewer} from 'neuroglancer/viewer';
 import {NumberInputWidget} from 'neuroglancer/widget/number_input_widget';
-
-import 'neuroglancer/preferences/user_preferences.css';
 
 class UserPreferences {
   renderMeshByDefault: TrackableBoolean;

@@ -128,12 +128,14 @@ export class HidingList {
 
   private findFirstNonDescendant(currentElement: HTMLElement, parent: HTMLElement): HTMLElement
       |undefined {
-    // Returns the first element that is not a descendant of parent.
-    // This is necessary so that when a new element is added to its parent group, it can go at the
-    // "end" of the group (after all existing children of the parent). If there is no such element
-    // (i.e. the parent group is at the end of the list), this will return undefined.
-    // currentElement is the one being inserted, in case it is being moved and has descendants.
-    const visitedElements = new Set<string>(); // will be filled with parent & all its descendants
+    // Returns the first element that is not a descendant of parent. This is necessary so that when
+    // a new element is added to its parent group, it can go at the "end" of the group (after all
+    // existing children of the parent). If there is no such element(i.e. the parent group is at the
+    // end of the list), this will return undefined. currentElement is the one being inserted, in
+    // case it is being moved and has descendants.
+
+    // will be filled with parent & all its descendants
+    const visitedElements = new Set<string>();
     visitedElements.add(currentElement.dataset.id!);
     visitedElements.add(parent.dataset.id!);
     const startIndex = this.elementIndices.get(parent)! + 1;

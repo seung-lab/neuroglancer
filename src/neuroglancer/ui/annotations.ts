@@ -1322,7 +1322,7 @@ export class AnnotationLayerView extends Tab {
                     .get((<Collection>raw).entries[index]);
             break;
           default:
-              // Do not add annotation row, if it has unexpected type
+            // Do not add annotation row, if it has unexpected type
             continue;
         }
 
@@ -1370,7 +1370,7 @@ export class AnnotationLayerView extends Tab {
       successfulImport++;
     }
 
-    (<AnnotationSource>this.annotationLayer.source).addAll(rawAnnotations, true);
+    this.annotationLayer.source.addAll(rawAnnotations, true);
     // TODO: Undoable
     StatusMessage.showTemporaryMessage(`Imported ${successfulImport} csv(s).`, 3000);
   }
