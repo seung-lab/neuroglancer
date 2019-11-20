@@ -1271,7 +1271,7 @@ export class AnnotationLayerView extends Tab {
       for (const annProps of annStrings) {
         const type = annProps[7];
         const parentId = annProps[6];
-        const cid = annProps[8];
+        const AnnotationID = annProps[8];
         const tags = annProps[3];
         let raw = <Annotation>{id: makeAnnotationId(), description: annProps[4]};
 
@@ -1326,13 +1326,13 @@ export class AnnotationLayerView extends Tab {
             continue;
         }
 
-        if (cid) {
-          if (!registry[cid]) {
-            registry[cid] = raw;
+        if (AnnotationID) {
+          if (!registry[AnnotationID]) {
+            registry[AnnotationID] = raw;
             (<Collection>raw).entries = [];
           } else {
-            raw = {...raw, ...registry[cid]};
-            registry[cid] = raw;
+            raw = {...raw, ...registry[AnnotationID]};
+            registry[AnnotationID] = raw;
             (<Collection>raw).entries.forEach((ann: any) => {
               ann.parentId = raw.id;
               return ann.id;
