@@ -843,13 +843,8 @@ export class AnnotationLayerView extends Tab {
     const {source} = annotationLayer;
     this.annotationHidingList.removeAll();
     annotationListElements.clear();
-    this.annotationsToAdd = [];
-    for (const annotation of source) {
-      this.annotationsToAdd.push(this.makeAnnotationListElement(annotation, false));
-    }
-    this.arrangeAnnotationsToAdd();
-    this.annotationHidingList.addElements(this.annotationsToAdd);
-    this.resetOnUpdate();
+
+    this.addAnnotationsHelper(source);
   }
 
   private arrangeAnnotationsToAdd() {
@@ -919,6 +914,16 @@ export class AnnotationLayerView extends Tab {
     this.resetOnUpdate();
   }
 
+  private addAnnotationsHelper(annotations: Iterable<Annotation>) {
+    this.annotationsToAdd = [];
+    for (const annotation of annotations) {
+      this.annotationsToAdd.push(this.makeAnnotationListElement(annotation, false));
+    }
+    this.arrangeAnnotationsToAdd();
+    this.annotationHidingList.addElements(this.annotationsToAdd);
+    this.resetOnUpdate();
+  }
+
   private addAnnotationElements(annotations: Annotation[]) {
     if (!this.visible) {
       this.updated = false;
@@ -928,12 +933,7 @@ export class AnnotationLayerView extends Tab {
       this.updateView();
       return;
     }
-    const annotationElems = [];
-    for (const annotation of annotations) {
-      annotationElems.push(this.makeAnnotationListElement(annotation));
-    }
-    this.annotationHidingList.addElements(annotationElems);
-    this.resetOnUpdate();
+    this.addAnnotationsHelper(annotations);
   }
 
   private updateAnnotationElement(annotation: Annotation, checkVisibility = true) {
