@@ -642,24 +642,26 @@ export class AnnotationLayerView extends Tab {
     const exportToCSVButton = document.createElement('button');
     const importCSVButton = document.createElement('button');
     // importCSVButton.disabled = true;
-    const importCSVForm = document.createElement('input');
+    const importCSVForm = document.createElement('form');
+    const importCSVFileSelect = document.createElement('input');
     exportToCSVButton.id = 'exportToCSVButton';
     exportToCSVButton.textContent = 'Export to CSV';
     exportToCSVButton.addEventListener('click', () => {
       this.exportToCSV();
     });
-    importCSVForm.id = 'importCSVForm';
-    importCSVForm.type = 'file';
-    importCSVForm.accept = 'text/csv';
-    importCSVForm.multiple = true;
-    importCSVForm.style.display = 'none';
+    importCSVFileSelect.id = 'importCSVFileSelect';
+    importCSVFileSelect.type = 'file';
+    importCSVFileSelect.accept = 'text/csv';
+    importCSVFileSelect.multiple = true;
+    importCSVFileSelect.style.display = 'none';
     importCSVButton.textContent = 'Import from CSV';
     importCSVButton.addEventListener('click', () => {
-      importCSVForm.click();
+      importCSVFileSelect.click();
     });
-    importCSVForm.addEventListener('change', () => {
-      this.importCSV(importCSVForm.files);
-      importCSVForm.files = null;
+    importCSVForm.appendChild(importCSVFileSelect);
+    importCSVFileSelect.addEventListener('change', () => {
+      this.importCSV(importCSVFileSelect.files);
+      importCSVForm.reset();
     });
     const csvContainer = document.createElement('span');
     csvContainer.append(exportToCSVButton, importCSVButton, importCSVForm);
@@ -1010,7 +1012,7 @@ export class AnnotationLayerView extends Tab {
     }
 
     this.annotationListElements.set(annotation.id, element);
-    
+
     let depth = 0;
     let parent = undefined;
     let checkElement: HTMLElement = element;
@@ -1083,10 +1085,14 @@ export class AnnotationLayerView extends Tab {
 
   private setChildrenVisibleHelper(elementId: string, visible: boolean) {
     const collection = <Collection>this.annotationLayer.source.getReference(elementId).value;
-    if (!collection.entries) return;
+    if (!collection.entries) {
+      return;
+    }
     for (const childId of collection.entries) {
       const child = this.annotationListElements.get(childId);
-      if (!child) continue; //child not defined yet
+      if (!child) {
+        continue;
+      }  // child not defined yet
       if (visible) {
         child.classList.remove('neuroglancer-annotation-child-hidden');
         const annotation = this.annotationLayer.source.getReference(childId).value;
@@ -1269,6 +1275,13 @@ export class AnnotationLayerView extends Tab {
     return vec3.fromValues(val[0], val[1], val[2]);
   }
 
+  private dimensionsToVec3 = (input: string): vec3 => {
+    // format: A × B × C
+    let raw = input.replace(/s/g, '');
+    let val = raw.split('×').map(v => parseInt(v, 10));
+    return vec3.fromValues(val[0], val[1], val[2]);
+  }
+
   private async importCSV(files: FileList|null) {
     const rawAnnotations = <Annotation[]>[];
     let successfulImport = 0;
@@ -1284,12 +1297,14 @@ export class AnnotationLayerView extends Tab {
         continue;
       }
       const annStrings = rawData.data;
-      const parentRegistry = new Map<string, Annotation>();
-      const childRegistry = new Map<string, Annotation>();
+      // const parentRegistry = new Map<string, Annotation>();
+      // const childRegistry = new Map<string, Annotation>();
+      const csvIdToRealAnnotationIdMap: {[key: string]: string} = {};
+      const childStorage: {[key: string]: string[]} = {};
       for (const annProps of annStrings) {
         const type = annProps[7];
         const parentId = annProps[6];
-        const annotationID = annProps[8];
+        const annotationID: string|undefined = annProps[8];
         const tags = annProps[3];
         let raw = <Annotation>{id: makeAnnotationId(), description: annProps[4]};
 
@@ -1313,7 +1328,8 @@ export class AnnotationLayerView extends Tab {
             (<Ellipsoid>raw).center = vec3.transformMat4(
                 vec3.create(), this.stringToVec3(annProps[0]), this.annotationLayer.globalToObject);
             (<Ellipsoid>raw).radii = vec3.transformMat4(
-                vec3.create(), this.stringToVec3(annProps[2]), this.annotationLayer.globalToObject);
+                vec3.create(), this.dimensionsToVec3(annProps[2]),
+                this.annotationLayer.globalToObject);
             break;
           case 'Line Strip':
           case 'Line Strip*':
@@ -1344,10 +1360,37 @@ export class AnnotationLayerView extends Tab {
             continue;
         }
 
-        //parentRegistry maps annotationID (parent-only identifier) to parent annotations
-        //childRegistry maps raw.id (actual ID of the annotation) to all annotations
-        childRegistry.set(raw.id, raw);
-        if (annotationID) { //is parent
+        if (annotationID) {
+          if (csvIdToRealAnnotationIdMap[annotationID]) {
+            raw.id = csvIdToRealAnnotationIdMap[annotationID];
+            (<Collection>raw).entries = childStorage[raw.id];
+          } else {
+            csvIdToRealAnnotationIdMap[annotationID] = raw.id;
+            (<Collection>raw).entries = [];
+            childStorage[raw.id] = (<Collection>raw).entries;
+          }
+        }
+
+        if (parentId) {
+          if (csvIdToRealAnnotationIdMap[parentId]) {
+            raw.parentId = csvIdToRealAnnotationIdMap[parentId];
+            childStorage[raw.parentId].push(raw.id);
+          } else {
+            raw.parentId = makeAnnotationId();
+            csvIdToRealAnnotationIdMap[parentId] = raw.parentId;
+            if (childStorage[raw.parentId]) {
+              childStorage[raw.parentId].push(raw.id);
+            } else {
+              childStorage[raw.parentId] = [raw.id];
+            }
+          }
+        }
+
+
+        // parentRegistry maps annotationID (parent-only identifier) to parent annotations
+        // childRegistry maps raw.id (actual ID of the annotation) to all annotations
+        /*childRegistry.set(raw.id, raw);
+        if (annotationID) {  // is parent
           if (!parentRegistry.has(annotationID)) {
             parentRegistry.set(annotationID, raw);
             (<Collection>raw).entries = [];
@@ -1374,7 +1417,7 @@ export class AnnotationLayerView extends Tab {
           } else {
             parentRegistry.set(parentId, <Collection>{entries: [raw.id]});
           }
-        }
+        }*/
         if (tags) {
           raw.tagIds = new Set();
           const labels = tags.split(',');
