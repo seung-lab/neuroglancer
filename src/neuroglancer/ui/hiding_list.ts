@@ -253,11 +253,14 @@ export class HidingList {
   recalculateHeights() {
     this.totalHeight = 0;
     this.loadedElements = [];
+    // Split up unhide and calculate height to avoid forcing reflow
     for (let i = 0; i < this.elementYs.length; i++) {
       const element = this.elementYs[i][0];
       this.unhideElement(element);
       this.loadedElements.push(element);
-      const elementHeight = element.offsetHeight;
+    }
+    for (let i = 0; i < this.elementYs.length; i++) {
+      const elementHeight = this.elementYs[i][0].offsetHeight;
       this.elementYs[i][1] = this.totalHeight;
       this.totalHeight += elementHeight;
     }
