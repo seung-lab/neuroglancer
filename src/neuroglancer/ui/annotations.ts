@@ -1010,17 +1010,28 @@ export class AnnotationLayerView extends Tab {
     }
 
     this.annotationListElements.set(annotation.id, element);
-
-    if (doPadding) {
-      let depth = 0;
-      let parent = undefined;
-      let checkElement: HTMLElement = element;
-      while (checkElement.dataset.parent) {
-        parent = this.annotationListElements.get(checkElement.dataset.parent);
-        checkElement = parent!;
-        depth++;
+    
+    let depth = 0;
+    let parent = undefined;
+    let checkElement: HTMLElement = element;
+    while (checkElement && checkElement.dataset.parent) {
+      const parentId = checkElement.dataset.parent;
+      parent = this.annotationListElements.get(parentId);
+      checkElement = parent!;
+      const checkCollection = <Collection>this.annotationLayer.source.getReference(parentId).value;
+      if (checkCollection.entries && !checkCollection.childrenVisible.value) {
+        element.classList.add('neuroglancer-annotation-child-hidden');
+        this.setChildrenVisibleHelper(element.dataset.id, false);
       }
+      depth++;
+    }
+    if (doPadding) {
       this.setPadding(element, depth);
+    }
+
+    const collection = <Collection>annotation;
+    if (collection.entries && !collection.childrenVisible.value) {
+      this.setChildrenVisibleHelper(element.dataset.id, false);
     }
 
     element.addEventListener('mouseenter', () => {
@@ -1053,8 +1064,6 @@ export class AnnotationLayerView extends Tab {
         if (collection.entries) {
           collection.childrenVisible.value = !collection.childrenVisible.value;
           this.setChildrenVisible(element.dataset.id!, collection.childrenVisible.value);
-          this.annotationHidingList.recalculateHeights();
-          this.annotationLayer.source.changed.dispatch();
         } else {
           this.setSpatialCoordinates(
               getCenterPosition(collection, this.annotationLayer.objectToGlobal));
@@ -1067,20 +1076,28 @@ export class AnnotationLayerView extends Tab {
   }
 
   private setChildrenVisible(elementId: string, visible: boolean) {
-    const children = this.annotationListContainer.querySelectorAll(`[data-parent="${elementId}"]`);
-    for (const child of children) {
-      const childId = (<HTMLElement>child).dataset.id!;
+    this.setChildrenVisibleHelper(elementId, visible);
+    this.annotationHidingList.recalculateHeights();
+    this.annotationLayer.source.changed.dispatch();
+  }
+
+  private setChildrenVisibleHelper(elementId: string, visible: boolean) {
+    const collection = <Collection>this.annotationLayer.source.getReference(elementId).value;
+    if (!collection.entries) return;
+    for (const childId of collection.entries) {
+      const child = this.annotationListElements.get(childId);
+      if (!child) continue; //child not defined yet
       if (visible) {
         child.classList.remove('neuroglancer-annotation-child-hidden');
         const annotation = this.annotationLayer.source.getReference(childId).value;
         const collection = <Collection>annotation;
         // expand the children if they had been shown before collapsing this
         if (collection.entries && collection.childrenVisible.value) {
-          this.setChildrenVisible(childId, true);
+          this.setChildrenVisibleHelper(childId, true);
         }
       } else {
         child.classList.add('neuroglancer-annotation-child-hidden');
-        this.setChildrenVisible(childId, false);
+        this.setChildrenVisibleHelper(childId, false);
       }
     }
   }
@@ -1267,7 +1284,8 @@ export class AnnotationLayerView extends Tab {
         continue;
       }
       const annStrings = rawData.data;
-      const registry = <any>{};
+      const parentRegistry = new Map<string, Annotation>();
+      const childRegistry = new Map<string, Annotation>();
       for (const annProps of annStrings) {
         const type = annProps[7];
         const parentId = annProps[6];
@@ -1326,30 +1344,35 @@ export class AnnotationLayerView extends Tab {
             continue;
         }
 
-        if (annotationID) {
-          if (!registry[annotationID]) {
-            registry[annotationID] = raw;
+        //parentRegistry maps annotationID (parent-only identifier) to parent annotations
+        //childRegistry maps raw.id (actual ID of the annotation) to all annotations
+        childRegistry.set(raw.id, raw);
+        if (annotationID) { //is parent
+          if (!parentRegistry.has(annotationID)) {
+            parentRegistry.set(annotationID, raw);
             (<Collection>raw).entries = [];
           } else {
-            raw = {...raw, ...registry[annotationID]};
-            registry[annotationID] = raw;
-            (<Collection>raw).entries.forEach((ann: any) => {
-              ann.parentId = raw.id;
-              return ann.id;
-            });
+            raw = {...raw, ...parentRegistry.get(annotationID)};
+            parentRegistry.set(annotationID, raw);
+            if ((<Collection>raw).entries) {
+              (<Collection>raw).entries.forEach((childId) => {
+                const childAnn = childRegistry.get(childId);
+                if (childAnn) {
+                  childAnn.parentId = raw.id;
+                }
+              });
+            }
           }
         }
         if (parentId) {
-          if (registry[parentId]) {
-            const parent = registry[parentId];
+          const parent = <Collection>parentRegistry.get(parentId);
+          if (parent) {
+            parent.entries.push(raw.id);
             if (parent.id) {
-              parent.entries.push(raw.id);
               raw.parentId = parent.id;
-            } else {
-              parent.entries.push(raw);
             }
           } else {
-            registry[parentId] = {entries: [raw]};
+            parentRegistry.set(parentId, <Collection>{entries: [raw.id]});
           }
         }
         if (tags) {
