@@ -1299,7 +1299,14 @@ export class AnnotationLayerView extends Tab {
       const annStrings = rawData.data;
       const csvIdToRealAnnotationIdMap: {[key: string]: string} = {};
       const childStorage: {[key: string]: string[]} = {};
+      const textToPoint = (point: string, transform: mat4, dimension?: boolean) => {
+        const parsedVec = dimension ? this.dimensionsToVec3(point) : this.stringToVec3(point);
+        const spatialPoint = this.voxelSize.spatialFromVoxel(tempVec3, parsedVec);
+        return vec3.transformMat4(vec3.create(), spatialPoint, transform);
+      };
+      let row = -1;
       for (const annProps of annStrings) {
+        row++;
         const type = annProps[7];
         const parentId = annProps[6];
         const annotationID: string|undefined = annProps[8];
@@ -1311,23 +1318,17 @@ export class AnnotationLayerView extends Tab {
           case 'Line':
             raw.type =
                 type === 'Line' ? AnnotationType.LINE : AnnotationType.AXIS_ALIGNED_BOUNDING_BOX;
-            (<Line>raw).pointA = vec3.transformMat4(
-                vec3.create(), this.stringToVec3(annProps[0]), this.annotationLayer.globalToObject);
-            (<Line>raw).pointB = vec3.transformMat4(
-                vec3.create(), this.stringToVec3(annProps[1]), this.annotationLayer.globalToObject);
+            (<Line>raw).pointA = textToPoint(annProps[0], this.annotationLayer.globalToObject);
+            (<Line>raw).pointB = textToPoint(annProps[1], this.annotationLayer.globalToObject);
             break;
           case 'Point':
             raw.type = AnnotationType.POINT;
-            (<Point>raw).point = vec3.transformMat4(
-                vec3.create(), this.stringToVec3(annProps[0]), this.annotationLayer.globalToObject);
+            (<Point>raw).point = textToPoint(annProps[0], this.annotationLayer.globalToObject);
             break;
           case 'Ellipsoid':
             raw.type = AnnotationType.ELLIPSOID;
-            (<Ellipsoid>raw).center = vec3.transformMat4(
-                vec3.create(), this.stringToVec3(annProps[0]), this.annotationLayer.globalToObject);
-            (<Ellipsoid>raw).radii = vec3.transformMat4(
-                vec3.create(), this.dimensionsToVec3(annProps[2]),
-                this.annotationLayer.globalToObject);
+            (<Ellipsoid>raw).center = textToPoint(annProps[0], this.annotationLayer.globalToObject);
+            (<Ellipsoid>raw).radii = textToPoint(annProps[2], this.annotationLayer.globalToObject);
             break;
           case 'Line Strip':
           case 'Line Strip*':
@@ -1347,14 +1348,16 @@ export class AnnotationLayerView extends Tab {
               (<Collection>raw).connected = false;
             }
             (<Collection>raw).childrenVisible = new TrackableBoolean(false, true);
-            (<Collection>raw).source = vec3.transformMat4(
-                vec3.create(), this.stringToVec3(annProps[0]), this.annotationLayer.globalToObject);
+            (<Collection>raw).source =
+                textToPoint(annProps[0], this.annotationLayer.globalToObject);
             (<Collection>raw).entry = (index: number) =>
                 (<LocalAnnotationSource>this.annotationLayer.source)
                     .get((<Collection>raw).entries[index]);
             break;
           default:
             // Do not add annotation row, if it has unexpected type
+            console.error(
+                `No annotation of type ${type}. Cannot parse ${file.name}:${row} ${annProps}`);
             continue;
         }
 
