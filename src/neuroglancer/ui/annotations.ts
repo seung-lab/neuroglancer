@@ -1297,8 +1297,6 @@ export class AnnotationLayerView extends Tab {
         continue;
       }
       const annStrings = rawData.data;
-      // const parentRegistry = new Map<string, Annotation>();
-      // const childRegistry = new Map<string, Annotation>();
       const csvIdToRealAnnotationIdMap: {[key: string]: string} = {};
       const childStorage: {[key: string]: string[]} = {};
       for (const annProps of annStrings) {
@@ -1386,38 +1384,6 @@ export class AnnotationLayerView extends Tab {
           }
         }
 
-
-        // parentRegistry maps annotationID (parent-only identifier) to parent annotations
-        // childRegistry maps raw.id (actual ID of the annotation) to all annotations
-        /*childRegistry.set(raw.id, raw);
-        if (annotationID) {  // is parent
-          if (!parentRegistry.has(annotationID)) {
-            parentRegistry.set(annotationID, raw);
-            (<Collection>raw).entries = [];
-          } else {
-            raw = {...raw, ...parentRegistry.get(annotationID)};
-            parentRegistry.set(annotationID, raw);
-            if ((<Collection>raw).entries) {
-              (<Collection>raw).entries.forEach((childId) => {
-                const childAnn = childRegistry.get(childId);
-                if (childAnn) {
-                  childAnn.parentId = raw.id;
-                }
-              });
-            }
-          }
-        }
-        if (parentId) {
-          const parent = <Collection>parentRegistry.get(parentId);
-          if (parent) {
-            parent.entries.push(raw.id);
-            if (parent.id) {
-              raw.parentId = parent.id;
-            }
-          } else {
-            parentRegistry.set(parentId, <Collection>{entries: [raw.id]});
-          }
-        }*/
         if (tags) {
           raw.tagIds = new Set();
           const labels = tags.split(',');
