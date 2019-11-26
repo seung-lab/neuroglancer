@@ -1,4 +1,4 @@
-### 🦃 November 2019 🍂
+### ☃️ December 2019 ❄️
 # Annotation Overhaul: Part 1
 * New type of Annotations: Collections
     * Collections are annotation groups.

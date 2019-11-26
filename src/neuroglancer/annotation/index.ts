@@ -776,7 +776,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     this.changed.dispatch();
   }
 
-  restoreState(annotationObj: any, annotationTagObj: any) {
+  restoreState(annotationObj: any, annotationTagObj: any, allowMissingId = false) {
     const {annotationMap, tags: annotationTags} = this;
     annotationTags.clear();
     annotationMap.clear();
@@ -798,7 +798,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     }
     if (annotationObj !== undefined) {
       parseArray(annotationObj, x => {
-        const annotation = restoreAnnotation(x);
+        const annotation = restoreAnnotation(x, allowMissingId);
         this.insertAnnotationNode(annotation);
       });
     }
