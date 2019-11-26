@@ -225,10 +225,10 @@ export class FindPathWidget extends RefCounted {
         annotationListElementCreator(pathBetweenSupervoxels.source, true);
       }
       if (pathBetweenSupervoxels.hasPath) {
-        findPathLabel.textContent = 'Path between source and target found.';
+        findPathLabel.textContent = 'Rough path between source and target found.';
         findPathButton.style.color = '#32CD32';
       } else {
-        findPathLabel.textContent = 'Select a source and target to find a path.';
+        findPathLabel.textContent = 'Select a source and target to find a (very rough) path between the two.';
         findPathButton.style.color = '#000000';
       }
       if (pathBetweenSupervoxels.target) {

@@ -1,4 +1,4 @@
-### October 1 2019
+### November 25 2019
 # Find a path between two points in a segment
 * A new feature helps users find locations of mergers.
 * For graphene segmentation layers, a new widget has been added to the "Graph" tab. It is labeled "Find Path."

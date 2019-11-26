@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {vec3} from 'gl-matrix';
+import {vec3} from 'neuroglancer/util/geom';
 import {annotationToJson, AnnotationType, Line, LocalAnnotationSource, Point, restoreAnnotation} from 'neuroglancer/annotation';
 import {AnnotationLayerState} from 'neuroglancer/annotation/frontend';
 import {CoordinateTransform} from 'neuroglancer/coordinate_transform';
