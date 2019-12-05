@@ -1,4 +1,4 @@
-import {Annotation, AnnotationReference, AnnotationSource, AnnotationType, AxisAlignedBoundingBox, Collection, Line, LocalAnnotationSource} from 'neuroglancer/annotation';
+import {Annotation, AnnotationReference, AnnotationSource, AnnotationType, AxisAlignedBoundingBox, Collection, intializeCollectionMethods, Line, LocalAnnotationSource} from 'neuroglancer/annotation';
 import {PlaceBoundingBoxTool} from 'neuroglancer/annotation/bounding_box';
 import {PlaceSphereTool} from 'neuroglancer/annotation/ellipsoid';
 import {AnnotationLayerState} from 'neuroglancer/annotation/frontend';
@@ -261,23 +261,7 @@ export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
       segmentSet: () => {},
       childrenVisible: new TrackableBoolean(true, true)
     };
-    coll.entry = (index: number) =>
-        (<LocalAnnotationSource>annotationLayer.source).get(coll.entries[index]);
-    coll.segmentSet = () => {
-      coll.segments = [];
-      coll.entries.forEach((ref, index) => {
-        ref;
-        const child = <Annotation>coll.entry(index);
-        if (coll.segments && child && child.segments) {
-          coll.segments = [...coll.segments!, ...child.segments];
-        }
-      });
-      if (coll.segments) {
-        coll.segments =
-            [...new Set(coll.segments.map((e) => e.toString()))].map((s) => Uint64.parseString(s));
-      }
-    };
-    return coll;
+    return intializeCollectionMethods(coll, <LocalAnnotationSource>annotationLayer.source);
   }
 
   protected safeDelete(target?: AnnotationReference) {

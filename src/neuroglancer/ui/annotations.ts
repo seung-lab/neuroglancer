@@ -21,7 +21,7 @@
 import './annotations.css';
 
 import debounce from 'lodash/debounce';
-import {Annotation, AnnotationReference, AnnotationSource, AnnotationTag, AnnotationType, AxisAlignedBoundingBox, Collection, Ellipsoid, getAnnotationTypeHandler, Line, LineStrip, LocalAnnotationSource, makeAnnotationId, Point, Spoke} from 'neuroglancer/annotation';
+import {Annotation, AnnotationReference, AnnotationSource, AnnotationTag, AnnotationType, AxisAlignedBoundingBox, Collection, Ellipsoid, getAnnotationTypeHandler, intializeCollectionMethods, Line, LineStrip, LocalAnnotationSource, makeAnnotationId, Point, Spoke} from 'neuroglancer/annotation';
 import {AnnotationTool, MultiStepAnnotationTool, PlaceAnnotationTool, SubAnnotationTool} from 'neuroglancer/annotation/annotation';
 import {PlaceBoundingBoxTool} from 'neuroglancer/annotation/bounding_box';
 import {PlaceSphereTool} from 'neuroglancer/annotation/ellipsoid';
@@ -1407,9 +1407,10 @@ export class AnnotationLayerView extends Tab {
 
     this.annotationLayer.source.addAll(rawAnnotations, true);
     // TODO: Undoable
-    StatusMessage.showTemporaryMessage(`Imported ${successfulImport} csv(s).`, 3000)
+    StatusMessage.showTemporaryMessage(`Imported ${successfulImport} csv(s).`, 3000);
   }
 
+  // TODO: This is outdated;
   async synapseBuilder(synapses: any[]) {
     type Coordinate = [number, number, number];
     synapses.forEach((synapse) => {
@@ -1439,7 +1440,7 @@ export class AnnotationLayerView extends Tab {
         pointB: postPoint
       };
 
-      const annotation = <LineStrip>{
+      const rawAnnotation = <LineStrip>{
         id: makeAnnotationId(),
         type: AnnotationType.LINE_STRIP,
         description: 'synapse',
@@ -1448,10 +1449,11 @@ export class AnnotationLayerView extends Tab {
         connected: true,
         childrenVisible: new TrackableBoolean(false, true),
         source: ctrPoint,
-        entry: () => {}
+        entry: () => {},
+        segmentSet: () => {}
       };
-      annotation.entry = (index: number) =>
-          (<LocalAnnotationSource>this.annotationLayer.source).get(annotation.entries[index]);
+      const annotation = intializeCollectionMethods(
+          rawAnnotation, <LocalAnnotationSource>this.annotationLayer.source);
 
       this.annotationLayer.source.add(pre_pos, /*commit=*/true);
       this.annotationLayer.source.add(post_pos, /*commit=*/true);
@@ -1597,7 +1599,7 @@ export class AnnotationDetailsTab extends Tab {
           break;
       }
 
-      const collection = <Collection>{
+      const rawCollection = <Collection>{
         id: '',
         type: AnnotationType.COLLECTION,
         description: '',
@@ -1609,22 +1611,8 @@ export class AnnotationDetailsTab extends Tab {
         segmentSet: () => {},
         childrenVisible: new TrackableBoolean(true, true)
       };
-      collection.entry = (index: number) =>
-          (<LocalAnnotationSource>annotationLayer.source).get(collection.entries[index]);
-      collection.segmentSet = () => {
-        collection.segments = [];
-        collection.entries.forEach((ref, index) => {
-          ref;
-          const child = <Annotation>collection.entry(index);
-          if (collection.segments && child.segments) {
-            collection.segments = [...collection.segments!, ...child.segments];
-          }
-        });
-        if (collection.segments) {
-          collection.segments = [...new Set(collection.segments.map((e) => e.toString()))].map(
-              (s) => Uint64.parseString(s));
-        }
-      };
+      const collection =
+          intializeCollectionMethods(rawCollection, <LocalAnnotationSource>annotationLayer.source);
 
       const collectionReference = (<AnnotationSource>annotationLayer.source).add(collection, true);
       if (first.parentId) {

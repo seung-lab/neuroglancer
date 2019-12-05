@@ -97,6 +97,24 @@ export interface Ellipsoid extends AnnotationBase {
 }
 
 // Collections //
+export function intializeCollectionMethods(annotation: Collection, source: LocalAnnotationSource) {
+  annotation.entry = (index: number) => source.get(annotation.entries[index]);
+  annotation.segmentSet = () => {
+    annotation.segments = [];
+    annotation.entries.forEach((ref, index) => {
+      ref;
+      const child = <Annotation>annotation.entry(index);
+      if (annotation.segments && child && child.segments) {
+        annotation.segments = [...annotation.segments!, ...child.segments];
+      }
+    });
+    if (annotation.segments) {
+      annotation.segments = [...new Set(annotation.segments.map((e) => e.toString()))].map(
+          (s) => Uint64.parseString(s));
+    }
+  };
+  return annotation;
+}
 export interface Collection extends AnnotationBase {
   lastA?: AnnotationReference;
   lastB?: AnnotationReference;
@@ -468,24 +486,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
 
     if (annotation.type === AnnotationType.COLLECTION ||
         annotation.type === AnnotationType.LINE_STRIP || annotation.type === AnnotationType.SPOKE) {
-      annotationNode.entry = (index: number) => this.get(annotationNode.entries[index]);
-
-      annotationNode.segmentSet = () => {
-        annotationNode.segments = [];
-        annotationNode.entries.forEach((ref: any, index: number) => {
-          ref;
-          const child = <Annotation>annotationNode.entry(index);
-          if (annotationNode.segments && child.segments) {
-            annotationNode.segments = [...annotationNode.segments!, ...child.segments];
-          }
-        });
-        if (annotationNode.segments) {
-          annotationNode.segments =
-              [...new Set(annotationNode.segments.map((e: Uint64) => e.toString()))].map(
-                  (s: string) => Uint64.parseString(s));
-        }
-        return annotationNode.segments;
-      };
+      annotationNode = intializeCollectionMethods(annotationNode, this);
     }
     this.annotationMap.set(annotation.id, annotationNode);
   }
