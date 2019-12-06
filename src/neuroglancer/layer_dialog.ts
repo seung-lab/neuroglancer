@@ -34,7 +34,6 @@ export class LayerDialog extends Overlay {
   submitElement = document.createElement('button');
   namePromptElement = document.createElement('label');
   nameInputElement = document.createElement('input');
-  radioInputElement = document.createElement('input');
   volumeCancellationSource: CancellationTokenSource|undefined = undefined;
   sourceValid: boolean = false;
   nameValid: boolean = true;
@@ -89,7 +88,7 @@ export class LayerDialog extends Overlay {
 
     dialogElement.appendChild(sourceForm);
 
-    let {statusElement, namePromptElement, nameInputElement, submitElement, radioInputElement} =
+    let {statusElement, namePromptElement, nameInputElement, submitElement} =
         this;
     statusElement.className = 'dialog-status';
 
@@ -137,7 +136,6 @@ export class LayerDialog extends Overlay {
     nameForm.appendChild(namePromptElement);
     nameForm.appendChild(nameInputElement);
     nameForm.appendChild(submitElement);
-    nameForm.appendChild(radioInputElement);
     dialogElement.appendChild(nameForm);
     dialogElement.appendChild(typeForm);
 

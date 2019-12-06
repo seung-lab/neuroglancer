@@ -1282,6 +1282,11 @@ export class AnnotationLayerView extends Tab {
     return vec3.fromValues(val[0], val[1], val[2]);
   }
 
+  private coordinatesToPoint = (input: vec3, transform: mat4): vec3 => {
+    const spatialPoint = this.voxelSize.spatialFromVoxel(tempVec3, input);
+    return vec3.transformMat4(vec3.create(), spatialPoint, transform);
+  }
+
   private async importCSV(files: FileList|null) {
     const rawAnnotations = <Annotation[]>[];
     let successfulImport = 0;
@@ -1301,8 +1306,7 @@ export class AnnotationLayerView extends Tab {
       const childStorage: {[key: string]: string[]} = {};
       const textToPoint = (point: string, transform: mat4, dimension?: boolean) => {
         const parsedVec = dimension ? this.dimensionsToVec3(point) : this.stringToVec3(point);
-        const spatialPoint = this.voxelSize.spatialFromVoxel(tempVec3, parsedVec);
-        return vec3.transformMat4(vec3.create(), spatialPoint, transform);
+        return this.coordinatesToPoint(parsedVec, transform);
       };
       let row = -1;
       for (const annProps of annStrings) {
@@ -1410,19 +1414,19 @@ export class AnnotationLayerView extends Tab {
     StatusMessage.showTemporaryMessage(`Imported ${successfulImport} csv(s).`, 3000);
   }
 
-  // TODO: This is outdated;
   async synapseBuilder(synapses: any[]) {
     type Coordinate = [number, number, number];
     synapses.forEach((synapse) => {
-      const prePoint = vec3.transformMat4(
-          vec3.create(), vec3.fromValues(...(<Coordinate>synapse.pre_pt_position.coordinates)),
+      const prePoint = this.coordinatesToPoint(
+          vec3.fromValues(...(<Coordinate>synapse.pre_pt_position.coordinates)),
           this.annotationLayer.globalToObject);
-      const ctrPoint = vec3.transformMat4(
-          vec3.create(), vec3.fromValues(...(<Coordinate>synapse.ctr_pt_position.coordinates)),
+      const ctrPoint = this.coordinatesToPoint(
+          vec3.fromValues(...(<Coordinate>synapse.ctr_pt_position.coordinates)),
           this.annotationLayer.globalToObject);
-      const postPoint = vec3.transformMat4(
-          vec3.create(), vec3.fromValues(...(<Coordinate>synapse.post_pt_position.coordinates)),
+      const postPoint = this.coordinatesToPoint(
+          vec3.fromValues(...(<Coordinate>synapse.post_pt_position.coordinates)),
           this.annotationLayer.globalToObject);
+
       const pre_pos = <Line>{
         id: makeAnnotationId(),
         type: AnnotationType.LINE,
