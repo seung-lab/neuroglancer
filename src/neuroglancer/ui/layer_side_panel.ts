@@ -26,6 +26,7 @@ import {removeFromParent} from 'neuroglancer/util/dom';
 import {WatchableVisibilityPriority} from 'neuroglancer/visibility_priority/frontend';
 import {makeCloseButton} from 'neuroglancer/widget/close_button';
 import {StackView, Tab, TabView} from 'neuroglancer/widget/tab_view';
+import { ManagedUserLayerWithSpecification } from '../layer_specification';
 
 class UserLayerInfoPanel extends Tab {
   tabView = new TabView(this.layer.tabs.addRef(), this.visibility);
@@ -74,11 +75,38 @@ class ManagedUserLayerInfoPanel extends Tab {
     element.appendChild(title);
     element.appendChild(stack.element);
 
+    const iconDiv = document.createElement('div');
+    iconDiv.className = 'neuroglancer-layer-side-panel-icon';
+    const layerType = (<ManagedUserLayerWithSpecification>layer).initialSpecification.type;
+    switch (layerType) {
+      case 'image': {
+        iconDiv.innerText = `🖼️`;
+        iconDiv.title = 'Image Layer';
+        break;
+      }
+      case 'segmentation': {
+        iconDiv.innerText = `⛒`;
+        iconDiv.title = 'Image Layer';
+        break;
+      }
+      case 'segmentation_with_graph': {
+        iconDiv.innerText = `⛒📊`;
+        iconDiv.title = 'Image Layer';
+        break;
+      }
+      case 'annotation': {
+        iconDiv.innerText = `📝`;
+        iconDiv.title = 'Annotation Layer';
+        break;
+      }
+    }
+
     const collapseButton = makeCloseButton();
     collapseButton.title = 'Close side panel';
     collapseButton.addEventListener('click', () => {
       this.collapse();
     });
+    title.appendChild(iconDiv);
     title.appendChild(layerName);
     layerName.spellcheck = false;
     layerName.title = 'Rename layer';
