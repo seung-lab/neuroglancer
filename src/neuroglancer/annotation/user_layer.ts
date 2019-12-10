@@ -541,5 +541,8 @@ class AnnotationShortcutHandler extends RefCounted {
   }
 }
 
+export class RemoteAnnotationUserLayer extends AnnotationUserLayer {}
+
 registerLayerType('annotation', AnnotationUserLayer);
+registerLayerType('remoteAnnotation', RemoteAnnotationUserLayer);
 registerLayerType('pointAnnotation', AnnotationUserLayer);
