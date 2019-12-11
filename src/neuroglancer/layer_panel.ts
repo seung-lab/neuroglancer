@@ -354,7 +354,8 @@ export class LayerPanel extends RefCounted {
         const layer = new ManagedUserLayerWithSpecification('annotation', {}, this.manager);
         this.manager.initializeLayerFromSpec(layer, {type: 'annotation'});
         this.manager.add(layer);
-      } else {
+      }
+      else {
         this.addLayerMenu();
       }
     };

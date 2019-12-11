@@ -408,8 +408,26 @@ export class AnnotationLayerView extends Tab {
   private updated = false;
   private toolbox: HTMLDivElement;
   private buttonMap: any = {};
+  groupSource = this.registerDisposer(new MinimizableGroupWidget('Source'));
   groupVisualization = this.registerDisposer(new MinimizableGroupWidget('Visualization'));
   groupAnnotations = this.registerDisposer(new MinimizableGroupWidget('Annotations'));
+
+  private addSourceSelect() {
+    // TODO: See layer_dialog.ts:41
+    let sourceForm = document.createElement('form');
+    sourceForm.className = 'source-form';
+    this.registerEventListener(sourceForm, 'submit', (event: Event) => {
+      event.preventDefault();
+      this.manager.initializeLayerFromSpec(layer, {type: 'annotation'});
+      this.manager.add(layer);
+    });
+    let sourceInput = document.createElement('input');
+    let sourceSubmit = document.createElement('input');
+    sourceSubmit.type = 'submit';
+    sourceSubmit.value = 'Set';
+    sourceForm.append(sourceInput, ' ', sourceSubmit);
+    this.groupSource.appendFixedChild(sourceForm);
+  }
 
   private highlightButton(typekey: string, toolset?: AnnotationType) {
     let target = this.toolbox.querySelector(`.${typekey}`);
@@ -701,7 +719,8 @@ export class AnnotationLayerView extends Tab {
     toolbox.className = 'neuroglancer-annotation-toolbox';
 
     layer.initializeAnnotationLayerViewTab(this);
-
+    // Source Group
+    this.addSourceSelect();
     // Visualization Group
     this.addOpacitySlider();
     this.bracketShortcutCheckbox();
@@ -713,6 +732,7 @@ export class AnnotationLayerView extends Tab {
 
     this.groupAnnotations.appendFixedChild(toolbox);
     this.groupAnnotations.appendFlexibleChild(this.annotationListContainer);
+    this.element.appendChild(this.groupSource.element);
     this.element.appendChild(this.groupVisualization.element);
     this.element.appendChild(this.groupAnnotations.element);
 

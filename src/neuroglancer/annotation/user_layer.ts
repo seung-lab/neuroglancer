@@ -136,7 +136,7 @@ export class AnnotationUserLayer extends Base {
     };
   }
 
-  constructor(manager: LayerListSpecification, specification: any) {
+  constructor(manager: LayerListSpecification, public specification: any) {
     super(manager, specification);
     const sourceUrl = this.sourceUrl = specification[SOURCE_JSON_KEY];
     this.linkedSegmentationLayer.restoreState(specification[LINKED_SEGMENTATION_LAYER_JSON_KEY]);
@@ -541,7 +541,18 @@ class AnnotationShortcutHandler extends RefCounted {
   }
 }
 
-export class RemoteAnnotationUserLayer extends AnnotationUserLayer {}
+export class RemoteAnnotationUserLayer extends AnnotationUserLayer {
+  constructor(manager: LayerListSpecification, specification: any, source?: AnnotationUserLayer) {
+    if (source) {
+      super(source.manager, source.specification);
+    } else {
+      if (!specification[SOURCE_JSON_KEY]) {
+        throw new Error(`'source' URL must be specified.`);
+      }
+      super(manager, specification);
+    }
+  }
+}
 
 registerLayerType('annotation', AnnotationUserLayer);
 registerLayerType('remoteAnnotation', RemoteAnnotationUserLayer);
