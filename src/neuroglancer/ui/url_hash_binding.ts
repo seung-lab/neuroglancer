@@ -74,7 +74,8 @@ export class UrlHashBinding extends RefCounted {
     const {generation} = cacheState;
     // TODO: Change to recurring, onblur and time, or onunload save and push to state server
     if (getUrlAutoSave().value) {
-      history.replaceState(null, '', removeParameterFromUrl(window.location.href, 'json_url'));
+      const safeString = removeParameterFromUrl(window.location.href, 'json_url');
+      history.replaceState(null, '', safeString);
     }
 
     if (generation !== this.prevStateGeneration) {

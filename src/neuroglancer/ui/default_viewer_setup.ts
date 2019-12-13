@@ -37,9 +37,11 @@ export function setupDefaultViewer() {
     }
     hashBinding.parseError;
   }));
-  hashBinding.updateFromUrlHash();
-  
-  viewer.loadFromJsonUrl();
+
+  //
+  hashBinding.updateFromUrlHash(); // Get state from URL
+  viewer.loadFromJsonUrl(); // Get state from JSON server
+  //
 
   bindDefaultCopyHandler(viewer);
   bindDefaultPasteHandler(viewer);
