@@ -14,25 +14,14 @@
  * limitations under the License.
  */
 
-import debounce from 'lodash/debounce';
-import {getUrlAutoSave} from 'neuroglancer/preferences/user_preferences';
 import {WatchableValue} from 'neuroglancer/trackable_value';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {urlSafeParse, verifyObject} from 'neuroglancer/util/json';
-import {getCachedJson, Trackable} from 'neuroglancer/util/trackable';
+import {Trackable} from 'neuroglancer/util/trackable';
 
 /**
  * @file Implements a binding between a Trackable value and the URL hash state.
  */
-
-/**
- * Encodes a fragment string robustly.
- */
-function encodeFragment(fragment: string) {
-  return encodeURI(fragment).replace(/[!'()*;,]/g, function(c) {
-    return '%' + c.charCodeAt(0).toString(16).toUpperCase();
-  });
-}
 
 export function removeParameterFromUrl(url: string, parameter: string) {
   return url.replace(new RegExp('[?&]' + parameter + '=[^&#]*(#.*)?$'), '$1')
@@ -49,49 +38,13 @@ export class UrlHashBinding extends RefCounted {
   private prevStateString: string|undefined;
 
   /**
-   * Generation number of previous state set.
-   */
-  private prevStateGeneration: number|undefined;
-
-  /**
    * Most recent error parsing URL hash.
    */
   parseError = new WatchableValue<Error|undefined>(undefined);
 
-  constructor(public root: Trackable, updateDelayMilliseconds = 200) {
+  constructor(public root: Trackable) {
     super();
     this.registerEventListener(window, 'hashchange', () => this.updateFromUrlHash());
-    const throttledSetUrlHash = debounce(() => this.setUrlHash(), updateDelayMilliseconds);
-    this.registerDisposer(root.changed.add(throttledSetUrlHash));
-    this.registerDisposer(() => throttledSetUrlHash.cancel());
-  }
-
-  /**
-   * Sets the URL hash to match the current state.
-   */
-  setUrlHash() {
-    const cacheState = getCachedJson(this.root);
-    const {generation} = cacheState;
-    // TODO: Change to recurring, onblur and time, or onunload save and push to state server
-    if (getUrlAutoSave().value) {
-      const safeString = removeParameterFromUrl(window.location.href, 'json_url');
-      history.replaceState(null, '', safeString);
-    }
-
-    if (generation !== this.prevStateGeneration) {
-      this.prevStateGeneration = cacheState.generation;
-      let stateString = encodeFragment(JSON.stringify(cacheState.value));
-      if (stateString !== this.prevStateString) {
-        this.prevStateString = stateString;
-        if (getUrlAutoSave().value) {
-          if (decodeURIComponent(stateString) === '{}') {
-            history.replaceState(null, '', '#');
-          } else {
-            history.replaceState(null, '', '#!' + stateString);
-          }
-        }
-      }
-    }
   }
 
   /**
@@ -99,6 +52,7 @@ export class UrlHashBinding extends RefCounted {
    * on the URL hash, then this should be called immediately after construction.
    */
   updateFromUrlHash() {
+    // TODO: Alert about deprecation
     try {
       let s = location.href.replace(/^[^#]+/, '');
       if (s === '' || s === '#' || s === '#!') {

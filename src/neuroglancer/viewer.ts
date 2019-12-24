@@ -70,6 +70,7 @@ declare var NEUROGLANCER_OVERRIDE_DEFAULT_VIEWER_OPTIONS: any
 import './viewer.css';
 import 'neuroglancer/noselect.css';
 import 'neuroglancer/ui/button.css';
+import { SaveState } from './save_state/save_state';
 
 export function validateStateServer(obj: any) {
   return obj;
@@ -204,6 +205,7 @@ function makeViewerContextMenu(viewer: Viewer) {
 export class Viewer extends RefCounted implements ViewerState {
   navigationState = this.registerDisposer(new NavigationState());
   perspectiveNavigationState = new NavigationState(new Pose(this.navigationState.position), 1);
+  saver?: SaveState;
   mouseState = new MouseSelectionState();
   layerManager = this.registerDisposer(new LayerManager(this.messageWithUndo.bind(this)));
   selectedLayer = this.registerDisposer(new SelectedLayerState(this.layerManager.addRef()));
@@ -741,6 +743,20 @@ export class Viewer extends RefCounted implements ViewerState {
     new WhatsNewDialog(this);
   }
 
+  showReportDialog(image: string) {
+    new UserReportDialog(this, image);
+  }
+
+  promptJsonStateServer(message: string): void {
+    let json_server_input =
+        prompt(message, 'https://www.dynamicannotationframework.com/nglstate/post');
+    if (json_server_input !== null) {
+      this.jsonStateServer.value = json_server_input;
+    } else {
+      this.jsonStateServer.reset();
+    }
+  }
+
   loadFromJsonUrl() {
     var urlParams = new URLSearchParams(window.location.search);
     if (urlParams.has('json_url')) {
@@ -757,20 +773,6 @@ export class Viewer extends RefCounted implements ViewerState {
               delay: true,
               errorPrefix: `Error retrieving state: `,
             });
-    }
-  }
-
-  showReportDialog(image: string) {
-    new UserReportDialog(this, image);
-  }
-
-  promptJsonStateServer(message: string): void {
-    let json_server_input =
-        prompt(message, 'https://www.dynamicannotationframework.com/nglstate/post');
-    if (json_server_input !== null) {
-      this.jsonStateServer.value = json_server_input;
-    } else {
-      this.jsonStateServer.reset();
     }
   }
 
