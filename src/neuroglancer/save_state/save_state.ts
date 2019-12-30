@@ -5,7 +5,7 @@ import {getRandomHexString} from '../util/random';
 import {Trackable} from '../util/trackable';
 // TODO: LOAD JSON FROM URL IN THE SAME PLACE WE DO SID LOADING
 export class SaveState extends RefCounted {
-  activeKey?: string|null;
+  private activeKey?: string|null;
   history: SaveEntry[];
   saveStorage: any;
   constructor(public root: Trackable, updateDelayMilliseconds = 400) {
@@ -63,7 +63,7 @@ export class SaveState extends RefCounted {
     this.commit();
   }
 
-  disposeCurrentEntry() {
+  reset() {
     if (this.activeKey) {
       const entry = this.saveStorage[this.activeKey];
       entry.state = null;
