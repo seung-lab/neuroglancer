@@ -3,14 +3,16 @@ import {debounce} from 'lodash';
 import {RefCounted} from '../util/disposable';
 import {getRandomHexString} from '../util/random';
 import {Trackable} from '../util/trackable';
+import { Viewer } from '../viewer';
+import { Overlay } from '../overlay';
 // TODO: LOAD JSON FROM URL IN THE SAME PLACE WE DO SID LOADING
 export class SaveState extends RefCounted {
   private activeKey?: string|null;
   history: SaveEntry[];
   saveStorage: any;
+  supported = true;
   constructor(public root: Trackable, updateDelayMilliseconds = 400) {
     super();
-    // TODO: BACKWARDS COMPATIBILITY FOR NO STORAGE
     if (storageAvailable()) {
       const saveStorageString = localStorage.getItem('neuroglancerSaveState');
       this.saveStorage = JSON.parse(saveStorageString || '{}');
@@ -20,10 +22,12 @@ export class SaveState extends RefCounted {
       const throttledUpdate = debounce(() => this.updateStorage(), updateDelayMilliseconds);
       this.registerDisposer(root.changed.add(throttledUpdate));
       this.registerDisposer(() => throttledUpdate.cancel());
+    } else {
+      this.supported = false;
     }
   }
 
-  commit() {
+  push() {
     localStorage.setItem('neuroglancerSaveState', JSON.stringify(this.saveStorage));
   }
 
@@ -39,9 +43,11 @@ export class SaveState extends RefCounted {
           this.root.restoreState(entry.state);
         } else {
           // older valid state
+          // TODO: Load from JSON URL
         }
       } else {
         // Invalid state key
+        // TODO: ERROR MESSAGE
       }
     }
   }
@@ -54,28 +60,36 @@ export class SaveState extends RefCounted {
       this.activeKey = entry.state_id;
       const params = new URLSearchParams();
       params.set('sid', this.activeKey);
-      history.replaceState({}, '', `${window.location.origin}/?${params.toString()}`);
+      // Push instead of replace to preserve history
+      history.pushState({}, (new Date()).toISOString(), `${window.location.origin}/?${params.toString()}`);
     } else {
       entry = this.saveStorage[this.activeKey];
     }
     entry.state = this.root.toJSON();
     this.saveStorage[this.activeKey] = entry;
-    this.commit();
+    this.push();
   }
 
-  reset() {
+  commit(source_url: string) {
     if (this.activeKey) {
       const entry = this.saveStorage[this.activeKey];
       entry.state = null;
-      entry.source_url = window.location.href;
+      entry.source_url = source_url;
       this.activeKey = null;
-      this.commit();
+      this.push();
     }
   }
 }
 
-export class SaveStateDialog {}
+export class SaveDialog {
+  constructor(public viewer: Viewer) {}
+}
 
+export class SaveStateDialog extends Overlay {
+  constructor(public viewer: Viewer) {
+    super();
+  }
+}
 interface SaveEntry {
   source_url: string;
   state_id: string;

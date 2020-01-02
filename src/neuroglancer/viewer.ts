@@ -32,6 +32,7 @@ import {TopLevelLayerListSpecification} from 'neuroglancer/layer_specification';
 import {NavigationState, Pose} from 'neuroglancer/navigation_state';
 import {overlaysOpen} from 'neuroglancer/overlay';
 import {UserPreferencesDialog} from 'neuroglancer/preferences/user_preferences';
+import {SaveDialog, SaveState} from 'neuroglancer/save_state/save_state';
 import {StatusMessage} from 'neuroglancer/status';
 import {ElementVisibilityFromTrackableBoolean, TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
 import {makeDerivedWatchableValue, TrackableValue, WatchableValueInterface} from 'neuroglancer/trackable_value';
@@ -71,7 +72,6 @@ declare var NEUROGLANCER_OVERRIDE_DEFAULT_VIEWER_OPTIONS: any
 import './viewer.css';
 import 'neuroglancer/noselect.css';
 import 'neuroglancer/ui/button.css';
-import { SaveState } from './save_state/save_state';
 
 export function validateStateServer(obj: any) {
   return obj;
@@ -106,7 +106,7 @@ export class InputEventBindings extends DataPanelInputEventBindings {
 const viewerUiControlOptionKeys: (keyof ViewerUIControlConfiguration)[] = [
   'showHelpButton', 'showEditStateButton', 'showLayerPanel', 'showLocation',
   'showAnnotationToolStatus', 'showJsonPostButton', 'showUserPreferencesButton',
-  'showWhatsNewButton', 'showBugButton'
+  'showWhatsNewButton', 'showBugButton', 'showSaveButton'
 ];
 
 const viewerOptionKeys: (keyof ViewerUIOptions)[] =
@@ -122,6 +122,7 @@ export class ViewerUIControlConfiguration {
   showLocation = new TrackableBoolean(true);
   showAnnotationToolStatus = new TrackableBoolean(true);
   showWhatsNewButton = new TrackableBoolean(true);
+  showSaveButton = new TrackableBoolean(true);
 }
 
 export class ViewerUIConfiguration extends ViewerUIControlConfiguration {
@@ -155,6 +156,7 @@ interface ViewerUIOptions {
   showUserPreferencesButton: boolean;
   showWhatsNewButton: boolean;
   showBugButton: boolean;
+  showSaveButton: boolean;
 }
 
 export interface ViewerOptions extends ViewerUIOptions, VisibilityPrioritySpecification {
@@ -475,6 +477,21 @@ export class Viewer extends RefCounted implements ViewerState {
         this.uiControlVisibility.showAnnotationToolStatus, annotationToolStatus.element));
 
     {
+      const button = document.createElement('button');
+      button.innerText = 'Save';
+      this.registerEventListener(button, 'click', () => {
+        this.postJsonState();
+        if (!this.jsonStateServer.value) {
+
+        }
+        this.showSaveDialog();
+      });
+      this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
+          this.uiControlVisibility.showSaveButton, button));
+      topRow.appendChild(button);
+    }
+
+    {
       const button = makeTextIconButton('{}', 'Edit JSON state');
       this.registerEventListener(button, 'click', () => {
         this.editJsonState();
@@ -483,6 +500,7 @@ export class Viewer extends RefCounted implements ViewerState {
           this.uiControlVisibility.showEditStateButton, button));
       topRow.appendChild(button);
     }
+
     {
       const button = makeTextIconButton('⇧', 'Post JSON to state server');
       this.registerEventListener(button, 'click', () => {
@@ -748,6 +766,10 @@ export class Viewer extends RefCounted implements ViewerState {
     new UserReportDialog(this, image);
   }
 
+  showSaveDialog() {
+    new SaveDialog(this);
+  }
+
   promptJsonStateServer(message: string): void {
     let json_server_input =
         prompt(message, 'https://www.dynamicannotationframework.com/nglstate/post');
@@ -789,9 +811,14 @@ export class Viewer extends RefCounted implements ViewerState {
           this.jsonStateServer.value, {method: 'POST', body: JSON.stringify(this.state.toJSON())},
           responseJson)
           .then(response => {
-            history.replaceState(
-                null, '',
-                window.location.origin + window.location.pathname + '?json_url=' + response);
+            const savedUrl =
+                window.location.origin + window.location.pathname + '?json_url=' + response;
+            if (this.saver && this.saver.supported) {
+              this.saver.commit(savedUrl);
+            } else {
+              // No local storage fallback
+              history.replaceState(null, '', savedUrl);
+            }
           })
           // catch errors with upload and prompt the user if there was an error
           .catch(() => {

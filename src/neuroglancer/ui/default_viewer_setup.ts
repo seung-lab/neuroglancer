@@ -43,6 +43,9 @@ export function setupDefaultViewer() {
   //
   viewer.loadFromJsonUrl();
   viewer.saver = viewer.registerDisposer(new SaveState(viewer.state));
+  if (!viewer.saver.supported) {
+    hashBinding.fallback();
+  }
 
   bindDefaultCopyHandler(viewer);
   bindDefaultPasteHandler(viewer);
