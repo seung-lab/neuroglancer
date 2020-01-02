@@ -11,7 +11,7 @@ export class SaveState extends RefCounted {
   history: SaveEntry[];
   saveStorage: any;
   supported = true;
-  constructor(public root: Trackable, updateDelayMilliseconds = 400) {
+  constructor(public root: Trackable, public loadJSON: Function, updateDelayMilliseconds = 400) {
     super();
     if (storageAvailable()) {
       const saveStorageString = localStorage.getItem('neuroglancerSaveState');
@@ -44,6 +44,7 @@ export class SaveState extends RefCounted {
         } else {
           // older valid state
           // TODO: Load from JSON URL
+          this.loadJSON(entry.source_url);
         }
       } else {
         // Invalid state key
@@ -60,7 +61,7 @@ export class SaveState extends RefCounted {
       this.activeKey = entry.state_id;
       const params = new URLSearchParams();
       params.set('sid', this.activeKey);
-      // Push instead of replace to preserve history
+      // Push instead of replace to preserve history could use entry.timestamp
       history.pushState({}, (new Date()).toISOString(), `${window.location.origin}/?${params.toString()}`);
     } else {
       entry = this.saveStorage[this.activeKey];
