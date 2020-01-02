@@ -43,7 +43,7 @@ import {MouseSelectionStateTooltipManager} from 'neuroglancer/ui/mouse_selection
 import {setupPositionDropHandlers} from 'neuroglancer/ui/position_drag_and_drop';
 import {StateEditorDialog} from 'neuroglancer/ui/state_editor';
 import {StatisticsDisplayState, StatisticsPanel} from 'neuroglancer/ui/statistics';
-import {removeParameterFromUrl} from 'neuroglancer/ui/url_hash_binding';
+import {removeParameterFromUrl, UrlHashBinding} from 'neuroglancer/ui/url_hash_binding';
 import {UserReportDialog} from 'neuroglancer/user_report/user_report';
 import {AutomaticallyFocusedElement} from 'neuroglancer/util/automatic_focus';
 import {TrackableRGB} from 'neuroglancer/util/color';
@@ -208,6 +208,7 @@ export class Viewer extends RefCounted implements ViewerState {
   navigationState = this.registerDisposer(new NavigationState());
   perspectiveNavigationState = new NavigationState(new Pose(this.navigationState.position), 1);
   saver?: SaveState;
+  hashBinding?: UrlHashBinding;
   mouseState = new MouseSelectionState();
   layerManager = this.registerDisposer(new LayerManager(this.messageWithUndo.bind(this)));
   selectedLayer = this.registerDisposer(new SelectedLayerState(this.layerManager.addRef()));
@@ -481,7 +482,9 @@ export class Viewer extends RefCounted implements ViewerState {
       this.registerEventListener(button, 'click', () => {
         this.postJsonState();
         if (!this.jsonStateServer.value) {
-
+          // Fallback for no state server
+          this.hashBinding!.setUrlHash();
+          this.saver!.commit();
         }
         this.showSaveDialog();
       });

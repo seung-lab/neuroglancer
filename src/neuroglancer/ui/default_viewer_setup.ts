@@ -30,6 +30,7 @@ export function setupDefaultViewer() {
 
   // LEGACY: Preserved for backwards compatibility
   const hashBinding = viewer.registerDisposer(new UrlHashBinding(viewer.state));
+  viewer.hashBinding = hashBinding;
   viewer.registerDisposer(hashBinding.parseError.changed.add(() => {
     const {value} = hashBinding.parseError;
     if (value !== undefined) {
