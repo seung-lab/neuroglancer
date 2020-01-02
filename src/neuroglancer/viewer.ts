@@ -783,11 +783,11 @@ export class Viewer extends RefCounted implements ViewerState {
     }
   }
 
-  loadFromJsonUrl() {
+  loadFromJsonUrl(jsonURL?: string) {
     var urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.has('json_url')) {
+    if (urlParams.has('json_url') || jsonURL) {
       let json_url = urlParams.get('json_url')!;
-      history.replaceState(null, '', removeParameterFromUrl(window.location.href, 'json_url'));
+      history.replaceState(null, '', jsonURL || removeParameterFromUrl(window.location.href, 'json_url'));
       StatusMessage.forPromise(
           cancellableFetchOk(json_url, {}, responseJson).then(response => {
             this.state.restoreState(response);
@@ -817,7 +817,7 @@ export class Viewer extends RefCounted implements ViewerState {
             const savedUrl =
                 window.location.origin + window.location.pathname + '?json_url=' + response;
             if (this.saver && this.saver.supported) {
-              this.saver.commit(savedUrl);
+              this.saver.commit(response);
             } else {
               // No local storage fallback
               history.replaceState(null, '', savedUrl);

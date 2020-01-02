@@ -43,7 +43,7 @@ export function setupDefaultViewer() {
   hashBinding.updateFromUrlHash();  // Get state from URL
   //
   viewer.loadFromJsonUrl();
-  viewer.saver = viewer.registerDisposer(new SaveState(viewer.state));
+  viewer.saver = viewer.registerDisposer(new SaveState(viewer.state, viewer.loadFromJsonUrl));
   if (!viewer.saver.supported) {
     hashBinding.fallback();
   }

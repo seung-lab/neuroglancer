@@ -103,7 +103,6 @@ export class UrlHashBinding extends RefCounted {
   }
 
   fallback(updateDelayMilliseconds = 400) {
-    this.registerEventListener(window, 'hashchange', () => this.updateFromUrlHash());
     const throttledSetUrlHash = debounce(() => this.setUrlHash(), updateDelayMilliseconds);
     this.registerDisposer(this.root.changed.add(throttledSetUrlHash));
     this.registerDisposer(() => throttledSetUrlHash.cancel());
