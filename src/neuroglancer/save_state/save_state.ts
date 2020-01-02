@@ -70,12 +70,16 @@ export class SaveState extends RefCounted {
     this.push();
   }
 
-  commit(source_url: string) {
+  commit(source_url?: string) {
     if (this.activeKey) {
-      const entry = this.saveStorage[this.activeKey];
-      entry.state = null;
-      entry.source_url = source_url;
-      this.activeKey = null;
+      if (source_url) {
+        const entry = this.saveStorage[this.activeKey];
+        entry.state = null;
+        entry.source_url = source_url;
+        this.activeKey = null;
+      } else {
+        this.saveStorage[this.activeKey] = null;
+      }
       this.push();
     }
   }
