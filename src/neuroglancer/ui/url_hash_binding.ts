@@ -14,10 +14,12 @@
  * limitations under the License.
  */
 
+import {debounce} from 'lodash';
+import {getUrlAutoSave} from 'neuroglancer/preferences/user_preferences';
 import {WatchableValue} from 'neuroglancer/trackable_value';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {urlSafeParse, verifyObject} from 'neuroglancer/util/json';
-import {Trackable} from 'neuroglancer/util/trackable';
+import {getCachedJson, Trackable} from 'neuroglancer/util/trackable';
 
 /**
  * @file Implements a binding between a Trackable value and the URL hash state.
@@ -85,4 +87,53 @@ export class UrlHashBinding extends RefCounted {
       this.parseError.value = parseError;
     }
   }
+
+  // ****FALLBACK**** //
+  /**
+   * Generation number of previous state set.
+   */
+  private prevStateGeneration: number|undefined;
+  /**
+   * Encodes a fragment string robustly.
+   */
+  encodeFragment(fragment: string) {
+    return encodeURI(fragment).replace(/[!'()*;,]/g, function(c) {
+      return '%' + c.charCodeAt(0).toString(16).toUpperCase();
+    });
+  }
+
+  fallback(updateDelayMilliseconds = 400) {
+    this.registerEventListener(window, 'hashchange', () => this.updateFromUrlHash());
+    const throttledSetUrlHash = debounce(() => this.setUrlHash(), updateDelayMilliseconds);
+    this.registerDisposer(this.root.changed.add(throttledSetUrlHash));
+    this.registerDisposer(() => throttledSetUrlHash.cancel());
+  }
+
+  /**
+   * Sets the URL hash to match the current state.
+   */
+  setUrlHash() {
+    const cacheState = getCachedJson(this.root);
+    const {generation} = cacheState;
+    // TODO: Change to recurring, onblur and time, or onunload save and push to state server
+    if (getUrlAutoSave().value) {
+      history.replaceState(null, '', removeParameterFromUrl(window.location.href, 'json_url'));
+    }
+
+    if (generation !== this.prevStateGeneration) {
+      this.prevStateGeneration = cacheState.generation;
+      let stateString = this.encodeFragment(JSON.stringify(cacheState.value));
+      if (stateString !== this.prevStateString) {
+        this.prevStateString = stateString;
+        if (getUrlAutoSave().value) {
+          if (decodeURIComponent(stateString) === '{}') {
+            history.replaceState(null, '', '#');
+          } else {
+            history.replaceState(null, '', '#!' + stateString);
+          }
+        }
+      }
+    }
+  }
+  // ****END FALLBACK**** //
 }
