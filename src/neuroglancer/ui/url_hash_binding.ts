@@ -58,7 +58,8 @@ export class UrlHashBinding extends RefCounted {
     try {
       let s = location.href.replace(/^[^#]+/, '');
       if (s === '' || s === '#' || s === '#!') {
-        s = '#!{}';
+        // s = '#!{}';
+        return;
       }
       if (s.startsWith('#!+')) {
         s = s.slice(3);
@@ -135,4 +136,8 @@ export class UrlHashBinding extends RefCounted {
     }
   }
   // ****END FALLBACK**** //
+  returnURLHash() {
+    const cacheState = getCachedJson(this.root);
+    return this.encodeFragment(JSON.stringify(cacheState.value));
+  }
 }

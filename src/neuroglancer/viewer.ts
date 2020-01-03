@@ -32,7 +32,7 @@ import {TopLevelLayerListSpecification} from 'neuroglancer/layer_specification';
 import {NavigationState, Pose} from 'neuroglancer/navigation_state';
 import {overlaysOpen} from 'neuroglancer/overlay';
 import {UserPreferencesDialog} from 'neuroglancer/preferences/user_preferences';
-import {SaveDialog, SaveState} from 'neuroglancer/save_state/save_state';
+import {SaveState} from 'neuroglancer/save_state/save_state';
 import {StatusMessage} from 'neuroglancer/status';
 import {ElementVisibilityFromTrackableBoolean, TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
 import {makeDerivedWatchableValue, TrackableValue, WatchableValueInterface} from 'neuroglancer/trackable_value';
@@ -770,7 +770,7 @@ export class Viewer extends RefCounted implements ViewerState {
   }
 
   showSaveDialog() {
-    new SaveDialog(this);
+    this.saver!.showSaveDialog(this);
   }
 
   promptJsonStateServer(message: string): void {
@@ -783,11 +783,11 @@ export class Viewer extends RefCounted implements ViewerState {
     }
   }
 
-  loadFromJsonUrl(jsonURL?: string) {
+  loadFromJsonUrl() {
     var urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.has('json_url') || jsonURL) {
+    if (urlParams.has('json_url')) {
       let json_url = urlParams.get('json_url')!;
-      history.replaceState(null, '', jsonURL || removeParameterFromUrl(window.location.href, 'json_url'));
+      history.replaceState(null, '', removeParameterFromUrl(window.location.href, 'json_url'));
       StatusMessage.forPromise(
           cancellableFetchOk(json_url, {}, responseJson).then(response => {
             this.state.restoreState(response);
