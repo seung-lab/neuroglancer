@@ -79,8 +79,8 @@ export class DataManagementContext extends RefCounted {
   worker = new Worker('chunk_worker.bundle.js');
   chunkQueueManager = this.registerDisposer(
       new ChunkQueueManager(new RPC(this.worker), this.gl, this.frameNumberCounter, {
-        gpuMemory: new CapacitySpecification({defaultItemLimit: 1e6, defaultSizeLimit: 1e9}),
-        systemMemory: new CapacitySpecification({defaultItemLimit: 1e7, defaultSizeLimit: 2e9}),
+        gpuMemory: new CapacitySpecification({defaultItemLimit: 1e6, defaultSizeLimit: 2e9}),
+        systemMemory: new CapacitySpecification({defaultItemLimit: 1e7, defaultSizeLimit: 3e9}),
         download: new CapacitySpecification(
             {defaultItemLimit: 32, defaultSizeLimit: Number.POSITIVE_INFINITY}),
         compute: new CapacitySpecification({defaultItemLimit: 128, defaultSizeLimit: 5e8}),
