@@ -1,40 +1,54 @@
-import {debounce} from 'lodash';
-
-import {Overlay} from '../overlay';
-import {StatusMessage} from '../status';
-import {RefCounted} from '../util/disposable';
-import {cancellableFetchOk, responseJson} from '../util/http_request';
-import {getRandomHexString} from '../util/random';
-import {Trackable} from '../util/trackable';
-import {Viewer} from '../viewer';
-
 import 'neuroglancer/save_state/save_state.css';
 
-// TODO: LOAD JSON FROM URL IN THE SAME PLACE WE DO SID LOADING
+import {debounce} from 'lodash';
+
+import {Overlay} from 'neuroglancer/overlay';
+import {getOldStyleSaving} from 'neuroglancer/preferences/user_preferences';
+import {StatusMessage} from 'neuroglancer/status';
+import {RefCounted} from 'neuroglancer/util/disposable';
+import {cancellableFetchOk, responseJson} from 'neuroglancer/util/http_request';
+import {getRandomHexString} from 'neuroglancer/util/random';
+import {Trackable} from 'neuroglancer/util/trackable';
+import {Viewer} from 'neuroglancer/viewer';
+
 export class SaveState extends RefCounted {
   private activeKey?: string|null;
-  history: SaveEntry[];
+  lastKey?: string|null;
   saveStorage: any;
   supported = true;
   constructor(public root: Trackable, updateDelayMilliseconds = 400) {
     super();
+    // TODO: Smelly code
     if (storageAvailable()) {
       const saveStorageString = localStorage.getItem('neuroglancerSaveState');
       this.saveStorage = JSON.parse(saveStorageString || '{}');
       this.loadFromStorage();
 
       this.registerEventListener(window, 'popstate', () => this.loadFromStorage());
+    } else {
+      this.supported = false;
+      this.saveStorage = {};
+      StatusMessage.showTemporaryMessage(
+          `Warning: Cannot access Local Storage. Unsaved changes will be lost! Use OldStyleSaving to allow for auto saving.`,
+          3000);
+    }
+    if (!getOldStyleSaving().value) {
       // this.registerEventListener(window, 'hashchange', () => this.updateFromUrlHash());
       const throttledUpdate = debounce(() => this.updateStorage(), updateDelayMilliseconds);
       this.registerDisposer(root.changed.add(throttledUpdate));
       this.registerDisposer(() => throttledUpdate.cancel());
     } else {
       this.supported = false;
+      StatusMessage.showTemporaryMessage(
+          `Save State has been disabled because Old Style saving has been turned on in User Preferences.`,
+          3000);
     }
   }
 
   push() {
-    localStorage.setItem('neuroglancerSaveState', JSON.stringify(this.saveStorage));
+    if (storageAvailable()) {
+      localStorage.setItem('neuroglancerSaveState', JSON.stringify(this.saveStorage));
+    }
   }
 
   loadFromStorage() {
@@ -44,17 +58,19 @@ export class SaveState extends RefCounted {
     if (givenKey) {
       const entry = this.saveStorage[givenKey];
       this.activeKey = givenKey;
+      this.lastKey = this.activeKey;
       if (entry) {
         if (entry.state) {
           this.root.restoreState(entry.state);
         } else {
           // older valid state
-          // TODO: Load from JSON URL
           this.remoteLoad(entry.source_url);
         }
       } else {
         // Invalid state key
-        // TODO: ERROR MESSAGE
+        StatusMessage.showTemporaryMessage(
+            `This URL is invalid. Do not copy the URL in the address bar. Use the save button.`,
+            3000);
       }
     }
   }
@@ -63,8 +79,9 @@ export class SaveState extends RefCounted {
     let entry;
     if (!this.activeKey) {
       // TODO: May want this to only be JSON URL
-      entry = recordEntry(window.location.href);
+      entry = recordEntry();
       this.activeKey = entry.state_id;
+      this.lastKey = this.activeKey;
       const params = new URLSearchParams();
       params.set('sid', this.activeKey);
       // Push instead of replace to preserve history could use entry.timestamp
@@ -107,30 +124,31 @@ export class SaveState extends RefCounted {
   showSaveDialog(viewer: Viewer) {
     new SaveDialog(viewer, this);
   }
+
+  showHistory(viewer: Viewer) {
+    new SaveStateDialog(viewer, this);
+  }
 }
 
 class SaveDialog extends Overlay {
   constructor(public viewer: Viewer, saver: any) {
     super();
     let {content} = this;
+    content.style.overflow = 'visible';
 
     let modal = document.createElement('div');
     content.appendChild(modal);
 
-    let entry = saver.saveStorage[saver.activeKey];
+    let entry = saver.saveStorage[saver.lastKey];
     let form = document.createElement('form');
     let urlStart = window.location.origin + window.location.pathname;
-    let popupContainer = document.createElement('div');
-    popupContainer.classList.add('ng-popup');
-    let popupContent = document.createElement('span');
-    popupContent.classList.add('ng-popuptext');
-    popupContent.innerText = 'Copied...';
-    popupContent.id = 'ng-save-popup';
-    popupContainer.appendChild(popupContent);
-    modal.appendChild(popupContainer);
+    let jsonUrlString =
+        entry.source_url ? `${urlStart}?json_url='${entry.source_url}` : 'NOT AVALABLE';
 
-    this.insertField(form, 'JSON_URL', `${urlStart}?json_url='${entry.source_url}`);
+    form.append(this.makePopup('JSON_URL'));
+    this.insertField(form, 'JSON_URL', jsonUrlString);
     form.append(document.createElement('br'));
+    form.append(this.makePopup('RAW_URL'));
     this.insertField(form, 'RAW_URL', `${urlStart}#!'${viewer.hashBinding!.returnURLHash()}`);
     form.append('DEPRECATED');
     modal.appendChild(form);
@@ -147,65 +165,88 @@ class SaveDialog extends Overlay {
     text.type = 'text';
     text.value = content || '';
     text.size = 100;
+    const id = `ng-save-popup-${label || ''}`;
     text.addEventListener('click', () => {
       text.select();
       document.execCommand('copy');
-      let popup = document.getElementById('ng-save-popup');
-      popup!.classList.toggle('ng-show');
+      let popup = document.getElementById(id);
+      popup!.classList.add('ng-show');
+    });
+    text.addEventListener('blur', () => {
+      let popup = document.getElementById(id);
+      popup!.classList.remove('ng-show');
     });
     form.append(labelElement, ' ', text, document.createElement('br'));
   }
-}
 
-
-export class SaveStateDialog extends Overlay {
-  constructor(public viewer: Viewer) {
-    super();
+  makePopup(label?: string) {
+    let popupContainer = document.createElement('div');
+    popupContainer.classList.add('ng-popup');
+    let popupContent = document.createElement('span');
+    popupContent.classList.add('ng-popuptext');
+    popupContent.innerText = 'Copied...';
+    popupContent.id = `ng-save-popup-${label || ''}`;
+    popupContainer.appendChild(popupContent);
+    return popupContainer;
   }
 }
-/*export class WhatsNewDialog extends Overlay {
-  constructor(public viewer: Viewer, description: string = '') {
+
+class SaveStateDialog extends Overlay {
+  constructor(public viewer: Viewer, saver: any) {
     super();
     let {content} = this;
+    if (saver.supported) {
+      let saves =
+          (<SaveEntry[]>Object.values(saver.saveStorage)).sort((a, b) => b.timestamp - a.timestamp);
+      let modal = document.createElement('div');
+      content.appendChild(modal);
 
-    if (!description.length) {
-      description = generateWhatsNew();
+      const table = document.createElement('table');
+      table.classList.add('ng-zebra-table');
+      saves.forEach(entry => {
+        if (!entry || !entry.source_url) {
+          return;
+        }
+        const row = document.createElement('tr');
+        const date = document.createElement('td');
+        const link = document.createElement('td');
+        const linkAnchor = document.createElement('a');
+
+        date.innerText = (new Date(entry.timestamp)).toLocaleString();
+        linkAnchor.innerText = `${window.location.origin}${window.location.pathname}?json_url=${entry.source_url}`;
+        linkAnchor.href = linkAnchor.innerText;
+        linkAnchor.style.display = 'block';
+        link.append(linkAnchor);
+        row.append(date, link);
+        table.append(row);
+      });
+
+      modal.append(table);
+      modal.onblur = () => this.dispose();
+      modal.focus();
+    } else {
+      StatusMessage.showTemporaryMessage(`Cannot access saved states.`, 3000);
     }
-
-    let modal = document.createElement('div');
-
-    content.appendChild(modal);
-
-    let header = document.createElement('h3');
-    header.textContent = `What's New`;
-    modal.appendChild(header);
-
-    let body = document.createElement('p');
-    body.innerHTML = description;
-    modal.appendChild(body);
-
-    let okBtn = document.createElement('button');
-    okBtn.textContent = 'Ok';
-    okBtn.onclick = () => this.dispose();
-
-    modal.appendChild(okBtn);
-    modal.onblur = () => this.dispose();
-    modal.focus();
   }
-}*/
+}
 
 interface SaveEntry {
-  source_url: string;
+  source_url: string|null;
   state_id: string;
   state: any;
   timestamp: number;
 }
 
-const recordEntry = (source_url: string, state = {}) => {
-  return {timestamp: (new Date()).valueOf(), state_id: getRandomHexString(), source_url, state};
+const recordEntry = (state = {}) => {
+  return <SaveEntry>{
+    timestamp: (new Date()).valueOf(),
+    state_id: getRandomHexString(),
+    source_url: null,
+    state
+  };
 };
 
-const storageAvailable = () => {
+export const storageAvailable = () => {
   // Stolen from
   // https://developer.mozilla.org/en-US/docs/Web/API/Web_Storage_API/Using_the_Web_Storage_API
   const type = 'localStorage';
