@@ -50,3 +50,12 @@
     from {opacity: 0;}
     to {opacity:1 ;}
   }
+
+  .ng-zebra-table td, .ng-zebra-table th {
+    border: 1px solid #ddd;
+    padding: 8px;
+  }
+  
+  .ng-zebra-table tr:nth-child(even){background-color: #f2f2f2;}
+  
+  .ng-zebra-table tr:hover {background-color: #ddd;}
