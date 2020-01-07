@@ -30,7 +30,7 @@ export class SaveState extends RefCounted {
       this.saveStorage = {};
       StatusMessage.showTemporaryMessage(
           `Warning: Cannot access Local Storage. Unsaved changes will be lost! Use OldStyleSaving to allow for auto saving.`,
-          3000);
+          10000);
     }
     if (!getOldStyleSaving().value) {
       // this.registerEventListener(window, 'hashchange', () => this.updateFromUrlHash());
@@ -41,7 +41,7 @@ export class SaveState extends RefCounted {
       this.supported = false;
       StatusMessage.showTemporaryMessage(
           `Save State has been disabled because Old Style saving has been turned on in User Preferences.`,
-          3000);
+          10000);
     }
   }
 
@@ -70,7 +70,7 @@ export class SaveState extends RefCounted {
         // Invalid state key
         StatusMessage.showTemporaryMessage(
             `This URL is invalid. Do not copy the URL in the address bar. Use the save button.`,
-            3000);
+            10000);
       }
     }
   }
@@ -121,8 +121,8 @@ export class SaveState extends RefCounted {
         });
   }
 
-  showSaveDialog(viewer: Viewer) {
-    new SaveDialog(viewer, this);
+  showSaveDialog(viewer: Viewer, jsonString?: string) {
+    new SaveDialog(viewer, this, jsonString);
   }
 
   showHistory(viewer: Viewer) {
@@ -131,7 +131,7 @@ export class SaveState extends RefCounted {
 }
 
 class SaveDialog extends Overlay {
-  constructor(public viewer: Viewer, saver: any) {
+  constructor(public viewer: Viewer, saver: any, jsonstring?: string) {
     super();
     let {content} = this;
     content.style.overflow = 'visible';
@@ -139,14 +139,23 @@ class SaveDialog extends Overlay {
     let modal = document.createElement('div');
     content.appendChild(modal);
 
-    let entry = saver.saveStorage[saver.lastKey];
     let form = document.createElement('form');
     let urlStart = window.location.origin + window.location.pathname;
-    let jsonUrlString =
-        entry.source_url ? `${urlStart}?json_url='${entry.source_url}` : 'NOT AVALABLE';
+    let jsonUrlString;
+    if (jsonstring) {
+      jsonUrlString = `${urlStart}?json_url='${jsonstring}`;
+    } else {
+      if (saver.supported) {
+        let entry = saver.saveStorage[saver.lastKey];
+        jsonUrlString = `${urlStart}?json_url='${entry.source_url}`;
+      }
+      if (!jsonUrlString) {
+        jsonUrlString = 'NOT AVALABLE';
+      }
+    }
 
     form.append(this.makePopup('JSON_URL'));
-    this.insertField(form, 'JSON_URL', jsonUrlString);
+    this.insertField(form, 'JSON_URL', jsonUrlString, jsonUrlString === 'NOT AVALABLE');
     form.append(document.createElement('br'));
     form.append(this.makePopup('RAW_URL'));
     this.insertField(form, 'RAW_URL', `${urlStart}#!'${viewer.hashBinding!.returnURLHash()}`);
@@ -157,7 +166,7 @@ class SaveDialog extends Overlay {
     modal.focus();
   }
 
-  insertField(form: HTMLElement, label?: string, content?: string) {
+  insertField(form: HTMLElement, label?: string, content?: string, disabled = false) {
     let labelElement = document.createElement('label');
     labelElement.innerText = label || '';
     let text = document.createElement('input');
@@ -165,6 +174,7 @@ class SaveDialog extends Overlay {
     text.type = 'text';
     text.value = content || '';
     text.size = 100;
+    text.disabled = disabled;
     const id = `ng-save-popup-${label || ''}`;
     text.addEventListener('click', () => {
       text.select();
@@ -213,7 +223,8 @@ class SaveStateDialog extends Overlay {
         const linkAnchor = document.createElement('a');
 
         date.innerText = (new Date(entry.timestamp)).toLocaleString();
-        linkAnchor.innerText = `${window.location.origin}${window.location.pathname}?json_url=${entry.source_url}`;
+        linkAnchor.innerText =
+            `${window.location.origin}${window.location.pathname}?json_url=${entry.source_url}`;
         linkAnchor.href = linkAnchor.innerText;
         linkAnchor.style.display = 'block';
         link.append(linkAnchor);
@@ -225,7 +236,8 @@ class SaveStateDialog extends Overlay {
       modal.onblur = () => this.dispose();
       modal.focus();
     } else {
-      StatusMessage.showTemporaryMessage(`Cannot access saved states.`, 3000);
+      this.dispose();
+      StatusMessage.showTemporaryMessage(`Cannot access saved states.`, 10000);
     }
   }
 }

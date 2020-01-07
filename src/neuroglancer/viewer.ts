@@ -793,8 +793,8 @@ export class Viewer extends RefCounted implements ViewerState {
     new UserReportDialog(this, image);
   }
 
-  showSaveDialog() {
-    this.saver!.showSaveDialog(this);
+  showSaveDialog(jsonString?: string) {
+    this.saver!.showSaveDialog(this, jsonString);
   }
 
   showHistory() {
@@ -850,6 +850,7 @@ export class Viewer extends RefCounted implements ViewerState {
             } else {
               // No local storage fallback
               history.replaceState(null, '', savedUrl);
+              this.showSaveDialog(response);
             }
           })
           // catch errors with upload and prompt the user if there was an error
