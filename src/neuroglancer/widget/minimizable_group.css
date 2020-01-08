@@ -38,7 +38,13 @@
   content: '⮟ ';
 }
 
-.neuroglancer-minimizable-group-title.minimized::before {
+.neuroglancer-minimizable-group.minimized {
+  flex-basis: 22px !important;
+  flex-grow: 0 !important;
+  min-height: 0px;
+}
+
+.neuroglancer-minimizable-group.minimized .neuroglancer-minimizable-group-title::before {
   content: '➤ ';
 }
 
@@ -50,7 +56,7 @@
   max-height: max-content;
 }
 
-.neuroglancer-minimizable-group-content.minimized {
+.neuroglancer-minimizable-group.minimized .neuroglancer-minimizable-group-content {
   display: none;
 }
 

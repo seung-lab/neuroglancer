@@ -110,7 +110,7 @@ function makeShaderCodeWidget(layer: ImageUserLayer) {
 }
 
 class RenderingOptionsTab extends Tab {
-  private group2D = this.registerDisposer(new MinimizableGroupWidget('2D Visualization'));
+  private group2D = this.registerDisposer(new MinimizableGroupWidget('2D Visualization', 'viz2d'));
   opacityWidget = this.registerDisposer(new RangeWidget(this.layer.opacity));
   codeWidget = this.registerDisposer(makeShaderCodeWidget(this.layer));
   constructor(public layer: ImageUserLayer) {

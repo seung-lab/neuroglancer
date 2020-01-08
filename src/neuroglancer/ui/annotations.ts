@@ -408,8 +408,8 @@ export class AnnotationLayerView extends Tab {
   private updated = false;
   private toolbox: HTMLDivElement;
   private buttonMap: any = {};
-  groupVisualization = this.registerDisposer(new MinimizableGroupWidget('Visualization'));
-  groupAnnotations = this.registerDisposer(new MinimizableGroupWidget('Annotations'));
+  groupVisualization = this.registerDisposer(new MinimizableGroupWidget('Visualization', 'viz'));
+  groupAnnotations = this.registerDisposer(new MinimizableGroupWidget('Annotations', 'annotations'));
 
   private highlightButton(typekey: string, toolset?: AnnotationType) {
     let target = this.toolbox.querySelector(`.${typekey}`);

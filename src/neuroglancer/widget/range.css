@@ -19,8 +19,11 @@
   flex-direction: row;
   white-space: nowrap;
   justify-content: space-between;
+  align-items: center;
 }
 
 .range-slider input[type='range'] {
+  width: calc(100% - 200px);
+
 }
 

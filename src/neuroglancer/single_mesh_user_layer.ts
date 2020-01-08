@@ -264,7 +264,7 @@ function makeVertexAttributeWidget(layer: SingleMeshUserLayer) {
 }
 
 class DisplayOptionsTab extends Tab {
-  private group3D = this.registerDisposer(new MinimizableGroupWidget('3D Visualization'));
+  private group3D = this.registerDisposer(new MinimizableGroupWidget('3D Visualization', 'viz3d'));
   attributeWidget = this.registerDisposer(makeVertexAttributeWidget(this.layer));
   codeWidget = this.registerDisposer(makeShaderCodeWidget(this.layer));
   constructor(public layer: SingleMeshUserLayer) {

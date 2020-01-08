@@ -28,9 +28,25 @@
   margin-bottom: 5px;
 }
 
+.neuroglancer-segmentation-dropdown-skeleton-shader-header {
+  background-color: #2828ae;
+  padding: 2px;
+  display: flex;
+  align-items: middle;
+  margin-top: 5px;
+}
+
+.neuroglancer-segmentation-dropdown-skeleton-shader-header button {
+  padding: 2px;
+  padding-left: 5px;
+  padding-right: 5px;
+  font-size: 8pt;
+  width: 50px;
+}
+
 .segmentation-dropdown .neuroglancer-shader-code-widget {
-  height: 6em;
-  width: 60ch;
+  height: 12ch;
+  width: calc(100% - 2px);
   border: 1px solid transparent;
 }
 
@@ -38,3 +54,16 @@
   width: 80vw;
   height: 80vh;
 }
+
+.neuroglancer-minimizable-group.viz2d {
+  flex-grow: 0;
+  flex-basis: 160px;
+}
+
+.neuroglancer-minimizable-group.viz3d {
+  flex-basis: 400px;
+  flex-grow: 0;
+  overflow-y: hidden;
+}
+
+

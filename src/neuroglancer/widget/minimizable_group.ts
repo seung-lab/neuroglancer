@@ -23,19 +23,18 @@ export class MinimizableGroupWidget extends RefCounted {
   element = document.createElement('div');
   private label = document.createElement('div');
   private content = document.createElement('div');
-  constructor(title: string) {
+  constructor(title: string, klass: string) {
     super();
     const {label, content, element} = this;
 
     label.textContent = title;
     label.className = 'neuroglancer-minimizable-group-title';
     label.addEventListener('click', () => {
-      content.classList.toggle('minimized');
-      label.classList.toggle('minimized');
+      element.classList.toggle('minimized');
     });
 
     content.className = 'neuroglancer-minimizable-group-content';
-    element.className = 'neuroglancer-minimizable-group';
+    element.className = 'neuroglancer-minimizable-group ' + klass;
     element.appendChild(label);
     element.appendChild(content);
   }

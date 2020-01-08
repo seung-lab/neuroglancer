@@ -641,11 +641,11 @@ function makeSkeletonShaderCodeWidget(layer: SegmentationUserLayer) {
 }
 
 class DisplayOptionsTab extends Tab {
-  private group2D = this.registerDisposer(new MinimizableGroupWidget('2D Visualization'));
-  private group3D = this.registerDisposer(new MinimizableGroupWidget('3D Visualization'));
+  private group2D = this.registerDisposer(new MinimizableGroupWidget('2D Visualization', 'viz2d'));
+  private group3D = this.registerDisposer(new MinimizableGroupWidget('3D Visualization', 'viz3d'));
   private groupSegmentSelection =
-      this.registerDisposer(new MinimizableGroupWidget('Segment Selection'));
-  private groupOmniInfo = this.registerDisposer(new MinimizableGroupWidget('Omni Segment Info'));
+      this.registerDisposer(new MinimizableGroupWidget('Segment Selection', 'segselect'));
+  private groupOmniInfo = this.registerDisposer(new MinimizableGroupWidget('Omni Segment Info', 'omniseginfo'));
   visibleSegmentWidget = this.registerDisposer(new SegmentSetWidget(this.layer.displayState));
   addSegmentWidget = this.registerDisposer(new Uint64EntryWidget());
   selectedAlphaWidget =
@@ -806,7 +806,7 @@ class DisplayOptionsTab extends Tab {
       topRow.className = 'neuroglancer-segmentation-dropdown-skeleton-shader-header';
       let label = document.createElement('div');
       label.style.flex = '1';
-      label.textContent = 'Skeleton shader:';
+      label.textContent = 'Skeleton Shader';
       let helpLink = document.createElement('a');
       let helpButton = document.createElement('button');
       helpButton.type = 'button';

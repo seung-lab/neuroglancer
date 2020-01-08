@@ -119,7 +119,7 @@ export class VectorGraphicsUserLayer extends UserLayer {
 
 class DisplayOptionsTab extends Tab {
   private groupVisualization =
-      this.registerDisposer(new MinimizableGroupWidget('3D Visualization'));
+      this.registerDisposer(new MinimizableGroupWidget('3D Visualization', 'viz3d'));
   opacityWidget = this.registerDisposer(new RangeWidget(this.layer.opacity));
   lineWidthWidget =
       this.registerDisposer(new RangeWidget(this.layer.lineWidth, {min: 0, max: 50, step: 1}));

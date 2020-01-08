@@ -284,10 +284,10 @@ export class GraphOperationLayerView extends Tab {
   private previousSelectedId: string|undefined;
   private previousHoverId: string|undefined;
   private updated = false;
-  multicutGroup = this.registerDisposer(new MinimizableGroupWidget('Multicut'));
-  multicutOpacityGroup = this.registerDisposer(new MinimizableGroupWidget('Multicut Opacity'));
-  timectrlGroup = this.registerDisposer(new MinimizableGroupWidget('Time Control'));
-  findPathGroup = this.registerDisposer(new MinimizableGroupWidget('Find Path'));
+  multicutGroup = this.registerDisposer(new MinimizableGroupWidget('Multicut', 'multicut'));
+  multicutOpacityGroup = this.registerDisposer(new MinimizableGroupWidget('Multicut Opacity', 'multicutopacity'));
+  timectrlGroup = this.registerDisposer(new MinimizableGroupWidget('Time Control', 'timecontrol'));
+  findPathGroup = this.registerDisposer(new MinimizableGroupWidget('Find Path', 'findpath'));
   timeWidget: TimeSegmentWidget|undefined;
 
   constructor(
