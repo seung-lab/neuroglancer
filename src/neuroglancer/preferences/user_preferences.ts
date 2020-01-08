@@ -76,12 +76,15 @@ export class UserPreferencesDialog extends Overlay {
     addLimitWidget(
         'Concurrent chunk requests', viewer.chunkQueueManager.capacities.download.itemLimit);
 
-    const addCheckbox = (label: string, value: TrackableBoolean, onclick?: any) => {
+    const addCheckbox = (label: string, value: TrackableBoolean, onclick?: any, title?: string) => {
       const labelElement = document.createElement('label');
       labelElement.textContent = label;
       const checkbox = this.registerDisposer(new TrackableBooleanCheckbox(value));
       if (onclick) {
         checkbox.element.onclick = onclick;
+      }
+      if (title) {
+        labelElement.title = title;
       }
       labelElement.appendChild(checkbox.element);
       scroll.appendChild(labelElement);
@@ -90,7 +93,8 @@ export class UserPreferencesDialog extends Overlay {
     addCheckbox('Render Mesh By Default', userPreferences.renderMeshByDefault);
     addCheckbox('Prefetch SliceView Chunks', userPreferences.prefetchSliceViewChunks);
     addCheckbox('Show cursor on mouse drag', userPreferences.cursorOnMousedrag);
-    addCheckbox('Old Style Saving', userPreferences.oldStyleSave, () => location.reload());
-    scroll.append(` Saves state in address bar. Useful if storage is unsupported. Press save to post to JSON Server. Warning: Toggling the option reloads the page!`);
+    addCheckbox(
+        'Old Style Saving', userPreferences.oldStyleSave, () => location.reload(),
+        `Saves state in address bar. Useful if storage is unsupported. Press save to post to JSON Server. Warning: Toggling the option reloads the page!`);
   }
 }
