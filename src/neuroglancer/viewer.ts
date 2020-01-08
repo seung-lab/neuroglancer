@@ -815,17 +815,23 @@ export class Viewer extends RefCounted implements ViewerState {
     if (urlParams.has('json_url')) {
       let json_url = urlParams.get('json_url')!;
       history.replaceState(null, '', removeParameterFromUrl(window.location.href, 'json_url'));
-      StatusMessage.forPromise(
-          authFetch(json_url)
-            .then(res => res.json())
-            .then(response => {
-              this.state.restoreState(response);
-            }),
-            {
-              initialMessage: `Retrieving state from json_url: ${json_url}.`,
-              delay: true,
-              errorPrefix: `Error retrieving state: `,
-            });
+
+      this.resetStateWhenEmpty = false;
+      StatusMessage
+          .forPromise(
+            authFetch(json_url)
+              .then(res => res.json())
+              .then(response => {
+                this.state.restoreState(response);
+              }),
+              {
+                initialMessage: `Retrieving state from json_url: ${json_url}.`,
+                delay: true,
+                errorPrefix: `Error retrieving state: `,
+              })
+          .finally(() => {
+            this.resetStateWhenEmpty = true;
+          });
     }
   }
 
