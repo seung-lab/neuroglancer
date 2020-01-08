@@ -23,6 +23,7 @@ export class SaveState extends RefCounted {
       const saveStorageString = localStorage.getItem('neuroglancerSaveState');
       this.saveStorage = JSON.parse(saveStorageString || '{}');
       this.loadFromStorage();
+      this.cull();
 
       this.registerEventListener(window, 'popstate', () => this.loadFromStorage());
     } else {
@@ -51,11 +52,39 @@ export class SaveState extends RefCounted {
     }
   }
 
+  pull() {
+    if (storageAvailable()) {
+      this.saveStorage = {
+        ...this.saveStorage,
+        ...JSON.parse(localStorage.getItem('neuroglancerSaveState') || '{}')
+      };
+    }
+  }
+
+  cull(limit = 100) {
+    if (storageAvailable()) {
+      this.pull();
+      if (this.list().length >= limit) {
+        const recent = this.list().slice(0, limit);
+        const newStorage: any = {};
+        recent.forEach(entry => {
+          newStorage[entry.state_id] = entry;
+        });
+        this.saveStorage = newStorage;
+        this.push();
+      }
+    }
+  }
+
+  list() {
+    return (<SaveEntry[]>Object.values(this.saveStorage)).sort((a, b) => b.timestamp - a.timestamp);
+  }
   loadFromStorage() {
     const params = new URLSearchParams(window.location.search);
     const givenKey = params.get('sid');
 
     if (givenKey) {
+      location.hash = '';
       const entry = this.saveStorage[givenKey];
       this.activeKey = givenKey;
       this.lastKey = this.activeKey;
@@ -202,12 +231,12 @@ class SaveDialog extends Overlay {
 }
 
 class SaveStateDialog extends Overlay {
-  constructor(public viewer: Viewer, saver: any) {
+  constructor(public viewer: Viewer, saver: SaveState) {
     super();
     let {content} = this;
     if (saver.supported) {
-      let saves =
-          (<SaveEntry[]>Object.values(saver.saveStorage)).sort((a, b) => b.timestamp - a.timestamp);
+      saver.pull();
+      let saves = saver.list();
       let modal = document.createElement('div');
       content.appendChild(modal);
 
