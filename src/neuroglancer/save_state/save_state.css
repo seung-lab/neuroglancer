@@ -1,3 +1,29 @@
+button.ng-saver.fallback {
+  background-color: yellow;
+  border: 1px solid black;
+  color: black;
+}
+button.ng-saver.fallback:hover {
+  background-color: orangered;
+}
+
+button.ng-saver.inactive {
+  background-color: orangered;
+  border: 1px solid black;
+  color: black;
+}
+button.ng-saver.inactive:hover {
+  background-color: yellow;
+}
+
+button.ng-saver {
+  background-color: #00000000;
+  border: 1px solid white;
+  border-radius: 5px;
+  margin-left: 5px;
+  width: auto;
+  height: auto;
+}
 /* Popup container */
 .ng-popup {
     position: relative;
