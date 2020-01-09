@@ -14,21 +14,35 @@
  * limitations under the License.
  */
 
+import {SaveState} from 'neuroglancer/save_state/save_state';
 import {StatusMessage} from 'neuroglancer/status';
 import {bindDefaultCopyHandler, bindDefaultPasteHandler} from 'neuroglancer/ui/default_clipboard_handling';
 import {setDefaultInputEventBindings} from 'neuroglancer/ui/default_input_event_bindings';
 import {makeDefaultViewer} from 'neuroglancer/ui/default_viewer';
 import {UrlHashBinding} from 'neuroglancer/ui/url_hash_binding';
-import {SaveState} from '../save_state/save_state';
 
 /**
  * Sets up the default neuroglancer viewer.
  */
 export function setupDefaultViewer() {
-  let viewer = (<any>window)['viewer'] = makeDefaultViewer();
-  setDefaultInputEventBindings(viewer.inputEventBindings);
+  const viewer = (<any>window)['viewer'] = makeDefaultViewer();
+  const legacy = legacyViewerSetupHashBinding(viewer);
 
-  // LEGACY: Preserved for backwards compatibility
+  setDefaultInputEventBindings(viewer.inputEventBindings);
+  viewer.loadFromJsonUrl();
+  viewer.saver = viewer.registerDisposer(new SaveState(viewer.state));
+  if (!viewer.saver.supported) {
+    legacy.hashBinding.fallback();
+  }
+
+  bindDefaultCopyHandler(viewer);
+  bindDefaultPasteHandler(viewer);
+
+  return viewer;
+}
+
+function legacyViewerSetupHashBinding(viewer: any) {
+  // Backwards compatibility for state links
   const hashBinding = viewer.registerDisposer(new UrlHashBinding(viewer.state));
   viewer.hashBinding = hashBinding;
   viewer.registerDisposer(hashBinding.parseError.changed.add(() => {
@@ -40,16 +54,7 @@ export function setupDefaultViewer() {
     }
     hashBinding.parseError;
   }));
-  hashBinding.updateFromUrlHash();  // Get state from URL
-  //
-  viewer.loadFromJsonUrl();
-  viewer.saver = viewer.registerDisposer(new SaveState(viewer.state));
-  if (!viewer.saver.supported) {
-    hashBinding.fallback();
-  }
+  hashBinding.updateFromUrlHash();
 
-  bindDefaultCopyHandler(viewer);
-  bindDefaultPasteHandler(viewer);
-
-  return viewer;
+  return {hashBinding};
 }

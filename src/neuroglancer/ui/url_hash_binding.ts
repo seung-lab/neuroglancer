@@ -15,6 +15,7 @@
  */
 
 import {debounce} from 'lodash';
+import {StatusMessage} from 'neuroglancer/status';
 import {WatchableValue} from 'neuroglancer/trackable_value';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {urlSafeParse, verifyObject} from 'neuroglancer/util/json';
@@ -37,29 +38,29 @@ export class UrlHashBinding extends RefCounted {
    * Most recently parsed or set state string.
    */
   private prevStateString: string|undefined;
-
   /**
    * Most recent error parsing URL hash.
    */
   parseError = new WatchableValue<Error|undefined>(undefined);
-
+  legacy: UrlHashBindingLegacy;
   constructor(public root: Trackable) {
     super();
     this.registerEventListener(window, 'hashchange', () => this.updateFromUrlHash());
+    this.legacy = new UrlHashBindingLegacy(root, this, this.prevStateString);
   }
-
   /**
    * Sets the current state to match the URL hash.  If it is desired to initialize the state based
    * on the URL hash, then this should be called immediately after construction.
    */
   updateFromUrlHash() {
-    // TODO: Alert about deprecation
     try {
       let s = location.href.replace(/^[^#]+/, '');
       if (s === '' || s === '#' || s === '#!') {
         // s = '#!{}';
         return;
       }
+      StatusMessage.showTemporaryMessage(
+          `State URLs are Deprecated! Please use JSON URLs whenever avaliable.`, 10000);
       if (s.startsWith('#!+')) {
         s = s.slice(3);
         // Firefox always %-encodes the URL even if it is not typed that way.
@@ -87,8 +88,17 @@ export class UrlHashBinding extends RefCounted {
       this.parseError.value = parseError;
     }
   }
+  returnURLHash() {
+    const cacheState = getCachedJson(this.root);
+    return this.legacy.encodeFragment(JSON.stringify(cacheState.value));
+  }
+}
 
-  // ****FALLBACK (NO STORAGE)**** //
+class UrlHashBindingLegacy {
+  // No localStorage fallback (Neuroglancer is currently inoperable w/o localStorage)
+  constructor(
+      public root: Trackable, public parent: UrlHashBinding,
+      private prevStateString: string|undefined) {}
   /**
    * Generation number of previous state set.
    */
@@ -101,24 +111,25 @@ export class UrlHashBinding extends RefCounted {
       return '%' + c.charCodeAt(0).toString(16).toUpperCase();
     });
   }
-
+  /**
+   * Sets url hash event handler, in case saver is deactivated.
+   */
   fallback(updateDelayMilliseconds = 400) {
     const throttledSetUrlHash = debounce(() => this.setUrlHash(), updateDelayMilliseconds);
-    this.registerDisposer(this.root.changed.add(throttledSetUrlHash));
-    this.registerDisposer(() => throttledSetUrlHash.cancel());
+    this.parent.registerDisposer(this.root.changed.add(throttledSetUrlHash));
+    this.parent.registerDisposer(() => throttledSetUrlHash.cancel());
   }
-
   /**
    * Sets the URL hash to match the current state.
    */
   setUrlHash() {
     const cacheState = getCachedJson(this.root);
     const {generation} = cacheState;
-    // TODO: Change to recurring, onblur and time, or onunload save and push to state server
+    // Suggestion: Change to recurring, onblur and time, or onunload save and push to state server
+    // Counterpoint: No point optimizing deprecated code
     let cleanURL =
         removeParameterFromUrl(removeParameterFromUrl(window.location.href, 'json_url'), 'sid');
     history.replaceState(null, '', cleanURL);
-
 
     if (generation !== this.prevStateGeneration) {
       this.prevStateGeneration = cacheState.generation;
@@ -132,10 +143,5 @@ export class UrlHashBinding extends RefCounted {
         }
       }
     }
-  }
-  // ****END FALLBACK**** //
-  returnURLHash() {
-    const cacheState = getCachedJson(this.root);
-    return this.encodeFragment(JSON.stringify(cacheState.value));
   }
 }

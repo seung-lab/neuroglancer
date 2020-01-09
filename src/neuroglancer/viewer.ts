@@ -495,9 +495,9 @@ export class Viewer extends RefCounted implements ViewerState {
       }
       this.registerEventListener(button, 'click', () => {
         this.postJsonState();
-        if (!this.jsonStateServer.value) {
-          // Fallback for no state server
-          this.hashBinding!.setUrlHash();
+        const noStateServerAccess = !this.jsonStateServer.value;
+        if (noStateServerAccess) {
+          this.hashBinding!.legacy.setUrlHash();
           this.saver!.commit();
           this.showSaveDialog();
         }
@@ -526,18 +526,6 @@ export class Viewer extends RefCounted implements ViewerState {
           this.uiControlVisibility.showEditStateButton, button));
       topRow.appendChild(button);
     }
-
-    /* DEPRECATED
-    {
-      const button = makeTextIconButton('⇧', 'Post JSON to state server');
-      this.registerEventListener(button, 'click', () => {
-        this.postJsonState();
-      });
-      this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
-          this.uiControlVisibility.showJsonPostButton, button));
-      topRow.appendChild(button);
-    }
-    */
 
     {
       const button = makeTextIconButton('⚙', 'Preferences');
@@ -849,12 +837,11 @@ export class Viewer extends RefCounted implements ViewerState {
           responseJson)
           .then(response => {
             const savedUrl =
-                window.location.origin + window.location.pathname + '?json_url=' + response;
+                `${window.location.origin}${window.location.pathname}?json_url=${response}`;
             if (this.saver && this.saver.supported) {
               this.saver.commit(response);
               this.showSaveDialog();
             } else {
-              // No local storage fallback
               history.replaceState(null, '', savedUrl);
               this.showSaveDialog(response);
             }
