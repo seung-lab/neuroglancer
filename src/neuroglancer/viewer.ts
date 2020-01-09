@@ -481,14 +481,15 @@ export class Viewer extends RefCounted implements ViewerState {
 
     {
       const button = document.createElement('button');
+      button.classList.add('ng-saver', 'neuroglancer-icon-button');
       button.innerText = 'Save';
       if (!storageAvailable()) {
-        button.style.backgroundColor = 'yellow';
+        button.classList.add('fallback');
         button.title =
             `Cannot access Local Storage. Unsaved changes will be lost! Use OldStyleSaving to allow for auto saving.`;
       }
       if (storageAvailable() && getOldStyleSaving().value) {
-        button.style.backgroundColor = 'orange';
+        button.classList.add('inactive');
         button.title =
             `Save State has been disabled because Old Style saving has been turned on in User Preferences.`;
       }
