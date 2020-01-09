@@ -46,6 +46,14 @@ export class SaveState extends RefCounted {
     }
   }
 
+  purge() {
+    if (storageAvailable() && this.activeKey) {
+      const current = this.saveStorage[this.activeKey];
+      this.saveStorage = {[current.state_id]: current};
+      this.push();
+    }
+  }
+
   push() {
     if (storageAvailable()) {
       localStorage.setItem('neuroglancerSaveState', JSON.stringify(this.saveStorage));
@@ -79,6 +87,7 @@ export class SaveState extends RefCounted {
   list() {
     return (<SaveEntry[]>Object.values(this.saveStorage)).sort((a, b) => b.timestamp - a.timestamp);
   }
+
   loadFromStorage() {
     const params = new URLSearchParams(window.location.search);
     const givenKey = params.get('sid');
@@ -96,7 +105,6 @@ export class SaveState extends RefCounted {
           this.remoteLoad(entry.source_url);
         }
       } else {
-        // Invalid state key
         StatusMessage.showTemporaryMessage(
             `This URL is invalid. Do not copy the URL in the address bar. Use the save button.`,
             10000);
@@ -107,15 +115,12 @@ export class SaveState extends RefCounted {
   updateStorage() {
     let entry;
     if (!this.activeKey) {
-      // TODO: May want this to only be JSON URL
       entry = recordEntry();
       this.activeKey = entry.state_id;
       this.lastKey = this.activeKey;
       const params = new URLSearchParams();
       params.set('sid', this.activeKey);
-      // Push instead of replace to preserve history could use entry.timestamp
-      history.pushState(
-          {}, (new Date()).toISOString(), `${window.location.origin}/?${params.toString()}`);
+      history.pushState({}, '', `${window.location.origin}/?${params.toString()}`);
     } else {
       entry = this.saveStorage[this.activeKey];
     }
@@ -160,7 +165,7 @@ export class SaveState extends RefCounted {
 }
 
 class SaveDialog extends Overlay {
-  constructor(public viewer: Viewer, saver: any, jsonstring?: string) {
+  constructor(public viewer: Viewer, saver: any, jsonString?: string) {
     super();
     let {content} = this;
     content.style.overflow = 'visible';
@@ -169,25 +174,25 @@ class SaveDialog extends Overlay {
     content.appendChild(modal);
 
     let form = document.createElement('form');
-    let urlStart = window.location.origin + window.location.pathname;
-    let jsonUrlString;
-    if (jsonstring) {
-      jsonUrlString = `${urlStart}?json_url='${jsonstring}`;
+    let urlStart = `${window.location.origin}${window.location.pathname}`;
+    let jsonUrl;
+    if (jsonString) {
+      jsonUrl = `${urlStart}?json_url=${jsonString}`;
     } else {
       if (saver.supported) {
         let entry = saver.saveStorage[saver.lastKey];
-        jsonUrlString = `${urlStart}?json_url='${entry.source_url}`;
+        jsonUrl = `${urlStart}?json_url=${entry.source_url}`;
       }
-      if (!jsonUrlString) {
-        jsonUrlString = 'NOT AVALABLE';
+      if (!jsonUrl) {
+        jsonUrl = 'NOT AVALABLE';
       }
     }
 
     form.append(this.makePopup('JSON_URL'));
-    this.insertField(form, 'JSON_URL', jsonUrlString, jsonUrlString === 'NOT AVALABLE');
+    this.insertField(form, 'JSON_URL', jsonUrl, jsonUrl === 'NOT AVALABLE');
     form.append(document.createElement('br'));
     form.append(this.makePopup('RAW_URL'));
-    this.insertField(form, 'RAW_URL', `${urlStart}#!'${viewer.hashBinding!.returnURLHash()}`);
+    this.insertField(form, 'RAW_URL', `${urlStart}#!${viewer.hashBinding!.returnURLHash()}`);
     form.append('DEPRECATED');
     modal.appendChild(form);
 
@@ -231,36 +236,31 @@ class SaveDialog extends Overlay {
 }
 
 class SaveStateDialog extends Overlay {
+  table = document.createElement('table');
   constructor(public viewer: Viewer, saver: SaveState) {
     super();
-    let {content} = this;
+    let {content, table} = this;
     if (saver.supported) {
       saver.pull();
       let saves = saver.list();
       let modal = document.createElement('div');
       content.appendChild(modal);
 
-      const table = document.createElement('table');
       table.classList.add('ng-zebra-table');
-      saves.forEach(entry => {
-        if (!entry || !entry.source_url) {
-          return;
-        }
-        const row = document.createElement('tr');
-        const date = document.createElement('td');
-        const link = document.createElement('td');
-        const linkAnchor = document.createElement('a');
+      saves.forEach(this.tableEntry);
 
-        date.innerText = (new Date(entry.timestamp)).toLocaleString();
-        linkAnchor.innerText =
-            `${window.location.origin}${window.location.pathname}?json_url=${entry.source_url}`;
-        linkAnchor.href = linkAnchor.innerText;
-        linkAnchor.style.display = 'block';
-        link.append(linkAnchor);
-        row.append(date, link);
-        table.append(row);
+      const clear = document.createElement('button');
+      clear.innerText = 'Clear';
+      clear.title = 'Remove all saved states.';
+      clear.addEventListener('click', () => {
+        saver.purge();
+        this.dispose();
       });
 
+      modal.append(clear);
+      if (!table.children.length) {
+        modal.append(document.createElement('br'), `There are no saved states.`);
+      }
       modal.append(table);
       modal.onblur = () => this.dispose();
       modal.focus();
@@ -268,6 +268,25 @@ class SaveStateDialog extends Overlay {
       this.dispose();
       StatusMessage.showTemporaryMessage(`Cannot access saved states.`, 10000);
     }
+  }
+
+  tableEntry(entry: SaveEntry) {
+    if (!entry || !entry.source_url) {
+      return;
+    }
+    const row = document.createElement('tr');
+    const date = document.createElement('td');
+    const link = document.createElement('td');
+    const linkAnchor = document.createElement('a');
+
+    date.innerText = (new Date(entry.timestamp)).toLocaleString();
+    linkAnchor.innerText =
+        `${window.location.origin}${window.location.pathname}?json_url=${entry.source_url}`;
+    linkAnchor.href = linkAnchor.innerText;
+    linkAnchor.style.display = 'block';
+    link.append(linkAnchor);
+    row.append(date, link);
+    this.table.append(row);
   }
 }
 
