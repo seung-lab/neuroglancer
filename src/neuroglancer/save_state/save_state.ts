@@ -14,35 +14,33 @@ import {Viewer} from 'neuroglancer/viewer';
 export class SaveState extends RefCounted {
   private activeKey?: string|null;
   lastKey?: string|null;
-  saveStorage: any;
+  saveStorage: any = {};
   supported = true;
   constructor(public root: Trackable, updateDelayMilliseconds = 400) {
     super();
-    // TODO: Smelly code
+    const saverManuallyDisabled = !getOldStyleSaving().value;
+    this.supported = !storageAvailable() && saverManuallyDisabled;
+
     if (storageAvailable()) {
       const saveStorageString = localStorage.getItem('neuroglancerSaveState');
       this.saveStorage = JSON.parse(saveStorageString || '{}');
       this.loadFromStorage();
       this.cull();
-
       this.registerEventListener(window, 'popstate', () => this.loadFromStorage());
     } else {
       this.supported = false;
-      this.saveStorage = {};
       StatusMessage.showTemporaryMessage(
           `Warning: Cannot access Local Storage. Unsaved changes will be lost! Use OldStyleSaving to allow for auto saving.`,
           10000);
     }
-    if (!getOldStyleSaving().value) {
-      // this.registerEventListener(window, 'hashchange', () => this.updateFromUrlHash());
-      const throttledUpdate = debounce(() => this.updateStorage(), updateDelayMilliseconds);
-      this.registerDisposer(root.changed.add(throttledUpdate));
-      this.registerDisposer(() => throttledUpdate.cancel());
-    } else {
-      this.supported = false;
+    if (saverManuallyDisabled) {
       StatusMessage.showTemporaryMessage(
           `Save State has been disabled because Old Style saving has been turned on in User Preferences.`,
           10000);
+    } else {
+      const throttledUpdate = debounce(() => this.updateStorage(), updateDelayMilliseconds);
+      this.registerDisposer(root.changed.add(throttledUpdate));
+      this.registerDisposer(() => throttledUpdate.cancel());
     }
   }
 
