@@ -65,7 +65,8 @@ type AnnotationIdAndPart = {
   id: string,
   partIndex?: number,
   multiple?: Set<string>,
-  ungroupable?: boolean
+  ungroupable?: boolean,
+  modifier?: boolean
 };
 
 export class AnnotationSegmentListWidget extends RefCounted {
@@ -403,7 +404,7 @@ export class AnnotationLayerView extends Tab {
   private annotationHidingList: HidingList;
   private annotationsToAdd: HTMLElement[] = [];
   private annotationTags = new Map<number, HTMLOptionElement>();
-  private previousSelectedId: string|undefined;
+  private selectHistory: string[] = [];
   private previousHoverId: string|undefined;
   private updated = false;
   private toolbox: HTMLDivElement;
@@ -416,6 +417,7 @@ export class AnnotationLayerView extends Tab {
     if (target) {
       target.classList.remove(typekey);
     }
+    // target?.classList.remove(typekey); TODO: Optional Chaining doesn't work w/ Webpack yet
     if (toolset !== undefined) {
       this.buttonMap[toolset].classList.add(typekey);
     }
@@ -649,7 +651,7 @@ export class AnnotationLayerView extends Tab {
     exportToCSVButton.addEventListener('click', () => {
       this.exportToCSV();
     });
-    importCSVFileSelect.id = 'importCSVFileSelect';
+    importCSVFileSelect.id = 'importCSVFileSelectmultipleKey';
     importCSVFileSelect.type = 'file';
     importCSVFileSelect.accept = 'text/csv';
     importCSVFileSelect.multiple = true;
@@ -740,10 +742,11 @@ export class AnnotationLayerView extends Tab {
 
   private handleMultiple() {
     const selectedValue = this.state.value;
-    const {previousSelectedId} = this;
-    if (!selectedValue || !selectedValue.multiple || !previousSelectedId) {
+    const {selectHistory} = this;
+    if (!selectedValue || !selectedValue.multiple || !selectHistory.length) {
       return;
     }
+    const previousSelectedId = selectHistory[0];
     const element = this.annotationListElements.get(previousSelectedId);
     const multiple = Array.from(selectedValue.multiple);
     if (element !== undefined && multiple.length && multiple.includes(previousSelectedId)) {
@@ -752,14 +755,10 @@ export class AnnotationLayerView extends Tab {
   }
 
   private clearSelectionClass() {
-    const {previousSelectedId} = this;
-    if (previousSelectedId !== undefined) {
-      const element = this.annotationListElements.get(previousSelectedId);
-      if (element !== undefined) {
-        element.classList.remove('neuroglancer-annotation-selected');
-      }
-      this.previousSelectedId = undefined;
-    }
+    const selectedKey = 'neuroglancer-annotation-selected';
+    const oldSelected =
+        Array.from(this.annotationListContainer.querySelectorAll(`.${selectedKey}`));
+    oldSelected.forEach((e: HTMLElement) => e.classList.remove(selectedKey));
   }
 
   private clearHoverClass() {
@@ -779,14 +778,18 @@ export class AnnotationLayerView extends Tab {
 
   private updateSelectionView() {
     const selectedValue = this.state.value;
+    const selectedKey = 'neuroglancer-annotation-selected';
+    const multipleKey = 'neuroglancer-annotation-multiple';
     let newSelectedId: string|undefined;
-    let multiple: string[]|undefined;
+    let multiple: string[] = [];
+    let multiset: Set<string>|undefined;
     if (selectedValue !== undefined) {
       newSelectedId = selectedValue.id;
-      multiple = selectedValue.multiple ? Array.from(selectedValue.multiple) : undefined;
+      multiset = selectedValue.multiple;
+      multiple = multiset ? Array.from(multiset) : [];
     }
-    const {previousSelectedId} = this;
-    if (newSelectedId === previousSelectedId) {
+    const previousSelectedId = this.selectHistory[0];
+    if (newSelectedId === previousSelectedId && !multiple.length) {
       return;
     }
     this.handleMultiple();
@@ -795,21 +798,36 @@ export class AnnotationLayerView extends Tab {
     if (newSelectedId !== undefined) {
       const element = this.annotationListElements.get(newSelectedId);
       if (element !== undefined) {
-        element.classList.add('neuroglancer-annotation-selected');
-        if (multiple && multiple.length) {
-          element.classList.add('neuroglancer-annotation-multiple');
+        const alreadySelected =
+            multiset && multiset.size && this.selectHistory.includes(newSelectedId);
+        if (alreadySelected) {
+          element.classList.remove(selectedKey, multipleKey);
+          const target = this.selectHistory.indexOf(newSelectedId);
+          this.selectHistory.splice(target, 1);
+          this.state.value!.id = this.selectHistory[0];
+          if (!this.selectHistory.length) {
+            multiple = [];
+          }
+        } else {
+          element.classList.add(selectedKey);
+          if (multiple.length) {
+            element.classList.add(multipleKey);
+          }
+          this.selectHistory.unshift(newSelectedId);
         }
-
         // TODO: Why? This is a anti user ui pattern
         this.annotationHidingList.scrollTo(element);
       }
+    } else {
+      this.selectHistory = [];
     }
-    this.previousSelectedId = newSelectedId;
-    if (!multiple) {
-      const multiselected = Array.from(
-          this.annotationListContainer.querySelectorAll('.neuroglancer-annotation-multiple'));
-      multiselected.forEach(
-          (e: HTMLElement) => e.classList.remove('neuroglancer-annotation-multiple'));
+
+    const multipleStyled = this.annotationListContainer.querySelector(`.${multipleKey}`);
+    if (!multiple.length && multipleStyled) {
+      this.selectHistory = (this.state.value!.id) ? [this.state.value!.id] : [];
+      const multiselected =
+          Array.from(this.annotationListContainer.querySelectorAll(`.${multipleKey}`));
+      multiselected.forEach((e: HTMLElement) => e.classList.remove(multipleKey));
     }
   }
 
@@ -985,6 +1003,76 @@ export class AnnotationLayerView extends Tab {
     this.updateSelectionView();
   }
 
+  selectAnnotationElement(multiple: Set<string>, annotationId: string, previousId?: string) {
+    if (this.state.value) {
+      if (this.state.value.multiple) {
+        multiple = this.state.value.multiple;
+      } else if (this.state.value.ungroupable) {
+        // Cannot select line segment for group
+      } else {
+        // FIXME: spurious add; needed for ctrl add
+        multiple.add(previousId || this.state.value!.id);
+      }
+    }
+
+    if (multiple.has(annotationId)) {
+      multiple.delete(annotationId);
+    } else {
+      multiple.add(annotationId);
+    }
+
+    if (!multiple.size) {
+      return;
+    }
+    return multiple;
+  }
+
+  shiftSelect(origin: string, target: string) {
+    let multiple = new Set<string>();
+    const source = (<AnnotationSource>this.annotationLayer.source);
+    let pList: string[]|null = [];
+    let nList: string[]|null = [];
+
+    while (pList || nList) {
+      if (pList) {
+        let prev: any = source.getPrevAnnotation(!pList.length ? origin : pList[pList.length - 1]);
+        if (pList[pList.length - 1] === target) {
+          nList = null;
+          break;
+        } else if (!prev || prev.loopedOver) {
+          pList = null;
+        } else {
+          pList.push(prev.id);
+        }
+      }
+      if (nList) {
+        let next: any = source.getNextAnnotation(!nList.length ? origin : nList[nList.length - 1]);
+        if (nList[nList.length - 1] === target) {
+          pList = null;
+          break;
+        } else if (!next || next.loopedOver) {
+          nList = null;
+        } else {
+          nList.push(next.id);
+        }
+      }
+    }
+    const shiftList = nList || pList || [];
+    shiftList.forEach((id, n, list) => {
+      // FIXME: This bypasses the normal way styles are set
+      const element = this.annotationListContainer.querySelector(`[data-id="${id}"]`);
+      if (element) {
+        element.classList.add('neuroglancer-annotation-multiple');
+      }
+      this.selectHistory.unshift(id);
+      // element?.classList.add('neuroglancer-annotation-multiple'); TODO: Optional Chaining doesn't
+      // work w/ Webpack yet
+      multiple = <any>this.selectAnnotationElement(multiple, id, n!? origin : list[n - 1]);
+    });
+
+    return multiple;
+  }
+
   private makeAnnotationListElement(annotation: Annotation, doPadding: boolean = true) {
     const transform = this.annotationLayer.objectToGlobal;
     const element = document.createElement('li');
@@ -1041,22 +1129,17 @@ export class AnnotationLayerView extends Tab {
     });
 
     element.addEventListener('click', (event: MouseEvent) => {
-      if (event.ctrlKey || event.metaKey) {
-        let multiple = new Set<string>();
-        if (this.state.value) {
-          if (this.state.value.multiple) {
-            multiple = this.state.value.multiple;
-          } else if (this.state.value.ungroupable) {
-            // Cannot select line segment for group
-          } else {
-            multiple.add(this.state.value.id);
-          }
-        }
-        multiple.add(annotation.id);
-        this.state.value = {id: annotation.id, partIndex: 0, multiple};
+      let multiple: Set<string>|undefined = new Set<string>();
+      let modifier = true;
+      if (event.ctrlKey || event.metaKey || (event.shiftKey && !this.selectHistory.length)) {
+        multiple = this.selectAnnotationElement(multiple, annotation.id);
+      } else if (event.shiftKey) {
+        multiple = this.shiftSelect(this.selectHistory[0], annotation.id);
       } else {
-        this.state.value = {id: annotation.id, partIndex: 0};
+        modifier = false;
+        multiple = undefined;
       }
+      this.state.value = {id: annotation.id, partIndex: 0, multiple, modifier};
       event.stopPropagation();
     });
 
@@ -1328,7 +1411,8 @@ export class AnnotationLayerView extends Tab {
           case 'Ellipsoid':
             raw.type = AnnotationType.ELLIPSOID;
             (<Ellipsoid>raw).center = textToPoint(annProps[0], this.annotationLayer.globalToObject);
-            (<Ellipsoid>raw).radii = textToPoint(annProps[2], this.annotationLayer.globalToObject, true);
+            (<Ellipsoid>raw).radii =
+                textToPoint(annProps[2], this.annotationLayer.globalToObject, true);
             break;
           case 'Line Strip':
           case 'Line Strip*':
@@ -1719,7 +1803,7 @@ export class AnnotationDetailsTab extends Tab {
       this.hoverState = undefined;
       return;
     }
-    this.element.style.display = null;
+    this.element.style.display = '';
     if (this.valid) {
       return;
     }
