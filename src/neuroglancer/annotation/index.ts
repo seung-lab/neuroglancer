@@ -509,10 +509,23 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     return existingAnnotation;
   }
 
+  bypass(source: AnnotationNode|undefined, next: boolean) {
+    // FIXME: HACK
+    if (!source) {
+      return;
+    }
+    const area = document.querySelector('.neuroglancer-annotation-hiding-list-scrollarea')!;
+    const head = area.firstElementChild ? (<HTMLElement>area.firstElementChild).dataset.id : null;
+    const tail = area.lastElementChild ? (<HTMLElement>area.lastElementChild).dataset.id : null;
+    const loopedOver = (next && source.id === tail) || (!next && source.id === head);
+    // (source!.prev.id === tail) || (source!.next.id === head) ;
+    return <any>{...next ? source.next : source.prev, loopedOver};
+  }
+
   getNextAnnotation(id: AnnotationId): Annotation|undefined {
     const existingAnnotation = this.annotationMap.get(id);
     if (existingAnnotation) {
-      return existingAnnotation.next;
+      return this.bypass(existingAnnotation, true);
     }
     return;
   }
@@ -520,7 +533,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
   getPrevAnnotation(id: AnnotationId): Annotation|undefined {
     const existingAnnotation = this.annotationMap.get(id);
     if (existingAnnotation) {
-      return existingAnnotation.prev;
+      return this.bypass(existingAnnotation, false);
     }
     return;
   }
