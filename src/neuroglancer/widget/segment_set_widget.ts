@@ -60,6 +60,7 @@ export class SegmentSetWidget extends RefCounted {
 
   constructor(public displayState: SegmentationDisplayState) {
     super();
+    this.createThresholdInput();
     this.createTopButtons();
     this.registerDisposer(displayState.rootSegments.changed.add((x, add) => {
       this.handleEnabledSetChanged(x, add);
@@ -111,6 +112,23 @@ export class SegmentSetWidget extends RefCounted {
       this.addElement(x.toString(), false);
     }
     this.updateTopButtonsVisibility();
+  }
+
+  private createThresholdInput() {
+    const {element} = this;
+    const thresholdInputLabel = document.createElement('label');
+    thresholdInputLabel.textContent = 'Seg threshold';
+    const thresholdInput = document.createElement('input');
+    thresholdInput.addEventListener('input', () => {
+       const num = parseInt(thresholdInput.value, 10);
+       if (isNaN(num)) {
+        this.displayState.segFilter.value = 0;
+       } else {
+        this.displayState.segFilter.value = num;
+       }
+    });
+    thresholdInputLabel.appendChild(thresholdInput);
+    element.appendChild(thresholdInputLabel);
   }
 
   // Create 3 buttons: clear all segments, copy all segment IDs, copy all displayed segment IDs.

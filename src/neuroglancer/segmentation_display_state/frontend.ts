@@ -111,6 +111,7 @@ export interface SegmentationDisplayState extends VisibleSegmentsState {
   saturation: TrackableAlphaValue;
   highlightedSegments: Uint64Set;
   shatterSegmentEquivalences: TrackableBoolean;
+  segFilter: TrackableAlphaValue;
 }
 
 export interface SegmentationDisplayStateWithAlpha extends SegmentationDisplayState {
@@ -135,6 +136,8 @@ export function registerRedrawWhenSegmentationDisplayStateChanged(
   renderLayer.registerDisposer(displayState.segmentEquivalences.changed.add(dispatchRedrawNeeded));
   renderLayer.registerDisposer(
       displayState.segmentSelectionState.changed.add(dispatchRedrawNeeded));
+  renderLayer.registerDisposer(
+    displayState.segFilter.changed.add(dispatchRedrawNeeded));
 }
 
 export function registerRedrawWhenSegmentationDisplayStateWithAlphaChanged(

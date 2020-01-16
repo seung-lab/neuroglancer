@@ -107,6 +107,7 @@ export class SegmentationUserLayer extends Base {
     renderScaleHistogram: new RenderScaleHistogram(),
     renderScaleTarget: trackableRenderScaleTarget(1),
     shatterSegmentEquivalences: new TrackableBoolean(false, false),
+    segFilter: trackableAlphaValue(0)
   };
 
   /**
@@ -154,6 +155,7 @@ export class SegmentationUserLayer extends Base {
     this.displayState.segmentStatedColors.changed.add(this.specificationChanged.dispatch);
     this.displayState.renderScaleTarget.changed.add(this.specificationChanged.dispatch);
     this.displayState.shatterSegmentEquivalences.changed.add(this.specificationChanged.dispatch);
+    this.displayState.segFilter.changed.add(this.specificationChanged.dispatch);
     this.ignoreSegmentInteractions.changed.add(this.specificationChanged.dispatch);
     this.loadMeshes.changed.add(this.specificationChanged.dispatch);
     this.loadSkeletons.changed.add(this.specificationChanged.dispatch);

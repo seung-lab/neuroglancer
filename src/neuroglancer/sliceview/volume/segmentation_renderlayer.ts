@@ -106,6 +106,10 @@ export class SegmentationRenderLayer extends RenderLayer {
         this.redrawNeeded.dispatch();
       }));
     }
+    this.registerDisposer(displayState.segFilter.changed.add(() => {
+      this.redrawNeeded.dispatch();
+      this.shaderGetter.invalidateShader();
+    }));
     this.hasEquivalences = this.displayState.segmentEquivalences.size !== 0;
     displayState.segmentEquivalences.changed.add(() => {
       let {segmentEquivalences} = this.displayState;
@@ -181,6 +185,7 @@ uint64_t getMappedObjectId() {
     builder.addUniform('highp uint', 'uShatterSegmentEquivalences');
     builder.addUniform('highp uint', 'uFocusMulticutSegments');
     builder.addUniform('highp float', 'uOtherSegmentsAlpha');
+    builder.addUniform('highp uint', 'uSegFilter');
     let fragmentMain = `
   uint64_t value = getMappedObjectId();
   uint64_t rawValue = getUint64DataValue();
@@ -188,6 +193,15 @@ uint64_t getMappedObjectId() {
   float alpha = uSelectedAlpha;
   float saturation = uSaturation;
 `;
+
+    // if (this.displayState.segFilter.value !== -1) {
+    fragmentMain += `
+  if (uSegFilter > value.value[0]) {
+    emit(vec4(vec4(0, 0, 0, 0)));
+    return;
+  }
+`;
+    // }
     if (this.displayState.hideSegmentZero.value) {
       fragmentMain += `
   if (value.value[0] == 0u && value.value[1] == 0u) {
@@ -282,9 +296,12 @@ uint64_t getMappedObjectId() {
     gl.uniform1f(shader.uniform('uSelectedAlpha'), this.displayState.selectedAlpha.value);
     gl.uniform1f(shader.uniform('uSaturation'), this.displayState.saturation.value);
     gl.uniform1f(shader.uniform('uNotSelectedAlpha'), this.displayState.notSelectedAlpha.value);
+    // gl.uniform1f(shader.uniform('uSegFilter'), this.displayState.segFilter.value);
     gl.uniform2ui(shader.uniform('uSelectedSegment'), selectedSegmentLow, selectedSegmentHigh);
     gl.uniform2ui(
         shader.uniform('uRawSelectedSegment'), rawSelectedSegmentLow, rawSelectedSegmentHigh);
+    gl.uniform1ui(
+      shader.uniform('uSegFilter'), this.displayState.segFilter.value);
     gl.uniform1ui(shader.uniform('uShowAllSegments'), rootSegments.hashTable.size ? 0 : 1);
     gl.uniform1ui(
         shader.uniform('uShatterSegmentEquivalences'),
