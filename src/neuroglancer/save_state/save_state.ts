@@ -18,8 +18,7 @@ export class SaveState extends RefCounted {
   supported = true;
   constructor(public root: Trackable, updateDelayMilliseconds = 400) {
     super();
-    const saverManuallyDisabled = !getOldStyleSaving().value;
-    this.supported = !storageAvailable() && saverManuallyDisabled;
+    const userDisabledSaver = !getOldStyleSaving().value;
 
     if (storageAvailable()) {
       const saveStorageString = localStorage.getItem('neuroglancerSaveState');
@@ -33,7 +32,8 @@ export class SaveState extends RefCounted {
           `Warning: Cannot access Local Storage. Unsaved changes will be lost! Use OldStyleSaving to allow for auto saving.`,
           10000);
     }
-    if (saverManuallyDisabled) {
+    if (userDisabledSaver) {
+      this.supported = false;
       StatusMessage.showTemporaryMessage(
           `Save State has been disabled because Old Style saving has been turned on in User Preferences.`,
           10000);
@@ -316,18 +316,6 @@ export const storageAvailable = () => {
     storage.removeItem(x);
     return true;
   } catch (e) {
-    return e instanceof DOMException &&
-        (
-               // everything except Firefox
-               e.code === 22 ||
-               // Firefox
-               e.code === 1014 ||
-               // test name field too, because code might not be present
-               // everything except Firefox
-               e.name === 'QuotaExceededError' ||
-               // Firefox
-               e.name === 'NS_ERROR_DOM_QUOTA_REACHED') &&
-        // acknowledge QuotaExceededError only if there's something already stored
-        (storage && storage.length !== 0);
+    return false;
   }
 };
