@@ -482,6 +482,7 @@ export class Viewer extends RefCounted implements ViewerState {
       const button = document.createElement('button');
       button.classList.add('ng-saver', 'neuroglancer-icon-button');
       button.innerText = 'Save';
+      button.title = 'Save Changes';
       if (!storageAvailable()) {
         button.classList.add('fallback');
         button.title =
@@ -494,12 +495,6 @@ export class Viewer extends RefCounted implements ViewerState {
       }
       this.registerEventListener(button, 'click', () => {
         this.postJsonState();
-        const noStateServerAccess = !this.jsonStateServer.value;
-        if (noStateServerAccess) {
-          this.hashBinding!.legacy.setUrlHash();
-          this.saver!.commit();
-          this.showSaveDialog();
-        }
       });
       this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
           this.uiControlVisibility.showSaveButton, button));
@@ -507,7 +502,7 @@ export class Viewer extends RefCounted implements ViewerState {
     }
 
     {
-      const button = makeTextIconButton('$', 'Save History');
+      const button = makeTextIconButton('$', 'View Save History');
       this.registerEventListener(button, 'click', () => {
         this.showHistory();
       });
@@ -853,6 +848,14 @@ export class Viewer extends RefCounted implements ViewerState {
             this.promptJsonStateServer('state server not responding, enter a new one?');
             if (this.jsonStateServer.value) {
               this.postJsonState();
+            }
+          })
+          .finally(() => {
+            const noStateServerAccess = !this.jsonStateServer.value;
+            if (noStateServerAccess) {
+              this.hashBinding!.legacy.setUrlHash();
+              this.saver!.commit();
+              this.showSaveDialog();
             }
           });
     }
