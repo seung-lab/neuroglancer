@@ -14,11 +14,11 @@ import {Viewer} from 'neuroglancer/viewer';
 export class SaveState extends RefCounted {
   private activeKey?: string|null;
   lastKey?: string|null;
-  saveStorage: any = {};
+  saveStorage: {[key: string]: SaveEntry;} = {};
   supported = true;
   constructor(public root: Trackable, updateDelayMilliseconds = 400) {
     super();
-    const userDisabledSaver = !getOldStyleSaving().value;
+    const userDisabledSaver = getOldStyleSaving().value;
 
     if (storageAvailable()) {
       const saveStorageString = localStorage.getItem('neuroglancerSaveState');
@@ -100,7 +100,7 @@ export class SaveState extends RefCounted {
           this.root.restoreState(entry.state);
         } else {
           // older valid state
-          this.remoteLoad(entry.source_url);
+          this.remoteLoad(entry.source_url!);
         }
       } else {
         StatusMessage.showTemporaryMessage(
@@ -133,10 +133,10 @@ export class SaveState extends RefCounted {
         const entry = this.saveStorage[this.activeKey];
         entry.state = null;
         entry.source_url = source_url;
-        this.activeKey = null;
       } else {
-        this.saveStorage[this.activeKey] = null;
+        delete this.saveStorage[this.activeKey];
       }
+      this.activeKey = null;
       this.push();
     }
   }
@@ -179,7 +179,9 @@ class SaveDialog extends Overlay {
     } else {
       if (saver.supported) {
         let entry = saver.saveStorage[saver.lastKey];
-        jsonUrl = `${urlStart}?json_url=${entry.source_url}`;
+        if (entry) {
+          jsonUrl = `${urlStart}?json_url=${entry.source_url}`;
+        }
       }
       if (!jsonUrl) {
         jsonUrl = 'NOT AVALABLE';
@@ -245,7 +247,7 @@ class SaveStateDialog extends Overlay {
       content.appendChild(modal);
 
       table.classList.add('ng-zebra-table');
-      saves.forEach(this.tableEntry);
+      saves.forEach(this.tableEntry.bind(this));
 
       const clear = document.createElement('button');
       clear.innerText = 'Clear';

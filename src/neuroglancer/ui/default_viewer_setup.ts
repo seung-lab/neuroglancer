@@ -32,7 +32,7 @@ export function setupDefaultViewer() {
   viewer.loadFromJsonUrl();
   viewer.saver = viewer.registerDisposer(new SaveState(viewer.state));
   if (!viewer.saver.supported) {
-    legacy.hashBinding.fallback();
+    legacy.hashBinding.legacy.fallback();
   }
 
   bindDefaultCopyHandler(viewer);
