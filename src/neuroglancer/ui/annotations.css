@@ -198,3 +198,19 @@
 .neuroglancer-annotation-inprogress {
   color: #3c3;
 }
+
+.neuroglancer-annotation-editing {
+  background-color: #3c3 !important;
+}
+
+@keyframes pulseSelect {
+  from { background-color: blue; -webkit-box-shadow: 0 0 9px black; }
+  50% { background-color: rgb(0, 157, 255); -webkit-box-shadow: 0 0 18px rgb(0, 157, 255); }
+  to { background-color: blue; -webkit-box-shadow: 0 0 9px black; }
+}
+
+.neuroglancer-annotation-first .neuroglancer-annotation-multiple {
+  animation-name: pulseSelect;
+  animation-duration: 1;
+  animation-iteration-count: infinite;
+}
