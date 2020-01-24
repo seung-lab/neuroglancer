@@ -495,7 +495,7 @@ export abstract class RenderedDataPanel extends RenderedPanel {
           navigationState.pose.translateVoxelsRelative(offset);
         });
 
-    for (const amount of [1, 10, 100, 1000]) {
+    for (const amount of [1, -10, 10, -100, 100, -1000, 1000]) {
       registerActionListener(element, `z+${amount}-via-wheel`, (event: ActionEvent<WheelEvent>) => {
         const e = event.detail;
         let {navigationState} = this;
