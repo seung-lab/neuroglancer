@@ -17,6 +17,7 @@
 import './user_layer.css';
 
 import {Annotation, AnnotationId, AnnotationType, LocalAnnotationSource} from 'neuroglancer/annotation';
+import {AnnotationLayerView} from 'neuroglancer/annotation/annotation_layer_view';
 import {AnnotationLayerState} from 'neuroglancer/annotation/frontend';
 import {CoordinateTransform, makeDerivedCoordinateTransform} from 'neuroglancer/coordinate_transform';
 import {LayerReference, ManagedUserLayer, UserLayer} from 'neuroglancer/layer';
@@ -27,7 +28,7 @@ import {SegmentationUserLayer} from 'neuroglancer/segmentation_user_layer';
 import {StatusMessage} from 'neuroglancer/status';
 import {ElementVisibilityFromTrackableBoolean, TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
 import {makeDerivedWatchableValue, WatchableValue} from 'neuroglancer/trackable_value';
-import {AnnotationLayerView, getAnnotationRenderOptions, UserLayerWithAnnotationsMixin} from 'neuroglancer/ui/annotations';
+import {getAnnotationRenderOptions, UserLayerWithAnnotationsMixin} from 'neuroglancer/ui/annotations';
 import {UserLayerWithCoordinateTransformMixin} from 'neuroglancer/user_layer_with_coordinate_transform';
 import {Borrowed, RefCounted, registerEventListener} from 'neuroglancer/util/disposable';
 import {EventActionMap, registerActionListener} from 'neuroglancer/util/event_action_map';
