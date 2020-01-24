@@ -1,6 +1,5 @@
 import { Tab } from "../widget/tab_view";
 import { AnnotationLayerState } from "./frontend";
-import { AnnotationLayerState } from "./annotation_layer_state";
 
 export class AnnotationTab extends Tab {
     private stack = this.registerDisposer(
