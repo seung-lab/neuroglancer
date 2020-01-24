@@ -1,3 +1,4 @@
+import {Annotation, AnnotationSource, AnnotationTag, AnnotationType, Collection, Ellipsoid, getAnnotationTypeHandler, Line, LineStrip, LocalAnnotationSource, makeAnnotationId, Point, Spoke} from 'neuroglancer/annotation';
 import {AnnotationTool, MultiStepAnnotationTool, PlaceAnnotationTool, SubAnnotationTool} from 'neuroglancer/annotation/annotation';
 import {PlaceBoundingBoxTool} from 'neuroglancer/annotation/bounding_box';
 import {PlaceCollectionTool} from 'neuroglancer/annotation/collection';
@@ -19,8 +20,6 @@ import {ColorWidget} from 'neuroglancer/widget/color';
 import {MinimizableGroupWidget} from 'neuroglancer/widget/minimizable_group';
 import {RangeWidget} from 'neuroglancer/widget/range';
 import {Tab} from 'neuroglancer/widget/tab_view';
-
-import {Annotation, AnnotationSource, AnnotationTag, AnnotationType, Collection, Ellipsoid, getAnnotationTypeHandler, Line, LineStrip, LocalAnnotationSource, makeAnnotationId, Point, Spoke} from '.';
 
 const tempVec3 = vec3.create();
 
@@ -55,7 +54,6 @@ export class AnnotationLayerView extends Tab {
   private annotationHidingList: HidingList;
   private annotationsToAdd: HTMLElement[] = [];
   private annotationTags = new Map<number, HTMLOptionElement>();
-  private selectHistory: string[] = [];
   private previousHoverId: string|undefined;
   private updated = false;
   private toolbox: HTMLDivElement;
