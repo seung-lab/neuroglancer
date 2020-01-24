@@ -21,47 +21,26 @@
 import './annotations.css';
 
 import debounce from 'lodash/debounce';
-import {Annotation, AnnotationReference, AnnotationSource, AnnotationTag, AnnotationType, AxisAlignedBoundingBox, Collection, Ellipsoid, getAnnotationTypeHandler, Line, LineStrip, LocalAnnotationSource, makeAnnotationId, Point, Spoke} from 'neuroglancer/annotation';
-import {AnnotationTool, MultiStepAnnotationTool, PlaceAnnotationTool, SubAnnotationTool} from 'neuroglancer/annotation/annotation';
-import {PlaceBoundingBoxTool} from 'neuroglancer/annotation/bounding_box';
-import {PlaceSphereTool} from 'neuroglancer/annotation/ellipsoid';
+import {Annotation, AnnotationReference, AnnotationType} from 'neuroglancer/annotation';
+import {AnnotationLayerView} from 'neuroglancer/annotation/annotation_layer_view';
+import {AnnotationTab} from 'neuroglancer/annotation/annotation_tab';
 import {AnnotationLayer, AnnotationLayerState, PerspectiveViewAnnotationLayer, SliceViewAnnotationLayer} from 'neuroglancer/annotation/frontend';
 import {DataFetchSliceViewRenderLayer, MultiscaleAnnotationSource} from 'neuroglancer/annotation/frontend_source';
-import {PlaceLineTool} from 'neuroglancer/annotation/line';
-import {PlaceLineStripTool} from 'neuroglancer/annotation/line_strip';
-import {PlacePointTool} from 'neuroglancer/annotation/point';
 import {setAnnotationHoverStateFromMouseState} from 'neuroglancer/annotation/selection';
-import {PlaceSpokeTool} from 'neuroglancer/annotation/spoke';
 import {UserLayer} from 'neuroglancer/layer';
 import {VoxelSize} from 'neuroglancer/navigation_state';
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
-import {StatusMessage} from 'neuroglancer/status';
 import {TrackableAlphaValue, trackableAlphaValue} from 'neuroglancer/trackable_alpha';
-import {TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
-import {registerNested, TrackableValueInterface, WatchableRefCounted, WatchableValue} from 'neuroglancer/trackable_value';
-import {HidingList} from 'neuroglancer/ui/hiding_list';
+import {registerNested, TrackableValueInterface, WatchableRefCounted} from 'neuroglancer/trackable_value';
 import {TrackableRGB} from 'neuroglancer/util/color';
 import {Borrowed, Owned, RefCounted} from 'neuroglancer/util/disposable';
-import {removeChildren} from 'neuroglancer/util/dom';
 import {mat4, transformVectorByMat4, vec3} from 'neuroglancer/util/geom';
 import {verifyObject, verifyObjectProperty, verifyOptionalInt, verifyString} from 'neuroglancer/util/json';
 import {NullarySignal} from 'neuroglancer/util/signal';
-import {formatBoundingBoxVolume, formatIntegerBounds, formatIntegerPoint, formatLength} from 'neuroglancer/util/spatial_units';
+import {formatIntegerBounds, formatIntegerPoint} from 'neuroglancer/util/spatial_units';
 import {Uint64} from 'neuroglancer/util/uint64';
-import {WatchableVisibilityPriority} from 'neuroglancer/visibility_priority/frontend';
-import {makeCloseButton} from 'neuroglancer/widget/close_button';
-import {ColorWidget} from 'neuroglancer/widget/color';
-import {MinimizableGroupWidget} from 'neuroglancer/widget/minimizable_group';
-import {RangeWidget} from 'neuroglancer/widget/range';
-import {StackView, Tab} from 'neuroglancer/widget/tab_view';
-import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
 import {Uint64EntryWidget} from 'neuroglancer/widget/uint64_entry_widget';
 
-import {AnnotationDetailsTab} from '../annotation/annotation_details_tab';
-import {AnnotationLayerView} from '../annotation/annotation_layer_view';
-import {PlaceCollectionTool} from '../annotation/collection';
-
-const Papa = require('papaparse');
 
 type AnnotationIdAndPart = {
   id: string,
@@ -188,6 +167,7 @@ export class AnnotationSegmentListWidget extends RefCounted {
     });
   }
 }
+
 export class SelectedAnnotationState extends RefCounted implements
     TrackableValueInterface<AnnotationIdAndPart|undefined> {
   private value_: AnnotationIdAndPart|undefined;
@@ -377,7 +357,6 @@ export function getPositionSummary(
     }
   }
 }
-
 
 export interface UserLayerWithAnnotations extends UserLayer {
   annotationLayerState: WatchableRefCounted<AnnotationLayerState>;

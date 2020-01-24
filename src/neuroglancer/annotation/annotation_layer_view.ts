@@ -773,8 +773,8 @@ export class AnnotationLayerView extends Tab {
       this.setPadding(element, depth);
     }
 
-    const collection = <Collection>annotation;
-    if (collection.entries && !collection.childrenVisible.value) {
+    const collectionAnnotation = <Collection>annotation;
+    if (collectionAnnotation.entries && !collectionAnnotation.childrenVisible.value) {
       this.setChildrenVisibleHelper(element.dataset.id, false);
     }
 
@@ -834,9 +834,9 @@ export class AnnotationLayerView extends Tab {
       if (visible) {
         child.classList.remove('neuroglancer-annotation-child-hidden');
         const annotation = this.annotationLayer.source.getReference(childId).value;
-        const collection = <Collection>annotation;
+        const collectionAnnotation = <Collection>annotation;
         // expand the children if they had been shown before collapsing this
-        if (collection.entries && collection.childrenVisible.value) {
+        if (collectionAnnotation.entries && collectionAnnotation.childrenVisible.value) {
           this.setChildrenVisibleHelper(childId, true);
         }
       } else {
