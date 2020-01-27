@@ -55,6 +55,7 @@ export class AnnotationLayerView extends Tab {
   private annotationsToAdd: HTMLElement[] = [];
   private annotationTags = new Map<number, HTMLOptionElement>();
   private previousHoverId: string|undefined;
+  private previousSelectedId: string|undefined;
   private updated = false;
   private toolbox: HTMLDivElement;
   private buttonMap: any = {};
@@ -391,11 +392,10 @@ export class AnnotationLayerView extends Tab {
 
   private handleMultiple() {
     const selectedValue = this.state.value;
-    if (!selectedValue || !selectedValue.multiple) {
+    const {previousSelectedId} = this;
+    if (!selectedValue || !selectedValue.multiple || !previousSelectedId) {
       return;
     }
-    const first = [...selectedValue.multiple][0];
-    const previousSelectedId = first;
     const element = this.annotationListElements.get(previousSelectedId);
     const multiple = Array.from(selectedValue.multiple);
     if (element !== undefined && multiple.length && multiple.includes(previousSelectedId)) {
@@ -404,10 +404,15 @@ export class AnnotationLayerView extends Tab {
   }
 
   private clearSelectionClass() {
+    const {previousSelectedId} = this;
     const selectedKey = 'neuroglancer-annotation-selected';
-    const oldSelected =
-        Array.from(this.annotationListContainer.querySelectorAll(`.${selectedKey}`));
-    oldSelected.forEach((e: HTMLElement) => e.classList.remove(selectedKey));
+    if (previousSelectedId !== undefined) {
+      const element = this.annotationListElements.get(previousSelectedId);
+      if (element !== undefined) {
+        element.classList.remove(selectedKey);
+      }
+      this.previousSelectedId = undefined;
+    }
   }
 
   private clearHoverClass() {
@@ -437,8 +442,9 @@ export class AnnotationLayerView extends Tab {
       const multiset = selectedValue.multiple;
       multiple = multiset ? [...multiset] : [];
     }
-    const previousSelectedId = multiple[0];
-    if (newSelectedId === previousSelectedId && !multiple.length) {
+    const {previousSelectedId} = this;
+    const removedFromMultiple = newSelectedId ? !multiple.includes(newSelectedId) : false;
+    if (newSelectedId === previousSelectedId || removedFromMultiple) {
       return;
     }
     this.handleMultiple();
@@ -454,13 +460,11 @@ export class AnnotationLayerView extends Tab {
         // TODO: Why? This is a anti user ui pattern
         this.annotationHidingList.scrollTo(element);
       }
-    } else {
-      this.selectHistory = [];
     }
+    this.previousSelectedId = newSelectedId;
 
     const multipleStyled = this.annotationListContainer.querySelector(`.${multipleKey}`);
     if (!multiple.length && multipleStyled) {
-      this.selectHistory = (this.state.value!.id) ? [this.state.value!.id] : [];
       const multiselected =
           Array.from(this.annotationListContainer.querySelectorAll(`.${multipleKey}`));
       multiselected.forEach((e: HTMLElement) => e.classList.remove(multipleKey));
