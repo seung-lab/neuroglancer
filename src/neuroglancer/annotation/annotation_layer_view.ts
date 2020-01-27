@@ -391,11 +391,11 @@ export class AnnotationLayerView extends Tab {
 
   private handleMultiple() {
     const selectedValue = this.state.value;
-    const {selectHistory} = this;
-    if (!selectedValue || !selectedValue.multiple || !selectHistory.length) {
+    if (!selectedValue || !selectedValue.multiple) {
       return;
     }
-    const previousSelectedId = selectHistory[0];
+    const first = [...selectedValue.multiple][0];
+    const previousSelectedId = first;
     const element = this.annotationListElements.get(previousSelectedId);
     const multiple = Array.from(selectedValue.multiple);
     if (element !== undefined && multiple.length && multiple.includes(previousSelectedId)) {
@@ -431,13 +431,13 @@ export class AnnotationLayerView extends Tab {
     const multipleKey = 'neuroglancer-annotation-multiple';
     let newSelectedId: string|undefined;
     let multiple: string[] = [];
-    let multiset: Set<string>|undefined;
+    // let multiset: Set<string>|undefined;
     if (selectedValue !== undefined) {
       newSelectedId = selectedValue.id;
-      multiset = selectedValue.multiple;
-      multiple = multiset ? Array.from(multiset) : [];
+      const multiset = selectedValue.multiple;
+      multiple = multiset ? [...multiset] : [];
     }
-    const previousSelectedId = this.selectHistory[0];
+    const previousSelectedId = multiple[0];
     if (newSelectedId === previousSelectedId && !multiple.length) {
       return;
     }
@@ -450,23 +450,7 @@ export class AnnotationLayerView extends Tab {
         if (selectedValue && selectedValue.edit === selectedValue.id) {
           element.classList.add(selectedKey);
         }
-        const alreadySelected =
-            multiset && multiset.size && this.selectHistory.includes(newSelectedId);
-        if (alreadySelected) {
-          element.classList.remove(selectedKey, multipleKey);
-          const target = this.selectHistory.indexOf(newSelectedId);
-          this.selectHistory.splice(target, 1);
-          this.state.value!.id = this.selectHistory[0];
-          if (!this.selectHistory.length) {
-            multiple = [];
-          }
-        } else {
-          element.classList.add(selectedKey);
-          if (multiple.length) {
-            element.classList.add(multipleKey);
-          }
-          this.selectHistory.unshift(newSelectedId);
-        }
+
         // TODO: Why? This is a anti user ui pattern
         this.annotationHidingList.scrollTo(element);
       }
@@ -655,15 +639,16 @@ export class AnnotationLayerView extends Tab {
     this.updateSelectionView();
   }
 
-  selectAnnotationElement(multiple: Set<string>, annotationId: string, previousId?: string) {
-    if (this.state.value) {
-      if (this.state.value.multiple) {
-        multiple = this.state.value.multiple;
-      } else if (this.state.value.ungroupable) {
+  selectAnnotationElement(annotationId: string, previousId?: string) {
+    let multiple = new Set<string>();
+    const state = this.state.value;
+    if (state) {
+      if (state.multiple) {
+        multiple = state.multiple;
+      } else if (state.ungroupable) {
         // Cannot select line segment for group
       } else {
-        // FIXME: spurious add; needed for ctrl add
-        multiple.add(previousId || this.state.value!.id);
+        multiple.add(previousId || state.id);
       }
     }
 
@@ -716,10 +701,9 @@ export class AnnotationLayerView extends Tab {
       if (element) {
         element.classList.add('neuroglancer-annotation-multiple');
       }
-      this.selectHistory.unshift(id);
-      // element?.classList.add('neuroglancer-annotation-multiple'); TODO: Optional Chaining doesn't
-      // work w/ Webpack yet
-      multiple = <any>this.selectAnnotationElement(multiple, id, n!? origin : list[n - 1]);
+      // element?.classList.add('neuroglancer-annotation-multiple');
+      // TODO: Optional Chaining doesn't work w/ Webpack yet
+      multiple = <any>this.selectAnnotationElement(id, n!? origin : list[n - 1]);
     });
 
     return multiple;
@@ -781,18 +765,22 @@ export class AnnotationLayerView extends Tab {
     });
 
     element.addEventListener('click', (event: MouseEvent) => {
-      let multiple: Set<string>|undefined = new Set<string>();
-      let modifier = true;
-      let edit = this.state.value ? this.state.value.edit : undefined;
-      if (event.ctrlKey || event.metaKey || (event.shiftKey && !this.selectHistory.length)) {
-        multiple = this.selectAnnotationElement(multiple, annotation.id);
-      } else if (event.shiftKey) {
-        multiple = this.shiftSelect(this.selectHistory[0], annotation.id);
-      } else {
-        modifier = false;
-        multiple = undefined;
+      let multiple, previousSelections, previousSelectionsExist, edit;
+      const state = this.state.value;
+      if (state) {
+        previousSelections = state.multiple;
+        previousSelectionsExist = previousSelections ? previousSelections.size : 0;
+        edit = state.edit;
       }
-      this.state.value = {id: annotation.id, partIndex: 0, multiple, modifier, edit};
+
+      if (event.ctrlKey || event.metaKey || (event.shiftKey && !previousSelectionsExist)) {
+        multiple = this.selectAnnotationElement(annotation.id);
+      } else if (event.shiftKey) {
+        const first = [...(<Set<string>>previousSelections)][0];
+        multiple = this.shiftSelect(first, annotation.id);
+      }
+
+      this.state.value = {id: annotation.id, multiple, edit};
       event.stopPropagation();
     });
 
