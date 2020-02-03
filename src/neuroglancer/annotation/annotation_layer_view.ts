@@ -446,6 +446,7 @@ export class AnnotationLayerView extends Tab {
   private updateSelectionView() {
     const state = this.state.value;
     const {previousSelectedId} = this;
+    const editingKey = 'neuroglancer-annotation-editing';
     let newSelectedId: string|undefined;
     let multiple: string[] = [];
 
@@ -457,10 +458,6 @@ export class AnnotationLayerView extends Tab {
     const removedFromMultiple =
         newSelectedId ? !multiple.includes(newSelectedId) && multiple.length : false;
     if (newSelectedId === previousSelectedId || removedFromMultiple) {
-      /*if (multiple.length && state) {
-        newSelectedId = this.state.value = multiple[multiple.length - 1];
-        this.previousSelectedId =
-      }*/
       return;
     }
     this.clearSelectionClass();
@@ -470,7 +467,7 @@ export class AnnotationLayerView extends Tab {
       if (element !== undefined) {
         element.classList.add('neuroglancer-annotation-selected');
         if (state!.edit === state!.id) {
-          element.classList.add('neuroglancer-annotation-editing');
+          element.classList.add(editingKey);
         }
 
         // TODO: Why? This is a anti user ui pattern
@@ -628,6 +625,7 @@ export class AnnotationLayerView extends Tab {
     }
     const {annotationHidingList} = this;
     const newElement = this.makeAnnotationListElement(annotation);
+    newElement.classList.add(...[...element.classList]);
     annotationHidingList.replaceElement(newElement, element);
     annotationListElements.set(annotation.id, newElement);
     this.resetOnUpdate();
@@ -689,7 +687,7 @@ export class AnnotationLayerView extends Tab {
       multiple.add(annotationId);
       element.classList.add(multipleKey);
     }
-    return multiple.size > 1 ? multiple : undefined;
+    return multiple;
   }
 
   shiftSelect(origin: string, target: string) {
@@ -791,6 +789,7 @@ export class AnnotationLayerView extends Tab {
 
     element.addEventListener('click', (event: MouseEvent) => {
       let lastSelected, groupable, edit;
+      let selectedId = annotation.id;
       const state = this.state.value;
       if (state) {
         lastSelected = [...(state.multiple || [])].pop();
@@ -801,12 +800,17 @@ export class AnnotationLayerView extends Tab {
       let multiple;
       if (event.ctrlKey || event.metaKey || (event.shiftKey && !groupable)) {
         multiple = this.selectAnnotationInGroup(annotation.id);
+        if (multiple && multiple.size <= 1) {
+          selectedId = [...multiple].pop()!;
+          multiple = undefined;
+          this.previousSelectedId = undefined;
+        }
       } else if (event.shiftKey && groupable) {
         const first = lastSelected ? lastSelected : state!.id;
         multiple = this.shiftSelect(first, annotation.id);
       }
 
-      this.state.value = {id: annotation.id, multiple, edit};
+      this.state.value = {id: selectedId, multiple, edit};
       event.stopPropagation();
     });
 

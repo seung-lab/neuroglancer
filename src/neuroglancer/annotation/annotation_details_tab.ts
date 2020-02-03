@@ -505,6 +505,12 @@ export class AnnotationDetailsTab extends Tab {
       value.ungroupable = true;
     }
 
+    // FIXME: TODO: Hack
+    const liveEdit = document.querySelector(`.neuroglancer-annotation-editing`);
+    if (liveEdit && this.state && this.state.value) {
+      this.state.value.edit = (<HTMLElement>liveEdit).dataset.id;
+    }
+
     const contextualButtons = <HTMLDivElement[]>[];
     if (!annotationLayer.source.readonly) {
       const {COLLECTION, LINE_STRIP, SPOKE} = AnnotationType;
