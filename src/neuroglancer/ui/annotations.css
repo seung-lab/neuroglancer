@@ -207,8 +207,8 @@
   to { background-color: blue; -webkit-box-shadow: 0 0 9px black; }
 }
 
-.neuroglancer-annotation-first .neuroglancer-annotation-multiple {
+.neuroglancer-annotation-first.neuroglancer-annotation-multiple {
   animation-name: pulseSelect;
-  animation-duration: 1;
+  animation-duration: 2s;
   animation-iteration-count: infinite;
 }
