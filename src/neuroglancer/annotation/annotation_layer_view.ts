@@ -48,6 +48,11 @@ function getCenterPosition(annotation: Annotation, transform: mat4) {
   return vec3.transformMat4(center, center, transform);
 }
 
+interface StateOverride {
+  id?: string;
+  multiple?: Set<string>;
+}
+
 export class AnnotationLayerView extends Tab {
   private annotationListContainer = document.createElement('ul');
   private annotationListElements = new Map<string, HTMLElement>();
@@ -390,16 +395,24 @@ export class AnnotationLayerView extends Tab {
         new HidingList(scrollArea, scrollbar, scrollbarFiller, this.groupAnnotations.element);
   }
 
-  private handleMultiple() {
+  private designateFirst() {
     const selectedValue = this.state.value;
-    const {previousSelectedId} = this;
-    if (!selectedValue || !selectedValue.multiple || !previousSelectedId) {
+    if (!selectedValue || !selectedValue.multiple) {
       return;
     }
-    const element = this.annotationListElements.get(previousSelectedId);
-    const multiple = Array.from(selectedValue.multiple);
-    if (element !== undefined && multiple.length && multiple.includes(previousSelectedId)) {
-      element.classList.add('neuroglancer-annotation-multiple');
+    const multiple = [...selectedValue.multiple];
+    const first = multiple[0];
+    const firstKey = 'neuroglancer-annotation-first';
+    if (first) {
+      const element = this.annotationListElements.get(first);
+      const oldFirst = this.annotationListContainer.querySelector(`.${firstKey}`);
+      if (oldFirst) {
+        oldFirst.classList.remove('neuroglancer-annotation-first');
+      }
+      if (element && !element.classList.contains(firstKey)) {
+        element.classList.add('neuroglancer-annotation-multiple');
+        element.classList.add(firstKey);
+      }
     }
   }
 
@@ -431,44 +444,46 @@ export class AnnotationLayerView extends Tab {
   }
 
   private updateSelectionView() {
-    const selectedValue = this.state.value;
-    const selectedKey = 'neuroglancer-annotation-selected';
-    const multipleKey = 'neuroglancer-annotation-multiple';
+    const state = this.state.value;
+    const {previousSelectedId} = this;
     let newSelectedId: string|undefined;
     let multiple: string[] = [];
-    // let multiset: Set<string>|undefined;
-    if (selectedValue !== undefined) {
-      newSelectedId = selectedValue.id;
-      const multiset = selectedValue.multiple;
-      multiple = multiset ? [...multiset] : [];
+
+    this.designateFirst();
+    if (state) {
+      newSelectedId = state.id;
+      multiple = [...(state.multiple || [])];
     }
-    const {previousSelectedId} = this;
-    const removedFromMultiple = newSelectedId ? !multiple.includes(newSelectedId) : false;
+    const removedFromMultiple =
+        newSelectedId ? !multiple.includes(newSelectedId) && multiple.length : false;
     if (newSelectedId === previousSelectedId || removedFromMultiple) {
+      /*if (multiple.length && state) {
+        newSelectedId = this.state.value = multiple[multiple.length - 1];
+        this.previousSelectedId =
+      }*/
       return;
     }
-    this.handleMultiple();
     this.clearSelectionClass();
 
     if (newSelectedId !== undefined) {
       const element = this.annotationListElements.get(newSelectedId);
       if (element !== undefined) {
-        if (selectedValue && selectedValue.edit === selectedValue.id) {
-          element.classList.add(selectedKey);
+        element.classList.add('neuroglancer-annotation-selected');
+        if (state!.edit === state!.id) {
+          element.classList.add('neuroglancer-annotation-editing');
         }
 
         // TODO: Why? This is a anti user ui pattern
         this.annotationHidingList.scrollTo(element);
       }
     }
-    this.previousSelectedId = newSelectedId;
-
-    const multipleStyled = this.annotationListContainer.querySelector(`.${multipleKey}`);
-    if (!multiple.length && multipleStyled) {
-      const multiselected =
-          Array.from(this.annotationListContainer.querySelectorAll(`.${multipleKey}`));
-      multiselected.forEach((e: HTMLElement) => e.classList.remove(multipleKey));
+    if (!multiple.length) {
+      [...this.annotationListElements].forEach((ele) => {
+        ele[1].classList.remove(
+            'neuroglancer-annotation-multiple', 'neuroglancer-annotation-first');
+      });
     }
+    this.previousSelectedId = newSelectedId;
   }
 
   private updateHoverView() {
@@ -643,33 +658,42 @@ export class AnnotationLayerView extends Tab {
     this.updateSelectionView();
   }
 
-  selectAnnotationElement(annotationId: string, previousId?: string) {
-    let multiple = new Set<string>();
+  handleInitialMultipleState(override: StateOverride) {
     const state = this.state.value;
-    if (state) {
-      if (state.multiple) {
-        multiple = state.multiple;
-      } else if (state.ungroupable) {
-        // Cannot select line segment for group
-      } else {
-        multiple.add(previousId || state.id);
-      }
+
+    if (override.multiple) {
+      return override.multiple;
     }
+
+    if (state) {
+      if (state.ungroupable) {
+        return;
+      }
+      return state.multiple ? state.multiple : new Set<string>([override.id || state.id]);
+    }
+    return;
+  }
+
+  selectAnnotationInGroup(annotationId: string, previousId?: string, givenSet?: Set<string>) {
+    const element = this.annotationListElements.get(annotationId);
+    const multiple = this.handleInitialMultipleState({id: previousId, multiple: givenSet});
+    if (!element || !multiple) {
+      return;
+    }
+    const multipleKey = 'neuroglancer-annotation-multiple';
 
     if (multiple.has(annotationId)) {
       multiple.delete(annotationId);
+      element.classList.remove(multipleKey);
     } else {
       multiple.add(annotationId);
+      element.classList.add(multipleKey);
     }
-
-    if (!multiple.size) {
-      return;
-    }
-    return multiple;
+    return multiple.size > 1 ? multiple : undefined;
   }
 
   shiftSelect(origin: string, target: string) {
-    let multiple = new Set<string>();
+    let multiple: Set<string>|undefined;
     const source = (<AnnotationSource>this.annotationLayer.source);
     let pList: string[]|null = [];
     let nList: string[]|null = [];
@@ -677,10 +701,11 @@ export class AnnotationLayerView extends Tab {
     while (pList || nList) {
       if (pList) {
         let prev: any = source.getPrevAnnotation(!pList.length ? origin : pList[pList.length - 1]);
-        if (pList[pList.length - 1] === target) {
+        const current = pList[pList.length - 1];
+        if (current === target) {
           nList = null;
           break;
-        } else if (!prev || prev.loopedOver) {
+        } else if (!prev || prev.loopedOver || current === origin) {
           pList = null;
         } else {
           pList.push(prev.id);
@@ -688,10 +713,11 @@ export class AnnotationLayerView extends Tab {
       }
       if (nList) {
         let next: any = source.getNextAnnotation(!nList.length ? origin : nList[nList.length - 1]);
-        if (nList[nList.length - 1] === target) {
+        const current = nList[nList.length - 1];
+        if (current === target) {
           pList = null;
           break;
-        } else if (!next || next.loopedOver) {
+        } else if (!next || next.loopedOver || current === origin) {
           nList = null;
         } else {
           nList.push(next.id);
@@ -700,14 +726,9 @@ export class AnnotationLayerView extends Tab {
     }
     const shiftList = nList || pList || [];
     shiftList.forEach((id, n, list) => {
-      // FIXME: This bypasses the normal way styles are set
-      const element = this.annotationListContainer.querySelector(`[data-id="${id}"]`);
-      if (element) {
-        element.classList.add('neuroglancer-annotation-multiple');
-      }
       // element?.classList.add('neuroglancer-annotation-multiple');
       // TODO: Optional Chaining doesn't work w/ Webpack yet
-      multiple = <any>this.selectAnnotationElement(id, n!? origin : list[n - 1]);
+      multiple = <any>this.selectAnnotationInGroup(id, n!? origin : list[n - 1], multiple);
     });
 
     return multiple;
@@ -769,18 +790,19 @@ export class AnnotationLayerView extends Tab {
     });
 
     element.addEventListener('click', (event: MouseEvent) => {
-      let multiple, previousSelections, previousSelectionsExist, edit;
+      let lastSelected, groupable, edit;
       const state = this.state.value;
       if (state) {
-        previousSelections = state.multiple;
-        previousSelectionsExist = previousSelections ? previousSelections.size : 0;
+        lastSelected = [...(state.multiple || [])].pop();
+        const otherSelected = annotation.id !== state.id;
+        groupable = lastSelected || otherSelected;
         edit = state.edit;
       }
-
-      if (event.ctrlKey || event.metaKey || (event.shiftKey && !previousSelectionsExist)) {
-        multiple = this.selectAnnotationElement(annotation.id);
-      } else if (event.shiftKey) {
-        const first = [...(<Set<string>>previousSelections)][0];
+      let multiple;
+      if (event.ctrlKey || event.metaKey || (event.shiftKey && !groupable)) {
+        multiple = this.selectAnnotationInGroup(annotation.id);
+      } else if (event.shiftKey && groupable) {
+        const first = lastSelected ? lastSelected : state!.id;
         multiple = this.shiftSelect(first, annotation.id);
       }
 

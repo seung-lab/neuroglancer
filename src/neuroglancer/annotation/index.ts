@@ -509,15 +509,17 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     return existingAnnotation;
   }
 
-  bypass(source: AnnotationNode|undefined, next: boolean) {
+  bypass(source: AnnotationNode|undefined, forward: boolean) {
     // FIXME: HACK
     if (!source) {
       return;
     }
+    const next =  forward;
+    const prev = !forward;
     const area = document.querySelector('.neuroglancer-annotation-hiding-list-scrollarea')!;
     const head = area.firstElementChild ? (<HTMLElement>area.firstElementChild).dataset.id : null;
-    const tail = area.lastElementChild ? (<HTMLElement>area.lastElementChild).dataset.id : null;
-    const loopedOver = (next && source.id === tail) || (!next && source.id === head);
+    const tail = head ? this.annotationMap.get(head)!.prev.id : null;
+    const loopedOver = (next && source.id === tail) || (prev && source.id === head);
     // (source!.prev.id === tail) || (source!.next.id === head) ;
     return <any>{...next ? source.next : source.prev, loopedOver};
   }
