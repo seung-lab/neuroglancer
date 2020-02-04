@@ -509,14 +509,14 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     return existingAnnotation;
   }
 
-  bypass(source: AnnotationNode|undefined, forward: boolean) {
+  bypass(source: AnnotationNode|undefined, view: HTMLElement, forward: boolean) {
     // FIXME: HACK
     if (!source) {
       return;
     }
     const next =  forward;
     const prev = !forward;
-    const area = document.querySelector('.neuroglancer-annotation-hiding-list-scrollarea')!;
+    const area = view.firstElementChild ? view.firstElementChild : document.createElement('div');
     const head = area.firstElementChild ? (<HTMLElement>area.firstElementChild).dataset.id : null;
     const tail = head ? this.annotationMap.get(head)!.prev.id : null;
     const loopedOver = (next && source.id === tail) || (prev && source.id === head);
@@ -524,20 +524,20 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     return <any>{...next ? source.next : source.prev, loopedOver};
   }
 
-  getNextAnnotation(id: AnnotationId): Annotation|undefined {
+  getNextAnnotation(id: AnnotationId, viewContainer?: HTMLElement): Annotation|undefined {
     const existingAnnotation = this.annotationMap.get(id);
-    if (existingAnnotation) {
-      return this.bypass(existingAnnotation, true);
+    if (viewContainer) {
+      return this.bypass(existingAnnotation, viewContainer, true);
     }
-    return;
+    return existingAnnotation;
   }
 
-  getPrevAnnotation(id: AnnotationId): Annotation|undefined {
+  getPrevAnnotation(id: AnnotationId, viewContainer?: HTMLElement): Annotation|undefined {
     const existingAnnotation = this.annotationMap.get(id);
-    if (existingAnnotation) {
-      return this.bypass(existingAnnotation, false);
+    if (viewContainer) {
+      return this.bypass(existingAnnotation, viewContainer, false);
     }
-    return;
+    return existingAnnotation;
   }
 
   private addHelper(annotation: Annotation, commit: boolean, parentReference?: AnnotationReference):

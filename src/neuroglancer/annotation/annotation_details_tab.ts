@@ -13,7 +13,8 @@ import {makeCloseButton} from 'neuroglancer/widget/close_button';
 import {Tab} from 'neuroglancer/widget/tab_view';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
 import {getPreserveSourceAnnotations} from '../preferences/user_preferences';
-import { StatusMessage } from '../status';
+import {StatusMessage} from '../status';
+import { createPointAnnotation } from './point';
 
 const tempVec3 = vec3.create();
 export class AnnotationDetailsTab extends Tab {
@@ -189,7 +190,7 @@ export class AnnotationDetailsTab extends Tab {
 
   private validateSelectionForSpecialCollection(ids: string[]) {
     const annotationLayer = this.state.annotationLayerState.value!;
-    for (const id in ids) {
+    for (const id of ids) {
       const annotation = annotationLayer.source.getReference(id).value!;
       switch (annotation.type) {
         case AnnotationType.COLLECTION:
@@ -199,7 +200,9 @@ export class AnnotationDetailsTab extends Tab {
         case AnnotationType.ELLIPSOID:
           break;
         default:
-          StatusMessage.showTemporaryMessage(`Cannot Generate Spoke/LineStrip from annotations with ambiguous points (Line, Bounding Box).`, 3000);
+          StatusMessage.showTemporaryMessage(
+              `Cannot Generate Spoke/LineStrip from annotations with ambiguous points (Line, Bounding Box).`,
+              3000);
           return false;
       }
     }
@@ -239,7 +242,7 @@ export class AnnotationDetailsTab extends Tab {
     return collection;
   }
 
-  generateCollectionOperation() {
+  private generateCollectionOperation() {
     const value = this.state.value!;
     const annotationLayer = this.state.annotationLayerState.value!;
     const target = value.multiple ? [...value.multiple] : [value.id];
@@ -283,11 +286,54 @@ export class AnnotationDetailsTab extends Tab {
     return button;
   }
 
-  generateLine(pointA: vec3, pointB: vec3) {
+  private generateLine(pointA: vec3, pointB: vec3) {
     const annotationLayer = this.state.annotationLayerState.value!;
     const line =
         <Line>{id: '', type: AnnotationType.LINE, description: '', pointA, pointB, segments: []};
     return (<AnnotationSource>annotationLayer.source).add(line, true);
+  }
+
+  private generatePointVectors(annotation: Annotation) {
+    switch (annotation.type) {
+      case AnnotationType.AXIS_ALIGNED_BOUNDING_BOX:
+      case AnnotationType.LINE:
+        const line = (<Line|AxisAlignedBoundingBox>annotation);
+        return [line.pointA, line.pointB];
+      case AnnotationType.POINT:
+        return [(<Point>annotation).point];
+      case AnnotationType.ELLIPSOID:
+        return [(<Ellipsoid>annotation).center];
+      case AnnotationType.LINE_STRIP:
+      case AnnotationType.SPOKE:
+      case AnnotationType.COLLECTION:
+        this.generatePointAnnotations((<LineStrip>annotation).entries);
+        return [];
+    }
+  }
+
+  private generatePointAnnotations(target: string[]) {
+    const annotationLayer = this.state.annotationLayerState.value!;
+    target.forEach((id) => {
+      const annotation = annotationLayer.source.getReference(id).value!;
+      const points = this.generatePointVectors(annotation);
+      points.forEach((point) => {
+        const pointAnnotation = createPointAnnotation(point, annotationLayer);
+        (<AnnotationSource>annotationLayer.source).add(pointAnnotation, true);
+      });
+    });
+  }
+
+  private generatePointButton() {
+    const value = this.state.value!;
+    const button = makeTextIconButton('⚬', 'Generate points from annotation');
+    button.addEventListener('click', () => {
+      const target = value.multiple ? [...value.multiple] : [value.id];
+      this.generatePointAnnotations(target);
+      if (!getPreserveSourceAnnotations().value) {
+        this.deleteOperation();
+      }
+    });
+    return button;
   }
 
   private generateSpokeButton() {
@@ -544,6 +590,7 @@ export class AnnotationDetailsTab extends Tab {
             contextualButtons.push(this.ungroupButton());
           }
         }
+        contextualButtons.push(this.generatePointButton());
         contextualButtons.push(this.deleteButton());
       }
     }
