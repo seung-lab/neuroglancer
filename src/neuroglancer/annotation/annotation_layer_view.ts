@@ -625,7 +625,10 @@ export class AnnotationLayerView extends Tab {
     }
     const {annotationHidingList} = this;
     const newElement = this.makeAnnotationListElement(annotation);
+    // This makes sure the new element preserves classes of the old
     newElement.classList.add(...[...element.classList]);
+    let isInProgress = (<AnnotationSource>this.annotationLayer.source).isPending(annotation.id);
+    newElement.classList.toggle('neuroglancer-annotation-inprogress', isInProgress);
     annotationHidingList.replaceElement(newElement, element);
     annotationListElements.set(annotation.id, newElement);
     this.resetOnUpdate();
@@ -698,7 +701,8 @@ export class AnnotationLayerView extends Tab {
 
     while (pList || nList) {
       if (pList) {
-        let prev: any = source.getPrevAnnotation(!pList.length ? origin : pList[pList.length - 1]);
+        let prev: any = source.getPrevAnnotation(
+            !pList.length ? origin : pList[pList.length - 1], this.annotationListContainer);
         const current = pList[pList.length - 1];
         if (current === target) {
           nList = null;
@@ -710,7 +714,8 @@ export class AnnotationLayerView extends Tab {
         }
       }
       if (nList) {
-        let next: any = source.getNextAnnotation(!nList.length ? origin : nList[nList.length - 1]);
+        let next: any = source.getNextAnnotation(
+            !nList.length ? origin : nList[nList.length - 1], this.annotationListContainer);
         const current = nList[nList.length - 1];
         if (current === target) {
           pList = null;

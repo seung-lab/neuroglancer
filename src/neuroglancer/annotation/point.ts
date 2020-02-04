@@ -28,6 +28,8 @@ import {mat4, vec3} from 'neuroglancer/util/geom';
 import {CircleShader} from 'neuroglancer/webgl/circles';
 import {emitterDependentShaderGetter, ShaderBuilder} from 'neuroglancer/webgl/shader';
 
+import { AnnotationLayerState } from './annotation_layer_state';
+
 const ANNOTATE_POINT_TOOL_ID = 'annotatePoint';
 
 class RenderHelper extends AnnotationRenderHelper {
@@ -141,3 +143,14 @@ PlacePointTool.prototype.annotationType = AnnotationType.POINT;
 registerTool(
     ANNOTATE_POINT_TOOL_ID,
     (layer, options) => new PlacePointTool(<UserLayerWithAnnotations>layer, options));
+
+export function createPointAnnotation(position: vec3, annotationLayer: AnnotationLayerState) {
+  const annotation: Annotation = {
+    id: '',
+    description: '',
+    segments: getSelectedAssocatedSegment(annotationLayer),
+    point: position,
+    type: AnnotationType.POINT,
+  };
+  return annotation;
+}
