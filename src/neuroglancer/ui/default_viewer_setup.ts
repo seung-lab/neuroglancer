@@ -41,7 +41,7 @@ export function setupDefaultViewer() {
   return viewer;
 }
 
-function legacyViewerSetupHashBinding(viewer: any) {
+export function legacyViewerSetupHashBinding(viewer: any) {
   // Backwards compatibility for state links
   const hashBinding = viewer.registerDisposer(new UrlHashBinding(viewer.state));
   viewer.hashBinding = hashBinding;
