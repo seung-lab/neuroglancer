@@ -514,7 +514,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     if (!source) {
       return;
     }
-    const next =  forward;
+    const next = forward;
     const prev = !forward;
     const area = view.firstElementChild ? view.firstElementChild : document.createElement('div');
     const head = area.firstElementChild ? (<HTMLElement>area.firstElementChild).dataset.id : null;
@@ -529,7 +529,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     if (viewContainer) {
       return this.bypass(existingAnnotation, viewContainer, true);
     }
-    return existingAnnotation;
+    return existingAnnotation ? existingAnnotation.next : existingAnnotation;
   }
 
   getPrevAnnotation(id: AnnotationId, viewContainer?: HTMLElement): Annotation|undefined {
@@ -537,7 +537,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     if (viewContainer) {
       return this.bypass(existingAnnotation, viewContainer, false);
     }
-    return existingAnnotation;
+    return existingAnnotation ? existingAnnotation.prev : existingAnnotation;
   }
 
   private addHelper(annotation: Annotation, commit: boolean, parentReference?: AnnotationReference):
@@ -629,11 +629,35 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     return [];
   }
 
+  unlinkChild(targetNode: AnnotationNode) {
+    const firstChildNode = targetNode.next;
+    const lastChildNode = targetNode.prev;
+    firstChildNode.prev = targetNode.prev;
+    lastChildNode.next = targetNode.next;
+  }
+
+  linkChild(targetNode: AnnotationNode, handleID: string) {
+    const handle = document.querySelector(`[data-id="${handleID}"]`);
+    if (handle) {
+      const firstChild = <HTMLElement>handle.parentElement!.firstElementChild;
+      if (firstChild) {
+        const firstId = firstChild.dataset.id!;
+        const firstNode = this.annotationMap.get(firstId)!;
+        const lastNode = firstNode.prev;
+        lastNode.next = targetNode;
+        firstNode.prev = targetNode;
+        targetNode.next = firstNode;
+        targetNode.prev = lastNode;
+      }
+    }
+  }
+
   childReassignment(targets: string[], surrogate?: AnnotationReference): AnnotationReference[] {
     const emptynesters = <AnnotationReference[]>[];
     let adopter = surrogate ? <Collection>surrogate.value : null;
 
     targets.forEach((id: string) => {
+      const targetNode = this.annotationMap.get(id);
       const target = this.getReference(id).value!;
       let oldParent;
       if (target.parentId) {
@@ -647,12 +671,20 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
         // reassign/orphan child
         if (!adopter) {
           // no adopter- clear parent
+          if (targetNode) {
+            this.unlinkChild(targetNode);
+            this.linkChild(targetNode, id);
+          }
           target.parentId = undefined;
         } else if (this.isAncestor(target, adopter)) {
           // ancestor cannot be adopted by its descendant- skip this one
           return;
         } else {
           // adopt normally
+          if (targetNode) {
+            this.unlinkChild(targetNode);
+            this.linkChild(targetNode, adopter.id);
+          }
           target.parentId = adopter.id;
           adopter.entries.push(target.id);
         }

@@ -12,11 +12,12 @@ import {Uint64} from 'neuroglancer/util/uint64';
 import {makeCloseButton} from 'neuroglancer/widget/close_button';
 import {Tab} from 'neuroglancer/widget/tab_view';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
-import {getPreserveSourceAnnotations} from '../preferences/user_preferences';
-import {StatusMessage} from '../status';
-import { createPointAnnotation } from './point';
+import {getPreserveSourceAnnotations} from 'neuroglancer/preferences/user_preferences';
+import {StatusMessage} from 'neuroglancer/status';
+import {createPointAnnotation} from 'neuroglancer/annotation/point';
 
 const tempVec3 = vec3.create();
+type CollectionLike = AnnotationType.COLLECTION|AnnotationType.SPOKE|AnnotationType.LINE_STRIP;
 export class AnnotationDetailsTab extends Tab {
   private valid = false;
   private mouseEntered = false;
@@ -209,6 +210,23 @@ export class AnnotationDetailsTab extends Tab {
     return true;
   }
 
+  private isChildOfSpecialCollection(ids: string[]) {
+    const annotationLayer = this.state.annotationLayerState.value!;
+    for (const id of ids) {
+      const annotation = annotationLayer.source.getReference(id).value!;
+      const parent = annotation.parentId ?
+          annotationLayer.source.getReference(annotation.parentId).value! :
+          null;
+      if (parent && parent.type !== AnnotationType.COLLECTION) {
+        StatusMessage.showTemporaryMessage(
+            `Only Line Annotations can be the children of Special Collections (Spoke, LineStrip). Cannot convert to point here.`,
+            3000);
+        return false;
+      }
+    }
+    return true;
+  }
+
   private generateEmptyCollection(sourcePoint: vec3) {
     const annotationLayer = this.state.annotationLayerState.value!;
     const collection = <Collection>{
@@ -242,14 +260,14 @@ export class AnnotationDetailsTab extends Tab {
     return collection;
   }
 
-  private generateCollectionOperation() {
+  private generateCollectionOperation(type?: CollectionLike) {
     const value = this.state.value!;
     const annotationLayer = this.state.annotationLayerState.value!;
     const target = value.multiple ? [...value.multiple] : [value.id];
     const first = annotationLayer.source.getReference(target[0]).value!;
     const sourcePoint = this.getSourcePoint(first.id);
-    const collection = <Spoke>this.generateEmptyCollection(sourcePoint);
-    collection.type = AnnotationType.SPOKE;
+    const collection = <Collection|Spoke|LineStrip>this.generateEmptyCollection(sourcePoint);
+    collection.type = type ? type : AnnotationType.COLLECTION;
     collection.connected = true;
 
     const collectionReference = (<AnnotationSource>annotationLayer.source).add(collection, true);
@@ -293,7 +311,7 @@ export class AnnotationDetailsTab extends Tab {
     return (<AnnotationSource>annotationLayer.source).add(line, true);
   }
 
-  private generatePointVectors(annotation: Annotation) {
+  private generatePointVectors(annotation: Annotation, parent?: AnnotationReference|null) {
     switch (annotation.type) {
       case AnnotationType.AXIS_ALIGNED_BOUNDING_BOX:
       case AnnotationType.LINE:
@@ -306,29 +324,41 @@ export class AnnotationDetailsTab extends Tab {
       case AnnotationType.LINE_STRIP:
       case AnnotationType.SPOKE:
       case AnnotationType.COLLECTION:
-        this.generatePointAnnotations((<LineStrip>annotation).entries);
+        this.generatePointAnnotations((<LineStrip>annotation).entries, parent);
         return [];
     }
   }
 
-  private generatePointAnnotations(target: string[]) {
+  private generatePointAnnotations(target: string[], parent?: AnnotationReference|null) {
     const annotationLayer = this.state.annotationLayerState.value!;
     target.forEach((id) => {
       const annotation = annotationLayer.source.getReference(id).value!;
-      const points = this.generatePointVectors(annotation);
-      points.forEach((point) => {
+      const points = this.generatePointVectors(annotation, parent);
+      const newIds = points.map(point => {
         const pointAnnotation = createPointAnnotation(point, annotationLayer);
-        (<AnnotationSource>annotationLayer.source).add(pointAnnotation, true);
+        const reference = (<AnnotationSource>annotationLayer.source).add(pointAnnotation, true);
+        return reference.id;
       });
+      if (parent) {
+        (<AnnotationSource>annotationLayer.source).childReassignment(newIds, parent);
+      }
     });
   }
 
   private generatePointButton() {
     const value = this.state.value!;
     const button = makeTextIconButton('⚬', 'Generate points from annotation');
+    const annotationLayer = this.state.annotationLayerState.value!;
     button.addEventListener('click', () => {
       const target = value.multiple ? [...value.multiple] : [value.id];
-      this.generatePointAnnotations(target);
+      const safeToGenerate = this.isChildOfSpecialCollection(target);
+      if (!safeToGenerate) {
+        return;
+      }
+      const first = annotationLayer.source.getReference(target[0]).value!;
+      const parent =
+          first.parentId ? annotationLayer.source.getReference(first.parentId) : undefined;
+      this.generatePointAnnotations(target, parent);
       if (!getPreserveSourceAnnotations().value) {
         this.deleteOperation();
       }
@@ -346,7 +376,8 @@ export class AnnotationDetailsTab extends Tab {
       if (!safeToGenerate) {
         return;
       }
-      const {sourcePoint, collectionReference} = this.generateCollectionOperation();
+      const {sourcePoint, collectionReference} =
+          this.generateCollectionOperation(AnnotationType.SPOKE);
       const lines: string[] = [];
       target.forEach((annotationId, index) => {
         if (!index) {
@@ -377,7 +408,7 @@ export class AnnotationDetailsTab extends Tab {
       if (!safeToGenerate) {
         return;
       }
-      const {collectionReference} = this.generateCollectionOperation();
+      const {collectionReference} = this.generateCollectionOperation(AnnotationType.LINE_STRIP);
       const lines: string[] = [];
       target.forEach((annotationId, index, targArr) => {
         if (!index) {
