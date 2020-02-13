@@ -1,7 +1,6 @@
 import 'neuroglancer/save_state/save_state.css';
 
 import {debounce} from 'lodash';
-
 import {Overlay} from 'neuroglancer/overlay';
 import {getOldStyleSaving} from 'neuroglancer/preferences/user_preferences';
 import {StatusMessage} from 'neuroglancer/status';
@@ -9,7 +8,7 @@ import {RefCounted} from 'neuroglancer/util/disposable';
 import {cancellableFetchOk, responseJson} from 'neuroglancer/util/http_request';
 import {getRandomHexString} from 'neuroglancer/util/random';
 import {Trackable} from 'neuroglancer/util/trackable';
-import {Viewer} from 'neuroglancer/viewer';
+import {UrlType, Viewer} from 'neuroglancer/viewer';
 
 export class SaveState extends RefCounted {
   private activeKey?: string|null;
@@ -153,8 +152,8 @@ export class SaveState extends RefCounted {
         });
   }
 
-  showSaveDialog(viewer: Viewer, jsonString?: string) {
-    new SaveDialog(viewer, this, jsonString);
+  showSaveDialog(viewer: Viewer, jsonString?: string, get?: UrlType) {
+    new SaveDialog(viewer, this, jsonString, get);
   }
 
   showHistory(viewer: Viewer) {
@@ -163,15 +162,9 @@ export class SaveState extends RefCounted {
 }
 
 class SaveDialog extends Overlay {
-  constructor(public viewer: Viewer, saver: any, jsonString?: string) {
+  constructor(public viewer: Viewer, saver: any, jsonString?: string, get?: UrlType) {
     super();
-    let {content} = this;
-    content.style.overflow = 'visible';
 
-    let modal = document.createElement('div');
-    content.appendChild(modal);
-
-    let form = document.createElement('form');
     let urlStart = `${window.location.origin}${window.location.pathname}`;
     let jsonUrl;
     if (jsonString) {
@@ -187,20 +180,45 @@ class SaveDialog extends Overlay {
         jsonUrl = 'NOT AVALABLE';
       }
     }
+    const rawUrl = `${urlStart}#!${viewer.hashBinding!.returnURLHash()}`;
+
+    if (get) {
+      const copyString = get === UrlType.json ? jsonUrl : rawUrl;
+      const text = document.createElement('input');
+      document.body.append(text);
+      text.type = 'text';
+      text.value = copyString;
+      text.select();
+      document.execCommand('copy');
+      document.body.removeChild(text);
+      StatusMessage.showTemporaryMessage(`Saved and Copied to Clipboard.`, 5000);
+      this.dispose();
+      return;
+    }
+
+    let form = document.createElement('form');
+    let {content} = this;
+    content.style.overflow = 'visible';
+
+    let modal = document.createElement('div');
+    content.appendChild(modal);
 
     form.append(this.makePopup('JSON_URL'));
-    this.insertField(form, 'JSON_URL', jsonUrl, jsonUrl === 'NOT AVALABLE');
+    this.insertField(
+        form, 'JSON_URL', jsonUrl, 'neuroglancer-save-state-json', jsonUrl === 'NOT AVALABLE');
     form.append(document.createElement('br'));
     form.append(this.makePopup('RAW_URL'));
-    this.insertField(form, 'RAW_URL', `${urlStart}#!${viewer.hashBinding!.returnURLHash()}`);
+    this.insertField(form, 'RAW_URL', rawUrl, 'neuroglancer-save-state-raw');
     form.append('DEPRECATED');
+    StatusMessage.showTemporaryMessage(`Saved.`, 5000);
     modal.appendChild(form);
 
     modal.onblur = () => this.dispose();
     modal.focus();
   }
 
-  insertField(form: HTMLElement, label?: string, content?: string, disabled = false) {
+  insertField(
+      form: HTMLElement, label?: string, content?: string, textId?: string, disabled = false) {
     let labelElement = document.createElement('label');
     labelElement.innerText = label || '';
     let text = document.createElement('input');
@@ -209,6 +227,9 @@ class SaveDialog extends Overlay {
     text.value = content || '';
     text.size = 100;
     text.disabled = disabled;
+    if (textId) {
+      text.id = textId;
+    }
     const id = `ng-save-popup-${label || ''}`;
     text.addEventListener('click', () => {
       text.select();

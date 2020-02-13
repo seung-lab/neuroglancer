@@ -206,6 +206,11 @@ function makeViewerContextMenu(viewer: Viewer) {
   return menu;
 }
 
+export enum UrlType {
+  json = 1,
+  raw,
+}
+
 export class Viewer extends RefCounted implements ViewerState {
   navigationState = this.registerDisposer(new NavigationState());
   perspectiveNavigationState = new NavigationState(new Pose(this.navigationState.position), 1);
@@ -753,6 +758,13 @@ export class Viewer extends RefCounted implements ViewerState {
     this.bindAction('toggle-default-annotations', () => this.showDefaultAnnotations.toggle());
     this.bindAction('toggle-show-slices', () => this.showPerspectiveSliceViews.toggle());
     this.bindAction('toggle-show-statistics', () => this.showStatistics());
+    this.bindAction('save-state', () => this.postJsonState());
+    this.bindAction('save-state-getjson', () => {
+      this.postJsonState(UrlType.json);
+    });
+    this.bindAction('save-state-getraw', () => {
+      this.postJsonState(UrlType.raw);
+    });
   }
 
   showHelpDialog() {
@@ -776,8 +788,8 @@ export class Viewer extends RefCounted implements ViewerState {
     new UserReportDialog(this, image);
   }
 
-  showSaveDialog(jsonString?: string) {
-    this.saver!.showSaveDialog(this, jsonString);
+  showSaveDialog(get: UrlType = 0, jsonString?: string) {
+    this.saver!.showSaveDialog(this, jsonString, get);
   }
 
   showHistory() {
@@ -819,7 +831,7 @@ export class Viewer extends RefCounted implements ViewerState {
     }
   }
 
-  postJsonState() {
+  postJsonState(get: UrlType = 0) {
     // if jsonStateServer is not present prompt for value and store it in state
     if (!this.jsonStateServer.value) {
       this.promptJsonStateServer(
@@ -837,10 +849,10 @@ export class Viewer extends RefCounted implements ViewerState {
                 `${window.location.origin}${window.location.pathname}?json_url=${response}`;
             if (this.saver && this.saver.supported) {
               this.saver.commit(response);
-              this.showSaveDialog();
+              this.showSaveDialog(get);
             } else {
               history.replaceState(null, '', savedUrl);
-              this.showSaveDialog(response);
+              this.showSaveDialog(get, response);
             }
           })
           // catch errors with upload and prompt the user if there was an error
