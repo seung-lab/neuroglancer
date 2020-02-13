@@ -1,6 +1,10 @@
 ### 🌱 Febuary 2019 🐇
 # New Save System
-* Saving is no longer saved in the address bar to improve performance.
+* ***State is no longer saved in the address bar***
+* Pressing "Save" provides **sharable links** and **uploads to state server** if avaliable.
+* **CTRL + SHIFT + J** - Save and Copy Shortened Link. *(Recommended)*
+* CTRL + SHIFT + R - Save and Copy Full State (Raw) Link.
+* CTRL + SHIFT + S - Save.
 * Local changes are still automatically backed up, but you must Save changes to share them.
     * This saves the changes remotely.
 * The save button has replaced "Post JSON to state server".
