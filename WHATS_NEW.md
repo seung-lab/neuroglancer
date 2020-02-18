@@ -14,5 +14,5 @@
     * Uses existing annotations as positions/points in generated collection.
     * With multiple annotations selected press "ʌ" for a LineStrip and "⚹" for a spoke.
     * **This will not delete the originally selected annotations.**
-    * To delete the source annotations, uncheck "Preserve Source Annotations" in User Preferences.
+    * To **delete the source annotations**, uncheck "Preserve Source Annotations" in User Preferences.
 * First annotation in a selection is now animated.
