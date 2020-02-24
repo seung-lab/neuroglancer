@@ -1,0 +1,10 @@
+^(.*/)?#.*#$
+^(.*/)?.*~$
+^(.*/)?.*\.py[co]$
+^(.*/)?.*/RCS/.*$
+^(.*/)?\..*$
+^node_modules$
+
+.gcloudignore
+.git
+.gitignore
