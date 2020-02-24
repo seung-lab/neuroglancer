@@ -1,6 +1,5 @@
-runtime: python27
+runtime: python37
 api_version: 1
-threadsafe: true
 
 # The skip_files element specifies which files
 # in the application directory are not to be 
