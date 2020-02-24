@@ -486,7 +486,7 @@ export class Viewer extends RefCounted implements ViewerState {
     {
       const button = document.createElement('button');
       button.classList.add('ng-saver', 'neuroglancer-icon-button');
-      button.innerText = 'Save';
+      button.innerText = 'Share';
       button.title = 'Save Changes';
       if (!storageAvailable()) {
         button.classList.add('fallback');
@@ -832,14 +832,12 @@ export class Viewer extends RefCounted implements ViewerState {
   }
 
   postJsonState(get: UrlType = 0) {
-    // if jsonStateServer is not present prompt for value and store it in state
-    if (!this.jsonStateServer.value) {
-      this.promptJsonStateServer(
-          'No state server found. Please enter a server URL, or hit OK to use the default server.');
-    }
-
     // upload state to jsonStateServer (only if it's defined)
-    if (this.jsonStateServer.value) {
+    if (this.saver && this.saver.activeEntry && !this.saver.activeEntry.dirty) {
+      this.showSaveDialog(get, this.saver.savedUrl);
+      return;
+    }
+    if (this.jsonStateServer.value || !get) {
       StatusMessage.showTemporaryMessage(`Posting state to ${this.jsonStateServer.value}.`);
       authFetch(
           this.jsonStateServer.value, {method: 'POST', body: JSON.stringify(this.state.toJSON())})
@@ -849,10 +847,10 @@ export class Viewer extends RefCounted implements ViewerState {
                 `${window.location.origin}${window.location.pathname}?json_url=${response}`;
             if (this.saver && this.saver.supported) {
               this.saver.commit(response);
-              this.showSaveDialog(get);
+              this.showSaveDialog(get, response);
             } else {
               history.replaceState(null, '', savedUrl);
-              this.showSaveDialog(get, response);
+              this.showSaveDialog(get);
             }
           })
           // catch errors with upload and prompt the user if there was an error
@@ -866,10 +864,13 @@ export class Viewer extends RefCounted implements ViewerState {
             const noStateServerAccess = !this.jsonStateServer.value;
             if (noStateServerAccess) {
               this.hashBinding!.legacy.setUrlHash();
-              this.saver!.commit();
               this.showSaveDialog();
             }
           });
+    }
+    else {
+      StatusMessage.showTemporaryMessage(`Cannot access state server. Press the share button/CTRL + SHIFT + S to enter a server URL.`);
+      this.showSaveDialog(2);
     }
   }
 

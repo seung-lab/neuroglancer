@@ -128,7 +128,7 @@ class UrlHashBindingLegacy {
     // Suggestion: Change to recurring, onblur and time, or onunload save and push to state server
     // Counterpoint: No point optimizing deprecated code
     let cleanURL =
-        removeParameterFromUrl(removeParameterFromUrl(window.location.href, 'json_url'), 'sid');
+        removeParameterFromUrl(removeParameterFromUrl(window.location.href, 'json_url'), 'local_id');
     history.replaceState(null, '', cleanURL);
 
     if (generation !== this.prevStateGeneration) {

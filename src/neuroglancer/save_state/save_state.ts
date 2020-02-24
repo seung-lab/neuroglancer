@@ -11,9 +11,9 @@ import {Trackable} from 'neuroglancer/util/trackable';
 import {UrlType, Viewer} from 'neuroglancer/viewer';
 
 export class SaveState extends RefCounted {
-  private activeKey?: string|null;
-  lastKey?: string|null;
-  saveStorage: {[key: string]: SaveEntry;} = {};
+  activeEntry?: SaveEntry;
+  savedUrl?: string;
+  private saveStorage: {[key: string]: SaveEntry;} = {};
   supported = true;
   constructor(public root: Trackable, updateDelayMilliseconds = 400) {
     super();
@@ -44,10 +44,8 @@ export class SaveState extends RefCounted {
   }
 
   purge() {
-    if (storageAvailable() && this.activeKey) {
-      const current = this.saveStorage[this.activeKey];
-      this.saveStorage = {[current.state_id]: current};
-      this.push();
+    if (storageAvailable()) {
+      this.overwriteHistory();
     }
   }
 
@@ -78,6 +76,8 @@ export class SaveState extends RefCounted {
         this.saveStorage = newStorage;
         this.push();
       }
+      const history = this.history();
+      this.overwriteHistory(history.slice(history.length - limit));
     }
   }
 
@@ -85,22 +85,32 @@ export class SaveState extends RefCounted {
     return (<SaveEntry[]>Object.values(this.saveStorage)).sort((a, b) => b.timestamp - a.timestamp);
   }
 
+  history(): SaveHistory[] {
+    const saveHistoryString = localStorage.getItem('neuroglancerSaveHistory');
+    return saveHistoryString ? JSON.parse(saveHistoryString) : [];
+  }
+
+  addToHistory(entry: SaveHistory) {
+    const saveHistoryString = this.history();
+    saveHistoryString.push(entry);
+    const record = JSON.stringify(saveHistoryString);
+    localStorage.setItem('neuroglancerSaveHistory', record);
+  }
+
+  overwriteHistory(newHistory: SaveHistory[] = []) {
+    localStorage.setItem('neuroglancerSaveHistory', JSON.stringify(newHistory));
+  }
+
   loadFromStorage() {
     const params = new URLSearchParams(window.location.search);
-    const givenKey = params.get('sid');
+    const givenKey = params.get('local_id');
 
     if (givenKey) {
       location.hash = '';
       const entry = this.saveStorage[givenKey];
-      this.activeKey = givenKey;
-      this.lastKey = this.activeKey;
       if (entry) {
-        if (entry.state) {
+          this.activeEntry = entry;
           this.root.restoreState(entry.state);
-        } else {
-          // older valid state
-          this.remoteLoad(entry.source_url!);
-        }
       } else {
         StatusMessage.showTemporaryMessage(
             `This URL is invalid. Do not copy the URL in the address bar. Use the save button.`,
@@ -111,32 +121,26 @@ export class SaveState extends RefCounted {
 
   updateStorage() {
     let entry;
-    if (!this.activeKey) {
+    if (!this.activeEntry) {
       entry = recordEntry();
-      this.activeKey = entry.state_id;
-      this.lastKey = this.activeKey;
+      this.activeEntry = entry;
       const params = new URLSearchParams();
-      params.set('sid', this.activeKey);
+      params.set('local_id', this.activeEntry.state_id);
+      this.saveStorage[this.activeEntry.state_id] = entry;
       history.pushState({}, '', `${window.location.origin}/?${params.toString()}`);
     } else {
-      entry = this.saveStorage[this.activeKey];
+      entry = this.activeEntry;
     }
     entry.state = this.root.toJSON();
-    this.saveStorage[this.activeKey] = entry;
+    entry.dirty = true;
     this.push();
   }
 
-  commit(source_url?: string) {
-    if (this.activeKey) {
-      if (source_url) {
-        const entry = this.saveStorage[this.activeKey];
-        entry.state = null;
-        entry.source_url = source_url;
-      } else {
-        delete this.saveStorage[this.activeKey];
-      }
-      this.activeKey = null;
-      this.push();
+  commit(source_url: string) {
+    if (this.activeEntry) {
+      this.savedUrl = source_url;
+      this.activeEntry.dirty = false;
+      this.addToHistory(recordHistory(source_url));
     }
   }
 
@@ -153,16 +157,16 @@ export class SaveState extends RefCounted {
   }
 
   showSaveDialog(viewer: Viewer, jsonString?: string, get?: UrlType) {
-    new SaveDialog(viewer, this, jsonString, get);
+    new SaveDialog(viewer, jsonString, get);
   }
 
   showHistory(viewer: Viewer) {
-    new SaveStateDialog(viewer, this);
+    new SaveHistoryDialog(viewer, this);
   }
 }
 
 class SaveDialog extends Overlay {
-  constructor(public viewer: Viewer, saver: any, jsonString?: string, get?: UrlType) {
+  constructor(public viewer: Viewer, jsonString?: string, get?: UrlType) {
     super();
 
     let urlStart = `${window.location.origin}${window.location.pathname}`;
@@ -170,12 +174,6 @@ class SaveDialog extends Overlay {
     if (jsonString) {
       jsonUrl = `${urlStart}?json_url=${jsonString}`;
     } else {
-      if (saver.supported) {
-        let entry = saver.saveStorage[saver.lastKey];
-        if (entry) {
-          jsonUrl = `${urlStart}?json_url=${entry.source_url}`;
-        }
-      }
       if (!jsonUrl) {
         jsonUrl = 'NOT AVALABLE';
       }
@@ -191,7 +189,7 @@ class SaveDialog extends Overlay {
       text.select();
       document.execCommand('copy');
       document.body.removeChild(text);
-      StatusMessage.showTemporaryMessage(`Saved and Copied to Clipboard.`, 5000);
+      StatusMessage.showTemporaryMessage(`Saved and Copied ${get === UrlType.json ? `JSON Link` : `Full State (RAW) link`} to Clipboard.`, 5000);
       this.dispose();
       return;
     }
@@ -256,19 +254,19 @@ class SaveDialog extends Overlay {
   }
 }
 
-class SaveStateDialog extends Overlay {
+class SaveHistoryDialog extends Overlay {
   table = document.createElement('table');
   constructor(public viewer: Viewer, saver: SaveState) {
     super();
     let {content, table} = this;
     if (saver.supported) {
       saver.pull();
-      let saves = saver.list();
+      let saves = saver.history();
       let modal = document.createElement('div');
       content.appendChild(modal);
 
       table.classList.add('ng-zebra-table');
-      saves.forEach(this.tableEntry.bind(this));
+      saves.reverse().forEach(this.tableEntry.bind(this));
 
       const clear = document.createElement('button');
       clear.innerText = 'Clear';
@@ -291,7 +289,7 @@ class SaveStateDialog extends Overlay {
     }
   }
 
-  tableEntry(entry: SaveEntry) {
+  tableEntry(entry: SaveHistory) {
     if (!entry || !entry.source_url) {
       return;
     }
@@ -312,9 +310,14 @@ class SaveStateDialog extends Overlay {
 }
 
 interface SaveEntry {
-  source_url: string|null;
+  timestamp: number;
   state_id: string;
+  dirty: boolean;
   state: any;
+}
+
+interface SaveHistory {
+  source_url: string;
   timestamp: number;
 }
 
@@ -322,8 +325,15 @@ const recordEntry = (state = {}) => {
   return <SaveEntry>{
     timestamp: (new Date()).valueOf(),
     state_id: getRandomHexString(),
-    source_url: null,
+    dirty: false,
     state
+  };
+};
+
+const recordHistory = (url: string) => {
+  return <SaveHistory>{
+    timestamp: (new Date()).valueOf(),
+    source_url: url
   };
 };
 
