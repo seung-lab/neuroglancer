@@ -133,6 +133,7 @@ export class SaveState extends RefCounted {
     }
     entry.state = this.root.toJSON();
     entry.dirty = true;
+    this.saveStorage[entry.state_id] = entry;
     this.push();
   }
 
