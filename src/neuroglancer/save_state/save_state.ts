@@ -9,6 +9,7 @@ import {cancellableFetchOk, responseJson} from 'neuroglancer/util/http_request';
 import {getRandomHexString} from 'neuroglancer/util/random';
 import {Trackable} from 'neuroglancer/util/trackable';
 import {UrlType, Viewer} from 'neuroglancer/viewer';
+import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 
 export class SaveState extends RefCounted {
   activeEntry?: SaveEntry;
@@ -101,6 +102,13 @@ export class SaveState extends RefCounted {
     localStorage.setItem('neuroglancerSaveHistory', JSON.stringify(newHistory));
   }
 
+  unsaved() {
+    const button = document.getElementById('neuroglancer-saver-button');
+    if (this.activeEntry && button) {
+      button.classList.toggle('dirty', this.activeEntry.dirty.value);
+    }
+  }
+
   loadFromStorage() {
     const params = new URLSearchParams(window.location.search);
     const givenKey = params.get('local_id');
@@ -110,6 +118,11 @@ export class SaveState extends RefCounted {
       const entry = this.saveStorage[givenKey];
       if (entry) {
           this.activeEntry = entry;
+          if (entry.dirty === undefined || entry.dirty.value === undefined) {
+            this.activeEntry.dirty = new TrackableBoolean(entry.dirty ? true : false);
+            this.activeEntry.dirty.changed.add(this.unsaved.bind(this));
+            this.unsaved();
+          }
           this.root.restoreState(entry.state);
       } else {
         StatusMessage.showTemporaryMessage(
@@ -120,10 +133,12 @@ export class SaveState extends RefCounted {
   }
 
   updateStorage() {
-    let entry;
+    let entry: SaveEntry;
     if (!this.activeEntry) {
       entry = recordEntry();
+      entry.dirty.changed.add(this.unsaved.bind(this));
       this.activeEntry = entry;
+      this.unsaved();
       const params = new URLSearchParams();
       params.set('local_id', this.activeEntry.state_id);
       this.saveStorage[this.activeEntry.state_id] = entry;
@@ -132,7 +147,7 @@ export class SaveState extends RefCounted {
       entry = this.activeEntry;
     }
     entry.state = this.root.toJSON();
-    entry.dirty = true;
+    entry.dirty.value = true;
     this.saveStorage[entry.state_id] = entry;
     this.push();
   }
@@ -140,7 +155,7 @@ export class SaveState extends RefCounted {
   commit(source_url: string) {
     if (this.activeEntry) {
       this.savedUrl = source_url;
-      this.activeEntry.dirty = false;
+      this.activeEntry.dirty.value = false;
       this.addToHistory(recordHistory(source_url));
     }
   }
@@ -313,7 +328,7 @@ class SaveHistoryDialog extends Overlay {
 interface SaveEntry {
   timestamp: number;
   state_id: string;
-  dirty: boolean;
+  dirty: TrackableBoolean;
   state: any;
 }
 
@@ -326,7 +341,7 @@ const recordEntry = (state = {}) => {
   return <SaveEntry>{
     timestamp: (new Date()).valueOf(),
     state_id: getRandomHexString(),
-    dirty: false,
+    dirty: new TrackableBoolean(false, false),
     state
   };
 };
