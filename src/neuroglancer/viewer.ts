@@ -486,6 +486,7 @@ export class Viewer extends RefCounted implements ViewerState {
 
     {
       const button = document.createElement('button');
+      button.id = 'neuroglancer-saver-button';
       button.classList.add('ng-saver', 'neuroglancer-icon-button');
       button.innerText = 'Share';
       button.title = 'Save Changes';
@@ -498,6 +499,10 @@ export class Viewer extends RefCounted implements ViewerState {
         button.classList.add('inactive');
         button.title =
             `Save State has been disabled because Old Style saving has been turned on in User Preferences.`;
+      }
+      if (this.saver && !this.saver.supported && this.saver.activeEntry) {
+        const entry = this.saver.activeEntry;
+        button.classList.toggle('dirty', entry.dirty.value);
       }
       this.registerEventListener(button, 'click', () => {
         this.postJsonState();

@@ -1,19 +1,19 @@
-button.ng-saver.fallback {
-  background-color: yellow;
+button.ng-saver.inactive button.ng-saver.fallback{
+  background-color: orangered;
   border: 1px solid black;
   color: black;
-}
-button.ng-saver.fallback:hover {
-  background-color: orangered;
 }
 
-button.ng-saver.inactive {
-  background-color: orangered;
+button.ng-saver.dirty {
+  background-color: yellow;
   border: 1px solid black;
   color: black;
 }
-button.ng-saver.inactive:hover {
-  background-color: yellow;
+
+button.ng-saver:hover {
+  background-color: #3c3;
+  border: 1px solid black;
+  color: black;
 }
 
 button.ng-saver {
