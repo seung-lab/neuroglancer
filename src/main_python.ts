@@ -30,12 +30,10 @@ import {RemoteActionHandler} from 'neuroglancer/python_integration/remote_action
 import {TrackableBasedStatusMessages} from 'neuroglancer/python_integration/remote_status_messages';
 import {ScreenshotHandler} from 'neuroglancer/python_integration/screenshots';
 import {ServerConnection} from 'neuroglancer/python_integration/server_connection';
-import {SaveState} from 'neuroglancer/save_state/save_state';
 import {TrackableValue} from 'neuroglancer/trackable_value';
 import {bindDefaultCopyHandler, bindDefaultPasteHandler} from 'neuroglancer/ui/default_clipboard_handling';
 import {setDefaultInputEventBindings} from 'neuroglancer/ui/default_input_event_bindings';
 import {makeDefaultViewer} from 'neuroglancer/ui/default_viewer';
-import {legacyViewerSetupHashBinding} from 'neuroglancer/ui/default_viewer_setup';
 import {parseFixedLengthArray, verifyInt} from 'neuroglancer/util/json';
 import {CompoundTrackable} from 'neuroglancer/util/trackable';
 import {InputEventBindings} from 'neuroglancer/viewer';
@@ -106,7 +104,6 @@ window.addEventListener('DOMContentLoaded', () => {
     resetStateWhenEmpty: false,
     dataSourceProvider,
   });
-  const legacy = legacyViewerSetupHashBinding(viewer);
   setDefaultInputEventBindings(viewer.inputEventBindings);
   configState.add(
       'inputEventBindings', makeTrackableBasedEventActionMaps(viewer.inputEventBindings));
@@ -164,10 +161,7 @@ window.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('resize', updateSize);
   size.changed.add(debounce(() => updateSize(), 0))
 
-  viewer.saver = viewer.registerDisposer(new SaveState(viewer.state));
-  if (!viewer.saver.supported) {
-    legacy.hashBinding.legacy.fallback();
-  }
+  viewer.initializeSaver();
 
   let serverConnection: ServerConnection;
   if (viewer.stateServer.value === '') {
