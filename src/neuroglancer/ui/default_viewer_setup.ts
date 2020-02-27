@@ -23,8 +23,8 @@ import {makeDefaultViewer} from 'neuroglancer/ui/default_viewer';
  */
 export function setupDefaultViewer() {
   const viewer = (<any>window)['viewer'] = makeDefaultViewer();
-
   setDefaultInputEventBindings(viewer.inputEventBindings);
+
   viewer.loadFromJsonUrl();
   viewer.initializeSaver();
 

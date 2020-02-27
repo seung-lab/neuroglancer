@@ -31,7 +31,7 @@ import {RootLayoutContainer} from 'neuroglancer/layer_groups_layout';
 import {TopLevelLayerListSpecification} from 'neuroglancer/layer_specification';
 import {NavigationState, Pose} from 'neuroglancer/navigation_state';
 import {overlaysOpen} from 'neuroglancer/overlay';
-import {getOldStyleSaving, UserPreferencesDialog} from 'neuroglancer/preferences/user_preferences';
+import {getSaveToAddressBar, UserPreferencesDialog} from 'neuroglancer/preferences/user_preferences';
 import {SaveState, storageAvailable} from 'neuroglancer/save_state/save_state';
 import {StatusMessage} from 'neuroglancer/status';
 import {ElementVisibilityFromTrackableBoolean, TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
@@ -495,7 +495,7 @@ export class Viewer extends RefCounted implements ViewerState {
         button.title =
             `Cannot access Local Storage. Unsaved changes will be lost! Use OldStyleSaving to allow for auto saving.`;
       }
-      if (storageAvailable() && getOldStyleSaving().value) {
+      if (storageAvailable() && getSaveToAddressBar().value) {
         button.classList.add('inactive');
         button.title =
             `Save State has been disabled because Old Style saving has been turned on in User Preferences.`;
@@ -794,7 +794,7 @@ export class Viewer extends RefCounted implements ViewerState {
     new UserReportDialog(this, image);
   }
 
-  showSaveDialog(get: UrlType = 0, jsonString?: string) {
+  showSaveDialog(get?: UrlType, jsonString?: string) {
     this.saver!.showSaveDialog(this, jsonString, get);
   }
 
@@ -834,7 +834,7 @@ export class Viewer extends RefCounted implements ViewerState {
     }
   }
 
-  postJsonState(get: UrlType = 0) {
+  postJsonState(get?: UrlType) {
     // upload state to jsonStateServer (only if it's defined)
     if (this.saver && this.saver.key && !this.saver.saves[this.saver.key].dirty.value) {
       this.showSaveDialog(get, this.saver.savedUrl);
@@ -864,16 +864,18 @@ export class Viewer extends RefCounted implements ViewerState {
             }
           })
           .finally(() => {
+            // HashBinding is deprecated, but the urlHash is set in the URL Bar if there is no state
+            // access. So this is setup in the initializeSaver
             const noStateServerAccess = !this.jsonStateServer.value;
-            if (noStateServerAccess) {
-              this.hashBinding!.legacy.setUrlHash();
+            if (this.hashBinding && noStateServerAccess) {
+              this.hashBinding.legacy.setUrlHash();
               this.showSaveDialog();
             }
           });
     } else {
       StatusMessage.showTemporaryMessage(
           `Cannot access state server. Press the share button/CTRL + SHIFT + S to enter a server URL.`);
-      this.showSaveDialog(2);
+      this.showSaveDialog(UrlType.raw);
     }
   }
 
@@ -945,6 +947,8 @@ export class Viewer extends RefCounted implements ViewerState {
     const hashBinding = this.legacyViewerSetupHashBinding();
     this.saver = this.registerDisposer(new SaveState(this.state));
     if (!this.saver.supported) {
+      // Fallback to register state change handler has legacy urlHashBinding if saver is not
+      // supported
       hashBinding.legacy.fallback();
     }
   }

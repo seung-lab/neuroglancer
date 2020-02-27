@@ -2,7 +2,7 @@ import 'neuroglancer/save_state/save_state.css';
 
 import {debounce} from 'lodash';
 import {Overlay} from 'neuroglancer/overlay';
-import {getOldStyleSaving} from 'neuroglancer/preferences/user_preferences';
+import {getSaveToAddressBar} from 'neuroglancer/preferences/user_preferences';
 import {StatusMessage} from 'neuroglancer/status';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {cancellableFetchOk, responseJson} from 'neuroglancer/util/http_request';
@@ -18,7 +18,7 @@ export class SaveState extends RefCounted {
   supported = true;
   constructor(public root: Trackable, updateDelayMilliseconds = 400) {
     super();
-    const userDisabledSaver = getOldStyleSaving().value;
+    const userDisabledSaver = getSaveToAddressBar().value;
 
     if (storageAvailable()) {
       const saveStorageString = localStorage.getItem('neuroglancerSaveState');
@@ -161,7 +161,6 @@ export class SaveState extends RefCounted {
     }
     entry.state = this.root.toJSON();
     entry.dirty.value = true;
-    // this.saves[this.key!] = entry;
     this.push();
   }
 
