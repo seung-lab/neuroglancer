@@ -870,9 +870,9 @@ export class Viewer extends RefCounted implements ViewerState {
               this.showSaveDialog();
             }
           });
-    }
-    else {
-      StatusMessage.showTemporaryMessage(`Cannot access state server. Press the share button/CTRL + SHIFT + S to enter a server URL.`);
+    } else {
+      StatusMessage.showTemporaryMessage(
+          `Cannot access state server. Press the share button/CTRL + SHIFT + S to enter a server URL.`);
       this.showSaveDialog(2);
     }
   }
@@ -902,7 +902,6 @@ export class Viewer extends RefCounted implements ViewerState {
     const undo = this.getStateRevertingFunction();
     StatusMessage.messageWithAction(message, actionMessage, undo, closeAfter);
   }
-
 
   private getStateRevertingFunction() {
     const currentState = getCachedJson(this.state).value;
@@ -940,5 +939,31 @@ export class Viewer extends RefCounted implements ViewerState {
       }
     };
     return maybeAddOrRemoveAnnotationShortcuts;
+  }
+
+  initializeSaver() {
+    const hashBinding = this.legacyViewerSetupHashBinding();
+    this.saver = this.registerDisposer(new SaveState(this.state));
+    if (!this.saver.supported) {
+      hashBinding.legacy.fallback();
+    }
+  }
+
+  legacyViewerSetupHashBinding() {
+    // Backwards compatibility for state links
+    const hashBinding = this.registerDisposer(new UrlHashBinding(this.state));
+    this.hashBinding = hashBinding;
+    this.registerDisposer(hashBinding.parseError.changed.add(() => {
+      const {value} = hashBinding.parseError;
+      if (value !== undefined) {
+        const status = new StatusMessage();
+        status.setErrorMessage(`Error parsing state: ${value.message}`);
+        console.log('Error parsing state', value);
+      }
+      hashBinding.parseError;
+    }));
+    hashBinding.updateFromUrlHash();
+
+    return hashBinding;
   }
 }
