@@ -500,8 +500,8 @@ export class Viewer extends RefCounted implements ViewerState {
         button.title =
             `Save State has been disabled because Old Style saving has been turned on in User Preferences.`;
       }
-      if (this.saver && !this.saver.supported && this.saver.activeEntry) {
-        const entry = this.saver.activeEntry;
+      if (this.saver && !this.saver.supported && this.saver.key) {
+        const entry = this.saver.saves[this.saver.key];
         button.classList.toggle('dirty', entry.dirty.value);
       }
       this.registerEventListener(button, 'click', () => {
@@ -836,7 +836,7 @@ export class Viewer extends RefCounted implements ViewerState {
 
   postJsonState(get: UrlType = 0) {
     // upload state to jsonStateServer (only if it's defined)
-    if (this.saver && this.saver.activeEntry && !this.saver.activeEntry.dirty) {
+    if (this.saver && this.saver.key && !this.saver.saves[this.saver.key].dirty.value) {
       this.showSaveDialog(get, this.saver.savedUrl);
       return;
     }
