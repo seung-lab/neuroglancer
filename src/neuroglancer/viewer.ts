@@ -793,8 +793,8 @@ export class Viewer extends RefCounted implements ViewerState {
     new UserReportDialog(this, image);
   }
 
-  showSaveDialog(get?: UrlType, jsonString?: string) {
-    this.saver!.showSaveDialog(this, jsonString, get);
+  showSaveDialog(getUrlType?: UrlType, jsonString?: string) {
+    this.saver!.showSaveDialog(this, jsonString, getUrlType);
   }
 
   showHistory() {
@@ -836,13 +836,13 @@ export class Viewer extends RefCounted implements ViewerState {
     }
   }
 
-  postJsonState(get?: UrlType) {
+  postJsonState(getUrlType?: UrlType) {
     // upload state to jsonStateServer (only if it's defined)
     if (this.saver && this.saver.key && !this.saver.saves[this.saver.key].dirty.value) {
-      this.showSaveDialog(get, this.saver.savedUrl);
+      this.showSaveDialog(getUrlType, this.saver.savedUrl);
       return;
     }
-    if (this.jsonStateServer.value || !get) {
+    if (this.jsonStateServer.value || !getUrlType) {
       StatusMessage.showTemporaryMessage(`Posting state to ${this.jsonStateServer.value}.`);
       authFetch(
           this.jsonStateServer.value, {method: 'POST', body: JSON.stringify(this.state.toJSON())})
@@ -852,10 +852,10 @@ export class Viewer extends RefCounted implements ViewerState {
                 `${window.location.origin}${window.location.pathname}?json_url=${response}`;
             if (this.saver && this.saver.supported) {
               this.saver.commit(response);
-              this.showSaveDialog(get, response);
+              this.showSaveDialog(getUrlType, response);
             } else {
               history.replaceState(null, '', savedUrl);
-              this.showSaveDialog(get);
+              this.showSaveDialog(getUrlType);
             }
           })
           // catch errors with upload and prompt the user if there was an error

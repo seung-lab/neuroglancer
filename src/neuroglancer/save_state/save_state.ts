@@ -11,6 +11,11 @@ import {Trackable} from 'neuroglancer/util/trackable';
 import {UrlType, Viewer} from 'neuroglancer/viewer';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 
+const stateKey = 'neuroglancerSaveState';
+const historyKey = 'neuroglancerSaveHistory';
+// TODO: Remove state ID from URL and preserve updated state order, or use timestamp
+// const orderKey = 'neuroglancerSaveOrder';
+
 export class SaveState extends RefCounted {
   key?: string;
   savedUrl?: string;
@@ -21,7 +26,7 @@ export class SaveState extends RefCounted {
     const userDisabledSaver = getSaveToAddressBar().value;
 
     if (storageAvailable()) {
-      const saveStorageString = localStorage.getItem('neuroglancerSaveState');
+      const saveStorageString = localStorage.getItem(stateKey);
       this.saves = JSON.parse(saveStorageString || '{}');
       this.loadFromStorage();
       this.cull();
@@ -52,7 +57,7 @@ export class SaveState extends RefCounted {
 
   push() {
     if (storageAvailable()) {
-      localStorage.setItem('neuroglancerSaveState', JSON.stringify(this.saves));
+      localStorage.setItem(stateKey, JSON.stringify(this.saves));
     }
   }
 
@@ -60,7 +65,7 @@ export class SaveState extends RefCounted {
     if (storageAvailable()) {
       this.saves = {
         ...this.saves,
-        ...JSON.parse(localStorage.getItem('neuroglancerSaveState') || '{}')
+        ...JSON.parse(localStorage.getItem(stateKey) || '{}')
       };
     }
   }
@@ -87,7 +92,7 @@ export class SaveState extends RefCounted {
   }
 
   history(): SaveHistory[] {
-    const saveHistoryString = localStorage.getItem('neuroglancerSaveHistory');
+    const saveHistoryString = localStorage.getItem(historyKey);
     return saveHistoryString ? JSON.parse(saveHistoryString) : [];
   }
 
@@ -95,11 +100,11 @@ export class SaveState extends RefCounted {
     const saveHistoryString = this.history();
     saveHistoryString.push(entry);
     const record = JSON.stringify(saveHistoryString);
-    localStorage.setItem('neuroglancerSaveHistory', record);
+    localStorage.setItem(historyKey, record);
   }
 
   overwriteHistory(newHistory: SaveHistory[] = []) {
-    localStorage.setItem('neuroglancerSaveHistory', JSON.stringify(newHistory));
+    localStorage.setItem(historyKey, JSON.stringify(newHistory));
   }
 
   unsaved() {
@@ -195,22 +200,15 @@ export class SaveState extends RefCounted {
 }
 
 class SaveDialog extends Overlay {
-  constructor(public viewer: Viewer, jsonString?: string, get?: UrlType) {
+  constructor(public viewer: Viewer, jsonString?: string, getUrlType?: UrlType) {
     super();
 
-    let urlStart = `${window.location.origin}${window.location.pathname}`;
-    let jsonUrl;
-    if (jsonString) {
-      jsonUrl = `${urlStart}?json_url=${jsonString}`;
-    } else {
-      if (!jsonUrl) {
-        jsonUrl = 'NOT AVALABLE';
-      }
-    }
+    const urlStart = `${window.location.origin}${window.location.pathname}`;
+    const jsonUrl = jsonString ? `${urlStart}?json_url=${jsonString}` : `NOT AVAILABLE`;
     const rawUrl = `${urlStart}#!${viewer.hashBinding!.returnURLHash()}`;
 
-    if (get) {
-      const copyString = get === UrlType.json ? jsonUrl : rawUrl;
+    if (getUrlType) {
+      const copyString = getUrlType === UrlType.json ? jsonUrl : rawUrl;
       const text = document.createElement('input');
       document.body.append(text);
       text.type = 'text';
@@ -218,7 +216,7 @@ class SaveDialog extends Overlay {
       text.select();
       document.execCommand('copy');
       document.body.removeChild(text);
-      StatusMessage.showTemporaryMessage(`Saved and Copied ${get === UrlType.json ? `JSON Link` : `Full State (RAW) link`} to Clipboard.`, 5000);
+      StatusMessage.showTemporaryMessage(`Saved and Copied ${getUrlType === UrlType.json ? `JSON Link` : `Full State (RAW) link`} to Clipboard.`, 5000);
       this.dispose();
       return;
     }
@@ -232,7 +230,7 @@ class SaveDialog extends Overlay {
 
     form.append(this.makePopup('JSON_URL'));
     this.insertField(
-        form, 'JSON_URL', jsonUrl, 'neuroglancer-save-state-json', jsonUrl === 'NOT AVALABLE');
+        form, 'JSON_URL', jsonUrl, 'neuroglancer-save-state-json', jsonUrl === 'NOT AVAILABLE');
     form.append(document.createElement('br'));
     form.append(this.makePopup('RAW_URL'));
     this.insertField(form, 'RAW_URL', rawUrl, 'neuroglancer-save-state-raw');

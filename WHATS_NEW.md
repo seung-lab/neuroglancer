@@ -1,7 +1,7 @@
-### 🌱 Febuary 2019 🐇
+### 🌱 March 2019 🐇
 # New Save System
 * ***State is no longer saved in the address bar***
-* Pressing "Share" provides **sharable links** and **uploads to state server** if available.
+* Pressing "Share" provides **shareable links** and **uploads to state server** if available.
 * **CTRL + SHIFT + J** - Save and Copy Shortened Link. *(Recommended)*
 * CTRL + SHIFT + R - Save and Copy Full State (Raw) Link.
 * CTRL + SHIFT + S - Save.
