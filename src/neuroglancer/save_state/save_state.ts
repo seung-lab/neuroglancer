@@ -4,12 +4,12 @@ import {debounce} from 'lodash';
 import {Overlay} from 'neuroglancer/overlay';
 import {getSaveToAddressBar} from 'neuroglancer/preferences/user_preferences';
 import {StatusMessage} from 'neuroglancer/status';
+import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {cancellableFetchOk, responseJson} from 'neuroglancer/util/http_request';
 import {getRandomHexString} from 'neuroglancer/util/random';
 import {Trackable} from 'neuroglancer/util/trackable';
 import {UrlType, Viewer} from 'neuroglancer/viewer';
-import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 
 const stateKey = 'neuroglancerSaveState';
 const historyKey = 'neuroglancerSaveHistory';
@@ -63,10 +63,7 @@ export class SaveState extends RefCounted {
 
   pull() {
     if (storageAvailable()) {
-      this.saves = {
-        ...this.saves,
-        ...JSON.parse(localStorage.getItem(stateKey) || '{}')
-      };
+      this.saves = {...this.saves, ...JSON.parse(localStorage.getItem(stateKey) || '{}')};
     }
   }
 
@@ -128,7 +125,7 @@ export class SaveState extends RefCounted {
 
   loadFromStorage() {
     const params = new URLSearchParams(window.location.search);
-    this.key = <any> params.get('local_id');
+    this.key = <any>params.get('local_id');
 
     if (this.key) {
       location.hash = '';
@@ -137,10 +134,12 @@ export class SaveState extends RefCounted {
         this.forceDirtyAsTrackable();
         this.unsaved();
         this.root.restoreState(entry.state);
+        StatusMessage.showTemporaryMessage(
+            `Loaded from local storage. Do not duplicate this URL.`, 4000, {color: 'yellow'});
       } else {
         StatusMessage.showTemporaryMessage(
             `This URL is invalid. Do not copy the URL in the address bar. Use the save button.`,
-            10000);
+            10000, {color: 'red'});
       }
     }
   }
@@ -216,7 +215,10 @@ class SaveDialog extends Overlay {
       text.select();
       document.execCommand('copy');
       document.body.removeChild(text);
-      StatusMessage.showTemporaryMessage(`Saved and Copied ${getUrlType === UrlType.json ? `JSON Link` : `Full State (RAW) link`} to Clipboard.`, 5000);
+      StatusMessage.showTemporaryMessage(
+          `Saved and Copied ${
+              getUrlType === UrlType.json ? `JSON Link` : `Full State (RAW) link`} to Clipboard.`,
+          5000);
       this.dispose();
       return;
     }
@@ -358,10 +360,7 @@ const recordEntry = (state = {}) => {
 };
 
 const recordHistory = (url: string) => {
-  return <SaveHistory>{
-    timestamp: (new Date()).valueOf(),
-    source_url: url
-  };
+  return <SaveHistory>{timestamp: (new Date()).valueOf(), source_url: url};
 };
 
 export const storageAvailable = () => {

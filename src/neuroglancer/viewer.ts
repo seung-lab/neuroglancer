@@ -860,17 +860,14 @@ export class Viewer extends RefCounted implements ViewerState {
           })
           // catch errors with upload and prompt the user if there was an error
           .catch(() => {
-            this.promptJsonStateServer('state server not responding, enter a new one?');
+            this.promptJsonStateServer('State server could not be reached, try again or enter a new one.');
             if (this.jsonStateServer.value) {
               this.postJsonState();
             }
           })
           .finally(() => {
-            // HashBinding is deprecated, but the urlHash is set in the URL Bar if there is no state
-            // access. So this is setup in the initializeSaver
             const noStateServerAccess = !this.jsonStateServer.value;
-            if (this.hashBinding && noStateServerAccess) {
-              this.hashBinding.legacy.setUrlHash();
+            if (noStateServerAccess) {
               this.showSaveDialog();
             }
           });
