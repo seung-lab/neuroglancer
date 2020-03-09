@@ -1,5 +1,5 @@
 import {Annotation, AnnotationSource, AnnotationTag, AnnotationType, Collection, Ellipsoid, getAnnotationTypeHandler, Line, LineStrip, LocalAnnotationSource, makeAnnotationId, Point, Spoke} from 'neuroglancer/annotation';
-import {AnnotationTool, MultiStepAnnotationTool, PlaceAnnotationTool, SubAnnotationTool} from 'neuroglancer/annotation/annotation';
+import {AnnotationTool, getSourcePoint, MultiStepAnnotationTool, PlaceAnnotationTool, produceCollection, SubAnnotationTool} from 'neuroglancer/annotation/annotation';
 import {PlaceBoundingBoxTool} from 'neuroglancer/annotation/bounding_box';
 import {PlaceCollectionTool} from 'neuroglancer/annotation/collection';
 import {PlaceSphereTool} from 'neuroglancer/annotation/ellipsoid';
@@ -772,10 +772,23 @@ export class AnnotationLayerView extends Tab {
       const parentId = checkElement.dataset.parent;
       parent = this.annotationListElements.get(parentId);
       checkElement = parent!;
-      const checkCollection = <Collection>this.annotationLayer.source.getReference(parentId).value;
-      if (checkCollection.entries && !checkCollection.childrenVisible.value) {
-        element.classList.add('neuroglancer-annotation-child-hidden');
-        this.setChildrenVisibleHelper(element.dataset.id, false);
+      let checkCollection = <Collection>this.annotationLayer.source.getReference(parentId).value;
+      if (!checkCollection) {
+        const annotationSource = <LocalAnnotationSource>this.annotationLayer.source;
+        const virtualParent =
+            produceCollection(getSourcePoint(annotation), annotationSource, parentId);
+        // This recovery method cannot recover grandparents, but it shouldn't be possible to create
+        // an in progress child annotation
+        checkCollection = <Collection>annotationSource.add(virtualParent, true).value;
+      }
+      if (checkCollection.entries) {
+        if (!checkCollection.entries.includes(annotation.id)) {
+          checkCollection.entries.push(annotation.id);
+        }
+        if (!checkCollection.childrenVisible.value) {
+          element.classList.add('neuroglancer-annotation-child-hidden');
+          this.setChildrenVisibleHelper(element.dataset.id, false);
+        }
       }
       depth++;
     }
