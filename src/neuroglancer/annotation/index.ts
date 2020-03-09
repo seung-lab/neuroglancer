@@ -268,14 +268,14 @@ const collectionTypeSet = {
   toJSON: (annotation: Collection) => {
     return {
       source: Array.from(annotation.source),
-      entries: Array.from(annotation.entries),
+      // entries: Array.from(annotation.entries),
       childrenVisible: annotation.childrenVisible.value,
       looped: (<LineStrip>annotation).looped
     };
   },
   restoreState: (annotation: Collection, obj: any) => {
     annotation.source = verifyObjectProperty(obj, 'source', verify3dVec);
-    annotation.entries = obj.entries.filter((v: any) => typeof v === 'string');
+    annotation.entries = [];// obj.entries.filter((v: any) => typeof v === 'string');
     annotation.childrenVisible = new TrackableBoolean(obj.childrenVisible, true);
     (<LineStrip>annotation).looped = verifyObjectProperty(obj, 'looped', verifyOptionalBoolean);
   },
@@ -516,11 +516,20 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     }
     const next = forward;
     const prev = !forward;
-    const area = view.firstElementChild ? view.firstElementChild : document.createElement('div');
-    const head = area.firstElementChild ? (<HTMLElement>area.firstElementChild).dataset.id : null;
-    const tail = head ? this.annotationMap.get(head)!.prev.id : null;
-    const loopedOver = (next && source.id === tail) || (prev && source.id === head);
-    // (source!.prev.id === tail) || (source!.next.id === head) ;
+    const parent = source.parentId ? <Collection> <any> this.annotationMap.get(source.parentId) : undefined;
+    let loopedOver;
+    if (parent) {
+      const lastId = parent.entries.length - 1;
+      const isLastChild = parent.entries[lastId] === source.id;
+      const isFirstChild = parent.entries[0] === source.id;
+      // Annotation list view order is reversed from entries order
+      loopedOver = (!next && isLastChild) || (!prev && isFirstChild);
+    } else {
+      const area = view.firstElementChild ? view.firstElementChild : document.createElement('div');
+      const head = area.firstElementChild ? (<HTMLElement>area.firstElementChild).dataset.id : null;
+      const tail = head ? this.annotationMap.get(head)!.prev.id : null;
+      loopedOver = (next && source.id === tail) || (prev && source.id === head);
+    }
     return <any>{...next ? source.next : source.prev, loopedOver};
   }
 
@@ -561,8 +570,14 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
 
   add(annotation: Annotation, commit: boolean = true,
       parentReference?: AnnotationReference): AnnotationReference {
-    const reference = this.addHelper(annotation, commit, parentReference);
-    this.childAdded.dispatch(annotation);
+    let reference: AnnotationReference;
+    if (this.annotationMap.has(annotation.id)) {
+      reference = this.getReference(annotation.id);
+    }
+    else {
+      reference = this.addHelper(annotation, commit, parentReference);
+      this.childAdded.dispatch(annotation);
+    }
     return reference;
   }
 

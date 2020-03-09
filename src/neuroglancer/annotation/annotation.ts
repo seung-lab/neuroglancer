@@ -1,4 +1,4 @@
-import {Annotation, AnnotationReference, AnnotationSource, AnnotationType, AxisAlignedBoundingBox, Collection, Line, LocalAnnotationSource} from 'neuroglancer/annotation';
+import {Annotation, AnnotationReference, AnnotationSource, AnnotationType, AxisAlignedBoundingBox, Collection, Ellipsoid, Line, LineStrip, LocalAnnotationSource, Point} from 'neuroglancer/annotation';
 import {PlaceBoundingBoxTool} from 'neuroglancer/annotation/bounding_box';
 import {PlaceSphereTool} from 'neuroglancer/annotation/ellipsoid';
 import {AnnotationLayerState} from 'neuroglancer/annotation/frontend';
@@ -248,36 +248,10 @@ export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
 
   protected getInitialAnnotation(
       mouseState: MouseSelectionState, annotationLayer: AnnotationLayerState): Annotation {
-    const coll = <Collection>{
-      id: '',
-      type: this.annotationType,
-      description: '',
-      entries: [],
-      segments: [],
-      connected: false,
-      source:
-          vec3.transformMat4(vec3.create(), mouseState.position, annotationLayer.globalToObject),
-      entry: () => {},
-      segmentSet: () => {},
-      childrenVisible: new TrackableBoolean(true, true)
-    };
-    coll.entry = (index: number) =>
-        (<LocalAnnotationSource>annotationLayer.source).get(coll.entries[index]);
-    coll.segmentSet = () => {
-      coll.segments = [];
-      coll.entries.forEach((ref, index) => {
-        ref;
-        const child = <Annotation>coll.entry(index);
-        if (coll.segments && child && child.segments) {
-          coll.segments = [...coll.segments!, ...child.segments];
-        }
-      });
-      if (coll.segments) {
-        coll.segments =
-            [...new Set(coll.segments.map((e) => e.toString()))].map((s) => Uint64.parseString(s));
-      }
-    };
-    return coll;
+    const sourcePoint =
+        vec3.transformMat4(vec3.create(), mouseState.position, annotationLayer.globalToObject);
+    const annotationSource = <LocalAnnotationSource>annotationLayer.source;
+    return produceCollection(sourcePoint, annotationSource);
   }
 
   protected safeDelete(target?: AnnotationReference) {
@@ -422,4 +396,52 @@ export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
   abstract get description(): string;
 
   abstract toJSON(): string;
+}
+
+export function produceCollection(
+    sourcePoint: vec3, annotationSource: LocalAnnotationSource, id: string = '') {
+  const collection = <Collection>{
+    id,
+    type: AnnotationType.COLLECTION,
+    description: '',
+    entries: [],  // identical to target
+    segments: [],
+    connected: false,
+    source: sourcePoint,
+    entry: () => {},
+    segmentSet: () => {},
+    childrenVisible: new TrackableBoolean(true, true)
+  };
+  collection.entry = (index: number) => annotationSource.get(collection.entries[index]);
+  collection.segmentSet = () => {
+    collection.segments = [];
+    collection.entries.forEach((ref, index) => {
+      ref;
+      const child = <Annotation>collection.entry(index);
+      if (collection.segments && child.segments) {
+        collection.segments = [...collection.segments!, ...child.segments];
+      }
+    });
+    if (collection.segments) {
+      collection.segments = [...new Set(collection.segments.map((e) => e.toString()))].map(
+          (s) => Uint64.parseString(s));
+    }
+  };
+  return collection;
+}
+
+export function getSourcePoint(annotation: Annotation) {
+  switch (annotation.type) {
+    case AnnotationType.AXIS_ALIGNED_BOUNDING_BOX:
+    case AnnotationType.LINE:
+      return (<Line|AxisAlignedBoundingBox>annotation).pointA;
+    case AnnotationType.POINT:
+      return (<Point>annotation).point;
+    case AnnotationType.ELLIPSOID:
+      return (<Ellipsoid>annotation).center;
+    case AnnotationType.LINE_STRIP:
+    case AnnotationType.SPOKE:
+    case AnnotationType.COLLECTION:
+      return (<LineStrip>annotation).source;
+  }
 }

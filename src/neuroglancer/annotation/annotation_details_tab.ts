@@ -1,20 +1,20 @@
 import {Annotation, AnnotationReference, AnnotationSource, AnnotationType, AxisAlignedBoundingBox, Collection, Ellipsoid, getAnnotationTypeHandler, Line, LineStrip, LocalAnnotationSource, Point, Spoke} from 'neuroglancer/annotation';
 import {AnnotationLayerState} from 'neuroglancer/annotation/frontend';
+import {createPointAnnotation} from 'neuroglancer/annotation/point';
 import {VoxelSize} from 'neuroglancer/navigation_state';
-import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
+import {getPreserveSourceAnnotations} from 'neuroglancer/preferences/user_preferences';
+import {StatusMessage} from 'neuroglancer/status';
 import {WatchableValue} from 'neuroglancer/trackable_value';
 import {AnnotationSegmentListWidget, getPositionSummary, SelectedAnnotationState} from 'neuroglancer/ui/annotations';
 import {Owned} from 'neuroglancer/util/disposable';
 import {removeChildren} from 'neuroglancer/util/dom';
 import {transformVectorByMat4, vec3} from 'neuroglancer/util/geom';
 import {formatBoundingBoxVolume, formatIntegerBounds, formatLength} from 'neuroglancer/util/spatial_units';
-import {Uint64} from 'neuroglancer/util/uint64';
 import {makeCloseButton} from 'neuroglancer/widget/close_button';
 import {Tab} from 'neuroglancer/widget/tab_view';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
-import {getPreserveSourceAnnotations} from 'neuroglancer/preferences/user_preferences';
-import {StatusMessage} from 'neuroglancer/status';
-import {createPointAnnotation} from 'neuroglancer/annotation/point';
+
+import {getSourcePoint, produceCollection} from './annotation';
 
 const tempVec3 = vec3.create();
 type CollectionLike = AnnotationType.COLLECTION|AnnotationType.SPOKE|AnnotationType.LINE_STRIP;
@@ -152,19 +152,15 @@ export class AnnotationDetailsTab extends Tab {
     return button;
   }
 
-  private evictButton(annotation: Annotation, isSingleton?: boolean) {
+  private evictButton() {
     const annotationLayer = this.state.annotationLayerState.value!;
     const button = makeTextIconButton('✂️', 'Extract from collection');
     button.addEventListener('click', () => {
-      const parentReference = annotationLayer.source.getReference(annotation.parentId!);
-      if (isSingleton) {
-        try {
-          annotationLayer.source.delete(parentReference);
-        } finally {
-          parentReference.dispose();
-        }
-      } else {
-        (<AnnotationSource>annotationLayer.source).childReassignment([annotation.id]);
+      const value = this.state.value;
+      if (value) {
+        const target = value.multiple ? [...value.multiple] : [value.id];
+        const emptyArrays = (<AnnotationSource>annotationLayer.source).childReassignment(target);
+        emptyArrays.forEach(ref => annotationLayer.source.delete(ref));
       }
       this.state.value = undefined;
     });
@@ -174,19 +170,7 @@ export class AnnotationDetailsTab extends Tab {
   private getSourcePoint(id: string) {
     const annotationLayer = this.state.annotationLayerState.value!;
     const annotation = annotationLayer.source.getReference(id).value!;
-    switch (annotation.type) {
-      case AnnotationType.AXIS_ALIGNED_BOUNDING_BOX:
-      case AnnotationType.LINE:
-        return (<Line|AxisAlignedBoundingBox>annotation).pointA;
-      case AnnotationType.POINT:
-        return (<Point>annotation).point;
-      case AnnotationType.ELLIPSOID:
-        return (<Ellipsoid>annotation).center;
-      case AnnotationType.LINE_STRIP:
-      case AnnotationType.SPOKE:
-      case AnnotationType.COLLECTION:
-        return (<LineStrip>annotation).source;
-    }
+    return getSourcePoint(annotation);
   }
 
   private validateSelectionForSpecialCollection(ids: string[]) {
@@ -227,48 +211,16 @@ export class AnnotationDetailsTab extends Tab {
     return true;
   }
 
-  private generateEmptyCollection(sourcePoint: vec3) {
-    const annotationLayer = this.state.annotationLayerState.value!;
-    const collection = <Collection>{
-      id: '',
-      type: AnnotationType.COLLECTION,
-      description: '',
-      entries: [],  // identical to target
-      segments: [],
-      connected: false,
-      source: sourcePoint,
-      entry: () => {},
-      segmentSet: () => {},
-      childrenVisible: new TrackableBoolean(true, true)
-    };
-    collection.entry = (index: number) =>
-        (<LocalAnnotationSource>annotationLayer.source).get(collection.entries[index]);
-    collection.segmentSet = () => {
-      collection.segments = [];
-      collection.entries.forEach((ref, index) => {
-        ref;
-        const child = <Annotation>collection.entry(index);
-        if (collection.segments && child.segments) {
-          collection.segments = [...collection.segments!, ...child.segments];
-        }
-      });
-      if (collection.segments) {
-        collection.segments = [...new Set(collection.segments.map((e) => e.toString()))].map(
-            (s) => Uint64.parseString(s));
-      }
-    };
-    return collection;
-  }
-
   private generateCollectionOperation(type?: CollectionLike) {
     const value = this.state.value!;
     const annotationLayer = this.state.annotationLayerState.value!;
     const target = value.multiple ? [...value.multiple] : [value.id];
     const first = annotationLayer.source.getReference(target[0]).value!;
     const sourcePoint = this.getSourcePoint(first.id);
-    const collection = <Collection|Spoke|LineStrip>this.generateEmptyCollection(sourcePoint);
+    const collection = <Collection|Spoke|LineStrip>produceCollection(
+        sourcePoint, <LocalAnnotationSource>annotationLayer.source);
     collection.type = type ? type : AnnotationType.COLLECTION;
-    collection.connected = true;
+    collection.connected = type !== AnnotationType.COLLECTION;
 
     const collectionReference = (<AnnotationSource>annotationLayer.source).add(collection, true);
     if (first.parentId) {
@@ -578,7 +530,7 @@ export class AnnotationDetailsTab extends Tab {
 
     const info = this.getAnnotationStateInfo();
     const title = this.createAnnotationDetailsTitleElement(annotation, info);
-    const {isLineSegment, isChild, isSingleton, isInProgress} = info;
+    const {isLineSegment, isChild, isInProgress} = info;
 
     if (isLineSegment || isInProgress) {
       // not allowed to multi select line segments
@@ -605,16 +557,16 @@ export class AnnotationDetailsTab extends Tab {
         }
         contextualButtons.push(this.editModeButton(annotation));
       } else if (!readOnly) {
+        if (isChild) {
+          contextualButtons.push(this.evictButton());
+        }
         if (value.multiple) {
           contextualButtons.push(this.groupButton());
           contextualButtons.push(this.generateSpokeButton());
           contextualButtons.push(this.generateLineStripButton());
         } else {
-          if (annotation.type === COLLECTION) {
+          if (annotation.type === COLLECTION || annotation.type === AnnotationType.SPOKE) {
             contextualButtons.push(this.editModeButton(annotation));
-          }
-          if (isChild) {
-            contextualButtons.push(this.evictButton(annotation, isSingleton));
           }
           contextualButtons.push(this.groupButton());
           if (annotation.type === COLLECTION || specialCollectionTypes.includes(annotation.type)) {
