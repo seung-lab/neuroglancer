@@ -20,6 +20,7 @@
 
 import {Annotation, AnnotationReference, AnnotationType, Point} from 'neuroglancer/annotation';
 import {getSelectedAssocatedSegment, PlaceAnnotationTool} from 'neuroglancer/annotation/annotation';
+import {AnnotationLayerState} from 'neuroglancer/annotation/annotation_layer_state';
 import {AnnotationRenderContext, AnnotationRenderHelper, registerAnnotationTypeRenderHandler} from 'neuroglancer/annotation/type_handler';
 import {MouseSelectionState} from 'neuroglancer/layer';
 import {UserLayerWithAnnotations} from 'neuroglancer/ui/annotations';
@@ -27,8 +28,6 @@ import {registerTool} from 'neuroglancer/ui/tool';
 import {mat4, vec3} from 'neuroglancer/util/geom';
 import {CircleShader} from 'neuroglancer/webgl/circles';
 import {emitterDependentShaderGetter, ShaderBuilder} from 'neuroglancer/webgl/shader';
-
-import { AnnotationLayerState } from './annotation_layer_state';
 
 const ANNOTATE_POINT_TOOL_ID = 'annotatePoint';
 

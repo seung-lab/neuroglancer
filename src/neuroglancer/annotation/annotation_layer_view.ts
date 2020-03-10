@@ -702,7 +702,7 @@ export class AnnotationLayerView extends Tab {
 
     while (pList || nList) {
       if (pList) {
-        let prev: any = source.getPrevAnnotation(
+        let prev: Annotation|undefined = source.getPrevAnnotation(
             !pList.length ? origin : pList[pList.length - 1], this.annotationListContainer);
         const current = pList[pList.length - 1];
         if (current === target) {
