@@ -578,7 +578,7 @@ export class AnnotationLayerView extends Tab {
       this.updateView();
       return;
     }
-    const element = this.makeAnnotationListElement(annotation);
+    const element = this.makeAnnotationListElement(annotation).pop()!;
     const parent = element.dataset.parent ?
         this.annotationListElements.get(element.dataset.parent) :
         undefined;
@@ -589,7 +589,8 @@ export class AnnotationLayerView extends Tab {
   private addAnnotationsHelper(annotations: Iterable<Annotation>) {
     this.annotationsToAdd = [];
     for (const annotation of annotations) {
-      this.annotationsToAdd.push(this.makeAnnotationListElement(annotation, false));
+      const processedAnnotations = this.makeAnnotationListElement(annotation, false);
+      this.annotationsToAdd = [...this.annotationsToAdd, ...processedAnnotations];
     }
     this.arrangeAnnotationsToAdd();
     this.annotationHidingList.addElements(this.annotationsToAdd);
@@ -624,7 +625,7 @@ export class AnnotationLayerView extends Tab {
       return;
     }
     const {annotationHidingList} = this;
-    const newElement = this.makeAnnotationListElement(annotation);
+    const newElement = this.makeAnnotationListElement(annotation).pop()!;
     // This makes sure the new element preserves classes of the old
     newElement.classList.add(...[...element.classList]);
     let isInProgress = (<AnnotationSource>this.annotationLayer.source).isPending(annotation.id);
@@ -740,6 +741,8 @@ export class AnnotationLayerView extends Tab {
   private makeAnnotationListElement(annotation: Annotation, doPadding: boolean = true) {
     const transform = this.annotationLayer.objectToGlobal;
     const element = document.createElement('li');
+    let listElementsCreated: HTMLLIElement[] = [];
+
     element.dataset.id = annotation.id;
     element.title = 'Click to select, right click to recenter view.';
     let isInProgress = (<AnnotationSource>this.annotationLayer.source).isPending(annotation.id);
@@ -779,7 +782,12 @@ export class AnnotationLayerView extends Tab {
             produceCollection(getSourcePoint(annotation), annotationSource, parentId);
         // This recovery method cannot recover grandparents, but it shouldn't be possible to create
         // an in progress child annotation
-        checkCollection = <Collection>annotationSource.add(virtualParent, true).value;
+        listElementsCreated = [...this.makeAnnotationListElement(virtualParent)];
+        checkCollection = virtualParent;
+        /* const possibleParent = annotationSource.add(virtualParent, true);
+        if (!possibleParent.value) {
+          return;
+        }*/
       }
       if (checkCollection.entries) {
         if (!checkCollection.entries.includes(annotation.id)) {
@@ -845,8 +853,9 @@ export class AnnotationLayerView extends Tab {
         event.stopPropagation();
       }
     });
+    listElementsCreated.push(element);
 
-    return element;
+    return listElementsCreated;
   }
 
   private setChildrenVisible(elementId: string, visible: boolean) {
