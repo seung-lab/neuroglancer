@@ -18,6 +18,17 @@ import {getSourcePoint, produceCollection} from './annotation';
 
 const tempVec3 = vec3.create();
 type CollectionLike = AnnotationType.COLLECTION|AnnotationType.SPOKE|AnnotationType.LINE_STRIP;
+
+interface AnnotationStateInfo {
+  isInProgress: boolean;
+  isLineSegment: boolean;
+  isSpoke: boolean;
+  isChild: boolean;
+  isSingleton: boolean;
+  groupSize: number;
+
+}
+
 export class AnnotationDetailsTab extends Tab {
   private valid = false;
   private mouseEntered = false;
@@ -56,7 +67,7 @@ export class AnnotationDetailsTab extends Tab {
 
   private getAnnotationStateInfo() {
     const value = this.state.value!;
-    const info = <any>{};
+    const info = <AnnotationStateInfo>{};
     const annotationLayer = this.state.annotationLayerState.value;
     if (annotationLayer) {
       info.isInProgress = annotationLayer.source.isPending(value.id);

@@ -111,18 +111,23 @@
   overflow-y: scroll;
 }
 
-/*.neuroglancer-annotation-details-position {}*/
-
 .neuroglancer-annotation-toolbox {
   display: flex;
   align-items: stretch;
 }
 
-/*.neuroglancer-annotation-segment-list {}*/
-
 
 .neuroglancer-annotation-segment-item {
   color: black;
+}
+
+.neuroglancer-seperator-element {
+  padding: 1px;
+  border: 1px;
+}
+
+.neuroglancer-hidden-button {
+  display: none;
 }
 
 .neuroglancer-minimizable-group-flexible.neuroglancer-annotation-hiding-list-parent {
