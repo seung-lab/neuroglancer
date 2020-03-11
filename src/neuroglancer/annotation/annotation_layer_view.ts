@@ -1,4 +1,4 @@
-import {Annotation, AnnotationSource, AnnotationTag, AnnotationType, Collection, Ellipsoid, getAnnotationTypeHandler, Line, LineStrip, LocalAnnotationSource, makeAnnotationId, Point, Spoke} from 'neuroglancer/annotation';
+import {Annotation, AnnotationSource, AnnotationTag, AnnotationType, Collection, Ellipsoid, getAnnotationTypeHandler, Line, LineStrip, LocalAnnotationSource, makeAnnotationId, Point, Spoke, AnnotationCT} from 'neuroglancer/annotation';
 import {AnnotationTool, getSourcePoint, MultiStepAnnotationTool, PlaceAnnotationTool, produceCollection, SubAnnotationTool} from 'neuroglancer/annotation/annotation';
 import {PlaceBoundingBoxTool} from 'neuroglancer/annotation/bounding_box';
 import {PlaceCollectionTool} from 'neuroglancer/annotation/collection';
@@ -194,8 +194,7 @@ export class AnnotationLayerView extends Tab {
       const activeTool = <MultiStepAnnotationTool>this.layer.tool.value;
       const separator = document.createElement('button');
       separator.disabled = true;
-      separator.style.padding = '1px';
-      separator.style.border = '1px';
+      separator.classList.add('neuroglancer-seperator-element');
       annotationButtons.unshift(...annotationButtons.splice(4, 1));
       annotationButtons.splice(1, 0, separator);
 
@@ -298,7 +297,6 @@ export class AnnotationLayerView extends Tab {
   private csvToolboxSetup() {
     const exportToCSVButton = document.createElement('button');
     const importCSVButton = document.createElement('button');
-    // importCSVButton.disabled = true;
     const importCSVForm = document.createElement('form');
     const importCSVFileSelect = document.createElement('input');
     exportToCSVButton.id = 'exportToCSVButton';
@@ -310,7 +308,6 @@ export class AnnotationLayerView extends Tab {
     importCSVFileSelect.type = 'file';
     importCSVFileSelect.accept = 'text/csv';
     importCSVFileSelect.multiple = true;
-    importCSVFileSelect.style.display = 'none';
     importCSVButton.textContent = 'Import from CSV';
     importCSVButton.addEventListener('click', () => {
       importCSVFileSelect.click();
@@ -320,6 +317,7 @@ export class AnnotationLayerView extends Tab {
       this.importCSV(importCSVFileSelect.files);
       importCSVForm.reset();
     });
+    importCSVFileSelect.classList.add('neuroglancer-hidden-button');
     const csvContainer = document.createElement('span');
     csvContainer.append(exportToCSVButton, importCSVButton, importCSVForm);
     this.groupAnnotations.appendFixedChild(csvContainer);
@@ -702,7 +700,7 @@ export class AnnotationLayerView extends Tab {
 
     while (pList || nList) {
       if (pList) {
-        let prev: Annotation|undefined = source.getPrevAnnotation(
+        let prev: AnnotationCT|undefined = source.getPrevAnnotation(
             !pList.length ? origin : pList[pList.length - 1], this.annotationListContainer);
         const current = pList[pList.length - 1];
         if (current === target) {
@@ -715,7 +713,7 @@ export class AnnotationLayerView extends Tab {
         }
       }
       if (nList) {
-        let next: any = source.getNextAnnotation(
+        let next: AnnotationCT|undefined = source.getNextAnnotation(
             !nList.length ? origin : nList[nList.length - 1], this.annotationListContainer);
         const current = nList[nList.length - 1];
         if (current === target) {
@@ -732,7 +730,7 @@ export class AnnotationLayerView extends Tab {
     shiftList.forEach((id, n, list) => {
       // element?.classList.add('neuroglancer-annotation-multiple');
       // TODO: Optional Chaining doesn't work w/ Webpack yet
-      multiple = <any>this.selectAnnotationInGroup(id, n!? origin : list[n - 1], multiple);
+      multiple = this.selectAnnotationInGroup(id, n!? origin : list[n - 1], multiple);
     });
 
     return multiple;

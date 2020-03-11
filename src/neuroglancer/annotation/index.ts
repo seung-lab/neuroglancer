@@ -133,6 +133,11 @@ type AnnotationNode = Annotation&{
   next: AnnotationNode;
 };
 
+export type AnnotationCT = Annotation&{
+  // Circularly tracked
+  loopedOver?: boolean;
+};
+
 export interface AnnotationTypeHandler<T extends Annotation> {
   icon: string;
   description: string;
@@ -529,7 +534,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
       const tail = head ? this.annotationMap.get(head)!.prev.id : null;
       loopedOver = (next && source.id === tail) || (prev && source.id === head);
     }
-    return <Annotation> {...next ? source.next : source.prev, loopedOver};
+    return <AnnotationCT> {...next ? source.next : source.prev, loopedOver};
   }
 
   getNextAnnotation(id: AnnotationId, viewContainer?: HTMLElement): Annotation|undefined {
