@@ -207,10 +207,13 @@ function parseTransform(data: any): mat4 {
   });
 }
 
-function parseMeshMetadata(data: any): MultiscaleMeshMetadata {
+function parseMeshMetadata(data: any): MultiscaleMeshMetadata|undefined {
   verifyObject(data);
   const t = verifyObjectProperty(data, '@type', verifyString);
-  if (t !== 'neuroglancer_multilod_draco') {
+  if (t === 'neuroglancer_legacy_mesh') {
+    return undefined;
+  }
+  else if (t !== 'neuroglancer_multilod_draco') {
     throw new Error(`Unsupported mesh type: ${JSON.stringify(t)}`);
   }
   const lodScaleMultiplier =
@@ -242,7 +245,7 @@ function parseShardingEncoding(y: any): DataEncoding {
 }
 
 function parseShardingParameters(shardingData: any): ShardingParameters|undefined {
-  if (shardingData === undefined) return undefined;
+  if (shardingData === undefined || shardingData === null) return undefined;
   verifyObject(shardingData);
   const t = verifyObjectProperty(shardingData, '@type', verifyString);
   if (t !== 'neuroglancer_uint64_sharded_v1') {

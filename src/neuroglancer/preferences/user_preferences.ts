@@ -10,22 +10,22 @@ class UserPreferences {
   renderMeshByDefault: TrackableBoolean;
   prefetchSliceViewChunks: TrackableBoolean;
   cursorOnMousedrag: TrackableBoolean;
-  urlAutoSave: TrackableBoolean;
   preserveSourceAnnotations: TrackableBoolean;
+  saveToAddressBar: TrackableBoolean;
   constructor() {
     // mesh rendering is enabled by default, unless user selects not to
     this.renderMeshByDefault = new TrackableBoolean(true, true, 'renderMeshByDefault');
     // prefetching disabled by default, as it uses a lot of additional memory/bandwidth
     this.prefetchSliceViewChunks = new TrackableBoolean(false, false, 'prefetchSliceViewChunks');
     this.cursorOnMousedrag = new TrackableBoolean(true, true, 'cursorOnMousedrag');
-    this.urlAutoSave = new TrackableBoolean(true, true, 'urlAutoSave');
     this.preserveSourceAnnotations = new TrackableBoolean(true, true, 'preserveSourceAnnotations');
+    this.saveToAddressBar = new TrackableBoolean(false, false, 'saveToAddressBar');
 
     this.renderMeshByDefault.restoreState({});
     this.prefetchSliceViewChunks.restoreState({});
     this.cursorOnMousedrag.restoreState({});
-    this.urlAutoSave.restoreState({});
     this.preserveSourceAnnotations.restoreState({});
+    this.saveToAddressBar.restoreState({});
 
     this.renderMeshByDefault.changed.add(() => {
       location.reload(false);
@@ -47,8 +47,8 @@ export function getCursorOnMousedrag(): TrackableBoolean {
   return userPreferences.cursorOnMousedrag;
 }
 
-export function getUrlAutoSave(): TrackableBoolean {
-  return userPreferences.urlAutoSave;
+export function getSaveToAddressBar(): TrackableBoolean {
+  return userPreferences.saveToAddressBar;
 }
 
 export function getPreserveSourceAnnotations(): TrackableBoolean {
@@ -83,18 +83,28 @@ export class UserPreferencesDialog extends Overlay {
     addLimitWidget(
         'Concurrent chunk requests', viewer.chunkQueueManager.capacities.download.itemLimit);
 
-    const addCheckbox = (label: string, value: TrackableBoolean) => {
-      const labelElement = document.createElement('label');
-      labelElement.textContent = label;
-      const checkbox = this.registerDisposer(new TrackableBooleanCheckbox(value));
-      labelElement.appendChild(checkbox.element);
-      scroll.appendChild(labelElement);
-    };
+    const addCheckbox =
+        (label: string, value: TrackableBoolean, onclick?: (ev: MouseEvent) => any,
+         title?: string) => {
+          const labelElement = document.createElement('label');
+          labelElement.textContent = label;
+          const checkbox = this.registerDisposer(new TrackableBooleanCheckbox(value));
+          if (onclick) {
+            checkbox.element.onclick = onclick;
+          }
+          if (title) {
+            labelElement.title = title;
+          }
+          labelElement.appendChild(checkbox.element);
+          scroll.appendChild(labelElement);
+        };
 
     addCheckbox('Render Mesh By Default', userPreferences.renderMeshByDefault);
     addCheckbox('Prefetch SliceView Chunks', userPreferences.prefetchSliceViewChunks);
     addCheckbox('Show cursor on mouse drag', userPreferences.cursorOnMousedrag);
-    addCheckbox('Auto Save', userPreferences.urlAutoSave);
     addCheckbox('Preserve Source Annotations', userPreferences.preserveSourceAnnotations);
+    addCheckbox(
+        'Old Style Saving', userPreferences.saveToAddressBar, () => location.reload(),
+        `Saves state in address bar. Useful if storage is unsupported. Press save to post to JSON Server. Warning: Toggling the option reloads the page!`);
   }
 }

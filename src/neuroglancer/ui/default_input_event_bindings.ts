@@ -29,6 +29,9 @@ export function getDefaultGlobalBindings() {
     map.set('shift+keyb', 'toggle-default-annotations');
     map.set('keya', 'toggle-axis-lines');
     map.set('keyo', 'toggle-orthographic-projection');
+    map.set('control+shift+keys', 'save-state');
+    map.set('control+shift+keyj', 'save-state-getjson');
+    map.set('control+shift+keyr', 'save-state-getraw');
 
     for (let i = 1; i <= 9; ++i) {
       map.set('digit' + i, 'toggle-layer-' + i);
@@ -57,6 +60,12 @@ export function getDefaultRenderedDataPanelBindings() {
           'arrowdown': 'y+',
           'comma': 'z-',
           'period': 'z+',
+          'shift+comma': 'z-10',
+          'shift+period': 'z+10',
+          'control+shift+comma': 'z-100',
+          'control+shift+period': 'z+100',
+          'control+alt+shift+comma': 'z-1000',
+          'control+alt+shift+period': 'z+1000',
           'keyz': 'snap',
           'control+equal': 'zoom-in',
           'control+shift+equal': 'zoom-in',
@@ -75,6 +84,8 @@ export function getDefaultRenderedDataPanelBindings() {
           'at:control+wheel': {action: 'zoom-via-wheel', preventDefault: true},
           'at:wheel': {action: 'z+1-via-wheel', preventDefault: true},
           'at:shift+wheel': {action: 'z+10-via-wheel', preventDefault: true},
+          'at:control+shift+wheel': {action: 'z+100-via-wheel', preventDefault: true},
+          'at:control+alt+shift+wheel': {action: 'z+1000-via-wheel', preventDefault: true},
           'at:dblclick0': 'select',
           'at:control+mousedown0': 'annotate',
           'at:control+dblclick0': 'complete-annotation',

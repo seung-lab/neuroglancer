@@ -1,4 +1,4 @@
-### Febuary 2019 ❄️
+### 🌱 March 2019 🐇
 # New Annotation Controls
 * Shift + Click
     * Select a continous section of annotations between the previous selection and current selection.
