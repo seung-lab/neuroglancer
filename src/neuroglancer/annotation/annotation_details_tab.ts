@@ -620,7 +620,7 @@ export class AnnotationDetailsTab extends Tab {
     }
     element.appendChild(segmentListWidget.element);
 
-    if (!value.multiple) {
+    if (!value.multiple && !isInProgress) {
       element.appendChild(this.annotationDetailsDescription());
     }
   }
