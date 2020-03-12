@@ -782,10 +782,10 @@ export class AnnotationLayerView extends Tab {
         // an in progress child annotation
         listElementsCreated = [...this.makeAnnotationListElement(virtualParent)];
         checkCollection = virtualParent;
-        /* const possibleParent = annotationSource.add(virtualParent, true);
+        const possibleParent = annotationSource.add(virtualParent, true);
         if (!possibleParent.value) {
-          return;
-        }*/
+          return [];
+        }
       }
       if (checkCollection.entries) {
         if (!checkCollection.entries.includes(annotation.id)) {

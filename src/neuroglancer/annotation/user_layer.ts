@@ -16,7 +16,7 @@
 
 import './user_layer.css';
 
-import {Annotation, AnnotationId, AnnotationType, LocalAnnotationSource} from 'neuroglancer/annotation';
+import {Annotation, AnnotationId, AnnotationType, LocalAnnotationSource, annotationErrorCorrection} from 'neuroglancer/annotation';
 import {AnnotationLayerView} from 'neuroglancer/annotation/annotation_layer_view';
 import {AnnotationLayerState} from 'neuroglancer/annotation/frontend';
 import {CoordinateTransform, makeDerivedCoordinateTransform} from 'neuroglancer/coordinate_transform';
@@ -145,6 +145,7 @@ export class AnnotationUserLayer extends Base {
     if (sourceUrl === undefined) {
       this.isReady = true;
       this.voxelSize.restoreState(specification[VOXEL_SIZE_JSON_KEY]);
+      specification[ANNOTATIONS_JSON_KEY] = annotationErrorCorrection(specification[ANNOTATIONS_JSON_KEY], this.localAnnotations);
       this.localAnnotations.restoreState(
           specification[ANNOTATIONS_JSON_KEY], specification[ANNOTATION_TAGS_JSON_KEY]);
       // Handle legacy "points" property.
