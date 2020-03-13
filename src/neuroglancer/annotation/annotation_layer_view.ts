@@ -1,5 +1,5 @@
 import {Annotation, AnnotationSource, AnnotationTag, AnnotationType, Collection, Ellipsoid, getAnnotationTypeHandler, Line, LineStrip, LocalAnnotationSource, makeAnnotationId, Point, Spoke, AnnotationCT} from 'neuroglancer/annotation';
-import {AnnotationTool, getSourcePoint, MultiStepAnnotationTool, PlaceAnnotationTool, produceCollection, SubAnnotationTool} from 'neuroglancer/annotation/annotation';
+import {AnnotationTool, MultiStepAnnotationTool, PlaceAnnotationTool, SubAnnotationTool} from 'neuroglancer/annotation/annotation';
 import {PlaceBoundingBoxTool} from 'neuroglancer/annotation/bounding_box';
 import {PlaceCollectionTool} from 'neuroglancer/annotation/collection';
 import {PlaceSphereTool} from 'neuroglancer/annotation/ellipsoid';
@@ -576,7 +576,7 @@ export class AnnotationLayerView extends Tab {
       this.updateView();
       return;
     }
-    const element = this.makeAnnotationListElement(annotation).pop()!;
+    const element = this.makeAnnotationListElement(annotation);
     const parent = element.dataset.parent ?
         this.annotationListElements.get(element.dataset.parent) :
         undefined;
@@ -587,8 +587,7 @@ export class AnnotationLayerView extends Tab {
   private addAnnotationsHelper(annotations: Iterable<Annotation>) {
     this.annotationsToAdd = [];
     for (const annotation of annotations) {
-      const processedAnnotations = this.makeAnnotationListElement(annotation, false);
-      this.annotationsToAdd = [...this.annotationsToAdd, ...processedAnnotations];
+      this.annotationsToAdd.push(this.makeAnnotationListElement(annotation, false));
     }
     this.arrangeAnnotationsToAdd();
     this.annotationHidingList.addElements(this.annotationsToAdd);
@@ -623,7 +622,7 @@ export class AnnotationLayerView extends Tab {
       return;
     }
     const {annotationHidingList} = this;
-    const newElement = this.makeAnnotationListElement(annotation).pop()!;
+    const newElement = this.makeAnnotationListElement(annotation);
     // This makes sure the new element preserves classes of the old
     newElement.classList.add(...[...element.classList]);
     let isInProgress = (<AnnotationSource>this.annotationLayer.source).isPending(annotation.id);
@@ -739,7 +738,6 @@ export class AnnotationLayerView extends Tab {
   private makeAnnotationListElement(annotation: Annotation, doPadding: boolean = true) {
     const transform = this.annotationLayer.objectToGlobal;
     const element = document.createElement('li');
-    let listElementsCreated: HTMLLIElement[] = [];
 
     element.dataset.id = annotation.id;
     element.title = 'Click to select, right click to recenter view.';
@@ -774,19 +772,6 @@ export class AnnotationLayerView extends Tab {
       parent = this.annotationListElements.get(parentId);
       checkElement = parent!;
       let checkCollection = <Collection>this.annotationLayer.source.getReference(parentId).value;
-      if (!checkCollection) {
-        const annotationSource = <LocalAnnotationSource>this.annotationLayer.source;
-        const virtualParent =
-            produceCollection(getSourcePoint(annotation), annotationSource, parentId);
-        // This recovery method cannot recover grandparents, but it shouldn't be possible to create
-        // an in progress child annotation
-        listElementsCreated = [...this.makeAnnotationListElement(virtualParent)];
-        checkCollection = virtualParent;
-        const possibleParent = annotationSource.add(virtualParent, true);
-        if (!possibleParent.value) {
-          return [];
-        }
-      }
       if (checkCollection.entries) {
         if (!checkCollection.entries.includes(annotation.id)) {
           checkCollection.entries.push(annotation.id);
@@ -851,9 +836,7 @@ export class AnnotationLayerView extends Tab {
         event.stopPropagation();
       }
     });
-    listElementsCreated.push(element);
-
-    return listElementsCreated;
+    return element;
   }
 
   private setChildrenVisible(elementId: string, visible: boolean) {

@@ -1,4 +1,4 @@
-import {Annotation, AnnotationReference, AnnotationSource, AnnotationType, AxisAlignedBoundingBox, Collection, Ellipsoid, Line, LineStrip, LocalAnnotationSource, Point} from 'neuroglancer/annotation';
+import {Annotation, AnnotationReference, AnnotationSource, AnnotationType, AxisAlignedBoundingBox, Collection, Ellipsoid, Line, LineStrip, LocalAnnotationSource, Point, annotationToJson} from 'neuroglancer/annotation';
 import {PlaceBoundingBoxTool} from 'neuroglancer/annotation/bounding_box';
 import {PlaceSphereTool} from 'neuroglancer/annotation/ellipsoid';
 import {AnnotationLayerState} from 'neuroglancer/annotation/frontend';
@@ -444,4 +444,29 @@ export function getSourcePoint(annotation: Annotation) {
     case AnnotationType.COLLECTION:
       return (<LineStrip>annotation).source;
   }
+}
+
+export function annotationErrorCorrection(annotationObj: Annotation[], source: LocalAnnotationSource) {
+  const verifyMap: {[key: string]: any} = {};
+  const newAnnotations: Annotation[] = annotationObj;
+
+  for (const annotation of annotationObj) {
+    verifyMap[annotation.id] = annotation;
+    if (annotation.parentId) {
+      const {parentId} = annotation;
+      if (!verifyMap[parentId]) {
+        verifyMap[parentId] = {child: annotation, invalid: true};
+      }
+    }
+  }
+
+  for (const ids in verifyMap) {
+    if (verifyMap[ids].invalid) {
+      const child = verifyMap[ids].child;
+      const parent = produceCollection(vec3.clone(child.point), source, ids);
+      const strParent = annotationToJson(parent);
+      newAnnotations.push(strParent);
+    }
+  }
+  return newAnnotations;
 }

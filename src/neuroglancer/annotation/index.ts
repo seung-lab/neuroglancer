@@ -25,7 +25,6 @@ import {parseArray, verify3dScale, verify3dVec, verifyEnumString, verifyObject, 
 import {getRandomHexString} from 'neuroglancer/util/random';
 import {NullarySignal, Signal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
-import { produceCollection, getSourcePoint } from './annotation';
 
 export type AnnotationId = string;
 
@@ -575,14 +574,8 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
 
   add(annotation: Annotation, commit: boolean = true,
       parentReference?: AnnotationReference): AnnotationReference {
-    let reference: AnnotationReference;
-    if (this.annotationMap.has(annotation.id)) {
-      reference = this.getReference(annotation.id);
-    }
-    else {
-      reference = this.addHelper(annotation, commit, parentReference);
-      this.childAdded.dispatch(annotation);
-    }
+    const reference = this.addHelper(annotation, commit, parentReference);
+    this.childAdded.dispatch(annotation);
     return reference;
   }
 
@@ -991,29 +984,6 @@ export function serializeAnnotations(allAnnotations: Annotation[][]): Serialized
     });
   }
   return {data: new Uint8Array(data), typeToIds, typeToOffset, segmentListIndex, segmentList};
-}
-
-export function annotationErrorCorrection(annotationObj: Annotation[], source: LocalAnnotationSource) {
-  const verifyMap: {[key: string]: any} = {};
-  const newAnnotations: Annotation[] = [];
-
-  for (const annotation of annotationObj) {
-    verifyMap[annotation.id] = annotation;
-    if (annotation.parentId) {
-      const {parentId} = annotation;
-      if (!verifyMap[parentId]) {
-        verifyMap[parentId] = {child: annotation, invalid: true};
-      }
-    }
-  }
-
-  for (const ids in verifyMap) {
-    if (verifyMap[ids].invalid) {
-      const child = verifyMap[ids].child;
-      newAnnotations.push(produceCollection(getSourcePoint(child), source, ids));
-    }
-  }
-  return newAnnotations;
 }
 
 export class AnnotationSerializer {
