@@ -88,7 +88,11 @@ export async function cancellableFetchOk<T>(
     return await transformResponse(response);
   }
   const abortController = new AbortController();
-  const unregisterCancellation = cancellationToken.add(() => abortController.abort());
+  init.signal = abortController.signal;
+  const unregisterCancellation = cancellationToken.add(() => {
+    console.log('cancel request');
+    return abortController.abort();
+  });
   try {
     const response = await fetchOk(input, init);
     return await transformResponse(response);

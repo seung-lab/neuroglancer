@@ -27,6 +27,7 @@ import {ChunkedGraphChunkSpecification, ChunkedGraphSourceOptions} from 'neurogl
 import {ChunkedGraphChunkSource} from 'neuroglancer/sliceview/chunked_graph/frontend';
 import {DataType, VolumeChunkSpecification, VolumeSourceOptions, VolumeType} from 'neuroglancer/sliceview/volume/base';
 import {MultiscaleVolumeChunkSource as GenericMultiscaleVolumeChunkSource, VolumeChunkSource} from 'neuroglancer/sliceview/volume/frontend';
+import {GrapheneImageMultiscaleVolumeChunkSource} from 'neuroglancer/datasource/graphene/image/frontend';
 import {StatusMessage} from 'neuroglancer/status';
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {mat4, vec3} from 'neuroglancer/util/geom';
@@ -69,7 +70,7 @@ function resolvePath(a: string, b: string) {
   return outputParts.join('/');
 }
 
-class ScaleInfo {
+export class ScaleInfo {
   key: string;
   encoding: VolumeChunkEncoding;
   resolution: vec3;
@@ -218,14 +219,20 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
     if (t !== undefined && t !== 'neuroglancer_multiscale_volume') {
       throw new Error(`Invalid type: ${JSON.stringify(t)}`);
     }
-    this.app = verifyObjectProperty(obj, 'app', x => new AppInfo(infoUrl, x));
-    this.dataUrl = verifyObjectProperty(obj, 'data_dir', x => parseSpecialUrl(x));
+
+    if (obj.type === 'segmentation') {
+      this.app = verifyObjectProperty(obj, 'app', x => new AppInfo(infoUrl, x));
+      this.dataUrl = verifyObjectProperty(obj, 'data_dir', x => parseSpecialUrl(x));
+      this.graph = verifyObjectProperty(obj, 'graph', x => new GraphInfo(x));
+      this.volumeType = VolumeType.SEGMENTATION_WITH_GRAPH;
+    } else {
+      this.volumeType = verifyObjectProperty(obj, 'type', x => verifyEnumString(x, VolumeType));
+      // this.segmentMetadata = verifyObjectProperty(obj, 'segmentMetadata', verifyOptionalString);
+    }
     this.dataType = verifyObjectProperty(obj, 'data_type', x => verifyEnumString(x, DataType));
     this.numChannels = verifyObjectProperty(obj, 'num_channels', verifyPositiveInt);
-    this.volumeType = VolumeType.SEGMENTATION_WITH_GRAPH;
     this.mesh = verifyObjectProperty(obj, 'mesh', verifyOptionalString);
     this.skeletons = verifyObjectProperty(obj, 'skeletons', verifyOptionalString);
-    this.graph = verifyObjectProperty(obj, 'graph', x => new GraphInfo(x));
     this.scales = verifyObjectProperty(obj, 'scales', x => parseArray(x, y => new ScaleInfo(y)));
   }
 
@@ -419,7 +426,13 @@ export function getVolume(chunkManager: ChunkManager, url: string) {
       {'type': 'graphene:MultiscaleVolumeChunkSource', url},
       () => authFetch(`${url}/info`)
                 .then(response => response.json())
-                .then(response => new MultiscaleVolumeChunkSource(chunkManager, url, response)));
+                .then(response => {
+                  if (response.type === 'image') {
+                    return new GrapheneImageMultiscaleVolumeChunkSource(chunkManager, url, response);
+                  } else {
+                    return new MultiscaleVolumeChunkSource(chunkManager, url, response);
+                  }
+                }));
 }
 
 export class GrapheneDataSource extends DataSource {

@@ -26,7 +26,9 @@ import {SkeletonSource} from 'neuroglancer/skeleton/frontend';
 import {DataType, VolumeChunkSpecification, VolumeSourceOptions, VolumeType} from 'neuroglancer/sliceview/volume/base';
 import {MultiscaleVolumeChunkSource as GenericMultiscaleVolumeChunkSource, VolumeChunkSource} from 'neuroglancer/sliceview/volume/frontend';
 import {mat4, vec3} from 'neuroglancer/util/geom';
-import {fetchOk, parseSpecialUrl} from 'neuroglancer/util/http_request';
+// import {fetchOk, parseSpecialUrl} from 'neuroglancer/util/http_request';
+import {parseSpecialUrl} from 'neuroglancer/util/http_request';
+import {authFetch as fetchOk} from 'neuroglancer/authentication/frontend';
 import {parseArray, parseFixedLengthArray, parseIntVec, verifyArray, verifyEnumString, verifyFiniteFloat, verifyFinitePositiveFloat, verifyInt, verifyObject, verifyObjectProperty, verifyOptionalString, verifyPositiveInt, verifyString} from 'neuroglancer/util/json';
 
 class PrecomputedVolumeChunkSource extends
