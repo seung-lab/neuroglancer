@@ -18,6 +18,7 @@ import {AUTHENTICATION_GET_SHARED_TOKEN_RPC_ID, AUTHENTICATION_REAUTHENTICATE_RP
 import {SharedWatchableValue} from 'neuroglancer/shared_watchable_value.ts';
 import {CancellationToken, uncancelableToken} from 'neuroglancer/util/cancellation';
 import {rpc} from 'neuroglancer/worker_rpc_context.ts';
+import { ResponseTransform } from 'neuroglancer/util/http_request';
 
 const authTokenSharedValuePromise: Promise<SharedWatchableValue<string|null>> = new Promise((f) => {
   rpc.promiseInvoke<number>(AUTHENTICATION_GET_SHARED_TOKEN_RPC_ID, {}).then((rpcId) => {
@@ -60,9 +61,43 @@ async function reauthenticate(
 }
 
 export async function authFetch(
-    input: RequestInfo, init = {}, cancelToken: CancellationToken = uncancelableToken,
-    retry = 1): Promise<Response> {
-  return authTokenSharedValuePromise.then((val) => {
-    return authFetchWithSharedValue(reauthenticate, val, input, init, cancelToken, retry);
-  });
+  input: RequestInfo, init?: RequestInit): Promise<Response>;
+export async function authFetch<T>(
+  input: RequestInfo, init: RequestInit, transformResponse: ResponseTransform<T>,
+  cancellationToken: CancellationToken): Promise<T>;
+export async function authFetch<T>(
+  input: RequestInfo, init: RequestInit = {}, transformResponse?: ResponseTransform<T>,
+  cancellationToken: CancellationToken = uncancelableToken): Promise<T|Response> {
+
+  const authTokenShared = await authTokenSharedValuePromise;
+  const response = await authFetchWithSharedValue(reauthenticate, authTokenShared!, input, init, cancellationToken);
+
+  if (transformResponse) {
+    return transformResponse(response);
+  } else {
+    return response;
+  }
+}
+
+// import {CancellationToken} from 'neuroglancer/util/cancellation';
+import {getByteRangeHeader, responseArrayBuffer} from 'neuroglancer/util/http_request';
+import {Uint64} from 'neuroglancer/util/uint64';
+
+/**
+ * On Chromium, multiple concurrent byte range requests to the same URL are serialized unless the
+ * cache is disabled.  Disabling the cache works around the problem.
+ *
+ * https://bugs.chromium.org/p/chromium/issues/detail?id=969828
+ */
+const cacheMode = navigator.userAgent.indexOf('Chrome') !== -1 ? 'no-store' : 'default';
+
+export function authFetchHttpByteRange(
+    url: string, startOffset: Uint64|number, endOffset: Uint64|number,
+    cancellationToken: CancellationToken): Promise<ArrayBuffer> {
+  return authFetch(
+      url, {
+        headers: getByteRangeHeader(startOffset, endOffset),
+        cache: cacheMode,
+      },
+      responseArrayBuffer, cancellationToken);
 }
