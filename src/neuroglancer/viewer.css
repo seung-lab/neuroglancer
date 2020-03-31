@@ -46,3 +46,19 @@
   margin-bottom: 3px;
   padding-right: 2px;
 }
+
+.ng-hb-dropdown {
+  display: none;
+  position: absolute;
+  background-color: black;
+  min-width: 160px;
+  box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+  padding: 12px 16px;
+  z-index: 1;
+  right: 0px;
+  margin: 0px;
+}
+
+.ng-hamburger:hover .ng-hb-dropdown {
+  display: block;
+}
