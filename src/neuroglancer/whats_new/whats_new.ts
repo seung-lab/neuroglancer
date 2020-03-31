@@ -1,7 +1,7 @@
+import 'neuroglancer/whats_new/whats_new.css';
+
 import {Overlay} from 'neuroglancer/overlay';
 import {Viewer} from 'neuroglancer/viewer';
-
-import 'neuroglancer/whats_new/whats_new.css';
 
 const updateFName = 'WHATS_NEW.md';
 const generateWhatsNew = (GHCommits: string[] = []) => {
@@ -24,15 +24,22 @@ const generateWhatsNew = (GHCommits: string[] = []) => {
 };
 
 export const findWhatsNew = async (viewer: Viewer) => {
-  let url =
-          `https://script.google.com/macros/s/AKfycbzVt6TLlJonmfU0EKTZVthi9pbM9dY1TYfTIH985tLUc8TZ5BNG/exec`,
-      WNCommits = JSON.parse(localStorage.getItem('WNCommits') || '[]'), headers = {
-        'Content-Type': 'text/plain;charset=utf-8',
-      },
-      body = JSON.stringify({
-        path: updateFName
-        // since: (WNCommits.length) ? WNCommits[0].commit.author.date : void(0)
-      });
+  const url =
+      `https://script.google.com/macros/s/AKfycbzVt6TLlJonmfU0EKTZVthi9pbM9dY1TYfTIH985tLUc8TZ5BNG/exec`;
+  const newUser = !localStorage.getItem('ng-newuser');
+  if (newUser) {
+    localStorage.setItem('ng-newuser', '1');
+    let description = (require('../../../NEW_USER.md')) || '';
+    return new WhatsNewDialog(viewer, description, {center: true});
+  }
+  const WNCommits = JSON.parse(localStorage.getItem('WNCommits') || '[]');
+  const headers = {
+    'Content-Type': 'text/plain;charset=utf-8',
+  };
+  const body = JSON.stringify({
+    path: updateFName
+    // since: (WNCommits.length) ? WNCommits[0].commit.author.date : void(0)
+  });
 
   let GHRes = await fetch(url, {method: 'post', headers, body});
   let GHCommits = JSON.parse(await GHRes.json());
@@ -52,22 +59,21 @@ export const findWhatsNew = async (viewer: Viewer) => {
 };
 
 export class WhatsNewDialog extends Overlay {
-  constructor(public viewer: Viewer, description: string = '') {
+  constructor(public viewer: Viewer, description: string = '', override?: any) {
     super();
     let {content} = this;
 
-    if (!description.length) {
-      description = generateWhatsNew();
-    }
-
-    let modal = document.createElement('div');
-
+    const modal = document.createElement('div');
     content.appendChild(modal);
 
-    let header = document.createElement('h3');
-    header.textContent = `What's New`;
-    modal.appendChild(header);
-
+    if (!override) {
+      if (!description.length) {
+        description = generateWhatsNew();
+      }
+      let header = document.createElement('h3');
+      header.textContent = `What's New`;
+      modal.appendChild(header);
+    }
     let body = document.createElement('p');
     body.innerHTML = description;
     modal.appendChild(body);
@@ -76,6 +82,7 @@ export class WhatsNewDialog extends Overlay {
     okBtn.textContent = 'Ok';
     okBtn.onclick = () => this.dispose();
 
+    modal.classList.toggle('align-center', override ? override.center : false);
     modal.appendChild(okBtn);
     modal.onblur = () => this.dispose();
     modal.focus();
