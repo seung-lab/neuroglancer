@@ -517,7 +517,7 @@ export class Viewer extends RefCounted implements ViewerState {
     });
     */
     hbDropdown.classList.add('ng-hb-dropdown');
-    const createMenuItem = (text: string, title?: string) => {
+    const createMenuItem = (text: string,\ title?: string) => {
       const element = document.createElement('li');
       const button = makeTextIconButton(text, title);
       element.append(button);
@@ -526,7 +526,7 @@ export class Viewer extends RefCounted implements ViewerState {
 
     {
       // Hamburger
-      const button = makeTextIconButton('☰', 'Customize and Control Neuroglancer');
+      const button = makeTextIconButton('⋮', 'Customize and Control Neuroglancer');
       button.append(hbDropdown);
       button.classList.add('ng-hamburger');
       /*
