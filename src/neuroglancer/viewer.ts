@@ -846,61 +846,36 @@ export class Viewer extends RefCounted implements ViewerState {
       this.showSaveDialog(getUrlType, this.saver.savedUrl);
       return;
     }
-    if (this.jsonStateServer.value || getUrlType) {
-      if (this.jsonStateServer.value.length) {
-        let postSuccess = false;
-        StatusMessage.forPromise(
-            authFetch(
-                this.jsonStateServer.value,
-                {method: 'POST', body: JSON.stringify(this.state.toJSON())})
-                .then(res => res.json())
-                .then(response => {
-                  const savedUrl =
-                      `${window.location.origin}${window.location.pathname}?json_url=${response}`;
-                  const saverSupported = this.saver && this.saver.supported;
-                  if (saverSupported) {
-                    this.saver!.commit(response);
-                  } else {
-                    history.replaceState(null, '', savedUrl);
-                  }
-                  if (savestate) {
-                    callback();
-                    this.showSaveDialog(getUrlType, saverSupported ? response : undefined);
-                  }
-                  StatusMessage.showTemporaryMessage(`Successfully shared state.`, 4000);
-                  postSuccess = true;
-                })
-                // catch errors with upload and prompt the user if there was an error
-                .catch(() => {
-                  if (retry) {
-                    this.promptJsonStateServer(
-                        'State server could not be reached, try again or enter a new one.');
-                    if (this.jsonStateServer.value) {
-                      this.postJsonState(savestate, getUrlType);
-                    } else {
-                      StatusMessage.messageWithAction(
-                          `Could not share state, no state server was found. `, 'Ok', () => {},
-                          undefined, {color: 'yellow'});
-                    }
-                  } else {
-                    StatusMessage.showTemporaryMessage(
-                        `Could not access state server.`, 4000, {color: 'yellow'});
-                  }
-                })
-                .finally(() => {
-                  if (!postSuccess && savestate) {
-                    callback();
-                    this.showSaveDialog(getUrlType);
-                  }
-                }),
-            {
-              initialMessage: `Posting state to ${this.jsonStateServer.value}.`,
-              delay: true,
-              errorPrefix: ''
-            });
-      } else {
-        StatusMessage.showTemporaryMessage(`No state server found.`, 4000, {color: 'yellow'});
-      }
+    if (this.jsonStateServer.value || !getUrlType) {
+      StatusMessage.showTemporaryMessage(`Posting state to ${this.jsonStateServer.value}.`);
+      authFetch(
+          this.jsonStateServer.value, {method: 'POST', body: JSON.stringify(this.state.toJSON())})
+          .then(res => res.json())
+          .then(response => {
+            const savedUrl =
+                `${window.location.origin}${window.location.pathname}?json_url=${response}`;
+            if (this.saver && this.saver.supported) {
+              this.saver.commit(response);
+              this.showSaveDialog(getUrlType, response);
+            } else {
+              history.replaceState(null, '', savedUrl);
+              this.showSaveDialog(getUrlType);
+            }
+          })
+          // catch errors with upload and prompt the user if there was an error
+          .catch(() => {
+            this.promptJsonStateServer(
+                'State server could not be reached, try again or enter a new one.');
+            if (this.jsonStateServer.value) {
+              this.postJsonState();
+            }
+          })
+          .finally(() => {
+            const noStateServerAccess = !this.jsonStateServer.value;
+            if (noStateServerAccess) {
+              this.showSaveDialog();
+            }
+          });
     } else {
       if (savestate) {
         callback();
