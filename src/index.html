@@ -6,10 +6,17 @@
   <title>neuroglancer</title>
   <script>
     // localStorage test
-    try {
-      localStorage;
-    } catch (e) {
-      alert('Local Storage has been disabled, please renable it in Chrome');
+    {
+      const type = 'localStorage';
+      let storage;
+      try {
+        storage = window[type];
+        let x = '__storage_test__';
+        storage.setItem(x, x);
+        storage.removeItem(x);
+      } catch (e) {
+        alert('Local Storage has been disabled, please renable it in Chrome');
+      }
     }
   </script>
 </head>
