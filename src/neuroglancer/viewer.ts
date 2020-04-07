@@ -525,7 +525,10 @@ export class Viewer extends RefCounted implements ViewerState {
     hbDropdown.classList.add('ng-hb-dropdown');
     const createMenuItem = (text: string, title?: string) => {
       const element = document.createElement('li');
-      const button = makeTextIconButton(text, title);
+      // const button = makeTextIconButton(text, title);
+      const button = document.createElement('button');
+      button.innerText = text;
+      button.title = title || '';
       element.append(button);
       return element;
     };
