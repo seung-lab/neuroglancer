@@ -17,7 +17,7 @@
 import debounce from 'lodash/debounce';
 import {MultiStepAnnotationTool} from 'neuroglancer/annotation/annotation';
 import {AnnotationUserLayer} from 'neuroglancer/annotation/user_layer';
-import {initAuthTokenSharedValue, authFetch} from 'neuroglancer/authentication/frontend';
+import {authFetch, initAuthTokenSharedValue} from 'neuroglancer/authentication/frontend';
 import {CapacitySpecification, ChunkManager, ChunkQueueManager, FrameNumberCounter} from 'neuroglancer/chunk_manager/frontend';
 import {defaultCredentialsManager} from 'neuroglancer/credentials_provider/default_manager';
 import {InputEventBindings as DataPanelInputEventBindings} from 'neuroglancer/data_panel_layout';
@@ -824,9 +824,7 @@ export class Viewer extends RefCounted implements ViewerState {
       this.resetStateWhenEmpty = false;
       StatusMessage
           .forPromise(
-            authFetch(json_url)
-              .then(res => res.json())
-              .then(response => {
+              authFetch(json_url).then(res => res.json()).then(response => {
                 this.state.restoreState(response);
               }),
               {
@@ -864,7 +862,8 @@ export class Viewer extends RefCounted implements ViewerState {
           })
           // catch errors with upload and prompt the user if there was an error
           .catch(() => {
-            this.promptJsonStateServer('State server could not be reached, try again or enter a new one.');
+            this.promptJsonStateServer(
+                'State server could not be reached, try again or enter a new one.');
             if (this.jsonStateServer.value) {
               this.postJsonState();
             }
