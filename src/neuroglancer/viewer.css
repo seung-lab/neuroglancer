@@ -62,3 +62,21 @@
 .ng-hamburger:hover .ng-hb-dropdown {
   display: block;
 }
+
+.ng-hb-dropdown {
+  list-style-type: none;
+}
+
+.ng-hb-dropdown button {
+  background-color: #00000000;
+  border: 1px solid white;
+  color: white;
+  margin-left: 5px;
+  width: auto;
+  height: auto;
+}
+
+.ng-hb-dropdown button:hover {
+  background-color: #3c3;
+  color: black;
+}
