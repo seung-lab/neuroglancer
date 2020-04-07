@@ -39,14 +39,8 @@ export class TrackableBoolean implements TrackableWithLocalStorage {
   changed = new NullarySignal();
   constructor(
       private value_: boolean, public defaultValue: boolean = value_, public localStorageKey = '') {
-    try {
-      if (localStorageKey && !localStorage.getItem(this.localStorageKey)) {
-        localStorage.setItem(this.localStorageKey, JSON.stringify(this.defaultValue));
-      }
-    }
-    catch (e) {
-      alert('Local Storage has been disabled, please renable it in Chrome');
-      throw e;
+    if (localStorageKey && !localStorage.getItem(this.localStorageKey)) {
+      localStorage.setItem(this.localStorageKey, JSON.stringify(this.defaultValue));
     }
   }
   toJSON() {
