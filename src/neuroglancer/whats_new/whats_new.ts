@@ -24,22 +24,16 @@ const generateWhatsNew = (GHCommits: string[] = []) => {
 };
 
 export const findWhatsNew = async (viewer: Viewer) => {
+  // This google apps script is used by the seung-issues account to make an API request to Github.
+  // the api request queries Github to get a list of commits.
   const url =
       `https://script.google.com/macros/s/AKfycbzVt6TLlJonmfU0EKTZVthi9pbM9dY1TYfTIH985tLUc8TZ5BNG/exec`;
   const newUser = !localStorage.getItem('ng-newuser');
-  if (newUser) {
-    localStorage.setItem('ng-newuser', '1');
-    let description = (require('../../../NEW_USER.md')) || '';
-    return new WhatsNewDialog(viewer, description, {center: true});
-  }
   const WNCommits = JSON.parse(localStorage.getItem('WNCommits') || '[]');
   const headers = {
     'Content-Type': 'text/plain;charset=utf-8',
   };
-  const body = JSON.stringify({
-    path: updateFName
-    // since: (WNCommits.length) ? WNCommits[0].commit.author.date : void(0)
-  });
+  const body = JSON.stringify({path: updateFName});
 
   let GHRes = await fetch(url, {method: 'post', headers, body});
   let GHCommits = JSON.parse(await GHRes.json());
@@ -79,6 +73,7 @@ export class WhatsNewDialog extends Overlay {
     modal.appendChild(body);
 
     let okBtn = document.createElement('button');
+    okBtn.classList.add('neuroglancer-dialog-ok');
     okBtn.textContent = 'Ok';
     okBtn.onclick = () => this.dispose();
 
