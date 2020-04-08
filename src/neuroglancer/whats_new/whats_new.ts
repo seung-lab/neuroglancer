@@ -28,7 +28,6 @@ export const findWhatsNew = async (viewer: Viewer) => {
   // the api request queries Github to get a list of commits.
   const url =
       `https://script.google.com/macros/s/AKfycbzVt6TLlJonmfU0EKTZVthi9pbM9dY1TYfTIH985tLUc8TZ5BNG/exec`;
-  const newUser = !localStorage.getItem('ng-newuser');
   const WNCommits = JSON.parse(localStorage.getItem('WNCommits') || '[]');
   const headers = {
     'Content-Type': 'text/plain;charset=utf-8',
