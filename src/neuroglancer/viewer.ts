@@ -517,6 +517,16 @@ export class Viewer extends RefCounted implements ViewerState {
       topRow.appendChild(button);
     }
 
+    /*<div class='dropdown'>
+      <button class='dropbtn'> Dropdown</button>
+      <div class="dropdown-content">
+        <a href="#">Link 1</a>
+        <a href='#'>Link 2< /a>
+        <a href="#">Link 3</a >
+      </div>
+    </div>
+*/
+
     const hbDropdown = document.createElement('ul');
     /*/this.registerEventListener(hbDropdown, 'blur', () => {
       hbDropdown.style.display = 'none';
@@ -524,13 +534,15 @@ export class Viewer extends RefCounted implements ViewerState {
     */
     hbDropdown.classList.add('ng-hb-dropdown');
     const createMenuItem = (text: string, title?: string) => {
-      const element = document.createElement('li');
+      // const element = document.createElement('li');
       // const button = makeTextIconButton(text, title);
-      const button = document.createElement('button');
-      button.innerText = text;
-      button.title = title || '';
-      element.append(button);
-      return element;
+      const entry = document.createElement('a');
+      entry.innerText = text;
+      entry.title = title || '';
+      entry.href = '#';
+      return entry;
+      // element.append(entry);
+      // return element;
     };
 
     {
