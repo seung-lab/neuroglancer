@@ -59,24 +59,23 @@
   margin: 0px;
 }
 
-.ng-hamburger:hover .ng-hb-dropdown {
-  display: block;
+.dropdown {
+  position: relative;
+  display: inline-block;
 }
 
-.ng-hb-dropdown {
-  list-style-type: none;
+.dropdown-content {
+  display: none;
+  position: absolute;
+  background-color: #f1f1f1;
+  min-width: 160px;
+  box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+  z-index: 1;
 }
 
-.ng-hb-dropdown button {
-  background-color: #00000000;
-  border: 1px solid white;
-  color: white;
-  margin-left: 5px;
-  width: auto;
-  height: auto;
-}
-
-.ng-hb-dropdown button:hover {
-  background-color: #3c3;
+.dropdown-content a {
   color: black;
+  padding: 12px 16px;
+  text-decoration: none;
+  display: block;
 }
