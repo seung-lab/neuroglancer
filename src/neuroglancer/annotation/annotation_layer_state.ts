@@ -21,7 +21,7 @@ import {RenderLayerRole} from 'neuroglancer/layer';
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
 import {TrackableAlphaValue} from 'neuroglancer/trackable_alpha';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
-import {WatchableValue, TrackableValue} from 'neuroglancer/trackable_value';
+import {TrackableValue, WatchableValue} from 'neuroglancer/trackable_value';
 import {TrackableRGB} from 'neuroglancer/util/color';
 import {Owned, RefCounted} from 'neuroglancer/util/disposable';
 import {mat4} from 'neuroglancer/util/geom';
@@ -44,6 +44,7 @@ export class AnnotationLayerState extends RefCounted {
   segmentationState: WatchableValue<SegmentationDisplayState|undefined|null>;
   filterBySegmentation: TrackableBoolean;
   annotationJumpingDisplaysSegmentation = new TrackableBoolean(false);
+  annotationSelectionDisplaysSegmentation = new TrackableBoolean(false);
   selectedAnnotationTagId = new TrackableValue<number>(0, verifyNonnegativeInt, 0);
 
   private transformCacheGeneration = -1;
@@ -77,6 +78,8 @@ export class AnnotationLayerState extends RefCounted {
     role?: RenderLayerRole, color: TrackableRGB, fillOpacity: TrackableAlphaValue,
     segmentationState?: WatchableValue<SegmentationDisplayState|undefined|null>,
     filterBySegmentation?: TrackableBoolean,
+    annotationJumpingDispaysSegmentationInitialValue?: boolean,
+    annotationSelectionDisplaysSegmentationInitialValue?: boolean
   }) {
     super();
     const {
@@ -88,6 +91,8 @@ export class AnnotationLayerState extends RefCounted {
       fillOpacity,
       segmentationState = new WatchableValue(null),
       filterBySegmentation = new TrackableBoolean(false),
+      annotationJumpingDispaysSegmentationInitialValue,
+      annotationSelectionDisplaysSegmentationInitialValue
     } = options;
     this.transform = transform;
     this.source = this.registerDisposer(source);
@@ -97,5 +102,11 @@ export class AnnotationLayerState extends RefCounted {
     this.fillOpacity = fillOpacity;
     this.segmentationState = segmentationState;
     this.filterBySegmentation = filterBySegmentation;
+    if (annotationJumpingDispaysSegmentationInitialValue) {
+      this.annotationJumpingDisplaysSegmentation.value = true;
+    }
+    if (annotationSelectionDisplaysSegmentationInitialValue) {
+      this.annotationSelectionDisplaysSegmentation.value = true;
+    }
   }
 }

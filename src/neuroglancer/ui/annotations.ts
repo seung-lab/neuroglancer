@@ -323,10 +323,12 @@ export class SelectedAnnotationState extends RefCounted implements
 }
 
 const tempVec3 = vec3.create();
+let lastSelectedAnnotation: Annotation|undefined;
 
 function makePointLink(
     point: vec3, transform: mat4, voxelSize: VoxelSize,
-    setSpatialCoordinates?: (point: vec3) => void) {
+    setSpatialCoordinates?: (point: vec3) => void, annotation?: Annotation,
+    annotationLayerState?: AnnotationLayerState) {
   const spatialPoint = vec3.transformMat4(vec3.create(), point, transform);
   const positionText = formatIntegerPoint(voxelSize.voxelFromSpatial(tempVec3, spatialPoint));
   if (setSpatialCoordinates !== undefined) {
@@ -336,6 +338,22 @@ function makePointLink(
     element.title = `Center view on voxel coordinates ${positionText}.`;
     element.addEventListener('click', () => {
       setSpatialCoordinates(spatialPoint);
+      if (annotationLayerState &&
+          annotationLayerState.annotationSelectionDisplaysSegmentation.value) {
+        if (lastSelectedAnnotation && lastSelectedAnnotation.segments) {
+          lastSelectedAnnotation.segments.forEach(segment => {
+            if (annotationLayerState.segmentationState.value!.rootSegments.has(segment)) {
+              annotationLayerState.segmentationState.value!.rootSegments.delete(segment);
+            }
+          });
+        }
+        if (annotation && annotation.segments) {
+          annotation.segments.forEach(segment => {
+            annotationLayerState.segmentationState.value!.rootSegments.add(segment);
+          });
+        }
+        lastSelectedAnnotation = annotation;
+      }
     });
     return element;
   } else {
@@ -345,9 +363,9 @@ function makePointLink(
 
 export function getPositionSummary(
     element: HTMLElement, annotation: Annotation, transform: mat4, voxelSize: VoxelSize,
-    setSpatialCoordinates?: (point: vec3) => void) {
-  const makePointLinkWithTransform = (point: vec3) =>
-      makePointLink(point, transform, voxelSize, setSpatialCoordinates);
+    setSpatialCoordinates?: (point: vec3) => void, annotationLayerState?: AnnotationLayerState) {
+  const makePointLinkWithTransform = (point: vec3) => makePointLink(
+      point, transform, voxelSize, setSpatialCoordinates, annotation, annotationLayerState);
 
   switch (annotation.type) {
     case AnnotationType.AXIS_ALIGNED_BOUNDING_BOX:
@@ -481,7 +499,7 @@ export class AnnotationLayerView extends Tab {
           }
         }
         this.highlightButton(activeChildToolKey, toolset);
-        setTool(/*parent=*/multiTool);
+        setTool(/*parent=*/ multiTool);
       } else if (currentTool.annotationType === toolset) {
         multiTool.complete(false, true);
         toolset = undefined;
@@ -590,6 +608,15 @@ export class AnnotationLayerView extends Tab {
     const label = document.createElement('label');
     label.textContent = 'Bracket shortcuts show segmentation: ';
     label.appendChild(jumpingShowsSegmentationCheckbox.element);
+    this.groupVisualization.appendFixedChild(label);
+  }
+
+  private selectionShowsSegmentationCheckbox() {
+    const selectionShowsSegmentationCheckbox = this.registerDisposer(
+        new TrackableBooleanCheckbox(this.annotationLayer.annotationSelectionDisplaysSegmentation));
+    const label = document.createElement('label');
+    label.textContent = 'Annotation selection shows segmentation: ';
+    label.appendChild(selectionShowsSegmentationCheckbox.element);
     this.groupVisualization.appendFixedChild(label);
   }
 
@@ -705,6 +732,7 @@ export class AnnotationLayerView extends Tab {
     // Visualization Group
     this.addOpacitySlider();
     this.bracketShortcutCheckbox();
+    this.selectionShowsSegmentationCheckbox();
     this.filterAnnotationByTagControl();
     // Annotations Group
     this.addColorPicker();
@@ -1000,7 +1028,9 @@ export class AnnotationLayerView extends Tab {
 
     const position = document.createElement('div');
     position.className = 'neuroglancer-annotation-position';
-    getPositionSummary(position, annotation, transform, this.voxelSize, this.setSpatialCoordinates);
+    getPositionSummary(
+        position, annotation, transform, this.voxelSize, this.setSpatialCoordinates,
+        this.annotationLayer);
     element.appendChild(position);
     if (annotation.parentId) {
       element.dataset.parent = annotation.parentId;
@@ -1328,7 +1358,8 @@ export class AnnotationLayerView extends Tab {
           case 'Ellipsoid':
             raw.type = AnnotationType.ELLIPSOID;
             (<Ellipsoid>raw).center = textToPoint(annProps[0], this.annotationLayer.globalToObject);
-            (<Ellipsoid>raw).radii = textToPoint(annProps[2], this.annotationLayer.globalToObject, true);
+            (<Ellipsoid>raw).radii =
+                textToPoint(annProps[2], this.annotationLayer.globalToObject, true);
             break;
           case 'Line Strip':
           case 'Line Strip*':
