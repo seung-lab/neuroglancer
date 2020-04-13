@@ -133,3 +133,10 @@ export async function authFetch<T>(
     return response;
   }
 }
+
+const queryParmas = new URLSearchParams(window.location.search);
+
+if (queryParmas.has('middle_auth_token') && queryParmas.has('middle_auth_url')) {
+  localStorage.setItem('auth_token', queryParmas.get('middle_auth_token')!);
+  localStorage.setItem('auth_url', `https://${queryParmas.get('middle_auth_url')!}/api/v1/authorize`);
+}
