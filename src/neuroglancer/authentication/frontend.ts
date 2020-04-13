@@ -53,8 +53,8 @@ async function reauthenticate(
   }
   used_token = <string>used_token;
 
-  const existingToken = localStorage.getItem('auth_token');
-  const existingAuthURL = localStorage.getItem('auth_url');
+  const existingToken = localStorage.getItem('mididle_auth_token');
+  const existingAuthURL = localStorage.getItem('middle_auth_url');
 
   // if we don't have a promise or we are authenticating with a new auth url
   // or if we failed to authenticate with our existing token
@@ -64,8 +64,8 @@ async function reauthenticate(
       return existingToken;
     } else {
       const token = await authorize(auth_url);
-      localStorage.setItem('auth_token', token);
-      localStorage.setItem('auth_url', auth_url);
+      localStorage.setItem('mididle_auth_token', token);
+      localStorage.setItem('middle_auth_url', auth_url);
       authTokenShared!.value = token;
       return token;
     }
@@ -99,4 +99,12 @@ export async function authFetch(
     retry = 1): Promise<Response> {
   return authFetchWithSharedValue(
       reauthenticate, authTokenShared!, input, init, cancelToken, retry);
+}
+
+const queryParmas = new URLSearchParams(window.location.search);
+
+if (queryParmas.has('middle_auth_token') && queryParmas.has('middle_auth_url')) {
+  console.log('setting localStorage');
+  localStorage.setItem('middle_auth_token', queryParmas.get('middle_auth_token')!);
+  localStorage.setItem('middle_auth_url', `https://${queryParmas.get('middle_auth_url')!}/api/v1/authorize`);
 }
