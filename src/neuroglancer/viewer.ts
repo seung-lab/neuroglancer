@@ -433,7 +433,7 @@ export class Viewer extends RefCounted implements ViewerState {
     if (error) {
       error.style.display = 'none';
     }
-    if (localStorage['neuroglancer-whatsnew']) {
+    if (localStorage.getItem('neuroglancer-whatsnew')) {
       findWhatsNew(this);
     }
   }
