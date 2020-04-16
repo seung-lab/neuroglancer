@@ -37,6 +37,7 @@ import {murmurHash3_x86_128Hash64Bits} from 'neuroglancer/util/hash';
 import {cancellableFetchOk, responseArrayBuffer, responseJson} from 'neuroglancer/util/http_request';
 import {stableStringify} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
+import {encodeZIndexCompressed} from 'neuroglancer/util/zorder';
 import {registerSharedObject} from 'neuroglancer/worker_rpc';
 
 const DracoLoader = require('dracoloader');
@@ -222,23 +223,67 @@ chunkDecoders.set(VolumeChunkEncoding.COMPRESSED_SEGMENTATION, decodeCompressedS
 
 @registerSharedObject() export class GrapheneVolumeChunkSource extends
 (WithParameters(VolumeChunkSource, VolumeChunkSourceParameters)) {
-  chunkDecoder = chunkDecoders.get(this.parameters.encoding)!;
+  // chunkDecoder = chunkDecoders.get(this.parameters.encoding)!;
+  // async download(chunk: VolumeChunk, cancellationToken: CancellationToken) {
+  //   const {parameters} = this;
+  //   let url: string;
+  //   {
+  //     // chunkPosition must not be captured, since it will be invalidated by the next call to
+  //     // computeChunkBounds.
+  //     let chunkPosition = this.computeChunkBounds(chunk);
+  //     let chunkDataSize = chunk.chunkDataSize!;
+  //     url = `${parameters.url}/${chunkPosition[0]}-${chunkPosition[0] + chunkDataSize[0]}_` +
+  //         `${chunkPosition[1]}-${chunkPosition[1] + chunkDataSize[1]}_` +
+  //         `${chunkPosition[2]}-${chunkPosition[2] + chunkDataSize[2]}`;
+  //   }
+  //   const response = await cancellableFetchOk(url, {}, responseArrayBuffer, cancellationToken);
+  //   await this.chunkDecoder(chunk, cancellationToken, response);
+  // }
 
-  async download(chunk: VolumeChunk, cancellationToken: CancellationToken) {
-    const {parameters} = this;
-    let url: string;
-    {
-      // chunkPosition must not be captured, since it will be invalidated by the next call to
-      // computeChunkBounds.
-      let chunkPosition = this.computeChunkBounds(chunk);
-      let chunkDataSize = chunk.chunkDataSize!;
-      url = `${parameters.url}/${chunkPosition[0]}-${chunkPosition[0] + chunkDataSize[0]}_` +
-          `${chunkPosition[1]}-${chunkPosition[1] + chunkDataSize[1]}_` +
-          `${chunkPosition[2]}-${chunkPosition[2] + chunkDataSize[2]}`;
+  chunkDecoder = chunkDecoders.get(this.parameters.encoding)!;
+  private minishardIndexSource = getMinishardIndexDataSource(this.chunkManager, this.parameters);
+
+  gridShape = (() => {
+    const gridShape = new Uint32Array(3);
+    const {upperVoxelBound, chunkDataSize} = this.spec;
+    for (let i = 0; i < 3; ++i) {
+      gridShape[i] = Math.ceil(upperVoxelBound[i] / chunkDataSize[i]);
     }
-    const response = await cancellableFetchOk(url, {}, responseArrayBuffer, cancellationToken);
+    return gridShape;
+  })();
+
+  async download(chunk: VolumeChunk, cancellationToken: CancellationToken): Promise<void> {
+    const {parameters} = this;
+
+    const {minishardIndexSource} = this;
+    let response: ArrayBuffer;
+    if (minishardIndexSource === undefined) {
+      let url: string;
+      {
+        // chunkPosition must not be captured, since it will be invalidated by the next call to
+        // computeChunkBounds.
+        let chunkPosition = this.computeChunkBounds(chunk);
+        let chunkDataSize = chunk.chunkDataSize!;
+        url = `${parameters.url}/${chunkPosition[0]}-${chunkPosition[0] + chunkDataSize[0]}_` +
+            `${chunkPosition[1]}-${chunkPosition[1] + chunkDataSize[1]}_` +
+            `${chunkPosition[2]}-${chunkPosition[2] + chunkDataSize[2]}`;
+      }
+      response = await cancellableFetchOk(url, {}, responseArrayBuffer, cancellationToken);
+    } else {
+      this.computeChunkBounds(chunk);
+      const {gridShape} = this;
+      const {chunkGridPosition} = chunk;
+      const xBits = Math.ceil(Math.log2(gridShape[0])), yBits = Math.ceil(Math.log2(gridShape[1])),
+            zBits = Math.ceil(Math.log2(gridShape[2]));
+      const chunkIndex = encodeZIndexCompressed(
+          new Uint64(), xBits, yBits, zBits, chunkGridPosition[0], chunkGridPosition[1],
+          chunkGridPosition[2]);
+      response =
+          (await getShardedData(minishardIndexSource, chunk, chunkIndex, cancellationToken)).data;
+    }
     await this.chunkDecoder(chunk, cancellationToken, response);
-  }
+  }  
+
 }
 
 export function decodeChunkedGraphChunk(
