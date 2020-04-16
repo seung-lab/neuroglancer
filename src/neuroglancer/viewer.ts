@@ -517,58 +517,86 @@ export class Viewer extends RefCounted implements ViewerState {
       topRow.appendChild(button);
     }
 
+    const hbDropdown = document.createElement('ul');
+    /*/this.registerEventListener(hbDropdown, 'blur', () => {
+      hbDropdown.style.display = 'none';
+    });
+    */
+    hbDropdown.classList.add('ng-hb-dropdown');
+    const createMenuItem = (text: string, title?: string) => {
+      const element = document.createElement('li');
+      const button = makeTextIconButton(text, title);
+      element.append(button);
+      return element;
+    };
+
     {
-      const button = makeTextIconButton('$', 'View Save History');
+      // Hamburger
+      const button = makeTextIconButton('☰', 'Customize and Control Neuroglancer');
+      button.append(hbDropdown);
+      button.classList.add('ng-hamburger');
+      /*
       this.registerEventListener(button, 'click', () => {
-        this.showHistory();
+        hbDropdown.style.display = 'block';
       });
+      */
       this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
           this.uiControlVisibility.showHistoryButton, button));
       topRow.appendChild(button);
     }
 
     {
-      const button = makeTextIconButton('{}', 'Edit JSON state');
+      const button = createMenuItem('History', 'View Save History');
+      this.registerEventListener(button, 'click', () => {
+        this.showHistory();
+      });
+      this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
+          this.uiControlVisibility.showHistoryButton, button));
+      hbDropdown.appendChild(button);
+    }
+
+    {
+      const button = createMenuItem('State Editor', 'Edit JSON state');
       this.registerEventListener(button, 'click', () => {
         this.editJsonState();
       });
       this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
           this.uiControlVisibility.showEditStateButton, button));
-      topRow.appendChild(button);
+      hbDropdown.appendChild(button);
     }
 
     {
-      const button = makeTextIconButton('⚙', 'Preferences');
+      const button = createMenuItem('Preferences', 'Preferences');
       this.registerEventListener(button, 'click', () => {
         this.showPreferencesModal();
       });
       this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
           this.uiControlVisibility.showUserPreferencesButton, button));
-      topRow.appendChild(button);
+      hbDropdown.appendChild(button);
     }
 
     {
-      const button = makeTextIconButton('?', 'Help');
+      const button = createMenuItem('Shortcuts', 'Help');
       this.registerEventListener(button, 'click', () => {
         this.showHelpDialog();
       });
       this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
           this.uiControlVisibility.showHelpButton, button));
-      topRow.appendChild(button);
+      hbDropdown.appendChild(button);
     }
 
     {
-      const button = makeTextIconButton('!', `What's New`);
+      const button = createMenuItem(`What's New`, `What's New`);
       this.registerEventListener(button, 'click', () => {
         this.showWhatsNewDialog();
       });
       this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
           this.uiControlVisibility.showWhatsNewButton, button));
-      topRow.appendChild(button);
+      hbDropdown.appendChild(button);
     }
 
     {
-      const button = makeTextIconButton('🐞', 'Feedback');
+      const button = createMenuItem('Give Feedback', 'Feedback');
       this.registerEventListener(button, 'click', async () => {
         this.display.draw();
         let raw_ss = (await require('html2canvas')(document.body)).toDataURL();
@@ -578,7 +606,7 @@ export class Viewer extends RefCounted implements ViewerState {
       });
       this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
           this.uiControlVisibility.showBugButton, button));
-      topRow.appendChild(button);
+      hbDropdown.appendChild(button);
     }
 
     this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
@@ -587,7 +615,7 @@ export class Viewer extends RefCounted implements ViewerState {
             this.uiControlVisibility.showHelpButton, this.uiControlVisibility.showEditStateButton,
             this.uiControlVisibility.showLocation,
             this.uiControlVisibility.showAnnotationToolStatus),
-        topRow));
+        hbDropdown));
 
     gridContainer.appendChild(topRow);
 
