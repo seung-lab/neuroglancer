@@ -18,6 +18,7 @@ import {AUTHENTICATION_GET_SHARED_TOKEN_RPC_ID, AUTHENTICATION_REAUTHENTICATE_RP
 import {SharedWatchableValue} from 'neuroglancer/shared_watchable_value.ts';
 import {CancellationToken, uncancelableToken} from 'neuroglancer/util/cancellation';
 import {registerPromiseRPC, registerRPC, RPC} from 'neuroglancer/worker_rpc';
+import { ResponseTransform } from '../util/http_request';
 
 let authPromise: Promise<string>|null = null;
 
@@ -74,11 +75,10 @@ async function reauthenticate(
   return authPromise;
 }
 
-export let authTokenShared: SharedAuthToken|undefined;
+let authTokenShared: SharedAuthToken|undefined;
 
 export function initAuthTokenSharedValue(rpc: RPC) {
   authTokenShared = SharedWatchableValue.make(rpc, localStorage.getItem('auth_token'));
-  return authTokenShared;
 }
 
 // allow backend thread to access the shared token rpc id so that it can initialize the shared value
@@ -96,8 +96,18 @@ registerRPC(AUTHENTICATION_REAUTHENTICATE_RPC_ID, function({auth_url, used_token
 });
 
 export async function authFetch(
-    input: RequestInfo, init = {}, cancelToken: CancellationToken = uncancelableToken,
-    retry = 1): Promise<Response> {
-  return authFetchWithSharedValue(
-      reauthenticate, authTokenShared!, input, init, cancelToken, retry);
+    input: RequestInfo, init?: RequestInit): Promise<Response>;
+export async function authFetch<T>(
+    input: RequestInfo, init: RequestInit, transformResponse: ResponseTransform<T>,
+    cancellationToken: CancellationToken): Promise<T>;
+export async function authFetch<T>(
+    input: RequestInfo, init: RequestInit = {}, transformResponse?: ResponseTransform<T>,
+    cancellationToken: CancellationToken = uncancelableToken): Promise<T|Response> {
+  const response = await authFetchWithSharedValue(reauthenticate, authTokenShared!, input, init, cancellationToken);
+
+  if (transformResponse) {
+    return transformResponse(response);
+  } else {
+    return response;
+  }
 }
