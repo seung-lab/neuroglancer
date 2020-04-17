@@ -31,7 +31,7 @@ import {StatusMessage} from 'neuroglancer/status';
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {mat4, vec3} from 'neuroglancer/util/geom';
 import {parseSpecialUrl} from 'neuroglancer/util/http_request';
-import {parseArray, parseFixedLengthArray, parseIntVec, verifyEnumString, verifyFiniteFloat, verifyFinitePositiveFloat, verifyInt, verifyNonnegativeInt, verifyObject, verifyObjectProperty, verifyOptionalString, verifyPositiveInt, verifyString} from 'neuroglancer/util/json';
+import {parseArray, parseFixedLengthArray, parseIntVec, verifyEnumString, verifyFiniteFloat, verifyFinitePositiveFloat, verifyInt, verifyNonnegativeInt, verifyObject, verifyObjectProperty, verifyOptionalString, verifyPositiveInt, verifyString, verifyOptionalBoolean} from 'neuroglancer/util/json';
 
 class GrapheneVolumeChunkSource extends
 (WithParameters(VolumeChunkSource, VolumeChunkSourceParameters)) {}
@@ -162,6 +162,7 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
   numChannels: number;
   volumeType: VolumeType;
   mesh: string|undefined;
+  shardedMesh: boolean|undefined;
   skeletons: string|undefined;
   app: AppInfo;
   graph: GraphInfo;
@@ -197,6 +198,9 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
   getMeshSource() {
     const {mesh} = this;
     if (mesh !== undefined) {
+      if (this.shardedMesh) {
+        return getMeshSource(this.chunkManager, resolvePath(this.dataUrl, mesh));
+      }
       return getShardedMeshSource(
           this.chunkManager,
           {manifestUrl: this.app.meshingUrl, fragmentUrl: resolvePath(this.dataUrl, mesh), lod: 0});
@@ -233,6 +237,7 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
 
     this.numChannels = verifyObjectProperty(obj, 'num_channels', verifyPositiveInt);
     this.mesh = verifyObjectProperty(obj, 'mesh', verifyOptionalString);
+    this.shardedMesh = verifyObjectProperty(obj, 'sharded_mesh', verifyOptionalBoolean);
     this.skeletons = verifyObjectProperty(obj, 'skeletons', verifyOptionalString);
     this.scales = verifyObjectProperty(obj, 'scales', x => parseArray(x, y => new ScaleInfo(y)));
   }
@@ -388,7 +393,7 @@ function getSkeletonMetadata(chunkManager: ChunkManager, url: string): Promise<S
 async function getMeshSource(chunkManager: ChunkManager, url: string) {
   const metadata = await getMeshMetadata(chunkManager, url);
   if (metadata === undefined) {
-    return getShardedMeshSource(chunkManager, {manifestUrl: url, fragmentUrl: url, lod: 0});
+    throw new Error(`Unable to fetch sharding metadata at ${url}/info`);
   }
   let vertexPositionFormat: VertexPositionFormat;
   const {vertexQuantizationBits} = metadata;
