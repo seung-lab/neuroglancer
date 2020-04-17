@@ -432,7 +432,7 @@ async function getMeshSource(chunkManager: ChunkManager, parameters: MeshSourceP
   }
   console.log(vertexPositionFormat);
   parameters.sharding = metadata.sharding;
-  return getShardedMeshSource(chunkManager, parameters);  
+  return getShardedMeshSource(chunkManager, parameters);
 }
 
 export async function getSkeletonSource(chunkManager: ChunkManager, url: string) {
