@@ -170,6 +170,7 @@ export interface ViewerOptions extends ViewerUIOptions, VisibilityPrioritySpecif
   showLayerDialog: boolean;
   inputEventBindings: InputEventBindings;
   resetStateWhenEmpty: boolean;
+  defaultLayoutSpecification: any;
 }
 
 const defaultViewerOptions = 'undefined' !== typeof NEUROGLANCER_OVERRIDE_DEFAULT_VIEWER_OPTIONS ?
@@ -258,6 +259,7 @@ export class Viewer extends RefCounted implements ViewerState {
   dataSourceProvider: Borrowed<DataSourceProvider>;
 
   uiConfiguration: ViewerUIConfiguration;
+  defaultLayoutSpecification: any;
 
   private makeUiControlVisibilityState(key: keyof ViewerUIOptions) {
     const showUIControls = this.uiConfiguration.showUIControls;
@@ -296,6 +298,7 @@ export class Viewer extends RefCounted implements ViewerState {
       dataSourceProvider =
           getDefaultDataSourceProvider({credentialsManager: defaultCredentialsManager}),
       uiConfiguration = new ViewerUIConfiguration(),
+      defaultLayoutSpecification = '4panel',
     } = options;
     this.visibility = visibility;
     this.inputEventBindings = inputEventBindings;
@@ -303,6 +306,7 @@ export class Viewer extends RefCounted implements ViewerState {
     this.element.id = 'neuroglancerViewer';
     this.dataSourceProvider = dataSourceProvider;
     this.uiConfiguration = uiConfiguration;
+    this.defaultLayoutSpecification = defaultLayoutSpecification;
 
     this.registerDisposer(() => removeFromParent(this.element));
 
@@ -597,7 +601,7 @@ export class Viewer extends RefCounted implements ViewerState {
     layoutAndSidePanel.style.display = 'flex';
     layoutAndSidePanel.style.flex = '1';
     layoutAndSidePanel.style.flexDirection = 'row';
-    this.layout = this.registerDisposer(new RootLayoutContainer(this, '4panel'));
+    this.layout = this.registerDisposer(new RootLayoutContainer(this, this.defaultLayoutSpecification));
     layoutAndSidePanel.appendChild(this.layout.element);
     const layerInfoPanel =
         this.registerDisposer(new LayerInfoPanelContainer(this.selectedLayer.addRef()));
