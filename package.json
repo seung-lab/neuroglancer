@@ -63,6 +63,7 @@
     "@types/text-encoding": "0.0.35",
     "@types/webgl2": "^0.0.4",
     "@types/webpack-env": "^1.13.9",
+    "@types/zepto": "^1.0.30",
     "acorn": "^6.1.1",
     "codemirror": "^5.45.0",
     "css-loader": "^2.1.1",
@@ -85,6 +86,7 @@
     "ts-loader": "^5.3.3",
     "typescript": "3.4.5",
     "url-loader": "^1.1.2",
-    "webpack": "^4.29.6"
+    "webpack": "^4.29.6",
+    "zepto": "^1.2.0"
   }
 }
