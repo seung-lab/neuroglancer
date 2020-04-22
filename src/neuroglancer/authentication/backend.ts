@@ -51,8 +51,7 @@ async function reauthenticate(
     waitingForToken = null;
   });
 
-  // returns a promise though I don't use this value since it also gets sent through the
-  // authTokenSharedValue maybe it should be changed to a regular invoke
+  // TODO: change back to promise, we need to handle the promise rejecting even though we get the value from the shared value
   rpc.invoke(
       AUTHENTICATION_REAUTHENTICATE_RPC_ID,
       {auth_url: auth_url, used_token: authTokenSharedValue.value});
