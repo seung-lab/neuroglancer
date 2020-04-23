@@ -84,10 +84,11 @@ async function reauthenticate(
   }
 }
 
-let authTokenShared: SharedAuthToken|undefined;
+export let authTokenShared: SharedAuthToken|undefined;
 
 export function initAuthTokenSharedValue(rpc: RPC) {
   authTokenShared = SharedWatchableValue.make(rpc, localStorage.getItem('auth_token'));
+  return authTokenShared;
 }
 
 // allow backend thread to access the shared token rpc id so that it can initialize the shared value
