@@ -18,7 +18,7 @@ import {AUTHENTICATION_GET_SHARED_TOKEN_RPC_ID, AUTHENTICATION_REAUTHENTICATE_RP
 import {SharedWatchableValue} from 'neuroglancer/shared_watchable_value.ts';
 import {CancellationToken, uncancelableToken} from 'neuroglancer/util/cancellation';
 import {registerPromiseRPC, registerRPC, RPC} from 'neuroglancer/worker_rpc';
-import { ResponseTransform } from '../util/http_request';
+import { ResponseTransform } from 'neuroglancer/util/http_request';
 
 // generate a token with the neuroglancer-auth service using google oauth2
 async function authorize(auth_url: string) {
@@ -32,6 +32,7 @@ async function authorize(auth_url: string) {
   return new Promise<string>((f, r) => {
     const checkClosed = setInterval(() => {
       if (auth_popup.closed) {
+        // in successful case, this will still fire but fulfill will have already been called
         clearInterval(checkClosed);
         r(new Error('Auth popup closed'));
       }
