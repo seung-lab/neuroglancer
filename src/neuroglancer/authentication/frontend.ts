@@ -17,12 +17,13 @@
 import {AUTHENTICATION_GET_SHARED_TOKEN_RPC_ID, AUTHENTICATION_REAUTHENTICATE_RPC_ID, authFetchWithSharedValue, SharedAuthToken} from 'neuroglancer/authentication/base.ts';
 import {SharedWatchableValue} from 'neuroglancer/shared_watchable_value.ts';
 import {CancellationToken, uncancelableToken} from 'neuroglancer/util/cancellation';
+import {ResponseTransform} from 'neuroglancer/util/http_request';
 import {registerPromiseRPC, registerRPC, RPC} from 'neuroglancer/worker_rpc';
-import { ResponseTransform } from 'neuroglancer/util/http_request';
 
 // generate a token with the neuroglancer-auth service using google oauth2
 async function authorize(auth_url: string) {
-  const auth_popup = window.open(`${auth_url}?redirect=${encodeURI(window.location.origin + '/auth_redirect.html')}`);
+  const auth_popup = window.open(
+      `${auth_url}?redirect=${encodeURI(window.location.origin + '/auth_redirect.html')}`);
 
   if (!auth_popup) {
     alert('Allow popups on this page to authenticate');
@@ -70,8 +71,7 @@ async function reauthenticate(
   const storedAuthURL = localStorage.getItem('auth_url');
 
   // if the stored token is not what was tried, and auth url matches, try the stored token
-  if (storedToken && storedAuthURL
-      && storedAuthURL === auth_url && storedToken !== used_token) {
+  if (storedToken && storedAuthURL && storedAuthURL === auth_url && storedToken !== used_token) {
     authTokenShared!.value = storedToken;
     return storedToken;
   } else {
@@ -106,15 +106,15 @@ registerRPC(AUTHENTICATION_REAUTHENTICATE_RPC_ID, function({auth_url, used_token
   });
 });
 
-export async function authFetch(
-    input: RequestInfo, init?: RequestInit): Promise<Response>;
+export async function authFetch(input: RequestInfo, init?: RequestInit): Promise<Response>;
 export async function authFetch<T>(
     input: RequestInfo, init: RequestInit, transformResponse: ResponseTransform<T>,
     cancellationToken: CancellationToken): Promise<T>;
 export async function authFetch<T>(
     input: RequestInfo, init: RequestInit = {}, transformResponse?: ResponseTransform<T>,
     cancellationToken: CancellationToken = uncancelableToken): Promise<T|Response> {
-  const response = await authFetchWithSharedValue(reauthenticate, authTokenShared!, input, init, cancellationToken);
+  const response = await authFetchWithSharedValue(
+      reauthenticate, authTokenShared!, input, init, cancellationToken);
 
   if (transformResponse) {
     return transformResponse(response);

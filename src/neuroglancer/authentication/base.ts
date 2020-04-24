@@ -16,7 +16,7 @@
 
 import {SharedWatchableValue} from 'neuroglancer/shared_watchable_value';
 import {CancellationToken, uncancelableToken} from 'neuroglancer/util/cancellation';
-import { HttpError } from 'neuroglancer/util/http_request';
+import {HttpError} from 'neuroglancer/util/http_request';
 
 export const AUTHENTICATION_GET_SHARED_TOKEN_RPC_ID = 'Authentication.get_shared_token';
 export const AUTHENTICATION_REAUTHENTICATE_RPC_ID = 'Authentication.reauthenticate';
@@ -61,7 +61,7 @@ async function authFetchOk(input: RequestInfo, init?: RequestInit): Promise<Resp
             throw new AuthenticationError(<string>wwwAuthMap.get('realm'));
           }
           throw new Error(`status ${res.status} auth error - ${
-            wwwAuthMap.get('error')} + " Reason: ${wwwAuthMap.get('error_description')}`);
+              wwwAuthMap.get('error')} + " Reason: ${wwwAuthMap.get('error_description')}`);
         }
       }
     }
@@ -72,7 +72,8 @@ async function authFetchOk(input: RequestInfo, init?: RequestInit): Promise<Resp
 
     return res;
   } catch (error) {
-    // A fetch() promise will reject with a TypeError when a network error is encountered or CORS is misconfigured on the server-side
+    // A fetch() promise will reject with a TypeError when a network error is encountered or CORS is
+    // misconfigured on the server-side
     if (error instanceof TypeError) {
       throw new HttpError('', 0, '');
     }
@@ -81,10 +82,9 @@ async function authFetchOk(input: RequestInfo, init?: RequestInit): Promise<Resp
 }
 
 export async function authFetchWithSharedValue(
-    reauthenticate: ReauthFunction, authTokenShared: SharedAuthToken,
-    input: RequestInfo, init: RequestInit,
+    reauthenticate: ReauthFunction, authTokenShared: SharedAuthToken, input: RequestInfo,
+    init: RequestInit,
     cancellationToken: CancellationToken = uncancelableToken): Promise<Response> {
-  
   const aborts: (() => void)[] = [];
   function addCancellationToken(options: any) {
     options = JSON.parse(JSON.stringify(init));
@@ -112,15 +112,15 @@ export async function authFetchWithSharedValue(
         return url.href;
       }
     }
-    
+
     return input;
   }
-  
+
   try {
     return await authFetchOk(setAuthQuery(input), addCancellationToken(init));
   } catch (error) {
     if (error instanceof AuthenticationError) {
-      await reauthenticate(error.realm, authTokenShared); // try once after authenticating
+      await reauthenticate(error.realm, authTokenShared);  // try once after authenticating
       return await authFetchOk(setAuthQuery(input), addCancellationToken(init));
     } else {
       throw error;

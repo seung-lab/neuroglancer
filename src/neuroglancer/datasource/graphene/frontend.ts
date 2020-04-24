@@ -230,7 +230,7 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
       this.volumeType = VolumeType.SEGMENTATION_WITH_GRAPH;
       this.graph = verifyObjectProperty(obj, 'graph', x => new GraphInfo(x));
     }
-    
+
     this.numChannels = verifyObjectProperty(obj, 'num_channels', verifyPositiveInt);
     this.mesh = verifyObjectProperty(obj, 'mesh', verifyOptionalString);
     this.skeletons = verifyObjectProperty(obj, 'skeletons', verifyOptionalString);
@@ -296,8 +296,7 @@ function parseMeshMetadata(data: any): MultiscaleMeshMetadata|undefined {
   const t = verifyObjectProperty(data, '@type', verifyString);
   if (t === 'neuroglancer_legacy_mesh') {
     return undefined;
-  }
-  else if (t !== 'neuroglancer_multilod_draco') {
+  } else if (t !== 'neuroglancer_multilod_draco') {
     throw new Error(`Unsupported mesh type: ${JSON.stringify(t)}`);
   }
   const lodScaleMultiplier =
