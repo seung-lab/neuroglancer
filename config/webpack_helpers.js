@@ -229,6 +229,7 @@ function getBaseConfig(options) {
           loader: require.resolve('svg-inline-loader'),
           options: {removeSVGTagAttrs: false}
         },
+        {test: /\.ttf$/, loader: require.resolve('ttf-loader')},
         {test: /\.css$/, loader: 'style-loader!css-loader'}, {
           test: /\.glsl$/,
           loader: [

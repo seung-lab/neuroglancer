@@ -3,6 +3,7 @@ import 'neuroglancer/save_state/save_state.css';
 import {debounce} from 'lodash';
 import {Overlay} from 'neuroglancer/overlay';
 import {dismissUnshareWarning, getSaveToAddressBar, getUnshareWarning} from 'neuroglancer/preferences/user_preferences';
+import {createSocialBar} from 'neuroglancer/social_share/social_share';
 import {StatusMessage} from 'neuroglancer/status';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {getRandomHexString} from 'neuroglancer/util/random';
@@ -301,6 +302,7 @@ class SaveDialog extends Overlay {
         viewer.postJsonState(true, undefined, true, restoreSaving);
       }
     });
+    content.appendChild(createSocialBar());
     const pushButtonContainer = document.createElement('div');
     pushButtonContainer.style.textAlign = 'right';
     pushButtonContainer.style.marginBottom = '5px';

@@ -50,6 +50,7 @@
     "nunjucks": "^3.2.0",
     "tslint": "^5.15.0",
     "tslint-eslint-rules": "^5.4.0",
+    "ttf-loader": "^1.0.2",
     "webpack-cli": "^3.3.0",
     "webpack-dev-server": ">=3.2.1"
   },

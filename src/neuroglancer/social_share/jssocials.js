@@ -402,7 +402,7 @@ window.jsSocials = {
   shareStrategies: shareStrategies,
   setDefaults: setDefaults
 };
-}(window, jQuery));
+}(window, window.$));
 
 
 (function(window, $, jsSocials, undefined) {
@@ -530,4 +530,4 @@ $.extend(jsSocials.shares, {
   }
 
 });
-}(window, jQuery, window.jsSocials));
+}(window, $ || jQuery, window.jsSocials));
