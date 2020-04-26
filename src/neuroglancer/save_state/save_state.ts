@@ -248,6 +248,7 @@ class SaveDialog extends Overlay {
     const urlStart = `${window.location.origin}${window.location.pathname}`;
     const jsonUrl = jsonString ? `${urlStart}?json_url=${jsonString}` : `NOT AVAILABLE`;
     const rawUrl = `${urlStart}#!${viewer.hashBinding!.returnURLHash()}`;
+    const socialBar = createSocialBar(jsonUrl);
 
     if (getUrlType) {
       const copyString = getUrlType === UrlType.json ? jsonUrl : rawUrl;
@@ -302,7 +303,9 @@ class SaveDialog extends Overlay {
         viewer.postJsonState(true, undefined, true, restoreSaving);
       }
     });
-    content.appendChild(createSocialBar());
+    if (socialBar) {
+      content.appendChild(socialBar);
+    }
     const pushButtonContainer = document.createElement('div');
     pushButtonContainer.style.textAlign = 'right';
     pushButtonContainer.style.marginBottom = '5px';

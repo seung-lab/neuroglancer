@@ -1,10 +1,11 @@
 // import 'neuroglancer/social_share/jssocials-theme-classic.css';
-import 'neuroglancer/social_share/fontawesome-free-5.13.0-web/css/brands.css';
+import 'neuroglancer/social_share/font-awesome-4.7.0/css/font-awesome.css';
+import 'neuroglancer/social_share/jssocials.css';
 import 'neuroglancer/social_share/jssocials-theme-flat.css';
 // import 'neuroglancer/social_share/jssocials-theme-minimal.css';
 // import 'neuroglancer/social_share/jssocials-theme-plain.css';
 
-export function createSocialBar() {
+export function createSocialBar(link: string) {
   const jQuery = require('neuroglancer/social_share/jquery.3.5.0');
   (<any>window).jQuery = jQuery;
   (<any>window).$ = (<any>window).jQuery;
@@ -18,11 +19,8 @@ export function createSocialBar() {
 
   const socialBar = $(socials);
   socialBar.jsSocials({
-    shares: [
-      'email', 'twitter', 'facebook', 'googleplus', 'linkedin', 'pinterest', 'stumbleupon',
-      'pocket', 'whatsapp', 'viber', 'messenger', 'vkontakte', 'telegram', 'line'
-    ],
-    url: 'http://url.to.share',
+    shares: ['email', 'twitter', 'facebook', 'pinterest', 'stumbleupon'],
+    url: link,
     text: 'text to share',
     showLabel: false,
     showCount: false,

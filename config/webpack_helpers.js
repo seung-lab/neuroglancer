@@ -229,7 +229,6 @@ function getBaseConfig(options) {
           loader: require.resolve('svg-inline-loader'),
           options: {removeSVGTagAttrs: false}
         },
-        {test: /\.ttf$/, loader: require.resolve('ttf-loader')},
         {test: /\.css$/, loader: 'style-loader!css-loader'}, {
           test: /\.glsl$/,
           loader: [
@@ -238,7 +237,7 @@ function getBaseConfig(options) {
           ],
         },
         {
-          test: /\.wasm$/,
+          test: /\.(woff(2)?|ttf|eot|wasm)(\?v=\d+\.\d+\.\d+)?$/,  // /\.wasm$/,
           loader: require.resolve('file-loader'),
           type: 'javascript/auto',
           options: {name: '[name].[ext]'}
