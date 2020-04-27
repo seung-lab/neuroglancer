@@ -319,9 +319,29 @@ export function decodeDracoFragmentChunk(
 
   downloadFragment(chunk: FragmentChunk, cancellationToken: CancellationToken) {
     const {parameters} = this;
-    const fragmentDownloadPromise = cancellableFetchOk(
-        `${parameters.fragmentUrl}/${chunk.fragmentId}`, {}, responseArrayBuffer,
-        cancellationToken);
+    // let fragmentDownloadPromise;
+    // if (parameters.sharded){
+    //   fragmentDownloadPromise = cancellableFetchOk(
+    //     `${parameters.fragmentUrl}/dynamic/${chunk.fragmentId}`, {}, responseArrayBuffer,
+    //     cancellationToken);  
+    // } else {
+    //   fragmentDownloadPromise = cancellableFetchOk(
+    //     `${parameters.fragmentUrl}/${chunk.fragmentId}`, {}, responseArrayBuffer,
+    //     cancellationToken);
+    // }
+
+    // 173449088858062852: ['graphene_meshes/initial/2/6829831-0.shard', 30004.0, 2167]
+
+    let adjustedStartOffset: Uint64|number, adjustedEndOffset: Uint64|number;
+    adjustedStartOffset = 30004;
+    adjustedEndOffset = 30004+2167;
+    const fragmentDownloadPromise = fetchHttpByteRange(
+      `${parameters.fragmentUrl}/initial/2/6829831-0.shard`,
+      adjustedStartOffset,
+      adjustedEndOffset,
+      cancellationToken
+    );
+
     const dracoModulePromise = DracoLoader.default;
     const readyToDecode = Promise.all([fragmentDownloadPromise, dracoModulePromise]);
     return readyToDecode.then(
@@ -340,6 +360,47 @@ export function decodeDracoFragmentChunk(
         });
   }
 }
+
+
+
+// @registerSharedObject() //
+// export class GrapheneShardedMeshSource extends
+// (WithParameters(MeshSource, MeshSourceParameters)) {
+//   async download(chunk: ManifestChunk, cancellationToken: CancellationToken):
+//       Promise<void> {
+//       const {parameters} = this;
+//       return authFetch(
+//                   `${parameters.manifestUrl}/manifest/${chunk.objectId}:${parameters.lod}?verify=True`,
+//                   {}, cancellationToken)
+//           .then(responseJson)
+//           .then(response => decodeManifestChunk(chunk, response));
+//   }
+
+//   async downloadFragment(chunk: FragmentChunk, cancellationToken: CancellationToken) {
+//     const {parameters} = this;
+//     const fragmentDownloadPromise = cancellableFetchOk(
+//         `${parameters.fragmentUrl}/dynamic/${chunk.fragmentId}`, {}, responseArrayBuffer,
+//         cancellationToken);
+//     const dracoModulePromise = DracoLoader.default;
+//     const readyToDecode = Promise.all([fragmentDownloadPromise, dracoModulePromise]);
+//     return readyToDecode.then(
+//         response => {
+//           try {
+//             decodeDracoFragmentChunk(chunk, response[0], response[1].decoderModule);
+//           } catch (err) {
+//             if (err instanceof TypeError) {
+//               // not a draco mesh
+//               decodeFragmentChunk(chunk, response[0]);
+//             }
+//           }
+//         },
+//         error => {
+//           Promise.reject(error);
+//         });
+//   }
+// }
+
+
 
 @registerSharedObject() //
 export class GrapheneSkeletonSource extends

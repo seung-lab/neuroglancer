@@ -18,7 +18,7 @@ import {AnnotationSource, makeDataBoundsBoundingBox} from 'neuroglancer/annotati
 import {authFetch} from 'neuroglancer/authentication/frontend.ts';
 import {ChunkManager, WithParameters} from 'neuroglancer/chunk_manager/frontend';
 import {DataSource} from 'neuroglancer/datasource';
-import {ChunkedGraphSourceParameters, DataEncoding, MeshSourceParameters, MultiscaleMeshMetadata, MultiscaleMeshSourceParameters, PYCG_APP_VERSION, ShardingHashFunction, ShardingParameters, SkeletonMetadata, SkeletonSourceParameters, VolumeChunkEncoding, VolumeChunkSourceParameters} from 'neuroglancer/datasource/graphene/base';
+import {ChunkedGraphSourceParameters, DataEncoding, MeshSourceParameters, MultiscaleMeshMetadata, PYCG_APP_VERSION, ShardingHashFunction, ShardingParameters, SkeletonMetadata, SkeletonSourceParameters, VolumeChunkEncoding, VolumeChunkSourceParameters, MultiscaleMeshSourceParameters} from 'neuroglancer/datasource/graphene/base';
 import {VertexPositionFormat} from 'neuroglancer/mesh/base';
 import {MeshSource, MultiscaleMeshSource} from 'neuroglancer/mesh/frontend';
 import {VertexAttributeInfo} from 'neuroglancer/skeleton/base';
@@ -41,6 +41,9 @@ class GrapheneChunkedGraphChunkSource extends
 
 class GrapheneMeshSource extends
 (WithParameters(MeshSource, MeshSourceParameters)) {}
+
+// class GrapheneShardedMeshSource extends
+// (WithParameters(MeshSource, MeshSourceParameters)) {}
 
 class GrapheneMultiscaleMeshSource extends
 (WithParameters(MultiscaleMeshSource, MultiscaleMeshSourceParameters)) {}
@@ -198,12 +201,13 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
   getMeshSource() {
     const {mesh} = this;
     if (mesh !== undefined) {
-      if (this.shardedMesh) {
-        return getMeshSource(this.chunkManager, resolvePath(this.dataUrl, mesh));
-      }
-      return getShardedMeshSource(
-          this.chunkManager,
-          {manifestUrl: this.app.meshingUrl, fragmentUrl: resolvePath(this.dataUrl, mesh), lod: 0});
+      let parameters = {
+        manifestUrl: this.app.meshingUrl,
+        fragmentUrl: resolvePath(this.dataUrl, mesh),
+        lod: 0,
+        sharded: this.shardedMesh !== undefined
+      };
+      return getShardedMeshSource(this.chunkManager, parameters);
     }
     return null;
   }
@@ -386,7 +390,9 @@ function getSkeletonMetadata(chunkManager: ChunkManager, url: string): Promise<S
 async function getMeshSource(chunkManager: ChunkManager, url: string) {
   const metadata = await getMeshMetadata(chunkManager, url);
   if (metadata === undefined) {
-    throw new Error(`Unable to fetch sharding metadata at ${url}/info`);
+    return getShardedMeshSource(
+      chunkManager, {manifestUrl: url, fragmentUrl: url, lod: 0, sharded: false}
+    );
   }
   let vertexPositionFormat: VertexPositionFormat;
   const {vertexQuantizationBits} = metadata;
