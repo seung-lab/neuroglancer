@@ -43,6 +43,7 @@ export class MeshSourceParameters {
   manifestUrl: string;
   fragmentUrl: string;
   lod: number;
+  sharded: boolean;
 
   static RPC_ID = 'graphene/MeshSource';
 }
