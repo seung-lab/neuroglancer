@@ -319,28 +319,30 @@ export function decodeDracoFragmentChunk(
 
   downloadFragment(chunk: FragmentChunk, cancellationToken: CancellationToken) {
     const {parameters} = this;
-    // let fragmentDownloadPromise;
-    // if (parameters.sharded){
-    //   fragmentDownloadPromise = cancellableFetchOk(
-    //     `${parameters.fragmentUrl}/dynamic/${chunk.fragmentId}`, {}, responseArrayBuffer,
-    //     cancellationToken);  
-    // } else {
-    //   fragmentDownloadPromise = cancellableFetchOk(
-    //     `${parameters.fragmentUrl}/${chunk.fragmentId}`, {}, responseArrayBuffer,
-    //     cancellationToken);
-    // }
+    let fragmentDownloadPromise;
+    if (parameters.sharded){
+      if (chunk.fragmentId && chunk.fragmentId.charAt(0) === '~'){
+        let adjustedStartOffset: Uint64|number, adjustedEndOffset: Uint64|number;
+        adjustedStartOffset = 30004;
+        adjustedEndOffset = 30004+2167;
+        fragmentDownloadPromise = fetchHttpByteRange(
+          `${parameters.fragmentUrl}/initial/2/6829831-0.shard`,
+          adjustedStartOffset,
+          adjustedEndOffset,
+          cancellationToken
+        );        
+      }
+      else {
+        fragmentDownloadPromise = cancellableFetchOk(
+          `${parameters.fragmentUrl}/dynamic/${chunk.fragmentId}`, {}, responseArrayBuffer,
+          cancellationToken);  
+      }
+    } else {
+      fragmentDownloadPromise = cancellableFetchOk(
+        `${parameters.fragmentUrl}/${chunk.fragmentId}`, {}, responseArrayBuffer,
+        cancellationToken);
+    }
 
-    // 173449088858062852: ['graphene_meshes/initial/2/6829831-0.shard', 30004.0, 2167]
-
-    let adjustedStartOffset: Uint64|number, adjustedEndOffset: Uint64|number;
-    adjustedStartOffset = 30004;
-    adjustedEndOffset = 30004+2167;
-    const fragmentDownloadPromise = fetchHttpByteRange(
-      `${parameters.fragmentUrl}/initial/2/6829831-0.shard`,
-      adjustedStartOffset,
-      adjustedEndOffset,
-      cancellationToken
-    );
 
     const dracoModulePromise = DracoLoader.default;
     const readyToDecode = Promise.all([fragmentDownloadPromise, dracoModulePromise]);
