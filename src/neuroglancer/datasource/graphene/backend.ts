@@ -323,13 +323,14 @@ export function decodeDracoFragmentChunk(
     let fragmentDownloadPromise;
     if (parameters.sharded){
       if (chunk.fragmentId && chunk.fragmentId.charAt(0) === '~'){
-        let adjustedStartOffset: Uint64|number, adjustedEndOffset: Uint64|number;
-        adjustedStartOffset = 30004;
-        adjustedEndOffset = 30004+2167;
+        let parts = chunk.fragmentId.substr(1).split(':');
+        let startOffset: Uint64|number, endOffset: Uint64|number;
+        startOffset = Number(parts[1]);
+        endOffset = startOffset+Number(parts[2]);
         fragmentDownloadPromise = fetchHttpByteRange(
-          `${parameters.fragmentUrl}/initial/2/6829831-0.shard`,
-          adjustedStartOffset,
-          adjustedEndOffset,
+          `${parameters.fragmentUrl}/initial/${parts[0]}`,
+          startOffset,
+          endOffset,
           cancellationToken
         );        
       }
