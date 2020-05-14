@@ -58,7 +58,6 @@ export class WhatsNewDialog extends Overlay {
 
     const modal = document.createElement('div');
     content.appendChild(modal);
-    content.className = (override && override.className) ? override.className : '';
 
     if (!override) {
       if (!description.length) {
