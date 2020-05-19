@@ -17,7 +17,7 @@
 import debounce from 'lodash/debounce';
 import {MultiStepAnnotationTool} from 'neuroglancer/annotation/annotation';
 import {AnnotationUserLayer} from 'neuroglancer/annotation/user_layer';
-import {initAuthTokenSharedValue, authFetch} from 'neuroglancer/authentication/frontend';
+import {authFetch, initAuthTokenSharedValue} from 'neuroglancer/authentication/frontend';
 import {CapacitySpecification, ChunkManager, ChunkQueueManager, FrameNumberCounter} from 'neuroglancer/chunk_manager/frontend';
 import {defaultCredentialsManager} from 'neuroglancer/credentials_provider/default_manager';
 import {InputEventBindings as DataPanelInputEventBindings} from 'neuroglancer/data_panel_layout';
@@ -32,7 +32,7 @@ import {TopLevelLayerListSpecification} from 'neuroglancer/layer_specification';
 import {NavigationState, Pose} from 'neuroglancer/navigation_state';
 import {overlaysOpen} from 'neuroglancer/overlay';
 import {getSaveToAddressBar, UserPreferencesDialog} from 'neuroglancer/preferences/user_preferences';
-import {SaveState, storageAvailable} from 'neuroglancer/save_state/save_state';
+import {saverToggle, SaveState, storageAccessible} from 'neuroglancer/save_state/save_state';
 import {StatusMessage} from 'neuroglancer/status';
 import {ElementVisibilityFromTrackableBoolean, TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
 import {makeDerivedWatchableValue, TrackableValue, WatchableValueInterface} from 'neuroglancer/trackable_value';
@@ -429,7 +429,13 @@ export class Viewer extends RefCounted implements ViewerState {
     const maybeAddOrRemoveAnnotationShortcuts = this.annotationShortcutControllerFactory();
     this.registerDisposer(
         this.selectedLayer.changed.add(() => maybeAddOrRemoveAnnotationShortcuts()));
-    findWhatsNew(this);
+    const error = document.getElementById('neuroglancer-error');
+    if (error) {
+      error.style.display = 'none';
+    }
+    if (!localStorage.getItem('neuroglancer-disableWhatsNew')) {
+      findWhatsNew(this);
+    }
   }
 
   private updateShowBorders() {
@@ -489,22 +495,22 @@ export class Viewer extends RefCounted implements ViewerState {
       button.classList.add('ng-saver', 'neuroglancer-icon-button');
       button.innerText = 'Share';
       button.title = 'Save Changes';
-      if (!storageAvailable()) {
+      if (!storageAccessible()) {
         button.classList.add('fallback');
         button.title =
             `Cannot access Local Storage. Unsaved changes will be lost! Use OldStyleSaving to allow for auto saving.`;
       }
-      if (storageAvailable() && getSaveToAddressBar().value) {
+      if (storageAccessible() && getSaveToAddressBar().value) {
         button.classList.add('inactive');
         button.title =
             `Save State has been disabled because Old Style saving has been turned on in User Preferences.`;
       }
       if (this.saver && !this.saver.supported && this.saver.key) {
-        const entry = this.saver.saves[this.saver.key];
-        button.classList.toggle('dirty', entry.dirty.value);
+        const entry = this.saver.pull();
+        button.classList.toggle('dirty', entry ? entry.dirty : true);
       }
       this.registerEventListener(button, 'click', () => {
-        this.postJsonState();
+        this.postJsonState(true);
       });
       this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
           this.uiControlVisibility.showSaveButton, button));
@@ -763,12 +769,12 @@ export class Viewer extends RefCounted implements ViewerState {
     this.bindAction('toggle-default-annotations', () => this.showDefaultAnnotations.toggle());
     this.bindAction('toggle-show-slices', () => this.showPerspectiveSliceViews.toggle());
     this.bindAction('toggle-show-statistics', () => this.showStatistics());
-    this.bindAction('save-state', () => this.postJsonState());
+    this.bindAction('save-state', () => this.postJsonState(true));
     this.bindAction('save-state-getjson', () => {
-      this.postJsonState(UrlType.json);
+      this.postJsonState(true, UrlType.json);
     });
     this.bindAction('save-state-getraw', () => {
-      this.postJsonState(UrlType.raw);
+      this.postJsonState(true, UrlType.raw);
     });
   }
 
@@ -818,12 +824,13 @@ export class Viewer extends RefCounted implements ViewerState {
       history.replaceState(null, '', removeParameterFromUrl(window.location.href, 'json_url'));
 
       this.resetStateWhenEmpty = false;
-      StatusMessage
+      return StatusMessage
           .forPromise(
-            authFetch(json_url)
-              .then(res => res.json())
-              .then(response => {
+              authFetch(json_url).then(res => res.json()).then(response => {
                 this.state.restoreState(response);
+                if (this.saver) {
+                  this.saver.push(true);
+                }
               }),
               {
                 initialMessage: `Retrieving state from json_url: ${json_url}.`,
@@ -833,48 +840,85 @@ export class Viewer extends RefCounted implements ViewerState {
           .finally(() => {
             this.resetStateWhenEmpty = true;
           });
+    } else {
+      return Promise.resolve();
     }
   }
 
-  postJsonState(getUrlType?: UrlType) {
+  postJsonState(
+      savestate?: boolean, getUrlType?: UrlType, retry?: boolean, callback: Function = () => {}) {
     // upload state to jsonStateServer (only if it's defined)
-    if (this.saver && this.saver.key && !this.saver.saves[this.saver.key].dirty.value) {
-      this.showSaveDialog(getUrlType, this.saver.savedUrl);
-      return;
+    if (savestate && this.saver) {
+      const savedUrl = this.saver.savedUrl;
+      const entry = this.saver.pull();
+      if (savedUrl && !entry.dirty) {
+        callback();
+        this.showSaveDialog(getUrlType, this.saver.savedUrl);
+        return;
+      }
     }
-    if (this.jsonStateServer.value || !getUrlType) {
-      StatusMessage.showTemporaryMessage(`Posting state to ${this.jsonStateServer.value}.`);
-      authFetch(
-          this.jsonStateServer.value, {method: 'POST', body: JSON.stringify(this.state.toJSON())})
-          .then(res => res.json())
-          .then(response => {
-            const savedUrl =
-                `${window.location.origin}${window.location.pathname}?json_url=${response}`;
-            if (this.saver && this.saver.supported) {
-              this.saver.commit(response);
-              this.showSaveDialog(getUrlType, response);
-            } else {
-              history.replaceState(null, '', savedUrl);
-              this.showSaveDialog(getUrlType);
-            }
-          })
-          // catch errors with upload and prompt the user if there was an error
-          .catch(() => {
-            this.promptJsonStateServer('State server could not be reached, try again or enter a new one.');
-            if (this.jsonStateServer.value) {
-              this.postJsonState();
-            }
-          })
-          .finally(() => {
-            const noStateServerAccess = !this.jsonStateServer.value;
-            if (noStateServerAccess) {
-              this.showSaveDialog();
-            }
-          });
+    if (this.jsonStateServer.value || getUrlType) {
+      if (this.jsonStateServer.value.length) {
+        saverToggle(false);
+        let postSuccess = false;
+        StatusMessage.forPromise(
+            authFetch(
+                this.jsonStateServer.value,
+                {method: 'POST', body: JSON.stringify(this.state.toJSON())})
+                .then(res => res.json())
+                .then(response => {
+                  const savedUrl =
+                      `${window.location.origin}${window.location.pathname}?json_url=${response}`;
+                  const saverSupported = this.saver && this.saver.supported;
+                  if (saverSupported) {
+                    this.saver!.commit(response);
+                  } else {
+                    history.replaceState(null, '', savedUrl);
+                  }
+                  if (savestate) {
+                    callback();
+                    this.showSaveDialog(getUrlType, saverSupported ? response : undefined);
+                  }
+                  StatusMessage.showTemporaryMessage(`Successfully shared state.`, 4000);
+                  postSuccess = true;
+                })
+                // catch errors with upload and prompt the user if there was an error
+                .catch(() => {
+                  if (retry) {
+                    this.promptJsonStateServer(
+                        'State server could not be reached, try again or enter a new one.');
+                    if (this.jsonStateServer.value) {
+                      this.postJsonState(savestate, getUrlType);
+                    } else {
+                      StatusMessage.messageWithAction(
+                          `Could not share state, no state server was found. `, [{message: 'Ok'}],
+                          undefined, {color: 'yellow'});
+                    }
+                  } else {
+                    StatusMessage.showTemporaryMessage(
+                        `Could not access state server.`, 4000, {color: 'yellow'});
+                  }
+                })
+                .finally(() => {
+                  saverToggle(true);
+                  if (!postSuccess && savestate) {
+                    callback();
+                    this.showSaveDialog(getUrlType);
+                  }
+                }),
+            {
+              initialMessage: `Posting state to ${this.jsonStateServer.value}.`,
+              delay: true,
+              errorPrefix: ''
+            });
+      } else {
+        StatusMessage.showTemporaryMessage(`No state server found.`, 4000, {color: 'yellow'});
+      }
     } else {
-      StatusMessage.showTemporaryMessage(
-          `Cannot access state server. Press the share button/CTRL + SHIFT + S to enter a server URL.`);
-      this.showSaveDialog(UrlType.raw);
+      if (savestate) {
+        callback();
+        this.showSaveDialog(getUrlType);
+      }
     }
   }
 
@@ -901,7 +945,7 @@ export class Viewer extends RefCounted implements ViewerState {
 
   messageWithUndo(message: string, actionMessage: string, closeAfter: number = 10000) {
     const undo = this.getStateRevertingFunction();
-    StatusMessage.messageWithAction(message, actionMessage, undo, closeAfter);
+    StatusMessage.messageWithAction(message, [{message: actionMessage, action: undo}], closeAfter);
   }
 
   private getStateRevertingFunction() {
@@ -944,7 +988,7 @@ export class Viewer extends RefCounted implements ViewerState {
 
   initializeSaver() {
     const hashBinding = this.legacyViewerSetupHashBinding();
-    this.saver = this.registerDisposer(new SaveState(this.state));
+    this.saver = this.registerDisposer(new SaveState(this.state, this));
     if (!this.saver.supported) {
       // Fallback to register state change handler has legacy urlHashBinding if saver is not
       // supported
@@ -954,7 +998,7 @@ export class Viewer extends RefCounted implements ViewerState {
 
   legacyViewerSetupHashBinding() {
     // Backwards compatibility for state links
-    const hashBinding = this.registerDisposer(new UrlHashBinding(this.state));
+    const hashBinding = this.registerDisposer(new UrlHashBinding(this.state, this));
     this.hashBinding = hashBinding;
     this.registerDisposer(hashBinding.parseError.changed.add(() => {
       const {value} = hashBinding.parseError;

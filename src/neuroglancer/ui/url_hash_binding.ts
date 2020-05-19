@@ -15,11 +15,13 @@
  */
 
 import {debounce} from 'lodash';
+import {dismissUnshareWarning, getUnshareWarning} from 'neuroglancer/preferences/user_preferences';
 import {StatusMessage} from 'neuroglancer/status';
 import {WatchableValue} from 'neuroglancer/trackable_value';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {urlSafeParse, verifyObject} from 'neuroglancer/util/json';
 import {getCachedJson, Trackable} from 'neuroglancer/util/trackable';
+import {Viewer} from 'neuroglancer/viewer';
 
 /**
  * @file Implements a binding between a Trackable value and the URL hash state.
@@ -43,7 +45,7 @@ export class UrlHashBinding extends RefCounted {
    */
   parseError = new WatchableValue<Error|undefined>(undefined);
   legacy: UrlHashBindingLegacy;
-  constructor(public root: Trackable) {
+  constructor(public root: Trackable, public viewer: Viewer) {
     super();
     this.registerEventListener(window, 'hashchange', () => this.updateFromUrlHash());
     this.legacy = new UrlHashBindingLegacy(root, this, this.prevStateString);
@@ -60,7 +62,24 @@ export class UrlHashBinding extends RefCounted {
         return;
       }
       StatusMessage.showTemporaryMessage(
-          `State URLs are Deprecated! Please use JSON URLs whenever avaliable.`, 10000);
+          `RAW URLs will soon be Deprecated. Please use JSON URLs whenever available.`, 10000);
+      if (getUnshareWarning().value) {
+        StatusMessage.messageWithAction(
+            `This state has not been shared, share and copy the JSON or RAW url to avoid losing progress. `,
+            [
+              {
+                message: 'Dismiss',
+                action: () => {
+                  dismissUnshareWarning();
+                  StatusMessage.showTemporaryMessage(
+                      'To reenable this warning, check "Unshared state warning" in the User Preferences menu.',
+                      5000);
+                }
+              },
+              {message: 'Share', action: () => this.viewer.postJsonState(true)}
+            ],
+            undefined, {color: 'yellow'});
+      }
       if (s.startsWith('#!+')) {
         s = s.slice(3);
         // Firefox always %-encodes the URL even if it is not typed that way.
@@ -127,8 +146,8 @@ class UrlHashBindingLegacy {
     const {generation} = cacheState;
     // Suggestion: Change to recurring, onblur and time, or onunload save and push to state server
     // Counterpoint: No point optimizing deprecated code
-    let cleanURL =
-        removeParameterFromUrl(removeParameterFromUrl(window.location.href, 'json_url'), 'local_id');
+    let cleanURL = removeParameterFromUrl(
+        removeParameterFromUrl(window.location.href, 'json_url'), 'local_id');
     history.replaceState(null, '', cleanURL);
 
     if (generation !== this.prevStateGeneration) {

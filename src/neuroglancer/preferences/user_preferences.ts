@@ -12,6 +12,7 @@ class UserPreferences {
   cursorOnMousedrag: TrackableBoolean;
   preserveSourceAnnotations: TrackableBoolean;
   saveToAddressBar: TrackableBoolean;
+  unshareWarning: TrackableBoolean;
   constructor() {
     // mesh rendering is enabled by default, unless user selects not to
     this.renderMeshByDefault = new TrackableBoolean(true, true, 'renderMeshByDefault');
@@ -20,12 +21,14 @@ class UserPreferences {
     this.cursorOnMousedrag = new TrackableBoolean(true, true, 'cursorOnMousedrag');
     this.preserveSourceAnnotations = new TrackableBoolean(true, true, 'preserveSourceAnnotations');
     this.saveToAddressBar = new TrackableBoolean(false, false, 'saveToAddressBar');
+    this.unshareWarning = new TrackableBoolean(true, true, 'unshareWarning');
 
     this.renderMeshByDefault.restoreState({});
     this.prefetchSliceViewChunks.restoreState({});
     this.cursorOnMousedrag.restoreState({});
     this.preserveSourceAnnotations.restoreState({});
     this.saveToAddressBar.restoreState({});
+    this.unshareWarning.restoreState({});
 
     this.renderMeshByDefault.changed.add(() => {
       location.reload(false);
@@ -53,6 +56,14 @@ export function getSaveToAddressBar(): TrackableBoolean {
 
 export function getPreserveSourceAnnotations(): TrackableBoolean {
   return userPreferences.preserveSourceAnnotations;
+}
+
+export function getUnshareWarning(): TrackableBoolean {
+  return userPreferences.unshareWarning;
+}
+
+export function dismissUnshareWarning() {
+  userPreferences.unshareWarning.value = false;
 }
 
 export class UserPreferencesDialog extends Overlay {
@@ -106,5 +117,23 @@ export class UserPreferencesDialog extends Overlay {
     addCheckbox(
         'Old Style Saving', userPreferences.saveToAddressBar, () => location.reload(),
         `Saves state in address bar. Useful if storage is unsupported. Press save to post to JSON Server. Warning: Toggling the option reloads the page!`);
+    addCheckbox(
+        'Unshared state warning', userPreferences.unshareWarning, undefined,
+        'Disable the warning message when loading an unshared state.');
+
+    /* TODO: This button may be renabled in the future
+    const evictButton = document.createElement('button');
+    evictButton.innerText = '⚠️ Clear Storage';
+    evictButton.title = 'Remove all local storage entries.';
+    evictButton.addEventListener('click', () => {
+      if (confirm(
+              'All unshared or unopened states will be lost and you will need to reauthenticate. The
+    page will be reloaded. Continue?')) { if (viewer.saver) { viewer.saver.userRemoveEntries(true);
+          location.reload();
+        }
+      }
+    });
+    scroll.appendChild(evictButton);
+    */
   }
 }
