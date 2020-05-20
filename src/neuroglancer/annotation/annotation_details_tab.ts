@@ -26,7 +26,6 @@ interface AnnotationStateInfo {
   isChild: boolean;
   isSingleton: boolean;
   groupSize: number;
-
 }
 
 export class AnnotationDetailsTab extends Tab {
@@ -138,6 +137,7 @@ export class AnnotationDetailsTab extends Tab {
           if (target) {
             target.classList.add(editingKey);
           }
+          //  delete this.state.value.id;
         }
         this.valid = false;
         this.updateView();
@@ -158,6 +158,8 @@ export class AnnotationDetailsTab extends Tab {
         if (parentReference.value) {
           (<AnnotationSource>annotationLayer.source).childReassignment(children, parentReference);
         }
+        // delete this.state.value.id;
+        // delete this.state.value.multiple;
       }
     });
     return button;

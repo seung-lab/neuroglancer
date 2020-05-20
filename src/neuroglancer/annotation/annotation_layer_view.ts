@@ -1,4 +1,4 @@
-import {Annotation, AnnotationSource, AnnotationTag, AnnotationType, Collection, Ellipsoid, getAnnotationTypeHandler, Line, LineStrip, LocalAnnotationSource, makeAnnotationId, Point, Spoke, AnnotationCT} from 'neuroglancer/annotation';
+import {Annotation, AnnotationCT, AnnotationSource, AnnotationTag, AnnotationType, Collection, Ellipsoid, getAnnotationTypeHandler, Line, LineStrip, LocalAnnotationSource, makeAnnotationId, Point, Spoke} from 'neuroglancer/annotation';
 import {AnnotationTool, MultiStepAnnotationTool, PlaceAnnotationTool, SubAnnotationTool} from 'neuroglancer/annotation/annotation';
 import {PlaceBoundingBoxTool} from 'neuroglancer/annotation/bounding_box';
 import {PlaceCollectionTool} from 'neuroglancer/annotation/collection';
@@ -138,7 +138,7 @@ export class AnnotationLayerView extends Tab {
           }
         }
         this.highlightButton(activeChildToolKey, toolset);
-        setTool(/*parent=*/multiTool);
+        setTool(/*parent=*/ multiTool);
       } else if (currentTool.annotationType === toolset) {
         multiTool.complete(false, true);
         toolset = undefined;
