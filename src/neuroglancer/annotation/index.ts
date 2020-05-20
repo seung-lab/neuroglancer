@@ -669,7 +669,9 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
   childReassignment(targets: string[], surrogate?: AnnotationReference): AnnotationReference[] {
     const emptynesters = <AnnotationReference[]>[];
     let adopter = surrogate ? <Collection>surrogate.value : null;
-
+    if (adopter) {
+      targets = targets.filter(e => e === adopter!.id);
+    }
     targets.forEach((id: string) => {
       const targetNode = this.annotationMap.get(id);
       const target = this.getReference(id).value!;
