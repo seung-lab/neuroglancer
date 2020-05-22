@@ -18,6 +18,7 @@
  * @file Basic annotation data structures.
  */
 
+import {StatusMessage} from 'neuroglancer/status';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {Borrowed, RefCounted} from 'neuroglancer/util/disposable';
 import {mat4, vec3} from 'neuroglancer/util/geom';
@@ -865,7 +866,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
           const annotation = restoreAnnotation(x, allowMissingId);
           this.insertAnnotationNode(annotation);
         } catch (e) {
-          console.error(e);
+          StatusMessage.showError(e);
         }
       });
     }
