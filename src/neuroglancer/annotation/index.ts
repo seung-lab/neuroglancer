@@ -274,7 +274,6 @@ const collectionTypeSet = {
   toJSON: (annotation: Collection) => {
     return {
       source: Array.from(annotation.source),
-      // entries: Array.from(annotation.entries),
       childrenVisible: annotation.childrenVisible.value,
       looped: (<LineStrip>annotation).looped
     };
