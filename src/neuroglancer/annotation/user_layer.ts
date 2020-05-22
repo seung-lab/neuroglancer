@@ -17,6 +17,7 @@
 import './user_layer.css';
 
 import {Annotation, AnnotationId, AnnotationType, LocalAnnotationSource} from 'neuroglancer/annotation';
+import {annotationErrorCorrection} from 'neuroglancer/annotation/annotation';
 import {AnnotationLayerView} from 'neuroglancer/annotation/annotation_layer_view';
 import {AnnotationLayerState} from 'neuroglancer/annotation/frontend';
 import {CoordinateTransform, makeDerivedCoordinateTransform} from 'neuroglancer/coordinate_transform';
@@ -37,7 +38,6 @@ import {parseArray, verify3dVec} from 'neuroglancer/util/json';
 import {KeyboardEventBinder} from 'neuroglancer/util/keyboard_bindings';
 import {LayerReferenceWidget} from 'neuroglancer/widget/layer_reference';
 import {Tab} from 'neuroglancer/widget/tab_view';
-import { annotationErrorCorrection } from './annotation';
 
 const POINTS_JSON_KEY = 'points';
 const ANNOTATIONS_JSON_KEY = 'annotations';
@@ -147,7 +147,8 @@ export class AnnotationUserLayer extends Base {
       this.isReady = true;
       this.voxelSize.restoreState(specification[VOXEL_SIZE_JSON_KEY]);
       if (specification[ANNOTATIONS_JSON_KEY]) {
-        specification[ANNOTATIONS_JSON_KEY] = annotationErrorCorrection(specification[ANNOTATIONS_JSON_KEY], this.localAnnotations);
+        specification[ANNOTATIONS_JSON_KEY] =
+            annotationErrorCorrection(specification[ANNOTATIONS_JSON_KEY], this.localAnnotations);
       }
       this.localAnnotations.restoreState(
           specification[ANNOTATIONS_JSON_KEY], specification[ANNOTATION_TAGS_JSON_KEY]);
