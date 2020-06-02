@@ -204,7 +204,7 @@ function findMinishardEntry(minishardIndex: DecodedMinishardIndex, key: Uint64) 
 }
 
 async function getShardedData(
-    minishardIndexSource: MinishardIndexSource, chunk: Chunk, key: Uint64,
+    minishardIndexSource: MinishardIndexSource, chunk: Chunk, key: Uint64, layer: number,
     cancellationToken: CancellationToken): Promise<{shardInfo: ShardInfo, data: ArrayBuffer}> {
   const parts = (chunk as FragmentChunk).fragmentId!.split(':');
   const getPriority = () => ({priorityTier: chunk.priorityTier, priority: chunk.priority});
@@ -212,7 +212,7 @@ async function getShardedData(
       await minishardIndexSource.getData(`${parts[3]}:${parts[4]}`, getPriority, cancellationToken);
   const {startOffset, endOffset} = findMinishardEntry(minishardIndex, key);
   let data =
-      await fetchHttpByteRange(minishardIndex.shardUrl, startOffset, endOffset, cancellationToken);
+      await fetchHttpByteRange(`${minishardIndex.shardUrl}/${layer}`, startOffset, endOffset, cancellationToken);
   if (minishardIndexSource.sharding.dataEncoding === DataEncoding.GZIP) {
     data =
         (await requestAsyncComputation(decodeGzip, cancellationToken, [data], new Uint8Array(data)))
@@ -574,7 +574,7 @@ export class GrapheneSkeletonSource extends
           `${parameters.url}/${chunk.objectId}`, {}, responseArrayBuffer, cancellationToken);
     } else {
       response =
-          (await getShardedData(minishardIndexSource, chunk, chunk.objectId, cancellationToken))
+          (await getShardedData(minishardIndexSource, chunk, chunk.objectId, 0, cancellationToken))
               .data;
     }
     decodeSkeletonChunk(chunk, response, parameters.metadata.vertexAttributes);
