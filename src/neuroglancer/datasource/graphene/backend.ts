@@ -68,23 +68,28 @@ interface MinishardIndexSource extends GenericSharedDataSource<Uint64, DecodedMi
 
 function getMinishardIndexDataSource(
     chunkManager: Borrowed<ChunkManager>,
-    parameters: {url: string, sharding: ShardingParameters|undefined}): MinishardIndexSource|
+    parameters: {url: string, sharding: ShardingParameters|undefined, layer:number}): MinishardIndexSource|
     undefined {
-  const {url, sharding} = parameters;
+  const {url, sharding, layer} = parameters;
   if (sharding === undefined) return undefined;
   const source =
       GenericSharedDataSource.get<Uint64, DecodedMinishardIndex>(
           chunkManager, stableStringify({type: 'graphene:shardedDataSource', url, sharding}), {
             download: async function(
                 shardAndMinishard: Uint64, cancellationToken: CancellationToken) {
+              console.log(shardAndMinishard);
+              console.log("shardAndMinishard");
               const minishard = Uint64.lowMask(new Uint64(), sharding.minishardBits);
               Uint64.and(minishard, minishard, shardAndMinishard);
               const shard = Uint64.lowMask(new Uint64(), sharding.shardBits);
               const temp = new Uint64();
               Uint64.rshift(temp, shardAndMinishard, sharding.minishardBits);
               Uint64.and(shard, shard, temp);
-              const shardUrl = `${url}/${
-                  shard.toString(16).padStart(Math.ceil(sharding.shardBits / 4), '0')}.shard`;
+              let shardName = shard.toString(16).padStart(Math.ceil(sharding.shardBits / 4), '0');
+              console.log(shardName);
+              console.log(shard);
+              console.log(temp);
+              const shardUrl = `${url}/${layer}/${shardName}.shard`;
               // Retrive minishard index start/end offsets.
 
               const shardIndexSize = new Uint64(16);
@@ -172,6 +177,22 @@ function getMinishardIndexDataSource(
   return source;
 }
 
+function getGrapheneMinishardIndexDataSources(
+  chunkManager: Borrowed<ChunkManager>,
+  parameters: {url: string, sharding: Array<ShardingParameters>|undefined}): Array<MinishardIndexSource>|
+  undefined {
+  const {url, sharding} = parameters;
+  if (sharding === undefined) return undefined;
+  const sources = new Array<MinishardIndexSource>();
+  for (const index in sharding)
+  {
+    const layer = Number(index);
+     sources[layer] = getMinishardIndexDataSource(
+       chunkManager, {url: url, sharding: sharding[layer], layer:layer})!;
+  }
+  return sources;
+}
+
 function findMinishardEntry(minishardIndex: DecodedMinishardIndex, key: Uint64) {
   const minishardIndexData = minishardIndex.data;
   const minishardIndexSize = minishardIndexData.length / 6;
@@ -192,7 +213,7 @@ function findMinishardEntry(minishardIndex: DecodedMinishardIndex, key: Uint64) 
 }
 
 async function getShardedData(
-    minishardIndexSource: MinishardIndexSource, chunk: Chunk, key: Uint64,
+    minishardIndexSource: MinishardIndexSource, chunk: Chunk, key: Uint64, layer: number,
     cancellationToken: CancellationToken): Promise<{shardInfo: ShardInfo, data: ArrayBuffer}> {
   const {sharding} = minishardIndexSource;
   const hashFunction = shardingHashFunctions.get(sharding.hash)!;
@@ -206,7 +227,7 @@ async function getShardedData(
       await minishardIndexSource.getData(shardAndMinishard, getPriority, cancellationToken);
   const {startOffset, endOffset} = findMinishardEntry(minishardIndex, key);
   let data =
-      await fetchHttpByteRange(minishardIndex.shardUrl, startOffset, endOffset, cancellationToken);
+      await fetchHttpByteRange(`${minishardIndex.shardUrl}/${layer}`, startOffset, endOffset, cancellationToken);
   if (minishardIndexSource.sharding.dataEncoding === DataEncoding.GZIP) {
     data =
         (await requestAsyncComputation(decodeGzip, cancellationToken, [data], new Uint8Array(data)))
@@ -370,21 +391,41 @@ export function decodeDracoFragmentChunk(
 // @registerSharedObject() //
 // export class GrapheneShardedMeshSource extends
 // (WithParameters(MeshSource, MeshSourceParameters)) {
-//   async download(chunk: ManifestChunk, cancellationToken: CancellationToken):
-//       Promise<void> {
-//       const {parameters} = this;
-//       return authFetch(
-//                   `${parameters.manifestUrl}/manifest/${chunk.objectId}:${parameters.lod}?verify=True`,
-//                   {}, cancellationToken)
-//           .then(responseJson)
-//           .then(response => decodeManifestChunk(chunk, response));
+//   download(chunk: ManifestChunk, cancellationToken: CancellationToken) {
+//     const {parameters} = this;
+//     return cancellableFetchOk(
+//                `${parameters.manifestUrl}/manifest/${chunk.objectId}:${parameters.lod}?verify=True`,
+//                {}, responseJson, cancellationToken)
+//         .then(response => decodeManifestChunk(chunk, response));
 //   }
 
-//   async downloadFragment(chunk: FragmentChunk, cancellationToken: CancellationToken) {
+//   downloadFragment(chunk: FragmentChunk, cancellationToken: CancellationToken) {
 //     const {parameters} = this;
-//     const fragmentDownloadPromise = cancellableFetchOk(
-//         `${parameters.fragmentUrl}/dynamic/${chunk.fragmentId}`, {}, responseArrayBuffer,
+//     let fragmentDownloadPromise;
+//     if (parameters.sharding){
+//       if (chunk.fragmentId && chunk.fragmentId.charAt(0) === '~'){
+//         let parts = chunk.fragmentId.substr(1).split(':');
+//         let startOffset: Uint64|number, endOffset: Uint64|number;
+//         startOffset = Number(parts[1]);
+//         endOffset = startOffset+Number(parts[2]);
+//         fragmentDownloadPromise = fetchHttpByteRange(
+//           `${parameters.fragmentUrl}/initial/${parts[0]}`,
+//           startOffset,
+//           endOffset,
+//           cancellationToken
+//         );
+//       }
+//       else {
+//         fragmentDownloadPromise = cancellableFetchOk(
+//           `${parameters.fragmentUrl}/dynamic/${chunk.fragmentId}`, {}, responseArrayBuffer,
+//           cancellationToken);
+//       }
+//     } else {
+//       fragmentDownloadPromise = cancellableFetchOk(
+//         `${parameters.fragmentUrl}/${chunk.fragmentId}`, {}, responseArrayBuffer,
 //         cancellationToken);
+//     }
+
 //     const dracoModulePromise = DracoLoader.default;
 //     const readyToDecode = Promise.all([fragmentDownloadPromise, dracoModulePromise]);
 //     return readyToDecode.then(
@@ -405,12 +446,70 @@ export function decodeDracoFragmentChunk(
 // }
 
 
+@registerSharedObject() //
+export class GrapheneMeshSource extends
+(WithParameters(MeshSource, MeshSourceParameters)) {
+  protected minishardIndexSources: MinishardIndexSource[];
+  async download(chunk: ManifestChunk, cancellationToken: CancellationToken) {
+        const {parameters} = this;
+        this.minishardIndexSources = getGrapheneMinishardIndexDataSources(
+          this.chunkManager, {url: parameters.fragmentUrl, sharding: parameters.sharding})!;
+        console.log(this.minishardIndexSources);
+        await cancellableFetchOk(
+                   `${parameters.manifestUrl}/manifest/${chunk.objectId}:${parameters.lod}?verify=0`,
+                   {}, responseJson, cancellationToken)
+            .then(response => decodeManifestChunk(chunk, response));
+      }
+
+  async downloadFragment(chunk: FragmentChunk, cancellationToken: CancellationToken) {
+    const {parameters, minishardIndexSources} = this;
+    let fragmentDownloadPromise;
+    let parts = chunk.fragmentId!.substr(1).split(':');
+    let layer = Number(parts[1]);
+    let objectId = Uint64.parseString(parts[0]);
+    let data: ArrayBuffer;
+    let shardInfo: ShardInfo;
+    ({data, shardInfo: shardInfo} =
+      await getShardedData(minishardIndexSources[layer]!, chunk, objectId, layer, cancellationToken));
+    console.log(data);
+    console.log(shardInfo);
+    // await decodeMultiscaleManifestChunk(chunk, data);
+
+    let startOffset: Uint64|number, endOffset: Uint64|number;
+    startOffset = Number(parts[1]);
+    endOffset = startOffset+Number(parts[2]);
+    fragmentDownloadPromise = fetchHttpByteRange(
+      `${parameters.fragmentUrl}/initial/${parts[0]}`,
+      startOffset,
+      endOffset,
+      cancellationToken
+    );
+    const dracoModulePromise = DracoLoader.default;
+    const readyToDecode = Promise.all([fragmentDownloadPromise, dracoModulePromise]);
+    return readyToDecode.then(
+        response => {
+          try {
+            decodeDracoFragmentChunk(chunk, response[0], response[1].decoderModule);
+          } catch (err) {
+            if (err instanceof TypeError) {
+              // not a draco mesh
+              decodeFragmentChunk(chunk, response[0]);
+            }
+          }
+        },
+        error => {
+          Promise.reject(error);
+        });
+  }
+}
+
+
 
 @registerSharedObject() //
 export class GrapheneSkeletonSource extends
 (WithParameters(SkeletonSource, SkeletonSourceParameters)) {
   private minishardIndexSource = getMinishardIndexDataSource(
-      this.chunkManager, {url: this.parameters.url, sharding: this.parameters.metadata.sharding});
+      this.chunkManager, {url: this.parameters.url, sharding: this.parameters.metadata.sharding, layer:0});
   async download(chunk: SkeletonChunk, cancellationToken: CancellationToken) {
     const {minishardIndexSource, parameters} = this;
     let response: ArrayBuffer;
@@ -419,7 +518,7 @@ export class GrapheneSkeletonSource extends
           `${parameters.url}/${chunk.objectId}`, {}, responseArrayBuffer, cancellationToken);
     } else {
       response =
-          (await getShardedData(minishardIndexSource, chunk, chunk.objectId, cancellationToken))
+          (await getShardedData(minishardIndexSource, chunk, chunk.objectId, 0, cancellationToken))
               .data;
     }
     decodeSkeletonChunk(chunk, response, parameters.metadata.vertexAttributes);
