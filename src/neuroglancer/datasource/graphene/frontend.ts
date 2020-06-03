@@ -430,6 +430,7 @@ async function getMeshSource(chunkManager: ChunkManager, parameters: MeshSourceP
   } else {
     throw new Error(`Invalid vertex quantization bits: ${vertexQuantizationBits}`);
   }
+  console.log(vertexPositionFormat);
   parameters.sharding = metadata.sharding;
   return getShardedMeshSource(chunkManager, parameters);
 }
