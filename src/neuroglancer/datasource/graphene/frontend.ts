@@ -31,7 +31,7 @@ import {StatusMessage} from 'neuroglancer/status';
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {mat4, vec3} from 'neuroglancer/util/geom';
 import {parseSpecialUrl} from 'neuroglancer/util/http_request';
-import {parseArray, parseFixedLengthArray, parseIntVec, verifyEnumString, verifyFiniteFloat, verifyFinitePositiveFloat, verifyInt, verifyNonnegativeInt, verifyObject, verifyObjectProperty, verifyOptionalString, verifyPositiveInt, verifyString} from 'neuroglancer/util/json';
+import {parseArray, parseFixedLengthArray, parseIntVec, verifyEnumString, verifyFiniteFloat, verifyFinitePositiveFloat, verifyInt, verifyNonnegativeInt, verifyObject, verifyObjectProperty, verifyOptionalString, verifyPositiveInt, verifyString, verifyOptionalBoolean} from 'neuroglancer/util/json';
 
 class GrapheneVolumeChunkSource extends
 (WithParameters(VolumeChunkSource, VolumeChunkSourceParameters)) {}
@@ -430,7 +430,6 @@ async function getMeshSource(chunkManager: ChunkManager, parameters: MeshSourceP
   } else {
     throw new Error(`Invalid vertex quantization bits: ${vertexQuantizationBits}`);
   }
-  console.log(vertexPositionFormat);
   parameters.sharding = metadata.sharding;
   return getShardedMeshSource(chunkManager, parameters);
 }
