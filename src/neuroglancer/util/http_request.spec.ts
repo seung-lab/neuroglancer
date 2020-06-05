@@ -21,4 +21,9 @@ describe('Parsing Special URLs', () => {
     const result = parseSpecialUrl('s3://bucket/dataset/layer/');
     expect(result).toBe('https://s3.amazonaws.com/bucket/dataset/layer/');
   });
+
+  it('Parse SeungLab Storage Url (matrix://)', () => {
+    const result = parseSpecialUrl('matrix://bucket/dataset/layer/');
+    expect(result).toBe('https://s3-hpcrc.rc.princeton.edu/bucket/dataset/layer/');
+  });
 });
