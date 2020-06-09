@@ -60,7 +60,6 @@ export abstract class PlaceAnnotationTool extends Tool {
     if (!annotation || !parent) {
       throw `Invalid reference for assignment: ${!annotation ? 'Child' : 'Parent'} has no value`;
     }
-    parent.entries.push(annotation.id);
   }
 
   complete() {
@@ -331,7 +330,7 @@ export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
     }
     const nonPointTool = <MultiStepAnnotationTool|TwoStepAnnotationTool>this.childTool;
     const childInProgress = nonPointTool ? nonPointTool.inProgressAnnotation : undefined;
-    const childCount = value.entries.length;
+    let childCount = value.entries.length;
     let isChildInProgressCollection = false;
     let success = false;
     let collection: Collection;
@@ -364,6 +363,7 @@ export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
       }
     }
 
+    childCount = value.entries.length;
     // success is true if, child annotation is a completed collection
     if (((!childInProgress || success) && childCount === 1) || childCount > 1) {
       if (this.childTool) {
@@ -371,6 +371,17 @@ export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
         if (!endChild) {
           this.reInitChildTool();
         }
+      }
+
+      childCount = value.entries.length;
+      if (childCount < 1) {
+        StatusMessage.showTemporaryMessage(`No annotation has been made.`, 3000);
+        const myType = this.inProgressAnnotation.reference.value!.type;
+        const acceptableTypes = [AnnotationType.SPOKE, AnnotationType.LINE_STRIP];
+        if (acceptableTypes.includes(myType)) {
+          this.dispose();
+        }
+        return false;
       }
 
       const {reference, annotationLayer} = this.inProgressAnnotation;
