@@ -137,7 +137,6 @@ export class AnnotationDetailsTab extends Tab {
           if (target) {
             target.classList.add(editingKey);
           }
-          //  delete this.state.value.id;
         }
         this.valid = false;
         this.updateView();
@@ -149,17 +148,31 @@ export class AnnotationDetailsTab extends Tab {
   private insertButton(annotation: Annotation) {
     const annotationLayer = this.state.annotationLayerState.value!;
     const button = makeTextIconButton('➕');
+    button.title = 'Insert into Collection';
     button.addEventListener('click', () => {
       if (this.state.value && this.state.value.edit) {
         const {multiple, edit} = this.state.value;
+        if (this.state.value.id === edit || multiple && multiple.has(edit)) {
+          StatusMessage.showTemporaryMessage(
+              `Cannot insert annotation into itself.`, 3000, {color: 'yellow'});
+          return;
+        }
         const parentReference = annotationLayer.source.getReference(edit);
-        // TODO: get rid of set history
-        const children = multiple ? [...multiple] : [annotation.id];
+        let children = multiple ? [...multiple] : [annotation.id];
+        if (parentReference.value!.type === AnnotationType.SPOKE) {
+          const spoke = <Spoke>parentReference.value;
+          const lines: string[] = [];
+          children.forEach((annotationId) => {
+            const pointB = this.getSourcePoint(annotationId);
+            const line = this.generateLine(spoke.source, pointB);
+            lines.push(line.id);
+          });
+          this.deleteOperation();
+          children = lines;
+        }
         if (parentReference.value) {
           (<AnnotationSource>annotationLayer.source).childReassignment(children, parentReference);
         }
-        // delete this.state.value.id;
-        // delete this.state.value.multiple;
       }
     });
     return button;
@@ -200,7 +213,7 @@ export class AnnotationDetailsTab extends Tab {
         default:
           StatusMessage.showTemporaryMessage(
               `Cannot Generate Spoke/LineStrip from annotations with ambiguous points (Line, Bounding Box).`,
-              3000);
+              3000, {color: 'yellow'});
           return false;
       }
     }
@@ -217,7 +230,7 @@ export class AnnotationDetailsTab extends Tab {
       if (parent && parent.type !== AnnotationType.COLLECTION) {
         StatusMessage.showTemporaryMessage(
             `Only Line Annotations can be the children of Special Collections (Spoke, LineStrip). Cannot convert to point here.`,
-            3000);
+            3000, {color: 'yellow'});
         return false;
       }
     }
@@ -269,10 +282,17 @@ export class AnnotationDetailsTab extends Tab {
     return button;
   }
 
-  private generateLine(pointA: vec3, pointB: vec3) {
+  private generateLine(pointA: vec3, pointB: vec3, source: Annotation = <Annotation>{}) {
     const annotationLayer = this.state.annotationLayerState.value!;
-    const line =
-        <Line>{id: '', type: AnnotationType.LINE, description: '', pointA, pointB, segments: []};
+    const line = <Line>{
+      id: '',
+      type: AnnotationType.LINE,
+      description: source.description || '',
+      pointA,
+      pointB,
+      segments: [],
+      tagIds: source.tagIds
+    };
     return (<AnnotationSource>annotationLayer.source).add(line, true);
   }
 
@@ -288,24 +308,34 @@ export class AnnotationDetailsTab extends Tab {
         return [(<Ellipsoid>annotation).center];
       case AnnotationType.LINE_STRIP:
       case AnnotationType.SPOKE:
-      case AnnotationType.COLLECTION:
         this.generatePointAnnotations((<LineStrip>annotation).entries, parent);
+        return [];
+      case AnnotationType.COLLECTION:
+        this.generatePointAnnotations((<LineStrip>annotation).entries, parent, true);
         return [];
     }
   }
 
-  private generatePointAnnotations(target: string[], parent?: AnnotationReference|null) {
+  private generatePointAnnotations(
+      target: string[], parent?: AnnotationReference|null, duplicatesAllowed?: boolean) {
     const annotationLayer = this.state.annotationLayerState.value!;
+    const points: Point[] = [];
+    const pointMap: any = {};
     target.forEach((id) => {
       const annotation = annotationLayer.source.getReference(id).value!;
-      const points = this.generatePointVectors(annotation, parent);
-      const newIds = points.map(point => {
-        const pointAnnotation = createPointAnnotation(point, annotationLayer);
-        const reference = (<AnnotationSource>annotationLayer.source).add(pointAnnotation, true);
-        return reference.id;
+      const pointVectors = this.generatePointVectors(annotation, parent);
+      pointVectors.map(point => {
+        const pointKey = point.toString();
+        if (!pointMap[pointKey] || duplicatesAllowed) {
+          pointMap[pointKey] = true;
+          points.push(createPointAnnotation(point, annotationLayer, annotation));
+        }
       });
+    });
+    points.forEach((point) => {
+      const reference = (<AnnotationSource>annotationLayer.source).add(point, true);
       if (parent) {
-        (<AnnotationSource>annotationLayer.source).childReassignment(newIds, parent);
+        (<AnnotationSource>annotationLayer.source).childReassignment([reference.id], parent);
       }
     });
   }

@@ -773,7 +773,8 @@ export class AnnotationLayerView extends Tab {
       checkElement = parent!;
       let checkCollection = <Collection>this.annotationLayer.source.getReference(parentId).value;
       if (checkCollection.entries) {
-        if (!checkCollection.entries.includes(annotation.id)) {
+        if (!checkCollection.entries.includes(annotation.id) &&
+            checkCollection.id === annotation.parentId) {
           checkCollection.entries.push(annotation.id);
         }
         if (!checkCollection.childrenVisible.value) {

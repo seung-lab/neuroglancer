@@ -479,7 +479,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
         annotationNode.entries.forEach((ref: any, index: number) => {
           ref;
           const child = <Annotation>annotationNode.entry(index);
-          if (annotationNode.segments && child.segments) {
+          if (annotationNode.segments && child && child.segments) {
             annotationNode.segments = [...annotationNode.segments!, ...child.segments];
           }
         });
@@ -669,7 +669,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     const emptynesters = <AnnotationReference[]>[];
     let adopter = surrogate ? <Collection>surrogate.value : null;
     if (adopter) {
-      targets = targets.filter(e => e === adopter!.id);
+      targets = targets.filter(e => e !== adopter!.id);
     }
     targets.forEach((id: string) => {
       const targetNode = this.annotationMap.get(id);
@@ -701,7 +701,6 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
             this.linkChild(targetNode, adopter.id);
           }
           target.parentId = adopter.id;
-          adopter.entries.push(target.id);
         }
 
         if (adopter) {
