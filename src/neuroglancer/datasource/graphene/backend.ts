@@ -380,7 +380,7 @@ export class GrapheneMeshSource extends
         if (!parameters.verifyMesh) {
           manifestUrl = `${parameters.manifestUrl}/manifest/${chunk.objectId}:${parameters.lod}?verify=0`;
           this.minishardIndexSources = getGrapheneMinishardIndexDataSources(
-            this.chunkManager, {url: parameters.fragmentUrl, sharding: parameters.sharding})!;          
+            this.chunkManager, {url: parameters.fragmentUrl, sharding: parameters.sharding})!;
         }
         await cancellableFetchOk(manifestUrl, {}, responseJson, cancellationToken)
             .then(response => decodeManifestChunk(chunk, response));

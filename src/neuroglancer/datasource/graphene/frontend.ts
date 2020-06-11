@@ -206,7 +206,7 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
         fragmentUrl: resolvePath(this.dataUrl, mesh),
         lod: 0,
         sharding: undefined,
-        verifyMesh: false
+        verifyMesh: true
       };
       return getMeshSource(this.chunkManager, parameters);
       // return getShardedMeshSource(this.chunkManager, parameters);
