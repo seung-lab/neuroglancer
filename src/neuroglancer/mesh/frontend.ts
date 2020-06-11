@@ -326,7 +326,7 @@ export class MeshLayer extends PerspectiveViewRenderLayer {
 
       for (const fragmentId of manifestChunk.fragmentIds) {
         let key = fragmentId;
-        if (fragmentId.charAt(0) === '~') key = fragmentId.substr(1).split(':')[0];        
+        if (fragmentId.charAt(0) === '~') key = fragmentId.substr(1).split(':')[0];
         const fragment = fragmentChunks.get(key);
         if (fragment !== undefined && fragment.state === ChunkState.GPU_MEMORY) {
           meshShaderManager.drawFragment(gl, shader, fragment);
