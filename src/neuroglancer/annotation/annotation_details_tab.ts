@@ -228,9 +228,6 @@ export class AnnotationDetailsTab extends Tab {
           annotationLayer.source.getReference(annotation.parentId).value! :
           null;
       if (parent && parent.type !== AnnotationType.COLLECTION) {
-        StatusMessage.showTemporaryMessage(
-            `Only Line Annotations can be the children of Special Collections (Spoke, LineStrip). Cannot convert to point here.`,
-            3000, {color: 'yellow'});
         return false;
       }
     }
@@ -264,6 +261,13 @@ export class AnnotationDetailsTab extends Tab {
     button.addEventListener('click', () => {
       const {collectionReference} = this.generateCollectionOperation();
       const target = value.multiple ? [...value.multiple] : [value.id];
+      const safeToGenerate = this.isChildOfSpecialCollection(target);
+      if (!safeToGenerate) {
+        StatusMessage.showTemporaryMessage(
+            `Only Line Annotations can be the children of Special Collections (Spoke, LineStrip). Cannot group annotations here.`,
+            3000, {color: 'yellow'});
+        return;
+      }
       const emptyCollection =
           (<AnnotationSource>annotationLayer.source).childReassignment(target, collectionReference);
 
@@ -348,6 +352,9 @@ export class AnnotationDetailsTab extends Tab {
       const target = value.multiple ? [...value.multiple] : [value.id];
       const safeToGenerate = this.isChildOfSpecialCollection(target);
       if (!safeToGenerate) {
+        StatusMessage.showTemporaryMessage(
+            `Only Line Annotations can be the children of Special Collections (Spoke, LineStrip). Cannot convert to point here.`,
+            3000, {color: 'yellow'});
         return;
       }
       const first = annotationLayer.source.getReference(target[0]).value!;
