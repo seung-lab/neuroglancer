@@ -19,7 +19,7 @@
     * To **delete the source annotations**, uncheck "Preserve Source Annotations" in User Preferences.
 * Generate Point(s) from selected annotation.
     * Press "⚬" to reduce a given annotation to its component points.
-    * Line annotations reduce into their endpoints.
+    * Line and Bounding Box annotations reduce into their endpoints.
     * All other two-step annotations reduce into their center point.
     * Collection annotations reduce their child annotations.
     * Special collections **remove overlapping point annotations**.
