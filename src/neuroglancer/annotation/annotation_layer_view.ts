@@ -817,7 +817,17 @@ export class AnnotationLayerView extends Tab {
         }
       } else if (event.shiftKey && groupable) {
         const first = lastSelected ? lastSelected : state!.id;
-        multiple = this.shiftSelect(first, annotation.id);
+        const firstAnnotation = (<AnnotationSource>this.annotationLayer.source).get(first);
+        if (firstAnnotation && firstAnnotation.parentId === annotation.parentId) {
+          multiple = this.shiftSelect(first, annotation.id);
+        } else {
+          if (state) {
+            multiple = state.multiple;
+          }
+          StatusMessage.showTemporaryMessage(
+              `Cannot Shift Select between annotations of different hierarchy. Use Ctrl Select instead.`,
+              3000);
+        }
       }
 
       this.state.value = {id: selectedId, multiple, edit};

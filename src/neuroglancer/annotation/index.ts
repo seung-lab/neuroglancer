@@ -526,8 +526,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
       const lastId = parent.entries.length - 1;
       const isLastChild = parent.entries[lastId] === source.id;
       const isFirstChild = parent.entries[0] === source.id;
-      // Annotation list view order is reversed from entries order
-      loopedOver = (!next && isLastChild) || (!prev && isFirstChild);
+      loopedOver = (next && isLastChild) || (prev && isFirstChild);
     } else {
       const area = view.firstElementChild ? view.firstElementChild : document.createElement('div');
       const head = area.firstElementChild ? (<HTMLElement>area.firstElementChild).dataset.id : null;
