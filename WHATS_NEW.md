@@ -10,7 +10,7 @@
 * Collection Editing
     * Activate edit mode for an existing Collection via the "📝" button.
     * Add annotations in edit mode by pressing the "➕" button.
-    * Spoke annotations can be edited. Added annotations will be transformed into points that form lines.
+    * Spoke annotations can be edited. Added annotations will be transformed into points that connect with the center.
     * LineStrip annotations cannot be edited.
 * Generate Spoke and LineStrip from existing annotations.
     * Uses existing annotations as positions/points in generated collection.
