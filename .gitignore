@@ -17,3 +17,4 @@ lib
 staging
 secrets
 .vscode
+.devcontainer
