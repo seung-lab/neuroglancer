@@ -393,15 +393,22 @@ export class GrapheneMeshSource extends
     if (parameters.sharding){
       if (!parameters.verifyMesh) {
         // Download shard fragments without verification
-        let parts = chunk.fragmentId!.split(':');
-        let objectId = Uint64.parseString(parts[0]);
-        let layer = Number(parts[1]);
-        let data: ArrayBuffer;
-        let shardInfo: ShardInfo;
-        ({data, shardInfo: shardInfo} =
-          await getShardedData(minishardIndexSources[layer]!, chunk, objectId, cancellationToken));
-        console.log(shardInfo);
-        fragmentDownloadPromise = Promise.resolve(data);
+        if (chunk.fragmentId && chunk.fragmentId.charAt(0) === '~'){
+          let parts = chunk.fragmentId.substr(1).split(':');
+          let objectId = Uint64.parseString(parts[0]);
+          let layer = Number(parts[1]);
+          let data: ArrayBuffer;
+          let shardInfo: ShardInfo;
+          ({data, shardInfo: shardInfo} =
+            await getShardedData(minishardIndexSources[layer]!, chunk, objectId, cancellationToken));
+          console.log(shardInfo);
+          fragmentDownloadPromise = Promise.resolve(data);
+        }
+        else {
+          fragmentDownloadPromise = cancellableFetchOk(
+            `${parameters.fragmentUrl}/dynamic/${chunk.fragmentId}`, {}, responseArrayBuffer,
+            cancellationToken);
+        }        
       }
       else {
         // Download shard fragments with verification (response contains size and offset)
@@ -420,7 +427,7 @@ export class GrapheneMeshSource extends
         else {
           fragmentDownloadPromise = cancellableFetchOk(
             `${parameters.fragmentUrl}/dynamic/${chunk.fragmentId}`, {}, responseArrayBuffer,
-            cancellationToken);  
+            cancellationToken);
         }
       }
     } else {
