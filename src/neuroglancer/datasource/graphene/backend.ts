@@ -395,14 +395,20 @@ export class GrapheneMeshSource extends
       if (!parameters.verifyMesh) {
         // Download shard fragments without verification
         let parts = chunk.fragmentId!.split(':');
-        let objectId = Uint64.parseString(parts[0]);
-        let layer = Number(parts[1]);
-        let data: ArrayBuffer;
-        let shardInfo: ShardInfo;
-        ({data, shardInfo: shardInfo} =
-          await getShardedData(minishardIndexSources[layer]!, chunk, objectId, cancellationToken));
-        console.log(shardInfo);
-        fragmentDownloadPromise = Promise.resolve(data);
+        if (parts[0].charAt(0) === '~') {
+          let objectId = Uint64.parseString(parts[0].substr(1));
+          let layer = Number(parts[1]);
+          let data: ArrayBuffer;
+          let shardInfo: ShardInfo;
+          ({data, shardInfo: shardInfo} =
+            await getShardedData(minishardIndexSources[layer]!, chunk, objectId, cancellationToken));
+          console.log(shardInfo);
+          fragmentDownloadPromise = Promise.resolve(data);
+        } else {
+          fragmentDownloadPromise = cancellableFetchOk(
+            `${parameters.fragmentUrl}/dynamic/${chunk.fragmentId}`, {}, responseArrayBuffer,
+            cancellationToken);
+        }
       }
       else {
         // Download shard fragments with verification (response contains size and offset)
