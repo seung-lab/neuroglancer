@@ -21,3 +21,9 @@
 #path-finder-color-widget {
   width: 60%;
 }
+
+#precision-mode-checkbox {
+  /* vertical-align: bottom; */
+  position: relative;
+  top: 3px;
+}
