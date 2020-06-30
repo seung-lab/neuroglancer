@@ -443,6 +443,7 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart implemen
     const priorityTier = getPriorityTier(visibility);
     const basePriority = getBasePriority(visibility);
     const {source, chunkManager} = this;
+    // console.log(this.newRootSegments!.toJSON());
     forEachVisibleSegment3D(this, objectId => {
       let manifestChunk = source.getChunk(objectId);
       chunkManager.requestChunk(

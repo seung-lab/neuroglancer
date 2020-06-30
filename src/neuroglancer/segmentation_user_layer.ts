@@ -96,6 +96,7 @@ export class SegmentationUserLayer extends Base {
     objectAlpha: trackableAlphaValue(1.0),
     hideSegmentZero: new TrackableBoolean(true, true),
     rootSegments: Uint64Set.makeWithCounterpart(this.manager.worker),
+    newRootSegments: Uint64Set.makeWithCounterpart(this.manager.worker),
     hiddenRootSegments: new Uint64Set(),
     visibleSegments2D: new Uint64Set(),
     visibleSegments3D: Uint64Set.makeWithCounterpart(this.manager.worker),
