@@ -438,7 +438,7 @@ export class GrapheneMeshSource extends
   async download(chunk: ManifestChunk, cancellationToken: CancellationToken) {
         const {parameters} = this;
         let manifestUrl = `${parameters.manifestUrl}/manifest/${chunk.objectId}:${parameters.lod}?verify=1`;
-        if (!parameters.verifyMesh) {
+        if (chunk.verifyFragments !== undefined && chunk.verifyFragments == false) {
           manifestUrl = `${parameters.manifestUrl}/manifest/${chunk.objectId}:${parameters.lod}?verify=0`;
           this.minishardIndexSources = getGrapheneMinishardIndexDataSources(
             this.chunkManager, {url: parameters.fragmentUrl, sharding: parameters.sharding})!;
@@ -450,6 +450,7 @@ export class GrapheneMeshSource extends
   async downloadFragment(chunk: FragmentChunk, cancellationToken: CancellationToken) {
     const {minishardIndexSources} = this;
     const {parameters} = this;
+    const {manifestChunk} = chunk;
     let fragmentDownloadPromise;
     let parts = chunk.fragmentId!.substr(1).split(':');
     let layer = Number(parts[1]);

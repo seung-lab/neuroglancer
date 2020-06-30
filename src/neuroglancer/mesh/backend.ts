@@ -44,13 +44,17 @@ export type FragmentId = string;
 export class ManifestChunk extends Chunk {
   objectId = new Uint64();
   fragmentIds: FragmentId[]|null;
+  verifyFragments?: boolean|undefined;
 
   constructor() {
     super();
   }
   // We can't save a reference to objectId, because it may be a temporary
   // object.
-  initializeManifestChunk(key: string, objectId: Uint64) {
+  initializeManifestChunk(key: string, objectId: Uint64, verifyFragments?: boolean|undefined) {
+    // default behaviour for manifest is to verify fragments exist
+    if (verifyFragments === undefined) verifyFragments = true;
+    this.verifyFragments = verifyFragments;
     super.initialize(key);
     this.objectId.assign(objectId);
   }
@@ -358,12 +362,13 @@ export class MeshSource extends ChunkSource {
     fragmentSource.meshSource = this;
   }
 
-  getChunk(objectId: Uint64) {
+  getChunk(objectId: Uint64, verifyFragments?: boolean|undefined) {
     const key = getObjectKey(objectId);
     let chunk = <ManifestChunk>this.chunks.get(key);
     if (chunk === undefined) {
+      if (verifyFragments === undefined) verifyFragments = true;
       chunk = this.getNewChunk_(ManifestChunk);
-      chunk.initializeManifestChunk(key, objectId);
+      chunk.initializeManifestChunk(key, objectId, verifyFragments);
       this.addChunk(chunk);
     }
     return chunk;
@@ -445,7 +450,8 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart implemen
     const {source, chunkManager} = this;
     // console.log(this.newRootSegments!.toJSON());
     forEachVisibleSegment3D(this, objectId => {
-      let manifestChunk = source.getChunk(objectId);
+      // if objectId exists in newRootSegments, do not verify if mesh fragments exist
+      let manifestChunk = source.getChunk(objectId, !this.newRootSegments!.has(objectId));
       chunkManager.requestChunk(
           manifestChunk, priorityTier, basePriority + MESH_OBJECT_MANIFEST_CHUNK_PRIORITY);
       const state = manifestChunk.state;
