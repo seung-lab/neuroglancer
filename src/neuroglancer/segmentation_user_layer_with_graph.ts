@@ -353,6 +353,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
           this.getRootOfSelectedSupervoxel()
               .then(rootSegment => {
                 rootSegments.add(rootSegment);
+                newRootSegments!.add(rootSegment);
               })
               .catch((e: Error) => {
                 console.log(e);
