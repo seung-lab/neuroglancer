@@ -375,8 +375,8 @@ export class MeshSource extends ChunkSource {
   }
 
   getFragmentChunk(manifestChunk: ManifestChunk, fragmentId: FragmentId) {
-    // let key = `${manifestChunk.key}/${fragmentId}`;
     let key = fragmentId;
+    if (fragmentId.charAt(0) === '~') key = fragmentId.substr(1).split(':')[0];
     let fragmentSource = this.fragmentSource;
     let chunk = <FragmentChunk>fragmentSource.chunks.get(key);
     if (chunk === undefined) {
@@ -448,7 +448,7 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart implemen
     const priorityTier = getPriorityTier(visibility);
     const basePriority = getBasePriority(visibility);
     const {source, chunkManager} = this;
-    // console.log(this.newRootSegments!.toJSON());
+    console.log(this.newRootSegments!.toJSON());
     forEachVisibleSegment3D(this, objectId => {
       // if objectId exists in newRootSegments, do not verify if mesh fragments exist
       let manifestChunk = source.getChunk(objectId, !this.newRootSegments!.has(objectId));
@@ -463,6 +463,7 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart implemen
             fragmentChunk, priorityTier, basePriority + MESH_OBJECT_FRAGMENT_CHUNK_PRIORITY);
         }
       }
+      this.newRootSegments!.delete(objectId);
     });
   }
 }
