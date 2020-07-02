@@ -467,11 +467,9 @@ function getVerifiedFragmentPromise(
       cancellationToken
     );
   }
-  else {
-    return cancellableFetchOk(
-      `${parameters.fragmentUrl}/dynamic/${chunk.fragmentId}`, {}, responseArrayBuffer,
-      cancellationToken);
-  }
+  return cancellableFetchOk(
+    `${parameters.fragmentUrl}/dynamic/${chunk.fragmentId}`, {}, responseArrayBuffer,
+    cancellationToken);
 }
 
 
