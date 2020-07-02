@@ -44,8 +44,7 @@ export type FragmentId = string;
 export class ManifestChunk extends Chunk {
   objectId = new Uint64();
   fragmentIds: FragmentId[]|null;
-  verifyFragments?: boolean|undefined;
-
+  verifyFragments?: boolean|undefined
   constructor() {
     super();
   }
@@ -53,10 +52,9 @@ export class ManifestChunk extends Chunk {
   // object.
   initializeManifestChunk(key: string, objectId: Uint64, verifyFragments?: boolean|undefined) {
     // default behaviour for manifest is to verify fragments exist
-    if (verifyFragments === undefined) verifyFragments = true;
-    this.verifyFragments = verifyFragments;
     super.initialize(key);
     this.objectId.assign(objectId);
+    this.verifyFragments = verifyFragments;
   }
 
   freeSystemMemory() {
@@ -120,10 +118,15 @@ export class FragmentChunk extends Chunk {
   manifestChunk: ManifestChunk|null = null;
   fragmentId: FragmentId|null = null;
   meshData: EncodedMeshData|null = null;
+  verifyFragment?: boolean|undefined;
   constructor() {
     super();
   }
-  initializeFragmentChunk(key: string, manifestChunk: ManifestChunk, fragmentId: FragmentId) {
+  initializeFragmentChunk(
+    key: string, manifestChunk: ManifestChunk, fragmentId: FragmentId, verifyFragment?: boolean|undefined
+  ) {
+    if (verifyFragment === undefined) verifyFragment = true;
+    this.verifyFragment = verifyFragment;
     super.initialize(key);
     this.manifestChunk = manifestChunk;
     this.fragmentId = fragmentId;
@@ -374,14 +377,21 @@ export class MeshSource extends ChunkSource {
     return chunk;
   }
 
-  getFragmentChunk(manifestChunk: ManifestChunk, fragmentId: FragmentId) {
+  getFragmentChunk(manifestChunk: ManifestChunk, fragmentId: FragmentId, verifyFragment?: boolean|undefined) {
     let key = fragmentId;
-    if (fragmentId.charAt(0) === '~') key = fragmentId.substr(1).split(':')[0];
+    if (fragmentId.charAt(0) === '~') {
+      // extract segment ID from fragment ID
+      // use it as key, the rest is information for reading the fragment
+      let parts = fragmentId.substr(1).split(/:(.+)/);
+      key = parts[0];
+      fragmentId = parts[1];
+    }
     let fragmentSource = this.fragmentSource;
     let chunk = <FragmentChunk>fragmentSource.chunks.get(key);
     if (chunk === undefined) {
+      if (verifyFragment === undefined) verifyFragment = true;
       chunk = fragmentSource.getNewChunk_(FragmentChunk);
-      chunk.initializeFragmentChunk(key, manifestChunk, fragmentId);
+      chunk.initializeFragmentChunk(key, manifestChunk, fragmentId, verifyFragment);
       fragmentSource.addChunk(chunk);
     }
     return chunk;
@@ -448,7 +458,6 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart implemen
     const priorityTier = getPriorityTier(visibility);
     const basePriority = getBasePriority(visibility);
     const {source, chunkManager} = this;
-    console.log(this.newRootSegments!.toJSON());
     forEachVisibleSegment3D(this, objectId => {
       // if objectId exists in newRootSegments, do not verify if mesh fragments exist
       let manifestChunk = source.getChunk(objectId, !this.newRootSegments!.has(objectId));
@@ -458,7 +467,7 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart implemen
       if (state === ChunkState.SYSTEM_MEMORY_WORKER || state === ChunkState.SYSTEM_MEMORY ||
         state === ChunkState.GPU_MEMORY) {
       for (let fragmentId of manifestChunk.fragmentIds!) {
-        let fragmentChunk = source.getFragmentChunk(manifestChunk, fragmentId);
+        let fragmentChunk = source.getFragmentChunk(manifestChunk, fragmentId, !this.newRootSegments!.has(objectId));
         chunkManager.requestChunk(
             fragmentChunk, priorityTier, basePriority + MESH_OBJECT_FRAGMENT_CHUNK_PRIORITY);
         }

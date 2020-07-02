@@ -204,7 +204,6 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
                 if (displayState.newRootSegments !== undefined) {
                   displayState.newRootSegments.clear();
                 }
-                displayState.newRootSegments!.clear();
                 verifyObjectProperty(specification, ROOT_SEGMENTS_JSON_KEY, y => {
                   if (y !== undefined) {
                     let {rootSegments} = displayState;
