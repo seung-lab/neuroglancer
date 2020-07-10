@@ -330,7 +330,6 @@ export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
     }
     const nonPointTool = <MultiStepAnnotationTool|TwoStepAnnotationTool>this.childTool;
     const childInProgress = nonPointTool ? nonPointTool.inProgressAnnotation : undefined;
-    let childCount = value.entries.length;
     let isChildInProgressCollection = false;
     let success = false;
     let collection: Collection;
@@ -363,7 +362,7 @@ export abstract class MultiStepAnnotationTool extends PlaceAnnotationTool {
       }
     }
 
-    childCount = value.entries.length;
+    let childCount = value.entries.length;
     // success is true if, child annotation is a completed collection
     if (((!childInProgress || success) && childCount === 1) || childCount > 1) {
       if (this.childTool) {
