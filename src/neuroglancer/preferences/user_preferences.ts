@@ -10,6 +10,7 @@ class UserPreferences {
   renderMeshByDefault: TrackableBoolean;
   prefetchSliceViewChunks: TrackableBoolean;
   cursorOnMousedrag: TrackableBoolean;
+  preserveSourceAnnotations: TrackableBoolean;
   saveToAddressBar: TrackableBoolean;
   unshareWarning: TrackableBoolean;
   preserveSourceAnnotations: TrackableBoolean;
@@ -19,6 +20,7 @@ class UserPreferences {
     // prefetching disabled by default, as it uses a lot of additional memory/bandwidth
     this.prefetchSliceViewChunks = new TrackableBoolean(false, false, 'prefetchSliceViewChunks');
     this.cursorOnMousedrag = new TrackableBoolean(true, true, 'cursorOnMousedrag');
+    this.preserveSourceAnnotations = new TrackableBoolean(true, true, 'preserveSourceAnnotations');
     this.saveToAddressBar = new TrackableBoolean(false, false, 'saveToAddressBar');
     this.unshareWarning = new TrackableBoolean(true, true, 'unshareWarning');
     this.preserveSourceAnnotations = new TrackableBoolean(true, true, 'preserveSourceAnnotations');
@@ -26,6 +28,7 @@ class UserPreferences {
     this.renderMeshByDefault.restoreState({});
     this.prefetchSliceViewChunks.restoreState({});
     this.cursorOnMousedrag.restoreState({});
+    this.preserveSourceAnnotations.restoreState({});
     this.saveToAddressBar.restoreState({});
     this.unshareWarning.restoreState({});
     this.preserveSourceAnnotations.restoreState({});
@@ -52,6 +55,10 @@ export function getCursorOnMousedrag(): TrackableBoolean {
 
 export function getSaveToAddressBar(): TrackableBoolean {
   return userPreferences.saveToAddressBar;
+}
+
+export function getPreserveSourceAnnotations(): TrackableBoolean {
+  return userPreferences.preserveSourceAnnotations;
 }
 
 export function getUnshareWarning(): TrackableBoolean {
@@ -113,6 +120,7 @@ export class UserPreferencesDialog extends Overlay {
     addCheckbox('Render Mesh By Default', userPreferences.renderMeshByDefault);
     addCheckbox('Prefetch SliceView Chunks', userPreferences.prefetchSliceViewChunks);
     addCheckbox('Show cursor on mouse drag', userPreferences.cursorOnMousedrag);
+    addCheckbox('Preserve Source Annotations', userPreferences.preserveSourceAnnotations);
     addCheckbox(
         'Old Style Saving', userPreferences.saveToAddressBar, () => location.reload(),
         `Saves state in address bar. Useful if storage is unsupported. Press save to post to JSON Server. Warning: Toggling the option reloads the page!`);
