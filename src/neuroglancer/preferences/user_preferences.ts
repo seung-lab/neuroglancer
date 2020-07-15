@@ -12,6 +12,7 @@ class UserPreferences {
   cursorOnMousedrag: TrackableBoolean;
   saveToAddressBar: TrackableBoolean;
   unshareWarning: TrackableBoolean;
+  preserveSourceAnnotations: TrackableBoolean;
   constructor() {
     // mesh rendering is enabled by default, unless user selects not to
     this.renderMeshByDefault = new TrackableBoolean(true, true, 'renderMeshByDefault');
@@ -20,12 +21,14 @@ class UserPreferences {
     this.cursorOnMousedrag = new TrackableBoolean(true, true, 'cursorOnMousedrag');
     this.saveToAddressBar = new TrackableBoolean(false, false, 'saveToAddressBar');
     this.unshareWarning = new TrackableBoolean(true, true, 'unshareWarning');
+    this.preserveSourceAnnotations = new TrackableBoolean(true, true, 'preserveSourceAnnotations');
 
     this.renderMeshByDefault.restoreState({});
     this.prefetchSliceViewChunks.restoreState({});
     this.cursorOnMousedrag.restoreState({});
     this.saveToAddressBar.restoreState({});
     this.unshareWarning.restoreState({});
+    this.preserveSourceAnnotations.restoreState({});
 
     this.renderMeshByDefault.changed.add(() => {
       location.reload(false);
@@ -57,6 +60,10 @@ export function getUnshareWarning(): TrackableBoolean {
 
 export function dismissUnshareWarning() {
   userPreferences.unshareWarning.value = false;
+}
+
+export function getPreserveSourceAnnotations(): TrackableBoolean {
+  return userPreferences.preserveSourceAnnotations;
 }
 
 export class UserPreferencesDialog extends Overlay {
@@ -127,5 +134,6 @@ export class UserPreferencesDialog extends Overlay {
     });
     scroll.appendChild(evictButton);
     */
+    addCheckbox('Preserve Source Annotations', userPreferences.preserveSourceAnnotations);
   }
 }

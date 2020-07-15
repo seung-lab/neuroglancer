@@ -12,6 +12,8 @@ import {Uint64} from 'neuroglancer/util/uint64';
 import {makeCloseButton} from 'neuroglancer/widget/close_button';
 import {Tab} from 'neuroglancer/widget/tab_view';
 import {makeTextIconButton} from 'neuroglancer/widget/text_icon_button';
+import {getPreserveSourceAnnotations} from '../preferences/user_preferences';
+import { StatusMessage } from '../status';
 
 const tempVec3 = vec3.create();
 export class AnnotationDetailsTab extends Tab {
@@ -185,6 +187,25 @@ export class AnnotationDetailsTab extends Tab {
     }
   }
 
+  private validateSelectionForSpecialCollection(ids: string[]) {
+    const annotationLayer = this.state.annotationLayerState.value!;
+    for (const id in ids) {
+      const annotation = annotationLayer.source.getReference(id).value!;
+      switch (annotation.type) {
+        case AnnotationType.COLLECTION:
+        case AnnotationType.LINE_STRIP:
+        case AnnotationType.SPOKE:
+        case AnnotationType.POINT:
+        case AnnotationType.ELLIPSOID:
+          break;
+        default:
+          StatusMessage.showTemporaryMessage(`Cannot Generate Spoke/LineStrip from annotations with ambiguous points (Line, Bounding Box).`, 3000);
+          return false;
+      }
+    }
+    return true;
+  }
+
   private generateEmptyCollection(sourcePoint: vec3) {
     const annotationLayer = this.state.annotationLayerState.value!;
     const collection = <Collection>{
@@ -218,28 +239,32 @@ export class AnnotationDetailsTab extends Tab {
     return collection;
   }
 
+  generateCollectionOperation() {
+    const value = this.state.value!;
+    const annotationLayer = this.state.annotationLayerState.value!;
+    const target = value.multiple ? [...value.multiple] : [value.id];
+    const first = annotationLayer.source.getReference(target[0]).value!;
+    const sourcePoint = this.getSourcePoint(first.id);
+    const collection = <Spoke>this.generateEmptyCollection(sourcePoint);
+    collection.type = AnnotationType.SPOKE;
+    collection.connected = true;
+
+    const collectionReference = (<AnnotationSource>annotationLayer.source).add(collection, true);
+    if (first.parentId) {
+      const firstParent = (<AnnotationSource>annotationLayer.source).getReference(first.parentId);
+      (<AnnotationSource>annotationLayer.source)
+          .childReassignment([collectionReference.value!.id], firstParent);
+    }
+    return {sourcePoint, collectionReference};
+  }
+
   private groupButton() {
     const annotationLayer = this.state.annotationLayerState.value!;
     const value = this.state.value!;
     const button = makeTextIconButton('⚄', 'Create collection');
     button.addEventListener('click', () => {
-      // Create a new collection with annotations in value.multiple
-      let target: string[];
-      if (value.multiple) {
-        target = [...value.multiple];
-      } else {
-        target = [value.id];
-      }
-      const first = annotationLayer.source.getReference(target[0]).value!;
-      let sourcePoint = this.getSourcePoint(first.id);
-      const collection = this.generateEmptyCollection(sourcePoint);
-
-      const collectionReference = (<AnnotationSource>annotationLayer.source).add(collection, true);
-      if (first.parentId) {
-        const firstParent = (<AnnotationSource>annotationLayer.source).getReference(first.parentId);
-        (<AnnotationSource>annotationLayer.source)
-            .childReassignment([collectionReference.value!.id], firstParent);
-      }
+      const {collectionReference} = this.generateCollectionOperation();
+      const target = value.multiple ? [...value.multiple] : [value.id];
       const emptyCollection =
           (<AnnotationSource>annotationLayer.source).childReassignment(target, collectionReference);
 
@@ -266,31 +291,16 @@ export class AnnotationDetailsTab extends Tab {
   }
 
   private generateSpokeButton() {
+    const value = this.state.value!;
     const annotationLayer = this.state.annotationLayerState.value!;
     const button = makeTextIconButton('⚹', 'Create Spoke using selected annotations as positions');
-    const value = this.state.value!;
     button.addEventListener('click', () => {
-      // Create a new spoke with annotation positions in value.multiple
-      let target: string[];
-      if (value.multiple) {
-        target = [...value.multiple];
-      } else {
-        target = [value.id];
+      const target = value.multiple ? [...value.multiple] : [value.id];
+      const safeToGenerate = this.validateSelectionForSpecialCollection(target);
+      if (!safeToGenerate) {
+        return;
       }
-      const first = annotationLayer.source.getReference(target[0]).value!;
-      let sourcePoint = this.getSourcePoint(first.id);
-      const collection = <Spoke>this.generateEmptyCollection(sourcePoint);
-      collection.type = AnnotationType.SPOKE;
-      collection.connected = true;
-
-      const collectionReference = (<AnnotationSource>annotationLayer.source).add(collection, true);
-      if (first.parentId) {
-        const firstParent = (<AnnotationSource>annotationLayer.source).getReference(first.parentId);
-        (<AnnotationSource>annotationLayer.source)
-            .childReassignment([collectionReference.value!.id], firstParent);
-      }
-      // this is where it differs from group button
-      // generate a spoke from given targets
+      const {sourcePoint, collectionReference} = this.generateCollectionOperation();
       const lines: string[] = [];
       target.forEach((annotationId, index) => {
         if (!index) {
@@ -301,6 +311,9 @@ export class AnnotationDetailsTab extends Tab {
         lines.push(line.id);
       });
       (<AnnotationSource>annotationLayer.source).childReassignment(lines, collectionReference);
+      if (!getPreserveSourceAnnotations().value) {
+        this.deleteOperation();
+      }
 
       this.state.value = {id: collectionReference.id};
     });
@@ -308,32 +321,17 @@ export class AnnotationDetailsTab extends Tab {
   }
 
   private generateLineStripButton() {
+    const value = this.state.value!;
     const annotationLayer = this.state.annotationLayerState.value!;
     const button =
         makeTextIconButton('ʌ', 'Create LineStrip using selected annotations as positions');
-    const value = this.state.value!;
     button.addEventListener('click', () => {
-      // Create a new spoke with annotation positions in value.multiple
-      let target: string[];
-      if (value.multiple) {
-        target = [...value.multiple];
-      } else {
-        target = [value.id];
+      const target = value.multiple ? [...value.multiple] : [value.id];
+      const safeToGenerate = this.validateSelectionForSpecialCollection(target);
+      if (!safeToGenerate) {
+        return;
       }
-      const first = annotationLayer.source.getReference(target[0]).value!;
-      let sourcePoint = this.getSourcePoint(first.id);
-      const collection = <LineStrip>this.generateEmptyCollection(sourcePoint);
-      collection.type = AnnotationType.LINE_STRIP;
-      collection.connected = true;
-
-      const collectionReference = (<AnnotationSource>annotationLayer.source).add(collection, true);
-      if (first.parentId) {
-        const firstParent = (<AnnotationSource>annotationLayer.source).getReference(first.parentId);
-        (<AnnotationSource>annotationLayer.source)
-            .childReassignment([collectionReference.value!.id], firstParent);
-      }
-      // this is where it differs from group button
-      // generate a spoke from given targets
+      const {collectionReference} = this.generateCollectionOperation();
       const lines: string[] = [];
       target.forEach((annotationId, index, targArr) => {
         if (!index) {
@@ -346,6 +344,9 @@ export class AnnotationDetailsTab extends Tab {
         lines.push(line.id);
       });
       (<AnnotationSource>annotationLayer.source).childReassignment(lines, collectionReference);
+      if (!getPreserveSourceAnnotations().value) {
+        this.deleteOperation();
+      }
 
       this.state.value = {id: collectionReference.id};
     });
@@ -367,27 +368,30 @@ export class AnnotationDetailsTab extends Tab {
     return button;
   }
 
-  private deleteButton() {
+  private deleteOperation() {
     const annotationLayer = this.state.annotationLayerState.value!;
     const value = this.state.value!;
-    const button = makeTextIconButton('🗑', 'Delete annotation');
-    button.addEventListener('click', () => {
-      let target: string[];
-      if (value.multiple) {
-        target = Array.from(value.multiple);
-      } else {
-        target = [value.id];
+
+    let target: string[];
+    if (value.multiple) {
+      target = Array.from(value.multiple);
+    } else {
+      target = [value.id];
+    }
+    target.forEach((id: string) => {
+      const reference = annotationLayer.source.getReference(id);
+      try {
+        // Delete annotation and all its children
+        annotationLayer.source.delete(reference, true);
+      } finally {
+        reference.dispose();
       }
-      target.forEach((id: string) => {
-        const reference = annotationLayer.source.getReference(id);
-        try {
-          // Delete annotation and all its children
-          annotationLayer.source.delete(reference, true);
-        } finally {
-          reference.dispose();
-        }
-      });
     });
+  }
+
+  private deleteButton() {
+    const button = makeTextIconButton('🗑', 'Delete annotation');
+    button.addEventListener('click', this.deleteOperation.bind(this));
     return button;
   }
 
