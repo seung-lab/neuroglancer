@@ -13,7 +13,6 @@ class UserPreferences {
   preserveSourceAnnotations: TrackableBoolean;
   saveToAddressBar: TrackableBoolean;
   unshareWarning: TrackableBoolean;
-  preserveSourceAnnotations: TrackableBoolean;
   constructor() {
     // mesh rendering is enabled by default, unless user selects not to
     this.renderMeshByDefault = new TrackableBoolean(true, true, 'renderMeshByDefault');
@@ -67,10 +66,6 @@ export function getUnshareWarning(): TrackableBoolean {
 
 export function dismissUnshareWarning() {
   userPreferences.unshareWarning.value = false;
-}
-
-export function getPreserveSourceAnnotations(): TrackableBoolean {
-  return userPreferences.preserveSourceAnnotations;
 }
 
 export class UserPreferencesDialog extends Overlay {
