@@ -3,7 +3,7 @@ import 'neuroglancer/save_state/save_state.css';
 import {debounce} from 'lodash';
 import {Overlay} from 'neuroglancer/overlay';
 import {dismissUnshareWarning, getSaveToAddressBar, getUnshareWarning} from 'neuroglancer/preferences/user_preferences';
-import {createSocialBar} from 'neuroglancer/social_share/social_share';
+// import {createSocialBar} from 'neuroglancer/social_share/social_share';
 import {StatusMessage} from 'neuroglancer/status';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {getRandomHexString} from 'neuroglancer/util/random';
@@ -284,7 +284,7 @@ class SaveDialog extends Overlay {
     const urlStart = `${window.location.origin}${window.location.pathname}`;
     const jsonUrl = jsonString ? `${urlStart}?json_url=${jsonString}` : jsonURLDefault;
     const rawUrl = `${urlStart}#!${viewer.hashBinding!.returnURLHash()}`;
-    const socialBar = createSocialBar(jsonUrl);
+    // const socialBar = createSocialBar(jsonUrl);
 
     const existingShareDialog = document.getElementById('neuroglancer-save-state-json');
     if (existingShareDialog) {
