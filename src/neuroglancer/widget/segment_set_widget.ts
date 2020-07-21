@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
 import {packColor, TrackableRGB} from 'neuroglancer/util/color';
 import {RefCounted} from 'neuroglancer/util/disposable';
@@ -288,6 +289,8 @@ export class SegmentSetWidget extends RefCounted {
 
   private createItemColorSelection = (segmentIDString: string, itemElement: ItemElement):
       HTMLInputElement => {
+        const tempButton = document.createElement('button');
+        tempButton.textContent = 'Set to default';
         temp.tryParseString(segmentIDString, 10);
         const trackableRGB = new TrackableRGB(vec3.fromValues(0, 0, 0));
         if (this.displayState.segmentStatedColors.has(temp)) {
@@ -298,6 +301,15 @@ export class SegmentSetWidget extends RefCounted {
         }
         this.segmentColors.set(segmentIDString, trackableRGB);
         const colorWidget = new ColorWidget(trackableRGB);
+        colorWidget.element.title = 'Left click to select color; right click to reset to default.';
+        this.registerEventListener(colorWidget.element, 'contextmenu', () => {
+          const confirmed =
+              confirm('Are you sure you want to set the segment\'s color back to default?')
+          if (confirmed) {
+            temp.tryParseString(segmentIDString, 10);
+            this.displayState.segmentStatedColors.delete(temp);
+          }
+        });
         trackableRGB.changed.add(() => {
           if (this.colorChangeEventsEnabled) {
             temp.tryParseString(segmentIDString, 10);
