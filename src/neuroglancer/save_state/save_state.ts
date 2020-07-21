@@ -25,7 +25,7 @@ export class SaveState extends RefCounted {
     super();
     const userDisabledSaver = getSaveToAddressBar().value;
 
-    if (storageAvailable()) {
+    if (storageAccessible()) {
       this.loadFromKey();
       this.registerEventListener(window, 'popstate', () => this.loadFromKey());
     } else {
@@ -43,13 +43,13 @@ export class SaveState extends RefCounted {
       const throttledUpdate = debounce(() => this.push(), updateDelayMilliseconds);
       this.registerDisposer(root.changed.add(throttledUpdate));
       this.registerDisposer(() => throttledUpdate.cancel());
-      window.addEventListener('focus', (() => this.push(true)).bind(this));
+      window.addEventListener('focus', (() => this.push()).bind(this));
     }
   }
   // Main Methods
-  pull() {
+  public pull() {
     // Get SaveEntry from localStorage
-    if (storageAvailable() && this.key) {
+    if (storageAccessible() && this.key) {
       const entry = localStorage[`${stateKey}-${this.key}`];
       if (entry) {
         return JSON.parse(entry);
@@ -57,9 +57,9 @@ export class SaveState extends RefCounted {
     }
     return;
   }
-  push(clean = false) {
+  public push(clean?: boolean) {
     // update SaveEntry in localStorage
-    if (storageAvailable() && this.key) {
+    if (storageAccessible() && this.key) {
       const source = <SaveEntry>this.pull() || {};
       if (source.history && source.history.length) {
         // history should never be empty
@@ -70,15 +70,21 @@ export class SaveState extends RefCounted {
       } else {
         source.history = [this.session_id];
       }
-      source.state = this.root.toJSON();
-      source.dirty = !clean;
+      const oldState = this.root.toJSON();
+      const stateChange = JSON.stringify(oldState) !== JSON.stringify(source.state);
+
+      if (stateChange || clean) {
+        source.state = oldState;
+        // if clean is true, then this state is committed, and not dirty.
+        source.dirty = clean ? !clean : true;
+        const serializedUpdate = JSON.stringify(source);
+        this.robustSet(`${stateKey}-${this.key}`, serializedUpdate);
+      }
       this.setSaveStatus(source.dirty);
-      const serializedUpdate = JSON.stringify(source);
-      this.robustLocalStorageSet(`${stateKey}-${this.key}`, serializedUpdate);
       this.notifyManager();
     }
   }
-  commit(source_url: string) {
+  public commit(source_url: string) {
     if (this.key) {
       this.savedUrl = source_url;
       this.addToHistory(recordHistory(source_url));
@@ -99,12 +105,16 @@ export class SaveState extends RefCounted {
         entry = oldDatabase[this.key];
         delete oldDatabase[this.key];
         const serializedDatabase = JSON.stringify(oldDatabase);
-        localStorage.setItem(deprecatedKey, serializedDatabase);
+        this.robustSet(deprecatedKey, serializedDatabase);
       }
 
       if (entry) {
         this.setSaveStatus(entry.dirty);
-        this.root.restoreState(entry.state);
+        try {
+          this.root.restoreState(entry.state);
+        } catch (e) {
+          StatusMessage.showError(e);
+        }
         StatusMessage.showTemporaryMessage(
             `Loaded from local storage. Do not duplicate this URL.`, 4000);
         if (entry.dirty && getUnshareWarning().value) {
@@ -125,9 +135,8 @@ export class SaveState extends RefCounted {
               undefined, {color: 'yellow'});
         }
       } else {
-        StatusMessage.showTemporaryMessage(
-            `This URL is invalid. Do not copy the URL in the address bar. Use the save button.`,
-            10000, {color: 'red'});
+        StatusMessage.showError(
+            `This URL is invalid. Do not copy the URL in the address bar. Use the save button.`);
       }
     } else {
       this.setSaveStatus(true);
@@ -136,20 +145,25 @@ export class SaveState extends RefCounted {
   }
   // Utility
   purge() {
-    if (storageAvailable()) {
+    if (storageAccessible()) {
       this.overwriteHistory();
     }
   }
-  nuke() {
-    if (storageAvailable()) {
+  nuke(complete = false) {
+    if (storageAccessible()) {
       localStorage[stateKey] = '[]';
       const storage = localStorage;
       const storageKeys = Object.keys(storage);
-      const stateKeys = storageKeys.filter(key => key.includes(`${stateKey}-`));
+      const stateKeys =
+          complete ? storageKeys : storageKeys.filter(key => key.includes(`${stateKey}-`));
       stateKeys.forEach(target => localStorage.removeItem(target));
     }
   }
-  setSaveStatus(status: boolean) {
+  userRemoveEntries(complete = false) {
+    this.nuke(complete);
+    this.push();
+  }
+  setSaveStatus(status = false) {
     const button = document.getElementById('neuroglancer-saver-button');
     if (button) {
       button.classList.toggle('dirty', status);
@@ -161,12 +175,12 @@ export class SaveState extends RefCounted {
     return saveHistoryString ? JSON.parse(saveHistoryString) : [];
   }
   overwriteHistory(newHistory: SaveHistory[] = []) {
-    localStorage.setItem(historyKey, JSON.stringify(newHistory));
+    this.robustSet(historyKey, JSON.stringify(newHistory));
   }
-  showSaveDialog(viewer: Viewer, jsonString?: string, get?: UrlType) {
+  public showSaveDialog(viewer: Viewer, jsonString?: string, get?: UrlType) {
     new SaveDialog(viewer, jsonString, get);
   }
-  showHistory(viewer: Viewer) {
+  public showHistory(viewer: Viewer) {
     new SaveHistoryDialog(viewer, this);
   }
   // Helper
@@ -187,7 +201,7 @@ export class SaveState extends RefCounted {
     }
     return false;
   }
-  robustLocalStorageSet(key: string, data: any) {
+  robustSet(key: string, data: any) {
     while (true) {
       try {
         localStorage.setItem(key, data);
@@ -209,14 +223,14 @@ export class SaveState extends RefCounted {
     return <string[]>JSON.parse(managerRaw || '[]');
   }
   notifyManager() {
-    if (storageAvailable() && this.key) {
+    if (storageAccessible() && this.key) {
       const manager = this.uniquePush(this.getManager(), this.key);
       const serializedManager = JSON.stringify(manager);
-      localStorage.setItem(stateKey, serializedManager);
+      this.robustSet(stateKey, serializedManager);
     }
   }
   evict(count = 1) {
-    if (storageAvailable() && this.key) {
+    if (storageAccessible() && this.key) {
       const manager = this.getManager();
 
       const targets = manager.splice(0, count);
@@ -226,10 +240,12 @@ export class SaveState extends RefCounted {
     }
   }
   addToHistory(entry: SaveHistory) {
-    const saveHistoryString = this.history();
-    saveHistoryString.push(entry);
-    const record = JSON.stringify(saveHistoryString);
-    localStorage.setItem(historyKey, record);
+    const saveHistory = this.history();
+    saveHistory.push(entry);
+    if (saveHistory.length > 100) {
+      saveHistory.splice(0, 1);
+    }
+    this.overwriteHistory(saveHistory);
   }
   uniquePush(source: any[], entry: any) {
     const target = source.indexOf(entry);
@@ -241,18 +257,43 @@ export class SaveState extends RefCounted {
   }
 }
 
+/*form: HTMLElement, popupID?: string, content?:
+string, textId?: string, disabled = false, fieldTitle = '', btnName?: string, btnTitle?: string,
+btnAct?: EventListener, btnClass?: string, readonly = true, newLine = true */
+type FieldConfig = {
+  form: HTMLElement,
+  popupID?: string,
+  content?: string,
+  textId?: string,
+  disabled?: boolean,
+  fieldTitle?: string,
+  btnName?: string,
+  btnTitle?: string,
+  btnAct?: EventListener,
+  btnClass?: string,
+  readonly?: boolean,
+  newLine?: boolean
+};
+
 class SaveDialog extends Overlay {
   constructor(public viewer: Viewer, jsonString?: string, getUrlType?: UrlType) {
     super();
+    const br = () => document.createElement('br');
+    const jsonURLDefault = `LINK SHORTNER INACCESSIBLE`;
 
     const urlStart = `${window.location.origin}${window.location.pathname}`;
-    const jsonUrl = jsonString ? `${urlStart}?json_url=${jsonString}` : `NOT AVAILABLE`;
+    const jsonUrl = jsonString ? `${urlStart}?json_url=${jsonString}` : jsonURLDefault;
     const rawUrl = `${urlStart}#!${viewer.hashBinding!.returnURLHash()}`;
     const socialBar = createSocialBar(jsonUrl);
 
+    const existingShareDialog = document.getElementById('neuroglancer-save-state-json');
+    if (existingShareDialog) {
+      return;
+    }
+
     if (getUrlType) {
       const copyString = getUrlType === UrlType.json ? jsonUrl : rawUrl;
-      if (copyString !== 'NOT AVAILABLE') {
+      if (copyString !== jsonURLDefault) {
         const text = document.createElement('input');
         document.body.append(text);
         text.type = 'text';
@@ -272,35 +313,105 @@ class SaveDialog extends Overlay {
       return;
     }
 
-    let form = document.createElement('form');
+    let formMain = document.createElement('form');
     let {content} = this;
     content.style.overflow = 'visible';
+    content.classList.add('ng-dark');
 
-    const pushButton = document.createElement('button');
-    pushButton.innerText = 'Push State to Server';
-    pushButton.title = 'Push to state server to get JSON URL.';
-    pushButton.addEventListener('click', () => {
-      viewer.promptJsonStateServer('Please enter the state server to access.');
-      if (viewer.jsonStateServer.value) {
-        pushButton.disabled = true;
-        const saver = document.getElementsByClassName('ng-saver');
-        let saveBtn: HTMLButtonElement;
-        if (saver && saver.length) {
-          saveBtn = <HTMLButtonElement>saver[0];
-          saveBtn.classList.add('busy');
-          saveBtn.disabled = true;
-        }
-        const restoreSaving = () => {
-          try {
-            this.dispose();
-          } catch {
+    const title = document.createElement('h1');
+    title.innerText = 'Share Link';
+    const descr = document.createElement('div');
+    descr.innerText = 'This link lets you share the exact view you currently see in neuroglancer.';
+    descr.style.paddingBottom = '10px';
+    descr.style.maxWidth = '360px';
+
+    const viewSimple = document.createElement('div');
+    {
+      viewSimple.append(this.makePopup('JSON_URL'));
+      this.insertField({
+        form: viewSimple,
+        popupID: `ng-save-popup-${'JSON_URL'}`,
+        content: jsonUrl,
+        textId: 'neuroglancer-save-state-json',
+        disabled: jsonUrl === jsonURLDefault,
+        fieldTitle:
+            'This link points to a location where the state is saved with a server defined in "Advanced Options"',
+        btnName: 'Copy',
+        btnTitle: 'CTRL + SHIFT + J',
+        btnClass: 'copy_button'
+      });
+    }
+
+    const advanceTab = document.createElement('button');
+    advanceTab.innerHTML = 'Advanced Options';
+    advanceTab.type = 'button';
+    advanceTab.classList.add('special-button');
+    const viewAdvanc = document.createElement('div');
+    advanceTab.addEventListener('click', () => {
+      viewAdvanc.classList.toggle('ng-hidden');
+    });
+    {
+      viewAdvanc.classList.toggle('ng-hidden', jsonUrl !== jsonURLDefault);
+      viewAdvanc.append(this.makePopup('RAW_URL'));
+      this.insertLabel(viewAdvanc, 'Long Link', 'neuroglancer-save-state-raw');
+
+      this.insertField({
+        form: viewAdvanc,
+        popupID: `ng-save-popup-${'RAW_URL'}`,
+        content: rawUrl,
+        textId: 'neuroglancer-save-state-raw',
+        fieldTitle:
+            'This link contains the whole state, does not involve a server but might be too long to copy and share.',
+        btnName: 'Copy',
+        btnTitle: 'CTRL + SHIFT + R',
+        btnClass: 'copy_button'
+      });
+      viewAdvanc.append(br());
+      this.insertLabel(viewAdvanc, 'Link Shortener', 'neuroglancer-save-state-linkshare');
+      this.insertField({
+        form: viewAdvanc,
+        popupID: '',
+        content: viewer.jsonStateServer.value,
+        textId: 'neuroglancer-save-state-linkshare',
+        fieldTitle: '',
+        readonly: false,
+        btnName: 'Shorten',
+        btnTitle: 'Push to state server to get JSON URL.',
+        btnAct: () => {
+          const field =
+              <HTMLInputElement>document.getElementById('neuroglancer-save-state-linkshare');
+          const fieldBtn = <HTMLButtonElement>document.getElementById(
+              'neuroglancer-save-state-linkshare-button');
+          viewer.jsonStateServer.value = field ? field.value : '';
+          if (viewer.jsonStateServer.value && fieldBtn) {
+            fieldBtn.disabled = true;
+            saverToggle(false);
+            const restoreSaving = () => {
+              try {
+                this.dispose();
+              } catch {
+              }
+              saverToggle(true);
+            };
+            viewer.postJsonState(true, undefined, true, restoreSaving);
           }
-          if (saveBtn) {
-            saveBtn.classList.remove('busy');
-            saveBtn.disabled = false;
+        },
+        btnClass: 'shorten_button'
+      });
+
+      /* TODO: This button may be renabled in the future
+      const clearButton = document.createElement('button');
+      {
+        clearButton.innerText = '⚠️ Clear States';
+        clearButton.title = 'Remove all Local States.';
+        clearButton.type = 'button';
+        clearButton.addEventListener('click', () => {
+          if (confirm('All unshared or unopened states will be lost. Continue?')) {
+            if (viewer.saver) {
+              viewer.saver.userRemoveEntries();
+            }
           }
-        };
-        viewer.postJsonState(true, undefined, true, restoreSaving);
+        });
       }
     });
     if (socialBar) {
@@ -311,49 +422,83 @@ class SaveDialog extends Overlay {
     pushButtonContainer.style.marginBottom = '5px';
     pushButtonContainer.append(pushButton);
     content.append(pushButtonContainer);
+      viewAdvanc.append(br());
+      viewAdvanc.append(clearButton);
+      */
+    }
+
+    formMain.append(title, descr, viewSimple, br(), advanceTab, viewAdvanc);
 
     let modal = document.createElement('div');
     content.appendChild(modal);
 
-    form.append(this.makePopup('JSON_URL'));
-    this.insertField(
-        form, 'JSON_URL', jsonUrl, 'neuroglancer-save-state-json', jsonUrl === 'NOT AVAILABLE');
-    form.append(document.createElement('br'));
-    form.append(this.makePopup('RAW_URL'));
-    this.insertField(form, 'RAW_URL', rawUrl, 'neuroglancer-save-state-raw');
-    // TODO: Re Deprecate
-    // form.append('DEPRECATED');
-    modal.appendChild(form);
+    modal.appendChild(formMain);
 
     modal.onblur = () => this.dispose();
     modal.focus();
   }
 
-  insertField(
-      form: HTMLElement, label?: string, content?: string, textId?: string, disabled = false) {
-    let labelElement = document.createElement('label');
-    labelElement.innerText = label || '';
+  insertField(config: FieldConfig) {
+    const {form} = config;
+    let {content, textId, fieldTitle, disabled} = config;
+    let {btnName, btnTitle, btnAct, btnClass} = config;
+    let {readonly, newLine, popupID} = config;
+
     let text = document.createElement('input');
-    text.readOnly = true;
+    text.readOnly = readonly === undefined ? true : readonly;
     text.type = 'text';
     text.value = content || '';
     text.size = 100;
-    text.disabled = disabled;
+    text.disabled = !!disabled;
+    text.title = fieldTitle || '';
+    text.classList.add('rounded-input');
+    text.classList.toggle('disabled', !!disabled);
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = btnClass || '';
+    btn.classList.toggle('disabled', !!disabled);
+    btn.disabled = !!disabled;
+    if (btnAct && !disabled) {
+      btn.addEventListener('click', btnAct);
+    }
+    btn.innerText = btnName || '';
+    btn.title = btnTitle || '';
+
     if (textId) {
       text.id = textId;
+      btn.id = `${text.id}-button`;
     }
-    const id = `ng-save-popup-${label || ''}`;
-    text.addEventListener('click', () => {
-      text.select();
-      document.execCommand('copy');
-      let popup = document.getElementById(id);
-      popup!.classList.add('ng-show');
-    });
-    text.addEventListener('blur', () => {
-      let popup = document.getElementById(id);
-      popup!.classList.remove('ng-show');
-    });
-    form.append(labelElement, ' ', text, document.createElement('br'));
+
+    if (popupID) {
+      const copyFtn = () => {
+        text.select();
+        document.execCommand('copy');
+        let popup = document.getElementById(popupID!);
+        if (popup) {
+          popup.classList.add('ng-show');
+        }
+      };
+      text.addEventListener('click', copyFtn);
+      text.addEventListener('blur', () => {
+        let popup = document.getElementById(popupID!);
+        if (popup) {
+          popup.classList.remove('ng-show');
+        }
+      });
+      if (btnName && !btnAct) {
+        btn.addEventListener('click', copyFtn);
+      }
+    }
+    form.append(
+        text, ' ', btn, (newLine || newLine === undefined) ? document.createElement('br') : '');
+  }
+
+  insertLabel(form: HTMLElement, label: string, targetId: string, newLine = true) {
+    let labelElement = document.createElement('label');
+    labelElement.innerText = label;
+    labelElement.htmlFor = targetId;
+    form.append(labelElement, newLine ? document.createElement('br') : '');
   }
 
   makePopup(label?: string) {
@@ -437,7 +582,17 @@ const recordHistory = (url: string) => {
   return <SaveHistory>{timestamp: (new Date()).valueOf(), source_url: url};
 };
 
-export const storageAvailable = () => {
+export const saverToggle = (active: boolean) => {
+  const saver = document.getElementsByClassName('ng-saver');
+  let saveBtn: HTMLButtonElement;
+  if (saver && saver.length) {
+    saveBtn = <HTMLButtonElement>saver[0];
+    saveBtn.classList.toggle('busy', !active);
+    saveBtn.disabled = !active;
+  }
+};
+
+export const storageAccessible = () => {
   // Stolen from
   // https://developer.mozilla.org/en-US/docs/Web/API/Web_Storage_API/Using_the_Web_Storage_API
   const type = 'localStorage';
@@ -449,6 +604,20 @@ export const storageAvailable = () => {
     storage.removeItem(x);
     return true;
   } catch (e) {
-    return false;
+    const outOfSpace = e instanceof DOMException &&
+        (
+                           // everything except Firefox
+                           e.code === 22 ||
+                           // Firefox
+                           e.code === 1014 ||
+                           // test name field too, because code might not be present
+                           // everything except Firefox
+                           e.name === 'QuotaExceededError' ||
+                           // Firefox
+                           e.name === 'NS_ERROR_DOM_QUOTA_REACHED') &&
+        // acknowledge QuotaExceededError only if there's something already stored
+        (storage && storage.length !== 0);
+    // outOfSpace is still accessible
+    return outOfSpace;
   }
 };
