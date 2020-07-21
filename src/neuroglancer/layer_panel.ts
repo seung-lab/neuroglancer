@@ -245,7 +245,10 @@ class LayerWidget extends RefCounted {
     element.appendChild(colorWidget.element);
     element.appendChild(layerNumberElement);
     element.appendChild(labelElement);
-    element.appendChild(valueElement);
+    const valueWrapperElement = document.createElement('span');
+    valueWrapperElement.classList.add('neuroglancer-layer-item-value-wrapper');
+    valueWrapperElement.appendChild(valueElement);
+    element.appendChild(valueWrapperElement);
     if (timeWarningElement) {
       element.appendChild(timeWarningElement);
     }

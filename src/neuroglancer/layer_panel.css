@@ -40,6 +40,12 @@
   padding: 1px;
 }
 
+.neuroglancer-layer-item-value-wrapper {
+  white-space: nowrap;
+  overflow: hidden;
+  width: 4.4vw;
+}
+
 .neuroglancer-layer-item, .neuroglancer-layer-add-button {
   margin: 1px;
   margin-left: 5px;
