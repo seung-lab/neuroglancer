@@ -124,7 +124,8 @@ class RenderingOptionsTab extends Tab {
 
     {
       const renderScaleWidget = this.registerDisposer(new RenderScaleWidget(
-          this.layer.sliceViewRenderScaleHistogram, this.layer.sliceViewRenderScaleTarget));
+          this.layer.sliceViewRenderScaleHistogram, this.layer.sliceViewRenderScaleTarget,
+          this.layer.sliceViewRenderScaleTargetLow));
       renderScaleWidget.label.textContent = 'Resolution (slice)';
       group2D.appendFixedChild(renderScaleWidget.element);
     }

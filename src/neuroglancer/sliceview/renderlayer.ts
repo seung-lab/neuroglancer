@@ -32,6 +32,7 @@ export interface RenderLayerOptions {
   rpcType?: string;
   rpcTransfer?: {[index: string]: number|string|null};
   renderScaleTarget?: WatchableValueInterface<number>;
+  renderScaleLowTarget?: WatchableValueInterface<number>;
   renderScaleHistogram?: RenderScaleHistogram;
 }
 
@@ -44,6 +45,7 @@ export abstract class RenderLayer extends GenericRenderLayer {
   transformedSources: TransformedSource<SliceViewChunkSource>[][];
   transformedSourcesGeneration = -1;
   renderScaleTarget: WatchableValueInterface<number>;
+  renderScaleLowTarget: WatchableValueInterface<number>;
   renderScaleHistogram?: RenderScaleHistogram;
 
   constructor(
@@ -55,7 +57,8 @@ export abstract class RenderLayer extends GenericRenderLayer {
       rpcType = SLICEVIEW_RENDERLAYER_RPC_ID,
       rpcTransfer = {},
       transform = new CoordinateTransform(),
-      renderScaleTarget = trackableRenderScaleTarget(1)
+      renderScaleTarget = trackableRenderScaleTarget(1),
+      renderScaleLowTarget = trackableRenderScaleTarget(0)
     } = options;
     this.rpcType = rpcType;
     this.rpcTransfer = rpcTransfer;

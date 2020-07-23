@@ -36,6 +36,7 @@ const inputEventMap = EventActionMap.fromObject({
   'mousedown0': {action: 'set'},
   'wheel': {action: 'adjust-via-wheel'},
   'dblclick0': {action: 'reset'},
+  'mousedown2': {action: 'set-low'},
 });
 
 
@@ -64,7 +65,8 @@ export class RenderScaleWidget extends RefCounted {
 
 
   constructor(
-      public histogram: RenderScaleHistogram, public target: TrackableValueInterface<number>) {
+      public histogram: RenderScaleHistogram, public target: TrackableValueInterface<number>,
+      public lowTarget: TrackableValueInterface<number>) {
     super();
     const {canvas, label, element, legend, legendRenderScale, legendSpatialScale, legendChunks} =
         this;
@@ -83,6 +85,7 @@ export class RenderScaleWidget extends RefCounted {
     this.registerDisposer(histogram.changed.add(this.throttledUpdateView));
     this.registerDisposer(histogram.visibility.changed.add(this.debouncedUpdateView));
     this.registerDisposer(target.changed.add(this.debouncedUpdateView));
+    this.registerDisposer(lowTarget.changed.add(this.debouncedUpdateView));
     this.registerDisposer(new MouseEventBinder(canvas, inputEventMap));
     this.registerDisposer(target.changed.add(this.debouncedUpdateView));
     this.registerDisposer(this.hoverTarget.changed.add(this.debouncedUpdateView));
@@ -100,7 +103,19 @@ export class RenderScaleWidget extends RefCounted {
     });
 
     this.registerDisposer(registerActionListener<MouseEvent>(canvas, 'set', actionEvent => {
-      this.target.value = getTargetValue(actionEvent.detail);
+      const newTarget = getTargetValue(actionEvent.detail);
+      this.target.value = newTarget;
+      if (newTarget >= this.lowTarget.value) {
+        this.lowTarget.value = 0;
+      }
+    }));
+
+    this.registerDisposer(registerActionListener<MouseEvent>(canvas, 'set-low', actionEvent => {
+      const newTargetLow = getTargetValue(actionEvent.detail);
+      this.lowTarget.value = newTargetLow;
+      if (newTargetLow <= this.target.value) {
+        this.target.value = 0;
+      }
     }));
 
     this.registerDisposer(
@@ -111,7 +126,11 @@ export class RenderScaleWidget extends RefCounted {
             return;
           }
           this.hoverTarget.value = undefined;
-          this.target.value *= 2 ** Math.sign(deltaY);
+          const newTarget = this.target.value * (2 ** Math.sign(deltaY));
+          this.target.value = newTarget;
+          if (newTarget >= this.lowTarget.value) {
+            this.lowTarget.value = 0;
+          }
           event.preventDefault();
         }));
 
@@ -119,6 +138,7 @@ export class RenderScaleWidget extends RefCounted {
     this.registerDisposer(registerActionListener(canvas, 'reset', event => {
       this.hoverTarget.value = undefined;
       this.target.reset();
+      this.lowTarget.reset();
       event.preventDefault();
     }));
     const resizeObserver = new ResizeObserver(() => this.debouncedUpdateView());

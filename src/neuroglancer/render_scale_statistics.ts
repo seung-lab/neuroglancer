@@ -15,7 +15,7 @@
  */
 
 import {TrackableValue} from 'neuroglancer/trackable_value';
-import {verifyFinitePositiveFloat} from 'neuroglancer/util/json';
+import {verifyFiniteNonnegativeFloat} from 'neuroglancer/util/json';
 import {VisibilityPriorityAggregator} from 'neuroglancer/visibility_priority/frontend';
 import { NullarySignal } from './util/signal';
 
@@ -32,7 +32,7 @@ export function getRenderScaleFromHistogramOffset(offset: number): number {
 }
 
 export function trackableRenderScaleTarget(initialValue: number) {
-  return new TrackableValue<number>(initialValue, verifyFinitePositiveFloat);
+  return new TrackableValue<number>(initialValue, verifyFiniteNonnegativeFloat);
 }
 
 export class RenderScaleHistogram {

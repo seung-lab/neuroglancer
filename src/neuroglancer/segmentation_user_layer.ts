@@ -106,6 +106,7 @@ export class SegmentationUserLayer extends Base {
     shaderError: makeWatchableShaderError(),
     renderScaleHistogram: new RenderScaleHistogram(),
     renderScaleTarget: trackableRenderScaleTarget(1),
+    renderScaleLowTarget: trackableRenderScaleTarget(0),
     shatterSegmentEquivalences: new TrackableBoolean(false, false),
   };
 
@@ -675,7 +676,8 @@ class DisplayOptionsTab extends Tab {
 
       {
         const renderScaleWidget = this.registerDisposer(new RenderScaleWidget(
-            this.layer.sliceViewRenderScaleHistogram, this.layer.sliceViewRenderScaleTarget));
+            this.layer.sliceViewRenderScaleHistogram, this.layer.sliceViewRenderScaleTarget,
+            this.layer.sliceViewRenderScaleLowTarget));
         renderScaleWidget.label.textContent = 'Resolution (slice)';
         group2D.appendFixedChild(renderScaleWidget.element);
       }
@@ -691,7 +693,8 @@ class DisplayOptionsTab extends Tab {
 
     {
       const renderScaleWidget = this.registerDisposer(new RenderScaleWidget(
-          this.layer.displayState.renderScaleHistogram, this.layer.displayState.renderScaleTarget));
+          this.layer.displayState.renderScaleHistogram, this.layer.displayState.renderScaleTarget,
+          this.layer.displayState.renderScaleLowTarget));
       renderScaleWidget.label.textContent = 'Resolution (mesh)';
       group3D.appendFixedChild(renderScaleWidget.element);
       this.registerDisposer(

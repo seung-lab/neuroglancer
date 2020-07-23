@@ -44,6 +44,11 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
       target.changed.add(this.specificationChanged.dispatch);
       return target;
     })();
+    sliceViewRenderScaleLowTarget = (() => {
+      const target = trackableRenderScaleTarget(0);
+      target.changed.add(this.specificationChanged.dispatch);
+      return target;
+    })();
 
     restoreState(specification: any) {
       super.restoreState(specification);

@@ -121,6 +121,7 @@ export interface SegmentationDisplayState3D extends SegmentationDisplayStateWith
   objectToDataTransform: CoordinateTransform;
   renderScaleHistogram: RenderScaleHistogram;
   renderScaleTarget: TrackableValue<number>;
+  renderScaleLowTarget: TrackableValue<number>;
 }
 
 export function registerRedrawWhenSegmentationDisplayStateChanged(

@@ -44,6 +44,14 @@ export function verifyFinitePositiveFloat(obj: any): number {
   throw new Error(`Expected positive finite floating-point number, but received: ${x}.`);
 }
 
+export function verifyFiniteNonnegativeFloat(obj: any): number {
+  let x = verifyFiniteFloat(obj);
+  if (x >= 0) {
+    return x;
+  }
+  throw new Error(`Expected non-negative finite floating-point number, but received: ${x}.`);
+}
+
 export function parseXYZ<A extends WritableArrayLike<number>>(
     out: A, obj: any, validator: (x: any) => number = verifyFloat): A {
   verifyObject(obj);
