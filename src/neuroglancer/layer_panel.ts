@@ -168,6 +168,8 @@ class LayerWidget extends RefCounted {
   layerNumberElement: HTMLSpanElement;
   labelElement: HTMLSpanElement;
   valueElement: HTMLSpanElement;
+  maxLength: number = 0;
+  prevValueText: string = '';
 
   constructor(public layer: ManagedUserLayerWithSpecification, public panel: LayerPanel) {
     super();
@@ -245,10 +247,7 @@ class LayerWidget extends RefCounted {
     element.appendChild(colorWidget.element);
     element.appendChild(layerNumberElement);
     element.appendChild(labelElement);
-    const valueWrapperElement = document.createElement('span');
-    valueWrapperElement.classList.add('neuroglancer-layer-item-value-wrapper');
-    valueWrapperElement.appendChild(valueElement);
-    element.appendChild(valueWrapperElement);
+    element.appendChild(valueElement);
     if (timeWarningElement) {
       element.appendChild(timeWarningElement);
     }
@@ -441,6 +440,12 @@ export class LayerPanel extends RefCounted {
           });
           text += value.join(', ');
         }
+      }
+      if (text === widget.prevValueText) continue;
+      widget.prevValueText = text;
+      if (text.length > widget.maxLength) {
+        const length = widget.maxLength = text.length;
+        widget.valueElement.style.width = `${length}ch`;
       }
       widget.valueElement.textContent = text;
     }
