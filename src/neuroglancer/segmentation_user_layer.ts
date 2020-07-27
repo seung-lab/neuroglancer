@@ -382,6 +382,18 @@ export class SegmentationUserLayer extends Base {
     this.objectLayerStateChanged.dispatch();
   }
 
+  private getStateRevertingFunction() {
+    const currentState = this.toJSON();
+    return () => {
+      this.restoreState(currentState);
+    };
+  }
+
+  messageWithUndo(message: string, actionMessage: string = 'Undo?', closeAfter: number = 10000) {
+    const undo = this.getStateRevertingFunction();
+    StatusMessage.messageWithAction(message, [{message: actionMessage, action: undo}], closeAfter);
+  }
+
   toJSON() {
     const x = super.toJSON();
     x['type'] = 'segmentation';
@@ -646,7 +658,8 @@ class DisplayOptionsTab extends Tab {
   private groupSegmentSelection =
       this.registerDisposer(new MinimizableGroupWidget('Segment Selection'));
   private groupOmniInfo = this.registerDisposer(new MinimizableGroupWidget('Omni Segment Info'));
-  visibleSegmentWidget = this.registerDisposer(new SegmentSetWidget(this.layer.displayState));
+  visibleSegmentWidget = this.registerDisposer(
+      new SegmentSetWidget(this.layer.displayState, this.layer.messageWithUndo.bind(this.layer)));
   addSegmentWidget = this.registerDisposer(new Uint64EntryWidget());
   selectedAlphaWidget =
       this.registerDisposer(new RangeWidget(this.layer.displayState.selectedAlpha));

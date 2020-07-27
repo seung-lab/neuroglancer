@@ -59,7 +59,10 @@ export class SegmentSetWidget extends RefCounted {
     return this.displayState.segmentSelectionState;
   }
 
-  constructor(public displayState: SegmentationDisplayState) {
+  constructor(
+      public displayState: SegmentationDisplayState,
+      private messageWithUndo:
+          (message: string, actionMessage: string, closeAfter: number) => void) {
     super();
     this.createTopButtons();
     this.registerDisposer(displayState.rootSegments.changed.add((x, add) => {
@@ -303,6 +306,7 @@ export class SegmentSetWidget extends RefCounted {
         const colorWidget = new ColorWidget(trackableRGB);
         colorWidget.element.title = 'Left click to select color; right click to reset to default.';
         this.registerEventListener(colorWidget.element, 'contextmenu', () => {
+          this.messageWithUndo(`Color reset for ${segmentIDString}.`, 'Undo?')
           const confirmed =
               confirm('Are you sure you want to set the segment\'s color back to default?')
           if (confirmed) {
@@ -423,6 +427,7 @@ export class SegmentSetWidget extends RefCounted {
     clearButton.className = 'clear-button';
     clearButton.title = 'Remove all segment IDs';
     this.registerEventListener(clearButton, 'click', () => {
+      this.messageWithUndo('Segments removed.', 'Undo?', 12000);
       this.rootSegments.clear();
       this.hiddenRootSegments!.clear();
     });
