@@ -66,7 +66,7 @@ export class RenderScaleWidget extends RefCounted {
 
   constructor(
       public histogram: RenderScaleHistogram, public target: TrackableValueInterface<number>,
-      public lowTarget: TrackableValueInterface<number>) {
+      public lowResTarget: TrackableValueInterface<number>) {
     super();
     const {canvas, label, element, legend, legendRenderScale, legendSpatialScale, legendChunks} =
         this;
@@ -85,7 +85,7 @@ export class RenderScaleWidget extends RefCounted {
     this.registerDisposer(histogram.changed.add(this.throttledUpdateView));
     this.registerDisposer(histogram.visibility.changed.add(this.debouncedUpdateView));
     this.registerDisposer(target.changed.add(this.debouncedUpdateView));
-    this.registerDisposer(lowTarget.changed.add(this.debouncedUpdateView));
+    this.registerDisposer(lowResTarget.changed.add(this.debouncedUpdateView));
     this.registerDisposer(new MouseEventBinder(canvas, inputEventMap));
     this.registerDisposer(target.changed.add(this.debouncedUpdateView));
     this.registerDisposer(this.hoverTarget.changed.add(this.debouncedUpdateView));
@@ -105,15 +105,15 @@ export class RenderScaleWidget extends RefCounted {
     this.registerDisposer(registerActionListener<MouseEvent>(canvas, 'set', actionEvent => {
       const newTarget = getTargetValue(actionEvent.detail);
       this.target.value = newTarget;
-      if (newTarget >= this.lowTarget.value) {
-        this.lowTarget.value = 0;
+      if (newTarget >= this.lowResTarget.value) {
+        this.lowResTarget.value = 0;
       }
     }));
 
     this.registerDisposer(registerActionListener<MouseEvent>(canvas, 'set-low', actionEvent => {
-      const newTargetLow = getTargetValue(actionEvent.detail);
-      this.lowTarget.value = newTargetLow;
-      if (newTargetLow <= this.target.value) {
+      const newLowResTarget = getTargetValue(actionEvent.detail);
+      this.lowResTarget.value = newLowResTarget;
+      if (newLowResTarget <= this.target.value) {
         this.target.value = 0;
       }
     }));
@@ -126,11 +126,13 @@ export class RenderScaleWidget extends RefCounted {
             return;
           }
           this.hoverTarget.value = undefined;
-          const newTarget = this.target.value * (2 ** Math.sign(deltaY));
-          this.target.value = newTarget;
-          if (newTarget >= this.lowTarget.value) {
-            this.lowTarget.value = 0;
-          }
+          this.target.value *= 2 ** Math.sign(deltaY);
+          this.lowResTarget.value *= 2 ** Math.sign(deltaY);
+          // const newTarget = this.target.value * (2 ** Math.sign(deltaY));
+          // this.target.value = newTarget;
+          // if (newTarget >= this.lowTarget.value) {
+          //   this.lowTarget.value = 0;
+          // }
           event.preventDefault();
         }));
 
@@ -138,7 +140,7 @@ export class RenderScaleWidget extends RefCounted {
     this.registerDisposer(registerActionListener(canvas, 'reset', event => {
       this.hoverTarget.value = undefined;
       this.target.reset();
-      this.lowTarget.reset();
+      this.lowResTarget.reset();
       event.preventDefault();
     }));
     const resizeObserver = new ResizeObserver(() => this.debouncedUpdateView());
@@ -153,13 +155,21 @@ export class RenderScaleWidget extends RefCounted {
     const width = canvas.width = canvas.offsetWidth;
     const height = canvas.height = canvas.offsetHeight;
     const targetValue = this.target.value;
+    const lowResTargetValue = this.lowResTarget.value;
     const hoverValue = this.hoverTarget.value;
 
     {
       const {legendRenderScale} = this;
-      const value = hoverValue === undefined ? targetValue : hoverValue[0];
-      const valueString = formatPixelNumber(value);
-      legendRenderScale.textContent = valueString + ' px';
+      if (hoverValue) {
+        legendRenderScale.textContent = formatPixelNumber(hoverValue[0]) + ' px';
+      } else if (lowResTargetValue === 0) {
+        legendRenderScale.textContent = formatPixelNumber(targetValue) + ' px';
+      } else if (targetValue === 0) {
+        legendRenderScale.textContent = '0-' + formatPixelNumber(lowResTargetValue) + ' px';
+      } else {
+        legendRenderScale.textContent =
+            formatPixelNumber(targetValue) + '-' + formatPixelNumber(lowResTargetValue) + ' px';
+      }
     }
 
     function binToCanvasX(bin: number) {
@@ -290,6 +300,14 @@ export class RenderScaleWidget extends RefCounted {
 
     {
       const value = targetValue;
+      ctx.fillStyle = '#fff';
+      const startOffset = binToCanvasX(getRenderScaleHistogramOffset(value));
+      const lineWidth = 1;
+      ctx.fillRect(Math.floor(startOffset), 0, lineWidth, height);
+    }
+
+    {
+      const value = lowResTargetValue;
       ctx.fillStyle = '#fff';
       const startOffset = binToCanvasX(getRenderScaleHistogramOffset(value));
       const lineWidth = 1;

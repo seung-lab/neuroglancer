@@ -32,7 +32,7 @@ export interface RenderLayerOptions {
   rpcType?: string;
   rpcTransfer?: {[index: string]: number|string|null};
   renderScaleTarget?: WatchableValueInterface<number>;
-  renderScaleLowTarget?: WatchableValueInterface<number>;
+  renderScaleLowResTarget?: WatchableValueInterface<number>;
   renderScaleHistogram?: RenderScaleHistogram;
 }
 
@@ -45,7 +45,7 @@ export abstract class RenderLayer extends GenericRenderLayer {
   transformedSources: TransformedSource<SliceViewChunkSource>[][];
   transformedSourcesGeneration = -1;
   renderScaleTarget: WatchableValueInterface<number>;
-  renderScaleLowTarget: WatchableValueInterface<number>;
+  renderScaleLowResTarget: WatchableValueInterface<number>;
   renderScaleHistogram?: RenderScaleHistogram;
 
   constructor(
@@ -58,11 +58,12 @@ export abstract class RenderLayer extends GenericRenderLayer {
       rpcTransfer = {},
       transform = new CoordinateTransform(),
       renderScaleTarget = trackableRenderScaleTarget(1),
-      renderScaleLowTarget = trackableRenderScaleTarget(0)
+      renderScaleLowResTarget = trackableRenderScaleTarget(0)
     } = options;
     this.rpcType = rpcType;
     this.rpcTransfer = rpcTransfer;
     this.renderScaleTarget = renderScaleTarget;
+    this.renderScaleLowResTarget = renderScaleLowResTarget;
     this.renderScaleHistogram = options.renderScaleHistogram;
     this.transform = transform;
     const transformedSources = getTransformedSources(this);
@@ -87,6 +88,8 @@ export abstract class RenderLayer extends GenericRenderLayer {
       renderScaleTarget:
           this.registerDisposer(SharedWatchableValue.makeFromExisting(rpc, this.renderScaleTarget))
               .rpcId,
+      renderScaleLowResTarget: this.registerDisposer(SharedWatchableValue.makeFromExisting(
+                                                         rpc, this.renderScaleLowResTarget)).rpcId,
       ...this.rpcTransfer,
     });
     this.rpcId = sharedObject.rpcId;

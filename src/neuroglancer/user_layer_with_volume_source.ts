@@ -27,6 +27,7 @@ import {verifyObjectProperty, verifyOptionalString} from 'neuroglancer/util/json
 
 const SOURCE_JSON_KEY = 'source';
 const CROSS_SECTION_RENDER_SCALE_JSON_KEY = 'crossSectionRenderScale';
+const CROSS_SECTION_RENDER_LOW_RES_SCALE_JSON_KEY = 'crossSectionRenderLowResScale';
 
 interface BaseConstructor {
   new(...args: any[]): UserLayerWithAnnotations&UserLayerWithCoordinateTransform;
@@ -44,7 +45,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
       target.changed.add(this.specificationChanged.dispatch);
       return target;
     })();
-    sliceViewRenderScaleLowTarget = (() => {
+    sliceViewRenderScaleLowResTarget = (() => {
       const target = trackableRenderScaleTarget(0);
       target.changed.add(this.specificationChanged.dispatch);
       return target;
@@ -56,6 +57,8 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
           verifyObjectProperty(specification, SOURCE_JSON_KEY, verifyOptionalString);
       this.sliceViewRenderScaleTarget.restoreState(
           specification[CROSS_SECTION_RENDER_SCALE_JSON_KEY]);
+      this.sliceViewRenderScaleLowResTarget.restoreState(
+        specification[CROSS_SECTION_RENDER_LOW_RES_SCALE_JSON_KEY]);
 
       if (volumePath !== undefined) {
         const multiscaleSource = this.multiscaleSource = getVolumeWithStatusMessage(
@@ -81,6 +84,8 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
       const result = super.toJSON();
       result[SOURCE_JSON_KEY] = this.volumePath;
       result[CROSS_SECTION_RENDER_SCALE_JSON_KEY] = this.sliceViewRenderScaleTarget.toJSON();
+      result[CROSS_SECTION_RENDER_LOW_RES_SCALE_JSON_KEY] =
+          this.sliceViewRenderScaleLowResTarget.toJSON();
       return result;
     }
   }
