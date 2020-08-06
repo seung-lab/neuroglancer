@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
 import {StatusMessage} from 'neuroglancer/status';
 import {packColor, TrackableRGB} from 'neuroglancer/util/color';
@@ -293,8 +292,6 @@ export class SegmentSetWidget extends RefCounted {
 
   private createItemColorSelection = (segmentIDString: string, itemElement: ItemElement):
       HTMLInputElement => {
-        const tempButton = document.createElement('button');
-        tempButton.textContent = 'Set to default';
         temp.tryParseString(segmentIDString, 10);
         const trackableRGB = new TrackableRGB(vec3.fromValues(0, 0, 0));
         const colorWidget = new ColorWidget(trackableRGB);
