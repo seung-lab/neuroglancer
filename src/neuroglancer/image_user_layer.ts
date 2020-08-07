@@ -81,6 +81,7 @@ export class ImageUserLayer extends Base {
           shaderError: this.shaderError,
           transform: this.transform,
           renderScaleTarget: this.sliceViewRenderScaleTarget,
+          renderScaleLowResTarget: this.sliceViewRenderScaleLowResTarget,
           renderScaleHistogram: this.sliceViewRenderScaleHistogram,
         });
         this.addRenderLayer(renderLayer);

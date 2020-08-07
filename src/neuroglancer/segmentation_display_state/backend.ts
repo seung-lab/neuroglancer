@@ -36,6 +36,7 @@ export class SegmentationLayerSharedObjectCounterpart extends Base implements Vi
   segmentEquivalences: SharedDisjointUint64Sets;
   objectToDataTransform: SharedWatchableValue<mat4>;
   renderScaleTarget: SharedWatchableValue<number>;
+  renderScaleLowResTarget: SharedWatchableValue<number>;
 
   constructor(rpc: RPC, options: any) {
     super(rpc, options);
@@ -46,6 +47,7 @@ export class SegmentationLayerSharedObjectCounterpart extends Base implements Vi
     this.segmentEquivalences = <SharedDisjointUint64Sets>rpc.get(options['segmentEquivalences']);
     this.objectToDataTransform = rpc.get(options['objectToDataTransform']);
     this.renderScaleTarget = rpc.get(options['renderScaleTarget']);
+    this.renderScaleLowResTarget = rpc.get(options['renderScaleLowResTarget']);
 
     const scheduleUpdateChunkPriorities = () => {
       this.chunkManager.scheduleUpdateChunkPriorities();
@@ -55,5 +57,6 @@ export class SegmentationLayerSharedObjectCounterpart extends Base implements Vi
     this.registerDisposer(this.segmentEquivalences.changed.add(scheduleUpdateChunkPriorities));
     this.registerDisposer(this.objectToDataTransform.changed.add(scheduleUpdateChunkPriorities));
     this.registerDisposer(this.renderScaleTarget.changed.add(scheduleUpdateChunkPriorities));
+    this.registerDisposer(this.renderScaleLowResTarget.changed.add(scheduleUpdateChunkPriorities));
   }
 }

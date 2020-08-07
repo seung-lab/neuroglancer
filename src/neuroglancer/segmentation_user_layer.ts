@@ -154,6 +154,7 @@ export class SegmentationUserLayer extends Base {
     this.displayState.segmentColorHash.changed.add(this.specificationChanged.dispatch);
     this.displayState.segmentStatedColors.changed.add(this.specificationChanged.dispatch);
     this.displayState.renderScaleTarget.changed.add(this.specificationChanged.dispatch);
+    this.displayState.renderScaleLowResTarget.changed.add(this.specificationChanged.dispatch);
     this.displayState.shatterSegmentEquivalences.changed.add(this.specificationChanged.dispatch);
     this.ignoreSegmentInteractions.changed.add(this.specificationChanged.dispatch);
     this.loadMeshes.changed.add(this.specificationChanged.dispatch);
@@ -294,6 +295,7 @@ export class SegmentationUserLayer extends Base {
             transform: displayState.objectToDataTransform,
             renderScaleHistogram: this.sliceViewRenderScaleHistogram,
             renderScaleTarget: this.sliceViewRenderScaleTarget,
+            renderScaleLowResTarget: this.sliceViewRenderScaleLowResTarget,
           }));
           // Meshes
           if (meshPath === undefined && this.shouldRenderMesh()) {

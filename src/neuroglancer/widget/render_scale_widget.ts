@@ -92,7 +92,10 @@ export class RenderScaleWidget extends RefCounted {
 
     const getTargetValue = (event: MouseEvent) => {
       const position = event.offsetX / canvas.width * numRenderScaleHistogramBins;
-      return getRenderScaleFromHistogramOffset(position);
+      // return getRenderScaleFromHistogramOffset(position);
+      const tempP = getRenderScaleFromHistogramOffset(position);
+      // console.log(`position = ${tempP}`);
+      return tempP;
     };
     this.registerEventListener(canvas, 'pointermove', (event: MouseEvent) => {
       this.hoverTarget.value = [getTargetValue(event), event.offsetY];
@@ -111,7 +114,7 @@ export class RenderScaleWidget extends RefCounted {
     }));
 
     this.registerDisposer(registerActionListener<MouseEvent>(canvas, 'set-low', actionEvent => {
-      const newLowResTarget = getTargetValue(actionEvent.detail);
+      const newLowResTarget = getTargetValue(actionEvent.detail) / 2;
       this.lowResTarget.value = newLowResTarget;
       if (newLowResTarget <= this.target.value) {
         this.target.value = 0;
@@ -307,7 +310,7 @@ export class RenderScaleWidget extends RefCounted {
     }
 
     {
-      const value = lowResTargetValue;
+      const value = lowResTargetValue * 2;
       ctx.fillStyle = '#fff';
       const startOffset = binToCanvasX(getRenderScaleHistogramOffset(value));
       const lineWidth = 1;

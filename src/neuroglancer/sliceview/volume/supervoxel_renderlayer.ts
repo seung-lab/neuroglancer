@@ -43,6 +43,7 @@ export class SupervoxelRenderLayer extends RenderLayer {
       transform: displayState.transform,
       renderScaleHistogram: displayState.renderScaleHistogram,
       renderScaleTarget: displayState.renderScaleTarget,
+      renderScaleLowResTarget: displayState.renderScaleLowResTarget,
     });
     registerRedrawWhenSegmentationDisplayStateChanged(displayState, this);
     this.registerDisposer(displayState.isActive.changed.add(() => {

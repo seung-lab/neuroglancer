@@ -124,6 +124,7 @@ export class SliceView extends SliceViewIntermediateBase {
     layer.layerChanged.remove(this.handleLayerChanged);
     layer.transform.changed.remove(this.invalidateVisibleSources);
     layer.renderScaleTarget.changed.remove(this.invalidateVisibleSources);
+    layer.renderScaleLowResTarget.changed.remove(this.invalidateVisibleSources);
     this.invalidateVisibleSources();
   }
 
@@ -132,6 +133,7 @@ export class SliceView extends SliceViewIntermediateBase {
     layer.layerChanged.add(this.handleLayerChanged);
     layer.transform.changed.add(this.invalidateVisibleSources);
     layer.renderScaleTarget.changed.add(this.invalidateVisibleSources);
+    layer.renderScaleLowResTarget.changed.add(this.invalidateVisibleSources);
     this.invalidateVisibleSources();
   }
 
@@ -370,10 +372,12 @@ export class RenderLayer extends SharedObjectCounterpart implements
   transformedSources: TransformedSource<SliceViewChunkSource>[][];
   transformedSourcesGeneration = -1;
   renderScaleTarget: SharedWatchableValue<number>;
+  renderScaleLowResTarget: SharedWatchableValue<number>;
 
   constructor(rpc: RPC, options: any) {
     super(rpc, options);
     this.renderScaleTarget = rpc.get(options.renderScaleTarget);
+    this.renderScaleLowResTarget = rpc.get(options.renderScaleLowResTarget);
     let sources = this.sources = new Array<SliceViewChunkSource[]>();
     for (let alternativeIds of options['sources']) {
       let alternatives = new Array<SliceViewChunkSource>();

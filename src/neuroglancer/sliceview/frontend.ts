@@ -158,6 +158,7 @@ export class SliceView extends Base {
     disposers.push(renderLayer.redrawNeeded.add(this.viewChanged.dispatch));
     disposers.push(renderLayer.transform.changed.add(this.invalidateVisibleSources));
     disposers.push(renderLayer.renderScaleTarget.changed.add(this.invalidateVisibleSources));
+    disposers.push(renderLayer.renderScaleLowResTarget.changed.add(this.invalidateVisibleSources));
     const {renderScaleHistogram} = renderLayer;
     if (renderScaleHistogram !== undefined) {
       disposers.push(renderScaleHistogram.visibility.add(this.visibility));

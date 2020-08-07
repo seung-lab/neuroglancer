@@ -141,6 +141,7 @@ export interface RenderLayer<Source extends SliceViewChunkSource> {
   transformedSources: TransformedSource<Source>[][]|undefined;
   transformedSourcesGeneration: number;
   renderScaleTarget: WatchableValueInterface<number>;
+  renderScaleLowResTarget: WatchableValueInterface<number>;
   renderRatioLimit?: number;
   leafRequestsActive?: TrackableBoolean;
 }
@@ -377,6 +378,7 @@ export class SliceViewBase<Source extends SliceViewChunkSource,
       }
 
       const renderScaleTarget = renderLayer.renderScaleTarget.value;
+      const renderScaleLowResTarget = renderLayer.renderScaleLowResTarget.value;
 
       /**
        * Determines whether we should continue to look for a finer-resolution source *after* one
@@ -408,6 +410,20 @@ export class SliceViewBase<Source extends SliceViewChunkSource,
         return false;
       };
 
+      const meetsLowResTarget = (voxelSize: vec3) => {
+        if (renderScaleLowResTarget === 0) {
+          return true;
+        }
+        const targetSize = pixelSize * renderScaleLowResTarget;
+        for (let i = 0; i < 3; ++i) {
+          const size = voxelSize[i];
+          if (size > targetSize) {
+            return false;
+          }
+        }
+        return true;
+      };
+
       /**
        * Registers a source as being visible.  This should be called with consecutively decreasing
        * values of scaleIndex.
@@ -434,7 +450,9 @@ export class SliceViewBase<Source extends SliceViewChunkSource,
             !improvesOnPrevVoxelSize(transformedSource.voxelSize, prevVoxelSize)) {
           break;
         }
-        addVisibleSource(transformedSource, (scaleIndex + 1) / numSources);
+        if (meetsLowResTarget(transformedSource.voxelSize)) {
+          addVisibleSource(transformedSource, (scaleIndex + 1) / numSources);
+        }
 
         if (scaleIndex === 0 || !canImproveOnVoxelSize(transformedSource.voxelSize)) {
           break;
