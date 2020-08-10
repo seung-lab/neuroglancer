@@ -410,18 +410,19 @@ export class SliceViewBase<Source extends SliceViewChunkSource,
         return false;
       };
 
-      const meetsLowResTarget = (voxelSize: vec3) => {
+      const meetsLowResTarget = (voxelSize: vec3, prevVoxelSize: vec3) => {
         if (renderScaleLowResTarget === 0) {
           return true;
         }
         const targetSize = pixelSize * renderScaleLowResTarget;
         for (let i = 0; i < 3; ++i) {
           const size = voxelSize[i];
-          if (size > targetSize) {
-            return false;
+          const prevSize = prevVoxelSize[i];
+          if (size < targetSize && size ) {
+            return true;
           }
         }
-        return true;
+        return false;
       };
 
       /**
@@ -444,15 +445,23 @@ export class SliceViewBase<Source extends SliceViewChunkSource,
 
       scaleIndex = numSources - 1;
       let prevVoxelSize: vec3|undefined;
+      type PotentialSource = {
+        "transformedSource": TransformedSource<Source>,
+        "sourceScaleIndex": number
+      };
+      const potentialSources: PotentialSource[] = [];
       while (true) {
         const transformedSource = pickBestAlternativeSource(zAxis, transformedSources[scaleIndex]);
         if (prevVoxelSize !== undefined &&
             !improvesOnPrevVoxelSize(transformedSource.voxelSize, prevVoxelSize)) {
           break;
         }
-        if (meetsLowResTarget(transformedSource.voxelSize)) {
-          addVisibleSource(transformedSource, (scaleIndex + 1) / numSources);
-        }
+        // if (meetsLowResTarget(transformedSource.voxelSize)) {
+          // addVisibleSource(transformedSource, (scaleIndex + 1) / numSources);
+        const sourceScaleIndex = (scaleIndex + 1) / numSources;
+          // potentialSources.push((transformedSource, (scaleIndex + 1) / numSources));
+        potentialSources.push({transformedSource, sourceScaleIndex});
+        // }
 
         if (scaleIndex === 0 || !canImproveOnVoxelSize(transformedSource.voxelSize)) {
           break;
@@ -460,6 +469,15 @@ export class SliceViewBase<Source extends SliceViewChunkSource,
         prevVoxelSize = transformedSource.voxelSize;
         --scaleIndex;
       }
+      
+      // Traverse potential sources from high-res to low, filtering out
+      // those that do not meet low res target
+      prevVoxelSize = undefined;
+      for (const potentialSource in potentialSources) {
+        const {transformedSource, sourceScaleIndex} = potentialSource;
+
+      }
+      
       // Reverse visibleSources list since we added sources from coarsest to finest resolution, but
       // we want them ordered from finest to coarsest.
       visibleSources.reverse();
