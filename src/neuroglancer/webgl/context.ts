@@ -38,8 +38,6 @@ export function initializeWebGL(canvas: HTMLCanvasElement) {
   let gl =
       <GL>canvas.getContext('webgl2', options);
   if (gl == null) {
-    alert(
-        'Your browser does not support WebGL2, or it is not enabled. Please use a browser that does, such as Chrome or Firefox.');
     throw new Error('WebGL not supported.');
   }
   gl.memoize = new Memoize<any, RefCounted>();
