@@ -15,7 +15,6 @@
  */
 
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
-import {StatusMessage} from 'neuroglancer/status';
 import {packColor, TrackableRGB} from 'neuroglancer/util/color';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {vec3} from 'neuroglancer/util/geom';
