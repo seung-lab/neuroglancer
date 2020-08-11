@@ -129,6 +129,9 @@ export class SegmentationRenderLayer extends RenderLayer {
         // No need to trigger redraw, since that will happen anyway.
       }
     });
+    this.registerDisposer(displayState.segmentStatedColors.changed.add(() => {
+      this.redrawNeeded.dispatch();
+    }));
   }
 
   getShaderKey() {

@@ -318,8 +318,6 @@ export class SegmentSetWidget extends RefCounted {
           if (this.colorChangeEventsEnabled) {
             temp.tryParseString(segmentIDString, 10);
             // Disable signal to stop cycle of firing events
-            StatusMessage.showTemporaryMessage(
-                `New color set for ${segmentIDString}. Repainting may take a moment.`, 3000);
             this.colorChangeEventsEnabled = false;
             if (deletingColor) {
               colorWidget.element.classList.remove('stated-color');
