@@ -155,7 +155,7 @@ class GraphInfo {
   constructor(obj: any) {
     verifyObject(obj);
     this.chunkSize = verifyObjectProperty(
-        obj, 'chunk_size', x => parseFixedLengthArray(vec3.create(), x, verifyPositiveInt));
+        obj, 'bounding_box', x => parseFixedLengthArray(vec3.create(), x, verifyPositiveInt));
   }
 }
 
