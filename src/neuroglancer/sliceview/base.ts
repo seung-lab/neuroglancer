@@ -473,11 +473,16 @@ export class SliceViewBase<Source extends SliceViewChunkSource,
       // Traverse potential sources from high-res to low, filtering out
       // those that do not meet low res target
       prevVoxelSize = undefined;
-      for (const potentialSource in potentialSources) {
+      for (const potentialSource of potentialSources) {
         const {transformedSource, sourceScaleIndex} = potentialSource;
-
+        if (prevVoxelSize !== undefined &&
+            !meetsLowResTarget(transformedSource.voxelSize, prevVoxelSize)) {
+          break;
+        }
+        addVisibleSource(transformedSource, sourceScaleIndex);
+        prevVoxelSize = transformedSource.voxelSize;
       }
-      
+
       // Reverse visibleSources list since we added sources from coarsest to finest resolution, but
       // we want them ordered from finest to coarsest.
       visibleSources.reverse();
