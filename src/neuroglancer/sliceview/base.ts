@@ -410,16 +410,22 @@ export class SliceViewBase<Source extends SliceViewChunkSource,
         return false;
       };
 
-      const meetsLowResTarget = (voxelSize: vec3, prevVoxelSize: vec3) => {
+      const meetsLowResTarget = (voxelSize: vec3, prevVoxelSize: vec3|undefined) => {
         if (renderScaleLowResTarget === 0) {
           return true;
         }
         const targetSize = pixelSize * renderScaleLowResTarget;
         for (let i = 0; i < 3; ++i) {
           const size = voxelSize[i];
-          const prevSize = prevVoxelSize[i];
-          if (size < targetSize && size ) {
-            return true;
+          if (size < targetSize) {
+            if (prevVoxelSize) {
+              const prevSize = prevVoxelSize[i];
+              if (size > 1.01 * prevSize) {
+                return true;
+              }
+            } else {
+              return true;
+            }
           }
         }
         return false;
@@ -456,12 +462,8 @@ export class SliceViewBase<Source extends SliceViewChunkSource,
             !improvesOnPrevVoxelSize(transformedSource.voxelSize, prevVoxelSize)) {
           break;
         }
-        // if (meetsLowResTarget(transformedSource.voxelSize)) {
-          // addVisibleSource(transformedSource, (scaleIndex + 1) / numSources);
         const sourceScaleIndex = (scaleIndex + 1) / numSources;
-          // potentialSources.push((transformedSource, (scaleIndex + 1) / numSources));
         potentialSources.push({transformedSource, sourceScaleIndex});
-        // }
 
         if (scaleIndex === 0 || !canImproveOnVoxelSize(transformedSource.voxelSize)) {
           break;
@@ -469,23 +471,22 @@ export class SliceViewBase<Source extends SliceViewChunkSource,
         prevVoxelSize = transformedSource.voxelSize;
         --scaleIndex;
       }
+
+      // Reverse visibleSources list since we added sources from coarsest to finest resolution, but
+      // we want them ordered from finest to coarsest.
+      potentialSources.reverse();
       
       // Traverse potential sources from high-res to low, filtering out
       // those that do not meet low res target
       prevVoxelSize = undefined;
       for (const potentialSource of potentialSources) {
         const {transformedSource, sourceScaleIndex} = potentialSource;
-        if (prevVoxelSize !== undefined &&
-            !meetsLowResTarget(transformedSource.voxelSize, prevVoxelSize)) {
+        if (!meetsLowResTarget(transformedSource.voxelSize, prevVoxelSize)) {
           break;
         }
         addVisibleSource(transformedSource, sourceScaleIndex);
         prevVoxelSize = transformedSource.voxelSize;
       }
-
-      // Reverse visibleSources list since we added sources from coarsest to finest resolution, but
-      // we want them ordered from finest to coarsest.
-      visibleSources.reverse();
     }
   }
 

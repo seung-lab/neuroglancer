@@ -130,7 +130,10 @@ export class RenderScaleWidget extends RefCounted {
           }
           this.hoverTarget.value = undefined;
           this.target.value *= 2 ** Math.sign(deltaY);
-          this.lowResTarget.value *= 2 ** Math.sign(deltaY);
+          if (this.target.value >= this.lowResTarget.value) {
+            this.lowResTarget.value = 0;
+          }
+          // this.lowResTarget.value *= 2 ** Math.sign(deltaY);
           // const newTarget = this.target.value * (2 ** Math.sign(deltaY));
           // this.target.value = newTarget;
           // if (newTarget >= this.lowTarget.value) {
@@ -311,7 +314,7 @@ export class RenderScaleWidget extends RefCounted {
 
     {
       const value = lowResTargetValue * 2;
-      ctx.fillStyle = '#fff';
+      ctx.fillStyle = '#f00';
       const startOffset = binToCanvasX(getRenderScaleHistogramOffset(value));
       const lineWidth = 1;
       ctx.fillRect(Math.floor(startOffset), 0, lineWidth, height);
