@@ -30,14 +30,15 @@ import {decodeRawChunk} from 'neuroglancer/sliceview/backend_chunk_decoders/raw'
 import {ChunkedGraphChunk, ChunkedGraphChunkSource, decodeSupervoxelArray} from 'neuroglancer/sliceview/chunked_graph/backend';
 import {VolumeChunk, VolumeChunkSource} from 'neuroglancer/sliceview/volume/backend';
 import {fetchHttpByteRange} from 'neuroglancer/util/byte_range_http_requests';
-import {CancellationToken} from 'neuroglancer/util/cancellation';
+import {CancellationToken, uncancelableToken} from 'neuroglancer/util/cancellation';
 import {Borrowed} from 'neuroglancer/util/disposable';
 import {convertEndian32, Endianness} from 'neuroglancer/util/endian';
 import {murmurHash3_x86_128Hash64Bits} from 'neuroglancer/util/hash';
 import {responseArrayBuffer, responseJson} from 'neuroglancer/util/http_request';
 import {stableStringify} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
-import {registerSharedObject} from 'neuroglancer/worker_rpc';
+import {registerRPC, registerSharedObject} from 'neuroglancer/worker_rpc';
+import {GRAPHENE_MANIFEST_REFRESH} from 'neuroglancer/datasource/graphene/base';
 
 const DracoLoader = require('dracoloader');
 
@@ -384,3 +385,10 @@ export class GrapheneSkeletonSource extends
     decodeSkeletonChunk(chunk, response, parameters.metadata.vertexAttributes);
   }
 }
+
+registerRPC(GRAPHENE_MANIFEST_REFRESH, function(x) {
+  let obj = <GrapheneMeshSource>this.get(x['id']);
+  let manifestChunk = obj.getChunk(Uint64.parseString(x['segment']));
+  obj.download(manifestChunk, uncancelableToken);
+  manifestChunk.downloadSucceeded();
+});

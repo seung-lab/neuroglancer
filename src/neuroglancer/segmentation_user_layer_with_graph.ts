@@ -38,6 +38,7 @@ import {vec3} from 'neuroglancer/util/geom';
 import {parseArray, verifyObjectProperty} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {NullarySignal} from './util/signal';
+import {GRAPHENE_MANIFEST_REFRESH} from 'neuroglancer/datasource/graphene/base';
 
 // Already defined in segmentation_user_layer.ts
 const EQUIVALENCES_JSON_KEY = 'equivalences';
@@ -309,6 +310,10 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
               5000);
           break;
         }
+        case 'reload-manifest': {
+          this.reloadManifest();
+          break;
+        }        
         default:
           super.handleAction(action);
           break;
@@ -356,6 +361,17 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
         }
       }
     }
+
+    reloadManifest() {
+      let {segmentSelectionState} = this.displayState;
+      if (segmentSelectionState.hasSelectedSegment) {
+        let segment = segmentSelectionState.selectedSegment;
+        let meshSource = this.meshLayer!.source;
+        meshSource.rpc!.invoke(
+          GRAPHENE_MANIFEST_REFRESH,
+          {'id': meshSource.rpcId, 'segment': segment.toString()});
+      }
+    }    
 
     safeToSubmit(action: string, callback: Function) {
       if (this.displayState.timestamp.value !== '') {
