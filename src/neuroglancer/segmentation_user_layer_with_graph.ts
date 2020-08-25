@@ -310,7 +310,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
               5000);
           break;
         }
-        case 'reload-manifest': {
+        case 'refresh-mesh': {
           this.reloadManifest();
           break;
         }         
