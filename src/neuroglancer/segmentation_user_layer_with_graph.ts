@@ -366,12 +366,15 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
       let {segmentSelectionState} = this.displayState;
       if (segmentSelectionState.hasSelectedSegment) {
         let segment = segmentSelectionState.selectedSegment;
-        let meshSource = this.meshLayer!.source;
-        meshSource.rpc!.invoke(
-          GRAPHENE_MANIFEST_REFRESH,
-          {'id': meshSource.rpcId, 'segment': segment.toString()});
+        let {rootSegments} = this.displayState;
+        if (rootSegments.has(segment)) {
+          let meshSource = this.meshLayer!.source;
+          meshSource.rpc!.invoke(
+            GRAPHENE_MANIFEST_REFRESH,
+            {'id': meshSource.rpcId, 'segment': segment.toString()});
+        }
       }
-    }    
+    }
 
     safeToSubmit(action: string, callback: Function) {
       if (this.displayState.timestamp.value !== '') {
