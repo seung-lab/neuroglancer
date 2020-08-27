@@ -256,7 +256,7 @@ export class ChunkedGraphLayer extends GenericSliceViewRenderLayer {
     status.setText(options.initialMessage);
     const dispose = status.dispose.bind(status);
     let response = await promise;
-    if (!(response instanceof Response)) {
+    if (response !== undefined && !(response instanceof Response)) {
       response = new Response(response);
     }
     if (response.ok) {
