@@ -26,7 +26,6 @@ const generateWhatsNew = (GHCommits: string[] = []) => {
 export const findWhatsNew = async (viewer: Viewer) => {
   const params = new URLSearchParams(window.location.search);
   const isPublic = (typeof<string|null>params.get('public')) === 'string';
-  console.log(isPublic);
   if (isPublic) {
     return;
   }
