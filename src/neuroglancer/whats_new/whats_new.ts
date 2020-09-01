@@ -24,6 +24,13 @@ const generateWhatsNew = (GHCommits: string[] = []) => {
 };
 
 export const findWhatsNew = async (viewer: Viewer) => {
+  const params = new URLSearchParams(window.location.search);
+  const isPublic = (typeof<string|null>params.get('public')) === 'string';
+  console.log(isPublic);
+  if (isPublic) {
+    return;
+  }
+
   // This google apps script is used by the seung-issues account to make an API request to Github.
   // the api request queries Github to get a list of commits.
   const url =
@@ -48,7 +55,7 @@ export const findWhatsNew = async (viewer: Viewer) => {
     localStorage.setItem('WNCommits', JSON.stringify(GHCommits));
     return new WhatsNewDialog(viewer, description);
   }
-  return false;
+  return;
 };
 
 export class WhatsNewDialog extends Overlay {
