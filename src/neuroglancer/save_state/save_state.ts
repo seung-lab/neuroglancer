@@ -184,9 +184,15 @@ export class SaveState extends RefCounted {
   }
   // Helper
   generateKey() {
+    const oldParams = new URLSearchParams(window.location.search);
+    const isPublic = (typeof<string|null>oldParams.get('public')) === 'string';
+
     this.key = getRandomHexString();
     const params = new URLSearchParams();
     params.set('local_id', this.key);
+    if (isPublic) {
+      params.set('public', '');
+    }
     history.pushState({}, '', `${window.location.origin}/?${params.toString()}`);
   }
   reassign(master: any) {
