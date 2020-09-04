@@ -376,7 +376,7 @@ export class GrapheneMeshSource extends
   protected minishardIndexSources: MinishardIndexSource[];
   async download(chunk: ManifestChunk, cancellationToken: CancellationToken) {
         const {parameters} = this;
-        let url = `${parameters.manifestUrl}/manifest/`;
+        let url = `${parameters.manifestUrl}/manifest`;
         let manifestUrl = `${url}/${chunk.objectId}:${parameters.lod}?verify=1&prepend_seg_ids=1`;
         if (chunk.verifyFragments !== undefined && chunk.verifyFragments == false) {
           manifestUrl = `${url}/${chunk.objectId}:${parameters.lod}?verify=0`;

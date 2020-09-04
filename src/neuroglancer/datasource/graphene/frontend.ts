@@ -42,12 +42,6 @@ class GrapheneChunkedGraphChunkSource extends
 class GrapheneMeshSource extends
 (WithParameters(MeshSource, MeshSourceParameters)) {}
 
-// class GrapheneShardedMeshSource extends
-// (WithParameters(MeshSource, MeshSourceParameters)) {}
-
-// class GrapheneMultiscaleMeshSource extends
-// (WithParameters(MultiscaleMeshSource, MultiscaleMeshSourceParameters)) {}
-
 class GrapheneSkeletonSource extends
 (WithParameters(SkeletonSource, SkeletonSourceParameters)) {
   get skeletonVertexCoordinatesInVoxels() {
@@ -117,7 +111,7 @@ class AppInfo {
   constructor(infoUrl: string, obj: any) {
     // .../1.0/... is the legacy link style
     // .../table/... is the current, version agnostic link style (for retrieving the info file)
-    const linkStyle = /^(https?:\/\/[^\/]+)\/segmentation\/(?:1\.0|table)\/([^\/]+)\/?$/;
+    const linkStyle = /^(https?:\/\/[.\w:\-\/]+)\/segmentation\/(?:1\.0|table)\/([^\/]+)\/?$/;
     let match = infoUrl.match(linkStyle);
     if (match === null) {
       throw Error(`Graph URL invalid: ${infoUrl}`);
