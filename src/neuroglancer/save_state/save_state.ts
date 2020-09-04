@@ -184,15 +184,18 @@ export class SaveState extends RefCounted {
   }
   // Helper
   generateKey() {
+    const whiteList = ['hide_news'];
     const oldParams = new URLSearchParams(window.location.search);
-    const isPublic = (typeof<string|null>oldParams.get('public')) === 'string';
+    const params = new URLSearchParams();
+    // preserve some parameters
+    for (var pair of oldParams.entries()) {
+      if (whiteList.includes(pair[0])) {
+        params.set(pair[0], pair[1]);
+      }
+    }
 
     this.key = getRandomHexString();
-    const params = new URLSearchParams();
     params.set('local_id', this.key);
-    if (isPublic) {
-      params.set('public', '');
-    }
     history.pushState({}, '', `${window.location.origin}/?${params.toString()}`);
   }
   reassign(master: any) {
