@@ -303,15 +303,95 @@ export function decodeDracoFragmentChunk(
       chunk, decodeTriangleVertexPositionsAndIndicesDraco(response, decoderModule));
 }
 
-@registerSharedObject() export class GrapheneMeshSource extends
-(WithParameters(MeshSource, MeshSourceParameters)) {
-  download(chunk: ManifestChunk, cancellationToken: CancellationToken) {
-    const {parameters} = this;
-    return cancellableFetchOk(
-               `${parameters.manifestUrl}/manifest/${chunk.objectId}:${parameters.lod}?verify=True`,
-               {}, responseJson, cancellationToken)
-        .then(response => decodeManifestChunk(chunk, response));
+async function getUnverifiedFragmentPromise(
+  chunk: FragmentChunk,
+  parameters: MeshSourceParameters,
+  minishardIndexSources: MinishardIndexSource[],
+  cancellationToken: CancellationToken) {
+  if (chunk.fragmentId && chunk.fragmentId.charAt(0) === '~'){
+    let parts = chunk.fragmentId.substr(1).split(':');
+    let objectId = Uint64.parseString(parts[0]);
+    let layer = Number(parts[1]);
+    let data: ArrayBuffer;
+    ({data} =
+      await getShardedData(minishardIndexSources[layer]!, chunk, objectId, cancellationToken));
+    return Promise.resolve(data);
   }
+  return cancellableFetchOk(
+    `${parameters.fragmentUrl}/dynamic/${chunk.fragmentId}`, {}, responseArrayBuffer,
+    cancellationToken);
+}
+
+
+function getVerifiedFragmentPromise(
+  chunk: FragmentChunk,
+  parameters: MeshSourceParameters,
+  cancellationToken: CancellationToken) {
+  if (chunk.fragmentId && chunk.fragmentId.charAt(0) === '~') {
+    let parts = chunk.fragmentId.substr(1).split(':');
+    let startOffset: Uint64|number, endOffset: Uint64|number;
+    startOffset = Number(parts[1]);
+    endOffset = startOffset+Number(parts[2]);
+    return fetchHttpByteRange(
+      `${parameters.fragmentUrl}/initial/${parts[0]}`,
+      startOffset,
+      endOffset,
+      cancellationToken
+    );
+  }
+  return cancellableFetchOk(
+    `${parameters.fragmentUrl}/dynamic/${chunk.fragmentId}`, {}, responseArrayBuffer,
+    cancellationToken);
+}
+
+
+function getFragmentDownloadPromise(
+  chunk: FragmentChunk,
+  parameters: MeshSourceParameters,
+  minishardIndexSources: MinishardIndexSource[],
+  cancellationToken: CancellationToken
+) {
+  let fragmentDownloadPromise;
+  if (parameters.sharding){
+    if (chunk.verifyFragment !== undefined && !chunk.verifyFragment) {
+      // Download shard fragments without verification
+      fragmentDownloadPromise =
+        getUnverifiedFragmentPromise(chunk, parameters, minishardIndexSources, cancellationToken);
+    }
+    else {
+      // Download shard fragments with verification (response contains size and offset)
+      fragmentDownloadPromise = getVerifiedFragmentPromise(chunk, parameters, cancellationToken);
+    }
+  } else {
+    fragmentDownloadPromise = cancellableFetchOk(
+      `${parameters.fragmentUrl}/${chunk.fragmentId}`, {}, responseArrayBuffer,
+      cancellationToken);
+  }
+  return fragmentDownloadPromise;
+}
+
+@registerSharedObject() //
+export class GrapheneMeshSource extends
+(WithParameters(MeshSource, MeshSourceParameters)) {
+  protected minishardIndexSources: MinishardIndexSource[];
+  async download(chunk: ManifestChunk, cancellationToken: CancellationToken) {
+        const {parameters} = this;
+        let url = `${parameters.manifestUrl}/manifest`;
+        let manifestUrl = `${url}/${chunk.objectId}:${parameters.lod}?verify=1&prepend_seg_ids=1`;
+        if (chunk.verifyFragments !== undefined && chunk.verifyFragments == false) {
+          manifestUrl = `${url}/${chunk.objectId}:${parameters.lod}?verify=0`;
+          this.minishardIndexSources = getGrapheneMinishardIndexDataSources(
+            this.chunkManager, {url: parameters.fragmentUrl, sharding: parameters.sharding})!;
+        }
+        await cancellableFetchOk(manifestUrl, {}, responseJson, cancellationToken)
+            .then(response => decodeManifestChunk(chunk, response));
+      }
+
+  async downloadFragment(chunk: FragmentChunk, cancellationToken: CancellationToken) {
+    const {parameters, minishardIndexSources} = this;
+    const fragmentDownloadPromise = getFragmentDownloadPromise(
+      chunk, parameters, minishardIndexSources, cancellationToken
+    );
 
     const dracoModulePromise = DracoLoader.default;
     const readyToDecode = Promise.all([fragmentDownloadPromise, dracoModulePromise]);
