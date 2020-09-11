@@ -19,7 +19,6 @@ import {authFetch} from 'neuroglancer/authentication/frontend.ts';
 import {ChunkManager, WithParameters} from 'neuroglancer/chunk_manager/frontend';
 import {DataSource} from 'neuroglancer/datasource';
 import {ChunkedGraphSourceParameters, DataEncoding, MeshSourceParameters, MultiscaleMeshMetadata, PYCG_APP_VERSION, ShardingHashFunction, ShardingParameters, SkeletonMetadata, SkeletonSourceParameters, VolumeChunkEncoding, VolumeChunkSourceParameters} from 'neuroglancer/datasource/graphene/base';
-import {VertexPositionFormat} from 'neuroglancer/mesh/base';
 import {MeshSource} from 'neuroglancer/mesh/frontend';
 import {VertexAttributeInfo} from 'neuroglancer/skeleton/base';
 import {SkeletonSource} from 'neuroglancer/skeleton/frontend';
@@ -203,7 +202,6 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
         verifyMesh: true
       };
       return getMeshSource(this.chunkManager, parameters);
-      // return getShardedMeshSource(this.chunkManager, parameters);
     }
     return null;
   }
@@ -415,16 +413,6 @@ async function getMeshSource(chunkManager: ChunkManager, parameters: MeshSourceP
   if (metadata === undefined) {
     return getShardedMeshSource(chunkManager, parameters);
   }
-  let vertexPositionFormat: VertexPositionFormat;
-  const {vertexQuantizationBits} = metadata;
-  if (vertexQuantizationBits === 10) {
-    vertexPositionFormat = VertexPositionFormat.uint10;
-  } else if (vertexQuantizationBits === 16) {
-    vertexPositionFormat = VertexPositionFormat.uint16;
-  } else {
-    throw new Error(`Invalid vertex quantization bits: ${vertexQuantizationBits}`);
-  }
-  console.log(vertexPositionFormat);
   parameters.sharding = metadata.sharding;
   return getShardedMeshSource(chunkManager, parameters);
 }

@@ -44,7 +44,7 @@ export type FragmentId = string;
 export class ManifestChunk extends Chunk {
   objectId = new Uint64();
   fragmentIds: FragmentId[]|null;
-  verifyFragments?: boolean|undefined
+  verifyFragments?: boolean|undefined;
   constructor() {
     super();
   }

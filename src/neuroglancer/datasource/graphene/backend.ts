@@ -378,10 +378,18 @@ export class GrapheneMeshSource extends
         const {parameters} = this;
         let url = `${parameters.manifestUrl}/manifest`;
         let manifestUrl = `${url}/${chunk.objectId}:${parameters.lod}?verify=1&prepend_seg_ids=1`;
-        if (chunk.verifyFragments !== undefined && chunk.verifyFragments == false) {
-          manifestUrl = `${url}/${chunk.objectId}:${parameters.lod}?verify=0`;
+        if (this.minishardIndexSources === undefined) {
           this.minishardIndexSources = getGrapheneMinishardIndexDataSources(
             this.chunkManager, {url: parameters.fragmentUrl, sharding: parameters.sharding})!;
+        }
+        if (
+          // parameters.sharding is a proxy (for now) for chunkedgraph format
+          // if undefined, chunkedgraph format is old else new
+          parameters.sharding !== undefined &&
+          chunk.verifyFragments !== undefined &&
+          chunk.verifyFragments == false
+        ) {
+          manifestUrl = `${url}/${chunk.objectId}:${parameters.lod}?verify=0`;
         }
         await cancellableFetchOk(manifestUrl, {}, responseJson, cancellationToken)
             .then(response => decodeManifestChunk(chunk, response));
