@@ -202,8 +202,8 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
 
                 // Have to wait for graph server initialization to fetch agglomerations
                 displayState.segmentEquivalences.clear();
-                if (displayState.newRootSegments !== undefined) {
-                  displayState.newRootSegments.clear();
+                if (displayState.rootSegmentsAfterEdit !== undefined) {
+                  displayState.rootSegmentsAfterEdit.clear();
                 }
                 verifyObjectProperty(specification, ROOT_SEGMENTS_JSON_KEY, y => {
                   if (y !== undefined) {
@@ -275,6 +275,9 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
           this.displayState.visibleSegments2D!.clear();
           this.displayState.visibleSegments3D.clear();
           this.displayState.segmentEquivalences.clear();
+          if (this.displayState.rootSegmentsAfterEdit !== undefined) {
+            this.displayState.rootSegmentsAfterEdit.clear();
+          }
           break;
         }
         case 'merge-selected': {
@@ -389,7 +392,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
     }
 
     mergeSelectSecond() {
-      const {segmentSelectionState, rootSegments, newRootSegments} = this.displayState;
+      const {segmentSelectionState, rootSegments, rootSegmentsAfterEdit} = this.displayState;
       if (segmentSelectionState.hasSelectedSegment) {
         const currentSegmentSelection: SegmentSelection = {
           segmentId: segmentSelectionState.rawSelectedSegment.clone(),
@@ -406,11 +409,11 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
           const cgl = this.chunkedGraphLayer;
           this.safeToSubmit('Merge', () => {
             cgl.mergeSegments(lastSegmentSelection, currentSegmentSelection).then((mergedRoot) => {
-              newRootSegments!.clear();
+              rootSegmentsAfterEdit!.clear();
               rootSegments.delete(lastSegmentSelection.rootId);
               rootSegments.delete(currentSegmentSelection.rootId);
               rootSegments.add(mergedRoot);
-              newRootSegments!.add(mergedRoot);
+              rootSegmentsAfterEdit!.add(mergedRoot);
             });
           });
         } else {
@@ -435,7 +438,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
     }
 
     splitSelectSecond() {
-      const {segmentSelectionState, rootSegments, newRootSegments} = this.displayState;
+      const {segmentSelectionState, rootSegments, rootSegmentsAfterEdit} = this.displayState;
       if (segmentSelectionState.hasSelectedSegment) {
         const currentSegmentSelection: SegmentSelection = {
           segmentId: segmentSelectionState.rawSelectedSegment.clone(),
@@ -457,12 +460,10 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
                     StatusMessage.showTemporaryMessage(`No split found.`, 3000);
                     return;
                   }
-                  newRootSegments!.clear();
+                  rootSegmentsAfterEdit!.clear();
                   rootSegments.delete(currentSegmentSelection.rootId);
-                  for (const splitRoot of splitRoots) {
-                    rootSegments.add(splitRoot);
-                    newRootSegments!.add(splitRoot);
-                  }
+                  rootSegments.add(splitRoots);
+                  rootSegmentsAfterEdit!.add(splitRoots);
                 });
           });
         } else {
@@ -503,6 +504,9 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
           this.displayState.visibleSegments2D!.clear();
           this.displayState.visibleSegments3D.clear();
           this.displayState.segmentEquivalences.clear();
+          if (this.displayState.rootSegmentsAfterEdit !== undefined) {
+            this.displayState.rootSegmentsAfterEdit.clear();
+          }
           StatusMessage.showTemporaryMessage(`Deselected all ${leafSegmentCount} segments.`, 3000);
         }
       } else if (added) {

@@ -80,6 +80,22 @@ export class ManifestChunk extends Chunk {
   toString() {
     return this.objectId.toString();
   }
+
+  extractFragmentKey(fragmentId: FragmentId) {
+    if (fragmentId.charAt(0) === '~') {
+      return this.extractGrapheneFragmentKey(fragmentId);
+    }
+    return {key:fragmentId, id: fragmentId}
+  }
+
+  extractGrapheneFragmentKey(fragmentId: FragmentId) {
+    // extract segment ID from fragment ID
+    // use it as key, the rest is information for reading the fragment
+    let parts = fragmentId.substr(1).split(/:(.+)/);
+    let key = parts[0];
+    fragmentId = parts[1];
+    return {key:key, id: fragmentId}
+  }
 }
 
 export interface RawMeshData {
@@ -125,11 +141,10 @@ export class FragmentChunk extends Chunk {
   initializeFragmentChunk(
     key: string, manifestChunk: ManifestChunk, fragmentId: FragmentId, verifyFragment?: boolean|undefined
   ) {
-    if (verifyFragment === undefined) verifyFragment = true;
-    this.verifyFragment = verifyFragment;
     super.initialize(key);
     this.manifestChunk = manifestChunk;
     this.fragmentId = fragmentId;
+    this.verifyFragment = verifyFragment;
   }
   freeSystemMemory() {
     this.manifestChunk = null;
@@ -369,7 +384,6 @@ export class MeshSource extends ChunkSource {
     const key = getObjectKey(objectId);
     let chunk = <ManifestChunk>this.chunks.get(key);
     if (chunk === undefined) {
-      if (verifyFragments === undefined) verifyFragments = true;
       chunk = this.getNewChunk_(ManifestChunk);
       chunk.initializeManifestChunk(key, objectId, verifyFragments);
       this.addChunk(chunk);
@@ -377,18 +391,15 @@ export class MeshSource extends ChunkSource {
     return chunk;
   }
 
-  getFragmentChunk(manifestChunk: ManifestChunk, fragmentId: FragmentId, verifyFragment?: boolean|undefined) {
-    let key = fragmentId;
-    if (fragmentId.charAt(0) === '~') {
-      // extract segment ID from fragment ID
-      // use it as key, the rest is information for reading the fragment
-      let parts = fragmentId.substr(1).split(/:(.+)/);
-      key = parts[0];
-      fragmentId = parts[1];
-    }
+  getFragmentChunk(manifestChunk: ManifestChunk, fragmentId: FragmentId) {
     let fragmentSource = this.fragmentSource;
+    let extractInfo = manifestChunk.extractFragmentKey(fragmentId);
+    let key = extractInfo.key;
+    fragmentId = extractInfo.id;
     let chunk = <FragmentChunk>fragmentSource.chunks.get(key);
     if (chunk === undefined) {
+      let verifyFragment = manifestChunk.verifyFragments;
+      // if not set explicitly, assume verify true
       if (verifyFragment === undefined) verifyFragment = true;
       chunk = fragmentSource.getNewChunk_(FragmentChunk);
       chunk.initializeFragmentChunk(key, manifestChunk, fragmentId, verifyFragment);
@@ -459,21 +470,22 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart implemen
     const basePriority = getBasePriority(visibility);
     const {source, chunkManager} = this;
     forEachVisibleSegment3D(this, objectId => {
-      // if objectId exists in newRootSegments, do not verify if mesh fragments exist
-      let manifestChunk = source.getChunk(objectId, !this.newRootSegments!.has(objectId));
+      // if objectId exists in rootSegmentsAfterEdit, do not verify mesh fragments existence
+      const manifestChunk = source.getChunk(objectId, !this.rootSegmentsAfterEdit!.has(objectId));
+      console.log(objectId.toString(), !this.rootSegmentsAfterEdit!.has(objectId), manifestChunk.verifyFragments);
       chunkManager.requestChunk(
           manifestChunk, priorityTier, basePriority + MESH_OBJECT_MANIFEST_CHUNK_PRIORITY);
       const state = manifestChunk.state;
       if (state === ChunkState.SYSTEM_MEMORY_WORKER || state === ChunkState.SYSTEM_MEMORY ||
         state === ChunkState.GPU_MEMORY) {
       for (let fragmentId of manifestChunk.fragmentIds!) {
-        let fragmentChunk = source.getFragmentChunk(manifestChunk, fragmentId, !this.newRootSegments!.has(objectId));
+        let fragmentChunk = source.getFragmentChunk(manifestChunk, fragmentId);
         chunkManager.requestChunk(
             fragmentChunk, priorityTier, basePriority + MESH_OBJECT_FRAGMENT_CHUNK_PRIORITY);
         }
       }
-      this.newRootSegments!.delete(objectId);
     });
+    this.rootSegmentsAfterEdit!.clear();
   }
 }
 

@@ -386,8 +386,7 @@ export class GrapheneMeshSource extends
           // parameters.sharding is a proxy (for now) for chunkedgraph format
           // if undefined, chunkedgraph format is old else new
           parameters.sharding !== undefined &&
-          chunk.verifyFragments !== undefined &&
-          chunk.verifyFragments == false
+          chunk.verifyFragments === false
         ) {
           manifestUrl = `${url}/${chunk.objectId}:${parameters.lod}?verify=0`;
         }
