@@ -472,7 +472,6 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart implemen
     forEachVisibleSegment3D(this, objectId => {
       // if objectId exists in rootSegmentsAfterEdit, do not verify mesh fragments existence
       const manifestChunk = source.getChunk(objectId, !this.rootSegmentsAfterEdit!.has(objectId));
-      console.log(objectId.toString(), !this.rootSegmentsAfterEdit!.has(objectId), manifestChunk.verifyFragments);
       chunkManager.requestChunk(
           manifestChunk, priorityTier, basePriority + MESH_OBJECT_MANIFEST_CHUNK_PRIORITY);
       const state = manifestChunk.state;
