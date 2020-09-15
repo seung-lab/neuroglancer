@@ -32,6 +32,7 @@ import {Uint64} from 'neuroglancer/util/uint64';
 import {zorder3LessThan} from 'neuroglancer/util/zorder';
 import {getBasePriority, getPriorityTier} from 'neuroglancer/visibility_priority/backend';
 import {registerSharedObject, RPC} from 'neuroglancer/worker_rpc';
+import {GRAPHENE_MANIFEST_SHARDED} from 'neuroglancer/datasource/graphene/base';
 
 const MESH_OBJECT_MANIFEST_CHUNK_PRIORITY = 100;
 const MESH_OBJECT_FRAGMENT_CHUNK_PRIORITY = 50;
@@ -44,13 +45,15 @@ export type FragmentId = string;
 export class ManifestChunk extends Chunk {
   objectId = new Uint64();
   fragmentIds: FragmentId[]|null;
+  manifestType: string|undefined;
   verifyFragments?: boolean|undefined;
   constructor() {
     super();
   }
   // We can't save a reference to objectId, because it may be a temporary
   // object.
-  initializeManifestChunk(key: string, objectId: Uint64, verifyFragments?: boolean|undefined) {
+  initializeManifestChunk(key: string, objectId: Uint64, verifyFragments?: boolean|undefined
+  ) {
     // default behaviour for manifest is to verify fragments exist
     super.initialize(key);
     this.objectId.assign(objectId);
@@ -82,7 +85,7 @@ export class ManifestChunk extends Chunk {
   }
 
   extractFragmentKey(fragmentId: FragmentId) {
-    if (fragmentId.charAt(0) === '~') {
+    if (this.manifestType === GRAPHENE_MANIFEST_SHARDED) {
       return this.extractGrapheneFragmentKey(fragmentId);
     }
     return {key:fragmentId, id: fragmentId}
@@ -91,6 +94,7 @@ export class ManifestChunk extends Chunk {
   extractGrapheneFragmentKey(fragmentId: FragmentId) {
     // extract segment ID from fragment ID
     // use it as key, the rest is information for reading the fragment
+    // ignores tilde at 0 index
     let parts = fragmentId.substr(1).split(/:(.+)/);
     let key = parts[0];
     fragmentId = parts[1];

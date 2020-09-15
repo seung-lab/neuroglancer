@@ -37,7 +37,7 @@ import {responseArrayBuffer, responseJson} from 'neuroglancer/util/http_request'
 import {stableStringify} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {registerPromiseRPC, registerSharedObject, RPCPromise} from 'neuroglancer/worker_rpc';
-import {GRAPHENE_MANIFEST_REFRESH_PROMISE} from 'neuroglancer/datasource/graphene/base';
+import {GRAPHENE_MANIFEST_REFRESH_PROMISE, GRAPHENE_MANIFEST_SHARDED} from 'neuroglancer/datasource/graphene/base';
 
 const DracoLoader = require('dracoloader');
 
@@ -377,17 +377,18 @@ export class GrapheneMeshSource extends
         const {parameters} = this;
         let url = `${parameters.manifestUrl}/manifest`;
         let manifestUrl = `${url}/${chunk.objectId}:${parameters.lod}?verify=1&prepend_seg_ids=1`;
-        if (this.minishardIndexSources === undefined) {
-          this.minishardIndexSources = getGrapheneMinishardIndexDataSources(
-            this.chunkManager, {url: parameters.fragmentUrl, sharding: parameters.sharding})!;
-        }
-        if (
-          // parameters.sharding is a proxy (for now) for chunkedgraph format
-          // if undefined, chunkedgraph format is old else new
-          parameters.sharding !== undefined &&
-          chunk.verifyFragments === false
-        ) {
-          manifestUrl = `${url}/${chunk.objectId}:${parameters.lod}?verify=0&prepend_seg_ids=1`;
+
+        // parameters.sharding is a proxy for mesh format
+        // if undefined, mesh format is old else new
+        if (parameters.sharding !== undefined) {
+          chunk.manifestType = GRAPHENE_MANIFEST_SHARDED;
+          if (this.minishardIndexSources === undefined) {
+            this.minishardIndexSources = getGrapheneMinishardIndexDataSources(
+              this.chunkManager, {url: parameters.fragmentUrl, sharding: parameters.sharding})!;
+          }
+          if (chunk.verifyFragments === false) {
+            manifestUrl = `${url}/${chunk.objectId}:${parameters.lod}?verify=0&prepend_seg_ids=1`;
+          }
         }
         await cancellableFetchOk(manifestUrl, {}, responseJson, cancellationToken)
             .then(response => decodeManifestChunk(chunk, response));
