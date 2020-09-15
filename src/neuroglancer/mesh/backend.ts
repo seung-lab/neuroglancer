@@ -32,6 +32,7 @@ import {Uint64} from 'neuroglancer/util/uint64';
 import {zorder3LessThan} from 'neuroglancer/util/zorder';
 import {getBasePriority, getPriorityTier} from 'neuroglancer/visibility_priority/backend';
 import {registerSharedObject, RPC} from 'neuroglancer/worker_rpc';
+import {GRAPHENE_MANIFEST_SHARDED} from 'neuroglancer/datasource/graphene/base';
 
 const MESH_OBJECT_MANIFEST_CHUNK_PRIORITY = 100;
 const MESH_OBJECT_FRAGMENT_CHUNK_PRIORITY = 50;
@@ -44,15 +45,19 @@ export type FragmentId = string;
 export class ManifestChunk extends Chunk {
   objectId = new Uint64();
   fragmentIds: FragmentId[]|null;
-
+  manifestType: string|undefined;
+  verifyFragments?: boolean|undefined;
   constructor() {
     super();
   }
   // We can't save a reference to objectId, because it may be a temporary
   // object.
-  initializeManifestChunk(key: string, objectId: Uint64) {
+  initializeManifestChunk(key: string, objectId: Uint64, verifyFragments?: boolean|undefined
+  ) {
+    // default behaviour for manifest is to verify fragments exist
     super.initialize(key);
     this.objectId.assign(objectId);
+    this.verifyFragments = verifyFragments;
   }
 
   freeSystemMemory() {
@@ -77,6 +82,23 @@ export class ManifestChunk extends Chunk {
 
   toString() {
     return this.objectId.toString();
+  }
+
+  extractFragmentKey(fragmentId: FragmentId) {
+    if (this.manifestType === GRAPHENE_MANIFEST_SHARDED) {
+      return this.extractGrapheneFragmentKey(fragmentId);
+    }
+    return {key:fragmentId, id: fragmentId}
+  }
+
+  extractGrapheneFragmentKey(fragmentId: FragmentId) {
+    // extract segment ID from fragment ID
+    // use it as key, the rest is information for reading the fragment
+    // ignores tilde at 0 index
+    let parts = fragmentId.substr(1).split(/:(.+)/);
+    let key = parts[0];
+    fragmentId = parts[1];
+    return {key:key, id: fragmentId}
   }
 }
 
@@ -116,13 +138,17 @@ export class FragmentChunk extends Chunk {
   manifestChunk: ManifestChunk|null = null;
   fragmentId: FragmentId|null = null;
   meshData: EncodedMeshData|null = null;
+  verifyFragment?: boolean|undefined;
   constructor() {
     super();
   }
-  initializeFragmentChunk(key: string, manifestChunk: ManifestChunk, fragmentId: FragmentId) {
+  initializeFragmentChunk(
+    key: string, manifestChunk: ManifestChunk, fragmentId: FragmentId, verifyFragment?: boolean|undefined
+  ) {
     super.initialize(key);
     this.manifestChunk = manifestChunk;
     this.fragmentId = fragmentId;
+    this.verifyFragment = verifyFragment;
   }
   freeSystemMemory() {
     this.manifestChunk = null;
@@ -358,24 +384,29 @@ export class MeshSource extends ChunkSource {
     fragmentSource.meshSource = this;
   }
 
-  getChunk(objectId: Uint64) {
+  getChunk(objectId: Uint64, verifyFragments?: boolean|undefined) {
     const key = getObjectKey(objectId);
     let chunk = <ManifestChunk>this.chunks.get(key);
     if (chunk === undefined) {
       chunk = this.getNewChunk_(ManifestChunk);
-      chunk.initializeManifestChunk(key, objectId);
+      chunk.initializeManifestChunk(key, objectId, verifyFragments);
       this.addChunk(chunk);
     }
     return chunk;
   }
 
   getFragmentChunk(manifestChunk: ManifestChunk, fragmentId: FragmentId) {
-    let key = `${manifestChunk.key}/${fragmentId}`;
     let fragmentSource = this.fragmentSource;
+    let extractInfo = manifestChunk.extractFragmentKey(fragmentId);
+    let key = extractInfo.key;
+    fragmentId = extractInfo.id;
     let chunk = <FragmentChunk>fragmentSource.chunks.get(key);
     if (chunk === undefined) {
+      let verifyFragment = manifestChunk.verifyFragments;
+      // if not set explicitly, assume verify true
+      if (verifyFragment === undefined) verifyFragment = true;
       chunk = fragmentSource.getNewChunk_(FragmentChunk);
-      chunk.initializeFragmentChunk(key, manifestChunk, fragmentId);
+      chunk.initializeFragmentChunk(key, manifestChunk, fragmentId, verifyFragment);
       fragmentSource.addChunk(chunk);
     }
     return chunk;
@@ -443,7 +474,8 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart implemen
     const basePriority = getBasePriority(visibility);
     const {source, chunkManager} = this;
     forEachVisibleSegment3D(this, objectId => {
-      let manifestChunk = source.getChunk(objectId);
+      // if objectId exists in rootSegmentsAfterEdit, do not verify mesh fragments existence
+      const manifestChunk = source.getChunk(objectId, !this.rootSegmentsAfterEdit!.has(objectId));
       chunkManager.requestChunk(
           manifestChunk, priorityTier, basePriority + MESH_OBJECT_MANIFEST_CHUNK_PRIORITY);
       const state = manifestChunk.state;
@@ -456,6 +488,7 @@ export class MeshLayer extends SegmentationLayerSharedObjectCounterpart implemen
         }
       }
     });
+    this.rootSegmentsAfterEdit!.clear();
   }
 }
 
