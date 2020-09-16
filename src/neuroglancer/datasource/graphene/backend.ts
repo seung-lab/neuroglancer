@@ -198,7 +198,7 @@ async function getShardedData(
   const parts = (chunk as FragmentChunk).fragmentId!.split(':');
   const getPriority = () => ({priorityTier: chunk.priorityTier, priority: chunk.priority});
   const minishardIndex =
-      await minishardIndexSource.getData(`${parts[2]}:${parts[3]}`, getPriority, cancellationToken);
+      await minishardIndexSource.getData(`${parts[3]}:${parts[4]}`, getPriority, cancellationToken);
   const {startOffset, endOffset} = findMinishardEntry(minishardIndex, key);
   let data =
       await fetchHttpByteRange(minishardIndex.shardUrl, startOffset, endOffset, cancellationToken);
@@ -310,7 +310,7 @@ async function getUnverifiedFragmentPromise(
   cancellationToken: CancellationToken) {
   if (chunk.fragmentId && chunk.fragmentId.charAt(0) === '~'){
     let objectId = Uint64.parseString(chunk.key!);
-    let layer = Number(chunk.fragmentId.substr(1).split(':')[0]);
+    let layer = Number(chunk.fragmentId.substr(1).split(':')[1]);
     let data: ArrayBuffer;
     ({data} =
       await getShardedData(minishardIndexSources[layer]!, chunk, objectId, cancellationToken));
@@ -377,6 +377,7 @@ export class GrapheneMeshSource extends
         const {parameters} = this;
         let url = `${parameters.manifestUrl}/manifest`;
         let manifestUrl = `${url}/${chunk.objectId}:${parameters.lod}?verify=1&prepend_seg_ids=1`;
+        chunk.verifyFragments = false;
 
         // parameters.sharding is a proxy for mesh format
         // if undefined, mesh format is old else new
