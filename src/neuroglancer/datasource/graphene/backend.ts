@@ -377,7 +377,6 @@ export class GrapheneMeshSource extends
         const {parameters} = this;
         let url = `${parameters.manifestUrl}/manifest`;
         let manifestUrl = `${url}/${chunk.objectId}:${parameters.lod}?verify=1&prepend_seg_ids=1`;
-        chunk.verifyFragments = false;
 
         // parameters.sharding is a proxy for mesh format
         // if undefined, mesh format is old else new
