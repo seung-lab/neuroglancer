@@ -415,7 +415,6 @@ export class GrapheneMeshSource extends
         },
         error => {
           if (error instanceof HttpError && error.status == 404) {
-            console.log(error, error.status);
             chunk.source!.removeChunk(chunk);
           }
           Promise.reject(error);
