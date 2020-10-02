@@ -16,7 +16,7 @@
 
 import {Chunk, ChunkSource} from 'neuroglancer/chunk_manager/backend';
 import {ChunkPriorityTier, ChunkState} from 'neuroglancer/chunk_manager/base';
-import {EncodedMeshData, EncodedVertexPositions, FRAGMENT_SOURCE_RPC_ID, MESH_LAYER_RPC_ID, MeshVertexIndices, MULTISCALE_FRAGMENT_SOURCE_RPC_ID, MULTISCALE_MESH_LAYER_RPC_ID, MultiscaleFragmentFormat, VertexPositionFormat} from 'neuroglancer/mesh/base';
+import {EncodedMeshData, EncodedVertexPositions, FRAGMENT_SOURCE_RPC_ID, MESH_LAYER_RPC_ID, MeshVertexIndices, MULTISCALE_FRAGMENT_SOURCE_RPC_ID, MULTISCALE_MESH_LAYER_RPC_ID, MultiscaleFragmentFormat, VertexPositionFormat, FragmentId} from 'neuroglancer/mesh/base';
 import {getDesiredMultiscaleMeshChunks, MultiscaleMeshManifest} from 'neuroglancer/mesh/multiscale';
 import {computeTriangleStrips} from 'neuroglancer/mesh/triangle_strips';
 import {PerspectiveViewRenderLayer, PerspectiveViewState} from 'neuroglancer/perspective_view/backend';
@@ -38,8 +38,6 @@ const MESH_OBJECT_MANIFEST_CHUNK_PRIORITY = 100;
 const MESH_OBJECT_FRAGMENT_CHUNK_PRIORITY = 50;
 
 const CONVERT_TO_TRIANGLE_STRIPS = false;
-
-export type FragmentId = string;
 
 // Chunk that contains the list of fragments that make up a single object.
 export class ManifestChunk extends Chunk {
