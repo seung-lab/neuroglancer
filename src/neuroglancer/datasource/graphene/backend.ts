@@ -33,7 +33,7 @@ import {fetchHttpByteRange} from 'neuroglancer/util/byte_range_http_requests';
 import {CancellationToken} from 'neuroglancer/util/cancellation';
 import {Borrowed} from 'neuroglancer/util/disposable';
 import {convertEndian32, Endianness} from 'neuroglancer/util/endian';
-import {responseArrayBuffer, responseJson} from 'neuroglancer/util/http_request';
+import {HttpError, responseArrayBuffer, responseJson} from 'neuroglancer/util/http_request';
 import {stableStringify} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {registerPromiseRPC, registerSharedObject, RPCPromise} from 'neuroglancer/worker_rpc';
@@ -414,6 +414,10 @@ export class GrapheneMeshSource extends
           }
         },
         error => {
+          if (error instanceof HttpError && error.status == 404) {
+            console.log(error, error.status);
+            chunk.source!.removeChunk(chunk);
+          }
           Promise.reject(error);
         });
   }
