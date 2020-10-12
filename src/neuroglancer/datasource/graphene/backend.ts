@@ -445,7 +445,6 @@ export class GrapheneSkeletonSource extends
 registerPromiseRPC(GRAPHENE_MANIFEST_REFRESH_PROMISE, function(x, cancellationToken): RPCPromise<any> {
   let obj = <GrapheneMeshSource>this.get(x['rpcId']);
   let manifestChunk = obj.getChunk(Uint64.parseString(x['segment']));
-  manifestChunk.verifyFragments = false;
   return obj.download(manifestChunk, cancellationToken)
     .then(() => {
       manifestChunk.downloadSucceeded();
