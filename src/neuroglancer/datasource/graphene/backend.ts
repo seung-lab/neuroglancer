@@ -378,6 +378,10 @@ export class GrapheneMeshSource extends
         let url = `${parameters.manifestUrl}/manifest`;
         let manifestUrl = `${url}/${chunk.objectId}:${parameters.lod}?verify=1&prepend_seg_ids=1`;
 
+        // speculative manifest isn't working all the time
+        // race condition is the prime suspect so use verify=true
+        chunk.verifyFragments = true;
+
         // parameters.sharding is a proxy for mesh format
         // if undefined, mesh format is old else new
         if (parameters.sharding !== undefined) {
@@ -386,7 +390,7 @@ export class GrapheneMeshSource extends
             this.minishardIndexSources = getGrapheneMinishardIndexDataSources(
               this.chunkManager, {url: parameters.fragmentUrl, sharding: parameters.sharding})!;
           }
-          if (chunk.verifyFragments === false) {
+          if (!chunk.verifyFragments) {
             manifestUrl = `${url}/${chunk.objectId}:${parameters.lod}?verify=0&prepend_seg_ids=1`;
           }
         }
