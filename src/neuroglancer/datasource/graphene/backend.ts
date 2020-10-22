@@ -65,7 +65,7 @@ function getMinishardIndexDataSource(
       GenericSharedDataSource.get<string, DecodedMinishardIndex>(
           chunkManager, stableStringify({type: 'graphene:shardedDataSource', url, sharding}), {
             download: async function(
-              shardFileAndMiniShard: string, cancellationToken: CancellationToken) {
+                shardFileAndMiniShard: string, cancellationToken: CancellationToken) {
               const parts = shardFileAndMiniShard.split(':');
               const shardFile = parts[0];
               const miniShard: Uint64 = Uint64.parseString(parts[1]);

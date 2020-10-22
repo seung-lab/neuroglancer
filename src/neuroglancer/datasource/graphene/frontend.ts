@@ -322,8 +322,7 @@ function parseGrapheneShardingParameters(shardingData: any): Array<ShardingParam
   if (shardingData === undefined) return undefined;
   verifyObject(shardingData);
   let grapheneShardingParameters = new Array<ShardingParameters>();
-  for (const layer in shardingData)
-  {
+  for (const layer in shardingData) {
      let index = Number(layer);
      grapheneShardingParameters[index] = parseShardingParameters(shardingData[index])!;
   }
