@@ -226,10 +226,16 @@ export class SaveState extends RefCounted {
       }
     }
   }
+  /**
+   * The manager is responsible for keeping track of unique save states
+   */
   private getManager() {
     const managerRaw = localStorage[stateKey];
     return <string[]>JSON.parse(managerRaw || '[]');
   }
+  /**
+   * Registers a new state via ID into the manager
+   */
   private notifyManager() {
     if (storageAccessible() && this.key) {
       const manager = this.uniquePush(this.getManager(), this.key);
