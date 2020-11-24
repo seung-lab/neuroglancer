@@ -492,6 +492,26 @@ export class Viewer extends RefCounted implements ViewerState {
         this.uiControlVisibility.showAnnotationToolStatus, annotationToolStatus.element));
 
     {
+      const button = makeTextIconButton('⬅️', 'Undo');
+      this.registerEventListener(button, 'click', () => {
+        this.saver?.differ.rollback();
+      });
+      this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
+          this.uiControlVisibility.showEditStateButton, button));
+      topRow.appendChild(button);
+    }
+    
+    {
+      const button = makeTextIconButton('➡️', 'Redo');
+      this.registerEventListener(button, 'click', () => {
+        this.saver?.differ.rollforward();
+      });
+      this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
+          this.uiControlVisibility.showEditStateButton, button));
+      topRow.appendChild(button);
+    }
+
+    {
       const button = document.createElement('button');
       button.id = 'neuroglancer-saver-button';
       button.classList.add('ng-saver', 'neuroglancer-icon-button');
