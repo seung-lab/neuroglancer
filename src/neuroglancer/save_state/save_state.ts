@@ -3,6 +3,7 @@ import 'neuroglancer/save_state/save_state.css';
 import {debounce} from 'lodash';
 import {Overlay} from 'neuroglancer/overlay';
 import {dismissUnshareWarning, getSaveToAddressBar, getUnshareWarning} from 'neuroglancer/preferences/user_preferences';
+import {SaveDiff} from 'neuroglancer/save_state/save_diff';
 import {StatusMessage} from 'neuroglancer/status';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {getRandomHexString} from 'neuroglancer/util/random';
@@ -20,6 +21,7 @@ export class SaveState extends RefCounted {
   session_id = getRandomHexString();
   savedUrl?: string;
   supported = true;
+  differ: SaveDiff;
   constructor(public root: Trackable, public viewer: Viewer, updateDelayMilliseconds = 400) {
     super();
     const userDisabledSaver = getSaveToAddressBar().value;
@@ -43,6 +45,7 @@ export class SaveState extends RefCounted {
       this.registerDisposer(root.changed.add(throttledUpdate));
       this.registerDisposer(() => throttledUpdate.cancel());
       window.addEventListener('focus', (() => this.push()).bind(this));
+      this.differ = new SaveDiff(root);
     }
   }
   // Main Methods
@@ -70,7 +73,7 @@ export class SaveState extends RefCounted {
         source.history = [this.session_id];
       }
       const oldState = this.root.toJSON();
-      const stateChange = JSON.stringify(oldState) !== JSON.stringify(source.state);
+      const stateChange = this.differ.record(oldState, source.state);
 
       if (stateChange || clean) {
         source.state = oldState;
