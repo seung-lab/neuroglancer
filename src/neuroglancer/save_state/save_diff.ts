@@ -13,13 +13,16 @@ export class SaveDiff {
 
   constructor(public root: Trackable) {}
   public record(oldState: any, newState: any) {
-    if (!this.active) {
-      this.active = true;
-      return;
+    if (newState === undefined) {
+      return false;
     }
     const oldSerial = JSON.stringify(oldState);
     const newSerial = JSON.stringify(newState);
     const stateChange = oldSerial !== newSerial;
+    if (!this.active) {
+      this.active = true;
+      return stateChange;
+    }
     if (stateChange) {
       if (this.cursor < this.stack.length) {
         this.stack.splice(this.cursor);

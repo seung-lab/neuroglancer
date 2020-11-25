@@ -105,8 +105,8 @@ export class InputEventBindings extends DataPanelInputEventBindings {
 }
 
 const viewerUiControlOptionKeys: (keyof ViewerUIControlConfiguration)[] = [
-  'showHelpButton', 'showEditStateButton', 'showLayerPanel', 'showLocation',
-  'showAnnotationToolStatus', 'showJsonPostButton', 'showUserPreferencesButton',
+  'showHelpButton', 'showEditStateButton', 'showRedoButton', 'showUndoButton', 'showLayerPanel',
+  'showLocation', 'showAnnotationToolStatus', 'showJsonPostButton', 'showUserPreferencesButton',
   'showWhatsNewButton', 'showBugButton', 'showSaveButton', 'showHistoryButton'
 ];
 
@@ -116,6 +116,8 @@ const viewerOptionKeys: (keyof ViewerUIOptions)[] =
 export class ViewerUIControlConfiguration {
   showHelpButton = new TrackableBoolean(true);
   showEditStateButton = new TrackableBoolean(true);
+  showRedoButton = new TrackableBoolean(true);
+  showUndoButton = new TrackableBoolean(true);
   showJsonPostButton = new TrackableBoolean(true);
   showUserPreferencesButton = new TrackableBoolean(true);
   showBugButton = new TrackableBoolean(true);
@@ -150,6 +152,8 @@ interface ViewerUIOptions {
   showUIControls: boolean;
   showHelpButton: boolean;
   showEditStateButton: boolean;
+  showRedoButton: boolean;
+  showUndoButton: boolean;
   showLayerPanel: boolean;
   showLocation: boolean;
   showPanelBorders: boolean;
@@ -494,20 +498,24 @@ export class Viewer extends RefCounted implements ViewerState {
     {
       const button = makeTextIconButton('⬅️', 'Undo');
       this.registerEventListener(button, 'click', () => {
-        this.saver?.differ.rollback();
+        if (this.saver && this.saver.supported) {
+          this.saver.differ.rollback();
+        }
       });
       this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
-          this.uiControlVisibility.showEditStateButton, button));
+          this.uiControlVisibility.showUndoButton, button));
       topRow.appendChild(button);
     }
-    
+
     {
       const button = makeTextIconButton('➡️', 'Redo');
       this.registerEventListener(button, 'click', () => {
-        this.saver?.differ.rollforward();
+        if (this.saver && this.saver.supported) {
+          this.saver.differ.rollforward();
+        }
       });
       this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
-          this.uiControlVisibility.showEditStateButton, button));
+          this.uiControlVisibility.showRedoButton, button));
       topRow.appendChild(button);
     }
 
