@@ -74,6 +74,8 @@ export class SaveState extends RefCounted {
       }
       const oldState = this.root.toJSON();
       const stateChange = this.differ.record(oldState, source.state);
+      // const stateChange = JSON.stringify(oldState) !== JSON.stringify(source.state);
+
 
       if (stateChange || clean) {
         source.state = oldState;
