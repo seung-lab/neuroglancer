@@ -496,7 +496,9 @@ export class Viewer extends RefCounted implements ViewerState {
         this.uiControlVisibility.showAnnotationToolStatus, annotationToolStatus.element));
 
     {
-      const button = makeTextIconButton('⬅️', 'Undo');
+      const button = makeTextIconButton('⇦', 'Undo');
+      button.id = 'neuroglancer-undo-button';
+      button.classList.add('disabled');
       this.registerEventListener(button, 'click', () => {
         if (this.saver && this.saver.supported) {
           this.saver.differ.rollback();
@@ -508,7 +510,9 @@ export class Viewer extends RefCounted implements ViewerState {
     }
 
     {
-      const button = makeTextIconButton('➡️', 'Redo');
+      const button = makeTextIconButton('⇨', 'Redo');
+      button.id = 'neuroglancer-redo-button';
+      button.classList.add('disabled');
       this.registerEventListener(button, 'click', () => {
         if (this.saver && this.saver.supported) {
           this.saver.differ.rollforward();

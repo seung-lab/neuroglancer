@@ -4,10 +4,11 @@ import {Trackable} from 'neuroglancer/util/trackable';
 const diff = new diff_match_patch();
 
 export class SaveDiff {
-  diffsInstances = 0;
-  cursor = 0;
+  saveRedo = false;
+  applyRedo = false;
   max = 100;
   stack: string[] = [];
+  reverseStack: string[] = [];
 
   constructor(public root: Trackable) {}
   public record(oldState: any, newState: any) {
@@ -20,13 +21,21 @@ export class SaveDiff {
 
     if (stateChange) {
       const patch = diff.patch_toText(diff.patch_make(oldSerial, newSerial));
-      if (this.cursor < this.stack.length - 1) {
-        this.stack[this.cursor] = patch;
-      } else {
-        this.cursor = this.stack.push(patch);
+      if (this.reverseStack.length && !this.saveRedo && !this.applyRedo) {
+        // do not clear reverse stack if applied redo or undo
+        this.reverseStack = [];
       }
-      // this.cursor++;
+      if (this.saveRedo) {
+        this.saveRedo = false;
+        this.reverseStack.push(patch);
+      } else {
+        this.stack.push(patch);
+      }
+      if (this.applyRedo) {
+        this.applyRedo = false;
+      }
     }
+    this.setRollStatus();
     return stateChange;
   }
   public rollback() {
@@ -35,13 +44,34 @@ export class SaveDiff {
   public rollforward() {
     this.apply(false);
   }
-  private apply(rollback = true) {
-    if (this.cursor + (rollback ? -1 : 1) >= this.stack.length) {
-      // at most recent state
+  private setRollStatus() {
+    const undo = document.getElementById('neuroglancer-undo-button');
+    const redo = document.getElementById('neuroglancer-redo-button');
+    this.modifyStatus(undo, !!this.stack.length, '⬅️', '⇦');
+    this.modifyStatus(redo, !!this.reverseStack.length, '➡️', '⇨');
+  }
+  private modifyStatus(
+      element: HTMLElement|null, status: boolean, enabled: string, disabled: string) {
+    if (!element) {
       return;
     }
-    this.cursor += rollback ? -1 : 1;
-    const lastPatch = this.stack[this.cursor];
+    element.classList.toggle('disabled', status);
+    element.innerText = status ? enabled : disabled;
+  }
+  private apply(rollback = true) {
+    const target = rollback ? this.stack : this.reverseStack;
+    const lastPatch = target.pop();
+    if (!lastPatch) {
+      // Cancel apply if no patch to apply
+      return;
+    }
+    if (rollback) {
+      // Tell save diff that next state change is a rollback/undo
+      // save it in the reverse stack
+      this.saveRedo = true;
+    } else {
+      this.applyRedo = true;
+    }
     const currentState = JSON.stringify(this.root.toJSON());
     const patchfromText = diff.patch_fromText(lastPatch);
     const restoreFromPatch = diff.patch_apply(patchfromText, currentState);
