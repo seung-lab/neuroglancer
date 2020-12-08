@@ -47,16 +47,18 @@ export class SaveDiff {
   private setRollStatus() {
     const undo = document.getElementById('neuroglancer-undo-button');
     const redo = document.getElementById('neuroglancer-redo-button');
-    this.modifyStatus(undo, !!this.stack.length, '⬅️', '⇦');
-    this.modifyStatus(redo, !!this.reverseStack.length, '➡️', '⇨');
+    this.modifyStatus(undo, this.stack.length, '⬅️', '⇦', 'undo');
+    this.modifyStatus(redo, this.reverseStack.length, '➡️', '⇨', 'redo');
   }
   private modifyStatus(
-      element: HTMLElement|null, status: boolean, enabled: string, disabled: string) {
+      element: HTMLElement|null, status: number, enabled: string, disabled: string, name: string) {
     if (!element) {
       return;
     }
-    element.classList.toggle('disabled', status);
+    element.classList.toggle('disabled', !status);
     element.innerText = status ? enabled : disabled;
+    element.title =
+        status ? `${status} ${name}${status > 1 ? 's' : ''} avaliable` : `Nothing to ${name}`;
   }
   private apply(rollback = true) {
     const target = rollback ? this.stack : this.reverseStack;
