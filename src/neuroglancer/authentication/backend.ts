@@ -14,24 +14,23 @@
  * limitations under the License.
  */
 
-import {AUTHENTICATION_GET_SHARED_TOKEN_RPC_ID, AUTHENTICATION_REAUTHENTICATE_RPC_ID, authFetchWithSharedValue} from 'neuroglancer/authentication/base.ts';
-import {SharedWatchableValue} from 'neuroglancer/shared_watchable_value.ts';
+import {AuthToken, SharedAuthToken, AUTHENTICATION_GET_SHARED_TOKEN_RPC_ID, AUTHENTICATION_REAUTHENTICATE_RPC_ID, authFetchWithSharedValue} from 'neuroglancer/authentication/base.ts';
 import {CancellationToken, uncancelableToken} from 'neuroglancer/util/cancellation';
 import {ResponseTransform} from 'neuroglancer/util/http_request';
 import {rpc} from 'neuroglancer/worker_rpc_context.ts';
 
-const authTokenSharedValuePromise: Promise<SharedWatchableValue<string|null>> = new Promise((f) => {
+const authTokenSharedValuePromise: Promise<SharedAuthToken> = new Promise((f) => {
   rpc.promiseInvoke<number>(AUTHENTICATION_GET_SHARED_TOKEN_RPC_ID, {}).then((rpcId) => {
     f(rpc.get(rpcId));
   });
 });
 
-let waitingForToken: Promise<string>|null = null;
+let waitingForToken: Promise<AuthToken>|null = null;
 
 // makes a request to the main thread to reauthenticate with the given auth url
 // auth token is passed back through the auth token shared value
 async function reauthenticate(
-    auth_url: string, authTokenSharedValue: SharedWatchableValue<string|null>): Promise<string> {
+    auth_url: string, authTokenSharedValue: SharedAuthToken): Promise<AuthToken> {
   if (waitingForToken) {
     return waitingForToken;
   }
@@ -39,7 +38,7 @@ async function reauthenticate(
   // promise fulfills when the shared value changes
   waitingForToken = new Promise((f) => {
     const onSharedValueChange = () => {
-      f(<string>authTokenSharedValue.value);
+      f(<AuthToken>authTokenSharedValue.value);
       authTokenSharedValue.changed.remove(onSharedValueChange);
     };
 

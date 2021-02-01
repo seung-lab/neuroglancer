@@ -33,9 +33,15 @@ export function parseWWWAuthHeader(headerVal: string) {
   return wwwAuthMap;
 }
 
-export type SharedAuthToken = SharedWatchableValue<string|null>;
+export type AuthToken = {
+  url: string,
+  token: string,
+  apps: string[],
+}
 
-type ReauthFunction = (auth_url: string, used_token?: string|SharedAuthToken) => Promise<string>;
+export type SharedAuthToken = SharedWatchableValue<AuthToken|null>;
+
+type ReauthFunction = (auth_url: string, used_token?: SharedAuthToken) => Promise<AuthToken>;
 
 export class AuthenticationError extends Error {
   realm: string;
@@ -43,6 +49,15 @@ export class AuthenticationError extends Error {
   constructor(realm: string) {
     super();
     this.realm = realm;
+  }
+}
+
+export class UnverifiedApp extends Error {
+  url: string;
+
+  constructor(url: string) {
+    super();
+    this.url = url;
   }
 }
 
@@ -82,6 +97,16 @@ async function authFetchOk(
   }
 }
 
+function isVerifiedUrl(authToken: AuthToken, url: string) {
+  for (const verifiedUrl of authToken.apps) {
+    if (url.startsWith(verifiedUrl)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export async function authFetchWithSharedValue(
     reauthenticate: ReauthFunction, authTokenShared: SharedAuthToken, input: RequestInfo,
     init: RequestInit, cancellationToken: CancellationToken = uncancelableToken,
@@ -102,16 +127,12 @@ export async function authFetchWithSharedValue(
   }
 
   function setAuthQuery(input: RequestInfo) {
-    if (input instanceof Request) {
-      // do nothing TODO: is this right?
-    } else {
-      const authToken = authTokenShared!.value;
+    const authToken = authTokenShared!.value;
 
-      if (authToken) {
-        const url = new URL(input);
-        url.searchParams.set('middle_auth_token', authToken);
-        return url.href;
-      }
+    if (!(input instanceof Request) && authToken && isVerifiedUrl(authToken, input)) {
+      const url = new URL(input);
+      url.searchParams.set('middle_auth_token', authToken.token);
+      input = url.href;
     }
 
     return input;
@@ -121,6 +142,13 @@ export async function authFetchWithSharedValue(
     return await authFetchOk(setAuthQuery(input), addCancellationToken(init), handleError);
   } catch (error) {
     if (error instanceof AuthenticationError) {
+      const url = (input instanceof Request) ? input.url : input;
+      if (authTokenShared
+        && authTokenShared.value
+        && authTokenShared.value.apps.length
+        && !isVerifiedUrl(authTokenShared.value, url)) {
+          throw new UnverifiedApp(url);
+      }
       await reauthenticate(error.realm, authTokenShared);  // try once after authenticating
       return await authFetchOk(setAuthQuery(input), addCancellationToken(init), handleError);
     } else {
