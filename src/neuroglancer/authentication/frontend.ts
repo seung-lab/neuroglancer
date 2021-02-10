@@ -33,6 +33,14 @@ async function authorize(auth_url: string): Promise<AuthToken> {
   const auth_popup = openPopupCenter(
       `${auth_url}?redirect=${encodeURI(window.location.origin + '/auth_redirect.html')}`, 400, 650);
 
+  const closeAuthPopup = () => {
+    if (auth_popup) {
+      auth_popup.close();
+    }
+  }
+
+  window.addEventListener('beforeunload', closeAuthPopup);
+
   if (!auth_popup) {
     alert('Allow popups on this page to authenticate');
     throw new Error('Allow popups on this page to authenticate');
@@ -49,8 +57,9 @@ async function authorize(auth_url: string): Promise<AuthToken> {
     const tokenListener = async (ev: MessageEvent) => {
       if (ev.source === auth_popup) {
         clearInterval(checkClosed);
-        auth_popup.close();
         window.removeEventListener('message', tokenListener);
+        window.removeEventListener('beforeunload', closeAuthPopup);
+        closeAuthPopup();
 
         const token: AuthToken = {token: ev.data.token, url: auth_url, apps: []};
         await updateAppUrls(token);
