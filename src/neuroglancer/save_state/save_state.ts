@@ -200,7 +200,7 @@ export class SaveState extends RefCounted {
 
     this.key = getRandomHexString();
     params.set('local_id', this.key);
-    history.pushState({}, '', `${window.location.origin}/?${params.toString()}`);
+    history.pushState({}, '', `${window.location.origin}${window.location.pathname}?${params.toString()}`);
   }
   private reassign(master: any) {
     const hist = <string[]>master.history;
