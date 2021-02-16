@@ -1,14 +1,17 @@
+import 'neuroglancer/differ/differ.css';
+
 import {diff_match_patch} from 'diff-match-patch';
+import {Dialog} from 'neuroglancer/dialog';
 import {Trackable} from 'neuroglancer/util/trackable';
+import {Viewer} from 'neuroglancer/viewer';
 
 const diff = new diff_match_patch();
-
-export class SaveDiff {
+export class Differ {
   saveRedo = false;
   applyRedo = false;
   max = 100;
-  stack: string[] = [];
-  reverseStack: string[] = [];
+  stack: StateChange[] = [];
+  reverseStack: StateChange[] = [];
 
   constructor(public root: Trackable) {}
   public record(oldState: any, newState: any) {
@@ -21,15 +24,18 @@ export class SaveDiff {
 
     if (stateChange) {
       const patch = diff.patch_toText(diff.patch_make(oldSerial, newSerial));
+      const timestamp = (new Date()).valueOf();
+      const change = 'Change';
+      const entry = <StateChange>{patch, timestamp, change};
       if (this.reverseStack.length && !this.saveRedo && !this.applyRedo) {
         // do not clear reverse stack if applied redo or undo
         this.reverseStack = [];
       }
       if (this.saveRedo) {
         this.saveRedo = false;
-        this.reverseStack.push(patch);
+        this.reverseStack.push(entry);
       } else {
-        this.stack.push(patch);
+        this.stack.push(entry);
       }
       if (this.applyRedo) {
         this.applyRedo = false;
@@ -43,6 +49,9 @@ export class SaveDiff {
   }
   public rollforward() {
     this.apply(false);
+  }
+  public showChanges(viewer: Viewer) {
+    new DiffDialog(viewer, this);
   }
   private setRollStatus() {
     const undo = document.getElementById('neuroglancer-undo-button');
@@ -75,10 +84,63 @@ export class SaveDiff {
       this.applyRedo = true;
     }
     const currentState = JSON.stringify(this.root.toJSON());
-    const patchfromText = diff.patch_fromText(lastPatch);
+    const patchfromText = diff.patch_fromText(lastPatch.patch!);
     const restoreFromPatch = diff.patch_apply(patchfromText, currentState);
     /* deactivate so that state change triggered by updating
     the state w/ a rollback doesn't affect state history*/
     this.root.restoreState(JSON.parse(restoreFromPatch[0]));
   }
+}
+
+class DiffDialog extends Dialog {
+  constructor(public viewer: Viewer, public diffSrc: Differ) {
+    super(viewer);
+    let {modal, table} = this;
+    let {stack, reverseStack} = diffSrc;
+    let changeCount = diffSrc.stack.length + diffSrc.reverseStack.length;
+    if (changeCount) {
+      reverseStack.forEach(this.addTableEntry.bind(this));
+      this.addTableEntry({patch: null, timestamp: (new Date()).valueOf(), change: 'Current'});
+      stack.forEach(this.addTableEntry.bind(this));
+
+      if (!table.children.length) {
+        modal.append(document.createElement('br'), `There is nothing to undo/redo.`);
+      }
+    } else {
+      this.dispose();
+    }
+  }
+
+  private addTableEntry(entry: StateChange) {
+    if (!entry) {
+      return;
+    }
+    const row = this.tableEntry();
+    const date = document.createElement('td');
+    const link = document.createElement('td');
+    const linkAnchor = document.createElement('a');
+
+    date.innerText = (new Date(entry.timestamp)).toLocaleString();
+    linkAnchor.innerText = `${entry.change}`;
+    // linkAnchor.href = linkAnchor.innerText;
+    linkAnchor.style.display = 'block';
+    linkAnchor.onclick = () => {};
+    link.append(linkAnchor);
+    row.append(date, link);
+    if (entry.patch === null) {
+      row.classList.add('ng-differ-current');
+    }
+  }
+
+  public clearHandler() {
+    this.diffSrc.stack = [];
+    this.diffSrc.reverseStack = [];
+    this.dispose();
+  }
+}
+
+interface StateChange {
+  patch: string|null;
+  change: string;
+  timestamp: number;
 }
