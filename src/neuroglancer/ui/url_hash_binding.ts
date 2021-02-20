@@ -59,24 +59,6 @@ export class UrlHashBinding extends RefCounted {
         // s = '#!{}';
         return;
       }
-      /*if (getUnshareWarning().value) {
-        StatusMessage.messageWithAction(
-            `This state has not been shared, share and copy the JSON or RAW url to avoid losing
-      progress. `,
-            [
-              {
-                message: 'Dismiss',
-                action: () => {
-                  dismissUnshareWarning();
-                  StatusMessage.showTemporaryMessage(
-                      'To reenable this warning, check "Unshared state warning" in the User
-      Preferences menu.', 5000);
-                }
-              },
-              {message: 'Share', action: () => this.viewer.postJsonState(true)}
-            ],
-            undefined, {color: 'yellow'});
-      }*/
       if (s.startsWith('#!+')) {
         s = s.slice(3);
         // Firefox always %-encodes the URL even if it is not typed that way.
