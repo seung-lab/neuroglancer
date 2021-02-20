@@ -499,8 +499,11 @@ export class Viewer extends RefCounted implements ViewerState {
     this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
         this.uiControlVisibility.showAnnotationToolStatus, annotationToolStatus.element));
 
+    // TODO: Differ does not work with legacy saving
+    const isLegacySavingOn = getSaveToAddressBar().value;
+    const unsupported = ' is currently unsupported in Legacy Saving Mode';
     {
-      const button = makeTextIconButton('⇦', 'Undo');
+      const button = makeTextIconButton('⇦', `Undo${isLegacySavingOn ? unsupported : ''}`);
       button.id = 'neuroglancer-undo-button';
       button.classList.add('disabled');
       this.registerEventListener(button, 'click', () => {
@@ -526,7 +529,7 @@ export class Viewer extends RefCounted implements ViewerState {
     }
 
     {
-      const button = makeTextIconButton('⇨', 'Redo');
+      const button = makeTextIconButton('⇨', `Redo${isLegacySavingOn ? unsupported : ''}`);
       button.id = 'neuroglancer-redo-button';
       button.classList.add('disabled');
       this.registerEventListener(button, 'click', () => {
@@ -548,12 +551,12 @@ export class Viewer extends RefCounted implements ViewerState {
       if (!storageAccessible()) {
         button.classList.add('fallback');
         button.title =
-            `Cannot access Local Storage. Unsaved changes will be lost! Use OldStyleSaving to allow for auto saving.`;
+            `Cannot access Local Storage. Unsaved changes will be lost! Use Legacy Saving to allow for auto saving.`;
       }
       if (storageAccessible() && getSaveToAddressBar().value) {
         button.classList.add('inactive');
         button.title =
-            `Save State has been disabled because Old Style saving has been turned on in User Preferences.`;
+            `Save State has been disabled because Legacy Saving has been turned on in User Preferences.`;
       }
       if (this.saver && !this.saver.supported && this.saver.key) {
         const entry = this.saver.pull();
@@ -1061,6 +1064,7 @@ export class Viewer extends RefCounted implements ViewerState {
     if (!this.saver.supported) {
       // Fallback to register state change handler has legacy urlHashBinding if saver is not
       // supported
+      this.differ.legacy = this;
       hashBinding.legacy.fallback();
     }
   }
@@ -1078,6 +1082,8 @@ export class Viewer extends RefCounted implements ViewerState {
       }
       hashBinding.parseError;
     }));
+    StatusMessage.showTemporaryMessage(
+        `RAW URLs will soon be Deprecated. Please use JSON URLs whenever available.`, 10000);
     hashBinding.updateFromUrlHash();
 
     return hashBinding;

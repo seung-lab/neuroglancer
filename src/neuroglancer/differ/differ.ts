@@ -2,7 +2,7 @@ import 'neuroglancer/differ/differ.css';
 
 import {diff_match_patch} from 'diff-match-patch';
 import {Dialog} from 'neuroglancer/dialog';
-import {Trackable} from 'neuroglancer/util/trackable';
+import {getCachedJson, Trackable} from 'neuroglancer/util/trackable';
 import {Viewer} from 'neuroglancer/viewer';
 
 const diff = new diff_match_patch();
@@ -13,13 +13,15 @@ export class Differ {
   stack: StateChange[] = [];
   reverseStack: StateChange[] = [];
 
-  constructor(public root: Trackable) {}
+  constructor(public root: Trackable, public legacy?: Viewer) {}
   public record(oldState: any, newState: any) {
-    if (newState === undefined) {
+    // TODO: Differ does not work with legacy saving
+    if (oldState === undefined || newState === undefined || this.legacy) {
       return true;
     }
-    const oldSerial = JSON.stringify(oldState);
-    const newSerial = JSON.stringify(newState);
+
+    const oldSerial = this.legacy ? oldState : JSON.stringify(oldState);
+    const newSerial = this.legacy ? newState : JSON.stringify(newState);
     const stateChange = oldSerial !== newSerial;
 
     if (stateChange) {
@@ -72,7 +74,8 @@ export class Differ {
   private apply(rollback = true) {
     const target = rollback ? this.stack : this.reverseStack;
     const lastPatch = target.pop();
-    if (!lastPatch) {
+    // TODO: Differ does not work with legacy saving
+    if (!lastPatch || this.legacy) {
       // Cancel apply if no patch to apply
       return;
     }
@@ -83,11 +86,21 @@ export class Differ {
     } else {
       this.applyRedo = true;
     }
-    const currentState = JSON.stringify(this.root.toJSON());
-    const patchfromText = diff.patch_fromText(lastPatch.patch!);
-    const restoreFromPatch = diff.patch_apply(patchfromText, currentState);
-    /* deactivate so that state change triggered by updating
-    the state w/ a rollback doesn't affect state history*/
+    let restoreFromPatch;
+    if (!this.legacy) {
+      const currentState = JSON.stringify(this.root.toJSON());
+      const patchfromText = diff.patch_fromText(lastPatch.patch!);
+      restoreFromPatch = diff.patch_apply(patchfromText, currentState);
+      /* deactivate so that state change triggered by updating
+      the state w/ a rollback doesn't affect state history*/
+    } else {
+      // If in Legacy mode update URL instead
+      const cacheState = getCachedJson(this.root);
+
+      const currentStateString = JSON.stringify(cacheState.value);
+      const patchfromText = diff.patch_fromText(lastPatch.patch!);
+      restoreFromPatch = diff.patch_apply(patchfromText, currentStateString);
+    }
     this.root.restoreState(JSON.parse(restoreFromPatch[0]));
   }
 }
