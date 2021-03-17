@@ -949,7 +949,7 @@ export class Viewer extends RefCounted implements ViewerState {
                   }
                   if (savestate) {
                     callback();
-                    this.showSaveDialog(getUrlType, saverSupported ? response : undefined);
+                    this.showSaveDialog(getUrlType, response);
                   }
                   StatusMessage.showTemporaryMessage(`Successfully shared state.`, 4000);
                   postSuccess = true;
