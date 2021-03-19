@@ -281,7 +281,9 @@ export class Viewer extends RefCounted implements ViewerState {
 
   visible = true;
 
-  constructor(public display: DisplayContext, options: Partial<ViewerOptions> = {}) {
+  constructor(
+      public display: DisplayContext, options: Partial<ViewerOptions> = {},
+      public minSidePanelSize = 290) {
     super();
 
     const {
@@ -613,7 +615,7 @@ export class Viewer extends RefCounted implements ViewerState {
             self.selectedLayer.visible = visible;
           }
         },
-        this.selectedLayer.size, 'horizontal', 290));
+        this.selectedLayer.size, 'horizontal', this.minSidePanelSize));
 
     gridContainer.appendChild(layoutAndSidePanel);
 
