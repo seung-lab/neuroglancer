@@ -171,6 +171,7 @@ export interface ViewerOptions extends ViewerUIOptions, VisibilityPrioritySpecif
   inputEventBindings: InputEventBindings;
   resetStateWhenEmpty: boolean;
   defaultLayoutSpecification: any;
+  minSidePanelSize: number;
 }
 
 const defaultViewerOptions = 'undefined' !== typeof NEUROGLANCER_OVERRIDE_DEFAULT_VIEWER_OPTIONS ?
@@ -216,6 +217,7 @@ export enum UrlType {
 
 export class Viewer extends RefCounted implements ViewerState {
   navigationState = this.registerDisposer(new NavigationState());
+  minSidePanelSize = 290;
   perspectiveNavigationState = new NavigationState(new Pose(this.navigationState.position), 1);
   saver?: SaveState;
   hashBinding?: UrlHashBinding;
@@ -300,6 +302,7 @@ export class Viewer extends RefCounted implements ViewerState {
       uiConfiguration = new ViewerUIConfiguration(),
       defaultLayoutSpecification = '4panel',
     } = options;
+    this.minSidePanelSize = options.minSidePanelSize || this.minSidePanelSize;
     this.visibility = visibility;
     this.inputEventBindings = inputEventBindings;
     this.element = element;
@@ -601,7 +604,8 @@ export class Viewer extends RefCounted implements ViewerState {
     layoutAndSidePanel.style.display = 'flex';
     layoutAndSidePanel.style.flex = '1';
     layoutAndSidePanel.style.flexDirection = 'row';
-    this.layout = this.registerDisposer(new RootLayoutContainer(this, this.defaultLayoutSpecification));
+    this.layout =
+        this.registerDisposer(new RootLayoutContainer(this, this.defaultLayoutSpecification));
     layoutAndSidePanel.appendChild(this.layout.element);
     const layerInfoPanel =
         this.registerDisposer(new LayerInfoPanelContainer(this.selectedLayer.addRef()));
@@ -617,7 +621,7 @@ export class Viewer extends RefCounted implements ViewerState {
             self.selectedLayer.visible = visible;
           }
         },
-        this.selectedLayer.size, 'horizontal', 290));
+        this.selectedLayer.size, 'horizontal', this.minSidePanelSize));
 
     gridContainer.appendChild(layoutAndSidePanel);
 
