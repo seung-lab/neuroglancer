@@ -14,15 +14,15 @@
  * limitations under the License.
  */
 
+import 'neuroglancer/noselect.css';
+import 'neuroglancer/widget/segment_set_widget.css';
+
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
 import {packColor, TrackableRGB} from 'neuroglancer/util/color';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {vec3} from 'neuroglancer/util/geom';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {ColorWidget} from 'neuroglancer/widget/color';
-
-import 'neuroglancer/noselect.css';
-import 'neuroglancer/widget/segment_set_widget.css';
 
 const copyIcon = require('neuroglancer/../../assets/icons/copySegment.svg');
 
@@ -58,7 +58,7 @@ export class SegmentSetWidget extends RefCounted {
     return this.displayState.segmentSelectionState;
   }
 
-  constructor(public displayState: SegmentationDisplayState) {
+  constructor(public displayState: SegmentationDisplayState, public volumePath?: string) {
     super();
     this.createTopButtons();
     this.registerDisposer(displayState.rootSegments.changed.add((x, add) => {
@@ -233,6 +233,8 @@ export class SegmentSetWidget extends RefCounted {
     // Wrap buttons in div so node button and its hide and copy buttons appear on same line
     const itemElement = document.createElement('div');
     itemElement.className = 'segment-div';
+    itemElement.dataset.dataset =
+        (this.volumePath) ? this.volumePath.substring(this.volumePath.lastIndexOf('/') + 1) : '';
     itemElement.appendChild(this.createItemButton(segmentIDString));
     itemElement.appendChild(this.createItemCopyIDButton(segmentIDString));
     itemElement.appendChild(this.createItemColorSelection(segmentIDString, itemElement));
