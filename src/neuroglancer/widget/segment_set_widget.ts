@@ -14,15 +14,15 @@
  * limitations under the License.
  */
 
+import 'neuroglancer/noselect.css';
+import 'neuroglancer/widget/segment_set_widget.css';
+
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
 import {packColor, TrackableRGB} from 'neuroglancer/util/color';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {vec3} from 'neuroglancer/util/geom';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {ColorWidget} from 'neuroglancer/widget/color';
-
-import 'neuroglancer/noselect.css';
-import 'neuroglancer/widget/segment_set_widget.css';
 
 const copyIcon = require('neuroglancer/../../assets/icons/copySegment.svg');
 
@@ -103,13 +103,15 @@ export class SegmentSetWidget extends RefCounted {
       }
     }));
 
-    for (const x of displayState.rootSegments) {
+    const initspec = displayState.initialSegmentSelections || {};
+    for (const x of (initspec['segments'] || displayState.rootSegments)) {
       this.addElement(x.toString(), true);
     }
 
-    for (const x of displayState.hiddenRootSegments!) {
+    for (const x of (initspec['hiddenSegments'] || displayState.hiddenRootSegments!)) {
       this.addElement(x.toString(), false);
     }
+    delete this.displayState.initialSegmentSelections;
     this.updateTopButtonsVisibility();
   }
 

@@ -26,21 +26,21 @@ import {getRenderMeshByDefault} from 'neuroglancer/preferences/user_preferences'
 import {RenderScaleHistogram, trackableRenderScaleTarget} from 'neuroglancer/render_scale_statistics';
 import {SegmentColorHash} from 'neuroglancer/segment_color';
 import {SegmentMetadata, SegmentToVoxelCountMap} from 'neuroglancer/segment_metadata';
-import {SegmentSelectionState, Uint64MapEntry, SegmentationDisplayState3D} from 'neuroglancer/segmentation_display_state/frontend';
+import {SegmentationDisplayState3D, SegmentSelectionState, Uint64MapEntry} from 'neuroglancer/segmentation_display_state/frontend';
 import {SharedDisjointUint64Sets} from 'neuroglancer/shared_disjoint_sets';
-import {FRAGMENT_MAIN_START as SKELETON_FRAGMENT_MAIN_START, PerspectiveViewSkeletonLayer, SkeletonLayer, SkeletonRenderingOptions, SkeletonSource, SliceViewPanelSkeletonLayer, ViewSpecificSkeletonRenderingOptions, SkeletonLayerDisplayState} from 'neuroglancer/skeleton/frontend';
+import {FRAGMENT_MAIN_START as SKELETON_FRAGMENT_MAIN_START, PerspectiveViewSkeletonLayer, SkeletonLayer, SkeletonLayerDisplayState, SkeletonRenderingOptions, SkeletonSource, SliceViewPanelSkeletonLayer, ViewSpecificSkeletonRenderingOptions} from 'neuroglancer/skeleton/frontend';
 import {VolumeType} from 'neuroglancer/sliceview/volume/base';
 import {SegmentationRenderLayer, SliceViewSegmentationDisplayState} from 'neuroglancer/sliceview/volume/segmentation_renderlayer';
 import {StatusMessage} from 'neuroglancer/status';
 import {trackableAlphaValue} from 'neuroglancer/trackable_alpha';
 import {ElementVisibilityFromTrackableBoolean, TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
 import {ComputedWatchableValue} from 'neuroglancer/trackable_value';
-import {Uint64Set} from 'neuroglancer/uint64_set';
 import {Uint64Map} from 'neuroglancer/uint64_map';
+import {Uint64Set} from 'neuroglancer/uint64_set';
 import {UserLayerWithVolumeSourceMixin} from 'neuroglancer/user_layer_with_volume_source';
-import {parseRGBColorSpecification, packColor} from 'neuroglancer/util/color';
+import {packColor, parseRGBColorSpecification} from 'neuroglancer/util/color';
 import {Borrowed} from 'neuroglancer/util/disposable';
-import {parseArray, verifyObjectProperty, verifyOptionalString, verifyObjectAsMap} from 'neuroglancer/util/json';
+import {parseArray, verifyObjectAsMap, verifyObjectProperty, verifyOptionalString} from 'neuroglancer/util/json';
 import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {makeWatchableShaderError} from 'neuroglancer/webgl/dynamic_shader';
@@ -80,7 +80,8 @@ const CATEGORIZED_SEGMENTS_JSON_KEY = 'categorizedSegments';
 const SHATTER_SEGMENT_EQUIVALENCES_JSON_KEY = 'shatterSegmentEquivalences';
 
 export type SegmentationUserLayerDisplayState =
-    SliceViewSegmentationDisplayState&SkeletonLayerDisplayState&SegmentationDisplayState3D;
+    SliceViewSegmentationDisplayState&SkeletonLayerDisplayState&SegmentationDisplayState3D&
+    {initialSegmentSelections?: {[key: string]: any}};
 
 const lastSegmentSelection = new Uint64();
 
@@ -197,7 +198,10 @@ export class SegmentationUserLayer extends Base {
     const restoreSegmentsList = (key: string, segments: Uint64Set) => {
       verifyObjectProperty(specification, key, y => {
         if (y !== undefined) {
-          let {segmentEquivalences} = this.displayState;
+          let {segmentEquivalences, initialSegmentSelections} = this.displayState;
+          if (initialSegmentSelections !== undefined) {
+            this.displayState.initialSegmentSelections![key] = y;
+          }
           parseArray(y, value => {
             let id = Uint64.parseString(String(value), 10);
             segments.add(segmentEquivalences.get(id));
@@ -206,6 +210,7 @@ export class SegmentationUserLayer extends Base {
       });
     };
 
+    this.displayState.initialSegmentSelections = {};
     restoreSegmentsList(ROOT_SEGMENTS_JSON_KEY, this.displayState.rootSegments);
     restoreSegmentsList(HIDDEN_ROOT_SEGMENTS_JSON_KEY, this.displayState.hiddenRootSegments!);
     restoreSegmentsList(HIGHLIGHTS_JSON_KEY, this.displayState.highlightedSegments);
@@ -314,7 +319,8 @@ export class SegmentationUserLayer extends Base {
               }
             });
           }
-          if (skeletonsPath === undefined && volume.getSkeletonSource && this.shouldRenderSkeletons()) {
+          if (skeletonsPath === undefined && volume.getSkeletonSource &&
+              this.shouldRenderSkeletons()) {
             ++remaining;
             Promise.resolve(volume.getSkeletonSource()).then(skeletonSource => {
               if (this.wasDisposed) {
@@ -355,11 +361,11 @@ export class SegmentationUserLayer extends Base {
     }
   }
 
-  private shouldRenderMesh() : boolean {
+  private shouldRenderMesh(): boolean {
     return getRenderMeshByDefault() && this.loadMeshes.value;
   }
 
-  private shouldRenderSkeletons() : boolean {
+  private shouldRenderSkeletons(): boolean {
     return this.loadSkeletons.value;
   }
 
@@ -401,7 +407,8 @@ export class SegmentationUserLayer extends Base {
     if (segmentStatedColors.size > 0) {
       let json = segmentStatedColors.toJSON();
       // Convert colors from decimal integers to CSS "#RRGGBB" format.
-      Object.keys(json).map(k => json[k] = '#' + parseInt(json[k], 10).toString(16).padStart(6, '0'));
+      Object.keys(json).map(
+          k => json[k] = '#' + parseInt(json[k], 10).toString(16).padStart(6, '0'));
       x[SEGMENT_STATED_COLORS_JSON_KEY] = json;
     }
     let {rootSegments} = this.displayState;
@@ -701,26 +708,22 @@ class DisplayOptionsTab extends Tab {
     group3D.appendFixedChild(this.objectAlphaWidget.element);
 
     {
-      const checkbox =
-          this.registerDisposer(new TrackableBooleanCheckbox(layer.loadMeshes));
+      const checkbox = this.registerDisposer(new TrackableBooleanCheckbox(layer.loadMeshes));
       checkbox.element.className =
           'neuroglancer-segmentation-dropdown-load-meshes neuroglancer-noselect';
       const label = document.createElement('label');
-      label.className =
-          'neuroglancer-segmentation-dropdown-load-meshes neuroglancer-noselect';
+      label.className = 'neuroglancer-segmentation-dropdown-load-meshes neuroglancer-noselect';
       label.appendChild(document.createTextNode('Load layer meshes (requires refresh)'));
       label.appendChild(checkbox.element);
       group3D.appendFixedChild(label);
     }
 
     {
-      const checkbox =
-          this.registerDisposer(new TrackableBooleanCheckbox(layer.loadSkeletons));
+      const checkbox = this.registerDisposer(new TrackableBooleanCheckbox(layer.loadSkeletons));
       checkbox.element.className =
           'neuroglancer-segmentation-dropdown-load-skeletons neuroglancer-noselect';
       const label = document.createElement('label');
-      label.className =
-          'neuroglancer-segmentation-dropdown-load-skeletons neuroglancer-noselect';
+      label.className = 'neuroglancer-segmentation-dropdown-load-skeletons neuroglancer-noselect';
       label.appendChild(document.createTextNode('Load layer skeletons (requires refresh)'));
       label.appendChild(checkbox.element);
       group3D.appendFixedChild(label);
