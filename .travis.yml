@@ -46,7 +46,7 @@ matrix:
         - cp -r ./dist/python-min appengine/frontend/static/
       deploy:
       - provider: gae
-        skip_cleanup: true
+        edge: true
         keyfile: "/secrets/google-secret.json"
         project: neuromancer-seung-import
         version: "$APPVERSION"
