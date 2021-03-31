@@ -1,11 +1,10 @@
-sudo: required
 language: python
 os:
   - linux
 python:
   - "3.5"
   - "3.8"
-matrix:
+jobs:
   include:
     - name: "C++"
       language: cpp
@@ -21,7 +20,6 @@ matrix:
       osx_image: xcode8.3
       python: "3.6-dev"
     - name: "Web client"
-      sudo: required
       addons:
         chrome: stable
       language: node_js
@@ -52,10 +50,10 @@ matrix:
         version: "$APPVERSION"
         on:
           all_branches: true
-        no_promote: true
+        promote: false
         verbosity: warning
         config: "./appengine/frontend/app.yaml"
-        no_stop_previous_version: false
+        stop_previous_version: true
       
 install:
   - pip install tox-travis
