@@ -54,7 +54,7 @@ matrix:
           all_branches: true
         no_promote: true
         default: true
-        verbosity: error
+        verbosity: warning
         config: "./appengine/frontend/app.yaml"
         no_stop_previous_version: false
       
