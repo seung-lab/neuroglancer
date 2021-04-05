@@ -730,16 +730,20 @@ export class Viewer extends RefCounted implements ViewerState {
       const splitOn = () => StatusMessage.showTemporaryMessage('Split mode activated.');
       const mergeOff = () => StatusMessage.showTemporaryMessage('Merge mode deactivated.');
       const splitOff = () => StatusMessage.showTemporaryMessage('Split mode deactivated.');
+      const disable = (deactivate = true) => this.differ.disable = deactivate;
+      this.differ.purgeHistory();
 
       if (mergeWhileInSplit) {
         this.mouseState.setMode(ActionMode.MERGE);
         mergeOn();
         splitOff();
+        disable();
         this.mouseState.toggleAction();
       } else if (splitWhileInMerge) {
         this.mouseState.setMode(ActionMode.SPLIT);
         splitOn();
         mergeOff();
+        disable();
         this.mouseState.toggleAction();
       } else if (this.mouseState.actionState === ActionState.INACTIVE) {
         if (this.mouseState.actionMode === ActionMode.MERGE) {
@@ -747,6 +751,7 @@ export class Viewer extends RefCounted implements ViewerState {
         } else {
           splitOff();
         }
+        disable(false);
         this.mouseState.setMode(ActionMode.NONE);
       } else {
         if (merge) {
@@ -756,6 +761,7 @@ export class Viewer extends RefCounted implements ViewerState {
           this.mouseState.setMode(ActionMode.SPLIT);
           splitOn();
         }
+        disable();
       }
     };
 

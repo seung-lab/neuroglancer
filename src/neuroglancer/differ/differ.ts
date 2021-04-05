@@ -13,16 +13,30 @@ export class Differ {
   stack: StateChange[] = [];
   reverseStack: StateChange[] = [];
 
-  constructor(public root: Trackable, public legacy?: Viewer) {}
+  constructor(public root: Trackable, public legacy?: Viewer, public disable?: boolean) {}
   public record(oldState: any, newState: any) {
     // TODO: Differ does not work with legacy saving
-    if (oldState === undefined || newState === undefined || this.legacy) {
+    if (oldState === undefined || newState === undefined || this.legacy || this.disable) {
       return true;
     }
 
     const oldSerial = this.legacy ? oldState : JSON.stringify(oldState);
     const newSerial = this.legacy ? newState : JSON.stringify(newState);
     const stateChange = oldSerial !== newSerial;
+
+    if (newState.layers) {
+      // This effectively disables undo/redo if multicut points are selected
+      const graphOpMarker = newState.layers.find((layer: {[x: string]: any[];}) => {
+        if (layer.graphOperationMarker) {
+          return layer.graphOperationMarker.find(
+              ops => ops.annotations ? ops.annotations.length : false);
+        }
+      });
+      if (graphOpMarker) {
+        this.purgeHistory();
+        return true;
+      }
+    }
 
     if (stateChange) {
       const patch = diff.patch_toText(diff.patch_make(oldSerial, newSerial));
@@ -54,6 +68,11 @@ export class Differ {
   }
   public showChanges(viewer: Viewer) {
     new DiffDialog(viewer, this);
+  }
+  public purgeHistory() {
+    this.stack = [];
+    this.reverseStack = [];
+    this.setRollStatus();
   }
   private setRollStatus() {
     const undo = document.getElementById('neuroglancer-undo-button');
