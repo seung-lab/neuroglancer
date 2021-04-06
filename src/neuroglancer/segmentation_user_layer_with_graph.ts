@@ -17,6 +17,7 @@
 import {AnnotationLayer, SliceViewAnnotationLayer} from 'neuroglancer/annotation/frontend';
 import {PerspectiveViewAnnotationLayer} from 'neuroglancer/annotation/renderlayer';
 import {setAnnotationHoverStateFromMouseState} from 'neuroglancer/annotation/selection';
+import {GRAPHENE_MANIFEST_REFRESH_PROMISE} from 'neuroglancer/datasource/graphene/base';
 import {GraphOperationLayerState} from 'neuroglancer/graph/graph_operation_layer_state';
 import {PathFinderState} from 'neuroglancer/graph/path_finder_state';
 import {registerLayerType, registerVolumeLayerType} from 'neuroglancer/layer_specification';
@@ -37,8 +38,8 @@ import {Borrowed, RefCounted} from 'neuroglancer/util/disposable';
 import {vec3} from 'neuroglancer/util/geom';
 import {parseArray, verifyObjectProperty} from 'neuroglancer/util/json';
 import {Uint64} from 'neuroglancer/util/uint64';
+
 import {NullarySignal} from './util/signal';
-import {GRAPHENE_MANIFEST_REFRESH_PROMISE} from 'neuroglancer/datasource/graphene/base';
 
 // Already defined in segmentation_user_layer.ts
 const EQUIVALENCES_JSON_KEY = 'equivalences';
@@ -414,6 +415,11 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
               rootSegments.delete(currentSegmentSelection.rootId);
               rootSegments.add(mergedRoot);
               rootSegmentsAfterEdit!.add(mergedRoot);
+              // TODO: Merge unsupported with edits
+              const view = (<any>window)['viewer'];
+              view.deactivateEditMode();
+              view.differ.purgeHistory();
+              view.differ.ignoreChanges();
             });
           });
         } else {
@@ -464,6 +470,11 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
                   rootSegments.delete(currentSegmentSelection.rootId);
                   rootSegments.add(splitRoots);
                   rootSegmentsAfterEdit!.add(splitRoots);
+                  // TODO: Merge unsupported with edits
+                  const view = (<any>window)['viewer'];
+                  view.deactivateEditMode();
+                  view.differ.purgeHistory();
+                  view.differ.ignoreChanges();
                 });
           });
         } else {
@@ -481,9 +492,9 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
         if (rootSegments.has(segment)) {
           let meshSource = this.meshLayer!.source;
           const promise = meshSource.rpc!.promiseInvoke<any>(
-            GRAPHENE_MANIFEST_REFRESH_PROMISE,
-            {'rpcId': meshSource.rpcId!, 'segment': segment.toString()});
-          let msgTail = 'if full mesh does not appear try again after this message disappears.'
+              GRAPHENE_MANIFEST_REFRESH_PROMISE,
+              {'rpcId': meshSource.rpcId!, 'segment': segment.toString()});
+          let msgTail = 'if full mesh does not appear try again after this message disappears.';
           this.chunkedGraphLayer!.withErrorMessage(promise, {
             initialMessage: `Reloading mesh for segment ${segment}, ${msgTail}`,
             errorPrefix: `Could not fetch mesh manifest: `

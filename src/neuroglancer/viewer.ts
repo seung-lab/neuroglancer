@@ -701,7 +701,53 @@ export class Viewer extends RefCounted implements ViewerState {
   bindAction(action: string, handler: () => void) {
     this.registerDisposer(registerActionListener(this.element, action, handler));
   }
+  /**
+   * Called after an edit is made to "deactivate" merge/split
+   */
+  deactivateEditMode() {
+    if (this.mouseState.actionState === ActionState.INACTIVE) {
+      this.mouseState.toggleAction();
+    }
+    this.handleModeChange(this.mouseState.actionMode === ActionMode.MERGE);
+  }
 
+  handleModeChange(merge: boolean) {
+    this.mouseState.toggleAction();
+
+    const mergeWhileInSplit = merge && this.mouseState.actionMode === ActionMode.SPLIT;
+    const splitWhileInMerge = !merge && this.mouseState.actionMode === ActionMode.MERGE;
+    const mergeOn = () => StatusMessage.showTemporaryMessage('Merge mode activated.');
+    const splitOn = () => StatusMessage.showTemporaryMessage('Split mode activated.');
+    const mergeOff = () => StatusMessage.showTemporaryMessage('Merge mode deactivated.');
+    const splitOff = () => StatusMessage.showTemporaryMessage('Split mode deactivated.');
+
+    if (mergeWhileInSplit) {
+      this.mouseState.setMode(ActionMode.MERGE);
+      mergeOn();
+      splitOff();
+      this.mouseState.toggleAction();
+    } else if (splitWhileInMerge) {
+      this.mouseState.setMode(ActionMode.SPLIT);
+      splitOn();
+      mergeOff();
+      this.mouseState.toggleAction();
+    } else if (this.mouseState.actionState === ActionState.INACTIVE) {
+      if (this.mouseState.actionMode === ActionMode.MERGE) {
+        mergeOff();
+      } else {
+        splitOff();
+      }
+      this.mouseState.setMode(ActionMode.NONE);
+    } else {
+      if (merge) {
+        this.mouseState.setMode(ActionMode.MERGE);
+        mergeOn();
+      } else {
+        this.mouseState.setMode(ActionMode.SPLIT);
+        splitOn();
+      }
+    }
+  }
   /**
    * Called once by the constructor to register the action listeners.
    */
@@ -721,56 +767,12 @@ export class Viewer extends RefCounted implements ViewerState {
       });
     }
 
-    const handleModeChange = (merge: boolean) => {
-      this.mouseState.toggleAction();
-
-      const mergeWhileInSplit = merge && this.mouseState.actionMode === ActionMode.SPLIT;
-      const splitWhileInMerge = !merge && this.mouseState.actionMode === ActionMode.MERGE;
-      const mergeOn = () => StatusMessage.showTemporaryMessage('Merge mode activated.');
-      const splitOn = () => StatusMessage.showTemporaryMessage('Split mode activated.');
-      const mergeOff = () => StatusMessage.showTemporaryMessage('Merge mode deactivated.');
-      const splitOff = () => StatusMessage.showTemporaryMessage('Split mode deactivated.');
-      const disable = (deactivate = true) => this.differ.disable = deactivate;
-      this.differ.purgeHistory();
-
-      if (mergeWhileInSplit) {
-        this.mouseState.setMode(ActionMode.MERGE);
-        mergeOn();
-        splitOff();
-        disable();
-        this.mouseState.toggleAction();
-      } else if (splitWhileInMerge) {
-        this.mouseState.setMode(ActionMode.SPLIT);
-        splitOn();
-        mergeOff();
-        disable();
-        this.mouseState.toggleAction();
-      } else if (this.mouseState.actionState === ActionState.INACTIVE) {
-        if (this.mouseState.actionMode === ActionMode.MERGE) {
-          mergeOff();
-        } else {
-          splitOff();
-        }
-        disable(false);
-        this.mouseState.setMode(ActionMode.NONE);
-      } else {
-        if (merge) {
-          this.mouseState.setMode(ActionMode.MERGE);
-          mergeOn();
-        } else {
-          this.mouseState.setMode(ActionMode.SPLIT);
-          splitOn();
-        }
-        disable();
-      }
-    };
-
     this.bindAction('two-point-merge', () => {
-      handleModeChange(true);
+      this.handleModeChange(true);
     });
 
     this.bindAction('two-point-cut', () => {
-      handleModeChange(false);
+      this.handleModeChange(false);
     });
 
     this.bindAction('help', () => this.showHelpDialog());
