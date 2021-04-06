@@ -29,20 +29,6 @@ export class Differ {
     const newSerial = this.legacy ? newState : JSON.stringify(newState);
     const stateChange = oldSerial !== newSerial;
 
-    /*if (newState.layers) {
-      // This effectively disables undo/redo if multicut points are selected
-      const graphOpMarker = newState.layers.find((layer: {[x: string]: any[];}) => {
-        if (layer.graphOperationMarker) {
-          return layer.graphOperationMarker.find(
-              ops => ops.annotations ? ops.annotations.length : false);
-        }
-      });
-      if (graphOpMarker) {
-        this.purgeHistory();
-        return true;
-      }
-    }*/
-
     if (stateChange) {
       const patch = diff.patch_toText(diff.patch_make(oldSerial, newSerial));
       const timestamp = (new Date()).valueOf();
