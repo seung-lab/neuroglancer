@@ -1,3 +1,5 @@
+import 'flatpickr/dist/flatpickr.min.css';
+
 import flatpickr from 'flatpickr';
 import minMaxTimePlugin from 'flatpickr/dist/plugins/minMaxTimePlugin';
 import {SegmentationUserLayerWithGraphDisplayState} from 'neuroglancer/segmentation_user_layer_with_graph';
@@ -5,16 +7,15 @@ import {TrackableValue} from 'neuroglancer/trackable_value';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {removeFromParent} from 'neuroglancer/util/dom';
 
-import 'flatpickr/dist/flatpickr.min.css';
-
 export class TimeSegmentWidget extends RefCounted {
   element = document.createElement('div');
   input = <HTMLInputElement>document.createElement('input');
+  internal: any;
   limit: TrackableValue<string>;
   model: TrackableValue<string>;
 
   constructor(
-      private displayState: SegmentationUserLayerWithGraphDisplayState,
+      private displayState: SegmentationUserLayerWithGraphDisplayState, private name: string,
       private undo?: (message: string, action: string) => void) {
     super();
     this.model = displayState.timestamp;
@@ -78,45 +79,56 @@ export class TimeSegmentWidget extends RefCounted {
   }
 
   private buildFlatpickr(ele: HTMLInputElement, defaultDate?: string|Date) {
-    return flatpickr(ele, {
-      defaultDate,
-      enableTime: true,
-      enableSeconds: true,
-      'disable': [(date) => {
-        const target = date.valueOf();
-        const future = Date.now();
-        // note: this is fine b/c we are dealing with epoch time (date sheNaNigans are irrelevant
-        // here)
-        const past = parseInt(this.limit.value || '0', 10) - (24 * 60 * 60 * 1000);
+    if (!this.internal) {
+      const orphan = document.getElementById(`fp_${this.name}`);
+      if (orphan) {
+        orphan.remove();
+      }
+      this.internal = flatpickr(ele, {
+        defaultDate,
+        enableTime: true,
+        enableSeconds: true,
+        'disable': [(date) => {
+          const target = date.valueOf();
+          const future = Date.now();
+          // note: this is fine b/c we are dealing with epoch time (date sheNaNigans are irrelevant
+          // here)
+          const past = parseInt(this.limit.value || '0', 10) - (24 * 60 * 60 * 1000);
 
-        if (past) {
-          return past > target || target >= future;
-        } else {
-          return target >= future;
-        }
-      }],
-      plugins: [minMaxTimePlugin({
-        getTimeLimits: (date) => {
-          const now = new Date();
-          const past = new Date(parseInt(this.limit.value || '0', 10));
-          let minmax = {minTime: `00:00:00`, maxTime: `23:59:59`};
-
-          if (date.toDateString() === now.toDateString()) {
-            minmax.maxTime = `${now.getHours()}:${now.getMinutes()}:${now.getSeconds()}`;
-          } else if (date.toDateString() === past.toDateString()) {
-            // Flatpickr does not support millisecond res, must round up to nearest second
-            // TODO: Seconds fixed has been merged in, remove + 1 to minutes when flatpickr is
-            // updated
-            minmax.minTime = `${past.getHours()}:${(past.getMinutes() + 1) % 60}:${
-                (past.getSeconds() + 1) % 60}`;
+          if (past) {
+            return past > target || target >= future;
+          } else {
+            return target >= future;
           }
-          return minmax;
-        }
-      })]
-    });
+        }],
+        plugins: [minMaxTimePlugin({
+          getTimeLimits: (date) => {
+            const now = new Date();
+            const past = new Date(parseInt(this.limit.value || '0', 10));
+            let minmax = {minTime: `00:00:00`, maxTime: `23:59:59`};
+
+            if (date.toDateString() === now.toDateString()) {
+              minmax.maxTime = `${now.getHours()}:${now.getMinutes()}:${now.getSeconds()}`;
+            } else if (date.toDateString() === past.toDateString()) {
+              // Flatpickr does not support millisecond res, must round up to nearest second
+              // TODO: Seconds fixed has been merged in, remove + 1 to minutes when flatpickr is
+              // updated
+              minmax.minTime = `${past.getHours()}:${(past.getMinutes() + 1) % 60}:${
+                  (past.getSeconds() + 1) % 60}`;
+            }
+            return minmax;
+          }
+        })]
+      });
+      this.internal.calendarContainer.id = `fp_${this.name}`;
+    }
+    return this.internal;
   }
 
   disposed() {
+    if (this.internal) {
+      this.internal.destroy();
+    }
     removeFromParent(this.element);
     super.disposed();
   }

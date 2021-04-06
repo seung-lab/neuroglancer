@@ -349,7 +349,7 @@ export class GraphOperationLayerView extends Tab {
             StatusMessage.showTemporaryMessage(`No split found.`, 3000);
           } else {
             let segmentationState = this.annotationLayer.segmentationState.value!
-            for (let segment of [...sinks, ...sources]) {
+                                    for (let segment of [...sinks, ...sources]) {
               segmentationState.rootSegments.delete(segment.rootId);
             }
             segmentationState.rootSegmentsAfterEdit!.clear();
@@ -400,8 +400,8 @@ export class GraphOperationLayerView extends Tab {
     this.multicutOpacityGroup.appendFixedChild(otherSegmentsAlphaWidget.element);
     this.element.appendChild(this.multicutOpacityGroup.element);
 
-    this.timeWidget = this.registerDisposer(
-        new TimeSegmentWidget(displayState, wrapper.manager.layerManager.messageWithUndo));
+    this.timeWidget = this.registerDisposer(new TimeSegmentWidget(
+        displayState, wrapper.name, wrapper.manager.layerManager.messageWithUndo));
     const disableConfirm = () => {
       if (displayState.timestamp.value === '') {
         confirmButton.disabled = false;
