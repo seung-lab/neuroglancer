@@ -348,13 +348,18 @@ export class GraphOperationLayerView extends Tab {
           if (splitRoots.length === 0) {
             StatusMessage.showTemporaryMessage(`No split found.`, 3000);
           } else {
-            let segmentationState = this.annotationLayer.segmentationState.value!
+            let segmentationState = this.annotationLayer.segmentationState.value!;
             for (let segment of [...sinks, ...sources]) {
               segmentationState.rootSegments.delete(segment.rootId);
             }
             segmentationState.rootSegmentsAfterEdit!.clear();
             segmentationState.rootSegments.add(splitRoots);
             segmentationState.rootSegmentsAfterEdit!.add(splitRoots);
+
+            // TODO: Merge unsupported with edits
+            const view = (<any>window)['viewer'];
+            view.differ.purgeHistory();
+            view.differ.ignoreChanges();
           }
         });
       });

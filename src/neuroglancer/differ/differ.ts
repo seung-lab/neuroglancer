@@ -12,11 +12,16 @@ export class Differ {
   max = 100;
   stack: StateChange[] = [];
   reverseStack: StateChange[] = [];
+  ignore = 0;
 
-  constructor(public root: Trackable, public legacy?: Viewer) {}
+  constructor(public root: Trackable, public legacy?: Viewer, public disable?: boolean) {}
   public record(oldState: any, newState: any) {
     // TODO: Differ does not work with legacy saving
-    if (oldState === undefined || newState === undefined || this.legacy) {
+    if (oldState === undefined || newState === undefined || this.legacy || this.disable ||
+        this.ignore > 0) {
+      if (this.ignore > 0) {
+        this.ignore--;
+      }
       return true;
     }
 
@@ -54,6 +59,14 @@ export class Differ {
   }
   public showChanges(viewer: Viewer) {
     new DiffDialog(viewer, this);
+  }
+  public ignoreChanges(count = 1) {
+    this.ignore = count;
+  }
+  public purgeHistory() {
+    this.stack = [];
+    this.reverseStack = [];
+    this.setRollStatus();
   }
   private setRollStatus() {
     const undo = document.getElementById('neuroglancer-undo-button');
