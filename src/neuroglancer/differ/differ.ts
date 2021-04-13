@@ -16,10 +16,10 @@ export class Differ {
   stack: StateChange[] = [];
   reverseStack: StateChange[] = [];
   ignore = 0;
+  icons = {undo: undoIcon, redo: redoIcon};
 
   constructor(public root: Trackable, public legacy?: Viewer, public disable?: boolean) {}
   public record(currentState: any, lastState: any) {
-    // TODO: Differ does not work with legacy saving
     if (currentState === undefined || lastState === undefined || this.disable || this.ignore > 0) {
       if (this.ignore > 0) {
         this.ignore--;
