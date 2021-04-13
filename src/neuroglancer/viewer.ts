@@ -506,7 +506,7 @@ export class Viewer extends RefCounted implements ViewerState {
     const isLegacySavingOn = getSaveToAddressBar().value;
     const unsupported = ' is currently unsupported in Legacy Saving Mode';
     {
-      const button = makeTextIconButton('⇦', `Undo${isLegacySavingOn ? unsupported : ''}`);
+      const button = makeTextIconButton('', `Undo${isLegacySavingOn ? unsupported : ''}`);
       button.id = 'neuroglancer-undo-button';
       button.classList.add('disabled');
       this.registerEventListener(button, 'click', () => {
@@ -532,7 +532,7 @@ export class Viewer extends RefCounted implements ViewerState {
     }
 
     {
-      const button = makeTextIconButton('⇨', `Redo${isLegacySavingOn ? unsupported : ''}`);
+      const button = makeTextIconButton('', `Redo${isLegacySavingOn ? unsupported : ''}`);
       button.id = 'neuroglancer-redo-button';
       button.classList.add('disabled');
       this.registerEventListener(button, 'click', () => {
@@ -855,6 +855,9 @@ export class Viewer extends RefCounted implements ViewerState {
     this.bindAction('save-state-getraw', () => {
       this.postJsonState(true, UrlType.raw);
     });
+
+    this.bindAction('undo', () => this.differ.rollback());
+    this.bindAction('redo', () => this.differ.rollforward());
   }
 
   showHelpDialog() {

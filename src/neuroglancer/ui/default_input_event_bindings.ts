@@ -22,6 +22,8 @@ let defaultGlobalBindings: EventActionMap|undefined;
 export function getDefaultGlobalBindings() {
   if (defaultGlobalBindings === undefined) {
     const map = new EventActionMap();
+    map.set('control+keyz', 'undo');
+    map.set('control+shift+keyz', 'redo');
     map.set('keyl', 'recolor');
     map.set('control+shift+keyx', 'clear-segments');
     map.set('keys', 'toggle-show-slices');

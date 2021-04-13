@@ -5,6 +5,9 @@ import {Dialog} from 'neuroglancer/dialog';
 import {getCachedJson, Trackable} from 'neuroglancer/util/trackable';
 import {Viewer} from 'neuroglancer/viewer';
 
+const undoIcon = require('neuroglancer/../../assets/icons/undo_24dp.svg');
+const redoIcon = require('neuroglancer/../../assets/icons/redo_24dp.svg');
+
 const diff = new diff_match_patch();
 export class Differ {
   saveRedo = false;
@@ -71,16 +74,21 @@ export class Differ {
   private setRollStatus() {
     const undo = document.getElementById('neuroglancer-undo-button');
     const redo = document.getElementById('neuroglancer-redo-button');
-    this.modifyStatus(undo, this.stack.length, '⬅️', '⇦', 'undo');
-    this.modifyStatus(redo, this.reverseStack.length, '➡️', '⇨', 'redo');
+    this.modifyStatus(undo, this.stack.length, undoIcon, '#059AA6', '#ffffff', 'undo');
+    this.modifyStatus(redo, this.reverseStack.length, redoIcon, '#059AA6', '#ffffff', 'redo');
   }
   private modifyStatus(
-      element: HTMLElement|null, status: number, enabled: string, disabled: string, name: string) {
+      element: HTMLElement|null, status: number, icon: string, enabled: string, disabled: string,
+      name: string) {
     if (!element) {
       return;
     }
     element.classList.toggle('disabled', !status);
-    element.innerText = status ? enabled : disabled;
+    element.innerHTML = icon;
+    const svg = element.firstChild;
+    if (svg) {
+      (<SVGElement>svg).style.fill = status ? enabled : disabled;
+    }
     element.title =
         status ? `${status} ${name}${status > 1 ? 's' : ''} avaliable` : `Nothing to ${name}`;
   }
