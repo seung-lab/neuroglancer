@@ -71,12 +71,13 @@ export class SaveState extends RefCounted {
       } else {
         source.history = [this.session_id];
       }
-      const oldState = this.root.toJSON();
-      const stateChange = this.viewer.differ!.record(oldState, source.state);
+      const currentState = this.root.toJSON();
+      const lastUpdatedState = source.state;
+      const stateChange = this.viewer.differ!.record(currentState, lastUpdatedState);
 
 
       if (stateChange || clean) {
-        source.state = oldState;
+        source.state = currentState;
         // if clean is true, then this state is committed, and not dirty.
         source.dirty = clean ? !clean : true;
         const serializedUpdate = JSON.stringify(source);

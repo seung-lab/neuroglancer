@@ -135,7 +135,7 @@ class UrlHashBindingLegacy {
       const encodedStateString = this.encodeFragment(stateString);
       const prevStateString =
           this.prevStateString ? decodeURIComponent(this.prevStateString) : this.prevStateString;
-      if (this.parent.viewer.differ.record(prevStateString, stateString)) {
+      if (this.parent.viewer.differ.record(stateString, prevStateString)) {
         this.prevStateString = encodedStateString;
         if (decodeURIComponent(encodedStateString) === '{}') {
           history.replaceState(null, '', '#');

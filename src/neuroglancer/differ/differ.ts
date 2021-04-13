@@ -18,22 +18,21 @@ export class Differ {
   ignore = 0;
 
   constructor(public root: Trackable, public legacy?: Viewer, public disable?: boolean) {}
-  public record(oldState: any, newState: any) {
+  public record(currentState: any, lastState: any) {
     // TODO: Differ does not work with legacy saving
-    if (oldState === undefined || newState === undefined || this.legacy || this.disable ||
-        this.ignore > 0) {
+    if (currentState === undefined || lastState === undefined || this.disable || this.ignore > 0) {
       if (this.ignore > 0) {
         this.ignore--;
       }
       return true;
     }
 
-    const oldSerial = this.legacy ? oldState : JSON.stringify(oldState);
-    const newSerial = this.legacy ? newState : JSON.stringify(newState);
-    const stateChange = oldSerial !== newSerial;
+    const currentSerial = this.legacy ? currentState : JSON.stringify(currentState);
+    const lastSerial = this.legacy ? lastState : JSON.stringify(lastState);
+    const stateChange = currentSerial !== lastSerial;
 
     if (stateChange) {
-      const patch = diff.patch_toText(diff.patch_make(oldSerial, newSerial));
+      const patch = diff.patch_toText(diff.patch_make(currentSerial, lastSerial));
       const timestamp = (new Date()).valueOf();
       const change = 'Change';
       const entry = <StateChange>{patch, timestamp, change};
@@ -95,8 +94,7 @@ export class Differ {
   private apply(rollback = true) {
     const target = rollback ? this.stack : this.reverseStack;
     const lastPatch = target.pop();
-    // TODO: Differ does not work with legacy saving
-    if (!lastPatch || this.legacy) {
+    if (!lastPatch) {
       // Cancel apply if no patch to apply
       return;
     }
@@ -108,20 +106,13 @@ export class Differ {
       this.applyRedo = true;
     }
     let restoreFromPatch;
-    if (!this.legacy) {
-      const currentState = JSON.stringify(this.root.toJSON());
-      const patchfromText = diff.patch_fromText(lastPatch.patch!);
-      restoreFromPatch = diff.patch_apply(patchfromText, currentState);
-      /* deactivate so that state change triggered by updating
-      the state w/ a rollback doesn't affect state history*/
-    } else {
-      // If in Legacy mode update URL instead
-      const cacheState = getCachedJson(this.root);
-
-      const currentStateString = JSON.stringify(cacheState.value);
-      const patchfromText = diff.patch_fromText(lastPatch.patch!);
-      restoreFromPatch = diff.patch_apply(patchfromText, currentStateString);
-    }
+    // If in Legacy mode update URL instead
+    const currentState =
+        JSON.stringify((this.legacy) ? getCachedJson(this.root).value : this.root.toJSON());
+    const patchfromText = diff.patch_fromText(lastPatch.patch!);
+    restoreFromPatch = diff.patch_apply(patchfromText, currentState);
+    /* deactivate so that state change triggered by updating
+    the state w/ a rollback doesn't affect state history*/
     this.root.restoreState(JSON.parse(restoreFromPatch[0]));
   }
 }
