@@ -502,13 +502,11 @@ export class Viewer extends RefCounted implements ViewerState {
     this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
         this.uiControlVisibility.showAnnotationToolStatus, annotationToolStatus.element));
 
-    // TODO: Differ does not work with legacy saving
-    const isLegacySavingOn = getSaveToAddressBar().value;
-    const unsupported = ' is currently unsupported in Legacy Saving Mode';
     {
-      const button = makeTextIconButton('', `Undo${isLegacySavingOn ? unsupported : ''}`);
+      const button = makeTextIconButton('', `Undo`);
       button.id = 'neuroglancer-undo-button';
       button.classList.add('disabled');
+      button.innerHTML = this.differ.icons.undo;
       this.registerEventListener(button, 'click', () => {
         if (this.differ) {
           this.differ.rollback();
@@ -532,9 +530,10 @@ export class Viewer extends RefCounted implements ViewerState {
     }
 
     {
-      const button = makeTextIconButton('', `Redo${isLegacySavingOn ? unsupported : ''}`);
+      const button = makeTextIconButton('', `Redo`);
       button.id = 'neuroglancer-redo-button';
       button.classList.add('disabled');
+      button.innerHTML = this.differ.icons.redo;
       this.registerEventListener(button, 'click', () => {
         if (this.differ) {
           this.differ.rollforward();
