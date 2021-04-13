@@ -216,3 +216,55 @@ jobs:
         key: ${{ runner.os }}-${{ matrix.go-version }}-go-${{ hashFiles('**/go.sum') }}
     - run: go build .
       working-directory: ngauth_server
+  build-and-deploy:
+    strategy:
+        matrix:
+          node-version:
+            - '14.x'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v1
+      with:
+        node-version: ${{ matrix.node-version }}
+    - uses: actions/cache@v2
+      with:
+        path: "**/node_modules"
+        key: ${{ runner.os }}-${{ matrix.node-version }}-node_modules-${{ hashFiles('**/package-lock.json') }}
+    - run: npm install
+    - name: Typecheck with TypeScript
+      run: npm run typecheck
+    - name: Build client bundles
+      run: npm run build --no-typecheck
+    - run: cp -r ./dist/min appengine/frontend/static/
+    - name: Extract branch name
+      id: get_branch
+      shell: bash
+      run: echo "##[set-output name=branch;]$(echo ${GITHUB_REF#refs/heads/} | tr / - | tr _ -)"
+    - run: echo ${{ steps.get_branch.outputs.branch }}
+    - name: start deployment
+      uses: bobheadxi/deployments@v0.5.2
+      id: deployment
+      with:
+        step: start
+        token: ${{ secrets.GITHUB_TOKEN }}
+        env: ${{ steps.get_branch.outputs.branch }}
+        desc: Setting up staging deployment for ${{ steps.get_branch.outputs.branch }}
+    - id: deploy
+      uses: google-github-actions/deploy-appengine@main
+      with:
+        credentials: ${{ secrets.SA_GOOGLE_APPS_DEPLOY }}
+        version: ${{ steps.get_branch.outputs.branch }}
+        deliverables: appengine/frontend/app.yaml
+        promote: false
+    - name: update deployment status
+      uses: bobheadxi/deployments@v0.5.2
+      if: always()
+      with:
+        step: finish
+        token: ${{ secrets.GITHUB_TOKEN }}
+        env: ${{ steps.deployment.outputs.env }}
+        env_url: ${{ steps.deploy.outputs.url }}
+        status: ${{ job.status }}
+        deployment_id: ${{ steps.deployment.outputs.deployment_id }}
