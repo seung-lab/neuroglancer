@@ -462,6 +462,13 @@ export class SegmentationUserLayer extends Base {
     if (this.ignoreSegmentInteractions.value) {
       return;
     }
+    // TODO: Merge unsupported with edits
+    const disposeUndoRedoAfterEdit = () => {
+      const view = (<any>window)['viewer'];
+      view.deactivateEditMode();
+      view.differ.purgeHistory();
+      view.differ.ignoreChanges();
+    };
     switch (action) {
       case 'recolor': {
         this.displayState.segmentColorHash.randomize();
@@ -483,6 +490,7 @@ export class SegmentationUserLayer extends Base {
         // Cleanup by removing all old root segments
         const newRootSegment = segmentEquivalences.get(firstSegment);
         rootSegments.delete([...rootSegments].filter(id => !Uint64.equal(id, newRootSegment)));
+        disposeUndoRedoAfterEdit();
         break;
       }
       case 'cut-selected': {
@@ -492,6 +500,7 @@ export class SegmentationUserLayer extends Base {
           segmentEquivalences.deleteSet(rootSegment);
           rootSegments.add(segments.filter(id => !Uint64.equal(id, rootSegment)));
         }
+        disposeUndoRedoAfterEdit();
         break;
       }
       case 'select': {
@@ -508,6 +517,7 @@ export class SegmentationUserLayer extends Base {
       }
       case 'merge-select-second': {
         this.mergeSelectSecond();
+        disposeUndoRedoAfterEdit();
         break;
       }
       case 'split-select-first': {
