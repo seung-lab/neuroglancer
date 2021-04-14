@@ -507,6 +507,10 @@ export class Viewer extends RefCounted implements ViewerState {
       button.id = 'neuroglancer-undo-button';
       button.classList.add('disabled', 'unmerged');
       button.innerHTML = this.differ.icons.undo;
+      const svg = button.firstChild;
+      if (svg) {
+        (<SVGElement>svg).style.fill = this.differ.icons.disableColor;
+      }
       this.registerEventListener(button, 'click', () => {
         if (this.differ) {
           this.differ.rollback();
@@ -535,6 +539,10 @@ export class Viewer extends RefCounted implements ViewerState {
       button.id = 'neuroglancer-redo-button';
       button.classList.add('disabled', 'unmerged');
       button.innerHTML = this.differ.icons.redo;
+      const svg = button.firstChild;
+      if (svg) {
+        (<SVGElement>svg).style.fill = this.differ.icons.disableColor;
+      }
       this.registerEventListener(button, 'click', () => {
         if (this.differ) {
           this.differ.rollforward();

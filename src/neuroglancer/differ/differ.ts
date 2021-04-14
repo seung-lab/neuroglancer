@@ -16,7 +16,7 @@ export class Differ {
   stack: StateChange[] = [];
   reverseStack: StateChange[] = [];
   ignore = 0;
-  icons = {undo: undoIcon, redo: redoIcon};
+  icons = {undo: undoIcon, redo: redoIcon, disableColor: '#444444', enableColor: '#ffffff'};
 
   constructor(public root: Trackable, public legacy?: Viewer, public disable?: boolean) {}
   public record(currentState: any, lastState: any) {
@@ -73,8 +73,11 @@ export class Differ {
   private setRollStatus() {
     const undo = document.getElementById('neuroglancer-undo-button');
     const redo = document.getElementById('neuroglancer-redo-button');
-    this.modifyStatus(undo, this.stack.length, undoIcon, '#059AA6', '#ffffff', 'undo');
-    this.modifyStatus(redo, this.reverseStack.length, redoIcon, '#059AA6', '#ffffff', 'redo');
+    this.modifyStatus(
+        undo, this.stack.length, undoIcon, this.icons.enableColor, this.icons.disableColor, 'undo');
+    this.modifyStatus(
+        redo, this.reverseStack.length, redoIcon, this.icons.enableColor, this.icons.disableColor,
+        'redo');
   }
   private modifyStatus(
       element: HTMLElement|null, status: number, icon: string, enabled: string, disabled: string,
