@@ -505,7 +505,7 @@ export class Viewer extends RefCounted implements ViewerState {
     {
       const button = makeTextIconButton('', `Undo`);
       button.id = 'neuroglancer-undo-button';
-      button.classList.add('disabled');
+      button.classList.add('disabled', 'unmerged');
       button.innerHTML = this.differ.icons.undo;
       this.registerEventListener(button, 'click', () => {
         if (this.differ) {
@@ -520,6 +520,7 @@ export class Viewer extends RefCounted implements ViewerState {
     {
       const button = makeTextIconButton('⚬', 'Change History');
       button.id = 'neuroglancer-change-button';
+      button.classList.add('unmerged');
       this.registerEventListener(button, 'click', () => {
         this.showChanges();
       });
@@ -532,7 +533,7 @@ export class Viewer extends RefCounted implements ViewerState {
     {
       const button = makeTextIconButton('', `Redo`);
       button.id = 'neuroglancer-redo-button';
-      button.classList.add('disabled');
+      button.classList.add('disabled', 'unmerged');
       button.innerHTML = this.differ.icons.redo;
       this.registerEventListener(button, 'click', () => {
         if (this.differ) {
@@ -547,7 +548,7 @@ export class Viewer extends RefCounted implements ViewerState {
     {
       const button = document.createElement('button');
       button.id = 'neuroglancer-saver-button';
-      button.classList.add('ng-saver', 'neuroglancer-icon-button');
+      button.classList.add('ng-saver', 'neuroglancer-icon-button', 'unmerged');
       button.innerText = 'Share';
       button.title = 'Save Changes';
       if (!storageAccessible()) {
