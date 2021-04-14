@@ -502,13 +502,15 @@ export class Viewer extends RefCounted implements ViewerState {
     this.registerDisposer(new ElementVisibilityFromTrackableBoolean(
         this.uiControlVisibility.showAnnotationToolStatus, annotationToolStatus.element));
 
-    // TODO: Differ does not work with legacy saving
-    const isLegacySavingOn = getSaveToAddressBar().value;
-    const unsupported = ' is currently unsupported in Legacy Saving Mode';
     {
-      const button = makeTextIconButton('⇦', `Undo${isLegacySavingOn ? unsupported : ''}`);
+      const button = makeTextIconButton('', `Undo`);
       button.id = 'neuroglancer-undo-button';
-      button.classList.add('disabled');
+      button.classList.add('disabled', 'unmerged');
+      button.innerHTML = this.differ.icons.undo;
+      const svg = button.firstChild;
+      if (svg) {
+        (<SVGElement>svg).style.fill = this.differ.icons.disableColor;
+      }
       this.registerEventListener(button, 'click', () => {
         if (this.differ) {
           this.differ.rollback();
@@ -522,6 +524,7 @@ export class Viewer extends RefCounted implements ViewerState {
     {
       const button = makeTextIconButton('⚬', 'Change History');
       button.id = 'neuroglancer-change-button';
+      button.classList.add('unmerged');
       this.registerEventListener(button, 'click', () => {
         this.showChanges();
       });
@@ -532,9 +535,14 @@ export class Viewer extends RefCounted implements ViewerState {
     }
 
     {
-      const button = makeTextIconButton('⇨', `Redo${isLegacySavingOn ? unsupported : ''}`);
+      const button = makeTextIconButton('', `Redo`);
       button.id = 'neuroglancer-redo-button';
-      button.classList.add('disabled');
+      button.classList.add('disabled', 'unmerged');
+      button.innerHTML = this.differ.icons.redo;
+      const svg = button.firstChild;
+      if (svg) {
+        (<SVGElement>svg).style.fill = this.differ.icons.disableColor;
+      }
       this.registerEventListener(button, 'click', () => {
         if (this.differ) {
           this.differ.rollforward();
@@ -548,7 +556,7 @@ export class Viewer extends RefCounted implements ViewerState {
     {
       const button = document.createElement('button');
       button.id = 'neuroglancer-saver-button';
-      button.classList.add('ng-saver', 'neuroglancer-icon-button');
+      button.classList.add('ng-saver', 'neuroglancer-icon-button', 'unmerged');
       button.innerText = 'Share';
       button.title = 'Save Changes';
       if (!storageAccessible()) {
@@ -855,6 +863,9 @@ export class Viewer extends RefCounted implements ViewerState {
     this.bindAction('save-state-getraw', () => {
       this.postJsonState(true, UrlType.raw);
     });
+
+    this.bindAction('undo', () => this.differ.rollback());
+    this.bindAction('redo', () => this.differ.rollforward());
   }
 
   showHelpDialog() {
