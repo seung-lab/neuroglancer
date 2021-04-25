@@ -532,7 +532,6 @@ export class Viewer extends RefCounted implements ViewerState {
       topRow.appendChild(button);
     }
 
-    
     {
       const button = makeIcon({text: '?', title: 'Help'});
       this.registerEventListener(button, 'click', () => {
