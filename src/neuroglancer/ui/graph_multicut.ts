@@ -343,25 +343,29 @@ export class GraphOperationLayerView extends Tab {
       confirmButton.title = 'Perform Multi-Cut';
       confirmButton.addEventListener('click', () => {
         const {sources, sinks} = this.annotationLayer.getSourcesAndSinks();
-        this.wrapper.chunkedGraphLayer!.splitSegments(sources, sinks).then((splitRoots) => {
-          splitPreviewWrapper.disablePreview();
-          if (splitRoots.length === 0) {
-            StatusMessage.showTemporaryMessage(`No split found.`, 3000);
-          } else {
-            let segmentationState = this.annotationLayer.segmentationState.value!;
-            for (let segment of [...sinks, ...sources]) {
-              segmentationState.rootSegments.delete(segment.rootId);
-            }
-            segmentationState.rootSegmentsAfterEdit!.clear();
-            segmentationState.rootSegments.add(splitRoots);
-            segmentationState.rootSegmentsAfterEdit!.add(splitRoots);
+        if (sources.length === 0 || sinks.length === 0) {
+          StatusMessage.showTemporaryMessage('Must select both red and blue groups to perform a multi-cut.', 7000);
+        } else {
+          this.wrapper.chunkedGraphLayer!.splitSegments(sources, sinks).then((splitRoots) => {
+            splitPreviewWrapper.disablePreview();
+            if (splitRoots.length === 0) {
+              StatusMessage.showTemporaryMessage(`No split found.`, 3000);
+            } else {
+              let segmentationState = this.annotationLayer.segmentationState.value!;
+              for (let segment of [...sinks, ...sources]) {
+                segmentationState.rootSegments.delete(segment.rootId);
+              }
+              segmentationState.rootSegmentsAfterEdit!.clear();
+              segmentationState.rootSegments.add(splitRoots);
+              segmentationState.rootSegmentsAfterEdit!.add(splitRoots);
 
-            // TODO: Merge unsupported with edits
-            const view = (<any>window)['viewer'];
-            view.differ.purgeHistory();
-            view.differ.ignoreChanges();
-          }
-        });
+              // TODO: Merge unsupported with edits
+              const view = (<any>window)['viewer'];
+              view.differ.purgeHistory();
+              view.differ.ignoreChanges();
+            }
+          });
+        }
       });
       toolbox.appendChild(confirmButton);
     }
