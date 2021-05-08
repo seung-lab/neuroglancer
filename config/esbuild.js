@@ -82,6 +82,7 @@ class Builder {
     this.minify = minify;
     this.python = options.python;
     this.srcDir = path.resolve(__dirname, '..', 'src');
+    this.thirdPartyDir = path.resolve(__dirname, '..', 'third_party');
     this.plugins = getCommonPlugins();
     this.define = define;
     this.inject = inject;
@@ -168,6 +169,9 @@ class Builder {
       await fs.promises.copyFile(
           path.resolve(this.srcDir, 'neuroglancer/datasource/boss/bossauth.html'),
           path.resolve(this.outDir, 'bossauth.html'));
+      await fs.promises.copyFile(
+        path.resolve(this.thirdPartyDir, 'draco/draco_decoder.wasm'),
+        path.resolve(this.outDir, 'draco_decoder.wasm'));
     }
     await esbuild.build({
       ...this.getBaseEsbuildConfig(),
