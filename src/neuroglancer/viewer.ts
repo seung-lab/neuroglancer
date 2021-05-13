@@ -1006,7 +1006,12 @@ export class Viewer extends RefCounted implements ViewerState {
               errorPrefix: ''
             });
       } else {
-        StatusMessage.showTemporaryMessage(`No state server found.`, 4000, {color: 'yellow'});
+        if (getUrlType === UrlType.json) {
+          StatusMessage.showTemporaryMessage(`No state server found.`, 4000, {color: 'yellow'});
+          this.showSaveDialog();
+        } else {
+          this.showSaveDialog(getUrlType);
+        }
       }
     } else {
       if (savestate) {
