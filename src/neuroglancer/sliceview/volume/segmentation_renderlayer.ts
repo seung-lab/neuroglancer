@@ -66,8 +66,8 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
   private gpuSegmentStatedColorHashTable =
       GPUHashTable.get(this.gl, this.segmentationGroupState.segmentStatedColors.hashTable);
 
-  private hashTableManager = new HashSetShaderManager('visibleSegments');
-  private gpuHashTable = GPUHashTable.get(this.gl, this.segmentationGroupState.visibleSegments3D.hashTable);
+  private hashTableManager = new HashSetShaderManager('visibleSegments2D');
+  private gpuHashTable = GPUHashTable.get(this.gl, this.segmentationGroupState.visibleSegments2D!.hashTable);
   private equivalencesShaderManager = new HashMapShaderManager('equivalences');
   private equivalencesHashMap =
       new EquivalencesHashMap(this.segmentationGroupState.segmentEquivalences.disjointSets);
@@ -186,7 +186,7 @@ uint64_t getMappedObjectId() {
   initializeShader(_sliceView: SliceView, shader: ShaderProgram, parameters: ShaderParameters) {
     const {gl} = this;
     const {segmentSelectionState} = this.displayState;
-    const {visibleSegments3D, segmentColorHash} = this.segmentationGroupState;
+    const {visibleSegments2D, segmentColorHash} = this.segmentationGroupState;
     const ignoreNullSegmentSet = this.displayState.ignoreNullVisibleSet.value;
     let selectedSegmentLow = 0, selectedSegmentHigh = 0;
     if (segmentSelectionState.hasSelectedSegment) {
@@ -200,7 +200,7 @@ uint64_t getMappedObjectId() {
     gl.uniform2ui(shader.uniform('uSelectedSegment'), selectedSegmentLow, selectedSegmentHigh);
     gl.uniform1ui(
         shader.uniform('uShowAllSegments'),
-        visibleSegments3D.hashTable.size || !ignoreNullSegmentSet ? 0 : 1);
+        visibleSegments2D!.hashTable.size || !ignoreNullSegmentSet ? 0 : 1);
     this.hashTableManager.enable(gl, shader, this.gpuHashTable);
     if (parameters.hasEquivalences) {
       this.equivalencesHashMap.update();

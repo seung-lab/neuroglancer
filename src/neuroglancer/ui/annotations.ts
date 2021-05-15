@@ -1507,6 +1507,7 @@ export function UserLayerWithAnnotationsMixin<TBase extends {new (...args: any[]
                       if (related.length === 0 && sourceReadonly) continue;
                       const relationshipIndex = i;
                       const relationship = relationships[i];
+                      console.log('makeRelatedSegmentList');
                       parent.appendChild(
                           context
                               .registerDisposer(makeRelatedSegmentList(
