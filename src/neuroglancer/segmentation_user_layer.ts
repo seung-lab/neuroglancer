@@ -1278,7 +1278,7 @@ class SegmentDisplayTab extends Tab {
                   selectionClearButton.checked = true;
                   selectionClearButton.title = 'Deselect all segment IDs';
                   selectionClearButton.addEventListener('change', () => {
-                    group.visibleSegments3D.clear();
+                    group.rootSegments.clear();
                   });
                   const selectionCopyButton = makeCopyButton({
                     title: 'Copy visible segment IDs',
