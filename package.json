@@ -68,7 +68,7 @@
     "@types/sockjs-client": "^1.1.1",
     "@types/webpack-env": "^1.15.3",
     "codemirror": "^5.58.2",
-    "esbuild": "^0.8.11",
+    "esbuild": "^0.9.0",
     "gl-matrix": "^3.1.0",
     "glsl-editor": "^1.0.0",
     "ikonate": "^1.1.1",
