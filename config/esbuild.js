@@ -133,7 +133,6 @@ class Builder {
       target: 'es2019',
       plugins: this.plugins,
       loader: {'.wasm': 'dataurl'},
-      external: ['fs', 'path'],
     };
   }
 
