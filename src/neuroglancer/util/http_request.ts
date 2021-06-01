@@ -134,6 +134,11 @@ export function parseSpecialUrl(url: string): string {
     let path = match[3];
     if (path === undefined) path = '';
     return `https://s3.amazonaws.com/${bucket}${path}`;
+  } else if (protocol === 'matrix') {
+    const bucket = match[2];
+    let path = match[3];
+    if (path === undefined) path = '';
+    return `https://seungdata.princeton.edu/${bucket}${path}`;
   }
   return url;
 }
