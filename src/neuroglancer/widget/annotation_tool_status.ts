@@ -69,7 +69,25 @@ export class AnnotationToolStatusWidget extends RefCounted {
     return tool.description;
   }
 
+  private getDescriptionColor(): string {
+    const defaultColor = '#33cc33';
+    const layer = this.selectedLayer.layer;
+    if (layer === undefined) {
+      return defaultColor;
+    }
+    const userLayer = layer.layer;
+    if (userLayer === null) {
+      return defaultColor;
+    }
+    const tool = userLayer.tool.value;
+    if (tool === undefined || tool.getDescriptionColor === undefined) {
+      return defaultColor;
+    }
+    return tool.getDescriptionColor();
+  }
+
   private updateView() {
     this.element.textContent = this.getDescriptionText() || '';
+    this.element.style.color = this.getDescriptionColor();
   }
 }

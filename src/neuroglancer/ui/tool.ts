@@ -28,6 +28,7 @@ export abstract class Tool extends RefCounted {
   abstract toJSON(): any;
   deactivate(): void {}
   description: string;
+  getDescriptionColor?(): string;
 }
 
 export function restoreTool(layer: UserLayer, obj: any) {
