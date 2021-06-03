@@ -321,6 +321,10 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
           this.reloadManifest();
           break;
         }
+        case 'switch-multicut-group': {
+          this.graphOperationLayerState.value!.toggleSource();
+          break;
+        }
         default:
           super.handleAction(action);
           break;

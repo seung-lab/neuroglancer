@@ -320,7 +320,22 @@ export class GraphOperationLayerView extends Tab {
       pointButton.textContent = getAnnotationTypeHandler(AnnotationType.POINT).icon;
       pointButton.title = 'Set split point';
       pointButton.addEventListener('click', () => {
-        this.wrapper.tool.value = new PlaceGraphOperationMarkerTool(this.wrapper, {});
+        this.wrapper.tool.value = new PlaceGraphOperationMarkerTool(
+            this.wrapper, {},
+            () => {
+              if (this.annotationLayer.activeSource === sourceA) {
+                return 'set graph red split point';
+              } else {
+                return 'set graph blue split point';
+              }
+            },
+            () => {
+              if (this.annotationLayer.activeSource === sourceA) {
+                return 'rgb(255,0,0)';
+              } else {
+                return 'rgb(120,120,255)';
+              }
+            });
       });
       toolbox.appendChild(pointButton);
     }
@@ -983,8 +998,14 @@ abstract class PlaceGraphOperationTool extends Tool {
 }
 
 export class PlaceGraphOperationMarkerTool extends PlaceGraphOperationTool {
-  constructor(layer: SegmentationUserLayerWithGraph, options: any) {
+  private _getDescription: () => string;
+
+  constructor(
+      layer: SegmentationUserLayerWithGraph, options: any, getDescription: () => string,
+      getDescriptionColor: () => string) {
     super(layer, options);
+    this._getDescription = getDescription;
+    this.getDescriptionColor = getDescriptionColor;
   }
 
   trigger(mouseState: MouseSelectionState) {
@@ -1043,7 +1064,7 @@ export class PlaceGraphOperationMarkerTool extends PlaceGraphOperationTool {
   }
 
   get description() {
-    return `set graph merge/split point`;
+    return this._getDescription();
   }
 
   toJSON() {
