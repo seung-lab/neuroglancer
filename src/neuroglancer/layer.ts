@@ -414,6 +414,25 @@ export class UserLayer extends RefCounted {
     return this.transformPickedValue(result);
   }
 
+  getRawValueAt(position: Float32Array, pickState: PickState) {
+    let result: any;
+    let {renderLayers} = this;
+    let {pickedRenderLayer} = pickState;
+    if (pickedRenderLayer !== null && renderLayers.indexOf(pickedRenderLayer) !== -1) {
+      result =
+          pickedRenderLayer.transformPickedValue(pickState.pickedValue, pickState.pickedOffset);
+      result = this.transformPickedValue(result);
+      if (result != null) return result;
+    }
+    for (let layer of renderLayers) {
+      result = layer.getValueAt(position);
+      if (result != null) {
+        break;
+      }
+    }
+    return this.transformPickedValue(result);
+  }
+
   transformPickedValue(value: any) {
     return value;
   }
@@ -779,10 +798,25 @@ export class LayerManager extends RefCounted {
   }
 }
 
+export enum ActionState {
+  INACTIVE,
+  FIRST,   // Selecting elements for the first group.
+  SECOND,  // Selecting elements for the second group.
+}
+
+export enum ActionMode {
+  NONE,
+  MERGE,
+  SPLIT,
+}
+
 export interface PickState {
   pickedRenderLayer: RenderLayer|null;
   pickedValue: Uint64;
   pickedOffset: number;
+
+  actionMode: ActionMode;
+  actionState: ActionState;
 }
 
 export class MouseSelectionState implements PickState {
@@ -800,8 +834,50 @@ export class MouseSelectionState implements PickState {
   pickedAnnotationBufferOffset: number|undefined = undefined;
   pageX: number;
   pageY: number;
+  
+  actionMode = ActionMode.NONE;
+  actionState = ActionState.INACTIVE;
 
   private forcerFunction: (() => void)|undefined = undefined;
+
+  setMode(mode: ActionMode) {
+    this.actionMode = mode;
+  }
+
+  toggleAction() {
+    if (this.actionState === ActionState.INACTIVE) {
+      this.actionState = ActionState.FIRST;
+    } else {
+      this.actionState = ActionState.INACTIVE;
+    }
+  }
+
+  updateAction() {
+    switch (this.actionMode) {
+      case ActionMode.MERGE: {
+        if (this.actionState === ActionState.FIRST) {
+          this.actionState = ActionState.SECOND;
+          return ['merge', 'first'];
+        } else {
+          this.actionState = ActionState.INACTIVE;
+          return ['merge', 'second'];
+        }
+      }
+      case ActionMode.SPLIT: {
+        if (this.actionState === ActionState.FIRST) {
+          this.actionState = ActionState.SECOND;
+          return ['split', 'first'];
+        } else {
+          this.actionState = ActionState.INACTIVE;
+          return ['split', 'second'];
+        }
+      }
+      default: {
+        // Should never happen
+        return [];
+      }
+    }
+  }
 
   removeForcer(forcer: (() => void)) {
     if (forcer === this.forcerFunction) {
