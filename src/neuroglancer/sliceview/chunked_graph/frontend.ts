@@ -227,8 +227,8 @@ export class ChunkedGraphLayer extends GenericSliceViewRenderLayer {
         authFetch(`${url}/graph/find_path?int64_as_str=1&precision_mode=${Number(precisionMode)}`, {
           method: 'POST',
           body: JSON.stringify([
-            [String(first.segmentId), ...first.position.values()],
-            [String(second.segmentId), ...second.position.values()]
+            [String(first.rootId), ...first.position.values()],
+            [String(second.rootId), ...second.position.values()]
           ])
         });
 
