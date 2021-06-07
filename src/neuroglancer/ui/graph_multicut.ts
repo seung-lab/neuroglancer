@@ -278,6 +278,26 @@ function getCenterPosition(annotation: Annotation, transform: mat4) {
   return vec3.transformMat4(center, center, transform);
 }
 
+export function enableSplitPointTool(
+    layer: SegmentationUserLayerWithGraph, graphOperationLayerState: GraphOperationLayerState) {
+  layer.tool.value = new PlaceGraphOperationMarkerTool(
+      layer, {},
+      () => {
+        if (graphOperationLayerState.activeSource === graphOperationLayerState.sourceA) {
+          return 'set graph red split point';
+        } else {
+          return 'set graph blue split point';
+        }
+      },
+      () => {
+        if (graphOperationLayerState.activeSource === graphOperationLayerState.sourceA) {
+          return 'rgb(255,0,0)';
+        } else {
+          return 'rgb(120,120,255)';
+        }
+      });
+}
+
 export class GraphOperationLayerView extends Tab {
   private annotationListContainer = document.createElement('ul');
   private annotationListElements = new Map<string, HTMLElement>();
@@ -319,24 +339,7 @@ export class GraphOperationLayerView extends Tab {
       const pointButton = document.createElement('button');
       pointButton.textContent = getAnnotationTypeHandler(AnnotationType.POINT).icon;
       pointButton.title = 'Set split point';
-      pointButton.addEventListener('click', () => {
-        this.wrapper.tool.value = new PlaceGraphOperationMarkerTool(
-            this.wrapper, {},
-            () => {
-              if (this.annotationLayer.activeSource === sourceA) {
-                return 'set graph red split point';
-              } else {
-                return 'set graph blue split point';
-              }
-            },
-            () => {
-              if (this.annotationLayer.activeSource === sourceA) {
-                return 'rgb(255,0,0)';
-              } else {
-                return 'rgb(120,120,255)';
-              }
-            });
-      });
+      pointButton.addEventListener('click', enableSplitPointTool.bind(undefined, this.wrapper, this.annotationLayer));
       toolbox.appendChild(pointButton);
     }
 
