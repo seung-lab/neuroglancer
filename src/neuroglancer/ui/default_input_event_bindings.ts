@@ -46,6 +46,7 @@ export function getDefaultGlobalBindings() {
     map.set('space', 'toggle-layout');
     map.set('shift+space', 'toggle-layout-alternative');
     map.set('backslash', 'toggle-show-statistics');
+    map.set('control+shift+backslash', 'switch-multicut-group');
     defaultGlobalBindings = map;
   }
   return defaultGlobalBindings;
@@ -83,7 +84,6 @@ export function getDefaultRenderedDataPanelBindings() {
           'keyc': 'two-point-cut',
           'control+keyc': 'cut-selected',
           'control+keys': 'shatter-segment-equivalences',
-          'control+shift+backslash': 'switch-multicut-group',
           'at:control+wheel': {action: 'zoom-via-wheel', preventDefault: true},
           'at:wheel': {action: 'z+1-via-wheel', preventDefault: true},
           'at:shift+wheel': {action: 'z+10-via-wheel', preventDefault: true},
