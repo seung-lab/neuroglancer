@@ -235,6 +235,8 @@ export class SegmentSetWidget extends RefCounted {
     itemElement.className = 'segment-div';
     itemElement.dataset.dataset =
         (this.volumePath) ? this.volumePath.substring(this.volumePath.lastIndexOf('/') + 1) : '';
+    itemElement.dataset.source =
+        (this.volumePath) ? new URL(new URL(this.volumePath).pathname.slice(2)).href : '';
     itemElement.appendChild(this.createItemButton(segmentIDString));
     itemElement.appendChild(this.createItemCopyIDButton(segmentIDString));
     itemElement.appendChild(this.createItemColorSelection(segmentIDString, itemElement));
