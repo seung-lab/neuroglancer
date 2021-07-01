@@ -14,91 +14,91 @@ jobs:
           - "macos-latest"
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v2
-      - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v1
-        with:
-          node-version: ${{ matrix.node-version }}
-      - uses: actions/cache@v2
-        with:
-          path: "**/node_modules"
-          key: ${{ runner.os }}-${{ matrix.node-version }}-node_modules-${{ hashFiles('**/package-lock.json') }}
-      - run: npm install
-      - name: Typecheck with TypeScript
-        run: npm run typecheck
-      - name: Build client bundles
-        run: npm run build --no-typecheck
-      - name: Build JavaScript module
-        run: npm run build-module --no-typecheck
-      - name: Build Python client bundles
-        run: npm run build-python --no-typecheck
-      - run: sudo apt-get install xvfb
-        if: startsWith(runner.os, 'Linux')
-      - name: Run JavaScript tests (including WebGL)
-        # Swiftshader, used by Chrome headless, crashes when running Neuroglancer
-        # tests.
-        #
-        # The only reliable headless configuration is Firefox on Linux under
-        # xvfb-run, which uses Mesa software rendering.
-        if: startsWith(runner.os, 'Linux')
-        run: xvfb-run --auto-servernum --server-args='-screen 0 1024x768x24' npm run test -- --browsers Firefox
-      - name: Run JavaScript tests (excluding WebGL)
-        if: ${{ !startsWith(runner.os, 'Linux') }}
-        run: npm run test -- --browsers ChromeHeadless --define=NEUROGLANCER_SKIP_WEBGL_TESTS
-      - name: Run JavaScript benchmarks
-        run: npm run benchmark
+    - uses: actions/checkout@v2
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v1
+      with:
+        node-version: ${{ matrix.node-version }}
+    - uses: actions/cache@v2
+      with:
+        path: "**/node_modules"
+        key: ${{ runner.os }}-${{ matrix.node-version }}-node_modules-${{ hashFiles('**/package-lock.json') }}
+    - run: npm install
+    - name: Typecheck with TypeScript
+      run: npm run typecheck
+    - name: Build client bundles
+      run: npm run build --no-typecheck
+    - name: Build JavaScript module
+      run: npm run build-module --no-typecheck
+    - name: Build Python client bundles
+      run: npm run build-python --no-typecheck
+    - run: sudo apt-get install xvfb
+      if: startsWith(runner.os, 'Linux')
+    - name: Run JavaScript tests (including WebGL)
+      # Swiftshader, used by Chrome headless, crashes when running Neuroglancer
+      # tests.
+      #
+      # The only reliable headless configuration is Firefox on Linux under
+      # xvfb-run, which uses Mesa software rendering.
+      if: startsWith(runner.os, 'Linux')
+      run: xvfb-run --auto-servernum --server-args='-screen 0 1024x768x24' npm run test -- --browsers Firefox
+    - name: Run JavaScript tests (excluding WebGL)
+      if: ${{ !startsWith(runner.os, 'Linux') }}
+      run: npm run test -- --browsers ChromeHeadless --define=NEUROGLANCER_SKIP_WEBGL_TESTS
+    - name: Run JavaScript benchmarks
+      run: npm run benchmark
   build-and-deploy:
     strategy:
-      matrix:
-        node-version:
-          - "14.x"
+        matrix:
+          node-version:
+            - '14.x'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v1
-        with:
-          node-version: ${{ matrix.node-version }}
-      - uses: actions/cache@v2
-        with:
-          path: "**/node_modules"
-          key: ${{ runner.os }}-${{ matrix.node-version }}-node_modules-${{ hashFiles('**/package-lock.json') }}
-      - run: npm install
-      - name: Typecheck with TypeScript
-        run: npm run typecheck
-      - name: Build client bundles
-        run: npm run build --no-typecheck
-      - run: cp -r ./dist/min appengine/frontend/static/
-      - name: Extract branch name and short sha
-        id: vars
-        shell: bash
-        run: |
-          echo "##[set-output name=branch;]$(echo ${GITHUB_REF#refs/heads/} | tr / - | tr _ -)"
-          echo "::set-output name=sha_short::$(git rev-parse --short HEAD)"
-      - run: echo ${{ steps.vars.outputs.branch }}
-      - run: echo ${{ steps.vars.outputs.sha_short }}
-      - name: start deployment
-        uses: bobheadxi/deployments@v0.5.2
-        id: deployment
-        with:
-          step: start
-          token: ${{ secrets.GITHUB_TOKEN }}
-          env: ${{ steps.vars.outputs.branch }}
-          desc: Setting up staging deployment for ${{ steps.vars.outputs.branch }}
-      - id: deploy
-        uses: google-github-actions/deploy-appengine@main
-        with:
-          credentials: ${{ secrets.SA_GOOGLE_APPS_DEPLOY }}
-          version: ${{ steps.vars.outputs.sha_short }}
-          deliverables: appengine/frontend/app.yaml
-          promote: true
-      - name: update deployment status
-        uses: bobheadxi/deployments@v0.5.2
-        if: always()
-        with:
-          step: finish
-          token: ${{ secrets.GITHUB_TOKEN }}
-          env: ${{ steps.deployment.outputs.env }}
-          env_url: ${{ steps.deploy.outputs.url }}
-          status: ${{ job.status }}
-          deployment_id: ${{ steps.deployment.outputs.deployment_id }}
+    - uses: actions/checkout@v2
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v1
+      with:
+        node-version: ${{ matrix.node-version }}
+    - uses: actions/cache@v2
+      with:
+        path: "**/node_modules"
+        key: ${{ runner.os }}-${{ matrix.node-version }}-node_modules-${{ hashFiles('**/package-lock.json') }}
+    - run: npm install
+    - name: Typecheck with TypeScript
+      run: npm run typecheck
+    - name: Build client bundles
+      run: npm run build
+    - run: cp -r ./dist/min appengine/frontend/static/
+    - name: Extract branch name and short sha
+      id: vars
+      shell: bash
+      run: |
+        echo "##[set-output name=branch;]$(echo ${GITHUB_REF#refs/heads/} | tr / - | tr _ -)"
+        echo "::set-output name=sha_short::$(git rev-parse --short HEAD)"
+    - run: echo ${{ steps.vars.outputs.branch }}
+    - run: echo ${{ steps.vars.outputs.sha_short }}
+    - name: start deployment
+      uses: bobheadxi/deployments@v0.5.2
+      id: deployment
+      with:
+        step: start
+        token: ${{ secrets.GITHUB_TOKEN }}
+        env: ${{ steps.vars.outputs.branch }}
+        desc: Setting up staging deployment for ${{ steps.vars.outputs.branch }}
+    - id: deploy
+      uses: google-github-actions/deploy-appengine@main
+      with:
+        credentials: ${{ secrets.SA_GOOGLE_APPS_DEPLOY }}
+        version: ${{ steps.vars.outputs.sha_short }}
+        deliverables: appengine/frontend/app.yaml
+        promote: true
+    - name: update deployment status
+      uses: bobheadxi/deployments@v0.5.2
+      if: always()
+      with:
+        step: finish
+        token: ${{ secrets.GITHUB_TOKEN }}
+        env: ${{ steps.deployment.outputs.env }}
+        env_url: ${{ steps.deploy.outputs.url }}
+        status: ${{ job.status }}
+        deployment_id: ${{ steps.deployment.outputs.deployment_id }}
