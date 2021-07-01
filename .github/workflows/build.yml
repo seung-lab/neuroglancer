@@ -67,7 +67,7 @@ jobs:
     - name: Typecheck with TypeScript
       run: npm run typecheck
     - name: Build client bundles
-      run: npm run build --no-typecheck
+      run: npm run build
     - run: cp -r ./dist/min appengine/frontend/static/
     - name: Extract branch name and short sha
       id: vars
