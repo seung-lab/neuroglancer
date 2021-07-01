@@ -13,7 +13,7 @@ skip_files:
 - ^(.*/)?\..*$
 - ^node_modules$
 
-service: neuroglancer
+service: microns-explorer
 
 handlers:
 # Handle the main page by serving the index page.
