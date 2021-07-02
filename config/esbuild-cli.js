@@ -117,6 +117,7 @@ async function main(argv) {
     define: argv.define,
     inject: argv.inject,
     googleTagManager: argv.googleTagManager,
+    googleTagManagerAuth: argv.googleTagManagerAuth
   });
   if (moduleBuild) {
     try {
@@ -204,6 +205,12 @@ if (require.main === module) {
               type: 'string',
               nargs: 1,
               description: 'Google tag manager id to include in index.html',
+            },
+            ['google-tag-manager-auth']: {
+              group: 'Customization',
+              type: 'string',
+              nargs: 1,
+              description: 'Google tag manager authid to include in index.html',
             },
           })
           .strict()
