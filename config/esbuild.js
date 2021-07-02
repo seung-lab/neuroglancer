@@ -24,11 +24,11 @@ const esbuild = require('esbuild');
 const path = require('path');
 const fs = require('fs');
 const bundleConfig = require('./bundle-config');
-const {spawn} = require('child_process');
+const { spawn } = require('child_process');
 
 function createEntryPointFile(cacheId, bundleName, sources) {
   const tempEntryPointDir =
-      path.resolve(__dirname, '..', 'node_modules', '.cache', 'esbuild-entry-points', cacheId);
+    path.resolve(__dirname, '..', 'node_modules', '.cache', 'esbuild-entry-points', cacheId);
   sources = sources.map(x => {
     // Ensure all paths are relative and use forward slashes.
     if (path.isAbsolute(x)) {
@@ -43,10 +43,10 @@ function createEntryPointFile(cacheId, bundleName, sources) {
     sources = sources.slice();
     sources.sort();
     bundleName =
-        require('crypto').createHash('sha256').update(JSON.stringify(sources)).digest('hex') +
-        '.js';
+      require('crypto').createHash('sha256').update(JSON.stringify(sources)).digest('hex') +
+      '.js';
   }
-  fs.mkdirSync(tempEntryPointDir, {recursive: true});
+  fs.mkdirSync(tempEntryPointDir, { recursive: true });
   const bundleInputPath = path.resolve(tempEntryPointDir, bundleName);
   const source = sources.map(path => `import ${JSON.stringify(path)};\n`).join('');
   fs.writeFileSync(bundleInputPath, source);
@@ -56,13 +56,13 @@ function createEntryPointFile(cacheId, bundleName, sources) {
 exports.createEntryPointFile = createEntryPointFile;
 
 function getCommonPlugins() {
-  return [svgInlineLoader({removeSVGTagAttrs: false, removeTags: true})];
+  return [svgInlineLoader({ removeSVGTagAttrs: false, removeTags: true })];
 }
 exports.getCommonPlugins = getCommonPlugins;
 
 class Builder {
   constructor(options = {}) {
-    const {id = 'min'} = options;
+    const { id = 'min' } = options;
     const {
       outDir = path.resolve(__dirname, '..', 'dist', id),
       python = false,
@@ -71,7 +71,7 @@ class Builder {
       inject = [],
       minify = true,
       googleTagManager = undefined,
-      googleTagManagerAuth = undefined
+      googleTagAuth = undefined
     } = options;
     this.outDir = outDir;
     this.cacheId = id;
@@ -88,7 +88,7 @@ class Builder {
     this.define = define;
     this.inject = inject;
     this.googleTagManager = googleTagManager;
-    this.googleTagManagerAuth = googleTagManagerAuth;
+    this.googleTagAuth = googleTagAuth;
   }
 
   // Deletes .js/.css/.html files from `this.outDir`.  Can safely be used on
@@ -106,7 +106,7 @@ class Builder {
           // Ignore errors removing output files
         }
       }
-    } catch  {
+    } catch {
       // ignore errors listing output directory (e.g. if it does not already exist)
     }
   }
@@ -120,24 +120,24 @@ class Builder {
     <link href="main.bundle.css" rel="stylesheet">
 `;
 
-  
-const { googleTagManager } = this;
-const { googleTagManagerAuth } = this;
-if (googleTagManager) {
-  indexHtml += `<!-- Google Tag Manager -->
+
+    const { googleTagManager } = this;
+    const { googleTagAuth } = this;
+    if (googleTagManager) {
+      indexHtml += `<!-- Google Tag Manager -->
 <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
 new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
 j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
-'https://www.googletagmanager.com/gtm.js?id='+i+dl+'&gtm_auth=${googleTagManagerAuth}&gtm_preview=env-1&gtm_cookies_win=x';f.parentNode.insertBefore(j,f);
+'https://www.googletagmanager.com/gtm.js?id='+i+dl+'&gtm_auth=${googleTagAuth}&gtm_preview=env-1&gtm_cookies_win=x';f.parentNode.insertBefore(j,f);
 })(window,document,'script','dataLayer',${JSON.stringify(googleTagManager)});</script>
 <!-- End Google Tag Manager -->
 `;
-}
+    }
 
-indexHtml += `  </head>
+    indexHtml += `  </head>
     <body>
     <!-- Google Tag Manager (noscript) -->
-    <noscript><iframe src="https://www.googletagmanager.com/ns.html?id=${googleTagManager}&gtm_auth=${googleTagManagerAuth}&gtm_preview=env-1&gtm_cookies_win=x"
+    <noscript><iframe src="https://www.googletagmanager.com/ns.html?id=${googleTagManager}&gtm_auth=${googleTagAuth}&gtm_preview=env-1&gtm_cookies_win=x"
     height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
     <!-- End Google Tag Manager (noscript) -->
     <div id="neuroglancer-container"></div>
@@ -152,12 +152,12 @@ indexHtml += `  </head>
   getBaseEsbuildConfig() {
     return {
       outdir: this.outDir,
-      define: {...this.bundleSources.defines, ...this.define},
+      define: { ...this.bundleSources.defines, ...this.define },
       inject: this.inject,
       minify: this.minify,
       target: 'es2019',
       plugins: this.plugins,
-      loader: {'.wasm': 'dataurl'},
+      loader: { '.wasm': 'dataurl' },
       // TODO(jbms): Remove this workaround once evanw/esbuild#1202 is fixed.
       banner: {
         js: 'function require(x) { throw new Error(\'Cannot require \' + x) }',
@@ -167,7 +167,7 @@ indexHtml += `  </head>
 
   getWorkerEntrypoints() {
     return Object.entries(this.bundleSources.workers)
-        .map(([key, sources]) => createEntryPointFile(this.cacheId, key + '.bundle.js', sources));
+      .map(([key, sources]) => createEntryPointFile(this.cacheId, key + '.bundle.js', sources));
   }
 
   getMainEntrypoint(name = 'main.bundle.js') {
@@ -177,7 +177,7 @@ indexHtml += `  </head>
   async build() {
     const startTime = Date.now();
     try {
-      await fs.promises.mkdir(this.outDir, {recursive: true});
+      await fs.promises.mkdir(this.outDir, { recursive: true });
       if (this.module) {
         await this.buildModule();
       } else {
@@ -195,8 +195,8 @@ indexHtml += `  </head>
     await this.writeIndex();
     if (!this.python) {
       await fs.promises.copyFile(
-          path.resolve(this.srcDir, 'neuroglancer/datasource/boss/bossauth.html'),
-          path.resolve(this.outDir, 'bossauth.html'));
+        path.resolve(this.srcDir, 'neuroglancer/datasource/boss/bossauth.html'),
+        path.resolve(this.outDir, 'bossauth.html'));
     }
     await esbuild.build({
       ...this.getBaseEsbuildConfig(),
@@ -207,8 +207,8 @@ indexHtml += `  </head>
   }
 
   async buildModule() {
-    await fs.promises.rmdir(this.outDir, {recursive: true});
-    const {outDir} = this;
+    await fs.promises.rmdir(this.outDir, { recursive: true });
+    const { outDir } = this;
     // Build workers and main bundle.  The main bundle won't be saved, it is
     // just to analyze dependencies and to generate the CSS bundle.
     const [mainBuildResult, workerBuildResult] = await Promise.all([
@@ -227,7 +227,7 @@ indexHtml += `  </head>
     ]);
     const metaEntry = mainBuildResult.metafile;
     const cssEntry =
-        mainBuildResult.outputFiles.find(entry => entry.path.endsWith('.css')).contents;
+      mainBuildResult.outputFiles.find(entry => entry.path.endsWith('.css')).contents;
     await fs.promises.writeFile(path.resolve(this.outDir, 'main.css'), cssEntry);
     const srcDirPrefix = this.srcDir + path.sep;
     const dependencies = Object.keys(metaEntry.inputs).filter(x => x.startsWith('src/'));
@@ -240,7 +240,7 @@ indexHtml += `  </head>
     });
     for (const entry of buildResult.outputFiles) {
       if (entry.path.endsWith('.css')) continue;
-      await fs.promises.mkdir(path.dirname(entry.path), {recursive: true});
+      await fs.promises.mkdir(path.dirname(entry.path), { recursive: true });
       await fs.promises.writeFile(entry.path, entry.contents);
     }
   }
@@ -250,8 +250,8 @@ indexHtml += `  </head>
     try {
       await new Promise((resolve, reject) => {
         const child = spawn(
-            process.execPath, [require.resolve('typescript/lib/tsc.js'), '--noEmit'],
-            {stdio: 'inherit'});
+          process.execPath, [require.resolve('typescript/lib/tsc.js'), '--noEmit'],
+          { stdio: 'inherit' });
         child.on('close', (code) => {
           if (code === 0) {
             resolve();
@@ -267,14 +267,14 @@ indexHtml += `  </head>
 
   typeCheckWatch() {
     const child = spawn(
-        process.execPath,
-        [
-          require.resolve('typescript/lib/tsc.js'),
-          '--noEmit',
-          '--watch',
-          '--preserveWatchOutput',
-        ],
-        {stdio: 'inherit'});
+      process.execPath,
+      [
+        require.resolve('typescript/lib/tsc.js'),
+        '--noEmit',
+        '--watch',
+        '--preserveWatchOutput',
+      ],
+      { stdio: 'inherit' });
   }
 
   async buildAndTypeCheck(options) {

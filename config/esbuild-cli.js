@@ -18,7 +18,7 @@
 
 'use strict';
 
-const {Builder} = require('./esbuild');
+const { Builder } = require('./esbuild');
 const path = require('path');
 const fs = require('fs');
 
@@ -117,12 +117,12 @@ async function main(argv) {
     define: argv.define,
     inject: argv.inject,
     googleTagManager: argv.googleTagManager,
-    googleTagManagerAuth: argv.googleTagManagerAuth
+    googleTagAuth: argv.googleTagAuth
   });
   if (moduleBuild) {
     try {
       if ((await fs.promises.lstat(builder.outDir)).isDirectory()) {
-        await fs.promises.rmdir(builder.outDir, {recursive: true});
+        await fs.promises.rmdir(builder.outDir, { recursive: true });
       }
     } catch (e) {
       // Ignore errors.
@@ -138,88 +138,88 @@ async function main(argv) {
       skipTypeCheck,
     });
   } else {
-    await builder.buildOrExit({skipTypeCheck});
+    await builder.buildOrExit({ skipTypeCheck });
   }
 }
 if (require.main === module) {
   const argv =
-      require('yargs')
-          .options({
-            config: {
-              description: 'Build configuration identifier',
-              type: 'string',
-              nargs: 1,
-              choices: ['min', 'dev', 'python-min', 'python-dev', 'module'],
-              default: 'min',
-            },
-            typecheck: {
-              type: 'boolean',
-              default: true,
-              description: 'Typecheck the TypeScript code.',
-            },
-            define: {
-              type: 'array',
-              coerce: parseDefines,
-              default: [],
-              description:
-                  'JavaScript global identifiers to define when building.  Usage: `--define VARIABLE=EXPR`.',
-            },
-            inject: {
-              type: 'array',
-              default: [],
-              description: 'Additional modules to inject into global scope.',
-            },
-            watch: {
-              type: 'boolean',
-              default: false,
-              description: 'Watch sources for changes and rebuild automatically.',
-            },
-            serve: {
-              group: 'Development server options:',
-              type: 'boolean',
-              default: false,
-              description: 'Run a development server.',
-            },
-            host: {
-              group: 'Development server options:',
-              type: 'string',
-              nargs: 1,
-              description:
-                  'Specifies bind address for development server, e.g. 0.0.0.0 or 127.0.0.1',
-              default: '127.0.0.1',
-            },
-            port: {
-              group: 'Development server options:',
-              type: 'number',
-              nargs: 1,
-              default: 8080,
-              description: 'Port number for the development server',
-            },
-            configfile: {
-              config: true,
-              description: 'Additional JSON/JavaScript config file to load.',
-              configParser: x => mungeConfig(require(x)),
-            },
-            ['google-tag-manager']: {
-              group: 'Customization',
-              type: 'string',
-              nargs: 1,
-              description: 'Google tag manager id to include in index.html',
-            },
-            ['google-tag-manager-auth']: {
-              group: 'Customization',
-              type: 'string',
-              nargs: 1,
-              description: 'Google tag manager authid to include in index.html',
-            },
-          })
-          .strict()
-          .config(mungeConfig(require('./config.js')))
-          .demandCommand(0, 0)
-          .version(false)
-          .env('NEUROGLANCER')
-          .help()
-          .parse();
+    require('yargs')
+      .options({
+        config: {
+          description: 'Build configuration identifier',
+          type: 'string',
+          nargs: 1,
+          choices: ['min', 'dev', 'python-min', 'python-dev', 'module'],
+          default: 'min',
+        },
+        typecheck: {
+          type: 'boolean',
+          default: true,
+          description: 'Typecheck the TypeScript code.',
+        },
+        define: {
+          type: 'array',
+          coerce: parseDefines,
+          default: [],
+          description:
+            'JavaScript global identifiers to define when building.  Usage: `--define VARIABLE=EXPR`.',
+        },
+        inject: {
+          type: 'array',
+          default: [],
+          description: 'Additional modules to inject into global scope.',
+        },
+        watch: {
+          type: 'boolean',
+          default: false,
+          description: 'Watch sources for changes and rebuild automatically.',
+        },
+        serve: {
+          group: 'Development server options:',
+          type: 'boolean',
+          default: false,
+          description: 'Run a development server.',
+        },
+        host: {
+          group: 'Development server options:',
+          type: 'string',
+          nargs: 1,
+          description:
+            'Specifies bind address for development server, e.g. 0.0.0.0 or 127.0.0.1',
+          default: '127.0.0.1',
+        },
+        port: {
+          group: 'Development server options:',
+          type: 'number',
+          nargs: 1,
+          default: 8080,
+          description: 'Port number for the development server',
+        },
+        configfile: {
+          config: true,
+          description: 'Additional JSON/JavaScript config file to load.',
+          configParser: x => mungeConfig(require(x)),
+        },
+        ['google-tag-manager']: {
+          group: 'Customization',
+          type: 'string',
+          nargs: 1,
+          description: 'Google tag manager id to include in index.html',
+        },
+        ['google-tag-auth']: {
+          group: 'Customization',
+          type: 'string',
+          nargs: 1,
+          description: 'Google tag manager authid to include in index.html',
+        },
+      })
+      .strict()
+      .config(mungeConfig(require('./config.js')))
+      .demandCommand(0, 0)
+      .version(false)
+      .env('NEUROGLANCER')
+      .help()
+      .parse();
   if (argv.serve) {
     argv.watch = true;
   }

@@ -7,5 +7,5 @@ module.exports = {
     // NEUROGLANCER_SHOW_OBJECT_SELECTION_TOOLTIP: true
   },
   googleTagManager: 'GTM-568GB29',
-  googleTagManagerAuth: 'eYtcyqAJwhKrmzMP927MYg'
+  googleTagAuth: 'eYtcyqAJwhKrmzMP927MYg'
 };
