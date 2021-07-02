@@ -71,6 +71,7 @@ class Builder {
       inject = [],
       minify = true,
       googleTagManager = undefined,
+      googleTagManagerAuth = undefined
     } = options;
     this.outDir = outDir;
     this.cacheId = id;
@@ -87,6 +88,7 @@ class Builder {
     this.define = define;
     this.inject = inject;
     this.googleTagManager = googleTagManager;
+    this.googleTagManagerAuth = googleTagManagerAuth;
   }
 
   // Deletes .js/.css/.html files from `this.outDir`.  Can safely be used on
