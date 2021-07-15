@@ -188,7 +188,7 @@ export class MultiscaleVolumeChunkSource implements GenericMultiscaleVolumeChunk
 
     return [[this.chunkManager.getChunkSource(
         GrapheneChunkedGraphChunkSource,
-        {spec, rootSegments, parameters: {url: `${this.app.segmentationUrl}/node`}})]];
+        {spec, rootSegments, parameters: {url: `${this.app.segmentationUrl}`}})]];
   }
 
   getMeshSource() {

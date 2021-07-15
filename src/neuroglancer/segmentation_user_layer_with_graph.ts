@@ -31,7 +31,7 @@ import {StatusMessage} from 'neuroglancer/status';
 import {trackableAlphaValue} from 'neuroglancer/trackable_alpha';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {TrackableValue, WatchableRefCounted, WatchableValue} from 'neuroglancer/trackable_value';
-import {GraphOperationTab, SelectedGraphOperationState} from 'neuroglancer/ui/graph_multicut';
+import {enableSplitPointTool, GraphOperationTab, PlaceGraphOperationMarkerTool, SelectedGraphOperationState} from 'neuroglancer/ui/graph_multicut';
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {TrackableRGB} from 'neuroglancer/util/color';
 import {Borrowed, RefCounted} from 'neuroglancer/util/disposable';
@@ -319,6 +319,15 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
         }
         case 'refresh-mesh': {
           this.reloadManifest();
+          break;
+        }
+        case 'switch-multicut-group': {
+          if (this.tool.value === undefined ||
+              (!(this.tool.value instanceof PlaceGraphOperationMarkerTool))) {
+            enableSplitPointTool(this, this.graphOperationLayerState.value!);
+          } else {
+            this.graphOperationLayerState.value!.toggleSource();
+          }
           break;
         }
         default:

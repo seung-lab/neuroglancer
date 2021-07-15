@@ -181,6 +181,7 @@ export class GraphOperationLayerState extends RefCounted {
       this.annotationToSupervoxelA.isActive.value = true;
       this.annotationToSupervoxelB.isActive.value = false;
     }
+    this.changed.dispatch();
   }
 
   getReference(id: AnnotationId): AnnotationReference {

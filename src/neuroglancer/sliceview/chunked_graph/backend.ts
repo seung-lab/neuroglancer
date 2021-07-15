@@ -22,12 +22,12 @@ import {SharedDisjointUint64Sets} from 'neuroglancer/shared_disjoint_sets';
 import {SliceViewChunk, SliceViewChunkSource} from 'neuroglancer/sliceview/backend';
 import {RenderLayer as RenderLayerInterface, TransformedSource} from 'neuroglancer/sliceview/base';
 import {CHUNKED_GRAPH_LAYER_RPC_ID, CHUNKED_GRAPH_SOURCE_UPDATE_ROOT_SEGMENTS_RPC_ID, ChunkedGraphChunkSource as ChunkedGraphChunkSourceInterface, ChunkedGraphChunkSpecification, RENDER_RATIO_LIMIT} from 'neuroglancer/sliceview/chunked_graph/base';
+import {WatchableValueInterface} from 'neuroglancer/trackable_value';
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {mat4, vec3, vec3Key} from 'neuroglancer/util/geom';
 import {NullarySignal} from 'neuroglancer/util/signal';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {registerRPC, registerSharedObject, RPC, SharedObjectCounterpart} from 'neuroglancer/worker_rpc';
-import {WatchableValueInterface} from 'neuroglancer/trackable_value';
 
 const tempChunkDataSize = vec3.create();
 const tempChunkPosition = vec3.create();
@@ -84,14 +84,18 @@ export class ChunkedGraphChunk extends SliceViewChunk {
 }
 
 export async function decodeSupervoxelArray(
-    chunk: ChunkedGraphChunk, rootObjectKey: string, data: Response) {
-  const leaves = (await data.json())['leaf_ids'];
-  const final: Uint64[] = new Array(leaves.length);
-  for (let i = 0; i < final.length; ++i) {
-    final[i] = Uint64.parseString(leaves[i]);
-  }
-  chunk.mappings!.set(rootObjectKey, final);
+    chunk: ChunkedGraphChunk, rootObjectKeys: string[], data: Response) {
+  const rootToLeavesMap = await data.json();
+  rootObjectKeys.forEach(rootObjectKey => {
+    const leaves = rootToLeavesMap[rootObjectKey];
+    const final: Uint64[] = new Array(leaves.length);
+    for (let i = 0; i < final.length; ++i) {
+      final[i] = Uint64.parseString(leaves[i]);
+    }
+    chunk.mappings!.set(rootObjectKey, final);
+  });
 }
+
 
 export class ChunkedGraphChunkSource extends SliceViewChunkSource implements
     ChunkedGraphChunkSourceInterface {

@@ -278,6 +278,26 @@ function getCenterPosition(annotation: Annotation, transform: mat4) {
   return vec3.transformMat4(center, center, transform);
 }
 
+export function enableSplitPointTool(
+    layer: SegmentationUserLayerWithGraph, graphOperationLayerState: GraphOperationLayerState) {
+  layer.tool.value = new PlaceGraphOperationMarkerTool(
+      layer, {},
+      () => {
+        if (graphOperationLayerState.activeSource === graphOperationLayerState.sourceA) {
+          return 'set graph red split point';
+        } else {
+          return 'set graph blue split point';
+        }
+      },
+      () => {
+        if (graphOperationLayerState.activeSource === graphOperationLayerState.sourceA) {
+          return 'rgb(255,0,0)';
+        } else {
+          return 'rgb(120,120,255)';
+        }
+      });
+}
+
 export class GraphOperationLayerView extends Tab {
   private annotationListContainer = document.createElement('ul');
   private annotationListElements = new Map<string, HTMLElement>();
@@ -319,9 +339,7 @@ export class GraphOperationLayerView extends Tab {
       const pointButton = document.createElement('button');
       pointButton.textContent = getAnnotationTypeHandler(AnnotationType.POINT).icon;
       pointButton.title = 'Set split point';
-      pointButton.addEventListener('click', () => {
-        this.wrapper.tool.value = new PlaceGraphOperationMarkerTool(this.wrapper, {});
-      });
+      pointButton.addEventListener('click', enableSplitPointTool.bind(undefined, this.wrapper, this.annotationLayer));
       toolbox.appendChild(pointButton);
     }
 
@@ -343,25 +361,29 @@ export class GraphOperationLayerView extends Tab {
       confirmButton.title = 'Perform Multi-Cut';
       confirmButton.addEventListener('click', () => {
         const {sources, sinks} = this.annotationLayer.getSourcesAndSinks();
-        this.wrapper.chunkedGraphLayer!.splitSegments(sources, sinks).then((splitRoots) => {
-          splitPreviewWrapper.disablePreview();
-          if (splitRoots.length === 0) {
-            StatusMessage.showTemporaryMessage(`No split found.`, 3000);
-          } else {
-            let segmentationState = this.annotationLayer.segmentationState.value!;
-            for (let segment of [...sinks, ...sources]) {
-              segmentationState.rootSegments.delete(segment.rootId);
-            }
-            segmentationState.rootSegmentsAfterEdit!.clear();
-            segmentationState.rootSegments.add(splitRoots);
-            segmentationState.rootSegmentsAfterEdit!.add(splitRoots);
+        if (sources.length === 0 || sinks.length === 0) {
+          StatusMessage.showTemporaryMessage('Must select both red and blue groups to perform a multi-cut.', 7000);
+        } else {
+          this.wrapper.chunkedGraphLayer!.splitSegments(sources, sinks).then((splitRoots) => {
+            splitPreviewWrapper.disablePreview();
+            if (splitRoots.length === 0) {
+              StatusMessage.showTemporaryMessage(`No split found.`, 3000);
+            } else {
+              let segmentationState = this.annotationLayer.segmentationState.value!;
+              for (let segment of [...sinks, ...sources]) {
+                segmentationState.rootSegments.delete(segment.rootId);
+              }
+              segmentationState.rootSegmentsAfterEdit!.clear();
+              segmentationState.rootSegments.add(splitRoots);
+              segmentationState.rootSegmentsAfterEdit!.add(splitRoots);
 
-            // TODO: Merge unsupported with edits
-            const view = (<any>window)['viewer'];
-            view.differ.purgeHistory();
-            view.differ.ignoreChanges();
-          }
-        });
+              // TODO: Merge unsupported with edits
+              const view = (<any>window)['viewer'];
+              view.differ.purgeHistory();
+              view.differ.ignoreChanges();
+            }
+          });
+        }
       });
       toolbox.appendChild(confirmButton);
     }
@@ -979,8 +1001,14 @@ abstract class PlaceGraphOperationTool extends Tool {
 }
 
 export class PlaceGraphOperationMarkerTool extends PlaceGraphOperationTool {
-  constructor(layer: SegmentationUserLayerWithGraph, options: any) {
+  private _getDescription: () => string;
+
+  constructor(
+      layer: SegmentationUserLayerWithGraph, options: any, getDescription: () => string,
+      getDescriptionColor: () => string) {
     super(layer, options);
+    this._getDescription = getDescription;
+    this.getDescriptionColor = getDescriptionColor;
   }
 
   trigger(mouseState: MouseSelectionState) {
@@ -1039,7 +1067,7 @@ export class PlaceGraphOperationMarkerTool extends PlaceGraphOperationTool {
   }
 
   get description() {
-    return `set graph merge/split point`;
+    return this._getDescription();
   }
 
   toJSON() {

@@ -767,7 +767,7 @@ export class Viewer extends RefCounted implements ViewerState {
   private registerActionListeners() {
     for (const action
              of ['recolor', 'clear-segments', 'merge-selected', 'cut-selected',
-                 'shatter-segment-equivalences']) {
+                 'shatter-segment-equivalences', 'switch-multicut-group']) {
       this.bindAction(action, () => {
         this.layerManager.invokeAction(action);
       });
@@ -1011,7 +1011,12 @@ export class Viewer extends RefCounted implements ViewerState {
               errorPrefix: ''
             });
       } else {
-        StatusMessage.showTemporaryMessage(`No state server found.`, 4000, {color: 'yellow'});
+        if (getUrlType === UrlType.json) {
+          StatusMessage.showTemporaryMessage(`No state server found.`, 4000, {color: 'yellow'});
+          this.showSaveDialog();
+        } else {
+          this.showSaveDialog(getUrlType);
+        }
       }
     } else {
       if (savestate) {
