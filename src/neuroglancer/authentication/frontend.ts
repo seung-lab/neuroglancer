@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {AUTHENTICATION_GET_SHARED_TOKEN_RPC_ID, AUTHENTICATION_REAUTHENTICATE_RPC_ID, authFetchWithSharedValue, SharedAuthToken} from 'neuroglancer/authentication/base.ts';
+import {AUTHENTICATION_GET_SHARED_TOKEN_RPC_ID, AUTHENTICATION_REAUTHENTICATE_RPC_ID, AUTHENTICATION_SHOW_TOS_RPC_ID, authFetchWithSharedValue, SharedAuthToken} from 'neuroglancer/authentication/base.ts';
 import {SharedWatchableValue} from 'neuroglancer/shared_watchable_value.ts';
 import {CancellationToken, uncancelableToken} from 'neuroglancer/util/cancellation';
 import {ResponseTransform} from 'neuroglancer/util/http_request';
@@ -93,6 +93,36 @@ async function reauthenticate(
   }
 }
 
+async function showTosForm(tos_url: string) {
+    const auth_popup = openPopupCenter(
+      `${tos_url}?redirect=${encodeURI(window.location.origin + '/auth_redirect.html')}`, 400, 650);
+
+  if (!auth_popup) {
+    alert('Allow popups on this page to show Terms of Service Form');
+    throw new Error('Allow popups on this page to show Terms of Service Form');
+  }
+
+  return new Promise<void>((f, r) => {
+    const checkClosed = setInterval(() => {
+      if (auth_popup.closed) {
+        // in successful case, this will still fire but fulfill will have already been called
+        clearInterval(checkClosed);
+        r(new Error('Terms of Service Form popup closed'));
+      }
+    }, 1000);
+
+    const tokenListener = (ev: MessageEvent) => {
+      if (ev.source === auth_popup) {
+        auth_popup.close();
+        window.removeEventListener('message', tokenListener);
+        f();
+      }
+    };
+
+    window.addEventListener('message', tokenListener);
+  });
+}
+
 export let authTokenShared: SharedAuthToken|undefined;
 
 export function initAuthTokenSharedValue(rpc: RPC) {
@@ -114,6 +144,11 @@ registerRPC(AUTHENTICATION_REAUTHENTICATE_RPC_ID, function({auth_url, used_token
   });
 });
 
+// allow backend to trigger showTosForm when shared value token is invalid
+registerRPC(AUTHENTICATION_SHOW_TOS_RPC_ID, function({tos_url}) {
+  return showTosForm(tos_url);
+});
+
 export const responseIdentity = async (x: any) => x;
 
 export async function authFetch(input: RequestInfo, init?: RequestInit): Promise<Response>;
@@ -125,7 +160,7 @@ export async function authFetch<T>(
     cancellationToken: CancellationToken = uncancelableToken,
     handleError = true): Promise<T|Response> {
   const response = await authFetchWithSharedValue(
-      reauthenticate, authTokenShared!, input, init, cancellationToken, handleError);
+      reauthenticate, showTosForm, authTokenShared!, input, init, cancellationToken, handleError);
 
   if (transformResponse) {
     return transformResponse(response);
