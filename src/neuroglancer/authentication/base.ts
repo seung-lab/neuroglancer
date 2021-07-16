@@ -144,13 +144,14 @@ export async function authFetchWithSharedValue(
   } catch (error) {
     if (error instanceof AuthenticationError) {
       await reauthenticate(error.realm, authTokenShared);  // try once after authenticating
-      return await authFetchOk(setAuthQuery(input), addCancellationToken(init), handleError);
-    } if (error instanceof TosError) {
+    } else if (error instanceof TosError) {
       await showTosForm(error.url);
-      return await authFetchOk(setAuthQuery(input), addCancellationToken(init), handleError);
     } else {
       throw error;
     }
+
+    // retry
+    return authFetchWithSharedValue(reauthenticate, showTosForm, authTokenShared, input, init, cancellationToken, handleError);
   } finally {
     for (let abort of aborts) {
       cancellationToken.remove(abort);
