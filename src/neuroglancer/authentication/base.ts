@@ -20,6 +20,7 @@ import {HttpError} from 'neuroglancer/util/http_request';
 
 export const AUTHENTICATION_GET_SHARED_TOKEN_RPC_ID = 'Authentication.get_shared_token';
 export const AUTHENTICATION_REAUTHENTICATE_RPC_ID = 'Authentication.reauthenticate';
+export const AUTHENTICATION_SHOW_TOS_RPC_ID = 'Authentication.show_tos';
 
 export function parseWWWAuthHeader(headerVal: string) {
   const tuples =
@@ -37,12 +38,23 @@ export type SharedAuthToken = SharedWatchableValue<string|null>;
 
 type ReauthFunction = (auth_url: string, used_token?: string|SharedAuthToken) => Promise<string>;
 
+type TosFunction = (tos_url: string) => Promise<void>;
+
 export class AuthenticationError extends Error {
   realm: string;
 
   constructor(realm: string) {
     super();
     this.realm = realm;
+  }
+}
+
+export class TosError extends Error {
+  url: string;
+
+  constructor(url: string) {
+    super();
+    this.url = url;
   }
 }
 
@@ -65,6 +77,16 @@ async function authFetchOk(
               wwwAuthMap.get('error')} + " Reason: ${wwwAuthMap.get('error_description')}`);
         }
       }
+    } else if (res.status === 403) {
+      const contentType = res.headers.get('content-type');
+
+      if (contentType === 'application/json') {
+        const json = await res.json();
+
+        if (json.error && json.error === 'missing_tos') {
+          throw new TosError(json.data.tos_form_url);
+        }
+      }
     }
 
     if (!res.ok && handleError) {
@@ -83,7 +105,7 @@ async function authFetchOk(
 }
 
 export async function authFetchWithSharedValue(
-    reauthenticate: ReauthFunction, authTokenShared: SharedAuthToken, input: RequestInfo,
+    reauthenticate: ReauthFunction, showTosForm: TosFunction, authTokenShared: SharedAuthToken, input: RequestInfo,
     init: RequestInit, cancellationToken: CancellationToken = uncancelableToken,
     handleError = true): Promise<Response> {
   const aborts: (() => void)[] = [];
@@ -121,11 +143,15 @@ export async function authFetchWithSharedValue(
     return await authFetchOk(setAuthQuery(input), addCancellationToken(init), handleError);
   } catch (error) {
     if (error instanceof AuthenticationError) {
-      await reauthenticate(error.realm, authTokenShared);  // try once after authenticating
-      return await authFetchOk(setAuthQuery(input), addCancellationToken(init), handleError);
+      await reauthenticate(error.realm, authTokenShared);
+    } else if (error instanceof TosError) {
+      await showTosForm(error.url);
     } else {
       throw error;
     }
+
+    // retry after authentication/tos form completion
+    return authFetchWithSharedValue(reauthenticate, showTosForm, authTokenShared, input, init, cancellationToken, handleError);
   } finally {
     for (let abort of aborts) {
       cancellationToken.remove(abort);

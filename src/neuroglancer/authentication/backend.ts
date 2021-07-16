@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {AUTHENTICATION_GET_SHARED_TOKEN_RPC_ID, AUTHENTICATION_REAUTHENTICATE_RPC_ID, authFetchWithSharedValue} from 'neuroglancer/authentication/base.ts';
+import {AUTHENTICATION_GET_SHARED_TOKEN_RPC_ID, AUTHENTICATION_REAUTHENTICATE_RPC_ID, AUTHENTICATION_SHOW_TOS_RPC_ID, authFetchWithSharedValue} from 'neuroglancer/authentication/base.ts';
 import {SharedWatchableValue} from 'neuroglancer/shared_watchable_value.ts';
 import {CancellationToken, uncancelableToken} from 'neuroglancer/util/cancellation';
 import {ResponseTransform} from 'neuroglancer/util/http_request';
@@ -60,6 +60,13 @@ async function reauthenticate(
   return waitingForToken;
 }
 
+async function showTosForm(
+    tos_url: string): Promise<void> {
+  return rpc.promiseInvoke(
+      AUTHENTICATION_SHOW_TOS_RPC_ID,
+      {tos_url: tos_url});
+}
+
 export const responseIdentity = async (x: any) => x;
 
 export async function authFetch(input: RequestInfo, init?: RequestInit): Promise<Response>;
@@ -72,7 +79,7 @@ export async function authFetch<T>(
     handleError = true): Promise<T|Response> {
   const authTokenShared = await authTokenSharedValuePromise;
   const response = await authFetchWithSharedValue(
-      reauthenticate, authTokenShared!, input, init, cancellationToken, handleError);
+      reauthenticate, showTosForm, authTokenShared!, input, init, cancellationToken, handleError);
 
   if (transformResponse) {
     return transformResponse(response);
