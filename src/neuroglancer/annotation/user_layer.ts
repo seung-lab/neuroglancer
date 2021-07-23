@@ -115,8 +115,11 @@ export class AnnotationUserLayer extends Base {
       new LayerReference(this.manager.rootLayers.addRef(), isValidLinkedSegmentationLayer));
   filterBySegmentation = new TrackableBoolean(false);
   shortcutHandler = this.registerDisposer(new AnnotationShortcutHandler());
-  private keyShortcutModifier = 'shift+';
-  private keyShortcuts = ['q', 'w', 'e', 'r', 't', 'a', 's', 'd', 'f', 'g', 'z', 'x', 'c', 'v'];
+  private keyShortcuts = [
+    'shift+keyq', 'shift+keyw', 'shift+keye', 'shift+keyr', 'shift+keyt', 'shift+keya',
+    'shift+keys', 'shift+keyd', 'shift+keyf', 'shift+keyg', 'shift+keyz', 'shift+keyx',
+    'shift+keyc', 'shift+keyv'
+  ];
   private tagToShortcut: Map<number, string> = new Map<number, string>();
   private _numTagsAllowed = this.keyShortcuts.length;
 
@@ -369,8 +372,7 @@ export class AnnotationUserLayer extends Base {
 
   addAnnotationTagShortcut(tagId: number) {
     const {localAnnotations, selectedAnnotation, shortcutHandler: shortcutHandlerViewer} = this;
-    const shortcutKey = this.keyShortcuts.splice(0, 1)[0];
-    const shortcutCode = this.keyShortcutModifier + 'key' + shortcutKey;
+    const shortcutCode = this.keyShortcuts.splice(0, 1)[0];
     this.tagToShortcut.set(tagId, shortcutCode);
     const addAnnotationTagToAnnotation = () => {
       const reference = selectedAnnotation.reference;
