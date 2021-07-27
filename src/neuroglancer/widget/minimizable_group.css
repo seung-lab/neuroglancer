@@ -18,7 +18,7 @@
 .neuroglancer-minimizable-group {
   display: flex;
   flex-direction: column;
-  flex: 1;
+  flex: 0 1 auto;
   overflow-y: hidden;
   max-height: max-content;
 }
