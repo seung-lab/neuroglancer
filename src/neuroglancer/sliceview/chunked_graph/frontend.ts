@@ -126,7 +126,7 @@ export class ChunkedGraphLayer extends GenericSliceViewRenderLayer {
     return Uint64.parseString(jsonResp['root_id']);
   }
 
-  async mergeSegments(first: SegmentSelection, second: SegmentSelection): Promise<Uint64> {
+  async mergeSegments(first: SegmentSelection, second: SegmentSelection): Promise<any> {
     const {url} = this;
     if (url === '') {
       return Promise.reject(GRAPH_SERVER_NOT_SPECIFIED);
@@ -147,10 +147,10 @@ export class ChunkedGraphLayer extends GenericSliceViewRenderLayer {
       errorPrefix: 'Merge failed: '
     });
     const jsonResp = await response.json();
-    return Uint64.parseString(jsonResp['new_root_ids'][0]);
+    return jsonResp
   }
 
-  async splitSegments(first: SegmentSelection[], second: SegmentSelection[]): Promise<Uint64[]> {
+  async splitSegments(first: SegmentSelection[], second: SegmentSelection[]): Promise<any> {
     const {url} = this;
     if (url === '') {
       return Promise.reject(GRAPH_SERVER_NOT_SPECIFIED);
@@ -171,11 +171,20 @@ export class ChunkedGraphLayer extends GenericSliceViewRenderLayer {
       errorPrefix: 'Split failed: '
     });
     const jsonResp = await response.json();
+    return jsonResp;
+  }
+
+  getNewRootIdsFromSplitResponse(jsonResp: any): Array<Uint64> {
     const final: Uint64[] = new Array(jsonResp['new_root_ids'].length);
     for (let i = 0; i < final.length; ++i) {
       final[i] = Uint64.parseString(jsonResp['new_root_ids'][i]);
     }
     return final;
+  }
+
+  getOperationIdFromOperationResponse(jsonResp: any): Number {
+    const operation_id = Uint64.parseString(jsonResp['operation_id']).low
+    return operation_id
   }
 
   async splitPreview(first: SegmentSelection[], second: SegmentSelection[]):

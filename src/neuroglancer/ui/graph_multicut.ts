@@ -364,8 +364,10 @@ export class GraphOperationLayerView extends Tab {
         if (sources.length === 0 || sinks.length === 0) {
           StatusMessage.showTemporaryMessage('Must select both red and blue groups to perform a multi-cut.', 7000);
         } else {
-          this.wrapper.chunkedGraphLayer!.splitSegments(sources, sinks).then((splitRoots) => {
+          this.wrapper.chunkedGraphLayer!.splitSegments(sources, sinks).then((splitResponse) => {
             splitPreviewWrapper.disablePreview();
+            const splitRoots = this.wrapper.chunkedGraphLayer!.getNewRootIdsFromSplitResponse(splitResponse);
+            const splitOperationId = this.wrapper.chunkedGraphLayer!.getOperationIdFromOperationResponse(splitResponse);
             if (splitRoots.length === 0) {
               StatusMessage.showTemporaryMessage(`No split found.`, 3000);
             } else {
@@ -381,6 +383,8 @@ export class GraphOperationLayerView extends Tab {
               const view = (<any>window)['viewer'];
               view.differ.purgeHistory();
               view.differ.ignoreChanges();
+              // Add splitOperationId to window
+              (<any>window)["operation_ids"].push(splitOperationId);
             }
           });
         }

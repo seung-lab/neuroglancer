@@ -201,6 +201,9 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
                     {...displayState, transform: displayState.objectToDataTransform});
                 this.addRenderLayer(this.chunkedGraphLayer);
 
+                // Initialize operation_id array as empty
+                (<any>window)["operation_ids"] = [];
+
                 // Have to wait for graph server initialization to fetch agglomerations
                 displayState.segmentEquivalences.clear();
                 if (displayState.rootSegmentsAfterEdit !== undefined) {
@@ -418,7 +421,9 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
         if (this.chunkedGraphLayer) {
           const cgl = this.chunkedGraphLayer;
           this.safeToSubmit('Merge', () => {
-            cgl.mergeSegments(lastSegmentSelection, currentSegmentSelection).then((mergedRoot) => {
+            cgl.mergeSegments(lastSegmentSelection, currentSegmentSelection).then((mergeResponse) => {
+              const mergedRoot = Uint64.parseString(mergeResponse['new_root_ids'][0]);
+              const mergeOperationId = cgl.getOperationIdFromOperationResponse(mergeResponse);
               rootSegmentsAfterEdit!.clear();
               rootSegments.delete(lastSegmentSelection.rootId);
               rootSegments.delete(currentSegmentSelection.rootId);
@@ -429,6 +434,8 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
               view.deactivateEditMode();
               view.differ.purgeHistory();
               view.differ.ignoreChanges();
+              // Add mergeOperationId to window
+              (<any>window)["operation_ids"].push(mergeOperationId);
             });
           });
         } else {
@@ -470,7 +477,9 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
           const cgl = this.chunkedGraphLayer;
           this.safeToSubmit('Split', () => {
             cgl.splitSegments([lastSegmentSelection], [currentSegmentSelection])
-                .then((splitRoots) => {
+                .then((splitResponse) => {
+                  const splitRoots = cgl.getNewRootIdsFromSplitResponse(splitResponse);
+                  const splitOperationId = cgl.getOperationIdFromOperationResponse(splitResponse);
                   if (splitRoots.length === 0) {
                     StatusMessage.showTemporaryMessage(`No split found.`, 3000);
                     return;
@@ -484,6 +493,8 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
                   view.deactivateEditMode();
                   view.differ.purgeHistory();
                   view.differ.ignoreChanges();
+                  // Add splitOperationId to window
+                  (<any>window)["operation_ids"].push(splitOperationId);
                 });
           });
         } else {
