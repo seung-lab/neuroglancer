@@ -330,12 +330,30 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
           }
           break;
         }
+        case 'decrease-segmentation-opacity': {
+          this.changeOnOpacity('decrease');
+          break;
+        }
+        case 'increase-segmentation-opacity': {
+          this.changeOnOpacity('increase');
+          break;
+        }
         default:
           super.handleAction(action);
           break;
       }
     }
 
+    changeOnOpacity(direction: string) {
+      // function that changes opacity by 10%
+      if (direction === "decrease") {
+        this.displayState.objectAlpha.value = Math.round(Math.max(0, this.displayState.objectAlpha.value - 0.1)*10)/10;
+      } 
+
+      else if (direction === "increase") {
+        this.displayState.objectAlpha.value = Math.round(Math.min(1, this.displayState.objectAlpha.value + 0.1)*10)/10;
+      } 
+    }
     getRootOfSelectedSupervoxel() {
       let {segmentSelectionState, timestamp} = this.displayState;
       let tsValue = (timestamp.value !== '') ? timestamp.value : void (0);
