@@ -71,6 +71,7 @@ export class FindPathWidget extends RefCounted {
     });
     let pathFound = false;
     const {findPathButton, precisionModeCheckbox} = this;
+    precisionModeCheckbox.checked = true;
     precisionModeCheckbox.addEventListener('click', () => {
       pathFound = false;
     });
