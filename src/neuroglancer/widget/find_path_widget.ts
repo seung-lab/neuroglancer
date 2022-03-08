@@ -69,58 +69,48 @@ export class FindPathWidget extends RefCounted {
     selectSourceAndTargetButton.addEventListener('click', () => {
       this.layer.tool.value = new PathFindingMarkerTool(this.layer);
     });
-    let pathFound = false;
     const {findPathButton, precisionModeCheckbox} = this;
     precisionModeCheckbox.checked = true;
-    precisionModeCheckbox.addEventListener('click', () => {
-      pathFound = false;
-    });
     findPathButton.textContent = '✔️';
     findPathButton.title = 'Find path';
     findPathButton.addEventListener('click', () => {
-      if (!pathFound) {
-        if (!this.pathBetweenSupervoxels.ready()) {
-          StatusMessage.showTemporaryMessage('You must select a source and target to find a path');
-        } else {
-          const getSegmentSelectionFromPoint = (point: Point) => {
-            return {
-              segmentId: point.segments![0],
-              rootId: point.segments![1],
-              position: point.point
-            };
-          };
-          this.layer.chunkedGraphLayer!
-              .findPath(
-                  getSegmentSelectionFromPoint(this.pathBetweenSupervoxels.source!),
-                  getSegmentSelectionFromPoint(this.pathBetweenSupervoxels.target!),
-                  precisionModeCheckbox.checked)
-              .then((centroids) => {
-                pathFound = true;
-                findPathButton.title = 'Path found!';
-                StatusMessage.showTemporaryMessage('Path found!', 5000);
-                const path: Line[] = [];
-                for (let i = 0; i < centroids.length - 1; i++) {
-                  const line: Line = {
-                    pointA: vec3.fromValues(centroids[i][0], centroids[i][1], centroids[i][2]),
-                    pointB: vec3.fromValues(
-                        centroids[i + 1][0], centroids[i + 1][1], centroids[i + 1][2]),
-                    id: '',
-                    type: AnnotationType.LINE
-                  };
-                  path.push(line);
-                }
-                this.pathBetweenSupervoxels.setPath(path);
-              });
-        }
+      if (!this.pathBetweenSupervoxels.ready()) {
+        StatusMessage.showTemporaryMessage('You must select a source and target to find a path');
       } else {
-        StatusMessage.showTemporaryMessage('Requested path already found.');
+        const getSegmentSelectionFromPoint = (point: Point) => {
+          return {
+            segmentId: point.segments![0],
+            rootId: point.segments![1],
+            position: point.point
+          };
+        };
+        this.layer.chunkedGraphLayer!
+            .findPath(
+                getSegmentSelectionFromPoint(this.pathBetweenSupervoxels.source!),
+                getSegmentSelectionFromPoint(this.pathBetweenSupervoxels.target!),
+                precisionModeCheckbox.checked)
+            .then((centroids) => {
+              findPathButton.title = 'Path found!';
+              StatusMessage.showTemporaryMessage('Path found!', 5000);
+              const path: Line[] = [];
+              for (let i = 0; i < centroids.length - 1; i++) {
+                const line: Line = {
+                  pointA: vec3.fromValues(centroids[i][0], centroids[i][1], centroids[i][2]),
+                  pointB: vec3.fromValues(
+                      centroids[i + 1][0], centroids[i + 1][1], centroids[i + 1][2]),
+                  id: '',
+                  type: AnnotationType.LINE
+                };
+                path.push(line);
+              }
+              this.pathBetweenSupervoxels.setPath(path);
+            });
       }
     });
     const clearButton = document.createElement('button');
     clearButton.textContent = '❌';
     clearButton.title = 'Clear path';
     clearButton.addEventListener('click', () => {
-      pathFound = false;
       findPathButton.title = 'Find path';
       this.pathBetweenSupervoxels.clear();
     });
