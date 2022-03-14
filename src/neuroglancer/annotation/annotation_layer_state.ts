@@ -37,7 +37,7 @@ export class AnnotationLayerState extends RefCounted {
   role: RenderLayerRole;
   color: TrackableRGB;
   fillOpacity: TrackableAlphaValue;
-  pointSize = new TrackableValue<number>(5, verifyNonnegativeInt, 5);
+
   /**
    * undefined means may have a segmentation state.  null means no segmentation state is supported.
    */
@@ -46,7 +46,6 @@ export class AnnotationLayerState extends RefCounted {
   annotationJumpingDisplaysSegmentation = new TrackableBoolean(false);
   annotationSelectionDisplaysSegmentation = new TrackableBoolean(false);
   selectedAnnotationTagId = new TrackableValue<number>(0, verifyNonnegativeInt, 0);
-  
 
   private transformCacheGeneration = -1;
   private cachedObjectToGlobal = mat4.create();
@@ -76,10 +75,7 @@ export class AnnotationLayerState extends RefCounted {
   constructor(options: {
     transform?: CoordinateTransform, source: Owned<AnnotationSource|MultiscaleAnnotationSource>,
     hoverState?: AnnotationHoverState,
-    role?: RenderLayerRole, 
-    color: TrackableRGB, 
-    fillOpacity: TrackableAlphaValue,
-    pointSize: TrackableValue<number>,
+    role?: RenderLayerRole, color: TrackableRGB, fillOpacity: TrackableAlphaValue,
     segmentationState?: WatchableValue<SegmentationDisplayState|undefined|null>,
     filterBySegmentation?: TrackableBoolean,
     annotationJumpingDispaysSegmentationInitialValue?: boolean,
@@ -93,11 +89,10 @@ export class AnnotationLayerState extends RefCounted {
       role = RenderLayerRole.ANNOTATION,
       color,
       fillOpacity,
-      pointSize,
       segmentationState = new WatchableValue(null),
       filterBySegmentation = new TrackableBoolean(false),
       annotationJumpingDispaysSegmentationInitialValue,
-      annotationSelectionDisplaysSegmentationInitialValue,
+      annotationSelectionDisplaysSegmentationInitialValue
     } = options;
     this.transform = transform;
     this.source = this.registerDisposer(source);
@@ -107,7 +102,6 @@ export class AnnotationLayerState extends RefCounted {
     this.fillOpacity = fillOpacity;
     this.segmentationState = segmentationState;
     this.filterBySegmentation = filterBySegmentation;
-    this.pointSize = pointSize;
     if (annotationJumpingDispaysSegmentationInitialValue) {
       this.annotationJumpingDisplaysSegmentation.value = true;
     }
