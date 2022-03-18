@@ -377,6 +377,7 @@ export class AnnotationLayerView extends Tab {
     this.bracketShortcutCheckbox();
     this.selectionShowsSegmentationCheckbox();
     this.filterAnnotationByTagControl();
+    this.addPointSize();
     // Annotations Group
     this.addColorPicker();
     this.annotationToolboxSetup();

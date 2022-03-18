@@ -90,6 +90,7 @@ export class AnnotationLayerState extends RefCounted {
       role = RenderLayerRole.ANNOTATION,
       color,
       fillOpacity,
+      pointSize,
       segmentationState = new WatchableValue(null),
       filterBySegmentation = new TrackableBoolean(false),
       annotationJumpingDispaysSegmentationInitialValue,
@@ -101,6 +102,7 @@ export class AnnotationLayerState extends RefCounted {
     this.role = role;
     this.color = color;
     this.fillOpacity = fillOpacity;
+    this.pointSize = pointSize;
     this.segmentationState = segmentationState;
     this.filterBySegmentation = filterBySegmentation;
     if (annotationJumpingDispaysSegmentationInitialValue) {
