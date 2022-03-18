@@ -22,6 +22,7 @@ import {MouseSelectionState} from 'neuroglancer/layer';
 import {SegmentationUserLayerWithGraph} from 'neuroglancer/segmentation_user_layer_with_graph';
 import {StatusMessage} from 'neuroglancer/status';
 import {trackableAlphaValue} from 'neuroglancer/trackable_alpha';
+import {trackableSizeValue} from 'neuroglancer/trackable_size';
 import {WatchableRefCounted} from 'neuroglancer/trackable_value';
 import {Tool} from 'neuroglancer/ui/tool';
 import {serializeColor, TrackableRGB} from 'neuroglancer/util/color';
@@ -52,6 +53,7 @@ export class PathFinderState extends RefCounted {
       transform,
       source: annotationSource.addRef(),
       fillOpacity: trackableAlphaValue(1.0),
+      pointSize: trackableSizeValue(),
       color: this.pathAnnotationColor,
     });
     this.registerDisposer(this.pathBetweenSupervoxels.changed.add(this.changed.dispatch));

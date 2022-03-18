@@ -235,7 +235,7 @@ export class AnnotationLayerView extends Tab {
   }
 
   private addPointSize() {
-    const widget = this.registerDisposer(new RangeWidget(this.annotationLayer.pointSize, {min: 5, max: 15, step:1}));
+    const widget = this.registerDisposer(new RangeWidget(this.annotationLayer.pointSize, {min: 5, max: 20, step:1}));
     widget.promptElement.textContent = 'Point Size';
     this.groupVisualization.appendFixedChild(widget.element);
   }

@@ -30,6 +30,7 @@ import {setAnnotationHoverStateFromMouseState} from 'neuroglancer/annotation/sel
 import {UserLayer} from 'neuroglancer/layer';
 import {VoxelSize} from 'neuroglancer/navigation_state';
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
+import {TrackableSizeValue, trackableSizeValue} from 'neuroglancer/trackable_size';
 import {TrackableAlphaValue, trackableAlphaValue} from 'neuroglancer/trackable_alpha';
 import {registerNested, TrackableValueInterface, WatchableRefCounted} from 'neuroglancer/trackable_value';
 import {TrackableRGB} from 'neuroglancer/util/color';
@@ -381,17 +382,23 @@ export interface UserLayerWithAnnotations extends UserLayer {
   selectedAnnotation: SelectedAnnotationState;
   annotationColor: TrackableRGB;
   annotationFillOpacity: TrackableAlphaValue;
+  annotationPointSize: TrackableSizeValue;
   initializeAnnotationLayerViewTab(tab: AnnotationLayerView): void;
   getAnnotationText(annotation: Annotation): string;
 }
 
 export function getAnnotationRenderOptions(userLayer: UserLayerWithAnnotations) {
-  return {color: userLayer.annotationColor, fillOpacity: userLayer.annotationFillOpacity};
+  return {
+    color: userLayer.annotationColor, 
+    fillOpacity: userLayer.annotationFillOpacity,
+    pointSize: userLayer.annotationPointSize
+    };
 }
 
 const SELECTED_ANNOTATION_JSON_KEY = 'selectedAnnotation';
 const ANNOTATION_COLOR_JSON_KEY = 'annotationColor';
 const ANNOTATION_FILL_OPACITY_JSON_KEY = 'annotationFillOpacity';
+const ANNOTATION_POINT_SIZE_JSON_KEY = 'annotationPointSize'
 export function UserLayerWithAnnotationsMixin<TBase extends {new (...args: any[]): UserLayer}>(
     Base: TBase) {
   abstract class C extends Base implements UserLayerWithAnnotations {
@@ -400,11 +407,13 @@ export function UserLayerWithAnnotationsMixin<TBase extends {new (...args: any[]
         this.registerDisposer(new SelectedAnnotationState(this.annotationLayerState.addRef()));
     annotationColor = new TrackableRGB(vec3.fromValues(1, 1, 0));
     annotationFillOpacity = trackableAlphaValue(0.0);
+    annotationPointSize = trackableSizeValue();
     constructor(...args: any[]) {
       super(...args);
       this.selectedAnnotation.changed.add(this.specificationChanged.dispatch);
       this.annotationColor.changed.add(this.specificationChanged.dispatch);
       this.annotationFillOpacity.changed.add(this.specificationChanged.dispatch);
+      this.annotationPointSize.changed.add(this.specificationChanged.dispatch);
       this.tabs.add('annotations', {
         label: 'Annotations',
         order: 10,
@@ -438,6 +447,7 @@ export function UserLayerWithAnnotationsMixin<TBase extends {new (...args: any[]
       this.selectedAnnotation.restoreState(specification[SELECTED_ANNOTATION_JSON_KEY]);
       this.annotationColor.restoreState(specification[ANNOTATION_COLOR_JSON_KEY]);
       this.annotationFillOpacity.restoreState(specification[ANNOTATION_FILL_OPACITY_JSON_KEY]);
+      this.annotationPointSize.restoreState(specification[ANNOTATION_POINT_SIZE_JSON_KEY]);
     }
 
     toJSON() {
@@ -445,6 +455,7 @@ export function UserLayerWithAnnotationsMixin<TBase extends {new (...args: any[]
       x[SELECTED_ANNOTATION_JSON_KEY] = this.selectedAnnotation.toJSON();
       x[ANNOTATION_COLOR_JSON_KEY] = this.annotationColor.toJSON();
       x[ANNOTATION_FILL_OPACITY_JSON_KEY] = this.annotationFillOpacity.toJSON();
+      x[ANNOTATION_POINT_SIZE_JSON_KEY] = this.annotationPointSize.toJSON();
       return x;
     }
 
