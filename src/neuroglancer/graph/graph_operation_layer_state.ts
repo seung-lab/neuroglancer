@@ -23,6 +23,7 @@ import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/
 import {SegmentSelection} from 'neuroglancer/sliceview/chunked_graph/frontend';
 import {trackableAlphaValue} from 'neuroglancer/trackable_alpha';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
+import {trackableSizeValue} from 'neuroglancer/trackable_size';
 import {WatchableRefCounted, WatchableValue} from 'neuroglancer/trackable_value';
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {TrackableRGB} from 'neuroglancer/util/color';
@@ -146,11 +147,13 @@ export class GraphOperationLayerState extends RefCounted {
     this.segmentationState = segmentationState;
 
     const fillOpacity = trackableAlphaValue(1.0);
+    const pointSize = trackableSizeValue();
     this.annotationLayerStateA.value = new AnnotationLayerState({
       transform: this.transform,
       source: this.sourceA.addRef(),
       role: RenderLayerRole.GRAPH_MODIFICATION_MARKER,
       fillOpacity: fillOpacity,
+      pointSize: pointSize,
       color: new TrackableRGB(vec3.fromValues(1.0, 0.0, 0.0)),
       segmentationState: segmentationState,
     });
@@ -160,6 +163,7 @@ export class GraphOperationLayerState extends RefCounted {
       source: this.sourceB.addRef(),
       role: RenderLayerRole.GRAPH_MODIFICATION_MARKER,
       fillOpacity: fillOpacity,
+      pointSize: pointSize,
       color: new TrackableRGB(vec3.fromValues(0.0, 0.0, 1.0)),
       segmentationState: segmentationState,
     });

@@ -234,6 +234,12 @@ export class AnnotationLayerView extends Tab {
     this.groupVisualization.appendFixedChild(widget.element);
   }
 
+  private addPointSize() {
+    const widget = this.registerDisposer(new RangeWidget(this.annotationLayer.pointSize, {min: 5, max: 20, step:1}));
+    widget.promptElement.textContent = 'Point Size';
+    this.groupVisualization.appendFixedChild(widget.element);
+  }
+
   private addColorPicker() {
     const colorPicker = this.registerDisposer(new ColorWidget(this.annotationLayer.color));
     colorPicker.element.title = 'Change annotation display color';

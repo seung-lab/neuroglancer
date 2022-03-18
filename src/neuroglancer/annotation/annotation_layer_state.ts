@@ -20,6 +20,7 @@ import {CoordinateTransform} from 'neuroglancer/coordinate_transform';
 import {RenderLayerRole} from 'neuroglancer/layer';
 import {SegmentationDisplayState} from 'neuroglancer/segmentation_display_state/frontend';
 import {TrackableAlphaValue} from 'neuroglancer/trackable_alpha';
+import {TrackableSizeValue} from 'neuroglancer/trackable_size';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {TrackableValue, WatchableValue} from 'neuroglancer/trackable_value';
 import {TrackableRGB} from 'neuroglancer/util/color';
@@ -37,10 +38,7 @@ export class AnnotationLayerState extends RefCounted {
   role: RenderLayerRole;
   color: TrackableRGB;
   fillOpacity: TrackableAlphaValue;
-
-  /**
-   * undefined means may have a segmentation state.  null means no segmentation state is supported.
-   */
+  pointSize: TrackableSizeValue;
   segmentationState: WatchableValue<SegmentationDisplayState|undefined|null>;
   filterBySegmentation: TrackableBoolean;
   annotationJumpingDisplaysSegmentation = new TrackableBoolean(false);
@@ -75,7 +73,10 @@ export class AnnotationLayerState extends RefCounted {
   constructor(options: {
     transform?: CoordinateTransform, source: Owned<AnnotationSource|MultiscaleAnnotationSource>,
     hoverState?: AnnotationHoverState,
-    role?: RenderLayerRole, color: TrackableRGB, fillOpacity: TrackableAlphaValue,
+    role?: RenderLayerRole, 
+    color: TrackableRGB, 
+    fillOpacity: TrackableAlphaValue,
+    pointSize: TrackableSizeValue,
     segmentationState?: WatchableValue<SegmentationDisplayState|undefined|null>,
     filterBySegmentation?: TrackableBoolean,
     annotationJumpingDispaysSegmentationInitialValue?: boolean,

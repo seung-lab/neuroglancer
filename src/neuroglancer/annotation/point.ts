@@ -61,9 +61,10 @@ emitAnnotation(getCircleColor(vColor, borderColor));
           /*normalized=*/ false,
           /*stride=*/ 0, /*offset=*/ context.bufferOffset);
       gl.vertexAttribDivisor(aVertexPosition, 1);
+      const pointSize = context.annotationLayer.state.pointSize.value;
       this.circleShader.draw(
           shader, context.renderContext,
-          {interiorRadiusInPixels: 6, borderWidthInPixels: 2, featherWidthInPixels: 1},
+          {interiorRadiusInPixels: pointSize, borderWidthInPixels: 2, featherWidthInPixels: 1},
           context.count);
       gl.vertexAttribDivisor(aVertexPosition, 0);
       gl.disableVertexAttribArray(aVertexPosition);
