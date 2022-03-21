@@ -1,6 +1,6 @@
 {
     "flywire": {
-        "url": "middleauth+https://globalv1.flywire-daf.com/nglstate/post",
+        "url": "middleauth+https://global.daf-apis.com/nglstate/post",
         "default": true
     }
 }
