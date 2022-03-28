@@ -49,6 +49,7 @@ export function getDefaultGlobalBindings() {
     map.set('keyg', 'switch-multicut-group');
     map.set('keyu', 'decrease-segmentation-opacity');
     map.set('keyi', 'increase-segmentation-opacity');
+    map.set('keyx', 'dismiss-all-status-messages');
     defaultGlobalBindings = map;
   }
   return defaultGlobalBindings;

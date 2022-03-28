@@ -786,6 +786,8 @@ export class Viewer extends RefCounted implements ViewerState {
 
     this.bindAction('help', () => this.showHelpDialog());
 
+    this.bindAction('dismiss-all-status-messages', () => StatusMessage.disposeAll() )
+
     for (let i = 1; i <= 9; ++i) {
       this.bindAction(`toggle-layer-${i}`, () => {
         const layerIndex = i - 1;
