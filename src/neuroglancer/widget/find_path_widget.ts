@@ -70,6 +70,7 @@ export class FindPathWidget extends RefCounted {
       this.layer.tool.value = new PathFindingMarkerTool(this.layer);
     });
     const {findPathButton, precisionModeCheckbox} = this;
+    let pathFound = false;
     precisionModeCheckbox.checked = true;
     findPathButton.textContent = '✔️';
     findPathButton.title = 'Find path';
@@ -77,6 +78,11 @@ export class FindPathWidget extends RefCounted {
       if (!this.pathBetweenSupervoxels.ready()) {
         StatusMessage.showTemporaryMessage('You must select a source and target to find a path');
       } else {
+        // Update Points to have the latest segment ID if path has already been found.
+        if (pathFound) {
+          console.log("Retrieving latest segments")
+          this.pathBetweenSupervoxels.getLatestSegments(this.layer);
+        }
         const getSegmentSelectionFromPoint = (point: Point) => {
           return {
             segmentId: point.segments![0],
@@ -90,6 +96,7 @@ export class FindPathWidget extends RefCounted {
                 getSegmentSelectionFromPoint(this.pathBetweenSupervoxels.target!),
                 precisionModeCheckbox.checked)
             .then((centroids) => {
+              pathFound = true;
               findPathButton.title = 'Path found!';
               StatusMessage.showTemporaryMessage('Path found!', 5000);
               const path: Line[] = [];
@@ -104,6 +111,8 @@ export class FindPathWidget extends RefCounted {
                 path.push(line);
               }
               this.pathBetweenSupervoxels.setPath(path);
+            }, error => {
+              StatusMessage.showTemporaryMessage(`Path finding failed: ${error}`);
             });
       }
     });
@@ -111,6 +120,7 @@ export class FindPathWidget extends RefCounted {
     clearButton.textContent = '❌';
     clearButton.title = 'Clear path';
     clearButton.addEventListener('click', () => {
+      pathFound = false;
       findPathButton.title = 'Find path';
       this.pathBetweenSupervoxels.clear();
     });
