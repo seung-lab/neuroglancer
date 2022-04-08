@@ -48,6 +48,7 @@ export function getDefaultGlobalBindings() {
     map.set('backslash', 'toggle-show-statistics');
     map.set('keyg', 'switch-multicut-group');
     map.set('keyu', 'decrease-segmentation-opacity');
+    map.set('keyp', 'refresh-all-meshes');
     map.set('keyi', 'increase-segmentation-opacity');
     map.set('keyx', 'dismiss-all-status-messages');
     defaultGlobalBindings = map;
@@ -78,6 +79,7 @@ export function getDefaultRenderedDataPanelBindings() {
           'control+minus': 'zoom-out',
           'keyr': 'rotate-relative-z-',
           'keye': 'rotate-relative-z+',
+          //'keyp': 'refresh-all-meshes',
           'shift+arrowdown': 'rotate-relative-x-',
           'shift+arrowup': 'rotate-relative-x+',
           'shift+arrowleft': 'rotate-relative-y-',
