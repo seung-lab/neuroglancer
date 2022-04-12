@@ -324,6 +324,10 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
           this.reloadManifest();
           break;
         }
+        case 'refresh-all-meshes': {
+          this.reloadAllManifests();
+          break;
+        }
         case 'switch-multicut-group': {
           if (this.tool.value === undefined ||
               (!(this.tool.value instanceof PlaceGraphOperationMarkerTool))) {
@@ -523,6 +527,7 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
     }
 
     reloadManifest() {
+      console.log("you are refreshing one mesh");
       let {segmentSelectionState} = this.displayState;
       if (segmentSelectionState.hasSelectedSegment) {
         let segment = segmentSelectionState.selectedSegment;
@@ -537,6 +542,34 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
             initialMessage: `Reloading mesh for segment ${segment}, ${msgTail}`,
             errorPrefix: `Could not fetch mesh manifest: `
           });
+        }
+      }
+    }
+
+    reloadAllManifests() {
+      let {segmentSelectionState} = this.displayState;
+      if (segmentSelectionState.hasSelectedSegment) {
+        let segment = segmentSelectionState.selectedSegment;
+        let {rootSegments} = this.displayState;
+        if (rootSegments.has(segment)) {
+          let meshSource = this.meshLayer!.source;
+          let chunkEntries = [...meshSource.chunks.entries()];
+          // convert each chunk entry into a segment, then refresh each segment
+          for (let entry of chunkEntries) {
+            let chunkLow = entry[0].split(',')[0];
+            let chunkHigh = entry[0].split(',')[1];
+            let tempSegment = new Uint64(parseInt(chunkLow), parseInt(chunkHigh));
+
+            // create a refresh promise for each segment 
+            const promise = meshSource.rpc!.promiseInvoke<any>(
+              GRAPHENE_MANIFEST_REFRESH_PROMISE,
+              {'rpcId': meshSource.rpcId!, 'segment': tempSegment.toString()});
+            let msgTail = 'if full mesh does not appear try again after this message disappears.';
+            this.chunkedGraphLayer!.withErrorMessage(promise, {
+              initialMessage: `Reloading mesh for segment ${tempSegment}, ${msgTail}`,
+              errorPrefix: `Could not fetch mesh manifest: `
+            });
+          }
         }
       }
     }
