@@ -79,7 +79,6 @@ export function getDefaultRenderedDataPanelBindings() {
           'control+minus': 'zoom-out',
           'keyr': 'rotate-relative-z-',
           'keye': 'rotate-relative-z+',
-          //'keyp': 'refresh-all-meshes',
           'shift+arrowdown': 'rotate-relative-x-',
           'shift+arrowup': 'rotate-relative-x+',
           'shift+arrowleft': 'rotate-relative-y-',

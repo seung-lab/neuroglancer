@@ -270,7 +270,6 @@ function helper<TBase extends BaseConstructor>(Base: TBase) {
     }
 
     handleAction(action: string) {
-      console.log("action:", action);
       if (this.ignoreSegmentInteractions.value) {
         return;
       }
