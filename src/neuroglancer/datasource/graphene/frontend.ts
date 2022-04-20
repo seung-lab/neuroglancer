@@ -1338,9 +1338,9 @@ class GrapheneGraphSource extends SegmentationGraphSource {
     super();
     this.graphServer = new GrapheneGraphServerInterface(info.app!.segmentationUrl, credentialsProvider);
 
-    // this.graphServer.getTimestampLimit().then((limit) => {
-    //   this.timestampLimit.value = limit;
-    // });
+    this.graphServer.getTimestampLimit().then((limit) => {
+      this.timestampLimit.value = limit;
+    });
   }
 
   tab(layer: SegmentationUserLayer) {
