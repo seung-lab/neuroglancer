@@ -379,6 +379,36 @@ export class GraphOperationLayerView extends Tab {
               segmentationState.rootSegments.add(splitRoots);
               segmentationState.rootSegmentsAfterEdit!.add(splitRoots);
 
+              // Access split points mode checkbox value 
+              let splitPointscheckbox = document.getElementById('multi-split-mode-checkbox') as HTMLInputElement;
+              let splitPointsValue = splitPointscheckbox.checked;
+              if (splitPointsValue) {
+                // remove red and blue points
+                for (const annotation of sourceA) {
+                  const ref = annotationLayer.sourceA.getReference(annotation.id);
+                  try {
+                    annotationLayer.sourceA.delete(ref);
+                  } finally {
+                    ref.dispose();
+                  }
+                }
+                for (const annotation of sourceB) {
+                  const ref = annotationLayer.sourceB.getReference(annotation.id);
+                  try {
+                    annotationLayer.sourceB.delete(ref);
+                  } finally {
+                    ref.dispose();
+                  }
+                }
+
+                // regenerate path
+                console.log("Regenerating Path!!!");
+                let has_path = this.wrapper.pathFinderState.pathBetweenSupervoxels.hasPath;
+                if (has_path) {
+                  let find_path_button = document.getElementById('find-path-button') as HTMLButtonElement;
+                  find_path_button!.click();
+                }
+              }
               // TODO: Merge unsupported with edits
               const view = (<any>window)['viewer'];
               view.differ.purgeHistory();

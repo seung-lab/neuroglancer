@@ -182,8 +182,6 @@ class PathBetweenSupervoxels extends RefCounted {
       return
     }
     const {segmentSelectionState} = layer.displayState;
-    console.log(segmentSelectionState.rawSelectedSegment.clone())
-    console.log(segmentSelectionState.selectedSegment.clone())
     const newSource: Point = {
       id: '',
       segments: [
