@@ -146,8 +146,8 @@ export class FindPathWidget extends RefCounted {
     multiSplitModeCheckbox.type = 'checkbox';
     multiSplitModeCheckbox.id = 'multi-split-mode-checkbox';
     const splitPointscheckboxLabel = document.createElement('split-points-label');
-    splitPointscheckboxLabel.textContent = 'Multi-Split Mode: ';
-    splitPointscheckboxLabel.title = 'Regenerates path after a successful split.';
+    splitPointscheckboxLabel.textContent = 'Multi-Split mode: ';
+    splitPointscheckboxLabel.title = 'Multi-Split mode regenerates the current path after a successful split.';
     splitPointscheckboxLabel.appendChild(multiSplitModeCheckbox);
     this.findPathGroup.appendFlexibleChild(splitPointscheckboxLabel);
   }
