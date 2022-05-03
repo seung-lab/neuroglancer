@@ -38,7 +38,7 @@ const hsv = new Float32Array(3);
 export class FindPathWidget extends RefCounted {
   private findPathButton = document.createElement('button');
   private precisionModeCheckbox = document.createElement('input');
-  private removeSplitPointsCheckbox = document.createElement('input');
+  private multiSplitModeCheckbox = document.createElement('input');
 
   constructor(
       private findPathGroup: Borrowed<MinimizableGroupWidget>,
@@ -70,10 +70,10 @@ export class FindPathWidget extends RefCounted {
     selectSourceAndTargetButton.addEventListener('click', () => {
       this.layer.tool.value = new PathFindingMarkerTool(this.layer);
     });
-    const {findPathButton, precisionModeCheckbox, removeSplitPointsCheckbox} = this;
+    const {findPathButton, precisionModeCheckbox, multiSplitModeCheckbox} = this;
     let pathFound = false;
     precisionModeCheckbox.checked = true;
-    removeSplitPointsCheckbox.checked = false;
+    multiSplitModeCheckbox.checked = false;
     findPathButton.textContent = '✔️';
     findPathButton.title = 'Find path';
     findPathButton.id = 'find-path-button';
@@ -143,12 +143,12 @@ export class FindPathWidget extends RefCounted {
     checkboxLabel.appendChild(precisionModeCheckbox);
     this.findPathGroup.appendFlexibleChild(checkboxLabel);
 
-    removeSplitPointsCheckbox.type = 'checkbox';
-    removeSplitPointsCheckbox.id = 'remove-split-points-checkbox';
+    multiSplitModeCheckbox.type = 'checkbox';
+    multiSplitModeCheckbox.id = 'multi-split-mode-checkbox';
     const splitPointscheckboxLabel = document.createElement('split-points-label');
-    splitPointscheckboxLabel.textContent = 'Remove Split Points: ';
-    splitPointscheckboxLabel.title = 'Title for split points mode.';
-    splitPointscheckboxLabel.appendChild(removeSplitPointsCheckbox);
+    splitPointscheckboxLabel.textContent = 'Multi-Split Mode: ';
+    splitPointscheckboxLabel.title = 'Regenerates path after a successful split.';
+    splitPointscheckboxLabel.appendChild(multiSplitModeCheckbox);
     this.findPathGroup.appendFlexibleChild(splitPointscheckboxLabel);
   }
 

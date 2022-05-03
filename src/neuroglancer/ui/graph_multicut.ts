@@ -380,7 +380,7 @@ export class GraphOperationLayerView extends Tab {
               segmentationState.rootSegmentsAfterEdit!.add(splitRoots);
 
               // Access split points mode checkbox value 
-              let splitPointscheckbox = document.getElementById('remove-split-points-checkbox') as HTMLInputElement;
+              let splitPointscheckbox = document.getElementById('multi-split-mode-checkbox') as HTMLInputElement;
               let splitPointsValue = splitPointscheckbox.checked;
               if (splitPointsValue) {
                 // remove red and blue points
