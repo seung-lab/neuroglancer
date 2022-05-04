@@ -69,50 +69,51 @@ export class FindPathWidget extends RefCounted {
     selectSourceAndTargetButton.addEventListener('click', () => {
       this.layer.tool.value = new PathFindingMarkerTool(this.layer);
     });
-    let pathFound = false;
     const {findPathButton, precisionModeCheckbox} = this;
-    precisionModeCheckbox.addEventListener('click', () => {
-      pathFound = false;
-    });
+    let pathFound = false;
+    precisionModeCheckbox.checked = true;
     findPathButton.textContent = '✔️';
     findPathButton.title = 'Find path';
     findPathButton.addEventListener('click', () => {
-      if (!pathFound) {
-        if (!this.pathBetweenSupervoxels.ready()) {
-          StatusMessage.showTemporaryMessage('You must select a source and target to find a path');
-        } else {
-          const getSegmentSelectionFromPoint = (point: Point) => {
-            return {
-              segmentId: point.segments![0],
-              rootId: point.segments![1],
-              position: point.point
-            };
-          };
-          this.layer.chunkedGraphLayer!
-              .findPath(
-                  getSegmentSelectionFromPoint(this.pathBetweenSupervoxels.source!),
-                  getSegmentSelectionFromPoint(this.pathBetweenSupervoxels.target!),
-                  precisionModeCheckbox.checked)
-              .then((centroids) => {
-                pathFound = true;
-                findPathButton.title = 'Path found!';
-                StatusMessage.showTemporaryMessage('Path found!', 5000);
-                const path: Line[] = [];
-                for (let i = 0; i < centroids.length - 1; i++) {
-                  const line: Line = {
-                    pointA: vec3.fromValues(centroids[i][0], centroids[i][1], centroids[i][2]),
-                    pointB: vec3.fromValues(
-                        centroids[i + 1][0], centroids[i + 1][1], centroids[i + 1][2]),
-                    id: '',
-                    type: AnnotationType.LINE
-                  };
-                  path.push(line);
-                }
-                this.pathBetweenSupervoxels.setPath(path);
-              });
-        }
+      if (!this.pathBetweenSupervoxels.ready()) {
+        StatusMessage.showTemporaryMessage('You must select a source and target to find a path');
       } else {
-        StatusMessage.showTemporaryMessage('Requested path already found.');
+        // Update Points to have the latest segment ID if path has already been found.
+        if (pathFound) {
+          console.log("Retrieving latest segments")
+          this.pathBetweenSupervoxels.getLatestSegments(this.layer);
+        }
+        const getSegmentSelectionFromPoint = (point: Point) => {
+          return {
+            segmentId: point.segments![0],
+            rootId: point.segments![1],
+            position: point.point
+          };
+        };
+        this.layer.chunkedGraphLayer!
+            .findPath(
+                getSegmentSelectionFromPoint(this.pathBetweenSupervoxels.source!),
+                getSegmentSelectionFromPoint(this.pathBetweenSupervoxels.target!),
+                precisionModeCheckbox.checked)
+            .then((centroids) => {
+              pathFound = true;
+              findPathButton.title = 'Path found!';
+              StatusMessage.showTemporaryMessage('Path found!', 5000);
+              const path: Line[] = [];
+              for (let i = 0; i < centroids.length - 1; i++) {
+                const line: Line = {
+                  pointA: vec3.fromValues(centroids[i][0], centroids[i][1], centroids[i][2]),
+                  pointB: vec3.fromValues(
+                      centroids[i + 1][0], centroids[i + 1][1], centroids[i + 1][2]),
+                  id: '',
+                  type: AnnotationType.LINE
+                };
+                path.push(line);
+              }
+              this.pathBetweenSupervoxels.setPath(path);
+            }, error => {
+              StatusMessage.showTemporaryMessage(`Path finding failed: ${error}`);
+            });
       }
     });
     const clearButton = document.createElement('button');
