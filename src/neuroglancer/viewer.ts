@@ -784,7 +784,8 @@ export class Viewer extends RefCounted implements ViewerState {
     });
 
     this.bindAction('help', () => this.showHelpDialog());
-
+    this.bindAction('dismiss-all-status-messages', () => StatusMessage.disposeAll() )
+    
     for (let i = 1; i <= 9; ++i) {
       this.bindAction(`toggle-layer-${i}`, () => {
         const layerIndex = i - 1;
@@ -1109,8 +1110,8 @@ export class Viewer extends RefCounted implements ViewerState {
       }
       hashBinding.parseError;
     }));
-    StatusMessage.showTemporaryMessage(
-        `RAW URLs will soon be Deprecated. Please use JSON URLs whenever available.`, 10000);
+    // StatusMessage.showTemporaryMessage(
+    //     `RAW URLs will soon be Deprecated. Please use JSON URLs whenever available.`, 10000);
     hashBinding.updateFromUrlHash();
 
     return hashBinding;

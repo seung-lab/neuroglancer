@@ -151,4 +151,12 @@ export class StatusMessage {
   }): StatusMessage {
     return this.showTemporaryMessage(message, closeAfter, config);
   }
+
+  static disposeAll() {
+    if (statusContainer !== null) {
+      while (statusContainer.firstChild) {
+        statusContainer.removeChild(statusContainer.firstChild);
+      }
+    }
+  }
 }
