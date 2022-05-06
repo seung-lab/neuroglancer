@@ -284,8 +284,8 @@ export class ChunkedGraphLayer extends GenericSliceViewRenderLayer {
       this.leafRequestsStatusMessage = undefined;
       StatusMessage.showTemporaryMessage('Loading chunked graph segmentation...', 3000);
     } else if ((!this.leafRequestsStatusMessage) && (!leafRequestsActive)) {
-      this.leafRequestsStatusMessage = StatusMessage.showMessage(
-          'At this zoom level, chunked graph segmentation will not be loaded. Please zoom in if you wish to load it.');
+      this.leafRequestsStatusMessage = StatusMessage.showTemporaryMessage(
+        'At this zoom level, chunked graph segmentation will not be loaded. Please zoom in if you wish to load it.', 3000);
     }
   }
 }
