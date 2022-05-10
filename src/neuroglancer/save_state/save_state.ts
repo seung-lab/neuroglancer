@@ -180,8 +180,8 @@ export class SaveState extends RefCounted {
   private overwriteHistory(newHistory: SaveHistory[] = []) {
     this.robustSet(historyKey, JSON.stringify(newHistory));
   }
-  public showSaveDialog(viewer: Viewer, jsonString?: string, get?: UrlType) {
-    new SaveDialog(viewer, jsonString, get);
+  public showSaveDialog(viewer: Viewer, jsonString?: string, get?: UrlType, hidden = true) {
+    new SaveDialog(viewer, jsonString, get, hidden);
   }
   public showHistory(viewer: Viewer) {
     new SaveHistoryDialog(viewer, this);
@@ -294,8 +294,8 @@ type FieldConfig = {
 };
 
 class SaveDialog extends Overlay {
-  constructor(public viewer: Viewer, jsonString?: string, getUrlType?: UrlType) {
-    super();
+  constructor(public viewer: Viewer, jsonString?: string, getUrlType?: UrlType, hidden = false) {
+    super(hidden);
     const br = () => document.createElement('br');
     const jsonURLDefault = `LINK SHORTNER INACCESSIBLE`;
 
@@ -334,6 +334,7 @@ class SaveDialog extends Overlay {
     let {content} = this;
     content.style.overflow = 'visible';
     content.classList.add('ng-dark');
+    content.classList.add('save-state-overlay');
 
     const title = document.createElement('h1');
     title.innerText = 'Share Link';

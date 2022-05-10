@@ -32,12 +32,15 @@ export class Overlay extends RefCounted {
   container: HTMLDivElement;
   content: HTMLDivElement;
   keyMap = new EventActionMap();
-  constructor() {
+  constructor(hidden = false) {
     super();
     this.keyMap.addParent(defaultEventMap, Number.NEGATIVE_INFINITY);
     ++overlaysOpen;
     let container = this.container = document.createElement('div');
     container.className = 'overlay';
+    if (hidden) {
+      container.className = 'overlay overlay-hidden';
+    }
     let content = this.content = document.createElement('div');
     this.registerDisposer(new AutomaticallyFocusedElement(content));
     content.className = 'overlay-content';
