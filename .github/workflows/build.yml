@@ -100,7 +100,7 @@ jobs:
     - name: Typecheck with TypeScript
       run: npm run typecheck
     - name: Build client bundles
-      run: npm run build --no-typecheck
+      run: node ./config/esbuild-cli.js --config=min --no-typecheck --define STATE_SERVERS=$(cat config/state_servers.json | tr -d " \t\n\r")
     - run: cp -r ./dist/min appengine/frontend/static/
     - name: Extract branch name
       id: get_branch
