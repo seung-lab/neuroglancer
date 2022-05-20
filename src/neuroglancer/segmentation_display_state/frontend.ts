@@ -40,6 +40,7 @@ import {Uint64} from 'neuroglancer/util/uint64';
 import {withSharedVisibility} from 'neuroglancer/visibility_priority/frontend';
 import {makeCopyButton} from 'neuroglancer/widget/copy_button';
 import {makeFilterButton} from 'neuroglancer/widget/filter_button';
+import { Uint64Set } from '../uint64_set';
 
 export class Uint64MapEntry {
   constructor(public key: Uint64, public value?: Uint64, public label?: string|undefined) {}
@@ -77,8 +78,8 @@ export class SegmentSelectionState extends RefCounted {
     if (value == null) {
       hasSelectedSegment = false;
     } else if (typeof value === 'number') {
-      newLow = newBaseLow = (value >>> 0);
-      newHigh = newBaseHigh = value < 0 ? 0xffffffff : 0;
+      newLow = newBaseLow = value;
+      newHigh = newBaseHigh = 0;
       hasSelectedSegment = true;
     } else if (value instanceof Uint64MapEntry) {
       const valueMapped = value.value || value.key;
@@ -150,6 +151,7 @@ export interface SegmentationDisplayState {
   segmentSelectionState: SegmentSelectionState;
   saturation: TrackableAlphaValue;
   baseSegmentColoring: WatchableValueInterface<boolean>;
+  baseSegmentHighlighting: WatchableValueInterface<boolean>;
   segmentationGroupState: WatchableValueInterface<SegmentationGroupState>;
   segmentationColorGroupState: WatchableValueInterface<SegmentationColorGroupState>;
 
@@ -162,6 +164,10 @@ export interface SegmentationDisplayState {
   segmentColorHash: WatchableValueInterface<number>;
   segmentStatedColors: WatchableValueInterface<Uint64Map>;
   segmentDefaultColor: WatchableValueInterface<vec3|undefined>;
+  highlightColor: WatchableValueInterface<vec3|undefined>;
+
+  showFocusSegments: WatchableValueInterface<boolean>;
+  focusSegments: WatchableValueInterface<Uint64Set>;
 }
 
 export function resetTemporaryVisibleSegmentsState(state: VisibleSegmentsState) {
@@ -181,7 +187,7 @@ export function maybeAugmentSegmentId(
   let mapped: Uint64|undefined;
   let label: string|undefined;
   if (typeof value === 'number') {
-    id = new Uint64((value >>> 0), value < 0 ? 0xffffffff : 0);
+    id = new Uint64(value, 0);
   } else if (typeof value === 'string') {
     id = Uint64.parseString(value);
   } else {
@@ -757,7 +763,10 @@ export function getObjectColor(
 
 export function sendVisibleSegmentsState(state: VisibleSegmentsState, options: any = {}) {
   for (const property of VISIBLE_SEGMENTS_STATE_PROPERTIES) {
-    options[property] = state[property].rpcId;
+    const value = state[property];
+    if (value) { // due to optional rootSegmentsAfterEdit
+      options[property] = value.rpcId;
+    }
   }
   return options;
 }
@@ -774,6 +783,9 @@ export class SegmentationLayerSharedObject extends Base {
     let {displayState} = this;
     options['chunkManager'] = this.chunkManager.rpcId;
     sendVisibleSegmentsState(displayState.segmentationGroupState.value, options);
+    if (displayState.segmentationGroupState.value.rootSegmentsAfterEdit !== undefined){
+      options['rootSegmentsAfterEdit'] = displayState.segmentationGroupState.value.rootSegmentsAfterEdit!.rpcId;
+    }
     options['transform'] =
         this.registerDisposer(SharedWatchableValue.makeFromExisting(
                                   this.chunkManager.rpc!, this.displayState.transform))

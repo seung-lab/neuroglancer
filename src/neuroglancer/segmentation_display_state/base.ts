@@ -31,6 +31,8 @@ export interface VisibleSegmentsState {
   temporarySegmentEquivalences: SharedDisjointUint64Sets;
   useTemporaryVisibleSegments: SharedWatchableValue<boolean>;
   useTemporarySegmentEquivalences: SharedWatchableValue<boolean>;
+
+  rootSegmentsAfterEdit?: Uint64Set; // new roots generated as result of edit operation
 }
 
 export const VISIBLE_SEGMENTS_STATE_PROPERTIES: (keyof VisibleSegmentsState)[] = [
