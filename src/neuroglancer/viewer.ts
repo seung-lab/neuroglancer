@@ -1111,8 +1111,6 @@ export class Viewer extends RefCounted implements ViewerState {
       }
       hashBinding.parseError;
     }));
-    // StatusMessage.showTemporaryMessage(
-    //     `RAW URLs will soon be Deprecated. Please use JSON URLs whenever available.`, 10000);
     hashBinding.updateFromUrlHash();
 
     return hashBinding;
