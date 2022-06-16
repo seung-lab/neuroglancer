@@ -79,7 +79,7 @@ export class SegmentColorHash implements Trackable {
     h = hashCombine(h, x.high);
     const c0 = (h & 0xFF) / 255;
     const c1 = ((h >> 8) & 0xFF) / 255;
-    hsvToRgb(out, c0, 0.5 + 0.5 * c1, 1.0);
+    hsvToRgb(out, c0, 0.5 + 0.25 * c1, 1.0);
     return out;
   }
 
