@@ -51,5 +51,12 @@ export function setupDefaultViewer() {
   bindDefaultCopyHandler(viewer);
   bindDefaultPasteHandler(viewer);
 
+  
+  document.addEventListener('keydown', (ev) => {
+    if (ev.ctrlKey && ev.key === 'b') {
+      viewer.display.saveScreenshot();
+    }
+  });
+
   return viewer;
 }

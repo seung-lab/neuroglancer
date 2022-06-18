@@ -123,12 +123,15 @@ export abstract class RenderedPanel extends RefCounted {
       this.boundsObserversRegistered = true;
     }
     const clientRect = element.getBoundingClientRect();
+    // clientRect.width *= 2;
+    // clientRect.height *= 2;
     const root = context.container;
     const canvasRect = context.canvasRect!;
     const {canvas} = context;
     const {width: canvasPixelWidth, height: canvasPixelHeight} = canvas;
-    const screenToCanvasPixelScaleX = canvasPixelWidth / canvasRect.width;
-    const screenToCanvasPixelScaleY = canvasPixelHeight / canvasRect.height;
+    const screenToCanvasPixelScaleX = canvasPixelWidth / canvasRect.width;// * 2;
+    const screenToCanvasPixelScaleY = canvasPixelHeight / canvasRect.height;// * 2;
+    console.log('screenToCanvasPixelScaleX', screenToCanvasPixelScaleX);
     // Logical bounding rectangle in canvas/WebGL pixels (which may be a different size than screen
     // pixels when using a fixed canvas size via the Python integration).
     const canvasLeft = canvasRect.left, canvasTop = canvasRect.top;
@@ -136,7 +139,7 @@ export abstract class RenderedPanel extends RefCounted {
             (clientRect.left - canvasLeft) * screenToCanvasPixelScaleX + element.clientLeft),
         logicalTop = this.canvasRelativeLogicalTop = Math.round(
             (clientRect.top - canvasTop) * screenToCanvasPixelScaleY + element.clientTop),
-        logicalWidth = element.clientWidth, logicalHeight = element.clientHeight,
+        logicalWidth = element.clientWidth * context.scale, logicalHeight = element.clientHeight * context.scale,
         logicalRight = logicalLeft + logicalWidth, logicalBottom = logicalTop + logicalHeight;
     // Clipped bounding rectangle in canvas/WebGL pixels.  The clipped bounding rectangle is the
     // portion actually visible and overlapping the canvas.
@@ -297,6 +300,8 @@ export class DisplayContext extends RefCounted implements FrameNumberCounter {
   resizeGeneration = 0;
   boundsGeneration = -1;
 
+  scale = 1;
+
   // Panels ordered by `drawOrder`.  If length is 0, needs to be recomputed.
   private orderedPanels: RenderedPanel[] = [];
 
@@ -371,6 +376,25 @@ export class DisplayContext extends RefCounted implements FrameNumberCounter {
       window.location.reload();
     });
     this.gl = initializeWebGL(canvas);
+
+    // @ts-ignore
+    window.foo = (x) => {
+      this.saveScreenshot();
+    }
+  }
+
+  saveScreenshot() {
+    this.scale = 4;
+    ++this.resizeGeneration;
+    this.draw();
+    const {canvas} = this;
+    const a = document.createElement('a');
+    a.download = `${Date.now()}.png`;
+    a.href = canvas.toDataURL();
+    a.dispatchEvent(new MouseEvent('click'));
+    this.scale = 1;
+    ++this.resizeGeneration;
+    this.draw();
   }
 
   applyWindowedViewportToElement(element: HTMLElement, value: Float64Array) {
@@ -441,9 +465,11 @@ export class DisplayContext extends RefCounted implements FrameNumberCounter {
     const {resizeGeneration} = this;
     if (this.boundsGeneration === resizeGeneration) return;
     const {canvas} = this;
-    canvas.width = canvas.offsetWidth;
-    canvas.height = canvas.offsetHeight;
+    canvas.width = canvas.offsetWidth * this.scale;
+    canvas.height = canvas.offsetHeight * this.scale;
     this.canvasRect = canvas.getBoundingClientRect();
+    // this.canvasRect.width = canvas.width;
+    // this.canvasRect.height = canvas.height;
     this.boundsGeneration = resizeGeneration;
   }
 
