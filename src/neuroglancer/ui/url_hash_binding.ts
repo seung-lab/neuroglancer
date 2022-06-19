@@ -102,6 +102,9 @@ export class UrlHashBinding extends RefCounted {
    */
   updateFromUrlHash() {
     try {
+      if (location.href.includes('?json_url=')) {
+        window.location.replace(location.href.replace('?json_url=', '#!middleauth+'))
+      }
       let s = location.href.replace(/^[^#]+/, '');
       if (s === '' || s === '#' || s === '#!') {
         s = '#!' + this.defaultFragment;
@@ -114,6 +117,12 @@ export class UrlHashBinding extends RefCounted {
             cancellableFetchSpecialOk(credentialsProvider, parsedUrl, {}, responseJson)
                 .then(json => {
                   verifyObject(json);
+                  for (let layer of json.layers) {
+                    if (layer.type === 'segmentation_with_graph') {
+                      layer.type = 'segmentation';
+                      layer.source = layer.source.replace('graphene://https', 'graphene://middleauth+https');
+                    }
+                  }
                   this.root.reset();
                   this.root.restoreState(json);
                 }),
