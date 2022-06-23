@@ -146,6 +146,7 @@ export interface SegmentationColorGroupState {
   tempSegmentStatedColors2d: Uint64Map;
   segmentDefaultColor: WatchableValueInterface<vec3|undefined>;
   tempSegmentDefaultColor2d: WatchableValueInterface<vec3|vec4|undefined>;
+  beautifulColors: WatchableValueInterface<boolean>;
 }
 
 export interface SegmentationDisplayState {
@@ -169,6 +170,7 @@ export interface SegmentationDisplayState {
   segmentDefaultColor: WatchableValueInterface<vec3|undefined>;
   tempSegmentDefaultColor2d: WatchableValueInterface<vec3|vec4|undefined>;
   highlightColor: WatchableValueInterface<vec4|undefined>;
+  beautifulColors: WatchableValueInterface<boolean>;
 }
 
 export function resetTemporaryVisibleSegmentsState(state: VisibleSegmentsState) {
@@ -667,6 +669,7 @@ export function registerCallbackWhenSegmentationDisplayStateChanged(
   context.registerDisposer(registerNestedSync((c, colorGroupState) => {
     c.registerDisposer(colorGroupState.segmentColorHash.changed.add(callback));
     c.registerDisposer(colorGroupState.segmentDefaultColor.changed.add(callback));
+    c.registerDisposer(colorGroupState.beautifulColors.changed.add(callback));
   }, displayState.segmentationColorGroupState));
   context.registerDisposer(displayState.saturation.changed.add(callback));
   context.registerDisposer(displayState.segmentSelectionState.changed.add(callback));

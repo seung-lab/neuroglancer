@@ -67,6 +67,7 @@ const OBJECT_ALPHA_JSON_KEY = 'objectAlpha';
 const SATURATION_JSON_KEY = 'saturation';
 const HIDE_SEGMENT_ZERO_JSON_KEY = 'hideSegmentZero';
 const BASE_SEGMENT_COLORING_JSON_KEY = 'baseSegmentColoring';
+const BEAUTIFUL_COLORS_JSON_KEY = 'beautifulColors';
 const IGNORE_NULL_VISIBLE_SET_JSON_KEY = 'ignoreNullVisibleSet';
 const MESH_JSON_KEY = 'mesh';
 const SKELETONS_JSON_KEY = 'skeletons';
@@ -174,6 +175,7 @@ export class SegmentationUserLayerColorGroupState extends RefCounted implements
     this.segmentDefaultColor.changed.add(specificationChanged.dispatch);
     this.tempSegmentDefaultColor2d.changed.add(specificationChanged.dispatch);
     this.highlightColor.changed.add(specificationChanged.dispatch);
+    this.beautifulColors.changed.add(specificationChanged.dispatch);
   }
 
   restoreState(specification: unknown) {
@@ -190,6 +192,9 @@ export class SegmentationUserLayerColorGroupState extends RefCounted implements
         this.segmentStatedColors.set(id, color);
       }
     });
+    verifyOptionalObjectProperty(
+        specification, BEAUTIFUL_COLORS_JSON_KEY,
+        value => this.beautifulColors.restoreState(value));
   }
 
   toJSON() {
@@ -203,6 +208,7 @@ export class SegmentationUserLayerColorGroupState extends RefCounted implements
         j[key.toString()] = serializeColor(unpackRGB(value.low));
       }
     }
+    x[BEAUTIFUL_COLORS_JSON_KEY] = this.beautifulColors.toJSON();
     return x;
   }
 
@@ -214,12 +220,13 @@ export class SegmentationUserLayerColorGroupState extends RefCounted implements
     this.highlightColor.value = other.highlightColor.value;
   }
 
-  segmentColorHash = SegmentColorHash.getDefault();
+  segmentColorHash = SegmentColorHash.getDefault(this);
   segmentStatedColors = this.registerDisposer(new Uint64Map());
   tempSegmentStatedColors2d = this.registerDisposer(new Uint64Map());
   segmentDefaultColor = new TrackableOptionalRGB();
   tempSegmentDefaultColor2d = new WatchableValue<vec3|vec4|undefined>(undefined);
   highlightColor = new WatchableValue<vec4|undefined>(undefined);
+  beautifulColors = new TrackableBoolean(false, false);
 }
 
 class LinkedSegmentationGroupState<State extends SegmentationUserLayerGroupState|
@@ -271,6 +278,8 @@ class SegmentationUserLayerDisplayState implements SegmentationDisplayState {
 
     this.hideSegmentZero = this.layer.registerDisposer(
         new IndirectWatchableValue(this.segmentationGroupState, group => group.hideSegmentZero));
+    this.beautifulColors = this.layer.registerDisposer(
+        new IndirectWatchableValue(this.segmentationColorGroupState, group => group.beautifulColors));
     this.segmentColorHash = this.layer.registerDisposer(new IndirectTrackableValue(
         this.segmentationColorGroupState, group => group.segmentColorHash));
     this.segmentStatedColors = this.layer.registerDisposer(new IndirectTrackableValue(
@@ -342,6 +351,7 @@ class SegmentationUserLayerDisplayState implements SegmentationDisplayState {
   highlightColor: WatchableValueInterface<vec4|undefined>;
   segmentQuery: WatchableValueInterface<string>;
   segmentPropertyMap: WatchableValueInterface<PreprocessedSegmentPropertyMap|undefined>;
+  beautifulColors: WatchableValueInterface<boolean>;
 }
 
 interface SegmentationActionContext extends LayerActionContext {
@@ -405,6 +415,7 @@ export class SegmentationUserLayer extends Base {
     this.displayState.notSelectedAlpha.changed.add(this.specificationChanged.dispatch);
     this.displayState.objectAlpha.changed.add(this.specificationChanged.dispatch);
     this.displayState.baseSegmentColoring.changed.add(this.specificationChanged.dispatch);
+    this.displayState.beautifulColors.changed.add(this.specificationChanged.dispatch);
     this.displayState.ignoreNullVisibleSet.changed.add(this.specificationChanged.dispatch);
     this.displayState.skeletonRenderingOptions.changed.add(this.specificationChanged.dispatch);
     this.displayState.renderScaleTarget.changed.add(this.specificationChanged.dispatch);
@@ -607,6 +618,8 @@ export class SegmentationUserLayer extends Base {
     this.displayState.objectAlpha.restoreState(specification[OBJECT_ALPHA_JSON_KEY]);
     this.displayState.baseSegmentColoring.restoreState(
         specification[BASE_SEGMENT_COLORING_JSON_KEY]);
+    // this.displayState.beautifulColors.restoreState(
+    //     specification[BEAUTIFUL_COLORS_JSON_KEY]);
     this.displayState.silhouetteRendering.restoreState(
         specification[MESH_SILHOUETTE_RENDERING_JSON_KEY]);
     this.displayState.ignoreNullVisibleSet.restoreState(
@@ -644,6 +657,7 @@ export class SegmentationUserLayer extends Base {
     x[SATURATION_JSON_KEY] = this.displayState.saturation.toJSON();
     x[OBJECT_ALPHA_JSON_KEY] = this.displayState.objectAlpha.toJSON();
     x[BASE_SEGMENT_COLORING_JSON_KEY] = this.displayState.baseSegmentColoring.toJSON();
+    // x[BEAUTIFUL_COLORS_JSON_KEY] = this.displayState.beautifulColors.toJSON();
     x[IGNORE_NULL_VISIBLE_SET_JSON_KEY] = this.displayState.ignoreNullVisibleSet.toJSON();
     x[MESH_SILHOUETTE_RENDERING_JSON_KEY] = this.displayState.silhouetteRendering.toJSON();
     x[ANCHOR_SEGMENT_JSON_KEY] = this.anchorSegment.toJSON();
@@ -937,6 +951,12 @@ export const LAYER_CONTROLS: LayerControlDefinition<SegmentationUserLayer>[] = [
     toolJson: BASE_SEGMENT_COLORING_JSON_KEY,
     title: 'Color base segments individually',
     ...checkboxLayerControl(layer => layer.displayState.baseSegmentColoring),
+  },
+  {
+    label: 'Beautiful colors',
+    toolJson: BEAUTIFUL_COLORS_JSON_KEY,
+    title: 'Color base segments individually',
+    ...checkboxLayerControl(layer => layer.displayState.beautifulColors),
   },
   {
     label: 'Show all by default',

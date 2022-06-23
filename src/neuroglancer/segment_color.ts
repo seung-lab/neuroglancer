@@ -25,6 +25,7 @@ import {ShaderBuilder, ShaderProgram} from 'neuroglancer/webgl/shader';
 import {glsl_hsvToRgb, glsl_uint64} from 'neuroglancer/webgl/shader_lib';
 import {getRandomUint32} from './util/random';
 import {Trackable} from './util/trackable';
+import { SegmentationColorGroupState } from './segmentation_display_state/frontend';
 
 const NUM_COMPONENTS = 2;
 
@@ -72,10 +73,10 @@ export function getCssColor(color: Float32Array) {
 export class SegmentColorHash implements Trackable {
   changed = new NullarySignal();
 
-  constructor(public hashSeed: number = getRandomUint32()) {}
+  constructor(public hashSeed: number = getRandomUint32(), private displayState?: SegmentationColorGroupState) {}
 
-  static getDefault() {
-    return new SegmentColorHash(0);
+  static getDefault(displayState?: SegmentationColorGroupState) {
+    return new SegmentColorHash(0, displayState);
   }
 
   get value() {
@@ -92,8 +93,11 @@ export class SegmentColorHash implements Trackable {
   compute(out: Float32Array, x: Uint64) {
     let h = hashCombine(this.hashSeed, x.low);
     h = hashCombine(h, x.high);
-    const minHue = 0.45;
-    const maxHue = 0.85;
+    let minHue = 0, maxHue = 1;
+    if (this.displayState?.beautifulColors.value) {
+      minHue = 0.45;
+      maxHue = 0.85;
+    }
     const c0 = (h & 0xFF) / 255 * (maxHue - minHue) + minHue;
     // const c1 = ((h >> 8) & 0xFF) / 255;
     hsvToRgb(out, c0, 0.9, 1.0);
