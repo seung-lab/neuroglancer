@@ -1,11 +1,11 @@
+import 'flatpickr/dist/flatpickr.min.css';
+
 import flatpickr from 'flatpickr';
 import minMaxTimePlugin from 'flatpickr/dist/plugins/minMaxTimePlugin';
 import {SegmentationUserLayerWithGraphDisplayState} from 'neuroglancer/segmentation_user_layer_with_graph';
 import {TrackableValue} from 'neuroglancer/trackable_value';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {removeFromParent} from 'neuroglancer/util/dom';
-
-import 'flatpickr/dist/flatpickr.min.css';
 
 export class TimeSegmentWidget extends RefCounted {
   element = document.createElement('div');
@@ -82,6 +82,7 @@ export class TimeSegmentWidget extends RefCounted {
       defaultDate,
       enableTime: true,
       enableSeconds: true,
+      dateFormat: 'Z',
       'disable': [(date) => {
         const target = date.valueOf();
         const future = Date.now();
