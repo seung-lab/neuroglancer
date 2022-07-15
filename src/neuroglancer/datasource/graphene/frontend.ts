@@ -874,8 +874,23 @@ class GrapheneGraphSource extends SegmentationGraphSource {
     return this.graphServer.getRoot(segment);
   }
 
-  tab(layer: SegmentationUserLayer) {
-    return new GrapheneTab(layer);
+  tabContents(layer: SegmentationUserLayer) {
+
+    return new DependentViewWidget(
+                                layer.displayState.segmentationGroupState.value.graph,
+                                (graph, parent, context) => {
+                                  if (graph === undefined) return;
+                                  if (!(graph instanceof GrapheneGraphSource)) return;
+                                  const toolbox = document.createElement('div');
+                                  toolbox.className = 'neuroglancer-segmentation-toolbox';
+                                  toolbox.appendChild(makeToolButton(context, layer, {
+                                    toolJson: ANNOTATE_MULTICUT_SEGMENTS_TOOL_ID,
+                                    label: 'Multicut',
+                                    title: 'Multicut segments'
+                                  }));
+                                  parent.appendChild(toolbox);
+                                });
+    // return new GrapheneTabContents(layer);
   }
 
   // following not used
@@ -1066,7 +1081,7 @@ const synchronizeAnnotationSource = (source: WatchableSet<SegmentSelection>, sta
   }
 }
 
-export class GrapheneTab extends Tab {
+export class GrapheneTabContents extends Tab {
   private annotationLayerView =
       this.registerDisposer(new MulticutAnnotationLayerView(this.layer, this.layer.annotationDisplayState));
 

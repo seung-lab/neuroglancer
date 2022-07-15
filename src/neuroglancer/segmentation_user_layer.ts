@@ -27,7 +27,7 @@ import {SegmentColorHash} from 'neuroglancer/segment_color';
 import {augmentSegmentId, bindSegmentListWidth, makeSegmentWidget, maybeAugmentSegmentId, registerCallbackWhenSegmentationDisplayStateChanged, SegmentationColorGroupState, SegmentationDisplayState, SegmentationGroupState, SegmentSelectionState, Uint64MapEntry} from 'neuroglancer/segmentation_display_state/frontend';
 import {getPreprocessedSegmentPropertyMap, PreprocessedSegmentPropertyMap, SegmentPropertyMap} from 'neuroglancer/segmentation_display_state/property_map';
 import {LocalSegmentationGraphSource} from 'neuroglancer/segmentation_graph/local';
-import {SegmentationGraphSource, SegmentationGraphSourceConnection, VisibleSegmentEquivalencePolicy} from 'neuroglancer/segmentation_graph/source';
+import {SegmentationGraphSource, SegmentationGraphSourceConnection, SegmentationGraphSourceTab, VisibleSegmentEquivalencePolicy} from 'neuroglancer/segmentation_graph/source';
 import {SharedDisjointUint64Sets} from 'neuroglancer/shared_disjoint_sets';
 import {SharedWatchableValue} from 'neuroglancer/shared_watchable_value';
 import {PerspectiveViewSkeletonLayer, SkeletonLayer, SkeletonRenderingOptions, SliceViewPanelSkeletonLayer} from 'neuroglancer/skeleton/frontend';
@@ -419,6 +419,8 @@ export class SegmentationUserLayer extends Base {
         'rendering', {label: 'Render', order: -100, getter: () => new DisplayOptionsTab(this)});
     this.tabs.add(
         'segments', {label: 'Seg.', order: -50, getter: () => new SegmentDisplayTab(this)});
+    this.tabs.add(
+        'graph', {label: 'Graph', order: -25, getter: () => new SegmentationGraphSourceTab(this)});
     this.tabs.default = 'rendering';
   }
 
@@ -513,19 +515,19 @@ export class SegmentationUserLayer extends Base {
               for (const renderLayer of graphRenderLayers) {
                 loadedSubsource.addRenderLayer(renderLayer);
               }
-              const graphTab = segmentationGraph.tab;
-              if (graphTab) {
-                const tabId = 'graph';
-                this.tabs.add(
-                  tabId, {label: 'Graph', order: -25, getter: () => {
-                    return graphTab(this);
-                  }});
-                this.panels.updateTabs();
-                refCounted.registerDisposer(() => {
-                  this.tabs.remove(tabId);
-                  this.panels.updateTabs();
-                });
-              }
+              // const graphTab = segmentationGraph.tabContents;
+              // if (graphTab) {
+              //   const tabId = 'graph';
+              //   this.tabs.add(
+              //     tabId, {label: 'Graph', order: -25, getter: () => {
+              //       return graphTab(this);
+              //     }});
+              //   this.panels.updateTabs();
+              //   refCounted.registerDisposer(() => {
+              //     this.tabs.remove(tabId);
+              //     this.panels.updateTabs();
+              //   });
+              // }
             });
           }
         }
