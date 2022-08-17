@@ -74,6 +74,7 @@ declare var NEUROGLANCER_OVERRIDE_DEFAULT_VIEWER_OPTIONS: any
 import './viewer.css';
 import 'neuroglancer/noselect.css';
 import 'neuroglancer/ui/button.css';
+import {L2GraphBFS} from 'neuroglancer/widget/l2graph_bfs';
 
 export function validateStateServer(obj: any) {
   return obj;
@@ -462,6 +463,7 @@ export class Viewer extends RefCounted implements ViewerState {
   }
 
   private makeUI() {
+    (<any>window).L2GraphBFS = L2GraphBFS;
     const gridContainer = this.element;
     gridContainer.classList.add('neuroglancer-viewer');
     gridContainer.classList.add('neuroglancer-noselect');
@@ -762,7 +764,7 @@ export class Viewer extends RefCounted implements ViewerState {
   private registerActionListeners() {
     for (const action
              of ['recolor', 'clear-segments', 'merge-selected', 'cut-selected',
-                 'shatter-segment-equivalences', 'switch-multicut-group', 
+                 'shatter-segment-equivalences', 'switch-multicut-group',
                  'decrease-segmentation-opacity', 'increase-segmentation-opacity']) {
       this.bindAction(action, () => {
         this.layerManager.invokeAction(action);
@@ -785,8 +787,8 @@ export class Viewer extends RefCounted implements ViewerState {
     });
 
     this.bindAction('help', () => this.showHelpDialog());
-    this.bindAction('dismiss-all-status-messages', () => StatusMessage.disposeAll() )
-    
+    this.bindAction('dismiss-all-status-messages', () => StatusMessage.disposeAll())
+
     for (let i = 1; i <= 9; ++i) {
       this.bindAction(`toggle-layer-${i}`, () => {
         const layerIndex = i - 1;
