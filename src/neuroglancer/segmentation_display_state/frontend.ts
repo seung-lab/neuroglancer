@@ -517,6 +517,8 @@ export class SegmentWidgetFactory<Template extends SegmentWidgetTemplate> {
     container.dataset.selected = (segmentSelectionState.hasSelectedSegment &&
                                   Uint64.equal(segmentSelectionState.selectedSegment, mapped))
                                      .toString();
+    const {selectedSegments} = displayState!.segmentationGroupState.value;
+    container.dataset.selectedSegment = selectedSegments.has(mapped) ? 'true' : 'false';
     const idContainer = stickyChildren[template.idContainerIndex] as HTMLElement;
     setSegmentIdElementStyle(
         (idContainer.children[template.idIndex] as HTMLElement),

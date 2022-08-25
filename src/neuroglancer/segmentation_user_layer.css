@@ -55,6 +55,11 @@
   background-color: #222;
 }
 
+.neuroglancer-segment-list-entry:not([data-visible-list])[data-selected-segment="true"],
+.neuroglancer-selection-details-segment:not([data-visible-list])[data-selected-segment="true"] {
+  background-color: #ffffff45;
+}
+
 .neuroglancer-segment-list-entry-copy-container {
   display: flex;
   flex-direction: column;
