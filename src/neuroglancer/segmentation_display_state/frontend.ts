@@ -381,8 +381,10 @@ function makeRegisterSegmentWidgetEventHandlers(displayState: SegmentationDispla
     const idString = entryElement.dataset.id!;
     const id = tempStatedColor;
     id.tryParseString(idString);
-    const {visibleSegments} = displayState.segmentationGroupState.value;
-    visibleSegments.set(id, !visibleSegments.has(id));
+    const {selectedSegments, visibleSegments} = displayState.segmentationGroupState.value;
+    const shouldBeVisible = !visibleSegments.has(id);
+    selectedSegments.add(id);
+    visibleSegments.set(id, shouldBeVisible);
     event.stopPropagation();
     console.log('visibleCheckboxHandler');
   };
