@@ -1041,6 +1041,7 @@ export class SegmentDisplayTab extends Tab {
                   context.registerDisposer(
                       displayState.segmentDefaultColor.changed.add(updateListItems));
                   list.element.classList.add('neuroglancer-segment-list');
+                  list.element.classList.add('neuroglancer-preview-list');
                   list.element.style.flexBasis = 'unset';
                   list.element.style.flexGrow = 'unset';
                   list2.element.classList.add('neuroglancer-segment-list');

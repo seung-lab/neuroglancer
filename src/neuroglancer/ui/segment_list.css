@@ -23,7 +23,15 @@
   overflow-y: auto;
   overflow-x: auto; /* temp "fix" */
   flex: 1;
-  border-bottom: 20px solid black;
+}
+
+.neuroglancer-preview-list {
+  border-bottom: 1px solid white;
+  margin-bottom: 20px;
+}
+
+.neuroglancer-segment-list-query:placeholder-shown + div > .neuroglancer-preview-list {
+  display: none;
 }
 
 .neuroglancer-segment-display-tab {
