@@ -21,8 +21,9 @@
 .neuroglancer-segment-list {
   position: relative;
   overflow-y: auto;
-  overflow-x: scroll;
+  overflow-x: auto; /* temp "fix" */
   flex: 1;
+  border-bottom: 20px solid black;
 }
 
 .neuroglancer-segment-display-tab {
