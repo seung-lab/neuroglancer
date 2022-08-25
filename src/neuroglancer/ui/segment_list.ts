@@ -86,7 +86,7 @@ class SegmentListSource extends RefCounted implements VirtualListSource {
     const visibleSegmentsGeneration = selectedSegments.changed.count;
     const prevVisibleSegmentsGeneration = this.visibleSegmentsGeneration;
     const unconstrained = isQueryUnconstrained(queryResult.query);
-    if (unconstrained) {
+    if (unconstrained && this.showExplicit) {
       // Full list of visible segments is shown only if no query is specified.
       if (prevVisibleSegmentsGeneration !== visibleSegmentsGeneration ||
           this.explicitSegments === undefined || !this.explicitSegmentsVisible) {
@@ -163,6 +163,8 @@ class SegmentListSource extends RefCounted implements VirtualListSource {
     if (changed) {
       this.changed.dispatch(splices);
     }
+
+    console.log('explicit', this.explicitSegments ? this.explicitSegments.map(x => x.toJSON()) : "");
   }
   debouncedUpdate = debounce(() => this.update(), 0);
 
@@ -170,7 +172,8 @@ class SegmentListSource extends RefCounted implements VirtualListSource {
       public query: WatchableValueInterface<string>,
       public segmentPropertyMap: PreprocessedSegmentPropertyMap|undefined,
       public segmentationDisplayState: SegmentationDisplayState,
-      public parentElement: HTMLElement) {
+      public parentElement: HTMLElement,
+      public showExplicit = true) {
     super();
     this.update();
 
@@ -856,7 +859,10 @@ export class SegmentDisplayTab extends Tab {
                     queryElement.select();
                   };
                   const listSource = context.registerDisposer(new SegmentListSource(
-                      segmentQuery, segmentPropertyMap, layer.displayState, parent));
+                      segmentQuery, segmentPropertyMap, layer.displayState, parent, false));
+                  const dummyString = new WatchableValue<string>("");
+                  const listSource2 = context.registerDisposer(new SegmentListSource(
+                      dummyString, segmentPropertyMap, layer.displayState, parent));
                   const group = layer.displayState.segmentationGroupState.value;
                   const queryErrors = document.createElement('ul');
                   queryErrors.classList.add('neuroglancer-segment-query-errors');
@@ -902,12 +908,13 @@ export class SegmentDisplayTab extends Tab {
                   });
                   matchCheckbox.type = 'checkbox';
                   const toggleMatches = () => {
+                    console.log('toggleMatches');
                     debouncedUpdateQueryModel();
                     debouncedUpdateQueryModel.flush();
                     listSource.debouncedUpdate.flush();
                     const queryResult = listSource.queryResult.value;
                     if (queryResult === undefined) return;
-                    const {selectedSegments} = group;
+                    const {selectedSegments, visibleSegments} = group;
                     const {selectedMatches} = listSource;
                     const shouldSelect = (selectedMatches !== queryResult.count);
                     if (shouldSelect &&
@@ -921,8 +928,10 @@ export class SegmentDisplayTab extends Tab {
                       hasConfirmed = false;
                       updateStatus();
                     }
+                    console.log('shouldSelect', shouldSelect);
                     forEachQueryResultSegmentId(segmentPropertyMap, queryResult, id => {
                       selectedSegments.set(id, shouldSelect);
+                      visibleSegments.set(id, shouldSelect);
                     });
                     return true;
                   };
@@ -1015,8 +1024,11 @@ export class SegmentDisplayTab extends Tab {
                       }));
                   const list = context.registerDisposer(
                       new VirtualList({source: listSource, horizontalScroll: true}));
+                  const list2 = context.registerDisposer(
+                      new VirtualList({source: listSource2, horizontalScroll: true}));
                   const updateListItems = context.registerCancellable(animationFrameDebounce(() => {
                     listSource.updateRenderedItems(list);
+                    listSource2.updateRenderedItems(list2);
                   }));
                   const {displayState} = this.layer;
                   context.registerDisposer(
@@ -1029,9 +1041,15 @@ export class SegmentDisplayTab extends Tab {
                   context.registerDisposer(
                       displayState.segmentDefaultColor.changed.add(updateListItems));
                   list.element.classList.add('neuroglancer-segment-list');
+                  list.element.style.flexBasis = 'unset';
+                  list.element.style.flexGrow = 'unset';
+                  list2.element.classList.add('neuroglancer-segment-list');
                   context.registerDisposer(layer.bindSegmentListWidth(list.element));
                   context.registerDisposer(
                       new MouseEventBinder(list.element, getDefaultSelectBindings()));
+                  context.registerDisposer(layer.bindSegmentListWidth(list2.element));
+                  context.registerDisposer(
+                      new MouseEventBinder(list2.element, getDefaultSelectBindings()));
                   const numericalPropertySummaries =
                       context.registerDisposer(new NumericalPropertiesSummary(
                           segmentPropertyMap, listSource.queryResult, setQuery));
@@ -1057,7 +1075,13 @@ export class SegmentDisplayTab extends Tab {
                         listSource.segmentationDisplayState, listSource.parentElement,
                         property => queryIncludesColumn(queryResult?.query, property.id));
                     list.scrollToTop();
+                    listSource2.segmentWidgetFactory = new SegmentWidgetWithExtraColumnsFactory(
+                        listSource.segmentationDisplayState, listSource.parentElement,
+                        property => queryIncludesColumn(queryResult?.query, property.id));
+                    list2.scrollToTop();
+                    // list2.scrollToTop();
                     removeChildren(list.header);
+                    removeChildren(list2.header);
                     if (segmentPropertyMap !== undefined) {
                       const header = listSource.segmentWidgetFactory.getHeader();
                       header.container.classList.add('neuroglancer-segment-list-header');
@@ -1086,6 +1110,7 @@ export class SegmentDisplayTab extends Tab {
                     }
                   }, listSource.queryResult);
                   parent.appendChild(list.element);
+                  parent.appendChild(list2.element);
                 }))
             .element);
   }
