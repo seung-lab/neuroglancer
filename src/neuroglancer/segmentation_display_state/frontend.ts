@@ -384,6 +384,7 @@ function makeRegisterSegmentWidgetEventHandlers(displayState: SegmentationDispla
     const {visibleSegments} = displayState.segmentationGroupState.value;
     visibleSegments.set(id, !visibleSegments.has(id));
     event.stopPropagation();
+    console.log('visibleCheckboxHandler');
   };
 
   const filterHandler = (event: Event) => {
