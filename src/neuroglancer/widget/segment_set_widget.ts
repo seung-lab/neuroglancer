@@ -255,20 +255,20 @@ export class SegmentSetWidget extends RefCounted {
         itemButton.title = `Remove segment ID ${segmentIDString}`;
         itemButton.dataset.segId = segmentIDString;
         itemButton.addEventListener('click', function(this: HTMLButtonElement) {
-          temp.tryParseString(this.textContent!);
+          temp.tryParseString(this.dataset.segId!);
           widget.rootSegments.delete(temp);
           widget.hiddenRootSegments!.delete(temp);
           widget.segmentColors.delete(segmentIDString);
         });
         itemButton.addEventListener('mouseenter', function(this: HTMLButtonElement) {
-          temp.tryParseString(this.textContent!);
+          temp.tryParseString(this.dataset.segId!);
           widget.segmentSelectionState.set(temp);
           widget.segmentSelectionState.setRaw(temp);
           this.classList.add('selectedSeg');
           this.style.setProperty('--pulseSpeed', '2.5s');
         });
         itemButton.addEventListener('mouseleave', function(this: HTMLButtonElement) {
-          temp.tryParseString(this.textContent!);
+          temp.tryParseString(this.dataset.segId!);
           widget.segmentSelectionState.set(null);
           widget.segmentSelectionState.setRaw(null);
           this.classList.remove('selectedSeg');
@@ -377,7 +377,7 @@ export class SegmentSetWidget extends RefCounted {
 
   private setItemButtonColor(itemElement: ItemElement) {
     const itemButton = <HTMLElement>(itemElement.getElementsByClassName('segment-button')[0]);
-    const segmentIDString = itemButton.textContent!;
+    const segmentIDString = itemButton.dataset.segId!;
     itemButton.style.backgroundColor = this.getSegmentColor(segmentIDString);
   }
 
