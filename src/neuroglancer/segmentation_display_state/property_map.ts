@@ -700,12 +700,13 @@ function regexpEscapeCharCode(code: number) {
 }
 
 export function executeSegmentQuery(
-    db: PreprocessedSegmentPropertyMap|undefined, query: QueryParseResult): QueryResult {
+    db: PreprocessedSegmentPropertyMap|undefined, query: QueryParseResult, excludeSegments: Uint64Set|undefined): QueryResult {
   if (query.errors !== undefined) {
     return {query, total: -1, count: 0, errors: query.errors};
   }
   if (query.ids !== undefined) {
-    const {ids} = query;
+    // const {ids} = query;
+    const ids = query.ids.filter(x => !excludeSegments?.has(x));    
     return {query, total: -1, explicitIds: ids, count: ids.length};
   }
   const inlineProperties = db?.segmentPropertyMap?.inlineProperties;

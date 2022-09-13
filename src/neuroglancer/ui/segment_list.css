@@ -26,8 +26,8 @@
 }
 
 .neuroglancer-preview-list {
-  border-bottom: 1px solid white;
-  margin-bottom: 20px;
+  border-bottom: 1px solid black; /* why is this neccessary */
+  /* margin-bottom: 20px; */
 }
 
 .neuroglancer-segment-list-query:placeholder-shown + div > .neuroglancer-preview-list {
@@ -92,6 +92,16 @@
   flex-direction: row;
   align-items: center;
   background-color: #333;
+}
+
+.neuroglancer-segment-list-move {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  background-color: #333;
+
+  gap: 5px;
+  cursor: pointer;
 }
 
 .neuroglancer-segment-list-entry-copy {
