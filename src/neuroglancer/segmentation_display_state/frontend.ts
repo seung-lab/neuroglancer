@@ -40,6 +40,7 @@ import {Uint64} from 'neuroglancer/util/uint64';
 import {withSharedVisibility} from 'neuroglancer/visibility_priority/frontend';
 import {makeCopyButton} from 'neuroglancer/widget/copy_button';
 import {makeFilterButton} from 'neuroglancer/widget/filter_button';
+import { makeDeleteButton } from '../widget/delete_button';
 
 export class Uint64MapEntry {
   constructor(public key: Uint64, public value?: Uint64, public label?: string|undefined) {}
@@ -270,6 +271,13 @@ const segmentWidgetTemplate = (() => {
   idElement.classList.add('neuroglancer-segment-list-entry-id');
   const idIndex = idContainer.childElementCount;
   idContainer.appendChild(idElement);
+  const deleteButton = makeDeleteButton({
+    title: `Delete segment`,
+  });
+  deleteButton.classList.add('neuroglancer-segment-list-entry-delete');
+  const deleteIndex = copyContainer.childElementCount;
+  stickyContainer.appendChild(deleteButton);
+
   const nameElement = document.createElement('span');
   nameElement.classList.add('neuroglancer-segment-list-entry-name');
   const labelIndex = template.childElementCount;
@@ -289,6 +297,7 @@ const segmentWidgetTemplate = (() => {
     idIndex,
     labelIndex,
     filterIndex,
+    deleteIndex,
     unmappedIdIndex: -1,
     unmappedCopyIndex: -1
   };
@@ -428,6 +437,16 @@ function makeRegisterSegmentWidgetEventHandlers(displayState: SegmentationDispla
     stickyChildren[template.visibleIndex].addEventListener('click', visibleCheckboxHandler);
     children[template.filterIndex].addEventListener('click', filterHandler);
     element.addEventListener('action:select-position', selectHandler);
+
+    const deleteButton = stickyChildren[template.deleteIndex] as HTMLElement;
+    deleteButton.addEventListener('click', (event: MouseEvent) => {
+      const entryElement = event.currentTarget as HTMLElement;
+      const idString = entryElement.dataset.id!;
+      const id = tempStatedColor
+      id.tryParseString(idString);
+      const {selectedSegments} = displayState.segmentationGroupState.value;
+      selectedSegments.delete(id);
+    });
   };
 }
 

@@ -94,14 +94,32 @@
   background-color: #333;
 }
 
+.neuroglancer-segment-list-status.empty-query {
+  display: none;
+}
+
 .neuroglancer-segment-list-move {
   display: flex;
   flex-direction: row;
   align-items: center;
-  background-color: #333;
 
   gap: 5px;
   cursor: pointer;
+  justify-content: center;
+}
+
+.neuroglancer-segment-list-move.empty-query {
+  display: none;
+}
+
+.neuroglancer-segment-list-move > span {
+  background-color: #333;
+  border: 1px solid gray;
+  border-radius: 6px;
+  padding: 0 5px;
+  width: 100%;
+  margin: 2px 0;
+  text-align: center;
 }
 
 .neuroglancer-segment-list-entry-copy {
