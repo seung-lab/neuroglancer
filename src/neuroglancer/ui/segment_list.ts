@@ -168,29 +168,6 @@ class SegmentListSource extends RefCounted implements VirtualListSource {
     }
 
     console.log('explicit', this.explicitSegments ? this.explicitSegments.map(x => x.toJSON()) : "");
-
-    // if (prevQueryResult) {
-    //   console.log('prev', prevQueryResult.explicitIds?.map(x => x.toJSON()));
-    //   console.log('curr', queryResult.explicitIds?.map(x => x.toJSON()));
-      
-    //   if (prevQueryResult.explicitIds) {
-    //     for (const id of prevQueryResult.explicitIds) {
-    //       if (!queryResult.explicitIds) {
-    //         // do it
-    //       } else {
-    //         let exists = false;
-    //         for (const id2 of queryResult.explicitIds) {
-    //           if (Uint64.equal(id, id2)) {
-    //             exists = true;
-    //           };
-    //         }
-    //         if (!exists) {
-    //           this.
-    //         }
-    //       }
-    //     }
-    //   }
-    // }
   }
   debouncedUpdate = debounce(() => this.update(), 0);
 
@@ -924,8 +901,8 @@ export class SegmentDisplayTab extends Tab {
                   selectionStatusContainer.appendChild(selectionClearButton);
                   selectionStatusContainer.appendChild(selectionStatusMessage);
                   const moveStatusContainer = document.createElement('span');
-                  const moveButton = document.createElement('div');
-                  moveButton.innerText = "Move";
+                  // const moveButton = document.createElement('div');
+                  // moveButton.innerText = "Move (↓)";
                   const matchCopyButton = makeCopyButton({
                     onClick: () => {
                       debouncedUpdateQueryModel();
@@ -985,12 +962,12 @@ export class SegmentDisplayTab extends Tab {
                     });
                     return true;
                   };
-                  moveButton.addEventListener('click', event => {
+                  moveStatusContainer.addEventListener('click', event => {
                     if (!toggleMatches()) event.preventDefault();
                   });
                   const moveStatusMessage = document.createElement('span');
                   // matchStatusContainer.appendChild(matchCopyButton);
-                  moveStatusContainer.appendChild(moveButton);
+                  // moveStatusContainer.appendChild(moveButton);
                   moveStatusContainer.appendChild(moveStatusMessage);
                   selectionStatusContainer.classList.add('neuroglancer-segment-list-status');
                   moveStatusContainer.classList.add('neuroglancer-segment-list-move');
@@ -1002,17 +979,32 @@ export class SegmentDisplayTab extends Tab {
                   parent.appendChild(selectionStatusContainer);
                   let prevNumSelected = -1;
                   const updateStatusPreview = () => {
-                    // const numSelected = group.visibleSegments.size;
-
-                    const {visibleSegments} = group;
+                    const {visibleSegments, selectedSegments} = group;
                     let visibleCount = 0;
                     let totalCount = 0;
+                    console.log('updateStatusPreview', listSource.queryResult.value?.count, listSource.prevQueryResult.value?.count);
+                    
+                    if (listSource.queryResult.value?.count === 0) {
+                      forEachQueryResultSegmentId(segmentPropertyMap, listSource.prevQueryResult.value, id => {
+                      if (visibleSegments.has(id) && !selectedSegments.has(id)) {
+                          visibleSegments.delete(id);
+                        }
+                      });
+                    }
+
                     forEachQueryResultSegmentId(segmentPropertyMap, listSource.queryResult.value, id => {
                       if (visibleSegments.has(id)) {
                         visibleCount++;
                       }
                       totalCount++;
                     });
+
+                    selectionStatusContainer.classList.toggle('empty-query', totalCount === 0);
+                    moveStatusContainer.classList.toggle('empty-query', totalCount === 0);
+                    if (totalCount === 0) {
+                      return;
+                    }
+
                     if (prevNumSelected !== visibleCount) {
                       prevNumSelected = visibleCount;
                       selectionStatusMessage.textContent = `${visibleCount}/${totalCount} visible`;
@@ -1022,13 +1014,13 @@ export class SegmentDisplayTab extends Tab {
                     }
                     // moveStatusMessage.textContent = listSource.statusText.value + " v";
 
-                    moveStatusMessage.textContent = `${visibleCount > 0 ? visibleCount : totalCount} ids`;
+                    moveStatusMessage.textContent = `Move (↓) ${visibleCount > 0 ? visibleCount : totalCount} ids`;
 
                     const {numMatches, selectedMatches} = listSource;
                     console.log('numMatches', numMatches, 'selectedMatches', selectedMatches);
                     matchCopyButton.style.visibility = numMatches ? 'visible' : 'hidden';
                     matchCopyButton.title = `Copy ${numMatches} segment ID(s)`;
-                    moveButton.style.visibility = numMatches ? 'visible' : 'hidden';
+                    // moveButton.style.visibility = numMatches ? 'visible' : 'hidden';
                     if (selectedMatches === 0) {
                       // moveButton.checked = false;
                       // moveButton.indeterminate = false;
@@ -1218,6 +1210,7 @@ export class SegmentDisplayTab extends Tab {
                     updateStatusSelected();
                     listSource2.statusText.changed.add(updateStatusSelected);
                     context.registerDisposer(group.visibleSegments.changed.add(updateStatusSelected));
+                    context.registerDisposer(group.selectedSegments.changed.add(updateStatusSelected));
                   }
 
 
