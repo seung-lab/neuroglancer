@@ -275,7 +275,7 @@ const segmentWidgetTemplate = (() => {
     title: `Delete segment`,
   });
   deleteButton.classList.add('neuroglancer-segment-list-entry-delete');
-  const deleteIndex = copyContainer.childElementCount;
+  const deleteIndex = stickyContainer.childElementCount;
   stickyContainer.appendChild(deleteButton);
 
   const nameElement = document.createElement('span');

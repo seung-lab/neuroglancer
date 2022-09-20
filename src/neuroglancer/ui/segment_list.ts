@@ -886,7 +886,18 @@ export class SegmentDisplayTab extends Tab {
                   selectionClearButton.checked = true;
                   selectionClearButton.title = 'Deselect all segment IDs';
                   selectionClearButton.addEventListener('change', () => {
-                    group.visibleSegments.clear();
+                    const adding = selectionClearButton.checked;
+                    debouncedUpdateQueryModel();
+                    debouncedUpdateQueryModel.flush();
+                    listSource.debouncedUpdate.flush();
+                    const queryResult = listSource.queryResult.value;
+                    if (queryResult === undefined) return;
+                    forEachQueryResultSegmentId(segmentPropertyMap, queryResult, (id) => {
+                      if (group.selectedSegments.has(id)) {
+                        return;
+                      }
+                      adding ? group.visibleSegments.add(id) : group.visibleSegments.delete(id);
+                    });
                   });
                   const selectionCopyButton = makeCopyButton({
                     title: 'Copy visible segment IDs',
@@ -905,6 +916,7 @@ export class SegmentDisplayTab extends Tab {
                   // moveButton.innerText = "Move (↓)";
                   const matchCopyButton = makeCopyButton({
                     onClick: () => {
+                      console.log('match copy');
                       debouncedUpdateQueryModel();
                       debouncedUpdateQueryModel.flush();
                       listSource.debouncedUpdate.flush();
@@ -1178,7 +1190,14 @@ export class SegmentDisplayTab extends Tab {
                     selectionClearButton.checked = true;
                     selectionClearButton.title = 'Deselect all segment IDs';
                     selectionClearButton.addEventListener('change', () => {
-                      group.visibleSegments.clear();
+                      const adding = selectionClearButton.checked;
+                      for (const id of group.selectedSegments) {
+                        if (adding) {
+                          group.visibleSegments.add(id);
+                        } else {
+                          group.visibleSegments.delete(id);
+                        }
+                      }
                     });
                     const selectionCopyButton = makeCopyButton({
                       title: 'Copy visible segment IDs',
