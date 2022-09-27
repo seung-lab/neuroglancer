@@ -766,7 +766,8 @@ export class Viewer extends RefCounted implements ViewerState {
   private registerActionListeners() {
     for (const action
              of ['recolor', 'clear-segments', 'merge-selected', 'cut-selected',
-                 'shatter-segment-equivalences', 'switch-multicut-group']) {
+                 'shatter-segment-equivalences', 'switch-multicut-group', 
+                 'decrease-segmentation-opacity', 'increase-segmentation-opacity']) {
       this.bindAction(action, () => {
         this.layerManager.invokeAction(action);
       });
@@ -788,7 +789,8 @@ export class Viewer extends RefCounted implements ViewerState {
     });
 
     this.bindAction('help', () => this.showHelpDialog());
-
+    this.bindAction('dismiss-all-status-messages', () => StatusMessage.disposeAll() )
+    
     for (let i = 1; i <= 9; ++i) {
       this.bindAction(`toggle-layer-${i}`, () => {
         const layerIndex = i - 1;
@@ -1113,8 +1115,6 @@ export class Viewer extends RefCounted implements ViewerState {
       }
       hashBinding.parseError;
     }));
-    StatusMessage.showTemporaryMessage(
-        `RAW URLs will soon be Deprecated. Please use JSON URLs whenever available.`, 10000);
     hashBinding.updateFromUrlHash();
 
     return hashBinding;
