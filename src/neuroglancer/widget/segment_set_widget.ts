@@ -500,8 +500,6 @@ export class SegmentSetWidget extends RefCounted {
 
   private static addCopyToClipboardEventToButton(
       button: HTMLButtonElement, stringCreator: () => string) {
-    const defaultButtonColor = 'rgb(0, 255, 0)';
-    const pressedButtonColor = 'rgb(240, 240, 240)';
     button.addEventListener('click', function(this: HTMLButtonElement) {
       const handleCopy = (e: ClipboardEvent) => {
         const {clipboardData} = e;
@@ -510,11 +508,9 @@ export class SegmentSetWidget extends RefCounted {
         }
         e.preventDefault();
         document.removeEventListener('copy', handleCopy);
-        this.style.backgroundColor = defaultButtonColor;
+        this.classList.toggle('segment-copy-pressed', true);
         setTimeout(() => {
-          if (this.style.backgroundColor === defaultButtonColor) {
-            this.style.backgroundColor = pressedButtonColor;
-          }
+          this.classList.toggle('segment-copy-pressed', false);
         }, 300);
       };
       document.addEventListener('copy', handleCopy);

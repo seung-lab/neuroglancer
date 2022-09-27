@@ -74,3 +74,7 @@
   margin: 3px;
   vertical-align: bottom;
 }
+
+.segment-copy-pressed {
+    background-color: rgb(0, 255, 0);
+}
