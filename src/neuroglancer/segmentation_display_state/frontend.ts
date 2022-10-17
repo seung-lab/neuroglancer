@@ -40,7 +40,7 @@ import {Uint64} from 'neuroglancer/util/uint64';
 import {withSharedVisibility} from 'neuroglancer/visibility_priority/frontend';
 import {makeCopyButton} from 'neuroglancer/widget/copy_button';
 import {makeFilterButton} from 'neuroglancer/widget/filter_button';
-import { makeDeleteButton } from '../widget/delete_button';
+import {makeStarButton} from 'neuroglancer/widget/star_button';
 
 export class Uint64MapEntry {
   constructor(public key: Uint64, public value?: Uint64, public label?: string|undefined) {}
@@ -271,12 +271,12 @@ const segmentWidgetTemplate = (() => {
   idElement.classList.add('neuroglancer-segment-list-entry-id');
   const idIndex = idContainer.childElementCount;
   idContainer.appendChild(idElement);
-  const deleteButton = makeDeleteButton({
-    title: `Delete segment`,
+  const starButton = makeStarButton({
+    title: `Star segment`,
   });
-  deleteButton.classList.add('neuroglancer-segment-list-entry-delete');
-  const deleteIndex = stickyContainer.childElementCount;
-  stickyContainer.appendChild(deleteButton);
+  starButton.classList.add('neuroglancer-segment-list-entry-star');
+  const starIndex = stickyContainer.childElementCount;
+  stickyContainer.appendChild(starButton);
 
   const nameElement = document.createElement('span');
   nameElement.classList.add('neuroglancer-segment-list-entry-name');
@@ -297,7 +297,7 @@ const segmentWidgetTemplate = (() => {
     idIndex,
     labelIndex,
     filterIndex,
-    deleteIndex,
+    starIndex,
     unmappedIdIndex: -1,
     unmappedCopyIndex: -1
   };
@@ -392,9 +392,10 @@ function makeRegisterSegmentWidgetEventHandlers(displayState: SegmentationDispla
     id.tryParseString(idString);
     const {selectedSegments, visibleSegments} = displayState.segmentationGroupState.value;
     const shouldBeVisible = !visibleSegments.has(id);
-    selectedSegments;
-    // selectedSegments.add(id);
     visibleSegments.set(id, shouldBeVisible);
+    if (shouldBeVisible) {
+      selectedSegments.add(id);
+    }
     event.stopPropagation();
     console.log('visibleCheckboxHandler');
   };
@@ -438,14 +439,19 @@ function makeRegisterSegmentWidgetEventHandlers(displayState: SegmentationDispla
     children[template.filterIndex].addEventListener('click', filterHandler);
     element.addEventListener('action:select-position', selectHandler);
 
-    const deleteButton = stickyChildren[template.deleteIndex] as HTMLElement;
-    deleteButton.addEventListener('click', (event: MouseEvent) => {
+    const starButton = stickyChildren[template.starIndex] as HTMLElement;
+    starButton.addEventListener('click', (event: MouseEvent) => {
       const entryElement = event.currentTarget as HTMLElement;
       const idString = entryElement.dataset.id!;
       const id = tempStatedColor
       id.tryParseString(idString);
-      const {selectedSegments} = displayState.segmentationGroupState.value;
-      selectedSegments.delete(id);
+      const {selectedSegments, visibleSegments} = displayState.segmentationGroupState.value;
+      if (selectedSegments.has(id)) {
+        selectedSegments.delete(id);
+        visibleSegments.delete(id);
+      } else {
+        selectedSegments.add(id);
+      }
     });
   };
 }

@@ -38,6 +38,7 @@ export class VirtualListState {
   anchorClientOffset: number = 0;
 
   splice(splices: readonly Readonly<ArraySpliceOp>[]) {
+    console.log('splice!');
     let {anchorIndex} = this;
     let offset = 0;
     for (const splice of splices) {
@@ -52,6 +53,7 @@ export class VirtualListState {
       anchorIndex = anchorIndex - deleteCount + insertCount;
       offset += insertCount - insertCount;
     }
+    console.log('new anchorIndex', anchorIndex);
     this.anchorIndex = anchorIndex;
   }
 }
@@ -210,6 +212,7 @@ function updateRenderParameters(
   newParams.anchorIndex = renderAnchorIndex;
   newParams.anchorOffset = renderAnchorOffset;
   newParams.scrollOffset = renderScrollOffset;
+  console.log('newParams.scrollOffset', renderScrollOffset);
 }
 
 function normalizeRenderParams(p: RenderParameters, sizes: SizeEstimates) {
@@ -298,6 +301,7 @@ export class VirtualList extends RefCounted {
     });
     if (source.changed !== undefined) {
       this.registerDisposer(source.changed.add(splices => {
+        console.log('source changed!');
         this.sizes.splice(splices);
         this.state.splice(splices);
         this.renderedItems.length = 0;
@@ -315,6 +319,7 @@ export class VirtualList extends RefCounted {
       // Element not visible
       return;
     }
+    console.log('updateView state', this.state.anchorClientOffset, this.state.anchorIndex);
     const viewportHeight = element.clientHeight - this.header.offsetHeight;
 
     const {source, state, sizes} = this;
@@ -415,6 +420,7 @@ export class VirtualList extends RefCounted {
   }
 
   scrollItemIntoView(index: number) {
+    console.log('scrollItemIntoView', index);
     const itemStartOffset = this.sizes.getEstimatedOffset(index);
     const itemEndOffset = itemStartOffset + this.sizes.getEstimatedSize(index);
     const startOffset = this.element.scrollTop;

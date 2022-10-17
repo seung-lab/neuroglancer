@@ -99,17 +99,17 @@ export class SegmentationUserLayerGroupState extends RefCounted implements Segme
     const {visibleSegments, selectedSegments} = this;
     visibleSegments.changed.add(specificationChanged.dispatch);
     selectedSegments.changed.add(specificationChanged.dispatch);
-    selectedSegments.changed.add((x, add) => {
-      if (x === null && !add) {
-        visibleSegments.clear();
-      } else if (x) {
-        if (add) {
-          visibleSegments.add(x);
-        } else {
-          visibleSegments.delete(x);
-        }
-      }
-    });
+    // selectedSegments.changed.add((x, add) => {
+    //   if (x === null && !add) {
+    //     visibleSegments.clear();
+    //   } else if (x) {
+    //     if (add) {
+    //       visibleSegments.add(x);
+    //     } else {
+    //       visibleSegments.delete(x);
+    //     }
+    //   }
+    // });
 
     visibleSegments.changed.add(() => { console.log('visibleSegments', visibleSegments.toJSON())});
     selectedSegments.changed.add(() => { console.log('selectedSegments', selectedSegments.toJSON())});
@@ -704,7 +704,7 @@ export class SegmentationUserLayer extends Base {
         const {segmentSelectionState} = this.displayState;
         if (segmentSelectionState.hasSelectedSegment) {
           const segment = segmentSelectionState.selectedSegment;
-          const {selectedSegments} = this.displayState.segmentationGroupState.value;
+          const {selectedSegments, visibleSegments} = this.displayState.segmentationGroupState.value;
           const newVisible = !selectedSegments.has(segment);
           if (newVisible || context.segmentationToggleSegmentState === undefined) {
             context.segmentationToggleSegmentState = newVisible;
@@ -712,6 +712,7 @@ export class SegmentationUserLayer extends Base {
           context.defer(() => {
             if (context.segmentationToggleSegmentState === newVisible) {
               selectedSegments.set(segment, newVisible);
+              visibleSegments.set(segment, newVisible);
             }
           });
         }
