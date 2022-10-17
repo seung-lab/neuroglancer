@@ -55,9 +55,25 @@
   background-color: #222;
 }
 
-.neuroglancer-segment-list-entry:not([data-visible-list])[data-selected-segment="true"],
+/* .neuroglancer-segment-list-entry:not([data-visible-list])[data-selected-segment="true"],
 .neuroglancer-selection-details-segment:not([data-visible-list])[data-selected-segment="true"] {
   background-color: #ffffff45;
+} */
+
+.neuroglancer-segment-list-entry-star:hover {
+  background-color: inherit;
+}
+
+.neuroglancer-segment-list-entry[data-selected-segment="true"] .neuroglancer-segment-list-entry-star:not(:hover) svg {
+  fill: white;
+}
+
+.neuroglancer-segment-list-entry[data-selected-segment="true"] .neuroglancer-segment-list-entry-star:hover svg {
+  fill: inherit;
+}
+
+.neuroglancer-segment-list-entry:not([data-selected-segment="true"]) .neuroglancer-segment-list-entry-star:hover svg {
+  fill: white;
 }
 
 .neuroglancer-segment-list-entry-copy-container {

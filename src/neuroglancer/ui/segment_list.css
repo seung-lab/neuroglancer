@@ -27,7 +27,7 @@
 
 .neuroglancer-preview-list {
   border-bottom: 1px solid black; /* why is this neccessary */
-  /* margin-bottom: 20px; */
+  max-height: 24%;
 }
 
 .neuroglancer-segment-list-query:placeholder-shown + div > .neuroglancer-preview-list {
@@ -98,6 +98,28 @@
   display: none;
 }
 
+.neuroglancer-segment-list-separator.empty-query {
+  display: none;
+}
+
+.neuroglancer-segment-list-separator {
+  /* display: flex;
+  flex-direction: row;
+  align-items: center;
+
+  gap: 5px;
+  cursor: pointer;
+  justify-content: center; */
+
+  background-color: #333;
+  /* border: 1px solid gray; */
+  /* padding: 0 5px; */
+  width: 100%;
+  /* margin: 2px 0; */
+  /* text-align: center; */
+  height: 5px;
+}
+
 .neuroglancer-segment-list-move {
   display: flex;
   flex-direction: row;
@@ -133,19 +155,6 @@
 
 .neuroglancer-segment-list-entry-visible-checkbox {
   order: -1;
-}
-
-.neuroglancer-segment-list-entry[data-visible-list] .neuroglancer-segment-list-entry-sticky::before {
-  order: -1000;
-  content: " ";
-  display: inline-block;
-  width: 2px;
-  /* prevent collapsing if name is too long */
-  flex-shrink: 0;
-  margin-right: -2px;
-  align-self: stretch;
-  margin-bottom: 2px;
-  background-color: #999;
 }
 
 .neuroglancer-segment-list-entry-filter {

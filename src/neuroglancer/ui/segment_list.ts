@@ -870,7 +870,7 @@ export class SegmentDisplayTab extends Tab {
                   };
                   const group = layer.displayState.segmentationGroupState.value;
                   const listSource = context.registerDisposer(new SegmentListSource(
-                      segmentQuery, segmentPropertyMap, layer.displayState, parent, group.selectedSegments, false));
+                      segmentQuery, segmentPropertyMap, layer.displayState, parent, undefined, false));
                   const dummyString = new WatchableValue<string>("");
                   const listSource2 = context.registerDisposer(new SegmentListSource(
                       dummyString, segmentPropertyMap, layer.displayState, parent));
@@ -887,16 +887,22 @@ export class SegmentDisplayTab extends Tab {
                   selectionClearButton.title = 'Deselect all segment IDs';
                   selectionClearButton.addEventListener('change', () => {
                     const adding = selectionClearButton.checked;
+                    console.log('boop');
                     debouncedUpdateQueryModel();
                     debouncedUpdateQueryModel.flush();
                     listSource.debouncedUpdate.flush();
                     const queryResult = listSource.queryResult.value;
                     if (queryResult === undefined) return;
                     forEachQueryResultSegmentId(segmentPropertyMap, queryResult, (id) => {
-                      if (group.selectedSegments.has(id)) {
-                        return;
+                      // if (group.selectedSegments.has(id)) {
+                      //   return;
+                      // }
+                      if (adding) {
+                        group.selectedSegments.add(id);
+                        group.visibleSegments.add(id);
+                      } else {
+                        group.visibleSegments.delete(id);
                       }
-                      adding ? group.visibleSegments.add(id) : group.visibleSegments.delete(id);
                     });
                   });
                   const selectionCopyButton = makeCopyButton({
@@ -912,6 +918,7 @@ export class SegmentDisplayTab extends Tab {
                   selectionStatusContainer.appendChild(selectionClearButton);
                   selectionStatusContainer.appendChild(selectionStatusMessage);
                   const moveStatusContainer = document.createElement('span');
+                  const previewListSeparator = document.createElement('span');
                   // const moveButton = document.createElement('div');
                   // moveButton.innerText = "Move (↓)";
                   const matchCopyButton = makeCopyButton({
@@ -940,38 +947,49 @@ export class SegmentDisplayTab extends Tab {
                     const {selectedSegments, visibleSegments} = group;
                     const {selectedMatches} = listSource;
                     const shouldSelect = (selectedMatches !== queryResult.count);
+                    console.log('shouldSelect', shouldSelect);
+
+                    // let shouldAddAll = true;
+
+                    let count2 = 0;
+
+                    forEachQueryResultSegmentId(segmentPropertyMap, queryResult, id => {
+                      if (visibleSegments.has(id)) {
+                        shouldAddAll = false;
+                        count2++;
+                      }
+                    });
+
+                    const realCount = count2 || queryResult.count - selectedMatches;
+
                     if (shouldSelect &&
-                        queryResult.count - selectedMatches > selectSegmentConfirmationThreshold) {
+                        realCount > selectSegmentConfirmationThreshold) {
                       if (!hasConfirmed) {
                         hasConfirmed = true;
                         moveStatusMessage.textContent =
-                            `Confirm: show ${queryResult.count - selectedMatches} segments?`;
+                            `Confirm: show ${realCount} segments?`;
                         return false;
                       }
                       hasConfirmed = false;
                       updateStatusPreview();
                     }
-                    console.log('shouldSelect', shouldSelect);
-                    visibleSegments;
 
-                    let shouldAddAll = true;
-
-                    forEachQueryResultSegmentId(segmentPropertyMap, queryResult, id => {
-                      console.log('selectedSegments', id);
-                      if (visibleSegments.has(id)) {
-                        shouldAddAll = false;
-                      }
-                    });
+                    // TODO wtf is going on here
 
 
                     forEachQueryResultSegmentId(segmentPropertyMap, queryResult, id => {
-                      console.log('selectedSegments', id);
-                      if (shouldAddAll || visibleSegments.has(id)) {
+                      // if (shouldAddAll || visibleSegments.has(id)) {
+                      //   selectedSegments.set(id, shouldSelect);
+                      //   visibleSegments.set(id, shouldSelect);
+                      // } 
+                      if (!selectedSegments.has(id)) {
                         selectedSegments.set(id, shouldSelect);
-                      }
-                      
-                      // visibleSegments.set(id, shouldSelect);
+                        visibleSegments.set(id, shouldSelect);
+                      }                     
                     });
+
+                    console.log('scroll list now?');
+                    // list2.scrollToTop();
                     return true;
                   };
                   moveStatusContainer.addEventListener('click', event => {
@@ -989,7 +1007,7 @@ export class SegmentDisplayTab extends Tab {
                       'neuroglancer-segment-query-result-statistics-separator');
                   parent.appendChild(queryStatisticsSeparator);
                   parent.appendChild(selectionStatusContainer);
-                  let prevNumSelected = -1;
+                  // let prevNumSelected = -1;
                   const updateStatusPreview = () => {
                     const {visibleSegments, selectedSegments} = group;
                     let visibleCount = 0;
@@ -1012,18 +1030,18 @@ export class SegmentDisplayTab extends Tab {
                     });
 
                     selectionStatusContainer.classList.toggle('empty-query', totalCount === 0);
-                    moveStatusContainer.classList.toggle('empty-query', totalCount === 0);
+                    previewListSeparator.classList.toggle('empty-query', totalCount === 0);
                     if (totalCount === 0) {
                       return;
                     }
 
-                    if (prevNumSelected !== visibleCount) {
-                      prevNumSelected = visibleCount;
+                    // if (prevNumSelected !== visibleCount) {
+                      // prevNumSelected = visibleCount;
                       selectionStatusMessage.textContent = `${visibleCount}/${totalCount} visible`;
                       selectionClearButton.checked = visibleCount > 0;
                       // selectionClearButton.style.visibility = numSelected ? 'visible' : 'hidden';
                       // selectionCopyButton.style.visibility = numSelected ? 'visible' : 'hidden';
-                    }
+                    // }
                     // moveStatusMessage.textContent = listSource.statusText.value + " v";
 
                     moveStatusMessage.textContent = `Move (↓) ${visibleCount > 0 ? visibleCount : totalCount} ids`;
@@ -1101,6 +1119,7 @@ export class SegmentDisplayTab extends Tab {
                   const {displayState} = this.layer;
                   context.registerDisposer(
                       displayState.segmentSelectionState.changed.add(updateListItems));
+                  context.registerDisposer(group.selectedSegments.changed.add(updateListItems));
                   context.registerDisposer(group.visibleSegments.changed.add(updateListItems));
                   context.registerDisposer(
                       displayState.segmentColorHash.changed.add(updateListItems));
@@ -1140,14 +1159,16 @@ export class SegmentDisplayTab extends Tab {
                     }
                   };
                   observeWatchable((queryResult: QueryResult|undefined) => {
+                    console.log('observeWatchable');
                     listSource.segmentWidgetFactory = new SegmentWidgetWithExtraColumnsFactory(
                         listSource.segmentationDisplayState, listSource.parentElement,
                         property => queryIncludesColumn(queryResult?.query, property.id));
-                    list.scrollToTop();
+                    // list.scrollToTop();
                     listSource2.segmentWidgetFactory = new SegmentWidgetWithExtraColumnsFactory(
                         listSource.segmentationDisplayState, listSource.parentElement,
                         property => queryIncludesColumn(queryResult?.query, property.id));
-                    list2.scrollToTop();
+                    // list2.scrollToTop();
+                    // console.log('scrolling to top!');
                     removeChildren(list.header);
                     removeChildren(list2.header);
                     if (segmentPropertyMap !== undefined) {
@@ -1178,7 +1199,9 @@ export class SegmentDisplayTab extends Tab {
                     }
                   }, listSource.queryResult);
                   parent.appendChild(list.element);
-                  parent.appendChild(moveStatusContainer);
+                  previewListSeparator.classList.add('neuroglancer-segment-list-separator')
+                  parent.appendChild(previewListSeparator);
+                  // parent.appendChild(moveStatusContainer);
 
 
 

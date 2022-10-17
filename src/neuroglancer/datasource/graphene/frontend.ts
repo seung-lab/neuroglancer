@@ -654,6 +654,13 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       this.selectedSegmentsChanged(segmentIds, add);
     });
 
+    segmentsState.visibleSegments.changed.add((segmentIds: Uint64[]|Uint64|null, add: boolean) => {
+      if (segmentIds !== null) {
+        segmentIds = Array<Uint64>().concat(segmentIds);
+      }
+      this.visibleSegmentsChanged(segmentIds, add);
+    });
+
     const {annotationLayerStates, state: {multicutState}} = this;
     const loadedSubsource = getGraphLoadedSubsource(layer)!;
     const redGroup = makeColoredAnnotationState(layer, loadedSubsource, "sinks", RED_COLOR);
@@ -679,7 +686,7 @@ class GraphConnection extends SegmentationGraphSourceConnection {
   private lastDeselectionMessage: StatusMessage|undefined;
   private lastDeselectionMessageExists = false;
 
-  private selectedSegmentsChanged(segments: Uint64[]|null, added: boolean) {
+  private visibleSegmentsChanged(segments: Uint64[]|null, added: boolean) {
     const {segmentsState} = this;
 
     if (segments === null) {
@@ -688,27 +695,9 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       StatusMessage.showTemporaryMessage(`Deselected all ${leafSegmentCount} segments.`, 3000);
       return;
     }
-
+  
     for (const segmentId of segments) {
-      const isBaseSegment = isBaseSegmentId(segmentId, this.graph.info.graph.nBitsForLayerId);
-
-      const segmentConst = segmentId.clone();
-
-      if (added) {
-        if (isBaseSegment) {
-          this.graph.getRoot(segmentConst).then(rootId => {
-            segmentsState.selectedSegments.delete(segmentConst);
-            segmentsState.selectedSegments.add(rootId);
-          });
-        }
-      } else if (!isBaseSegment) {
-        const {focusSegment: {value: focusSegment}} = this.graph.state.multicutState;
-        if (focusSegment && Uint64.equal(segmentId, focusSegment)) {
-          segmentsState.selectedSegments.add(segmentId);
-          StatusMessage.showTemporaryMessage(`Can't deselect active multicut segment.`, 3000);
-          return;
-        }
-
+    if (!added) {
         const segmentCount = [...segmentsState.segmentEquivalences.setElements(segmentId)].length; // Approximation
 
         segmentsState.segmentEquivalences.deleteSet(segmentId);
@@ -726,6 +715,44 @@ class GraphConnection extends SegmentationGraphSourceConnection {
             this.lastDeselectionMessageExists = false;
           }
         }, 2000);
+    }
+    }
+  }
+
+  private selectedSegmentsChanged(segments: Uint64[]|null, added: boolean) {
+    const {segmentsState} = this;
+    console.log('yo!');
+
+    if (segments === null) {
+      const leafSegmentCount = this.segmentsState.selectedSegments.size;
+      this.segmentsState.segmentEquivalences.clear();
+      StatusMessage.showTemporaryMessage(`Deselected all ${leafSegmentCount} segments.`, 3000);
+      return;
+    }
+
+    for (const segmentId of segments) {
+      const isBaseSegment = isBaseSegmentId(segmentId, this.graph.info.graph.nBitsForLayerId);
+
+      const segmentConst = segmentId.clone();
+
+      if (added) {
+        if (isBaseSegment) {
+          this.graph.getRoot(segmentConst).then(rootId => {
+            segmentsState.selectedSegments.delete(segmentConst);
+            if (segmentsState.visibleSegments.has(segmentConst)) {
+              segmentsState.visibleSegments.delete(segmentConst);
+              segmentsState.visibleSegments.add(rootId);
+            }
+            segmentsState.selectedSegments.add(rootId);
+          });
+        }
+      } else if (!isBaseSegment) {
+        const {focusSegment: {value: focusSegment}} = this.graph.state.multicutState;
+        if (focusSegment && Uint64.equal(segmentId, focusSegment)) {
+          segmentsState.selectedSegments.add(segmentId);
+          StatusMessage.showTemporaryMessage(`Can't deselect active multicut segment.`, 3000);
+          return;
+        }
       }
     }
   }
