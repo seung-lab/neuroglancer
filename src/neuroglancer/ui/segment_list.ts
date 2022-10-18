@@ -906,11 +906,16 @@ export class SegmentDisplayTab extends Tab {
                     });
                   });
                   const selectionCopyButton = makeCopyButton({
-                    title: 'Copy visible segment IDs',
+                    title: 'Copy preview segment IDs',
                     onClick: () => {
-                      const selectedSegments = Array.from(group.selectedSegments, x => x.clone());
-                      selectedSegments.sort(Uint64.compare);
-                      setClipboard(selectedSegments.join(', '));
+                      const ids: Uint64[] = [];
+                      const queryResult = listSource.queryResult.value;
+                      if (queryResult === undefined) return;
+                      forEachQueryResultSegmentId(segmentPropertyMap, queryResult, (id) => {
+                        ids.push(id);
+                      });
+                      ids.sort(Uint64.compare);
+                      setClipboard(ids.join(', '));
                     },
                   });
                   const selectionStatusMessage = document.createElement('span');
