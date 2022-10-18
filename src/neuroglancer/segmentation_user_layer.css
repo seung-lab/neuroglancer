@@ -64,6 +64,22 @@
   background-color: inherit;
 }
 
+.neuroglancer-segment-list-entry:not([data-selected-segment="true"]) .neuroglancer-icon-hover:hover svg:first-child {
+  display: inherit;
+}
+
+.neuroglancer-segment-list-entry:not([data-selected-segment="true"]) .neuroglancer-icon-hover:hover svg:last-child {
+  display: none;
+}
+
+/* .neuroglancer-icon-hover:not(:hover) svg:last-child {
+  display: none;
+} */
+
+/* .neuroglancer-icon-hover:hover svg:first-child {
+  display: none;
+} */
+
 .neuroglancer-segment-list-entry[data-selected-segment="true"] .neuroglancer-segment-list-entry-star:not(:hover) svg {
   fill: white;
 }

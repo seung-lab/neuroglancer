@@ -958,12 +958,12 @@ export class SegmentDisplayTab extends Tab {
 
                     let count2 = 0;
 
-                    forEachQueryResultSegmentId(segmentPropertyMap, queryResult, id => {
-                      if (visibleSegments.has(id)) {
-                        shouldAddAll = false;
-                        count2++;
-                      }
-                    });
+                    // forEachQueryResultSegmentId(segmentPropertyMap, queryResult, id => {
+                    //   if (visibleSegments.has(id)) {
+                    //     shouldAddAll = false;
+                    //     count2++;
+                    //   }
+                    // });
 
                     const realCount = count2 || queryResult.count - selectedMatches;
 
@@ -1205,7 +1205,7 @@ export class SegmentDisplayTab extends Tab {
                   }, listSource.queryResult);
                   parent.appendChild(list.element);
                   previewListSeparator.classList.add('neuroglancer-segment-list-separator')
-                  parent.appendChild(previewListSeparator);
+                  // parent.appendChild(previewListSeparator);
                   // parent.appendChild(moveStatusContainer);
 
 
@@ -1213,6 +1213,7 @@ export class SegmentDisplayTab extends Tab {
 
                   {
                     const selectionStatusContainer = document.createElement('span');
+                    selectionStatusContainer.classList.add('neuroglancer-segment-list-status');
                     const selectionClearButton = document.createElement('input');
                     selectionClearButton.type = 'checkbox';
                     selectionClearButton.checked = true;

@@ -15,11 +15,10 @@
  */
 
 import svg_bin from 'ikonate/icons/star.svg';
-import {makeIcon, MakeIconOptions} from 'neuroglancer/widget/icon';
+import svg_close from 'ikonate/icons/close.svg';
+import {makeHoverIcon, MakeIconOptions} from 'neuroglancer/widget/icon';
 
 export function makeStarButton(options: MakeIconOptions = {}) {
-  const icon = makeIcon({svg: svg_bin, ...options});
-  // const svg = icon.firstElementChild as HTMLElement;
-  // svg.style.fill = 'white';
+  const icon = makeHoverIcon({svg: svg_bin, svgHover: svg_close, ...options});
   return icon;
 }
