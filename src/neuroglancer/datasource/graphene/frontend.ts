@@ -695,9 +695,9 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       StatusMessage.showTemporaryMessage(`Deselected all ${leafSegmentCount} segments.`, 3000);
       return;
     }
-  
+
     for (const segmentId of segments) {
-    if (!added) {
+      if (!added) {
         const segmentCount = [...segmentsState.segmentEquivalences.setElements(segmentId)].length; // Approximation
 
         segmentsState.segmentEquivalences.deleteSet(segmentId);
@@ -715,7 +715,7 @@ class GraphConnection extends SegmentationGraphSourceConnection {
             this.lastDeselectionMessageExists = false;
           }
         }, 2000);
-    }
+      }
     }
   }
 
@@ -738,11 +738,10 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       if (added) {
         if (isBaseSegment) {
           this.graph.getRoot(segmentConst).then(rootId => {
-            segmentsState.selectedSegments.delete(segmentConst);
             if (segmentsState.visibleSegments.has(segmentConst)) {
-              segmentsState.visibleSegments.delete(segmentConst);
               segmentsState.visibleSegments.add(rootId);
             }
+            segmentsState.selectedSegments.delete(segmentConst);
             segmentsState.selectedSegments.add(rootId);
           });
         }
@@ -783,7 +782,6 @@ class GraphConnection extends SegmentationGraphSourceConnection {
           segmentsState.selectedSegments.delete(segment.rootId);
         }
         segmentsState.selectedSegments.add(splitRoots);
-        multicutState.reset();
         return true;
       }
     }

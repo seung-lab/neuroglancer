@@ -154,7 +154,7 @@
 }
 
 .neuroglancer-segment-list-entry-visible-checkbox {
-  order: -1;
+  order: 1;
 }
 
 .neuroglancer-segment-list-entry-filter {

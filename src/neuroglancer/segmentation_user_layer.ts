@@ -71,7 +71,7 @@ const IGNORE_NULL_VISIBLE_SET_JSON_KEY = 'ignoreNullVisibleSet';
 const MESH_JSON_KEY = 'mesh';
 const SKELETONS_JSON_KEY = 'skeletons';
 const SELECTED_SEGMENTS_JSON_KEY = 'segments';
-// const VISIBLE_SEGMENTS_JSON_KEY = 'visibleSegments';
+const VISIBLE_SEGMENTS_JSON_KEY = 'visibleSegments';
 const EQUIVALENCES_JSON_KEY = 'equivalences';
 const COLOR_SEED_JSON_KEY = 'colorSeed';
 const SEGMENT_STATED_COLORS_JSON_KEY = 'segmentColors';
@@ -99,20 +99,28 @@ export class SegmentationUserLayerGroupState extends RefCounted implements Segme
     const {visibleSegments, selectedSegments} = this;
     visibleSegments.changed.add(specificationChanged.dispatch);
     selectedSegments.changed.add(specificationChanged.dispatch);
-    // selectedSegments.changed.add((x, add) => {
-    //   if (x === null && !add) {
-    //     visibleSegments.clear();
-    //   } else if (x) {
-    //     if (add) {
-    //       visibleSegments.add(x);
-    //     } else {
-    //       visibleSegments.delete(x);
-    //     }
-    //   }
-    // });
+    selectedSegments.changed.add((x, add) => {
+      if (x === null && !add) {
+        visibleSegments.clear();
+      } else if (x) {
+        if (add) {
+          // visibleSegments.add(x);
+        } else {
+          console.log('selected delete', x.toString());
+          visibleSegments.delete(x);
+        }
+      }
+    });
 
-    visibleSegments.changed.add(() => { console.log('visibleSegments', visibleSegments.toJSON())});
-    selectedSegments.changed.add(() => { console.log('selectedSegments', selectedSegments.toJSON())});
+    visibleSegments.changed.add((x, add) => { console.log('visibleSegments', add, x?.toString(), visibleSegments.toJSON())});
+    selectedSegments.changed.add((x, add) => { console.log('selectedSegments', add, x?.toString(), selectedSegments.toJSON())});
+
+    window.addEventListener('keypress', (evt) => {
+      if (evt.key === 'p') {
+        console.log('selected', selectedSegments.toJSON());
+        console.log('visible', visibleSegments.toJSON());
+      }
+    })
   }
 
   restoreState(specification: unknown) {
@@ -125,13 +133,25 @@ export class SegmentationUserLayerGroupState extends RefCounted implements Segme
 
     verifyOptionalObjectProperty(specification, SELECTED_SEGMENTS_JSON_KEY, segmentsValue => {
       const {segmentEquivalences, selectedSegments} = this;
+
+      // backwards compatibility, assume all are visible
+      const missingVisible = !Object.prototype.hasOwnProperty.call(specification, VISIBLE_SEGMENTS_JSON_KEY);
       parseArray(segmentsValue, value => {
         let id = Uint64.parseString(String(value), 10);
         selectedSegments.add(segmentEquivalences.get(id));
+        if (missingVisible) {
+          this.visibleSegments.add(segmentEquivalences.get(id));
+        }
       });
     });
-    verifyOptionalObjectProperty(
-        specification, SEGMENT_QUERY_JSON_KEY, value => this.segmentQuery.restoreState(value));
+    verifyOptionalObjectProperty(specification, VISIBLE_SEGMENTS_JSON_KEY, segmentsValue => {
+      console.log('segmentsValue', segmentsValue);
+      const {segmentEquivalences, visibleSegments} = this;
+      parseArray(segmentsValue, value => {
+        let id = Uint64.parseString(String(value), 10);
+        visibleSegments.add(segmentEquivalences.get(id));
+      });
+    });
   }
 
   toJSON() {
@@ -140,6 +160,12 @@ export class SegmentationUserLayerGroupState extends RefCounted implements Segme
     let {selectedSegments} = this;
     if (selectedSegments.size > 0) {
       x[SELECTED_SEGMENTS_JSON_KEY] = this.selectedSegments.toJSON();
+    }
+    let {visibleSegments} = this;
+    if (visibleSegments.size > 0) {
+      x[VISIBLE_SEGMENTS_JSON_KEY] = this.visibleSegments.toJSON();
+    } else {
+      x[VISIBLE_SEGMENTS_JSON_KEY] = [];
     }
     let {segmentEquivalences} = this;
     if (this.localSegmentEquivalences && segmentEquivalences.size > 0) {
