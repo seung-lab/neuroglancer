@@ -21,7 +21,7 @@ import {ChunkManager, WithParameters} from 'neuroglancer/chunk_manager/frontend'
 import {makeIdentityTransform} from 'neuroglancer/coordinate_transform';
 import {WithCredentialsProvider} from 'neuroglancer/credentials_provider/chunk_source_frontend';
 import {DataSource, DataSubsourceEntry, GetDataSourceOptions, RedirectError} from 'neuroglancer/datasource';
-import {MeshSource} from 'neuroglancer/mesh/frontend';
+import {MeshLayer, MeshSource, MultiscaleMeshLayer} from 'neuroglancer/mesh/frontend';
 import {Owned} from 'neuroglancer/util/disposable';
 import {mat4, vec3, vec4} from 'neuroglancer/util/geom';
 import {HttpError, isNotFoundError, responseJson} from 'neuroglancer/util/http_request';
@@ -29,7 +29,7 @@ import {parseArray, parseFixedLengthArray, verifyEnumString, verifyFiniteFloat, 
 import {getObjectId} from 'neuroglancer/util/object_id';
 import {cancellableFetchSpecialOk, parseSpecialUrl, SpecialProtocolCredentials, SpecialProtocolCredentialsProvider} from 'neuroglancer/util/special_protocol_request';
 import {Uint64} from 'neuroglancer/util/uint64';
-import {getGrapheneFragmentKey, isBaseSegmentId, responseIdentity} from 'neuroglancer/datasource/graphene/base';
+import {getGrapheneFragmentKey, GRAPHENE_REFRESH_MESH_RPC_ID, isBaseSegmentId, responseIdentity} from 'neuroglancer/datasource/graphene/base';
 import {ChunkedGraphSourceParameters, MeshSourceParameters, MultiscaleMeshMetadata, PYCG_APP_VERSION} from 'neuroglancer/datasource/graphene/base';
 import {DataEncoding, ShardingHashFunction, ShardingParameters} from 'neuroglancer/datasource/precomputed/base';
 import {StatusMessage} from 'neuroglancer/status';
@@ -908,6 +908,11 @@ class GrapheneGraphSource extends SegmentationGraphSource {
       label: 'Merge',
       title: 'Merge segments'
     }));
+    toolbox.appendChild(makeToolButton(context, layer, {
+      toolJson: GRAPHENE_REFRESH_MESH_TOOL_ID,
+      label: 'Refresh Mesh',
+      title: 'Refresh Meshes'
+    }));
     parent.appendChild(toolbox);
     parent.appendChild(
       context.registerDisposer(new MulticutAnnotationLayerView(layer, layer.annotationDisplayState))
@@ -1050,6 +1055,7 @@ class SliceViewPanelChunkedGraphLayer extends SliceViewPanelRenderLayer {
 
 const GRAPHENE_MULTICUT_SEGMENTS_TOOL_ID = 'grapheneMulticutSegments';
 const GRAPHENE_MERGE_SEGMENTS_TOOL_ID = 'grapheneMergeSegments';
+const GRAPHENE_REFRESH_MESH_TOOL_ID = 'grapheneRefreshMesh';
 
 class MulticutAnnotationLayerView extends AnnotationLayerView {
   private _annotationStates: MergedAnnotationStates;
@@ -1427,3 +1433,52 @@ registerLayerTool(SegmentationUserLayer, GRAPHENE_MULTICUT_SEGMENTS_TOOL_ID, lay
 registerLayerTool(SegmentationUserLayer, GRAPHENE_MERGE_SEGMENTS_TOOL_ID, layer => {
   return new MergeSegmentsTool(layer, true);
 });
+
+registerLayerTool(SegmentationUserLayer, GRAPHENE_REFRESH_MESH_TOOL_ID, layer => {
+  return new RefreshMeshTool(layer);
+});
+
+const REFRESH_MESH_INPUT_EVENT_MAP = EventActionMap.fromObject({
+  'at:shift?+mousedown0': {action: 'refresh-mesh'},
+});
+
+class RefreshMeshTool extends Tool<SegmentationUserLayer> {
+  activate(activation: ToolActivation<this>) {
+    const {body, header} = makeToolActivationStatusMessageWithHeader(activation);
+    header.textContent = 'Refresh mesh';
+    body.classList.add('neuroglancer-merge-segments-status');
+
+    activation.bindInputEventMap(REFRESH_MESH_INPUT_EVENT_MAP); // has to be after makeToolActivationStatusMessageWithHeader
+
+
+    const someMeshLayer = (layer: SegmentationUserLayer) => {
+      for (let x of layer.renderLayers) {
+        if (x instanceof MeshLayer || x instanceof MultiscaleMeshLayer) {
+          return x;
+        }
+      }
+      return undefined;
+    };
+
+    activation.bindAction('refresh-mesh', event => {
+      event.stopPropagation();
+      const {segmentSelectionState, segmentationGroupState} = this.layer.displayState;
+      if (!segmentSelectionState.hasSelectedSegment) return;
+      const segment = segmentSelectionState.selectedSegment;
+      const {visibleSegments} = segmentationGroupState.value;
+      if (!visibleSegments.has(segment)) return;
+      const meshLayer = someMeshLayer(this.layer);
+      if (!meshLayer) return;
+      const meshSource = meshLayer.source;
+      meshSource.rpc!.invoke(GRAPHENE_REFRESH_MESH_RPC_ID, {'rpcId': meshSource.rpcId!, 'segment': segment.toString()});
+    });
+  }
+
+  toJSON() {
+    return GRAPHENE_REFRESH_MESH_TOOL_ID;
+  }
+
+  get description() {
+    return `refresh mesh`;
+  }
+}
