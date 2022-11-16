@@ -30,6 +30,9 @@ export interface LayerControlLabelOptions<LayerType extends UserLayer = UserLaye
   toolDescription?: string;
   toolJson: any;
   isValid?: (layer: LayerType) => WatchableValueInterface<boolean>;
+  hideStatus?: boolean;
+  toggle?: boolean;
+  basicActivation?: boolean;
 }
 
 export interface LayerControlFactory<LayerType extends UserLayer, ControlType = unknown> {
@@ -77,19 +80,21 @@ function makeControl<LayerType extends UserLayer>(
 
 export class LayerControlTool<LayerType extends UserLayer = UserLayer> extends Tool<LayerType> {
   constructor(layer: LayerType, public options: LayerControlDefinition<LayerType>) {
-    super(layer);
+    super(layer, options.toggle, options.basicActivation);
   }
   activate(activation: ToolActivation<this>) {
     const {options} = this;
     const {layer} = this;
     const {isValid} = options;
     if (isValid !== undefined && !isValid(layer).value) return;
-    const {header, body} = makeToolActivationStatusMessageWithHeader(activation);
     const {controlContainer, control, labelContainer} = makeControl(
         activation, layer, options,
         new WatchableVisibilityPriority(WatchableVisibilityPriority.VISIBLE));
-    header.appendChild(labelContainer);
-    body.appendChild(controlContainer);
+    if (!options.hideStatus) {
+      const {header, body} = makeToolActivationStatusMessageWithHeader(activation);
+      header.appendChild(labelContainer);
+      body.appendChild(controlContainer);
+    }
     options.activateTool(activation, control);
   }
   get description() {

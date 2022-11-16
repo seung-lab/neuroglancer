@@ -55,7 +55,7 @@ export class ToolActivation<ToolType extends Tool = Tool> extends RefCounted {
 export abstract class Tool<LayerType extends UserLayer = UserLayer> extends RefCounted {
   changed = new Signal();
   keyBinding: string|undefined = undefined;
-  constructor(public layer: LayerType, public toggle: boolean = false) {
+  constructor(public layer: LayerType, public toggle: boolean = false, public basicActivation = false) {
     super();
   }
   get mouseState() {
@@ -266,6 +266,13 @@ export class ToolBinder extends RefCounted {
       this.deactivate_();
       return;
     }
+
+    if (tool.basicActivation) {
+      const activation = new ToolActivation(tool, this.inputEventMapBinder);
+      tool.activate(activation);
+      return tool;
+    }
+
     this.debounceDeactivate.cancel();
     this.debounceReactivate.cancel();
     const activeTool = this.activeTool_;

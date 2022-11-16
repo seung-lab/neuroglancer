@@ -64,6 +64,8 @@ import { makeIcon } from 'neuroglancer/widget/icon';
 import { EventActionMap } from 'neuroglancer/util/event_action_map';
 import { packColor } from 'neuroglancer/util/color';
 import { Uint64Set } from 'neuroglancer/uint64_set';
+import { addLayerControlToOptionsTab, LayerControlFactory, registerLayerControl } from 'neuroglancer/widget/layer_control';
+import { DateTimeInputWidget } from 'neuroglancer/widget/datetime_input';
 
 function vec4FromVec3(vec: vec3, alpha = 0) {
   const res = vec4.clone([...vec]);
@@ -506,30 +508,41 @@ const SEGMENT_ID_JSON_KEY = "segmentId";
 const ROOT_ID_JSON_KEY = "rootId";
 const POSITION_JSON_KEY = "position";
 
+const TIMESTAMP_JSON_KEY = "timestamp";
+
 class GrapheneState implements Trackable {
   changed = new NullarySignal();
 
   public multicutState = new MulticutState();
+  public timestamp: TrackableValue<number> = new TrackableValue(0, x => x);
 
   constructor() {
     this.multicutState.changed.add(() => {
+      this.changed.dispatch();
+    });
+    this.timestamp.changed.add(() => {
       this.changed.dispatch();
     });
   }
 
   reset() {
     this.multicutState.reset();
+    this.timestamp.reset();
   }
 
   toJSON() {
     return {
       [MULTICUT_JSON_KEY]: this.multicutState.toJSON(),
+      [TIMESTAMP_JSON_KEY]: this.timestamp.toJSON(),
     }
   }
 
   restoreState(x: any) {
     verifyOptionalObjectProperty(x, MULTICUT_JSON_KEY, value => {
       this.multicutState.restoreState(value);
+    });
+    verifyOptionalObjectProperty(x, TIMESTAMP_JSON_KEY, value => {
+      this.timestamp.restoreState(value);
     });
   }
 }
@@ -819,11 +832,18 @@ export const GRAPH_SERVER_NOT_SPECIFIED = Symbol('Graph Server Not Specified.');
 class GrapheneGraphServerInterface {
   constructor(private url: string, private credentialsProvider: SpecialProtocolCredentialsProvider) {}
 
-  async getRoot(segment: Uint64, timestamp = '') {
-    const timestampEpoch = (new Date(timestamp)).valueOf() / 1000;
+  async getTimestampLimit() {
+    const response = await cancellableFetchSpecialOk(
+      this.credentialsProvider, `${this.url}/oldest_timestamp`, {}, responseJson);
+    const isoString = verifyObjectProperty(response, 'iso', verifyString);
+    return new Date(isoString).valueOf();
+  }
+
+  async getRoot(segment: Uint64, timestamp = 0) {
+    const timestampEpoch = timestamp / 1000;
 
     const url = `${this.url}/node/${String(segment)}/root?int64_as_str=1${
-      Number.isNaN(timestampEpoch) ? '' : `&timestamp=${timestampEpoch}`}`
+      timestamp > 0 ? `&timestamp=${timestampEpoch}` : ''}`
 
     const promise = cancellableFetchSpecialOk(
       this.credentialsProvider,
@@ -890,6 +910,7 @@ class GrapheneGraphServerInterface {
 class GrapheneGraphSource extends SegmentationGraphSource {
   private connections = new Set<GraphConnection>();
   public graphServer: GrapheneGraphServerInterface;
+  public timestampLimit: TrackableValue<number> = new TrackableValue(0, x => x);
 
   constructor(public info: GrapheneMultiscaleVolumeInfo,
               credentialsProvider: SpecialProtocolCredentialsProvider,
@@ -897,6 +918,9 @@ class GrapheneGraphSource extends SegmentationGraphSource {
               public state: GrapheneState) {
     super();
     this.graphServer = new GrapheneGraphServerInterface(info.app!.segmentationUrl, credentialsProvider);
+    this.graphServer.getTimestampLimit().then(limit => {
+      this.timestampLimit.value = limit;
+    });
   }
 
   connect(layer: SegmentationUserLayer): Owned<SegmentationGraphSourceConnection> {
@@ -916,12 +940,13 @@ class GrapheneGraphSource extends SegmentationGraphSource {
   }
 
   getRoot(segment: Uint64) {
-    return this.graphServer.getRoot(segment);
+    return this.graphServer.getRoot(segment, this.state.timestamp.value);
   }
 
   tabContents(layer: SegmentationUserLayer, context: DependentViewContext, tab: SegmentationGraphSourceTab) {
     const parent = document.createElement('div');
     parent.style.display = 'contents';
+    parent.appendChild(addLayerControlToOptionsTab(tab, layer, tab.visibility, timeControl));
     const toolbox = document.createElement('div');
     toolbox.className = 'neuroglancer-segmentation-toolbox';
     toolbox.appendChild(makeToolButton(context, layer, {
@@ -1287,7 +1312,7 @@ class MulticutSegmentsTool extends Tool<SegmentationUserLayer> {
 
     activation.bindAction('set-anchor', event => {
       event.stopPropagation();
-      const currentSegmentSelection = maybeGetSelection(this, segmentationGroupState.visibleSegments); // or visible segments?
+      const currentSegmentSelection = maybeGetSelection(this, segmentationGroupState.visibleSegments, graphConnection.graph);
       if (!currentSegmentSelection) return;
       const {rootId, segmentId} = currentSegmentSelection;
       const {focusSegment, segments} = multicutState;
@@ -1321,7 +1346,11 @@ class MulticutSegmentsTool extends Tool<SegmentationUserLayer> {
   }
 }
 
-const maybeGetSelection = (tool: Tool<SegmentationUserLayer>, visibleSegments: Uint64Set): SegmentSelection|undefined => {
+const maybeGetSelection = (tool: Tool<SegmentationUserLayer>, visibleSegments: Uint64Set, graph: GrapheneGraphSource): SegmentSelection|undefined => {
+  if (graph.state.timestamp.value !== 0) {
+    StatusMessage.showTemporaryMessage('Editing can not be performed with a segmentation at an older state.');
+    return;
+  }
   const {layer, mouseState} = tool;
   const {segmentSelectionState: {value, baseValue}} = layer.displayState;
   if (!baseValue || !value) return;
@@ -1410,13 +1439,13 @@ class MergeSegmentsTool extends Tool<SegmentationUserLayer> {
       (async () => {
         const lastSegmentSelection = this.lastAnchorSelection.value;
         if (!lastSegmentSelection) { // first selection
-          const selection = maybeGetSelection(this, segmentationGroupState.visibleSegments);
+          const selection = maybeGetSelection(this, segmentationGroupState.visibleSegments, graph);
           if (selection) {
             this.lastAnchorSelection.value = selection;
             setSink(selection.rootId);
           }
         } else if (!activeSubmission) {
-          const selection = maybeGetSelection(this, segmentationGroupState.visibleSegments);
+          const selection = maybeGetSelection(this, segmentationGroupState.visibleSegments, graph);
           if (selection) {
             activeSubmission = true;
             setSource(selection.rootId);
@@ -1452,3 +1481,63 @@ registerLayerTool(SegmentationUserLayer, GRAPHENE_MULTICUT_SEGMENTS_TOOL_ID, lay
 registerLayerTool(SegmentationUserLayer, GRAPHENE_MERGE_SEGMENTS_TOOL_ID, layer => {
   return new MergeSegmentsTool(layer, true);
 });
+
+const GRAPHENE_TIME_JSON_KEY = 'grapheneTime';
+
+const timeControl = {
+  label: 'Time',
+  title: 'View segmentation at earlier point of time',
+  toolJson: GRAPHENE_TIME_JSON_KEY,
+  hideStatus: true,
+  foo: true,
+  ...timeLayerControl(),
+};
+
+registerLayerControl(SegmentationUserLayer, timeControl);
+
+function timeLayerControl(): LayerControlFactory<SegmentationUserLayer> {
+  return {
+    makeControl: (layer, context) => {
+      const segmentationGroupState = layer.displayState.segmentationGroupState.value;
+      const {graph: {value: graph}} = segmentationGroupState;
+      const timestamp = graph instanceof GrapheneGraphSource ? graph.state.timestamp : new TrackableValue<number>(0, x => x);
+      const timestampLimit = graph instanceof GrapheneGraphSource ? graph.timestampLimit : new TrackableValue<number>(0, x => x);
+      const controlElement = document.createElement('div');
+      controlElement.classList.add('neuroglancer-time-control');
+      const intermediateTimestamp = new TrackableValue<number>(timestamp.value, x => x);
+      intermediateTimestamp.changed.add(() => {
+        if (intermediateTimestamp.value === timestamp.value) {
+          return;
+        }
+        if (confirm('Changing timestamp will clear all selected segments')) {
+          if (graph instanceof GrapheneGraphSource) {
+            graph.state.multicutState.reset();
+          }
+          timestamp.value = intermediateTimestamp.value;
+        } else {
+          intermediateTimestamp.value = timestamp.value;
+        }
+      });
+      const widget =
+          context.registerDisposer(new DateTimeInputWidget(intermediateTimestamp, new Date(timestampLimit.value), new Date()));
+      timestampLimit.changed.add(() => {
+        widget.setMin(new Date(timestampLimit.value));
+      });
+      timestamp.changed.add(() => {
+        segmentationGroupState.selectedSegments.clear();
+        segmentationGroupState.temporaryVisibleSegments.clear(); // TODO, do we care about this? maybe we need to force close/clear multicut
+        if (timestamp.value !== intermediateTimestamp.value) {
+          intermediateTimestamp.value = timestamp.value;
+        }
+      });
+      controlElement.appendChild(widget.element);
+      return {controlElement, control: widget};
+    },
+    activateTool: (_activation, control: DateTimeInputWidget) => {
+      if ('showPicker' in HTMLInputElement.prototype) {
+        // esbuild complaining, maybe update
+        (control.element as any).showPicker();
+      }
+    },
+  };
+}
