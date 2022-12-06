@@ -21,17 +21,14 @@ import {
 } from "#src/annotation/annotation_layer_state.js";
 import type {
   AnnotationReference,
+  Annotation,
+  AnnotationSource,
+  AnnotationType,
   Line,
   Point,
 } from "#src/annotation/index.js";
-import {
-  AnnotationType,
-  LocalAnnotationSource,
-  makeDataBoundsBoundingBoxAnnotationSet,
-} from "#src/annotation/index.js";
 import { LayerChunkProgressInfo } from "#src/chunk_manager/base.js";
-import type { ChunkManager } from "#src/chunk_manager/frontend.js";
-import { WithParameters } from "#src/chunk_manager/frontend.js";
+import type { ChunkManager, WithParameters } from "#src/chunk_manager/frontend.js";
 import { makeIdentityTransform } from "#src/coordinate_transform.js";
 import { WithCredentialsProvider } from "#src/credentials_provider/chunk_source_frontend.js";
 import type { CredentialsManager } from "#src/credentials_provider/index.js";
@@ -40,6 +37,7 @@ import type {
   ChunkedGraphChunkSpecification,
   MultiscaleMeshMetadata,
 } from "#src/datasource/graphene/base.js";
+import { MultiscaleAnnotationSource } from "#src/annotation/frontend_source";
 import {
   CHUNKED_GRAPH_LAYER_RPC_ID,
   CHUNKED_GRAPH_RENDER_LAYER_UPDATE_SOURCES_RPC_ID,
@@ -141,23 +139,23 @@ import {
 } from "#src/trackable_value.js";
 import {
   AnnotationLayerView,
+  makeAnnotationListElement,
   MergedAnnotationStates,
   PlaceLineTool,
 } from "#src/ui/annotations.js";
-import type { ToolActivation } from "#src/ui/tool.js";
+import { getDefaultAnnotationListBindings } from "#src/ui/default_input_event_bindings";
 import {
   LayerTool,
   makeToolActivationStatusMessageWithHeader,
   makeToolButton,
   registerLegacyTool,
   registerTool,
+  ToolActivation
 } from "#src/ui/tool.js";
 import type { Uint64Set } from "#src/uint64_set.js";
 import { packColor } from "#src/util/color.js";
-import type { Owned } from "#src/util/disposable.js";
-import { RefCounted } from "#src/util/disposable.js";
-import type { ValueOrError } from "#src/util/error.js";
-import { makeValueOrError, valueOrThrow } from "#src/util/error.js";
+import type { Owned, RefCounted } from "#src/util/disposable.js";
+import { ValueOrError, makeValueOrError, valueOrThrow } from "#src/util/error.js";
 import { EventActionMap } from "#src/util/event_action_map.js";
 import { mat4, vec3, vec4 } from "#src/util/geom.js";
 import {
@@ -165,6 +163,7 @@ import {
   isNotFoundError,
   responseJson,
 } from "#src/util/http_request.js";
+import { removeChildren } from "#src/util/dom";
 import {
   parseArray,
   parseFixedLengthArray,
@@ -173,7 +172,9 @@ import {
   verifyEnumString,
   verifyFiniteFloat,
   verifyFinitePositiveFloat,
+  verifyFloatArray,
   verifyInt,
+  verifyIntegerArray,
   verifyNonnegativeInt,
   verifyObject,
   verifyObjectProperty,
@@ -181,6 +182,7 @@ import {
   verifyOptionalString,
   verifyPositiveInt,
   verifyString,
+  verifyStringArray
 } from "#src/util/json.js";
 import { getObjectId } from "#src/util/object_id.js";
 import { NullarySignal } from "#src/util/signal.js";
@@ -188,6 +190,7 @@ import type {
   SpecialProtocolCredentials,
   SpecialProtocolCredentialsProvider,
 } from "#src/util/special_protocol_request.js";
+import { MouseEventBinder } from "#src/util/mouse_bindings";
 import {
   cancellableFetchSpecialOk,
   parseSpecialUrl,
@@ -215,6 +218,7 @@ const RED_COLOR_SEGMENT_PACKED = new Uint64(packColor(RED_COLOR_SEGMENT));
 const BLUE_COLOR_SEGMENT_PACKED = new Uint64(packColor(BLUE_COLOR_SEGMENT));
 const TRANSPARENT_COLOR_PACKED = new Uint64(packColor(TRANSPARENT_COLOR));
 const MULTICUT_OFF_COLOR = vec4.fromValues(0, 0, 0, 0.5);
+const WHITE_COLOR = vec3.fromValues(1, 1, 1);
 
 class GrapheneMeshSource extends WithParameters(
   WithCredentialsProvider<SpecialProtocolCredentials>()(MeshSource),
@@ -229,6 +233,8 @@ class GrapheneMeshSource extends WithParameters(
 class AppInfo {
   segmentationUrl: string;
   meshingUrl: string;
+  l2CacheUrl: string;
+  table: string;
   supported_api_versions: number[];
   constructor(infoUrl: string, obj: any) {
     // .../1.0/... is the legacy link style
@@ -239,8 +245,11 @@ class AppInfo {
     if (match === null) {
       throw Error(`Graph URL invalid: ${infoUrl}`);
     }
-    this.segmentationUrl = `${match[1]}/segmentation/api/v${PYCG_APP_VERSION}/table/${match[2]}`;
-    this.meshingUrl = `${match[1]}/meshing/api/v${PYCG_APP_VERSION}/table/${match[2]}`;
+    this.table = match[2];
+    const { table } = this;
+    this.segmentationUrl = `${match[1]}/segmentation/api/v${PYCG_APP_VERSION}/table/${table}`;
+    this.meshingUrl = `${match[1]}/meshing/api/v${PYCG_APP_VERSION}/table/${table}`;
+    this.l2CacheUrl = `${match[1]}/l2cache/api/v${PYCG_APP_VERSION}`;
 
     try {
       verifyObject(obj);
@@ -705,7 +714,7 @@ export class GrapheneDataSource extends PrecomputedDataSource {
           );
         } catch (e) {
           if (isNotFoundError(e)) {
-            if (parameters.type === "mesh") {
+            if (parameters["type"] === "mesh") {
               console.log("does this happen?");
             }
           }
@@ -814,47 +823,81 @@ function restoreSegmentSelection(obj: any): SegmentSelection {
   };
 }
 
+const segmentSelectionToJSON = (x: SegmentSelection) => {
+  return {
+    [SEGMENT_ID_JSON_KEY]: x.segmentId.toJSON(),
+    [ROOT_ID_JSON_KEY]: x.rootId.toJSON(),
+    [POSITION_JSON_KEY]: [...x.position],
+  };
+};
+
 const ID_JSON_KEY = "id";
-const ERROR_JSON_KEY = "error";
+const SEGMENT_ID_JSON_KEY = "segmentId";
+const ROOT_ID_JSON_KEY = "rootId";
+const POSITION_JSON_KEY = "position";
+const SINK_JSON_KEY = "sink";
+const SOURCE_JSON_KEY = "source";
+
 const MULTICUT_JSON_KEY = "multicut";
 const FOCUS_SEGMENT_JSON_KEY = "focusSegment";
 const SINKS_JSON_KEY = "sinks";
 const SOURCES_JSON_KEY = "sources";
-const SEGMENT_ID_JSON_KEY = "segmentId";
-const ROOT_ID_JSON_KEY = "rootId";
-const POSITION_JSON_KEY = "position";
+
 const MERGE_JSON_KEY = "merge";
 const MERGES_JSON_KEY = "merges";
 const AUTOSUBMIT_JSON_KEY = "autosubmit";
-const SINK_JSON_KEY = "sink";
-const SOURCE_JSON_KEY = "source";
-const MERGED_ROOT_JSON_KEY = "mergedRoot";
 const LOCKED_JSON_KEY = "locked";
+const MERGED_ROOT_JSON_KEY = "mergedRoot";
+const ERROR_JSON_KEY = "error";
 
-class GrapheneState implements Trackable {
+const FIND_PATH_JSON_KEY = "findPath";
+const TARGET_JSON_KEY = "target";
+const CENTROIDS_JSON_KEY = "centroids";
+const PRECISION_MODE_JSON_KEY = "precision";
+
+class GrapheneState extends RefCounted implements Trackable {
   changed = new NullarySignal();
 
   public multicutState = new MulticutState();
   public mergeState = new MergeState();
+  public findPathState = new FindPathState();
 
   constructor() {
-    this.multicutState.changed.add(() => {
-      this.changed.dispatch();
-    });
-    this.mergeState.changed.add(() => {
-      this.changed.dispatch();
-    });
+    super();
+    this.registerDisposer(
+      this.multicutState.changed.add(() => {
+        this.changed.dispatch();
+      }),
+    );
+    this.registerDisposer(
+      this.mergeState.changed.add(() => {
+        this.changed.dispatch();
+      }),
+    );
+    this.registerDisposer(
+      this.findPathState.changed.add(() => {
+        this.changed.dispatch();
+      }),
+    );
+  }
+
+  replaceSegments(oldValues: Uint64Set, newValues: Uint64Set) {
+    this.multicutState.replaceSegments(oldValues, newValues);
+    this.mergeState.replaceSegments(oldValues, newValues);
+    this.findPathState.replaceSegments(oldValues, newValues);
   }
 
   reset() {
     this.multicutState.reset();
     this.mergeState.reset();
+    this.findPathState.reset();
   }
 
   toJSON() {
     return {
       [MULTICUT_JSON_KEY]: this.multicutState.toJSON(),
       [MERGE_JSON_KEY]: this.mergeState.toJSON(),
+      [FIND_PATH_JSON_KEY]: this.findPathState.toJSON(),
     };
   }
 
@@ -864,6 +907,9 @@ class GrapheneState implements Trackable {
     });
     verifyOptionalObjectProperty(x, MERGE_JSON_KEY, (value) => {
       this.mergeState.restoreState(value);
+    });
+    verifyOptionalObjectProperty(x, FIND_PATH_JSON_KEY, (value) => {
+      this.findPathState.restoreState(value);
     });
   }
 }
@@ -886,6 +932,31 @@ class MergeState extends RefCounted implements Trackable {
     this.registerDisposer(this.merges.changed.add(this.changed.dispatch));
   }
 
+  replaceSegments(oldValues: Uint64Set, newValues: Uint64Set) {
+    const {
+      merges: { value: merges },
+    } = this;
+    const newValue = newValues.size === 1 ? [...newValues][0] : undefined;
+    for (const merge of merges) {
+      if (merge.source && oldValues.has(merge.source.rootId)) {
+        if (newValue) {
+          merge.source.rootId = newValue;
+        } else {
+          this.reset();
+          return;
+        }
+      }
+      if (merge.sink && oldValues.has(merge.sink.rootId)) {
+        if (newValue) {
+          merge.sink.rootId = newValue;
+        } else {
+          this.reset();
+          return;
+        }
+      }
+    }
+  }
+
   reset() {
     this.merges.value = [];
     this.autoSubmit.reset();
@@ -893,15 +964,6 @@ class MergeState extends RefCounted implements Trackable {
 
   toJSON() {
     const { merges, autoSubmit } = this;
-
-    const segmentSelectionToJSON = (x: SegmentSelection) => {
-      return {
-        [SEGMENT_ID_JSON_KEY]: x.segmentId.toJSON(),
-        [ROOT_ID_JSON_KEY]: x.rootId.toJSON(),
-        [POSITION_JSON_KEY]: [...x.position],
-      };
-    };
-
     const mergeToJSON = (x: MergeSubmission) => {
       const res: any = {
         [ID_JSON_KEY]: x.id,
@@ -909,17 +971,14 @@ class MergeState extends RefCounted implements Trackable {
         [SINK_JSON_KEY]: segmentSelectionToJSON(x.sink),
         [SOURCE_JSON_KEY]: segmentSelectionToJSON(x.source!),
       };
-
       if (x.mergedRoot) {
         res[MERGED_ROOT_JSON_KEY] = x.mergedRoot.toJSON();
       }
       if (x.error) {
         res[ERROR_JSON_KEY] = x.error;
       }
-
       return res;
     };
-
     return {
       [MERGES_JSON_KEY]: merges.value.filter((x) => x.source).map(mergeToJSON),
       [AUTOSUBMIT_JSON_KEY]: autoSubmit.toJSON(),
@@ -965,6 +1024,147 @@ class MergeState extends RefCounted implements Trackable {
   }
 }
 
+class FindPathState extends RefCounted implements Trackable {
+  changed = new NullarySignal();
+  triggerPathUpdate = new NullarySignal();
+
+  source = new TrackableValue<SegmentSelection | undefined>(
+    undefined,
+    (x) => x,
+  );
+  target = new TrackableValue<SegmentSelection | undefined>(
+    undefined,
+    (x) => x,
+  );
+  centroids = new TrackableValue<number[][]>([], (x) => x);
+  precisionMode = new TrackableBoolean(true);
+
+  get path() {
+    const path: Line[] = [];
+    const {
+      source: { value: source },
+      target: { value: target },
+      centroids: { value: centroids },
+    } = this;
+    if (!source || !target || centroids.length === 0) {
+      return path;
+    }
+    for (let i = 0; i < centroids.length - 1; i++) {
+      const pointA = centroids[i];
+      const pointB = centroids[i + 1];
+      const line: Line = {
+        pointA: vec3.fromValues(pointA[0], pointA[1], pointA[2]),
+        pointB: vec3.fromValues(pointB[0], pointB[1], pointB[2]),
+        id: "",
+        type: AnnotationType.LINE,
+        properties: [],
+      };
+      path.push(line);
+    }
+    const firstLine: Line = {
+      pointA: source.position,
+      pointB: path[0].pointA,
+      id: "",
+      type: AnnotationType.LINE,
+      properties: [],
+    };
+    const lastLine: Line = {
+      pointA: path[path.length - 1].pointB,
+      pointB: target.position,
+      id: "",
+      type: AnnotationType.LINE,
+      properties: [],
+    };
+
+    return [firstLine, ...path, lastLine];
+  }
+
+  constructor() {
+    super();
+    this.registerDisposer(
+      this.source.changed.add(() => {
+        this.centroids.reset();
+        this.changed.dispatch();
+      }),
+    );
+    this.registerDisposer(
+      this.target.changed.add(() => {
+        this.centroids.reset();
+        this.changed.dispatch();
+      }),
+    );
+    this.registerDisposer(this.centroids.changed.add(this.changed.dispatch));
+  }
+
+  replaceSegments(oldValues: Uint64Set, newValues: Uint64Set) {
+    const {
+      source: { value: source },
+      target: { value: target },
+    } = this;
+    const newValue = newValues.size === 1 ? [...newValues][0] : undefined;
+    const sourceChanged = !!source && oldValues.has(source.rootId);
+    const targetChanged = !!target && oldValues.has(target.rootId);
+    if (newValue) {
+      if (sourceChanged) {
+        source.rootId = newValue;
+      }
+      if (targetChanged) {
+        target.rootId = newValue;
+      }
+      // don't want to fire off multiple changed
+      if (sourceChanged || targetChanged) {
+        if (this.centroids.value.length) {
+          this.centroids.reset();
+          this.triggerPathUpdate.dispatch();
+        } else {
+          this.changed.dispatch();
+        }
+      }
+    } else {
+      if (sourceChanged || targetChanged) {
+        this.reset();
+      }
+    }
+  }
+
+  reset() {
+    this.source.reset();
+    this.target.reset();
+    this.centroids.reset();
+    this.precisionMode.reset();
+  }
+
+  toJSON() {
+    const {
+      source: { value: source },
+      target: { value: target },
+      centroids,
+      precisionMode,
+    } = this;
+    return {
+      [SOURCE_JSON_KEY]: source ? segmentSelectionToJSON(source) : undefined,
+      [TARGET_JSON_KEY]: target ? segmentSelectionToJSON(target) : undefined,
+      [CENTROIDS_JSON_KEY]: centroids.toJSON(),
+      [PRECISION_MODE_JSON_KEY]: precisionMode.toJSON(),
+    };
+  }
+
+  restoreState(x: any) {
+    verifyOptionalObjectProperty(x, SOURCE_JSON_KEY, (value) => {
+      this.source.restoreState(restoreSegmentSelection(value));
+    });
+    verifyOptionalObjectProperty(x, TARGET_JSON_KEY, (value) => {
+      this.target.restoreState(restoreSegmentSelection(value));
+    });
+    verifyOptionalObjectProperty(x, CENTROIDS_JSON_KEY, (value) => {
+      this.centroids.restoreState(value);
+    });
+    verifyOptionalObjectProperty(x, PRECISION_MODE_JSON_KEY, (value) => {
+      this.precisionMode.restoreState(value);
+    });
+  }
+}
+
 class MulticutState extends RefCounted implements Trackable {
   changed = new NullarySignal();
 
@@ -995,8 +1195,30 @@ class MulticutState extends RefCounted implements Trackable {
     this.registerDisposer(this.sources.changed.add(this.changed.dispatch));
   }
 
+  replaceSegments(oldValues: Uint64Set, newValues: Uint64Set) {
+    const newValue = newValues.size === 1 ? [...newValues][0] : undefined;
+    const {
+      focusSegment: { value: focusSegment },
+    } = this;
+
+    if (focusSegment && oldValues.has(focusSegment)) {
+      if (newValue) {
+        this.focusSegment.value = newValue;
+        for (const sink of this.sinks) {
+          sink.rootId = newValue;
+        }
+        for (const source of this.sources) {
+          source.rootId = newValue;
+        }
+        this.changed.dispatch();
+      } else {
+        this.reset();
+      }
+    }
+  }
+
   reset() {
-    this.focusSegment.value = undefined;
+    this.focusSegment.reset();
     this.blueGroup.value = false;
     this.sinks.clear();
     this.sources.clear();
@@ -1004,15 +1226,6 @@ class MulticutState extends RefCounted implements Trackable {
 
   toJSON() {
     const { focusSegment, sinks, sources } = this;
-
-    const segmentSelectionToJSON = (x: SegmentSelection) => {
-      return {
-        [SEGMENT_ID_JSON_KEY]: x.segmentId.toJSON(),
-        [ROOT_ID_JSON_KEY]: x.rootId.toJSON(),
-        [POSITION_JSON_KEY]: [...x.position],
-      };
-    };
-
     return {
       [FOCUS_SEGMENT_JSON_KEY]: focusSegment.toJSON(),
       [SINKS_JSON_KEY]: [...sinks].map(segmentSelectionToJSON),
@@ -1079,6 +1292,7 @@ class MulticutState extends RefCounted implements Trackable {
 class GraphConnection extends SegmentationGraphSourceConnection {
   public annotationLayerStates: AnnotationLayerState[] = [];
   public mergeAnnotationState: AnnotationLayerState;
+  public findPathAnnotationState: AnnotationLayerState;
 
   constructor(
     public graph: GrapheneGraphSource,
@@ -1088,27 +1302,31 @@ class GraphConnection extends SegmentationGraphSourceConnection {
   ) {
     super(graph, layer.displayState.segmentationGroupState.value);
     const segmentsState = layer.displayState.segmentationGroupState.value;
-    segmentsState.selectedSegments.changed.add(
-      (segmentIds: Uint64[] | Uint64 | null, add: boolean) => {
-        if (segmentIds !== null) {
-          segmentIds = Array<Uint64>().concat(segmentIds);
-        }
-        this.selectedSegmentsChanged(segmentIds, add);
-      },
+    this.registerDisposer(
+      segmentsState.selectedSegments.changed.add(
+        (segmentIds: Uint64[] | Uint64 | null, add: boolean) => {
+          if (segmentIds !== null) {
+            segmentIds = Array<Uint64>().concat(segmentIds);
+          }
+          this.selectedSegmentsChanged(segmentIds, add);
+        },
+      ),
     );
 
-    segmentsState.visibleSegments.changed.add(
-      (segmentIds: Uint64[] | Uint64 | null, add: boolean) => {
-        if (segmentIds !== null) {
-          segmentIds = Array<Uint64>().concat(segmentIds);
-        }
-        this.visibleSegmentsChanged(segmentIds, add);
-      },
+    this.registerDisposer(
+      segmentsState.visibleSegments.changed.add(
+        (segmentIds: Uint64[] | Uint64 | null, add: boolean) => {
+          if (segmentIds !== null) {
+            segmentIds = Array<Uint64>().concat(segmentIds);
+          }
+          this.visibleSegmentsChanged(segmentIds, add);
+        },
+      ),
     );
 
     const {
       annotationLayerStates,
-      state: { multicutState },
+      state: { multicutState, findPathState },
     } = this;
     const loadedSubsource = getGraphLoadedSubsource(layer)!;
     const redGroup = makeColoredAnnotationState(
@@ -1150,80 +1368,153 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       }
 
       // initialize source changes
-      mergeAnnotationState.source.childAdded.add((x) => {
-        const annotation = x as Line;
-        const relatedSegments = annotation.relatedSegments![0];
-        const visibles = relatedSegments.map((x) => visibleSegments.has(x));
-        if (visibles[0] === false) {
-          setTimeout(() => {
-            const { tool } = layer;
-            if (tool.value instanceof MergeSegmentsPlaceLineTool) {
-              tool.value.deactivate();
-            }
-          }, 0);
-          StatusMessage.showTemporaryMessage("Cannot merge a hidden segment.");
-        } else if (merges.value.length < MAX_MERGE_COUNT) {
-          merges.value = [...merges.value, lineToSubmission(annotation, true)];
-        } else {
-          setTimeout(() => {
-            const { tool } = layer;
-            if (tool.value instanceof MergeSegmentsPlaceLineTool) {
-              tool.value.deactivate();
-            }
-          }, 0);
-          StatusMessage.showTemporaryMessage(
-            `Maximum of ${MAX_MERGE_COUNT} simultanous merges allowed.`,
-          );
-        }
-      });
-
-      mergeAnnotationState.source.childCommitted.add((x) => {
-        const ref = mergeAnnotationState.source.getReference(x);
-        const annotation = ref.value as Line | undefined;
-        if (annotation) {
+      this.registerDisposer(
+        mergeAnnotationState.source.childAdded.add((x) => {
+          const annotation = x as Line;
           const relatedSegments = annotation.relatedSegments![0];
           const visibles = relatedSegments.map((x) => visibleSegments.has(x));
-          if (relatedSegments.length < 4) {
-            mergeAnnotationState.source.delete(ref);
+          if (visibles[0] === false) {
+            setTimeout(() => {
+              const { tool } = layer;
+              if (tool.value instanceof MergeSegmentsPlaceLineTool) {
+                tool.value.deactivate();
+              }
+            }, 0);
             StatusMessage.showTemporaryMessage(
-              "Cannot merge segment with itself.",
+              `Cannot merge a hidden segment.`,
+            );
+          } else if (merges.value.length < MAX_MERGE_COUNT) {
+            merges.value = [
+              ...merges.value,
+              lineToSubmission(annotation, true),
+            ];
+          } else {
+            setTimeout(() => {
+              const { tool } = layer;
+              if (tool.value instanceof MergeSegmentsPlaceLineTool) {
+                tool.value.deactivate();
+              }
+            }, 0);
+            StatusMessage.showTemporaryMessage(
+              `Maximum of ${MAX_MERGE_COUNT} simultanous merges allowed.`,
             );
           }
-          if (visibles[2] === false) {
-            mergeAnnotationState.source.delete(ref);
-            StatusMessage.showTemporaryMessage(
-              "Cannot merge a hidden segment.",
+        }),
+      );
+
+      this.registerDisposer(
+        mergeAnnotationState.source.childCommitted.add((x) => {
+          const ref = mergeAnnotationState.source.getReference(x);
+          const annotation = ref.value as Line | undefined;
+          if (annotation) {
+            const relatedSegments = annotation.relatedSegments![0];
+            const visibles = relatedSegments.map((x) => visibleSegments.has(x));
+            if (relatedSegments.length < 4) {
+              mergeAnnotationState.source.delete(ref);
+              StatusMessage.showTemporaryMessage(
+                `Cannot merge segment with itself.`,
+              );
+            }
+            if (visibles[2] === false) {
+              mergeAnnotationState.source.delete(ref);
+              StatusMessage.showTemporaryMessage(
+                `Cannot merge a hidden segment.`,
+              );
+            }
+            const existingSubmission = merges.value.find(
+              (x) => x.id === ref.id,
             );
-          }
-          const existingSubmission = merges.value.find((x) => x.id === ref.id);
-          if (existingSubmission && !existingSubmission?.locked) {
-            //  how would it be locked?
-            const newSubmission = lineToSubmission(annotation, false);
-            existingSubmission.sink = newSubmission.sink;
-            existingSubmission.source = newSubmission.source;
-            merges.changed.dispatch();
-            if (autoSubmit.value) {
-              this.bulkMerge([existingSubmission]);
+            if (existingSubmission && !existingSubmission?.locked) {
+              //  how would it be locked?
+              const newSubmission = lineToSubmission(annotation, false);
+              existingSubmission.sink = newSubmission.sink;
+              existingSubmission.source = newSubmission.source;
+              merges.changed.dispatch();
+              if (autoSubmit.value) {
+                this.bulkMerge([existingSubmission]);
+              }
             }
           }
-        }
-        ref.dispose();
-      });
+          ref.dispose();
+        }),
+      );
 
-      mergeAnnotationState.source.childDeleted.add((id) => {
-        let changed = false;
-        const filtered = merges.value.filter((x) => {
-          const keep = x.id !== id || x.locked;
-          if (!keep) {
-            changed = true;
+      this.registerDisposer(
+        mergeAnnotationState.source.childDeleted.add((id) => {
+          let changed = false;
+          const filtered = merges.value.filter((x) => {
+            const keep = x.id !== id || x.locked;
+            if (!keep) {
+              changed = true;
+            }
+            return keep;
+          });
+          if (changed) {
+            merges.value = filtered;
           }
-          return keep;
-        });
-        if (changed) {
-          merges.value = filtered;
-        }
-      });
+        }),
+      );
     }
+
+    const findPathGroup = makeColoredAnnotationState(
+      layer,
+      loadedSubsource,
+      "findpath",
+      WHITE_COLOR,
+    );
+    this.findPathAnnotationState = findPathGroup;
+    findPathGroup.source.childDeleted.add((annotationId) => {
+      if (
+        findPathState.source.value?.annotationReference?.id === annotationId
+      ) {
+        findPathState.source.value = undefined;
+      }
+      if (
+        findPathState.target.value?.annotationReference?.id === annotationId
+      ) {
+        findPathState.target.value = undefined;
+      }
+    });
+    const findPathChanged = () => {
+      const { path, source, target } = findPathState;
+      const annotationSource = findPathGroup.source;
+      if (source.value && !source.value.annotationReference) {
+        addSelection(annotationSource, source.value, "find path source");
+      }
+      if (target.value && !target.value.annotationReference) {
+        addSelection(annotationSource, target.value, "find path target");
+      }
+      for (const annotation of annotationSource) {
+        if (
+          annotation.id !== source.value?.annotationReference?.id &&
+          annotation.id !== target.value?.annotationReference?.id
+        ) {
+          annotationSource.delete(annotationSource.getReference(annotation.id));
+        }
+      }
+      for (const line of path) {
+        // line.id = ''; // TODO, is it a bug that this is necessary? annotationMap is empty if I
+        // step through it but logging shows it isn't empty
+        annotationSource.add(line);
+      }
+    };
+    this.registerDisposer(findPathState.changed.add(findPathChanged));
+    this.registerDisposer(
+      findPathState.triggerPathUpdate.add(() => {
+        const loadedSubsource = getGraphLoadedSubsource(this.layer)!;
+        const annotationToNanometers =
+          loadedSubsource.loadedDataSource.transform.inputSpace.value.scales.map(
+            (x) => x / 1e-9,
+          );
+        this.submitFindPath(
+          findPathState.precisionMode.value,
+          annotationToNanometers,
+        ).then((success) => {
+          success;
+        });
+      }),
+    );
+    findPathChanged(); // initial state
   }
 
   createRenderLayers(
@@ -1346,7 +1637,7 @@ class GraphConnection extends SegmentationGraphSourceConnection {
         const graphSubsource = subsources.filter(
           (subsource) => subsource.id === "graph",
         )[0];
-        if (graphSubsource?.subsource.segmentationGraph) {
+        if (graphSubsource && graphSubsource.subsource.segmentationGraph) {
           if (graphSubsource.subsource.segmentationGraph !== this.graph) {
             continue;
           }
@@ -1385,27 +1676,35 @@ class GraphConnection extends SegmentationGraphSourceConnection {
         7000,
       );
       return false;
+    } else {
+      const splitRoots = await this.graph.graphServer.splitSegments(
+        [...sinks].map((x) => selectionInNanometers(x, annotationToNanometers)),
+        [...sources].map((x) =>
+          selectionInNanometers(x, annotationToNanometers),
+        ),
+      );
+      if (splitRoots.length === 0) {
+        StatusMessage.showTemporaryMessage(`No split found.`, 3000);
+        return false;
+      } else {
+        const focusSegment = multicutState.focusSegment.value!;
+        multicutState.reset(); // need to clear the focus segment before deleting the multicut segment
+        const { segmentsState } = this;
+        segmentsState.selectedSegments.delete(focusSegment);
+        for (const segment of [...sinks, ...sources]) {
+          segmentsState.selectedSegments.delete(segment.rootId);
+        }
+        this.meshAddNewSegments(splitRoots);
+        segmentsState.selectedSegments.add(splitRoots);
+        segmentsState.visibleSegments.add(splitRoots);
+        const oldValues = new Uint64Set();
+        oldValues.add(focusSegment);
+        const newValues = new Uint64Set();
+        newValues.add(splitRoots);
+        this.state.replaceSegments(oldValues, newValues);
+        return true;
+      }
     }
-    const splitRoots = await this.graph.graphServer.splitSegments(
-      [...sinks],
-      [...sources],
-      annotationToNanometers,
-    );
-    if (splitRoots.length === 0) {
-      StatusMessage.showTemporaryMessage("No split found.", 3000);
-      return false;
-    }
-    const focusSegment = multicutState.focusSegment.value!;
-    multicutState.reset(); // need to clear the focus segment before deleting the multicut segment
-    const { segmentsState } = this;
-    segmentsState.selectedSegments.delete(focusSegment);
-    for (const segment of [...sinks, ...sources]) {
-      segmentsState.selectedSegments.delete(segment.rootId);
-    }
-    this.meshAddNewSegments(splitRoots);
-    segmentsState.selectedSegments.add(splitRoots);
-    segmentsState.visibleSegments.add(splitRoots);
-    return true;
   }
 
   deleteMergeSubmission = (submission: MergeSubmission) => {
@@ -1420,7 +1719,6 @@ class GraphConnection extends SegmentationGraphSourceConnection {
     submission: MergeSubmission,
     attempts = 1,
   ): Promise<Uint64> => {
-    this.graph;
     const loadedSubsource = getGraphLoadedSubsource(this.layer)!;
     const annotationToNanometers =
       loadedSubsource.loadedDataSource.transform.inputSpace.value.scales.map(
@@ -1429,11 +1727,17 @@ class GraphConnection extends SegmentationGraphSourceConnection {
     submission.error = undefined;
     for (let i = 1; i <= attempts; i++) {
       try {
-        return await this.graph.graphServer.mergeSegments(
-          submission.sink,
-          submission.source!,
-          annotationToNanometers,
+        const newRoot = await this.graph.graphServer.mergeSegments(
+          selectionInNanometers(submission.sink, annotationToNanometers),
+          selectionInNanometers(submission.source!, annotationToNanometers),
         );
+        const oldValues = new Uint64Set();
+        oldValues.add(submission.sink.rootId);
+        oldValues.add(submission.source!.rootId);
+        const newValues = new Uint64Set();
+        newValues.add(newRoot);
+        this.state.replaceSegments(oldValues, newValues);
+        return newRoot;
       } catch (err) {
         if (i === attempts) {
           submission.error = err.message || "unknown";
@@ -1456,20 +1760,6 @@ class GraphConnection extends SegmentationGraphSourceConnection {
           return;
         }
         const segmentsToRemove: Uint64[] = [];
-        const replaceSegment = (a: Uint64, b: Uint64) => {
-          segmentsToRemove.push(a);
-          for (const submission of submissions) {
-            if (
-              submission.source &&
-              Uint64.equal(submission.source.rootId, a)
-            ) {
-              submission.source.rootId = b;
-            }
-            if (Uint64.equal(submission.sink.rootId, a)) {
-              submission.sink.rootId = b;
-            }
-          }
-        };
         let completed = 0;
         let activeLoops = 0;
         const loop = (completedAt: number, pending: MergeSubmission[]) => {
@@ -1490,10 +1780,13 @@ class GraphConnection extends SegmentationGraphSourceConnection {
             submission.locked = true;
             submission.status = "trying...";
             merges.changed.dispatch();
+            const segments = [
+              submission.source!.rootId,
+              submission.sink.rootId,
+            ];
             this.submitMerge(submission, 3)
               .then((mergedRoot) => {
-                replaceSegment(submission.source!.rootId, mergedRoot);
-                replaceSegment(submission.sink.rootId, mergedRoot);
+                segmentsToRemove.push(...segments);
                 submission.status = "done";
                 submission.mergedRoot = mergedRoot;
                 merges.changed.dispatch();
@@ -1530,16 +1823,45 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       } else if (submission.mergedRoot) {
         segmentsToAdd.push(submission.mergedRoot);
       }
+      const latestRoots =
+        await this.graph.graphServer.filterLatestRoots(segmentsToAdd);
+      const segmentsState =
+        this.layer.displayState.segmentationGroupState.value;
+      const { visibleSegments, selectedSegments } = segmentsState;
+      selectedSegments.delete(segmentsToRemove);
+      this.meshAddNewSegments(latestRoots);
+      selectedSegments.add(latestRoots);
+      visibleSegments.add(latestRoots);
+      merges.changed.dispatch();
     }
-    const latestRoots =
-      await this.graph.graphServer.filterLatestRoots(segmentsToAdd);
     const segmentsState = this.layer.displayState.segmentationGroupState.value;
     const { visibleSegments, selectedSegments } = segmentsState;
     selectedSegments.delete(segmentsToRemove);
-    this.meshAddNewSegments(latestRoots);
+    const latestRoots =
+      await this.graph.graphServer.filterLatestRoots(segmentsToAdd);
     selectedSegments.add(latestRoots);
     visibleSegments.add(latestRoots);
     merges.changed.dispatch();
+  }
+
+  async submitFindPath(
+    precisionMode: boolean,
+    annotationToNanometers: Float64Array,
+  ): Promise<boolean> {
+    const {
+      state: { findPathState },
+    } = this;
+    const { source, target } = findPathState;
+    if (!source.value || !target.value) return false;
+    const centroids = await this.graph.findPath(
+      source.value,
+      target.value,
+      precisionMode,
+      annotationToNanometers,
+    );
+    StatusMessage.showTemporaryMessage("Path found!", 5000);
+    findPathState.centroids.value = centroids;
+    return true;
   }
 }
 
@@ -1547,7 +1869,7 @@ async function parseGrapheneError(e: HttpError) {
   if (e.response) {
     let msg: string;
     if (e.response.headers.get("content-type") === "application/json") {
-      msg = (await e.response.json()).message;
+      msg = (await e.response.json())["message"];
     } else {
       msg = await e.response.text();
     }
@@ -1564,7 +1886,7 @@ async function withErrorMessageHTTP(
   },
 ): Promise<Response> {
   let status: StatusMessage | undefined = undefined;
-  let dispose = () => {};
+  let dispose = () => { };
   if (options.initialMessage) {
     status = new StatusMessage(true);
     status.setText(options.initialMessage);
@@ -1577,19 +1899,29 @@ async function withErrorMessageHTTP(
   } catch (e) {
     if (e instanceof HttpError && e.response) {
       const { errorPrefix = "" } = options;
-      const msg = await parseGrapheneError(e);
-      if (msg) {
-        if (!status) {
-          status = new StatusMessage(true);
-        }
-        status.setErrorMessage(errorPrefix + msg);
-        status.setVisible(true);
-        throw new Error(`[${e.response.status}] ${errorPrefix}${msg}`);
+      const msg = (await parseGrapheneError(e)) || "unknown error";
+      if (!status) {
+        status = new StatusMessage(true);
       }
+      status.setErrorMessage(errorPrefix + msg);
+      status.setVisible(true);
+      throw new Error(`[${e.response.status}] ${errorPrefix}${msg}`);
     }
     throw e;
   }
 }
+
+const selectionInNanometers = (
+  selection: SegmentSelection,
+  annotationToNanometers: Float64Array,
+): SegmentSelection => {
+  const { rootId, segmentId, position } = selection;
+  return {
+    rootId,
+    segmentId,
+    position: position.map((val, i) => val * annotationToNanometers[i]),
+  };
+};
 
 export const GRAPH_SERVER_NOT_SPECIFIED = Symbol("Graph Server Not Specified.");
 
@@ -1597,14 +1929,13 @@ class GrapheneGraphServerInterface {
   constructor(
     private url: string,
     private credentialsProvider: SpecialProtocolCredentialsProvider,
-  ) {}
+  ) { }
 
   async getRoot(segment: Uint64, timestamp = "") {
     const timestampEpoch = new Date(timestamp).valueOf() / 1000;
 
-    const url = `${this.url}/node/${String(segment)}/root?int64_as_str=1${
-      Number.isNaN(timestampEpoch) ? "" : `&timestamp=${timestampEpoch}`
-    }`;
+    const url = `${this.url}/node/${String(segment)}/root?int64_as_str=1${Number.isNaN(timestampEpoch) ? "" : `&timestamp=${timestampEpoch}`
+      }`;
 
     const promise = cancellableFetchSpecialOk(
       this.credentialsProvider,
@@ -1615,16 +1946,15 @@ class GrapheneGraphServerInterface {
 
     const response = await withErrorMessageHTTP(promise, {
       initialMessage: `Retrieving root for segment ${segment}`,
-      errorPrefix: "Could not fetch root: ",
+      errorPrefix: `Could not fetch root: `,
     });
     const jsonResp = await response.json();
-    return Uint64.parseString(jsonResp.root_id);
+    return Uint64.parseString(jsonResp["root_id"]);
   }
 
   async mergeSegments(
     first: SegmentSelection,
     second: SegmentSelection,
-    annotationToNanometers: Float64Array,
   ): Promise<Uint64> {
     const { url } = this;
     if (url === "") {
@@ -1637,14 +1967,8 @@ class GrapheneGraphServerInterface {
       {
         method: "POST",
         body: JSON.stringify([
-          [
-            String(first.segmentId),
-            ...first.position.map((val, i) => val * annotationToNanometers[i]),
-          ],
-          [
-            String(second.segmentId),
-            ...second.position.map((val, i) => val * annotationToNanometers[i]),
-          ],
+          [String(first.segmentId), ...first.position],
+          [String(second.segmentId), ...second.position],
         ]),
       },
       responseIdentity,
@@ -1653,7 +1977,7 @@ class GrapheneGraphServerInterface {
     try {
       const response = await promise;
       const jsonResp = await response.json();
-      return Uint64.parseString(jsonResp.new_root_ids[0]);
+      return Uint64.parseString(jsonResp["new_root_ids"][0]);
     } catch (e) {
       if (e instanceof HttpError) {
         const msg = await parseGrapheneError(e);
@@ -1666,7 +1990,6 @@ class GrapheneGraphServerInterface {
   async splitSegments(
     first: SegmentSelection[],
     second: SegmentSelection[],
-    annotationToNanometers: Float64Array,
   ): Promise<Uint64[]> {
     const { url } = this;
     if (url === "") {
@@ -1679,14 +2002,8 @@ class GrapheneGraphServerInterface {
       {
         method: "POST",
         body: JSON.stringify({
-          sources: first.map((x) => [
-            String(x.segmentId),
-            ...x.position.map((val, i) => val * annotationToNanometers[i]),
-          ]),
-          sinks: second.map((x) => [
-            String(x.segmentId),
-            ...x.position.map((val, i) => val * annotationToNanometers[i]),
-          ]),
+          sources: first.map((x) => [String(x.segmentId), ...x.position]),
+          sinks: second.map((x) => [String(x.segmentId), ...x.position]),
         }),
       },
       responseIdentity,
@@ -1697,9 +2014,9 @@ class GrapheneGraphServerInterface {
       errorPrefix: "Split failed: ",
     });
     const jsonResp = await response.json();
-    const final: Uint64[] = new Array(jsonResp.new_root_ids.length);
+    const final: Uint64[] = new Array(jsonResp["new_root_ids"].length);
     for (let i = 0; i < final.length; ++i) {
-      final[i] = Uint64.parseString(jsonResp.new_root_ids[i]);
+      final[i] = Uint64.parseString(jsonResp["new_root_ids"][i]);
     }
     return final;
   }
@@ -1712,35 +2029,87 @@ class GrapheneGraphServerInterface {
       url,
       {
         method: "POST",
-        body: JSON.stringify({
-          node_ids: segments.map((x) => x.toJSON()),
-        }),
+        body: JSON.stringify({ node_ids: segments.map((x) => x.toJSON()) }),
       },
       responseIdentity,
     );
 
     const response = await withErrorMessageHTTP(promise, {
-      errorPrefix: "Could not check latest: ",
+      errorPrefix: `Could not check latest: `,
     });
     const jsonResp = await response.json();
 
     const res: Uint64[] = [];
-    for (const [i, isLatest] of jsonResp.is_latest.entries()) {
+    for (const [i, isLatest] of jsonResp["is_latest"].entries()) {
       if (isLatest) {
         res.push(segments[i]);
       }
     }
     return res;
   }
+
+  async findPath(
+    first: SegmentSelection,
+    second: SegmentSelection,
+    precisionMode: boolean,
+  ) {
+    const { url } = this;
+    if (url === "") {
+      return Promise.reject(GRAPH_SERVER_NOT_SPECIFIED);
+    }
+    const promise = cancellableFetchSpecialOk(
+      this.credentialsProvider,
+      `${url}/graph/find_path?int64_as_str=1&precision_mode=${Number(
+        precisionMode,
+      )}`,
+      {
+        method: "POST",
+        body: JSON.stringify([
+          [String(first.rootId), ...first.position],
+          [String(second.rootId), ...second.position],
+        ]),
+      },
+      responseIdentity,
+    );
+
+    const response = await withErrorMessageHTTP(promise, {
+      initialMessage: `Finding path between ${first.segmentId} and ${second.segmentId}`,
+      errorPrefix: "Path finding failed: ",
+    });
+    const jsonResponse = await response.json();
+    const supervoxelCentroidsKey = "centroids_list";
+    const centroids = verifyObjectProperty(
+      jsonResponse,
+      supervoxelCentroidsKey,
+      (x) => parseArray(x, verifyFloatArray),
+    );
+    const missingL2IdsKey = "failed_l2_ids";
+    const missingL2Ids = jsonResponse[missingL2IdsKey];
+    if (missingL2Ids && missingL2Ids.length > 0) {
+      StatusMessage.showTemporaryMessage(
+        "Some level 2 meshes are missing, so the path shown may have a poor level of detail.",
+      );
+    }
+    const l2_path = verifyOptionalObjectProperty(
+      jsonResponse,
+      "l2_path",
+      verifyStringArray,
+    );
+    return {
+      centroids,
+      l2_path,
+    };
+  }
 }
 
 class GrapheneGraphSource extends SegmentationGraphSource {
   private connections = new Set<GraphConnection>();
   public graphServer: GrapheneGraphServerInterface;
+  private l2CacheAvailable: boolean | undefined = undefined;
 
   constructor(
     public info: GrapheneMultiscaleVolumeInfo,
-    credentialsProvider: SpecialProtocolCredentialsProvider,
+    private credentialsProvider: SpecialProtocolCredentialsProvider,
     private chunkSource: GrapheneMultiscaleVolumeChunkSource,
     public state: GrapheneState,
   ) {
@@ -1776,8 +2145,79 @@ class GrapheneGraphSource extends SegmentationGraphSource {
     );
   }
 
+  async isL2CacheUrlAvailable() {
+    if (this.l2CacheAvailable !== undefined) {
+      return this.l2CacheAvailable;
+    }
+    try {
+      const { l2CacheUrl, table } = this.info.app;
+      const tableMapping = await cancellableFetchSpecialOk(
+        undefined,
+        `${l2CacheUrl}/table_mapping`,
+        {},
+        responseJson,
+      );
+      this.l2CacheAvailable = !!(tableMapping && tableMapping[table]);
+      return this.l2CacheAvailable;
+    } catch (e) {
+      console.error("e", e);
+      return false;
+    }
+  }
+
   getRoot(segment: Uint64) {
     return this.graphServer.getRoot(segment);
+  }
+
+  async findPath(
+    first: SegmentSelection,
+    second: SegmentSelection,
+    precisionMode: boolean,
+    annotationToNanometers: Float64Array,
+  ): Promise<number[][]> {
+    const { l2CacheUrl, table } = this.info.app;
+    const l2CacheAvailable =
+      precisionMode && (await this.isL2CacheUrlAvailable()); // don't check if available if we don't need it
+    let { centroids, l2_path } = await this.graphServer.findPath(
+      selectionInNanometers(first, annotationToNanometers),
+      selectionInNanometers(second, annotationToNanometers),
+      precisionMode && !l2CacheAvailable,
+    );
+    if (precisionMode && l2CacheAvailable && l2_path) {
+      const repCoordinatesUrl = `${l2CacheUrl}/table/${table}/attributes`;
+      try {
+        const res = await cancellableFetchSpecialOk(
+          this.credentialsProvider,
+          repCoordinatesUrl,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              l2_ids: l2_path,
+            }),
+          },
+          responseJson,
+        );
+
+        // many reasons why an l2 id might not have info
+        // l2 cache has a process that takes time for new ids (even hours)
+        // maybe a small fraction have no info
+        // sometime l2 is so small (single voxel), it is ignored by l2
+        // best to just drop those points
+        centroids = l2_path
+          .map((id) => {
+            return verifyOptionalObjectProperty(res, id, (x) => {
+              return verifyIntegerArray(x["rep_coord_nm"]);
+            });
+          })
+          .filter((x): x is number[] => x !== undefined);
+      } catch (e) {
+        console.log("e", e);
+      }
+    }
+    const centroidsTransformed = centroids.map((point: number[]) => {
+      return point.map((val, i) => val / annotationToNanometers[i]);
+    });
+    return centroidsTransformed;
   }
 
   tabContents(
@@ -1801,6 +2241,13 @@ class GrapheneGraphSource extends SegmentationGraphSource {
         toolJson: GRAPHENE_MERGE_SEGMENTS_TOOL_ID,
         label: "Merge",
         title: "Merge segments",
+      }),
+    );
+    toolbox.appendChild(
+      makeToolButton(context, layer.toolBinder, {
+        toolJson: GRAPHENE_FIND_PATH_TOOL_ID,
+        label: "Find Path",
+        title: "Find Path",
       }),
     );
     parent.appendChild(toolbox);
@@ -1839,10 +2286,18 @@ class GrapheneGraphSource extends SegmentationGraphSource {
 
 class ChunkedGraphChunkSource
   extends SliceViewChunkSource
-  implements ChunkedGraphChunkSourceInterface
-{
+  implements ChunkedGraphChunkSourceInterface {
   spec: ChunkedGraphChunkSpecification;
   OPTIONS: { spec: ChunkedGraphChunkSpecification };
+
+  constructor(
+    chunkManager: ChunkManager,
+    options: {
+      spec: ChunkedGraphChunkSpecification;
+    },
+  ) {
+    super(chunkManager, options);
+  }
 }
 
 class GrapheneChunkedGraphChunkSource extends WithParameters(
@@ -1850,7 +2305,7 @@ class GrapheneChunkedGraphChunkSource extends WithParameters(
     ChunkedGraphChunkSource,
   ),
   ChunkedGraphSourceParameters,
-) {}
+) { }
 
 type ChunkedGraphLayerDisplayState = SegmentationDisplayState3D;
 
@@ -1897,7 +2352,7 @@ class SliceViewPanelChunkedGraphLayer extends SliceViewPanelRenderLayer {
     );
     const sharedObject =
       (this.sharedObject =
-      this.backend =
+        this.backend =
         this.registerDisposer(
           new SegmentationLayerSharedObject(
             chunkManager,
@@ -1992,6 +2447,7 @@ class SliceViewPanelChunkedGraphLayer extends SliceViewPanelRenderLayer {
 
 const GRAPHENE_MULTICUT_SEGMENTS_TOOL_ID = "grapheneMulticutSegments";
 const GRAPHENE_MERGE_SEGMENTS_TOOL_ID = "grapheneMergeSegments";
+const GRAPHENE_FIND_PATH_TOOL_ID = "grapheneFindPath";
 
 class MulticutAnnotationLayerView extends AnnotationLayerView {
   private _annotationStates: MergedAnnotationStates;
@@ -2022,51 +2478,50 @@ class MulticutAnnotationLayerView extends AnnotationLayerView {
   }
 }
 
+const addSelection = (
+  source: AnnotationSource | MultiscaleAnnotationSource,
+  selection: SegmentSelection,
+  description?: string,
+) => {
+  const annotation: Point = {
+    id: "",
+    point: selection.position,
+    type: AnnotationType.POINT,
+    properties: [],
+    relatedSegments: [[selection.segmentId, selection.rootId]],
+    description,
+  };
+  const ref = source.add(annotation);
+  selection.annotationReference = ref;
+};
+
 const synchronizeAnnotationSource = (
   source: WatchableSet<SegmentSelection>,
   state: AnnotationLayerState,
 ) => {
   const annotationSource = state.source;
-
   annotationSource.childDeleted.add((annotationId) => {
     const selection = [...source].find(
       (selection) => selection.annotationReference?.id === annotationId,
     );
     if (selection) source.delete(selection);
   });
-
-  const addSelection = (selection: SegmentSelection) => {
-    const annotation: Point = {
-      id: "",
-      point: selection.position,
-      type: AnnotationType.POINT,
-      properties: [],
-      relatedSegments: [[selection.segmentId, selection.rootId]],
-    };
-    const ref = annotationSource.add(annotation);
-    selection.annotationReference = ref;
-  };
-
   source.changed.add((x, add) => {
     if (x === null) {
       for (const annotation of annotationSource) {
-        // using .clear does not remove annotations from the list
-        // (this.blueGroupAnnotationState.source as LocalAnnotationSource).clear();
         annotationSource.delete(annotationSource.getReference(annotation.id));
       }
       return;
     }
-
     if (add) {
-      addSelection(x);
+      addSelection(annotationSource, x);
     } else if (x.annotationReference) {
       annotationSource.delete(x.annotationReference);
     }
   });
-
   // load initial state
   for (const selection of source) {
-    addSelection(selection);
+    addSelection(annotationSource, selection);
   }
 };
 
@@ -2137,7 +2592,7 @@ class MulticutSegmentsTool extends LayerTool<SegmentationUserLayer> {
     const { body, header } =
       makeToolActivationStatusMessageWithHeader(activation);
     header.textContent = "Multicut segments";
-    body.classList.add("graphene-multicut-status");
+    body.classList.add("graphene-tool-status", "graphene-multicut");
     body.appendChild(
       makeIcon({
         text: "Swap",
@@ -2432,8 +2887,6 @@ function mergeToLine(submission: MergeSubmission): Line {
 
 const MAX_MERGE_COUNT = 10;
 
-// on error, copy (also clean up error message)
-
 const MERGE_SEGMENTS_INPUT_EVENT_MAP = EventActionMap.fromObject({
   "at:shift?+enter": { action: "submit" },
 });
@@ -2463,7 +2916,7 @@ class MergeSegmentsTool extends LayerTool<SegmentationUserLayer> {
     const { body, header } =
       makeToolActivationStatusMessageWithHeader(activation);
     header.textContent = "Merge segments";
-    body.classList.add("graphene-merge-segments-status");
+    body.classList.add("graphene-tool-status", "graphene-merge-segments");
     activation.bindInputEventMap(MERGE_SEGMENTS_INPUT_EVENT_MAP);
     const submitAction = async () => {
       if (merges.value.filter((x) => x.locked).length) return;
@@ -2578,6 +3031,143 @@ class MergeSegmentsTool extends LayerTool<SegmentationUserLayer> {
   }
 }
 
+const FIND_PATH_INPUT_EVENT_MAP = EventActionMap.fromObject({
+  "at:shift?+enter": { action: "submit" },
+  "at:shift?+control+mousedown0": { action: "add-point" },
+});
+
+class FindPathTool extends LayerTool<SegmentationUserLayer> {
+  activate(activation: ToolActivation<this>) {
+    const { layer } = this;
+    const {
+      graphConnection: { value: graphConnection },
+    } = layer;
+    if (!graphConnection || !(graphConnection instanceof GraphConnection))
+      return;
+    const {
+      state: { findPathState },
+      findPathAnnotationState,
+    } = graphConnection;
+    const { source, target, precisionMode } = findPathState;
+    // Ensure we use the same segmentationGroupState while activated.
+    const segmentationGroupState =
+      this.layer.displayState.segmentationGroupState.value;
+    const { body, header } =
+      makeToolActivationStatusMessageWithHeader(activation);
+    header.textContent = "Find Path";
+    body.classList.add("graphene-tool-status", "graphene-find-path");
+    const submitAction = () => {
+      findPathState.triggerPathUpdate.dispatch();
+    };
+    body.appendChild(
+      makeIcon({
+        text: "Submit",
+        title: "Submit Find Path",
+        onClick: () => {
+          submitAction();
+        },
+      }),
+    );
+    body.appendChild(
+      makeIcon({
+        text: "Clear",
+        title: "Clear Find Path",
+        onClick: () => {
+          findPathState.source.reset();
+          findPathState.target.reset();
+          findPathState.centroids.reset();
+        },
+      }),
+    );
+    const checkbox = activation.registerDisposer(
+      new TrackableBooleanCheckbox(precisionMode),
+    );
+    const label = document.createElement("label");
+    const labelText = document.createElement("span");
+    labelText.textContent = "Precision mode: ";
+    label.appendChild(labelText);
+    label.title =
+      "Precision mode returns a more accurate path, but takes longer.";
+    label.appendChild(checkbox.element);
+    body.appendChild(label);
+    const annotationElements = document.createElement("div");
+    annotationElements.classList.add("find-path-annotations");
+    body.appendChild(annotationElements);
+    const bindings = getDefaultAnnotationListBindings();
+    this.registerDisposer(new MouseEventBinder(annotationElements, bindings));
+    const updateAnnotationElements = () => {
+      removeChildren(annotationElements);
+      const maxColumnWidths = [0, 0, 0];
+      const globalDimensionIndices = [0, 1, 2];
+      const localDimensionIndices: number[] = [];
+      const template =
+        "[symbol] 2ch [dim] var(--neuroglancer-column-0-width) [dim] var(--neuroglancer-column-1-width) [dim] var(--neuroglancer-column-2-width) [delete] min-content";
+      const endpoints = [source, target];
+      const endpointAnnotations = endpoints
+        .map((x) => x.value?.annotationReference?.value)
+        .filter((x) => x) as Annotation[];
+      for (const annotation of endpointAnnotations) {
+        const [element, elementColumnWidths] = makeAnnotationListElement(
+          this.layer,
+          annotation,
+          findPathAnnotationState,
+          template,
+          globalDimensionIndices,
+          localDimensionIndices,
+        );
+        for (const [column, width] of elementColumnWidths.entries()) {
+          maxColumnWidths[column] = width;
+        }
+        annotationElements.appendChild(element);
+      }
+      for (const [column, width] of maxColumnWidths.entries()) {
+        annotationElements.style.setProperty(
+          `--neuroglancer-column-${column}-width`,
+          `${width + 2}ch`,
+        );
+      }
+    };
+    findPathState.changed.add(updateAnnotationElements);
+    updateAnnotationElements();
+    activation.bindInputEventMap(FIND_PATH_INPUT_EVENT_MAP);
+    activation.bindAction("submit", (event) => {
+      event.stopPropagation();
+      submitAction();
+    });
+    activation.bindAction("add-point", (event) => {
+      event.stopPropagation();
+      (async () => {
+        if (!source.value) {
+          // first selection
+          const selection = maybeGetSelection(
+            this,
+            segmentationGroupState.visibleSegments,
+          );
+          if (selection) {
+            source.value = selection;
+          }
+        } else if (!target.value) {
+          const selection = maybeGetSelection(
+            this,
+            segmentationGroupState.visibleSegments,
+          );
+          if (selection) {
+            target.value = selection;
+          }
+        }
+      })();
+    });
+  }
+
+  toJSON() {
+    return GRAPHENE_FIND_PATH_TOOL_ID;
+  }
+
+  get description() {
+    return "find path";
+  }
+}
+
 registerTool(
   SegmentationUserLayer,
   GRAPHENE_MULTICUT_SEGMENTS_TOOL_ID,
@@ -2593,6 +3183,10 @@ registerTool(
     return new MergeSegmentsTool(layer, true);
   },
 );
+
+registerTool(SegmentationUserLayer, GRAPHENE_FIND_PATH_TOOL_ID, (layer) => {
+  return new FindPathTool(layer, true);
+});
 
 const ANNOTATE_MERGE_LINE_TOOL_ID = "annotateMergeLine";
 
