@@ -820,6 +820,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
   protected rank_: number;
 
   get rank() {
+    this.clear
     return this.rank_;
   }
 
@@ -840,7 +841,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
   add(annotation: Annotation, commit: boolean = true): AnnotationReference {
     this.ensureUpdated();
     if (!annotation.id) {
-      annotation.id = makeAnnotationId();
+      annotation.id = makeAnnotationId(); // todo, shouldn't this be a loop that checks annotationmap
     } else if (this.annotationMap.has(annotation.id)) {
       throw new Error(`Annotation id already exists: ${JSON.stringify(annotation.id)}.`);
     }

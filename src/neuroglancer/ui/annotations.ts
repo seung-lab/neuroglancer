@@ -61,6 +61,63 @@ import {makeMoveToButton} from 'neuroglancer/widget/move_to_button';
 import {Tab} from 'neuroglancer/widget/tab_view';
 import {VirtualList, VirtualListSource} from 'neuroglancer/widget/virtual_list';
 
+// ths is what we want to expose
+  export const makeAnnotationListElementTest = (layer: UserLayer, annotation: Annotation, state: AnnotationLayerState) => {
+    let gridTemplate = '[symbol] 2ch';
+
+    const chunkTransform = state.chunkTransform.value as ChunkTransformParameters;
+    const element = document.createElement('div');
+    element.classList.add('neuroglancer-annotation-list-entry');
+    element.style.gridAutoFlow = 'column';
+    element.dataset.color = state.displayState.color.toString();
+    element.style.gridTemplateColumns = gridTemplate;
+    const icon = document.createElement('div');
+    icon.className = 'neuroglancer-annotation-icon';
+    icon.textContent = annotationTypeHandlers[annotation.type].icon;
+    element.appendChild(icon);
+
+    const globalDimensionIndices = [0,1,2];
+    const localDimensionIndices: number[] = [];
+
+    // let numRows = 0;
+    visitTransformedAnnotationGeometry(annotation, chunkTransform, (layerPosition, isVector) => {
+      isVector;
+      const position = document.createElement('div');
+      position.className = 'neuroglancer-annotation-position';
+      element.appendChild(position);
+      const addDims =
+          (viewDimensionIndices: readonly number[], layerDimensionIndices: readonly number[]) => {
+            for (const viewDim of viewDimensionIndices) {
+              const layerDim = layerDimensionIndices[viewDim];
+              if (layerDim !== -1) {
+                const coord = Math.floor(layerPosition[layerDim]);
+                const coordElement = document.createElement('div');
+                const text = coord.toString()
+                coordElement.textContent = text;
+                coordElement.classList.add('neuroglancer-annotation-coordinate');
+                position.appendChild(coordElement);
+              }
+            }
+          };
+      addDims(
+          globalDimensionIndices, chunkTransform.modelTransform.globalToRenderLayerDimensions);
+      addDims(
+          localDimensionIndices, chunkTransform.modelTransform.localToRenderLayerDimensions);
+
+      if (!isVector) {
+          const moveButton = makeMoveToButton({
+            title: 'Move to position',
+            onClick: () => {
+              setLayerPosition(layer, chunkTransform, layerPosition);
+            },
+          });
+          element.appendChild(moveButton);
+        }
+    });
+    return element;
+  };
+
+
 export class MergedAnnotationStates extends RefCounted implements
     WatchableValueInterface<readonly AnnotationLayerState[]> {
   changed = new NullarySignal();
@@ -650,6 +707,7 @@ export class AnnotationLayerView extends Tab {
     this.updateSelectionView();
   }
 
+  // ths is what we want to expose
   private makeAnnotationListElement(annotation: Annotation, state: AnnotationLayerState) {
     const chunkTransform = state.chunkTransform.value as ChunkTransformParameters;
     const element = document.createElement('div');

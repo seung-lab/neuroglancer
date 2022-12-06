@@ -16,7 +16,7 @@
 
 import './graphene.css';
 
-import {AnnotationReference, AnnotationType, LocalAnnotationSource, makeDataBoundsBoundingBoxAnnotationSet, Point} from 'neuroglancer/annotation';
+import {AnnotationReference, AnnotationSource, AnnotationType, Line, LocalAnnotationSource, makeDataBoundsBoundingBoxAnnotationSet, Point} from 'neuroglancer/annotation';
 import {ChunkManager, WithParameters} from 'neuroglancer/chunk_manager/frontend';
 import {makeIdentityTransform} from 'neuroglancer/coordinate_transform';
 import {WithCredentialsProvider} from 'neuroglancer/credentials_provider/chunk_source_frontend';
@@ -55,7 +55,7 @@ import { CredentialsManager } from 'neuroglancer/credentials_provider';
 import { makeToolActivationStatusMessageWithHeader, makeToolButton, registerLayerTool, Tool, ToolActivation } from 'neuroglancer/ui/tool';
 import { SegmentationUserLayer } from 'neuroglancer/segmentation_user_layer';
 import { DependentViewContext } from 'neuroglancer/widget/dependent_view_widget';
-import { AnnotationLayerView, MergedAnnotationStates } from 'neuroglancer/ui/annotations';
+import { AnnotationLayerView, makeAnnotationListElementTest, MergedAnnotationStates } from 'neuroglancer/ui/annotations';
 import { AnnotationDisplayState, AnnotationLayerState } from 'neuroglancer/annotation/annotation_layer_state';
 import { LoadedDataSubsource } from 'neuroglancer/layer_data_source';
 import { NullarySignal } from 'neuroglancer/util/signal';
@@ -64,6 +64,9 @@ import { makeIcon } from 'neuroglancer/widget/icon';
 import { EventActionMap } from 'neuroglancer/util/event_action_map';
 import { packColor } from 'neuroglancer/util/color';
 import { Uint64Set } from 'neuroglancer/uint64_set';
+import { TrackableBoolean, TrackableBooleanCheckbox } from 'src/neuroglancer/trackable_boolean';
+import { MultiscaleAnnotationSource } from 'src/neuroglancer/annotation/frontend_source';
+import { removeChildren } from 'src/neuroglancer/util/dom';
 
 function vec4FromVec3(vec: vec3, alpha = 0) {
   const res = vec4.clone([...vec]);
@@ -82,6 +85,7 @@ const RED_COLOR_SEGMENT_PACKED = new Uint64(packColor(RED_COLOR_SEGMENT));
 const BLUE_COLOR_SEGMENT_PACKED = new Uint64(packColor(BLUE_COLOR_SEGMENT));
 const TRANSPARENT_COLOR_PACKED = new Uint64(packColor(TRANSPARENT_COLOR));
 const MULTICUT_OFF_COLOR = vec4.fromValues(0, 0, 0, 0.5);
+const WHITE_COLOR = vec3.fromValues(1, 1, 1);
 
 class GrapheneMeshSource extends
 (WithParameters(WithCredentialsProvider<SpecialProtocolCredentials>()(MeshSource), MeshSourceParameters)) {
@@ -458,9 +462,10 @@ function getGraphLoadedSubsource(layer: SegmentationUserLayer) {
 
 function makeColoredAnnotationState(
     layer: SegmentationUserLayer, loadedSubsource: LoadedDataSubsource,
-    subsubsourceId: string, color: vec3) {
+    subsubsourceId: string, color: vec3, readonly=false) {
   const {subsourceEntry} = loadedSubsource;
   const source = new LocalAnnotationSource(loadedSubsource.loadedDataSource.transform, [], []);
+  source.readonly = readonly;
   
   const displayState = new AnnotationDisplayState();
   displayState.color.value.set(color);
@@ -490,17 +495,23 @@ function restoreSegmentSelection(obj: any): SegmentSelection {
     obj, POSITION_JSON_KEY, value => {
       return verify3dVec(value);
     });
-    return {
-      segmentId,
-      rootId,
-      position,
-    }
+  return {
+    segmentId,
+    rootId,
+    position,
+  }
 }
 
 const MULTICUT_JSON_KEY = "multicut";
 const FOCUS_SEGMENT_JSON_KEY = "focusSegment";
 const SINKS_JSON_KEY = "sinks";
 const SOURCES_JSON_KEY = "sources";
+
+const FIND_PATH_JSON_KEY = "findPath";
+const SOURCE_JSON_KEY = "source";
+const TARGET_JSON_KEY = "target";
+const CENTROIDS_JSON_KEY = "centroids";
+const PRECISION_MODE_JSON_KEY = "precision";
 
 const SEGMENT_ID_JSON_KEY = "segmentId";
 const ROOT_ID_JSON_KEY = "rootId";
@@ -510,26 +521,31 @@ class GrapheneState implements Trackable {
   changed = new NullarySignal();
 
   public multicutState = new MulticutState();
+  public findPathState = new FindPathState();
 
   constructor() {
-    this.multicutState.changed.add(() => {
-      this.changed.dispatch();
-    });
+    this.multicutState.changed.add(this.changed.dispatch);
+    this.findPathState.changed.add(this.changed.dispatch);
   }
 
   reset() {
     this.multicutState.reset();
+    this.findPathState.reset();
   }
 
   toJSON() {
     return {
       [MULTICUT_JSON_KEY]: this.multicutState.toJSON(),
+      [FIND_PATH_JSON_KEY]: this.findPathState.toJSON(),
     }
   }
 
   restoreState(x: any) {
     verifyOptionalObjectProperty(x, MULTICUT_JSON_KEY, value => {
       this.multicutState.restoreState(value);
+    });
+    verifyOptionalObjectProperty(x, FIND_PATH_JSON_KEY, value => {
+      this.findPathState.restoreState(value);
     });
   }
 }
@@ -539,6 +555,111 @@ export interface SegmentSelection {
   rootId: Uint64;
   position: Float32Array;
   annotationReference?: AnnotationReference;
+}
+
+const segmentSelectionToJSON = (x: SegmentSelection) => {
+  return {
+    [SEGMENT_ID_JSON_KEY]: x.segmentId.toJSON(),
+    [ROOT_ID_JSON_KEY]: x.rootId.toJSON(),
+    [POSITION_JSON_KEY]: [...x.position],
+  }
+}
+
+class FindPathState extends RefCounted implements Trackable {
+  changed = new NullarySignal();
+
+  source = new TrackableValue<SegmentSelection|undefined>(undefined, x => x);
+  target = new TrackableValue<SegmentSelection|undefined>(undefined, x => x);
+  centroids = new TrackableValue<number[][]>([], x => x);
+  precisionMode = new TrackableBoolean(true);
+
+  get path() {
+    const path: Line[] = [];
+    const {
+      source: {value: source},
+      target: {value: target},
+      centroids: {value: centroids}
+    } = this;
+    if (!source || !target || centroids.length === 0) {
+      return path;
+    }
+    for (let i = 0; i < centroids.length - 1; i++) {
+      const pointA = centroids[i];
+      const pointB = centroids[i+1];
+      const line: Line = {
+        pointA: vec3.fromValues(pointA[0], pointA[1], pointA[2]),
+        pointB: vec3.fromValues(pointB[0], pointB[1], pointB[2]),
+        id: '',
+        type: AnnotationType.LINE,
+        properties: [],
+      };
+      path.push(line);
+    }
+    const firstLine: Line = {
+      pointA: source.position,
+      pointB: path[0].pointA,
+      id: '',
+      type: AnnotationType.LINE,
+      properties: [],
+    };
+    const lastLine: Line = {
+      pointA: path[path.length - 1].pointB,
+      pointB: target.position,
+      id: '',
+      type: AnnotationType.LINE,
+      properties: [],
+    };
+
+    return [firstLine, ...path, lastLine];
+  }
+
+  constructor() {
+    super();
+    this.registerDisposer(this.source.changed.add(this.changed.dispatch));
+    this.registerDisposer(this.target.changed.add(this.changed.dispatch));
+    this.registerDisposer(this.centroids.changed.add(this.changed.dispatch));
+  }
+
+  reset() {
+    this.source.reset();
+    this.target.reset();
+    this.centroids.reset();
+    this.precisionMode.reset();
+  }
+
+  toJSON() {
+    const {
+      source: {value: source},
+      target: {value: target},
+      centroids,
+      precisionMode,
+    } = this;
+    return {
+      [SOURCE_JSON_KEY]: source ? segmentSelectionToJSON(source) : undefined,
+      [TARGET_JSON_KEY]: target ? segmentSelectionToJSON(target) : undefined,
+      [CENTROIDS_JSON_KEY]: centroids.toJSON(),
+      [PRECISION_MODE_JSON_KEY]: precisionMode.toJSON(), 
+    };
+  }
+
+  restoreState(x: any) {
+    verifyOptionalObjectProperty(
+        x, SOURCE_JSON_KEY, value => {
+          this.source.restoreState(restoreSegmentSelection(value));
+        });
+    verifyOptionalObjectProperty(
+        x, TARGET_JSON_KEY, value => {
+          this.target.restoreState(restoreSegmentSelection(value));
+        });
+    verifyOptionalObjectProperty(
+        x, CENTROIDS_JSON_KEY, value => {
+          this.centroids.restoreState(value);
+        });
+    verifyOptionalObjectProperty(
+        x, PRECISION_MODE_JSON_KEY, value => {
+          this.precisionMode.restoreState(value);
+        });
+  }
 }
 
 class MulticutState extends RefCounted implements Trackable {
@@ -568,7 +689,7 @@ class MulticutState extends RefCounted implements Trackable {
   }
 
   reset() {
-    this.focusSegment.value = undefined;
+    this.focusSegment.reset();
     this.blueGroup.value = false;
     this.sinks.clear();
     this.sources.clear();
@@ -576,15 +697,6 @@ class MulticutState extends RefCounted implements Trackable {
 
   toJSON() {
     const {focusSegment, sinks, sources} = this;
-
-    const segmentSelectionToJSON = (x: SegmentSelection) => {
-      return {
-        [SEGMENT_ID_JSON_KEY]: x.segmentId.toJSON(),
-        [ROOT_ID_JSON_KEY]: x.rootId.toJSON(),
-        [POSITION_JSON_KEY]: [...x.position],
-      }
-    }
-
     return {
       [FOCUS_SEGMENT_JSON_KEY]: focusSegment.toJSON(),
       [SINKS_JSON_KEY]: [...sinks].map(segmentSelectionToJSON),
@@ -640,6 +752,8 @@ class MulticutState extends RefCounted implements Trackable {
 class GraphConnection extends SegmentationGraphSourceConnection {
   public annotationLayerStates: AnnotationLayerState[] = [];
 
+  public findPathAnnotationState: AnnotationLayerState;
+
   constructor(
       public graph: GrapheneGraphSource,
       layer: SegmentationUserLayer,
@@ -661,13 +775,47 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       this.visibleSegmentsChanged(segmentIds, add);
     });
 
-    const {annotationLayerStates, state: {multicutState}} = this;
+    const {annotationLayerStates, state: {multicutState, findPathState}} = this;
     const loadedSubsource = getGraphLoadedSubsource(layer)!;
     const redGroup = makeColoredAnnotationState(layer, loadedSubsource, "sinks", RED_COLOR);
     const blueGroup = makeColoredAnnotationState(layer, loadedSubsource, "sources", BLUE_COLOR);
     synchronizeAnnotationSource(multicutState.sinks, redGroup);
-    synchronizeAnnotationSource(multicutState.sources, blueGroup)
+    synchronizeAnnotationSource(multicutState.sources, blueGroup);
     annotationLayerStates.push(redGroup, blueGroup);
+
+
+
+    // const findPathPointsGroup = makeColoredAnnotationState(layer, loadedSubsource, "findpath", WHITE_COLOR);
+    // synchronizeAnnotationSource(findPathState.points, findPathPointsGroup);
+    
+    const clearAnnotations = (source: AnnotationSource|MultiscaleAnnotationSource) => {
+      for (const annotation of source) {
+        source.delete(source.getReference(annotation.id));
+      }
+    };
+
+    const findPathGroup = makeColoredAnnotationState(layer, loadedSubsource, "findpath", WHITE_COLOR, false);
+
+    this.findPathAnnotationState = findPathGroup;
+
+    const findPathChanged = () => {
+      const {path, source, target} = findPathState;
+      const annotationSource = findPathGroup.source;
+      clearAnnotations(annotationSource);
+      if (source.value) {
+        addSelection(annotationSource, source.value, "find path source");
+      }
+      if (target.value) {
+        addSelection(annotationSource, target.value, "find path target");
+      }
+
+      for (const line of path) {
+        line.id = ''; // TODO, is it a bug that this is necessary? annotationMap is empty if I step through it but logging shows it isn't empty
+        annotationSource.add(line);
+      }
+    };
+    findPathState.changed.add(findPathChanged);
+    findPathChanged(); // initial state
   }
 
   createRenderLayers(
@@ -757,6 +905,39 @@ class GraphConnection extends SegmentationGraphSourceConnection {
     exclude;
     return undefined;
   }
+
+  async submitFindPath(precisionMode: boolean, annotationToNanometers: Float64Array): Promise<boolean> {
+    const {state: {findPathState}} = this;
+    const {source, target} = findPathState;
+    if (!source.value || !target.value) return false;
+    const centroids = await this.graph.graphServer.findPath(source.value, target.value, precisionMode, annotationToNanometers);
+    StatusMessage.showTemporaryMessage('Path found!', 5000);    
+    findPathState.centroids.value = centroids;
+    return true;
+  }
+
+  /*
+  setPath(path: Line[]) {
+    if (this.ready()) {
+      this.annotationSource.clear();
+      const firstLine: Line =
+          {pointA: this.source!.point, pointB: path[0].pointA, id: '', type: AnnotationType.LINE};
+      this.annotationSource.add(firstLine);
+      for (const line of path) {
+        this.annotationSource.add(line);
+      }
+      const lastLine: Line = {
+        pointA: path[path.length - 1].pointB,
+        pointB: this.target!.point,
+        id: '',
+        type: AnnotationType.LINE
+      };
+      this.annotationSource.add(lastLine);
+      this._hasPath = true;
+      this.changed.dispatch();
+    }
+  }
+  */
 
   async submitMulticut(annotationToNanometers: Float64Array): Promise<boolean> {
     const {state: {multicutState}} = this;
@@ -870,8 +1051,8 @@ class GrapheneGraphServerInterface {
       method: 'POST',
       body: JSON.stringify({
         'sources': first.map(x => [String(x.segmentId), ...x.position.map((val, i) => val * annotationToNanometers[i])]),
-        'sinks': second.map(x => [String(x.segmentId), ...x.position.map((val, i) => val * annotationToNanometers[i])])
-      })
+        'sinks': second.map(x => [String(x.segmentId), ...x.position.map((val, i) => val * annotationToNanometers[i])]),
+      }),
     }, responseIdentity);
 
     const response = await withErrorMessageHTTP(promise, {
@@ -884,6 +1065,43 @@ class GrapheneGraphServerInterface {
       final[i] = Uint64.parseString(jsonResp['new_root_ids'][i]);
     }
     return final;
+  }
+
+  async findPath(first: SegmentSelection, second: SegmentSelection, precisionMode: boolean, annotationToNanometers: Float64Array):
+      Promise<number[][]> {
+    const {url} = this;
+    if (url === '') {
+      return Promise.reject(GRAPH_SERVER_NOT_SPECIFIED);
+    }
+
+    const promise =
+        cancellableFetchSpecialOk(this.credentialsProvider, `${url}/graph/find_path?int64_as_str=1&precision_mode=${Number(precisionMode)}`, {
+          method: 'POST',
+          body: JSON.stringify([
+            [String(first.rootId), ...first.position.map((val, i) => val * annotationToNanometers[i])],
+            [String(second.rootId), ...second.position.map((val, i) => val * annotationToNanometers[i])],
+          ]),
+        }, responseIdentity);
+
+    const response = await withErrorMessageHTTP(promise, {
+      initialMessage: `Finding path between ${first.segmentId} and ${second.segmentId}`,
+      errorPrefix: 'Path finding failed: '
+    });
+    const jsonResponse = await response.json();
+    const supervoxelCentroidsKey = 'centroids_list';
+    const centroids = jsonResponse[supervoxelCentroidsKey];
+
+    const centroidsTransformed = centroids.map((point: number[]) => {
+      return point.map((val, i) => val / annotationToNanometers[i]);
+    });
+
+    const missingL2IdsKey = 'failed_l2_ids';
+    const missingL2Ids = jsonResponse[missingL2IdsKey];
+    if (missingL2Ids && missingL2Ids.length > 0) {
+      StatusMessage.showTemporaryMessage(
+          'Some level 2 meshes are missing, so the path shown may have a poor level of detail.');
+    }
+    return centroidsTransformed;
   }
 }
 
@@ -933,6 +1151,11 @@ class GrapheneGraphSource extends SegmentationGraphSource {
       toolJson: GRAPHENE_MERGE_SEGMENTS_TOOL_ID,
       label: 'Merge',
       title: 'Merge segments'
+    }));
+    toolbox.appendChild(makeToolButton(context, layer, {
+      toolJson: GRAPHENE_FIND_PATH_TOOL_ID,
+      label: 'Find Path',
+      title: 'Find Path'
     }));
     parent.appendChild(toolbox);
     parent.appendChild(
@@ -1074,6 +1297,7 @@ class SliceViewPanelChunkedGraphLayer extends SliceViewPanelRenderLayer {
 
 const GRAPHENE_MULTICUT_SEGMENTS_TOOL_ID = 'grapheneMulticutSegments';
 const GRAPHENE_MERGE_SEGMENTS_TOOL_ID = 'grapheneMergeSegments';
+const GRAPHENE_FIND_PATH_TOOL_ID = 'grapheneFindPath';
 
 class MulticutAnnotationLayerView extends AnnotationLayerView {
   private _annotationStates: MergedAnnotationStates;
@@ -1099,6 +1323,19 @@ class MulticutAnnotationLayerView extends AnnotationLayerView {
   }
 }
 
+const addSelection = (source: AnnotationSource|MultiscaleAnnotationSource, selection: SegmentSelection, description?: string) => {
+  const annotation: Point = {
+    id: '',
+    point: selection.position,
+    type: AnnotationType.POINT,
+    properties: [],
+    relatedSegments: [[selection.segmentId, selection.rootId]],
+    description,
+  };
+  const ref = source.add(annotation);
+  selection.annotationReference = ref;
+}
+
 const synchronizeAnnotationSource = (source: WatchableSet<SegmentSelection>, state: AnnotationLayerState) => {
   const annotationSource = state.source;
 
@@ -1107,30 +1344,16 @@ const synchronizeAnnotationSource = (source: WatchableSet<SegmentSelection>, sta
     if (selection) source.delete(selection); 
   });
 
-  const addSelection = (selection: SegmentSelection) => {
-    const annotation: Point = {
-      id: '',
-      point: selection.position,
-      type: AnnotationType.POINT,
-      properties: [],
-      relatedSegments: [[selection.segmentId, selection.rootId]],
-    };
-    const ref = annotationSource.add(annotation);
-    selection.annotationReference = ref;
-  }
-
   source.changed.add((x, add) => {
     if (x === null) {
       for (const annotation of annotationSource) {
-        // using .clear does not remove annotations from the list
-        // (this.blueGroupAnnotationState.source as LocalAnnotationSource).clear();
         annotationSource.delete(annotationSource.getReference(annotation.id));
       }
       return;
     }
 
     if (add) {
-      addSelection(x);
+      addSelection(annotationSource, x);
     } else if (x.annotationReference) {
       annotationSource.delete(x.annotationReference);
     }
@@ -1138,7 +1361,7 @@ const synchronizeAnnotationSource = (source: WatchableSet<SegmentSelection>, sta
 
   // load initial state
   for (const selection of source) {
-    addSelection(selection);
+    addSelection(annotationSource, selection);
   }
 }
 
@@ -1451,4 +1674,133 @@ registerLayerTool(SegmentationUserLayer, GRAPHENE_MULTICUT_SEGMENTS_TOOL_ID, lay
 
 registerLayerTool(SegmentationUserLayer, GRAPHENE_MERGE_SEGMENTS_TOOL_ID, layer => {
   return new MergeSegmentsTool(layer, true);
+});
+
+
+
+
+
+
+const FIND_PATH_INPUT_EVENT_MAP = EventActionMap.fromObject({
+  'at:shift?+control+mousedown0': {action: 'add-point'},
+});
+
+class FindPathTool extends Tool<SegmentationUserLayer> {
+  activate(activation: ToolActivation<this>) {
+    const {layer} = this;
+    const {graphConnection: {value: graphConnection}} = layer;
+    if (!graphConnection || !(graphConnection instanceof GraphConnection)) return;
+    const {state: {findPathState}, findPathAnnotationState} = graphConnection;
+    const {source, target, precisionMode} = findPathState;
+
+    // Ensure we use the same segmentationGroupState while activated.
+    const segmentationGroupState = this.layer.displayState.segmentationGroupState.value;
+
+    const {body, header} = makeToolActivationStatusMessageWithHeader(activation);
+    header.textContent = 'Find Path';
+    body.classList.add('graphene-find-path-status');
+
+    body.appendChild(makeIcon({
+      text: 'Clear',
+      title: 'Clear Find Path',
+      onClick: () => {
+        findPathState.source.reset();
+        findPathState.target.reset();
+        findPathState.centroids.reset();
+      }}));
+    body.appendChild(makeIcon({
+      text: 'Submit',
+      title: 'Submit Find Path',
+      onClick: () => {
+        const loadedSubsource = getGraphLoadedSubsource(this.layer)!;
+        const annotationToNanometers = loadedSubsource.loadedDataSource.transform.inputSpace.value.scales.map(x => x / 1e-9);
+        graphConnection.submitFindPath(precisionMode.value, annotationToNanometers).then(success => {
+          if (success) {
+            activation.cancel();
+          }
+        });
+      }}));
+
+    const checkbox = activation.registerDisposer(new TrackableBooleanCheckbox(precisionMode));
+
+    const label = document.createElement('label');
+    const labelText = document.createElement('span');
+    labelText.textContent = "Precision mode: ";
+    label.appendChild(labelText);
+    label.title = 'todo';
+    label.appendChild(checkbox.element);
+    body.appendChild(label);
+  
+    const points = document.createElement('div');
+    points.style.display = 'contents';
+    body.appendChild(points);
+
+    const cancelBtn = makeIcon({
+      text: 'Clear',
+      title: 'Clear selection',
+      onClick: () => {
+        while (points.firstChild) {
+          points.removeChild(points.firstChild);
+        }
+        body.removeChild(cancelBtn);
+      }});
+
+    const annotationElements = document.createElement('div');
+    annotationElements.classList.add('graphene-find-path-status-annotations')
+    body.appendChild(annotationElements);
+
+    const updateAnnotationElements = () => {
+      console.log('updateAnnotationElements');
+      removeChildren(annotationElements);
+      for (const annotation of findPathAnnotationState.source) {
+        if (['find path source', 'find path target'].includes(annotation.description || '')) {
+          console.log('found', annotation.description);
+          const annotationLabel = document.createElement('div');
+          annotationLabel.innerHTML = annotation.description!;
+          annotationElements.appendChild(annotationLabel);
+          annotationElements.appendChild(makeAnnotationListElementTest(this.layer, annotation, findPathAnnotationState));
+        }
+      }
+    };
+
+    findPathAnnotationState.source.changed.add(updateAnnotationElements);
+    updateAnnotationElements();
+
+    activation.bindInputEventMap(FIND_PATH_INPUT_EVENT_MAP);
+
+    activation.bindAction('add-point', event => {
+      event.stopPropagation();
+      (async () => {
+        console.log('add point!');
+        if (!source.value) { // first selection
+        console.log('case1');
+          const selection = maybeGetSelection(this, segmentationGroupState.visibleSegments);
+          if (selection) {
+            source.value = selection;
+          }
+        } else if (!target.value) {
+          console.log('case2');
+          const selection = maybeGetSelection(this, segmentationGroupState.visibleSegments);
+          if (selection) {
+            target.value = selection;
+          }
+        } else {
+          console.log('case3');
+        }
+      })()
+    });
+  }
+
+  toJSON() {
+    return GRAPHENE_FIND_PATH_TOOL_ID;
+  }
+
+  get description() {
+    return `find path`;
+  }
+}
+
+
+registerLayerTool(SegmentationUserLayer, GRAPHENE_FIND_PATH_TOOL_ID, layer => {
+  return new FindPathTool(layer, true);
 });
