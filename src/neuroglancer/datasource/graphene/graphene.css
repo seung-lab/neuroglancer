@@ -50,7 +50,10 @@
   gap: 10px;
 }
 
-.graphene-merge-segments-status .neuroglancer-icon, .graphene-multicut-status .neuroglancer-icon {
+.graphene-merge-segments-status .neuroglancer-icon,
+.graphene-multicut-status .neuroglancer-icon,
+.graphene-find-path-status .neuroglancer-icon
+ {
   height: 100%;
 }
 
@@ -71,4 +74,40 @@
 .graphene-merge-segments-point .neuroglancer-segment-list-entry-visible-checkbox,
 .graphene-merge-segments-point .neuroglancer-segment-list-entry-copy-container {
   display: none;
+}
+
+.graphene-find-path-status {
+  display: flex;
+  flex-direction: row;
+}
+
+.graphene-find-path-status-annotations {
+  display: grid;
+  margin: 0 10px;
+  grid-template-columns: min-content min-content;
+  column-gap: 10px;
+  white-space: nowrap;
+}
+
+.graphene-find-path-status-annotations:nth-child(2n-1) {
+  text-align: right;
+}
+
+.graphene-find-path-status-annotations .neuroglancer-annotation-position > .neuroglancer-annotation-coordinate:nth-child(2) {
+  margin-left: 10px;
+  margin-right: 10px;
+}
+
+.graphene-find-path-status > label {
+  display: flex;
+}
+
+.graphene-find-path-status > label > span {
+  display: flex;
+  align-content: center;
+  flex-wrap: wrap;
+}
+
+.graphene-find-path-status-annotations > .neuroglancer-annotation-list-entry {
+  background-color: black;
 }
