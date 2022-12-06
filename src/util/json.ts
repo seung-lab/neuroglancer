@@ -485,7 +485,7 @@ export function verifyMapKey<U>(obj: any, map: Map<string, U>) {
   if (result === undefined) {
     throw new Error(
       `Expected one of ${JSON.stringify(Array.from(map.keys()))}, ` +
-        `but received: ${JSON.stringify(obj)}.`,
+      `but received: ${JSON.stringify(obj)}.`,
     );
   }
   return result;
@@ -546,8 +546,7 @@ export function verifyObjectProperty<T>(
     return validator(value);
   } catch (parseError) {
     throw new Error(
-      `Error parsing ${JSON.stringify(propertyName)} property: ${
-        parseError.message
+      `Error parsing ${JSON.stringify(propertyName)} property: ${parseError.message
       }`,
     );
   }
@@ -588,8 +587,7 @@ export function verifyObjectAsMap<T>(
       map.set(key, validator(obj[key]));
     } catch (parseError) {
       throw new Error(
-        `Error parsing value associated with key ${JSON.stringify(key)}: ${
-          parseError.message
+        `Error parsing value associated with key ${JSON.stringify(key)}: ${parseError.message
         }`,
       );
     }
@@ -698,6 +696,16 @@ export function verifyIntegerArray(a: unknown) {
     if (!Number.isInteger(x)) {
       throw new Error(`Expected integer, received: ${JSON.stringify(x)}.`);
     }
+  }
+  return <number[]>a;
+}
+
+export function verifyFloatArray(a: unknown) {
+  if (!Array.isArray(a)) {
+    throw new Error(`Expected array, received: ${JSON.stringify(a)}.`);
+  }
+  for (let x of a) {
+    verifyFloat(x);
   }
   return <number[]>a;
 }
