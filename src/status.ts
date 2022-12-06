@@ -33,6 +33,7 @@ export class StatusMessage {
     if (statusContainer === null) {
       statusContainer = document.createElement("ul");
       statusContainer.id = "statusContainer";
+      statusContainer.tabIndex = -1;
       const el: HTMLElement | null = document.getElementById(
         "neuroglancer-container",
       );
