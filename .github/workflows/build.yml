@@ -251,6 +251,9 @@ jobs:
     # Check that there are no differences.
     - run: git diff --exit-code
   build-and-deploy:
+    permissions:
+      contents: 'read'
+      id-token: 'write'
     strategy:
         matrix:
           node-version:
