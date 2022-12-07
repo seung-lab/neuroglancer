@@ -285,10 +285,14 @@ jobs:
         token: ${{ secrets.GITHUB_TOKEN }}
         env: ${{ steps.get_branch.outputs.branch }}
         desc: Setting up staging deployment for ${{ steps.get_branch.outputs.branch }}
+    - id: 'auth'
+      uses: 'google-github-actions/auth@v1'
+      with:
+        workload_identity_provider: 'projects/483670036293/locations/global/workloadIdentityPools/neuroglancer-github/providers/github'
+        service_account: 'chris-apps-deploy@seung-lab.iam.gserviceaccount.com'
     - id: deploy
       uses: google-github-actions/deploy-appengine@main
       with:
-        credentials: ${{ secrets.SA_GOOGLE_APPS_DEPLOY }}
         version: ${{ steps.get_branch.outputs.branch }}
         deliverables: appengine/frontend/app.yaml
         promote: false
