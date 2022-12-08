@@ -13,9 +13,11 @@ import {StatusMessage} from 'neuroglancer/status';
 import {TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
 import {getPositionSummary, SelectedAnnotationState, UserLayerWithAnnotations} from 'neuroglancer/ui/annotations';
 import {HidingList} from 'neuroglancer/ui/hiding_list';
+import {br} from 'neuroglancer/util/br';
 import {Borrowed, Owned} from 'neuroglancer/util/disposable';
 import {mat4, transformVectorByMat4, vec3} from 'neuroglancer/util/geom';
 import {formatIntegerBounds, formatIntegerPoint} from 'neuroglancer/util/spatial_units';
+import {Uint64} from 'neuroglancer/util/uint64';
 import {ColorWidget} from 'neuroglancer/widget/color';
 import {MinimizableGroupWidget} from 'neuroglancer/widget/minimizable_group';
 import {RangeWidget} from 'neuroglancer/widget/range';
@@ -308,6 +310,8 @@ export class AnnotationLayerView extends Tab {
     const importCSVButton = document.createElement('button');
     const importCSVForm = document.createElement('form');
     const importCSVFileSelect = document.createElement('input');
+    const segmentCSVOverrideCheckbox = document.createElement('input');
+    const segmentCSVOverrideLabel = document.createElement('label');
     exportToCSVButton.id = 'exportToCSVButton';
     exportToCSVButton.textContent = 'Export to CSV';
     exportToCSVButton.addEventListener('click', () => {
@@ -323,12 +327,19 @@ export class AnnotationLayerView extends Tab {
     });
     importCSVForm.appendChild(importCSVFileSelect);
     importCSVFileSelect.addEventListener('change', () => {
-      this.importCSV(importCSVFileSelect.files);
+      this.importCSV(importCSVFileSelect.files, segmentCSVOverrideCheckbox.checked);
       importCSVForm.reset();
     });
     importCSVFileSelect.classList.add('neuroglancer-hidden-button');
+    segmentCSVOverrideLabel.textContent = 'Select segments on import (Experimental): ';
+    segmentCSVOverrideLabel.title =
+        'This requires that the segmentation source of the annotation layer when importing the CSV file is the same as the segmentation source when the file was exported. Imported IDs may be outdated.'
+    segmentCSVOverrideCheckbox.type = 'checkbox';
+
     const csvContainer = document.createElement('span');
-    csvContainer.append(exportToCSVButton, importCSVButton, importCSVForm);
+    csvContainer.append(
+        exportToCSVButton, importCSVButton, br(), segmentCSVOverrideLabel,
+        segmentCSVOverrideCheckbox, importCSVForm);
     this.groupAnnotations.appendFixedChild(csvContainer);
   }
 
@@ -1067,7 +1078,7 @@ export class AnnotationLayerView extends Tab {
       return vec3.fromValues(val[0], val[1], val[2]);
     }
 
-    private async importCSV(files: FileList|null) {
+    private async importCSV(files: FileList|null, segmentOverride: boolean = false) {
     const rawAnnotations = <Annotation[]>[];
     let successfulImport = 0;
 
@@ -1096,6 +1107,7 @@ export class AnnotationLayerView extends Tab {
         const parentId = annProps[6];
         const annotationID: string|undefined = annProps[8];
         const tags = annProps[3];
+        const segments = annProps[5];
         let raw = <Annotation>{id: makeAnnotationId(), description: annProps[4]};
 
         switch (type) {
@@ -1185,7 +1197,11 @@ export class AnnotationLayerView extends Tab {
           });
         }
         // Segments not supported
-
+        // getSelectedAssocatedSegment(this.annotationLayer)
+        // naively add segment directly from excel
+        if (segments && segmentOverride) {
+          raw.segments = segments.split(',').map((s: string) => Uint64.parseString(s));
+        }
         rawAnnotations.push(raw);
       }
       successfulImport++;
