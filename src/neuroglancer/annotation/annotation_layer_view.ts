@@ -1051,34 +1051,38 @@ export class AnnotationLayerView extends Tab {
   }
 
   // TODO: pull request to papa repo
-  private betterPapa = (inputFile: File|Blob): Promise<any> => {
-      return new Promise((resolve) => {
-        Papa.parse(inputFile, {
-          complete: (results: any) => {
-            resolve(results);
-          }
+  private betterPapa = (inputFile: File|Blob):
+      Promise<any> => {
+        return new Promise((resolve) => {
+          Papa.parse(inputFile, {
+            complete: (results: any) => {
+              resolve(results);
+            }
+          });
         });
-      });
-    }
+      }
 
-    private stringToVec3 = (input: string): vec3 => {
-      // format: (x, y, z)
-      let raw = input.split('');
-      raw.shift();
-      raw.pop();
-      let list = raw.join('');
-      let val = list.split(',').map(v => parseInt(v, 10));
-      return vec3.fromValues(val[0], val[1], val[2]);
-    }
+  private stringToVec3 = (input: string):
+      vec3 => {
+        // format: (x, y, z)
+        let list = input.replace(/[{()}[\]]/g, '');
+        let val = list.split(',').map(v => parseInt(v, 10));
+        return vec3.fromValues(val[0], val[1], val[2]);
+      }
 
-    private dimensionsToVec3 = (input: string): vec3 => {
-      // format: A × B × C
-      let raw = input.replace(/s/g, '');
-      let val = raw.split('×').map(v => parseInt(v, 10));
-      return vec3.fromValues(val[0], val[1], val[2]);
-    }
+  private dimensionsToVec3 = (input: string): vec3 => {
+    // format: A × B × C
+    let raw = input.replace(/s/g, '');
+    let val = raw.split('×').map(v => parseInt(v, 10));
+    return vec3.fromValues(val[0], val[1], val[2]);
+  }
+  private textToPoint = (point: string, transform: mat4, dimension?: boolean) => {
+    const parsedVec = dimension ? this.dimensionsToVec3(point) : this.stringToVec3(point);
+    const spatialPoint = this.voxelSize.spatialFromVoxel(tempVec3, parsedVec);
+    return vec3.transformMat4(vec3.create(), spatialPoint, transform);
+  }
 
-    private async importCSV(files: FileList|null, segmentOverride: boolean = false) {
+  private async importCSV(files: FileList|null, segmentOverride: boolean = false) {
     const rawAnnotations = <Annotation[]>[];
     let successfulImport = 0;
 
@@ -1092,18 +1096,14 @@ export class AnnotationLayerView extends Tab {
       if (!rawData.data.length) {
         continue;
       }
-      const annStrings = rawData.data;
+      const annStrings = <string[][]>rawData.data;
       const csvIdToRealAnnotationIdMap: {[key: string]: string} = {};
       const childStorage: {[key: string]: string[]} = {};
-      const textToPoint = (point: string, transform: mat4, dimension?: boolean) => {
-        const parsedVec = dimension ? this.dimensionsToVec3(point) : this.stringToVec3(point);
-        const spatialPoint = this.voxelSize.spatialFromVoxel(tempVec3, parsedVec);
-        return vec3.transformMat4(vec3.create(), spatialPoint, transform);
-      };
       let row = -1;
+
       for (const annProps of annStrings) {
         row++;
-        const type = annProps[7];
+        const type = annProps[7].toLowerCase();
         const parentId = annProps[6];
         const annotationID: string|undefined = annProps[8];
         const tags = annProps[3];
@@ -1111,43 +1111,44 @@ export class AnnotationLayerView extends Tab {
         let raw = <Annotation>{id: makeAnnotationId(), description: annProps[4]};
 
         switch (type) {
-          case 'AABB':
-          case 'Line':
+          case 'aabb':
+          case 'line':
             raw.type =
-                type === 'Line' ? AnnotationType.LINE : AnnotationType.AXIS_ALIGNED_BOUNDING_BOX;
-            (<Line>raw).pointA = textToPoint(annProps[0], this.annotationLayer.globalToObject);
-            (<Line>raw).pointB = textToPoint(annProps[1], this.annotationLayer.globalToObject);
+                type === 'line' ? AnnotationType.LINE : AnnotationType.AXIS_ALIGNED_BOUNDING_BOX;
+            (<Line>raw).pointA = this.textToPoint(annProps[0], this.annotationLayer.globalToObject);
+            (<Line>raw).pointB = this.textToPoint(annProps[1], this.annotationLayer.globalToObject);
             break;
-          case 'Point':
+          case 'point':
             raw.type = AnnotationType.POINT;
-            (<Point>raw).point = textToPoint(annProps[0], this.annotationLayer.globalToObject);
+            (<Point>raw).point = this.textToPoint(annProps[0], this.annotationLayer.globalToObject);
             break;
-          case 'Ellipsoid':
+          case 'ellipsoid':
             raw.type = AnnotationType.ELLIPSOID;
-            (<Ellipsoid>raw).center = textToPoint(annProps[0], this.annotationLayer.globalToObject);
+            (<Ellipsoid>raw).center =
+                this.textToPoint(annProps[0], this.annotationLayer.globalToObject);
             (<Ellipsoid>raw).radii =
-                textToPoint(annProps[2], this.annotationLayer.globalToObject, true);
+                this.textToPoint(annProps[2], this.annotationLayer.globalToObject, true);
             break;
-          case 'Line Strip':
-          case 'Line Strip*':
-          case 'Spoke':
-          case 'Spoke*':
-          case 'Collection':
-            if (type === 'Line Strip' || type === 'Line Strip*') {
+          case 'line Strip':
+          case 'line Strip*':
+          case 'spoke':
+          case 'spoke*':
+          case 'collection':
+            if (type === 'line Strip' || type === 'line Strip*') {
               raw.type = AnnotationType.LINE_STRIP;
               (<LineStrip>raw).connected = true;
-              (<LineStrip>raw).looped = type === 'Line Strip*';
-            } else if (type === 'Spoke' || type === 'Spoke*') {
+              (<LineStrip>raw).looped = type === 'line Strip*';
+            } else if (type === 'spoke' || type === 'spoke*') {
               raw.type = AnnotationType.SPOKE;
               (<Spoke>raw).connected = true;
-              (<Spoke>raw).wheeled = type === 'Spoke*';
+              (<Spoke>raw).wheeled = type === 'spoke*';
             } else {
               raw.type = AnnotationType.COLLECTION;
               (<Collection>raw).connected = false;
             }
             (<Collection>raw).childrenVisible = new TrackableBoolean(false, true);
             (<Collection>raw).source =
-                textToPoint(annProps[0], this.annotationLayer.globalToObject);
+                this.textToPoint(annProps[0], this.annotationLayer.globalToObject);
             (<Collection>raw).entry = (index: number) =>
                 (<LocalAnnotationSource>this.annotationLayer.source)
                     .get((<Collection>raw).entries[index]);
