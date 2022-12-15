@@ -1,4 +1,5 @@
 import {Overlay} from 'neuroglancer/overlay';
+import {br} from 'neuroglancer/util/br';
 import {Viewer} from 'neuroglancer/viewer';
 
 // TODO: css
@@ -19,7 +20,6 @@ interface ItemConfig {
   className?: string;
 }
 
-const br = () => document.createElement('br');
 const simpleItem =
     (value: string, config: ItemConfig = {
       type: 'checkbox'
