@@ -29,18 +29,22 @@ jobs:
     - name: Build client bundles
       run: node ./config/esbuild-cli.js --config=min --no-typecheck --define STATE_SERVERS=$(cat config/state_servers.json | tr -d " \t\n\r")
     - run: cp -r ./dist/min appengine/frontend/static/
-    - name: Extract branch name
-      id: get_branch
+    - name: Get branch name (merge)
+      if: github.event_name != 'pull_request'
       shell: bash
-      run: echo "##[set-output name=branch;]$(echo ${GITHUB_REF#refs/heads/} | tr / - | tr _ -)"
-    - run: echo ${{ steps.get_branch.outputs.branch }}
+      run: echo "BRANCH_NAME=$(echo ${GITHUB_REF#refs/heads/} | tr / -)" >> $GITHUB_ENV
+    - name: Get branch name (pull request)
+      if: github.event_name == 'pull_request'
+      shell: bash
+      run: echo "BRANCH_NAME=$(echo ${GITHUB_HEAD_REF} | tr / -)" >> $GITHUB_ENV
+    - run: echo ${{ env.BRANCH_NAME }}
     - name: start deployment
       uses: bobheadxi/deployments@v1
       id: deployment
       with:
         step: start
         token: ${{ secrets.GITHUB_TOKEN }}
-        env: ${{ steps.get_branch.outputs.branch }}
+        env: ${{ env.BRANCH_NAME }}
         desc: Setting up staging deployment for ${{ steps.get_branch.outputs.branch }}
     - id: 'auth'
       uses: 'google-github-actions/auth@v1'
