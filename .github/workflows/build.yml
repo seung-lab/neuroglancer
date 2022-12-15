@@ -1,47 +1,67 @@
-name: BuildAndDeploy
+name: Build
 
-on: [push]
+on: [push, pull_request]
 
 jobs:
   build-and-deploy:
-
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      deployments: 'write'
+    strategy:
+        matrix:
+          node-version:
+            - '16.x'
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v1
-    - uses: actions/setup-node@v1
+    - uses: actions/checkout@v2
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v1
       with:
-        node-version: '10.x'
-    - run: npm i
-    - run: npm run build
+        node-version: ${{ matrix.node-version }}
+    - uses: actions/cache@v3
+      with:
+        path: "**/node_modules"
+        key: ${{ runner.os }}-${{ matrix.node-version }}-node_modules-${{ hashFiles('**/package-lock.json') }}
+    - run: npm install
+    - name: Build
+      run: npm run build
     - run: cp -r ./dist/dev appengine/frontend/static/
-    - name: Extract branch name
-      id: get_branch
+    - name: Get branch name (merge)
+      if: github.event_name != 'pull_request'
       shell: bash
-      run: echo "##[set-output name=branch;]$(echo ${GITHUB_REF#refs/heads/} | tr / - | tr _ -)"
-    - run: echo ${{ steps.get_branch.outputs.branch }}
+      run: echo "BRANCH_NAME=$(echo ${GITHUB_REF#refs/heads/} | tr / - | tr _ -)" >> $GITHUB_ENV
+    - name: Get branch name (pull request)
+      if: github.event_name == 'pull_request'
+      shell: bash
+      run: echo "BRANCH_NAME=$(echo ${GITHUB_HEAD_REF} | tr / - | tr _ -)" >> $GITHUB_ENV
+    - run: echo ${{ env.BRANCH_NAME }}
     - name: start deployment
-      uses: bobheadxi/deployments@v0.5.2
+      uses: bobheadxi/deployments@v1
       id: deployment
       with:
         step: start
         token: ${{ secrets.GITHUB_TOKEN }}
-        env: ${{ steps.get_branch.outputs.branch }}
-        desc: Setting up staging deployment for ${{ steps.get_branch.outputs.branch }}
-    - name: deploy to gcloud dev branch
-      uses: actions-hub/gcloud@master
-      env:
-        PROJECT_ID: neuromancer-seung-import
-        APPLICATION_CREDENTIALS: ${{ secrets.SA_NEUROMANCER_GOOGLE_APPS_DEPLOY }}
+        env: ${{ env.BRANCH_NAME }}
+        desc: Setting up staging deployment for ${{ env.BRANCH_NAME }}
+    - id: 'auth'
+      uses: 'google-github-actions/auth@v1'
       with:
-        args: app deploy appengine/frontend/app.yaml --no-promote --version ${{ steps.get_branch.outputs.branch }}
+        workload_identity_provider: 'projects/483670036293/locations/global/workloadIdentityPools/neuroglancer-github/providers/github'
+        service_account: 'chris-apps-deploy@seung-lab.iam.gserviceaccount.com'
+    - id: deploy
+      uses: google-github-actions/deploy-appengine@main
+      with:
+        version: ${{ env.BRANCH_NAME }}
+        deliverables: appengine/frontend/app.yaml
+        promote: false
     - name: update deployment status
-      uses: bobheadxi/deployments@v0.5.2
+      uses: bobheadxi/deployments@v1
       if: always()
       with:
         step: finish
         token: ${{ secrets.GITHUB_TOKEN }}
         env: ${{ steps.deployment.outputs.env }}
-        env_url: https://${{ steps.get_branch.outputs.branch }}-dot-neuromancer-seung-import.appspot.com
+        env_url: ${{ steps.deploy.outputs.url }}
         status: ${{ job.status }}
         deployment_id: ${{ steps.deployment.outputs.deployment_id }}
