@@ -122,6 +122,12 @@ const DEFAULT_DATA_SOURCES = exports.DEFAULT_DATA_SOURCES = [
       'neuroglancer/async_computation/decode_gzip',
     ],
   },
+  {
+    source: 'neuroglancer/datasource/cave',
+    asyncComputation: [
+      'neuroglancer/async_computation/decode_gzip',
+    ],
+  },
 ];
 
 const DEFAULT_SUPPORTED_LAYERS = exports.DEFAULT_SUPPORTED_LAYERS = [

@@ -17,7 +17,7 @@
 import {WithParameters} from 'neuroglancer/chunk_manager/backend';
 import {WithSharedCredentialsProviderCounterpart} from 'neuroglancer/credentials_provider/shared_counterpart';
 import {assignMeshFragmentData, FragmentChunk, ManifestChunk, MeshSource} from 'neuroglancer/mesh/backend';
-import {getGrapheneFragmentKey, responseIdentity} from 'neuroglancer/datasource/graphene/base';
+import {CaveSourceParameters, getGrapheneFragmentKey, responseIdentity} from 'neuroglancer/datasource/graphene/base';
 import {CancellationToken} from 'neuroglancer/util/cancellation';
 import {isNotFoundError, responseArrayBuffer, responseJson} from 'neuroglancer/util/http_request';
 import {cancellableFetchSpecialOk, SpecialProtocolCredentials, SpecialProtocolCredentialsProvider} from 'neuroglancer/util/special_protocol_request';
@@ -44,6 +44,8 @@ import { SharedWatchableValue } from 'neuroglancer/shared_watchable_value';
 import { DisplayDimensionRenderInfo } from 'neuroglancer/navigation_state';
 import { forEachVisibleSegment } from 'neuroglancer/segmentation_display_state/base';
 import { computeChunkBounds } from 'neuroglancer/sliceview/volume/backend';
+// import { AnnotationPropertySerializer, annotationTypeHandlers } from 'src/neuroglancer/annotation';
+import { AnnotationMetadataChunk, AnnotationSource, AnnotationSubsetGeometryChunk } from 'src/neuroglancer/annotation/backend';
 
 function getVerifiedFragmentPromise(
     credentialsProvider: SpecialProtocolCredentialsProvider,
@@ -91,6 +93,54 @@ async function decodeDracoFragmentChunk(
   const rawMesh = await m.decodeDraco(new Uint8Array(response));
   assignMeshFragmentData(chunk, rawMesh);
 }
+
+// AnnotationSource), AnnotationSourceParameters
+
+
+
+@registerSharedObject() export class CaveAnnotationSource extends
+(WithParameters(WithSharedCredentialsProviderCounterpart<SpecialProtocolCredentials>()(AnnotationSource), CaveSourceParameters)) {
+  // private byIdMinishardIndexSource = getMinishardIndexDataSource(
+  //     this.chunkManager, this.credentialsProvider, this.parameters.byId);
+  // private relationshipIndexSource = this.parameters.relationships.map(
+  //     x => getMinishardIndexDataSource(this.chunkManager, this.credentialsProvider, x));
+  // annotationPropertySerializer = new AnnotationPropertySerializer(
+  //     this.parameters.rank,
+  //     annotationTypeHandlers[this.parameters.type].serializedBytes(this.parameters.rank),
+  //     this.parameters.properties);
+
+  async downloadSegmentFilteredGeometry(
+      chunk: AnnotationSubsetGeometryChunk, relationshipIndex: number,
+      cancellationToken: CancellationToken) {
+        chunk;
+        relationshipIndex;
+        cancellationToken;
+    // const {parameters} = this;
+    // const response = await fetchByUint64(
+    //     this.credentialsProvider, parameters.relationships[relationshipIndex].url, chunk,
+    //     this.relationshipIndexSource[relationshipIndex], chunk.objectId, cancellationToken);
+    // if (response !== undefined) {
+    //   chunk.data = parseAnnotations(response, this.parameters, this.annotationPropertySerializer);
+    // }
+  }
+
+  async downloadMetadata(chunk: AnnotationMetadataChunk, cancellationToken: CancellationToken) {
+    chunk;
+    cancellationToken;
+    // const {parameters} = this;
+    // const id = Uint64.parseString(chunk.key!);
+    // const response = await fetchByUint64(
+    //     this.credentialsProvider, parameters.byId.url, chunk, this.byIdMinishardIndexSource, id,
+    //     cancellationToken);
+    // if (response === undefined) {
+    //   chunk.annotation = null;
+    // } else {
+    //   chunk.annotation = parseSingleAnnotation(
+    //       response, this.parameters, this.annotationPropertySerializer, chunk.key!);
+    // }
+  }
+}
+
 
 @registerSharedObject() export class GrapheneMeshSource extends
 (WithParameters(WithSharedCredentialsProviderCounterpart<SpecialProtocolCredentials>()(MeshSource), MeshSourceParameters)) {
