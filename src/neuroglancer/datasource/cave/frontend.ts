@@ -115,8 +115,8 @@ interface PrecomputedAnnotationSourceOptions {
   credentialsProvider: SpecialProtocolCredentialsProvider;
 }
 
-class CaveAnnotationSpatialIndexSource extends
-(WithParameters(WithCredentialsProvider<SpecialProtocolCredentials>()(AnnotationGeometryChunkSource), AnnotationSpatialIndexSourceParameters)) {}
+// class CaveAnnotationSpatialIndexSource extends
+// (WithParameters(WithCredentialsProvider<SpecialProtocolCredentials>()(AnnotationGeometryChunkSource), AnnotationSpatialIndexSourceParameters)) {}
 
 
 export class CaveAnnotationSource extends MultiscaleAnnotationSourceBase {
