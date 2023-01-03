@@ -109,6 +109,7 @@ export class AnnotationSubsetGeometryChunk extends GeometryChunkMixin
 class AnnotationMetadataChunkSource extends ChunkSource {
   parent: Borrowed<AnnotationSource>|undefined = undefined;
   getChunk(id: string) {
+    console.log('AnnotationMetadataChunkSource getChunk');
     const {chunks} = this;
     let chunk = chunks.get(id);
     if (chunk === undefined) {
@@ -120,6 +121,7 @@ class AnnotationMetadataChunkSource extends ChunkSource {
   }
 
   download(chunk: AnnotationMetadataChunk, cancellationToken: CancellationToken) {
+    console.log('AnnotationMetadataChunkSource download');
     return this.parent!.downloadMetadata(chunk, cancellationToken);
   }
 }
@@ -129,6 +131,7 @@ export class AnnotationGeometryChunkSourceBackend extends
   parent: Borrowed<AnnotationSource>;
   constructor(rpc: RPC, options: any) {
     super(rpc, options);
+    console.log('constructed AnnotationGeometryChunkSourceBackend');
     this.parent = rpc.get(options.parent);
   }
 }

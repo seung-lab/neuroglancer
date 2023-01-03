@@ -272,6 +272,7 @@ interface PrecomputedAnnotationSourceOptions {
   credentialsProvider: SpecialProtocolCredentialsProvider;
 }
 
+// is this the meat?
 export class PrecomputedAnnotationSource extends MultiscaleAnnotationSourceBase {
   key: any;
   metadata: AnnotationMetadata;
@@ -602,7 +603,7 @@ async function getSkeletonsDataSource(
   };
 }
 
-function parseKeyAndShardingSpec(url: string, obj: any) {
+export function parseKeyAndShardingSpec(url: string, obj: any) {
   verifyObject(obj);
   return {
     url: resolvePath(url, verifyObjectProperty(obj, 'key', verifyString)),
@@ -704,7 +705,7 @@ async function getAnnotationDataSource(
       {
         id: 'default',
         default: true,
-        subsource: {
+        subsource: { // here
           annotation: options.chunkManager.getChunkSource(PrecomputedAnnotationSource, {
             credentialsProvider,
             metadata: info,

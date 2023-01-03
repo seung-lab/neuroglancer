@@ -119,6 +119,7 @@ export class AnnotationGeometryChunk extends SliceViewChunk {
   }
 }
 
+// TODO, some meat here
 @registerSharedObjectOwner(ANNOTATION_GEOMETRY_CHUNK_SOURCE_RPC_ID)
 export class AnnotationGeometryChunkSource extends
     SliceViewChunkSource<AnnotationGeometryChunkSpecification, AnnotationGeometryChunk> {
@@ -137,6 +138,7 @@ export class AnnotationGeometryChunkSource extends
     super(chunkManager, options);
     const parent = this.parent = options.parent;
     parent.spatiallyIndexedSources.add(this);
+    // todo, where is the spec coming from
     const {rank, chunkDataSize} = this.spec;
     const multiscaleToChunkTransform = this.multiscaleToChunkTransform =
         new Float32Array((rank + 1) ** 2);
@@ -166,6 +168,7 @@ export class AnnotationGeometryChunkSource extends
   }
 
   getChunk(x: any) {
+    console.log('getChunk', x);
     return new AnnotationGeometryChunk(this, x);
   }
 }
