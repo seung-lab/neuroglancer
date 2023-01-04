@@ -1,9 +1,7 @@
-import { AnnotationGeometryChunkSpecification } from "src/neuroglancer/annotation/base";
-import { AnnotationGeometryChunkSource, MultiscaleAnnotationSource } from "src/neuroglancer/annotation/frontend_source";
+import { MultiscaleAnnotationSource } from "src/neuroglancer/annotation/frontend_source";
 import { ChunkManager, WithParameters } from "src/neuroglancer/chunk_manager/frontend";
 import { CoordinateSpace, coordinateSpaceFromJson, makeCoordinateSpace, makeIdentityTransform, makeIdentityTransformedBoundingBox } from "src/neuroglancer/coordinate_transform";
 import { WithCredentialsProvider } from "src/neuroglancer/credentials_provider/chunk_source_frontend";
-import { SliceViewSingleResolutionSource } from "src/neuroglancer/sliceview/frontend";
 import { completeHttpPath } from "src/neuroglancer/util/http_path_completion";
 import { responseJson } from "src/neuroglancer/util/http_request";
 import { parseArray, parseFixedLengthArray, unparseQueryStringParameters, verifyEnumString, verifyFiniteFloat, verifyFinitePositiveFloat, verifyObject, verifyObjectProperty, verifyOptionalObjectProperty, verifyPositiveInt, verifyString } from "src/neuroglancer/util/json";
@@ -11,21 +9,13 @@ import { getObjectId } from "src/neuroglancer/util/object_id";
 import { cancellableFetchSpecialOk, parseSpecialUrl, SpecialProtocolCredentials, SpecialProtocolCredentialsProvider } from "src/neuroglancer/util/special_protocol_request";
 import { CompleteUrlOptions, ConvertLegacyUrlOptions, DataSource, DataSourceProvider, GetDataSourceOptions, NormalizeUrlOptions, RedirectError } from "..";
 import { parseKeyAndShardingSpec, parseProviderUrl } from "../precomputed/frontend";
-import { AnnotationSourceParameters, AnnotationSpatialIndexSourceParameters } from "./base";
-import * as matrix from 'neuroglancer/util/matrix';
-import { makeSliceViewChunkSpecification } from "src/neuroglancer/sliceview/base";
+import { AnnotationSourceParameters } from "./base";
 import { AnnotationType, parseAnnotationPropertySpecs } from "src/neuroglancer/annotation";
 
-interface AnnotationSpatialIndexLevelMetadata {
-  parameters: AnnotationSpatialIndexSourceParameters;
-  limit: number;
-  spec: AnnotationGeometryChunkSpecification;
-}
 
 class AnnotationMetadata {
   coordinateSpace: CoordinateSpace;
   parameters: AnnotationSourceParameters;
-  spatialIndices: AnnotationSpatialIndexLevelMetadata[];
   constructor(public url: string, metadata: any) {
     verifyObject(metadata);
     const baseCoordinateSpace =
@@ -62,48 +52,9 @@ class AnnotationMetadata {
                 return {...common, name};
               })),
       properties: verifyObjectProperty(metadata, 'properties', parseAnnotationPropertySpecs),
-      // byId: verifyObjectProperty(metadata, 'by_id', obj => parseKeyAndShardingSpec(url, obj)),
     };
-    this.spatialIndices = verifyObjectProperty(
-        metadata, 'spatial',
-        spatialObj => parseArray(spatialObj, levelObj => {
-          const common: AnnotationSpatialIndexSourceParameters =
-              parseKeyAndShardingSpec(url, levelObj);
-          const gridShape = verifyObjectProperty(
-              levelObj, 'grid_shape',
-              j => parseFixedLengthArray(new Float32Array(rank), j, verifyPositiveInt));
-          const chunkShape = verifyObjectProperty(
-              levelObj, 'chunk_size',
-              j => parseFixedLengthArray(new Float32Array(rank), j, verifyFinitePositiveFloat));
-          const limit = verifyObjectProperty(levelObj, 'limit', verifyPositiveInt);
-          const gridShapeInVoxels = new Float32Array(rank);
-          for (let i = 0; i < rank; ++i) {
-            gridShapeInVoxels[i] = gridShape[i] * chunkShape[i];
-          }
-          const chunkToMultiscaleTransform = matrix.createIdentity(Float32Array, rank + 1);
-          for (let i = 0; i < rank; ++i) {
-            chunkToMultiscaleTransform[(rank + 1) * rank + i] = lowerBounds[i];
-          }
-          const spec: AnnotationGeometryChunkSpecification = {
-            limit,
-            chunkToMultiscaleTransform,
-            ...makeSliceViewChunkSpecification({
-              rank,
-              chunkDataSize: chunkShape,
-              upperVoxelBound: gridShapeInVoxels,
-            })
-          };
-          spec.upperChunkBound = gridShape;
-          return {
-            parameters: common,
-            spec,
-            limit,
-          };
-        }));
-    this.spatialIndices.reverse();
   }
 }
-
 
 const MultiscaleAnnotationSourceBase = (WithParameters(
     WithCredentialsProvider<SpecialProtocolCredentials>()(MultiscaleAnnotationSource),
@@ -114,10 +65,6 @@ interface PrecomputedAnnotationSourceOptions {
   parameters: AnnotationSourceParameters;
   credentialsProvider: SpecialProtocolCredentialsProvider;
 }
-
-// class CaveAnnotationSpatialIndexSource extends
-// (WithParameters(WithCredentialsProvider<SpecialProtocolCredentials>()(AnnotationGeometryChunkSource), AnnotationSpatialIndexSourceParameters)) {}
-
 
 export class CaveAnnotationSource extends MultiscaleAnnotationSourceBase {
   key: any;
@@ -137,7 +84,8 @@ export class CaveAnnotationSource extends MultiscaleAnnotationSourceBase {
     this.credentialsProvider = options.credentialsProvider;
   }
 
-  getSources(): SliceViewSingleResolutionSource<AnnotationGeometryChunkSource>[][] {
+  // no spatial sources
+  getSources(_unused: any) {
     return [];
   }
 }
@@ -152,7 +100,7 @@ async function getAnnotationDataSource(
       {
         id: 'default',
         default: true,
-        subsource: { // here
+        subsource: {
           annotation: options.chunkManager.getChunkSource(CaveAnnotationSource, {
             credentialsProvider,
             metadata: info,
@@ -213,14 +161,14 @@ export class CaveDataSource extends DataSourceProvider {
             getJsonMetadata;
             metadata = {
   "@type" : "cave_annotations_v1",
-  "annotation_type" : "POINT",
+  "annotation_type" : "POINT", // NOT USED
   "dimensions" : {
       "x" : [ 4e-09, "m" ],
       "y" : [ 4e-09, "m" ],
       "z" : [ 40e-09, "m" ]
    },
-  "lower_bound" : [ 26285, 30208, 14826 ], // [26285, 30208, 14826]
-  "size" : [ 192768, 131328, 13056 ], // 192768, 131328, 13056
+  "lower_bound" : [ 26285, 30208, 14826 ], // maybe these are only used for the spatial index?
+  "size" : [ 192768, 131328, 13056 ],
   "spatial" : [],
   "properties" : [],
   "relationships": [{
