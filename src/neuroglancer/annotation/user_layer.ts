@@ -630,7 +630,6 @@ class RenderingOptionsTab extends Tab {
 
 registerLayerType(AnnotationUserLayer);
 registerLayerType(AnnotationUserLayer, 'pointAnnotation');
-// TODO, this matters
 registerLayerTypeDetector(subsource => {
   if (subsource.local === LocalDataSource.annotations) {
     return {layerConstructor: AnnotationUserLayer, priority: 100};

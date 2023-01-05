@@ -274,7 +274,6 @@ interface PrecomputedAnnotationSourceOptions {
   credentialsProvider: SpecialProtocolCredentialsProvider;
 }
 
-// is this the meat?
 export class PrecomputedAnnotationSource extends MultiscaleAnnotationSourceBase {
   key: any;
   metadata: AnnotationMetadata;
@@ -707,7 +706,7 @@ async function getAnnotationDataSource(
       {
         id: 'default',
         default: true,
-        subsource: { // here
+        subsource: {
           annotation: options.chunkManager.getChunkSource(PrecomputedAnnotationSource, {
             credentialsProvider,
             metadata: info,

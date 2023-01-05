@@ -4,11 +4,11 @@ import { CoordinateSpace, coordinateSpaceFromJson, makeCoordinateSpace, makeIden
 import { WithCredentialsProvider } from "src/neuroglancer/credentials_provider/chunk_source_frontend";
 import { completeHttpPath } from "src/neuroglancer/util/http_path_completion";
 import { responseJson } from "src/neuroglancer/util/http_request";
-import { parseArray, parseFixedLengthArray, unparseQueryStringParameters, verifyEnumString, verifyFiniteFloat, verifyFinitePositiveFloat, verifyObject, verifyObjectProperty, verifyOptionalObjectProperty, verifyPositiveInt, verifyString } from "src/neuroglancer/util/json";
+import { parseArray, parseFixedLengthArray, unparseQueryStringParameters, verifyEnumString, verifyFiniteFloat, verifyObject, verifyObjectProperty, verifyOptionalObjectProperty, verifyString } from "src/neuroglancer/util/json";
 import { getObjectId } from "src/neuroglancer/util/object_id";
 import { cancellableFetchSpecialOk, parseSpecialUrl, SpecialProtocolCredentials, SpecialProtocolCredentialsProvider } from "src/neuroglancer/util/special_protocol_request";
 import { CompleteUrlOptions, ConvertLegacyUrlOptions, DataSource, DataSourceProvider, GetDataSourceOptions, NormalizeUrlOptions, RedirectError } from "..";
-import { parseKeyAndShardingSpec, parseProviderUrl } from "../precomputed/frontend";
+import { parseProviderUrl } from "../precomputed/frontend";
 import { AnnotationSourceParameters } from "./base";
 import { AnnotationType, parseAnnotationPropertySpecs } from "src/neuroglancer/annotation";
 
@@ -39,6 +39,8 @@ class AnnotationMetadata {
       boundingBoxes: [makeIdentityTransformedBoundingBox({lowerBounds, upperBounds})],
     });
     this.parameters = {
+      url,
+      timestamp: '',
       type: verifyObjectProperty(
           metadata, 'annotation_type', typeObj => verifyEnumString(typeObj, AnnotationType)),
       rank,
@@ -47,9 +49,9 @@ class AnnotationMetadata {
           relsObj => parseArray(
               relsObj,
               relObj => {
-                const common = parseKeyAndShardingSpec(url, relObj);
+                // const common = parseKeyAndShardingSpec(url, relObj);
                 const name = verifyObjectProperty(relObj, 'id', verifyString);
-                return {...common, name};
+                return name;
               })),
       properties: verifyObjectProperty(metadata, 'properties', parseAnnotationPropertySpecs),
     };
@@ -75,7 +77,7 @@ export class CaveAnnotationSource extends MultiscaleAnnotationSourceBase {
     const {parameters} = options;
     super(chunkManager, {
       rank: parameters.rank,
-      relationships: parameters.relationships.map(x => x.name),
+      relationships: parameters.relationships,
       properties: parameters.properties,
       parameters,
     } as any);
@@ -90,10 +92,22 @@ export class CaveAnnotationSource extends MultiscaleAnnotationSourceBase {
   }
 }
 
+async function getLatestTimestamp(credentialsProvider: SpecialProtocolCredentialsProvider, url: string, metadata: any) {
+  console.log('metadata', metadata);
+  const versonsURL = `${url}/versions`;
+  const versions = await cancellableFetchSpecialOk(credentialsProvider, versonsURL, {}, responseJson);
+  const latestVersion = Math.max(...versions);
+  const versionMetadataURL = `${url}/version/${latestVersion}`;
+  const versionMetadata = await cancellableFetchSpecialOk(credentialsProvider, versionMetadataURL, {}, responseJson);
+  return versionMetadata.time_stamp;
+}
+
+
 async function getAnnotationDataSource(
     options: GetDataSourceOptions, credentialsProvider: SpecialProtocolCredentialsProvider,
     url: string, metadata: any): Promise<DataSource> {
   const info = new AnnotationMetadata(url, metadata);
+  const timestamp = await getLatestTimestamp(credentialsProvider, url, metadata);
   const dataSource: DataSource = {
     modelTransform: makeIdentityTransform(info.coordinateSpace),
     subsources: [
@@ -104,7 +118,7 @@ async function getAnnotationDataSource(
           annotation: options.chunkManager.getChunkSource(CaveAnnotationSource, {
             credentialsProvider,
             metadata: info,
-            parameters: info.parameters,
+            parameters: {...info.parameters, timestamp},
           }),
         }
       },
@@ -173,11 +187,11 @@ export class CaveDataSource extends DataSourceProvider {
   "properties" : [],
   "relationships": [{
          "id" : "pre_pt_root_id",
-         "key" : "pre_pt_root_id"
+         "name" : "Pre root id"
       },
       {
          "id" : "post_pt_root_id",
-         "key" : "post_pt_root_id"
+         "name" : "Post root id"
       }]
 };
 

@@ -785,7 +785,6 @@ export class PrecomputedAnnotationSourceBackend extends (WithParameters(WithShar
       annotationTypeHandlers[this.parameters.type].serializedBytes(this.parameters.rank),
       this.parameters.properties);
 
-  // using this?
   async downloadSegmentFilteredGeometry(
       chunk: AnnotationSubsetGeometryChunk, relationshipIndex: number,
       cancellationToken: CancellationToken) {
