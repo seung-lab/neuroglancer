@@ -42,31 +42,6 @@ export class ChunkedGraphSourceParameters {
   static RPC_ID = 'graphene/ChunkedGraphSource';
 }
 
-export class CaveAnnotationSourceParameters {
-  url: string;
-
-  static RPC_ID = 'cave/AnnotationSource';
-}
-
-export class CaveSourceParameters {
-  rank: number;
-  relationships: {url: string; name: string; sharding: ShardingParameters | undefined;}[];
-  properties: AnnotationPropertySpec[];
-  byId: {url: string; sharding: ShardingParameters | undefined;};
-  type: AnnotationType;
-  // static RPC_ID = 'precomputed/AnnotationSource';
-
-
-  caveUrl: string;
-  // manifestUrl: string;
-  // fragmentUrl: string;
-  // lod: number;
-  // sharding: Array<ShardingParameters>|undefined;
-  // nBitsForLayerId: number;
-
-  static RPC_ID = 'cave/AnnotationSource';
-}
-
 export class MeshSourceParameters {
   manifestUrl: string;
   fragmentUrl: string;
@@ -85,7 +60,6 @@ export class MultiscaleMeshMetadata {
 }
 
 import { Uint64 } from 'neuroglancer/util/uint64';
-import { AnnotationPropertySpec, AnnotationType } from 'src/neuroglancer/annotation';
 
 export const responseIdentity = async (x: any) => x;
 
