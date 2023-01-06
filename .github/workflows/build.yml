@@ -37,7 +37,7 @@ jobs:
       if: github.event_name == 'pull_request'
       shell: bash
       run: echo "BRANCH_NAME=$(echo ${GITHUB_HEAD_REF} | tr / -)" >> $GITHUB_ENV
-    - run: echo ${{ env.BRANCH_NAME }}
+    - run: echo "BRANCH_NAME_URL=$(echo ${{ env.BRANCH_NAME }} | tr / - | tr _ -)" >> $GITHUB_ENV
     - name: start deployment
       uses: bobheadxi/deployments@v1
       id: deployment
@@ -45,7 +45,7 @@ jobs:
         step: start
         token: ${{ secrets.GITHUB_TOKEN }}
         env: ${{ env.BRANCH_NAME }}
-        desc: Setting up staging deployment for ${{ steps.get_branch.outputs.branch }}
+        desc: Setting up staging deployment for ${{ env.BRANCH_NAME }}
     - id: 'auth'
       uses: 'google-github-actions/auth@v1'
       with:
@@ -54,7 +54,7 @@ jobs:
     - id: deploy
       uses: google-github-actions/deploy-appengine@main
       with:
-        version: ${{ steps.get_branch.outputs.branch }}
+        version: ${{ env.BRANCH_NAME_URL }}
         deliverables: appengine/frontend/app.yaml
         promote: false
     - name: update deployment status
