@@ -1,0 +1,14 @@
+{
+  "keym": {
+    "layer": "segmentation",
+    "tool": "grapheneMergeSegments"
+  },
+  "keyv": {
+    "layer": "segmentation",
+    "tool": "grapheneMulticutSegments"
+  },
+  "keys": {
+    "layer": "segmentation",
+    "tool": "saturation"
+  }
+}
