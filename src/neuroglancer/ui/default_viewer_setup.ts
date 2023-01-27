@@ -20,14 +20,53 @@ import {setDefaultInputEventBindings} from 'neuroglancer/ui/default_input_event_
 import {makeDefaultViewer} from 'neuroglancer/ui/default_viewer';
 import {bindTitle} from 'neuroglancer/ui/title';
 import {UrlHashBinding} from 'neuroglancer/ui/url_hash_binding';
+import { UserLayerConstructor } from '../layer';
+import { SegmentationUserLayer } from '../segmentation_user_layer';
+import { restoreTool } from './tool';
 
 declare var NEUROGLANCER_DEFAULT_STATE_FRAGMENT: string|undefined;
+
+type CustomBinding = {
+  layer: string, tool: string
+}
+
+type CustomBindings = {
+  [key: string]: CustomBinding
+};
+
+declare const CUSTOM_BINDINGS: CustomBindings|undefined;
+
+export const hasCustomBindings = typeof CUSTOM_BINDINGS !== 'undefined' && Object.keys(CUSTOM_BINDINGS).length > 0;
 
 /**
  * Sets up the default neuroglancer viewer.
  */
 export function setupDefaultViewer() {
   let viewer = (<any>window)['viewer'] = makeDefaultViewer();
+
+  const bindActionToTool = (action: string, toolType: string, layerType: UserLayerConstructor, toolKey: string) => {
+    viewer.bindAction(action, () => {
+      const layersOfType = viewer.layerManager.managedLayers.filter((managedLayer) => {
+        return managedLayer.layer instanceof layerType;
+      });
+      if (layersOfType.length > 0) {
+        const firstLayer = layersOfType[0];
+        const tool = restoreTool(firstLayer.layer!, toolType);
+        viewer.toolBinder.activate(toolKey, tool!);
+      }
+    });
+  }
+
+  if (hasCustomBindings) {
+    for (const [key, val] of Object.entries(CUSTOM_BINDINGS!)) {
+      viewer.inputEventBindings.global.set(key, `tool-${val.tool}`);
+      if (val.layer === "segmentation") {
+        const toolKey = key.charAt(key.length - 1).toUpperCase();
+        bindActionToTool(`tool-${val.tool}`, val.tool, SegmentationUserLayer, toolKey);
+      }
+    }
+  }
+
   setDefaultInputEventBindings(viewer.inputEventBindings);
 
   const hashBinding = viewer.registerDisposer(

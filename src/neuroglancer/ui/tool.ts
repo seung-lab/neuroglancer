@@ -271,16 +271,17 @@ export class ToolBinder extends RefCounted {
     this.changed.dispatch();
   }
 
-  activate(key: string): Borrowed<Tool>|undefined {
-    const tool = this.get(key);
+  activate(key: string, tool?: Tool<UserLayer>): Borrowed<Tool>|undefined {
+    tool = tool || this.get(key); 
     if (tool === undefined) {
       this.deactivate_();
       return;
     }
+    console.log('activate', tool);
     this.debounceDeactivate.cancel();
     this.debounceReactivate.cancel();
     const activeTool = this.activeTool_;
-    if (tool === activeTool?.tool) {
+    if (tool.toJSON() === activeTool?.tool.toJSON()) {
       if (tool.toggle) {
         this.deactivate_();
       }

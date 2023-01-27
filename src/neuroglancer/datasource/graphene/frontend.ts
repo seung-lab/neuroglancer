@@ -1141,7 +1141,7 @@ const getPoint = (layer: SegmentationUserLayer, mouseState: MouseSelectionState)
 
 const MULTICUT_SEGMENTS_INPUT_EVENT_MAP = EventActionMap.fromObject({
   'at:shift?+control+mousedown0': {action: 'set-anchor'},
-  'at:shift?+keys': {action: 'swap-group'},
+  'at:shift?+keyg': {action: 'swap-group'},
 });
 
 class MulticutSegmentsTool extends Tool<SegmentationUserLayer> {
