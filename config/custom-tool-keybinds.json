@@ -10,5 +10,6 @@
   "keys": {
     "layer": "segmentation",
     "tool": "saturation"
-  }
+  },
+  "keyx": "dismiss-all-status-messages"
 }

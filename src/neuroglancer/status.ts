@@ -118,4 +118,12 @@ export class StatusMessage {
     window.setTimeout(() => msg.dispose(), closeAfter);
     return msg;
   }
+
+  static disposeAll() {
+    if (statusContainer !== null) {
+      while (statusContainer.firstChild) {
+        statusContainer.removeChild(statusContainer.firstChild);
+      }
+    }
+  }
 }

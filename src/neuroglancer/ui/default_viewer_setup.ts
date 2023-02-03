@@ -44,6 +44,8 @@ export const hasCustomBindings = typeof CUSTOM_BINDINGS !== 'undefined' && Objec
 export function setupDefaultViewer() {
   let viewer = (<any>window)['viewer'] = makeDefaultViewer();
 
+  setDefaultInputEventBindings(viewer.inputEventBindings);
+
   const bindActionToTool = (action: string, toolType: string, layerType: UserLayerConstructor, toolKey: string) => {
     viewer.bindAction(action, () => {
       const layersOfType = viewer.layerManager.managedLayers.filter((managedLayer) => {
@@ -59,15 +61,17 @@ export function setupDefaultViewer() {
 
   if (hasCustomBindings) {
     for (const [key, val] of Object.entries(CUSTOM_BINDINGS!)) {
-      viewer.inputEventBindings.global.set(key, `tool-${val.tool}`);
-      if (val.layer === "segmentation") {
-        const toolKey = key.charAt(key.length - 1).toUpperCase();
-        bindActionToTool(`tool-${val.tool}`, val.tool, SegmentationUserLayer, toolKey);
+      if (typeof val === 'string') {
+        viewer.inputEventBindings.global.set(key, val);
+      } else {
+        viewer.inputEventBindings.global.set(key, `tool-${val.tool}`);
+        if (val.layer === "segmentation") {
+          const toolKey = key.charAt(key.length - 1).toUpperCase();
+          bindActionToTool(`tool-${val.tool}`, val.tool, SegmentationUserLayer, toolKey);
+        }
       }
     }
   }
-
-  setDefaultInputEventBindings(viewer.inputEventBindings);
 
   const hashBinding = viewer.registerDisposer(
       new UrlHashBinding(viewer.state, viewer.dataSourceProvider.credentialsManager, {
@@ -89,6 +93,8 @@ export function setupDefaultViewer() {
 
   bindDefaultCopyHandler(viewer);
   bindDefaultPasteHandler(viewer);
+
+  viewer.bindAction('dismiss-all-status-messages', StatusMessage.disposeAll);
 
   return viewer;
 }
