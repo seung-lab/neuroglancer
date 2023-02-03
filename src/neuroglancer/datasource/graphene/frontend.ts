@@ -1035,13 +1035,15 @@ class SliceViewPanelChunkedGraphLayer extends SliceViewPanelRenderLayer {
   }
 
   private showOrHideMessage(leafRequestsActive: boolean) {
-    if (this.leafRequestsStatusMessage && leafRequestsActive) {
-      this.leafRequestsStatusMessage.dispose();
-      this.leafRequestsStatusMessage = undefined;
+    if (leafRequestsActive) {
+      this.leafRequestsStatusMessage?.dispose();
       StatusMessage.showTemporaryMessage('Loading chunked graph segmentation...', 3000);
     } else if ((!this.leafRequestsStatusMessage) && (!leafRequestsActive)) {
       this.leafRequestsStatusMessage = StatusMessage.showMessage(
           'At this zoom level, chunked graph segmentation will not be loaded. Please zoom in if you wish to load it.');
+      this.leafRequestsStatusMessage.registerDisposer(() => {
+        this.leafRequestsStatusMessage = undefined;
+      });
     }
   }
 }

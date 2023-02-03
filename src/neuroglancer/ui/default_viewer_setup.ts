@@ -49,10 +49,13 @@ export function setupDefaultViewer() {
   const bindActionToTool = (action: string, toolType: string, layerType: UserLayerConstructor, toolKey: string) => {
     viewer.bindAction(action, () => {
       const layersOfType = viewer.layerManager.managedLayers.filter((managedLayer) => {
+        console.log('managedLayer.layer', managedLayer.layer);
         return managedLayer.layer instanceof layerType;
       });
       if (layersOfType.length > 0) {
         const firstLayer = layersOfType[0];
+        console.log('firstLayer', firstLayer);
+        console.log('firstLayer.lauyer', firstLayer.layer);
         const tool = restoreTool(firstLayer.layer!, toolType);
         viewer.toolBinder.activate(toolKey, tool!);
       }

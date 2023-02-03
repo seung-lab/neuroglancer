@@ -15,17 +15,20 @@
  */
 
 import './status.css';
+import { RefCounted } from 'neuroglancer/util/disposable';
 
 let statusContainer: HTMLElement|null = null;
+let activeMessages: StatusMessage[] = [];
 
 export var DEFAULT_STATUS_DELAY = 200;
 
 export type Delay = boolean | number;
 
-export class StatusMessage {
+export class StatusMessage extends RefCounted {
   element: HTMLElement;
   private timer: number|null;
   constructor(delay: Delay = false) {
+    super();
     if (statusContainer === null) {
       statusContainer = document.createElement('ul');
       statusContainer.id = 'statusContainer';
@@ -48,8 +51,10 @@ export class StatusMessage {
       this.timer = null;
     }
     statusContainer.appendChild(element);
+    activeMessages.push(this);
   }
-  dispose() {
+  disposed() {
+    activeMessages = activeMessages.filter(msg => msg !== this);
     statusContainer!.removeChild(this.element);
     this.element = <any>undefined;
     if (this.timer !== null) {
@@ -120,10 +125,8 @@ export class StatusMessage {
   }
 
   static disposeAll() {
-    if (statusContainer !== null) {
-      while (statusContainer.firstChild) {
-        statusContainer.removeChild(statusContainer.firstChild);
-      }
+    for (const msg of activeMessages) {
+      msg.dispose();
     }
   }
 }

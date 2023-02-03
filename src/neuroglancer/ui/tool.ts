@@ -515,6 +515,9 @@ export function makeToolButton(
 
 export function makeToolActivationStatusMessage(activation: ToolActivation) {
   const message = activation.registerDisposer(new StatusMessage(false));
+  message.registerDisposer(() => {
+    activation.cancel();
+  });
   message.element.classList.add('neuroglancer-tool-status');
   const content = document.createElement('div');
   content.classList.add('neuroglancer-tool-status-content');
