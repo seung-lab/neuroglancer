@@ -18,11 +18,14 @@
   --neuroglancer-segment-list-width: auto;
 }
 
-.neuroglancer-segment-list {
+.neuroglancer-segment-list, .neuroglancer-segment-query-result-statistics {
   position: relative;
   overflow-y: auto;
   overflow-x: auto;
-  flex: 1;
+  /* flex: 1; */
+  flex-grow: 0;
+  flex-shrink: 1;
+  flex-basis: content;
 }
 
 .neuroglancer-segment-display-tab {
@@ -148,12 +151,12 @@
   grid-column: exclude;
 }
 
-.neuroglancer-segment-query-result-statistics {
+/* .neuroglancer-segment-query-result-statistics {
   background-color: #333;
   max-height: 40%;
   flex-shrink: 0;
   overflow: auto;
-}
+} */
 
 .neuroglancer-segment-query-result-statistics:not(:empty) {
   padding-top: 3px;
