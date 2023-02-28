@@ -16,8 +16,10 @@
 
 import './status.css';
 import { RefCounted } from 'neuroglancer/util/disposable';
+import {makeCloseButton} from 'neuroglancer/widget/close_button';
 
 let statusContainer: HTMLElement|null = null;
+let modalStatusContainer: HTMLElement|null = null;
 let activeMessages: StatusMessage[] = [];
 
 export var DEFAULT_STATUS_DELAY = 200;
@@ -26,8 +28,9 @@ export type Delay = boolean | number;
 
 export class StatusMessage extends RefCounted {
   element: HTMLElement;
+  modalElementWrapper: HTMLElement|undefined;
   private timer: number|null;
-  constructor(delay: Delay = false) {
+  constructor(delay: Delay = false, modal = false) {
     super();
     if (statusContainer === null) {
       statusContainer = document.createElement('ul');
@@ -37,6 +40,16 @@ export class StatusMessage extends RefCounted {
         el.appendChild(statusContainer);
       } else {
         document.body.appendChild(statusContainer);
+      }
+    }
+    if (modal && modalStatusContainer === null) {
+      modalStatusContainer = document.createElement('ul');
+      modalStatusContainer.id = 'statusContainerModal';
+      const el: HTMLElement | null = document.getElementById('neuroglancer-container');
+      if (el) {
+        el.appendChild(modalStatusContainer);
+      } else {
+        document.body.appendChild(modalStatusContainer);
       }
     }
     let element = document.createElement('li');
@@ -50,11 +63,37 @@ export class StatusMessage extends RefCounted {
     } else {
       this.timer = null;
     }
-    statusContainer.appendChild(element);
+    if (modal) {
+      const modalElementWrapper = document.createElement('div');
+      const dismissModalElement = makeCloseButton({
+        title: 'Dismiss',
+        onClick: () => {
+          this.dismissModal();
+        },
+      });
+      dismissModalElement.classList.add('dismiss-modal');
+      dismissModalElement.addEventListener('click', () => this.dismissModal());
+      modalElementWrapper.appendChild(dismissModalElement);
+      modalElementWrapper.appendChild(element);
+      this.modalElementWrapper = modalElementWrapper;
+      modalStatusContainer!.appendChild(modalElementWrapper);
+    } else {
+      statusContainer.appendChild(element);
+    }
     activeMessages.push(this);
+  }
+  dismissModal() {
+    if (this.modalElementWrapper) {
+      modalStatusContainer!.removeChild(this.modalElementWrapper);
+      this.modalElementWrapper = undefined;
+      statusContainer!.appendChild(this.element);
+    }
   }
   disposed() {
     activeMessages = activeMessages.filter(msg => msg !== this);
+    if (this.modalElementWrapper) {
+      modalStatusContainer!.removeChild(this.modalElementWrapper);
+    }
     statusContainer!.removeChild(this.element);
     this.element = <any>undefined;
     if (this.timer !== null) {
