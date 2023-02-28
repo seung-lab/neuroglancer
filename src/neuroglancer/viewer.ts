@@ -776,7 +776,7 @@ export class Viewer extends RefCounted implements ViewerState {
           inputEventMap, Number.POSITIVE_INFINITY));
   };
   
-  private toolBinder = this.registerDisposer(new ToolBinder(this.toolInputEventMapBinder));
+  public toolBinder = this.registerDisposer(new ToolBinder(this.toolInputEventMapBinder));
 
   activateTool(uppercase: string) {
     this.toolBinder.activate(uppercase);
