@@ -1035,13 +1035,15 @@ class SliceViewPanelChunkedGraphLayer extends SliceViewPanelRenderLayer {
   }
 
   private showOrHideMessage(leafRequestsActive: boolean) {
-    if (this.leafRequestsStatusMessage && leafRequestsActive) {
-      this.leafRequestsStatusMessage.dispose();
-      this.leafRequestsStatusMessage = undefined;
+    if (leafRequestsActive) {
+      this.leafRequestsStatusMessage?.dispose();
       StatusMessage.showTemporaryMessage('Loading chunked graph segmentation...', 3000);
     } else if ((!this.leafRequestsStatusMessage) && (!leafRequestsActive)) {
       this.leafRequestsStatusMessage = StatusMessage.showMessage(
           'At this zoom level, chunked graph segmentation will not be loaded. Please zoom in if you wish to load it.');
+      this.leafRequestsStatusMessage.registerDisposer(() => {
+        this.leafRequestsStatusMessage = undefined;
+      });
     }
   }
 }
@@ -1141,7 +1143,7 @@ const getPoint = (layer: SegmentationUserLayer, mouseState: MouseSelectionState)
 
 const MULTICUT_SEGMENTS_INPUT_EVENT_MAP = EventActionMap.fromObject({
   'at:shift?+control+mousedown0': {action: 'set-anchor'},
-  'at:shift?+keys': {action: 'swap-group'},
+  'at:shift?+keyg': {action: 'swap-group'},
 });
 
 class MulticutSegmentsTool extends Tool<SegmentationUserLayer> {

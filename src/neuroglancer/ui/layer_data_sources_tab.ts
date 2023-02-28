@@ -321,6 +321,7 @@ function changeLayerTypeToDetected(userLayer: UserLayer) {
     const layerConstructor = userLayer.detectedLayerConstructor;
     if (layerConstructor !== undefined) {
       changeLayerType(userLayer.managedLayer, layerConstructor);
+      userLayer.managedLayer.layer!.toolBinder.loadDefaultKeybinds();
       return true;
     }
   }

@@ -27,7 +27,7 @@ jobs:
     - name: Typecheck with TypeScript
       run: npm run typecheck
     - name: Build client bundles
-      run: node ./config/esbuild-cli.js --config=min --no-typecheck --define STATE_SERVERS=$(cat config/state_servers.json | tr -d " \t\n\r")
+      run: node ./config/esbuild-cli.js --config=min --no-typecheck --define STATE_SERVERS=$(cat config/state_servers.json | tr -d " \t\n\r") --define CUSTOM_BINDINGS=$(cat config/custom-tool-keybinds.json | tr -d " \t\n\r")
     - run: cp -r ./dist/min appengine/frontend/static/
     - name: Get branch name (merge)
       if: github.event_name != 'pull_request'

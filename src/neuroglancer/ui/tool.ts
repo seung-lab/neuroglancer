@@ -33,6 +33,17 @@ import {Signal} from 'neuroglancer/util/signal';
 
 const TOOL_KEY_PATTERN = /^[A-Z]$/;
 
+type DefaultKeybindsForLayerType = {
+  [key: string]: any
+};
+
+type DefaultKeybinds = {
+  [layerType: string]: DefaultKeybindsForLayerType
+};
+
+declare const DEFAULT_KEYBINDS: DefaultKeybinds|undefined;
+
+
 export type InputEventMapBinder = (eventActionMap: EventActionMap, context: RefCounted) => void;
 
 export class ToolActivation<ToolType extends Tool = Tool> extends RefCounted {
@@ -260,16 +271,17 @@ export class ToolBinder extends RefCounted {
     this.changed.dispatch();
   }
 
-  activate(key: string): Borrowed<Tool>|undefined {
-    const tool = this.get(key);
+  activate(key: string, tool?: Tool<UserLayer>): Borrowed<Tool>|undefined {
+    tool = tool || this.get(key); 
     if (tool === undefined) {
       this.deactivate_();
       return;
     }
+    console.log('activate', tool);
     this.debounceDeactivate.cancel();
     this.debounceReactivate.cancel();
     const activeTool = this.activeTool_;
-    if (tool === activeTool?.tool) {
+    if (tool.toJSON() === activeTool?.tool.toJSON()) {
       if (tool.toggle) {
         this.deactivate_();
       }
@@ -397,6 +409,20 @@ export class LayerToolBinder {
     this.clear();
   }
 
+  loadDefaultKeybinds() {
+    if (typeof DEFAULT_KEYBINDS !== 'undefined') {
+      const obj: DefaultKeybindsForLayerType = {};
+      const defaultKeybindsForLayer = DEFAULT_KEYBINDS[this.layer.type] || {};
+      for (const [key, value] of Object.entries(defaultKeybindsForLayer)) {
+        if (this.globalBinder.get(key)) {
+          continue;
+        }
+        obj[key] = value;
+      }
+      this.restoreState(obj);
+    }
+  }
+
   restoreState(obj: any) {
     if (obj === undefined) return;
     verifyObject(obj);
@@ -489,6 +515,9 @@ export function makeToolButton(
 
 export function makeToolActivationStatusMessage(activation: ToolActivation) {
   const message = activation.registerDisposer(new StatusMessage(false));
+  message.registerDisposer(() => {
+    activation.cancel();
+  });
   message.element.classList.add('neuroglancer-tool-status');
   const content = document.createElement('div');
   content.classList.add('neuroglancer-tool-status-content');
