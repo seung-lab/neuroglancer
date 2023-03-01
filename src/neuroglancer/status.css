@@ -32,6 +32,7 @@
 }
 
 #statusContainerModal {
+  pointer-events: none;
   position: absolute;
   z-index: 100;
   color: white;
@@ -48,6 +49,7 @@
 }
 
 #statusContainerModal > div {
+  pointer-events: initial;
   position: relative;
   background-color: #808080;
   padding: 20px;
