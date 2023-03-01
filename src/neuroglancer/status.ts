@@ -93,8 +93,9 @@ export class StatusMessage extends RefCounted {
     activeMessages = activeMessages.filter(msg => msg !== this);
     if (this.modalElementWrapper) {
       modalStatusContainer!.removeChild(this.modalElementWrapper);
+    } else {
+      statusContainer!.removeChild(this.element);
     }
-    statusContainer!.removeChild(this.element);
     this.element = <any>undefined;
     if (this.timer !== null) {
       clearTimeout(this.timer);
