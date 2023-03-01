@@ -45,6 +45,10 @@
   padding: 1px;
 }
 
+.neuroglancer-layer-item.active-tool {
+  background-color: rgb(255 165 0 / 75%);
+}
+
 .neuroglancer-layer-item, .neuroglancer-layer-add-button {
   margin: 1px;
   margin-left: 5px;
