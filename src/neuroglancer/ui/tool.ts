@@ -308,6 +308,7 @@ export class ToolBinder extends RefCounted {
         this.debounceReactivate();
       });
     }
+    this.changed.dispatch();
     tool.activate(activation);
     return tool;
   }
@@ -318,6 +319,7 @@ export class ToolBinder extends RefCounted {
       this.activeTool_ = activation;
       this.queuedTool.activate(activation);
       this.queuedTool = undefined;
+      this.changed.dispatch();
     }
   }
 
@@ -343,6 +345,7 @@ export class ToolBinder extends RefCounted {
     if (activation === undefined) return;
     this.activeTool_ = undefined;
     activation.dispose();
+    this.changed.dispatch();
   }
 }
 

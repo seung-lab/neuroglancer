@@ -147,6 +147,8 @@ class LayerWidget extends RefCounted {
     }
     title += `, drag to move, shift+drag to copy`;
     element.title = title;
+
+    element.classList.toggle('active-tool', layer.manager.root.toolBinder.activeTool_?.tool.layer === layer.layer);
   }
 
   disposed() {
@@ -245,6 +247,11 @@ export class LayerBar extends RefCounted {
     // Ensure layer widgets are updated before WebGL drawing starts; we don't want the layout to
     // change after WebGL drawing or we will get flicker.
     this.registerDisposer(display.updateStarted.add(() => this.updateLayers()));
+
+    this.registerDisposer(manager.root.toolBinder.changed.add(() => {
+      this.layerUpdateNeeded = true;
+      this.updateLayers();
+    }));
 
     this.registerDisposer(manager.chunkManager.layerChunkStatisticsUpdated.add(
         this.registerCancellable(animationFrameDebounce(() => this.updateChunkStatistics()))));
