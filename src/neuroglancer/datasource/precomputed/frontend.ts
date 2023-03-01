@@ -208,7 +208,7 @@ export class PrecomputedMultiscaleVolumeChunkSource extends MultiscaleVolumeChun
   getSources(volumeSourceOptions: VolumeSourceOptions) {
     const modelResolution = this.info.scales[0].resolution;
     const {rank} = this;
-    return transposeNestedArrays(this.info.scales.map(scaleInfo => {
+    return transposeNestedArrays(this.info.scales.filter(x => x.key !== "placeholder").map(scaleInfo => {
       const {resolution} = scaleInfo;
       const stride = rank + 1;
       const chunkToMultiscaleTransform = new Float32Array(stride * stride);
