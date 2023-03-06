@@ -112,6 +112,12 @@ export interface EventModifierKeyState {
   shiftKey: boolean;
 }
 
+export const mouseEventToDescription: {[key: string]: string} = {
+  'mousedown0': 'left-click',
+  'mousedown1': 'right-click',
+  'mousedown2': 'middle-click'
+};
+
 export function getEventModifierMask(event: EventModifierKeyState): ModifierMask {
   return (event.ctrlKey ? Modifiers.CONTROL : 0) | (event.altKey ? Modifiers.ALT : 0) |
       (event.metaKey ? Modifiers.META : 0) | (event.shiftKey ? Modifiers.SHIFT : 0);
@@ -349,13 +355,26 @@ export class EventActionMap extends
   }
 
   describe(): string {
+    const formatKeyName = (key: string) => {
+      const keys = key.split('+');
+      const removeOptional = keys.filter(x => !x.endsWith('?'));
+      const fixKeys = removeOptional.map(x => {
+        if (x.startsWith('key')) {
+          return `[${x.substring(3)}]`;
+        } else {
+          return mouseEventToDescription[x] || x;
+        }
+      });
+      return fixKeys.join('+');
+    }
+
     const bindings = [];
     const uniqueBindings = new Map<string, string>();
     for (const [, value] of this.entries()) {
       uniqueBindings.set(value.originalEventIdentifier!, value.action);
     }
     for (const [key, value] of uniqueBindings) {
-      bindings.push(`${key}→${value}`);
+      bindings.push(`${formatKeyName(key)}→${value}`);
     }
     return bindings.join(', ');
   }

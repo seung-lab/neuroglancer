@@ -22,7 +22,7 @@ import {DEFAULT_SIDE_PANEL_LOCATION, SidePanelLocation, TrackableSidePanelLocati
 import {ToolBinder} from 'neuroglancer/ui/tool';
 import {animationFrameDebounce} from 'neuroglancer/util/animation_frame_debounce';
 import {removeChildren} from 'neuroglancer/util/dom';
-import {EventActionMap} from 'neuroglancer/util/event_action_map';
+import {EventActionMap, mouseEventToDescription} from 'neuroglancer/util/event_action_map';
 import {emptyToUndefined} from 'neuroglancer/util/json';
 
 declare var NEUROGLANCER_BUILD_INFO: {tag: string, url?: string, timestamp?: string}|undefined;
@@ -37,12 +37,15 @@ export function formatKeyName(name: string) {
   if (name.startsWith('arrow')) {
     return name.substring(5);
   }
+  if (mouseEventToDescription[name]) {
+    return mouseEventToDescription[name];
+  }
   return name;
 }
 
 export function formatKeyStroke(stroke: string) {
   let parts = stroke.split('+');
-  return parts.map(formatKeyName).join('+');
+  return parts.filter(x => !x.endsWith('?')).map(formatKeyName).join('+');
 }
 
 const DEFAULT_HELP_PANEL_LOCATION: SidePanelLocation = {
