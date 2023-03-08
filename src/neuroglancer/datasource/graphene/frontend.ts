@@ -1315,7 +1315,7 @@ const maybeGetSelection = (tool: Tool<SegmentationUserLayer>, visibleSegments: U
 }
 
 const MERGE_SEGMENTS_INPUT_EVENT_MAP = EventActionMap.fromObject({
-  'at:shift?+mousedown0': {action: 'merge-segments'},
+  'at:shift?+control+mousedown0': {action: 'merge-segments'},
 });
 
 class MergeSegmentsTool extends Tool<SegmentationUserLayer> {
