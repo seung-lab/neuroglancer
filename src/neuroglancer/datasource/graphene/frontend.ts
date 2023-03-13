@@ -16,7 +16,7 @@
 
 import './graphene.css';
 
-import {AnnotationReference, AnnotationType, LocalAnnotationSource, makeDataBoundsBoundingBoxAnnotationSet, Point} from 'neuroglancer/annotation';
+import {AnnotationReference, AnnotationType, Line, LocalAnnotationSource, makeDataBoundsBoundingBoxAnnotationSet, Point} from 'neuroglancer/annotation';
 import {ChunkManager, WithParameters} from 'neuroglancer/chunk_manager/frontend';
 import {makeIdentityTransform} from 'neuroglancer/coordinate_transform';
 import {WithCredentialsProvider} from 'neuroglancer/credentials_provider/chunk_source_frontend';
@@ -44,7 +44,7 @@ import {FrontendTransformedSource, getVolumetricTransformedSources, serializeAll
 import {SliceViewPanelRenderLayer, SliceViewRenderLayer} from 'neuroglancer/sliceview/renderlayer';
 import { RefCounted } from 'neuroglancer/util/disposable';
 import { LayerChunkProgressInfo } from 'neuroglancer/chunk_manager/base';
-import { augmentSegmentId, makeSegmentWidget, resetTemporaryVisibleSegmentsState, SegmentationDisplayState3D, SegmentationLayerSharedObject, Uint64MapEntry } from 'neuroglancer/segmentation_display_state/frontend';
+import { augmentSegmentId, makeSegmentWidget, resetTemporaryVisibleSegmentsState, SegmentationDisplayState3D, SegmentationLayerSharedObject, SegmentWidgetFactory, Uint64MapEntry } from 'neuroglancer/segmentation_display_state/frontend';
 import { LayerView, MouseSelectionState, VisibleLayerInfo } from 'neuroglancer/layer';
 import { ChunkTransformParameters, getChunkTransformParameters } from 'neuroglancer/render_coordinate_transform';
 import { DisplayDimensionRenderInfo } from 'neuroglancer/navigation_state';
@@ -64,6 +64,7 @@ import { makeIcon } from 'neuroglancer/widget/icon';
 import { EventActionMap } from 'neuroglancer/util/event_action_map';
 import { packColor } from 'neuroglancer/util/color';
 import { Uint64Set } from 'neuroglancer/uint64_set';
+import { animationFrameDebounce } from 'src/neuroglancer/util/animation_frame_debounce';
 
 function vec4FromVec3(vec: vec3, alpha = 0) {
   const res = vec4.clone([...vec]);
@@ -1318,12 +1319,77 @@ const MERGE_SEGMENTS_INPUT_EVENT_MAP = EventActionMap.fromObject({
   'at:shift?+control+mousedown0': {action: 'merge-segments'},
 });
 
+const wait = (t: number) => {
+  return new Promise((f, _r) => {
+    setTimeout(f, t);
+  });
+}
+
+interface MergeSubmission {
+  id: number;
+  sink: SegmentSelection;
+  source?: SegmentSelection;
+}
+
 class MergeSegmentsTool extends Tool<SegmentationUserLayer> {
-  lastAnchorSelection = new WatchableValue<SegmentSelection|undefined>(undefined);
+  // lastAnchorSelection = new WatchableValue<SegmentSelection|undefined>(undefined);
+  submissions = new WatchableValue<MergeSubmission[]>([]);
+
+  annotationReferences: AnnotationReference[] = [];
+
+  lastSubmissionId = 0;
 
   activate(activation: ToolActivation<this>) {
     // Ensure we use the same segmentationGroupState while activated.
     const segmentationGroupState = this.layer.displayState.segmentationGroupState.value;
+
+    const updateState = () => {
+      while (points.firstChild) {
+        points.removeChild(points.firstChild);
+      }
+      for (let ref of this.annotationReferences) {
+        annotationState.source.delete(ref);
+      }
+      this.annotationReferences = [];
+      for (let submission of this.submissions.value) {
+        if (submission.source) {
+          const annotation: Line = {
+              id: '',
+              pointA: submission.sink.position,
+              pointB: submission.source.position,
+              type: AnnotationType.LINE,
+              properties: [],
+              // relatedSegments: [[selection.segmentId, selection.rootId]],
+          };
+          this.annotationReferences.push(annotationState.source.add(annotation));
+        } else {
+          const annotation: Point = {
+              id: '',
+              point: submission.sink.position,
+              type: AnnotationType.POINT,
+              properties: [],
+              // relatedSegments: [[selection.segmentId, selection.rootId]],
+          };
+          this.annotationReferences.push(annotationState.source.add(annotation));
+        }
+        points.appendChild(createSubmissionElement(submission));
+      }
+    };
+
+    activation.registerDisposer(this.submissions.changed.add(updateState));
+
+    // activation.registerCancellable(animationFrameDebounce(() => {
+    //   console.log('animationFrameDebounce');
+    //   // listSource.updateRenderedItems(list);
+    //   for (const el of points.querySelectorAll('.neuroglancer-segment-list-entry-double-line')) {
+    //     segmentWidgetFactory.update(el as HTMLElement);
+    //   }
+    // }));
+
+
+    const loadedSubsource = getGraphLoadedSubsource(this.layer)!;
+    const annotationState = makeColoredAnnotationState(this.layer, loadedSubsource, "merges", RED_COLOR);
+    const removeState = this.layer.annotationStates.add(annotationState);
 
     const {graph: {value: graph}} = segmentationGroupState;
     if (!(graph instanceof GrapheneGraphSource)) return;
@@ -1333,16 +1399,19 @@ class MergeSegmentsTool extends Tool<SegmentationUserLayer> {
     body.classList.add('graphene-merge-segments-status');
 
     const points = document.createElement('div');
-    points.style.display = 'contents';
+    points.classList.add('graphene-merge-segments-points');
     body.appendChild(points);
 
+    const segmentWidgetFactory = SegmentWidgetFactory.make(this.layer.displayState, /*includeUnmapped=*/ true);
+  makeSegmentWidget;
     const makeWidget = (id: Uint64MapEntry) => {
-      const row = makeSegmentWidget(this.layer.displayState, id);
+      // const row = makeSegmentWidget(this.layer.displayState, id);
+      const row = segmentWidgetFactory.getWithNormalizedId(id);
       row.classList.add('neuroglancer-segment-list-entry-double-line');
       return row;
     };
 
-    const setPoint = (id: Uint64, text: string) => {
+    const createPointElement = (id: Uint64, text: string) => {
       const containerEl =  document.createElement('div');
       containerEl.classList.add('graphene-merge-segments-point')
       const labelEl = document.createElement('span');
@@ -1350,62 +1419,82 @@ class MergeSegmentsTool extends Tool<SegmentationUserLayer> {
       containerEl.appendChild(labelEl);
       const widget = makeWidget(augmentSegmentId(this.layer.displayState, id));
       containerEl.appendChild(widget);
-      points.appendChild(containerEl);
-    }
+      return containerEl;
+    };
+
+    const createSubmissionElement = (submission: MergeSubmission) => {
+      const containerEl =  document.createElement('div');
+      containerEl.classList.add('graphene-merge-segments-submission');
+      containerEl.appendChild(createPointElement(submission.sink.rootId, "sink"));
+      if (submission.source) {
+        containerEl.appendChild(createPointElement(submission.source.rootId, "source"));
+      }
+      return containerEl;
+    };
+
+
+  // augmentSegmentId;
+  // makeSegmentWidget;
+  // Uint64MapEntry;
 
     const cancelBtn = makeIcon({
       text: 'Clear',
       title: 'Clear selection',
       onClick: () => {
-        this.lastAnchorSelection.value = undefined;
+        // const lastSubmission = this.submissions[0];
+        // if (lastSubmission && !lastSubmission.source) {
+
+        // }
+        // this.lastAnchorSelection.value = undefined;
         while (points.firstChild) {
           points.removeChild(points.firstChild);
         }
-        body.removeChild(cancelBtn);
+        // body.removeChild(cancelBtn);
       }});
 
-    const setSink = (id: Uint64) => {
-      setPoint(id, "Sink: ");
-      body.appendChild(cancelBtn);
-    }
+      cancelBtn;
 
-    const setSource = (id: Uint64) => {
-      body.removeChild(cancelBtn);
-      setPoint(id, "Source: ");
-    }
+    // const setSink = (id: Uint64) => {
+    //   setPoint(id, "Sink: ");
+    //   // body.appendChild(cancelBtn);
+    // }
+
+    // const setSource = (id: Uint64) => {
+    //   // body.removeChild(cancelBtn);
+    //   setPoint(id, "Source: ");
+    // }
 
     activation.bindInputEventMap(MERGE_SEGMENTS_INPUT_EVENT_MAP);
     activation.registerDisposer(() => {
-      this.lastAnchorSelection.value = undefined;
+      // this.lastAnchorSelection.value = undefined;
+      removeState();
     });
 
-    let activeSubmission = false;
+    // let activeSubmission = false;
 
     activation.bindAction('merge-segments', event => {
       event.stopPropagation();
       (async () => {
-        const lastSegmentSelection = this.lastAnchorSelection.value;
-        if (!lastSegmentSelection) { // first selection
-          const selection = maybeGetSelection(this, segmentationGroupState.visibleSegments);
-          if (selection) {
-            this.lastAnchorSelection.value = selection;
-            setSink(selection.rootId);
-          }
-        } else if (!activeSubmission) {
-          const selection = maybeGetSelection(this, segmentationGroupState.visibleSegments);
-          if (selection) {
-            activeSubmission = true;
-            setSource(selection.rootId);
-            const loadedSubsource = getGraphLoadedSubsource(this.layer)!;
-            const annotationToNanometers = loadedSubsource.loadedDataSource.transform.inputSpace.value.scales.map(x => x / 1e-9);
-            activation.cancel();
-            const mergedRoot = await graph.graphServer.mergeSegments(lastSegmentSelection, selection, annotationToNanometers);
-            const {visibleSegments} = segmentationGroupState;
-            visibleSegments.delete(lastSegmentSelection.rootId);
-            visibleSegments.delete(selection.rootId);
-            visibleSegments.add(mergedRoot);
-            this.lastAnchorSelection.value = undefined;
-          }
+        const selection = maybeGetSelection(this, segmentationGroupState.visibleSegments);
+        if (!selection) return;
+        const lastSubmission = this.submissions.value[0];
+        if (!lastSubmission || lastSubmission.source) {
+          this.submissions.value = [{
+            id: this.lastSubmissionId++,
+            sink: selection
+          }, ...this.submissions.value];
+        } else {
+          lastSubmission.source = selection;
+          this.submissions.changed.dispatch();
+            // const loadedSubsource = getGraphLoadedSubsource(this.layer)!;
+            await wait(5000);
+            // const annotationToNanometers = loadedSubsource.loadedDataSource.transform.inputSpace.value.scales.map(x => x / 1e-9);
+            // const mergedRoot = await graph.graphServer.mergeSegments(lastSegmentSelection, selection, annotationToNanometers);
+            // const {visibleSegments} = segmentationGroupState;
+            // visibleSegments.delete(lastSegmentSelection.rootId);
+            // visibleSegments.delete(selection.rootId);
+            // visibleSegments.add(mergedRoot);
+          this.submissions.value = this.submissions.value.filter(x => x.id !== lastSubmission.id);
         }
       })()
     });

@@ -35,6 +35,16 @@
   content: "Blue";
 }
 
+.graphene-merge-segments-points {
+  display: flex;
+  flex-direction: column;
+}
+
+.graphene-merge-segments-submission {
+  display: flex;
+  gap: 10px;
+}
+
 .graphene-merge-segments-status {
   display: flex;
   gap: 10px;
