@@ -509,7 +509,6 @@ export class SegmentWidgetFactory<Template extends SegmentWidgetTemplate> {
     const {visibleSegments} = displayState!.segmentationGroupState.value;
     (stickyChildren[template.visibleIndex] as HTMLInputElement).checked =
         visibleSegments.has(mapped);
-    console.log('update selected');
     container.dataset.selected = (segmentSelectionState.hasSelectedSegment &&
                                   Uint64.equal(segmentSelectionState.selectedSegment, mapped))
                                      .toString();

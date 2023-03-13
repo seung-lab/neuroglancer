@@ -815,7 +815,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
   childUpdated = new Signal<(annotation: Annotation) => void>();
   childDeleted = new Signal<(annotationId: string) => void>();
 
-  private pending = new Set<AnnotationId>();
+  public pending = new Set<AnnotationId>();
 
   protected rank_: number;
 
@@ -845,11 +845,11 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
       throw new Error(`Annotation id already exists: ${JSON.stringify(annotation.id)}.`);
     }
     this.annotationMap.set(annotation.id, annotation);
-    this.changed.dispatch();
-    this.childAdded.dispatch(annotation);
     if (!commit) {
       this.pending.add(annotation.id);
     }
+    this.changed.dispatch();
+    this.childAdded.dispatch(annotation);
     return this.getReference(annotation.id);
   }
 
@@ -874,6 +874,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
 
   [Symbol.iterator]() {
     this.ensureUpdated();
+    // for (const annotation of this)
     return this.annotationMap.values();
   }
 
