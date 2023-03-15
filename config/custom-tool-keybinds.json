@@ -11,5 +11,9 @@
     "layer": "segmentation",
     "tool": "saturation"
   },
+  "keyr": {
+    "layer": "segmentation",
+    "tool": "grapheneRefreshMesh"
+  },
   "keyx": "dismiss-all-status-messages"
 }

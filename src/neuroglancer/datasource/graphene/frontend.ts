@@ -1438,9 +1438,9 @@ registerLayerTool(SegmentationUserLayer, GRAPHENE_REFRESH_MESH_TOOL_ID, layer =>
   return new RefreshMeshTool(layer);
 });
 
-const REFRESH_MESH_INPUT_EVENT_MAP = EventActionMap.fromObject({
-  'at:shift?+mousedown0': {action: 'refresh-mesh'},
-});
+// const REFRESH_MESH_INPUT_EVENT_MAP = EventActionMap.fromObject({
+//   'at:shift?+mousedown0': {action: 'refresh-mesh'},
+// });
 
 class RefreshMeshTool extends Tool<SegmentationUserLayer> {
   activate(activation: ToolActivation<this>) {
@@ -1448,7 +1448,7 @@ class RefreshMeshTool extends Tool<SegmentationUserLayer> {
     header.textContent = 'Refresh mesh';
     body.classList.add('neuroglancer-merge-segments-status');
 
-    activation.bindInputEventMap(REFRESH_MESH_INPUT_EVENT_MAP); // has to be after makeToolActivationStatusMessageWithHeader
+    // activation.bindInputEventMap(REFRESH_MESH_INPUT_EVENT_MAP); // has to be after makeToolActivationStatusMessageWithHeader
 
 
     const someMeshLayer = (layer: SegmentationUserLayer) => {
@@ -1460,18 +1460,37 @@ class RefreshMeshTool extends Tool<SegmentationUserLayer> {
       return undefined;
     };
 
-    activation.bindAction('refresh-mesh', event => {
-      event.stopPropagation();
-      const {segmentSelectionState, segmentationGroupState} = this.layer.displayState;
-      if (!segmentSelectionState.hasSelectedSegment) return;
-      const segment = segmentSelectionState.selectedSegment;
+      const {segmentationGroupState} = this.layer.displayState;
+      // if (!segmentSelectionState.hasSelectedSegment) return;
+      // const segment = segmentSelectionState.selectedSegment;
       const {visibleSegments} = segmentationGroupState.value;
-      if (!visibleSegments.has(segment)) return;
+      // if (!visibleSegments.has(segment)) return;
+
       const meshLayer = someMeshLayer(this.layer);
       if (!meshLayer) return;
       const meshSource = meshLayer.source;
-      meshSource.rpc!.invoke(GRAPHENE_REFRESH_MESH_RPC_ID, {'rpcId': meshSource.rpcId!, 'segment': segment.toString()});
-    });
+
+      for (const segment of visibleSegments) {
+        meshSource.rpc!.invoke(GRAPHENE_REFRESH_MESH_RPC_ID, {'rpcId': meshSource.rpcId!, 'segment': segment.toString()});
+      }
+
+
+    // activation.bindAction('refresh-mesh', event => {
+    //   event.stopPropagation();
+    //   const {segmentationGroupState} = this.layer.displayState;
+    //   // if (!segmentSelectionState.hasSelectedSegment) return;
+    //   // const segment = segmentSelectionState.selectedSegment;
+    //   const {visibleSegments} = segmentationGroupState.value;
+    //   // if (!visibleSegments.has(segment)) return;
+
+    //   const meshLayer = someMeshLayer(this.layer);
+    //   if (!meshLayer) return;
+    //   const meshSource = meshLayer.source;
+
+    //   for (const segment of visibleSegments) {
+    //     meshSource.rpc!.invoke(GRAPHENE_REFRESH_MESH_RPC_ID, {'rpcId': meshSource.rpcId!, 'segment': segment.toString()});
+    //   }
+    // });
   }
 
   toJSON() {
