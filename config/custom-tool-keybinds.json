@@ -11,7 +11,7 @@
     "layer": "segmentation",
     "tool": "saturation"
   },
-  "keyr": {
+  "keyq": {
     "layer": "segmentation",
     "tool": "grapheneRefreshMesh"
   },
