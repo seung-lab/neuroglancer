@@ -19,7 +19,7 @@ import {WithSharedCredentialsProviderCounterpart} from 'neuroglancer/credentials
 import {assignMeshFragmentData, FragmentChunk, ManifestChunk, MeshSource} from 'neuroglancer/mesh/backend';
 import {getGrapheneFragmentKey, GRAPHENE_REFRESH_MESH_RPC_ID, responseIdentity} from 'neuroglancer/datasource/graphene/base';
 import {CancellationToken} from 'neuroglancer/util/cancellation';
-import {HttpError, isNotFoundError, responseArrayBuffer, responseJson} from 'neuroglancer/util/http_request';
+import {isNotFoundError, responseArrayBuffer, responseJson} from 'neuroglancer/util/http_request';
 import {cancellableFetchSpecialOk, SpecialProtocolCredentials, SpecialProtocolCredentialsProvider} from 'neuroglancer/util/special_protocol_request';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {registerSharedObject} from 'neuroglancer/worker_rpc';
@@ -68,14 +68,6 @@ function getVerifiedFragmentPromise(
     cancellationToken);
 }
 
-function reject404(url: string): Promise<ArrayBuffer> {
-  return new Promise((_f, r) => {
-    setTimeout(() => {
-      r(new HttpError(url, 404, "404", undefined));
-    }, 1000);
-  })
-}
-
 function getFragmentDownloadPromise(
     credentialsProvider: SpecialProtocolCredentialsProvider,
     chunk: FragmentChunk,
@@ -85,9 +77,6 @@ function getFragmentDownloadPromise(
   if (parameters.sharding){
     fragmentDownloadPromise = getVerifiedFragmentPromise(credentialsProvider, chunk, parameters, cancellationToken);
   } else {
-    if (Math.random() < 0.5) {
-      return reject404(`${parameters.fragmentUrl}/${chunk.fragmentId}`);
-    }
     fragmentDownloadPromise = cancellableFetchSpecialOk(
       credentialsProvider,
       `${parameters.fragmentUrl}/${chunk.fragmentId}`, {}, responseArrayBuffer,
