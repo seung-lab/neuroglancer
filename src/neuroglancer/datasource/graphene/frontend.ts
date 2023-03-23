@@ -1417,7 +1417,7 @@ function lineToSubmission(line: Line, pending: boolean): MergeSubmission {
   return res;
 }
 
-const MAX_MERGE_COUNT = 4;
+const MAX_MERGE_COUNT = 10;
 
 class MergeSegmentsTool extends Tool<SegmentationUserLayer> {
   submissions = new WatchableValue<MergeSubmission[]>([]);
