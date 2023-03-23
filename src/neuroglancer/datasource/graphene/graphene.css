@@ -55,3 +55,8 @@
   align-items: center;
   gap: 10px;
 }
+
+.graphene-merge-segments-point .neuroglancer-segment-list-entry-visible-checkbox,
+.graphene-merge-segments-point .neuroglancer-segment-list-entry-copy-container {
+  display: none;
+}

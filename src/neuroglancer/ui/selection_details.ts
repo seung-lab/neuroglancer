@@ -43,6 +43,7 @@ export class SelectionDetailsPanel extends SidePanel {
       public manager: Borrowed<TopLevelLayerListSpecification>,
       public selectedLayer: Borrowed<SelectedLayerState>) {
     super(sidePanelManager, state.location);
+    console.log('create SelectionDetailsPanel');
     const {element, body} = this;
     element.classList.add('neuroglancer-selection-details');
     this.registerDisposer(new MouseEventBinder(this.element, getDefaultSelectBindings()));
