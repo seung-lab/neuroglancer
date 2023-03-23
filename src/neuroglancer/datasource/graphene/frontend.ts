@@ -64,7 +64,7 @@ import { makeIcon } from 'neuroglancer/widget/icon';
 import { EventActionMap } from 'neuroglancer/util/event_action_map';
 import { packColor } from 'neuroglancer/util/color';
 import { Uint64Set } from 'neuroglancer/uint64_set';
-import { TrackableBoolean } from 'src/neuroglancer/trackable_boolean';
+import { TrackableBoolean, TrackableBooleanCheckbox } from 'src/neuroglancer/trackable_boolean';
 import { makeDeleteButton } from 'src/neuroglancer/widget/delete_button';
 
 function vec4FromVec3(vec: vec3, alpha = 0) {
@@ -1419,11 +1419,11 @@ function lineToSubmission(line: Line, pending: boolean): MergeSubmission {
 
 const MAX_MERGE_COUNT = 4;
 
-const bulkMerge = true;
-
 class MergeSegmentsTool extends Tool<SegmentationUserLayer> {
   submissions = new WatchableValue<MergeSubmission[]>([]);
   initialized = false;
+  autoSubmit = new TrackableBoolean(false);
+
 
   activate(activation: ToolActivation<this>) {
     // Ensure we use the same segmentationGroupState while activated.
@@ -1500,7 +1500,6 @@ class MergeSegmentsTool extends Tool<SegmentationUserLayer> {
     header.textContent = 'Merge segments';
     body.classList.add('graphene-merge-segments-status');
 
-    // let bulkMergeInProgress = false;
     const submitIcon = makeIcon({
       text: 'Submit',
       title: 'Submit merge',
@@ -1512,6 +1511,15 @@ class MergeSegmentsTool extends Tool<SegmentationUserLayer> {
         submitIcon.classList.toggle('disabled', false);
       }});
     body.appendChild(submitIcon);
+
+
+    const checkbox = activation.registerDisposer(new TrackableBooleanCheckbox(this.autoSubmit));
+    const label = document.createElement('label');
+    label.appendChild(document.createTextNode('auto-submit'));
+    label.title =
+        'auto-submit merges';
+    label.appendChild(checkbox.element);
+    body.appendChild(label);
 
     const points = document.createElement('div');
     points.classList.add('graphene-merge-segments-points');
@@ -1583,7 +1591,7 @@ class MergeSegmentsTool extends Tool<SegmentationUserLayer> {
     //     return submission;
     //   } else {
     //     console.log('fakeSubmit - fail', submission.id);
-    //     throw 'failed for some reason';
+    //     throw {message: 'failed for some reason'};
     //   }
     // }
 
@@ -1653,14 +1661,17 @@ class MergeSegmentsTool extends Tool<SegmentationUserLayer> {
       while (points.firstChild) {
         points.removeChild(points.firstChild);
       }
+      console.log('updateState');
       for (let submission of this.submissions.value) {
-        if (!bulkMerge) {
-          if (!submission.locked && submission.source) {
+        console.log('loop');
+        console.log('points.appendChild(createSubmissionElement');
+        points.appendChild(createSubmissionElement(submission));
+        if (this.autoSubmit.value) {
+          if (!submission.locked && submission.source && !submission.error) {
             console.log('submitting', submission);
             submit([submission]);
           }
         }
-        points.appendChild(createSubmissionElement(submission));
       }
     };
 
