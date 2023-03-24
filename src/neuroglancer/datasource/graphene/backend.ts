@@ -17,9 +17,9 @@
 import {WithParameters} from 'neuroglancer/chunk_manager/backend';
 import {WithSharedCredentialsProviderCounterpart} from 'neuroglancer/credentials_provider/shared_counterpart';
 import {assignMeshFragmentData, FragmentChunk, ManifestChunk, MeshSource} from 'neuroglancer/mesh/backend';
-import {getGrapheneFragmentKey, responseIdentity} from 'neuroglancer/datasource/graphene/base';
+import {getGrapheneFragmentKey, GRAPHENE_REFRESH_MESH_RPC_ID, responseIdentity} from 'neuroglancer/datasource/graphene/base';
 import {CancellationToken} from 'neuroglancer/util/cancellation';
-import {isNotFoundError, responseArrayBuffer, responseJson} from 'neuroglancer/util/http_request';
+import {HttpError, isNotFoundError, responseArrayBuffer, responseJson} from 'neuroglancer/util/http_request';
 import {cancellableFetchSpecialOk, SpecialProtocolCredentials, SpecialProtocolCredentialsProvider} from 'neuroglancer/util/special_protocol_request';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {registerSharedObject} from 'neuroglancer/worker_rpc';
@@ -71,6 +71,14 @@ function getVerifiedFragmentPromise(
     cancellationToken);
 }
 
+function reject404(url: string): Promise<ArrayBuffer> {
+  return new Promise((_f, r) => {
+    setTimeout(() => {
+      r(new HttpError(url, 404, "404", undefined));
+    }, 1000);
+  })
+}
+
 function getFragmentDownloadPromise(
     credentialsProvider: SpecialProtocolCredentialsProvider,
     chunk: FragmentChunk,
@@ -80,6 +88,9 @@ function getFragmentDownloadPromise(
   if (parameters.sharding){
     fragmentDownloadPromise = getVerifiedFragmentPromise(credentialsProvider, chunk, parameters, cancellationToken);
   } else {
+    if (Math.random() < 0.5) {
+      return reject404(`${parameters.fragmentUrl}/${chunk.fragmentId}`);
+    }
     fragmentDownloadPromise = cancellableFetchSpecialOk(
       credentialsProvider,
       `${parameters.fragmentUrl}/${chunk.fragmentId}`, {}, responseArrayBuffer,
@@ -97,6 +108,17 @@ async function decodeDracoFragmentChunk(
 
 @registerSharedObject() export class GrapheneMeshSource extends
 (WithParameters(WithSharedCredentialsProviderCounterpart<SpecialProtocolCredentials>()(MeshSource), MeshSourceParameters)) {
+  chunksNotFound = new Map<string, FragmentChunk[]>();
+
+  redownload(segment: Uint64) {
+    const segmentString = segment.toJSON();
+    const segmentChunks = this.chunksNotFound.get(segmentString) || [];
+    this.chunksNotFound.delete(segmentString);
+    for (let chunk of segmentChunks) {
+      this.chunkManager.queueManager.updateChunkState(chunk, ChunkState.QUEUED);
+    }
+  }
+
   async download(chunk: ManifestChunk, cancellationToken: CancellationToken) {
     const {parameters} = this;
     if (isBaseSegmentId(chunk.objectId, parameters.nBitsForLayerId)) {
@@ -118,9 +140,13 @@ async function decodeDracoFragmentChunk(
       await decodeDracoFragmentChunk(chunk, response);
     } catch (e) {
       if (isNotFoundError(e)) {
-        chunk.source!.removeChunk(chunk);
+        const segmentString = chunk.manifestChunk?.objectId?.toJSON();
+        if (segmentString) {
+          this.chunksNotFound.set(segmentString, this.chunksNotFound.get(segmentString) || []);
+          this.chunksNotFound.get(segmentString)!.push(chunk);
+        }
       }
-      Promise.reject(e);
+      throw e;
     }
   }
 
@@ -423,4 +449,9 @@ registerRPC(CHUNKED_GRAPH_RENDER_LAYER_UPDATE_SOURCES_RPC_ID, function(x) {
       ChunkedGraphLayer, GrapheneChunkedGraphChunkSource>;
   attachment.state!.displayDimensionRenderInfo = x.displayDimensionRenderInfo;
   layer.chunkManager.scheduleUpdateChunkPriorities();
+});
+
+registerRPC(GRAPHENE_REFRESH_MESH_RPC_ID, function(x) {
+  let obj = <GrapheneMeshSource>this.get(x.rpcId);
+  obj.redownload(Uint64.parseString(x.segment));
 });
