@@ -16,8 +16,8 @@
 
 import {WithParameters} from 'neuroglancer/chunk_manager/backend';
 import {WithSharedCredentialsProviderCounterpart} from 'neuroglancer/credentials_provider/shared_counterpart';
-import {assignMeshFragmentData, FragmentChunk, ManifestChunk, MeshSource} from 'neuroglancer/mesh/backend';
-import {getGrapheneFragmentKey, responseIdentity} from 'neuroglancer/datasource/graphene/base';
+import {assignMeshFragmentData, FragmentChunk, FragmentId, ManifestChunk, MeshSource, MultiscaleFragmentChunk, MultiscaleManifestChunk, MultiscaleMeshSource} from 'neuroglancer/mesh/backend';
+import {getGrapheneFragmentKey, MultiscaleMeshSourceParameters, responseIdentity} from 'neuroglancer/datasource/graphene/base';
 import {CancellationToken} from 'neuroglancer/util/cancellation';
 import {isNotFoundError, responseArrayBuffer, responseJson} from 'neuroglancer/util/http_request';
 import {cancellableFetchSpecialOk, SpecialProtocolCredentials, SpecialProtocolCredentialsProvider} from 'neuroglancer/util/special_protocol_request';
@@ -44,14 +44,15 @@ import { SharedWatchableValue } from 'neuroglancer/shared_watchable_value';
 import { DisplayDimensionRenderInfo } from 'neuroglancer/navigation_state';
 import { forEachVisibleSegment } from 'neuroglancer/segmentation_display_state/base';
 import { computeChunkBounds } from 'neuroglancer/sliceview/volume/backend';
+import { verifyObject } from 'src/neuroglancer/util/json';
 
 function getVerifiedFragmentPromise(
     credentialsProvider: SpecialProtocolCredentialsProvider,
-    chunk: FragmentChunk,
-    parameters: MeshSourceParameters,
+    fragmentId: string|null,
+    parameters: MeshSourceParameters|MultiscaleMeshSourceParameters,
     cancellationToken: CancellationToken) {
-  if (chunk.fragmentId && chunk.fragmentId.charAt(0) === '~') {
-    let parts = chunk.fragmentId.substr(1).split(':');
+  if (fragmentId && fragmentId.charAt(0) === '~') {
+    let parts = fragmentId.substr(1).split(':');
     let startOffset: Uint64|number, endOffset: Uint64|number;
     startOffset = Number(parts[1]);
     endOffset = startOffset+Number(parts[2]);
@@ -64,29 +65,29 @@ function getVerifiedFragmentPromise(
   }
   return cancellableFetchSpecialOk(
     credentialsProvider,
-    `${parameters.fragmentUrl}/dynamic/${chunk.fragmentId}`, {}, responseArrayBuffer,
+    `${parameters.fragmentUrl}/dynamic/${fragmentId}`, {}, responseArrayBuffer,
     cancellationToken);
 }
 
 function getFragmentDownloadPromise(
     credentialsProvider: SpecialProtocolCredentialsProvider,
-    chunk: FragmentChunk,
-    parameters: MeshSourceParameters,
+    fragmentId: string|null,
+    parameters: MeshSourceParameters|MultiscaleMeshSourceParameters,
     cancellationToken: CancellationToken) {
   let fragmentDownloadPromise;
   if (parameters.sharding){
-    fragmentDownloadPromise = getVerifiedFragmentPromise(credentialsProvider, chunk, parameters, cancellationToken);
+    fragmentDownloadPromise = getVerifiedFragmentPromise(credentialsProvider, fragmentId, parameters, cancellationToken);
   } else {
     fragmentDownloadPromise = cancellableFetchSpecialOk(
       credentialsProvider,
-      `${parameters.fragmentUrl}/${chunk.fragmentId}`, {}, responseArrayBuffer,
+      `${parameters.fragmentUrl}/${fragmentId}`, {}, responseArrayBuffer,
       cancellationToken);
   }
   return fragmentDownloadPromise;
 }
 
 async function decodeDracoFragmentChunk(
-    chunk: FragmentChunk, response: ArrayBuffer) {
+    chunk: FragmentChunk|MultiscaleFragmentChunk, response: ArrayBuffer) {
   const m = await import(/* webpackChunkName: "draco" */ 'neuroglancer/mesh/draco');
   const rawMesh = await m.decodeDraco(new Uint8Array(response));
   assignMeshFragmentData(chunk, rawMesh);
@@ -111,8 +112,86 @@ async function decodeDracoFragmentChunk(
 
     try {
       const response = await getFragmentDownloadPromise(
-        undefined, chunk, parameters, cancellationToken);
+        undefined, chunk.fragmentId, parameters, cancellationToken);
       await decodeDracoFragmentChunk(chunk, response);
+    } catch (e) {
+      if (isNotFoundError(e)) {
+        chunk.source!.removeChunk(chunk);
+      }
+      Promise.reject(e);
+    }
+  }
+
+  getFragmentKey(objectKey: string|null, fragmentId: string) {
+    objectKey;
+    return getGrapheneFragmentKey(fragmentId);
+  }
+}
+
+interface ShardInfo {
+  shardUrl: string;
+  offset: Uint64;
+}
+
+interface GrapheneMultiscaleManifestChunk extends MultiscaleManifestChunk {
+  fragmentIds: FragmentId[]|null;
+  shardInfo?: ShardInfo;
+}
+
+function decodeMultiscaleManifestChunk(chunk: GrapheneMultiscaleManifestChunk, response: any) {
+  verifyObject(response);
+  chunk.manifest = {
+    chunkShape: response.chunkShape,
+    chunkGridSpatialOrigin: response.chunkGridSpatialOrigin,
+    lodScales: response.lodScales,
+    octree: response.octree,
+    vertexOffsets: response.vertexOffsets,
+    clipLowerBound: vec3.create(),
+    clipUpperBound: vec3.create(),
+  }
+  chunk.fragmentIds = response.fragments;
+}
+
+// async function decodeMultiscaleFragmentChunk(
+//     chunk: MultiscaleFragmentChunk, response: ArrayBuffer) {
+//   const {lod} = chunk;
+//   const source = chunk.manifestChunk!.source! as GrapheneMultiscaleMeshSource;
+//   const m = await import(/* webpackChunkName: "draco" */ 'neuroglancer/mesh/draco');
+//   const rawMesh = await m.decodeDracoPartitioned(
+//       new Uint8Array(response), source.parameters.metadata.vertexQuantizationBits, lod !== 0);
+//   assignMultiscaleMeshFragmentData(chunk, rawMesh, source.format.vertexPositionFormat);
+// }
+
+
+@registerSharedObject()
+export class GrapheneMultiscaleMeshSource extends
+(WithParameters(WithSharedCredentialsProviderCounterpart<SpecialProtocolCredentials>()(MultiscaleMeshSource), MultiscaleMeshSourceParameters)) {
+  async download(chunk: GrapheneMultiscaleManifestChunk, cancellationToken: CancellationToken):
+      Promise<void> {
+    const {parameters} = this;
+    let url = `${parameters.manifestUrl}/manifest/multiscale`;
+    let manifestUrl = `${url}/${chunk.objectId}?verify=1&prepend_seg_ids=1`;
+    await cancellableFetchSpecialOk(this.credentialsProvider, manifestUrl, {}, responseJson, cancellationToken)
+        .then(response => decodeMultiscaleManifestChunk(chunk, response));
+  }
+
+  async downloadFragment(
+      chunk: MultiscaleFragmentChunk, cancellationToken: CancellationToken): Promise<void> {
+    const {parameters} = this;
+    const manifestChunk = chunk.manifestChunk! as GrapheneMultiscaleManifestChunk;
+    const chunkIndex = chunk.chunkIndex;
+    const {fragmentIds} = manifestChunk;
+
+    try {
+      let fragmentId = null;
+      if (fragmentIds !== null){
+        fragmentId = fragmentIds[chunkIndex];
+        fragmentId = fragmentId.substring(fragmentId.indexOf(':') + 1)
+      }
+      const response = await getFragmentDownloadPromise(
+        undefined, fragmentId, parameters, cancellationToken);
+      await decodeDracoFragmentChunk(chunk, response);
+      chunk.subChunkOffsets = new Uint32Array();
     } catch (e) {
       if (isNotFoundError(e)) {
         chunk.source!.removeChunk(chunk);
