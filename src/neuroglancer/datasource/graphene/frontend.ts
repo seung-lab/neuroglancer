@@ -811,6 +811,36 @@ export const GRAPH_SERVER_NOT_SPECIFIED = Symbol('Graph Server Not Specified.');
 class GrapheneGraphServerInterface {
   constructor(private url: string, private credentialsProvider: SpecialProtocolCredentialsProvider) {}
 
+  async filterLatestRoots(segments: Uint64[]): Promise<Uint64[]> {
+    const url = `${this.url}/is_latest_roots`;
+
+    const promise = cancellableFetchSpecialOk(this.credentialsProvider, url, {
+      method: 'POST',
+      body: JSON.stringify({
+        "node_ids": segments.map(x => x.toJSON())
+      }),
+    }, responseIdentity);
+
+    // const promise = cancellableFetchSpecialOk(
+    //   this.credentialsProvider,
+    //   url,
+    //   {}, responseIdentity);
+
+    const response = await withErrorMessageHTTP(promise, {
+      initialMessage: `Checking is latest for segments ${segments.map(x => x.toJSON()).join(', ')}`,
+      errorPrefix: `Could not check latest: `
+    });
+    const jsonResp = await response.json();
+
+    const res: Uint64[] = [];
+    for (const [i, isLatest] of jsonResp['is_latest'].entries()) {
+      if (isLatest) {
+        res.push(segments[i]);
+      }
+    }
+    return res;
+  }
+
   async getRoot(segment: Uint64, timestamp = '') {
     const timestampEpoch = (new Date(timestamp)).valueOf() / 1000;
 
@@ -1343,9 +1373,10 @@ interface MergeSubmission {
   id: string;
   locked: boolean;
   error?: string;
-  status: string;
+  status?: string;
   sink: SegmentSelection;
   source?: SegmentSelection;
+  mergedRoot?: Uint64;
 }
 
 export class MergeSegmentsPlaceLineTool extends PlaceLineTool {
@@ -1400,7 +1431,6 @@ function lineToSubmission(line: Line, pending: boolean): MergeSubmission {
   const res: MergeSubmission = {
     id: line.id,
     locked: false,
-    status: 'new',
     sink: {
       position: line.pointA.slice(),
       rootId: relatedSegments[0].clone(),
@@ -1422,7 +1452,7 @@ const MAX_MERGE_COUNT = 10;
 class MergeSegmentsTool extends Tool<SegmentationUserLayer> {
   submissions = new WatchableValue<MergeSubmission[]>([]);
   initialized = false;
-  autoSubmit = new TrackableBoolean(false);
+  autoSubmit = new TrackableBoolean(true);
 
 
   activate(activation: ToolActivation<this>) {
@@ -1534,12 +1564,9 @@ class MergeSegmentsTool extends Tool<SegmentationUserLayer> {
       return row;
     };
 
-    const createPointElement = (id: Uint64, text: string) => {
+    const createPointElement = (id: Uint64) => {
       const containerEl =  document.createElement('div');
       containerEl.classList.add('graphene-merge-segments-point')
-      const labelEl = document.createElement('span');
-      labelEl.textContent = text;
-      containerEl.appendChild(labelEl);
       const widget = makeWidget(augmentSegmentId(this.layer.displayState, id));
       containerEl.appendChild(widget);
       return containerEl;
@@ -1553,14 +1580,11 @@ class MergeSegmentsTool extends Tool<SegmentationUserLayer> {
     const createSubmissionElement = (submission: MergeSubmission) => {
       const containerEl =  document.createElement('div');
       containerEl.classList.add('graphene-merge-segments-submission');
-      containerEl.appendChild(createPointElement(submission.sink.rootId, "sink"));
+      containerEl.appendChild(createPointElement(submission.sink.rootId));
       if (submission.source) {
-        containerEl.appendChild(createPointElement(submission.source.rootId, "source"));
+        containerEl.appendChild(document.createElement('div')).textContent = "ꕹ";
+        containerEl.appendChild(createPointElement(submission.source.rootId));
       }
-      const statusEl =  document.createElement('div');
-        statusEl.classList.add('graphene-merge-segments-submission-status');
-        statusEl.textContent = submission.status;
-        containerEl.appendChild(statusEl);
       if (!submission.locked) {
         containerEl.appendChild(makeDeleteButton({
           title: 'Delete merge',
@@ -1571,32 +1595,62 @@ class MergeSegmentsTool extends Tool<SegmentationUserLayer> {
           },
         }));
       }
-      
+      if (submission.status) {
+        const statusEl =  document.createElement('div');
+        statusEl.classList.add('graphene-merge-segments-submission-status');
+        statusEl.textContent = submission.status;
+        containerEl.appendChild(statusEl);
+      }
       return containerEl;
     };
 
     const realSubmit = async (submission: MergeSubmission) => {
+      submission.error = undefined;
       const annotationToNanometers = loadedSubsource.loadedDataSource.transform.inputSpace.value.scales.map(x => x / 1e-9);
       const mergedRoot = await graph.graphServer.mergeSegments(submission.sink, submission.source!, annotationToNanometers);
-      visibleSegments.delete(submission.sink.rootId);
-      visibleSegments.delete(submission.source!.rootId);
-      visibleSegments.add(mergedRoot);
+      return mergedRoot;
     }
 
     // const fakeSubmit = async (submission: MergeSubmission) => {
+    //   submission.error = undefined;
     //   console.log('fakeSubmit', submission.id);
-    //   await wait(5000);
+    //   await wait(2000);
     //   if (Math.random() > 0.5) {
     //     console.log('fakeSubmit - success', submission.id);
-    //     return submission;
+    //     return submission.sink.rootId;
     //   } else {
     //     console.log('fakeSubmit - fail', submission.id);
     //     throw {message: 'failed for some reason'};
     //   }
     // }
 
-    const submit = (submissions: MergeSubmission[]): Promise<void> => {
+    const submit = async (submissions: MergeSubmission[]) => {
       submissions = submissions.filter(x => !x.locked && x.source);
+      await submitHelper(submissions);
+      const segmentsToRemove: Uint64[] = [];
+      const segmentsToAdd: Uint64[] = [];
+      for (const submission of submissions) {
+        if (submission.error) {
+          submission.locked = false;
+          submission.status = submission.error;
+        } else if (submission.mergedRoot) {
+          segmentsToRemove.push(submission.sink.rootId, submission.source!.rootId);
+          // TODO, get latest roots
+          segmentsToAdd.push(submission.mergedRoot);
+        }
+      }
+      visibleSegments.delete(segmentsToRemove);
+
+      console.log('removing/adding', segmentsToRemove.map(x => x.toJSON()), segmentsToAdd.map(x => x.toJSON()));
+
+      const latestRoots = await graph.graphServer.filterLatestRoots(segmentsToAdd);
+      console.log('isLatestRoots', latestRoots.map(x => x.toJSON()));
+      visibleSegments.add(latestRoots);
+
+      this.submissions.changed.dispatch();
+    }
+
+    const submitHelper = (submissions: MergeSubmission[]): Promise<void> => {
       return new Promise(f => {
         if (submissions.length === 0) {
           f();
@@ -1605,7 +1659,7 @@ class MergeSegmentsTool extends Tool<SegmentationUserLayer> {
         let completed = 0;
         let activeLoops = 0;
         const loop = (completedAT: number, pending: MergeSubmission[]) => {
-          console.log("LOOP ", completed, completedAT, pending.map(x => x.id));
+          // console.log("LOOP ", completed, completedAT, pending.map(x => x.id));
           if (completed === submissions.length || pending.length === 0) return;
           activeLoops++;
           let failed: MergeSubmission[] = [];
@@ -1615,13 +1669,6 @@ class MergeSegmentsTool extends Tool<SegmentationUserLayer> {
               activeLoops -= 1;
             }
             if (activeLoops === 0) {
-              for (const submission of submissions) {
-                if (submission.error) {
-                  submission.locked = false;
-                  submission.status = submission.error;
-                }
-                this.submissions.changed.dispatch();
-              }
               f();
             }
           };
@@ -1631,14 +1678,15 @@ class MergeSegmentsTool extends Tool<SegmentationUserLayer> {
             submission.locked = true;
             submission.status = 'trying...';
             this.submissions.changed.dispatch();
-            realSubmit(submission).then(() => {
+            realSubmit(submission).then(mergedRoot => {
               submission.status = 'done';
+              submission.mergedRoot = mergedRoot;
               this.submissions.changed.dispatch();
               completed += 1;
               loop(completed, failed);
               failed = [];
               checkDone();
-              wait(3000).then(() => {
+              wait(5000).then(() => {
                 deleteSubmission(submission);
               });
             }).catch((err) => {
