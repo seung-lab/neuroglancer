@@ -874,6 +874,10 @@ abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
       oldAnnotation: Annotation, mouseState: MouseSelectionState,
       annotationLayer: AnnotationLayerState): Annotation;
 
+  added = new Signal<(reference: AnnotationReference) => void>();
+  completed = new Signal<(reference: AnnotationReference) => void>();
+
+
   trigger(mouseState: MouseSelectionState) {
     const {annotationLayer} = this;
     if (annotationLayer === undefined) {
@@ -908,12 +912,14 @@ abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
           reference,
           disposer,
         };
+        this.added.dispatch(reference);
       } else {
         updatePointB();
-        this.inProgressAnnotation.annotationLayer.source.commit(
-            this.inProgressAnnotation.reference);
+        const ref = this.inProgressAnnotation.reference;
+        this.inProgressAnnotation.annotationLayer.source.commit(ref);
         this.inProgressAnnotation.disposer();
         this.inProgressAnnotation = undefined;
+        this.completed.dispatch(ref);
       }
     }
   }
@@ -995,6 +1001,7 @@ export class PlaceLineTool extends PlaceTwoCornerAnnotationTool {
 
   getInitialAnnotation(mouseState: MouseSelectionState, annotationLayer: AnnotationLayerState):
       Annotation {
+        // console.log('getInitialAnnotation');
     const result = super.getInitialAnnotation(mouseState, annotationLayer);
     this.initialRelationships = result.relatedSegments =
         getSelectedAssociatedSegments(annotationLayer, this.getBaseSegment);
@@ -1004,6 +1011,7 @@ export class PlaceLineTool extends PlaceTwoCornerAnnotationTool {
   getUpdatedAnnotation(
       oldAnnotation: Line|AxisAlignedBoundingBox, mouseState: MouseSelectionState,
       annotationLayer: AnnotationLayerState) {
+        // console.log('getUpdatedAnnotation');
     const result = super.getUpdatedAnnotation(oldAnnotation, mouseState, annotationLayer);
     const initialRelationships = this.initialRelationships;
     const newRelationships = getSelectedAssociatedSegments(annotationLayer, this.getBaseSegment);

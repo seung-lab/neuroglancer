@@ -50,6 +50,18 @@
   gap: 10px;
 }
 
+.graphene-merge-segments-status .neuroglancer-icon {
+  height: 100%;
+}
+
+.graphene-merge-segments-status label {
+  display: grid;
+  grid-template-columns: min-content min-content;
+  white-space: nowrap;
+  justify-content: center;
+  align-content: center;
+}
+
 .graphene-merge-segments-point {
   display: flex;
   align-items: center;
