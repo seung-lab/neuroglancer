@@ -277,7 +277,6 @@ export class ToolBinder extends RefCounted {
       this.deactivate_();
       return;
     }
-    console.log('activate', tool);
     this.debounceDeactivate.cancel();
     this.debounceReactivate.cancel();
     const activeTool = this.activeTool_;

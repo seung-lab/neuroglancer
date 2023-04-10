@@ -804,6 +804,7 @@ export interface AnnotationSourceSignals {
   changed: NullarySignal;
   childAdded: Signal<(annotation: Annotation) => void>;
   childUpdated: Signal<(annotation: Annotation) => void>;
+  childCommitted: Signal<(annotationId: string) => void>;
   childDeleted: Signal<(annotationId: string) => void>;
 }
 
@@ -813,6 +814,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
   readonly = false;
   childAdded = new Signal<(annotation: Annotation) => void>();
   childUpdated = new Signal<(annotation: Annotation) => void>();
+  childCommitted = new Signal<(annotationId: string) => void>();
   childDeleted = new Signal<(annotationId: string) => void>();
 
   public pending = new Set<AnnotationId>();
@@ -850,6 +852,9 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     }
     this.changed.dispatch();
     this.childAdded.dispatch(annotation);
+    if (commit) {
+      this.childCommitted.dispatch(annotation.id);
+    }
     return this.getReference(annotation.id);
   }
 
@@ -858,6 +863,7 @@ export class AnnotationSource extends RefCounted implements AnnotationSourceSign
     const id = reference.id;
     this.pending.delete(id);
     this.changed.dispatch();
+    this.childCommitted.dispatch(id);
   }
 
   update(reference: AnnotationReference, annotation: Annotation) {

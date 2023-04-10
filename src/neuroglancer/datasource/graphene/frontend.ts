@@ -25,7 +25,7 @@ import {MeshSource} from 'neuroglancer/mesh/frontend';
 import {Owned} from 'neuroglancer/util/disposable';
 import {mat4, vec3, vec4} from 'neuroglancer/util/geom';
 import {HttpError, isNotFoundError, responseJson} from 'neuroglancer/util/http_request';
-import {parseArray, parseFixedLengthArray, verifyEnumString, verifyFiniteFloat, verifyFinitePositiveFloat, verifyInt, verifyObject, verifyObjectProperty, verifyOptionalObjectProperty, verifyOptionalString, verifyPositiveInt, verifyString, verifyNonnegativeInt, verify3dVec} from 'neuroglancer/util/json';
+import {parseArray, parseFixedLengthArray, verifyEnumString, verifyFiniteFloat, verifyFinitePositiveFloat, verifyInt, verifyObject, verifyObjectProperty, verifyOptionalObjectProperty, verifyOptionalString, verifyPositiveInt, verifyString, verifyNonnegativeInt, verify3dVec, verifyBoolean} from 'neuroglancer/util/json';
 import {getObjectId} from 'neuroglancer/util/object_id';
 import {cancellableFetchSpecialOk, parseSpecialUrl, SpecialProtocolCredentials, SpecialProtocolCredentialsProvider} from 'neuroglancer/util/special_protocol_request';
 import {Uint64} from 'neuroglancer/util/uint64';
@@ -487,25 +487,35 @@ function makeColoredAnnotationState(
   return state;
 }
 
+function getUint64(obj: any, key: string, optional = false) {
+  const verifier = optional ? verifyOptionalObjectProperty : verifyObjectProperty;
+  return verifier(obj, key, value => Uint64.parseString(String(value)));
+}
+
 function restoreSegmentSelection(obj: any): SegmentSelection {
-  function getUint64(key: string) {
-    return verifyObjectProperty(obj, key, value => Uint64.parseString(String(value)));
-  }
-  const segmentId = getUint64(SEGMENT_ID_JSON_KEY);
-  const rootId = getUint64(ROOT_ID_JSON_KEY);
+  const segmentId = getUint64(obj, SEGMENT_ID_JSON_KEY);
+  const rootId = getUint64(obj, ROOT_ID_JSON_KEY);
   const position = verifyObjectProperty(
     obj, POSITION_JSON_KEY, value => {
       return verify3dVec(value);
     });
-    return {
-      segmentId,
-      rootId,
-      position,
-    }
+  return {
+    segmentId,
+    rootId,
+    position,
+  }
 }
 
+const ID_JSON_KEY = "id";
+const MERGED_ROOT_JSON_KEY = "mergedRoot";
 const MULTICUT_JSON_KEY = "multicut";
+const MERGE_JSON_KEY = "merge";
+const MERGES_JSON_KEY = "merges";
+const AUTOSUBMIT_JSON_KEY = "autosubmit";
+const LOCKED_JSON_KEY = "locked";
 const FOCUS_SEGMENT_JSON_KEY = "focusSegment";
+const SINK_JSON_KEY = "sink";
+const SOURCE_JSON_KEY = "source";
 const SINKS_JSON_KEY = "sinks";
 const SOURCES_JSON_KEY = "sources";
 
@@ -517,26 +527,35 @@ class GrapheneState implements Trackable {
   changed = new NullarySignal();
 
   public multicutState = new MulticutState();
+  public mergeState = new MergeState();
 
   constructor() {
     this.multicutState.changed.add(() => {
+      this.changed.dispatch();
+    });
+    this.mergeState.changed.add(() => {
       this.changed.dispatch();
     });
   }
 
   reset() {
     this.multicutState.reset();
+    this.mergeState.reset();
   }
 
   toJSON() {
     return {
       [MULTICUT_JSON_KEY]: this.multicutState.toJSON(),
+      [MERGE_JSON_KEY]: this.mergeState.toJSON(),
     }
   }
 
   restoreState(x: any) {
     verifyOptionalObjectProperty(x, MULTICUT_JSON_KEY, value => {
       this.multicutState.restoreState(value);
+    });
+    verifyOptionalObjectProperty(x, MERGE_JSON_KEY, value => {
+      this.mergeState.restoreState(value);
     });
   }
 }
@@ -546,6 +565,84 @@ export interface SegmentSelection {
   rootId: Uint64;
   position: Float32Array;
   annotationReference?: AnnotationReference;
+}
+
+class MergeState extends RefCounted implements Trackable {
+  changed = new NullarySignal();
+
+  merges = new WatchableValue<MergeSubmission[]>([]);
+  autoSubmit = new TrackableBoolean(false);
+
+  constructor() {
+    super();
+    this.registerDisposer(this.merges.changed.add(this.changed.dispatch));
+  }
+
+  reset() {
+    this.merges.value = [];
+    this.autoSubmit.reset();
+  }
+
+  toJSON() {
+    const {merges, autoSubmit} = this;
+
+    const segmentSelectionToJSON = (x: SegmentSelection) => {
+      return {
+        [SEGMENT_ID_JSON_KEY]: x.segmentId.toJSON(),
+        [ROOT_ID_JSON_KEY]: x.rootId.toJSON(),
+        [POSITION_JSON_KEY]: [...x.position],
+      }
+    }
+
+    const mergeToJSON = (x: MergeSubmission) => {
+      const res: any = {
+        [ID_JSON_KEY]: x.id,
+        [LOCKED_JSON_KEY]: x.locked,
+        [SINK_JSON_KEY]: segmentSelectionToJSON(x.sink),
+        [SOURCE_JSON_KEY]: segmentSelectionToJSON(x.source!),
+      }
+
+      if (x.mergedRoot) {
+        res['mergedRoot'] = x.mergedRoot.toJSON();
+      }
+      if (x.error) {
+        res['error'] = x.error;
+      }
+
+      return res;
+    }
+
+    return {
+      [MERGES_JSON_KEY]: merges.value.filter(x=>x.source).map(mergeToJSON),
+      [AUTOSUBMIT_JSON_KEY]: autoSubmit.toJSON(),
+    };
+  }
+
+  restoreState(x: any) {
+    function restoreSubmission(obj: any): MergeSubmission {
+      const mergedRoot = getUint64(obj, MERGED_ROOT_JSON_KEY, true);
+      const id = verifyObjectProperty(obj, ID_JSON_KEY, verifyString);
+      const locked = verifyObjectProperty(obj, LOCKED_JSON_KEY, verifyBoolean);
+      const sink = restoreSegmentSelection(obj[SINK_JSON_KEY]);
+      const source = restoreSegmentSelection(obj[SOURCE_JSON_KEY]);
+      return {
+        id,
+        locked,
+        sink,
+        source,
+        mergedRoot,
+      }
+    }
+
+    const submissionsValidator = (value: any) => {
+      return parseArray(value, x => {
+        return restoreSubmission(x);
+      });
+    };
+
+    this.merges.value = verifyObjectProperty(x, MERGES_JSON_KEY, submissionsValidator);
+    this.autoSubmit.restoreState(verifyOptionalObjectProperty(x, AUTOSUBMIT_JSON_KEY, verifyBoolean));
+  }
 }
 
 class MulticutState extends RefCounted implements Trackable {
@@ -646,10 +743,11 @@ class MulticutState extends RefCounted implements Trackable {
 
 class GraphConnection extends SegmentationGraphSourceConnection {
   public annotationLayerStates: AnnotationLayerState[] = [];
+  public mergeAnnotationState: AnnotationLayerState;
 
   constructor(
       public graph: GrapheneGraphSource,
-      layer: SegmentationUserLayer,
+      private layer: SegmentationUserLayer,
       private chunkSource: GrapheneMultiscaleVolumeChunkSource,
       public state: GrapheneState) {
     super(graph, layer.displayState.segmentationGroupState.value);
@@ -671,6 +769,89 @@ class GraphConnection extends SegmentationGraphSourceConnection {
 
     if (layer.tool.value instanceof MergeSegmentsPlaceLineTool) {
       layer.tool.value = undefined;
+    }
+
+    this.mergeAnnotationState = makeColoredAnnotationState(layer, loadedSubsource, "grapheneMerge", RED_COLOR);
+
+    {
+      const {mergeState} = state;
+      const {merges, autoSubmit} = mergeState;
+      const {mergeAnnotationState} = this;
+      const {visibleSegments} = segmentsState;
+
+
+      // load merges from state
+      for (const merge of merges.value) {
+        mergeAnnotationState.source.add(mergeToLine(merge));
+      }
+
+      // initialize source changes
+      mergeAnnotationState.source.childAdded.add((x) => {
+        const annotation = x as Line;
+        const relatedSegments = annotation.relatedSegments![0];
+        const visibles = relatedSegments.map(x => visibleSegments.has(x));
+        if (visibles[0] === false) {
+          setTimeout(() => {
+            const {tool} = layer;
+            if (tool.value instanceof MergeSegmentsPlaceLineTool) {
+              tool.value.deactivate();
+            }
+          }, 0);
+          StatusMessage.showTemporaryMessage(`Cannot merge a hidden segment.`);
+        } else if (merges.value.length < MAX_MERGE_COUNT) {
+          merges.value = [...merges.value, lineToSubmission(annotation, true)];
+        } else {
+          setTimeout(() => {
+            const {tool} = layer;
+            if (tool.value instanceof MergeSegmentsPlaceLineTool) {
+              tool.value.deactivate();
+            }
+          }, 0);
+          StatusMessage.showTemporaryMessage(`Maximum of ${MAX_MERGE_COUNT} simultanous merges allowed.`);
+        }
+      });
+
+      mergeAnnotationState.source.childCommitted.add((x) => {
+        const ref = mergeAnnotationState.source.getReference(x);
+        const annotation = ref.value as Line|undefined;
+        if (annotation) {
+          const relatedSegments = annotation.relatedSegments![0];
+          const visibles = relatedSegments.map(x => visibleSegments.has(x));
+          if (relatedSegments.length < 4) {
+            mergeAnnotationState.source.delete(ref);
+            StatusMessage.showTemporaryMessage(`Cannot merge segment with itself.`);
+          }
+          if (visibles[2] === false) {
+            mergeAnnotationState.source.delete(ref);
+            StatusMessage.showTemporaryMessage(`Cannot merge a hidden segment.`);
+          }
+          const existingSubmission = merges.value.find(x => x.id === ref.id);
+          if (existingSubmission && !existingSubmission?.locked) { //  how would it be locked?
+            const newSubmission = lineToSubmission(annotation, false);
+            existingSubmission.sink = newSubmission.sink;
+            existingSubmission.source = newSubmission.source;
+            merges.changed.dispatch();
+            if (autoSubmit.value) {
+              this.bulkMerge([existingSubmission]);
+            }
+          }
+        }
+        ref.dispose();
+      });
+
+      mergeAnnotationState.source.childDeleted.add((id) => {
+        let changed = false;
+        const filtered = merges.value.filter(x => {
+          const keep = x.id !== id || x.locked;
+          if (!keep) {
+            changed = true;
+          }
+          return keep;
+        });
+        if (changed) {
+          merges.value = filtered;
+        }
+      });
     }
   }
 
@@ -768,6 +949,120 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       }
     }
   }
+
+  deleteMergeSubmission = (submission: MergeSubmission) => {
+    const {mergeAnnotationState} = this;
+    submission.locked = false;
+    mergeAnnotationState.source.delete(mergeAnnotationState.source.getReference(submission.id));
+  }
+
+  private submitMerge = async (submission: MergeSubmission, attempts=1): Promise<Uint64> => {
+    const loadedSubsource = getGraphLoadedSubsource(this.layer)!;
+    const annotationToNanometers = loadedSubsource.loadedDataSource.transform.inputSpace.value.scales.map(x => x / 1e-9);
+    submission.error = undefined;
+    for (let i = 1; i <= attempts; i++) {
+      try {
+        return await this.graph.graphServer.mergeSegments(submission.sink, submission.source!, annotationToNanometers);
+      } catch (err) {
+        if (i === attempts) {
+          submission.error = err;
+          throw err;
+        }
+      }
+    }
+
+    return Uint64.ZERO; // appease typescript
+  }
+
+    async bulkMerge(submissions: MergeSubmission[]) {
+      const {merges} = this.state.mergeState;
+      const bulkMergeHelper = (submissions: MergeSubmission[]): Promise<Uint64[]> => {
+        return new Promise(f => {
+          if (submissions.length === 0) {
+            f([]);
+            return;
+          }
+          const segmentsToRemove: Uint64[] = [];
+          const replaceSegment = (a: Uint64, b: Uint64) => {
+            segmentsToRemove.push(a);
+            for (const submission of submissions) {
+              if (submission.source && Uint64.equal(submission.source.rootId, a)) {
+                submission.source.rootId = b;
+              }
+              if (Uint64.equal(submission.sink.rootId, a)) {
+                submission.sink.rootId = b;
+              }
+            }
+          };
+          let completed = 0;
+          let activeLoops = 0;
+          const loop = (completedAt: number, pending: MergeSubmission[]) => {
+            if (completed === submissions.length || pending.length === 0) return;
+            activeLoops++;
+            let failed: MergeSubmission[] = [];
+            const checkDone = () => {
+              loopDone++;
+              if (loopDone === pending.length) {
+                activeLoops -= 1;
+              }
+              if (activeLoops === 0) {
+                f(segmentsToRemove);
+              }
+            };
+            let loopDone = 0;
+            for (const submission of pending) {
+              submission.locked = true;
+              submission.status = 'trying...';
+              merges.changed.dispatch();
+              this.submitMerge(submission, 3).then(mergedRoot => {
+                replaceSegment(submission.source!.rootId, mergedRoot);
+                replaceSegment(submission.sink.rootId, mergedRoot);
+                submission.status = 'done';
+                submission.mergedRoot = mergedRoot;
+                merges.changed.dispatch();
+                completed += 1;
+                loop(completed, failed);
+                failed = [];
+                checkDone();
+                wait(5000).then(() => {
+                  this.deleteMergeSubmission(submission);
+                });
+              }).catch(() => {
+                merges.changed.dispatch();
+                failed.push(submission);
+                if (completed > completedAt) {
+                  loop(completed, failed);
+                  failed = [];
+                }
+                checkDone();
+              });
+            }
+          };
+          loop(completed, submissions);
+        });
+      };
+
+
+      submissions = submissions.filter(x => !x.locked && x.source);
+      const segmentsToRemove = await bulkMergeHelper(submissions);
+      const segmentsToAdd: Uint64[] = [];
+      for (const submission of submissions) {
+        if (submission.error) {
+          submission.locked = false;
+          submission.status = submission.error;
+        } else if (submission.mergedRoot) {
+          segmentsToAdd.push(submission.mergedRoot);
+        }
+      }
+      const segmentsState = this.layer.displayState.segmentationGroupState.value;
+      const {visibleSegments} = segmentsState;
+      visibleSegments.delete(segmentsToRemove);
+      const latestRoots = await this.graph.graphServer.filterLatestRoots(segmentsToAdd);
+      visibleSegments.add(latestRoots);
+      merges.changed.dispatch();
+    }
+
+    
 }
 
 async function withErrorMessageHTTP(promise: Promise<Response>, options: {
@@ -1370,7 +1665,7 @@ const wait = (t: number) => {
 }
 
 interface MergeSubmission {
-  ref: AnnotationReference;
+  id: string;
   locked: boolean;
   error?: string;
   status?: string;
@@ -1381,28 +1676,24 @@ interface MergeSubmission {
 
 export class MergeSegmentsPlaceLineTool extends PlaceLineTool {
   getBaseSegment = true;
-
   constructor(layer: SegmentationUserLayer, private annotationState: AnnotationLayerState) {
     super(layer, {});
   }
-
   get annotationLayer() {
     return this.annotationState;
   }
-
   get description() {
     return `merge line`;
   }
-
   toJSON() {
     return ANNOTATE_MERGE_LINE_TOOL_ID;
   }
 }
 
-function lineToSubmission(line: Line, reference: AnnotationReference, pending: boolean): MergeSubmission {
+function lineToSubmission(line: Line, pending: boolean): MergeSubmission {
   const relatedSegments = line.relatedSegments![0];
   const res: MergeSubmission = {
-    ref: reference,
+    id: line.id,
     locked: false,
     sink: {
       position: line.pointA.slice(),
@@ -1420,14 +1711,21 @@ function lineToSubmission(line: Line, reference: AnnotationReference, pending: b
   return res;
 }
 
+function mergeToLine(submission: MergeSubmission): Line {
+  const {sink, source} = submission;
+  const res: Line = {
+    id: submission.id,
+    type: AnnotationType.LINE,
+    pointA: sink.position.slice(),
+    pointB: source!.position.slice(),
+    relatedSegments: [[sink.rootId.clone(), sink.segmentId.clone(), source!.rootId.clone(), source!.segmentId.clone()]],
+    properties: [],
+  };
+  return res;
+}
+
 const MAX_MERGE_COUNT = 10;
 
-// todo: make a replacement map
-// fix the unslected segments
-// make submit biggger
-// exit and enter broken (not loading annotations immediately)
-
-// retry on failures? (10 retries with 2 second gap)
 // on error, copy (also clean up error message)
 
 const MERGE_SEGMENTS_INPUT_EVENT_MAP = EventActionMap.fromObject({
@@ -1435,98 +1733,28 @@ const MERGE_SEGMENTS_INPUT_EVENT_MAP = EventActionMap.fromObject({
 });
 
 class MergeSegmentsTool extends Tool<SegmentationUserLayer> {
-  submissions = new WatchableValue<MergeSubmission[]>([]);
-  autoSubmit = new TrackableBoolean(false);
-
   activate(activation: ToolActivation<this>) {
-    // Ensure we use the same segmentationGroupState while activated.
-    const segmentationGroupState = this.layer.displayState.segmentationGroupState.value;
-    const {visibleSegments} = segmentationGroupState;
-    const {graph: {value: graph}} = segmentationGroupState;
-    if (!(graph instanceof GrapheneGraphSource)) return;
-    const loadedSubsource = getGraphLoadedSubsource(this.layer)!;
-    const GRAPHENE_ANNOTATION_ID = "grapheneMerge";
-    const annotationState = this.layer.annotationStates.states.find(x => x.subsubsourceId === GRAPHENE_ANNOTATION_ID) ||
-      makeColoredAnnotationState(this.layer, loadedSubsource, GRAPHENE_ANNOTATION_ID, RED_COLOR);
+    const {graphConnection: {value: graphConnection}, tool} = this.layer;
+    if (!graphConnection || !(graphConnection instanceof GraphConnection)) return;
+    const {state: {mergeState}} = graphConnection;
+    if (mergeState === undefined) return;
+    const {merges, autoSubmit} = mergeState;
 
-    const lineTool = new MergeSegmentsPlaceLineTool(this.layer, annotationState);
-
-    activation.registerDisposer(lineTool.added.add((ref) => {
-      const annotation = ref.value as Line|undefined;
-      if (annotation) {
-        const relatedSegments = annotation.relatedSegments![0];
-        const visibles = relatedSegments.map(x => visibleSegments.has(x));
-        if (visibles[0] === false) {
-          lineTool.deactivate();
-          StatusMessage.showTemporaryMessage(`Cannot merge a hidden segment.`);
-        } else if (this.submissions.value.length < MAX_MERGE_COUNT) {
-          const unregister = ref.changed.add(() => {
-            if (ref.value === null) {
-              this.submissions.value = this.submissions.value.filter(x => {
-                return x.ref.value !== null || x.locked;
-              });
-              unregister();
-            }
-          });
-          const submission = lineToSubmission(annotation, ref, true);
-          this.submissions.value = [...this.submissions.value, submission];
-        } else {
-          lineTool.deactivate();
-          StatusMessage.showTemporaryMessage(`Maximum of ${MAX_MERGE_COUNT} simultanous merges allowed.`);
-        }
-      }      
-    }));
-
-    activation.registerDisposer(lineTool.completed.add((ref) => {
-      console.log('completed line');
-      const annotation = ref.value as Line|undefined;
-      if (annotation) {
-        const relatedSegments = annotation.relatedSegments![0];
-        const visibles = relatedSegments.map(x => visibleSegments.has(x));
-
-        if (relatedSegments.length < 4) {
-          annotationState.source.delete(annotationState.source.getReference(annotation.id));
-          StatusMessage.showTemporaryMessage(`Cannot merge segment with itself.`);
-        }
-
-        if (visibles[2] === false) {
-          annotationState.source.delete(annotationState.source.getReference(annotation.id));
-          StatusMessage.showTemporaryMessage(`Cannot merge a hidden segment.`);
-        }
-
-        const existingSubmission = this.submissions.value.find(x => x.ref.id === ref.id);
-        if (existingSubmission && !existingSubmission?.locked) { //  how would it be locked?
-          const newSubmission = lineToSubmission(annotation, ref, false);
-          existingSubmission.sink = newSubmission.sink;
-          existingSubmission.source = newSubmission.source;
-          this.submissions.changed.dispatch();
-          if (this.autoSubmit.value) {
-            submit([existingSubmission]);
-          }
-        }
-      }
-    }));
-
-    this.layer.tool.value = lineTool;
+    const lineTool = new MergeSegmentsPlaceLineTool(this.layer, graphConnection.mergeAnnotationState);
+    tool.value = lineTool;
     activation.registerDisposer(() => {
-      this.layer.tool.value = undefined;
+      tool.value = undefined;
     });
-
-
     const {body, header} = makeToolActivationStatusMessageWithHeader(activation);
     header.textContent = 'Merge segments';
     body.classList.add('graphene-merge-segments-status');
-
     activation.bindInputEventMap(MERGE_SEGMENTS_INPUT_EVENT_MAP);
-
     const submitAction = async () => {
-      if (this.submissions.value.filter(x => x.locked).length) return;
-      console.log('submit!');
+      if (merges.value.filter(x => x.locked).length) return;
       submitIcon.classList.toggle('disabled', true);
-      await submit(this.submissions.value);
+      await graphConnection.bulkMerge(merges.value);
       submitIcon.classList.toggle('disabled', false);
     }
-
     const submitIcon = makeIcon({
       text: 'Submit',
       title: 'Submit merge',
@@ -1534,25 +1762,23 @@ class MergeSegmentsTool extends Tool<SegmentationUserLayer> {
         submitAction();
       }});
     body.appendChild(submitIcon);
-
     activation.bindAction('submit', async event => {
       event.stopPropagation();
       submitAction();
     });
 
 
-    const checkbox = activation.registerDisposer(new TrackableBooleanCheckbox(this.autoSubmit));
+    const checkbox = activation.registerDisposer(new TrackableBooleanCheckbox(autoSubmit));
     const label = document.createElement('label');
     label.appendChild(document.createTextNode('auto-submit'));
     label.title =
         'auto-submit merges';
     label.appendChild(checkbox.element);
     body.appendChild(label);
-
     const points = document.createElement('div');
-    points.classList.add('graphene-merge-segments-points');
-    body.appendChild(points);
-
+    points.classList.add('graphene-merge-segments-merges');
+    body.appendChild(points)
+  
     const segmentWidgetFactory = SegmentWidgetFactory.make(this.layer.displayState, /*includeUnmapped=*/ true);
     const makeWidget = (id: Uint64MapEntry) => {
       // const row = makeSegmentWidget(this.layer.displayState, id);
@@ -1569,12 +1795,6 @@ class MergeSegmentsTool extends Tool<SegmentationUserLayer> {
       return containerEl;
     };
 
-    const deleteSubmission = (submission: MergeSubmission) => {
-      submission.locked = false;
-      console.log('deleting', submission.ref.id);
-      annotationState.source.delete(submission.ref);
-    }
-
     const createSubmissionElement = (submission: MergeSubmission) => {
       const containerEl =  document.createElement('div');
       containerEl.classList.add('graphene-merge-segments-submission');
@@ -1589,7 +1809,7 @@ class MergeSegmentsTool extends Tool<SegmentationUserLayer> {
           onClick: event => {
             event.stopPropagation();
             event.preventDefault();
-            deleteSubmission(submission);
+            graphConnection.deleteMergeSubmission(submission);
           },
         }));
       }
@@ -1602,155 +1822,16 @@ class MergeSegmentsTool extends Tool<SegmentationUserLayer> {
       return containerEl;
     };
 
-    const realSubmit = async (submission: MergeSubmission, attempts=1): Promise<Uint64> => {
-      submission.error = undefined;
-      const annotationToNanometers = loadedSubsource.loadedDataSource.transform.inputSpace.value.scales.map(x => x / 1e-9);
-      for (let i = 1; i <= attempts; i++) {
-        try {
-          return await graph.graphServer.mergeSegments(submission.sink, submission.source!, annotationToNanometers);
-        } catch (err) {
-          if (i === attempts) {
-            throw err;
-          }
-        }
-      }
-
-      return Uint64.ZERO; // appease typescript
-    }
-
-    // const fakeSubmit = async (submission: MergeSubmission, attempts=1) => {
-    //   submission.error = undefined;
-    //   console.log('fakeSubmit', submission.ref.id);
-    //   const foo = async (i: number) => {
-    //     await wait(2000);
-    //     if (Math.random() > 0.8) {
-    //       console.log('fakeSubmit - success', i, submission.ref.id);
-    //       return submission.sink.rootId;
-    //     } else {
-    //       console.log('fakeSubmit - fail', i, submission.ref.id);
-    //       throw {message: 'failed for some reason'};
-    //     }
-    //   }
-
-    //   for (let i = 1; i <= attempts; i++) {
-    //     try {
-    //       return await foo(i);
-    //     } catch (err) {
-    //       if (i === attempts) {
-    //         throw err;
-    //       }
-    //     }
-    //   }
-
-    //   return Uint64.ZERO; // appease typescript
-    // }
-
-    const submit = async (submissions: MergeSubmission[]) => {
-      submissions = submissions.filter(x => !x.locked && x.source);
-      const segmentsToRemove = await submitHelper(submissions);
-      const segmentsToAdd: Uint64[] = [];
-      for (const submission of submissions) {
-        if (submission.error) {
-          submission.locked = false;
-          submission.status = submission.error;
-        } else if (submission.mergedRoot) {
-          segmentsToAdd.push(submission.mergedRoot);
-        }
-      }
-      visibleSegments.delete(segmentsToRemove);
-
-      console.log('removing/adding', segmentsToRemove.map(x => x.toJSON()), segmentsToAdd.map(x => x.toJSON()));
-
-      const latestRoots = await graph.graphServer.filterLatestRoots(segmentsToAdd);
-      console.log('isLatestRoots', latestRoots.map(x => x.toJSON()));
-      visibleSegments.add(latestRoots);
-
-      this.submissions.changed.dispatch();
-    }
-
-    const submitHelper = (submissions: MergeSubmission[]): Promise<Uint64[]> => {
-      return new Promise(f => {
-        if (submissions.length === 0) {
-          f([]);
-          return;
-        }
-
-        const segmentsToRemove: Uint64[] = [];
-
-        const replaceSegment = (a: Uint64, b: Uint64) => {
-          segmentsToRemove.push(a);
-          for (const submission of submissions) {
-            if (submission.source && Uint64.equal(submission.source.rootId, a)) {
-              submission.source.rootId = b;
-            }
-            if (Uint64.equal(submission.sink.rootId, a)) {
-              submission.sink.rootId = b;
-            }
-          }
-        };
-
-        let completed = 0;
-        let activeLoops = 0;
-        const loop = (completedAT: number, pending: MergeSubmission[]) => {
-          // console.log("LOOP ", completed, completedAT, pending.map(x => x.id));
-          if (completed === submissions.length || pending.length === 0) return;
-          activeLoops++;
-          let failed: MergeSubmission[] = [];
-          const checkDone = () => {
-            loopDone++;
-            if (loopDone === pending.length) {
-              activeLoops -= 1;
-            }
-            if (activeLoops === 0) {
-              f(segmentsToRemove);
-            }
-          };
-
-          let loopDone = 0;
-          for (const submission of pending) {
-            submission.locked = true;
-            submission.status = 'trying...';
-            this.submissions.changed.dispatch();
-            realSubmit(submission, 3).then(mergedRoot => {
-              replaceSegment(submission.source!.rootId, mergedRoot);
-              replaceSegment(submission.sink.rootId, mergedRoot);
-              submission.status = 'done';
-              submission.mergedRoot = mergedRoot;
-              this.submissions.changed.dispatch();
-              completed += 1;
-              loop(completed, failed);
-              failed = [];
-              checkDone();
-              wait(5000).then(() => {
-                deleteSubmission(submission);
-              });
-            }).catch((err) => {
-              submission.error = err.message;
-              this.submissions.changed.dispatch();
-              failed.push(submission);
-              if (completed > completedAT) {
-                loop(completed, failed);
-                failed = [];
-              }
-              checkDone();
-            });
-          }
-        };
-        loop(completed, submissions);
-      });
-    }
-
-    const updateState = () => {
+    const updateUI = () => {
       while (points.firstChild) {
         points.removeChild(points.firstChild);
       }
-      for (let submission of this.submissions.value) {
+      for (let submission of merges.value) {
         points.appendChild(createSubmissionElement(submission));
       }
     };
-
-    activation.registerDisposer(this.submissions.changed.add(updateState));
-    updateState();
+    activation.registerDisposer(merges.changed.add(updateUI));
+    updateUI();
   }
 
   toJSON() {
