@@ -68,7 +68,7 @@ export async function decodeDracoPartitioned(
   heap.set(buffer, offset);
   numPartitions = partition ? 8 : 1;
   const code = (m.instance.exports.neuroglancer_draco_decode as Function)(
-      offset, buffer.byteLength, partition, vertexQuantizationBits, true);
+      offset, buffer.byteLength, partition, vertexQuantizationBits, false);
   if (code === 0) {
     const r = decodeResult;
     decodeResult = undefined;
