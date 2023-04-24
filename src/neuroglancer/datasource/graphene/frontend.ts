@@ -487,9 +487,12 @@ function makeColoredAnnotationState(
   return state;
 }
 
-function getUint64(obj: any, key: string, optional = false) {
-  const verifier = optional ? verifyOptionalObjectProperty : verifyObjectProperty;
-  return verifier(obj, key, value => Uint64.parseString(String(value)));
+function getOptionalUint64(obj: any, key: string) {
+  return verifyOptionalObjectProperty(obj, key, value => Uint64.parseString(String(value)));
+}
+
+function getUint64(obj: any, key: string) {
+  return verifyObjectProperty(obj, key, value => Uint64.parseString(String(value)));
 }
 
 function restoreSegmentSelection(obj: any): SegmentSelection {
@@ -620,7 +623,7 @@ class MergeState extends RefCounted implements Trackable {
 
   restoreState(x: any) {
     function restoreSubmission(obj: any): MergeSubmission {
-      const mergedRoot = getUint64(obj, MERGED_ROOT_JSON_KEY, true);
+      const mergedRoot = getOptionalUint64(obj, MERGED_ROOT_JSON_KEY);
       const id = verifyObjectProperty(obj, ID_JSON_KEY, verifyString);
       const locked = verifyObjectProperty(obj, LOCKED_JSON_KEY, verifyBoolean);
       const sink = restoreSegmentSelection(obj[SINK_JSON_KEY]);
@@ -1678,6 +1681,13 @@ export class MergeSegmentsPlaceLineTool extends PlaceLineTool {
   getBaseSegment = true;
   constructor(layer: SegmentationUserLayer, private annotationState: AnnotationLayerState) {
     super(layer, {});
+    const {inProgressAnnotation} = this;
+    const {displayState} = annotationState;
+    if (!displayState) return; // TODO, this happens when reloading the page when a toggle tool is up
+    const {disablePicking} = displayState;
+    this.registerDisposer(inProgressAnnotation.changed.add(() => {
+      disablePicking.value = inProgressAnnotation.value !== undefined;
+    }));
   }
   get annotationLayer() {
     return this.annotationState;
