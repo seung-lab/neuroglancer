@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {DecodedImage} from 'src/neuroglancer/async_computation/decode_png_request';
+import {DecodedImage} from 'neuroglancer/async_computation/decode_png_request';
 import pngWasmDataUrl from './libpng.wasm';
 
 const libraryEnv = {
