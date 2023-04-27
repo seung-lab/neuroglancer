@@ -22,10 +22,10 @@ import {CancellationToken} from 'neuroglancer/util/cancellation';
 import {isNotFoundError, responseArrayBuffer} from 'neuroglancer/util/http_request';
 import {cancellableFetchSpecialOk, SpecialProtocolCredentials} from 'neuroglancer/util/special_protocol_request';
 import {registerSharedObject} from 'neuroglancer/worker_rpc';
-import {decodeJpeg} from 'src/neuroglancer/async_computation/decode_jpeg_request';
-import {decodePng} from 'src/neuroglancer/async_computation/decode_png_request';
-import {requestAsyncComputation} from 'src/neuroglancer/async_computation/request';
-import {transposeArray2d} from 'src/neuroglancer/util/array';
+import {decodeJpeg} from 'neuroglancer/async_computation/decode_jpeg_request';
+import {decodePng} from 'neuroglancer/async_computation/decode_png_request';
+import {requestAsyncComputation} from 'neuroglancer/async_computation/request';
+import {transposeArray2d} from 'neuroglancer/util/array';
 
 /* This is enough if support for these aren't needed:
  * - Firefox before 105 (OffscreenCanvas, 2022-09-20)
