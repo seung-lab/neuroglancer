@@ -13,7 +13,7 @@ skip_files:
 - ^(.*/)?\..*$
 - ^node_modules$
 
-service: neuroglancer
+service: base-cave
 
 handlers:
 # Handle the main page by serving the index page.
