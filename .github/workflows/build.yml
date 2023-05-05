@@ -54,9 +54,9 @@ jobs:
       - id: deploy
         uses: google-github-actions/deploy-appengine@main
         with:
-          version: ${{ env.BRANCH_NAME_URL }}
+          version: ${{ env.GITHUB_SHA }}
           deliverables: appengine/frontend/app.yaml
-          promote: false
+          promote: true
       - name: update deployment status
         uses: bobheadxi/deployments@v1
         if: always()
