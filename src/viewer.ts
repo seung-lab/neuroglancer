@@ -93,7 +93,7 @@ import { SelectionDetailsPanel } from "#src/ui/selection_details.js";
 import { SidePanelManager } from "#src/ui/side_panel.js";
 import { StateEditorDialog } from "#src/ui/state_editor.js";
 import { StatisticsDisplayState, StatisticsPanel } from "#src/ui/statistics.js";
-import { GlobalToolBinder, LocalToolBinder } from "#src/ui/tool.js";
+import { GlobalToolBinder, LocalToolBinder, Tool } from "#src/ui/tool.js";
 import {
   ViewerSettingsPanel,
   ViewerSettingsPanelState,
@@ -258,7 +258,7 @@ function setViewerUiConfiguration(
 
 export interface ViewerOptions
   extends ViewerUIOptions,
-    VisibilityPrioritySpecification {
+  VisibilityPrioritySpecification {
   dataContext: Owned<DataManagementContext>;
   element: HTMLElement;
   dataSourceProvider: Borrowed<DataSourceProviderRegistry>;
@@ -272,9 +272,9 @@ const defaultViewerOptions =
   "undefined" !== typeof NEUROGLANCER_OVERRIDE_DEFAULT_VIEWER_OPTIONS
     ? NEUROGLANCER_OVERRIDE_DEFAULT_VIEWER_OPTIONS
     : {
-        showLayerDialog: true,
-        resetStateWhenEmpty: true,
-      };
+      showLayerDialog: true,
+      resetStateWhenEmpty: true,
+    };
 
 class TrackableViewerState extends CompoundTrackable {
   constructor(public viewer: Borrowed<Viewer>) {
@@ -1124,8 +1124,8 @@ export class Viewer extends RefCounted implements ViewerState {
     new LocalToolBinder(this, this.globalToolBinder),
   );
 
-  activateTool(uppercase: string) {
-    this.globalToolBinder.activate(uppercase);
+  activateTool(key: string, tool?: Tool<Object>) {
+    this.globalToolBinder.activate(key, tool);
   }
 
   editJsonState() {
