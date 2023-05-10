@@ -46,7 +46,7 @@ import {SelectionDetailsPanel} from 'neuroglancer/ui/selection_details';
 import {SidePanelManager} from 'neuroglancer/ui/side_panel';
 import {StateEditorDialog} from 'neuroglancer/ui/state_editor';
 import {StatisticsDisplayState, StatisticsPanel} from 'neuroglancer/ui/statistics';
-import {GlobalToolBinder, LocalToolBinder} from 'neuroglancer/ui/tool';
+import {GlobalToolBinder, LocalToolBinder, Tool} from 'neuroglancer/ui/tool';
 import {ViewerSettingsPanel, ViewerSettingsPanelState} from 'neuroglancer/ui/viewer_settings';
 import {AutomaticallyFocusedElement} from 'neuroglancer/util/automatic_focus';
 import {TrackableRGB} from 'neuroglancer/util/color';
@@ -789,8 +789,8 @@ export class Viewer extends RefCounted implements ViewerState {
 
   public toolBinder = this.registerDisposer(new LocalToolBinder(this, this.globalToolBinder));
 
-  activateTool(uppercase: string) {
-    this.globalToolBinder.activate(uppercase);
+  activateTool(key: string, tool?: Tool<Object>) {
+    this.globalToolBinder.activate(key, tool);
   }
 
   editJsonState() {
