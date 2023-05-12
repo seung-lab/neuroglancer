@@ -20,14 +20,14 @@ import {setDefaultInputEventBindings} from 'neuroglancer/ui/default_input_event_
 import {makeDefaultViewer} from 'neuroglancer/ui/default_viewer';
 import {bindTitle} from 'neuroglancer/ui/title';
 import {UrlHashBinding} from 'neuroglancer/ui/url_hash_binding';
-import {UserLayer, UserLayerConstructor} from 'neuroglancer/layer';
-import {SegmentationUserLayer} from 'neuroglancer/segmentation_user_layer';
+import {UserLayer, UserLayerConstructor, layerTypes} from 'neuroglancer/layer';
 import {Tool, restoreTool} from 'neuroglancer/ui/tool';
+import {verifyObject, verifyObjectProperty, verifyString} from 'neuroglancer/util/json';
 
 declare var NEUROGLANCER_DEFAULT_STATE_FRAGMENT: string|undefined;
 
 type CustomBinding = {
-  layer: string, tool: string, protocol?: string,
+  layer: string, tool: unknown, provider?: string,
 }
 
 type CustomBindings = {
@@ -44,16 +44,21 @@ export function setupDefaultViewer() {
   let viewer = (<any>window)['viewer'] = makeDefaultViewer();
   setDefaultInputEventBindings(viewer.inputEventBindings);
 
-  const bindActionToTool = (action: string, toolType: string, toolKey: string, desiredLayerType: UserLayerConstructor, desiredProtocol?: string) => {
+  const bindNonLayerSpecificTool = (obj: unknown, toolKey: string, desiredLayerType: UserLayerConstructor, desiredProvider?: string) => {
     let previousTool: Tool<Object>|undefined;
     let previousLayer: UserLayer|undefined;
-    viewer.bindAction(action, () => {
+    if (typeof obj === 'string') {
+      obj = {'type': obj};
+    }
+    verifyObject(obj);
+    const type = verifyObjectProperty(obj, 'type', verifyString);
+    viewer.bindAction(`tool-${type}`, () => {
       const acceptableLayers = viewer.layerManager.managedLayers.filter((managedLayer) => {
         const correctLayerType = managedLayer.layer instanceof desiredLayerType;
-        if (desiredProtocol && correctLayerType) {
+        if (desiredProvider && correctLayerType) {
           for (const dataSource of managedLayer.layer?.dataSources || []) {
             const protocol = viewer.dataSourceProvider.getProvider(dataSource.spec.url)[2];
-            if (protocol === desiredProtocol) {
+            if (protocol === desiredProvider) {
               return true;
             }
           }
@@ -66,7 +71,7 @@ export function setupDefaultViewer() {
         const firstLayer = acceptableLayers[0].layer;
         if (firstLayer) {
           if (firstLayer !== previousLayer) {
-            previousTool = restoreTool(firstLayer, toolType);
+            previousTool = restoreTool(firstLayer, obj);
             previousLayer = firstLayer;
           }
           if (previousTool) {
@@ -77,22 +82,16 @@ export function setupDefaultViewer() {
     });
   }
 
-  const nameToLayer: {[key: string]: UserLayerConstructor|undefined} = {};
-
-  for (let x of [SegmentationUserLayer]) {
-    nameToLayer[x.type] = x;
-  }
-
   if (hasCustomBindings) {
     for (const [key, val] of Object.entries(CUSTOM_BINDINGS!)) {
       if (typeof val === 'string') {
         viewer.inputEventBindings.global.set(key, val);
       } else {
         viewer.inputEventBindings.global.set(key, `tool-${val.tool}`);
-        const layerConstructor = nameToLayer[val.layer];
+        const layerConstructor = layerTypes.get(val.layer);
         if (layerConstructor) {
           const toolKey = key.charAt(key.length - 1).toUpperCase();
-          bindActionToTool(`tool-${val.tool}`, val.tool, toolKey, layerConstructor, val.protocol);
+          bindNonLayerSpecificTool(val.tool, toolKey, layerConstructor, val.provider);
         }
       }
     }
