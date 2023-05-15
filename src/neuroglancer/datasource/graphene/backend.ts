@@ -94,6 +94,8 @@ async function decodeDracoFragmentChunk(
 
 @registerSharedObject() export class GrapheneMeshSource extends
 (WithParameters(WithSharedCredentialsProviderCounterpart<SpecialProtocolCredentials>()(MeshSource), MeshSourceParameters)) {
+  chunkToFailureCount = new Map<string, number>();
+
   async download(chunk: ManifestChunk, cancellationToken: CancellationToken) {
     const {parameters} = this;
     if (isBaseSegmentId(chunk.objectId, parameters.nBitsForLayerId)) {
@@ -108,16 +110,25 @@ async function decodeDracoFragmentChunk(
 
   async downloadFragment(chunk: FragmentChunk, cancellationToken: CancellationToken) {
     const {parameters} = this;
+    const chunkIdentifier = `${chunk.key}${chunk.fragmentId}`;
 
     try {
       const response = await getFragmentDownloadPromise(
         undefined, chunk, parameters, cancellationToken);
       await decodeDracoFragmentChunk(chunk, response);
+      this.chunkToFailureCount.delete(chunkIdentifier);
     } catch (e) {
       if (isNotFoundError(e)) {
-        chunk.source!.removeChunk(chunk);
+        const failureCount = (this.chunkToFailureCount.get(chunkIdentifier) || 0) + 1;
+        this.chunkToFailureCount.set(chunkIdentifier, failureCount);
+        const retryPeriodSeconds = Math.pow(2, failureCount);
+        setTimeout(() => {
+          if (chunk.state === ChunkState.FAILED) {
+            this.chunkManager.queueManager.updateChunkState(chunk, ChunkState.QUEUED);
+          }
+        }, retryPeriodSeconds * 1000);
       }
-      Promise.reject(e);
+      throw e;
     }
   }
 
