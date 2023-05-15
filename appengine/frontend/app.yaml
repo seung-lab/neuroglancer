@@ -1,6 +1,6 @@
 runtime: python312
 
-service: neuroglancer
+service: spelunker
 
 handlers:
   # Handle the main page by serving the index page.
