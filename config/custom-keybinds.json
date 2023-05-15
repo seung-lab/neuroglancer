@@ -1,0 +1,18 @@
+{
+  "keym": {
+    "layer": "segmentation",
+    "tool": "grapheneMergeSegments",
+    "provider": "graphene"
+  },
+  "keyc": {
+    "layer": "segmentation",
+    "tool": "grapheneMulticutSegments",
+    "provider": "graphene"
+  },
+  "keyf": {
+    "layer": "segmentation",
+    "tool": "grapheneFindPath",
+    "provider": "graphene"
+  },
+  "keyx": false
+}
