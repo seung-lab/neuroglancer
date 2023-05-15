@@ -19,7 +19,7 @@ import {WithSharedCredentialsProviderCounterpart} from 'neuroglancer/credentials
 import {assignMeshFragmentData, FragmentChunk, ManifestChunk, MeshSource} from 'neuroglancer/mesh/backend';
 import {getGrapheneFragmentKey, responseIdentity} from 'neuroglancer/datasource/graphene/base';
 import {CancellationToken} from 'neuroglancer/util/cancellation';
-import {isNotFoundError, responseArrayBuffer, responseJson} from 'neuroglancer/util/http_request';
+import {responseArrayBuffer, responseJson} from 'neuroglancer/util/http_request';
 import {cancellableFetchSpecialOk, SpecialProtocolCredentials, SpecialProtocolCredentialsProvider} from 'neuroglancer/util/special_protocol_request';
 import {Uint64} from 'neuroglancer/util/uint64';
 import {registerSharedObject} from 'neuroglancer/worker_rpc';
@@ -94,10 +94,13 @@ async function decodeDracoFragmentChunk(
 
 @registerSharedObject() export class GrapheneMeshSource extends
 (WithParameters(WithSharedCredentialsProviderCounterpart<SpecialProtocolCredentials>()(MeshSource), MeshSourceParameters)) {
-  chunkToFailureCount = new Map<string, number>();
+  manifestRetryCount = new Map<string, number>();
 
   async download(chunk: ManifestChunk, cancellationToken: CancellationToken) {
     const {parameters} = this;
+    const chunkIdentifier = parameters.manifestUrl;
+    const requestCount = (this.manifestRetryCount.get(chunkIdentifier) || 0) + 1;
+    this.manifestRetryCount.set(chunkIdentifier, requestCount);
     if (isBaseSegmentId(chunk.objectId, parameters.nBitsForLayerId)) {
       return decodeManifestChunk(chunk, {fragments: []});
     }
@@ -105,29 +108,34 @@ async function decodeDracoFragmentChunk(
     let manifestUrl = `${url}/${chunk.objectId}:${parameters.lod}?verify=1&prepend_seg_ids=1`;
 
     await cancellableFetchSpecialOk(this.credentialsProvider, manifestUrl, {}, responseJson, cancellationToken)
-        .then(response => decodeManifestChunk(chunk, response));
+        .then(response => {
+          setTimeout(() => {
+            this.chunkManager.queueManager.updateChunkState(chunk, ChunkState.QUEUED);
+          }, Math.pow(2, requestCount) * 1000);
+          return decodeManifestChunk(chunk, response);
+        });
   }
 
   async downloadFragment(chunk: FragmentChunk, cancellationToken: CancellationToken) {
     const {parameters} = this;
-    const chunkIdentifier = `${chunk.key}${chunk.fragmentId}`;
+    // const chunkIdentifier = `${chunk.key}${chunk.fragmentId}`;
 
     try {
       const response = await getFragmentDownloadPromise(
         undefined, chunk, parameters, cancellationToken);
       await decodeDracoFragmentChunk(chunk, response);
-      this.chunkToFailureCount.delete(chunkIdentifier);
+      // this.chunkToFailureCount.delete(chunkIdentifier);
     } catch (e) {
-      if (isNotFoundError(e)) {
-        const failureCount = (this.chunkToFailureCount.get(chunkIdentifier) || 0) + 1;
-        this.chunkToFailureCount.set(chunkIdentifier, failureCount);
-        const retryPeriodSeconds = Math.pow(2, failureCount);
-        setTimeout(() => {
-          if (chunk.state === ChunkState.FAILED) {
-            this.chunkManager.queueManager.updateChunkState(chunk, ChunkState.QUEUED);
-          }
-        }, retryPeriodSeconds * 1000);
-      }
+      // if (isNotFoundError(e)) {
+      //   const failureCount = (this.chunkToFailureCount.get(chunkIdentifier) || 0) + 1;
+      //   this.chunkToFailureCount.set(chunkIdentifier, failureCount);
+      //   const retryPeriodSeconds = Math.pow(2, failureCount);
+      //   setTimeout(() => {
+      //     if (chunk.state === ChunkState.FAILED) {
+      //       this.chunkManager.queueManager.updateChunkState(chunk, ChunkState.QUEUED);
+      //     }
+      //   }, retryPeriodSeconds * 1000);
+      // }
       throw e;
     }
   }
