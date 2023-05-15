@@ -47,7 +47,7 @@ jobs:
       - name: Check for dirty working directory
         run: git diff --exit-code
       - name: Build client bundles
-        run: npm run build -- --no-typecheck --no-lint --define STATE_SERVERS=$(cat config/state_servers.json | tr -d " \t\n\r") --define NEUROGLANCER_BUILD_INFO='${{ env.BUILD_INFO }}'
+        run: npm run build -- --no-typecheck --no-lint --define STATE_SERVERS=$(cat config/state_servers.json | tr -d " \t\n\r") --define NEUROGLANCER_BUILD_INFO='${{ env.BUILD_INFO }}' --define CUSTOM_BINDINGS=$(cat config/custom-keybinds.json | tr -d " \t\n\r")
       - name: Write build info
         run: echo ${{ env.BUILD_INFO }} >> ./dist/min/version.json
         shell: bash
