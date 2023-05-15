@@ -109,9 +109,11 @@ async function decodeDracoFragmentChunk(
 
     await cancellableFetchSpecialOk(this.credentialsProvider, manifestUrl, {}, responseJson, cancellationToken)
         .then(response => {
-          setTimeout(() => {
-            this.chunkManager.queueManager.updateChunkState(chunk, ChunkState.QUEUED);
-          }, Math.pow(2, requestCount) * 1000);
+          if (requestCount <= 10) {
+            setTimeout(() => {
+              this.chunkManager.queueManager.updateChunkState(chunk, ChunkState.QUEUED);
+            }, Math.pow(2, requestCount) * 1000);
+          }
           return decodeManifestChunk(chunk, response);
         });
   }
