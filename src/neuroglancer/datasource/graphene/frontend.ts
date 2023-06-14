@@ -1876,6 +1876,7 @@ class MergeSegmentsTool extends LayerTool<SegmentationUserLayer> {
       text: 'Clear',
       title: 'Clear pending merges',
       onClick: () => {
+        lineTool.deactivate();
         for (const merge of merges.value) {
           if (!merge.locked) {
             graphConnection.deleteMergeSubmission(merge);
