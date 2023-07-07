@@ -17,6 +17,8 @@
 import {CredentialsManager, CredentialsProvider, CredentialsWithGeneration, makeCredentialsGetter} from 'neuroglancer/credentials_provider';
 import {StatusMessage} from 'neuroglancer/status';
 import {verifyObject, verifyObjectProperty, verifyString, verifyStringArray} from 'neuroglancer/util/json';
+import {CancellationToken} from 'neuroglancer/util/cancellation';
+import {Signal} from 'third_party/neuroglancer/util/signal';
 
 
 export type MiddleAuthToken = {
@@ -106,27 +108,48 @@ function saveAuthTokenToLocalStorage(authURL: string, value: MiddleAuthToken) {
   localStorage.setItem(`${LOCAL_STORAGE_AUTH_KEY}_${authURL}`, JSON.stringify(value));
 }
 
+const middleAuthLoginEvent = new Event("middleauthlogin");
+
 export class MiddleAuthCredentialsProvider extends CredentialsProvider<MiddleAuthToken> {
-  alreadyTriedLocalStorage: Boolean = false;
+  // alreadyTriedLocalStorage: Boolean = false;
+
+  updated = new Signal();
 
   constructor(private serverUrl: string) {
     super();
+    console.log('MiddleAuthCredentialsProvider constructor', serverUrl);
   }
-  get = makeCredentialsGetter(async () => {
-    let token = undefined;
 
-    if (!this.alreadyTriedLocalStorage) {
-      this.alreadyTriedLocalStorage = true;
-      token = getAuthTokenFromLocalStorage(this.serverUrl);
-    }
+  private cachedGet = this.updateCachedGet();
 
-    if (!token) {
-      token = await waitForLogin(this.serverUrl);
-      saveAuthTokenToLocalStorage(this.serverUrl, token);
-    }
+  updateCachedGet() {
+    let alreadyTriedLocalStorage = false;
+    const res = makeCredentialsGetter(async () => {
+      console.log('MiddleAuthCredentialsProvider get');
+      let token = undefined;
 
-    return token;
-  });
+      if (!alreadyTriedLocalStorage) {
+        alreadyTriedLocalStorage = true;
+        token = getAuthTokenFromLocalStorage(this.serverUrl);
+      }
+
+      if (!token) {
+        console.log('requesting login');
+        token = await waitForLogin(this.serverUrl);
+        saveAuthTokenToLocalStorage(this.serverUrl, token);
+        window.dispatchEvent(middleAuthLoginEvent);
+      }
+
+      return token;
+    });
+    this.cachedGet = res;
+    this.updated.dispatch();
+    return res;
+  }
+
+  get = (invalidCredentials?: CredentialsWithGeneration<MiddleAuthToken> | undefined, cancellationToken?: CancellationToken | undefined) => {
+    return this.cachedGet(invalidCredentials, cancellationToken);
+  }
 }
 
 export class UnverifiedApp extends Error {
@@ -143,20 +166,44 @@ export class MiddleAuthAppCredentialsProvider extends CredentialsProvider<Middle
 
   constructor(private serverUrl: string, private credentialsManager: CredentialsManager) {
     super();
+
+    console.log('MiddleAuthAppCredentialsProvider constructor', serverUrl);
+
+    // setInterval(() => {
+    //   console.log('throwing away old credentials')
+    //   this.updateCachedGet();
+    // }, 10000);
   }
 
-  get = makeCredentialsGetter(async () => {
-    const authInfo = await fetch(`${this.serverUrl}/auth_info`).then((res) => res.json());
-    const provider = this.credentialsManager.getCredentialsProvider('middleauth', authInfo.login_url) as MiddleAuthCredentialsProvider;
+  updateCachedGet() {
+    const res = makeCredentialsGetter(async () => {
+      console.log('MiddleAuthAppCredentialsProvider geta');
+      const authInfo = await fetch(`${this.serverUrl}/auth_info`).then((res) => res.json());
+      const provider = this.credentialsManager.getCredentialsProvider('middleauth', authInfo.login_url) as MiddleAuthCredentialsProvider;
+      // provider.cachedGet = provider.updateCachedGet();
 
-    this.credentials = await provider.get(this.credentials);
+      const removeHandler = this.registerDisposer(provider.updated.add(() => {
+        removeHandler();
+        this.updateCachedGet();
+      }));
 
-    if (this.credentials.credentials.appUrls.includes(this.serverUrl)) {
-      return this.credentials.credentials;
-    } else {
-      const status = new StatusMessage(/*delay=*/ false);
-      status.setText(`middleauth: unverified app ${this.serverUrl}`);
-      throw new UnverifiedApp(this.serverUrl);
-    }
-  });
+      this.credentials = await provider.get(this.credentials);
+
+      if (this.credentials.credentials.appUrls.includes(this.serverUrl)) {
+        return this.credentials.credentials;
+      } else {
+        const status = new StatusMessage(/*delay=*/ false);
+        status.setText(`middleauth: unverified app ${this.serverUrl}`);
+        throw new UnverifiedApp(this.serverUrl);
+      }
+    });
+    this.cachedGet = res;
+    return res;
+  }
+
+  private cachedGet = this.updateCachedGet();
+
+  get = (invalidCredentials?: CredentialsWithGeneration<MiddleAuthToken> | undefined, cancellationToken?: CancellationToken | undefined) => {
+    return this.cachedGet(invalidCredentials, cancellationToken);
+  }
 }

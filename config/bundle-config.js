@@ -185,7 +185,7 @@ function getBundleSources(options) {
     'global': 'window',
   };
   let extraDefines = options.defines || {};
-  let srcDir = resolveReal(__dirname, '..', 'src');
+  let srcDir = resolveReal(process.cwd(), 'src');
   let extraChunkWorkerModules = options.chunkWorkerModules || [];
   let extraAsyncComputationModules = options.asyncComputationModules || [];
   let chunkWorkerModules = [
@@ -222,7 +222,7 @@ function getBundleSources(options) {
 exports.getBundleSources = getBundleSources;
 
 function makePythonClientOptions(options) {
-  const srcDir = resolveReal(__dirname, '..', 'src');
+  const srcDir = resolveReal(process.cwd(), 'src');
   options = Object.assign({}, options);
   options.extraDataSources = [
     ...(options.extraDataSources || []),
@@ -241,7 +241,7 @@ exports.getViewerOptions = function (baseConfig, options = {}) {
     baseConfig = makePythonClientOptions(baseConfig);
   }
   if (options.module) {
-    const srcDir = resolveReal(__dirname, '..', 'src');
+    const srcDir = resolveReal(process.cwd(), 'src');
     baseConfig.frontendModules = [resolveReal(srcDir, 'main_module.ts')];
   }
   return baseConfig;
