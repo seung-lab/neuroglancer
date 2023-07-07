@@ -25,10 +25,13 @@ const path = require('path');
 const fs = require('fs');
 const bundleConfig = require('./bundle-config');
 const {spawn} = require('child_process');
+const alias = require('esbuild-plugin-alias');
+const vuePlugin = require("esbuild-plugin-vue3");
+
 
 function createEntryPointFile(cacheId, bundleName, sources) {
   const tempEntryPointDir =
-      path.resolve(__dirname, '..', 'node_modules', '.cache', 'esbuild-entry-points', cacheId);
+      path.resolve(process.cwd(), 'node_modules', '.cache', 'esbuild-entry-points', cacheId);
   sources = sources.map(x => {
     // Ensure all paths are relative and use forward slashes.
     if (path.isAbsolute(x)) {
@@ -56,7 +59,11 @@ function createEntryPointFile(cacheId, bundleName, sources) {
 exports.createEntryPointFile = createEntryPointFile;
 
 function getCommonPlugins() {
-  return [svgInlineLoader({removeSVGTagAttrs: false, removeTags: true})];
+  return [
+    svgInlineLoader({removeSVGTagAttrs: false, removeTags: true}),
+    alias({'vue': path.resolve(__dirname, '../../vue/dist/vue.esm-bundler.js')}),
+    vuePlugin(),
+  ];
 }
 exports.getCommonPlugins = getCommonPlugins;
 
@@ -64,7 +71,7 @@ class Builder {
   constructor(options = {}) {
     const {id = 'min'} = options;
     const {
-      outDir = path.resolve(__dirname, '..', 'dist', id),
+      outDir = path.resolve(process.cwd(), 'dist', id),
       python = false,
       module: moduleBuild = false,
       define = {},
@@ -83,7 +90,7 @@ class Builder {
     this.bundleSources = bundleConfig.getBundleSources(viewerConfig);
     this.minify = minify;
     this.python = options.python;
-    this.srcDir = path.resolve(__dirname, '..', 'src');
+    this.srcDir = path.resolve(process.cwd(), 'src');
     this.plugins = getCommonPlugins();
     this.define = define;
     this.inject = inject;
@@ -151,7 +158,7 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
       minify: this.minify,
       target: 'es2019',
       plugins: this.plugins,
-      loader: {'.wasm': 'dataurl'},
+      loader: {'.wasm': 'dataurl', '.png': 'file'},
       // TODO(jbms): Remove this workaround once evanw/esbuild#1202 is fixed.
       banner: {
         js: 'function require(x) { throw new Error(\'Cannot require \' + x) }',
@@ -186,10 +193,11 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   }
 
   async buildNonModule() {
-    await this.writeIndex();
+    // await this.writeIndex();
+    await fs.promises.copyFile(path.resolve(this.srcDir, 'index.html'), path.resolve(this.outDir, 'index.html'));
     if (!this.python) {
       await fs.promises.copyFile(
-          path.resolve(this.srcDir, 'neuroglancer/datasource/boss/bossauth.html'),
+          path.resolve(this.srcDir, '../third_party/', 'neuroglancer/datasource/boss/bossauth.html'),
           path.resolve(this.outDir, 'bossauth.html'));
       await fs.promises.copyFile(
           path.resolve(this.srcDir, 'neuroglancer/util/google_oauth2_redirect.html'),
