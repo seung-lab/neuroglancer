@@ -6,11 +6,11 @@ import { CancellationToken } from "src/neuroglancer/util/cancellation";
 import { responseJson } from "src/neuroglancer/util/http_request";
 import { SpecialProtocolCredentials } from "src/neuroglancer/util/special_protocol_request";
 import { registerSharedObject } from "src/neuroglancer/worker_rpc";
-import { AnnotationSourceParameters } from "./base";
+import { AnnotationSourceParameters, API_STRING } from "./base";
 import {cancellableFetchSpecialOk} from 'neuroglancer/util/special_protocol_request';
 
 import {vec3} from 'neuroglancer/util/geom';
-import { AnnotationSerializer, AnnotationType, Line, makeAnnotationPropertySerializers } from "src/neuroglancer/annotation";
+import { AnnotationBase, AnnotationSerializer, AnnotationType, Line, Point, makeAnnotationPropertySerializers } from "src/neuroglancer/annotation";
 
 
 const annotationPropertySerializers =
@@ -21,16 +21,37 @@ function parseCaveAnnototations(annotationsJson: any[], parameters: AnnotationSo
   parameters;
   const serializer = new AnnotationSerializer(annotationPropertySerializers);
 
-  const annotations: Line[] = annotationsJson.map(x => {
-    return {
-      type: AnnotationType.LINE,
-      id: x.pre_pt_supervoxel_id,
-      pointA: vec3.fromValues(x.pre_pt_position_x, x.pre_pt_position_y, x.pre_pt_position_z),
-      pointB: vec3.fromValues(x.post_pt_position_x, x.post_pt_position_y, x.post_pt_position_z),
-      description: 'size: 916',
+  console.log('parameters', parameters);
+
+  const annotations: (Point|Line)[] = annotationsJson.map(x => {
+    const points = parameters.relationships.map(rel => {
+      return vec3.fromValues(
+        x[`${rel}_position_x`],
+        x[`${rel}_position_y`],
+        x[`${rel}_position_z`]
+      );
+    });
+
+    const res: AnnotationBase = {
+      type: AnnotationType.POINT,
+      id: x.id,
+      description: `size: ${x.size}`,
       properties: [],
-      //relatedSegments: segments,
-    }
+    };
+    if (points.length > 1) {
+      return {
+        ...res,
+        type: AnnotationType.LINE,
+        pointA: points[0],
+        pointB: points[1],
+      }
+    } else {
+      return {
+        ...res,
+        type: AnnotationType.POINT,
+        point: points[0],
+      }
+    }    
   });
 
   for (const annotation of annotations) {
@@ -44,19 +65,17 @@ export class CaveAnnotationSourceBackend extends (WithParameters(WithSharedCrede
   async downloadSegmentFilteredGeometry(
       chunk: AnnotationSubsetGeometryChunk, relationshipIndex: number,
       cancellationToken: CancellationToken) {
-    cancellationToken;
-    relationshipIndex
     const {parameters} = this;
-    const url = `${parameters.url}/query?return_pyarrow=false&split_positions=false&count=false&allow_missing_lookups=false`;
+    const url = `${parameters.url}/${API_STRING}/datastack/${parameters.datastack}/query?return_pyarrow=false&split_positions=false&count=false&allow_missing_lookups=false`;
     const payload = `{
       "timestamp": "${parameters.timestamp}",
       "filter_in_dict": {
-        "synapses_pni_2":{
-          "${parameters.relationships[relationshipIndex]}": [${chunk.objectId.toJSON()}]
+        "${parameters.table}":{
+          "${parameters.relationships[relationshipIndex]}_root_id": [${chunk.objectId.toJSON()}]
         }
       },
-      "table": "synapses_pni_2"
-    }`;
+      "table": "${parameters.table}"
+    }`; // TODO (hardcooding _root_id)
     // parameters; for spatial
     // const payload = `{
     //   "timestamp": "${timestamp}",

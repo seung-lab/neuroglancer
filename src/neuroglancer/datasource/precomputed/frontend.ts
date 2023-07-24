@@ -981,6 +981,7 @@ export class PrecomputedDataSource extends DataSourceProvider {
         });
   }
   completeUrl(options: CompleteUrlOptions) {
+    console.log('precomputed completeUrl');
     return completeHttpPath(
         options.credentialsManager, options.providerUrl, options.cancellationToken);
   }
