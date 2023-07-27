@@ -1,4 +1,4 @@
-import { MultiscaleAnnotationSource } from "neuroglancer/annotation/frontend_source";
+import { AnnotationGeometryChunkSource, MultiscaleAnnotationSource } from "neuroglancer/annotation/frontend_source";
 import { ChunkManager, WithParameters } from "neuroglancer/chunk_manager/frontend";
 import { CoordinateSpace, coordinateSpaceFromJson, makeCoordinateSpace, makeIdentityTransform, makeIdentityTransformedBoundingBox } from "neuroglancer/coordinate_transform";
 import { WithCredentialsProvider } from "neuroglancer/credentials_provider/chunk_source_frontend";
@@ -7,16 +7,24 @@ import { parseFixedLengthArray, unparseQueryStringParameters, verifyEnumString, 
 import { getObjectId } from "neuroglancer/util/object_id";
 import { cancellableFetchSpecialOk, parseSpecialUrl, SpecialProtocolCredentials, SpecialProtocolCredentialsProvider } from "neuroglancer/util/special_protocol_request";
 import { CompleteUrlOptions, ConvertLegacyUrlOptions, DataSource, DataSourceProvider, GetDataSourceOptions, NormalizeUrlOptions, RedirectError } from "..";
-import { parseProviderUrl } from "neuroglancer/datasource/precomputed/frontend";
-import { AnnotationSourceParameters, API_STRING, API_STRING_V2 } from "neuroglancer/datasource/cave/base";
+import { parseMultiscaleVolumeInfo, parseProviderUrl } from "neuroglancer/datasource/precomputed/frontend";
+import { AnnotationSourceParameters, AnnotationSpatialIndexSourceParameters, API_STRING, API_STRING_V2 } from "neuroglancer/datasource/cave/base";
 import { AnnotationType, parseAnnotationPropertySpecs } from "neuroglancer/annotation";
+import {SliceViewSingleResolutionSource} from "src/neuroglancer/sliceview/frontend";
+import {AnnotationGeometryChunkSpecification} from "src/neuroglancer/annotation/base";
+import * as matrix from 'neuroglancer/util/matrix';
+import {getJsonMetadata} from "../graphene/frontend";
+
 AnnotationType; // TODO
 verifyEnumString; // TODO
+parseFixedLengthArray;
+verifyFiniteFloat;
 
 class AnnotationMetadata {
   coordinateSpace: CoordinateSpace;
   parameters: AnnotationSourceParameters;
-  constructor(public url: string, datastack: string, table: string, metadata: any, tableMetadata: TableMetadata) {
+  size: Float64Array; // TEMP probably
+  constructor(public url: string, datastack: string, table: string, metadata: any, tableMetadata: TableMetadata, public lowerBounds: Float64Array, public upperBounds: Float64Array) {
     verifyObject(metadata);
     const {voxel_resolution_x, voxel_resolution_y, voxel_resolution_z} = tableMetadata;
     const baseCoordinateSpace = coordinateSpaceFromJson({
@@ -25,16 +33,24 @@ class AnnotationMetadata {
       "z" : [ voxel_resolution_z, "nm" ]
     });
     const {rank} = baseCoordinateSpace;
-    const lowerBounds = verifyObjectProperty(
-        metadata, 'lower_bound',
-        boundJson => parseFixedLengthArray(new Float64Array(rank), boundJson, verifyFiniteFloat));
-    const size = verifyObjectProperty(
-        metadata, 'size',
-        boundJson => parseFixedLengthArray(new Float64Array(rank), boundJson, verifyFiniteFloat));
-    const upperBounds: Float64Array = new Float64Array(rank);
+    // const lowerBounds = verifyObjectProperty(
+    //     metadata, 'lower_bound',
+    //     boundJson => parseFixedLengthArray(new Float64Array(rank), boundJson, verifyFiniteFloat));
+    // this.lowerBounds = lowerBounds;
+    // const size = verifyObjectProperty(
+    //     metadata, 'size',
+    //     boundJson => parseFixedLengthArray(new Float64Array(rank), boundJson, verifyFiniteFloat));
+    // this.size = size;
+    const size: Float64Array = new Float64Array(rank);
     for (let i = 0; i < rank; i++) {
-      upperBounds[i] = lowerBounds[i] + size[i];
+      size[i] = upperBounds[i] - lowerBounds[i];
     }
+    this.size = size;
+    // const upperBounds: Float64Array = new Float64Array(rank);
+    // for (let i = 0; i < rank; i++) {
+    //   upperBounds[i] = lowerBounds[i] + size[i];
+    // }
+    // this.upperBounds = upperBounds;
     this.coordinateSpace = makeCoordinateSpace({
       rank,
       names: baseCoordinateSpace.names,
@@ -71,6 +87,10 @@ const MultiscaleAnnotationSourceBase = (WithParameters(
     WithCredentialsProvider<SpecialProtocolCredentials>()(MultiscaleAnnotationSource),
     AnnotationSourceParameters));
 
+class CaveAnnotationSpatialIndexSource extends
+(WithParameters(WithCredentialsProvider<SpecialProtocolCredentials>()(AnnotationGeometryChunkSource), AnnotationSpatialIndexSourceParameters)) {}
+
+
 interface PrecomputedAnnotationSourceOptions {
   metadata: AnnotationMetadata;
   parameters: AnnotationSourceParameters;
@@ -95,9 +115,67 @@ export class CaveAnnotationSource extends MultiscaleAnnotationSourceBase {
     this.credentialsProvider = options.credentialsProvider;
   }
 
+  /*
+    Property 'chunkSource' is missing in type '{ chunkSourceX: PrecomputedAnnotationSpatialIndexSource; chunkToMultiscaleTransform: Float32Array; }' but required in type 'SliceViewSingleResolutionSource<AnnotationGeometryChunkSource>'.ts(2322)
+
+*/
+
   // no spatial sources
-  getSources(_unused: any) {
-    return [];
+  getSources(_unused: any): SliceViewSingleResolutionSource<AnnotationGeometryChunkSource>[][] {
+    // console.log("getSources (spatial)", _unused);
+    // return [];
+    
+
+    // modelTransform: makeIdentityTransform(info.coordinateSpace),
+
+    const {credentialsProvider, rank, metadata} = this;
+    const {lowerBounds, upperBounds, size} = metadata;
+
+    const chunkToMultiscaleTransform = matrix.createIdentity(Float32Array, rank + 1);
+    for (let i = 0; i < rank; ++i) {
+      chunkToMultiscaleTransform[(rank + 1) * rank + i] = lowerBounds[i];
+    }
+
+    // const chunkToMultiscaleTransform = makeIdentityTransform(this.metadata.coordinateSpace).transform;
+
+    // this.metadata.coordinateSpace
+
+    const spec: AnnotationGeometryChunkSpecification = {
+      rank,
+      chunkToMultiscaleTransform,
+      lowerChunkBound: new Float32Array([0, 0, 0]),
+      upperChunkBound: new Float32Array([1, 1, 1]),
+      limit: 10000,
+      chunkDataSize: new Float32Array(size),
+      lowerVoxelBound: new Float32Array(lowerBounds),
+      upperVoxelBound: new Float32Array(upperBounds),
+    };
+    // upper voxel bound - 34418, 30604, 39628
+    // chunk data size   - 34418, 30604, 39628
+    return [[
+      {
+        chunkSource: this.chunkManager.getChunkSource(CaveAnnotationSpatialIndexSource, {
+          credentialsProvider,
+          // metadata: info,
+          parameters: {}, // parent.paramters has all we need
+          parent: this,
+          spec,
+        }),
+        chunkToMultiscaleTransform: spec.chunkToMultiscaleTransform,
+      }
+    ]];
+    // return [this.metadata.spatialIndices.map(spatialIndexLevel => {
+    //   const {spec} = spatialIndexLevel;
+    //   return {
+    //     chunkSource: this.chunkManager.getChunkSource(PrecomputedAnnotationSpatialIndexSource, {
+    //       credentialsProvider: this.credentialsProvider,
+    //       parent: this,
+    //       spec,
+    //       parameters: spatialIndexLevel.parameters,
+    //     }),
+    //     chunkToMultiscaleTransform: spec.chunkToMultiscaleTransform,
+    //   };
+    // })];
   }
 }
 
@@ -222,11 +300,25 @@ async function getAnnotationDataSource(
     url: string, datastack: string, table: string, metadata: any): Promise<DataSource> {
   const latestVersion = await getLatestVersion(credentialsProvider, url, datastack);
   const timestamp = await getLatestTimestamp(credentialsProvider, url, datastack, latestVersion);
-
   const tableMetadata = await getTableMetadata(credentialsProvider, url, datastack, latestVersion, table);// url: string, datastack: string, table: string)
+  
+  
+  const origin = new URL(url).origin;
+  const authInfo = await fetch(`${origin}/auth_info`).then((res) => res.json());
+  const {login_url} = authInfo;
+  const infoServiceOrigin = new URL(login_url).origin;
+  const datastackInfo = await getDatastackMetadata(options.chunkManager, credentialsProvider, `${infoServiceOrigin}/info/api/v2/datastack/${datastack}`);
+  const segmentationSource = verifyObjectProperty(datastackInfo, 'segmentation_source', verifyString);
+  const [_protocol, grapheneUrl] = segmentationSource.split('graphene://'); // TODO, do we only support graphene?
+  const grapheneMetadata = await getJsonMetadata(options.chunkManager, credentialsProvider, grapheneUrl);
+  const volumeInfo = parseMultiscaleVolumeInfo(grapheneMetadata);
+  const {modelSpace} = volumeInfo;
+  const {lowerBounds, upperBounds} = modelSpace.boundingBoxes[0].box;
+  console.log(lowerBounds, upperBounds);
 
-
-  const info = new AnnotationMetadata(url, datastack, table, metadata, tableMetadata);
+  
+  
+  const info = new AnnotationMetadata(url, datastack, table, metadata, tableMetadata, lowerBounds, upperBounds);
 
   const dataSource: DataSource = {
     modelTransform: makeIdentityTransform(info.coordinateSpace),
@@ -255,14 +347,25 @@ function unparseProviderUrl(url: string, parameters: any) {
   return url;
 }
 
-function getJsonMetadata(
+// function getJsonMetadata(
+//     chunkManager: ChunkManager, credentialsProvider: SpecialProtocolCredentialsProvider,
+//     url: string): Promise<any> {
+//   return chunkManager.memoize.getUncounted(
+//       {'type': 'cave:metadata', url, credentialsProvider: getObjectId(credentialsProvider)},
+//       async () => {
+//         return await cancellableFetchSpecialOk(
+//             credentialsProvider, `${url}`, {}, responseJson); // /info
+//       });
+// }
+
+function getDatastackMetadata(
     chunkManager: ChunkManager, credentialsProvider: SpecialProtocolCredentialsProvider,
     url: string): Promise<any> {
   return chunkManager.memoize.getUncounted(
-      {'type': 'cave:metadata', url, credentialsProvider: getObjectId(credentialsProvider)},
+      {'type': 'cave:datastack_metadata', url, credentialsProvider: getObjectId(credentialsProvider)},
       async () => {
         return await cancellableFetchSpecialOk(
-            credentialsProvider, `${url}`, {}, responseJson); // /info
+            credentialsProvider, `${url}`, {}, responseJson);
       });
 }
 
@@ -297,10 +400,11 @@ export class CaveDataSource extends DataSourceProvider {
             throw 'bad url';
           }
           const [_, datastack, table] = res;
+
+
           const materializationUrl = url.split(`/${API_STRING}/`)[0];
           let metadata: any;
           try {
-            getJsonMetadata;
             metadata = {
   "@type" : "cave_annotations_v1",
   // "annotation_type" : "LINE",
@@ -309,10 +413,10 @@ export class CaveDataSource extends DataSourceProvider {
   //     "y" : [ 4e-09, "m" ],
   //     "z" : [ 40e-09, "m" ]
   //  },
-  "lower_bound" : [ 26285, 30208, 14826 ], // maybe these are only used for the spatial index?
-  "size" : [ 192768, 131328, 13056 ],
+  // "lower_bound" : [ 26285, 30208, 14826 ], // maybe these are only used for the spatial index?
+  // "size" : [ 192768, 131328, 13056 ],
   "spatial" : [],
-  "properties" : [],
+  // "properties" : ['size'],
   // "relationships": [{
   //        "id" : "pre_pt_root_id",
   //        "name" : "Pre root id"

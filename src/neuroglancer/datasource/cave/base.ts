@@ -25,3 +25,7 @@ export class AnnotationSourceParameters {
   // type: AnnotationType;
   static RPC_ID = 'cave/AnnotationSource';
 }
+
+export class AnnotationSpatialIndexSourceParameters {
+  static RPC_ID = 'cave/AnnotationSpatialIndexSource';
+}

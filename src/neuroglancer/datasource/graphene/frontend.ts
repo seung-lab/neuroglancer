@@ -184,6 +184,8 @@ class GrapheneMultiscaleVolumeChunkSource extends PrecomputedMultiscaleVolumeChu
     const lowerClipBound = new Float32Array(rank);
     const upperClipBound = new Float32Array(rank);
 
+    console.log('lowerBounds', baseLowerBound);
+
     for (let i = 0; i < 3; ++i) {
       const relativeScale = 1;
       chunkToMultiscaleTransform[stride * i + i] = relativeScale;
@@ -326,7 +328,7 @@ async function getMeshSource(
   };
 }
 
-function getJsonMetadata(
+export function getJsonMetadata(
     chunkManager: ChunkManager, credentialsProvider: SpecialProtocolCredentialsProvider,
     url: string): Promise<any> {
   return chunkManager.memoize.getUncounted(
