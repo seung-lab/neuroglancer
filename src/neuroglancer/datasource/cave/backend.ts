@@ -76,6 +76,7 @@ export class CaveAnnotationSpatialIndexSourceBackend extends (WithParameters(Wit
     const url = `${parameters.url}/${API_STRING}/datastack/${parameters.datastack}/query?return_pyarrow=false&split_positions=false&count=false&allow_missing_lookups=false`;
     const payload = `{
       "timestamp": "${parameters.timestamp}",
+      "limit": 10000,
       "table": "${parameters.table}"
     }`;
     const response = await cancellableFetchSpecialOk(this.credentialsProvider, url, {
