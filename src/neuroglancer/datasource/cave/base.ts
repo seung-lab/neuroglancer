@@ -28,4 +28,7 @@ export class AnnotationSourceParameters {
 
 export class AnnotationSpatialIndexSourceParameters {
   static RPC_ID = 'cave/AnnotationSpatialIndexSource';
+  url: string;
+  datastack: string;
+  table: string;
 }

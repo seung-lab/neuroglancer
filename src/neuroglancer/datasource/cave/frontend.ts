@@ -152,12 +152,17 @@ export class CaveAnnotationSource extends MultiscaleAnnotationSourceBase {
     };
     // upper voxel bound - 34418, 30604, 39628
     // chunk data size   - 34418, 30604, 39628
+    const {url, datastack, table} = this.parameters;
     return [[
       {
         chunkSource: this.chunkManager.getChunkSource(CaveAnnotationSpatialIndexSource, {
           credentialsProvider,
           // metadata: info,
-          parameters: {}, // parent.paramters has all we need
+          parameters: {
+            url,
+            datastack,
+            table,
+          }, // parent.paramters has all we need, but memoize doesn't seem to care about the parent parameters
           parent: this,
           spec,
         }),
