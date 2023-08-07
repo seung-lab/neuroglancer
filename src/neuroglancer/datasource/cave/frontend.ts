@@ -9,7 +9,7 @@ import { cancellableFetchSpecialOk, parseSpecialUrl, SpecialProtocolCredentials,
 import { CompleteUrlOptions, ConvertLegacyUrlOptions, DataSource, DataSourceProvider, GetDataSourceOptions, NormalizeUrlOptions, RedirectError } from "..";
 import { parseMultiscaleVolumeInfo, parseProviderUrl } from "neuroglancer/datasource/precomputed/frontend";
 import { AnnotationSourceParameters, AnnotationSpatialIndexSourceParameters, API_STRING, API_STRING_V2 } from "neuroglancer/datasource/cave/base";
-import { AnnotationType, parseAnnotationPropertySpecs } from "neuroglancer/annotation";
+import { AnnotationPropertySpec, AnnotationType, parseAnnotationPropertySpecs } from "neuroglancer/annotation";
 import {SliceViewSingleResolutionSource} from "src/neuroglancer/sliceview/frontend";
 import {AnnotationGeometryChunkSpecification} from "src/neuroglancer/annotation/base";
 import * as matrix from 'neuroglancer/util/matrix';
@@ -66,8 +66,8 @@ class AnnotationMetadata {
       // type: verifyObjectProperty(
       //     metadata, 'annotation_type', typeObj => verifyEnumString(typeObj, AnnotationType)),
       rank,
-      relationships: tableMetadata.properties,
-      properties: verifyObjectProperty(metadata, 'properties', parseAnnotationPropertySpecs),
+      relationships: tableMetadata.relationships,
+      properties: tableMetadata.shaderProperties,
     };
     /*
     verifyObjectProperty(
@@ -239,10 +239,16 @@ interface TableMetadata {
   voxel_resolution_x: number,
   voxel_resolution_y: number,
   voxel_resolution_z: number,
-  properties: string[],
+  relationships: string[],
+  shaderProperties: AnnotationPropertySpec[],
+}
+
+const schemaFormatToPropertyType: {[key: string]: string} = {
+  'float': 'float32',
 }
 
 const BOUND_SPATIAL_POINT = 'BoundSpatialPoint';
+const SPATIAL_POINT = 'SpatialPoint';
 
 async function getTableMetadata(credentialsProvider: SpecialProtocolCredentialsProvider, url: string, datastack: string, version: number, table: string): Promise<TableMetadata> {
   const metadataURL = `${url}/${API_STRING_V2}/datastack/${datastack}/version/${version}/table/${table}/metadata`;
@@ -272,20 +278,33 @@ async function getTableMetadata(credentialsProvider: SpecialProtocolCredentialsP
   const definitionName = refToName(ref);
   const definitions = verifyObjectProperty(schema, 'definitions', verifyObject);
   const definition = verifyObjectProperty(definitions, definitionName, verifyObject);
-  const properties = verifyObjectProperty(definition, 'properties', x => {
-    const res = [];
+  const [relationships, shaderProperties] = verifyObjectProperty(definition, 'properties', x => {
+    const relationships: string[] = [];
+    const shaderProps: unknown[] = [];
     const result = verifyObjectAsMap(x, verifyObject);
     for (const [name, obj] of result) {
+      console.log('name', name);
       verifyObject(obj);
       const ref = verifyOptionalObjectProperty(obj, '$ref', verifyString);
-      if (!ref) continue;
-      const refName = refToName(ref);
-      const order = verifyOptionalObjectProperty(obj, 'order', verifyNonnegativeInt) || 0;
-      if (refName === BOUND_SPATIAL_POINT) { // TODO, maybe we want to support SpatialPoint?
-        res[order] = name;
+      if (ref) {
+        const refName = refToName(ref);
+        const order = verifyOptionalObjectProperty(obj, 'order', verifyNonnegativeInt) || 0;
+        if (refName === BOUND_SPATIAL_POINT) { // TODO, maybe we want to support SpatialPoint?
+          relationships[order] = name;
+        } else if (refName === SPATIAL_POINT) {
+          // TODO
+        }
+      }
+      const format = obj['format'];
+      const type = schemaFormatToPropertyType[format];
+      if (type) {
+        shaderProps.push({
+          id: name,
+          type,
+        });
       }
     }
-    return res.filter(x => x !== undefined);
+    return [relationships.filter(x => x !== undefined), parseAnnotationPropertySpecs(shaderProps)];
   });
 
   // TODO, maybe use flat_segmentation_source to automatically link up the segmentation?
@@ -295,7 +314,8 @@ async function getTableMetadata(credentialsProvider: SpecialProtocolCredentialsP
     voxel_resolution_x,
     voxel_resolution_y,
     voxel_resolution_z,
-    properties,
+    relationships,
+    shaderProperties,
   }
 }
 
