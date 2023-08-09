@@ -1,26 +1,27 @@
-import { AnnotationGeometryChunk, AnnotationGeometryChunkSourceBackend, AnnotationGeometryData, AnnotationMetadataChunk, AnnotationSource } from "src/neuroglancer/annotation/backend";
-import { AnnotationSubsetGeometryChunk } from "src/neuroglancer/annotation/backend";
-import { WithParameters } from "src/neuroglancer/chunk_manager/backend";
-import { WithSharedCredentialsProviderCounterpart } from "src/neuroglancer/credentials_provider/shared_counterpart";
-import { CancellationToken } from "src/neuroglancer/util/cancellation";
-import { responseArrayBuffer, responseJson } from "src/neuroglancer/util/http_request";
-import { SpecialProtocolCredentials } from "src/neuroglancer/util/special_protocol_request";
-import { registerSharedObject } from "src/neuroglancer/worker_rpc";
-import { AnnotationSourceParameters, AnnotationSpatialIndexSourceParameters, API_STRING } from "./base";
+import {AnnotationGeometryChunk, AnnotationGeometryChunkSourceBackend, AnnotationGeometryData, AnnotationMetadataChunk, AnnotationSource} from "neuroglancer/annotation/backend";
+import {AnnotationSubsetGeometryChunk} from "neuroglancer/annotation/backend";
+import {WithParameters} from "neuroglancer/chunk_manager/backend";
+import {WithSharedCredentialsProviderCounterpart} from "neuroglancer/credentials_provider/shared_counterpart";
+import {CancellationToken} from "neuroglancer/util/cancellation";
+import {responseJson} from "neuroglancer/util/http_request";
+import {SpecialProtocolCredentials} from "neuroglancer/util/special_protocol_request";
+import {registerSharedObject} from "neuroglancer/worker_rpc";
+import {AnnotationSourceParameters, AnnotationSpatialIndexSourceParameters, API_STRING} from "./base";
 import {cancellableFetchSpecialOk} from 'neuroglancer/util/special_protocol_request';
 import {vec3} from 'neuroglancer/util/geom';
-import {Annotation, AnnotationBase, AnnotationSerializer, AnnotationType, Line, Point, makeAnnotationPropertySerializers} from "src/neuroglancer/annotation";
+import {Annotation, AnnotationBase, AnnotationSerializer, AnnotationType, Line, Point, makeAnnotationPropertySerializers} from "neuroglancer/annotation";
 import {Uint64} from "neuroglancer/util/uint64";
+import {tableFromIPC} from "apache-arrow";
 
 
-function parseCaveAnnototations(segmentId: Uint64, annotationsJson: any[], parameters: AnnotationSourceParameters) {
-  console.log('parameters', parameters);
+
+function parseCaveAnnototations(segmentId: Uint64, annotationsJson: any[], parameters: AnnotationSourceParameters) {  
   const annotations: (Point|Line)[] = annotationsJson.map(x => {
     const points = parameters.relationships.map(rel => {
       return vec3.fromValues(
-        x[`${rel}_position_x`],
-        x[`${rel}_position_y`],
-        x[`${rel}_position_z`]
+        Number(x[`${rel}_position_x`]),
+        Number(x[`${rel}_position_y`]),
+        Number(x[`${rel}_position_z`])
       );
     });
 
@@ -28,7 +29,7 @@ function parseCaveAnnototations(segmentId: Uint64, annotationsJson: any[], param
       type: AnnotationType.POINT,
       id: `${segmentId}_${x.id}`,
       description: `size: ${x.size}`,
-      properties: parameters.properties.map(p => x[p.identifier]),
+      properties: parameters.properties.map(p => Number(x[p.identifier])),
     };
     if (points.length > 1) {
       return {
@@ -49,6 +50,8 @@ function parseCaveAnnototations(segmentId: Uint64, annotationsJson: any[], param
   return annotations;
 }
 
+export const responseArrowIPC = async (x: any) => tableFromIPC(x);
+
 @registerSharedObject() //
 export class CaveAnnotationSpatialIndexSourceBackend extends (WithParameters(WithSharedCredentialsProviderCounterpart<SpecialProtocolCredentials>()(AnnotationGeometryChunkSourceBackend), AnnotationSpatialIndexSourceParameters)) {
   parent: CaveAnnotationSourceBackend;
@@ -56,24 +59,23 @@ export class CaveAnnotationSpatialIndexSourceBackend extends (WithParameters(Wit
     const {parent} = this;
     const {parameters} = parent; // we probably don't need separate spatial index for now
     const {datastack, table, timestamp, rank, properties} = parameters;
-    const binaryFormat = false;
-    const url = `${parameters.url}/${API_STRING}/datastack/${datastack}/query?return_pyarrow=${binaryFormat}&split_positions=false&count=false&allow_missing_lookups=false`;
+    const binaryFormat = true;
+    const url = `${parameters.url}/${API_STRING}/datastack/${datastack}/query?arrow_format=${binaryFormat}&split_positions=false&count=false&allow_missing_lookups=false`;
     const payload = `{
       "timestamp": "${timestamp}",
       "limit": 10000,
       "table": "${table}"
     }`;
-    const response = await cancellableFetchSpecialOk(this.credentialsProvider, url, {
+    let response = await cancellableFetchSpecialOk(this.credentialsProvider, url, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: payload,
-    }, binaryFormat ? responseArrayBuffer : responseJson, cancellationToken);
+    }, binaryFormat ? responseArrowIPC : responseJson, cancellationToken);
     if (response !== undefined) {
-      if (binaryFormat) {
-        console.log("got arraybuffer!", response.byteLength);
-        return;
-      }
       console.log("got annotations!", response.length);
+      if (binaryFormat) {
+        response = [...response];
+      }
       const annotations = parseCaveAnnototations(Uint64.ZERO, response, parameters);
       // this.annotationCache[chunk.objectId.toJSON()] = annotations;
       const propertySerializers = makeAnnotationPropertySerializers(rank, properties);
@@ -98,7 +100,8 @@ export class CaveAnnotationSourceBackend extends (WithParameters(WithSharedCrede
       cancellationToken: CancellationToken) {
     const {parameters} = this;
     const {datastack, table, relationships, timestamp, rank, properties} = parameters;
-    const url = `${parameters.url}/${API_STRING}/datastack/${datastack}/query?return_pyarrow=false&split_positions=false&count=false&allow_missing_lookups=false`;
+    const binaryFormat = true;
+    const url = `${parameters.url}/${API_STRING}/datastack/${datastack}/query?arrow_format=${binaryFormat}&split_positions=false&count=false&allow_missing_lookups=false`;
     const payload = `{
       "timestamp": "${timestamp}",
       "filter_in_dict": {
@@ -108,12 +111,15 @@ export class CaveAnnotationSourceBackend extends (WithParameters(WithSharedCrede
       },
       "table": "${table}"
     }`; // TODO (hardcoding `_root_id`)
-    const response = await cancellableFetchSpecialOk(this.credentialsProvider, url, {
+    let response = await cancellableFetchSpecialOk(this.credentialsProvider, url, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: payload,
-    }, responseJson, cancellationToken);
+    }, binaryFormat ? responseArrowIPC : responseJson, cancellationToken);
     if (response !== undefined) {
+      if (binaryFormat) {
+        response = [...response];
+      }
       const annotations = parseCaveAnnototations(chunk.objectId, response, this.parameters);
       const propertySerializers = makeAnnotationPropertySerializers(rank, properties);
       const serializer = new AnnotationSerializer(propertySerializers);
