@@ -3,7 +3,7 @@ import { ChunkManager, WithParameters } from "neuroglancer/chunk_manager/fronten
 import { CoordinateSpace, coordinateSpaceFromJson, makeCoordinateSpace, makeIdentityTransform, makeIdentityTransformedBoundingBox } from "neuroglancer/coordinate_transform";
 import { WithCredentialsProvider } from "neuroglancer/credentials_provider/chunk_source_frontend";
 import { responseJson } from "neuroglancer/util/http_request";
-import { parseFixedLengthArray, unparseQueryStringParameters, verifyEnumString, verifyFiniteFloat, verifyFinitePositiveFloat, verifyNonnegativeInt, verifyObject, verifyObjectAsMap, verifyObjectProperty, verifyOptionalObjectProperty, verifyString } from "neuroglancer/util/json";
+import { parseFixedLengthArray, unparseQueryStringParameters, verifyEnumString, verifyFiniteFloat, verifyFinitePositiveFloat, verifyNonnegativeInt, verifyObject, verifyObjectAsMap, verifyObjectProperty, verifyOptionalObjectProperty, verifyString, verifyStringArray } from "neuroglancer/util/json";
 import { getObjectId } from "neuroglancer/util/object_id";
 import { cancellableFetchSpecialOk, parseSpecialUrl, SpecialProtocolCredentials, SpecialProtocolCredentialsProvider } from "neuroglancer/util/special_protocol_request";
 import { CompleteUrlOptions, ConvertLegacyUrlOptions, DataSource, DataSourceProvider, GetDataSourceOptions, NormalizeUrlOptions, RedirectError } from "..";
@@ -245,6 +245,7 @@ interface TableMetadata {
 
 const schemaFormatToPropertyType: {[key: string]: string} = {
   'float': 'float32',
+  // ''
 }
 
 const BOUND_SPATIAL_POINT = 'BoundSpatialPoint';
@@ -286,6 +287,21 @@ async function getTableMetadata(credentialsProvider: SpecialProtocolCredentialsP
       console.log('name', name);
       verifyObject(obj);
       const ref = verifyOptionalObjectProperty(obj, '$ref', verifyString);
+      const type = verifyOptionalObjectProperty(obj, 'type', (x) => {
+        try {
+          const [type, defaultValue] = verifyStringArray(x);
+          return {
+            type,
+            defaultValue,
+          }
+        } catch (_e) {
+          const type = verifyString(x);
+          return {
+            type,
+          }
+        }
+      });
+      const format = verifyOptionalObjectProperty(obj, 'format', verifyString);
       if (ref) {
         const refName = refToName(ref);
         const order = verifyOptionalObjectProperty(obj, 'order', verifyNonnegativeInt) || 0;
@@ -295,13 +311,25 @@ async function getTableMetadata(credentialsProvider: SpecialProtocolCredentialsP
           // TODO
         }
       }
-      const format = obj['format'];
-      const type = schemaFormatToPropertyType[format];
-      if (type) {
+
+      if (type && type.type === 'string') {
+        console.log('got str', name);
         shaderProps.push({
           id: name,
-          type,
+          type: 'uint8',
+          enum_values: [1,2,3],
+          enum_labels: ['a', 'b', 'c']
         });
+      }
+
+      if (format) {
+        const shaderType = schemaFormatToPropertyType[format];
+        if (shaderType) {
+          shaderProps.push({
+            id: name,
+            type: shaderType,
+          });
+        }
       }
     }
     return [relationships.filter(x => x !== undefined), parseAnnotationPropertySpecs(shaderProps)];

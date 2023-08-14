@@ -16,6 +16,7 @@ import {tableFromIPC} from "apache-arrow";
 
 
 function parseCaveAnnototations(segmentId: Uint64, annotationsJson: any[], parameters: AnnotationSourceParameters) {  
+  const seenEnums = new Map<String, Set<String>>();
   const annotations: (Point|Line)[] = annotationsJson.map(x => {
     const points = parameters.relationships.map(rel => {
       return vec3.fromValues(
@@ -24,12 +25,20 @@ function parseCaveAnnototations(segmentId: Uint64, annotationsJson: any[], param
         Number(x[`${rel}_position_z`])
       );
     });
-
     const res: AnnotationBase = {
       type: AnnotationType.POINT,
       id: `${segmentId}_${x.id}`,
       description: `size: ${x.size}`,
-      properties: parameters.properties.map(p => Number(x[p.identifier])),
+      properties: parameters.properties.map(p => {
+        const value = x[p.identifier];
+        if (p.type = "uint8") { // todo, not the right way to check
+          const setEnumsForIdentifier = seenEnums.get(p.identifier) || new Set();
+          setEnumsForIdentifier.add(value);
+          seenEnums.set(p.identifier, setEnumsForIdentifier);
+          return Number([...setEnumsForIdentifier].indexOf(value));
+        }
+        return Number(value);
+      }),
     };
     if (points.length > 1) {
       return {
@@ -47,6 +56,7 @@ function parseCaveAnnototations(segmentId: Uint64, annotationsJson: any[], param
     }    
   });
 
+  console.log('seenEnums', seenEnums);
   return annotations;
 }
 
