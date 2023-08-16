@@ -31,15 +31,6 @@ jobs:
       - run: npm install
       - name: Typecheck with TypeScript
         run: npm run typecheck
-      - run: |
-          build_info="{'tag':'$(git describe --always --tags)', 'url':'https://github.com/google/neuroglancer/commit/$(git rev-parse HEAD)', 'timestamp':'$(date)'}"
-          npm run build-python -- --no-typecheck --no-lint --define NEUROGLANCER_BUILD_INFO="${build_info}"
-        shell: bash
-      - name: Check for dirty working directory
-        run: git diff --exit-code
-      - name: Build client bundles
-        run: npm run build -- --no-typecheck --no-lint --define STATE_SERVERS=$(cat config/state_servers.json | tr -d " \t\n\r")
-      - run: cp -r ./dist/min appengine/frontend/static/
       - name: Get branch name (merge)
         if: github.event_name != 'pull_request'
         shell: bash
@@ -49,6 +40,17 @@ jobs:
         shell: bash
         run: echo "BRANCH_NAME=$(echo ${GITHUB_HEAD_REF} | tr / -)" >> $GITHUB_ENV
       - run: echo "BRANCH_NAME_URL=$(echo ${{ env.BRANCH_NAME }} | tr / - | tr _ -)" >> $GITHUB_ENV
+      - name: Get build info
+        run: echo "BUILD_INFO={\"tag\":\"$(git describe --always --tags)\", \"url\":\"https://github.com/${{github.repository}}/commit/$(git rev-parse HEAD)\", \"timestamp\":\"$(date)\", \"branch\":\"${{github.repository}}/${{env.BRANCH_NAME}}\"}" >> $GITHUB_ENV
+        shell: bash
+      - name: Check for dirty working directory
+        run: git diff --exit-code
+      - name: Build client bundles
+        run: npm run build -- --no-typecheck --no-lint --define STATE_SERVERS=$(cat config/state_servers.json | tr -d " \t\n\r") --define NEUROGLANCER_BUILD_INFO='${{ env.BUILD_INFO }}'
+      - name: Write build info
+        run: echo ${{ env.BUILD_INFO }} >> ./dist/min/version.json
+        shell: bash
+      - run: cp -r ./dist/min appengine/frontend/static/
       - name: start deployment
         uses: bobheadxi/deployments@v1
         id: deployment
