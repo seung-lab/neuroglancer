@@ -143,6 +143,15 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     await fs.promises.writeFile(path.resolve(this.outDir, 'index.html'), indexHtml);
   }
 
+  async writeInfo() {
+    if (this.define.NEUROGLANCER_BUILD_INFO) {
+      await fs.promises.writeFile(path.resolve(this.outDir, 'version.json'), this.define.NEUROGLANCER_BUILD_INFO);
+    }
+    if (this.define.STATE_SERVERS) {
+      await fs.promises.writeFile(path.resolve(this.outDir, 'state_servers.json'), this.define.STATE_SERVERS);
+    }
+  }
+
   getBaseEsbuildConfig() {
     return {
       outdir: this.outDir,
@@ -187,6 +196,7 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
 
   async buildNonModule() {
     await this.writeIndex();
+    await this.writeInfo();
     if (!this.python) {
       await fs.promises.copyFile(
           path.resolve(this.srcDir, 'neuroglancer/datasource/boss/bossauth.html'),
