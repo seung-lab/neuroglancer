@@ -158,6 +158,15 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     );
   }
 
+  async writeInfo() {
+    if (this.define.NEUROGLANCER_BUILD_INFO) {
+      await fs.promises.writeFile(
+        path.resolve(this.outDir, "version.json"),
+        this.define.NEUROGLANCER_BUILD_INFO,
+      );
+    }
+  }
+
   getBaseEsbuildConfig(entryPointSources) {
     const { plugin: entryPointPlugin, entryPoints } =
       getEntryPointPlugin(entryPointSources);
@@ -204,6 +213,7 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
 
   async buildNonModule() {
     await this.writeIndex();
+    await this.writeInfo();
     if (!this.python) {
       await fs.promises.copyFile(
         path.resolve(this.srcDir, "datasource/boss/bossauth.html"),
