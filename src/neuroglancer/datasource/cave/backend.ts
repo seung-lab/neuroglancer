@@ -31,7 +31,7 @@ function parseCaveAnnototations(segmentId: Uint64, annotationsJson: any[], param
       description: `size: ${x.size}`,
       properties: parameters.properties.map(p => {
         const value = x[p.identifier];
-        if (p.type = "uint8") { // todo, not the right way to check
+        if (p.type === "uint8") { // todo, not the right way to check
           const setEnumsForIdentifier = seenEnums.get(p.identifier) || new Set();
           setEnumsForIdentifier.add(value);
           seenEnums.set(p.identifier, setEnumsForIdentifier);

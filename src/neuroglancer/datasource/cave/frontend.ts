@@ -117,14 +117,10 @@ export class CaveAnnotationSource extends MultiscaleAnnotationSourceBase {
 
   /*
     Property 'chunkSource' is missing in type '{ chunkSourceX: PrecomputedAnnotationSpatialIndexSource; chunkToMultiscaleTransform: Float32Array; }' but required in type 'SliceViewSingleResolutionSource<AnnotationGeometryChunkSource>'.ts(2322)
-
 */
 
-  // no spatial sources
   getSources(_unused: any): SliceViewSingleResolutionSource<AnnotationGeometryChunkSource>[][] {
-    // console.log("getSources (spatial)", _unused);
-    // return [];
-    
+    console.log("getSources (spatial)", _unused);    
 
     // modelTransform: makeIdentityTransform(info.coordinateSpace),
 
@@ -169,18 +165,6 @@ export class CaveAnnotationSource extends MultiscaleAnnotationSourceBase {
         chunkToMultiscaleTransform: spec.chunkToMultiscaleTransform,
       }
     ]];
-    // return [this.metadata.spatialIndices.map(spatialIndexLevel => {
-    //   const {spec} = spatialIndexLevel;
-    //   return {
-    //     chunkSource: this.chunkManager.getChunkSource(PrecomputedAnnotationSpatialIndexSource, {
-    //       credentialsProvider: this.credentialsProvider,
-    //       parent: this,
-    //       spec,
-    //       parameters: spatialIndexLevel.parameters,
-    //     }),
-    //     chunkToMultiscaleTransform: spec.chunkToMultiscaleTransform,
-    //   };
-    // })];
   }
 }
 
@@ -284,7 +268,6 @@ async function getTableMetadata(credentialsProvider: SpecialProtocolCredentialsP
     const shaderProps: unknown[] = [];
     const result = verifyObjectAsMap(x, verifyObject);
     for (const [name, obj] of result) {
-      console.log('name', name);
       verifyObject(obj);
       const ref = verifyOptionalObjectProperty(obj, '$ref', verifyString);
       const type = verifyOptionalObjectProperty(obj, 'type', (x) => {
@@ -367,9 +350,6 @@ async function getAnnotationDataSource(
   const volumeInfo = parseMultiscaleVolumeInfo(grapheneMetadata);
   const {modelSpace} = volumeInfo;
   const {lowerBounds, upperBounds} = modelSpace.boundingBoxes[0].box;
-  console.log(lowerBounds, upperBounds);
-
-  
   
   const info = new AnnotationMetadata(url, datastack, table, metadata, tableMetadata, lowerBounds, upperBounds);
 
@@ -399,17 +379,6 @@ function unparseProviderUrl(url: string, parameters: any) {
   }
   return url;
 }
-
-// function getJsonMetadata(
-//     chunkManager: ChunkManager, credentialsProvider: SpecialProtocolCredentialsProvider,
-//     url: string): Promise<any> {
-//   return chunkManager.memoize.getUncounted(
-//       {'type': 'cave:metadata', url, credentialsProvider: getObjectId(credentialsProvider)},
-//       async () => {
-//         return await cancellableFetchSpecialOk(
-//             credentialsProvider, `${url}`, {}, responseJson); // /info
-//       });
-// }
 
 function getDatastackMetadata(
     chunkManager: ChunkManager, credentialsProvider: SpecialProtocolCredentialsProvider,
@@ -499,7 +468,7 @@ export class CaveDataSource extends DataSourceProvider {
         });
   }
   async completeUrl(options: CompleteUrlOptions) {
-    console.log('completeUrl', options);
+    // console.log('completeUrl', options);
 
     const {providerUrl} = options;
 
