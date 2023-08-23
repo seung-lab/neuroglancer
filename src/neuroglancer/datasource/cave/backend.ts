@@ -9,7 +9,7 @@ import {registerSharedObject} from "neuroglancer/worker_rpc";
 import {AnnotationSourceParameters, AnnotationSpatialIndexSourceParameters, API_STRING} from "./base";
 import {cancellableFetchSpecialOk} from 'neuroglancer/util/special_protocol_request';
 import {vec3} from 'neuroglancer/util/geom';
-import {Annotation, AnnotationBase, AnnotationSerializer, AnnotationType, Line, Point, makeAnnotationPropertySerializers} from "neuroglancer/annotation";
+import {AnnotationBase, AnnotationSerializer, AnnotationType, Line, Point, makeAnnotationPropertySerializers} from "neuroglancer/annotation";
 import {Uint64} from "neuroglancer/util/uint64";
 import {tableFromIPC} from "apache-arrow";
 
@@ -70,10 +70,9 @@ export class CaveAnnotationSpatialIndexSourceBackend extends (WithParameters(Wit
     const {parameters} = parent; // we probably don't need separate spatial index for now
     const {datastack, table, timestamp, rank, properties} = parameters;
     const binaryFormat = true;
-    const url = `${parameters.url}/${API_STRING}/datastack/${datastack}/query?arrow_format=${binaryFormat}&split_positions=false&count=false&allow_missing_lookups=false`;
+    const url = `${parameters.url}/${API_STRING}/datastack/${datastack}/query?random_sample=1000&arrow_format=${binaryFormat}&split_positions=false&count=false&allow_missing_lookups=false`;
     const payload = `{
       "timestamp": "${timestamp}",
-      "limit": 10000,
       "table": "${table}"
     }`;
     let response = await cancellableFetchSpecialOk(this.credentialsProvider, url, {
