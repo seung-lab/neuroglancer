@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {Annotation, AnnotationPropertySpec, AnnotationType, annotationTypeHandlers, getPropertyOffsets, propertyTypeDataType} from 'neuroglancer/annotation';
+import {Annotation, AnnotationNumericPropertySpec, AnnotationPropertySpec, AnnotationType, annotationTypeHandlers, getPropertyOffsets, propertyTypeDataType} from 'neuroglancer/annotation';
 import {AnnotationLayer} from 'neuroglancer/annotation/renderlayer';
 import {PerspectiveViewRenderContext} from 'neuroglancer/perspective_view/render_layer';
 import {ChunkDisplayTransformParameters} from 'neuroglancer/render_coordinate_transform';
@@ -221,12 +221,22 @@ export abstract class AnnotationRenderHelper extends AnnotationRenderHelperBase 
       parameters: this.shaderControlState.builderState,
       shaderError: this.shaderError,
       defineShader: (builder: ShaderBuilder, parameters: ShaderControlsBuilderState) => {
+        console.log('defineSader', this.properties);
         const {rank, properties} = this;
         const referencedProperties: number[] = [];
         const controlsReferencedProperties = parameters.referencedProperties;
         const processedCode = parameters.parseResult.code;
         for (let i = 0, numProperties = properties.length; i < numProperties; ++i) {
           const property = properties[i];
+
+          const enumLabels = (property as AnnotationNumericPropertySpec).enumLabels || [];
+          const enumValues = (property as AnnotationNumericPropertySpec).enumValues || [];
+
+          for (let i = 0; i < enumLabels.length && i < enumValues.length; i++) {
+            console.log('add vertex code', `#define prop_${property.identifier}_${enumLabels[i]} uint(${enumValues[i]})\n`);
+            builder.addVertexCode(`#define prop_${property.identifier}_${enumLabels[i]} uint(${enumValues[i]})\n`);
+          }
+
           const functionName = `prop_${property.identifier}`;
           if (!controlsReferencedProperties.includes(property.identifier) &&
               !processedCode.match(new RegExp(`\\b${functionName}\\b`))) {
@@ -234,6 +244,7 @@ export abstract class AnnotationRenderHelper extends AnnotationRenderHelperBase 
           }
           referencedProperties.push(i);
         }
+        // here
         this.defineProperties(builder, referencedProperties);
         builder.addUniform('highp vec3', 'uColor');
         builder.addUniform('highp uint', 'uSelectedIndex');

@@ -9,11 +9,12 @@ import { cancellableFetchSpecialOk, parseSpecialUrl, SpecialProtocolCredentials,
 import { CompleteUrlOptions, ConvertLegacyUrlOptions, DataSource, DataSourceProvider, GetDataSourceOptions, NormalizeUrlOptions, RedirectError } from "..";
 import { parseMultiscaleVolumeInfo, parseProviderUrl } from "neuroglancer/datasource/precomputed/frontend";
 import { AnnotationSourceParameters, AnnotationSpatialIndexSourceParameters, API_STRING, API_STRING_V2 } from "neuroglancer/datasource/cave/base";
-import { AnnotationPropertySpec, AnnotationType, parseAnnotationPropertySpecs } from "neuroglancer/annotation";
+import { AnnotationNumericPropertySpec, AnnotationPropertySpec, AnnotationType, parseAnnotationPropertySpecs } from "neuroglancer/annotation";
 import {SliceViewSingleResolutionSource} from "src/neuroglancer/sliceview/frontend";
 import {AnnotationGeometryChunkSpecification} from "src/neuroglancer/annotation/base";
 import * as matrix from 'neuroglancer/util/matrix';
 import {getJsonMetadata} from "../graphene/frontend";
+import {tableFromIPC} from "apache-arrow";
 
 AnnotationType; // TODO
 verifyEnumString; // TODO
@@ -252,7 +253,7 @@ async function getTableMetadata(credentialsProvider: SpecialProtocolCredentialsP
     return res;
   };
 
-  // TODO, break apart url so we can avoid hardcodingg global.daf-apis.com
+  // TODO, break apart url so we can avoid hardcoding global.daf-apis.com
   // TODO ADD CORS TO /schema
   const schemaURL = `https://global.daf-apis.com/schema/${API_STRING_V2}/type/${schemaType}`;
   // TODO, do we ever want to authenticate this request?
@@ -300,8 +301,8 @@ async function getTableMetadata(credentialsProvider: SpecialProtocolCredentialsP
         shaderProps.push({
           id: name,
           type: 'uint8',
-          enum_values: [1,2,3],
-          enum_labels: ['a', 'b', 'c']
+          enum_values: [],
+          enum_labels: [],
         });
       }
 
@@ -315,8 +316,43 @@ async function getTableMetadata(credentialsProvider: SpecialProtocolCredentialsP
         }
       }
     }
-    return [relationships.filter(x => x !== undefined), parseAnnotationPropertySpecs(shaderProps)];
+    return [relationships.filter(x => x !== undefined), parseAnnotationPropertySpecs(shaderProps) as AnnotationNumericPropertySpec[]];
   });
+  
+    // TEMPORARY CODE
+    {
+    const responseArrowIPC = async (x: any) => tableFromIPC(x);
+    const timestamp = await getLatestTimestamp(credentialsProvider, url, datastack, version);
+    const binaryFormat = true;
+    const urlSample = `${url}/${API_STRING}/datastack/${datastack}/query?random_sample=1000&arrow_format=${binaryFormat}&split_positions=false&count=false&allow_missing_lookups=false`;
+    const payload = `{
+      "timestamp": "${timestamp}",
+      "table": "${table}"
+    }`;
+    let response = await cancellableFetchSpecialOk(credentialsProvider, urlSample, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: payload,
+    }, responseArrowIPC, undefined);
+    if (response !== undefined) {
+      if (binaryFormat) {
+        // response = [...response];
+        for (let prop of shaderProperties) {
+          if (prop.enumLabels !== undefined) {
+            for (let row of response) {
+              const value = row[prop.identifier];
+              if (value !== undefined) {
+                if (prop.enumLabels.indexOf(value) === -1) {
+                  prop.enumLabels.push(value);
+                  prop.enumValues?.push(prop.enumValues.length);
+                }
+              }
+            }
+          }
+        }
+      }
+  }
+    }
 
   // TODO, maybe use flat_segmentation_source to automatically link up the segmentation?
   // segmentation_source is empty

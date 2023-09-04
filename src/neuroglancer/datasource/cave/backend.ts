@@ -9,7 +9,7 @@ import {registerSharedObject} from "neuroglancer/worker_rpc";
 import {AnnotationSourceParameters, AnnotationSpatialIndexSourceParameters, API_STRING} from "./base";
 import {cancellableFetchSpecialOk} from 'neuroglancer/util/special_protocol_request';
 import {vec3} from 'neuroglancer/util/geom';
-import {AnnotationBase, AnnotationSerializer, AnnotationType, Line, Point, makeAnnotationPropertySerializers} from "neuroglancer/annotation";
+import {AnnotationBase, AnnotationNumericPropertySpec, AnnotationSerializer, AnnotationType, Line, Point, makeAnnotationPropertySerializers} from "neuroglancer/annotation";
 import {Uint64} from "neuroglancer/util/uint64";
 import {tableFromIPC} from "apache-arrow";
 
@@ -30,13 +30,28 @@ function parseCaveAnnototations(segmentId: Uint64, annotationsJson: any[], param
       id: `${segmentId}_${x.id}`,
       description: `size: ${x.size}`,
       properties: parameters.properties.map(p => {
+        
         const value = x[p.identifier];
-        if (p.type === "uint8") { // todo, not the right way to check
-          const setEnumsForIdentifier = seenEnums.get(p.identifier) || new Set();
-          setEnumsForIdentifier.add(value);
-          seenEnums.set(p.identifier, setEnumsForIdentifier);
-          return Number([...setEnumsForIdentifier].indexOf(value));
+        const maybeEnumProperty = p as AnnotationNumericPropertySpec;
+
+        if (maybeEnumProperty.enumLabels && maybeEnumProperty.enumValues) {
+          const enumIndex = maybeEnumProperty.enumLabels.indexOf(value);
+          if (enumIndex > -1) {
+            const setEnumsForIdentifier = seenEnums.get(p.identifier) || new Set();
+            setEnumsForIdentifier.add(value);
+            seenEnums.set(p.identifier, setEnumsForIdentifier);
+            return maybeEnumProperty.enumValues[enumIndex];
+          } else {
+            console.warn('new enum', value, 'refresh the page!');
+          }
         }
+
+        // if (p.type === "uint8") { // todo, not the right way to check
+        //   const setEnumsForIdentifier = seenEnums.get(p.identifier) || new Set();
+        //   setEnumsForIdentifier.add(value);
+        //   seenEnums.set(p.identifier, setEnumsForIdentifier);
+        //   return Number([...setEnumsForIdentifier].indexOf(value));
+        // }
         return Number(value);
       }),
     };
@@ -102,7 +117,7 @@ export class CaveAnnotationSpatialIndexSourceBackend extends (WithParameters(Wit
 
 @registerSharedObject() //
 export class CaveAnnotationSourceBackend extends (WithParameters(WithSharedCredentialsProviderCounterpart<SpecialProtocolCredentials>()(AnnotationSource), AnnotationSourceParameters)) {  
-  annotationCache = new Map<string, Annotation>();
+  // annotationCache = new Map<string, Annotation>();
   
   async downloadSegmentFilteredGeometry(
       chunk: AnnotationSubsetGeometryChunk, relationshipIndex: number,
@@ -133,7 +148,7 @@ export class CaveAnnotationSourceBackend extends (WithParameters(WithSharedCrede
       const propertySerializers = makeAnnotationPropertySerializers(rank, properties);
       const serializer = new AnnotationSerializer(propertySerializers);
       for (const annotation of annotations) {
-        this.annotationCache.set(annotation.id, annotation);
+        // this.annotationCache.set(annotation.id, annotation);
         serializer.add(annotation);
       }
       chunk.data = Object.assign(new AnnotationGeometryData(), serializer.serialize());
@@ -145,6 +160,6 @@ export class CaveAnnotationSourceBackend extends (WithParameters(WithSharedCrede
     const {parameters} = this;
     console.log('downloadMetadata', chunk.key, chunk.annotation, parameters);
     if (!chunk.key) return;
-    chunk.annotation = this.annotationCache.get(chunk.key) || null;
+    // chunk.annotation = this.annotationCache.get(chunk.key) || null;
   }
 }

@@ -16,7 +16,7 @@
 
 import './user_layer.css';
 
-import {AnnotationPropertySpec, annotationPropertySpecsToJson, AnnotationType, LocalAnnotationSource, parseAnnotationPropertySpecs} from 'neuroglancer/annotation';
+import {AnnotationNumericPropertySpec, AnnotationPropertySpec, annotationPropertySpecsToJson, AnnotationType, LocalAnnotationSource, parseAnnotationPropertySpecs} from 'neuroglancer/annotation';
 import {AnnotationDisplayState, AnnotationLayerState} from 'neuroglancer/annotation/annotation_layer_state';
 import {MultiscaleAnnotationSource} from 'neuroglancer/annotation/frontend_source';
 import {CoordinateTransformSpecification, makeCoordinateSpace} from 'neuroglancer/coordinate_transform';
@@ -588,7 +588,20 @@ class RenderingOptionsTab extends Tab {
                     div.classList.add('neuroglancer-annotation-shader-property');
                     const typeElement = document.createElement('span');
                     typeElement.classList.add('neuroglancer-annotation-shader-property-type');
-                    typeElement.textContent = property.type;
+                    const enumLabels = (property as AnnotationNumericPropertySpec).enumLabels;
+                    if (enumLabels) {
+                      typeElement.textContent = 'enum';
+                      const enumLabelsElement = document.createElement('div');
+                      enumLabelsElement.classList.add('neuroglancer-annotation-shader-property-enum-labels');
+                      for (const label of enumLabels) {
+                        const labelElement = document.createElement('div');
+                        labelElement.textContent = `prop_${property.identifier}_${label}`;
+                        enumLabelsElement.appendChild(labelElement);
+                      }
+                      typeElement.appendChild(enumLabelsElement);
+                    } else {
+                      typeElement.textContent = property.type;
+                    }
                     const nameElement = document.createElement('span');
                     nameElement.classList.add('neuroglancer-annotation-shader-property-identifier');
                     nameElement.textContent = `prop_${property.identifier}`;
