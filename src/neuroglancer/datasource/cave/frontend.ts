@@ -344,9 +344,13 @@ async function getTableMetadata(credentialsProvider: SpecialProtocolCredentialsP
               if (value !== undefined) {
                 if (prop.enumLabels.indexOf(value) === -1) {
                   prop.enumLabels.push(value);
-                  prop.enumValues?.push(prop.enumValues.length);
                 }
               }
+            }
+            prop.enumLabels.sort((a, b) => a < b ? -1 : 1);
+
+            for (let i = 0; i < prop.enumLabels.length; i++) {
+              prop.enumValues![i] = i + 1;
             }
           }
         }

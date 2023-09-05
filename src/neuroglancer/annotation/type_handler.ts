@@ -29,6 +29,7 @@ import {ParameterizedContextDependentShaderGetter, parameterizedEmitterDependent
 import {defineInvlerpShaderFunction, enableLerpShaderFunction} from 'neuroglancer/webgl/lerp';
 import {ShaderBuilder, ShaderModule, ShaderProgram} from 'neuroglancer/webgl/shader';
 import {addControlsToBuilder, setControlsInShader, ShaderControlsBuilderState, ShaderControlState} from 'neuroglancer/webgl/shader_ui_controls';
+import {BasicHashColorShaderManager} from 'neuroglancer/segment_color';
 
 const DEBUG_HISTOGRAMS = false;
 
@@ -197,6 +198,8 @@ export abstract class AnnotationRenderHelper extends AnnotationRenderHelperBase 
   pickIdsPerInstance: number;
   targetIsSliceView: boolean;
 
+  protected hashColorShaderManager = new BasicHashColorShaderManager('hashColor');
+
   constructor(
       gl: GL, annotationType: AnnotationType, rank: number,
       properties: readonly Readonly<AnnotationPropertySpec>[],
@@ -226,6 +229,7 @@ export abstract class AnnotationRenderHelper extends AnnotationRenderHelperBase 
         const referencedProperties: number[] = [];
         const controlsReferencedProperties = parameters.referencedProperties;
         const processedCode = parameters.parseResult.code;
+        this.hashColorShaderManager.defineShader(builder);
         for (let i = 0, numProperties = properties.length; i < numProperties; ++i) {
           const property = properties[i];
 
