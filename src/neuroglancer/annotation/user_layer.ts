@@ -44,6 +44,9 @@ import {RenderScaleWidget} from 'neuroglancer/widget/render_scale_widget';
 import {ShaderCodeWidget} from 'neuroglancer/widget/shader_code_widget';
 import {registerLayerShaderControlsTool, ShaderControls} from 'neuroglancer/widget/shader_controls';
 import {Tab} from 'neuroglancer/widget/tab_view';
+import {getCssColor, SegmentColorHash} from 'neuroglancer/segment_color';
+import {useWhiteBackground} from 'neuroglancer/util/color';
+import {vec3} from 'neuroglancer/util/geom';
 
 const POINTS_JSON_KEY = 'points';
 const ANNOTATIONS_JSON_KEY = 'annotations';
@@ -572,6 +575,8 @@ class RenderingOptionsTab extends Tab {
   codeWidget = this.registerDisposer(makeShaderCodeWidget(this.layer));
   constructor(public layer: AnnotationUserLayer) {
     super();
+    const segmentColorHash = SegmentColorHash.getDefault();
+    let tempColor = new Float32Array(3) as vec3;
     const {element} = this;
     element.classList.add('neuroglancer-annotation-rendering-tab');
     element.appendChild(
@@ -589,14 +594,20 @@ class RenderingOptionsTab extends Tab {
                     const typeElement = document.createElement('span');
                     typeElement.classList.add('neuroglancer-annotation-shader-property-type');
                     const enumLabels = (property as AnnotationNumericPropertySpec).enumLabels;
-                    if (enumLabels) {
+                    const enumValues = (property as AnnotationNumericPropertySpec).enumValues;
+                    if (enumLabels && enumValues) {
                       typeElement.textContent = 'enum';
                       const enumLabelsElement = document.createElement('div');
                       enumLabelsElement.classList.add('neuroglancer-annotation-shader-property-enum-labels');
-                      for (const label of enumLabels) {
+                      for (let i = 0; i < enumLabels.length && i < enumValues.length; i++) {
+                        const label = enumLabels[i];
+                        const value = enumValues[i];
                         const labelElement = document.createElement('div');
                         labelElement.textContent = `prop_${property.identifier}_${label}`;
                         enumLabelsElement.appendChild(labelElement);
+                        const color = segmentColorHash.computeNumber(tempColor, value);
+                        labelElement.style.backgroundColor = getCssColor(color);
+                        labelElement.style.color = useWhiteBackground(tempColor) ? 'white' : 'black';
                       }
                       typeElement.appendChild(enumLabelsElement);
                     } else {

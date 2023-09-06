@@ -125,6 +125,14 @@ export class SegmentColorHash implements Trackable {
     return out;
   }
 
+  computeNumber(out: Float32Array, x: number) {
+    let h = hashCombine(this.hashSeed, x);
+    const c0 = (h & 0xFF) / 255;
+    const c1 = ((h >> 8) & 0xFF) / 255;
+    hsvToRgb(out, c0, 0.5 + 0.5 * c1, 1.0);
+    return out;
+  }
+
   computeCssColor(x: Uint64) {
     this.compute(tempColor, x);
     return getCssColor(tempColor);
