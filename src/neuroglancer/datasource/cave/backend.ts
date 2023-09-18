@@ -9,7 +9,7 @@ import {registerSharedObject} from "neuroglancer/worker_rpc";
 import {AnnotationSourceParameters, AnnotationSpatialIndexSourceParameters, API_STRING} from "./base";
 import {cancellableFetchSpecialOk} from 'neuroglancer/util/special_protocol_request';
 import {vec3} from 'neuroglancer/util/geom';
-import {AnnotationBase, AnnotationNumericPropertySpec, AnnotationSerializer, AnnotationType, Line, Point, makeAnnotationPropertySerializers} from "neuroglancer/annotation";
+import {Annotation, AnnotationBase, AnnotationNumericPropertySpec, AnnotationSerializer, AnnotationType, Line, Point, makeAnnotationPropertySerializers} from "neuroglancer/annotation";
 import {Uint64} from "neuroglancer/util/uint64";
 import {tableFromIPC} from "apache-arrow";
 
@@ -28,7 +28,6 @@ function parseCaveAnnototations(segmentId: Uint64, annotationsJson: any[], param
     const res: AnnotationBase = {
       type: AnnotationType.POINT,
       id: `${segmentId}_${x.id}`,
-      description: `size: ${x.size}`,
       properties: parameters.properties.map(p => {
         
         const value = x[p.identifier];
@@ -45,13 +44,6 @@ function parseCaveAnnototations(segmentId: Uint64, annotationsJson: any[], param
             console.warn('new enum', value, 'refresh the page!');
           }
         }
-
-        // if (p.type === "uint8") { // todo, not the right way to check
-        //   const setEnumsForIdentifier = seenEnums.get(p.identifier) || new Set();
-        //   setEnumsForIdentifier.add(value);
-        //   seenEnums.set(p.identifier, setEnumsForIdentifier);
-        //   return Number([...setEnumsForIdentifier].indexOf(value));
-        // }
         return Number(value);
       }),
     };
@@ -70,8 +62,6 @@ function parseCaveAnnototations(segmentId: Uint64, annotationsJson: any[], param
       }
     }    
   });
-
-  console.log('seenEnums', seenEnums);
   return annotations;
 }
 
@@ -96,7 +86,6 @@ export class CaveAnnotationSpatialIndexSourceBackend extends (WithParameters(Wit
       body: payload,
     }, binaryFormat ? responseArrowIPC : responseJson, cancellationToken);
     if (response !== undefined) {
-      console.log("got annotations!", response.length);
       if (binaryFormat) {
         response = [...response];
       }
@@ -117,11 +106,13 @@ export class CaveAnnotationSpatialIndexSourceBackend extends (WithParameters(Wit
 
 @registerSharedObject() //
 export class CaveAnnotationSourceBackend extends (WithParameters(WithSharedCredentialsProviderCounterpart<SpecialProtocolCredentials>()(AnnotationSource), AnnotationSourceParameters)) {  
-  // annotationCache = new Map<string, Annotation>();
+  annotationCache = new Map<string, Annotation>();
+  waitingFor: Promise<any>|undefined;
   
   async downloadSegmentFilteredGeometry(
       chunk: AnnotationSubsetGeometryChunk, relationshipIndex: number,
       cancellationToken: CancellationToken) {
+        console.log('cave downloadSegmentFilteredGeometry');
     const {parameters} = this;
     const {datastack, table, relationships, timestamp, rank, properties} = parameters;
     const binaryFormat = true;
@@ -135,11 +126,12 @@ export class CaveAnnotationSourceBackend extends (WithParameters(WithSharedCrede
       },
       "table": "${table}"
     }`; // TODO (hardcoding `_root_id`)
-    let response = await cancellableFetchSpecialOk(this.credentialsProvider, url, {
+    this.waitingFor = cancellableFetchSpecialOk(this.credentialsProvider, url, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: payload,
     }, binaryFormat ? responseArrowIPC : responseJson, cancellationToken);
+    let response = await this.waitingFor;
     if (response !== undefined) {
       if (binaryFormat) {
         response = [...response];
@@ -148,7 +140,7 @@ export class CaveAnnotationSourceBackend extends (WithParameters(WithSharedCrede
       const propertySerializers = makeAnnotationPropertySerializers(rank, properties);
       const serializer = new AnnotationSerializer(propertySerializers);
       for (const annotation of annotations) {
-        // this.annotationCache.set(annotation.id, annotation);
+        this.annotationCache.set(annotation.id, annotation);
         serializer.add(annotation);
       }
       chunk.data = Object.assign(new AnnotationGeometryData(), serializer.serialize());
@@ -157,9 +149,9 @@ export class CaveAnnotationSourceBackend extends (WithParameters(WithSharedCrede
 
   async downloadMetadata(chunk: AnnotationMetadataChunk, cancellationToken: CancellationToken) {
     cancellationToken;
-    const {parameters} = this;
-    console.log('downloadMetadata', chunk.key, chunk.annotation, parameters);
+    console.log('cave downloadMetadata');
     if (!chunk.key) return;
-    // chunk.annotation = this.annotationCache.get(chunk.key) || null;
+    await this.waitingFor;
+    chunk.annotation = this.annotationCache.get(chunk.key);// || null;
   }
 }

@@ -508,14 +508,11 @@ export class CaveDataSource extends DataSourceProvider {
         });
   }
   async completeUrl(options: CompleteUrlOptions) {
-    // console.log('completeUrl', options);
-
     const {providerUrl} = options;
 
     const {url, credentialsProvider} =
               parseSpecialUrl(providerUrl, options.credentialsManager);
 
-    
     {
       const regex = /.*https:\/\/.*\/datastack\/(.*)\/table\/(.*)/;
       const res = providerUrl.match(regex);
@@ -555,35 +552,6 @@ export class CaveDataSource extends DataSourceProvider {
       }
     }
 
-    // const materializationUrl = url.split(`/${API_STRING}/`)[0];
-
-
-    // const res = providerUrl.match(/.*\/table\/(\w*)/);
-
-    // https://global.daf-apis.com/info/api/v2/datastacks
-
-    // // https://minnie.microns-daf.com/materialize/api/v3/datastack/minnie65_phase3_v1/version/671/tables
-
-    // if (res) {
-    //   const [first, second] = res;
-    //   const offset = first.length - second.length;
-    //   return {
-    //     offset,
-    //     completions: [
-    //       {
-    //         value: 'bumble',
-    //         desciptiono: `it's a fricken bee!`,
-    //       },
-    //       {
-    //         value: 'something else',
-    //         desciptiono: `not a bee!`,
-    //       }
-    //     ]
-    //   }
-    // }
-
     return {offset: options.providerUrl.length, completions: []};
-    // return completeHttpPath(
-    //     options.credentialsManager, options.providerUrl, options.cancellationToken);
   }
 }

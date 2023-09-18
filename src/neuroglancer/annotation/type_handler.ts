@@ -224,7 +224,6 @@ export abstract class AnnotationRenderHelper extends AnnotationRenderHelperBase 
       parameters: this.shaderControlState.builderState,
       shaderError: this.shaderError,
       defineShader: (builder: ShaderBuilder, parameters: ShaderControlsBuilderState) => {
-        console.log('defineSader', this.properties);
         const {rank, properties} = this;
         const referencedProperties: number[] = [];
         const controlsReferencedProperties = parameters.referencedProperties;
@@ -237,7 +236,6 @@ export abstract class AnnotationRenderHelper extends AnnotationRenderHelperBase 
           const enumValues = (property as AnnotationNumericPropertySpec).enumValues || [];
 
           for (let i = 0; i < enumLabels.length && i < enumValues.length; i++) {
-            console.log('add vertex code', `#define prop_${property.identifier}_${enumLabels[i]} uint(${enumValues[i]})\n`);
             builder.addVertexCode(`#define prop_${property.identifier}_${enumLabels[i]} uint(${enumValues[i]})\n`);
           }
 

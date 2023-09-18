@@ -221,8 +221,19 @@ export class AnnotationLayerView extends Tab {
             (annotationId) => this.deleteAnnotationElement(annotationId, state)));
       }
       refCounted.registerDisposer(state.transform.changed.add(this.forceUpdateView));
+      refCounted.registerDisposer(state.displayState.relationshipStates.changed.add(this.forceUpdateView));
       newAttachedAnnotationStates.set(
           state, {refCounted, annotations: [], idToIndex: new Map(), listOffset: 0});
+      
+      console.log('waiting for visibleChunksChanged');
+      if (source instanceof MultiscaleAnnotationSource) {
+        refCounted.registerDisposer(source.chunkManager.chunkQueueManager.visibleChunksChanged.add(() => {
+          console.log('visibleChunksChanged!', source);
+          this.forceUpdateView();
+        }));
+      }
+
+      refCounted.registerDisposer(source)
     }
     this.attachedAnnotationStates = newAttachedAnnotationStates;
     attachedAnnotationStates.clear();
@@ -538,7 +549,7 @@ export class AnnotationLayerView extends Tab {
       if (!state.source.readonly) isMutable = true;
       if (state.chunkTransform.value.error !== undefined) continue;
       const {source} = state;
-      const annotations = Array.from(source);
+      const annotations = source instanceof MultiscaleAnnotationSource ? source.activeAnnotations(state) : Array.from(source);
       info.annotations = annotations;
       const {idToIndex} = info;
       idToIndex.clear();
