@@ -379,6 +379,37 @@ export function makeTemporaryChunk() {
       {data: new Uint8Array(0), numPickIds: 0, typeToOffset, typeToIds, typeToIdMaps});
 }
 
+export function deserializeAnnotations(
+    serializedAnnotations: SerializedAnnotations,
+    rank: number, properties: Readonly<AnnotationPropertySpec>[]) {
+  const annotations: Annotation[] = [];
+  const annotationBuffer = serializedAnnotations.data;
+  let annotation: Annotation|undefined;
+  for (let [annotationType, annotationsOfType] of serializedAnnotations.typeToIdMaps.entries()) {
+    const handler = annotationTypeHandlers[annotationType as AnnotationType];
+    const numGeometryBytes = handler.serializedBytes(rank);
+    const baseOffset = annotationBuffer.byteOffset;
+    const dataView = new DataView(annotationBuffer.buffer);
+    const isLittleEndian = Endianness.LITTLE === ENDIANNESS;
+    const annotationPropertySerializer =
+        new AnnotationPropertySerializer(rank, numGeometryBytes, properties);
+    const annotationCount = annotationsOfType.size;
+    for (const [annotationId, annotationIndex] of annotationsOfType) {
+      annotation = handler.deserialize(
+          dataView,
+          baseOffset +
+              annotationPropertySerializer.propertyGroupBytes[0] *
+                  annotationIndex,
+          isLittleEndian, rank, annotationId);
+      annotationPropertySerializer.deserialize(
+          dataView, baseOffset, annotationIndex, annotationCount, isLittleEndian,
+          annotation.properties = new Array(properties.length));
+      annotations.push(annotation);
+    }
+  }
+  return annotations;
+}
+
 export class MultiscaleAnnotationSource extends SharedObject implements
     MultiscaleSliceViewChunkSource<AnnotationGeometryChunkSource>, AnnotationSourceSignals {
   OPTIONS: {};
@@ -413,9 +444,10 @@ export class MultiscaleAnnotationSource extends SharedObject implements
 
   activeAnnotations(state: AnnotationLayerState): Annotation[] {
     const annotations: Annotation[] = [];
-    const {segmentFilteredSources, rank, properties, relationships} = this;
+    const {segmentFilteredSources, spatiallyIndexedSources, rank, properties, relationships} = this;
     const {relationshipStates} = state.displayState;
 
+    let hasVisibleSegments = false;
     for (let i = 0; i < relationships.length; i++) {
       const relationship = relationships[i];
       const state = relationshipStates.get(relationship)
@@ -424,39 +456,26 @@ export class MultiscaleAnnotationSource extends SharedObject implements
         if (!showMatches || !segmentationState) continue;
         const chunks = segmentFilteredSources[i].chunks;
         forEachVisibleSegment(segmentationState.segmentationGroupState.value, objectId => {
+          hasVisibleSegments = true;
           const key = getObjectKey(objectId);
           const chunk = chunks.get(key);
-
           if (chunk !== undefined && chunk.state === ChunkState.GPU_MEMORY) {
               const {data} = chunk;
               if (data === undefined) return;
               const {serializedAnnotations} = data;
-              const annotationBuffer = serializedAnnotations.data;
-              let annotation: Annotation|undefined;
-              for (let [annotationType, annotationsOfType]  of serializedAnnotations.typeToIdMaps.entries()) {
-                const handler = annotationTypeHandlers[annotationType as AnnotationType];
-                const numGeometryBytes = handler.serializedBytes(rank);
-                const baseOffset = annotationBuffer.byteOffset;
-                const dataView = new DataView(annotationBuffer.buffer);
-                const isLittleEndian = Endianness.LITTLE === ENDIANNESS;
-                const annotationPropertySerializer =
-                    new AnnotationPropertySerializer(rank, numGeometryBytes, properties);
-                const annotationCount = annotationsOfType.size;
-                for (const [annotationId, annotationIndex] of annotationsOfType) {
-                  annotation = handler.deserialize(
-                      dataView,
-                      baseOffset +
-                          annotationPropertySerializer.propertyGroupBytes[0] *
-                              annotationIndex,
-                      isLittleEndian, rank, annotationId);
-                  annotationPropertySerializer.deserialize(
-                      dataView, baseOffset, annotationIndex, annotationCount, isLittleEndian,
-                      annotation.properties = new Array(properties.length));
-                  annotations.push(annotation);
-                }
-              }
+              annotations.push(...deserializeAnnotations(serializedAnnotations, rank, properties));
           }
         });
+      }
+    }
+    if (!hasVisibleSegments) {
+      for (const source of spatiallyIndexedSources) {
+        for (const [_key, chunk] of source.chunks) {
+          const {data} = chunk;
+          if (data === undefined) continue;
+          const {serializedAnnotations} = data;
+          annotations.push(...deserializeAnnotations(serializedAnnotations, rank, properties));
+        }
       }
     }
 
