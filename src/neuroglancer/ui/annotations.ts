@@ -562,8 +562,12 @@ export class AnnotationLayerView extends Tab {
     }
     const oldLength = this.virtualListSource.length;
     this.updateListLength();
+    // TODO, what problems does this change cause?
+    const insertCount = Math.max(0, listElements.length - oldLength);
+    const deleteCount = Math.max(0, oldLength - listElements.length);
+    const retainCount = Math.min(listElements.length, oldLength);
     this.virtualListSource.changed!.dispatch(
-        [{retainCount: 0, deleteCount: oldLength, insertCount: listElements.length}]);
+        [{retainCount, deleteCount, insertCount}]);
     this.mutableControls.style.display = isMutable ? 'contents' : 'none';
     this.resetOnUpdate();
   }
