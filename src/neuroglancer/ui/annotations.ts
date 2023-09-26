@@ -225,10 +225,8 @@ export class AnnotationLayerView extends Tab {
       newAttachedAnnotationStates.set(
           state, {refCounted, annotations: [], idToIndex: new Map(), listOffset: 0});
       
-      console.log('waiting for visibleChunksChanged');
       if (source instanceof MultiscaleAnnotationSource) {
         refCounted.registerDisposer(source.chunkManager.chunkQueueManager.visibleChunksChanged.add(() => {
-          console.log('visibleChunksChanged!', source);
           this.forceUpdateView();
         }));
       }
@@ -355,8 +353,33 @@ export class AnnotationLayerView extends Tab {
       this.displayState.hoverState.value = undefined;
     });
 
+    const changeSelectedIndex = (offset: number) => {
+      const selectedIndex = this.getSelectedAnnotationIndex();
+      if (selectedIndex === undefined) return;
+      const nextAnnotation = this.listElements[selectedIndex+offset];
+      if (nextAnnotation) {
+        const {state, annotation} = nextAnnotation;
+        this.layer.selectAnnotation(state, annotation.id, true);
+        this.moveToAnnotation(annotation, state);
+      }
+    };
+
+    this.virtualList.element.addEventListener('action:select-previous-annotation', event => {
+      event.stopPropagation();
+      event.preventDefault();
+      changeSelectedIndex(-1);
+    });
+
+    this.virtualList.element.addEventListener('action:select-next-annotation', event => {
+      event.stopPropagation();
+      event.preventDefault();
+      changeSelectedIndex(1);
+    });
+
     const bindings = getDefaultAnnotationListBindings();
     this.registerDisposer(new MouseEventBinder(this.virtualList.element, bindings));
+    this.registerDisposer(new KeyboardEventBinder(this.virtualList.element, bindings));
+    this.virtualList.element.tabIndex = -1;
     this.virtualList.element.title = bindings.describe();
     this.registerDisposer(this.displayState.hoverState.changed.add(() => this.updateHoverView()));
     this.registerDisposer(
@@ -372,6 +395,17 @@ export class AnnotationLayerView extends Tab {
     this.updateCoordinateSpace();
     this.updateAttachedAnnotationLayerStates();
     this.updateSelectionView();
+  }
+
+  private getSelectedAnnotationIndex() {
+    const {previousSelectedState: state} = this;
+    if (state === undefined) return;
+    const {annotationLayerState, annotationId} = state;
+    const attached = this.attachedAnnotationStates.get(annotationLayerState);
+    if (attached === undefined) return;
+    const index = attached.idToIndex.get(annotationId);
+    if (index === undefined) return;
+    return attached.listOffset + index;
   }
 
   private getRenderedAnnotationListElement(
@@ -665,6 +699,18 @@ export class AnnotationLayerView extends Tab {
     this.updateSelectionView();
   }
 
+  private moveToAnnotation(annotation: Annotation, state: AnnotationLayerState) {
+    const chunkTransform = state.chunkTransform.value as ChunkTransformParameters;
+    const {layerRank} = chunkTransform;
+    const chunkPosition = new Float32Array(layerRank);
+    const layerPosition = new Float32Array(layerRank);
+    getCenterPosition(chunkPosition, annotation);
+    matrix.transformPoint(
+        layerPosition, chunkTransform.chunkToLayerTransform, layerRank + 1, chunkPosition,
+        layerRank);
+    setLayerPosition(this.layer, chunkTransform, layerPosition);
+  }
+
   private makeAnnotationListElement(annotation: Annotation, state: AnnotationLayerState) {
     const chunkTransform = state.chunkTransform.value as ChunkTransformParameters;
     const element = document.createElement('div');
@@ -761,14 +807,7 @@ export class AnnotationLayerView extends Tab {
     element.addEventListener('action:move-to-annotation', event => {
       event.stopPropagation();
       event.preventDefault();
-      const {layerRank} = chunkTransform;
-      const chunkPosition = new Float32Array(layerRank);
-      const layerPosition = new Float32Array(layerRank);
-      getCenterPosition(chunkPosition, annotation);
-      matrix.transformPoint(
-          layerPosition, chunkTransform.chunkToLayerTransform, layerRank + 1, chunkPosition,
-          layerRank);
-      setLayerPosition(this.layer, chunkTransform, layerPosition);
+      this.moveToAnnotation(annotation, state);
     });
 
     const selectionState = this.selectedAnnotationState.value;
