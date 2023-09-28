@@ -1239,6 +1239,7 @@ export class ChunkManager extends SharedObjectCounterpart {
     priority: number,
     requestedState: ChunkState = ChunkState.GPU_MEMORY,
   ) {
+    // console.log("requestChunk", chunk.key);
     if (Number.isNaN(priority)) {
       return;
     }

@@ -869,6 +869,12 @@ export function forEachVisibleVolumetricChunk<
     return;
   }
   const { size: chunkSize } = transformedSource.chunkLayout;
+  // console.log(
+  //   "forEachVisibleVolumetricChunk",
+  //   chunkSize.toString(),
+  //   transformedSource.curPositionInChunks.toString(),
+  //   transformedSource.fixedPositionWithinChunk.toString(),
+  // );
   const modelViewProjection = mat4.multiply(
     tempVisibleVolumetricModelViewProjection,
     projectionParameters.viewProjectionMat,

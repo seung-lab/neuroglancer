@@ -41,7 +41,10 @@ import {
 } from "#/annotation/base";
 import { getAnnotationTypeRenderHandler } from "#/annotation/type_handler";
 import { Chunk, ChunkManager, ChunkSource } from "#/chunk_manager/frontend";
-import { getObjectKey } from "#/segmentation_display_state/base";
+import {
+  forEachVisibleSegment,
+  getObjectKey,
+} from "#/segmentation_display_state/base";
 import { SliceViewSourceOptions } from "#/sliceview/base";
 import {
   MultiscaleSliceViewChunkSource,
@@ -63,6 +66,10 @@ import {
   RPC,
   SharedObject,
 } from "#/worker_rpc";
+import { AnnotationLayerState } from "./annotation_layer_state";
+import { ChunkState } from "src/chunk_manager/base";
+import { vec3 } from "src/util/geom";
+import { getCenterPosition } from "src/ui/annotations";
 
 export interface AnnotationGeometryChunkSourceOptions
   extends SliceViewChunkSourceOptions {
@@ -178,11 +185,12 @@ export class AnnotationGeometryChunkSource extends SliceViewChunkSource<
     options: AnnotationGeometryChunkSourceOptions,
   ) {
     super(chunkManager, options);
+    console.log("create AnnotationGeometryChunkSource");
     const parent = (this.parent = options.parent);
     parent.spatiallyIndexedSources.add(this);
     const { rank, chunkDataSize } = this.spec;
     const multiscaleToChunkTransform = (this.multiscaleToChunkTransform =
-      new Float32Array((rank + 1) ** 2));
+      new Float32Array((rank + 1) ** 2)); // HMM do I need to use the transform for each source?
     matrix.inverse(
       multiscaleToChunkTransform,
       rank + 1,
@@ -209,6 +217,7 @@ export class AnnotationGeometryChunkSource extends SliceViewChunkSource<
 
   addChunk(key: string, chunk: AnnotationGeometryChunk) {
     super.addChunk(key, chunk);
+    // console.log("add chunk", key);
     // TODO: process local deletions
   }
 
@@ -496,6 +505,52 @@ export function makeTemporaryChunk() {
   );
 }
 
+export function deserializeAnnotations(
+  serializedAnnotations: SerializedAnnotations,
+  rank: number,
+  properties: Readonly<AnnotationPropertySpec>[],
+) {
+  const annotations: Annotation[] = [];
+  const annotationBuffer = serializedAnnotations.data;
+  let annotation: Annotation | undefined;
+  for (const [
+    annotationType,
+    annotationsOfType,
+  ] of serializedAnnotations.typeToIdMaps.entries()) {
+    const handler = annotationTypeHandlers[annotationType as AnnotationType];
+    const numGeometryBytes = handler.serializedBytes(rank);
+    const baseOffset = annotationBuffer.byteOffset;
+    const dataView = new DataView(annotationBuffer.buffer);
+    const isLittleEndian = Endianness.LITTLE === ENDIANNESS;
+    const annotationPropertySerializer = new AnnotationPropertySerializer(
+      rank,
+      numGeometryBytes,
+      properties,
+    );
+    const annotationCount = annotationsOfType.size;
+    for (const [annotationId, annotationIndex] of annotationsOfType) {
+      annotation = handler.deserialize(
+        dataView,
+        baseOffset +
+          annotationPropertySerializer.propertyGroupBytes[0] * annotationIndex,
+        isLittleEndian,
+        rank,
+        annotationId,
+      );
+      annotationPropertySerializer.deserialize(
+        dataView,
+        baseOffset,
+        annotationIndex,
+        annotationCount,
+        isLittleEndian,
+        (annotation.properties = new Array(properties.length)),
+      );
+      annotations.push(annotation);
+    }
+  }
+  return annotations;
+}
+
 export class MultiscaleAnnotationSource
   extends SharedObject
   implements
@@ -522,6 +577,7 @@ export class MultiscaleAnnotationSource
     },
   ) {
     super();
+    console.log("create MultiscaleAnnotationSource");
     this.rank = options.rank;
     this.properties = options.properties;
     this.annotationPropertySerializers = makeAnnotationPropertySerializers(
@@ -539,6 +595,222 @@ export class MultiscaleAnnotationSource
         ),
       );
     }
+  }
+
+  foo(position: Float32Array) {
+    const { rank, spatiallyIndexedSources } = this;
+    const tempLower = new Float32Array(rank);
+    const tempUpper = new Float32Array(rank);
+    const tempChunk = new Float32Array(rank);
+
+    for (const source of spatiallyIndexedSources) {
+      matrix.transformPoint(
+        tempLower,
+        source.multiscaleToChunkTransform,
+        rank + 1,
+        position,
+        rank,
+      );
+      tempUpper.set(tempLower);
+
+      let totalChunks = 1;
+      for (let i = 0; i < rank; ++i) {
+        const a = tempLower[i];
+        const b = tempUpper[i];
+        const lower = Math.min(a, b);
+        const upper = Math.max(a, b);
+        // In the case that the point lies directly on a boundary, ensure it is included in both
+        // chunks, since we don't know how the datasource handles this case.
+        tempLower[i] = Math.ceil(lower - 1);
+        tempUpper[i] = Math.floor(upper + 1);
+        totalChunks *= tempUpper[i] - tempLower[i];
+      }
+      const { chunks } = source;
+      for (let chunkIndex = 0; chunkIndex < totalChunks; ++chunkIndex) {
+        let remainder = chunkIndex;
+        for (let i = 0; i < rank; ++i) {
+          const lower = tempLower[i];
+          const upper = tempUpper[i];
+          const size = upper - lower;
+          const x = (tempChunk[i] = remainder % size);
+          remainder = (remainder - x) / size;
+        }
+        const chunk = chunks.get(tempChunk.join());
+        if (chunk !== undefined) {
+          console.log(
+            "we got a chunk",
+            chunk.chunkGridPosition,
+            source.spec.chunkDataSize,
+          );
+        }
+      }
+    }
+  }
+
+  activeAnnotations(
+    state: AnnotationLayerState,
+    sortByPosition: Float32Array,
+  ): [
+    length: number,
+    indexToId: (index: number) => Annotation,
+    idToIndex: (id: string) => number | undefined,
+  ] {
+    const {
+      segmentFilteredSources,
+      spatiallyIndexedSources,
+      rank,
+      properties,
+      relationships,
+    } = this;
+    const { relationshipStates } = state.displayState;
+    let hasVisibleSegments = false;
+
+    let currentLength = 0;
+    const listOffsets: number[] = []; // TODO, maybe change to index start
+    const serializedAnnotationsList: SerializedAnnotations[] = [];
+    const deserializedAnnotationsList: Annotation[][] = [];
+    const idToIndexMap = new Map<string, number>();
+
+    for (let i = 0; i < relationships.length; i++) {
+      const relationship = relationships[i];
+      const state = relationshipStates.get(relationship);
+      if (state) {
+        const {
+          showMatches: { value: showMatches },
+          segmentationState: { value: segmentationState },
+        } = state;
+        if (!showMatches || !segmentationState) continue;
+        const chunks = segmentFilteredSources[i].chunks;
+        forEachVisibleSegment(
+          segmentationState.segmentationGroupState.value,
+          (objectId) => {
+            hasVisibleSegments = true;
+            const key = getObjectKey(objectId);
+            const chunk = chunks.get(key);
+            if (chunk !== undefined && chunk.state === ChunkState.GPU_MEMORY) {
+              const { data } = chunk;
+              if (data === undefined) return;
+              const { serializedAnnotations } = data;
+              const length = serializedAnnotations.typeToIds.reduce(
+                (sum, idsOfType) => sum + idsOfType.length,
+                0,
+              );
+              serializedAnnotationsList.push(serializedAnnotations);
+              listOffsets.push(currentLength);
+              currentLength += length;
+            }
+          },
+        );
+      }
+    }
+    if (!hasVisibleSegments) {
+      this.foo(sortByPosition);
+      for (const source of spatiallyIndexedSources) {
+        const rank = sortByPosition.length;
+        const sortChunk = new Uint32Array(rank);
+        const { chunkDataSize } = source.spec;
+        // TODO, one of these?
+        // source.spec.chunkToMultiscaleTransform
+        // source.multiscaleToChunkTransform
+
+        // const tempLower = new Float32Array(rank);
+        // {
+        //   matrix.transformPoint(
+        //     tempLower,
+        //     source.multiscaleToChunkTransform,
+        //     rank + 1,
+        //     sortByPosition,
+        //     rank,
+        //   );
+
+        //   console.log("compare", sortByPosition, tempLower);
+        // }
+
+        for (let i = 0; i < rank; i++) {
+          sortChunk[i] = Math.floor(sortByPosition[i] / chunkDataSize[i]);
+        }
+        // currently not working well because the chunk calculation is off so we end up using a low
+        // level chunk
+        const chunk = source.chunks.get(sortChunk.join(","));
+        console.log("checking for chunk", sortChunk.join(","));
+        if (chunk) {
+          const { data } = chunk;
+          if (data === undefined) continue;
+          const { serializedAnnotations } = data;
+          const length = serializedAnnotations.typeToIds.reduce(
+            (sum, idsOfType) => sum + idsOfType.length,
+            0,
+          );
+          listOffsets.push(currentLength);
+          currentLength += length;
+          const tempCenter = new Float32Array(rank);
+          const annotations = deserializeAnnotations(
+            serializedAnnotations,
+            rank,
+            properties,
+          );
+          annotations.sort((a, b) => {
+            getCenterPosition(tempCenter, a);
+            const distanceA = vec3.distance(
+              // TEMP, shouldn't assume 3d
+              tempCenter as vec3,
+              sortByPosition as vec3,
+            );
+            getCenterPosition(tempCenter, b);
+            const distanceB = vec3.distance(
+              tempCenter as vec3,
+              sortByPosition as vec3,
+            );
+            return distanceA - distanceB;
+          });
+          deserializedAnnotationsList[0] = annotations;
+          for (let i = 0; i < annotations.length; i++) {
+            idToIndexMap.set(annotations[0].id, i);
+          }
+          break;
+        }
+      }
+    }
+    const indexToId = (index: number) => {
+      if (index < currentLength) {
+        for (const [idx, listOffset] of listOffsets.entries()) {
+          const nextOffset = listOffsets[idx + 1] || Number.MAX_VALUE;
+          if (index < nextOffset) {
+            if (!deserializedAnnotationsList[idx]) {
+              const serializedAnnotations = serializedAnnotationsList[idx];
+              deserializedAnnotationsList[idx] = deserializeAnnotations(
+                serializedAnnotations,
+                rank,
+                properties,
+              );
+            }
+            return deserializedAnnotationsList[idx][index - listOffset];
+          }
+        }
+      }
+      throw new Error("OUT OF BOUNDS");
+    };
+    const idToIndex = (id: string) => {
+      const index = idToIndexMap.get(id);
+      if (index) {
+        return index;
+      }
+      for (const [idx, listOffset] of listOffsets.entries()) {
+        const serializedAnnotations = serializedAnnotationsList[idx];
+        if (!serializedAnnotations) continue;
+        const { typeToIdMaps } = serializedAnnotations;
+        for (const idMapForType of typeToIdMaps) {
+          const localIndex = idMapForType.get(id);
+          if (localIndex) {
+            return listOffset + localIndex; // TODO, is this handling SerializedAnnotations with
+            // multiple types correctly?
+          }
+        }
+      }
+      return undefined;
+    };
+
+    return [currentLength, indexToId, idToIndex];
   }
 
   hasNonSerializedProperties() {
@@ -852,6 +1124,7 @@ export class MultiscaleAnnotationSource
         }
         const chunk = chunks.get(tempChunk.join());
         if (chunk !== undefined) {
+          console.log("we callback with chunk");
           callback(chunk);
         }
       }
