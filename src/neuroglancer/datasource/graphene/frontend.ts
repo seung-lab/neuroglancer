@@ -184,8 +184,6 @@ class GrapheneMultiscaleVolumeChunkSource extends PrecomputedMultiscaleVolumeChu
     const lowerClipBound = new Float32Array(rank);
     const upperClipBound = new Float32Array(rank);
 
-    console.log('lowerBounds', baseLowerBound);
-
     for (let i = 0; i < 3; ++i) {
       const relativeScale = 1;
       chunkToMultiscaleTransform[stride * i + i] = relativeScale;

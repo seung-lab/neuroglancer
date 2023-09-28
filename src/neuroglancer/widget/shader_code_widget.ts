@@ -62,7 +62,6 @@ export class ShaderCodeWidget extends RefCounted {
 
   constructor(public state: ShaderCodeState) {
     super();
-    console.log('make widget!');
     this.textEditor = CodeMirror(_element => {}, {
       value: this.state.fragmentMain.value,
       mode: 'glsl',
@@ -79,7 +78,6 @@ export class ShaderCodeWidget extends RefCounted {
     }));
     this.element.classList.add('neuroglancer-shader-code-widget');
     this.registerDisposer(this.state.shaderError.changed.add(() => {
-      console.log('shader error changed!');
       this.updateErrorState();
     }));
     const {shaderControlState} = this.state;

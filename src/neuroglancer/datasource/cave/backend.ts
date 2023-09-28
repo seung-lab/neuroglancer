@@ -87,6 +87,7 @@ async function queryAnnotations(
 @registerSharedObject() //
 export class CaveAnnotationSpatialIndexSourceBackend extends (WithParameters(WithSharedCredentialsProviderCounterpart<SpecialProtocolCredentials>()(AnnotationGeometryChunkSourceBackend), AnnotationSpatialIndexSourceParameters)) {
   parent: CaveAnnotationSourceBackend;
+
   async download(chunk: AnnotationGeometryChunk, cancellationToken: CancellationToken) {
     const {credentialsProvider, parent} = this;
     const {parameters} = parent; // we probably don't need separate spatial index for now
@@ -142,10 +143,8 @@ export class CaveAnnotationSourceBackend extends (WithParameters(WithSharedCrede
   async downloadMetadata(chunk: AnnotationMetadataChunk, cancellationToken: CancellationToken) {
     cancellationToken;
     if (!chunk.key) return;
-
     const {credentialsProvider, parameters} = this;
     const {timestamp, table} = parameters;
-
     const payload = `{
       "timestamp": "${timestamp}",
       "filter_in_dict": {
@@ -155,9 +154,8 @@ export class CaveAnnotationSourceBackend extends (WithParameters(WithSharedCrede
       },
       "table": "${table}"
     }`;
-    const annotations = await queryAnnotations(credentialsProvider, parameters, payload,
-      0,
-      cancellationToken);
+    const annotations = await queryAnnotations(
+      credentialsProvider, parameters, payload, 0, cancellationToken);
     if (annotations && annotations.length > 0) {
       chunk.annotation = annotations[0];
     }

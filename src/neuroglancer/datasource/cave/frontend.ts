@@ -3,28 +3,23 @@ import {ChunkManager, WithParameters} from 'neuroglancer/chunk_manager/frontend'
 import {CoordinateSpace, coordinateSpaceFromJson, makeCoordinateSpace, makeIdentityTransform, makeIdentityTransformedBoundingBox} from 'neuroglancer/coordinate_transform';
 import {WithCredentialsProvider} from 'neuroglancer/credentials_provider/chunk_source_frontend';
 import {responseJson} from 'neuroglancer/util/http_request';
-import {parseFixedLengthArray, unparseQueryStringParameters, verifyEnumString, verifyFiniteFloat, verifyFinitePositiveFloat, verifyNonnegativeInt, verifyObject, verifyObjectAsMap, verifyObjectProperty, verifyOptionalObjectProperty, verifyString, verifyStringArray} from 'neuroglancer/util/json';
+import {unparseQueryStringParameters, verifyFinitePositiveFloat, verifyNonnegativeInt, verifyObject, verifyObjectAsMap, verifyObjectProperty, verifyOptionalObjectProperty, verifyString, verifyStringArray} from 'neuroglancer/util/json';
 import {getObjectId} from 'neuroglancer/util/object_id';
 import {cancellableFetchSpecialOk, parseSpecialUrl, SpecialProtocolCredentials, SpecialProtocolCredentialsProvider} from 'neuroglancer/util/special_protocol_request';
 import {CompleteUrlOptions, ConvertLegacyUrlOptions, DataSource, DataSourceProvider, GetDataSourceOptions, NormalizeUrlOptions} from 'neuroglancer/datasource';
 import {parseMultiscaleVolumeInfo, parseProviderUrl} from 'neuroglancer/datasource/precomputed/frontend';
 import {AnnotationSourceParameters, AnnotationSpatialIndexSourceParameters, API_STRING, API_STRING_V2} from 'neuroglancer/datasource/cave/base';
-import {AnnotationNumericPropertySpec, AnnotationPropertySpec, AnnotationType, parseAnnotationPropertySpecs} from 'neuroglancer/annotation';
+import {AnnotationNumericPropertySpec, AnnotationPropertySpec, parseAnnotationPropertySpecs} from 'neuroglancer/annotation';
 import {SliceViewSingleResolutionSource} from 'src/neuroglancer/sliceview/frontend';
 import {AnnotationGeometryChunkSpecification} from 'src/neuroglancer/annotation/base';
 import * as matrix from 'neuroglancer/util/matrix';
 import {getJsonMetadata} from 'neuroglancer/datasource/graphene/frontend';
 import {tableFromIPC} from 'apache-arrow';
 
-AnnotationType; // TODO
-verifyEnumString; // TODO
-parseFixedLengthArray;
-verifyFiniteFloat;
-
 class AnnotationMetadata {
   coordinateSpace: CoordinateSpace;
   parameters: AnnotationSourceParameters;
-  size: Float64Array; // TEMP probably
+  size: Float64Array;
   constructor(public url: string, datastack: string, table: string, tableMetadata: TableMetadata, public lowerBounds: Float64Array, public upperBounds: Float64Array) {
     const {voxel_resolution_x, voxel_resolution_y, voxel_resolution_z} = tableMetadata;
     const baseCoordinateSpace = coordinateSpaceFromJson({
@@ -38,11 +33,6 @@ class AnnotationMetadata {
       size[i] = upperBounds[i] - lowerBounds[i];
     }
     this.size = size;
-    // const upperBounds: Float64Array = new Float64Array(rank);
-    // for (let i = 0; i < rank; i++) {
-    //   upperBounds[i] = lowerBounds[i] + size[i];
-    // }
-    // this.upperBounds = upperBounds;
     this.coordinateSpace = makeCoordinateSpace({
       rank,
       names: baseCoordinateSpace.names,

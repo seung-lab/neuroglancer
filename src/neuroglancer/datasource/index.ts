@@ -118,7 +118,7 @@ export enum LocalDataSource {
 export interface DataSubsource {
   volume?: MultiscaleVolumeChunkSource;
   mesh?: MeshSource|MultiscaleMeshSource|SkeletonSource;
-  annotation?: AnnotationSource|MultiscaleAnnotationSource;
+  annotation?: MultiscaleAnnotationSource;
   staticAnnotations?: AnnotationSource;
   local?: LocalDataSource;
   singleMesh?: SingleMeshSource;

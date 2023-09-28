@@ -224,13 +224,11 @@ export class AnnotationLayerView extends Tab {
       refCounted.registerDisposer(state.displayState.relationshipStates.changed.add(this.forceUpdateView));
       newAttachedAnnotationStates.set(
           state, {refCounted, annotations: [], idToIndex: new Map(), listOffset: 0});
-      
       if (source instanceof MultiscaleAnnotationSource) {
         refCounted.registerDisposer(source.chunkManager.chunkQueueManager.visibleChunksChanged.add(() => {
           this.forceUpdateView();
         }));
       }
-
       refCounted.registerDisposer(source)
     }
     this.attachedAnnotationStates = newAttachedAnnotationStates;
@@ -352,7 +350,6 @@ export class AnnotationLayerView extends Tab {
     this.virtualList.element.addEventListener('mouseleave', () => {
       this.displayState.hoverState.value = undefined;
     });
-
     const changeSelectedIndex = (offset: number) => {
       const selectedIndex = this.getSelectedAnnotationIndex();
       if (selectedIndex === undefined) return;
@@ -363,19 +360,16 @@ export class AnnotationLayerView extends Tab {
         this.moveToAnnotation(annotation, state);
       }
     };
-
     this.virtualList.element.addEventListener('action:select-previous-annotation', event => {
       event.stopPropagation();
       event.preventDefault();
       changeSelectedIndex(-1);
     });
-
     this.virtualList.element.addEventListener('action:select-next-annotation', event => {
       event.stopPropagation();
       event.preventDefault();
       changeSelectedIndex(1);
     });
-
     const bindings = getDefaultAnnotationListBindings();
     this.registerDisposer(new MouseEventBinder(this.virtualList.element, bindings));
     this.registerDisposer(new KeyboardEventBinder(this.virtualList.element, bindings));
@@ -597,6 +591,7 @@ export class AnnotationLayerView extends Tab {
     const oldLength = this.virtualListSource.length;
     this.updateListLength();
     // TODO, what problems does this change cause?
+    // this prevents the scroll list position from resetting when updateView is run
     const insertCount = Math.max(0, listElements.length - oldLength);
     const deleteCount = Math.max(0, oldLength - listElements.length);
     const retainCount = Math.min(listElements.length, oldLength);

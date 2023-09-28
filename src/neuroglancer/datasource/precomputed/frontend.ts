@@ -604,7 +604,7 @@ async function getSkeletonsDataSource(
   };
 }
 
-export function parseKeyAndShardingSpec(url: string, obj: any) {
+function parseKeyAndShardingSpec(url: string, obj: any) {
   verifyObject(obj);
   return {
     url: resolvePath(url, verifyObjectProperty(obj, 'key', verifyString)),
@@ -981,7 +981,6 @@ export class PrecomputedDataSource extends DataSourceProvider {
         });
   }
   completeUrl(options: CompleteUrlOptions) {
-    console.log('precomputed completeUrl');
     return completeHttpPath(
         options.credentialsManager, options.providerUrl, options.cancellationToken);
   }
