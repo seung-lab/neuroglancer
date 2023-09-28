@@ -446,7 +446,6 @@ export class MultiscaleAnnotationSource extends SharedObject implements
     const annotations: Annotation[] = [];
     const {segmentFilteredSources, spatiallyIndexedSources, rank, properties, relationships} = this;
     const {relationshipStates} = state.displayState;
-
     let hasVisibleSegments = false;
     for (let i = 0; i < relationships.length; i++) {
       const relationship = relationships[i];
@@ -478,8 +477,6 @@ export class MultiscaleAnnotationSource extends SharedObject implements
         }
       }
     }
-
-    console.log("list length", annotations.length);
     return annotations;
   }
 

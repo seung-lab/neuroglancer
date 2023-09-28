@@ -231,14 +231,11 @@ export abstract class AnnotationRenderHelper extends AnnotationRenderHelperBase 
         this.hashColorShaderManager.defineShader(builder);
         for (let i = 0, numProperties = properties.length; i < numProperties; ++i) {
           const property = properties[i];
-
           const enumLabels = (property as AnnotationNumericPropertySpec).enumLabels || [];
           const enumValues = (property as AnnotationNumericPropertySpec).enumValues || [];
-
           for (let i = 0; i < enumLabels.length && i < enumValues.length; i++) {
             builder.addVertexCode(`#define prop_${property.identifier}_${enumLabels[i]} uint(${enumValues[i]})\n`);
           }
-
           const functionName = `prop_${property.identifier}`;
           if (!controlsReferencedProperties.includes(property.identifier) &&
               !processedCode.match(new RegExp(`\\b${functionName}\\b`))) {
@@ -246,7 +243,6 @@ export abstract class AnnotationRenderHelper extends AnnotationRenderHelperBase 
           }
           referencedProperties.push(i);
         }
-        // here
         this.defineProperties(builder, referencedProperties);
         builder.addUniform('highp vec3', 'uColor');
         builder.addUniform('highp uint', 'uSelectedIndex');

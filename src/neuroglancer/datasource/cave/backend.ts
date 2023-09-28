@@ -1,18 +1,16 @@
-import {AnnotationGeometryChunk, AnnotationGeometryChunkSourceBackend, AnnotationGeometryData, AnnotationMetadataChunk, AnnotationSource} from "neuroglancer/annotation/backend";
-import {AnnotationSubsetGeometryChunk} from "neuroglancer/annotation/backend";
-import {WithParameters} from "neuroglancer/chunk_manager/backend";
-import {WithSharedCredentialsProviderCounterpart} from "neuroglancer/credentials_provider/shared_counterpart";
-import {CancellationToken} from "neuroglancer/util/cancellation";
-import {responseJson} from "neuroglancer/util/http_request";
-import {SpecialProtocolCredentials, SpecialProtocolCredentialsProvider} from "neuroglancer/util/special_protocol_request";
-import {registerSharedObject} from "neuroglancer/worker_rpc";
-import {AnnotationSourceParameters, AnnotationSpatialIndexSourceParameters, API_STRING} from "./base";
+import {AnnotationGeometryChunk, AnnotationGeometryChunkSourceBackend, AnnotationGeometryData, AnnotationMetadataChunk, AnnotationSource} from 'neuroglancer/annotation/backend';
+import {AnnotationSubsetGeometryChunk} from 'neuroglancer/annotation/backend';
+import {WithParameters} from 'neuroglancer/chunk_manager/backend';
+import {WithSharedCredentialsProviderCounterpart} from 'neuroglancer/credentials_provider/shared_counterpart';
+import {CancellationToken} from 'neuroglancer/util/cancellation';
+import {responseJson} from 'neuroglancer/util/http_request';
+import {SpecialProtocolCredentials, SpecialProtocolCredentialsProvider} from 'neuroglancer/util/special_protocol_request';
+import {registerSharedObject} from 'neuroglancer/worker_rpc';
+import {AnnotationSourceParameters, AnnotationSpatialIndexSourceParameters, API_STRING} from 'neuroglancer/datasource/cave/base';
 import {cancellableFetchSpecialOk} from 'neuroglancer/util/special_protocol_request';
 import {vec3} from 'neuroglancer/util/geom';
-import {AnnotationBase, AnnotationNumericPropertySpec, AnnotationSerializer, AnnotationType, Line, Point, makeAnnotationPropertySerializers} from "neuroglancer/annotation";
-import {tableFromIPC} from "apache-arrow";
-
-
+import {AnnotationBase, AnnotationNumericPropertySpec, AnnotationSerializer, AnnotationType, Line, Point, makeAnnotationPropertySerializers} from 'neuroglancer/annotation';
+import {tableFromIPC} from 'apache-arrow';
 
 function parseCaveAnnototations(annotationsJson: any[], parameters: AnnotationSourceParameters) {  
   const seenEnums = new Map<String, Set<String>>();
@@ -117,7 +115,6 @@ export class CaveAnnotationSourceBackend extends (WithParameters(WithSharedCrede
   async downloadSegmentFilteredGeometry(
       chunk: AnnotationSubsetGeometryChunk, relationshipIndex: number,
       cancellationToken: CancellationToken) {
-    console.log('cave downloadSegmentFilteredGeometry');
     const {credentialsProvider, parameters} = this;
     const {timestamp, table, relationships, rank, properties} = parameters;
     const payload = `{
@@ -144,7 +141,6 @@ export class CaveAnnotationSourceBackend extends (WithParameters(WithSharedCrede
 
   async downloadMetadata(chunk: AnnotationMetadataChunk, cancellationToken: CancellationToken) {
     cancellationToken;
-    console.log('cave downloadMetadata');
     if (!chunk.key) return;
 
     const {credentialsProvider, parameters} = this;

@@ -1,17 +1,7 @@
-import { AnnotationPropertySpec, AnnotationType } from "src/neuroglancer/annotation";
-// import { ShardingParameters } from "../precomputed/base";
+import {AnnotationPropertySpec} from "neuroglancer/annotation";
 
 export const API_STRING_V2 = 'api/v2';
 export const API_STRING = 'api/v3';
-
-
-// export class AnnotationSpatialIndexSourceParameters {
-//   url: string;
-//   // sharding: ShardingParameters|undefined;
-//   static RPC_ID = 'cave/AnnotationSpatialIndexSource';
-// }
-
-AnnotationType; // TODO
 
 export class AnnotationSourceParameters {
   url: string;
@@ -21,8 +11,6 @@ export class AnnotationSourceParameters {
   rank: number;
   relationships: string[];
   properties: AnnotationPropertySpec[];
-  // byId: {url: string; sharding: ShardingParameters | undefined;};
-  // type: AnnotationType;
   static RPC_ID = 'cave/AnnotationSource';
 }
 
