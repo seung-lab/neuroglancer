@@ -84,19 +84,17 @@
 .graphene-find-path-status-annotations {
   display: grid;
   margin: 0 10px;
-  grid-template-columns: min-content min-content;
-  column-gap: 10px;
-  white-space: nowrap;
+  grid-template-columns: min-content;
 }
 
-.graphene-find-path-status-annotations:nth-child(2n-1) {
+/* .graphene-find-path-status-annotations:nth-child(2n-1) {
   text-align: right;
 }
 
 .graphene-find-path-status-annotations .neuroglancer-annotation-position > .neuroglancer-annotation-coordinate:nth-child(2) {
   margin-left: 10px;
   margin-right: 10px;
-}
+} */
 
 .graphene-find-path-status > label {
   display: flex;
