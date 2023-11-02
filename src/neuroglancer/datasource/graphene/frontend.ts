@@ -2270,7 +2270,7 @@ class FindPathTool extends LayerTool<SegmentationUserLayer> {
     body.appendChild(label);
 
     const annotationElements = document.createElement('div');
-    annotationElements.classList.add('graphene-find-path-status-annotations')
+    annotationElements.classList.add('graphene-find-path-status-annotations');
     body.appendChild(annotationElements);
 
     const bindings = getDefaultAnnotationListBindings();
@@ -2287,7 +2287,7 @@ class FindPathTool extends LayerTool<SegmentationUserLayer> {
       const endpointAnnotations = endpoints.map(x => x.value?.annotationReference?.value)
         .filter(x => x) as Annotation[];
       for (const annotation of endpointAnnotations) {
-        const [element, elementColumnWidths] = makeAnnotationListElement(this.layer, annotation, findPathAnnotationState, template, globalDimensionIndices, localDimensionIndices, false);
+        const [element, elementColumnWidths] = makeAnnotationListElement(this.layer, annotation, findPathAnnotationState, template, globalDimensionIndices, localDimensionIndices);
         for (const [column, width] of elementColumnWidths.entries()) {
           maxColumnWidths[column] = width;
         }

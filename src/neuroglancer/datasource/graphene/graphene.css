@@ -10,10 +10,10 @@
   color: #4444ff;
 }
 
-.graphene-multicut-status {
+/* .graphene-multicut-status {
   display: flex;
   flex-direction: row;
-}
+} */
 
 .graphene-multicut-status > .activeGroupIndicator {
   padding: 2px;
@@ -45,7 +45,7 @@
   gap: 10px;
 }
 
-.graphene-merge-segments-status {
+.graphene-merge-segments-status, .graphene-multicut-status, .graphene-find-path-status{
   display: flex;
   gap: 10px;
 }
@@ -82,19 +82,9 @@
 }
 
 .graphene-find-path-status-annotations {
-  display: grid;
-  margin: 0 10px;
-  grid-template-columns: min-content;
+  display: flex;
+  gap: 10px;
 }
-
-/* .graphene-find-path-status-annotations:nth-child(2n-1) {
-  text-align: right;
-}
-
-.graphene-find-path-status-annotations .neuroglancer-annotation-position > .neuroglancer-annotation-coordinate:nth-child(2) {
-  margin-left: 10px;
-  margin-right: 10px;
-} */
 
 .graphene-find-path-status > label {
   display: flex;
