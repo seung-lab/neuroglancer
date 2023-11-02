@@ -18,7 +18,7 @@ import './graphene.css';
 
 import {AnnotationDisplayState, AnnotationLayerState} from 'neuroglancer/annotation/annotation_layer_state';
 import {LayerChunkProgressInfo} from 'neuroglancer/chunk_manager/base';
-import {AnnotationReference, AnnotationSource, AnnotationType, Line, LocalAnnotationSource, makeDataBoundsBoundingBoxAnnotationSet, Point} from 'neuroglancer/annotation';
+import {Annotation, AnnotationReference, AnnotationSource, AnnotationType, Line, LocalAnnotationSource, makeDataBoundsBoundingBoxAnnotationSet, Point} from 'neuroglancer/annotation';
 import {ChunkManager, WithParameters} from 'neuroglancer/chunk_manager/frontend';
 import {makeIdentityTransform} from 'neuroglancer/coordinate_transform';
 import {CredentialsManager} from 'neuroglancer/credentials_provider';
@@ -43,7 +43,7 @@ import {SliceViewPanelRenderLayer, SliceViewRenderLayer} from 'neuroglancer/slic
 import {StatusMessage} from 'neuroglancer/status';
 import {TrackableBoolean, TrackableBooleanCheckbox} from 'neuroglancer/trackable_boolean';
 import {makeCachedLazyDerivedWatchableValue, NestedStateManager, registerNested, TrackableValue, WatchableSet, WatchableValue, WatchableValueInterface} from 'neuroglancer/trackable_value';
-import {AnnotationLayerView, MergedAnnotationStates, PlaceLineTool, makeAnnotationListElementTest} from 'neuroglancer/ui/annotations';
+import {AnnotationLayerView, MergedAnnotationStates, PlaceLineTool, makeAnnotationListElement} from 'neuroglancer/ui/annotations';
 import {LayerTool, makeToolActivationStatusMessageWithHeader, makeToolButton, registerLegacyTool, registerTool, ToolActivation} from 'neuroglancer/ui/tool';
 import {Uint64Set} from 'neuroglancer/uint64_set';
 import {packColor} from 'neuroglancer/util/color';
@@ -61,8 +61,10 @@ import {Uint64} from 'neuroglancer/util/uint64';
 import {makeDeleteButton} from 'neuroglancer/widget/delete_button';
 import {DependentViewContext} from 'neuroglancer/widget/dependent_view_widget';
 import {makeIcon} from 'neuroglancer/widget/icon';
-import {MultiscaleAnnotationSource} from 'src/neuroglancer/annotation/frontend_source';
-import {removeChildren} from 'src/neuroglancer/util/dom';
+import {MultiscaleAnnotationSource} from 'neuroglancer/annotation/frontend_source';
+import {removeChildren} from 'neuroglancer/util/dom';
+import {getDefaultAnnotationListBindings} from 'neuroglancer/ui/default_input_event_bindings';
+import {MouseEventBinder} from 'neuroglancer/util/mouse_bindings';
 
 function vec4FromVec3(vec: vec3, alpha = 0) {
   const res = vec4.clone([...vec]);
@@ -355,7 +357,7 @@ async function getVolumeDataSource(
   const info = parseGrapheneMultiscaleVolumeInfo(metadata, url, options.credentialsManager);
   const volume =
       new GrapheneMultiscaleVolumeChunkSource(options.chunkManager, credentialsProvider, info);
-  const state = new GrapheneState()
+  const state = new GrapheneState();
   if (options.state) {
     state.restoreState(options.state)
   }
@@ -548,7 +550,7 @@ const PRECISION_MODE_JSON_KEY = "precision";
 
 
 
-class GrapheneState implements Trackable {
+class GrapheneState extends RefCounted implements Trackable {
   changed = new NullarySignal();
 
   public multicutState = new MulticutState();
@@ -556,15 +558,23 @@ class GrapheneState implements Trackable {
   public findPathState = new FindPathState();
 
   constructor() {
-    this.multicutState.changed.add(() => {
+    super();
+    this.registerDisposer(this.multicutState.changed.add(() => {
       this.changed.dispatch();
-    });
-    this.mergeState.changed.add(() => {
+    }));
+    this.registerDisposer(this.mergeState.changed.add(() => {
       this.changed.dispatch();
-    });
-    this.findPathState.changed.add(() => {
+    }));
+    this.registerDisposer(this.findPathState.changed.add(() => {
       this.changed.dispatch()
-    });
+    }));
+  }
+
+  replaceSegments(oldValues: Uint64Set, newValues: Uint64Set) {
+    console.log('replaceSegments', [...oldValues].map(x => x.toJSON()), [...newValues].map(x => x.toJSON()));
+    this.multicutState.replaceSegments(oldValues, newValues);
+    this.mergeState.replaceSegments(oldValues, newValues);
+    this.findPathState.replaceSegments(oldValues, newValues);
   }
 
   reset() {
@@ -610,6 +620,29 @@ class MergeState extends RefCounted implements Trackable {
   constructor() {
     super();
     this.registerDisposer(this.merges.changed.add(this.changed.dispatch));
+  }
+
+  replaceSegments(oldValues: Uint64Set, newValues: Uint64Set) {
+    const {merges: {value: merges}} = this;
+    const newValue = newValues.size === 1 ? [...newValues][0] : undefined;
+    for (const merge of merges) {
+      if (merge.source && oldValues.has(merge.source.rootId)) {
+        if (newValue) {
+          merge.source.rootId = newValue;
+        } else {
+          this.reset();
+          return;
+        }
+      }
+      if (merge.sink && oldValues.has(merge.sink.rootId)) {
+        if (newValue) {
+          merge.sink.rootId = newValue;
+        } else {
+          this.reset();
+          return;
+        }
+      }
+    }
   }
 
   reset() {
@@ -676,6 +709,7 @@ class MergeState extends RefCounted implements Trackable {
 
 class FindPathState extends RefCounted implements Trackable {
   changed = new NullarySignal();
+  triggerPathUpdate = new NullarySignal();
 
   source = new TrackableValue<SegmentSelection|undefined>(undefined, x => x);
   target = new TrackableValue<SegmentSelection|undefined>(undefined, x => x);
@@ -724,9 +758,43 @@ class FindPathState extends RefCounted implements Trackable {
 
   constructor() {
     super();
-    this.registerDisposer(this.source.changed.add(this.changed.dispatch));
-    this.registerDisposer(this.target.changed.add(this.changed.dispatch));
+    this.registerDisposer(this.source.changed.add(() => {
+      this.centroids.reset();
+      this.changed.dispatch();
+    }));
+    this.registerDisposer(this.target.changed.add(() => {
+      this.centroids.reset();
+      this.changed.dispatch();
+    }));
     this.registerDisposer(this.centroids.changed.add(this.changed.dispatch));
+  }
+
+  replaceSegments(oldValues: Uint64Set, newValues: Uint64Set) {
+    const {source: {value: source}, target: {value: target}} = this;
+    const newValue = newValues.size === 1 ? [...newValues][0] : undefined;
+    const sourceChanged = !!source && oldValues.has(source.rootId);
+    const targetChanged = !!target && oldValues.has(target.rootId);
+    if (newValue) {
+      if (sourceChanged) {
+        source.rootId = newValue;
+      }
+      if (targetChanged) {
+        target.rootId = newValue;
+      }
+      // don't want to fire off multiple changed
+      if (sourceChanged || targetChanged) {
+        if (this.centroids.value.length) {
+          this.centroids.reset();
+          this.triggerPathUpdate.dispatch();
+        } else {
+          this.changed.dispatch();
+        }
+      }
+    } else {
+      if (sourceChanged || targetChanged) {
+        this.reset();
+      }
+    }
   }
 
   reset() {
@@ -797,6 +865,26 @@ class MulticutState extends RefCounted implements Trackable {
     this.registerDisposer(this.sources.changed.add(this.changed.dispatch));
   }
 
+  replaceSegments(oldValues: Uint64Set, newValues: Uint64Set) {
+    const newValue = newValues.size === 1 ? [...newValues][0] : undefined;
+    const {focusSegment: {value: focusSegment}} = this;
+    
+    if (focusSegment && oldValues.has(focusSegment)) {
+      if (newValue) {
+        this.focusSegment.value = newValue;
+        for (const sink of this.sinks) {
+          sink.rootId = newValue;
+        }
+        for (const source of this.sources) {
+          source.rootId = newValue;
+        }
+        this.changed.dispatch();
+      } else {
+        this.reset();
+      }
+    }
+  }
+
   reset() {
     this.focusSegment.reset();
     this.blueGroup.value = false;
@@ -862,7 +950,6 @@ class MulticutState extends RefCounted implements Trackable {
 class GraphConnection extends SegmentationGraphSourceConnection {
   public annotationLayerStates: AnnotationLayerState[] = [];
   public mergeAnnotationState: AnnotationLayerState;
-
   public findPathAnnotationState: AnnotationLayerState;
 
   constructor(
@@ -870,19 +957,19 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       private chunkSource: GrapheneMultiscaleVolumeChunkSource, public state: GrapheneState) {
     super(graph, layer.displayState.segmentationGroupState.value);
     const segmentsState = layer.displayState.segmentationGroupState.value;
-    segmentsState.selectedSegments.changed.add((segmentIds: Uint64[]|Uint64|null, add: boolean) => {
+    this.registerDisposer(segmentsState.selectedSegments.changed.add((segmentIds: Uint64[]|Uint64|null, add: boolean) => {
       if (segmentIds !== null) {
         segmentIds = Array<Uint64>().concat(segmentIds);
       }
       this.selectedSegmentsChanged(segmentIds, add);
-    });
+    }));
 
-    segmentsState.visibleSegments.changed.add((segmentIds: Uint64[]|Uint64|null, add: boolean) => {
+    this.registerDisposer(segmentsState.visibleSegments.changed.add((segmentIds: Uint64[]|Uint64|null, add: boolean) => {
       if (segmentIds !== null) {
         segmentIds = Array<Uint64>().concat(segmentIds);
       }
       this.visibleSegmentsChanged(segmentIds, add);
-    });
+    }));
 
     const {annotationLayerStates, state: {multicutState, findPathState}} = this;
     const loadedSubsource = getGraphLoadedSubsource(layer)!;
@@ -911,7 +998,7 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       }
 
       // initialize source changes
-      mergeAnnotationState.source.childAdded.add((x) => {
+      this.registerDisposer(mergeAnnotationState.source.childAdded.add((x) => {
         const annotation = x as Line;
         const relatedSegments = annotation.relatedSegments![0];
         const visibles = relatedSegments.map(x => visibleSegments.has(x));
@@ -934,9 +1021,9 @@ class GraphConnection extends SegmentationGraphSourceConnection {
           }, 0);
           StatusMessage.showTemporaryMessage(`Maximum of ${MAX_MERGE_COUNT} simultanous merges allowed.`);
         }
-      });
+      }));
 
-      mergeAnnotationState.source.childCommitted.add((x) => {
+      this.registerDisposer(mergeAnnotationState.source.childCommitted.add((x) => {
         const ref = mergeAnnotationState.source.getReference(x);
         const annotation = ref.value as Line|undefined;
         if (annotation) {
@@ -962,9 +1049,9 @@ class GraphConnection extends SegmentationGraphSourceConnection {
           }
         }
         ref.dispose();
-      });
+      }));
 
-      mergeAnnotationState.source.childDeleted.add((id) => {
+      this.registerDisposer(mergeAnnotationState.source.childDeleted.add((id) => {
         let changed = false;
         const filtered = merges.value.filter(x => {
           const keep = x.id !== id || x.locked;
@@ -976,39 +1063,47 @@ class GraphConnection extends SegmentationGraphSourceConnection {
         if (changed) {
           merges.value = filtered;
         }
-      });
+      }));
     }
 
-    // const findPathPointsGroup = makeColoredAnnotationState(layer, loadedSubsource, "findpath", WHITE_COLOR);
-    // synchronizeAnnotationSource(findPathState.points, findPathPointsGroup);
-    
-    const clearAnnotations = (source: AnnotationSource|MultiscaleAnnotationSource) => {
-      for (const annotation of source) {
-        source.delete(source.getReference(annotation.id));
-      }
-    };
-
     const findPathGroup = makeColoredAnnotationState(layer, loadedSubsource, "findpath", WHITE_COLOR, false);
-
     this.findPathAnnotationState = findPathGroup;
-
+    findPathGroup.source.childDeleted.add(annotationId => {
+      if (findPathState.source.value?.annotationReference?.id === annotationId) {
+        findPathState.source.value = undefined;
+      }
+      if (findPathState.target.value?.annotationReference?.id === annotationId) {
+        findPathState.target.value = undefined;
+      }
+    });
     const findPathChanged = () => {
       const {path, source, target} = findPathState;
       const annotationSource = findPathGroup.source;
-      clearAnnotations(annotationSource);
-      if (source.value) {
+      if (source.value && !source.value.annotationReference) {
         addSelection(annotationSource, source.value, "find path source");
       }
-      if (target.value) {
+      if (target.value && !target.value.annotationReference) {
         addSelection(annotationSource, target.value, "find path target");
       }
-
+      for (const annotation of annotationSource) {
+        if (annotation.id !== source.value?.annotationReference?.id &&
+            annotation.id !== target.value?.annotationReference?.id) {
+          annotationSource.delete(annotationSource.getReference(annotation.id));
+        }
+      }
       for (const line of path) {
-        line.id = ''; // TODO, is it a bug that this is necessary? annotationMap is empty if I step through it but logging shows it isn't empty
+        // line.id = ''; // TODO, is it a bug that this is necessary? annotationMap is empty if I step through it but logging shows it isn't empty
         annotationSource.add(line);
       }
     };
-    findPathState.changed.add(findPathChanged);
+    this.registerDisposer(findPathState.changed.add(findPathChanged));
+    this.registerDisposer(findPathState.triggerPathUpdate.add(() => {
+      const loadedSubsource = getGraphLoadedSubsource(this.layer)!;
+      const annotationToNanometers = loadedSubsource.loadedDataSource.transform.inputSpace.value.scales.map(x => x / 1e-9);
+      this.submitFindPath(findPathState.precisionMode.value, annotationToNanometers).then(success => {
+        success;
+      });
+    }));
     findPathChanged(); // initial state
   }
 
@@ -1128,29 +1223,6 @@ class GraphConnection extends SegmentationGraphSourceConnection {
     return true;
   }
 
-  /*
-  setPath(path: Line[]) {
-    if (this.ready()) {
-      this.annotationSource.clear();
-      const firstLine: Line =
-          {pointA: this.source!.point, pointB: path[0].pointA, id: '', type: AnnotationType.LINE};
-      this.annotationSource.add(firstLine);
-      for (const line of path) {
-        this.annotationSource.add(line);
-      }
-      const lastLine: Line = {
-        pointA: path[path.length - 1].pointB,
-        pointB: this.target!.point,
-        id: '',
-        type: AnnotationType.LINE
-      };
-      this.annotationSource.add(lastLine);
-      this._hasPath = true;
-      this.changed.dispatch();
-    }
-  }
-  */
-
   async submitMulticut(annotationToNanometers: Float64Array): Promise<boolean> {
     const {state: {multicutState}} = this;
     const {sinks, sources} = multicutState;
@@ -1176,6 +1248,11 @@ class GraphConnection extends SegmentationGraphSourceConnection {
         this.meshAddNewSegments(splitRoots);
         segmentsState.selectedSegments.add(splitRoots);
         segmentsState.visibleSegments.add(splitRoots);
+        const oldValues = new Uint64Set();
+        oldValues.add(focusSegment);
+        const newValues = new Uint64Set();
+        newValues.add(splitRoots);
+        this.state.replaceSegments(oldValues, newValues);
         return true;
       }
     }
@@ -1188,13 +1265,19 @@ class GraphConnection extends SegmentationGraphSourceConnection {
   }
 
   private submitMerge = async (submission: MergeSubmission, attempts=1): Promise<Uint64> => {
-    this.graph
     const loadedSubsource = getGraphLoadedSubsource(this.layer)!;
     const annotationToNanometers = loadedSubsource.loadedDataSource.transform.inputSpace.value.scales.map(x => x / 1e-9);
     submission.error = undefined;
     for (let i = 1; i <= attempts; i++) {
       try {
-        return await this.graph.graphServer.mergeSegments(submission.sink, submission.source!, annotationToNanometers);
+        const newRoot = await this.graph.graphServer.mergeSegments(submission.sink, submission.source!, annotationToNanometers);
+        const oldValues = new Uint64Set();
+        oldValues.add(submission.sink.rootId);
+        oldValues.add(submission.source!.rootId);
+        const newValues = new Uint64Set();
+        newValues.add(newRoot);
+        this.state.replaceSegments(oldValues, newValues);
+        return newRoot;
       } catch (err) {
         if (i === attempts) {
           submission.error = err.message || "unknown";
@@ -1215,17 +1298,6 @@ class GraphConnection extends SegmentationGraphSourceConnection {
             return;
           }
           const segmentsToRemove: Uint64[] = [];
-          const replaceSegment = (a: Uint64, b: Uint64) => {
-            segmentsToRemove.push(a);
-            for (const submission of submissions) {
-              if (submission.source && Uint64.equal(submission.source.rootId, a)) {
-                submission.source.rootId = b;
-              }
-              if (Uint64.equal(submission.sink.rootId, a)) {
-                submission.sink.rootId = b;
-              }
-            }
-          };
           let completed = 0;
           let activeLoops = 0;
           const loop = (completedAt: number, pending: MergeSubmission[]) => {
@@ -1246,9 +1318,9 @@ class GraphConnection extends SegmentationGraphSourceConnection {
               submission.locked = true;
               submission.status = 'trying...';
               merges.changed.dispatch();
+              const segments = [submission.source!.rootId, submission.sink.rootId];
               this.submitMerge(submission, 3).then(mergedRoot => {
-                replaceSegment(submission.source!.rootId, mergedRoot);
-                replaceSegment(submission.sink.rootId, mergedRoot);
+                segmentsToRemove.push(...segments);
                 submission.status = 'done';
                 submission.mergedRoot = mergedRoot;
                 merges.changed.dispatch();
@@ -1800,7 +1872,7 @@ class MulticutSegmentsTool extends LayerTool<SegmentationUserLayer> {
 
     const {body, header} = makeToolActivationStatusMessageWithHeader(activation);
     header.textContent = 'Multicut segments';
-    body.classList.add('graphene-multicut-status');
+    body.classList.add('graphene-tool-status', 'graphene-multicut');
     body.appendChild(makeIcon({
       text: 'Swap',
       title: 'Swap group',
@@ -2071,7 +2143,7 @@ class MergeSegmentsTool extends LayerTool<SegmentationUserLayer> {
     });
     const {body, header} = makeToolActivationStatusMessageWithHeader(activation);
     header.textContent = 'Merge segments';
-    body.classList.add('graphene-merge-segments-status');
+    body.classList.add('graphene-tool-status', 'graphene-merge-segments');
     activation.bindInputEventMap(MERGE_SEGMENTS_INPUT_EVENT_MAP);
     const submitAction = async () => {
       if (merges.value.filter(x => x.locked).length) return;
@@ -2193,8 +2265,19 @@ class FindPathTool extends LayerTool<SegmentationUserLayer> {
 
     const {body, header} = makeToolActivationStatusMessageWithHeader(activation);
     header.textContent = 'Find Path';
-    body.classList.add('graphene-find-path-status');
+    body.classList.add('graphene-tool-status', 'graphene-find-path');
 
+    const submitAction = () => {
+      findPathState.triggerPathUpdate.dispatch();
+    }
+
+    body.appendChild(makeIcon({
+      text: 'Submit',
+      title: 'Submit Find Path',
+      onClick: () => {
+        submitAction();
+      }}));
+    
     body.appendChild(makeIcon({
       text: 'Clear',
       title: 'Clear Find Path',
@@ -2204,62 +2287,46 @@ class FindPathTool extends LayerTool<SegmentationUserLayer> {
         findPathState.centroids.reset();
       }}));
 
-    const submitAction = () => {
-      const loadedSubsource = getGraphLoadedSubsource(this.layer)!;
-      const annotationToNanometers = loadedSubsource.loadedDataSource.transform.inputSpace.value.scales.map(x => x / 1e-9);
-      graphConnection.submitFindPath(precisionMode.value, annotationToNanometers).then(success => {
-        success;
-      });
-    }
-
-    body.appendChild(makeIcon({
-      text: 'Submit',
-      title: 'Submit Find Path',
-      onClick: () => {
-        submitAction();
-      }}));
-
     const checkbox = activation.registerDisposer(new TrackableBooleanCheckbox(precisionMode));
 
     const label = document.createElement('label');
     const labelText = document.createElement('span');
     labelText.textContent = "Precision mode: ";
     label.appendChild(labelText);
-    label.title = 'todo';
+    label.title = 'Precision mode returns a more accurate path, but takes longer.';
     label.appendChild(checkbox.element);
     body.appendChild(label);
-  
-    const points = document.createElement('div');
-    points.style.display = 'contents';
-    body.appendChild(points);
-
-    const cancelBtn = makeIcon({
-      text: 'Clear',
-      title: 'Clear selection',
-      onClick: () => {
-        while (points.firstChild) {
-          points.removeChild(points.firstChild);
-        }
-        body.removeChild(cancelBtn);
-      }});
 
     const annotationElements = document.createElement('div');
-    annotationElements.classList.add('graphene-find-path-status-annotations')
+    annotationElements.classList.add('find-path-annotations');
     body.appendChild(annotationElements);
+
+    const bindings = getDefaultAnnotationListBindings();
+    this.registerDisposer(new MouseEventBinder(annotationElements, bindings));
 
     const updateAnnotationElements = () => {
       removeChildren(annotationElements);
-      for (const annotation of findPathAnnotationState.source) {
-        if (['find path source', 'find path target'].includes(annotation.description || '')) {
-          const annotationLabel = document.createElement('div');
-          annotationLabel.innerHTML = annotation.description!;
-          annotationElements.appendChild(annotationLabel);
-          annotationElements.appendChild(makeAnnotationListElementTest(this.layer, annotation, findPathAnnotationState));
+      const maxColumnWidths = [0, 0, 0];
+      const globalDimensionIndices = [0, 1, 2];
+      const localDimensionIndices: number[] = [];
+      const template = '[symbol] 2ch [dim] var(--neuroglancer-column-0-width) [dim] var(--neuroglancer-column-1-width) [dim] var(--neuroglancer-column-2-width) [delete] min-content';
+      
+      const endpoints = [source, target];
+      const endpointAnnotations = endpoints.map(x => x.value?.annotationReference?.value)
+        .filter(x => x) as Annotation[];
+      for (const annotation of endpointAnnotations) {
+        const [element, elementColumnWidths] = makeAnnotationListElement(this.layer, annotation, findPathAnnotationState, template, globalDimensionIndices, localDimensionIndices);
+        for (const [column, width] of elementColumnWidths.entries()) {
+          maxColumnWidths[column] = width;
         }
+        annotationElements.appendChild(element);
+      }
+      for (const [column, width] of maxColumnWidths.entries()) {
+        annotationElements.style.setProperty(`--neuroglancer-column-${column}-width`, `${width+2}ch`);
       }
     };
 
-    findPathAnnotationState.source.changed.add(updateAnnotationElements);
+    findPathState.changed.add(updateAnnotationElements);
     updateAnnotationElements();
 
     activation.bindInputEventMap(FIND_PATH_INPUT_EVENT_MAP);
@@ -2270,6 +2337,7 @@ class FindPathTool extends LayerTool<SegmentationUserLayer> {
     });
 
     activation.bindAction('add-point', event => {
+      console.log('add-point');
       event.stopPropagation();
       (async () => {
         if (!source.value) { // first selection
