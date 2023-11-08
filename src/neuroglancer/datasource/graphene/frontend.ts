@@ -61,10 +61,10 @@ import {Uint64} from 'neuroglancer/util/uint64';
 import {makeDeleteButton} from 'neuroglancer/widget/delete_button';
 import {DependentViewContext} from 'neuroglancer/widget/dependent_view_widget';
 import {makeIcon} from 'neuroglancer/widget/icon';
-import {MultiscaleAnnotationSource} from 'src/neuroglancer/annotation/frontend_source';
-import {removeChildren} from 'src/neuroglancer/util/dom';
-import {getDefaultAnnotationListBindings} from 'src/neuroglancer/ui/default_input_event_bindings';
-import {MouseEventBinder} from 'src/neuroglancer/util/mouse_bindings';
+import {MultiscaleAnnotationSource} from 'neuroglancer/annotation/frontend_source';
+import {removeChildren} from 'neuroglancer/util/dom';
+import {getDefaultAnnotationListBindings} from 'neuroglancer/ui/default_input_event_bindings';
+import {MouseEventBinder} from 'neuroglancer/util/mouse_bindings';
 
 function vec4FromVec3(vec: vec3, alpha = 0) {
   const res = vec4.clone([...vec]);
@@ -1849,7 +1849,7 @@ class MulticutSegmentsTool extends LayerTool<SegmentationUserLayer> {
 
     const {body, header} = makeToolActivationStatusMessageWithHeader(activation);
     header.textContent = 'Multicut segments';
-    body.classList.add('graphene-multicut-status');
+    body.classList.add('graphene-tool-status', 'graphene-multicut');
     body.appendChild(makeIcon({
       text: 'Swap',
       title: 'Swap group',
@@ -2120,7 +2120,7 @@ class MergeSegmentsTool extends LayerTool<SegmentationUserLayer> {
     });
     const {body, header} = makeToolActivationStatusMessageWithHeader(activation);
     header.textContent = 'Merge segments';
-    body.classList.add('graphene-merge-segments-status');
+    body.classList.add('graphene-tool-status', 'graphene-merge-segments');
     activation.bindInputEventMap(MERGE_SEGMENTS_INPUT_EVENT_MAP);
     const submitAction = async () => {
       if (merges.value.filter(x => x.locked).length) return;
@@ -2237,7 +2237,7 @@ class FindPathTool extends LayerTool<SegmentationUserLayer> {
 
     const {body, header} = makeToolActivationStatusMessageWithHeader(activation);
     header.textContent = 'Find Path';
-    body.classList.add('graphene-find-path-status');
+    body.classList.add('graphene-tool-status', 'graphene-find-path');
 
     const submitAction = () => {
       findPathState.triggerPathUpdate.dispatch();
@@ -2270,7 +2270,7 @@ class FindPathTool extends LayerTool<SegmentationUserLayer> {
     body.appendChild(label);
 
     const annotationElements = document.createElement('div');
-    annotationElements.classList.add('graphene-find-path-status-annotations');
+    annotationElements.classList.add('find-path-annotations');
     body.appendChild(annotationElements);
 
     const bindings = getDefaultAnnotationListBindings();
