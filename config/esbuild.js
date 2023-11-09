@@ -200,7 +200,7 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
           path.resolve(this.srcDir, '../third_party/', 'neuroglancer/datasource/boss/bossauth.html'),
           path.resolve(this.outDir, 'bossauth.html'));
       await fs.promises.copyFile(
-          path.resolve(this.srcDir, 'neuroglancer/util/google_oauth2_redirect.html'),
+          path.resolve(this.srcDir, '../third_party/', 'neuroglancer/util/google_oauth2_redirect.html'),
           path.resolve(this.outDir, 'google_oauth2_redirect.html'));
     }
     const result = await esbuild.build({
