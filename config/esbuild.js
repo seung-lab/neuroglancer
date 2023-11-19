@@ -147,9 +147,6 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     if (this.define.NEUROGLANCER_BUILD_INFO) {
       await fs.promises.writeFile(path.resolve(this.outDir, 'version.json'), this.define.NEUROGLANCER_BUILD_INFO);
     }
-    if (this.define.STATE_SERVERS) {
-      await fs.promises.writeFile(path.resolve(this.outDir, 'state_servers.json'), this.define.STATE_SERVERS);
-    }
   }
 
   getBaseEsbuildConfig() {
