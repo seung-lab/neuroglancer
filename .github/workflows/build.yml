@@ -28,6 +28,7 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             examples/**/package-lock.json
+          fetch-depth: 0
       - run: npm install
       - name: Typecheck with TypeScript
         run: npm run typecheck
