@@ -8,5 +8,10 @@
     "layer": "segmentation",
     "tool": "grapheneMulticutSegments",
     "provider": "graphene"
+  },
+  "keyp": {
+    "layer": "segmentation",
+    "tool": "grapheneFindPath",
+    "provider": "graphene"
   }
 }
