@@ -200,6 +200,10 @@ import { Uint64 } from "#src/util/uint64.js";
 import { makeDeleteButton } from "#src/widget/delete_button.js";
 import type { DependentViewContext } from "#src/widget/dependent_view_widget.js";
 import { makeIcon } from "#src/widget/icon.js";
+import {
+  CancellationToken,
+  CancellationTokenSource,
+} from "#src/util/cancellation";
 
 function vec4FromVec3(vec: vec3, alpha = 0) {
   const res = vec4.clone([...vec]);
@@ -1475,7 +1479,11 @@ class GraphConnection extends SegmentationGraphSourceConnection {
         findPathState.target.value = undefined;
       }
     });
+    let findPathCancellation: CancellationTokenSource | undefined = undefined;
     const findPathChanged = () => {
+      if (findPathCancellation) {
+        findPathCancellation.cancel();
+      }
       const { path, source, target } = findPathState;
       const annotationSource = findPathGroup.source;
       if (source.value && !source.value.annotationReference) {
@@ -1501,16 +1509,22 @@ class GraphConnection extends SegmentationGraphSourceConnection {
     this.registerDisposer(findPathState.changed.add(findPathChanged));
     this.registerDisposer(
       findPathState.triggerPathUpdate.add(() => {
+        if (findPathCancellation) {
+          findPathCancellation.cancel();
+        }
         const loadedSubsource = getGraphLoadedSubsource(this.layer)!;
         const annotationToNanometers =
           loadedSubsource.loadedDataSource.transform.inputSpace.value.scales.map(
             (x) => x / 1e-9,
           );
+        findPathCancellation = new CancellationTokenSource();
         this.submitFindPath(
           findPathState.precisionMode.value,
           annotationToNanometers,
+          findPathCancellation,
         ).then((success) => {
           success;
+          findPathCancellation = undefined;
         });
       }),
     );
@@ -1847,6 +1861,7 @@ class GraphConnection extends SegmentationGraphSourceConnection {
   async submitFindPath(
     precisionMode: boolean,
     annotationToNanometers: Float64Array,
+    cancellationToken?: CancellationToken,
   ): Promise<boolean> {
     const {
       state: { findPathState },
@@ -1858,6 +1873,7 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       target.value,
       precisionMode,
       annotationToNanometers,
+      cancellationToken,
     );
     StatusMessage.showTemporaryMessage("Path found!", 5000);
     findPathState.centroids.value = centroids;
@@ -1906,6 +1922,10 @@ async function withErrorMessageHTTP(
       status.setErrorMessage(errorPrefix + msg);
       status.setVisible(true);
       throw new Error(`[${e.response.status}] ${errorPrefix}${msg}`);
+    }
+    if (e instanceof DOMException && e.name === "AbortError") {
+      dispose();
+      StatusMessage.showTemporaryMessage("Request was aborted.");
     }
     throw e;
   }
@@ -2052,6 +2072,7 @@ class GrapheneGraphServerInterface {
     first: SegmentSelection,
     second: SegmentSelection,
     precisionMode: boolean,
+    cancellationToken?: CancellationToken,
   ) {
     const { url } = this;
     if (url === "") {
@@ -2070,6 +2091,7 @@ class GrapheneGraphServerInterface {
         ]),
       },
       responseIdentity,
+      cancellationToken,
     );
 
     const response = await withErrorMessageHTTP(promise, {
@@ -2174,6 +2196,7 @@ class GrapheneGraphSource extends SegmentationGraphSource {
     second: SegmentSelection,
     precisionMode: boolean,
     annotationToNanometers: Float64Array,
+    cancellationToken?: CancellationToken,
   ): Promise<number[][]> {
     const { l2CacheUrl, table } = this.info.app;
     const l2CacheAvailable =
@@ -2182,6 +2205,7 @@ class GrapheneGraphSource extends SegmentationGraphSource {
       selectionInNanometers(first, annotationToNanometers),
       selectionInNanometers(second, annotationToNanometers),
       precisionMode && !l2CacheAvailable,
+      cancellationToken,
     );
     if (precisionMode && l2CacheAvailable && l2_path) {
       const repCoordinatesUrl = `${l2CacheUrl}/table/${table}/attributes`;
@@ -2196,6 +2220,7 @@ class GrapheneGraphSource extends SegmentationGraphSource {
             }),
           },
           responseJson,
+          cancellationToken,
         );
 
         // many reasons why an l2 id might not have info
@@ -3033,6 +3058,7 @@ class MergeSegmentsTool extends LayerTool<SegmentationUserLayer> {
 
 const FIND_PATH_INPUT_EVENT_MAP = EventActionMap.fromObject({
   "at:shift?+enter": { action: "submit" },
+  escape: { action: "clearPath" },
   "at:shift?+control+mousedown0": { action: "add-point" },
 });
 
@@ -3059,6 +3085,11 @@ class FindPathTool extends LayerTool<SegmentationUserLayer> {
     const submitAction = () => {
       findPathState.triggerPathUpdate.dispatch();
     };
+    const clearPath = () => {
+      findPathState.source.reset();
+      findPathState.target.reset();
+      findPathState.centroids.reset();
+    };
     body.appendChild(
       makeIcon({
         text: "Submit",
@@ -3072,11 +3103,7 @@ class FindPathTool extends LayerTool<SegmentationUserLayer> {
       makeIcon({
         text: "Clear",
         title: "Clear Find Path",
-        onClick: () => {
-          findPathState.source.reset();
-          findPathState.target.reset();
-          findPathState.centroids.reset();
-        },
+        onClick: clearPath,
       }),
     );
     const checkbox = activation.registerDisposer(
@@ -3137,6 +3164,9 @@ class FindPathTool extends LayerTool<SegmentationUserLayer> {
     activation.bindAction("add-point", (event) => {
       event.stopPropagation();
       (async () => {
+        if (source.value && target.value) {
+          clearPath();
+        }
         if (!source.value) {
           // first selection
           const selection = maybeGetSelection(
@@ -3157,6 +3187,7 @@ class FindPathTool extends LayerTool<SegmentationUserLayer> {
         }
       })();
     });
+    activation.bindAction("clearPath", clearPath);
   }
 
   toJSON() {

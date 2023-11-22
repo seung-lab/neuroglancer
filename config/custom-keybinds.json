@@ -9,7 +9,7 @@
     "tool": "grapheneMulticutSegments",
     "provider": "graphene"
   },
-  "keyp": {
+  "keyf": {
     "layer": "segmentation",
     "tool": "grapheneFindPath",
     "provider": "graphene"
