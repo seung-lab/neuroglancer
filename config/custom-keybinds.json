@@ -13,5 +13,6 @@
     "layer": "segmentation",
     "tool": "grapheneFindPath",
     "provider": "graphene"
-  }
+  },
+  "keyx": false
 }
