@@ -109,6 +109,10 @@ export function setupDefaultViewer(options?: Partial<MinimalViewerOptions>) {
     for (const [key, val] of Object.entries(CUSTOM_BINDINGS!)) {
       if (typeof val === "string") {
         viewer.inputEventBindings.global.set(key, val);
+      } else if (typeof val === "boolean") {
+        if (!val) {
+          viewer.inputEventBindings.global.delete(key);
+        }
       } else {
         viewer.inputEventBindings.global.set(key, `tool-${val.tool}`);
         const layerConstructor = layerTypes.get(val.layer);
