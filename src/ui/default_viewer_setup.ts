@@ -112,6 +112,9 @@ export function setupDefaultViewer(options?: Partial<MinimalViewerOptions>) {
       } else if (typeof val === "boolean") {
         if (!val) {
           viewer.inputEventBindings.global.delete(key);
+          viewer.inputEventBindings.global.parents.map((parent) =>
+            parent.delete(key),
+          );
         }
       } else {
         viewer.inputEventBindings.global.set(key, `tool-${val.tool}`);
