@@ -26,8 +26,10 @@ import {
   getCredentialsWithStatus,
   monitorAuthPopupWindow,
 } from "#src/credentials_provider/interactive_credentials_provider.js";
+import type { OAuth2Credentials } from "#src/credentials_provider/oauth2.js";
 import { StatusMessage } from "#src/status.js";
 import { raceWithAbort } from "#src/util/abort.js";
+import type { HttpError } from "#src/util/http_request.js";
 import {
   verifyObject,
   verifyObjectProperty,
@@ -57,44 +59,81 @@ function openPopupCenter(url: string, width: number, height: number) {
   );
 }
 
-function waitForAuthResponseMessage(
-  serverUrl: string,
+function waitForPopupResponseMessage(
   source: Window,
   signal: AbortSignal,
-): Promise<MiddleAuthToken> {
-  return new Promise((resolve, reject) => {
+): Promise<any> {
+  return new Promise((resolve) => {
     window.addEventListener(
       "message",
       (event) => {
         if (event.source !== source) return;
-        try {
-          const obj = verifyObject(event.data);
-          const accessToken = verifyObjectProperty(obj, "token", verifyString);
-          const appUrls = verifyObjectProperty(
-            obj,
-            "app_urls",
-            verifyStringArray,
-          );
-
-          const token: MiddleAuthToken = {
-            tokenType: "Bearer",
-            accessToken,
-            url: serverUrl,
-            appUrls,
-          };
-          resolve(token);
-        } catch (parseError) {
-          reject(
-            new Error(
-              `Received unexpected authentication response: ${parseError.message}`,
-            ),
-          );
-          console.error("Response received: ", event.data);
-        }
+        resolve(event.data);
       },
-      { signal: signal },
+      { signal },
     );
   });
+}
+
+async function waitForRemoteFlow(
+  url: string,
+  startMessage: string,
+  startAction: string,
+  retryMessage: string,
+  closedMessage: string,
+): Promise<any> {
+  const status = new StatusMessage(/*delay=*/ false, /*modal=*/ true);
+  const res: Promise<MiddleAuthToken> = new Promise((f) => {
+    function writeStatus(message: string, buttonMessage: string) {
+      status.element.textContent = message + " ";
+      const button = document.createElement("button");
+      button.textContent = buttonMessage;
+      status.element.appendChild(button);
+
+      button.addEventListener("click", () => {
+        writeStatus(retryMessage, "Retry");
+        const popup = openPopupCenter(url, 400, 650);
+        const closePopup = () => {
+          popup?.close();
+        };
+        window.addEventListener("beforeunload", closePopup);
+        const checkClosed = setInterval(() => {
+          if (popup?.closed) {
+            clearInterval(checkClosed);
+            writeStatus(closedMessage, "Retry");
+          }
+        }, 1000);
+
+        const messageListener = async (ev: MessageEvent) => {
+          if (ev.source === popup) {
+            clearInterval(checkClosed);
+            window.removeEventListener("message", messageListener);
+            window.removeEventListener("beforeunload", closePopup);
+            closePopup();
+            f(ev.data);
+          }
+        };
+        window.addEventListener("message", messageListener);
+      });
+    }
+    writeStatus(startMessage, startAction);
+  });
+  try {
+    return await res;
+  } finally {
+    status.dispose();
+  }
+}
+
+async function showTosForm(url: string, tosName: string) {
+  const data = await waitForRemoteFlow(
+    url,
+    `Before you can access ${tosName}, you need to accept its Terms of Service.`,
+    "Open",
+    "Waiting for Terms of Service agreement...",
+    `Terms of Service closed for ${tosName}.`,
+  );
+  return data === "success";
 }
 
 async function waitForLogin(
@@ -114,7 +153,33 @@ async function waitForLogin(
     }
     monitorAuthPopupWindow(newWindow, abortController);
     return await raceWithAbort(
-      waitForAuthResponseMessage(serverUrl, newWindow, abortController.signal),
+      waitForPopupResponseMessage(newWindow, abortController.signal).then(
+        async (data) => {
+          try {
+            const obj = verifyObject(data);
+            const accessToken = verifyObjectProperty(
+              obj,
+              "token",
+              verifyString,
+            );
+            const appUrls = verifyObjectProperty(
+              obj,
+              "app_urls",
+              verifyStringArray,
+            );
+            return {
+              tokenType: "Bearer",
+              accessToken,
+              url: serverUrl,
+              appUrls,
+            } satisfies MiddleAuthToken;
+          } catch (parseError) {
+            throw new Error(
+              `Received unexpected authentication response: ${parseError.message}`,
+            );
+          }
+        },
+      ),
       signal,
     );
   } finally {
@@ -182,6 +247,7 @@ export class UnverifiedApp extends Error {
 export class MiddleAuthAppCredentialsProvider extends CredentialsProvider<MiddleAuthToken> {
   private credentials: CredentialsWithGeneration<MiddleAuthToken> | undefined =
     undefined;
+  private agreedToTos = false;
 
   constructor(
     private serverUrl: string,
@@ -191,23 +257,23 @@ export class MiddleAuthAppCredentialsProvider extends CredentialsProvider<Middle
   }
 
   get = makeCredentialsGetter(async (options) => {
-    let authInfo: any;
-    {
-      using _span = new ProgressSpan(options.progressListener, {
-        message: `Determining authentication server for ${this.serverUrl}`,
-      });
-      const response = await fetch(`${this.serverUrl}/auth_info`, {
-        signal: options.signal,
-      });
-      authInfo = await response.json();
+    if (this.credentials && this.agreedToTos) {
+      return this.credentials.credentials;
     }
+    this.agreedToTos = false;
+    const { progressListener, signal } = options;
+    using _span = new ProgressSpan(progressListener, {
+      message: `Determining authentication server for ${this.serverUrl}`,
+    });
+    const response = await fetch(`${this.serverUrl}/auth_info`, {
+      signal,
+    });
+    const authInfo = await response.json();
     const provider = this.credentialsManager.getCredentialsProvider(
       "middleauth",
       authInfo.login_url,
     ) as MiddleAuthCredentialsProvider;
-
     this.credentials = await provider.get(this.credentials, options);
-
     if (this.credentials.credentials.appUrls.includes(this.serverUrl)) {
       return this.credentials.credentials;
     }
@@ -215,4 +281,43 @@ export class MiddleAuthAppCredentialsProvider extends CredentialsProvider<Middle
     status.setText(`middleauth: unverified app ${this.serverUrl}`);
     throw new UnverifiedApp(this.serverUrl);
   });
+
+  errorHandler = async (
+    error: HttpError,
+    credentials: OAuth2Credentials,
+  ): Promise<"refresh"> => {
+    const { status } = error;
+    if (status === 401) {
+      // 401: Authorization needed.  OAuth2 token may have expired.
+      return "refresh";
+    }
+    if (status === 403) {
+      const { response } = error;
+      if (response) {
+        const { headers } = response;
+        const contentType = headers.get("content-type");
+        if (contentType === "application/json") {
+          const json = await response.json();
+          if (json.error && json.error === "missing_tos") {
+            // Missing terms of service agreement.  Prompt user.
+            const url = new URL(json.data.tos_form_url);
+            url.searchParams.set("client", "ng");
+            const success = await showTosForm(
+              url.toString(),
+              json.data.tos_name,
+            );
+            if (success) {
+              this.agreedToTos = true;
+              return "refresh";
+            }
+          }
+        }
+      }
+      if (!credentials.accessToken) {
+        // Anonymous access denied.  Request credentials.
+        return "refresh";
+      }
+    }
+    throw error;
+  };
 }
