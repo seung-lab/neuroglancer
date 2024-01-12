@@ -23,6 +23,8 @@ import { MultipleConsumerCancellationTokenSource } from "#src/util/cancellation.
 import type { Owned } from "#src/util/disposable.js";
 import { RefCounted } from "#src/util/disposable.js";
 import { StringMemoize } from "#src/util/memoize.js";
+import { HttpError } from "#src/util/http_request";
+import { OAuth2Credentials } from "#src/credentials_provider/oauth2";
 
 /**
  * Wraps an arbitrary JSON credentials object with a generation number.
@@ -45,6 +47,27 @@ export abstract class CredentialsProvider<Credentials> extends RefCounted {
     invalidCredentials?: CredentialsWithGeneration<Credentials>,
     cancellationToken?: CancellationToken,
   ) => Promise<CredentialsWithGeneration<Credentials>>;
+
+  errorHandler? = async (
+    error: HttpError,
+    credentials: OAuth2Credentials,
+  ): Promise<"refresh"> => {
+    const { status } = error;
+    if (status === 401) {
+      // 401: Authorization needed.  OAuth2 token may have expired.
+      return "refresh";
+    }
+    if (status === 403 && !credentials.accessToken) {
+      // Anonymous access denied.  Request credentials.
+      return "refresh";
+    }
+    if (error instanceof Error && credentials.email !== undefined) {
+      error.message += `  (Using credentials for ${JSON.stringify(
+        credentials.email,
+      )})`;
+    }
+    throw error;
+  };
 }
 
 export function makeCachedCredentialsGetter<Credentials>(
@@ -166,8 +189,7 @@ export class MapBasedCredentialsManager implements CredentialsManager {
  */
 export class CachingCredentialsManager<Base extends CredentialsManager>
   extends RefCounted
-  implements CredentialsManager
-{
+  implements CredentialsManager {
   memoize = new StringMemoize();
 
   constructor(public base: Base) {
