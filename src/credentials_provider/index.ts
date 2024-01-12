@@ -18,9 +18,11 @@
  * @file Generic facility for providing authentication/authorization credentials.
  */
 
+import type { OAuth2Credentials } from "#src/credentials_provider/oauth2.js";
 import { raceWithAbort, SharedAbortController } from "#src/util/abort.js";
 import type { Owned } from "#src/util/disposable.js";
 import { RefCounted } from "#src/util/disposable.js";
+import type { HttpError } from "#src/util/http_request.js";
 import { StringMemoize } from "#src/util/memoize.js";
 
 /**
@@ -44,6 +46,27 @@ export abstract class CredentialsProvider<Credentials> extends RefCounted {
     invalidCredentials?: CredentialsWithGeneration<Credentials>,
     abortSignal?: AbortSignal | undefined,
   ) => Promise<CredentialsWithGeneration<Credentials>>;
+
+  errorHandler? = async (
+    error: HttpError,
+    credentials: OAuth2Credentials,
+  ): Promise<"refresh"> => {
+    const { status } = error;
+    if (status === 401) {
+      // 401: Authorization needed.  OAuth2 token may have expired.
+      return "refresh";
+    }
+    if (status === 403 && !credentials.accessToken) {
+      // Anonymous access denied.  Request credentials.
+      return "refresh";
+    }
+    if (error instanceof Error && credentials.email !== undefined) {
+      error.message += `  (Using credentials for ${JSON.stringify(
+        credentials.email,
+      )})`;
+    }
+    throw error;
+  };
 }
 
 export function makeCachedCredentialsGetter<Credentials>(
