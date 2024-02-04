@@ -23,6 +23,7 @@ from collections.abc import Sequence
 from typing import Literal, NamedTuple, Optional, Union, cast
 
 import numpy as np
+import rtree
 
 try:
     import tensorstore as ts
@@ -215,6 +216,7 @@ class AnnotationWriter:
         relationships: Sequence[str] = (),
         properties: Sequence[viewer_state.AnnotationPropertySpec] = (),
         chunk_size: Sequence[int] = [256, 256, 256],
+        max_annotations_per_chunk: int = 5000,
     ):
         """Initializes an `AnnotationWriter`.
 
@@ -237,6 +239,8 @@ class AnnotationWriter:
             write_id_sharded: If True, the annotations will be sharded by id.
             id_sharding_spec: The sharding specification for the id sharding.  If
                 not specified spec will be automatically configured
+            max_annotations_per_chunk: The maximum number of annotations per chunk.
+
         """
         self.chunk_size = np.array(chunk_size)
         self.coordinate_space = coordinate_space
@@ -258,6 +262,8 @@ class AnnotationWriter:
             shape=(self.rank,), fill_value=float("-inf"), dtype=np.float32
         )
         self.related_annotations = [{} for _ in self.relationships]
+        self.rtree = rtree.index.Index()
+        self.max_annotations_per_chunk = max_annotations_per_chunk
 
     def get_chunk_index(self, coords):
         return tuple(((coords - self.lower_bound) // self.chunk_size).astype(np.int32))
@@ -274,6 +280,7 @@ class AnnotationWriter:
 
         # self.lower_bound = np.minimum(self.lower_bound, point)
         self.upper_bound = np.maximum(self.upper_bound, point)
+        self.rtree.insert(len(self.annotations), point + point)
         self._add_obj(point, id, **kwargs)
 
     def add_axis_aligned_bounding_box(
@@ -319,8 +326,13 @@ class AnnotationWriter:
                 f"Expected coordinates to have length {self.coordinate_space.rank}, but received: {len(point_b)}"
             )
 
-        # self.lower_bound = np.minimum(self.lower_bound, point_a)
-        self.upper_bound = np.maximum(self.upper_bound, point_b)
+        #
+
+        max_vals = np.max([point_a, point_b], axis=0)
+        min_vals = np.min([point_a, point_b], axis=0)
+        self.upper_bound = np.maximum(self.upper_bound, max_vals)
+        # self.lower_bound = np.minimum(self.lower_bound, min_vals)
+        self.rtree.insert(len(self.annotations), np.concatenate([min_vals, max_vals]))
         coords = np.concatenate((point_a, point_b))
         self._add_obj(cast(Sequence[float], coords), id, **kwargs)
 
@@ -352,7 +364,7 @@ class AnnotationWriter:
         )
 
         chunk_index = self.get_chunk_index(np.array(coords[: self.rank]))
-        self.annotations_by_chunk[chunk_index].append(annotation)
+        # self.annotations_by_chunk[chunk_index].append(annotation)
         self.annotations.append(annotation)
         for i, segment_ids in enumerate(related_ids):
             for segment_id in segment_ids:
@@ -437,6 +449,84 @@ class AnnotationWriter:
             dataset.with_transaction(txn)[key] = value
 
         txn.commit_async().result()
+
+    def make_spatial_index(self):
+        chunk_sizes = []
+        grid_shapes = []
+
+        annotations_remaining = len(self.annotations)
+        spatial_index = 1
+        chunk_size = self.upper_bound - self.lower_bound
+
+        # make an array equal to the length of annotations which tracks
+        # which spatial index each annotation belongs to
+        spatial_indices = np.zeros(len(self.annotations))
+        chunk_indices = np.zeros((len(self.annotations), self.rank), dtype=np.int32)
+        while (annotations_remaining > self.max_annotations_per_chunk) or (
+            spatial_index == 0
+        ):
+            num_chunks = np.ceil(
+                (self.upper_bound - self.lower_bound) / chunk_size
+            ).astype(int)
+
+            chunk_sizes.append(chunk_size)
+            grid_shapes.append(num_chunks.tolist())
+
+            # iterate over all chunks in the grid
+            for x in range(num_chunks[0]):
+                for y in range(num_chunks[1]):
+                    for z in range(num_chunks[2]):
+                        chunk_index = (x, y, z)
+                        min_val = self.lower_bound + chunk_index * chunk_size
+                        max_val = min_val + chunk_size
+
+                        chunk_annotations = self.rtree.intersection(
+                            (
+                                min_val[0],
+                                min_val[1],
+                                min_val[2],
+                                max_val[0],
+                                max_val[1],
+                                max_val[2],
+                            )
+                        )
+
+                        chunk_annotations = np.array(list(chunk_annotations))
+                        if len(chunk_annotations) > 0:
+                            # find the annotations which have not been placed yet
+                            chunk_annotations = chunk_annotations[
+                                spatial_indices[chunk_annotations] == 0
+                            ]
+                            if len(chunk_annotations) > 0:
+                                # pick self.max_annotations_per_chunk annotations to place in the chunk
+                                # randomizing the order of the annotations
+                                np.random.Generator().shuffle(chunk_annotations)
+
+                                chunk_annotations = chunk_annotations[
+                                    : self.max_annotations_per_chunk
+                                ]
+                                # assign the spatial index to the annotations
+                                spatial_indices[chunk_annotations] = spatial_index
+                                chunk_indices[chunk_annotations] = chunk_index
+            spatial_index += 1
+            annotations_remaining = len(self.annotations) - np.sum(spatial_indices > 0)
+
+            # each component of chunk_size of each successively level should be either equal to, or half of,
+            # the corresponding component of the prior level chunk_size, whichever results in a more spatially isotropic chunk.
+
+
+def shrink_to_uniform_size(arr: np.ndarray) -> np.ndarray:
+    half_chunk_size = arr / 2
+    min_size = np.minimum(arr)
+    max_half_size = np.maximum(half_chunk_size)
+
+    if max_half_size > min_size:
+        new_sizes = np.where(half_chunk_size > min_size, half_chunk_size, arr)
+    else:
+        new_sizes = half_chunk_size
+    return new_sizes
+
+    # query the rtree for the number of annotations in each chunk
 
     def write(self, path: Union[str, pathlib.Path]):
         metadata = {
