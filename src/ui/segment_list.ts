@@ -98,8 +98,7 @@ const tempUint64 = new Uint64();
 
 abstract class SegmentListSource
   extends RefCounted
-  implements VirtualListSource
-{
+  implements VirtualListSource {
   length: number;
   changed = new Signal<(splices: readonly Readonly<ArraySpliceOp>[]) => void>();
 
@@ -274,10 +273,10 @@ class SegmentQueryListSource extends SegmentListSource {
       this.selectedMatches =
         queryResult.count > 0
           ? findQueryResultIntersectionSize(
-              segmentPropertyMap,
-              queryResult,
-              selectedSegments,
-            )
+            segmentPropertyMap,
+            queryResult,
+            selectedSegments,
+          )
           : 0;
     }
 
@@ -285,10 +284,10 @@ class SegmentQueryListSource extends SegmentListSource {
       this.visibleMatches =
         queryResult.count > 0
           ? findQueryResultIntersectionSize(
-              segmentPropertyMap,
-              queryResult,
-              visibleSegments,
-            )
+            segmentPropertyMap,
+            queryResult,
+            visibleSegments,
+          )
           : 0;
     }
 
@@ -475,9 +474,8 @@ function updateColumnSortIcon(
   const order = sortBy?.find((s) => s.fieldId === id)?.order;
   sortIcon.textContent = order === ">" ? "▼" : "▲";
   sortIcon.style.visibility = order === undefined ? "" : "visible";
-  sortIcon.title = `Sort by ${id} in ${
-    order === "<" ? "descending" : "ascending"
-  } order`;
+  sortIcon.title = `Sort by ${id} in ${order === "<" ? "descending" : "ascending"
+    } order`;
 }
 
 class NumericalPropertiesSummary extends RefCounted {
@@ -511,9 +509,8 @@ class NumericalPropertiesSummary extends RefCounted {
     if (properties !== undefined && properties.length > 0) {
       listElement = document.createElement("details");
       const summaryElement = document.createElement("summary");
-      summaryElement.textContent = `${properties.length} numerical propert${
-        properties.length > 1 ? "ies" : "y"
-      }`;
+      summaryElement.textContent = `${properties.length} numerical propert${properties.length > 1 ? "ies" : "y"
+        }`;
       listElement.appendChild(summaryElement);
       listElement.classList.add(
         "neuroglancer-segment-query-result-numerical-list",
@@ -725,11 +722,11 @@ class NumericalPropertiesSummary extends RefCounted {
               value as number,
             );
             this.bounds[boundType].changed.dispatch();
-          } catch {}
+          } catch { }
           updateInputBoundValue(
             e,
             this.bounds[boundType].value[propertyIndex][
-              endpointIndex
+            endpointIndex
             ] as number,
           );
         });
@@ -922,7 +919,7 @@ class NumericalPropertiesSummary extends RefCounted {
             computeInvlerp(propertyHistogram.window, constraintBounds[0]),
           ),
         ) *
-          (numBins - 2),
+        (numBins - 2),
       );
       const constraintEndBin = Math.ceil(
         Math.max(
@@ -932,7 +929,7 @@ class NumericalPropertiesSummary extends RefCounted {
             computeInvlerp(propertyHistogram.window, constraintBounds[1]),
           ),
         ) *
-          (numBins - 2),
+        (numBins - 2),
       );
       const polyLine = makeCdfLine(
         constraintStartBin,
@@ -988,12 +985,19 @@ function renderTagSummary(
   const filterQuery = queryResult.query as FilterQuery;
   const tagList = document.createElement("div");
   tagList.classList.add("neuroglancer-segment-query-result-tag-list");
-  for (const { tag, count } of tags) {
+  for (const { tag, count, desc } of tags) {
     const tagElement = document.createElement("div");
     tagElement.classList.add("neuroglancer-segment-query-result-tag");
     const tagName = document.createElement("span");
     tagName.classList.add("neuroglancer-segment-query-result-tag-name");
-    tagName.textContent = tag;
+    // if the tag is different than desc, show both
+    if (tag !== desc && desc !== undefined && desc !== ""){
+      tagName.textContent = tag + " (" + desc + ")";
+    }
+    else {
+      tagName.textContent = tag;
+    }
+
     tagList.appendChild(tagElement);
     const included = filterQuery.includeTags.includes(tag);
     const excluded = filterQuery.excludeTags.includes(tag);
@@ -1024,8 +1028,7 @@ function renderTagSummary(
         "neuroglancer-segment-query-result-tag-toggle",
       );
       includeElement.classList.add(
-        `neuroglancer-segment-query-result-tag-${
-          include ? "include" : "exclude"
+        `neuroglancer-segment-query-result-tag-${include ? "include" : "exclude"
         }`,
       );
       tagElement.appendChild(includeElement);
@@ -1052,9 +1055,8 @@ function renderTagSummary(
           {
             text: include ? "+" : "-",
             enableTitle: `Add tag to ${include ? "required" : "exclusion"} set`,
-            disableTitle: `Remove tag from ${
-              include ? "required" : "exclusion"
-            } set`,
+            disableTitle: `Remove tag from ${include ? "required" : "exclusion"
+              } set`,
             backgroundScheme: "dark",
           },
         ).element,
@@ -1245,12 +1247,10 @@ abstract class SegmentListGroupBase extends RefCounted {
       visibleSelectedCount > 0 && visibleSelectedCount !== totalDisplayed,
     );
     selectionStatusMessage.textContent = statusMessage;
-    copyAllSegmentsButton.title = `Copy all ${totalDisplayed} ${
-      numMatches ? "matching" : "starred"
-    } segment(s)`;
-    copyVisibleSegmentsButton.title = `Copy ${visibleDisplayedCount} ${
-      numMatches ? "visible matching" : "visible"
-    } segment(s)`;
+    copyAllSegmentsButton.title = `Copy all ${totalDisplayed} ${numMatches ? "matching" : "starred"
+      } segment(s)`;
+    copyVisibleSegmentsButton.title = `Copy ${visibleDisplayedCount} ${numMatches ? "visible matching" : "visible"
+      } segment(s)`;
     copyAllSegmentsButton.style.visibility = totalDisplayed
       ? "visible"
       : "hidden";
@@ -1274,9 +1274,8 @@ abstract class SegmentListGroupBase extends RefCounted {
     );
     let visibleToggleTitle: string;
     if (!allVisible) {
-      visibleToggleTitle = `Click to show ${
-        totalDisplayed - visibleDisplayedCount
-      } segment ID(s).`;
+      visibleToggleTitle = `Click to show ${totalDisplayed - visibleDisplayedCount
+        } segment ID(s).`;
     } else {
       visibleToggleTitle = `Click to hide ${totalDisplayed} segment ID(s).`;
     }
