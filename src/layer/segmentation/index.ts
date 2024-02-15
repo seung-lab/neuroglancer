@@ -41,7 +41,6 @@ import {
   MultiscaleMeshLayer,
   MultiscaleMeshSource,
 } from "#src/mesh/frontend.js";
-import type { RenderLayerTransform } from "#src/render_coordinate_transform.js";
 import {
   RenderScaleHistogram,
   trackableRenderScaleTarget,
@@ -130,11 +129,14 @@ import { Uint64 } from "#src/util/uint64.js";
 import { makeWatchableShaderError } from "#src/webgl/dynamic_shader.js";
 import type { DependentViewContext } from "#src/widget/dependent_view_widget.js";
 import { registerLayerShaderControlsTool } from "#src/widget/shader_controls.js";
+import { gatherUpdate } from "#src/util/array";
+
+export const SKELETON_RENDERING_SHADER_CONTROL_TOOL_ID =
+  "skeletonShaderControl";
 
 export class SegmentationUserLayerGroupState
   extends RefCounted
-  implements SegmentationGroupState
-{
+  implements SegmentationGroupState {
   specificationChanged = new Signal();
   constructor(public layer: SegmentationUserLayer) {
     super();
@@ -281,8 +283,7 @@ export class SegmentationUserLayerGroupState
 
 export class SegmentationUserLayerColorGroupState
   extends RefCounted
-  implements SegmentationColorGroupState
-{
+  implements SegmentationColorGroupState {
   specificationChanged = new Signal();
   constructor(public layer: SegmentationUserLayer) {
     super();
@@ -356,10 +357,10 @@ export class SegmentationUserLayerColorGroupState
 }
 
 class LinkedSegmentationGroupState<
-    State extends
-      | SegmentationUserLayerGroupState
-      | SegmentationUserLayerColorGroupState,
-  >
+  State extends
+  | SegmentationUserLayerGroupState
+  | SegmentationUserLayerColorGroupState,
+>
   extends RefCounted
   implements WatchableValueInterface<State>
 {
@@ -786,7 +787,7 @@ export class SegmentationUserLayer extends Base {
             "Not supported on non-root linked segmentation layers",
           );
         } else {
-          loadedSubsource.activate(() => {});
+          loadedSubsource.activate(() => { });
           updatedSegmentPropertyMaps.push(segmentPropertyMap);
         }
       } else if (segmentationGraph !== undefined) {
@@ -913,7 +914,7 @@ export class SegmentationUserLayer extends Base {
     if (
       layerSpec[json_keys.EQUIVALENCES_JSON_KEY] !== undefined &&
       explicitSpecs.find((spec) => spec.url === localEquivalencesUrl) ===
-        undefined
+      undefined
     ) {
       specs.push({
         url: localEquivalencesUrl,
@@ -1229,13 +1230,31 @@ export class SegmentationUserLayer extends Base {
 
   moveToSegment(id: Uint64) {
     for (const layer of this.renderLayers) {
-      if (!(layer instanceof MultiscaleMeshLayer)) continue;
-      const layerPosition = layer.getObjectPosition(id);
-      if (layerPosition === undefined) continue;
-      this.setLayerPosition(
-        layer.displayState.transform.value as RenderLayerTransform,
-        layerPosition,
+      if (
+        !(layer instanceof MultiscaleMeshLayer || layer instanceof MeshLayer)
+      ) {
+        continue;
+      }
+      const transform = layer.displayState.transform.value;
+      if (transform.error !== undefined) return undefined;
+      const { rank, globalToRenderLayerDimensions } = transform;
+      const { globalPosition } = this.manager.root;
+      const globalLayerPosition = new Float32Array(rank);
+      const renderToGlobalLayerDimensions = [];
+      for (let i = 0; i < rank; i++) {
+        renderToGlobalLayerDimensions[globalToRenderLayerDimensions[i]] = i;
+      }
+      gatherUpdate(
+        globalLayerPosition,
+        globalPosition.value,
+        renderToGlobalLayerDimensions,
       );
+      const layerPosition =
+        layer instanceof MeshLayer
+          ? layer.getObjectPosition(id, globalLayerPosition)
+          : layer.getObjectPosition(id);
+      if (layerPosition === undefined) continue;
+      this.setLayerPosition(transform, layerPosition);
       return;
     }
     StatusMessage.showTemporaryMessage(
