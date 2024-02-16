@@ -589,7 +589,8 @@ export class MeshLayer extends PerspectiveViewRenderLayer<ThreeDimensionalRender
   ): Float32Array | undefined {
     const transform = this.displayState.transform.value;
     if (transform.error !== undefined) return undefined;
-    const chunk = this.source.chunks.get(getObjectKey(id));
+    const key = getObjectKey(id);
+    const chunk = this.source.chunks.get(key);
     if (chunk === undefined) return undefined;
     const { rank } = transform;
     const inverseModelToRenderLayerTransform = new Float32Array(
@@ -611,10 +612,11 @@ export class MeshLayer extends PerspectiveViewRenderLayer<ThreeDimensionalRender
       rank,
     );
     const { fragmentIds } = chunk;
-    let closestVertex = new Float32Array(rank);
+    const closestVertex = new Float32Array(rank);
     let closestDistanceSq = Number.POSITIVE_INFINITY;
-    for (let fragmentId of fragmentIds) {
-      const fragmentChunk = this.source.fragmentSource.chunks.get(fragmentId);
+    for (const fragmentId of fragmentIds) {
+      const { key: fragmentKey } = this.source.getFragmentKey(key, fragmentId);
+      const fragmentChunk = this.source.fragmentSource.chunks.get(fragmentKey);
       if (fragmentChunk === undefined) continue;
       const { state, meshData } = fragmentChunk;
       if (
@@ -628,10 +630,8 @@ export class MeshLayer extends PerspectiveViewRenderLayer<ThreeDimensionalRender
       for (let i = 0; i < vertexPositions.length; i += rank) {
         let distanceSq = 0;
         for (let j = 0; j < rank; j++) {
-          distanceSq += Math.pow(
-            vertexPositions[i + j] - nearestPositionInModal[j],
-            2,
-          );
+          distanceSq +=
+            (vertexPositions[i + j] - nearestPositionInModal[j]) ** 2;
         }
         if (distanceSq < closestDistanceSq) {
           closestDistanceSq = distanceSq;
