@@ -80,6 +80,7 @@ import { copySelectionPositionToClipboard } from "#src/ui/selection_details.js";
 import type { SidePanelManager } from "#src/ui/side_panel.js";
 import { StateEditorDialog } from "#src/ui/state_editor.js";
 import { StatisticsDisplayState } from "#src/ui/statistics.js";
+import type { Tool } from "#src/ui/tool.js";
 import { GlobalToolBinder, LocalToolBinder } from "#src/ui/tool.js";
 import { MultiToolPaletteState } from "#src/ui/tool_palette.js";
 import { encodeStateAsFragment } from "#src/ui/url_hash_binding.js";
@@ -986,8 +987,8 @@ export class Viewer extends RefCounted implements ViewerState {
     new LocalToolBinder(this, this.globalToolBinder),
   );
 
-  activateTool(uppercase: string) {
-    this.globalToolBinder.activate(uppercase);
+  activateTool(key: string, tool?: Tool<object>) {
+    this.globalToolBinder.activate(key, tool);
   }
 
   deactivateTools() {
