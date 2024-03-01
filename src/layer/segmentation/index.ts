@@ -123,6 +123,7 @@ import {
   verifyFiniteNonNegativeFloat,
   verifyObjectAsMap,
   verifyOptionalObjectProperty,
+  verifyPositiveInt,
   verifyString,
 } from "#src/util/json.js";
 import { Signal } from "#src/util/signal.js";
@@ -133,8 +134,7 @@ import { registerLayerShaderControlsTool } from "#src/widget/shader_controls.js"
 
 export class SegmentationUserLayerGroupState
   extends RefCounted
-  implements SegmentationGroupState
-{
+  implements SegmentationGroupState {
   specificationChanged = new Signal();
   constructor(public layer: SegmentationUserLayer) {
     super();
@@ -281,8 +281,7 @@ export class SegmentationUserLayerGroupState
 
 export class SegmentationUserLayerColorGroupState
   extends RefCounted
-  implements SegmentationColorGroupState
-{
+  implements SegmentationColorGroupState {
   specificationChanged = new Signal();
   constructor(public layer: SegmentationUserLayer) {
     super();
@@ -356,10 +355,10 @@ export class SegmentationUserLayerColorGroupState
 }
 
 class LinkedSegmentationGroupState<
-    State extends
-      | SegmentationUserLayerGroupState
-      | SegmentationUserLayerColorGroupState,
-  >
+  State extends
+  | SegmentationUserLayerGroupState
+  | SegmentationUserLayerColorGroupState,
+>
   extends RefCounted
   implements WatchableValueInterface<State>
 {
@@ -484,6 +483,7 @@ class SegmentationUserLayerDisplayState implements SegmentationDisplayState {
   );
   objectAlpha = trackableAlphaValue(1.0);
   ignoreNullVisibleSet = new TrackableBoolean(true, true);
+  stopLayer = new TrackableValue<number>(0, verifyPositiveInt);
   skeletonRenderingOptions = new SkeletonRenderingOptions();
   shaderError = makeWatchableShaderError();
   renderScaleHistogram = new RenderScaleHistogram();
@@ -594,7 +594,11 @@ export class SegmentationUserLayer extends Base {
   };
 
   displayState = new SegmentationUserLayerDisplayState(this);
-
+  stopLayer = new TrackableValue<number>(
+    0,
+    verifyFiniteNonNegativeFloat,
+    0,
+  );
   anchorSegment = new TrackableValue<Uint64 | undefined>(undefined, (x) =>
     x === undefined ? undefined : Uint64.parseString(x),
   );
@@ -786,7 +790,7 @@ export class SegmentationUserLayer extends Base {
             "Not supported on non-root linked segmentation layers",
           );
         } else {
-          loadedSubsource.activate(() => {});
+          loadedSubsource.activate(() => { });
           updatedSegmentPropertyMaps.push(segmentPropertyMap);
         }
       } else if (segmentationGraph !== undefined) {
@@ -913,7 +917,7 @@ export class SegmentationUserLayer extends Base {
     if (
       layerSpec[json_keys.EQUIVALENCES_JSON_KEY] !== undefined &&
       explicitSpecs.find((spec) => spec.url === localEquivalencesUrl) ===
-        undefined
+      undefined
     ) {
       specs.push({
         url: localEquivalencesUrl,
