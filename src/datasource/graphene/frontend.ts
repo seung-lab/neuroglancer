@@ -89,6 +89,7 @@ import type {
 import type { LoadedDataSubsource } from "#src/layer/layer_data_source.js";
 import { LoadedLayerDataSource } from "#src/layer/layer_data_source.js";
 import { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
+import * as json_keys from "#src/layer/segmentation/json_keys.js";
 import { MeshSource } from "#src/mesh/frontend.js";
 import type { DisplayDimensionRenderInfo } from "#src/navigation_state.js";
 import type {
@@ -202,11 +203,15 @@ import { DateTimeInputWidget } from "#src/widget/datetime.js";
 import { makeDeleteButton } from "#src/widget/delete_button.js";
 import type { DependentViewContext } from "#src/widget/dependent_view_widget.js";
 import { makeIcon } from "#src/widget/icon.js";
-import type { LayerControlFactory } from "#src/widget/layer_control.js";
+import type {
+  LayerControlFactory,
+  LayerControlDefinition,
+} from "#src/widget/layer_control.js";
 import {
   addLayerControlToOptionsTab,
   registerLayerControl,
 } from "#src/widget/layer_control.js";
+import { rangeLayerControl } from "#src/widget/layer_control_range.js";
 
 function vec4FromVec3(vec: vec3, alpha = 0) {
   const res = vec4.clone([...vec]);
@@ -1645,7 +1650,11 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       );
       if (added && isBaseSegment) {
         this.graph
-          .getRoot(segmentId, segmentsState.timestamp.value)
+          .getRoot(
+            segmentId,
+            segmentsState.timestamp.value,
+            this.layer.displayState.stopLayer.value,
+          )
           .then((rootId) => {
             if (segmentsState.visibleSegments.has(segmentId)) {
               segmentsState.visibleSegments.add(rootId);
@@ -1958,7 +1967,11 @@ class GrapheneGraphServerInterface {
     return new Date(isoString).valueOf();
   }
 
-  async getRoot(segment: bigint, timestamp = 0) {
+  async getRoot(
+    segment: bigint,
+    timestamp = 0,
+    stopLayer: number | undefined = undefined,
+  ) {
     const timestampEpoch = timestamp / 1000;
     const { fetchOkImpl, baseUrl } = this.httpSource;
 
@@ -1966,7 +1979,7 @@ class GrapheneGraphServerInterface {
       fetchOkImpl(
         `${baseUrl}/node/${String(segment)}/root?int64_as_str=1${
           timestamp > 0 ? `&timestamp=${timestampEpoch}` : ""
-        }`,
+        }${stopLayer !== undefined ? `&stop_layer=${stopLayer}` : ""}`,
         {},
       ).then((response) => response.json()),
       {
@@ -2105,6 +2118,18 @@ class GrapheneGraphServerInterface {
   }
 }
 
+export const LAYER_CONTROLS: LayerControlDefinition<SegmentationUserLayer>[] = [
+  {
+    label: "Stop Layer", // Adjust the label as needed
+    toolJson: json_keys.STOP_LAYER,
+    // ... other properties (toolJson, isValid, title) based on your requirements
+    ...rangeLayerControl((layer) => ({
+      value: layer.displayState.stopLayer,
+      options: { min: 0.0, max: 10, step: 1.0 },
+    })), // Integrate your getter function
+  },
+];
+
 class GrapheneGraphSource extends SegmentationGraphSource {
   public graphServer: GrapheneGraphServerInterface;
   private l2CacheAvailable: boolean | undefined = undefined;
@@ -2141,8 +2166,12 @@ class GrapheneGraphSource extends SegmentationGraphSource {
     );
   }
 
-  getRoot(segment: bigint, timestamp?: number) {
-    return this.graphServer.getRoot(segment, timestamp);
+  getRoot(segment: bigint, timestamp?: number, stopLayer?: number) {
+    return this.graphServer.getRoot(
+      segment,
+      timestamp,
+      stopLayer ? (stopLayer > 0 ? stopLayer : undefined) : undefined,
+    );
   }
 
   async isL2CacheUrlAvailable() {
@@ -2255,7 +2284,14 @@ class GrapheneGraphSource extends SegmentationGraphSource {
         title: "Find Path",
       }),
     );
+    for (const control of LAYER_CONTROLS) {
+      toolbox.appendChild(
+        addLayerControlToOptionsTab(tab, layer, tab.visibility, control),
+      );
+    }
+
     parent.appendChild(toolbox);
+
     parent.appendChild(
       context.registerDisposer(
         new MulticutAnnotationLayerView(layer, layer.annotationDisplayState),

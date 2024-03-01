@@ -127,6 +127,7 @@ import {
   verifyFiniteNonNegativeFloat,
   verifyObjectAsMap,
   verifyOptionalObjectProperty,
+  verifyPositiveInt,
   verifyString,
   verifyStringArray,
 } from "#src/util/json.js";
@@ -574,6 +575,7 @@ class SegmentationUserLayerDisplayState implements SegmentationDisplayState {
   );
   objectAlpha = trackableAlphaValue(1.0);
   ignoreNullVisibleSet = new TrackableBoolean(true, true);
+  stopLayer = new TrackableValue<number>(0, verifyPositiveInt);
   skeletonRenderingOptions = new SkeletonRenderingOptions();
   shaderError = makeWatchableShaderError();
   renderScaleHistogram = new RenderScaleHistogram();
