@@ -39,6 +39,7 @@ import { WithParameters } from "#src/chunk_manager/frontend.js";
 import { makeIdentityTransform } from "#src/coordinate_transform.js";
 import { WithCredentialsProvider } from "#src/credentials_provider/chunk_source_frontend.js";
 import type { CredentialsManager } from "#src/credentials_provider/index.js";
+
 import type {
   ChunkedGraphChunkSource as ChunkedGraphChunkSourceInterface,
   ChunkedGraphChunkSpecification,
@@ -84,6 +85,7 @@ import type {
 import type { LoadedDataSubsource } from "#src/layer/layer_data_source.js";
 import { LoadedLayerDataSource } from "#src/layer/layer_data_source.js";
 import { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
+import * as json_keys from "#src/layer/segmentation/json_keys.js";
 import { MeshSource } from "#src/mesh/frontend.js";
 import type { DisplayDimensionRenderInfo } from "#src/navigation_state.js";
 import type {
@@ -214,6 +216,9 @@ import {
   addLayerControlToOptionsTab,
   registerLayerControl,
 } from "#src/widget/layer_control.js";
+import type { LayerControlDefinition } from "#src/widget/layer_control.js";
+import { rangeLayerControl } from "#src/widget/layer_control_range.js";
+
 
 function vec4FromVec3(vec: vec3, alpha = 0) {
   const res = vec4.clone([...vec]);
@@ -1676,7 +1681,7 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       const segmentConst = segmentId.clone();
       if (added && isBaseSegment) {
         this.graph
-          .getRoot(segmentConst, segmentsState.timestamp.value)
+          .getRoot(segmentConst, segmentsState.timestamp.value, this.layer.displayState.stopLayer.value)
           .then((rootId) => {
             if (segmentsState.visibleSegments.has(segmentConst)) {
               segmentsState.visibleSegments.add(rootId);
@@ -1952,7 +1957,7 @@ async function withErrorMessageHTTP(
   },
 ): Promise<Response> {
   let status: StatusMessage | undefined = undefined;
-  let dispose = () => {};
+  let dispose = () => { };
   if (options.initialMessage) {
     status = new StatusMessage(true);
     status.setText(options.initialMessage);
@@ -1995,7 +2000,7 @@ class GrapheneGraphServerInterface {
   constructor(
     private url: string,
     private credentialsProvider: SpecialProtocolCredentialsProvider,
-  ) {}
+  ) { }
 
   async getTimestampLimit() {
     const response = await cancellableFetchSpecialOk(
@@ -2008,12 +2013,14 @@ class GrapheneGraphServerInterface {
     return new Date(isoString).valueOf();
   }
 
-  async getRoot(segment: Uint64, timestamp = 0) {
+  async getRoot(segment: Uint64, timestamp = 0, stop_layer: number | undefined = undefined) {
     const timestampEpoch = timestamp / 1000;
 
-    const url = `${this.url}/node/${String(segment)}/root?int64_as_str=1${
-      timestamp > 0 ? `&timestamp=${timestampEpoch}` : ""
-    }`;
+    let url = `${this.url}/node/${String(segment)}/root?int64_as_str=1${timestamp > 0 ? `&timestamp=${timestampEpoch}` : ""
+      }`;
+    if (stop_layer !== undefined) {
+      url += "&stop_layer=" + stop_layer;
+    }
 
     const promise = cancellableFetchSpecialOk(
       this.credentialsProvider,
@@ -2105,9 +2112,8 @@ class GrapheneGraphServerInterface {
     flipResult = false,
   ): Promise<Uint64[]> {
     const timestampEpoch = timestamp / 1000;
-    const url = `${this.url}/is_latest_roots${
-      timestamp > 0 ? `?timestamp=${timestampEpoch}` : ""
-    }`;
+    const url = `${this.url}/is_latest_roots${timestamp > 0 ? `?timestamp=${timestampEpoch}` : ""
+      }`;
     const promise = cancellableFetchSpecialOk(
       this.credentialsProvider,
       url,
@@ -2184,6 +2190,17 @@ class GrapheneGraphServerInterface {
   }
 }
 
+export const LAYER_CONTROLS: LayerControlDefinition<SegmentationUserLayer>[] = [
+  {
+    label: "Stop Layer", // Adjust the label as needed
+    toolJson: json_keys.STOP_LAYER,
+    // ... other properties (toolJson, isValid, title) based on your requirements
+    ...rangeLayerControl((layer) => ({
+      value: layer.displayState.stopLayer,
+      options: { min: 0.0, max: 10, step: 1.0 }
+    })), // Integrate your getter function
+  }]
+
 class GrapheneGraphSource extends SegmentationGraphSource {
   public graphServer: GrapheneGraphServerInterface;
   private l2CacheAvailable: boolean | undefined = undefined;
@@ -2238,8 +2255,13 @@ class GrapheneGraphSource extends SegmentationGraphSource {
     }
   }
 
-  getRoot(segment: Uint64, timestamp?: number) {
-    return this.graphServer.getRoot(segment, timestamp);
+  getRoot(segment: Uint64, stop_layer: number) {
+    if (stop_layer > 0) {
+      return this.graphServer.getRoot(segment, "", stop_layer);
+    }
+    else {
+      return this.graphServer.getRoot(segment);
+    }
   }
 
   async findPath(
@@ -2326,7 +2348,15 @@ class GrapheneGraphSource extends SegmentationGraphSource {
         title: "Find Path",
       }),
     );
+    for (const control of LAYER_CONTROLS) {
+      toolbox.appendChild(
+        addLayerControlToOptionsTab(tab, layer, tab.visibility, control),
+      );
+    }
+
+
     parent.appendChild(toolbox);
+
     parent.appendChild(
       context.registerDisposer(
         new MulticutAnnotationLayerView(layer, layer.annotationDisplayState),
@@ -2360,10 +2390,10 @@ class GrapheneGraphSource extends SegmentationGraphSource {
   }
 }
 
+
 class ChunkedGraphChunkSource
   extends SliceViewChunkSource
-  implements ChunkedGraphChunkSourceInterface
-{
+  implements ChunkedGraphChunkSourceInterface {
   spec: ChunkedGraphChunkSpecification;
   OPTIONS: { spec: ChunkedGraphChunkSpecification };
 
@@ -2382,7 +2412,7 @@ class GrapheneChunkedGraphChunkSource extends WithParameters(
     ChunkedGraphChunkSource,
   ),
   ChunkedGraphSourceParameters,
-) {}
+) { }
 
 type ChunkedGraphLayerDisplayState = SegmentationDisplayState3D;
 
@@ -2429,7 +2459,7 @@ class SliceViewPanelChunkedGraphLayer extends SliceViewPanelRenderLayer {
     );
     const sharedObject =
       (this.sharedObject =
-      this.backend =
+        this.backend =
         this.registerDisposer(
           new SegmentationLayerSharedObject(
             chunkManager,
@@ -2740,7 +2770,7 @@ function timeLayerControl(): LayerControlFactory<SegmentationUserLayer> {
       controlElement.appendChild(widget.element);
       return { controlElement, control: widget };
     },
-    activateTool: (_activation) => {},
+    activateTool: (_activation) => { },
   };
 }
 
