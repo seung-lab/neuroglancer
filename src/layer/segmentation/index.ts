@@ -122,6 +122,7 @@ import {
   verifyFiniteNonNegativeFloat,
   verifyObjectAsMap,
   verifyOptionalObjectProperty,
+  verifyPositiveInt,
   verifyString,
 } from "#src/util/json.js";
 import { Signal } from "#src/util/signal.js";
@@ -485,6 +486,7 @@ class SegmentationUserLayerDisplayState implements SegmentationDisplayState {
   );
   objectAlpha = trackableAlphaValue(1.0);
   ignoreNullVisibleSet = new TrackableBoolean(true, true);
+  stopLayer = new TrackableValue<number>(0, verifyPositiveInt);
   skeletonRenderingOptions = new SkeletonRenderingOptions();
   shaderError = makeWatchableShaderError();
   renderScaleHistogram = new RenderScaleHistogram();
@@ -595,7 +597,11 @@ export class SegmentationUserLayer extends Base {
   };
 
   displayState = new SegmentationUserLayerDisplayState(this);
-
+  stopLayer = new TrackableValue<number>(
+    0,
+    verifyFiniteNonNegativeFloat,
+    0,
+  );
   anchorSegment = new TrackableValue<Uint64 | undefined>(undefined, (x) =>
     x === undefined ? undefined : Uint64.parseString(x),
   );

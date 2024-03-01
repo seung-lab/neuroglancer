@@ -32,6 +32,7 @@ import type { ChunkManager, WithParameters } from "#src/chunk_manager/frontend.j
 import { makeIdentityTransform } from "#src/coordinate_transform.js";
 import { WithCredentialsProvider } from "#src/credentials_provider/chunk_source_frontend.js";
 import type { CredentialsManager } from "#src/credentials_provider/index.js";
+
 import type {
   ChunkedGraphChunkSource as ChunkedGraphChunkSourceInterface,
   ChunkedGraphChunkSpecification,
@@ -78,6 +79,7 @@ import type {
 import type { LoadedDataSubsource } from "#src/layer/layer_data_source.js";
 import { LoadedLayerDataSource } from "#src/layer/layer_data_source.js";
 import { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
+import * as json_keys from "#src/layer/segmentation/json_keys.js";
 import { MeshSource } from "#src/mesh/frontend.js";
 import type { DisplayDimensionRenderInfo } from "#src/navigation_state.js";
 import type {
@@ -205,6 +207,10 @@ import {
   CancellationTokenSource,
 } from "#src/util/cancellation";
 import { debounce } from "lodash";
+import type { LayerControlDefinition } from "#src/widget/layer_control.js";
+import { addLayerControlToOptionsTab } from "#src/widget/layer_control.js";
+import { rangeLayerControl } from "#src/widget/layer_control_range.js";
+
 
 function vec4FromVec3(vec: vec3, alpha = 0) {
   const res = vec4.clone([...vec]);
@@ -1626,7 +1632,7 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       );
       const segmentConst = segmentId.clone();
       if (added && isBaseSegment) {
-        this.graph.getRoot(segmentConst).then((rootId) => {
+        this.graph.getRoot(segmentConst, this.layer.displayState.stopLayer.value).then((rootId) => {
           if (segmentsState.visibleSegments.has(segmentConst)) {
             segmentsState.visibleSegments.add(rootId);
           }
@@ -1952,11 +1958,14 @@ class GrapheneGraphServerInterface {
     private credentialsProvider: SpecialProtocolCredentialsProvider,
   ) { }
 
-  async getRoot(segment: Uint64, timestamp = "") {
+  async getRoot(segment: Uint64, timestamp = "", stop_layer: number | undefined = undefined) {
     const timestampEpoch = new Date(timestamp).valueOf() / 1000;
 
-    const url = `${this.url}/node/${String(segment)}/root?int64_as_str=1${Number.isNaN(timestampEpoch) ? "" : `&timestamp=${timestampEpoch}`
+    let url = `${this.url}/node/${String(segment)}/root?int64_as_str=1${Number.isNaN(timestampEpoch) ? "" : `&timestamp=${timestampEpoch}`
       }`;
+    if (stop_layer !== undefined) {
+      url += "&stop_layer=" + stop_layer;
+    }
 
     const promise = cancellableFetchSpecialOk(
       this.credentialsProvider,
@@ -2125,6 +2134,17 @@ class GrapheneGraphServerInterface {
   }
 }
 
+export const LAYER_CONTROLS: LayerControlDefinition<SegmentationUserLayer>[] = [
+  {
+    label: "Stop Layer", // Adjust the label as needed
+    toolJson: json_keys.STOP_LAYER,
+    // ... other properties (toolJson, isValid, title) based on your requirements
+    ...rangeLayerControl((layer) => ({
+      value: layer.displayState.stopLayer,
+      options: { min: 0.0, max: 10, step: 1.0 }
+    })), // Integrate your getter function
+  }]
+
 class GrapheneGraphSource extends SegmentationGraphSource {
   private connections = new Set<GraphConnection>();
   public graphServer: GrapheneGraphServerInterface;
@@ -2188,8 +2208,14 @@ class GrapheneGraphSource extends SegmentationGraphSource {
     }
   }
 
-  getRoot(segment: Uint64) {
-    return this.graphServer.getRoot(segment);
+
+  getRoot(segment: Uint64, stop_layer: number) {
+    if (stop_layer > 0) {
+      return this.graphServer.getRoot(segment, "", stop_layer);
+    }
+    else {
+      return this.graphServer.getRoot(segment);
+    }
   }
 
   async findPath(
@@ -2276,7 +2302,15 @@ class GrapheneGraphSource extends SegmentationGraphSource {
         title: "Find Path",
       }),
     );
+    for (const control of LAYER_CONTROLS) {
+      toolbox.appendChild(
+        addLayerControlToOptionsTab(tab, layer, tab.visibility, control),
+      );
+    }
+
+
     parent.appendChild(toolbox);
+
     parent.appendChild(
       context.registerDisposer(
         new MulticutAnnotationLayerView(layer, layer.annotationDisplayState),
@@ -2309,6 +2343,7 @@ class GrapheneGraphSource extends SegmentationGraphSource {
     };
   }
 }
+
 
 class ChunkedGraphChunkSource
   extends SliceViewChunkSource
