@@ -50,7 +50,7 @@ jobs:
         run: echo ${{ env.BUILD_INFO }} >> src/version.json
         shell: bash
       - name: Build client bundles
-        run: node ./config/esbuild-cli.js --config=min --no-typecheck --define STATE_SERVERS=$(cat config/state_servers.json | tr -d " \t\n\r") --define NEUROGLANCER_BUILD_INFO='${{ env.BUILD_INFO }}' --define CUSTOM_BINDINGS=$(cat config/custom-keybinds.json | tr -d " \t\n\r")
+        run: npm run build -- --no-typecheck --no-lint
       - run: cp -r ./dist/min appengine/frontend/static/
       - name: start deployment
         uses: bobheadxi/deployments@v1
