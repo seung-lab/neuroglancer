@@ -24,7 +24,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v1
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
       - uses: actions/cache@v3
@@ -66,7 +66,7 @@ jobs:
           workload_identity_provider: "projects/483670036293/locations/global/workloadIdentityPools/neuroglancer-github/providers/github"
           service_account: "chris-apps-deploy@seung-lab.iam.gserviceaccount.com"
       - id: deploy
-        uses: google-github-actions/deploy-appengine@main
+        uses: google-github-actions/deploy-appengine@v1
         with:
           version: ${{ env.GITHUB_SHA }}
           deliverables: appengine/frontend/app.yaml
