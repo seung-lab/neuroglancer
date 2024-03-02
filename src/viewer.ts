@@ -93,7 +93,7 @@ import { SelectionDetailsPanel } from "#src/ui/selection_details.js";
 import { SidePanelManager } from "#src/ui/side_panel.js";
 import { StateEditorDialog } from "#src/ui/state_editor.js";
 import { StatisticsDisplayState, StatisticsPanel } from "#src/ui/statistics.js";
-import { GlobalToolBinder, LocalToolBinder, Tool } from "#src/ui/tool.js";
+import { type Tool, GlobalToolBinder, LocalToolBinder } from "#src/ui/tool.js";
 import {
   ViewerSettingsPanel,
   ViewerSettingsPanelState,
@@ -1124,7 +1124,7 @@ export class Viewer extends RefCounted implements ViewerState {
     new LocalToolBinder(this, this.globalToolBinder),
   );
 
-  activateTool(key: string, tool?: Tool<Object>) {
+  activateTool(key: string, tool?: Tool<object>) {
     this.globalToolBinder.activate(key, tool);
   }
 

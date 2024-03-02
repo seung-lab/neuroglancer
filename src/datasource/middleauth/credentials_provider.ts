@@ -22,15 +22,16 @@ import {
   CredentialsProvider,
   makeCredentialsGetter,
 } from "#src/credentials_provider/index.js";
+import { type OAuth2Credentials } from "#src/credentials_provider/oauth2.js";
 import { StatusMessage } from "#src/status.js";
+import { type HttpError } from "#src/util/http_request.js";
 import {
   verifyObject,
   verifyObjectProperty,
   verifyString,
   verifyStringArray,
 } from "#src/util/json.js";
-import { HttpError } from "#src/util/http_request";
-import { OAuth2Credentials } from "#src/credentials_provider/oauth2";
+
 
 export type MiddleAuthToken = {
   tokenType: string;

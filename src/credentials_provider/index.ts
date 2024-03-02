@@ -17,14 +17,15 @@
 /**
  * @file Generic facility for providing authentication/authorization credentials.
  */
-
+import { type OAuth2Credentials } from "#src/credentials_provider/oauth2.js";
 import type { CancellationToken } from "#src/util/cancellation.js";
 import { MultipleConsumerCancellationTokenSource } from "#src/util/cancellation.js";
 import type { Owned } from "#src/util/disposable.js";
 import { RefCounted } from "#src/util/disposable.js";
+import { type HttpError } from "#src/util/http_request.js";
 import { StringMemoize } from "#src/util/memoize.js";
-import { HttpError } from "#src/util/http_request";
-import { OAuth2Credentials } from "#src/credentials_provider/oauth2";
+
+
 
 /**
  * Wraps an arbitrary JSON credentials object with a generation number.

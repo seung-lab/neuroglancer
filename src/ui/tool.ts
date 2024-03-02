@@ -129,7 +129,7 @@ export abstract class LegacyTool<
   }
   abstract trigger(mouseState: MouseSelectionState): void;
   abstract toJSON(): any;
-  deactivate(): void {}
+  deactivate(): void { }
   abstract description: string;
   unbind() {
     const { layer } = this;
@@ -318,7 +318,7 @@ export class GlobalToolBinder extends RefCounted {
     this.changed.dispatch();
   }
 
-  activate(key: string, tool?: Tool<Object>): Borrowed<Tool> | undefined {
+  activate(key: string, tool?: Tool<object>): Borrowed<Tool> | undefined {
     tool = tool || this.get(key);
     if (tool === undefined) {
       this.deactivate_();

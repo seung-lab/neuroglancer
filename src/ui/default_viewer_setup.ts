@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+import { type UserLayer, type UserLayerConstructor, layerTypes } from "#src/layer/index.js";
 import { StatusMessage } from "#src/status.js";
 import {
   bindDefaultCopyHandler,
@@ -23,15 +23,16 @@ import { setDefaultInputEventBindings } from "#src/ui/default_input_event_bindin
 import { makeDefaultViewer } from "#src/ui/default_viewer.js";
 import type { MinimalViewerOptions } from "#src/ui/minimal_viewer.js";
 import { bindTitle } from "#src/ui/title.js";
+import { type Tool, restoreTool } from "#src/ui/tool.js";
 import { UrlHashBinding } from "#src/ui/url_hash_binding.js";
-import { UserLayer, UserLayerConstructor } from "#src/layer";
-import { Tool, restoreTool } from "./tool";
-import { SegmentationUserLayer } from "#src/segmentation_user_layer";
 import {
   verifyObject,
   verifyObjectProperty,
   verifyString,
-} from "#src/util/json";
+} from "#src/util/json.js";
+
+
+
 
 declare let NEUROGLANCER_DEFAULT_STATE_FRAGMENT: string | undefined;
 
@@ -63,7 +64,7 @@ export function setupDefaultViewer(options?: Partial<MinimalViewerOptions>) {
     desiredLayerType: UserLayerConstructor,
     desiredProvider?: string,
   ) => {
-    let previousTool: Tool<Object> | undefined;
+    let previousTool: Tool<object> | undefined;
     let previousLayer: UserLayer | undefined;
     if (typeof obj === "string") {
       obj = { type: obj };

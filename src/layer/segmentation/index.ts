@@ -107,6 +107,7 @@ import { DisplayOptionsTab } from "#src/ui/segmentation_display_options_tab.js";
 import { Uint64Map } from "#src/uint64_map.js";
 import { Uint64OrderedSet } from "#src/uint64_ordered_set.js";
 import { Uint64Set } from "#src/uint64_set.js";
+import { gatherUpdate } from "#src/util/array.js";
 import {
   packColor,
   parseRGBColorSpecification,
@@ -130,7 +131,6 @@ import { Uint64 } from "#src/util/uint64.js";
 import { makeWatchableShaderError } from "#src/webgl/dynamic_shader.js";
 import type { DependentViewContext } from "#src/widget/dependent_view_widget.js";
 import { registerLayerShaderControlsTool } from "#src/widget/shader_controls.js";
-import { gatherUpdate } from "#src/util/array";
 
 export const SKELETON_RENDERING_SHADER_CONTROL_TOOL_ID =
   "skeletonShaderControl";

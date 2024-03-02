@@ -15,20 +15,23 @@
  */
 
 import "#src/datasource/graphene/graphene.css";
+import { debounce } from "lodash-es";
 import {
   AnnotationDisplayState,
   AnnotationLayerState,
 } from "#src/annotation/annotation_layer_state.js";
-import type {
-  AnnotationReference,
-  Annotation,
-  AnnotationSource,
-  AnnotationType,
-  Line,
-  Point,
+import { type MultiscaleAnnotationSource } from "#src/annotation/frontend_source.js";
+import {
+  type AnnotationReference,
+  type Annotation,
+  type AnnotationSource, AnnotationType,
+  type Line,
+  type Point,
+  LocalAnnotationSource,
+  makeDataBoundsBoundingBoxAnnotationSet,
 } from "#src/annotation/index.js";
 import { LayerChunkProgressInfo } from "#src/chunk_manager/base.js";
-import type { ChunkManager, WithParameters } from "#src/chunk_manager/frontend.js";
+import { type ChunkManager, WithParameters } from "#src/chunk_manager/frontend.js";
 import { makeIdentityTransform } from "#src/coordinate_transform.js";
 import { WithCredentialsProvider } from "#src/credentials_provider/chunk_source_frontend.js";
 import type { CredentialsManager } from "#src/credentials_provider/index.js";
@@ -38,7 +41,6 @@ import type {
   ChunkedGraphChunkSpecification,
   MultiscaleMeshMetadata,
 } from "#src/datasource/graphene/base.js";
-import { MultiscaleAnnotationSource } from "#src/annotation/frontend_source";
 import {
   CHUNKED_GRAPH_LAYER_RPC_ID,
   CHUNKED_GRAPH_RENDER_LAYER_UPDATE_SOURCES_RPC_ID,
@@ -145,19 +147,24 @@ import {
   MergedAnnotationStates,
   PlaceLineTool,
 } from "#src/ui/annotations.js";
-import { getDefaultAnnotationListBindings } from "#src/ui/default_input_event_bindings";
+import { getDefaultAnnotationListBindings } from "#src/ui/default_input_event_bindings.js";
 import {
   LayerTool,
   makeToolActivationStatusMessageWithHeader,
   makeToolButton,
   registerLegacyTool,
   registerTool,
-  ToolActivation
+  type ToolActivation
 } from "#src/ui/tool.js";
-import type { Uint64Set } from "#src/uint64_set.js";
+import { Uint64Set } from "#src/uint64_set.js";
+import {
+  type CancellationToken,
+  CancellationTokenSource,
+} from "#src/util/cancellation.js";
 import { packColor } from "#src/util/color.js";
-import type { Owned, RefCounted } from "#src/util/disposable.js";
-import { ValueOrError, makeValueOrError, valueOrThrow } from "#src/util/error.js";
+import { type Owned, RefCounted } from "#src/util/disposable.js";
+import { removeChildren } from "#src/util/dom.js";
+import { type ValueOrError, makeValueOrError, valueOrThrow } from "#src/util/error.js";
 import { EventActionMap } from "#src/util/event_action_map.js";
 import { mat4, vec3, vec4 } from "#src/util/geom.js";
 import {
@@ -165,7 +172,7 @@ import {
   isNotFoundError,
   responseJson,
 } from "#src/util/http_request.js";
-import { removeChildren } from "#src/util/dom";
+
 import {
   parseArray,
   parseFixedLengthArray,
@@ -186,13 +193,13 @@ import {
   verifyString,
   verifyStringArray
 } from "#src/util/json.js";
+import { MouseEventBinder } from "#src/util/mouse_bindings.js";
 import { getObjectId } from "#src/util/object_id.js";
 import { NullarySignal } from "#src/util/signal.js";
 import type {
   SpecialProtocolCredentials,
   SpecialProtocolCredentialsProvider,
 } from "#src/util/special_protocol_request.js";
-import { MouseEventBinder } from "#src/util/mouse_bindings";
 import {
   cancellableFetchSpecialOk,
   parseSpecialUrl,
@@ -202,11 +209,7 @@ import { Uint64 } from "#src/util/uint64.js";
 import { makeDeleteButton } from "#src/widget/delete_button.js";
 import type { DependentViewContext } from "#src/widget/dependent_view_widget.js";
 import { makeIcon } from "#src/widget/icon.js";
-import {
-  CancellationToken,
-  CancellationTokenSource,
-} from "#src/util/cancellation";
-import { debounce } from "lodash";
+
 import type { LayerControlDefinition } from "#src/widget/layer_control.js";
 import { addLayerControlToOptionsTab } from "#src/widget/layer_control.js";
 import { rangeLayerControl } from "#src/widget/layer_control_range.js";

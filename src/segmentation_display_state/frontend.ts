@@ -55,16 +55,16 @@ import {
 } from "#src/util/color.js";
 import { RefCounted } from "#src/util/disposable.js";
 import { measureElementClone } from "#src/util/dom.js";
-import type { vec3 } from "#src/util/geom.js";
-import { kOneVec, vec4 } from "#src/util/geom.js";
+import { vec3, kOneVec, vec4 } from "#src/util/geom.js";
 import { NullarySignal } from "#src/util/signal.js";
 import { Uint64 } from "#src/util/uint64.js";
 import { withSharedVisibility } from "#src/visibility_priority/frontend.js";
+import { ColorWidget } from "#src/widget/color.js";
 import { makeCopyButton } from "#src/widget/copy_button.js";
 import { makeEyeButton } from "#src/widget/eye_button.js";
 import { makeFilterButton } from "#src/widget/filter_button.js";
 import { makeStarButton } from "#src/widget/star_button.js";
-import { ColorWidget } from "#src/widget/color";
+
 
 export class Uint64MapEntry {
   constructor(
