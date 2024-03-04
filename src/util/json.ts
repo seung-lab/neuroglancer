@@ -704,7 +704,7 @@ export function verifyFloatArray(a: unknown) {
   if (!Array.isArray(a)) {
     throw new Error(`Expected array, received: ${JSON.stringify(a)}.`);
   }
-  for (let x of a) {
+  for (const x of a) {
     verifyFloat(x);
   }
   return <number[]>a;

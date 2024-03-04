@@ -18,6 +18,7 @@ import {
   AnnotationDisplayState,
   AnnotationLayerState,
 } from "#src/annotation/annotation_layer_state.js";
+import { type MultiscaleAnnotationSource } from '#src/annotation/frontend_source.js';
 import type {
   AnnotationReference,
   Line,
@@ -30,7 +31,6 @@ import {
   LocalAnnotationSource,
   makeDataBoundsBoundingBoxAnnotationSet,
 } from "#src/annotation/index.js";
-import { MultiscaleAnnotationSource } from '#src/annotation/frontend_source.js';
 import { LayerChunkProgressInfo } from "#src/chunk_manager/base.js";
 import type { ChunkManager } from "#src/chunk_manager/frontend.js";
 import { WithParameters } from "#src/chunk_manager/frontend.js";
@@ -159,6 +159,7 @@ import {
   registerTool,
 } from "#src/ui/tool.js";
 import { Uint64Set } from "#src/uint64_set.js";
+import { type CancellationToken, CancellationTokenSource } from '#src/util/cancellation.js';
 import { packColor } from "#src/util/color.js";
 import type { Owned } from "#src/util/disposable.js";
 import { RefCounted } from "#src/util/disposable.js";
@@ -210,7 +211,6 @@ import { Uint64 } from "#src/util/uint64.js";
 import { makeDeleteButton } from "#src/widget/delete_button.js";
 import type { DependentViewContext } from "#src/widget/dependent_view_widget.js";
 import { makeIcon } from "#src/widget/icon.js";
-import { CancellationToken, CancellationTokenSource } from '#src/util/cancellation.js';
 
 
 function vec4FromVec3(vec: vec3, alpha = 0) {
@@ -1989,7 +1989,7 @@ class GrapheneGraphServerInterface {
     });
     const jsonResponse = await response.json();
     const supervoxelCentroidsKey = 'centroids_list';
-    let centroids = verifyObjectProperty(
+    const centroids = verifyObjectProperty(
       jsonResponse, supervoxelCentroidsKey, x => parseArray(x, verifyFloatArray));
     const missingL2IdsKey = 'failed_l2_ids';
     const missingL2Ids = jsonResponse[missingL2IdsKey];
