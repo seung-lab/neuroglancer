@@ -14,5 +14,6 @@
     "tool": "grapheneFindPath",
     "provider": "graphene"
   },
-  "keyx": false
+  "keyx": false,
+  "control+shift+keyx": "clear-segments"
 }
