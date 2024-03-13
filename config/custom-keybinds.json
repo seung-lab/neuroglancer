@@ -22,5 +22,8 @@
   },
   "keyx": {
     "action": false
+  },
+  "control+shift+keyx": {
+    "action": "clear-segments"
   }
 }
