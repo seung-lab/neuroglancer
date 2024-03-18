@@ -62,7 +62,6 @@ async function authFetchOk(
     input: RequestInfo, init?: RequestInit, handleError = true): Promise<Response> {
   try {
     const res = await fetch(input, init);
-    alert(`authFetchOk status ${res.status}`);
     console.log("authFetchOk status", res.status);
 
     if (res.status === 400 || res.status === 401) {
