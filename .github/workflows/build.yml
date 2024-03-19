@@ -49,9 +49,9 @@ jobs:
       - name: Build client bundles
         run: npm run build -- --no-typecheck --no-lint --define STATE_SERVERS=$(cat config/state_servers.json | tr -d " \t\n\r") --define NEUROGLANCER_BUILD_INFO='${{ env.BUILD_INFO }}' --define CUSTOM_BINDINGS=$(cat config/custom-keybinds.json | tr -d " \t\n\r")
       - name: Write build info
-        run: echo $BUILD_INFO > ./dist/min/version.json
+        run: echo $BUILD_INFO > ./dist/client/version.json
         shell: bash
-      - run: cp -r ./dist/min appengine/frontend/static/
+      - run: cp -r ./dist/client appengine/frontend/static/
       - name: start deployment
         uses: bobheadxi/deployments@v1
         id: deployment
