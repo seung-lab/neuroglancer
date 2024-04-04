@@ -349,7 +349,7 @@ export class AnnotationLayerView extends Tab {
         refCounted.registerDisposer(
           source.chunkManager.chunkQueueManager.visibleChunksChanged.add(
             debounce(() => {
-              console.log("calling force update view!");
+              // console.log("calling force update view!");
               this.forceUpdateView();
             }, 1000),
           ),

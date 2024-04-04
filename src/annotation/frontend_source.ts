@@ -217,7 +217,7 @@ export class AnnotationGeometryChunkSource extends SliceViewChunkSource<
 
   addChunk(key: string, chunk: AnnotationGeometryChunk) {
     super.addChunk(key, chunk);
-    // console.log("add chunk", key);
+    console.log("addChunk", key);
     // TODO: process local deletions
   }
 
@@ -638,9 +638,15 @@ export class MultiscaleAnnotationSource
         const chunk = chunks.get(tempChunk.join());
         if (chunk !== undefined) {
           console.log(
-            "we got a chunk",
-            chunk.chunkGridPosition,
-            source.spec.chunkDataSize,
+            "chunk exists",
+            tempChunk.join(),
+            'size',
+            source.spec.chunkDataSize.toString(),
+          );
+        } else {
+          console.log(
+            "no chunk for key",
+            tempChunk.join(),
           );
         }
       }
@@ -732,7 +738,7 @@ export class MultiscaleAnnotationSource
         // currently not working well because the chunk calculation is off so we end up using a low
         // level chunk
         const chunk = source.chunks.get(sortChunk.join(","));
-        console.log("checking for chunk", sortChunk.join(","));
+        // console.log("checking for chunk", sortChunk.join(","));
         if (chunk) {
           const { data } = chunk;
           if (data === undefined) continue;
