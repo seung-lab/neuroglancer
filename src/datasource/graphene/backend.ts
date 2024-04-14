@@ -466,6 +466,7 @@ export class ChunkedGraphLayer extends withSegmentationLayerBackendState(
 
           forEachVisibleSegment(this, (segment, _) => {
             if (isBaseSegmentId(segment, this.nBitsForLayerId.value)) return; // TODO maybe support highBitRepresentation?
+            // TODO
             const chunk = source.getChunk(curPositionInChunks, segment.clone());
             chunkManager.requestChunk(
               chunk,
