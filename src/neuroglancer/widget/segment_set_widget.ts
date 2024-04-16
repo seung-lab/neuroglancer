@@ -58,7 +58,10 @@ export class SegmentSetWidget extends RefCounted {
     return this.displayState.segmentSelectionState;
   }
 
-  constructor(public displayState: SegmentationDisplayState) {
+  constructor(
+      public displayState: SegmentationDisplayState,
+      private messageWithUndo:
+          (message: string, actionMessage?: string, closeAfter?: number) => void) {
     super();
     this.createTopButtons();
     this.registerDisposer(displayState.rootSegments.changed.add((x, add) => {
@@ -290,22 +293,39 @@ export class SegmentSetWidget extends RefCounted {
       HTMLInputElement => {
         temp.tryParseString(segmentIDString, 10);
         const trackableRGB = new TrackableRGB(vec3.fromValues(0, 0, 0));
+        const colorWidget = new ColorWidget(trackableRGB);
+        colorWidget.element.title = 'Left click to select color; right click to reset to default.';
         if (this.displayState.segmentStatedColors.has(temp)) {
           this.displayState.segmentStatedColors.get(temp, temp);
           trackableRGB.restoreState(SegmentSetWidget.Uint64ToCSSColor(temp));
+          colorWidget.element.classList.add('stated-color');
         } else {
           trackableRGB.restoreState(this.segmentColorHash.computeCssColor(temp));
         }
         this.segmentColors.set(segmentIDString, trackableRGB);
-        const colorWidget = new ColorWidget(trackableRGB);
+        let deletingColor = false;
+        this.registerEventListener(colorWidget.element, 'contextmenu', () => {
+          temp.tryParseString(segmentIDString, 10);
+          if (this.displayState.segmentStatedColors.has(temp)) {
+            this.messageWithUndo(`Color reset for ${segmentIDString}.`, 'Undo?', 6000);
+            deletingColor = true;
+            this.displayState.segmentStatedColors.delete(temp);
+            deletingColor = false;
+          }
+        });
         trackableRGB.changed.add(() => {
           if (this.colorChangeEventsEnabled) {
             temp.tryParseString(segmentIDString, 10);
-            const testU = new Uint64(packColor(trackableRGB.value));
             // Disable signal to stop cycle of firing events
             this.colorChangeEventsEnabled = false;
-            this.displayState.segmentStatedColors.delete(temp);
-            this.displayState.segmentStatedColors.set(temp, testU);
+            if (deletingColor) {
+              colorWidget.element.classList.remove('stated-color');
+            } else {
+              this.displayState.segmentStatedColors.delete(temp);
+              const testU = new Uint64(packColor(trackableRGB.value));
+              this.displayState.segmentStatedColors.set(temp, testU);
+              colorWidget.element.classList.add('stated-color');
+            }
             this.colorChangeEventsEnabled = true;
             this.setItemButtonColor(itemElement);
           }
@@ -323,19 +343,19 @@ export class SegmentSetWidget extends RefCounted {
       }
     } else if (added) {
       const segmentIDString = x.toString();
-      const segmentColor = this.segmentColors.get(segmentIDString);
-      if (segmentColor) {
+      const trackableRGB = this.segmentColors.get(segmentIDString);
+      if (trackableRGB) {
         // A selected segment's color has been updated
         this.displayState.segmentStatedColors.get(x, temp);
-        segmentColor.restoreState(SegmentSetWidget.Uint64ToCSSColor(temp));
+        trackableRGB.restoreState(SegmentSetWidget.Uint64ToCSSColor(temp));
       }
     } else {
       const segmentIDString = x.toString();
-      const segmentColor = this.segmentColors.get(segmentIDString);
-      if (segmentColor) {
+      const trackableRGB = this.segmentColors.get(segmentIDString);
+      if (trackableRGB) {
         // A selected segment's specified color has been deleted, reset its
         // color to the one specified by the hash
-        segmentColor.restoreState(this.segmentColorHash.computeCssColor(x));
+        trackableRGB.restoreState(this.segmentColorHash.computeCssColor(x));
       }
     }
   }
@@ -411,6 +431,7 @@ export class SegmentSetWidget extends RefCounted {
     clearButton.className = 'clear-button';
     clearButton.title = 'Remove all segment IDs';
     this.registerEventListener(clearButton, 'click', () => {
+      this.messageWithUndo('Segments removed.', 'Undo?', 12000);
       this.rootSegments.clear();
       this.hiddenRootSegments!.clear();
     });
