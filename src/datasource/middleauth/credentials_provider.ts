@@ -24,12 +24,14 @@ import {
 } from "#src/credentials_provider/index.js";
 import type { OAuth2Credentials } from "#src/credentials_provider/oauth2.js";
 import { StatusMessage } from "#src/status.js";
+import type { CancellationToken } from "#src/util/cancellation.js";
 import {
   verifyObject,
   verifyObjectProperty,
   verifyString,
   verifyStringArray,
 } from "#src/util/json.js";
+import { Signal } from "#src/util/signal.js";
 import type { HttpError } from "src/util/http_request";
 
 export type MiddleAuthToken = {
@@ -151,24 +153,47 @@ function saveAuthTokenToLocalStorage(authURL: string, value: MiddleAuthToken) {
   );
 }
 
+const middleAuthLoginEvent = new Event("middleauthlogin");
+
 export class MiddleAuthCredentialsProvider extends CredentialsProvider<MiddleAuthToken> {
-  alreadyTriedLocalStorage = false;
+  updated = new Signal();
 
   constructor(private serverUrl: string) {
     super();
   }
-  get = makeCredentialsGetter(async () => {
-    let token = undefined;
-    if (!this.alreadyTriedLocalStorage) {
-      this.alreadyTriedLocalStorage = true;
-      token = getAuthTokenFromLocalStorage(this.serverUrl);
-    }
-    if (!token) {
-      token = await waitForLogin(this.serverUrl);
-      saveAuthTokenToLocalStorage(this.serverUrl, token);
-    }
-    return token;
-  });
+
+  private cachedGet = this.updateCachedGet();
+
+  updateCachedGet() {
+    let alreadyTriedLocalStorage = false;
+    const res = makeCredentialsGetter(async () => {
+      let token = undefined;
+
+      if (!alreadyTriedLocalStorage) {
+        alreadyTriedLocalStorage = true;
+        token = getAuthTokenFromLocalStorage(this.serverUrl);
+      }
+
+      if (!token) {
+        console.log("requesting login");
+        token = await waitForLogin(this.serverUrl);
+        saveAuthTokenToLocalStorage(this.serverUrl, token);
+        window.dispatchEvent(middleAuthLoginEvent);
+      }
+
+      return token;
+    });
+    this.cachedGet = res;
+    this.updated.dispatch();
+    return res;
+  }
+
+  get = (
+    invalidCredentials?: CredentialsWithGeneration<MiddleAuthToken> | undefined,
+    cancellationToken?: CancellationToken | undefined,
+  ) => {
+    return this.cachedGet(invalidCredentials, cancellationToken);
+  };
 }
 
 export class UnverifiedApp extends Error {
@@ -192,26 +217,48 @@ export class MiddleAuthAppCredentialsProvider extends CredentialsProvider<Middle
     super();
   }
 
-  get = makeCredentialsGetter(async () => {
-    if (this.credentials && this.agreedToTos) {
-      return this.credentials.credentials;
-    }
-    this.agreedToTos = false;
-    const authInfo = await fetch(`${this.serverUrl}/auth_info`).then((res) =>
-      res.json(),
-    );
-    const provider = this.credentialsManager.getCredentialsProvider(
-      "middleauth",
-      authInfo.login_url,
-    ) as MiddleAuthCredentialsProvider;
-    this.credentials = await provider.get(this.credentials);
-    if (this.credentials.credentials.appUrls.includes(this.serverUrl)) {
-      return this.credentials.credentials;
-    }
-    const status = new StatusMessage(/*delay=*/ false);
-    status.setText(`middleauth: unverified app ${this.serverUrl}`);
-    throw new UnverifiedApp(this.serverUrl);
-  });
+  private cachedGet = this.updateCachedGet();
+
+  updateCachedGet() {
+    const res = makeCredentialsGetter(async () => {
+      if (this.credentials && this.agreedToTos) {
+        return this.credentials.credentials;
+      }
+      this.agreedToTos = false;
+      const authInfo = await fetch(`${this.serverUrl}/auth_info`).then((res) =>
+        res.json(),
+      );
+      const provider = this.credentialsManager.getCredentialsProvider(
+        "middleauth",
+        authInfo.login_url,
+      ) as MiddleAuthCredentialsProvider;
+      // TODO, so is it always expected that MiddleAuthCredentialsProvider
+      // will be the open to have updateCachedGetcalled initially?
+      const removeHandler = this.registerDisposer(
+        provider.updated.add(() => {
+          removeHandler();
+          this.updateCachedGet();
+        }),
+      );
+      this.credentials = await provider.get(this.credentials);
+      if (this.credentials.credentials.appUrls.includes(this.serverUrl)) {
+        return this.credentials.credentials;
+      } else {
+        const status = new StatusMessage(/*delay=*/ false);
+        status.setText(`middleauth: unverified app ${this.serverUrl}`);
+        throw new UnverifiedApp(this.serverUrl);
+      }
+    });
+    this.cachedGet = res;
+    return res;
+  }
+
+  get = (
+    invalidCredentials?: CredentialsWithGeneration<MiddleAuthToken> | undefined,
+    cancellationToken?: CancellationToken | undefined,
+  ) => {
+    return this.cachedGet(invalidCredentials, cancellationToken);
+  };
 
   errorHandler = async (
     error: HttpError,
