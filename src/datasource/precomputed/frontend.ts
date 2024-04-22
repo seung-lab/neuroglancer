@@ -322,6 +322,7 @@ export class PrecomputedMultiscaleVolumeChunkSource extends MultiscaleVolumeChun
     return transposeNestedArrays(
       this.info.scales
         .filter((x) => !x.hidden)
+        .filter((x) => x.key !== "placeholder")
         .map((scaleInfo) => {
           const { resolution } = scaleInfo;
           const stride = rank + 1;
