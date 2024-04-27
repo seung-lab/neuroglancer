@@ -576,7 +576,7 @@ async function getMeshSource(
   };
 }
 
-function getJsonMetadata(
+export function getJsonMetadata( // TODO (chrisj), nearly identical to precomputed
   chunkManager: ChunkManager,
   credentialsProvider: SpecialProtocolCredentialsProvider,
   url: string,
