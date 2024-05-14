@@ -24,8 +24,8 @@ import {SharedWatchableValue} from 'neuroglancer/shared_watchable_value';
 import {TrackableAlphaValue} from 'neuroglancer/trackable_alpha';
 import {TrackableBoolean} from 'neuroglancer/trackable_boolean';
 import {TrackableValue} from 'neuroglancer/trackable_value';
-import {Uint64Set} from 'neuroglancer/uint64_set';
 import {Uint64Map} from 'neuroglancer/uint64_map';
+import {Uint64Set} from 'neuroglancer/uint64_set';
 import {hsvToRgb, rgbToHsv} from 'neuroglancer/util/colorspace';
 import {RefCounted} from 'neuroglancer/util/disposable';
 import {vec4} from 'neuroglancer/util/geom';
@@ -111,6 +111,7 @@ export interface SegmentationDisplayState extends VisibleSegmentsState {
   saturation: TrackableAlphaValue;
   highlightedSegments: Uint64Set;
   shatterSegmentEquivalences: TrackableBoolean;
+  initialSegmentSelections?: {[key: string]: any};
 }
 
 export interface SegmentationDisplayStateWithAlpha extends SegmentationDisplayState {
@@ -174,8 +175,8 @@ export function getObjectColor(
     // If displayState maps the ID to a color, use it
     displayState.segmentStatedColors.get(objectId, tempStatedColor);
     color[0] = ((tempStatedColor.low & 0xff0000) >>> 16) / 255.0;
-    color[1] = ((tempStatedColor.low & 0x00ff00) >>>  8) / 255.0;
-    color[2] = ((tempStatedColor.low & 0x0000ff))        / 255.0;
+    color[1] = ((tempStatedColor.low & 0x00ff00) >>> 8) / 255.0;
+    color[2] = ((tempStatedColor.low & 0x0000ff)) / 255.0;
   } else {
     displayState.segmentColorHash.compute(color, objectId);
   }
@@ -221,7 +222,7 @@ export class SegmentationLayerSharedObject extends Base {
     let {displayState} = this;
     options['chunkManager'] = this.chunkManager.rpcId;
     options['rootSegments'] = displayState.rootSegments.rpcId;
-    if (displayState.rootSegmentsAfterEdit !== undefined){
+    if (displayState.rootSegmentsAfterEdit !== undefined) {
       options['rootSegmentsAfterEdit'] = displayState.rootSegmentsAfterEdit!.rpcId;
     }
     options['visibleSegments3D'] = displayState.visibleSegments3D.rpcId;

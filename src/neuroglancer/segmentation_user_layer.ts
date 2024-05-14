@@ -80,7 +80,8 @@ const CATEGORIZED_SEGMENTS_JSON_KEY = 'categorizedSegments';
 const SHATTER_SEGMENT_EQUIVALENCES_JSON_KEY = 'shatterSegmentEquivalences';
 
 export type SegmentationUserLayerDisplayState =
-    SliceViewSegmentationDisplayState&SkeletonLayerDisplayState&SegmentationDisplayState3D;
+    SliceViewSegmentationDisplayState&SkeletonLayerDisplayState&SegmentationDisplayState3D&
+    {initialSegmentSelections?: {[key: string]: any}};
 
 const lastSegmentSelection = new Uint64();
 
@@ -197,7 +198,10 @@ export class SegmentationUserLayer extends Base {
     const restoreSegmentsList = (key: string, segments: Uint64Set) => {
       verifyObjectProperty(specification, key, y => {
         if (y !== undefined) {
-          let {segmentEquivalences} = this.displayState;
+          let {segmentEquivalences, initialSegmentSelections} = this.displayState;
+          if (initialSegmentSelections !== undefined) {
+            this.displayState.initialSegmentSelections![key] = y;
+          }
           parseArray(y, value => {
             let id = Uint64.parseString(String(value), 10);
             segments.add(segmentEquivalences.get(id));
@@ -206,6 +210,7 @@ export class SegmentationUserLayer extends Base {
       });
     };
 
+    this.displayState.initialSegmentSelections = {};
     restoreSegmentsList(ROOT_SEGMENTS_JSON_KEY, this.displayState.rootSegments);
     restoreSegmentsList(HIDDEN_ROOT_SEGMENTS_JSON_KEY, this.displayState.hiddenRootSegments!);
     restoreSegmentsList(HIGHLIGHTS_JSON_KEY, this.displayState.highlightedSegments);
