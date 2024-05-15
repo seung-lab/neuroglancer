@@ -691,56 +691,51 @@ export class GrapheneDataSource extends PrecomputedDataSource {
     return "Graphene file-backed data source";
   }
 
-  get(options: GetDataSourceOptions): Promise<DataSource> {
+  async get(options: GetDataSourceOptions): Promise<DataSource> {
     const { url: providerUrl, parameters } = parseProviderUrl(
       options.providerUrl,
     );
-    return options.chunkManager.memoize.getUncounted(
-      { type: "graphene:get", providerUrl, parameters },
-      async (): Promise<DataSource> => {
-        const { url, credentialsProvider } = parseSpecialUrl(
-          providerUrl,
-          options.credentialsManager,
-        );
-        let metadata: any;
-        try {
-          metadata = await getJsonMetadata(
-            options.chunkManager,
-            credentialsProvider,
-            url,
-          );
-        } catch (e) {
-          if (isNotFoundError(e)) {
-            if (parameters.type === "mesh") {
-              console.log("does this happen?");
-            }
-          }
-          throw e;
-        }
-        verifyObject(metadata);
-        const redirect = verifyOptionalObjectProperty(
-          metadata,
-          "redirect",
-          verifyString,
-        );
-        if (redirect !== undefined) {
-          throw new RedirectError(redirect);
-        }
-        const t = verifyOptionalObjectProperty(metadata, "@type", verifyString);
-        switch (t) {
-          case "neuroglancer_multiscale_volume":
-          case undefined:
-            return await getVolumeDataSource(
-              options,
-              credentialsProvider,
-              url,
-              metadata,
-            );
-          default:
-            throw new Error(`Invalid type: ${JSON.stringify(t)}`);
-        }
-      },
+    const { url, credentialsProvider } = parseSpecialUrl(
+      providerUrl,
+      options.credentialsManager,
     );
+    let metadata: any;
+    try {
+      metadata = await getJsonMetadata(
+        options.chunkManager,
+        credentialsProvider,
+        url,
+      );
+    } catch (e) {
+      if (isNotFoundError(e)) {
+        if (parameters.type === "mesh") {
+          console.log("does this happen?");
+        }
+      }
+      throw e;
+    }
+    verifyObject(metadata);
+    const redirect = verifyOptionalObjectProperty(
+      metadata,
+      "redirect",
+      verifyString,
+    );
+    if (redirect !== undefined) {
+      throw new RedirectError(redirect);
+    }
+    const t = verifyOptionalObjectProperty(metadata, "@type", verifyString);
+    switch (t) {
+      case "neuroglancer_multiscale_volume":
+      case undefined:
+        return await getVolumeDataSource(
+          options,
+          credentialsProvider,
+          url,
+          metadata,
+        );
+      default:
+        throw new Error(`Invalid type: ${JSON.stringify(t)}`);
+    }
   }
 }
 
