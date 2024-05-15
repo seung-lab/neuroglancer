@@ -197,35 +197,32 @@ export class CaveAnnotationSource extends MultiscaleAnnotationSourceBase {
 }
 
 // TODO, find a better generic caching mechanism
-async function getLatestVersion(
+async function getVersions(
   credentialsProvider: SpecialProtocolCredentialsProvider,
   url: string,
   datastack: string,
 ) {
-  const existing = getLatestVersion.cache[`${url}_${datastack}`];
+  const existing = getVersions.cache[`${url}_${datastack}`];
   if (existing) return existing;
-
   const versonsURL = `${url}/${API_STRING_V2}/datastack/${datastack}/versions`;
-  const versions = await cancellableFetchSpecialOk(
+  const versions = (await cancellableFetchSpecialOk(
     credentialsProvider,
     versonsURL,
     {},
     responseJson,
-  );
-  const latestVersion = Math.max(...versions);
-
-  getLatestVersion.cache[`${url}_${datastack}`] = latestVersion;
-  return latestVersion;
+  )) as number[]; //temp
+  getVersions.cache[`${url}_${datastack}`] = versions.sort((a, b) => a - b);
+  return versions;
 }
-getLatestVersion.cache = {} as { [key: string]: number };
+getVersions.cache = {} as { [key: string]: number[] };
 
-async function getLatestTimestamp(
+async function getVersionTimestamp(
   credentialsProvider: SpecialProtocolCredentialsProvider,
   url: string,
   datastack: string,
   version: number,
 ) {
-  const existing = getLatestTimestamp.cache[`${url}_${datastack}_${version}`];
+  const existing = getVersionTimestamp.cache[`${url}_${datastack}_${version}`];
   if (existing) return existing;
 
   const versionMetadataURL = `${url}/${API_STRING_V2}/datastack/${datastack}/version/${version}`;
@@ -237,10 +234,10 @@ async function getLatestTimestamp(
   );
   const res = versionMetadata.time_stamp as string;
 
-  getLatestTimestamp.cache[`${url}_${datastack}_${version}`] = res;
+  getVersionTimestamp.cache[`${url}_${datastack}_${version}`] = res;
   return res;
 }
-getLatestTimestamp.cache = {} as { [key: string]: string };
+getVersionTimestamp.cache = {} as { [key: string]: string };
 
 async function getTables(
   credentialsProvider: SpecialProtocolCredentialsProvider,
@@ -269,15 +266,14 @@ async function getDatastacks(
 ) {
   const existing = getDatastacks.cache.datastacks;
   if (existing) return existing as string[];
-
   const datastacksURL = `https://global.daf-apis.com/info/api/v2/datastacks`;
-  const datastacks = (await cancellableFetchSpecialOk(
+  const res = await cancellableFetchSpecialOk(
     credentialsProvider,
     datastacksURL,
     {},
     responseJson,
-  )) as string[];
-
+  );
+  const datastacks = verifyStringArray(res);
   getDatastacks.cache.datastacks = datastacks;
   return datastacks;
 }
@@ -345,7 +341,6 @@ async function getTableMetadata(
 
   // TODO, break apart url so we can avoid hardcoding global.daf-apis.com
   const schemaURL = `https://global.daf-apis.com/schema/${API_STRING_V2}/type/${schemaType}`;
-  // TODO, do we ever want to authenticate this request?
   const schema = await cancellableFetchSpecialOk(
     undefined,
     schemaURL,
@@ -438,7 +433,6 @@ async function getTableMetadata(
     table,
     credentialsProvider,
   );
-  // console.log("res", res);
 
   for (const prop of shaderProperties) {
     if (prop.enumLabels !== undefined) {
@@ -465,54 +459,6 @@ async function getTableMetadata(
     }
   }
 
-  // TEMPORARY CODE
-  // {
-  //   const responseArrowIPC = async (x: any) => tableFromIPC(x);
-  //   const timestamp = await getLatestTimestamp(
-  //     credentialsProvider,
-  //     url,
-  //     datastack,
-  //     version,
-  //   );
-  //   const binaryFormat = false;
-  //   const urlSample = `${url}/${API_STRING}/datastack/${datastack}/query?return_pyarrow=${binaryFormat}&arrow_format=${binaryFormat}&split_positions=false&count=false&allow_missing_lookups=false`;
-  //   const payload = `{
-  //     "timestamp": "${timestamp}",
-  //     "table": "${table}"
-  //   }`;
-  //   const response = await cancellableFetchSpecialOk(
-  //     credentialsProvider,
-  //     urlSample,
-  //     {
-  //       method: "POST",
-  //       headers: { "Content-Type": "application/json" },
-  //       body: payload,
-  //     },
-  //     binaryFormat ? responseArrowIPC : responseJson,
-  //     undefined,
-  //   );
-  //   if (response !== undefined) {
-  //     // if (binaryFormat) {
-  //     for (const prop of shaderProperties) {
-  //       if (prop.enumLabels !== undefined) {
-  //         for (const row of response) {
-  //           const value = row[prop.identifier];
-  //           if (value !== undefined) {
-  //             if (prop.enumLabels.indexOf(value) === -1) {
-  //               prop.enumLabels.push(value);
-  //             }
-  //           }
-  //         }
-  //         prop.enumLabels.sort();
-  //         for (let i = 0; i < prop.enumLabels.length; i++) {
-  //           prop.enumValues![i] = i + 1;
-  //         }
-  //       }
-  //     }
-  //     // }
-  //   }
-  // }
-
   // TODO, maybe use flat_segmentation_source to automatically link up the segmentation?
   // segmentation_source is empty
   return {
@@ -530,27 +476,22 @@ async function getAnnotationDataSource(
   credentialsProvider: SpecialProtocolCredentialsProvider,
   url: string,
   datastack: string,
+  version: number,
   table: string,
 ): Promise<DataSource> {
-  const latestVersion = await getLatestVersion(
+  const timestamp = await getVersionTimestamp(
     credentialsProvider,
     url,
     datastack,
-  );
-  const timestamp = await getLatestTimestamp(
-    credentialsProvider,
-    url,
-    datastack,
-    latestVersion,
+    version,
   );
   const tableMetadata = await getTableMetadata(
     credentialsProvider,
     url,
     datastack,
-    latestVersion,
+    version,
     table,
-  ); // url: string, datastack: string, table: string)
-
+  );
   const origin = new URL(url).origin;
   const authInfo = await fetch(`${origin}/auth_info`).then((res) => res.json());
   const { login_url } = authInfo;
@@ -575,7 +516,6 @@ async function getAnnotationDataSource(
   const volumeInfo = parseMultiscaleVolumeInfo(grapheneMetadata);
   const { modelSpace } = volumeInfo;
   const { lowerBounds, upperBounds } = modelSpace.boundingBoxes[0].box;
-
   const info = new AnnotationMetadata(
     url,
     datastack,
@@ -584,7 +524,6 @@ async function getAnnotationDataSource(
     lowerBounds,
     upperBounds,
   );
-
   const dataSource: DataSource = {
     modelTransform: makeIdentityTransform(info.coordinateSpace),
     subsources: [
@@ -694,25 +633,29 @@ export class CaveDataSource extends DataSourceProvider {
           providerUrl,
           options.credentialsManager,
         );
-        const regex = /https:\/\/.*\/datastack\/(.*)\/table\/(.*)/;
+        const regex =
+          /https:\/\/.*\/datastack\/(.*)\/version\/(.*)\/table\/(.*)/;
         const res = url.match(regex);
-        if (!res || res.length < 2) {
+        if (!res || res.length < 3) {
           throw "bad url";
         }
-        const [_, datastack, table] = res;
-        _; // TODO (chrisj)
+        const [_url, datastack, version, table] = res;
+        _url;
         const materializationUrl = url.split(`/${API_STRING}/`)[0];
         return await getAnnotationDataSource(
           options,
           credentialsProvider,
           materializationUrl,
           datastack,
+          parseInt(version),
           table,
         );
       },
     );
   }
   async completeUrl(options: CompleteUrlOptions) {
+    // maybe better autocmplete using field.selectionStart
+    // HTMLInputElement: setSelectionRange
     const { providerUrl } = options;
 
     const { url, credentialsProvider } = parseSpecialUrl(
@@ -721,23 +664,19 @@ export class CaveDataSource extends DataSourceProvider {
     );
 
     {
-      const regex = /.*https:\/\/.*\/datastack\/(.*)\/table\/(.*)/;
+      const regex =
+        /.*https:\/\/.*\/datastack\/(.*)\/version\/(.*)\/table\/(.*)/;
       const res = providerUrl.match(regex);
-      if (res && res.length === 3) {
-        const [full, datastack, table] = res;
+      if (res && res.length === 4) {
+        const [full, datastack, version, table] = res;
         const offset = full.length - table.length;
 
         const materializationUrl = url.split(`/${API_STRING}/`)[0];
-        const latestVersion = await getLatestVersion(
-          credentialsProvider,
-          materializationUrl,
-          datastack,
-        );
         const tables = await getTables(
           credentialsProvider,
           materializationUrl,
           datastack,
-          latestVersion,
+          parseInt(version),
         );
         const tablesFiltered = tables.filter((x) => x.startsWith(table));
         const completions = tablesFiltered.map((x) => {
@@ -751,12 +690,66 @@ export class CaveDataSource extends DataSourceProvider {
     }
 
     {
-      const regex = /.*https:\/\/.*\/datastack\/.*\/(\w*)$/;
+      const regex = /.*https:\/\/.*\/datastack\/.*\/version\/.*\/(\w*)$/;
       const res = providerUrl.match(regex);
       if (res && res.length === 2) {
         const [full, pathSegment] = res;
         const offset = full.length - pathSegment.length;
         const desiredSegment = "table/";
+        const result = desiredSegment.match(new RegExp(pathSegment));
+        if (result) {
+          const completions = [{ value: desiredSegment }];
+          return {
+            offset,
+            completions,
+          };
+        }
+      }
+    }
+
+    {
+      const regex = /.*https:\/\/.*\/datastack\/(.*)\/version\/(\w*)$/;
+      const res = providerUrl.match(regex);
+      if (res && res.length === 3) {
+        const [full, datastack, version] = res;
+        const offset = full.length - version.length;
+        const materializationUrl = url.split(`/${API_STRING}/`)[0];
+        const versions = await getVersions(
+          credentialsProvider,
+          materializationUrl,
+          datastack,
+        );
+        const timestampPromises = versions.map((version) => {
+          return getVersionTimestamp(
+            credentialsProvider,
+            materializationUrl,
+            datastack,
+            version,
+          );
+        });
+        const timestamps = await Promise.all(timestampPromises);
+        let completions = versions.map((x, idx) => {
+          return { value: `${x}`, description: timestamps[idx] };
+        });
+        completions.push({
+          value: "live",
+          description: "TODO",
+        });
+        completions = completions.filter((x) => x.value.startsWith(version));
+        return {
+          offset,
+          completions,
+        };
+      }
+    }
+
+    {
+      const regex = /.*https:\/\/.*\/datastack\/.*\/(\w*)$/;
+      const res = providerUrl.match(regex);
+      if (res && res.length === 2) {
+        const [full, pathSegment] = res;
+        const offset = full.length - pathSegment.length;
+        const desiredSegment = "version/";
         const result = desiredSegment.match(new RegExp(pathSegment));
         if (result) {
           const completions = [{ value: desiredSegment }];
