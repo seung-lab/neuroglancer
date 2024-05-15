@@ -28,6 +28,8 @@ import {
 } from "#src/annotation/index.js";
 import type { CoordinateTransformSpecification } from "#src/coordinate_transform.js";
 import { makeCoordinateSpace } from "#src/coordinate_transform.js";
+import { CaveAnnotationSource } from "#src/datasource/cave/frontend.js";
+import { GraphConnection } from "#src/datasource/graphene/frontend.js";
 import type { DataSourceSpecification } from "#src/datasource/index.js";
 import { localAnnotationsUrl, LocalDataSource } from "#src/datasource/index.js";
 import type { LayerManager, ManagedUserLayer } from "#src/layer/index.js";
@@ -404,8 +406,34 @@ export class AnnotationUserLayer extends Base {
 
   constructor(managedLayer: Borrowed<ManagedUserLayer>) {
     super(managedLayer);
-    this.linkedSegmentationLayers.changed.add(
-      this.specificationChanged.dispatch,
+    this.registerDisposer(
+      this.linkedSegmentationLayers.changed.add(() => {
+        console.log("linkedSegmentationLayers.changed");
+        for (const { source } of this.annotationStates.value) {
+          if (source instanceof CaveAnnotationSource) {
+            const { timestamp } = source.parameters;
+            for (const relationship of this.linkedSegmentationLayers
+              .annotationStates.relationships) {
+              const linkedLayer =
+                this.linkedSegmentationLayers.get(relationship);
+              if (linkedLayer) {
+                const layer = linkedLayer.layerRef.layer?.layer;
+                if (layer) {
+                  if (layer instanceof SegmentationUserLayer) {
+                    const graphConnection = layer.graphConnection.value;
+                    if (graphConnection instanceof GraphConnection) {
+                      graphConnection.state.timestamp.value = new Date(
+                        timestamp,
+                      ).valueOf();
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        this.specificationChanged.dispatch();
+      }),
     );
     this.annotationDisplayState.ignoreNullSegmentFilter.changed.add(
       this.specificationChanged.dispatch,
