@@ -75,16 +75,22 @@ class LayerWidget extends RefCounted {
         console.log("layer is ready", layer.isReady());
         if (layer.isReady() && layer.layer instanceof SegmentationUserLayer) {
           const graphConnection = layer.layer.graphConnection;
-          const timeElement = document.createElement("div");
-          timeElement.innerHTML = "🕘";
+          const timeButton = makeIcon({ text: "🕘", title: "Share State" });
+          timeButton.addEventListener("click", (evt) => {
+            evt.stopPropagation();
+            if (graphConnection.value instanceof GraphConnection) {
+              const { timestamp } = graphConnection.value.state;
+              timestamp.reset();
+            }
+          });
           let timeStampDisposer: (() => boolean) | undefined = undefined;
           const graphConnectionChanged = () => {
             if (timeStampDisposer) timeStampDisposer();
             if (graphConnection.value instanceof GraphConnection) {
-              element.appendChild(timeElement);
+              element.appendChild(timeButton);
               const { timestamp } = graphConnection.value.state;
               const updateTimeDisplay = () => {
-                timeElement.style.display =
+                timeButton.style.display =
                   timestamp.value > 0 ? "inherit" : "none";
               };
               timeStampDisposer = this.registerDisposer(
@@ -92,8 +98,8 @@ class LayerWidget extends RefCounted {
               );
               updateTimeDisplay();
             } else {
-              if (element.contains(timeElement)) {
-                element.removeChild(timeElement);
+              if (element.contains(timeButton)) {
+                element.removeChild(timeButton);
               }
             }
           };
