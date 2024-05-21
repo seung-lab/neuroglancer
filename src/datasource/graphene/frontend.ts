@@ -2816,7 +2816,7 @@ function mergeToLine(submission: MergeSubmission): Line {
   return res;
 }
 
-const MAX_MERGE_COUNT = 10;
+const MAX_MERGE_COUNT = 20;
 
 const MERGE_SEGMENTS_INPUT_EVENT_MAP = EventActionMap.fromObject({
   "at:shift?+enter": { action: "submit" },
