@@ -88,7 +88,7 @@ class LayerWidget extends RefCounted {
                 timestamp.reset();
               } else {
                 StatusMessage.showTemporaryMessage(
-                  "Segmentation time bound to an annotation layer",
+                  `Segmentation time bound to annotation layer(s) ${[...timestampOwner].join(", ")}`,
                 );
               }
             }

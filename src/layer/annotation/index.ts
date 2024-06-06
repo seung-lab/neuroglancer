@@ -422,27 +422,31 @@ export class AnnotationUserLayer extends Base {
               .annotationStates.relationships) {
               const linkedLayer =
                 this.linkedSegmentationLayers.get(relationship);
-              if (linkedLayer && linkedLayer.showMatches.value) {
+              if (linkedLayer) {
                 const layer = linkedLayer.layerRef.layer?.layer;
                 if (layer) {
                   if (layer instanceof SegmentationUserLayer) {
                     const graphConnection = layer.graphConnection.value;
                     if (graphConnection instanceof GraphConnection) {
                       const { state } = graphConnection;
-                      if (state.canSetTimestamp(managedLayer.name)) {
-                        ownedGraphConnections.push(graphConnection);
-                        state.timestampOwner.add(managedLayer.name);
-                        state.timestamp.value = unixTimestamp;
-                      } else if (state.timestamp.value === unixTimestamp) {
-                        state.timestampOwner.add(managedLayer.name);
-                        console.log(
-                          "same timestamp, all good, however we need to break it if the seg timestamp changes",
-                        );
+                      if (linkedLayer.showMatches.value) {
+                        if (state.canSetTimestamp(managedLayer.name)) {
+                          ownedGraphConnections.push(graphConnection);
+                          state.timestampOwner.add(managedLayer.name);
+                          state.timestamp.value = unixTimestamp;
+                        } else if (state.timestamp.value === unixTimestamp) {
+                          state.timestampOwner.add(managedLayer.name);
+                          console.log(
+                            "same timestamp, all good, however we need to break it if the seg timestamp changes",
+                          );
+                        } else {
+                          linkedLayer.showMatches.reset();
+                          StatusMessage.showTemporaryMessage(
+                            "Segmentation layer is already bound to another annotation layer at a different timestamp.",
+                          );
+                        }
                       } else {
-                        linkedLayer.showMatches.reset();
-                        StatusMessage.showTemporaryMessage(
-                          "Segmentation layer is already bound to another annotation layer at a different timestamp.",
-                        );
+                        state.timestampOwner.delete(managedLayer.name);
                       }
                     }
                   }
