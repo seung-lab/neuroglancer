@@ -23,6 +23,7 @@ import { addNewLayer, deleteLayer, makeLayer } from "#src/layer/index.js";
 import { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import type { LayerGroupViewer } from "#src/layer_group_viewer.js";
 import { NavigationLinkType } from "#src/navigation_state.js";
+import { StatusMessage } from "#src/status.js";
 import type { WatchableValueInterface } from "#src/trackable_value.js";
 import type { DropLayers } from "#src/ui/layer_drag_and_drop.js";
 import {
@@ -72,15 +73,24 @@ class LayerWidget extends RefCounted {
 
     this.registerDisposer(
       layer.readyStateChanged.add(() => {
-        console.log("layer is ready", layer.isReady());
         if (layer.isReady() && layer.layer instanceof SegmentationUserLayer) {
           const graphConnection = layer.layer.graphConnection;
-          const timeButton = makeIcon({ text: "🕘", title: "Share State" });
+          const timeButton = makeIcon({
+            text: "🕘",
+            title:
+              "This segmentation is currently in an older state.\nClick to return to current form.",
+          });
           timeButton.addEventListener("click", (evt) => {
             evt.stopPropagation();
             if (graphConnection.value instanceof GraphConnection) {
-              const { timestamp } = graphConnection.value.state;
-              timestamp.reset();
+              const { timestamp, timestampOwner } = graphConnection.value.state;
+              if (!timestampOwner.size) {
+                timestamp.reset();
+              } else {
+                StatusMessage.showTemporaryMessage(
+                  "Segmentation time bound to an annotation layer",
+                );
+              }
             }
           });
           let timeStampDisposer: (() => boolean) | undefined = undefined;

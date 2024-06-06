@@ -419,6 +419,7 @@ export class LayerDataSourcesTab extends Tab {
       const view = this.sourceViews.get(layerDataSource);
       if (view === undefined) return;
       view.urlInput.inputElement.focus();
+      console.log("hi");
     });
     element.appendChild(this.dataSourcesContainer);
     if (layer instanceof NewUserLayer) {

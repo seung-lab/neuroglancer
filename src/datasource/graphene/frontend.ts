@@ -853,6 +853,7 @@ const SINK_JSON_KEY = "sink";
 const SOURCE_JSON_KEY = "source";
 
 const TIMESTAMP_JSON_KEY = "timestamp";
+const TIMESTAMP_OWNER_JSON_KEY = "timestampOwner";
 const MULTICUT_JSON_KEY = "multicut";
 const FOCUS_SEGMENT_JSON_KEY = "focusSegment";
 const SINKS_JSON_KEY = "sinks";
@@ -873,7 +874,10 @@ const PRECISION_MODE_JSON_KEY = "precision";
 class GrapheneState extends RefCounted implements Trackable {
   changed = new NullarySignal();
 
-  public timestamp: TrackableValue<number> = new TrackableValue(0, (x) => x);
+  public timestamp = new TrackableValue<number>(0, (x) => x);
+
+  public timestampOwner = new WatchableSet<string>();
+
   public multicutState = new MulticutState();
   public mergeState = new MergeState();
   public findPathState = new FindPathState();
@@ -882,12 +886,12 @@ class GrapheneState extends RefCounted implements Trackable {
     super();
     this.registerDisposer(
       this.timestamp.changed.add(() => {
-        this.multicutState.reset();
         this.changed.dispatch();
       }),
     );
     this.registerDisposer(
       this.multicutState.changed.add(() => {
+        console.log("multicutState.changed");
         this.changed.dispatch();
       }),
     );
@@ -903,6 +907,17 @@ class GrapheneState extends RefCounted implements Trackable {
     );
   }
 
+  canSetTimestamp(owner?: string) {
+    if (this.multicutState.focusSegment.value) {
+      return false;
+    }
+    const otherOwners = [...this.timestampOwner].filter((x) => x !== owner);
+    if (otherOwners.length) {
+      return false;
+    }
+    return true;
+  }
+
   replaceSegments(oldValues: Uint64Set, newValues: Uint64Set) {
     this.multicutState.replaceSegments(oldValues, newValues);
     this.mergeState.replaceSegments(oldValues, newValues);
@@ -910,6 +925,7 @@ class GrapheneState extends RefCounted implements Trackable {
   }
 
   reset() {
+    this.timestampOwner.clear();
     this.timestamp.reset();
     this.multicutState.reset();
     this.mergeState.reset();
@@ -919,6 +935,7 @@ class GrapheneState extends RefCounted implements Trackable {
   toJSON() {
     return {
       [TIMESTAMP_JSON_KEY]: this.timestamp.toJSON(),
+      [TIMESTAMP_OWNER_JSON_KEY]: [...this.timestampOwner], // convert from set to array
       [MULTICUT_JSON_KEY]: this.multicutState.toJSON(),
       [MERGE_JSON_KEY]: this.mergeState.toJSON(),
       [FIND_PATH_JSON_KEY]: this.findPathState.toJSON(),
@@ -926,6 +943,13 @@ class GrapheneState extends RefCounted implements Trackable {
   }
 
   restoreState(x: any) {
+    verifyOptionalObjectProperty(x, TIMESTAMP_OWNER_JSON_KEY, (value) => {
+      const owners = verifyStringArray(value);
+      this.timestampOwner.clear();
+      for (const owner of owners) {
+        this.timestampOwner.add(owner);
+      }
+    });
     verifyOptionalObjectProperty(x, TIMESTAMP_JSON_KEY, (value) => {
       this.timestamp.restoreState(value);
     });
@@ -1353,13 +1377,27 @@ export class GraphConnection extends SegmentationGraphSourceConnection {
 
     const {
       annotationLayerStates,
-      state: { multicutState, findPathState },
+      state: { multicutState, findPathState, timestamp },
     } = this;
 
     this.registerDisposer(
-      state.timestamp.changed.add(() => {
-        segmentsState.selectedSegments.clear();
-        segmentsState.temporaryVisibleSegments.clear();
+      state.timestamp.changed.add(async () => {
+        const nonLatestRoots = await this.graph.graphServer.filterLatestRoots(
+          [...segmentsState.selectedSegments],
+          timestamp.value,
+          true,
+        );
+        segmentsState.selectedSegments.delete(nonLatestRoots);
+        const currentTimestamp = timestamp.value === 0;
+        if (currentTimestamp) {
+          const {
+            focusSegment: { value: focusSegment },
+          } = state.multicutState;
+          if (focusSegment) {
+            // segmentsState.selectedSegments.add(focusSegment);
+            segmentsState.visibleSegments.add(focusSegment);
+          }
+        }
       }),
     );
 
@@ -1572,11 +1610,21 @@ export class GraphConnection extends SegmentationGraphSourceConnection {
   private lastDeselectionMessageExists = false;
 
   private visibleSegmentsChanged(segments: Uint64[] | null, added: boolean) {
+    console.log("visibleSegmentsChanged");
     const { segmentsState } = this;
+    const { state } = this.graph;
     const {
       focusSegment: { value: focusSegment },
-    } = this.graph.state.multicutState;
-    if (focusSegment && !segmentsState.visibleSegments.has(focusSegment)) {
+    } = state.multicutState;
+    const {
+      timestamp: { value: timestamp },
+    } = state;
+    const currentTimestamp = timestamp === 0;
+    if (
+      currentTimestamp &&
+      focusSegment &&
+      !segmentsState.visibleSegments.has(focusSegment)
+    ) {
       if (segmentsState.selectedSegments.has(focusSegment)) {
         StatusMessage.showTemporaryMessage(
           `Can't hide active multicut segment.`,
@@ -2068,9 +2116,15 @@ class GrapheneGraphServerInterface {
     return final;
   }
 
-  async filterLatestRoots(segments: Uint64[]): Promise<Uint64[]> {
-    const url = `${this.url}/is_latest_roots`;
-
+  async filterLatestRoots(
+    segments: Uint64[],
+    timestamp = 0,
+    flipResult = false,
+  ): Promise<Uint64[]> {
+    const timestampEpoch = timestamp / 1000;
+    const url = `${this.url}/is_latest_roots${
+      timestamp > 0 ? `?timestamp=${timestampEpoch}` : ""
+    }`;
     const promise = cancellableFetchSpecialOk(
       this.credentialsProvider,
       url,
@@ -2080,15 +2134,13 @@ class GrapheneGraphServerInterface {
       },
       responseIdentity,
     );
-
     const response = await withErrorMessageHTTP(promise, {
       errorPrefix: `Could not check latest: `,
     });
     const jsonResp = await response.json();
-
     const res: Uint64[] = [];
     for (const [i, isLatest] of jsonResp["is_latest"].entries()) {
-      if (isLatest) {
+      if (isLatest !== flipResult) {
         res.push(segments[i]);
       }
     }
@@ -2647,29 +2699,40 @@ function timeLayerControl(): LayerControlFactory<SegmentationUserLayer> {
         graph instanceof GrapheneGraphSource
           ? graph.timestampLimit
           : new TrackableValue<number>(0, (x) => x);
+      const timestampOwner =
+        graph instanceof GrapheneGraphSource
+          ? graph.state.timestampOwner
+          : new WatchableSet<string>();
+
       const controlElement = document.createElement("div");
       controlElement.classList.add("neuroglancer-time-control");
       const intermediateTimestamp = new TrackableValue<number>(
         timestamp.value,
         (x) => x,
       );
-      intermediateTimestamp.changed.add(() => {
+      intermediateTimestamp.changed.add(async () => {
         if (intermediateTimestamp.value === timestamp.value) {
           return;
         }
         if (graph instanceof GrapheneGraphSource) {
-          const hasSelectedSegments =
-            segmentationGroupState.selectedSegments.size +
-              segmentationGroupState.temporaryVisibleSegments.size >
-            0;
-          if (
-            !hasSelectedSegments ||
-            confirm("Changing graphene time will clear all selected segments.")
-          ) {
-            timestamp.value = intermediateTimestamp.value;
-          } else {
-            intermediateTimestamp.value = timestamp.value;
+          if (timestampOwner.size) {
+            const nonLatestRoots = await graph.graphServer.filterLatestRoots(
+              [...segmentationGroupState.selectedSegments],
+              timestamp.value,
+              true,
+            );
+            if (
+              graph.state.canSetTimestamp() &&
+              (!nonLatestRoots.length ||
+                confirm(
+                  `Changing graphene time will clear ${nonLatestRoots.length} segment(s).`,
+                ))
+            ) {
+              timestamp.value = intermediateTimestamp.value;
+              return;
+            }
           }
+          intermediateTimestamp.value = timestamp.value;
         }
       });
       const widget = context.registerDisposer(

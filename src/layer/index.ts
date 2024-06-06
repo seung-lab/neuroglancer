@@ -816,7 +816,7 @@ export class LayerManager extends RefCounted {
   layersChanged = new NullarySignal();
   readyStateChanged = new NullarySignal();
   specificationChanged = new NullarySignal();
-  boundPositions = new WeakSet<Position>();
+  // boundPositions = new WeakSet<Position>(); // TODO is this no longer used?
   numDirectUsers = 0;
   nonArchivedLayerIndexGeneration = -1;
   private renderLayerToManagedLayerMapGeneration = -1;

@@ -44,6 +44,7 @@ function parseCaveAnnototations(
   annotationsJson: any[],
   parameters: AnnotationSourceParameters,
 ) {
+  console.log("#annos", annotationsJson.length);
   const seenEnums = new Map<string, Set<string>>();
   const annotations: (Point | Line)[] = annotationsJson.map((x) => {
     const points = parameters.relationships.map((rel) => {

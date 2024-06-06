@@ -196,6 +196,14 @@ export class CaveAnnotationSource extends MultiscaleAnnotationSourceBase {
   }
 }
 
+interface VersionMetadata {
+  version: number;
+  valid: boolean;
+  time_stamp: string;
+  is_merged: boolean;
+  status: string;
+}
+
 // TODO, find a better generic caching mechanism
 async function getVersions(
   credentialsProvider: SpecialProtocolCredentialsProvider,
@@ -204,18 +212,21 @@ async function getVersions(
 ) {
   const existing = getVersions.cache[`${url}_${datastack}`];
   if (existing) return existing;
-  const versonsURL = `${url}/${API_STRING_V2}/datastack/${datastack}/versions`;
+  const versonsURL = `${url}/${API_STRING}/datastack/${datastack}/metadata`;
   const versions = (await cancellableFetchSpecialOk(
     credentialsProvider,
     versonsURL,
     {},
     responseJson,
-  )) as number[]; //temp
-  getVersions.cache[`${url}_${datastack}`] = versions.sort((a, b) => a - b);
+  )) as VersionMetadata[]; //TODO: parse it with verify
+  getVersions.cache[`${url}_${datastack}`] = versions.sort(
+    (a, b) => a.version - b.version,
+  );
   return versions;
 }
-getVersions.cache = {} as { [key: string]: number[] };
+getVersions.cache = {} as { [key: string]: VersionMetadata[] };
 
+// todo, can we get rid of this?
 async function getVersionTimestamp(
   credentialsProvider: SpecialProtocolCredentialsProvider,
   url: string,
@@ -719,17 +730,17 @@ export class CaveDataSource extends DataSourceProvider {
           materializationUrl,
           datastack,
         );
-        const timestampPromises = versions.map((version) => {
-          return getVersionTimestamp(
-            credentialsProvider,
-            materializationUrl,
-            datastack,
-            version,
-          );
-        });
-        const timestamps = await Promise.all(timestampPromises);
-        let completions = versions.map((x, idx) => {
-          return { value: `${x}`, description: timestamps[idx] };
+        // const timestampPromises = versions.map((version) => {
+        //   return getVersionTimestamp(
+        //     credentialsProvider,
+        //     materializationUrl,
+        //     datastack,
+        //     version,
+        //   );
+        // });
+        // const timestamps = await Promise.all(timestampPromises);
+        let completions = versions.map((x) => {
+          return { value: `${x.version}`, description: x.time_stamp };
         });
         completions.push({
           value: "live",
