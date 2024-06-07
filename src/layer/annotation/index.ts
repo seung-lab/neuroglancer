@@ -407,47 +407,46 @@ export class AnnotationUserLayer extends Base {
     super.disposed();
   }
 
-  constructor(managedLayer: Borrowed<ManagedUserLayer>) {
-    super(managedLayer);
-
-    this.registerDisposer(
-      this.linkedSegmentationLayers.changed.add(() => {
-        const ownedGraphConnections: GraphConnection[] = [];
-        console.log("linkedSegmentationLayers.changed");
-        for (const { source } of this.annotationStates.value) {
-          if (source instanceof CaveAnnotationSource) {
-            const { timestamp } = source.parameters;
-            const unixTimestamp = new Date(timestamp).valueOf();
-            for (const relationship of this.linkedSegmentationLayers
-              .annotationStates.relationships) {
-              const linkedLayer =
-                this.linkedSegmentationLayers.get(relationship);
-              if (linkedLayer) {
-                const layer = linkedLayer.layerRef.layer?.layer;
-                if (layer) {
-                  if (layer instanceof SegmentationUserLayer) {
-                    const graphConnection = layer.graphConnection.value;
-                    if (graphConnection instanceof GraphConnection) {
-                      const { state } = graphConnection;
-                      if (linkedLayer.showMatches.value) {
-                        if (state.canSetTimestamp(managedLayer.name)) {
-                          ownedGraphConnections.push(graphConnection);
-                          state.timestampOwner.add(managedLayer.name);
-                          state.timestamp.value = unixTimestamp;
-                        } else if (state.timestamp.value === unixTimestamp) {
-                          state.timestampOwner.add(managedLayer.name);
-                          console.log(
-                            "same timestamp, all good, however we need to break it if the seg timestamp changes",
-                          );
-                        } else {
-                          linkedLayer.showMatches.reset();
-                          StatusMessage.showTemporaryMessage(
-                            "Segmentation layer is already bound to another annotation layer at a different timestamp.",
-                          );
-                        }
-                      } else {
-                        state.timestampOwner.delete(managedLayer.name);
-                      }
+  updateTimestamp() {
+    const { managedLayer } = this;
+    const ownedGraphConnections = [];
+    for (const { source } of this.annotationStates.value) {
+      if (source instanceof CaveAnnotationSource) {
+        const { timestamp } = source.parameters;
+        const unixTimestamp = new Date(timestamp).valueOf();
+        for (const relationship of this.linkedSegmentationLayers
+          .annotationStates.relationships) {
+          const linkedLayer = this.linkedSegmentationLayers.get(relationship);
+          if (linkedLayer) {
+            const layer = linkedLayer.layerRef.layer?.layer;
+            if (layer) {
+              if (layer instanceof SegmentationUserLayer) {
+                const graphConnection = layer.graphConnection.value;
+                if (graphConnection instanceof GraphConnection) {
+                  const { state } = graphConnection;
+                  const { timestamp, timestampOwner } = state;
+                  console.log("show matches", linkedLayer.showMatches.value);
+                  if (linkedLayer.showMatches.value) {
+                    if (state.canSetTimestamp(managedLayer.name)) {
+                      ownedGraphConnections.push(graphConnection);
+                      timestampOwner.add(managedLayer.name);
+                      timestamp.value = unixTimestamp;
+                    } else if (state.timestamp.value === unixTimestamp) {
+                      ownedGraphConnections.push(graphConnection);
+                      timestampOwner.add(managedLayer.name);
+                      console.log(
+                        "same timestamp, all good, however we need to break it if the seg timestamp changes",
+                      );
+                    } else {
+                      linkedLayer.showMatches.reset();
+                      StatusMessage.showTemporaryMessage(
+                        "Segmentation layer is already bound to another annotation layer at a different timestamp.",
+                      );
+                    }
+                  } else if (timestampOwner.has(managedLayer.name)) {
+                    timestampOwner.delete(managedLayer.name);
+                    if (timestampOwner.size === 0) {
+                      timestamp.reset();
                     }
                   }
                 }
@@ -455,27 +454,48 @@ export class AnnotationUserLayer extends Base {
             }
           }
         }
-        for (const { layer } of managedLayer.manager.layerManager
-          .managedLayers) {
-          if (layer instanceof SegmentationUserLayer) {
-            const graphConnection = layer.graphConnection.value;
-            if (graphConnection instanceof GraphConnection) {
-              const { timestampOwner } = graphConnection.state;
-              if (
-                timestampOwner.size === 1 &&
-                timestampOwner.has(managedLayer.name)
-              ) {
-                if (!ownedGraphConnections.includes(graphConnection)) {
-                  console.log("resetting graph connection");
-                  graphConnection.state.timestampOwner.clear();
-                  graphConnection.state.timestamp.reset();
-                } else {
-                  console.log("still valid graph conneciton");
-                }
+      }
+    }
+
+    for (const { layer } of managedLayer.manager.layerManager.managedLayers) {
+      if (layer instanceof SegmentationUserLayer) {
+        const graphConnection = layer.graphConnection.value;
+        if (graphConnection instanceof GraphConnection) {
+          const { timestampOwner, timestamp } = graphConnection.state;
+          if (timestampOwner.has(managedLayer.name)) {
+            if (!ownedGraphConnections.includes(graphConnection)) {
+              console.log("doing this when unsetting layername");
+              timestampOwner.delete(managedLayer.name);
+              if (timestampOwner.size === 0) {
+                timestamp.reset();
               }
+            } else {
+              console.log("still valid graph conneciton");
             }
           }
         }
+      }
+    }
+  }
+
+  constructor(managedLayer: Borrowed<ManagedUserLayer>) {
+    super(managedLayer);
+
+    // TODO, if you change from a named segmentation layer to the unset posiiton
+    // we need to unset the ownership
+
+    this.registerDisposer(
+      this.annotationStates.changed.add(() => {
+        console.log("annotationStates.changed");
+        this.updateTimestamp();
+      }),
+    );
+
+    this.registerDisposer(
+      this.linkedSegmentationLayers.changed.add(() => {
+        // const ownedGraphConnections: GraphConnection[] = [];
+        console.log("linkedSegmentationLayers.changed");
+        this.updateTimestamp();
         this.specificationChanged.dispatch();
       }),
     );
