@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { TrackableValueInterface } from "#src/trackable_value.js";
+import type { WatchableValue } from "#src/trackable_value.js";
 import { RefCounted } from "#src/util/disposable.js";
 import { removeFromParent } from "#src/util/dom.js";
 
@@ -28,7 +28,7 @@ function toDateTimeLocalString(date: Date) {
 export class DateTimeInputWidget extends RefCounted {
   element = document.createElement("input");
   constructor(
-    public model: TrackableValueInterface<number>,
+    public model: WatchableValue<number | undefined>,
     minDate?: Date,
     maxDate?: Date,
   ) {
@@ -61,7 +61,7 @@ export class DateTimeInputWidget extends RefCounted {
   }
 
   private updateView() {
-    if (this.model.value) {
+    if (this.model.value !== undefined) {
       this.element.value = toDateTimeLocalString(new Date(this.model.value));
     } else {
       this.element.value = "";
@@ -71,9 +71,9 @@ export class DateTimeInputWidget extends RefCounted {
   private updateModel() {
     try {
       if (this.element.value) {
-        this.model.restoreState(new Date(this.element.value).valueOf());
+        this.model.value = new Date(this.element.value).valueOf();
       } else {
-        this.model.restoreState(0);
+        this.model.value = undefined;
       }
     } catch {
       // Ignore invalid input.

@@ -2136,6 +2136,7 @@ export class TopLevelLayerListSpecification extends LayerListSpecification {
   }
 
   restoreState(x: any) {
+    console.log("restore state", x);
     this.layerManager.clear();
     let layerSpecs: any[];
     if (!Array.isArray(x)) {
@@ -2175,6 +2176,9 @@ export class TopLevelLayerListSpecification extends LayerListSpecification {
     for (const { managedLayer, spec } of layersToRestore) {
       try {
         completeUserLayerInitialization(managedLayer, spec);
+        managedLayer.registerDisposer(() => {
+          console.log("we deleted", managedLayer.name);
+        });
       } catch (e) {
         const msg = new StatusMessage();
         msg.setErrorMessage(

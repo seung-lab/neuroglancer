@@ -17,7 +17,6 @@
 import "#src/noselect.css";
 import "#src/ui/layer_bar.css";
 import svg_plus from "ikonate/icons/plus.svg?raw";
-import { GraphConnection } from "#src/datasource/graphene/frontend.js";
 import type { ManagedUserLayer } from "#src/layer/index.js";
 import { addNewLayer, deleteLayer, makeLayer } from "#src/layer/index.js";
 import { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
@@ -74,53 +73,62 @@ class LayerWidget extends RefCounted {
     this.registerDisposer(
       layer.readyStateChanged.add(() => {
         if (layer.isReady() && layer.layer instanceof SegmentationUserLayer) {
-          const graphConnection = layer.layer.graphConnection;
           const timeButton = makeIcon({
             text: "🕘",
-            title:
-              "This segmentation is currently in an older state.\nClick to return to current form.",
+          });
+          element.appendChild(timeButton);
+
+          const { segmentationGroupState } = layer.layer.displayState;
+          const { timestamp, timestampOwner } = segmentationGroupState.value;
+
+          const updateTimeButtonTitle = () => {
+            const otherOwners = [...timestampOwner].filter(
+              (x) => x !== layer.name,
+            );
+            if (timestamp.value) {
+              if (timestampOwner.size) {
+                timeButton.title = `${new Date(timestamp.value)}.\nBound to annotation layer(s): ${otherOwners.join(", ")}`;
+              } else {
+                timeButton.title = `${new Date(timestamp.value)}.\nClick to return to current form.`;
+              }
+            }
+            timeButton.style.display =
+              timestamp.value === undefined ? "none" : "inherit";
+          };
+          updateTimeButtonTitle();
+
+          timestampOwner.changed.add(() => {
+            updateTimeButtonTitle();
+            const layerNames = layer.manager.layerManager.managedLayers.map(
+              (x) => x.name,
+            );
+            const invalidOwners = [...timestampOwner].filter(
+              (x) => !layerNames.includes(x),
+            );
+            for (const owner of invalidOwners) {
+              // TODO, this is going to trigger changed again, would this break things
+              timestampOwner.delete(owner);
+            }
+          });
+          timestamp.changed.add(() => {
+            updateTimeButtonTitle();
           });
           timeButton.addEventListener("click", (evt) => {
             evt.stopPropagation();
-            if (graphConnection.value instanceof GraphConnection) {
-              const { timestamp, timestampOwner } = graphConnection.value.state;
-              if (!timestampOwner.size) {
-                timestamp.reset();
-              } else {
-                StatusMessage.showTemporaryMessage(
-                  `Segmentation time bound to annotation layer(s) ${[...timestampOwner].join(", ")}`,
-                );
-              }
+            if (segmentationGroupState.value.canSetTimestamp(layer.name)) {
+              timestamp.reset();
+            } else {
+              const otherOwners = [...timestampOwner].filter(
+                (x) => x !== layer.name,
+              );
+              StatusMessage.showTemporaryMessage(
+                `Segmentation time bound to annotation layer(s): ${otherOwners.join(", ")}`,
+              );
             }
           });
-          let timeStampDisposer: (() => boolean) | undefined = undefined;
-          const graphConnectionChanged = () => {
-            if (timeStampDisposer) timeStampDisposer();
-            if (graphConnection.value instanceof GraphConnection) {
-              element.appendChild(timeButton);
-              const { timestamp } = graphConnection.value.state;
-              const updateTimeDisplay = () => {
-                timeButton.style.display =
-                  timestamp.value > 0 ? "inherit" : "none";
-              };
-              timeStampDisposer = this.registerDisposer(
-                timestamp.changed.add(updateTimeDisplay),
-              );
-              updateTimeDisplay();
-            } else {
-              if (element.contains(timeButton)) {
-                element.removeChild(timeButton);
-              }
-            }
-          };
-          graphConnectionChanged();
-          this.registerDisposer(
-            graphConnection.changed.add(graphConnectionChanged),
-          );
         }
       }),
     );
-
     visibleProgress.className = "neuroglancer-layer-item-visible-progress";
     prefetchProgress.className = "neuroglancer-layer-item-prefetch-progress";
     layerNumberElement.className = "neuroglancer-layer-item-number";
