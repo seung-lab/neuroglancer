@@ -2695,6 +2695,15 @@ function timeLayerControl(): LayerControlFactory<SegmentationUserLayer> {
         if (intermediateTimestamp.value === timestamp.value) {
           return;
         }
+        if (
+          intermediateTimestamp.value === undefined &&
+          segmentationGroupState.canSetTimestamp(layer.managedLayer.name)
+        ) {
+          // TODO, make sure there is no edit
+          timestamp.value = intermediateTimestamp.value;
+          timestampOwner.delete(layer.managedLayer.name);
+          return;
+        }
         if (graph instanceof GrapheneGraphSource) {
           if (segmentationGroupState.canSetTimestamp()) {
             const nonLatestRoots = await graph.graphServer.filterLatestRoots(
@@ -2709,12 +2718,7 @@ function timeLayerControl(): LayerControlFactory<SegmentationUserLayer> {
               )
             ) {
               timestamp.value = intermediateTimestamp.value;
-              if (intermediateTimestamp.value) {
-                timestampOwner.add(layer.managedLayer.name);
-              } else {
-                // since we are in canSetTimestamp(), there is no edit
-                timestampOwner.delete(layer.managedLayer.name);
-              }
+              timestampOwner.add(layer.managedLayer.name);
               return;
             }
           }

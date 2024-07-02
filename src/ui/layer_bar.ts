@@ -81,24 +81,25 @@ class LayerWidget extends RefCounted {
           const { segmentationGroupState } = layer.layer.displayState;
           const { timestamp, timestampOwner } = segmentationGroupState.value;
 
-          const updateTimeButtonTitle = () => {
+          const updateTimeButton = () => {
             const otherOwners = [...timestampOwner].filter(
               (x) => x !== layer.name,
             );
             if (timestamp.value) {
               if (timestampOwner.size) {
-                timeButton.title = `${new Date(timestamp.value)}.\nBound to annotation layer(s): ${otherOwners.join(", ")}`;
+                timeButton.title = `${new Date(timestamp.value)}.\nBound to layer(s): ${otherOwners.join(", ")}`;
               } else {
                 timeButton.title = `${new Date(timestamp.value)}.\nClick to return to current form.`;
               }
+              timeButton.classList.toggle("locked", otherOwners.length > 0);
             }
             timeButton.style.display =
               timestamp.value === undefined ? "none" : "inherit";
           };
-          updateTimeButtonTitle();
+          updateTimeButton();
 
           timestampOwner.changed.add(() => {
-            updateTimeButtonTitle();
+            updateTimeButton();
             const layerNames = layer.manager.layerManager.managedLayers.map(
               (x) => x.name,
             );
@@ -111,7 +112,7 @@ class LayerWidget extends RefCounted {
             }
           });
           timestamp.changed.add(() => {
-            updateTimeButtonTitle();
+            updateTimeButton();
           });
           timeButton.addEventListener("click", (evt) => {
             evt.stopPropagation();
@@ -122,7 +123,7 @@ class LayerWidget extends RefCounted {
                 (x) => x !== layer.name,
               );
               StatusMessage.showTemporaryMessage(
-                `Segmentation time bound to annotation layer(s): ${otherOwners.join(", ")}`,
+                `Segmentation time bound to layer(s): ${otherOwners.join(", ")}`,
               );
             }
           });

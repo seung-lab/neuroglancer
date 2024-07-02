@@ -456,7 +456,7 @@ export class AnnotationUserLayer extends Base {
                   } else {
                     linkedLayer.showMatches.reset();
                     StatusMessage.showTemporaryMessage(
-                      "Segmentation layer is already bound to another annotation layer at a different timestamp.",
+                      `Segmentation layer timestamp is locked by layer(s): ${[...timestampOwner].join(", ")}`,
                     );
                   }
                 } else if (timestampOwner.has(managedLayer.name)) {

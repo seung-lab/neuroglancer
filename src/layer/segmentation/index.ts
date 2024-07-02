@@ -253,7 +253,9 @@ export class SegmentationUserLayerGroupState
     }
     x[json_keys.SEGMENT_QUERY_JSON_KEY] = this.segmentQuery.toJSON();
     x[json_keys.TIMESTAMP_JSON_KEY] = this.timestamp.toJSON();
-    x[json_keys.TIMESTAMP_OWNER_JSON_KEY] = [...this.timestampOwner];
+    if (this.timestampOwner.size > 0) {
+      x[json_keys.TIMESTAMP_OWNER_JSON_KEY] = [...this.timestampOwner];
+    }
     return x;
   }
 
