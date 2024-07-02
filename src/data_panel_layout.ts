@@ -793,7 +793,6 @@ export class DataPanelLayoutContainer extends RefCounted {
     return this.specification.type.value;
   }
   set name(value: string) {
-    console.log("set name", value);
     this.specification.type.value = value;
   }
 
@@ -845,7 +844,6 @@ export class DataPanelLayoutContainer extends RefCounted {
   }
   private updateLayout() {
     this.disposeLayout();
-    console.log("updateLayout", this.name);
     this.layout = getLayoutByName(this.name).factory(
       this,
       this.element,
