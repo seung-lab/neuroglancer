@@ -16,6 +16,8 @@
 
 import "#src/ui/segment_list.css";
 
+import svg_eye_crossed from "ikonate/icons/eye-crossed.svg?raw";
+import svg_eye from "ikonate/icons/eye.svg?raw";
 import type { DebouncedFunc } from "lodash-es";
 import { debounce, throttle } from "lodash-es";
 import type {
@@ -48,7 +50,11 @@ import {
   updatePropertyHistograms,
 } from "#src/segmentation_display_state/property_map.js";
 import type { WatchableValueInterface } from "#src/trackable_value.js";
-import { observeWatchable, WatchableValue } from "#src/trackable_value.js";
+import {
+  AggregateWatchableValue,
+  observeWatchable,
+  WatchableValue,
+} from "#src/trackable_value.js";
 import { getDefaultSelectBindings } from "#src/ui/default_input_event_bindings.js";
 import { SELECT_SEGMENTS_TOOLS_ID } from "#src/ui/segment_select_tools.js";
 import {
@@ -84,6 +90,7 @@ import { CheckboxIcon } from "#src/widget/checkbox_icon.js";
 import { makeCopyButton } from "#src/widget/copy_button.js";
 import { DependentViewWidget } from "#src/widget/dependent_view_widget.js";
 import { makeEyeButton } from "#src/widget/eye_button.js";
+import { makeIcon } from "#src/widget/icon.js";
 import type { RangeAndWindowIntervals } from "#src/widget/invlerp.js";
 import {
   CdfController,
@@ -1559,85 +1566,145 @@ export class SegmentDisplayTab extends Tab {
       }, this.layer.segmentQueryFocusTime),
     );
 
-    element.appendChild(queryElement);
+    const queryVisible = new WatchableValue<boolean>(false); // TODO (state?)
+
+    const hideIcon = makeIcon({
+      svg: svg_eye,
+      title: "Hide layer",
+      onClick: () => {
+        queryVisible.value = false;
+      },
+    });
+    const showIcon = makeIcon({
+      svg: svg_eye_crossed,
+      title: "Show layer",
+      onClick: () => {
+        queryVisible.value = true;
+      },
+    });
+    const updateView = () => {
+      const visible = queryVisible.value;
+      hideIcon.style.display = visible ? "" : "none";
+      showIcon.style.display = !visible ? "" : "none";
+    };
+    queryVisible.changed.add(updateView);
+    updateView();
+
+    const queryContainer = document.createElement("div");
+    queryContainer.style.display = "flex";
+    queryElement.style.flex = "1 1 0%";
+    queryContainer.appendChild(queryElement);
+    queryContainer.appendChild(showIcon);
+    queryContainer.appendChild(hideIcon);
+    element.appendChild(queryContainer);
     element.appendChild(
       this.registerDisposer(
         new DependentViewWidget(
+          this.registerDisposer(
+            new AggregateWatchableValue(() => ({
+              queryVisible: queryVisible,
+              segmentPropertyMap: layer.displayState.segmentPropertyMap,
+            })),
+          ),
           // segmentLabelMap is guaranteed to change if segmentationGroupState changes.
-          layer.displayState.segmentPropertyMap,
-          (segmentPropertyMap, parent, context) => {
-            const listSource = context.registerDisposer(
-              new SegmentQueryListSource(
-                segmentQuery,
-                segmentPropertyMap,
-                layer.displayState,
-                parent,
-              ),
-            );
+          ({ queryVisible, segmentPropertyMap }, parent, context) => {
+            const { displayState } = this.layer;
+            const group = layer.displayState.segmentationGroupState.value;
+            if (queryVisible) {
+              const listSource = context.registerDisposer(
+                new SegmentQueryListSource(
+                  segmentQuery,
+                  segmentPropertyMap,
+                  layer.displayState,
+                  parent,
+                ),
+              );
+              const list = context.registerDisposer(
+                new VirtualList({ source: listSource, horizontalScroll: true }),
+              );
+
+              const segList = context.registerDisposer(
+                new SegmentListGroupQuery(
+                  list,
+                  listSource,
+                  group,
+                  segmentPropertyMap,
+                  segmentQuery,
+                  queryElement,
+                  debouncedUpdateQueryModel,
+                ),
+              );
+              segList.element.appendChild(list.element);
+              parent.appendChild(segList.element);
+              segList.updateStatus();
+
+              list.element.classList.add("neuroglancer-segment-list");
+              list.element.classList.add("neuroglancer-preview-list");
+              context.registerDisposer(
+                layer.bindSegmentListWidth(list.element),
+              );
+              context.registerDisposer(
+                new MouseEventBinder(list.element, getDefaultSelectBindings()),
+              );
+              const updateListItems = context.registerCancellable(
+                animationFrameDebounce(() => {
+                  listSource.updateRenderedItems(list);
+                }),
+              );
+              registerCallbackWhenSegmentationDisplayStateChanged(
+                displayState,
+                context,
+                updateListItems,
+              );
+              context.registerDisposer(
+                displayState.segmentationGroupState.value.selectedSegments.changed.add(
+                  updateListItems,
+                ),
+              );
+            }
             const selectedSegmentsListSource = context.registerDisposer(
               new StarredSegmentsListSource(layer.displayState, parent),
             );
-            const list = context.registerDisposer(
-              new VirtualList({ source: listSource, horizontalScroll: true }),
-            );
+
             const selectedSegmentsList = context.registerDisposer(
               new VirtualList({
                 source: selectedSegmentsListSource,
                 horizontalScroll: true,
               }),
             );
-
-            const group = layer.displayState.segmentationGroupState.value;
-
-            const segList = context.registerDisposer(
-              new SegmentListGroupQuery(
-                list,
-                listSource,
-                group,
-                segmentPropertyMap,
-                segmentQuery,
-                queryElement,
-                debouncedUpdateQueryModel,
-              ),
-            );
-            segList.element.appendChild(list.element);
-            parent.appendChild(segList.element);
             const segList2 = context.registerDisposer(
               new SegmentListGroupSelected(selectedSegmentsListSource, group),
             );
             segList2.element.appendChild(selectedSegmentsList.element);
             parent.appendChild(segList2.element);
 
-            const updateListDisplayState = () => {
-              const showQueryResultsList =
-                listSource.query.value !== "" || listSource.numMatches > 0;
-              const showStarredSegmentsList =
-                selectedSegmentsListSource.length > 0 || !showQueryResultsList;
-              segList.element.style.display = showQueryResultsList
-                ? "contents"
-                : "none";
-              segList2.element.style.display = showStarredSegmentsList
-                ? "contents"
-                : "none";
-            };
-            context.registerDisposer(
-              segList.statusChanged.add(updateListDisplayState),
-            );
-            context.registerDisposer(
-              segList2.statusChanged.add(updateListDisplayState),
-            );
-            segList.updateStatus();
+            // const updateListDisplayState = () => {
+            //   const showQueryResultsList =
+            //     listSource.query.value !== "" || listSource.numMatches > 0;
+            //   const showStarredSegmentsList =
+            //     selectedSegmentsListSource.length > 0 || !showQueryResultsList;
+            //   segList.element.style.display = showQueryResultsList
+            //     ? "contents"
+            //     : "none";
+            //   segList2.element.style.display = showStarredSegmentsList
+            //     ? "contents"
+            //     : "none";
+            // };
+            // context.registerDisposer(
+            //   segList.statusChanged.add(updateListDisplayState),
+            // );
+            // context.registerDisposer(
+            //   segList2.statusChanged.add(updateListDisplayState),
+            // );
             segList2.updateStatus();
 
             const updateListItems = context.registerCancellable(
               animationFrameDebounce(() => {
-                listSource.updateRenderedItems(list);
                 selectedSegmentsListSource.updateRenderedItems(
                   selectedSegmentsList,
                 );
               }),
             );
-            const { displayState } = this.layer;
             registerCallbackWhenSegmentationDisplayStateChanged(
               displayState,
               context,
@@ -1648,17 +1715,11 @@ export class SegmentDisplayTab extends Tab {
                 updateListItems,
               ),
             );
-            list.element.classList.add("neuroglancer-segment-list");
-            list.element.classList.add("neuroglancer-preview-list");
             selectedSegmentsList.element.classList.add(
               "neuroglancer-segment-list",
             );
-            context.registerDisposer(layer.bindSegmentListWidth(list.element));
             context.registerDisposer(
               layer.bindSegmentListWidth(selectedSegmentsList.element),
-            );
-            context.registerDisposer(
-              new MouseEventBinder(list.element, getDefaultSelectBindings()),
             );
             context.registerDisposer(
               new MouseEventBinder(
