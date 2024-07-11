@@ -62,7 +62,7 @@ import {
   SharedObjectCounterpart,
 } from "#src/worker_rpc.js";
 
-const DEBUG_CHUNK_UPDATES = false;
+const DEBUG_CHUNK_UPDATES = true;
 
 export interface ChunkStateListener {
   (chunk: Chunk, oldState: ChunkState): void;
