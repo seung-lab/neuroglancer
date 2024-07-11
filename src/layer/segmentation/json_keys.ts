@@ -27,3 +27,4 @@ export const SKELETON_RENDERING_SHADER_CONTROL_TOOL_ID =
   "skeletonShaderControl";
 export const TIMESTAMP_JSON_KEY = "timestamp";
 export const TIMESTAMP_OWNER_JSON_KEY = "timestampOwner";
+export const HIDE_QUERY_RESULTS_JSON_KEY = "hideQueryResults";

@@ -16,8 +16,8 @@
 
 import "#src/ui/segment_list.css";
 
-import svg_eye_crossed from "ikonate/icons/eye-crossed.svg?raw";
-import svg_eye from "ikonate/icons/eye.svg?raw";
+import svg_chevron_down from "ikonate/icons/chevron-down.svg?raw";
+import svg_chevron_up from "ikonate/icons/chevron-up.svg?raw";
 import type { DebouncedFunc } from "lodash-es";
 import { debounce, throttle } from "lodash-es";
 import type {
@@ -1566,51 +1566,49 @@ export class SegmentDisplayTab extends Tab {
       }, this.layer.segmentQueryFocusTime),
     );
 
-    const queryVisible = new WatchableValue<boolean>(false); // TODO (state?)
+    const { hideQueryResults } = layer.displayState;
 
     const hideIcon = makeIcon({
-      svg: svg_eye,
-      title: "Hide layer",
+      svg: svg_chevron_up,
+      title: "Hide query results",
       onClick: () => {
-        queryVisible.value = false;
+        hideQueryResults.value = true;
       },
     });
     const showIcon = makeIcon({
-      svg: svg_eye_crossed,
-      title: "Show layer",
+      svg: svg_chevron_down,
+      title: "Show query results",
       onClick: () => {
-        queryVisible.value = true;
+        hideQueryResults.value = false;
       },
     });
     const updateView = () => {
-      const visible = queryVisible.value;
-      hideIcon.style.display = visible ? "" : "none";
-      showIcon.style.display = !visible ? "" : "none";
+      hideIcon.style.display = !hideQueryResults.value ? "" : "none";
+      showIcon.style.display = hideQueryResults.value ? "" : "none";
     };
-    queryVisible.changed.add(updateView);
+    hideQueryResults.changed.add(updateView);
     updateView();
-
     const queryContainer = document.createElement("div");
     queryContainer.style.display = "flex";
     queryElement.style.flex = "1 1 0%";
-    queryContainer.appendChild(queryElement);
     queryContainer.appendChild(showIcon);
     queryContainer.appendChild(hideIcon);
+    queryContainer.appendChild(queryElement);
     element.appendChild(queryContainer);
     element.appendChild(
       this.registerDisposer(
         new DependentViewWidget(
           this.registerDisposer(
             new AggregateWatchableValue(() => ({
-              queryVisible: queryVisible,
+              hideQueryResults: hideQueryResults,
               segmentPropertyMap: layer.displayState.segmentPropertyMap,
             })),
           ),
           // segmentLabelMap is guaranteed to change if segmentationGroupState changes.
-          ({ queryVisible, segmentPropertyMap }, parent, context) => {
+          ({ hideQueryResults, segmentPropertyMap }, parent, context) => {
             const { displayState } = this.layer;
             const group = layer.displayState.segmentationGroupState.value;
-            if (queryVisible) {
+            if (!hideQueryResults) {
               const listSource = context.registerDisposer(
                 new SegmentQueryListSource(
                   segmentQuery,
@@ -1622,7 +1620,6 @@ export class SegmentDisplayTab extends Tab {
               const list = context.registerDisposer(
                 new VirtualList({ source: listSource, horizontalScroll: true }),
               );
-
               const segList = context.registerDisposer(
                 new SegmentListGroupQuery(
                   list,
@@ -1665,7 +1662,6 @@ export class SegmentDisplayTab extends Tab {
             const selectedSegmentsListSource = context.registerDisposer(
               new StarredSegmentsListSource(layer.displayState, parent),
             );
-
             const selectedSegmentsList = context.registerDisposer(
               new VirtualList({
                 source: selectedSegmentsListSource,
@@ -1677,27 +1673,7 @@ export class SegmentDisplayTab extends Tab {
             );
             segList2.element.appendChild(selectedSegmentsList.element);
             parent.appendChild(segList2.element);
-
-            // const updateListDisplayState = () => {
-            //   const showQueryResultsList =
-            //     listSource.query.value !== "" || listSource.numMatches > 0;
-            //   const showStarredSegmentsList =
-            //     selectedSegmentsListSource.length > 0 || !showQueryResultsList;
-            //   segList.element.style.display = showQueryResultsList
-            //     ? "contents"
-            //     : "none";
-            //   segList2.element.style.display = showStarredSegmentsList
-            //     ? "contents"
-            //     : "none";
-            // };
-            // context.registerDisposer(
-            //   segList.statusChanged.add(updateListDisplayState),
-            // );
-            // context.registerDisposer(
-            //   segList2.statusChanged.add(updateListDisplayState),
-            // );
             segList2.updateStatus();
-
             const updateListItems = context.registerCancellable(
               animationFrameDebounce(() => {
                 selectedSegmentsListSource.updateRenderedItems(
@@ -1727,7 +1703,6 @@ export class SegmentDisplayTab extends Tab {
                 getDefaultSelectBindings(),
               ),
             );
-
             // list2 doesn't depend on queryResult, maybe move this into class
             selectedSegmentsListSource.segmentWidgetFactory =
               new SegmentWidgetWithExtraColumnsFactory(

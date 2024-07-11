@@ -541,6 +541,8 @@ class SegmentationUserLayerDisplayState implements SegmentationDisplayState {
     SharedWatchableValue.make(this.layer.manager.rpc, false),
   );
 
+  hideQueryResults = new TrackableBoolean(false);
+
   filterBySegmentLabel = this.layer.filterBySegmentLabel;
 
   moveToSegment = (id: Uint64) => {
@@ -1001,6 +1003,9 @@ export class SegmentationUserLayer extends Base {
     this.displayState.ignoreNullVisibleSet.restoreState(
       specification[json_keys.IGNORE_NULL_VISIBLE_SET_JSON_KEY],
     );
+    this.displayState.hideQueryResults.restoreState(
+      specification[json_keys.HIDE_QUERY_RESULTS_JSON_KEY],
+    );
 
     const { skeletonRenderingOptions } = this.displayState;
     skeletonRenderingOptions.restoreState(
@@ -1067,6 +1072,9 @@ export class SegmentationUserLayer extends Base {
       this.displayState.skeletonRenderingOptions.toJSON();
     x[json_keys.MESH_RENDER_SCALE_JSON_KEY] =
       this.displayState.renderScaleTarget.toJSON();
+    x[json_keys.HIDE_QUERY_RESULTS_JSON_KEY] =
+      this.displayState.hideQueryResults.toJSON();
+
     x[json_keys.CROSS_SECTION_RENDER_SCALE_JSON_KEY] =
       this.sliceViewRenderScaleTarget.toJSON();
 

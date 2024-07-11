@@ -218,6 +218,7 @@ export interface SegmentationDisplayState {
   segmentDefaultColor: WatchableValueInterface<vec3 | undefined>;
   tempSegmentDefaultColor2d: WatchableValueInterface<vec3 | vec4 | undefined>;
   highlightColor: WatchableValueInterface<vec4 | undefined>;
+  hideQueryResults: WatchableValueInterface<boolean>;
 }
 
 export function resetTemporaryVisibleSegmentsState(
