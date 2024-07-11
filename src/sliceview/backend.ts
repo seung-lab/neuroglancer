@@ -405,6 +405,10 @@ export class SliceViewChunkSourceBackend<
     }
     return chunk;
   }
+
+  toString() {
+    return (this as any).parameters.url;
+  }
 }
 
 @registerSharedObject(SLICEVIEW_RENDERLAYER_RPC_ID)

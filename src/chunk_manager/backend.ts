@@ -861,7 +861,7 @@ export class ChunkQueueManager extends SharedObjectCounterpart {
     }
     if (DEBUG_CHUNK_UPDATES) {
       console.log(
-        `${chunk}: changed priority ${chunk.priorityTier}:` +
+        `${chunk.toString()}: changed priority ${chunk.priorityTier}:` +
           `${chunk.priority} -> ${chunk.newPriorityTier}:${chunk.newPriority}`,
       );
     }
@@ -880,7 +880,7 @@ export class ChunkQueueManager extends SharedObjectCounterpart {
     }
     if (DEBUG_CHUNK_UPDATES) {
       console.log(
-        `${chunk}: changed state ${ChunkState[chunk.state]} -> ${
+        `${chunk.toString()}: changed state ${ChunkState[chunk.state]} -> ${
           ChunkState[newState]
         }`,
       );
