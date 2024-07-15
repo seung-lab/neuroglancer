@@ -28,6 +28,7 @@ import {
 } from "#src/annotation/index.js";
 import type { CoordinateTransformSpecification } from "#src/coordinate_transform.js";
 import { makeCoordinateSpace } from "#src/coordinate_transform.js";
+import { CaveAnnotationSource } from "#src/datasource/cave/frontend.js";
 import type { DataSourceSpecification } from "#src/datasource/index.js";
 import { localAnnotationsUrl, LocalDataSource } from "#src/datasource/index.js";
 import type { LayerManager, ManagedUserLayer } from "#src/layer/index.js";
@@ -43,6 +44,7 @@ import { Overlay } from "#src/overlay.js";
 import { getWatchableRenderLayerTransform } from "#src/render_coordinate_transform.js";
 import { RenderLayerRole } from "#src/renderlayer.js";
 import type { SegmentationDisplayState } from "#src/segmentation_display_state/frontend.js";
+import { StatusMessage } from "#src/status.js";
 import type { TrackableBoolean } from "#src/trackable_boolean.js";
 import { TrackableBooleanCheckbox } from "#src/trackable_boolean.js";
 import { makeCachedLazyDerivedWatchableValue } from "#src/trackable_value.js";
@@ -345,6 +347,7 @@ class LinkedSegmentationLayersWidget extends RefCounted {
   }
 
   private updateView() {
+    console.log("update view");
     const { linkedSegmentationLayers } = this;
     const { annotationStates } = linkedSegmentationLayers;
     const generation = annotationStates.changed.count;
@@ -366,6 +369,7 @@ class LinkedSegmentationLayersWidget extends RefCounted {
       if (widget.seenGeneration !== generation) {
         widget.dispose();
         widgets.delete(relationship);
+        console.log("deleted", relationship);
       }
     }
     updateChildren(this.element, getChildren.call(this));
@@ -394,6 +398,21 @@ export class AnnotationUserLayer extends Base {
     ),
   );
 
+  removeOwner(layer: SegmentationUserLayer) {
+    const { managedLayer } = this;
+    const { segmentationGroupState } = layer.displayState;
+    const { timestamp, timestampOwner } = segmentationGroupState.value;
+    if (
+      timestampOwner.has(managedLayer.name) &&
+      !this.ownedLayers.includes(layer)
+    ) {
+      timestampOwner.delete(managedLayer.name);
+      if (timestampOwner.size === 0) {
+        timestamp.reset();
+      }
+    }
+  }
+
   disposed() {
     const { localAnnotations } = this;
     if (localAnnotations !== undefined) {
@@ -402,11 +421,92 @@ export class AnnotationUserLayer extends Base {
     super.disposed();
   }
 
+  ownedLayers: SegmentationUserLayer[] = [];
+
+  updateTimestamp() {
+    const { managedLayer } = this;
+    this.ownedLayers = [];
+    // find all the segmentation layers we should have timestamp ownership of
+    for (const { source } of this.annotationStates.value) {
+      if (source instanceof CaveAnnotationSource) {
+        const { timestamp } = source.parameters;
+        const unixTimestamp = new Date(timestamp).valueOf();
+        for (const relationship of this.linkedSegmentationLayers
+          .annotationStates.relationships) {
+          const linkedLayer = this.linkedSegmentationLayers.get(relationship);
+          if (linkedLayer) {
+            const layer = linkedLayer.layerRef.layer?.layer;
+            if (layer) {
+              if (layer instanceof SegmentationUserLayer) {
+                const { segmentationGroupState } = layer.displayState;
+                const { timestamp, timestampOwner } =
+                  segmentationGroupState.value;
+                if (linkedLayer.showMatches.value) {
+                  if (
+                    segmentationGroupState.value.canSetTimestamp(
+                      managedLayer.name,
+                    )
+                  ) {
+                    this.ownedLayers.push(layer);
+                    timestampOwner.add(managedLayer.name);
+                    timestamp.value = unixTimestamp;
+                  } else if (timestamp.value === unixTimestamp) {
+                    this.ownedLayers.push(layer);
+                    timestampOwner.add(managedLayer.name);
+                  } else {
+                    linkedLayer.showMatches.reset();
+                    StatusMessage.showTemporaryMessage(
+                      `Segmentation layer timestamp is locked by layer(s): ${[...timestampOwner].join(", ")}`,
+                    );
+                  }
+                } else if (timestampOwner.has(managedLayer.name)) {
+                  this.removeOwner(layer);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // WHY DO WE NEED THIS?
+    // WE CHECK TO SEE IF ANY MANAGED LAYER STILL HAS OWNERSHIP OF THIS LAYER EVEN THOUGH IT HAS BEEN UNCHECKED
+    // SHOULD WE HANDLE THIS IN THE EVENT HANDLER FOR THE UI TOGGLE?
+    // THE ISSUE IS WE NEED THE PREVIOUS VALUE
+    for (const { layer } of managedLayer.manager.layerManager.managedLayers) {
+      if (
+        layer instanceof SegmentationUserLayer &&
+        !this.ownedLayers.includes(layer)
+      ) {
+        console.log("removing owner because no longer linked by UI");
+        this.removeOwner(layer);
+      }
+    }
+  }
+
   constructor(managedLayer: Borrowed<ManagedUserLayer>) {
     super(managedLayer);
-    this.linkedSegmentationLayers.changed.add(
-      this.specificationChanged.dispatch,
+
+    this.registerDisposer(
+      this.annotationStates.changed.add(() => {
+        this.updateTimestamp();
+      }),
     );
+
+    this.registerDisposer(
+      this.linkedSegmentationLayers.changed.add(() => {
+        this.updateTimestamp();
+        this.specificationChanged.dispatch();
+      }),
+    );
+
+    // remove owner when annotation layer go away
+    this.registerDisposer(() => {
+      for (const layer of this.ownedLayers) {
+        this.removeOwner(layer);
+      }
+    });
+
     this.annotationDisplayState.ignoreNullSegmentFilter.changed.add(
       this.specificationChanged.dispatch,
     );
