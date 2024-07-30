@@ -437,7 +437,9 @@ class LinkedSegmentationGroupState<
   }
 }
 
-class SegmentationUserLayerDisplayState implements SegmentationDisplayState {
+export class SegmentationUserLayerDisplayState
+  implements SegmentationDisplayState
+{
   constructor(public layer: SegmentationUserLayer) {
     // Even though `SegmentationUserLayer` assigns this to its `displayState` property, redundantly
     // assign it here first in order to allow it to be accessed by `segmentationGroupState`.
