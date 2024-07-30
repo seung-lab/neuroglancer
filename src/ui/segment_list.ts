@@ -20,6 +20,7 @@ import type { DebouncedFunc } from "lodash-es";
 import { debounce, throttle } from "lodash-es";
 import type {
   SegmentationUserLayer,
+  SegmentationUserLayerDisplayState,
   SegmentationUserLayerGroupState,
 } from "#src/layer/segmentation/index.js";
 import type { SegmentationDisplayState } from "#src/segmentation_display_state/frontend.js";
@@ -129,8 +130,15 @@ abstract class SegmentListSource
   abstract render(index: number): HTMLDivElement;
 
   updateRenderedItems(list: VirtualList) {
+    const graphType = (
+      this.segmentationDisplayState as SegmentationUserLayerDisplayState
+    ).layer.graphConnection.value?.graph.constructor.name;
+    const event = new Event(`segment-list-item-updated-${graphType}`, {
+      bubbles: true,
+    });
     list.forEachRenderedItem((element) => {
       this.updateRendering(element);
+      element.dispatchEvent(event);
     });
   }
 }
