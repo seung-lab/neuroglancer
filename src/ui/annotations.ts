@@ -1765,8 +1765,20 @@ export function UserLayerWithAnnotationsMixin<
                 label.appendChild(valueElement);
                 parent.appendChild(label);
 
+                const activeTags: string[] = [];
+
                 for (let i = 0, count = properties.length; i < count; ++i) {
                   const property = properties[i];
+                  const value = annotation.properties[i];
+
+                  if ((property as any).tag) {
+                    // TODO fix
+                    if (value === 1) {
+                      activeTags.push(property.identifier);
+                    }
+                    continue;
+                  }
+
                   const label = document.createElement("label");
                   label.classList.add("neuroglancer-annotation-property");
                   const idElement = document.createElement("span");
@@ -1779,7 +1791,6 @@ export function UserLayerWithAnnotationsMixin<
                   if (description !== undefined) {
                     label.title = description;
                   }
-                  const value = annotation.properties[i];
                   const valueElement = document.createElement("span");
                   valueElement.classList.add(
                     "neuroglancer-annotation-property-value",
@@ -1815,6 +1826,26 @@ export function UserLayerWithAnnotationsMixin<
                       );
                       break;
                   }
+                  label.appendChild(valueElement);
+                  parent.appendChild(label);
+                }
+
+                if (activeTags.length) {
+                  const label = document.createElement("label");
+                  label.classList.add("neuroglancer-annotation-property");
+                  const idElement = document.createElement("span");
+                  idElement.classList.add(
+                    "neuroglancer-annotation-property-label",
+                  );
+                  idElement.textContent = "tags";
+                  label.appendChild(idElement);
+                  const valueElement = document.createElement("span");
+                  valueElement.classList.add(
+                    "neuroglancer-annotation-property-value",
+                  );
+                  valueElement.textContent = activeTags
+                    .map((x) => `#${x}`)
+                    .join(" ");
                   label.appendChild(valueElement);
                   parent.appendChild(label);
                 }

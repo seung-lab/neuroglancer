@@ -40,6 +40,7 @@ import {
   expectArray,
   parseArray,
   parseFixedLengthArray,
+  verifyBoolean,
   verifyEnumString,
   verifyFiniteFloat,
   verifyFiniteNonNegativeFloat,
@@ -106,6 +107,7 @@ export interface AnnotationNumericPropertySpec
   min?: number;
   max?: number;
   step?: number;
+  tag?: boolean;
 }
 
 export const propertyTypeDataType: Record<
@@ -126,6 +128,12 @@ export const propertyTypeDataType: Record<
 export type AnnotationPropertySpec =
   | AnnotationColorPropertySpec
   | AnnotationNumericPropertySpec;
+
+export function isAnnotationNumericPropertySpec(
+  spec: AnnotationPropertySpec,
+): spec is AnnotationNumericPropertySpec {
+  return spec.type !== "rgb" && spec.type !== "rgba";
+}
 
 export interface AnnotationPropertyTypeHandler {
   serializedBytes(rank: number): number;
@@ -569,6 +577,7 @@ function parseAnnotationPropertySpec(obj: unknown): AnnotationPropertySpec {
   );
   let enumValues: number[] | undefined;
   let enumLabels: string[] | undefined;
+  let tag: boolean | undefined;
   switch (type) {
     case "rgb":
     case "rgba":
@@ -593,6 +602,7 @@ function parseAnnotationPropertySpec(obj: unknown): AnnotationPropertySpec {
           ),
         );
       }
+      tag = verifyOptionalObjectProperty(obj, "tag", verifyBoolean);
     }
   }
   return {
@@ -602,15 +612,18 @@ function parseAnnotationPropertySpec(obj: unknown): AnnotationPropertySpec {
     default: defaultValue,
     enumValues,
     enumLabels,
+    tag,
   } as AnnotationPropertySpec;
 }
 
 function annotationPropertySpecToJson(spec: AnnotationPropertySpec) {
   const defaultValue = spec.default;
+  const tag = isAnnotationNumericPropertySpec(spec) ? spec.tag : undefined;
   return {
     id: spec.identifier,
     description: spec.description,
     type: spec.type,
+    tag,
     default:
       defaultValue === 0
         ? undefined
@@ -1261,7 +1274,7 @@ export class LocalAnnotationSource extends AnnotationSource {
 
   constructor(
     public watchableTransform: WatchableCoordinateSpaceTransform,
-    properties: AnnotationPropertySpec[],
+    public properties: AnnotationPropertySpec[],
     relationships: string[],
   ) {
     super(watchableTransform.value.sourceRank, relationships, properties);
@@ -1269,6 +1282,19 @@ export class LocalAnnotationSource extends AnnotationSource {
     this.registerDisposer(
       watchableTransform.changed.add(() => this.ensureUpdated()),
     );
+  }
+
+  updateAnnotationPropertySerializers() {
+    this.annotationPropertySerializers = makeAnnotationPropertySerializers(
+      this.rank_,
+      this.properties,
+    );
+  }
+
+  addProperty(property: AnnotationPropertySpec) {
+    this.properties.push(property);
+    this.updateAnnotationPropertySerializers();
+    this.changed.dispatch();
   }
 
   ensureUpdated() {
@@ -1325,10 +1351,7 @@ export class LocalAnnotationSource extends AnnotationSource {
     }
     if (this.rank_ !== sourceRank) {
       this.rank_ = sourceRank;
-      this.annotationPropertySerializers = makeAnnotationPropertySerializers(
-        this.rank_,
-        this.properties,
-      );
+      this.updateAnnotationPropertySerializers();
     }
     this.changed.dispatch();
   }

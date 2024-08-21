@@ -49,3 +49,11 @@
   content: "()";
   color: #999;
 }
+
+.neuroglancer-tags-tab {
+
+}
+
+.neuroglancer-add-tag-control {
+  display: flex;
+}

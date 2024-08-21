@@ -45,12 +45,22 @@ import { RenderLayerRole } from "#src/renderlayer.js";
 import type { SegmentationDisplayState } from "#src/segmentation_display_state/frontend.js";
 import type { TrackableBoolean } from "#src/trackable_boolean.js";
 import { TrackableBooleanCheckbox } from "#src/trackable_boolean.js";
-import { makeCachedLazyDerivedWatchableValue } from "#src/trackable_value.js";
+import {
+  makeCachedLazyDerivedWatchableValue,
+  TrackableValue,
+} from "#src/trackable_value.js";
 import type {
   AnnotationLayerView,
   MergedAnnotationStates,
 } from "#src/ui/annotations.js";
 import { UserLayerWithAnnotationsMixin } from "#src/ui/annotations.js";
+import type { ToolActivation } from "#src/ui/tool.js";
+import {
+  LayerTool,
+  makeToolButton,
+  registerTool,
+  unregisterTool,
+} from "#src/ui/tool.js";
 import { animationFrameDebounce } from "#src/util/animation_frame_debounce.js";
 import type { Borrowed, Owned } from "#src/util/disposable.js";
 import { RefCounted } from "#src/util/disposable.js";
@@ -67,6 +77,8 @@ import {
   verifyStringArray,
 } from "#src/util/json.js";
 import { NullarySignal } from "#src/util/signal.js";
+import { makeAddButton } from "#src/widget/add_button.js";
+import { makeDeleteButton } from "#src/widget/delete_button.js";
 import { DependentViewWidget } from "#src/widget/dependent_view_widget.js";
 import { makeHelpButton } from "#src/widget/help_button.js";
 import { LayerReferenceWidget } from "#src/widget/layer_reference.js";
@@ -78,9 +90,12 @@ import {
   ShaderControls,
 } from "#src/widget/shader_controls.js";
 import { Tab } from "#src/widget/tab_view.js";
+import type { VirtualListSource } from "#src/widget/virtual_list.js";
+import { VirtualList } from "#src/widget/virtual_list.js";
 
 const POINTS_JSON_KEY = "points";
 const ANNOTATIONS_JSON_KEY = "annotations";
+const TAGS_JSON_KEY = "tags";
 const ANNOTATION_PROPERTIES_JSON_KEY = "annotationProperties";
 const ANNOTATION_RELATIONSHIPS_JSON_KEY = "annotationRelationships";
 const CROSS_SECTION_RENDER_SCALE_JSON_KEY = "crossSectionAnnotationSpacing";
@@ -379,6 +394,159 @@ class LinkedSegmentationLayersWidget extends RefCounted {
   }
 }
 
+const TOOL_ID = "foofoofoo";
+
+class TagTool extends LayerTool<AnnotationUserLayer> {
+  constructor(
+    public tag: string,
+    layer: AnnotationUserLayer,
+    toggle?: boolean,
+  ) {
+    super(layer, toggle);
+  }
+
+  activate(activation: ToolActivation<this>) {
+    console.log("I want to tag", this.tag);
+    const { localAnnotations } = this.layer;
+    if (localAnnotations) {
+      const ourSelectionState =
+        this.layer.manager.root.selectionState.value?.layers.find(
+          (x) => x.layer === this.layer,
+        );
+      if (ourSelectionState && ourSelectionState.state.annotationId) {
+        console.log("annotationId", ourSelectionState.state.annotationId);
+        const identifier = `tag_${this.tag}`;
+        const existing = localAnnotations.properties.find(
+          (x) => x.identifier === identifier,
+        );
+        if (!existing) {
+          localAnnotations.addProperty({
+            type: "uint8",
+            tag: true,
+            enumValues: [0, 1],
+            enumLabels: ["", this.tag],
+            default: 0,
+            description: this.tag,
+            identifier,
+          });
+          localAnnotations.changed.dispatch();
+          // this.layer.specificationChanged.dispatch(); // add property to JSON (or we could create the properties from the tags which might ensure greater consistency)
+        }
+
+        const annotation = localAnnotations.get(
+          ourSelectionState.state.annotationId,
+        );
+
+        if (annotation) {
+          console.log("annotation", annotation);
+          const propertyIndex = localAnnotations.properties.findIndex(
+            (x) => x.identifier === identifier,
+          );
+          if (propertyIndex > -1) {
+            annotation.properties[propertyIndex] =
+              1 - (annotation.properties[propertyIndex] || 0);
+            localAnnotations.changed.dispatch();
+            this.layer.manager.root.selectionState.changed.dispatch(); // TODO, this is probably not the best way to handle it
+          }
+        }
+      }
+    }
+    activation.cancel();
+  }
+
+  toJSON() {
+    return `${TOOL_ID}_${this.tag}`;
+  }
+
+  get description() {
+    return `tag ${this.tag}`;
+  }
+}
+
+class TagsTab extends Tab {
+  // private layerView = this.registerDisposer(
+  //   new AnnotationLayerView(this.layer, this.layer.annotationDisplayState),
+  // );
+
+  tools = new Set<string>();
+
+  constructor(public layer: Borrowed<AnnotationUserLayer>) {
+    super();
+    const { element } = this;
+    element.classList.add("neuroglancer-tags-tab");
+    // element.appendChild(this.layerView.element);
+
+    const { tags } = layer;
+
+    const addTagControl = document.createElement("div");
+    addTagControl.classList.add("neuroglancer-add-tag-control");
+    const inputElement = document.createElement("input");
+    inputElement.required = true;
+    const addNewTagButton = makeAddButton({
+      title: "Add additional tag",
+      onClick: () => {
+        const { value } = inputElement;
+        if (inputElement.validity.valid && !tags.value.includes(value)) {
+          tags.value.push(value);
+          tags.changed.dispatch();
+        }
+      },
+    });
+    addTagControl.appendChild(inputElement);
+    addTagControl.appendChild(addNewTagButton);
+    element.appendChild(addTagControl);
+
+    const tagsContainer = document.createElement("div");
+    element.appendChild(tagsContainer);
+
+    const listSource: VirtualListSource = {
+      length: tags.value.length,
+      render: (index: number) => {
+        const el = document.createElement("div");
+        const tag = tags.value[index];
+        const tool = makeToolButton(this, layer.toolBinder, {
+          toolJson: `${TOOL_ID}_${tag}`,
+          label: tag,
+          title: `Tag selected annotation with ${tag}`,
+        });
+        el.append(tool);
+        const deleteButton = makeDeleteButton({
+          title: "Delete tag",
+          onClick: (event) => {
+            event.stopPropagation();
+            event.preventDefault();
+            tags.value = tags.value.filter((x) => x !== tag);
+          },
+        });
+        el.append(deleteButton);
+        return el;
+      },
+      changed: new NullarySignal(),
+    };
+
+    const list = this.registerDisposer(
+      new VirtualList({
+        source: listSource,
+      }),
+    );
+    element.appendChild(list.element);
+
+    this.registerDisposer(
+      tags.changed.add(() => {
+        listSource.length = tags.value.length;
+        listSource.changed!.dispatch([
+          {
+            retainCount: 0,
+            deleteCount: 0,
+            insertCount: listSource.length,
+          },
+        ]);
+      }),
+    );
+    tags.changed.dispatch();
+  }
+}
+
 const Base = UserLayerWithAnnotationsMixin(UserLayer);
 export class AnnotationUserLayer extends Base {
   localAnnotations: LocalAnnotationSource | undefined;
@@ -386,6 +554,7 @@ export class AnnotationUserLayer extends Base {
   private localAnnotationRelationships: string[];
   private localAnnotationsJson: any = undefined;
   private pointAnnotationsJson: any = undefined;
+  tags: TrackableValue<string[]> = new TrackableValue([], verifyStringArray);
   linkedSegmentationLayers = this.registerDisposer(
     new LinkedSegmentationLayers(
       this.manager.rootLayers,
@@ -416,18 +585,55 @@ export class AnnotationUserLayer extends Base {
     this.annotationProjectionRenderScaleTarget.changed.add(
       this.specificationChanged.dispatch,
     );
+    const registeredTools = new Set<string>();
+
+    this.tags.changed.add(() => {
+      for (const tag of this.tags.value) {
+        if (!registeredTools.has(tag)) {
+          registerTool(AnnotationUserLayer, `${TOOL_ID}_${tag}`, (layer) => {
+            return new TagTool(tag, layer, true);
+          });
+          registeredTools.add(tag);
+        }
+      }
+      for (const tag of registeredTools) {
+        if (!this.tags.value.includes(tag)) {
+          unregisterTool(AnnotationUserLayer, `${TOOL_ID}_${tag}`);
+          registeredTools.delete(tag);
+
+          for (const [key, tool] of this.toolBinder.bindings.entries()) {
+            if (tool instanceof TagTool && tool.tag === tag) {
+              this.toolBinder.bindings.delete(key);
+              this.toolBinder.changed.dispatch();
+            }
+          }
+
+          console.log("local bindings", this.toolBinder.bindings);
+        }
+      }
+      this.specificationChanged.dispatch();
+    });
     this.tabs.add("rendering", {
       label: "Rendering",
       order: -100,
       getter: () => new RenderingOptionsTab(this),
     });
     this.tabs.default = "annotations";
+    this.tabs.add("tags", {
+      label: "Tags",
+      order: 10,
+      getter: () => new TagsTab(this),
+    });
   }
 
   restoreState(specification: any) {
+    console.log("restore state of annotation source");
+    // restore tags before super so tag tools are registered
+    this.tags.restoreState(specification[TAGS_JSON_KEY] || []);
     super.restoreState(specification);
     this.linkedSegmentationLayers.restoreState(specification);
     this.localAnnotationsJson = specification[ANNOTATIONS_JSON_KEY];
+    // this.tags = verifyOptionalObjectProperty(specification, TAGS_JSON_KEY, verifyStringArray);
     this.localAnnotationProperties = verifyOptionalObjectProperty(
       specification,
       ANNOTATION_PROPERTIES_JSON_KEY,
@@ -558,9 +764,11 @@ export class AnnotationUserLayer extends Base {
             this.localAnnotations = undefined;
           });
           refCounted.registerDisposer(
-            this.localAnnotations.changed.add(
-              this.specificationChanged.dispatch,
-            ),
+            this.localAnnotations.changed.add(() => {
+              this.localAnnotationProperties =
+                this.localAnnotations?.properties;
+              this.specificationChanged.dispatch();
+            }),
           );
           try {
             addPointAnnotations(
@@ -710,6 +918,9 @@ export class AnnotationUserLayer extends Base {
     x[SHADER_CONTROLS_JSON_KEY] =
       this.annotationDisplayState.shaderControls.toJSON();
     Object.assign(x, this.linkedSegmentationLayers.toJSON());
+    if (this.tabs.value?.length) {
+      x[TAGS_JSON_KEY] = this.tags.toJSON();
+    }
     return x;
   }
 
