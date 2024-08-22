@@ -469,6 +469,19 @@ export class LocalToolBinder<
     return obj;
   }
 
+  deleteTool(key: string) {
+    const { globalBinder, bindings, jsonToKey } = this;
+    const existingTool = bindings.get(key);
+    if (existingTool) {
+      bindings.delete(key);
+      globalBinder.bindings.delete(key);
+      jsonToKey.delete(JSON.stringify(existingTool.toJSON()));
+      globalBinder.destroyTool(existingTool);
+      globalBinder.changed.dispatch();
+      this.changed.dispatch();
+    }
+  }
+
   clear() {
     const { globalBinder, bindings } = this;
     if (bindings.size !== 0) {

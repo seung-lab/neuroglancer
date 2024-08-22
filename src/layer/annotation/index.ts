@@ -603,8 +603,7 @@ export class AnnotationUserLayer extends Base {
 
           for (const [key, tool] of this.toolBinder.bindings.entries()) {
             if (tool instanceof TagTool && tool.tag === tag) {
-              this.toolBinder.bindings.delete(key);
-              this.toolBinder.changed.dispatch();
+              this.toolBinder.deleteTool(key);
             }
           }
 
