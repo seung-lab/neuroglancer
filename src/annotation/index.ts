@@ -1294,6 +1294,9 @@ export class LocalAnnotationSource extends AnnotationSource {
   addProperty(property: AnnotationPropertySpec) {
     this.properties.push(property);
     this.updateAnnotationPropertySerializers();
+    for (const annotation of this) {
+      annotation.properties.push(property.default);
+    }
     this.changed.dispatch();
   }
 

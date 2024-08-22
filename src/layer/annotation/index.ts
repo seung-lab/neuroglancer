@@ -444,7 +444,7 @@ class TagTool extends LayerTool<AnnotationUserLayer> {
           );
           if (propertyIndex > -1) {
             annotation.properties[propertyIndex] =
-              1 - (annotation.properties[propertyIndex] || 0);
+              1 - annotation.properties[propertyIndex];
             localAnnotations.changed.dispatch();
             this.layer.manager.root.selectionState.changed.dispatch(); // TODO, this is probably not the best way to handle it
           }
