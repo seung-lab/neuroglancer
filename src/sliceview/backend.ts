@@ -130,6 +130,7 @@ export class SliceViewBackend extends SliceViewIntermediateBase {
   };
 
   updateVisibleChunks() {
+    console.log("updateVisibleChunks!");
     const projectionParameters = this.projectionParameters.value;
     const chunkManager = this.chunkManager;
     const visibility = this.visibility.value;
@@ -158,6 +159,13 @@ export class SliceViewBackend extends SliceViewIntermediateBase {
         i < numVisibleSources;
         ++i
       ) {
+        console.log("RL", (layer as any).resolutionLimit.value);
+        if ((layer as any).resolutionLimit) {
+          if (i > (layer as any).resolutionLimit.value) {
+            console.log("SKIP!");
+            continue;
+          }
+        }
         const tsource = visibleSources[i];
         const prefetchOffsets = chunkManager.queueManager.enablePrefetch.value
           ? getPrefetchChunkOffsets(this.velocityEstimator, tsource)
@@ -414,6 +422,7 @@ export class SliceViewRenderLayerBackend
 {
   rpcId: number;
   renderScaleTarget: SharedWatchableValue<number>;
+  resolutionLimit: SharedWatchableValue<number>;
   localPosition: WatchableValueInterface<Float32Array>;
 
   numVisibleChunksNeeded: number;
@@ -425,6 +434,7 @@ export class SliceViewRenderLayerBackend
   constructor(rpc: RPC, options: any) {
     super(rpc, options);
     this.renderScaleTarget = rpc.get(options.renderScaleTarget);
+    this.resolutionLimit = rpc.get(options.resolutionLimit);
     this.localPosition = rpc.get(options.localPosition);
     this.numVisibleChunksNeeded = 0;
     this.numVisibleChunksAvailable = 0;

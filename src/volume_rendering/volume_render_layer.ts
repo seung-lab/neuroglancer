@@ -139,6 +139,7 @@ interface VolumeRenderingAttachmentState {
 
 export interface VolumeRenderingRenderLayerOptions {
   gain: WatchableValueInterface<number>;
+  resolutionLimit: WatchableValueInterface<number>;
   multiscaleSource: MultiscaleVolumeChunkSource;
   transform: WatchableValueInterface<RenderLayerTransformOrError>;
   shaderError: WatchableShaderError;
@@ -217,6 +218,7 @@ export class VolumeRenderingRenderLayer extends PerspectiveViewRenderLayer {
   localPosition: WatchableValueInterface<Float32Array>;
   shaderControlState: ShaderControlState;
   depthSamplesTarget: WatchableValueInterface<number>;
+  resolutionLimit: WatchableValueInterface<number>;
   chunkResolutionHistogram: RenderScaleHistogram;
   mode: TrackableVolumeRenderingModeValue;
   backend: ChunkRenderLayerFrontend;
@@ -263,6 +265,7 @@ export class VolumeRenderingRenderLayer extends PerspectiveViewRenderLayer {
     this.shaderControlState = options.shaderControlState;
     this.localPosition = options.localPosition;
     this.depthSamplesTarget = options.depthSamplesTarget;
+    this.resolutionLimit = options.resolutionLimit || 999999;
     this.chunkResolutionHistogram = options.chunkResolutionHistogram;
     this.mode = options.mode;
     this.modeOverride = trackableShaderModeValue();
@@ -652,6 +655,9 @@ outputValue = vec4(1.0, 1.0, 1.0, 1.0);
     this.registerDisposer(
       this.depthSamplesTarget.changed.add(this.redrawNeeded.dispatch),
     );
+    this.registerDisposer(
+      this.resolutionLimit.changed.add(this.redrawNeeded.dispatch),
+    );
     this.registerDisposer(this.gain.changed.add(this.redrawNeeded.dispatch));
     this.registerDisposer(
       this.shaderControlState.changed.add(this.redrawNeeded.dispatch),
@@ -681,6 +687,9 @@ outputValue = vec4(1.0, 1.0, 1.0, 1.0);
       ).rpcId,
       renderScaleTarget: this.registerDisposer(
         SharedWatchableValue.makeFromExisting(rpc, this.depthSamplesTarget),
+      ).rpcId,
+      resolutionLimit: this.registerDisposer(
+        SharedWatchableValue.makeFromExisting(rpc, this.resolutionLimit),
       ).rpcId,
     });
     this.backend = sharedObject;

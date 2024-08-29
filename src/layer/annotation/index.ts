@@ -489,6 +489,7 @@ class TagsTab extends Tab {
         if (inputElement.validity.valid && !tags.value.includes(value)) {
           tags.value.push(value);
           tags.changed.dispatch();
+          inputElement.value = "";
         }
       },
     });

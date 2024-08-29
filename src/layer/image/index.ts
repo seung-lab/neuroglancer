@@ -55,13 +55,14 @@ import {
   makeCachedDerivedWatchableValue,
   makeCachedLazyDerivedWatchableValue,
   registerNested,
+  TrackableValue,
   WatchableValue,
 } from "#src/trackable_value.js";
 import { UserLayerWithAnnotationsMixin } from "#src/ui/annotations.js";
 import { setClipboard } from "#src/util/clipboard.js";
 import type { Borrowed } from "#src/util/disposable.js";
 import { makeValueOrError } from "#src/util/error.js";
-import { verifyOptionalObjectProperty } from "#src/util/json.js";
+import { verifyInt, verifyOptionalObjectProperty } from "#src/util/json.js";
 import {
   trackableShaderModeValue,
   VolumeRenderingModes,
@@ -111,6 +112,7 @@ const CHANNEL_DIMENSIONS_JSON_KEY = "channelDimensions";
 const VOLUME_RENDERING_JSON_KEY = "volumeRendering";
 const VOLUME_RENDERING_GAIN_JSON_KEY = "volumeRenderingGain";
 const VOLUME_RENDERING_DEPTH_SAMPLES_JSON_KEY = "volumeRenderingDepthSamples";
+const RESOLUTION_LIMIT_JSON_KEY = "resolutionLimit";
 
 export interface ImageLayerSelectionState extends UserLayerSelectionState {
   value: any;
@@ -123,6 +125,7 @@ const [
 ] = getVolumeRenderingDepthSamplesBoundsLogScale();
 export class ImageUserLayer extends Base {
   opacity = trackableAlphaValue(0.5);
+  resolutionLimit = new TrackableValue<number>(100, verifyInt);
   blendMode = trackableBlendModeValue();
   fragmentMain = getTrackableFragmentMain();
   shaderError = makeWatchableShaderError();
@@ -204,6 +207,7 @@ export class ImageUserLayer extends Base {
       isLocalDimension;
     this.blendMode.changed.add(this.specificationChanged.dispatch);
     this.opacity.changed.add(this.specificationChanged.dispatch);
+    this.resolutionLimit.changed.add(this.specificationChanged.dispatch);
     this.volumeRenderingGain.changed.add(this.specificationChanged.dispatch);
     this.fragmentMain.changed.add(this.specificationChanged.dispatch);
     this.shaderControlState.changed.add(this.specificationChanged.dispatch);
@@ -251,6 +255,7 @@ export class ImageUserLayer extends Base {
               this.channelCoordinateSpace,
             ),
             renderScaleTarget: this.sliceViewRenderScaleTarget,
+            resolutionLimit: this.resolutionLimit,
             renderScaleHistogram: this.sliceViewRenderScaleHistogram,
             localPosition: this.localPosition,
             channelCoordinateSpace: this.channelCoordinateSpace,
@@ -266,6 +271,7 @@ export class ImageUserLayer extends Base {
               this.channelCoordinateSpace,
             ),
             depthSamplesTarget: this.volumeRenderingDepthSamplesTarget,
+            resolutionLimit: this.resolutionLimit,
             chunkResolutionHistogram:
               this.volumeRenderingChunkResolutionHistogram,
             localPosition: this.localPosition,
@@ -293,6 +299,7 @@ export class ImageUserLayer extends Base {
   restoreState(specification: any) {
     super.restoreState(specification);
     this.opacity.restoreState(specification[OPACITY_JSON_KEY]);
+    this.resolutionLimit.restoreState(specification[RESOLUTION_LIMIT_JSON_KEY]);
     verifyOptionalObjectProperty(specification, BLEND_JSON_KEY, (blendValue) =>
       this.blendMode.restoreState(blendValue),
     );
@@ -337,6 +344,7 @@ export class ImageUserLayer extends Base {
   toJSON() {
     const x = super.toJSON();
     x[OPACITY_JSON_KEY] = this.opacity.toJSON();
+    x[RESOLUTION_LIMIT_JSON_KEY] = this.resolutionLimit.toJSON();
     x[BLEND_JSON_KEY] = this.blendMode.toJSON();
     x[SHADER_JSON_KEY] = this.fragmentMain.toJSON();
     x[SHADER_CONTROLS_JSON_KEY] = this.shaderControlState.toJSON();
@@ -467,6 +475,16 @@ const LAYER_CONTROLS: LayerControlDefinition<ImageUserLayer>[] = [
       histogram: layer.sliceViewRenderScaleHistogram,
       target: layer.sliceViewRenderScaleTarget,
     })),
+  },
+  {
+    label: "Only load first (n) resolutions",
+    toolJson: RESOLUTION_LIMIT_JSON_KEY,
+    ...rangeLayerControl((layer) => {
+      return {
+        value: layer.resolutionLimit,
+        options: { min: 0, max: 10, step: 1 },
+      };
+    }),
   },
   {
     label: "Blending (slice)",

@@ -48,8 +48,12 @@ import type {
 } from "#src/sliceview/frontend.js";
 import type { SliceViewPanel } from "#src/sliceview/panel.js";
 import type { WatchableValueInterface } from "#src/trackable_value.js";
-import { constantWatchableValue } from "#src/trackable_value.js";
+import {
+  constantWatchableValue,
+  TrackableValue,
+} from "#src/trackable_value.js";
 import type { Borrowed } from "#src/util/disposable.js";
+import { verifyInt } from "#src/util/json.js";
 import { HistogramSpecifications } from "#src/webgl/empirical_cdf.js";
 import type { ShaderModule } from "#src/webgl/shader.js";
 import type { RpcId, SharedObject } from "#src/worker_rpc.js";
@@ -61,6 +65,7 @@ export interface SliceViewRenderLayerOptions {
    */
   transform: WatchableValueInterface<RenderLayerTransformOrError>;
   renderScaleTarget?: WatchableValueInterface<number>;
+  resolutionLimit?: WatchableValueInterface<number>;
   renderScaleHistogram?: RenderScaleHistogram;
 
   /**
@@ -96,6 +101,7 @@ export abstract class SliceViewRenderLayer<
   transform: WatchableValueInterface<RenderLayerTransformOrError>;
 
   renderScaleTarget: WatchableValueInterface<number>;
+  resolutionLimit: WatchableValueInterface<number>;
   renderScaleHistogram?: RenderScaleHistogram;
 
   // This is only used by `ImageRenderLayer` currently, but is defined here because
@@ -183,6 +189,9 @@ export abstract class SliceViewRenderLayer<
 
     const { renderScaleTarget = trackableRenderScaleTarget(1) } = options;
     this.renderScaleTarget = renderScaleTarget;
+    const { resolutionLimit = new TrackableValue<number>(1, verifyInt) } =
+      options;
+    this.resolutionLimit = resolutionLimit;
     this.renderScaleHistogram = options.renderScaleHistogram;
     this.transform = options.transform;
     this.localPosition = options.localPosition;
@@ -216,6 +225,9 @@ export abstract class SliceViewRenderLayer<
       ).rpcId,
       renderScaleTarget: this.registerDisposer(
         SharedWatchableValue.makeFromExisting(rpc, this.renderScaleTarget),
+      ).rpcId,
+      resolutionLimit: this.registerDisposer(
+        SharedWatchableValue.makeFromExisting(rpc, this.resolutionLimit),
       ).rpcId,
       ...this.rpcTransfer,
     });
