@@ -476,31 +476,6 @@ export class AnnotationLayerView extends Tab {
     this.virtualList.element.addEventListener("mouseleave", () => {
       this.displayState.hoverState.value = undefined;
     });
-    const changeSelectedIndex = (offset: number) => {
-      const selectedIndex = this.getSelectedAnnotationIndex();
-      if (selectedIndex === undefined) return;
-      const nextAnnotation = this.listElements[selectedIndex + offset];
-      if (nextAnnotation) {
-        const { state, annotation } = nextAnnotation;
-        this.layer.selectAnnotation(state, annotation.id, true);
-        moveToAnnotation(this.layer, annotation, state);
-      }
-    };
-    this.registerDisposer(
-      this.layer.registerLayerEvent("select-previous", () => {
-        // if (this.layer.panels.panels[0].selectedTab.value === "annotations") {
-        if (this.element.checkVisibility()) {
-          changeSelectedIndex(-1);
-        }
-      }),
-    );
-    this.registerDisposer(
-      this.layer.registerLayerEvent("select-next", () => {
-        if (this.element.checkVisibility()) {
-          changeSelectedIndex(1);
-        }
-      }),
-    );
     const bindings = getDefaultAnnotationListBindings();
     this.registerDisposer(
       new MouseEventBinder(this.virtualList.element, bindings),
@@ -529,17 +504,6 @@ export class AnnotationLayerView extends Tab {
     this.updateCoordinateSpace();
     this.updateAttachedAnnotationLayerStates();
     this.updateSelectionView();
-  }
-
-  private getSelectedAnnotationIndex() {
-    const { previousSelectedState: state } = this;
-    if (state === undefined) return;
-    const { annotationLayerState, annotationId } = state;
-    const attached = this.attachedAnnotationStates.get(annotationLayerState);
-    if (attached === undefined) return;
-    const index = attached.idToIndex.get(annotationId);
-    if (index === undefined) return;
-    return attached.listOffset + index;
   }
 
   private getRenderedAnnotationListElement(
@@ -1601,6 +1565,16 @@ export function UserLayerWithAnnotationsMixin<
           this.annotationDisplayState.hoverState.value = undefined;
         }),
       );
+      this.registerDisposer(
+        this.registerLayerEvent("select-previous", () => {
+          this.changeSelectedIndex(-1);
+        }),
+      );
+      this.registerDisposer(
+        this.registerLayerEvent("select-next", () => {
+          this.changeSelectedIndex(1);
+        }),
+      );
     }
 
     initializeAnnotationLayerViewTab(tab: AnnotationLayerView) {
@@ -2128,6 +2102,50 @@ export function UserLayerWithAnnotationsMixin<
         pin,
       );
     }
+
+    changeSelectedIndex = (offset: number) => {
+      const selectionState = this.manager.root.selectionState.value;
+      if (selectionState === undefined) return;
+      const layerSelectionState = selectionState.layers.find(
+        (s) => s.layer === this,
+      )?.state;
+      if (layerSelectionState === undefined) return;
+      const { annotationId } = layerSelectionState;
+      if (annotationId === undefined) return;
+      let annotationLayerState = this.annotationStates.states.find(
+        (x) =>
+          x.sourceIndex === layerSelectionState.annotationSourceIndex &&
+          (layerSelectionState.annotationSubsource === undefined ||
+            x.subsourceId === layerSelectionState.annotationSubsource),
+      );
+      if (annotationLayerState === undefined) return;
+      let annotationLayerStateIndex =
+        this.annotationStates.states.indexOf(annotationLayerState);
+      let { source } = annotationLayerState;
+      let annotations = Array.from(source);
+      let index = annotations.findIndex((x) => x.id === annotationId);
+      while (true) {
+        index = index + offset;
+        if (index === -1) {
+          // this only happens if offset is negative
+          annotationLayerStateIndex -= 1;
+        } else if (index === annotations.length) {
+          // this only happens if offset is positive
+          annotationLayerStateIndex += 1;
+        } else {
+          const annotation = annotations[index];
+          this.selectAnnotation(annotationLayerState, annotation.id, true);
+          moveToAnnotation(this, annotation, annotationLayerState);
+          return;
+        }
+        annotationLayerState =
+          this.annotationStates.states[annotationLayerStateIndex];
+        if (annotationLayerState === undefined) return;
+        source = annotationLayerState.source;
+        annotations = Array.from(source);
+        index = index === -1 ? annotations.length : 0;
+      }
+    };
 
     toJSON() {
       const x = super.toJSON();
