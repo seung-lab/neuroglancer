@@ -125,6 +125,7 @@ export class ViewerSettingsPanel extends SidePanel {
     );
     addCheckbox("Wire frame rendering", viewer.wireFrame);
     addCheckbox("Enable prefetching", viewer.chunkQueueManager.enablePrefetch);
+    addLimitWidget("Load delay", viewer.chunkQueueManager.loadDelay);
     addCheckbox(
       "Enable adaptive downsampling",
       viewer.enableAdaptiveDownsampling,

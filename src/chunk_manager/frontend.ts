@@ -32,7 +32,7 @@ import { TrackableValue } from "#src/trackable_value.js";
 import type { CancellationToken } from "#src/util/cancellation.js";
 import { CANCELED } from "#src/util/cancellation.js";
 import type { Borrowed } from "#src/util/disposable.js";
-import { stableStringify } from "#src/util/json.js";
+import { stableStringify, verifyInt } from "#src/util/json.js";
 import { StringMemoize } from "#src/util/memoize.js";
 import { getObjectId } from "#src/util/object_id.js";
 import { NullarySignal } from "#src/util/signal.js";
@@ -113,6 +113,7 @@ export class ChunkQueueManager extends SharedObject {
   chunkUpdateDelay = 30;
 
   enablePrefetch = new TrackableBoolean(true, true);
+  loadDelay = new TrackableValue<number>(0, verifyInt);
 
   constructor(
     rpc: RPC,
@@ -145,6 +146,9 @@ export class ChunkQueueManager extends SharedObject {
       computeCapacity: makeCapacityCounterparts(capacities.compute),
       enablePrefetch: this.registerDisposer(
         SharedWatchableValue.makeFromExisting(rpc, this.enablePrefetch),
+      ).rpcId,
+      loadDelay: this.registerDisposer(
+        SharedWatchableValue.makeFromExisting(rpc, this.loadDelay),
       ).rpcId,
     });
   }

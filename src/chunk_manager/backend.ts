@@ -654,6 +654,7 @@ export class ChunkQueueManager extends SharedObjectCounterpart {
   computeCapacity: AvailableCapacity;
 
   enablePrefetch: SharedWatchableValue<boolean>;
+  loadDelay: SharedWatchableValue<number>;
 
   /**
    * Set of chunk sources associated with this queue manager.
@@ -737,6 +738,7 @@ export class ChunkQueueManager extends SharedObjectCounterpart {
       getCapacity(options.downloadCapacity),
     ];
     this.computeCapacity = getCapacity(options.computeCapacity);
+    this.loadDelay = rpc.get(options.loadDelay);
   }
 
   scheduleUpdate() {
@@ -1201,10 +1203,11 @@ export class ChunkManager extends SharedObjectCounterpart {
   }
 
   scheduleUpdateChunkPriorities() {
+    console.log("load delay", this.queueManager.loadDelay.value);
     if (this.updatePending === null) {
       this.updatePending = setTimeout(
         this.recomputeChunkPriorities_.bind(this),
-        0,
+        this.queueManager.loadDelay.value,
       );
     }
   }

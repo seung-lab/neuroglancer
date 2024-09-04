@@ -306,6 +306,7 @@ class TrackableViewerState extends CompoundTrackable {
       viewer.dataContext.chunkQueueManager.capacities.gpuMemory.sizeLimit,
     );
     this.add("prefetch", viewer.dataContext.chunkQueueManager.enablePrefetch);
+    this.add("loadDelay", viewer.dataContext.chunkQueueManager.loadDelay);
     this.add(
       "systemMemoryLimit",
       viewer.dataContext.chunkQueueManager.capacities.systemMemory.sizeLimit,
