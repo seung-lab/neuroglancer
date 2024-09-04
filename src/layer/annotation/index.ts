@@ -464,20 +464,13 @@ class TagTool extends LayerTool<AnnotationUserLayer> {
 }
 
 class TagsTab extends Tab {
-  // private layerView = this.registerDisposer(
-  //   new AnnotationLayerView(this.layer, this.layer.annotationDisplayState),
-  // );
-
   tools = new Set<string>();
 
   constructor(public layer: Borrowed<AnnotationUserLayer>) {
     super();
     const { element } = this;
     element.classList.add("neuroglancer-tags-tab");
-    // element.appendChild(this.layerView.element);
-
     const { tags } = layer;
-
     const addTagControl = document.createElement("div");
     addTagControl.classList.add("neuroglancer-add-tag-control");
     const inputElement = document.createElement("input");

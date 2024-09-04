@@ -50,10 +50,34 @@
   color: #999;
 }
 
-.neuroglancer-tags-tab {
+/* .neuroglancer-add-tag-control {
+  display: flex;
+} */
 
+.neuroglancer-add-tag-control > input {
+  background-color: #151515;
+  color: white;
+  font-family: monospace;
+  font-size: medium;
+  border: 2px solid #333;
+  padding: 2px;
+  outline: 0px;
 }
 
-.neuroglancer-add-tag-control {
-  display: flex;
+.neuroglancer-tag-list > div {
+  display: grid;
+  grid-template-columns: min-content auto;
+}
+
+.neuroglancer-tag-list-entry {
+  display: contents;
+  white-space: nowrap;
+}
+
+.neuroglancer-tag-list-entry:hover .neuroglancer-tag-list-entry-delete {
+  visibility: visible;
+}
+
+.neuroglancer-tag-list-entry .neuroglancer-tag-list-entry-delete {
+  visibility: hidden;
 }
