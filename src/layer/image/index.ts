@@ -480,6 +480,7 @@ const LAYER_CONTROLS: LayerControlDefinition<ImageUserLayer>[] = [
     label: "Only load first (n) resolutions",
     toolJson: RESOLUTION_LIMIT_JSON_KEY,
     ...rangeLayerControl((layer) => {
+      console.log("layer", layer);
       return {
         value: layer.resolutionLimit,
         options: { min: 0, max: 10, step: 1 },
