@@ -18,7 +18,11 @@ import { animationFrameDebounce } from "#src/util/animation_frame_debounce.js";
 import type { ArraySpliceOp } from "#src/util/array.js";
 import { spliceArray } from "#src/util/array.js";
 import { RefCounted } from "#src/util/disposable.js";
-import { removeFromParent, updateChildren } from "#src/util/dom.js";
+import {
+  getBoundingClientRectSupportingDisplayContents,
+  removeFromParent,
+  updateChildren,
+} from "#src/util/dom.js";
 import type { Signal } from "#src/util/signal.js";
 
 // Must be a multiple of 2.
@@ -46,10 +50,17 @@ export class VirtualListState {
       if (anchorIndex < offset) break;
       const { deleteCount } = splice;
       if (anchorIndex < offset + deleteCount) {
+        console.log("change AI from", anchorIndex, "to", offset);
         anchorIndex = offset;
         break;
       }
       const { insertCount } = splice;
+      console.log(
+        "change AI from",
+        anchorIndex,
+        "to",
+        anchorIndex - deleteCount + insertCount,
+      );
       anchorIndex = anchorIndex - deleteCount + insertCount;
       offset += insertCount - insertCount;
     }
@@ -377,6 +388,8 @@ export class VirtualList extends RefCounted {
 
     const { source, state, sizes } = this;
     const numItems = source.length;
+    console.log("sizes", sizes.totalKnownSize);
+    console.log("numItems", numItems);
 
     const { body, topItems, bottomItems } = this;
     const { changed, renderChanged } = source;
@@ -421,6 +434,8 @@ export class VirtualList extends RefCounted {
       this.renderedItems = renderedItems;
       this.newRenderedItems = prevRenderedItems;
 
+      console.log("prevRenderedItems", prevRenderedItems);
+
       const { source } = this;
       const { render } = source;
       const {
@@ -438,13 +453,14 @@ export class VirtualList extends RefCounted {
           yield item;
         }
       }
+      console.log("index", curStartIndex, anchorIndex);
       updateChildren(topItems, getChildren(curStartIndex, anchorIndex));
       updateChildren(bottomItems, getChildren(anchorIndex, curEndIndex));
 
       // Update item size estimates.
       for (let i = curStartIndex; i < curEndIndex; ++i) {
         const element = renderedItems[i];
-        const bounds = element.getBoundingClientRect();
+        const bounds = getBoundingClientRectSupportingDisplayContents(element);
         const newSize = bounds.height;
         const existingSize = sizes.itemSize[i];
         if (existingSize !== undefined) {
@@ -496,12 +512,14 @@ export class VirtualList extends RefCounted {
     const itemEndOffset = itemStartOffset + this.sizes.getEstimatedSize(index);
     const startOffset = this.element.scrollTop;
     if (itemStartOffset < startOffset) {
+      console.log("change AI from", this.state.anchorIndex, "to", index);
       this.state.anchorIndex = index;
       this.state.anchorClientOffset = 0;
     } else if (
       itemStartOffset > startOffset &&
       itemEndOffset > startOffset + this.element.offsetHeight
     ) {
+      console.log("change AI from", this.state.anchorIndex, "to", index + 1);
       this.state.anchorIndex = index + 1;
       this.state.anchorClientOffset = this.element.offsetHeight;
     } else {

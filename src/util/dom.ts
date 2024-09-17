@@ -50,8 +50,10 @@ export function updateChildren(
   element: HTMLElement,
   children: Iterable<HTMLElement>,
 ) {
+  console.log("element", element);
   let nextChild = element.firstElementChild;
   for (const child of children) {
+    console.log("child", child);
     if (child !== nextChild) {
       element.insertBefore(child, nextChild);
     }
@@ -81,4 +83,24 @@ export function measureElementClone(element: HTMLElement) {
   clone.style.position = "absolute";
   document.body.appendChild(clone);
   return clone.getBoundingClientRect();
+}
+
+export function getBoundingClientRectSupportingDisplayContents(
+  element: Element,
+) {
+  const bounds = element.getBoundingClientRect();
+  if (
+    bounds.width === 0 &&
+    bounds.height === 0 &&
+    getComputedStyle(element).display === "contents"
+  ) {
+    for (const child of element.children) {
+      const childRect = getBoundingClientRectSupportingDisplayContents(child);
+      bounds.x = Math.min(bounds.x, childRect.x);
+      bounds.y = Math.min(bounds.y, childRect.y);
+      bounds.width = Math.max(bounds.width, childRect.right - bounds.x);
+      bounds.height = Math.max(bounds.height, childRect.bottom - bounds.y);
+    }
+  }
+  return bounds;
 }

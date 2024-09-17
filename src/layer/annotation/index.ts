@@ -497,6 +497,7 @@ class TagsTab extends Tab {
       length: tags.value.length,
       render: (index: number) => {
         const el = document.createElement("div");
+        el.classList.add("neuroglancer-tag-list-entry");
         const tag = tags.value[index];
         const tool = makeToolButton(this, layer.toolBinder, {
           toolJson: `${TOOL_ID}_${tag}`,
@@ -504,6 +505,7 @@ class TagsTab extends Tab {
           title: `Tag selected annotation with ${tag}`,
         });
         el.append(tool);
+        const end = document.createElement("div");
         const deleteButton = makeDeleteButton({
           title: "Delete tag",
           onClick: (event) => {
@@ -512,7 +514,9 @@ class TagsTab extends Tab {
             tags.value = tags.value.filter((x) => x !== tag);
           },
         });
-        el.append(deleteButton);
+        deleteButton.classList.add("neuroglancer-tag-list-entry-delete");
+        end.append(deleteButton);
+        el.append(end);
         return el;
       },
       changed: new NullarySignal(),
@@ -524,6 +528,7 @@ class TagsTab extends Tab {
       }),
     );
     element.appendChild(list.element);
+    list.body.classList.add("neuroglancer-tag-list");
 
     this.registerDisposer(
       tags.changed.add(() => {
