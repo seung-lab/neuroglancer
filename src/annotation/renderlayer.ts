@@ -483,7 +483,9 @@ function AnnotationRenderLayer<
       for (const oldHelper of renderHelpers) {
         oldHelper.dispose();
       }
-      const { properties } = this.base.source;
+      const {
+        properties: { value: properties },
+      } = this.base.source;
       const { displayState } = this.base.state;
       for (const annotationType of annotationTypes) {
         const handler = getAnnotationTypeRenderHandler(annotationType);
@@ -780,7 +782,9 @@ function AnnotationRenderLayer<
     transformPickedValue(pickState: PickState) {
       const { pickedAnnotationBuffer } = pickState;
       if (pickedAnnotationBuffer === undefined) return undefined;
-      const { properties } = this.base.source;
+      const {
+        properties: { value: properties },
+      } = this.base.source;
       if (properties.length === 0) return undefined;
       const {
         pickedAnnotationBufferBaseOffset,

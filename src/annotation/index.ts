@@ -23,6 +23,7 @@ import type {
   CoordinateSpaceTransform,
   WatchableCoordinateSpaceTransform,
 } from "#src/coordinate_transform.js";
+import { WatchableValue } from "#src/trackable_value.js";
 import { arraysEqual } from "#src/util/array.js";
 import {
   packColor,
@@ -532,7 +533,7 @@ export function formatAnnotationPropertyValue(
 
 export function parseAnnotationPropertyId(obj: unknown) {
   const s = verifyString(obj);
-  if (s.match(/^[a-z][a-zA-Z0-9_ ]*$/) === null) {
+  if (s.match(/^[a-zA-Z0-9_ -]+$/) === null) {
     throw new Error(`Invalid property identifier: ${JSON.stringify(obj)}`);
   }
   return s;
@@ -617,13 +618,19 @@ function parseAnnotationPropertySpec(obj: unknown): AnnotationPropertySpec {
 }
 
 function annotationPropertySpecToJson(spec: AnnotationPropertySpec) {
+  console.log("annotationPropertySpecToJson", spec);
   const defaultValue = spec.default;
-  const tag = isAnnotationNumericPropertySpec(spec) ? spec.tag : undefined;
+  const isNumeric = isAnnotationNumericPropertySpec(spec);
+  const tag = isNumeric ? spec.tag : undefined;
+  const enum_values = isNumeric ? spec.enumValues : undefined;
+  const enum_labels = isNumeric ? spec.enumLabels : undefined;
   return {
     id: spec.identifier,
     description: spec.description,
     type: spec.type,
     tag,
+    enum_values,
+    enum_labels,
     default:
       defaultValue === 0
         ? undefined
@@ -1013,7 +1020,7 @@ export const annotationTypeHandlers: Record<
 export interface AnnotationSchema {
   rank: number;
   relationships: readonly string[];
-  properties: readonly AnnotationPropertySpec[];
+  properties: WatchableValue<readonly Readonly<AnnotationPropertySpec>[]>;
 }
 
 export function annotationToJson(
@@ -1033,8 +1040,8 @@ export function annotationToJson(
       segments.map((x) => x.toString()),
     );
   }
-  if (schema.properties.length !== 0) {
-    const propertySpecs = schema.properties;
+  const propertySpecs = schema.properties.value;
+  if (propertySpecs.length !== 0) {
     result.props = annotation.properties.map((prop, i) =>
       annotationPropertyTypeHandlers[propertySpecs[i].type].serializeJson(prop),
     );
@@ -1074,9 +1081,9 @@ function restoreAnnotation(
     );
   });
   const properties = verifyObjectProperty(obj, "props", (propsObj) => {
-    const propSpecs = schema.properties;
+    const propSpecs = schema.properties.value;
     if (propsObj === undefined) return propSpecs.map((x) => x.default);
-    return parseArray(expectArray(propsObj, schema.properties.length), (x, i) =>
+    return parseArray(expectArray(propsObj, propSpecs.length), (x, i) =>
       annotationPropertyTypeHandlers[propSpecs[i].type].deserializeJson(x),
     );
   });
@@ -1121,16 +1128,20 @@ export class AnnotationSource
 
   annotationPropertySerializers: AnnotationPropertySerializer[];
 
+  // new WatchableValue([])
+
   constructor(
     rank: number,
     public readonly relationships: readonly string[] = [],
-    public readonly properties: Readonly<AnnotationPropertySpec>[] = [],
+    public readonly properties: WatchableValue<
+      readonly Readonly<AnnotationPropertySpec>[]
+    > = new WatchableValue([]),
   ) {
     super();
     this.rank_ = rank;
     this.annotationPropertySerializers = makeAnnotationPropertySerializers(
       rank,
-      properties,
+      properties.value,
     );
   }
 
@@ -1274,7 +1285,9 @@ export class LocalAnnotationSource extends AnnotationSource {
 
   constructor(
     public watchableTransform: WatchableCoordinateSpaceTransform,
-    public properties: AnnotationPropertySpec[],
+    public readonly properties: WatchableValue<
+      AnnotationPropertySpec[]
+    > = new WatchableValue([]),
     relationships: string[],
   ) {
     super(watchableTransform.value.sourceRank, relationships, properties);
@@ -1282,20 +1295,39 @@ export class LocalAnnotationSource extends AnnotationSource {
     this.registerDisposer(
       watchableTransform.changed.add(() => this.ensureUpdated()),
     );
+
+    this.registerDisposer(
+      properties.changed.add(() => {
+        this.updateAnnotationPropertySerializers();
+        this.changed.dispatch();
+      }),
+    );
   }
 
   updateAnnotationPropertySerializers() {
     this.annotationPropertySerializers = makeAnnotationPropertySerializers(
       this.rank_,
-      this.properties,
+      this.properties.value,
     );
   }
 
   addProperty(property: AnnotationPropertySpec) {
-    this.properties.push(property);
-    this.updateAnnotationPropertySerializers();
+    this.properties.value.push(property);
+    this.properties.changed.dispatch();
     for (const annotation of this) {
       annotation.properties.push(property.default);
+    }
+    this.changed.dispatch();
+  }
+
+  removeProperty(identifier: string) {
+    const propertyIndex = this.properties.value.findIndex(
+      (x) => x.identifier === identifier,
+    );
+    this.properties.value.splice(propertyIndex, 1);
+    this.properties.changed.dispatch();
+    for (const annotation of this) {
+      annotation.properties.splice(propertyIndex, 1);
     }
     this.changed.dispatch();
   }

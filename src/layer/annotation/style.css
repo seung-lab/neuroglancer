@@ -50,11 +50,17 @@
   color: #999;
 }
 
+.neuroglancer-tag-list > div {
+  display: grid;
+  row-gap: 5px;
+}
+
 /* .neuroglancer-add-tag-control {
   display: flex;
 } */
 
-.neuroglancer-add-tag-control > input {
+.neuroglancer-add-tag-control > input,
+.neuroglancer-tag-list-entry > input {
   background-color: #151515;
   color: white;
   font-family: monospace;
@@ -64,13 +70,15 @@
   outline: 0px;
 }
 
-.neuroglancer-tag-list > div {
+/* .neuroglancer-tag-list > div {
   display: grid;
-  grid-template-columns: min-content auto;
-}
+  grid-template-columns: min-content auto min-content;
+} */
 
 .neuroglancer-tag-list-entry {
-  display: contents;
+  display: grid;
+  grid-template-columns: min-content auto min-content;
+  align-items: center;
   white-space: nowrap;
 }
 
