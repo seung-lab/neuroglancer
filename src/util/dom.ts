@@ -50,10 +50,8 @@ export function updateChildren(
   element: HTMLElement,
   children: Iterable<HTMLElement>,
 ) {
-  console.log("element", element);
   let nextChild = element.firstElementChild;
   for (const child of children) {
-    console.log("child", child);
     if (child !== nextChild) {
       element.insertBefore(child, nextChild);
     }

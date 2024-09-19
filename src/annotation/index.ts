@@ -505,6 +505,7 @@ export function formatNumericProperty(
   property: AnnotationNumericPropertySpec,
   value: number,
 ): string {
+  console.log("formatNumericProperty");
   const formattedValue =
     property.type === "float32" ? value.toPrecision(6) : value.toString();
   const { enumValues, enumLabels } = property;
@@ -618,7 +619,6 @@ function parseAnnotationPropertySpec(obj: unknown): AnnotationPropertySpec {
 }
 
 function annotationPropertySpecToJson(spec: AnnotationPropertySpec) {
-  console.log("annotationPropertySpecToJson", spec);
   const defaultValue = spec.default;
   const isNumeric = isAnnotationNumericPropertySpec(spec);
   const tag = isNumeric ? spec.tag : undefined;
@@ -1298,6 +1298,7 @@ export class LocalAnnotationSource extends AnnotationSource {
 
     this.registerDisposer(
       properties.changed.add(() => {
+        console.log("properties changed!");
         this.updateAnnotationPropertySerializers();
         this.changed.dispatch();
       }),
@@ -1313,11 +1314,10 @@ export class LocalAnnotationSource extends AnnotationSource {
 
   addProperty(property: AnnotationPropertySpec) {
     this.properties.value.push(property);
-    this.properties.changed.dispatch();
     for (const annotation of this) {
       annotation.properties.push(property.default);
     }
-    this.changed.dispatch();
+    this.properties.changed.dispatch();
   }
 
   removeProperty(identifier: string) {
@@ -1325,12 +1325,19 @@ export class LocalAnnotationSource extends AnnotationSource {
       (x) => x.identifier === identifier,
     );
     this.properties.value.splice(propertyIndex, 1);
-    this.properties.changed.dispatch();
     for (const annotation of this) {
       annotation.properties.splice(propertyIndex, 1);
     }
-    this.changed.dispatch();
+    this.properties.changed.dispatch();
   }
+
+  getTagProperties = () => {
+    const { properties } = this;
+    const numericProps = properties.value.filter(
+      isAnnotationNumericPropertySpec,
+    ); // for type
+    return numericProps.filter((x) => x.tag);
+  };
 
   ensureUpdated() {
     const transform = this.watchableTransform.value;
