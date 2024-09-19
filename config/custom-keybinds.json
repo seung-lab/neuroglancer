@@ -15,5 +15,7 @@
     "provider": "graphene"
   },
   "keyx": false,
-  "control+shift+keyx": "clear-segments"
+  "control+shift+keyx": "clear-segments",
+  "bracketleft": "select-previous",
+  "bracketright": "select-next"
 }
