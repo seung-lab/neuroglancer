@@ -25,5 +25,15 @@
   },
   "control+shift+keyx": {
     "action": "clear-segments"
-  }
+  },
+  "bracketleft": [
+    { "action": false, "context": "sliceView" },
+    { "action": false, "context": "perspectiveView" },
+    { "action": "select-previous" }
+  ],
+  "bracketright": [
+    { "action": false, "context": "sliceView" },
+    { "action": false, "context": "perspectiveView" },
+    { "action": "select-next" }
+  ]
 }
