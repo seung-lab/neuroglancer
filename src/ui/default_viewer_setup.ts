@@ -27,6 +27,7 @@ import { bindTitle } from "#src/ui/title.js";
 import type { Tool } from "#src/ui/tool.js";
 import { restoreTool } from "#src/ui/tool.js";
 import { UrlHashBinding } from "#src/ui/url_hash_binding.js";
+import type { EventActionMap } from "#src/util/event_action_map.js";
 import {
   verifyObject,
   verifyObjectProperty,
@@ -106,16 +107,21 @@ export function setupDefaultViewer() {
   };
 
   if (hasCustomBindings) {
+    const deleteKey = (map: EventActionMap, key: string) => {
+      map.delete(key);
+      for (const pMap of map.parents) {
+        deleteKey(pMap, key);
+      }
+    };
+
     for (const [key, val] of Object.entries(CUSTOM_BINDINGS!)) {
+      deleteKey(viewer.inputEventBindings.global, key);
+      deleteKey(viewer.inputEventBindings.perspectiveView, key);
+      deleteKey(viewer.inputEventBindings.sliceView, key);
       if (typeof val === "string") {
         viewer.inputEventBindings.global.set(key, val);
       } else if (typeof val === "boolean") {
-        if (!val) {
-          viewer.inputEventBindings.global.delete(key);
-          viewer.inputEventBindings.global.parents.map((parent) =>
-            parent.delete(key),
-          );
-        }
+        // not doing anything because we just use this to delete keybinds
       } else {
         viewer.inputEventBindings.global.set(key, `tool-${val.tool}`);
         const layerConstructor = layerTypes.get(val.layer);
