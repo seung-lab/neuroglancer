@@ -535,7 +535,7 @@ class TagsTab extends Tab {
                   enumLabels: ["", value],
                   default: 0,
                   description: value,
-                  identifier: self.crypto.randomUUID(), // TODO
+                  identifier: localAnnotations.getUniquePropertyId(),
                 });
               }
             }

@@ -1312,6 +1312,20 @@ export class LocalAnnotationSource extends AnnotationSource {
     );
   }
 
+  getUniquePropertyId() {
+    const { properties } = this;
+    const ids = new Set<string>();
+    for (const p of properties.value) {
+      ids.add(p.identifier);
+    }
+    while (true) {
+      const uuid = crypto.randomUUID();
+      if (!ids.has(uuid)) {
+        return uuid;
+      }
+    }
+  }
+
   addProperty(property: AnnotationPropertySpec) {
     this.properties.value.push(property);
     for (const annotation of this) {
