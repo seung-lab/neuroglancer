@@ -50,6 +50,10 @@
   color: #999;
 }
 
+.neuroglancer-annotation-tag-property-type {
+  color: #999;
+}
+
 .neuroglancer-tag-list > div {
   display: grid;
   /* row-gap: 5px; */
@@ -105,7 +109,7 @@
   padding: 2px 20px 2px 0;
 }
 
-.neuroglancer-tag-list-entry.new .neuroglancer-tool-button {
+.neuroglancer-tag-list-entry.add .neuroglancer-tool-button {
   visibility: hidden;
 }
 

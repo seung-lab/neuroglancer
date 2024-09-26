@@ -41,7 +41,6 @@ import {
   expectArray,
   parseArray,
   parseFixedLengthArray,
-  verifyBoolean,
   verifyEnumString,
   verifyFiniteFloat,
   verifyFiniteNonNegativeFloat,
@@ -108,7 +107,13 @@ export interface AnnotationNumericPropertySpec
   min?: number;
   max?: number;
   step?: number;
-  tag?: boolean;
+  tag?: string;
+}
+
+export interface AnnotationTagPropertySpec
+  extends AnnotationNumericPropertySpec {
+  type: "int8";
+  tag: string;
 }
 
 export const propertyTypeDataType: Record<
@@ -134,6 +139,12 @@ export function isAnnotationNumericPropertySpec(
   spec: AnnotationPropertySpec,
 ): spec is AnnotationNumericPropertySpec {
   return spec.type !== "rgb" && spec.type !== "rgba";
+}
+
+export function isAnnotationTagPropertySpec(
+  spec: AnnotationPropertySpec,
+): spec is AnnotationTagPropertySpec {
+  return spec.type === "uint8" && spec.tag !== undefined;
 }
 
 export interface AnnotationPropertyTypeHandler {
@@ -505,7 +516,6 @@ export function formatNumericProperty(
   property: AnnotationNumericPropertySpec,
   value: number,
 ): string {
-  console.log("formatNumericProperty");
   const formattedValue =
     property.type === "float32" ? value.toPrecision(6) : value.toString();
   const { enumValues, enumLabels } = property;
@@ -579,7 +589,7 @@ function parseAnnotationPropertySpec(obj: unknown): AnnotationPropertySpec {
   );
   let enumValues: number[] | undefined;
   let enumLabels: string[] | undefined;
-  let tag: boolean | undefined;
+  let tag: string | undefined;
   switch (type) {
     case "rgb":
     case "rgba":
@@ -604,7 +614,7 @@ function parseAnnotationPropertySpec(obj: unknown): AnnotationPropertySpec {
           ),
         );
       }
-      tag = verifyOptionalObjectProperty(obj, "tag", verifyBoolean);
+      tag = verifyOptionalObjectProperty(obj, "tag", verifyString);
     }
   }
   return {
@@ -1312,20 +1322,6 @@ export class LocalAnnotationSource extends AnnotationSource {
     );
   }
 
-  getUniquePropertyId() {
-    const { properties } = this;
-    const ids = new Set<string>();
-    for (const p of properties.value) {
-      ids.add(p.identifier);
-    }
-    while (true) {
-      const uuid = crypto.randomUUID();
-      if (!ids.has(uuid)) {
-        return uuid;
-      }
-    }
-  }
-
   addProperty(property: AnnotationPropertySpec) {
     this.properties.value.push(property);
     for (const annotation of this) {
@@ -1347,10 +1343,7 @@ export class LocalAnnotationSource extends AnnotationSource {
 
   getTagProperties = () => {
     const { properties } = this;
-    const numericProps = properties.value.filter(
-      isAnnotationNumericPropertySpec,
-    ); // for type
-    return numericProps.filter((x) => x.tag);
+    return properties.value.filter(isAnnotationTagPropertySpec);
   };
 
   ensureUpdated() {

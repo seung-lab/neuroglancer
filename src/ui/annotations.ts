@@ -39,7 +39,7 @@ import {
   AnnotationType,
   annotationTypeHandlers,
   formatNumericProperty,
-  isAnnotationNumericPropertySpec,
+  isAnnotationTagPropertySpec,
 } from "#src/annotation/index.js";
 import {
   AnnotationLayer,
@@ -1808,14 +1808,9 @@ export function UserLayerWithAnnotationsMixin<
                   const property = properties[i];
                   const value = annotation.properties[i];
 
-                  if (
-                    isAnnotationNumericPropertySpec(property) &&
-                    property.tag
-                  ) {
+                  if (isAnnotationTagPropertySpec(property) && property.tag) {
                     if (value !== 0) {
-                      activeTags.push(
-                        property.description || property.identifier,
-                      );
+                      activeTags.push(property.tag);
                     }
                     continue;
                   }

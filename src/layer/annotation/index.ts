@@ -19,11 +19,14 @@ import "#src/layer/annotation/style.css";
 import type { AnnotationDisplayState } from "#src/annotation/annotation_layer_state.js";
 import { AnnotationLayerState } from "#src/annotation/annotation_layer_state.js";
 import { MultiscaleAnnotationSource } from "#src/annotation/frontend_source.js";
-import type { AnnotationPropertySpec } from "#src/annotation/index.js";
+import type {
+  AnnotationPropertySpec,
+  AnnotationSource,
+} from "#src/annotation/index.js";
 import {
   annotationPropertySpecsToJson,
   AnnotationType,
-  isAnnotationNumericPropertySpec,
+  isAnnotationTagPropertySpec,
   LocalAnnotationSource,
   parseAnnotationPropertySpecs,
 } from "#src/annotation/index.js";
@@ -48,7 +51,6 @@ import type { TrackableBoolean } from "#src/trackable_boolean.js";
 import { TrackableBooleanCheckbox } from "#src/trackable_boolean.js";
 import {
   makeCachedLazyDerivedWatchableValue,
-  TrackableValue,
   WatchableValue,
 } from "#src/trackable_value.js";
 import type {
@@ -411,11 +413,11 @@ class TagTool extends LayerTool<AnnotationUserLayer> {
   get tag(): string {
     const { localAnnotations } = this.layer;
     if (localAnnotations) {
-      const propertyDescription = localAnnotations.properties.value.find(
+      const property = localAnnotations.properties.value.find(
         (x) => x.identifier === this.propertyIdentifier,
-      )?.description;
-      if (propertyDescription) {
-        return propertyDescription;
+      );
+      if (property && isAnnotationTagPropertySpec(property)) {
+        return property.tag;
       }
     }
     return "unknown";
@@ -468,20 +470,9 @@ class TagsTab extends Tab {
     super();
     const { element } = this;
     element.classList.add("neuroglancer-tags-tab");
-    // const { tags } = layer;
-    // const addTagControl = document.createElement("div");
-    // addTagControl.classList.add("neuroglancer-add-tag-control");
-    // const inputElement = document.createElement("input");
-    // inputElement.required = true;
-
     const { localAnnotations } = layer;
     if (!localAnnotations) return;
     const { properties } = localAnnotations;
-
-    // addTagControl.appendChild(inputElement);
-    // // addTagControl.appendChild(addNewTagButton);
-    // element.appendChild(addTagControl);
-
     const tagsContainer = document.createElement("div");
     tagsContainer.classList.add("hello-world");
     element.appendChild(tagsContainer);
@@ -493,7 +484,6 @@ class TagsTab extends Tab {
 
     const validateNewTag = (tag: string) => {
       messages.clearMessages();
-      console.log("prev list", prevList, tag);
       if (prevList.includes(tag)) {
         messages.addMessage({
           severity: MessageSeverity.error,
@@ -502,6 +492,34 @@ class TagsTab extends Tab {
         return false;
       }
       return true;
+    };
+
+    const getUniqueTagPropertyId = (source: AnnotationSource) => {
+      const { properties } = source;
+      let largestTagId = -1;
+      for (const p of properties.value) {
+        const res = p.identifier.match(/tag([\d]+)/);
+        largestTagId++;
+        if (res && res.length > 1) {
+          largestTagId = parseInt(res[1]);
+        }
+      }
+      return `tag${largestTagId + 1}`;
+    };
+
+    const addTag = (input: HTMLInputElement) => {
+      const { value } = input;
+      if (input.validity.valid) {
+        if (validateNewTag(value)) {
+          localAnnotations.addProperty({
+            type: "uint8",
+            tag: value,
+            default: 0,
+            description: value,
+            identifier: getUniqueTagPropertyId(localAnnotations),
+          });
+        }
+      }
     };
 
     const listSource: VirtualListSource = {
@@ -513,67 +531,49 @@ class TagsTab extends Tab {
         inputElement.required = true;
         el.append(inputElement);
         if (index === listSource.length - 1) {
-          el.classList.add("new");
+          el.classList.add("add");
+          // this is created just to match the width of the tool button
           const tool = makeToolButton(this, layer.toolBinder, {
             toolJson: `${TOOL_ID}_${"_invalid"}`,
           });
           el.prepend(tool);
           inputElement.placeholder = "enter tag name";
+          // select input when number of tags increases, this is useful for adding multiple tags in a row
           if (previousListLength < listSource.length) {
             setTimeout(() => {
               inputElement.focus();
             }, 0);
           }
-          const addTag = () => {
-            const { value } = inputElement;
-            if (inputElement.validity.valid) {
-              if (validateNewTag(value)) {
-                localAnnotations.addProperty({
-                  type: "uint8",
-                  tag: true,
-                  enumValues: [0, 1],
-                  enumLabels: ["", value],
-                  default: 0,
-                  description: value,
-                  identifier: localAnnotations.getUniquePropertyId(),
-                });
-              }
-            }
-          };
           inputElement.addEventListener("keyup", (evt) => {
-            console.log("key", evt.key);
             if (evt.key === "Enter") {
-              addTag();
+              addTag(inputElement);
             }
           });
           const addNewTagButton = makeAddButton({
             title: "Add additional tag",
-            onClick: addTag,
+            onClick: () => addTag(inputElement),
           });
           el.append(addNewTagButton);
           previousListLength = listSource.length;
         } else {
-          const tag = localAnnotations.getTagProperties()[index];
+          const property = localAnnotations.getTagProperties()[index];
+          const { tag } = property;
           const tool = makeToolButton(this, layer.toolBinder, {
-            toolJson: `${TOOL_ID}_${tag.identifier}`,
-            // label: tag,
+            toolJson: `${TOOL_ID}_${property.identifier}`,
             title: `Tag selected annotation with ${tag}`,
           });
           el.prepend(tool);
-          inputElement.value = tag.description || "";
+          inputElement.value = tag;
           inputElement.addEventListener("change", () => {
             const { value } = inputElement;
-            const oldValue = tag.enumLabels![1];
             if (
               !validateNewTag(value) ||
-              !confirm(`Rename tag ${oldValue} to ${value}?`)
+              !confirm(`Rename tag ${tag} to ${value}?`)
             ) {
-              inputElement.value = oldValue; // revert
+              inputElement.value = tag;
               return;
             }
-            console.log("IE change");
-            tag.description = value;
-            tag.enumLabels![1] = value;
+            property.tag = value;
             properties.changed.dispatch();
             this.layer.manager.root.selectionState.changed.dispatch(); // TODO, this is probably not the best way to handle it
           });
@@ -583,9 +583,9 @@ class TagsTab extends Tab {
             onClick: (event) => {
               event.stopPropagation();
               event.preventDefault();
-              const value = tag.enumLabels![1];
-              if (confirm(`Delete tag ${value}?`))
-                localAnnotations.removeProperty(tag.identifier);
+              if (confirm(`Delete tag ${tag}?`)) {
+                localAnnotations.removeProperty(property.identifier);
+              }
               this.layer.manager.root.selectionState.changed.dispatch(); // TODO, this is probably not the best way to handle it
             },
           });
@@ -593,12 +593,10 @@ class TagsTab extends Tab {
           end.append(deleteButton);
           el.append(end);
         }
-        console.log("RENDER");
         return el;
       },
       changed: new NullarySignal(),
     };
-
     const list = this.registerDisposer(
       new VirtualList({
         source: listSource,
@@ -606,54 +604,43 @@ class TagsTab extends Tab {
     );
     tagsContainer.appendChild(list.element);
     const messagesView = this.registerDisposer(new MessagesView(messages));
-    // element.appendChild(sourceInfoLine);
-    // sourceInfoLine.appendChild(sourceType);
     tagsContainer.appendChild(messagesView.element);
     list.body.classList.add("neuroglancer-tag-list");
     list.element.classList.add("neuroglancer-tag-list-outer");
 
-    this.registerDisposer(
-      properties.changed.add(() => {
-        let retainCount = 1; // new entry
-        let deleteCount = 0;
-        let insertCount = 0;
-
-        const newList = localAnnotations
-          .getTagProperties()
-          .map((x) => x.enumLabels![1]);
-
-        for (const tag of newList) {
-          if (prevList.includes(tag)) {
-            retainCount++;
-          } else {
-            insertCount++;
-          }
+    const updateTagList = () => {
+      let retainCount = 1; // new entry
+      let deleteCount = 0;
+      let insertCount = 0;
+      const newList = localAnnotations.getTagProperties().map((x) => x.tag);
+      for (const tag of newList) {
+        if (prevList.includes(tag)) {
+          retainCount++;
+        } else {
+          insertCount++;
         }
-
-        for (const tag of prevList) {
-          if (!newList.includes(tag)) {
-            deleteCount++;
-          }
+      }
+      for (const tag of prevList) {
+        if (!newList.includes(tag)) {
+          deleteCount++;
         }
-
-        listSource.length = newList.length + 1;
-        prevList = newList;
-        if (deleteCount > 0 || insertCount > 0) {
-          listSource.changed!.dispatch([
-            {
-              retainCount,
-              deleteCount,
-              insertCount,
-            },
-          ]);
-        }
-      }),
-    );
-    properties.changed.dispatch(); // just to get the list to update, is it needed?
+      }
+      listSource.length = newList.length + 1;
+      prevList = newList;
+      if (deleteCount > 0 || insertCount > 0) {
+        listSource.changed!.dispatch([
+          {
+            retainCount,
+            deleteCount,
+            insertCount,
+          },
+        ]);
+      }
+    };
+    this.registerDisposer(properties.changed.add(updateTagList));
+    updateTagList();
   }
 }
-
-TrackableValue;
 
 const Base = UserLayerWithAnnotationsMixin(UserLayer);
 export class AnnotationUserLayer extends Base {
@@ -664,13 +651,6 @@ export class AnnotationUserLayer extends Base {
   private localAnnotationsJson: any = undefined;
   private pointAnnotationsJson: any = undefined;
   private tagTools: string[] = [];
-  // tags: TrackableValue<WatchableValue<string>[]> = new TrackableValue(
-  //   [],
-  //   (a: any) => {
-  //     const tagsAsStringArray = verifyStringArray(a);
-  //     return tagsAsStringArray.map((x) => new WatchableValue(x));
-  //   },
-  // );
   linkedSegmentationLayers = this.registerDisposer(
     new LinkedSegmentationLayers(
       this.manager.rootLayers,
@@ -728,9 +708,7 @@ export class AnnotationUserLayer extends Base {
 
   syncTagTools = (tagIdentifiers: string[]) => {
     // TODO, change to set? intersection etc
-    const { tagTools } = this;
-
-    for (const propertyIdentifier of tagTools) {
+    for (const propertyIdentifier of this.tagTools) {
       if (!tagIdentifiers.includes(propertyIdentifier)) {
         unregisterTool(AnnotationUserLayer, `${TOOL_ID}_${propertyIdentifier}`);
         for (const [key, tool] of this.toolBinder.bindings.entries()) {
@@ -743,17 +721,15 @@ export class AnnotationUserLayer extends Base {
         }
       }
     }
-    this.tagTools = tagTools.filter((x) => tagIdentifiers.includes(x));
-
+    this.tagTools = this.tagTools.filter((x) => tagIdentifiers.includes(x));
     for (const tagIdentifier of tagIdentifiers) {
-      if (!tagTools.includes(tagIdentifier)) {
-        tagTools.push(tagIdentifier);
+      if (!this.tagTools.includes(tagIdentifier)) {
+        this.tagTools.push(tagIdentifier);
         registerTool(
           AnnotationUserLayer,
           `${TOOL_ID}_${tagIdentifier}`,
           (layer) => {
             const tool = new TagTool(tagIdentifier, layer);
-            // tools.set(idx, tool);
             return tool;
           },
         );
@@ -770,10 +746,7 @@ export class AnnotationUserLayer extends Base {
     );
     if (properties) {
       this.syncTagTools(
-        properties
-          .filter(isAnnotationNumericPropertySpec)
-          .filter((x) => x.tag)
-          .map((x) => x.identifier),
+        properties.filter(isAnnotationTagPropertySpec).map((x) => x.identifier),
       );
     }
     super.restoreState(specification);
@@ -864,16 +837,21 @@ export class AnnotationUserLayer extends Base {
 
   activateDataSubsources(subsources: Iterable<LoadedDataSubsource>) {
     let hasLocalAnnotations = false;
-    let properties: readonly AnnotationPropertySpec[] | undefined;
+    let properties:
+      | WatchableValue<readonly Readonly<AnnotationPropertySpec>[]>
+      | undefined;
     for (const loadedSubsource of subsources) {
       const { subsourceEntry } = loadedSubsource;
       const { local } = subsourceEntry.subsource;
       const setProperties = (
-        newProperties: readonly AnnotationPropertySpec[],
+        newProperties: WatchableValue<
+          readonly Readonly<AnnotationPropertySpec>[]
+        >,
       ) => {
         if (
           properties !== undefined &&
-          stableStringify(newProperties) !== stableStringify(properties)
+          stableStringify(newProperties.value) !==
+            stableStringify(properties.value)
         ) {
           loadedSubsource.deactivate(
             "Annotation properties are not compatible",
@@ -891,7 +869,7 @@ export class AnnotationUserLayer extends Base {
           continue;
         }
         hasLocalAnnotations = true;
-        if (!setProperties(this.localAnnotationProperties.value)) continue;
+        if (!setProperties(this.localAnnotationProperties)) continue;
         loadedSubsource.activate((refCounted) => {
           const localAnnotations = (this.localAnnotations =
             new LocalAnnotationSource(
@@ -948,7 +926,7 @@ export class AnnotationUserLayer extends Base {
       }
       const { annotation } = subsourceEntry.subsource;
       if (annotation !== undefined) {
-        if (!setProperties(annotation.properties.value)) continue;
+        if (!setProperties(annotation.properties)) continue;
         loadedSubsource.activate(() => {
           const state = new AnnotationLayerState({
             localPosition: this.localPosition,
@@ -966,12 +944,24 @@ export class AnnotationUserLayer extends Base {
       }
       loadedSubsource.deactivate("Not compatible with annotation layer");
     }
-    const prevAnnotationProperties =
-      this.annotationDisplayState.annotationProperties.value;
     if (
-      stableStringify(prevAnnotationProperties) !== stableStringify(properties)
+      properties &&
+      stableStringify(
+        this.annotationDisplayState.annotationProperties.value,
+      ) !== stableStringify(properties?.value)
     ) {
-      this.annotationDisplayState.annotationProperties.value = properties;
+      // we are here
+      this.registerDisposer(
+        properties.changed.add(() => {
+          console.log("update annotationDisplayState.annotationProperties");
+          this.annotationDisplayState.annotationProperties.value = [
+            ...properties!.value,
+          ];
+        }),
+      );
+      this.annotationDisplayState.annotationProperties.value = [
+        ...properties!.value,
+      ];
     }
   }
 
@@ -1038,7 +1028,6 @@ export class AnnotationUserLayer extends Base {
   }
 
   toJSON() {
-    console.log("local anno to json");
     const x = super.toJSON();
     x[CROSS_SECTION_RENDER_SCALE_JSON_KEY] =
       this.annotationCrossSectionRenderScaleTarget.toJSON();
@@ -1127,6 +1116,14 @@ class RenderingOptionsTab extends Tab {
               const { description } = property;
               if (description !== undefined) {
                 div.title = description;
+              }
+              if (isAnnotationTagPropertySpec(property)) {
+                const tagElement = document.createElement("span");
+                tagElement.classList.add(
+                  "neuroglancer-annotation-tag-property-type",
+                );
+                tagElement.textContent = `(${property.tag})`;
+                div.appendChild(tagElement);
               }
               propertyList.appendChild(div);
             }
