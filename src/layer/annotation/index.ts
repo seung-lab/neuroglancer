@@ -474,7 +474,7 @@ class TagsTab extends Tab {
     if (!localAnnotations) return;
     const { properties } = localAnnotations;
     const tagsContainer = document.createElement("div");
-    tagsContainer.classList.add("hello-world");
+    tagsContainer.classList.add("neuroglancer-tags-container");
     element.appendChild(tagsContainer);
 
     let previousListLength = 0;

@@ -1138,8 +1138,6 @@ export class AnnotationSource
 
   annotationPropertySerializers: AnnotationPropertySerializer[];
 
-  // new WatchableValue([])
-
   constructor(
     rank: number,
     public readonly relationships: readonly string[] = [],
@@ -1308,7 +1306,6 @@ export class LocalAnnotationSource extends AnnotationSource {
 
     this.registerDisposer(
       properties.changed.add(() => {
-        console.log("properties changed!");
         this.updateAnnotationPropertySerializers();
         this.changed.dispatch();
       }),
