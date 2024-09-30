@@ -208,7 +208,12 @@ export class UserLayer extends RefCounted {
     const unregister = existingSignal.add(handler);
     return () => {
       const res = unregister();
-      // TODO delete from map? currently handlers is private
+      // TODO delete from layerEventListeners if no other handlers attached? currently Signal.handlers is private
+      /*
+      if (existingSignal.handlers.length === 0) {
+        layerEventListeners.delete(type);
+      }
+      */
       return res;
     };
   }

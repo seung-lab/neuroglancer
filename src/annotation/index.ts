@@ -544,7 +544,7 @@ export function formatAnnotationPropertyValue(
 
 export function parseAnnotationPropertyId(obj: unknown) {
   const s = verifyString(obj);
-  if (s.match(/^[a-zA-Z0-9_ -]+$/) === null) {
+  if (s.match(/^[a-z][a-zA-Z0-9_]*$/) === null) {
     throw new Error(`Invalid property identifier: ${JSON.stringify(obj)}`);
   }
   return s;

@@ -101,7 +101,6 @@ import { VirtualList } from "#src/widget/virtual_list.js";
 
 const POINTS_JSON_KEY = "points";
 const ANNOTATIONS_JSON_KEY = "annotations";
-// const TAGS_JSON_KEY = "tags";
 const ANNOTATION_PROPERTIES_JSON_KEY = "annotationProperties";
 const ANNOTATION_RELATIONSHIPS_JSON_KEY = "annotationRelationships";
 const CROSS_SECTION_RENDER_SCALE_JSON_KEY = "crossSectionAnnotationSpacing";
@@ -515,7 +514,7 @@ class TagsTab extends Tab {
             type: "uint8",
             tag: value,
             default: 0,
-            description: value,
+            description: undefined,
             identifier: getUniqueTagPropertyId(localAnnotations),
           });
         }
@@ -531,13 +530,14 @@ class TagsTab extends Tab {
         inputElement.required = true;
         el.append(inputElement);
         if (index === listSource.length - 1) {
+          // add new tag UI
           el.classList.add("add");
           // this is created just to match the width of the tool button
           const tool = makeToolButton(this, layer.toolBinder, {
             toolJson: `${TOOL_ID}_${"_invalid"}`,
           });
           el.prepend(tool);
-          inputElement.placeholder = "enter tag name";
+          inputElement.placeholder = "Tag name";
           // select input when number of tags increases, this is useful for adding multiple tags in a row
           if (previousListLength < listSource.length) {
             setTimeout(() => {
@@ -577,7 +577,6 @@ class TagsTab extends Tab {
             properties.changed.dispatch();
             this.layer.manager.root.selectionState.changed.dispatch(); // TODO, this is probably not the best way to handle it
           });
-          const end = document.createElement("div");
           const deleteButton = makeDeleteButton({
             title: "Delete tag",
             onClick: (event) => {
@@ -590,8 +589,7 @@ class TagsTab extends Tab {
             },
           });
           deleteButton.classList.add("neuroglancer-tag-list-entry-delete");
-          end.append(deleteButton);
-          el.append(end);
+          el.append(deleteButton);
         }
         return el;
       },
@@ -1053,10 +1051,6 @@ export class AnnotationUserLayer extends Base {
     x[SHADER_CONTROLS_JSON_KEY] =
       this.annotationDisplayState.shaderControls.toJSON();
     Object.assign(x, this.linkedSegmentationLayers.toJSON());
-    // if (this.tags.value.length) {
-    //   x[TAGS_JSON_KEY] = this.tags.value.map((x) => x.value);
-    //   console.log("FOO", x[TAGS_JSON_KEY]);
-    // }
     return x;
   }
 
