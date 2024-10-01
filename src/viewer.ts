@@ -1053,6 +1053,21 @@ export class Viewer extends RefCounted implements ViewerState {
       });
     }
 
+    const sendEventToSelectedLayer = (type: string) => {
+      const selectedLayer = this.selectedLayer.layer?.layer;
+      if (selectedLayer) {
+        selectedLayer.dispatchLayerEvent(type);
+      }
+    };
+
+    this.bindAction("select-previous", () => {
+      sendEventToSelectedLayer("select-previous");
+    });
+
+    this.bindAction("select-next", () => {
+      sendEventToSelectedLayer("select-next");
+    });
+
     for (const action of ["select", "star"]) {
       this.bindAction(action, () => {
         this.mouseState.updateUnconditionally();
