@@ -771,7 +771,7 @@ function makeColoredAnnotationState(
   const { subsourceEntry } = loadedSubsource;
   const source = new LocalAnnotationSource(
     loadedSubsource.loadedDataSource.transform,
-    [],
+    new WatchableValue([]),
     ["associated segments"],
   );
 
