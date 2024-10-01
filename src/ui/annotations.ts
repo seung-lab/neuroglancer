@@ -231,6 +231,26 @@ interface AnnotationLayerViewAttachedState {
   listOffset: number;
 }
 
+const moveToAnnotation = (
+  layer: UserLayer,
+  annotation: Annotation,
+  state: AnnotationLayerState,
+) => {
+  const chunkTransform = state.chunkTransform.value as ChunkTransformParameters;
+  const { layerRank } = chunkTransform;
+  const chunkPosition = new Float32Array(layerRank);
+  const layerPosition = new Float32Array(layerRank);
+  getCenterPosition(chunkPosition, annotation);
+  matrix.transformPoint(
+    layerPosition,
+    chunkTransform.chunkToLayerTransform,
+    layerRank + 1,
+    chunkPosition,
+    layerRank,
+  );
+  setLayerPosition(layer, chunkTransform, layerPosition);
+};
+
 export class AnnotationLayerView extends Tab {
   private previousSelectedState:
     | {
@@ -1564,6 +1584,16 @@ export function UserLayerWithAnnotationsMixin<
           this.annotationDisplayState.hoverState.value = undefined;
         }),
       );
+      this.registerDisposer(
+        this.registerLayerEvent("select-previous", () => {
+          this.changeSelectedIndex(-1);
+        }),
+      );
+      this.registerDisposer(
+        this.registerLayerEvent("select-next", () => {
+          this.changeSelectedIndex(1);
+        }),
+      );
     }
 
     initializeAnnotationLayerViewTab(tab: AnnotationLayerView) {
@@ -2060,6 +2090,50 @@ export function UserLayerWithAnnotationsMixin<
       );
     }
 
+    changeSelectedIndex = (offset: number) => {
+      const selectionState = this.manager.root.selectionState.value;
+      if (selectionState === undefined) return;
+      const layerSelectionState = selectionState.layers.find(
+        (s) => s.layer === this,
+      )?.state;
+      if (layerSelectionState === undefined) return;
+      const { annotationId } = layerSelectionState;
+      if (annotationId === undefined) return;
+      let annotationLayerState = this.annotationStates.states.find(
+        (x) =>
+          x.sourceIndex === layerSelectionState.annotationSourceIndex &&
+          (layerSelectionState.annotationSubsource === undefined ||
+            x.subsourceId === layerSelectionState.annotationSubsource),
+      );
+      if (annotationLayerState === undefined) return;
+      let annotationLayerStateIndex =
+        this.annotationStates.states.indexOf(annotationLayerState);
+      let { source } = annotationLayerState;
+      let annotations = Array.from(source);
+      let index = annotations.findIndex((x) => x.id === annotationId);
+      while (true) {
+        index = index + offset;
+        if (index === -1) {
+          // this only happens if offset is negative
+          annotationLayerStateIndex -= 1;
+        } else if (index === annotations.length) {
+          // this only happens if offset is positive
+          annotationLayerStateIndex += 1;
+        } else {
+          const annotation = annotations[index];
+          this.selectAnnotation(annotationLayerState, annotation.id, true);
+          moveToAnnotation(this, annotation, annotationLayerState);
+          return;
+        }
+        annotationLayerState =
+          this.annotationStates.states[annotationLayerStateIndex];
+        if (annotationLayerState === undefined) return;
+        source = annotationLayerState.source;
+        annotations = Array.from(source);
+        index = index === -1 ? annotations.length : 0;
+      }
+    };
+
     toJSON() {
       const x = super.toJSON();
       x[ANNOTATION_COLOR_JSON_KEY] = this.annotationDisplayState.color.toJSON();
@@ -2184,18 +2258,7 @@ export function makeAnnotationListElement(
   element.addEventListener("action:move-to-annotation", (event) => {
     event.stopPropagation();
     event.preventDefault();
-    const { layerRank } = chunkTransform;
-    const chunkPosition = new Float32Array(layerRank);
-    const layerPosition = new Float32Array(layerRank);
-    getCenterPosition(chunkPosition, annotation);
-    matrix.transformPoint(
-      layerPosition,
-      chunkTransform.chunkToLayerTransform,
-      layerRank + 1,
-      chunkPosition,
-      layerRank,
-    );
-    setLayerPosition(layer, chunkTransform, layerPosition);
+    moveToAnnotation(layer, annotation, state);
   });
   return [element, columnWidths];
 }
