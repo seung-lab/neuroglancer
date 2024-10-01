@@ -23,6 +23,7 @@ import type {
   CoordinateSpaceTransform,
   WatchableCoordinateSpaceTransform,
 } from "#src/coordinate_transform.js";
+import { WatchableValue } from "#src/trackable_value.js";
 import { arraysEqual } from "#src/util/array.js";
 import {
   packColor,
@@ -108,6 +109,7 @@ export interface AnnotationNumericPropertySpec
   min?: number;
   max?: number;
   step?: number;
+  tag?: string;
 }
 
 export function isAnnotationNumericPropertySpec(
@@ -134,6 +136,18 @@ export const propertyTypeDataType: Record<
 export type AnnotationPropertySpec =
   | AnnotationColorPropertySpec
   | AnnotationNumericPropertySpec;
+
+export interface AnnotationTagPropertySpec
+  extends AnnotationNumericPropertySpec {
+  type: "int8";
+  tag: string;
+}
+
+export function isAnnotationTagPropertySpec(
+  spec: AnnotationPropertySpec,
+): spec is AnnotationTagPropertySpec {
+  return spec.type === "uint8" && spec.tag !== undefined;
+}
 
 export interface AnnotationPropertyTypeHandler {
   serializedBytes(rank: number): number;
@@ -577,6 +591,7 @@ function parseAnnotationPropertySpec(obj: unknown): AnnotationPropertySpec {
   );
   let enumValues: number[] | undefined;
   let enumLabels: string[] | undefined;
+  let tag: string | undefined;
   switch (type) {
     case "rgb":
     case "rgba":
@@ -601,6 +616,7 @@ function parseAnnotationPropertySpec(obj: unknown): AnnotationPropertySpec {
           ),
         );
       }
+      tag = verifyOptionalObjectProperty(obj, "tag", verifyString);
     }
   }
   return {
@@ -610,6 +626,7 @@ function parseAnnotationPropertySpec(obj: unknown): AnnotationPropertySpec {
     default: defaultValue,
     enumValues,
     enumLabels,
+    tag,
   } as AnnotationPropertySpec;
 }
 
@@ -622,6 +639,7 @@ function annotationPropertySpecToJson(spec: AnnotationPropertySpec) {
       ? spec.enumValues.map(handler.serializeJson)
       : undefined;
   const enumLabels = isNumeric ? spec.enumLabels : undefined;
+  const tag = isNumeric ? spec.tag : undefined;
   return {
     id: spec.identifier,
     description: spec.description,
@@ -630,6 +648,7 @@ function annotationPropertySpecToJson(spec: AnnotationPropertySpec) {
       defaultValue === 0 ? undefined : handler.serializeJson(defaultValue),
     enum_labels: enumLabels,
     enum_values: enumValues,
+    tag,
   };
 }
 
@@ -1209,7 +1228,7 @@ export const annotationTypeHandlers: Record<
 export interface AnnotationSchema {
   rank: number;
   relationships: readonly string[];
-  properties: readonly AnnotationPropertySpec[];
+  properties: WatchableValue<readonly Readonly<AnnotationPropertySpec>[]>;
 }
 
 export function annotationToJson(
@@ -1229,8 +1248,8 @@ export function annotationToJson(
       Array.from(segments, (x) => x.toString()),
     );
   }
-  if (schema.properties.length !== 0) {
-    const propertySpecs = schema.properties;
+  const propertySpecs = schema.properties.value;
+  if (propertySpecs.length !== 0) {
     result.props = annotation.properties.map((prop, i) =>
       annotationPropertyTypeHandlers[propertySpecs[i].type].serializeJson(prop),
     );
@@ -1279,9 +1298,9 @@ function restoreAnnotation(
     );
   });
   const properties = verifyObjectProperty(obj, "props", (propsObj) => {
-    const propSpecs = schema.properties;
+    const propSpecs = schema.properties.value;
     if (propsObj === undefined) return propSpecs.map((x) => x.default);
-    return parseArray(expectArray(propsObj, schema.properties.length), (x, i) =>
+    return parseArray(expectArray(propsObj, propSpecs.length), (x, i) =>
       annotationPropertyTypeHandlers[propSpecs[i].type].deserializeJson(x),
     );
   });
@@ -1329,13 +1348,15 @@ export class AnnotationSource
   constructor(
     rank: number,
     public readonly relationships: readonly string[] = [],
-    public readonly properties: Readonly<AnnotationPropertySpec>[] = [],
+    public readonly properties: WatchableValue<
+      readonly Readonly<AnnotationPropertySpec>[]
+    > = new WatchableValue([]),
   ) {
     super();
     this.rank_ = rank;
     this.annotationPropertySerializers = makeAnnotationPropertySerializers(
       rank,
-      properties,
+      properties.value,
     );
   }
 
@@ -1479,7 +1500,9 @@ export class LocalAnnotationSource extends AnnotationSource {
 
   constructor(
     public watchableTransform: WatchableCoordinateSpaceTransform,
-    properties: AnnotationPropertySpec[],
+    public readonly properties: WatchableValue<
+      AnnotationPropertySpec[]
+    > = new WatchableValue([]),
     relationships: string[],
   ) {
     super(watchableTransform.value.sourceRank, relationships, properties);
@@ -1487,7 +1510,45 @@ export class LocalAnnotationSource extends AnnotationSource {
     this.registerDisposer(
       watchableTransform.changed.add(() => this.ensureUpdated()),
     );
+
+    this.registerDisposer(
+      properties.changed.add(() => {
+        this.updateAnnotationPropertySerializers();
+        this.changed.dispatch();
+      }),
+    );
   }
+
+  updateAnnotationPropertySerializers() {
+    this.annotationPropertySerializers = makeAnnotationPropertySerializers(
+      this.rank_,
+      this.properties.value,
+    );
+  }
+
+  addProperty(property: AnnotationPropertySpec) {
+    this.properties.value.push(property);
+    for (const annotation of this) {
+      annotation.properties.push(property.default);
+    }
+    this.properties.changed.dispatch();
+  }
+
+  removeProperty(identifier: string) {
+    const propertyIndex = this.properties.value.findIndex(
+      (x) => x.identifier === identifier,
+    );
+    this.properties.value.splice(propertyIndex, 1);
+    for (const annotation of this) {
+      annotation.properties.splice(propertyIndex, 1);
+    }
+    this.properties.changed.dispatch();
+  }
+
+  getTagProperties = () => {
+    const { properties } = this;
+    return properties.value.filter(isAnnotationTagPropertySpec);
+  };
 
   ensureUpdated() {
     const transform = this.watchableTransform.value;
@@ -1546,10 +1607,7 @@ export class LocalAnnotationSource extends AnnotationSource {
     }
     if (this.rank_ !== sourceRank) {
       this.rank_ = sourceRank;
-      this.annotationPropertySerializers = makeAnnotationPropertySerializers(
-        this.rank_,
-        this.properties,
-      );
+      this.updateAnnotationPropertySerializers();
     }
     this.changed.dispatch();
   }

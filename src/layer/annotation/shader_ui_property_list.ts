@@ -18,6 +18,7 @@ export interface ShaderPropertyListMetadata {
   type: string;
   identifier: string;
   description?: string;
+  tag?: string;
 }
 
 export function buildShaderPropertyList(
@@ -43,6 +44,12 @@ export function buildShaderPropertyList(
     const { description } = property;
     if (description !== undefined) {
       div.title = description;
+    }
+    if (property.tag !== undefined) {
+      const tagElement = document.createElement("span");
+      tagElement.classList.add("neuroglancer-annotation-tag-property-type");
+      tagElement.textContent = `(${property.tag})`;
+      div.appendChild(tagElement);
     }
     propertyList.appendChild(div);
   }
