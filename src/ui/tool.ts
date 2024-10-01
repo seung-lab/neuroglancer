@@ -212,6 +212,17 @@ export function registerTool<Context extends object>(
   tools.set(type, getter);
 }
 
+export function unregisterTool<Context extends object>(
+  contextType: AnyConstructor<Context>,
+  type: string,
+) {
+  const { prototype } = contextType;
+  const tools = toolsForPrototype.get(prototype);
+  if (tools) {
+    tools.delete(type);
+  }
+}
+
 export class SelectedLegacyTool
   extends RefCounted
   implements TrackableValueInterface<LegacyTool | undefined>
@@ -456,6 +467,19 @@ export class LocalToolBinder<
       obj[key] = value.toJSON();
     }
     return obj;
+  }
+
+  deleteTool(key: string) {
+    const { globalBinder, bindings, jsonToKey } = this;
+    const existingTool = bindings.get(key);
+    if (existingTool) {
+      bindings.delete(key);
+      globalBinder.bindings.delete(key);
+      jsonToKey.delete(JSON.stringify(existingTool.toJSON()));
+      globalBinder.destroyTool(existingTool);
+      globalBinder.changed.dispatch();
+      this.changed.dispatch();
+    }
   }
 
   clear() {
