@@ -40,6 +40,7 @@ import {
   AnnotationType,
   annotationTypeHandlers,
   formatNumericProperty,
+  isAnnotationTagPropertySpec,
 } from "#src/annotation/index.js";
 import {
   AnnotationLayer,
@@ -515,7 +516,6 @@ export class AnnotationLayerView extends Tab {
     this.virtualList.element.addEventListener("mouseleave", () => {
       this.displayState.hoverState.value = undefined;
     });
-
     const bindings = getDefaultAnnotationListBindings();
     this.registerDisposer(
       new MouseEventBinder(this.virtualList.element, bindings),
@@ -982,7 +982,9 @@ export class PlacePointTool extends PlaceAnnotationTool {
         relatedSegments: getSelectedAssociatedSegments(annotationLayer),
         point,
         type: AnnotationType.POINT,
-        properties: annotationLayer.source.properties.map((x) => x.default),
+        properties: annotationLayer.source.properties.value.map(
+          (x) => x.default,
+        ),
       };
       const reference = annotationLayer.source.add(
         annotation,
@@ -1134,7 +1136,7 @@ abstract class PlaceTwoCornerAnnotationTool extends TwoStepAnnotationTool {
       description: "",
       pointA: point,
       pointB: point,
-      properties: annotationLayer.source.properties.map((x) => x.default),
+      properties: annotationLayer.source.properties.value.map((x) => x.default),
     };
   }
 
@@ -1256,7 +1258,7 @@ class PlaceEllipsoidTool extends TwoStepAnnotationTool {
       segments: getSelectedAssociatedSegments(annotationLayer),
       center: point,
       radii: vec3.fromValues(0, 0, 0),
-      properties: annotationLayer.source.properties.map((x) => x.default),
+      properties: annotationLayer.source.properties.value.map((x) => x.default),
     };
   }
 
@@ -1677,7 +1679,7 @@ export function UserLayerWithAnnotationsMixin<
                     new AnnotationPropertySerializer(
                       rank,
                       numGeometryBytes,
-                      properties,
+                      properties.value,
                     );
                   const annotationIndex = state.annotationIndex!;
                   const annotationCount = state.annotationCount!;
@@ -1696,7 +1698,9 @@ export function UserLayerWithAnnotationsMixin<
                     annotationIndex,
                     annotationCount,
                     isLittleEndian,
-                    (annotation.properties = new Array(properties.length)),
+                    (annotation.properties = new Array(
+                      properties.value.length,
+                    )),
                   );
                   if (annotationLayer.source.hasNonSerializedProperties()) {
                     statusText = "Loading...";
@@ -1794,7 +1798,10 @@ export function UserLayerWithAnnotationsMixin<
                   positionGrid.appendChild(button);
                 }
 
-                const { relationships, properties } = annotationLayer.source;
+                const {
+                  relationships,
+                  properties: { value: properties },
+                } = annotationLayer.source;
                 const sourceReadonly = annotationLayer.source.readonly;
 
                 // Add the ID to the annotation details.
@@ -1814,8 +1821,19 @@ export function UserLayerWithAnnotationsMixin<
                 label.appendChild(valueElement);
                 parent.appendChild(label);
 
+                const activeTags: string[] = [];
+
                 for (let i = 0, count = properties.length; i < count; ++i) {
                   const property = properties[i];
+                  const value = annotation.properties[i];
+
+                  if (isAnnotationTagPropertySpec(property) && property.tag) {
+                    if (value !== 0) {
+                      activeTags.push(property.tag);
+                    }
+                    continue;
+                  }
+
                   const label = document.createElement("label");
                   label.classList.add("neuroglancer-annotation-property");
                   const idElement = document.createElement("span");
@@ -1828,7 +1846,6 @@ export function UserLayerWithAnnotationsMixin<
                   if (description !== undefined) {
                     label.title = description;
                   }
-                  const value = annotation.properties[i];
                   const valueElement = document.createElement("span");
                   valueElement.classList.add(
                     "neuroglancer-annotation-property-value",
@@ -1864,6 +1881,26 @@ export function UserLayerWithAnnotationsMixin<
                       );
                       break;
                   }
+                  label.appendChild(valueElement);
+                  parent.appendChild(label);
+                }
+
+                if (activeTags.length) {
+                  const label = document.createElement("label");
+                  label.classList.add("neuroglancer-annotation-property");
+                  const idElement = document.createElement("span");
+                  idElement.classList.add(
+                    "neuroglancer-annotation-property-label",
+                  );
+                  idElement.textContent = "tags";
+                  label.appendChild(idElement);
+                  const valueElement = document.createElement("span");
+                  valueElement.classList.add(
+                    "neuroglancer-annotation-property-value",
+                  );
+                  valueElement.textContent = activeTags
+                    .map((x) => `#${x}`)
+                    .join(" ");
                   label.appendChild(valueElement);
                   parent.appendChild(label);
                 }
