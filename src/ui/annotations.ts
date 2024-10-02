@@ -173,6 +173,21 @@ export class MergedAnnotationStates
   }
 }
 
+function getFirstVertexPosition(pos: Float32Array, annotation: Annotation) {
+  switch (annotation.type) {
+    case AnnotationType.AXIS_ALIGNED_BOUNDING_BOX:
+    case AnnotationType.LINE:
+      pos.set(annotation.pointA);
+      break;
+    case AnnotationType.POINT:
+      pos.set(annotation.point);
+      break;
+    case AnnotationType.ELLIPSOID:
+      pos.set(annotation.center);
+      break;
+  }
+}
+
 function getCenterPosition(center: Float32Array, annotation: Annotation) {
   switch (annotation.type) {
     case AnnotationType.AXIS_ALIGNED_BOUNDING_BOX:
@@ -188,6 +203,7 @@ function getCenterPosition(center: Float32Array, annotation: Annotation) {
       break;
   }
 }
+getCenterPosition;
 
 function setLayerPosition(
   layer: UserLayer,
@@ -241,7 +257,7 @@ const moveToAnnotation = (
   const { layerRank } = chunkTransform;
   const chunkPosition = new Float32Array(layerRank);
   const layerPosition = new Float32Array(layerRank);
-  getCenterPosition(chunkPosition, annotation);
+  getFirstVertexPosition(chunkPosition, annotation);
   matrix.transformPoint(
     layerPosition,
     chunkTransform.chunkToLayerTransform,
@@ -250,6 +266,36 @@ const moveToAnnotation = (
     layerRank,
   );
   setLayerPosition(layer, chunkTransform, layerPosition);
+  if (state.displayState.swapVisibleSegmentsOnMove.value) {
+    showAnnotationSegments(annotation, state, true);
+  }
+};
+
+const showAnnotationSegments = (
+  annotation: Annotation,
+  state: AnnotationLayerState,
+  onlyVisible = false,
+) => {
+  const { relatedSegments } = annotation;
+  if (relatedSegments) {
+    const { source, displayState } = state;
+    const { relationships } = source;
+    const { relationshipStates } = displayState;
+    for (let i = 0, count = relationships.length; i < count; ++i) {
+      const segmentationState = relationshipStates.get(relationships[i])
+        .segmentationState.value;
+      if (segmentationState) {
+        if (onlyVisible) {
+          segmentationState.segmentationGroupState.value.visibleSegments.clear();
+        }
+        for (const segmentList of relatedSegments) {
+          segmentationState.segmentationGroupState.value.visibleSegments.add(
+            segmentList,
+          );
+        }
+      }
+    }
+  }
 };
 
 export class AnnotationLayerView extends Tab {
