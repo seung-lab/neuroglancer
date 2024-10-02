@@ -55,7 +55,7 @@ import {
   SliceViewChunkSource,
 } from "#src/sliceview/frontend.js";
 import { StatusMessage } from "#src/status.js";
-import type { WatchableValue } from "#src/trackable_value.js";
+import { WatchableValue } from "#src/trackable_value.js";
 import type { Borrowed, Owned } from "#src/util/disposable.js";
 import { ENDIANNESS, Endianness } from "#src/util/endian.js";
 import * as matrix from "#src/util/matrix.js";
@@ -551,7 +551,7 @@ export class MultiscaleAnnotationSource
       new AnnotationMetadataChunkSource(this.chunkManager, this),
     );
     this.rank = options.rank;
-    this.properties.value = options.properties;
+    this.properties = new WatchableValue(options.properties);
     this.annotationPropertySerializers = makeAnnotationPropertySerializers(
       this.rank,
       this.properties.value,
