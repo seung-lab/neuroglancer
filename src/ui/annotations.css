@@ -63,7 +63,8 @@
   padding-right: 5px;
 }
 
-.neuroglancer-annotation-description {
+.neuroglancer-annotation-description,
+.neuroglancer-annotation-tags {
   grid-column: dim / -1;
   text-overflow: ellipsis;
   overflow: hidden;
