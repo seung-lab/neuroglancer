@@ -51,6 +51,7 @@ import type { SegmentationDisplayState } from "#src/segmentation_display_state/f
 import type { TrackableBoolean } from "#src/trackable_boolean.js";
 import { TrackableBooleanCheckbox } from "#src/trackable_boolean.js";
 import {
+  ComputedWatchableValue,
   makeCachedLazyDerivedWatchableValue,
   WatchableValue,
 } from "#src/trackable_value.js";
@@ -159,6 +160,7 @@ interface LinkedSegmentationLayer {
 const LINKED_SEGMENTATION_LAYER_JSON_KEY = "linkedSegmentationLayer";
 const FILTER_BY_SEGMENTATION_JSON_KEY = "filterBySegmentation";
 const IGNORE_NULL_SEGMENT_FILTER_JSON_KEY = "ignoreNullSegmentFilter";
+const SWAP_VISIBLE_SEGMENTS_ON_MOVE_JSON_KEY = "swapVisbleSegmentsOnMove";
 
 class LinkedSegmentationLayers extends RefCounted {
   changed = new NullarySignal();
@@ -705,7 +707,6 @@ export class AnnotationUserLayer extends Base {
     this.annotationProjectionRenderScaleTarget.changed.add(
       this.specificationChanged.dispatch,
     );
-
     this.registerDisposer(
       this.localAnnotationProperties.changed.add(() => {
         const { localAnnotations } = this;
@@ -722,12 +723,18 @@ export class AnnotationUserLayer extends Base {
       order: -100,
       getter: () => new RenderingOptionsTab(this),
     });
-    this.tabs.default = "annotations";
+    const hideTagsTab = this.registerDisposer(
+      new ComputedWatchableValue(() => {
+        return this.localAnnotations === undefined;
+      }, this.dataSourcesChanged),
+    );
     this.tabs.add("tags", {
       label: "Tags",
       order: 10,
       getter: () => new TagsTab(this),
+      hidden: hideTagsTab,
     });
+    this.tabs.default = "annotations";
   }
 
   syncTagTools = (tagIdentifiers: string[]) => {
@@ -797,6 +804,9 @@ export class AnnotationUserLayer extends Base {
     );
     this.annotationDisplayState.ignoreNullSegmentFilter.restoreState(
       specification[IGNORE_NULL_SEGMENT_FILTER_JSON_KEY],
+    );
+    this.annotationDisplayState.swapVisibleSegmentsOnMove.restoreState(
+      specification[SWAP_VISIBLE_SEGMENTS_ON_MOVE_JSON_KEY],
     );
     this.annotationDisplayState.shader.restoreState(
       specification[SHADER_JSON_KEY],
@@ -1043,6 +1053,22 @@ export class AnnotationUserLayer extends Base {
       label.appendChild(checkbox.element);
       tab.element.appendChild(label);
     }
+    {
+      const checkbox = tab.registerDisposer(
+        new TrackableBooleanCheckbox(
+          this.annotationDisplayState.swapVisibleSegmentsOnMove,
+        ),
+      );
+      const label = document.createElement("label");
+      label.appendChild(
+        document.createTextNode(
+          "Swap visible segments when moving to annotation",
+        ),
+      );
+      label.title = "Swap visible segments when moving to annotation";
+      label.appendChild(checkbox.element);
+      tab.element.appendChild(label);
+    }
     tab.element.appendChild(
       tab.registerDisposer(
         new LinkedSegmentationLayersWidget(this.linkedSegmentationLayers),
@@ -1072,6 +1098,8 @@ export class AnnotationUserLayer extends Base {
         : localAnnotationRelationships;
     x[IGNORE_NULL_SEGMENT_FILTER_JSON_KEY] =
       this.annotationDisplayState.ignoreNullSegmentFilter.toJSON();
+    x[SWAP_VISIBLE_SEGMENTS_ON_MOVE_JSON_KEY] =
+      this.annotationDisplayState.swapVisibleSegmentsOnMove.toJSON();
     x[SHADER_JSON_KEY] = this.annotationDisplayState.shader.toJSON();
     x[SHADER_CONTROLS_JSON_KEY] =
       this.annotationDisplayState.shaderControls.toJSON();
