@@ -161,7 +161,22 @@ export function setupDefaultViewer() {
       hashBinding.parseError;
     }),
   );
-  hashBinding.updateFromUrlHash();
+  hashBinding.updateFromUrlHash((state) => {
+    // convert graphene state timestamp to layer timestamp
+    const fixTimestamp = (layer: any) => {
+      if (layer.source?.state?.timestamp) {
+        layer.timestamp = layer.source.state.timestamp;
+        layer.source.state.timestamp = undefined;
+      }
+    };
+    if (state.layers) {
+      const layers = Array.isArray(state.layers)
+        ? state.layers
+        : Object.values(state.layers);
+      layers.map(fixTimestamp);
+    }
+    return state;
+  });
   viewer.registerDisposer(bindTitle(viewer.title));
 
   bindDefaultCopyHandler(viewer);
