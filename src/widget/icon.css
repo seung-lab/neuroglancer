@@ -49,6 +49,10 @@
   background-color: #db4437;
 }
 
+.neuroglancer-icon.locked {
+  background-color: yellow;
+}
+
 .neuroglancer-icon.neuroglancer-info-icon:hover {
   background-color: inherit;
 }
