@@ -1,12 +1,6 @@
 name: Build
 
-on:
-  push:
-    branches:
-      - spelunker
-    tags:
-      - v**
-  pull_request:
+on: [push, pull_request]
 
 jobs:
   build-and-deploy:
@@ -71,9 +65,9 @@ jobs:
       - id: deploy
         uses: google-github-actions/deploy-appengine@main
         with:
-          version: ${{ env.GITHUB_SHA }}
+          version: ${{ env.BRANCH_NAME_URL }}
           deliverables: appengine/frontend/app.yaml
-          promote: true
+          promote: false
       - name: update deployment status
         uses: bobheadxi/deployments@v1
         if: always()
