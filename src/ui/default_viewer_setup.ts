@@ -179,5 +179,65 @@ export function setupDefaultViewer() {
   bindDefaultCopyHandler(viewer);
   bindDefaultPasteHandler(viewer);
 
+  const downloadObject = (obj: any, filename: string) => {
+    const a = document.createElement("a");
+    const file = new Blob([JSON.stringify(obj)], { type: "application/json" });
+    a.href = URL.createObjectURL(file);
+    a.download = filename;
+    a.click();
+  };
+
+  (window as any).saveHistory = (sessionId: string) => {
+    const res: any[] = [];
+    let historyIndex = 0;
+    let state: string | null = null;
+    while (
+      (state = localStorage.getItem(`${sessionId}_${historyIndex}`)) !== null
+    ) {
+      res.push(JSON.parse(state));
+      historyIndex++;
+    }
+    downloadObject(res, "history.json");
+  };
+
+  let inReplay = false;
+
+  (window as any).ngReplay = (sessionId: string) => {
+    if (inReplay) return;
+    hashBinding.recording = false;
+    inReplay = true;
+    const startTime = Date.now();
+    let historyIndex = 0;
+    let nextState = localStorage.getItem(`${sessionId}_${historyIndex}`);
+    if (!nextState) {
+      console.log(`no history for session ${sessionId}`);
+    }
+    let nextTime = parseInt(
+      localStorage.getItem(`${sessionId}_${historyIndex}_time`)!,
+    );
+
+    const loop = () => {
+      const elapsedTime = Date.now() - startTime;
+      console.log("replay", elapsedTime, historyIndex, nextTime - elapsedTime);
+      if (nextTime > 0 && elapsedTime >= nextTime) {
+        // set new state
+        viewer.state.restoreState(JSON.parse(nextState!));
+        // get next states
+        historyIndex++;
+        nextState = localStorage.getItem(`${sessionId}_${historyIndex}`);
+        if (!nextState) {
+          inReplay = false;
+          console.log("done with replay");
+          return;
+        }
+        nextTime = parseInt(
+          localStorage.getItem(`${sessionId}_${historyIndex}_time`)!,
+        );
+      }
+      requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  };
+
   return viewer;
 }

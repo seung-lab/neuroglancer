@@ -631,7 +631,7 @@ async function getVolumeDataSource(
     info,
     credentialsProvider,
     volume,
-    state,
+    state, // how to apply this to connection instead
   );
   const { modelSpace } = info;
   const subsources: DataSubsourceEntry[] = [
@@ -708,56 +708,56 @@ export class GrapheneDataSource extends PrecomputedDataSource {
     return "Graphene file-backed data source";
   }
 
-  get(options: GetDataSourceOptions): Promise<DataSource> {
+  async get(options: GetDataSourceOptions): Promise<DataSource> {
     const { url: providerUrl, parameters } = parseProviderUrl(
       options.providerUrl,
     );
-    return options.chunkManager.memoize.getUncounted(
-      { type: "graphene:get", providerUrl, parameters },
-      async (): Promise<DataSource> => {
-        const { url, credentialsProvider } = parseSpecialUrl(
-          providerUrl,
-          options.credentialsManager,
-        );
-        let metadata: any;
-        try {
-          metadata = await getJsonMetadata(
-            options.chunkManager,
-            credentialsProvider,
-            url,
-          );
-        } catch (e) {
-          if (isNotFoundError(e)) {
-            if (parameters["type"] === "mesh") {
-              console.log("does this happen?");
-            }
-          }
-          throw e;
-        }
-        verifyObject(metadata);
-        const redirect = verifyOptionalObjectProperty(
-          metadata,
-          "redirect",
-          verifyString,
-        );
-        if (redirect !== undefined) {
-          throw new RedirectError(redirect);
-        }
-        const t = verifyOptionalObjectProperty(metadata, "@type", verifyString);
-        switch (t) {
-          case "neuroglancer_multiscale_volume":
-          case undefined:
-            return await getVolumeDataSource(
-              options,
-              credentialsProvider,
-              url,
-              metadata,
-            );
-          default:
-            throw new Error(`Invalid type: ${JSON.stringify(t)}`);
-        }
-      },
+    // return options.chunkManager.memoize.getUncounted(
+    //   { type: "graphene:get", providerUrl, parameters },
+    //   async (): Promise<DataSource> => {
+    const { url, credentialsProvider } = parseSpecialUrl(
+      providerUrl,
+      options.credentialsManager,
     );
+    let metadata: any;
+    try {
+      metadata = await getJsonMetadata(
+        options.chunkManager,
+        credentialsProvider,
+        url,
+      );
+    } catch (e) {
+      if (isNotFoundError(e)) {
+        if (parameters["type"] === "mesh") {
+          console.log("does this happen?");
+        }
+      }
+      throw e;
+    }
+    verifyObject(metadata);
+    const redirect = verifyOptionalObjectProperty(
+      metadata,
+      "redirect",
+      verifyString,
+    );
+    if (redirect !== undefined) {
+      throw new RedirectError(redirect);
+    }
+    const t = verifyOptionalObjectProperty(metadata, "@type", verifyString);
+    switch (t) {
+      case "neuroglancer_multiscale_volume":
+      case undefined:
+        return await getVolumeDataSource(
+          options,
+          credentialsProvider,
+          url,
+          metadata,
+        );
+      default:
+        throw new Error(`Invalid type: ${JSON.stringify(t)}`);
+    }
+    //   },
+    // );
   }
 }
 
@@ -908,6 +908,7 @@ class GrapheneState extends RefCounted implements Trackable {
   }
 
   toJSON() {
+    console.log("GS toJSON");
     return {
       [MULTICUT_JSON_KEY]: this.multicutState.toJSON(),
       [MERGE_JSON_KEY]: this.mergeState.toJSON(),
@@ -1314,6 +1315,7 @@ class GraphConnection extends SegmentationGraphSourceConnection {
     private chunkSource: GrapheneMultiscaleVolumeChunkSource,
     public state: GrapheneState,
   ) {
+    console.log("GraphConnection constructor");
     super(graph, layer.displayState.segmentationGroupState.value);
     const segmentsState = layer.displayState.segmentationGroupState.value;
     this.previousVisibleSegmentCount = segmentsState.visibleSegments.size;
@@ -1403,6 +1405,26 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       for (const merge of merges.value) {
         mergeAnnotationState.source.add(mergeToLine(merge));
       }
+
+      this.registerDisposer(
+        merges.changed.add(() => {
+          for (const annotation of mergeAnnotationState.source) {
+            if (!merges.value.map((x) => x.id).includes(annotation.id)) {
+              mergeAnnotationState.source.delete(
+                mergeAnnotationState.source.getReference(annotation.id),
+              );
+            }
+          }
+          const existingAnnotationIds = [...mergeAnnotationState.source].map(
+            (x) => x.id,
+          );
+          for (const merge of merges.value) {
+            if (!existingAnnotationIds.includes(merge.id)) {
+              mergeAnnotationState.source.add(mergeToLine(merge));
+            }
+          }
+        }),
+      );
 
       // initialize source changes
       this.registerDisposer(
@@ -2452,6 +2474,10 @@ class SliceViewPanelChunkedGraphLayer extends SliceViewPanelRenderLayer {
       ).rpcId,
     });
     this.registerDisposer(sharedObject.visibility.add(this.visibility));
+
+    this.registerDisposer(() => {
+      console.log("SliceViewPanelChunkedGraphLayer disposed");
+    });
 
     this.registerDisposer(
       this.leafRequestsActive.changed.add(() => {
