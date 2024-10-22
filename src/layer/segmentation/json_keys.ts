@@ -33,3 +33,5 @@ export const APPEARANCE_SECTION_JSON_KEY = "appearanceExpanded";
 export const SLICE_SECTION_JSON_KEY = "sliceRenderingExpanded";
 export const MESH_SECTION_JSON_KEY = "meshRenderingExpanded";
 export const SKELETON_SECTION_JSON_KEY = "skeletonsExpanded";
+export const TIMESTAMP_JSON_KEY = "timestamp";
+export const TIMESTAMP_OWNER_JSON_KEY = "timestampOwner";
