@@ -205,9 +205,15 @@ import {
 } from "#src/util/special_protocol_request.js";
 import type { Trackable } from "#src/util/trackable.js";
 import { Uint64 } from "#src/util/uint64.js";
+import { DateTimeInputWidget } from "#src/widget/datetime.js";
 import { makeDeleteButton } from "#src/widget/delete_button.js";
 import type { DependentViewContext } from "#src/widget/dependent_view_widget.js";
 import { makeIcon } from "#src/widget/icon.js";
+import type { LayerControlFactory } from "#src/widget/layer_control.js";
+import {
+  addLayerControlToOptionsTab,
+  registerLayerControl,
+} from "#src/widget/layer_control.js";
 
 function vec4FromVec3(vec: vec3, alpha = 0) {
   const res = vec4.clone([...vec]);
@@ -1335,8 +1341,30 @@ class GraphConnection extends SegmentationGraphSourceConnection {
 
     const {
       annotationLayerStates,
-      state: { multicutState, findPathState },
+      state: { multicutState, mergeState, findPathState },
     } = this;
+
+    const { timestamp } = segmentsState;
+    this.registerDisposer(
+      timestamp.changed.add(async () => {
+        const nonLatestRoots = await this.graph.graphServer.filterLatestRoots(
+          [...segmentsState.selectedSegments],
+          timestamp.value,
+          true,
+        );
+        segmentsState.selectedSegments.delete(nonLatestRoots);
+        const unsetTimestamp = timestamp.value === undefined;
+        if (unsetTimestamp) {
+          const {
+            focusSegment: { value: focusSegment },
+          } = state.multicutState;
+          if (focusSegment) {
+            segmentsState.visibleSegments.add(focusSegment);
+          }
+        }
+      }),
+    );
+
     const loadedSubsource = getGraphLoadedSubsource(layer)!;
     const redGroup = makeColoredAnnotationState(
       layer,
@@ -1524,6 +1552,22 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       }),
     );
     findPathChanged(); // initial state
+    this.registerDisposer(
+      state.changed.add(() => {
+        if (segmentsState.timestamp.value === undefined) {
+          if (
+            multicutState.focusSegment.value ||
+            mergeState.merges.value.length > 0
+          ) {
+            // remind me why want to add ourselves compared to keeping it empty
+            // if it is non empty, graphene knows there is a tool locking it
+            segmentsState.timestampOwner.add(layer.managedLayer.name);
+          } else {
+            segmentsState.timestampOwner.delete(layer.managedLayer.name);
+          }
+        }
+      }),
+    );
   }
 
   createRenderLayers(
@@ -1549,10 +1593,17 @@ class GraphConnection extends SegmentationGraphSourceConnection {
 
   private visibleSegmentsChanged(segments: Uint64[] | null, added: boolean) {
     const { segmentsState } = this;
+    const { state } = this.graph;
     const {
       focusSegment: { value: focusSegment },
-    } = this.graph.state.multicutState;
-    if (focusSegment && !segmentsState.visibleSegments.has(focusSegment)) {
+    } = state.multicutState;
+    const { timestamp } = segmentsState;
+    const unsetTimestamp = timestamp.value === undefined;
+    if (
+      unsetTimestamp &&
+      focusSegment &&
+      !segmentsState.visibleSegments.has(focusSegment)
+    ) {
       if (segmentsState.selectedSegments.has(focusSegment)) {
         StatusMessage.showTemporaryMessage(
           `Can't hide active multicut segment.`,
@@ -1564,7 +1615,6 @@ class GraphConnection extends SegmentationGraphSourceConnection {
           3000,
         );
       }
-      segmentsState.selectedSegments.add(focusSegment);
       segmentsState.visibleSegments.add(focusSegment);
       if (segments) {
         segments = segments.filter(
@@ -1625,13 +1675,15 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       );
       const segmentConst = segmentId.clone();
       if (added && isBaseSegment) {
-        this.graph.getRoot(segmentConst).then((rootId) => {
-          if (segmentsState.visibleSegments.has(segmentConst)) {
-            segmentsState.visibleSegments.add(rootId);
-          }
-          segmentsState.selectedSegments.delete(segmentConst);
-          segmentsState.selectedSegments.add(rootId);
-        });
+        this.graph
+          .getRoot(segmentConst, segmentsState.timestamp.value)
+          .then((rootId) => {
+            if (segmentsState.visibleSegments.has(segmentConst)) {
+              segmentsState.visibleSegments.add(rootId);
+            }
+            segmentsState.selectedSegments.delete(segmentConst);
+            segmentsState.selectedSegments.add(rootId);
+          });
       }
     }
   }
@@ -1945,11 +1997,22 @@ class GrapheneGraphServerInterface {
     private credentialsProvider: SpecialProtocolCredentialsProvider,
   ) {}
 
-  async getRoot(segment: Uint64, timestamp = "") {
-    const timestampEpoch = new Date(timestamp).valueOf() / 1000;
+  async getTimestampLimit() {
+    const response = await cancellableFetchSpecialOk(
+      this.credentialsProvider,
+      `${this.url}/oldest_timestamp`,
+      {},
+      responseJson,
+    );
+    const isoString = verifyObjectProperty(response, "iso", verifyString);
+    return new Date(isoString).valueOf();
+  }
+
+  async getRoot(segment: Uint64, timestamp = 0) {
+    const timestampEpoch = timestamp / 1000;
 
     const url = `${this.url}/node/${String(segment)}/root?int64_as_str=1${
-      Number.isNaN(timestampEpoch) ? "" : `&timestamp=${timestampEpoch}`
+      timestamp > 0 ? `&timestamp=${timestampEpoch}` : ""
     }`;
 
     const promise = cancellableFetchSpecialOk(
@@ -2036,9 +2099,15 @@ class GrapheneGraphServerInterface {
     return final;
   }
 
-  async filterLatestRoots(segments: Uint64[]): Promise<Uint64[]> {
-    const url = `${this.url}/is_latest_roots`;
-
+  async filterLatestRoots(
+    segments: Uint64[],
+    timestamp = 0,
+    flipResult = false,
+  ): Promise<Uint64[]> {
+    const timestampEpoch = timestamp / 1000;
+    const url = `${this.url}/is_latest_roots${
+      timestamp > 0 ? `?timestamp=${timestampEpoch}` : ""
+    }`;
     const promise = cancellableFetchSpecialOk(
       this.credentialsProvider,
       url,
@@ -2048,15 +2117,13 @@ class GrapheneGraphServerInterface {
       },
       responseIdentity,
     );
-
     const response = await withErrorMessageHTTP(promise, {
       errorPrefix: `Could not check latest: `,
     });
     const jsonResp = await response.json();
-
     const res: Uint64[] = [];
     for (const [i, isLatest] of jsonResp["is_latest"].entries()) {
-      if (isLatest) {
+      if (isLatest !== flipResult) {
         res.push(segments[i]);
       }
     }
@@ -2118,9 +2185,9 @@ class GrapheneGraphServerInterface {
 }
 
 class GrapheneGraphSource extends SegmentationGraphSource {
-  private connections = new Set<GraphConnection>();
   public graphServer: GrapheneGraphServerInterface;
   private l2CacheAvailable: boolean | undefined = undefined;
+  public timestampLimit = new TrackableValue<number>(0, (x) => x);
 
   constructor(
     public info: GrapheneMultiscaleVolumeInfo,
@@ -2133,24 +2200,15 @@ class GrapheneGraphSource extends SegmentationGraphSource {
       info.app!.segmentationUrl,
       credentialsProvider,
     );
+    this.graphServer.getTimestampLimit().then((limit) => {
+      this.timestampLimit.value = limit;
+    });
   }
 
   connect(
     layer: SegmentationUserLayer,
   ): Owned<SegmentationGraphSourceConnection> {
-    const connection = new GraphConnection(
-      this,
-      layer,
-      this.chunkSource,
-      this.state,
-    );
-
-    this.connections.add(connection);
-    connection.registerDisposer(() => {
-      this.connections.delete(connection);
-    });
-
-    return connection;
+    return new GraphConnection(this, layer, this.chunkSource, this.state);
   }
 
   get visibleSegmentEquivalencePolicy() {
@@ -2180,8 +2238,8 @@ class GrapheneGraphSource extends SegmentationGraphSource {
     }
   }
 
-  getRoot(segment: Uint64) {
-    return this.graphServer.getRoot(segment);
+  getRoot(segment: Uint64, timestamp?: number) {
+    return this.graphServer.getRoot(segment, timestamp);
   }
 
   async findPath(
@@ -2244,6 +2302,9 @@ class GrapheneGraphSource extends SegmentationGraphSource {
     parent.style.display = "contents";
     const toolbox = document.createElement("div");
     toolbox.className = "neuroglancer-segmentation-toolbox";
+    parent.appendChild(
+      addLayerControlToOptionsTab(tab, layer, tab.visibility, timeControl),
+    );
     toolbox.appendChild(
       makeToolButton(context, layer.toolBinder, {
         toolJson: GRAPHENE_MULTICUT_SEGMENTS_TOOL_ID,
@@ -2581,6 +2642,122 @@ const getPoint = (
   return undefined;
 };
 
+const GRAPHENE_TIME_JSON_KEY = "grapheneTime";
+
+const timeControl = {
+  label: "Time",
+  title: "View segmentation at earlier point of time",
+  toolJson: GRAPHENE_TIME_JSON_KEY,
+  ...timeLayerControl(),
+};
+
+registerLayerControl(SegmentationUserLayer, timeControl);
+
+function timeLayerControl(): LayerControlFactory<SegmentationUserLayer> {
+  return {
+    makeControl: (layer, context) => {
+      const segmentationGroupState =
+        layer.displayState.segmentationGroupState.value;
+      const {
+        graph: { value: graph },
+      } = segmentationGroupState;
+      const timestamp =
+        graph instanceof GrapheneGraphSource
+          ? segmentationGroupState.timestamp
+          : new WatchableValue<number | undefined>(undefined);
+      const timestampLimit =
+        graph instanceof GrapheneGraphSource
+          ? graph.timestampLimit
+          : new WatchableValue<number>(0);
+      const timestampOwner =
+        graph instanceof GrapheneGraphSource
+          ? segmentationGroupState.timestampOwner
+          : new WatchableSet<string>();
+
+      const controlElement = document.createElement("div");
+      controlElement.classList.add("neuroglancer-time-control");
+      const intermediateTimestamp = new WatchableValue<number | undefined>(
+        timestamp.value,
+      );
+      intermediateTimestamp.changed.add(async () => {
+        if (intermediateTimestamp.value === timestamp.value) {
+          return;
+        }
+        // resetting timestamp back to unset
+        if (
+          intermediateTimestamp.value === undefined &&
+          segmentationGroupState.canSetTimestamp(layer.managedLayer.name)
+        ) {
+          timestamp.value = intermediateTimestamp.value;
+          timestampOwner.delete(layer.managedLayer.name);
+          return;
+        }
+        if (graph instanceof GrapheneGraphSource) {
+          const selfLock = segmentationGroupState.timestampOwner.has(
+            layer.managedLayer.name,
+          );
+          const canSetTimestamp = segmentationGroupState.canSetTimestamp(
+            layer.managedLayer.name,
+          );
+          // if we have a lock while the timestamp is unset, it is a tool-based lock (this check can be improved)
+          if (canSetTimestamp && (!selfLock || timestamp.value !== undefined)) {
+            const nonLatestRoots = await graph.graphServer.filterLatestRoots(
+              [...segmentationGroupState.selectedSegments],
+              timestamp.value,
+              true,
+            );
+            if (
+              !nonLatestRoots.length ||
+              confirm(
+                `Changing graphene time will clear ${nonLatestRoots.length} segment(s).`,
+              )
+            ) {
+              timestamp.value = intermediateTimestamp.value;
+              // is this where it is done
+              timestampOwner.add(layer.managedLayer.name);
+              return;
+            }
+          }
+          intermediateTimestamp.value = timestamp.value;
+          StatusMessage.showTemporaryMessage("Timestamp is locked.");
+        }
+      });
+      const widget = context.registerDisposer(
+        new DateTimeInputWidget(
+          intermediateTimestamp,
+          new Date(timestampLimit.value),
+          new Date(),
+        ),
+      );
+      timestampLimit.changed.add(() => {
+        widget.setMin(new Date(timestampLimit.value));
+      });
+      timestamp.changed.add(() => {
+        if (timestamp.value !== intermediateTimestamp.value) {
+          intermediateTimestamp.value = timestamp.value;
+        }
+      });
+      controlElement.appendChild(widget.element);
+      return { controlElement, control: widget };
+    },
+    activateTool: (_activation) => {},
+  };
+}
+
+const checkSegmentationOld = (
+  timestamp: WatchableValue<number | undefined>,
+  activation: ToolActivation,
+) => {
+  if (timestamp.value !== undefined) {
+    StatusMessage.showTemporaryMessage(
+      "Editing can not be performed with a segmentation at an older state.",
+    );
+    activation.cancel();
+    return true;
+  }
+  return false;
+};
+
 const MULTICUT_SEGMENTS_INPUT_EVENT_MAP = EventActionMap.fromObject({
   "at:shift?+control+mousedown0": { action: "set-anchor" },
   "at:shift?+keyg": { action: "swap-group" },
@@ -2904,17 +3081,22 @@ class MergeSegmentsTool extends LayerTool<SegmentationUserLayer> {
       graphConnection: { value: graphConnection },
       tool,
     } = this.layer;
-    if (!graphConnection || !(graphConnection instanceof GraphConnection))
+    if (!graphConnection || !(graphConnection instanceof GraphConnection)) {
+      activation.cancel();
       return;
+    }
     const {
       state: { mergeState },
+      segmentsState: { timestamp },
+      mergeAnnotationState,
     } = graphConnection;
-    if (mergeState === undefined) return;
+    if (checkSegmentationOld(timestamp, activation)) {
+      return;
+    }
     const { merges, autoSubmit } = mergeState;
-
     const lineTool = new MergeSegmentsPlaceLineTool(
       this.layer,
-      graphConnection.mergeAnnotationState,
+      mergeAnnotationState,
     );
     tool.value = lineTool;
     activation.registerDisposer(() => {
