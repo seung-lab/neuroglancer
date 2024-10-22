@@ -95,12 +95,18 @@ export class UrlHashBinding extends RefCounted {
     this.registerDisposer(root.changed.add(throttledSetUrlHash));
     this.registerDisposer(() => throttledSetUrlHash.cancel());
     this.defaultFragment = defaultFragment;
+
+    this.registerDisposer(
+      root.changed.add(() => {
+        this.setUrlHash(true);
+      }),
+    );
   }
 
   /**
    * Sets the URL hash to match the current state.
    */
-  setUrlHash() {
+  setUrlHash(saveOnly = false) {
     const cacheState = getCachedJson(this.root);
     const { generation } = cacheState;
     if (generation !== this.prevStateGeneration) {
@@ -109,10 +115,12 @@ export class UrlHashBinding extends RefCounted {
       const stateString = encodeFragment(jsonString);
       if (stateString !== this.prevStateString) {
         this.prevStateString = stateString;
-        if (decodeURIComponent(stateString) === "{}") {
-          history.replaceState(null, "", "#");
-        } else {
-          history.replaceState(null, "", "#!" + stateString);
+        if (saveOnly) {
+          if (decodeURIComponent(stateString) === "{}") {
+            history.replaceState(null, "", "#");
+          } else {
+            history.replaceState(null, "", "#!" + stateString);
+          }
         }
         if (this.recording) {
           console.log("recording", this.sessionId, this.historyIndex);
