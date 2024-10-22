@@ -69,12 +69,20 @@ export class UrlHashBinding extends RefCounted {
 
   private defaultFragment: string;
 
+  readonly sessionId = self.crypto.randomUUID();
+
+  historyIndex = 0;
+  startTime = Date.now();
+
+  recording = true;
+
   constructor(
     public root: Trackable,
     public credentialsManager: CredentialsManager,
     options: UrlHashBindingOptions = {},
   ) {
     super();
+
     const { updateDelayMilliseconds = 200, defaultFragment = "{}" } = options;
     this.registerEventListener(window, "hashchange", () =>
       this.updateFromUrlHash(),
@@ -97,13 +105,26 @@ export class UrlHashBinding extends RefCounted {
     const { generation } = cacheState;
     if (generation !== this.prevStateGeneration) {
       this.prevStateGeneration = cacheState.generation;
-      const stateString = encodeFragment(JSON.stringify(cacheState.value));
+      const jsonString = JSON.stringify(cacheState.value);
+      const stateString = encodeFragment(jsonString);
       if (stateString !== this.prevStateString) {
         this.prevStateString = stateString;
         if (decodeURIComponent(stateString) === "{}") {
           history.replaceState(null, "", "#");
         } else {
           history.replaceState(null, "", "#!" + stateString);
+        }
+        if (this.recording) {
+          console.log("recording", this.sessionId, this.historyIndex);
+          localStorage.setItem(
+            `${this.sessionId}_${this.historyIndex}_time`,
+            (Date.now() - this.startTime).toString(),
+          );
+          localStorage.setItem(
+            `${this.sessionId}_${this.historyIndex}`,
+            jsonString,
+          );
+          this.historyIndex++;
         }
       }
     }

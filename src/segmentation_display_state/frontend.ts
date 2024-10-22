@@ -1091,6 +1091,11 @@ export class SegmentationLayerSharedObject extends Base {
     }
   }
 
+  disposed(): void {
+    console.log("SegmentationLayerSharedObject disposed");
+    super.disposed();
+  }
+
   initializeCounterpartWithChunkManager(options: any) {
     const { displayState } = this;
     options.chunkManager = this.chunkManager.rpcId;

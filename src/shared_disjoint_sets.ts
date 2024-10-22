@@ -42,6 +42,10 @@ export class SharedDisjointUint64Sets
   disjointSets = new DisjointUint64Sets();
   changed = new NullarySignal();
 
+  debugDisposed = false;
+
+  readonly sessionId = self.crypto.randomUUID();
+
   /**
    * For compatibility with `WatchableValueInterface`.
    */
@@ -49,11 +53,22 @@ export class SharedDisjointUint64Sets
     return this;
   }
 
+  // constructor() {
+  //   super();
+  //   console.log("SharedDisjointUint64Sets constructor", this.sessionId);
+  // }
+
   static makeWithCounterpart(
     rpc: RPC,
     highBitRepresentative: WatchableValueInterface<VisibleSegmentEquivalencePolicy>,
+    name = "foo",
   ) {
     const obj = new SharedDisjointUint64Sets();
+    console.log(
+      "making SharedDisjointUint64Sets counterpart",
+      name,
+      obj.sessionId,
+    );
     obj.disjointSets.visibleSegmentEquivalencePolicy = highBitRepresentative;
     obj.registerDisposer(
       highBitRepresentative.changed.add(() => {
@@ -64,10 +79,13 @@ export class SharedDisjointUint64Sets
     if (highBitRepresentative.value) {
       updateHighBitRepresentative(obj);
     }
+    console.log("returning", obj);
     return obj;
   }
 
   disposed() {
+    console.log("SharedDisjointUint64Sets disposed!", this.sessionId);
+    this.debugDisposed = true;
     this.disjointSets = <any>undefined;
     this.changed = <any>undefined;
     super.disposed();

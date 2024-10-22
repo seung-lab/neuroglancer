@@ -62,6 +62,7 @@ import { computeChunkBounds } from "#src/sliceview/volume/backend.js";
 import { Uint64Set } from "#src/uint64_set.js";
 import { fetchSpecialHttpByteRange } from "#src/util/byte_range_http_requests.js";
 import type { CancellationToken } from "#src/util/cancellation.js";
+import { invokeDisposers } from "#src/util/disposable.js";
 import { vec3, vec3Key } from "#src/util/geom.js";
 import { responseArrayBuffer, responseJson } from "#src/util/http_request.js";
 import type {
@@ -365,7 +366,10 @@ export class ChunkedGraphLayer extends withSegmentationLayerBackendState(
   leafRequestsActive: SharedWatchableValue<boolean>;
   nBitsForLayerId: SharedWatchableValue<number>;
 
+  readonly sessionId = self.crypto.randomUUID();
+
   constructor(rpc: RPC, options: any) {
+    console.log("ChunkedGraphLayer constructor");
     super(rpc, options);
     this.source = this.registerDisposer(
       rpc.getRef<GrapheneChunkedGraphChunkSource>(options.source),
@@ -377,9 +381,26 @@ export class ChunkedGraphLayer extends withSegmentationLayerBackendState(
     this.registerDisposer(
       this.chunkManager.recomputeChunkPriorities.add(() => {
         this.updateChunkPriorities();
-        this.debouncedupdateDisplayState();
+        this.debouncedUpdateDisplayState();
       }),
     );
+    this.registerDisposer(() => {
+      console.log("ChunkedGraphLayer disposed really", this.sessionId);
+    });
+  }
+
+  disposed() {
+    console.log("ChunkedGraphLayer disposed called");
+    if (this.refCount === 0) {
+      console.log("ChunkedGraphLayer invoking disposers", this.sessionId);
+      const { disposers } = this;
+      if (disposers !== undefined) {
+        invokeDisposers(disposers);
+        this.disposers = <any>undefined;
+      }
+      this.wasDisposed = true;
+    }
+    super.disposed();
   }
 
   attach(
@@ -500,7 +521,9 @@ export class ChunkedGraphLayer extends withSegmentationLayerBackendState(
     }
   }
 
-  private debouncedupdateDisplayState = debounce(() => {
+  private debouncedUpdateDisplayState = debounce(() => {
+    console.log("ChunkedGraphLayer debounced update invoked", this.sessionId);
+    if (this.wasDisposed) return;
     this.updateDisplayState();
   }, 100);
 
@@ -542,6 +565,11 @@ export class ChunkedGraphLayer extends withSegmentationLayerBackendState(
         this.segmentEquivalences.delete([...this.segmentEquivalences.setElements(Uint64.parseString(root))].filter(x
       => !leaves.has(x) && !this.visibleSegments.has(x)));
       }*/
+      // console.log(
+      //   "debugDisposed",
+      //   this.segmentEquivalences.debugDisposed,
+      //   this.segmentEquivalences.sessionId,
+      // );
       const filteredLeaves = [...leaves].filter(
         (x) => !this.segmentEquivalences.has(x),
       );
