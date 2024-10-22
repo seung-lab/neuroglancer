@@ -114,7 +114,7 @@ export class UrlHashBinding extends RefCounted {
    * Sets the current state to match the URL hash.  If it is desired to initialize the state based
    * on the URL hash, then this should be called immediately after construction.
    */
-  updateFromUrlHash() {
+  updateFromUrlHash(upgradeState: (a: any) => any = (x) => x) {
     try {
       let s = location.href.replace(/^[^#]+/, "");
       if (s === "" || s === "#" || s === "#!") {
@@ -155,7 +155,7 @@ export class UrlHashBinding extends RefCounted {
         this.root.reset();
         const state = urlSafeParse(s);
         verifyObject(state);
-        this.root.restoreState(state);
+        this.root.restoreState(upgradeState(state));
       } else {
         throw new Error(
           `URL hash is expected to be of the form "#!{...}" or "#!+{...}".`,
