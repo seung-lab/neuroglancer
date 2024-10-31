@@ -517,6 +517,7 @@ export class MultiscaleAnnotationSource
   segmentFilteredSources: Owned<AnnotationSubsetGeometryChunkSource>[];
   spatiallyIndexedSources = new Set<Borrowed<AnnotationGeometryChunkSource>>();
   rank: number;
+  readonly timestamp?: string;
   readonly relationships: readonly string[];
   readonly properties: WatchableValue<
     readonly Readonly<AnnotationPropertySpec>[]

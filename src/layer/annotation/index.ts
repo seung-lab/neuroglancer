@@ -48,6 +48,7 @@ import { Overlay } from "#src/overlay.js";
 import { getWatchableRenderLayerTransform } from "#src/render_coordinate_transform.js";
 import { RenderLayerRole } from "#src/renderlayer.js";
 import type { SegmentationDisplayState } from "#src/segmentation_display_state/frontend.js";
+import { StatusMessage } from "#src/status.js";
 import type { TrackableBoolean } from "#src/trackable_boolean.js";
 import { TrackableBooleanCheckbox } from "#src/trackable_boolean.js";
 import {
@@ -695,8 +696,27 @@ export class AnnotationUserLayer extends Base {
 
   constructor(managedLayer: Borrowed<ManagedUserLayer>) {
     super(managedLayer);
-    this.linkedSegmentationLayers.changed.add(
-      this.specificationChanged.dispatch,
+    this.registerDisposer(
+      this.linkedSegmentationLayers.annotationStates.changed.add(() => {
+        console.log(
+          "linkedSegmentationLayers.annotationStates.changed",
+          this.annotationStates.relationships,
+        );
+      }),
+    );
+    this.registerDisposer(
+      this.annotationStates.changed.add(() => {
+        console.log(
+          "this.annotationStates.changed",
+          this.annotationStates.relationships,
+        );
+      }),
+    );
+    this.registerDisposer(
+      this.linkedSegmentationLayers.changed.add(() => {
+        this.updateTimestamp();
+        this.specificationChanged.dispatch();
+      }),
     );
     this.annotationDisplayState.ignoreNullSegmentFilter.changed.add(
       this.specificationChanged.dispatch,
@@ -770,6 +790,79 @@ export class AnnotationUserLayer extends Base {
       }
     }
   };
+
+  timestampOwnedLayers: SegmentationUserLayer[] = [];
+
+  removeOwner(layer: SegmentationUserLayer) {
+    const { managedLayer } = this;
+    const { segmentationGroupState } = layer.displayState;
+    const { timestamp, timestampOwner } = segmentationGroupState.value;
+    if (
+      timestampOwner.has(managedLayer.name) &&
+      !this.timestampOwnedLayers.includes(layer)
+    ) {
+      timestampOwner.delete(managedLayer.name);
+      if (timestampOwner.size === 0) {
+        timestamp.reset();
+      }
+    }
+  }
+
+  updateTimestamp() {
+    const { managedLayer } = this;
+    this.timestampOwnedLayers = [];
+
+    // find all the segmentation layers we should have timestamp ownership of
+    for (const { source } of this.annotationStates.value) {
+      const { timestamp } = source;
+      if (timestamp === undefined) continue;
+      const unixTimestamp = new Date(timestamp).valueOf();
+      for (const relationship of this.annotationStates.relationships) {
+        const linkedLayer = this.linkedSegmentationLayers.get(relationship);
+        if (linkedLayer) {
+          const layer = linkedLayer.layerRef.layer
+            ?.layer as SegmentationUserLayer;
+          if (layer) {
+            const { segmentationGroupState } = layer.displayState;
+            const { timestamp, timestampOwner } = segmentationGroupState.value;
+            if (linkedLayer.showMatches.value) {
+              if (
+                segmentationGroupState.value.canSetTimestamp(managedLayer.name)
+              ) {
+                this.timestampOwnedLayers.push(layer);
+                timestampOwner.add(managedLayer.name);
+                timestamp.value = unixTimestamp;
+              } else if (timestamp.value === unixTimestamp) {
+                this.timestampOwnedLayers.push(layer);
+                timestampOwner.add(managedLayer.name);
+              } else {
+                linkedLayer.showMatches.reset();
+                StatusMessage.showTemporaryMessage(
+                  `Segmentation layer timestamp is locked by layer(s): ${[...timestampOwner].join(", ")}`,
+                );
+              }
+            } else if (timestampOwner.has(managedLayer.name)) {
+              this.removeOwner(layer);
+            }
+          }
+        }
+      }
+    }
+
+    // WHY DO WE NEED THIS?
+    // WE CHECK TO SEE IF ANY MANAGED LAYER STILL HAS OWNERSHIP OF THIS LAYER EVEN THOUGH IT HAS BEEN UNCHECKED
+    // SHOULD WE HANDLE THIS IN THE EVENT HANDLER FOR THE UI TOGGLE?
+    // THE ISSUE IS WE NEED THE PREVIOUS VALUE
+    // OR WITH A MANUAL STATE CHANGE
+    for (const { layer } of managedLayer.manager.layerManager.managedLayers) {
+      if (
+        layer instanceof SegmentationUserLayer &&
+        !this.timestampOwnedLayers.includes(layer)
+      ) {
+        this.removeOwner(layer);
+      }
+    }
+  }
 
   restoreState(specification: any) {
     // restore tag tools before super so tag tools are registered

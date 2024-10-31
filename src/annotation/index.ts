@@ -1138,6 +1138,8 @@ export class AnnotationSource
 
   annotationPropertySerializers: AnnotationPropertySerializer[];
 
+  readonly timestamp?: string;
+
   constructor(
     rank: number,
     public readonly relationships: readonly string[] = [],

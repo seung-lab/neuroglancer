@@ -576,7 +576,7 @@ async function getMeshSource(
   };
 }
 
-function getJsonMetadata(
+export function getJsonMetadata(
   chunkManager: ChunkManager,
   credentialsProvider: SpecialProtocolCredentialsProvider,
   url: string,
