@@ -2772,12 +2772,13 @@ class MulticutSegmentsTool extends LayerTool<SegmentationUserLayer> {
     const priorBaseSegmentHighlighting =
       displayState.baseSegmentHighlighting.value;
     const priorHighlightColor = displayState.highlightColor.value;
-
+    const priorHideSegmentZero = displayState.hideSegmentZero.value;
     activation.bindInputEventMap(MULTICUT_SEGMENTS_INPUT_EVENT_MAP);
     activation.registerDisposer(() => {
       resetMulticutDisplay();
       displayState.baseSegmentHighlighting.value = priorBaseSegmentHighlighting;
       displayState.highlightColor.value = priorHighlightColor;
+      displayState.hideSegmentZero.value = priorHideSegmentZero;
     });
     const resetMulticutDisplay = () => {
       resetTemporaryVisibleSegmentsState(segmentationGroupState);
@@ -2785,6 +2786,23 @@ class MulticutSegmentsTool extends LayerTool<SegmentationUserLayer> {
       displayState.tempSegmentStatedColors2d.value.clear(); // TODO, should only clear those that are in temp sets
       displayState.tempSegmentDefaultColor2d.value = undefined;
       displayState.highlightColor.value = undefined;
+    };
+    const { segmentSelectionState } = layer.displayState;
+    const updateHighlightColor = () => {
+      const focusSegment = multicutState.focusSegment.value;
+      if (focusSegment === undefined) {
+        displayState.highlightColor.value = undefined;
+        return;
+      }
+      const { value } = segmentSelectionState;
+      if (value === multicutState.focusSegment.value) {
+        displayState.highlightColor.value = multicutState.blueGroup.value
+          ? BLUE_COLOR_HIGHTLIGHT
+          : RED_COLOR_HIGHLIGHT;
+      } else {
+        // set hightlight to off color for all other segments to ignore them
+        displayState.highlightColor.value = MULTICUT_OFF_COLOR;
+      }
     };
     const updateMulticutDisplay = () => {
       resetMulticutDisplay();
@@ -2795,9 +2813,8 @@ class MulticutSegmentsTool extends LayerTool<SegmentationUserLayer> {
       const focusSegment = multicutState.focusSegment.value;
       if (focusSegment === undefined) return;
       displayState.baseSegmentHighlighting.value = true;
-      displayState.highlightColor.value = multicutState.blueGroup.value
-        ? BLUE_COLOR_HIGHTLIGHT
-        : RED_COLOR_HIGHLIGHT;
+      displayState.hideSegmentZero.value = false;
+      updateHighlightColor();
       segmentsState.useTemporaryVisibleSegments.value = true;
       segmentsState.useTemporarySegmentEquivalences.value = true;
       // add focus segment and red/blue segments
@@ -2838,6 +2855,11 @@ class MulticutSegmentsTool extends LayerTool<SegmentationUserLayer> {
       displayState.useTempSegmentStatedColors2d.value = true;
     };
     updateMulticutDisplay();
+    activation.registerDisposer(
+      layer.displayState.segmentSelectionState.changed.add(
+        updateHighlightColor,
+      ),
+    );
     activation.registerDisposer(
       multicutState.changed.add(updateMulticutDisplay),
     );
