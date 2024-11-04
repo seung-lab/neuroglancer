@@ -144,12 +144,13 @@ export class CaveAnnotationSpatialIndexSourceBackend extends WithParameters(
       {
         timestamp,
         table,
-        limit: 10000,
+        limit: 100000, // hardcoding limit
       },
-      5,
+      5000,
       cancellationToken,
     );
     if (annotations) {
+      console.log("#anno", annotations.length);
       const propertySerializers = makeAnnotationPropertySerializers(
         rank,
         properties,
