@@ -16,6 +16,7 @@
 
 import type { UserLayer, UserLayerConstructor } from "#src/layer/index.js";
 import { layerTypes } from "#src/layer/index.js";
+import { Overlay } from "#src/overlay.js";
 import { StatusMessage } from "#src/status.js";
 import {
   bindDefaultCopyHandler,
@@ -23,6 +24,7 @@ import {
 } from "#src/ui/default_clipboard_handling.js";
 import { setDefaultInputEventBindings } from "#src/ui/default_input_event_bindings.js";
 import { makeDefaultViewer } from "#src/ui/default_viewer.js";
+import "#src/ui/history.css";
 import { bindTitle } from "#src/ui/title.js";
 import type { Tool } from "#src/ui/tool.js";
 import { restoreTool } from "#src/ui/tool.js";
@@ -205,20 +207,26 @@ export function setupDefaultViewer() {
 
   let inReplay = false;
 
-  (window as any).ngReplay = (sessionId: string, skipForward = true) => {
+  const ngReplay = (sessionId: string, skipForward = true) => {
     if (inReplay) return;
     hashBinding.recording = false;
     inReplay = true;
-    let startTime = Date.now();
     let historyIndex = 0;
-    let nextState = localStorage.getItem(`${sessionId}_${historyIndex}`);
+    let nextState = localStorage.getItem(
+      `history_state_${sessionId}_${historyIndex}`,
+    );
     if (!nextState) {
       console.log(`no history for session ${sessionId}`);
       return;
     }
     let nextTime = parseInt(
-      localStorage.getItem(`${sessionId}_${historyIndex}_time`)!,
+      localStorage.getItem(`history_time_${sessionId}_${historyIndex}`)!,
     );
+
+    let startTime = Date.now() - nextTime;
+
+    console.log("starting replay");
+    StatusMessage.showTemporaryMessage("starting replay");
 
     const loop = () => {
       let elapsedTime = Date.now() - startTime;
@@ -233,14 +241,17 @@ export function setupDefaultViewer() {
         viewer.state.restoreState(JSON.parse(nextState!));
         // get next states
         historyIndex++;
-        nextState = localStorage.getItem(`${sessionId}_${historyIndex}`);
+        nextState = localStorage.getItem(
+          `history_state_${sessionId}_${historyIndex}`,
+        );
         if (!nextState) {
           inReplay = false;
           console.log("done with replay");
+          StatusMessage.showTemporaryMessage("replay  complete!");
           return;
         }
         nextTime = parseInt(
-          localStorage.getItem(`${sessionId}_${historyIndex}_time`)!,
+          localStorage.getItem(`history_time_${sessionId}_${historyIndex}`)!,
         );
       }
       requestAnimationFrame(loop);
@@ -248,5 +259,116 @@ export function setupDefaultViewer() {
     requestAnimationFrame(loop);
   };
 
+  let currentOverlay: Overlay | undefined = undefined;
+
+  document.addEventListener("keypress", (evt) => {
+    console.log(evt.key, evt.ctrlKey);
+    if (evt.key === "r" && evt.ctrlKey) {
+      if (!currentOverlay || currentOverlay.wasDisposed) {
+        currentOverlay = showHistoryViewer();
+      } else {
+        currentOverlay.dispose();
+      }
+    }
+  });
+
+  const deleteHistory = (key: string) => {
+    const relevantKeys = Object.keys(localStorage).filter((x) =>
+      x.includes(key),
+    );
+    for (const item of relevantKeys) {
+      localStorage.removeItem(item);
+    }
+  };
+
+  const showHistoryViewer = () => {
+    const historyViewer = document.createElement("div");
+    historyViewer.classList.add("historyViewer");
+
+    const title = document.createElement("div");
+    title.classList.add("title");
+    title.textContent = "History";
+    historyViewer.append(title);
+
+    const buttonClose = document.createElement("button");
+    buttonClose.classList.add("close-button");
+    buttonClose.textContent = "Close";
+    historyViewer.appendChild(buttonClose);
+    buttonClose.addEventListener("click", () => overlay.dispose());
+
+    const overlay = new Overlay();
+    overlay.content.append(historyViewer);
+
+    const times = Object.keys(localStorage).filter((x) =>
+      x.startsWith("history_time"),
+    );
+
+    const historyCounts: { [key: string]: number } = {};
+    const historyTimes: { [key: string]: number } = {};
+
+    for (const timeKey of times) {
+      const [_a, _b, key, idx] = timeKey.split("_");
+      _a;
+      _b;
+      const time = localStorage.getItem(timeKey);
+      if (!time) continue;
+      historyCounts[key] = Math.max(historyCounts[key] || 0, parseInt(idx) + 1);
+      historyTimes[key] = Math.max(historyTimes[key] || 0, parseInt(time) + 1);
+    }
+
+    const listEl = document.createElement("div");
+    listEl.classList.add("historyList");
+
+    let idx = 1;
+
+    for (const key of Object.keys(historyCounts)) {
+      const count = historyCounts[key];
+      const lastUpdateTime = historyTimes[key];
+
+      if (key === hashBinding.sessionId) continue;
+
+      if (count < 10) {
+        deleteHistory(key);
+        continue;
+      }
+
+      const itemEl = document.createElement("div");
+      itemEl.textContent = `#${idx}`;
+      listEl.appendChild(itemEl);
+
+      const entriesEl = document.createElement("div");
+      entriesEl.textContent = `states: ${count}`;
+      listEl.appendChild(entriesEl);
+
+      const lastUpdatedEl = document.createElement("div");
+      lastUpdatedEl.textContent = `Last update: ${new Date(lastUpdateTime)}`;
+      listEl.appendChild(lastUpdatedEl);
+
+      const buttonReplay = document.createElement("button");
+      buttonReplay.classList.add("replay-button");
+      buttonReplay.textContent = "Replay";
+      buttonReplay.addEventListener("click", () => {
+        ngReplay(key);
+        overlay.dispose();
+      });
+      listEl.appendChild(buttonReplay);
+
+      const deleteHistoryBtn = document.createElement("button");
+      deleteHistoryBtn.classList.add("delete-button");
+      deleteHistoryBtn.textContent = "Delete";
+      deleteHistoryBtn.addEventListener("click", () => {
+        deleteHistory(key);
+        overlay.dispose();
+        showHistoryViewer();
+      });
+      listEl.appendChild(deleteHistoryBtn);
+
+      idx++;
+    }
+
+    historyViewer.appendChild(listEl);
+
+    return overlay;
+  };
   return viewer;
 }

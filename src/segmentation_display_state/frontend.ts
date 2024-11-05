@@ -1092,7 +1092,7 @@ export class SegmentationLayerSharedObject extends Base {
   }
 
   disposed(): void {
-    console.log("SegmentationLayerSharedObject disposed");
+    // console.log("SegmentationLayerSharedObject disposed");
     super.disposed();
   }
 

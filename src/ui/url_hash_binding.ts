@@ -125,11 +125,15 @@ export class UrlHashBinding extends RefCounted {
         if (this.recording) {
           console.log("recording", this.sessionId, this.historyIndex);
           localStorage.setItem(
-            `${this.sessionId}_${this.historyIndex}_time`,
+            `history_elapsed_${this.sessionId}_${this.historyIndex}`,
             (Date.now() - this.startTime).toString(),
           );
           localStorage.setItem(
-            `${this.sessionId}_${this.historyIndex}`,
+            `history_time_${this.sessionId}_${this.historyIndex}`,
+            Date.now().toString(),
+          );
+          localStorage.setItem(
+            `history_state_${this.sessionId}_${this.historyIndex}`,
             jsonString,
           );
           this.historyIndex++;

@@ -380,6 +380,12 @@ export class ChunkedGraphLayer extends withSegmentationLayerBackendState(
 
     this.registerDisposer(
       this.chunkManager.recomputeChunkPriorities.add(() => {
+        if (this.wasDisposed) {
+          console.log(
+            "we were disposed!",
+            this.segmentEquivalences.disjointSets,
+          );
+        }
         this.updateChunkPriorities();
         this.debouncedUpdateDisplayState();
       }),

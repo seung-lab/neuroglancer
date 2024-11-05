@@ -1,0 +1,14 @@
+.historyViewer {
+    display: grid;
+    min-width: 300px;
+    min-height: 200px;
+}
+
+.historyList {
+    height: min-content;
+    margin-top: 20px;
+    display: grid;
+    white-space: nowrap;
+    grid-template-columns: auto auto auto min-content min-content;
+    column-gap: 10px;
+}

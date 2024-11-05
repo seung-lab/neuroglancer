@@ -193,6 +193,7 @@ const tempB = new Uint64();
 
 registerRPC(ADD_METHOD_ID, function (x) {
   const obj = <SharedDisjointUint64Sets>this.get(x.id);
+  if (!obj) return;
   tempA.low = x.al;
   tempA.high = x.ah;
   tempB.low = x.bl;
