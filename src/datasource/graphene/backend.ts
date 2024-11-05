@@ -369,7 +369,7 @@ export class ChunkedGraphLayer extends withSegmentationLayerBackendState(
   readonly sessionId = self.crypto.randomUUID();
 
   constructor(rpc: RPC, options: any) {
-    console.log("ChunkedGraphLayer constructor");
+    // console.log("ChunkedGraphLayer constructor");
     super(rpc, options);
     this.source = this.registerDisposer(
       rpc.getRef<GrapheneChunkedGraphChunkSource>(options.source),
@@ -384,15 +384,15 @@ export class ChunkedGraphLayer extends withSegmentationLayerBackendState(
         this.debouncedUpdateDisplayState();
       }),
     );
-    this.registerDisposer(() => {
-      console.log("ChunkedGraphLayer disposed really", this.sessionId);
-    });
+    // this.registerDisposer(() => {
+    //   console.log("ChunkedGraphLayer disposed really", this.sessionId);
+    // });
   }
 
   disposed() {
-    console.log("ChunkedGraphLayer disposed called");
+    // console.log("ChunkedGraphLayer disposed called");
     if (this.refCount === 0) {
-      console.log("ChunkedGraphLayer invoking disposers", this.sessionId);
+      // console.log("ChunkedGraphLayer invoking disposers", this.sessionId);
       const { disposers } = this;
       if (disposers !== undefined) {
         invokeDisposers(disposers);
@@ -522,7 +522,7 @@ export class ChunkedGraphLayer extends withSegmentationLayerBackendState(
   }
 
   private debouncedUpdateDisplayState = debounce(() => {
-    console.log("ChunkedGraphLayer debounced update invoked", this.sessionId);
+    // console.log("ChunkedGraphLayer debounced update invoked", this.sessionId);
     if (this.wasDisposed) return;
     this.updateDisplayState();
   }, 100);

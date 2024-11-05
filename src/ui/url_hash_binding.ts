@@ -90,17 +90,17 @@ export class UrlHashBinding extends RefCounted {
     const throttledSetUrlHash = debounce(
       () => this.setUrlHash(),
       updateDelayMilliseconds,
-      { maxWait: updateDelayMilliseconds * 2 },
+      { maxWait: updateDelayMilliseconds },
     );
     this.registerDisposer(root.changed.add(throttledSetUrlHash));
     this.registerDisposer(() => throttledSetUrlHash.cancel());
     this.defaultFragment = defaultFragment;
 
-    this.registerDisposer(
-      root.changed.add(() => {
-        this.setUrlHash(true);
-      }),
-    );
+    // this.registerDisposer(
+    //   root.changed.add(() => {
+    //     this.setUrlHash(true);
+    //   }),
+    // );
   }
 
   /**
@@ -115,7 +115,7 @@ export class UrlHashBinding extends RefCounted {
       const stateString = encodeFragment(jsonString);
       if (stateString !== this.prevStateString) {
         this.prevStateString = stateString;
-        if (saveOnly) {
+        if (!saveOnly) {
           if (decodeURIComponent(stateString) === "{}") {
             history.replaceState(null, "", "#");
           } else {
@@ -189,6 +189,7 @@ export class UrlHashBinding extends RefCounted {
         this.root.reset();
         const state = urlSafeParse(s);
         verifyObject(state);
+        upgradeState;
         this.root.restoreState(upgradeState(state));
       } else {
         throw new Error(

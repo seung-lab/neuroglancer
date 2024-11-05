@@ -205,23 +205,29 @@ export function setupDefaultViewer() {
 
   let inReplay = false;
 
-  (window as any).ngReplay = (sessionId: string) => {
+  (window as any).ngReplay = (sessionId: string, skipForward = true) => {
     if (inReplay) return;
     hashBinding.recording = false;
     inReplay = true;
-    const startTime = Date.now();
+    let startTime = Date.now();
     let historyIndex = 0;
     let nextState = localStorage.getItem(`${sessionId}_${historyIndex}`);
     if (!nextState) {
       console.log(`no history for session ${sessionId}`);
+      return;
     }
     let nextTime = parseInt(
       localStorage.getItem(`${sessionId}_${historyIndex}_time`)!,
     );
 
     const loop = () => {
-      const elapsedTime = Date.now() - startTime;
-      console.log("replay", elapsedTime, historyIndex, nextTime - elapsedTime);
+      let elapsedTime = Date.now() - startTime;
+      if (skipForward && nextTime - elapsedTime > 5000) {
+        startTime -= nextTime - elapsedTime - 5000;
+        elapsedTime = Date.now() - startTime;
+        // console.log("jumping forward");
+      }
+      // console.log("replay", elapsedTime, historyIndex, nextTime - elapsedTime);
       if (nextTime > 0 && elapsedTime >= nextTime) {
         // set new state
         viewer.state.restoreState(JSON.parse(nextState!));

@@ -340,10 +340,10 @@ registerRPC("SharedObject.dispose", function (x) {
   if (DEBUG) {
     console.log(`[${IS_WORKER}] #rpc objects: ${this.numObjects}`);
   }
-  if (obj.RPC_TYPE_ID === "ChunkedGraphLayer") {
-    console.log("RPC DISPOSING CHUNKED_GRAPH_LAYER");
-  }
-  console.log("RPC DISPOSE", obj);
+  // if (obj.RPC_TYPE_ID === "ChunkedGraphLayer") {
+  //   console.log("RPC DISPOSING CHUNKED_GRAPH_LAYER");
+  // }
+  // console.log("RPC DISPOSE", obj);
   obj.disposed();
   this.delete(obj.rpcId!);
   obj.rpcId = null;
@@ -399,12 +399,12 @@ registerRPC("SharedObject.new", function (x) {
 
   // console.log("test", obj);
 
-  if ((obj as any).constructor.name === "SharedDisjointUint64Sets") {
-    console.log(
-      "SharedObject.new SharedDisjointUint64Sets",
-      (obj as any).sessionId,
-    );
-  }
+  // if ((obj as any).constructor.name === "SharedDisjointUint64Sets") {
+  //   console.log(
+  //     "SharedObject.new SharedDisjointUint64Sets",
+  //     (obj as any).sessionId,
+  //   );
+  // }
   // Counterpart objects start with a reference count of zero.
   --obj.refCount;
 });

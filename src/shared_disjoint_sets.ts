@@ -63,12 +63,13 @@ export class SharedDisjointUint64Sets
     highBitRepresentative: WatchableValueInterface<VisibleSegmentEquivalencePolicy>,
     name = "foo",
   ) {
+    name;
     const obj = new SharedDisjointUint64Sets();
-    console.log(
-      "making SharedDisjointUint64Sets counterpart",
-      name,
-      obj.sessionId,
-    );
+    // console.log(
+    //   "making SharedDisjointUint64Sets counterpart",
+    //   name,
+    //   obj.sessionId,
+    // );
     obj.disjointSets.visibleSegmentEquivalencePolicy = highBitRepresentative;
     obj.registerDisposer(
       highBitRepresentative.changed.add(() => {
@@ -79,12 +80,12 @@ export class SharedDisjointUint64Sets
     if (highBitRepresentative.value) {
       updateHighBitRepresentative(obj);
     }
-    console.log("returning", obj);
+    // console.log("returning", obj);
     return obj;
   }
 
   disposed() {
-    console.log("SharedDisjointUint64Sets disposed!", this.sessionId);
+    // console.log("SharedDisjointUint64Sets disposed!", this.sessionId);
     this.debugDisposed = true;
     this.disjointSets = <any>undefined;
     this.changed = <any>undefined;
