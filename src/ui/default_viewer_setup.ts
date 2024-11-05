@@ -265,7 +265,7 @@ export function setupDefaultViewer() {
 
   document.addEventListener("keypress", (evt) => {
     console.log(evt.key, evt.ctrlKey);
-    if (evt.key === "r" && evt.ctrlKey) {
+    if (evt.key === "i") {
       if (!currentOverlay || currentOverlay.wasDisposed) {
         currentOverlay = showHistoryViewer();
       } else {
