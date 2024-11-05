@@ -2535,19 +2535,21 @@ class SliceViewPanelChunkedGraphLayer extends SliceViewPanelRenderLayer {
   }
 
   private showOrHideMessage(leafRequestsActive: boolean) {
-    if (this.leafRequestsStatusMessage && leafRequestsActive) {
-      this.leafRequestsStatusMessage.dispose();
-      this.leafRequestsStatusMessage = undefined;
-      StatusMessage.showTemporaryMessage(
-        "Loading chunked graph segmentation...",
-        3000,
-      );
-    } else if (!this.leafRequestsStatusMessage && !leafRequestsActive) {
-      this.leafRequestsStatusMessage = StatusMessage.showMessage(
-        "At this zoom level, chunked graph segmentation will not be loaded. Please zoom in if you wish to load it.",
-      );
-    }
-  }
+    leafRequestsActive;
+    // disabling for demo
+  //   if (this.leafRequestsStatusMessage && leafRequestsActive) {
+  //     this.leafRequestsStatusMessage.dispose();
+  //     this.leafRequestsStatusMessage = undefined;
+  //     StatusMessage.showTemporaryMessage(
+  //       "Loading chunked graph segmentation...",
+  //       3000,
+  //     );
+  //   } else if (!this.leafRequestsStatusMessage && !leafRequestsActive) {
+  //     this.leafRequestsStatusMessage = StatusMessage.showMessage(
+  //       "At this zoom level, chunked graph segmentation will not be loaded. Please zoom in if you wish to load it.",
+  //     );
+  //   }
+  // }
 }
 
 const GRAPHENE_MULTICUT_SEGMENTS_TOOL_ID = "grapheneMulticutSegments";

@@ -323,7 +323,11 @@ export function setupDefaultViewer() {
 
     let idx = 1;
 
-    for (const key of Object.keys(historyCounts)) {
+    const keysSorted = Object.keys(historyCounts).sort((a, b) => {
+      return historyTimes[a] - historyTimes[b];
+    });
+
+    for (const key of keysSorted) {
       const count = historyCounts[key];
       const lastUpdateTime = historyTimes[key];
 
