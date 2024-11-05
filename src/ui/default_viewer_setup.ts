@@ -259,6 +259,8 @@ export function setupDefaultViewer() {
     requestAnimationFrame(loop);
   };
 
+  (window as any).ngReplay = ngReplay;
+
   let currentOverlay: Overlay | undefined = undefined;
 
   document.addEventListener("keypress", (evt) => {
