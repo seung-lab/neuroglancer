@@ -10,8 +10,10 @@ import {
   AnnotationSource,
 } from "#src/annotation/backend.js";
 import type {
+  Annotation,
   AnnotationBase,
   AnnotationNumericPropertySpec,
+  AnnotationPropertySpec,
   Line,
   Point,
 } from "#src/annotation/index.js";
@@ -90,6 +92,22 @@ function parseCaveAnnototations(
   return annotations;
 }
 
+const serializeAnnotations = (
+  annotations: Annotation[],
+  rank: number,
+  properties: AnnotationPropertySpec[],
+) => {
+  const propertySerializers = makeAnnotationPropertySerializers(
+    rank,
+    properties,
+  );
+  const serializer = new AnnotationSerializer(propertySerializers);
+  for (const annotation of annotations) {
+    serializer.add(annotation);
+  }
+  return Object.assign(new AnnotationGeometryData(), serializer.serialize());
+};
+
 export const responseArrowIPC = async (x: any) => tableFromIPC(x);
 
 async function queryAnnotations(
@@ -144,25 +162,13 @@ export class CaveAnnotationSpatialIndexSourceBackend extends WithParameters(
       {
         timestamp,
         table,
-        limit: 100000, // hardcoding limit
       },
       5000,
       cancellationToken,
     );
     if (annotations) {
       console.log("#anno", annotations.length);
-      const propertySerializers = makeAnnotationPropertySerializers(
-        rank,
-        properties,
-      );
-      const serializer = new AnnotationSerializer(propertySerializers);
-      for (const annotation of annotations) {
-        serializer.add(annotation);
-      }
-      chunk.data = Object.assign(
-        new AnnotationGeometryData(),
-        serializer.serialize(),
-      );
+      chunk.data = serializeAnnotations(annotations, rank, properties);
     }
   }
 }
@@ -199,19 +205,9 @@ export class CaveAnnotationSourceBackend extends WithParameters(
       0,
       cancellationToken,
     );
+
     if (annotations) {
-      const propertySerializers = makeAnnotationPropertySerializers(
-        rank,
-        properties,
-      );
-      const serializer = new AnnotationSerializer(propertySerializers);
-      for (const annotation of annotations) {
-        serializer.add(annotation);
-      }
-      chunk.data = Object.assign(
-        new AnnotationGeometryData(),
-        serializer.serialize(),
-      );
+      chunk.data = serializeAnnotations(annotations, rank, properties);
     }
   }
 

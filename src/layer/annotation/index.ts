@@ -712,6 +712,7 @@ export class AnnotationUserLayer extends Base {
         );
       }),
     );
+    this.registerDisposer(this.readyStateChanged.add(this.updateTimestamp));
     this.registerDisposer(
       this.linkedSegmentationLayers.changed.add(() => {
         this.updateTimestamp();
@@ -809,6 +810,7 @@ export class AnnotationUserLayer extends Base {
   }
 
   updateTimestamp() {
+    if (!this.isReady) return;
     const { managedLayer } = this;
     this.timestampOwnedLayers = [];
 
