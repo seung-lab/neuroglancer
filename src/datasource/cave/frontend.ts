@@ -234,7 +234,7 @@ async function getVersionTimestamp(
     {},
     responseJson,
   );
-  const res = versionMetadata.time_stamp as string;
+  const res = `${versionMetadata.time_stamp}Z`;
 
   getVersionTimestamp.cache[`${url}_${datastack}_${version}`] = res;
   return res;
