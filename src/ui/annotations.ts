@@ -250,6 +250,7 @@ interface AnnotationLayerViewAttachedState {
 const moveToAnnotation = (
   layer: UserLayer,
   annotation: Annotation,
+  previousAnnotation: Annotation | undefined,
   state: AnnotationLayerState,
 ) => {
   const chunkTransform = state.chunkTransform.value as ChunkTransformParameters;
@@ -266,12 +267,13 @@ const moveToAnnotation = (
   );
   setLayerPosition(layer, chunkTransform, layerPosition);
   if (state.displayState.swapVisibleSegmentsOnMove.value) {
-    showAnnotationSegments(annotation, state, true);
+    showAnnotationSegments(annotation, previousAnnotation, state, true);
   }
 };
 
 const showAnnotationSegments = (
   annotation: Annotation,
+  previousAnnotation: Annotation | undefined,
   state: AnnotationLayerState,
   onlyVisible = false,
 ) => {
@@ -285,7 +287,16 @@ const showAnnotationSegments = (
         .segmentationState.value;
       if (segmentationState) {
         if (onlyVisible) {
-          segmentationState.segmentationGroupState.value.visibleSegments.clear();
+          if (previousAnnotation) {
+            for (const segmentList of previousAnnotation.relatedSegments ||
+              []) {
+              segmentationState.segmentationGroupState.value.visibleSegments.delete(
+                segmentList,
+              );
+            }
+          } else {
+            segmentationState.segmentationGroupState.value.visibleSegments.clear();
+          }
         }
         for (const segmentList of relatedSegments) {
           segmentationState.segmentationGroupState.value.visibleSegments.add(
@@ -2172,6 +2183,10 @@ export function UserLayerWithAnnotationsMixin<
       let { source } = annotationLayerState;
       let annotations = Array.from(source);
       let index = annotations.findIndex((x) => x.id === annotationId);
+      const previousAnnotation =
+        source instanceof AnnotationSource
+          ? source.get(annotationId)
+          : undefined;
       while (true) {
         index = index + offset;
         if (index === -1) {
@@ -2183,7 +2198,12 @@ export function UserLayerWithAnnotationsMixin<
         } else {
           const annotation = annotations[index];
           this.selectAnnotation(annotationLayerState, annotation.id, true);
-          moveToAnnotation(this, annotation, annotationLayerState);
+          moveToAnnotation(
+            this,
+            annotation,
+            previousAnnotation,
+            annotationLayerState,
+          );
           return;
         }
         annotationLayerState =
@@ -2337,7 +2357,7 @@ export function makeAnnotationListElement(
   element.addEventListener("action:move-to-annotation", (event) => {
     event.stopPropagation();
     event.preventDefault();
-    moveToAnnotation(layer, annotation, state);
+    moveToAnnotation(layer, annotation, undefined, state);
   });
   return [element, columnWidths];
 }
