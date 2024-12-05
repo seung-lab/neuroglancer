@@ -218,6 +218,7 @@ import {
 } from "#src/widget/layer_control.js";
 import type { LayerControlDefinition } from "#src/widget/layer_control.js";
 import { rangeLayerControl } from "#src/widget/layer_control_range.js";
+import { time } from "console";
 
 
 function vec4FromVec3(vec: vec3, alpha = 0) {
@@ -1681,7 +1682,7 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       const segmentConst = segmentId.clone();
       if (added && isBaseSegment) {
         this.graph
-          .getRoot(segmentConst, segmentsState.timestamp.value, this.layer.displayState.stopLayer.value)
+          .getRoot(segmentConst, this.layer.displayState.stopLayer.value, segmentsState.timestamp.value)
           .then((rootId) => {
             if (segmentsState.visibleSegments.has(segmentConst)) {
               segmentsState.visibleSegments.add(rootId);
@@ -2255,12 +2256,12 @@ class GrapheneGraphSource extends SegmentationGraphSource {
     }
   }
 
-  getRoot(segment: Uint64, stop_layer: number) {
+  getRoot(segment: Uint64, stop_layer: number, timestamp?: number,) {
     if (stop_layer > 0) {
-      return this.graphServer.getRoot(segment, "", stop_layer);
+      return this.graphServer.getRoot(segment, timestamp, stop_layer);
     }
     else {
-      return this.graphServer.getRoot(segment);
+      return this.graphServer.getRoot(segment, timestamp);
     }
   }
 
