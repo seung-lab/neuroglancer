@@ -9,6 +9,7 @@ export const IGNORE_NULL_VISIBLE_SET_JSON_KEY = "ignoreNullVisibleSet";
 export const MESH_JSON_KEY = "mesh";
 export const SKELETONS_JSON_KEY = "skeletons";
 export const SEGMENTS_JSON_KEY = "segments";
+export const STOP_LAYER = 'stop_layer';
 export const EQUIVALENCES_JSON_KEY = "equivalences";
 export const COLOR_SEED_JSON_KEY = "colorSeed";
 export const SEGMENT_STATED_COLORS_JSON_KEY = "segmentColors";
