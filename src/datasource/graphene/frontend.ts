@@ -218,7 +218,7 @@ import {
 } from "#src/widget/layer_control.js";
 import type { LayerControlDefinition } from "#src/widget/layer_control.js";
 import { rangeLayerControl } from "#src/widget/layer_control_range.js";
-import { time } from "console";
+
 
 
 function vec4FromVec3(vec: vec3, alpha = 0) {
