@@ -9,6 +9,6 @@
     margin-top: 20px;
     display: grid;
     white-space: nowrap;
-    grid-template-columns: auto auto auto min-content min-content;
+    grid-template-columns: auto auto auto min-content min-content min-content;
     column-gap: 10px;
 }

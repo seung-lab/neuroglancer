@@ -22,3 +22,17 @@
   position: absolute;
   right: 15px;
 }
+
+.record-button {
+  position: absolute;
+  right: 70px;
+}
+.record-button.active {
+  background-color: green; /* Green background when active (recording) */
+  color: white;  /* White text when active */
+}
+
+.record-button:not(.active) {
+  background-color: rgb(255, 255, 255); /* White background when not active */
+  color: black;  /* Black text when not active */
+}
