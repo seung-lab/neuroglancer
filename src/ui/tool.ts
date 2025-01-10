@@ -131,6 +131,13 @@ export abstract class LayerTool<
   get mouseState() {
     return this.layer.manager.root.layerSelectedValues.mouseState;
   }
+  renderInPalette(context: RefCounted): HTMLElement | undefined {
+    context;
+    this.description;
+    const el = document.createElement("div");
+    el.innerHTML = this.description;
+    return el;
+  }
 }
 
 export abstract class LegacyTool<
