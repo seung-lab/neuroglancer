@@ -36,7 +36,8 @@ import {
   verifyString,
   verifyStringArray,
 } from "#src/util/json.js";
-import { ProgressSpan } from "#src/util/progress_listener.js";
+import { ProgressOptions, ProgressSpan } from "#src/util/progress_listener.js";
+import { Signal } from "#src/util/signal.js";
 
 export type MiddleAuthToken = {
   tokenType: string;
@@ -204,35 +205,53 @@ function saveAuthTokenToLocalStorage(authURL: string, value: MiddleAuthToken) {
   );
 }
 
+const middleAuthLoginEvent = new Event("middleauthlogin");
+
 export class MiddleAuthCredentialsProvider extends CredentialsProvider<MiddleAuthToken> {
-  alreadyTriedLocalStorage = false;
+  updated = new Signal();
+  private cachedGet = this.updateCachedGet();
 
   constructor(private serverUrl: string) {
     super();
   }
-  get = makeCredentialsGetter(async (options) => {
-    let token = undefined;
+  get = (
+    invalidCredentials?: CredentialsWithGeneration<MiddleAuthToken>,
+    options?: Partial<ProgressOptions>,
+  ) => {
+    return this.cachedGet(invalidCredentials, options);
+  };
 
-    if (!this.alreadyTriedLocalStorage) {
-      this.alreadyTriedLocalStorage = true;
-      token = getAuthTokenFromLocalStorage(this.serverUrl);
-      if (token) return token;
-    }
+  updateCachedGet() {
+    let alreadyTriedLocalStorage = false;
+    const res = makeCredentialsGetter(async (options) => {
+      let token = undefined;
 
-    using _span = new ProgressSpan(options.progressListener, {
-      message: `Waiting for middleauth login to ${this.serverUrl}`,
+      if (!alreadyTriedLocalStorage) {
+        alreadyTriedLocalStorage = true;
+        token = getAuthTokenFromLocalStorage(this.serverUrl);
+        if (token) return token;
+      }
+
+      using _span = new ProgressSpan(options.progressListener, {
+        message: `Waiting for middleauth login to ${this.serverUrl}`,
+      });
+      token = await getCredentialsWithStatus(
+        {
+          description: `middleauth server ${this.serverUrl}`,
+          requestDescription: "login",
+          get: (signal) => waitForLogin(this.serverUrl, signal),
+        },
+        options.signal,
+      );
+      saveAuthTokenToLocalStorage(this.serverUrl, token);
+      window.dispatchEvent(middleAuthLoginEvent);
+      return token;
     });
-    token = await getCredentialsWithStatus(
-      {
-        description: `middleauth server ${this.serverUrl}`,
-        requestDescription: "login",
-        get: (signal) => waitForLogin(this.serverUrl, signal),
-      },
-      options.signal,
-    );
-    saveAuthTokenToLocalStorage(this.serverUrl, token);
-    return token;
-  });
+
+    this.cachedGet = res;
+    this.updated.dispatch();
+    return res;
+  }
 }
 
 export class UnverifiedApp extends Error {
@@ -248,6 +267,7 @@ export class MiddleAuthAppCredentialsProvider extends CredentialsProvider<Middle
   private credentials: CredentialsWithGeneration<MiddleAuthToken> | undefined =
     undefined;
   private agreedToTos = false;
+  private cachedGet = this.updateCachedGet();
 
   constructor(
     private serverUrl: string,
@@ -256,31 +276,51 @@ export class MiddleAuthAppCredentialsProvider extends CredentialsProvider<Middle
     super();
   }
 
-  get = makeCredentialsGetter(async (options) => {
-    if (this.credentials && this.agreedToTos) {
-      return this.credentials.credentials;
-    }
-    this.agreedToTos = false;
-    const { progressListener, signal } = options;
-    using _span = new ProgressSpan(progressListener, {
-      message: `Determining authentication server for ${this.serverUrl}`,
+  get = (
+    invalidCredentials?: CredentialsWithGeneration<MiddleAuthToken>,
+    options?: Partial<ProgressOptions>,
+  ) => {
+    return this.cachedGet(invalidCredentials, options);
+  };
+
+  updateCachedGet() {
+    const res = makeCredentialsGetter(async (options) => {
+      if (this.credentials && this.agreedToTos) {
+        return this.credentials.credentials;
+      }
+      this.agreedToTos = false;
+      const { progressListener, signal } = options;
+      using _span = new ProgressSpan(progressListener, {
+        message: `Determining authentication server for ${this.serverUrl}`,
+      });
+      const response = await fetch(`${this.serverUrl}/auth_info`, {
+        signal,
+      });
+      const authInfo = await response.json();
+      const provider = this.credentialsManager.getCredentialsProvider(
+        "middleauth",
+        authInfo.login_url,
+      ) as MiddleAuthCredentialsProvider;
+      this.credentials = await provider.get(this.credentials, options);
+      // TODO, so is it always expected that MiddleAuthCredentialsProvider
+      // will be the open to have updateCachedGetcalled initially?
+      const removeHandler = this.registerDisposer(
+        provider.updated.add(() => {
+          removeHandler();
+          this.updateCachedGet();
+        }),
+      );
+      if (this.credentials.credentials.appUrls.includes(this.serverUrl)) {
+        return this.credentials.credentials;
+      }
+      const status = new StatusMessage(/*delay=*/ false);
+      status.setText(`middleauth: unverified app ${this.serverUrl}`);
+      throw new UnverifiedApp(this.serverUrl);
     });
-    const response = await fetch(`${this.serverUrl}/auth_info`, {
-      signal,
-    });
-    const authInfo = await response.json();
-    const provider = this.credentialsManager.getCredentialsProvider(
-      "middleauth",
-      authInfo.login_url,
-    ) as MiddleAuthCredentialsProvider;
-    this.credentials = await provider.get(this.credentials, options);
-    if (this.credentials.credentials.appUrls.includes(this.serverUrl)) {
-      return this.credentials.credentials;
-    }
-    const status = new StatusMessage(/*delay=*/ false);
-    status.setText(`middleauth: unverified app ${this.serverUrl}`);
-    throw new UnverifiedApp(this.serverUrl);
-  });
+
+    this.cachedGet = res;
+    return res;
+  }
 
   errorHandler = async (
     error: HttpError,
