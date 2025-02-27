@@ -3,7 +3,7 @@ name: Build
 on:
   push:
     branches:
-      - spelunker
+      - spelunker-rewind
     tags:
       - v**
 
