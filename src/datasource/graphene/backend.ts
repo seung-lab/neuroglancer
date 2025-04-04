@@ -108,9 +108,10 @@ function downloadFragment(
   if (parameters.sharding) {
     return downloadFragmentWithSharding(fragmentKvStore, fragmentId, signal);
   } else {
+    // TODO, is this change safe?
     return readKvStore(
       fragmentKvStore.store,
-      `${fragmentKvStore.path}/${fragmentId}`,
+      `${fragmentKvStore.path}${fragmentId}`,
       { signal, throwIfMissing: true },
     );
   }
