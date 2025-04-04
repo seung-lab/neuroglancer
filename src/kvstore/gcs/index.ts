@@ -63,6 +63,18 @@ export class GcsKvStore implements KvStore {
     //
     // 2. If the object does not prohibit caching (e.g. public bucket and default
     //    `cache-control` metadata value), GCS may return stale responses.
+    // parseSpecialUrl("foo");
+    if (
+      this.bucket === "seunglab2" &&
+      key.includes("ws_190410_FAFB_v02_ws_size_threshold_200")
+    ) {
+      console.log("we are doing this!");
+      return (
+        `https://storage.googleapis.com/${this.bucket}/` +
+        `${key}?alt=media` +
+        `&neuroglancer=${getRandomHexString()}`
+      );
+    }
     return (
       `https://storage.googleapis.com/storage/v1/b/${this.bucket}/o/` +
       `${encodeURIComponent(key)}?alt=media` +
