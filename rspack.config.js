@@ -115,7 +115,7 @@ export default (env, args) => {
       // NEUROGLANCER_SHOW_LAYER_BAR_EXTRA_BUTTONS: true,
       // NEUROGLANCER_SHOW_OBJECT_SELECTION_TOOLTIP: true
 
-      // NEUROGLANCER_GOOGLE_TAG_MANAGER: JSON.stringify('GTM-XXXXXX'),
+      NEUROGLANCER_GOOGLE_TAG_MANAGER: JSON.stringify("GTM-568GB29"),
     },
     watchOptions: {
       ignored: /node_modules/,
