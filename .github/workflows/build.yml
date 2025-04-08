@@ -3,7 +3,7 @@ name: Build
 on:
   push:
     branches:
-      - spelunker
+      - microns-explorer-2
     tags:
       - v**
 

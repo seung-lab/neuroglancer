@@ -1,6 +1,6 @@
 runtime: python312
 
-service: spelunker
+service: microns-explorer
 
 handlers:
   # Handle the main page by serving the index page.
