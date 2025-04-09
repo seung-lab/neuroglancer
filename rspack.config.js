@@ -110,7 +110,10 @@ export default (env, args) => {
         "639403125587-4k5hgdfumtrvur8v48e3pr7oo91d765k.apps.googleusercontent.com",
       ),
 
-      // NEUROGLANCER_CREDIT_LINK: JSON.stringify({url: '...', text: '...'}),
+      NEUROGLANCER_CREDIT_LINK: JSON.stringify({
+        url: "https://microns-explorer.org",
+        text: "Microns Explorer",
+      }),
       // NEUROGLANCER_DEFAULT_STATE_FRAGMENT: JSON.stringify('gs://bucket/state.json'),
       // NEUROGLANCER_SHOW_LAYER_BAR_EXTRA_BUTTONS: true,
       // NEUROGLANCER_SHOW_OBJECT_SELECTION_TOOLTIP: true
