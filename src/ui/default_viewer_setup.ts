@@ -158,16 +158,12 @@ export function setupDefaultViewer() {
   }
 
   const hashBinding = viewer.registerDisposer(
-    new UrlHashBinding(
-      viewer.state,
-      viewer.dataSourceProvider.sharedKvStoreContext,
-      {
-        defaultFragment:
-          typeof NEUROGLANCER_DEFAULT_STATE_FRAGMENT !== "undefined"
-            ? NEUROGLANCER_DEFAULT_STATE_FRAGMENT
-            : undefined,
-      },
-    ),
+    new UrlHashBinding(viewer, {
+      defaultFragment:
+        typeof NEUROGLANCER_DEFAULT_STATE_FRAGMENT !== "undefined"
+          ? NEUROGLANCER_DEFAULT_STATE_FRAGMENT
+          : undefined,
+    }),
   );
   viewer.registerDisposer(
     hashBinding.parseError.changed.add(() => {
