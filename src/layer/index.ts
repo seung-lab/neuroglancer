@@ -1178,7 +1178,7 @@ export class LayerSelectedValues extends RefCounted {
     super();
     this.registerDisposer(
       mouseState.changed.add(() => {
-        this.handleChange();
+        this.handleChange(); // here we have a mouse handle change
       }),
     );
     this.registerDisposer(

@@ -285,7 +285,13 @@ uint64_t getMappedObjectId(uint64_t value) {
       saturation += adjustment;
     }
 `;
-    if (parameters.hasHighlightColor) {
+    if (parameters.hasSegmentStatedColors && parameters.hasHighlightColor) {
+      builder.addUniform("highp vec4", "uHighlightColor");
+      fragmentMain += `
+emit(uHighlightColor);
+return;
+`;
+    } else if (parameters.hasHighlightColor) {
       builder.addUniform("highp vec4", "uHighlightColor");
       fragmentMain += `
     emit(uHighlightColor);
@@ -300,6 +306,8 @@ uint64_t getMappedObjectId(uint64_t value) {
     let getMappedIdColor = `vec4 getMappedIdColor(uint64_t value) {
 `;
     // If the value has a mapped color, use it; otherwise, compute the color.
+
+    // specific color, highlight ok
     if (parameters.hasSegmentStatedColors) {
       this.segmentStatedColorShaderManager.defineShader(builder);
       getMappedIdColor += `

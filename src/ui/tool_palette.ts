@@ -1270,6 +1270,7 @@ export class MultiToolPaletteDropdownButton extends RefCounted {
     this.registerDisposer(state.visibleStateChanged.add(debouncedUpdateView));
 
     element.addEventListener("focusout", (event) => {
+      console.log("focusout tool pallet");
       const { relatedTarget } = event;
       if (relatedTarget instanceof Node && !element.contains(relatedTarget)) {
         this.dropdownVisible.value = false;

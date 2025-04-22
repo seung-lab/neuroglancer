@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
+import type { DebouncedFunc } from "lodash-es";
 import { debounce } from "lodash-es";
-import type { SharedKvStoreContext } from "#src/kvstore/frontend.js";
 import { StatusMessage } from "#src/status.js";
 import { WatchableValue } from "#src/trackable_value.js";
 import { RefCounted } from "#src/util/disposable.js";
@@ -24,8 +24,8 @@ import {
   urlSafeParse,
   verifyObject,
 } from "#src/util/json.js";
-import type { Trackable } from "#src/util/trackable.js";
 import { getCachedJson } from "#src/util/trackable.js";
+import type { Viewer } from "#src/viewer.js";
 
 /**
  * @file Implements a binding between a Trackable value and the URL hash state.
@@ -34,7 +34,7 @@ import { getCachedJson } from "#src/util/trackable.js";
 /**
  * Encodes a fragment string robustly.
  */
-function encodeFragment(fragment: string) {
+export function encodeFragment(fragment: string) {
   return encodeURI(fragment).replace(
     /[!'()*;,]/g,
     (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase(),
@@ -45,6 +45,32 @@ export interface UrlHashBindingOptions {
   defaultFragment?: string;
   updateDelayMilliseconds?: number;
 }
+
+const dynamicDebounce = (
+  func: () => any,
+  wait: WatchableValue<number>,
+  ref: RefCounted,
+) => {
+  let debouncedFunc: DebouncedFunc<() => void> | undefined = undefined;
+  const updateDebounce = () => {
+    if (ref.wasDisposed) return;
+    debouncedFunc?.flush();
+    debouncedFunc = debounce(func, wait.value, { maxWait: wait.value * 2 });
+  };
+  ref.registerDisposer(wait.changed.add(updateDebounce));
+  updateDebounce();
+
+  return Object.assign(
+    () => {
+      return debouncedFunc!();
+    },
+    {
+      cancel: () => {
+        debouncedFunc?.cancel();
+      },
+    },
+  );
+};
 
 /**
  * An instance of this class manages a binding between a Trackable value and the URL hash state.
@@ -68,45 +94,115 @@ export class UrlHashBinding extends RefCounted {
 
   private defaultFragment: string;
 
+  get root() {
+    return this.viewer.state;
+  }
+
+  get sharedKvStoreContext() {
+    return this.viewer.dataSourceProvider.sharedKvStoreContext;
+  }
+
+  private blurred: boolean = false;
+
   constructor(
-    public root: Trackable,
-    public sharedKvStoreContext: SharedKvStoreContext,
+    private viewer: Viewer,
     options: UrlHashBindingOptions = {},
   ) {
     super();
-    const { updateDelayMilliseconds = 200, defaultFragment = "{}" } = options;
+    const { defaultFragment = "{}" } = options;
+
+    const { root } = this;
+
     this.registerEventListener(window, "hashchange", () =>
       this.updateFromUrlHash(),
     );
-    const throttledSetUrlHash = debounce(
+
+    const throttledSetUrlHash = dynamicDebounce(
       () => this.setUrlHash(),
-      updateDelayMilliseconds,
-      { maxWait: updateDelayMilliseconds * 2 },
+      viewer.urlRateLimit,
+      this,
     );
+
     this.registerDisposer(root.changed.add(throttledSetUrlHash));
     this.registerDisposer(() => throttledSetUrlHash.cancel());
+
+    // this.registerDisposer(
+    //   this.viewer.saveStateUrl.changed.add(() => {
+    //     if (this.viewer.saveStateUrl.value) {
+    //       this.setUrlHash();
+    //     } else {
+    //       history.replaceState(null, "", "#");
+    //     }
+    //   }),
+    // );
+
+    // todo, doesn't belong in url_hash_bindings
+    window.addEventListener("beforeunload", () => {
+      if (!this.viewer.saveStateSession.value) return;
+      const cacheState = getCachedJson(this.root);
+      const stateString = JSON.stringify(
+        cacheState.value,
+        bigintToStringJsonReplacer,
+      );
+      window.sessionStorage.setItem("state", stateString);
+    });
+
+    window.addEventListener("blur", () => {
+      console.log('blur');
+      this.blurred = true;
+      this.setUrlHash(true);
+    });
+
+    window.addEventListener("focusin", () => {
+      console.log('focusin');
+      this.blurred = false;
+    });
+
     this.defaultFragment = defaultFragment;
   }
 
   /**
    * Sets the URL hash to match the current state.
    */
-  setUrlHash() {
+  setUrlHash(force=false) {
+    if (!force && this.blurred) {
+      return;
+    }
+
+    if (!force && !this.viewer.saveStateUrl.value) {
+      // TODO but waiting till here is a performance loss
+      // TODO, why is it? ah I'm doing it twice
+      this.prevStateGeneration = undefined;
+      this.prevStateString = undefined;
+      console.log("cp1");
+      return history.replaceState(null, "", "#");
+    }
     const cacheState = getCachedJson(this.root);
     const { generation } = cacheState;
+    console.log("generation", generation, this.prevStateGeneration);
     if (generation !== this.prevStateGeneration) {
       this.prevStateGeneration = cacheState.generation;
+
       const stateString = encodeFragment(
         JSON.stringify(cacheState.value, bigintToStringJsonReplacer),
       );
       if (stateString !== this.prevStateString) {
+        console.log("we have a new state!");
         this.prevStateString = stateString;
+        if (!force && !this.viewer.saveStateUrl.value) {
+          // TODO but waiting till here is a performance loss
+          console.log("cp2");
+          return history.replaceState(null, "", "#");
+        }
+        this.viewer.urlLastUpdatedTime.value = performance.now();
         if (decodeURIComponent(stateString) === "{}") {
           history.replaceState(null, "", "#");
         } else {
           history.replaceState(null, "", "#!" + stateString);
         }
       }
+    } else {
+      console.log("not doing this!");
     }
   }
 
@@ -115,6 +211,8 @@ export class UrlHashBinding extends RefCounted {
    * on the URL hash, then this should be called immediately after construction.
    */
   updateFromUrlHash(upgradeState: (a: any) => any = (x) => x) {
+    const sessionStateString = window.sessionStorage.getItem("state");
+    window.sessionStorage.removeItem("state");
     try {
       let s = location.href.replace(/^[^#]+/, "");
       if (s === "" || s === "#" || s === "#!") {
@@ -130,20 +228,26 @@ export class UrlHashBinding extends RefCounted {
             .then((json) => {
               verifyObject(json);
               this.root.reset();
-              this.root.restoreState(json);
+              this.root.restoreState(upgradeState(json));
             }),
           {
             initialMessage: `Loading state from ${url}`,
             errorPrefix: "Error loading state:",
           },
         );
+      } else if (sessionStateString) {
+        const json = JSON.parse(sessionStateString);
+        this.prevStateString = encodeFragment(json);
+        verifyObject(json);
+        this.root.reset();
+        this.root.restoreState(upgradeState(json));
       } else if (s.startsWith("#!+")) {
         s = s.slice(3);
         // Firefox always %-encodes the URL even if it is not typed that way.
         s = decodeURIComponent(s);
         const state = urlSafeParse(s);
         verifyObject(state);
-        this.root.restoreState(state);
+        this.root.restoreState(upgradeState(state));
         this.prevStateString = undefined;
       } else if (s.startsWith("#!")) {
         s = s.slice(2);

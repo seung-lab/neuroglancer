@@ -34,7 +34,7 @@ import { DataManagementContext } from "#src/data_management_context.js";
 import { InputEventBindings as DataPanelInputEventBindings } from "#src/data_panel_layout.js";
 import { getDefaultDataSourceProvider } from "#src/datasource/default_provider.js";
 import type { DataSourceRegistry } from "#src/datasource/index.js";
-import { StateShare, stateShareEnabled } from "#src/datasource/state_share.js";
+import { StateShare } from "#src/datasource/state_share.js";
 import type { DisplayContext } from "#src/display_context.js";
 import { TrackableWindowedViewport } from "#src/display_context.js";
 import {
@@ -116,8 +116,10 @@ import { vec3 } from "#src/util/geom.js";
 import {
   parseFixedLengthArray,
   verifyFinitePositiveFloat,
+  verifyNonnegativeInt,
   verifyObject,
   verifyOptionalObjectProperty,
+  verifyPositiveInt,
   verifyString,
 } from "#src/util/json.js";
 import {
@@ -169,6 +171,7 @@ export const VIEWER_TOP_ROW_CONFIG_OPTIONS = [
   "showLayerListPanelButton",
   "showSelectionPanelButton",
   "showLayerSidePanelButton",
+  "showShareButton",
   "showLocation",
   "showAnnotationToolStatus",
 ] as const;
@@ -249,6 +252,9 @@ class TrackableViewerState extends CompoundTrackable {
     this.add("projectionScale", viewer.projectionScale);
     this.add("projectionDepth", viewer.projectionDepthRange);
     this.add("layers", viewer.layerSpecification);
+    this.add("urlRateLimit", viewer.urlRateLimit);
+    this.add("saveStateUrl", viewer.saveStateUrl);
+    this.add("saveStateSession", viewer.saveStateSession);
     this.add("showAxisLines", viewer.showAxisLines);
     this.add("wireFrame", viewer.wireFrame);
     this.add("enableAdaptiveDownsampling", viewer.enableAdaptiveDownsampling);
@@ -283,7 +289,7 @@ class TrackableViewerState extends CompoundTrackable {
     this.add("statistics", viewer.statisticsDisplayState);
     this.add("helpPanel", viewer.helpPanelState);
     this.add("settingsPanel", viewer.settingsPanelState);
-    this.add("selection", viewer.selectionDetailsState);
+    this.add("selection", viewer.selectionDetailsState); // TODO, if I disable this, do we stop updating the state when we move the mouse?
     this.add("layerListPanel", viewer.layerListPanelState);
     this.add("partialViewport", viewer.partialViewport);
     this.add("selectedStateServer", viewer.selectedStateServer);
@@ -418,6 +424,10 @@ export class Viewer extends RefCounted implements ViewerState {
   selectedLayer = this.registerDisposer(
     new SelectedLayerState(this.layerManager.addRef()),
   );
+  urlRateLimit = new TrackableValue<number>(200, verifyNonnegativeInt);
+  urlLastUpdatedTime = new TrackableValue<number>(0, verifyPositiveInt);
+  saveStateUrl = new TrackableBoolean(true, true);
+  saveStateSession = new TrackableBoolean(true, true);
   showAxisLines = new TrackableBoolean(true, true);
   wireFrame = new TrackableBoolean(false, false);
   enableAdaptiveDownsampling = new TrackableBoolean(true, true);
@@ -756,10 +766,14 @@ export class Viewer extends RefCounted implements ViewerState {
       ),
     );
 
-    if (stateShareEnabled) {
-      const stateShare = this.registerDisposer(new StateShare(this));
-      topRow.appendChild(stateShare.element);
-    }
+    const stateShare = this.registerDisposer(new StateShare(this));
+    topRow.appendChild(stateShare.element);
+    this.registerDisposer(
+      new ElementVisibilityFromTrackableBoolean(
+        this.uiControlVisibility.showShareButton,
+        stateShare.element,
+      ),
+    );
 
     {
       const button = this.registerDisposer(
