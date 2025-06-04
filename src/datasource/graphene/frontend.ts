@@ -53,6 +53,7 @@ import {
   isBaseSegmentId,
   makeChunkedGraphChunkSpecification,
   MeshSourceParameters,
+  MultiscaleMeshSourceParameters,
   PYCG_APP_VERSION,
   getHttpSource,
 } from "#src/datasource/graphene/base.js";
@@ -89,7 +90,7 @@ import type {
 import type { LoadedDataSubsource } from "#src/layer/layer_data_source.js";
 import { LoadedLayerDataSource } from "#src/layer/layer_data_source.js";
 import { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
-import { MeshSource } from "#src/mesh/frontend.js";
+import { MeshSource, MultiscaleMeshSource } from "#src/mesh/frontend.js";
 import type { DisplayDimensionRenderInfo } from "#src/navigation_state.js";
 import type {
   ChunkTransformParameters,
@@ -208,6 +209,7 @@ import {
   addLayerControlToOptionsTab,
   registerLayerControl,
 } from "#src/widget/layer_control.js";
+import { VertexPositionFormat } from "#src/mesh/base.js";
 
 function vec4FromVec3(vec: vec3, alpha = 0) {
   const res = vec4.clone([...vec]);
@@ -238,6 +240,11 @@ class GrapheneMeshSource extends WithParameters(
     return getGrapheneFragmentKey(fragmentId);
   }
 }
+
+class GrapheneMultiscaleMeshSource extends WithParameters(
+  WithSharedKvStoreContext(MultiscaleMeshSource),
+  MultiscaleMeshSourceParameters,
+) {}
 
 class AppInfo {
   segmentationUrl: string;
@@ -551,17 +558,46 @@ async function getMeshSource(
     fragmentUrl,
     options,
   );
-  const parameters: MeshSourceParameters = {
+  if (metadata === undefined) {
+    throw new Error('Mesh metadata is missing');
+  }
+  if (metadata.lodScaleMultiplier === 0) {
+    const parameters: MeshSourceParameters = {
+      manifestUrl: url,
+      fragmentUrl: fragmentUrl,
+      lod: 0,
+      sharding: metadata?.sharding,
+      nBitsForLayerId,
+    };
+    const transform = metadata?.transform || mat4.create();
+    return {
+      source: getShardedMeshSource(sharedKvStoreContext, parameters),
+      transform,
+      segmentPropertyMap,
+    };
+  }
+
+  const parameters: MultiscaleMeshSourceParameters = {
     manifestUrl: url,
     fragmentUrl: fragmentUrl,
-    lod: 0,
-    sharding: metadata?.sharding,
-    nBitsForLayerId,
+    metadata: metadata,
+    sharding: metadata.sharding,
+    nBitsForLayerId: nBitsForLayerId,
   };
-  const transform = metadata?.transform || mat4.create();
+
+  const {chunkManager} = sharedKvStoreContext;
   return {
-    source: getShardedMeshSource(sharedKvStoreContext, parameters),
-    transform,
+    source: chunkManager.getChunkSource(
+      GrapheneMultiscaleMeshSource,
+      {
+        sharedKvStoreContext,
+        parameters: parameters,
+        format: {
+          fragmentRelativeVertices: false,
+          vertexPositionFormat: VertexPositionFormat.float32,
+        }
+    }),
+    transform: metadata.transform,
     segmentPropertyMap,
   };
 }
@@ -2510,7 +2546,6 @@ const synchronizeAnnotationSource = (
     );
     if (selection) source.delete(selection);
   });
-
   source.changed.add((x, add) => {
     if (x === null) {
       for (const annotation of annotationSource) {
@@ -2768,12 +2803,14 @@ class MulticutSegmentsTool extends LayerTool<SegmentationUserLayer> {
     const priorBaseSegmentHighlighting =
       displayState.baseSegmentHighlighting.value;
     const priorHighlightColor = displayState.highlightColor.value;
+    const priorHideSegmentZero = displayState.hideSegmentZero.value;
 
     activation.bindInputEventMap(MULTICUT_SEGMENTS_INPUT_EVENT_MAP);
     activation.registerDisposer(() => {
       resetMulticutDisplay();
       displayState.baseSegmentHighlighting.value = priorBaseSegmentHighlighting;
       displayState.highlightColor.value = priorHighlightColor;
+      displayState.hideSegmentZero.value = priorHideSegmentZero;
     });
     const resetMulticutDisplay = () => {
       resetTemporaryVisibleSegmentsState(segmentationGroupState);
@@ -2794,6 +2831,7 @@ class MulticutSegmentsTool extends LayerTool<SegmentationUserLayer> {
       displayState.highlightColor.value = multicutState.blueGroup.value
         ? BLUE_COLOR_HIGHTLIGHT
         : RED_COLOR_HIGHLIGHT;
+      displayState.hideSegmentZero.value = false;
       segmentsState.useTemporaryVisibleSegments.value = true;
       segmentsState.useTemporarySegmentEquivalences.value = true;
       // add focus segment and red/blue segments

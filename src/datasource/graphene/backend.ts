@@ -37,14 +37,15 @@ import {
   isBaseSegmentId,
   parseGrapheneError,
   getHttpSource,
+  MultiscaleMeshSourceParameters,
 } from "#src/datasource/graphene/base.js";
 import { decodeManifestChunk } from "#src/datasource/precomputed/backend.js";
 import { WithSharedKvStoreContextCounterpart } from "#src/kvstore/backend.js";
 import type { KvStoreWithPath, ReadResponse } from "#src/kvstore/index.js";
 import { readKvStore } from "#src/kvstore/index.js";
-import type { FragmentChunk, ManifestChunk } from "#src/mesh/backend.js";
-import { assignMeshFragmentData, MeshSource } from "#src/mesh/backend.js";
-import { decodeDraco } from "#src/mesh/draco/index.js";
+import type { FragmentChunk, FragmentId, ManifestChunk, MultiscaleFragmentChunk, MultiscaleManifestChunk } from "#src/mesh/backend.js";
+import { assignMeshFragmentData, assignMultiscaleMeshFragmentData, MeshSource, MultiscaleMeshSource } from "#src/mesh/backend.js";
+import { decodeDraco, decodeDracoPartitioned } from "#src/mesh/draco/index.js";
 import type { DisplayDimensionRenderInfo } from "#src/navigation_state.js";
 import type {
   RenderedViewBackend,
@@ -77,10 +78,12 @@ import {
 } from "#src/visibility_priority/backend.js";
 import type { RPC } from "#src/worker_rpc.js";
 import { registerSharedObject, registerRPC } from "#src/worker_rpc.js";
+import { isNotFoundError } from "#src/util/http_request.js";
+import { verifyObject } from "#src/util/json.js";
 
 function downloadFragmentWithSharding(
   fragmentKvStore: KvStoreWithPath,
-  fragmentId: string,
+  fragmentId: string | null,
   signal: AbortSignal,
 ): Promise<ReadResponse> {
   if (fragmentId && fragmentId.charAt(0) === "~") {
@@ -101,8 +104,8 @@ function downloadFragmentWithSharding(
 
 function downloadFragment(
   fragmentKvStore: KvStoreWithPath,
-  fragmentId: string,
-  parameters: MeshSourceParameters,
+  fragmentId: string | null,
+  parameters: MeshSourceParameters | MultiscaleMeshSourceParameters,
   signal: AbortSignal,
 ): Promise<ReadResponse> {
   if (parameters.sharding) {
@@ -190,6 +193,236 @@ export class GrapheneMeshSource extends WithParameters(
       chunk,
       new Uint8Array(await response.arrayBuffer()),
     );
+  }
+
+  getFragmentKey(objectKey: string | null, fragmentId: string) {
+    objectKey;
+    return getGrapheneFragmentKey(fragmentId);
+  }
+}
+
+interface ShardInfo {
+  shardUrl: string;
+  offset: bigint;
+}
+
+interface GrapheneMultiscaleManifestChunk extends MultiscaleManifestChunk {
+  fragments: Array<FragmentId[]> | null;
+  fragmentIds: FragmentId[] | null;
+  shardInfo?: ShardInfo;
+}
+
+function decodeMultiscaleManifestChunk(chunk: GrapheneMultiscaleManifestChunk, response: any) {
+  verifyObject(response);
+  chunk.manifest = {
+    chunkShape: vec3.clone(response.chunkShape),
+    chunkGridSpatialOrigin: vec3.clone(response.chunkGridSpatialOrigin),
+    lodScales: new Float32Array(response.lodScales),
+    octree: new Uint32Array(response.octree),
+    vertexOffsets: new Float32Array(response.lodScales.length * 3),
+    clipLowerBound: vec3.clone(response.clipLowerBound),
+    clipUpperBound: vec3.clone(response.clipUpperBound),
+  };
+  chunk.fragments = response.fragments;
+  chunk.manifest.clipLowerBound.fill(0);
+  chunk.manifest.clipUpperBound.fill(10000000);
+}
+
+async function decodeMultiscaleFragmentChunk(
+  chunk: MultiscaleFragmentChunk,
+  response: ArrayBuffer,
+) {
+  const { lod } = chunk;
+  const source = chunk.manifestChunk!.source! as GrapheneMultiscaleMeshSource;
+  const rawMesh = await decodeDracoPartitioned(
+    new Uint8Array(response),
+    source.parameters.metadata.vertexQuantizationBits,
+    lod !== 0,
+    false,
+  );
+  assignMultiscaleMeshFragmentData(
+    chunk,
+    rawMesh,
+    source.format.vertexPositionFormat,
+  );
+}
+
+@registerSharedObject()
+export class GrapheneMultiscaleMeshSource extends WithParameters(
+  WithSharedKvStoreContextCounterpart(MultiscaleMeshSource),
+  MultiscaleMeshSourceParameters,
+) {
+  manifestRequestCount = new Map<string, number>();
+  newSegments = new Uint64Set();
+
+  manifestHttpSource = getHttpSource(
+    this.sharedKvStoreContext.kvStoreContext,
+    this.parameters.manifestUrl,
+  );
+  fragmentKvStore = this.sharedKvStoreContext.kvStoreContext.getKvStore(
+    this.parameters.fragmentUrl,
+  );
+
+  addNewSegment(segment: bigint) {
+    const { newSegments } = this;
+    newSegments.add(segment);
+    const TEN_MINUTES = 1000 * 60 * 10;
+    setTimeout(() => {
+      newSegments.delete(segment);
+    }, TEN_MINUTES);
+  }
+
+
+  async download(
+    chunk: GrapheneMultiscaleManifestChunk,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const { parameters, newSegments, manifestRequestCount } = this;
+    if (isBaseSegmentId(chunk.objectId, parameters.nBitsForLayerId)) {
+      return decodeManifestChunk(chunk, { fragments: [] });
+    }
+    const { fetchOkImpl, baseUrl } = this.manifestHttpSource;
+    const manifestPath = `/manifest/multiscale/${chunk.objectId}?verify=1`;
+    const response = await (
+      await fetchOkImpl(baseUrl + manifestPath, { signal })
+    ).json();
+    const chunkIdentifier = manifestPath;
+    if (newSegments.has(chunk.objectId)) {
+      const requestCount = (manifestRequestCount.get(chunkIdentifier) ?? 0) + 1;
+      manifestRequestCount.set(chunkIdentifier, requestCount);
+      setTimeout(
+        () => {
+          this.chunkManager.queueManager.updateChunkState(
+            chunk,
+            ChunkState.QUEUED,
+          );
+        },
+        2 ** requestCount * 1000,
+      );
+    } else {
+      manifestRequestCount.delete(chunkIdentifier);
+    }
+    return decodeMultiscaleManifestChunk(chunk, response);
+  }
+
+  async downloadFragment(chunk: MultiscaleFragmentChunk, signal: AbortSignal) {
+    const { parameters } = this;
+    const manifestChunk = chunk.manifestChunk! as GrapheneMultiscaleManifestChunk;
+    const chunkIndex = chunk.chunkIndex;
+    const { fragments } = manifestChunk;
+
+    try {
+      if (fragments !== null) {
+        const fragmentsIds = fragments[chunkIndex];
+        
+        if (fragmentsIds.length === 1) {
+          // Single fragment - use simple path
+          let { response } = await downloadFragment(
+            this.fragmentKvStore,
+            fragmentsIds[0],
+            parameters,
+            signal,
+          );
+          await decodeMultiscaleFragmentChunk(chunk, await response.arrayBuffer());
+        } else {
+          // Multiple fragments - decode each individually and merge the raw data
+          const rawMeshData = [];
+          
+          for (const fragmentId of fragmentsIds) {
+            let { response } = await downloadFragment(
+              this.fragmentKvStore,
+              fragmentId,
+              parameters,
+              signal,
+            );
+            
+            const arrayBuffer = await response.arrayBuffer();
+            
+            // Decode this fragment individually to get raw mesh data
+            const rawMesh = await decodeDracoPartitioned(
+              new Uint8Array(arrayBuffer),
+              this.parameters.metadata.vertexQuantizationBits,
+              chunk.lod !== 0,
+              false,
+            );
+            
+            rawMeshData.push(rawMesh);
+          }
+          
+          // Merge the raw mesh data
+          const mergedMesh = this.mergeRawMeshData(rawMeshData);
+          
+          // Assign the merged data to the chunk
+          assignMultiscaleMeshFragmentData(
+            chunk,
+            mergedMesh,
+            this.format.vertexPositionFormat,
+          );
+        }
+      }
+    } catch (e) {
+      if (isNotFoundError(e)) {
+        chunk.source!.removeChunk(chunk);
+      }
+      Promise.reject(e);
+    }
+  }
+
+  private mergeRawMeshData(fragments: any[]): any {
+    if (fragments.length === 1) {
+      return fragments[0];
+    }
+    
+    // Calculate total sizes
+    let totalVertices = 0;
+    let totalIndices = 0;
+    for (const fragment of fragments) {
+      totalVertices += fragment.vertexPositions.length;
+      totalIndices += fragment.indices.length;
+    }
+    
+    // Create merged arrays
+    const mergedVertices = new Uint32Array(totalVertices);
+    const mergedIndices = new Uint32Array(totalIndices);
+    const mergedSubChunkOffsets = new Uint32Array(9); // 8 subchunks + total
+    
+    let vertexOffset = 0;
+    let indexOffset = 0;
+    
+    for (const fragment of fragments) {
+      // Copy vertices
+      mergedVertices.set(fragment.vertexPositions, vertexOffset);
+      
+      // Copy and adjust indices (add vertex offset)
+      for (let i = 0; i < fragment.indices.length; i++) {
+        mergedIndices[indexOffset + i] = fragment.indices[i] + (vertexOffset / 3);
+      }
+      
+      // Merge subchunk offsets
+      for (let subchunk = 0; subchunk < 8; subchunk++) {
+        const subchunkStart = fragment.subChunkOffsets[subchunk];
+        const subchunkEnd = fragment.subChunkOffsets[subchunk + 1];
+        const subchunkSize = subchunkEnd - subchunkStart;
+        
+        if (subchunkSize > 0) {
+          mergedSubChunkOffsets[subchunk + 1] += subchunkSize;
+        }
+      }
+
+      vertexOffset += fragment.vertexPositions.length;
+      indexOffset += fragment.indices.length;
+    }
+
+    // Convert subchunk counts to cumulative offsets
+    for (let i = 1; i <= 8; i++) {
+      mergedSubChunkOffsets[i] += mergedSubChunkOffsets[i - 1];
+    }
+
+    return {
+      vertexPositions: mergedVertices,
+      indices: mergedIndices,
+      subChunkOffsets: mergedSubChunkOffsets
+    };
   }
 
   getFragmentKey(objectKey: string | null, fragmentId: string) {

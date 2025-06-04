@@ -1,11 +1,6 @@
 name: Build
 
-on:
-  push:
-    branches:
-      - spelunker
-    tags:
-      - v**
+on: [push, pull_request]
 
 jobs:
   build-and-deploy:
@@ -30,6 +25,7 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             examples/**/package-lock.json
+          fetch-depth: 0
       - run: npm install
       - name: Typecheck with TypeScript
         run: npm run typecheck
@@ -69,9 +65,9 @@ jobs:
       - id: deploy
         uses: google-github-actions/deploy-appengine@main
         with:
-          version: ${{ env.GITHUB_SHA }}
+          version: ${{ env.BRANCH_NAME_URL }}
           deliverables: appengine/frontend/app.yaml
-          promote: true
+          promote: false
       - name: update deployment status
         uses: bobheadxi/deployments@v1
         if: always()
