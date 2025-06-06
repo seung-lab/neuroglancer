@@ -45,7 +45,7 @@ import type { KvStoreWithPath, ReadResponse } from "#src/kvstore/index.js";
 import { readKvStore } from "#src/kvstore/index.js";
 import type { FragmentChunk, FragmentId, ManifestChunk, MultiscaleFragmentChunk, MultiscaleManifestChunk } from "#src/mesh/backend.js";
 import { assignMeshFragmentData, assignMultiscaleMeshFragmentData, MeshSource, MultiscaleMeshSource } from "#src/mesh/backend.js";
-import { decodeDraco, decodeDracoPartitioned } from "#src/mesh/draco/index.js";
+import { decodeDraco, decodeDracoPartitionedWithOctantCenter } from "#src/mesh/draco/index.js";
 import type { DisplayDimensionRenderInfo } from "#src/navigation_state.js";
 import type {
   RenderedViewBackend,
@@ -234,11 +234,52 @@ async function decodeMultiscaleFragmentChunk(
 ) {
   const { lod } = chunk;
   const source = chunk.manifestChunk!.source! as GrapheneMultiscaleMeshSource;
-  const rawMesh = await decodeDracoPartitioned(
+
+  // Calculate octant center coordinates for this specific chunk
+  let octantCenterX: number | undefined;
+  let octantCenterY: number | undefined;
+  let octantCenterZ: number | undefined;
+
+  if (lod !== 0) {
+    // For GrapheneMultiscaleMeshSource, we need to calculate the octant center
+    // based on the chunk's position in the octree hierarchy
+    const manifestChunk = chunk.manifestChunk! as GrapheneMultiscaleManifestChunk;
+    const { manifest } = manifestChunk;
+    if (!manifest) {
+      throw new Error("Manifest not available for octant center calculation");
+    }
+
+    const { octree, chunkShape, chunkGridSpatialOrigin, vertexOffsets } = manifest;
+    const chunkIndex = chunk.chunkIndex;
+
+    // Extract octree node coordinates
+    const x = octree[5 * chunkIndex];
+    const y = octree[5 * chunkIndex + 1];
+    const z = octree[5 * chunkIndex + 2];
+    const scale = 1 << lod; // 2^lod
+
+    // Calculate the center of this octant in world coordinates
+    // This matches the calculation from src/mesh/frontend.ts
+    const fragmentOriginX = chunkGridSpatialOrigin[0] + x * chunkShape[0] * scale + vertexOffsets[lod * 3 + 0];
+    const fragmentOriginY = chunkGridSpatialOrigin[1] + y * chunkShape[1] * scale + vertexOffsets[lod * 3 + 1];
+    const fragmentOriginZ = chunkGridSpatialOrigin[2] + z * chunkShape[2] * scale + vertexOffsets[lod * 3 + 2];
+
+    const fragmentShapeX = chunkShape[0] * scale;
+    const fragmentShapeY = chunkShape[1] * scale;
+    const fragmentShapeZ = chunkShape[2] * scale;
+
+    // The octant center is at the middle of the fragment bounds
+    octantCenterX = fragmentOriginX + fragmentShapeX / 2;
+    octantCenterY = fragmentOriginY + fragmentShapeY / 2;
+    octantCenterZ = fragmentOriginZ + fragmentShapeZ / 2;
+  }
+
+  const rawMesh = await decodeDracoPartitionedWithOctantCenter(
     new Uint8Array(response),
-    source.parameters.metadata.vertexQuantizationBits,
     lod !== 0,
-    false,
+    octantCenterX,
+    octantCenterY,
+    octantCenterZ,
   );
   assignMultiscaleMeshFragmentData(
     chunk,
@@ -327,6 +368,39 @@ export class GrapheneMultiscaleMeshSource extends WithParameters(
         } else {
           // Multiple fragments - decode each individually and merge the raw data
           const rawMeshData = [];
+
+          // Calculate octant center (same logic as single fragment)
+          let octantCenterX: number | undefined;
+          let octantCenterY: number | undefined;
+          let octantCenterZ: number | undefined;
+
+          if (chunk.lod !== 0) {
+            const manifestChunk = chunk.manifestChunk! as GrapheneMultiscaleManifestChunk;
+            const { manifest } = manifestChunk;
+            if (!manifest) {
+              throw new Error("Manifest not available for octant center calculation");
+            }
+
+            const { octree, chunkShape, chunkGridSpatialOrigin, vertexOffsets } = manifest;
+            const chunkIndex = chunk.chunkIndex;
+
+            const x = octree[5 * chunkIndex];
+            const y = octree[5 * chunkIndex + 1];
+            const z = octree[5 * chunkIndex + 2];
+            const scale = 1 << chunk.lod;
+
+            const fragmentOriginX = chunkGridSpatialOrigin[0] + x * chunkShape[0] * scale + vertexOffsets[chunk.lod * 3 + 0];
+            const fragmentOriginY = chunkGridSpatialOrigin[1] + y * chunkShape[1] * scale + vertexOffsets[chunk.lod * 3 + 1];
+            const fragmentOriginZ = chunkGridSpatialOrigin[2] + z * chunkShape[2] * scale + vertexOffsets[chunk.lod * 3 + 2];
+
+            const fragmentShapeX = chunkShape[0] * scale;
+            const fragmentShapeY = chunkShape[1] * scale;
+            const fragmentShapeZ = chunkShape[2] * scale;
+
+            octantCenterX = fragmentOriginX + fragmentShapeX / 2;
+            octantCenterY = fragmentOriginY + fragmentShapeY / 2;
+            octantCenterZ = fragmentOriginZ + fragmentShapeZ / 2;
+          }
           
           for (const fragmentId of fragmentsIds) {
             let { response } = await downloadFragment(
@@ -339,11 +413,12 @@ export class GrapheneMultiscaleMeshSource extends WithParameters(
             const arrayBuffer = await response.arrayBuffer();
             
             // Decode this fragment individually to get raw mesh data
-            const rawMesh = await decodeDracoPartitioned(
+            const rawMesh = await decodeDracoPartitionedWithOctantCenter(
               new Uint8Array(arrayBuffer),
-              this.parameters.metadata.vertexQuantizationBits,
               chunk.lod !== 0,
-              false,
+              octantCenterX,
+              octantCenterY,
+              octantCenterZ,
             );
             
             rawMeshData.push(rawMesh);

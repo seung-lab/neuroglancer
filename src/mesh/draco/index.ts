@@ -92,20 +92,90 @@ export async function decodeDracoPartitioned(
   const heap = new Uint8Array((m.exports.memory as WebAssembly.Memory).buffer);
   heap.set(buffer, offset);
   numPartitions = partition ? 8 : 1;
-  const code = (m.exports.neuroglancer_draco_decode as Function)(
-    offset,
-    buffer.byteLength,
-    partition,
-    vertexQuantizationBits,
-    skipDequantization,
-  );
-  if (code === 0) {
-    const r = decodeResult;
-    decodeResult = undefined;
-    if (r instanceof Error) throw r;
-    return r!;
+
+  try {
+    // Use normalized coordinates function for Precomputed meshes
+    const code = (m.exports.neuroglancer_draco_decode as Function)(
+      offset,
+      buffer.byteLength,
+      partition,
+      vertexQuantizationBits,
+      skipDequantization,
+    );
+    if (code === 0) {
+      const r = decodeResult;
+      decodeResult = undefined;
+      if (r instanceof Error) throw r;
+      // Convert vertex positions to Float32Array when skipDequantization = false
+      if (!skipDequantization && r!.vertexPositions instanceof Uint32Array) {
+        r!.vertexPositions = new Float32Array(r!.vertexPositions.buffer);
+      }
+      return r!;
+    }
+    throw new Error(`Failed to decode draco mesh: ${code}`);
+  } finally {
+    // C++ will handle freeing all memory (input buffer and coordinate array)
   }
-  throw new Error(`Failed to decode draco mesh: ${code}`);
+}
+
+/**
+ * Decode a Draco mesh with world coordinate octant centers.
+ * Used by Graphene meshes which store vertices in world space.
+ */
+export async function decodeDracoPartitionedWithOctantCenter(
+  buffer: Uint8Array,
+  partition: boolean,
+  octantCenterX?: number,
+  octantCenterY?: number,
+  octantCenterZ?: number,
+): Promise<RawPartitionedMeshData> {
+  const m = await getDracoModulePromise();
+  const offset = (m.exports.malloc as Function)(buffer.byteLength);
+  const heap = new Uint8Array((m.exports.memory as WebAssembly.Memory).buffer);
+  heap.set(buffer, offset);
+  numPartitions = partition ? 8 : 1;
+
+  let coordsOffset = 0;
+
+  try {
+    if (partition) {
+      if (octantCenterX === undefined || octantCenterY === undefined || octantCenterZ === undefined) {
+        throw new Error("NotImplemented: Partitioned meshes require octant center coordinates");
+      }
+      
+      // Allocate memory for the coordinate array
+      coordsOffset = (m.exports.malloc as Function)(12); // 3 * 4 bytes
+      const floatBuffer = new Float32Array([octantCenterX, octantCenterY, octantCenterZ]);
+      const uint32View = new Uint32Array(floatBuffer.buffer);
+      const coordsHeap = new Uint32Array((m.exports.memory as WebAssembly.Memory).buffer);
+      coordsHeap.set(uint32View, coordsOffset / 4);
+    } else {
+      // For non-partitioned meshes, use dummy coordinates (they won't be used)
+      coordsOffset = (m.exports.malloc as Function)(12); // 3 * 4 bytes
+      const floatBuffer = new Float32Array([0, 0, 0]);
+      const uint32View = new Uint32Array(floatBuffer.buffer);
+      const coordsHeap = new Uint32Array((m.exports.memory as WebAssembly.Memory).buffer);
+      coordsHeap.set(uint32View, coordsOffset / 4);
+    }
+
+    const code = (m.exports.neuroglancer_draco_decode_world_coords as Function)(
+      offset,
+      buffer.byteLength,
+      partition,
+      coordsOffset,
+    );
+
+    if (code === 0) {
+      const r = decodeResult;
+      decodeResult = undefined;
+      if (r instanceof Error) throw r;
+      // Graphene meshes are already in world space (float32), no conversion needed
+      return r!;
+    }
+    throw new Error(`Failed to decode draco mesh: ${code}`);
+  } finally {
+    // C++ will handle freeing all memory (input buffer and coordinate array)
+  }
 }
 
 export async function decodeDraco(buffer: Uint8Array): Promise<RawMeshData> {
@@ -113,19 +183,24 @@ export async function decodeDraco(buffer: Uint8Array): Promise<RawMeshData> {
   const offset = (m.exports.malloc as Function)(buffer.byteLength);
   const heap = new Uint8Array((m.exports.memory as WebAssembly.Memory).buffer);
   heap.set(buffer, offset);
-  const code = (m.exports.neuroglancer_draco_decode as Function)(
-    offset,
-    buffer.byteLength,
-    false,
-    0,
-    false,
-  );
-  if (code === 0) {
-    const r = decodeResult;
-    decodeResult = undefined;
-    if (r instanceof Error) throw r;
-    r!.vertexPositions = new Float32Array(r!.vertexPositions.buffer);
-    return r!;
+
+  try {
+    const code = (m.exports.neuroglancer_draco_decode as Function)(
+      offset,
+      buffer.byteLength,
+      false,
+      0,
+      false,
+    );
+    if (code === 0) {
+      const r = decodeResult;
+      decodeResult = undefined;
+      if (r instanceof Error) throw r;
+      r!.vertexPositions = new Float32Array(r!.vertexPositions.buffer);
+      return r!;
+    }
+    throw new Error(`Failed to decode draco mesh: ${code}`);
+  } finally {
+    // C++ input_deleter will handle freeing the input buffer
   }
-  throw new Error(`Failed to decode draco mesh: ${code}`);
 }

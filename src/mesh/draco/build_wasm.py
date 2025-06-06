@@ -24,7 +24,7 @@ SETTINGS = {
     "ALLOW_MEMORY_GROWTH": "1",
     "TOTAL_STACK": "32768",
     "TOTAL_MEMORY": "65536",
-    "EXPORTED_FUNCTIONS": '["_neuroglancer_draco_decode","_malloc"]',
+    "EXPORTED_FUNCTIONS": '["_neuroglancer_draco_decode","_neuroglancer_draco_decode_world_coords","_malloc"]',
     "MALLOC": "emmalloc",
     "ENVIRONMENT": "worker",
     # Build in standalone mode (also implied by -o <name>.wasm option below)

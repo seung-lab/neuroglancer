@@ -29,8 +29,9 @@ extern void neuroglancer_draco_receive_decoded_mesh(unsigned int num_indices,
                                                     const void *vertex_positions,
                                                     const void *subchunk_offsets);
 
-int neuroglancer_draco_decode(char *input, unsigned int input_size, bool partition,
-                              int vertex_quantization_bits, bool skipDequantization) {
+// Shared implementation for both coordinate systems
+static int neuroglancer_draco_decode_impl(char *input, unsigned int input_size, bool partition,
+                                          bool skipDequantization, const unsigned int *partition_coords) {
   std::unique_ptr<char[], FreeDeleter> input_deleter(input);
   draco::DecoderBuffer decoder_buffer;
   decoder_buffer.Init(input, input_size);
@@ -81,11 +82,9 @@ int neuroglancer_draco_decode(char *input, unsigned int input_size, bool partiti
       position_att->GetAddress(draco::AttributeValueIndex(0)));
   if (partition) {
     const auto get_vertex_mask = [&](auto *v_pos) {
-      const std::uint32_t partition_point =
-          (std::numeric_limits<std::uint32_t>::max() >> (32 - vertex_quantization_bits)) / 2 + 1;
       // mask is 1 if point can be included in octree node
       unsigned int mask = 0xFF;
-      if (v_pos[0] < partition_point) {
+      if (v_pos[0] < partition_coords[0]) {
         // mask of octree nodes with x=0
 
         // 0: x=0, y=0, z=0
@@ -98,17 +97,17 @@ int neuroglancer_draco_decode(char *input, unsigned int input_size, bool partiti
         // 7: x=1, y=1, z=1
 
         mask &= 0b01010101;
-      } else if (v_pos[0] > partition_point) {
+      } else if (v_pos[0] > partition_coords[0]) {
         mask &= 0b10101010;
       }
-      if (v_pos[1] < partition_point) {
+      if (v_pos[1] < partition_coords[1]) {
         mask &= 0b00110011;
-      } else if (v_pos[1] > partition_point) {
+      } else if (v_pos[1] > partition_coords[1]) {
         mask &= 0b11001100;
       }
-      if (v_pos[2] < partition_point) {
+      if (v_pos[2] < partition_coords[2]) {
         mask &= 0b00001111;
-      } else if (v_pos[2] > partition_point) {
+      } else if (v_pos[2] > partition_coords[2]) {
         mask &= 0b11110000;
       }
       return mask;
@@ -154,5 +153,29 @@ int neuroglancer_draco_decode(char *input, unsigned int input_size, bool partiti
                                             vertex_positions, subchunk_offsets);
   }
   return 0;
+}
+
+// Function for normalized/quantized Draco coordinates
+int neuroglancer_draco_decode(char *input, unsigned int input_size, bool partition,
+                              int vertex_quantization_bits, bool skipDequantization) {
+  if (partition) {
+    // Calculate partition point for normalized/quantized coordinates
+    const std::uint32_t partition_point =
+        (std::numeric_limits<std::uint32_t>::max() >> (32 - vertex_quantization_bits)) / 2 + 1;
+    const std::uint32_t partition_coords[3] = {partition_point, partition_point, partition_point};
+    return neuroglancer_draco_decode_impl(input, input_size, partition, skipDequantization, partition_coords);
+  } else {
+    return neuroglancer_draco_decode_impl(input, input_size, partition, skipDequantization, nullptr);
+  }
+}
+
+// Function for world coordinates with explicit octant center
+int neuroglancer_draco_decode_world_coords(char *input, unsigned int input_size, bool partition,
+                                           const unsigned int *octant_center_coords) {
+  // World coordinate meshes don't need dequantization (they're already in world space)
+  // Take ownership of coordinate array memory for consistent memory management
+  std::unique_ptr<unsigned int[], FreeDeleter> coords_deleter(
+      const_cast<unsigned int*>(octant_center_coords));
+  return neuroglancer_draco_decode_impl(input, input_size, partition, false, octant_center_coords);
 }
 }
