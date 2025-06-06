@@ -447,51 +447,90 @@ export class GrapheneMultiscaleMeshSource extends WithParameters(
     if (fragments.length === 1) {
       return fragments[0];
     }
-    
-    // Calculate total sizes
-    let totalVertices = 0;
-    let totalIndices = 0;
-    for (const fragment of fragments) {
-      totalVertices += fragment.vertexPositions.length;
-      totalIndices += fragment.indices.length;
-    }
-    
-    // Create merged arrays
-    const mergedVertices = new Uint32Array(totalVertices);
-    const mergedIndices = new Uint32Array(totalIndices);
-    const mergedSubChunkOffsets = new Uint32Array(9); // 8 subchunks + total
-    
-    let vertexOffset = 0;
-    let indexOffset = 0;
-    
-    for (const fragment of fragments) {
-      // Copy vertices
-      mergedVertices.set(fragment.vertexPositions, vertexOffset);
-      
-      // Copy and adjust indices (add vertex offset)
-      for (let i = 0; i < fragment.indices.length; i++) {
-        mergedIndices[indexOffset + i] = fragment.indices[i] + (vertexOffset / 3);
+
+    // Calculate total sizes and validate data
+    let totalVertexCount = 0;  // Number of vertices
+    let totalIndexCount = 0;   // Number of indices
+
+    for (let i = 0; i < fragments.length; i++) {
+      const fragment = fragments[i];
+      const vertexCount = fragment.vertexPositions ? fragment.vertexPositions.length / 3 : 0;
+      const indexCount = fragment.indices ? fragment.indices.length : 0;
+
+      if (!fragment.vertexPositions || !fragment.indices) {
+        continue;
       }
-      
-      // Merge subchunk offsets
-      for (let subchunk = 0; subchunk < 8; subchunk++) {
-        const subchunkStart = fragment.subChunkOffsets[subchunk];
-        const subchunkEnd = fragment.subChunkOffsets[subchunk + 1];
-        const subchunkSize = subchunkEnd - subchunkStart;
-        
-        if (subchunkSize > 0) {
-          mergedSubChunkOffsets[subchunk + 1] += subchunkSize;
+
+      totalVertexCount += vertexCount;
+      totalIndexCount += indexCount;
+    }
+
+    // Create merged arrays - match the type of the first fragment
+    const firstFragment = fragments[0];
+    const VertexType = firstFragment.vertexPositions.constructor;
+    const IndexType = firstFragment.indices.constructor;
+
+    const mergedVertices = new VertexType(totalVertexCount * 3);  // 3 components per vertex
+    const mergedIndices = new IndexType(totalIndexCount);
+    const mergedSubChunkOffsets = new Uint32Array(9); // 8 subchunks + total
+
+    // First pass: Copy all vertices and collect indices by octant
+    let currentVertexOffset = 0;
+    const indicesByOctant: Uint32Array[] = Array.from({ length: 8 }, () => new Uint32Array(0));
+
+    for (let fragIdx = 0; fragIdx < fragments.length; fragIdx++) {
+      const fragment = fragments[fragIdx];
+
+      if (!fragment.vertexPositions || !fragment.indices) {
+        continue;
+      }
+
+      const fragVertexCount = fragment.vertexPositions.length / 3;
+
+      // Copy vertices (all position values)
+      const vertexStartPos = currentVertexOffset * 3;
+      mergedVertices.set(fragment.vertexPositions, vertexStartPos);
+
+      // Extract indices by octant and adjust vertex references
+      if (fragment.subChunkOffsets) {
+        for (let octant = 0; octant < 8; octant++) {
+          const start = fragment.subChunkOffsets[octant];
+          const end = fragment.subChunkOffsets[octant + 1];
+          const count = end - start;
+
+          if (count > 0) {
+            // Extract indices for this octant and adjust vertex references
+            const octantIndices = fragment.indices.slice(start, end);
+            const adjustedIndices = new Uint32Array(count);
+            for (let i = 0; i < count; i++) {
+              adjustedIndices[i] = octantIndices[i] + currentVertexOffset;
+            }
+
+            // Append to the octant's index collection
+            const existingLength = indicesByOctant[octant].length;
+            const newIndices = new Uint32Array(existingLength + count);
+            newIndices.set(indicesByOctant[octant], 0);
+            newIndices.set(adjustedIndices, existingLength);
+            indicesByOctant[octant] = newIndices;
+          }
         }
       }
 
-      vertexOffset += fragment.vertexPositions.length;
-      indexOffset += fragment.indices.length;
+      currentVertexOffset += fragVertexCount;
     }
 
-    // Convert subchunk counts to cumulative offsets
-    for (let i = 1; i <= 8; i++) {
-      mergedSubChunkOffsets[i] += mergedSubChunkOffsets[i - 1];
+    // Second pass: Concatenate all octant indices and build final subchunk offsets
+    let totalIndexOffset = 0;
+    for (let octant = 0; octant < 8; octant++) {
+      mergedSubChunkOffsets[octant] = totalIndexOffset;
+      const octantIndices = indicesByOctant[octant];
+
+      if (octantIndices.length > 0) {
+        mergedIndices.set(octantIndices, totalIndexOffset);
+        totalIndexOffset += octantIndices.length;
+      }
     }
+    mergedSubChunkOffsets[8] = totalIndexOffset; // Total
 
     return {
       vertexPositions: mergedVertices,
