@@ -481,6 +481,7 @@ export class MeshLayer extends withSegmentationLayerBackendState(
             fragmentId,
           );
           ++this.numVisibleChunksNeeded;
+          // console.log("RCFC");
           chunkManager.requestChunk(
             fragmentChunk,
             priorityTier,

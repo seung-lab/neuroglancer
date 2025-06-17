@@ -558,6 +558,10 @@ class SegmentationUserLayerDisplayState implements SegmentationDisplayState {
     );
   }
 
+  cullBounds = new TrackableBoolean(false, false);
+
+  bounds = new WatchableValue(new Float32Array(6)); // TODO hardcoding rank
+
   segmentSelectionState = new SegmentSelectionState();
   selectedAlpha = trackableAlphaValue(0.5);
   saturation = trackableAlphaValue(1.0);

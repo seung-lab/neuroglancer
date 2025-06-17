@@ -16,6 +16,7 @@
 
 import type {
   ChunkSourceParametersConstructor,
+  ChunkSourceStateConstructor,
   LayerChunkProgressInfo,
 } from "#src/chunk_manager/base.js";
 import {
@@ -267,9 +268,7 @@ export class ChunkQueueManager extends SharedObject {
           switch (newState) {
             case ChunkState.GPU_MEMORY:
               chunk.copyToGPU(this.gl);
-              if (chunk.constructor.name !== "ManifestChunk") {
-                visibleChunksChanged = true;
-              }
+              visibleChunksChanged = true;
               break;
             case ChunkState.SYSTEM_MEMORY:
               if (oldState === ChunkState.GPU_MEMORY) {
@@ -494,22 +493,30 @@ export interface ChunkSource {
 
 export function WithParameters<
   Parameters,
+  State,
   TBase extends ChunkSourceConstructor,
 >(
   Base: TBase,
   parametersConstructor: ChunkSourceParametersConstructor<Parameters>,
+  state?: ChunkSourceStateConstructor<State>,
 ) {
+  state;
   type WithParametersOptions = InstanceType<TBase>["OPTIONS"] & {
     parameters: Parameters;
+    state?: State;
   };
   @registerSharedObjectOwner(parametersConstructor.RPC_ID)
   class C extends Base {
     declare OPTIONS: WithParametersOptions;
     parameters: Parameters;
+    state: State;
     constructor(...args: any[]) {
       super(...args);
       const options: WithParametersOptions = args[1];
       this.parameters = options.parameters;
+      if (options.state) {
+        this.state = options.state;
+      }
     }
     initializeCounterpart(rpc: RPC, options: any) {
       options.parameters = this.parameters;
