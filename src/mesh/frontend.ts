@@ -355,7 +355,11 @@ export class MeshShaderManager {
     console.log("making getter!", layer.displayState.cullBounds);
 
     const myBundleWatchable = makeCachedDerivedWatchableValue(
-      (silhouetteRendering: number, cullingEnabled: boolean, bounds: Float32Array) => {
+      (
+        silhouetteRendering: number,
+        cullingEnabled: boolean,
+        bounds: Float32Array,
+      ) => {
         return {
           silhouetteRenderingEnabled: silhouetteRendering > 0,
           cullingEnabled,
@@ -425,27 +429,17 @@ vColor *= pow(1.0 - absCosAngle, uSilhouettePower);
         }
         if (cullingEnabled) {
           vertexMain += `
-if (vertexPosition.x < ${bounds[0].toFixed(1)}f) {
-  vDiscard = 1.0f;
-}
-  if (vertexPosition.y < ${bounds[1].toFixed(1)}f) {
-  vDiscard = 1.0f;
-}
-  if (vertexPosition.z < ${bounds[2].toFixed(1)}f) {
-  vDiscard = 1.0f;
-}
-  if (vertexPosition.x > ${bounds[3].toFixed(1)}f) {
-  vDiscard = 1.0f;
-}
-  if (vertexPosition.y > ${bounds[4].toFixed(1)}f) {
-  vDiscard = 1.0f;
-}
-  if (vertexPosition.z > ${bounds[5].toFixed(1)}f) {
+if ((vertexPosition.x < ${bounds[0].toFixed(1)}f) ||
+    (vertexPosition.y < ${bounds[1].toFixed(1)}f) ||
+    (vertexPosition.z < ${bounds[2].toFixed(1)}f) ||
+    (vertexPosition.x > ${bounds[3].toFixed(1)}f) ||
+    (vertexPosition.y > ${bounds[4].toFixed(1)}f) ||
+    (vertexPosition.z > ${bounds[5].toFixed(1)}f)) {
   vDiscard = 1.0f;
 }
 `;
         }
-        console.log('vertex main', vertexMain);
+        console.log("vertex main", vertexMain);
 
         builder.setVertexMain(vertexMain);
         let fragmentMain = `
