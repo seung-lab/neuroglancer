@@ -238,14 +238,17 @@ class GrapheneState extends RefCounted implements Trackable {
   public mergeState = new MergeState();
   public findPathState = new FindPathState();
 
-  public focusPosition = new TrackableValue<Float32Array>(
-    new Float32Array(),
+  public focusBoundingBox = new TrackableValue<Float32Array | undefined>(
+    undefined,
     (val) => {
       const x = verifyFloatArray(val);
       return new Float32Array(x);
     },
   );
   public focusBoundingBoxSize = new TrackableValue(0, verifyNonnegativeInt);
+  public focusTrackGlobalPosition = new TrackableBoolean(true);
+
+  public focusMeshCulling = new TrackableBoolean(false);
 
   constructor() {
     super();
@@ -265,12 +268,22 @@ class GrapheneState extends RefCounted implements Trackable {
       }),
     );
     this.registerDisposer(
-      this.focusPosition.changed.add(() => {
+      this.focusBoundingBox.changed.add(() => {
         this.changed.dispatch();
       }),
     );
     this.registerDisposer(
       this.focusBoundingBoxSize.changed.add(() => {
+        this.changed.dispatch();
+      }),
+    );
+    this.registerDisposer(
+      this.focusTrackGlobalPosition.changed.add(() => {
+        this.changed.dispatch();
+      }),
+    );
+    this.registerDisposer(
+      this.focusMeshCulling.changed.add(() => {
         this.changed.dispatch();
       }),
     );
@@ -286,8 +299,10 @@ class GrapheneState extends RefCounted implements Trackable {
     this.multicutState.reset();
     this.mergeState.reset();
     this.findPathState.reset();
-    this.focusPosition.reset();
+    this.focusBoundingBox.reset();
     this.focusBoundingBoxSize.reset();
+    this.focusTrackGlobalPosition.reset();
+    this.focusMeshCulling.reset();
   }
 
   toJSON() {
@@ -295,8 +310,11 @@ class GrapheneState extends RefCounted implements Trackable {
       [MULTICUT_JSON_KEY]: this.multicutState.toJSON(),
       [MERGE_JSON_KEY]: this.mergeState.toJSON(),
       [FIND_PATH_JSON_KEY]: this.findPathState.toJSON(),
-      [FOCUS_POSITION_JSON_KEY]: this.focusPosition.toJSON(),
+      [FOCUS_BOUNDING_BOX_JSON_KEY]: this.focusBoundingBox.toJSON(),
       [FOCUS_BOUNDING_BOX_SIZE_JSON_KEY]: this.focusBoundingBoxSize.toJSON(),
+      [FOCUS_TRACK_GLOBAL_POSITION_JSON_KEY]:
+        this.focusTrackGlobalPosition.toJSON(),
+        [FOCUS_MESH_CULLING_JSON_KEY]: this.focusMeshCulling.toJSON(),
     };
   }
 
@@ -310,14 +328,28 @@ class GrapheneState extends RefCounted implements Trackable {
     verifyOptionalObjectProperty(x, FIND_PATH_JSON_KEY, (value) => {
       this.findPathState.restoreState(value);
     });
-    verifyOptionalObjectProperty(x, FOCUS_POSITION_JSON_KEY, (value) => {
-      this.focusPosition.restoreState(value);
+    verifyOptionalObjectProperty(x, FOCUS_BOUNDING_BOX_JSON_KEY, (value) => {
+      this.focusBoundingBox.restoreState(value);
     });
     verifyOptionalObjectProperty(
       x,
       FOCUS_BOUNDING_BOX_SIZE_JSON_KEY,
       (value) => {
         this.focusBoundingBoxSize.restoreState(value);
+      },
+    );
+    verifyOptionalObjectProperty(
+      x,
+      FOCUS_TRACK_GLOBAL_POSITION_JSON_KEY,
+      (value) => {
+        this.focusTrackGlobalPosition.restoreState(value);
+      },
+    );
+    verifyOptionalObjectProperty(
+      x,
+      FOCUS_MESH_CULLING_JSON_KEY,
+      (value) => {
+        this.focusTrackGlobalPosition.restoreState(value);
       },
     );
   }
@@ -334,18 +366,13 @@ class GrapheneMeshSource extends WithParameters(
   }
 
   initializeCounterpart(rpc: RPC, options: MeshSourceParameters): void {
-    const focusPosition = SharedWatchableValue.makeFromExisting(
+    const focusBoundingBox = SharedWatchableValue.makeFromExisting(
       rpc!,
-      this.state.focusPosition,
-    );
-    const focusBoundingBoxSize = SharedWatchableValue.makeFromExisting(
-      rpc!,
-      this.state.focusBoundingBoxSize,
+      this.state.focusBoundingBox,
     );
     super.initializeCounterpart(rpc, {
       ...options,
-      focusPosition: focusPosition.rpcId!,
-      focusBoundingBoxSize: focusBoundingBoxSize.rpcId!,
+      focusBoundingBox: focusBoundingBox.rpcId!,
     });
   }
 }
@@ -897,7 +924,17 @@ function makeColoredAnnotationState(
   );
 
   const displayState = new AnnotationDisplayState();
+  console.log("shader!", displayState.shader);
   displayState.color.value.set(color);
+  color;
+  // displayState.shader.value = `void main() {setColor(vec3(1.0, 0.0, 0.0));}`
+  // displayState.shader.defaultValue = `void main() {setColor(vec3(1.0, 0.0, 0.0));}`
+
+  // displayState.shader.changed.add(() => {
+  //   console.log('shader changed!');
+  // })
+
+  // console.log('new shader!', displayState.shader);
 
   displayState.relationshipStates.set("associated segments", {
     segmentationState: new WatchableValue(layer.displayState),
@@ -972,8 +1009,10 @@ const TARGET_JSON_KEY = "target";
 const CENTROIDS_JSON_KEY = "centroids";
 const PRECISION_MODE_JSON_KEY = "precision";
 
-const FOCUS_POSITION_JSON_KEY = "focusPosition";
+const FOCUS_BOUNDING_BOX_JSON_KEY = "focusBoundingBox";
 const FOCUS_BOUNDING_BOX_SIZE_JSON_KEY = "focusBoundingBoxSize";
+const FOCUS_TRACK_GLOBAL_POSITION_JSON_KEY = "focusTrackGlobalPosition";
+const FOCUS_MESH_CULLING_JSON_KEY = "focusMeshCulling";
 
 export interface SegmentSelection {
   segmentId: bigint;
@@ -1348,6 +1387,10 @@ class MulticutState extends RefCounted implements Trackable {
   }
 }
 
+const clamp = (val: number, min: number, max: number) => {
+  return Math.max(min, Math.min(max, val));
+};
+
 class GraphConnection extends SegmentationGraphSourceConnection {
   public annotationLayerStates: AnnotationLayerState[] = [];
   public mergeAnnotationState: AnnotationLayerState;
@@ -1361,17 +1404,92 @@ class GraphConnection extends SegmentationGraphSourceConnection {
   ) {
     super(graph, layer.displayState.segmentationGroupState.value);
 
-    const updateFocusPosition = () => {
-      state.focusPosition.value =
-        layer.managedLayer.manager.root.globalPosition.value;
+    const updateMeshBounds = () => {
+      const {
+        focusBoundingBox: { value: focusBoundingBox },
+        focusMeshCulling: { value: focusMeshCulling },
+      } = state;
+      if (!focusBoundingBox || !focusMeshCulling) {
+        layer.displayState.cullBounds.value = false;
+        return;
+      }
+
+      const { rank } = this.chunkSource;
+      const { resolution } = this.chunkSource.info.scales[0];
+      const {
+        bounds: { value: bounds },
+      } = layer.displayState;
+      for (let i = 0; i < rank; i++) {
+        bounds[i] = focusBoundingBox[i] * resolution[i];
+        bounds[i + rank] = focusBoundingBox[i + rank] * resolution[i];
+      }
+      layer.displayState.cullBounds.value = true;
+      layer.displayState.bounds.changed.dispatch();
+    };
+
+    updateMeshBounds();
+
+    this.registerDisposer(state.focusBoundingBox.changed.add(updateMeshBounds));
+    this.registerDisposer(state.focusMeshCulling.changed.add(updateMeshBounds));
+
+    const updateFocusBoundingBox = () => {
+      const {
+        focusBoundingBoxSize: { value: focusBoundingBoxSize },
+      } = state;
+      if (focusBoundingBoxSize === 0) {
+        state.focusBoundingBox.value = undefined;
+        return;
+      }
+      const { rank } = this.chunkSource;
+      const { resolution, size, voxelOffset } = this.chunkSource.info.scales[0];
+      const boundingBox = new Float32Array(rank * 2);
+
+      let center = new Float32Array(rank);
+
+      const currentBoundingBox = state.focusBoundingBox.value;
+
+      if (state.focusTrackGlobalPosition.value) {
+        const {
+          globalPosition: { value: globalPosition },
+        } = layer.managedLayer.manager.root;
+        for (let i = 0; i < rank; i++) {
+          center[i] = globalPosition[i];
+        }
+      } else if (currentBoundingBox) {
+        for (let i = 0; i < rank; i++) {
+          center[i] =
+            (currentBoundingBox[i] + currentBoundingBox[i + rank]) / 2;
+        }
+      }
+
+      for (let i = 0; i < rank; i++) {
+        const boundingBoxLength =
+          (focusBoundingBoxSize ** 3 * resolution[0]) / resolution[i];
+        boundingBox[i] = clamp(
+          Math.round(center[i] - boundingBoxLength / 2),
+          voxelOffset[i],
+          voxelOffset[i] + size[i],
+        );
+        boundingBox[i + rank] = clamp(
+          Math.round(center[i] + boundingBoxLength / 2),
+          voxelOffset[i],
+          voxelOffset[i] + size[i],
+        );
+      }
+      state.focusBoundingBox.value = boundingBox;
     };
 
     this.registerDisposer(
-      layer.managedLayer.manager.root.globalPosition.changed.add(
-        updateFocusPosition,
-      ),
+      layer.managedLayer.manager.root.globalPosition.changed.add(() => {
+        if (state.focusTrackGlobalPosition.value) {
+          updateFocusBoundingBox();
+        }
+      }),
     );
-    updateFocusPosition();
+    this.registerDisposer(
+      state.focusBoundingBoxSize.changed.add(updateFocusBoundingBox),
+    );
+    updateFocusBoundingBox();
 
     const segmentsState = layer.displayState.segmentationGroupState.value;
     this.previousVisibleSegmentCount = segmentsState.visibleSegments.size;
@@ -1439,21 +1557,24 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       layer,
       loadedSubsource,
       "focus area",
-      WHITE_COLOR,
+      vec3.fromValues(0.3, 0.3, 0.3),
     );
 
-    const updateFocusBoundingBox = () => {
+    const updateFocusBoundingBoxAnnotation = () => {
       const annotationSource = focusArea.source;
       for (const annotation of annotationSource) {
         annotationSource.delete(annotationSource.getReference(annotation.id));
       }
-
-      const pointA = new Float32Array(state.focusPosition.value);
-      const pointB = new Float32Array(state.focusPosition.value);
-      for (let i = 0; i < 3; i++) {
-        pointA[i] -= state.focusBoundingBoxSize.value;
-        pointB[i] += state.focusBoundingBoxSize.value;
+      const {
+        focusBoundingBox: { value: focusBoundingBox },
+      } = state;
+      if (focusBoundingBox === undefined) {
+        console.log("focusBoundingBox undefined");
       }
+      if (focusBoundingBox === undefined) return;
+      const { rank } = this.chunkSource;
+      const pointA = new Float32Array(focusBoundingBox.slice(0, rank));
+      const pointB = new Float32Array(focusBoundingBox.slice(rank));
       const annotation: AxisAlignedBoundingBox = {
         id: "",
         pointA,
@@ -1464,10 +1585,9 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       annotationSource.add(annotation);
     };
 
-    updateFocusBoundingBox();
+    updateFocusBoundingBoxAnnotation();
 
-    state.focusPosition.changed.add(updateFocusBoundingBox);
-    state.focusBoundingBoxSize.changed.add(updateFocusBoundingBox);
+    state.focusBoundingBox.changed.add(updateFocusBoundingBoxAnnotation);
 
     annotationLayerStates.push(redGroup, blueGroup, focusArea);
 
@@ -2351,6 +2471,26 @@ class GrapheneGraphSource extends SegmentationGraphSource {
         focusBoundingBoxSizeControl,
       ),
     );
+    {
+      const checkbox = tab.registerDisposer(
+        new TrackableBooleanCheckbox(this.state.focusTrackGlobalPosition),
+      );
+      const label = document.createElement("label");
+      label.appendChild(document.createTextNode("Focus track global position"));
+      label.title = "todo";
+      label.appendChild(checkbox.element);
+      parent.appendChild(label);
+    }
+    {
+      const checkbox = tab.registerDisposer(
+        new TrackableBooleanCheckbox(this.state.focusMeshCulling),
+      );
+      const label = document.createElement("label");
+      label.appendChild(document.createTextNode("Focus mesh culling"));
+      label.title = "todo";
+      label.appendChild(checkbox.element);
+      parent.appendChild(label);
+    }
     toolbox.appendChild(
       makeToolButton(context, layer.toolBinder, {
         toolJson: GRAPHENE_MULTICUT_SEGMENTS_TOOL_ID,
@@ -2712,7 +2852,7 @@ const focusBoundingBoxSizeControl = {
         value: graphConnection.state.focusBoundingBoxSize,
         options: {
           min: 0,
-          max: 100000,
+          max: 100,
           step: 1,
         },
       };

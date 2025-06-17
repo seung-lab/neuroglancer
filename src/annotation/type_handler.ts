@@ -506,6 +506,7 @@ void userMain();
             shaderCodeWithLineDirective(parameters.parseResult.code) +
             "\n#undef main\n",
         );
+        console.log('we added our userMain');
       },
     });
   }
@@ -595,6 +596,7 @@ if (ng_discardValue) {
     binder.enable(1);
     gl.bindBuffer(WebGL2RenderingContext.ARRAY_BUFFER, context.buffer.buffer);
     binder.bind(/*stride=*/ context.count, context.bufferOffset);
+    console.log('callback', shader);
     callback(shader);
     binder.disable();
   }

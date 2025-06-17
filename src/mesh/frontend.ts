@@ -54,7 +54,10 @@ import {
   SegmentationLayerSharedObject,
 } from "#src/segmentation_display_state/frontend.js";
 import type { WatchableValueInterface } from "#src/trackable_value.js";
-import { makeCachedDerivedWatchableValue } from "#src/trackable_value.js";
+import {
+  makeCachedDerivedWatchableValue,
+  WatchableValue,
+} from "#src/trackable_value.js";
 import type { Borrowed, RefCounted } from "#src/util/disposable.js";
 import type { vec4 } from "#src/util/geom.js";
 import {
@@ -349,19 +352,37 @@ export class MeshShaderManager {
   }
 
   makeGetter(layer: RefCounted & { gl: GL; displayState: MeshDisplayState }) {
-    const silhouetteRenderingEnabled = layer.registerDisposer(
-      makeCachedDerivedWatchableValue(
-        (x) => x > 0,
-        [layer.displayState.silhouetteRendering],
-      ),
+    console.log("making getter!", layer.displayState.cullBounds);
+
+    const myBundleWatchable = makeCachedDerivedWatchableValue(
+      (silhouetteRendering: number, cullingEnabled: boolean, bounds: Float32Array) => {
+        return {
+          silhouetteRenderingEnabled: silhouetteRendering > 0,
+          cullingEnabled,
+          bounds,
+        };
+      },
+      [
+        layer.displayState.silhouetteRendering,
+        layer.displayState.cullBounds || new WatchableValue(false),
+        layer.displayState.bounds || new WatchableValue(new Float32Array(6)), // TODO get rank
+      ],
+      // (a, b) => JSON.stringify(a) === JSON.stringify(b), TODO do I need this?
     );
     return parameterizedEmitterDependentShaderGetter(layer, layer.gl, {
       memoizeKey: `mesh/MeshShaderManager/${this.fragmentRelativeVertices}/${this.vertexPositionFormat}`,
-      parameters: silhouetteRenderingEnabled,
-      defineShader: (builder, silhouetteRenderingEnabled) => {
+      parameters: myBundleWatchable,
+      defineShader: (
+        builder,
+        { silhouetteRenderingEnabled, cullingEnabled, bounds },
+      ) => {
+        bounds;
         this.vertexPositionHandler.defineShader(builder);
         builder.addAttribute("highp vec2", "aVertexNormal");
         builder.addVarying("highp vec4", "vColor");
+        if (cullingEnabled) {
+          builder.addVarying("highp float", "vDiscard");
+        }
         builder.addUniform("highp vec4", "uLightDirection");
         builder.addUniform("highp vec4", "uColor");
         builder.addUniform("highp mat3", "uNormalMatrix");
@@ -377,11 +398,13 @@ export class MeshShaderManager {
         builder.addVertexCode(glsl_decodeNormalOctahedronSnorm8);
         let vertexMain = "";
         if (this.fragmentRelativeVertices) {
+          console.log("we are relative!");
           vertexMain += `
 highp vec3 vertexPosition = uFragmentOrigin + uFragmentShape * getVertexPosition();
 highp vec3 normalMultiplier = 1.0 / uFragmentShape;
 `;
         } else {
+          console.log("we are non-relative!");
           vertexMain += `
 highp vec3 vertexPosition = getVertexPosition();
 highp vec3 normalMultiplier = vec3(1.0, 1.0, 1.0);
@@ -400,8 +423,42 @@ vColor = vec4(lightingFactor * uColor.rgb, uColor.a);
 vColor *= pow(1.0 - absCosAngle, uSilhouettePower);
 `;
         }
+        if (cullingEnabled) {
+          vertexMain += `
+if (vertexPosition.x < ${bounds[0].toFixed(1)}f) {
+  vDiscard = 1.0f;
+}
+  if (vertexPosition.y < ${bounds[1].toFixed(1)}f) {
+  vDiscard = 1.0f;
+}
+  if (vertexPosition.z < ${bounds[2].toFixed(1)}f) {
+  vDiscard = 1.0f;
+}
+  if (vertexPosition.x > ${bounds[3].toFixed(1)}f) {
+  vDiscard = 1.0f;
+}
+  if (vertexPosition.y > ${bounds[4].toFixed(1)}f) {
+  vDiscard = 1.0f;
+}
+  if (vertexPosition.z > ${bounds[5].toFixed(1)}f) {
+  vDiscard = 1.0f;
+}
+`;
+        }
+        console.log('vertex main', vertexMain);
+
         builder.setVertexMain(vertexMain);
-        builder.setFragmentMain("emit(vColor, uPickID);");
+        let fragmentMain = `
+emit(vColor, uPickID);
+`;
+        if (cullingEnabled) {
+          fragmentMain += `
+if (vDiscard > 0.0f) {
+  discard;
+}
+`;
+        }
+        builder.setFragmentMain(fragmentMain);
       },
     });
   }
@@ -409,6 +466,8 @@ vColor *= pow(1.0 - absCosAngle, uSilhouettePower);
 
 export interface MeshDisplayState extends SegmentationDisplayState3D {
   silhouetteRendering: WatchableValueInterface<number>;
+  cullBounds?: WatchableValueInterface<boolean>;
+  bounds?: WatchableValueInterface<Float32Array>;
 }
 
 export class MeshLayer extends PerspectiveViewRenderLayer<ThreeDimensionalRenderLayerAttachmentState> {
@@ -533,6 +592,7 @@ export class MeshLayer extends PerspectiveViewRenderLayer<ThreeDimensionalRender
             fragment.state === ChunkState.GPU_MEMORY
           ) {
             meshShaderManager.drawFragment(gl, shader, fragment);
+            console.log("draw fragment!", fragment, shader);
             ++presentChunks;
           }
         }

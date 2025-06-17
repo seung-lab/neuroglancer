@@ -63,8 +63,7 @@ export class MeshSourceParameters {
 }
 
 export class MeshSourceParametersWithFocus extends MeshSourceParameters {
-  focusPosition: number;
-  focusBoundingBoxSize: number;
+  focusBoundingBox: number;
 }
 
 export class MultiscaleMeshMetadata {

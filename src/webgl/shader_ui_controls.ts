@@ -1449,6 +1449,7 @@ export class ShaderControlState
   }
 
   private handleFragmentMainChanged() {
+    console.log('handleFragmentMainChanged');
     const generation = this.fragmentMain.changed.count;
     const dataContextGeneration = this.dataContext.changed.count;
     if (

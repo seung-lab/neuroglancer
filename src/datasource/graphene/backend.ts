@@ -141,13 +141,11 @@ export class GrapheneMeshSource extends WithParameters(
     this.parameters.fragmentUrl,
   );
 
-  focusPosition: SharedWatchableValue<Float32Array>;
-  focusBoundingBoxSize: SharedWatchableValue<number>;
+  focusBoundingBox: SharedWatchableValue<Float32Array|undefined>;
 
   constructor(rpc: RPC, options: MeshSourceParametersWithFocus) {
     super(rpc, options);
-    this.focusPosition = rpc.get(options.focusPosition);
-    this.focusBoundingBoxSize = rpc.get(options.focusBoundingBoxSize);
+    this.focusBoundingBox = rpc.get(options.focusBoundingBox);
 
     // this.registerDisposer(
     //   this.focusPosition.changed.add(() => {
@@ -170,28 +168,23 @@ export class GrapheneMeshSource extends WithParameters(
 
   async download(chunk: ManifestChunk, signal: AbortSignal) {
     const {
-      focusPosition: { value: focusPosition },
-      focusBoundingBoxSize: { value: boundingBoxSize },
+      focusBoundingBox: { value: focusBoundingBox },
     } = this;
     // console.log("download", chunk.objectId, focusPosition);
 
-    const x = Math.round(focusPosition[0]);
-    const y = Math.round(focusPosition[1]);
-    const z = Math.round(focusPosition[2]);
-
-    const boundingBoxHalf = Math.floor(boundingBoxSize / 2); // TODO better name
-
     // TODO, dataset bounds?
 
-    const bounds =
-      boundingBoxSize > 0
-        ? [x, y, z]
-            .map(
-              (v) =>
-                `${Math.max(0, v - boundingBoxHalf)}-${v + boundingBoxHalf}`,
-            )
-            .join("_")
-        : undefined;
+    // if (focusBoundingBox.length)
+
+    // const bounds =
+    //   boundingBoxSize > 0
+    //     ? [x, y, z]
+    //         .map(
+    //           (v) =>
+    //             `${Math.max(0, v - boundingBoxHalf)}-${v + boundingBoxHalf}`,
+    //         )
+    //         .join("_")
+    //     : undefined;
 
     const retry = () => {
       console.log(
@@ -200,9 +193,7 @@ export class GrapheneMeshSource extends WithParameters(
         chunk.newRequestedState,
       );
       chunk.downloadAbortController?.abort("retry");
-      unregisterFPL();
-      unregisterFBSL();
-
+      unregister();
       if (chunk.newRequestedState !== ChunkState.NEW) {
         // re-download manifest
         console.log("re-download because focus changed", chunk.objectId);
@@ -213,12 +204,8 @@ export class GrapheneMeshSource extends WithParameters(
       }
     };
 
-    const unregisterFPL = this.registerDisposer(
-      this.focusPosition.changed.add(retry),
-    );
-
-    const unregisterFBSL = this.registerDisposer(
-      this.focusBoundingBoxSize.changed.add(retry),
+    const unregister = this.registerDisposer(
+      this.focusBoundingBox.changed.add(retry),
     );
 
     // console.log('re-do manifest', chunk.objectId, chunk.requestedState, chunk.newRequestedState, chunk.state, chunk.);
@@ -229,8 +216,9 @@ export class GrapheneMeshSource extends WithParameters(
     }
     const { fetchOkImpl, baseUrl } = this.manifestHttpSource;
     let manifestPath = `/manifest/${chunk.objectId}:${parameters.lod}?verify=1&prepend_seg_ids=1`;
-    if (bounds) {
-      manifestPath += `&bounds=${bounds}&stop_layer=2`; // TODO, url builder?
+    if (focusBoundingBox) {
+      const boundsStr = [0,1,2].map(x => `${focusBoundingBox[x]}-${focusBoundingBox[x+3]}`).join("_");
+      manifestPath += `&bounds=${boundsStr}&stop_layer=2`;
     }
     const response = await (
       await fetchOkImpl(baseUrl + manifestPath, { signal })
