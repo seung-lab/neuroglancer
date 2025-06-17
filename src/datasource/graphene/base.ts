@@ -59,8 +59,12 @@ export class MeshSourceParameters {
   lod: number;
   sharding: Array<ShardingParameters> | undefined;
   nBitsForLayerId: number;
-
   static RPC_ID = "graphene/MeshSource";
+}
+
+export class MeshSourceParametersWithFocus extends MeshSourceParameters {
+  focusPosition: number;
+  focusBoundingBoxSize: number;
 }
 
 export class MultiscaleMeshMetadata {

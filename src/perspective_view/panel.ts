@@ -890,6 +890,7 @@ export class PerspectivePanel extends RenderedDataPanel {
   }
 
   drawWithPicking(pickingData: FramePickingData): boolean {
+    console.log("drawWithPicking");
     if (!this.navigationState.valid) {
       return false;
     }

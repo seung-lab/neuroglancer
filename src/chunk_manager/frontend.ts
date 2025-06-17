@@ -16,6 +16,7 @@
 
 import type {
   ChunkSourceParametersConstructor,
+  ChunkSourceStateConstructor,
   LayerChunkProgressInfo,
 } from "#src/chunk_manager/base.js";
 import {
@@ -190,7 +191,10 @@ export class ChunkQueueManager extends SharedObject {
       }
     }
     if (visibleChunksChanged) {
+      console.log("visibleChunksChanged!");
       this.visibleChunksChanged.dispatch();
+    } else {
+      console.log("no visibleChunksChanged!");
     }
     return numUpdates;
   }
@@ -227,12 +231,22 @@ export class ChunkQueueManager extends SharedObject {
   }
 
   applyChunkUpdate(update: any) {
+    console.log("ACU", update);
+
     let visibleChunksChanged = false;
     const { rpc } = this;
     const source = <ChunkSource>rpc!.get(update.source);
     if (source === undefined) {
       // Source was removed while chunk update was enqueued.
+      console.log("SRCUE");
       return;
+    }
+    {
+      const key2 = update.id;
+      if (!update.new) {
+        const chunk2 = source.chunks.get(key2)!;
+        console.log("not new chunk", chunk2);
+      }
     }
     if (DEBUG_CHUNK_UPDATES) {
       console.log(
@@ -252,6 +266,7 @@ export class ChunkQueueManager extends SharedObject {
       const newState: number = update.state;
       if (newState === ChunkState.EXPIRED) {
         // FIXME: maybe use freeList for chunks here
+        console.log("chunk expired");
         source.deleteChunk(update.id);
       } else {
         let chunk: Chunk;
@@ -262,14 +277,16 @@ export class ChunkQueueManager extends SharedObject {
         } else {
           chunk = source.chunks.get(key)!;
         }
+        console.log("chunk.constructor.name", chunk.constructor.name);
         const oldState = chunk.state;
         if (newState !== oldState) {
           switch (newState) {
             case ChunkState.GPU_MEMORY:
               chunk.copyToGPU(this.gl);
-              if (chunk.constructor.name !== "ManifestChunk") {
-                visibleChunksChanged = true;
-              }
+              // if (chunk.constructor.name !== "ManifestChunk") { TEMP
+              // WHY DO I NOT GET FRAGMENT CHUNK UPDATES HERE? THEY SHOULD BE REMOVED AND ADDED AS I PAN/CHANGE BBOX
+              visibleChunksChanged = true;
+              // }
               break;
             case ChunkState.SYSTEM_MEMORY:
               if (oldState === ChunkState.GPU_MEMORY) {
@@ -319,6 +336,7 @@ export class ChunkQueueManager extends SharedObject {
 }
 
 function updateChunk(rpc: RPC, x: any) {
+  console.log('update chunk', x);
   const source: ChunkSource = rpc.get(x.source);
   if (DEBUG_CHUNK_UPDATES) {
     console.log(
@@ -494,22 +512,30 @@ export interface ChunkSource {
 
 export function WithParameters<
   Parameters,
+  State,
   TBase extends ChunkSourceConstructor,
 >(
   Base: TBase,
   parametersConstructor: ChunkSourceParametersConstructor<Parameters>,
+  state?: ChunkSourceStateConstructor<State>,
 ) {
+  state;
   type WithParametersOptions = InstanceType<TBase>["OPTIONS"] & {
     parameters: Parameters;
+    state?: State;
   };
   @registerSharedObjectOwner(parametersConstructor.RPC_ID)
   class C extends Base {
     declare OPTIONS: WithParametersOptions;
     parameters: Parameters;
+    state: State;
     constructor(...args: any[]) {
       super(...args);
       const options: WithParametersOptions = args[1];
       this.parameters = options.parameters;
+      if (options.state) {
+        this.state = options.state;
+      }
     }
     initializeCounterpart(rpc: RPC, options: any) {
       options.parameters = this.parameters;

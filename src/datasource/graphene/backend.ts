@@ -30,7 +30,7 @@ import {
   getGrapheneFragmentKey,
   GRAPHENE_MESH_NEW_SEGMENT_RPC_ID,
   ChunkedGraphSourceParameters,
-  MeshSourceParameters,
+  MeshSourceParametersWithFocus,
   CHUNKED_GRAPH_LAYER_RPC_ID,
   CHUNKED_GRAPH_RENDER_LAYER_UPDATE_SOURCES_RPC_ID,
   RENDER_RATIO_LIMIT,
@@ -102,7 +102,7 @@ function downloadFragmentWithSharding(
 function downloadFragment(
   fragmentKvStore: KvStoreWithPath,
   fragmentId: string,
-  parameters: MeshSourceParameters,
+  parameters: MeshSourceParametersWithFocus,
   signal: AbortSignal,
 ): Promise<ReadResponse> {
   if (parameters.sharding) {
@@ -128,7 +128,7 @@ async function decodeDracoFragmentChunk(
 @registerSharedObject()
 export class GrapheneMeshSource extends WithParameters(
   WithSharedKvStoreContextCounterpart(MeshSource),
-  MeshSourceParameters,
+  MeshSourceParametersWithFocus,
 ) {
   manifestRequestCount = new Map<string, number>();
   newSegments = new Uint64Set();
@@ -141,6 +141,24 @@ export class GrapheneMeshSource extends WithParameters(
     this.parameters.fragmentUrl,
   );
 
+  focusPosition: SharedWatchableValue<Float32Array>;
+  focusBoundingBoxSize: SharedWatchableValue<number>;
+
+  constructor(rpc: RPC, options: MeshSourceParametersWithFocus) {
+    super(rpc, options);
+    this.focusPosition = rpc.get(options.focusPosition);
+    this.focusBoundingBoxSize = rpc.get(options.focusBoundingBoxSize);
+
+    // this.registerDisposer(
+    //   this.focusPosition.changed.add(() => {
+    //     console.log("our focus is changing!", this.focusPosition.value);
+    //     for (const chunk of this.chunks) {
+    //       console.log("this is a chunk!", chunk);
+    //     }
+    //   }),
+    // );
+  }
+
   addNewSegment(segment: bigint) {
     const { newSegments } = this;
     newSegments.add(segment);
@@ -151,12 +169,69 @@ export class GrapheneMeshSource extends WithParameters(
   }
 
   async download(chunk: ManifestChunk, signal: AbortSignal) {
+    const {
+      focusPosition: { value: focusPosition },
+      focusBoundingBoxSize: { value: boundingBoxSize },
+    } = this;
+    // console.log("download", chunk.objectId, focusPosition);
+
+    const x = Math.round(focusPosition[0]);
+    const y = Math.round(focusPosition[1]);
+    const z = Math.round(focusPosition[2]);
+
+    const boundingBoxHalf = Math.floor(boundingBoxSize / 2); // TODO better name
+
+    // TODO, dataset bounds?
+
+    const bounds =
+      boundingBoxSize > 0
+        ? [x, y, z]
+            .map(
+              (v) =>
+                `${Math.max(0, v - boundingBoxHalf)}-${v + boundingBoxHalf}`,
+            )
+            .join("_")
+        : undefined;
+
+    const retry = () => {
+      console.log(
+        "abort controller?",
+        chunk.downloadAbortController,
+        chunk.newRequestedState,
+      );
+      chunk.downloadAbortController?.abort("retry");
+      unregisterFPL();
+      unregisterFBSL();
+
+      if (chunk.newRequestedState !== ChunkState.NEW) {
+        // re-download manifest
+        console.log("re-download because focus changed", chunk.objectId);
+        this.chunkManager.queueManager.updateChunkState(
+          chunk,
+          ChunkState.QUEUED,
+        );
+      }
+    };
+
+    const unregisterFPL = this.registerDisposer(
+      this.focusPosition.changed.add(retry),
+    );
+
+    const unregisterFBSL = this.registerDisposer(
+      this.focusBoundingBoxSize.changed.add(retry),
+    );
+
+    // console.log('re-do manifest', chunk.objectId, chunk.requestedState, chunk.newRequestedState, chunk.state, chunk.);
+
     const { parameters, newSegments, manifestRequestCount } = this;
     if (isBaseSegmentId(chunk.objectId, parameters.nBitsForLayerId)) {
       return decodeManifestChunk(chunk, { fragments: [] });
     }
     const { fetchOkImpl, baseUrl } = this.manifestHttpSource;
-    const manifestPath = `/manifest/${chunk.objectId}:${parameters.lod}?verify=1&prepend_seg_ids=1`;
+    let manifestPath = `/manifest/${chunk.objectId}:${parameters.lod}?verify=1&prepend_seg_ids=1`;
+    if (bounds) {
+      manifestPath += `&bounds=${bounds}&stop_layer=2`; // TODO, url builder?
+    }
     const response = await (
       await fetchOkImpl(baseUrl + manifestPath, { signal })
     ).json();
@@ -190,6 +265,7 @@ export class GrapheneMeshSource extends WithParameters(
       chunk,
       new Uint8Array(await response.arrayBuffer()),
     );
+    console.log('got fragment!');
   }
 
   getFragmentKey(objectKey: string | null, fragmentId: string) {
@@ -431,6 +507,12 @@ export class ChunkedGraphLayer extends withSegmentationLayerBackendState(
       this.chunkManager.recomputeChunkPriorities.add(() => {
         this.updateChunkPriorities();
         this.debouncedupdateDisplayState();
+      }),
+    );
+
+    this.registerDisposer(
+      this.localPosition.changed.add(() => {
+        console.log("our local posiiton changed!");
       }),
     );
   }

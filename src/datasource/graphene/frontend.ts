@@ -25,6 +25,7 @@ import type {
   Annotation,
   AnnotationReference,
   AnnotationSource,
+  AxisAlignedBoundingBox,
   Line,
   Point,
 } from "#src/annotation/index.js";
@@ -208,6 +209,8 @@ import {
   addLayerControlToOptionsTab,
   registerLayerControl,
 } from "#src/widget/layer_control.js";
+import { RPC } from "#src/worker_rpc.js";
+import { rangeLayerControl } from "#src/widget/layer_control_range.js";
 
 function vec4FromVec3(vec: vec3, alpha = 0) {
   const res = vec4.clone([...vec]);
@@ -228,13 +231,122 @@ const TRANSPARENT_COLOR_PACKED = BigInt(packColor(TRANSPARENT_COLOR));
 const MULTICUT_OFF_COLOR = vec4.fromValues(0, 0, 0, 0.5);
 const WHITE_COLOR = vec3.fromValues(1, 1, 1);
 
+class GrapheneState extends RefCounted implements Trackable {
+  changed = new NullarySignal();
+
+  public multicutState = new MulticutState();
+  public mergeState = new MergeState();
+  public findPathState = new FindPathState();
+
+  public focusPosition = new TrackableValue<Float32Array>(
+    new Float32Array(),
+    (val) => {
+      const x = verifyFloatArray(val);
+      return new Float32Array(x);
+    },
+  );
+  public focusBoundingBoxSize = new TrackableValue(0, verifyNonnegativeInt);
+
+  constructor() {
+    super();
+    this.registerDisposer(
+      this.multicutState.changed.add(() => {
+        this.changed.dispatch();
+      }),
+    );
+    this.registerDisposer(
+      this.mergeState.changed.add(() => {
+        this.changed.dispatch();
+      }),
+    );
+    this.registerDisposer(
+      this.findPathState.changed.add(() => {
+        this.changed.dispatch();
+      }),
+    );
+    this.registerDisposer(
+      this.focusPosition.changed.add(() => {
+        this.changed.dispatch();
+      }),
+    );
+    this.registerDisposer(
+      this.focusBoundingBoxSize.changed.add(() => {
+        this.changed.dispatch();
+      }),
+    );
+  }
+
+  replaceSegments(oldValues: Uint64Set, newValues: Uint64Set) {
+    this.multicutState.replaceSegments(oldValues, newValues);
+    this.mergeState.replaceSegments(oldValues, newValues);
+    this.findPathState.replaceSegments(oldValues, newValues);
+  }
+
+  reset() {
+    this.multicutState.reset();
+    this.mergeState.reset();
+    this.findPathState.reset();
+    this.focusPosition.reset();
+    this.focusBoundingBoxSize.reset();
+  }
+
+  toJSON() {
+    return {
+      [MULTICUT_JSON_KEY]: this.multicutState.toJSON(),
+      [MERGE_JSON_KEY]: this.mergeState.toJSON(),
+      [FIND_PATH_JSON_KEY]: this.findPathState.toJSON(),
+      [FOCUS_POSITION_JSON_KEY]: this.focusPosition.toJSON(),
+      [FOCUS_BOUNDING_BOX_SIZE_JSON_KEY]: this.focusBoundingBoxSize.toJSON(),
+    };
+  }
+
+  restoreState(x: any) {
+    verifyOptionalObjectProperty(x, MULTICUT_JSON_KEY, (value) => {
+      this.multicutState.restoreState(value);
+    });
+    verifyOptionalObjectProperty(x, MERGE_JSON_KEY, (value) => {
+      this.mergeState.restoreState(value);
+    });
+    verifyOptionalObjectProperty(x, FIND_PATH_JSON_KEY, (value) => {
+      this.findPathState.restoreState(value);
+    });
+    verifyOptionalObjectProperty(x, FOCUS_POSITION_JSON_KEY, (value) => {
+      this.focusPosition.restoreState(value);
+    });
+    verifyOptionalObjectProperty(
+      x,
+      FOCUS_BOUNDING_BOX_SIZE_JSON_KEY,
+      (value) => {
+        this.focusBoundingBoxSize.restoreState(value);
+      },
+    );
+  }
+}
+
 class GrapheneMeshSource extends WithParameters(
   WithSharedKvStoreContext(MeshSource),
   MeshSourceParameters,
+  GrapheneState,
 ) {
   getFragmentKey(objectKey: string | null, fragmentId: string) {
     objectKey;
     return getGrapheneFragmentKey(fragmentId);
+  }
+
+  initializeCounterpart(rpc: RPC, options: MeshSourceParameters): void {
+    const focusPosition = SharedWatchableValue.makeFromExisting(
+      rpc!,
+      this.state.focusPosition,
+    );
+    const focusBoundingBoxSize = SharedWatchableValue.makeFromExisting(
+      rpc!,
+      this.state.focusBoundingBoxSize,
+    );
+    super.initializeCounterpart(rpc, {
+      ...options,
+      focusPosition: focusPosition.rpcId!,
+      focusBoundingBoxSize: focusBoundingBoxSize.rpcId!,
+    });
   }
 }
 
@@ -531,10 +643,12 @@ function parseGrapheneShardingParameters(
 function getShardedMeshSource(
   sharedKvStoreContext: SharedKvStoreContext,
   parameters: MeshSourceParameters,
+  state: GrapheneState,
 ) {
   return sharedKvStoreContext.chunkManager.getChunkSource(GrapheneMeshSource, {
     sharedKvStoreContext,
     parameters,
+    state,
   });
 }
 
@@ -544,6 +658,7 @@ async function getMeshSource(
   fragmentUrl: string,
   nBitsForLayerId: number,
   options: ProgressOptions,
+  state: GrapheneState,
 ) {
   const { metadata, segmentPropertyMap } = await getMeshMetadata(
     sharedKvStoreContext,
@@ -559,7 +674,7 @@ async function getMeshSource(
   };
   const transform = metadata?.transform || mat4.create();
   return {
-    source: getShardedMeshSource(sharedKvStoreContext, parameters),
+    source: getShardedMeshSource(sharedKvStoreContext, parameters, state),
     transform,
     segmentPropertyMap,
   };
@@ -672,6 +787,7 @@ async function getVolumeDataSource(
       ),
       info.graph.nBitsForLayerId,
       options,
+      state,
     );
     const subsourceToModelSubspaceTransform =
       getSubsourceToModelSubspaceTransform(info);
@@ -856,64 +972,8 @@ const TARGET_JSON_KEY = "target";
 const CENTROIDS_JSON_KEY = "centroids";
 const PRECISION_MODE_JSON_KEY = "precision";
 
-class GrapheneState extends RefCounted implements Trackable {
-  changed = new NullarySignal();
-
-  public multicutState = new MulticutState();
-  public mergeState = new MergeState();
-  public findPathState = new FindPathState();
-
-  constructor() {
-    super();
-    this.registerDisposer(
-      this.multicutState.changed.add(() => {
-        this.changed.dispatch();
-      }),
-    );
-    this.registerDisposer(
-      this.mergeState.changed.add(() => {
-        this.changed.dispatch();
-      }),
-    );
-    this.registerDisposer(
-      this.findPathState.changed.add(() => {
-        this.changed.dispatch();
-      }),
-    );
-  }
-
-  replaceSegments(oldValues: Uint64Set, newValues: Uint64Set) {
-    this.multicutState.replaceSegments(oldValues, newValues);
-    this.mergeState.replaceSegments(oldValues, newValues);
-    this.findPathState.replaceSegments(oldValues, newValues);
-  }
-
-  reset() {
-    this.multicutState.reset();
-    this.mergeState.reset();
-    this.findPathState.reset();
-  }
-
-  toJSON() {
-    return {
-      [MULTICUT_JSON_KEY]: this.multicutState.toJSON(),
-      [MERGE_JSON_KEY]: this.mergeState.toJSON(),
-      [FIND_PATH_JSON_KEY]: this.findPathState.toJSON(),
-    };
-  }
-
-  restoreState(x: any) {
-    verifyOptionalObjectProperty(x, MULTICUT_JSON_KEY, (value) => {
-      this.multicutState.restoreState(value);
-    });
-    verifyOptionalObjectProperty(x, MERGE_JSON_KEY, (value) => {
-      this.mergeState.restoreState(value);
-    });
-    verifyOptionalObjectProperty(x, FIND_PATH_JSON_KEY, (value) => {
-      this.findPathState.restoreState(value);
-    });
-  }
-}
+const FOCUS_POSITION_JSON_KEY = "focusPosition";
+const FOCUS_BOUNDING_BOX_SIZE_JSON_KEY = "focusBoundingBoxSize";
 
 export interface SegmentSelection {
   segmentId: bigint;
@@ -1300,6 +1360,19 @@ class GraphConnection extends SegmentationGraphSourceConnection {
     public state: GrapheneState,
   ) {
     super(graph, layer.displayState.segmentationGroupState.value);
+
+    const updateFocusPosition = () => {
+      state.focusPosition.value =
+        layer.managedLayer.manager.root.globalPosition.value;
+    };
+
+    this.registerDisposer(
+      layer.managedLayer.manager.root.globalPosition.changed.add(
+        updateFocusPosition,
+      ),
+    );
+    updateFocusPosition();
+
     const segmentsState = layer.displayState.segmentationGroupState.value;
     this.previousVisibleSegmentCount = segmentsState.visibleSegments.size;
     segmentsState.selectedSegments.changed.add(
@@ -1361,7 +1434,42 @@ class GraphConnection extends SegmentationGraphSourceConnection {
     );
     synchronizeAnnotationSource(multicutState.sinks, redGroup);
     synchronizeAnnotationSource(multicutState.sources, blueGroup);
-    annotationLayerStates.push(redGroup, blueGroup);
+
+    const focusArea = makeColoredAnnotationState(
+      layer,
+      loadedSubsource,
+      "focus area",
+      WHITE_COLOR,
+    );
+
+    const updateFocusBoundingBox = () => {
+      const annotationSource = focusArea.source;
+      for (const annotation of annotationSource) {
+        annotationSource.delete(annotationSource.getReference(annotation.id));
+      }
+
+      const pointA = new Float32Array(state.focusPosition.value);
+      const pointB = new Float32Array(state.focusPosition.value);
+      for (let i = 0; i < 3; i++) {
+        pointA[i] -= state.focusBoundingBoxSize.value;
+        pointB[i] += state.focusBoundingBoxSize.value;
+      }
+      const annotation: AxisAlignedBoundingBox = {
+        id: "",
+        pointA,
+        pointB,
+        type: AnnotationType.AXIS_ALIGNED_BOUNDING_BOX,
+        properties: [],
+      };
+      annotationSource.add(annotation);
+    };
+
+    updateFocusBoundingBox();
+
+    state.focusPosition.changed.add(updateFocusBoundingBox);
+    state.focusBoundingBoxSize.changed.add(updateFocusBoundingBox);
+
+    annotationLayerStates.push(redGroup, blueGroup, focusArea);
 
     if (layer.tool.value instanceof MergeSegmentsPlaceLineTool) {
       layer.tool.value = undefined;
@@ -2235,6 +2343,14 @@ class GrapheneGraphSource extends SegmentationGraphSource {
     parent.appendChild(
       addLayerControlToOptionsTab(tab, layer, tab.visibility, timeControl),
     );
+    parent.appendChild(
+      addLayerControlToOptionsTab(
+        tab,
+        layer,
+        tab.visibility,
+        focusBoundingBoxSizeControl,
+      ),
+    );
     toolbox.appendChild(
       makeToolButton(context, layer.toolBinder, {
         toolJson: GRAPHENE_MULTICUT_SEGMENTS_TOOL_ID,
@@ -2578,7 +2694,37 @@ const timeControl = {
   ...timeLayerControl(),
 };
 
+const GRAPHENE_FOCUS_BOUNDING_BOX_SIZE_JSON_KEY =
+  "grapheneFocusBoundingBoxSize";
+
+const focusBoundingBoxSizeControl = {
+  label: "Focus Bounding Box Size",
+  toolJson: GRAPHENE_FOCUS_BOUNDING_BOX_SIZE_JSON_KEY,
+  // isValid: (layer) => layer.has3dLayer,
+  title: "Opacity of meshes and skeletons",
+  ...rangeLayerControl<SegmentationUserLayer>((layer) => {
+    const {
+      graphConnection: { value: graphConnection },
+    } = layer;
+    if (graphConnection && graphConnection instanceof GraphConnection) {
+      graphConnection.state.focusBoundingBoxSize;
+      return {
+        value: graphConnection.state.focusBoundingBoxSize,
+        options: {
+          min: 0,
+          max: 100000,
+          step: 1,
+        },
+      };
+    }
+    return {
+      value: new WatchableValue(0),
+    };
+  }),
+};
+
 registerLayerControl(SegmentationUserLayer, timeControl);
+registerLayerControl(SegmentationUserLayer, focusBoundingBoxSizeControl);
 
 function timeLayerControl(): LayerControlFactory<SegmentationUserLayer> {
   return {
