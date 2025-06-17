@@ -314,7 +314,7 @@ class GrapheneState extends RefCounted implements Trackable {
       [FOCUS_BOUNDING_BOX_SIZE_JSON_KEY]: this.focusBoundingBoxSize.toJSON(),
       [FOCUS_TRACK_GLOBAL_POSITION_JSON_KEY]:
         this.focusTrackGlobalPosition.toJSON(),
-        [FOCUS_MESH_CULLING_JSON_KEY]: this.focusMeshCulling.toJSON(),
+      [FOCUS_MESH_CULLING_JSON_KEY]: this.focusMeshCulling.toJSON(),
     };
   }
 
@@ -345,13 +345,9 @@ class GrapheneState extends RefCounted implements Trackable {
         this.focusTrackGlobalPosition.restoreState(value);
       },
     );
-    verifyOptionalObjectProperty(
-      x,
-      FOCUS_MESH_CULLING_JSON_KEY,
-      (value) => {
-        this.focusTrackGlobalPosition.restoreState(value);
-      },
-    );
+    verifyOptionalObjectProperty(x, FOCUS_MESH_CULLING_JSON_KEY, (value) => {
+      this.focusMeshCulling.restoreState(value);
+    });
   }
 }
 
