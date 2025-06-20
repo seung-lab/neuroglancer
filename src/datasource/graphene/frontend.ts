@@ -246,6 +246,7 @@ class GrapheneState extends RefCounted implements Trackable {
     },
   );
   public focusBoundingBoxSize = new TrackableValue(0, verifyNonnegativeInt);
+  public focusStartLayerOverride = new TrackableValue(0, verifyNonnegativeInt);
   public focusTrackGlobalPosition = new TrackableBoolean(true);
 
   public focusMeshCulling = new TrackableBoolean(false);
@@ -287,6 +288,11 @@ class GrapheneState extends RefCounted implements Trackable {
         this.changed.dispatch();
       }),
     );
+    this.registerDisposer(
+      this.focusStartLayerOverride.changed.add(() => {
+        this.changed.dispatch();
+      }),
+    );
   }
 
   replaceSegments(oldValues: Uint64Set, newValues: Uint64Set) {
@@ -303,6 +309,7 @@ class GrapheneState extends RefCounted implements Trackable {
     this.focusBoundingBoxSize.reset();
     this.focusTrackGlobalPosition.reset();
     this.focusMeshCulling.reset();
+    this.focusStartLayerOverride.reset();
   }
 
   toJSON() {
@@ -318,6 +325,7 @@ class GrapheneState extends RefCounted implements Trackable {
       [FOCUS_TRACK_GLOBAL_POSITION_JSON_KEY]:
         this.focusTrackGlobalPosition.toJSON(),
       [FOCUS_MESH_CULLING_JSON_KEY]: this.focusMeshCulling.toJSON(),
+      [FOCUS_START_LAYER_OVERRIDE_SIZE_JSON_KEY]: this.focusStartLayerOverride.toJSON(),
     };
   }
 
@@ -351,6 +359,9 @@ class GrapheneState extends RefCounted implements Trackable {
     verifyOptionalObjectProperty(x, FOCUS_MESH_CULLING_JSON_KEY, (value) => {
       this.focusMeshCulling.restoreState(value);
     });
+    verifyOptionalObjectProperty(x, FOCUS_START_LAYER_OVERRIDE_SIZE_JSON_KEY, (value) => {
+      this.focusStartLayerOverride.restoreState(value);
+    });
   }
 }
 
@@ -369,9 +380,14 @@ class GrapheneMeshSource extends WithParameters(
       rpc!,
       this.state.focusBoundingBox,
     );
+    const focusStartLayerOverride = SharedWatchableValue.makeFromExisting(
+      rpc!,
+      this.state.focusStartLayerOverride,
+    );
     super.initializeCounterpart(rpc, {
       ...options,
       focusBoundingBox: focusBoundingBox.rpcId!,
+      focusStartLayerOverride: focusStartLayerOverride.rpcId!,
     });
   }
 }
@@ -1016,6 +1032,7 @@ const PRECISION_MODE_JSON_KEY = "precision";
 
 const FOCUS_BOUNDING_BOX_JSON_KEY = "focusBoundingBox";
 const FOCUS_BOUNDING_BOX_SIZE_JSON_KEY = "focusBoundingBoxSize";
+const FOCUS_START_LAYER_OVERRIDE_SIZE_JSON_KEY = "focusStartLayerOverride";
 const FOCUS_TRACK_GLOBAL_POSITION_JSON_KEY = "focusTrackGlobalPosition";
 const FOCUS_MESH_CULLING_JSON_KEY = "focusMeshCulling";
 
@@ -2476,6 +2493,14 @@ class GrapheneGraphSource extends SegmentationGraphSource {
         focusBoundingBoxSizeControl,
       ),
     );
+    parent.appendChild(
+      addLayerControlToOptionsTab(
+        tab,
+        layer,
+        tab.visibility,
+        focusStartLayerOverrideControl,
+      ),
+    );
     {
       const checkbox = tab.registerDisposer(
         new TrackableBooleanCheckbox(this.state.focusTrackGlobalPosition),
@@ -2846,7 +2871,7 @@ const focusBoundingBoxSizeControl = {
   label: "Focus Bounding Box Size",
   toolJson: GRAPHENE_FOCUS_BOUNDING_BOX_SIZE_JSON_KEY,
   // isValid: (layer) => layer.has3dLayer,
-  title: "Opacity of meshes and skeletons",
+  title: "",
   ...rangeLayerControl<SegmentationUserLayer>((layer) => {
     const {
       graphConnection: { value: graphConnection },
@@ -2858,6 +2883,32 @@ const focusBoundingBoxSizeControl = {
         options: {
           min: 0,
           max: 100,
+          step: 1,
+        },
+      };
+    }
+    return {
+      value: new WatchableValue(0),
+    };
+  }),
+};
+
+const focusStartLayerOverrideControl = {
+  label: "Focus Start Layer Override",
+  toolJson: GRAPHENE_FOCUS_BOUNDING_BOX_SIZE_JSON_KEY,
+  // isValid: (layer) => layer.has3dLayer,
+  title: "",
+  ...rangeLayerControl<SegmentationUserLayer>((layer) => {
+    const {
+      graphConnection: { value: graphConnection },
+    } = layer;
+    if (graphConnection && graphConnection instanceof GraphConnection) {
+      graphConnection.state.focusStartLayerOverride;
+      return {
+        value: graphConnection.state.focusStartLayerOverride,
+        options: {
+          min: 0,
+          max: 20,
           step: 1,
         },
       };

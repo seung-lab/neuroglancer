@@ -142,10 +142,12 @@ export class GrapheneMeshSource extends WithParameters(
   );
 
   focusBoundingBox: SharedWatchableValue<Float32Array|undefined>;
+  focusStartLayerOverride: SharedWatchableValue<number>;
 
   constructor(rpc: RPC, options: MeshSourceParametersWithFocus) {
     super(rpc, options);
     this.focusBoundingBox = rpc.get(options.focusBoundingBox);
+    this.focusStartLayerOverride = rpc.get(options.focusStartLayerOverride);
     console.log('options', options);
 
     // this.registerDisposer(
@@ -170,6 +172,7 @@ export class GrapheneMeshSource extends WithParameters(
   async download(chunk: ManifestChunk, signal: AbortSignal) {
     const {
       focusBoundingBox: { value: focusBoundingBox },
+      focusStartLayerOverride: { value: focusStartLayerOverride },
     } = this;
     const {chunkSize, baseVoxelOffset, nBitsForLayerId} = this.parameters;
     // console.log("download", chunk.objectId, focusPosition);
@@ -196,6 +199,7 @@ export class GrapheneMeshSource extends WithParameters(
       );
       chunk.downloadAbortController?.abort("retry");
       unregister();
+      unregister2();
       if (chunk.newRequestedState !== ChunkState.NEW) {
         // re-download manifest
         console.log("re-download because focus changed", chunk.objectId);
@@ -208,6 +212,10 @@ export class GrapheneMeshSource extends WithParameters(
 
     const unregister = this.registerDisposer(
       this.focusBoundingBox.changed.add(retry),
+    );
+
+    const unregister2 = this.registerDisposer(
+      this.focusStartLayerOverride.changed.add(retry),
     );
 
     // console.log('re-do manifest', chunk.objectId, chunk.requestedState, chunk.newRequestedState, chunk.state, chunk.);
@@ -241,9 +249,11 @@ export class GrapheneMeshSource extends WithParameters(
 
       console.log('maxChunks', maxChunks);
 
-      let startLayer = 2 + Math.max(0, Math.floor(Math.log2(maxChunks / 8)) - 0);//2);
+      let startLayer = 2 + Math.max(0, Math.floor(Math.log2(maxChunks / 2)) - 0);//2);
 
-      startLayer = 2;
+      if (focusStartLayerOverride > 0) {
+        startLayer = focusStartLayerOverride;
+      }
 
       console.log('startLayer', startLayer);
 
