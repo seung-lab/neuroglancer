@@ -438,9 +438,17 @@ if ((vertexPosition.x < ${bounds[0].toFixed(1)}f) ||
   vDiscard = 1.0f;
 }
 `;
-        }
-        console.log("vertex main", vertexMain);
+//           vertexMain += `
+// vDiscard += clamp(${bounds[0].toFixed(1)}f - vertexPosition.x, 0.0f, 1.0f);
+// vDiscard += clamp(vertexPosition.x - ${bounds[3].toFixed(1)}f, 0.0f, 1.0f);
 
+// vDiscard += clamp(${bounds[1].toFixed(1)}f - vertexPosition.y, 0.0f, 1.0f);
+// vDiscard += clamp(vertexPosition.y - ${bounds[4].toFixed(1)}f, 0.0f, 1.0f);
+
+// vDiscard += clamp(${bounds[2].toFixed(1)}f - vertexPosition.z, 0.0f, 1.0f);
+// vDiscard += clamp(vertexPosition.z - ${bounds[5].toFixed(1)}f, 0.0f, 1.0f);
+// `;
+        }
         builder.setVertexMain(vertexMain);
         let fragmentMain = `
 emit(vColor, uPickID);
@@ -586,7 +594,6 @@ export class MeshLayer extends PerspectiveViewRenderLayer<ThreeDimensionalRender
             fragment.state === ChunkState.GPU_MEMORY
           ) {
             meshShaderManager.drawFragment(gl, shader, fragment);
-            console.log("draw fragment!", fragment, shader);
             ++presentChunks;
           }
         }

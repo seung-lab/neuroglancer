@@ -191,10 +191,10 @@ export class ChunkQueueManager extends SharedObject {
       }
     }
     if (visibleChunksChanged) {
-      console.log("visibleChunksChanged!");
+      // console.log("visibleChunksChanged!");
       this.visibleChunksChanged.dispatch();
     } else {
-      console.log("no visibleChunksChanged!");
+      // console.log("no visibleChunksChanged!");
     }
     return numUpdates;
   }
@@ -231,23 +231,23 @@ export class ChunkQueueManager extends SharedObject {
   }
 
   applyChunkUpdate(update: any) {
-    console.log("ACU", update);
+    // console.log("ACU", update);
 
     let visibleChunksChanged = false;
     const { rpc } = this;
     const source = <ChunkSource>rpc!.get(update.source);
     if (source === undefined) {
       // Source was removed while chunk update was enqueued.
-      console.log("SRCUE");
+      // console.log("SRCUE");
       return;
     }
-    {
-      const key2 = update.id;
-      if (!update.new) {
-        const chunk2 = source.chunks.get(key2)!;
-        console.log("not new chunk", chunk2);
-      }
-    }
+    // {
+    //   const key2 = update.id;
+    //   if (!update.new) {
+    //     const chunk2 = source.chunks.get(key2)!;
+    //     // console.log("not new chunk", chunk2);
+    //   }
+    // }
     if (DEBUG_CHUNK_UPDATES) {
       console.log(
         `${Date.now()} Chunk.update processed: ${source.rpcId} ` +
@@ -266,7 +266,7 @@ export class ChunkQueueManager extends SharedObject {
       const newState: number = update.state;
       if (newState === ChunkState.EXPIRED) {
         // FIXME: maybe use freeList for chunks here
-        console.log("chunk expired");
+        // console.log("chunk expired");
         source.deleteChunk(update.id);
       } else {
         let chunk: Chunk;
@@ -277,7 +277,7 @@ export class ChunkQueueManager extends SharedObject {
         } else {
           chunk = source.chunks.get(key)!;
         }
-        console.log("chunk.constructor.name", chunk.constructor.name);
+        // console.log("chunk.constructor.name", chunk.constructor.name);
         const oldState = chunk.state;
         if (newState !== oldState) {
           switch (newState) {
@@ -336,7 +336,7 @@ export class ChunkQueueManager extends SharedObject {
 }
 
 function updateChunk(rpc: RPC, x: any) {
-  console.log('update chunk', x);
+  // console.log('update chunk', x);
   const source: ChunkSource = rpc.get(x.source);
   if (DEBUG_CHUNK_UPDATES) {
     console.log(

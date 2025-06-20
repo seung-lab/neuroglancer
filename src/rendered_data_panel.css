@@ -22,3 +22,11 @@
   color: #fff;
   text-align: left;
 }
+
+.neuroglancer-frame-time {
+  position: absolute;
+  color: #fff;
+  right: 10px;
+  top: 50px;
+  font-family: monospace;
+}

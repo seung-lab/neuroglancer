@@ -146,6 +146,7 @@ export class GrapheneMeshSource extends WithParameters(
   constructor(rpc: RPC, options: MeshSourceParametersWithFocus) {
     super(rpc, options);
     this.focusBoundingBox = rpc.get(options.focusBoundingBox);
+    console.log('options', options);
 
     // this.registerDisposer(
     //   this.focusPosition.changed.add(() => {
@@ -170,6 +171,7 @@ export class GrapheneMeshSource extends WithParameters(
     const {
       focusBoundingBox: { value: focusBoundingBox },
     } = this;
+    const {chunkSize, baseVoxelOffset, nBitsForLayerId} = this.parameters;
     // console.log("download", chunk.objectId, focusPosition);
 
     // TODO, dataset bounds?
@@ -211,14 +213,42 @@ export class GrapheneMeshSource extends WithParameters(
     // console.log('re-do manifest', chunk.objectId, chunk.requestedState, chunk.newRequestedState, chunk.state, chunk.);
 
     const { parameters, newSegments, manifestRequestCount } = this;
-    if (isBaseSegmentId(chunk.objectId, parameters.nBitsForLayerId)) {
+    if (isBaseSegmentId(chunk.objectId, nBitsForLayerId)) {
       return decodeManifestChunk(chunk, { fragments: [] });
     }
+
     const { fetchOkImpl, baseUrl } = this.manifestHttpSource;
     let manifestPath = `/manifest/${chunk.objectId}:${parameters.lod}?verify=1&prepend_seg_ids=1`;
     if (focusBoundingBox) {
-      const boundsStr = [0,1,2].map(x => `${focusBoundingBox[x]}-${focusBoundingBox[x+3]}`).join("_");
-      manifestPath += `&bounds=${boundsStr}&stop_layer=2`;
+      const rank = focusBoundingBox.length / 2;
+      
+      const focusBoundingBoxOffset = new Float32Array(focusBoundingBox);
+
+      for (let i = 0; i < rank * 2; i++) {
+        focusBoundingBoxOffset[i] -= baseVoxelOffset[i % rank];
+      }
+
+      // if we make sure we have at least 3 chunks, it will over-fill at most 150% (0.49 + 0.49 + 0.49)
+
+      let maxChunks = 0;
+      for (let i = 0; i < rank; i++) {
+        console.log('start', i, focusBoundingBoxOffset[i] / chunkSize[i]);
+        const length = focusBoundingBoxOffset[i+rank] - focusBoundingBoxOffset[i];
+        console.log('length', length, i);
+        const numChunks = Math.ceil(length / chunkSize[i]);
+        maxChunks = Math.max(maxChunks, numChunks);
+      }
+
+      console.log('maxChunks', maxChunks);
+
+      let startLayer = 2 + Math.max(0, Math.floor(Math.log2(maxChunks / 8)) - 0);//2);
+
+      startLayer = 2;
+
+      console.log('startLayer', startLayer);
+
+      const boundsStr = [0,1,2].map(x => `${focusBoundingBox[x]}-${focusBoundingBox[x+rank]}`).join("_");
+      manifestPath += `&bounds=${boundsStr}&start_layer=${startLayer}`;
     }
     const response = await (
       await fetchOkImpl(baseUrl + manifestPath, { signal })
@@ -243,6 +273,7 @@ export class GrapheneMeshSource extends WithParameters(
   }
 
   async downloadFragment(chunk: FragmentChunk, signal: AbortSignal) {
+    // console.log('downloadFragment');
     const { response } = await downloadFragment(
       this.fragmentKvStore,
       chunk.fragmentId!,
@@ -253,7 +284,7 @@ export class GrapheneMeshSource extends WithParameters(
       chunk,
       new Uint8Array(await response.arrayBuffer()),
     );
-    console.log('got fragment!');
+    // console.log('got fragment!');
   }
 
   getFragmentKey(objectKey: string | null, fragmentId: string) {
@@ -584,6 +615,7 @@ export class ChunkedGraphLayer extends withSegmentationLayerBackendState(
         getNormalizedChunkLayout(projectionParameters, chunkLayout),
         (positionInChunks) => {
           vec3.multiply(tempChunkPosition, positionInChunks, chunkSize);
+          console.log('chunk size', chunkSize);
           const priority = -vec3.distance(localCenter, tempChunkPosition);
           const { curPositionInChunks } = tsource;
 

@@ -135,7 +135,6 @@ export abstract class RenderedPanel extends RefCounted {
 
   scheduleRedraw() {
     if (this.visible) {
-      console.log('schedule redraw');
       this.context.scheduleRedraw();
     }
   }

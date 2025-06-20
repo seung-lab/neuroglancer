@@ -890,7 +890,6 @@ export class PerspectivePanel extends RenderedDataPanel {
   }
 
   drawWithPicking(pickingData: FramePickingData): boolean {
-    console.log("drawWithPicking");
     if (!this.navigationState.valid) {
       return false;
     }
@@ -1089,6 +1088,14 @@ export class PerspectivePanel extends RenderedDataPanel {
       /*dpfail=*/ WebGL2RenderingContext.KEEP,
       /*dppass=*/ WebGL2RenderingContext.KEEP,
     );
+
+    const frameTime = this.context.getLastFrameTimesInMs(
+        Math.min(1, this.frameRateCalculator.numberOfStoredFrameDeltas)
+      );
+
+      if (frameTime.length) {
+        this.element.querySelector('.neuroglancer-frame-time')!.textContent = frameTime[0].toFixed(2) + 'ms';
+      }
 
     if (hasTransparent) {
       //Draw transparent objects.

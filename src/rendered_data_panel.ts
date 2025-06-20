@@ -460,6 +460,9 @@ export abstract class RenderedDataPanel extends RenderedPanel {
     element.classList.add("neuroglancer-rendered-data-panel");
     element.classList.add("neuroglancer-panel");
     element.classList.add("neuroglancer-noselect");
+    const frameTimeEl = document.createElement('div');
+    frameTimeEl.classList.add("neuroglancer-frame-time");
+    element.appendChild(frameTimeEl);
     if (
       typeof NEUROGLANCER_SHOW_OBJECT_SELECTION_TOOLTIP !== "undefined" &&
       NEUROGLANCER_SHOW_OBJECT_SELECTION_TOOLTIP === true

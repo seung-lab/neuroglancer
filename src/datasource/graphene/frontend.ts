@@ -310,7 +310,10 @@ class GrapheneState extends RefCounted implements Trackable {
       [MULTICUT_JSON_KEY]: this.multicutState.toJSON(),
       [MERGE_JSON_KEY]: this.mergeState.toJSON(),
       [FIND_PATH_JSON_KEY]: this.findPathState.toJSON(),
-      [FOCUS_BOUNDING_BOX_JSON_KEY]: this.focusBoundingBox.toJSON(),
+      [FOCUS_BOUNDING_BOX_JSON_KEY]:
+        this.focusBoundingBox.value === undefined
+          ? undefined
+          : Array.from(this.focusBoundingBox.value),
       [FOCUS_BOUNDING_BOX_SIZE_JSON_KEY]: this.focusBoundingBoxSize.toJSON(),
       [FOCUS_TRACK_GLOBAL_POSITION_JSON_KEY]:
         this.focusTrackGlobalPosition.toJSON(),
@@ -680,6 +683,8 @@ async function getMeshSource(
   url: string,
   fragmentUrl: string,
   nBitsForLayerId: number,
+  chunkSize: vec3,
+  baseVoxelOffset: Float32Array,
   options: ProgressOptions,
   state: GrapheneState,
 ) {
@@ -694,6 +699,8 @@ async function getMeshSource(
     lod: 0,
     sharding: metadata?.sharding,
     nBitsForLayerId,
+    baseVoxelOffset,
+    chunkSize,
   };
   const transform = metadata?.transform || mat4.create();
   return {
@@ -809,6 +816,8 @@ async function getVolumeDataSource(
         ),
       ),
       info.graph.nBitsForLayerId,
+      info.graph.chunkSize,
+      info.scales[0].voxelOffset,
       options,
       state,
     );
