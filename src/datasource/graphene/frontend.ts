@@ -56,6 +56,7 @@ import {
   MeshSourceParameters,
   PYCG_APP_VERSION,
   getHttpSource,
+  startLayerForBBox,
 } from "#src/datasource/graphene/base.js";
 import type {
   DataSource,
@@ -325,7 +326,8 @@ class GrapheneState extends RefCounted implements Trackable {
       [FOCUS_TRACK_GLOBAL_POSITION_JSON_KEY]:
         this.focusTrackGlobalPosition.toJSON(),
       [FOCUS_MESH_CULLING_JSON_KEY]: this.focusMeshCulling.toJSON(),
-      [FOCUS_START_LAYER_OVERRIDE_SIZE_JSON_KEY]: this.focusStartLayerOverride.toJSON(),
+      [FOCUS_START_LAYER_OVERRIDE_SIZE_JSON_KEY]:
+        this.focusStartLayerOverride.toJSON(),
     };
   }
 
@@ -359,9 +361,13 @@ class GrapheneState extends RefCounted implements Trackable {
     verifyOptionalObjectProperty(x, FOCUS_MESH_CULLING_JSON_KEY, (value) => {
       this.focusMeshCulling.restoreState(value);
     });
-    verifyOptionalObjectProperty(x, FOCUS_START_LAYER_OVERRIDE_SIZE_JSON_KEY, (value) => {
-      this.focusStartLayerOverride.restoreState(value);
-    });
+    verifyOptionalObjectProperty(
+      x,
+      FOCUS_START_LAYER_OVERRIDE_SIZE_JSON_KEY,
+      (value) => {
+        this.focusStartLayerOverride.restoreState(value);
+      },
+    );
   }
 }
 
@@ -1595,21 +1601,65 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       }
       if (focusBoundingBox === undefined) return;
       const { rank } = this.chunkSource;
-      const pointA = new Float32Array(focusBoundingBox.slice(0, rank));
-      const pointB = new Float32Array(focusBoundingBox.slice(rank));
-      const annotation: AxisAlignedBoundingBox = {
-        id: "",
-        pointA,
-        pointB,
-        type: AnnotationType.AXIS_ALIGNED_BOUNDING_BOX,
-        properties: [],
-      };
-      annotationSource.add(annotation);
+
+      {
+        const pointA = new Float32Array(focusBoundingBox.slice(0, rank));
+        const pointB = new Float32Array(focusBoundingBox.slice(rank));
+        const annotation: AxisAlignedBoundingBox = {
+          id: "",
+          pointA,
+          pointB,
+          type: AnnotationType.AXIS_ALIGNED_BOUNDING_BOX,
+          properties: [],
+        };
+        annotationSource.add(annotation);
+      }
+
+      {
+        const { chunkSize } = this.chunkSource.info.graph;
+        const { voxelOffset } = this.chunkSource.info.scales[0];
+
+        const nearestChunkBoundry = Float32Array.from(
+          focusBoundingBox.slice(0, rank),
+        );
+
+        const scaledChunkSize = Float32Array.from(chunkSize);
+
+        let startLayer = startLayerForBBox(
+          focusBoundingBox,
+          this.chunkSource.info.graph.chunkSize,
+        );
+
+        if (state.focusStartLayerOverride.value > 0) {
+          startLayer = state.focusStartLayerOverride.value;
+        }
+
+        for (let i = 0; i < rank; i++) {
+          scaledChunkSize[i] *= 2 ** (startLayer - 2);
+          nearestChunkBoundry[i] -=
+            (nearestChunkBoundry[i] - voxelOffset[i]) % scaledChunkSize[i];
+        }
+
+        const chunkAnnotation: AxisAlignedBoundingBox = {
+          id: "",
+          pointA: Float32Array.from(nearestChunkBoundry),
+          pointB: Float32Array.from(nearestChunkBoundry),
+          type: AnnotationType.AXIS_ALIGNED_BOUNDING_BOX,
+          properties: [],
+        };
+
+        for (let i = 0; i < rank; i++) {
+          chunkAnnotation.pointB[i] += scaledChunkSize[i];
+        }
+
+        annotationSource.add(chunkAnnotation);
+      }
     };
 
     updateFocusBoundingBoxAnnotation();
 
     state.focusBoundingBox.changed.add(updateFocusBoundingBoxAnnotation);
+    state.focusStartLayerOverride.changed.add(updateFocusBoundingBoxAnnotation);
 
     annotationLayerStates.push(redGroup, blueGroup, focusArea);
 

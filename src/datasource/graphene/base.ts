@@ -178,3 +178,17 @@ export function getHttpSource(
   }
   return { fetchOkImpl, baseUrl: joinBaseUrlAndPath(baseUrl, path) };
 }
+
+export const startLayerForBBox = (
+  focusBoundingBox: Float32Array<ArrayBufferLike>,
+  chunkSize: vec3,
+) => {
+  const rank = 3; // TODO need to change vec3 otherwise it doesn't make sense to make this a variable
+  let minChunks = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < rank; i++) {
+    const length = focusBoundingBox[i + rank] - focusBoundingBox[i];
+    const numChunks = Math.ceil(length / chunkSize[i]);
+    minChunks = Math.min(minChunks, numChunks);
+  }
+  return 2 + Math.max(0, Math.floor(Math.log2(minChunks / 2)));
+};
