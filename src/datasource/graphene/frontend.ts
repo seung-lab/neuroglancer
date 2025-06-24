@@ -1585,14 +1585,14 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       layer,
       loadedSubsource,
       "focus area",
-      vec3.fromValues(0.3, 0.3, 0.3),
+      vec3.fromValues(0.0, 1.0, 0.8),
     );
 
     const focusAreaChunk = makeColoredAnnotationState(
       layer,
       loadedSubsource,
       "focus area chunk",
-      vec3.fromValues(0.8, 0.0, 0.4),
+      vec3.fromValues(1.0, 0.0, 0.4),
     );
 
     const updateFocusBoundingBoxAnnotation = () => {
