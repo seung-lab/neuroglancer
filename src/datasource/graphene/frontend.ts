@@ -1588,10 +1588,21 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       vec3.fromValues(0.3, 0.3, 0.3),
     );
 
+    const focusAreaChunk = makeColoredAnnotationState(
+      layer,
+      loadedSubsource,
+      "focus area chunk",
+      vec3.fromValues(0.8, 0.0, 0.4),
+    );
+
     const updateFocusBoundingBoxAnnotation = () => {
       const annotationSource = focusArea.source;
       for (const annotation of annotationSource) {
         annotationSource.delete(annotationSource.getReference(annotation.id));
+      }
+      const annotationSource2 = focusAreaChunk.source;
+      for (const annotation of annotationSource2) {
+        annotationSource2.delete(annotationSource2.getReference(annotation.id));
       }
       const {
         focusBoundingBox: { value: focusBoundingBox },
@@ -1652,7 +1663,7 @@ class GraphConnection extends SegmentationGraphSourceConnection {
           chunkAnnotation.pointB[i] += scaledChunkSize[i];
         }
 
-        annotationSource.add(chunkAnnotation);
+        annotationSource2.add(chunkAnnotation);
       }
     };
 
@@ -1661,7 +1672,7 @@ class GraphConnection extends SegmentationGraphSourceConnection {
     state.focusBoundingBox.changed.add(updateFocusBoundingBoxAnnotation);
     state.focusStartLayerOverride.changed.add(updateFocusBoundingBoxAnnotation);
 
-    annotationLayerStates.push(redGroup, blueGroup, focusArea);
+    annotationLayerStates.push(redGroup, blueGroup, focusArea, focusAreaChunk);
 
     if (layer.tool.value instanceof MergeSegmentsPlaceLineTool) {
       layer.tool.value = undefined;
