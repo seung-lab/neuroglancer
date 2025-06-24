@@ -1626,7 +1626,7 @@ class GraphConnection extends SegmentationGraphSourceConnection {
         annotationSource.add(annotation);
       }
 
-      {
+      if (!state.focusMeshCulling.value) {
         const { chunkSize } = this.chunkSource.info.graph;
         const { voxelOffset } = this.chunkSource.info.scales[0];
 
@@ -1671,6 +1671,7 @@ class GraphConnection extends SegmentationGraphSourceConnection {
 
     state.focusBoundingBox.changed.add(updateFocusBoundingBoxAnnotation);
     state.focusStartLayerOverride.changed.add(updateFocusBoundingBoxAnnotation);
+    state.focusMeshCulling.changed.add(updateFocusBoundingBoxAnnotation);
 
     annotationLayerStates.push(redGroup, blueGroup, focusArea, focusAreaChunk);
 
