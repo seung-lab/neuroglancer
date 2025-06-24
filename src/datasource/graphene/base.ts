@@ -190,5 +190,5 @@ export const startLayerForBBox = (
     const numChunks = Math.ceil(length / chunkSize[i]);
     minChunks = Math.min(minChunks, numChunks);
   }
-  return 2 + Math.max(0, Math.floor(Math.log2(minChunks / 2)));
+  return 2 + Math.max(0, Math.floor(Math.log2(minChunks / 1)));
 };
