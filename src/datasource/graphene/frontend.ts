@@ -1472,7 +1472,7 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       const { resolution, size, voxelOffset } = this.chunkSource.info.scales[0];
       const boundingBox = new Float32Array(rank * 2);
 
-      let center = new Float32Array(rank);
+      let center: Float32Array<ArrayBufferLike> = new Float32Array(rank);
 
       const currentBoundingBox = state.focusBoundingBox.value;
 
@@ -1483,6 +1483,17 @@ class GraphConnection extends SegmentationGraphSourceConnection {
         for (let i = 0; i < rank; i++) {
           center[i] = globalPosition[i];
         }
+
+        const centerPosition = getGlobalPositionInLayerCoordinates(
+          globalPosition,
+          this.layer,
+        );
+        if (!centerPosition) {
+          return;
+        }
+        center = centerPosition;
+
+        console.log("centerPosition", centerPosition, globalPosition);
       } else if (currentBoundingBox) {
         for (let i = 0; i < rank; i++) {
           center[i] =
@@ -2877,7 +2888,7 @@ const synchronizeAnnotationSource = (
   }
 };
 
-function getMousePositionInLayerCoordinates(
+function getGlobalPositionInLayerCoordinates(
   unsnappedPosition: Float32Array,
   layer: SegmentationUserLayer,
 ): Float32Array | undefined {
@@ -2909,7 +2920,7 @@ const getPoint = (
   mouseState: MouseSelectionState,
 ) => {
   if (mouseState.updateUnconditionally()) {
-    return getMousePositionInLayerCoordinates(
+    return getGlobalPositionInLayerCoordinates(
       mouseState.unsnappedPosition,
       layer,
     );
