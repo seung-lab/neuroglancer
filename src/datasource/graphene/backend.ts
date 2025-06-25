@@ -606,7 +606,6 @@ export class ChunkedGraphLayer extends withSegmentationLayerBackendState(
         getNormalizedChunkLayout(projectionParameters, chunkLayout),
         (positionInChunks) => {
           vec3.multiply(tempChunkPosition, positionInChunks, chunkSize);
-          console.log("chunk size", chunkSize);
           const priority = -vec3.distance(localCenter, tempChunkPosition);
           const { curPositionInChunks } = tsource;
 

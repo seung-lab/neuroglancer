@@ -951,17 +951,7 @@ function makeColoredAnnotationState(
   );
 
   const displayState = new AnnotationDisplayState();
-  console.log("shader!", displayState.shader);
   displayState.color.value.set(color);
-  color;
-  // displayState.shader.value = `void main() {setColor(vec3(1.0, 0.0, 0.0));}`
-  // displayState.shader.defaultValue = `void main() {setColor(vec3(1.0, 0.0, 0.0));}`
-
-  // displayState.shader.changed.add(() => {
-  //   console.log('shader changed!');
-  // })
-
-  // console.log('new shader!', displayState.shader);
 
   displayState.relationshipStates.set("associated segments", {
     segmentationState: new WatchableValue(layer.displayState),
