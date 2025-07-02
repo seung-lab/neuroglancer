@@ -184,7 +184,6 @@ import {
   verifyFinitePositiveFloat,
   verifyFloatArray,
   verifyInt,
-  verifyIntegerArray,
   verifyNonnegativeInt,
   verifyObject,
   verifyObjectProperty,
@@ -2214,7 +2213,7 @@ class GrapheneGraphSource extends SegmentationGraphSource {
         centroids = l2_path
           .map((id) => {
             return verifyOptionalObjectProperty(attributes, id, (x) => {
-              return verifyIntegerArray(x["rep_coord_nm"]);
+              return verifyFloatArray(x["rep_coord_nm"]);
             });
           })
           .filter((x): x is number[] => x !== undefined);
