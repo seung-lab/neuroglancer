@@ -43,12 +43,12 @@ vec2 getLineOffset() { return getQuadVertexPosition(vec2(0.0, -1.0), vec2(1.0, 1
 float getLineEndpointCoefficient() { return getLineOffset().x; }
 uint getLineEndpointIndex() { return uint(getLineEndpointCoefficient()); }
 
-void emitLineWithVariableWidth(vec4 vertexAClip, vec4 vertexBClip, float startingLineWidthInPixels, float endingLineWidthInPixels) {
+void emitLineWithVariableWidth(vec4 vertexAClip, vec4 vertexBClip, float startingLineWidthInPixels) {
   if (!clipLineToDepthRange(vertexAClip, vertexBClip)) {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     return;
   }
-  float lineWidthInPixels = mix(startingLineWidthInPixels, endingLineWidthInPixels, getLineEndpointCoefficient());
+  float lineWidthInPixels = startingLineWidthInPixels;//mix(startingLineWidthInPixels, endingLineWidthInPixels, getLineEndpointCoefficient());
   float wVal = mix(vertexAClip.w, vertexBClip.w, getLineEndpointCoefficient());
   vec3 vertexADevice = vertexAClip.xyz / vertexAClip.w;
   vec3 vertexBDevice = vertexBClip.xyz / vertexBClip.w;
@@ -78,7 +78,7 @@ void emitLineWithVariableWidth(vec4 vertexAClip, vec4 vertexBClip, float startin
 }
 
 void emitLine(vec4 vertexAClip, vec4 vertexBClip, float lineWidthInPixels) {
-  emitLineWithVariableWidth(vertexAClip, vertexBClip, lineWidthInPixels, lineWidthInPixels);
+  emitLineWithVariableWidth(vertexAClip, vertexBClip, lineWidthInPixels);
 }
 
 void emitLine(mat4 projection, vec3 vertexA, vec3 vertexB, float lineWidthInPixels
@@ -88,9 +88,9 @@ void emitLine(mat4 projection, vec3 vertexA, vec3 vertexB, float lineWidthInPixe
            ${rounded ? ", borderWidth" : ""});
 }
 
-void emitLineWithVariableWidth(mat4 projection, vec3 vertexA, vec3 vertexB, float startingLineWidthInPixels, float endingLineWidthInPixels) {
+void emitLineWithVariableWidth(mat4 projection, vec3 vertexA, vec3 vertexB, float startingLineWidthInPixels) {
   emitLineWithVariableWidth(projection * vec4(vertexA, 1.0), projection * vec4(vertexB, 1.0),
-           startingLineWidthInPixels, endingLineWidthInPixels);
+           startingLineWidthInPixels);
 }
 `);
 
