@@ -170,9 +170,9 @@ class RenderHelper extends RefCounted {
           let vertexMain = `
 highp vec3 vertexA = readAttribute0(aVertexIndex.x);
 highp vec3 vertexB = readAttribute0(aVertexIndex.y);
-emitLine(uProjection, vertexA, vertexB, uLineWidth);
 highp uint lineEndpointIndex = getLineEndpointIndex();
 highp uint vertexIndex = aVertexIndex.x * lineEndpointIndex + aVertexIndex.y * (1u - lineEndpointIndex);
+emitLineWithVariableWidth(uProjection, vertexA, vertexB, readAttribute1(aVertexIndex.x) / 80.0f, readAttribute1(aVertexIndex.y) / 80.0f);
 `;
 
           builder.addFragmentCode(`
@@ -189,6 +189,7 @@ void emitDefault() {
           builder.addFragmentCode(glsl_COLORMAPS);
           const { vertexAttributes } = this;
           const numAttributes = vertexAttributes.length;
+          console.log('hi!');
           for (let i = 1; i < numAttributes; ++i) {
             const info = vertexAttributes[i];
             builder.addVarying(`highp ${info.glslDataType}`, `vCustom${i}`);
@@ -558,6 +559,7 @@ export class SkeletonLayer extends RefCounted {
     const edgeShaderResult = renderHelper.edgeShaderGetter(
       renderContext.emitter,
     );
+    console.log('edgeShaderResult', edgeShaderResult);
     const nodeShaderResult = renderHelper.nodeShaderGetter(
       renderContext.emitter,
     );
@@ -807,6 +809,7 @@ export class SkeletonChunk extends Chunk {
       i < numAttributes;
       ++i
     ) {
+      console.log('copy skeleton to gpu!');
       const texture = gl.createTexture();
       gl.bindTexture(WebGL2RenderingContext.TEXTURE_2D, texture);
       setOneDimensionalTextureData(
