@@ -44,8 +44,7 @@ import { SliceViewPanelRenderLayer } from "#src/sliceview/renderlayer.js";
 import { TrackableValue, WatchableValue } from "#src/trackable_value.js";
 import { DataType } from "#src/util/data_type.js";
 import { RefCounted } from "#src/util/disposable.js";
-import type { vec3 } from "#src/util/geom.js";
-import { mat4 } from "#src/util/geom.js";
+import { mat4, vec3 } from "#src/util/geom.js";
 import { verifyFinitePositiveFloat } from "#src/util/json.js";
 import { NullarySignal } from "#src/util/signal.js";
 import type { Trackable } from "#src/util/trackable.js";
@@ -127,6 +126,7 @@ class RenderHelper extends RefCounted {
     builder.addUniform("highp vec4", "uColor");
     builder.addUniform("highp mat4", "uProjection");
     builder.addUniform("highp uint", "uPickID");
+    builder.addUniform("highp float", "uScale");
   }
 
   edgeShaderGetter;
@@ -176,7 +176,7 @@ highp uint vertexIndex = aVertexIndex.x * lineEndpointIndex + aVertexIndex.y * (
 highp uint vertexIndex2 = aVertexIndex.y * lineEndpointIndex + aVertexIndex.x * (1u - lineEndpointIndex);
 
 
-emitLineWithVariableWidth(uProjection, vertexA, vertexB, readAttribute1(vertexIndex2) / 80.0f);
+emitLineWithVariableWidth(uProjection, vertexA, vertexB, readAttribute1(vertexIndex2) * uScale * 200.0f);
 `;
 
           builder.addFragmentCode(`
@@ -193,7 +193,7 @@ void emitDefault() {
           builder.addFragmentCode(glsl_COLORMAPS);
           const { vertexAttributes } = this;
           const numAttributes = vertexAttributes.length;
-          console.log('hi!');
+          console.log("hi!");
           for (let i = 1; i < numAttributes; ++i) {
             const info = vertexAttributes[i];
             builder.addVarying(`highp ${info.glslDataType}`, `vCustom${i}`);
@@ -317,9 +317,16 @@ void emitDefault() {
     renderContext: SliceViewPanelRenderContext | PerspectiveViewRenderContext,
     modelMatrix: mat4,
   ) {
-    const { viewProjectionMat } = renderContext.projectionParameters;
+    const { viewProjectionMat, viewMatrix } =
+      renderContext.projectionParameters;
     const mat = mat4.multiply(tempMat2, viewProjectionMat, modelMatrix);
+
+    const tempVec = vec3.create();
+    mat4.getScaling(tempVec, viewMatrix);
+
+    // console.log("scaling", tempVec[0], tempVec2[0]);
     gl.uniformMatrix4fv(shader.uniform("uProjection"), false, mat);
+    gl.uniform1f(shader.uniform("uScale"), tempVec[0]);
     this.vertexIdHelper.enable();
   }
 
@@ -563,7 +570,7 @@ export class SkeletonLayer extends RefCounted {
     const edgeShaderResult = renderHelper.edgeShaderGetter(
       renderContext.emitter,
     );
-    console.log('edgeShaderResult', edgeShaderResult);
+    console.log("edgeShaderResult", edgeShaderResult);
     const nodeShaderResult = renderHelper.nodeShaderGetter(
       renderContext.emitter,
     );
@@ -813,7 +820,7 @@ export class SkeletonChunk extends Chunk {
       i < numAttributes;
       ++i
     ) {
-      console.log('copy skeleton to gpu!');
+      console.log("copy skeleton to gpu!");
       const texture = gl.createTexture();
       gl.bindTexture(WebGL2RenderingContext.TEXTURE_2D, texture);
       setOneDimensionalTextureData(
