@@ -53,6 +53,9 @@ void emitLineWithVariableWidth(vec4 vertexAClip, vec4 vertexBClip, float startin
   vec3 vertexADevice = vertexAClip.xyz / vertexAClip.w;
   vec3 vertexBDevice = vertexBClip.xyz / vertexBClip.w;
 
+
+  // lineWidthInPixels = 50.0;
+
   vec2 lineDirectionUnnormalized = vertexBDevice.xy - vertexADevice.xy;
   vec2 lineDirection;
   float linePixelLength = length(lineDirectionUnnormalized / uLineParams.xy * 0.5);
@@ -67,13 +70,19 @@ void emitLineWithVariableWidth(vec4 vertexAClip, vec4 vertexBClip, float startin
   }
   vec2 lineNormal = normalize(vec2(lineDirection.y, -lineDirection.x) / uLineParams.yx * uLineParams.xy);
 
+
+  // vec3 scaleTransformed = 
+
+  // vec2 aspectRatio = vec2(1.0 / uLineParams.y / 1000000.0, 1.0 / uLineParams.y / 1000000.0);
+
+
   vec2 lineOffset = getLineOffset();
   gl_Position = vec4(mix(vertexADevice, vertexBDevice, lineOffset.x), 1.0);
   float totalLineWidth = lineWidthInPixels / wVal;// + 2.0 * uLineParams.z;
   if (lineWidthInPixels == 0.0) totalLineWidth = 0.0;
   vLineFeatherFraction = max(1e-6, uLineParams.z) / totalLineWidth;
   gl_Position.xy += (lineOffset.y * lineNormal)
-                  * totalLineWidth * uLineParams.xy;
+                  * totalLineWidth * uLineParams.xy * uScale.xy;
   vLineCoord = lineOffset.y;
 }
 
@@ -115,6 +124,7 @@ export function initializeLineShader(
   featherWidthInPixels: number,
 ) {
   const { gl } = shader;
+  console.log('ulineParams', projectionParameters.width, projectionParameters.height);
   gl.uniform3f(
     shader.uniform("uLineParams"),
     1 / projectionParameters.width,

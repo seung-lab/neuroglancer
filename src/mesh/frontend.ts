@@ -491,6 +491,7 @@ export class MeshLayer extends PerspectiveViewRenderLayer<ThreeDimensionalRender
       return;
     }
     const { shader } = this.getShader(renderContext.emitter);
+    console.log("get shader", shader);
     if (shader === null) return;
     shader.bind();
     meshShaderManager.beginLayer(gl, shader, renderContext, this.displayState);

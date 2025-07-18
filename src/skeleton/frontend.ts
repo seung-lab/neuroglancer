@@ -44,7 +44,7 @@ import { SliceViewPanelRenderLayer } from "#src/sliceview/renderlayer.js";
 import { TrackableValue, WatchableValue } from "#src/trackable_value.js";
 import { DataType } from "#src/util/data_type.js";
 import { RefCounted } from "#src/util/disposable.js";
-import { mat4, vec3 } from "#src/util/geom.js";
+import { mat4, quat, vec3 } from "#src/util/geom.js";
 import { verifyFinitePositiveFloat } from "#src/util/json.js";
 import { NullarySignal } from "#src/util/signal.js";
 import type { Trackable } from "#src/util/trackable.js";
@@ -126,7 +126,7 @@ class RenderHelper extends RefCounted {
     builder.addUniform("highp vec4", "uColor");
     builder.addUniform("highp mat4", "uProjection");
     builder.addUniform("highp uint", "uPickID");
-    builder.addUniform("highp float", "uScale");
+    builder.addUniform("highp vec3", "uScale");
   }
 
   edgeShaderGetter;
@@ -176,7 +176,7 @@ highp uint vertexIndex = aVertexIndex.x * lineEndpointIndex + aVertexIndex.y * (
 highp uint vertexIndex2 = aVertexIndex.y * lineEndpointIndex + aVertexIndex.x * (1u - lineEndpointIndex);
 
 
-emitLineWithVariableWidth(uProjection, vertexA, vertexB, readAttribute1(vertexIndex2) * uScale * 200.0f);
+emitLineWithVariableWidth(uProjection, vertexA, vertexB, readAttribute1(vertexIndex2));
 `;
 
           builder.addFragmentCode(`
@@ -317,16 +317,70 @@ void emitDefault() {
     renderContext: SliceViewPanelRenderContext | PerspectiveViewRenderContext,
     modelMatrix: mat4,
   ) {
-    const { viewProjectionMat, viewMatrix } =
+    const { viewProjectionMat, viewMatrix, invViewMatrix, invViewProjectionMat, projectionMat } =
       renderContext.projectionParameters;
     const mat = mat4.multiply(tempMat2, viewProjectionMat, modelMatrix);
 
     const tempVec = vec3.create();
-    mat4.getScaling(tempVec, viewMatrix);
+    tempVec.set([1, 1, 1]);
+    viewMatrix;
+    // mat4.getScaling(tempVec, mat);
 
-    // console.log("scaling", tempVec[0], tempVec2[0]);
+    if (true) {
+  // view matrix
+    mat4.getScaling(tempVec, viewMatrix);
+    vec3.scale(tempVec, tempVec, 1 / 4);
+
+    // vec3.scale(tempVec, tempVec, 10);
+
+
+    // vec3.scale(tempVec, tempVec, 100);
+  }
+
+      if (false) {
+  // view proj matrix
+    mat4.getScaling(tempVec, viewProjectionMat);
+    vec3.scale(tempVec, tempVec, 1 / 10);
+  }
+2
+
+  if (false) {
+    vec3.multiply(tempVec, tempVec, vec3.fromValues(renderContext.projectionParameters.width, renderContext.projectionParameters.height, 1));
+  }
+
+
+  // vec3.scale(tempVec, tempVec, 1/10x000);
+
+
+
+    // const rotationQuat = quat.create();
+
+    // mat4.getRotation(rotationQuat, viewMatrix);
+
+    // quat.invert(rotationQuat, rotationQuat);
+
+    // console.log('rotationQuat', rotationQuat);
+
+    // vec3.transformQuat(tempVec, tempVec, rotationQuat);
+
+    invViewMatrix;
+    invViewProjectionMat;
+    projectionMat;
+    quat;
+
+    // vec3.transformMat4(tempVec, tempVec, viewMatrix);
+
+
+
+    console.log('tempVec', tempVec[0] * 20000, tempVec[1] * 20000, tempVec[2] * 20000);
+
+    // vec3.normalize(tempVec, tempVec);
+    // vec3.scale(tempVec, tempVec, 1 / 200);
+
+
+    console.log("scaling", tempVec);
     gl.uniformMatrix4fv(shader.uniform("uProjection"), false, mat);
-    gl.uniform1f(shader.uniform("uScale"), tempVec[0]);
+    gl.uniform3fv(shader.uniform("uScale"), tempVec);
     this.vertexIdHelper.enable();
   }
 
