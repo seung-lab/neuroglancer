@@ -53,7 +53,10 @@ void emitLineWithVariableWidthFoo(mat4 projection, mat4 viewModel, vec4 vertexAV
     return;
   }
 
-  vec2 lineDirectionUnnormalized = vertexBView.xy - vertexAView.xy;
+  vec4 vertexADevice = vertexAClip / vertexAClip.w;
+  vec4 vertexBDevice = vertexBClip / vertexBClip.w;
+
+  vec2 lineDirectionUnnormalized = vertexBDevice.xy - vertexADevice.xy;
   vec2 lineDirection;
   float linePixelLength = length(lineDirectionUnnormalized / uLineParams.xy * 0.5);
 
