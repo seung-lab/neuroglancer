@@ -40,12 +40,15 @@ export function defineCircleShader(
   // 2-D position within circle quad, ranging from [-1, -1] to [1, 1].
   builder.addVarying("highp vec4", "vCircleCoord");
   builder.addVertexCode(`
-void emitCircle(vec4 position, float diameter, float borderWidth) {
-  gl_Position = position;
-  float totalDiameter = diameter + 2.0 * (borderWidth + uCircleParams.z);
+void emitCircle(mat4 projection, mat4 viewModel, vec3 position, float diameter, float borderWidth) {
+  gl_Position = viewModel * vec4(position, 1.0);
+  float totalDiameter = diameter;
   if (diameter == 0.0) totalDiameter = 0.0;
   vec2 circleCornerOffset = getQuadVertexPosition(vec2(-1.0, -1.0), vec2(1.0, 1.0));
-  gl_Position.xy += circleCornerOffset * uCircleParams.xy * gl_Position.w * totalDiameter;
+  float scale = length(viewModel[0].xyz);
+  totalDiameter = totalDiameter * scale;
+  gl_Position.xy += circleCornerOffset * totalDiameter;
+  gl_Position = projection * gl_Position;
   vCircleCoord.xy = circleCornerOffset;
   if (borderWidth == 0.0) {
     vCircleCoord.z = totalDiameter;

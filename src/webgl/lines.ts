@@ -29,6 +29,7 @@ import { glsl_clipLineToDepthRange } from "#src/webgl/shader_lib.js";
 export const VERTICES_PER_LINE = VERTICES_PER_QUAD;
 
 export function defineLineShader(builder: ShaderBuilder, rounded = false) {
+  rounded;
   builder.addVertexCode(glsl_getQuadVertexPosition);
   // x: 1 / viewportWidth
   // y: 1 / viewportHeight
@@ -43,62 +44,48 @@ vec2 getLineOffset() { return getQuadVertexPosition(vec2(0.0, -1.0), vec2(1.0, 1
 float getLineEndpointCoefficient() { return getLineOffset().x; }
 uint getLineEndpointIndex() { return uint(getLineEndpointCoefficient()); }
 
-void emitLineWithVariableWidth(vec4 vertexAClip, vec4 vertexBClip, float startingLineWidthInPixels) {
+void emitLineWithVariableWidthFoo(mat4 projection, mat4 viewModel, vec4 vertexAView, vec4 vertexBView, float lineWidthInPixels) {
+  vec4 vertexAClip = projection * vertexAView;
+  vec4 vertexBClip = projection * vertexBView;
+
   if (!clipLineToDepthRange(vertexAClip, vertexBClip)) {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     return;
   }
-  float lineWidthInPixels = startingLineWidthInPixels;//mix(startingLineWidthInPixels, endingLineWidthInPixels, getLineEndpointCoefficient());
-  float wVal = mix(vertexAClip.w, vertexBClip.w, getLineEndpointCoefficient());
-  vec3 vertexADevice = vertexAClip.xyz / vertexAClip.w;
-  vec3 vertexBDevice = vertexBClip.xyz / vertexBClip.w;
 
-
-  // lineWidthInPixels = 50.0;
-
-  vec2 lineDirectionUnnormalized = vertexBDevice.xy - vertexADevice.xy;
+  vec2 lineDirectionUnnormalized = vertexBView.xy - vertexAView.xy;
   vec2 lineDirection;
   float linePixelLength = length(lineDirectionUnnormalized / uLineParams.xy * 0.5);
 
   if (linePixelLength < 1e-3) {
     // If the line is too short, we can't draw it.
+    // return; any reason not to just return?
     lineDirection = vec2(1.0, 0.0);
-    vertexADevice.z = vertexBDevice.z = 0.0;
+    vertexAView.z = vertexBView.z = 0.0;
   } else {
     // Normalize the line direction to a unit vector.
     lineDirection = normalize(lineDirectionUnnormalized);
   }
-  vec2 lineNormal = normalize(vec2(lineDirection.y, -lineDirection.x) / uLineParams.yx * uLineParams.xy);
-
-
-  // vec3 scaleTransformed = 
-
-  // vec2 aspectRatio = vec2(1.0 / uLineParams.y / 1000000.0, 1.0 / uLineParams.y / 1000000.0);
-
+  vec2 lineNormal = normalize(vec2(lineDirection.y, -lineDirection.x));
 
   vec2 lineOffset = getLineOffset();
-  gl_Position = vec4(mix(vertexADevice, vertexBDevice, lineOffset.x), 1.0);
-  float totalLineWidth = lineWidthInPixels / wVal;// + 2.0 * uLineParams.z;
-  if (lineWidthInPixels == 0.0) totalLineWidth = 0.0;
-  vLineFeatherFraction = max(1e-6, uLineParams.z) / totalLineWidth;
-  gl_Position.xy += (lineOffset.y * lineNormal)
-                  * totalLineWidth * uLineParams.xy * uScale.xy;
-  vLineCoord = lineOffset.y;
+  gl_Position = mix(vertexAView, vertexBView, lineOffset.x);
+
+  float totalLineWidth = lineWidthInPixels;
+
+  float scale = length(viewModel[0].xyz);
+  gl_Position.xy += (lineOffset.y * lineNormal * scale * totalLineWidth);
+  gl_Position = projection * gl_Position;
+
+  // TODO, add minimum line width in pixels.
+
+
+  // vLineFeatherFraction = max(1e-6, uLineParams.z) / totalLineWidth;
+  // vLineCoord = lineOffset.y;
 }
 
-void emitLine(vec4 vertexAClip, vec4 vertexBClip, float lineWidthInPixels) {
-  emitLineWithVariableWidth(vertexAClip, vertexBClip, lineWidthInPixels);
-}
-
-void emitLine(mat4 projection, vec3 vertexA, vec3 vertexB, float lineWidthInPixels
-              ${rounded ? ", float borderWidth" : ""}) {
-  emitLine(projection * vec4(vertexA, 1.0), projection * vec4(vertexB, 1.0),
-           lineWidthInPixels
-           ${rounded ? ", borderWidth" : ""});
-}
-
-void emitLineWithVariableWidth(mat4 projection, vec3 vertexA, vec3 vertexB, float startingLineWidthInPixels) {
-  emitLineWithVariableWidth(projection * vec4(vertexA, 1.0), projection * vec4(vertexB, 1.0),
+void emitLineWithVariableWidth(mat4 projection, mat4 viewModel, vec3 vertexA, vec3 vertexB, float startingLineWidthInPixels) {
+  emitLineWithVariableWidthFoo(projection, viewModel, viewModel * vec4(vertexA, 1.0), viewModel * vec4(vertexB, 1.0),
            startingLineWidthInPixels);
 }
 `);

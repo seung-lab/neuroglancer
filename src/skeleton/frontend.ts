@@ -125,6 +125,7 @@ class RenderHelper extends RefCounted {
     defineVertexId(builder);
     builder.addUniform("highp vec4", "uColor");
     builder.addUniform("highp mat4", "uProjection");
+    builder.addUniform("highp mat4", "uViewModel");
     builder.addUniform("highp uint", "uPickID");
     builder.addUniform("highp vec3", "uScale");
   }
@@ -176,7 +177,7 @@ highp uint vertexIndex = aVertexIndex.x * lineEndpointIndex + aVertexIndex.y * (
 highp uint vertexIndex2 = aVertexIndex.y * lineEndpointIndex + aVertexIndex.x * (1u - lineEndpointIndex);
 
 
-emitLineWithVariableWidth(uProjection, vertexA, vertexB, readAttribute1(vertexIndex2));
+emitLineWithVariableWidth(uProjection, uViewModel, vertexA, vertexB, readAttribute1(vertexIndex2));
 `;
 
           builder.addFragmentCode(`
@@ -236,10 +237,11 @@ void emitDefault() {
             /*crossSectionFade=*/ this.targetIsSliceView,
           );
           builder.addUniform("highp float", "uNodeDiameter");
+          console.log('are we doing this?');
           let vertexMain = `
 highp uint vertexIndex = uint(gl_InstanceID);
 highp vec3 vertexPosition = readAttribute0(vertexIndex);
-emitCircle(uProjection * vec4(vertexPosition, 1.0), uNodeDiameter, 0.0);
+emitCircle(uProjection, uViewModel, vertexPosition, readAttribute1(vertexIndex), 0.0);
 `;
 
           builder.addFragmentCode(`
@@ -319,34 +321,44 @@ void emitDefault() {
   ) {
     const { viewProjectionMat, viewMatrix, invViewMatrix, invViewProjectionMat, projectionMat } =
       renderContext.projectionParameters;
-    const mat = mat4.multiply(tempMat2, viewProjectionMat, modelMatrix);
+    const mat = mat4.multiply(tempMat2, viewMatrix, modelMatrix);
 
-    const tempVec = vec3.create();
-    tempVec.set([1, 1, 1]);
-    viewMatrix;
+
+    viewProjectionMat;
+
+    gl.uniformMatrix4fv(shader.uniform("uProjection"), false, projectionMat);
+
+    gl.uniformMatrix4fv(shader.uniform("uViewModel"), false, mat);
+
+
+
+
+    // const tempVec = vec3.create();
+    // tempVec.set([1, 1, 1]);
+    // viewMatrix;
     // mat4.getScaling(tempVec, mat);
 
     if (true) {
   // view matrix
-    mat4.getScaling(tempVec, viewMatrix);
-    vec3.scale(tempVec, tempVec, 1 / 4);
+    // mat4.getScaling(tempVec, viewMatrix);
+    // vec3.scale(tempVec, tempVec, 1 / 4);
 
-    // vec3.scale(tempVec, tempVec, 10);
+    // vec3.scale(tempVec, tempVec, 1000);
 
 
     // vec3.scale(tempVec, tempVec, 100);
   }
 
-      if (false) {
-  // view proj matrix
-    mat4.getScaling(tempVec, viewProjectionMat);
-    vec3.scale(tempVec, tempVec, 1 / 10);
-  }
-2
+//       if (false) {
+//   // view proj matrix
+//     mat4.getScaling(tempVec, viewProjectionMat);
+//     vec3.scale(tempVec, tempVec, 1 / 10);
+//   }
+// 2
 
-  if (false) {
-    vec3.multiply(tempVec, tempVec, vec3.fromValues(renderContext.projectionParameters.width, renderContext.projectionParameters.height, 1));
-  }
+//   if (false) {
+//     vec3.multiply(tempVec, tempVec, vec3.fromValues(renderContext.projectionParameters.width, renderContext.projectionParameters.height, 1));
+//   }
 
 
   // vec3.scale(tempVec, tempVec, 1/10x000);
@@ -372,15 +384,14 @@ void emitDefault() {
 
 
 
-    console.log('tempVec', tempVec[0] * 20000, tempVec[1] * 20000, tempVec[2] * 20000);
+    // console.log('tempVec', tempVec[0] * 20000, tempVec[1] * 20000, tempVec[2] * 20000);
 
     // vec3.normalize(tempVec, tempVec);
     // vec3.scale(tempVec, tempVec, 1 / 200);
 
 
-    console.log("scaling", tempVec);
-    gl.uniformMatrix4fv(shader.uniform("uProjection"), false, mat);
-    gl.uniform3fv(shader.uniform("uScale"), tempVec);
+    // console.log("viewMatrix", mat4.getRotation(quat.create(), viewMatrix));
+    // gl.uniform3fv(shader.uniform("uScale"), tempVec);
     this.vertexIdHelper.enable();
   }
 
@@ -550,6 +561,8 @@ export class SkeletonLayer extends RefCounted {
     public displayState: SkeletonLayerDisplayState,
   ) {
     super();
+
+    console.log("vertexAttributes", source.vertexAttributes);
 
     registerRedrawWhenSegmentationDisplayState3DChanged(displayState, this);
     this.displayState.shaderError.value = undefined;

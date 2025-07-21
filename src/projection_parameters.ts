@@ -71,6 +71,7 @@ export function projectionParametersEqual(
 export function updateProjectionParametersFromInverseViewAndProjection(
   p: ProjectionParameters,
 ) {
+  console.log("updateProjectionParametersFromInverseViewAndProjection");
   const { viewMatrix, viewProjectionMat } = p;
   mat4.invert(viewMatrix, p.invViewMatrix);
   mat4.multiply(viewProjectionMat, p.projectionMat, viewMatrix);

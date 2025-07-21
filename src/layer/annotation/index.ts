@@ -1150,6 +1150,7 @@ class RenderingOptionsTab extends Tab {
   codeWidget: ShaderCodeWidget;
   constructor(public layer: AnnotationUserLayer) {
     super();
+    console.log("RenderingOptionsTab");
     const { element } = this;
     this.codeWidget = this.registerDisposer(makeShaderCodeWidget(this.layer));
     element.classList.add("neuroglancer-annotation-rendering-tab");

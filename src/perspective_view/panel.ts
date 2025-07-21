@@ -417,6 +417,7 @@ export class PerspectivePanel extends RenderedDataPanel {
       new DerivedProjectionParameters({
         navigationState: this.navigationState,
         update: (out: ProjectionParameters, navigationState) => {
+          console.log('updateProjectionParameters');
           const { invViewMatrix, projectionMat, logicalWidth, logicalHeight } =
             out;
           const widthOverHeight = logicalWidth / logicalHeight;
@@ -461,6 +462,7 @@ export class PerspectivePanel extends RenderedDataPanel {
           );
           mat4.translate(invViewMatrix, invViewMatrix, kAxes[2]);
           updateProjectionParametersFromInverseViewAndProjection(out);
+          console.log('projectionMat', projectionMat);
         },
       }),
     );
