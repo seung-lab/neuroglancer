@@ -703,7 +703,7 @@ export class SkeletonLayer extends RefCounted {
         renderHelper.drawSkeleton(
           gl,
           edgeShader,
-          nodeShader,
+          renderOptions.mode.value === SkeletonRenderMode.LINES_AND_POINTS ? nodeShader : null,
           skeleton,
           renderContext.projectionParameters,
         );
