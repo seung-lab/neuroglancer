@@ -167,7 +167,10 @@ class RenderHelper extends RefCounted {
           defineLineShader(builder);
           builder.addAttribute("highp uvec2", "aVertexIndex");
           builder.addUniform("highp float", "uLineWidth");
-          let vertexMain = `
+          builder.addVertexCode(`
+float nanometersToPixels(float nanometers) {
+
+// duplicating this stuff is ugly
 highp vec3 vertexA = readAttribute0(aVertexIndex.x);
 highp vec3 vertexB = readAttribute0(aVertexIndex.y);
 highp uint lineEndpointIndex = getLineEndpointIndex();
@@ -176,18 +179,15 @@ highp uint vertexIndex2 = aVertexIndex.y * lineEndpointIndex + aVertexIndex.x * 
 
 
 
-{
     // we need:
     // vertexClip (so we also have w value)
     // projection matrix
     // viewModel matrix
     // width in nanometers
     // ulineParams
-
-    float totalLineWidth = readAttribute1(vertexIndex2);
-
     mat4 projection = uProjection;
     mat4 viewModel = uViewModel;
+    mat4 projectionInverse = inverse(projection);
 
     vec4 vertexAClip = projection * viewModel * vec4(vertexA, 1.0);
     vec4 vertexBClip = projection * viewModel * vec4(vertexB, 1.0);
@@ -196,23 +196,32 @@ highp uint vertexIndex2 = aVertexIndex.y * lineEndpointIndex + aVertexIndex.x * 
     vec2 lineOffset = getLineOffset();
     vec4 vertexDevice = vec4(mix(vertexADevice, vertexBDevice, lineOffset.x), 1.0);
     vec2 offset = vec2(1.0, 0.0) * uLineParams.xy; // any normal vector will work
-    mat4 projectionInverse = inverse(projection);
     vec4 pos1View = projectionInverse * vertexDevice;
     vec4 pos2View = projectionInverse * (vertexDevice + vec4(offset, 0.0, 0.0));
     float viewDistance = length(pos2View.xyz - pos1View.xyz);
     float wVal = mix(vertexAClip.w, vertexBClip.w, lineOffset.x);
     float perspectiveScale = 1.0 / wVal;
-    float projectionScale = totalLineWidth / viewDistance;
+    float projectionScale = nanometers / viewDistance;
     float viewModalScale = length(viewModel[0].xyz);
-    float linePixelWidth = perspectiveScale * projectionScale * viewModalScale;
+    return perspectiveScale * projectionScale * viewModalScale;
+}
+`);
+          let vertexMain = `
+highp vec3 vertexA = readAttribute0(aVertexIndex.x);
+highp vec3 vertexB = readAttribute0(aVertexIndex.y);
+highp uint lineEndpointIndex = getLineEndpointIndex();
+highp uint vertexIndex = aVertexIndex.x * lineEndpointIndex + aVertexIndex.y * (1u - lineEndpointIndex);
+highp uint vertexIndex2 = aVertexIndex.y * lineEndpointIndex + aVertexIndex.x * (1u - lineEndpointIndex);
 
-    emitLineWithVariableWidth(uProjection, uViewModel, vertexA, vertexB, linePixelWidth);
+    float radius = readAttribute1(vertexIndex2);
+    
 
-  }
+    float override = nanometersToPixels(radius) / 2.0;
 
+    override = max(override, 1.0);
 
-
-
+    
+    emitLine(uProjection * uViewModel, vertexA, vertexB, override);
 `;
 
           builder.addFragmentCode(`
@@ -229,7 +238,6 @@ void emitDefault() {
           builder.addFragmentCode(glsl_COLORMAPS);
           const { vertexAttributes } = this;
           const numAttributes = vertexAttributes.length;
-          console.log("hi!");
           for (let i = 1; i < numAttributes; ++i) {
             const info = vertexAttributes[i];
             builder.addVarying(`highp ${info.glslDataType}`, `vCustom${i}`);

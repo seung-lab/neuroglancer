@@ -29,7 +29,6 @@ import { glsl_clipLineToDepthRange } from "#src/webgl/shader_lib.js";
 export const VERTICES_PER_LINE = VERTICES_PER_QUAD;
 
 export function defineLineShader(builder: ShaderBuilder, rounded = false) {
-  rounded;
   builder.addVertexCode(glsl_getQuadVertexPosition);
   // x: 1 / viewportWidth
   // y: 1 / viewportHeight
@@ -38,21 +37,24 @@ export function defineLineShader(builder: ShaderBuilder, rounded = false) {
   builder.addVarying("highp float", "vLineCoord");
   // max(1e-6, featherWidth) / (lineWidth + featherWidth)
   builder.addVarying("highp float", "vLineFeatherFraction");
+  if (rounded) {
+    // Fraction of total line length used by each endpoint.
+    builder.addVarying("highp float", "vEndpointFraction");
+    builder.addVarying("highp float", "vLineCoordT");
+    // Starting point of border from [0, 1].
+    builder.addVarying("highp float", "vLineBorderStartFraction");
+  }
   builder.addVertexCode(glsl_clipLineToDepthRange);
   builder.addVertexCode(`
 vec2 getLineOffset() { return getQuadVertexPosition(vec2(0.0, -1.0), vec2(1.0, 1.0)); }
 float getLineEndpointCoefficient() { return getLineOffset().x; }
 uint getLineEndpointIndex() { return uint(getLineEndpointCoefficient()); }
-
-void emitLineWithVariableWidthFoo(mat4 projection, mat4 viewModel, vec4 vertexAView, vec4 vertexBView, float totalLineWidth) {
-  vec4 vertexAClip = projection * vertexAView;
-  vec4 vertexBClip = projection * vertexBView;
-
+void emitLine(vec4 vertexAClip, vec4 vertexBClip, float lineWidthInPixels
+              ${rounded ? ", float borderWidth" : ""}) {
   if (!clipLineToDepthRange(vertexAClip, vertexBClip)) {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     return;
   }
-
   vec3 vertexADevice = vertexAClip.xyz / vertexAClip.w;
   vec3 vertexBDevice = vertexBClip.xyz / vertexBClip.w;
 
@@ -61,33 +63,66 @@ void emitLineWithVariableWidthFoo(mat4 projection, mat4 viewModel, vec4 vertexAV
   float linePixelLength = length(lineDirectionUnnormalized / uLineParams.xy * 0.5);
 
   if (linePixelLength < 1e-3) {
-    // If the line is too short, we can't draw it.
-    // return; any reason not to just return?
     lineDirection = vec2(1.0, 0.0);
-    vertexAView.z = vertexBView.z = 0.0;
+    vertexADevice.z = vertexBDevice.z = 0.0;
   } else {
-    // Normalize the line direction to a unit vector.
     lineDirection = normalize(lineDirectionUnnormalized);
   }
-  vec2 lineNormal = normalize(vec2(lineDirection.y, -lineDirection.x));
+  vec2 lineNormal = normalize(vec2(lineDirection.y, -lineDirection.x) / uLineParams.yx * uLineParams.xy);
 
   vec2 lineOffset = getLineOffset();
   gl_Position = vec4(mix(vertexADevice, vertexBDevice, lineOffset.x), 1.0);
-
-
-    gl_Position.xy += lineOffset.y * lineNormal * totalLineWidth * uLineParams.xy;
-
-
-  // todo, I can't see a difference caused by this
-  // vLineFeatherFraction = max(1e-6, uLineParams.z) / linePixelWidth;
-  // vLineCoord = lineOffset.y;
+  float totalLineWidth = lineWidthInPixels + 2.0 * uLineParams.z ${
+    rounded ? " + 2.0 * borderWidth" : ""
+  };
+  if (lineWidthInPixels == 0.0) totalLineWidth = 0.0;
+  vLineFeatherFraction = max(1e-6, uLineParams.z) / totalLineWidth;
+  gl_Position.xy += (lineOffset.y * lineNormal
+                     ${
+                       rounded
+                         ? "+ lineDirection * (2.0 * lineOffset.x - 1.0)"
+                         : ""
+                     })
+                  * totalLineWidth * uLineParams.xy;
+  vLineCoord = lineOffset.y;
+  ${
+    rounded
+      ? "vEndpointFraction = totalLineWidth / (linePixelLength + totalLineWidth * 2.0);"
+      : ""
+  }
+  ${
+    rounded
+      ? "vLineCoordT = lineOffset.x; vLineBorderStartFraction = lineWidthInPixels / totalLineWidth;"
+      : ""
+  }
 }
-
-void emitLineWithVariableWidth(mat4 projection, mat4 viewModel, vec3 vertexA, vec3 vertexB, float startingLineWidthInPixels) {
-  emitLineWithVariableWidthFoo(projection, viewModel, viewModel * vec4(vertexA, 1.0), viewModel * vec4(vertexB, 1.0),
-           startingLineWidthInPixels);
+void emitLine(mat4 projection, vec3 vertexA, vec3 vertexB, float lineWidthInPixels
+              ${rounded ? ", float borderWidth" : ""}) {
+  emitLine(projection * vec4(vertexA, 1.0), projection * vec4(vertexB, 1.0),
+           lineWidthInPixels
+           ${rounded ? ", borderWidth" : ""});
 }
 `);
+  if (rounded) {
+    builder.addFragmentCode(`
+vec4 getRoundedLineColor(vec4 interiorColor, vec4 borderColor) {
+  float radius;
+  if (vLineCoordT < vEndpointFraction || vLineCoordT > 1.0 - vEndpointFraction) {
+    radius = length(vec2(1.0 - min(vLineCoordT, 1.0 - vLineCoordT) / vEndpointFraction,
+                         vLineCoord));
+    if (radius > 1.0) {
+      discard;
+    }
+  } else {
+    radius = abs(vLineCoord);
+  }
+  float borderColorFraction = clamp((radius - vLineBorderStartFraction) / vLineFeatherFraction, 0.0, 1.0);
+  float feather = clamp((1.0 - radius) / vLineFeatherFraction, 0.0, 1.0);
+  vec4 color = mix(interiorColor, borderColor, borderColorFraction);
+  return vec4(color.rgb, color.a * feather);
+}
+`);
+  }
 
   builder.addFragmentCode(`
 float getLineAlpha() {
@@ -110,7 +145,6 @@ export function initializeLineShader(
   featherWidthInPixels: number,
 ) {
   const { gl } = shader;
-  console.log('ulineParams', projectionParameters.width, projectionParameters.height);
   gl.uniform3f(
     shader.uniform("uLineParams"),
     1 / projectionParameters.width,
