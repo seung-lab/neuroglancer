@@ -44,7 +44,7 @@ vec2 getLineOffset() { return getQuadVertexPosition(vec2(0.0, -1.0), vec2(1.0, 1
 float getLineEndpointCoefficient() { return getLineOffset().x; }
 uint getLineEndpointIndex() { return uint(getLineEndpointCoefficient()); }
 
-void emitLineWithVariableWidthFoo(mat4 projection, mat4 viewModel, vec4 vertexAView, vec4 vertexBView, float lineWidthInPixels) {
+void emitLineWithVariableWidthFoo(mat4 projection, mat4 viewModel, vec4 vertexAView, vec4 vertexBView, float totalLineWidth) {
   vec4 vertexAClip = projection * vertexAView;
   vec4 vertexBClip = projection * vertexBView;
 
@@ -53,8 +53,8 @@ void emitLineWithVariableWidthFoo(mat4 projection, mat4 viewModel, vec4 vertexAV
     return;
   }
 
-  vec4 vertexADevice = vertexAClip / vertexAClip.w;
-  vec4 vertexBDevice = vertexBClip / vertexBClip.w;
+  vec3 vertexADevice = vertexAClip.xyz / vertexAClip.w;
+  vec3 vertexBDevice = vertexBClip.xyz / vertexBClip.w;
 
   vec2 lineDirectionUnnormalized = vertexBDevice.xy - vertexADevice.xy;
   vec2 lineDirection;
@@ -72,18 +72,14 @@ void emitLineWithVariableWidthFoo(mat4 projection, mat4 viewModel, vec4 vertexAV
   vec2 lineNormal = normalize(vec2(lineDirection.y, -lineDirection.x));
 
   vec2 lineOffset = getLineOffset();
-  gl_Position = mix(vertexAView, vertexBView, lineOffset.x);
-
-  float totalLineWidth = lineWidthInPixels;
-
-  float scale = length(viewModel[0].xyz);
-  gl_Position.xy += (lineOffset.y * lineNormal * scale * totalLineWidth);
-  gl_Position = projection * gl_Position;
-
-  // TODO, add minimum line width in pixels.
+  gl_Position = vec4(mix(vertexADevice, vertexBDevice, lineOffset.x), 1.0);
 
 
-  // vLineFeatherFraction = max(1e-6, uLineParams.z) / totalLineWidth;
+    gl_Position.xy += lineOffset.y * lineNormal * totalLineWidth * uLineParams.xy;
+
+
+  // todo, I can't see a difference caused by this
+  // vLineFeatherFraction = max(1e-6, uLineParams.z) / linePixelWidth;
   // vLineCoord = lineOffset.y;
 }
 

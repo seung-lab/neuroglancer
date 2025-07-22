@@ -44,7 +44,7 @@ import { SliceViewPanelRenderLayer } from "#src/sliceview/renderlayer.js";
 import { TrackableValue, WatchableValue } from "#src/trackable_value.js";
 import { DataType } from "#src/util/data_type.js";
 import { RefCounted } from "#src/util/disposable.js";
-import { mat4, quat, vec3 } from "#src/util/geom.js";
+import { mat4, vec3 } from "#src/util/geom.js";
 import { verifyFinitePositiveFloat } from "#src/util/json.js";
 import { NullarySignal } from "#src/util/signal.js";
 import type { Trackable } from "#src/util/trackable.js";
@@ -127,7 +127,6 @@ class RenderHelper extends RefCounted {
     builder.addUniform("highp mat4", "uProjection");
     builder.addUniform("highp mat4", "uViewModel");
     builder.addUniform("highp uint", "uPickID");
-    builder.addUniform("highp vec3", "uScale");
   }
 
   edgeShaderGetter;
@@ -173,11 +172,47 @@ highp vec3 vertexA = readAttribute0(aVertexIndex.x);
 highp vec3 vertexB = readAttribute0(aVertexIndex.y);
 highp uint lineEndpointIndex = getLineEndpointIndex();
 highp uint vertexIndex = aVertexIndex.x * lineEndpointIndex + aVertexIndex.y * (1u - lineEndpointIndex);
-
 highp uint vertexIndex2 = aVertexIndex.y * lineEndpointIndex + aVertexIndex.x * (1u - lineEndpointIndex);
 
 
-emitLineWithVariableWidth(uProjection, uViewModel, vertexA, vertexB, readAttribute1(vertexIndex2));
+
+{
+    // we need:
+    // vertexClip (so we also have w value)
+    // projection matrix
+    // viewModel matrix
+    // width in nanometers
+    // ulineParams
+
+    float totalLineWidth = readAttribute1(vertexIndex2);
+
+    mat4 projection = uProjection;
+    mat4 viewModel = uViewModel;
+
+    vec4 vertexAClip = projection * viewModel * vec4(vertexA, 1.0);
+    vec4 vertexBClip = projection * viewModel * vec4(vertexB, 1.0);
+    vec3 vertexADevice = vertexAClip.xyz / vertexAClip.w;
+    vec3 vertexBDevice = vertexBClip.xyz / vertexBClip.w;
+    vec2 lineOffset = getLineOffset();
+    vec4 vertexDevice = vec4(mix(vertexADevice, vertexBDevice, lineOffset.x), 1.0);
+    vec2 offset = vec2(1.0, 0.0) * uLineParams.xy; // any normal vector will work
+    mat4 projectionInverse = inverse(projection);
+    vec4 pos1View = projectionInverse * vertexDevice;
+    vec4 pos2View = projectionInverse * (vertexDevice + vec4(offset, 0.0, 0.0));
+    float viewDistance = length(pos2View.xyz - pos1View.xyz);
+    float wVal = mix(vertexAClip.w, vertexBClip.w, lineOffset.x);
+    float perspectiveScale = 1.0 / wVal;
+    float projectionScale = totalLineWidth / viewDistance;
+    float viewModalScale = length(viewModel[0].xyz);
+    float linePixelWidth = perspectiveScale * projectionScale * viewModalScale;
+
+    emitLineWithVariableWidth(uProjection, uViewModel, vertexA, vertexB, linePixelWidth);
+
+  }
+
+
+
+
 `;
 
           builder.addFragmentCode(`
@@ -237,7 +272,7 @@ void emitDefault() {
             /*crossSectionFade=*/ this.targetIsSliceView,
           );
           builder.addUniform("highp float", "uNodeDiameter");
-          console.log('are we doing this?');
+          console.log("are we doing this?");
           let vertexMain = `
 highp uint vertexIndex = uint(gl_InstanceID);
 highp vec3 vertexPosition = readAttribute0(vertexIndex);
@@ -319,79 +354,10 @@ void emitDefault() {
     renderContext: SliceViewPanelRenderContext | PerspectiveViewRenderContext,
     modelMatrix: mat4,
   ) {
-    const { viewProjectionMat, viewMatrix, invViewMatrix, invViewProjectionMat, projectionMat } =
-      renderContext.projectionParameters;
-    const mat = mat4.multiply(tempMat2, viewMatrix, modelMatrix);
-
-
-    viewProjectionMat;
-
+    const { viewMatrix, projectionMat } = renderContext.projectionParameters;
+    const viewModelMat = mat4.multiply(tempMat2, viewMatrix, modelMatrix);
     gl.uniformMatrix4fv(shader.uniform("uProjection"), false, projectionMat);
-
-    gl.uniformMatrix4fv(shader.uniform("uViewModel"), false, mat);
-
-
-
-
-    // const tempVec = vec3.create();
-    // tempVec.set([1, 1, 1]);
-    // viewMatrix;
-    // mat4.getScaling(tempVec, mat);
-
-    if (true) {
-  // view matrix
-    // mat4.getScaling(tempVec, viewMatrix);
-    // vec3.scale(tempVec, tempVec, 1 / 4);
-
-    // vec3.scale(tempVec, tempVec, 1000);
-
-
-    // vec3.scale(tempVec, tempVec, 100);
-  }
-
-//       if (false) {
-//   // view proj matrix
-//     mat4.getScaling(tempVec, viewProjectionMat);
-//     vec3.scale(tempVec, tempVec, 1 / 10);
-//   }
-// 2
-
-//   if (false) {
-//     vec3.multiply(tempVec, tempVec, vec3.fromValues(renderContext.projectionParameters.width, renderContext.projectionParameters.height, 1));
-//   }
-
-
-  // vec3.scale(tempVec, tempVec, 1/10x000);
-
-
-
-    // const rotationQuat = quat.create();
-
-    // mat4.getRotation(rotationQuat, viewMatrix);
-
-    // quat.invert(rotationQuat, rotationQuat);
-
-    // console.log('rotationQuat', rotationQuat);
-
-    // vec3.transformQuat(tempVec, tempVec, rotationQuat);
-
-    invViewMatrix;
-    invViewProjectionMat;
-    projectionMat;
-    quat;
-
-    // vec3.transformMat4(tempVec, tempVec, viewMatrix);
-
-
-
-    // console.log('tempVec', tempVec[0] * 20000, tempVec[1] * 20000, tempVec[2] * 20000);
-
-    // vec3.normalize(tempVec, tempVec);
-    // vec3.scale(tempVec, tempVec, 1 / 200);
-
-
-    // console.log("viewMatrix", mat4.getRotation(quat.create(), viewMatrix));
-    // gl.uniform3fv(shader.uniform("uScale"), tempVec);
+    gl.uniformMatrix4fv(shader.uniform("uViewModel"), false, viewModelMat);
     this.vertexIdHelper.enable();
   }
 
@@ -703,7 +669,9 @@ export class SkeletonLayer extends RefCounted {
         renderHelper.drawSkeleton(
           gl,
           edgeShader,
-          renderOptions.mode.value === SkeletonRenderMode.LINES_AND_POINTS ? nodeShader : null,
+          renderOptions.mode.value === SkeletonRenderMode.LINES_AND_POINTS
+            ? nodeShader
+            : null,
           skeleton,
           renderContext.projectionParameters,
         );

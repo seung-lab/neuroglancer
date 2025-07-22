@@ -47,27 +47,8 @@ void emitCircle(mat4 projection, mat4 viewModel, vec3 position, float diameter, 
   vec2 circleCornerOffset = getQuadVertexPosition(vec2(-1.0, -1.0), vec2(1.0, 1.0));
   float scale = length(viewModel[0].xyz);
   totalDiameter = totalDiameter * scale;
-  // gl_Position.xy += circleCornerOffset * totalDiameter;
-
-  vec4 newPosition = gl_Position;
-  newPosition.xy += circleCornerOffset * totalDiameter;
-  newPosition = projection * newPosition;
-
-
-  vec4 oldPosition = projection * gl_Position;
-
-  vec4 vertexADevice = oldPosition / oldPosition.w;
-  vec4 vertexBDevice = newPosition / newPosition.w;
-
-  vec2 lineDirectionUnnormalized = vertexBDevice.xy - vertexADevice.xy;
-  float linePixelLength = length(lineDirectionUnnormalized / uCircleParams.xy * 0.5);
-
-  if (linePixelLength < 1.0) {
-    gl_Position.xy += circleCornerOffset * totalDiameter / linePixelLength;
-    gl_Position = projection * gl_Position;
-  } else {
-    gl_Position = newPosition;
-  }
+  gl_Position.xy += circleCornerOffset * totalDiameter;
+  gl_Position = projection * gl_Position;
 
   vCircleCoord.xy = circleCornerOffset;
   if (borderWidth == 0.0) {
