@@ -720,7 +720,6 @@ export class SkeletonLayer extends RefCounted {
     nodeShader.bind();
     renderHelper.beginLayer(gl, nodeShader, renderContext, modelMatrix);
     gl.uniform1f(nodeShader.uniform("uNodeDiameter"), pointDiameter);
-    console.log("pointDiameter", pointDiameter);
     setControlsInShader(
       gl,
       nodeShader,
@@ -759,9 +758,7 @@ export class SkeletonLayer extends RefCounted {
         renderHelper.drawSkeleton(
           gl,
           edgeShader,
-          renderOptions.mode.value === SkeletonRenderMode.LINES_AND_POINTS
-            ? nodeShader
-            : null,
+          nodeShader,
           skeleton,
           renderContext.projectionParameters,
         );
