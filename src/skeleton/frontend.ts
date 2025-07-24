@@ -101,13 +101,13 @@ void setLineWidth(float width) {}
 
 function defineNoOpNodeSetters(builder: ShaderBuilder) {
   builder.addVertexCode(`
-void setNodeSize(float size) {}
+void setNodeDiameter(float size) {}
 `);
 }
 
 const DEFAULT_VERTEX_MAIN = `void main() {
   setLineWidth(uLineWidth);
-  setNodeSize(uNodeDiameter);
+  setNodeDiameter(uNodeDiameter);
 }
 `;
 
@@ -310,10 +310,10 @@ void main() {
           builder.addUniform("highp float", "uLineWidth");
 
           builder.addVertexCode(`
-float ng_nodeSize;
+float ng_nodeDiameter;
 
-void setNodeSize(float size) {
-  ng_nodeSize = size;
+void setNodeDiameter(float size) {
+  ng_nodeDiameter = size;
 }
 
 float nanometersToPixels(float nanometers) {
@@ -373,7 +373,7 @@ vColor = uColor;
 
           vertexMain += `
 userMain();
-emitCircle(uProjection * uViewModel * vec4(vertexPosition, 1.0), ng_nodeSize, 0.0);
+emitCircle(uProjection * uViewModel * vec4(vertexPosition, 1.0), ng_nodeDiameter, 0.0);
 `;
 
           builder.addFragmentCode(`
@@ -384,10 +384,6 @@ void emitRGBA(vec4 color) {
 `);
           builder.setVertexMain(vertexMain);
           addControlsToBuilder(shaderBuilderState, builder);
-          // builder.setFragmentMainFunction(
-          //   shaderCodeWithLineDirective(shaderBuilderState.parseResult.code),
-          // );
-
           builder.addVertexCode(
             "\n#define main userMain\n" +
               shaderCodeWithLineDirective(shaderBuilderState.parseResult.code) +
@@ -692,7 +688,6 @@ export class SkeletonLayer extends RefCounted {
     const edgeShaderResult = renderHelper.edgeShaderGetter(
       renderContext.emitter,
     );
-    // console.log("edgeShaderResult", edgeShaderResult);
     const nodeShaderResult = renderHelper.nodeShaderGetter(
       renderContext.emitter,
     );
