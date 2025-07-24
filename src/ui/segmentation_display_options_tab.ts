@@ -69,30 +69,24 @@ export class DisplayOptionsTab extends Tab {
       );
     }
 
-    console.log("code visible", layer.codeVisible.value);
-
     const skeletonControls = this.registerDisposer(
       new DependentViewWidget(
         layer.hasSkeletonsLayer,
         (hasSkeletonsLayer, parent, refCounted) => {
           if (!hasSkeletonsLayer) return;
-          console.log("Adding skeleton controls");
-
           const skeletonLayer = layer.getSkeletonLayer()!;
 
           {
             const { vertexAttributes } = skeletonLayer;
-
-            console.log(
-              "skeleton Rendering annotation vertexAttributes",
-              vertexAttributes,
-            );
             if (vertexAttributes.length <= 1)
               return;
             const propertyList = document.createElement("div");
             parent.appendChild(propertyList);
             propertyList.classList.add(
               "neuroglancer-annotation-shader-property-list",
+            );
+            propertyList.classList.add(
+              "neuroglancer-skeleton-shader-vertex-attribute-list",
             );
             const [_, ...rest] = vertexAttributes;
             for (const property of rest) {
