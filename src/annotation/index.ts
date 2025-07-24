@@ -863,7 +863,6 @@ export const annotationTypeHandlers: Record<
       rank: number,
       annotation: Line,
     ) {
-      console.log('serializeLine');
       serializeTwoFloatVectors(
         buffer,
         offset,
@@ -932,7 +931,6 @@ export const annotationTypeHandlers: Record<
       annotation: PolyLine,
       instanceStride: number,
     ) => {
-      console.log('serializePolyLine');
       // Build buffer like
       // P1 P2 PROPERTIES P3 P4 PROPERTIES ...
       for (let i = 0; i < annotation.points.length - 1; i++) {

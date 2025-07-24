@@ -121,7 +121,6 @@ emitAnnotation(vec4(vColor.rgb, vColor.a * getLineAlpha() *
                                 ${this.getCrossSectionFadeFactor()} *
                                 clipCoefficient));
 `);
-builder.addFragmentCode(`void setLineWidth(float width) {}`);
     },
   );
 
@@ -135,9 +134,6 @@ builder.addFragmentCode(`void setLineWidth(float width) {}`);
       builder.addVarying("highp vec4", "vBorderColor");
       defineNoOpLineSetters(builder);
       builder.addVertexCode(`
-
-void setLineWidth(float width) {}
-
 float ng_markerDiameter;
 float ng_markerBorderWidth;
 int getEndpointIndex() {
@@ -176,7 +172,6 @@ vec4 color = getCircleColor(vColor, vBorderColor);
 color.a *= vClipCoefficient;
 emitAnnotation(color);
 `);
-builder.addFragmentCode(`void setLineWidth(float width) {}`);
     },
   );
 
@@ -203,7 +198,6 @@ builder.addFragmentCode(`void setLineWidth(float width) {}`);
 
   drawEdges(context: AnnotationRenderContext) {
     this.enable(this.edgeShaderGetter, context, (shader) => {
-      console.log('draw lines!');
       initializeLineShader(
         shader,
         context.renderContext.projectionParameters,

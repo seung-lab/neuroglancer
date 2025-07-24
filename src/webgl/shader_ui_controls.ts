@@ -1361,7 +1361,6 @@ export class ShaderControlState
     this.processedFragmentMain = {
       changed: this.parseResultChanged,
       get value() {
-        console.log("processedFragmentMain getter called");
         self.handleFragmentMainChanged();
         return self.processedFragmentMain_;
       },
