@@ -141,6 +141,7 @@ class RenderHelper extends RefCounted {
     builder.addUniform("highp vec4", "uColor");
     builder.addUniform("highp mat4", "uProjection");
     builder.addUniform("highp mat4", "uViewModel");
+    builder.addUniform("highp mat4", "uView");
     builder.addUniform("highp uint", "uPickID");
   }
 
@@ -193,7 +194,7 @@ float nanometersToPixels(float value) {
   highp vec3 vertexA = readAttribute0(aVertexIndex.x);
   highp vec3 vertexB = readAttribute0(aVertexIndex.y);
   highp vec3 vertex = mix(vertexA, vertexB, lineOffset.x);
-  return nanometersToPixels(value, vertex, uProjection, uViewModel, uLineParams.xy);
+  return nanometersToPixels(value, vertex, uProjection, uView, uLineParams.xy);
 }
 float ng_lineWidth;
 void setLineWidth(float width) {
@@ -277,7 +278,7 @@ emit(vec4(vColor.rgb, vColor.a * getLineAlpha() * ${this.getCrossSectionFadeFact
 float nanometersToPixels(float value) {
   highp uint vertexIndex = uint(gl_InstanceID);
   highp vec3 vertexPosition = readAttribute0(vertexIndex);
-  return nanometersToPixels(value, vertexPosition, uProjection, uViewModel, uCircleParams.xy);
+  return nanometersToPixels(value, vertexPosition, uProjection, uView, uCircleParams.xy);
 }
 float ng_nodeDiameter;
 void setNodeDiameter(float size) {
@@ -369,6 +370,7 @@ emit(getCircleColor(vColor, borderColor), uPickID);
     const viewModelMat = mat4.multiply(tempMat2, viewMatrix, modelMatrix);
     gl.uniformMatrix4fv(shader.uniform("uProjection"), false, projectionMat);
     gl.uniformMatrix4fv(shader.uniform("uViewModel"), false, viewModelMat);
+    gl.uniformMatrix4fv(shader.uniform("uView"), false, viewMatrix);
     this.vertexIdHelper.enable();
   }
 
