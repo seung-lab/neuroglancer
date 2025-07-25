@@ -465,6 +465,23 @@ highp int subtractSaturate(highp int x, highp uint y) {
 `,
 ];
 
+export const glsl_nanometersToPixels = `
+float nanometersToPixels(float nanometers, highp vec3 vertex, mat4 projection, mat4 viewModel, vec2 params) {
+  mat4 projectionInverse = inverse(projection);
+  vec4 vertexClip = projection * viewModel * vec4(vertex, 1.0);
+  vec4 vertexDevice = vec4(vertexClip.xyz / vertexClip.w, 1.0);
+  vec2 offset = vec2(1.0, 0.0) * params; // any normal vector will work
+  vec4 pos1View = projectionInverse * vertexDevice;
+  vec4 pos2View = projectionInverse * (vertexDevice + vec4(offset, 0.0, 0.0));
+  float viewDistance = length(pos2View.xyz - pos1View.xyz);
+  float wVal = vertexClip.w;
+  float perspectiveScale = 1.0 / wVal;
+  float projectionScale = nanometers / viewDistance;
+  float viewModalScale = length(viewModel[0].xyz);
+  return perspectiveScale * projectionScale * viewModalScale;
+}
+`;
+
 export function getShaderType(dataType: DataType, numComponents = 1) {
   switch (dataType) {
     case DataType.FLOAT32:

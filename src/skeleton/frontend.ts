@@ -74,6 +74,7 @@ import type {
   ShaderProgram,
   ShaderSamplerType,
 } from "#src/webgl/shader.js";
+import { glsl_nanometersToPixels } from "#src/webgl/shader_lib.js";
 import type { ShaderControlsBuilderState } from "#src/webgl/shader_ui_controls.js";
 import {
   addControlsToBuilder,
@@ -105,7 +106,8 @@ void setNodeDiameter(float size) {}
 `);
 }
 
-const DEFAULT_VERTEX_MAIN = `void main() {
+const DEFAULT_VERTEX_MAIN = `
+void main() {
   setLineWidth(uLineWidth);
   setNodeDiameter(uNodeDiameter);
 }
@@ -182,55 +184,28 @@ class RenderHelper extends RefCounted {
           builder.addAttribute("highp uvec2", "aVertexIndex");
           builder.addUniform("highp float", "uLineWidth");
           builder.addUniform("highp float", "uNodeDiameter");
-
+          builder.addVarying("vec4", "vColor");
+          builder.addVertexCode(glsl_COLORMAPS);
+          builder.addVertexCode(glsl_nanometersToPixels);
           builder.addVertexCode(`
+float nanometersToPixels(float value) {
+  vec2 lineOffset = getLineOffset();
+  highp vec3 vertexA = readAttribute0(aVertexIndex.x);
+  highp vec3 vertexB = readAttribute0(aVertexIndex.y);
+  highp vec3 vertex = mix(vertexA, vertexB, lineOffset.x);
+  return nanometersToPixels(value, vertex, uProjection, uViewModel, uLineParams.xy);
+}
 float ng_lineWidth;
-
 void setLineWidth(float width) {
   ng_lineWidth = width;
 }
-
-float nanometersToPixels(float nanometers) {
-  // can I avoid duplicating this?
-  highp vec3 vertexA = readAttribute0(aVertexIndex.x);
-  highp vec3 vertexB = readAttribute0(aVertexIndex.y);
-
-  // we need:
-  // vertexClip (so we also have w value)
-  // projection matrix
-  // viewModel matrix
-  // width in nanometers
-  // ulineParams
-  mat4 projection = uProjection;
-  mat4 viewModel = uViewModel;
-  mat4 projectionInverse = inverse(projection);
-
-  vec4 vertexAClip = projection * viewModel * vec4(vertexA, 1.0);
-  vec4 vertexBClip = projection * viewModel * vec4(vertexB, 1.0);
-  vec3 vertexADevice = vertexAClip.xyz / vertexAClip.w;
-  vec3 vertexBDevice = vertexBClip.xyz / vertexBClip.w;
-  vec2 lineOffset = getLineOffset();
-  vec4 vertexDevice = vec4(mix(vertexADevice, vertexBDevice, lineOffset.x), 1.0);
-  vec2 offset = vec2(1.0, 0.0) * uLineParams.xy; // any normal vector will work
-  vec4 pos1View = projectionInverse * vertexDevice;
-  vec4 pos2View = projectionInverse * (vertexDevice + vec4(offset, 0.0, 0.0));
-  float viewDistance = length(pos2View.xyz - pos1View.xyz);
-  float wVal = mix(vertexAClip.w, vertexBClip.w, lineOffset.x);
-  float perspectiveScale = 1.0 / wVal;
-  float projectionScale = nanometers / viewDistance;
-  float viewModalScale = length(viewModel[0].xyz);
-  return perspectiveScale * projectionScale * viewModalScale;
-}
-
 void emitRGB(vec3 color) {
-  vColor = vec4(color.rgb, 1.0);
+  vColor = vec4(color.rgb, uColor.a);
 }
-
 void emitRGBA(vec4 color) {
   vColor = color;
 }
 `);
-
           let vertexMain = `
 highp vec3 vertexA = readAttribute0(aVertexIndex.x);
 highp vec3 vertexB = readAttribute0(aVertexIndex.y);
@@ -239,29 +214,19 @@ highp uint vertexIndex = aVertexIndex.x * lineEndpointIndex + aVertexIndex.y * (
 highp uint vertexIndex2 = aVertexIndex.y * lineEndpointIndex + aVertexIndex.x * (1u - lineEndpointIndex);
 vColor = uColor;
 `;
-
-          builder.addVarying("vec4", "vColor");
-
-          builder.addFragmentCode(glsl_COLORMAPS);
           const { vertexAttributes } = this;
           const numAttributes = vertexAttributes.length;
           for (let i = 1; i < numAttributes; ++i) {
             const info = vertexAttributes[i];
             builder.addVarying(`highp ${info.glslDataType}`, `vCustom${i}`);
             vertexMain += `vCustom${i} = readAttribute${i}(vertexIndex2);\n`; // TODO, why is vertexIndex2 correct?
+            // builder.addVertexCode(`#define ${info.name} vCustom${i}\n`);
             builder.addVertexCode(`#define ${info.name}() vCustom${i}\n`);
           }
-
           vertexMain += `
 userMain();
 emitLine(uProjection * uViewModel, vertexA, vertexB, ng_lineWidth);
 `;
-
-          builder.addFragmentCode(`
-void emitRGBA(vec4 color) {
-  emit(vec4(color.rgb, uColor.a * getLineAlpha() * ${this.getCrossSectionFadeFactor()}), uPickID);
-}
-`);
           builder.setVertexMain(vertexMain);
           addControlsToBuilder(shaderBuilderState, builder);
           builder.addVertexCode(
@@ -269,11 +234,8 @@ void emitRGBA(vec4 color) {
               shaderCodeWithLineDirective(shaderBuilderState.parseResult.code) +
               "\n#undef main\n",
           );
-
-          builder.setFragmentMainFunction(`
-void main() {
-  emitRGBA(vColor);
-}
+          builder.setFragmentMain(`
+emit(vec4(vColor.rgb, vColor.a * getLineAlpha() * ${this.getCrossSectionFadeFactor()}), uPickID);
 `);
         },
       },
@@ -308,80 +270,44 @@ void main() {
           defineNoOpEdgeSetters(builder);
           builder.addUniform("highp float", "uNodeDiameter");
           builder.addUniform("highp float", "uLineWidth");
-
+          builder.addVarying("vec4", "vColor");
+          builder.addVertexCode(glsl_COLORMAPS);
+          builder.addVertexCode(glsl_nanometersToPixels);
           builder.addVertexCode(`
+float nanometersToPixels(float value) {
+  highp uint vertexIndex = uint(gl_InstanceID);
+  highp vec3 vertexPosition = readAttribute0(vertexIndex);
+  return nanometersToPixels(value, vertexPosition, uProjection, uViewModel, uCircleParams.xy);
+}
 float ng_nodeDiameter;
-
 void setNodeDiameter(float size) {
   ng_nodeDiameter = size;
 }
-
-float nanometersToPixels(float nanometers) {
-  // can I avoid duplicating this?
-  highp uint vertexIndex = uint(gl_InstanceID);
-  highp vec3 vertex = readAttribute0(vertexIndex);
-
-  // we need:
-  // vertexClip (so we also have w value)
-  // projection matrix
-  // viewModel matrix
-  // width in nanometers
-  // ulineParams
-  mat4 projection = uProjection;
-  mat4 viewModel = uViewModel;
-  mat4 projectionInverse = inverse(projection);
-
-  vec4 vertexClip = projection * viewModel * vec4(vertex, 1.0);
-  vec4 vertexDevice = vec4(vertexClip.xyz / vertexClip.w, 1.0);
-  vec2 offset = vec2(1.0, 0.0) * uCircleParams.xy; // any normal vector will work
-  vec4 pos1View = projectionInverse * vertexDevice;
-  vec4 pos2View = projectionInverse * (vertexDevice + vec4(offset, 0.0, 0.0));
-  float viewDistance = length(pos2View.xyz - pos1View.xyz);
-  float wVal = vertexClip.w;
-  float perspectiveScale = 1.0 / wVal;
-  float projectionScale = nanometers / viewDistance;
-  float viewModalScale = length(viewModel[0].xyz);
-  return perspectiveScale * projectionScale * viewModalScale;
-}
-
 void emitRGB(vec3 color) {
   vColor = vec4(color.rgb, uColor.a);
 }
-
 void emitRGBA(vec4 color) {
   vColor = color;
 }
 `);
-
           let vertexMain = `
 highp uint vertexIndex = uint(gl_InstanceID);
 highp vec3 vertexPosition = readAttribute0(vertexIndex);
 vColor = uColor;
 `;
-
-          builder.addVarying("vec4", "vColor");
-
-          builder.addFragmentCode(glsl_COLORMAPS);
           const { vertexAttributes } = this;
           const numAttributes = vertexAttributes.length;
           for (let i = 1; i < numAttributes; ++i) {
             const info = vertexAttributes[i];
             builder.addVarying(`highp ${info.glslDataType}`, `vCustom${i}`);
             vertexMain += `vCustom${i} = readAttribute${i}(vertexIndex);\n`;
+            // builder.addVertexCode(`#define ${info.name} vCustom${i}\n`);
             builder.addVertexCode(`#define ${info.name}() vCustom${i}\n`);
           }
-
           vertexMain += `
 userMain();
 emitCircle(uProjection * uViewModel * vec4(vertexPosition, 1.0), ng_nodeDiameter, 0.0);
 `;
-
-          builder.addFragmentCode(`
-void emitRGBA(vec4 color) {
-  vec4 borderColor = color;
-  emit(getCircleColor(color, borderColor), uPickID);
-}
-`);
           builder.setVertexMain(vertexMain);
           addControlsToBuilder(shaderBuilderState, builder);
           builder.addVertexCode(
@@ -389,11 +315,9 @@ void emitRGBA(vec4 color) {
               shaderCodeWithLineDirective(shaderBuilderState.parseResult.code) +
               "\n#undef main\n",
           );
-
-          builder.setFragmentMainFunction(`
-void main() {
-  emitRGBA(vColor);
-}
+          builder.setFragmentMain(`
+vec4 borderColor = vColor;
+emit(getCircleColor(vColor, borderColor), uPickID);
 `);
         },
       },
@@ -691,6 +615,8 @@ export class SkeletonLayer extends RefCounted {
     const nodeShaderResult = renderHelper.nodeShaderGetter(
       renderContext.emitter,
     );
+    console.log("edgeShaderResult", edgeShaderResult);
+    console.log("nodeShaderResult", nodeShaderResult);
     const { shader: edgeShader, parameters: edgeShaderParameters } =
       edgeShaderResult;
     const { shader: nodeShader, parameters: nodeShaderParameters } =
