@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { buildShaderPropertyList } from "#src/layer/annotation/index.js";
 import type { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import { SKELETON_RENDERING_SHADER_CONTROL_TOOL_ID } from "#src/layer/segmentation/json_keys.js";
 import { LAYER_CONTROLS } from "#src/layer/segmentation/layer_controls.js";
@@ -75,47 +76,17 @@ export class DisplayOptionsTab extends Tab {
         (hasSkeletonsLayer, parent, refCounted) => {
           if (!hasSkeletonsLayer) return;
           const skeletonLayer = layer.getSkeletonLayer()!;
-
-          {
-            const { vertexAttributes } = skeletonLayer;
-            if (vertexAttributes.length <= 1)
-              return;
-            const propertyList = document.createElement("div");
-            parent.appendChild(propertyList);
-            propertyList.classList.add(
-              "neuroglancer-annotation-shader-property-list",
+          if (skeletonLayer.vertexAttributes.length > 1) {
+            buildShaderPropertyList(
+              skeletonLayer.vertexAttributes.slice(1).map((x) => {
+                return {
+                  type: x.glslDataType,
+                  identifier: x.name,
+                };
+              }),
+              parent,
             );
-            propertyList.classList.add(
-              "neuroglancer-skeleton-shader-vertex-attribute-list",
-            );
-            const [_, ...rest] = vertexAttributes;
-            for (const property of rest) {
-              const div = document.createElement("div");
-              div.classList.add("neuroglancer-annotation-shader-property");
-              const typeElement = document.createElement("span");
-              typeElement.classList.add(
-                "neuroglancer-annotation-shader-property-type",
-              );
-              typeElement.textContent = property.glslDataType;
-              const nameElement = document.createElement("span");
-              nameElement.classList.add(
-                "neuroglancer-annotation-shader-property-identifier",
-              );
-              nameElement.textContent = property.name;
-              div.appendChild(typeElement);
-              div.appendChild(nameElement);
-              // const { description } = property;
-              // if (description !== undefined) {
-              //   div.title = description;
-              // }
-              propertyList.appendChild(div);
-            }
-            parent.appendChild(propertyList);
-            //     },
-            //   ),
-            // ).element;
           }
-
           const codeWidget = refCounted.registerDisposer(
             makeSkeletonShaderCodeWidget(this.layer),
           );
