@@ -471,8 +471,9 @@ float nanometersToPixels(float nanometers, highp vec3 vertex, mat4 projection, m
   vec4 vertexClip = projection * viewModel * vec4(vertex, 1.0);
   // why do we not need persepective divide here?
   vec4 pos1View = projectionInverse * vertexClip;
-  vec4 pos2View = projectionInverse * (vertexClip + vec4(params.x, 0.0, 0.0, 0.0)); // any normal vector will work, want a 1 pixel offset
-  float viewDistance = length(pos2View.xyz - pos1View.xyz);
+  // measure along x axis for simplicity
+  vec4 pos2View = projectionInverse * (vertexClip + vec4(params.x, 0.0, 0.0, 0.0)); // 1 pixel offset
+  float viewDistance = abs(pos2View.x - pos1View.x);
   float wVal = vertexClip.w;
   float perspectiveScale = 1.0 / vertexClip.w;
   float projectionScale = nanometers / viewDistance;
