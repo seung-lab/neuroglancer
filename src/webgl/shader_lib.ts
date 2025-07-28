@@ -469,13 +469,12 @@ export const glsl_nanometersToPixels = `
 float nanometersToPixels(float nanometers, highp vec3 vertex, mat4 projection, mat4 viewModel, vec2 params) {
   mat4 projectionInverse = inverse(projection);
   vec4 vertexClip = projection * viewModel * vec4(vertex, 1.0);
-  vec4 vertexDevice = vec4(vertexClip.xyz / vertexClip.w, 1.0);
-  vec2 offset = vec2(1.0, 0.0) * params; // any normal vector will work
-  vec4 pos1View = projectionInverse * vertexDevice;
-  vec4 pos2View = projectionInverse * (vertexDevice + vec4(offset, 0.0, 0.0));
+  // why do we not need persepective divide here?
+  vec4 pos1View = projectionInverse * vertexClip;
+  vec4 pos2View = projectionInverse * (vertexClip + vec4(params.x, 0.0, 0.0, 0.0)); // any normal vector will work, want a 1 pixel offset
   float viewDistance = length(pos2View.xyz - pos1View.xyz);
   float wVal = vertexClip.w;
-  float perspectiveScale = 1.0 / wVal;
+  float perspectiveScale = 1.0 / vertexClip.w;
   float projectionScale = nanometers / viewDistance;
   float viewModalScale = length(viewModel[0].xyz);
   return perspectiveScale * projectionScale * viewModalScale;
