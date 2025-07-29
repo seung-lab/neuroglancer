@@ -465,19 +465,21 @@ highp int subtractSaturate(highp int x, highp uint y) {
 `,
 ];
 
+// we don't need to divide by w because it is just a scalar? and we don't care about where on the screen the x/y is
+
+// what if we try distance in view space and then project, to avoid inverse?
+
 export const glsl_nanometersToPixels = `
 float nanometersToPixels(float nanometers, highp vec3 vertex, mat4 projection, mat4 viewModel, vec2 params) {
-  mat4 projectionInverse = inverse(projection);
-  vec4 vertexClip = projection * viewModel * vec4(vertex, 1.0);
-  // why do we not need persepective divide here?
-  vec4 pos1View = projectionInverse * vertexClip;
-  // measure along x axis for simplicity
-  vec4 pos2View = projectionInverse * (vertexClip + vec4(params.x, 0.0, 0.0, 0.0)); // 1 pixel offset
-  float viewDistance = abs(pos2View.x - pos1View.x);
-  float wVal = vertexClip.w;
-  float perspectiveScale = 1.0 / vertexClip.w;
-  float projectionScale = 1.0 / viewDistance;
+  float viewDistance = 1.0;
+  vec4 vertexViewOrigin = viewModel * vec4(vertex, 1.0);
+  vec4 vertexViewOffset = vertexViewOrigin + vec4(viewDistance, 0.0, 0.0, 0.0);
+  vec4 vertexClipOrigin = projection * vertexViewOrigin;
+  vec4 vertexClipOffset = projection * vertexViewOffset;
+  float projectionDistancePixels = abs(vertexClipOrigin.x - vertexClipOffset.x) / params.x;
   float viewModalScale = length(viewModel[0].xyz);
+  float projectionScale = projectionDistancePixels / viewDistance;
+  float perspectiveScale = 1.0 / vertexClipOrigin.w;
   return nanometers * perspectiveScale * projectionScale * viewModalScale;
 }
 `;
