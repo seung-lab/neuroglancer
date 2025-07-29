@@ -476,9 +476,9 @@ float nanometersToPixels(float nanometers, highp vec3 vertex, mat4 projection, m
   float viewDistance = abs(pos2View.x - pos1View.x);
   float wVal = vertexClip.w;
   float perspectiveScale = 1.0 / vertexClip.w;
-  float projectionScale = nanometers / viewDistance;
+  float projectionScale = 1.0 / viewDistance;
   float viewModalScale = length(viewModel[0].xyz);
-  return perspectiveScale * projectionScale * viewModalScale;
+  return nanometers * perspectiveScale * projectionScale * viewModalScale;
 }
 `;
 
