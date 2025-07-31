@@ -1368,7 +1368,7 @@ class GraphConnection extends SegmentationGraphSourceConnection {
     annotationLayerStates.push(redGroup, blueGroup);
 
     if (layer.tool.value instanceof MergeSegmentsPlaceLineTool) {
-      layer.tool.value = undefined;
+      layer.tool.value = undefined; // unset the line tool if it is active when page is loaded
     }
 
     this.mergeAnnotationState = makeColoredAnnotationState(
@@ -3049,15 +3049,25 @@ class MergeSegmentsTool extends LayerTool<SegmentationUserLayer> {
     if (checkSegmentationOld(timestamp, activation)) {
       return;
     }
-    const { merges, autoSubmit } = mergeState;
     const lineTool = new MergeSegmentsPlaceLineTool(
       this.layer,
       mergeAnnotationState,
     );
+    // Switch selected layer to the layer associated with the tool
+    // to enable to place line tool. Swap back when deactivating.
+    const { selectedLayer } = this.layer.manager.root;
+    const previousSelectedLayer = selectedLayer.layer;
+    const previousSelectedLayerVisible = selectedLayer.visible;
+    const previousTool = tool.value;
+    selectedLayer.layer = this.layer.managedLayer;
+    selectedLayer.visible = true;
     tool.value = lineTool;
     activation.registerDisposer(() => {
-      tool.value = undefined;
+      selectedLayer.layer = previousSelectedLayer;
+      selectedLayer.visible = previousSelectedLayerVisible;
+      tool.value = previousTool;
     });
+    const { merges, autoSubmit } = mergeState;
     const { body, header } =
       makeToolActivationStatusMessageWithHeader(activation);
     header.textContent = "Merge segments";
