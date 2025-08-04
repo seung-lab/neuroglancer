@@ -75,7 +75,10 @@ import type {
   ShaderProgram,
   ShaderSamplerType,
 } from "#src/webgl/shader.js";
-import { glsl_nanometersToPixels } from "#src/webgl/shader_lib.js";
+import {
+  getShaderType,
+  glsl_nanometersToPixels,
+} from "#src/webgl/shader_lib.js";
 import type { ShaderControlsBuilderState } from "#src/webgl/shader_ui_controls.js";
 import {
   addControlsToBuilder,
@@ -115,7 +118,6 @@ void main() {
 
 interface VertexAttributeRenderInfo extends VertexAttributeInfo {
   name: string;
-  webglDataType: number;
   glslDataType: string;
 }
 
@@ -221,7 +223,7 @@ setLineWidth(uLineWidth);
           const numAttributes = vertexAttributes.length;
           for (let i = 1; i < numAttributes; ++i) {
             const info = vertexAttributes[i];
-            builder.addVarying(`highp ${info.glslDataType}`, `vCustom${i}`);
+            builder.addVertexCode(`${info.glslDataType} vCustom${i};\n`);
             vertexMain += `vCustom${i} = readAttribute${i}(vertexIndex2);\n`; // TODO, why is vertexIndex2 correct?
             builder.addVertexCode(`#define ${info.name} vCustom${i}\n`);
           }
@@ -304,7 +306,7 @@ setNodeDiameter(uNodeDiameter);
           const numAttributes = vertexAttributes.length;
           for (let i = 1; i < numAttributes; ++i) {
             const info = vertexAttributes[i];
-            builder.addVarying(`highp ${info.glslDataType}`, `vCustom${i}`);
+            builder.addVertexCode(`${info.glslDataType} vCustom${i};\n`);
             vertexMain += `vCustom${i} = readAttribute${i}(vertexIndex);\n`;
             builder.addVertexCode(`#define ${info.name} vCustom${i}\n`);
           }
@@ -573,9 +575,7 @@ export class SkeletonLayer extends RefCounted {
         name,
         dataType: info.dataType,
         numComponents: info.numComponents,
-        webglDataType: getWebglDataType(info.dataType),
-        glslDataType:
-          info.numComponents > 1 ? `vec${info.numComponents}` : "float",
+        glslDataType: getShaderType(info.dataType, info.numComponents),
       });
     }
   }
@@ -816,22 +816,10 @@ export class SliceViewPanelSkeletonLayer extends SliceViewPanelRenderLayer {
   }
 }
 
-function getWebglDataType(dataType: DataType) {
-  switch (dataType) {
-    case DataType.FLOAT32:
-      return WebGL2RenderingContext.FLOAT;
-    default:
-      throw new Error(
-        `Data type not supported by WebGL: ${DataType[dataType]}`,
-      );
-  }
-}
-
 const vertexPositionAttribute: VertexAttributeRenderInfo = {
   dataType: DataType.FLOAT32,
   numComponents: 3,
   name: "",
-  webglDataType: WebGL2RenderingContext.FLOAT,
   glslDataType: "vec3",
 };
 
