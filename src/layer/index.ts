@@ -1443,10 +1443,11 @@ export class TrackableDataSelectionState
   select() {
     const { pin } = this;
     this.location.visible = true;
-    pin.value = !pin.value;
-    if (pin.value) {
-      this.capture();
-    }
+    pin.value = true;
+    this.capture();
+  }
+  unpin() {
+    this.pin.value = false;
   }
   capture(canRetain = false) {
     const newValue = capturePersistentViewerSelectionState(
