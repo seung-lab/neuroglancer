@@ -100,6 +100,9 @@ function defineVolumeShader(builder: ShaderBuilder, wireFrame: boolean) {
   // Matrix by which computed vertices will be transformed.
   builder.addUniform("highp mat4", "uProjectionMatrix");
 
+  // Effective voxel size
+  builder.addUniform("highp vec3", "uVoxelSize");
+
   // Chunk size in voxels.
   builder.addUniform("highp vec3", "uChunkDataSize");
 
@@ -625,6 +628,8 @@ void main() {
 
       let chunkDataSize: Uint32Array | undefined;
       const chunkRank = source.spec.rank;
+
+      gl.uniform3fv(shader.uniform("uVoxelSize"), transformedSource.effectiveVoxelSize);
 
       beginSource(
         gl,
