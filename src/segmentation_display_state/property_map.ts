@@ -208,6 +208,7 @@ export class PreprocessedSegmentPropertyMap {
   }
 
   getSegmentLabel(id: bigint): string | undefined {
+    // console.log("get segment label!", id);
     const index = this.getSegmentInlineIndex(id);
     if (index === -1) return undefined;
     const { labels, tags: tagsProperty } = this;
@@ -228,6 +229,7 @@ export class PreprocessedSegmentPropertyMap {
       }
     }
     if (label.length === 0) return undefined;
+    // console.log("label", label);
     return label;
   }
 }

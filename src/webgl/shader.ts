@@ -108,6 +108,7 @@ export function getShader(
   source: string,
   shaderType: ShaderType,
 ) {
+  // here is where we get the shader
   const shader = gl.createShader(shaderType)!;
   gl.shaderSource(shader, source);
   gl.compileShader(shader);
@@ -222,7 +223,7 @@ export class ShaderProgram extends RefCounted {
 
       throw new ShaderLinkError(vertexSource, fragmentSource, log);
     }
-    this.program = shaderProgram!;
+    this.program = shaderProgram; // is the ! needed?
 
     const { uniforms, attributes } = this;
     if (uniformNames) {
@@ -476,6 +477,7 @@ interface VertexDebugOutput {
 }
 
 export class ShaderBuilder {
+  // my shader builder
   private nextSymbolID = 0;
   private nextTextureUnit = 0;
   private uniformsCode = "";
@@ -495,7 +497,9 @@ export class ShaderBuilder {
   private initializers: Array<ShaderInitializer> = [];
   private textureUnits = new Map<symbol | string, number>();
   private vertexDebugOutputs: VertexDebugOutput[] = [];
-  constructor(public gl: GL) {}
+  constructor(public gl: GL) {
+    console.log("new shader builder");
+  }
 
   addVertexPositionDebugOutput() {
     this.vertexDebugOutputs.push({ typeName: "vec4", name: "gl_Position" });

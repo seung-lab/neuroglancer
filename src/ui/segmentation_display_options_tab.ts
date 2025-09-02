@@ -29,16 +29,26 @@ import {
 import { ShaderControls } from "#src/widget/shader_controls.js";
 import { Tab } from "#src/widget/tab_view.js";
 
+function makeShaderCodeWidget(layer: SegmentationUserLayer) {
+  return new ShaderCodeWidget({
+    fragmentMain: layer.displayState.fragmentMain,
+    shaderError: layer.displayState.shaderError,
+    shaderControlState: layer.displayState.shaderControlState,
+  });
+}
+
 function makeSkeletonShaderCodeWidget(layer: SegmentationUserLayer) {
   return new ShaderCodeWidget({
     fragmentMain: layer.displayState.skeletonRenderingOptions.shader,
-    shaderError: layer.displayState.shaderError,
+    shaderError: layer.displayState.skeletonRenderingOptions.shaderError,
     shaderControlState:
       layer.displayState.skeletonRenderingOptions.shaderControlState,
   });
 }
 
 export class DisplayOptionsTab extends Tab {
+  codeWidget: ShaderCodeWidget;
+
   constructor(public layer: SegmentationUserLayer) {
     super();
     const { element } = this;
@@ -70,6 +80,41 @@ export class DisplayOptionsTab extends Tab {
       );
     }
 
+    this.codeWidget = this.registerDisposer(makeShaderCodeWidget(layer));
+
+
+    console.log("widget: ", this.codeWidget.state.fragmentMain.value);
+
+    this.codeWidget.state.fragmentMain.changed.add(() => {
+      console.log('fragment main changed!');
+    });
+
+    element.appendChild(
+      makeShaderCodeWidgetTopRow(
+        this.layer,
+        this.codeWidget,
+        ShaderCodeOverlay,
+        {
+          title: "Documentation on image layer rendering",
+          href: "https://github.com/google/neuroglancer/blob/master/src/annotation/rendering.md",
+        },
+        "neuroglancer-segmentation-dropdown-segment-color-shader-header",
+        "Segment Color Shader",
+      ),
+    );
+
+    element.appendChild(this.codeWidget.element);
+    element.appendChild(
+      this.registerDisposer(
+        new ShaderControls(
+          layer.annotationDisplayState.shaderControls,
+          this.layer.manager.root.display,
+          this.layer,
+          { visibility: this.visibility },
+        ),
+      ).element,
+    );
+
     const skeletonControls = this.registerDisposer(
       new DependentViewWidget(
         layer.hasSkeletonsLayer,
@@ -100,6 +145,7 @@ export class DisplayOptionsTab extends Tab {
                 href: "https://github.com/google/neuroglancer/blob/master/src/sliceview/image_layer_rendering.md",
               },
               "neuroglancer-segmentation-dropdown-skeleton-shader-header",
+              "Skeleton Shader",
             ),
           );
           parent.appendChild(codeWidget.element);

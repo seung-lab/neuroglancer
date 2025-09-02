@@ -121,6 +121,7 @@ async function decodeDracoFragmentChunk(
   response: Uint8Array,
 ) {
   const rawMesh = await decodeDraco(response);
+  // console.log("decodeDracoFragmentChunk", chunk.key, chunk.fragmentId);
   assignMeshFragmentData(chunk, rawMesh);
 }
 

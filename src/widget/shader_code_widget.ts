@@ -104,6 +104,7 @@ export class ShaderCodeWidget extends RefCounted {
     if (shaderControlState !== undefined) {
       this.registerDisposer(
         shaderControlState.parseErrors.changed.add(() => {
+          console.log('parse errors changed!');
           this.updateErrorState();
         }),
       );
@@ -215,13 +216,14 @@ export function makeShaderCodeWidgetTopRow<T extends Overlay>(
     href: string;
   },
   className: string,
+  title = "Shader",
 ) {
   const spacer = document.createElement("div");
   spacer.style.flex = "1";
 
   const topRow = document.createElement("div");
   topRow.className = className;
-  topRow.appendChild(document.createTextNode("Shader"));
+  topRow.appendChild(document.createTextNode(title));
   topRow.appendChild(spacer);
 
   layer.registerDisposer(

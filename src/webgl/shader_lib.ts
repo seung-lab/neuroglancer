@@ -25,6 +25,15 @@ import type {
   ShaderCodePart,
 } from "#src/webgl/shader.js";
 
+export const bigIntPreprocessing = (code: string) => {
+  return code.replaceAll(/(\d+)n/g, (_, n) => {
+    const v = BigInt(n);
+    const low = Number(v & 0xffffffffn);
+    const high = Number(v >> 32n);
+    return `uint64_t(uvec2(${low}u, ${high}u))`;
+  });
+};
+
 export const glsl_mixLinear = `
 float mixLinear(float x, float y, float a) { return mix(x, y, a); }
 `;

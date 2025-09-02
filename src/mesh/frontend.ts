@@ -44,6 +44,10 @@ import { PerspectiveViewRenderLayer } from "#src/perspective_view/render_layer.j
 import type { ThreeDimensionalRenderLayerAttachmentState } from "#src/renderlayer.js";
 import { update3dRenderLayerAttachment } from "#src/renderlayer.js";
 import {
+  SegmentColorHash,
+  SegmentColorShaderManager,
+} from "#src/segment_color.js";
+import {
   forEachVisibleSegment,
   getObjectKey,
 } from "#src/segmentation_display_state/base.js";
@@ -53,10 +57,12 @@ import {
   registerRedrawWhenSegmentationDisplayState3DChanged,
   SegmentationLayerSharedObject,
 } from "#src/segmentation_display_state/frontend.js";
+import { PreprocessedSegmentPropertyMap } from "#src/segmentation_display_state/property_map.js";
 import type { WatchableValueInterface } from "#src/trackable_value.js";
 import { makeCachedDerivedWatchableValue } from "#src/trackable_value.js";
+import { DataType } from "#src/util/data_type.js";
 import type { Borrowed, RefCounted } from "#src/util/disposable.js";
-import type { vec4 } from "#src/util/geom.js";
+import { vec4 } from "#src/util/geom.js";
 import {
   getFrustrumPlanes,
   mat3,
@@ -68,13 +74,31 @@ import {
 import * as matrix from "#src/util/matrix.js";
 import { GLBuffer } from "#src/webgl/buffer.js";
 import type { GL } from "#src/webgl/context.js";
-import { parameterizedEmitterDependentShaderGetter } from "#src/webgl/dynamic_shader.js";
+import {
+  parameterizedEmitterDependentShaderGetter,
+  shaderCodeWithLineDirective,
+  WatchableShaderError,
+} from "#src/webgl/dynamic_shader.js";
 import type { ShaderBuilder, ShaderProgram } from "#src/webgl/shader.js";
+import {
+  bigIntPreprocessing,
+  glsl_equalUint64,
+  glsl_uint64,
+} from "#src/webgl/shader_lib.js";
+import {
+  addControlsToBuilder,
+  setControlsInShader,
+  ShaderControlState,
+} from "#src/webgl/shader_ui_controls.js";
 import type { RPC } from "#src/worker_rpc.js";
 import { registerSharedObjectOwner } from "#src/worker_rpc.js";
 
 const tempMat4 = mat4.create();
 const tempMat3 = mat3.create();
+
+const tempVec3 = vec3.create();
+
+const colorHash = SegmentColorHash.getDefault();
 
 // To validate the octrees and to determine the multiscale fragment responsible for each framebuffer
 // location, set `DEBUG_MULTISCALE_FRAGMENTS=true` and also set `DEBUG_PICKING=true` in
@@ -269,6 +293,14 @@ export class MeshShaderManager {
     gl.uniform4fv(shader.uniform("uColor"), color);
   }
 
+  setID(gl: GL, shader: ShaderProgram, id: bigint) {
+    gl.uniform2ui(
+      shader.uniform(`uID`),
+      Number(id & 0xffffffffn),
+      Number(id >> 32n),
+    );
+  }
+
   setPickID(gl: GL, shader: ShaderProgram, pickID: number) {
     gl.uniform1ui(shader.uniform("uPickID"), pickID);
   }
@@ -303,6 +335,7 @@ export class MeshShaderManager {
     indexBegin: number,
     indexEnd: number,
   ) {
+    // drawFragmentHelper
     this.vertexPositionHandler.bind(gl, shader, fragmentChunk);
     const { meshData } = fragmentChunk;
     fragmentChunk.normalBuffer.bindToVertexAttrib(
@@ -328,6 +361,19 @@ export class MeshShaderManager {
   drawFragment(gl: GL, shader: ShaderProgram, fragmentChunk: FragmentChunk) {
     const { meshData } = fragmentChunk;
     const { indices } = meshData;
+    const id = (meshData as any).id;
+    const bigId = BigInt(id);
+    tempVec3;
+    colorHash;
+    // const color = colorHash.compute(tempVec3, bigId);
+    // console.log('color', id, color);
+    // this.setColor(
+    //   gl,
+    //   shader,
+    //   vec4.fromValues(color[0], color[1], color[2], 1.0),
+    // );
+    bigId;
+    // this.setID(gl, shader, bigId);
     this.drawFragmentHelper(gl, shader, fragmentChunk, 0, indices.length);
   }
 
@@ -349,24 +395,99 @@ export class MeshShaderManager {
   }
 
   makeGetter(layer: RefCounted & { gl: GL; displayState: MeshDisplayState }) {
-    const silhouetteRenderingEnabled = layer.registerDisposer(
+    const parameters = layer.registerDisposer(
       makeCachedDerivedWatchableValue(
-        (x) => x > 0,
-        [layer.displayState.silhouetteRendering],
+        (a, b, c) => {
+          return {
+            silhouetteRenderingEnabled: a > 0,
+            shaderBuilderState: b,
+            segmentProperties: c,
+          };
+        },
+        [
+          layer.displayState.silhouetteRendering,
+          layer.displayState.shaderControlState.builderState,
+          layer.displayState.segmentationGroupState.value.segmentPropertyMap,
+        ],
       ),
     );
+
+    function getShaderOutputType(ioType: DataType): string {
+      switch (ioType) {
+        case DataType.UINT8:
+        case DataType.UINT16:
+        case DataType.UINT32:
+          return "uint";
+        case DataType.INT8:
+        case DataType.INT16:
+        case DataType.INT32:
+          return "int";
+        case DataType.FLOAT32:
+          return "float";
+        case DataType.UINT64:
+          return "uvec2";
+      }
+    }
+
     return parameterizedEmitterDependentShaderGetter(layer, layer.gl, {
       memoizeKey: `mesh/MeshShaderManager/${this.fragmentRelativeVertices}/${this.vertexPositionFormat}`,
-      parameters: silhouetteRenderingEnabled,
-      defineShader: (builder, silhouetteRenderingEnabled) => {
+      parameters,
+      encodeParameters: (p) => {
+        return `${p.silhouetteRenderingEnabled}/${p.shaderBuilderState.parseResult.code}/${p.segmentProperties?.numericalProperties.map((np) => np.id).join(",")}`;
+      },
+      shaderError: layer.displayState.shaderError,
+      defineShader: (
+        builder,
+        { silhouetteRenderingEnabled, shaderBuilderState, segmentProperties },
+      ) => {
+        addControlsToBuilder(shaderBuilderState, builder);
         this.vertexPositionHandler.defineShader(builder);
         builder.addAttribute("highp vec2", "aVertexNormal");
         builder.addVarying("highp vec4", "vColor");
+        builder.addVarying("highp float", "vLightingFactor");
         builder.addUniform("highp vec4", "uLightDirection");
         builder.addUniform("highp vec4", "uColor");
         builder.addUniform("highp mat3", "uNormalMatrix");
         builder.addUniform("highp mat4", "uModelViewProjection");
         builder.addUniform("highp uint", "uPickID");
+        builder.addUniform("highp uvec2", "uID");
+
+        // const shaderCodeWithPropertyPreprocessing = (code: string) => {
+        //   if (!segmentProperties) return code;
+        //   const { numericalProperties, tags } = segmentProperties;
+        //   numericalProperties;
+        //   if (tags) {
+        //     for (const [i, tag] of tags.tags.entries()) {
+        //       code = code.replaceAll(`tag("${tag}")`, `uTag${i} == 1u`);
+        //     }
+        //   }
+        //   return code;
+        // };
+
+        if (segmentProperties) {
+          const { numericalProperties, tags } = segmentProperties;
+          for (const property of numericalProperties) {
+            console.log("numeric", property);
+            // TODO maybe just number it instead of using id
+            builder.addUniform(
+              `highp ${getShaderOutputType(property.dataType)}`,
+              property.id.replaceAll(" ", "_"),
+            );
+          }
+          if (tags) {
+            console.log("tags", tags);
+
+            for (const [i, tag] of tags.tags.entries()) {
+              console.log("tag", tag, tag.replaceAll(" ", "_"));
+              builder.addUniform("highp uint", `uTag${i}`);
+              builder.addVertexCode(
+                `\n#define TAG_${tag.replaceAll(" ", "_").replaceAll("-", "_").toUpperCase()} uTag${i}\n`,
+              );
+              // gl.uniform1ui(shader.uniform(`tag${tagIndices.charCodeAt(i)}`), 1);
+            }
+          }
+        }
+
         if (silhouetteRenderingEnabled) {
           builder.addUniform("highp float", "uSilhouettePower");
         }
@@ -375,6 +496,14 @@ export class MeshShaderManager {
           builder.addUniform("highp vec3", "uFragmentShape");
         }
         builder.addVertexCode(glsl_decodeNormalOctahedronSnorm8);
+        builder.addVertexCode(glsl_uint64);
+        builder.addVertexCode(glsl_equalUint64);
+
+        builder.addVertexCode(`
+          vec4 defaultColor() { return uColor; }
+          void setColor(vec4 color) {
+            vColor = color;
+          }`);
         let vertexMain = "";
         if (this.fragmentRelativeVertices) {
           vertexMain += `
@@ -393,7 +522,10 @@ vec3 origNormal = decodeNormalOctahedronSnorm8(aVertexNormal);
 vec3 normal = normalize(uNormalMatrix * (normalMultiplier * origNormal));
 float absCosAngle = abs(dot(normal, uLightDirection.xyz));
 float lightingFactor = absCosAngle + uLightDirection.w;
-vColor = vec4(lightingFactor * uColor.rgb, uColor.a);
+vColor = uColor;
+vColor = segmentColor(vColor, uint64_t(uID));
+vColor = vec4(lightingFactor * vColor.rgb, vColor.a);
+vLightingFactor = lightingFactor;
 `;
         if (silhouetteRenderingEnabled) {
           vertexMain += `
@@ -401,14 +533,90 @@ vColor *= pow(1.0 - absCosAngle, uSilhouettePower);
 `;
         }
         builder.setVertexMain(vertexMain);
+        const shaderManager = new SegmentColorShaderManager("getColor");
+        shaderManager.defineShader(builder);
         builder.setFragmentMain("emit(vColor, uPickID);");
+        const segmentColor = shaderCodeWithLineDirective(
+          bigIntPreprocessing(shaderBuilderState.parseResult.code),
+        );
+        builder.addVertexCode(segmentColor + "\n");
       },
     });
   }
 }
 
+const addPropertyUniforms = (
+  gl: GL,
+  shader: ShaderProgram,
+  segmentPropertyMap: PreprocessedSegmentPropertyMap,
+  id: bigint,
+) => {
+  const index = segmentPropertyMap.getSegmentInlineIndex(id);
+  // const {tags} = segmentPropertyMap;
+  // console.log("index", index, objectId, key);
+  // console.log(
+  //   "segmentPropertyMap.numerical",
+  //   segmentPropertyMap.numericalProperties,
+  // );
+  // console.log("segmentPropertyMap.numerical", segmentPropertyMap.tags);
+
+  if (index !== -1) {
+    const { labels, tags: tagsProperty } = segmentPropertyMap;
+    labels;
+    // let label = "";
+    // if (labels !== undefined) {
+    //   label = labels.values[index];
+    // }
+    if (tagsProperty !== undefined) {
+      const { values, tags } = tagsProperty;
+      const tagIndices = values[index];
+      for (let i = 0; i < tags.length; ++i) {
+        gl.uniform1ui(shader.uniform(`uTag${i}`), 0);
+      }
+      for (let i = 0, length = tagIndices.length; i < length; ++i) {
+        const tagIdx = tagIndices.charCodeAt(i);
+        console.log("enable tag", tagIdx);
+        gl.uniform1ui(shader.uniform(`uTag${tagIdx}`), 1);
+      }
+    }
+
+    function getShaderUniformValueSetter(gl: GL, ioType: DataType) {
+      switch (ioType) {
+        case DataType.UINT8:
+        case DataType.UINT16:
+        case DataType.UINT32:
+          return gl.uniform1ui;
+        case DataType.INT8:
+        case DataType.INT16:
+        case DataType.INT32:
+          return gl.uniform1i;
+        case DataType.FLOAT32:
+          return gl.uniform1f;
+        case DataType.UINT64:
+          throw new Error("nope");
+        // return gl.uniform
+      }
+    }
+    // if (label.length === 0) return undefined;
+
+    // if (tags) {
+    //   console.log('tags', tags);
+    //   // for (const tag of tags) {
+    // }
+    getShaderUniformValueSetter;
+    // for (const [name, channel] of Object.entries(value)) {
+    //   const setter = getShaderUniformValueSetter(gl, channel.dataType);
+    //   if (setter) {
+    //     setter.call(gl, shader.uniforms[name], channel.value);
+    //   }
+    // }
+  }
+};
 export interface MeshDisplayState extends SegmentationDisplayState3D {
   silhouetteRendering: WatchableValueInterface<number>;
+
+  shaderControlState: ShaderControlState;
+  shaderError: WatchableShaderError;
 }
 
 export class MeshLayer extends PerspectiveViewRenderLayer<ThreeDimensionalRenderLayerAttachmentState> {
@@ -431,6 +639,22 @@ export class MeshLayer extends PerspectiveViewRenderLayer<ThreeDimensionalRender
     registerRedrawWhenSegmentationDisplayState3DChanged(displayState, this);
     this.registerDisposer(
       displayState.silhouetteRendering.changed.add(this.redrawNeeded.dispatch),
+    );
+    this.registerDisposer(
+      displayState.shaderControlState.changed.add(this.redrawNeeded.dispatch),
+    );
+    this.registerDisposer(
+      displayState.shaderControlState.parseResult.changed.add(
+        this.redrawNeeded.dispatch,
+      ),
+    );
+
+    console.log("or are we not multiscale?");
+
+    this.registerDisposer(
+      displayState.shaderControlState.changed.add(() => {
+        console.log("shader control state changed!");
+      }),
     );
 
     const sharedObject = (this.backend = this.registerDisposer(
@@ -490,11 +714,19 @@ export class MeshLayer extends PerspectiveViewRenderLayer<ThreeDimensionalRender
     if (modelMatrix === undefined) {
       return;
     }
-    const { shader } = this.getShader(renderContext.emitter);
+    const { shader, parameters } = this.getShader(renderContext.emitter);
     if (shader === null) return;
     shader.bind();
     meshShaderManager.beginLayer(gl, shader, renderContext, this.displayState);
     meshShaderManager.beginModel(gl, shader, renderContext, modelMatrix);
+    setControlsInShader;
+    this.displayState.silhouetteRendering;
+    setControlsInShader(
+      gl,
+      shader,
+      this.displayState.shaderControlState,
+      parameters.shaderBuilderState.parseResult.controls,
+    );
 
     const manifestChunks = this.source.chunks;
 
@@ -521,6 +753,16 @@ export class MeshLayer extends PerspectiveViewRenderLayer<ThreeDimensionalRender
           meshShaderManager.setPickID(gl, shader, pickIndex!);
         }
         totalChunks += manifestChunk.fragmentIds.length;
+
+        const {
+          segmentPropertyMap: { value: segmentPropertyMap },
+        } = displayState.segmentationGroupState.value;
+        if (segmentPropertyMap) {
+          console.log("key/objectId", key, objectId);
+          addPropertyUniforms(gl, shader, segmentPropertyMap, objectId);
+        }
+
+        this.meshShaderManager.setID(gl, shader, objectId);
 
         for (const fragmentId of manifestChunk.fragmentIds) {
           const { key: fragmentKey } = this.source.getFragmentKey(
@@ -774,6 +1016,8 @@ export class MultiscaleMeshLayer extends PerspectiveViewRenderLayer<ThreeDimensi
       displayState.silhouetteRendering.changed.add(this.redrawNeeded.dispatch),
     );
 
+    console.log("are we multiscale?");
+
     const sharedObject = (this.backend = this.registerDisposer(
       new SegmentationLayerSharedObject(
         chunkManager,
@@ -829,7 +1073,9 @@ export class MultiscaleMeshLayer extends PerspectiveViewRenderLayer<ThreeDimensi
       attachment,
     );
     if (modelMatrix === undefined) return;
-    const { shader } = this.getShader(renderContext.emitter);
+    console.log("get shader multiscale!");
+    const { shader, parameters } = this.getShader(renderContext.emitter);
+    parameters;
     if (shader === null) return;
     shader.bind();
     meshShaderManager.beginLayer(gl, shader, renderContext, this.displayState);
@@ -900,6 +1146,15 @@ export class MultiscaleMeshLayer extends PerspectiveViewRenderLayer<ThreeDimensi
         if (renderContext.emitPickID) {
           meshShaderManager.setPickID(gl, shader, pickIndex!);
         }
+
+        const {
+          segmentPropertyMap: { value: segmentPropertyMap },
+        } = displayState.segmentationGroupState.value;
+        if (segmentPropertyMap) {
+          console.log("key/objectId", key, objectId);
+          addPropertyUniforms(gl, shader, segmentPropertyMap, objectId);
+        }
+
         getMultiscaleChunksToDraw(
           manifest,
           modelViewProjection,
