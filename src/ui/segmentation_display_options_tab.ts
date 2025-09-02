@@ -29,16 +29,26 @@ import {
 import { ShaderControls } from "#src/widget/shader_controls.js";
 import { Tab } from "#src/widget/tab_view.js";
 
+function makeShaderCodeWidget(layer: SegmentationUserLayer) {
+  return new ShaderCodeWidget({
+    fragmentMain: layer.displayState.fragmentMain,
+    shaderError: layer.displayState.shaderError,
+    shaderControlState: layer.displayState.shaderControlState,
+  });
+}
+
 function makeSkeletonShaderCodeWidget(layer: SegmentationUserLayer) {
   return new ShaderCodeWidget({
     fragmentMain: layer.displayState.skeletonRenderingOptions.shader,
-    shaderError: layer.displayState.shaderError,
+    shaderError: layer.displayState.skeletonRenderingOptions.shaderError,
     shaderControlState:
       layer.displayState.skeletonRenderingOptions.shaderControlState,
   });
 }
 
 export class DisplayOptionsTab extends Tab {
+  codeWidget: ShaderCodeWidget;
+
   constructor(public layer: SegmentationUserLayer) {
     super();
     const { element } = this;
@@ -69,6 +79,33 @@ export class DisplayOptionsTab extends Tab {
         addLayerControlToOptionsTab(this, layer, this.visibility, control),
       );
     }
+
+    this.codeWidget = this.registerDisposer(makeShaderCodeWidget(layer));
+
+    element.appendChild(
+      makeShaderCodeWidgetTopRow(
+        this.layer,
+        this.codeWidget,
+        ShaderCodeOverlay,
+        {
+          title: "Documentation on image layer rendering",
+          href: "https://github.com/google/neuroglancer/blob/master/src/annotation/rendering.md",
+        },
+        "neuroglancer-annotation-dropdown-shader-top-row",
+      ),
+    );
+
+    element.appendChild(this.codeWidget.element);
+    element.appendChild(
+      this.registerDisposer(
+        new ShaderControls(
+          layer.annotationDisplayState.shaderControls,
+          this.layer.manager.root.display,
+          this.layer,
+          { visibility: this.visibility },
+        ),
+      ).element,
+    );
 
     const skeletonControls = this.registerDisposer(
       new DependentViewWidget(
