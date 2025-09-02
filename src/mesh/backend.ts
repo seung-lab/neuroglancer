@@ -802,6 +802,7 @@ function convertMeshData(
   } else {
     encodedVertexPositions = data.vertexPositions as Float32Array;
   }
+  // TODO, add attributes here? Or can we change a uniform for every fragment draw request?
   return {
     vertexPositions: encodedVertexPositions,
     vertexNormals: encodedNormals,

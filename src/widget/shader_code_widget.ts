@@ -104,6 +104,7 @@ export class ShaderCodeWidget extends RefCounted {
     if (shaderControlState !== undefined) {
       this.registerDisposer(
         shaderControlState.parseErrors.changed.add(() => {
+          console.log('parse errors changed!');
           this.updateErrorState();
         }),
       );

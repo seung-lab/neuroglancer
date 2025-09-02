@@ -131,9 +131,13 @@ import {
   verifyStringArray,
 } from "#src/util/json.js";
 import { Signal } from "#src/util/signal.js";
-import { makeWatchableShaderError } from "#src/webgl/dynamic_shader.js";
+import {
+  makeTrackableFragmentMain,
+  makeWatchableShaderError,
+} from "#src/webgl/dynamic_shader.js";
 import type { DependentViewContext } from "#src/widget/dependent_view_widget.js";
 import { registerLayerShaderControlsTool } from "#src/widget/shader_controls.js";
+import { ShaderControlState } from "#src/webgl/shader_ui_controls.js";
 
 const MAX_LAYER_BAR_UI_INDICATOR_COLORS = 6;
 
@@ -450,6 +454,12 @@ class LinkedSegmentationGroupState<
   }
 }
 
+const DEFAULT_FRAGMENT_MAIN = `
+void main() {
+  emit(vColor, uPickID);
+}
+`;
+
 class SegmentationUserLayerDisplayState implements SegmentationDisplayState {
   constructor(public layer: SegmentationUserLayer) {
     // Even though `SegmentationUserLayer` assigns this to its `displayState` property, redundantly
@@ -576,6 +586,8 @@ class SegmentationUserLayerDisplayState implements SegmentationDisplayState {
   ignoreNullVisibleSet = new TrackableBoolean(true, true);
   skeletonRenderingOptions = new SkeletonRenderingOptions();
   shaderError = makeWatchableShaderError();
+  fragmentMain = makeTrackableFragmentMain(DEFAULT_FRAGMENT_MAIN);
+  shaderControlState = new ShaderControlState(this.fragmentMain);
   renderScaleHistogram = new RenderScaleHistogram();
   renderScaleTarget = trackableRenderScaleTarget(1);
   selectSegment: (id: bigint, pin: boolean | "toggle") => void;
@@ -728,6 +740,9 @@ export class SegmentationUserLayer extends Base {
     );
     this.displayState.linkedSegmentationGroup.changed.add(() =>
       this.updateDataSubsourceActivations(),
+    );
+    this.displayState.fragmentMain.changed.add(
+      this.specificationChanged.dispatch,
     );
     this.tabs.add("rendering", {
       label: "Render",
@@ -1027,6 +1042,9 @@ export class SegmentationUserLayer extends Base {
     this.displayState.ignoreNullVisibleSet.restoreState(
       specification[json_keys.IGNORE_NULL_VISIBLE_SET_JSON_KEY],
     );
+    this.displayState.fragmentMain.restoreState(
+      specification[json_keys.SHADER_JSON_KEY],
+    );
 
     const { skeletonRenderingOptions } = this.displayState;
     skeletonRenderingOptions.restoreState(
@@ -1097,6 +1115,7 @@ export class SegmentationUserLayer extends Base {
       this.displayState.renderScaleTarget.toJSON();
     x[json_keys.CROSS_SECTION_RENDER_SCALE_JSON_KEY] =
       this.sliceViewRenderScaleTarget.toJSON();
+    x[json_keys.SHADER_JSON_KEY] = this.displayState.fragmentMain.toJSON();
 
     const { linkedSegmentationGroup, linkedSegmentationColorGroup } =
       this.displayState;
@@ -1431,6 +1450,10 @@ registerLayerTypeDetector((subsource) => {
   }
   return undefined;
 });
+
+registerLayerShaderControlsTool(SegmentationUserLayer, (layer) => ({
+  shaderControlState: layer.displayState.shaderControlState,
+}));
 
 registerLayerShaderControlsTool(
   SegmentationUserLayer,
