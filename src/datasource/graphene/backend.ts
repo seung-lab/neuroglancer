@@ -198,10 +198,13 @@ export class GrapheneMeshSource extends WithParameters(
   }
 }
 
+const allRequestedBounds = new Set<string>();
+const successfullyRequestedBounds = new Set<string>();
+
 class LeavesManyProxy {
   pendingRequests = new Map<
     string,
-    [Signal<(response: any) => void>, Uint64Set, AbortController]
+    [Signal<(response: any) => void>, Uint64Set, (reason?: any) => void]
   >();
 
   constructor(private httpSource: HttpSource) {}
@@ -216,15 +219,16 @@ class LeavesManyProxy {
     bounds: string,
     signal: AbortSignal,
   ): Promise<any> {
+    if (signal.aborted) {
+      return;
+    }
     const { pendingRequests } = this;
     let pendingRequest = pendingRequests.get(bounds);
     if (!pendingRequest) {
       const requestSignal = new Signal<(request: any) => void>();
       const abortController = new AbortController();
       const segments = new Uint64Set();
-      pendingRequest = [requestSignal, segments, abortController];
-      pendingRequests.set(bounds, pendingRequest);
-      setTimeout(async () => {
+      const timeoutId = setTimeout(async () => {
         pendingRequests.delete(bounds);
         const { fetchOkImpl, baseUrl } = this.httpSource;
         try {
@@ -240,19 +244,32 @@ class LeavesManyProxy {
           ).then((res) => res.json());
           requestSignal.dispatch(response);
         } catch (e) {
+          console.log("do we get an error?", e);
           requestSignal.dispatch(e);
         }
       }, 0);
+      const cancelPendingRequest = (reason?: any) => {
+        clearTimeout(timeoutId);
+        abortController.abort(reason);
+        pendingRequests.delete(bounds);
+      };
+      pendingRequest = [requestSignal, segments, cancelPendingRequest];
+      pendingRequests.set(bounds, pendingRequest);
+
     }
-    const [requestSignal, segments, abortController] = pendingRequest;
+    const [requestSignal, segments, cancelPendingRequest] = pendingRequest;
     segments.add(segment);
-    signal.addEventListener("abort", () => {
-      segments.delete(segment);
-      if (segments.size === 0) {
-        abortController.abort();
-      }
-    });
     return new Promise((f, r) => {
+      signal.addEventListener("abort", () => {
+        segments.delete(segment);
+        if (segments.size === 0) {
+          cancelPendingRequest(signal.reason);
+        }
+        // the above cancel may cause a rejection as well
+        r(new DOMException("chunk download cancelled", "AbortError"));
+
+      });
+
       const unregister = requestSignal.add((response) => {
         unregister();
         if (response instanceof Error) {
@@ -328,6 +345,15 @@ function decodeChunkedGraphChunk(leaves: string[]) {
   return BigUint64Array.from(leaves, parseUint64);
 }
 
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+(self as any).checkStatus = () => {
+  console.log(
+    "Status:",
+    allRequestedBounds.difference(successfullyRequestedBounds),
+  );
+};
+
 @registerSharedObject()
 export class GrapheneChunkedGraphChunkSource extends WithParameters(
   WithSharedKvStoreContextCounterpart(ChunkSource),
@@ -356,19 +382,32 @@ export class GrapheneChunkedGraphChunkSource extends WithParameters(
   async download(chunk: ChunkedGraphChunk, signal: AbortSignal): Promise<void> {
     const { segment, bounds } = chunk;
     if (!bounds) return;
-    const request = this.leavesManyProxy.request(segment, bounds, signal);
-    await this.withErrorMessage(
-      request,
-      `Fetching leaves of segment ${chunk.segment} in region ${bounds}: `,
-    )
-      .then((res) => {
+    allRequestedBounds.add(bounds);
+    const numTries = 5;
+    for (let i = 0; i < numTries; i++) {
+      const request = this.leavesManyProxy.request(segment, bounds, signal);
+      console.log("try #", i + 1, signal.aborted);
+      try {
+        const res = await this.withErrorMessage(
+          request,
+          `Fetching leaves of segment ${chunk.segment} in region ${bounds}: `,
+        );
         verifyStringArray(res);
         chunk.leaves = decodeChunkedGraphChunk(res);
-      })
-      .catch((err) => {
-        if (err instanceof Error && err.name === "AbortError") return;
-        console.error(err);
-      });
+        successfullyRequestedBounds.add(bounds);
+        return;
+      } catch (e) {
+        if (e instanceof Error && e.name === "AbortError") {
+          throw e;
+        }
+        if (i < numTries - 1) {
+          await wait(2 ** i * 1000);
+        } else {
+          console.log("out of tries", i + 1);
+          throw e;
+        }
+      }
+    }
   }
 
   getChunk(chunkGridPosition: Float32Array, segment: bigint) {
