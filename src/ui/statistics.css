@@ -32,10 +32,14 @@
 
 .neuroglancer-statistics-panel-body > table > thead td {
   position: sticky;
-  top: 0px;
+  top: 2px; /* border-spacing */
   z-index: 2;
   background-color: #333;
   font-weight: bold;
+}
+
+.neuroglancer-statistics-panel-body > table > thead > tr:nth-child(2) > td {
+  top: 38px; /* border-spacing */
 }
 
 .neuroglancer-statistics-panel-body > table > tbody tr:hover {

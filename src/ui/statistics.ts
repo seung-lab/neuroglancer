@@ -375,7 +375,7 @@ export class StatisticsPanel extends SidePanel {
         const td = document.createElement("td");
         tr.appendChild(td);
       }
-      for (const { label: column } of columnSpecifications) {
+      for (const { label: column, key } of columnSpecifications) {
         const sepIndex = column.indexOf("/");
         let suffix = "";
         if (sepIndex !== -1) {
@@ -383,6 +383,7 @@ export class StatisticsPanel extends SidePanel {
         }
         const td = document.createElement("td");
         td.textContent = suffix;
+        td.title = key;
         tr.appendChild(td);
       }
       table.appendChild(thead);
