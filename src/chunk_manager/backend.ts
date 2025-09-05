@@ -170,6 +170,11 @@ export class Chunk implements Disposable {
 
   downloadFailed(error: any) {
     this.error = error;
+    this.source?.rpc?.invoke("DEBUG_FAILURE", {
+      key: this.key,
+      source: this.source!.rpcId,
+      error: error,
+    });
     this.queueManager.updateChunkState(this, ChunkState.FAILED);
   }
 

@@ -255,7 +255,6 @@ class LeavesManyProxy {
       };
       pendingRequest = [requestSignal, segments, cancelPendingRequest];
       pendingRequests.set(bounds, pendingRequest);
-
     }
     const [requestSignal, segments, cancelPendingRequest] = pendingRequest;
     segments.add(segment);
@@ -267,7 +266,6 @@ class LeavesManyProxy {
         }
         // the above cancel may cause a rejection as well
         r(new DOMException("chunk download cancelled", "AbortError"));
-
       });
 
       const unregister = requestSignal.add((response) => {

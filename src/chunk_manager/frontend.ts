@@ -27,8 +27,10 @@ import {
   REQUEST_CHUNK_STATISTICS_RPC_ID,
 } from "#src/chunk_manager/base.js";
 import { SharedWatchableValue } from "#src/shared_watchable_value.js";
+import { StatusMessage } from "#src/status.js";
 import { TrackableBoolean } from "#src/trackable_boolean.js";
 import { TrackableValue } from "#src/trackable_value.js";
+import { getChunkSourceIdentifier } from "#src/ui/statistics.js";
 import type { Borrowed } from "#src/util/disposable.js";
 import { stableStringify } from "#src/util/json.js";
 import { StringMemoize } from "#src/util/memoize.js";
@@ -347,6 +349,12 @@ function updateChunk(rpc: RPC, x: any) {
 
 registerRPC("Chunk.update", function (x) {
   updateChunk(this, x);
+});
+
+registerRPC("DEBUG_FAILURE", function (x) {
+  const source: ChunkSource = this.get(x.source);
+  const {type} = getChunkSourceIdentifier(source);
+  StatusMessage.showTemporaryMessage(`failed to download chunk: ${type}_${x.key} error: ${x.error}`, 10000);
 });
 
 registerPromiseRPC("Chunk.retrieve", function (x, signal): RPCPromise<any> {
