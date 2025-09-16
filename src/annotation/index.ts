@@ -18,10 +18,10 @@
  * @file Basic annotation data structures.
  */
 
-import type {
-  BoundingBox,
-  CoordinateSpaceTransform,
-  WatchableCoordinateSpaceTransform,
+import {
+  type BoundingBox,
+  type CoordinateSpaceTransform,
+  type WatchableCoordinateSpaceTransform,
 } from "#src/coordinate_transform.js";
 import { WatchableValue } from "#src/trackable_value.js";
 import { arraysEqual } from "#src/util/array.js";
@@ -55,6 +55,7 @@ import {
 } from "#src/util/json.js";
 import { parseDataTypeValue } from "#src/util/lerp.js";
 import { getRandomHexString } from "#src/util/random.js";
+// import { formatScaleWithUnitAsString } from "#src/util/si_units.js";
 import { NullarySignal, Signal } from "#src/util/signal.js";
 
 export type AnnotationId = string;
@@ -718,6 +719,7 @@ export type Annotation =
 export interface AnnotationTypeHandler<T extends Annotation = Annotation> {
   icon: string;
   description: string;
+  dataProperties: string[];
   toJSON: (annotation: T, rank: number) => any;
   restoreState: (annotation: T, obj: any, rank: number) => void;
   /**
@@ -839,6 +841,7 @@ export const annotationTypeHandlers: Record<
   [AnnotationType.LINE]: {
     icon: "ꕹ",
     description: "Line",
+    dataProperties: ["pointA", "pointB"],
     toJSON(annotation: Line) {
       return {
         pointA: Array.from(annotation.pointA),
@@ -903,6 +906,7 @@ export const annotationTypeHandlers: Record<
   [AnnotationType.POLYLINE]: {
     icon: "⤤",
     description: "Polyline",
+    dataProperties: ["points"],
     toJSON(annotation: PolyLine) {
       return {
         points: annotation.points.map((point) => Array.from(point)),
@@ -1034,6 +1038,7 @@ export const annotationTypeHandlers: Record<
   [AnnotationType.POINT]: {
     icon: "⚬",
     description: "Point",
+    dataProperties: ["point"],
     toJSON: (annotation: Point) => {
       return {
         point: Array.from(annotation.point),
@@ -1082,6 +1087,7 @@ export const annotationTypeHandlers: Record<
   [AnnotationType.AXIS_ALIGNED_BOUNDING_BOX]: {
     icon: "❑",
     description: "Bounding Box",
+    dataProperties: ["pointA", "pointB"],
     toJSON: (annotation: AxisAlignedBoundingBox) => {
       return {
         pointA: Array.from(annotation.pointA),
@@ -1154,6 +1160,7 @@ export const annotationTypeHandlers: Record<
   [AnnotationType.ELLIPSOID]: {
     icon: "◎",
     description: "Ellipsoid",
+    dataProperties: ["center", "radii"],
     toJSON: (annotation: Ellipsoid) => {
       return {
         center: Array.from(annotation.center),
@@ -1334,6 +1341,8 @@ export class AnnotationSource
   childUpdated = new Signal<(annotation: Annotation) => void>();
   childCommitted = new Signal<(annotationId: string) => void>();
   childDeleted = new Signal<(annotationId: string) => void>();
+
+  bigChange = new Signal<() => void>();
 
   public pending = new Set<AnnotationId>();
 
@@ -1517,6 +1526,107 @@ export class LocalAnnotationSource extends AnnotationSource {
         this.changed.dispatch();
       }),
     );
+  }
+
+  fromCSV(csv: string, annotations: any[]) {
+    const rows = csv.split("\n");
+    if (rows.length < 2) return; // need a header and a row
+    const [header, ...dataRows] = rows;
+    const columnNames = header.split(",");
+    for (const row of dataRows) {
+      const columns = row.split(",");
+      const json = {};
+      let annotationIndex: number = annotations.length;
+      for (const [index, value] of columns.entries()) {
+        if (value === "") continue;
+        const column = columnNames[index];
+        if (column === undefined) {
+          throw new Error("bad csv");
+        }
+        if (column === "index") {
+          annotationIndex = parseInt(value);
+          continue;
+        }
+        const [name, _] = column.split("[");
+        let currentTarget: any = json;
+        let key: string = name;
+        const arrayIndices = column
+          .matchAll(/\[(\d+)\]/g)
+          .map(([_, index]) => index);
+        for (const index of arrayIndices) {
+          currentTarget = currentTarget[key] = currentTarget[key] || [];
+          key = index;
+        }
+        currentTarget[key] = value;
+      }
+      annotations[annotationIndex] = json;
+    }
+  }
+
+  toCSV(): Iterable<[string, string]> {
+    this.ensureUpdated();
+    const { pending } = this;
+    const typeToAnnotations = new Map<AnnotationType, [number, any][]>();
+    let index = 0;
+    for (const annotation of this) {
+      if (pending.has(annotation.id)) {
+        // Don't serialize uncommitted annotations.
+        continue;
+      }
+      const { type } = annotation;
+      const formattedAnnotation = annotationToJson(annotation, this);
+      if (typeToAnnotations.has(type)) {
+        typeToAnnotations.get(type)!.push([index, formattedAnnotation]);
+      } else {
+        typeToAnnotations.set(type, [[index, formattedAnnotation]]);
+      }
+      index++;
+    }
+    const annotationsToCSV = (
+      annotations: [index: number, annotation: any][],
+    ) => {
+      const header = ["index"];
+      const csvRows: string[][] = [];
+      const addValue = (row: string[], key: string, val: unknown) => {
+        if (Array.isArray(val)) {
+          for (const [i, v] of val.entries()) {
+            addValue(row, `${key}[${i}]`, v);
+          }
+        } else {
+          let columnIdx = header.indexOf(key);
+          if (columnIdx === -1) {
+            columnIdx = header.push(key) - 1;
+          }
+          row[columnIdx] = `${val}`;
+        }
+      };
+      for (const [index, annotation] of annotations) {
+        const row: string[] = [`${index}`];
+        csvRows.push(row);
+        for (const [key, val] of Object.entries(annotation)) {
+          if (val !== undefined) {
+            addValue(row, key, val);
+          }
+        }
+      }
+      const sortedHeader = header.slice().sort();
+      const sortMap = new Map<number, number>();
+      for (let i = 0; i < header.length; i++) {
+        sortMap.set(sortedHeader.indexOf(header[i]), i);
+      }
+      const sortedRows = csvRows.map((row) => {
+        const sortedRow = new Array(sortedHeader.length).fill("");
+        for (let i = 0; i < sortedRow.length; i++) {
+          sortedRow[i] = row[sortMap.get(i)!];
+        }
+        return sortedRow;
+      });
+      return [sortedHeader, ...sortedRows].map((row) => row.join(",")).join("\n");
+    };
+    return typeToAnnotations.entries().map(([type, annotations]) => {
+      const typeString = AnnotationType[type].toLowerCase();
+      return [typeString, annotationsToCSV(annotations)];
+    });
   }
 
   updateAnnotationPropertySerializers() {

@@ -145,7 +145,8 @@ export function formatScaleWithUnitAsString(
     unit: formattedUnit,
     prefix,
   } = formatScaleWithUnit(scale, unit, options);
-  return `${formattedScale}${prefix}${formattedUnit}`;
+  const res = `${formattedScale}${prefix}${formattedUnit}`;
+  return res;
 }
 
 export function parseScale(s: string) {

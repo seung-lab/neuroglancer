@@ -756,131 +756,29 @@ export class AnnotationUserLayer extends Base {
   saveToCSV() {
     const { localAnnotations } = this;
     if (!localAnnotations) return;
-
-    // enumerate through all the rows, combine the keys to generate a csv header
-
-    if (localAnnotations.toJSON().length === 0) {
-      console.warn("No annotations to export to CSV.");
-      return;
+    for (const [type, csv] of localAnnotations.toCSV()) {
+      const blob = new Blob([csv], {
+        type: "text/csv;charset=utf-8;",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `annotations_${type}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
     }
-
-    // get output dimension names
-    console.log("test", this);
-    const outputDimensionNames =
-      localAnnotations.watchableTransform.outputSpace.value.names;
-
-    const json = localAnnotations.toJSON();
-
-    // TODO, this is a bit hacky, but we need to get the keys from the first row
-    // to generate the header, this is because the properties can be different for each annotation
-    // and we don't want to hardcode the keys
-    if (json.length > 1) {
-      console.warn(
-        "Exporting annotations with different properties, only the first row will be used to generate the header.",
-      );
-    }
-
-    let longestRow = 0;
-    let header: string[] = [];
-
-    const dataNames = ['point', 'points', 'pointA', 'pointB', 'center', 'radii'];
-
-    const csvContent = localAnnotations
-      .toJSON()
-      .map((row: any) => {
-        const totalLength = Object.values(row).flat(Infinity).length;
-        const isLongestRow = totalLength > longestRow;
-        if (isLongestRow) {
-          longestRow = totalLength;
-          header = [];
-        }
-
-        const what = Object.entries(row)
-          .sort(([keyA, valA], [keyB, valB]) => {
-            let sortValA = 0;
-            let sortValB = 0;
-            sortValA -= Array.isArray(valA) ? 1 : 0;
-            sortValB -= Array.isArray(valB) ? 1 : 0;
-            sortValA -= dataNames.includes(keyA) ? 1 : 0;
-            sortValB -= dataNames.includes(keyB) ? 1 : 0;
-            return sortValB - sortValA;
-          });
-
-          console.log("what", what);
-
-        return Object.entries(row)
-          .sort(([keyA, valA], [keyB, valB]) => {
-            let sortValA = 0;
-            let sortValB = 0;
-            sortValA -= Array.isArray(valA) ? 1 : 0;
-            sortValB -= Array.isArray(valB) ? 1 : 0;
-            sortValA -= dataNames.includes(keyA) ? 1 : 0;
-            sortValB -= dataNames.includes(keyB) ? 1 : 0;
-            return sortValB - sortValA;
-          })
-          .flatMap(([key, val]) => {
-            if (Array.isArray(val)) {
-              if (key.startsWith("props")) {
-                if (isLongestRow) {
-                  header.push(
-                    ...Array(val.length)
-                      .fill(undefined)
-                      .map((_, i) => `${key}[${i}]`),
-                  );
-                }
-                return val;
-              } else if (dataNames.includes(key)) {
-                const data = val.flat(Infinity);
-                if (isLongestRow) {
-                  for (let i = 0; i < data.length; i++) {
-                    header.push(
-                      `data[${Math.floor(i / outputDimensionNames.length)}]${outputDimensionNames[i % outputDimensionNames.length]}`,
-                    );
-                  }
-                }
-                return data;
-              }
-            }
-            if (isLongestRow) {
-              header.push(`${key}`);
-            }
-            return val;
-          })
-          .join(",");
-      })
-      .join("\n");
-
-    const csvHeader = header.join(",") + "\n";
-
-    const blob = new Blob([csvHeader + "\n" + csvContent], {
-      type: "text/csv;charset=utf-8;",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "annotations.csv";
-    a.click();
-    URL.revokeObjectURL(url);
   }
 
-  // loadFromCSV(csv: string) {
-
-  //   const csvToJSON = (csv: string) => {
-  //     const lines = csv.split("\n");
-  //     const result: any[] = [];
-  //     const headers = lines[0].split(",");
-  //     for (let i = 1; i < lines.length; i++) {
-  //       const obj: any = {};
-  //       const currentline = lines[i].split(",");
-  //       for (let j = 0; j < headers.length; j++) {
-  //         obj[headers[j]] = currentline[j];
-  //       }
-  //       result.push(obj);
-  //     }
-  //     return result;
-  //   }
-
-  // }
+  loadFromCSV(csvs: string[]) {
+    const { localAnnotations } = this;
+    if (!localAnnotations) return;
+    const annotations: any[] = [];
+    for (const csv of csvs) {
+      localAnnotations.fromCSV(csv, annotations);
+    }
+    localAnnotations.restoreState(annotations);
+    localAnnotations.bigChange.dispatch();
+  }
 
   syncTagTools = (tagIdentifiers: string[]) => {
     // TODO, change to set? intersection etc
@@ -1187,9 +1085,41 @@ export class AnnotationUserLayer extends Base {
     {
       const downloadButton = document.createElement("button");
       downloadButton.textContent = "Download";
-      downloadButton.title = "Download state as a JSON file";
+      downloadButton.title = "Download annotation state as a JSON file";
       tab.element.appendChild(downloadButton);
       downloadButton.addEventListener("click", () => this.saveToCSV());
+    }
+    {
+      const importButton = document.createElement("input");
+      importButton.type = "file";
+      importButton.multiple = true;
+      importButton.accept = ".csv";
+      importButton.title = "Import annotation state from a CSV file";
+      tab.element.appendChild(importButton);
+      importButton.addEventListener("change", async () => {
+        const files = importButton.files;
+        if (!files) return;
+        const csvs = await Promise.all(
+          Array.from(files).map((f) => {
+            return new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = (e) => {
+                const result = e.target?.result;
+                if (typeof result !== "string") {
+                  reject(new Error("FileReader result is not a string"));
+                  return;
+                }
+                resolve(result);
+              };
+              reader.onerror = (e) => {
+                reject(e);
+              };
+              reader.readAsText(f);
+            });
+          }),
+        );
+        this.loadFromCSV(csvs);
+      });
     }
     {
       const checkbox = tab.registerDisposer(

@@ -375,6 +375,9 @@ export class AnnotationLayerView extends Tab {
             this.deleteAnnotationElement(annotationId, state),
           ),
         );
+        refCounted.registerDisposer(
+          source.bigChange.add(this.forceUpdateView),
+        );
       }
       refCounted.registerDisposer(
         state.transform.changed.add(this.forceUpdateView),
@@ -755,6 +758,7 @@ export class AnnotationLayerView extends Tab {
   }
 
   private updateView() {
+    console.log("updateView", this.visible);
     if (!this.visible) {
       return;
     }
@@ -865,6 +869,7 @@ export class AnnotationLayerView extends Tab {
     annotation: Annotation,
     state: AnnotationLayerState,
   ) {
+    console.log("addAnnotationElement");
     if (!this.visible) {
       this.updated = false;
       return;
