@@ -111,6 +111,7 @@ import {
 import { Tab } from "#src/widget/tab_view.js";
 import type { VirtualListSource } from "#src/widget/virtual_list.js";
 import { VirtualList } from "#src/widget/virtual_list.js";
+import { fromCSV, toCSV } from "#src/util/csv.js";
 
 const POINTS_JSON_KEY = "points";
 const ANNOTATIONS_JSON_KEY = "annotations";
@@ -278,7 +279,7 @@ class LinkedSegmentationLayers extends RefCounted {
       }
       const { layerName } = state.layerRef;
       if (layerName !== undefined) {
-        (linkedJson = linkedJson || {})[name] = layerName;
+        (linkedJson = linkedJson ?? {})[name] = layerName;
       }
     }
     filterBySegmentation.sort();
@@ -756,28 +757,47 @@ export class AnnotationUserLayer extends Base {
   saveToCSV() {
     const { localAnnotations } = this;
     if (!localAnnotations) return;
-    for (const [type, csv] of localAnnotations.toCSV()) {
-      const blob = new Blob([csv], {
+    const json = this.toJSON();
+    const saveToFile = (data: string, filename: string) => {
+      const blob = new Blob([data], {
         type: "text/csv;charset=utf-8;",
       });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `annotations_${type}.csv`;
+      a.download = filename;
       a.click();
       URL.revokeObjectURL(url);
+    };
+    const {[ANNOTATIONS_JSON_KEY]: annotations, ...metadata} = json;
+    saveToFile(JSON.stringify(metadata), `annotations_metadata.json`);
+    const typeToAnnotations = new Map<string, any[]>();
+    for (const [index, annotation] of annotations.entries()) {
+      annotation.index = index;
+      typeToAnnotations.set(
+        annotation.type,
+        (typeToAnnotations.get(annotation.type) ?? []).concat([annotation]),
+      );
+    }
+    for (const [type, annotations] of typeToAnnotations) {
+      saveToFile(toCSV(annotations), `annotations_${type}.csv`);
     }
   }
 
-  loadFromCSV(csvs: string[]) {
+  loadFromCSV(metadata: any, csvs: string[]) {
     const { localAnnotations } = this;
     if (!localAnnotations) return;
     const annotations: any[] = [];
     for (const csv of csvs) {
-      localAnnotations.fromCSV(csv, annotations);
+      for (const {index, ...annotation} of fromCSV(csv)) {
+        annotations[index ?? annotations.length] = annotation;
+      }
     }
-    localAnnotations.restoreState(annotations);
-    localAnnotations.bigChange.dispatch();
+    this.dataSources = [];
+    this.restoreState({
+      ...metadata,
+      [ANNOTATIONS_JSON_KEY]: annotations,
+    });
   }
 
   syncTagTools = (tagIdentifiers: string[]) => {
@@ -815,6 +835,7 @@ export class AnnotationUserLayer extends Base {
   };
 
   restoreState(specification: any) {
+    console.log('restoreState');
     // restore tag tools before super so tag tools are registered
     const properties = verifyOptionalObjectProperty(
       specification,
@@ -858,6 +879,7 @@ export class AnnotationUserLayer extends Base {
     this.annotationDisplayState.shaderControls.restoreState(
       specification[SHADER_CONTROLS_JSON_KEY],
     );
+    console.log('restoreStateEnd');
   }
 
   getLegacyDataSourceSpecifications(
@@ -917,6 +939,10 @@ export class AnnotationUserLayer extends Base {
   }
 
   activateDataSubsources(subsources: Iterable<LoadedDataSubsource>) {
+    console.log("activateDataSubsources", this.localAnnotationsJson);
+    if (this.localAnnotationsJson) {
+      console.log("we have our local now");
+    }
     let hasLocalAnnotations = false;
     let properties:
       | WatchableValue<readonly Readonly<AnnotationPropertySpec>[]>
@@ -943,6 +969,7 @@ export class AnnotationUserLayer extends Base {
         return true;
       };
       if (local === LocalDataSource.annotations) {
+        console.log("found local annotations");
         if (hasLocalAnnotations) {
           loadedSubsource.deactivate(
             "Only one local annotations source per layer is supported",
@@ -1082,44 +1109,12 @@ export class AnnotationUserLayer extends Base {
       renderScaleControls.element,
       tab.element.firstChild,
     );
-    {
+    if (this.localAnnotations) {
       const downloadButton = document.createElement("button");
       downloadButton.textContent = "Download";
-      downloadButton.title = "Download annotation state as a JSON file";
+      downloadButton.title = "Save as csv";
       tab.element.appendChild(downloadButton);
       downloadButton.addEventListener("click", () => this.saveToCSV());
-    }
-    {
-      const importButton = document.createElement("input");
-      importButton.type = "file";
-      importButton.multiple = true;
-      importButton.accept = ".csv";
-      importButton.title = "Import annotation state from a CSV file";
-      tab.element.appendChild(importButton);
-      importButton.addEventListener("change", async () => {
-        const files = importButton.files;
-        if (!files) return;
-        const csvs = await Promise.all(
-          Array.from(files).map((f) => {
-            return new Promise<string>((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onload = (e) => {
-                const result = e.target?.result;
-                if (typeof result !== "string") {
-                  reject(new Error("FileReader result is not a string"));
-                  return;
-                }
-                resolve(result);
-              };
-              reader.onerror = (e) => {
-                reject(e);
-              };
-              reader.readAsText(f);
-            });
-          }),
-        );
-        this.loadFromCSV(csvs);
-      });
     }
     {
       const checkbox = tab.registerDisposer(
