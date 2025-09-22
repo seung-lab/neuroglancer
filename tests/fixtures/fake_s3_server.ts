@@ -34,13 +34,20 @@ export function fakeS3ServerFixture(
   console.log("create fake S3 server");
   const { msw } = options;
   const s3Server = fixture(async (stack) => {
-    const proc = stack.use(
-      spawn(
-        "uv",
-        ["--project", "build_tools/vitest/python_tools", "run", "moto_server", "-p", "0"],
-        { stdio: ["ignore", "pipe", "pipe"] },
-      ),
+    const proc = spawn(
+      "uv",
+      [
+        "--project",
+        "build_tools/vitest/python_tools",
+        "run",
+        "moto_server",
+        "-p",
+        "0",
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
     );
+
+    stack.use(proc);
 
     const { resolve, reject, promise } = Promise.withResolvers<string>();
 
@@ -61,8 +68,8 @@ export function fakeS3ServerFixture(
     proc.on("message", (message) => {
       console.log("proc message", message);
     });
-    proc.on('disconnect', () => {
-      console.log('proc disconnected');
+    proc.on("disconnect", () => {
+      console.log("proc disconnected");
     });
 
     proc.stderr.on("data", (data) => {
@@ -70,7 +77,6 @@ export function fakeS3ServerFixture(
     });
 
     (async () => {
-
       for await (const line of readline.createInterface({
         input: proc.stderr,
       })) {
@@ -155,7 +161,7 @@ export function fakeS3ServerFixture(
         ),
       );
       const endTime = performance.now();
-      console.log('s3 fixture time', endTime - startTime);
+      console.log("s3 fixture time", endTime - startTime);
     }, 30000);
   }
   return s3Server;
