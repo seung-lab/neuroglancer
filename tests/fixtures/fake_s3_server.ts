@@ -50,7 +50,10 @@ export function fakeS3ServerFixture(
         console.log(`moto_server: ${line}`);
         const m = line.match(/Running on (http:\/\/[^\s]+)$/);
         if (m !== null) {
-          resolve(m[1]);
+          setTimeout(() => {
+            resolve(m[1]);
+          }, 12000);
+          return;
         }
       }
       reject(new Error("Failed to start server"));

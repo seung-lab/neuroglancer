@@ -18,6 +18,7 @@ import path from "node:path";
 import mswPlugin from "@iodigital/vite-plugin-msw";
 import type { ViteUserConfig } from "vitest/config";
 import { defineConfig, mergeConfig } from "vitest/config";
+import { parseCLI } from "vitest/node";
 import { getFakeGcsServerBin } from "./build_tools/vitest/build_fake_gcs_server.js";
 import { startFakeNgauthServer } from "./build_tools/vitest/fake_ngauth_server.js";
 import {
@@ -45,6 +46,9 @@ const nodeDefines = {
   ...commonDefines,
 };
 
+// ugly but vitest is ignoring CLI settings
+const { options: cliOptions } = parseCLI(["vitest", ...process.argv.slice(2)]);
+
 function defaultNodeProject(): ViteUserConfig {
   return {
     define: { ...nodeDefines },
@@ -54,7 +58,7 @@ function defaultNodeProject(): ViteUserConfig {
         "./build_tools/vitest/polyfill-browser-globals-in-node.ts",
         "@vitest/web-worker",
       ],
-      testTimeout: 10000,
+      ...cliOptions,
     },
   };
 }
