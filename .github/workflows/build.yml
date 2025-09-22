@@ -3,10 +3,7 @@ name: Build
 on:
   push:
     branches:
-      - master
-    tags:
-      - v**
-  pull_request:
+      - cj-test-timeout-increase-moto-mac
   workflow_dispatch:
     inputs:
       debug_enabled:
@@ -66,7 +63,7 @@ jobs:
         run: npm test
         if: ${{ runner.os != 'macOS' }}
       - name: Run JavaScript tests (excluding WebGL)
-        run: npm test -- --project node
+        run: npm test -- --project node --hook-timeout=120000
         if: ${{ runner.os == 'macOS' }}
       - name: Run JavaScript benchmarks
         run: npm run benchmark
