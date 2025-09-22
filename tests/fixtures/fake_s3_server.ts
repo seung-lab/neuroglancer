@@ -32,6 +32,7 @@ export function fakeS3ServerFixture(
   } = {},
 ): Fixture<string> {
   console.log("create fake S3 server");
+  const startT = performance.now();
   const { msw } = options;
   const s3Server = fixture(async (stack) => {
     const proc = spawn(
@@ -51,7 +52,7 @@ export function fakeS3ServerFixture(
 
     const { resolve, reject, promise } = Promise.withResolvers<string>();
 
-    console.log("proc", proc);
+    // console.log("proc", proc);
 
     proc.on("error", (err) => {
       console.error("proc error", err);
@@ -83,6 +84,8 @@ export function fakeS3ServerFixture(
         console.log(`moto_server: ${line}`);
         const m = line.match(/Running on (http:\/\/[^\s]+)$/);
         if (m !== null) {
+          const endT = performance.now();
+          console.log("moto server startup time", endT - startT);
           resolve(m[1]);
         }
       }

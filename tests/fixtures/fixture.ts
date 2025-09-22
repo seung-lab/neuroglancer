@@ -43,7 +43,7 @@ export function fixture<T>(
 
   beforeAll(async () => {
     await asyncGetter();
-  }, 30000);
+  }, 120000);
 
   return asyncGetter;
 }
