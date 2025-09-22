@@ -46,6 +46,8 @@ jobs:
           npm run build -- --no-typecheck --no-lint --define NEUROGLANCER_BUILD_INFO="${build_info}"
           echo $build_info > ./dist/client/version.json
         shell: bash
+      - name: Run moto script
+        run: node test_moto_server.ts
       - name: Run moto node
         run: node tests/kvstore/moto.node.ts
       - name: Run moto test
