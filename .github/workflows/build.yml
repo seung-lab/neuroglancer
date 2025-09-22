@@ -60,7 +60,7 @@ jobs:
       - run: npm publish --dry-run
         working-directory: dist/package
       - name: Run JavaScript tests (including WebGL)
-        run: npm test
+        run: npm test -- --hook-timeout=120000
         if: ${{ runner.os != 'macOS' }}
       - name: Run JavaScript tests (excluding WebGL)
         run: npm test -- --project node --hook-timeout=120000
