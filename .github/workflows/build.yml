@@ -45,4 +45,4 @@ jobs:
           echo $build_info > ./dist/client/version.json
         shell: bash
       - name: Try running moto_server
-        run: uv --project build_tools/vitest/python_tools run moto_server -p 0
+        run: node test_moto_server.ts
