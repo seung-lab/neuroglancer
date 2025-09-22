@@ -3,9 +3,7 @@ name: Build
 on:
   push:
     branches:
-      - master
-    tags:
-      - v**
+      - cj-build-gcs-expose-error
   pull_request:
   workflow_dispatch:
     inputs:
@@ -17,6 +15,7 @@ on:
 
 jobs:
   client:
+    timeout-minutes: 5
     strategy:
       matrix:
         os:
