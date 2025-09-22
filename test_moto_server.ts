@@ -32,5 +32,5 @@ test1.on("spawn", () => {
 
 setTimeout(() => {
   test1.kill();
-}, 10000);
+}, 30000);
 

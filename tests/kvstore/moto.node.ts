@@ -37,7 +37,7 @@ export const startMotoServer = async () => {
       setTimeout(() => {
         console.log("kill test1");
         test1.kill();
-      }, 10000);
+      }, 30000);
     });
     const waitForClose = new Promise<void>((resolve) => {
       test1.on("close", (code, signal) => {
