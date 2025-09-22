@@ -29,8 +29,3 @@ test1.on("message", (message) => {
 test1.on("spawn", () => {
   console.log("test1 process spawned");
 });
-
-setTimeout(() => {
-  test1.kill();
-}, 30000);
-
