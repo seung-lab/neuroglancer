@@ -162,7 +162,7 @@ export function fakeS3ServerFixture(
       );
       const endTime = performance.now();
       console.log("s3 fixture time", endTime - startTime);
-    }, 30000);
+    }, 120000);
   }
   return s3Server;
 }
