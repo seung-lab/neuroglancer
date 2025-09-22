@@ -46,11 +46,5 @@ jobs:
           npm run build -- --no-typecheck --no-lint --define NEUROGLANCER_BUILD_INFO="${build_info}"
           echo $build_info > ./dist/client/version.json
         shell: bash
-      - name: Build Python client bundles
-        run: npm run build-python -- --no-typecheck --no-lint
-      - run: npm run build-package
-      - run: npm publish --dry-run
-        working-directory: dist/package
-      - name: Run JavaScript tests (excluding WebGL) TEMP - ONLY RUNNING s3 for debug
-        run: npm test tests/kvstore/s3.spec.ts -- --project node
-        if: ${{ runner.os == 'macOS' }}
+      - name: Run moto test
+        run: npm test tests/kvstore/moto.spec.ts -- --project node
