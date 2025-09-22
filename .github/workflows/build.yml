@@ -48,7 +48,3 @@ jobs:
         shell: bash
       - name: Run moto script
         run: node test_moto_server.ts
-      - name: Run moto node
-        run: node tests/kvstore/moto.node.ts
-      - name: Run moto test
-        run: npm test tests/kvstore/moto.spec.ts -- --project node

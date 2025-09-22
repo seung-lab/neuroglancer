@@ -2,7 +2,7 @@ import { spawn } from "child_process";
 
 const test1 = spawn(
     "uv",
-    ["--project", "build_tools/vitest/python_tools", "run", "moto_server", "-p", "0"],
+    ["--project", "build_tools/vitest/python_tools", "run", "-v", "moto_server", "-p", "0"],
     { stdio: ["ignore", "pipe", "pipe"] },
 );
 
