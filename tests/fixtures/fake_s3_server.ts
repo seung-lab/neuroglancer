@@ -46,6 +46,25 @@ export function fakeS3ServerFixture(
 
     console.log("proc", proc);
 
+    proc.on("error", (err) => {
+      console.error("proc error", err);
+    });
+    proc.on("exit", (code, signal) => {
+      console.log(`proc exited with code ${code}, signal ${signal}`);
+    });
+    proc.on("close", (code, signal) => {
+      console.log(`proc closed with code ${code}, signal ${signal}`);
+    });
+    proc.on("spawn", () => {
+      console.log("proc spawned");
+    });
+    proc.on("message", (message) => {
+      console.log("proc message", message);
+    });
+    proc.on('disconnect', () => {
+      console.log('proc disconnected');
+    });
+
     proc.stderr.on("data", (data) => {
       console.log("foo: ", data);
     });
