@@ -34,6 +34,7 @@ export function fakeS3ServerFixture(
   console.log("create fake S3 server");
   const { msw } = options;
   const s3Server = fixture(async (stack) => {
+    console.log("PYTHON_TEST_TOOLS_PATH", PYTHON_TEST_TOOLS_PATH);
     const proc = stack.use(
       spawn(
         "uv",

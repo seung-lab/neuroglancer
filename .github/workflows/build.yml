@@ -3,10 +3,7 @@ name: Build
 on:
   push:
     branches:
-      - master
-    tags:
-      - v**
-  pull_request:
+      - cj-moto-server-test
   workflow_dispatch:
     inputs:
       debug_enabled:
@@ -54,23 +51,6 @@ jobs:
       - run: npm run build-package
       - run: npm publish --dry-run
         working-directory: dist/package
-      - name: Run JavaScript tests (including WebGL)
-        run: npm test
-        if: ${{ runner.os != 'macOS' }}
       - name: Run JavaScript tests (excluding WebGL) TEMP - ONLY RUNNING s3 for debug
         run: npm test tests/kvstore/s3.spec.ts -- --project node
         if: ${{ runner.os == 'macOS' }}
-      - name: Run JavaScript benchmarks
-        run: npm run benchmark
-      - name: Upload NPM package as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: npm-package
-          path: dist/package
-        if: ${{ runner.os == 'Linux' }}
-      - name: Upload client as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: client
-          path: dist/client
-        if: ${{ runner.os == 'Linux' }}
