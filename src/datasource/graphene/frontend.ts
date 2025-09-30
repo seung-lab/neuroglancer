@@ -285,7 +285,8 @@ function parseGrapheneMultiscaleVolumeInfo(
   url: string,
 ): GrapheneMultiscaleVolumeInfo {
   const volumeInfo = parseMultiscaleVolumeInfo(obj);
-  const dataUrl = verifyObjectProperty(obj, "data_dir", verifyString);
+  let dataUrl = verifyObjectProperty(obj, "data_dir", verifyString);
+  dataUrl = `${dataUrl}|ocdbt:`;
   const app = verifyObjectProperty(obj, "app", (x) => new AppInfo(url, x));
   const graph = verifyObjectProperty(obj, "graph", (x) => new GraphInfo(x));
   return {
