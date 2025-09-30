@@ -644,7 +644,7 @@ async function getVolumeDataSource(
       subsource: { segmentPropertyMap },
     });
   }
-  if (info.mesh !== undefined) {
+  if (info.mesh !== undefined && Math.random() > 1) {
     const { source: meshSource, transform } = await getMeshSource(
       sharedKvStoreContext,
       info.app!.meshingUrl,
