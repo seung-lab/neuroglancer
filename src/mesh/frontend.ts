@@ -481,6 +481,7 @@ export class MeshShaderManager {
               `highp ${getShaderOutputType(property.dataType)}`,
               property.id.replaceAll(" ", "_"),
             );
+            console.log("added numeric uniform", property.id);
           }
           if (tags) {
             console.log("tags", tags);
@@ -573,27 +574,7 @@ const addPropertyUniforms = (
   // );
   // console.log("segmentPropertyMap.numerical", segmentPropertyMap.tags);
 
-  if (index !== -1) {
-    const { labels, tags: tagsProperty } = segmentPropertyMap;
-    labels;
-    // let label = "";
-    // if (labels !== undefined) {
-    //   label = labels.values[index];
-    // }
-    if (tagsProperty !== undefined) {
-      const { values, tags } = tagsProperty;
-      const tagIndices = values[index];
-      for (let i = 0; i < tags.length; ++i) {
-        gl.uniform1ui(shader.uniform(`uTag${i}`), 0);
-      }
-      for (let i = 0, length = tagIndices.length; i < length; ++i) {
-        const tagIdx = tagIndices.charCodeAt(i);
-        console.log("enable tag", tagIdx);
-        gl.uniform1ui(shader.uniform(`uTag${tagIdx}`), 1);
-      }
-    }
-
-    function getShaderUniformValueSetter(gl: GL, ioType: DataType) {
+  const getShaderUniformValueSetter = (gl: GL, ioType: DataType) => {
       switch (ioType) {
         case DataType.UINT8:
         case DataType.UINT16:
@@ -608,6 +589,33 @@ const addPropertyUniforms = (
         case DataType.UINT64:
           throw new Error("nope");
         // return gl.uniform
+      };
+    };
+
+  if (index !== -1) {
+    const { labels, tags: tagsProperty, numericalProperties } = segmentPropertyMap;
+    labels;
+
+    for (const property of numericalProperties) {
+      const value = property.values[index];
+      const uniformSetter = getShaderUniformValueSetter(gl, property.dataType);
+      uniformSetter.call(gl, shader.uniform(property.id.replaceAll(" ", "_")), value);
+    }
+
+    // let label = "";
+    // if (labels !== undefined) {
+    //   label = labels.values[index];
+    // }
+    if (tagsProperty !== undefined) {
+      const { values, tags } = tagsProperty;
+      const tagIndices = values[index];
+      for (let i = 0; i < tags.length; ++i) {
+        gl.uniform1ui(shader.uniform(`uTag${i}`), 0);
+      }
+      for (let i = 0, length = tagIndices.length; i < length; ++i) {
+        const tagIdx = tagIndices.charCodeAt(i);
+        console.log("enable tag", tagIdx);
+        gl.uniform1ui(shader.uniform(`uTag${tagIdx}`), 1);
       }
     }
     // if (label.length === 0) return undefined;
