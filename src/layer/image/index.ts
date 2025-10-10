@@ -551,6 +551,7 @@ class RenderingOptionsTab extends Tab {
           href: "https://github.com/google/neuroglancer/blob/master/src/sliceview/image_layer_rendering.md",
         },
         "neuroglancer-image-dropdown-top-row",
+        "fin",
       ),
     );
     element.appendChild(

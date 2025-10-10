@@ -416,7 +416,7 @@ class LinkedSegmentationGroupState<
 
 const DEFAULT_FRAGMENT_MAIN = `
 void main() {
-  emit(vColor, uPickID);
+  setColor(defaultColor());
 }
 `;
 

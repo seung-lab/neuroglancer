@@ -854,6 +854,7 @@ class RenderingOptionsTab extends Tab {
           href: "https://github.com/google/neuroglancer/blob/master/src/annotation/rendering.md",
         },
         "neuroglancer-annotation-dropdown-shader-top-row",
+        "anno",
       ),
     );
 

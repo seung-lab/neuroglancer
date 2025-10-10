@@ -82,6 +82,13 @@ export class DisplayOptionsTab extends Tab {
 
     this.codeWidget = this.registerDisposer(makeShaderCodeWidget(layer));
 
+
+    console.log("widget: ", this.codeWidget.state.fragmentMain.value);
+
+    this.codeWidget.state.fragmentMain.changed.add(() => {
+      console.log('fragment main changed!');
+    });
+
     element.appendChild(
       makeShaderCodeWidgetTopRow(
         this.layer,
@@ -91,7 +98,8 @@ export class DisplayOptionsTab extends Tab {
           title: "Documentation on image layer rendering",
           href: "https://github.com/google/neuroglancer/blob/master/src/annotation/rendering.md",
         },
-        "neuroglancer-annotation-dropdown-shader-top-row",
+        "neuroglancer-segmentation-dropdown-mesh-shader-header",
+        "Mesh Shader",
       ),
     );
 
@@ -137,6 +145,7 @@ export class DisplayOptionsTab extends Tab {
                 href: "https://github.com/google/neuroglancer/blob/master/src/sliceview/image_layer_rendering.md",
               },
               "neuroglancer-segmentation-dropdown-skeleton-shader-header",
+              "Skeleton Shader",
             ),
           );
           parent.appendChild(codeWidget.element);
