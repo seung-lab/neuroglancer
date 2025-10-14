@@ -222,6 +222,7 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
   }
 
   defineShader(builder: ShaderBuilder, parameters: ShaderParameters) {
+    console.log('seg defineShader', parameters);
     this.hashTableManager.defineShader(builder);
     let getUint64Code = `
 uint64_t getUint64DataValue() {
@@ -338,6 +339,7 @@ uint64_t getMappedObjectId(uint64_t value) {
     shader: ShaderProgram,
     parameters: ShaderParameters,
   ) {
+    console.log("initializing segmentation shader", parameters);
     const { gl } = this;
     const { displayState, segmentationGroupState } = this;
     const { segmentSelectionState } = this.displayState;

@@ -40,6 +40,8 @@ import {
 } from "#src/util/lerp.js";
 import { getObjectId } from "#src/util/object_id.js";
 import { defaultStringCompare } from "#src/util/string.js";
+import { GL } from "#src/webgl/context.js";
+import { ShaderBuilder, ShaderProgram } from "#src/webgl/shader.js";
 
 export type InlineSegmentProperty =
   | InlineSegmentStringProperty
@@ -1338,3 +1340,116 @@ export function queryIncludesColumn(
     includeColumns.includes(fieldId)
   );
 }
+
+function getShaderOutputType(ioType: DataType): string {
+  switch (ioType) {
+    case DataType.UINT8:
+    case DataType.UINT16:
+    case DataType.UINT32:
+      return "uint";
+    case DataType.INT8:
+    case DataType.INT16:
+    case DataType.INT32:
+      return "int";
+    case DataType.FLOAT32:
+      return "float";
+    case DataType.UINT64:
+      return "uvec2";
+  }
+}
+
+const getShaderUniformValueSetter = (gl: GL, ioType: DataType) => {
+  switch (ioType) {
+    case DataType.UINT8:
+    case DataType.UINT16:
+    case DataType.UINT32:
+      return gl.uniform1ui;
+    case DataType.INT8:
+    case DataType.INT16:
+    case DataType.INT32:
+      return gl.uniform1i;
+    case DataType.FLOAT32:
+      return gl.uniform1f;
+    case DataType.UINT64:
+      throw new Error("nope");
+    // return gl.uniform
+  }
+};
+
+export function shaderCodeWithPropertyPreprocessing(
+  segmentProperties: PreprocessedSegmentPropertyMap | undefined,
+  code: string,
+) {
+  if (!segmentProperties) return code;
+  const { numericalProperties, tags } = segmentProperties;
+  numericalProperties;
+  if (tags) {
+    for (const [i, tag] of tags.tags.entries()) {
+      code = code.replaceAll(`tag("${tag}")`, `uSegmentTagProperty${i} == 1u`);
+    }
+  }
+  for (const [i, property] of numericalProperties.entries()) {
+    code = code.replaceAll(`prop("${property.id}")`, `uSegmentNumericalProperty${i}`);
+  }
+  return code;
+}
+
+export function addSegmentPropertiesToShaderBuilder(
+  segmentProperties: PreprocessedSegmentPropertyMap,
+  builder: ShaderBuilder,
+) {
+  if (segmentProperties) {
+    const { numericalProperties, tags } = segmentProperties;
+    for (const [i, property] of numericalProperties.entries()) {
+      builder.addUniform(
+        `highp ${getShaderOutputType(property.dataType)}`,
+        `uSegmentNumericalProperty${i}`,
+      );
+    }
+    if (tags) {
+      for (const [i, tag] of tags.tags.entries()) {
+        tag;
+        builder.addUniform("highp uint", `uSegmentTagProperty${i}`);
+        // builder.addVertexCode(
+        //   `\n#define TAG_${tag.replaceAll(" ", "_").replaceAll("-", "_").toUpperCase()} uSegmentTagProperty${i}\n`,
+        // );
+      }
+    }
+  }
+}
+
+export const setSegmentPropertyUniforms = (
+  gl: GL,
+  shader: ShaderProgram,
+  segmentPropertyMap: PreprocessedSegmentPropertyMap,
+  id: bigint,
+) => {
+  const index = segmentPropertyMap.getSegmentInlineIndex(id);
+
+  if (index !== -1) {
+    const {
+      labels,
+      tags: tagsProperty,
+      numericalProperties,
+    } = segmentPropertyMap;
+    labels; // TODO, support labels
+
+    for (const [i, property] of numericalProperties.entries()) {
+      const value = property.values[index];
+      const uniformSetter = getShaderUniformValueSetter(gl, property.dataType);
+      uniformSetter.call(gl, shader.uniform(`uSegmentNumericalProperty${i}`), value);
+    }
+
+    if (tagsProperty !== undefined) {
+      const { values, tags } = tagsProperty;
+      const tagIndices = values[index];
+      for (let i = 0; i < tags.length; ++i) {
+        gl.uniform1ui(shader.uniform(`uSegmentTagProperty${i}`), 0);
+      }
+      for (let i = 0, length = tagIndices.length; i < length; ++i) {
+        const tagIdx = tagIndices.charCodeAt(i);
+        gl.uniform1ui(shader.uniform(`uSegmentTagProperty${tagIdx}`), 1);
+      }
+    }
+  }
+};

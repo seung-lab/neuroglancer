@@ -57,10 +57,9 @@ import {
   registerRedrawWhenSegmentationDisplayState3DChanged,
   SegmentationLayerSharedObject,
 } from "#src/segmentation_display_state/frontend.js";
-import { PreprocessedSegmentPropertyMap } from "#src/segmentation_display_state/property_map.js";
+import { addSegmentPropertiesToShaderBuilder, setSegmentPropertyUniforms, shaderCodeWithPropertyPreprocessing } from "#src/segmentation_display_state/property_map.js";
 import type { WatchableValueInterface } from "#src/trackable_value.js";
 import { makeCachedDerivedWatchableValue } from "#src/trackable_value.js";
-import { DataType } from "#src/util/data_type.js";
 import type { Borrowed, RefCounted } from "#src/util/disposable.js";
 import { vec4 } from "#src/util/geom.js";
 import {
@@ -391,12 +390,11 @@ export class MeshShaderManager {
   makeGetter(layer: RefCounted & { gl: GL; displayState: MeshDisplayState }) {
     const parameters = layer.registerDisposer(
       makeCachedDerivedWatchableValue(
-        (a, b, c) => {
-          console.log("update CDWV");
+        (silhouetteRendering, shaderBuilderState, segmentProperties) => {
           return {
-            silhouetteRenderingEnabled: a > 0,
-            shaderBuilderState: b,
-            segmentProperties: c,
+            silhouetteRenderingEnabled: silhouetteRendering > 0,
+            shaderBuilderState,
+            segmentProperties,
           };
         },
         [
@@ -406,33 +404,6 @@ export class MeshShaderManager {
         ],
       ),
     );
-
-    parameters.changed.add(() => {
-      console.log("parameters changed");
-    });
-
-    layer.displayState.segmentationGroupState.value.segmentPropertyMap.changed.add(
-      () => {
-        console.log("segment property map changed");
-      },
-    );
-
-    function getShaderOutputType(ioType: DataType): string {
-      switch (ioType) {
-        case DataType.UINT8:
-        case DataType.UINT16:
-        case DataType.UINT32:
-          return "uint";
-        case DataType.INT8:
-        case DataType.INT16:
-        case DataType.INT32:
-          return "int";
-        case DataType.FLOAT32:
-          return "float";
-        case DataType.UINT64:
-          return "uvec2";
-      }
-    }
 
     return parameterizedEmitterDependentShaderGetter(layer, layer.gl, {
       memoizeKey: `mesh/MeshShaderManager/${this.fragmentRelativeVertices}/${this.vertexPositionFormat}`,
@@ -457,44 +428,8 @@ export class MeshShaderManager {
         builder.addUniform("highp uint", "uPickID");
         builder.addUniform("highp uvec2", "uID");
 
-        // TODO define segment property uniforms here
-        // console.log("segmentProperties", segmentProperties);
-
-        const shaderCodeWithPropertyPreprocessing = (code: string) => {
-          if (!segmentProperties) return code;
-          const { numericalProperties, tags } = segmentProperties;
-          numericalProperties;
-          if (tags) {
-            for (const [i, tag] of tags.tags.entries()) {
-              code = code.replaceAll(`tag("${tag}")`, `uTag${i} == 1u`);
-            }
-          }
-          return code;
-        };
-
         if (segmentProperties) {
-          const { numericalProperties, tags } = segmentProperties;
-          for (const property of numericalProperties) {
-            console.log("numeric", property);
-            // TODO maybe just number it instead of using id
-            builder.addUniform(
-              `highp ${getShaderOutputType(property.dataType)}`,
-              property.id.replaceAll(" ", "_"),
-            );
-            console.log("added numeric uniform", property.id);
-          }
-          if (tags) {
-            console.log("tags", tags);
-
-            for (const [i, tag] of tags.tags.entries()) {
-              console.log("tag", tag, tag.replaceAll(" ", "_"));
-              builder.addUniform("highp uint", `uTag${i}`);
-              builder.addVertexCode(
-                `\n#define TAG_${tag.replaceAll(" ", "_").replaceAll("-", "_").toUpperCase()} uTag${i}\n`,
-              );
-              // gl.uniform1ui(shader.uniform(`tag${tagIndices.charCodeAt(i)}`), 1);
-            }
-          }
+          addSegmentPropertiesToShaderBuilder(segmentProperties, builder);
         }
 
         if (silhouetteRenderingEnabled) {
@@ -551,7 +486,7 @@ vColor *= pow(1.0 - absCosAngle, uSilhouettePower);
 
         builder.addVertexCode(
           "\n#define main userMain\n" +
-            shaderCodeWithLineDirective(shaderCodeWithPropertyPreprocessing(shaderBuilderState.parseResult.code)) +
+            shaderCodeWithLineDirective(shaderCodeWithPropertyPreprocessing(segmentProperties, shaderBuilderState.parseResult.code)) +
             "\n#undef main\n",
         );
       },
@@ -559,80 +494,6 @@ vColor *= pow(1.0 - absCosAngle, uSilhouettePower);
   }
 }
 
-const addPropertyUniforms = (
-  gl: GL,
-  shader: ShaderProgram,
-  segmentPropertyMap: PreprocessedSegmentPropertyMap,
-  id: bigint,
-) => {
-  const index = segmentPropertyMap.getSegmentInlineIndex(id);
-  // const {tags} = segmentPropertyMap;
-  // console.log("index", index, objectId, key);
-  // console.log(
-  //   "segmentPropertyMap.numerical",
-  //   segmentPropertyMap.numericalProperties,
-  // );
-  // console.log("segmentPropertyMap.numerical", segmentPropertyMap.tags);
-
-  const getShaderUniformValueSetter = (gl: GL, ioType: DataType) => {
-      switch (ioType) {
-        case DataType.UINT8:
-        case DataType.UINT16:
-        case DataType.UINT32:
-          return gl.uniform1ui;
-        case DataType.INT8:
-        case DataType.INT16:
-        case DataType.INT32:
-          return gl.uniform1i;
-        case DataType.FLOAT32:
-          return gl.uniform1f;
-        case DataType.UINT64:
-          throw new Error("nope");
-        // return gl.uniform
-      };
-    };
-
-  if (index !== -1) {
-    const { labels, tags: tagsProperty, numericalProperties } = segmentPropertyMap;
-    labels;
-
-    for (const property of numericalProperties) {
-      const value = property.values[index];
-      const uniformSetter = getShaderUniformValueSetter(gl, property.dataType);
-      uniformSetter.call(gl, shader.uniform(property.id.replaceAll(" ", "_")), value);
-    }
-
-    // let label = "";
-    // if (labels !== undefined) {
-    //   label = labels.values[index];
-    // }
-    if (tagsProperty !== undefined) {
-      const { values, tags } = tagsProperty;
-      const tagIndices = values[index];
-      for (let i = 0; i < tags.length; ++i) {
-        gl.uniform1ui(shader.uniform(`uTag${i}`), 0);
-      }
-      for (let i = 0, length = tagIndices.length; i < length; ++i) {
-        const tagIdx = tagIndices.charCodeAt(i);
-        console.log("enable tag", tagIdx);
-        gl.uniform1ui(shader.uniform(`uTag${tagIdx}`), 1);
-      }
-    }
-    // if (label.length === 0) return undefined;
-
-    // if (tags) {
-    //   console.log('tags', tags);
-    //   // for (const tag of tags) {
-    // }
-    getShaderUniformValueSetter;
-    // for (const [name, channel] of Object.entries(value)) {
-    //   const setter = getShaderUniformValueSetter(gl, channel.dataType);
-    //   if (setter) {
-    //     setter.call(gl, shader.uniforms[name], channel.value);
-    //   }
-    // }
-  }
-};
 export interface MeshDisplayState extends SegmentationDisplayState3D {
   silhouetteRendering: WatchableValueInterface<number>;
 
@@ -783,7 +644,7 @@ export class MeshLayer extends PerspectiveViewRenderLayer<ThreeDimensionalRender
         } = displayState.segmentationGroupState.value;
         if (segmentPropertyMap) {
           console.log('key/objectId', key, objectId);
-          addPropertyUniforms(gl, shader, segmentPropertyMap, objectId);
+          setSegmentPropertyUniforms(gl, shader, segmentPropertyMap, objectId);
         }
 
         for (const fragmentId of manifestChunk.fragmentIds) {
@@ -1174,7 +1035,7 @@ export class MultiscaleMeshLayer extends PerspectiveViewRenderLayer<ThreeDimensi
         } = displayState.segmentationGroupState.value;
         if (segmentPropertyMap) {
           console.log('key/objectId', key, objectId);
-          addPropertyUniforms(gl, shader, segmentPropertyMap, objectId);
+          setSegmentPropertyUniforms(gl, shader, segmentPropertyMap, objectId);
         }
 
         getMultiscaleChunksToDraw(
