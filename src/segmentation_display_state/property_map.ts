@@ -1389,7 +1389,10 @@ export function shaderCodeWithPropertyPreprocessing(
     }
   }
   for (const [i, property] of numericalProperties.entries()) {
-    code = code.replaceAll(`prop("${property.id}")`, `uSegmentNumericalProperty${i}`);
+    code = code.replaceAll(
+      `prop("${property.id}")`,
+      `uSegmentNumericalProperty${i}`,
+    );
   }
   return code;
 }
@@ -1425,31 +1428,34 @@ export const setSegmentPropertyUniforms = (
   id: bigint,
 ) => {
   const index = segmentPropertyMap.getSegmentInlineIndex(id);
+  const {
+    labels,
+    tags: tagsProperty,
+    numericalProperties,
+  } = segmentPropertyMap;
+  labels; // TODO, support labels
 
-  if (index !== -1) {
-    const {
-      labels,
-      tags: tagsProperty,
-      numericalProperties,
-    } = segmentPropertyMap;
-    labels; // TODO, support labels
+  for (const [i, property] of numericalProperties.entries()) {
+    const value = index !== -1 ? property.values[index] : 0;
+    const uniformSetter = getShaderUniformValueSetter(gl, property.dataType);
+    uniformSetter.call(
+      gl,
+      shader.uniform(`uSegmentNumericalProperty${i}`),
+      value,
+    );
+  }
 
-    for (const [i, property] of numericalProperties.entries()) {
-      const value = property.values[index];
-      const uniformSetter = getShaderUniformValueSetter(gl, property.dataType);
-      uniformSetter.call(gl, shader.uniform(`uSegmentNumericalProperty${i}`), value);
+  if (tagsProperty !== undefined) {
+    const { values, tags } = tagsProperty;
+    for (let i = 0; i < tags.length; ++i) {
+      gl.uniform1ui(shader.uniform(`uSegmentTagProperty${i}`), 0);
     }
+    const tagIndices = index !== -1 ? values[index] : "";
+    for (let i = 0, length = tagIndices.length; i < length; ++i) {
+      const tagIdx = tagIndices.charCodeAt(i);
 
-    if (tagsProperty !== undefined) {
-      const { values, tags } = tagsProperty;
-      const tagIndices = values[index];
-      for (let i = 0; i < tags.length; ++i) {
-        gl.uniform1ui(shader.uniform(`uSegmentTagProperty${i}`), 0);
-      }
-      for (let i = 0, length = tagIndices.length; i < length; ++i) {
-        const tagIdx = tagIndices.charCodeAt(i);
-        gl.uniform1ui(shader.uniform(`uSegmentTagProperty${tagIdx}`), 1);
-      }
+      console.log("enable tag property", tagIdx);
+      gl.uniform1ui(shader.uniform(`uSegmentTagProperty${tagIdx}`), 1);
     }
   }
 };

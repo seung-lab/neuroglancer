@@ -339,7 +339,7 @@ uint64_t getMappedObjectId(uint64_t value) {
     shader: ShaderProgram,
     parameters: ShaderParameters,
   ) {
-    console.log("initializing segmentation shader", parameters);
+    // console.log("initializing segmentation shader", parameters);
     const { gl } = this;
     const { displayState, segmentationGroupState } = this;
     const { segmentSelectionState } = this.displayState;
