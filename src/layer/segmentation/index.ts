@@ -119,12 +119,13 @@ import {
 } from "#src/util/color.js";
 import type { Borrowed, Owned } from "#src/util/disposable.js";
 import { RefCounted } from "#src/util/disposable.js";
-import type { vec3, vec4 } from "#src/util/geom.js";
+import { vec3, vec4 } from "#src/util/geom.js";
 import {
   parseArray,
   parseUint64,
   verifyArray,
   verifyFiniteNonNegativeFloat,
+  verifyFloat,
   verifyObject,
   verifyObjectAsMap,
   verifyObjectProperty,
@@ -147,11 +148,11 @@ export interface SegmentPropertyColor {
   property: string;
   map?: Map<string, string>; // TODO is there a color type?
   options?: {
-    min?: number;
-    max?: number;
-    minColor?: string;
-    maxColor?: string;
-  }
+    min: number;
+    max: number;
+    minColor: string;
+    maxColor: string;
+  };
 }
 
 export class SegmentationUserLayerGroupState
@@ -318,62 +319,91 @@ export class SegmentationUserLayerColorGroupState
   constructor(public layer: SegmentationUserLayer) {
     super();
 
+    this.segmentPropertyColorsMap = this.registerDisposer(
+      makeCachedDerivedWatchableValue(
+        (segmentPropertyMap, segmentPropertyColors) => {
+          console.log("update segmentPropertyColorsMap");
+          segmentPropertyColors;
+          const map = new Uint64Map();
+          if (!segmentPropertyMap) {
+            return map;
+          }
 
-    this.segmentPropertyColorsMap = this.registerDisposer(makeCachedDerivedWatchableValue(
-          (segmentPropertyMap, segmentPropertyColors) => {
-            console.log('update segmentPropertyColorsMap');
-            segmentPropertyColors;
-            const map = new Uint64Map();
-            if (!segmentPropertyMap) {
-              return map;
-            }
+          const { tags: tagsProperty } = segmentPropertyMap;
 
-            const { tags: tagsProperty } = segmentPropertyMap;
+          console.log("tags", segmentPropertyMap.tags);
 
-            console.log("tags", segmentPropertyMap.tags);
+          for (const propertyColor of segmentPropertyColors) {
+            if (propertyColor.type === "tag" && tagsProperty) {
+              const { tags, values } = tagsProperty;
 
-            for (const propertyColor of segmentPropertyColors) {
-              if (propertyColor.type === "tag" && tagsProperty) {
-                const { tags, values } = tagsProperty;
+              // const colors =  todo performance, cache colors as bigints
 
-                // const colors =  todo performance, cache colors as bigints
-
-                const bigIntColors = new Map<string, bigint>();
-                for (const [tag, colorString] of propertyColor.map!.entries()) {
-                  const color = parseRGBColorSpecification(colorString);
-                  bigIntColors.set(tag, BigInt(packColor(color)));
-                  console.log("tag color", tag, colorString, color);
-                }
-
-                for (const [index, id] of (segmentPropertyMap.segmentPropertyMap.inlineProperties?.ids || []).entries()) {
-                  if (map.has(id)) continue; // priority first color match
-                  const tagIndices = values[index];
-                  const segmentTags = new Set(
-                      tagIndices.split("").map((x) => tags[x.charCodeAt(0)]),
-                  );
-
-                  for (const [tag, color] of bigIntColors.entries()) {
-                    if (segmentTags.has(tag)) {
-                      map.set(id, color);
-                      break;
-                    }
-                  }
-                }
-              } else if (propertyColor.type === "numeric") {
-                console.log("propety:", propertyColor.property);
+              const bigIntColors = new Map<string, bigint>();
+              for (const [tag, colorString] of propertyColor.map!.entries()) {
+                const color = parseRGBColorSpecification(colorString);
+                bigIntColors.set(tag, BigInt(packColor(color)));
+                console.log("tag color", tag, colorString, color);
               }
 
-              /*
-              "type": "numeric",
-              "property": "Nvx",
-              */
+              for (const [index, id] of (
+                segmentPropertyMap.segmentPropertyMap.inlineProperties?.ids ||
+                []
+              ).entries()) {
+                if (map.has(id)) continue; // priority first color match
+                const tagIndices = values[index];
+                const segmentTags = new Set(
+                  tagIndices.split("").map((x) => tags[x.charCodeAt(0)]),
+                );
+
+                for (const [tag, color] of bigIntColors.entries()) {
+                  if (segmentTags.has(tag)) {
+                    map.set(id, color);
+                    break;
+                  }
+                }
+              }
+            } else if (propertyColor.type === "numeric") {
+
+              const options = propertyColor.options!;
+
+
+              const {numericalProperties} = segmentPropertyMap;
+
+              const numericalProperty = numericalProperties.find(x => x.id === propertyColor.property);
+
+              const {min, max} = options;
+
+              const minColor = parseRGBColorSpecification(options.minColor);
+              const maxColor = parseRGBColorSpecification(options.maxColor);
+
+              if (numericalProperty) {
+                const {values} = numericalProperty;
+                for (const [index, id] of (
+                segmentPropertyMap.segmentPropertyMap.inlineProperties?.ids ||
+                []
+              ).entries()) {
+                const value = values[index];
+                if (Number.isNaN(value)) continue;
+                const valueClamped = Math.min(Math.max(value, min), max);
+                const valueNormalized = (valueClamped - min) / (max - min);
+                const color = vec3.create();
+                vec3.lerp(color, minColor, maxColor, valueNormalized);
+                map.set(id, BigInt(packColor(color)));
+              }
+              }
             }
-            console.log('map', map.size);
-            return map;
-          },
-          [this.layer.displayState.originalSegmentationGroupState.segmentPropertyMap,
-          this.segmentPropertyColors],
-        ));
+          }
+          console.log("map", map.size);
+          return map;
+        },
+        [
+          this.layer.displayState.originalSegmentationGroupState
+            .segmentPropertyMap,
+          this.segmentPropertyColors,
+        ],
+      ),
+    );
 
     const { specificationChanged } = this;
     this.segmentColorHash.changed.add(specificationChanged.dispatch);
@@ -430,27 +460,60 @@ export class SegmentationUserLayerColorGroupState
             "property",
             verifyString,
           );
-          const map = verifyObjectProperty(
-            propertyColor,
-            json_keys.MAP_JSON_KEY,
-            (x) => {
-              verifyObject(x);
-              const res = new Map<string, string>();
-              for (const [tag, value] of Object.entries(x)) {
-                const color = verifyString(value);
-                res.set(tag, color);
-              }
-              return res;
-            },
-          );
-
-          if (type !== "tag") throw new Error(`unsupported type: ${type}`);
-
-          this.segmentPropertyColors.value.push({
-            type,
-            property,
-            map,
-          });
+          if (type === "tag") {
+            const map = verifyObjectProperty(
+              propertyColor,
+              json_keys.MAP_JSON_KEY,
+              (x) => {
+                verifyObject(x);
+                const res = new Map<string, string>();
+                for (const [tag, value] of Object.entries(x)) {
+                  const color = verifyString(value);
+                  res.set(tag, color);
+                }
+                return res;
+              },
+            );
+            this.segmentPropertyColors.value.push({
+              type,
+              property,
+              map,
+            });
+            continue;
+          } else if (type === "numeric") {
+            const options = verifyObjectProperty(
+              propertyColor,
+              "options",
+              (x) => {
+                verifyObject(x);
+                const min = verifyObjectProperty(x, "min", verifyFloat);
+                const max = verifyObjectProperty(x, "max", verifyFloat);
+                const minColor = verifyObjectProperty(
+                  x,
+                  "minColor",
+                  verifyString,
+                );
+                const maxColor = verifyObjectProperty(
+                  x,
+                  "maxColor",
+                  verifyString,
+                );
+                return {
+                  min,
+                  max,
+                  minColor,
+                  maxColor,
+                };
+              },
+            );
+            this.segmentPropertyColors.value.push({
+              type,
+              property,
+              options,
+            });
+          } else {
+            throw new Error(`unsupported type: ${type}`);
+          }
         }
         this.segmentPropertyColors.changed.dispatch();
       },
@@ -462,7 +525,10 @@ export class SegmentationUserLayerColorGroupState
     x[json_keys.COLOR_SEED_JSON_KEY] = this.segmentColorHash.toJSON();
     x[json_keys.SEGMENT_DEFAULT_COLOR_JSON_KEY] =
       this.segmentDefaultColor.toJSON();
-    const { segmentStatedColors, segmentPropertyColors: {value: segmentPropertyColors} } = this;
+    const {
+      segmentStatedColors,
+      segmentPropertyColors: { value: segmentPropertyColors },
+    } = this;
     if (segmentStatedColors.size > 0) {
       const j: any = (x[json_keys.SEGMENT_STATED_COLORS_JSON_KEY] = {});
       for (const [key, value] of segmentStatedColors) {
@@ -482,6 +548,7 @@ export class SegmentationUserLayerColorGroupState
           }
         } else {
           // TODO numeric
+          p["options"] = propertyColor.options;
         }
         j.push(p);
       }
