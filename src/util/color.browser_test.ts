@@ -27,6 +27,8 @@ import { vec3, vec4 } from "#src/util/geom.js";
 describe("color", () => {
   it("parseColorSerialization works", () => {
     expect(parseColorSerialization("#000000")).toEqual([0, 0, 0, 1]);
+    expect(parseColorSerialization("#00000000")).toEqual([0, 0, 0, 0]);
+    expect(parseColorSerialization("#000000FF")).toEqual([0, 0, 0, 1]);
     expect(parseColorSerialization("#123456")).toEqual([0x12, 0x34, 0x56, 1]);
     expect(parseColorSerialization("rgba(101, 102, 103, 0.45)")).toEqual([
       101, 102, 103, 0.45,

@@ -682,6 +682,13 @@ export function verify3dDimensions(obj: any) {
   return parseFixedLengthArray(vec3.create(), obj, verifyPositiveInt);
 }
 
+export function verifyArray(a: any) {
+  if (!Array.isArray(a)) {
+    throw new Error(`Expected array, received: ${JSON.stringify(a)}.`);
+  }
+  return a;
+}
+
 export function verifyStringArray(a: any) {
   if (!Array.isArray(a)) {
     throw new Error(`Expected array, received: ${JSON.stringify(a)}.`);

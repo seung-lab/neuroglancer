@@ -643,7 +643,6 @@ export class MeshLayer extends PerspectiveViewRenderLayer<ThreeDimensionalRender
           segmentPropertyMap: { value: segmentPropertyMap },
         } = displayState.segmentationGroupState.value;
         if (segmentPropertyMap) {
-          console.log('key/objectId', key, objectId);
           setSegmentPropertyUniforms(gl, shader, segmentPropertyMap, objectId);
         }
 
@@ -956,7 +955,7 @@ export class MultiscaleMeshLayer extends PerspectiveViewRenderLayer<ThreeDimensi
       attachment,
     );
     if (modelMatrix === undefined) return;
-    console.log("get shader multiscale!");
+    // console.log("get shader multiscale!");
     const { shader, parameters } = this.getShader(renderContext.emitter);
     parameters;
     if (shader === null) return;
@@ -1034,7 +1033,6 @@ export class MultiscaleMeshLayer extends PerspectiveViewRenderLayer<ThreeDimensi
           segmentPropertyMap: { value: segmentPropertyMap },
         } = displayState.segmentationGroupState.value;
         if (segmentPropertyMap) {
-          console.log('key/objectId', key, objectId);
           setSegmentPropertyUniforms(gl, shader, segmentPropertyMap, objectId);
         }
 

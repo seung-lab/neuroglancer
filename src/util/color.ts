@@ -43,6 +43,21 @@ export function parseColorSerialization(x: string) {
       ];
     }
   }
+
+  // TODO, add support for hex with alpha channel.
+  const hexAlphaPattern = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/;
+  {
+    const m = x.match(hexAlphaPattern);
+    if (m !== null) {
+      return [
+        parseInt(m[1], 16),
+        parseInt(m[2], 16),
+        parseInt(m[3], 16),
+        parseInt(m[4], 16) / 255,
+      ];
+    }
+  }
+
   const hexPattern = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/;
   {
     const m = x.match(hexPattern);

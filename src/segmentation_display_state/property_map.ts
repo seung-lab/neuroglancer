@@ -1434,7 +1434,6 @@ export const setSegmentPropertyUniforms = (
     numericalProperties,
   } = segmentPropertyMap;
   labels; // TODO, support labels
-
   for (const [i, property] of numericalProperties.entries()) {
     const value = index !== -1 ? property.values[index] : 0;
     const uniformSetter = getShaderUniformValueSetter(gl, property.dataType);
@@ -1444,7 +1443,6 @@ export const setSegmentPropertyUniforms = (
       value,
     );
   }
-
   if (tagsProperty !== undefined) {
     const { values, tags } = tagsProperty;
     for (let i = 0; i < tags.length; ++i) {
@@ -1453,8 +1451,7 @@ export const setSegmentPropertyUniforms = (
     const tagIndices = index !== -1 ? values[index] : "";
     for (let i = 0, length = tagIndices.length; i < length; ++i) {
       const tagIdx = tagIndices.charCodeAt(i);
-
-      console.log("enable tag property", tagIdx);
+      // console.log('enabling tagIdx', tagIdx);
       gl.uniform1ui(shader.uniform(`uSegmentTagProperty${tagIdx}`), 1);
     }
   }

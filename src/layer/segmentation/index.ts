@@ -123,8 +123,11 @@ import type { vec3, vec4 } from "#src/util/geom.js";
 import {
   parseArray,
   parseUint64,
+  verifyArray,
   verifyFiniteNonNegativeFloat,
+  verifyObject,
   verifyObjectAsMap,
+  verifyObjectProperty,
   verifyOptionalObjectProperty,
   verifyString,
 } from "#src/util/json.js";
@@ -138,6 +141,18 @@ import { registerLayerShaderControlsTool } from "#src/widget/shader_controls.js"
 import { ShaderControlState } from "#src/webgl/shader_ui_controls.js";
 
 const MAX_LAYER_BAR_UI_INDICATOR_COLORS = 6;
+
+export interface SegmentPropertyColor {
+  type: "tag" | "numeric";
+  property: string;
+  map?: Map<string, string>; // TODO is there a color type?
+  options?: {
+    min?: number;
+    max?: number;
+    minColor?: string;
+    maxColor?: string;
+  }
+}
 
 export class SegmentationUserLayerGroupState
   extends RefCounted
@@ -302,9 +317,69 @@ export class SegmentationUserLayerColorGroupState
   specificationChanged = new Signal();
   constructor(public layer: SegmentationUserLayer) {
     super();
+
+
+    this.segmentPropertyColorsMap = this.registerDisposer(makeCachedDerivedWatchableValue(
+          (segmentPropertyMap, segmentPropertyColors) => {
+            console.log('update segmentPropertyColorsMap');
+            segmentPropertyColors;
+            const map = new Uint64Map();
+            if (!segmentPropertyMap) {
+              return map;
+            }
+
+            const { tags: tagsProperty } = segmentPropertyMap;
+
+            console.log("tags", segmentPropertyMap.tags);
+
+            for (const propertyColor of segmentPropertyColors) {
+              if (propertyColor.type === "tag" && tagsProperty) {
+                const { tags, values } = tagsProperty;
+
+                // const colors =  todo performance, cache colors as bigints
+
+                const bigIntColors = new Map<string, bigint>();
+                for (const [tag, colorString] of propertyColor.map!.entries()) {
+                  const color = parseRGBColorSpecification(colorString);
+                  bigIntColors.set(tag, BigInt(packColor(color)));
+                  console.log("tag color", tag, colorString, color);
+                }
+
+                for (const [index, id] of (segmentPropertyMap.segmentPropertyMap.inlineProperties?.ids || []).entries()) {
+                  if (map.has(id)) continue; // priority first color match
+                  const tagIndices = values[index];
+                  const segmentTags = new Set(
+                      tagIndices.split("").map((x) => tags[x.charCodeAt(0)]),
+                  );
+
+                  for (const [tag, color] of bigIntColors.entries()) {
+                    if (segmentTags.has(tag)) {
+                      map.set(id, color);
+                      break;
+                    }
+                  }
+                }
+              } else if (propertyColor.type === "numeric") {
+                console.log("propety:", propertyColor.property);
+              }
+
+              /*
+              "type": "numeric",
+              "property": "Nvx",
+              */
+            }
+            console.log('map', map.size);
+            return map;
+          },
+          [this.layer.displayState.originalSegmentationGroupState.segmentPropertyMap,
+          this.segmentPropertyColors],
+        ));
+
     const { specificationChanged } = this;
     this.segmentColorHash.changed.add(specificationChanged.dispatch);
     this.segmentStatedColors.changed.add(specificationChanged.dispatch);
+    this.segmentPropertyColors.changed.add(specificationChanged.dispatch);
+    this.segmentPropertyColorsMap.changed.add(specificationChanged.dispatch);
     this.tempSegmentStatedColors2d.changed.add(specificationChanged.dispatch);
     this.segmentDefaultColor.changed.add(specificationChanged.dispatch);
     this.tempSegmentDefaultColor2d.changed.add(specificationChanged.dispatch);
@@ -330,10 +405,54 @@ export class SegmentationUserLayerColorGroupState
           parseRGBColorSpecification(String(x)),
         );
         for (const [idStr, colorVec] of result) {
+          console.log("stated color", idStr, colorVec);
           const id = parseUint64(idStr);
           const color = BigInt(packColor(colorVec));
           this.segmentStatedColors.set(id, color);
         }
+      },
+    );
+
+    verifyOptionalObjectProperty(
+      specification,
+      json_keys.SEGMENT_PROPERTY_COLORS_JSON_KEY,
+      (value) => {
+        const segmentPropertyColors = verifyArray(value);
+        for (const propertyColor of segmentPropertyColors) {
+          verifyObject(propertyColor);
+          const type = verifyObjectProperty(
+            propertyColor,
+            "type",
+            verifyString,
+          );
+          const property = verifyObjectProperty(
+            propertyColor,
+            "property",
+            verifyString,
+          );
+          const map = verifyObjectProperty(
+            propertyColor,
+            json_keys.MAP_JSON_KEY,
+            (x) => {
+              verifyObject(x);
+              const res = new Map<string, string>();
+              for (const [tag, value] of Object.entries(x)) {
+                const color = verifyString(value);
+                res.set(tag, color);
+              }
+              return res;
+            },
+          );
+
+          if (type !== "tag") throw new Error(`unsupported type: ${type}`);
+
+          this.segmentPropertyColors.value.push({
+            type,
+            property,
+            map,
+          });
+        }
+        this.segmentPropertyColors.changed.dispatch();
       },
     );
   }
@@ -343,11 +462,28 @@ export class SegmentationUserLayerColorGroupState
     x[json_keys.COLOR_SEED_JSON_KEY] = this.segmentColorHash.toJSON();
     x[json_keys.SEGMENT_DEFAULT_COLOR_JSON_KEY] =
       this.segmentDefaultColor.toJSON();
-    const { segmentStatedColors } = this;
+    const { segmentStatedColors, segmentPropertyColors: {value: segmentPropertyColors} } = this;
     if (segmentStatedColors.size > 0) {
       const j: any = (x[json_keys.SEGMENT_STATED_COLORS_JSON_KEY] = {});
       for (const [key, value] of segmentStatedColors) {
         j[key.toString()] = serializeColor(unpackRGB(Number(value)));
+      }
+    }
+    if (segmentPropertyColors.length > 0) {
+      const j: any[] = (x[json_keys.SEGMENT_PROPERTY_COLORS_JSON_KEY] = []);
+      for (const propertyColor of segmentPropertyColors) {
+        const p: any = {};
+        p["type"] = propertyColor.type;
+        p["property"] = propertyColor.property;
+        if (propertyColor.type === "tag") {
+          const map: any = (p[json_keys.MAP_JSON_KEY] = {});
+          for (const [key, value] of propertyColor.map!.entries()) {
+            map[key.toString()] = value;
+          }
+        } else {
+          // TODO numeric
+        }
+        j.push(p);
       }
     }
     return x;
@@ -356,6 +492,7 @@ export class SegmentationUserLayerColorGroupState
   assignFrom(other: SegmentationUserLayerColorGroupState) {
     this.segmentColorHash.value = other.segmentColorHash.value;
     this.segmentStatedColors.assignFrom(other.segmentStatedColors);
+    this.segmentPropertyColors.value = other.segmentPropertyColors.value;
     this.tempSegmentStatedColors2d.assignFrom(other.tempSegmentStatedColors2d);
     this.segmentDefaultColor.value = other.segmentDefaultColor.value;
     this.highlightColor.value = other.highlightColor.value;
@@ -363,6 +500,8 @@ export class SegmentationUserLayerColorGroupState
 
   segmentColorHash = SegmentColorHash.getDefault();
   segmentStatedColors = this.registerDisposer(new Uint64Map());
+  segmentPropertyColors = new WatchableValue<SegmentPropertyColor[]>([]);
+  segmentPropertyColorsMap: WatchableValueInterface<Uint64Map>;
   tempSegmentStatedColors2d = this.registerDisposer(new Uint64Map());
   segmentDefaultColor = new TrackableOptionalRGB();
   tempSegmentDefaultColor2d = new WatchableValue<vec3 | vec4 | undefined>(
@@ -494,6 +633,18 @@ class SegmentationUserLayerDisplayState implements SegmentationDisplayState {
         (group) => group.segmentStatedColors,
       ),
     );
+    this.segmentPropertyColors = this.layer.registerDisposer(
+      new IndirectTrackableValue(
+        this.segmentationColorGroupState,
+        (group) => group.segmentPropertyColors,
+      ),
+    );
+    this.segmentPropertyColorsMap = this.layer.registerDisposer(
+      new IndirectTrackableValue(
+        this.segmentationColorGroupState,
+        (group) => group.segmentPropertyColorsMap,
+      ),
+    );
     this.tempSegmentStatedColors2d = this.layer.registerDisposer(
       new IndirectTrackableValue(
         this.segmentationColorGroupState,
@@ -576,6 +727,8 @@ class SegmentationUserLayerDisplayState implements SegmentationDisplayState {
   segmentColorHash: TrackableValueInterface<number>;
   segmentStatedColors: WatchableValueInterface<Uint64Map>;
   tempSegmentStatedColors2d: WatchableValueInterface<Uint64Map>;
+  segmentPropertyColors: WatchableValueInterface<SegmentPropertyColor[]>;
+  segmentPropertyColorsMap: WatchableValueInterface<Uint64Map>;
   segmentDefaultColor: WatchableValueInterface<vec3 | undefined>;
   tempSegmentDefaultColor2d: WatchableValueInterface<vec3 | vec4 | undefined>;
   highlightColor: WatchableValueInterface<vec4 | undefined>;

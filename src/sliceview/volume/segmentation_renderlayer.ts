@@ -46,7 +46,7 @@ import {
   AggregateWatchableValue,
   makeCachedDerivedWatchableValue,
 } from "#src/trackable_value.js";
-import type { Uint64Map } from "#src/uint64_map.js";
+import { Uint64Map } from "#src/uint64_map.js";
 import type { DisjointUint64Sets } from "#src/util/disjoint_sets.js";
 import type { ShaderBuilder, ShaderProgram } from "#src/webgl/shader.js";
 
@@ -125,16 +125,20 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
           makeCachedDerivedWatchableValue(
             (
               segmentStatedColors: Uint64Map,
+              segmentPropertyColorsMap: Uint64Map,
               tempSegmentStatedColors2d: Uint64Map,
               useTempSegmentStatedColors2d: boolean,
             ) => {
               const releventMap = useTempSegmentStatedColors2d
                 ? tempSegmentStatedColors2d
                 : segmentStatedColors;
-              return releventMap.size !== 0;
+              return (
+                releventMap.size !== 0 || segmentPropertyColorsMap.size !== 0
+              );
             },
             [
               displayState.segmentStatedColors,
+              displayState.segmentPropertyColorsMap,
               displayState.tempSegmentStatedColors2d,
               displayState.useTempSegmentStatedColors2d,
             ],
@@ -222,7 +226,7 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
   }
 
   defineShader(builder: ShaderBuilder, parameters: ShaderParameters) {
-    console.log('seg defineShader', parameters);
+    console.log("seg defineShader", parameters);
     this.hashTableManager.defineShader(builder);
     let getUint64Code = `
 uint64_t getUint64DataValue() {
@@ -424,15 +428,24 @@ uint64_t getMappedObjectId(uint64_t value) {
         .value
         ? displayState.tempSegmentStatedColors2d.value
         : displayState.segmentStatedColors.value;
+
+      const segmentPropertyColorsMap = displayState.segmentPropertyColorsMap.value;
+
+
+      const combinedMap = new Uint64Map();
+      segmentStatedColors;
+      combinedMap.union(segmentPropertyColorsMap);
+      combinedMap.union(segmentStatedColors);
+
       let { gpuSegmentStatedColorHashTable } = this;
       if (
         gpuSegmentStatedColorHashTable === undefined ||
         gpuSegmentStatedColorHashTable.hashTable !==
-          segmentStatedColors.hashTable
+          combinedMap.hashTable
       ) {
         gpuSegmentStatedColorHashTable?.dispose();
         this.gpuSegmentStatedColorHashTable = gpuSegmentStatedColorHashTable =
-          GPUHashTable.get(gl, segmentStatedColors.hashTable);
+          GPUHashTable.get(gl, combinedMap.hashTable);
       }
       this.segmentStatedColorShaderManager.enable(
         gl,

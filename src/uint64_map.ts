@@ -92,7 +92,12 @@ export class Uint64Map
 
   assignFrom(other: Uint64Map) {
     this.clear();
+    this.union(other);
+  }
+
+  union(other: Uint64Map) {
     for (const [key, value] of other) {
+      this.delete(key);
       this.set(key, value);
     }
   }
