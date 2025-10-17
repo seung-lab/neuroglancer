@@ -124,6 +124,7 @@ import {
   parseArray,
   parseUint64,
   verifyArray,
+  verifyBoolean,
   verifyFiniteNonNegativeFloat,
   verifyFloat,
   verifyObject,
@@ -146,6 +147,7 @@ const MAX_LAYER_BAR_UI_INDICATOR_COLORS = 6;
 export interface SegmentPropertyColor {
   type: "tag" | "numeric";
   property: string;
+  active: boolean;
   map?: Map<string, string>; // TODO is there a color type?
   options?: {
     min: number;
@@ -334,6 +336,8 @@ export class SegmentationUserLayerColorGroupState
           console.log("tags", segmentPropertyMap.tags);
 
           for (const propertyColor of segmentPropertyColors) {
+            if (!propertyColor.active) continue;
+
             if (propertyColor.type === "tag" && tagsProperty) {
               const { tags, values } = tagsProperty;
 
@@ -460,6 +464,11 @@ export class SegmentationUserLayerColorGroupState
             "property",
             verifyString,
           );
+          const active = verifyOptionalObjectProperty(
+            propertyColor,
+            "active",
+            verifyBoolean,
+          );
           if (type === "tag") {
             const map = verifyObjectProperty(
               propertyColor,
@@ -476,6 +485,7 @@ export class SegmentationUserLayerColorGroupState
             );
             this.segmentPropertyColors.value.push({
               type,
+              active: active ?? true,
               property,
               map,
             });
@@ -508,6 +518,7 @@ export class SegmentationUserLayerColorGroupState
             );
             this.segmentPropertyColors.value.push({
               type,
+              active: active ?? true,
               property,
               options,
             });
@@ -541,6 +552,7 @@ export class SegmentationUserLayerColorGroupState
         const p: any = {};
         p["type"] = propertyColor.type;
         p["property"] = propertyColor.property;
+        p["active"] = propertyColor.active;
         if (propertyColor.type === "tag") {
           const map: any = (p[json_keys.MAP_JSON_KEY] = {});
           for (const [key, value] of propertyColor.map!.entries()) {
