@@ -141,17 +141,18 @@ import {
 import type { DependentViewContext } from "#src/widget/dependent_view_widget.js";
 import { registerLayerShaderControlsTool } from "#src/widget/shader_controls.js";
 import { ShaderControlState } from "#src/webgl/shader_ui_controls.js";
+import { computeInvlerp } from "#src/util/lerp.js";
 
 const MAX_LAYER_BAR_UI_INDICATOR_COLORS = 6;
 
 export interface SegmentPropertyColor {
   type: "tag" | "numeric";
-  property: string;
   active: boolean;
+  property?: string;
   map?: Map<string, string>; // TODO is there a color type?
   options?: {
-    min: number;
-    max: number;
+    min?: number;
+    max?: number;
     minColor: string;
     maxColor: string;
   };
@@ -368,33 +369,32 @@ export class SegmentationUserLayerColorGroupState
                 }
               }
             } else if (propertyColor.type === "numeric") {
-
               const options = propertyColor.options!;
-
-
-              const {numericalProperties} = segmentPropertyMap;
-
-              const numericalProperty = numericalProperties.find(x => x.id === propertyColor.property);
-
-              const {min, max} = options;
-
-              const minColor = parseRGBColorSpecification(options.minColor);
-              const maxColor = parseRGBColorSpecification(options.maxColor);
-
+              const { numericalProperties } = segmentPropertyMap;
+              const numericalProperty = numericalProperties.find(
+                (x) => x.id === propertyColor.property,
+              );
               if (numericalProperty) {
-                const {values} = numericalProperty;
-                for (const [index, id] of (
-                segmentPropertyMap.segmentPropertyMap.inlineProperties?.ids ||
-                []
-              ).entries()) {
-                const value = values[index];
-                if (Number.isNaN(value)) continue;
-                const valueClamped = Math.min(Math.max(value, min), max);
-                const valueNormalized = (valueClamped - min) / (max - min);
+                const minColor = parseRGBColorSpecification(options.minColor);
+                const maxColor = parseRGBColorSpecification(options.maxColor);
                 const color = vec3.create();
-                vec3.lerp(color, minColor, maxColor, valueNormalized);
-                map.set(id, BigInt(packColor(color)));
-              }
+                const { values, bounds } = numericalProperty;
+                const min = Number(options.min ?? bounds[0]);
+                const max = Number(options.max ?? bounds[1]);
+
+                for (const [index, id] of (
+                  segmentPropertyMap.segmentPropertyMap.inlineProperties?.ids ||
+                  []
+                ).entries()) {
+                  const value = values[index];
+                  if (Number.isNaN(value)) continue;
+                  const normalized = Math.min(
+                    1,
+                    Math.max(0, computeInvlerp([min, max], value)),
+                  );
+                  vec3.lerp(color, minColor, maxColor, normalized);
+                  map.set(id, BigInt(packColor(color)));
+                }
               }
             }
           }
@@ -439,14 +439,12 @@ export class SegmentationUserLayerColorGroupState
           parseRGBColorSpecification(String(x)),
         );
         for (const [idStr, colorVec] of result) {
-          console.log("stated color", idStr, colorVec);
           const id = parseUint64(idStr);
           const color = BigInt(packColor(colorVec));
           this.segmentStatedColors.set(id, color);
         }
       },
     );
-
     verifyOptionalObjectProperty(
       specification,
       json_keys.SEGMENT_PROPERTY_COLORS_JSON_KEY,
@@ -457,11 +455,6 @@ export class SegmentationUserLayerColorGroupState
           const type = verifyObjectProperty(
             propertyColor,
             "type",
-            verifyString,
-          );
-          const property = verifyObjectProperty(
-            propertyColor,
-            "property",
             verifyString,
           );
           const active = verifyOptionalObjectProperty(
@@ -486,18 +479,21 @@ export class SegmentationUserLayerColorGroupState
             this.segmentPropertyColors.value.push({
               type,
               active: active ?? true,
-              property,
               map,
             });
-            continue;
           } else if (type === "numeric") {
+            const property = verifyObjectProperty(
+              propertyColor,
+              "property",
+              verifyString,
+            );
             const options = verifyObjectProperty(
               propertyColor,
               "options",
               (x) => {
                 verifyObject(x);
-                const min = verifyObjectProperty(x, "min", verifyFloat);
-                const max = verifyObjectProperty(x, "max", verifyFloat);
+                const min = verifyOptionalObjectProperty(x, "min", verifyFloat);
+                const max = verifyOptionalObjectProperty(x, "max", verifyFloat);
                 const minColor = verifyObjectProperty(
                   x,
                   "minColor",
@@ -518,8 +514,8 @@ export class SegmentationUserLayerColorGroupState
             );
             this.segmentPropertyColors.value.push({
               type,
-              active: active ?? true,
               property,
+              active: active ?? true,
               options,
             });
           } else {
@@ -552,14 +548,13 @@ export class SegmentationUserLayerColorGroupState
         const p: any = {};
         p["type"] = propertyColor.type;
         p["property"] = propertyColor.property;
-        p["active"] = propertyColor.active;
+        p["active"] = propertyColor.active ? undefined : false;
         if (propertyColor.type === "tag") {
           const map: any = (p[json_keys.MAP_JSON_KEY] = {});
           for (const [key, value] of propertyColor.map!.entries()) {
             map[key.toString()] = value;
           }
         } else {
-          // TODO numeric
           p["options"] = propertyColor.options;
         }
         j.push(p);
