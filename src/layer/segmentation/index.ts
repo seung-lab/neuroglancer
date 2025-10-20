@@ -410,7 +410,6 @@ export class SegmentationUserLayerColorGroupState
     const { specificationChanged } = this;
     this.segmentColorHash.changed.add(specificationChanged.dispatch);
     this.segmentStatedColors.changed.add(specificationChanged.dispatch);
-    this.segmentPropertyColors.changed.add(specificationChanged.dispatch);
     this.segmentPropertyColorsMap.changed.add(specificationChanged.dispatch);
     this.tempSegmentStatedColors2d.changed.add(specificationChanged.dispatch);
     this.segmentDefaultColor.changed.add(specificationChanged.dispatch);
