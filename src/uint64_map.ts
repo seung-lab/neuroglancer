@@ -90,14 +90,11 @@ export class Uint64Map
     return this.hashTable.size;
   }
 
-  assignFrom(other: Uint64Map) {
-    this.clear();
-    this.union(other);
-  }
-
-  union(other: Uint64Map) {
+  assignFrom(other: Uint64Map, clear = true) {
+    if (clear) {
+      this.clear();
+    }
     for (const [key, value] of other) {
-      this.delete(key);
       this.set(key, value);
     }
   }

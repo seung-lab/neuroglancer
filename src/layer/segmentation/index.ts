@@ -145,18 +145,30 @@ import { computeInvlerp } from "#src/util/lerp.js";
 
 const MAX_LAYER_BAR_UI_INDICATOR_COLORS = 6;
 
-export interface SegmentPropertyColor {
+export interface SegmentPropertyColorBase {
   type: "tag" | "numeric";
   active: boolean;
-  property?: string;
-  map?: Map<string, string>; // TODO is there a color type?
-  options?: {
+}
+
+export interface SegmentPropertyColorNumeric extends SegmentPropertyColorBase {
+  type: "numeric";
+  active: boolean;
+  property: string;
+  options: {
     min?: number;
     max?: number;
     minColor: string;
     maxColor: string;
   };
 }
+
+export interface SegmentPropertyColorTag extends SegmentPropertyColorBase {
+  type: "tag";
+  active: boolean;
+  map: Map<string, string>;
+}
+
+export type SegmentPropertyColor = SegmentPropertyColorNumeric | SegmentPropertyColorTag;
 
 export class SegmentationUserLayerGroupState
   extends RefCounted
@@ -325,42 +337,29 @@ export class SegmentationUserLayerColorGroupState
     this.segmentPropertyColorsMap = this.registerDisposer(
       makeCachedDerivedWatchableValue(
         (segmentPropertyMap, segmentPropertyColors) => {
-          console.log("update segmentPropertyColorsMap");
-          segmentPropertyColors;
           const map = new Uint64Map();
           if (!segmentPropertyMap) {
             return map;
           }
-
           const { tags: tagsProperty } = segmentPropertyMap;
-
-          console.log("tags", segmentPropertyMap.tags);
-
           for (const propertyColor of segmentPropertyColors) {
             if (!propertyColor.active) continue;
-
             if (propertyColor.type === "tag" && tagsProperty) {
               const { tags, values } = tagsProperty;
-
-              // const colors =  todo performance, cache colors as bigints
-
               const bigIntColors = new Map<string, bigint>();
               for (const [tag, colorString] of propertyColor.map!.entries()) {
                 const color = parseRGBColorSpecification(colorString);
                 bigIntColors.set(tag, BigInt(packColor(color)));
-                console.log("tag color", tag, colorString, color);
               }
-
               for (const [index, id] of (
                 segmentPropertyMap.segmentPropertyMap.inlineProperties?.ids ||
                 []
               ).entries()) {
-                if (map.has(id)) continue; // priority first color match
+                if (map.has(id)) continue; // prioritize first color match
                 const tagIndices = values[index];
                 const segmentTags = new Set(
                   tagIndices.split("").map((x) => tags[x.charCodeAt(0)]),
                 );
-
                 for (const [tag, color] of bigIntColors.entries()) {
                   if (segmentTags.has(tag)) {
                     map.set(id, color);
@@ -369,7 +368,7 @@ export class SegmentationUserLayerColorGroupState
                 }
               }
             } else if (propertyColor.type === "numeric") {
-              const options = propertyColor.options!;
+              const options = propertyColor.options;
               const { numericalProperties } = segmentPropertyMap;
               const numericalProperty = numericalProperties.find(
                 (x) => x.id === propertyColor.property,
@@ -381,11 +380,11 @@ export class SegmentationUserLayerColorGroupState
                 const { values, bounds } = numericalProperty;
                 const min = Number(options.min ?? bounds[0]);
                 const max = Number(options.max ?? bounds[1]);
-
                 for (const [index, id] of (
                   segmentPropertyMap.segmentPropertyMap.inlineProperties?.ids ||
                   []
                 ).entries()) {
+                  if (map.has(id)) continue; // prioritize first color match
                   const value = values[index];
                   if (Number.isNaN(value)) continue;
                   const normalized = Math.min(
@@ -398,7 +397,6 @@ export class SegmentationUserLayerColorGroupState
               }
             }
           }
-          console.log("map", map.size);
           return map;
         },
         [
@@ -465,7 +463,7 @@ export class SegmentationUserLayerColorGroupState
           if (type === "tag") {
             const map = verifyObjectProperty(
               propertyColor,
-              json_keys.MAP_JSON_KEY,
+              "map",
               (x) => {
                 verifyObject(x);
                 const res = new Map<string, string>();
@@ -543,22 +541,25 @@ export class SegmentationUserLayerColorGroupState
       }
     }
     if (segmentPropertyColors.length > 0) {
-      const j: any[] = (x[json_keys.SEGMENT_PROPERTY_COLORS_JSON_KEY] = []);
-      for (const propertyColor of segmentPropertyColors) {
-        const p: any = {};
-        p["type"] = propertyColor.type;
-        p["property"] = propertyColor.property;
-        p["active"] = propertyColor.active ? undefined : false;
-        if (propertyColor.type === "tag") {
-          const map: any = (p[json_keys.MAP_JSON_KEY] = {});
-          for (const [key, value] of propertyColor.map!.entries()) {
-            map[key.toString()] = value;
-          }
+      x[json_keys.SEGMENT_PROPERTY_COLORS_JSON_KEY] = segmentPropertyColors.map((propertyColor) => {
+        const {type, active} = propertyColor;
+        if (type === "numeric") {
+          const { property, options } = propertyColor;
+          return {
+            type,
+            active,
+            property,
+            options
+          };
         } else {
-          p["options"] = propertyColor.options;
+          const { map } = propertyColor;
+          return {
+            type,
+            active,
+            map: Object.fromEntries(map.entries().map(([k,v])=>[k.toString(),v])),
+          };
         }
-        j.push(p);
-      }
+      });
     }
     return x;
   }

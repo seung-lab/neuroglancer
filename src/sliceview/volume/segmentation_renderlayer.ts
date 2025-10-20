@@ -431,11 +431,9 @@ uint64_t getMappedObjectId(uint64_t value) {
 
       const segmentPropertyColorsMap = displayState.segmentPropertyColorsMap.value;
 
-
       const combinedMap = new Uint64Map();
-      segmentStatedColors;
-      combinedMap.union(segmentPropertyColorsMap);
-      combinedMap.union(segmentStatedColors);
+      combinedMap.assignFrom(segmentStatedColors, false);
+      combinedMap.assignFrom(segmentPropertyColorsMap, false);
 
       let { gpuSegmentStatedColorHashTable } = this;
       if (
