@@ -174,6 +174,7 @@ const LINKED_SEGMENTATION_LAYER_JSON_KEY = "linkedSegmentationLayer";
 const FILTER_BY_SEGMENTATION_JSON_KEY = "filterBySegmentation";
 const IGNORE_NULL_SEGMENT_FILTER_JSON_KEY = "ignoreNullSegmentFilter";
 const CODE_VISIBLE_KEY = "codeVisible";
+const SWAP_VISIBLE_SEGMENTS_ON_MOVE_JSON_KEY = "swapVisbleSegmentsOnMove";
 
 class LinkedSegmentationLayers extends RefCounted {
   changed = new NullarySignal();
@@ -823,6 +824,9 @@ export class AnnotationUserLayer extends Base {
     this.annotationDisplayState.ignoreNullSegmentFilter.restoreState(
       specification[IGNORE_NULL_SEGMENT_FILTER_JSON_KEY],
     );
+    this.annotationDisplayState.swapVisibleSegmentsOnMove.restoreState(
+      specification[SWAP_VISIBLE_SEGMENTS_ON_MOVE_JSON_KEY],
+    );
     this.annotationDisplayState.shader.restoreState(
       specification[SHADER_JSON_KEY],
     );
@@ -1068,6 +1072,22 @@ export class AnnotationUserLayer extends Base {
       label.appendChild(checkbox.element);
       tab.element.appendChild(label);
     }
+    {
+      const checkbox = tab.registerDisposer(
+        new TrackableBooleanCheckbox(
+          this.annotationDisplayState.swapVisibleSegmentsOnMove,
+        ),
+      );
+      const label = document.createElement("label");
+      label.appendChild(
+        document.createTextNode(
+          "Swap visible segments when moving to annotation",
+        ),
+      );
+      label.title = "Swap visible segments when moving to annotation";
+      label.appendChild(checkbox.element);
+      tab.element.appendChild(label);
+    }
     tab.element.appendChild(
       tab.registerDisposer(
         new LinkedSegmentationLayersWidget(this.linkedSegmentationLayers),
@@ -1098,6 +1118,8 @@ export class AnnotationUserLayer extends Base {
         : localAnnotationRelationships;
     x[IGNORE_NULL_SEGMENT_FILTER_JSON_KEY] =
       this.annotationDisplayState.ignoreNullSegmentFilter.toJSON();
+    x[SWAP_VISIBLE_SEGMENTS_ON_MOVE_JSON_KEY] =
+      this.annotationDisplayState.swapVisibleSegmentsOnMove.toJSON();
     x[SHADER_JSON_KEY] = this.annotationDisplayState.shader.toJSON();
     x[SHADER_CONTROLS_JSON_KEY] =
       this.annotationDisplayState.shaderControls.toJSON();
