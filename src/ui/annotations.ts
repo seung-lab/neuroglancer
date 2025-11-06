@@ -242,6 +242,9 @@ const moveToAnnotation = (
     layerRank,
   );
   setLayerPosition(layer, chunkTransform, layerPosition);
+  if (state.displayState.swapVisibleSegmentsOnMove.value) {
+    showAnnotationSegments(annotation, state, true);
+  }
 };
 
 function visitTransformedAnnotationGeometry(
@@ -277,6 +280,33 @@ interface AnnotationLayerViewAttachedState {
   idToIndex: Map<AnnotationId, number>;
   listOffset: number;
 }
+
+const showAnnotationSegments = (
+  annotation: Annotation,
+  state: AnnotationLayerState,
+  onlyVisible = false,
+) => {
+  const { relatedSegments } = annotation;
+  if (relatedSegments) {
+    const { source, displayState } = state;
+    const { relationships } = source;
+    const { relationshipStates } = displayState;
+    for (let i = 0, count = relationships.length; i < count; ++i) {
+      const segmentationState = relationshipStates.get(relationships[i])
+        .segmentationState.value;
+      if (segmentationState) {
+        if (onlyVisible) {
+          segmentationState.segmentationGroupState.value.visibleSegments.clear();
+        }
+        for (const segmentList of relatedSegments) {
+          segmentationState.segmentationGroupState.value.visibleSegments.add(
+            segmentList,
+          );
+        }
+      }
+    }
+  }
+};
 
 export class AnnotationLayerView extends Tab {
   private previousSelectedState:
