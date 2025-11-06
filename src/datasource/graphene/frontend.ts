@@ -1279,6 +1279,7 @@ class GraphConnection extends SegmentationGraphSourceConnection {
   ) {
     super(graph, layer.displayState.segmentationGroupState.value);
     const segmentsState = layer.displayState.segmentationGroupState.value;
+    this.previousVisibleSegmentCount = segmentsState.visibleSegments.size;
     segmentsState.selectedSegments.changed.add(
       (segmentIds: bigint[] | bigint | null, add: boolean) => {
         if (segmentIds !== null) {
@@ -1497,6 +1498,8 @@ class GraphConnection extends SegmentationGraphSourceConnection {
   private lastDeselectionMessage: StatusMessage | undefined;
   private lastDeselectionMessageExists = false;
 
+  private previousVisibleSegmentCount: number;
+
   private visibleSegmentsChanged(segments: bigint[] | null, added: boolean) {
     const { segmentsState } = this;
     const {
@@ -1521,16 +1524,18 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       }
     }
     if (segments === null) {
-      const leafSegmentCount = this.segmentsState.selectedSegments.size;
       this.segmentsState.segmentEquivalences.clear();
       StatusMessage.showTemporaryMessage(
-        `Hid all ${leafSegmentCount} segments.`,
+        `Hid all ${this.previousVisibleSegmentCount} segment(s).`,
         3000,
       );
       return;
     }
     for (const segmentId of segments) {
-      if (!added) {
+      if (
+        !added &&
+        !isBaseSegmentId(segmentId, this.graph.info.graph.nBitsForLayerId)
+      ) {
         const segmentCount = [
           ...segmentsState.segmentEquivalences.setElements(segmentId),
         ].length; // Approximation
@@ -1540,7 +1545,7 @@ class GraphConnection extends SegmentationGraphSourceConnection {
           this.lastDeselectionMessageExists = false;
         }
         this.lastDeselectionMessage = StatusMessage.showMessage(
-          `Hid ${segmentCount} segments.`,
+          `Hid ${segmentCount} segment(s).`,
         );
         this.lastDeselectionMessageExists = true;
         setTimeout(() => {
@@ -1551,6 +1556,7 @@ class GraphConnection extends SegmentationGraphSourceConnection {
         }, 2000);
       }
     }
+    this.previousVisibleSegmentCount = segmentsState.visibleSegments.size;
   }
 
   private selectedSegmentsChanged(segments: bigint[] | null, added: boolean) {
@@ -1558,7 +1564,7 @@ class GraphConnection extends SegmentationGraphSourceConnection {
     if (segments === null) {
       const leafSegmentCount = this.segmentsState.selectedSegments.size;
       StatusMessage.showTemporaryMessage(
-        `Deselected all ${leafSegmentCount} segments.`,
+        `Deselected all ${leafSegmentCount} segment(s).`,
         3000,
       );
       return;
