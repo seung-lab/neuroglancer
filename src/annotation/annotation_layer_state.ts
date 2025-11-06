@@ -159,6 +159,7 @@ export class AnnotationDisplayState extends RefCounted {
     new WatchableAnnotationRelationshipStates(),
   );
   ignoreNullSegmentFilter = new TrackableBoolean(true);
+  swapVisibleSegmentsOnMove = new TrackableBoolean(true);
   disablePicking = new WatchableValue(false);
   displayUnfiltered = makeCachedLazyDerivedWatchableValue(
     (map, ignoreNullSegmentFilter) => {
