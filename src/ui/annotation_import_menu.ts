@@ -97,6 +97,10 @@ TODO lets simplyify this now and import one type at a time, and require a header
       } else {
         const first = csvs[0];
         const header = first.split("\n")[0].split(',');
+        const inferredType = this.inferTypeFromHeader(header);
+        if (inferredType) {
+            this.type.value = inferredType;
+        }
         this.header.value = header
         this.rowCount.value = first.split("\n").length - 1;
       }
@@ -143,11 +147,12 @@ TODO lets simplyify this now and import one type at a time, and require a header
   }
 
   inferTypeFromHeader(header: string[]): AnnotationType | null {
+    const headersWithArraysJoined = this.joinArrayHeaders(header);
     for (const [type, handler] of Object.entries(annotationTypeHandlers)) {
       const { dataProperties } = handler;
       let allPropertiesPresent = true;
       for (const property of dataProperties) {
-        if (!header.includes(property)) {
+        if (!headersWithArraysJoined.has(property)) {
           allPropertiesPresent = false;
           break;
         }
@@ -158,6 +163,27 @@ TODO lets simplyify this now and import one type at a time, and require a header
     }
     return null;
   }
+
+  joinArrayHeaders(header: string[]): Map<string, number[] | number> {
+    const headersWithArraysJoined = new Map<string, number[] | number>();
+    for (const [idx, col] of header.entries()) {
+      if (col.endsWith("]")) {
+        const baseName = col.split("[")[0];
+        const index = col.match(/\[(\d+)\]/)![1];
+
+        const current = headersWithArraysJoined.get(baseName) ?? [];
+        if (Array.isArray(current)) {
+          current[Number(index)] = idx;
+          headersWithArraysJoined.set(baseName, current);
+        } else {
+          throw new Error("Inconsistent array indices in header");
+        }
+      } else {
+        headersWithArraysJoined.set(col, idx);
+      }
+    }
+    return headersWithArraysJoined;
+}
 
   updateUI() {
     console.log("updating UI", this.columnsContainer);
@@ -183,23 +209,7 @@ TODO lets simplyify this now and import one type at a time, and require a header
     )}`;
     resultContainer.appendChild(availableColumnsInfo);
 
-    let headersWithArraysJoined = new Map<string, number[] | number>();
-    for (const [idx, col] of header.entries()) {
-      if (col.endsWith("]")) {
-        const baseName = col.split("[")[0];
-        const index = col.match(/\[(\d+)\]/)![1];
-
-        const current = headersWithArraysJoined.get(baseName) ?? [];
-        if (Array.isArray(current)) {
-          current[Number(index)] = idx;
-          headersWithArraysJoined.set(baseName, current);
-        } else {
-          throw new Error("Inconsistent array indices in header");
-        }
-      } else {
-        headersWithArraysJoined.set(col, idx);
-      }
-    }
+    const headersWithArraysJoined = this.joinArrayHeaders(header);
 
     console.log("headersWithArraysJoined", headersWithArraysJoined);
 
