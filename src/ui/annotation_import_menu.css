@@ -1,0 +1,4 @@
+.annotation-import-columns-container {
+    display: grid;
+    grid-template-columns: auto auto;
+}

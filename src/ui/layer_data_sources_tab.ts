@@ -301,59 +301,7 @@ export class LoadedDataSourceView extends RefCounted {
           .element,
       );
     }
-    const localSubsource = source.subsources.find(
-      (x) => x.subsourceEntry.subsource.local === LocalDataSource.annotations,
-    );
-    const { layer } = source;
-    if (localSubsource && layer instanceof AnnotationUserLayer) {
-      const importButton = document.createElement("input");
-      importButton.type = "file";
-      importButton.multiple = true;
-      importButton.accept = ".csv,.json,application/json,text/csv";
-      importButton.title = "Import annotation state from a CSV file";
-      element.appendChild(importButton);
-      importButton.addEventListener("change", async () => {
-        const files = importButton.files;
-        if (!files) return;
-        const processedFiles = await Promise.all(
-          Array.from(files).map((f) => {
-            return new Promise<string>((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onload = (e) => {
-                const result = e.target?.result;
-                if (typeof result !== "string") {
-                  reject(new Error("FileReader result is not a string"));
-                  return;
-                }
-                resolve(result);
-              };
-              reader.onerror = (e) => {
-                reject(e);
-              };
-              reader.readAsText(f);
-            });
-          }),
-        );
-        const contentByType = new Map<string, string[]>();
-        for (const [index, content] of processedFiles.entries()) {
-          const file = files[index];
-          contentByType.set(
-            file.type,
-            (contentByType.get(file.type) ?? []).concat([content]),
-          );
-        }
-        const metadata = contentByType.get("application/json") ?? [];
-        if (metadata.length > 1) {
-          throw new Error("Multiple metadata files provided");
-        }
-        if (metadata.length === 0) {
-          throw new Error("No metadata file provided");
-        }
-        const csvs = contentByType.get("text/csv") ?? [];
-        layer.loadFromCSV(JSON.parse(metadata[0]), csvs);
-      });
-    }
-
+    
     const { transform } = source;
     if (transform.mutableSourceRank || transform.value.sourceRank !== 0) {
       const transformWidget = this.registerDisposer(

@@ -750,7 +750,6 @@ export class SegmentWidgetWithExtraColumnsFactory extends SegmentWidgetFactory<S
     const label = document.createElement("span");
     label.textContent = id;
     label.classList.add("neuroglancer-segment-list-header-label");
-    label.classList.add("neuroglancer-segment-list-header-label");
     if (id === "label") {
       parent.style.textAlign = "left";
     }

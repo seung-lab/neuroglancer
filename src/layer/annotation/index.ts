@@ -93,6 +93,7 @@ import {
   ShaderControls,
 } from "#src/widget/shader_controls.js";
 import { Tab } from "#src/widget/tab_view.js";
+import { AnnotationImportDialog } from "#src/ui/annotation_import_menu.js";
 
 const POINTS_JSON_KEY = "points";
 const ANNOTATIONS_JSON_KEY = "annotations";
@@ -690,6 +691,14 @@ export class AnnotationUserLayer extends Base {
       downloadButton.title = "Save as csv";
       tab.element.appendChild(downloadButton);
       downloadButton.addEventListener("click", () => this.saveToCSV());
+
+      const importButton = document.createElement("button");
+      importButton.textContent = "Import";
+      importButton.title = "Load from csv";
+      tab.element.appendChild(importButton);
+      importButton.addEventListener("click", () => {
+        new AnnotationImportDialog(this);
+      });
     }
     {
       const checkbox = tab.registerDisposer(
