@@ -124,6 +124,9 @@ TODO lets simplyify this now and import one type at a time, and require a header
       const value = annotationType.value as keyof typeof AnnotationType;
       this.type.value = AnnotationType[value];
     });
+    this.registerDisposer(this.type.changed.add(() => {
+      annotationType.value = AnnotationType[this.type.value];
+    }));
 
     this.columnsContainer = document.createElement("div");
     this.mainBody.appendChild(this.columnsContainer);
@@ -158,7 +161,7 @@ TODO lets simplyify this now and import one type at a time, and require a header
         }
       }
       if (allPropertiesPresent) {
-        return AnnotationType[type as keyof typeof AnnotationType];
+        return type as unknown as AnnotationType;
       }
     }
     return null;
