@@ -1659,8 +1659,10 @@ class GraphConnection extends SegmentationGraphSourceConnection {
             if (segmentsState.visibleSegments.has(segmentId)) {
               segmentsState.visibleSegments.add(rootId);
             }
-            segmentsState.selectedSegments.delete(segmentId);
-            segmentsState.selectedSegments.add(rootId);
+            if (segmentId !== rootId) {
+              segmentsState.selectedSegments.delete(segmentId);
+              segmentsState.selectedSegments.add(rootId);
+            }
           });
       }
     }
