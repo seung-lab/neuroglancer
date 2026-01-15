@@ -1371,7 +1371,6 @@ export class AnnotationSource
   }
 
   commit(reference: AnnotationReference): void {
-    console.log('Committing annotation', reference.id);
     this.ensureUpdated();
     const id = reference.id;
     this.pending.delete(id);

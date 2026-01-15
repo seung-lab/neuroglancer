@@ -5,8 +5,6 @@ import {
   AnnotationType,
   annotationTypeHandlers,
   annotationTypes,
-  Line,
-  Point,
   restoreAnnotation,
 } from "#src/annotation/index.js";
 import { AnnotationUserLayer } from "#src/layer/annotation/index.js";
@@ -19,16 +17,39 @@ import { ModalDialog } from "#src/ui/modal_dialog.js";
 import { getLoadState } from "#src/layer/multi_channel_setup.js";
 import { WatchableMap } from "#src/util/watchable_map.js";
 
-const optionalProperties = ["id", "description", "relatedSegments"]; //, "type", "properties"];
+const optionalProperties = ["id", "description", "index"]; //, "relatedSegments"]; //, "type", "properties"];
 
 export class AnnotationImportDialog extends ModalDialog {
   columnsContainer: HTMLElement;
   importAnnotationsButton: HTMLButtonElement;
 
-  header: WatchableValueInterface<string[]> = new WatchableValue<string[]>([]);
-  //rowCount: WatchableValueInterface<number> = new WatchableValue<number>(0);
+  metadata: WatchableValueInterface<any> = new WatchableValue<any>(undefined);
+
   rows: WatchableValueInterface<string[][]> = new WatchableValue<string[][]>(
     [],
+  );
+  header: WatchableValueInterface<string[]> = this.registerDisposer(
+    makeDerivedWatchableValue((rows) => {
+      if (rows.length === 0) {
+        return [];
+      }
+      return rows[0];
+    }, this.rows),
+  );
+  isHeader: WatchableValueInterface<boolean> = new WatchableValue<boolean>(
+    true,
+  );
+  dataRows: WatchableValueInterface<string[][]> = this.registerDisposer(
+    makeDerivedWatchableValue(
+      (rows, isHeader) => {
+        if (rows.length === 0) {
+          return [];
+        }
+        return rows.slice(isHeader ? 1 : 0);
+      },
+      this.rows,
+      this.isHeader,
+    ),
   );
   type: WatchableValueInterface<AnnotationType> =
     new WatchableValue<AnnotationType>(AnnotationType.POINT);
@@ -51,6 +72,10 @@ export class AnnotationImportDialog extends ModalDialog {
 
   importable: WatchableValueInterface<boolean>;
 
+  clearExisting: WatchableValueInterface<boolean> = new WatchableValue<boolean>(
+    false,
+  );
+
   constructor(private layer: AnnotationUserLayer) {
     super("Import Annotations");
     this.initializeAnnotationUI();
@@ -61,25 +86,14 @@ export class AnnotationImportDialog extends ModalDialog {
       this.columnMapping.changed.add(() => this.updateUI()),
     );
     this.registerDisposer(this.pendingMap.changed.add(() => this.updateUI()));
-    // this.registerDisposer(this.header.changed.add(() => this.updateUI()));
     this.registerDisposer(this.type.changed.add(() => this.updateUI()));
     this.registerDisposer(this.rows.changed.add(() => this.updateUI()));
     this.registerDisposer(this.sourceRank.changed.add(() => this.updateUI()));
-
-    // type X = keyof (Line | Point);
-
-    // type SameKeysAsSource<NewType> = {
-    //   [Key in keyof Annotation]: NewType;
-    // };
-
-    // const myMap: SameKeysAsSource<string|string[]> = {
-    //   id: "id",
-    //   description: "description",
-    //   relatedSegments: "relatedSegments",
-    //   type: "type",
-    //   properties: "properties",
-    //   pointA: "bh"
-    // }
+    this.registerDisposer(this.isHeader.changed.add(() => this.updateUI()));
+    this.registerDisposer(
+      this.clearExisting.changed.add(() => this.updateUI()),
+    );
+    this.registerDisposer(this.metadata.changed.add(() => this.updateUI()));
 
     this.derivedProperties = this.registerDisposer(
       makeDerivedWatchableValue(
@@ -155,7 +169,9 @@ export class AnnotationImportDialog extends ModalDialog {
       importable: { value: importable },
       type: { value: type },
       sourceRank: { value: sourceRank },
-      rows: { value: rows },
+      header: { value: header },
+      dataRows: { value: dataRows },
+      clearExisting: { value: clearExisting },
     } = this;
 
     if (!sourceRank) {
@@ -168,19 +184,11 @@ export class AnnotationImportDialog extends ModalDialog {
       );
     }
 
-    console.log("this.columnMapping", this.columnMapping);
-
-    // this.layer.importFromCSVMapping(this.header.value, this.columnMapping);
-
-    // const {type: { value: type }} = this;
-
-    // const {
-    //   derivedProperties: { value: derivedProperties },
-    // } = this;
+    if (dataRows.length === 0) {
+      throw new Error("Cannot import annotations, no data rows available");
+    }
 
     const { dataProperties } = annotationTypeHandlers[type];
-
-    const header = this.header.value;
 
     const propertyToColumnIndex: Map<string, number> = new Map();
     for (const [property, column] of this.columnMapping) {
@@ -212,58 +220,51 @@ export class AnnotationImportDialog extends ModalDialog {
       return annotationData satisfies Annotation;
     };
 
-    const test = parseAnnotation(rows[0]);
+    const annotationSource: AnnotationSource | undefined =
+      this.layer.localAnnotations;
 
-    const annotationSource: AnnotationSource|undefined = this.layer.localAnnotations;
+    if (!annotationSource) {
+      throw new Error("No local annotation source available on layer");
+    }
 
-    console.log("test", test);
+    if (clearExisting) {
+      annotationSource.clear();
+    }
 
-    if (annotationSource) {
+    for (const row of dataRows) {
+      const parsedAnnotation = parseAnnotation(row);
       const restored = restoreAnnotation(
-        test,
+        parsedAnnotation,
         annotationSource,
         false,
       );
       if (annotationSource.get(restored.id)) {
-        annotationSource.update(annotationSource.getReference(restored.id), restored);
+        annotationSource.update(
+          annotationSource.getReference(restored.id),
+          restored,
+        );
       } else {
         annotationSource.add(restored);
       }
     }
-
-    // const testParsed = annotationTypeHandlers[type].restoreState(test);
-
-    // // if
-
-    // if (
-    //   derivedProperties.every(
-    //     (prop) => !prop.optional || this.columnMapping.has(prop.property),
-    //   )
-    // ) {
-    //   console.log("All required properties mapped, proceeding with import");
-    // }
   }
 
   initializeAnnotationUI() {
-    const description = document.createElement("div");
-    description.textContent = `Import annotation state from a CSV file and associated metadata.
-
-Annotations must be in the following format CSV format:
-
-
-TODO lets simplyify this now and import one type at a time, and require a header
-
-      `;
-
-    this.mainBody.appendChild(description);
+    const step1 = document.createElement("div");
+    step1.textContent = `Select a csv file containing annotations and optionally a metadata file (in NG format)`;
+    this.mainBody.appendChild(step1);
 
     const importButton = document.createElement("input");
     importButton.type = "file";
-    // importButton.multiple = true;
+    importButton.multiple = true;
     importButton.accept = ".csv,.json,application/json,text/csv";
     importButton.title = "Import annotation state from a CSV file";
     this.mainBody.appendChild(importButton);
     importButton.addEventListener("change", async () => {
+      // reset state
+      this.metadata.value = undefined;
+      this.rows.value = [];
+
       const files = importButton.files;
       if (!files) return;
       const processedFiles = await Promise.all(
@@ -293,35 +294,23 @@ TODO lets simplyify this now and import one type at a time, and require a header
           (contentByType.get(file.type) ?? []).concat([content]),
         );
       }
-      //   const metadata = contentByType.get("application/json") ?? [];
-      //   if (metadata.length > 1) {
-      //     throw new Error("Multiple metadata files provided");
-      //   }
-      //   if (metadata.length === 0) {
-      //     throw new Error("No metadata file provided");
-      //   }
+      const metadata = contentByType.get("application/json") ?? [];
+      if (metadata.length > 1) {
+        throw new Error("Multiple metadata files provided");
+      }
+      if (metadata.length === 1) {
+        this.metadata.value = JSON.parse(metadata[0]);
+      }
       const csvs = contentByType.get("text/csv") ?? [];
-
-      if (csvs.length === 0) {
-      } else {
+      if (csvs.length > 0) {
         const firstFile = csvs[0];
-
-        const rows = firstFile.split("\n").map((row) => row.split(","));
-
-        const [header, ...rest] = rows;
-
-        const inferredType = this.inferTypeFromHeader(header);
-        if (inferredType) {
-          this.type.value = inferredType;
-        }
-        this.header.value = header;
-        this.rows.value = rest;
+        this.rows.value = firstFile.split("\n").map((row) => row.split(","));
       }
     });
 
-    const columnsHeader = document.createElement("h3");
-    columnsHeader.textContent = "Column Mapping";
-    this.mainBody.appendChild(columnsHeader);
+    const step2 = document.createElement("div");
+    step2.textContent = `Change the annotation type if necessary`;
+    this.mainBody.appendChild(step2);
 
     const annotationType = document.createElement("select");
     for (const type of annotationTypes) {
@@ -349,6 +338,10 @@ TODO lets simplyify this now and import one type at a time, and require a header
       }),
     );
 
+    const step3 = document.createElement("div");
+    step3.textContent = `Click on input column and then output property to map from csv to neuroglancer format`;
+    this.mainBody.appendChild(step3);
+
     this.columnsContainer = document.createElement("div");
     this.mainBody.appendChild(this.columnsContainer);
 
@@ -362,6 +355,28 @@ TODO lets simplyify this now and import one type at a time, and require a header
     footerScreenshotActionBtnsContainer.classList.add(
       "neuroglancer-modal-dialog-footer-container",
     );
+
+    const isHeaderLabel = document.createElement("label");
+    isHeaderLabel.textContent = "First row is header";
+    const isHeaderCheckbox = document.createElement("input");
+    isHeaderCheckbox.type = "checkbox";
+    isHeaderCheckbox.checked = this.isHeader.value;
+    isHeaderLabel.appendChild(isHeaderCheckbox);
+    footerScreenshotActionBtnsContainer.appendChild(isHeaderLabel);
+    isHeaderCheckbox.addEventListener("change", () => {
+      this.isHeader.value = isHeaderCheckbox.checked;
+    });
+
+    const clearExistingLabel = document.createElement("label");
+    clearExistingLabel.textContent = "Clear existing";
+    const clearExistingCheckbox = document.createElement("input");
+    clearExistingCheckbox.type = "checkbox";
+    clearExistingCheckbox.checked = this.clearExisting.value;
+    clearExistingLabel.appendChild(clearExistingCheckbox);
+    footerScreenshotActionBtnsContainer.appendChild(clearExistingLabel);
+    clearExistingCheckbox.addEventListener("change", () => {
+      this.clearExisting.value = clearExistingCheckbox.checked;
+    });
 
     footerScreenshotActionBtnsContainer.appendChild(
       this.importAnnotationsButton,
@@ -415,12 +430,12 @@ TODO lets simplyify this now and import one type at a time, and require a header
 
     const {
       header: { value: header },
-      // type: { value: type },
-      rows: { value: rows },
+      dataRows: { value: dataRows },
       sourceRank: { value: sourceRank },
       columnMapping: { value: columnMapping },
       derivedProperties: { value: derivedProperties },
       importable: { value: importable },
+      metadata: { value: metadata },
     } = this;
     if (this.columnsContainer.firstChild) {
       this.columnsContainer.removeChild(this.columnsContainer.firstChild);
@@ -431,13 +446,27 @@ TODO lets simplyify this now and import one type at a time, and require a header
     const resultContainer = document.createElement("div");
     this.columnsContainer.appendChild(resultContainer);
 
+    if (metadata) {
+      const metadataHeader = document.createElement("h4");
+      metadataHeader.textContent = "Metadata";
+      resultContainer.appendChild(metadataHeader);
+      const metadataPre = document.createElement("pre");
+      metadataPre.classList.add("annotation-import-metadata-display");
+      metadataPre.textContent = JSON.stringify(metadata, null, 2);
+      resultContainer.appendChild(metadataPre);
+    }
+
     const rankInfo = document.createElement("div");
     rankInfo.textContent = `Source rank: ${sourceRank !== undefined ? sourceRank : "N/A"}`;
     resultContainer.appendChild(rankInfo);
 
     const rowCountInfo = document.createElement("div");
-    rowCountInfo.textContent = `Rows detected: ${rows.length}`;
+    rowCountInfo.textContent = `Annotations: ${dataRows.length}`;
     resultContainer.appendChild(rowCountInfo);
+
+    const columnsHeader = document.createElement("h4");
+    columnsHeader.textContent = "Column Mapping";
+    resultContainer.appendChild(columnsHeader);
 
     const mappedColumns = new Set(columnMapping.values());
 
@@ -482,31 +511,20 @@ TODO lets simplyify this now and import one type at a time, and require a header
       const fieldContainer = document.createElement("div");
       fieldContainer.classList.add("annotation-import-field");
 
-      const label = document.createElement("label");
-      label.textContent = property;
-      fieldContainer.appendChild(label);
-
-      // const select = document.createElement("select");
-      // const noneOption = document.createElement("option");
-      // noneOption.value = "";
-      // noneOption.textContent = "None";
-      // select.appendChild(noneOption);
-
-      // for (const column of header) {
-      //   const option = document.createElement("option");
-      //   option.value = column;
-      //   option.textContent = column;
-      //   select.appendChild(option);
-      // }
-      // fieldContainer.appendChild(select);
       annotationFields.appendChild(fieldContainer);
 
       if (columnMapping.has(property)) {
         // select.value = columnMapping.get(propertyId)!;
         fieldContainer.classList.add("annotation-import-field-mapped");
         const mappedColumn = document.createElement("div");
-        mappedColumn.textContent = `<- ${columnMapping.get(property)}`;
+        mappedColumn.classList.add("annotation-import-field-mapped-column");
+        mappedColumn.textContent = `${columnMapping.get(property)}`;
         fieldContainer.appendChild(mappedColumn);
+
+        const importFieldLink = document.createElement("div");
+        importFieldLink.classList.add("annotation-import-field-link");
+        fieldContainer.appendChild(importFieldLink);
+
         // add unset button
         const unsetButton = document.createElement("button");
         unsetButton.textContent = "Unset";
@@ -515,7 +533,7 @@ TODO lets simplyify this now and import one type at a time, and require a header
           // e.stopPropagation();
           this.columnMapping.delete(property);
         });
-        fieldContainer.appendChild(unsetButton);
+        importFieldLink.appendChild(unsetButton);
       } else if (!optional) {
         fieldContainer.classList.add("annotation-import-field-missing");
       }
@@ -526,57 +544,15 @@ TODO lets simplyify this now and import one type at a time, and require a header
           this.pendingMap.value = undefined;
         }
       });
+
+      const propertyName = document.createElement("div");
+      propertyName.classList.add("annotation-import-field-property-name");
+      propertyName.textContent = property;
+      fieldContainer.appendChild(propertyName);
     }
 
     resultContainer.appendChild(annotationFields);
 
     this.importAnnotationsButton.disabled = !importable;
-
-    // for column of annotation type, create a select element to choose the column
-
-    // allAnnotationProperties;
-
-    // for (const [col, idx] of headersWithArraysJoined.entries()) {
-    //   idx;
-    //   const propertyContainer = document.createElement("div");
-    //   const label = document.createElement("label");
-    //   label.textContent = col;
-    //   propertyContainer.appendChild(label);
-    //   columns.appendChild(propertyContainer);
-    //   }
-    // for (const property of allAnnotationProperties) {
-    //   //   const propertyContainer = document.createElement("div");
-    //   const label = document.createElement("label");
-    //   label.textContent = property;
-    //   //   propertyContainer.appendChild(label);
-
-    //   const select = document.createElement("select");
-
-    //   if (optionalProperties.includes(property)) {
-    //     const noneOption = document.createElement("option");
-    //     noneOption.value = "";
-    //     noneOption.textContent = "None";
-    //     select.appendChild(noneOption);
-    //   }
-
-    //   for (const [col, idx] of headersWithArraysJoined.entries()) {
-    //     const option = document.createElement("option");
-    //     const myValue = Array.isArray(idx) ? `${col}[${idx.length}]` : col;
-    //     option.value = myValue;
-    //     option.textContent = myValue;
-    //     select.appendChild(option);
-
-    //     if (property === col) {
-    //       select.value = myValue;
-    //     }
-    //   }
-
-    //   columns.appendChild(label);
-    //   columns.appendChild(select);
-    //   //   propertyContainer.appendChild(select);
-    //   //   columns.appendChild(propertyContainer);
-    // }
-
-    // resultContainer.appendChild(columns);
   }
 }

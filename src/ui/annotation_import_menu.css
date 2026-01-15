@@ -9,7 +9,7 @@
     gap: 4px;
 }
 
-.annotation-import-available-columns > div {
+.annotation-import-available-columns > div, .annotation-import-field-property-name {
     border: 1px solid #ccc;
     border-radius: 4px;
     padding: 4px 8px;
@@ -40,10 +40,27 @@
 .annotation-import-fields-container {
     display: grid;
     grid-template-columns: min-content min-content min-content;
-
     white-space: nowrap;
+    justify-content: space-between;
 }
 
 .annotation-import-fields-container > div {
     display: contents;
+}
+
+.annotation-import-field-mapped-column {
+
+}
+
+.annotation-import-field-link::before {
+  content: '→';
+}
+
+.annotation-import-field-property-name {
+  grid-column: 3;
+}
+
+.annotation-import-metadata-display {
+    max-height: 100px;
+    overflow-y: scroll;
 }
