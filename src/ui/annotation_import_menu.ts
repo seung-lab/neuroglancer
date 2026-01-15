@@ -1,11 +1,13 @@
 import "#src/ui/annotation_import_menu.css";
 import {
   Annotation,
+  AnnotationSource,
   AnnotationType,
   annotationTypeHandlers,
   annotationTypes,
   Line,
   Point,
+  restoreAnnotation,
 } from "#src/annotation/index.js";
 import { AnnotationUserLayer } from "#src/layer/annotation/index.js";
 import {
@@ -17,12 +19,17 @@ import { ModalDialog } from "#src/ui/modal_dialog.js";
 import { getLoadState } from "#src/layer/multi_channel_setup.js";
 import { WatchableMap } from "#src/util/watchable_map.js";
 
+const optionalProperties = ["id", "description", "relatedSegments"]; //, "type", "properties"];
+
 export class AnnotationImportDialog extends ModalDialog {
   columnsContainer: HTMLElement;
   importAnnotationsButton: HTMLButtonElement;
 
   header: WatchableValueInterface<string[]> = new WatchableValue<string[]>([]);
-  rowCount: WatchableValueInterface<number> = new WatchableValue<number>(0);
+  //rowCount: WatchableValueInterface<number> = new WatchableValue<number>(0);
+  rows: WatchableValueInterface<string[][]> = new WatchableValue<string[][]>(
+    [],
+  );
   type: WatchableValueInterface<AnnotationType> =
     new WatchableValue<AnnotationType>(AnnotationType.POINT);
   sourceRank: WatchableValueInterface<number | undefined> = new WatchableValue<
@@ -35,10 +42,14 @@ export class AnnotationImportDialog extends ModalDialog {
 
   pendingMap = new WatchableValue<string | undefined>(undefined);
 
-  derivedProperties: WatchableValueInterface<{
-    property: string;
-    optional?: boolean;
-  }[]>;
+  derivedProperties: WatchableValueInterface<
+    {
+      property: string;
+      optional?: boolean;
+    }[]
+  >;
+
+  importable: WatchableValueInterface<boolean>;
 
   constructor(private layer: AnnotationUserLayer) {
     super("Import Annotations");
@@ -52,7 +63,7 @@ export class AnnotationImportDialog extends ModalDialog {
     this.registerDisposer(this.pendingMap.changed.add(() => this.updateUI()));
     // this.registerDisposer(this.header.changed.add(() => this.updateUI()));
     this.registerDisposer(this.type.changed.add(() => this.updateUI()));
-    this.registerDisposer(this.rowCount.changed.add(() => this.updateUI()));
+    this.registerDisposer(this.rows.changed.add(() => this.updateUI()));
     this.registerDisposer(this.sourceRank.changed.add(() => this.updateUI()));
 
     // type X = keyof (Line | Point);
@@ -74,9 +85,7 @@ export class AnnotationImportDialog extends ModalDialog {
       makeDerivedWatchableValue(
         (type, sourceRank) => {
           const { dataProperties } = annotationTypeHandlers[type];
-          const optionalProperties = ["id", "description", "relatedSegments"]; //, "type", "properties"];
-
-          return [
+          const res = [
             ...dataProperties
               .map((property) => {
                 return Array(sourceRank)
@@ -90,13 +99,44 @@ export class AnnotationImportDialog extends ModalDialog {
               return { property: p, optional: true };
             }),
           ];
-          // return res;
+          return res;
         },
         this.type,
         this.sourceRank,
       ),
     );
-    this.registerDisposer(this.derivedProperties.changed.add(() => this.updateUI()));
+    this.registerDisposer(
+      this.derivedProperties.changed.add(() => this.updateUI()),
+    );
+
+    const automatedMapping = () => {
+      const {
+        header: { value: header },
+        derivedProperties: { value: derivedProperties },
+      } = this;
+      for (const { property } of derivedProperties) {
+        if (header.includes(property)) {
+          this.columnMapping.set(property, property); // TODO, this ends up triggering updateUI multiple times
+        }
+      }
+    };
+    this.registerDisposer(this.derivedProperties.changed.add(automatedMapping));
+    this.registerDisposer(this.header.changed.add(automatedMapping));
+    // automatedMapping();
+
+    this.importable = this.registerDisposer(
+      makeDerivedWatchableValue(
+        (derivedProperties, columnMapping) => {
+          return derivedProperties.every(
+            (prop) => prop.optional || columnMapping.has(prop.property),
+          );
+        },
+        this.derivedProperties,
+        this.columnMapping,
+      ),
+    );
+
+    this.registerDisposer(this.importable.changed.add(() => this.updateUI()));
 
     const updateSourceRank = () => {
       const loadState = getLoadState(this.layer.managedLayer);
@@ -111,7 +151,97 @@ export class AnnotationImportDialog extends ModalDialog {
   }
 
   importAnnotations() {
-    console.log("importAnnotations called");
+    const {
+      importable: { value: importable },
+      type: { value: type },
+      sourceRank: { value: sourceRank },
+      rows: { value: rows },
+    } = this;
+
+    if (!sourceRank) {
+      throw new Error("Cannot import annotations, source rank unknown");
+    }
+
+    if (!importable) {
+      throw new Error(
+        "Cannot import annotations, required properties not mapped",
+      );
+    }
+
+    console.log("this.columnMapping", this.columnMapping);
+
+    // this.layer.importFromCSVMapping(this.header.value, this.columnMapping);
+
+    // const {type: { value: type }} = this;
+
+    // const {
+    //   derivedProperties: { value: derivedProperties },
+    // } = this;
+
+    const { dataProperties } = annotationTypeHandlers[type];
+
+    const header = this.header.value;
+
+    const propertyToColumnIndex: Map<string, number> = new Map();
+    for (const [property, column] of this.columnMapping) {
+      propertyToColumnIndex.set(
+        property,
+        header.findIndex((h) => h === column),
+      );
+    }
+
+    const parseAnnotation = (row: string[]) => {
+      const annotationData: any = {
+        type: AnnotationType[type],
+        // id: 1,
+        // description: "",
+        // relatedSegments: [],
+      };
+      for (const property of dataProperties) {
+        const data = Array(sourceRank)
+          .fill(undefined)
+          .map((_, i) => row[propertyToColumnIndex.get(`${property}[${i}]`)!]);
+        annotationData[property] = data;
+      }
+      for (const optionalProperty of optionalProperties) {
+        if (propertyToColumnIndex.has(optionalProperty)) {
+          annotationData[optionalProperty] =
+            row[propertyToColumnIndex.get(optionalProperty)!];
+        }
+      }
+      return annotationData satisfies Annotation;
+    };
+
+    const test = parseAnnotation(rows[0]);
+
+    const annotationSource: AnnotationSource|undefined = this.layer.localAnnotations;
+
+    console.log("test", test);
+
+    if (annotationSource) {
+      const restored = restoreAnnotation(
+        test,
+        annotationSource,
+        false,
+      );
+      if (annotationSource.get(restored.id)) {
+        annotationSource.update(annotationSource.getReference(restored.id), restored);
+      } else {
+        annotationSource.add(restored);
+      }
+    }
+
+    // const testParsed = annotationTypeHandlers[type].restoreState(test);
+
+    // // if
+
+    // if (
+    //   derivedProperties.every(
+    //     (prop) => !prop.optional || this.columnMapping.has(prop.property),
+    //   )
+    // ) {
+    //   console.log("All required properties mapped, proceeding with import");
+    // }
   }
 
   initializeAnnotationUI() {
@@ -174,17 +304,19 @@ TODO lets simplyify this now and import one type at a time, and require a header
 
       if (csvs.length === 0) {
       } else {
-        const first = csvs[0];
-        const header = first.split("\n")[0].split(",");
+        const firstFile = csvs[0];
+
+        const rows = firstFile.split("\n").map((row) => row.split(","));
+
+        const [header, ...rest] = rows;
+
         const inferredType = this.inferTypeFromHeader(header);
         if (inferredType) {
           this.type.value = inferredType;
         }
         this.header.value = header;
-        this.rowCount.value = first.split("\n").length - 1;
+        this.rows.value = rest;
       }
-
-      //   this.layer.loadFromCSV(JSON.parse(metadata[0]), csvs);
     });
 
     const columnsHeader = document.createElement("h3");
@@ -283,10 +415,12 @@ TODO lets simplyify this now and import one type at a time, and require a header
 
     const {
       header: { value: header },
-      type: { value: type },
-      rowCount: { value: rowCount },
+      // type: { value: type },
+      rows: { value: rows },
       sourceRank: { value: sourceRank },
       columnMapping: { value: columnMapping },
+      derivedProperties: { value: derivedProperties },
+      importable: { value: importable },
     } = this;
     if (this.columnsContainer.firstChild) {
       this.columnsContainer.removeChild(this.columnsContainer.firstChild);
@@ -302,7 +436,7 @@ TODO lets simplyify this now and import one type at a time, and require a header
     resultContainer.appendChild(rankInfo);
 
     const rowCountInfo = document.createElement("div");
-    rowCountInfo.textContent = `Rows detected: ${rowCount}`;
+    rowCountInfo.textContent = `Rows detected: ${rows.length}`;
     resultContainer.appendChild(rowCountInfo);
 
     const mappedColumns = new Set(columnMapping.values());
@@ -337,69 +471,66 @@ TODO lets simplyify this now and import one type at a time, and require a header
 
     // console.log("headersWithArraysJoined", headersWithArraysJoined);
 
-    const { dataProperties } = annotationTypeHandlers[type];
-
-    // const optionalProperties = ["id", "description", "relatedSegments"];
+    // const { dataProperties } = annotationTypeHandlers[type];
 
     // const allAnnotationProperties = [...dataProperties, ...optionalProperties];
 
     const annotationFields = document.createElement("div");
     annotationFields.classList.add("annotation-import-fields-container");
 
-    for (const property of dataProperties) {
-      for (let i = 0; i < sourceRank; i++) {
-        const propertyId = `${property}[${i}]`;
-        const fieldContainer = document.createElement("div");
-        fieldContainer.classList.add("annotation-import-field");
+    for (const { property, optional } of derivedProperties) {
+      const fieldContainer = document.createElement("div");
+      fieldContainer.classList.add("annotation-import-field");
 
-        const label = document.createElement("label");
-        label.textContent = propertyId;
-        fieldContainer.appendChild(label);
+      const label = document.createElement("label");
+      label.textContent = property;
+      fieldContainer.appendChild(label);
 
-        // const select = document.createElement("select");
-        // const noneOption = document.createElement("option");
-        // noneOption.value = "";
-        // noneOption.textContent = "None";
-        // select.appendChild(noneOption);
+      // const select = document.createElement("select");
+      // const noneOption = document.createElement("option");
+      // noneOption.value = "";
+      // noneOption.textContent = "None";
+      // select.appendChild(noneOption);
 
-        // for (const column of header) {
-        //   const option = document.createElement("option");
-        //   option.value = column;
-        //   option.textContent = column;
-        //   select.appendChild(option);
-        // }
-        // fieldContainer.appendChild(select);
-        annotationFields.appendChild(fieldContainer);
+      // for (const column of header) {
+      //   const option = document.createElement("option");
+      //   option.value = column;
+      //   option.textContent = column;
+      //   select.appendChild(option);
+      // }
+      // fieldContainer.appendChild(select);
+      annotationFields.appendChild(fieldContainer);
 
-        if (columnMapping.has(propertyId)) {
-          // select.value = columnMapping.get(propertyId)!;
-          fieldContainer.classList.add("annotation-import-field-mapped");
-          const mappedColumn = document.createElement("div");
-          mappedColumn.textContent = `Mapped to: ${columnMapping.get(
-            propertyId,
-          )}`;
-          fieldContainer.appendChild(mappedColumn);
-          // add unset button
-          const unsetButton = document.createElement("button");
-          unsetButton.textContent = "Unset";
-          unsetButton.classList.add("annotation-import-unset-button");
-          unsetButton.addEventListener("click", () => {
-            // e.stopPropagation();
-            this.columnMapping.delete(propertyId);
-          });
-          fieldContainer.appendChild(unsetButton);
-        }
-
-        fieldContainer.addEventListener("click", () => {
-          if (this.pendingMap.value) {
-            this.columnMapping.set(propertyId, this.pendingMap.value);
-            this.pendingMap.value = undefined;
-          }
+      if (columnMapping.has(property)) {
+        // select.value = columnMapping.get(propertyId)!;
+        fieldContainer.classList.add("annotation-import-field-mapped");
+        const mappedColumn = document.createElement("div");
+        mappedColumn.textContent = `<- ${columnMapping.get(property)}`;
+        fieldContainer.appendChild(mappedColumn);
+        // add unset button
+        const unsetButton = document.createElement("button");
+        unsetButton.textContent = "Unset";
+        unsetButton.classList.add("annotation-import-unset-button");
+        unsetButton.addEventListener("click", () => {
+          // e.stopPropagation();
+          this.columnMapping.delete(property);
         });
+        fieldContainer.appendChild(unsetButton);
+      } else if (!optional) {
+        fieldContainer.classList.add("annotation-import-field-missing");
       }
+
+      fieldContainer.addEventListener("click", () => {
+        if (this.pendingMap.value) {
+          this.columnMapping.set(property, this.pendingMap.value);
+          this.pendingMap.value = undefined;
+        }
+      });
     }
 
     resultContainer.appendChild(annotationFields);
+
+    this.importAnnotationsButton.disabled = !importable;
 
     // for column of annotation type, create a select element to choose the column
 

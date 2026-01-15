@@ -133,6 +133,7 @@
   font-weight: 590;
   color: var(--gray800);
   margin: 0 0 0 0.25rem;
+  cursor: pointer;
 }
 
 .neuroglancer-modal-dialog-footer-button:disabled {

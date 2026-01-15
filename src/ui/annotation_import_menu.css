@@ -32,3 +32,18 @@
 .annotation-import-available-columns > .annotation-import-available-column-mapped {
     opacity: 0.4;
 }
+
+.annotation-import-field-missing {
+    border: 2px solid red;
+}
+
+.annotation-import-fields-container {
+    display: grid;
+    grid-template-columns: min-content min-content min-content;
+
+    white-space: nowrap;
+}
+
+.annotation-import-fields-container > div {
+    display: contents;
+}

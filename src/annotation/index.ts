@@ -699,7 +699,7 @@ export type Annotation =
 export interface AnnotationTypeHandler<T extends Annotation = Annotation> {
   icon: string;
   description: string;
-  dataProperties: string[];
+  dataProperties: string[]; // TODO rename this from data to spatial?
   toJSON: (annotation: T, rank: number) => any;
   restoreState: (annotation: T, obj: any, rank: number) => void;
   /**
@@ -1244,7 +1244,7 @@ export function annotationToJson(
   return result;
 }
 
-function restoreAnnotation(
+export function restoreAnnotation(
   obj: any,
   schema: AnnotationSchema,
   allowMissingId = false,
@@ -1371,6 +1371,7 @@ export class AnnotationSource
   }
 
   commit(reference: AnnotationReference): void {
+    console.log('Committing annotation', reference.id);
     this.ensureUpdated();
     const id = reference.id;
     this.pending.delete(id);
