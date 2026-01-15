@@ -2,3 +2,33 @@
     display: grid;
     grid-template-columns: auto auto;
 }
+
+.annotation-import-available-columns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.annotation-import-available-columns > div {
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    padding: 4px 8px;
+    cursor: pointer;
+}
+
+.annotation-import-available-columns > div:hover {
+    filter: brightness(1.1);
+}
+
+.annotation-import-available-columns > .annotation-import-available-column-pending {
+    background-color: #d0eaff;
+    border-color: #3399ff;
+}
+
+.annotation-import-field-mapped {
+    background-color: #e6ffe6;
+}
+
+.annotation-import-available-columns > .annotation-import-available-column-mapped {
+    opacity: 0.4;
+}

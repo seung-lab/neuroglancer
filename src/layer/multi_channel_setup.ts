@@ -161,7 +161,7 @@ function rangeFromBounds(lower: number, upper: number) {
   return Array.from({ length: upper - lower }, (_, i) => i + lower);
 }
 
-function getLoadState(layer: ManagedUserLayer) {
+export function getLoadState(layer: ManagedUserLayer) {
   if (layer.layer === null) return null;
   return layer.layer.dataSources[0]?.loadState;
 }

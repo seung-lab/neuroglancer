@@ -708,10 +708,12 @@ export class AnnotationLayerView extends Tab {
         this.layer.manager.root.coordinateSpace.value;
       for (const globalDim of this.globalDimensionIndices) {
         addDimension(globalCoordinateSpace, globalDim);
+        console.log("add global dim", globalDim);
       }
       const localCoordinateSpace = this.layer.localCoordinateSpace.value;
       for (const localDim of this.localDimensionIndices) {
         addDimension(localCoordinateSpace, localDim);
+        console.log("add local dim", localDim);
       }
       headerRow.appendChild(deletePlaceholder);
       gridTemplate += " [delete] 2ch";

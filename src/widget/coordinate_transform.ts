@@ -286,6 +286,7 @@ export class CoordinateSpaceTransformWidget extends RefCounted {
     public globalCombiner: CoordinateSpaceCombiner,
   ) {
     super();
+    console.log("create coordinate space transform widget", transform.value.rank);
     const { element } = this;
     const keyboardHandler = this.registerDisposer(
       new KeyboardEventBinder(element, inputEventMap),
