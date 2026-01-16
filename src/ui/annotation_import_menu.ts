@@ -66,7 +66,9 @@ export class AnnotationImportDialog extends ModalDialog {
   derivedProperties: WatchableValueInterface<
     {
       property: string;
+      fullName: string;
       array: boolean;
+      dimension?: number;
       optional?: boolean;
     }[]
   >;
@@ -106,12 +108,12 @@ export class AnnotationImportDialog extends ModalDialog {
                 return Array(sourceRank)
                   .fill(property)
                   .map((p, i) => {
-                    return { property: `${p}[${i}]`, array: array || false };
+                    return { property: p, fullName: `${p}[${i}]`, dimension: i, array: array || false };
                   });
               })
               .flat(),
             ...optionalProperties.map((p) => {
-              return { property: p, optional: true, array: false };
+              return { property: p, fullName: p, optional: true, array: false };
             }),
           ];
           return res;
@@ -125,13 +127,19 @@ export class AnnotationImportDialog extends ModalDialog {
     );
 
     const automatedMapping = () => {
+      console.log("automateMapping called");
       const {
         header: { value: header },
         derivedProperties: { value: derivedProperties },
       } = this;
-      for (const { property } of derivedProperties) {
-        if (header.includes(property)) {
-          this.columnMapping.set(property, [property]); // TODO, this ends up triggering updateUI multiple times
+      for (const { property, fullName, array, dimension } of derivedProperties) {
+        if (array) {
+          const matchingColumns = header.filter((h) => h.match(`${property}\\[\\d+\\]\\[${dimension}\\]`));
+          this.columnMapping.set(fullName, matchingColumns);
+        } else {
+          if (header.includes(fullName)) {
+            this.columnMapping.set(fullName, [fullName]); // TODO, this ends up triggering updateUI multiple times
+          }
         }
       }
     };
@@ -151,7 +159,7 @@ export class AnnotationImportDialog extends ModalDialog {
       makeDerivedWatchableValue(
         (derivedProperties, columnMapping) => {
           return derivedProperties.every(
-            (prop) => prop.optional || columnMapping.has(prop.property),
+            (prop) => prop.optional || columnMapping.has(prop.fullName),
           );
         },
         this.derivedProperties,
@@ -574,18 +582,18 @@ export class AnnotationImportDialog extends ModalDialog {
     const annotationFields = document.createElement("div");
     annotationFields.classList.add("annotation-import-fields-container");
 
-    for (const { property, optional, array } of derivedProperties) {
+    for (const { property, fullName, optional, array } of derivedProperties) {
       const fieldContainer = document.createElement("div");
       fieldContainer.classList.add("annotation-import-field");
 
       annotationFields.appendChild(fieldContainer);
 
-      if (columnMapping.has(property)) {
+      if (columnMapping.has(fullName)) {
         // select.value = columnMapping.get(propertyId)!;
         fieldContainer.classList.add("annotation-import-field-mapped");
         const mappedColumn = document.createElement("div");
         mappedColumn.classList.add("annotation-import-field-mapped-column");
-        mappedColumn.textContent = `${columnMapping.get(property)}`;
+        mappedColumn.textContent = `${columnMapping.get(fullName)}`;
         fieldContainer.appendChild(mappedColumn);
 
         const importFieldLink = document.createElement("div");
@@ -598,7 +606,7 @@ export class AnnotationImportDialog extends ModalDialog {
         unsetButton.classList.add("annotation-import-unset-button");
         unsetButton.addEventListener("click", () => {
           // e.stopPropagation();
-          this.columnMapping.delete(property);
+          this.columnMapping.delete(fullName);
         });
         importFieldLink.appendChild(unsetButton);
       } else if (!optional) {
@@ -607,12 +615,12 @@ export class AnnotationImportDialog extends ModalDialog {
 
       const propertyName = document.createElement("div");
       propertyName.classList.add("annotation-import-field-property-name");
-      propertyName.textContent = property;
+      propertyName.textContent = fullName;
       fieldContainer.appendChild(propertyName);
 
       propertyName.addEventListener("click", () => {
         if (this.pendingMap.value) {
-          this.columnMapping.set(property, this.pendingMap.value);
+          this.columnMapping.set(fullName, this.pendingMap.value);
           this.pendingMap.value = undefined;
         }
       });
