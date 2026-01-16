@@ -564,7 +564,7 @@ export class AnnotationImportDialog extends ModalDialog {
       columnEl.addEventListener("click", (evt) => {
         evt.preventDefault();
         evt.stopPropagation();
-        if (evt.shiftKey) {
+        if (evt.metaKey) {
           const currentPending = this.pendingMap.value || [];
           if (currentPending.includes(column)) {
             this.pendingMap.value = currentPending.filter((c) => c !== column);
