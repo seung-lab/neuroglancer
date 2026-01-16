@@ -54,6 +54,7 @@
 }
 
 .annotation-import-field-mapped-column {
+  grid-column: 1;
   white-space: normal;
 }
 
