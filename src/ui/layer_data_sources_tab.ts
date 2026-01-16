@@ -19,7 +19,6 @@
  */
 
 import { LocalDataSource } from "#src/datasource/local.js";
-import { AnnotationUserLayer } from "#src/layer/annotation/index.js";
 import type { UserLayer, UserLayerConstructor } from "#src/layer/index.js";
 import {
   changeLayerName,
