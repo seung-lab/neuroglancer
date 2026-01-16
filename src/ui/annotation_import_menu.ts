@@ -58,14 +58,15 @@ export class AnnotationImportDialog extends ModalDialog {
   >(undefined);
 
   columnMapping = this.registerDisposer(
-    new WatchableMap<string, string>(() => {}),
+    new WatchableMap<string, string[]>(() => {}),
   );
 
-  pendingMap = new WatchableValue<string | undefined>(undefined);
+  pendingMap = new WatchableValue<string[] | undefined>(undefined);
 
   derivedProperties: WatchableValueInterface<
     {
       property: string;
+      array: boolean;
       optional?: boolean;
     }[]
   >;
@@ -98,19 +99,19 @@ export class AnnotationImportDialog extends ModalDialog {
     this.derivedProperties = this.registerDisposer(
       makeDerivedWatchableValue(
         (type, sourceRank) => {
-          const { dataProperties } = annotationTypeHandlers[type];
+          const { spatialProperties } = annotationTypeHandlers[type];
           const res = [
-            ...dataProperties
-              .map((property) => {
+            ...spatialProperties
+              .map(({ property, array }) => {
                 return Array(sourceRank)
                   .fill(property)
                   .map((p, i) => {
-                    return { property: `${p}[${i}]` };
+                    return { property: `${p}[${i}]`, array: array || false };
                   });
               })
               .flat(),
             ...optionalProperties.map((p) => {
-              return { property: p, optional: true };
+              return { property: p, optional: true, array: false };
             }),
           ];
           return res;
@@ -130,12 +131,20 @@ export class AnnotationImportDialog extends ModalDialog {
       } = this;
       for (const { property } of derivedProperties) {
         if (header.includes(property)) {
-          this.columnMapping.set(property, property); // TODO, this ends up triggering updateUI multiple times
+          this.columnMapping.set(property, [property]); // TODO, this ends up triggering updateUI multiple times
         }
       }
     };
     this.registerDisposer(this.derivedProperties.changed.add(automatedMapping));
-    this.registerDisposer(this.header.changed.add(automatedMapping));
+    this.registerDisposer(
+      this.header.changed.add(() => {
+        const inferredType = this.inferTypeFromHeader(this.header.value);
+        if (inferredType) {
+          this.type.value = inferredType;
+        }
+        automatedMapping();
+      }),
+    );
     // automatedMapping();
 
     this.importable = this.registerDisposer(
@@ -188,15 +197,19 @@ export class AnnotationImportDialog extends ModalDialog {
       throw new Error("Cannot import annotations, no data rows available");
     }
 
-    const { dataProperties } = annotationTypeHandlers[type];
+    const { spatialProperties } = annotationTypeHandlers[type];
 
-    const propertyToColumnIndex: Map<string, number> = new Map();
-    for (const [property, column] of this.columnMapping) {
+    const propertyToColumnIndex: Map<string, number[]> = new Map();
+    for (const [property, columns] of this.columnMapping) {
       propertyToColumnIndex.set(
         property,
-        header.findIndex((h) => h === column),
+        columns.map((column) => header.findIndex((h) => h === column)),
       );
     }
+
+    console.log("propertyToColumnIndex", propertyToColumnIndex);
+
+    console.log("spatialProperties", spatialProperties);
 
     const parseAnnotation = (row: string[]) => {
       const annotationData: any = {
@@ -205,16 +218,51 @@ export class AnnotationImportDialog extends ModalDialog {
         // description: "",
         // relatedSegments: [],
       };
-      for (const property of dataProperties) {
-        const data = Array(sourceRank)
-          .fill(undefined)
-          .map((_, i) => row[propertyToColumnIndex.get(`${property}[${i}]`)!]);
-        annotationData[property] = data;
+      for (const { property, array } of spatialProperties) {
+        if (array) {
+          // const columnIndices = propertyToColumnIndex.get(property)!;
+
+          // for (let i = 0; i < columnIndices.length; i++) {
+          // }
+
+          // columnIndices.map((index => {
+          //   const vec = Array(sourceRank).map((_, i) => row[index + i];
+
+          // })
+
+          const vec = Array(sourceRank)
+            .fill(undefined)
+            .map((_, i) =>
+              propertyToColumnIndex
+                .get(`${property}[${i}]`)!
+                .map((index) => row[index]),
+            );
+
+          const length = vec[0].length; // TODO cleanup;
+
+          // need to invert the array
+          const data = Array(length)
+            .fill(undefined)
+            .map((_, i) => {
+              return Array(sourceRank)
+                .fill(undefined)
+                .map((_, j) => vec[j][i]);
+            });
+
+          annotationData[property] = data;
+        } else {
+          const data = Array(sourceRank)
+            .fill(undefined)
+            .map(
+              (_, i) => row[propertyToColumnIndex.get(`${property}[${i}]`)![0]],
+            );
+          annotationData[property] = data;
+        }
       }
       for (const optionalProperty of optionalProperties) {
         if (propertyToColumnIndex.has(optionalProperty)) {
           annotationData[optionalProperty] =
-            row[propertyToColumnIndex.get(optionalProperty)!];
+            row[propertyToColumnIndex.get(optionalProperty)![0]];
         }
       }
       return annotationData satisfies Annotation;
@@ -326,6 +374,7 @@ export class AnnotationImportDialog extends ModalDialog {
     });
     this.registerDisposer(
       this.type.changed.add(() => {
+        console.log("annotation type changed", this.type.value);
         annotationType.value = AnnotationType[this.type.value];
         this.columnMapping.clear();
         this.pendingMap.value = undefined;
@@ -388,9 +437,16 @@ export class AnnotationImportDialog extends ModalDialog {
   inferTypeFromHeader(header: string[]): AnnotationType | null {
     const headersWithArraysJoined = this.joinArrayHeaders(header);
     for (const [type, handler] of Object.entries(annotationTypeHandlers)) {
-      const { dataProperties } = handler;
+      const { spatialProperties } = handler;
       let allPropertiesPresent = true;
-      for (const property of dataProperties) {
+      for (const { property, array } of spatialProperties) {
+        if (
+          array &&
+          headersWithArraysJoined.keys().find((x) => x.startsWith(property))
+        ) {
+          continue; // we found an earray entry, TODO this is quick hack
+        }
+
         if (!headersWithArraysJoined.has(property)) {
           allPropertiesPresent = false;
           break;
@@ -468,14 +524,14 @@ export class AnnotationImportDialog extends ModalDialog {
     columnsHeader.textContent = "Column Mapping";
     resultContainer.appendChild(columnsHeader);
 
-    const mappedColumns = new Set(columnMapping.values());
+    const mappedColumns = new Set([...columnMapping.values()].flat());
 
     const sortedColumns = Array.from(header).sort((a, b) => {
       const aMapped = mappedColumns.has(a);
       const bMapped = mappedColumns.has(b);
       if (aMapped && !bMapped) return 1;
       if (!aMapped && bMapped) return -1;
-      return -1;
+      return 1;
     });
 
     const availableColumns = document.createElement("div");
@@ -484,10 +540,21 @@ export class AnnotationImportDialog extends ModalDialog {
       const columnEl = document.createElement("div");
       columnEl.textContent = column;
       availableColumns.appendChild(columnEl);
-      columnEl.addEventListener("click", () => {
-        this.pendingMap.value = column;
+      columnEl.addEventListener("click", (evt) => {
+        evt.preventDefault();
+        evt.stopPropagation();
+        if (evt.shiftKey) {
+          const currentPending = this.pendingMap.value || [];
+          if (currentPending.includes(column)) {
+            this.pendingMap.value = currentPending.filter((c) => c !== column);
+          } else {
+            this.pendingMap.value = [...currentPending, column];
+          }
+        } else {
+          this.pendingMap.value = [column];
+        }
       });
-      if (this.pendingMap.value === column) {
+      if (this.pendingMap.value && this.pendingMap.value.includes(column)) {
         columnEl.classList.add("annotation-import-available-column-pending");
       }
       if (mappedColumns.has(column)) {
@@ -507,7 +574,7 @@ export class AnnotationImportDialog extends ModalDialog {
     const annotationFields = document.createElement("div");
     annotationFields.classList.add("annotation-import-fields-container");
 
-    for (const { property, optional } of derivedProperties) {
+    for (const { property, optional, array } of derivedProperties) {
       const fieldContainer = document.createElement("div");
       fieldContainer.classList.add("annotation-import-field");
 
@@ -538,17 +605,34 @@ export class AnnotationImportDialog extends ModalDialog {
         fieldContainer.classList.add("annotation-import-field-missing");
       }
 
-      fieldContainer.addEventListener("click", () => {
+      const propertyName = document.createElement("div");
+      propertyName.classList.add("annotation-import-field-property-name");
+      propertyName.textContent = property;
+      fieldContainer.appendChild(propertyName);
+
+      propertyName.addEventListener("click", () => {
         if (this.pendingMap.value) {
           this.columnMapping.set(property, this.pendingMap.value);
           this.pendingMap.value = undefined;
         }
       });
 
-      const propertyName = document.createElement("div");
-      propertyName.classList.add("annotation-import-field-property-name");
-      propertyName.textContent = property;
-      fieldContainer.appendChild(propertyName);
+      if (array) {
+        const arrayInfo = document.createElement("div");
+        arrayInfo.classList.add("annotation-import-field-array-info");
+        arrayInfo.textContent = `Append To Array`;
+        fieldContainer.appendChild(arrayInfo);
+
+        arrayInfo.addEventListener("click", () => {
+          if (this.pendingMap.value) {
+            this.columnMapping.set(property, [
+              ...(this.columnMapping.get(property) || []),
+              ...this.pendingMap.value,
+            ]);
+            this.pendingMap.value = undefined;
+          }
+        });
+      }
     }
 
     resultContainer.appendChild(annotationFields);
