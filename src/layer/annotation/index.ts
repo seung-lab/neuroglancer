@@ -53,6 +53,7 @@ import {
   makeCachedLazyDerivedWatchableValue,
   observeWatchable,
 } from "#src/trackable_value.js";
+import { AnnotationImportDialog } from "#src/ui/annotation_import_menu.js";
 import type {
   AnnotationLayerView,
   MergedAnnotationStates,
@@ -93,7 +94,6 @@ import {
   ShaderControls,
 } from "#src/widget/shader_controls.js";
 import { Tab } from "#src/widget/tab_view.js";
-import { AnnotationImportDialog } from "#src/ui/annotation_import_menu.js";
 
 const POINTS_JSON_KEY = "points";
 const ANNOTATIONS_JSON_KEY = "annotations";

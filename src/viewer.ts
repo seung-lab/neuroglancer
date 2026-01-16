@@ -89,7 +89,7 @@ import {
 } from "#src/ui/layer_list_panel.js";
 import { LayerSidePanelManager } from "#src/ui/layer_side_panel.js";
 import { setupPositionDropHandlers } from "#src/ui/position_drag_and_drop.js";
-import { ModalDialog } from "#src/ui/modal_dialog.js";
+import { ScreenshotDialog } from "#src/ui/screenshot_menu.js";
 import { SelectionDetailsPanel } from "#src/ui/selection_details.js";
 import { SidePanelManager } from "#src/ui/side_panel.js";
 import { StateEditorDialog } from "#src/ui/state_editor.js";
@@ -145,7 +145,6 @@ import {
   registerDimensionToolForViewer,
 } from "#src/widget/position_widget.js";
 import { TrackableScaleBarOptions } from "#src/widget/scale_bar.js";
-import { ScreenshotDialog } from "#src/ui/screenshot_menu.js";
 
 declare let NEUROGLANCER_OVERRIDE_DEFAULT_VIEWER_OPTIONS: any;
 

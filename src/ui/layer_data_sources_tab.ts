@@ -300,7 +300,7 @@ export class LoadedDataSourceView extends RefCounted {
           .element,
       );
     }
-    
+
     const { transform } = source;
     if (transform.mutableSourceRank || transform.value.sourceRank !== 0) {
       const transformWidget = this.registerDisposer(

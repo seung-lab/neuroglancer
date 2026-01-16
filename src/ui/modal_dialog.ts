@@ -16,10 +16,10 @@
  * @file UI menu for taking screenshots from the viewer.
  */
 
+import svg_close from "ikonate/icons/close.svg?raw";
 import { Overlay } from "#src/overlay.js";
 import "#src/ui/modal_dialog.css";
 import { makeIcon } from "#src/widget/icon.js";
-import svg_close from "ikonate/icons/close.svg?raw";
 
 export class ModalDialog extends Overlay {
   protected closeMenuButton: HTMLButtonElement;
@@ -77,7 +77,9 @@ export class ModalDialog extends Overlay {
     this.content.appendChild(closeAndHelpContainer);
 
     this.mainBody = document.createElement("div");
-    this.mainBody.classList.add("neuroglancer-modal-dialog-main-body-container");
+    this.mainBody.classList.add(
+      "neuroglancer-modal-dialog-main-body-container",
+    );
     this.content.appendChild(this.mainBody);
   }
 }

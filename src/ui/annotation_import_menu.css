@@ -1,60 +1,64 @@
 .annotation-import-columns-container {
-    display: grid;
-    grid-template-columns: auto auto;
+  display: grid;
+  grid-template-columns: auto auto;
 }
 
 .annotation-import-available-columns {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
-.annotation-import-available-columns > div, .annotation-import-field-property-name, .annotation-import-field-array-info {
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    padding: 4px 8px;
-    cursor: pointer;
-    user-select: none;
+.annotation-import-available-columns > div,
+.annotation-import-field-property-name,
+.annotation-import-field-array-info {
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 4px 8px;
+  cursor: pointer;
+  user-select: none;
 }
 
 .annotation-import-available-columns > div:hover {
-    filter: brightness(1.1);
+  filter: brightness(1.1);
 }
 
-.annotation-import-available-columns > .annotation-import-available-column-pending {
-    background-color: #d0eaff;
-    border-color: #3399ff;
+.annotation-import-available-columns
+  > .annotation-import-available-column-pending {
+  background-color: #d0eaff;
+  border-color: #3399ff;
 }
 
 .annotation-import-field-mapped {
-    background-color: #e6ffe6;
+  background-color: #e6ffe6;
 }
 
-.annotation-import-available-columns > .annotation-import-available-column-mapped {
-    opacity: 0.4;
+.annotation-import-available-columns
+  > .annotation-import-available-column-mapped {
+  opacity: 0.4;
 }
 
 .annotation-import-field-missing {
-    border: 2px solid red;
+  border: 2px solid red;
 }
 
 .annotation-import-fields-container {
-    display: grid;
-    grid-template-columns: auto min-content min-content min-content;
-    white-space: nowrap;
-    /* justify-content: space-between; */
+  display: grid;
+  grid-template-columns: auto min-content min-content min-content;
+  white-space: nowrap;
+  /* justify-content: space-between; */
 }
 
 .annotation-import-fields-container > div {
-    display: contents;
+  display: contents;
 }
 
 .annotation-import-field-mapped-column {
-    white-space: normal;
+  white-space: normal;
 }
 
 .annotation-import-field-link::before {
-  content: '→';
+  content: "→";
 }
 
 .annotation-import-field-property-name {
@@ -62,10 +66,10 @@
 }
 
 .annotation-import-field-array-info {
-    grid-column: 4;
+  grid-column: 4;
 }
 
 .annotation-import-metadata-display {
-    max-height: 100px;
-    overflow-y: scroll;
+  max-height: 100px;
+  overflow-y: scroll;
 }

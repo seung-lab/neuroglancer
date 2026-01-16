@@ -20,6 +20,7 @@ import "#src/ui/screenshot_menu.css";
 import svg_help from "ikonate/icons/help.svg?raw";
 import { throttle } from "lodash-es";
 import { StatusMessage } from "#src/status.js";
+import { ModalDialog } from "#src/ui/modal_dialog.js";
 import { setClipboard } from "#src/util/clipboard.js";
 import type {
   ScreenshotLoadStatistics,
@@ -39,7 +40,6 @@ import {
 } from "#src/util/viewer_resolution_stats.js";
 import { makeCopyButton } from "#src/widget/copy_button.js";
 import { makeIcon } from "#src/widget/icon.js";
-import { ModalDialog } from "#src/ui/modal_dialog.js";
 
 // If DEBUG_ALLOW_MENU_CLOSE is true, the menu can be closed by clicking the close button
 // Usually the user is locked into the screenshot menu until the screenshot is taken or cancelled
@@ -398,9 +398,7 @@ export class ScreenshotDialog extends ModalDialog {
     inputContainer.appendChild(this.createScaleRadioButtons());
 
     const previewContainer = document.createElement("div");
-    previewContainer.classList.add(
-      "neuroglancer-modal-dialog-group-container",
-    );
+    previewContainer.classList.add("neuroglancer-modal-dialog-group-container");
     // previewContainer.classList.add(
     //   "neuroglancer-screenshot-resolution-preview-container",
     // );

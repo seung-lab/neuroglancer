@@ -886,7 +886,7 @@ export const annotationTypeHandlers: Record<
   [AnnotationType.POLYLINE]: {
     icon: "⤤",
     description: "Polyline",
-    spatialProperties: [{  property: "points", array: true }],
+    spatialProperties: [{ property: "points", array: true }],
     toJSON(annotation: PolyLine) {
       return {
         points: annotation.points.map((point) => Array.from(point)),

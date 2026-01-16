@@ -1,20 +1,19 @@
 import "#src/ui/annotation_import_menu.css";
+import type { Annotation, AnnotationSource } from "#src/annotation/index.js";
 import {
-  Annotation,
-  AnnotationSource,
   AnnotationType,
   annotationTypeHandlers,
   annotationTypes,
   restoreAnnotation,
 } from "#src/annotation/index.js";
-import { AnnotationUserLayer } from "#src/layer/annotation/index.js";
+import type { AnnotationUserLayer } from "#src/layer/annotation/index.js";
+import { getLoadState } from "#src/layer/multi_channel_setup.js";
+import type { WatchableValueInterface } from "#src/trackable_value.js";
 import {
   makeDerivedWatchableValue,
   WatchableValue,
-  WatchableValueInterface,
 } from "#src/trackable_value.js";
 import { ModalDialog } from "#src/ui/modal_dialog.js";
-import { getLoadState } from "#src/layer/multi_channel_setup.js";
 import { WatchableMap } from "#src/util/watchable_map.js";
 
 const optionalProperties = ["id", "description", "index"]; //, "relatedSegments"]; //, "type", "properties"];
@@ -108,7 +107,12 @@ export class AnnotationImportDialog extends ModalDialog {
                 return Array(sourceRank)
                   .fill(property)
                   .map((p, i) => {
-                    return { property: p, fullName: `${p}[${i}]`, dimension: i, array: array || false };
+                    return {
+                      property: p,
+                      fullName: `${p}[${i}]`,
+                      dimension: i,
+                      array: array || false,
+                    };
                   });
               })
               .flat(),
@@ -132,9 +136,16 @@ export class AnnotationImportDialog extends ModalDialog {
         header: { value: header },
         derivedProperties: { value: derivedProperties },
       } = this;
-      for (const { property, fullName, array, dimension } of derivedProperties) {
+      for (const {
+        property,
+        fullName,
+        array,
+        dimension,
+      } of derivedProperties) {
         if (array) {
-          const matchingColumns = header.filter((h) => h.match(`${property}\\[\\d+\\]\\[${dimension}\\]`));
+          const matchingColumns = header.filter((h) =>
+            h.match(`${property}\\[\\d+\\]\\[${dimension}\\]`),
+          );
           this.columnMapping.set(fullName, matchingColumns);
         } else {
           if (header.includes(fullName)) {
