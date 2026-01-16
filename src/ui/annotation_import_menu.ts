@@ -314,6 +314,8 @@ export class AnnotationImportDialog extends ModalDialog {
         annotationSource.add(restored);
       }
     }
+
+    this.close();
   }
 
   initializeAnnotationUI() {
