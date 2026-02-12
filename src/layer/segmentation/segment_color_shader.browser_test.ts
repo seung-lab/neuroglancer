@@ -9,6 +9,7 @@ import {
 } from "#src/segmentation_display_state/property_map.js";
 import { vec4 } from "#src/util/geom.js";
 import { Viewer } from "#src/viewer.js";
+import { DataType } from "#src/util/data_type.js";
 
 const setupSegmentationLayer = () => {
   const target = document.createElement("div");
@@ -267,6 +268,79 @@ vec3 segmentColor(vec3 color, bool hasProperties, bool isStated) {
     expectColor(
       segmentationUserLayer.displayState.getShaderSegmentColor(0n)!,
       [0.0, 1.0, 0.0, 0.0],
+    );
+  });
+
+  it("colors by numerical property uint8", () => {
+    const segmentationUserLayer = setupSegmentationLayer();
+    segmentationUserLayer.displayState.segmentPropertyMap.value =
+      new PreprocessedSegmentPropertyMap(
+        new SegmentPropertyMap({
+          inlineProperties: {
+            ids: new BigUint64Array([1n, 2n]),
+            properties: [
+              {
+                id: "prop1",
+                type: "number",
+                dataType: DataType.UINT8,
+                values: new Uint8Array([0, 50]),
+                description: "prop1",
+                bounds: [0, 100],
+              },
+            ],
+          },
+        }),
+      );
+
+      segmentationUserLayer.displayState.fragmentSegmentColor.value = `
+vec3 segmentColor(vec3 color, bool hasProperties, bool isStated) {
+    if (prop("prop1") == 50u) {
+      return vec3(1.0, 0.0, 0.0);
+    }
+    return vec3(0.0, 0.0, 0.0);
+}`;
+    expectColor(
+      segmentationUserLayer.displayState.getShaderSegmentColor(1n)!,
+      [0.0, 0.0, 0.0, 0.0],
+    );
+    expectColor(
+      segmentationUserLayer.displayState.getShaderSegmentColor(2n)!,
+      [1.0, 0.0, 0.0, 0.0],
+    );
+  });
+
+  it("colors by numerical property float", () => {
+    const segmentationUserLayer = setupSegmentationLayer();
+    segmentationUserLayer.displayState.segmentPropertyMap.value =
+      new PreprocessedSegmentPropertyMap(
+        new SegmentPropertyMap({
+          inlineProperties: {
+            ids: new BigUint64Array([1n, 2n]),
+            properties: [
+              {
+                id: "prop1",
+                type: "number",
+                dataType: DataType.FLOAT32,
+                values: new Float32Array([0, 0.75]),
+                description: "prop1",
+                bounds: [0, 100],
+              },
+            ],
+          },
+        }),
+      );
+
+      segmentationUserLayer.displayState.fragmentSegmentColor.value = `
+vec3 segmentColor(vec3 color, bool hasProperties, bool isStated) {
+  return vec3(prop("prop1"), 0.0, 0.0);
+}`;
+    expectColor(
+      segmentationUserLayer.displayState.getShaderSegmentColor(1n)!,
+      [0.0, 0.0, 0.0, 0.0],
+    );
+    expectColor(
+      segmentationUserLayer.displayState.getShaderSegmentColor(2n)!,
+      [0.75, 0.0, 0.0, 0.0],
     );
   });
 });
