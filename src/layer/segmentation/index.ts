@@ -65,7 +65,7 @@ import {
   SegmentSelectionState,
   Uint64MapEntry,
 } from "#src/segmentation_display_state/frontend.js";
-import type {
+import {
   PreprocessedSegmentPropertyMap,
   SegmentPropertyMap,
 } from "#src/segmentation_display_state/property_map.js";
@@ -551,6 +551,7 @@ class SegmentationUserLayerDisplayState implements SegmentationDisplayState {
         this.fragmentSegmentColor,
         makeCachedLazyDerivedWatchableValue(
           (segmentPropertyMap, isReady) => {
+            // TODO need to add tag properties, string properties
             const properties = new Map<string, DataType>();
             const values = new Map<string, TypedNumberArray<ArrayBuffer>>();
             if (segmentPropertyMap === undefined) {
@@ -569,7 +570,7 @@ class SegmentationUserLayerDisplayState implements SegmentationDisplayState {
               return `numerical${propertyIdx}`; // TEMP extract this from the SegmentationColorUserShaderManager
             };
 
-            return { properties, values, shaderName };
+            return { properties, values, shaderName, segmentPropertyMap };
           },
           this.segmentationGroupState.value.segmentPropertyMap,
           this.layer.isReadyWatchable,

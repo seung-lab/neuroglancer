@@ -76,7 +76,8 @@ export interface SliceViewSegmentationDisplayState
 }
 
 interface ShaderParameters {
-  segmentColorState: SegmentationColorUserShaderManagerParameters;
+  segmentColorParameters: SegmentationColorUserShaderManagerParameters;
+  segmentColorProperties: Set<string>;
   hasEquivalences: boolean;
   baseSegmentColoring: boolean;
   baseSegmentHighlighting: boolean;
@@ -85,7 +86,7 @@ interface ShaderParameters {
   // hasSegmentDefaultColor: boolean;
   hasHighlightColor: boolean;
   shaderBuilderState: ShaderControlsBuilderState;
-  usedProperties: Set<string>;
+  // usedProperties: Set<string>;
   // segmentProperties: PreprocessedSegmentPropertyMap | undefined;
 }
 
@@ -109,24 +110,33 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
   ) {
     super(multiscaleSource, {
       encodeShaderParameters: (p) => {
-        const { shaderBuilderState, ...rest } = p;
+        const { shaderBuilderState, segmentColorProperties, ...rest } = p;
         const {
           parseResult: { code },
-          referencedProperties,
+          // referencedProperties,
         } = shaderBuilderState;
+        // TODO, should only need one list of properties
         return {
           shaderBuilderStateCode: code,
-          shaderBuilderStateReferencedProperties: referencedProperties,
+          // referencedProperties,
+          segmentColorProperties: [...segmentColorProperties],
           ...rest,
         };
       },
       shaderError: displayState.shaderError,
       shaderParameters: new AggregateWatchableValue((refCounted) => ({
-        usedProperties: displayState.segmentationColorUserShader.usedProperties,
-        segmentColorState:
+        segmentColorParameters:
           displayState.segmentationColorUserShader.shaderParameters,
+        segmentColorProperties:
+          displayState.segmentationColorUserShader.usedProperties,
         shaderBuilderState:
           displayState.segmentColorShaderControlState.builderState,
+
+        // usedProperties: displayState.segmentationColorUserShader.usedProperties,
+        // segmentColorState:
+        //   displayState.segmentationColorUserShader.shaderParameters,
+        // shaderBuilderState:
+        //   displayState.segmentColorShaderControlState.builderState,
         hasEquivalences: refCounted.registerDisposer(
           makeCachedDerivedWatchableValue(
             (x) => x.size !== 0,
@@ -316,6 +326,7 @@ uint64_t getMappedObjectId(uint64_t value) {
     shader: ShaderProgram,
     parameters: ShaderParameters,
   ) {
+    console.log("initialize shader");
     const { gl } = this;
     const { displayState, segmentationGroupState } = this;
     const {

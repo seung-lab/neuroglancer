@@ -45,6 +45,7 @@ import type { ShaderBuilder, ShaderProgram } from "#src/webgl/shader.js";
 import { glsl_hsvToRgb, glsl_uint64 } from "#src/webgl/shader_lib.js";
 import type {
   Controls,
+  SegmentPropertyReference,
   ShaderControlParseError,
 } from "#src/webgl/shader_ui_controls.js";
 import {
@@ -74,6 +75,7 @@ export class SegmentColorShaderManager {
       : builder.addVertexCode.bind(builder);
     const { seedName } = this;
     builder.addUniform("highp uint", seedName);
+    console.log("defining segment color shader with seed name", seedName);
     addCode(glsl_uint64);
     addCode(glsl_hashCombine);
     addCode(glsl_hsvToRgb);
@@ -283,25 +285,22 @@ export class SegmentColorUserShaderManager extends RefCounted {
     // TODO, I can make this lazy if we use this value to trigger defineShader
     this.usedProperties = this.registerDisposer(
       makeCachedLazyDerivedWatchableValue(
-        ({ referencedProperties }, { code }, segmentPropertyMap) => {
-          // console.log("updating usedProperties", this.debugId);
-          const tagRegex = /tag\("([^()]+)"\)/g;
-          const numericRegex = /prop\("([^()]+)"\)/g;
-          const stringRegex = /stringPropertyEquals\("([^()]+)", "([^()]+)"\)/g;
-          const tagPropertyNames = new Set(
-            code.matchAll(tagRegex).map((m) => m[1]),
-          );
-          const numericPropertyNames = new Set([
-            ...referencedProperties,
-            ...code.matchAll(numericRegex).map((m) => m[1]),
-          ]);
-          const stringPropertyNames = new Set(
-            code.matchAll(stringRegex).map((m) => m[1]),
-          );
+        ({ segmentProperties, referencedProperties }, { code }, segmentPropertyMap) => {
+
+          // TEMP
+          {
+            if (referencedProperties.length && segmentPropertyMap) {
+              segmentProperties = segmentProperties ?? [];
+              segmentProperties.push(...referencedProperties.map((x) => {
+                const index = segmentPropertyMap.numericalProperties.findIndex((p) => p.id === x);
+                return { type: "numerical", id: index } satisfies SegmentPropertyReference;
+              }));
+            }
+          }
+
+
           const shaderUsesProperties =
-            tagPropertyNames.size > 0 ||
-            numericPropertyNames.size > 0 ||
-            stringPropertyNames.size > 0;
+            segmentProperties !== undefined && segmentProperties.length > 0;
           for (const [_, data] of this.segmentPropertyShaderData) {
             data.stale = true;
           }
@@ -335,68 +334,14 @@ export class SegmentColorUserShaderManager extends RefCounted {
               }
             }
             if (shaderUsesProperties) {
-              for (const tag of tagPropertyNames) {
-                const shaderIdentifier = this.tagPropertyToShaderData(
-                  tag,
-                  segmentPropertyMap,
-                );
-                if (shaderIdentifier) {
-                  code = code.replaceAll(
-                    `tag("${tag}")`,
-                    `${shaderIdentifier} == 1u`,
-                  );
-                } else {
-                  addErrorIfNotFound({
-                    message: `Tag "${tag}" not found in segment properties.`,
-                    line: 0,
-                  });
-                  code = code.replaceAll(`tag("${tag}")`, `false`);
+              for (const prop of segmentProperties!) { // ! only needed due to temp code above
+                if (prop.type === "tag") {
+                  this.tagPropertyToShaderData(prop.id, segmentPropertyMap);
+                } else if (prop.type === "numerical") {
+                  this.numericPropertyToShaderData(prop.id, segmentPropertyMap);
+                } else if (prop.type === "string") {
+                  this.stringPropertyToShaderData(prop.id, segmentPropertyMap);
                 }
-              }
-              for (const propName of numericPropertyNames) {
-                const shaderIdentifier = this.numericPropertyToShaderData(
-                  propName,
-                  segmentPropertyMap,
-                );
-                if (shaderIdentifier) {
-                  code = code.replaceAll(
-                    `prop("${propName}")`,
-                    shaderIdentifier,
-                  );
-                } else {
-                  addErrorIfNotFound({
-                    message: `Numeric property "${propName}" not found in segment properties.`,
-                    line: 0,
-                  });
-                  code = code.replaceAll(`prop("${propName}")`, `0`);
-                }
-              }
-              for (const string of stringPropertyNames) {
-                const res = this.stringPropertyToShaderData(
-                  string,
-                  segmentPropertyMap,
-                );
-                if (res) {
-                  const { shaderIdentifier, stringToIndex } = res;
-                  for (const [val, idx] of Object.entries(stringToIndex)) {
-                    const codeToReplace = `stringPropertyEquals("${string}", "${val}")`;
-                    code = code.replaceAll(
-                      codeToReplace,
-                      `(${shaderIdentifier} == ${idx}u)`,
-                    );
-                  }
-                } else {
-                  addErrorIfNotFound({
-                    message: `String property "${string}" not found in segment properties.`,
-                    line: 0,
-                  });
-                }
-                // replace comparisons that have invalid string property identifiers or values with false
-                const pattern = new RegExp(
-                  String.raw`stringPropertyEquals\("${string}", "[^()]+"\)`,
-                  "g",
-                );
-                code = code.replaceAll(pattern, "false");
               }
             }
           }
@@ -429,10 +374,6 @@ export class SegmentColorUserShaderManager extends RefCounted {
         // (a, b) => a.size === b.size && a.isSubsetOf(b), // cache equality check
       ),
     );
-
-    this.usedProperties.changed.add(() => {
-      // console.log("this.usedProperties changed", this.usedProperties.value);
-    });
   }
 
   private updateShaderData(
@@ -451,14 +392,12 @@ export class SegmentColorUserShaderManager extends RefCounted {
   }
 
   private stringPropertyToShaderData(
-    identifier: string,
+    index: number,
     segmentPropertyMap: PreprocessedSegmentPropertyMap,
   ) {
     const { strings } = segmentPropertyMap;
-    const propertyIdx = strings.findIndex((p) => p.id === identifier);
-    if (propertyIdx === -1) return; // TODO should we output an error to the user?
-    const property = strings[propertyIdx];
-    const propertyShaderIdentifier = `string${propertyIdx}`;
+    const property = strings[index];
+    const propertyShaderIdentifier = `string${index}`;
     const stringToIndex = Object.fromEntries(
       [...new Set(property.values)].map((s, i) => [s, i]),
     );
@@ -474,16 +413,14 @@ export class SegmentColorUserShaderManager extends RefCounted {
   }
 
   private tagPropertyToShaderData(
-    tag: string,
+    id: number,
     segmentPropertyMap: PreprocessedSegmentPropertyMap,
   ) {
     const { tags } = segmentPropertyMap;
     if (!tags) return;
     const { values } = tags;
-    const tagIdx = tags.tags.indexOf(tag);
-    if (tagIdx === -1) return; // TODO should we output an error to the user?
-    const propertyShaderIdentifier = `tag${tagIdx}`;
-    const codeUnit = String.fromCharCode(tagIdx);
+    const propertyShaderIdentifier = `tag${id}`;
+    const codeUnit = String.fromCharCode(id);
     const valuesForTag = values.map((x) => (x.includes(codeUnit) ? 1 : 0));
     this.updateShaderData(
       propertyShaderIdentifier,
@@ -494,16 +431,12 @@ export class SegmentColorUserShaderManager extends RefCounted {
   }
 
   private numericPropertyToShaderData(
-    identifier: string,
+    index: number,
     segmentPropertyMap: PreprocessedSegmentPropertyMap,
   ) {
     const { numericalProperties } = segmentPropertyMap;
-    const propertyIdx = numericalProperties.findIndex(
-      (p) => p.id === identifier,
-    );
-    if (propertyIdx === -1) return; // TODO should we output an error to the user?
-    const property = numericalProperties[propertyIdx];
-    const propertyShaderIdentifier = `numerical${propertyIdx}`;
+    const property = numericalProperties[index];
+    const propertyShaderIdentifier = `numerical${index}`;
     this.updateShaderData(
       propertyShaderIdentifier,
       property.values,
@@ -577,7 +510,7 @@ export class SegmentColorUserShaderManager extends RefCounted {
           ),
         );
         addCode(
-          `highp ${getShaderOutputType(dataType)} ${identifier};`,
+          `highp ${getShaderOutputType(dataType)} ${identifier};\n`,
           /*beginning=*/ true,
         );
       }
@@ -691,8 +624,10 @@ ${
     );
     for (const [identifier, { texture }] of this.segmentPropertyShaderData) {
       const textureUnit = shader.textureUnit(Symbol.for(identifier));
-      gl.activeTexture(WebGL2RenderingContext.TEXTURE0 + textureUnit);
-      gl.bindTexture(WebGL2RenderingContext.TEXTURE_2D, texture);
+      if (textureUnit) {
+        gl.activeTexture(WebGL2RenderingContext.TEXTURE0 + textureUnit);
+        gl.bindTexture(WebGL2RenderingContext.TEXTURE_2D, texture);
+      }
     }
     if (hasSegmentStatedColors) {
       const segmentStatedColors = displayState.useTempSegmentStatedColors2d

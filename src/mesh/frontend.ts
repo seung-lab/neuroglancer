@@ -184,7 +184,7 @@ function getFloatPositionHandler(
     defineShader: (builder: ShaderBuilder) => {
       builder.addAttribute("highp vec3", "aVertexPosition");
       builder.addVertexCode(
-        "highp vec3 getVertexPosition() { return aVertexPosition; }",
+        "highp vec3 getVertexPosition() { return aVertexPosition; }\n",
       );
     },
     bind(

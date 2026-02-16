@@ -43,6 +43,7 @@ import { propertyInvlerpLayerControl } from "#src/widget/layer_control_property_
 import { rangeLayerControl } from "#src/widget/layer_control_range.js";
 import { Tab } from "#src/widget/tab_view.js";
 import { transferFunctionLayerControl } from "#src/widget/transfer_function.js";
+import { propertyLayerControl } from "#src/widget/layer_control_property.js";
 
 export interface LegendShaderOptions
   extends ParameterizedEmitterDependentShaderOptions {
@@ -60,6 +61,7 @@ function getShaderLayerControlFactory<LayerType extends UserLayer>(
   controlId: string,
 ): LayerControlFactory<LayerType> | undefined {
   const { shaderControlState } = layerShaderControls;
+  console.log("get control state");
   const controlState = shaderControlState.state.get(controlId);
   if (controlState === undefined) return undefined;
   const { control } = controlState;
@@ -104,6 +106,16 @@ function getShaderLayerControlFactory<LayerType extends UserLayer>(
         defaultChannel: control.default.channel,
         histogramSpecifications: shaderControlState.histogramSpecifications,
         histogramIndex: calculateHistogramIndex(),
+      }));
+    }
+    case "property": {
+      return propertyLayerControl(() => ({
+        segmentProperties: control.segmentProperties,
+        // values: control.values,
+        watchableValue: controlState.trackable,
+        // histogramSpecifications: shaderControlState.histogramSpecifications,
+        // histogramIndex: calculateHistogramIndex(),
+        // legendShaderOptions: layerShaderControls.legendShaderOptions,
       }));
     }
   }

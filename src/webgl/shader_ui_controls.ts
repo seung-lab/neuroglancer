@@ -15,6 +15,7 @@
  */
 
 import type { CoordinateSpaceCombiner } from "#src/coordinate_transform.js";
+import { PreprocessedSegmentPropertyMap } from "#src/segmentation_display_state/property_map.js";
 import { TrackableBoolean } from "#src/trackable_boolean.js";
 import type {
   TrackableValueInterface,
@@ -120,13 +121,29 @@ export interface ShaderTransferFunctionControl {
   default: TransferFunctionParameters;
 }
 
+export interface AvailableSegmentProperties {
+  tags: string[];
+  numericalProperties: string[];
+  stringProperties: string[];
+}
+
+export interface ShaderPropertyControl {
+  type: "property";
+  //properties: PropertiesSpecification;
+  // values?: Map<string, TypedNumberArray<ArrayBuffer>>;
+  // shaderName: (arg0: string) => string;
+  segmentProperties: AvailableSegmentProperties;
+  default?: SegmentPropertyReference;
+}
+
 export type ShaderUiControl =
   | ShaderSliderControl
   | ShaderColorControl
   | ShaderImageInvlerpControl
   | ShaderPropertyInvlerpControl
   | ShaderCheckboxControl
-  | ShaderTransferFunctionControl;
+  | ShaderTransferFunctionControl
+  | ShaderPropertyControl;
 
 export interface ShaderControlParseError {
   line: number;
@@ -147,6 +164,7 @@ export interface ShaderControlsBuilderState {
   parseResult: ShaderControlsParseResult;
   builderValues: ShaderBuilderValues;
   referencedProperties: string[];
+  segmentProperties?: SegmentPropertyReference[];
 }
 
 // Strips comments from GLSL code.  Also handles string literals since they are used in ui control
@@ -451,6 +469,55 @@ function parseInvlerpDirective(
   return { errors };
 }
 
+function parsePropertyDirective(
+  valueType: string,
+  parameters: DirectiveParameters,
+  dataContext: ShaderDataContext,
+): DirectiveParseResult {
+  const { segmentPropertyMap } = dataContext;
+  valueType;
+  parameters;
+  dataContext;
+  console.log("pp3 valueType", valueType);
+  console.log("pp3 parameters", parameters);
+  console.log("pp3 dataContext", dataContext);
+
+  if (!segmentPropertyMap) {
+    // TODO or use empty map (empty dropdown)
+    return { errors: [] };
+  }
+
+  const type = parameters.get("type");
+
+  const segmentProperties = {
+    tags:
+      segmentPropertyMap.tags?.tags.filter(
+        (_) => type === undefined || type === "tag",
+      ) || [],
+    numericalProperties:
+      segmentPropertyMap.numericalProperties
+        .filter((_) => type === undefined || type === "number")
+        .map((x) => x.id) || [],
+    stringProperties:
+      segmentPropertyMap.strings
+        .filter((_) => type === undefined || type === "string")
+        .map((x) => x.id) || [],
+  };
+
+  return {
+    control: {
+      type: "property",
+      // clamp,
+      // properties,
+      // values,
+      // shaderName,
+      segmentProperties,
+      default: { type: "tag", id: 0 }, // TODO
+    } satisfies ShaderPropertyControl,
+    errors: undefined,
+  };
+}
+
 function parseImageInvlerpDirective(
   valueType: string,
   parameters: DirectiveParameters,
@@ -687,6 +754,7 @@ export interface ShaderDataContext {
   properties?: Map<string, DataType>;
   values?: Map<string, TypedNumberArray<ArrayBuffer>>;
   shaderName?: (arg0: string) => string;
+  segmentPropertyMap?: PreprocessedSegmentPropertyMap;
 }
 
 const controlParsers = new Map<
@@ -702,12 +770,14 @@ const controlParsers = new Map<
   ["invlerp", parseInvlerpDirective],
   ["checkbox", parseCheckboxDirective],
   ["transferFunction", parseTransferFunctionDirective],
+  ["property", parsePropertyDirective],
 ]);
 
 export function parseShaderUiControls(
   code: string,
   dataContext: ShaderDataContext = {},
 ): ShaderControlsParseResult {
+  console.log("Parsing shader UI controls");
   code = stripComments(code);
   // Matches any #uicontrols directive.  Syntax errors in the directive are handled later.
   const directivePattern = /^[ \t]*#[ \t]*uicontrol[ \t]+(.*)$/gm;
@@ -764,6 +834,7 @@ export function parseShaderUiControls(
         return "";
       }
       controls.set(variableName, result.control);
+      console.log("Parsed control", variableName, result.control);
       return "";
     },
   );
@@ -840,6 +911,14 @@ float ${uName}() {
             builderValue.channel,
           ),
         );
+        break;
+      }
+      case "property": {
+        if (builderValue) {
+          const { type, id } = builderValue;
+          const code = `#define ${name} ${type}${id}\n`;
+          addCode(code);
+        }
         break;
       }
       default: {
@@ -1222,6 +1301,11 @@ export class TrackableTransferFunctionParameters extends TrackableValue<Transfer
   }
 }
 
+export interface SegmentPropertyReference {
+  type: "tag" | "numerical" | "string";
+  id: number;
+}
+
 function getControlTrackable(control: ShaderUiControl): {
   trackable: TrackableValueInterface<any>;
   getBuilderValue: (value: any) => any;
@@ -1289,6 +1373,18 @@ function getControlTrackable(control: ShaderUiControl): {
           channel: value.channel,
           dataType: control.dataType,
         }),
+      };
+    case "property":
+      return {
+        trackable: new TrackableValue<SegmentPropertyReference | undefined>(
+          control.default,
+          (x) => {
+            console.log("trackable property value", x);
+            // return verifyInt(1);
+            return x;
+          },
+        ),
+        getBuilderValue: (x: SegmentPropertyReference) => x,
       };
   }
 }
@@ -1361,6 +1457,7 @@ export class ShaderControlState
     public channelCoordinateSpaceCombiner?: CoordinateSpaceCombiner | undefined,
   ) {
     super();
+    console.log("Creating ShaderControlState", dataContext);
     this.registerDisposer(
       fragmentMain.changed.add(() => this.handleFragmentMainChanged()),
     );
@@ -1396,11 +1493,18 @@ export class ShaderControlState
       (parseResult: ShaderControlsParseResult, state: ShaderControlMap) => {
         const builderValues: ShaderBuilderValues = {};
         const referencedProperties = [];
+        const segmentProperties: SegmentPropertyReference[] = [];
         for (const [key, { control, trackable, getBuilderValue }] of state) {
           const builderValue = getBuilderValue(trackable.value);
           builderValues[key] = builderValue;
           if (control.type === "propertyInvlerp") {
+            console.log("foobp pushing", builderValue);
             referencedProperties.push(builderValue.property);
+          }
+          if (control.type === "property") {
+            console.log("PROPERTY CONTROL BUILDER VALUE 2222", builderValue);
+            // referencedProperties.push(builderValue);
+            segmentProperties.push(builderValue);
           }
         }
         return {
@@ -1408,6 +1512,7 @@ export class ShaderControlState
           parseResult,
           builderValues,
           referencedProperties,
+          segmentProperties,
         };
       },
       [this.parseResult, this],
@@ -1537,8 +1642,16 @@ export class ShaderControlState
       }
       if (controlState === undefined) {
         const { trackable, getBuilderValue } = getControlTrackable(control);
+        console.log("new control state", name, control, trackable);
         controlState = { control, trackable, getBuilderValue };
         controlState.trackable.changed.add(this.changed.dispatch);
+        controlState.trackable.changed.add(() => {
+          console.log(
+            "control value changed",
+            name,
+            controlState!.trackable.value,
+          );
+        });
         state_.set(name, controlState);
         changed = true;
       }
@@ -1641,6 +1754,7 @@ function setControlInShader(
 ) {
   const uName = uniformName(name);
   const uniform = shader.uniform(uName);
+
   switch (control.type) {
     case "slider":
       switch (control.valueType) {
@@ -1678,6 +1792,10 @@ function setControlInShader(
         control.dataType,
         value.sortedControlPoints,
       );
+      break;
+    case "property":
+      // TODO, do I need to do anything here or just add the correct define?
+      break;
   }
 }
 

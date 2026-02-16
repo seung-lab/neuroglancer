@@ -248,8 +248,8 @@ export class ShaderProgram extends RefCounted {
     return this.attributes.get(name)!;
   }
 
-  textureUnit(symbol: symbol | string): number {
-    return this.textureUnits.get(symbol)!;
+  textureUnit(symbol: symbol | string): number | undefined {
+    return this.textureUnits.get(symbol);
   }
 
   bind() {
