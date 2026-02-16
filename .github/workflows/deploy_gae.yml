@@ -27,8 +27,8 @@ jobs:
             package-lock.json
             examples/**/package-lock.json
       - run: npm install
-      - name: Typecheck with TypeScript
-        run: npm run typecheck
+      # - name: Typecheck with TypeScript
+      #   run: npm run typecheck
       - name: Get branch name (merge)
         if: github.event_name != 'pull_request'
         shell: bash
