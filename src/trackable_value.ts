@@ -54,10 +54,10 @@ export class TrackableValue<T> extends WatchableValue<T> implements Trackable {
     super(value);
   }
   toJSON(): any {
-    const { value_ } = this;
-    if (value_ === this.defaultValue) {
-      return undefined;
-    }
+    // const { value_ } = this;
+    // if (value_ === this.defaultValue) {
+    //   return undefined;
+    // }
     return this.value_;
   }
   reset() {

@@ -123,7 +123,7 @@ export interface ShaderTransferFunctionControl {
 
 export interface AvailableSegmentProperties {
   tags: string[];
-  numericalProperties: string[];
+  numericalProperties: Map<string, DataType>;
   stringProperties: string[];
 }
 
@@ -131,7 +131,6 @@ export interface ShaderPropertyControl {
   type: "property";
   //properties: PropertiesSpecification;
   // values?: Map<string, TypedNumberArray<ArrayBuffer>>;
-  // shaderName: (arg0: string) => string;
   segmentProperties: AvailableSegmentProperties;
   default?: SegmentPropertyReference;
 }
@@ -163,7 +162,7 @@ export interface ShaderControlsBuilderState {
   key: string;
   parseResult: ShaderControlsParseResult;
   builderValues: ShaderBuilderValues;
-  referencedProperties: string[];
+  // referencedProperties: string[];
   segmentProperties?: SegmentPropertyReference[];
 }
 
@@ -475,9 +474,6 @@ function parsePropertyDirective(
   dataContext: ShaderDataContext,
 ): DirectiveParseResult {
   const { segmentPropertyMap } = dataContext;
-  valueType;
-  parameters;
-  dataContext;
   console.log("pp3 valueType", valueType);
   console.log("pp3 parameters", parameters);
   console.log("pp3 dataContext", dataContext);
@@ -494,10 +490,11 @@ function parsePropertyDirective(
       segmentPropertyMap.tags?.tags.filter(
         (_) => type === undefined || type === "tag",
       ) || [],
-    numericalProperties:
+    numericalProperties: new Map(
       segmentPropertyMap.numericalProperties
         .filter((_) => type === undefined || type === "number")
-        .map((x) => x.id) || [],
+        .map((x) => [x.id, x.dataType]),
+    ),
     stringProperties:
       segmentPropertyMap.strings
         .filter((_) => type === undefined || type === "string")
@@ -512,7 +509,7 @@ function parsePropertyDirective(
       // values,
       // shaderName,
       segmentProperties,
-      default: { type: "tag", id: 0 }, // TODO
+      // default: { type: "tag", id: 0 }, // TODO
     } satisfies ShaderPropertyControl,
     errors: undefined,
   };
@@ -896,6 +893,14 @@ float ${uName}() {
         addCode(`#define ${name} ${uName}\n`);
         break;
       }
+      case "property": {
+        if (builderValue) {
+          const { type, id } = builderValue;
+          const code = `#define ${name} ${type}${id}\n`;
+          addCode(code);
+        }
+        break;
+      }
       case "checkbox": {
         const code = `#define ${name} ${builderValue.value}\n`;
         addCode(code);
@@ -911,14 +916,6 @@ float ${uName}() {
             builderValue.channel,
           ),
         );
-        break;
-      }
-      case "property": {
-        if (builderValue) {
-          const { type, id } = builderValue;
-          const code = `#define ${name} ${type}${id}\n`;
-          addCode(code);
-        }
         break;
       }
       default: {
@@ -1303,7 +1300,7 @@ export class TrackableTransferFunctionParameters extends TrackableValue<Transfer
 
 export interface SegmentPropertyReference {
   type: "tag" | "numerical" | "string";
-  id: number;
+  id: string;
 }
 
 function getControlTrackable(control: ShaderUiControl): {
@@ -1358,6 +1355,33 @@ function getControlTrackable(control: ShaderUiControl): {
           dataType: value.dataType,
         }),
       };
+    case "property":
+      return {
+        trackable: new TrackableValue<SegmentPropertyReference | undefined>(
+          control.default,
+          (x) => x,
+        ),
+        getBuilderValue: (x: SegmentPropertyReference) => {
+          const getIndex = () => {
+            switch (x.type) {
+              case "numerical": {
+                return [
+                  ...control.segmentProperties.numericalProperties.keys(),
+                ].indexOf(x.id);
+              }
+              case "string": {
+                return control.segmentProperties.stringProperties.indexOf(x.id);
+              }
+              case "tag": {
+                return control.segmentProperties.tags.indexOf(x.id);
+              }
+              default:
+                throw new Error(`Invalid property reference type: ${x.type}`);
+            }
+          };
+          return { type: x.type, id: getIndex() };
+        },
+      };
     case "checkbox":
       return {
         trackable: new TrackableBoolean(control.default),
@@ -1373,18 +1397,6 @@ function getControlTrackable(control: ShaderUiControl): {
           channel: value.channel,
           dataType: control.dataType,
         }),
-      };
-    case "property":
-      return {
-        trackable: new TrackableValue<SegmentPropertyReference | undefined>(
-          control.default,
-          (x) => {
-            console.log("trackable property value", x);
-            // return verifyInt(1);
-            return x;
-          },
-        ),
-        getBuilderValue: (x: SegmentPropertyReference) => x,
       };
   }
 }
@@ -1425,7 +1437,7 @@ export function getFallbackBuilderState(
     builderValues,
     parseResult,
     key: encodeBuilderStateKey(builderValues, parseResult),
-    referencedProperties,
+    // referencedProperties,
   };
 }
 
@@ -1492,26 +1504,30 @@ export class ShaderControlState
     this.builderState = makeCachedDerivedWatchableValue(
       (parseResult: ShaderControlsParseResult, state: ShaderControlMap) => {
         const builderValues: ShaderBuilderValues = {};
-        const referencedProperties = [];
+        // const referencedProperties = [];
         const segmentProperties: SegmentPropertyReference[] = [];
         for (const [key, { control, trackable, getBuilderValue }] of state) {
           const builderValue = getBuilderValue(trackable.value);
           builderValues[key] = builderValue;
           if (control.type === "propertyInvlerp") {
             console.log("foobp pushing", builderValue);
-            referencedProperties.push(builderValue.property);
+            segmentProperties.push({
+              type: "numerical",
+              id: builderValue.property,
+            });
           }
           if (control.type === "property") {
             console.log("PROPERTY CONTROL BUILDER VALUE 2222", builderValue);
             // referencedProperties.push(builderValue);
-            segmentProperties.push(builderValue);
+            const { type, id } = trackable.value as SegmentPropertyReference;
+            segmentProperties.push({ type, id });
           }
         }
         return {
           key: encodeBuilderStateKey(builderValues, parseResult),
           parseResult,
           builderValues,
-          referencedProperties,
+          // referencedProperties,w
           segmentProperties,
         };
       },

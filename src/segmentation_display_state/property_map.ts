@@ -209,6 +209,21 @@ export class PreprocessedSegmentPropertyMap {
     this.strings = (inlineProperties?.properties.filter(
       (p) => p.type === "string",
     ) ?? []) as InlineSegmentStringProperty[];
+
+    // DEBUG: inject synthetic string properties for testing
+    if (inlineProperties !== undefined && this.strings.length === 0) {
+      const numIds = inlineProperties.ids.length;
+      const categories = ["neuron", "glia", "synapse", "unknown"];
+      this.strings = [
+        {
+          id: "debug_category",
+          type: "string",
+          description: "Debug injected string property",
+          values: Array.from({ length: numIds }, (_, i) => categories[i % categories.length]),
+        },
+      ];
+      console.log(`[DEBUG] Injected string property 'debug_category' with ${numIds} values`);
+    }
   }
 
   getSegmentLabel(id: bigint): string | undefined {

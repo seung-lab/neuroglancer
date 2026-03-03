@@ -17,6 +17,7 @@
 import type { UserLayer } from "#src/layer/index.js";
 import { PreprocessedSegmentPropertyMap } from "#src/segmentation_display_state/property_map.js";
 import { WatchableValueInterface } from "#src/trackable_value.js";
+import { DataType } from "#src/util/data_type.js";
 import { RefCounted } from "#src/util/disposable.js";
 import { AvailableSegmentProperties, SegmentPropertyReference } from "#src/webgl/shader_ui_controls.js";
 // import type { WatchableValueInterface } from "#src/trackable_value.js";
@@ -42,25 +43,32 @@ export class DropdownWidget extends RefCounted {
     const { element } = this;
     element.classList.add("neuroglancer-dropdown-widget");
 
-    const maybeAddGroup = (type: string, values: string[]) => {
+    const maybeAddGroup = (type: string, values: string[]|[string, DataType][]) => {
       if (values.length) {
         const optGroup = document.createElement("optgroup");
         optGroup.label = `${type} properties`;
         element.appendChild(optGroup);
-        for (const [idx, value] of values.entries()) {
+        for (const value of values) {
           const option = document.createElement("option");
-          option.value = `${type}_${idx}`;
-          option.textContent = value;
-          if (model.value?.type === type && model.value.id === idx) {
+
+
+          const [identifier, dataType] = typeof value === "string" ? [value, undefined] : value;
+   
+          option.value = `${type}_${identifier}`;
+          option.textContent = dataType ? `${identifier} (${DataType[
+            dataType
+          ].toLowerCase()})` : identifier;
+
+          if (model.value?.type === type && model.value.id === identifier) {
             option.selected = true;
           }
           optGroup.appendChild(option);
         }
       }
-    }
+    };
 
     maybeAddGroup("tag", segmentProperties.tags);
-    maybeAddGroup("numerical", segmentProperties.numericalProperties);
+    maybeAddGroup("numerical", [...segmentProperties.numericalProperties]);
     maybeAddGroup("string", segmentProperties.stringProperties);
 
     element.addEventListener("change", () => this.updateModel());
@@ -72,7 +80,7 @@ export class DropdownWidget extends RefCounted {
       const separatorIndex = value.indexOf("_");
       if (separatorIndex > 0) {
         const type = value.slice(0, separatorIndex);
-        const id = parseInt(value.slice(separatorIndex + 1));
+        const id = value.slice(separatorIndex + 1);
         if (type == "tag" || type == "numerical" || type == "string") {
           this.model.value = {type, id};
           return;

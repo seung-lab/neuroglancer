@@ -285,18 +285,18 @@ export class SegmentColorUserShaderManager extends RefCounted {
     // TODO, I can make this lazy if we use this value to trigger defineShader
     this.usedProperties = this.registerDisposer(
       makeCachedLazyDerivedWatchableValue(
-        ({ segmentProperties, referencedProperties }, { code }, segmentPropertyMap) => {
+        ({ segmentProperties }, { code }, segmentPropertyMap) => {
 
           // TEMP
-          {
-            if (referencedProperties.length && segmentPropertyMap) {
-              segmentProperties = segmentProperties ?? [];
-              segmentProperties.push(...referencedProperties.map((x) => {
-                const index = segmentPropertyMap.numericalProperties.findIndex((p) => p.id === x);
-                return { type: "numerical", id: index } satisfies SegmentPropertyReference;
-              }));
-            }
-          }
+          // {
+          //   if (referencedProperties.length && segmentPropertyMap) {
+          //     segmentProperties = segmentProperties ?? [];
+          //     segmentProperties.push(...referencedProperties.map((x) => {
+          //       const index = segmentPropertyMap.numericalProperties.findIndex((p) => p.id === x);
+          //       return { type: "numerical", id: index } satisfies SegmentPropertyReference;
+          //     }));
+          //   }
+          // }
 
 
           const shaderUsesProperties =
@@ -391,11 +391,50 @@ export class SegmentColorUserShaderManager extends RefCounted {
     }
   }
 
-  private stringPropertyToShaderData(
-    index: number,
+  private tagPropertyToShaderData(
+    id: string,
+    segmentPropertyMap: PreprocessedSegmentPropertyMap,
+  ) {
+    const { tags } = segmentPropertyMap;
+    if (!tags) return;
+    const index = tags.tags.indexOf(id);
+    if (index === -1) return;
+    const { values } = tags;
+    const propertyShaderIdentifier = `tag${index}`;
+    const codeUnit = String.fromCharCode(index);
+    const valuesForTag = values.map((x) => (x.includes(codeUnit) ? 1 : 0));
+    this.updateShaderData(
+      propertyShaderIdentifier,
+      new Uint8Array(valuesForTag),
+      DataType.UINT8,
+    );
+    return propertyShaderIdentifier;
+  }
+
+  private numericPropertyToShaderData(
+    id: string,
+    segmentPropertyMap: PreprocessedSegmentPropertyMap,
+  ) {
+    const { numericalProperties } = segmentPropertyMap;
+    const index = numericalProperties.findIndex((p) => p.id === id);
+    if (index === -1) return;
+    const property = numericalProperties[index];
+    const propertyShaderIdentifier = `numerical${index}`;
+    this.updateShaderData(
+      propertyShaderIdentifier,
+      property.values,
+      property.dataType,
+    );
+    return propertyShaderIdentifier;
+  }
+
+    private stringPropertyToShaderData(
+    id: string,
     segmentPropertyMap: PreprocessedSegmentPropertyMap,
   ) {
     const { strings } = segmentPropertyMap;
+    const index = strings.findIndex((p) => p.id === id);
+    if (index === -1) return;
     const property = strings[index];
     const propertyShaderIdentifier = `string${index}`;
     const stringToIndex = Object.fromEntries(
@@ -410,39 +449,6 @@ export class SegmentColorUserShaderManager extends RefCounted {
       shaderIdentifier: propertyShaderIdentifier,
       stringToIndex,
     };
-  }
-
-  private tagPropertyToShaderData(
-    id: number,
-    segmentPropertyMap: PreprocessedSegmentPropertyMap,
-  ) {
-    const { tags } = segmentPropertyMap;
-    if (!tags) return;
-    const { values } = tags;
-    const propertyShaderIdentifier = `tag${id}`;
-    const codeUnit = String.fromCharCode(id);
-    const valuesForTag = values.map((x) => (x.includes(codeUnit) ? 1 : 0));
-    this.updateShaderData(
-      propertyShaderIdentifier,
-      new Uint8Array(valuesForTag),
-      DataType.UINT8,
-    );
-    return propertyShaderIdentifier;
-  }
-
-  private numericPropertyToShaderData(
-    index: number,
-    segmentPropertyMap: PreprocessedSegmentPropertyMap,
-  ) {
-    const { numericalProperties } = segmentPropertyMap;
-    const property = numericalProperties[index];
-    const propertyShaderIdentifier = `numerical${index}`;
-    this.updateShaderData(
-      propertyShaderIdentifier,
-      property.values,
-      property.dataType,
-    );
-    return propertyShaderIdentifier;
   }
 
   private getMappedIdColor(builder: ShaderBuilder, fragment: boolean) {

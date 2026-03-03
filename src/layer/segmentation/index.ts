@@ -551,7 +551,6 @@ class SegmentationUserLayerDisplayState implements SegmentationDisplayState {
         this.fragmentSegmentColor,
         makeCachedLazyDerivedWatchableValue(
           (segmentPropertyMap, isReady) => {
-            // TODO need to add tag properties, string properties
             const properties = new Map<string, DataType>();
             const values = new Map<string, TypedNumberArray<ArrayBuffer>>();
             if (segmentPropertyMap === undefined) {
