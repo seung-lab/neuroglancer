@@ -172,7 +172,7 @@ class RenderHelper extends RefCounted {
         // fallbackParameters: this.base.fallbackShaderParameters,
         parameters,
         encodeParameters: (p) => {
-          return `${p.skeletonShaderBuilderState.parseResult.code}/${p.segmentColorShaderBuilderState.parseResult.code}/${JSON.stringify(p.segmentColorParameters)}/${JSON.stringify([...p.segmentColorProperties])}}`;
+          return `${p.skeletonShaderBuilderState.key}/${p.segmentColorShaderBuilderState.key}/${JSON.stringify(p.segmentColorParameters)}/${JSON.stringify([...p.segmentColorProperties])}}}`;
         },
         shaderError:
           this.base.displayState.skeletonRenderingOptions.shaderError,
@@ -249,7 +249,7 @@ void emitDefault() {
         // fallbackParameters: this.base.fallbackShaderParameters,
         parameters,
         encodeParameters: (p) => {
-          return `${p.skeletonShaderBuilderState.parseResult.code}/${p.segmentColorShaderBuilderState.parseResult.code}/${JSON.stringify(p.segmentColorParameters)}/${JSON.stringify([...p.segmentColorProperties])}}`;
+          return `${p.skeletonShaderBuilderState.key}/${p.segmentColorShaderBuilderState.key}/${JSON.stringify(p.segmentColorParameters)}/${JSON.stringify([...p.segmentColorProperties])}}`;
         },
         shaderError:
           this.base.displayState.skeletonRenderingOptions.shaderError,

@@ -380,7 +380,7 @@ export class MeshShaderManager {
       memoizeKey: `mesh/MeshShaderManager/${this.fragmentRelativeVertices}/${this.vertexPositionFormat}`,
       parameters,
       encodeParameters: (p) => {
-        return `${p.shaderBuilderState.parseResult.code}/${JSON.stringify(p.segmentColorParameters)}/${JSON.stringify([...p.segmentColorProperties])}/${p.silhouetteRenderingEnabled}`;
+        return `${p.shaderBuilderState.key}/${JSON.stringify(p.segmentColorParameters)}/${JSON.stringify([...p.segmentColorProperties])}/${p.silhouetteRenderingEnabled}`;
       },
       shaderError: layer.displayState.shaderError,
       defineShader: (builder, { silhouetteRenderingEnabled }) => {

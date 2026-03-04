@@ -124,7 +124,8 @@ export interface ShaderTransferFunctionControl {
 export interface AvailableSegmentProperties {
   tags: string[];
   numericalProperties: Map<string, DataType>;
-  stringProperties: string[];
+  /** Maps string property id to its sorted unique values. */
+  stringProperties: Map<string, string[]>;
 }
 
 export interface ShaderPropertyControl {
@@ -495,10 +496,11 @@ function parsePropertyDirective(
         .filter((_) => type === undefined || type === "number")
         .map((x) => [x.id, x.dataType]),
     ),
-    stringProperties:
+    stringProperties: new Map(
       segmentPropertyMap.strings
         .filter((_) => type === undefined || type === "string")
-        .map((x) => x.id) || [],
+        .map((x) => [x.id, [...new Set(x.values)].sort()]),
+    ),
   };
 
   return {
@@ -895,9 +897,12 @@ float ${uName}() {
       }
       case "property": {
         if (builderValue) {
-          const { type, id } = builderValue;
-          const code = `#define ${name} ${type}${id}\n`;
-          addCode(code);
+          const { shaderId, filterIndex } = builderValue;
+          const glslExpr =
+            filterIndex !== undefined
+              ? `(${shaderId} == ${filterIndex}u ? 1u : 0u)`
+              : shaderId;
+          addCode(`#define ${name} ${glslExpr}\n`);
         }
         break;
       }
@@ -1301,6 +1306,8 @@ export class TrackableTransferFunctionParameters extends TrackableValue<Transfer
 export interface SegmentPropertyReference {
   type: "tag" | "numerical" | "string";
   id: string;
+  /** For string properties: the specific value selected (used for filtering/coloring). */
+  value?: string;
 }
 
 function getControlTrackable(control: ShaderUiControl): {
@@ -1361,25 +1368,38 @@ function getControlTrackable(control: ShaderUiControl): {
           control.default,
           (x) => x,
         ),
-        getBuilderValue: (x: SegmentPropertyReference) => {
-          const getIndex = () => {
+        getBuilderValue: (x: SegmentPropertyReference | undefined) => {
+          if (!x) return undefined;
+          const getShaderId = () => {
             switch (x.type) {
               case "numerical": {
-                return [
+                const idx = [
                   ...control.segmentProperties.numericalProperties.keys(),
                 ].indexOf(x.id);
+                return { type: x.type, shaderId: `numerical${idx}`, filterIndex: undefined };
               }
               case "string": {
-                return control.segmentProperties.stringProperties.indexOf(x.id);
+                const strIdx = [
+                  ...control.segmentProperties.stringProperties.keys(),
+                ].indexOf(x.id);
+                const shaderId = `string${strIdx}`;
+                if (x.value !== undefined) {
+                  const uniqueVals =
+                    control.segmentProperties.stringProperties.get(x.id) ?? [];
+                  const filterIndex = uniqueVals.indexOf(x.value);
+                  return { type: x.type, shaderId, filterIndex: filterIndex < 0 ? undefined : filterIndex };
+                }
+                return { type: x.type, shaderId, filterIndex: undefined };
               }
               case "tag": {
-                return control.segmentProperties.tags.indexOf(x.id);
+                const idx = control.segmentProperties.tags.indexOf(x.id);
+                return { type: x.type, shaderId: `tag${idx}`, filterIndex: undefined };
               }
               default:
                 throw new Error(`Invalid property reference type: ${x.type}`);
             }
           };
-          return { type: x.type, id: getIndex() };
+          return getShaderId();
         },
       };
     case "checkbox":
@@ -1516,11 +1536,9 @@ export class ShaderControlState
               id: builderValue.property,
             });
           }
-          if (control.type === "property") {
-            console.log("PROPERTY CONTROL BUILDER VALUE 2222", builderValue);
-            // referencedProperties.push(builderValue);
-            const { type, id } = trackable.value as SegmentPropertyReference;
-            segmentProperties.push({ type, id });
+          if (control.type === "property" && builderValue) {
+            const ref = trackable.value as SegmentPropertyReference;
+            segmentProperties.push({ type: ref.type, id: ref.id, value: ref.value });
           }
         }
         return {

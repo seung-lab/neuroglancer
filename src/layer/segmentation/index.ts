@@ -644,7 +644,7 @@ class SegmentationUserLayerDisplayState implements SegmentationDisplayState {
         memoizeKey: `segmentation/ColorShader`,
         parameters,
         encodeParameters: (p) => {
-          return `${p.shaderBuilderState.parseResult.code}/${JSON.stringify(p.segmentColorParameters)}/${JSON.stringify([...p.segmentColorProperties])}`;
+          return `${p.shaderBuilderState.key}/${JSON.stringify(p.segmentColorParameters)}/${JSON.stringify([...p.segmentColorProperties])}`;
         },
         shaderError: this.layer.displayState.shaderError, // TODO can I reuse this?
         defineShader: (builder) => {

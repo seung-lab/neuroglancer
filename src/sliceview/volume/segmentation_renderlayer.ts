@@ -112,14 +112,14 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
       encodeShaderParameters: (p) => {
         const { shaderBuilderState, segmentColorProperties, ...rest } = p;
         const {
-          parseResult: { code },
+          key,
           // referencedProperties,
         } = shaderBuilderState;
         // TODO, should only need one list of properties
         return {
-          shaderBuilderStateCode: code,
+          shaderBuilderStateKey: key,
           // referencedProperties,
-          segmentColorProperties: [...segmentColorProperties],
+          segmentColorProperties: [...segmentColorProperties], // TODO do we need this?
           ...rest,
         };
       },

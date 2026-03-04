@@ -428,7 +428,7 @@ export class SegmentColorUserShaderManager extends RefCounted {
     return propertyShaderIdentifier;
   }
 
-    private stringPropertyToShaderData(
+  private stringPropertyToShaderData(
     id: string,
     segmentPropertyMap: PreprocessedSegmentPropertyMap,
   ) {
@@ -436,6 +436,7 @@ export class SegmentColorUserShaderManager extends RefCounted {
     const index = strings.findIndex((p) => p.id === id);
     if (index === -1) return;
     const property = strings[index];
+
     const propertyShaderIdentifier = `string${index}`;
     const stringToIndex = Object.fromEntries(
       [...new Set(property.values)].map((s, i) => [s, i]),
@@ -445,10 +446,7 @@ export class SegmentColorUserShaderManager extends RefCounted {
       new Uint8Array(property.values.map((x) => stringToIndex[x])),
       DataType.UINT8,
     );
-    return {
-      shaderIdentifier: propertyShaderIdentifier,
-      stringToIndex,
-    };
+    return propertyShaderIdentifier;
   }
 
   private getMappedIdColor(builder: ShaderBuilder, fragment: boolean) {
