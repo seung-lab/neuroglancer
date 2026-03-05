@@ -67,22 +67,7 @@ export class DropdownWidget extends RefCounted {
 
     maybeAddGroup("tag", segmentProperties.tags);
     maybeAddGroup("numerical", [...segmentProperties.numericalProperties]);
-
-    // String properties: show property name in primary dropdown
-    if (segmentProperties.stringProperties.size > 0) {
-      const optGroup = document.createElement("optgroup");
-      optGroup.label = "string properties";
-      element.appendChild(optGroup);
-      for (const [id] of segmentProperties.stringProperties) {
-        const option = document.createElement("option");
-        option.value = `string_${id}`;
-        option.textContent = id;
-        if (model.value?.type === "string" && model.value.id === id) {
-          option.selected = true;
-        }
-        optGroup.appendChild(option);
-      }
-    }
+    maybeAddGroup("string", [...segmentProperties.stringProperties.keys()]);
 
     element.addEventListener("change", () => this.updateModel());
     valueElement.addEventListener("change", () => this.updateStringValue());
@@ -106,10 +91,10 @@ export class DropdownWidget extends RefCounted {
         for (const v of uniqueValues) {
           const option = document.createElement("option");
           option.value = v;
-          option.textContent = v;
           if (model.value.value === v) option.selected = true;
           valueElement.appendChild(option);
         }
+        this.updateValueDropdownLabels();
         valueElement.style.display = "";
         return;
       }
@@ -118,12 +103,35 @@ export class DropdownWidget extends RefCounted {
     valueElement.innerHTML = "";
   }
 
+  private updateValueDropdownLabels() {
+    const { model, valueElement } = this;
+    const selectedValue = model.value?.value;
+    const options = valueElement.options;
+    let idx = 0;
+    for (let i = 0; i < options.length; i++) {
+      const opt = options[i];
+      if (opt.value === "") {
+        opt.textContent = "— any —";
+        continue;
+      }
+      const suffix =
+        selectedValue === undefined
+          ? `${idx}u`
+          : opt.value === selectedValue
+            ? "1u"
+            : "0u";
+      opt.textContent = `${opt.value} (${suffix})`;
+      idx++;
+    }
+  }
+
   private updateStringValue() {
     const { model, valueElement } = this;
     if (model.value?.type === "string") {
       const selected = valueElement.value;
       // Empty string = "any" option selected → clear filter
       model.value = { ...model.value, value: selected !== "" ? selected : undefined };
+      this.updateValueDropdownLabels();
     }
   }
 
