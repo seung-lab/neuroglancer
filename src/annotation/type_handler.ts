@@ -473,6 +473,7 @@ void setPointMarkerBorderWidth(float size);
 void setPointMarkerBorderColor(vec3 color) { setPointMarkerBorderColor(vec4(color, 1.0)); }
 
 void setEllipsoidFillColor(vec4 color);
+void setCapsuleFillColor(vec4 color);
 
 void setBoundingBoxBorderColor(vec4 color);
 void setBoundingBoxBorderWidth(float size);
@@ -536,8 +537,10 @@ void setColor(vec4 color) {
   setEndpointMarkerColor(color);
   setBoundingBoxBorderColor(color);
   setEllipsoidFillColor(vec4(color.rgb, color.a * (PROJECTION_VIEW ? 1.0 : 0.5)));
+  setCapsuleFillColor(color);
 }
 void setEllipsoidFillColor(vec3 color) { setEllipsoidFillColor(vec4(color, 1.0)); }
+void setCapsuleFillColor(vec3 color) { setCapsuleFillColor(vec4(color, 1.0)); }
 
 void setBoundingBoxFillColor(vec3 color) { setBoundingBoxFillColor(vec4(color, 1.0)); }
 void setBoundingBoxBorderColor(vec3 color) { setBoundingBoxBorderColor(vec4(color, 1.0)); }

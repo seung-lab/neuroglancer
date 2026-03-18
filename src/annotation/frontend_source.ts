@@ -801,6 +801,7 @@ export class MultiscaleAnnotationSource
     const tempLower = new Float32Array(rank);
     const tempUpper = new Float32Array(rank);
     const tempChunk = new Float32Array(rank);
+    const tempRadius = new Float32Array(rank);
     for (const source of this.spatiallyIndexedSources) {
       switch (annotation.type) {
         case AnnotationType.POINT:
@@ -829,6 +830,37 @@ export class MultiscaleAnnotationSource
             annotation.pointB,
             rank,
           );
+          break;
+        case AnnotationType.CAPSULE:
+          matrix.transformPoint(
+            tempLower,
+            source.multiscaleToChunkTransform,
+            rank + 1,
+            annotation.pointA,
+            rank,
+          );
+          matrix.transformPoint(
+            tempUpper,
+            source.multiscaleToChunkTransform,
+            rank + 1,
+            annotation.pointB,
+            rank,
+          );
+          tempRadius.fill(annotation.radius);
+          matrix.transformVector(
+            tempChunk,
+            source.multiscaleToChunkTransform,
+            rank + 1,
+            tempRadius,
+            rank,
+          );
+          for (let i = 0; i < rank; ++i) {
+            const a = tempLower[i];
+            const b = tempUpper[i];
+            const r = Math.abs(tempChunk[i]);
+            tempLower[i] = Math.min(a, b) - r;
+            tempUpper[i] = Math.max(a, b) + r;
+          }
           break;
         case AnnotationType.ELLIPSOID:
           matrix.transformPoint(
