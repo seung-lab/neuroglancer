@@ -30,20 +30,16 @@ import {
 } from "#src/annotation/type_handler.js";
 import type { PerspectiveViewRenderContext } from "#src/perspective_view/render_layer.js";
 import type { SliceViewPanelRenderContext } from "#src/sliceview/renderlayer.js";
-import { mat4 } from "#src/util/geom.js";
-import { projectPointToLineSegment } from "#src/util/geom.js";
 import {
-  defineCircleShader,
-  drawCircles,
-  initializeCircleShader,
-  VERTICES_PER_CIRCLE,
-} from "#src/webgl/circles.js";
+  mat3,
+  mat3FromMat4,
+  mat4,
+  projectPointToLineSegment,
+  scaleMat3Output,
+  scaleMat3Input,
+} from "#src/util/geom.js";
 import { CylinderRenderHelper } from "#src/webgl/cylinders.js";
-import {
-  defineLineShader,
-  drawLines,
-  initializeLineShader,
-} from "#src/webgl/lines.js";
+import { drawQuads, glsl_getQuadVertexPosition } from "#src/webgl/quad.js";
 import type { ShaderBuilder, ShaderProgram } from "#src/webgl/shader.js";
 import { defineVectorArrayVertexShaderInput } from "#src/webgl/shader_lib.js";
 import { SphereRenderHelper } from "#src/webgl/spheres.js";
@@ -51,6 +47,9 @@ import { SphereRenderHelper } from "#src/webgl/spheres.js";
 const FULL_OBJECT_PICK_OFFSET = 0;
 const ENDPOINTS_PICK_OFFSET = FULL_OBJECT_PICK_OFFSET + 1;
 const PICK_IDS_PER_INSTANCE = ENDPOINTS_PICK_OFFSET + 2;
+const tempMat4 = mat4.create();
+const tempMat3 = mat3.create();
+const tempMat3b = mat3.create();
 
 function defineNoOpCapsuleSetters(builder: ShaderBuilder) {
   builder.addVertexCode(`
@@ -89,10 +88,6 @@ vec3 toCanonicalSubspace(vec3 subspacePoint) {
 
 vec3 fromCanonicalSubspace(vec3 canonicalPoint) {
   return canonicalPoint / uCanonicalVoxelFactors;
-}
-
-vec3 canonicalNormalToDisplay(vec3 canonicalNormal) {
-  return canonicalNormal * uCanonicalVoxelFactors;
 }
 
 vec3 getDisplayRadiusVector(float radius) {
@@ -143,6 +138,35 @@ class PerspectiveRenderHelper extends BaseRenderHelper {
   );
   private tempLightVec = new Float32Array(4);
 
+  private initializeDisplayTransforms(
+    shader: ShaderProgram,
+    context: AnnotationRenderContext & {
+      renderContext: PerspectiveViewRenderContext;
+    },
+  ) {
+    const canonicalVoxelFactors =
+      context.renderContext.projectionParameters.displayDimensionRenderInfo
+        .canonicalVoxelFactors;
+    mat3FromMat4(tempMat3, context.renderSubspaceModelMatrix);
+    scaleMat3Input(tempMat3, tempMat3, [
+      1 / canonicalVoxelFactors[0],
+      1 / canonicalVoxelFactors[1],
+      1 / canonicalVoxelFactors[2],
+    ]);
+    mat3FromMat4(tempMat3b, context.renderSubspaceInvModelMatrix);
+    scaleMat3Output(tempMat3b, tempMat3b, canonicalVoxelFactors);
+    shader.gl.uniformMatrix3fv(
+      shader.uniform("uCanonicalToDisplayMatrix"),
+      /*transpose=*/ false,
+      tempMat3,
+    );
+    shader.gl.uniformMatrix3fv(
+      shader.uniform("uDisplayToCanonicalMatrix"),
+      /*transpose=*/ false,
+      tempMat3b,
+    );
+  }
+
   private cylinderShaderGetter = this.getDependentShader(
     "annotation/capsule/projection/cylinder",
     (builder: ShaderBuilder) => {
@@ -150,7 +174,8 @@ class PerspectiveRenderHelper extends BaseRenderHelper {
       this.defineShader(builder);
       this.cylinderRenderHelper.defineShader(builder);
       builder.addUniform("highp vec4", "uLightDirection");
-      builder.addUniform("highp mat4", "uNormalTransform");
+      builder.addUniform("highp mat3", "uCanonicalToDisplayMatrix");
+      builder.addUniform("highp mat3", "uDisplayToCanonicalMatrix");
       builder.addUniform("highp vec3", "uCanonicalVoxelFactors");
       builder.addVarying("highp float", "vClipCoefficient");
       builder.addVertexCode(`
@@ -164,25 +189,26 @@ void emitCanonicalCapsuleCylinder(
     float radius,
     vec4 lightDirection) {
   vec3 axis = pointB - pointA;
-  float axisLength = length(axis);
+  vec3 displayAxis = uCanonicalToDisplayMatrix * axis;
+  float axisLength = length(displayAxis);
   if (axisLength < 1e-6) {
     gl_Position = vec4(2.0, 0.0, 0.0, 1.0);
     return;
   }
-  vec3 yAxis = axis / axisLength;
+  vec3 yAxis = displayAxis / axisLength;
   vec3 tangent = abs(yAxis.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
   vec3 xAxis = normalize(cross(tangent, yAxis));
   vec3 zAxis = cross(yAxis, xAxis);
+  vec3 xAxisCanonical = uDisplayToCanonicalMatrix * xAxis;
+  vec3 zAxisCanonical = uDisplayToCanonicalMatrix * zAxis;
   vec3 center = 0.5 * (pointA + pointB);
   vec3 canonicalVertexPosition = center +
-      xAxis * (aCylinderVertex.x * radius) +
-      yAxis * (aCylinderVertex.y * 0.5 * axisLength) +
-      zAxis * (aCylinderVertex.z * radius);
+      xAxisCanonical * (aCylinderVertex.x * radius) +
+      axis * (aCylinderVertex.y * 0.5) +
+      zAxisCanonical * (aCylinderVertex.z * radius);
   vec3 displayVertexPosition = fromCanonicalSubspace(canonicalVertexPosition);
   gl_Position = uModelViewProjection * vec4(displayVertexPosition, 1.0);
-  vec3 canonicalNormal = normalize(xAxis * aCylinderVertex.x + zAxis * aCylinderVertex.z);
-  vec3 displayNormal = normalize((uNormalTransform * vec4(
-      canonicalNormalToDisplay(canonicalNormal), 0.0)).xyz);
+  vec3 displayNormal = normalize(xAxis * aCylinderVertex.x + zAxis * aCylinderVertex.z);
   vLightingFactor = abs(dot(displayNormal, lightDirection.xyz)) + lightDirection.w;
 }
 `);
@@ -217,7 +243,7 @@ emitAnnotation(vec4(vColor.rgb * vLightingFactor, vColor.a * vClipCoefficient));
       this.defineShader(builder);
       this.sphereRenderHelper.defineShader(builder);
       builder.addUniform("highp vec4", "uLightDirection");
-      builder.addUniform("highp mat4", "uNormalTransform");
+      builder.addUniform("highp mat3", "uDisplayToCanonicalMatrix");
       builder.addUniform("highp vec3", "uCanonicalVoxelFactors");
       builder.addVarying("highp float", "vClipCoefficient");
       builder.addVertexCode(`
@@ -226,11 +252,10 @@ void setCapsuleFillColor(vec4 color) {
 }
 
     void emitCanonicalCapsuleSphere(vec3 center, float radius, vec4 lightDirection) {
-      vec3 canonicalVertexPosition = center + aSphereVertex * radius;
+      vec3 canonicalVertexPosition = center + (uDisplayToCanonicalMatrix * aSphereVertex) * radius;
       vec3 displayVertexPosition = fromCanonicalSubspace(canonicalVertexPosition);
       gl_Position = uModelViewProjection * vec4(displayVertexPosition, 1.0);
-      vec3 displayNormal = normalize((uNormalTransform * vec4(
-      canonicalNormalToDisplay(aSphereVertex), 0.0)).xyz);
+      vec3 displayNormal = normalize(aSphereVertex);
       vLightingFactor = abs(dot(displayNormal, lightDirection.xyz)) + lightDirection.w;
     }
 `);
@@ -271,11 +296,7 @@ emitAnnotation(vec4(vColor.rgb * vLightingFactor, vColor.a * vClipCoefficient));
     lightVec[2] = lightDirection[2] * directionalLighting;
     lightVec[3] = ambientLighting;
     shader.gl.uniform4fv(shader.uniform("uLightDirection"), lightVec);
-    shader.gl.uniformMatrix4fv(
-      shader.uniform("uNormalTransform"),
-      /*transpose=*/ false,
-      mat4.transpose(mat4.create(), context.renderSubspaceInvModelMatrix),
-    );
+    this.initializeDisplayTransforms(shader, context);
   }
 
   draw(
@@ -312,25 +333,35 @@ class SliceViewRenderHelper extends BaseRenderHelper {
     (builder: ShaderBuilder) => {
       const { rank } = this;
       this.defineShader(builder);
-      defineLineShader(builder);
+      builder.addVertexCode(glsl_getQuadVertexPosition);
+      builder.addUniform("highp mat4", "uViewportToObject");
+      builder.addUniform("highp mat4", "uObjectToViewport");
+      builder.addUniform("highp mat4", "uViewportToDevice");
       builder.addUniform("highp vec3", "uCanonicalVoxelFactors");
+      builder.addVarying("highp vec2", "vViewportPosition");
       builder.addVarying("highp float", "vClipCoefficient");
+      builder.addVarying("highp float", "vRadius", "flat");
+      builder.addVarying("highp vec3", "vCanonicalPointA", "flat");
+      builder.addVarying("highp vec3", "vCanonicalPointB", "flat");
       builder.addVertexCode(`
 void setCapsuleFillColor(vec4 color) {
   vColor = color;
 }
 
-float getCapsuleRadiusInPixels(vec3 subspacePoint, float radius) {
-  vec3 displayRadius = getDisplayRadiusVector(radius);
-  vec4 centerClip = uModelViewProjection * vec4(subspacePoint, 1.0);
-  vec2 centerDevice = centerClip.xy / centerClip.w;
-  vec4 xOffsetClip = uModelViewProjection * vec4(subspacePoint + vec3(displayRadius.x, 0.0, 0.0), 1.0);
-  vec4 yOffsetClip = uModelViewProjection * vec4(subspacePoint + vec3(0.0, displayRadius.y, 0.0), 1.0);
-  vec2 xDevice = xOffsetClip.xy / xOffsetClip.w;
-  vec2 yDevice = yOffsetClip.xy / yOffsetClip.w;
-  float xRadius = length((xDevice - centerDevice) / uLineParams.xy * 0.5);
-  float yRadius = length((yDevice - centerDevice) / uLineParams.xy * 0.5);
-  return max(xRadius, yRadius);
+vec3 canonicalPointToViewport(vec3 canonicalPoint) {
+  return (uObjectToViewport * vec4(fromCanonicalSubspace(canonicalPoint), 1.0)).xyz;
+}
+
+float getCapsuleRadiusInViewport(vec3 canonicalPoint, float radius) {
+  vec3 viewportCenter = canonicalPointToViewport(canonicalPoint);
+  vec3 viewportX = canonicalPointToViewport(canonicalPoint + vec3(radius, 0.0, 0.0));
+  vec3 viewportY = canonicalPointToViewport(canonicalPoint + vec3(0.0, radius, 0.0));
+  return max(length(viewportX.xy - viewportCenter.xy), length(viewportY.xy - viewportCenter.xy));
+}
+`);
+      builder.addFragmentCode(`
+vec3 viewportPointToCanonical(vec3 viewportPoint) {
+  return (uViewportToObject * vec4(viewportPoint, 1.0)).xyz * uCanonicalVoxelFactors;
 }
 `);
       builder.setVertexMain(`
@@ -339,17 +370,47 @@ float modelPositionB[${rank}] = getVertexPosition1();
 float radius = getCapsuleRadius();
 vec3 subspacePointA = projectModelVectorToSubspace(modelPositionA);
 vec3 subspacePointB = projectModelVectorToSubspace(modelPositionB);
+vec3 canonicalPointA = toCanonicalSubspace(subspacePointA);
+vec3 canonicalPointB = toCanonicalSubspace(subspacePointB);
+vec3 viewportPointA = canonicalPointToViewport(canonicalPointA);
+vec3 viewportPointB = canonicalPointToViewport(canonicalPointB);
+float viewportRadius = max(
+  getCapsuleRadiusInViewport(canonicalPointA, radius),
+  max(
+    getCapsuleRadiusInViewport(canonicalPointB, radius),
+    getCapsuleRadiusInViewport(0.5 * (canonicalPointA + canonicalPointB), radius)));
+vec2 viewportMin = min(viewportPointA.xy, viewportPointB.xy) - vec2(viewportRadius);
+vec2 viewportMax = max(viewportPointA.xy, viewportPointB.xy) + vec2(viewportRadius);
+vec2 viewportPosition = getQuadVertexPosition(viewportMin, viewportMax);
 vClipCoefficient = getMaxSubspaceClipCoefficient(modelPositionA, modelPositionB);
+vRadius = radius;
+vCanonicalPointA = canonicalPointA;
+vCanonicalPointB = canonicalPointB;
+vViewportPosition = viewportPosition;
 vColor = vec4(0.0, 0.0, 0.0, 0.0);
 ${this.invokeUserMain}
-emitLine(
-  uModelViewProjection * vec4(subspacePointA, 1.0),
-  uModelViewProjection * vec4(subspacePointB, 1.0),
-  2.0 * getCapsuleRadiusInPixels(0.5 * (subspacePointA + subspacePointB), radius));
+gl_Position = uViewportToDevice * vec4(viewportPosition, 0.0, 1.0);
 ${this.setPartIndex(builder)};
 `);
       builder.setFragmentMain(`
-emitAnnotation(vec4(vColor.rgb, vColor.a * getLineAlpha() * vClipCoefficient));
+vec3 p = viewportPointToCanonical(vec3(vViewportPosition, 0.0));
+vec3 a = vCanonicalPointA;
+vec3 b = vCanonicalPointB;
+vec3 ab = b - a;
+float denom = dot(ab, ab);
+if (denom <= 1e-6) {
+  discard;
+}
+float t = dot(p - a, ab) / denom;
+if (t <= 0.0 || t >= 1.0) {
+  discard;
+}
+vec3 closestPoint = a + t * ab;
+float distanceToBody = length(p - closestPoint);
+if (distanceToBody > vRadius) {
+  discard;
+}
+emitAnnotation(vec4(vColor.rgb, vColor.a * vClipCoefficient));
 `);
     },
   );
@@ -359,52 +420,67 @@ emitAnnotation(vec4(vColor.rgb, vColor.a * getLineAlpha() * vClipCoefficient));
     (builder: ShaderBuilder) => {
       const { rank } = this;
       this.defineShader(builder);
-      defineCircleShader(builder, this.targetIsSliceView);
+      builder.addVertexCode(glsl_getQuadVertexPosition);
+      builder.addUniform("highp mat4", "uViewportToObject");
+      builder.addUniform("highp mat4", "uObjectToViewport");
+      builder.addUniform("highp mat4", "uViewportToDevice");
       builder.addUniform("highp vec3", "uCanonicalVoxelFactors");
+      builder.addVarying("highp vec2", "vViewportPosition");
       builder.addVarying("highp float", "vClipCoefficient");
+      builder.addVarying("highp float", "vRadius", "flat");
+      builder.addVarying("highp vec3", "vCanonicalPoint", "flat");
       builder.addVertexCode(`
-int getEndpointIndex() {
-  return gl_VertexID / ${VERTICES_PER_CIRCLE};
-}
-
 void setCapsuleFillColor(vec4 color) {
   vColor = color;
 }
 
-float getCapsuleRadiusInPixels(vec3 subspacePoint, float radius) {
-  vec3 displayRadius = getDisplayRadiusVector(radius);
-  vec4 centerClip = uModelViewProjection * vec4(subspacePoint, 1.0);
-  vec2 centerDevice = centerClip.xy / centerClip.w;
-  vec4 xOffsetClip = uModelViewProjection * vec4(subspacePoint + vec3(displayRadius.x, 0.0, 0.0), 1.0);
-  vec4 yOffsetClip = uModelViewProjection * vec4(subspacePoint + vec3(0.0, displayRadius.y, 0.0), 1.0);
-  vec2 xDevice = xOffsetClip.xy / xOffsetClip.w;
-  vec2 yDevice = yOffsetClip.xy / yOffsetClip.w;
-  float xRadius = length((xDevice - centerDevice) / uCircleParams.xy * 0.5);
-  float yRadius = length((yDevice - centerDevice) / uCircleParams.xy * 0.5);
-  return max(xRadius, yRadius);
+vec3 canonicalPointToViewport(vec3 canonicalPoint) {
+  return (uObjectToViewport * vec4(fromCanonicalSubspace(canonicalPoint), 1.0)).xyz;
+}
+
+float getCapsuleRadiusInViewport(vec3 canonicalPoint, float radius) {
+  vec3 viewportCenter = canonicalPointToViewport(canonicalPoint);
+  vec3 viewportX = canonicalPointToViewport(canonicalPoint + vec3(radius, 0.0, 0.0));
+  vec3 viewportY = canonicalPointToViewport(canonicalPoint + vec3(0.0, radius, 0.0));
+  return max(length(viewportX.xy - viewportCenter.xy), length(viewportY.xy - viewportCenter.xy));
+}
+`);
+      builder.addFragmentCode(`
+vec3 viewportPointToCanonical(vec3 viewportPoint) {
+  return (uViewportToObject * vec4(viewportPoint, 1.0)).xyz * uCanonicalVoxelFactors;
 }
 `);
       builder.setVertexMain(`
-float modelPosition[${rank}] = getVertexPosition0();
+highp uint endpointIndex = uint(gl_InstanceID % 2);
+float modelPositionA[${rank}] = getVertexPosition0();
 float modelPositionB[${rank}] = getVertexPosition1();
+float modelPosition[${rank}] = getVertexPosition0();
 for (int i = 0; i < ${rank}; ++i) {
-  modelPosition[i] = mix(modelPosition[i], modelPositionB[i], float(getEndpointIndex()));
+  modelPosition[i] = mix(modelPositionA[i], modelPositionB[i], float(endpointIndex));
 }
 float radius = getCapsuleRadius();
 vec3 subspacePoint = projectModelVectorToSubspace(modelPosition);
+vec3 canonicalPoint = toCanonicalSubspace(subspacePoint);
+vec3 viewportPoint = canonicalPointToViewport(canonicalPoint);
+float viewportRadius = getCapsuleRadiusInViewport(canonicalPoint, radius);
+vec2 viewportPosition = getQuadVertexPosition(
+  viewportPoint.xy - vec2(viewportRadius),
+  viewportPoint.xy + vec2(viewportRadius));
+vCanonicalPoint = canonicalPoint;
+vViewportPosition = viewportPosition;
 vClipCoefficient = getSubspaceClipCoefficient(modelPosition);
+vRadius = radius;
 vColor = vec4(0.0, 0.0, 0.0, 0.0);
 ${this.invokeUserMain}
-emitCircle(
-  uModelViewProjection * vec4(subspacePoint, 1.0),
-  2.0 * getCapsuleRadiusInPixels(subspacePoint, radius),
-  0.0);
-${this.setPartIndex(builder, "uint(getEndpointIndex()) + 1u")};
+gl_Position = uViewportToDevice * vec4(viewportPosition, 0.0, 1.0);
+${this.setPartIndex(builder, "endpointIndex + 1u")};
 `);
       builder.setFragmentMain(`
-vec4 color = getCircleColor(vColor, vColor);
-color.a *= vClipCoefficient;
-emitAnnotation(color);
+vec3 p = viewportPointToCanonical(vec3(vViewportPosition, 0.0));
+if (distance(p, vCanonicalPoint) > vRadius) {
+  discard;
+}
+emitAnnotation(vec4(vColor.rgb, vColor.a * vClipCoefficient));
 `);
     },
   );
@@ -414,32 +490,63 @@ emitAnnotation(color);
       renderContext: SliceViewPanelRenderContext;
     },
   ) {
+    const projectionParameters =
+      context.renderContext.sliceView.projectionParameters.value;
+    const viewportToObject = mat4.multiply(
+      tempMat4,
+      context.renderSubspaceInvModelMatrix,
+      projectionParameters.invViewMatrix,
+    );
+    const objectToViewport = mat4.create();
+    mat4.invert(objectToViewport, viewportToObject);
     this.enableCapsule(
       this.bodyShaderGetter,
       context,
       /*positionDivisor=*/ 1,
       /*radiusDivisor=*/ 1,
       (shader) => {
-        initializeLineShader(
-          shader,
-          context.renderContext.sliceView.projectionParameters.value,
-          /*featherWidthInPixels=*/ 1.0,
+        const { gl } = shader;
+        gl.uniformMatrix4fv(
+          shader.uniform("uViewportToObject"),
+          false,
+          viewportToObject,
         );
-        drawLines(shader.gl, 1, context.count);
+        gl.uniformMatrix4fv(
+          shader.uniform("uObjectToViewport"),
+          false,
+          objectToViewport,
+        );
+        gl.uniformMatrix4fv(
+          shader.uniform("uViewportToDevice"),
+          false,
+          projectionParameters.projectionMat,
+        );
+        drawQuads(gl, 1, context.count);
       },
     );
     this.enableCapsule(
       this.endpointShaderGetter,
       context,
-      /*positionDivisor=*/ 1,
-      /*radiusDivisor=*/ 1,
+      /*positionDivisor=*/ 2,
+      /*radiusDivisor=*/ 2,
       (shader) => {
-        initializeCircleShader(
-          shader,
-          context.renderContext.sliceView.projectionParameters.value,
-          { featherWidthInPixels: 0.5 },
+        const { gl } = shader;
+        gl.uniformMatrix4fv(
+          shader.uniform("uViewportToObject"),
+          false,
+          viewportToObject,
         );
-        drawCircles(shader.gl, 2, context.count);
+        gl.uniformMatrix4fv(
+          shader.uniform("uObjectToViewport"),
+          false,
+          objectToViewport,
+        );
+        gl.uniformMatrix4fv(
+          shader.uniform("uViewportToDevice"),
+          false,
+          projectionParameters.projectionMat,
+        );
+        drawQuads(gl, 1, context.count * 2);
       },
     );
   }

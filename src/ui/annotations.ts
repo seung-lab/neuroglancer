@@ -30,6 +30,7 @@ import type {
   AnnotationId,
   AnnotationReference,
   AxisAlignedBoundingBox,
+  Capsule,
   Ellipsoid,
   Line,
   PolyLine,
@@ -176,6 +177,7 @@ function getCenterPosition(center: Float32Array, annotation: Annotation) {
   switch (annotation.type) {
     case AnnotationType.AXIS_ALIGNED_BOUNDING_BOX:
     case AnnotationType.LINE:
+    case AnnotationType.CAPSULE:
       vector.add(center, annotation.pointA, annotation.pointB);
       vector.scale(center, center, 0.5);
       break;
@@ -467,6 +469,15 @@ export class AnnotationLayerView extends Tab {
       },
     });
     mutableControls.appendChild(lineButton);
+
+    const capsuleButton = makeIcon({
+      text: annotationTypeHandlers[AnnotationType.CAPSULE].icon,
+      title: "Annotate capsule",
+      onClick: () => {
+        this.layer.tool.value = new PlaceCapsuleTool(this.layer, {});
+      },
+    });
+    mutableControls.appendChild(capsuleButton);
 
     const ellipsoidButton = makeIcon({
       text: annotationTypeHandlers[AnnotationType.ELLIPSOID].icon,
@@ -1058,6 +1069,7 @@ abstract class PlaceAnnotationTool extends LegacyTool {
 
 const ANNOTATE_POINT_TOOL_ID = "annotatePoint";
 const ANNOTATE_LINE_TOOL_ID = "annotateLine";
+const ANNOTATE_CAPSULE_TOOL_ID = "annotateCapsule";
 const ANNOTATE_BOUNDING_BOX_TOOL_ID = "annotateBoundingBox";
 const ANNOTATE_ELLIPSOID_TOOL_ID = "annotateSphere";
 const ANNOTATE_POLYLINE_TOOL_ID = "annotatePolyline";
@@ -1319,6 +1331,7 @@ abstract class TwoStepAnnotationTool extends PlaceAnnotationTool {
 abstract class PlaceTwoCornerAnnotationTool extends TwoStepAnnotationTool {
   declare annotationType:
     | AnnotationType.LINE
+    | AnnotationType.CAPSULE
     | AnnotationType.AXIS_ALIGNED_BOUNDING_BOX;
 
   getInitialAnnotation(
@@ -1329,7 +1342,7 @@ abstract class PlaceTwoCornerAnnotationTool extends TwoStepAnnotationTool {
       mouseState,
       annotationLayer,
     );
-    return <AxisAlignedBoundingBox | Line>{
+    return <AxisAlignedBoundingBox | Line | Capsule>{
       id: "",
       type: this.annotationType,
       description: "",
@@ -1340,7 +1353,7 @@ abstract class PlaceTwoCornerAnnotationTool extends TwoStepAnnotationTool {
   }
 
   getUpdatedAnnotation(
-    oldAnnotation: AxisAlignedBoundingBox | Line,
+    oldAnnotation: AxisAlignedBoundingBox | Line | Capsule,
     mouseState: MouseSelectionState,
     annotationLayer: AnnotationLayerState,
   ): Annotation {
@@ -1405,7 +1418,7 @@ export class PlaceLineTool extends PlaceTwoCornerAnnotationTool {
   }
 
   getUpdatedAnnotation(
-    oldAnnotation: Line | AxisAlignedBoundingBox,
+    oldAnnotation: Line | Capsule | AxisAlignedBoundingBox,
     mouseState: MouseSelectionState,
     annotationLayer: AnnotationLayerState,
   ) {
@@ -1439,6 +1452,29 @@ export class PlaceLineTool extends PlaceTwoCornerAnnotationTool {
   }
 }
 PlaceLineTool.prototype.annotationType = AnnotationType.LINE;
+
+class PlaceCapsuleTool extends PlaceLineTool {
+  get description() {
+    return "annotate capsule";
+  }
+
+  getInitialAnnotation(
+    mouseState: MouseSelectionState,
+    annotationLayer: AnnotationLayerState,
+  ): Annotation {
+    const annotation = super.getInitialAnnotation(
+      mouseState,
+      annotationLayer,
+    ) as Capsule;
+    annotation.radius = 2000;
+    return annotation;
+  }
+
+  toJSON() {
+    return ANNOTATE_CAPSULE_TOOL_ID;
+  }
+}
+PlaceCapsuleTool.prototype.annotationType = AnnotationType.CAPSULE;
 
 class PlacePolylineTool extends MultiStepAnnotationTool {
   getBaseSegment = false;
@@ -1642,6 +1678,11 @@ registerLegacyTool(
   ANNOTATE_LINE_TOOL_ID,
   (layer, options) =>
     new PlaceLineTool(<UserLayerWithAnnotations>layer, options),
+);
+registerLegacyTool(
+  ANNOTATE_CAPSULE_TOOL_ID,
+  (layer, options) =>
+    new PlaceCapsuleTool(<UserLayerWithAnnotations>layer, options),
 );
 registerLegacyTool(
   ANNOTATE_ELLIPSOID_TOOL_ID,

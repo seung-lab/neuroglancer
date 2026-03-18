@@ -912,7 +912,7 @@ export const annotationTypeHandlers: Record<
         obj,
         "radius",
         verifyFiniteNonNegativeFloat,
-        10,
+        2000,
       );
     },
     serializedBytes(rank: number) {

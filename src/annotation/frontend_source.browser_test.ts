@@ -137,7 +137,7 @@ describe("updateAnnotations", () => {
       type: AnnotationType.CAPSULE,
       pointA: Float32Array.of(1, 3),
       pointB: Float32Array.of(5, 7),
-      radius: 10,
+      radius: 2000,
       properties: [],
     });
 

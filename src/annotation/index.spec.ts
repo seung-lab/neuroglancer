@@ -41,7 +41,7 @@ describe("capsule annotations", () => {
     ]);
   });
 
-  it("defaults capsule radius to 10 when omitted from state", () => {
+  it("defaults capsule radius to 2000 when omitted from state", () => {
     const source = new AnnotationSource(3);
     source.restoreState([
       {
@@ -55,7 +55,7 @@ describe("capsule annotations", () => {
     const annotation = source.get("capsule-2");
     expect(annotation).toMatchObject({
       type: AnnotationType.CAPSULE,
-      radius: 10,
+      radius: 2000,
     });
   });
 });
