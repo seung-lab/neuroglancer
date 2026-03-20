@@ -145,8 +145,8 @@ class RenderHelper extends RefCounted {
 
   edgeShaderGetter;
   nodeShaderGetter;
-  capsuleEdgeShaderGetter;
-  capsuleNodeShaderGetter;
+  meshEdgeShaderGetter;
+  meshNodeShaderGetter;
 
   get gl(): GL {
     return this.base.gl;
@@ -233,12 +233,12 @@ void emitDefault() {
       },
     );
 
-    this.capsuleEdgeShaderGetter = parameterizedEmitterDependentShaderGetter(
+    this.meshEdgeShaderGetter = parameterizedEmitterDependentShaderGetter(
       this,
       gl,
       {
         memoizeKey: {
-          type: "skeleton/SkeletonShaderManager/capsuleEdge",
+          type: "skeleton/SkeletonShaderManager/meshEdge",
           vertexAttributes: this.vertexAttributes,
         },
         fallbackParameters: this.base.fallbackShaderParameters,
@@ -257,19 +257,19 @@ void emitDefault() {
           this.defineAttributeAccess(builder);
           this.cylinderRenderHelper.defineShader(builder);
           builder.addAttribute("highp uvec2", "aVertexIndex");
-          builder.addUniform("highp float", "uCapsuleRadius");
+          builder.addUniform("highp float", "uMeshRadius");
           builder.addUniform("highp vec4", "uLightDirection");
           builder.addUniform("highp mat3", "uNormalMatrix");
           builder.addVertexCode(`
 float getVertexRadius(highp uint vertexIndex) {
   return ${
     this.radiusAttributeIndex === -1
-      ? "uCapsuleRadius"
+              ? "uMeshRadius"
       : `readAttribute${this.radiusAttributeIndex}(vertexIndex)`
   };
 }
 
-void emitSkeletonCapsuleCylinder(
+void emitSkeletonMeshCylinder(
     mat4 projectionMatrix,
     mat3 normalMatrix,
     vec3 pointA,
@@ -309,7 +309,7 @@ highp vec3 vertexB = readAttribute0(aVertexIndex.y);
 float radiusA = getVertexRadius(aVertexIndex.x);
 float radiusB = getVertexRadius(aVertexIndex.y);
 float edgeT = 0.5 * (aCylinderVertex.y + 1.0);
-emitSkeletonCapsuleCylinder(uProjection, uNormalMatrix, vertexA, vertexB, radiusA, radiusB, uLightDirection);
+emitSkeletonMeshCylinder(uProjection, uNormalMatrix, vertexA, vertexB, radiusA, radiusB, uLightDirection);
 `;
           builder.addFragmentCode(`
 vec4 segmentColor() {
@@ -415,12 +415,12 @@ void emitDefault() {
       },
     );
 
-    this.capsuleNodeShaderGetter = parameterizedEmitterDependentShaderGetter(
+    this.meshNodeShaderGetter = parameterizedEmitterDependentShaderGetter(
       this,
       gl,
       {
         memoizeKey: {
-          type: "skeleton/SkeletonShaderManager/capsuleNode",
+          type: "skeleton/SkeletonShaderManager/meshNode",
           vertexAttributes: this.vertexAttributes,
         },
         fallbackParameters: this.base.fallbackShaderParameters,
@@ -438,14 +438,14 @@ void emitDefault() {
           this.defineCommonShader(builder);
           this.defineAttributeAccess(builder);
           this.sphereRenderHelper.defineShader(builder);
-          builder.addUniform("highp float", "uCapsuleRadius");
+          builder.addUniform("highp float", "uMeshRadius");
           builder.addUniform("highp vec4", "uLightDirection");
           builder.addUniform("highp mat3", "uNormalMatrix");
           builder.addVertexCode(`
 float getVertexRadius(highp uint vertexIndex) {
   return ${
     this.radiusAttributeIndex === -1
-      ? "uCapsuleRadius"
+              ? "uMeshRadius"
       : `readAttribute${this.radiusAttributeIndex}(vertexIndex)`
   };
 }
@@ -597,7 +597,7 @@ void emitDefault() {
     }
   }
 
-  initializeCapsuleUniforms(
+  initializeMeshUniforms(
     gl: GL,
     shader: ShaderProgram,
     renderContext: SliceViewPanelRenderContext | PerspectiveViewRenderContext,
@@ -611,7 +611,7 @@ void emitDefault() {
       projectionParameters.displayDimensionRenderInfo.canonicalVoxelFactors,
     );
     gl.uniformMatrix3fv(shader.uniform("uNormalMatrix"), false, tempMat3);
-    gl.uniform1f(shader.uniform("uCapsuleRadius"), fallbackRadius);
+    gl.uniform1f(shader.uniform("uMeshRadius"), fallbackRadius);
     const lightVec = this.tempLightVec;
     if ("lightDirection" in renderContext) {
       const { lightDirection, ambientLighting, directionalLighting } =
@@ -629,7 +629,7 @@ void emitDefault() {
     gl.uniform4fv(shader.uniform("uLightDirection"), lightVec);
   }
 
-  drawCapsuleSkeleton(
+  drawMeshSkeleton(
     gl: GL,
     edgeShader: ShaderProgram,
     nodeShader: ShaderProgram,
@@ -686,7 +686,7 @@ export enum SkeletonRenderMode {
 
 export enum SkeletonRenderingMode {
   DEFAULT = 0,
-  CAPSULES = 1,
+  MESH = 1,
 }
 
 export class TrackableSkeletonRenderingMode extends TrackableEnum<SkeletonRenderingMode> {
@@ -846,8 +846,8 @@ export class SkeletonLayer extends RefCounted {
     >,
   ) {
     const renderingMode = this.displayState.skeletonRenderingOptions.mode.value;
-    const capsuleMode = renderingMode === SkeletonRenderingMode.CAPSULES;
-    const lineWidth = capsuleMode
+    const meshMode = renderingMode === SkeletonRenderingMode.MESH;
+    const lineWidth = meshMode
       ? this.displayState.skeletonRenderingOptions.params3d.lineWidth.value
       : renderOptions.lineWidth.value;
     const { gl, source, displayState } = this;
@@ -868,11 +868,11 @@ export class SkeletonLayer extends RefCounted {
       pointDiameter = lineWidth;
     }
 
-    const edgeShaderResult = capsuleMode
-      ? renderHelper.capsuleEdgeShaderGetter(renderContext.emitter)
+    const edgeShaderResult = meshMode
+      ? renderHelper.meshEdgeShaderGetter(renderContext.emitter)
       : renderHelper.edgeShaderGetter(renderContext.emitter);
-    const nodeShaderResult = capsuleMode
-      ? renderHelper.capsuleNodeShaderGetter(renderContext.emitter)
+    const nodeShaderResult = meshMode
+      ? renderHelper.meshNodeShaderGetter(renderContext.emitter)
       : renderHelper.nodeShaderGetter(renderContext.emitter);
     const { shader: edgeShader, parameters: edgeShaderParameters } =
       edgeShaderResult;
@@ -893,8 +893,8 @@ export class SkeletonLayer extends RefCounted {
       shaderControlState,
       edgeShaderParameters.parseResult.controls,
     );
-    if (capsuleMode) {
-      renderHelper.initializeCapsuleUniforms(
+    if (meshMode) {
+      renderHelper.initializeMeshUniforms(
         gl,
         edgeShader,
         renderContext,
@@ -913,8 +913,8 @@ export class SkeletonLayer extends RefCounted {
       shaderControlState,
       nodeShaderParameters.parseResult.controls,
     );
-    if (capsuleMode) {
-      renderHelper.initializeCapsuleUniforms(
+    if (meshMode) {
+      renderHelper.initializeMeshUniforms(
         gl,
         nodeShader,
         renderContext,
@@ -953,8 +953,8 @@ export class SkeletonLayer extends RefCounted {
           nodeShader.bind();
           renderHelper.setPickID(gl, nodeShader, pickIndex);
         }
-        if (capsuleMode) {
-          renderHelper.drawCapsuleSkeleton(
+        if (meshMode) {
+          renderHelper.drawMeshSkeleton(
             gl,
             edgeShader,
             nodeShader,
