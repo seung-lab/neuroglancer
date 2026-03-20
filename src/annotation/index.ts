@@ -78,7 +78,6 @@ export enum AnnotationType {
   AXIS_ALIGNED_BOUNDING_BOX = 2,
   ELLIPSOID = 3,
   POLYLINE = 4,
-  CAPSULE = 5,
 }
 
 export const annotationTypes = [
@@ -87,7 +86,6 @@ export const annotationTypes = [
   AnnotationType.AXIS_ALIGNED_BOUNDING_BOX,
   AnnotationType.ELLIPSOID,
   AnnotationType.POLYLINE,
-  AnnotationType.CAPSULE,
 ];
 
 export interface AnnotationPropertySpecBase {
@@ -669,14 +667,6 @@ export interface Line extends AnnotationBase {
   type: AnnotationType.LINE;
 }
 
-export interface Capsule extends AnnotationBase {
-  pointA: Float32Array;
-  pointB: Float32Array;
-  radiusA: number;
-  radiusB: number;
-  type: AnnotationType.CAPSULE;
-}
-
 export interface Point extends AnnotationBase {
   point: Float32Array;
   type: AnnotationType.POINT;
@@ -701,7 +691,6 @@ export interface PolyLine extends AnnotationBase {
 
 export type Annotation =
   | Line
-  | Capsule
   | Point
   | AxisAlignedBoundingBox
   | Ellipsoid
@@ -888,104 +877,6 @@ export const annotationTypeHandlers: Record<
       callback(annotation.pointB, false);
     },
     defaultProperties(annotation: Line) {
-      annotation;
-      return { properties: [], values: [] };
-    },
-  },
-  [AnnotationType.CAPSULE]: {
-    icon: "◉",
-    description: "Capsule",
-    toJSON(annotation: Capsule) {
-      return {
-        pointA: Array.from(annotation.pointA),
-        pointB: Array.from(annotation.pointB),
-        radiusA: annotation.radiusA,
-        radiusB: annotation.radiusB,
-      };
-    },
-    restoreState(annotation: Capsule, obj: any, rank: number) {
-      annotation.pointA = verifyObjectProperty(obj, "pointA", (x) =>
-        parseFixedLengthArray(new Float32Array(rank), x, verifyFiniteFloat),
-      );
-      annotation.pointB = verifyObjectProperty(obj, "pointB", (x) =>
-        parseFixedLengthArray(new Float32Array(rank), x, verifyFiniteFloat),
-      );
-      const sharedRadius = verifyOptionalObjectProperty(
-        obj,
-        "radius",
-        verifyFiniteNonNegativeFloat,
-        2000,
-      );
-      annotation.radiusA = verifyOptionalObjectProperty(
-        obj,
-        "radiusA",
-        verifyFiniteNonNegativeFloat,
-        sharedRadius,
-      );
-      annotation.radiusB = verifyOptionalObjectProperty(
-        obj,
-        "radiusB",
-        verifyFiniteNonNegativeFloat,
-        sharedRadius,
-      );
-    },
-    serializedBytes(rank: number) {
-      return 2 * 4 * rank + 8;
-    },
-    serialize(
-      buffer: DataView,
-      offset: number,
-      isLittleEndian: boolean,
-      rank: number,
-      annotation: Capsule,
-    ) {
-      offset = serializeTwoFloatVectors(
-        buffer,
-        offset,
-        isLittleEndian,
-        rank,
-        annotation.pointA,
-        annotation.pointB,
-      );
-      buffer.setFloat32(offset, annotation.radiusA, isLittleEndian);
-      offset += 4;
-      buffer.setFloat32(offset, annotation.radiusB, isLittleEndian);
-    },
-    deserialize: (
-      buffer: DataView,
-      offset: number,
-      isLittleEndian: boolean,
-      rank: number,
-      id: string,
-    ): Capsule => {
-      const pointA = new Float32Array(rank);
-      const pointB = new Float32Array(rank);
-      offset = deserializeTwoFloatVectors(
-        buffer,
-        offset,
-        isLittleEndian,
-        rank,
-        pointA,
-        pointB,
-      );
-      const radiusA = buffer.getFloat32(offset, isLittleEndian);
-      offset += 4;
-      const radiusB = buffer.getFloat32(offset, isLittleEndian);
-      return {
-        type: AnnotationType.CAPSULE,
-        pointA,
-        pointB,
-        radiusA,
-        radiusB,
-        id,
-        properties: [],
-      };
-    },
-    visitGeometry(annotation: Capsule, callback) {
-      callback(annotation.pointA, false);
-      callback(annotation.pointB, false);
-    },
-    defaultProperties(annotation: Capsule) {
       annotation;
       return { properties: [], values: [] };
     },
@@ -1640,7 +1531,6 @@ export class LocalAnnotationSource extends AnnotationSource {
           annotation.point = mapVector(annotation.point);
           break;
         case AnnotationType.LINE:
-        case AnnotationType.CAPSULE:
         case AnnotationType.AXIS_ALIGNED_BOUNDING_BOX:
           annotation.pointA = mapVector(annotation.pointA);
           annotation.pointB = mapVector(annotation.pointB);
@@ -1817,8 +1707,7 @@ export class AnnotationSerializer {
     AxisAlignedBoundingBox[],
     Ellipsoid[],
     PolyLine[],
-    Capsule[],
-  ] = [[], [], [], [], [], []];
+  ] = [[], [], [], [], []];
   constructor(public propertySerializers: AnnotationPropertySerializer[]) {}
   add(annotation: Annotation) {
     (<Annotation[]>this.annotations[annotation.type]).push(annotation);

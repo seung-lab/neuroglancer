@@ -132,16 +132,6 @@ describe("updateAnnotations", () => {
       properties: [],
     });
 
-    tester.update({
-      id: "g",
-      type: AnnotationType.CAPSULE,
-      pointA: Float32Array.of(1, 3),
-      pointB: Float32Array.of(5, 7),
-      radiusA: 2000,
-      radiusB: 3000,
-      properties: [],
-    });
-
     tester.delete("a", AnnotationType.POINT);
     tester.update({
       id: "e",
@@ -158,6 +148,5 @@ describe("updateAnnotations", () => {
       properties: [],
     });
     tester.delete("f", AnnotationType.AXIS_ALIGNED_BOUNDING_BOX);
-    tester.delete("g", AnnotationType.CAPSULE);
   });
 });

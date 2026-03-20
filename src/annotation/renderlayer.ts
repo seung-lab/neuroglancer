@@ -15,7 +15,6 @@
  */
 
 import "#src/annotation/bounding_box.js";
-import "#src/annotation/capsule.js";
 import "#src/annotation/line.js";
 import "#src/annotation/point.js";
 import "#src/annotation/ellipsoid.js";
