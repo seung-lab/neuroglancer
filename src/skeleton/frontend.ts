@@ -51,6 +51,7 @@ import {
   normalMatrixFromMat4ToScaledSpace,
 } from "#src/util/geom.js";
 import { verifyFinitePositiveFloat } from "#src/util/json.js";
+import * as matrix from "#src/util/matrix.js";
 import { NullarySignal } from "#src/util/signal.js";
 import type { Trackable } from "#src/util/trackable.js";
 import { CompoundTrackable } from "#src/util/trackable.js";
@@ -833,6 +834,73 @@ export class SkeletonLayer extends RefCounted {
 
   get gl() {
     return this.chunkManager.chunkQueueManager.gl;
+  }
+
+  getObjectPosition(
+    id: bigint,
+    nearestTo: Float32Array,
+  ): Float32Array | undefined {
+    const transform = this.displayState.transform.value;
+    if (transform.error !== undefined) return undefined;
+    const key = getObjectKey(id);
+    const chunk = this.source.chunks.get(key);
+    if (chunk === undefined) return undefined;
+    const { state, vertexAttributes, numVertices } = chunk;
+    if (state !== ChunkState.SYSTEM_MEMORY && state !== ChunkState.GPU_MEMORY) {
+      return undefined;
+    }
+    const { rank } = transform;
+    const inverseModelToRenderLayerTransform = new Float32Array(
+      transform.modelToRenderLayerTransform.length,
+    );
+    matrix.inverse(
+      inverseModelToRenderLayerTransform,
+      rank + 1,
+      transform.modelToRenderLayerTransform,
+      rank + 1,
+      rank + 1,
+    );
+    const nearestPositionInModel = new Float32Array(rank);
+    matrix.transformPoint(
+      nearestPositionInModel,
+      inverseModelToRenderLayerTransform,
+      rank + 1,
+      nearestTo,
+      rank,
+    );
+    const vertexPositions = new Float32Array(
+      vertexAttributes.buffer,
+      vertexAttributes.byteOffset,
+      numVertices * 3,
+    );
+    const closestVertex = new Float32Array(rank);
+    let closestDistanceSq = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < vertexPositions.length; i += 3) {
+      let distanceSq = 0;
+      for (let j = 0; j < 3; ++j) {
+        distanceSq +=
+          (vertexPositions[i + j] - nearestPositionInModel[j]) ** 2;
+      }
+      if (distanceSq < closestDistanceSq) {
+        closestDistanceSq = distanceSq;
+        closestVertex[0] = vertexPositions[i];
+        closestVertex[1] = vertexPositions[i + 1];
+        closestVertex[2] = vertexPositions[i + 2];
+        for (let j = 3; j < rank; ++j) {
+          closestVertex[j] = 0;
+        }
+      }
+    }
+    if (closestDistanceSq === Number.POSITIVE_INFINITY) return undefined;
+    const layerCenter = new Float32Array(rank);
+    matrix.transformPoint(
+      layerCenter,
+      transform.modelToRenderLayerTransform,
+      rank + 1,
+      closestVertex,
+      rank,
+    );
+    return layerCenter;
   }
 
   draw(

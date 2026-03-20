@@ -1271,15 +1271,10 @@ export class SegmentationUserLayer extends Base {
   }
 
   moveToSegment(id: bigint) {
-    for (const layer of this.renderLayers) {
-      if (
-        !(layer instanceof MultiscaleMeshLayer || layer instanceof MeshLayer)
-      ) {
-        continue;
-      }
-      const transform = layer.displayState.transform.value;
-      if (transform.error !== undefined) return undefined;
-      const { rank, globalToRenderLayerDimensions } = transform;
+    const getGlobalLayerPosition = (
+      rank: number,
+      globalToRenderLayerDimensions: readonly number[],
+    ) => {
       const { globalPosition } = this.manager.root;
       const globalLayerPosition = new Float32Array(rank);
       const renderToGlobalLayerDimensions = [];
@@ -1291,9 +1286,47 @@ export class SegmentationUserLayer extends Base {
         globalPosition.value,
         renderToGlobalLayerDimensions,
       );
+      return globalLayerPosition;
+    };
+
+    for (const layer of this.renderLayers) {
+      if (
+        !(
+          layer instanceof PerspectiveViewSkeletonLayer ||
+          layer instanceof SliceViewPanelSkeletonLayer
+        )
+      ) {
+        continue;
+      }
+      const transform = layer.base.displayState.transform.value;
+      if (transform.error !== undefined) return undefined;
+      const layerPosition = layer.base.getObjectPosition(
+        id,
+        getGlobalLayerPosition(
+          transform.rank,
+          transform.globalToRenderLayerDimensions,
+        ),
+      );
+      if (layerPosition === undefined) continue;
+      this.setLayerPosition(transform, layerPosition);
+      return;
+    }
+
+    for (const layer of this.renderLayers) {
+      if (
+        !(layer instanceof MultiscaleMeshLayer || layer instanceof MeshLayer)
+      ) {
+        continue;
+      }
+      const transform = layer.displayState.transform.value;
+      if (transform.error !== undefined) return undefined;
+      const { rank, globalToRenderLayerDimensions } = transform;
       const layerPosition =
         layer instanceof MeshLayer
-          ? layer.getObjectPosition(id, globalLayerPosition)
+          ? layer.getObjectPosition(
+              id,
+              getGlobalLayerPosition(rank, globalToRenderLayerDimensions),
+            )
           : layer.getObjectPosition(id);
       if (layerPosition === undefined) continue;
       this.setLayerPosition(transform, layerPosition);
