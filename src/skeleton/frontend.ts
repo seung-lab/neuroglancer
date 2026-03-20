@@ -202,11 +202,14 @@ highp uint vertexIndex = aVertexIndex.x * (1u - lineEndpointIndex) + aVertexInde
 vec4 segmentColor() {
   return uColor;
 }
+void emitRGBA(vec4 color) {
+  emit(vec4(color.rgb * color.a, color.a * getLineAlpha() * ${this.getCrossSectionFadeFactor()}), uPickID);
+}
 void emitRGB(vec3 color) {
-  emit(vec4(color * uColor.a, uColor.a * getLineAlpha() * ${this.getCrossSectionFadeFactor()}), uPickID);
+  emitRGBA(vec4(color, uColor.a));
 }
 void emitDefault() {
-  emit(vec4(uColor.rgb, uColor.a * getLineAlpha() * ${this.getCrossSectionFadeFactor()}), uPickID);
+  emitRGBA(uColor);
 }
 `);
           builder.addFragmentCode(glsl_COLORMAPS);
@@ -312,11 +315,14 @@ emitSkeletonCapsuleCylinder(uProjection, uNormalMatrix, vertexA, vertexB, radius
 vec4 segmentColor() {
   return uColor;
 }
+void emitRGBA(vec4 color) {
+  emit(vec4(color.rgb * vLightingFactor, color.a * ${this.getCrossSectionFadeFactor()}), uPickID);
+}
 void emitRGB(vec3 color) {
-  emit(vec4(color * vLightingFactor, uColor.a * ${this.getCrossSectionFadeFactor()}), uPickID);
+  emitRGBA(vec4(color, uColor.a));
 }
 void emitDefault() {
-  emit(vec4(uColor.rgb * vLightingFactor, uColor.a * ${this.getCrossSectionFadeFactor()}), uPickID);
+  emitRGBA(uColor);
 }
 `);
           builder.addFragmentCode(glsl_COLORMAPS);
