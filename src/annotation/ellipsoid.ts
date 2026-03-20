@@ -30,7 +30,12 @@ import {
 } from "#src/annotation/type_handler.js";
 import type { PerspectiveViewRenderContext } from "#src/perspective_view/render_layer.js";
 import type { SliceViewPanelRenderContext } from "#src/sliceview/renderlayer.js";
-import { mat3, mat4, normalMatrixFromMat4ToScaledSpace, vec3 } from "#src/util/geom.js";
+import {
+  mat3,
+  mat4,
+  normalMatrixFromMat4ToScaledSpace,
+  vec3,
+} from "#src/util/geom.js";
 import {
   computeCenterOrientEllipseDebug,
   computeCrossSectionEllipseDebug,

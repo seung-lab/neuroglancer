@@ -111,6 +111,14 @@ export const LAYER_CONTROLS: LayerControlDefinition<SegmentationUserLayer>[] = [
     title: "Highlight the segment under the mouse pointer",
     ...checkboxLayerControl((layer) => layer.displayState.hoverHighlight),
   },
+  {
+    label: "Skeleton rendering",
+    toolJson: `${json_keys.SKELETON_RENDERING_JSON_KEY}.mode`,
+    isValid: (layer) => layer.hasSkeletonsLayer,
+    ...enumLayerControl(
+      (layer) => layer.displayState.skeletonRenderingOptions.mode,
+    ),
+  },
   ...getViewSpecificSkeletonRenderingControl("2d"),
   ...getViewSpecificSkeletonRenderingControl("3d"),
 ];

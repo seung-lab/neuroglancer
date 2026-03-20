@@ -306,6 +306,12 @@ class SaturationTool(LayerTool):
 
 
 @export_tool
+class SkeletonRenderingModeTool(LayerTool):
+    __slots__ = ()
+    TOOL_TYPE = "skeletonRendering.mode"
+
+
+@export_tool
 class SkeletonRenderingMode2dTool(LayerTool):
     __slots__ = ()
     TOOL_TYPE = "skeletonRendering.mode2d"
@@ -651,6 +657,7 @@ class SkeletonRenderingOptions(JsonObjectWrapper):
     shader_controls = shaderControls = wrapped_property(
         "shaderControls", ShaderControls
     )
+    mode = wrapped_property("mode", optional(str))
     mode2d = wrapped_property("mode2d", optional(str))
     line_width2d = lineWidth2d = wrapped_property("lineWidth2d", optional(float, 2))
     mode3d = wrapped_property("mode3d", optional(str))

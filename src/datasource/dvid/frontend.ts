@@ -50,6 +50,7 @@ import type {
   DataSourceProvider,
 } from "#src/datasource/index.js";
 import { MeshSource } from "#src/mesh/frontend.js";
+import type { VertexAttributeInfo } from "#src/skeleton/base.js";
 import { SkeletonSource } from "#src/skeleton/frontend.js";
 import type { SliceViewSingleResolutionSource } from "#src/sliceview/frontend.js";
 import type { VolumeSourceOptions } from "#src/sliceview/volume/base.js";
@@ -126,7 +127,25 @@ class DVIDVolumeChunkSource extends WithParameters(
 class DVIDSkeletonSource extends WithParameters(
   WithCredentialsProvider<DVIDToken>()(SkeletonSource),
   SkeletonSourceParameters,
-) {}
+) {
+  private vertexAttributes_?: Map<string, VertexAttributeInfo>;
+
+  get vertexAttributes() {
+    let vertexAttributes = this.vertexAttributes_;
+    if (vertexAttributes === undefined) {
+      vertexAttributes = this.vertexAttributes_ = new Map([
+        [
+          "radius",
+          {
+            dataType: DataType.FLOAT32,
+            numComponents: 1,
+          },
+        ],
+      ]);
+    }
+    return vertexAttributes;
+  }
+}
 
 class DVIDMeshSource extends WithParameters(
   WithCredentialsProvider<DVIDToken>()(MeshSource),

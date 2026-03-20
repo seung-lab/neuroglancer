@@ -66,6 +66,7 @@ from .viewer_state import (
     MeshRenderScaleTool,  # noqa: F401
     MeshSilhouetteRenderingTool,  # noqa: F401
     SaturationTool,  # noqa: F401
+    SkeletonRenderingModeTool,  # noqa: F401
     SkeletonRenderingMode2dTool,  # noqa: F401
     SkeletonRenderingMode3dTool,  # noqa: F401
     SkeletonRenderingLineWidth2dTool,  # noqa: F401

@@ -41,6 +41,7 @@ export function decodeSwcSkeletonChunk(chunk: SkeletonChunk, swcStr: string) {
   });
 
   const glVertices = new Float32Array(3 * nodeCount);
+  const glRadii = new Float32Array(nodeCount);
   const glIndices = new Uint32Array(2 * edgeCount);
 
   let nodeIndex = 0;
@@ -50,6 +51,7 @@ export function decodeSwcSkeletonChunk(chunk: SkeletonChunk, swcStr: string) {
       glVertices[3 * nodeIndex] = swcObj.x;
       glVertices[3 * nodeIndex + 1] = swcObj.y;
       glVertices[3 * nodeIndex + 2] = swcObj.z;
+      glRadii[nodeIndex] = swcObj.radius;
 
       if (swcObj.parent >= 0) {
         glIndices[2 * edgetIndex] = nodeIndex;
@@ -62,6 +64,7 @@ export function decodeSwcSkeletonChunk(chunk: SkeletonChunk, swcStr: string) {
 
   chunk.indices = glIndices;
   chunk.vertexPositions = glVertices;
+  chunk.vertexAttributes = [glRadii];
 }
 
 /*

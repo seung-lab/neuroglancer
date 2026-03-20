@@ -23,6 +23,9 @@ describe("skeleton/decode_swc_skeleton", () => {
       ]),
     ); // vertex locations
     expect(chunk.indices).toEqual(new Uint32Array([1, 0, 2, 1, 3, 2, 4, 3])); // pairs of indices for each line
+    expect(chunk.vertexAttributes).toEqual([
+      new Float32Array([2, 3.65685, 6.94427, 3.65685, 2]),
+    ]);
   });
   it("fails parsing improper skeleton", () => {
     const chunk = new SkeletonChunk();

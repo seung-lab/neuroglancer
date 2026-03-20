@@ -45,7 +45,11 @@ import { TrackableValue, WatchableValue } from "#src/trackable_value.js";
 import { DataType } from "#src/util/data_type.js";
 import { RefCounted } from "#src/util/disposable.js";
 import type { vec3 } from "#src/util/geom.js";
-import { mat4 } from "#src/util/geom.js";
+import {
+  mat3,
+  mat4,
+  normalMatrixFromMat4ToScaledSpace,
+} from "#src/util/geom.js";
 import { verifyFinitePositiveFloat } from "#src/util/json.js";
 import { NullarySignal } from "#src/util/signal.js";
 import type { Trackable } from "#src/util/trackable.js";
@@ -59,6 +63,7 @@ import {
 } from "#src/webgl/circles.js";
 import { glsl_COLORMAPS } from "#src/webgl/colormaps.js";
 import type { GL } from "#src/webgl/context.js";
+import { CylinderRenderHelper } from "#src/webgl/cylinders.js";
 import type { WatchableShaderError } from "#src/webgl/dynamic_shader.js";
 import {
   makeTrackableFragmentMain,
@@ -83,6 +88,7 @@ import {
   setControlsInShader,
   ShaderControlState,
 } from "#src/webgl/shader_ui_controls.js";
+import { SphereRenderHelper } from "#src/webgl/spheres.js";
 import {
   computeTextureFormat,
   getSamplerPrefixForDataType,
@@ -93,6 +99,7 @@ import {
 import { defineVertexId, VertexIdHelper } from "#src/webgl/vertex_id.js";
 
 const tempMat2 = mat4.create();
+const tempMat3 = mat3.create();
 
 const DEFAULT_FRAGMENT_MAIN = `void main() {
   emitDefault();
@@ -118,8 +125,15 @@ class RenderHelper extends RefCounted {
     "vertexData",
   );
   private vertexIdHelper;
+  private sphereRenderHelper;
+  private cylinderRenderHelper;
+  private tempLightVec = new Float32Array(4);
   get vertexAttributes(): VertexAttributeRenderInfo[] {
     return this.base.vertexAttributes;
+  }
+
+  get radiusAttributeIndex() {
+    return this.base.radiusAttributeIndex;
   }
 
   defineCommonShader(builder: ShaderBuilder) {
@@ -131,6 +145,8 @@ class RenderHelper extends RefCounted {
 
   edgeShaderGetter;
   nodeShaderGetter;
+  capsuleEdgeShaderGetter;
+  capsuleNodeShaderGetter;
 
   get gl(): GL {
     return this.base.gl;
@@ -141,10 +157,17 @@ class RenderHelper extends RefCounted {
     public targetIsSliceView: boolean,
   ) {
     super();
-    this.vertexIdHelper = this.registerDisposer(VertexIdHelper.get(this.gl));
+    const gl = base.gl;
+    this.vertexIdHelper = this.registerDisposer(VertexIdHelper.get(gl));
+    this.sphereRenderHelper = this.registerDisposer(
+      new SphereRenderHelper(gl, 10, 10),
+    );
+    this.cylinderRenderHelper = this.registerDisposer(
+      new CylinderRenderHelper(gl, 24),
+    );
     this.edgeShaderGetter = parameterizedEmitterDependentShaderGetter(
       this,
-      this.gl,
+      gl,
       {
         memoizeKey: {
           type: "skeleton/SkeletonShaderManager/edge",
@@ -207,9 +230,119 @@ void emitDefault() {
       },
     );
 
+    this.capsuleEdgeShaderGetter = parameterizedEmitterDependentShaderGetter(
+      this,
+      gl,
+      {
+        memoizeKey: {
+          type: "skeleton/SkeletonShaderManager/capsuleEdge",
+          vertexAttributes: this.vertexAttributes,
+        },
+        fallbackParameters: this.base.fallbackShaderParameters,
+        parameters:
+          this.base.displayState.skeletonRenderingOptions.shaderControlState
+            .builderState,
+        shaderError: this.base.displayState.shaderError,
+        defineShader: (
+          builder: ShaderBuilder,
+          shaderBuilderState: ShaderControlsBuilderState,
+        ) => {
+          if (shaderBuilderState.parseResult.errors.length !== 0) {
+            throw new Error("Invalid UI control specification");
+          }
+          this.defineCommonShader(builder);
+          this.defineAttributeAccess(builder);
+          this.cylinderRenderHelper.defineShader(builder);
+          builder.addAttribute("highp uvec2", "aVertexIndex");
+          builder.addUniform("highp float", "uCapsuleRadius");
+          builder.addUniform("highp vec4", "uLightDirection");
+          builder.addUniform("highp mat3", "uNormalMatrix");
+          builder.addVertexCode(`
+float getVertexRadius(highp uint vertexIndex) {
+  return ${
+    this.radiusAttributeIndex === -1
+      ? "uCapsuleRadius"
+      : `readAttribute${this.radiusAttributeIndex}(vertexIndex)`
+  };
+}
+
+void emitSkeletonCapsuleCylinder(
+    mat4 projectionMatrix,
+    mat3 normalMatrix,
+    vec3 pointA,
+    vec3 pointB,
+    float radiusA,
+    float radiusB,
+    vec4 lightDirection) {
+  vec3 axis = pointB - pointA;
+  float axisLength = length(axis);
+  if (axisLength < 1e-6) {
+    gl_Position = vec4(2.0, 0.0, 0.0, 1.0);
+    return;
+  }
+  vec3 yAxis = axis / axisLength;
+  vec3 tangent = abs(yAxis.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+  vec3 xAxis = normalize(cross(tangent, yAxis));
+  vec3 zAxis = cross(yAxis, xAxis);
+  float t = 0.5 * (aCylinderVertex.y + 1.0);
+  float radius = mix(radiusA, radiusB, t);
+  vec3 vertexPosition = pointA +
+      axis * t +
+      xAxis * (aCylinderVertex.x * radius) +
+      zAxis * (aCylinderVertex.z * radius);
+  gl_Position = projectionMatrix * vec4(vertexPosition, 1.0);
+  float radiusSlope = (radiusB - radiusA) / max(axisLength, 1e-6);
+  vec3 objectNormal = normalize(
+      xAxis * aCylinderVertex.x +
+      zAxis * aCylinderVertex.z -
+      yAxis * radiusSlope);
+  vec3 transformedNormal = normalize(normalMatrix * objectNormal);
+  vLightingFactor = abs(dot(transformedNormal, lightDirection.xyz)) + lightDirection.w;
+}
+`);
+          let vertexMain = `
+highp vec3 vertexA = readAttribute0(aVertexIndex.x);
+highp vec3 vertexB = readAttribute0(aVertexIndex.y);
+float radiusA = getVertexRadius(aVertexIndex.x);
+float radiusB = getVertexRadius(aVertexIndex.y);
+float edgeT = 0.5 * (aCylinderVertex.y + 1.0);
+emitSkeletonCapsuleCylinder(uProjection, uNormalMatrix, vertexA, vertexB, radiusA, radiusB, uLightDirection);
+`;
+          builder.addFragmentCode(`
+vec4 segmentColor() {
+  return uColor;
+}
+void emitRGB(vec3 color) {
+  emit(vec4(color * vLightingFactor, uColor.a * ${this.getCrossSectionFadeFactor()}), uPickID);
+}
+void emitDefault() {
+  emit(vec4(uColor.rgb * vLightingFactor, uColor.a * ${this.getCrossSectionFadeFactor()}), uPickID);
+}
+`);
+          builder.addFragmentCode(glsl_COLORMAPS);
+          const { vertexAttributes } = this;
+          const numAttributes = vertexAttributes.length;
+          for (let i = 1; i < numAttributes; ++i) {
+            const info = vertexAttributes[i];
+            builder.addVarying(`highp ${info.glslDataType}`, `vCustom${i}`);
+            vertexMain += `vCustom${i} = mix(readAttribute${i}(aVertexIndex.x), readAttribute${i}(aVertexIndex.y), edgeT);\n`;
+            builder.addFragmentCode(`#define ${info.name} vCustom${i}\n`);
+            builder.addFragmentCode(
+              `#define prop_${info.name}() vCustom${i}\n`,
+            );
+          }
+          builder.setVertexMain(vertexMain);
+          addControlsToBuilder(shaderBuilderState, builder);
+          builder.setFragmentMainFunction(
+            shaderCodeWithLineDirective(shaderBuilderState.parseResult.code),
+          );
+        },
+      },
+    );
+
     this.nodeShaderGetter = parameterizedEmitterDependentShaderGetter(
       this,
-      this.gl,
+      gl,
       {
         memoizeKey: {
           type: "skeleton/SkeletonShaderManager/node",
@@ -247,6 +380,82 @@ vec4 segmentColor() {
 void emitRGBA(vec4 color) {
   vec4 borderColor = color;
   emit(getCircleColor(color, borderColor), uPickID);
+}
+void emitRGB(vec3 color) {
+  emitRGBA(vec4(color, 1.0));
+}
+void emitDefault() {
+  emitRGBA(uColor);
+}
+`);
+          builder.addFragmentCode(glsl_COLORMAPS);
+          const { vertexAttributes } = this;
+          const numAttributes = vertexAttributes.length;
+          for (let i = 1; i < numAttributes; ++i) {
+            const info = vertexAttributes[i];
+            builder.addVarying(`highp ${info.glslDataType}`, `vCustom${i}`);
+            vertexMain += `vCustom${i} = readAttribute${i}(vertexIndex);\n`;
+            builder.addFragmentCode(`#define ${info.name} vCustom${i}\n`);
+            builder.addFragmentCode(
+              `#define prop_${info.name}() vCustom${i}\n`,
+            );
+          }
+          builder.setVertexMain(vertexMain);
+          addControlsToBuilder(shaderBuilderState, builder);
+          builder.setFragmentMainFunction(
+            shaderCodeWithLineDirective(shaderBuilderState.parseResult.code),
+          );
+        },
+      },
+    );
+
+    this.capsuleNodeShaderGetter = parameterizedEmitterDependentShaderGetter(
+      this,
+      gl,
+      {
+        memoizeKey: {
+          type: "skeleton/SkeletonShaderManager/capsuleNode",
+          vertexAttributes: this.vertexAttributes,
+        },
+        fallbackParameters: this.base.fallbackShaderParameters,
+        parameters:
+          this.base.displayState.skeletonRenderingOptions.shaderControlState
+            .builderState,
+        shaderError: this.base.displayState.shaderError,
+        defineShader: (
+          builder: ShaderBuilder,
+          shaderBuilderState: ShaderControlsBuilderState,
+        ) => {
+          if (shaderBuilderState.parseResult.errors.length !== 0) {
+            throw new Error("Invalid UI control specification");
+          }
+          this.defineCommonShader(builder);
+          this.defineAttributeAccess(builder);
+          this.sphereRenderHelper.defineShader(builder);
+          builder.addUniform("highp float", "uCapsuleRadius");
+          builder.addUniform("highp vec4", "uLightDirection");
+          builder.addUniform("highp mat3", "uNormalMatrix");
+          builder.addVertexCode(`
+float getVertexRadius(highp uint vertexIndex) {
+  return ${
+    this.radiusAttributeIndex === -1
+      ? "uCapsuleRadius"
+      : `readAttribute${this.radiusAttributeIndex}(vertexIndex)`
+  };
+}
+`);
+          let vertexMain = `
+highp uint vertexIndex = uint(gl_InstanceID);
+highp vec3 vertexPosition = readAttribute0(vertexIndex);
+float radius = getVertexRadius(vertexIndex);
+emitSphere(uProjection, uNormalMatrix, vertexPosition, vec3(radius), uLightDirection);
+`;
+          builder.addFragmentCode(`
+vec4 segmentColor() {
+  return uColor;
+}
+void emitRGBA(vec4 color) {
+  emit(vec4(color.rgb * vLightingFactor, color.a * uColor.a * ${this.getCrossSectionFadeFactor()}), uPickID);
 }
 void emitRGB(vec3 color) {
   emitRGBA(vec4(color, 1.0));
@@ -382,6 +591,74 @@ void emitDefault() {
     }
   }
 
+  initializeCapsuleUniforms(
+    gl: GL,
+    shader: ShaderProgram,
+    renderContext: SliceViewPanelRenderContext | PerspectiveViewRenderContext,
+    modelMatrix: mat4,
+    fallbackRadius: number,
+  ) {
+    const { projectionParameters } = renderContext;
+    normalMatrixFromMat4ToScaledSpace(
+      tempMat3,
+      modelMatrix,
+      projectionParameters.displayDimensionRenderInfo.canonicalVoxelFactors,
+    );
+    gl.uniformMatrix3fv(shader.uniform("uNormalMatrix"), false, tempMat3);
+    gl.uniform1f(shader.uniform("uCapsuleRadius"), fallbackRadius);
+    const lightVec = this.tempLightVec;
+    if ("lightDirection" in renderContext) {
+      const { lightDirection, ambientLighting, directionalLighting } =
+        renderContext;
+      lightVec[0] = lightDirection[0] * directionalLighting;
+      lightVec[1] = lightDirection[1] * directionalLighting;
+      lightVec[2] = lightDirection[2] * directionalLighting;
+      lightVec[3] = ambientLighting;
+    } else {
+      lightVec[0] = 0;
+      lightVec[1] = 0;
+      lightVec[2] = 0;
+      lightVec[3] = 1;
+    }
+    gl.uniform4fv(shader.uniform("uLightDirection"), lightVec);
+  }
+
+  drawCapsuleSkeleton(
+    gl: GL,
+    edgeShader: ShaderProgram,
+    nodeShader: ShaderProgram,
+    skeletonChunk: SkeletonChunk,
+  ) {
+    const { vertexAttributes } = this;
+    const numAttributes = vertexAttributes.length;
+    const { vertexAttributeTextures } = skeletonChunk;
+    for (let i = 0; i < numAttributes; ++i) {
+      const textureUnit =
+        WebGL2RenderingContext.TEXTURE0 +
+        edgeShader.textureUnit(vertexAttributeSamplerSymbols[i]);
+      gl.activeTexture(textureUnit);
+      gl.bindTexture(
+        WebGL2RenderingContext.TEXTURE_2D,
+        vertexAttributeTextures[i],
+      );
+    }
+
+    edgeShader.bind();
+    const aVertexIndex = edgeShader.attribute("aVertexIndex");
+    skeletonChunk.indexBuffer.bindToVertexAttribI(
+      aVertexIndex,
+      2,
+      WebGL2RenderingContext.UNSIGNED_INT,
+    );
+    gl.vertexAttribDivisor(aVertexIndex, 1);
+    this.cylinderRenderHelper.draw(edgeShader, skeletonChunk.numIndices / 2);
+    gl.vertexAttribDivisor(aVertexIndex, 0);
+    gl.disableVertexAttribArray(aVertexIndex);
+
+    nodeShader.bind();
+    this.sphereRenderHelper.draw(nodeShader, skeletonChunk.numVertices);
+  }
+
   endLayer(gl: GL, shader: ShaderProgram) {
     const { vertexAttributes } = this;
     const numAttributes = vertexAttributes.length;
@@ -399,6 +676,20 @@ void emitDefault() {
 export enum SkeletonRenderMode {
   LINES = 0,
   LINES_AND_POINTS = 1,
+}
+
+export enum SkeletonRenderingMode {
+  DEFAULT = 0,
+  CAPSULES = 1,
+}
+
+export class TrackableSkeletonRenderingMode extends TrackableEnum<SkeletonRenderingMode> {
+  constructor(
+    value: SkeletonRenderingMode,
+    defaultValue: SkeletonRenderingMode = value,
+  ) {
+    super(SkeletonRenderingMode, value, defaultValue);
+  }
 }
 
 export class TrackableSkeletonRenderMode extends TrackableEnum<SkeletonRenderMode> {
@@ -429,6 +720,7 @@ export class SkeletonRenderingOptions implements Trackable {
 
   shader = makeTrackableFragmentMain(DEFAULT_FRAGMENT_MAIN);
   shaderControlState = new ShaderControlState(this.shader);
+  mode = new TrackableSkeletonRenderingMode(SkeletonRenderingMode.DEFAULT);
   params2d: ViewSpecificSkeletonRenderingOptions = {
     mode: new TrackableSkeletonRenderMode(SkeletonRenderMode.LINES_AND_POINTS),
     lineWidth: new TrackableSkeletonLineWidth(2),
@@ -442,6 +734,7 @@ export class SkeletonRenderingOptions implements Trackable {
     const { compound } = this;
     compound.add("shader", this.shader);
     compound.add("shaderControls", this.shaderControlState);
+    compound.add("mode", this.mode);
     compound.add("mode2d", this.params2d.mode);
     compound.add("lineWidth2d", this.params2d.lineWidth);
     compound.add("mode3d", this.params3d.mode);
@@ -479,6 +772,7 @@ export class SkeletonLayer extends RefCounted {
   fallbackShaderParameters = new WatchableValue(
     getFallbackBuilderState(parseShaderUiControls(DEFAULT_FRAGMENT_MAIN)),
   );
+  radiusAttributeIndex = -1;
 
   get visibility() {
     return this.sharedObject.visibility;
@@ -517,6 +811,9 @@ export class SkeletonLayer extends RefCounted {
     ]);
 
     for (const [name, info] of source.vertexAttributes) {
+      if (name === "radius" && info.numComponents === 1) {
+        this.radiusAttributeIndex = vertexAttributes.length;
+      }
       vertexAttributes.push({
         name,
         dataType: info.dataType,
@@ -542,7 +839,11 @@ export class SkeletonLayer extends RefCounted {
       ThreeDimensionalRenderLayerAttachmentState
     >,
   ) {
-    const lineWidth = renderOptions.lineWidth.value;
+    const renderingMode = this.displayState.skeletonRenderingOptions.mode.value;
+    const capsuleMode = renderingMode === SkeletonRenderingMode.CAPSULES;
+    const lineWidth = capsuleMode
+      ? this.displayState.skeletonRenderingOptions.params3d.lineWidth.value
+      : renderOptions.lineWidth.value;
     const { gl, source, displayState } = this;
     if (displayState.objectAlpha.value <= 0.0) {
       // Skip drawing.
@@ -561,12 +862,12 @@ export class SkeletonLayer extends RefCounted {
       pointDiameter = lineWidth;
     }
 
-    const edgeShaderResult = renderHelper.edgeShaderGetter(
-      renderContext.emitter,
-    );
-    const nodeShaderResult = renderHelper.nodeShaderGetter(
-      renderContext.emitter,
-    );
+    const edgeShaderResult = capsuleMode
+      ? renderHelper.capsuleEdgeShaderGetter(renderContext.emitter)
+      : renderHelper.edgeShaderGetter(renderContext.emitter);
+    const nodeShaderResult = capsuleMode
+      ? renderHelper.capsuleNodeShaderGetter(renderContext.emitter)
+      : renderHelper.nodeShaderGetter(renderContext.emitter);
     const { shader: edgeShader, parameters: edgeShaderParameters } =
       edgeShaderResult;
     const { shader: nodeShader, parameters: nodeShaderParameters } =
@@ -586,17 +887,37 @@ export class SkeletonLayer extends RefCounted {
       shaderControlState,
       edgeShaderParameters.parseResult.controls,
     );
-    gl.uniform1f(edgeShader.uniform("uLineWidth"), lineWidth!);
+    if (capsuleMode) {
+      renderHelper.initializeCapsuleUniforms(
+        gl,
+        edgeShader,
+        renderContext,
+        modelMatrix,
+        lineWidth,
+      );
+    } else {
+      gl.uniform1f(edgeShader.uniform("uLineWidth"), lineWidth);
+    }
 
     nodeShader.bind();
     renderHelper.beginLayer(gl, nodeShader, renderContext, modelMatrix);
-    gl.uniform1f(nodeShader.uniform("uNodeDiameter"), pointDiameter);
     setControlsInShader(
       gl,
       nodeShader,
       shaderControlState,
       nodeShaderParameters.parseResult.controls,
     );
+    if (capsuleMode) {
+      renderHelper.initializeCapsuleUniforms(
+        gl,
+        nodeShader,
+        renderContext,
+        modelMatrix,
+        lineWidth,
+      );
+    } else {
+      gl.uniform1f(nodeShader.uniform("uNodeDiameter"), pointDiameter);
+    }
 
     const skeletons = source.chunks;
 
@@ -626,13 +947,22 @@ export class SkeletonLayer extends RefCounted {
           nodeShader.bind();
           renderHelper.setPickID(gl, nodeShader, pickIndex);
         }
-        renderHelper.drawSkeleton(
-          gl,
-          edgeShader,
-          nodeShader,
-          skeleton,
-          renderContext.projectionParameters,
-        );
+        if (capsuleMode) {
+          renderHelper.drawCapsuleSkeleton(
+            gl,
+            edgeShader,
+            nodeShader,
+            skeleton,
+          );
+        } else {
+          renderHelper.drawSkeleton(
+            gl,
+            edgeShader,
+            nodeShader,
+            skeleton,
+            renderContext.projectionParameters,
+          );
+        }
       },
     );
     renderHelper.endLayer(gl, edgeShader);
@@ -679,6 +1009,11 @@ export class PerspectiveViewSkeletonLayer extends PerspectiveViewRenderLayer {
     this.registerDisposer(base);
     this.registerDisposer(base.redrawNeeded.add(this.redrawNeeded.dispatch));
     const { renderOptions } = this;
+    this.registerDisposer(
+      base.displayState.skeletonRenderingOptions.mode.changed.add(
+        this.redrawNeeded.dispatch,
+      ),
+    );
     this.registerDisposer(
       renderOptions.mode.changed.add(this.redrawNeeded.dispatch),
     );
@@ -731,10 +1066,20 @@ export class SliceViewPanelSkeletonLayer extends SliceViewPanelRenderLayer {
     this.registerDisposer(base);
     const { renderOptions } = this;
     this.registerDisposer(
+      base.displayState.skeletonRenderingOptions.mode.changed.add(
+        this.redrawNeeded.dispatch,
+      ),
+    );
+    this.registerDisposer(
       renderOptions.mode.changed.add(this.redrawNeeded.dispatch),
     );
     this.registerDisposer(
       renderOptions.lineWidth.changed.add(this.redrawNeeded.dispatch),
+    );
+    this.registerDisposer(
+      base.displayState.skeletonRenderingOptions.params3d.lineWidth.changed.add(
+        this.redrawNeeded.dispatch,
+      ),
     );
     this.registerDisposer(base.redrawNeeded.add(this.redrawNeeded.dispatch));
     this.registerDisposer(base.visibility.add(this.visibility));

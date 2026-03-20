@@ -273,7 +273,11 @@ emitAnnotation(vec4(vColor.rgb * vLightingFactor, vColor.a * vClipCoefficient));
       context.renderContext.projectionParameters.displayDimensionRenderInfo
         .canonicalVoxelFactors,
     );
-    shader.gl.uniformMatrix3fv(shader.uniform("uNormalMatrix"), false, tempMat3);
+    shader.gl.uniformMatrix3fv(
+      shader.uniform("uNormalMatrix"),
+      false,
+      tempMat3,
+    );
   }
 
   draw(
