@@ -30,7 +30,7 @@ import {
 } from "#src/annotation/type_handler.js";
 import type { PerspectiveViewRenderContext } from "#src/perspective_view/render_layer.js";
 import type { SliceViewPanelRenderContext } from "#src/sliceview/renderlayer.js";
-import { mat3, mat4, vec3 } from "#src/util/geom.js";
+import { mat3, mat4, normalMatrixFromMat4ToScaledSpace, vec3 } from "#src/util/geom.js";
 import {
   computeCenterOrientEllipseDebug,
   computeCrossSectionEllipseDebug,
@@ -44,6 +44,7 @@ import { SphereRenderHelper } from "#src/webgl/spheres.js";
 import { defineVertexId, VertexIdHelper } from "#src/webgl/vertex_id.js";
 
 const tempMat4 = mat4.create();
+const tempMat3 = mat3.create();
 
 const DEBUG = false;
 
@@ -131,7 +132,7 @@ class PerspectiveRenderHelper extends RenderHelper {
       this.defineShader(builder);
       this.sphereRenderHelper.defineShader(builder);
       builder.addUniform("highp vec4", "uLightDirection");
-      builder.addUniform("highp mat4", "uNormalTransform");
+      builder.addUniform("highp mat3", "uNormalMatrix");
       builder.addVarying("highp float", "vClipCoefficient");
       builder.setVertexMain(`
 SubspaceParams params = getSubspaceParams();
@@ -141,7 +142,7 @@ if (params.cull) {
 }
 vClipCoefficient = params.clipCoefficient;
 ${this.invokeUserMain}
-emitSphere(uModelViewProjection, uNormalTransform, params.subspaceCenter, params.subspaceRadii, uLightDirection);
+emitSphere(uModelViewProjection, uNormalMatrix, params.subspaceCenter, params.subspaceRadii, uLightDirection);
 ${this.setPartIndex(builder)};
 `);
       builder.setFragmentMain(`
@@ -165,11 +166,13 @@ emitAnnotation(vec4(vColor.rgb * vLightingFactor, vColor.a * vClipCoefficient));
       vec3.scale(lightVec, lightDirection, directionalLighting);
       lightVec[3] = ambientLighting;
       gl.uniform4fv(shader.uniform("uLightDirection"), lightVec);
-      gl.uniformMatrix4fv(
-        shader.uniform("uNormalTransform"),
-        /*transpose=*/ false,
-        mat4.transpose(mat4.create(), context.renderSubspaceInvModelMatrix),
+      normalMatrixFromMat4ToScaledSpace(
+        tempMat3,
+        context.renderSubspaceModelMatrix,
+        context.renderContext.projectionParameters.displayDimensionRenderInfo
+          .canonicalVoxelFactors,
       );
+      gl.uniformMatrix3fv(shader.uniform("uNormalMatrix"), false, tempMat3);
       this.sphereRenderHelper.draw(shader, context.count);
     });
   }

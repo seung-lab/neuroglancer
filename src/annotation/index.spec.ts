@@ -18,7 +18,7 @@ import { describe, expect, it } from "vitest";
 import { AnnotationSource, AnnotationType } from "#src/annotation/index.js";
 
 describe("capsule annotations", () => {
-  it("round-trips capsule radius through annotation state", () => {
+  it("round-trips capsule end radii through annotation state", () => {
     const source = new AnnotationSource(3);
     source.restoreState([
       {
@@ -26,7 +26,8 @@ describe("capsule annotations", () => {
         type: "capsule",
         pointA: [1, 2, 3],
         pointB: [4, 5, 6],
-        radius: 12.5,
+        radiusA: 12.5,
+        radiusB: 18.5,
       },
     ]);
 
@@ -36,12 +37,13 @@ describe("capsule annotations", () => {
         type: "capsule",
         pointA: [1, 2, 3],
         pointB: [4, 5, 6],
-        radius: 12.5,
+        radiusA: 12.5,
+        radiusB: 18.5,
       },
     ]);
   });
 
-  it("defaults capsule radius to 2000 when omitted from state", () => {
+  it("defaults capsule end radii to 2000 when omitted from state", () => {
     const source = new AnnotationSource(3);
     source.restoreState([
       {
@@ -55,7 +57,28 @@ describe("capsule annotations", () => {
     const annotation = source.get("capsule-2");
     expect(annotation).toMatchObject({
       type: AnnotationType.CAPSULE,
-      radius: 2000,
+      radiusA: 2000,
+      radiusB: 2000,
+    });
+  });
+
+  it("uses shared radius as fallback for both capsule ends", () => {
+    const source = new AnnotationSource(3);
+    source.restoreState([
+      {
+        id: "capsule-3",
+        type: "capsule",
+        pointA: [0, 0, 0],
+        pointB: [1, 0, 0],
+        radius: 9,
+      },
+    ]);
+
+    const annotation = source.get("capsule-3");
+    expect(annotation).toMatchObject({
+      type: AnnotationType.CAPSULE,
+      radiusA: 9,
+      radiusB: 9,
     });
   });
 });

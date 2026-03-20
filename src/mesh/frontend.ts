@@ -62,6 +62,7 @@ import {
   mat3,
   mat3FromMat4,
   mat4,
+  normalMatrixFromMat4ToScaledSpace,
   scaleMat3Output,
   vec3,
 } from "#src/util/geom.js";
@@ -285,14 +286,11 @@ export class MeshShaderManager {
       false,
       mat4.multiply(tempMat4, projectionParameters.viewProjectionMat, modelMat),
     );
-    mat3FromMat4(tempMat3, modelMat);
-    scaleMat3Output(
+    normalMatrixFromMat4ToScaledSpace(
       tempMat3,
-      tempMat3,
+      modelMat,
       projectionParameters.displayDimensionRenderInfo.canonicalVoxelFactors,
     );
-    mat3.invert(tempMat3, tempMat3);
-    mat3.transpose(tempMat3, tempMat3);
     gl.uniformMatrix3fv(shader.uniform("uNormalMatrix"), false, tempMat3);
   }
 

@@ -1466,7 +1466,8 @@ class PlaceCapsuleTool extends PlaceLineTool {
       mouseState,
       annotationLayer,
     ) as Capsule;
-    annotation.radius = 2000;
+    annotation.radiusA = 2000;
+    annotation.radiusB = 2000;
     return annotation;
   }
 

@@ -110,10 +110,10 @@ export class SphereRenderHelper extends RefCounted {
     // =   (scalMat^{-1} * modelViewMat^{-1})^T
     // =   modelViewMat^{-1}^T * (scalMat^{-1})^T
     builder.addVertexCode(`
-void emitSphere(mat4 projectionMatrix, mat4 normalTransformMatrix, vec3 centerPosition, vec3 radii, vec4 lightDirection) {
+void emitSphere(mat4 projectionMatrix, mat3 normalMatrix, vec3 centerPosition, vec3 radii, vec4 lightDirection) {
   vec3 vertexPosition = aSphereVertex * radii + centerPosition;
   gl_Position = projectionMatrix * vec4(vertexPosition, 1.0);
-  vec3 normal = normalize((normalTransformMatrix * vec4(aSphereVertex / max(radii, 1e-6), 0.0)).xyz);
+  vec3 normal = normalize(normalMatrix * (aSphereVertex / max(radii, 1e-6)));
   vLightingFactor = abs(dot(normal, uLightDirection.xyz)) + uLightDirection.w;
 }
 `);

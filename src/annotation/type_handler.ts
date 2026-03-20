@@ -566,12 +566,24 @@ void userMain();
   }
 
   setPartIndex(builder: ShaderBuilder, ...partIndexExpressions: string[]) {
+    return this.setPartIndexForInstance(
+      builder,
+      "uint(gl_InstanceID)",
+      ...partIndexExpressions,
+    );
+  }
+
+  setPartIndexForInstance(
+    builder: ShaderBuilder,
+    instanceIndexExpression: string,
+    ...partIndexExpressions: string[]
+  ) {
     let s = `
 void setPartIndex(${partIndexExpressions
       .map((_, i) => `highp uint partIndex${i}`)
       .join()}) {
   highp uint pickID = uPickID;
-  highp uint pickBaseOffset = getPickBaseOffset();
+  highp uint pickBaseOffset = (${instanceIndexExpression}) * uint(${this.pickIdsPerInstance});
 ${partIndexExpressions
   .map((_, i) => `highp uint pickOffset${i} = pickBaseOffset + partIndex${i};`)
   .join("\n")}

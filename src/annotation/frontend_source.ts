@@ -846,7 +846,7 @@ export class MultiscaleAnnotationSource
             annotation.pointB,
             rank,
           );
-          tempRadius.fill(annotation.radius);
+          tempRadius.fill(Math.max(annotation.radiusA, annotation.radiusB));
           matrix.transformVector(
             tempChunk,
             source.multiscaleToChunkTransform,

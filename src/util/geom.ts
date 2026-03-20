@@ -412,6 +412,18 @@ export function scaleMat3Output(
   return out;
 }
 
+export function normalMatrixFromMat4ToScaledSpace(
+  out: mat3,
+  modelMatrix: mat4,
+  targetSpaceScales: TypedNumberArray,
+) {
+  mat3FromMat4(out, modelMatrix);
+  scaleMat3Output(out, out, targetSpaceScales);
+  mat3.invert(out, out);
+  mat3.transpose(out, out);
+  return out;
+}
+
 export function getViewFrustrumVolume(projectionMat: mat4) {
   if (projectionMat[15] === 1) {
     // orthographic projection

@@ -672,7 +672,8 @@ export interface Line extends AnnotationBase {
 export interface Capsule extends AnnotationBase {
   pointA: Float32Array;
   pointB: Float32Array;
-  radius: number;
+  radiusA: number;
+  radiusB: number;
   type: AnnotationType.CAPSULE;
 }
 
@@ -898,7 +899,8 @@ export const annotationTypeHandlers: Record<
       return {
         pointA: Array.from(annotation.pointA),
         pointB: Array.from(annotation.pointB),
-        radius: annotation.radius,
+        radiusA: annotation.radiusA,
+        radiusB: annotation.radiusB,
       };
     },
     restoreState(annotation: Capsule, obj: any, rank: number) {
@@ -908,15 +910,27 @@ export const annotationTypeHandlers: Record<
       annotation.pointB = verifyObjectProperty(obj, "pointB", (x) =>
         parseFixedLengthArray(new Float32Array(rank), x, verifyFiniteFloat),
       );
-      annotation.radius = verifyOptionalObjectProperty(
+      const sharedRadius = verifyOptionalObjectProperty(
         obj,
         "radius",
         verifyFiniteNonNegativeFloat,
         2000,
       );
+      annotation.radiusA = verifyOptionalObjectProperty(
+        obj,
+        "radiusA",
+        verifyFiniteNonNegativeFloat,
+        sharedRadius,
+      );
+      annotation.radiusB = verifyOptionalObjectProperty(
+        obj,
+        "radiusB",
+        verifyFiniteNonNegativeFloat,
+        sharedRadius,
+      );
     },
     serializedBytes(rank: number) {
-      return 2 * 4 * rank + 4;
+      return 2 * 4 * rank + 8;
     },
     serialize(
       buffer: DataView,
@@ -933,7 +947,9 @@ export const annotationTypeHandlers: Record<
         annotation.pointA,
         annotation.pointB,
       );
-      buffer.setFloat32(offset, annotation.radius, isLittleEndian);
+      buffer.setFloat32(offset, annotation.radiusA, isLittleEndian);
+      offset += 4;
+      buffer.setFloat32(offset, annotation.radiusB, isLittleEndian);
     },
     deserialize: (
       buffer: DataView,
@@ -952,12 +968,15 @@ export const annotationTypeHandlers: Record<
         pointA,
         pointB,
       );
-      const radius = buffer.getFloat32(offset, isLittleEndian);
+      const radiusA = buffer.getFloat32(offset, isLittleEndian);
+      offset += 4;
+      const radiusB = buffer.getFloat32(offset, isLittleEndian);
       return {
         type: AnnotationType.CAPSULE,
         pointA,
         pointB,
-        radius,
+        radiusA,
+        radiusB,
         id,
         properties: [],
       };
