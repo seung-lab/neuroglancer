@@ -1,5 +1,7 @@
 import type { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import * as json_keys from "#src/layer/segmentation/json_keys.js";
+import { SkeletonRenderingMode } from "#src/skeleton/frontend.js";
+import { makeCachedDerivedWatchableValue } from "#src/trackable_value.js";
 import type { LayerControlDefinition } from "#src/widget/layer_control.js";
 import { registerLayerControl } from "#src/widget/layer_control.js";
 import { checkboxLayerControl } from "#src/widget/layer_control_checkbox.js";
@@ -125,6 +127,14 @@ export const LAYER_CONTROLS: LayerControlDefinition<SegmentationUserLayer>[] = [
 
 const maxSilhouettePower = 10;
 
+function hasSkeletonControls(layer: SegmentationUserLayer) {
+  return makeCachedDerivedWatchableValue(
+    (hasSkeletonsLayer, renderingMode) =>
+      hasSkeletonsLayer && renderingMode !== SkeletonRenderingMode.MESH,
+    [layer.hasSkeletonsLayer, layer.displayState.skeletonRenderingOptions.mode],
+  );
+}
+
 function getViewSpecificSkeletonRenderingControl(
   viewName: "2d" | "3d",
 ): LayerControlDefinition<SegmentationUserLayer>[] {
@@ -132,7 +142,7 @@ function getViewSpecificSkeletonRenderingControl(
     {
       label: `Skeleton mode (${viewName})`,
       toolJson: `${json_keys.SKELETON_RENDERING_JSON_KEY}.mode${viewName}`,
-      isValid: (layer) => layer.hasSkeletonsLayer,
+      isValid: hasSkeletonControls,
       ...enumLayerControl(
         (layer) =>
           layer.displayState.skeletonRenderingOptions[
@@ -143,7 +153,10 @@ function getViewSpecificSkeletonRenderingControl(
     {
       label: `Line width (${viewName})`,
       toolJson: `${json_keys.SKELETON_RENDERING_JSON_KEY}.lineWidth${viewName}`,
-      isValid: (layer) => layer.hasSkeletonsLayer,
+      isValid:
+        viewName === "2d"
+          ? hasSkeletonControls
+          : (layer) => layer.hasSkeletonsLayer,
       toolDescription: `Skeleton line width (${viewName})`,
       title: `Skeleton line width (${viewName})`,
       ...rangeLayerControl((layer) => ({
