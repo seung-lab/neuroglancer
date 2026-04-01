@@ -15,7 +15,7 @@
  */
 
 :root {
-  --layer-number-color: #9a7518;
+  --layer-number-color: var(--kidpix-poppy);
 }
 
 .neuroglancer-layer-panel {
@@ -33,15 +33,20 @@
   position: relative;
   display: flex;
   align-items: center;
-  color: white;
+  color: var(--kidpix-ink);
   cursor: pointer;
-  border-width: 1px;
+  border-width: 3px;
   border-style: solid;
-  border-color: #ccc;
-  font-family: sans-serif;
-  font-size: 10pt;
-  background-color: black;
-  padding: 1px;
+  border-color: var(--kidpix-ink);
+  border-radius: 14px;
+  font-family: var(--kidpix-ui-font);
+  font-size: 11pt;
+  font-weight: 700;
+  background: linear-gradient(180deg, #fffceb 0%, var(--kidpix-paper) 100%);
+  padding: 3px 6px;
+  box-shadow:
+    inset 2px 2px 0px var(--kidpix-bevel-light),
+    3px 3px 0px rgba(28, 45, 74, 0.28);
 }
 
 .neuroglancer-layer-item,
@@ -51,15 +56,17 @@
 }
 
 .neuroglancer-layer-item[data-selected="true"] {
-  border-color: #8c8;
+  border-color: var(--kidpix-grass);
+  background: linear-gradient(180deg, #e6ffe9 0%, #b7f0bf 100%);
 }
 
 .neuroglancer-layer-item[data-selected="true"]:hover {
-  border-color: #3c3;
+  border-color: #2f9e43;
 }
 
 .neuroglancer-layer-item:hover {
-  border-color: #daa520;
+  border-color: var(--kidpix-poppy);
+  transform: translate(-1px, -1px);
 }
 
 .neuroglancer-layer-item-label {
@@ -73,14 +80,16 @@
   display: inline-block;
   background-color: var(--layer-number-color);
   font-weight: bold;
-  padding-left: 1px;
-  padding-right: 1px;
+  color: #fffdf2;
+  border-radius: 8px;
+  padding-left: 4px;
+  padding-right: 4px;
 }
 
 .neuroglancer-layer-panel[data-show-hover-values="true"]
   .neuroglancer-layer-item-value {
   display: inline-block;
-  font-family: monospace;
+  font-family: var(--kidpix-mono-font);
   font-size: medium;
   max-width: 50ch;
   margin-left: 1ch;
@@ -100,7 +109,7 @@
 }
 
 .neuroglancer-layer-item[data-visible="false"] {
-  color: #bbb;
+  color: #6b7591;
 }
 
 .neuroglancer-layer-panel-drop-zone {
@@ -112,8 +121,9 @@
 .neuroglancer-layer-item-prefetch-progress {
   position: absolute;
   left: 0px;
-  height: 2px;
-  background-color: #666;
+  height: 4px;
+  border-radius: 8px;
+  background-color: var(--kidpix-blueberry);
 }
 
 .neuroglancer-layer-item-visible-progress {
@@ -122,6 +132,7 @@
 
 .neuroglancer-layer-item-prefetch-progress {
   bottom: 0px;
+  background-color: var(--kidpix-bubblegum);
 }
 
 .neuroglancer-layer-item-value-container {
@@ -134,6 +145,7 @@
   position: relative;
   overflow: hidden;
   margin: 0 2px;
+  border-radius: 10px;
 }
 
 .neuroglancer-layer-item-label-color {

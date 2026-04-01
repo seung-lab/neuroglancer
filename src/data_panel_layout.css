@@ -25,27 +25,31 @@
 .neuroglancer-data-panel-layout-controls > button {
   display: flex;
   margin: 2px;
-  border: 0px;
-  background-color: rgba(0, 0, 0, 0.5);
+  border: 3px solid var(--kidpix-ink);
+  border-radius: 12px;
+  background: linear-gradient(180deg, #fff2a7 0%, var(--kidpix-sun) 100%);
   flex-direction: row;
   align-self: top;
   align-items: center;
   justify-content: center;
-  border: 1px solid white;
   font-size: 15px;
-  width: 18px;
-  height: 18px;
-  color: white;
+  width: 28px;
+  height: 28px;
+  color: var(--kidpix-ink);
+  box-shadow:
+    inset 2px 2px 0px rgba(255, 255, 255, 0.65),
+    2px 2px 0px rgba(28, 45, 74, 0.28);
 }
 
 .neuroglancer-data-panel-layout-controls > button > div {
   display: inline-block;
   text-align: center;
   line-height: 12px;
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
 }
 
 .neuroglancer-data-panel-layout-controls > button:hover {
-  color: #6ff;
+  background: linear-gradient(180deg, #ff9a84 0%, var(--kidpix-poppy) 100%);
+  color: #fffdf2;
 }

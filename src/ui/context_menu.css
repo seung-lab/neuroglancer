@@ -17,12 +17,14 @@
 .neuroglancer-context-menu {
   position: absolute;
   z-index: 100;
-  border: 1px solid white;
-  background-color: black;
-  box-shadow: 5px 5px 2px 1px rgba(0, 0, 0, 0.5);
-  font-family: sans-serif;
+  border: 4px solid var(--kidpix-ink);
+  border-radius: 18px;
+  background: linear-gradient(180deg, #fffdf1 0%, var(--kidpix-paper) 100%);
+  box-shadow: 8px 8px 0px rgba(28, 45, 74, 0.28);
+  font-family: var(--kidpix-ui-font);
   font-size: 11pt;
-  padding: 5px;
-  color: white;
+  font-weight: 700;
+  padding: 10px 12px;
+  color: var(--kidpix-ink);
   outline: 0px;
 }

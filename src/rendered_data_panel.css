@@ -21,4 +21,5 @@
   touch-action: none;
   color: #fff;
   text-align: left;
+  text-shadow: 1px 1px 0px rgba(28, 45, 74, 0.75);
 }

@@ -18,27 +18,32 @@
   text-decoration: none;
   align-self: center;
   white-space: nowrap;
-  padding-left: 2px;
-  padding-right: 2px;
-  min-width: 18px;
-  min-height: 18px;
-  border-radius: 20%;
+  padding-left: 5px;
+  padding-right: 5px;
+  min-width: 26px;
+  min-height: 26px;
+  border: 3px solid var(--kidpix-ink);
+  border-radius: 12px;
+  background: linear-gradient(180deg, #ff9a84 0%, var(--kidpix-poppy) 100%);
   align-items: center;
   justify-content: center;
-  color: white;
-  font: 12px sans-serif;
+  color: #fffdf2;
+  font: 12px var(--kidpix-ui-font);
   cursor: pointer;
   font-weight: 900;
   margin-left: 1px;
   margin-right: 1px;
   user-select: none;
+  box-shadow:
+    inset 2px 2px 0px rgba(255, 255, 255, 0.65),
+    2px 2px 0px rgba(28, 45, 74, 0.28);
 }
 
 .neuroglancer-icon svg {
   width: 16px;
   height: 16px;
   fill: transparent;
-  stroke: white;
+  stroke: #fffdf2;
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -46,7 +51,7 @@
 }
 
 .neuroglancer-icon:hover {
-  background-color: #db4437;
+  background: linear-gradient(180deg, #91ef9e 0%, var(--kidpix-grass) 100%);
 }
 
 .neuroglancer-icon.neuroglancer-info-icon:hover {

@@ -20,7 +20,7 @@
 }
 
 .neuroglancer-drag-over {
-  background-color: rgba(0, 0, 255, 0.5);
+  background-color: rgba(57, 123, 255, 0.4);
 }
 
 .neuroglancer-stack-layout-row > .neuroglancer-stack-layout-drop-placeholder {
@@ -40,13 +40,13 @@
 
 .neuroglancer-stack-layout-drop-placeholder {
   background-clip: content-box;
-  background-color: #666;
+  background-color: var(--kidpix-poppy);
   z-index: 1;
 }
 
 .neuroglancer-stack-layout-drop-placeholder.neuroglancer-drag-over {
   background-clip: border-box;
-  background-color: rgba(128, 128, 255, 0.5);
+  background-color: rgba(255, 214, 77, 0.65);
 }
 
 .neuroglancer-stack-layout-drop-placeholder:first-child,

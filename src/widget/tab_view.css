@@ -21,36 +21,40 @@
 
 .neuroglancer-tab-view-bar {
   display: block;
-  background-color: #333;
-  border-bottom: 1px solid white;
+  background: linear-gradient(180deg, #8ab0ff 0%, var(--kidpix-blueberry) 100%);
+  border-bottom: 4px solid var(--kidpix-ink);
+  padding: 4px 6px 0px;
 }
 
 .neuroglancer-tab-label {
   display: inline-block;
-  border-top: 1px solid transparent;
-  border-left: 1px solid transparent;
-  border-right: 1px solid transparent;
+  border-top: 3px solid var(--kidpix-ink);
+  border-left: 3px solid var(--kidpix-ink);
+  border-right: 3px solid var(--kidpix-ink);
   border-bottom: none;
   margin-right: 4px;
-  padding-top: 1px;
-  padding-left: 2px;
-  padding-right: 2px;
-  font: 10pt sans-serif;
+  padding: 4px 10px 2px;
+  font: 11pt var(--kidpix-ui-font);
   font-weight: bold;
   cursor: pointer;
+  color: var(--kidpix-ink);
+  background: linear-gradient(180deg, #ffe880 0%, var(--kidpix-sun) 100%);
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
+  box-shadow: inset 2px 2px 0px rgba(255, 255, 255, 0.6);
 }
 .neuroglancer-tab-label:hover {
-  color: #daa520;
+  background: linear-gradient(180deg, #ffc0df 0%, var(--kidpix-bubblegum) 100%);
 }
 
 .neuroglancer-tab-label.neuroglancer-selected-tab-label {
-  background-color: black;
-  border-top: 1px solid white;
-  border-left: 1px solid white;
-  border-right: 1px solid white;
-  border-bottom: 1px solid black;
-  padding-bottom: 1px;
-  margin-bottom: -1px;
+  background: linear-gradient(180deg, #fffdf1 0%, var(--kidpix-paper) 100%);
+  border-top: 3px solid var(--kidpix-ink);
+  border-left: 3px solid var(--kidpix-ink);
+  border-right: 3px solid var(--kidpix-ink);
+  border-bottom: 3px solid var(--kidpix-paper);
+  padding-bottom: 5px;
+  margin-bottom: -4px;
 }
 
 .neuroglancer-stack-view {
@@ -62,5 +66,5 @@
   flex-basis: 0px;
   height: 0px;
   min-height: 0px;
-  padding: 2px;
+  padding: 8px;
 }

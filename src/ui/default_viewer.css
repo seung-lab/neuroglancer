@@ -14,6 +14,22 @@
  * limitations under the License.
  */
 
+:root {
+  --kidpix-ink: #1c2d4a;
+  --kidpix-paper: #fff7d6;
+  --kidpix-sky: #7fd6ff;
+  --kidpix-sun: #ffd64d;
+  --kidpix-grass: #67cb78;
+  --kidpix-poppy: #ff6849;
+  --kidpix-bubblegum: #ff88c4;
+  --kidpix-blueberry: #397bff;
+  --kidpix-shadow: #284166;
+  --kidpix-bevel-light: #fffef7;
+  --kidpix-bevel-dark: #aa7b1f;
+  --kidpix-ui-font: "Chalkboard SE", "Comic Sans MS", "Marker Felt", "Trebuchet MS", cursive;
+  --kidpix-mono-font: "Andale Mono", "Courier New", monospace;
+}
+
 html,
 body {
   margin: 0px;
@@ -21,18 +37,74 @@ body {
   overflow: hidden;
   width: 100vw;
   height: 100vh;
-  background-color: black;
-  color: white;
+  background-color: var(--kidpix-sky);
+  background-image:
+    radial-gradient(circle at 14% 18%, rgba(255, 245, 153, 0.95) 0 8%, transparent 8.5%),
+    radial-gradient(circle at 86% 14%, rgba(255, 136, 196, 0.8) 0 6%, transparent 6.5%),
+    linear-gradient(180deg, #8edbff 0%, #8edbff 28%, #a7ebff 58%, #67cb78 58%, #67cb78 100%);
+  color: var(--kidpix-ink);
 }
 
 body {
   position: relative;
   display: flex;
   flex-direction: column;
+  font-family: var(--kidpix-ui-font);
 }
 
 #neuroglancer-container {
   width: 100vw;
   overflow: hidden;
   flex: 1;
+}
+
+#neuroglancer-container,
+#neuroglancer-container * {
+  /* box-sizing: border-box; */
+}
+
+#neuroglancer-container button,
+#neuroglancer-container input,
+#neuroglancer-container select,
+#neuroglancer-container textarea {
+  font-family: var(--kidpix-ui-font);
+}
+
+#neuroglancer-container button,
+#neuroglancer-container input:not([type="checkbox"]):not([type="range"]):not([type="color"]),
+#neuroglancer-container select,
+#neuroglancer-container textarea {
+  border: 3px solid var(--kidpix-ink);
+  border-radius: 12px;
+  background: var(--kidpix-paper);
+  color: var(--kidpix-ink);
+  box-shadow:
+    inset 2px 2px 0px var(--kidpix-bevel-light),
+    3px 3px 0px rgba(28, 45, 74, 0.35);
+}
+
+#neuroglancer-container button,
+#neuroglancer-container select {
+  cursor: pointer;
+}
+
+#neuroglancer-container input:not([type="checkbox"]):not([type="range"]):not([type="color"]),
+#neuroglancer-container select,
+#neuroglancer-container textarea {
+  padding: 4px 8px;
+}
+
+#neuroglancer-container button:hover,
+#neuroglancer-container select:hover,
+#neuroglancer-container input:not([type="checkbox"]):not([type="range"]):not([type="color"]):hover,
+#neuroglancer-container textarea:hover {
+  filter: saturate(1.05) brightness(1.02);
+}
+
+#neuroglancer-container button:focus-visible,
+#neuroglancer-container input:focus-visible,
+#neuroglancer-container select:focus-visible,
+#neuroglancer-container textarea:focus-visible {
+  outline: 4px solid rgba(255, 104, 73, 0.45);
+  outline-offset: 2px;
 }

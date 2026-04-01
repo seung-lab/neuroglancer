@@ -122,7 +122,7 @@ export class LayerTypeWidget extends RefCounted {
       this.layer.constructor as typeof UserLayer
     ).typeAbbreviation;
     element.value = selectedName;
-    element.style.width = `${measureElement.offsetWidth}px`;
+    element.style.width = `${measureElement.offsetWidth + 20}px`;
   }
 
   disposed() {
