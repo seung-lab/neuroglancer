@@ -325,7 +325,7 @@ describe("Voxel Operation Cost Calibration (Realistic)", () => {
     ) as VolumeChunk;
     chunk.data = null;
     await mockSource0.download(chunk);
-    (chunk.data as BigUint64Array).fill(0n);
+    (chunk.data as unknown as BigUint64Array).fill(0n);
   };
 
   const floodSizes = [1000, 5000, 10000, 25000, 50000];
