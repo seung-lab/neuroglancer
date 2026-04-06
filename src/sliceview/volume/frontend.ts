@@ -44,6 +44,28 @@ import type { ShaderBuilder, ShaderProgram } from "#src/webgl/shader.js";
 import { getShaderType, glsl_mixLinear } from "#src/webgl/shader_lib.js";
 import { registerSharedObjectOwner } from "#src/worker_rpc.js";
 
+export interface LocalVolumeEdit {
+  indices: number[] | Uint32Array;
+  value: bigint;
+  chunkGridPosition?: Float32Array;
+  indicesAreUnique?: boolean;
+}
+
+function parseChunkGridPositionKey(key: string) {
+  const chunkGridPosition = new Float32Array(3);
+  let component = 0;
+  let start = 0;
+  for (let i = 0; i <= key.length && component < 3; ++i) {
+    if (i !== key.length && key.charCodeAt(i) !== 44) {
+      continue;
+    }
+    chunkGridPosition[component] = Number(key.slice(start, i));
+    component++;
+    start = i + 1;
+  }
+  return chunkGridPosition;
+}
+
 export interface ChunkFormat {
   shaderKey: string;
 
@@ -305,14 +327,13 @@ export class InMemoryVolumeChunkSource extends VolumeChunkSource {
     setTimeout(update, 100);
   }
 
-  applyLocalEdits(
-    edits: Map<string, { indices: number[]; value: bigint }>,
-  ): void {
+  applyLocalEdits(edits: Map<string, LocalVolumeEdit>): void {
     const chunksToUpdate = new Set<VolumeChunk>();
     const { dataType } = this.spec;
 
     for (const [key, edit] of edits.entries()) {
-      const chunkGridPosition = new Float32Array(key.split(",").map(Number));
+      const chunkGridPosition =
+        edit.chunkGridPosition ?? parseChunkGridPositionKey(key);
 
       let chunk = this.chunks.get(key) as UncompressedVolumeChunk | undefined;
       if (chunk === undefined) {

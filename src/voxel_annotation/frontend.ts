@@ -17,12 +17,12 @@
 import type { ChunkChannelAccessParameters } from "#src/render_coordinate_transform.js";
 import { SharedWatchableValue } from "#src/shared_watchable_value.js";
 import type {
+  LocalVolumeEdit,
   InMemoryVolumeChunkSource,
   VolumeChunkSource,
 } from "#src/sliceview/volume/frontend.js";
 import { StatusMessage } from "#src/status.js";
 import { WatchableValue } from "#src/trackable_value.js";
-import { vec3 } from "#src/util/geom.js";
 import type {
   VoxelEditControllerHost,
   VoxelLayerResolution,
@@ -32,6 +32,7 @@ import type {
 import {
   makeVoxChunkKey,
   BrushShape,
+  getSphereOffsetKernel,
   parseVoxChunkKey,
   VOX_EDIT_BACKEND_RPC_ID,
   VOX_EDIT_FAILURE_RPC_ID,
@@ -47,6 +48,35 @@ import {
   registerSharedObjectOwner,
   SharedObject,
 } from "#src/worker_rpc.js";
+
+type PreviewLocalVolumeEdit = Omit<LocalVolumeEdit, "indices"> & {
+  indices: number[];
+  seenIndices?: Set<number>;
+};
+
+function getOrCreatePreviewEdit(
+  edits: Map<string, PreviewLocalVolumeEdit>,
+  chunkX: number,
+  chunkY: number,
+  chunkZ: number,
+  value: bigint,
+  dedupe: boolean,
+) {
+  const key = `${chunkX},${chunkY},${chunkZ}`;
+  let entry = edits.get(key);
+  if (entry !== undefined) {
+    return entry;
+  }
+  entry = {
+    indices: [],
+    value,
+    chunkGridPosition: Float32Array.of(chunkX, chunkY, chunkZ),
+    indicesAreUnique: true,
+    seenIndices: dedupe ? new Set<number>() : undefined,
+  };
+  edits.set(key, entry);
+  return entry;
+}
 
 @registerSharedObjectOwner(VOX_EDIT_BACKEND_RPC_ID)
 export class VoxelEditController extends SharedObject {
@@ -145,34 +175,24 @@ export class VoxelEditController extends SharedObject {
     basis: { u: Float32Array; v: Float32Array },
     filterValue?: bigint,
   ) {
+    void basis;
+    void filterValue;
     const voxelSize = 1; // Assuming LOD 0
     let r = Math.round(radiusCanonical / voxelSize);
     if (r <= 0) {
       throw new Error("Brush radius must be positive.");
     }
     r -= 1;
-    const rr = r * r;
-    const { u: uVec, v: vVec } = basis as { u: vec3; v: vec3 };
-    const n = vec3.create();
-    vec3.cross(n, uVec, vVec);
-    vec3.normalize(n, n);
-    const ux = uVec[0],
-      uy = uVec[1],
-      uz = uVec[2];
-    const vx = vVec[0],
-      vy = vVec[1],
-      vz = vVec[2];
-    const nx = n[0],
-      ny = n[1],
-      nz = n[2];
+    if (shape !== BrushShape.SPHERE) {
+      throw new Error(
+        "VoxelEditController.paintBrushWithShape frontend path only supports sphere brushes.",
+      );
+    }
+    const sphereKernel = getSphereOffsetKernel(r);
 
-    // WATCHOUT: update this value if the max possible voxel count changes
-    const maxCapacity = Math.ceil((2 * r + 1) ** 2 * 4);
-    const voxelBuffer = new Int32Array(maxCapacity * 3);
-
-    const edits = new Map<string, { indices: number[]; value: bigint }>();
+    const edits = new Map<string, PreviewLocalVolumeEdit>();
     const previewValue = valueGetter(true);
-    const storageValue = valueGetter(false);
+    const dedupePreviewIndices = points.length > 1;
 
     let previewSource: InMemoryVolumeChunkSource | undefined;
     let sizeX = 0,
@@ -194,122 +214,68 @@ export class VoxelEditController extends SharedObject {
       strideZ = sizeX * sizeY;
     }
 
-    let baseSource: VolumeChunkSource | undefined;
-    const tempPos = new Float32Array(3);
+    if (previewSource) {
+      let lastChunkX = Number.NaN;
+      let lastChunkY = Number.NaN;
+      let lastChunkZ = Number.NaN;
+      let lastEntry: PreviewLocalVolumeEdit | undefined;
 
-    if (filterValue !== undefined) {
-      const sourcesByScale = this.host.primarySource.getSources(
-        this.getIdentitySliceViewSourceOptions(),
-      );
-      baseSource = sourcesByScale[0][0].chunkSource as VolumeChunkSource;
-    }
+      const appendPreviewVoxel = (x: number, y: number, z: number) => {
+        const chunkX = Math.floor(x / sizeX);
+        const chunkY = Math.floor(y / sizeY);
+        const chunkZ = Math.floor(z / sizeZ);
 
-    const backendOps: Promise<void>[] = [];
-
-    for (const centerCanonical of points) {
-      let voxelCount = 0;
-
-      const addVoxel = (x: number, y: number, z: number) => {
-        if (filterValue && baseSource !== undefined) {
-          tempPos[0] = x;
-          tempPos[1] = y;
-          tempPos[2] = z;
-          const val = baseSource.getValueAt(tempPos, this.singleChannelAccess);
-          if (val != null) {
-            const bigVal = typeof val === "bigint" ? val : BigInt(val);
-            if (bigVal !== filterValue) return;
-          }
+        let entry = lastEntry;
+        if (
+          entry === undefined ||
+          chunkX !== lastChunkX ||
+          chunkY !== lastChunkY ||
+          chunkZ !== lastChunkZ
+        ) {
+          lastChunkX = chunkX;
+          lastChunkY = chunkY;
+          lastChunkZ = chunkZ;
+          entry = getOrCreatePreviewEdit(
+            edits,
+            chunkX,
+            chunkY,
+            chunkZ,
+            previewValue,
+            dedupePreviewIndices,
+          );
+          lastEntry = entry;
         }
 
-        const base = voxelCount * 3;
-        voxelBuffer[base] = x;
-        voxelBuffer[base + 1] = y;
-        voxelBuffer[base + 2] = z;
-        voxelCount++;
+        const lx = x - chunkX * sizeX;
+        const ly = y - chunkY * sizeY;
+        const lz = z - chunkZ * sizeZ;
+        const index = lz * strideZ + ly * strideY + lx;
+
+        if (entry.seenIndices?.has(index)) {
+          return;
+        }
+        entry.seenIndices?.add(index);
+        entry.indices.push(index);
       };
 
-      const cx = Math.round((centerCanonical[0] ?? 0) / voxelSize);
-      const cy = Math.round((centerCanonical[1] ?? 0) / voxelSize);
-      const cz = Math.round((centerCanonical[2] ?? 0) / voxelSize);
+      for (const centerCanonical of points) {
+        const cx = Math.round((centerCanonical[0] ?? 0) / voxelSize);
+        const cy = Math.round((centerCanonical[1] ?? 0) / voxelSize);
+        const cz = Math.round((centerCanonical[2] ?? 0) / voxelSize);
 
-      if (shape === BrushShape.DISK) {
-        for (let j = -r; j <= r; ++j) {
-          for (let i = -r; i <= r; ++i) {
-            if (i * i + j * j <= rr) {
-              const px = Math.round(cx + ux * i + vx * j);
-              const py = Math.round(cy + uy * i + vy * j);
-              const pz = Math.round(cz + uz * i + vz * j);
-              addVoxel(px, py, pz);
-            }
-          }
-        }
-      } else {
-        for (let j = -r; j <= r; ++j) {
-          for (let i = -r; i <= r; ++i) {
-            if (i * i + j * j <= rr) {
-              let px = Math.round(cx + ux * i + vx * j);
-              let py = Math.round(cy + uy * i + vy * j);
-              let pz = Math.round(cz + uz * i + vz * j);
-              addVoxel(px, py, pz);
-
-              px = Math.round(cx + ux * i + nx * j);
-              py = Math.round(cy + uy * i + ny * j);
-              pz = Math.round(cz + uz * i + nz * j);
-              addVoxel(px, py, pz);
-
-              px = Math.round(cx + nx * i + vx * j);
-              py = Math.round(cy + ny * i + vy * j);
-              pz = Math.round(cz + nz * i + vz * j);
-              addVoxel(px, py, pz);
-            }
-          }
+        for (let i = 0; i < sphereKernel.length; i += 3) {
+          appendPreviewVoxel(
+            cx + sphereKernel[i]!,
+            cy + sphereKernel[i + 1]!,
+            cz + sphereKernel[i + 2]!,
+          );
         }
       }
-
-      if (voxelCount > 0 && previewSource) {
-        for (let i = 0; i < voxelCount; ++i) {
-          const base = i * 3;
-          const x = voxelBuffer[base];
-          const y = voxelBuffer[base + 1];
-          const z = voxelBuffer[base + 2];
-
-          const chunkX = Math.floor(x / sizeX);
-          const chunkY = Math.floor(y / sizeY);
-          const chunkZ = Math.floor(z / sizeZ);
-
-          const lx = x - chunkX * sizeX;
-          const ly = y - chunkY * sizeY;
-          const lz = z - chunkZ * sizeZ;
-
-          const key = `${chunkX},${chunkY},${chunkZ}`;
-          let entry = edits.get(key);
-          if (!entry) {
-            entry = { indices: [], value: previewValue };
-            edits.set(key, entry);
-          }
-          const index = lz * strideZ + ly * strideY + lx;
-          entry.indices.push(index);
-        }
-      }
-
-      backendOps.push(
-        this.dispatchOperation({
-          type: VoxelOperationType.BRUSH,
-          center: centerCanonical,
-          radius: radiusCanonical,
-          value: storageValue,
-          shape,
-          basis,
-          filterValue,
-        }),
-      );
     }
 
     if (edits.size > 0 && previewSource) {
       previewSource.applyLocalEdits(edits);
     }
-
-    await Promise.all(backendOps);
   }
 
   async floodFillPlane2D(

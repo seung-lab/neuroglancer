@@ -153,6 +153,37 @@ export enum BrushShape {
   SPHERE = 1,
 }
 
+const sphereOffsetKernelCache = new Map<number, Int16Array>();
+
+export function getSphereOffsetKernel(radius: number): Int16Array {
+  let kernel = sphereOffsetKernelCache.get(radius);
+  if (kernel !== undefined) {
+    return kernel;
+  }
+
+  if (!Number.isInteger(radius) || radius < 0) {
+    throw new Error(`Invalid sphere radius: ${radius}`);
+  }
+
+  const rr = radius * radius;
+  const offsets: number[] = [];
+  for (let dz = -radius; dz <= radius; ++dz) {
+    const dz2 = dz * dz;
+    for (let dy = -radius; dy <= radius; ++dy) {
+      const dy2 = dy * dy;
+      for (let dx = -radius; dx <= radius; ++dx) {
+        if (dx * dx + dy2 + dz2 <= rr) {
+          offsets.push(dx, dy, dz);
+        }
+      }
+    }
+  }
+
+  kernel = Int16Array.from(offsets);
+  sphereOffsetKernelCache.set(radius, kernel);
+  return kernel;
+}
+
 export interface VoxelEditControllerHost {
   primarySource: MultiscaleVolumeChunkSource;
   previewSource?: VoxelPreviewMultiscaleSource;
