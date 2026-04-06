@@ -154,6 +154,7 @@ export enum BrushShape {
 }
 
 const sphereOffsetKernelCache = new Map<number, Int16Array>();
+const sphereRowRangesKernelCache = new Map<number, Int16Array>();
 
 export function getSphereOffsetKernel(radius: number): Int16Array {
   let kernel = sphereOffsetKernelCache.get(radius);
@@ -181,6 +182,35 @@ export function getSphereOffsetKernel(radius: number): Int16Array {
 
   kernel = Int16Array.from(offsets);
   sphereOffsetKernelCache.set(radius, kernel);
+  return kernel;
+}
+
+export function getSphereRowRangesKernel(radius: number): Int16Array {
+  let kernel = sphereRowRangesKernelCache.get(radius);
+  if (kernel !== undefined) {
+    return kernel;
+  }
+
+  if (!Number.isInteger(radius) || radius < 0) {
+    throw new Error(`Invalid sphere radius: ${radius}`);
+  }
+
+  const rr = radius * radius;
+  const ranges: number[] = [];
+  for (let dz = -radius; dz <= radius; ++dz) {
+    const dz2 = dz * dz;
+    for (let dy = -radius; dy <= radius; ++dy) {
+      const remaining = rr - dz2 - dy * dy;
+      if (remaining < 0) {
+        continue;
+      }
+      const maxDx = Math.floor(Math.sqrt(remaining));
+      ranges.push(dy, dz, -maxDx, maxDx + 1);
+    }
+  }
+
+  kernel = Int16Array.from(ranges);
+  sphereRowRangesKernelCache.set(radius, kernel);
   return kernel;
 }
 

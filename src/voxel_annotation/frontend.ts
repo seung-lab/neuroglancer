@@ -32,7 +32,7 @@ import type {
 import {
   makeVoxChunkKey,
   BrushShape,
-  getSphereOffsetKernel,
+  getSphereRowRangesKernel,
   parseVoxChunkKey,
   VOX_EDIT_BACKEND_RPC_ID,
   VOX_EDIT_FAILURE_RPC_ID,
@@ -51,7 +51,7 @@ import {
 
 type PreviewLocalVolumeEdit = Omit<LocalVolumeEdit, "indices"> & {
   indices: number[];
-  seenIndices?: Uint32Array;
+  indexRanges: number[];
 };
 
 function getOrCreatePreviewEdit(
@@ -60,8 +60,6 @@ function getOrCreatePreviewEdit(
   chunkY: number,
   chunkZ: number,
   value: bigint,
-  dedupe: boolean,
-  dedupeWordCount: number,
 ) {
   const key = `${chunkX},${chunkY},${chunkZ}`;
   let entry = edits.get(key);
@@ -70,10 +68,10 @@ function getOrCreatePreviewEdit(
   }
   entry = {
     indices: [],
+    indexRanges: [],
     value,
     chunkGridPosition: Float32Array.of(chunkX, chunkY, chunkZ),
     indicesAreUnique: true,
-    seenIndices: dedupe ? new Uint32Array(dedupeWordCount) : undefined,
   };
   edits.set(key, entry);
   return entry;
@@ -189,11 +187,10 @@ export class VoxelEditController extends SharedObject {
         "VoxelEditController.paintBrushWithShape frontend path only supports sphere brushes.",
       );
     }
-    const sphereKernel = getSphereOffsetKernel(r);
+    const sphereRowRanges = getSphereRowRangesKernel(r);
 
     const edits = new Map<string, PreviewLocalVolumeEdit>();
     const previewValue = valueGetter(true);
-    const dedupePreviewIndices = points.length > 1;
 
     let previewSource: InMemoryVolumeChunkSource | undefined;
     let sizeX = 0,
@@ -201,7 +198,6 @@ export class VoxelEditController extends SharedObject {
       sizeZ = 0;
     let strideY = 0,
       strideZ = 0;
-    let dedupeWordCount = 0;
     let useBitShiftChunkIndex = false;
     let sizeXShift = 0,
       sizeYShift = 0,
@@ -209,6 +205,13 @@ export class VoxelEditController extends SharedObject {
     let sizeXMask = 0,
       sizeYMask = 0,
       sizeZMask = 0;
+
+    const getChunkX = (x: number) =>
+      useBitShiftChunkIndex ? x >> sizeXShift : Math.floor(x / sizeX);
+    const getChunkY = (y: number) =>
+      useBitShiftChunkIndex ? y >> sizeYShift : Math.floor(y / sizeY);
+    const getChunkZ = (z: number) =>
+      useBitShiftChunkIndex ? z >> sizeZShift : Math.floor(z / sizeZ);
 
     if (this.host.previewSource) {
       previewSource = this.host.previewSource.getSources(
@@ -221,7 +224,6 @@ export class VoxelEditController extends SharedObject {
       sizeZ = chunkDataSize[2];
       strideY = sizeX;
       strideZ = sizeX * sizeY;
-      dedupeWordCount = Math.ceil((strideZ * sizeZ) / 32);
 
       const isPowerOfTwo = (value: number) => value > 0 && (value & (value - 1)) === 0;
       useBitShiftChunkIndex =
@@ -237,65 +239,106 @@ export class VoxelEditController extends SharedObject {
     }
 
     if (previewSource) {
+      const centers: Array<[number, number, number]> = [];
+      if (points.length <= 1) {
+        const centerCanonical = points[0]!;
+        centers.push([
+          Math.round((centerCanonical[0] ?? 0) / voxelSize),
+          Math.round((centerCanonical[1] ?? 0) / voxelSize),
+          Math.round((centerCanonical[2] ?? 0) / voxelSize),
+        ]);
+      } else {
+        const seenCenters = new Set<string>();
+        for (const centerCanonical of points) {
+          const cx = Math.round((centerCanonical[0] ?? 0) / voxelSize);
+          const cy = Math.round((centerCanonical[1] ?? 0) / voxelSize);
+          const cz = Math.round((centerCanonical[2] ?? 0) / voxelSize);
+          const key = `${cx},${cy},${cz}`;
+          if (seenCenters.has(key)) {
+            continue;
+          }
+          seenCenters.add(key);
+          centers.push([cx, cy, cz]);
+        }
+      }
+
       let lastChunkX = Number.NaN;
       let lastChunkY = Number.NaN;
       let lastChunkZ = Number.NaN;
       let lastEntry: PreviewLocalVolumeEdit | undefined;
 
-      const appendPreviewVoxel = (x: number, y: number, z: number) => {
-        const chunkX = useBitShiftChunkIndex ? x >> sizeXShift : Math.floor(x / sizeX);
-        const chunkY = useBitShiftChunkIndex ? y >> sizeYShift : Math.floor(y / sizeY);
-        const chunkZ = useBitShiftChunkIndex ? z >> sizeZShift : Math.floor(z / sizeZ);
-
-        let entry = lastEntry;
-        if (
-          entry === undefined ||
-          chunkX !== lastChunkX ||
-          chunkY !== lastChunkY ||
-          chunkZ !== lastChunkZ
-        ) {
-          lastChunkX = chunkX;
-          lastChunkY = chunkY;
-          lastChunkZ = chunkZ;
-          entry = getOrCreatePreviewEdit(
-            edits,
-            chunkX,
-            chunkY,
-            chunkZ,
-            previewValue,
-            dedupePreviewIndices,
-            dedupeWordCount,
-          );
-          lastEntry = entry;
-        }
-
-        const lx = useBitShiftChunkIndex ? x & sizeXMask : x - chunkX * sizeX;
+      const appendPreviewRange = (
+        xStart: number,
+        xEndExclusive: number,
+        y: number,
+        z: number,
+      ) => {
+        const chunkY = getChunkY(y);
+        const chunkZ = getChunkZ(z);
         const ly = useBitShiftChunkIndex ? y & sizeYMask : y - chunkY * sizeY;
         const lz = useBitShiftChunkIndex ? z & sizeZMask : z - chunkZ * sizeZ;
-        const index = lz * strideZ + ly * strideY + lx;
+        const baseIndex = lz * strideZ + ly * strideY;
 
-        const seenIndices = entry.seenIndices;
-        if (seenIndices !== undefined) {
-          const wordIndex = index >>> 5;
-          const bitMask = 1 << (index & 31);
-          if ((seenIndices[wordIndex]! & bitMask) !== 0) {
-            return;
+        let currentX = xStart;
+        while (currentX < xEndExclusive) {
+          const chunkX = getChunkX(currentX);
+          const nextChunkBoundary = (chunkX + 1) * sizeX;
+          const segmentEnd = Math.min(xEndExclusive, nextChunkBoundary);
+          const lx =
+            useBitShiftChunkIndex ? currentX & sizeXMask : currentX - chunkX * sizeX;
+          const startIndex = baseIndex + lx;
+          const length = segmentEnd - currentX;
+
+          let entry = lastEntry;
+          if (
+            entry === undefined ||
+            chunkX !== lastChunkX ||
+            chunkY !== lastChunkY ||
+            chunkZ !== lastChunkZ
+          ) {
+            lastChunkX = chunkX;
+            lastChunkY = chunkY;
+            lastChunkZ = chunkZ;
+            entry = getOrCreatePreviewEdit(
+              edits,
+              chunkX,
+              chunkY,
+              chunkZ,
+              previewValue,
+            );
+            lastEntry = entry;
           }
-          seenIndices[wordIndex] = seenIndices[wordIndex]! | bitMask;
+
+          if (length === 1) {
+            entry.indices.push(startIndex);
+          } else {
+            const ranges = entry.indexRanges;
+            const lastLengthIndex = ranges.length - 1;
+            if (
+              lastLengthIndex >= 1 &&
+              ranges[lastLengthIndex - 1]! + ranges[lastLengthIndex]! === startIndex
+            ) {
+              ranges[lastLengthIndex] = ranges[lastLengthIndex]! + length;
+            } else {
+              ranges.push(startIndex, length);
+            }
+          }
+          currentX = segmentEnd;
         }
-        entry.indices.push(index);
       };
 
-      for (const centerCanonical of points) {
-        const cx = Math.round((centerCanonical[0] ?? 0) / voxelSize);
-        const cy = Math.round((centerCanonical[1] ?? 0) / voxelSize);
-        const cz = Math.round((centerCanonical[2] ?? 0) / voxelSize);
+      for (const [cx, cy, cz] of centers) {
+        for (let i = 0; i < sphereRowRanges.length; i += 4) {
+          const dy = sphereRowRanges[i]!;
+          const dz = sphereRowRanges[i + 1]!;
+          const xStart = sphereRowRanges[i + 2]!;
+          const xEndExclusive = sphereRowRanges[i + 3]!;
 
-        for (let i = 0; i < sphereKernel.length; i += 3) {
-          appendPreviewVoxel(
-            cx + sphereKernel[i]!,
-            cy + sphereKernel[i + 1]!,
-            cz + sphereKernel[i + 2]!,
+          appendPreviewRange(
+            cx + xStart,
+            cx + xEndExclusive,
+            cy + dy,
+            cz + dz,
           );
         }
       }

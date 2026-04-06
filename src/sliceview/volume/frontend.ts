@@ -46,6 +46,7 @@ import { registerSharedObjectOwner } from "#src/worker_rpc.js";
 
 export interface LocalVolumeEdit {
   indices: number[] | Uint32Array;
+  indexRanges?: number[] | Uint32Array;
   value: bigint;
   chunkGridPosition?: Float32Array;
   indicesAreUnique?: boolean;
@@ -351,9 +352,16 @@ export class InMemoryVolumeChunkSource extends VolumeChunkSource {
       chunksToUpdate.add(chunk);
 
       const cpuArray = chunk.data!;
+      const rangeValue =
+        dataType === DataType.UINT64 ? edit.value : Number(edit.value);
+
+      for (let i = 0; i < (edit.indexRanges?.length ?? 0); i += 2) {
+        const start = edit.indexRanges![i]!;
+        const length = edit.indexRanges![i + 1]!;
+        (cpuArray as any).fill(rangeValue, start, start + length);
+      }
 
       for (const index of edit.indices) {
-        const value = edit.value;
         switch (dataType) {
           case DataType.UINT8:
           case DataType.INT8:
@@ -362,10 +370,10 @@ export class InMemoryVolumeChunkSource extends VolumeChunkSource {
           case DataType.UINT32:
           case DataType.INT32:
           case DataType.FLOAT32:
-            cpuArray[index] = Number(value);
+            cpuArray[index] = rangeValue;
             break;
           case DataType.UINT64:
-            (cpuArray as BigUint64Array)[index] = value;
+            (cpuArray as BigUint64Array)[index] = edit.value;
             break;
           default:
             console.warn(
