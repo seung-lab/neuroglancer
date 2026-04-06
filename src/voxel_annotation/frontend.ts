@@ -51,7 +51,7 @@ import {
 
 type PreviewLocalVolumeEdit = Omit<LocalVolumeEdit, "indices"> & {
   indices: number[];
-  seenIndices?: Set<number>;
+  seenIndices?: Uint32Array;
 };
 
 function getOrCreatePreviewEdit(
@@ -61,6 +61,7 @@ function getOrCreatePreviewEdit(
   chunkZ: number,
   value: bigint,
   dedupe: boolean,
+  dedupeWordCount: number,
 ) {
   const key = `${chunkX},${chunkY},${chunkZ}`;
   let entry = edits.get(key);
@@ -72,7 +73,7 @@ function getOrCreatePreviewEdit(
     value,
     chunkGridPosition: Float32Array.of(chunkX, chunkY, chunkZ),
     indicesAreUnique: true,
-    seenIndices: dedupe ? new Set<number>() : undefined,
+    seenIndices: dedupe ? new Uint32Array(dedupeWordCount) : undefined,
   };
   edits.set(key, entry);
   return entry;
@@ -200,6 +201,14 @@ export class VoxelEditController extends SharedObject {
       sizeZ = 0;
     let strideY = 0,
       strideZ = 0;
+    let dedupeWordCount = 0;
+    let useBitShiftChunkIndex = false;
+    let sizeXShift = 0,
+      sizeYShift = 0,
+      sizeZShift = 0;
+    let sizeXMask = 0,
+      sizeYMask = 0,
+      sizeZMask = 0;
 
     if (this.host.previewSource) {
       previewSource = this.host.previewSource.getSources(
@@ -212,6 +221,19 @@ export class VoxelEditController extends SharedObject {
       sizeZ = chunkDataSize[2];
       strideY = sizeX;
       strideZ = sizeX * sizeY;
+      dedupeWordCount = Math.ceil((strideZ * sizeZ) / 32);
+
+      const isPowerOfTwo = (value: number) => value > 0 && (value & (value - 1)) === 0;
+      useBitShiftChunkIndex =
+        isPowerOfTwo(sizeX) && isPowerOfTwo(sizeY) && isPowerOfTwo(sizeZ);
+      if (useBitShiftChunkIndex) {
+        sizeXShift = Math.log2(sizeX);
+        sizeYShift = Math.log2(sizeY);
+        sizeZShift = Math.log2(sizeZ);
+        sizeXMask = sizeX - 1;
+        sizeYMask = sizeY - 1;
+        sizeZMask = sizeZ - 1;
+      }
     }
 
     if (previewSource) {
@@ -221,9 +243,9 @@ export class VoxelEditController extends SharedObject {
       let lastEntry: PreviewLocalVolumeEdit | undefined;
 
       const appendPreviewVoxel = (x: number, y: number, z: number) => {
-        const chunkX = Math.floor(x / sizeX);
-        const chunkY = Math.floor(y / sizeY);
-        const chunkZ = Math.floor(z / sizeZ);
+        const chunkX = useBitShiftChunkIndex ? x >> sizeXShift : Math.floor(x / sizeX);
+        const chunkY = useBitShiftChunkIndex ? y >> sizeYShift : Math.floor(y / sizeY);
+        const chunkZ = useBitShiftChunkIndex ? z >> sizeZShift : Math.floor(z / sizeZ);
 
         let entry = lastEntry;
         if (
@@ -242,19 +264,25 @@ export class VoxelEditController extends SharedObject {
             chunkZ,
             previewValue,
             dedupePreviewIndices,
+            dedupeWordCount,
           );
           lastEntry = entry;
         }
 
-        const lx = x - chunkX * sizeX;
-        const ly = y - chunkY * sizeY;
-        const lz = z - chunkZ * sizeZ;
+        const lx = useBitShiftChunkIndex ? x & sizeXMask : x - chunkX * sizeX;
+        const ly = useBitShiftChunkIndex ? y & sizeYMask : y - chunkY * sizeY;
+        const lz = useBitShiftChunkIndex ? z & sizeZMask : z - chunkZ * sizeZ;
         const index = lz * strideZ + ly * strideY + lx;
 
-        if (entry.seenIndices?.has(index)) {
-          return;
+        const seenIndices = entry.seenIndices;
+        if (seenIndices !== undefined) {
+          const wordIndex = index >>> 5;
+          const bitMask = 1 << (index & 31);
+          if ((seenIndices[wordIndex]! & bitMask) !== 0) {
+            return;
+          }
+          seenIndices[wordIndex] = seenIndices[wordIndex]! | bitMask;
         }
-        entry.seenIndices?.add(index);
         entry.indices.push(index);
       };
 
