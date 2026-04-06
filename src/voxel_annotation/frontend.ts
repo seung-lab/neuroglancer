@@ -188,6 +188,30 @@ export class VoxelEditController extends SharedObject {
       );
     }
     const sphereRowRanges = getSphereRowRangesKernel(r);
+    const centers: Array<[number, number, number]> = [];
+    if (points.length <= 1) {
+      const centerCanonical = points[0];
+      if (centerCanonical !== undefined) {
+        centers.push([
+          Math.round((centerCanonical[0] ?? 0) / voxelSize),
+          Math.round((centerCanonical[1] ?? 0) / voxelSize),
+          Math.round((centerCanonical[2] ?? 0) / voxelSize),
+        ]);
+      }
+    } else {
+      const seenCenters = new Set<string>();
+      for (const centerCanonical of points) {
+        const cx = Math.round((centerCanonical[0] ?? 0) / voxelSize);
+        const cy = Math.round((centerCanonical[1] ?? 0) / voxelSize);
+        const cz = Math.round((centerCanonical[2] ?? 0) / voxelSize);
+        const key = `${cx},${cy},${cz}`;
+        if (seenCenters.has(key)) {
+          continue;
+        }
+        seenCenters.add(key);
+        centers.push([cx, cy, cz]);
+      }
+    }
 
     const edits = new Map<string, PreviewLocalVolumeEdit>();
     const previewValue = valueGetter(true);
@@ -239,29 +263,6 @@ export class VoxelEditController extends SharedObject {
     }
 
     if (previewSource) {
-      const centers: Array<[number, number, number]> = [];
-      if (points.length <= 1) {
-        const centerCanonical = points[0]!;
-        centers.push([
-          Math.round((centerCanonical[0] ?? 0) / voxelSize),
-          Math.round((centerCanonical[1] ?? 0) / voxelSize),
-          Math.round((centerCanonical[2] ?? 0) / voxelSize),
-        ]);
-      } else {
-        const seenCenters = new Set<string>();
-        for (const centerCanonical of points) {
-          const cx = Math.round((centerCanonical[0] ?? 0) / voxelSize);
-          const cy = Math.round((centerCanonical[1] ?? 0) / voxelSize);
-          const cz = Math.round((centerCanonical[2] ?? 0) / voxelSize);
-          const key = `${cx},${cy},${cz}`;
-          if (seenCenters.has(key)) {
-            continue;
-          }
-          seenCenters.add(key);
-          centers.push([cx, cy, cz]);
-        }
-      }
-
       let lastChunkX = Number.NaN;
       let lastChunkY = Number.NaN;
       let lastChunkZ = Number.NaN;
@@ -346,6 +347,35 @@ export class VoxelEditController extends SharedObject {
 
     if (edits.size > 0 && previewSource) {
       previewSource.applyLocalEdits(edits);
+    }
+
+    if (centers.length === 0) {
+      return;
+    }
+
+    const storageValue = valueGetter(false);
+    try {
+      await Promise.all(
+        centers.map(([cx, cy, cz]) =>
+          this.dispatchOperation({
+            type: VoxelOperationType.BRUSH,
+            center: Float32Array.of(cx, cy, cz),
+            radius: radiusCanonical,
+            value: storageValue,
+            shape,
+            basis,
+            filterValue,
+          }),
+        ),
+      );
+    } catch (e) {
+      if (edits.size > 0) {
+        this.callChunkReload(
+          Array.from(edits.keys(), (key) => makeVoxChunkKey(key, 0)),
+          true,
+        );
+      }
+      throw e;
     }
   }
 
