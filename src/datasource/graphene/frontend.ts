@@ -1792,7 +1792,9 @@ class GraphConnection extends SegmentationGraphSourceConnection {
     try {
       const response = await this.graph.graphServer.splitPreview(
         [...sinks].map((x) => selectionInNanometers(x, annotationToNanometers)),
-        [...sources].map((x) => selectionInNanometers(x, annotationToNanometers)),
+        [...sources].map((x) =>
+          selectionInNanometers(x, annotationToNanometers),
+        ),
       );
       multicutState.cachePreview(response);
       this.showSplitPreviewMessages();
@@ -2141,13 +2143,16 @@ class GrapheneGraphServerInterface {
 
   async splitPreview(first: SegmentSelection[], second: SegmentSelection[]) {
     const { fetchOkImpl, baseUrl } = this.httpSource;
-    const promise = fetchOkImpl(`${baseUrl}/graph/split_preview?int64_as_str=1`, {
-      method: "POST",
-      body: JSON.stringify({
-        sources: first.map((x) => [String(x.segmentId), ...x.position]),
-        sinks: second.map((x) => [String(x.segmentId), ...x.position]),
-      }),
-    });
+    const promise = fetchOkImpl(
+      `${baseUrl}/graph/split_preview?int64_as_str=1`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          sources: first.map((x) => [String(x.segmentId), ...x.position]),
+          sinks: second.map((x) => [String(x.segmentId), ...x.position]),
+        }),
+      },
+    );
     const jsonResp = await withErrorMessageHTTP(
       promise.then((response) => response.json()),
       {
@@ -2878,7 +2883,9 @@ class MulticutSegmentsTool extends LayerTool<SegmentationUserLayer> {
       }),
     );
     const getAnnotationToNanometers = () =>
-      getGraphLoadedSubsource(this.layer)!.loadedDataSource.transform.inputSpace.value.scales.map(
+      getGraphLoadedSubsource(
+        this.layer,
+      )!.loadedDataSource.transform.inputSpace.value.scales.map(
         (x) => x / 1e-9,
       );
     const previewAction = async () => {
@@ -3010,7 +3017,8 @@ class MulticutSegmentsTool extends LayerTool<SegmentationUserLayer> {
         multicutState.preview.previewActive &&
         multicutState.preview.hasCachedPreview
       ) {
-        const previewRepresentatives = graphConnection.applyMulticutPreviewDisplay();
+        const previewRepresentatives =
+          graphConnection.applyMulticutPreviewDisplay();
         displayState.tempSegmentDefaultColor2d.value = MULTICUT_OFF_COLOR;
         if (previewRepresentatives[0] !== undefined) {
           displayState.tempSegmentStatedColors2d.value.set(
@@ -3084,7 +3092,9 @@ class MulticutSegmentsTool extends LayerTool<SegmentationUserLayer> {
     activation.bindAction("swap-group", (event) => {
       event.stopPropagation();
       if (
-        blockPreviewEdit("Exit split preview before changing the multicut groups.")
+        blockPreviewEdit(
+          "Exit split preview before changing the multicut groups.",
+        )
       ) {
         return;
       }
@@ -3093,7 +3103,9 @@ class MulticutSegmentsTool extends LayerTool<SegmentationUserLayer> {
     activation.bindAction("set-anchor", (event) => {
       event.stopPropagation();
       if (
-        blockPreviewEdit("Exit split preview before changing the multicut seeds.")
+        blockPreviewEdit(
+          "Exit split preview before changing the multicut seeds.",
+        )
       ) {
         return;
       }

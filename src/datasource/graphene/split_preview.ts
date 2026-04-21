@@ -15,7 +15,12 @@
  */
 
 import type { VisibleSegmentsState } from "#src/segmentation_display_state/base.js";
-import { parseArray, parseUint64, verifyBoolean, verifyObjectProperty } from "#src/util/json.js";
+import {
+  parseArray,
+  parseUint64,
+  verifyBoolean,
+  verifyObjectProperty,
+} from "#src/util/json.js";
 
 export interface GrapheneSplitPreview {
   connectedComponents: bigint[][];
@@ -28,7 +33,8 @@ export function parseGrapheneSplitPreviewResponse(
   const connectedComponents = verifyObjectProperty(
     response,
     "supervoxel_connected_components",
-    (value) => parseArray(value, (component) => parseArray(component, parseUint64)),
+    (value) =>
+      parseArray(value, (component) => parseArray(component, parseUint64)),
   );
   const isSplitIllegal = verifyObjectProperty(
     response,

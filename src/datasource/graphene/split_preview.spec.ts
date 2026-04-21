@@ -78,15 +78,20 @@ describe("graphene split preview helpers", () => {
       useTemporaryVisibleSegments: new WatchableValue(false),
       useTemporarySegmentEquivalences: new WatchableValue(false),
     } as any;
-    const representatives = applySplitPreviewToTemporaryState(state, [
-      [1n, 3n, 2n],
-      [4n, 5n],
-      [9n],
-    ], [42n]);
+    const representatives = applySplitPreviewToTemporaryState(
+      state,
+      [[1n, 3n, 2n], [4n, 5n], [9n]],
+      [42n],
+    );
     expect(representatives).toEqual([3n, 5n, 9n]);
     expect(state.useTemporaryVisibleSegments.value).toBe(true);
     expect(state.useTemporarySegmentEquivalences.value).toBe(true);
-    expect(state.temporaryVisibleSegments.toJSON()).toEqual(["3", "42", "5", "9"]);
+    expect(state.temporaryVisibleSegments.toJSON()).toEqual([
+      "3",
+      "42",
+      "5",
+      "9",
+    ]);
     expect(state.temporarySegmentEquivalences.get(1n)).toBe(3n);
     expect(state.temporarySegmentEquivalences.get(2n)).toBe(3n);
     expect(state.temporarySegmentEquivalences.get(4n)).toBe(5n);
