@@ -1807,6 +1807,9 @@ class GraphConnection extends SegmentationGraphSourceConnection {
     return applySplitPreviewToTemporaryState(
       this.segmentsState,
       this.state.multicutState.preview.connectedComponents,
+      this.state.multicutState.focusSegment.value === undefined
+        ? []
+        : [this.state.multicutState.focusSegment.value],
     );
   }
 

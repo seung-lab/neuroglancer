@@ -90,6 +90,7 @@ export class MulticutSplitPreviewState {
 export function applySplitPreviewToTemporaryState(
   state: VisibleSegmentsState,
   connectedComponents: readonly (readonly bigint[])[],
+  preservedVisibleSegments: readonly bigint[] = [],
 ) {
   const representatives: bigint[] = [];
   const tempVisibleSegments = state.temporaryVisibleSegments;
@@ -98,6 +99,9 @@ export function applySplitPreviewToTemporaryState(
   tempEquivalences.clear();
   state.useTemporaryVisibleSegments.value = true;
   state.useTemporarySegmentEquivalences.value = true;
+  for (const segment of preservedVisibleSegments) {
+    tempVisibleSegments.add(segment);
+  }
   for (const component of connectedComponents) {
     if (component.length === 0) continue;
     tempEquivalences.linkAll([...component]);
