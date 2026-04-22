@@ -15,15 +15,15 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { VisibleSegmentEquivalencePolicy } from "#src/segmentation_graph/segment_id.js";
-import { SharedDisjointUint64Sets } from "#src/shared_disjoint_sets.js";
-import { WatchableValue } from "#src/trackable_value.js";
-import { Uint64Set } from "#src/uint64_set.js";
 import {
   applySplitPreviewToTemporaryState,
   MulticutSplitPreviewState,
   parseGrapheneSplitPreviewResponse,
 } from "#src/datasource/graphene/split_preview.js";
+import { VisibleSegmentEquivalencePolicy } from "#src/segmentation_graph/segment_id.js";
+import { SharedDisjointUint64Sets } from "#src/shared_disjoint_sets.js";
+import { WatchableValue } from "#src/trackable_value.js";
+import { Uint64Set } from "#src/uint64_set.js";
 
 describe("graphene split preview helpers", () => {
   it("parses split preview responses", () => {
