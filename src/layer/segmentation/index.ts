@@ -318,7 +318,6 @@ export class SegmentationUserLayerGroupState
   useTemporarySegmentEquivalences: SharedWatchableValue<boolean>;
 
   canSetTimestamp(owner?: string) {
-    console.log("canSetTimestamp", this.timestampOwner, owner);
     const otherOwners = [...this.timestampOwner].filter((x) => x !== owner);
     if (otherOwners.length) {
       return false;
@@ -1212,12 +1211,16 @@ export class SegmentationUserLayer extends Base {
       return false;
     }
     const { displayState } = this;
-    const normalizedId = augmentSegmentId(displayState, id);
     const {
       segmentEquivalences,
       segmentPropertyMap: { value: segmentPropertyMap },
     } = this.displayState.segmentationGroupState.value;
     const mapped = segmentEquivalences.get(id);
+    // If equivalences map this piece to a root, use the root for display.
+    // This ensures hover always shows roots even if the GPU pick buffer
+    // hasn't been updated with the latest equivalences yet.
+    const displayId = (mapped !== id) ? mapped : id;
+    const normalizedId = augmentSegmentId(displayState, displayId);
     const row = makeSegmentWidget(this.displayState, normalizedId);
     registerCallbackWhenSegmentationDisplayStateChanged(
       displayState,

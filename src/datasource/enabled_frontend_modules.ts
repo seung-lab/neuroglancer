@@ -7,6 +7,7 @@ import "#datasource/deepzoom/register_default";
 import "#datasource/dvid/register_default";
 import "#datasource/dvid/register_credentials_provider";
 import "#datasource/graphene/register_default";
+import "#datasource/calcada/register_default";
 import "#datasource/n5/register_default";
 import "#datasource/nggraph/register_default";
 import "#datasource/nifti/register_default";

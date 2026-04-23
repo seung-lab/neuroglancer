@@ -1,18 +1,15 @@
 {
   "keym": {
     "layer": "segmentation",
-    "tool": "grapheneMergeSegments",
-    "provider": "graphene"
+    "tool": "calcadaMergeSegments"
   },
   "keyc": {
     "layer": "segmentation",
-    "tool": "grapheneMulticutSegments",
-    "provider": "graphene"
+    "tool": "calcadaMulticutSegments"
   },
   "keyf": {
     "layer": "segmentation",
-    "tool": "grapheneFindPath",
-    "provider": "graphene"
+    "tool": "calcadaFindPath"
   },
   "keyx": false,
   "control+shift+keyx": "clear-segments",

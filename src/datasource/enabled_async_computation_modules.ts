@@ -4,6 +4,7 @@ import "#datasource/brainmaps/async_computation";
 import "#datasource/deepzoom/async_computation";
 import "#datasource/dvid/async_computation";
 import "#datasource/graphene/async_computation";
+import "#datasource/calcada/async_computation";
 import "#datasource/n5/async_computation";
 import "#datasource/obj/async_computation";
 import "#datasource/precomputed/async_computation";

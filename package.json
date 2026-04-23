@@ -241,6 +241,15 @@
       "neuroglancer/datasource/graphene:disabled": "./src/util/false.ts",
       "default": "./src/datasource/graphene/register_default.ts"
     },
+    "#datasource/calcada/backend": {
+      "default": "./src/datasource/calcada/backend.ts"
+    },
+    "#datasource/calcada/async_computation": {
+      "default": "./src/datasource/calcada/async_computation.ts"
+    },
+    "#datasource/calcada/register_default": {
+      "default": "./src/datasource/calcada/register_default.ts"
+    },
     "#datasource/n5/backend": {
       "neuroglancer/datasource/n5:enabled": "./src/datasource/n5/backend.ts",
       "neuroglancer/datasource:none_by_default": "./src/util/false.ts",

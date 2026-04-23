@@ -4,6 +4,7 @@ import "#datasource/brainmaps/backend";
 import "#datasource/deepzoom/backend";
 import "#datasource/dvid/backend";
 import "#datasource/graphene/backend";
+import "#datasource/calcada/backend";
 import "#datasource/n5/backend";
 import "#datasource/nifti/backend";
 import "#datasource/obj/backend";
