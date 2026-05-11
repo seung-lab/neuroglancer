@@ -84,6 +84,7 @@ export async function proxyRead(
       sharedKvStoreContext: sharedKvStoreContext.rpcId,
       url,
       byteRange: options.byteRange,
+      stalenessBound: options.stalenessBound,
       throwIfMissing: options.throwIfMissing,
     },
     { signal: options.signal, progressListener: options.progressListener },
@@ -105,6 +106,7 @@ registerPromiseRPC(
       sharedKvStoreContext: number;
       url: string;
       byteRange?: ByteRange;
+      stalenessBound?: number;
       throwIfMissing?: boolean;
     },
     progressOptions,
@@ -117,6 +119,7 @@ registerPromiseRPC(
       {
         ...progressOptions,
         byteRange: options.byteRange,
+        stalenessBound: options.stalenessBound,
         throwIfMissing: options.throwIfMissing,
       },
     );

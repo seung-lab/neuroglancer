@@ -99,7 +99,8 @@ export const PREFETCH_PRIORITY_MULTIPLIER = 1e13;
 
 export const CHUNK_QUEUE_MANAGER_RPC_ID = "ChunkQueueManager";
 export const CHUNK_MANAGER_RPC_ID = "ChunkManager";
-export const CHUNK_SOURCE_INVALIDATE_RPC_ID = "ChunkSource.invalidate";
+export const CHUNK_SOURCE_UPDATE_STALENESS_BOUND_RPC_ID =
+  "ChunkSource.updateStalenessBound";
 
 export const REQUEST_CHUNK_STATISTICS_RPC_ID =
   "ChunkQueueManager.requestChunkStatistics";

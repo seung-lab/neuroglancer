@@ -148,7 +148,10 @@ export class PrecomputedVolumeChunkSource extends WithParameters(
           `${chunkPosition[1]}-${chunkPosition[1] + chunkDataSize[1]}_` +
           `${chunkPosition[2]}-${chunkPosition[2] + chunkDataSize[2]}`;
       }
-      readResponse = await kvStore.store.read(path, { signal });
+      readResponse = await kvStore.store.read(
+        path,
+        this.getChunkDownloadReadOptions(chunk, signal),
+      );
     } else {
       this.computeChunkBounds(chunk);
       const { gridShape } = this;
@@ -164,7 +167,10 @@ export class PrecomputedVolumeChunkSource extends WithParameters(
         chunkGridPosition[1],
         chunkGridPosition[2],
       );
-      readResponse = await shardedKvStore.read(chunkIndex, { signal });
+      readResponse = await shardedKvStore.read(
+        chunkIndex,
+        this.getChunkDownloadReadOptions(chunk, signal),
+      );
     }
     if (readResponse !== undefined) {
       await this.chunkDecoder(

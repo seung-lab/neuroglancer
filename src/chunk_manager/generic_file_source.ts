@@ -23,7 +23,10 @@ import type { ChunkManager } from "#src/chunk_manager/backend.js";
 import { Chunk, ChunkSourceBase } from "#src/chunk_manager/backend.js";
 import { ChunkState } from "#src/chunk_manager/base.js";
 import type { SharedKvStoreContextCounterpart } from "#src/kvstore/backend.js";
-import type { ReadResponse } from "#src/kvstore/index.js";
+import {
+  getEffectiveStalenessBound,
+  type ReadResponse,
+} from "#src/kvstore/index.js";
 import type { Owned } from "#src/util/disposable.js";
 import { stableStringify } from "#src/util/json.js";
 import type { AsyncMemoize } from "#src/util/memoize.js";
@@ -40,14 +43,23 @@ class AsyncCacheChunk<Data> extends Chunk {
 
   freeSystemMemory() {
     this.asyncMemoize = undefined;
+    this.lastDownloadTimestamp = undefined;
   }
 }
+
+type SimpleAsyncCacheReadOptions = Partial<ProgressOptions> & {
+  stalenessBound?: number;
+};
+
+type SimpleAsyncCacheDownloadOptions = ProgressOptions & {
+  stalenessBound?: number;
+};
 
 export interface SimpleAsyncCacheOptions<Key, Value> {
   encodeKey?: (key: Key) => string;
   get: (
     key: Key,
-    progressOptions: ProgressOptions,
+    readOptions: SimpleAsyncCacheDownloadOptions,
   ) => Promise<{ size: number; data: Value }>;
 }
 
@@ -66,26 +78,29 @@ export class SimpleAsyncCache<Key, Value> extends ChunkSourceBase {
   encodeKeyFunction: (key: Key) => string;
   downloadFunction: (
     key: Key,
-    progressOptions: ProgressOptions,
+    readOptions: SimpleAsyncCacheDownloadOptions,
   ) => Promise<{ size: number; data: Value }>;
+
+  invalidateChunk(chunk: AsyncCacheChunk<Value>) {
+    chunk.freeSystemMemory();
+    this.chunkManager.queueManager.updateChunkState(chunk, ChunkState.QUEUED);
+  }
 
   invalidate(key: Key) {
     const encodedKey = this.encodeKeyFunction(key);
     const chunk = this.chunks.get(encodedKey);
     if (chunk !== undefined) {
-      chunk.freeSystemMemory();
-      this.chunkManager.queueManager.updateChunkState(chunk, ChunkState.QUEUED);
+      this.invalidateChunk(chunk);
     }
   }
 
   invalidateAll() {
     for (const chunk of this.chunks.values()) {
-      chunk.freeSystemMemory();
-      this.chunkManager.queueManager.updateChunkState(chunk, ChunkState.QUEUED);
+      this.invalidateChunk(chunk);
     }
   }
 
-  get(key: Key, options: Partial<ProgressOptions>): Promise<Value> {
+  get(key: Key, options: SimpleAsyncCacheReadOptions): Promise<Value> {
     const encodedKey = this.encodeKeyFunction(key);
     let chunk = this.chunks.get(encodedKey);
     if (chunk === undefined) {
@@ -93,14 +108,28 @@ export class SimpleAsyncCache<Key, Value> extends ChunkSourceBase {
       chunk.initialize(encodedKey);
       this.addChunk(chunk);
     }
+    if (
+      chunk.state === ChunkState.SYSTEM_MEMORY_WORKER &&
+      chunk.lastDownloadTimestamp !== undefined &&
+      options.stalenessBound !== undefined &&
+      chunk.lastDownloadTimestamp < options.stalenessBound
+    ) {
+      this.invalidateChunk(chunk);
+    }
     if (chunk.asyncMemoize === undefined) {
+      const requestStartTime = Date.now();
+      const stalenessBound = getEffectiveStalenessBound(
+        options.stalenessBound,
+        requestStartTime,
+      );
       chunk.asyncMemoize = asyncMemoizeWithProgress(async (progressOptions) => {
         try {
-          const { data, size } = await this.downloadFunction(
-            key,
-            progressOptions,
-          );
+          const { data, size } = await this.downloadFunction(key, {
+            ...progressOptions,
+            stalenessBound,
+          });
           chunk.systemMemoryBytes = size;
+          chunk.lastDownloadTimestamp = requestStartTime;
           chunk!.queueManager.updateChunkState(
             chunk!,
             ChunkState.SYSTEM_MEMORY_WORKER,

@@ -639,7 +639,7 @@ export class PythonDataSource implements DataSourceProvider {
       for (const source of sources) {
         if (source.generation !== generation) {
           source.generation = generation;
-          source.invalidateCache();
+          source.updateStalenessBound(Date.now());
         }
       }
     }

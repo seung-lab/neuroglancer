@@ -23,7 +23,7 @@ import {
   CHUNK_LAYER_STATISTICS_RPC_ID,
   CHUNK_MANAGER_RPC_ID,
   CHUNK_QUEUE_MANAGER_RPC_ID,
-  CHUNK_SOURCE_INVALIDATE_RPC_ID,
+  CHUNK_SOURCE_UPDATE_STALENESS_BOUND_RPC_ID,
   ChunkDownloadStatistics,
   ChunkMemoryStatistics,
   ChunkPriorityTier,
@@ -34,6 +34,7 @@ import {
   numChunkStatistics,
   REQUEST_CHUNK_STATISTICS_RPC_ID,
 } from "#src/chunk_manager/base.js";
+import { getEffectiveStalenessBound } from "#src/kvstore/index.js";
 import type { SharedWatchableValue } from "#src/shared_watchable_value.js";
 import type { TypedNumberArray } from "#src/util/array.js";
 import type { Borrowed, Disposable } from "#src/util/disposable.js";
@@ -57,6 +58,11 @@ import {
   SharedObject,
   SharedObjectCounterpart,
 } from "#src/worker_rpc.js";
+
+interface ChunkDownloadReadOptions {
+  signal: AbortSignal;
+  stalenessBound?: number;
+}
 
 const DEBUG_CHUNK_UPDATES = false;
 
@@ -127,6 +133,8 @@ export class Chunk implements Disposable {
    * DOWNLOADING.  This should not be accessed by code outside this module.
    */
   downloadAbortController: AbortController | undefined = undefined;
+  lastDownloadTimestamp: number | undefined = undefined;
+  downloadStalenessBound: number | undefined = undefined;
 
   initialize(key: string) {
     this.key = key;
@@ -138,6 +146,8 @@ export class Chunk implements Disposable {
     this.state = ChunkState.NEW;
     this.requestedState = ChunkState.NEW;
     this.newRequestedState = ChunkState.NEW;
+    this.lastDownloadTimestamp = undefined;
+    this.downloadStalenessBound = undefined;
   }
 
   /**
@@ -158,6 +168,8 @@ export class Chunk implements Disposable {
   dispose() {
     this.source = null;
     this.error = null;
+    this.lastDownloadTimestamp = undefined;
+    this.downloadStalenessBound = undefined;
   }
 
   get chunkManager() {
@@ -287,6 +299,7 @@ export class ChunkSourceBase extends SharedObject {
   chunks: Map<string, Chunk> = new Map<string, Chunk>();
   freeChunks: Chunk[] = new Array<Chunk>();
   statistics = new Float64Array(numChunkStatistics);
+  readStalenessBound: number | undefined;
 
   /**
    * sourceQueueLevel must be greater than the sourceQueueLevel of any ChunkSource whose download
@@ -383,6 +396,50 @@ export class ChunkSourceBase extends SharedObject {
       listener(chunk, oldState);
     }
   }
+
+  updateReadStalenessBound(stalenessBound: number) {
+    if (
+      this.readStalenessBound === undefined ||
+      stalenessBound > this.readStalenessBound
+    ) {
+      this.readStalenessBound = stalenessBound;
+      return true;
+    }
+    return false;
+  }
+
+  getCurrentChunkReadStalenessBound() {
+    return this.readStalenessBound;
+  }
+
+  isChunkStale(chunk: Chunk) {
+    const stalenessBound = this.readStalenessBound;
+    return (
+      stalenessBound !== undefined &&
+      chunk.lastDownloadTimestamp !== undefined &&
+      chunk.lastDownloadTimestamp < stalenessBound
+    );
+  }
+
+  isChunkDownloadStale(chunk: Chunk) {
+    const stalenessBound = this.readStalenessBound;
+    return (
+      stalenessBound !== undefined &&
+      (chunk.downloadStalenessBound === undefined ||
+        chunk.downloadStalenessBound < stalenessBound)
+    );
+  }
+
+  getChunkDownloadReadOptions(
+    chunk: Chunk,
+    signal: AbortSignal,
+  ): ChunkDownloadReadOptions {
+    const stalenessBound =
+      chunk.downloadStalenessBound ??
+      getEffectiveStalenessBound(this.getCurrentChunkReadStalenessBound());
+    chunk.downloadStalenessBound = stalenessBound;
+    return { signal, stalenessBound };
+  }
 }
 
 function updateChunkStatistics(chunk: Chunk, sign: number) {
@@ -432,11 +489,17 @@ function startChunkDownload(chunk: Chunk) {
   const downloadAbortController = (chunk.downloadAbortController =
     new AbortController());
   const startTime = Date.now();
+  chunk.downloadStalenessBound = getEffectiveStalenessBound(
+    chunk.source!.getCurrentChunkReadStalenessBound(),
+    startTime,
+  );
   chunk.source!.download(chunk, downloadAbortController.signal).then(
     () => {
       if (chunk.downloadAbortController === downloadAbortController) {
         chunk.downloadAbortController = undefined;
         const endTime = Date.now();
+        chunk.lastDownloadTimestamp = startTime;
+        chunk.downloadStalenessBound = undefined;
         const { statistics } = chunk.source!;
         statistics[
           getChunkDownloadStatisticIndex(ChunkDownloadStatistics.totalTime)
@@ -450,6 +513,7 @@ function startChunkDownload(chunk: Chunk) {
     (error: any) => {
       if (chunk.downloadAbortController === downloadAbortController) {
         chunk.downloadAbortController = undefined;
+        chunk.downloadStalenessBound = undefined;
         chunk.downloadFailed(error);
         console.log(`Error retrieving chunk ${chunk}: ${error}`);
       }
@@ -912,6 +976,32 @@ export class ChunkQueueManager extends SharedObjectCounterpart {
     this.addChunkToQueues_(chunk);
   }
 
+  refreshChunkForStalenessBound(chunk: Chunk) {
+    const source = chunk.source!;
+    switch (chunk.state) {
+      case ChunkState.DOWNLOADING:
+        if (!source.isChunkDownloadStale(chunk)) return false;
+        cancelChunkDownload(chunk);
+        this.updateChunkState(chunk, ChunkState.QUEUED);
+        return true;
+      case ChunkState.SYSTEM_MEMORY_WORKER:
+      case ChunkState.SYSTEM_MEMORY:
+      case ChunkState.GPU_MEMORY:
+        if (!source.isChunkStale(chunk)) return false;
+        if (chunk.state <= ChunkState.SYSTEM_MEMORY) {
+          this.rpc!.invoke("Chunk.update", {
+            id: chunk.key,
+            state: ChunkState.EXPIRED,
+            source: source.rpcId,
+          });
+        }
+        this.updateChunkState(chunk, ChunkState.QUEUED);
+        return true;
+      default:
+        return false;
+    }
+  }
+
   private processGPUPromotions_() {
     const queueManager = this;
     function evictFromGPUMemory(chunk: Chunk) {
@@ -1110,22 +1200,6 @@ export class ChunkQueueManager extends SharedObjectCounterpart {
     }
   }
 
-  invalidateSourceCache(source: ChunkSource) {
-    for (const chunk of source.chunks.values()) {
-      switch (chunk.state) {
-        case ChunkState.DOWNLOADING:
-          cancelChunkDownload(chunk);
-          break;
-        case ChunkState.SYSTEM_MEMORY_WORKER:
-          chunk.freeSystemMemory();
-          break;
-      }
-      // Note: After calling this, chunk may no longer be valid.
-      this.updateChunkState(chunk, ChunkState.QUEUED);
-    }
-    this.rpc!.invoke("Chunk.update", { source: source.rpcId });
-    this.scheduleUpdate();
-  }
 }
 
 export class ChunkRenderLayerBackend
@@ -1270,6 +1344,7 @@ export class ChunkManager extends SharedObjectCounterpart {
     if (tier === ChunkPriorityTier.RECENT) {
       throw new Error("Not going to request a chunk with the RECENT tier");
     }
+    this.queueManager.refreshChunkForStalenessBound(chunk);
     chunk.newRequestedState = Math.min(chunk.newRequestedState, requestedState);
     if (chunk.newPriorityTier === ChunkPriorityTier.RECENT) {
       this.newTierChunks.push(chunk);
@@ -1373,9 +1448,11 @@ export function withChunkManager<
   };
 }
 
-registerRPC(CHUNK_SOURCE_INVALIDATE_RPC_ID, function (x) {
-  const source = <ChunkSource>this.get(x.id);
-  source.chunkManager.queueManager.invalidateSourceCache(source);
+registerRPC(CHUNK_SOURCE_UPDATE_STALENESS_BOUND_RPC_ID, function (x) {
+  const source = <ChunkSourceBase>this.get(x.id);
+  if (source.updateReadStalenessBound(x.stalenessBound)) {
+    source.chunkManager.scheduleUpdateChunkPriorities();
+  }
 });
 
 registerPromiseRPC(

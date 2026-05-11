@@ -22,7 +22,7 @@ import {
   CHUNK_LAYER_STATISTICS_RPC_ID,
   CHUNK_MANAGER_RPC_ID,
   CHUNK_QUEUE_MANAGER_RPC_ID,
-  CHUNK_SOURCE_INVALIDATE_RPC_ID,
+  CHUNK_SOURCE_UPDATE_STALENESS_BOUND_RPC_ID,
   ChunkState,
   REQUEST_CHUNK_STATISTICS_RPC_ID,
 } from "#src/chunk_manager/base.js";
@@ -474,11 +474,11 @@ export class ChunkSource extends SharedObject {
     throw new Error("Not implemented.");
   }
 
-  /**
-   * Invalidates the chunk cache.  Operates asynchronously.
-   */
-  invalidateCache(): void {
-    this.rpc!.invoke(CHUNK_SOURCE_INVALIDATE_RPC_ID, { id: this.rpcId });
+  updateStalenessBound(stalenessBound: number): void {
+    this.rpc!.invoke(CHUNK_SOURCE_UPDATE_STALENESS_BOUND_RPC_ID, {
+      id: this.rpcId,
+      stalenessBound,
+    });
   }
 
   static encodeOptions(_options: object): { [key: string]: any } {

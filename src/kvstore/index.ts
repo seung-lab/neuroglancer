@@ -35,7 +35,23 @@ export interface ReadResponse {
   totalSize: number | undefined;
 }
 
-export interface DriverReadOptions extends Partial<ProgressOptions> {
+export interface StalenessBoundOptions {
+  // Minimum acceptable validation timestamp, in milliseconds since the Unix
+  // epoch, for a cached response or derived metadata entry.  If unspecified,
+  // the current time at request start is used.
+  stalenessBound?: number;
+}
+
+export function getEffectiveStalenessBound(
+  stalenessBound: number | undefined,
+  requestStartTime = Date.now(),
+) {
+  return stalenessBound ?? requestStartTime;
+}
+
+export interface DriverReadOptions
+  extends Partial<ProgressOptions>,
+    StalenessBoundOptions {
   byteRange?: ByteRangeRequest;
   throwIfMissing?: boolean;
 }

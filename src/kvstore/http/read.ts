@@ -23,7 +23,11 @@ import type {
   StatOptions,
   StatResponse,
 } from "#src/kvstore/index.js";
-import { KvStoreFileHandle, NotFoundError } from "#src/kvstore/index.js";
+import {
+  getEffectiveStalenessBound,
+  KvStoreFileHandle,
+  NotFoundError,
+} from "#src/kvstore/index.js";
 import type { FetchOk } from "#src/util/http_request.js";
 import { fetchOk, HttpError, isNotFoundError } from "#src/util/http_request.js";
 import type { ProgressListener } from "#src/util/progress_listener.js";
@@ -131,9 +135,21 @@ export async function read<Key>(
       signal: options.signal,
       progressListener: options.progressListener,
     };
+    const cacheControlHeaders: Record<string, string> = {};
     if (rangeHeader !== undefined) {
-      requestInit.headers = { range: rangeHeader };
       requestInit.cache = byteRangeCacheMode;
+      cacheControlHeaders.range = rangeHeader;
+    }
+    const stalenessBound = getEffectiveStalenessBound(options.stalenessBound);
+    const now = Date.now();
+    const maxAgeSeconds = Math.floor((now - stalenessBound) / 1000);
+    cacheControlHeaders["cache-control"] =
+      maxAgeSeconds <= 0 ? "no-cache, max-age=0" : `max-age=${maxAgeSeconds}`;
+    if (maxAgeSeconds <= 0 && rangeHeader === undefined) {
+      requestInit.cache = "reload";
+    }
+    if (Object.keys(cacheControlHeaders).length !== 0) {
+      requestInit.headers = cacheControlHeaders;
     }
     let response = await fetchOkImpl(url, requestInit);
     if (wasRedirectedToDirectoryListing(url, response)) {

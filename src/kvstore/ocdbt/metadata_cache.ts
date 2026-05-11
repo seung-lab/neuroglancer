@@ -16,6 +16,7 @@
 
 import { SimpleAsyncCache } from "#src/chunk_manager/generic_file_source.js";
 import type { SharedKvStoreContextCounterpart } from "#src/kvstore/backend.js";
+import type { StalenessBoundOptions } from "#src/kvstore/index.js";
 import type { BtreeNode } from "#src/kvstore/ocdbt/btree.js";
 import { decodeBtreeNode } from "#src/kvstore/ocdbt/btree.js";
 import type {
@@ -27,24 +28,23 @@ import type {
   ManifestWithVersionTree,
 } from "#src/kvstore/ocdbt/manifest.js";
 import { decodeManifest } from "#src/kvstore/ocdbt/manifest.js";
-import type { VersionSpecifier } from "#src/kvstore/ocdbt/version_specifier.js";
-import { formatVersion } from "#src/kvstore/ocdbt/version_specifier.js";
-import type {
-  BtreeGenerationReference,
-  VersionTreeNode,
-} from "#src/kvstore/ocdbt/version_tree.js";
+import type { VersionTreeNode } from "#src/kvstore/ocdbt/version_tree.js";
 import { decodeVersionTreeNode } from "#src/kvstore/ocdbt/version_tree.js";
 import { pipelineUrlJoin } from "#src/kvstore/url.js";
 import type { ProgressOptions } from "#src/util/progress_listener.js";
 import { ProgressSpan } from "#src/util/progress_listener.js";
 
-export function getManifest(
+type MetadataCacheOptions = Partial<ProgressOptions> & StalenessBoundOptions;
+
+const MANIFEST_CACHE_KEY = "ocdbt:manifest";
+const BTREE_CACHE_KEY = "ocdbt:btree";
+const VERSION_NODE_CACHE_KEY = "ocdbt:versionnode";
+
+function getManifestCache(
   sharedKvStoreContext: SharedKvStoreContextCounterpart,
-  dataFile: DataFileId,
-  options: Partial<ProgressOptions>,
-): Promise<Manifest> {
-  const cache = sharedKvStoreContext.chunkManager.memoize.get(
-    "ocdbt:manifest",
+) {
+  return sharedKvStoreContext.chunkManager.memoize.get(
+    MANIFEST_CACHE_KEY,
     () => {
       const cache = new SimpleAsyncCache<DataFileId, Manifest>(
         sharedKvStoreContext.chunkManager.addRef(),
@@ -86,74 +86,20 @@ export function getManifest(
       return cache;
     },
   );
-  return cache.get(dataFile, options);
 }
 
-// Clears every OCDBT metadata cache so the next read resolves a fresh root
-// from the updated manifest. Stub factories below intentionally throw: the
-// real factories (in `getManifest` / `getBtreeNode` / `getRoot`) are
-// already registered by the time invalidation runs, so `memoize.get` returns
-// the existing cache instance without ever calling these stubs.
-//
-// Scope is the whole shared context: if multiple OCDBT databases are open
-// they are all flushed. Metadata is small and fast to re-fetch so this is
-// acceptable.
-export function invalidateOcdbtCaches(
+export function getManifest(
   sharedKvStoreContext: SharedKvStoreContextCounterpart,
-) {
-  const manifestCache = sharedKvStoreContext.chunkManager.memoize.get(
-    "ocdbt:manifest",
-    () => {
-      const cache = new SimpleAsyncCache<DataFileId, Manifest>(
-        sharedKvStoreContext.chunkManager.addRef(),
-        {
-          get: async () => {
-            throw new Error("unreachable");
-          },
-        },
-      );
-      cache.registerDisposer(sharedKvStoreContext.addRef());
-      return cache;
-    },
-  );
-  manifestCache.invalidateAll();
-  const btreeCache = sharedKvStoreContext.chunkManager.memoize.get(
-    "ocdbt:btree",
-    () =>
-      makeIndirectDataReferenceCache(
-        sharedKvStoreContext,
-        "b+tree node",
-        decodeBtreeNode,
-      ),
-  );
-  btreeCache.invalidateAll();
-  const versionCache = sharedKvStoreContext.chunkManager.memoize.get(
-    "ocdbt:version",
-    () => {
-      const cache = new SimpleAsyncCache<
-        { url: string; version: VersionSpecifier | undefined },
-        BtreeGenerationReference
-      >(sharedKvStoreContext.chunkManager.addRef(), {
-        get: async () => {
-          throw new Error("unreachable");
-        },
-        encodeKey: ({ url, version }) =>
-          JSON.stringify([
-            url,
-            version !== undefined ? formatVersion(version) : undefined,
-          ]),
-      });
-      cache.registerDisposer(sharedKvStoreContext.addRef());
-      return cache;
-    },
-  );
-  versionCache.invalidateAll();
+  dataFile: DataFileId,
+  options: MetadataCacheOptions,
+): Promise<Manifest> {
+  return getManifestCache(sharedKvStoreContext).get(dataFile, options);
 }
 
 export async function getResolvedManifest(
   sharedKvStoreContext: SharedKvStoreContextCounterpart,
   url: string,
-  options: Partial<ProgressOptions>,
+  options: MetadataCacheOptions,
 ): Promise<ManifestWithVersionTree> {
   const manifest = await getManifest(
     sharedKvStoreContext,
@@ -222,30 +168,23 @@ function makeIndirectDataReferenceCache<T extends { estimatedSize: number }>(
   return cache;
 }
 
-export function getBtreeNode(
+function getBtreeNodeCache(
   sharedKvStoreContext: SharedKvStoreContextCounterpart,
-  location: IndirectDataReference,
-  options: Partial<ProgressOptions>,
-): Promise<BtreeNode> {
-  const cache = sharedKvStoreContext.chunkManager.memoize.get(
-    "ocdbt:btree",
-    () =>
-      makeIndirectDataReferenceCache(
-        sharedKvStoreContext,
-        "b+tree node",
-        decodeBtreeNode,
-      ),
+) {
+  return sharedKvStoreContext.chunkManager.memoize.get(BTREE_CACHE_KEY, () =>
+    makeIndirectDataReferenceCache(
+      sharedKvStoreContext,
+      "b+tree node",
+      decodeBtreeNode,
+    ),
   );
-  return cache.get(location, options);
 }
 
-export function getVersionTreeNode(
+function getVersionTreeNodeCache(
   sharedKvStoreContext: SharedKvStoreContextCounterpart,
-  location: IndirectDataReference,
-  options: Partial<ProgressOptions>,
-): Promise<VersionTreeNode> {
-  const cache = sharedKvStoreContext.chunkManager.memoize.get(
-    "ocdbt:versionnode",
+) {
+  return sharedKvStoreContext.chunkManager.memoize.get(
+    VERSION_NODE_CACHE_KEY,
     () =>
       makeIndirectDataReferenceCache(
         sharedKvStoreContext,
@@ -253,5 +192,20 @@ export function getVersionTreeNode(
         decodeVersionTreeNode,
       ),
   );
-  return cache.get(location, options);
+}
+
+export function getBtreeNode(
+  sharedKvStoreContext: SharedKvStoreContextCounterpart,
+  location: IndirectDataReference,
+  options: MetadataCacheOptions,
+): Promise<BtreeNode> {
+  return getBtreeNodeCache(sharedKvStoreContext).get(location, options);
+}
+
+export function getVersionTreeNode(
+  sharedKvStoreContext: SharedKvStoreContextCounterpart,
+  location: IndirectDataReference,
+  options: MetadataCacheOptions,
+): Promise<VersionTreeNode> {
+  return getVersionTreeNodeCache(sharedKvStoreContext).get(location, options);
 }

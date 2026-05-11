@@ -50,7 +50,6 @@ import {
   CHUNKED_GRAPH_RENDER_LAYER_UPDATE_SOURCES_RPC_ID,
   ChunkedGraphSourceParameters,
   getGrapheneFragmentKey,
-  GRAPHENE_INVALIDATE_OCDBT_RPC_ID,
   GRAPHENE_MESH_NEW_SEGMENT_RPC_ID,
   isBaseSegmentId,
   makeChunkedGraphChunkSpecification,
@@ -79,6 +78,7 @@ import {
 } from "#src/datasource/precomputed/frontend.js";
 import { WithSharedKvStoreContext } from "#src/kvstore/chunk_source_frontend.js";
 import type { SharedKvStoreContext } from "#src/kvstore/frontend.js";
+import type { DriverReadOptions } from "#src/kvstore/index.js";
 import {
   ensureEmptyUrlSuffix,
   kvstoreEnsureDirectoryPipelineUrl,
@@ -440,37 +440,23 @@ class GrapheneMultiscaleVolumeChunkSource extends PrecomputedMultiscaleVolumeChu
     return sources;
   }
 
-  // Invalidate just the OCDBT metadata caches (manifest / btree / version)
-  // on the backend without re-queueing volume chunks. Used before a
-  // targeted base-chunk read to ensure that read goes to the network
-  // instead of trusting potentially-stale cached metadata.
-  invalidateOcdbtMetadata() {
-    if (this.info.graph.ocdbtKvstoreSpec && this.chunkedGraphChunkSource?.rpc) {
-      this.chunkedGraphChunkSource.rpc.invoke(
-        GRAPHENE_INVALIDATE_OCDBT_RPC_ID,
-        { layerId: this.chunkedGraphChunkSource.rpcId },
-      );
+  updateVolumeSourceStalenessBound(stalenessBound: number) {
+    if (!this.info.graph.ocdbtKvstoreSpec) {
+      return;
     }
-  }
-
-  invalidateVolumeSources() {
-    // Invalidate OCDBT metadata caches first so that when volume chunks
-    // are re-queued and start downloading, they read fresh metadata.
-    this.invalidateOcdbtMetadata();
     for (const source of this.volumeChunkSources) {
-      source.invalidateCache();
+      source.updateStalenessBound(stalenessBound);
     }
   }
 
   // Read uint64 supervoxel IDs at the given layer-voxel positions directly
   // from the base-scale OCDBT data. Positions sharing a base chunk are
   // fetched in one request. Out-of-bounds positions yield `undefined`.
-  // Caller must invalidate OCDBT metadata first if it needs guaranteed-
-  // fresh reads (see `invalidateOcdbtMetadata`).
   async readBaseSupervoxelsAt(
     positions: Float32Array[],
-    signal?: AbortSignal,
+    options: Pick<DriverReadOptions, "signal" | "stalenessBound"> = {},
   ): Promise<(bigint | undefined)[]> {
+    const { signal, stalenessBound } = options;
     const baseScale = this.info.scales[0];
     const blockSize = baseScale.compressedSegmentationBlockSize;
     if (blockSize === undefined) {
@@ -521,6 +507,7 @@ class GrapheneMultiscaleVolumeChunkSource extends PrecomputedMultiscaleVolumeChu
         const response = await kvStoreContext.read(url, {
           throwIfMissing: true,
           signal,
+          stalenessBound,
         });
         if (response === undefined) return;
         const data = new Uint32Array(await response.response.arrayBuffer());
@@ -1893,10 +1880,10 @@ class GraphConnection extends SegmentationGraphSourceConnection {
           }
         }
         if (indices.length > 0) {
-          this.chunkSource.invalidateOcdbtMetadata();
           try {
             const fresh = await this.chunkSource.readBaseSupervoxelsAt(
               indices.map((i) => all[i].position),
+              { stalenessBound: Date.now() },
             );
             for (let j = 0; j < indices.length; ++j) {
               const v = fresh[j];
@@ -1937,7 +1924,7 @@ class GraphConnection extends SegmentationGraphSourceConnection {
         newValues.add(splitRoots);
         this.state.replaceSegments(oldValues, newValues);
         if (this.graph.info.graph.ocdbtKvstoreSpec) {
-          this.chunkSource.invalidateVolumeSources();
+          this.chunkSource.updateVolumeSourceStalenessBound(Date.now());
         }
         return true;
       }
