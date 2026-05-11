@@ -24,6 +24,10 @@ import { MultiConsumerProgressListener } from "#src/util/progress_listener.js";
 export class Memoize<Key, Value extends RefCounted> {
   private map = new Map<Key, Value>();
 
+  getIfExists(key: Key): Value | undefined {
+    return this.map.get(key);
+  }
+
   /**
    * If getter throws an exception, no value is added.
    */
@@ -44,6 +48,13 @@ export class Memoize<Key, Value extends RefCounted> {
 }
 
 export class StringMemoize extends Memoize<string, RefCounted> {
+  getIfExists(x: any) {
+    if (typeof x !== "string") {
+      x = stableStringify(x);
+    }
+    return super.getIfExists(x);
+  }
+
   get<T extends RefCounted>(x: any, getter: () => T) {
     if (typeof x !== "string") {
       x = stableStringify(x);

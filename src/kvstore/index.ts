@@ -35,7 +35,15 @@ export interface ReadResponse {
   totalSize: number | undefined;
 }
 
-export interface DriverReadOptions extends Partial<ProgressOptions> {
+export interface StalenessBoundOptions {
+  // Maximum permitted age, in milliseconds, of a cached response or derived
+  // metadata entry before it must be refreshed.
+  stalenessBound?: number;
+}
+
+export interface DriverReadOptions
+  extends Partial<ProgressOptions>,
+    StalenessBoundOptions {
   byteRange?: ByteRangeRequest;
   throwIfMissing?: boolean;
 }

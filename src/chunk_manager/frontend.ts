@@ -477,8 +477,11 @@ export class ChunkSource extends SharedObject {
   /**
    * Invalidates the chunk cache.  Operates asynchronously.
    */
-  invalidateCache(): void {
-    this.rpc!.invoke(CHUNK_SOURCE_INVALIDATE_RPC_ID, { id: this.rpcId });
+  invalidateCache(options: { stalenessBound?: number } = {}): void {
+    this.rpc!.invoke(CHUNK_SOURCE_INVALIDATE_RPC_ID, {
+      id: this.rpcId,
+      stalenessBound: options.stalenessBound,
+    });
   }
 
   static encodeOptions(_options: object): { [key: string]: any } {

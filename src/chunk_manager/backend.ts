@@ -58,6 +58,11 @@ import {
   SharedObjectCounterpart,
 } from "#src/worker_rpc.js";
 
+interface ChunkDownloadReadOptions {
+  signal: AbortSignal;
+  stalenessBound?: number;
+}
+
 const DEBUG_CHUNK_UPDATES = false;
 
 export interface ChunkStateListener {
@@ -287,6 +292,8 @@ export class ChunkSourceBase extends SharedObject {
   chunks: Map<string, Chunk> = new Map<string, Chunk>();
   freeChunks: Chunk[] = new Array<Chunk>();
   statistics = new Float64Array(numChunkStatistics);
+  private transientReadStalenessBound: number | undefined;
+  private transientReadCount = 0;
 
   /**
    * sourceQueueLevel must be greater than the sourceQueueLevel of any ChunkSource whose download
@@ -382,6 +389,25 @@ export class ChunkSourceBase extends SharedObject {
     for (const listener of listeners.slice()) {
       listener(chunk, oldState);
     }
+  }
+
+  prepareChunkReadsForInvalidation(stalenessBound: number | undefined) {
+    if (stalenessBound === undefined) {
+      return;
+    }
+    this.transientReadStalenessBound = stalenessBound;
+    this.transientReadCount = this.chunks.size;
+  }
+
+  getChunkDownloadReadOptions(signal: AbortSignal): ChunkDownloadReadOptions {
+    const stalenessBound = this.transientReadStalenessBound;
+    if (this.transientReadCount > 0) {
+      --this.transientReadCount;
+      if (this.transientReadCount === 0) {
+        this.transientReadStalenessBound = undefined;
+      }
+    }
+    return stalenessBound === undefined ? { signal } : { signal, stalenessBound };
   }
 }
 
@@ -1375,6 +1401,7 @@ export function withChunkManager<
 
 registerRPC(CHUNK_SOURCE_INVALIDATE_RPC_ID, function (x) {
   const source = <ChunkSource>this.get(x.id);
+  source.prepareChunkReadsForInvalidation(x.stalenessBound);
   source.chunkManager.queueManager.invalidateSourceCache(source);
 });
 

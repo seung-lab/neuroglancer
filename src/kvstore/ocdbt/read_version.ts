@@ -16,6 +16,7 @@
 
 import { SimpleAsyncCache } from "#src/chunk_manager/generic_file_source.js";
 import type { SharedKvStoreContextCounterpart } from "#src/kvstore/backend.js";
+import type { StalenessBoundOptions } from "#src/kvstore/index.js";
 import type {
   Config,
   ManifestWithVersionTree,
@@ -43,11 +44,13 @@ import {
 } from "#src/kvstore/ocdbt/version_tree.js";
 import type { ProgressOptions } from "#src/util/progress_listener.js";
 
+type MetadataCacheOptions = Partial<ProgressOptions> & StalenessBoundOptions;
+
 export async function getRoot(
   sharedKvStoreContext: SharedKvStoreContextCounterpart,
   url: string,
   version: VersionSpecifier | undefined,
-  options: Partial<ProgressOptions>,
+  options: MetadataCacheOptions,
 ): Promise<BtreeGenerationReference> {
   const cache = sharedKvStoreContext.chunkManager.memoize.get(
     "ocdbt:version",
@@ -96,7 +99,7 @@ export async function readVersion(
   sharedKvStoreContext: SharedKvStoreContextCounterpart,
   manifest: ManifestWithVersionTree,
   version: VersionQuery | undefined,
-  options: Partial<ProgressOptions>,
+  options: MetadataCacheOptions,
 ): Promise<
   | { ref: BtreeGenerationReference; generationIndex: GenerationIndex }
   | undefined
@@ -126,7 +129,7 @@ export async function findVersionIndexByLowerBound(
   sharedKvStoreContext: SharedKvStoreContextCounterpart,
   manifest: ManifestWithVersionTree,
   version: VersionSpecifier,
-  options: Partial<ProgressOptions>,
+  options: MetadataCacheOptions,
 ): Promise<GenerationIndex> {
   const { generationIndex } = await findVersionLowerBoundImpl(
     sharedKvStoreContext,
@@ -141,7 +144,7 @@ export async function findVersionIndexByUpperBound(
   sharedKvStoreContext: SharedKvStoreContextCounterpart,
   manifest: ManifestWithVersionTree,
   version: VersionSpecifier,
-  options: Partial<ProgressOptions>,
+  options: MetadataCacheOptions,
 ): Promise<GenerationIndex> {
   const { generationIndex } = await findVersionUpperBoundImpl(
     sharedKvStoreContext,
@@ -177,7 +180,7 @@ function findVersionImpl<Query>(options: FindVersionImplOptions<Query>): (
   sharedKvStoreContext: SharedKvStoreContextCounterpart,
   manifest: ManifestWithVersionTree,
   query: Query,
-  options: Partial<ProgressOptions>,
+  options: MetadataCacheOptions,
 ) => Promise<{
   ref: BtreeGenerationReference | undefined;
   generationIndex: GenerationIndex;
@@ -187,7 +190,7 @@ function findVersionImpl<Query>(options: FindVersionImplOptions<Query>): (
     sharedKvStoreContext: SharedKvStoreContextCounterpart,
     manifest: ManifestWithVersionTree,
     query: Query,
-    progressOptions: Partial<ProgressOptions>,
+    progressOptions: MetadataCacheOptions,
   ): Promise<{
     ref: BtreeGenerationReference | undefined;
     generationIndex: GenerationIndex;
@@ -225,7 +228,7 @@ function findVersionImpl<Query>(options: FindVersionImplOptions<Query>): (
     generationIndex: GenerationIndex,
     ref: VersionNodeReference,
     query: Query,
-    progressOptions: Partial<ProgressOptions>,
+    progressOptions: MetadataCacheOptions,
   ): Promise<{
     ref: BtreeGenerationReference | undefined;
     generationIndex: GenerationIndex;

@@ -131,9 +131,23 @@ export async function read<Key>(
       signal: options.signal,
       progressListener: options.progressListener,
     };
+    const cacheControlHeaders: Record<string, string> = {};
     if (rangeHeader !== undefined) {
-      requestInit.headers = { range: rangeHeader };
       requestInit.cache = byteRangeCacheMode;
+      cacheControlHeaders.range = rangeHeader;
+    }
+    const { stalenessBound } = options;
+    if (stalenessBound !== undefined) {
+      cacheControlHeaders["cache-control"] =
+        stalenessBound <= 0
+          ? "no-cache, max-age=0"
+          : `max-age=${Math.floor(stalenessBound / 1000)}`;
+      if (stalenessBound <= 0 && rangeHeader === undefined) {
+        requestInit.cache = "reload";
+      }
+    }
+    if (Object.keys(cacheControlHeaders).length !== 0) {
+      requestInit.headers = cacheControlHeaders;
     }
     let response = await fetchOkImpl(url, requestInit);
     if (wasRedirectedToDirectoryListing(url, response)) {
