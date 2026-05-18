@@ -102,9 +102,10 @@ export function invalidateOcdbtCaches(
   baseUrl: string,
 ) {
   const { memoize } = sharedKvStoreContext.chunkManager;
-  const manifestCache = memoize.getIfExists<
-    SimpleAsyncCache<DataFileId, Manifest>
-  >("ocdbt:manifest");
+  const manifestCache =
+    memoize.getIfExists<SimpleAsyncCache<DataFileId, Manifest>>(
+      "ocdbt:manifest",
+    );
   if (manifestCache !== undefined) {
     try {
       manifestCache.invalidate({ baseUrl, relativePath: "manifest.ocdbt" });
@@ -112,12 +113,13 @@ export function invalidateOcdbtCaches(
       manifestCache.dispose();
     }
   }
-  const versionCache = memoize.getIfExists<
-    SimpleAsyncCache<
-      { url: string; version: VersionSpecifier | undefined },
-      BtreeGenerationReference
-    >
-  >("ocdbt:version");
+  const versionCache =
+    memoize.getIfExists<
+      SimpleAsyncCache<
+        { url: string; version: VersionSpecifier | undefined },
+        BtreeGenerationReference
+      >
+    >("ocdbt:version");
   if (versionCache !== undefined) {
     try {
       versionCache.invalidate({ url: baseUrl, version: undefined });
