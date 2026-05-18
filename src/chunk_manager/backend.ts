@@ -184,6 +184,15 @@ export class Chunk implements Disposable {
 
   freeSystemMemory() {}
 
+  /**
+   * Frees this chunk's data and re-queues it for download. Used by caches
+   * that want to force a fresh fetch on the next access.
+   */
+  invalidateChunk() {
+    this.freeSystemMemory();
+    this.queueManager.updateChunkState(this, ChunkState.QUEUED);
+  }
+
   serialize(msg: any, _transfers: any[]) {
     msg.id = this.key;
     msg.source = (<ChunkSource>this.source).rpcId;

@@ -71,18 +71,7 @@ export class SimpleAsyncCache<Key, Value> extends ChunkSourceBase {
 
   invalidate(key: Key) {
     const encodedKey = this.encodeKeyFunction(key);
-    const chunk = this.chunks.get(encodedKey);
-    if (chunk !== undefined) {
-      chunk.freeSystemMemory();
-      this.chunkManager.queueManager.updateChunkState(chunk, ChunkState.QUEUED);
-    }
-  }
-
-  invalidateAll() {
-    for (const chunk of this.chunks.values()) {
-      chunk.freeSystemMemory();
-      this.chunkManager.queueManager.updateChunkState(chunk, ChunkState.QUEUED);
-    }
+    this.chunks.get(encodedKey)?.invalidateChunk();
   }
 
   get(key: Key, options: Partial<ProgressOptions>): Promise<Value> {
