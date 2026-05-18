@@ -28,7 +28,6 @@ import type {
 } from "#src/kvstore/ocdbt/manifest.js";
 import { decodeManifest } from "#src/kvstore/ocdbt/manifest.js";
 import type { VersionSpecifier } from "#src/kvstore/ocdbt/version_specifier.js";
-import { formatVersion } from "#src/kvstore/ocdbt/version_specifier.js";
 import type {
   BtreeGenerationReference,
   VersionTreeNode,
@@ -89,65 +88,43 @@ export function getManifest(
   return cache.get(dataFile, options);
 }
 
-// Clears every OCDBT metadata cache so the next read resolves a fresh root
-// from the updated manifest. Stub factories below intentionally throw: the
-// real factories (in `getManifest` / `getBtreeNode` / `getRoot`) are
-// already registered by the time invalidation runs, so `memoize.get` returns
-// the existing cache instance without ever calling these stubs.
+// Invalidate cached OCDBT metadata for a specific database so the next read
+// resolves a fresh root from the updated manifest. Only `ocdbt:manifest`
+// (per `{baseUrl, "manifest.ocdbt"}`) and `ocdbt:version` (per
+// `{url: baseUrl, version: undefined}`, i.e. "latest") can hold stale
+// entries after a server-side write; `ocdbt:btree` and `ocdbt:versionnode`
+// are content-addressed by `dataFile` location and self-correct (a new
+// manifest references new locations; old entries simply go unreferenced).
 //
-// Scope is the whole shared context: if multiple OCDBT databases are open
-// they are all flushed. Metadata is small and fast to re-fetch so this is
-// acceptable.
+// Safe to call when the caches haven't been populated yet (no-op).
 export function invalidateOcdbtCaches(
   sharedKvStoreContext: SharedKvStoreContextCounterpart,
+  baseUrl: string,
 ) {
-  const manifestCache = sharedKvStoreContext.chunkManager.memoize.get(
-    "ocdbt:manifest",
-    () => {
-      const cache = new SimpleAsyncCache<DataFileId, Manifest>(
-        sharedKvStoreContext.chunkManager.addRef(),
-        {
-          get: async () => {
-            throw new Error("unreachable");
-          },
-        },
-      );
-      cache.registerDisposer(sharedKvStoreContext.addRef());
-      return cache;
-    },
-  );
-  manifestCache.invalidateAll();
-  const btreeCache = sharedKvStoreContext.chunkManager.memoize.get(
-    "ocdbt:btree",
-    () =>
-      makeIndirectDataReferenceCache(
-        sharedKvStoreContext,
-        "b+tree node",
-        decodeBtreeNode,
-      ),
-  );
-  btreeCache.invalidateAll();
-  const versionCache = sharedKvStoreContext.chunkManager.memoize.get(
-    "ocdbt:version",
-    () => {
-      const cache = new SimpleAsyncCache<
-        { url: string; version: VersionSpecifier | undefined },
-        BtreeGenerationReference
-      >(sharedKvStoreContext.chunkManager.addRef(), {
-        get: async () => {
-          throw new Error("unreachable");
-        },
-        encodeKey: ({ url, version }) =>
-          JSON.stringify([
-            url,
-            version !== undefined ? formatVersion(version) : undefined,
-          ]),
-      });
-      cache.registerDisposer(sharedKvStoreContext.addRef());
-      return cache;
-    },
-  );
-  versionCache.invalidateAll();
+  const { memoize } = sharedKvStoreContext.chunkManager;
+  const manifestCache = memoize.getIfExists<
+    SimpleAsyncCache<DataFileId, Manifest>
+  >("ocdbt:manifest");
+  if (manifestCache !== undefined) {
+    try {
+      manifestCache.invalidate({ baseUrl, relativePath: "manifest.ocdbt" });
+    } finally {
+      manifestCache.dispose();
+    }
+  }
+  const versionCache = memoize.getIfExists<
+    SimpleAsyncCache<
+      { url: string; version: VersionSpecifier | undefined },
+      BtreeGenerationReference
+    >
+  >("ocdbt:version");
+  if (versionCache !== undefined) {
+    try {
+      versionCache.invalidate({ url: baseUrl, version: undefined });
+    } finally {
+      versionCache.dispose();
+    }
+  }
 }
 
 export async function getResolvedManifest(

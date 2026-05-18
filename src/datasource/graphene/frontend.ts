@@ -454,7 +454,10 @@ class GrapheneMultiscaleVolumeChunkSource extends PrecomputedMultiscaleVolumeChu
     ) {
       this.chunkedGraphChunkSource.rpc.invoke(
         GRAPHENE_INVALIDATE_OCDBT_RPC_ID,
-        { layerId: this.chunkedGraphChunkSource.rpcId },
+        {
+          layerId: this.chunkedGraphChunkSource.rpcId,
+          baseUrl: this.info.ocdbtDataUrl,
+        },
       );
     }
     for (const source of this.volumeChunkSources) {
