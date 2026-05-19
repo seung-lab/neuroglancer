@@ -11,6 +11,10 @@
     "layer": "segmentation",
     "tool": "calcadaFindPath"
   },
+  "keyp": {
+    "layer": "segmentation",
+    "tool": "calcadaPieceSplit"
+  },
   "keyx": false,
   "control+shift+keyx": "clear-segments",
   "bracketleft": "select-previous",

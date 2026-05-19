@@ -93,6 +93,8 @@ import type {
 } from "#src/layer/index.js";
 import type { LoadedDataSubsource } from "#src/layer/layer_data_source.js";
 import { LoadedLayerDataSource } from "#src/layer/layer_data_source.js";
+import { ImageUserLayer } from "#src/layer/image/index.js";
+import { makeLayer } from "#src/layer/index.js";
 import { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import { MeshSource } from "#src/mesh/frontend.js";
 import type { DisplayDimensionRenderInfo } from "#src/navigation_state.js";
@@ -941,12 +943,15 @@ const TARGET_JSON_KEY = "target";
 const CENTROIDS_JSON_KEY = "centroids";
 const PRECISION_MODE_JSON_KEY = "precision";
 
+const PIECE_SPLIT_JSON_KEY = "pieceSplit";
+
 class GrapheneState extends RefCounted implements Trackable {
   changed = new NullarySignal();
 
   public multicutState = new MulticutState();
   public mergeState = new MergeState();
   public findPathState = new FindPathState();
+  public pieceSplitState = new PieceSplitState();
 
   constructor() {
     super();
@@ -965,18 +970,25 @@ class GrapheneState extends RefCounted implements Trackable {
         this.changed.dispatch();
       }),
     );
+    this.registerDisposer(
+      this.pieceSplitState.changed.add(() => {
+        this.changed.dispatch();
+      }),
+    );
   }
 
   replaceSegments(oldValues: Uint64Set, newValues: Uint64Set) {
     this.multicutState.replaceSegments(oldValues, newValues);
     this.mergeState.replaceSegments(oldValues, newValues);
     this.findPathState.replaceSegments(oldValues, newValues);
+    this.pieceSplitState.replaceSegments(oldValues, newValues);
   }
 
   reset() {
     this.multicutState.reset();
     this.mergeState.reset();
     this.findPathState.reset();
+    this.pieceSplitState.reset();
   }
 
   toJSON() {
@@ -984,6 +996,7 @@ class GrapheneState extends RefCounted implements Trackable {
       [MULTICUT_JSON_KEY]: this.multicutState.toJSON(),
       [MERGE_JSON_KEY]: this.mergeState.toJSON(),
       [FIND_PATH_JSON_KEY]: this.findPathState.toJSON(),
+      [PIECE_SPLIT_JSON_KEY]: this.pieceSplitState.toJSON(),
     };
   }
 
@@ -996,6 +1009,9 @@ class GrapheneState extends RefCounted implements Trackable {
     });
     verifyOptionalObjectProperty(x, FIND_PATH_JSON_KEY, (value) => {
       this.findPathState.restoreState(value);
+    });
+    verifyOptionalObjectProperty(x, PIECE_SPLIT_JSON_KEY, (value) => {
+      this.pieceSplitState.restoreState(value);
     });
   }
 }
@@ -1373,6 +1389,151 @@ class MulticutState extends RefCounted implements Trackable {
   }
 }
 
+// VoxelPoint is an integer voxel coordinate placed by the user during piece
+// split. We keep these in voxel-space (after the nm → voxel conversion using
+// the graph's resolution) because the backend operates in voxel-space.
+type VoxelPoint = [number, number, number];
+
+// PointEntry stores both the voxel-space integer coordinate (used in the POST
+// body) and the layer-space float coordinate (used for the 3D annotation
+// marker shown in the viewer). The layer-space form is also persisted to JSON
+// so reloads keep the markers exactly where they were placed.
+interface PointEntry {
+  voxel: VoxelPoint;
+  layer: [number, number, number];
+}
+
+// PreviewResult is the parsed response from POST /piece/split_preview.
+interface PreviewResult {
+  bbox: [number, number, number, number, number, number];
+  // Inline gzipped+base64 mask; empty when the server omitted it due to size.
+  maskBase64: string;
+  maskUrl: string;
+  expiresAt: number; // unix-ms
+  maskVoxels: number;
+  sourceVoxels: number;
+  sinkVoxels: number;
+}
+
+const PIECE_SPLIT_FOCUS_KEY = "focusPieceId";
+const PIECE_SPLIT_BLUE_KEY = "blue";
+const PIECE_SPLIT_RED_KEY = "red";
+const PIECE_SPLIT_IMAGE_KEY = "imageSource";
+
+// PieceSplitState holds the working state of the point-driven piece split
+// tool: the focus piece, the two coloured point lists, the active colour, and
+// the URL of the image volume used to weight the cut.
+class PieceSplitState extends RefCounted implements Trackable {
+  changed = new NullarySignal();
+
+  focusPieceId = new TrackableValue<bigint | undefined>(undefined, (x) => x);
+  blueGroup = new WatchableValue<boolean>(true);
+  bluePoints = new WatchableValue<PointEntry[]>([]);
+  redPoints = new WatchableValue<PointEntry[]>([]);
+  imageSource = new TrackableValue<string>("", verifyString);
+  preview = new WatchableValue<PreviewResult | undefined>(undefined);
+
+  constructor() {
+    super();
+    const reemit = () => this.changed.dispatch();
+    this.registerDisposer(this.focusPieceId.changed.add(reemit));
+    this.registerDisposer(this.blueGroup.changed.add(reemit));
+    this.registerDisposer(this.bluePoints.changed.add(reemit));
+    this.registerDisposer(this.redPoints.changed.add(reemit));
+    this.registerDisposer(this.imageSource.changed.add(reemit));
+    this.registerDisposer(this.preview.changed.add(reemit));
+  }
+
+  reset() {
+    this.focusPieceId.reset();
+    this.blueGroup.value = true;
+    this.bluePoints.value = [];
+    this.redPoints.value = [];
+    this.preview.value = undefined;
+    // Intentionally do NOT clear imageSource — it's typically set once per session.
+  }
+
+  swapGroup() {
+    this.blueGroup.value = !this.blueGroup.value;
+  }
+
+  // Returns a *new* array — callers should not mutate the existing value array.
+  addPoint(p: PointEntry) {
+    if (this.blueGroup.value) {
+      this.bluePoints.value = [...this.bluePoints.value, p];
+    } else {
+      this.redPoints.value = [...this.redPoints.value, p];
+    }
+  }
+
+  removePoint(group: "blue" | "red", index: number) {
+    const src = group === "blue" ? this.bluePoints : this.redPoints;
+    if (index < 0 || index >= src.value.length) return;
+    const next = [...src.value];
+    next.splice(index, 1);
+    src.value = next;
+  }
+
+  // replaceSegments mirrors the contract of MulticutState.replaceSegments —
+  // when a piece is split or merged externally, the saved focus may become
+  // invalid and we should clear it. Points are voxel-space so they survive
+  // graph mutations; the focus reference does not.
+  replaceSegments(oldValues: Uint64Set, _newValues: Uint64Set) {
+    const focus = this.focusPieceId.value;
+    if (focus !== undefined && oldValues.has(focus)) {
+      this.reset();
+    }
+  }
+
+  toJSON() {
+    return {
+      [PIECE_SPLIT_FOCUS_KEY]: this.focusPieceId.toJSON()?.toString(),
+      [PIECE_SPLIT_BLUE_KEY]: this.bluePoints.value.map(entryToJSON),
+      [PIECE_SPLIT_RED_KEY]: this.redPoints.value.map(entryToJSON),
+      [PIECE_SPLIT_IMAGE_KEY]: this.imageSource.value || undefined,
+    };
+  }
+
+  restoreState(x: any) {
+    verifyOptionalObjectProperty(x, PIECE_SPLIT_FOCUS_KEY, (value) => {
+      this.focusPieceId.restoreState(parseUint64(value));
+    });
+    verifyOptionalObjectProperty(x, PIECE_SPLIT_BLUE_KEY, (value) => {
+      this.bluePoints.value = parseArray(value, parseEntry);
+    });
+    verifyOptionalObjectProperty(x, PIECE_SPLIT_RED_KEY, (value) => {
+      this.redPoints.value = parseArray(value, parseEntry);
+    });
+    verifyOptionalObjectProperty(x, PIECE_SPLIT_IMAGE_KEY, (value) => {
+      this.imageSource.value = verifyString(value);
+    });
+  }
+}
+
+const VOXEL_KEY = "voxel";
+const LAYER_KEY = "layer";
+
+function entryToJSON(e: PointEntry) {
+  return { [VOXEL_KEY]: e.voxel, [LAYER_KEY]: e.layer };
+}
+
+function parseEntry(value: any): PointEntry {
+  // Tolerate the older JSON shape that stored just a voxel triplet at the top
+  // level — fall back to using it for both fields so reloads from earlier
+  // sessions don't lose data.
+  if (Array.isArray(value)) {
+    const arr = parseFixedLengthArray([0, 0, 0] as VoxelPoint, value, verifyInt);
+    return { voxel: arr, layer: [arr[0], arr[1], arr[2]] };
+  }
+  const voxel = verifyObjectProperty(value, VOXEL_KEY, (v) =>
+    parseFixedLengthArray([0, 0, 0] as VoxelPoint, v, verifyInt),
+  );
+  const layer = verifyObjectProperty(value, LAYER_KEY, (v) =>
+    parseFixedLengthArray([0, 0, 0] as [number, number, number], v, verifyFiniteFloat),
+  );
+  return { voxel, layer };
+}
+
 class GraphConnection extends SegmentationGraphSourceConnection {
   public annotationLayerStates: AnnotationLayerState[] = [];
   public mergeAnnotationState: AnnotationLayerState;
@@ -1592,6 +1753,76 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       }
     };
     this.registerDisposer(findPathState.changed.add(findPathChanged));
+
+    // Piece-split annotations: blue + red point markers, kept in sync with the
+    // VoxelPoint lists in state.pieceSplitState.
+    const { pieceSplitState } = state;
+    const pieceSplitBlueAnnotation = makeColoredAnnotationState(
+      layer,
+      loadedSubsource,
+      "pieceSplitBlue",
+      BLUE_COLOR,
+    );
+    const pieceSplitRedAnnotation = makeColoredAnnotationState(
+      layer,
+      loadedSubsource,
+      "pieceSplitRed",
+      RED_COLOR,
+    );
+    // Default marker rendering uses size=5px which is barely visible when the
+    // viewer is zoomed in close to a slice — and the cross-section fade in
+    // slice view further drops the alpha. Bump the size, force opaque interior,
+    // and add a contrasting border so markers stand out at any zoom.
+    const PIECE_SPLIT_POINT_SHADER = `
+void main() {
+  setPointMarkerSize(20.0);
+  setPointMarkerBorderWidth(3.0);
+  setColor(vec4(defaultColor(), 1.0));
+  setPointMarkerBorderColor(vec4(1.0, 1.0, 1.0, 1.0));
+}
+`;
+    pieceSplitBlueAnnotation.displayState.shader.value = PIECE_SPLIT_POINT_SHADER;
+    pieceSplitRedAnnotation.displayState.shader.value = PIECE_SPLIT_POINT_SHADER;
+    const syncPieceSplitAnnotations = (
+      points: PointEntry[],
+      state: AnnotationLayerState,
+    ) => {
+      const src = state.source;
+      // Drop every existing annotation in the source, then re-add the current
+      // points. Simpler than tracking per-point identity since the lists are
+      // short (a handful of points).
+      for (const a of [...src]) src.delete(src.getReference(a.id));
+      for (const p of points) {
+        const annotation: Point = {
+          id: "",
+          point: new Float32Array(p.layer),
+          type: AnnotationType.POINT,
+          properties: [],
+          description: `(${p.voxel[0]}, ${p.voxel[1]}, ${p.voxel[2]})`,
+        };
+        src.add(annotation);
+      }
+    };
+    this.registerDisposer(
+      pieceSplitState.bluePoints.changed.add(() =>
+        syncPieceSplitAnnotations(
+          pieceSplitState.bluePoints.value,
+          pieceSplitBlueAnnotation,
+        ),
+      ),
+    );
+    this.registerDisposer(
+      pieceSplitState.redPoints.changed.add(() =>
+        syncPieceSplitAnnotations(
+          pieceSplitState.redPoints.value,
+          pieceSplitRedAnnotation,
+        ),
+      ),
+    );
+    // Initial sync from restored state.
+    syncPieceSplitAnnotations(pieceSplitState.bluePoints.value, pieceSplitBlueAnnotation);
+    syncPieceSplitAnnotations(pieceSplitState.redPoints.value, pieceSplitRedAnnotation);
+
     this.registerDisposer(
       findPathState.triggerPathUpdate.add(() => {
         const loadedSubsource = getGraphLoadedSubsource(this.layer)!;
@@ -2232,6 +2463,71 @@ class GrapheneGraphServerInterface {
     return final;
   }
 
+  async previewPieceSplit(
+    pieceId: bigint,
+    blue: VoxelPoint[],
+    red: VoxelPoint[],
+    imageSource: string,
+  ): Promise<PreviewResult> {
+    const { fetchOkImpl, baseUrl } = this.httpSource;
+    let response: Response;
+    try {
+      response = await fetchOkImpl(`${baseUrl}/piece/split_preview`, {
+        method: "POST",
+        body: JSON.stringify({
+          // piece_id is a bigint > 2^53 (layer-byte 0x01 stamped) — sending as
+          // a JS Number rounds to the nearest float64 and corrupts the value.
+          // Backend uses a tagged uint64 that accepts both string and number.
+          piece_id: pieceId.toString(),
+          blue,
+          red,
+          image_source: imageSource,
+        }),
+      });
+    } catch (e) {
+      throw await wrapCalcadaError(e);
+    }
+    const jsonResp = await response.json();
+    const bboxArr = parseFixedLengthArray(
+      new Array(6).fill(0) as [number, number, number, number, number, number],
+      jsonResp.bbox,
+      verifyInt,
+    );
+    return {
+      bbox: bboxArr,
+      maskBase64: typeof jsonResp.mask === "string" ? jsonResp.mask : "",
+      maskUrl: verifyString(jsonResp.mask_url),
+      expiresAt: jsonResp.expires_at
+        ? new Date(jsonResp.expires_at).getTime()
+        : Date.now() + 60 * 60 * 1000,
+      maskVoxels: Number(jsonResp.mask_voxels ?? 0),
+      sourceVoxels: Number(jsonResp.source_voxels ?? 0),
+      sinkVoxels: Number(jsonResp.sink_voxels ?? 0),
+    };
+  }
+
+  async applyPieceSplit(
+    pieceId: bigint,
+    maskUrl: string,
+  ): Promise<bigint[]> {
+    const { fetchOkImpl, baseUrl } = this.httpSource;
+    let response: Response;
+    try {
+      response = await fetchOkImpl(`${baseUrl}/piece/split?int64_as_str=1`, {
+        method: "POST",
+        body: JSON.stringify({
+          piece_id: pieceId.toString(),
+          new_segmentation: maskUrl,
+        }),
+      });
+    } catch (e) {
+      throw await wrapCalcadaError(e);
+    }
+    const jsonResp = await response.json();
+    const rootIds: string[] = jsonResp.new_root_ids ?? [];
+    return rootIds.map((x) => parseUint64(x));
+  }
+
   async filterLatestRoots(
     segments: bigint[],
     timestamp = 0,
@@ -2461,6 +2757,13 @@ class GrapheneGraphSource extends SegmentationGraphSource {
         title: "Find Path",
       }),
     );
+    toolbox.appendChild(
+      makeToolButton(context, layer.toolBinder, {
+        toolJson: CALCADA_PIECE_SPLIT_TOOL_ID,
+        label: "Piece Split",
+        title: "Split a piece using blue/red points",
+      }),
+    );
     parent.appendChild(toolbox);
     parent.appendChild(
       context.registerDisposer(
@@ -2656,6 +2959,7 @@ class SliceViewPanelChunkedGraphLayer extends SliceViewPanelRenderLayer {
 const CALCADA_MULTICUT_SEGMENTS_TOOL_ID = "calcadaMulticutSegments";
 const CALCADA_MERGE_SEGMENTS_TOOL_ID = "calcadaMergeSegments";
 const CALCADA_FIND_PATH_TOOL_ID = "calcadaFindPath";
+const CALCADA_PIECE_SPLIT_TOOL_ID = "calcadaPieceSplit";
 
 class MulticutAnnotationLayerView extends AnnotationLayerView {
   declare private _annotationStates: MergedAnnotationStates;
@@ -3509,6 +3813,596 @@ class FindPathTool extends LayerTool<SegmentationUserLayer> {
     return "find path";
   }
 }
+
+const PIECE_SPLIT_INPUT_EVENT_MAP = EventActionMap.fromObject({
+  "at:shift?+control+mousedown0": { action: "place-point" },
+  "at:shift?+keyg": { action: "swap-group" },
+  "at:shift?+enter": { action: "preview" },
+});
+
+// An image layer the user can pick as the weighting source for the cut.
+interface ImageLayerChoice {
+  name: string;
+  // The neuroglancer-style URL as it appears in the layer spec
+  // (e.g. "precomputed://gs://bucket/path" or "zarr://gs://..."). Kept
+  // for display.
+  rawUrl: string;
+  // The cloud URL with the neuroglancer datasource prefix stripped, ready to
+  // hand to the backend (e.g. "gs://bucket/path").
+  cloudUrl: string;
+}
+
+const IMAGE_URL_PREFIX = /^(?:[a-z0-9]+\+)?(?:precomputed|zarr|n5|nifti|render|deepzoom|brainmaps|boss|vtk|nggraph|python|obj):\/\//i;
+
+function cloudUrlFromLayerSpec(rawUrl: string): string {
+  if (!rawUrl) return "";
+  // Newer neuroglancer URL shape uses pipe-separated form:
+  //   "<kvstore-url>|<driver-name>:"
+  // e.g. "gs://bucket/path/|neuroglancer-precomputed:" — strip the pipe suffix
+  // so what remains is the raw kvstore URL the backend can hand to tensorstore.
+  let cleaned = rawUrl;
+  const pipeIdx = cleaned.indexOf("|");
+  if (pipeIdx > 0) {
+    cleaned = cleaned.slice(0, pipeIdx);
+  }
+  cleaned = cleaned.replace(IMAGE_URL_PREFIX, "");
+  cleaned = cleaned.replace(/^middleauth\+/i, "");
+  // Drop a trailing slash so e.g. "gs://bucket/path/" matches "gs://bucket/path"
+  // that the backend's graph_metadata.piece_source typically uses.
+  return cleaned.replace(/\/+$/, "");
+}
+
+// wrapCalcadaError turns an HttpError from a Calcada endpoint into a regular
+// Error whose message is the server's `error` field (or `message`, or the raw
+// body). Calcada's error envelope is `{"code":"X","error":"...","message":""}`,
+// which `parseGrapheneError` mis-handles because it only reads `.message`.
+async function wrapCalcadaError(e: unknown): Promise<Error> {
+  if (!(e instanceof HttpError)) {
+    return e instanceof Error ? e : new Error(String(e));
+  }
+  const resp = e.response;
+  if (!resp) return e;
+  try {
+    if ((resp.headers.get("content-type") || "").includes("application/json")) {
+      const j = await resp.json();
+      const msg = j?.error || j?.message || JSON.stringify(j);
+      return new Error(msg);
+    }
+    const text = await resp.text();
+    return new Error(text || `HTTP ${resp.status}`);
+  } catch {
+    return new Error(`HTTP ${resp.status}`);
+  }
+}
+
+function listImageLayers(layer: SegmentationUserLayer): ImageLayerChoice[] {
+  const out: ImageLayerChoice[] = [];
+  const layers = layer.manager?.rootLayers?.managedLayers ?? [];
+  for (const managed of layers) {
+    const userLayer = managed.layer;
+    if (!(userLayer instanceof ImageUserLayer)) continue;
+    const sources = userLayer.dataSources;
+    if (!sources || sources.length === 0) continue;
+    const rawUrl = sources[0].spec.url ?? "";
+    if (!rawUrl) continue;
+    out.push({
+      name: managed.name,
+      rawUrl,
+      cloudUrl: cloudUrlFromLayerSpec(rawUrl),
+    });
+  }
+  return out;
+}
+
+// Convert a layer-space point (the form returned by getPoint) into integer
+// voxel coordinates using the graph's resolution. Both arrays are expected
+// to be in the conventional (x, y, z) order. The conversion truncates toward
+// zero — matching the integer-division semantics the merge handler documents.
+function layerPointToVoxel(
+  layerPoint: Float32Array,
+  annotationToNanometers: Float64Array,
+  graphResolution: [number, number, number],
+): VoxelPoint {
+  return [
+    Math.floor((layerPoint[0] * annotationToNanometers[0]) / graphResolution[0]),
+    Math.floor((layerPoint[1] * annotationToNanometers[1]) / graphResolution[1]),
+    Math.floor((layerPoint[2] * annotationToNanometers[2]) / graphResolution[2]),
+  ];
+}
+
+class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
+  toJSON() {
+    return CALCADA_PIECE_SPLIT_TOOL_ID;
+  }
+
+  get description() {
+    return "piece split";
+  }
+
+  activate(activation: ToolActivation<this>) {
+    const { layer } = this;
+    const {
+      graphConnection: { value: graphConnection },
+    } = layer;
+    if (!graphConnection || !(graphConnection instanceof GraphConnection)) {
+      return;
+    }
+    const {
+      state: { pieceSplitState },
+    } = graphConnection;
+
+    const { body, header } =
+      makeToolActivationStatusMessageWithHeader(activation);
+    header.textContent = "Piece split";
+    body.classList.add("graphene-tool-status", "graphene-piece-split");
+
+    // Dim the segmentation overlay (same mechanism as MulticutSegmentsTool) so
+    // the bright point annotations stand out. The focus piece's root keeps
+    // its outline visible via TRANSPARENT_COLOR_PACKED; every other segment
+    // gets MULTICUT_OFF_COLOR. Save and restore the prior display state on
+    // tool deactivation so the segmentation returns to its normal rendering.
+    const { displayState } = layer;
+    const segmentationGroupState = displayState.segmentationGroupState.value;
+    const priorHideSegmentZero = displayState.hideSegmentZero.value;
+
+    const resetPieceSplitDisplay = () => {
+      resetTemporaryVisibleSegmentsState(segmentationGroupState);
+      displayState.useTempSegmentStatedColors2d.value = false;
+      displayState.tempSegmentStatedColors2d.value.clear();
+      displayState.tempSegmentDefaultColor2d.value = undefined;
+    };
+    const updatePieceSplitDisplay = () => {
+      resetPieceSplitDisplay();
+      // Render the segmentation overlay as transparent for the focus piece's
+      // root (so the image and our preview-mask shine through) and dim every
+      // other segment with MULTICUT_OFF_COLOR. We intentionally do NOT enable
+      // baseSegmentHighlighting — that follows the cursor's hovered piece,
+      // not the focus piece, and ends up tinting whatever segment the cursor
+      // happens to cross.
+      displayState.hideSegmentZero.value = false;
+      displayState.tempSegmentDefaultColor2d.value = MULTICUT_OFF_COLOR;
+      const focus = pieceSplitState.focusPieceId.value;
+      if (focus !== undefined) {
+        const focusRoot = segmentationGroupState.segmentEquivalences.get(focus);
+        displayState.tempSegmentStatedColors2d.value.set(
+          focusRoot,
+          TRANSPARENT_COLOR_PACKED,
+        );
+      }
+      displayState.useTempSegmentStatedColors2d.value = true;
+    };
+    activation.registerDisposer(() => {
+      resetPieceSplitDisplay();
+      displayState.hideSegmentZero.value = priorHideSegmentZero;
+    });
+    activation.registerDisposer(
+      pieceSplitState.changed.add(updatePieceSplitDisplay),
+    );
+    updatePieceSplitDisplay();
+
+    // --- Layout ---
+    const focusRow = document.createElement("div");
+    focusRow.className = "piece-split-focus";
+    body.appendChild(focusRow);
+
+    const imageRow = document.createElement("div");
+    imageRow.className = "piece-split-image-row";
+    const imageLabel = document.createElement("label");
+    imageLabel.textContent = "Image layer: ";
+    const imageSelect = document.createElement("select");
+    imageSelect.title = "Image layer used to weight the cut (edges across dark pixels are cheap to cut)";
+    const imageHint = document.createElement("div");
+    imageHint.className = "piece-split-image-hint";
+    imageRow.appendChild(imageLabel);
+    imageRow.appendChild(imageSelect);
+    body.appendChild(imageRow);
+    body.appendChild(imageHint);
+
+    const refreshImageOptions = () => {
+      const choices = listImageLayers(layer);
+      const current = pieceSplitState.imageSource.value;
+      removeChildren(imageSelect);
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = choices.length === 0
+        ? "— no image layers in viewer —"
+        : "— pick image layer —";
+      imageSelect.appendChild(placeholder);
+      let matched = "";
+      for (const c of choices) {
+        const opt = document.createElement("option");
+        opt.value = c.cloudUrl;
+        opt.textContent = `${c.name}  (${c.cloudUrl})`;
+        if (c.cloudUrl === current) {
+          opt.selected = true;
+          matched = c.cloudUrl;
+        }
+        imageSelect.appendChild(opt);
+      }
+      // If the stored imageSource was set previously but doesn't match any
+      // current layer (e.g. layer removed from viewer), show its value with a
+      // hint so the user knows what's being used.
+      imageHint.textContent = current && !matched
+        ? `Using saved URL: ${current}`
+        : "";
+    };
+    imageSelect.addEventListener("change", () => {
+      pieceSplitState.imageSource.value = imageSelect.value;
+      refreshImageOptions();
+    });
+    // Prevent the tool's input-event bindings from swallowing the native
+    // dropdown's mousedown — without this the picker may refuse to open.
+    for (const evt of ["mousedown", "click", "keydown"] as const) {
+      imageSelect.addEventListener(evt, (e) => e.stopPropagation());
+    }
+    refreshImageOptions();
+    // Refresh dropdown whenever layers are added/removed in the viewer.
+    const layerManager = layer.manager?.rootLayers;
+    if (layerManager) {
+      activation.registerDisposer(
+        layerManager.layersChanged.add(refreshImageOptions),
+      );
+    }
+
+    const groupRow = document.createElement("div");
+    groupRow.className = "piece-split-group-row";
+    body.appendChild(groupRow);
+
+    const pointsContainer = document.createElement("div");
+    pointsContainer.className = "piece-split-points";
+    body.appendChild(pointsContainer);
+
+    const previewSummary = document.createElement("div");
+    previewSummary.className = "piece-split-preview-summary";
+    body.appendChild(previewSummary);
+
+    const actions = document.createElement("div");
+    actions.className = "piece-split-actions";
+    body.appendChild(actions);
+
+    // ----- Preview overlay layer management -----
+    const PREVIEW_LAYER_NAME = `__piece_split_preview`;
+    const PREVIEW_SHADER = `
+void main() {
+  uint v = getDataValue().value;
+  if (v == 0u) {
+    emitTransparent();
+  } else if (v == 1u) {
+    // Bright blue for the source-side voxels.
+    emitRGB(vec3(0.1, 0.4, 1.0));
+  } else {
+    // Bright red for the sink-side voxels.
+    emitRGB(vec3(1.0, 0.1, 0.1));
+  }
+}
+`;
+    const findPreviewLayer = () => {
+      const layers = layer.manager?.rootLayers?.managedLayers ?? [];
+      for (const m of layers) {
+        if (m.name === PREVIEW_LAYER_NAME) return m;
+      }
+      return undefined;
+    };
+    const removePreviewLayer = () => {
+      const ml = findPreviewLayer();
+      if (ml) {
+        layer.manager?.rootLayers?.removeManagedLayer(ml);
+      }
+    };
+    const addPreviewLayer = (preview: PreviewResult) => {
+      removePreviewLayer();
+      const manager = layer.manager;
+      if (!manager) return;
+      // The mask zarr is written as (z, y, x) starting at voxel (0,0,0) in
+      // its own local space — but it should overlay the focus piece at the
+      // bbox origin in world voxel-space. Without an explicit transform NG
+      // renders the zarr at world (0,0,0) using abstract d0/d1/d2 axes,
+      // which is invisible to the user (it's "off-screen" relative to where
+      // they're zoomed in). Pin it into the image's world coord system
+      // (x@16nm, y@16nm, z@45nm) and translate by the bbox min.
+      const graphResolution =
+        graphConnection.graph.info.scales[0].resolution as unknown as [
+          number,
+          number,
+          number,
+        ];
+      const [minX, minY, minZ] = preview.bbox;
+      const spec = {
+        type: "image",
+        source: {
+          url: `${preview.maskUrl}/|zarr2:`,
+          transform: {
+            outputDimensions: {
+              x: [graphResolution[0] * 1e-9, "m"],
+              y: [graphResolution[1] * 1e-9, "m"],
+              z: [graphResolution[2] * 1e-9, "m"],
+            },
+            inputDimensions: {
+              d0: [graphResolution[2] * 1e-9, "m"],
+              d1: [graphResolution[1] * 1e-9, "m"],
+              d2: [graphResolution[0] * 1e-9, "m"],
+            },
+            matrix: [
+              [0, 0, 1, minX],
+              [0, 1, 0, minY],
+              [1, 0, 0, minZ],
+            ],
+          },
+        },
+        shader: PREVIEW_SHADER,
+        opacity: 0.85,
+      };
+      try {
+        const ml = makeLayer(manager, PREVIEW_LAYER_NAME, spec);
+        manager.add(ml);
+      } catch (e) {
+        StatusMessage.showTemporaryMessage(
+          `Failed to add preview overlay: ${e instanceof Error ? e.message : String(e)}`,
+          6000,
+        );
+      }
+    };
+    const syncPreviewLayer = () => {
+      const preview = pieceSplitState.preview.value;
+      if (preview) {
+        addPreviewLayer(preview);
+      } else {
+        removePreviewLayer();
+      }
+    };
+    activation.registerDisposer(pieceSplitState.preview.changed.add(syncPreviewLayer));
+    activation.registerDisposer(removePreviewLayer);
+    syncPreviewLayer();
+
+    const swapButton = makeIcon({
+      text: "Swap",
+      title: "Toggle blue/red (G)",
+      onClick: () => pieceSplitState.swapGroup(),
+    });
+    const clearButton = makeIcon({
+      text: "Clear",
+      title: "Remove all points and reset focus piece",
+      onClick: () => {
+        pieceSplitState.reset();
+      },
+    });
+    const previewButton = makeIcon({
+      text: "Preview",
+      title: "Compute split mask (shift+enter)",
+      onClick: () => void runPreview(),
+    });
+    const applyButton = makeIcon({
+      text: "Apply",
+      title: "Commit the previewed split",
+      onClick: () => void runApply(),
+    });
+    actions.appendChild(swapButton);
+    actions.appendChild(clearButton);
+    actions.appendChild(previewButton);
+    actions.appendChild(applyButton);
+
+    const setApplyEnabled = (enabled: boolean) => {
+      applyButton.classList.toggle("disabled", !enabled);
+    };
+
+    const render = () => {
+      // Focus piece label.
+      const focus = pieceSplitState.focusPieceId.value;
+      focusRow.textContent = focus !== undefined
+        ? `Focus piece: ${focus.toString()}`
+        : "Shift+Ctrl+click on a piece to set focus and place the first point.";
+
+      // Active-colour indicator.
+      removeChildren(groupRow);
+      const indicator = document.createElement("span");
+      indicator.className = pieceSplitState.blueGroup.value
+        ? "active-blue"
+        : "active-red";
+      indicator.textContent = pieceSplitState.blueGroup.value
+        ? "Active: BLUE (will place blue point on click)"
+        : "Active: RED (will place red point on click)";
+      groupRow.appendChild(indicator);
+
+      // Point lists.
+      removeChildren(pointsContainer);
+      const renderList = (
+        label: string,
+        cssClass: string,
+        points: PointEntry[],
+        group: "blue" | "red",
+      ) => {
+        const section = document.createElement("div");
+        section.className = cssClass;
+        const title = document.createElement("div");
+        title.textContent = `${label} (${points.length})`;
+        section.appendChild(title);
+        for (let i = 0; i < points.length; i++) {
+          const row = document.createElement("div");
+          row.className = "piece-split-point-row";
+          const text = document.createElement("span");
+          const [x, y, z] = points[i].voxel;
+          text.textContent = `  (${x}, ${y}, ${z})`;
+          row.appendChild(text);
+          const del = makeDeleteButton({
+            title: "Remove point",
+            onClick: () => pieceSplitState.removePoint(group, i),
+          });
+          row.appendChild(del);
+          section.appendChild(row);
+        }
+        pointsContainer.appendChild(section);
+      };
+      renderList("Blue points", "piece-split-blue", pieceSplitState.bluePoints.value, "blue");
+      renderList("Red points", "piece-split-red", pieceSplitState.redPoints.value, "red");
+
+      // Preview summary.
+      const preview = pieceSplitState.preview.value;
+      removeChildren(previewSummary);
+      if (preview !== undefined) {
+        const [minX, minY, minZ, maxX, maxY, maxZ] = preview.bbox;
+        const line1 = document.createElement("div");
+        line1.textContent = `Preview ready — bbox [${minX},${minY},${minZ}] → [${maxX},${maxY},${maxZ}]`;
+        previewSummary.appendChild(line1);
+        const line2 = document.createElement("div");
+        line2.textContent =
+          `Voxels: ${preview.maskVoxels} in piece` +
+          ` (source=${preview.sourceVoxels}, sink=${preview.sinkVoxels})`;
+        previewSummary.appendChild(line2);
+        const line3 = document.createElement("div");
+        line3.textContent = `Mask: ${preview.maskUrl}`;
+        line3.style.fontSize = "0.85em";
+        line3.style.opacity = "0.75";
+        previewSummary.appendChild(line3);
+        setApplyEnabled(true);
+      } else {
+        setApplyEnabled(false);
+      }
+    };
+    render();
+    activation.registerDisposer(pieceSplitState.changed.add(render));
+
+    // --- Actions ---
+    const runPreview = async () => {
+      const focus = pieceSplitState.focusPieceId.value;
+      if (focus === undefined) {
+        StatusMessage.showTemporaryMessage(
+          "Select exactly one piece to split first",
+          5000,
+        );
+        return;
+      }
+      if (pieceSplitState.bluePoints.value.length === 0) {
+        StatusMessage.showTemporaryMessage("Place at least one blue point", 5000);
+        return;
+      }
+      if (pieceSplitState.redPoints.value.length === 0) {
+        StatusMessage.showTemporaryMessage("Place at least one red point", 5000);
+        return;
+      }
+      if (!pieceSplitState.imageSource.value) {
+        StatusMessage.showTemporaryMessage(
+          "Set an image source URL in the side panel first",
+          5000,
+        );
+        return;
+      }
+      previewButton.classList.toggle("disabled", true);
+      try {
+        const result = await graphConnection.graph.graphServer.previewPieceSplit(
+          focus,
+          pieceSplitState.bluePoints.value.map((p) => p.voxel),
+          pieceSplitState.redPoints.value.map((p) => p.voxel),
+          pieceSplitState.imageSource.value,
+        );
+        pieceSplitState.preview.value = result;
+        StatusMessage.showTemporaryMessage("Preview computed", 2500);
+      } catch (e: unknown) {
+        StatusMessage.showTemporaryMessage(
+          `Preview failed: ${e instanceof Error ? e.message : String(e)}`,
+          8000,
+        );
+      } finally {
+        previewButton.classList.toggle("disabled", false);
+      }
+    };
+
+    const runApply = async () => {
+      const focus = pieceSplitState.focusPieceId.value;
+      const preview = pieceSplitState.preview.value;
+      if (focus === undefined || preview === undefined) {
+        StatusMessage.showTemporaryMessage(
+          "Run Preview before applying",
+          5000,
+        );
+        return;
+      }
+      applyButton.classList.toggle("disabled", true);
+      try {
+        const newRoots =
+          await graphConnection.graph.graphServer.applyPieceSplit(focus, preview.maskUrl);
+        StatusMessage.showTemporaryMessage(
+          `Piece split applied — ${newRoots.length} new root(s)`,
+          5000,
+        );
+        pieceSplitState.reset();
+        activation.cancel();
+      } catch (e: unknown) {
+        StatusMessage.showTemporaryMessage(
+          `Apply failed: ${e instanceof Error ? e.message : String(e)}`,
+          8000,
+        );
+        applyButton.classList.toggle("disabled", false);
+      }
+    };
+
+    // --- Click placement ---
+    activation.bindInputEventMap(PIECE_SPLIT_INPUT_EVENT_MAP);
+    activation.bindAction("place-point", (event) => {
+      event.stopPropagation();
+      const { mouseState } = this;
+      const point = getPoint(layer, mouseState);
+      if (point === undefined) return;
+      // baseValue is the piece (super-voxel) at the clicked voxel; value is its
+      // aggregated root. We split pieces, so always work with baseValue.
+      const baseValue =
+        layer.displayState.segmentSelectionState.baseValue;
+      if (baseValue === undefined || baseValue === null || baseValue === 0n) {
+        StatusMessage.showTemporaryMessage(
+          "No piece is selected at the click position",
+          3000,
+        );
+        return;
+      }
+      const currentFocus = pieceSplitState.focusPieceId.value;
+      if (currentFocus === undefined) {
+        // First click sets the focus piece.
+        pieceSplitState.focusPieceId.value = baseValue;
+      } else if (baseValue !== currentFocus) {
+        StatusMessage.showTemporaryMessage(
+          `Point must be inside piece ${currentFocus.toString()} (clicked: ${baseValue.toString()}). Press Clear to reset focus.`,
+          6000,
+        );
+        return;
+      }
+      const loadedSubsource = getGraphLoadedSubsource(layer)!;
+      const annotationToNanometers =
+        loadedSubsource.loadedDataSource.transform.inputSpace.value.scales.map(
+          (x: number) => x / 1e-9,
+        );
+      const graphResolution =
+        graphConnection.graph.info.scales[0].resolution as unknown as [
+          number,
+          number,
+          number,
+        ];
+      const voxel = layerPointToVoxel(
+        point,
+        new Float64Array(annotationToNanometers),
+        graphResolution,
+      );
+      pieceSplitState.addPoint({
+        voxel,
+        layer: [point[0], point[1], point[2]],
+      });
+    });
+    activation.bindAction("swap-group", (event) => {
+      event.stopPropagation();
+      pieceSplitState.swapGroup();
+    });
+    activation.bindAction("preview", (event) => {
+      event.stopPropagation();
+      void runPreview();
+    });
+  }
+}
+
+registerTool(
+  SegmentationUserLayer,
+  CALCADA_PIECE_SPLIT_TOOL_ID,
+  (layer) => {
+    return new PieceSplitTool(layer, true);
+  },
+);
 
 registerTool(
   SegmentationUserLayer,
