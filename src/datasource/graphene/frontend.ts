@@ -318,6 +318,7 @@ interface GrapheneMultiscaleVolumeInfo extends MultiscaleVolumeInfo {
   ocdbtScales: Set<string>;
   app: AppInfo;
   graph: GraphInfo;
+  dynamicMeshDir: string;
 }
 
 function parseGrapheneMultiscaleVolumeInfo(
@@ -328,6 +329,12 @@ function parseGrapheneMultiscaleVolumeInfo(
   const dataUrl = verifyObjectProperty(obj, "data_dir", verifyString);
   const app = verifyObjectProperty(obj, "app", (x) => new AppInfo(url, x));
   const graph = verifyObjectProperty(obj, "graph", (x) => new GraphInfo(x));
+  const dynamicMeshDir = verifyOptionalObjectProperty(
+    obj,
+    "dynamic_mesh_dir",
+    verifyString,
+    "dynamic",
+  );
   let ocdbtDataUrl: string | undefined;
   if (graph.ocdbtKvstoreSpec) {
     const spec = graph.ocdbtKvstoreSpec;
@@ -346,6 +353,7 @@ function parseGrapheneMultiscaleVolumeInfo(
     dataUrl,
     ocdbtDataUrl,
     ocdbtScales: new Set<string>(),
+    dynamicMeshDir,
   };
 }
 
@@ -686,6 +694,7 @@ async function getMeshSource(
   url: string,
   fragmentUrl: string,
   nBitsForLayerId: number,
+  dynamicMeshDir: string,
   options: ProgressOptions,
 ) {
   const { metadata, segmentPropertyMap } = await getMeshMetadata(
@@ -699,6 +708,7 @@ async function getMeshSource(
     lod: 0,
     sharding: metadata?.sharding,
     nBitsForLayerId,
+    dynamicMeshDir,
   };
   const transform = metadata?.transform || mat4.create();
   return {
@@ -834,6 +844,7 @@ async function getVolumeDataSource(
         ),
       ),
       info.graph.nBitsForLayerId,
+      info.dynamicMeshDir,
       options,
     );
     const subsourceToModelSubspaceTransform =

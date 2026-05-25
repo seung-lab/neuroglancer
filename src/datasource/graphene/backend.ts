@@ -83,6 +83,7 @@ import { registerSharedObject, registerRPC } from "#src/worker_rpc.js";
 function downloadFragmentWithSharding(
   fragmentKvStore: KvStoreWithPath,
   fragmentId: string,
+  dynamicMeshDir: string,
   signal: AbortSignal,
 ): Promise<ReadResponse> {
   if (fragmentId && fragmentId.charAt(0) === "~") {
@@ -96,7 +97,7 @@ function downloadFragmentWithSharding(
   }
   return readKvStore(
     fragmentKvStore.store,
-    `${fragmentKvStore.path}dynamic/${fragmentId}`,
+    `${fragmentKvStore.path}${dynamicMeshDir}/${fragmentId}`,
     { signal, throwIfMissing: true },
   );
 }
@@ -108,7 +109,12 @@ function downloadFragment(
   signal: AbortSignal,
 ): Promise<ReadResponse> {
   if (parameters.sharding) {
-    return downloadFragmentWithSharding(fragmentKvStore, fragmentId, signal);
+    return downloadFragmentWithSharding(
+      fragmentKvStore,
+      fragmentId,
+      parameters.dynamicMeshDir,
+      signal,
+    );
   } else {
     // TODO, is this change safe?
     return readKvStore(
