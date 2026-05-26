@@ -139,8 +139,10 @@ import {
   serializeAllTransformedSources,
   SliceViewChunkSource,
 } from "#src/sliceview/frontend.js";
-import type { SliceViewRenderLayer } from "#src/sliceview/renderlayer.js";
-import { SliceViewPanelRenderLayer } from "#src/sliceview/renderlayer.js";
+import {
+  SliceViewPanelRenderLayer,
+  SliceViewRenderLayer,
+} from "#src/sliceview/renderlayer.js";
 import { StatusMessage } from "#src/status.js";
 import {
   TrackableBoolean,
@@ -340,6 +342,19 @@ class GrapheneMultiscaleVolumeChunkSource extends PrecomputedMultiscaleVolumeChu
   // URL for the /precomputed_rp/ endpoint (piece_ids + LUT trailer)
   private rpUrl: string;
 
+  // Snapshot of the current time-travel and branch state read by getSources()
+  // at chunk-source construction time. Mutated externally by
+  // GraphConnection.refreshChunkSources() when the user toggles the layer's
+  // `Time` or `Branch` controls. The mutator must also trigger slice-view
+  // re-evaluation so a fresh chunk-source instance is created with the new
+  // values (and therefore a new URL with `?timestamp=…&branch_id=…`).
+  timestampMs = 0;
+  branchId = 0;
+  // Bumped by refreshChunkSources() so that toggling between live and any
+  // historical state always produces a distinct chunk-source memoize key —
+  // see base.ts comment on `generation` for the LUT-rebuild rationale.
+  generation = 0;
+
   constructor(
     sharedKvStoreContext: SharedKvStoreContext,
     public info: GrapheneMultiscaleVolumeInfo,
@@ -404,6 +419,9 @@ class GrapheneMultiscaleVolumeChunkSource extends PrecomputedMultiscaleVolumeChu
                   ),
                   encoding: scaleInfo.encoding as number,
                   sharding: scaleInfo.sharding,
+                  timestampMs: this.timestampMs,
+                  branchId: this.branchId,
+                  generation: this.generation,
                 },
               },
             ),
@@ -1589,6 +1607,16 @@ class GraphConnection extends SegmentationGraphSourceConnection {
             segmentsState.visibleSegments.add(focusSegment);
           }
         }
+        this.refreshChunkSources();
+      }),
+    );
+
+    // Calcada graph branch — UI-only state on the graph source. Changing it
+    // must force chunk-source re-creation so the LUT trailer is resolved
+    // against the new branch.
+    this.registerDisposer(
+      this.graph.branchId.changed.add(() => {
+        this.refreshChunkSources();
       }),
     );
 
@@ -1858,6 +1886,37 @@ void main() {
   }
 
   private graphRenderLayer: SliceViewPanelChunkedGraphLayer | undefined;
+
+  // refreshChunkSources mirrors the layer's current (timestamp, branchId)
+  // snapshot onto the volume and re-triggers slice-view source resolution.
+  // Re-resolution is achieved by dispatching `transform.changed` on each
+  // slice-view render layer — that signal is what `updateVisibleLayersNow`
+  // observes to decide whether to re-call `layer.getSources()`. Because the
+  // new (timestamp, branchId) is now in the volume, getSources() returns a
+  // chunk source with a new parameters hash, which the chunk manager memoizes
+  // as a fresh instance. The old chunks remain cached and are reused if the
+  // user toggles back to live.
+  private refreshChunkSources() {
+    const segmentsState =
+      this.layer.displayState.segmentationGroupState.value;
+    this.chunkSource.timestampMs = segmentsState.timestamp.value ?? 0;
+    this.chunkSource.branchId = this.graph.branchId.value;
+    this.chunkSource.generation += 1;
+    // Equivalences accumulated from previous LUT trailers must be wiped so
+    // the new (timestamp, branchId) LUT is the only source of piece→root
+    // mappings. Without this, a piece linked to merged_root in live state
+    // stays linked after switching to a pre-merge timestamp — the union is
+    // permanent until cleared.
+    segmentsState.segmentEquivalences.clear();
+    for (const renderLayer of this.layer.renderLayers) {
+      if (renderLayer instanceof SliceViewRenderLayer) {
+        // transform.changed is exposed as a read-only signal on the layer
+        // interface, but the underlying value is a NullarySignal we own.
+        // Cast through `unknown` so we can call its dispatch() at runtime.
+        (renderLayer.transform.changed as unknown as NullarySignal).dispatch();
+      }
+    }
+  }
 
   createRenderLayers(
     chunkManager: ChunkManager,
@@ -2367,6 +2426,26 @@ const selectionInNanometers = (
   };
 };
 
+// appendCoordParams appends `timestamp=<sec>` and `branch_id=<n>` query
+// parameters to a URL when set. timestamp is converted from Unix-ms (the
+// frontend representation) to Unix-seconds (the backend expects seconds with
+// fractional). branch_id is omitted when 0 (default = main branch).
+function appendCoordParams(
+  url: string,
+  coord: { timestamp?: number; branchId?: number },
+): string {
+  const parts: string[] = [];
+  if (coord.timestamp !== undefined && coord.timestamp > 0) {
+    parts.push(`timestamp=${coord.timestamp / 1000}`);
+  }
+  if (coord.branchId !== undefined && coord.branchId !== 0) {
+    parts.push(`branch_id=${coord.branchId}`);
+  }
+  if (parts.length === 0) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}${parts.join("&")}`;
+}
+
 class GrapheneGraphServerInterface {
   constructor(private httpSource: HttpSource) {}
 
@@ -2468,11 +2547,14 @@ class GrapheneGraphServerInterface {
     blue: VoxelPoint[],
     red: VoxelPoint[],
     imageSource: string,
+    branchId = 0,
   ): Promise<PreviewResult> {
     const { fetchOkImpl, baseUrl } = this.httpSource;
     let response: Response;
     try {
-      response = await fetchOkImpl(`${baseUrl}/piece/split_preview`, {
+      response = await fetchOkImpl(
+        appendCoordParams(`${baseUrl}/piece/split_preview`, { branchId }),
+        {
         method: "POST",
         body: JSON.stringify({
           // piece_id is a bigint > 2^53 (layer-byte 0x01 stamped) — sending as
@@ -2509,11 +2591,14 @@ class GrapheneGraphServerInterface {
   async applyPieceSplit(
     pieceId: bigint,
     maskUrl: string,
+    branchId = 0,
   ): Promise<bigint[]> {
     const { fetchOkImpl, baseUrl } = this.httpSource;
     let response: Response;
     try {
-      response = await fetchOkImpl(`${baseUrl}/piece/split?int64_as_str=1`, {
+      response = await fetchOkImpl(
+        appendCoordParams(`${baseUrl}/piece/split?int64_as_str=1`, { branchId }),
+        {
         method: "POST",
         body: JSON.stringify({
           piece_id: pieceId.toString(),
@@ -2612,6 +2697,13 @@ class GrapheneGraphSource extends SegmentationGraphSource {
   private l2CacheAvailable: boolean | undefined = undefined;
   private httpSource: HttpSource;
   public timestampLimit = new TrackableValue<number>(0, (x) => x);
+  // Calcada branch id surfaced as a layer-level control; default 0 = main.
+  // Lives here (and not on segmentationGroupState like `timestamp`) because
+  // branches are a Calcada-specific concept; the neuroglancer core has no
+  // notion of them.
+  public branchId = new TrackableValue<number>(0, (x) =>
+    typeof x === "number" && Number.isInteger(x) && x >= 0 ? x : 0,
+  );
 
   constructor(
     public info: GrapheneMultiscaleVolumeInfo,
@@ -2735,6 +2827,9 @@ class GrapheneGraphSource extends SegmentationGraphSource {
     toolbox.className = "neuroglancer-segmentation-toolbox";
     parent.appendChild(
       addLayerControlToOptionsTab(tab, layer, tab.visibility, timeControl),
+    );
+    parent.appendChild(
+      addLayerControlToOptionsTab(tab, layer, tab.visibility, branchControl),
     );
     toolbox.appendChild(
       makeToolButton(context, layer.toolBinder, {
@@ -3086,6 +3181,66 @@ const timeControl = {
 };
 
 registerLayerControl(SegmentationUserLayer, timeControl);
+
+// Calcada-specific branch picker. Renders as a small numeric input next to
+// the time control in the layer's options tab. Bound to
+// `GrapheneGraphSource.branchId` so two layers in the same group share state.
+const CALCADA_BRANCH_JSON_KEY = "calcadaBranch";
+
+function branchLayerControl(): LayerControlFactory<SegmentationUserLayer> {
+  return {
+    makeControl: (layer, context) => {
+      const segmentationGroupState =
+        layer.displayState.segmentationGroupState.value;
+      const {
+        graph: { value: graph },
+      } = segmentationGroupState;
+      const branchId =
+        graph instanceof GrapheneGraphSource
+          ? graph.branchId
+          : new TrackableValue<number>(0, (x) => x);
+
+      const controlElement = document.createElement("div");
+      controlElement.classList.add("neuroglancer-calcada-branch-control");
+
+      const input = document.createElement("input");
+      input.type = "number";
+      input.min = "0";
+      input.step = "1";
+      input.value = String(branchId.value);
+      input.style.width = "6em";
+      input.title =
+        "Calcada branch id (0 = main). Switching clears segments not present on the new branch.";
+      input.addEventListener("change", () => {
+        const parsed = Number.parseInt(input.value, 10);
+        if (!Number.isFinite(parsed) || parsed < 0) {
+          input.value = String(branchId.value);
+          return;
+        }
+        if (parsed === branchId.value) return;
+        branchId.value = parsed;
+      });
+      const sync = () => {
+        if (String(branchId.value) !== input.value) {
+          input.value = String(branchId.value);
+        }
+      };
+      context.registerDisposer(branchId.changed.add(sync));
+      controlElement.appendChild(input);
+      return { controlElement, control: input };
+    },
+    activateTool: (_activation) => {},
+  };
+}
+
+const branchControl = {
+  label: "Branch",
+  title: "Calcada branch (0 = main)",
+  toolJson: CALCADA_BRANCH_JSON_KEY,
+  ...branchLayerControl(),
+};
+
+registerLayerControl(SegmentationUserLayer, branchControl);
 
 function timeLayerControl(): LayerControlFactory<SegmentationUserLayer> {
   return {
@@ -3698,6 +3853,9 @@ class FindPathTool extends LayerTool<SegmentationUserLayer> {
     // Ensure we use the same segmentationGroupState while activated.
     const segmentationGroupState =
       this.layer.displayState.segmentationGroupState.value;
+    if (checkSegmentationOld(segmentationGroupState.timestamp, activation)) {
+      return;
+    }
     const { body, header } =
       makeToolActivationStatusMessageWithHeader(activation);
     header.textContent = "Find Path";
@@ -3927,6 +4085,11 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
     if (!graphConnection || !(graphConnection instanceof GraphConnection)) {
       return;
     }
+    const segmentationGroupState =
+      layer.displayState.segmentationGroupState.value;
+    if (checkSegmentationOld(segmentationGroupState.timestamp, activation)) {
+      return;
+    }
     const {
       state: { pieceSplitState },
     } = graphConnection;
@@ -3942,7 +4105,6 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
     // gets MULTICUT_OFF_COLOR. Save and restore the prior display state on
     // tool deactivation so the segmentation returns to its normal rendering.
     const { displayState } = layer;
-    const segmentationGroupState = displayState.segmentationGroupState.value;
     const priorHideSegmentZero = displayState.hideSegmentZero.value;
 
     const resetPieceSplitDisplay = () => {
@@ -4293,6 +4455,7 @@ void main() {
           pieceSplitState.bluePoints.value.map((p) => p.voxel),
           pieceSplitState.redPoints.value.map((p) => p.voxel),
           pieceSplitState.imageSource.value,
+          graphConnection.graph.branchId.value,
         );
         pieceSplitState.preview.value = result;
         StatusMessage.showTemporaryMessage("Preview computed", 2500);
@@ -4316,10 +4479,26 @@ void main() {
         );
         return;
       }
+      // Defence in depth: if the user toggled time-travel between Preview
+      // and Apply, refuse to issue the write — the backend would also reject
+      // it, but failing fast here keeps the local UI consistent.
+      if (
+        layer.displayState.segmentationGroupState.value.timestamp.value !==
+        undefined
+      ) {
+        StatusMessage.showTemporaryMessage(
+          "Apply disabled: segmentation is time-travelling (read-only).",
+          5000,
+        );
+        return;
+      }
       applyButton.classList.toggle("disabled", true);
       try {
-        const newRoots =
-          await graphConnection.graph.graphServer.applyPieceSplit(focus, preview.maskUrl);
+        const newRoots = await graphConnection.graph.graphServer.applyPieceSplit(
+          focus,
+          preview.maskUrl,
+          graphConnection.graph.branchId.value,
+        );
         StatusMessage.showTemporaryMessage(
           `Piece split applied — ${newRoots.length} new root(s)`,
           5000,
