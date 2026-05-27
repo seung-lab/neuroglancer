@@ -125,14 +125,23 @@ export class EditSessionHotkeyBinder extends RefCounted {
     );
     this.registerDisposer(detachParent);
 
-    // Camera-pan-during-paint mapping. While a paint-like tool is active,
-    // `PointerEventBridge` consumes plain `pointerdown` so neuroglancer's
-    // `at:mousedown0 → translate-via-mouse-drag` binding never fires. The
-    // user pans with Ctrl/Cmd+click instead; map those into the same
-    // action so the slice and perspective views translate normally. The
-    // bridge in turn lets Ctrl/Cmd-held pointer events fall through so
-    // these bindings can fire.
+    // Camera-pan-during-paint mapping. While a paint-like tool is active:
+    //
+    // - Plain left-click+drag must NOT pan. We override `at:mousedown0`
+    //   with a no-op action whose listener doesn't exist, which shadows
+    //   neuroglancer's default `translate-via-mouse-drag` binding from the
+    //   slice/perspective panels. The synthesized `mousedown` itself still
+    //   fires (Chrome only suppresses subsequent `mousemove` events when
+    //   `preventDefault` is called on the upstream `pointerdown` —
+    //   suppressing the action via the binding map avoids that pitfall).
+    //
+    // - Ctrl/Cmd+left-click+drag pans normally. We map those into the
+    //   existing `translate-via-mouse-drag` action.
     const navMap = EventActionMap.fromObject({
+      "at:mousedown0": {
+        action: "edit-session-noop-mousedown",
+        stopPropagation: true,
+      },
       "at:control+mousedown0": {
         action: "translate-via-mouse-drag",
         stopPropagation: true,
