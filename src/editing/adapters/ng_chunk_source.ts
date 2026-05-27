@@ -41,6 +41,7 @@ import type {
   VolumeChunkSpecification,
   VolumeSourceOptions,
 } from "#src/sliceview/volume/base.js";
+import { DataType } from "#src/util/data_type.js";
 
 /**
  * Adapter that exposes neuroglancer's per-layer volumetric chunk storage
@@ -150,7 +151,8 @@ export class NgChunkSource implements LibraryChunkSource {
           const raw = (chunk as unknown as { data?: ChunkVoxelBuffer | null })
             .data;
           if (raw == null) {
-            throw new Error("chunk-has-no-data");
+            // Treat empty chunks as all-zero baselines (see comment below).
+            return makeZeroFilledChunkBuffer(source);
           }
           // Snapshot the bytes: fetchChunk only guarantees presence inside the
           // transform callback. We need a stable view to hand to the library.
@@ -158,11 +160,17 @@ export class NgChunkSource implements LibraryChunkSource {
         },
         { signal: fetchSignal },
       );
-    } catch (cause) {
+    } catch (_cause) {
       if (signal?.aborted) {
         throw new ChunkReadAbortedError(coord);
       }
-      throw new ChunkReadFailedError(coord, cause);
+      // Sparse data sources (most precomputed segmentations) only store
+      // chunks that actually contain non-zero voxels; the rest 404. From the
+      // editing layer's perspective an absent chunk means "no segments here"
+      // which the user expects to be able to paint into. Treat any
+      // (non-abort) fetch failure as an all-zero baseline so the brush can
+      // proceed.
+      return wrapAsReadonlyBuffer(makeZeroFilledChunkBuffer(source));
     }
     return wrapAsReadonlyBuffer(data);
   }
@@ -332,6 +340,46 @@ function computeVoxelSizeNm(
 function cloneTypedArray(buf: ChunkVoxelBuffer): ChunkVoxelBuffer {
   // Each ChunkVoxelBuffer variant supports .slice() returning the same kind.
   return (buf as { slice(): ChunkVoxelBuffer }).slice();
+}
+
+/**
+ * Allocate an all-zero voxel buffer matching the source's chunk shape and
+ * data type. Used when the underlying data source is sparse: a missing
+ * chunk semantically means "no segments here" / "value 0 everywhere", and
+ * the editing layer should let the brush paint into it.
+ */
+function makeZeroFilledChunkBuffer(
+  source: VolumeChunkSource,
+): ChunkVoxelBuffer {
+  const { chunkDataSize, dataType } = source.spec;
+  // `chunkDataSize` is 4D `[x, y, z, channels]` for volumes — the channel
+  // count is folded into the last component.
+  let voxelCount = 1;
+  for (let i = 0; i < chunkDataSize.length; ++i) {
+    voxelCount *= chunkDataSize[i];
+  }
+  switch (dataType) {
+    case DataType.UINT8:
+      return new Uint8Array(voxelCount);
+    case DataType.INT8:
+      return new Int8Array(voxelCount);
+    case DataType.UINT16:
+      return new Uint16Array(voxelCount);
+    case DataType.INT16:
+      return new Int16Array(voxelCount);
+    case DataType.UINT32:
+      return new Uint32Array(voxelCount);
+    case DataType.INT32:
+      return new Int32Array(voxelCount);
+    case DataType.UINT64:
+      return new BigUint64Array(voxelCount);
+    case DataType.FLOAT32:
+      return new Float32Array(voxelCount);
+    default:
+      // Fallback: untyped bytes. Library readers tolerate the union; we
+      // size for a single byte per voxel which is the safest minimum.
+      return new Uint8Array(voxelCount);
+  }
 }
 
 function wrapAsReadonlyBuffer(
