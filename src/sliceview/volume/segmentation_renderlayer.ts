@@ -81,17 +81,23 @@ export interface SliceViewSegmentationDisplayState
   ignoreNullVisibleSet: WatchableValueInterface<boolean>;
   /**
    * Voxel-edit hook: when defined and the inner value is non-`undefined`,
-   * voxels outside the bbox render at a reduced alpha (see
+   * fragments outside the bbox are HARD-CLIPPED via `discard` (see
    * `src/editing/shaders/bbox_alpha_chunk.ts`). When this field is omitted
    * (the common case for layers not participating in an edit session) the
    * render path is byte-identical to the pre-hook implementation.
    *
+   * The bbox is expressed in the layer's GLOBAL frame (nm) so the
+   * comparison is resolution-independent — the shader converts the
+   * fragment's chunk-grid voxel position to global coords via
+   * `uChunkToGlobal`. Without this, the session's chosen resolution would
+   * have to match the actually-rendered scale, which it often doesn't (e.g.
+   * the session picks 16 nm but the viewer renders the 32 nm chunks).
+   *
    * Wired by the segmentation user layer from
-   * `viewer.editSessionHost.activeRegionByLayer.get(this.name)` in
-   * Phase 4 step 24. Until that wiring lands, leave this field unset.
+   * `viewer.editSessionHost.getActiveRegionWatchableForLayer(this.name)`.
    */
   editBboxLoHi?: WatchableValueInterface<
-    { loVoxel: vec3; hiVoxel: vec3 } | undefined
+    { lo: vec3; hi: vec3 } | undefined
   >;
 }
 
@@ -527,7 +533,7 @@ uint64_t getMappedObjectId(uint64_t value) {
     if (highlightColor !== undefined) {
       gl.uniform4fv(shader.uniform("uHighlightColor"), highlightColor);
     }
-    // Bbox-dim uniforms are bound only when the bbox-dim shader path was
+    // Bbox-clip uniforms are bound only when the bbox-clip shader path was
     // compiled (`editBboxActive === true`). Otherwise the uniforms don't
     // exist on the shader at all.
     //
@@ -536,12 +542,10 @@ uint64_t getMappedObjectId(uint64_t value) {
     // offscreen buffer); the panel-level picking pass goes through
     // `SliceViewPanelRenderLayer` subclasses (annotation/cursor overlays),
     // which do NOT invoke this volume layer. There is therefore no
-    // separate picking-pass shader for this layer to dim.
+    // separate picking-pass shader for this layer to clip.
     if (parameters.editBboxActive) {
-      const bbox = displayState.editBboxLoHi?.value;
       this.bboxAlphaHook.bind(gl, shader, {
-        bbox,
-        outsideAlphaMultiplier: 0.25,
+        bboxNm: displayState.editBboxLoHi?.value,
       });
     }
   }

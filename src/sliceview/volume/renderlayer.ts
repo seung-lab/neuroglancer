@@ -101,6 +101,15 @@ function defineVolumeShader(builder: ShaderBuilder, wireFrame: boolean) {
   // Matrix by which computed vertices will be transformed.
   builder.addUniform("highp mat4", "uProjectionMatrix");
 
+  // Per-source transform: maps chunk-grid voxel coordinates to the layer's
+  // global model frame (typically nm). Bound in `beginSource` for every
+  // visible source. Used by the edit-session bbox-clip shader hook (see
+  // `src/editing/shaders/bbox_alpha_chunk.ts`) so the comparison runs in a
+  // resolution-independent frame — without this, bbox uniforms computed at
+  // the session's chosen resolution mismatch fragments rendered at a
+  // different scale and the inside-test fails everywhere.
+  builder.addUniform("highp mat4", "uChunkToGlobal");
+
   // Chunk size in voxels.
   builder.addUniform("highp vec3", "uChunkDataSize");
 
@@ -227,6 +236,15 @@ function beginSource(
     shader.uniform("uProjectionMatrix"),
     false,
     mat4.multiply(tempMat4, dataToDeviceMatrix, chunkLayout.transform),
+  );
+
+  // Expose the chunk-grid → global transform separately for shaders that
+  // need to express positions in the layer's global model frame (e.g., the
+  // edit-session bbox-clip hook).
+  gl.uniformMatrix4fv(
+    shader.uniform("uChunkToGlobal"),
+    false,
+    chunkLayout.transform,
   );
 
   gl.uniform3fv(

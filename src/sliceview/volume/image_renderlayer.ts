@@ -66,20 +66,13 @@ export interface ImageRenderLayerOptions extends RenderLayerBaseOptions {
   shaderControlState: ShaderControlState;
   /**
    * Voxel-edit hook: when defined and the inner value is non-`undefined`,
-   * voxels outside the bbox render at a reduced alpha (see
-   * `src/editing/shaders/bbox_alpha_chunk.ts`). When this field is omitted
-   * (the common case for layers not participating in an edit session) the
-   * render path is byte-identical to the pre-hook implementation.
-   *
-   * Mirrors `SliceViewSegmentationDisplayState.editBboxLoHi` from
-   * `src/sliceview/volume/segmentation_renderlayer.ts` (step 15).
-   *
-   * Wired by the image user layer from
-   * `viewer.editSessionHost.activeRegionByLayer.get(this.name)` in
-   * Phase 4 step 24. Until that wiring lands, leave this field unset.
+   * fragments outside the bbox are HARD-CLIPPED via `discard` (see
+   * `src/editing/shaders/bbox_alpha_chunk.ts`). The bbox is expressed in
+   * the layer's GLOBAL frame (nm) so the comparison is resolution-
+   * independent. Mirrors `SliceViewSegmentationDisplayState.editBboxLoHi`.
    */
   editBboxLoHi?: WatchableValueInterface<
-    { loVoxel: vec3; hiVoxel: vec3 } | undefined
+    { lo: vec3; hi: vec3 } | undefined
   >;
 }
 
@@ -154,10 +147,11 @@ export class ImageRenderLayer extends SliceViewVolumeRenderLayer<ImageShaderPara
   shaderControlState: ShaderControlState;
   /**
    * Optional bbox watchable supplied by the image user layer during an edit
-   * session. Stored so `initializeShader` can read the current bbox lo/hi.
+   * session. Stored so `initializeShader` can read the current bbox lo/hi
+   * (in the layer's global nm frame).
    */
   private editBboxLoHi?: WatchableValueInterface<
-    { loVoxel: vec3; hiVoxel: vec3 } | undefined
+    { lo: vec3; hi: vec3 } | undefined
   >;
   /**
    * Voxel-edit bbox-dim shader hook. Stateless across compiles; gated by
@@ -277,10 +271,8 @@ export class ImageRenderLayer extends SliceViewVolumeRenderLayer<ImageShaderPara
     // volume layer. There is therefore no separate picking-pass shader
     // for this layer to dim.
     if (parameters.editBboxActive) {
-      const bbox = this.editBboxLoHi?.value;
       this.bboxAlphaHook.bind(gl, shader, {
-        bbox,
-        outsideAlphaMultiplier: 0.25,
+        bboxNm: this.editBboxLoHi?.value,
       });
     }
   }

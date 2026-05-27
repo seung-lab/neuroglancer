@@ -9,22 +9,28 @@
  */
 
 /**
- * @file Shared bbox-alpha shader hook.
+ * @file Shared bbox-clip shader hook.
  *
  * When an edit session is active, voxels outside the session bbox are
- * de-emphasized at fragment-shader time by multiplying the emitted alpha by
- * a small factor (default 0.25). Inside the bbox the alpha is unchanged.
+ * HARD-CLIPPED (the shader `discard`s the fragment). Used by
+ * `SegmentationRenderLayer`, `ImageRenderLayer`, and
+ * `PatchedSegmentationRenderLayer` so the user only sees data inside the
+ * current bbox while a session is open.
  *
- * This module is imported by `SegmentationRenderLayer` (step 15),
- * `ImageRenderLayer` (step 16), and `PatchedSegmentationRenderLayer`
- * (step 17). The hook is *parameter-gated* — the integrating render layer
- * is expected to gate `defineUniforms` + `fragmentSnippet` behind an
- * `editBboxActive: boolean` shader parameter so that, when no session is
- * active, the shader source is byte-identical to its pre-hook form.
+ * The bbox is expressed in the viewer's DISPLAY coordinate space — the
+ * same frame as `viewer.position.value` and what the annotation render
+ * layer uses to draw bbox annotations. The fragment's chunk-grid voxel
+ * position is converted to display coords via the `uChunkToGlobal`
+ * uniform that `defineVolumeShader` declares and `beginSource` binds per
+ * source to `chunkLayout.transform`. Using display coords (not nm and
+ * not the session's chosen layer-scale chunk-grid voxels) keeps the
+ * comparison resolution-independent — the shader works regardless of
+ * which scale the viewer actually picked to render.
  *
- * The chunk-space coordinate of the fragment is assumed to be exposed as
- * the `vChunkPosition` varying (a `highp vec3` defined in
- * `src/sliceview/volume/renderlayer.ts`'s `defineVolumeShader`).
+ * The hook is *parameter-gated*: the integrating render layer gates
+ * `defineUniforms` + `fragmentSnippet` behind an `editBboxActive: boolean`
+ * shader parameter so that when no session is active the shader source is
+ * byte-identical to its pre-hook form (no cost, no behavior change).
  *
  * See `docs/edit-session-integration/architecture/06-bbox-rendering.md`.
  */
@@ -33,35 +39,33 @@ import type { vec3 } from "#src/util/geom.js";
 import type { GL } from "#src/webgl/context.js";
 import type { ShaderBuilder, ShaderProgram } from "#src/webgl/shader.js";
 
-const DEFAULT_OUTSIDE_ALPHA_MULTIPLIER = 0.25;
-
 export interface BboxAlphaParams {
   /**
-   * Voxel coordinates of the session bbox lower/upper corner in the layer's
-   * chunk space. `undefined` means "no session active" — no dimming.
+   * Lower/upper corner of the session bbox in the viewer's DISPLAY
+   * coordinate space (same frame as `chunkLayout.transform`'s output and
+   * `viewer.position.value`). `undefined` means "no session active" —
+   * uniforms are bound to safe defaults and the shader's `editBboxActive`
+   * gate keeps the discard path inactive.
    */
-  bbox: { loVoxel: vec3; hiVoxel: vec3 } | undefined;
-  /**
-   * Alpha multiplier for fragments outside the bbox. Defaults to 0.25.
-   * Ignored when `bbox === undefined`.
-   */
-  outsideAlphaMultiplier?: number;
+  bboxNm: { lo: vec3; hi: vec3 } | undefined;
 }
 
 export interface BboxAlphaShaderHook {
   /**
    * Declares the uniforms the hook needs on the given `ShaderBuilder`.
    * Must only be called when the integrating render layer's shader is being
-   * built in `editBboxActive === true` mode.
+   * built in `editBboxActive === true` mode. (The `uChunkToGlobal` uniform
+   * itself is declared by `defineVolumeShader` and is always present in
+   * volume render layer shaders, so we don't redeclare it here.)
    */
   defineUniforms(builder: ShaderBuilder): void;
 
   /**
    * Binds the per-draw uniforms based on the current session state.
    *
-   * If `params.bbox === undefined`, sets `u_editBboxActive = 0` and the
-   * remaining uniforms to safe defaults. Otherwise sets the bbox lo/hi
-   * voxels and the outside-alpha multiplier.
+   * If `params.bboxNm === undefined`, sets `u_editBboxActive = 0` and the
+   * remaining uniforms to safe defaults. Otherwise sets the bbox lo/hi in
+   * the layer's global (nm) frame.
    */
   bind(gl: GL, shader: ShaderProgram, params: BboxAlphaParams): void;
 
@@ -70,23 +74,14 @@ export interface BboxAlphaShaderHook {
    *
    *   void emitWithBboxDim(vec4 rgba);
    *
-   * Callers add this snippet via `builder.addFragmentCode(...)` and then
-   * either replace their `emit(color)` calls with `emitWithBboxDim(color)`
-   * or use the convenience helper `wrapFragmentMain`.
+   * Despite the name (retained for historical reasons), the snippet now
+   * HARD-CLIPS (discards) fragments outside the bbox; it does not dim.
    */
   fragmentSnippet(): string;
 
   /**
    * Convenience: returns a glsl snippet defining the helper AND a `#define`
-   * that re-routes `emit(rgba)` calls to `emitWithBboxDim(rgba)`. Use this
-   * when you want the wrap to apply to the whole fragmentMain body without
-   * editing existing source strings.
-   *
-   * The `#define emit` macro is intentionally NOT included by default
-   * because it would conflict with the base layer's `void emit(vec4 color)`
-   * function definition (the macro expansion would corrupt the function
-   * declaration itself). Therefore use this only for downstream layers that
-   * do not redefine `emit` themselves.
+   * that re-routes `emit(rgba)` calls to `emitWithBboxDim(rgba)`.
    */
   fragmentSnippetWithEmitMacro(): string;
 
@@ -94,49 +89,36 @@ export interface BboxAlphaShaderHook {
    * Pure-function helper: takes the existing fragmentMain body source and
    * returns a new body where every `emit(<expr>)` call has been replaced by
    * `emitWithBboxDim(<expr>)` (default), or by a caller-specified target
-   * function name (e.g. `"emitOnlyInsideBbox"` for the hard-clip variant
-   * used by `PatchedSegmentationRenderLayer`). This avoids the
-   * macro-trampoline trick at the cost of touching the fragmentMain source.
-   *
-   * The `targetName` overload is backwards-compatible: existing call sites
-   * that pass only the main body continue to receive the `emitWithBboxDim`
-   * wrapping unchanged.
+   * function name.
    */
   wrapFragmentMain(originalMain: string, targetName?: string): string;
 }
 
 /**
- * Builds a fresh bbox-alpha shader hook. The hook is stateless across calls;
+ * Builds a fresh bbox-clip shader hook. The hook is stateless across calls;
  * a single instance can be shared across multiple shader compiles for the
  * same render layer.
  */
 export function createBboxAlphaShaderHook(): BboxAlphaShaderHook {
   return {
     defineUniforms(builder: ShaderBuilder) {
-      builder.addUniform("highp vec3", "u_editBboxLoVoxel");
-      builder.addUniform("highp vec3", "u_editBboxHiVoxel");
-      builder.addUniform("highp float", "u_editBboxOutsideAlpha");
-      // 0 = inactive (no dimming, byte-identical visual to no-session path),
+      builder.addUniform("highp vec3", "u_editBboxLoNm");
+      builder.addUniform("highp vec3", "u_editBboxHiNm");
+      // 0 = inactive (no clipping, byte-identical visual to no-session path),
       // 1 = active.
       builder.addUniform("highp int", "u_editBboxActive");
     },
 
     bind(gl: GL, shader: ShaderProgram, params: BboxAlphaParams) {
-      const { bbox } = params;
-      if (bbox === undefined) {
-        // Inactive — keep uniforms at safe defaults so any stale value
-        // doesn't leak through the `if (u_editBboxActive == 1)` guard.
-        gl.uniform3f(shader.uniform("u_editBboxLoVoxel"), 0, 0, 0);
-        gl.uniform3f(shader.uniform("u_editBboxHiVoxel"), 0, 0, 0);
-        gl.uniform1f(shader.uniform("u_editBboxOutsideAlpha"), 1.0);
+      const { bboxNm } = params;
+      if (bboxNm === undefined) {
+        gl.uniform3f(shader.uniform("u_editBboxLoNm"), 0, 0, 0);
+        gl.uniform3f(shader.uniform("u_editBboxHiNm"), 0, 0, 0);
         gl.uniform1i(shader.uniform("u_editBboxActive"), 0);
         return;
       }
-      const outsideAlpha =
-        params.outsideAlphaMultiplier ?? DEFAULT_OUTSIDE_ALPHA_MULTIPLIER;
-      gl.uniform3fv(shader.uniform("u_editBboxLoVoxel"), bbox.loVoxel);
-      gl.uniform3fv(shader.uniform("u_editBboxHiVoxel"), bbox.hiVoxel);
-      gl.uniform1f(shader.uniform("u_editBboxOutsideAlpha"), outsideAlpha);
+      gl.uniform3fv(shader.uniform("u_editBboxLoNm"), bboxNm.lo);
+      gl.uniform3fv(shader.uniform("u_editBboxHiNm"), bboxNm.hi);
       gl.uniform1i(shader.uniform("u_editBboxActive"), 1);
     },
 
@@ -155,9 +137,6 @@ export function createBboxAlphaShaderHook(): BboxAlphaShaderHook {
       originalMain: string,
       targetName: string = "emitWithBboxDim",
     ): string {
-      // Replace whole-token `emit(` with `${targetName}(`. We restrict the
-      // boundary character to ensure we don't accidentally rewrite a
-      // similarly-prefixed identifier.
       return originalMain.replace(/\bemit\s*\(/g, `${targetName}(`);
     },
   };
@@ -166,34 +145,33 @@ export function createBboxAlphaShaderHook(): BboxAlphaShaderHook {
 /**
  * Fragment shader snippet defining `emitWithBboxDim`.
  *
- * Assumes the integrating shader exposes both `vChunkPosition` (a
- * `highp vec3`, chunk-LOCAL voxel coordinate in `[0, chunkDataSize)`) and
- * the `uTranslation` uniform (`highp vec3`, the chunk's origin in the
- * layer's chunk-grid frame; cf. `src/sliceview/volume/renderlayer.ts:99`).
- * Both are emitted by `defineVolumeShader` for every
- * `SliceViewVolumeRenderLayer`-derived shader.
+ * The snippet relies on uniforms declared elsewhere:
+ *   - `uChunkToGlobal` (mat4, per source) — declared in
+ *     `defineVolumeShader`, bound in `beginSource` to `chunkLayout.transform`.
+ *     Converts chunk-grid voxel coords to the layer's global frame (nm).
+ *   - `u_editBboxLoNm`, `u_editBboxHiNm`, `u_editBboxActive` — declared by
+ *     this hook's `defineUniforms`, bound by `bind()`.
  *
- * `vChunkPosition + uTranslation` is the fragment's voxel coordinate in the
- * layer's CHUNK-GRID frame (i.e., layer absolute voxel coord minus the
- * layer's `voxelOffset`). The bbox uniforms supplied via `bind()` MUST be
- * in this same chunk-grid frame; see `EditSessionHost.computeActiveRegion`,
- * which subtracts `voxelOffset` for exactly this purpose.
+ * Assumes the integrating shader exposes `vChunkPosition` (chunk-LOCAL voxel
+ * coord in `[0, chunkDataSize)`) and `uTranslation` (chunk's origin in
+ * chunk-grid voxels), both from `defineVolumeShader`.
  *
- * Also assumes the base render layer has defined `void emit(vec4 color)`
- * before this snippet is added (true for `defineVolumeShader`-derived
- * shaders).
+ * Despite the historical name, the snippet HARD-CLIPS (discards) outside
+ * the bbox — see the file-level docstring.
  */
 const BBOX_ALPHA_FRAGMENT_SNIPPET = `
 void emitWithBboxDim(vec4 rgba) {
-  float dim = 1.0;
   if (u_editBboxActive == 1) {
-    vec3 v = vChunkPosition + uTranslation;
+    vec4 globalNm4 = uChunkToGlobal * vec4(vChunkPosition + uTranslation, 1.0);
+    vec3 globalNm = globalNm4.xyz / globalNm4.w;
     bool inside =
-      v.x >= u_editBboxLoVoxel.x && v.x < u_editBboxHiVoxel.x &&
-      v.y >= u_editBboxLoVoxel.y && v.y < u_editBboxHiVoxel.y &&
-      v.z >= u_editBboxLoVoxel.z && v.z < u_editBboxHiVoxel.z;
-    dim = inside ? 1.0 : u_editBboxOutsideAlpha;
+      globalNm.x >= u_editBboxLoNm.x && globalNm.x < u_editBboxHiNm.x &&
+      globalNm.y >= u_editBboxLoNm.y && globalNm.y < u_editBboxHiNm.y &&
+      globalNm.z >= u_editBboxLoNm.z && globalNm.z < u_editBboxHiNm.z;
+    if (!inside) {
+      discard;
+    }
   }
-  emit(vec4(rgba.rgb, rgba.a * dim));
+  emit(rgba);
 }
 `;

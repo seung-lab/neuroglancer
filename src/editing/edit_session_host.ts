@@ -230,9 +230,25 @@ interface PerLayerMachinery {
   mirror: PatchMirror | undefined;
 }
 
+/**
+ * Active region for a layer expressed in the viewer's DISPLAY coordinate
+ * space (the same frame as `viewer.position.value` — i.e. voxels at the
+ * display dimensions' configured scale). The shader converts each
+ * fragment's chunk-grid voxel position to this same frame via
+ * `uChunkToGlobal` (bound to `chunkLayout.transform` per source).
+ *
+ * We use display coords (not nm and not the session's chosen layer
+ * resolution) because:
+ *   - `chunkLayout.transform`'s output frame IS display coords, so the
+ *     shader comparison is one matrix multiply away from a fragment's
+ *     chunk-grid position regardless of which scale the viewer chose.
+ *   - The user's bbox annotation is itself rendered in display coords by
+ *     the annotation render layer — so this matches the visible yellow
+ *     rectangle exactly.
+ */
 interface ActiveRegion {
-  readonly loVoxel: Vec3Voxels;
-  readonly hiVoxel: Vec3Voxels;
+  readonly lo: readonly [number, number, number];
+  readonly hi: readonly [number, number, number];
 }
 
 // ---------------------------------------------------------------------------
@@ -288,9 +304,15 @@ export class EditSessionHost extends RefCounted {
   // segmentation/image user layer that may participate in any future session
   // subscribes ONCE to a layer-keyed watchable. Values flip on session
   // open/close. The map persists across sessions (entries lazily allocated).
+  //
+  // Bbox values are stored in the layer's GLOBAL frame (nm), not in
+  // chunk-grid voxels. The render-layer shader converts the fragment
+  // position to global coords (via `uChunkToGlobal`) and compares in nm —
+  // this keeps the bbox comparison resolution-independent so the session's
+  // chosen resolution doesn't have to match the actually-rendered scale.
   private readonly editBboxByLayer = new Map<
     string,
-    WatchableValue<{ loVoxel: vec3; hiVoxel: vec3 } | undefined>
+    WatchableValue<{ lo: vec3; hi: vec3 } | undefined>
   >();
 
   // -- Per-session machinery (cleared on session end) -----------------------
@@ -722,11 +744,11 @@ export class EditSessionHost extends RefCounted {
    */
   getActiveRegionWatchableForLayer(
     layerName: string,
-  ): WatchableValue<{ loVoxel: vec3; hiVoxel: vec3 } | undefined> {
+  ): WatchableValue<{ lo: vec3; hi: vec3 } | undefined> {
     let w = this.editBboxByLayer.get(layerName);
     if (w === undefined) {
       w = new WatchableValue<
-        { loVoxel: vec3; hiVoxel: vec3 } | undefined
+        { lo: vec3; hi: vec3 } | undefined
       >(this.readEditBboxForLayer(layerName));
       this.editBboxByLayer.set(layerName, w);
     }
@@ -735,23 +757,15 @@ export class EditSessionHost extends RefCounted {
 
   private readEditBboxForLayer(
     layerName: string,
-  ): { loVoxel: vec3; hiVoxel: vec3 } | undefined {
+  ): { lo: vec3; hi: vec3 } | undefined {
     // The `LayerId` newtype is a branded string; the lookup map is keyed by
     // the brand, but at runtime branded strings are plain strings, so the
     // cast is a no-op.
     const region = this._activeRegionByLayer.get(layerName as LayerId)?.value;
     if (region === undefined) return undefined;
     return {
-      loVoxel: vec3.fromValues(
-        region.loVoxel[0],
-        region.loVoxel[1],
-        region.loVoxel[2],
-      ),
-      hiVoxel: vec3.fromValues(
-        region.hiVoxel[0],
-        region.hiVoxel[1],
-        region.hiVoxel[2],
-      ),
+      lo: vec3.fromValues(region.lo[0], region.lo[1], region.lo[2]),
+      hi: vec3.fromValues(region.hi[0], region.hi[1], region.hi[2]),
     };
   }
 
@@ -961,6 +975,22 @@ export class EditSessionHost extends RefCounted {
     session: EditSession,
     config: HostSessionConfig,
   ): Promise<void> {
+    // Step 1: populate `_activeRegionByLayer` for EVERY layer in the
+    // session config (writable AND locked). Both kinds participate in
+    // bbox-scoped rendering — per
+    // `docs/edit-session-integration/architecture/06-bbox-rendering.md`
+    // § "Behaviorally important details", the dim alpha applies to all
+    // layers in `EditSessionConfig.layers`. Without this, locked image
+    // layers stay fully bright outside the bbox (bug seen in v1).
+    for (const layer of config.layers) {
+      this._activeRegionByLayer.set(
+        layer.layerId,
+        new WatchableValue<ActiveRegion | undefined>(
+          await this.computeActiveRegion(layer.layerId, layer.resolution, config),
+        ),
+      );
+    }
+    // Step 2: attach per-layer paint machinery for WRITABLE layers only.
     for (const layer of config.layers) {
       if (layer.role !== "writable") continue;
       const userLayer = this.findSegmentationUserLayer(layer.layerId);
@@ -1005,12 +1035,6 @@ export class EditSessionHost extends RefCounted {
         entry.patchStore,
         this.logger,
       );
-      this._activeRegionByLayer.set(
-        layer.layerId,
-        new WatchableValue<ActiveRegion | undefined>(
-          await this.computeActiveRegion(layer.layerId, layer.resolution, config),
-        ),
-      );
     }
 
     // Note on calcada save backend registration: the architecture spec
@@ -1030,63 +1054,52 @@ export class EditSessionHost extends RefCounted {
   }
 
   /**
-   * Compute the per-layer active region by intersecting the session bbox
-   * (expressed at `bboxResolution`) with the layer's chosen resolution's
-   * scale bounds. Per `06-bbox-rendering.md` § "Edge-case", we clip the
-   * bbox to `[voxelOffset, voxelOffset + sizeVoxels]` so render-layer
-   * uniforms never address out-of-bounds voxels.
+   * Compute the per-layer active region in the viewer's DISPLAY coordinate
+   * space (the same frame as `viewer.position.value`). The conversion is:
+   *
+   *   bbox_displayVoxel[i] =
+   *     bboxVoxels[i] × bboxResolutionVoxelSize_nm[i] × 1e-9 /
+   *     voxelPhysicalScales[i]
+   *
+   * where `voxelPhysicalScales[i]` is the display dimension's voxel size in
+   * meters (from `viewer.displayDimensionRenderInfo.value`), and the `1e-9`
+   * converts the annotation's nm voxel size to meters.
+   *
+   * The shader compares this with `(uChunkToGlobal *
+   * vec4(vChunkPosition + uTranslation, 1.0)).xyz`, which is the
+   * fragment's position in the same display-coord frame. So the
+   * comparison is resolution-independent — works regardless of which
+   * scale (16 nm vs 32 nm vs ...) the viewer actually rendered.
+   *
+   * `layerId` and `layerResolution` are retained for API symmetry; the
+   * current bbox is layer-agnostic in display coords.
    */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private async computeActiveRegion(
-    layerId: LayerId,
-    layerResolution: ResolutionType,
+    _layerId: LayerId,
+    _layerResolution: ResolutionType,
     config: HostSessionConfig,
   ): Promise<ActiveRegion | undefined> {
-    let metadata;
-    try {
-      metadata = await this.layerMetadataSource.resolve(layerId);
-    } catch {
-      return undefined;
-    }
-    const scale = metadata.scales.find((s) => s.resolution === layerResolution);
-    if (scale === undefined) return undefined;
-    const bboxNm = bboxToNm(config.bboxVoxelCoords, config.bboxResolution);
-    const layerLo: Vec3Voxels = [
-      Math.floor(bboxNm[0] / scale.voxelSizeNm[0]),
-      Math.floor(bboxNm[1] / scale.voxelSizeNm[1]),
-      Math.floor(bboxNm[2] / scale.voxelSizeNm[2]),
-    ];
-    const layerHi: Vec3Voxels = [
-      Math.ceil(bboxNm[3] / scale.voxelSizeNm[0]),
-      Math.ceil(bboxNm[4] / scale.voxelSizeNm[1]),
-      Math.ceil(bboxNm[5] / scale.voxelSizeNm[2]),
-    ];
-    const minBound: Vec3Voxels = [
-      scale.voxelOffset[0],
-      scale.voxelOffset[1],
-      scale.voxelOffset[2],
-    ];
-    const maxBound: Vec3Voxels = [
-      scale.voxelOffset[0] + scale.sizeVoxels[0],
-      scale.voxelOffset[1] + scale.sizeVoxels[1],
-      scale.voxelOffset[2] + scale.sizeVoxels[2],
-    ];
-    // The volume render layer's vertex shader emits a `vChunkPosition`
-    // varying in the layer's CHUNK-GRID frame (`vChunkPosition + uTranslation`
-    // is the chunk-grid voxel position; cf.
-    // `src/sliceview/volume/renderlayer.ts:138`). `voxelOffset` is the offset
-    // of that chunk-grid origin from the layer's absolute voxel coords. The
-    // bbox uniforms must be in the same chunk-grid frame as the varying, so
-    // subtract `voxelOffset` from the clamped absolute coords here.
+    const renderInfo = this.viewer.displayDimensionRenderInfo.value;
+    const scales = renderInfo.voxelPhysicalScales;
+    const bboxVoxelSizeNm = Resolution.toVoxelSize(config.bboxResolution);
+    const display = (axis: number, voxelCoord: number): number => {
+      const scale = scales[axis];
+      if (!Number.isFinite(scale) || scale === 0) {
+        return voxelCoord;
+      }
+      return (voxelCoord * bboxVoxelSizeNm[axis] * 1e-9) / scale;
+    };
     return {
-      loVoxel: [
-        Math.max(layerLo[0], minBound[0]) - scale.voxelOffset[0],
-        Math.max(layerLo[1], minBound[1]) - scale.voxelOffset[1],
-        Math.max(layerLo[2], minBound[2]) - scale.voxelOffset[2],
+      lo: [
+        display(0, config.bboxVoxelCoords[0]),
+        display(1, config.bboxVoxelCoords[1]),
+        display(2, config.bboxVoxelCoords[2]),
       ],
-      hiVoxel: [
-        Math.min(layerHi[0], maxBound[0]) - scale.voxelOffset[0],
-        Math.min(layerHi[1], maxBound[1]) - scale.voxelOffset[1],
-        Math.min(layerHi[2], maxBound[2]) - scale.voxelOffset[2],
+      hi: [
+        display(0, config.bboxVoxelCoords[3]),
+        display(1, config.bboxVoxelCoords[4]),
+        display(2, config.bboxVoxelCoords[5]),
       ],
     };
   }
@@ -1251,13 +1264,22 @@ export class EditSessionHost extends RefCounted {
   }
 
   /**
-   * Partial teardown for `commitActive`. The library's commit pipeline has
-   * already stashed the dirty chunks in `NgCommitTarget` (the host-side
-   * in-memory committed buffer). We need the painted result to stay
-   * VISIBLE on the canvas — it's the user's client-side persistence — so
-   * keep the per-layer `LocalPatchStore` + `PatchedSegmentationRenderLayer`
-   * alive. Everything else (session tools, library lock, sidebar state) is
-   * torn down so the editing UI exits cleanly.
+   * Partial teardown for `commitActive` and `discardActive`. The library's
+   * commit pipeline has already stashed the dirty chunks in
+   * `NgCommitTarget` (the host-side in-memory committed buffer). We need
+   * the painted result to stay VISIBLE on the canvas — it's the user's
+   * client-side persistence — so keep the per-layer `LocalPatchStore` +
+   * `PatchedSegmentationRenderLayer` alive. Everything else (session
+   * tools, library lock, sidebar state, the per-layer active region) is
+   * torn down so the editing UI exits cleanly and the bbox-clip shader
+   * path deactivates on every render layer.
+   *
+   * Clearing `_activeRegionByLayer` is what flips `editBboxLoHi` back to
+   * `undefined` on the per-layer watchables, which turns OFF the
+   * `editBboxActive` shader gate. Without this, render layers stay stuck
+   * in "clip outside the last-known bbox" mode even after the session
+   * ends — which means the canvas continues to discard everything outside
+   * the prior bbox.
    *
    * The `PatchMirror` instances are disposed (their backing session is
    * gone, no more `DirtyTracker` events will arrive) but the patch bytes
@@ -1278,6 +1300,8 @@ export class EditSessionHost extends RefCounted {
         entry.mirror = undefined;
       }
     }
+    this._activeRegionByLayer.clear();
+    this.refreshEditBboxWatchables();
     this.tearDownSessionState();
   }
 
@@ -1370,21 +1394,6 @@ function findBaseSegmentationRenderLayer(
     if (rl instanceof SegmentationRenderLayer) return rl;
   }
   return undefined;
-}
-
-function bboxToNm(
-  bbox: BoundingBoxVoxels,
-  resolution: ResolutionType,
-): [number, number, number, number, number, number] {
-  const voxelSizeNm = Resolution.toVoxelSize(resolution);
-  return [
-    bbox[0] * voxelSizeNm[0],
-    bbox[1] * voxelSizeNm[1],
-    bbox[2] * voxelSizeNm[2],
-    bbox[3] * voxelSizeNm[0],
-    bbox[4] * voxelSizeNm[1],
-    bbox[5] * voxelSizeNm[2],
-  ];
 }
 
 /**
