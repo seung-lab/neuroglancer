@@ -31,6 +31,10 @@ import { getDefaultCredentialsManager } from "#src/credentials_provider/default_
 import type { CredentialsManager } from "#src/credentials_provider/index.js";
 import { SharedCredentialsManager } from "#src/credentials_provider/shared.js";
 import { DataManagementContext } from "#src/data_management_context.js";
+import { EditSessionHost } from "#src/editing/edit_session_host.js";
+import { EnterEditSessionButton } from "#src/editing/ui/enter_session_button.js";
+import { EditSessionEntryModal } from "#src/editing/ui/entry_modal.js";
+import { EditSessionSidebar } from "#src/editing/ui/session_sidebar.js";
 import { InputEventBindings as DataPanelInputEventBindings } from "#src/data_panel_layout.js";
 import { getDefaultDataSourceProvider } from "#src/datasource/default_provider.js";
 import type { DataSourceRegistry } from "#src/datasource/index.js";
@@ -289,6 +293,7 @@ class TrackableViewerState extends CompoundTrackable {
     this.add("selectedStateServer", viewer.selectedStateServer);
     this.add("toolBindings", viewer.toolBinder);
     this.add("toolPalettes", viewer.toolPalettes);
+    this.add("editSession", viewer.editSessionHost.state);
   }
 
   restoreState(obj: any) {
@@ -418,6 +423,14 @@ export class Viewer extends RefCounted implements ViewerState {
   selectedLayer = this.registerDisposer(
     new SelectedLayerState(this.layerManager.addRef()),
   );
+  /**
+   * Wiring of the `@zetta-ai/edit-session` library. Constructed in the viewer
+   * constructor body (not as a field initializer) because its constructor
+   * reads `viewer.layerManager`, `viewer.chunkManager`, and `viewer.display.gl`
+   * — none of which are available during class-field initialization for
+   * fields that need to precede the constructor body.
+   */
+  editSessionHost!: EditSessionHost;
   showAxisLines = new TrackableBoolean(true, true);
   wireFrame = new TrackableBoolean(false, false);
   enableAdaptiveDownsampling = new TrackableBoolean(true, true);
@@ -590,6 +603,15 @@ export class Viewer extends RefCounted implements ViewerState {
       this.navigationState.pose.position,
       this.globalToolBinder,
     );
+    // Construct the edit-session host now that `layerManager`,
+    // `chunkManager`, and `display.gl` are all available.
+    this.editSessionHost = this.registerDisposer(new EditSessionHost(this));
+    // Publish the host through a dedicated `editSessionHost` extension
+    // point on `TopLevelLayerListSpecification` so per-layer UI
+    // (data-source widgets in `layer_data_sources_tab.ts`) can consult
+    // `host.sessionLock.isLayerDataSourceLocked(...)` without taking a
+    // direct Viewer dependency.
+    this.layerSpecification.editSessionHost = this.editSessionHost;
 
     this.registerDisposer(
       display.updateStarted.add(() => {
@@ -668,6 +690,12 @@ export class Viewer extends RefCounted implements ViewerState {
     this.registerDisposer(
       new PlaybackManager(this.display, this.position, this.velocity),
     );
+
+    // Re-open any session that was persisted via `state.editSession` (e.g.,
+    // after a page reload). The call is async and tolerant of layer-manager
+    // not-yet-ready states; if the referenced bbox annotation / layers are
+    // missing, it surfaces a StatusMessage and clears the intent block.
+    void this.editSessionHost.tryRestoreFromState();
   }
 
   private updateShowBorders() {
@@ -914,6 +942,31 @@ export class Viewer extends RefCounted implements ViewerState {
       topRow.appendChild(button.element);
     }
 
+    {
+      // Enter-Edit-Session button. Per
+      // `docs/edit-session-integration/architecture/04-ui-shell.md`, this is
+      // a top-bar control sibling to the existing CheckboxIcon buttons.
+      // Clicking opens the entry modal; the modal owns its own disposal.
+      const enterButton = this.registerDisposer(
+        new EnterEditSessionButton(
+          this.editSessionHost,
+          this.layerManager,
+          () => {
+            const modal = new EditSessionEntryModal(
+              this.editSessionHost,
+              this.layerManager,
+              this.editSessionHost.layerMetadataSource,
+              () => {
+                modal.dispose();
+              },
+            );
+            document.body.appendChild(modal.element);
+          },
+        ),
+      );
+      topRow.appendChild(enterButton.element);
+    }
+
     this.registerDisposer(
       new ElementVisibilityFromTrackableBoolean(
         makeDerivedWatchableValue(
@@ -1007,6 +1060,14 @@ export class Viewer extends RefCounted implements ViewerState {
             this.settingsPanelState,
             this,
           ),
+      }),
+    );
+
+    this.registerDisposer(
+      this.sidePanelManager.registerPanel({
+        location: this.editSessionHost.editSessionPanelLocation,
+        makePanel: () =>
+          new EditSessionSidebar(this.sidePanelManager, this.editSessionHost),
       }),
     );
 

@@ -25,6 +25,7 @@ import {
 } from "#src/coordinate_transform.js";
 import type {
   ManagedUserLayer,
+  TopLevelLayerListSpecification,
   UserLayerSelectionState,
 } from "#src/layer/index.js";
 import {
@@ -62,6 +63,7 @@ import { UserLayerWithAnnotationsMixin } from "#src/ui/annotations.js";
 import { setClipboard } from "#src/util/clipboard.js";
 import type { Borrowed } from "#src/util/disposable.js";
 import { makeValueOrError } from "#src/util/error.js";
+import type { vec3 } from "#src/util/geom.js";
 import { verifyOptionalObjectProperty } from "#src/util/json.js";
 import {
   trackableShaderModeValue,
@@ -117,6 +119,27 @@ const VOLUME_RENDERING_DEPTH_SAMPLES_JSON_KEY = "volumeRenderingDepthSamples";
 
 export interface ImageLayerSelectionState extends UserLayerSelectionState {
   value: any;
+}
+
+/**
+ * Returns the persistent edit-bbox watchable for `layerName` from the
+ * step-24 `EditSessionHost`, or `undefined` if no host is wired. Used to
+ * pass `editBboxLoHi` into the `ImageRenderLayer` constructor.
+ */
+function getEditBboxLoHiForLayer(
+  root: TopLevelLayerListSpecification,
+  layerName: string,
+): WatchableValueInterface<{ loVoxel: vec3; hiVoxel: vec3 } | undefined> | undefined {
+  const host = root.editSessionHost as
+    | {
+        getActiveRegionWatchableForLayer(
+          layerName: string,
+        ): WatchableValueInterface<
+          { loVoxel: vec3; hiVoxel: vec3 } | undefined
+        >;
+      }
+    | undefined;
+  return host?.getActiveRegionWatchableForLayer(layerName);
 }
 
 const Base = UserLayerWithAnnotationsMixin(UserLayer);
@@ -259,6 +282,12 @@ export class ImageUserLayer extends Base {
             renderScaleHistogram: this.sliceViewRenderScaleHistogram,
             localPosition: this.localPosition,
             channelCoordinateSpace: this.channelCoordinateSpace,
+            // Voxel-edit bbox-dim hook (step 24 of Phase 4). See the
+            // matching wire in `src/layer/segmentation/index.ts`.
+            editBboxLoHi: getEditBboxLoHiForLayer(
+              this.manager.root,
+              this.managedLayer.name,
+            ),
           }),
         );
         const volumeRenderLayer = context.registerDisposer(

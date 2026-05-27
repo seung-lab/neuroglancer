@@ -1,0 +1,241 @@
+/**
+ * @license
+ * Copyright 2026 Calcada AI / Zetta AI
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ */
+
+.neuroglancer-edit-session-entry-modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.6);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.neuroglancer-edit-session-entry-modal {
+  background-color: #1d1d1d;
+  color: #ddd;
+  border: 1px solid #444;
+  min-width: 520px;
+  max-width: 720px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  font: inherit;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+}
+
+.neuroglancer-edit-session-entry-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid #333;
+  font-weight: 600;
+}
+
+.neuroglancer-edit-session-entry-modal-close {
+  background: none;
+  border: none;
+  color: #ddd;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 6px;
+}
+
+.neuroglancer-edit-session-entry-modal-body {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.neuroglancer-edit-session-entry-modal-section-title {
+  font-weight: 600;
+  font-size: 12px;
+  color: #ccc;
+  margin: 0 0 6px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.neuroglancer-bbox-picker-select,
+.neuroglancer-resolution-picker-select {
+  background-color: #2a2a2a;
+  color: #ddd;
+  border: 1px solid #444;
+  padding: 2px 4px;
+  font: inherit;
+}
+
+.neuroglancer-bbox-picker-select {
+  width: 100%;
+}
+
+.neuroglancer-edit-session-entry-modal-bbox-info {
+  font-size: 11px;
+  color: #aaa;
+  margin-top: 4px;
+}
+
+/* Layers card --------------------------------------------------------------*/
+
+.neuroglancer-edit-session-entry-modal-layers-card {
+  border: 1px solid #333;
+  background-color: #181818;
+  padding: 4px 0;
+}
+
+.neuroglancer-edit-session-entry-modal-layers-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.neuroglancer-edit-session-entry-modal-layers-empty {
+  padding: 10px 12px;
+  font-style: italic;
+  color: #888;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto auto;
+  align-items: center;
+  column-gap: 14px;
+  padding: 6px 12px;
+  border-bottom: 1px solid #262626;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-row:last-child {
+  border-bottom: none;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-row-excluded {
+  opacity: 0.55;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-row-excluded
+  .neuroglancer-edit-session-entry-modal-layer-resolution,
+.neuroglancer-edit-session-entry-modal-layer-row-excluded
+  .neuroglancer-edit-session-entry-modal-layer-lock {
+  pointer-events: none;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-include {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-include input[type="checkbox"] {
+  margin: 0;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-name {
+  font-weight: 500;
+  color: #e6e6e6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-resolution {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #bbb;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-resolution-label {
+  color: #888;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-resolution-slot {
+  display: inline-flex;
+  align-items: center;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-resolution-static {
+  font-family: monospace;
+  color: #ddd;
+  background-color: #232323;
+  border: 1px solid #2e2e2e;
+  padding: 1px 6px;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-resolution-loading {
+  font-style: italic;
+  color: #777;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-resolution-error {
+  color: #f87171;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #aaa;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-lock input[type="checkbox"] {
+  margin: 0;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-lock input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+}
+
+/* Footer -------------------------------------------------------------------*/
+
+.neuroglancer-edit-session-entry-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid #333;
+}
+
+.neuroglancer-edit-session-entry-modal-error {
+  color: #f87171;
+  font-size: 11px;
+  margin-right: auto;
+}
+
+.neuroglancer-edit-session-entry-modal button {
+  padding: 5px 12px;
+  cursor: pointer;
+  background-color: #2a2a2a;
+  color: #ddd;
+  border: 1px solid #444;
+}
+
+.neuroglancer-edit-session-entry-modal button.primary {
+  background-color: #2d6cdf;
+  border-color: #2d6cdf;
+  color: #fff;
+}
+
+.neuroglancer-edit-session-entry-modal button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

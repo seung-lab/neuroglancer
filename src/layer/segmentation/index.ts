@@ -23,7 +23,11 @@ import {
   LocalDataSource,
   localEquivalencesUrl,
 } from "#src/datasource/local.js";
-import type { LayerActionContext, ManagedUserLayer } from "#src/layer/index.js";
+import type {
+  LayerActionContext,
+  ManagedUserLayer,
+  TopLevelLayerListSpecification,
+} from "#src/layer/index.js";
 import {
   LinkedLayerGroup,
   registerLayerType,
@@ -132,6 +136,30 @@ import { Signal } from "#src/util/signal.js";
 import { makeWatchableShaderError } from "#src/webgl/dynamic_shader.js";
 import type { DependentViewContext } from "#src/widget/dependent_view_widget.js";
 import { registerLayerShaderControlsTool } from "#src/widget/shader_controls.js";
+
+/**
+ * Returns the persistent edit-bbox watchable for `layerName` from the
+ * step-24 `EditSessionHost`, or `undefined` if no host is wired into this
+ * `TopLevelLayerListSpecification`. Used to pass `editBboxLoHi` into the
+ * `SegmentationRenderLayer` constructor; when undefined, the render layer's
+ * bbox-dim shader path is compiled out entirely (byte-identical to the
+ * pre-hook implementation).
+ */
+function getEditBboxLoHiForLayer(
+  root: TopLevelLayerListSpecification,
+  layerName: string,
+): WatchableValueInterface<{ loVoxel: vec3; hiVoxel: vec3 } | undefined> | undefined {
+  const host = root.editSessionHost as
+    | {
+        getActiveRegionWatchableForLayer(
+          layerName: string,
+        ): WatchableValueInterface<
+          { loVoxel: vec3; hiVoxel: vec3 } | undefined
+        >;
+      }
+    | undefined;
+  return host?.getActiveRegionWatchableForLayer(layerName);
+}
 
 export class SegmentationUserLayerGroupState
   extends RefCounted
@@ -806,6 +834,15 @@ export class SegmentationUserLayer extends Base {
                 renderScaleTarget: this.sliceViewRenderScaleTarget,
                 renderScaleHistogram: this.sliceViewRenderScaleHistogram,
                 localPosition: this.localPosition,
+                // Voxel-edit bbox-dim hook (step 24 of Phase 4). The host
+                // returns a persistent per-layer watchable that flips on
+                // session open/close. When no host is wired (test viewers,
+                // alternative embeddings), the field is left unset and the
+                // bbox-dim shader path is compiled out entirely.
+                editBboxLoHi: getEditBboxLoHiForLayer(
+                  this.manager.root,
+                  this.managedLayer.name,
+                ),
               }),
             ),
           this.displayState.segmentationGroupState.value,

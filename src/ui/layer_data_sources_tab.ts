@@ -35,6 +35,7 @@ import { LoadedLayerDataSource } from "#src/layer/layer_data_source.js";
 import { MeshSource, MultiscaleMeshSource } from "#src/mesh/frontend.js";
 import { SkeletonSource } from "#src/skeleton/frontend.js";
 import { MultiscaleVolumeChunkSource } from "#src/sliceview/volume/frontend.js";
+import { StatusMessage } from "#src/status.js";
 import { TrackableBooleanCheckbox } from "#src/trackable_boolean.js";
 import type { WatchableValueInterface } from "#src/trackable_value.js";
 import { WatchableValue } from "#src/trackable_value.js";
@@ -334,6 +335,23 @@ export class DataSourceView extends RefCounted {
       const { source } = this;
       const existingSpec = source.spec;
       const userLayer = this.source.layer;
+      // Per `09-error-handling.md` § "Layer data-source mutation blocked by
+      // session lock", reject the change at the action gate even if the UI
+      // gating somehow let it through. The input is snapped back to the
+      // previous spec URL and a StatusMessage explains why.
+      if (isDataSourceLocked(userLayer)) {
+        urlInput.value = existingSpec.url;
+        urlInput.dirty.value = false;
+        StatusMessage.showTemporaryMessage(
+          "Cannot change data source: layer is locked by the active edit session.",
+          4000,
+        );
+        console.warn(
+          "[session-lock] data-source mutation blocked for layer",
+          userLayer.managedLayer.name,
+        );
+        return;
+      }
       urlInput.dirty.value = false;
       // If url is non-empty and unchanged, don't set spec, as that would trigger a reload of the
       // data source.  If the url is empty, always set spec in order to possible remove the empty
@@ -360,6 +378,12 @@ export class DataSourceView extends RefCounted {
       source.spec = { ...existingSpec, url, setManually: true };
     };
     urlInput.onCommit.add(updateUrlFromView);
+
+    // Reactively reflect the data-source lock state on the URL input. When
+    // a session locks this layer, the input is made read-only and shows a
+    // tooltip explaining why; the change re-applies on every session
+    // open/close.
+    this.bindLockState(urlInput);
 
     const { element } = this;
     element.classList.add("neuroglancer-layer-data-source");
@@ -405,6 +429,76 @@ export class DataSourceView extends RefCounted {
     removeFromParent(this.element);
     super.disposed();
   }
+
+  /**
+   * Wire `host.sessionLock.activeSession.changed` to keep the input's
+   * read-only state and tooltip in sync. No-op when no `EditSessionHost` is
+   * wired (test viewers / alternative embeddings).
+   */
+  private bindLockState(urlInput: SourceUrlAutocomplete): void {
+    const userLayer = this.source.layer;
+    const host = getEditSessionHost(userLayer);
+    if (host === undefined) return;
+    const apply = () => {
+      const locked = host.sessionLock.isLayerDataSourceLocked(
+        userLayer.managedLayer.name,
+      );
+      const { inputElement } = urlInput;
+      inputElement.contentEditable = locked ? "false" : "true";
+      if (locked) {
+        inputElement.title = SESSION_LOCK_TOOLTIP;
+        urlInput.element.classList.add(
+          "neuroglancer-layer-data-source-locked",
+        );
+      } else {
+        if (inputElement.title === SESSION_LOCK_TOOLTIP) {
+          inputElement.removeAttribute("title");
+        }
+        urlInput.element.classList.remove(
+          "neuroglancer-layer-data-source-locked",
+        );
+      }
+    };
+    apply();
+    this.registerDisposer(host.sessionLock.activeSession.changed.add(apply));
+  }
+}
+
+const SESSION_LOCK_TOOLTIP =
+  "Locked by active edit session. Discard or commit the session before changing data sources for this layer.";
+
+/**
+ * Lazily look up the active `EditSessionHost` published by the viewer onto
+ * `TopLevelLayerListSpecification.editSessionHost` in step 24. Returns
+ * undefined when no host is wired (test viewers / alternative embeddings).
+ *
+ * The host type is duck-typed here to avoid pulling an `#src/editing/...`
+ * dependency into the layer-data-sources UI; the assertion is sound because
+ * the viewer is the only writer to this extension slot.
+ */
+interface EditSessionHostLike {
+  readonly sessionLock: {
+    isLayerDataSourceLocked(layerId: string): boolean;
+    readonly activeSession: {
+      readonly changed: {
+        add(handler: () => void): () => void;
+      };
+    };
+  };
+}
+
+function getEditSessionHost(userLayer: UserLayer): EditSessionHostLike | undefined {
+  const root = userLayer.manager.root;
+  const host = (root as unknown as { editSessionHost?: unknown })
+    .editSessionHost;
+  if (host === undefined || host === null) return undefined;
+  return host as EditSessionHostLike;
+}
+
+function isDataSourceLocked(userLayer: UserLayer): boolean {
+  const host = getEditSessionHost(userLayer);
+  if (host === undefined) return false;
+  return host.sessionLock.isLayerDataSourceLocked(userLayer.managedLayer.name);
 }
 
 function changeLayerTypeToDetected(userLayer: UserLayer) {
@@ -439,12 +533,60 @@ export class LayerDataSourcesTab extends Tab {
     const { addDataSourceIcon } = this;
     addDataSourceIcon.style.alignSelf = "start";
     addDataSourceIcon.addEventListener("click", () => {
+      // Defensive at-action gate (see `09-error-handling.md`). UI gating
+      // below should normally make this branch unreachable.
+      if (isDataSourceLocked(this.layer)) {
+        StatusMessage.showTemporaryMessage(
+          "Cannot change data source: layer is locked by the active edit session.",
+          4000,
+        );
+        console.warn(
+          "[session-lock] add-data-source mutation blocked for layer",
+          this.layer.managedLayer.name,
+        );
+        return;
+      }
       const layerDataSource = this.layer.addDataSource(undefined);
       this.updateView();
       const view = this.sourceViews.get(layerDataSource);
       if (view === undefined) return;
       view.urlInput.inputElement.focus();
     });
+    // Reflect the data-source lock state on the add button. Subscribed once
+    // here; flips on session open/close.
+    const host = getEditSessionHost(layer);
+    if (host !== undefined) {
+      const applyAddButtonLock = () => {
+        const locked = host.sessionLock.isLayerDataSourceLocked(
+          layer.managedLayer.name,
+        );
+        if (locked) {
+          (addDataSourceIcon as HTMLElement).setAttribute(
+            "aria-disabled",
+            "true",
+          );
+          (addDataSourceIcon as HTMLElement).title = SESSION_LOCK_TOOLTIP;
+          (addDataSourceIcon as HTMLElement).classList.add(
+            "neuroglancer-layer-data-source-locked",
+          );
+        } else {
+          (addDataSourceIcon as HTMLElement).removeAttribute("aria-disabled");
+          if (
+            (addDataSourceIcon as HTMLElement).title === SESSION_LOCK_TOOLTIP
+          ) {
+            (addDataSourceIcon as HTMLElement).title =
+              "Add additional data source";
+          }
+          (addDataSourceIcon as HTMLElement).classList.remove(
+            "neuroglancer-layer-data-source-locked",
+          );
+        }
+      };
+      applyAddButtonLock();
+      this.registerDisposer(
+        host.sessionLock.activeSession.changed.add(applyAddButtonLock),
+      );
+    }
     element.appendChild(this.dataSourcesContainer);
     if (layer instanceof NewUserLayer) {
       const { layerTypeDetection, layerTypeElement } = this;

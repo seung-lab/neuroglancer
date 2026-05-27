@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import type { BboxAlphaShaderHook } from "#src/editing/shaders/bbox_alpha_chunk.js";
+import { createBboxAlphaShaderHook } from "#src/editing/shaders/bbox_alpha_chunk.js";
 import { HashMapUint64 } from "#src/gpu_hash/hash_table.js";
 import {
   GPUHashTable,
@@ -44,10 +46,12 @@ import { SliceViewVolumeRenderLayer } from "#src/sliceview/volume/renderlayer.js
 import type { WatchableValueInterface } from "#src/trackable_value.js";
 import {
   AggregateWatchableValue,
+  constantWatchableValue,
   makeCachedDerivedWatchableValue,
 } from "#src/trackable_value.js";
 import type { Uint64Map } from "#src/uint64_map.js";
 import type { DisjointUint64Sets } from "#src/util/disjoint_sets.js";
+import type { vec3 } from "#src/util/geom.js";
 import type { ShaderBuilder, ShaderProgram } from "#src/webgl/shader.js";
 
 export class EquivalencesHashMap {
@@ -75,6 +79,20 @@ export interface SliceViewSegmentationDisplayState
   notSelectedAlpha: WatchableValueInterface<number>;
   hideSegmentZero: WatchableValueInterface<boolean>;
   ignoreNullVisibleSet: WatchableValueInterface<boolean>;
+  /**
+   * Voxel-edit hook: when defined and the inner value is non-`undefined`,
+   * voxels outside the bbox render at a reduced alpha (see
+   * `src/editing/shaders/bbox_alpha_chunk.ts`). When this field is omitted
+   * (the common case for layers not participating in an edit session) the
+   * render path is byte-identical to the pre-hook implementation.
+   *
+   * Wired by the segmentation user layer from
+   * `viewer.editSessionHost.activeRegionByLayer.get(this.name)` in
+   * Phase 4 step 24. Until that wiring lands, leave this field unset.
+   */
+  editBboxLoHi?: WatchableValueInterface<
+    { loVoxel: vec3; hiVoxel: vec3 } | undefined
+  >;
 }
 
 interface ShaderParameters {
@@ -85,6 +103,13 @@ interface ShaderParameters {
   hideSegmentZero: boolean;
   hasSegmentDefaultColor: boolean;
   hasHighlightColor: boolean;
+  /**
+   * Voxel-edit bbox-dim shader path gate. Defaults to `false`; flips to
+   * `true` only while an edit session is active for this layer. When
+   * `false`, the bbox-dim uniforms/snippet are NOT added to the shader and
+   * the compiled GLSL is byte-identical to the pre-hook implementation.
+   */
+  editBboxActive: boolean;
 }
 
 const HAS_SELECTED_SEGMENT_FLAG = 1;
@@ -108,6 +133,14 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
   private temporaryEquivalencesHashMap;
   private gpuEquivalencesHashTable;
   private gpuTemporaryEquivalencesHashTable;
+
+  /**
+   * Voxel-edit bbox-dim shader hook. Stateless across compiles; gated by
+   * the `editBboxActive` shader parameter so that when no session is
+   * active for this layer the hook contributes NOTHING to the shader
+   * source (no uniforms, no fragment code, no main-body wrapping).
+   */
+  private bboxAlphaHook: BboxAlphaShaderHook = createBboxAlphaShaderHook();
 
   constructor(
     multiscaleSource: MultiscaleVolumeChunkSource,
@@ -163,6 +196,20 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
         hideSegmentZero: displayState.hideSegmentZero,
         baseSegmentColoring: displayState.baseSegmentColoring,
         baseSegmentHighlighting: displayState.baseSegmentHighlighting,
+        // Voxel-edit bbox-dim gate. Derived from the optional
+        // `editBboxLoHi` watchable: `true` iff a session bbox is currently
+        // set for this layer. When `editBboxLoHi` is undefined (the
+        // default), this resolves to a constant `false` and the bbox-dim
+        // shader path is never compiled in.
+        editBboxActive:
+          displayState.editBboxLoHi === undefined
+            ? constantWatchableValue(false)
+            : refCounted.registerDisposer(
+                makeCachedDerivedWatchableValue(
+                  (bbox) => bbox !== undefined,
+                  [displayState.editBboxLoHi],
+                ),
+              ),
       })),
       transform: displayState.transform,
       renderScaleHistogram: displayState.renderScaleHistogram,
@@ -206,6 +253,14 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
     this.registerDisposer(
       displayState.ignoreNullVisibleSet.changed.add(this.redrawNeeded.dispatch),
     );
+    // Redraw when the bbox lo/hi changes within an active session — value
+    // changes don't flip the `editBboxActive` bit so they won't go through
+    // `shaderParameters.changed`, but they DO need a fresh `bind()`.
+    if (displayState.editBboxLoHi !== undefined) {
+      this.registerDisposer(
+        displayState.editBboxLoHi.changed.add(this.redrawNeeded.dispatch),
+      );
+    }
   }
 
   disposed() {
@@ -221,16 +276,23 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
     });
   }
 
-  defineShader(builder: ShaderBuilder, parameters: ShaderParameters) {
-    this.hashTableManager.defineShader(builder);
-    let getUint64Code = `
+  /**
+   * Voxel-edit extension point: subclasses override this to inject patch
+   * sampling into the segmentation read path. The default body returns
+   * `toUint64(getDataValue())` — stock base-segmentation behavior.
+   */
+  protected defineGetUint64DataValue(builder: ShaderBuilder) {
+    builder.addFragmentCode(`
 uint64_t getUint64DataValue() {
   uint64_t x = toUint64(getDataValue());
-`;
-    getUint64Code += `return x;
+  return x;
 }
-`;
-    builder.addFragmentCode(getUint64Code);
+`);
+  }
+
+  defineShader(builder: ShaderBuilder, parameters: ShaderParameters) {
+    this.hashTableManager.defineShader(builder);
+    this.defineGetUint64DataValue(builder);
     if (parameters.hasEquivalences) {
       this.equivalencesShaderManager.defineShader(builder);
       builder.addFragmentCode(`
@@ -343,6 +405,17 @@ uint64_t getMappedObjectId(uint64_t value) {
   }
   emit(vec4(mix(vec3(1.0,1.0,1.0), vec3(rgba), saturation), alpha));
 `;
+    // Voxel-edit bbox-dim opt-in path: when an edit session is active for
+    // this layer, route every `emit(...)` call in the main body through
+    // `emitWithBboxDim(...)` so outside-bbox fragments render at 0.25x
+    // alpha. Gated on the `editBboxActive` shader parameter, so when no
+    // session is active this branch is NOT taken and the resulting GLSL is
+    // byte-identical to the pre-hook shader.
+    if (parameters.editBboxActive) {
+      this.bboxAlphaHook.defineUniforms(builder);
+      builder.addFragmentCode(this.bboxAlphaHook.fragmentSnippet());
+      fragmentMain = this.bboxAlphaHook.wrapFragmentMain(fragmentMain);
+    }
     builder.setFragmentMain(fragmentMain);
   }
 
@@ -453,6 +526,23 @@ uint64_t getMappedObjectId(uint64_t value) {
     }
     if (highlightColor !== undefined) {
       gl.uniform4fv(shader.uniform("uHighlightColor"), highlightColor);
+    }
+    // Bbox-dim uniforms are bound only when the bbox-dim shader path was
+    // compiled (`editBboxActive === true`). Otherwise the uniforms don't
+    // exist on the shader at all.
+    //
+    // Picking-pass safety: `SliceViewVolumeRenderLayer.draw` is invoked
+    // only from `SliceView.updateRendering` (color into the sliceView
+    // offscreen buffer); the panel-level picking pass goes through
+    // `SliceViewPanelRenderLayer` subclasses (annotation/cursor overlays),
+    // which do NOT invoke this volume layer. There is therefore no
+    // separate picking-pass shader for this layer to dim.
+    if (parameters.editBboxActive) {
+      const bbox = displayState.editBboxLoHi?.value;
+      this.bboxAlphaHook.bind(gl, shader, {
+        bbox,
+        outsideAlphaMultiplier: 0.25,
+      });
     }
   }
   endSlice(

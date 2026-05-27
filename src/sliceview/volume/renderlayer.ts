@@ -39,6 +39,7 @@ import type { VolumeSourceOptions } from "#src/sliceview/volume/base.js";
 import type {
   ChunkFormat,
   MultiscaleVolumeChunkSource,
+  VolumeChunk,
   VolumeChunkSource,
 } from "#src/sliceview/volume/frontend.js";
 import { defineChunkDataShaderAccess } from "#src/sliceview/volume/frontend.js";
@@ -549,6 +550,18 @@ void main() {
     parameters;
   }
 
+  /**
+   * Voxel-edit extension point: called once per chunk drawn, after the base
+   * chunk format has bound its texture(s) and before the chunk's quad is
+   * drawn. Subclasses (e.g. PatchedSegmentationRenderLayer) override this to
+   * bind per-chunk overlay resources keyed by `chunk.chunkGridPosition`.
+   */
+  protected onBeginChunk(gl: GL, shader: ShaderProgram, chunk: VolumeChunk) {
+    gl;
+    shader;
+    chunk;
+  }
+
   draw(renderContext: SliceViewRenderContext) {
     const { sliceView } = renderContext;
     const layerInfo = sliceView.visibleLayers.get(this)!;
@@ -674,6 +687,10 @@ void main() {
               newSource,
             );
           }
+          // Voxel-edit extension point: subclasses use this to bind per-chunk
+          // overlay resources (e.g. patch textures keyed by chunkGridPosition)
+          // after the base chunk has been bound and before the chunk is drawn.
+          this.onBeginChunk(gl, shader!, chunk);
           newSource = false;
           drawChunk(gl, shader!, chunkPosition, wireFrame);
           ++presentCount;
