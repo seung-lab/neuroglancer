@@ -54,6 +54,19 @@ import { DataType } from "#src/util/data_type.js";
 export class NgChunkSource implements LibraryChunkSource {
   private currentSessionId: SessionId | undefined;
   private currentPinnedChunks: VolumeChunk[] = [];
+  /**
+   * Optional handle to the host's committed-buffer store. When set, baseline
+   * reads consult it before falling through to the data source — committed
+   * chunks from a previous session become the starting state for the next
+   * session's overlay. Wired by `EditSessionHost` at construction time.
+   */
+  commitTarget: {
+    getChunk(
+      layerId: LayerId,
+      resolution: string,
+      chunkId: string,
+    ): { bytes: ReadonlyChunkVoxelBuffer } | undefined;
+  } | undefined;
 
   constructor(
     private readonly layerManager: LayerManager,
@@ -134,6 +147,17 @@ export class NgChunkSource implements LibraryChunkSource {
     const coord: OverlayCoord = { layerId, resolution, chunkId };
     if (signal?.aborted) {
       throw new ChunkReadAbortedError(coord);
+    }
+    // If a previous session committed this chunk (in-memory, client-side
+    // only), use the committed bytes as the baseline so the new session's
+    // overlay starts on top of the user's pending changes. Without this,
+    // painting on top of a previously-committed voxel would silently revert
+    // it to the raw data-source value when PatchMirror writes the new
+    // chunk buffer (the overlay's "current" view never knew about the
+    // commit).
+    const committed = this.commitTarget?.getChunk(layerId, resolution, chunkId);
+    if (committed !== undefined) {
+      return committed.bytes;
     }
     let source: VolumeChunkSource;
     try {

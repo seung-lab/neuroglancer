@@ -34,15 +34,19 @@ import type {
   ZExtrapolationState,
   CorrespondenceState,
 } from "@zetta-ai/edit-session";
+import type { SavePayload, SaveLayerOutcome } from "@zetta-ai/edit-session";
 import {
+  ChunkId as ChunkIdFactory,
   DEFAULT_RADIUS_CYCLE,
   EditSession,
   InvalidSessionConfigError,
+  OverlayKey,
   Resolution,
   SessionPhaseViolationError,
   correspondence,
   layerId as toLayerId,
   painting,
+  sessionId as toSessionId,
   zExtrapolation,
 } from "@zetta-ai/edit-session";
 
@@ -215,8 +219,15 @@ function parseIntent(x: unknown): EditSessionIntent | null {
 interface PerLayerMachinery {
   readonly patchStore: LocalPatchStore;
   readonly renderLayer: PatchedSegmentationRenderLayer;
-  readonly mirror: PatchMirror;
   readonly detachRenderLayer: () => void;
+  /**
+   * Subscription bridging the active library overlay → `patchStore`. Set
+   * while a session is active, replaced on each new `openSession`, and
+   * cleared by `commitTeardown` (the backing `DirtyTracker` is gone after
+   * commit so the mirror has nothing to listen to). `patchStore` and
+   * `renderLayer` persist across the gap so committed patches stay visible.
+   */
+  mirror: PatchMirror | undefined;
 }
 
 interface ActiveRegion {
@@ -249,6 +260,13 @@ export class EditSessionHost extends RefCounted {
    */
   readonly editSessionPanelLocation = new TrackableSidePanelLocation();
 
+  /**
+   * Side-panel location for the "Pending Changes" panel — the post-commit
+   * lifecycle manager. The user toggles it via a top-bar button. Lives
+   * independently of any active session.
+   */
+  readonly pendingChangesPanelLocation = new TrackableSidePanelLocation();
+
   // -- Save cancellation ----------------------------------------------------
   private saveAbortController: AbortController | undefined;
 
@@ -259,7 +277,9 @@ export class EditSessionHost extends RefCounted {
   // Exposed publicly so the viewer can pass it into `EditSessionEntryModal`
   // without re-instantiating an adapter against the same `LayerManager`.
   readonly layerMetadataSource: NgLayerMetadataSource;
-  private readonly commitTarget: NgCommitTarget;
+  // Exposed publicly so the "Pending Changes" panel can subscribe to the
+  // `changed` signal and enumerate layers with in-memory committed chunks.
+  readonly commitTarget: NgCommitTarget;
   private readonly saveTarget: NgSaveTarget;
   private readonly clock: NgClock;
 
@@ -317,6 +337,10 @@ export class EditSessionHost extends RefCounted {
       this.viewer.chunkManager,
     );
     this.commitTarget = new NgCommitTarget();
+    // The chunk source merges in-memory committed chunks into baseline
+    // reads so a new session starts on top of a previous session's
+    // commits. See NgChunkSource.readBaselineChunk.
+    this.chunkSource.commitTarget = this.commitTarget;
     this.saveTarget = new NgSaveTarget(
       this.viewer.layerManager,
       this.layerMetadataSource,
@@ -344,6 +368,16 @@ export class EditSessionHost extends RefCounted {
       throw new Error("A session is already active");
     }
 
+    // NOTE: previously we tore down all per-layer machinery here so each
+    // session started fresh. That broke the cross-session "in-memory
+    // commits stay visible and editable" workflow — we now preserve any
+    // leftover LocalPatchStore + PatchedSegmentationRenderLayer per layer
+    // and just attach a fresh PatchMirror to the new session's overlay in
+    // `attachPerLayer`. Layers that aren't in the new config but still
+    // have a perLayer entry from a previous commit stay attached and
+    // visible until the user explicitly Saves or Resets them via the
+    // pending-changes panel.
+
     const libraryConfig = this.buildLibraryConfig(config);
     const adapters = this.buildAdapters();
 
@@ -362,8 +396,18 @@ export class EditSessionHost extends RefCounted {
         sessionLayerIds: new Set(config.layers.map((l) => l.layerId)),
       });
       this.bindSessionEvents(session);
-      this.writeIntentToState(config);
+      // Set `activeSession.value` BEFORE persisting the intent. Writing the
+      // intent dispatches `state.changed`, which the constructor subscribes
+      // to in order to trigger `tryRestoreFromState()` after a URL-state
+      // restore. The subscription short-circuits when a session is already
+      // active — so we need `activeSession.value` to be set first. Doing it
+      // in the other order makes the just-opened session look like a
+      // restore-pending intent, leading the subscription to call
+      // `openSession` again (which throws "A session is already active"),
+      // and the failure handler clears the intent — wiping the URL state
+      // we'd just persisted. The user only sees the bug on the next reload.
       this.activeSession.value = session;
+      this.writeIntentToState(config);
       this.editSessionPanelLocation.visible = true;
       this.pointerEventBridge = new PointerEventBridge(this, this.viewer.display);
       this.hotkeyBinder = new EditSessionHotkeyBinder(this, this.viewer);
@@ -384,15 +428,100 @@ export class EditSessionHost extends RefCounted {
     return session;
   }
 
-  /** Discard the active session, dropping all dirty chunks. */
+  /**
+   * Discard the active session. The CURRENT session's edits are rolled
+   * back, but in-memory committed patches from previous sessions are
+   * preserved (the user's "Save" buffer survives this discard — only
+   * "Reset" in the pending-changes panel clears that).
+   *
+   * Rollback procedure: for every chunk dirtied during this session,
+   *   - if `commitTarget` has a committed snapshot → re-mirror it into the
+   *     per-layer LocalPatchStore (reverting to the committed state),
+   *   - else → drop the chunk's patch entry so the base layer renders
+   *     through (no leftover patches from in-session edits).
+   * Chunks NOT dirtied in this session keep whatever committed state they
+   * already had.
+   */
   async discardActive(): Promise<void> {
     const session = this.activeSession.value;
     if (session === undefined) return;
+    // Snapshot the dirty set BEFORE discarding — `session.discard()` clears
+    // the library's DirtyTracker.
+    const dirty = Array.from(session.dirty.getDirtyChunks());
     try {
       await session.discard();
     } finally {
-      this.finalizeTeardown();
+      this.rollbackDirtyChunks(dirty);
+      this.commitTeardown();
     }
+  }
+
+  private rollbackDirtyChunks(overlayKeys: readonly string[]): void {
+    for (const key of overlayKeys) {
+      let coord;
+      try {
+        coord = OverlayKey.toCoord(key);
+      } catch {
+        continue;
+      }
+      const entry = this.perLayer.get(coord.layerId);
+      if (entry === undefined) continue;
+      const committed = this.commitTarget.getChunk(
+        coord.layerId,
+        coord.resolution,
+        coord.chunkId,
+      );
+      const chunkCoord = ChunkIdFactory.toCoord(coord.chunkId);
+      const chunkGridPosition = new Float32Array([
+        chunkCoord.x,
+        chunkCoord.y,
+        chunkCoord.z,
+      ]);
+      if (committed === undefined) {
+        // No committed snapshot — drop the patch entirely so the base
+        // layer renders through.
+        entry.patchStore.clearChunk(chunkGridPosition);
+        continue;
+      }
+      // Revert to the committed bytes. Mirror the conversion that
+      // `PatchMirror` does for live overlay writes.
+      const view = committed.bytes.asView();
+      const data =
+        view instanceof BigUint64Array
+          ? view
+          : widenToBigUint64(view);
+      const chunkDataSize = this.chunkDataSizeForLayer(
+        coord.layerId,
+        coord.resolution,
+      );
+      if (chunkDataSize === undefined) continue;
+      entry.patchStore.writeFullChunk(chunkGridPosition, chunkDataSize, data);
+    }
+  }
+
+  private chunkDataSizeForLayer(
+    layerId: LayerId,
+    _resolution: ResolutionType,
+  ): readonly [number, number, number] | undefined {
+    // The size is layer-resolution-specific. Pull it from the patched
+    // render layer's first source (mirrors what `PatchMirror` does).
+    const entry = this.perLayer.get(layerId);
+    if (entry === undefined) return undefined;
+    // PatchedSegmentationRenderLayer exposes visibleSourcesList; walk to
+    // find a source whose voxel size matches the resolution.
+    const sources = entry.renderLayer.visibleSourcesList;
+    for (const v of sources) {
+      const size = v.source.spec.chunkDataSize;
+      if (size.length >= 3) {
+        // We don't strictly check resolution match here — chunk sizes are
+        // typically consistent across scales for a given layer at editing
+        // time and the rollback is best-effort. The library's metadata
+        // source is the authoritative answer but it's async; this path
+        // runs synchronously inside discard.
+        return [size[0], size[1], size[2]];
+      }
+    }
+    return undefined;
   }
 
   /** Commit the active session. Ends the session regardless of outcome. */
@@ -405,7 +534,11 @@ export class EditSessionHost extends RefCounted {
     try {
       result = await session.commit();
     } finally {
-      this.finalizeTeardown();
+      // Commit = client-side in-memory persist. Keep the painted patches
+      // visible on the canvas (they live in the per-layer LocalPatchStore /
+      // PatchedSegmentationRenderLayer) so the user sees their work after
+      // committing. Discarding or starting a new session clears them.
+      this.commitTeardown();
     }
     return result;
   }
@@ -455,6 +588,119 @@ export class EditSessionHost extends RefCounted {
    */
   cancelActiveSave(): void {
     this.saveAbortController?.abort();
+  }
+
+  // -- Committed-buffer lifecycle (post-commit, no active session) ---------
+
+  /**
+   * Drop the in-memory committed patches for `layerId` without persisting
+   * them. Clears the corresponding `NgCommitTarget` entries and tears
+   * down the layer's `LocalPatchStore` + `PatchedSegmentationRenderLayer`
+   * so the base layer renders cleanly again. Safe to call any time.
+   */
+  resetLayer(layerId: LayerId): void {
+    this.commitTarget.clearLayer(layerId);
+    const entry = this.perLayer.get(layerId);
+    if (entry === undefined) return;
+    if (entry.mirror !== undefined) {
+      try {
+        entry.mirror.dispose();
+      } catch {
+        // ignore
+      }
+    }
+    try {
+      entry.detachRenderLayer();
+    } catch {
+      // ignore
+    }
+    try {
+      entry.patchStore.dispose();
+    } catch {
+      // ignore
+    }
+    this.perLayer.delete(layerId);
+    this._activeRegionByLayer.delete(layerId);
+  }
+
+  /** Drop the committed patches for every layer. */
+  resetAllCommitted(): void {
+    for (const layerId of [...this.perLayer.keys()]) {
+      this.resetLayer(layerId);
+    }
+    // Make sure NgCommitTarget is fully empty even for layers whose
+    // perLayer entry was already gone.
+    this.commitTarget.clearAll();
+  }
+
+  /**
+   * Persist the in-memory committed patches for the given layers (or all
+   * layers with pending changes if `layerIds` is omitted) via the host's
+   * save backends. On per-layer success the corresponding committed
+   * entries are cleared from `NgCommitTarget` and the layer's
+   * `LocalPatchStore` + `PatchedSegmentationRenderLayer` are torn down.
+   *
+   * Distinct from `saveActive()`, which only writes the live session's
+   * dirty chunks via the library's pipeline. This path is for committed
+   * buffers that survived past session end.
+   */
+  async saveCommitted(layerIds?: readonly LayerId[]): Promise<SaveResult> {
+    const targetLayers =
+      layerIds !== undefined && layerIds.length > 0
+        ? Array.from(new Set(layerIds))
+        : this.commitTarget.pendingLayerIds();
+    const outcomes: SaveLayerOutcome[] = [];
+    for (const layerId of targetLayers) {
+      const chunks = this.commitTarget.layerChunks(layerId);
+      if (chunks.length === 0) continue;
+      const payload: SavePayload = {
+        // No live session; synthesize a marker session id. Backends in
+        // v1 do not use this field for routing or auth.
+        sessionId: toSessionId("post-commit-save"),
+        savedAt: this.clock.now(),
+        layerIds: [layerId],
+        chunks: chunks.map((c) => ({
+          layerId: c.layerId,
+          resolution: c.resolution,
+          chunkId: c.chunkId,
+          chunkCoord: c.chunkCoord,
+          contentRef: c.contentRef,
+          bytes: c.bytes,
+        })),
+      };
+      let layerResult: SaveResult;
+      try {
+        layerResult = await this.saveTarget.save(payload);
+      } catch (err) {
+        outcomes.push({
+          status: "failed",
+          layerId,
+          error: {
+            kind: "recoverable",
+            code: "save-target-threw",
+            message: err instanceof Error ? err.message : String(err),
+            at: this.clock.now(),
+          },
+        });
+        continue;
+      }
+      for (const o of layerResult.outcomes) outcomes.push(o);
+      // Clear the committed buffer + render machinery for any layer whose
+      // outcome reports success.
+      for (const o of layerResult.outcomes) {
+        if (o.status === "succeeded") this.resetLayer(o.layerId);
+      }
+    }
+    return { overall: computeOverallOutcome(outcomes), outcomes };
+  }
+
+  /**
+   * True iff there's at least one committed chunk pending in memory that
+   * the user has not yet saved to the backend. Used to drive the
+   * `beforeunload` warning.
+   */
+  hasPendingCommittedChanges(): boolean {
+    return this.commitTarget.accepted.size > 0;
   }
 
   // -- Per-layer accessors --------------------------------------------------
@@ -725,33 +971,40 @@ export class EditSessionHost extends RefCounted {
         );
         continue;
       }
-      const baseRenderLayer = findBaseSegmentationRenderLayer(userLayer);
-      if (baseRenderLayer === undefined) {
-        this.logger.warn(
-          "session",
-          `Layer ${layer.layerId} has no SegmentationRenderLayer yet; skipping render-layer attach`,
+      // Reuse the existing per-layer entry when a previous commit left one
+      // behind — its LocalPatchStore + PatchedSegmentationRenderLayer are
+      // the user's in-memory commits and must stay visible/editable.
+      let entry = this.perLayer.get(layer.layerId);
+      if (entry === undefined) {
+        const baseRenderLayer = findBaseSegmentationRenderLayer(userLayer);
+        if (baseRenderLayer === undefined) {
+          this.logger.warn(
+            "session",
+            `Layer ${layer.layerId} has no SegmentationRenderLayer yet; skipping render-layer attach`,
+          );
+          continue;
+        }
+        const patchStore = new LocalPatchStore();
+        const renderLayer = new PatchedSegmentationRenderLayer(
+          baseRenderLayer.multiscaleSource,
+          baseRenderLayer.displayState,
+          patchStore,
         );
-        continue;
+        const detachRenderLayer = userLayer.addRenderLayer(renderLayer);
+        entry = {
+          patchStore,
+          renderLayer,
+          mirror: undefined,
+          detachRenderLayer,
+        };
+        this.perLayer.set(layer.layerId, entry);
       }
-      const patchStore = new LocalPatchStore();
-      const renderLayer = new PatchedSegmentationRenderLayer(
-        baseRenderLayer.multiscaleSource,
-        baseRenderLayer.displayState,
-        patchStore,
-      );
-      const detachRenderLayer = userLayer.addRenderLayer(renderLayer);
-      const mirror = new PatchMirror(
+      entry.mirror = new PatchMirror(
         session,
         layer.layerId,
-        patchStore,
+        entry.patchStore,
         this.logger,
       );
-      this.perLayer.set(layer.layerId, {
-        patchStore,
-        renderLayer,
-        mirror,
-        detachRenderLayer,
-      });
       this._activeRegionByLayer.set(
         layer.layerId,
         new WatchableValue<ActiveRegion | undefined>(
@@ -984,7 +1237,51 @@ export class EditSessionHost extends RefCounted {
     this.logger.error("session", message);
   }
 
+  /**
+   * Full teardown. Used by `discardActive` and the disposed path:
+   *   - tools (pointer bridge, hotkey binder, cursor),
+   *   - per-layer rendering (LocalPatchStore, PatchedSegmentationRenderLayer,
+   *     PatchMirror),
+   *   - session lock + state.
+   */
   private finalizeTeardown(): void {
+    this.tearDownSessionTools();
+    this.teardownPerLayer();
+    this.tearDownSessionState();
+  }
+
+  /**
+   * Partial teardown for `commitActive`. The library's commit pipeline has
+   * already stashed the dirty chunks in `NgCommitTarget` (the host-side
+   * in-memory committed buffer). We need the painted result to stay
+   * VISIBLE on the canvas — it's the user's client-side persistence — so
+   * keep the per-layer `LocalPatchStore` + `PatchedSegmentationRenderLayer`
+   * alive. Everything else (session tools, library lock, sidebar state) is
+   * torn down so the editing UI exits cleanly.
+   *
+   * The `PatchMirror` instances are disposed (their backing session is
+   * gone, no more `DirtyTracker` events will arrive) but the patch bytes
+   * already mirrored into the GPU stores stay put.
+   *
+   * URL state is cleared because in-memory commits do not survive a
+   * reload — they're per-client. A reload should start with a clean slate.
+   */
+  private commitTeardown(): void {
+    this.tearDownSessionTools();
+    for (const entry of this.perLayer.values()) {
+      if (entry.mirror !== undefined) {
+        try {
+          entry.mirror.dispose();
+        } catch {
+          // ignore
+        }
+        entry.mirror = undefined;
+      }
+    }
+    this.tearDownSessionState();
+  }
+
+  private tearDownSessionTools(): void {
     if (this.pointerEventBridge !== undefined) {
       try {
         this.pointerEventBridge.dispose();
@@ -995,7 +1292,9 @@ export class EditSessionHost extends RefCounted {
     }
     this.teardownHotkeyBinder();
     this.teardownCursorOverlays();
-    this.teardownPerLayer();
+  }
+
+  private tearDownSessionState(): void {
     this.sessionLock.clearActiveSession();
     if (this.sessionLockHandle !== undefined) {
       try {
@@ -1028,10 +1327,12 @@ export class EditSessionHost extends RefCounted {
 
   private teardownPerLayer(): void {
     for (const entry of this.perLayer.values()) {
-      try {
-        entry.mirror.dispose();
-      } catch {
-        // ignore
+      if (entry.mirror !== undefined) {
+        try {
+          entry.mirror.dispose();
+        } catch {
+          // ignore
+        }
       }
       try {
         entry.detachRenderLayer();
@@ -1084,4 +1385,49 @@ function bboxToNm(
     bbox[4] * voxelSizeNm[1],
     bbox[5] * voxelSizeNm[2],
   ];
+}
+
+/**
+ * Widen a narrower typed-array voxel buffer into a `BigUint64Array` with
+ * one BigUint64 per voxel (matching `LocalPatchStore`'s storage format).
+ * Mirrors the conversion logic in `PatchMirror.toBigUint64Array` so that
+ * discard-rollback writes are byte-compatible with live mirror writes.
+ */
+function computeOverallOutcome(
+  outcomes: readonly SaveLayerOutcome[],
+): SaveResult["overall"] {
+  if (outcomes.length === 0) return "all-succeeded";
+  let anySucceeded = false;
+  let anyFailed = false;
+  for (const o of outcomes) {
+    if (o.status === "succeeded") anySucceeded = true;
+    else anyFailed = true;
+  }
+  if (anySucceeded && !anyFailed) return "all-succeeded";
+  if (anyFailed && !anySucceeded) return "all-failed";
+  return "partial";
+}
+
+function widenToBigUint64(view: ArrayBufferView): BigUint64Array {
+  const len = (view as unknown as { length: number }).length;
+  const out = new BigUint64Array(len);
+  if (
+    view instanceof Uint8Array ||
+    view instanceof Uint16Array ||
+    view instanceof Uint32Array
+  ) {
+    for (let i = 0; i < len; ++i) out[i] = BigInt(view[i]);
+    return out;
+  }
+  if (
+    view instanceof Int8Array ||
+    view instanceof Int16Array ||
+    view instanceof Int32Array
+  ) {
+    for (let i = 0; i < len; ++i) out[i] = BigInt(view[i] >>> 0);
+    return out;
+  }
+  // Unknown / unsupported types fall through as all-zero — safer than
+  // misreading bytes.
+  return out;
 }

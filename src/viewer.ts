@@ -34,6 +34,7 @@ import { DataManagementContext } from "#src/data_management_context.js";
 import { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { EnterEditSessionButton } from "#src/editing/ui/enter_session_button.js";
 import { EditSessionEntryModal } from "#src/editing/ui/entry_modal.js";
+import { PendingChangesPanel } from "#src/editing/ui/pending_changes_panel.js";
 import { EditSessionSidebar } from "#src/editing/ui/session_sidebar.js";
 import { InputEventBindings as DataPanelInputEventBindings } from "#src/data_panel_layout.js";
 import { getDefaultDataSourceProvider } from "#src/datasource/default_provider.js";
@@ -967,6 +968,61 @@ export class Viewer extends RefCounted implements ViewerState {
       topRow.appendChild(enterButton.element);
     }
 
+    {
+      // "Pending Changes" top-bar button — toggles the side-panel that
+      // manages in-memory committed patches outside of an active edit
+      // session. The button itself only changes appearance when the
+      // commit buffer is non-empty (we surface a badge with the number of
+      // layers with pending data).
+      const pendingButton = document.createElement("button");
+      pendingButton.type = "button";
+      pendingButton.classList.add("neuroglancer-pending-changes-toggle");
+      pendingButton.title =
+        "Pending Changes — review / save / discard in-memory patches";
+      pendingButton.textContent = "Pending Changes";
+      const badge = document.createElement("span");
+      badge.classList.add("neuroglancer-pending-changes-badge");
+      badge.style.display = "none";
+      pendingButton.appendChild(badge);
+      const refreshBadge = () => {
+        const layerIds = this.editSessionHost.commitTarget.pendingLayerIds();
+        if (layerIds.length === 0) {
+          badge.style.display = "none";
+          badge.textContent = "";
+        } else {
+          badge.style.display = "";
+          badge.textContent = String(layerIds.length);
+        }
+      };
+      refreshBadge();
+      this.registerDisposer(
+        this.editSessionHost.commitTarget.changed.add(refreshBadge),
+      );
+      pendingButton.addEventListener("click", () => {
+        const location = this.editSessionHost.pendingChangesPanelLocation;
+        location.visible = !location.visible;
+      });
+      topRow.appendChild(pendingButton);
+    }
+
+    {
+      // beforeunload guard: warn the user if they navigate away while
+      // there are in-memory committed patches that have not been saved
+      // to the backend. Modern browsers ignore the custom message and
+      // show their own generic prompt; setting `returnValue` is what
+      // actually triggers it.
+      const handleBeforeUnload = (ev: BeforeUnloadEvent) => {
+        if (!this.editSessionHost.hasPendingCommittedChanges()) return;
+        ev.preventDefault();
+        ev.returnValue =
+          "You have unsaved in-memory edits. They will be lost if you leave.";
+      };
+      window.addEventListener("beforeunload", handleBeforeUnload);
+      this.registerDisposer(() =>
+        window.removeEventListener("beforeunload", handleBeforeUnload),
+      );
+    }
+
     this.registerDisposer(
       new ElementVisibilityFromTrackableBoolean(
         makeDerivedWatchableValue(
@@ -1068,6 +1124,17 @@ export class Viewer extends RefCounted implements ViewerState {
         location: this.editSessionHost.editSessionPanelLocation,
         makePanel: () =>
           new EditSessionSidebar(this.sidePanelManager, this.editSessionHost),
+      }),
+    );
+
+    this.registerDisposer(
+      this.sidePanelManager.registerPanel({
+        location: this.editSessionHost.pendingChangesPanelLocation,
+        makePanel: () =>
+          new PendingChangesPanel(
+            this.sidePanelManager,
+            this.editSessionHost,
+          ),
       }),
     );
 

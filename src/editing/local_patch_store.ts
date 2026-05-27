@@ -16,7 +16,7 @@
  * IndexedDB persistence are deferred to a later iteration.
  */
 
-import { LocalPatchSource } from "#src/editing/local_patch_source.js";
+import { chunkGridKey, LocalPatchSource } from "#src/editing/local_patch_source.js";
 import type { DebouncedFunction } from "#src/util/animation_frame_debounce.js";
 import { animationFrameDebounce } from "#src/util/animation_frame_debounce.js";
 import { RefCounted } from "#src/util/disposable.js";
@@ -70,6 +70,18 @@ export class LocalPatchStore extends RefCounted {
   clearAll(): void {
     this.source.clearAll();
     this.flushImmediately();
+  }
+
+  /**
+   * Drop a single patched chunk by grid position. Used when discarding an
+   * active edit session: chunks dirtied during the session that have NO
+   * committed snapshot to revert to need their patch removed so the base
+   * layer renders through.
+   */
+  clearChunk(chunkGridPosition: ArrayLike<number>): void {
+    if (this.source.clearChunk(chunkGridKey(chunkGridPosition))) {
+      this.scheduleGPUFlush();
+    }
   }
 
   /** Convenience: count total patches across all chunks. Used by tests/UI. */
