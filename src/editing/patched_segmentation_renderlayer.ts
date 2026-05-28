@@ -23,7 +23,7 @@
  * proper segment-color rendering.
  */
 
-import { LocalPatchChunk } from "#src/editing/local_patch_chunk.js";
+import type { LocalPatchChunk } from "#src/editing/local_patch_chunk.js";
 import type { LocalPatchStore } from "#src/editing/local_patch_store.js";
 import { chunkGridKey } from "#src/editing/local_patch_source.js";
 import type { BboxAlphaShaderHook } from "#src/editing/shaders/bbox_alpha_chunk.js";

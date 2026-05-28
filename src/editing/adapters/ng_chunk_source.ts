@@ -28,7 +28,7 @@ import {
 
 import { resolutionFor } from "#src/editing/adapters/ng_layer_metadata_source.js";
 import type { ChunkManager } from "#src/chunk_manager/frontend.js";
-import { Chunk } from "#src/chunk_manager/frontend.js";
+import type { Chunk } from "#src/chunk_manager/frontend.js";
 import type { LayerManager, UserLayer } from "#src/layer/index.js";
 import type { LoadedLayerDataSource } from "#src/layer/layer_data_source.js";
 import type { SliceViewSingleResolutionSource } from "#src/sliceview/frontend.js";

@@ -32,9 +32,8 @@ import type { CredentialsManager } from "#src/credentials_provider/index.js";
 import { SharedCredentialsManager } from "#src/credentials_provider/shared.js";
 import { DataManagementContext } from "#src/data_management_context.js";
 import { EditSessionHost } from "#src/editing/edit_session_host.js";
-import { EnterEditSessionButton } from "#src/editing/ui/enter_session_button.js";
-import { EditSessionEntryModal } from "#src/editing/ui/entry_modal.js";
-import { EditSessionSidebar } from "#src/editing/ui/session_sidebar.js";
+import { SessionEntryMount } from "#src/editing/ui/interop/session_entry_mount.js";
+import { SessionPanelMount } from "#src/editing/ui/interop/session_panel_mount.js";
 import { InputEventBindings as DataPanelInputEventBindings } from "#src/data_panel_layout.js";
 import { getDefaultDataSourceProvider } from "#src/datasource/default_provider.js";
 import type { DataSourceRegistry } from "#src/datasource/index.js";
@@ -948,20 +947,10 @@ export class Viewer extends RefCounted implements ViewerState {
       // a top-bar control sibling to the existing CheckboxIcon buttons.
       // Clicking opens the entry modal; the modal owns its own disposal.
       const enterButton = this.registerDisposer(
-        new EnterEditSessionButton(
+        new SessionEntryMount(
           this.editSessionHost,
           this.layerManager,
-          () => {
-            const modal = new EditSessionEntryModal(
-              this.editSessionHost,
-              this.layerManager,
-              this.editSessionHost.layerMetadataSource,
-              () => {
-                modal.dispose();
-              },
-            );
-            document.body.appendChild(modal.element);
-          },
+          this.editSessionHost.layerMetadataSource,
         ),
       );
       topRow.appendChild(enterButton.element);
@@ -1067,7 +1056,7 @@ export class Viewer extends RefCounted implements ViewerState {
       this.sidePanelManager.registerPanel({
         location: this.editSessionHost.editSessionPanelLocation,
         makePanel: () =>
-          new EditSessionSidebar(this.sidePanelManager, this.editSessionHost),
+          new SessionPanelMount(this.sidePanelManager, this.editSessionHost),
       }),
     );
 
