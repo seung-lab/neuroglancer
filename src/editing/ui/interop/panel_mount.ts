@@ -9,8 +9,8 @@
  */
 
 import type { ComponentType, RenderableProps } from "preact";
-import { createElement, render } from "preact";
 
+import { mountComponent } from "#src/editing/ui/interop/component_mount.js";
 import type { SidePanelManager } from "#src/ui/side_panel.js";
 import { SidePanel } from "#src/ui/side_panel.js";
 import type { TrackableSidePanelLocation } from "#src/ui/side_panel_location.js";
@@ -43,10 +43,12 @@ export class PanelMount<T> extends SidePanel {
       this.bodyElement.classList.add(...options.classNames);
     }
     this.addBody(this.bodyElement);
+    this.registerDisposer(
+      mountComponent(this.bodyElement, options.component, options.getProps()),
+    );
     if (options.subscribe) {
       this.registerDisposer(options.subscribe(() => this.renderBody()));
     }
-    this.renderBody();
   }
 
   override close(): void {
@@ -54,15 +56,7 @@ export class PanelMount<T> extends SidePanel {
     super.close();
   }
 
-  override disposed(): void {
-    render(null, this.bodyElement);
-    super.disposed();
-  }
-
   private renderBody(): void {
-    render(
-      createElement(this.options.component, this.options.getProps()),
-      this.bodyElement,
-    );
+    mountComponent(this.bodyElement, this.options.component, this.options.getProps());
   }
 }

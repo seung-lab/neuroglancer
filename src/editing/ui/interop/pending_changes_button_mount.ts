@@ -9,52 +9,19 @@
  */
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
+import { mountComponent } from "#src/editing/ui/interop/component_mount.js";
+import { PendingChangesButton } from "#src/editing/ui/session_controls/pending_changes_button.js";
 import { RefCounted } from "#src/util/disposable.js";
 
 export class PendingChangesButtonMount extends RefCounted {
-  readonly element: HTMLButtonElement;
-  private readonly badge: HTMLSpanElement;
+  readonly element: HTMLElement;
 
-  constructor(private readonly host: EditSessionHost) {
+  constructor(host: EditSessionHost) {
     super();
-
-    const button = document.createElement("button");
-    button.type = "button";
-    button.classList.add("neuroglancer-pending-changes-toggle");
-    button.title =
-      "Pending Changes — review / save / discard in-memory patches";
-    button.textContent = "Pending Changes";
-
-    this.badge = document.createElement("span");
-    this.badge.classList.add("neuroglancer-pending-changes-badge");
-    this.badge.style.display = "none";
-    button.appendChild(this.badge);
-
-    button.addEventListener("click", this.onClick);
-    this.element = button;
-
-    this.registerDisposer(host.commitTarget.changed.add(() => this.refresh()));
-    this.refresh();
-  }
-
-  private refresh = (): void => {
-    const layerIds = this.host.commitTarget.pendingLayerIds();
-    if (layerIds.length === 0) {
-      this.badge.style.display = "none";
-      this.badge.textContent = "";
-    } else {
-      this.badge.style.display = "";
-      this.badge.textContent = String(layerIds.length);
-    }
-  };
-
-  private onClick = (): void => {
-    const location = this.host.pendingChangesPanelLocation;
-    location.visible = !location.visible;
-  };
-
-  override disposed(): void {
-    this.element.removeEventListener("click", this.onClick);
-    super.disposed();
+    this.element = document.createElement("div");
+    this.element.style.display = "contents";
+    this.registerDisposer(
+      mountComponent(this.element, PendingChangesButton, { host }),
+    );
   }
 }
