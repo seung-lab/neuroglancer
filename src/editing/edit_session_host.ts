@@ -298,6 +298,15 @@ export class EditSessionHost extends RefCounted {
   readonly commitTarget: NgCommitTarget;
   private readonly saveTarget: NgSaveTarget;
   private readonly clock: NgClock;
+  /**
+   * Painting compute is constructed ONCE on the host. The library's
+   * `BrushApplyInput`/`BrushStrokeInput` don't carry the bbox, so the
+   * compute needs out-of-band session state to clip strokes that cross
+   * the bbox boundary (see PaintingCompute.setRegion). We keep one
+   * instance for the host's lifetime and call setRegion/clearRegion on
+   * session open/close.
+   */
+  private readonly paintingCompute = new PaintingCompute();
 
   // -- Per-layer persistent watchables for `editBboxLoHi` -------------------
   // Per `06-bbox-rendering.md` § "Wiring to the render layers", every
@@ -413,6 +422,15 @@ export class EditSessionHost extends RefCounted {
 
     try {
       this.attachPerLayer(session, config);
+      // Activate the bbox-clip region on the painting compute so brush
+      // strokes that cross the bbox boundary stamp only INSIDE the bbox.
+      // The library's `applyPaintBatch` writes voxels verbatim; without
+      // this filter the compute would happily paint disks into pinned
+      // chunks beyond the user-visible boundary (see image #20 bug).
+      this.paintingCompute.setRegion({
+        bbox: config.bboxVoxelCoords,
+        resolution: config.bboxResolution,
+      });
       this.sessionLock.setActiveSession({
         sessionId: session.sessionId,
         sessionLayerIds: new Set(config.layers.map((l) => l.layerId)),
@@ -945,7 +963,7 @@ export class EditSessionHost extends RefCounted {
       tools: [
         painting({
           initialState: paintInitial,
-          compute: new PaintingCompute(),
+          compute: this.paintingCompute,
         }),
         correspondence({
           initialState: correspondenceInitial,
@@ -1319,6 +1337,7 @@ export class EditSessionHost extends RefCounted {
   }
 
   private tearDownSessionState(): void {
+    this.paintingCompute.clearRegion();
     this.sessionLock.clearActiveSession();
     if (this.sessionLockHandle !== undefined) {
       try {

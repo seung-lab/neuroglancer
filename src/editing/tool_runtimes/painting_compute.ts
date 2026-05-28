@@ -9,6 +9,7 @@
  */
 
 import type {
+  BoundingBoxVoxels,
   BrushApplyInput,
   BrushStrokeInput,
   ChunkCoord,
@@ -24,7 +25,39 @@ import type {
   ScaleMetadata,
   VoxelDataType,
 } from "@zetta-ai/edit-session";
-import { ChunkId, scaleFor } from "@zetta-ai/edit-session";
+import { ChunkId, Resolution, scaleFor } from "@zetta-ai/edit-session";
+
+/**
+ * Bbox-clip region in some resolution's voxel coordinates. Set by
+ * `EditSessionHost` on session-open via {@link PaintingCompute.setRegion}
+ * and cleared on session-end via {@link PaintingCompute.clearRegion}.
+ *
+ * The architect spec (`06-bbox-rendering.md` § "PatchedSegmentationRenderLayer
+ * does NOT need the same dimming") explicitly assigns "soft-clamp at the
+ * patch's chunk-grid boundary to the actual bbox" to the painting compute —
+ * the library's `applyPaintBatch` writes every voxel the compute returns,
+ * so without this filter strokes that cross the bbox boundary stamp
+ * disks into pinned chunks beyond the user-visible edge.
+ */
+interface ActiveRegion {
+  readonly bbox: BoundingBoxVoxels;
+  readonly resolution: ResolutionType;
+}
+
+/**
+ * Bbox-clip region resolved into a specific target layer's voxel
+ * coordinates. Computed lazily per paint call from {@link ActiveRegion}
+ * and the call's `targetResolution`.
+ */
+interface TargetClipBounds {
+  readonly loX: number;
+  readonly loY: number;
+  readonly loZ: number;
+  /** Exclusive upper bound (matches the half-open bbox convention). */
+  readonly hiX: number;
+  readonly hiY: number;
+  readonly hiZ: number;
+}
 
 /**
  * Neuroglancer-side `PaintCompute` implementation. Computes per-chunk write
@@ -35,11 +68,68 @@ import { ChunkId, scaleFor } from "@zetta-ai/edit-session";
  * through `PatchMirror` after the framework applies the returned batch).
  */
 export class PaintingCompute implements PaintCompute {
+  private region: ActiveRegion | undefined;
+
+  /**
+   * Set the bbox-clip region. Subsequent stamps and stroke segments will
+   * skip writes outside this region. Called by `EditSessionHost` on
+   * session-open with the session's region (`config.region`). Without
+   * this filter the library's `applyPaintBatch` writes every voxel the
+   * compute returns, including pinned-chunk voxels outside the bbox.
+   */
+  setRegion(region: ActiveRegion): void {
+    this.region = region;
+  }
+
+  /** Clear the bbox-clip region. Called on session-end. */
+  clearRegion(): void {
+    this.region = undefined;
+  }
+
+  /**
+   * Resolve the active region to a target-resolution voxel bbox. Returns
+   * `undefined` when no region is set (i.e. no active session — paint
+   * calls should not be flowing in this case, but if they do we don't
+   * silently clip everything to zero).
+   */
+  private clipBoundsFor(
+    targetResolution: ResolutionType,
+  ): TargetClipBounds | undefined {
+    const region = this.region;
+    if (region === undefined) return undefined;
+    const regionVoxelSize = Resolution.toVoxelSize(region.resolution);
+    const targetVoxelSize = Resolution.toVoxelSize(targetResolution);
+    const sx = regionVoxelSize[0] / targetVoxelSize[0];
+    const sy = regionVoxelSize[1] / targetVoxelSize[1];
+    const sz = regionVoxelSize[2] / targetVoxelSize[2];
+    const [bx0, by0, bz0, bx1, by1, bz1] = region.bbox;
+    // Snap fractional bbox bounds to integer voxel indices. The bbox values
+    // come straight from the annotation's pointA/B and may carry half-voxel
+    // offsets (e.g. an axis-aligned bounding box drawn at the center of
+    // voxel 919 has z range `[919.5, 920.5]`). `stampDisk2D` floors voxel
+    // coords to integers before calling `writeVoxel`, so the clip must also
+    // be in integer voxel space — otherwise the lower-bound check
+    // `voxel < lo` rejects every floored voxel right at the bbox edge
+    // (e.g. `919 < 919.5` → discard, breaking ALL paints on that slice).
+    // `floor` on both ends preserves the visible "1 slice covered" mapping
+    // for half-offset bboxes: `floor(919.5)=919, floor(920.5)=920`, so the
+    // half-open interval `[919, 920)` covers exactly voxel 919.
+    return {
+      loX: Math.floor(bx0 * sx),
+      loY: Math.floor(by0 * sy),
+      loZ: Math.floor(bz0 * sz),
+      hiX: Math.floor(bx1 * sx),
+      hiY: Math.floor(by1 * sy),
+      hiZ: Math.floor(bz1 * sz),
+    };
+  }
+
   async applyBrush(input: BrushApplyInput): Promise<PaintWriteBatch> {
     const builder = new PaintBatchBuilder(
       input.metadata,
       input.targetLayerId,
       input.targetResolution,
+      this.clipBoundsFor(input.targetResolution),
     );
     stampDisk2D(builder, input.voxelPosition, input.radius, input.value);
     return builder.build();
@@ -50,6 +140,7 @@ export class PaintingCompute implements PaintCompute {
       input.metadata,
       input.targetLayerId,
       input.targetResolution,
+      this.clipBoundsFor(input.targetResolution),
     );
     // Step size: caller may pass a coarse stepVoxels, but to avoid gaps the
     // stamp spacing must be no larger than the brush radius. We use the
@@ -92,6 +183,7 @@ export class PaintingCompute implements PaintCompute {
       input.metadata,
       input.targetLayerId,
       input.targetResolution,
+      this.clipBoundsFor(input.targetResolution),
     );
 
     const seedX = Math.floor(input.seedVoxelPosition[0]);
@@ -241,6 +333,7 @@ class PaintBatchBuilder {
     metadata: LayerMetadata,
     private readonly targetLayerId: BrushApplyInput["targetLayerId"],
     private readonly targetResolution: ResolutionType,
+    private readonly clipBounds: TargetClipBounds | undefined,
   ) {
     const scale: ScaleMetadata = scaleFor(metadata, targetResolution);
     this.chunkDataSize = [
@@ -253,6 +346,21 @@ class PaintBatchBuilder {
 
   /** Mark a single voxel for write. Coordinates are in resolution voxel space. */
   writeVoxel(vx: number, vy: number, vz: number, value: number | bigint): void {
+    // Drop writes outside the bbox-clip region. The bounds are exclusive
+    // on the high side to match the bbox annotation's half-open
+    // convention (`[lo, hi)`).
+    if (this.clipBounds !== undefined) {
+      if (
+        vx < this.clipBounds.loX ||
+        vy < this.clipBounds.loY ||
+        vz < this.clipBounds.loZ ||
+        vx >= this.clipBounds.hiX ||
+        vy >= this.clipBounds.hiY ||
+        vz >= this.clipBounds.hiZ
+      ) {
+        return;
+      }
+    }
     const sx = this.chunkDataSize[0];
     const sy = this.chunkDataSize[1];
     const sz = this.chunkDataSize[2];
