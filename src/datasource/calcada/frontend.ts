@@ -342,17 +342,8 @@ class GrapheneMultiscaleVolumeChunkSource extends PrecomputedMultiscaleVolumeChu
   // URL for the /precomputed_rp/ endpoint (piece_ids + LUT trailer)
   private rpUrl: string;
 
-  // Snapshot of the current time-travel and branch state read by getSources()
-  // at chunk-source construction time. Mutated externally by
-  // GraphConnection.refreshChunkSources() when the user toggles the layer's
-  // `Time` or `Branch` controls. The mutator must also trigger slice-view
-  // re-evaluation so a fresh chunk-source instance is created with the new
-  // values (and therefore a new URL with `?timestamp=…&branch_id=…`).
   timestampMs = 0;
   branchId = 0;
-  // Bumped by refreshChunkSources() so that toggling between live and any
-  // historical state always produces a distinct chunk-source memoize key —
-  // see base.ts comment on `generation` for the LUT-rebuild rationale.
   generation = 0;
 
   constructor(
@@ -1612,9 +1603,6 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       }),
     );
 
-    // Calcada graph branch — UI-only state on the graph source. Changing it
-    // must force chunk-source re-creation so the LUT trailer is resolved
-    // against the new branch.
     this.registerDisposer(
       this.graph.branchId.changed.add(() => {
         this.refreshChunkSources();
@@ -1888,32 +1876,17 @@ void main() {
 
   private graphRenderLayer: SliceViewPanelChunkedGraphLayer | undefined;
 
-  // refreshChunkSources mirrors the layer's current (timestamp, branchId)
-  // snapshot onto the volume and re-triggers slice-view source resolution.
-  // Re-resolution is achieved by dispatching `transform.changed` on each
-  // slice-view render layer — that signal is what `updateVisibleLayersNow`
-  // observes to decide whether to re-call `layer.getSources()`. Because the
-  // new (timestamp, branchId) is now in the volume, getSources() returns a
-  // chunk source with a new parameters hash, which the chunk manager memoizes
-  // as a fresh instance. The old chunks remain cached and are reused if the
-  // user toggles back to live.
   refreshChunkSources() {
     const segmentsState =
       this.layer.displayState.segmentationGroupState.value;
     this.chunkSource.timestampMs = segmentsState.timestamp.value ?? 0;
     this.chunkSource.branchId = this.graph.branchId.value;
     this.chunkSource.generation += 1;
-    // Equivalences accumulated from previous LUT trailers must be wiped so
-    // the new (timestamp, branchId) LUT is the only source of piece→root
-    // mappings. Without this, a piece linked to merged_root in live state
-    // stays linked after switching to a pre-merge timestamp — the union is
-    // permanent until cleared.
+    // Wipe equivalences from prior LUT trailers or unions persist across a time/branch switch.
     segmentsState.segmentEquivalences.clear();
     for (const renderLayer of this.layer.renderLayers) {
       if (renderLayer instanceof SliceViewRenderLayer) {
-        // transform.changed is exposed as a read-only signal on the layer
-        // interface, but the underlying value is a NullarySignal we own.
-        // Cast through `unknown` so we can call its dispatch() at runtime.
+        // transform.changed is read-only on the interface; cast to reach the underlying NullarySignal.
         (renderLayer.transform.changed as unknown as NullarySignal).dispatch();
       }
     }
@@ -2478,10 +2451,6 @@ const selectionInNanometers = (
   };
 };
 
-// appendCoordParams appends `timestamp=<sec>` and `branch_id=<n>` query
-// parameters to a URL when set. timestamp is converted from Unix-ms (the
-// frontend representation) to Unix-seconds (the backend expects seconds with
-// fractional). branch_id is omitted when 0 (default = main branch).
 function appendCoordParams(
   url: string,
   coord: { timestamp?: number; branchId?: number },
@@ -2763,10 +2732,6 @@ class GrapheneGraphSource extends SegmentationGraphSource {
   private l2CacheAvailable: boolean | undefined = undefined;
   private httpSource: HttpSource;
   public timestampLimit = new TrackableValue<number>(0, (x) => x);
-  // Calcada branch id surfaced as a layer-level control; default 0 = main.
-  // Lives here (and not on segmentationGroupState like `timestamp`) because
-  // branches are a Calcada-specific concept; the neuroglancer core has no
-  // notion of them.
   public branchId = new TrackableValue<number>(0, (x) =>
     typeof x === "number" && Number.isInteger(x) && x >= 0 ? x : 0,
   );
@@ -2927,8 +2892,6 @@ class GrapheneGraphSource extends SegmentationGraphSource {
     );
     parent.appendChild(toolbox);
 
-    // Visual-only read-only hint; the actual edit gating lives in each
-    // tool's activate() via checkSegmentationOld.
     const segmentationGroupStateValue =
       layer.displayState.segmentationGroupState.value;
     const updateReadOnlyClass = () => {
@@ -3264,9 +3227,6 @@ const timeControl = {
 
 registerLayerControl(SegmentationUserLayer, timeControl);
 
-// Calcada-specific branch picker. Renders as a small numeric input next to
-// the time control in the layer's options tab. Bound to
-// `GrapheneGraphSource.branchId` so two layers in the same group share state.
 const CALCADA_BRANCH_JSON_KEY = "calcadaBranch";
 
 function branchLayerControl(): LayerControlFactory<SegmentationUserLayer> {
@@ -3293,8 +3253,6 @@ function branchLayerControl(): LayerControlFactory<SegmentationUserLayer> {
       input.style.width = "6em";
       input.title =
         "Calcada branch id (0 = main). Switching clears segments not present on the new branch.";
-      // Reentrancy guard: the handler awaits a network call + confirm()
-      // dialog; a second change firing mid-flight must not write stale state.
       let branchChangeGeneration = 0;
       input.addEventListener("change", async () => {
         const parsed = Number.parseInt(input.value, 10);
@@ -3339,8 +3297,6 @@ function branchLayerControl(): LayerControlFactory<SegmentationUserLayer> {
               return;
             }
             if (myGeneration !== branchChangeGeneration) return;
-            // nonLatest predates the confirm() prompt; the selection may
-            // have changed under us, so only delete ids still selected.
             const currentSelection = new Set<string>();
             for (const id of segmentationGroupState.selectedSegments) {
               currentSelection.add(id.toString());
@@ -4620,9 +4576,6 @@ void main() {
         );
         return;
       }
-      // Defence in depth: if the user toggled time-travel between Preview
-      // and Apply, refuse to issue the write — the backend would also reject
-      // it, but failing fast here keeps the local UI consistent.
       if (
         layer.displayState.segmentationGroupState.value.timestamp.value !==
         undefined
@@ -4634,10 +4587,7 @@ void main() {
         return;
       }
       applyButton.classList.toggle("disabled", true);
-      // Resolve the old root before apply: the local segmentEquivalences
-      // disjoint-set returns the input id when no entry exists (not
-      // undefined), and refreshChunkSources clears it anyway, so a
-      // post-apply lookup can't reliably identify the root to deselect.
+      // segmentEquivalences returns the input id (not undefined) when there's no entry — resolve via backend.
       let preApplyOldRoot: bigint | undefined;
       try {
         const candidate = await graphConnection.graph.graphServer.getRoot(
@@ -4669,8 +4619,7 @@ void main() {
         );
         const segmentsState =
           layer.displayState.segmentationGroupState.value;
-        // Deselect root 0 too: an accidental background click otherwise
-        // paints every orphan piece (root_id=0) as one visible blob.
+        // Deselect root 0 or a stray background click paints every orphan piece as one blob.
         const toRemove: bigint[] = [focus, 0n];
         if (preApplyOldRoot !== undefined) {
           toRemove.push(preApplyOldRoot);
