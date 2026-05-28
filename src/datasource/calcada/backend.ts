@@ -152,15 +152,47 @@ export class CalcadaVolumeChunkSource extends WithParameters(
     const { kvStore } = this;
     const chunkPosition = this.computeChunkBounds(chunk);
     const chunkDataSize = chunk.chunkDataSize!;
-    const path =
-      `${kvStore.path}${chunkPosition[0]}-${chunkPosition[0] + chunkDataSize[0]}_` +
+    const chunkPath =
+      `${chunkPosition[0]}-${chunkPosition[0] + chunkDataSize[0]}_` +
       `${chunkPosition[1]}-${chunkPosition[1] + chunkDataSize[1]}_` +
       `${chunkPosition[2]}-${chunkPosition[2] + chunkDataSize[2]}`;
 
-    const readResponse = await kvStore.store.read(path, { signal });
-    if (readResponse === undefined) return;
+    // Live-state path (no time-travel / non-default branch): take the
+    // normal kvstore code path so caching and request batching keep
+    // working unchanged.
+    const { timestampMs, branchId } = this.parameters;
+    const liveState =
+      (!timestampMs || timestampMs <= 0) && (!branchId || branchId <= 0);
 
-    const fullBuffer = await readResponse.response.arrayBuffer();
+    let fullBuffer: ArrayBuffer;
+    if (liveState) {
+      const readResponse = await kvStore.store.read(
+        `${kvStore.path}${chunkPath}`,
+        { signal },
+      );
+      if (readResponse === undefined) return;
+      fullBuffer = await readResponse.response.arrayBuffer();
+    } else {
+      // Time-travel / branch path: kvstore would URL-encode `?` in the path,
+      // which would put `timestamp=…` into the bbox segment and break the
+      // backend parser. Bypass the kvstore and issue a direct fetch using
+      // the same HTTP fetcher the kvstore would have used.
+      // The runtime kvstore is a ReadableHttpKvStore but the generic type is
+      // not statically visible here, so we cast through `any` for the field
+      // accesses we need (baseUrl, fetchOkImpl). Reads are protocol-safe.
+      const httpStore = kvStore.store as any;
+      const query: string[] = [];
+      if (timestampMs && timestampMs > 0) {
+        query.push(`timestamp=${timestampMs / 1000}`);
+      }
+      if (branchId && branchId > 0) {
+        query.push(`branch_id=${branchId}`);
+      }
+      const url = `${httpStore.baseUrl}${kvStore.path}${chunkPath}?${query.join("&")}`;
+      const response = await httpStore.fetchOkImpl(url, { signal });
+      if (!response.ok) return;
+      fullBuffer = await response.arrayBuffer();
+    }
 
     // Extract LUT trailer: last 4 bytes = N (uint32 LE), then N × 16 bytes of (piece, root) pairs
     const fullView = new DataView(fullBuffer);
@@ -175,7 +207,7 @@ export class CalcadaVolumeChunkSource extends WithParameters(
     const lutByteSize = lutCount * 16 + 4;
 
     if (lutCount === 0 || lutByteSize > byteLen) {
-      console.warn(`[calcada chunk] NO LUT: path=${path.slice(-40)} byteLen=${byteLen} lutCount=${lutCount}`);
+      console.warn(`[calcada chunk] NO LUT: bbox=${chunkPath} byteLen=${byteLen} lutCount=${lutCount}`);
       await this.chunkDecoder(chunk, signal, fullBuffer);
       return;
     }

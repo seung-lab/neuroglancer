@@ -44,6 +44,22 @@ export class VolumeChunkSourceParameters {
   url: string;
   encoding: VolumeChunkEncoding;
   sharding: ShardingParameters | undefined;
+  // Time-travel chunk URL parameters. timestampMs in Unix ms (0 = live state,
+  // omitted from URL). branchId is the Calcada graph branch (0 = main,
+  // omitted from URL). Including these in the parameters object makes
+  // chunkManager memoize different (ts, branch) tuples as different chunk
+  // sources, so switching them automatically invalidates cached chunks.
+  timestampMs: number;
+  branchId: number;
+  // generation increments every time GraphConnection refreshes the chunk
+  // sources after a time-travel / branch toggle. Including it in the
+  // parameters hash forces a fresh chunk source instance (and therefore a
+  // fresh download + LUT re-processing) on each toggle, so the cleared
+  // segmentEquivalences get repopulated from the actual on-disk LUT for the
+  // new state — instead of being reused from a previously-cached chunk that
+  // would skip the LUT-link step (it only runs for pieces not already in
+  // the disjoint set).
+  generation: number;
 
   static RPC_ID = "graphene/VolumeChunkSource";
 }

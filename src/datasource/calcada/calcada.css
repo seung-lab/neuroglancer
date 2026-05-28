@@ -91,3 +91,96 @@
 .find-path-annotations > .neuroglancer-annotation-list-entry {
   background-color: black;
 }
+
+.graphene-piece-split {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 28em;
+}
+
+.graphene-piece-split .piece-split-focus {
+  font: 13px sans-serif;
+  font-weight: 600;
+}
+
+.graphene-piece-split .piece-split-image-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.graphene-piece-split .piece-split-image-row select {
+  flex: 1;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.graphene-piece-split .piece-split-image-hint {
+  font-family: monospace;
+  font-size: 11px;
+  opacity: 0.6;
+  margin-left: 5em;
+}
+
+.graphene-piece-split .piece-split-group-row .active-blue {
+  color: #4ad;
+  font-weight: 700;
+}
+
+.graphene-piece-split .piece-split-group-row .active-red {
+  color: #e55;
+  font-weight: 700;
+}
+
+.graphene-piece-split .piece-split-points {
+  display: flex;
+  gap: 12px;
+  font: 12px monospace;
+}
+
+.graphene-piece-split .piece-split-blue > div:first-child,
+.graphene-piece-split .piece-split-red > div:first-child {
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.graphene-piece-split .piece-split-blue > div:first-child {
+  color: #4ad;
+}
+
+.graphene-piece-split .piece-split-red > div:first-child {
+  color: #e55;
+}
+
+.graphene-piece-split .piece-split-point-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.graphene-piece-split .piece-split-preview-summary {
+  font: 12px sans-serif;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 4px;
+  border-radius: 2px;
+}
+
+.graphene-piece-split .piece-split-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.graphene-piece-split .neuroglancer-icon.disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* Time-travel read-only mode: visually grey-out toolbox buttons. Clicking
+ * is still allowed (the status-message hint surfaces in checkSegmentationOld),
+ * but the disabled appearance tells the user upfront why nothing happens. */
+.neuroglancer-segmentation-toolbox.calcada-time-travel-readonly
+  .neuroglancer-tool-button {
+  opacity: 0.4;
+  filter: grayscale(1);
+}
