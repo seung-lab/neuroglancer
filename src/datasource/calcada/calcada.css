@@ -175,3 +175,12 @@
   opacity: 0.4;
   pointer-events: none;
 }
+
+/* Time-travel read-only mode: visually grey-out toolbox buttons. Clicking
+ * is still allowed (the status-message hint surfaces in checkSegmentationOld),
+ * but the disabled appearance tells the user upfront why nothing happens. */
+.neuroglancer-segmentation-toolbox.calcada-time-travel-readonly
+  .neuroglancer-tool-button {
+  opacity: 0.4;
+  filter: grayscale(1);
+}

@@ -1596,6 +1596,7 @@ class GraphConnection extends SegmentationGraphSourceConnection {
           [...segmentsState.selectedSegments],
           timestamp.value,
           true,
+          this.graph.branchId.value,
         );
         segmentsState.selectedSegments.delete(nonLatestRoots);
         const unsetTimestamp = timestamp.value === undefined;
@@ -1896,7 +1897,7 @@ void main() {
   // chunk source with a new parameters hash, which the chunk manager memoizes
   // as a fresh instance. The old chunks remain cached and are reused if the
   // user toggles back to live.
-  private refreshChunkSources() {
+  refreshChunkSources() {
     const segmentsState =
       this.layer.displayState.segmentationGroupState.value;
     this.chunkSource.timestampMs = segmentsState.timestamp.value ?? 0;
@@ -2090,9 +2091,14 @@ void main() {
     const generation = ++this.splitModeGeneration;
     // Fetch pieces for the focus segment (needed for multicut sink/source assignment)
     try {
-      const pieces = await this.graph.graphServer.getLeaves(focusSegment);
+      const segmentsState =
+        this.layer.displayState.segmentationGroupState.value;
+      const pieces = await this.graph.graphServer.getLeaves(
+        focusSegment,
+        segmentsState.timestamp.value ?? 0,
+        this.graph.branchId.value,
+      );
       if (this.splitModeGeneration !== generation) return;
-      const segmentsState = this.layer.displayState.segmentationGroupState.value;
       for (const piece of pieces) {
         segmentsState.segmentEquivalences.link(focusSegment, piece);
       }
@@ -2124,11 +2130,23 @@ void main() {
     // Rebuild equivalences from getLeaves — no chunk refetch needed!
     // Chunk data (piece_ids) is the same, only the mapping changed.
     for (const newRoot of newRoots) {
-      this.graph.graphServer.getLeaves(newRoot).then((pieces) => {
-        for (const piece of pieces) {
-          segmentsState.segmentEquivalences.link(newRoot, piece);
-        }
-      });
+      this.graph.graphServer
+        .getLeaves(
+          newRoot,
+          segmentsState.timestamp.value ?? 0,
+          this.graph.branchId.value,
+        )
+        .then((pieces) => {
+          for (const piece of pieces) {
+            segmentsState.segmentEquivalences.link(newRoot, piece);
+          }
+        })
+        .catch((e: unknown) => {
+          StatusMessage.showTemporaryMessage(
+            `Failed to load pieces for ${newRoot}: ${e instanceof Error ? e.message : String(e)}`,
+            6000,
+          );
+        });
     }
   }
 
@@ -2161,6 +2179,7 @@ void main() {
         [...sources].map((x) =>
           selectionInNanometers(x, annotationToNanometers),
         ),
+        this.graph.branchId.value,
       );
       if (splitRoots.length === 0) {
         StatusMessage.showTemporaryMessage(`No split found.`, 3000);
@@ -2217,6 +2236,7 @@ void main() {
         const newRoot = await this.graph.graphServer.mergeSegments(
           selectionInNanometers(submission.sink, annotationToNanometers),
           selectionInNanometers(submission.source!, annotationToNanometers),
+          this.graph.branchId.value,
         );
         const oldValues = new Uint64Set();
         oldValues.add(oldRootA);
@@ -2235,11 +2255,23 @@ void main() {
         segmentsState.visibleSegments.add(oldRootB);
         segmentsState.selectedSegments.add(newRoot);
         // Rebuild equivalences from getLeaves — no chunk refetch needed
-        this.graph.graphServer.getLeaves(newRoot).then((pieces) => {
-          for (const piece of pieces) {
-            segmentsState.segmentEquivalences.link(newRoot, piece);
-          }
-        });
+        this.graph.graphServer
+          .getLeaves(
+            newRoot,
+            segmentsState.timestamp.value ?? 0,
+            this.graph.branchId.value,
+          )
+          .then((pieces) => {
+            for (const piece of pieces) {
+              segmentsState.segmentEquivalences.link(newRoot, piece);
+            }
+          })
+          .catch((e: unknown) => {
+            StatusMessage.showTemporaryMessage(
+              `Failed to load pieces for ${newRoot}: ${e instanceof Error ? e.message : String(e)}`,
+              6000,
+            );
+          });
 
         return newRoot;
       } catch (err) {
@@ -2327,10 +2359,14 @@ void main() {
       } else if (submission.mergedRoot) {
         segmentsToAdd.push(submission.mergedRoot);
       }
-      const latestRoots =
-        await this.graph.graphServer.filterLatestRoots(segmentsToAdd);
       const segmentsState =
         this.layer.displayState.segmentationGroupState.value;
+      const latestRoots = await this.graph.graphServer.filterLatestRoots(
+        segmentsToAdd,
+        segmentsState.timestamp.value ?? 0,
+        false,
+        this.graph.branchId.value,
+      );
       const { visibleSegments, selectedSegments } = segmentsState;
       selectedSegments.delete(segmentsToRemove);
       this.meshAddNewSegments(latestRoots);
@@ -2341,8 +2377,12 @@ void main() {
     const segmentsState = this.layer.displayState.segmentationGroupState.value;
     const { visibleSegments, selectedSegments } = segmentsState;
     selectedSegments.delete(segmentsToRemove);
-    const latestRoots =
-      await this.graph.graphServer.filterLatestRoots(segmentsToAdd);
+    const latestRoots = await this.graph.graphServer.filterLatestRoots(
+      segmentsToAdd,
+      segmentsState.timestamp.value ?? 0,
+      false,
+      this.graph.branchId.value,
+    );
     selectedSegments.add(latestRoots);
     visibleSegments.add(latestRoots);
     // Clear stale equivalences for old roots and rebuild for new roots.
@@ -2351,11 +2391,23 @@ void main() {
       segmentsState.segmentEquivalences.deleteSet(oldRoot);
     }
     for (const newRoot of latestRoots) {
-      this.graph.graphServer.getLeaves(newRoot).then((pieces) => {
-        for (const piece of pieces) {
-          segmentsState.segmentEquivalences.link(newRoot, piece);
-        }
-      });
+      this.graph.graphServer
+        .getLeaves(
+          newRoot,
+          segmentsState.timestamp.value ?? 0,
+          this.graph.branchId.value,
+        )
+        .then((pieces) => {
+          for (const piece of pieces) {
+            segmentsState.segmentEquivalences.link(newRoot, piece);
+          }
+        })
+        .catch((e: unknown) => {
+          StatusMessage.showTemporaryMessage(
+            `Failed to load pieces for ${newRoot}: ${e instanceof Error ? e.message : String(e)}`,
+            6000,
+          );
+        });
     }
     merges.changed.dispatch();
   }
@@ -2458,15 +2510,14 @@ class GrapheneGraphServerInterface {
     return new Date(isoString).valueOf();
   }
 
-  async getRoot(segment: bigint, timestamp = 0) {
-    const timestampEpoch = timestamp / 1000;
+  async getRoot(segment: bigint, timestamp = 0, branchId = 0) {
     const { fetchOkImpl, baseUrl } = this.httpSource;
-
     const jsonResp = await withErrorMessageHTTP(
       fetchOkImpl(
-        `${baseUrl}/node/${String(segment)}/root?int64_as_str=1${
-          timestamp > 0 ? `&timestamp=${timestampEpoch}` : ""
-        }`,
+        appendCoordParams(
+          `${baseUrl}/node/${String(segment)}/root?int64_as_str=1`,
+          { timestamp, branchId },
+        ),
         {},
       ).then((response) => response.json()),
       {
@@ -2477,11 +2528,18 @@ class GrapheneGraphServerInterface {
     return parseUint64(jsonResp.root_id);
   }
 
-  async getLeaves(segment: bigint): Promise<bigint[]> {
+  async getLeaves(
+    segment: bigint,
+    timestamp = 0,
+    branchId = 0,
+  ): Promise<bigint[]> {
     const { fetchOkImpl, baseUrl } = this.httpSource;
     const jsonResp = await withErrorMessageHTTP(
       fetchOkImpl(
-        `${baseUrl}/node/${String(segment)}/leaves?int64_as_str=1`,
+        appendCoordParams(
+          `${baseUrl}/node/${String(segment)}/leaves?int64_as_str=1`,
+          { timestamp, branchId },
+        ),
         {},
       ).then((response) => response.json()),
       {
@@ -2496,15 +2554,19 @@ class GrapheneGraphServerInterface {
   async mergeSegments(
     first: SegmentSelection,
     second: SegmentSelection,
+    branchId = 0,
   ): Promise<bigint> {
     const { fetchOkImpl, baseUrl } = this.httpSource;
-    const promise = fetchOkImpl(`${baseUrl}/merge?int64_as_str=1`, {
-      method: "POST",
-      body: JSON.stringify([
-        [String(first.segmentId), ...first.position],
-        [String(second.segmentId), ...second.position],
-      ]),
-    });
+    const promise = fetchOkImpl(
+      appendCoordParams(`${baseUrl}/merge?int64_as_str=1`, { branchId }),
+      {
+        method: "POST",
+        body: JSON.stringify([
+          [String(first.segmentId), ...first.position],
+          [String(second.segmentId), ...second.position],
+        ]),
+      },
+    );
     try {
       const response = await promise;
       const jsonResp = await response.json();
@@ -2521,9 +2583,12 @@ class GrapheneGraphServerInterface {
   async splitSegments(
     first: SegmentSelection[],
     second: SegmentSelection[],
+    branchId = 0,
   ): Promise<bigint[]> {
     const { fetchOkImpl, baseUrl } = this.httpSource;
-    const promise = fetchOkImpl(`${baseUrl}/split?int64_as_str=1`, {
+    const promise = fetchOkImpl(
+      appendCoordParams(`${baseUrl}/split?int64_as_str=1`, { branchId }),
+      {
       method: "POST",
       body: JSON.stringify({
         sources: first.map((x) => [String(x.segmentId), ...x.position]),
@@ -2617,12 +2682,13 @@ class GrapheneGraphServerInterface {
     segments: bigint[],
     timestamp = 0,
     flipResult = false,
+    branchId = 0,
   ): Promise<bigint[]> {
-    const timestampEpoch = timestamp / 1000;
     const { fetchOkImpl, baseUrl } = this.httpSource;
-    const url = `${baseUrl}/is_latest_roots${
-      timestamp > 0 ? `?timestamp=${timestampEpoch}` : ""
-    }`;
+    const url = appendCoordParams(`${baseUrl}/is_latest_roots`, {
+      timestamp,
+      branchId,
+    });
     const promise = fetchOkImpl(url, {
       method: "POST",
       body: JSON.stringify({ node_ids: segments.map((x) => x.toString()) }),
@@ -2736,7 +2802,7 @@ class GrapheneGraphSource extends SegmentationGraphSource {
   }
 
   getRoot(segment: bigint, timestamp?: number) {
-    return this.graphServer.getRoot(segment, timestamp);
+    return this.graphServer.getRoot(segment, timestamp, this.branchId.value);
   }
 
   async isL2CacheUrlAvailable() {
@@ -2860,6 +2926,22 @@ class GrapheneGraphSource extends SegmentationGraphSource {
       }),
     );
     parent.appendChild(toolbox);
+
+    // Visual-only read-only hint; the actual edit gating lives in each
+    // tool's activate() via checkSegmentationOld.
+    const segmentationGroupStateValue =
+      layer.displayState.segmentationGroupState.value;
+    const updateReadOnlyClass = () => {
+      toolbox.classList.toggle(
+        "calcada-time-travel-readonly",
+        segmentationGroupStateValue.timestamp.value !== undefined,
+      );
+    };
+    updateReadOnlyClass();
+    context.registerDisposer(
+      segmentationGroupStateValue.timestamp.changed.add(updateReadOnlyClass),
+    );
+
     parent.appendChild(
       context.registerDisposer(
         new MulticutAnnotationLayerView(layer, layer.annotationDisplayState),
@@ -3211,14 +3293,72 @@ function branchLayerControl(): LayerControlFactory<SegmentationUserLayer> {
       input.style.width = "6em";
       input.title =
         "Calcada branch id (0 = main). Switching clears segments not present on the new branch.";
-      input.addEventListener("change", () => {
+      // Reentrancy guard: the handler awaits a network call + confirm()
+      // dialog; a second change firing mid-flight must not write stale state.
+      let branchChangeGeneration = 0;
+      input.addEventListener("change", async () => {
         const parsed = Number.parseInt(input.value, 10);
         if (!Number.isFinite(parsed) || parsed < 0) {
           input.value = String(branchId.value);
           return;
         }
         if (parsed === branchId.value) return;
-        branchId.value = parsed;
+        const myGeneration = ++branchChangeGeneration;
+        input.disabled = true;
+        try {
+          if (graph instanceof GrapheneGraphSource) {
+            const ts = segmentationGroupState.timestamp.value ?? 0;
+            let nonLatest: bigint[] = [];
+            try {
+              nonLatest = await graph.graphServer.filterLatestRoots(
+                [...segmentationGroupState.selectedSegments],
+                ts,
+                true,
+                parsed,
+              );
+            } catch (e) {
+              StatusMessage.showTemporaryMessage(
+                `Branch switch failed: ${e instanceof Error ? e.message : String(e)}`,
+                5000,
+              );
+              if (myGeneration === branchChangeGeneration) {
+                input.value = String(branchId.value);
+              }
+              return;
+            }
+            if (myGeneration !== branchChangeGeneration) return;
+            if (
+              nonLatest.length > 0 &&
+              !confirm(
+                `Changing branch will clear ${nonLatest.length} segment(s) not present on branch ${parsed}.`,
+              )
+            ) {
+              if (myGeneration === branchChangeGeneration) {
+                input.value = String(branchId.value);
+              }
+              return;
+            }
+            if (myGeneration !== branchChangeGeneration) return;
+            // nonLatest predates the confirm() prompt; the selection may
+            // have changed under us, so only delete ids still selected.
+            const currentSelection = new Set<string>();
+            for (const id of segmentationGroupState.selectedSegments) {
+              currentSelection.add(id.toString());
+            }
+            const toDelete = nonLatest.filter((id) =>
+              currentSelection.has(id.toString()),
+            );
+            if (toDelete.length > 0) {
+              segmentationGroupState.selectedSegments.delete(toDelete);
+            }
+          }
+          if (myGeneration !== branchChangeGeneration) return;
+          branchId.value = parsed;
+        } finally {
+          if (myGeneration === branchChangeGeneration) {
+            input.disabled = false;
+          }
+        }
       });
       const sync = () => {
         if (String(branchId.value) !== input.value) {
@@ -3294,6 +3434,7 @@ function timeLayerControl(): LayerControlFactory<SegmentationUserLayer> {
               [...segmentationGroupState.selectedSegments],
               timestamp.value,
               true,
+              graph.branchId.value,
             );
             if (
               !nonLatestRoots.length ||
@@ -4493,12 +4634,57 @@ void main() {
         return;
       }
       applyButton.classList.toggle("disabled", true);
+      // Resolve the old root before apply: the local segmentEquivalences
+      // disjoint-set returns the input id when no entry exists (not
+      // undefined), and refreshChunkSources clears it anyway, so a
+      // post-apply lookup can't reliably identify the root to deselect.
+      let preApplyOldRoot: bigint | undefined;
+      try {
+        const candidate = await graphConnection.graph.graphServer.getRoot(
+          focus,
+          0,
+          graphConnection.graph.branchId.value,
+        );
+        if (candidate !== 0n && candidate !== focus) {
+          preApplyOldRoot = candidate;
+        }
+      } catch (e) {
+        StatusMessage.showTemporaryMessage(
+          `Could not resolve old root before split (${e instanceof Error ? e.message : String(e)}); old segment may stay in the selection panel.`,
+          6000,
+        );
+        const fallback =
+          layer.displayState.segmentationGroupState.value.segmentEquivalences.get(
+            focus,
+          );
+        if (fallback !== undefined && fallback !== focus && fallback !== 0n) {
+          preApplyOldRoot = fallback;
+        }
+      }
       try {
         const newRoots = await graphConnection.graph.graphServer.applyPieceSplit(
           focus,
           preview.maskUrl,
           graphConnection.graph.branchId.value,
         );
+        const segmentsState =
+          layer.displayState.segmentationGroupState.value;
+        // Deselect root 0 too: an accidental background click otherwise
+        // paints every orphan piece (root_id=0) as one visible blob.
+        const toRemove: bigint[] = [focus, 0n];
+        if (preApplyOldRoot !== undefined) {
+          toRemove.push(preApplyOldRoot);
+        }
+        for (const id of toRemove) {
+          segmentsState.selectedSegments.delete(id);
+          segmentsState.visibleSegments.delete(id);
+        }
+        for (const newRoot of newRoots) {
+          if (newRoot === 0n) continue;
+          segmentsState.selectedSegments.add(newRoot);
+          segmentsState.visibleSegments.add(newRoot);
+        }
+        graphConnection.refreshChunkSources();
         StatusMessage.showTemporaryMessage(
           `Piece split applied — ${newRoots.length} new root(s)`,
           5000,
