@@ -18,6 +18,8 @@ import type {
   ReadonlyChunkVoxelBuffer,
 } from "@zetta-ai/edit-session";
 
+import { NullarySignal } from "#src/util/signal.js";
+
 /**
  * Build the composite key used by `NgCommitTarget.accepted`. Mirrors the
  * library's `OverlayKey` shape but is local to the adapter so we don't
@@ -52,15 +54,63 @@ function copyBytes(source: ReadonlyChunkVoxelBuffer): ChunkVoxelBuffer {
  */
 export class NgCommitTarget implements CommitTarget {
   private readonly store = new Map<string, CommittedChunk>();
+  /**
+   * Dispatched whenever the committed-chunk store is mutated (accept,
+   * clearLayer, clearAll). The "Pending Changes" panel subscribes to this
+   * to refresh its layer list + chunk counts.
+   */
+  readonly changed = new NullarySignal();
 
   get accepted(): ReadonlyMap<string, CommittedChunk> {
     return this.store;
+  }
+
+  /**
+   * Lookup a specific committed chunk. Used by `NgChunkSource` to merge
+   * in-memory commits into baseline reads for subsequent sessions.
+   */
+  getChunk(
+    layerId: LayerId,
+    resolution: string,
+    chunkId: string,
+  ): CommittedChunk | undefined {
+    return this.store.get(commitKey(layerId, resolution, chunkId));
+  }
+
+  /** Number of committed chunks for the given layer. */
+  countLayerChunks(layerId: LayerId): number {
+    const prefix = `${layerId}|`;
+    let count = 0;
+    for (const key of this.store.keys()) {
+      if (key.startsWith(prefix)) count += 1;
+    }
+    return count;
+  }
+
+  /** All layer ids that currently have committed chunks. */
+  pendingLayerIds(): readonly LayerId[] {
+    const seen = new Set<LayerId>();
+    for (const chunk of this.store.values()) {
+      seen.add(chunk.layerId);
+    }
+    return [...seen];
+  }
+
+  /** All committed chunks for the given layer. */
+  layerChunks(layerId: LayerId): readonly CommittedChunk[] {
+    const out: CommittedChunk[] = [];
+    const prefix = `${layerId}|`;
+    for (const [key, chunk] of this.store) {
+      if (key.startsWith(prefix)) out.push(chunk);
+    }
+    return out;
   }
 
   async accept(
     payload: CommitPayload,
     _signal?: AbortSignal,
   ): Promise<CommitResult> {
+    let mutated = false;
     for (const chunk of payload.chunks) {
       const copiedView = copyBytes(chunk.bytes);
       const byteLength = copiedView.byteLength;
@@ -80,22 +130,29 @@ export class NgCommitTarget implements CommitTarget {
         commitKey(chunk.layerId, chunk.resolution, chunk.chunkId),
         detached,
       );
+      mutated = true;
     }
+    if (mutated) this.changed.dispatch();
     return { status: "accepted" };
   }
 
-  /** Remove every accepted chunk for the given layer. Used on session close. */
+  /** Remove every accepted chunk for the given layer. */
   clearLayer(layerId: LayerId): void {
     const prefix = `${layerId}|`;
+    let mutated = false;
     for (const key of this.store.keys()) {
       if (key.startsWith(prefix)) {
         this.store.delete(key);
+        mutated = true;
       }
     }
+    if (mutated) this.changed.dispatch();
   }
 
-  /** Remove every accepted chunk. Used on host disposal. */
+  /** Remove every accepted chunk. */
   clearAll(): void {
+    if (this.store.size === 0) return;
     this.store.clear();
+    this.changed.dispatch();
   }
 }

@@ -32,6 +32,8 @@ import type { CredentialsManager } from "#src/credentials_provider/index.js";
 import { SharedCredentialsManager } from "#src/credentials_provider/shared.js";
 import { DataManagementContext } from "#src/data_management_context.js";
 import { EditSessionHost } from "#src/editing/edit_session_host.js";
+import { PendingChangesPanelMount } from "#src/editing/ui/interop/pending_changes_mount.js";
+import { PendingChangesToggleMount } from "#src/editing/ui/interop/pending_changes_toggle_mount.js";
 import { SessionEntryMount } from "#src/editing/ui/interop/session_entry_mount.js";
 import { SessionPanelMount } from "#src/editing/ui/interop/session_panel_mount.js";
 import { InputEventBindings as DataPanelInputEventBindings } from "#src/data_panel_layout.js";
@@ -956,6 +958,31 @@ export class Viewer extends RefCounted implements ViewerState {
       topRow.appendChild(enterButton.element);
     }
 
+    {
+      const pendingToggle = this.registerDisposer(
+        new PendingChangesToggleMount(this.editSessionHost),
+      );
+      topRow.appendChild(pendingToggle.element);
+    }
+
+    {
+      // beforeunload guard: warn the user if they navigate away while
+      // there are in-memory committed patches that have not been saved
+      // to the backend. Modern browsers ignore the custom message and
+      // show their own generic prompt; setting `returnValue` is what
+      // actually triggers it.
+      const handleBeforeUnload = (ev: BeforeUnloadEvent) => {
+        if (!this.editSessionHost.hasPendingCommittedChanges()) return;
+        ev.preventDefault();
+        ev.returnValue =
+          "You have unsaved in-memory edits. They will be lost if you leave.";
+      };
+      window.addEventListener("beforeunload", handleBeforeUnload);
+      this.registerDisposer(() =>
+        window.removeEventListener("beforeunload", handleBeforeUnload),
+      );
+    }
+
     this.registerDisposer(
       new ElementVisibilityFromTrackableBoolean(
         makeDerivedWatchableValue(
@@ -1057,6 +1084,17 @@ export class Viewer extends RefCounted implements ViewerState {
         location: this.editSessionHost.editSessionPanelLocation,
         makePanel: () =>
           new SessionPanelMount(this.sidePanelManager, this.editSessionHost),
+      }),
+    );
+
+    this.registerDisposer(
+      this.sidePanelManager.registerPanel({
+        location: this.editSessionHost.pendingChangesPanelLocation,
+        makePanel: () =>
+          new PendingChangesPanelMount(
+            this.sidePanelManager,
+            this.editSessionHost,
+          ),
       }),
     );
 

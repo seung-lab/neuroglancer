@@ -14,13 +14,15 @@
  * DESIGN (v1, debug-first): a minimal SliceViewVolumeRenderLayer subclass
  * with a SIMPLE shader that ignores the segmentation rendering machinery
  * entirely. For each chunk it samples the patch texture. Patched voxels
- * emit BRIGHT RED (alpha=1). Unpatched voxels emit transparent.
+ * emit the colored segment id; unpatched voxels emit transparent.
  *
- * This deliberately bypasses the segment color hash, equivalence remap,
- * visibility check, and per-segment alpha that the segmentation render
- * layer applies — those were silently swallowing patches in earlier
- * iterations. Once we confirm patches render at all, we can graduate to
- * proper segment-color rendering.
+ * Bbox-clip policy: when an edit session is active (`displayState.editBboxLoHi`
+ * is set), patches outside the current session bbox are HARD-CLIPPED via
+ * the shared `emitWithBboxDim` snippet (which now `discard`s — see
+ * `bbox_alpha_chunk.ts`). This matches the user-visible rule "during a
+ * session, only the current bbox is visible"; committed patches from a
+ * previous session reappear as soon as the session ends because
+ * `editBboxLoHi` flips back to `undefined`.
  */
 
 import type { LocalPatchChunk } from "#src/editing/local_patch_chunk.js";
@@ -49,22 +51,11 @@ const patchTextureUnitSymbol = Symbol(
 );
 
 interface PatchShaderParameters {
-  // Empty — but the framework requires SOMETHING parameterized so
-  // shaderGetter has a parameters watchable to subscribe to. Use a literal
-  // structure so encodeShaderParameters returns a stable JSON value.
-  version: number;
   /**
-   * Voxel-edit bbox-clip shader path gate. Defaults to `false`; flips to
-   * `true` only while an edit session bbox is set for this layer. When
-   * `false`, the bbox-clip uniforms/snippet are NOT added to the shader and
-   * the compiled GLSL is byte-identical to the pre-hook implementation.
-   *
-   * Unlike `SegmentationRenderLayer`'s bbox-dim path (which fades
-   * out-of-bbox fragments to 0.25x alpha), the patched layer uses a HARD
-   * clip: out-of-bbox fragments are `discard`ed. Patches should by
-   * definition only exist inside the session bbox; the discard is
-   * defense-in-depth against any paint-time bugs that emit out-of-bbox
-   * writes.
+   * Compile-time gate for the bbox-clip code path. When false, the shader
+   * compiles without any bbox uniforms or `discard`s — patches render
+   * everywhere. When true, fragments outside the session bbox are
+   * discarded.
    */
   editBboxActive: boolean;
 }
@@ -78,13 +69,6 @@ export class PatchedSegmentationRenderLayer extends SliceViewVolumeRenderLayer<P
   private segmentColorShaderManager = new SegmentColorShaderManager(
     "segmentColorHash",
   );
-
-  /**
-   * Voxel-edit bbox-clip shader hook. Stateless across compiles; gated by
-   * the `editBboxActive` shader parameter so that when no session bbox is
-   * set for this layer the hook contributes NOTHING to the shader source
-   * (no uniforms, no fragment code, no main-body wrapping).
-   */
   private bboxAlphaHook: BboxAlphaShaderHook = createBboxAlphaShaderHook();
 
   constructor(
@@ -94,14 +78,6 @@ export class PatchedSegmentationRenderLayer extends SliceViewVolumeRenderLayer<P
   ) {
     super(multiscaleSource, {
       shaderParameters: new AggregateWatchableValue((refCounted) => ({
-        version: constantWatchableValue(1),
-        // Voxel-edit bbox-clip gate. Derived from the optional
-        // `editBboxLoHi` watchable on `displayState`: `true` iff a session
-        // bbox is currently set for this layer. When `editBboxLoHi` is
-        // undefined (the default for layers not participating in an edit
-        // session) this resolves to a constant `false` and the bbox-clip
-        // shader path is never compiled in — the GLSL remains
-        // byte-identical to the pre-hook implementation.
         editBboxActive:
           displayState.editBboxLoHi === undefined
             ? constantWatchableValue(false)
@@ -132,9 +108,9 @@ export class PatchedSegmentationRenderLayer extends SliceViewVolumeRenderLayer<P
         this.redrawNeeded.dispatch,
       ),
     );
-    // Redraw when the bbox lo/hi changes within an active session — value
-    // changes don't flip the `editBboxActive` bit so they won't go through
-    // `shaderParameters.changed`, but they DO need a fresh `bind()`.
+    // Redraw when the bbox lo/hi changes within an active session — the
+    // value change doesn't flip the `editBboxActive` bit, but it DOES
+    // require a fresh `bind()`.
     if (displayState.editBboxLoHi !== undefined) {
       this.registerDisposer(
         displayState.editBboxLoHi.changed.add(this.redrawNeeded.dispatch),
@@ -174,26 +150,10 @@ if (uHasPatch != 0u) {
 }
 emit(vec4(0.0, 0.0, 0.0, 0.0));
 `;
-    // Voxel-edit bbox-clip opt-in path: when a session bbox is set for this
-    // layer, route every `emit(...)` call in the main body through
-    // `emitOnlyInsideBbox(...)` so out-of-bbox fragments are hard-clipped
-    // via `discard`. Gated on the `editBboxActive` shader parameter so when
-    // no session is active this branch is NOT taken and the resulting GLSL
-    // is byte-identical to the pre-hook shader.
-    //
-    // Hard clip (rather than the base layer's 0.25x dim) is intentional:
-    // patches should by definition only exist inside the session bbox, so a
-    // visible out-of-bbox patch indicates a bug in the paint compute path.
-    // `discard` gives loud, unambiguous feedback rather than silently
-    // attenuating the leak. See
-    // `docs/edit-session-integration/architecture/06-bbox-rendering.md`.
     if (parameters.editBboxActive) {
       this.bboxAlphaHook.defineUniforms(builder);
-      builder.addFragmentCode(EMIT_ONLY_INSIDE_BBOX_FRAGMENT_SNIPPET);
-      fragmentMain = this.bboxAlphaHook.wrapFragmentMain(
-        fragmentMain,
-        "emitOnlyInsideBbox",
-      );
+      builder.addFragmentCode(this.bboxAlphaHook.fragmentSnippet());
+      fragmentMain = this.bboxAlphaHook.wrapFragmentMain(fragmentMain);
     }
     builder.setFragmentMain(fragmentMain);
   }
@@ -208,16 +168,9 @@ emit(vec4(0.0, 0.0, 0.0, 0.0));
       shader,
       this.displayState.segmentColorHash.value,
     );
-    // Bbox-clip uniforms are bound only when the bbox-clip shader path was
-    // compiled (`editBboxActive === true`). Otherwise the uniforms don't
-    // exist on the shader at all. We pass `outsideAlphaMultiplier: 1.0` for
-    // consistency (the uniform exists but is unused by the hard-clip
-    // snippet, which `discard`s instead of attenuating).
     if (parameters.editBboxActive) {
-      const bbox = this.displayState.editBboxLoHi?.value;
       this.bboxAlphaHook.bind(this.gl, shader, {
-        bbox,
-        outsideAlphaMultiplier: 1.0,
+        bboxNm: this.displayState.editBboxLoHi?.value,
       });
     }
   }
@@ -317,40 +270,6 @@ emit(vec4(0.0, 0.0, 0.0, 0.0));
     }
   }
 }
-
-/**
- * Fragment shader snippet defining `emitOnlyInsideBbox`. Hard-clip variant
- * of `emitWithBboxDim` (see `src/editing/shaders/bbox_alpha_chunk.ts`):
- * fragments outside the bbox are `discard`ed rather than dimmed. Patches
- * outside the session bbox are by definition a bug, so this gives loud
- * visual feedback rather than silently attenuating the leak.
- *
- * Compares against `vChunkPosition + uTranslation` (the chunk-grid voxel
- * position; `vChunkPosition` alone is chunk-local in `[0, chunkDataSize)`
- * and would never match a layer-wide bbox). The bbox uniforms supplied via
- * `BboxAlphaShaderHook.bind()` MUST be in the same chunk-grid frame; see
- * `EditSessionHost.computeActiveRegion`, which subtracts the layer's
- * `voxelOffset` for this purpose.
- *
- * Assumes the uniforms `u_editBboxLoVoxel`, `u_editBboxHiVoxel`, and
- * `u_editBboxActive` have been declared via
- * `BboxAlphaShaderHook.defineUniforms(builder)`, and that `uTranslation`
- * (the chunk's chunk-grid-frame origin) is available — true for all
- * `SliceViewVolumeRenderLayer`-derived shaders.
- */
-const EMIT_ONLY_INSIDE_BBOX_FRAGMENT_SNIPPET = `
-void emitOnlyInsideBbox(vec4 rgba) {
-  if (u_editBboxActive == 1) {
-    vec3 v = vChunkPosition + uTranslation;
-    if (v.x < u_editBboxLoVoxel.x || v.x >= u_editBboxHiVoxel.x ||
-        v.y < u_editBboxLoVoxel.y || v.y >= u_editBboxHiVoxel.y ||
-        v.z < u_editBboxLoVoxel.z || v.z >= u_editBboxHiVoxel.z) {
-      discard;
-    }
-  }
-  emit(rgba);
-}
-`;
 
 function applyTextureParams(gl: GL) {
   gl.texParameteri(

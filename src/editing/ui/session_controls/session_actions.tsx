@@ -31,7 +31,10 @@ export function SessionActions({
   const runCommit = useCallback(async () => {
     if (!session.dirty.isDirty()) return;
     const ok = window.confirm(
-      "Commit all session edits? This will end the session.",
+      "Commit all session edits? This ends the editing session. " +
+        "Painted patches stay visible on the layer until you start a new " +
+        "session or reload — they are NOT yet sent to the backend (use " +
+        "Save All for that).",
     );
     if (!ok) return;
     try {

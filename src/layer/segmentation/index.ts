@@ -148,13 +148,13 @@ import { registerLayerShaderControlsTool } from "#src/widget/shader_controls.js"
 function getEditBboxLoHiForLayer(
   root: TopLevelLayerListSpecification,
   layerName: string,
-): WatchableValueInterface<{ loVoxel: vec3; hiVoxel: vec3 } | undefined> | undefined {
+): WatchableValueInterface<{ lo: vec3; hi: vec3 } | undefined> | undefined {
   const host = root.editSessionHost as
     | {
         getActiveRegionWatchableForLayer(
           layerName: string,
         ): WatchableValueInterface<
-          { loVoxel: vec3; hiVoxel: vec3 } | undefined
+          { lo: vec3; hi: vec3 } | undefined
         >;
       }
     | undefined;

@@ -114,31 +114,19 @@ export class PointerEventBridge extends RefCounted {
       this.dispatch(ev, () => this.translatePointer(panel, ev, kind));
     const onPointerDown = (ev: PointerEvent) => {
       // Camera lock: when a paint-like tool (brush/erase/fill) is active and
-      // the user clicks WITHOUT Ctrl/Cmd, claim the pointer for painting so
-      // neuroglancer's pan handler can't grab it. With Ctrl/Cmd held we
-      // intentionally skip both the capture and the dispatch so the user can
-      // pan with Ctrl+drag. See `dispatch` for the propagation side.
-      const cameraLocked = this.isCameraLockedForEvent(ev);
-      if (
-        ev.button === 0 &&
-        cameraLocked &&
-        typeof el.setPointerCapture === "function"
-      ) {
-        try {
-          el.setPointerCapture(ev.pointerId);
-        } catch {
-          // ignore — capture is best-effort
-        }
-      }
+      // the user clicks WITHOUT Ctrl/Cmd, prevent neuroglancer's pan from
+      // starting (otherwise click+drag = pan instead of brush stroke). We
+      // do NOT call `setPointerCapture` here — Chrome suppresses the
+      // compatibility `mousemove` events for the captured pointer, which
+      // would prevent the panel's pick-pass from running and freeze both
+      // the cursor and the stroke. The trade-off is that releasing the
+      // pointer outside the panel won't fire a pointerup on the panel; the
+      // active stroke ends instead on the next pointermove that arrives
+      // (or on pointerup if the cursor re-enters). With Ctrl/Cmd held we
+      // bail entirely from `dispatch` so the event falls through to
+      // neuroglancer's pan binding.
       this.dispatch(ev, () => this.translatePointer(panel, ev, "pointer-down"));
-      // Begin mouseState-driven stroke forwarding if we just dispatched a
-      // paint-tool pointer-down. The DOM `pointermove` listener can't be
-      // used as the stroke driver: neuroglancer reads voxel positions from
-      // `mouseState.unsnappedPosition`, which is updated asynchronously by
-      // the GPU pick-pass, so reading it inside a `pointermove` callback
-      // returns the PREVIOUS frame's value. Driving stroke advancement
-      // from `mouseState.changed` ensures the tool sees the fresh position
-      // every time picking resolves.
+      const cameraLocked = this.isCameraLockedForEvent(ev);
       if (cameraLocked && ev.button === 0) {
         this.beginStrokeForwarding(panel);
       }
@@ -147,13 +135,6 @@ export class PointerEventBridge extends RefCounted {
     const onPointerUp = (ev: PointerEvent) => {
       this.dispatch(ev, () => this.translatePointer(panel, ev, "pointer-up"));
       this.endActiveStroke();
-      if (typeof el.releasePointerCapture === "function") {
-        try {
-          el.releasePointerCapture(ev.pointerId);
-        } catch {
-          // ignore — not captured or already released
-        }
-      }
     };
     const onPointerCancel = (ev: PointerEvent) => {
       this.dispatch(ev, () =>
@@ -287,9 +268,20 @@ export class PointerEventBridge extends RefCounted {
 
   private consume(ev: Event): void {
     ev.stopPropagation();
+    // Intentionally NOT calling `preventDefault` on pointer events here.
+    // Chrome interprets `preventDefault` on `pointerdown` as a signal to
+    // suppress ALL synthesized mouse events for the rest of the gesture —
+    // not just `mousedown`. That breaks every downstream system that
+    // depends on `mousemove` (including the panel's pick-pass, which is
+    // what updates `mouseState.unsnappedPosition`). Pan-start is instead
+    // suppressed by the session's `at:mousedown0` no-op binding in
+    // `EditSessionHotkeyBinder`. For non-pointer events (e.g. wheel) the
+    // tool can ask to `preventDefault` by returning `consumed: true` —
+    // route those through a separate code path if/when needed.
     if (
+      !this.isPointerEvent(ev) &&
       typeof (ev as { preventDefault?: () => void }).preventDefault ===
-      "function"
+        "function"
     ) {
       ev.preventDefault();
     }

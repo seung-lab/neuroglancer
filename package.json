@@ -130,6 +130,7 @@
     "#src/editing/ui/session_controls/history_controls.js": "./src/editing/ui/session_controls/history_controls.tsx",
     "#src/editing/ui/session_controls/session_actions.js": "./src/editing/ui/session_controls/session_actions.tsx",
     "#src/editing/ui/session_controls/save_status.js": "./src/editing/ui/session_controls/save_status.tsx",
+    "#src/editing/ui/session_controls/pending_changes.js": "./src/editing/ui/session_controls/pending_changes.tsx",
     "#src/editing/ui/tool_settings/correspondence.js": "./src/editing/ui/tool_settings/correspondence.tsx",
     "#src/editing/ui/tool_settings/painting_brush.js": "./src/editing/ui/tool_settings/painting_brush.tsx",
     "#src/editing/ui/tool_settings/painting_eraser.js": "./src/editing/ui/tool_settings/painting_eraser.tsx",
