@@ -14,12 +14,12 @@ import type { NgLayerMetadataSource } from "#src/editing/adapters/ng_layer_metad
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { BboxSelectionModel } from "#src/editing/ui/session_entry/bbox_candidates.js";
 import { SessionEntryModal } from "#src/editing/ui/session_entry/session_entry.js";
-import { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import type { LayerManager } from "#src/layer/index.js";
+import { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import { StatusMessage } from "#src/status.js";
 import { RefCounted } from "#src/util/disposable.js";
 
-export class SessionEntryMount extends RefCounted {
+export class EditSessionButtonMount extends RefCounted {
   readonly element: HTMLButtonElement;
 
   private readonly bboxModel: BboxSelectionModel;

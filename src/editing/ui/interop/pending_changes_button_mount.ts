@@ -11,7 +11,7 @@
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { RefCounted } from "#src/util/disposable.js";
 
-export class PendingChangesToggleMount extends RefCounted {
+export class PendingChangesButtonMount extends RefCounted {
   readonly element: HTMLButtonElement;
   private readonly badge: HTMLSpanElement;
 

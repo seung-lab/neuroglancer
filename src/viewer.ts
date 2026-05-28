@@ -31,17 +31,17 @@ import { getDefaultCredentialsManager } from "#src/credentials_provider/default_
 import type { CredentialsManager } from "#src/credentials_provider/index.js";
 import { SharedCredentialsManager } from "#src/credentials_provider/shared.js";
 import { DataManagementContext } from "#src/data_management_context.js";
-import { EditSessionHost } from "#src/editing/edit_session_host.js";
-import { PendingChangesPanelMount } from "#src/editing/ui/interop/pending_changes_mount.js";
-import { PendingChangesToggleMount } from "#src/editing/ui/interop/pending_changes_toggle_mount.js";
-import { SessionEntryMount } from "#src/editing/ui/interop/session_entry_mount.js";
-import { SessionPanelMount } from "#src/editing/ui/interop/session_panel_mount.js";
 import { InputEventBindings as DataPanelInputEventBindings } from "#src/data_panel_layout.js";
 import { getDefaultDataSourceProvider } from "#src/datasource/default_provider.js";
 import type { DataSourceRegistry } from "#src/datasource/index.js";
 import { StateShare, stateShareEnabled } from "#src/datasource/state_share.js";
 import type { DisplayContext } from "#src/display_context.js";
 import { TrackableWindowedViewport } from "#src/display_context.js";
+import { EditSessionHost } from "#src/editing/edit_session_host.js";
+import { EditSessionButtonMount } from "#src/editing/ui/interop/edit_session_button_mount.js";
+import { makeEditSessionPanel } from "#src/editing/ui/interop/edit_session_panel_mount.js";
+import { PendingChangesButtonMount } from "#src/editing/ui/interop/pending_changes_button_mount.js";
+import { makePendingChangesPanel } from "#src/editing/ui/interop/pending_changes_panel_mount.js";
 import {
   HelpPanelState,
   InputEventBindingHelpDialog,
@@ -949,7 +949,7 @@ export class Viewer extends RefCounted implements ViewerState {
       // a top-bar control sibling to the existing CheckboxIcon buttons.
       // Clicking opens the entry modal; the modal owns its own disposal.
       const enterButton = this.registerDisposer(
-        new SessionEntryMount(
+        new EditSessionButtonMount(
           this.editSessionHost,
           this.layerManager,
           this.editSessionHost.layerMetadataSource,
@@ -960,7 +960,7 @@ export class Viewer extends RefCounted implements ViewerState {
 
     {
       const pendingToggle = this.registerDisposer(
-        new PendingChangesToggleMount(this.editSessionHost),
+        new PendingChangesButtonMount(this.editSessionHost),
       );
       topRow.appendChild(pendingToggle.element);
     }
@@ -1083,7 +1083,7 @@ export class Viewer extends RefCounted implements ViewerState {
       this.sidePanelManager.registerPanel({
         location: this.editSessionHost.editSessionPanelLocation,
         makePanel: () =>
-          new SessionPanelMount(this.sidePanelManager, this.editSessionHost),
+          makeEditSessionPanel(this.sidePanelManager, this.editSessionHost),
       }),
     );
 
@@ -1091,10 +1091,7 @@ export class Viewer extends RefCounted implements ViewerState {
       this.sidePanelManager.registerPanel({
         location: this.editSessionHost.pendingChangesPanelLocation,
         makePanel: () =>
-          new PendingChangesPanelMount(
-            this.sidePanelManager,
-            this.editSessionHost,
-          ),
+          makePendingChangesPanel(this.sidePanelManager, this.editSessionHost),
       }),
     );
 
