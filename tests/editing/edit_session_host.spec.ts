@@ -51,8 +51,8 @@ function sampleIntent(): EditSessionIntent {
       resolution: RES,
     },
     layers: [
-      { layerId: layerId("L1"), resolutions: [RES], role: "writable" },
-      { layerId: layerId("L2"), resolutions: [RES], role: "locked" },
+      { layerId: layerId("L1"), resolutions: [RES], writable: true },
+      { layerId: layerId("L2"), resolutions: [RES], writable: false },
     ],
     capturedRegion: {
       lo: [0, 0, 0],
@@ -174,8 +174,8 @@ describe("TrackableEditSessionIntent", () => {
         annotationId: "ann-1",
         resolution: RES,
       },
-      // role must be "writable" or "locked"
-      layers: [{ layerId: "L1", resolution: RES, role: "bogus" }],
+      // writable must be a boolean
+      layers: [{ layerId: "L1", resolution: RES, writable: "bogus" }],
       capturedRegion: { lo: [0, 0, 0], hi: [1, 1, 1] },
     };
     trackable.restoreState(bad);

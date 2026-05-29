@@ -27,7 +27,7 @@ export function SaveStatus({ saveTracker }: { saveTracker: SaveTracker }) {
               class={
                 "neuroglancer-edit-session-layer-status " +
                 entry.status +
-                (entry.role === "locked" ? " locked" : "")
+                (!entry.writable ? " locked" : "")
               }
             >
               <span class="neuroglancer-edit-session-layer-status-dot" />

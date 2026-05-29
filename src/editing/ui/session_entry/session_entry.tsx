@@ -8,13 +8,17 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import type { LayerId, LayerMetadata } from "@zetta-ai/edit-session";
+import type {
+  LayerId,
+  LayerMetadata,
+  VoxelDataType,
+} from "@zetta-ai/edit-session";
 import {
   availableResolutions,
   layerId as toLayerId,
   Resolution,
 } from "@zetta-ai/edit-session";
-import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 
 import type { NgLayerMetadataSource } from "#src/editing/adapters/ng_layer_metadata_source.js";
 import type {
@@ -27,13 +31,22 @@ import type {
   BboxAnnotationSelection,
 } from "#src/editing/ui/session_entry/bbox_candidates.js";
 import { BboxPicker } from "#src/editing/ui/session_entry/bbox_picker.js";
-import type { LayerRowState } from "#src/editing/ui/session_entry/layer_row.js";
+import type {
+  LayerKind,
+  LayerRowState,
+} from "#src/editing/ui/session_entry/layer_row.js";
 import { LayerRow } from "#src/editing/ui/session_entry/layer_row.js";
 import { ResolutionSelectionModel } from "#src/editing/ui/session_entry/resolution_options.js";
 import { ImageUserLayer } from "#src/layer/image/index.js";
-import type { LayerManager } from "#src/layer/index.js";
+import type { LayerManager, ManagedUserLayer } from "#src/layer/index.js";
 import { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import "#src/editing/ui/session_entry/session_entry.css";
+
+interface LayerEntry {
+  readonly name: string;
+  readonly kind: LayerKind;
+  readonly visible: boolean;
+}
 
 export function SessionEntryModal(props: {
   host: EditSessionHost;
@@ -47,12 +60,15 @@ export function SessionEntryModal(props: {
   const [selectedBbox, setSelectedBbox] = useState<
     BboxAnnotationSelection | undefined
   >(bboxModel.selection);
-  const [layerNames, setLayerNames] = useState<string[]>(() =>
-    collectLayerNames(layerManager),
+  const [layerEntries, setLayerEntries] = useState<LayerEntry[]>(() =>
+    collectLayerEntries(layerManager),
   );
   const [layerStates, setLayerStates] = useState<Map<string, LayerRowState>>(
     () => new Map(),
   );
+  const [metadataByLayer, setMetadataByLayer] = useState<
+    Map<string, LayerMetadata>
+  >(() => new Map());
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -67,7 +83,7 @@ export function SessionEntryModal(props: {
 
   useEffect(() => {
     const removeLayers = layerManager.layersChanged.add(() => {
-      setLayerNames(collectLayerNames(layerManager));
+      setLayerEntries(collectLayerEntries(layerManager));
     });
     return () => {
       removeLayers();
@@ -77,29 +93,22 @@ export function SessionEntryModal(props: {
   useEffect(() => {
     setLayerStates((prev) => {
       const next = new Map<string, LayerRowState>();
-      for (const name of layerNames) {
-        const existing = prev.get(name);
+      for (const entry of layerEntries) {
+        const existing = prev.get(entry.name);
         if (existing !== undefined) {
-          next.set(name, existing);
+          next.set(entry.name, existing);
         } else {
-          next.set(name, {
-            included: true,
-            locked: false,
-            resolutions: [],
-            loadState: "loading",
-            loadError: undefined,
-            availableResolutions: [],
-          });
+          next.set(entry.name, defaultStateFor(entry));
         }
       }
       for (const [name] of resolutionModelsRef.current) {
-        if (!layerNames.includes(name)) {
+        if (!layerEntries.some((e) => e.name === name)) {
           resolutionModelsRef.current.delete(name);
         }
       }
       return next;
     });
-  }, [layerNames]);
+  }, [layerEntries]);
 
   useEffect(() => {
     let cancelled = false;
@@ -141,6 +150,11 @@ export function SessionEntryModal(props: {
               return next;
             });
           });
+          setMetadataByLayer((prev) => {
+            const next = new Map(prev);
+            next.set(name, metadata);
+            return next;
+          });
           setLayerStates((prev) => {
             const next = new Map(prev);
             const s = next.get(name);
@@ -176,26 +190,27 @@ export function SessionEntryModal(props: {
     };
   }, [layerStates, metadataSource]);
 
-  const setIncluded = useCallback((name: string, included: boolean) => {
+  const setLocked = useCallback((name: string, locked: boolean) => {
     setLayerStates((prev) => {
       const next = new Map(prev);
       const s = next.get(name);
       if (s === undefined) return prev;
       next.set(name, {
         ...s,
-        included,
-        locked: included ? s.locked : false,
+        locked,
+        // Disable writable when the layer leaves the session.
+        writable: locked ? s.writable : false,
       });
       return next;
     });
   }, []);
 
-  const setLocked = useCallback((name: string, locked: boolean) => {
+  const setWritable = useCallback((name: string, writable: boolean) => {
     setLayerStates((prev) => {
       const next = new Map(prev);
       const s = next.get(name);
       if (s === undefined) return prev;
-      next.set(name, { ...s, locked });
+      next.set(name, { ...s, writable });
       return next;
     });
   }, []);
@@ -204,6 +219,28 @@ export function SessionEntryModal(props: {
     if (submitting) return;
     onClose();
   }, [submitting, onClose]);
+
+  const memoryEstimate = useMemo(
+    () =>
+      estimateLockedMemory({
+        layerEntries,
+        layerStates,
+        metadataByLayer,
+        bbox: selectedBbox,
+      }),
+    [layerEntries, layerStates, metadataByLayer, selectedBbox],
+  );
+
+  const limits = useMemo(
+    () => ({
+      gpu: host.viewer.chunkManager.chunkQueueManager.capacities.gpuMemory.sizeLimit
+        .value,
+      system:
+        host.viewer.chunkManager.chunkQueueManager.capacities.systemMemory
+          .sizeLimit.value,
+    }),
+    [host],
+  );
 
   const handleSubmit = useCallback(async () => {
     if (submitting) return;
@@ -214,37 +251,64 @@ export function SessionEntryModal(props: {
       return;
     }
 
-    const includedRows: Array<{
+    const lockedEntries: Array<{
       layerId: LayerId;
       name: string;
       state: LayerRowState;
     }> = [];
     let hasWritable = false;
-    for (const name of layerNames) {
-      const state = layerStates.get(name);
-      if (state === undefined || !state.included) continue;
+    for (const entry of layerEntries) {
+      const state = layerStates.get(entry.name);
+      if (state === undefined || !state.locked) continue;
       if (state.loadError !== undefined) {
-        setError(`Layer ${name} is unavailable: ${state.loadError}`);
+        setError(`Layer ${entry.name} is unavailable: ${state.loadError}`);
         return;
       }
       if (state.resolutions.length === 0) {
-        setError(`Pick at least one resolution for layer ${name}.`);
+        setError(`Pick at least one resolution for layer ${entry.name}.`);
         return;
       }
-      const id = toLayerId(name);
-      includedRows.push({ layerId: id, name, state });
-      if (!state.locked) {
-        hasWritable = true;
-      }
+      const id = toLayerId(entry.name);
+      lockedEntries.push({ layerId: id, name: entry.name, state });
+      if (state.writable) hasWritable = true;
     }
 
+    if (lockedEntries.length === 0) {
+      setError("Lock at least one layer to include it in the session.");
+      return;
+    }
     if (!hasWritable) {
-      setError("Select at least one writable layer.");
+      setError("Mark at least one locked layer as writable.");
       return;
     }
 
+    const gpuExceeded =
+      Number.isFinite(limits.gpu) && memoryEstimate.totalBytes > limits.gpu;
+    const systemExceeded =
+      Number.isFinite(limits.system) &&
+      memoryEstimate.totalBytes > limits.system;
+    if (gpuExceeded || systemExceeded) {
+      const parts: string[] = [];
+      if (gpuExceeded) {
+        parts.push(
+          `GPU memory limit (${formatBytes(limits.gpu)})`,
+        );
+      }
+      if (systemExceeded) {
+        parts.push(
+          `system memory limit (${formatBytes(limits.system)})`,
+        );
+      }
+      const proceed = window.confirm(
+        `Locked chunks will use ~${formatBytes(memoryEstimate.totalBytes)}, ` +
+          `exceeding your ${parts.join(" and ")}. ` +
+          `Continue anyway? You can raise the limits in Settings.`,
+      );
+      if (!proceed) return;
+    }
+
     const layersForConfig: HostSessionConfig["layers"][number][] = [];
-    for (const { layerId, name, state } of includedRows) {
+    for (const { layerId, name, state } of lockedEntries) {
       try {
         const metadata = await metadataSource.resolve(layerId);
         const available = availableResolutions(metadata);
@@ -265,14 +329,10 @@ export function SessionEntryModal(props: {
       layersForConfig.push({
         layerId,
         resolutions: [...state.resolutions],
-        role: state.locked ? "locked" : "writable",
+        writable: state.writable,
       });
     }
 
-    // bboxResolution is derived from the annotation source's own coord
-    // system (captured at selection time), NOT from any session layer's
-    // chosen resolution. Mixing the two physically rescales the bbox-clip
-    // region whenever the user picks a non-default layer resolution.
     const config: HostSessionConfig = {
       bboxRef: {
         annotationLayerName: selectedBbox.annotationLayerName,
@@ -294,11 +354,13 @@ export function SessionEntryModal(props: {
   }, [
     submitting,
     selectedBbox,
-    layerNames,
+    layerEntries,
     layerStates,
     metadataSource,
     host,
     onClose,
+    memoryEstimate,
+    limits,
   ]);
 
   const bboxInfoText =
@@ -347,28 +409,35 @@ export function SessionEntryModal(props: {
             </div>
             <div class="neuroglancer-edit-session-entry-modal-layers-card">
               <div class="neuroglancer-edit-session-entry-modal-layers-list">
-                {layerNames.length === 0 ? (
+                {layerEntries.length === 0 ? (
                   <div class="neuroglancer-edit-session-entry-modal-layers-empty">
                     (no editable layers loaded)
                   </div>
                 ) : (
-                  layerNames.map((name) => {
-                    const state = layerStates.get(name);
+                  layerEntries.map((entry) => {
+                    const state = layerStates.get(entry.name);
                     if (state === undefined) return null;
                     return (
                       <LayerRow
-                        key={name}
-                        name={name}
+                        key={entry.name}
+                        name={entry.name}
+                        layerKind={entry.kind}
                         state={state}
-                        resolutionModel={resolutionModelsRef.current.get(name)}
-                        onIncludedChange={(v) => setIncluded(name, v)}
-                        onLockedChange={(v) => setLocked(name, v)}
+                        resolutionModel={resolutionModelsRef.current.get(
+                          entry.name,
+                        )}
+                        onLockedChange={(v) => setLocked(entry.name, v)}
+                        onWritableChange={(v) => setWritable(entry.name, v)}
                       />
                     );
                   })
                 )}
               </div>
             </div>
+            <MemoryEstimate
+              estimate={memoryEstimate}
+              limits={limits}
+            />
           </div>
         </div>
         <div class="neuroglancer-edit-session-entry-modal-footer">
@@ -392,16 +461,163 @@ export function SessionEntryModal(props: {
   );
 }
 
-function collectLayerNames(layerManager: LayerManager): string[] {
-  const names: string[] = [];
-  for (const managed of layerManager.managedLayers) {
-    const userLayer = managed.layer;
-    if (
-      userLayer instanceof SegmentationUserLayer ||
-      userLayer instanceof ImageUserLayer
-    ) {
-      names.push(managed.name);
+function MemoryEstimate({
+  estimate,
+  limits,
+}: {
+  estimate: MemoryEstimate;
+  limits: { gpu: number; system: number };
+}) {
+  if (estimate.totalBytes === 0) return null;
+  const gpuOver =
+    Number.isFinite(limits.gpu) && estimate.totalBytes > limits.gpu;
+  const systemOver =
+    Number.isFinite(limits.system) && estimate.totalBytes > limits.system;
+  const overClass =
+    gpuOver || systemOver
+      ? "neuroglancer-edit-session-entry-modal-memory-estimate neuroglancer-edit-session-entry-modal-memory-estimate-over"
+      : "neuroglancer-edit-session-entry-modal-memory-estimate";
+  return (
+    <div class={overClass}>
+      Locked chunks: ~{formatBytes(estimate.totalBytes)}
+      {" · "}GPU limit {formatBytes(limits.gpu)}
+      {" · "}System limit {formatBytes(limits.system)}
+      {(gpuOver || systemOver) && " — over limit, will require confirmation"}
+    </div>
+  );
+}
+
+interface MemoryEstimate {
+  readonly totalBytes: number;
+}
+
+function estimateLockedMemory({
+  layerEntries,
+  layerStates,
+  metadataByLayer,
+  bbox,
+}: {
+  layerEntries: readonly LayerEntry[];
+  layerStates: ReadonlyMap<string, LayerRowState>;
+  metadataByLayer: ReadonlyMap<string, LayerMetadata>;
+  bbox: BboxAnnotationSelection | undefined;
+}): MemoryEstimate {
+  if (bbox === undefined) return { totalBytes: 0 };
+  const bboxExtentVoxels: [number, number, number] = [
+    bbox.voxelBbox[3] - bbox.voxelBbox[0],
+    bbox.voxelBbox[4] - bbox.voxelBbox[1],
+    bbox.voxelBbox[5] - bbox.voxelBbox[2],
+  ];
+  let total = 0;
+  for (const entry of layerEntries) {
+    const state = layerStates.get(entry.name);
+    if (state === undefined || !state.locked) continue;
+    const metadata = metadataByLayer.get(entry.name);
+    if (metadata === undefined) continue;
+    const bytesPerVoxel = bytesPerVoxelFor(metadata.voxelDataType);
+    if (bytesPerVoxel === 0) continue;
+    const channels = Math.max(1, metadata.channels);
+    for (const resolution of state.resolutions) {
+      const scale = metadata.scales.find((s) => s.resolution === resolution);
+      if (scale === undefined) continue;
+      const extentNm: [number, number, number] = [
+        bboxExtentVoxels[0] * bbox.voxelSizeNm[0],
+        bboxExtentVoxels[1] * bbox.voxelSizeNm[1],
+        bboxExtentVoxels[2] * bbox.voxelSizeNm[2],
+      ];
+      const extentLayerVoxels: [number, number, number] = [
+        extentNm[0] / scale.voxelSizeNm[0],
+        extentNm[1] / scale.voxelSizeNm[1],
+        extentNm[2] / scale.voxelSizeNm[2],
+      ];
+      const chunksX = Math.max(
+        1,
+        Math.ceil(extentLayerVoxels[0] / scale.chunkDataSize[0]),
+      );
+      const chunksY = Math.max(
+        1,
+        Math.ceil(extentLayerVoxels[1] / scale.chunkDataSize[1]),
+      );
+      const chunksZ = Math.max(
+        1,
+        Math.ceil(extentLayerVoxels[2] / scale.chunkDataSize[2]),
+      );
+      const chunkVoxels =
+        scale.chunkDataSize[0] *
+        scale.chunkDataSize[1] *
+        scale.chunkDataSize[2];
+      total +=
+        chunksX *
+        chunksY *
+        chunksZ *
+        chunkVoxels *
+        bytesPerVoxel *
+        channels;
     }
   }
-  return names;
+  return { totalBytes: total };
+}
+
+function bytesPerVoxelFor(dataType: VoxelDataType): number {
+  switch (dataType) {
+    case "uint8":
+    case "int8":
+      return 1;
+    case "uint16":
+    case "int16":
+      return 2;
+    case "uint32":
+    case "int32":
+    case "float32":
+      return 4;
+    case "uint64":
+      return 8;
+    default:
+      return 0;
+  }
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes)) return "∞";
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(value >= 100 ? 0 : value >= 10 ? 1 : 2)} ${units[unitIndex]}`;
+}
+
+function defaultStateFor(entry: LayerEntry): LayerRowState {
+  return {
+    locked: entry.visible,
+    writable: entry.visible && entry.kind === "segmentation",
+    resolutions: [],
+    loadState: "loading",
+    loadError: undefined,
+    availableResolutions: [],
+  };
+}
+
+function collectLayerEntries(layerManager: LayerManager): LayerEntry[] {
+  const entries: LayerEntry[] = [];
+  for (const managed of layerManager.managedLayers) {
+    const kind = layerKindOf(managed);
+    if (kind === undefined) continue;
+    entries.push({
+      name: managed.name,
+      kind,
+      visible: managed.visible,
+    });
+  }
+  return entries;
+}
+
+function layerKindOf(managed: ManagedUserLayer): LayerKind | undefined {
+  const userLayer = managed.layer;
+  if (userLayer instanceof SegmentationUserLayer) return "segmentation";
+  if (userLayer instanceof ImageUserLayer) return "image";
+  return undefined;
 }

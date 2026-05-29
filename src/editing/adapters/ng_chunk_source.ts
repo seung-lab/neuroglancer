@@ -51,9 +51,15 @@ import { DataType } from "#src/util/data_type.js";
  * through `SliceViewChunkSource.fetchChunk`, which awaits chunk arrival via
  * the existing chunk pipeline without blocking the main thread.
  */
+interface PinnedChunkRecord {
+  readonly source: VolumeChunkSource;
+  readonly key: string;
+  readonly chunk: VolumeChunk;
+}
+
 export class NgChunkSource implements LibraryChunkSource {
   private currentSessionId: SessionId | undefined;
-  private currentPinnedChunks: VolumeChunk[] = [];
+  private currentPinnedChunks: PinnedChunkRecord[] = [];
   /**
    * Optional handle to the host's committed-buffer store. When set, baseline
    * reads consult it before falling through to the data source — committed
@@ -72,9 +78,6 @@ export class NgChunkSource implements LibraryChunkSource {
     private readonly layerManager: LayerManager,
     _chunkManager: ChunkManager,
   ) {
-    // chunkManager is part of the constructor contract for future use;
-    // v1 reads route through `SliceViewChunkSource.fetchChunk` which already
-    // knows its chunkManager via the source instance.
     void _chunkManager;
   }
 
@@ -106,11 +109,8 @@ export class NgChunkSource implements LibraryChunkSource {
         const key = chunkKeyForSource(source, chunkCoord);
         const chunk = source.chunks.get(key) as VolumeChunk | undefined;
         if (chunk !== undefined) {
-          // v1: tracking the chunk reference is the pin intent. Neuroglancer's
-          // real chunk eviction is driven on the backend by priority tiers;
-          // baseline reads later go through `fetchChunk`, which guarantees
-          // system-memory residency during the read callback.
-          this.currentPinnedChunks.push(chunk);
+          source.chunkManager.markChunkPermanent(source, key, true);
+          this.currentPinnedChunks.push({ source, key, chunk });
         }
         // Missing-from-cache chunks are not a pin failure: pinChunks only
         // records intent. The library will call readBaselineChunk later,
@@ -200,8 +200,9 @@ export class NgChunkSource implements LibraryChunkSource {
   }
 
   private releaseTrackedPins(): void {
-    // v1: dropping references is the only release action available on the
-    // frontend; backend eviction is priority-driven on the backend.
+    for (const { source, key } of this.currentPinnedChunks) {
+      source.chunkManager.markChunkPermanent(source, key, false);
+    }
     this.currentPinnedChunks.length = 0;
   }
 

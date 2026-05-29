@@ -101,6 +101,8 @@ export const CHUNK_SOURCE_INVALIDATE_RPC_ID = "ChunkSource.invalidate";
 export const REQUEST_CHUNK_STATISTICS_RPC_ID =
   "ChunkQueueManager.requestChunkStatistics";
 
+export const CHUNK_SET_PERMANENT_RPC_ID = "ChunkManager.setChunkPermanent";
+
 // Used for sending per-layer visible/prefetch chunk statistics from backend to frontend.
 export const CHUNK_LAYER_STATISTICS_RPC_ID =
   "ChunkManager.chunkLayerStatistics";

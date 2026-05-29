@@ -14,9 +14,22 @@ import { useSignal } from "#src/editing/ui/interop/use_signal.js";
 import type { ResolutionSelectionModel } from "#src/editing/ui/session_entry/resolution_options.js";
 import { ResolutionPicker } from "#src/editing/ui/session_entry/resolution_picker.js";
 
+export type LayerKind = "image" | "segmentation";
+
 export interface LayerRowState {
-  included: boolean;
+  /**
+   * When true the layer participates in the session and its bbox-intersecting
+   * chunks are held in PERMANENT residency (protected from GPU and system
+   * memory eviction). When false the layer is not part of the session — base
+   * Neuroglancer LRU governs it.
+   */
   locked: boolean;
+  /**
+   * When true the layer is a paint target (overlay attached). Only meaningful
+   * when `locked` is true. Defaults follow layer kind: segmentation → true,
+   * image → false.
+   */
+  writable: boolean;
   resolutions: readonly Resolution[];
   loadState: "loading" | "loaded" | "error";
   loadError: string | undefined;
@@ -25,20 +38,22 @@ export interface LayerRowState {
 
 export function LayerRow({
   name,
+  layerKind,
   state,
   resolutionModel,
-  onIncludedChange,
   onLockedChange,
+  onWritableChange,
 }: {
   name: string;
+  layerKind: LayerKind;
   state: LayerRowState;
   resolutionModel: ResolutionSelectionModel | undefined;
-  onIncludedChange: (v: boolean) => void;
   onLockedChange: (v: boolean) => void;
+  onWritableChange: (v: boolean) => void;
 }) {
   useSignal(resolutionModel?.selectionChanged);
 
-  const rowClass = state.included
+  const rowClass = state.locked
     ? "neuroglancer-edit-session-entry-modal-layer-row"
     : "neuroglancer-edit-session-entry-modal-layer-row neuroglancer-edit-session-entry-modal-layer-row-excluded";
 
@@ -71,26 +86,32 @@ export function LayerRow({
         resolutions={resolutionModel.resolutions}
         isSelected={(r) => resolutionModel.isSelected(r)}
         onToggle={(r, checked) => resolutionModel.toggle(r, checked)}
-        disabled={!state.included}
+        disabled={!state.locked}
       />
     );
   } else {
     resolutionContent = null;
   }
 
+  const badgeClass =
+    layerKind === "segmentation"
+      ? "neuroglancer-edit-session-entry-modal-layer-kind neuroglancer-edit-session-entry-modal-layer-kind-segmentation"
+      : "neuroglancer-edit-session-entry-modal-layer-kind neuroglancer-edit-session-entry-modal-layer-kind-image";
+
   return (
     <div class={rowClass}>
       <label class="neuroglancer-edit-session-entry-modal-layer-include">
         <input
           type="checkbox"
-          checked={state.included}
+          checked={state.locked}
           onChange={(e) =>
-            onIncludedChange((e.target as HTMLInputElement).checked)
+            onLockedChange((e.target as HTMLInputElement).checked)
           }
         />
         <span class="neuroglancer-edit-session-entry-modal-layer-name">
           {name}
         </span>
+        <span class={badgeClass}>{layerKind}</span>
       </label>
       <span class="neuroglancer-edit-session-entry-modal-layer-resolution">
         <span class="neuroglancer-edit-session-entry-modal-layer-resolution-label">
@@ -103,13 +124,13 @@ export function LayerRow({
       <label class="neuroglancer-edit-session-entry-modal-layer-lock">
         <input
           type="checkbox"
-          checked={state.locked}
-          disabled={!state.included}
+          checked={state.writable}
+          disabled={!state.locked}
           onChange={(e) =>
-            onLockedChange((e.target as HTMLInputElement).checked)
+            onWritableChange((e.target as HTMLInputElement).checked)
           }
         />
-        <span>Read-only</span>
+        <span>Writable</span>
       </label>
     </div>
   );

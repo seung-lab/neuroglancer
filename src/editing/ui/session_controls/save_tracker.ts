@@ -26,7 +26,7 @@ export type SaveAllState =
 
 export interface PerLayerSaveStatus {
   readonly layerId: LayerId;
-  readonly role: "writable" | "locked";
+  readonly writable: boolean;
   readonly status: "succeeded" | "failed" | "skipped" | "partial" | "pending";
   readonly detail: string;
 }
@@ -100,7 +100,7 @@ export class SaveTracker {
   private markAllWritablePending(): void {
     const next = new Map(this.layerStatuses_);
     for (const [key, entry] of next) {
-      if (entry.role !== "writable") continue;
+      if (!entry.writable) continue;
       next.set(key, { ...entry, status: "pending", detail: "saving…" });
     }
     this.layerStatuses_ = next;
@@ -110,10 +110,10 @@ export class SaveTracker {
     const failedIds: string[] = [];
     const next = new Map(this.layerStatuses_);
     for (const [key, entry] of next) {
-      if (entry.role !== "writable") continue;
+      if (!entry.writable) continue;
       next.set(key, {
         layerId: entry.layerId,
-        role: "writable",
+        writable: true,
         status: "failed",
         detail: message,
       });
@@ -128,12 +128,12 @@ export class SaveTracker {
     const next = new Map(this.layerStatuses_);
     for (const outcome of result.outcomes) {
       const existing = next.get(outcome.layerId as string);
-      const role = existing?.role ?? "writable";
+      const writable = existing?.writable ?? true;
       const status = statusFromOutcome(outcome);
       const detail = detailFromOutcome(outcome, this.saveStartedAt_);
       next.set(outcome.layerId as string, {
         layerId: outcome.layerId,
-        role,
+        writable,
         status,
         detail,
       });
@@ -171,25 +171,25 @@ function initializeLayerStatuses(
 ): Map<string, PerLayerSaveStatus> {
   const statuses = new Map<string, PerLayerSaveStatus>();
   const intent = host.state.value.value;
-  const roleByLayer = new Map<string, "writable" | "locked">();
+  const writableByLayer = new Map<string, boolean>();
   if (intent !== null) {
     for (const layer of intent.layers) {
-      roleByLayer.set(layer.layerId, layer.role);
+      writableByLayer.set(layer.layerId, layer.writable);
     }
   }
   for (const sel of session.config.layers) {
-    const role = roleByLayer.get(sel.layerId) ?? "writable";
-    if (role === "locked") {
+    const writable = writableByLayer.get(sel.layerId) ?? true;
+    if (!writable) {
       statuses.set(sel.layerId as string, {
         layerId: sel.layerId,
-        role,
+        writable,
         status: "skipped",
         detail: "read-only; not saved",
       });
     } else {
       statuses.set(sel.layerId as string, {
         layerId: sel.layerId,
-        role,
+        writable,
         status: "pending",
         detail: "no save yet",
       });

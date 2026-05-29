@@ -101,10 +101,12 @@ export interface HostSessionConfig {
     /**
      * Resolutions selected at session-entry time. Non-empty. The first entry
      * is the default painting resolution for writable layers; downstream
-     * display is restricted to this set on both writable and locked layers.
+     * display is restricted to this set on both writable and read-only
+     * layers. Every layer in the config is locked in memory for the duration
+     * of the session (chunks held in PERMANENT residency).
      */
     readonly resolutions: readonly ResolutionType[];
-    readonly role: "writable" | "locked";
+    readonly writable: boolean;
   }>;
 }
 
@@ -124,7 +126,7 @@ export interface EditSessionIntent {
     readonly layerId: LayerId;
     /** Non-empty. First entry is the default painting resolution. */
     readonly resolutions: readonly ResolutionType[];
-    readonly role: "writable" | "locked";
+    readonly writable: boolean;
   }>;
   readonly capturedRegion: { readonly lo: Vec3Voxels; readonly hi: Vec3Voxels };
 }
@@ -181,10 +183,7 @@ function parseIntent(x: unknown): EditSessionIntent | null {
       throw new Error("invalid-layer-entry");
     }
     const e = entry as Record<string, unknown>;
-    if (
-      typeof e.layerId !== "string" ||
-      (e.role !== "writable" && e.role !== "locked")
-    ) {
+    if (typeof e.layerId !== "string" || typeof e.writable !== "boolean") {
       throw new Error("invalid-layer-fields");
     }
     // Accept either the current `resolutions: string[]` shape or the legacy
@@ -204,7 +203,7 @@ function parseIntent(x: unknown): EditSessionIntent | null {
     return {
       layerId: toLayerId(e.layerId),
       resolutions,
-      role: e.role,
+      writable: e.writable,
     };
   });
   const cr = obj.capturedRegion as Record<string, unknown> | undefined;
@@ -974,7 +973,7 @@ export class EditSessionHost extends RefCounted {
       layerId: l.layerId,
       selectedResolutions: [...l.resolutions],
     }));
-    const firstWritable = config.layers.find((l) => l.role === "writable");
+    const firstWritable = config.layers.find((l) => l.writable);
     const targetLayer = firstWritable ?? config.layers[0];
     const targetLayerId = targetLayer.layerId;
     const targetResolution = targetLayer.resolutions[0];
@@ -1092,7 +1091,7 @@ export class EditSessionHost extends RefCounted {
     }
     // Step 2: attach per-layer paint machinery for WRITABLE layers only.
     for (const layer of config.layers) {
-      if (layer.role !== "writable") continue;
+      if (!layer.writable) continue;
       const userLayer = this.findSegmentationUserLayer(layer.layerId);
       if (userLayer === undefined) {
         this.logger.warn(
@@ -1214,7 +1213,7 @@ export class EditSessionHost extends RefCounted {
    */
   private attachCursorOverlays(config: HostSessionConfig): void {
     this.cursorState = new BrushCursorState(this);
-    const firstWritable = config.layers.find((l) => l.role === "writable");
+    const firstWritable = config.layers.find((l) => l.writable);
     if (firstWritable === undefined) return;
     const userLayer = this.findSegmentationUserLayer(firstWritable.layerId);
     if (userLayer === undefined) return;
@@ -1314,7 +1313,7 @@ export class EditSessionHost extends RefCounted {
       layers: config.layers.map((l) => ({
         layerId: l.layerId,
         resolutions: [...l.resolutions],
-        role: l.role,
+        writable: l.writable,
       })),
       capturedRegion: {
         lo: [

@@ -47,7 +47,7 @@ export function PaintingTargetPicker({
   const intent = host.state.value.value;
   const writable = intent === null
     ? []
-    : intent.layers.filter((l) => l.role === "writable");
+    : intent.layers.filter((l) => l.writable);
 
   if (writable.length === 0) {
     return null;

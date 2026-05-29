@@ -109,20 +109,20 @@ function SessionContent({
   const intent = host.state.value.value;
   const intentByLayer = new Map<
     string,
-    { role: "writable" | "locked"; resolutions: readonly string[] }
+    { writable: boolean; resolutions: readonly string[] }
   >();
   if (intent !== null) {
     for (const layer of intent.layers) {
       intentByLayer.set(layer.layerId, {
-        role: layer.role,
+        writable: layer.writable,
         resolutions: layer.resolutions,
       });
     }
   }
   const layersParts = session.config.layers.map((sel) => {
     const meta = intentByLayer.get(sel.layerId);
-    const role = meta?.role ?? "writable";
-    const flag = role === "writable" ? "w" : "r";
+    const writable = meta?.writable ?? true;
+    const flag = writable ? "w" : "r";
     const resolutions =
       meta?.resolutions ?? sel.selectedResolutions;
     return `${sel.layerId} (${flag}) [${resolutions.join(", ")}]`;

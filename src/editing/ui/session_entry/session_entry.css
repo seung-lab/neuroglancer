@@ -152,6 +152,30 @@
   text-overflow: ellipsis;
 }
 
+.neuroglancer-edit-session-entry-modal-layer-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid #2e2e2e;
+  background-color: #232323;
+  color: #aaa;
+  white-space: nowrap;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-kind-segmentation {
+  color: #b6d6ff;
+  border-color: #2d4566;
+  background-color: #1a2638;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-kind-image {
+  color: #c7d7a6;
+  border-color: #3f4a2a;
+  background-color: #232a18;
+}
+
 .neuroglancer-edit-session-entry-modal-layer-resolution {
   display: inline-flex;
   align-items: center;
@@ -202,6 +226,21 @@
 
 .neuroglancer-edit-session-entry-modal-layer-lock input[type="checkbox"]:disabled {
   cursor: not-allowed;
+}
+
+.neuroglancer-edit-session-entry-modal-memory-estimate {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #aaa;
+  padding: 4px 6px;
+  border: 1px solid #2a2a2a;
+  background-color: #181818;
+}
+
+.neuroglancer-edit-session-entry-modal-memory-estimate-over {
+  color: #fbbf24;
+  border-color: #5c4a13;
+  background-color: #2a1f10;
 }
 
 /* Footer -------------------------------------------------------------------*/
