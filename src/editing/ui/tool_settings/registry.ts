@@ -8,16 +8,17 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import type { ComponentType } from "preact";
 import type { EditSession } from "@zetta-ai/edit-session";
+import type { ComponentType } from "preact";
 
+import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { Correspondence } from "#src/editing/ui/tool_settings/correspondence.js";
 import { PaintingBrush } from "#src/editing/ui/tool_settings/painting_brush.js";
 import { PaintingEraser } from "#src/editing/ui/tool_settings/painting_eraser.js";
 import { PaintingFill } from "#src/editing/ui/tool_settings/painting_fill.js";
 import { ZExtrapolation } from "#src/editing/ui/tool_settings/z_extrapolation.js";
 
-type ToolSettingsProps = { session: EditSession };
+type ToolSettingsProps = { session: EditSession; host: EditSessionHost };
 
 const registry = new Map<string, ComponentType<ToolSettingsProps>>([
   ["painting.brush", PaintingBrush],

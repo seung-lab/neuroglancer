@@ -11,9 +11,16 @@
 import type { EditSession } from "@zetta-ai/edit-session";
 import { useEffect, useState } from "preact/hooks";
 
+import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { getToolSettings } from "#src/editing/ui/tool_settings/registry.js";
 
-export function ActiveToolSettings({ session }: { session: EditSession }) {
+export function ActiveToolSettings({
+  session,
+  host,
+}: {
+  session: EditSession;
+  host: EditSessionHost;
+}) {
   const [activeToolId, setActiveToolId] = useState<string | undefined>(
     session.tools.getActiveToolId(),
   );
@@ -34,7 +41,7 @@ export function ActiveToolSettings({ session }: { session: EditSession }) {
       <div class="neuroglancer-edit-session-section-title">Tool</div>
       <div class="neuroglancer-edit-session-tool-panel-slot">
         {Panel !== undefined
-          ? <Panel session={session} />
+          ? <Panel session={session} host={host} />
           : (
             <p class="neuroglancer-tool-panel-host-placeholder">
               {activeToolId === undefined

@@ -9,17 +9,24 @@
  */
 
 import type { EditSession, PaintingTools } from "@zetta-ai/edit-session";
-import { DEFAULT_RADIUS_CYCLE } from "@zetta-ai/edit-session";
 import { useCallback } from "preact/hooks";
 
+import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { useEvent } from "#src/editing/ui/interop/use_event.js";
+import { PaintingTargetPicker } from "#src/editing/ui/tool_settings/painting_target_picker.js";
 
 function clampRadius(value: number): number {
   if (!Number.isFinite(value)) return 1;
   return Math.max(1, Math.min(64, Math.round(value)));
 }
 
-export function PaintingBrush({ session }: { session: EditSession }) {
+export function PaintingBrush({
+  session,
+  host,
+}: {
+  session: EditSession;
+  host: EditSessionHost;
+}) {
   const painting = session.tools.getTool<PaintingTools>("painting");
   const subscribe = useCallback(
     (h: () => void) => painting.on("changed", h),
@@ -51,6 +58,7 @@ export function PaintingBrush({ session }: { session: EditSession }) {
 
   return (
     <div class="neuroglancer-tool-panel neuroglancer-painting-brush-panel">
+      <PaintingTargetPicker session={session} host={host} />
       <div class="neuroglancer-tool-panel-row">
         <label>Radius</label>
         <input
@@ -69,21 +77,6 @@ export function PaintingBrush({ session }: { session: EditSession }) {
           value={state.radius}
           onChange={onRadiusChange}
         />
-      </div>
-      <div class="neuroglancer-tool-panel-row">
-        <label>Presets</label>
-        <div class="neuroglancer-tool-panel-presets">
-          {DEFAULT_RADIUS_CYCLE.map((preset) => (
-            <button
-              key={preset}
-              type="button"
-              class={preset === state.radius ? "active" : undefined}
-              onClick={() => painting.patchState({ radius: preset })}
-            >
-              {preset}
-            </button>
-          ))}
-        </div>
       </div>
       <div class="neuroglancer-tool-panel-row">
         <label>Target value</label>

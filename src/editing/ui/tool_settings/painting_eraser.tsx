@@ -11,7 +11,9 @@
 import type { EditSession, PaintingTools } from "@zetta-ai/edit-session";
 import { useCallback } from "preact/hooks";
 
+import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { useEvent } from "#src/editing/ui/interop/use_event.js";
+import { PaintingTargetPicker } from "#src/editing/ui/tool_settings/painting_target_picker.js";
 
 const SIZE_PRESETS: readonly number[] = [1, 3, 5, 9, 17, 33, 65];
 const MIN_PRESET_INDEX = 0;
@@ -51,7 +53,13 @@ function applyPresetByIndex(painting: PaintingTools, rawIndex: number): void {
   painting.patchState({ radius: sizeToRadius(SIZE_PRESETS[clamped]) });
 }
 
-export function PaintingEraser({ session }: { session: EditSession }) {
+export function PaintingEraser({
+  session,
+  host,
+}: {
+  session: EditSession;
+  host: EditSessionHost;
+}) {
   const painting = session.tools.getTool<PaintingTools>("painting");
   const subscribe = useCallback(
     (h: () => void) => painting.on("changed", h),
@@ -65,6 +73,7 @@ export function PaintingEraser({ session }: { session: EditSession }) {
 
   return (
     <div class="neuroglancer-tool-panel neuroglancer-painting-eraser-panel">
+      <PaintingTargetPicker session={session} host={host} />
       <div class="neuroglancer-tool-panel-row">
         <label>Size</label>
         <input

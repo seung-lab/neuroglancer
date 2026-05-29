@@ -11,9 +11,17 @@
 import type { EditSession, PaintingTools } from "@zetta-ai/edit-session";
 import { useCallback } from "preact/hooks";
 
+import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { useEvent } from "#src/editing/ui/interop/use_event.js";
+import { PaintingTargetPicker } from "#src/editing/ui/tool_settings/painting_target_picker.js";
 
-export function PaintingFill({ session }: { session: EditSession }) {
+export function PaintingFill({
+  session,
+  host,
+}: {
+  session: EditSession;
+  host: EditSessionHost;
+}) {
   const painting = session.tools.getTool<PaintingTools>("painting");
   const subscribe = useCallback(
     (h: () => void) => painting.on("changed", h),
@@ -35,6 +43,7 @@ export function PaintingFill({ session }: { session: EditSession }) {
 
   return (
     <div class="neuroglancer-tool-panel neuroglancer-painting-fill-panel">
+      <PaintingTargetPicker session={session} host={host} />
       <div class="neuroglancer-tool-panel-row">
         <label>Target value</label>
         <input
