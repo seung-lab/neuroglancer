@@ -338,12 +338,11 @@ function enumerateScaleSources(
     displayRank,
     modelChannelDimensionIndices,
   };
+  // `getSources` returns `result[orientation][scale]`. Take the first
+  // orientation's full scale list — same convention as the SliceView and
+  // as `NgLayerMetadataSource.collectAllScaleSources`.
   const sourcesByOrientation = volume.getSources(options);
-  const flat: SliceViewSingleResolutionSource<VolumeChunkSource>[] = [];
-  for (const perScale of sourcesByOrientation) {
-    if (perScale.length > 0) flat.push(perScale[0]);
-  }
-  return flat;
+  return sourcesByOrientation[0] ?? [];
 }
 
 function computeVoxelSizeNm(

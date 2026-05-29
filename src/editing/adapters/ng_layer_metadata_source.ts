@@ -216,12 +216,13 @@ function collectAllScaleSources(
   };
   const multiscale =
     volume as unknown as MultiscaleSliceViewChunkSource<VolumeChunkSource>;
+  // `getSources` returns `result[orientation][scale]` — outer indexes
+  // alternative chunk orientations (rare; typically 1), inner indexes
+  // scales ordered by increasing voxel size. SliceView picks one
+  // orientation and uses all of its scales, so we do the same: take the
+  // first orientation's full scale list.
   const sourcesByOrientation = multiscale.getSources(options);
-  const flat: SliceViewSingleResolutionSource<VolumeChunkSource>[] = [];
-  for (const perScale of sourcesByOrientation) {
-    if (perScale.length > 0) flat.push(perScale[0]);
-  }
-  return flat;
+  return sourcesByOrientation[0] ?? [];
 }
 
 function buildScaleMetadata(
