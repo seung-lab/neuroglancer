@@ -35,6 +35,7 @@ import { registerRedrawWhenSegmentationDisplayStateChanged } from "#src/segmenta
 import type { SliceViewSourceOptions } from "#src/sliceview/base.js";
 import type {
   SliceView,
+  SliceViewChunkSource,
   SliceViewSingleResolutionSource,
 } from "#src/sliceview/frontend.js";
 import type {
@@ -98,6 +99,17 @@ export interface SliceViewSegmentationDisplayState
    */
   editBboxLoHi?: WatchableValueInterface<
     { lo: vec3; hi: vec3 } | undefined
+  >;
+
+  /**
+   * Voxel-edit resolution-display lock. When set, the slice-view's
+   * `getSources()` returns only scales matching the user-selected
+   * resolutions for the active session; `undefined` means no filtering.
+   * Same wiring pattern as `editBboxLoHi`.
+   */
+  allowedSourcePredicate?: WatchableValueInterface<
+    | ((source: SliceViewSingleResolutionSource<SliceViewChunkSource>) => boolean)
+    | undefined
   >;
 }
 
@@ -221,6 +233,7 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
       renderScaleHistogram: displayState.renderScaleHistogram,
       renderScaleTarget: displayState.renderScaleTarget,
       localPosition: displayState.localPosition,
+      allowedSourcePredicate: displayState.allowedSourcePredicate,
     });
     this.segmentationGroupState = displayState.segmentationGroupState.value;
     this.gpuHashTable = this.registerDisposer(

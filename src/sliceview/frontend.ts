@@ -390,6 +390,17 @@ export class SliceView extends Base {
     );
     disposers.push(renderLayer.redrawNeeded.add(this.viewChanged.dispatch));
     disposers.push(renderLayer.transform.changed.add(this.updateVisibleLayers));
+    // The allow-list predicate (if set) drops/restores per-scale sources, so
+    // the cached `allSources` array (built once per render layer attachment)
+    // must be invalidated when it flips. The renderer-side counter is
+    // already bumped via the predicate's `changed` signal — here we just
+    // trigger the SliceView's `updateVisibleLayers` so the cache rebuilds.
+    const allowedSourcePredicate = renderLayer.allowedSourcePredicate;
+    if (allowedSourcePredicate !== undefined) {
+      disposers.push(
+        allowedSourcePredicate.changed.add(this.updateVisibleLayers),
+      );
+    }
     disposers.push(
       renderLayer.renderScaleTarget.changed.add(() =>
         this.invalidateVisibleSources(),
@@ -428,7 +439,7 @@ export class SliceView extends Base {
           layerInfo = {
             messages,
             allSources: this.getTransformedSources(renderLayer, messages),
-            transformGeneration: renderLayer.transform.changed.count,
+            transformGeneration: renderLayer.sourcesGeneration,
             visibleSources: [],
             disposers,
             lastSeenGeneration: curUpdateGeneration,
@@ -439,7 +450,7 @@ export class SliceView extends Base {
           this.bindVisibleRenderLayer(renderLayer, disposers);
         } else {
           layerInfo.lastSeenGeneration = curUpdateGeneration;
-          const curTransformGeneration = renderLayer.transform.changed.count;
+          const curTransformGeneration = renderLayer.sourcesGeneration;
           if (
             layerInfo.transformGeneration === curTransformGeneration &&
             layerInfo.displayDimensionRenderInfo === displayDimensionRenderInfo

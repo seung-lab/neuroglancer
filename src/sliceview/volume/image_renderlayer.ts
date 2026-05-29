@@ -16,7 +16,11 @@
 
 import type { BboxAlphaShaderHook } from "#src/editing/shaders/bbox_alpha_chunk.js";
 import { createBboxAlphaShaderHook } from "#src/editing/shaders/bbox_alpha_chunk.js";
-import type { SliceView } from "#src/sliceview/frontend.js";
+import type {
+  SliceView,
+  SliceViewChunkSource,
+  SliceViewSingleResolutionSource,
+} from "#src/sliceview/frontend.js";
 import type { MultiscaleVolumeChunkSource } from "#src/sliceview/volume/frontend.js";
 import type { RenderLayerBaseOptions } from "#src/sliceview/volume/renderlayer.js";
 import { SliceViewVolumeRenderLayer } from "#src/sliceview/volume/renderlayer.js";
@@ -73,6 +77,16 @@ export interface ImageRenderLayerOptions extends RenderLayerBaseOptions {
    */
   editBboxLoHi?: WatchableValueInterface<
     { lo: vec3; hi: vec3 } | undefined
+  >;
+
+  /**
+   * Voxel-edit resolution-display lock; mirrors the segmentation render
+   * layer hook. Already plumbed through to the base SliceViewRenderLayer
+   * by the `...options` spread in the super call.
+   */
+  allowedSourcePredicate?: WatchableValueInterface<
+    | ((source: SliceViewSingleResolutionSource<SliceViewChunkSource>) => boolean)
+    | undefined
   >;
 }
 

@@ -70,6 +70,19 @@ export interface SliceViewRenderLayerOptions {
   dataHistogramSpecifications?: HistogramSpecifications;
 
   rpcTransfer?: { [index: string]: number | string | null };
+
+  /**
+   * Optional source-allow-list filter. When the watchable holds a function,
+   * `SliceViewRenderLayer.getSources()` returns only the per-scale sources
+   * for which the predicate returns true; when `undefined` no filtering is
+   * applied. Used by the edit-session host to restrict displayed scales to
+   * the user-selected resolutions while a session is active. Changes to the
+   * watchable invalidate the SliceView's cached transformedSources.
+   */
+  allowedSourcePredicate?: WatchableValueInterface<
+    | ((source: SliceViewSingleResolutionSource<SliceViewChunkSource>) => boolean)
+    | undefined
+  >;
 }
 
 export interface VisibleSourceInfo<Source extends SliceViewChunkSource> {
@@ -122,10 +135,42 @@ export abstract class SliceViewRenderLayer<
    */
   private visibleSourcesList_: VisibleSourceInfo<Source>[] = [];
 
+  /**
+   * Optional per-source allow-list filter. Mirrors
+   * `SliceViewRenderLayerOptions.allowedSourcePredicate`.
+   */
+  allowedSourcePredicate?: WatchableValueInterface<
+    | ((source: SliceViewSingleResolutionSource<SliceViewChunkSource>) => boolean)
+    | undefined
+  >;
+
+  /**
+   * Bumped whenever `allowedSourcePredicate.value` changes. Combined with
+   * `transform.changed.count` into `sourcesGeneration`, which the SliceView
+   * uses as the cache key for the per-render-layer `allSources` array.
+   */
+  private allowedSourcesGeneration = 0;
+
+  /**
+   * Cache-key for `SliceView.getTransformedSources` invalidation. Bumps when
+   * either the layer transform changes OR the optional source-allow-list
+   * predicate changes.
+   */
+  get sourcesGeneration(): number {
+    return this.transform.changed.count + this.allowedSourcesGeneration;
+  }
+
   getSources(
     options: SliceViewSourceOptions,
   ): SliceViewSingleResolutionSource<Source>[][] {
-    return this.multiscaleSource.getSources(options as any);
+    const result = this.multiscaleSource.getSources(options as any);
+    const predicate = this.allowedSourcePredicate?.value;
+    if (predicate === undefined) return result;
+    return result.map((perScale) =>
+      perScale.filter((s) =>
+        predicate(s as SliceViewSingleResolutionSource<SliceViewChunkSource>),
+      ),
+    );
   }
 
   addSource(
@@ -200,6 +245,17 @@ export abstract class SliceViewRenderLayer<
         this.redrawNeeded.dispatch,
       ),
     );
+    if (options.allowedSourcePredicate !== undefined) {
+      this.allowedSourcePredicate = options.allowedSourcePredicate;
+      // Bump the cache-invalidation generation so the SliceView re-runs
+      // getTransformedSources(); the SliceView also subscribes directly to
+      // invalidate its allSources entry (see `bindVisibleRenderLayer`).
+      this.registerDisposer(
+        options.allowedSourcePredicate.changed.add(() => {
+          ++this.allowedSourcesGeneration;
+        }),
+      );
+    }
   }
 
   declare RPC_TYPE_ID: string;
