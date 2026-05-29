@@ -8,14 +8,11 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import type {
-  LayerId,
-  LayerMetadata,
-  Resolution,
-} from "@zetta-ai/edit-session";
+import type { LayerId, LayerMetadata } from "@zetta-ai/edit-session";
 import {
   availableResolutions,
   layerId as toLayerId,
+  Resolution,
 } from "@zetta-ai/edit-session";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 
@@ -29,10 +26,10 @@ import type {
   BboxSelectionModel,
   BboxAnnotationSelection,
 } from "#src/editing/ui/session_entry/bbox_candidates.js";
-import { ResolutionSelectionModel } from "#src/editing/ui/session_entry/resolution_options.js";
 import { BboxPicker } from "#src/editing/ui/session_entry/bbox_picker.js";
-import { LayerRow } from "#src/editing/ui/session_entry/layer_row.js";
 import type { LayerRowState } from "#src/editing/ui/session_entry/layer_row.js";
+import { LayerRow } from "#src/editing/ui/session_entry/layer_row.js";
+import { ResolutionSelectionModel } from "#src/editing/ui/session_entry/resolution_options.js";
 import { ImageUserLayer } from "#src/layer/image/index.js";
 import type { LayerManager } from "#src/layer/index.js";
 import { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
@@ -88,10 +85,10 @@ export function SessionEntryModal(props: {
           next.set(name, {
             included: true,
             locked: false,
-            resolution: undefined,
+            resolutions: [],
             loadState: "loading",
             loadError: undefined,
-            resolutions: [],
+            availableResolutions: [],
           });
         }
       }
@@ -127,50 +124,35 @@ export function SessionEntryModal(props: {
                 ...s,
                 loadState: "error",
                 loadError: "no resolutions",
-                resolutions: [],
+                availableResolutions: [],
               });
               return next;
             });
             return;
           }
-          if (resolutions.length > 1) {
-            const model = new ResolutionSelectionModel(metadata);
-            resolutionModelsRef.current.set(name, model);
-            model.selectionChanged.add(() => {
-              setLayerStates((prev) => {
-                const next = new Map(prev);
-                const s = next.get(name);
-                if (s === undefined) return prev;
-                next.set(name, { ...s, resolution: model.selection });
-                return next;
-              });
-            });
+          const model = new ResolutionSelectionModel(metadata);
+          resolutionModelsRef.current.set(name, model);
+          model.selectionChanged.add(() => {
             setLayerStates((prev) => {
               const next = new Map(prev);
               const s = next.get(name);
-              if (s === undefined || s.loadState !== "loading") return prev;
-              next.set(name, {
-                ...s,
-                loadState: "loaded",
-                resolution: model.selection,
-                resolutions,
-              });
+              if (s === undefined) return prev;
+              next.set(name, { ...s, resolutions: model.selectedResolutions });
               return next;
             });
-          } else {
-            setLayerStates((prev) => {
-              const next = new Map(prev);
-              const s = next.get(name);
-              if (s === undefined || s.loadState !== "loading") return prev;
-              next.set(name, {
-                ...s,
-                loadState: "loaded",
-                resolution: resolutions[0],
-                resolutions,
-              });
-              return next;
+          });
+          setLayerStates((prev) => {
+            const next = new Map(prev);
+            const s = next.get(name);
+            if (s === undefined || s.loadState !== "loading") return prev;
+            next.set(name, {
+              ...s,
+              loadState: "loaded",
+              resolutions: model.selectedResolutions,
+              availableResolutions: resolutions,
             });
-          }
+            return next;
+          });
         },
         (err: unknown) => {
           if (cancelled) return;
@@ -182,7 +164,7 @@ export function SessionEntryModal(props: {
               ...s,
               loadState: "error",
               loadError: err instanceof Error ? err.message : String(err),
-              resolutions: [],
+              availableResolutions: [],
             });
             return next;
           });
@@ -237,7 +219,6 @@ export function SessionEntryModal(props: {
       name: string;
       state: LayerRowState;
     }> = [];
-    let firstWritableResolution: Resolution | undefined;
     let hasWritable = false;
     for (const name of layerNames) {
       const state = layerStates.get(name);
@@ -246,17 +227,14 @@ export function SessionEntryModal(props: {
         setError(`Layer ${name} is unavailable: ${state.loadError}`);
         return;
       }
-      if (state.resolution === undefined) {
-        setError(`Pick a resolution for layer ${name}.`);
+      if (state.resolutions.length === 0) {
+        setError(`Pick at least one resolution for layer ${name}.`);
         return;
       }
       const id = toLayerId(name);
       includedRows.push({ layerId: id, name, state });
       if (!state.locked) {
         hasWritable = true;
-        if (firstWritableResolution === undefined) {
-          firstWritableResolution = state.resolution;
-        }
       }
     }
 
@@ -270,11 +248,11 @@ export function SessionEntryModal(props: {
       try {
         const metadata = await metadataSource.resolve(layerId);
         const available = availableResolutions(metadata);
-        if (!available.includes(state.resolution!)) {
-          setError(
-            `Resolution ${state.resolution} is not available on layer ${name}.`,
-          );
-          return;
+        for (const r of state.resolutions) {
+          if (!available.includes(r)) {
+            setError(`Resolution ${r} is not available on layer ${name}.`);
+            return;
+          }
         }
       } catch (err) {
         setError(
@@ -286,18 +264,22 @@ export function SessionEntryModal(props: {
       }
       layersForConfig.push({
         layerId,
-        resolution: state.resolution!,
+        resolutions: [...state.resolutions],
         role: state.locked ? "locked" : "writable",
       });
     }
 
+    // bboxResolution is derived from the annotation source's own coord
+    // system (captured at selection time), NOT from any session layer's
+    // chosen resolution. Mixing the two physically rescales the bbox-clip
+    // region whenever the user picks a non-default layer resolution.
     const config: HostSessionConfig = {
       bboxRef: {
         annotationLayerName: selectedBbox.annotationLayerName,
         annotationId: selectedBbox.annotationId,
       },
       bboxVoxelCoords: selectedBbox.voxelBbox,
-      bboxResolution: firstWritableResolution!,
+      bboxResolution: Resolution.from(selectedBbox.voxelSizeNm),
       layers: layersForConfig,
     };
 

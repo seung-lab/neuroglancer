@@ -107,16 +107,25 @@ function SessionContent({
   const voxelSizeNm = Resolution.toVoxelSize(region.resolution);
 
   const intent = host.state.value.value;
-  const roleByLayer = new Map<string, "writable" | "locked">();
+  const intentByLayer = new Map<
+    string,
+    { role: "writable" | "locked"; resolutions: readonly string[] }
+  >();
   if (intent !== null) {
     for (const layer of intent.layers) {
-      roleByLayer.set(layer.layerId, layer.role);
+      intentByLayer.set(layer.layerId, {
+        role: layer.role,
+        resolutions: layer.resolutions,
+      });
     }
   }
   const layersParts = session.config.layers.map((sel) => {
-    const role = roleByLayer.get(sel.layerId) ?? "writable";
+    const meta = intentByLayer.get(sel.layerId);
+    const role = meta?.role ?? "writable";
     const flag = role === "writable" ? "w" : "r";
-    return `${sel.layerId} (${flag})`;
+    const resolutions =
+      meta?.resolutions ?? sel.selectedResolutions;
+    return `${sel.layerId} (${flag}) [${resolutions.join(", ")}]`;
   });
 
   return (
@@ -141,7 +150,7 @@ function SessionContent({
         onToolClick={handleToolClick}
       />
 
-      <ActiveToolSettings session={session} />
+      <ActiveToolSettings session={session} host={host} />
 
       <HistoryControls
         session={session}

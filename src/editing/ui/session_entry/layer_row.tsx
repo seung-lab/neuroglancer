@@ -11,16 +11,16 @@
 import type { Resolution } from "@zetta-ai/edit-session";
 
 import { useSignal } from "#src/editing/ui/interop/use_signal.js";
-import { ResolutionPicker } from "#src/editing/ui/session_entry/resolution_picker.js";
 import type { ResolutionSelectionModel } from "#src/editing/ui/session_entry/resolution_options.js";
+import { ResolutionPicker } from "#src/editing/ui/session_entry/resolution_picker.js";
 
 export interface LayerRowState {
   included: boolean;
   locked: boolean;
-  resolution: Resolution | undefined;
+  resolutions: readonly Resolution[];
   loadState: "loading" | "loaded" | "error";
   loadError: string | undefined;
-  resolutions: readonly Resolution[];
+  availableResolutions: readonly Resolution[];
 }
 
 export function LayerRow({
@@ -59,18 +59,19 @@ export function LayerRow({
         {errorText}
       </span>
     );
-  } else if (state.resolutions.length === 1) {
+  } else if (state.availableResolutions.length === 1) {
     resolutionContent = (
       <span class="neuroglancer-edit-session-entry-modal-layer-resolution-static">
-        {state.resolutions[0]}
+        {state.availableResolutions[0]}
       </span>
     );
   } else if (resolutionModel !== undefined) {
     resolutionContent = (
       <ResolutionPicker
         resolutions={resolutionModel.resolutions}
-        selected={resolutionModel.selection}
-        onChange={(v) => resolutionModel.select(v)}
+        isSelected={(r) => resolutionModel.isSelected(r)}
+        onToggle={(r, checked) => resolutionModel.toggle(r, checked)}
+        disabled={!state.included}
       />
     );
   } else {
@@ -93,7 +94,7 @@ export function LayerRow({
       </label>
       <span class="neuroglancer-edit-session-entry-modal-layer-resolution">
         <span class="neuroglancer-edit-session-entry-modal-layer-resolution-label">
-          Resolution:
+          Resolutions:
         </span>
         <span class="neuroglancer-edit-session-entry-modal-layer-resolution-slot">
           {resolutionContent}

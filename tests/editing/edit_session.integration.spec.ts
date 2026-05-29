@@ -78,7 +78,7 @@ describe("EditSessionHost — integration (state surface)", () => {
         resolution: RES,
       },
       layers: [
-        { layerId: layerId("L1"), resolution: RES, role: "writable" },
+        { layerId: layerId("L1"), resolutions: [RES], role: "writable" },
       ],
       capturedRegion: { lo: [0, 0, 0], hi: [16, 16, 16] },
     };
@@ -109,7 +109,7 @@ describe("EditSessionHost — integration (state surface)", () => {
         resolution: RES,
       },
       layers: [
-        { layerId: layerId("missing-L1"), resolution: RES, role: "writable" },
+        { layerId: layerId("missing-L1"), resolutions: [RES], role: "writable" },
       ],
       capturedRegion: { lo: [0, 0, 0], hi: [16, 16, 16] },
     };

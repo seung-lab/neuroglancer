@@ -12,34 +12,35 @@ import type { Resolution } from "@zetta-ai/edit-session";
 
 export function ResolutionPicker({
   resolutions,
-  selected,
-  onChange,
+  isSelected,
+  onToggle,
+  disabled,
 }: {
   resolutions: readonly Resolution[];
-  selected: Resolution | undefined;
-  onChange: (value: Resolution | undefined) => void;
+  isSelected: (value: Resolution) => boolean;
+  onToggle: (value: Resolution, checked: boolean) => void;
+  disabled?: boolean;
 }) {
   if (resolutions.length === 0) {
     return (
-      <select class="neuroglancer-resolution-picker-select" disabled>
-        <option value="">(no resolutions available)</option>
-      </select>
+      <span class="neuroglancer-resolution-picker-empty">
+        (no resolutions available)
+      </span>
     );
   }
   return (
-    <select
-      class="neuroglancer-resolution-picker-select"
-      value={selected ?? ""}
-      onChange={(e) => {
-        const raw = (e.target as HTMLSelectElement).value;
-        onChange(resolutions.find((r) => r === raw));
-      }}
-    >
+    <span class="neuroglancer-resolution-picker">
       {resolutions.map((r) => (
-        <option key={r} value={r}>
-          {r}
-        </option>
+        <label key={r} class="neuroglancer-resolution-picker-option">
+          <input
+            type="checkbox"
+            checked={isSelected(r)}
+            disabled={disabled}
+            onChange={(e) => onToggle(r, (e.target as HTMLInputElement).checked)}
+          />
+          <span>{r}</span>
+        </label>
       ))}
-    </select>
+    </span>
   );
 }

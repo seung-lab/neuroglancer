@@ -13,11 +13,17 @@ import { availableResolutions } from "@zetta-ai/edit-session";
 
 import { NullarySignal } from "#src/util/signal.js";
 
+/**
+ * Per-layer model backing the multi-resolution picker in the
+ * session-entry modal. Holds the set of resolutions the user has checked
+ * for inclusion in the session. The first available resolution is
+ * pre-selected so that included layers are always immediately submittable.
+ */
 export class ResolutionSelectionModel {
   readonly selectionChanged = new NullarySignal();
 
   private resolutions_: readonly Resolution[] = [];
-  private selection_: Resolution | undefined;
+  private selection_ = new Set<Resolution>();
 
   constructor(metadata: LayerMetadata) {
     this.setMetadata(metadata);
@@ -27,20 +33,34 @@ export class ResolutionSelectionModel {
     return this.resolutions_;
   }
 
-  get selection(): Resolution | undefined {
-    return this.selection_;
+  /**
+   * Snapshot of the currently-checked resolutions, in `resolutions` order.
+   * Empty when nothing is selected (the modal blocks submit in that case).
+   */
+  get selectedResolutions(): readonly Resolution[] {
+    return this.resolutions_.filter((r) => this.selection_.has(r));
   }
 
-  select(value: Resolution | undefined): void {
-    if (value === this.selection_) return;
-    if (value !== undefined && !this.resolutions_.includes(value)) return;
-    this.selection_ = value;
+  isSelected(value: Resolution): boolean {
+    return this.selection_.has(value);
+  }
+
+  toggle(value: Resolution, checked: boolean): void {
+    if (!this.resolutions_.includes(value)) return;
+    if (checked === this.selection_.has(value)) return;
+    if (checked) {
+      this.selection_.add(value);
+    } else {
+      this.selection_.delete(value);
+    }
     this.selectionChanged.dispatch();
   }
 
   setMetadata(metadata: LayerMetadata): void {
-    const next = availableResolutions(metadata);
-    this.resolutions_ = next;
-    this.selection_ = next.length > 0 ? next[0] : undefined;
+    this.resolutions_ = availableResolutions(metadata);
+    this.selection_ = new Set();
+    if (this.resolutions_.length > 0) {
+      this.selection_.add(this.resolutions_[0]);
+    }
   }
 }

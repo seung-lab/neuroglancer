@@ -23,6 +23,7 @@ import {
   isLocalDimension,
   TrackableCoordinateSpace,
 } from "#src/coordinate_transform.js";
+import { getAllowedSourcePredicateForLayer } from "#src/editing/adapters/allowed_source_predicate.js";
 import type {
   ManagedUserLayer,
   TopLevelLayerListSpecification,
@@ -287,6 +288,14 @@ export class ImageUserLayer extends Base {
             editBboxLoHi: getEditBboxLoHiForLayer(
               this.manager.root,
               this.managedLayer.name,
+            ),
+            // Voxel-edit resolution-display lock. While a session is open,
+            // restrict the slice-view's selectable scales to the
+            // user-picked resolution set; `undefined` outside a session.
+            allowedSourcePredicate: getAllowedSourcePredicateForLayer(
+              this.manager.root,
+              this.managedLayer.name,
+              loadedSubsource.loadedDataSource,
             ),
           }),
         );

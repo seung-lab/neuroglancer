@@ -92,6 +92,7 @@ export class PatchedSegmentationRenderLayer extends SliceViewVolumeRenderLayer<P
       renderScaleTarget: displayState.renderScaleTarget,
       renderScaleHistogram: displayState.renderScaleHistogram,
       localPosition: displayState.localPosition,
+      allowedSourcePredicate: displayState.allowedSourcePredicate,
     });
     this.registerDisposer(
       this.shaderParameters as AggregateWatchableValue<PatchShaderParameters>,

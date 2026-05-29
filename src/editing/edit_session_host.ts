@@ -98,7 +98,12 @@ export interface HostSessionConfig {
   readonly bboxResolution: ResolutionType;
   readonly layers: ReadonlyArray<{
     readonly layerId: LayerId;
-    readonly resolution: ResolutionType;
+    /**
+     * Resolutions selected at session-entry time. Non-empty. The first entry
+     * is the default painting resolution for writable layers; downstream
+     * display is restricted to this set on both writable and locked layers.
+     */
+    readonly resolutions: readonly ResolutionType[];
     readonly role: "writable" | "locked";
   }>;
 }
@@ -117,7 +122,8 @@ export interface EditSessionIntent {
   };
   readonly layers: ReadonlyArray<{
     readonly layerId: LayerId;
-    readonly resolution: ResolutionType;
+    /** Non-empty. First entry is the default painting resolution. */
+    readonly resolutions: readonly ResolutionType[];
     readonly role: "writable" | "locked";
   }>;
   readonly capturedRegion: { readonly lo: Vec3Voxels; readonly hi: Vec3Voxels };
@@ -177,14 +183,27 @@ function parseIntent(x: unknown): EditSessionIntent | null {
     const e = entry as Record<string, unknown>;
     if (
       typeof e.layerId !== "string" ||
-      typeof e.resolution !== "string" ||
       (e.role !== "writable" && e.role !== "locked")
     ) {
       throw new Error("invalid-layer-fields");
     }
+    // Accept either the current `resolutions: string[]` shape or the legacy
+    // `resolution: string` shape (pre-multi-resolution URL state).
+    let resolutions: ResolutionType[];
+    if (Array.isArray(e.resolutions)) {
+      resolutions = e.resolutions.map((r) => {
+        if (typeof r !== "string") throw new Error("invalid-resolution-entry");
+        return r as ResolutionType;
+      });
+    } else if (typeof e.resolution === "string") {
+      resolutions = [e.resolution as ResolutionType];
+    } else {
+      throw new Error("invalid-layer-fields");
+    }
+    if (resolutions.length === 0) throw new Error("empty-resolutions");
     return {
       layerId: toLayerId(e.layerId),
-      resolution: e.resolution as ResolutionType,
+      resolutions,
       role: e.role,
     };
   });
@@ -322,6 +341,24 @@ export class EditSessionHost extends RefCounted {
   private readonly editBboxByLayer = new Map<
     string,
     WatchableValue<{ lo: vec3; hi: vec3 } | undefined>
+  >();
+
+  // Per-layer persistent watchables for the resolution-display lock. Same
+  // pattern as `editBboxByLayer`: layer-keyed, lazily allocated on first
+  // access from segmentation/image user-layer construction. Value holds the
+  // set of resolutions the slice-view render layer is allowed to display
+  // while a session is active; `undefined` means no session (no lock).
+  private readonly allowedResolutionsByLayer = new Map<
+    string,
+    WatchableValue<ReadonlySet<ResolutionType> | undefined>
+  >();
+
+  // Source-of-truth map populated at session-open from
+  // `HostSessionConfig.layers[*].resolutions`. Cleared on session end. The
+  // public watchables above are derived from this.
+  private readonly _allowedResolutionsByLayer = new Map<
+    LayerId,
+    ReadonlySet<ResolutionType>
   >();
 
   // -- Per-session machinery (cleared on session end) -----------------------
@@ -797,6 +834,40 @@ export class EditSessionHost extends RefCounted {
     }
   }
 
+  /**
+   * Return a persistent watchable holding the set of resolutions the layer's
+   * slice-view render layers are allowed to display while a session is
+   * active, or `undefined` when no session is active for the layer.
+   *
+   * Used by `SliceViewRenderLayer.getSources` to filter the multiscale
+   * source's scales, restricting display to the user-selected resolutions
+   * for both writable and locked layers in the session.
+   */
+  getAllowedResolutionsWatchableForLayer(
+    layerName: string,
+  ): WatchableValue<ReadonlySet<ResolutionType> | undefined> {
+    let w = this.allowedResolutionsByLayer.get(layerName);
+    if (w === undefined) {
+      w = new WatchableValue<ReadonlySet<ResolutionType> | undefined>(
+        this.readAllowedResolutionsForLayer(layerName),
+      );
+      this.allowedResolutionsByLayer.set(layerName, w);
+    }
+    return w;
+  }
+
+  private readAllowedResolutionsForLayer(
+    layerName: string,
+  ): ReadonlySet<ResolutionType> | undefined {
+    return this._allowedResolutionsByLayer.get(layerName as LayerId);
+  }
+
+  private refreshAllowedResolutionsWatchables(): void {
+    for (const [layerName, watchable] of this.allowedResolutionsByLayer) {
+      watchable.value = this.readAllowedResolutionsForLayer(layerName);
+    }
+  }
+
   // -- Reload restore -------------------------------------------------------
 
   /**
@@ -833,14 +904,16 @@ export class EditSessionHost extends RefCounted {
       }
       try {
         const metadata = await this.layerMetadataSource.resolve(layer.layerId);
-        const exposed = metadata.scales.some(
-          (s) => s.resolution === layer.resolution,
+        const availableResolutions = new Set(
+          metadata.scales.map((s) => s.resolution),
         );
-        if (!exposed) {
-          this.failRestore(
-            `Edit session reference invalid: resolution ${JSON.stringify(layer.resolution)} unavailable on layer ${JSON.stringify(layer.layerId)}.`,
-          );
-          return;
+        for (const resolution of layer.resolutions) {
+          if (!availableResolutions.has(resolution)) {
+            this.failRestore(
+              `Edit session reference invalid: resolution ${JSON.stringify(resolution)} unavailable on layer ${JSON.stringify(layer.layerId)}.`,
+            );
+            return;
+          }
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -892,18 +965,19 @@ export class EditSessionHost extends RefCounted {
   // -- Internal helpers -----------------------------------------------------
 
   private buildLibraryConfig(config: HostSessionConfig): EditSessionConfig {
-    const layers: LayerSelection[] = config.layers.map((l) => ({
-      layerId: l.layerId,
-      selectedResolutions: [l.resolution],
-    }));
     if (config.layers.length === 0) {
       throw new InvalidSessionConfigError(
         "EditSessionConfig.layers must be non-empty",
       );
     }
+    const layers: LayerSelection[] = config.layers.map((l) => ({
+      layerId: l.layerId,
+      selectedResolutions: [...l.resolutions],
+    }));
     const firstWritable = config.layers.find((l) => l.role === "writable");
-    const targetLayerId = (firstWritable ?? config.layers[0]).layerId;
-    const targetResolution = (firstWritable ?? config.layers[0]).resolution;
+    const targetLayer = firstWritable ?? config.layers[0];
+    const targetLayerId = targetLayer.layerId;
+    const targetResolution = targetLayer.resolutions[0];
     const sourceImageLayerId = config.layers[0].layerId;
 
     // The user-facing "Size" is `radius * 2 + 1` (see brush panel). Default
@@ -1004,8 +1078,16 @@ export class EditSessionHost extends RefCounted {
       this._activeRegionByLayer.set(
         layer.layerId,
         new WatchableValue<ActiveRegion | undefined>(
-          await this.computeActiveRegion(layer.layerId, layer.resolution, config),
+          await this.computeActiveRegion(
+            layer.layerId,
+            layer.resolutions[0],
+            config,
+          ),
         ),
+      );
+      this._allowedResolutionsByLayer.set(
+        layer.layerId,
+        new Set(layer.resolutions),
       );
     }
     // Step 2: attach per-layer paint machinery for WRITABLE layers only.
@@ -1069,6 +1151,7 @@ export class EditSessionHost extends RefCounted {
     // watchables that segmentation/image user layers subscribed to at their
     // construction time.
     this.refreshEditBboxWatchables();
+    this.refreshAllowedResolutionsWatchables();
   }
 
   /**
@@ -1230,7 +1313,7 @@ export class EditSessionHost extends RefCounted {
       },
       layers: config.layers.map((l) => ({
         layerId: l.layerId,
-        resolution: l.resolution,
+        resolutions: [...l.resolutions],
         role: l.role,
       })),
       capturedRegion: {
@@ -1319,7 +1402,9 @@ export class EditSessionHost extends RefCounted {
       }
     }
     this._activeRegionByLayer.clear();
+    this._allowedResolutionsByLayer.clear();
     this.refreshEditBboxWatchables();
+    this.refreshAllowedResolutionsWatchables();
     this.tearDownSessionState();
   }
 
@@ -1390,10 +1475,12 @@ export class EditSessionHost extends RefCounted {
     }
     this.perLayer.clear();
     this._activeRegionByLayer.clear();
+    this._allowedResolutionsByLayer.clear();
     // Flip subscribers from `defined` to `undefined`; this triggers the
     // bbox-dim shader path to recompile back to the no-session variant on
-    // the next render.
+    // the next render and re-enables full resolution range on slice views.
     this.refreshEditBboxWatchables();
+    this.refreshAllowedResolutionsWatchables();
   }
 
   private failRestore(message: string): void {

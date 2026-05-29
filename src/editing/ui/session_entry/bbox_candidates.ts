@@ -29,6 +29,14 @@ export interface BboxAnnotationSelection {
     number,
     number,
   ];
+  /**
+   * Physical size of one voxel of `voxelBbox`, in nanometers, derived from
+   * the annotation source's `modelTransform.outputSpace` at selection time.
+   * Bound to the bbox so the session's clip region is always in the
+   * annotation's own coord system, regardless of which resolutions any
+   * other session layer ends up exposing.
+   */
+  readonly voxelSizeNm: readonly [number, number, number];
 }
 
 export interface BboxEntry {
@@ -43,6 +51,7 @@ export interface BboxEntry {
     number,
     number,
   ];
+  readonly voxelSizeNm: readonly [number, number, number];
   readonly sizeLabel: string;
 }
 
@@ -84,6 +93,7 @@ export class BboxSelectionModel extends RefCounted {
       annotationLayerName: entry.annotationLayerName,
       annotationId: entry.annotation.id,
       voxelBbox: entry.voxelBbox,
+      voxelSizeNm: entry.voxelSizeNm,
     };
   }
 
@@ -131,6 +141,8 @@ export class BboxSelectionModel extends RefCounted {
       if (!(userLayer instanceof AnnotationUserLayer)) continue;
       const source = userLayer.localAnnotations;
       if (source === undefined) continue;
+      const voxelSizeNm = extractAnnotationVoxelSizeNm(userLayer);
+      if (voxelSizeNm === undefined) continue;
       for (const annotation of source as Iterable<Annotation>) {
         if (annotation.type !== AnnotationType.AXIS_ALIGNED_BOUNDING_BOX) {
           continue;
@@ -142,6 +154,7 @@ export class BboxSelectionModel extends RefCounted {
           annotationLayerName: managed.name,
           annotation: bbox,
           voxelBbox,
+          voxelSizeNm,
           sizeLabel: formatSize(voxelBbox),
         });
       }
@@ -173,6 +186,34 @@ export class BboxSelectionModel extends RefCounted {
       this.selectionChanged.dispatch();
     }
   };
+}
+
+/**
+ * Pulls the first 3 output-space scales of the annotation layer's loaded
+ * data source and converts them to nm. The scales are stored in meters
+ * (the standard neuroglancer convention); anything else falls through
+ * unchanged. Returns `undefined` when no data source has loaded yet —
+ * caller skips the layer until the load completes.
+ */
+function extractAnnotationVoxelSizeNm(
+  userLayer: AnnotationUserLayer,
+): readonly [number, number, number] | undefined {
+  for (const layerDataSource of userLayer.dataSources) {
+    const loadState = layerDataSource.loadState;
+    if (loadState === undefined) continue;
+    if ("error" in loadState && loadState.error !== undefined) continue;
+    const outputSpace = loadState.transform.value.outputSpace;
+    const { scales, units } = outputSpace;
+    if (scales.length < 3) continue;
+    const out: [number, number, number] = [0, 0, 0];
+    for (let i = 0; i < 3; ++i) {
+      const scale = scales[i];
+      const unit = units[i];
+      out[i] = unit === "m" ? scale * 1e9 : scale;
+    }
+    return out;
+  }
+  return undefined;
 }
 
 function computeVoxelBbox(

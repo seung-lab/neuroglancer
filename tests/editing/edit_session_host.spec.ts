@@ -51,8 +51,8 @@ function sampleIntent(): EditSessionIntent {
       resolution: RES,
     },
     layers: [
-      { layerId: layerId("L1"), resolution: RES, role: "writable" },
-      { layerId: layerId("L2"), resolution: RES, role: "locked" },
+      { layerId: layerId("L1"), resolutions: [RES], role: "writable" },
+      { layerId: layerId("L2"), resolutions: [RES], role: "locked" },
     ],
     capturedRegion: {
       lo: [0, 0, 0],
