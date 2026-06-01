@@ -51,7 +51,7 @@ jobs:
         with:
           go-version: "stable"
           cache: false
-      - run: npm ci
+      - run: npm ci --foreground-scripts --loglevel notice
       - run: npm run format:fix
       - name: Check for dirty working directory
         run: git diff --exit-code
@@ -113,7 +113,7 @@ jobs:
           cache: "npm"
           cache-dependency-path: |
             package-lock.json
-      - run: npm ci
+      - run: npm ci --foreground-scripts --loglevel notice
       - run: npm run example-project-test -- --reporter=html
       - name: Upload report and built clients
         uses: actions/upload-artifact@v7
@@ -203,7 +203,7 @@ jobs:
         id: uv-cache
         run: |
           echo "dir=$(uv cache dir)" >> "$GITHUB_OUTPUT"
-      - run: npm ci
+      - run: npm ci --foreground-scripts --loglevel notice
       - run: |
           build_info="{'tag':'$(git describe --always --tags)', 'url':'https://github.com/google/neuroglancer/commit/$(git rev-parse HEAD)', 'timestamp':'$(date)'}"
           npm run build-python -- --no-typecheck --no-lint --define NEUROGLANCER_BUILD_INFO="${build_info}"
