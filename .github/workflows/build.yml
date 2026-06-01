@@ -3,7 +3,7 @@ name: Build
 on:
   push:
     branches:
-      - master
+      - cj-debug-npm-ci
     tags:
       - v**
   pull_request:
