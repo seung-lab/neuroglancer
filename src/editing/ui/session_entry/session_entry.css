@@ -83,6 +83,69 @@
   width: 100%;
 }
 
+.neuroglancer-resolution-picker-dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.neuroglancer-resolution-picker-dropdown-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background-color: #2a2a2a;
+  color: #ddd;
+  border: 1px solid #444;
+  padding: 2px 6px;
+  font: inherit;
+  cursor: pointer;
+  min-width: 120px;
+}
+
+.neuroglancer-resolution-picker-dropdown-trigger:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.neuroglancer-resolution-picker-dropdown-summary {
+  flex: 1 1 auto;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.neuroglancer-resolution-picker-dropdown-caret {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: #999;
+}
+
+.neuroglancer-resolution-picker-dropdown-panel {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 2px;
+  background-color: #1a1a1a;
+  border: 1px solid #444;
+  padding: 4px 0;
+  z-index: 10;
+  min-width: 100%;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+}
+
+.neuroglancer-resolution-picker-dropdown-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.neuroglancer-resolution-picker-dropdown-option:hover {
+  background-color: #2a2a2a;
+}
+
 .neuroglancer-edit-session-entry-modal-bbox-info {
   font-size: 11px;
   color: #aaa;

@@ -84,8 +84,8 @@ export function LayerRow({
     resolutionContent = (
       <ResolutionPicker
         resolutions={resolutionModel.resolutions}
-        isSelected={(r) => resolutionModel.isSelected(r)}
-        onToggle={(r, checked) => resolutionModel.toggle(r, checked)}
+        selected={resolutionModel.selectedResolutions}
+        onChange={(values) => resolutionModel.setSelection(values)}
         disabled={!state.locked}
       />
     );

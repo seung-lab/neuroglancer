@@ -45,14 +45,18 @@ export class ResolutionSelectionModel {
     return this.selection_.has(value);
   }
 
-  toggle(value: Resolution, checked: boolean): void {
-    if (!this.resolutions_.includes(value)) return;
-    if (checked === this.selection_.has(value)) return;
-    if (checked) {
-      this.selection_.add(value);
-    } else {
-      this.selection_.delete(value);
+  /**
+   * Replace the entire selection with `values`. Order is irrelevant — the
+   * model normalizes back to `resolutions` order on read. Entries not in
+   * `resolutions_` are silently dropped.
+   */
+  setSelection(values: readonly Resolution[]): void {
+    const next = new Set<Resolution>();
+    for (const v of values) {
+      if (this.resolutions_.includes(v)) next.add(v);
     }
+    if (setsEqual(next, this.selection_)) return;
+    this.selection_ = next;
     this.selectionChanged.dispatch();
   }
 
@@ -63,4 +67,10 @@ export class ResolutionSelectionModel {
       this.selection_.add(this.resolutions_[0]);
     }
   }
+}
+
+function setsEqual<T>(a: ReadonlySet<T>, b: ReadonlySet<T>): boolean {
+  if (a.size !== b.size) return false;
+  for (const v of a) if (!b.has(v)) return false;
+  return true;
 }
