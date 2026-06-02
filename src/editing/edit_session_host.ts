@@ -316,15 +316,6 @@ export class EditSessionHost extends RefCounted {
   readonly commitTarget: NgCommitTarget;
   private readonly saveTarget: NgSaveTarget;
   private readonly clock: NgClock;
-  /**
-   * Painting compute is constructed ONCE on the host. The library's
-   * `BrushApplyInput`/`BrushStrokeInput` don't carry the bbox, so the
-   * compute needs out-of-band session state to clip strokes that cross
-   * the bbox boundary (see PaintingCompute.setRegion). We keep one
-   * instance for the host's lifetime and call setRegion/clearRegion on
-   * session open/close.
-   */
-  private readonly paintingCompute = new PaintingCompute();
 
   // -- Per-layer persistent watchables for `editBboxLoHi` -------------------
   // Per `06-bbox-rendering.md` § "Wiring to the render layers", every
@@ -458,15 +449,9 @@ export class EditSessionHost extends RefCounted {
 
     try {
       this.attachPerLayer(session, config);
-      // Activate the bbox-clip region on the painting compute so brush
-      // strokes that cross the bbox boundary stamp only INSIDE the bbox.
-      // The library's `applyPaintBatch` writes voxels verbatim; without
-      // this filter the compute would happily paint disks into pinned
-      // chunks beyond the user-visible boundary (see image #20 bug).
-      this.paintingCompute.setRegion({
-        bbox: config.bboxVoxelCoords,
-        resolution: config.bboxResolution,
-      });
+      // Bbox clipping is enforced by the library's paint write path (it
+      // clamps every voxel write to the session region), so the host no
+      // longer feeds the bbox to the compute out-of-band.
       this.sessionLock.setActiveSession({
         sessionId: session.sessionId,
         sessionLayerIds: new Set(config.layers.map((l) => l.layerId)),
@@ -485,7 +470,10 @@ export class EditSessionHost extends RefCounted {
       this.activeSession.value = session;
       this.writeIntentToState(config);
       this.editSessionPanelLocation.visible = true;
-      this.pointerEventBridge = new PointerEventBridge(this, this.viewer.display);
+      this.pointerEventBridge = new PointerEventBridge(
+        this,
+        this.viewer.display,
+      );
       this.hotkeyBinder = new EditSessionHotkeyBinder(this, this.viewer);
       this.attachCursorOverlays(config);
     } catch (err) {
@@ -563,9 +551,7 @@ export class EditSessionHost extends RefCounted {
       // `PatchMirror` does for live overlay writes.
       const view = committed.bytes.asView();
       const data =
-        view instanceof BigUint64Array
-          ? view
-          : widenToBigUint64(view);
+        view instanceof BigUint64Array ? view : widenToBigUint64(view);
       const chunkDataSize = this.chunkDataSizeForLayer(
         coord.layerId,
         coord.resolution,
@@ -801,9 +787,9 @@ export class EditSessionHost extends RefCounted {
   ): WatchableValue<{ lo: vec3; hi: vec3 } | undefined> {
     let w = this.editBboxByLayer.get(layerName);
     if (w === undefined) {
-      w = new WatchableValue<
-        { lo: vec3; hi: vec3 } | undefined
-      >(this.readEditBboxForLayer(layerName));
+      w = new WatchableValue<{ lo: vec3; hi: vec3 } | undefined>(
+        this.readEditBboxForLayer(layerName),
+      );
       this.editBboxByLayer.set(layerName, w);
     }
     return w;
@@ -916,9 +902,7 @@ export class EditSessionHost extends RefCounted {
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        this.failRestore(
-          `Edit session reference invalid: ${message}`,
-        );
+        this.failRestore(`Edit session reference invalid: ${message}`);
         return;
       }
     }
@@ -1032,11 +1016,14 @@ export class EditSessionHost extends RefCounted {
 
     return {
       layers,
-      region: { bbox: config.bboxVoxelCoords, resolution: config.bboxResolution },
+      region: {
+        bbox: config.bboxVoxelCoords,
+        resolution: config.bboxResolution,
+      },
       tools: [
         painting({
           initialState: paintInitial,
-          compute: this.paintingCompute,
+          compute: new PaintingCompute(),
         }),
         correspondence({
           initialState: correspondenceInitial,
@@ -1421,7 +1408,6 @@ export class EditSessionHost extends RefCounted {
   }
 
   private tearDownSessionState(): void {
-    this.paintingCompute.clearRegion();
     this.sessionLock.clearActiveSession();
     if (this.sessionLockHandle !== undefined) {
       try {
