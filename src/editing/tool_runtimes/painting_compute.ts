@@ -27,12 +27,11 @@ import type {
 import { ChunkId, scaleFor } from "@zettaai/edit-session";
 
 import {
-  applyMaskPipeline,
+  applyMorphologyPipeline,
   type MaskBuffer,
 } from "#src/editing/tool_runtimes/mask_compute.js";
 import {
   imageChunksCovering,
-  targetToImageVoxel,
   type VoxelTriple,
 } from "#src/editing/tool_runtimes/mask_coord.js";
 
@@ -317,6 +316,29 @@ function warnOncePerStroke(message: string): void {
   console.warn(message);
 }
 
+/**
+ * Reference-parity mask stamp.
+ *
+ * Mirrors the structure of `PythonPainter.apply_brush`:
+ *
+ * 1. Build the disk bbox in TARGET voxel coords.
+ * 2. For every voxel in the bbox, look up the corresponding image voxel
+ *    (nearest-neighbor via physical nm ratio) and combine `circle ∧ (img ∈ [low, high])`
+ *    into a 2D mask the size of the disk bbox.
+ * 3. Run binary closing and component-min-size filter on that 2D mask
+ *    (using shape `[bbx, bby, 1]` so `binaryClose3D`/`filterComponentsByMinSize`
+ *    degrade to 4-connected planar ops — matching scipy's default).
+ * 4. Sample each disk voxel out of the processed mask and stamp.
+ *
+ * Differences from a literal port of the reference:
+ *  - We read image chunks lazily through `ctx.reader.readChunk` instead of
+ *    receiving a whole-session image buffer up front.
+ *  - The reference operates on a buffer already sized to the bbox; we copy
+ *    the image-voxel slab the bbox projects to into a small Float64Array
+ *    once, then index it for every target voxel.
+ *  - Morphology near the disk bbox boundary erodes (border=false), same as
+ *    `scipy.ndimage.binary_closing` defaults.
+ */
 async function stampDisk2DMasked(
   builder: PaintBatchBuilder,
   voxelPosition: readonly [number, number, number],
@@ -330,73 +352,66 @@ async function stampDisk2DMasked(
   const cz = Math.floor(voxelPosition[2]);
   const r2 = r * r;
 
-  // Target footprint in target-voxel coords (closed-open).
-  const loTarget: VoxelTriple = [cx - r, cy - r, cz];
-  const hiTarget: VoxelTriple = [cx + r + 1, cy + r + 1, cz + 1];
+  // Disk bbox in target voxel coords (closed-open).
+  const loTx = cx - r;
+  const loTy = cy - r;
+  const tShapeX = 2 * r + 1;
+  const tShapeY = 2 * r + 1;
 
-  // Project to image-voxel coords; expand by `binaryClosing` halo so
-  // morphology near the stamp edge has a buffer to grow into.
-  const loImageNoHalo = targetToImageVoxel(
-    loTarget,
-    ctx.targetVoxelSizeNm,
-    ctx.imageVoxelSizeNm,
-  );
-  // Convert the exclusive hi corner by transforming `hi - 1` (the last
-  // included target voxel) then adding 1.
-  const hiTargetLast: VoxelTriple = [
-    hiTarget[0] - 1,
-    hiTarget[1] - 1,
-    hiTarget[2] - 1,
-  ];
-  const hiImageLast = targetToImageVoxel(
-    hiTargetLast,
-    ctx.targetVoxelSizeNm,
-    ctx.imageVoxelSizeNm,
-  );
-  const halo = Math.max(0, Math.floor(ctx.mask.binaryClosing));
-  const loImage: VoxelTriple = [
-    loImageNoHalo[0] - halo,
-    loImageNoHalo[1] - halo,
-    loImageNoHalo[2] - halo,
-  ];
-  const hiImage: VoxelTriple = [
-    hiImageLast[0] + 1 + halo,
-    hiImageLast[1] + 1 + halo,
-    hiImageLast[2] + 1 + halo,
-  ];
+  // Per-target-voxel image coord mapping. Uses physical nm ratio so any
+  // anisotropic ratio works (matches reference's `scale = image_size/target_size`
+  // when both buffers cover the same physical extent).
+  const sxRatio = ctx.targetVoxelSizeNm[0] / ctx.imageVoxelSizeNm[0];
+  const syRatio = ctx.targetVoxelSizeNm[1] / ctx.imageVoxelSizeNm[1];
+  const szRatio = ctx.targetVoxelSizeNm[2] / ctx.imageVoxelSizeNm[2];
+  const imageZ = Math.floor(cz * szRatio);
+  const imgX = new Int32Array(tShapeX);
+  const imgY = new Int32Array(tShapeY);
+  let minIx = Number.POSITIVE_INFINITY;
+  let maxIx = Number.NEGATIVE_INFINITY;
+  let minIy = Number.POSITIVE_INFINITY;
+  let maxIy = Number.NEGATIVE_INFINITY;
+  for (let i = 0; i < tShapeX; i++) {
+    const ix = Math.floor((loTx + i) * sxRatio);
+    imgX[i] = ix;
+    if (ix < minIx) minIx = ix;
+    if (ix > maxIx) maxIx = ix;
+  }
+  for (let j = 0; j < tShapeY; j++) {
+    const iy = Math.floor((loTy + j) * syRatio);
+    imgY[j] = iy;
+    if (iy < minIy) minIy = iy;
+    if (iy > maxIy) maxIy = iy;
+  }
 
-  const shape: VoxelTriple = [
-    hiImage[0] - loImage[0],
-    hiImage[1] - loImage[1],
-    hiImage[2] - loImage[2],
-  ];
-  const imageValues = new Float64Array(shape[0] * shape[1] * shape[2]);
+  // Image-voxel region we need (single z-slice).
+  const loImage: VoxelTriple = [minIx, minIy, imageZ];
+  const hiImage: VoxelTriple = [maxIx + 1, maxIy + 1, imageZ + 1];
+  const iShapeX = hiImage[0] - loImage[0];
+  const iShapeY = hiImage[1] - loImage[1];
+  const imageValues = new Float64Array(iShapeX * iShapeY);
 
-  // Walk every image chunk covering the haloed image region; copy its
-  // contribution into `imageValues`. Out-of-bounds / failed reads leave
-  // zeros (treated as outside the threshold band for most configurations).
   const chunks = imageChunksCovering(loImage, hiImage, ctx.imageScale);
   const ics = ctx.imageScale.chunkDataSize;
   for (const coord of chunks) {
     const chunkBuf = await ctx.reader.readChunk(coord);
     if (chunkBuf === undefined) continue;
     const view = chunkBuf.asView();
-    const chunkOriginX = coord.x * ics[0];
-    const chunkOriginY = coord.y * ics[1];
-    const chunkOriginZ = coord.z * ics[2];
-    // Intersection of chunk extent and image region.
-    const x0 = Math.max(loImage[0], chunkOriginX);
-    const y0 = Math.max(loImage[1], chunkOriginY);
-    const z0 = Math.max(loImage[2], chunkOriginZ);
-    const x1 = Math.min(hiImage[0], chunkOriginX + ics[0]);
-    const y1 = Math.min(hiImage[1], chunkOriginY + ics[1]);
-    const z1 = Math.min(hiImage[2], chunkOriginZ + ics[2]);
+    const cox = coord.x * ics[0];
+    const coy = coord.y * ics[1];
+    const coz = coord.z * ics[2];
+    const x0 = Math.max(loImage[0], cox);
+    const y0 = Math.max(loImage[1], coy);
+    const z0 = Math.max(loImage[2], coz);
+    const x1 = Math.min(hiImage[0], cox + ics[0]);
+    const y1 = Math.min(hiImage[1], coy + ics[1]);
+    const z1 = Math.min(hiImage[2], coz + ics[2]);
     for (let iz = z0; iz < z1; iz++) {
+      const lz = iz - coz;
       for (let iy = y0; iy < y1; iy++) {
+        const ly = iy - coy;
         for (let ix = x0; ix < x1; ix++) {
-          const lx = ix - chunkOriginX;
-          const ly = iy - chunkOriginY;
-          const lz = iz - chunkOriginZ;
+          const lx = ix - cox;
           const linearChunk = lx + ics[0] * (ly + ics[1] * lz);
           const raw =
             view instanceof BigUint64Array
@@ -404,65 +419,62 @@ async function stampDisk2DMasked(
               : (view as Exclude<ChunkVoxelBuffer, BigUint64Array>)[
                   linearChunk
                 ];
-          const dstX = ix - loImage[0];
-          const dstY = iy - loImage[1];
-          const dstZ = iz - loImage[2];
-          imageValues[dstX + shape[0] * (dstY + shape[1] * dstZ)] = raw;
+          // Single z-slice destination so dstZ = 0.
+          imageValues[ix - loImage[0] + iShapeX * (iy - loImage[1])] = raw;
         }
       }
     }
   }
 
-  const maskBuf: MaskBuffer = applyMaskPipeline({
-    imageValues,
-    shape,
-    thresholdLow: ctx.mask.thresholdLow,
-    thresholdHigh: ctx.mask.thresholdHigh,
+  // Build the 2D target-space mask: gate by circle ∧ threshold-band.
+  const tMaskShape: VoxelTriple = [tShapeX, tShapeY, 1];
+  const tMaskData = new Uint8Array(tShapeX * tShapeY);
+  const low = ctx.mask.thresholdLow;
+  const high = ctx.mask.thresholdHigh;
+  if (r === 0) {
+    const v = imageValues[imgX[0] - loImage[0] + iShapeX * (imgY[0] - loImage[1])];
+    if (v >= low && v <= high) tMaskData[0] = 1;
+  } else {
+    for (let j = 0; j < tShapeY; j++) {
+      const dy = j - r;
+      const iyLocal = imgY[j] - loImage[1];
+      for (let i = 0; i < tShapeX; i++) {
+        const dx = i - r;
+        if (dx * dx + dy * dy > r2) continue;
+        const ixLocal = imgX[i] - loImage[0];
+        const v = imageValues[ixLocal + iShapeX * iyLocal];
+        if (v >= low && v <= high) tMaskData[i + tShapeX * j] = 1;
+      }
+    }
+  }
+
+  // Apply binary closing + component filter in TARGET voxel space.
+  // Shape `[tShapeX, tShapeY, 1]` makes the 3D helpers degrade to
+  // 4-connected planar ops — same as scipy's default in the reference.
+  const processed: MaskBuffer = applyMorphologyPipeline({
+    mask: { data: tMaskData, shape: tMaskShape },
     binaryClosing: ctx.mask.binaryClosing,
     minComponentSize: ctx.mask.minComponentSize,
     filterComponentsFirst: ctx.mask.filterComponentsFirst,
   });
 
-  // Sample back to target voxels: for each (dx, dy) in the disk footprint,
-  // look up the mask byte at the corresponding image voxel and stamp.
+  // Sample back: for each target voxel in the disk, the mask byte is its
+  // entry in the processed buffer. The chunk builder records the disk's
+  // bounding box as the subregion; the per-voxel mask drives gating.
   if (r === 0) {
-    const iv = targetToImageVoxel(
-      [cx, cy, cz],
-      ctx.targetVoxelSizeNm,
-      ctx.imageVoxelSizeNm,
-    );
-    const maskByte = sampleMask(maskBuf, iv, loImage, shape);
-    builder.writeVoxelMasked(cx, cy, cz, value, maskByte);
+    builder.writeVoxelMasked(cx, cy, cz, value, processed.data[0] === 1 ? 1 : 0);
     return;
   }
   for (let dy = -r; dy <= r; dy++) {
+    const j = dy + r;
     for (let dx = -r; dx <= r; dx++) {
       if (dx * dx + dy * dy > r2) continue;
-      const tx = cx + dx;
-      const ty = cy + dy;
-      const iv = targetToImageVoxel(
-        [tx, ty, cz],
-        ctx.targetVoxelSizeNm,
-        ctx.imageVoxelSizeNm,
-      );
-      const maskByte = sampleMask(maskBuf, iv, loImage, shape);
-      builder.writeVoxelMasked(tx, ty, cz, value, maskByte);
+      const i = dx + r;
+      const maskByte =
+        processed.data[i + tShapeX * j] === 1 ? 1 : 0;
+      builder.writeVoxelMasked(cx + dx, cy + dy, cz, value, maskByte);
     }
   }
-}
-
-function sampleMask(
-  mask: MaskBuffer,
-  imageVoxel: readonly [number, number, number],
-  origin: VoxelTriple,
-  shape: VoxelTriple,
-): 0 | 1 {
-  const lx = imageVoxel[0] - origin[0];
-  const ly = imageVoxel[1] - origin[1];
-  const lz = imageVoxel[2] - origin[2];
-  if (lx < 0 || ly < 0 || lz < 0) return 0;
-  if (lx >= shape[0] || ly >= shape[1] || lz >= shape[2]) return 0;
-  return mask.data[lx + shape[0] * (ly + shape[1] * lz)] === 1 ? 1 : 0;
 }
 
 class MaskChunkReader {

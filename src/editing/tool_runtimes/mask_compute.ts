@@ -125,13 +125,21 @@ function erode6(src: Uint8Array, shape: VoxelTriple): Uint8Array {
       for (let x = 0; x < sx; x++) {
         const i = linear(shape, x, y, z);
         if (src[i] !== 1) continue;
-        // Border voxels: any out-of-bounds neighbor treated as 0 ⇒ erode.
-        if (x === 0 || src[i - 1] !== 1) continue;
-        if (x + 1 === sx || src[i + 1] !== 1) continue;
-        if (y === 0 || src[i - sx] !== 1) continue;
-        if (y + 1 === sy || src[i + sx] !== 1) continue;
-        if (z === 0 || src[i - sx * sy] !== 1) continue;
-        if (z + 1 === sz || src[i + sx * sy] !== 1) continue;
+        // Axes with extent 1 contribute no neighbor — skip them. On axes
+        // with extent > 1, any out-of-bounds neighbor is treated as 0
+        // (matches scipy.ndimage default `border_value=0`).
+        if (sx > 1) {
+          if (x === 0 || src[i - 1] !== 1) continue;
+          if (x + 1 === sx || src[i + 1] !== 1) continue;
+        }
+        if (sy > 1) {
+          if (y === 0 || src[i - sx] !== 1) continue;
+          if (y + 1 === sy || src[i + sx] !== 1) continue;
+        }
+        if (sz > 1) {
+          if (z === 0 || src[i - sx * sy] !== 1) continue;
+          if (z + 1 === sz || src[i + sx * sy] !== 1) continue;
+        }
         dst[i] = 1;
       }
     }
@@ -216,6 +224,48 @@ export function filterComponentsByMinSize(
   }
 }
 
+export interface MorphologyPipelineInput {
+  readonly mask: MaskBuffer;
+  readonly binaryClosing: number;
+  readonly minComponentSize: number;
+  /**
+   * When false: close → filter components.
+   * When true: filter components → close.
+   * Matches the reference Python `PythonPainter.apply_brush` semantics —
+   * the threshold pass is always done first by the caller; this function
+   * only orders the post-threshold morphology.
+   */
+  readonly filterComponentsFirst: boolean;
+}
+
+/**
+ * Apply binary closing + component-min-size filter to a pre-built mask,
+ * ordered per `filterComponentsFirst`. Reference (`PythonPainter.apply_brush`)
+ * runs the equivalent pipeline in 2D after thresholding inside the disk;
+ * see `painting_compute.ts` for that orchestration.
+ */
+export function applyMorphologyPipeline(
+  input: MorphologyPipelineInput,
+): MaskBuffer {
+  let working = input.mask;
+  if (input.filterComponentsFirst) {
+    if (input.minComponentSize > 1) {
+      filterComponentsByMinSize(working, input.minComponentSize);
+    }
+    if (input.binaryClosing > 0) {
+      working = binaryClose3D(working, input.binaryClosing);
+    }
+  } else {
+    if (input.binaryClosing > 0) {
+      working = binaryClose3D(working, input.binaryClosing);
+    }
+    if (input.minComponentSize > 1) {
+      filterComponentsByMinSize(working, input.minComponentSize);
+    }
+  }
+  return working;
+}
+
 export interface MaskPipelineInput {
   readonly imageValues: ImageScalar;
   readonly shape: VoxelTriple;
@@ -223,64 +273,24 @@ export interface MaskPipelineInput {
   readonly thresholdHigh: number;
   readonly binaryClosing: number;
   readonly minComponentSize: number;
-  /**
-   * When false (default): threshold → close → component filter. When true:
-   * component filter → close → threshold. Operationally, the field-name
-   * "first" refers to the component-filter pass running before threshold:
-   * the unthresholded image is binarized as `value > 0`, components are
-   * filtered by size, the kept components are then thresholded per-voxel
-   * against the band. v1 semantics — documented limitation: with
-   * `filterComponentsFirst=true`, the `value > 0` foreground definition
-   * is fixed and not user-configurable. (Future work could expose a
-   * separate "presence" threshold.)
-   */
   readonly filterComponentsFirst: boolean;
 }
 
 /**
- * Run the full mask pipeline. Returns a fresh `Uint8Array` shaped like
- * `input.shape`, with 1 where the voxel should be painted and 0 elsewhere.
+ * Convenience: threshold then apply morphology. Equivalent to
+ * `computeThresholdMask` followed by `applyMorphologyPipeline`.
  */
 export function applyMaskPipeline(input: MaskPipelineInput): MaskBuffer {
-  if (input.filterComponentsFirst) {
-    // Presence: value > 0.
-    const presence = computeThresholdMask(
-      input.imageValues,
-      input.shape,
-      Number.MIN_VALUE,
-      Number.POSITIVE_INFINITY,
-    );
-    let working = presence;
-    if (input.minComponentSize > 1) {
-      filterComponentsByMinSize(working, input.minComponentSize);
-    }
-    if (input.binaryClosing > 0) {
-      working = binaryClose3D(working, input.binaryClosing);
-    }
-    // Now AND the kept presence with the threshold band per voxel.
-    const banded = computeThresholdMask(
-      input.imageValues,
-      input.shape,
-      input.thresholdLow,
-      input.thresholdHigh,
-    );
-    for (let i = 0; i < banded.data.length; i++) {
-      banded.data[i] = banded.data[i] & working.data[i];
-    }
-    return banded;
-  }
-
-  let working = computeThresholdMask(
+  const thresholded = computeThresholdMask(
     input.imageValues,
     input.shape,
     input.thresholdLow,
     input.thresholdHigh,
   );
-  if (input.binaryClosing > 0) {
-    working = binaryClose3D(working, input.binaryClosing);
-  }
-  if (input.minComponentSize > 1) {
-    filterComponentsByMinSize(working, input.minComponentSize);
-  }
-  return working;
+  return applyMorphologyPipeline({
+    mask: thresholded,
+    binaryClosing: input.binaryClosing,
+    minComponentSize: input.minComponentSize,
+    filterComponentsFirst: input.filterComponentsFirst,
+  });
 }

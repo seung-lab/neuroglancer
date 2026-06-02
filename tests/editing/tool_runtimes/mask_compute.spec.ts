@@ -12,6 +12,7 @@ import { describe, it, expect } from "vitest";
 
 import {
   applyMaskPipeline,
+  applyMorphologyPipeline,
   binaryClose3D,
   computeThresholdMask,
   filterComponentsByMinSize,
@@ -201,11 +202,10 @@ describe("applyMaskPipeline (filterComponentsFirst=false)", () => {
 });
 
 describe("applyMaskPipeline (filterComponentsFirst=true)", () => {
-  it("uses value>0 presence then per-voxel threshold band", () => {
-    // Five voxels with values: 0, 50, 100, 150, 200 — all but first are
-    // "present" (>0). With minSize=3, the connected component of 4
-    // present voxels survives. Then threshold band [100, 200] keeps
-    // the last three.
+  it("threshold first, then filter components, then close (reference parity)", () => {
+    // Image [0, 50, 100, 150, 200] thresholded against [100, 200] →
+    // [0, 0, 1, 1, 1]. minSize=3 keeps the 3-voxel component. closing=0
+    // no-op. Final: [0, 0, 1, 1, 1].
     const img = new Uint8Array([0, 50, 100, 150, 200]);
     const out = applyMaskPipeline({
       imageValues: img,
@@ -217,5 +217,76 @@ describe("applyMaskPipeline (filterComponentsFirst=true)", () => {
       filterComponentsFirst: true,
     });
     expect(Array.from(out.data)).toEqual([0, 0, 1, 1, 1]);
+  });
+
+  it("closing runs after the component filter when filterFirst=true", () => {
+    // Threshold [100, 255] → [1, 0, 1, 0, 1].
+    // filterFirst (minSize=1, no-op) → [1, 0, 1, 0, 1].
+    // close r=1 → dilate [1,1,1,1,1] → erode [0,1,1,1,0] (boundary erodes,
+    // matching scipy default `border_value=0`).
+    const img = new Uint8Array([200, 50, 200, 50, 200]);
+    const out = applyMaskPipeline({
+      imageValues: img,
+      shape: [5, 1, 1],
+      thresholdLow: 100,
+      thresholdHigh: 255,
+      binaryClosing: 1,
+      minComponentSize: 1,
+      filterComponentsFirst: true,
+    });
+    expect(Array.from(out.data)).toEqual([0, 1, 1, 1, 0]);
+  });
+});
+
+describe("applyMorphologyPipeline", () => {
+  it("applies closing then filter when filterComponentsFirst=false", () => {
+    //   start    = [1, 1, 1, 0, 1, 0, 1]
+    //   close r=1: dilate → [1,1,1,1,1,1,1]; erode → [0,1,1,1,1,1,0]
+    //              (boundary erodes per scipy default `border_value=0`)
+    //   minSize=4: kept component size 5 → unchanged
+    const mask: MaskBuffer = {
+      data: new Uint8Array([1, 1, 1, 0, 1, 0, 1]),
+      shape: [7, 1, 1],
+    };
+    const out = applyMorphologyPipeline({
+      mask,
+      binaryClosing: 1,
+      minComponentSize: 4,
+      filterComponentsFirst: false,
+    });
+    expect(Array.from(out.data)).toEqual([0, 1, 1, 1, 1, 1, 0]);
+  });
+
+  it("applies filter then closing when filterComponentsFirst=true", () => {
+    // Same input. With filterFirst:
+    //   minSize=4 first → drop every component below 4. Two components:
+    //     [1,1,1] size 3 → dropped; [1] size 1 → dropped; [1] size 1 → dropped
+    //   result before close: all zeros
+    //   close r=1 → still zeros
+    const mask: MaskBuffer = {
+      data: new Uint8Array([1, 1, 1, 0, 1, 0, 1]),
+      shape: [7, 1, 1],
+    };
+    const out = applyMorphologyPipeline({
+      mask,
+      binaryClosing: 1,
+      minComponentSize: 4,
+      filterComponentsFirst: true,
+    });
+    expect(Array.from(out.data)).toEqual([0, 0, 0, 0, 0, 0, 0]);
+  });
+
+  it("returns input mask when both binaryClosing=0 and minSize<=1", () => {
+    const mask: MaskBuffer = {
+      data: new Uint8Array([1, 0, 1]),
+      shape: [3, 1, 1],
+    };
+    const out = applyMorphologyPipeline({
+      mask,
+      binaryClosing: 0,
+      minComponentSize: 1,
+      filterComponentsFirst: false,
+    });
+    expect(out.data).toBe(mask.data);
   });
 });
