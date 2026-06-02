@@ -11,38 +11,25 @@
 /**
  * @file Voxel-edit patch overlay render layer.
  *
- * DESIGN (v1, debug-first): a minimal SliceViewVolumeRenderLayer subclass
- * with a SIMPLE shader that ignores the segmentation rendering machinery
- * entirely. For each chunk it samples the patch texture. Patched voxels
- * emit the colored segment id; unpatched voxels emit transparent.
- *
- * Bbox-clip policy: when an edit session is active (`displayState.editBboxLoHi`
- * is set), patches outside the current session bbox are HARD-CLIPPED via
- * the shared `emitWithBboxDim` snippet (which now `discard`s — see
- * `bbox_alpha_chunk.ts`). This matches the user-visible rule "during a
- * session, only the current bbox is visible"; committed patches from a
- * previous session reappear as soon as the session ends because
- * `editBboxLoHi` flips back to `undefined`.
+ * DESIGN: subclass of `SegmentationRenderLayer` that injects patch sampling
+ * into the existing segmentation read path via the
+ * `defineGetUint64DataValue` extension point. When a voxel has a patch entry
+ * the override returns the patch value; otherwise it falls through to the
+ * base data. All Render-tab configuration (opacity, color seed, stated
+ * colors, hide-segment-0, base segment coloring, saturation, equivalences,
+ * highlight, visible-segments filtering) and the bbox-clip shader hook are
+ * inherited from the base layer — there is no second shader path here.
  */
 
 import type { LocalPatchChunk } from "#src/editing/local_patch_chunk.js";
 import type { LocalPatchStore } from "#src/editing/local_patch_store.js";
 import { chunkGridKey } from "#src/editing/local_patch_source.js";
-import type { BboxAlphaShaderHook } from "#src/editing/shaders/bbox_alpha_chunk.js";
-import { createBboxAlphaShaderHook } from "#src/editing/shaders/bbox_alpha_chunk.js";
-import { SegmentColorShaderManager } from "#src/segment_color.js";
 import type { SliceViewSegmentationDisplayState } from "#src/sliceview/volume/segmentation_renderlayer.js";
+import { SegmentationRenderLayer } from "#src/sliceview/volume/segmentation_renderlayer.js";
 import type {
   MultiscaleVolumeChunkSource,
   VolumeChunk,
 } from "#src/sliceview/volume/frontend.js";
-import type { SliceView } from "#src/sliceview/frontend.js";
-import { SliceViewVolumeRenderLayer } from "#src/sliceview/volume/renderlayer.js";
-import {
-  AggregateWatchableValue,
-  constantWatchableValue,
-  makeCachedDerivedWatchableValue,
-} from "#src/trackable_value.js";
 import type { GL } from "#src/webgl/context.js";
 import type { ShaderBuilder, ShaderProgram } from "#src/webgl/shader.js";
 
@@ -50,73 +37,25 @@ const patchTextureUnitSymbol = Symbol(
   "PatchedSegmentationRenderLayer.patchTexture",
 );
 
-interface PatchShaderParameters {
-  /**
-   * Compile-time gate for the bbox-clip code path. When false, the shader
-   * compiles without any bbox uniforms or `discard`s — patches render
-   * everywhere. When true, fragments outside the session bbox are
-   * discarded.
-   */
-  editBboxActive: boolean;
-}
-
-export class PatchedSegmentationRenderLayer extends SliceViewVolumeRenderLayer<PatchShaderParameters> {
+export class PatchedSegmentationRenderLayer extends SegmentationRenderLayer {
   private patchTextureUnit: number | undefined;
   private patchTextures = new Map<string, WebGLTexture>();
   private patchFallbackTexture: WebGLTexture | undefined;
   private generationCounter = 0;
   private uploadedGeneration = new WeakMap<LocalPatchChunk, number>();
-  private segmentColorShaderManager = new SegmentColorShaderManager(
-    "segmentColorHash",
-  );
-  private bboxAlphaHook: BboxAlphaShaderHook = createBboxAlphaShaderHook();
 
   constructor(
     multiscaleSource: MultiscaleVolumeChunkSource,
-    public readonly displayState: SliceViewSegmentationDisplayState,
+    displayState: SliceViewSegmentationDisplayState,
     public readonly patchStore: LocalPatchStore,
   ) {
-    super(multiscaleSource, {
-      shaderParameters: new AggregateWatchableValue((refCounted) => ({
-        editBboxActive:
-          displayState.editBboxLoHi === undefined
-            ? constantWatchableValue(false)
-            : refCounted.registerDisposer(
-                makeCachedDerivedWatchableValue(
-                  (bbox) => bbox !== undefined,
-                  [displayState.editBboxLoHi],
-                ),
-              ),
-      })),
-      transform: displayState.transform,
-      renderScaleTarget: displayState.renderScaleTarget,
-      renderScaleHistogram: displayState.renderScaleHistogram,
-      localPosition: displayState.localPosition,
-      allowedSourcePredicate: displayState.allowedSourcePredicate,
-    });
-    this.registerDisposer(
-      this.shaderParameters as AggregateWatchableValue<PatchShaderParameters>,
-    );
+    super(multiscaleSource, displayState);
     this.registerDisposer(
       this.patchStore.changed.add(() => {
         this.generationCounter++;
         this.redrawNeeded.dispatch();
       }),
     );
-    // Re-render when the user changes the global color hash seed.
-    this.registerDisposer(
-      this.displayState.segmentColorHash.changed.add(
-        this.redrawNeeded.dispatch,
-      ),
-    );
-    // Redraw when the bbox lo/hi changes within an active session — the
-    // value change doesn't flip the `editBboxActive` bit, but it DOES
-    // require a fresh `bind()`.
-    if (displayState.editBboxLoHi !== undefined) {
-      this.registerDisposer(
-        displayState.editBboxLoHi.changed.add(this.redrawNeeded.dispatch),
-      );
-    }
   }
 
   disposed() {
@@ -130,50 +69,26 @@ export class PatchedSegmentationRenderLayer extends SliceViewVolumeRenderLayer<P
     super.disposed();
   }
 
-  defineShader(builder: ShaderBuilder, parameters: PatchShaderParameters) {
+  protected override defineGetUint64DataValue(builder: ShaderBuilder) {
     this.patchTextureUnit = builder.addTextureSampler(
       "usampler3D",
       "uPatchSampler",
       patchTextureUnitSymbol,
     );
     builder.addUniform("highp uint", "uHasPatch");
-    this.segmentColorShaderManager.defineShader(builder);
-    let fragmentMain = `
-if (uHasPatch != 0u) {
-  highp ivec3 p = ivec3(max(vec3(0.0, 0.0, 0.0), min(floor(vChunkPosition), uChunkDataSize - 1.0)));
-  highp uvec4 raw = texelFetch(uPatchSampler, p, 0);
-  if (raw.r != 0u || raw.g != 0u) {
-    uint64_t patchVal; patchVal.value = uvec2(raw.r, raw.g);
-    vec3 color = segmentColorHash(patchVal);
-    emit(vec4(color, 1.0));
-    return;
+    builder.addFragmentCode(`
+uint64_t getUint64DataValue() {
+  if (uHasPatch != 0u) {
+    highp ivec3 p = ivec3(max(vec3(0.0, 0.0, 0.0), min(floor(vChunkPosition), uChunkDataSize - 1.0)));
+    highp uvec4 raw = texelFetch(uPatchSampler, p, 0);
+    if (raw.r != 0u || raw.g != 0u) {
+      uint64_t patchVal; patchVal.value = uvec2(raw.r, raw.g);
+      return patchVal;
+    }
   }
+  return toUint64(getDataValue());
 }
-emit(vec4(0.0, 0.0, 0.0, 0.0));
-`;
-    if (parameters.editBboxActive) {
-      this.bboxAlphaHook.defineUniforms(builder);
-      builder.addFragmentCode(this.bboxAlphaHook.fragmentSnippet());
-      fragmentMain = this.bboxAlphaHook.wrapFragmentMain(fragmentMain);
-    }
-    builder.setFragmentMain(fragmentMain);
-  }
-
-  initializeShader(
-    _sliceView: SliceView,
-    shader: ShaderProgram,
-    parameters: PatchShaderParameters,
-  ) {
-    this.segmentColorShaderManager.enable(
-      this.gl,
-      shader,
-      this.displayState.segmentColorHash.value,
-    );
-    if (parameters.editBboxActive) {
-      this.bboxAlphaHook.bind(this.gl, shader, {
-        bboxNm: this.displayState.editBboxLoHi?.value,
-      });
-    }
+`);
   }
 
   protected override onBeginChunk(
