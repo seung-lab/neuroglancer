@@ -12,7 +12,7 @@ import type {
   LayerId,
   LayerMetadata,
   SavedChunk,
-} from "@zetta-ai/edit-session";
+} from "@zettaai/edit-session";
 
 /**
  * Per-layer save outcome returned by a `SaveBackend`. This is the host's

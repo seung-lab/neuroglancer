@@ -425,7 +425,7 @@ export class Viewer extends RefCounted implements ViewerState {
     new SelectedLayerState(this.layerManager.addRef()),
   );
   /**
-   * Wiring of the `@zetta-ai/edit-session` library. Constructed in the viewer
+   * Wiring of the `@zettaai/edit-session` library. Constructed in the viewer
    * constructor body (not as a field initializer) because its constructor
    * reads `viewer.layerManager`, `viewer.chunkManager`, and `viewer.display.gl`
    * — none of which are available during class-field initialization for

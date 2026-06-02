@@ -8,7 +8,7 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import type { EditSession, PaintingTools } from "@zetta-ai/edit-session";
+import type { EditSession, PaintingTools } from "@zettaai/edit-session";
 import { useCallback } from "preact/hooks";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";

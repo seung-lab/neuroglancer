@@ -20,7 +20,7 @@
  * binding pattern mirrors `src/axes_lines.ts:AxesLineHelper.draw` (133).
  */
 
-import { Resolution } from "@zetta-ai/edit-session";
+import { Resolution } from "@zettaai/edit-session";
 
 import type { BrushCursorState } from "#src/editing/cursor/brush_cursor_state.js";
 import type {

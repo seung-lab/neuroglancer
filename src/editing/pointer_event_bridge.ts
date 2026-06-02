@@ -14,8 +14,8 @@ import type {
   PointerButton,
   Tool,
   ToolInputEvent,
-} from "@zetta-ai/edit-session";
-import { NO_MODIFIERS } from "@zetta-ai/edit-session";
+} from "@zettaai/edit-session";
+import { NO_MODIFIERS } from "@zettaai/edit-session";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import type { DisplayContext, RenderedPanel } from "#src/display_context.js";

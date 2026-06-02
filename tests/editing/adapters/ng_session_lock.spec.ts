@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { layerId, sessionId } from "@zetta-ai/edit-session";
+import { layerId, sessionId } from "@zettaai/edit-session";
 
 import { NgSessionLockAdapter } from "#src/editing/adapters/ng_session_lock.js";
 

@@ -12,12 +12,12 @@ import type {
   LayerId,
   LayerMetadata,
   VoxelDataType,
-} from "@zetta-ai/edit-session";
+} from "@zettaai/edit-session";
 import {
   availableResolutions,
   layerId as toLayerId,
   Resolution,
-} from "@zetta-ai/edit-session";
+} from "@zettaai/edit-session";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 
 import type { NgLayerMetadataSource } from "#src/editing/adapters/ng_layer_metadata_source.js";

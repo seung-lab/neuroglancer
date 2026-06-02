@@ -8,7 +8,7 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import type { EditSession } from "@zetta-ai/edit-session";
+import type { EditSession } from "@zettaai/edit-session";
 import type { ComponentType } from "preact";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";

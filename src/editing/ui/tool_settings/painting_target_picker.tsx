@@ -13,8 +13,8 @@ import type {
   LayerId,
   PaintingTools,
   Resolution,
-} from "@zetta-ai/edit-session";
-import { layerId as toLayerId } from "@zetta-ai/edit-session";
+} from "@zettaai/edit-session";
+import { layerId as toLayerId } from "@zettaai/edit-session";
 import { useCallback } from "preact/hooks";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";

@@ -27,7 +27,7 @@
  * `viewProjectionMat * modelMatrix`).
  */
 
-import { Resolution } from "@zetta-ai/edit-session";
+import { Resolution } from "@zettaai/edit-session";
 
 import type { BrushCursorState } from "#src/editing/cursor/brush_cursor_state.js";
 import { PerspectiveViewRenderLayer } from "#src/perspective_view/render_layer.js";

@@ -1,4 +1,4 @@
-import type { Clock } from "@zetta-ai/edit-session";
+import type { Clock } from "@zettaai/edit-session";
 
 export class NgClock implements Clock {
   now(): number {

@@ -8,7 +8,7 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import type { EditSession, HistorySnapshot } from "@zetta-ai/edit-session";
+import type { EditSession, HistorySnapshot } from "@zettaai/edit-session";
 import { useCallback } from "preact/hooks";
 
 export function HistoryControls({

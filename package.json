@@ -86,8 +86,7 @@
     "yauzl": "^3.2.0"
   },
   "dependencies": {
-    "@zetta-ai/edit-session": "file:/Users/vshyrokyi/Projects/zetta-ai/voxel-editor/.claude/worktrees/neuroglancer-intergration/packages/edit-session",
-    "preact": "^10.25.0",
+    "@zettaai/edit-session": "0.0.1",
     "codemirror": "^5.61.1",
     "core-js": "^3.40.0",
     "crc-32": "^1.2.2",
@@ -97,6 +96,7 @@
     "msgpackr": "^1.11.2",
     "nifti-reader-js": "^0.6.8",
     "numcodecs": "^0.3.2",
+    "preact": "^10.25.0",
     "valibot": "^1.0.0-beta.15"
   },
   "overrides": {

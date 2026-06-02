@@ -16,8 +16,8 @@ import type {
   SavedChunk,
   SaveTarget,
   SessionError,
-} from "@zetta-ai/edit-session";
-import { sessionError } from "@zetta-ai/edit-session";
+} from "@zettaai/edit-session";
+import { sessionError } from "@zettaai/edit-session";
 
 import type { NgLayerMetadataSource } from "#src/editing/adapters/ng_layer_metadata_source.js";
 import type { NgLogger } from "#src/editing/adapters/ng_logger.js";

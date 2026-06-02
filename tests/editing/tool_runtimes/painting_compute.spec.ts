@@ -16,8 +16,8 @@ import type {
   FillInput,
   LayerMetadata,
   ReadonlyChunkVoxelBuffer,
-} from "@zetta-ai/edit-session";
-import { Resolution, layerId } from "@zetta-ai/edit-session";
+} from "@zettaai/edit-session";
+import { Resolution, layerId } from "@zettaai/edit-session";
 
 import { PaintingCompute } from "#src/editing/tool_runtimes/painting_compute.js";
 

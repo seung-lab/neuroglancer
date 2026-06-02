@@ -15,8 +15,8 @@ import type {
   OverlayCoord,
   ReadonlyChunkVoxelBuffer,
   ViewBaseline,
-} from "@zetta-ai/edit-session";
-import { Resolution, layerId, sessionId } from "@zetta-ai/edit-session";
+} from "@zettaai/edit-session";
+import { Resolution, layerId, sessionId } from "@zettaai/edit-session";
 
 import { PatchMirror } from "#src/editing/overlay/patch_mirror.js";
 import { LocalPatchStore } from "#src/editing/local_patch_store.js";

@@ -10,8 +10,8 @@
 
 import "#src/editing/ui/session_controls/session_controls.css";
 
-import type { EditSession, SessionError } from "@zetta-ai/edit-session";
-import { Resolution } from "@zetta-ai/edit-session";
+import type { EditSession, SessionError } from "@zettaai/edit-session";
+import { Resolution } from "@zettaai/edit-session";
 import { useCallback, useEffect, useReducer, useRef, useState } from "preact/hooks";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";

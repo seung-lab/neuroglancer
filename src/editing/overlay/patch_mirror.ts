@@ -14,8 +14,8 @@ import type {
   OverlayCoord,
   ReadonlyChunkVoxelBuffer,
   Resolution,
-} from "@zetta-ai/edit-session";
-import { ChunkId } from "@zetta-ai/edit-session";
+} from "@zettaai/edit-session";
+import { ChunkId } from "@zettaai/edit-session";
 
 import type { NgLogger } from "#src/editing/adapters/ng_logger.js";
 import type { LocalPatchStore } from "#src/editing/local_patch_store.js";

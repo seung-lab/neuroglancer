@@ -13,7 +13,7 @@ import type {
   LayerId,
   SaveLayerOutcome,
   SaveResult,
-} from "@zetta-ai/edit-session";
+} from "@zettaai/edit-session";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { NullarySignal } from "#src/util/signal.js";

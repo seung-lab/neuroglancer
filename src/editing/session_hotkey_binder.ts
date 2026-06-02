@@ -42,7 +42,7 @@
  * `Ctrl+Z`) return to normal.
  */
 
-import type { PaintingTools } from "@zetta-ai/edit-session";
+import type { PaintingTools } from "@zettaai/edit-session";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { RefCounted } from "#src/util/disposable.js";
@@ -76,7 +76,7 @@ const ACTION_IDS = {
   brushIncr: "edit-session-brush-incr",
 } as const;
 
-// Library tool ids (see `node_modules/@zetta-ai/edit-session/dist/index.d.mts`
+// Library tool ids (see `node_modules/@zettaai/edit-session/dist/index.d.mts`
 // lines 1178, 1213, 1425, 1568, and 1148 for the `StrokeTool` toolId values).
 const TOOL_ID_BRUSH = "painting.brush";
 const TOOL_ID_ERASE = "painting.erase";

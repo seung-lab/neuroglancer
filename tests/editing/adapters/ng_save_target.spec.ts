@@ -16,8 +16,8 @@ import type {
   ReadonlyChunkVoxelBuffer,
   SavedChunk,
   SavePayload,
-} from "@zetta-ai/edit-session";
-import { Resolution, layerId, sessionId } from "@zetta-ai/edit-session";
+} from "@zettaai/edit-session";
+import { Resolution, layerId, sessionId } from "@zettaai/edit-session";
 
 import { NgSaveTarget } from "#src/editing/adapters/ng_save_target.js";
 import type { NgLayerMetadataSource } from "#src/editing/adapters/ng_layer_metadata_source.js";

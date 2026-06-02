@@ -15,11 +15,11 @@ import type {
   Resolution,
   ScaleMetadata,
   VoxelDataType,
-} from "@zetta-ai/edit-session";
+} from "@zettaai/edit-session";
 import {
   LayerMetadataUnavailableError,
   Resolution as ResolutionFactory,
-} from "@zetta-ai/edit-session";
+} from "@zettaai/edit-session";
 
 import type { LayerManager, UserLayer } from "#src/layer/index.js";
 import type { LoadedLayerDataSource } from "#src/layer/layer_data_source.js";

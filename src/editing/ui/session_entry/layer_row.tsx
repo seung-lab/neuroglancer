@@ -8,7 +8,7 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import type { Resolution } from "@zetta-ai/edit-session";
+import type { Resolution } from "@zettaai/edit-session";
 
 import { useSignal } from "#src/editing/ui/interop/use_signal.js";
 import type { ResolutionSelectionModel } from "#src/editing/ui/session_entry/resolution_options.js";

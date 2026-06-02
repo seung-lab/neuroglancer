@@ -16,7 +16,7 @@ import type {
   CommitTarget,
   LayerId,
   ReadonlyChunkVoxelBuffer,
-} from "@zetta-ai/edit-session";
+} from "@zettaai/edit-session";
 
 import { NullarySignal } from "#src/util/signal.js";
 

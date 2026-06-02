@@ -8,7 +8,7 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import type { Resolution } from "@zetta-ai/edit-session";
+import type { Resolution } from "@zettaai/edit-session";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 export function ResolutionPicker({

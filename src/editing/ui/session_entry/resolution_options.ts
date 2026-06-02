@@ -8,8 +8,8 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import type { LayerMetadata, Resolution } from "@zetta-ai/edit-session";
-import { availableResolutions } from "@zetta-ai/edit-session";
+import type { LayerMetadata, Resolution } from "@zettaai/edit-session";
+import { availableResolutions } from "@zettaai/edit-session";
 
 import { NullarySignal } from "#src/util/signal.js";
 

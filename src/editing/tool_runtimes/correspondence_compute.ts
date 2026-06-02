@@ -4,7 +4,7 @@ import type {
   AutoDetectResult,
   ApplyWarpInput,
   ApplyWarpResult,
-} from "@zetta-ai/edit-session";
+} from "@zettaai/edit-session";
 
 /** v1 stub; throws on every method. Real implementation deferred to v2 per architecture decision. */
 export class NgCorrespondenceCompute implements CorrespondenceCompute {

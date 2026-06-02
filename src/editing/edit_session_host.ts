@@ -9,7 +9,7 @@
  */
 
 /**
- * @file Phase-1 host wrapper around the `@zetta-ai/edit-session` library.
+ * @file Phase-1 host wrapper around the `@zettaai/edit-session` library.
  *
  * Owns: the active `EditSession` instance, per-session adapter wiring, the
  * per-layer `LocalPatchStore` + `PatchedSegmentationRenderLayer` +
@@ -33,8 +33,8 @@ import type {
   SaveResult,
   ZExtrapolationState,
   CorrespondenceState,
-} from "@zetta-ai/edit-session";
-import type { SavePayload, SaveLayerOutcome } from "@zetta-ai/edit-session";
+} from "@zettaai/edit-session";
+import type { SavePayload, SaveLayerOutcome } from "@zettaai/edit-session";
 import {
   ChunkId as ChunkIdFactory,
   DEFAULT_RADIUS_CYCLE,
@@ -48,7 +48,7 @@ import {
   painting,
   sessionId as toSessionId,
   zExtrapolation,
-} from "@zetta-ai/edit-session";
+} from "@zettaai/edit-session";
 
 import { NgChunkSource } from "#src/editing/adapters/ng_chunk_source.js";
 import { NgClock } from "#src/editing/adapters/ng_clock.js";

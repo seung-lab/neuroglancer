@@ -8,7 +8,7 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import type { LogLevel, LoggerChannel } from "@zetta-ai/edit-session";
+import type { LogLevel, LoggerChannel } from "@zettaai/edit-session";
 
 import type { NgLogger } from "#src/editing/adapters/ng_logger.js";
 

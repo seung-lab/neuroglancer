@@ -3,7 +3,7 @@ import type {
   SessionId,
   SessionLock,
   SessionLockAdapter,
-} from "@zetta-ai/edit-session";
+} from "@zettaai/edit-session";
 
 import { WatchableValue } from "#src/trackable_value.js";
 

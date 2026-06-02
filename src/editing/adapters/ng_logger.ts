@@ -2,7 +2,7 @@ import type {
   Logger,
   LoggerChannel,
   LogLevel,
-} from "@zetta-ai/edit-session";
+} from "@zettaai/edit-session";
 
 import { StatusMessage } from "#src/status.js";
 

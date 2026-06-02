@@ -14,8 +14,8 @@ import type {
   CommittedChunk,
   CommitPayload,
   ReadonlyChunkVoxelBuffer,
-} from "@zetta-ai/edit-session";
-import { Resolution, layerId, sessionId } from "@zetta-ai/edit-session";
+} from "@zettaai/edit-session";
+import { Resolution, layerId, sessionId } from "@zettaai/edit-session";
 
 import { NgCommitTarget } from "#src/editing/adapters/ng_commit_target.js";
 

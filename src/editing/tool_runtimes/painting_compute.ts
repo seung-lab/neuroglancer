@@ -23,8 +23,8 @@ import type {
   Resolution as ResolutionType,
   ScaleMetadata,
   VoxelDataType,
-} from "@zetta-ai/edit-session";
-import { ChunkId, scaleFor } from "@zetta-ai/edit-session";
+} from "@zettaai/edit-session";
+import { ChunkId, scaleFor } from "@zettaai/edit-session";
 
 /**
  * Neuroglancer-side `PaintCompute` implementation. Computes per-chunk write

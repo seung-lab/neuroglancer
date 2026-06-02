@@ -10,7 +10,7 @@
 
 /**
  * @file Pure-state derivations for the brush cursor overlays. Bridges the
- * `@zetta-ai/edit-session` library events (`active-tool-changed`, painting
+ * `@zettaai/edit-session` library events (`active-tool-changed`, painting
  * `changed`) and neuroglancer `mouseState.changed` into flat
  * `WatchableValue`s. Visibility (per `05-tools-and-cursor.md`): session
  * active AND active tool is `painting.brush` or `painting.erase` (fill
@@ -21,7 +21,7 @@ import type {
   EditSession,
   PaintingTools,
   Resolution,
-} from "@zetta-ai/edit-session";
+} from "@zettaai/edit-session";
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { vec3 } from "#src/util/geom.js";
 import { WatchableValue } from "#src/trackable_value.js";

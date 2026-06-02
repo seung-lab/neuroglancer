@@ -21,8 +21,8 @@
  * the canonicalized `Resolution.from(voxelSizeNm)` of every allowed entry.
  */
 
-import type { Resolution } from "@zetta-ai/edit-session";
-import { Resolution as ResolutionFactory } from "@zetta-ai/edit-session";
+import type { Resolution } from "@zettaai/edit-session";
+import { Resolution as ResolutionFactory } from "@zettaai/edit-session";
 
 import type { TopLevelLayerListSpecification } from "#src/layer/index.js";
 import type { LoadedLayerDataSource } from "#src/layer/layer_data_source.js";

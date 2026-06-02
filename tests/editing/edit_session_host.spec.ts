@@ -30,7 +30,7 @@ vi.hoisted(() => {
   }
 });
 
-import { Resolution, layerId } from "@zetta-ai/edit-session";
+import { Resolution, layerId } from "@zettaai/edit-session";
 
 import {
   EditSessionHost,

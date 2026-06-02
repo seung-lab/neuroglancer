@@ -18,13 +18,13 @@ import type {
   ReadonlyChunkVoxelBuffer,
   Resolution,
   SessionId,
-} from "@zetta-ai/edit-session";
+} from "@zettaai/edit-session";
 import {
   ChunkId as ChunkIdFactory,
   ChunkPinFailedError,
   ChunkReadAbortedError,
   ChunkReadFailedError,
-} from "@zetta-ai/edit-session";
+} from "@zettaai/edit-session";
 
 import { resolutionFor } from "#src/editing/adapters/ng_layer_metadata_source.js";
 import type { ChunkManager } from "#src/chunk_manager/frontend.js";

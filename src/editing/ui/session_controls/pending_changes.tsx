@@ -10,7 +10,7 @@
 
 import "#src/editing/ui/session_controls/pending_changes.css";
 
-import type { LayerId } from "@zetta-ai/edit-session";
+import type { LayerId } from "@zettaai/edit-session";
 import { useCallback, useState } from "preact/hooks";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
