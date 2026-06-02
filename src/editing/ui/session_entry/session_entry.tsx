@@ -26,20 +26,17 @@ import type {
   HostSessionConfig,
 } from "#src/editing/edit_session_host.js";
 import { useSignal } from "#src/editing/ui/interop/use_signal.js";
+import type { LayerKind } from "#src/editing/ui/layer_kind.js";
+import { layerKindOf } from "#src/editing/ui/layer_kind.js";
 import type {
   BboxSelectionModel,
   BboxAnnotationSelection,
 } from "#src/editing/ui/session_entry/bbox_candidates.js";
 import { BboxPicker } from "#src/editing/ui/session_entry/bbox_picker.js";
-import type {
-  LayerKind,
-  LayerRowState,
-} from "#src/editing/ui/session_entry/layer_row.js";
+import type { LayerRowState } from "#src/editing/ui/session_entry/layer_row.js";
 import { LayerRow } from "#src/editing/ui/session_entry/layer_row.js";
 import { ResolutionSelectionModel } from "#src/editing/ui/session_entry/resolution_options.js";
-import { ImageUserLayer } from "#src/layer/image/index.js";
-import type { LayerManager, ManagedUserLayer } from "#src/layer/index.js";
-import { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
+import type { LayerManager } from "#src/layer/index.js";
 import "#src/editing/ui/session_entry/session_entry.css";
 
 interface LayerEntry {
@@ -615,9 +612,3 @@ function collectLayerEntries(layerManager: LayerManager): LayerEntry[] {
   return entries;
 }
 
-function layerKindOf(managed: ManagedUserLayer): LayerKind | undefined {
-  const userLayer = managed.layer;
-  if (userLayer instanceof SegmentationUserLayer) return "segmentation";
-  if (userLayer instanceof ImageUserLayer) return "image";
-  return undefined;
-}

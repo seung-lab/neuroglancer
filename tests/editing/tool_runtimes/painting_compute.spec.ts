@@ -8,7 +8,6 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import { describe, it, expect } from "vitest";
 import type {
   BrushApplyInput,
   BrushStrokeInput,
@@ -17,7 +16,8 @@ import type {
   LayerMetadata,
   ReadonlyChunkVoxelBuffer,
 } from "@zettaai/edit-session";
-import { Resolution, layerId } from "@zettaai/edit-session";
+import { ChunkId, Resolution, layerId } from "@zettaai/edit-session";
+import { describe, it, expect } from "vitest";
 
 import { PaintingCompute } from "#src/editing/tool_runtimes/painting_compute.js";
 
@@ -55,6 +55,73 @@ function zeroReader(
   };
 }
 
+/** readChunkAt stub for tests that don't exercise the mask path. */
+const unusedReadChunkAt = async () => {
+  throw new Error("readChunkAt unused in this test");
+};
+
+/** uint8 image-layer metadata for mask tests. */
+const MASK_LAYER = layerId("M1");
+function imageMetadata(
+  chunkDataSize: readonly [number, number, number] = [16, 16, 16],
+  voxelSizeNm: readonly [number, number, number] = [8, 8, 40],
+): LayerMetadata {
+  return {
+    layerId: MASK_LAYER,
+    voxelDataType: "uint8",
+    channels: 1,
+    scales: [
+      {
+        resolution: TARGET_RES,
+        voxelSizeNm,
+        voxelOffset: [0, 0, 0],
+        sizeVoxels: [256, 256, 256],
+        chunkDataSize,
+      },
+    ],
+  };
+}
+
+/**
+ * Image-chunk reader: returns uint8 chunks filled with `valueFn(ix, iy, iz)`
+ * where coords are in global image-voxel space. Tracks call counts so tests
+ * can assert caching.
+ */
+function imageReader(
+  chunkDataSize: readonly [number, number, number],
+  valueFn: (ix: number, iy: number, iz: number) => number,
+): {
+  readChunkAt: (
+    _layer: unknown,
+    _res: unknown,
+    chunkId: ChunkIdType,
+  ) => Promise<ReadonlyChunkVoxelBuffer>;
+  calls: { count: number };
+} {
+  const volume = chunkDataSize[0] * chunkDataSize[1] * chunkDataSize[2];
+  const calls = { count: 0 };
+  return {
+    calls,
+    readChunkAt: async (_layer, _res, chunkId) => {
+      calls.count++;
+      const c = ChunkId.toCoord(chunkId);
+      const buf = new Uint8Array(volume);
+      for (let lz = 0; lz < chunkDataSize[2]; lz++) {
+        for (let ly = 0; ly < chunkDataSize[1]; ly++) {
+          for (let lx = 0; lx < chunkDataSize[0]; lx++) {
+            const ix = c.x * chunkDataSize[0] + lx;
+            const iy = c.y * chunkDataSize[1] + ly;
+            const iz = c.z * chunkDataSize[2] + lz;
+            buf[lx + chunkDataSize[0] * (ly + chunkDataSize[1] * lz)] =
+              valueFn(ix, iy, iz);
+          }
+        }
+      }
+      return { byteLength: buf.byteLength, asView: () => buf };
+    },
+  };
+}
+
 /**
  * Disk footprint helper — counts integer (dx, dy) pairs with
  * dx*dx + dy*dy <= r*r, matching `stampDisk2D` in painting_compute.ts.
@@ -84,6 +151,7 @@ describe("PaintingCompute.applyBrush", () => {
       radius: 0,
       value: 42n,
       readChunk: zeroReader([64, 64, 64]),
+      readChunkAt: unusedReadChunkAt,
     };
     const batch = await compute.applyBrush(input);
     expect(batch.chunks).toHaveLength(1);
@@ -110,6 +178,7 @@ describe("PaintingCompute.applyBrush", () => {
       radius,
       value: 7n,
       readChunk: zeroReader([64, 64, 64]),
+      readChunkAt: unusedReadChunkAt,
     };
     const batch = await compute.applyBrush(input);
     expect(batch.chunks).toHaveLength(1);
@@ -134,6 +203,7 @@ describe("PaintingCompute.applyBrush", () => {
       radius: 2,
       value: 5n,
       readChunk: zeroReader([8, 8, 8]),
+      readChunkAt: unusedReadChunkAt,
     };
     const batch = await compute.applyBrush(input);
     expect(batch.chunks.length).toBe(2);
@@ -160,6 +230,7 @@ describe("PaintingCompute.applyBrushStroke", () => {
       value: 1n,
       stepVoxels: 1,
       readChunk: zeroReader([64, 64, 64]),
+      readChunkAt: unusedReadChunkAt,
     };
     const batch = await compute.applyBrushStroke(input);
     expect(batch.chunks).toHaveLength(1);
@@ -181,6 +252,7 @@ describe("PaintingCompute.applyBrushStroke", () => {
       value: 9n,
       stepVoxels: 1,
       readChunk: zeroReader([64, 64, 64]),
+      readChunkAt: unusedReadChunkAt,
     };
     const batch = await compute.applyBrushStroke(input);
     // Every chunk write fits in chunk (0,0,0).
@@ -250,5 +322,191 @@ describe("PaintingCompute.fill3d", () => {
     const batch = await compute.fill3d(input);
     expect(batch.chunks).toHaveLength(0);
     expect(batch.truncated).toBeUndefined();
+  });
+});
+
+describe("PaintingCompute.applyBrush with mask", () => {
+  it("full-band mask paints every voxel (valueMask all 1s)", async () => {
+    const compute = new PaintingCompute();
+    const meta = metadata([64, 64, 64]);
+    const maskMeta = imageMetadata([64, 64, 64]);
+    const image = imageReader([64, 64, 64], () => 128);
+    const batch = await compute.applyBrush({
+      targetLayerId: TARGET_LAYER,
+      targetResolution: TARGET_RES,
+      metadata: meta,
+      voxelPosition: [32, 32, 16],
+      radius: 3,
+      value: 7n,
+      mask: {
+        imageLayerId: MASK_LAYER,
+        imageResolution: TARGET_RES,
+        thresholdLow: 0,
+        thresholdHigh: 255,
+        minComponentSize: 0,
+        binaryClosing: 0,
+        filterComponentsFirst: false,
+      },
+      maskMetadata: maskMeta,
+      readChunk: zeroReader([64, 64, 64]),
+      readChunkAt: image.readChunkAt,
+    });
+    expect(batch.chunks).toHaveLength(1);
+    const c = batch.chunks[0];
+    let setBits = 0;
+    for (const b of c.valueMask!) if (b !== 0) setBits++;
+    expect(setBits).toBe(diskFootprint(3));
+  });
+
+  it("low > all image values stamps the disk but valueMask is all 0", async () => {
+    const compute = new PaintingCompute();
+    const meta = metadata([64, 64, 64]);
+    const maskMeta = imageMetadata([64, 64, 64]);
+    const image = imageReader([64, 64, 64], () => 50);
+    const batch = await compute.applyBrush({
+      targetLayerId: TARGET_LAYER,
+      targetResolution: TARGET_RES,
+      metadata: meta,
+      voxelPosition: [32, 32, 16],
+      radius: 3,
+      value: 7n,
+      mask: {
+        imageLayerId: MASK_LAYER,
+        imageResolution: TARGET_RES,
+        thresholdLow: 200,
+        thresholdHigh: 255,
+        minComponentSize: 0,
+        binaryClosing: 0,
+        filterComponentsFirst: false,
+      },
+      maskMetadata: maskMeta,
+      readChunk: zeroReader([64, 64, 64]),
+      readChunkAt: image.readChunkAt,
+    });
+    expect(batch.chunks).toHaveLength(1);
+    const c = batch.chunks[0];
+    let setBits = 0;
+    for (const b of c.valueMask!) if (b !== 0) setBits++;
+    expect(setBits).toBe(0);
+  });
+
+  it("paints only voxels in the threshold band", async () => {
+    const compute = new PaintingCompute();
+    const meta = metadata([64, 64, 64]);
+    const maskMeta = imageMetadata([64, 64, 64]);
+    // Image: left half (ix < 32) bright, right half dark.
+    const image = imageReader([64, 64, 64], (ix) => (ix < 32 ? 200 : 50));
+    const batch = await compute.applyBrush({
+      targetLayerId: TARGET_LAYER,
+      targetResolution: TARGET_RES,
+      metadata: meta,
+      voxelPosition: [32, 32, 16],
+      radius: 4,
+      value: 7n,
+      mask: {
+        imageLayerId: MASK_LAYER,
+        imageResolution: TARGET_RES,
+        thresholdLow: 150,
+        thresholdHigh: 255,
+        minComponentSize: 0,
+        binaryClosing: 0,
+        filterComponentsFirst: false,
+      },
+      maskMetadata: maskMeta,
+      readChunk: zeroReader([64, 64, 64]),
+      readChunkAt: image.readChunkAt,
+    });
+    expect(batch.chunks.length).toBeGreaterThan(0);
+    let painted = 0;
+    for (const c of batch.chunks) {
+      const { origin, size } = c.subregion;
+      for (let z = 0; z < size[2]; z++) {
+        for (let y = 0; y < size[1]; y++) {
+          for (let x = 0; x < size[0]; x++) {
+            const linear = x + size[0] * (y + size[1] * z);
+            if (c.valueMask![linear] !== 0) {
+              const gx = origin[0] + x + c.chunkCoord.x * 64;
+              expect(gx).toBeLessThan(32);
+              painted++;
+            }
+          }
+        }
+      }
+    }
+    expect(painted).toBeGreaterThan(0);
+  });
+
+  it("paints with image resolution coarser than target (2x ratio)", async () => {
+    const compute = new PaintingCompute();
+    // Target 8nm, image 16nm. Image bright region at ix < 16 corresponds
+    // to target gx < 32.
+    const meta = metadata([64, 64, 64]);
+    const maskMeta = imageMetadata([32, 32, 32], [16, 16, 40]);
+    const image = imageReader([32, 32, 32], (ix) => (ix < 16 ? 200 : 50));
+    const batch = await compute.applyBrush({
+      targetLayerId: TARGET_LAYER,
+      targetResolution: TARGET_RES,
+      metadata: meta,
+      voxelPosition: [32, 32, 16],
+      radius: 4,
+      value: 7n,
+      mask: {
+        imageLayerId: MASK_LAYER,
+        imageResolution: TARGET_RES,
+        thresholdLow: 150,
+        thresholdHigh: 255,
+        minComponentSize: 0,
+        binaryClosing: 0,
+        filterComponentsFirst: false,
+      },
+      maskMetadata: maskMeta,
+      readChunk: zeroReader([64, 64, 64]),
+      readChunkAt: image.readChunkAt,
+    });
+    let painted = 0;
+    for (const c of batch.chunks) {
+      const { origin, size } = c.subregion;
+      for (let z = 0; z < size[2]; z++) {
+        for (let y = 0; y < size[1]; y++) {
+          for (let x = 0; x < size[0]; x++) {
+            if (c.valueMask![x + size[0] * (y + size[1] * z)] !== 0) {
+              const gx = origin[0] + x + c.chunkCoord.x * 64;
+              expect(gx).toBeLessThan(32);
+              painted++;
+            }
+          }
+        }
+      }
+    }
+    expect(painted).toBeGreaterThan(0);
+  });
+
+  it("falls back to unmasked stroke when maskMetadata is missing", async () => {
+    const compute = new PaintingCompute();
+    const meta = metadata([64, 64, 64]);
+    const batch = await compute.applyBrush({
+      targetLayerId: TARGET_LAYER,
+      targetResolution: TARGET_RES,
+      metadata: meta,
+      voxelPosition: [32, 32, 16],
+      radius: 3,
+      value: 7n,
+      mask: {
+        imageLayerId: MASK_LAYER,
+        imageResolution: TARGET_RES,
+        thresholdLow: 200,
+        thresholdHigh: 255,
+        minComponentSize: 0,
+        binaryClosing: 0,
+        filterComponentsFirst: false,
+      },
+      // maskMetadata intentionally omitted.
+      readChunk: zeroReader([64, 64, 64]),
+      readChunkAt: unusedReadChunkAt,
+    });
+    expect(batch.chunks).toHaveLength(1);
+    let setBits = 0;
+    for (const b of batch.chunks[0].valueMask!) if (b !== 0) setBits++;
+    expect(setBits).toBe(diskFootprint(3));
   });
 });

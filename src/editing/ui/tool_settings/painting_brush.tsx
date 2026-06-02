@@ -8,16 +8,42 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import type { EditSession, PaintingTools } from "@zettaai/edit-session";
-import { useCallback } from "preact/hooks";
+import type {
+  EditSession,
+  LayerId,
+  LayerMetadata,
+  PaintingMaskConfig,
+  PaintingTools,
+  Resolution,
+} from "@zettaai/edit-session";
+import { layerId as toLayerId } from "@zettaai/edit-session";
+import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
+import { voxelDataTypeRange } from "#src/editing/tool_runtimes/mask_coord.js";
 import { useEvent } from "#src/editing/ui/interop/use_event.js";
+import { useWatchable } from "#src/editing/ui/interop/use_watchable.js";
+import { layerKindOf } from "#src/editing/ui/layer_kind.js";
 import { PaintingTargetPicker } from "#src/editing/ui/tool_settings/painting_target_picker.js";
+import "#src/editing/ui/tool_settings/painting_brush.css";
 
-function clampRadius(value: number): number {
+const MAX_SIZE = 129; // size = radius*2+1; max radius 64.
+const MIN_SIZE = 1;
+
+function clampSize(value: number): number {
   if (!Number.isFinite(value)) return 1;
-  return Math.max(1, Math.min(64, Math.round(value)));
+  const n = Math.round(value);
+  // Snap to odd integers — size is voxel-count and must be odd.
+  const odd = n % 2 === 0 ? n + 1 : n;
+  return Math.max(MIN_SIZE, Math.min(MAX_SIZE, odd));
+}
+
+function sizeToRadius(size: number): number {
+  return Math.max(0, Math.floor((size - 1) / 2));
+}
+
+function radiusToSize(radius: number): number {
+  return Math.max(0, Math.floor(radius)) * 2 + 1;
 }
 
 export function PaintingBrush({
@@ -27,6 +53,7 @@ export function PaintingBrush({
   session: EditSession;
   host: EditSessionHost;
 }) {
+  useWatchable(host.state.value);
   const painting = session.tools.getTool<PaintingTools>("painting");
   const subscribe = useCallback(
     (h: () => void) => painting.on("changed", h),
@@ -35,14 +62,10 @@ export function PaintingBrush({
   useEvent(subscribe);
   const state = painting.getState();
 
-  const onRadiusInput = (e: Event) => {
+  const onSizeInput = (e: Event) => {
     const input = e.currentTarget as HTMLInputElement;
-    painting.patchState({ radius: clampRadius(input.valueAsNumber) });
-  };
-
-  const onRadiusChange = (e: Event) => {
-    const input = e.currentTarget as HTMLInputElement;
-    painting.patchState({ radius: clampRadius(input.valueAsNumber) });
+    const size = clampSize(input.valueAsNumber);
+    painting.patchState({ radius: sizeToRadius(size) });
   };
 
   const onTargetChange = (e: Event) => {
@@ -56,26 +79,28 @@ export function PaintingBrush({
     }
   };
 
+  const size = radiusToSize(state.radius);
+
   return (
     <div class="neuroglancer-tool-panel neuroglancer-painting-brush-panel">
       <PaintingTargetPicker session={session} host={host} />
       <div class="neuroglancer-tool-panel-row">
-        <label>Radius</label>
+        <label>Size</label>
         <input
           type="range"
-          min={1}
-          max={64}
-          step={1}
-          value={state.radius}
-          onInput={onRadiusInput}
+          min={MIN_SIZE}
+          max={MAX_SIZE}
+          step={2}
+          value={size}
+          onInput={onSizeInput}
         />
         <input
           type="number"
-          min={1}
-          max={64}
-          step={1}
-          value={state.radius}
-          onChange={onRadiusChange}
+          min={MIN_SIZE}
+          max={MAX_SIZE}
+          step={2}
+          value={size}
+          onChange={onSizeInput}
         />
       </div>
       <div class="neuroglancer-tool-panel-row">
@@ -87,6 +112,308 @@ export function PaintingBrush({
           onChange={onTargetChange}
         />
       </div>
+      <AdvancedBrush host={host} painting={painting} />
+    </div>
+  );
+}
+
+interface ImageLayerEntry {
+  readonly layerId: LayerId;
+  readonly resolutions: readonly Resolution[];
+}
+
+function AdvancedBrush({
+  host,
+  painting,
+}: {
+  host: EditSessionHost;
+  painting: PaintingTools;
+}) {
+  const intent = host.state.value.value;
+  const layerManager = host.viewer.layerManager;
+  const [expanded, setExpanded] = useState(false);
+  const [metadataByLayer, setMetadataByLayer] = useState<
+    ReadonlyMap<string, LayerMetadata>
+  >(new Map());
+
+  const imageEntries: readonly ImageLayerEntry[] = useMemo(() => {
+    if (intent === null) return [];
+    return intent.layers
+      .filter(
+        (l) =>
+          layerKindOf(layerManager.getLayerByName(l.layerId)) === "image",
+      )
+      .map((l) => ({
+        layerId: toLayerId(l.layerId),
+        resolutions: l.resolutions,
+      }));
+  }, [intent, layerManager]);
+
+  // Resolve metadata for each image layer once.
+  useEffect(() => {
+    let cancelled = false;
+    const missing = imageEntries.filter(
+      (e) => !metadataByLayer.has(e.layerId),
+    );
+    if (missing.length === 0) return undefined;
+    void Promise.all(
+      missing.map((e) =>
+        host.layerMetadataSource
+          .resolve(e.layerId)
+          .then((m) => [e.layerId, m] as const)
+          .catch(() => null),
+      ),
+    ).then((results) => {
+      if (cancelled) return;
+      const next = new Map(metadataByLayer);
+      let changed = false;
+      for (const r of results) {
+        if (r !== null && !next.has(r[0])) {
+          next.set(r[0], r[1]);
+          changed = true;
+        }
+      }
+      if (changed) setMetadataByLayer(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [imageEntries, host, metadataByLayer]);
+
+  const state = painting.getState();
+  const mask = state.mask;
+  const enabled = mask !== undefined;
+
+  const noImageLayers = imageEntries.length === 0;
+  const currentMetadata: LayerMetadata | undefined = mask
+    ? metadataByLayer.get(mask.imageLayerId)
+    : undefined;
+  const currentDtype = currentMetadata?.voxelDataType;
+  const currentRange =
+    currentDtype !== undefined ? voxelDataTypeRange(currentDtype) : null;
+  const uint64Selected = enabled && currentDtype === "uint64";
+
+  const enableMask = (
+    entry: ImageLayerEntry,
+    meta: LayerMetadata | undefined,
+  ) => {
+    if (meta === undefined) return;
+    const range = voxelDataTypeRange(meta.voxelDataType);
+    if (range === null) return;
+    const next: PaintingMaskConfig = {
+      imageLayerId: entry.layerId,
+      imageResolution: entry.resolutions[0],
+      thresholdLow: range.min,
+      thresholdHigh: range.max,
+      minComponentSize: 0,
+      binaryClosing: 0,
+      filterComponentsFirst: false,
+    };
+    painting.patchState({ mask: next });
+  };
+
+  const disableMask = () => painting.patchState({ mask: undefined });
+
+  const onToggle = () => {
+    if (enabled) {
+      disableMask();
+      return;
+    }
+    if (noImageLayers) return;
+    const first = imageEntries[0];
+    const meta = metadataByLayer.get(first.layerId);
+    enableMask(first, meta);
+  };
+
+  const onMaskLayerChange = (e: Event) => {
+    if (mask === undefined) return;
+    const value = (e.currentTarget as HTMLSelectElement).value as LayerId;
+    const entry = imageEntries.find((x) => x.layerId === value);
+    if (entry === undefined) return;
+    const meta = metadataByLayer.get(value);
+    const range =
+      meta !== undefined ? voxelDataTypeRange(meta.voxelDataType) : null;
+    painting.patchState({
+      mask: {
+        ...mask,
+        imageLayerId: entry.layerId,
+        imageResolution: entry.resolutions[0],
+        thresholdLow: range?.min ?? mask.thresholdLow,
+        thresholdHigh: range?.max ?? mask.thresholdHigh,
+      },
+    });
+  };
+
+  const onMaskResolutionChange = (e: Event) => {
+    if (mask === undefined) return;
+    const value = (e.currentTarget as HTMLSelectElement).value as Resolution;
+    painting.patchState({ mask: { ...mask, imageResolution: value } });
+  };
+
+  const patchMask = (patch: Partial<PaintingMaskConfig>) => {
+    if (mask === undefined) return;
+    painting.patchState({ mask: { ...mask, ...patch } });
+  };
+
+  const onLowChange = (e: Event) => {
+    const v = (e.currentTarget as HTMLInputElement).valueAsNumber;
+    if (Number.isFinite(v)) patchMask({ thresholdLow: v });
+  };
+  const onHighChange = (e: Event) => {
+    const v = (e.currentTarget as HTMLInputElement).valueAsNumber;
+    if (Number.isFinite(v)) patchMask({ thresholdHigh: v });
+  };
+  const onMinComponentChange = (e: Event) => {
+    const v = (e.currentTarget as HTMLInputElement).valueAsNumber;
+    if (Number.isFinite(v))
+      patchMask({ minComponentSize: Math.max(0, Math.floor(v)) });
+  };
+  const onClosingChange = (e: Event) => {
+    const v = (e.currentTarget as HTMLInputElement).valueAsNumber;
+    if (Number.isFinite(v))
+      patchMask({ binaryClosing: Math.max(0, Math.floor(v)) });
+  };
+  const onFilterFirstChange = (e: Event) => {
+    patchMask({
+      filterComponentsFirst: (e.currentTarget as HTMLInputElement).checked,
+    });
+  };
+
+  const currentEntry = mask
+    ? imageEntries.find((x) => x.layerId === mask.imageLayerId)
+    : undefined;
+
+  const disabledHint = uint64Selected
+    ? "uint64 layers can't be used as mask images."
+    : noImageLayers
+      ? "Lock an image layer in the session to enable advanced brush."
+      : undefined;
+
+  const toggleDisabled = noImageLayers || uint64Selected;
+  const showSliders =
+    enabled && currentRange !== null && currentDtype !== "float32";
+
+  return (
+    <div class="neuroglancer-painting-brush-advanced">
+      <button
+        type="button"
+        class="neuroglancer-painting-brush-advanced-summary"
+        onClick={() => setExpanded(!expanded)}
+      >
+        {expanded ? "▾" : "▸"} Advanced brush
+      </button>
+      {expanded && (
+        <div class="neuroglancer-painting-brush-advanced-body">
+          <div class="neuroglancer-tool-panel-row">
+            <label>
+              <input
+                type="checkbox"
+                checked={enabled}
+                disabled={toggleDisabled}
+                onChange={onToggle}
+              />
+              {" Enable advanced brush"}
+            </label>
+          </div>
+          {disabledHint !== undefined && (
+            <div class="neuroglancer-painting-brush-advanced-hint">
+              {disabledHint}
+            </div>
+          )}
+          {enabled && currentEntry !== undefined && (
+            <>
+              <div class="neuroglancer-tool-panel-row">
+                <label>Mask layer</label>
+                <select
+                  value={mask!.imageLayerId}
+                  onChange={onMaskLayerChange}
+                >
+                  {imageEntries.map((e) => (
+                    <option key={e.layerId} value={e.layerId}>
+                      {e.layerId}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div class="neuroglancer-tool-panel-row">
+                <label>Mask resolution</label>
+                <select
+                  value={mask!.imageResolution}
+                  onChange={onMaskResolutionChange}
+                  disabled={currentEntry.resolutions.length <= 1}
+                >
+                  {currentEntry.resolutions.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div class="neuroglancer-tool-panel-row neuroglancer-painting-brush-threshold">
+                <label>Threshold</label>
+                {showSliders && currentRange !== null && (
+                  <>
+                    <input
+                      type="range"
+                      min={currentRange.min}
+                      max={currentRange.max}
+                      value={mask!.thresholdLow}
+                      onInput={onLowChange}
+                    />
+                    <input
+                      type="range"
+                      min={currentRange.min}
+                      max={currentRange.max}
+                      value={mask!.thresholdHigh}
+                      onInput={onHighChange}
+                    />
+                  </>
+                )}
+                <input
+                  type="number"
+                  value={mask!.thresholdLow}
+                  onChange={onLowChange}
+                />
+                <input
+                  type="number"
+                  value={mask!.thresholdHigh}
+                  onChange={onHighChange}
+                />
+              </div>
+              <div class="neuroglancer-tool-panel-row">
+                <label>Min component</label>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={mask!.minComponentSize}
+                  onChange={onMinComponentChange}
+                />
+              </div>
+              <div class="neuroglancer-tool-panel-row">
+                <label>Binary closing</label>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={mask!.binaryClosing}
+                  onChange={onClosingChange}
+                />
+              </div>
+              <div class="neuroglancer-tool-panel-row">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={mask!.filterComponentsFirst}
+                    onChange={onFilterFirstChange}
+                  />
+                  {" Filter components first"}
+                </label>
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

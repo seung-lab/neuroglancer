@@ -11,10 +11,11 @@
 import type { Resolution } from "@zettaai/edit-session";
 
 import { useSignal } from "#src/editing/ui/interop/use_signal.js";
+import type { LayerKind } from "#src/editing/ui/layer_kind.js";
 import type { ResolutionSelectionModel } from "#src/editing/ui/session_entry/resolution_options.js";
 import { ResolutionPicker } from "#src/editing/ui/session_entry/resolution_picker.js";
 
-export type LayerKind = "image" | "segmentation";
+export type { LayerKind };
 
 export interface LayerRowState {
   /**
