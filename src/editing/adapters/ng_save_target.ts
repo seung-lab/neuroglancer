@@ -22,7 +22,7 @@ import { sessionError } from "@zettaai/edit-session";
 import type { NgLayerMetadataSource } from "#src/editing/adapters/ng_layer_metadata_source.js";
 import type { NgLogger } from "#src/editing/adapters/ng_logger.js";
 import type { SaveBackend, SaveBackendResult } from "#src/editing/adapters/save_backend.js";
-import { getSaveBackend } from "#src/editing/adapters/save_backend.js";
+import { getDefaultSaveBackend, getSaveBackend } from "#src/editing/adapters/save_backend.js";
 import type { LayerManager, UserLayer } from "#src/layer/index.js";
 
 /**
@@ -105,7 +105,11 @@ export class NgSaveTarget implements SaveTarget {
         reason: "no-data-source-loaded",
       });
     }
-    const backend: SaveBackend | undefined = getSaveBackend(kind);
+    // Prefer a scheme-specific backend; otherwise fall back to the registered
+    // default (the protocol-agnostic `PostMessageSaveBackend`). Only skip when
+    // neither exists, so saving works for every data-source kind out of the box.
+    const backend: SaveBackend | undefined =
+      getSaveBackend(kind) ?? getDefaultSaveBackend();
     if (backend === undefined) {
       return toOutcome(layerId, {
         status: "skipped",
@@ -146,6 +150,28 @@ function resolveDataSourceKind(
     const url = pickUrl(layerDataSource);
     const scheme = parseScheme(url);
     if (scheme !== undefined) return scheme;
+  }
+  return undefined;
+}
+
+/**
+ * Resolve the canonical data-source URL for `layerId` (the same URL
+ * `resolveDataSourceKind` derives its scheme from). Save backends that hand
+ * chunks off to an external writer (e.g. `PostMessageSaveBackend` → portal)
+ * pass this along so the writer can map the layer to its storage `path`
+ * regardless of protocol. Returns `undefined` when no data source is loaded.
+ */
+export function resolveDataSourceUrl(
+  layerManager: LayerManager,
+  layerId: LayerId,
+): string | undefined {
+  const managed = layerManager.getLayerByName(layerId);
+  if (managed === undefined) return undefined;
+  const userLayer: UserLayer | null = managed.layer;
+  if (userLayer === null) return undefined;
+  for (const layerDataSource of userLayer.dataSources) {
+    const url = pickUrl(layerDataSource);
+    if (url !== undefined) return url;
   }
   return undefined;
 }

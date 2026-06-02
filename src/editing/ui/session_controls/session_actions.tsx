@@ -12,7 +12,11 @@ import type { EditSession } from "@zettaai/edit-session";
 import { useCallback } from "preact/hooks";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
+import { useWatchable } from "#src/editing/ui/interop/use_watchable.js";
 import type { SaveTracker } from "#src/editing/ui/session_controls/save_tracker.js";
+
+const NO_SAVE_BACKEND_HINT =
+  "Saving is unavailable — no save backend is registered.";
 
 export function SessionActions({
   host,
@@ -27,6 +31,7 @@ export function SessionActions({
 }) {
   const hasDirty = session.dirty.isDirty();
   const isSaving = saveTracker.state.kind === "saving";
+  const saveAvailable = useWatchable(host.saveBackendAvailable);
 
   const runCommit = useCallback(async () => {
     if (!session.dirty.isDirty()) return;
@@ -86,7 +91,8 @@ export function SessionActions({
         ) : (
           <button
             type="button"
-            disabled={!hasDirty}
+            disabled={!hasDirty || !saveAvailable}
+            title={saveAvailable ? undefined : NO_SAVE_BACKEND_HINT}
             onClick={startSave}
           >
             Save All

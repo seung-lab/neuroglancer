@@ -15,11 +15,16 @@ import { useCallback, useState } from "preact/hooks";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { useSignal } from "#src/editing/ui/interop/use_signal.js";
+import { useWatchable } from "#src/editing/ui/interop/use_watchable.js";
 import { StatusMessage } from "#src/status.js";
+
+const NO_SAVE_BACKEND_HINT =
+  "Saving is unavailable — no save backend is registered.";
 
 export function PendingChanges({ host }: { host: EditSessionHost }) {
   useSignal(host.commitTarget.changed);
   const [busy, setBusy] = useState(false);
+  const saveAvailable = useWatchable(host.saveBackendAvailable);
   const layerIds = host.commitTarget.pendingLayerIds();
 
   const runReset = useCallback(
@@ -93,6 +98,7 @@ export function PendingChanges({ host }: { host: EditSessionHost }) {
                 host={host}
                 layerId={layerId}
                 busy={busy}
+                saveAvailable={saveAvailable}
                 onSave={() => void runSave([layerId])}
                 onReset={() => runReset(layerId)}
               />
@@ -102,7 +108,8 @@ export function PendingChanges({ host }: { host: EditSessionHost }) {
             <button
               type="button"
               class="primary"
-              disabled={busy}
+              disabled={busy || !saveAvailable}
+              title={saveAvailable ? undefined : NO_SAVE_BACKEND_HINT}
               onClick={() => void runSave(undefined)}
             >
               Save all to backend
@@ -126,12 +133,14 @@ function LayerRow({
   host,
   layerId,
   busy,
+  saveAvailable,
   onSave,
   onReset,
 }: {
   host: EditSessionHost;
   layerId: LayerId;
   busy: boolean;
+  saveAvailable: boolean;
   onSave: () => void;
   onReset: () => void;
 }) {
@@ -147,7 +156,12 @@ function LayerRow({
         </span>
       </div>
       <div class="neuroglancer-pending-changes-row-actions">
-        <button type="button" disabled={busy} onClick={onSave}>
+        <button
+          type="button"
+          disabled={busy || !saveAvailable}
+          title={saveAvailable ? undefined : NO_SAVE_BACKEND_HINT}
+          onClick={onSave}
+        >
           Save
         </button>
         <button type="button" class="danger" disabled={busy} onClick={onReset}>

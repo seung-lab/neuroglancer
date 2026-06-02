@@ -55,7 +55,15 @@ import { NgClock } from "#src/editing/adapters/ng_clock.js";
 import { NgCommitTarget } from "#src/editing/adapters/ng_commit_target.js";
 import { NgLayerMetadataSource } from "#src/editing/adapters/ng_layer_metadata_source.js";
 import { NgLogger } from "#src/editing/adapters/ng_logger.js";
-import { NgSaveTarget } from "#src/editing/adapters/ng_save_target.js";
+import { NgSaveTarget, resolveDataSourceUrl } from "#src/editing/adapters/ng_save_target.js";
+import type { SaveBackend } from "#src/editing/adapters/save_backend.js";
+import {
+  hasAnySaveBackend,
+  registerDefaultSaveBackend,
+  registerSaveBackend,
+  saveBackendRegistryChanged,
+} from "#src/editing/adapters/save_backend.js";
+import { PostMessageSaveBackend } from "#src/editing/adapters/save_backends/post_message_save_backend.js";
 import { NgSessionLockAdapter } from "#src/editing/adapters/ng_session_lock.js";
 import { LocalPatchStore } from "#src/editing/local_patch_store.js";
 // PatchMirror is created by step 9 of Phase 1; this file's runtime import
@@ -317,6 +325,29 @@ export class EditSessionHost extends RefCounted {
   private readonly saveTarget: NgSaveTarget;
   private readonly clock: NgClock;
 
+  /**
+   * Reactive flag: whether any save backend is registered (so persistence is
+   * wired up). Mirrors `hasAnySaveBackend()` from the registry. The Save
+   * controls subscribe to this and disable themselves while it is `false`.
+   */
+  readonly saveBackendAvailable = new WatchableValue<boolean>(
+    hasAnySaveBackend(),
+  );
+
+  /**
+   * The NG-provided postMessage save backend, exposed so the embedding host
+   * (the portal) can construct and register it from an injected script without
+   * importing the NG bundle:
+   *
+   *   const host = window.viewer.editSessionHost;
+   *   host.registerDefaultSaveBackend(
+   *     new host.PostMessageSaveBackend({
+   *       resolveDataSourceUrl: (id) => host.resolveLayerDataSourceUrl(id),
+   *     }),
+   *   );
+   */
+  readonly PostMessageSaveBackend = PostMessageSaveBackend;
+
   // -- Per-layer persistent watchables for `editBboxLoHi` -------------------
   // Per `06-bbox-rendering.md` § "Wiring to the render layers", every
   // segmentation/image user layer that may participate in any future session
@@ -403,6 +434,19 @@ export class EditSessionHost extends RefCounted {
       this.viewer.layerManager,
       this.layerMetadataSource,
       this.logger,
+    );
+
+    // NG does NOT register a save backend itself. NG runs as a same-origin
+    // iframe and cannot perform the authenticated write; the embedding host
+    // (the portal) installs a backend at viewer-ready via the public
+    // registration surface below — typically the NG-provided
+    // `PostMessageSaveBackend` (reachable as
+    // `window.viewer.editSessionHost.PostMessageSaveBackend`). Until it does,
+    // `saveBackendAvailable` is false and the Save controls stay disabled.
+    this.registerDisposer(
+      saveBackendRegistryChanged.add(() => {
+        this.saveBackendAvailable.value = hasAnySaveBackend();
+      }),
     );
 
     // The viewer constructor calls `tryRestoreFromState()` once, but the URL
@@ -650,6 +694,37 @@ export class EditSessionHost extends RefCounted {
    */
   cancelActiveSave(): void {
     this.saveAbortController?.abort();
+  }
+
+  /**
+   * Public host-level registration surface for save backends, reachable via
+   * `window.viewer.editSessionHost`. Hosts embedding neuroglancer (e.g. the
+   * portal) can register a backend for a specific data-source kind (the URL
+   * scheme, e.g. `"calcada"`, `"gs"`); a scheme-specific backend takes
+   * precedence over the default. See `src/editing/adapters/save_backend.ts`.
+   */
+  registerSaveBackend(kind: string, backend: SaveBackend): void {
+    registerSaveBackend(kind, backend);
+  }
+
+  /**
+   * Register the catch-all backend used for any data-source kind without a
+   * scheme-specific backend. NG does not install one itself — the embedding
+   * host (the portal) calls this at viewer-ready, typically with
+   * `new this.PostMessageSaveBackend({ ... })`.
+   */
+  registerDefaultSaveBackend(backend: SaveBackend): void {
+    registerDefaultSaveBackend(backend);
+  }
+
+  /**
+   * Resolve the canonical data-source URL for a layer (e.g.
+   * `gs://bucket/path|precomputed:`). Exposed so an embedder constructing a
+   * `PostMessageSaveBackend` can wire its `resolveDataSourceUrl` option without
+   * reaching into the viewer's `LayerManager` directly.
+   */
+  resolveLayerDataSourceUrl(layerId: LayerId): string | undefined {
+    return resolveDataSourceUrl(this.viewer.layerManager, layerId);
   }
 
   // -- Committed-buffer lifecycle (post-commit, no active session) ---------
@@ -1123,15 +1198,12 @@ export class EditSessionHost extends RefCounted {
       );
     }
 
-    // Note on calcada save backend registration: the architecture spec
-    // (03-host-adapters.md, save backends; 02-module-layout.md) calls for
-    // `registerCalcadaSaveBackend({ resolveHttpSource })` to be invoked here
-    // for calcada-backed layers. The `HttpSource` lookup goes through the
-    // KvStoreContext from the layer's data source, and the precise path from
-    // a loaded `UserLayer` to an `HttpSource` is not yet codified in the
-    // calcada frontend (see `src/datasource/calcada/frontend.ts:2317`).
-    // Wiring is deferred to the integration step that defines that path —
-    // see report from this step for the open question.
+    // Save backend: persistence routes through whatever backend the embedding
+    // host (the portal) registers via `registerDefaultSaveBackend` — typically
+    // the protocol-agnostic `PostMessageSaveBackend`, which ships dirty chunks
+    // to the portal over postMessage to be written there (TM-289, Option A).
+    // NG registers none itself. The earlier calcada `/edit_write` HttpSource
+    // path is retired, so no per-layer `HttpSource` resolution is needed.
 
     // Propagate the newly-set per-layer regions into any persistent
     // watchables that segmentation/image user layers subscribed to at their
