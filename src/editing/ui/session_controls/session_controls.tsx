@@ -12,7 +12,13 @@ import "#src/editing/ui/session_controls/session_controls.css";
 
 import type { EditSession, SessionError } from "@zettaai/edit-session";
 import { Resolution } from "@zettaai/edit-session";
-import { useCallback, useEffect, useReducer, useRef, useState } from "preact/hooks";
+import {
+  useCallback,
+  useEffect,
+  useReducer,
+  useRef,
+  useState,
+} from "preact/hooks";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { useSignal } from "#src/editing/ui/interop/use_signal.js";
@@ -22,7 +28,10 @@ import { HistoryControls } from "#src/editing/ui/session_controls/history_contro
 import { SaveStatus } from "#src/editing/ui/session_controls/save_status.js";
 import { SaveTracker } from "#src/editing/ui/session_controls/save_tracker.js";
 import { SessionActions } from "#src/editing/ui/session_controls/session_actions.js";
-import { ToolList } from "#src/editing/ui/session_controls/tool_list.js";
+import {
+  CURSOR_TOOL_ID,
+  ToolList,
+} from "#src/editing/ui/session_controls/tool_list.js";
 
 export function SessionControls({ host }: { host: EditSessionHost }) {
   const sessionOrUndefined = useWatchable(host.activeSession);
@@ -32,7 +41,9 @@ export function SessionControls({ host }: { host: EditSessionHost }) {
     return (
       <div class="neuroglancer-edit-session-section">
         <div class="neuroglancer-edit-session-section-title">Session</div>
-        <div class="neuroglancer-edit-session-status-row">No active session.</div>
+        <div class="neuroglancer-edit-session-status-row">
+          No active session.
+        </div>
       </div>
     );
   }
@@ -87,7 +98,11 @@ function SessionContent({
   const handleToolClick = useCallback(
     (toolId: string) => {
       try {
-        session.setActiveTool(toolId);
+        if (toolId === CURSOR_TOOL_ID) {
+          session.clearActiveTool();
+        } else {
+          session.setActiveTool(toolId);
+        }
       } catch (err) {
         setErrorMessage(err instanceof Error ? err.message : String(err));
       }
@@ -123,8 +138,7 @@ function SessionContent({
     const meta = intentByLayer.get(sel.layerId);
     const writable = meta?.writable ?? true;
     const flag = writable ? "w" : "r";
-    const resolutions =
-      meta?.resolutions ?? sel.selectedResolutions;
+    const resolutions = meta?.resolutions ?? sel.selectedResolutions;
     return `${sel.layerId} (${flag}) [${resolutions.join(", ")}]`;
   });
 

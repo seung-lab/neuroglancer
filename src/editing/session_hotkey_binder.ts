@@ -69,6 +69,7 @@ const ACTION_IDS = {
   toolFill: "edit-session-tool-fill",
   toolZExtrap: "edit-session-tool-zextrap",
   toolCorrespondence: "edit-session-tool-correspondence",
+  cursorMode: "edit-session-cursor-mode",
   undo: "edit-session-undo",
   redo: "edit-session-redo",
   exitTool: "edit-session-exit-tool",
@@ -106,6 +107,7 @@ export class EditSessionHotkeyBinder extends RefCounted {
       keyf: ACTION_IDS.toolFill,
       keyz: ACTION_IDS.toolZExtrap,
       keyc: ACTION_IDS.toolCorrespondence,
+      keyv: ACTION_IDS.cursorMode,
       "control+keyz": ACTION_IDS.undo,
       "control+shift+keyz": ACTION_IDS.redo,
       "meta+keyz": ACTION_IDS.undo,
@@ -125,23 +127,24 @@ export class EditSessionHotkeyBinder extends RefCounted {
     );
     this.registerDisposer(detachParent);
 
-    // Camera-pan-during-paint mapping. While a paint-like tool is active:
+    // Camera-pan navigation maps. Swapped based on the active tool:
     //
-    // - Plain left-click+drag must NOT pan. We override `at:mousedown0`
-    //   with a no-op action whose listener doesn't exist, which shadows
-    //   neuroglancer's default `translate-via-mouse-drag` binding from the
-    //   slice/perspective panels. The synthesized `mousedown` itself still
-    //   fires (Chrome only suppresses subsequent `mousemove` events when
-    //   `preventDefault` is called on the upstream `pointerdown` —
-    //   suppressing the action via the binding map avoids that pitfall).
+    // - `paintNavMap` — while brush/eraser/fill is active. Plain left-click
+    //   must NOT pan (otherwise click+drag would pan instead of paint), so
+    //   `at:mousedown0` is shadowed by a no-op action (the synthesized
+    //   `mousedown` itself still fires; Chrome only suppresses subsequent
+    //   `mousemove` events when `preventDefault` is called on the upstream
+    //   `pointerdown`). Ctrl/Cmd+left-click+drag pans via the existing
+    //   `translate-via-mouse-drag` action.
     //
-    // - Ctrl/Cmd+left-click+drag pans normally. We map those into the
-    //   existing `translate-via-mouse-drag` action.
-    const navMap = EventActionMap.fromObject({
-      "at:mousedown0": {
-        action: "edit-session-noop-mousedown",
-        stopPropagation: true,
-      },
+    // - `cursorNavMap` — while no tool / a non-paint tool is active. The
+    //   `at:mousedown0` no-op is dropped so plain click+drag falls through
+    //   to neuroglancer's default `translate-via-mouse-drag` on the slice
+    //   and perspective panels. The Ctrl/Cmd overrides are kept so
+    //   `Ctrl+click` inside the session pans instead of creating an
+    //   annotation (the default `at:control+mousedown0 → annotate` binding
+    //   from `getDefaultRenderedDataPanelBindings`).
+    const ctrlMetaPanEntries = {
       "at:control+mousedown0": {
         action: "translate-via-mouse-drag",
         stopPropagation: true,
@@ -150,19 +153,64 @@ export class EditSessionHotkeyBinder extends RefCounted {
         action: "translate-via-mouse-drag",
         stopPropagation: true,
       },
+    } as const;
+    const paintNavMap = EventActionMap.fromObject({
+      "at:mousedown0": {
+        action: "edit-session-noop-mousedown",
+        stopPropagation: true,
+      },
+      ...ctrlMetaPanEntries,
     });
-    navMap.label = "Edit session navigation";
-    const detachSliceNav = viewer.inputEventBindings.sliceView.addParent(
-      navMap,
-      SESSION_HOTKEY_PRIORITY,
-    );
-    const detachPerspectiveNav =
-      viewer.inputEventBindings.perspectiveView.addParent(
-        navMap,
+    paintNavMap.label = "Edit session navigation (paint)";
+    const cursorNavMap = EventActionMap.fromObject({
+      ...ctrlMetaPanEntries,
+    });
+    cursorNavMap.label = "Edit session navigation (cursor)";
+
+    let detachNav: (() => void) | undefined;
+    const applyNavMode = (toolId: string | undefined) => {
+      if (detachNav !== undefined) {
+        try {
+          detachNav();
+        } catch {
+          // best-effort detach
+        }
+        detachNav = undefined;
+      }
+      const map = isPaintLikeToolId(toolId) ? paintNavMap : cursorNavMap;
+      const detachSlice = viewer.inputEventBindings.sliceView.addParent(
+        map,
         SESSION_HOTKEY_PRIORITY,
       );
-    this.registerDisposer(detachSliceNav);
-    this.registerDisposer(detachPerspectiveNav);
+      const detachPerspective =
+        viewer.inputEventBindings.perspectiveView.addParent(
+          map,
+          SESSION_HOTKEY_PRIORITY,
+        );
+      detachNav = () => {
+        detachSlice();
+        detachPerspective();
+      };
+    };
+    const session = host.activeSession.value;
+    applyNavMode(session?.getActiveToolId());
+    if (session !== undefined) {
+      const offActiveTool = session.on(
+        "active-tool-changed",
+        ({ to }: { to: string | undefined }) => applyNavMode(to),
+      );
+      this.registerDisposer(offActiveTool);
+    }
+    this.registerDisposer(() => {
+      if (detachNav !== undefined) {
+        try {
+          detachNav();
+        } catch {
+          // best-effort detach during disposal
+        }
+        detachNav = undefined;
+      }
+    });
 
     const target = viewer.element;
 
@@ -235,22 +283,26 @@ export class EditSessionHotkeyBinder extends RefCounted {
       }),
     );
 
+    const clearActiveTool = (event: Event) => {
+      const s = host.activeSession.value;
+      if (s === undefined) return;
+      event.stopPropagation();
+      try {
+        s.clearActiveTool();
+      } catch (err) {
+        host.logger.warn(
+          "session",
+          `Clear active tool failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    };
     this.registerDisposer(
-      registerActionListener(target, ACTION_IDS.exitTool, (event) => {
-        const session = host.activeSession.value;
-        if (session === undefined) return;
-        event.stopPropagation();
-        try {
-          session.clearActiveTool();
-        } catch (err) {
-          host.logger.warn(
-            "session",
-            `Clear active tool failed: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        }
-      }),
+      registerActionListener(target, ACTION_IDS.exitTool, clearActiveTool),
+    );
+    this.registerDisposer(
+      registerActionListener(target, ACTION_IDS.cursorMode, clearActiveTool),
     );
 
     this.registerDisposer(
@@ -264,6 +316,14 @@ export class EditSessionHotkeyBinder extends RefCounted {
       }),
     );
   }
+}
+
+function isPaintLikeToolId(toolId: string | undefined): boolean {
+  return (
+    toolId === TOOL_ID_BRUSH ||
+    toolId === TOOL_ID_ERASE ||
+    toolId === TOOL_ID_FILL
+  );
 }
 
 function adjustBrushRadius(host: EditSessionHost, delta: number): void {

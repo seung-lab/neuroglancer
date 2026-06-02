@@ -15,9 +15,27 @@ interface ToolRow {
   readonly markDisabled: boolean;
 }
 
+/**
+ * Synthetic tool id used for the "Cursor" row. Selecting it clears the active
+ * tool (no real library tool corresponds to it). Kept in sync with the click
+ * handler in `session_controls.tsx`.
+ */
+export const CURSOR_TOOL_ID = "cursor";
+
 const TOOL_ROWS: readonly ToolRow[] = [
-  { toolId: "painting.brush", label: "Brush", hotkey: "B", markDisabled: false },
-  { toolId: "painting.erase", label: "Eraser", hotkey: "E", markDisabled: false },
+  { toolId: CURSOR_TOOL_ID, label: "Cursor", hotkey: "V", markDisabled: false },
+  {
+    toolId: "painting.brush",
+    label: "Brush",
+    hotkey: "B",
+    markDisabled: false,
+  },
+  {
+    toolId: "painting.erase",
+    label: "Eraser",
+    hotkey: "E",
+    markDisabled: false,
+  },
   { toolId: "painting.fill", label: "Fill", hotkey: "F", markDisabled: false },
   {
     toolId: "correspondence",
@@ -45,30 +63,38 @@ export function ToolList({
   return (
     <div class="neuroglancer-edit-session-section">
       <div class="neuroglancer-edit-session-section-title">Tools</div>
-      {TOOL_ROWS.filter((row) => knownToolIds.has(row.toolId)).map((row) => (
-        <div
-          key={row.toolId}
-          class={
-            "neuroglancer-edit-session-tool-row" +
-            (row.toolId === activeToolId ? " active" : "") +
-            (row.markDisabled ? " disabled" : "")
-          }
-          onClick={() => onToolClick(row.toolId)}
-        >
-          <span class="neuroglancer-edit-session-tool-radio" />
-          <span class="neuroglancer-edit-session-tool-label">
-            {row.label}
-            {row.markDisabled && (
-              <span class="neuroglancer-edit-session-tool-disabled-marker">
-                (disabled)
-              </span>
-            )}
-          </span>
-          <span class="neuroglancer-edit-session-tool-hotkey">
-            {`[${row.hotkey}]`}
-          </span>
-        </div>
-      ))}
+      {TOOL_ROWS.filter(
+        (row) => row.toolId === CURSOR_TOOL_ID || knownToolIds.has(row.toolId),
+      ).map((row) => {
+        const isActive =
+          row.toolId === CURSOR_TOOL_ID
+            ? activeToolId === undefined
+            : row.toolId === activeToolId;
+        return (
+          <div
+            key={row.toolId}
+            class={
+              "neuroglancer-edit-session-tool-row" +
+              (isActive ? " active" : "") +
+              (row.markDisabled ? " disabled" : "")
+            }
+            onClick={() => onToolClick(row.toolId)}
+          >
+            <span class="neuroglancer-edit-session-tool-radio" />
+            <span class="neuroglancer-edit-session-tool-label">
+              {row.label}
+              {row.markDisabled && (
+                <span class="neuroglancer-edit-session-tool-disabled-marker">
+                  (disabled)
+                </span>
+              )}
+            </span>
+            <span class="neuroglancer-edit-session-tool-hotkey">
+              {`[${row.hotkey}]`}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
