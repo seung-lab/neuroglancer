@@ -14,6 +14,8 @@ import type {
   SavedChunk,
 } from "@zettaai/edit-session";
 
+import { NullarySignal } from "#src/util/signal.js";
+
 /**
  * Per-layer save outcome returned by a `SaveBackend`. This is the host's
  * internal richer result type — `NgSaveTarget` collapses these into the
@@ -54,6 +56,14 @@ export interface SaveBackend {
   ): Promise<SaveBackendResult>;
 }
 
+/**
+ * Dispatched whenever the set of registered backends changes (per-scheme or
+ * default, register or clear). The host mirrors this into a reactive
+ * `saveBackendAvailable` watchable so the UI can gate the Save controls on
+ * whether persistence is actually wired up.
+ */
+export const saveBackendRegistryChanged = new NullarySignal();
+
 const saveBackendRegistry = new Map<string, SaveBackend>();
 
 export function registerSaveBackend(
@@ -61,6 +71,7 @@ export function registerSaveBackend(
   backend: SaveBackend,
 ): void {
   saveBackendRegistry.set(dataSourceKind, backend);
+  saveBackendRegistryChanged.dispatch();
 }
 
 export function getSaveBackend(
@@ -70,5 +81,43 @@ export function getSaveBackend(
 }
 
 export function unregisterSaveBackend(dataSourceKind: string): void {
-  saveBackendRegistry.delete(dataSourceKind);
+  if (saveBackendRegistry.delete(dataSourceKind)) {
+    saveBackendRegistryChanged.dispatch();
+  }
+}
+
+/**
+ * Catch-all backend used when no scheme-specific backend is registered for a
+ * layer's data-source kind. The `PostMessageSaveBackend` registers here so a
+ * single transport persists chunks for every protocol (`calcada`, `gs`,
+ * `precomputed`, `https`, ...) — the host doesn't write the bytes, it ships
+ * them to the portal, which owns the per-protocol `path` mapping. Per-scheme
+ * backends (if any are ever registered) take precedence over this default.
+ */
+let defaultSaveBackend: SaveBackend | undefined;
+
+export function registerDefaultSaveBackend(backend: SaveBackend): void {
+  defaultSaveBackend = backend;
+  saveBackendRegistryChanged.dispatch();
+}
+
+export function getDefaultSaveBackend(): SaveBackend | undefined {
+  return defaultSaveBackend;
+}
+
+export function clearDefaultSaveBackend(): void {
+  if (defaultSaveBackend !== undefined) {
+    defaultSaveBackend = undefined;
+    saveBackendRegistryChanged.dispatch();
+  }
+}
+
+/**
+ * Whether any backend (a default catch-all or any per-scheme backend) is
+ * currently registered — i.e. whether saving is wired up at all. The host
+ * does not auto-register a backend; the embedding host (the portal) installs
+ * one, so this is `false` until it does.
+ */
+export function hasAnySaveBackend(): boolean {
+  return defaultSaveBackend !== undefined || saveBackendRegistry.size > 0;
 }
