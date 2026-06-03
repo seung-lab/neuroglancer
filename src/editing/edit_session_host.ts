@@ -72,7 +72,7 @@ import { LocalPatchStore } from "#src/editing/local_patch_store.js";
 // where the mirror subscribes to `session.dirty` chunk events for `layerId`
 // and writes the resulting overlay bytes into `store.writeFullChunk(...)`.
 import { PatchMirror } from "#src/editing/overlay/patch_mirror.js";
-import { PatchedSegmentationRenderLayer } from "#src/editing/patched_segmentation_renderlayer.js";
+import { PatchTextureCache } from "#src/editing/patch_texture_cache.js";
 import type { PatchedMaskProvider } from "#src/editing/shaders/patched_mask_provider.js";
 import { BrushCursorPerspectiveOverlay } from "#src/editing/cursor/brush_cursor_perspective_overlay.js";
 import { BrushCursorSliceOverlay } from "#src/editing/cursor/brush_cursor_slice_overlay.js";
@@ -245,14 +245,26 @@ function parseIntent(x: unknown): EditSessionIntent | null {
 
 interface PerLayerMachinery {
   readonly patchStore: LocalPatchStore;
-  readonly renderLayer: PatchedSegmentationRenderLayer;
-  readonly detachRenderLayer: () => void;
+  /**
+   * The GPU texture cache. Implements `PatchedMaskProvider` and is
+   * published into the layer's `editPatchOverlay` watchable so the base
+   * `SegmentationRenderLayer` samples patch values directly — no
+   * separate render layer is involved. Persists across commit/discard
+   * teardown so committed patches stay visible.
+   */
+  readonly textureCache: PatchTextureCache;
+  /**
+   * Reference to the base segmentation render layer for this layer. Used
+   * by host-internal helpers that need to walk visible scales (e.g.
+   * `chunkDataSizeForLayer`); the cache itself is layer-agnostic.
+   */
+  readonly baseRenderLayer: SegmentationRenderLayer;
   /**
    * Subscription bridging the active library overlay → `patchStore`. Set
    * while a session is active, replaced on each new `openSession`, and
    * cleared by `commitTeardown` (the backing `DirtyTracker` is gone after
    * commit so the mirror has nothing to listen to). `patchStore` and
-   * `renderLayer` persist across the gap so committed patches stay visible.
+   * `textureCache` persist across the gap so committed patches stay visible.
    */
   mirror: PatchMirror | undefined;
 }
@@ -415,12 +427,14 @@ export class EditSessionHost extends RefCounted {
     WatchableValue<ActiveRegion | undefined>
   > = this._activeRegionByLayer;
 
-  get attachedRenderLayers(): ReadonlyMap<
-    LayerId,
-    PatchedSegmentationRenderLayer
-  > {
-    const m = new Map<LayerId, PatchedSegmentationRenderLayer>();
-    for (const [id, e] of this.perLayer) m.set(id, e.renderLayer);
+  /**
+   * Per-layer patch texture caches that are currently attached. The
+   * cache is what implements `PatchedMaskProvider` and feeds the base
+   * `SegmentationRenderLayer`'s patch-overlay shader path.
+   */
+  get attachedPatchTextureCaches(): ReadonlyMap<LayerId, PatchTextureCache> {
+    const m = new Map<LayerId, PatchTextureCache>();
+    for (const [id, e] of this.perLayer) m.set(id, e.textureCache);
     return m;
   }
 
@@ -620,13 +634,12 @@ export class EditSessionHost extends RefCounted {
     layerId: LayerId,
     _resolution: ResolutionType,
   ): readonly [number, number, number] | undefined {
-    // The size is layer-resolution-specific. Pull it from the patched
-    // render layer's first source (mirrors what `PatchMirror` does).
+    // The size is layer-resolution-specific. Pull it from the base
+    // segmentation render layer's first source (the same source the
+    // patch texture cache mirrors voxel-for-voxel).
     const entry = this.perLayer.get(layerId);
     if (entry === undefined) return undefined;
-    // PatchedSegmentationRenderLayer exposes visibleSourcesList; walk to
-    // find a source whose voxel size matches the resolution.
-    const sources = entry.renderLayer.visibleSourcesList;
+    const sources = entry.baseRenderLayer.visibleSourcesList;
     for (const v of sources) {
       const size = v.source.spec.chunkDataSize;
       if (size.length >= 3) {
@@ -757,8 +770,16 @@ export class EditSessionHost extends RefCounted {
         // ignore
       }
     }
+    // Withdraw the texture cache from the layer's editPatchOverlay
+    // watchable BEFORE disposing it. Otherwise the base segmentation
+    // shader might still try to bind from a freed texture handle on the
+    // next redraw.
+    const patchOverlayWatchable = this.patchOverlayByLayer.get(layerId);
+    if (patchOverlayWatchable !== undefined) {
+      patchOverlayWatchable.value = undefined;
+    }
     try {
-      entry.detachRenderLayer();
+      entry.textureCache.dispose();
     } catch {
       // ignore
     }
@@ -769,13 +790,6 @@ export class EditSessionHost extends RefCounted {
     }
     this.perLayer.delete(layerId);
     this._activeRegionByLayer.delete(layerId);
-    // Withdraw the patched-mask provider so the base segmentation render
-    // layer's discard branch stops firing — committed patches are gone,
-    // so there's nothing for the base layer to hide.
-    const patchOverlayWatchable = this.patchOverlayByLayer.get(layerId);
-    if (patchOverlayWatchable !== undefined) {
-      patchOverlayWatchable.value = undefined;
-    }
   }
 
   /** Drop the committed patches for every layer. */
@@ -902,7 +916,7 @@ export class EditSessionHost extends RefCounted {
   ): WatchableValue<PatchedMaskProvider | undefined> {
     let w = this.patchOverlayByLayer.get(layerName);
     if (w === undefined) {
-      const existing = this.perLayer.get(layerName as LayerId)?.renderLayer;
+      const existing = this.perLayer.get(layerName as LayerId)?.textureCache;
       w = new WatchableValue<PatchedMaskProvider | undefined>(existing);
       this.patchOverlayByLayer.set(layerName, w);
     }
@@ -1201,40 +1215,35 @@ export class EditSessionHost extends RefCounted {
         );
         continue;
       }
-      // Reuse the existing per-layer entry when a previous commit left one
-      // behind — its LocalPatchStore + PatchedSegmentationRenderLayer are
-      // the user's in-memory commits and must stay visible/editable.
+      // Reuse the existing per-layer entry when a previous commit left
+      // one behind — its `LocalPatchStore` + `PatchTextureCache` are the
+      // user's in-memory commits and must stay visible/editable.
       let entry = this.perLayer.get(layer.layerId);
       if (entry === undefined) {
         const baseRenderLayer = findBaseSegmentationRenderLayer(userLayer);
         if (baseRenderLayer === undefined) {
           this.logger.warn(
             "session",
-            `Layer ${layer.layerId} has no SegmentationRenderLayer yet; skipping render-layer attach`,
+            `Layer ${layer.layerId} has no SegmentationRenderLayer yet; skipping patch-overlay attach`,
           );
           continue;
         }
         const patchStore = new LocalPatchStore();
-        const renderLayer = new PatchedSegmentationRenderLayer(
-          baseRenderLayer.multiscaleSource,
-          baseRenderLayer.displayState,
-          patchStore,
-        );
-        const detachRenderLayer = userLayer.addRenderLayer(renderLayer);
+        const textureCache = new PatchTextureCache(patchStore);
         entry = {
           patchStore,
-          renderLayer,
+          textureCache,
+          baseRenderLayer,
           mirror: undefined,
-          detachRenderLayer,
         };
         this.perLayer.set(layer.layerId, entry);
-        // Publish the patched-mask provider so the base segmentation
-        // render layer's `editPatchOverlay` hook fires its discard branch
-        // for edited voxels. Without this, even a perfectly-painted patch
-        // gets shadowed by the original segment underneath at any voxel
-        // the patched layer emits transparent (eraser case).
+        // Publish the texture cache as the layer's PatchedMaskProvider so
+        // the base `SegmentationRenderLayer`'s `getUint64DataValue` starts
+        // sampling patched values uniformly with baseline values. The base
+        // shader recompiles to the editPatchOverlayActive variant on this
+        // watchable's first non-undefined dispatch.
         this.getPatchOverlayWatchableForLayer(layer.layerId).value =
-          renderLayer;
+          textureCache;
       }
       entry.mirror = new PatchMirror(
         session,
@@ -1564,6 +1573,15 @@ export class EditSessionHost extends RefCounted {
   }
 
   private teardownPerLayer(): void {
+    // Withdraw every texture cache from its editPatchOverlay watchable
+    // BEFORE disposing the cache. Otherwise the base segmentation shader
+    // could try to bind from a freed texture handle on the next redraw.
+    // Recompiling the shader back to the no-hook variant happens on the
+    // next render naturally because `editPatchOverlayActive` derives
+    // from `editPatchOverlay.value !== undefined`.
+    for (const watchable of this.patchOverlayByLayer.values()) {
+      watchable.value = undefined;
+    }
     for (const entry of this.perLayer.values()) {
       if (entry.mirror !== undefined) {
         try {
@@ -1573,7 +1591,7 @@ export class EditSessionHost extends RefCounted {
         }
       }
       try {
-        entry.detachRenderLayer();
+        entry.textureCache.dispose();
       } catch {
         // ignore
       }
@@ -1586,13 +1604,6 @@ export class EditSessionHost extends RefCounted {
     this.perLayer.clear();
     this._activeRegionByLayer.clear();
     this._allowedResolutionsByLayer.clear();
-    // Withdraw every patched-mask provider in lockstep with the per-layer
-    // entries we just disposed. The base segmentation render layer's
-    // `editPatchOverlayActive` shader parameter flips false on the next
-    // render and recompiles back to the no-hook variant.
-    for (const watchable of this.patchOverlayByLayer.values()) {
-      watchable.value = undefined;
-    }
     // Flip subscribers from `defined` to `undefined`; this triggers the
     // bbox-dim shader path to recompile back to the no-session variant on
     // the next render and re-enables full resolution range on slice views.

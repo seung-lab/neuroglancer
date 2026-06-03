@@ -27,4 +27,4 @@ export type {
 export { LocalPatchChunk } from "#src/editing/local_patch_chunk.js";
 export { LocalPatchSource } from "#src/editing/local_patch_source.js";
 export { LocalPatchStore } from "#src/editing/local_patch_store.js";
-export { PatchedSegmentationRenderLayer } from "#src/editing/patched_segmentation_renderlayer.js";
+export { PatchTextureCache } from "#src/editing/patch_texture_cache.js";

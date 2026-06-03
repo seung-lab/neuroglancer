@@ -54,6 +54,7 @@ import {
 } from "#src/trackable_value.js";
 import type { Uint64Map } from "#src/uint64_map.js";
 import type { DisjointUint64Sets } from "#src/util/disjoint_sets.js";
+import { getChunkPositionFromCombinedGlobalLocalPositions } from "#src/render_coordinate_transform.js";
 import type { vec3 } from "#src/util/geom.js";
 import type { GL } from "#src/webgl/context.js";
 import type { ShaderBuilder, ShaderProgram } from "#src/webgl/shader.js";
@@ -191,15 +192,19 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
    */
   private bboxAlphaHook: BboxAlphaShaderHook = createBboxAlphaShaderHook();
 
-  // Patch-overlay shader hook state. The sampler unit symbol is reused
-  // across shader recompiles. `patchedMaskFallbackTexture` is the 1×1×1
-  // zero texture bound for chunks without patches — the shader's
-  // `texelFetch(...).r != 0u` discard branch is never taken in that case,
-  // so the byte-identical-to-pre-hook semantics for unedited chunks holds.
+  // Patch-overlay shader hook state. The sampler unit symbols are reused
+  // across shader recompiles. The two textures are bound only when
+  // `editPatchOverlayActive`; for chunks without patches, the provider's
+  // fallback path binds a 1×1×1 zero mask + 1×1×1 zero value, so the
+  // shader reads patched=0 and falls through to the baseline chunk value
+  // — byte-identical to the pre-hook implementation.
   private patchedMaskTextureUnit: number | undefined;
-  private patchedMaskFallbackTexture: WebGLTexture | undefined;
+  private patchValueTextureUnit: number | undefined;
   private static readonly patchedMaskSamplerSymbol = Symbol(
     "SegmentationRenderLayer.patchedMaskSampler",
+  );
+  private static readonly patchValueSamplerSymbol = Symbol(
+    "SegmentationRenderLayer.patchValueSampler",
   );
 
   constructor(
@@ -333,24 +338,50 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
         displayState.editBboxLoHi.changed.add(this.redrawNeeded.dispatch),
       );
     }
-    // The patched-mask provider's per-chunk uploads happen lazily from
-    // `onBeginChunk` via `provider.bindPatchedMaskTexture`. When the
-    // provider's underlying patch store changes (user paints / erases),
-    // the `PatchedSegmentationRenderLayer` already dispatches
-    // `redrawNeeded`, which the viewer's render loop picks up and
-    // schedules a redraw of EVERY visible render layer — including this
-    // one. So no separate subscription on `editPatchOverlay.changed` is
-    // needed for the per-stroke "the mask changed" signal; we only need
-    // to react when the PROVIDER REFERENCE itself swaps (session open /
-    // close), which `shaderParameters.changed` already covers.
+    // Patch-overlay redraw plumbing.
+    //
+    // When the user paints / erases, the provider's underlying
+    // `LocalPatchStore` mutates and dispatches its own `changed` signal,
+    // which the provider re-dispatches via its `changed` member. Without
+    // an explicit subscription here, the base render layer would never
+    // know to redraw and the stroke would only appear at the next
+    // incidental redraw (camera move, etc.). The old
+    // `PatchedSegmentationRenderLayer` carried this subscription
+    // implicitly; collapsing it into this layer requires we wire the
+    // signal ourselves.
+    //
+    // The provider reference can swap (session open / close / commit), so
+    // we re-subscribe whenever `displayState.editPatchOverlay.value`
+    // changes. The detacher closure is captured at subscribe time and
+    // called before the new subscription is wired.
+    if (displayState.editPatchOverlay !== undefined) {
+      const editPatchOverlay = displayState.editPatchOverlay;
+      let unsubscribeProvider: (() => void) | undefined;
+      const updateProviderSubscription = () => {
+        if (unsubscribeProvider !== undefined) {
+          unsubscribeProvider();
+          unsubscribeProvider = undefined;
+        }
+        const provider = editPatchOverlay.value;
+        if (provider !== undefined) {
+          unsubscribeProvider = provider.changed.add(this.redrawNeeded.dispatch);
+        }
+      };
+      updateProviderSubscription();
+      this.registerDisposer(
+        editPatchOverlay.changed.add(updateProviderSubscription),
+      );
+      this.registerDisposer(() => {
+        if (unsubscribeProvider !== undefined) {
+          unsubscribeProvider();
+          unsubscribeProvider = undefined;
+        }
+      });
+    }
   }
 
   disposed() {
     this.gpuSegmentStatedColorHashTable?.dispose();
-    if (this.patchedMaskFallbackTexture !== undefined) {
-      this.gl.deleteTexture(this.patchedMaskFallbackTexture);
-      this.patchedMaskFallbackTexture = undefined;
-    }
   }
 
   getSources(
@@ -363,31 +394,147 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
   }
 
   /**
-   * Voxel-edit extension point: subclasses override this to inject patch
-   * sampling into the segmentation read path. The default body returns
-   * `toUint64(getDataValue())` — stock base-segmentation behavior.
+   * Patch-aware CPU value lookup for hover / pick / status-bar consumers.
+   *
+   * In slice view, the segmentation layer doesn't write into the GPU
+   * picking framebuffer — so `mouseState.value` is resolved CPU-side by
+   * walking visible sources and calling `source.getValueAt(...)`, which
+   * reads BASELINE chunks only. With patches active, that produced a
+   * mismatch: GPU rendered the patch value (segment N), CPU pick saw
+   * the baseline value (segment M), and the highlight uniform
+   * `uSelectedSegment` pointed at M — so hovering an edited voxel
+   * highlighted a different segment than the one displayed there. We
+   * intercept here and consult the patch provider first; on a hit, the
+   * patched bigint wins. The cast to `any` matches the parent
+   * `getValueAt` return contract.
    */
-  protected defineGetUint64DataValue(builder: ShaderBuilder) {
-    builder.addFragmentCode(`
+  override getValueAt(globalPosition: Float32Array): any {
+    const provider = this.displayState.editPatchOverlay?.value;
+    if (provider === undefined) {
+      return super.getValueAt(globalPosition);
+    }
+    const scratch = this.patchedValueAtScratch;
+    for (const { source, chunkTransform } of this.visibleSourcesList) {
+      if (scratch.length !== chunkTransform.layerRank) {
+        this.patchedValueAtScratch = new Float32Array(chunkTransform.layerRank);
+      }
+      const chunkPosition = this.patchedValueAtScratch;
+      if (
+        !getChunkPositionFromCombinedGlobalLocalPositions(
+          chunkPosition,
+          globalPosition,
+          this.localPosition.value,
+          chunkTransform.layerRank,
+          chunkTransform.combinedGlobalLocalToChunkTransform,
+        )
+      ) {
+        continue;
+      }
+      const chunkDataSize = source.spec.chunkDataSize;
+      if (chunkDataSize.length < 3) continue;
+      const sx = chunkDataSize[0];
+      const sy = chunkDataSize[1];
+      const sz = chunkDataSize[2];
+      const vx = chunkPosition[0];
+      const vy = chunkPosition[1];
+      const vz = chunkPosition[2];
+      const gx = Math.floor(vx / sx);
+      const gy = Math.floor(vy / sy);
+      const gz = Math.floor(vz / sz);
+      const lx = Math.floor(vx - sx * gx);
+      const ly = Math.floor(vy - sy * gy);
+      const lz = Math.floor(vz - sz * gz);
+      // Out-of-chunk-range guards (parity with VolumeChunkSource.getValueAt).
+      if (
+        lx < 0 || ly < 0 || lz < 0 ||
+        lx >= sx || ly >= sy || lz >= sz
+      ) {
+        continue;
+      }
+      const patched = provider.getPatchedValueAt(
+        [gx, gy, gz],
+        [lx, ly, lz],
+      );
+      if (patched !== undefined) {
+        return patched;
+      }
+      const baseline = source.getValueAt(chunkPosition, chunkTransform);
+      if (baseline != null) {
+        return baseline;
+      }
+    }
+    return null;
+  }
+
+  // Scratch buffer for `getValueAt`'s chunk-position computation. Resized
+  // lazily to the current source's `layerRank`; the parent class uses a
+  // similar private field but it isn't accessible from a subclass.
+  private patchedValueAtScratch = new Float32Array(0);
+
+  /**
+   * Emit GLSL for the per-fragment uint64 segment-id lookup. When the
+   * patch-overlay shader path is active, the lookup samples the
+   * patched-mask first and SUBSTITUTES the per-voxel patch value at edited
+   * voxels — so every downstream branch (hover highlight, selected-segment
+   * highlight, equivalences, stated colors, `hideSegmentZero`) runs
+   * uniformly over baseline and patched voxels. That uniformity is what
+   * fixes the prior "hovered segment shows two shades" bug: the patched
+   * region used to take a separate render layer with no hover logic; now
+   * it goes through the same shader as everything else.
+   *
+   * The erase semantic also falls out for free: a patched voxel with
+   * value 0 hits the existing `hideSegmentZero` path and emits transparent
+   * — image layer underneath shows through at full opacity.
+   */
+  protected defineGetUint64DataValue(
+    builder: ShaderBuilder,
+    withPatchOverlay: boolean,
+  ) {
+    if (withPatchOverlay) {
+      builder.addFragmentCode(`
+uint64_t getUint64DataValue() {
+  highp ivec3 patchedP = ivec3(max(vec3(0.0, 0.0, 0.0), min(floor(vChunkPosition), uChunkDataSize - 1.0)));
+  uint patched = texelFetch(uPatchedMaskSampler, patchedP, 0).r;
+  if (patched != 0u) {
+    highp uvec4 raw = texelFetch(uPatchValueSampler, patchedP, 0);
+    uint64_t v;
+    v.value = uvec2(raw.r, raw.g);
+    return v;
+  }
+  return toUint64(getDataValue());
+}
+`);
+    } else {
+      builder.addFragmentCode(`
 uint64_t getUint64DataValue() {
   uint64_t x = toUint64(getDataValue());
   return x;
 }
 `);
+    }
   }
 
   defineShader(builder: ShaderBuilder, parameters: ShaderParameters) {
     this.hashTableManager.defineShader(builder);
-    this.defineGetUint64DataValue(builder);
+    // Patch-overlay samplers MUST be added before `defineGetUint64DataValue`
+    // emits the function that calls `texelFetch(uPatch*Sampler, ...)` — the
+    // shader builder records uniform declarations in addition order.
     if (parameters.editPatchOverlayActive) {
       this.patchedMaskTextureUnit = builder.addTextureSampler(
         "usampler3D",
         "uPatchedMaskSampler",
         SegmentationRenderLayer.patchedMaskSamplerSymbol,
       );
+      this.patchValueTextureUnit = builder.addTextureSampler(
+        "usampler3D",
+        "uPatchValueSampler",
+        SegmentationRenderLayer.patchValueSamplerSymbol,
+      );
     } else {
       this.patchedMaskTextureUnit = undefined;
+      this.patchValueTextureUnit = undefined;
     }
+    this.defineGetUint64DataValue(builder, parameters.editPatchOverlayActive);
     if (parameters.hasEquivalences) {
       this.equivalencesShaderManager.defineShader(builder);
       builder.addFragmentCode(`
@@ -411,27 +558,12 @@ uint64_t getMappedObjectId(uint64_t value) {
     builder.addUniform("highp float", "uSelectedAlpha");
     builder.addUniform("highp float", "uNotSelectedAlpha");
     builder.addUniform("highp float", "uSaturation");
-    // Voxel-edit erase semantics: if the patch overlay says this voxel
-    // has been edited (paint OR erase), skip emitting from the base layer
-    // entirely — the patch render layer is the sole authority for its
-    // appearance. Without this, an erased voxel (value 0 in the patch
-    // overlay) would render twice: transparent from the patch layer, and
-    // the ORIGINAL segment color from this base layer, making the eraser
-    // look broken. Inserted before the chunk-value read so the texelFetch
-    // pair is the only work done for discarded fragments.
-    let fragmentMain = "";
-    if (parameters.editPatchOverlayActive) {
-      fragmentMain += `
-  {
-    highp ivec3 patchedP = ivec3(max(vec3(0.0, 0.0, 0.0), min(floor(vChunkPosition), uChunkDataSize - 1.0)));
-    if (texelFetch(uPatchedMaskSampler, patchedP, 0).r != 0u) {
-      emit(vec4(0.0, 0.0, 0.0, 0.0));
-      return;
-    }
-  }
-`;
-    }
-    fragmentMain += `
+    // The patch overlay is no longer surfaced via a separate discard
+    // branch here: `defineGetUint64DataValue` returns the patch value
+    // directly when this voxel is patched, so the rest of the shader
+    // (hover, selected, equivalences, stated colors, `hideSegmentZero`)
+    // applies uniformly across baseline and patched voxels.
+    let fragmentMain = `
   uint64_t baseValue = getUint64DataValue();
   uint64_t value = getMappedObjectId(baseValue);
   uint64_t valueForColor = ${
@@ -679,83 +811,33 @@ uint64_t getMappedObjectId(uint64_t value) {
     _shader: ShaderProgram,
     chunk: VolumeChunk,
   ) {
-    // Bind the patch overlay's per-chunk mask texture to our sampler unit
-    // when the shader path is compiled in. We DON'T touch the active
-    // texture unit when not active — keeps non-session render paths
-    // byte-identical to the pre-hook implementation.
-    if (this.patchedMaskTextureUnit === undefined) return;
+    // Bind both patch-overlay samplers (mask + value) for the current
+    // chunk. Skipped entirely when the shader path is not compiled in,
+    // so non-session render paths are byte-identical to the pre-hook
+    // implementation.
+    if (
+      this.patchedMaskTextureUnit === undefined ||
+      this.patchValueTextureUnit === undefined
+    ) {
+      return;
+    }
     const provider = this.displayState.editPatchOverlay?.value;
     if (provider === undefined) return;
     const prevActive = gl.getParameter(
       WebGL2RenderingContext.ACTIVE_TEXTURE,
     ) as number;
-    const bound = provider.bindPatchedMaskTexture(
+    // The provider handles its own zero-fallback when no patches exist
+    // for the chunk, so callers don't need to branch on a return value.
+    provider.bindPatchedMaskTexture(
       gl,
       this.patchedMaskTextureUnit,
       chunk.chunkGridPosition,
     );
-    if (!bound) {
-      // The provider has no patches for this chunk — bind a 1×1×1 zero
-      // mask so the shader's `texelFetch(...).r != 0u` test is uniformly
-      // false. `provider.bindPatchedMaskTexture` already set the active
-      // texture unit; rebind to that unit before binding the fallback.
-      gl.activeTexture(
-        WebGL2RenderingContext.TEXTURE0 + this.patchedMaskTextureUnit,
-      );
-      this.bindPatchedMaskFallback(gl);
-    }
+    provider.bindPatchValueTexture(
+      gl,
+      this.patchValueTextureUnit,
+      chunk.chunkGridPosition,
+    );
     gl.activeTexture(prevActive);
-  }
-
-  private bindPatchedMaskFallback(gl: GL) {
-    let tex = this.patchedMaskFallbackTexture;
-    if (tex === undefined) {
-      const newTex = gl.createTexture();
-      if (newTex === null) {
-        throw new Error("Failed to create patched-mask fallback texture");
-      }
-      tex = newTex;
-      this.patchedMaskFallbackTexture = tex;
-      gl.bindTexture(WebGL2RenderingContext.TEXTURE_3D, tex);
-      gl.texImage3D(
-        WebGL2RenderingContext.TEXTURE_3D,
-        0,
-        WebGL2RenderingContext.R8UI,
-        1,
-        1,
-        1,
-        0,
-        WebGL2RenderingContext.RED_INTEGER,
-        WebGL2RenderingContext.UNSIGNED_BYTE,
-        new Uint8Array(1),
-      );
-      gl.texParameteri(
-        WebGL2RenderingContext.TEXTURE_3D,
-        WebGL2RenderingContext.TEXTURE_MIN_FILTER,
-        WebGL2RenderingContext.NEAREST,
-      );
-      gl.texParameteri(
-        WebGL2RenderingContext.TEXTURE_3D,
-        WebGL2RenderingContext.TEXTURE_MAG_FILTER,
-        WebGL2RenderingContext.NEAREST,
-      );
-      gl.texParameteri(
-        WebGL2RenderingContext.TEXTURE_3D,
-        WebGL2RenderingContext.TEXTURE_WRAP_S,
-        WebGL2RenderingContext.CLAMP_TO_EDGE,
-      );
-      gl.texParameteri(
-        WebGL2RenderingContext.TEXTURE_3D,
-        WebGL2RenderingContext.TEXTURE_WRAP_T,
-        WebGL2RenderingContext.CLAMP_TO_EDGE,
-      );
-      gl.texParameteri(
-        WebGL2RenderingContext.TEXTURE_3D,
-        WebGL2RenderingContext.TEXTURE_WRAP_R,
-        WebGL2RenderingContext.CLAMP_TO_EDGE,
-      );
-    } else {
-      gl.bindTexture(WebGL2RenderingContext.TEXTURE_3D, tex);
-    }
   }
 }

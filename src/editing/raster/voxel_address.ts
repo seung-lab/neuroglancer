@@ -8,10 +8,10 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import type { PatchedSegmentationRenderLayer } from "#src/editing/patched_segmentation_renderlayer.js";
 import type { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import type { MouseSelectionState } from "#src/layer/index.js";
 import { getChunkPositionFromCombinedGlobalLocalPositions } from "#src/render_coordinate_transform.js";
+import type { SegmentationRenderLayer } from "#src/sliceview/volume/segmentation_renderlayer.js";
 
 export interface VoxelAddress {
   /** Integer chunk grid position (3 elements). */
@@ -24,20 +24,26 @@ export interface VoxelAddress {
 
 /**
  * Resolves the mouse's global position to a voxel address inside the
- * segmentation layer's patched render-layer chunk grid. Returns undefined if
- * the layer is not ready (transform missing, no chunk drawn yet, or position
- * lies outside the loaded grid).
+ * segmentation layer's chunk grid. Returns undefined if the layer is not
+ * ready (transform missing, no chunk drawn yet, or position lies outside
+ * the loaded grid).
+ *
+ * Currently dead code — kept for future cursor / pointer-bridge work. The
+ * caller passes any `SegmentationRenderLayer` whose `multiscaleSource`
+ * matches the layer in question (the base segmentation render layer is
+ * the natural choice; before TM-294 the editing host's separate patch
+ * render layer was passed instead, but it's gone now).
  */
 export function resolveVoxelAddress(
   layer: SegmentationUserLayer,
-  patchedLayer: PatchedSegmentationRenderLayer,
+  renderLayer: SegmentationRenderLayer,
   mouseState: MouseSelectionState,
 ): VoxelAddress | undefined {
   if (!mouseState.active) return undefined;
-  // Pick the highest-resolution source visible to the patched render layer.
+  // Pick the highest-resolution source visible to the render layer.
   // visibleSourcesList is sorted by chunkToLayerTransformDet (smallest first),
   // so element 0 is the finest scale.
-  const visible = patchedLayer.visibleSourcesList;
+  const visible = renderLayer.visibleSourcesList;
   if (visible.length === 0) return undefined;
   const { source, chunkTransform } = visible[0];
   const chunkDataSize = source.spec.chunkDataSize;

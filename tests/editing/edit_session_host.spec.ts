@@ -119,8 +119,8 @@ describe("EditSessionHost (no active session)", () => {
     expect(host.getPatchStoreForLayer(layerId("L1"))).toBeUndefined();
   });
 
-  it("attachedRenderLayers is empty when no session is active", () => {
-    expect(host.attachedRenderLayers.size).toBe(0);
+  it("attachedPatchTextureCaches is empty when no session is active", () => {
+    expect(host.attachedPatchTextureCaches.size).toBe(0);
   });
 });
 
