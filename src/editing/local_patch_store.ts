@@ -56,13 +56,16 @@ export class LocalPatchStore extends RefCounted {
   /**
    * Atomically replace a whole chunk's voxel buffer and schedule a GPU flush;
    * used by `PatchMirror` to mirror library DirtyTracker chunk events.
+   * `patched` is the per-voxel mask; see `LocalPatchSource.writeFullChunk`
+   * for the default-when-omitted behavior.
    */
   writeFullChunk(
     chunkGridPosition: ArrayLike<number>,
     chunkDataSize: ArrayLike<number>,
     data: BigUint64Array,
+    patched?: Uint8Array,
   ): void {
-    this.source.writeFullChunk(chunkGridPosition, chunkDataSize, data);
+    this.source.writeFullChunk(chunkGridPosition, chunkDataSize, data, patched);
     this.scheduleGPUFlush();
   }
 

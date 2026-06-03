@@ -31,9 +31,15 @@ describe("LocalPatchChunk", () => {
     expect(chunk.countPatchedVoxels()).toBe(1);
   });
 
-  it("writeVoxel returns false when value unchanged", () => {
+  it("writeVoxel returns false only when both value AND patched bit are unchanged", () => {
     const chunk = new LocalPatchChunk([2, 2, 2] as any);
     chunk.dirty = false;
+    // First call with 0n: value unchanged (0→0), but patched flips (0→1) —
+    // the user is explicitly erasing this voxel, which is a real edit.
+    expect(chunk.writeVoxel(0, 0, 0, 0n)).toBe(true);
+    expect(chunk.dirty).toBe(true);
+    chunk.dirty = false;
+    // Second 0n: now both value and patched are stable, so it's a no-op.
     expect(chunk.writeVoxel(0, 0, 0, 0n)).toBe(false);
     expect(chunk.dirty).toBe(false);
     expect(chunk.writeVoxel(0, 0, 0, 42n)).toBe(true);

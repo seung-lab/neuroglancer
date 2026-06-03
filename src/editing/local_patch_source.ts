@@ -71,11 +71,18 @@ export class LocalPatchSource extends RefCounted {
    * `chunkGridPosition`. Creates the chunk if it doesn't yet exist. Used by
    * `PatchMirror` to mirror library overlay chunks on undo/redo and any other
    * full-chunk replacement event.
+   *
+   * `patched` is the per-voxel patched mask: `0` = "no patch — render the
+   * baseline through"; non-zero = "user wrote this voxel (including erase
+   * to 0n)". When `patched` is omitted, defaults to `data[i] !== 0n` for
+   * legacy callers that conflated "non-zero value" with "patched" — the
+   * eraser path supplies an explicit mask so erase-to-zero is preserved.
    */
   writeFullChunk(
     chunkGridPosition: ArrayLike<number>,
     chunkDataSize: ArrayLike<number>,
     data: BigUint64Array,
+    patched?: Uint8Array,
   ): void {
     const chunk = this.getOrCreateChunk(chunkGridPosition, chunkDataSize);
     if (data.length !== chunk.data.length) {
@@ -85,7 +92,23 @@ export class LocalPatchSource extends RefCounted {
           `${Array.prototype.join.call(chunkDataSize, ",")}.`,
       );
     }
+    if (patched !== undefined && patched.length !== chunk.data.length) {
+      throw new Error(
+        `LocalPatchSource.writeFullChunk: patched length ${patched.length} does ` +
+          `not match chunk volume ${chunk.data.length}`,
+      );
+    }
     chunk.data.set(data);
+    if (patched !== undefined) {
+      chunk.patched.set(patched);
+    } else {
+      // Legacy default: any non-zero value counts as patched. Sufficient for
+      // the in-memory commit-snapshot rollback path, where erasures aren't
+      // round-tripped through this overload.
+      for (let i = 0; i < data.length; i++) {
+        chunk.patched[i] = data[i] !== 0n ? 1 : 0;
+      }
+    }
     chunk.dirty = true;
     this.dirtyKeys.add(chunkGridKey(chunkGridPosition));
   }

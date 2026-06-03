@@ -73,6 +73,7 @@ import { LocalPatchStore } from "#src/editing/local_patch_store.js";
 // and writes the resulting overlay bytes into `store.writeFullChunk(...)`.
 import { PatchMirror } from "#src/editing/overlay/patch_mirror.js";
 import { PatchedSegmentationRenderLayer } from "#src/editing/patched_segmentation_renderlayer.js";
+import type { PatchedMaskProvider } from "#src/editing/shaders/patched_mask_provider.js";
 import { BrushCursorPerspectiveOverlay } from "#src/editing/cursor/brush_cursor_perspective_overlay.js";
 import { BrushCursorSliceOverlay } from "#src/editing/cursor/brush_cursor_slice_overlay.js";
 import { BrushCursorState } from "#src/editing/cursor/brush_cursor_state.js";
@@ -362,6 +363,16 @@ export class EditSessionHost extends RefCounted {
   private readonly editBboxByLayer = new Map<
     string,
     WatchableValue<{ lo: vec3; hi: vec3 } | undefined>
+  >();
+
+  // Per-layer persistent watchables for the patched-mask provider hook the
+  // base `SegmentationRenderLayer` consumes via `editPatchOverlay`. Same
+  // lazy-allocation pattern as `editBboxByLayer`: the segmentation user
+  // layer queries on render-layer construction; the host mutates the
+  // value when a session opens / closes.
+  private readonly patchOverlayByLayer = new Map<
+    string,
+    WatchableValue<PatchedMaskProvider | undefined>
   >();
 
   // Per-layer persistent watchables for the resolution-display lock. Same
@@ -758,6 +769,13 @@ export class EditSessionHost extends RefCounted {
     }
     this.perLayer.delete(layerId);
     this._activeRegionByLayer.delete(layerId);
+    // Withdraw the patched-mask provider so the base segmentation render
+    // layer's discard branch stops firing — committed patches are gone,
+    // so there's nothing for the base layer to hide.
+    const patchOverlayWatchable = this.patchOverlayByLayer.get(layerId);
+    if (patchOverlayWatchable !== undefined) {
+      patchOverlayWatchable.value = undefined;
+    }
   }
 
   /** Drop the committed patches for every layer. */
@@ -866,6 +884,27 @@ export class EditSessionHost extends RefCounted {
         this.readEditBboxForLayer(layerName),
       );
       this.editBboxByLayer.set(layerName, w);
+    }
+    return w;
+  }
+
+  /**
+   * Returns the persistent per-layer watchable for the patched-mask
+   * provider hook the base `SegmentationRenderLayer` consumes via
+   * `editPatchOverlay`. The watchable's current value is the active
+   * session's `PatchedSegmentationRenderLayer` (which implements
+   * `PatchedMaskProvider`) for this layer, or `undefined` if no session
+   * has attached a provider yet. Lazily allocated — same wiring pattern
+   * as `getActiveRegionWatchableForLayer`.
+   */
+  getPatchOverlayWatchableForLayer(
+    layerName: string,
+  ): WatchableValue<PatchedMaskProvider | undefined> {
+    let w = this.patchOverlayByLayer.get(layerName);
+    if (w === undefined) {
+      const existing = this.perLayer.get(layerName as LayerId)?.renderLayer;
+      w = new WatchableValue<PatchedMaskProvider | undefined>(existing);
+      this.patchOverlayByLayer.set(layerName, w);
     }
     return w;
   }
@@ -1189,12 +1228,26 @@ export class EditSessionHost extends RefCounted {
           detachRenderLayer,
         };
         this.perLayer.set(layer.layerId, entry);
+        // Publish the patched-mask provider so the base segmentation
+        // render layer's `editPatchOverlay` hook fires its discard branch
+        // for edited voxels. Without this, even a perfectly-painted patch
+        // gets shadowed by the original segment underneath at any voxel
+        // the patched layer emits transparent (eraser case).
+        this.getPatchOverlayWatchableForLayer(layer.layerId).value =
+          renderLayer;
       }
       entry.mirror = new PatchMirror(
         session,
         layer.layerId,
         entry.patchStore,
         this.logger,
+        (coord) =>
+          this.chunkSource.readBaselineChunk(
+            coord.layerId,
+            coord.resolution,
+            coord.chunkId,
+            ChunkIdFactory.toCoord(coord.chunkId),
+          ),
       );
     }
 
@@ -1533,6 +1586,13 @@ export class EditSessionHost extends RefCounted {
     this.perLayer.clear();
     this._activeRegionByLayer.clear();
     this._allowedResolutionsByLayer.clear();
+    // Withdraw every patched-mask provider in lockstep with the per-layer
+    // entries we just disposed. The base segmentation render layer's
+    // `editPatchOverlayActive` shader parameter flips false on the next
+    // render and recompiles back to the no-hook variant.
+    for (const watchable of this.patchOverlayByLayer.values()) {
+      watchable.value = undefined;
+    }
     // Flip subscribers from `defined` to `undefined`; this triggers the
     // bbox-dim shader path to recompile back to the no-session variant on
     // the next render and re-enables full resolution range on slice views.

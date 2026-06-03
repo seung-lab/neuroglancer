@@ -16,6 +16,7 @@
 
 import type { BboxAlphaShaderHook } from "#src/editing/shaders/bbox_alpha_chunk.js";
 import { createBboxAlphaShaderHook } from "#src/editing/shaders/bbox_alpha_chunk.js";
+import type { PatchedMaskProvider } from "#src/editing/shaders/patched_mask_provider.js";
 import { HashMapUint64 } from "#src/gpu_hash/hash_table.js";
 import {
   GPUHashTable,
@@ -40,6 +41,7 @@ import type {
 } from "#src/sliceview/frontend.js";
 import type {
   MultiscaleVolumeChunkSource,
+  VolumeChunk,
   VolumeChunkSource,
 } from "#src/sliceview/volume/frontend.js";
 import type { RenderLayerBaseOptions } from "#src/sliceview/volume/renderlayer.js";
@@ -53,6 +55,7 @@ import {
 import type { Uint64Map } from "#src/uint64_map.js";
 import type { DisjointUint64Sets } from "#src/util/disjoint_sets.js";
 import type { vec3 } from "#src/util/geom.js";
+import type { GL } from "#src/webgl/context.js";
 import type { ShaderBuilder, ShaderProgram } from "#src/webgl/shader.js";
 
 export class EquivalencesHashMap {
@@ -111,6 +114,26 @@ export interface SliceViewSegmentationDisplayState
     | ((source: SliceViewSingleResolutionSource<SliceViewChunkSource>) => boolean)
     | undefined
   >;
+
+  /**
+   * Voxel-edit patch-overlay hook. When defined and the inner value is
+   * non-`undefined`, the base segmentation render layer samples the
+   * provider's per-chunk patched-mask 3D texture (R8UI) and `discard`s
+   * fragments at voxels the user has edited — leaving the active session's
+   * `PatchedSegmentationRenderLayer` as the sole source of truth for those
+   * voxels' appearance. This is what makes erase actually erase: the
+   * baseline segment is hidden, the patch layer emits transparent, and the
+   * image layer behind shows through at its natural opacity.
+   *
+   * When this field is omitted (the default — every non-session viewer
+   * mount) the render path is byte-identical to the pre-hook implementation:
+   * no extra sampler, no discard branch in the shader.
+   *
+   * Wired by the segmentation user layer from
+   * `viewer.editSessionHost.getPatchOverlayWatchableForLayer(this.name)`.
+   * Same wiring pattern as `editBboxLoHi`.
+   */
+  editPatchOverlay?: WatchableValueInterface<PatchedMaskProvider | undefined>;
 }
 
 interface ShaderParameters {
@@ -128,6 +151,14 @@ interface ShaderParameters {
    * the compiled GLSL is byte-identical to the pre-hook implementation.
    */
   editBboxActive: boolean;
+  /**
+   * Voxel-edit patch-overlay shader path gate. Defaults to `false`; flips
+   * to `true` only when an active session's `PatchedSegmentationRenderLayer`
+   * has registered a `PatchedMaskProvider` on `displayState.editPatchOverlay`.
+   * When `false`, no patched-mask sampler is added and the shader is
+   * byte-identical to the pre-hook implementation.
+   */
+  editPatchOverlayActive: boolean;
 }
 
 const HAS_SELECTED_SEGMENT_FLAG = 1;
@@ -159,6 +190,17 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
    * source (no uniforms, no fragment code, no main-body wrapping).
    */
   private bboxAlphaHook: BboxAlphaShaderHook = createBboxAlphaShaderHook();
+
+  // Patch-overlay shader hook state. The sampler unit symbol is reused
+  // across shader recompiles. `patchedMaskFallbackTexture` is the 1×1×1
+  // zero texture bound for chunks without patches — the shader's
+  // `texelFetch(...).r != 0u` discard branch is never taken in that case,
+  // so the byte-identical-to-pre-hook semantics for unedited chunks holds.
+  private patchedMaskTextureUnit: number | undefined;
+  private patchedMaskFallbackTexture: WebGLTexture | undefined;
+  private static readonly patchedMaskSamplerSymbol = Symbol(
+    "SegmentationRenderLayer.patchedMaskSampler",
+  );
 
   constructor(
     multiscaleSource: MultiscaleVolumeChunkSource,
@@ -228,6 +270,17 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
                   [displayState.editBboxLoHi],
                 ),
               ),
+        // Same compile-out pattern as `editBboxActive`: flips true only
+        // when an active session has registered a `PatchedMaskProvider`.
+        editPatchOverlayActive:
+          displayState.editPatchOverlay === undefined
+            ? constantWatchableValue(false)
+            : refCounted.registerDisposer(
+                makeCachedDerivedWatchableValue(
+                  (provider) => provider !== undefined,
+                  [displayState.editPatchOverlay],
+                ),
+              ),
       })),
       transform: displayState.transform,
       renderScaleHistogram: displayState.renderScaleHistogram,
@@ -280,10 +333,24 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
         displayState.editBboxLoHi.changed.add(this.redrawNeeded.dispatch),
       );
     }
+    // The patched-mask provider's per-chunk uploads happen lazily from
+    // `onBeginChunk` via `provider.bindPatchedMaskTexture`. When the
+    // provider's underlying patch store changes (user paints / erases),
+    // the `PatchedSegmentationRenderLayer` already dispatches
+    // `redrawNeeded`, which the viewer's render loop picks up and
+    // schedules a redraw of EVERY visible render layer — including this
+    // one. So no separate subscription on `editPatchOverlay.changed` is
+    // needed for the per-stroke "the mask changed" signal; we only need
+    // to react when the PROVIDER REFERENCE itself swaps (session open /
+    // close), which `shaderParameters.changed` already covers.
   }
 
   disposed() {
     this.gpuSegmentStatedColorHashTable?.dispose();
+    if (this.patchedMaskFallbackTexture !== undefined) {
+      this.gl.deleteTexture(this.patchedMaskFallbackTexture);
+      this.patchedMaskFallbackTexture = undefined;
+    }
   }
 
   getSources(
@@ -312,6 +379,15 @@ uint64_t getUint64DataValue() {
   defineShader(builder: ShaderBuilder, parameters: ShaderParameters) {
     this.hashTableManager.defineShader(builder);
     this.defineGetUint64DataValue(builder);
+    if (parameters.editPatchOverlayActive) {
+      this.patchedMaskTextureUnit = builder.addTextureSampler(
+        "usampler3D",
+        "uPatchedMaskSampler",
+        SegmentationRenderLayer.patchedMaskSamplerSymbol,
+      );
+    } else {
+      this.patchedMaskTextureUnit = undefined;
+    }
     if (parameters.hasEquivalences) {
       this.equivalencesShaderManager.defineShader(builder);
       builder.addFragmentCode(`
@@ -335,7 +411,27 @@ uint64_t getMappedObjectId(uint64_t value) {
     builder.addUniform("highp float", "uSelectedAlpha");
     builder.addUniform("highp float", "uNotSelectedAlpha");
     builder.addUniform("highp float", "uSaturation");
-    let fragmentMain = `
+    // Voxel-edit erase semantics: if the patch overlay says this voxel
+    // has been edited (paint OR erase), skip emitting from the base layer
+    // entirely — the patch render layer is the sole authority for its
+    // appearance. Without this, an erased voxel (value 0 in the patch
+    // overlay) would render twice: transparent from the patch layer, and
+    // the ORIGINAL segment color from this base layer, making the eraser
+    // look broken. Inserted before the chunk-value read so the texelFetch
+    // pair is the only work done for discarded fragments.
+    let fragmentMain = "";
+    if (parameters.editPatchOverlayActive) {
+      fragmentMain += `
+  {
+    highp ivec3 patchedP = ivec3(max(vec3(0.0, 0.0, 0.0), min(floor(vChunkPosition), uChunkDataSize - 1.0)));
+    if (texelFetch(uPatchedMaskSampler, patchedP, 0).r != 0u) {
+      emit(vec4(0.0, 0.0, 0.0, 0.0));
+      return;
+    }
+  }
+`;
+    }
+    fragmentMain += `
   uint64_t baseValue = getUint64DataValue();
   uint64_t value = getMappedObjectId(baseValue);
   uint64_t valueForColor = ${
@@ -576,5 +672,90 @@ uint64_t getMappedObjectId(uint64_t value) {
       this.segmentStatedColorShaderManager.disable(gl, shader);
     }
     super.endSlice(sliceView, shader, parameters);
+  }
+
+  protected override onBeginChunk(
+    gl: GL,
+    _shader: ShaderProgram,
+    chunk: VolumeChunk,
+  ) {
+    // Bind the patch overlay's per-chunk mask texture to our sampler unit
+    // when the shader path is compiled in. We DON'T touch the active
+    // texture unit when not active — keeps non-session render paths
+    // byte-identical to the pre-hook implementation.
+    if (this.patchedMaskTextureUnit === undefined) return;
+    const provider = this.displayState.editPatchOverlay?.value;
+    if (provider === undefined) return;
+    const prevActive = gl.getParameter(
+      WebGL2RenderingContext.ACTIVE_TEXTURE,
+    ) as number;
+    const bound = provider.bindPatchedMaskTexture(
+      gl,
+      this.patchedMaskTextureUnit,
+      chunk.chunkGridPosition,
+    );
+    if (!bound) {
+      // The provider has no patches for this chunk — bind a 1×1×1 zero
+      // mask so the shader's `texelFetch(...).r != 0u` test is uniformly
+      // false. `provider.bindPatchedMaskTexture` already set the active
+      // texture unit; rebind to that unit before binding the fallback.
+      gl.activeTexture(
+        WebGL2RenderingContext.TEXTURE0 + this.patchedMaskTextureUnit,
+      );
+      this.bindPatchedMaskFallback(gl);
+    }
+    gl.activeTexture(prevActive);
+  }
+
+  private bindPatchedMaskFallback(gl: GL) {
+    let tex = this.patchedMaskFallbackTexture;
+    if (tex === undefined) {
+      const newTex = gl.createTexture();
+      if (newTex === null) {
+        throw new Error("Failed to create patched-mask fallback texture");
+      }
+      tex = newTex;
+      this.patchedMaskFallbackTexture = tex;
+      gl.bindTexture(WebGL2RenderingContext.TEXTURE_3D, tex);
+      gl.texImage3D(
+        WebGL2RenderingContext.TEXTURE_3D,
+        0,
+        WebGL2RenderingContext.R8UI,
+        1,
+        1,
+        1,
+        0,
+        WebGL2RenderingContext.RED_INTEGER,
+        WebGL2RenderingContext.UNSIGNED_BYTE,
+        new Uint8Array(1),
+      );
+      gl.texParameteri(
+        WebGL2RenderingContext.TEXTURE_3D,
+        WebGL2RenderingContext.TEXTURE_MIN_FILTER,
+        WebGL2RenderingContext.NEAREST,
+      );
+      gl.texParameteri(
+        WebGL2RenderingContext.TEXTURE_3D,
+        WebGL2RenderingContext.TEXTURE_MAG_FILTER,
+        WebGL2RenderingContext.NEAREST,
+      );
+      gl.texParameteri(
+        WebGL2RenderingContext.TEXTURE_3D,
+        WebGL2RenderingContext.TEXTURE_WRAP_S,
+        WebGL2RenderingContext.CLAMP_TO_EDGE,
+      );
+      gl.texParameteri(
+        WebGL2RenderingContext.TEXTURE_3D,
+        WebGL2RenderingContext.TEXTURE_WRAP_T,
+        WebGL2RenderingContext.CLAMP_TO_EDGE,
+      );
+      gl.texParameteri(
+        WebGL2RenderingContext.TEXTURE_3D,
+        WebGL2RenderingContext.TEXTURE_WRAP_R,
+        WebGL2RenderingContext.CLAMP_TO_EDGE,
+      );
+    } else {
+      gl.bindTexture(WebGL2RenderingContext.TEXTURE_3D, tex);
+    }
   }
 }
