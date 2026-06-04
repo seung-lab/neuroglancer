@@ -22,7 +22,10 @@ import {
 } from "@zettaai/edit-session";
 
 import type { LayerManager, UserLayer } from "#src/layer/index.js";
-import type { LoadedLayerDataSource } from "#src/layer/layer_data_source.js";
+import type {
+  LayerDataSource,
+  LoadedLayerDataSource,
+} from "#src/layer/layer_data_source.js";
 import type {
   SliceViewSingleResolutionSource,
   MultiscaleSliceViewChunkSource,
@@ -89,6 +92,158 @@ export class NgLayerMetadataSource implements LayerMetadataSource {
       scales,
     };
   }
+
+  /**
+   * Wait until a managed layer with `layerName` exists and exposes a
+   * non-null `UserLayer`. Used by the edit-session restore flow before
+   * touching layer-specific state — at viewer-startup time, URL-restored
+   * layers may not have been instantiated yet, and `getLayerByName`
+   * transiently returns `undefined`.
+   *
+   * Resolves once the layer is present. Rejects on timeout.
+   */
+  async waitForLayer(
+    layerName: string,
+    { timeoutMs = 30000 }: { timeoutMs?: number } = {},
+  ): Promise<void> {
+    if (this.findUserLayer(layerName) !== undefined) return;
+    await this.subscribeUntil(
+      () => this.findUserLayer(layerName) !== undefined,
+      { trackPerLayer: false, timeoutMs, layerName },
+    );
+  }
+
+  /**
+   * Wait until the layer's data sources have settled enough that
+   * `resolve(layerId)` would succeed — i.e. at least one
+   * `LoadedLayerDataSource` exposes a volumetric subsource.
+   *
+   * Used by the edit-session restore flow because on page reload the
+   * `editSession` URL block populates synchronously, but each layer's
+   * data sources load asynchronously. Without this gate, restore races
+   * data-source loading and clears the persisted session on a transient
+   * "no-volumetric-data-source" error.
+   *
+   * Rejects if every data source on the layer has settled (some loaded,
+   * some errored) with no volumetric subsource present — that's a
+   * genuine reference failure, not a load race. Also rejects on timeout.
+   */
+  async waitForVolumetricReady(
+    layerId: LayerId,
+    { timeoutMs = 30000 }: { timeoutMs?: number } = {},
+  ): Promise<void> {
+    const check = (): { done: boolean; failure?: Error } => {
+      const userLayer = this.findUserLayer(layerId);
+      if (userLayer === undefined) return { done: false };
+      if (findFirstVolumetricSubsource(userLayer) !== undefined) {
+        return { done: true };
+      }
+      if (
+        userLayer.dataSources.length > 0 &&
+        userLayer.dataSources.every(allDataSourceSettled)
+      ) {
+        return {
+          done: true,
+          failure: new LayerMetadataUnavailableError(
+            layerId,
+            "no-volumetric-data-source",
+          ),
+        };
+      }
+      return { done: false };
+    };
+    const initial = check();
+    if (initial.failure !== undefined) throw initial.failure;
+    if (initial.done) return;
+    await this.subscribeUntil(check, {
+      trackPerLayer: true,
+      timeoutMs,
+      layerName: layerId,
+    });
+  }
+
+  private findUserLayer(layerName: string): UserLayer | undefined {
+    const managed = this.layerManager.getLayerByName(layerName);
+    if (managed === undefined) return undefined;
+    return managed.layer ?? undefined;
+  }
+
+  private subscribeUntil(
+    poll: () => boolean | { done: boolean; failure?: Error },
+    {
+      trackPerLayer,
+      timeoutMs,
+      layerName,
+    }: { trackPerLayer: boolean; timeoutMs: number; layerName: string },
+  ): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const cleanups: Array<() => void> = [];
+      let settled = false;
+      let perLayerDispose: (() => void) | undefined;
+      let attachedTo: UserLayer | undefined;
+
+      const finish = (failure?: Error) => {
+        if (settled) return;
+        settled = true;
+        for (const c of cleanups) {
+          try {
+            c();
+          } catch {
+            // ignore disposer errors
+          }
+        }
+        if (failure !== undefined) reject(failure);
+        else resolve();
+      };
+
+      const runCheck = () => {
+        if (settled) return;
+        const result = poll();
+        const normalized =
+          typeof result === "boolean" ? { done: result } : result;
+        if (normalized.done) finish(normalized.failure);
+        else if (trackPerLayer) attachPerLayer();
+      };
+
+      const attachPerLayer = () => {
+        const userLayer = this.findUserLayer(layerName);
+        if (userLayer === attachedTo) return;
+        if (perLayerDispose !== undefined) {
+          perLayerDispose();
+          perLayerDispose = undefined;
+        }
+        attachedTo = userLayer;
+        if (userLayer !== undefined) {
+          perLayerDispose = userLayer.dataSourcesChanged.add(runCheck);
+        }
+      };
+
+      cleanups.push(this.layerManager.layersChanged.add(runCheck));
+      if (trackPerLayer) {
+        attachPerLayer();
+        cleanups.push(() => {
+          if (perLayerDispose !== undefined) perLayerDispose();
+        });
+      }
+
+      const timeoutHandle = setTimeout(() => {
+        finish(
+          new Error(
+            `Timed out after ${timeoutMs}ms waiting for layer ${JSON.stringify(
+              layerName,
+            )} to load.`,
+          ),
+        );
+      }, timeoutMs);
+      cleanups.push(() => clearTimeout(timeoutHandle));
+
+      runCheck();
+    });
+  }
+}
+
+function allDataSourceSettled(ds: LayerDataSource): boolean {
+  return ds.loadState !== undefined;
 }
 
 /**

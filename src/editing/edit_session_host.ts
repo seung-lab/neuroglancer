@@ -984,23 +984,55 @@ export class EditSessionHost extends RefCounted {
   // -- Reload restore -------------------------------------------------------
 
   /**
+   * Promise of the in-flight restore attempt, if any. Used to coalesce
+   * repeated `state.changed` firings during the same restore window
+   * (e.g. URL parse → layer add → data-source load each dispatch
+   * `state.changed` indirectly).
+   */
+  private restoreInFlight: Promise<void> | undefined;
+
+  /**
    * Re-open a session from `state` after a viewer reload. No-op when no
    * intent is persisted or when a session is already active.
+   *
+   * Layers and their data sources load asynchronously after URL parse, so
+   * this method awaits per-layer readiness via the metadata source's
+   * `waitForLayer` / `waitForVolumetricReady` gates before validating
+   * resolutions. Without those gates, restore would race data-source
+   * loading and clear the persisted session on a transient
+   * "no-volumetric-data-source" error.
    */
   async tryRestoreFromState(): Promise<void> {
+    if (this.restoreInFlight !== undefined) return this.restoreInFlight;
     if (this.activeSession.value !== undefined) return;
+    if (this.state.value.value === null) return;
+    const attempt = this.runRestoreAttempt().finally(() => {
+      this.restoreInFlight = undefined;
+    });
+    this.restoreInFlight = attempt;
+    return attempt;
+  }
+
+  private async runRestoreAttempt(): Promise<void> {
+    // Capture the intent at attempt-start so that if `state` is mutated
+    // mid-await (user pastes a new state, or `failRestore` clears it),
+    // we abandon this attempt rather than mis-applying stale config.
     const intent = this.state.value.value;
     if (intent === null) return;
 
-    const annotationLayer = this.viewer.layerManager.getLayerByName(
-      intent.bboxRef.annotationLayerName,
-    );
-    if (annotationLayer === undefined) {
+    try {
+      await this.layerMetadataSource.waitForLayer(
+        intent.bboxRef.annotationLayerName,
+      );
+    } catch (err) {
+      if (!this.intentIsStillCurrent(intent)) return;
+      const message = err instanceof Error ? err.message : String(err);
       this.failRestore(
-        `Edit session reference invalid: annotation layer ${JSON.stringify(intent.bboxRef.annotationLayerName)} not found.`,
+        `Edit session reference invalid: annotation layer ${JSON.stringify(intent.bboxRef.annotationLayerName)} not found (${message}).`,
       );
       return;
     }
+    if (!this.intentIsStillCurrent(intent)) return;
     // Walking the annotation source for the specific id is a downstream
     // concern (annotation sources expose `references`). For v1 we trust the
     // captured bbox bytes and let the modal-style flow re-validate against
@@ -1008,15 +1040,11 @@ export class EditSessionHost extends RefCounted {
     // is missing from the source, downstream consumers degrade gracefully.
 
     for (const layer of intent.layers) {
-      const managed = this.viewer.layerManager.getLayerByName(layer.layerId);
-      if (managed === undefined) {
-        this.failRestore(
-          `Edit session reference invalid: layer ${JSON.stringify(layer.layerId)} not found.`,
-        );
-        return;
-      }
       try {
+        await this.layerMetadataSource.waitForVolumetricReady(layer.layerId);
+        if (!this.intentIsStillCurrent(intent)) return;
         const metadata = await this.layerMetadataSource.resolve(layer.layerId);
+        if (!this.intentIsStillCurrent(intent)) return;
         const availableResolutions = new Set(
           metadata.scales.map((s) => s.resolution),
         );
@@ -1029,6 +1057,7 @@ export class EditSessionHost extends RefCounted {
           }
         }
       } catch (err) {
+        if (!this.intentIsStillCurrent(intent)) return;
         const message = err instanceof Error ? err.message : String(err);
         this.failRestore(`Edit session reference invalid: ${message}`);
         return;
@@ -1051,12 +1080,18 @@ export class EditSessionHost extends RefCounted {
       bboxResolution: intent.bboxRef.resolution,
       layers: intent.layers,
     };
+    if (!this.intentIsStillCurrent(intent)) return;
     try {
       await this.openSession(config);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.failRestore(`Could not re-open session: ${message}`);
     }
+  }
+
+  private intentIsStillCurrent(intent: EditSessionIntent): boolean {
+    if (this.activeSession.value !== undefined) return false;
+    return this.state.value.value === intent;
   }
 
   // -- Disposal -------------------------------------------------------------
