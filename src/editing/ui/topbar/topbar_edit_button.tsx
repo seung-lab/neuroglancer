@@ -31,11 +31,14 @@ export function TopbarEditButton({ host }: { host: EditSessionHost }) {
 
   const [open, setOpen] = useState(false);
 
-  const hasDirty = sessionOrUndefined?.dirty.isDirty() ?? false;
-
   const handleExit = useCallback(async () => {
-    if (sessionOrUndefined === undefined) return;
-    const dirty = hasDirty || host.hasPendingCommittedChanges();
+    // Read dirty state at click time, not render time — this component
+    // doesn't subscribe to `session.dirty` events, so a render-time
+    // snapshot would be stale once the user starts painting.
+    const session = host.activeSession.value;
+    if (session === undefined) return;
+    const dirty =
+      session.dirty.isDirty() || host.hasPendingCommittedChanges();
     if (dirty) {
       const ok = window.confirm(
         "Exit edit session? Unsaved changes will be discarded.",
@@ -50,7 +53,7 @@ export function TopbarEditButton({ host }: { host: EditSessionHost }) {
         5000,
       );
     }
-  }, [host, sessionOrUndefined, hasDirty]);
+  }, [host]);
 
   const handleClick = useCallback(() => {
     if (isActive) {
