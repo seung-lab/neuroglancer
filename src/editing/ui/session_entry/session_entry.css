@@ -158,12 +158,13 @@
   gap: 6px;
   background-color: var(--neuroglancer-edit-session-bg-elev);
   color: var(--neuroglancer-edit-session-text);
-  border: 1px solid var(--neuroglancer-edit-session-border);
-  border-radius: 4px;
-  padding: 4px 8px;
+  border: 1px solid var(--neuroglancer-edit-session-border-soft);
+  border-radius: 3px;
+  padding: 3px 8px;
   font: inherit;
   cursor: pointer;
-  min-width: 120px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .neuroglancer-resolution-picker-dropdown-trigger:hover:not(:disabled) {
@@ -238,10 +239,11 @@
 
 .neuroglancer-edit-session-entry-modal-layer-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto auto;
+  /* name (flex) | kind chip | resolution slot (fixed) | role control */
+  grid-template-columns: minmax(120px, 1fr) auto 130px auto;
   align-items: center;
-  column-gap: 16px;
-  padding: 10px 14px;
+  column-gap: 10px;
+  padding: 4px 12px;
   border-bottom: 1px solid var(--neuroglancer-edit-session-border-soft);
   transition: opacity 0.12s ease;
 }
@@ -259,15 +261,8 @@
 }
 
 .neuroglancer-edit-session-entry-modal-layer-row-off
-  .neuroglancer-edit-session-entry-modal-layer-resolution {
+  .neuroglancer-edit-session-entry-modal-layer-resolution-slot {
   pointer-events: none;
-}
-
-.neuroglancer-edit-session-entry-modal-layer-identity {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
 }
 
 .neuroglancer-edit-session-entry-modal-layer-name {
@@ -276,6 +271,7 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .neuroglancer-edit-session-entry-modal-layer-kind {
@@ -288,6 +284,8 @@
   background-color: var(--neuroglancer-edit-session-bg-elev);
   color: var(--neuroglancer-edit-session-text-muted);
   white-space: nowrap;
+  /* Center the chip in its column. */
+  justify-self: start;
 }
 
 .neuroglancer-edit-session-entry-modal-layer-kind-segmentation {
@@ -302,21 +300,35 @@
   background-color: #232a18;
 }
 
-.neuroglancer-edit-session-entry-modal-layer-resolution {
+.neuroglancer-edit-session-entry-modal-layer-resolution-slot {
+  /* Fixed column width so the dropdown trigger (multi-res) and the
+     static value (single-res) occupy the same visual width — keeps the
+     role-control column aligned across rows. */
+  width: 130px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   font-size: 11px;
   color: var(--neuroglancer-edit-session-text-muted);
 }
 
-.neuroglancer-edit-session-entry-modal-layer-resolution-label {
-  color: var(--neuroglancer-edit-session-text-dim);
+.neuroglancer-edit-session-entry-modal-layer-resolution-slot > * {
+  width: 100%;
 }
 
-.neuroglancer-edit-session-entry-modal-layer-resolution-slot {
-  display: inline-flex;
-  align-items: center;
+/*
+ * The picker wraps a `.neuroglancer-resolution-picker-dropdown` span (which
+ * defaults to inline-block at content size). Force the intermediate
+ * elements to block-fill so the trigger button stretches to the slot's
+ * 130px — matching the static-value cell's width on single-res rows.
+ */
+.neuroglancer-edit-session-entry-modal-layer-resolution-picker {
+  display: block;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-resolution-picker
+  .neuroglancer-resolution-picker-dropdown {
+  display: block;
+  width: 100%;
 }
 
 .neuroglancer-edit-session-entry-modal-layer-resolution-static {
@@ -325,7 +337,8 @@
   background-color: var(--neuroglancer-edit-session-bg-elev);
   border: 1px solid var(--neuroglancer-edit-session-border-soft);
   border-radius: 3px;
-  padding: 2px 8px;
+  padding: 3px 8px;
+  box-sizing: border-box;
 }
 
 .neuroglancer-edit-session-entry-modal-layer-resolution-loading {
@@ -344,9 +357,9 @@
   align-items: stretch;
   background-color: var(--neuroglancer-edit-session-bg-elev);
   border: 1px solid var(--neuroglancer-edit-session-border);
-  border-radius: 5px;
-  padding: 2px;
-  gap: 2px;
+  border-radius: 4px;
+  padding: 1px;
+  gap: 1px;
 }
 
 .neuroglancer-edit-session-entry-modal-role-segment {
@@ -356,9 +369,9 @@
   color: var(--neuroglancer-edit-session-text-muted);
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
-  padding: 6px 14px;
-  min-width: 78px;
+  font-size: 11px;
+  padding: 3px 10px;
+  min-width: 56px;
   border-radius: 3px;
   transition:
     background-color 0.12s ease,

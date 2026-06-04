@@ -54,6 +54,11 @@ export const ROLE_TOOLTIP: Record<LayerRole, string> = {
 export const EDITABLE_DISABLED_TOOLTIP =
   "Image layers can't be edited — choose Off or Reference.";
 
+const LAYER_KIND_LABEL: Record<LayerKind, string> = {
+  image: "IMG",
+  segmentation: "SEG",
+};
+
 export function LayerRow({
   name,
   layerKind,
@@ -125,19 +130,12 @@ export function LayerRow({
 
   return (
     <div class={rowClass}>
-      <div class="neuroglancer-edit-session-entry-modal-layer-identity">
-        <span class="neuroglancer-edit-session-entry-modal-layer-name">
-          {name}
-        </span>
-        <span class={badgeClass}>{layerKind}</span>
-      </div>
-      <span class="neuroglancer-edit-session-entry-modal-layer-resolution">
-        <span class="neuroglancer-edit-session-entry-modal-layer-resolution-label">
-          Resolution:
-        </span>
-        <span class="neuroglancer-edit-session-entry-modal-layer-resolution-slot">
-          {resolutionContent}
-        </span>
+      <span class="neuroglancer-edit-session-entry-modal-layer-name">
+        {name}
+      </span>
+      <span class={badgeClass}>{LAYER_KIND_LABEL[layerKind]}</span>
+      <span class="neuroglancer-edit-session-entry-modal-layer-resolution-slot">
+        {resolutionContent}
       </span>
       <RoleControl
         role={state.role}

@@ -949,11 +949,17 @@ export class Viewer extends RefCounted implements ViewerState {
     }
 
     {
-      // Editing topbar (TM-294). Hosts tool icons, Undo/Redo, Save all /
-      // Discard, and the Edit (Enter/Exit session) button. Replaces the
-      // legacy Edit-Session sidebar root and standalone Enter / Pending
-      // buttons; the per-tool settings render in the dedicated per-tool
-      // side panels registered below (one PanelMount per tool).
+      // Editing topbar (TM-294). Hosts tool icons, Undo/Redo, Save all,
+      // and the Edit (Enter/Exit session) button. Replaces the legacy
+      // Edit-Session sidebar root and standalone Enter / Pending buttons;
+      // the per-tool settings render in the dedicated per-tool side panels
+      // registered below (one PanelMount per tool).
+      //
+      // The topbar is positioned between two flex:1 spacers so the
+      // cluster sits at the horizontal center of the neuroglancer top
+      // row: `mousePositionWidget` (flex:1, appended earlier) acts as the
+      // LEFT spacer, and the new spacer below balances on the RIGHT,
+      // pushing the trailing icon buttons to the row's right edge.
       const topbarMount = document.createElement("div");
       topbarMount.style.display = "contents";
       this.registerDisposer(
@@ -961,7 +967,19 @@ export class Viewer extends RefCounted implements ViewerState {
           host: this.editSessionHost,
         }),
       );
-      topRow.appendChild(topbarMount);
+      const editingTopbarRightSpacer = document.createElement("div");
+      editingTopbarRightSpacer.style.flex = "1 1 0";
+      editingTopbarRightSpacer.style.minWidth = "0";
+      // The trailing controls (Save all / tools / Undo-Redo) are rendered
+      // as absolutely-positioned children of `.neuroglancer-editing-topbar`
+      // so they overlay this spacer without contributing to the topbar's
+      // flex width — which keeps the Edit / Exit button's X coordinate
+      // constant between idle and active states. `pointer-events: none`
+      // here so those overlaid controls remain clickable.
+      editingTopbarRightSpacer.style.pointerEvents = "none";
+      const anchor = mousePositionWidget.element.nextSibling;
+      topRow.insertBefore(topbarMount, anchor);
+      topRow.insertBefore(editingTopbarRightSpacer, anchor);
     }
 
     {

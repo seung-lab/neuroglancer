@@ -3,27 +3,39 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  *
- * Styling for the editing topbar (TM-294). Hosts the per-session tool icons,
- * Undo/Redo, Save all / Discard, and the Edit button. Mounted by viewer.ts
- * into the existing top-row container so it sits next to the existing
- * Settings / Layer-list buttons.
+ * Styling for the editing topbar (TM-294). 3-column grid: the Edit / Exit
+ * button is centered (stable position across idle/active states); active-
+ * session controls flow left-to-right in the right column in this order:
+ * Save all → tool icons → Undo/Redo. Mounted by viewer.ts into the
+ * top-row container next to the existing Settings / Layer-list buttons.
  */
 
 .neuroglancer-editing-topbar {
-  display: flex;
+  /* The topbar's flex width is just the Edit / Exit button so its
+     position never changes between idle and active states. The trailing
+     controls live in a position:absolute wrapper that overflows to the
+     right (over the flex:1 spacer viewer.ts adds after the topbar). */
+  position: relative;
+  display: inline-flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 0 6px;
   height: 100%;
+  padding: 0 6px;
   font-size: 12px;
   color: #ddd;
 }
 
-.neuroglancer-editing-topbar-idle {
-  /* No active session — only the Edit button is meaningful. Keep the row
-     compact so it doesn't add visual weight when nothing is editable. */
-  gap: 0;
+.neuroglancer-editing-topbar-trailing {
+  /* Anchored to the right edge of the Edit button. Out of flow → adding
+     items here cannot shift the Edit button. */
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 100%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 8px;
+  white-space: nowrap;
 }
 
 .neuroglancer-editing-topbar-group {
@@ -37,11 +49,6 @@
   height: 18px;
   background: #333;
   margin: 0 4px;
-}
-
-.neuroglancer-editing-topbar-spacer {
-  flex: 1 1 auto;
-  min-width: 8px;
 }
 
 /* Tool icons -------------------------------------------------------------- */
@@ -112,10 +119,9 @@
   opacity: 0.4;
 }
 
-/* Save all / Discard ----------------------------------------------------- */
+/* Save all --------------------------------------------------------------- */
 
-.neuroglancer-editing-topbar-save-button,
-.neuroglancer-editing-topbar-discard-button {
+.neuroglancer-editing-topbar-save-button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -129,13 +135,11 @@
   white-space: nowrap;
 }
 
-.neuroglancer-editing-topbar-save-button:hover:not([disabled]),
-.neuroglancer-editing-topbar-discard-button:hover:not([disabled]) {
+.neuroglancer-editing-topbar-save-button:hover:not([disabled]) {
   background: #3a3a3a;
 }
 
-.neuroglancer-editing-topbar-save-button[disabled],
-.neuroglancer-editing-topbar-discard-button[disabled] {
+.neuroglancer-editing-topbar-save-button[disabled] {
   cursor: not-allowed;
   opacity: 0.5;
 }
@@ -144,15 +148,6 @@
   background: #4a3a1c;
   border-color: #8a6a2a;
   color: #ffd591;
-}
-
-.neuroglancer-editing-topbar-discard-button {
-  border-color: #6b2a2a;
-  color: #f6a6a6;
-}
-
-.neuroglancer-editing-topbar-discard-button:hover:not([disabled]) {
-  background: #4a1c1c;
 }
 
 .neuroglancer-editing-topbar-badge {
@@ -169,11 +164,15 @@
   font-weight: 600;
 }
 
-/* Edit button (right-most) ----------------------------------------------- */
+/* Edit / Exit-session button (center anchor) ----------------------------- */
 
 .neuroglancer-editing-topbar-edit-button {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  /* Fixed width keeps the button's center pinned to the topbar's midpoint
+     even though the label changes between "Edit" and "Exit session". */
+  min-width: 96px;
   padding: 2px 10px;
   background: #2a2a2a;
   border: 1px solid #444;

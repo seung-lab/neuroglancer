@@ -72,22 +72,26 @@ const TOOL_ENTRIES: readonly ToolEntry[] = [
 
 export function EditingTopbar({ host }: { host: EditSessionHost }) {
   const session = useWatchable(host.activeSession);
-
-  if (session === undefined) {
-    // No session: only the Edit button is meaningful. The topbar stays
-    // visible (mounted by viewer.ts so the Edit button is always reachable)
-    // but the tool / history / save controls render disabled stubs.
-    return (
-      <div class="neuroglancer-editing-topbar neuroglancer-editing-topbar-idle">
-        <TopbarEditButton host={host} />
-      </div>
-    );
-  }
-
-  return <ActiveTopbar host={host} session={session} />;
+  // The Edit / Exit button is the only flex child of the topbar — that
+  // keeps its X coordinate identical between idle and active states (the
+  // topbar's natural width never changes). Active-session controls are
+  // rendered into an absolutely-positioned trailing wrapper anchored to
+  // the right edge of the Edit button; viewer.ts centers the topbar
+  // between two flex:1 spacers so the cluster sits at the visual center
+  // of the neuroglancer top row.
+  return (
+    <div class="neuroglancer-editing-topbar">
+      <TopbarEditButton host={host} />
+      {session !== undefined && (
+        <div class="neuroglancer-editing-topbar-trailing">
+          <ActiveTopbarControls host={host} session={session} />
+        </div>
+      )}
+    </div>
+  );
 }
 
-function ActiveTopbar({
+function ActiveTopbarControls({
   host,
   session,
 }: {
@@ -199,23 +203,46 @@ function ActiveTopbar({
     saveTracker.cancel(host);
   }, [saveTracker, host]);
 
-  const runDiscard = useCallback(async () => {
-    const ok = window.confirm(
-      "Discard all session edits? This cannot be undone.",
-    );
-    if (!ok) return;
-    try {
-      await host.discardActive();
-    } catch (err) {
-      StatusMessage.showTemporaryMessage(
-        err instanceof Error ? err.message : String(err),
-        4000,
-      );
-    }
-  }, [host]);
-
   return (
-    <div class="neuroglancer-editing-topbar">
+    <>
+      <div
+        class="neuroglancer-editing-topbar-group"
+        role="toolbar"
+        aria-label="Save"
+      >
+        {isSaving ? (
+          <button
+            type="button"
+            class="neuroglancer-editing-topbar-save-button saving"
+            onClick={cancelSave}
+            title="Cancel in-flight save"
+          >
+            Cancel
+          </button>
+        ) : (
+          <button
+            type="button"
+            class="neuroglancer-editing-topbar-save-button"
+            disabled={!hasDirty || !saveAvailable}
+            title={
+              saveAvailable
+                ? "Save all dirty layers to the backend"
+                : "Saving is unavailable — no save backend is registered."
+            }
+            onClick={runSaveAll}
+          >
+            Save all
+            {pendingCount > 0 && (
+              <span class="neuroglancer-editing-topbar-badge">
+                {pendingCount}
+              </span>
+            )}
+          </button>
+        )}
+      </div>
+
+      <div class="neuroglancer-editing-topbar-divider" />
+
       <div
         class="neuroglancer-editing-topbar-group"
         role="toolbar"
@@ -276,57 +303,6 @@ function ActiveTopbar({
           {"↷"}
         </button>
       </div>
-
-      <div class="neuroglancer-editing-topbar-divider" />
-
-      <div
-        class="neuroglancer-editing-topbar-group"
-        role="toolbar"
-        aria-label="Save"
-      >
-        {isSaving ? (
-          <button
-            type="button"
-            class="neuroglancer-editing-topbar-save-button saving"
-            onClick={cancelSave}
-            title="Cancel in-flight save"
-          >
-            Cancel
-          </button>
-        ) : (
-          <button
-            type="button"
-            class="neuroglancer-editing-topbar-save-button"
-            disabled={!hasDirty || !saveAvailable}
-            title={
-              saveAvailable
-                ? "Save all dirty layers to the backend"
-                : "Saving is unavailable — no save backend is registered."
-            }
-            onClick={runSaveAll}
-          >
-            Save all
-            {pendingCount > 0 && (
-              <span class="neuroglancer-editing-topbar-badge">
-                {pendingCount}
-              </span>
-            )}
-          </button>
-        )}
-        <button
-          type="button"
-          class="neuroglancer-editing-topbar-discard-button"
-          disabled={isSaving}
-          title="Discard all session edits"
-          onClick={() => void runDiscard()}
-        >
-          Discard
-        </button>
-      </div>
-
-      <div class="neuroglancer-editing-topbar-spacer" />
-
-      <TopbarEditButton host={host} />
-    </div>
+    </>
   );
 }
