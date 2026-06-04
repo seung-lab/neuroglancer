@@ -22,7 +22,12 @@ let nextObjectId = 0;
  */
 export function getObjectId(x: any) {
   if (x instanceof Object) {
-    let id = x[OBJECT_ID_SYMBOL];
+    // Use own-property check so subclasses get distinct ids. A bare
+    // `x[OBJECT_ID_SYMBOL]` walks the prototype chain — for a class B that
+    // extends A, B would inherit A's id and collide in shader memoize keys.
+    let id = Object.prototype.hasOwnProperty.call(x, OBJECT_ID_SYMBOL)
+      ? x[OBJECT_ID_SYMBOL]
+      : undefined;
     if (id === undefined) {
       id = x[OBJECT_ID_SYMBOL] = nextObjectId++;
     }

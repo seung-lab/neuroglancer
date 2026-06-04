@@ -39,6 +39,7 @@ import type { VolumeSourceOptions } from "#src/sliceview/volume/base.js";
 import type {
   ChunkFormat,
   MultiscaleVolumeChunkSource,
+  VolumeChunk,
   VolumeChunkSource,
 } from "#src/sliceview/volume/frontend.js";
 import { defineChunkDataShaderAccess } from "#src/sliceview/volume/frontend.js";
@@ -99,6 +100,15 @@ function defineVolumeShader(builder: ShaderBuilder, wireFrame: boolean) {
 
   // Matrix by which computed vertices will be transformed.
   builder.addUniform("highp mat4", "uProjectionMatrix");
+
+  // Per-source transform: maps chunk-grid voxel coordinates to the layer's
+  // global model frame (typically nm). Bound in `beginSource` for every
+  // visible source. Used by the edit-session bbox-clip shader hook (see
+  // `src/editing/shaders/bbox_alpha_chunk.ts`) so the comparison runs in a
+  // resolution-independent frame — without this, bbox uniforms computed at
+  // the session's chosen resolution mismatch fragments rendered at a
+  // different scale and the inside-test fails everywhere.
+  builder.addUniform("highp mat4", "uChunkToGlobal");
 
   // Chunk size in voxels.
   builder.addUniform("highp vec3", "uChunkDataSize");
@@ -226,6 +236,15 @@ function beginSource(
     shader.uniform("uProjectionMatrix"),
     false,
     mat4.multiply(tempMat4, dataToDeviceMatrix, chunkLayout.transform),
+  );
+
+  // Expose the chunk-grid → global transform separately for shaders that
+  // need to express positions in the layer's global model frame (e.g., the
+  // edit-session bbox-clip hook).
+  gl.uniformMatrix4fv(
+    shader.uniform("uChunkToGlobal"),
+    false,
+    chunkLayout.transform,
   );
 
   gl.uniform3fv(
@@ -549,6 +568,18 @@ void main() {
     parameters;
   }
 
+  /**
+   * Voxel-edit extension point: called once per chunk drawn, after the base
+   * chunk format has bound its texture(s) and before the chunk's quad is
+   * drawn. Subclasses (e.g. PatchedSegmentationRenderLayer) override this to
+   * bind per-chunk overlay resources keyed by `chunk.chunkGridPosition`.
+   */
+  protected onBeginChunk(gl: GL, shader: ShaderProgram, chunk: VolumeChunk) {
+    gl;
+    shader;
+    chunk;
+  }
+
   draw(renderContext: SliceViewRenderContext) {
     const { sliceView } = renderContext;
     const layerInfo = sliceView.visibleLayers.get(this)!;
@@ -674,6 +705,10 @@ void main() {
               newSource,
             );
           }
+          // Voxel-edit extension point: subclasses use this to bind per-chunk
+          // overlay resources (e.g. patch textures keyed by chunkGridPosition)
+          // after the base chunk has been bound and before the chunk is drawn.
+          this.onBeginChunk(gl, shader!, chunk);
           newSource = false;
           drawChunk(gl, shader!, chunkPosition, wireFrame);
           ++presentCount;

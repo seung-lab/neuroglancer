@@ -23,7 +23,13 @@ import {
   LocalDataSource,
   localEquivalencesUrl,
 } from "#src/datasource/local.js";
-import type { LayerActionContext, ManagedUserLayer } from "#src/layer/index.js";
+import { getAllowedSourcePredicateForLayer } from "#src/editing/adapters/allowed_source_predicate.js";
+import type { PatchedMaskProvider } from "#src/editing/shaders/patched_mask_provider.js";
+import type {
+  LayerActionContext,
+  ManagedUserLayer,
+  TopLevelLayerListSpecification,
+} from "#src/layer/index.js";
 import {
   LinkedLayerGroup,
   registerLayerType,
@@ -132,6 +138,50 @@ import { Signal } from "#src/util/signal.js";
 import { makeWatchableShaderError } from "#src/webgl/dynamic_shader.js";
 import type { DependentViewContext } from "#src/widget/dependent_view_widget.js";
 import { registerLayerShaderControlsTool } from "#src/widget/shader_controls.js";
+
+/**
+ * Returns the persistent edit-bbox watchable for `layerName` from the
+ * step-24 `EditSessionHost`, or `undefined` if no host is wired into this
+ * `TopLevelLayerListSpecification`. Used to pass `editBboxLoHi` into the
+ * `SegmentationRenderLayer` constructor; when undefined, the render layer's
+ * bbox-dim shader path is compiled out entirely (byte-identical to the
+ * pre-hook implementation).
+ */
+function getEditBboxLoHiForLayer(
+  root: TopLevelLayerListSpecification,
+  layerName: string,
+): WatchableValueInterface<{ lo: vec3; hi: vec3 } | undefined> | undefined {
+  const host = root.editSessionHost as
+    | {
+        getActiveRegionWatchableForLayer(
+          layerName: string,
+        ): WatchableValueInterface<
+          { lo: vec3; hi: vec3 } | undefined
+        >;
+      }
+    | undefined;
+  return host?.getActiveRegionWatchableForLayer(layerName);
+}
+
+/**
+ * Same pattern as `getEditBboxLoHiForLayer`: returns the host's persistent
+ * per-layer `PatchedMaskProvider` watchable for use as the segmentation
+ * render layer's `editPatchOverlay` hook. When no host is wired, returns
+ * undefined and the render layer compiles the no-hook shader.
+ */
+function getEditPatchOverlayForLayer(
+  root: TopLevelLayerListSpecification,
+  layerName: string,
+): WatchableValueInterface<PatchedMaskProvider | undefined> | undefined {
+  const host = root.editSessionHost as
+    | {
+        getPatchOverlayWatchableForLayer(
+          layerName: string,
+        ): WatchableValueInterface<PatchedMaskProvider | undefined>;
+      }
+    | undefined;
+  return host?.getPatchOverlayWatchableForLayer(layerName);
+}
 
 export class SegmentationUserLayerGroupState
   extends RefCounted
@@ -806,6 +856,34 @@ export class SegmentationUserLayer extends Base {
                 renderScaleTarget: this.sliceViewRenderScaleTarget,
                 renderScaleHistogram: this.sliceViewRenderScaleHistogram,
                 localPosition: this.localPosition,
+                // Voxel-edit bbox-dim hook (step 24 of Phase 4). The host
+                // returns a persistent per-layer watchable that flips on
+                // session open/close. When no host is wired (test viewers,
+                // alternative embeddings), the field is left unset and the
+                // bbox-dim shader path is compiled out entirely.
+                editBboxLoHi: getEditBboxLoHiForLayer(
+                  this.manager.root,
+                  this.managedLayer.name,
+                ),
+                // Voxel-edit resolution-display lock. While a session is
+                // open, restrict the slice-view's selectable scales to the
+                // user-picked resolution set. `undefined` when no host is
+                // wired or no session is active.
+                allowedSourcePredicate: getAllowedSourcePredicateForLayer(
+                  this.manager.root,
+                  this.managedLayer.name,
+                  loadedSubsource.loadedDataSource,
+                ),
+                // Voxel-edit patch-overlay hook. The host publishes the
+                // active session's `PatchedSegmentationRenderLayer` (which
+                // implements `PatchedMaskProvider`) into this watchable so
+                // the base layer can discard fragments at edited voxels.
+                // Without it, an eraser stroke leaves the original segment
+                // visible beneath the (transparent) patch.
+                editPatchOverlay: getEditPatchOverlayForLayer(
+                  this.manager.root,
+                  this.managedLayer.name,
+                ),
               }),
             ),
           this.displayState.segmentationGroupState.value,

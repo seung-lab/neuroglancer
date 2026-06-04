@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 
+import type { BboxAlphaShaderHook } from "#src/editing/shaders/bbox_alpha_chunk.js";
+import { createBboxAlphaShaderHook } from "#src/editing/shaders/bbox_alpha_chunk.js";
+import type { PatchedMaskProvider } from "#src/editing/shaders/patched_mask_provider.js";
 import { HashMapUint64 } from "#src/gpu_hash/hash_table.js";
 import {
   GPUHashTable,
@@ -33,10 +36,12 @@ import { registerRedrawWhenSegmentationDisplayStateChanged } from "#src/segmenta
 import type { SliceViewSourceOptions } from "#src/sliceview/base.js";
 import type {
   SliceView,
+  SliceViewChunkSource,
   SliceViewSingleResolutionSource,
 } from "#src/sliceview/frontend.js";
 import type {
   MultiscaleVolumeChunkSource,
+  VolumeChunk,
   VolumeChunkSource,
 } from "#src/sliceview/volume/frontend.js";
 import type { RenderLayerBaseOptions } from "#src/sliceview/volume/renderlayer.js";
@@ -44,10 +49,14 @@ import { SliceViewVolumeRenderLayer } from "#src/sliceview/volume/renderlayer.js
 import type { WatchableValueInterface } from "#src/trackable_value.js";
 import {
   AggregateWatchableValue,
+  constantWatchableValue,
   makeCachedDerivedWatchableValue,
 } from "#src/trackable_value.js";
 import type { Uint64Map } from "#src/uint64_map.js";
 import type { DisjointUint64Sets } from "#src/util/disjoint_sets.js";
+import { getChunkPositionFromCombinedGlobalLocalPositions } from "#src/render_coordinate_transform.js";
+import type { vec3 } from "#src/util/geom.js";
+import type { GL } from "#src/webgl/context.js";
 import type { ShaderBuilder, ShaderProgram } from "#src/webgl/shader.js";
 
 export class EquivalencesHashMap {
@@ -75,6 +84,57 @@ export interface SliceViewSegmentationDisplayState
   notSelectedAlpha: WatchableValueInterface<number>;
   hideSegmentZero: WatchableValueInterface<boolean>;
   ignoreNullVisibleSet: WatchableValueInterface<boolean>;
+  /**
+   * Voxel-edit hook: when defined and the inner value is non-`undefined`,
+   * fragments outside the bbox are HARD-CLIPPED via `discard` (see
+   * `src/editing/shaders/bbox_alpha_chunk.ts`). When this field is omitted
+   * (the common case for layers not participating in an edit session) the
+   * render path is byte-identical to the pre-hook implementation.
+   *
+   * The bbox is expressed in the layer's GLOBAL frame (nm) so the
+   * comparison is resolution-independent — the shader converts the
+   * fragment's chunk-grid voxel position to global coords via
+   * `uChunkToGlobal`. Without this, the session's chosen resolution would
+   * have to match the actually-rendered scale, which it often doesn't (e.g.
+   * the session picks 16 nm but the viewer renders the 32 nm chunks).
+   *
+   * Wired by the segmentation user layer from
+   * `viewer.editSessionHost.getActiveRegionWatchableForLayer(this.name)`.
+   */
+  editBboxLoHi?: WatchableValueInterface<
+    { lo: vec3; hi: vec3 } | undefined
+  >;
+
+  /**
+   * Voxel-edit resolution-display lock. When set, the slice-view's
+   * `getSources()` returns only scales matching the user-selected
+   * resolutions for the active session; `undefined` means no filtering.
+   * Same wiring pattern as `editBboxLoHi`.
+   */
+  allowedSourcePredicate?: WatchableValueInterface<
+    | ((source: SliceViewSingleResolutionSource<SliceViewChunkSource>) => boolean)
+    | undefined
+  >;
+
+  /**
+   * Voxel-edit patch-overlay hook. When defined and the inner value is
+   * non-`undefined`, the base segmentation render layer samples the
+   * provider's per-chunk patched-mask 3D texture (R8UI) and `discard`s
+   * fragments at voxels the user has edited — leaving the active session's
+   * `PatchedSegmentationRenderLayer` as the sole source of truth for those
+   * voxels' appearance. This is what makes erase actually erase: the
+   * baseline segment is hidden, the patch layer emits transparent, and the
+   * image layer behind shows through at its natural opacity.
+   *
+   * When this field is omitted (the default — every non-session viewer
+   * mount) the render path is byte-identical to the pre-hook implementation:
+   * no extra sampler, no discard branch in the shader.
+   *
+   * Wired by the segmentation user layer from
+   * `viewer.editSessionHost.getPatchOverlayWatchableForLayer(this.name)`.
+   * Same wiring pattern as `editBboxLoHi`.
+   */
+  editPatchOverlay?: WatchableValueInterface<PatchedMaskProvider | undefined>;
 }
 
 interface ShaderParameters {
@@ -85,6 +145,21 @@ interface ShaderParameters {
   hideSegmentZero: boolean;
   hasSegmentDefaultColor: boolean;
   hasHighlightColor: boolean;
+  /**
+   * Voxel-edit bbox-dim shader path gate. Defaults to `false`; flips to
+   * `true` only while an edit session is active for this layer. When
+   * `false`, the bbox-dim uniforms/snippet are NOT added to the shader and
+   * the compiled GLSL is byte-identical to the pre-hook implementation.
+   */
+  editBboxActive: boolean;
+  /**
+   * Voxel-edit patch-overlay shader path gate. Defaults to `false`; flips
+   * to `true` only when an active session's `PatchedSegmentationRenderLayer`
+   * has registered a `PatchedMaskProvider` on `displayState.editPatchOverlay`.
+   * When `false`, no patched-mask sampler is added and the shader is
+   * byte-identical to the pre-hook implementation.
+   */
+  editPatchOverlayActive: boolean;
 }
 
 const HAS_SELECTED_SEGMENT_FLAG = 1;
@@ -108,6 +183,29 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
   private temporaryEquivalencesHashMap;
   private gpuEquivalencesHashTable;
   private gpuTemporaryEquivalencesHashTable;
+
+  /**
+   * Voxel-edit bbox-dim shader hook. Stateless across compiles; gated by
+   * the `editBboxActive` shader parameter so that when no session is
+   * active for this layer the hook contributes NOTHING to the shader
+   * source (no uniforms, no fragment code, no main-body wrapping).
+   */
+  private bboxAlphaHook: BboxAlphaShaderHook = createBboxAlphaShaderHook();
+
+  // Patch-overlay shader hook state. The sampler unit symbols are reused
+  // across shader recompiles. The two textures are bound only when
+  // `editPatchOverlayActive`; for chunks without patches, the provider's
+  // fallback path binds a 1×1×1 zero mask + 1×1×1 zero value, so the
+  // shader reads patched=0 and falls through to the baseline chunk value
+  // — byte-identical to the pre-hook implementation.
+  private patchedMaskTextureUnit: number | undefined;
+  private patchValueTextureUnit: number | undefined;
+  private static readonly patchedMaskSamplerSymbol = Symbol(
+    "SegmentationRenderLayer.patchedMaskSampler",
+  );
+  private static readonly patchValueSamplerSymbol = Symbol(
+    "SegmentationRenderLayer.patchValueSampler",
+  );
 
   constructor(
     multiscaleSource: MultiscaleVolumeChunkSource,
@@ -163,11 +261,37 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
         hideSegmentZero: displayState.hideSegmentZero,
         baseSegmentColoring: displayState.baseSegmentColoring,
         baseSegmentHighlighting: displayState.baseSegmentHighlighting,
+        // Voxel-edit bbox-dim gate. Derived from the optional
+        // `editBboxLoHi` watchable: `true` iff a session bbox is currently
+        // set for this layer. When `editBboxLoHi` is undefined (the
+        // default), this resolves to a constant `false` and the bbox-dim
+        // shader path is never compiled in.
+        editBboxActive:
+          displayState.editBboxLoHi === undefined
+            ? constantWatchableValue(false)
+            : refCounted.registerDisposer(
+                makeCachedDerivedWatchableValue(
+                  (bbox) => bbox !== undefined,
+                  [displayState.editBboxLoHi],
+                ),
+              ),
+        // Same compile-out pattern as `editBboxActive`: flips true only
+        // when an active session has registered a `PatchedMaskProvider`.
+        editPatchOverlayActive:
+          displayState.editPatchOverlay === undefined
+            ? constantWatchableValue(false)
+            : refCounted.registerDisposer(
+                makeCachedDerivedWatchableValue(
+                  (provider) => provider !== undefined,
+                  [displayState.editPatchOverlay],
+                ),
+              ),
       })),
       transform: displayState.transform,
       renderScaleHistogram: displayState.renderScaleHistogram,
       renderScaleTarget: displayState.renderScaleTarget,
       localPosition: displayState.localPosition,
+      allowedSourcePredicate: displayState.allowedSourcePredicate,
     });
     this.segmentationGroupState = displayState.segmentationGroupState.value;
     this.gpuHashTable = this.registerDisposer(
@@ -206,6 +330,54 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
     this.registerDisposer(
       displayState.ignoreNullVisibleSet.changed.add(this.redrawNeeded.dispatch),
     );
+    // Redraw when the bbox lo/hi changes within an active session — value
+    // changes don't flip the `editBboxActive` bit so they won't go through
+    // `shaderParameters.changed`, but they DO need a fresh `bind()`.
+    if (displayState.editBboxLoHi !== undefined) {
+      this.registerDisposer(
+        displayState.editBboxLoHi.changed.add(this.redrawNeeded.dispatch),
+      );
+    }
+    // Patch-overlay redraw plumbing.
+    //
+    // When the user paints / erases, the provider's underlying
+    // `LocalPatchStore` mutates and dispatches its own `changed` signal,
+    // which the provider re-dispatches via its `changed` member. Without
+    // an explicit subscription here, the base render layer would never
+    // know to redraw and the stroke would only appear at the next
+    // incidental redraw (camera move, etc.). The old
+    // `PatchedSegmentationRenderLayer` carried this subscription
+    // implicitly; collapsing it into this layer requires we wire the
+    // signal ourselves.
+    //
+    // The provider reference can swap (session open / close / commit), so
+    // we re-subscribe whenever `displayState.editPatchOverlay.value`
+    // changes. The detacher closure is captured at subscribe time and
+    // called before the new subscription is wired.
+    if (displayState.editPatchOverlay !== undefined) {
+      const editPatchOverlay = displayState.editPatchOverlay;
+      let unsubscribeProvider: (() => void) | undefined;
+      const updateProviderSubscription = () => {
+        if (unsubscribeProvider !== undefined) {
+          unsubscribeProvider();
+          unsubscribeProvider = undefined;
+        }
+        const provider = editPatchOverlay.value;
+        if (provider !== undefined) {
+          unsubscribeProvider = provider.changed.add(this.redrawNeeded.dispatch);
+        }
+      };
+      updateProviderSubscription();
+      this.registerDisposer(
+        editPatchOverlay.changed.add(updateProviderSubscription),
+      );
+      this.registerDisposer(() => {
+        if (unsubscribeProvider !== undefined) {
+          unsubscribeProvider();
+          unsubscribeProvider = undefined;
+        }
+      });
+    }
   }
 
   disposed() {
@@ -221,16 +393,148 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
     });
   }
 
-  defineShader(builder: ShaderBuilder, parameters: ShaderParameters) {
-    this.hashTableManager.defineShader(builder);
-    let getUint64Code = `
+  /**
+   * Patch-aware CPU value lookup for hover / pick / status-bar consumers.
+   *
+   * In slice view, the segmentation layer doesn't write into the GPU
+   * picking framebuffer — so `mouseState.value` is resolved CPU-side by
+   * walking visible sources and calling `source.getValueAt(...)`, which
+   * reads BASELINE chunks only. With patches active, that produced a
+   * mismatch: GPU rendered the patch value (segment N), CPU pick saw
+   * the baseline value (segment M), and the highlight uniform
+   * `uSelectedSegment` pointed at M — so hovering an edited voxel
+   * highlighted a different segment than the one displayed there. We
+   * intercept here and consult the patch provider first; on a hit, the
+   * patched bigint wins. The cast to `any` matches the parent
+   * `getValueAt` return contract.
+   */
+  override getValueAt(globalPosition: Float32Array): any {
+    const provider = this.displayState.editPatchOverlay?.value;
+    if (provider === undefined) {
+      return super.getValueAt(globalPosition);
+    }
+    const scratch = this.patchedValueAtScratch;
+    for (const { source, chunkTransform } of this.visibleSourcesList) {
+      if (scratch.length !== chunkTransform.layerRank) {
+        this.patchedValueAtScratch = new Float32Array(chunkTransform.layerRank);
+      }
+      const chunkPosition = this.patchedValueAtScratch;
+      if (
+        !getChunkPositionFromCombinedGlobalLocalPositions(
+          chunkPosition,
+          globalPosition,
+          this.localPosition.value,
+          chunkTransform.layerRank,
+          chunkTransform.combinedGlobalLocalToChunkTransform,
+        )
+      ) {
+        continue;
+      }
+      const chunkDataSize = source.spec.chunkDataSize;
+      if (chunkDataSize.length < 3) continue;
+      const sx = chunkDataSize[0];
+      const sy = chunkDataSize[1];
+      const sz = chunkDataSize[2];
+      const vx = chunkPosition[0];
+      const vy = chunkPosition[1];
+      const vz = chunkPosition[2];
+      const gx = Math.floor(vx / sx);
+      const gy = Math.floor(vy / sy);
+      const gz = Math.floor(vz / sz);
+      const lx = Math.floor(vx - sx * gx);
+      const ly = Math.floor(vy - sy * gy);
+      const lz = Math.floor(vz - sz * gz);
+      // Out-of-chunk-range guards (parity with VolumeChunkSource.getValueAt).
+      if (
+        lx < 0 || ly < 0 || lz < 0 ||
+        lx >= sx || ly >= sy || lz >= sz
+      ) {
+        continue;
+      }
+      const patched = provider.getPatchedValueAt(
+        [gx, gy, gz],
+        [lx, ly, lz],
+      );
+      if (patched !== undefined) {
+        return patched;
+      }
+      const baseline = source.getValueAt(chunkPosition, chunkTransform);
+      if (baseline != null) {
+        return baseline;
+      }
+    }
+    return null;
+  }
+
+  // Scratch buffer for `getValueAt`'s chunk-position computation. Resized
+  // lazily to the current source's `layerRank`; the parent class uses a
+  // similar private field but it isn't accessible from a subclass.
+  private patchedValueAtScratch = new Float32Array(0);
+
+  /**
+   * Emit GLSL for the per-fragment uint64 segment-id lookup. When the
+   * patch-overlay shader path is active, the lookup samples the
+   * patched-mask first and SUBSTITUTES the per-voxel patch value at edited
+   * voxels — so every downstream branch (hover highlight, selected-segment
+   * highlight, equivalences, stated colors, `hideSegmentZero`) runs
+   * uniformly over baseline and patched voxels. That uniformity is what
+   * fixes the prior "hovered segment shows two shades" bug: the patched
+   * region used to take a separate render layer with no hover logic; now
+   * it goes through the same shader as everything else.
+   *
+   * The erase semantic also falls out for free: a patched voxel with
+   * value 0 hits the existing `hideSegmentZero` path and emits transparent
+   * — image layer underneath shows through at full opacity.
+   */
+  protected defineGetUint64DataValue(
+    builder: ShaderBuilder,
+    withPatchOverlay: boolean,
+  ) {
+    if (withPatchOverlay) {
+      builder.addFragmentCode(`
+uint64_t getUint64DataValue() {
+  highp ivec3 patchedP = ivec3(max(vec3(0.0, 0.0, 0.0), min(floor(vChunkPosition), uChunkDataSize - 1.0)));
+  uint patched = texelFetch(uPatchedMaskSampler, patchedP, 0).r;
+  if (patched != 0u) {
+    highp uvec4 raw = texelFetch(uPatchValueSampler, patchedP, 0);
+    uint64_t v;
+    v.value = uvec2(raw.r, raw.g);
+    return v;
+  }
+  return toUint64(getDataValue());
+}
+`);
+    } else {
+      builder.addFragmentCode(`
 uint64_t getUint64DataValue() {
   uint64_t x = toUint64(getDataValue());
-`;
-    getUint64Code += `return x;
+  return x;
 }
-`;
-    builder.addFragmentCode(getUint64Code);
+`);
+    }
+  }
+
+  defineShader(builder: ShaderBuilder, parameters: ShaderParameters) {
+    this.hashTableManager.defineShader(builder);
+    // Patch-overlay samplers MUST be added before `defineGetUint64DataValue`
+    // emits the function that calls `texelFetch(uPatch*Sampler, ...)` — the
+    // shader builder records uniform declarations in addition order.
+    if (parameters.editPatchOverlayActive) {
+      this.patchedMaskTextureUnit = builder.addTextureSampler(
+        "usampler3D",
+        "uPatchedMaskSampler",
+        SegmentationRenderLayer.patchedMaskSamplerSymbol,
+      );
+      this.patchValueTextureUnit = builder.addTextureSampler(
+        "usampler3D",
+        "uPatchValueSampler",
+        SegmentationRenderLayer.patchValueSamplerSymbol,
+      );
+    } else {
+      this.patchedMaskTextureUnit = undefined;
+      this.patchValueTextureUnit = undefined;
+    }
+    this.defineGetUint64DataValue(builder, parameters.editPatchOverlayActive);
     if (parameters.hasEquivalences) {
       this.equivalencesShaderManager.defineShader(builder);
       builder.addFragmentCode(`
@@ -254,6 +558,11 @@ uint64_t getMappedObjectId(uint64_t value) {
     builder.addUniform("highp float", "uSelectedAlpha");
     builder.addUniform("highp float", "uNotSelectedAlpha");
     builder.addUniform("highp float", "uSaturation");
+    // The patch overlay is no longer surfaced via a separate discard
+    // branch here: `defineGetUint64DataValue` returns the patch value
+    // directly when this voxel is patched, so the rest of the shader
+    // (hover, selected, equivalences, stated colors, `hideSegmentZero`)
+    // applies uniformly across baseline and patched voxels.
     let fragmentMain = `
   uint64_t baseValue = getUint64DataValue();
   uint64_t value = getMappedObjectId(baseValue);
@@ -343,6 +652,17 @@ uint64_t getMappedObjectId(uint64_t value) {
   }
   emit(vec4(mix(vec3(1.0,1.0,1.0), vec3(rgba), saturation), alpha));
 `;
+    // Voxel-edit bbox-dim opt-in path: when an edit session is active for
+    // this layer, route every `emit(...)` call in the main body through
+    // `emitWithBboxDim(...)` so outside-bbox fragments render at 0.25x
+    // alpha. Gated on the `editBboxActive` shader parameter, so when no
+    // session is active this branch is NOT taken and the resulting GLSL is
+    // byte-identical to the pre-hook shader.
+    if (parameters.editBboxActive) {
+      this.bboxAlphaHook.defineUniforms(builder);
+      builder.addFragmentCode(this.bboxAlphaHook.fragmentSnippet());
+      fragmentMain = this.bboxAlphaHook.wrapFragmentMain(fragmentMain);
+    }
     builder.setFragmentMain(fragmentMain);
   }
 
@@ -454,6 +774,21 @@ uint64_t getMappedObjectId(uint64_t value) {
     if (highlightColor !== undefined) {
       gl.uniform4fv(shader.uniform("uHighlightColor"), highlightColor);
     }
+    // Bbox-clip uniforms are bound only when the bbox-clip shader path was
+    // compiled (`editBboxActive === true`). Otherwise the uniforms don't
+    // exist on the shader at all.
+    //
+    // Picking-pass safety: `SliceViewVolumeRenderLayer.draw` is invoked
+    // only from `SliceView.updateRendering` (color into the sliceView
+    // offscreen buffer); the panel-level picking pass goes through
+    // `SliceViewPanelRenderLayer` subclasses (annotation/cursor overlays),
+    // which do NOT invoke this volume layer. There is therefore no
+    // separate picking-pass shader for this layer to clip.
+    if (parameters.editBboxActive) {
+      this.bboxAlphaHook.bind(gl, shader, {
+        bboxNm: displayState.editBboxLoHi?.value,
+      });
+    }
   }
   endSlice(
     sliceView: SliceView,
@@ -469,5 +804,40 @@ uint64_t getMappedObjectId(uint64_t value) {
       this.segmentStatedColorShaderManager.disable(gl, shader);
     }
     super.endSlice(sliceView, shader, parameters);
+  }
+
+  protected override onBeginChunk(
+    gl: GL,
+    _shader: ShaderProgram,
+    chunk: VolumeChunk,
+  ) {
+    // Bind both patch-overlay samplers (mask + value) for the current
+    // chunk. Skipped entirely when the shader path is not compiled in,
+    // so non-session render paths are byte-identical to the pre-hook
+    // implementation.
+    if (
+      this.patchedMaskTextureUnit === undefined ||
+      this.patchValueTextureUnit === undefined
+    ) {
+      return;
+    }
+    const provider = this.displayState.editPatchOverlay?.value;
+    if (provider === undefined) return;
+    const prevActive = gl.getParameter(
+      WebGL2RenderingContext.ACTIVE_TEXTURE,
+    ) as number;
+    // The provider handles its own zero-fallback when no patches exist
+    // for the chunk, so callers don't need to branch on a return value.
+    provider.bindPatchedMaskTexture(
+      gl,
+      this.patchedMaskTextureUnit,
+      chunk.chunkGridPosition,
+    );
+    provider.bindPatchValueTexture(
+      gl,
+      this.patchValueTextureUnit,
+      chunk.chunkGridPosition,
+    );
+    gl.activeTexture(prevActive);
   }
 }

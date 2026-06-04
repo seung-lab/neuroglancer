@@ -1,0 +1,1798 @@
+/**
+ * @license
+ * Copyright 2026 Calcada AI / Zetta AI
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ */
+
+/**
+ * @file Phase-1 host wrapper around the `@zettaai/edit-session` library.
+ *
+ * Owns: the active `EditSession` instance, per-session adapter wiring, the
+ * per-layer `LocalPatchStore` + `PatchedSegmentationRenderLayer` +
+ * `PatchMirror` lifecycle, and the URL-restored session intent.
+ *
+ * Per `docs/edit-session-integration/architecture/02-module-layout.md`, this is
+ * the single integration point — every other neuroglancer module that touches
+ * the active session reads it through this host.
+ */
+
+import type {
+  BoundingBoxVoxels,
+  CommitResult,
+  EditSessionAdapters,
+  EditSessionConfig,
+  LayerId,
+  LayerSelection,
+  PaintingMaskConfig,
+  PaintingSharedState,
+  Resolution as ResolutionType,
+  SaveResult,
+  ZExtrapolationState,
+  CorrespondenceState,
+} from "@zettaai/edit-session";
+import type { SavePayload, SaveLayerOutcome } from "@zettaai/edit-session";
+import {
+  ChunkId as ChunkIdFactory,
+  DEFAULT_RADIUS_CYCLE,
+  EditSession,
+  InvalidSessionConfigError,
+  OverlayKey,
+  Resolution,
+  SessionPhaseViolationError,
+  correspondence,
+  layerId as toLayerId,
+  painting,
+  sessionId as toSessionId,
+  zExtrapolation,
+} from "@zettaai/edit-session";
+
+import { NgChunkSource } from "#src/editing/adapters/ng_chunk_source.js";
+import { NgClock } from "#src/editing/adapters/ng_clock.js";
+import { NgCommitTarget } from "#src/editing/adapters/ng_commit_target.js";
+import { NgLayerMetadataSource } from "#src/editing/adapters/ng_layer_metadata_source.js";
+import { NgLogger } from "#src/editing/adapters/ng_logger.js";
+import { NgSaveTarget, resolveDataSourceUrl } from "#src/editing/adapters/ng_save_target.js";
+import type { SaveBackend } from "#src/editing/adapters/save_backend.js";
+import {
+  hasAnySaveBackend,
+  registerDefaultSaveBackend,
+  registerSaveBackend,
+  saveBackendRegistryChanged,
+} from "#src/editing/adapters/save_backend.js";
+import { PostMessageSaveBackend } from "#src/editing/adapters/save_backends/post_message_save_backend.js";
+import { NgSessionLockAdapter } from "#src/editing/adapters/ng_session_lock.js";
+import { LocalPatchStore } from "#src/editing/local_patch_store.js";
+// PatchMirror is created by step 9 of Phase 1; this file's runtime import
+// resolves once that step lands. Assumed constructor signature:
+//   new PatchMirror(session, layerId, store, logger)
+// where the mirror subscribes to `session.dirty` chunk events for `layerId`
+// and writes the resulting overlay bytes into `store.writeFullChunk(...)`.
+import { PatchMirror } from "#src/editing/overlay/patch_mirror.js";
+import { PatchTextureCache } from "#src/editing/patch_texture_cache.js";
+import type { PatchedMaskProvider } from "#src/editing/shaders/patched_mask_provider.js";
+import { BrushCursorPerspectiveOverlay } from "#src/editing/cursor/brush_cursor_perspective_overlay.js";
+import { BrushCursorSliceOverlay } from "#src/editing/cursor/brush_cursor_slice_overlay.js";
+import { BrushCursorState } from "#src/editing/cursor/brush_cursor_state.js";
+import { PointerEventBridge } from "#src/editing/pointer_event_bridge.js";
+import { EditSessionHotkeyBinder } from "#src/editing/session_hotkey_binder.js";
+import { NgCorrespondenceCompute } from "#src/editing/tool_runtimes/correspondence_compute.js";
+import { PaintingCompute } from "#src/editing/tool_runtimes/painting_compute.js";
+import { NgZExtrapolationCompute } from "#src/editing/tool_runtimes/z_extrapolation_compute.js";
+import type { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
+import { SegmentationRenderLayer } from "#src/sliceview/volume/segmentation_renderlayer.js";
+import { StatusMessage } from "#src/status.js";
+import { WatchableValue } from "#src/trackable_value.js";
+import { vec3 } from "#src/util/geom.js";
+import {
+  DEFAULT_SIDE_PANEL_LOCATION,
+  TrackableSidePanelLocation,
+} from "#src/ui/side_panel_location.js";
+import { RefCounted } from "#src/util/disposable.js";
+import type { Trackable } from "#src/util/trackable.js";
+import { NullarySignal } from "#src/util/signal.js";
+import type { Viewer } from "#src/viewer.js";
+
+// ---------------------------------------------------------------------------
+// Host-side configuration shape (modal-provided)
+// ---------------------------------------------------------------------------
+
+export interface HostSessionConfig {
+  readonly bboxRef: {
+    readonly annotationLayerName: string;
+    readonly annotationId: string;
+  };
+  /** Voxel-space bbox snapshot at modal-submit time. */
+  readonly bboxVoxelCoords: BoundingBoxVoxels;
+  readonly bboxResolution: ResolutionType;
+  readonly layers: ReadonlyArray<{
+    readonly layerId: LayerId;
+    /**
+     * Resolutions selected at session-entry time. Non-empty. The first entry
+     * is the default painting resolution for writable layers; downstream
+     * display is restricted to this set on both writable and read-only
+     * layers. Every layer in the config is locked in memory for the duration
+     * of the session (chunks held in PERMANENT residency).
+     */
+    readonly resolutions: readonly ResolutionType[];
+    readonly writable: boolean;
+  }>;
+}
+
+// ---------------------------------------------------------------------------
+// URL-state shape (per architecture 08-state-ownership.md § URL state)
+// ---------------------------------------------------------------------------
+
+type Vec3Voxels = readonly [number, number, number];
+
+export interface EditSessionIntent {
+  readonly bboxRef: {
+    readonly annotationLayerName: string;
+    readonly annotationId: string;
+    readonly resolution: ResolutionType;
+  };
+  readonly layers: ReadonlyArray<{
+    readonly layerId: LayerId;
+    /** Non-empty. First entry is the default painting resolution. */
+    readonly resolutions: readonly ResolutionType[];
+    readonly writable: boolean;
+  }>;
+  readonly capturedRegion: { readonly lo: Vec3Voxels; readonly hi: Vec3Voxels };
+}
+
+/**
+ * Trackable wrapping the persisted "session intent" block on `ngState`. The
+ * value is `null` when no session has been opened (the default) and is
+ * cleared on session discard / commit; saved sessions retain the block per
+ * `07-data-flow.md` § G.
+ */
+export class TrackableEditSessionIntent implements Trackable {
+  readonly value = new WatchableValue<EditSessionIntent | null>(null);
+  readonly changed = new NullarySignal();
+
+  constructor() {
+    this.value.changed.add(this.changed.dispatch);
+  }
+
+  toJSON(): EditSessionIntent | null {
+    return this.value.value;
+  }
+
+  restoreState(x: unknown): void {
+    try {
+      this.value.value = parseIntent(x);
+    } catch {
+      this.reset();
+    }
+  }
+
+  reset(): void {
+    this.value.value = null;
+  }
+}
+
+function parseIntent(x: unknown): EditSessionIntent | null {
+  if (x === null || x === undefined) return null;
+  if (typeof x !== "object") throw new Error("not-an-object");
+  const obj = x as Record<string, unknown>;
+  const bboxRef = obj.bboxRef as Record<string, unknown> | undefined;
+  if (
+    bboxRef === undefined ||
+    typeof bboxRef !== "object" ||
+    typeof bboxRef.annotationLayerName !== "string" ||
+    typeof bboxRef.annotationId !== "string" ||
+    typeof bboxRef.resolution !== "string"
+  ) {
+    throw new Error("invalid-bboxRef");
+  }
+  const rawLayers = obj.layers;
+  if (!Array.isArray(rawLayers)) throw new Error("invalid-layers");
+  const layers = rawLayers.map((entry): EditSessionIntent["layers"][number] => {
+    if (typeof entry !== "object" || entry === null) {
+      throw new Error("invalid-layer-entry");
+    }
+    const e = entry as Record<string, unknown>;
+    if (typeof e.layerId !== "string" || typeof e.writable !== "boolean") {
+      throw new Error("invalid-layer-fields");
+    }
+    // Accept either the current `resolutions: string[]` shape or the legacy
+    // `resolution: string` shape (pre-multi-resolution URL state).
+    let resolutions: ResolutionType[];
+    if (Array.isArray(e.resolutions)) {
+      resolutions = e.resolutions.map((r) => {
+        if (typeof r !== "string") throw new Error("invalid-resolution-entry");
+        return r as ResolutionType;
+      });
+    } else if (typeof e.resolution === "string") {
+      resolutions = [e.resolution as ResolutionType];
+    } else {
+      throw new Error("invalid-layer-fields");
+    }
+    if (resolutions.length === 0) throw new Error("empty-resolutions");
+    return {
+      layerId: toLayerId(e.layerId),
+      resolutions,
+      writable: e.writable,
+    };
+  });
+  const cr = obj.capturedRegion as Record<string, unknown> | undefined;
+  if (
+    cr === undefined ||
+    typeof cr !== "object" ||
+    !Array.isArray(cr.lo) ||
+    !Array.isArray(cr.hi) ||
+    cr.lo.length !== 3 ||
+    cr.hi.length !== 3
+  ) {
+    throw new Error("invalid-capturedRegion");
+  }
+  const lo: Vec3Voxels = [Number(cr.lo[0]), Number(cr.lo[1]), Number(cr.lo[2])];
+  const hi: Vec3Voxels = [Number(cr.hi[0]), Number(cr.hi[1]), Number(cr.hi[2])];
+  return {
+    bboxRef: {
+      annotationLayerName: bboxRef.annotationLayerName,
+      annotationId: bboxRef.annotationId,
+      resolution: bboxRef.resolution as ResolutionType,
+    },
+    layers,
+    capturedRegion: { lo, hi },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Per-session machinery container
+// ---------------------------------------------------------------------------
+
+interface PerLayerMachinery {
+  readonly patchStore: LocalPatchStore;
+  /**
+   * The GPU texture cache. Implements `PatchedMaskProvider` and is
+   * published into the layer's `editPatchOverlay` watchable so the base
+   * `SegmentationRenderLayer` samples patch values directly — no
+   * separate render layer is involved. Persists across commit/discard
+   * teardown so committed patches stay visible.
+   */
+  readonly textureCache: PatchTextureCache;
+  /**
+   * Reference to the base segmentation render layer for this layer. Used
+   * by host-internal helpers that need to walk visible scales (e.g.
+   * `chunkDataSizeForLayer`); the cache itself is layer-agnostic.
+   */
+  readonly baseRenderLayer: SegmentationRenderLayer;
+  /**
+   * Subscription bridging the active library overlay → `patchStore`. Set
+   * while a session is active, replaced on each new `openSession`, and
+   * cleared by `commitTeardown` (the backing `DirtyTracker` is gone after
+   * commit so the mirror has nothing to listen to). `patchStore` and
+   * `textureCache` persist across the gap so committed patches stay visible.
+   */
+  mirror: PatchMirror | undefined;
+}
+
+/**
+ * Active region for a layer expressed in the viewer's DISPLAY coordinate
+ * space (the same frame as `viewer.position.value` — i.e. voxels at the
+ * display dimensions' configured scale). The shader converts each
+ * fragment's chunk-grid voxel position to this same frame via
+ * `uChunkToGlobal` (bound to `chunkLayout.transform` per source).
+ *
+ * We use display coords (not nm and not the session's chosen layer
+ * resolution) because:
+ *   - `chunkLayout.transform`'s output frame IS display coords, so the
+ *     shader comparison is one matrix multiply away from a fragment's
+ *     chunk-grid position regardless of which scale the viewer chose.
+ *   - The user's bbox annotation is itself rendered in display coords by
+ *     the annotation render layer — so this matches the visible yellow
+ *     rectangle exactly.
+ */
+interface ActiveRegion {
+  readonly lo: readonly [number, number, number];
+  readonly hi: readonly [number, number, number];
+}
+
+// ---------------------------------------------------------------------------
+// EditSessionHost
+// ---------------------------------------------------------------------------
+
+export class EditSessionHost extends RefCounted {
+  // -- Public reactive state ------------------------------------------------
+  readonly activeSession = new WatchableValue<EditSession | undefined>(
+    undefined,
+  );
+  readonly state = new TrackableEditSessionIntent();
+
+  /**
+   * Per-tool side-panel locations (TM-294 rework). Each tool owns an
+   * independent `TrackableSidePanelLocation`; the host's `selectTool()`
+   * invariant guarantees at most one is `visible` at any time. Cursor has
+   * no panel — selecting it forces all five `visible=false`.
+   *
+   * All default to `side: "left"` and the same row/col so they visually
+   * replace each other in the same slot.
+   */
+  readonly brushPanelLocation = new TrackableSidePanelLocation({
+    ...DEFAULT_SIDE_PANEL_LOCATION,
+    side: "left",
+  });
+  readonly eraserPanelLocation = new TrackableSidePanelLocation({
+    ...DEFAULT_SIDE_PANEL_LOCATION,
+    side: "left",
+  });
+  readonly fillPanelLocation = new TrackableSidePanelLocation({
+    ...DEFAULT_SIDE_PANEL_LOCATION,
+    side: "left",
+  });
+  readonly zExtrapPanelLocation = new TrackableSidePanelLocation({
+    ...DEFAULT_SIDE_PANEL_LOCATION,
+    side: "left",
+  });
+  readonly correspondencePanelLocation = new TrackableSidePanelLocation({
+    ...DEFAULT_SIDE_PANEL_LOCATION,
+    side: "left",
+  });
+
+  // -- Save cancellation ----------------------------------------------------
+  private saveAbortController: AbortController | undefined;
+
+  // -- Adapters (constructed once, reused across sessions) ------------------
+  readonly logger: NgLogger;
+  readonly sessionLock: NgSessionLockAdapter;
+  private readonly chunkSource: NgChunkSource;
+  // Exposed publicly so the viewer can pass it into `EditSessionEntryModal`
+  // without re-instantiating an adapter against the same `LayerManager`.
+  readonly layerMetadataSource: NgLayerMetadataSource;
+  // Exposed publicly so the "Pending Changes" panel can subscribe to the
+  // `changed` signal and enumerate layers with in-memory committed chunks.
+  readonly commitTarget: NgCommitTarget;
+  private readonly saveTarget: NgSaveTarget;
+  private readonly clock: NgClock;
+
+  /**
+   * Reactive flag: whether any save backend is registered (so persistence is
+   * wired up). Mirrors `hasAnySaveBackend()` from the registry. The Save
+   * controls subscribe to this and disable themselves while it is `false`.
+   */
+  readonly saveBackendAvailable = new WatchableValue<boolean>(
+    hasAnySaveBackend(),
+  );
+
+  /**
+   * The NG-provided postMessage save backend, exposed so the embedding host
+   * (the portal) can construct and register it from an injected script without
+   * importing the NG bundle:
+   *
+   *   const host = window.viewer.editSessionHost;
+   *   host.registerDefaultSaveBackend(
+   *     new host.PostMessageSaveBackend({
+   *       resolveDataSourceUrl: (id) => host.resolveLayerDataSourceUrl(id),
+   *     }),
+   *   );
+   */
+  readonly PostMessageSaveBackend = PostMessageSaveBackend;
+
+  // -- Per-layer persistent watchables for `editBboxLoHi` -------------------
+  // Per `06-bbox-rendering.md` § "Wiring to the render layers", every
+  // segmentation/image user layer that may participate in any future session
+  // subscribes ONCE to a layer-keyed watchable. Values flip on session
+  // open/close. The map persists across sessions (entries lazily allocated).
+  //
+  // Bbox values are stored in the layer's GLOBAL frame (nm), not in
+  // chunk-grid voxels. The render-layer shader converts the fragment
+  // position to global coords (via `uChunkToGlobal`) and compares in nm —
+  // this keeps the bbox comparison resolution-independent so the session's
+  // chosen resolution doesn't have to match the actually-rendered scale.
+  private readonly editBboxByLayer = new Map<
+    string,
+    WatchableValue<{ lo: vec3; hi: vec3 } | undefined>
+  >();
+
+  // Per-layer persistent watchables for the patched-mask provider hook the
+  // base `SegmentationRenderLayer` consumes via `editPatchOverlay`. Same
+  // lazy-allocation pattern as `editBboxByLayer`: the segmentation user
+  // layer queries on render-layer construction; the host mutates the
+  // value when a session opens / closes.
+  private readonly patchOverlayByLayer = new Map<
+    string,
+    WatchableValue<PatchedMaskProvider | undefined>
+  >();
+
+  // Per-layer persistent watchables for the resolution-display lock. Same
+  // pattern as `editBboxByLayer`: layer-keyed, lazily allocated on first
+  // access from segmentation/image user-layer construction. Value holds the
+  // set of resolutions the slice-view render layer is allowed to display
+  // while a session is active; `undefined` means no session (no lock).
+  private readonly allowedResolutionsByLayer = new Map<
+    string,
+    WatchableValue<ReadonlySet<ResolutionType> | undefined>
+  >();
+
+  // Source-of-truth map populated at session-open from
+  // `HostSessionConfig.layers[*].resolutions`. Cleared on session end. The
+  // public watchables above are derived from this.
+  private readonly _allowedResolutionsByLayer = new Map<
+    LayerId,
+    ReadonlySet<ResolutionType>
+  >();
+
+  // -- Per-session machinery (cleared on session end) -----------------------
+  private readonly perLayer = new Map<LayerId, PerLayerMachinery>();
+  private readonly _activeRegionByLayer = new Map<
+    LayerId,
+    WatchableValue<ActiveRegion | undefined>
+  >();
+  private sessionLockHandle: { release(): void } | undefined;
+  private unsubscribePhaseChanged: (() => void) | undefined;
+  private pointerEventBridge: PointerEventBridge | undefined;
+  private hotkeyBinder: EditSessionHotkeyBinder | undefined;
+  private cursorState: BrushCursorState | undefined;
+  private sliceOverlay: BrushCursorSliceOverlay | undefined;
+  private detachSliceOverlay: (() => void) | undefined;
+  private perspectiveOverlay: BrushCursorPerspectiveOverlay | undefined;
+  private detachPerspectiveOverlay: (() => void) | undefined;
+
+  // -- Read-only public views -----------------------------------------------
+  readonly activeRegionByLayer: ReadonlyMap<
+    LayerId,
+    WatchableValue<ActiveRegion | undefined>
+  > = this._activeRegionByLayer;
+
+  /**
+   * Per-layer patch texture caches that are currently attached. The
+   * cache is what implements `PatchedMaskProvider` and feeds the base
+   * `SegmentationRenderLayer`'s patch-overlay shader path.
+   */
+  get attachedPatchTextureCaches(): ReadonlyMap<LayerId, PatchTextureCache> {
+    const m = new Map<LayerId, PatchTextureCache>();
+    for (const [id, e] of this.perLayer) m.set(id, e.textureCache);
+    return m;
+  }
+
+  constructor(readonly viewer: Viewer) {
+    super();
+    this.logger = new NgLogger();
+    this.sessionLock = new NgSessionLockAdapter();
+    this.clock = new NgClock();
+    this.layerMetadataSource = new NgLayerMetadataSource(
+      this.viewer.layerManager,
+    );
+    this.chunkSource = new NgChunkSource(
+      this.viewer.layerManager,
+      this.viewer.chunkManager,
+    );
+    this.commitTarget = new NgCommitTarget();
+    // The chunk source merges in-memory committed chunks into baseline
+    // reads so a new session starts on top of a previous session's
+    // commits. See NgChunkSource.readBaselineChunk.
+    this.chunkSource.commitTarget = this.commitTarget;
+    this.saveTarget = new NgSaveTarget(
+      this.viewer.layerManager,
+      this.layerMetadataSource,
+      this.logger,
+    );
+
+    // NG does NOT register a save backend itself. NG runs as a same-origin
+    // iframe and cannot perform the authenticated write; the embedding host
+    // (the portal) installs a backend at viewer-ready via the public
+    // registration surface below — typically the NG-provided
+    // `PostMessageSaveBackend` (reachable as
+    // `window.viewer.editSessionHost.PostMessageSaveBackend`). Until it does,
+    // `saveBackendAvailable` is false and the Save controls stay disabled.
+    this.registerDisposer(
+      saveBackendRegistryChanged.add(() => {
+        this.saveBackendAvailable.value = hasAnySaveBackend();
+      }),
+    );
+
+    // The viewer constructor calls `tryRestoreFromState()` once, but the URL
+    // hash is parsed AFTER construction, so the first call is a no-op. Watch
+    // `state.changed` so that when the URL parse populates the intent block —
+    // or the user pastes a new JSON state — we retry the restore.
+    this.registerDisposer(
+      this.state.changed.add(() => {
+        if (this.activeSession.value !== undefined) return;
+        if (this.state.value.value === null) return;
+        void this.tryRestoreFromState();
+      }),
+    );
+  }
+
+  // -- Lifecycle ------------------------------------------------------------
+
+  /** Open a session described by the host-side `HostSessionConfig`. */
+  async openSession(config: HostSessionConfig): Promise<EditSession> {
+    if (this.activeSession.value !== undefined) {
+      throw new Error("A session is already active");
+    }
+
+    // NOTE: previously we tore down all per-layer machinery here so each
+    // session started fresh. That broke the cross-session "in-memory
+    // commits stay visible and editable" workflow — we now preserve any
+    // leftover LocalPatchStore + PatchedSegmentationRenderLayer per layer
+    // and just attach a fresh PatchMirror to the new session's overlay in
+    // `attachPerLayer`. Layers that aren't in the new config but still
+    // have a perLayer entry from a previous commit stay attached and
+    // visible until the user explicitly Saves or Resets them via the
+    // pending-changes panel.
+
+    const libraryConfig = this.buildLibraryConfig(config);
+    const adapters = this.buildAdapters();
+
+    let session: EditSession;
+    try {
+      session = await EditSession.open(libraryConfig, adapters);
+    } catch (err) {
+      this.handleOpenFailure(err);
+      throw err;
+    }
+
+    try {
+      this.attachPerLayer(session, config);
+      // Bbox clipping is enforced by the library's paint write path (it
+      // clamps every voxel write to the session region), so the host no
+      // longer feeds the bbox to the compute out-of-band.
+      this.sessionLock.setActiveSession({
+        sessionId: session.sessionId,
+        sessionLayerIds: new Set(config.layers.map((l) => l.layerId)),
+      });
+      this.bindSessionEvents(session);
+      // Set `activeSession.value` BEFORE persisting the intent. Writing the
+      // intent dispatches `state.changed`, which the constructor subscribes
+      // to in order to trigger `tryRestoreFromState()` after a URL-state
+      // restore. The subscription short-circuits when a session is already
+      // active — so we need `activeSession.value` to be set first. Doing it
+      // in the other order makes the just-opened session look like a
+      // restore-pending intent, leading the subscription to call
+      // `openSession` again (which throws "A session is already active"),
+      // and the failure handler clears the intent — wiping the URL state
+      // we'd just persisted. The user only sees the bug on the next reload.
+      this.activeSession.value = session;
+      this.writeIntentToState(config);
+      this.pointerEventBridge = new PointerEventBridge(
+        this,
+        this.viewer.display,
+      );
+      this.hotkeyBinder = new EditSessionHotkeyBinder(this, this.viewer);
+      this.attachCursorOverlays(config);
+    } catch (err) {
+      // If post-open wiring throws, attempt to terminate the session and
+      // surface the error.
+      try {
+        await session.discard();
+      } catch {
+        // ignore — the session will be GC'd
+      }
+      this.teardownCursorOverlays();
+      this.teardownHotkeyBinder();
+      this.teardownPerLayer();
+      throw err;
+    }
+    return session;
+  }
+
+  /**
+   * Discard the active session. The CURRENT session's edits are rolled
+   * back, but in-memory committed patches from previous sessions are
+   * preserved (the user's "Save" buffer survives this discard — only
+   * "Reset" in the pending-changes panel clears that).
+   *
+   * Rollback procedure: for every chunk dirtied during this session,
+   *   - if `commitTarget` has a committed snapshot → re-mirror it into the
+   *     per-layer LocalPatchStore (reverting to the committed state),
+   *   - else → drop the chunk's patch entry so the base layer renders
+   *     through (no leftover patches from in-session edits).
+   * Chunks NOT dirtied in this session keep whatever committed state they
+   * already had.
+   */
+
+  /**
+   * Tool selection invariant. The only entry point allowed to flip per-tool
+   * panel visibility — every other path (topbar click, hotkey, session
+   * teardown) goes through this method so the "≤1 tool panel visible at a
+   * time, matching the active tool" invariant always holds.
+   *
+   * `toolId === undefined` clears the active tool and hides all five panels
+   * (used for cursor selection and Escape).
+   */
+  selectTool(toolId: string | undefined): void {
+    const session = this.activeSession.value;
+    if (session === undefined) return;
+    try {
+      if (toolId === undefined) {
+        session.clearActiveTool();
+      } else {
+        session.setActiveTool(toolId);
+      }
+    } catch (err) {
+      this.logger.warn(
+        "session",
+        `${toolId === undefined ? "clearActiveTool" : `setActiveTool(${toolId})`} failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return;
+    }
+    const target = toolId !== undefined
+      ? this.toolPanelLocationFor(toolId)
+      : undefined;
+    for (const loc of this.allToolPanelLocations()) {
+      loc.visible = loc === target;
+    }
+  }
+
+  /**
+   * Toggles only the given tool's panel visibility — does NOT change the
+   * active tool. Used by the topbar when the user re-clicks the icon of the
+   * currently-active tool.
+   */
+  toggleToolPanel(toolId: string): void {
+    const loc = this.toolPanelLocationFor(toolId);
+    if (loc !== undefined) loc.visible = !loc.visible;
+  }
+
+  private toolPanelLocationFor(
+    toolId: string,
+  ): TrackableSidePanelLocation | undefined {
+    switch (toolId) {
+      case "painting.brush":
+        return this.brushPanelLocation;
+      case "painting.erase":
+        return this.eraserPanelLocation;
+      case "painting.fill":
+        return this.fillPanelLocation;
+      case "z-extrapolation":
+        return this.zExtrapPanelLocation;
+      case "correspondence":
+        return this.correspondencePanelLocation;
+    }
+    return undefined;
+  }
+
+  private allToolPanelLocations(): TrackableSidePanelLocation[] {
+    return [
+      this.brushPanelLocation,
+      this.eraserPanelLocation,
+      this.fillPanelLocation,
+      this.zExtrapPanelLocation,
+      this.correspondencePanelLocation,
+    ];
+  }
+
+  async discardActive(): Promise<void> {
+    const session = this.activeSession.value;
+    if (session === undefined) return;
+    // Snapshot the dirty set BEFORE discarding — `session.discard()` clears
+    // the library's DirtyTracker.
+    const dirty = Array.from(session.dirty.getDirtyChunks());
+    try {
+      await session.discard();
+    } finally {
+      this.rollbackDirtyChunks(dirty);
+      this.commitTeardown();
+    }
+  }
+
+  private rollbackDirtyChunks(overlayKeys: readonly string[]): void {
+    for (const key of overlayKeys) {
+      let coord;
+      try {
+        coord = OverlayKey.toCoord(key);
+      } catch {
+        continue;
+      }
+      const entry = this.perLayer.get(coord.layerId);
+      if (entry === undefined) continue;
+      const committed = this.commitTarget.getChunk(
+        coord.layerId,
+        coord.resolution,
+        coord.chunkId,
+      );
+      const chunkCoord = ChunkIdFactory.toCoord(coord.chunkId);
+      const chunkGridPosition = new Float32Array([
+        chunkCoord.x,
+        chunkCoord.y,
+        chunkCoord.z,
+      ]);
+      if (committed === undefined) {
+        // No committed snapshot — drop the patch entirely so the base
+        // layer renders through.
+        entry.patchStore.clearChunk(chunkGridPosition);
+        continue;
+      }
+      // Revert to the committed bytes. Mirror the conversion that
+      // `PatchMirror` does for live overlay writes.
+      const view = committed.bytes.asView();
+      const data =
+        view instanceof BigUint64Array ? view : widenToBigUint64(view);
+      const chunkDataSize = this.chunkDataSizeForLayer(
+        coord.layerId,
+        coord.resolution,
+      );
+      if (chunkDataSize === undefined) continue;
+      entry.patchStore.writeFullChunk(chunkGridPosition, chunkDataSize, data);
+    }
+  }
+
+  private chunkDataSizeForLayer(
+    layerId: LayerId,
+    _resolution: ResolutionType,
+  ): readonly [number, number, number] | undefined {
+    // The size is layer-resolution-specific. Pull it from the base
+    // segmentation render layer's first source (the same source the
+    // patch texture cache mirrors voxel-for-voxel).
+    const entry = this.perLayer.get(layerId);
+    if (entry === undefined) return undefined;
+    const sources = entry.baseRenderLayer.visibleSourcesList;
+    for (const v of sources) {
+      const size = v.source.spec.chunkDataSize;
+      if (size.length >= 3) {
+        // We don't strictly check resolution match here — chunk sizes are
+        // typically consistent across scales for a given layer at editing
+        // time and the rollback is best-effort. The library's metadata
+        // source is the authoritative answer but it's async; this path
+        // runs synchronously inside discard.
+        return [size[0], size[1], size[2]];
+      }
+    }
+    return undefined;
+  }
+
+  /** Commit the active session. Ends the session regardless of outcome. */
+  async commitActive(): Promise<CommitResult> {
+    const session = this.activeSession.value;
+    if (session === undefined) {
+      throw new Error("No active session to commit");
+    }
+    let result: CommitResult;
+    try {
+      result = await session.commit();
+    } finally {
+      // Commit = client-side in-memory persist. Keep the painted patches
+      // visible on the canvas (they live in the per-layer LocalPatchStore /
+      // PatchedSegmentationRenderLayer) so the user sees their work after
+      // committing. Discarding or starting a new session clears them.
+      this.commitTeardown();
+    }
+    return result;
+  }
+
+  /**
+   * Save the active session. The session remains active on success.
+   *
+   * An external `signal` (e.g. the sidebar's "Save All" abort controller)
+   * is composed with the host's own `saveAbortController` so callers of
+   * `cancelActiveSave()` can interrupt an in-flight save without having to
+   * own the controller themselves.
+   */
+  async saveActive(
+    layerIds?: readonly LayerId[],
+    signal?: AbortSignal,
+  ): Promise<SaveResult> {
+    const session = this.activeSession.value;
+    if (session === undefined) {
+      throw new Error("No active session to save");
+    }
+    if (this.saveAbortController !== undefined) {
+      throw new Error("A save is already in flight");
+    }
+    const controller = new AbortController();
+    this.saveAbortController = controller;
+    const onExternalAbort = () => controller.abort();
+    if (signal !== undefined) {
+      if (signal.aborted) controller.abort();
+      else signal.addEventListener("abort", onExternalAbort, { once: true });
+    }
+    try {
+      return await session.save(layerIds, controller.signal);
+    } finally {
+      if (signal !== undefined) {
+        signal.removeEventListener("abort", onExternalAbort);
+      }
+      if (this.saveAbortController === controller) {
+        this.saveAbortController = undefined;
+      }
+    }
+  }
+
+  /**
+   * Abort the in-flight save started by `saveActive()`. No-op when no save
+   * is in flight. Per `04-ui-shell.md` § "Cancellation", backends that
+   * observe the signal stop after the current chunk and return `'partial'`.
+   */
+  cancelActiveSave(): void {
+    this.saveAbortController?.abort();
+  }
+
+  /**
+   * Public host-level registration surface for save backends, reachable via
+   * `window.viewer.editSessionHost`. Hosts embedding neuroglancer (e.g. the
+   * portal) can register a backend for a specific data-source kind (the URL
+   * scheme, e.g. `"calcada"`, `"gs"`); a scheme-specific backend takes
+   * precedence over the default. See `src/editing/adapters/save_backend.ts`.
+   */
+  registerSaveBackend(kind: string, backend: SaveBackend): void {
+    registerSaveBackend(kind, backend);
+  }
+
+  /**
+   * Register the catch-all backend used for any data-source kind without a
+   * scheme-specific backend. NG does not install one itself — the embedding
+   * host (the portal) calls this at viewer-ready, typically with
+   * `new this.PostMessageSaveBackend({ ... })`.
+   */
+  registerDefaultSaveBackend(backend: SaveBackend): void {
+    registerDefaultSaveBackend(backend);
+  }
+
+  /**
+   * Resolve the canonical data-source URL for a layer (e.g.
+   * `gs://bucket/path|precomputed:`). Exposed so an embedder constructing a
+   * `PostMessageSaveBackend` can wire its `resolveDataSourceUrl` option without
+   * reaching into the viewer's `LayerManager` directly.
+   */
+  resolveLayerDataSourceUrl(layerId: LayerId): string | undefined {
+    return resolveDataSourceUrl(this.viewer.layerManager, layerId);
+  }
+
+  // -- Committed-buffer lifecycle (post-commit, no active session) ---------
+
+  /**
+   * Drop the in-memory committed patches for `layerId` without persisting
+   * them. Clears the corresponding `NgCommitTarget` entries and tears
+   * down the layer's `LocalPatchStore` + `PatchedSegmentationRenderLayer`
+   * so the base layer renders cleanly again. Safe to call any time.
+   */
+  resetLayer(layerId: LayerId): void {
+    this.commitTarget.clearLayer(layerId);
+    const entry = this.perLayer.get(layerId);
+    if (entry === undefined) return;
+    if (entry.mirror !== undefined) {
+      try {
+        entry.mirror.dispose();
+      } catch {
+        // ignore
+      }
+    }
+    // Withdraw the texture cache from the layer's editPatchOverlay
+    // watchable BEFORE disposing it. Otherwise the base segmentation
+    // shader might still try to bind from a freed texture handle on the
+    // next redraw.
+    const patchOverlayWatchable = this.patchOverlayByLayer.get(layerId);
+    if (patchOverlayWatchable !== undefined) {
+      patchOverlayWatchable.value = undefined;
+    }
+    try {
+      entry.textureCache.dispose();
+    } catch {
+      // ignore
+    }
+    try {
+      entry.patchStore.dispose();
+    } catch {
+      // ignore
+    }
+    this.perLayer.delete(layerId);
+    this._activeRegionByLayer.delete(layerId);
+  }
+
+  /** Drop the committed patches for every layer. */
+  resetAllCommitted(): void {
+    for (const layerId of [...this.perLayer.keys()]) {
+      this.resetLayer(layerId);
+    }
+    // Make sure NgCommitTarget is fully empty even for layers whose
+    // perLayer entry was already gone.
+    this.commitTarget.clearAll();
+  }
+
+  /**
+   * Persist the in-memory committed patches for the given layers (or all
+   * layers with pending changes if `layerIds` is omitted) via the host's
+   * save backends. On per-layer success the corresponding committed
+   * entries are cleared from `NgCommitTarget` and the layer's
+   * `LocalPatchStore` + `PatchedSegmentationRenderLayer` are torn down.
+   *
+   * Distinct from `saveActive()`, which only writes the live session's
+   * dirty chunks via the library's pipeline. This path is for committed
+   * buffers that survived past session end.
+   */
+  async saveCommitted(layerIds?: readonly LayerId[]): Promise<SaveResult> {
+    const targetLayers =
+      layerIds !== undefined && layerIds.length > 0
+        ? Array.from(new Set(layerIds))
+        : this.commitTarget.pendingLayerIds();
+    const outcomes: SaveLayerOutcome[] = [];
+    for (const layerId of targetLayers) {
+      const chunks = this.commitTarget.layerChunks(layerId);
+      if (chunks.length === 0) continue;
+      const payload: SavePayload = {
+        // No live session; synthesize a marker session id. Backends in
+        // v1 do not use this field for routing or auth.
+        sessionId: toSessionId("post-commit-save"),
+        savedAt: this.clock.now(),
+        layerIds: [layerId],
+        chunks: chunks.map((c) => ({
+          layerId: c.layerId,
+          resolution: c.resolution,
+          chunkId: c.chunkId,
+          chunkCoord: c.chunkCoord,
+          contentRef: c.contentRef,
+          bytes: c.bytes,
+        })),
+      };
+      let layerResult: SaveResult;
+      try {
+        layerResult = await this.saveTarget.save(payload);
+      } catch (err) {
+        outcomes.push({
+          status: "failed",
+          layerId,
+          error: {
+            kind: "recoverable",
+            code: "save-target-threw",
+            message: err instanceof Error ? err.message : String(err),
+            at: this.clock.now(),
+          },
+        });
+        continue;
+      }
+      for (const o of layerResult.outcomes) outcomes.push(o);
+      // Clear the committed buffer + render machinery for any layer whose
+      // outcome reports success.
+      for (const o of layerResult.outcomes) {
+        if (o.status === "succeeded") this.resetLayer(o.layerId);
+      }
+    }
+    return { overall: computeOverallOutcome(outcomes), outcomes };
+  }
+
+  /**
+   * True iff there's at least one committed chunk pending in memory that
+   * the user has not yet saved to the backend. Used to drive the
+   * `beforeunload` warning.
+   */
+  hasPendingCommittedChanges(): boolean {
+    return this.commitTarget.accepted.size > 0;
+  }
+
+  // -- Per-layer accessors --------------------------------------------------
+
+  getPatchStoreForLayer(layerId: LayerId): LocalPatchStore | undefined {
+    return this.perLayer.get(layerId)?.patchStore;
+  }
+
+  /**
+   * Return a persistent watchable holding the bbox lo/hi voxels for `layerId`
+   * in the layer's chunk space, or `undefined` when no session is active for
+   * the layer. Constructed lazily on first call; the same instance is
+   * returned on every subsequent call for the same layer.
+   *
+   * Wired into `SliceViewSegmentationDisplayState.editBboxLoHi` and
+   * `ImageRenderLayerOptions.editBboxLoHi` per
+   * `docs/edit-session-integration/architecture/06-bbox-rendering.md`
+   * § "Wiring to the render layers".
+   */
+  getActiveRegionWatchableForLayer(
+    layerName: string,
+  ): WatchableValue<{ lo: vec3; hi: vec3 } | undefined> {
+    let w = this.editBboxByLayer.get(layerName);
+    if (w === undefined) {
+      w = new WatchableValue<{ lo: vec3; hi: vec3 } | undefined>(
+        this.readEditBboxForLayer(layerName),
+      );
+      this.editBboxByLayer.set(layerName, w);
+    }
+    return w;
+  }
+
+  /**
+   * Returns the persistent per-layer watchable for the patched-mask
+   * provider hook the base `SegmentationRenderLayer` consumes via
+   * `editPatchOverlay`. The watchable's current value is the active
+   * session's `PatchedSegmentationRenderLayer` (which implements
+   * `PatchedMaskProvider`) for this layer, or `undefined` if no session
+   * has attached a provider yet. Lazily allocated — same wiring pattern
+   * as `getActiveRegionWatchableForLayer`.
+   */
+  getPatchOverlayWatchableForLayer(
+    layerName: string,
+  ): WatchableValue<PatchedMaskProvider | undefined> {
+    let w = this.patchOverlayByLayer.get(layerName);
+    if (w === undefined) {
+      const existing = this.perLayer.get(layerName as LayerId)?.textureCache;
+      w = new WatchableValue<PatchedMaskProvider | undefined>(existing);
+      this.patchOverlayByLayer.set(layerName, w);
+    }
+    return w;
+  }
+
+  private readEditBboxForLayer(
+    layerName: string,
+  ): { lo: vec3; hi: vec3 } | undefined {
+    // The `LayerId` newtype is a branded string; the lookup map is keyed by
+    // the brand, but at runtime branded strings are plain strings, so the
+    // cast is a no-op.
+    const region = this._activeRegionByLayer.get(layerName as LayerId)?.value;
+    if (region === undefined) return undefined;
+    return {
+      lo: vec3.fromValues(region.lo[0], region.lo[1], region.lo[2]),
+      hi: vec3.fromValues(region.hi[0], region.hi[1], region.hi[2]),
+    };
+  }
+
+  /**
+   * Re-evaluate every per-layer bbox watchable from `_activeRegionByLayer`.
+   * Called on session open / close.
+   */
+  private refreshEditBboxWatchables(): void {
+    for (const [layerName, watchable] of this.editBboxByLayer) {
+      watchable.value = this.readEditBboxForLayer(layerName);
+    }
+  }
+
+  /**
+   * Return a persistent watchable holding the set of resolutions the layer's
+   * slice-view render layers are allowed to display while a session is
+   * active, or `undefined` when no session is active for the layer.
+   *
+   * Used by `SliceViewRenderLayer.getSources` to filter the multiscale
+   * source's scales, restricting display to the user-selected resolutions
+   * for both writable and locked layers in the session.
+   */
+  getAllowedResolutionsWatchableForLayer(
+    layerName: string,
+  ): WatchableValue<ReadonlySet<ResolutionType> | undefined> {
+    let w = this.allowedResolutionsByLayer.get(layerName);
+    if (w === undefined) {
+      w = new WatchableValue<ReadonlySet<ResolutionType> | undefined>(
+        this.readAllowedResolutionsForLayer(layerName),
+      );
+      this.allowedResolutionsByLayer.set(layerName, w);
+    }
+    return w;
+  }
+
+  private readAllowedResolutionsForLayer(
+    layerName: string,
+  ): ReadonlySet<ResolutionType> | undefined {
+    return this._allowedResolutionsByLayer.get(layerName as LayerId);
+  }
+
+  private refreshAllowedResolutionsWatchables(): void {
+    for (const [layerName, watchable] of this.allowedResolutionsByLayer) {
+      watchable.value = this.readAllowedResolutionsForLayer(layerName);
+    }
+  }
+
+  // -- Reload restore -------------------------------------------------------
+
+  /**
+   * Promise of the in-flight restore attempt, if any. Used to coalesce
+   * repeated `state.changed` firings during the same restore window
+   * (e.g. URL parse → layer add → data-source load each dispatch
+   * `state.changed` indirectly).
+   */
+  private restoreInFlight: Promise<void> | undefined;
+
+  /**
+   * Re-open a session from `state` after a viewer reload. No-op when no
+   * intent is persisted or when a session is already active.
+   *
+   * Layers and their data sources load asynchronously after URL parse, so
+   * this method awaits per-layer readiness via the metadata source's
+   * `waitForLayer` / `waitForVolumetricReady` gates before validating
+   * resolutions. Without those gates, restore would race data-source
+   * loading and clear the persisted session on a transient
+   * "no-volumetric-data-source" error.
+   */
+  async tryRestoreFromState(): Promise<void> {
+    if (this.restoreInFlight !== undefined) return this.restoreInFlight;
+    if (this.activeSession.value !== undefined) return;
+    if (this.state.value.value === null) return;
+    const attempt = this.runRestoreAttempt().finally(() => {
+      this.restoreInFlight = undefined;
+    });
+    this.restoreInFlight = attempt;
+    return attempt;
+  }
+
+  private async runRestoreAttempt(): Promise<void> {
+    // Capture the intent at attempt-start so that if `state` is mutated
+    // mid-await (user pastes a new state, or `failRestore` clears it),
+    // we abandon this attempt rather than mis-applying stale config.
+    const intent = this.state.value.value;
+    if (intent === null) return;
+
+    try {
+      await this.layerMetadataSource.waitForLayer(
+        intent.bboxRef.annotationLayerName,
+      );
+    } catch (err) {
+      if (!this.intentIsStillCurrent(intent)) return;
+      const message = err instanceof Error ? err.message : String(err);
+      this.failRestore(
+        `Edit session reference invalid: annotation layer ${JSON.stringify(intent.bboxRef.annotationLayerName)} not found (${message}).`,
+      );
+      return;
+    }
+    if (!this.intentIsStillCurrent(intent)) return;
+    // Walking the annotation source for the specific id is a downstream
+    // concern (annotation sources expose `references`). For v1 we trust the
+    // captured bbox bytes and let the modal-style flow re-validate against
+    // the live annotation if/when the UI tab is opened. If the annotation
+    // is missing from the source, downstream consumers degrade gracefully.
+
+    for (const layer of intent.layers) {
+      try {
+        await this.layerMetadataSource.waitForVolumetricReady(layer.layerId);
+        if (!this.intentIsStillCurrent(intent)) return;
+        const metadata = await this.layerMetadataSource.resolve(layer.layerId);
+        if (!this.intentIsStillCurrent(intent)) return;
+        const availableResolutions = new Set(
+          metadata.scales.map((s) => s.resolution),
+        );
+        for (const resolution of layer.resolutions) {
+          if (!availableResolutions.has(resolution)) {
+            this.failRestore(
+              `Edit session reference invalid: resolution ${JSON.stringify(resolution)} unavailable on layer ${JSON.stringify(layer.layerId)}.`,
+            );
+            return;
+          }
+        }
+      } catch (err) {
+        if (!this.intentIsStillCurrent(intent)) return;
+        const message = err instanceof Error ? err.message : String(err);
+        this.failRestore(`Edit session reference invalid: ${message}`);
+        return;
+      }
+    }
+
+    const config: HostSessionConfig = {
+      bboxRef: {
+        annotationLayerName: intent.bboxRef.annotationLayerName,
+        annotationId: intent.bboxRef.annotationId,
+      },
+      bboxVoxelCoords: [
+        intent.capturedRegion.lo[0],
+        intent.capturedRegion.lo[1],
+        intent.capturedRegion.lo[2],
+        intent.capturedRegion.hi[0],
+        intent.capturedRegion.hi[1],
+        intent.capturedRegion.hi[2],
+      ],
+      bboxResolution: intent.bboxRef.resolution,
+      layers: intent.layers,
+    };
+    if (!this.intentIsStillCurrent(intent)) return;
+    try {
+      await this.openSession(config);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.failRestore(`Could not re-open session: ${message}`);
+    }
+  }
+
+  private intentIsStillCurrent(intent: EditSessionIntent): boolean {
+    if (this.activeSession.value !== undefined) return false;
+    return this.state.value.value === intent;
+  }
+
+  // -- Disposal -------------------------------------------------------------
+
+  override disposed(): void {
+    // Best-effort: if a session is still alive, drop in-memory state. We do
+    // not await — disposal is synchronous.
+    if (this.activeSession.value !== undefined) {
+      void this.activeSession.value.discard().catch(() => {});
+    }
+    this.teardownHotkeyBinder();
+    this.teardownPerLayer();
+    this.commitTarget.clearAll();
+    super.disposed();
+  }
+
+  // -- Internal helpers -----------------------------------------------------
+
+  private buildLibraryConfig(config: HostSessionConfig): EditSessionConfig {
+    if (config.layers.length === 0) {
+      throw new InvalidSessionConfigError(
+        "EditSessionConfig.layers must be non-empty",
+      );
+    }
+    const layers: LayerSelection[] = config.layers.map((l) => ({
+      layerId: l.layerId,
+      selectedResolutions: [...l.resolutions],
+    }));
+    const firstWritable = config.layers.find((l) => l.writable);
+    const targetLayer = firstWritable ?? config.layers[0];
+    const targetLayerId = targetLayer.layerId;
+    const targetResolution = targetLayer.resolutions[0];
+    const sourceImageLayerId = config.layers[0].layerId;
+
+    // The user-facing "Size" is `radius * 2 + 1` (see brush panel). Default
+    // size 5 paints a 13-voxel diamond — visible enough to confirm the brush
+    // works, small enough not to overshoot a precision edit.
+    const paintInitial: PaintingSharedState = {
+      targetLayerId,
+      targetResolution,
+      radius: 2,
+      radiusCycle: DEFAULT_RADIUS_CYCLE,
+      // The brush writes this segment id into voxels. The architect spec
+      // suggested 0n (= erase) and required the user to set a value before
+      // painting, but that hides successful strokes behind a confusing
+      // "nothing happens" UX. Default to 1n so the brush produces visible
+      // results immediately; the user can change it via the brush panel.
+      activeValue: 1n,
+      eraseValue: 0n,
+      mask: undefined as PaintingMaskConfig | undefined,
+    };
+
+    const correspondenceInitial: CorrespondenceState = {
+      lines: [],
+      markers: [],
+      pending: undefined,
+      hoveredId: undefined,
+      hoveredKind: undefined,
+      selectedId: undefined,
+      selectedKind: undefined,
+      reversedArrowMode: false,
+      sourceImageLayerId,
+      targetImageLayerId: targetLayerId,
+      fieldLayerId: targetLayerId,
+      warpedLayerId: targetLayerId,
+      writeResolution: targetResolution,
+      numIter: 200,
+      rigidity: 1,
+      learningRate: 0.1,
+      optimizer: "adam",
+      mseWeight: 1,
+    };
+
+    const zExtInitial: ZExtrapolationState = {
+      targetLayerId,
+      targetResolution,
+      imageLayerId: sourceImageLayerId,
+      imageResolution: targetResolution,
+      bboxXY: undefined,
+      sourceZ: undefined,
+      zRange: undefined,
+      trackingSegments: [],
+      modelHint: undefined,
+    };
+
+    return {
+      layers,
+      region: {
+        bbox: config.bboxVoxelCoords,
+        resolution: config.bboxResolution,
+      },
+      tools: [
+        painting({
+          initialState: paintInitial,
+          compute: new PaintingCompute(),
+        }),
+        correspondence({
+          initialState: correspondenceInitial,
+          compute: new NgCorrespondenceCompute(),
+        }),
+        zExtrapolation({
+          initialState: zExtInitial,
+          compute: new NgZExtrapolationCompute(),
+        }),
+      ],
+    };
+  }
+
+  private buildAdapters(): EditSessionAdapters {
+    return {
+      layerMetadata: this.layerMetadataSource,
+      chunks: this.chunkSource,
+      commit: this.commitTarget,
+      save: this.saveTarget,
+      lock: this.sessionLock,
+      clock: this.clock,
+      logger: this.logger,
+    };
+  }
+
+  private async attachPerLayer(
+    session: EditSession,
+    config: HostSessionConfig,
+  ): Promise<void> {
+    // Step 1: populate `_activeRegionByLayer` for EVERY layer in the
+    // session config (writable AND locked). Both kinds participate in
+    // bbox-scoped rendering — per
+    // `docs/edit-session-integration/architecture/06-bbox-rendering.md`
+    // § "Behaviorally important details", the dim alpha applies to all
+    // layers in `EditSessionConfig.layers`. Without this, locked image
+    // layers stay fully bright outside the bbox (bug seen in v1).
+    for (const layer of config.layers) {
+      this._activeRegionByLayer.set(
+        layer.layerId,
+        new WatchableValue<ActiveRegion | undefined>(
+          await this.computeActiveRegion(
+            layer.layerId,
+            layer.resolutions[0],
+            config,
+          ),
+        ),
+      );
+      this._allowedResolutionsByLayer.set(
+        layer.layerId,
+        new Set(layer.resolutions),
+      );
+    }
+    // Step 2: attach per-layer paint machinery for WRITABLE layers only.
+    for (const layer of config.layers) {
+      if (!layer.writable) continue;
+      const userLayer = this.findSegmentationUserLayer(layer.layerId);
+      if (userLayer === undefined) {
+        this.logger.warn(
+          "session",
+          `Layer ${layer.layerId} is not a writable segmentation layer; skipping render-layer attach`,
+        );
+        continue;
+      }
+      // Reuse the existing per-layer entry when a previous commit left
+      // one behind — its `LocalPatchStore` + `PatchTextureCache` are the
+      // user's in-memory commits and must stay visible/editable.
+      let entry = this.perLayer.get(layer.layerId);
+      if (entry === undefined) {
+        const baseRenderLayer = findBaseSegmentationRenderLayer(userLayer);
+        if (baseRenderLayer === undefined) {
+          this.logger.warn(
+            "session",
+            `Layer ${layer.layerId} has no SegmentationRenderLayer yet; skipping patch-overlay attach`,
+          );
+          continue;
+        }
+        const patchStore = new LocalPatchStore();
+        const textureCache = new PatchTextureCache(patchStore);
+        entry = {
+          patchStore,
+          textureCache,
+          baseRenderLayer,
+          mirror: undefined,
+        };
+        this.perLayer.set(layer.layerId, entry);
+        // Publish the texture cache as the layer's PatchedMaskProvider so
+        // the base `SegmentationRenderLayer`'s `getUint64DataValue` starts
+        // sampling patched values uniformly with baseline values. The base
+        // shader recompiles to the editPatchOverlayActive variant on this
+        // watchable's first non-undefined dispatch.
+        this.getPatchOverlayWatchableForLayer(layer.layerId).value =
+          textureCache;
+      }
+      entry.mirror = new PatchMirror(
+        session,
+        layer.layerId,
+        entry.patchStore,
+        this.logger,
+        (coord) =>
+          this.chunkSource.readBaselineChunk(
+            coord.layerId,
+            coord.resolution,
+            coord.chunkId,
+            ChunkIdFactory.toCoord(coord.chunkId),
+          ),
+      );
+    }
+
+    // Save backend: persistence routes through whatever backend the embedding
+    // host (the portal) registers via `registerDefaultSaveBackend` — typically
+    // the protocol-agnostic `PostMessageSaveBackend`, which ships dirty chunks
+    // to the portal over postMessage to be written there (TM-289, Option A).
+    // NG registers none itself. The earlier calcada `/edit_write` HttpSource
+    // path is retired, so no per-layer `HttpSource` resolution is needed.
+
+    // Propagate the newly-set per-layer regions into any persistent
+    // watchables that segmentation/image user layers subscribed to at their
+    // construction time.
+    this.refreshEditBboxWatchables();
+    this.refreshAllowedResolutionsWatchables();
+  }
+
+  /**
+   * Compute the per-layer active region in the viewer's DISPLAY coordinate
+   * space (the same frame as `viewer.position.value`). The conversion is:
+   *
+   *   bbox_displayVoxel[i] =
+   *     bboxVoxels[i] × bboxResolutionVoxelSize_nm[i] × 1e-9 /
+   *     voxelPhysicalScales[i]
+   *
+   * where `voxelPhysicalScales[i]` is the display dimension's voxel size in
+   * meters (from `viewer.displayDimensionRenderInfo.value`), and the `1e-9`
+   * converts the annotation's nm voxel size to meters.
+   *
+   * The shader compares this with `(uChunkToGlobal *
+   * vec4(vChunkPosition + uTranslation, 1.0)).xyz`, which is the
+   * fragment's position in the same display-coord frame. So the
+   * comparison is resolution-independent — works regardless of which
+   * scale (16 nm vs 32 nm vs ...) the viewer actually rendered.
+   *
+   * `layerId` and `layerResolution` are retained for API symmetry; the
+   * current bbox is layer-agnostic in display coords.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  private async computeActiveRegion(
+    _layerId: LayerId,
+    _layerResolution: ResolutionType,
+    config: HostSessionConfig,
+  ): Promise<ActiveRegion | undefined> {
+    const renderInfo = this.viewer.displayDimensionRenderInfo.value;
+    const scales = renderInfo.voxelPhysicalScales;
+    const bboxVoxelSizeNm = Resolution.toVoxelSize(config.bboxResolution);
+    const display = (axis: number, voxelCoord: number): number => {
+      const scale = scales[axis];
+      if (!Number.isFinite(scale) || scale === 0) {
+        return voxelCoord;
+      }
+      return (voxelCoord * bboxVoxelSizeNm[axis] * 1e-9) / scale;
+    };
+    return {
+      lo: [
+        display(0, config.bboxVoxelCoords[0]),
+        display(1, config.bboxVoxelCoords[1]),
+        display(2, config.bboxVoxelCoords[2]),
+      ],
+      hi: [
+        display(0, config.bboxVoxelCoords[3]),
+        display(1, config.bboxVoxelCoords[4]),
+        display(2, config.bboxVoxelCoords[5]),
+      ],
+    };
+  }
+
+  /**
+   * Construct the shared `BrushCursorState` and a `BrushCursorSliceOverlay`
+   * attached to the first writable layer's render-layer list. v1
+   * simplification: a single overlay piggy-backs on one writable layer's
+   * draw pass; Phase 3+ may register a dedicated viewer-level overlay if
+   * multi-layer cursoring becomes a concern.
+   */
+  private attachCursorOverlays(config: HostSessionConfig): void {
+    this.cursorState = new BrushCursorState(this);
+    const firstWritable = config.layers.find((l) => l.writable);
+    if (firstWritable === undefined) return;
+    const userLayer = this.findSegmentationUserLayer(firstWritable.layerId);
+    if (userLayer === undefined) return;
+    this.sliceOverlay = new BrushCursorSliceOverlay(
+      this.viewer.display.gl,
+      this.cursorState,
+    );
+    this.detachSliceOverlay = userLayer.addRenderLayer(this.sliceOverlay);
+    this.perspectiveOverlay = new BrushCursorPerspectiveOverlay(
+      this.viewer.display.gl,
+      this.cursorState,
+    );
+    this.detachPerspectiveOverlay = userLayer.addRenderLayer(
+      this.perspectiveOverlay,
+    );
+  }
+
+  private teardownHotkeyBinder(): void {
+    if (this.hotkeyBinder !== undefined) {
+      try {
+        this.hotkeyBinder.dispose();
+      } catch {
+        // ignore
+      }
+      this.hotkeyBinder = undefined;
+    }
+  }
+
+  private teardownCursorOverlays(): void {
+    if (this.detachPerspectiveOverlay !== undefined) {
+      try {
+        this.detachPerspectiveOverlay();
+      } catch {
+        // ignore
+      }
+      this.detachPerspectiveOverlay = undefined;
+    }
+    this.perspectiveOverlay = undefined;
+    if (this.detachSliceOverlay !== undefined) {
+      try {
+        this.detachSliceOverlay();
+      } catch {
+        // ignore
+      }
+      this.detachSliceOverlay = undefined;
+    }
+    // The slice overlay is owned by `addRenderLayer`'s detach call (which
+    // disposes the layer); only release the reference here.
+    this.sliceOverlay = undefined;
+    if (this.cursorState !== undefined) {
+      try {
+        this.cursorState.dispose();
+      } catch {
+        // ignore
+      }
+      this.cursorState = undefined;
+    }
+  }
+
+  private findSegmentationUserLayer(
+    layerId: LayerId,
+  ): SegmentationUserLayer | undefined {
+    const managed = this.viewer.layerManager.getLayerByName(layerId);
+    if (managed === undefined) return undefined;
+    const user = managed.layer;
+    if (user === null) return undefined;
+    // Avoid hard dependency on `instanceof SegmentationUserLayer`: the host
+    // can attach to any layer whose render layers include a
+    // `SegmentationRenderLayer`. Phase-3 modal will already have validated
+    // the layer is a segmentation layer.
+    return user as SegmentationUserLayer;
+  }
+
+  private bindSessionEvents(session: EditSession): void {
+    // The library does not emit a discrete "phase-changed" event in this
+    // public surface; we instead listen for fatal session errors, which
+    // signal an externally-driven termination. Recoverable errors keep the
+    // session ACTIVE.
+    this.unsubscribePhaseChanged = session.on("error", (err) => {
+      if (err.kind === "fatal") {
+        StatusMessage.showTemporaryMessage(
+          `Edit session terminated: ${err.message}`,
+          8000,
+        );
+        this.finalizeTeardown();
+      }
+    });
+  }
+
+  private writeIntentToState(config: HostSessionConfig): void {
+    const intent: EditSessionIntent = {
+      bboxRef: {
+        annotationLayerName: config.bboxRef.annotationLayerName,
+        annotationId: config.bboxRef.annotationId,
+        resolution: config.bboxResolution,
+      },
+      layers: config.layers.map((l) => ({
+        layerId: l.layerId,
+        resolutions: [...l.resolutions],
+        writable: l.writable,
+      })),
+      capturedRegion: {
+        lo: [
+          config.bboxVoxelCoords[0],
+          config.bboxVoxelCoords[1],
+          config.bboxVoxelCoords[2],
+        ],
+        hi: [
+          config.bboxVoxelCoords[3],
+          config.bboxVoxelCoords[4],
+          config.bboxVoxelCoords[5],
+        ],
+      },
+    };
+    this.state.value.value = intent;
+  }
+
+  private handleOpenFailure(err: unknown): void {
+    if (err instanceof InvalidSessionConfigError) {
+      StatusMessage.showTemporaryMessage(
+        `Invalid edit-session config: ${err.message}`,
+        6000,
+      );
+      return;
+    }
+    if (err instanceof SessionPhaseViolationError) {
+      StatusMessage.showTemporaryMessage(
+        `Edit-session phase violation: ${err.message}`,
+        6000,
+      );
+      return;
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    this.logger.error("session", message);
+  }
+
+  /**
+   * Full teardown. Used by `discardActive` and the disposed path:
+   *   - tools (pointer bridge, hotkey binder, cursor),
+   *   - per-layer rendering (LocalPatchStore, PatchedSegmentationRenderLayer,
+   *     PatchMirror),
+   *   - session lock + state.
+   */
+  private finalizeTeardown(): void {
+    this.tearDownSessionTools();
+    this.teardownPerLayer();
+    this.tearDownSessionState();
+  }
+
+  /**
+   * Partial teardown for `commitActive` and `discardActive`. The library's
+   * commit pipeline has already stashed the dirty chunks in
+   * `NgCommitTarget` (the host-side in-memory committed buffer). We need
+   * the painted result to stay VISIBLE on the canvas — it's the user's
+   * client-side persistence — so keep the per-layer `LocalPatchStore` +
+   * `PatchedSegmentationRenderLayer` alive. Everything else (session
+   * tools, library lock, sidebar state, the per-layer active region) is
+   * torn down so the editing UI exits cleanly and the bbox-clip shader
+   * path deactivates on every render layer.
+   *
+   * Clearing `_activeRegionByLayer` is what flips `editBboxLoHi` back to
+   * `undefined` on the per-layer watchables, which turns OFF the
+   * `editBboxActive` shader gate. Without this, render layers stay stuck
+   * in "clip outside the last-known bbox" mode even after the session
+   * ends — which means the canvas continues to discard everything outside
+   * the prior bbox.
+   *
+   * The `PatchMirror` instances are disposed (their backing session is
+   * gone, no more `DirtyTracker` events will arrive) but the patch bytes
+   * already mirrored into the GPU stores stay put.
+   *
+   * URL state is cleared because in-memory commits do not survive a
+   * reload — they're per-client. A reload should start with a clean slate.
+   */
+  private commitTeardown(): void {
+    this.tearDownSessionTools();
+    for (const entry of this.perLayer.values()) {
+      if (entry.mirror !== undefined) {
+        try {
+          entry.mirror.dispose();
+        } catch {
+          // ignore
+        }
+        entry.mirror = undefined;
+      }
+    }
+    this._activeRegionByLayer.clear();
+    this._allowedResolutionsByLayer.clear();
+    this.refreshEditBboxWatchables();
+    this.refreshAllowedResolutionsWatchables();
+    this.tearDownSessionState();
+  }
+
+  private tearDownSessionTools(): void {
+    if (this.pointerEventBridge !== undefined) {
+      try {
+        this.pointerEventBridge.dispose();
+      } catch {
+        // ignore
+      }
+      this.pointerEventBridge = undefined;
+    }
+    this.teardownHotkeyBinder();
+    this.teardownCursorOverlays();
+  }
+
+  private tearDownSessionState(): void {
+    this.sessionLock.clearActiveSession();
+    if (this.sessionLockHandle !== undefined) {
+      try {
+        this.sessionLockHandle.release();
+      } catch {
+        // ignore
+      }
+      this.sessionLockHandle = undefined;
+    }
+    if (this.unsubscribePhaseChanged !== undefined) {
+      try {
+        this.unsubscribePhaseChanged();
+      } catch {
+        // ignore
+      }
+      this.unsubscribePhaseChanged = undefined;
+    }
+    this.state.value.value = null;
+    this.activeSession.value = undefined;
+    for (const loc of this.allToolPanelLocations()) {
+      loc.visible = false;
+    }
+    if (this.saveAbortController !== undefined) {
+      try {
+        this.saveAbortController.abort();
+      } catch {
+        // ignore
+      }
+      this.saveAbortController = undefined;
+    }
+  }
+
+  private teardownPerLayer(): void {
+    // Withdraw every texture cache from its editPatchOverlay watchable
+    // BEFORE disposing the cache. Otherwise the base segmentation shader
+    // could try to bind from a freed texture handle on the next redraw.
+    // Recompiling the shader back to the no-hook variant happens on the
+    // next render naturally because `editPatchOverlayActive` derives
+    // from `editPatchOverlay.value !== undefined`.
+    for (const watchable of this.patchOverlayByLayer.values()) {
+      watchable.value = undefined;
+    }
+    for (const entry of this.perLayer.values()) {
+      if (entry.mirror !== undefined) {
+        try {
+          entry.mirror.dispose();
+        } catch {
+          // ignore
+        }
+      }
+      try {
+        entry.textureCache.dispose();
+      } catch {
+        // ignore
+      }
+      try {
+        entry.patchStore.dispose();
+      } catch {
+        // ignore
+      }
+    }
+    this.perLayer.clear();
+    this._activeRegionByLayer.clear();
+    this._allowedResolutionsByLayer.clear();
+    // Flip subscribers from `defined` to `undefined`; this triggers the
+    // bbox-dim shader path to recompile back to the no-session variant on
+    // the next render and re-enables full resolution range on slice views.
+    this.refreshEditBboxWatchables();
+    this.refreshAllowedResolutionsWatchables();
+  }
+
+  private failRestore(message: string): void {
+    StatusMessage.showTemporaryMessage(message, 8000);
+    this.state.value.value = null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Free-function helpers
+// ---------------------------------------------------------------------------
+
+function findBaseSegmentationRenderLayer(
+  user: SegmentationUserLayer,
+): SegmentationRenderLayer | undefined {
+  for (const rl of user.renderLayers) {
+    if (rl instanceof SegmentationRenderLayer) return rl;
+  }
+  return undefined;
+}
+
+/**
+ * Widen a narrower typed-array voxel buffer into a `BigUint64Array` with
+ * one BigUint64 per voxel (matching `LocalPatchStore`'s storage format).
+ * Mirrors the conversion logic in `PatchMirror.toBigUint64Array` so that
+ * discard-rollback writes are byte-compatible with live mirror writes.
+ */
+function computeOverallOutcome(
+  outcomes: readonly SaveLayerOutcome[],
+): SaveResult["overall"] {
+  if (outcomes.length === 0) return "all-succeeded";
+  let anySucceeded = false;
+  let anyFailed = false;
+  for (const o of outcomes) {
+    if (o.status === "succeeded") anySucceeded = true;
+    else anyFailed = true;
+  }
+  if (anySucceeded && !anyFailed) return "all-succeeded";
+  if (anyFailed && !anySucceeded) return "all-failed";
+  return "partial";
+}
+
+function widenToBigUint64(view: ArrayBufferView): BigUint64Array {
+  const len = (view as unknown as { length: number }).length;
+  const out = new BigUint64Array(len);
+  if (
+    view instanceof Uint8Array ||
+    view instanceof Uint16Array ||
+    view instanceof Uint32Array
+  ) {
+    for (let i = 0; i < len; ++i) out[i] = BigInt(view[i]);
+    return out;
+  }
+  if (
+    view instanceof Int8Array ||
+    view instanceof Int16Array ||
+    view instanceof Int32Array
+  ) {
+    for (let i = 0; i < len; ++i) out[i] = BigInt(view[i] >>> 0);
+    return out;
+  }
+  // Unknown / unsupported types fall through as all-zero — safer than
+  // misreading bytes.
+  return out;
+}

@@ -33,6 +33,13 @@ export default (env, args) => {
               parser: {
                 syntax: "typescript",
                 decorators: true,
+                tsx: true,
+              },
+              transform: {
+                react: {
+                  runtime: "automatic",
+                  importSource: "preact",
+                },
               },
             },
             env: {

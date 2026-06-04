@@ -22,6 +22,7 @@ import {
   CHUNK_LAYER_STATISTICS_RPC_ID,
   CHUNK_MANAGER_RPC_ID,
   CHUNK_QUEUE_MANAGER_RPC_ID,
+  CHUNK_SET_PERMANENT_RPC_ID,
   CHUNK_SOURCE_INVALIDATE_RPC_ID,
   ChunkState,
   REQUEST_CHUNK_STATISTICS_RPC_ID,
@@ -418,6 +419,23 @@ export class ChunkManager extends SharedObject {
       newSource.initializeCounterpart(this.rpc!, {});
       newSource.key = keyObject;
       return newSource;
+    });
+  }
+
+  /**
+   * Toggle permanent residency for a chunk. Permanent chunks bypass GPU and
+   * system-memory eviction until the flag is cleared. Used by the edit-session
+   * host to pin layer chunks against remote source drift.
+   */
+  markChunkPermanent(
+    source: ChunkSource,
+    chunkKey: string,
+    permanent: boolean,
+  ): void {
+    this.rpc!.invoke(CHUNK_SET_PERMANENT_RPC_ID, {
+      source: source.rpcId,
+      key: chunkKey,
+      permanent,
     });
   }
 }

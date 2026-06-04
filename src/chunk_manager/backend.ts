@@ -23,6 +23,7 @@ import {
   CHUNK_LAYER_STATISTICS_RPC_ID,
   CHUNK_MANAGER_RPC_ID,
   CHUNK_QUEUE_MANAGER_RPC_ID,
+  CHUNK_SET_PERMANENT_RPC_ID,
   CHUNK_SOURCE_INVALIDATE_RPC_ID,
   ChunkDownloadStatistics,
   ChunkMemoryStatistics,
@@ -108,6 +109,13 @@ export class Chunk implements Disposable {
    */
   newPriorityTier = ChunkPriorityTier.RECENT;
 
+  /**
+   * When true the chunk is excluded from eviction queues — both GPU and system
+   * memory residency are held until the flag is cleared. Used by the edit
+   * session host to pin reference imagery against remote-source drift.
+   */
+  permanent = false;
+
   private systemMemoryBytes_ = 0;
   private gpuMemoryBytes_ = 0;
   private downloadSlots_ = 1;
@@ -138,6 +146,7 @@ export class Chunk implements Disposable {
     this.state = ChunkState.NEW;
     this.requestedState = ChunkState.NEW;
     this.newRequestedState = ChunkState.NEW;
+    this.permanent = false;
   }
 
   /**
@@ -776,23 +785,37 @@ export class ChunkQueueManager extends SharedObjectCounterpart {
           yield this.computeEvictionQueue;
         } else {
           yield this.downloadEvictionQueue[chunk.source!.sourceQueueLevel];
-          yield this.systemMemoryEvictionQueue;
+          if (!chunk.permanent) {
+            yield this.systemMemoryEvictionQueue;
+          }
         }
         break;
 
       case ChunkState.SYSTEM_MEMORY_WORKER:
       case ChunkState.SYSTEM_MEMORY:
-        yield this.systemMemoryEvictionQueue;
+        if (!chunk.permanent) {
+          yield this.systemMemoryEvictionQueue;
+        }
         if (chunk.requestedState === ChunkState.GPU_MEMORY) {
           yield this.gpuMemoryPromotionQueue;
         }
         break;
 
       case ChunkState.GPU_MEMORY:
-        yield this.systemMemoryEvictionQueue;
-        yield this.gpuMemoryEvictionQueue;
+        if (!chunk.permanent) {
+          yield this.systemMemoryEvictionQueue;
+          yield this.gpuMemoryEvictionQueue;
+        }
         break;
     }
+  }
+
+  setChunkPermanent(chunk: Chunk, permanent: boolean) {
+    if (chunk.permanent === permanent) return;
+    this.removeChunkFromQueues_(chunk);
+    chunk.permanent = permanent;
+    this.addChunkToQueues_(chunk);
+    this.scheduleUpdate();
   }
 
   adjustCapacitiesForChunk(chunk: Chunk, add: boolean) {
@@ -1172,6 +1195,13 @@ export class ChunkManager extends SharedObjectCounterpart {
 
   layers: ChunkRenderLayerBackend[] = [];
 
+  /**
+   * Chunks held in permanent residency. They are re-requested at VISIBLE+Infinity
+   * each priority-recompute cycle and excluded from eviction queues, so neither
+   * GPU nor system memory can evict them until removed from this set.
+   */
+  private permanentChunks = new Set<Chunk>();
+
   private sendLayerChunkStatistics = this.registerCancellable(
     throttle(() => {
       this.rpc!.invoke(CHUNK_LAYER_STATISTICS_RPC_ID, {
@@ -1243,6 +1273,14 @@ export class ChunkManager extends SharedObjectCounterpart {
   private recomputeChunkPriorities_() {
     this.updatePending = null;
     this.layers.length = 0;
+    for (const chunk of this.permanentChunks) {
+      this.requestChunk(
+        chunk,
+        ChunkPriorityTier.VISIBLE,
+        Number.POSITIVE_INFINITY,
+        ChunkState.GPU_MEMORY,
+      );
+    }
     this.recomputeChunkPriorities.dispatch();
     this.recomputeChunkPrioritiesLate.dispatch();
     this.updateQueueState([
@@ -1250,6 +1288,26 @@ export class ChunkManager extends SharedObjectCounterpart {
       ChunkPriorityTier.PREFETCH,
     ]);
     this.sendLayerChunkStatistics();
+  }
+
+  markChunkPermanent(chunk: Chunk, permanent: boolean) {
+    if (permanent) {
+      if (this.permanentChunks.has(chunk)) return;
+      this.permanentChunks.add(chunk);
+      this.queueManager.setChunkPermanent(chunk, true);
+      this.requestChunk(
+        chunk,
+        ChunkPriorityTier.VISIBLE,
+        Number.POSITIVE_INFINITY,
+        ChunkState.GPU_MEMORY,
+      );
+      this.scheduleUpdateChunkPriorities();
+    } else {
+      if (!this.permanentChunks.has(chunk)) return;
+      this.permanentChunks.delete(chunk);
+      this.queueManager.setChunkPermanent(chunk, false);
+      this.scheduleUpdateChunkPriorities();
+    }
   }
 
   /**
@@ -1376,6 +1434,14 @@ export function withChunkManager<
 registerRPC(CHUNK_SOURCE_INVALIDATE_RPC_ID, function (x) {
   const source = <ChunkSource>this.get(x.id);
   source.chunkManager.queueManager.invalidateSourceCache(source);
+});
+
+registerRPC(CHUNK_SET_PERMANENT_RPC_ID, function (x) {
+  const source = <ChunkSource>this.get(x.source);
+  if (source === undefined) return;
+  const chunk = source.chunks.get(x.key);
+  if (chunk === undefined) return;
+  source.chunkManager.markChunkPermanent(chunk, x.permanent);
 });
 
 registerPromiseRPC(

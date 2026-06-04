@@ -127,7 +127,7 @@ import {
   SegmentationGraphSource,
   SegmentationGraphSourceConnection,
 } from "#src/segmentation_graph/source.js";
-import { SharedDisjointUint64Sets } from "#src/shared_disjoint_sets.js";
+import type { SharedDisjointUint64Sets } from "#src/shared_disjoint_sets.js";
 import { registerRPC } from "#src/worker_rpc.js";
 import { SharedWatchableValue } from "#src/shared_watchable_value.js";
 import type {

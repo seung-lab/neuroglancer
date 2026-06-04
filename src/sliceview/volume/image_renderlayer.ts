@@ -14,14 +14,27 @@
  * limitations under the License.
  */
 
-import type { SliceView } from "#src/sliceview/frontend.js";
+import type { BboxAlphaShaderHook } from "#src/editing/shaders/bbox_alpha_chunk.js";
+import { createBboxAlphaShaderHook } from "#src/editing/shaders/bbox_alpha_chunk.js";
+import type {
+  SliceView,
+  SliceViewChunkSource,
+  SliceViewSingleResolutionSource,
+} from "#src/sliceview/frontend.js";
 import type { MultiscaleVolumeChunkSource } from "#src/sliceview/volume/frontend.js";
 import type { RenderLayerBaseOptions } from "#src/sliceview/volume/renderlayer.js";
 import { SliceViewVolumeRenderLayer } from "#src/sliceview/volume/renderlayer.js";
 import type { TrackableAlphaValue } from "#src/trackable_alpha.js";
 import type { TrackableBlendModeValue } from "#src/trackable_blend.js";
 import { BLEND_FUNCTIONS, BLEND_MODES } from "#src/trackable_blend.js";
-import { WatchableValue } from "#src/trackable_value.js";
+import type { WatchableValueInterface } from "#src/trackable_value.js";
+import {
+  AggregateWatchableValue,
+  constantWatchableValue,
+  makeCachedDerivedWatchableValue,
+  WatchableValue,
+} from "#src/trackable_value.js";
+import type { vec3 } from "#src/util/geom.js";
 import { glsl_COLORMAPS } from "#src/webgl/colormaps.js";
 import type { WatchableShaderError } from "#src/webgl/dynamic_shader.js";
 import {
@@ -55,13 +68,58 @@ export interface ImageRenderLayerOptions extends RenderLayerBaseOptions {
   opacity: TrackableAlphaValue;
   blendMode: TrackableBlendModeValue;
   shaderControlState: ShaderControlState;
+  /**
+   * Voxel-edit hook: when defined and the inner value is non-`undefined`,
+   * fragments outside the bbox are HARD-CLIPPED via `discard` (see
+   * `src/editing/shaders/bbox_alpha_chunk.ts`). The bbox is expressed in
+   * the layer's GLOBAL frame (nm) so the comparison is resolution-
+   * independent. Mirrors `SliceViewSegmentationDisplayState.editBboxLoHi`.
+   */
+  editBboxLoHi?: WatchableValueInterface<
+    { lo: vec3; hi: vec3 } | undefined
+  >;
+
+  /**
+   * Voxel-edit resolution-display lock; mirrors the segmentation render
+   * layer hook. Already plumbed through to the base SliceViewRenderLayer
+   * by the `...options` spread in the super call.
+   */
+  allowedSourcePredicate?: WatchableValueInterface<
+    | ((source: SliceViewSingleResolutionSource<SliceViewChunkSource>) => boolean)
+    | undefined
+  >;
+}
+
+/**
+ * Combined shader-parameters object for `ImageRenderLayer`. Bundles the
+ * user-shader builder state (which historically WAS the entire shader
+ * parameters object) with the voxel-edit bbox-dim gate. When
+ * `editBboxActive === false`, the bbox-dim shader path is NOT compiled in
+ * and the resulting GLSL is byte-identical to the pre-hook implementation.
+ */
+interface ImageShaderParameters {
+  builderState: ShaderControlsBuilderState;
+  /**
+   * Voxel-edit bbox-dim shader path gate. Defaults to `false`; flips to
+   * `true` only while an edit session is active for this layer. When
+   * `false`, the bbox-dim uniforms/snippet are NOT added to the shader and
+   * the compiled GLSL is byte-identical to the pre-hook implementation.
+   */
+  editBboxActive: boolean;
 }
 
 export function defineImageLayerShader(
   builder: ShaderBuilder,
   shaderBuilderState: ShaderControlsBuilderState,
+  bboxAlphaHook?: BboxAlphaShaderHook,
 ) {
-  builder.addFragmentCode(`
+  // The image layer exposes a small set of helper functions to user-supplied
+  // shaders. Every one of these helpers funnels through the base `emit(...)`
+  // declared in `src/sliceview/volume/renderlayer.ts`; therefore wrapping the
+  // `emit(...)` calls in this prelude string is sufficient to dim ALL
+  // emission paths reachable from user code (`emitRGB`, `emitRGBA`,
+  // `emitGrayscale`, `emitTransparent`).
+  let helpers = `
 #define VOLUME_RENDERING false
 
 void emitRGBA(vec4 rgba) {
@@ -78,64 +136,135 @@ void emitTransparent() {
 }
 void emitIntensity(float value) {
 }
-`);
+`;
+  let userMain = shaderCodeWithLineDirective(
+    shaderBuilderState.parseResult.code,
+  );
+  // Voxel-edit bbox-dim opt-in path: re-route every `emit(<expr>)` call in
+  // the emit-helper prelude AND in the user-supplied fragmentMain through
+  // `emitWithBboxDim(<expr>)`. Gated on `bboxAlphaHook !== undefined`, so
+  // when no session is active this branch is NOT taken and the GLSL is
+  // byte-identical to the pre-hook shader.
+  if (bboxAlphaHook !== undefined) {
+    helpers = bboxAlphaHook.wrapFragmentMain(helpers);
+    userMain = bboxAlphaHook.wrapFragmentMain(userMain);
+  }
+  builder.addFragmentCode(helpers);
   builder.addFragmentCode(glsl_COLORMAPS);
   addControlsToBuilder(shaderBuilderState, builder);
-  builder.setFragmentMainFunction(
-    shaderCodeWithLineDirective(shaderBuilderState.parseResult.code),
-  );
+  builder.setFragmentMainFunction(userMain);
 }
 
-export class ImageRenderLayer extends SliceViewVolumeRenderLayer<ShaderControlsBuilderState> {
+export class ImageRenderLayer extends SliceViewVolumeRenderLayer<ImageShaderParameters> {
   opacity: TrackableAlphaValue;
   blendMode: TrackableBlendModeValue;
   shaderControlState: ShaderControlState;
+  /**
+   * Optional bbox watchable supplied by the image user layer during an edit
+   * session. Stored so `initializeShader` can read the current bbox lo/hi
+   * (in the layer's global nm frame).
+   */
+  private editBboxLoHi?: WatchableValueInterface<
+    { lo: vec3; hi: vec3 } | undefined
+  >;
+  /**
+   * Voxel-edit bbox-dim shader hook. Stateless across compiles; gated by
+   * the `editBboxActive` shader parameter so that when no session is
+   * active for this layer the hook contributes NOTHING to the shader
+   * source (no uniforms, no fragment code, no main-body wrapping).
+   */
+  private bboxAlphaHook: BboxAlphaShaderHook = createBboxAlphaShaderHook();
   constructor(
     multiscaleSource: MultiscaleVolumeChunkSource,
     options: ImageRenderLayerOptions,
   ) {
-    const { opacity, blendMode, shaderControlState } = options;
+    const { opacity, blendMode, shaderControlState, editBboxLoHi } = options;
+    const fallbackBuilderState = new WatchableValue(
+      getFallbackBuilderState(
+        parseShaderUiControls(DEFAULT_FRAGMENT_MAIN, {
+          imageData: {
+            dataType: multiscaleSource.dataType,
+            channelRank: options.channelCoordinateSpace?.value?.rank ?? 0,
+          },
+        }),
+      ),
+    );
     super(multiscaleSource, {
       ...options,
-      fallbackShaderParameters: new WatchableValue(
-        getFallbackBuilderState(
-          parseShaderUiControls(DEFAULT_FRAGMENT_MAIN, {
-            imageData: {
-              dataType: multiscaleSource.dataType,
-              channelRank: options.channelCoordinateSpace?.value?.rank ?? 0,
-            },
-          }),
-        ),
-      ),
-      encodeShaderParameters: (p) => p.key,
-      shaderParameters: shaderControlState.builderState,
+      fallbackShaderParameters: new WatchableValue<ImageShaderParameters>({
+        builderState: fallbackBuilderState.value,
+        editBboxActive: false,
+      }),
+      // Cache key: the builderState carries its own key string; concatenate
+      // the bbox-active bit so the two variants (with/without bbox-dim)
+      // compile and cache independently.
+      encodeShaderParameters: (p) =>
+        `${p.builderState.key}/${p.editBboxActive ? 1 : 0}`,
+      shaderParameters: new AggregateWatchableValue((refCounted) => ({
+        builderState: shaderControlState.builderState,
+        // Voxel-edit bbox-dim gate. Derived from the optional `editBboxLoHi`
+        // watchable: `true` iff a session bbox is currently set for this
+        // layer. When `editBboxLoHi` is undefined (the default), this
+        // resolves to a constant `false` and the bbox-dim shader path is
+        // never compiled in.
+        editBboxActive:
+          editBboxLoHi === undefined
+            ? constantWatchableValue(false)
+            : refCounted.registerDisposer(
+                makeCachedDerivedWatchableValue(
+                  (bbox) => bbox !== undefined,
+                  [editBboxLoHi],
+                ),
+              ),
+      })),
       dataHistogramSpecifications: shaderControlState.histogramSpecifications,
     });
     this.shaderControlState = shaderControlState;
     this.opacity = opacity;
     this.blendMode = blendMode;
+    this.editBboxLoHi = editBboxLoHi;
+    this.registerDisposer(
+      this.shaderParameters as AggregateWatchableValue<ImageShaderParameters>,
+    );
     this.registerDisposer(opacity.changed.add(this.redrawNeeded.dispatch));
     this.registerDisposer(blendMode.changed.add(this.redrawNeeded.dispatch));
     this.registerDisposer(
       shaderControlState.changed.add(this.redrawNeeded.dispatch),
     );
+    // Redraw when the bbox lo/hi changes within an active session — value
+    // changes don't flip the `editBboxActive` bit so they won't go through
+    // `shaderParameters.changed`, but they DO need a fresh `bind()`.
+    if (editBboxLoHi !== undefined) {
+      this.registerDisposer(editBboxLoHi.changed.add(this.redrawNeeded.dispatch));
+    }
   }
 
-  defineShader(
-    builder: ShaderBuilder,
-    shaderBuilderState: ShaderControlsBuilderState,
-  ) {
-    if (shaderBuilderState.parseResult.errors.length !== 0) {
+  defineShader(builder: ShaderBuilder, parameters: ImageShaderParameters) {
+    const { builderState, editBboxActive } = parameters;
+    if (builderState.parseResult.errors.length !== 0) {
       throw new Error("Invalid UI control specification");
     }
     builder.addUniform("highp float", "uOpacity");
-    defineImageLayerShader(builder, shaderBuilderState);
+    // Voxel-edit bbox-dim opt-in path: when an edit session is active for
+    // this layer, install the bbox uniforms + helper snippet and route every
+    // `emit(...)` call (in both the emit-helper prelude and the user's
+    // fragmentMain) through `emitWithBboxDim(...)` so outside-bbox fragments
+    // render at 0.25x alpha. Gated on the `editBboxActive` shader parameter,
+    // so when no session is active this branch is NOT taken and the
+    // resulting GLSL is byte-identical to the pre-hook shader.
+    if (editBboxActive) {
+      this.bboxAlphaHook.defineUniforms(builder);
+      builder.addFragmentCode(this.bboxAlphaHook.fragmentSnippet());
+      defineImageLayerShader(builder, builderState, this.bboxAlphaHook);
+    } else {
+      defineImageLayerShader(builder, builderState);
+    }
   }
 
   initializeShader(
     _sliceView: SliceView,
     shader: ShaderProgram,
-    parameters: ShaderControlsBuilderState,
+    parameters: ImageShaderParameters,
   ) {
     const { gl } = this;
     gl.uniform1f(shader.uniform("uOpacity"), this.opacity.value);
@@ -143,8 +272,23 @@ export class ImageRenderLayer extends SliceViewVolumeRenderLayer<ShaderControlsB
       gl,
       shader,
       this.shaderControlState,
-      parameters.parseResult.controls,
+      parameters.builderState.parseResult.controls,
     );
+    // Bbox-dim uniforms are bound only when the bbox-dim shader path was
+    // compiled (`editBboxActive === true`). Otherwise the uniforms don't
+    // exist on the shader at all.
+    //
+    // Picking-pass safety: `SliceViewVolumeRenderLayer.draw` is invoked
+    // only from `SliceView.updateRendering` (color into the sliceView
+    // offscreen buffer); the panel-level picking pass goes through
+    // `SliceViewPanelRenderLayer` subclasses, which do NOT invoke this
+    // volume layer. There is therefore no separate picking-pass shader
+    // for this layer to dim.
+    if (parameters.editBboxActive) {
+      this.bboxAlphaHook.bind(gl, shader, {
+        bboxNm: this.editBboxLoHi?.value,
+      });
+    }
   }
 
   setGLBlendMode(gl: WebGL2RenderingContext, renderLayerNum: number) {

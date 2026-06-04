@@ -2132,6 +2132,15 @@ export class TopLevelLayerListSpecification extends LayerListSpecification {
   coordinateSpaceCombiner: CoordinateSpaceCombiner;
   subsets = new Set<LayerSubsetSpecification>();
   layerSelectedValues: LayerSelectedValues;
+  /**
+   * Extension point for the `EditSessionHost`. Assigned by the `Viewer`
+   * constructor immediately after the host is constructed. Reached by
+   * per-layer UI (data-source widgets in `layer_data_sources_tab.ts`) that
+   * needs to consult `host.sessionLock.isLayerDataSourceLocked(...)` without
+   * taking a `Viewer` dependency. Untyped here to avoid an editing-module
+   * dependency cycle at the layer layer.
+   */
+  editSessionHost: unknown = undefined;
 
   constructor(
     public display: DisplayContext,

@@ -1,0 +1,527 @@
+/**
+ * @license
+ * Copyright 2026 Calcada AI / Zetta AI
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ */
+
+/* Design tokens (modal-scoped) --------------------------------------------- */
+
+.neuroglancer-edit-session-entry-modal-backdrop {
+  --neuroglancer-edit-session-accent: #3b82f6;
+  --neuroglancer-edit-session-accent-strong: #2563eb;
+  --neuroglancer-edit-session-accent-soft: #1e3a5f;
+  --neuroglancer-edit-session-text: #e5e7eb;
+  --neuroglancer-edit-session-text-muted: #9ca3af;
+  --neuroglancer-edit-session-text-dim: #6b7280;
+  --neuroglancer-edit-session-bg: #1a1a1a;
+  --neuroglancer-edit-session-bg-elev: #232323;
+  --neuroglancer-edit-session-bg-row: #1f1f1f;
+  --neuroglancer-edit-session-border: #3a3a3a;
+  --neuroglancer-edit-session-border-soft: #2a2a2a;
+  --neuroglancer-edit-session-safe: #22c55e;
+  --neuroglancer-edit-session-near: #f59e0b;
+  --neuroglancer-edit-session-over: #ef4444;
+}
+
+/* Backdrop + frame --------------------------------------------------------- */
+
+.neuroglancer-edit-session-entry-modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.6);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.neuroglancer-edit-session-entry-modal {
+  background-color: var(--neuroglancer-edit-session-bg);
+  color: var(--neuroglancer-edit-session-text);
+  border: 1px solid var(--neuroglancer-edit-session-border);
+  border-radius: 6px;
+  min-width: 560px;
+  max-width: 760px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  font: inherit;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
+}
+
+.neuroglancer-edit-session-entry-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--neuroglancer-edit-session-border-soft);
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.neuroglancer-edit-session-entry-modal-close {
+  background: none;
+  border: none;
+  color: var(--neuroglancer-edit-session-text-muted);
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+  padding: 4px 10px;
+  border-radius: 4px;
+}
+
+.neuroglancer-edit-session-entry-modal-close:hover {
+  color: var(--neuroglancer-edit-session-text);
+  background-color: var(--neuroglancer-edit-session-bg-elev);
+}
+
+.neuroglancer-edit-session-entry-modal-body {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  overflow-y: auto;
+}
+
+.neuroglancer-edit-session-entry-modal-section-title {
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--neuroglancer-edit-session-text);
+  margin: 0 0 8px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.neuroglancer-edit-session-entry-modal-section-caption {
+  font-size: 12px;
+  color: var(--neuroglancer-edit-session-text-muted);
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+
+/* Region (bbox) section ---------------------------------------------------- */
+
+.neuroglancer-edit-session-entry-modal-bbox {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.neuroglancer-bbox-picker-select {
+  background-color: var(--neuroglancer-edit-session-bg-elev);
+  color: var(--neuroglancer-edit-session-text);
+  border: 1px solid var(--neuroglancer-edit-session-border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font: inherit;
+  width: 100%;
+}
+
+.neuroglancer-bbox-picker-select:focus {
+  outline: none;
+  border-color: var(--neuroglancer-edit-session-accent);
+}
+
+.neuroglancer-edit-session-entry-modal-bbox-helper {
+  font-size: 11px;
+  color: var(--neuroglancer-edit-session-text-muted);
+  margin-top: 2px;
+}
+
+.neuroglancer-edit-session-entry-modal-bbox-empty {
+  font-size: 12px;
+  color: var(--neuroglancer-edit-session-text-muted);
+  padding: 12px;
+  border: 1px dashed var(--neuroglancer-edit-session-border-soft);
+  border-radius: 4px;
+  background-color: var(--neuroglancer-edit-session-bg-elev);
+  line-height: 1.4;
+}
+
+/* Resolution picker (multi-res dropdown) ----------------------------------- */
+
+.neuroglancer-resolution-picker-dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.neuroglancer-resolution-picker-dropdown-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background-color: var(--neuroglancer-edit-session-bg-elev);
+  color: var(--neuroglancer-edit-session-text);
+  border: 1px solid var(--neuroglancer-edit-session-border-soft);
+  border-radius: 3px;
+  padding: 3px 8px;
+  font: inherit;
+  cursor: pointer;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.neuroglancer-resolution-picker-dropdown-trigger:hover:not(:disabled) {
+  border-color: var(--neuroglancer-edit-session-accent);
+}
+
+.neuroglancer-resolution-picker-dropdown-trigger:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.neuroglancer-resolution-picker-dropdown-summary {
+  flex: 1 1 auto;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.neuroglancer-resolution-picker-dropdown-caret {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--neuroglancer-edit-session-text-dim);
+}
+
+.neuroglancer-resolution-picker-dropdown-panel {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 2px;
+  background-color: var(--neuroglancer-edit-session-bg);
+  border: 1px solid var(--neuroglancer-edit-session-border);
+  border-radius: 4px;
+  padding: 4px 0;
+  z-index: 10;
+  min-width: 100%;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+.neuroglancer-resolution-picker-dropdown-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.neuroglancer-resolution-picker-dropdown-option:hover {
+  background-color: var(--neuroglancer-edit-session-bg-elev);
+}
+
+/* Layers card -------------------------------------------------------------- */
+
+.neuroglancer-edit-session-entry-modal-layers-card {
+  border: 1px solid var(--neuroglancer-edit-session-border-soft);
+  border-radius: 4px;
+  background-color: var(--neuroglancer-edit-session-bg-row);
+  overflow: hidden;
+}
+
+.neuroglancer-edit-session-entry-modal-layers-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.neuroglancer-edit-session-entry-modal-layers-empty {
+  padding: 14px 16px;
+  font-style: italic;
+  color: var(--neuroglancer-edit-session-text-dim);
+}
+
+.neuroglancer-edit-session-entry-modal-layer-row {
+  display: grid;
+  /* name (flex) | kind chip | resolution slot (fixed) | role control */
+  grid-template-columns: minmax(120px, 1fr) auto 130px auto;
+  align-items: center;
+  column-gap: 10px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--neuroglancer-edit-session-border-soft);
+  transition: opacity 0.12s ease;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-row:last-child {
+  border-bottom: none;
+}
+
+/*
+ * `Off` rows dim in place — no reordering, no collapsing. Per spec the
+ * layer list order is stable.
+ */
+.neuroglancer-edit-session-entry-modal-layer-row-off {
+  opacity: 0.55;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-row-off
+  .neuroglancer-edit-session-entry-modal-layer-resolution-slot {
+  pointer-events: none;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-name {
+  font-weight: 500;
+  color: var(--neuroglancer-edit-session-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 10px;
+  border: 1px solid var(--neuroglancer-edit-session-border-soft);
+  background-color: var(--neuroglancer-edit-session-bg-elev);
+  color: var(--neuroglancer-edit-session-text-muted);
+  white-space: nowrap;
+  /* Center the chip in its column. */
+  justify-self: start;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-kind-segmentation {
+  color: #b6d6ff;
+  border-color: #2d4566;
+  background-color: #1a2638;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-kind-image {
+  color: #c7d7a6;
+  border-color: #3f4a2a;
+  background-color: #232a18;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-resolution-slot {
+  /* Fixed column width so the dropdown trigger (multi-res) and the
+     static value (single-res) occupy the same visual width — keeps the
+     role-control column aligned across rows. */
+  width: 130px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  color: var(--neuroglancer-edit-session-text-muted);
+}
+
+.neuroglancer-edit-session-entry-modal-layer-resolution-slot > * {
+  width: 100%;
+}
+
+/*
+ * The picker wraps a `.neuroglancer-resolution-picker-dropdown` span (which
+ * defaults to inline-block at content size). Force the intermediate
+ * elements to block-fill so the trigger button stretches to the slot's
+ * 130px — matching the static-value cell's width on single-res rows.
+ */
+.neuroglancer-edit-session-entry-modal-layer-resolution-picker {
+  display: block;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-resolution-picker
+  .neuroglancer-resolution-picker-dropdown {
+  display: block;
+  width: 100%;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-resolution-static {
+  font-family: monospace;
+  color: var(--neuroglancer-edit-session-text);
+  background-color: var(--neuroglancer-edit-session-bg-elev);
+  border: 1px solid var(--neuroglancer-edit-session-border-soft);
+  border-radius: 3px;
+  padding: 3px 8px;
+  box-sizing: border-box;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-resolution-loading {
+  font-style: italic;
+  color: var(--neuroglancer-edit-session-text-dim);
+}
+
+.neuroglancer-edit-session-entry-modal-layer-resolution-error {
+  color: var(--neuroglancer-edit-session-over);
+}
+
+/* 3-state role control (Off / Reference / Editable) ----------------------- */
+
+.neuroglancer-edit-session-entry-modal-role-control {
+  display: inline-flex;
+  align-items: stretch;
+  background-color: var(--neuroglancer-edit-session-bg-elev);
+  border: 1px solid var(--neuroglancer-edit-session-border);
+  border-radius: 4px;
+  padding: 1px;
+  gap: 1px;
+}
+
+.neuroglancer-edit-session-entry-modal-role-segment {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--neuroglancer-edit-session-text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 10px;
+  min-width: 56px;
+  border-radius: 3px;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.neuroglancer-edit-session-entry-modal-role-segment:hover:not(:disabled) {
+  color: var(--neuroglancer-edit-session-text);
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+.neuroglancer-edit-session-entry-modal-role-segment-selected {
+  background-color: var(--neuroglancer-edit-session-accent);
+  color: #fff;
+}
+
+.neuroglancer-edit-session-entry-modal-role-segment-selected:hover {
+  background-color: var(--neuroglancer-edit-session-accent-strong);
+  color: #fff;
+}
+
+.neuroglancer-edit-session-entry-modal-role-segment-disabled,
+.neuroglancer-edit-session-entry-modal-role-segment:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Memory meter ------------------------------------------------------------- */
+
+.neuroglancer-edit-session-entry-modal-memory-meter {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--neuroglancer-edit-session-border-soft);
+  border-radius: 4px;
+  background-color: var(--neuroglancer-edit-session-bg-row);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.neuroglancer-edit-session-entry-modal-memory-meter-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.neuroglancer-edit-session-entry-modal-memory-meter-summary {
+  color: var(--neuroglancer-edit-session-text);
+}
+
+.neuroglancer-edit-session-entry-modal-memory-meter-label {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.neuroglancer-edit-session-entry-modal-memory-meter-bar {
+  position: relative;
+  width: 100%;
+  height: 6px;
+  background-color: var(--neuroglancer-edit-session-bg-elev);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.neuroglancer-edit-session-entry-modal-memory-meter-fill {
+  height: 100%;
+  transition: width 0.2s ease, background-color 0.2s ease;
+}
+
+/* Safe / near / over signals — one accent per state. */
+.neuroglancer-edit-session-entry-modal-memory-meter-safe
+  .neuroglancer-edit-session-entry-modal-memory-meter-label {
+  color: var(--neuroglancer-edit-session-safe);
+}
+.neuroglancer-edit-session-entry-modal-memory-meter-safe
+  .neuroglancer-edit-session-entry-modal-memory-meter-fill {
+  background-color: var(--neuroglancer-edit-session-safe);
+}
+
+.neuroglancer-edit-session-entry-modal-memory-meter-near
+  .neuroglancer-edit-session-entry-modal-memory-meter-label {
+  color: var(--neuroglancer-edit-session-near);
+}
+.neuroglancer-edit-session-entry-modal-memory-meter-near
+  .neuroglancer-edit-session-entry-modal-memory-meter-fill {
+  background-color: var(--neuroglancer-edit-session-near);
+}
+
+.neuroglancer-edit-session-entry-modal-memory-meter-over
+  .neuroglancer-edit-session-entry-modal-memory-meter-label {
+  color: var(--neuroglancer-edit-session-over);
+}
+.neuroglancer-edit-session-entry-modal-memory-meter-over
+  .neuroglancer-edit-session-entry-modal-memory-meter-fill {
+  background-color: var(--neuroglancer-edit-session-over);
+}
+
+/* Footer ------------------------------------------------------------------- */
+
+.neuroglancer-edit-session-entry-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--neuroglancer-edit-session-border-soft);
+}
+
+.neuroglancer-edit-session-entry-modal-error {
+  color: var(--neuroglancer-edit-session-over);
+  font-size: 11px;
+  margin-right: auto;
+}
+
+/*
+ * Two-tier button hierarchy: secondary (Cancel) and primary (Open session).
+ * Larger hit targets per the redesign spec.
+ */
+.neuroglancer-edit-session-entry-modal-btn {
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  background-color: var(--neuroglancer-edit-session-bg-elev);
+  color: var(--neuroglancer-edit-session-text);
+  border: 1px solid var(--neuroglancer-edit-session-border);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  min-height: 32px;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+.neuroglancer-edit-session-entry-modal-btn:hover:not(:disabled) {
+  border-color: var(--neuroglancer-edit-session-accent);
+}
+
+.neuroglancer-edit-session-entry-modal-btn-primary {
+  background-color: var(--neuroglancer-edit-session-accent);
+  border-color: var(--neuroglancer-edit-session-accent);
+  color: #fff;
+}
+
+.neuroglancer-edit-session-entry-modal-btn-primary:hover:not(:disabled) {
+  background-color: var(--neuroglancer-edit-session-accent-strong);
+  border-color: var(--neuroglancer-edit-session-accent-strong);
+}
+
+.neuroglancer-edit-session-entry-modal-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

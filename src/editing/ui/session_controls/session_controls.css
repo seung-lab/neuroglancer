@@ -1,0 +1,120 @@
+/*
+ * Copyright 2026 Calcada AI / Zetta AI
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ *
+ * Styling for the per-tool settings side panel body (TM-294). The wider
+ * Edit-Session sidebar layout from the legacy single-panel root is gone —
+ * what remains here is just the tool-panel container.
+ */
+
+.neuroglancer-edit-session-tool-panel {
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  min-width: 240px;
+  font-size: 12px;
+  color: #ddd;
+  overflow-y: auto;
+}
+
+.neuroglancer-edit-session-tool-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.neuroglancer-tool-panel-host-placeholder {
+  margin: 0;
+  padding: 8px 0;
+  font-size: 11px;
+  color: #aaa;
+  font-style: italic;
+  line-height: 1.4;
+}
+
+/* Per-tool row helpers — used by the painting brush / eraser / fill panels. */
+
+.neuroglancer-tool-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.neuroglancer-tool-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.neuroglancer-tool-panel-row label {
+  flex: 0 0 auto;
+  min-width: 96px;
+  font-size: 11px;
+  color: #ccc;
+}
+
+.neuroglancer-tool-panel-row select,
+.neuroglancer-tool-panel-row input[type="text"],
+.neuroglancer-tool-panel-row input[type="number"] {
+  flex: 1 1 auto;
+  min-width: 64px;
+  background: #1a1a1a;
+  border: 1px solid #444;
+  color: #ddd;
+  padding: 2px 4px;
+  font: inherit;
+}
+
+.neuroglancer-tool-panel-row input[type="range"] {
+  flex: 1 1 80px;
+}
+
+.neuroglancer-tool-panel-readonly {
+  color: #aaa;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+/* Static resolution display when a layer is single-resolution. */
+.neuroglancer-tool-panel-resolution-static {
+  flex: 1 1 auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #aaa;
+  padding: 2px 4px;
+  background: #181818;
+  border: 1px solid #2a2a2a;
+  border-radius: 2px;
+}
+
+/* Segmented switch (e.g. Fill's 2D/3D toggle). */
+.neuroglancer-tool-panel-segmented {
+  display: inline-flex;
+  border: 1px solid #444;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.neuroglancer-tool-panel-segmented button {
+  background: #2a2a2a;
+  border: none;
+  color: #ddd;
+  padding: 2px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.neuroglancer-tool-panel-segmented button + button {
+  border-left: 1px solid #444;
+}
+
+.neuroglancer-tool-panel-segmented button:hover:not([disabled]) {
+  background: #3a3a3a;
+}
+
+.neuroglancer-tool-panel-segmented button.active {
+  background: #2c3a5a;
+  color: #fff;
+}

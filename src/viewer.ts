@@ -37,6 +37,16 @@ import type { DataSourceRegistry } from "#src/datasource/index.js";
 import { StateShare, stateShareEnabled } from "#src/datasource/state_share.js";
 import type { DisplayContext } from "#src/display_context.js";
 import { TrackableWindowedViewport } from "#src/display_context.js";
+import { EditSessionHost } from "#src/editing/edit_session_host.js";
+import { mountComponent } from "#src/editing/ui/interop/component_mount.js";
+import {
+  makeBrushPanel,
+  makeCorrespondencePanel,
+  makeEraserPanel,
+  makeFillPanel,
+  makeZExtrapPanel,
+} from "#src/editing/ui/interop/tool_panel_mounts.js";
+import { EditingTopbar } from "#src/editing/ui/topbar/editing_topbar.js";
 import {
   HelpPanelState,
   InputEventBindingHelpDialog,
@@ -289,6 +299,7 @@ class TrackableViewerState extends CompoundTrackable {
     this.add("selectedStateServer", viewer.selectedStateServer);
     this.add("toolBindings", viewer.toolBinder);
     this.add("toolPalettes", viewer.toolPalettes);
+    this.add("editSession", viewer.editSessionHost.state);
   }
 
   restoreState(obj: any) {
@@ -418,6 +429,14 @@ export class Viewer extends RefCounted implements ViewerState {
   selectedLayer = this.registerDisposer(
     new SelectedLayerState(this.layerManager.addRef()),
   );
+  /**
+   * Wiring of the `@zettaai/edit-session` library. Constructed in the viewer
+   * constructor body (not as a field initializer) because its constructor
+   * reads `viewer.layerManager`, `viewer.chunkManager`, and `viewer.display.gl`
+   * — none of which are available during class-field initialization for
+   * fields that need to precede the constructor body.
+   */
+  editSessionHost!: EditSessionHost;
   showAxisLines = new TrackableBoolean(true, true);
   wireFrame = new TrackableBoolean(false, false);
   enableAdaptiveDownsampling = new TrackableBoolean(true, true);
@@ -590,6 +609,15 @@ export class Viewer extends RefCounted implements ViewerState {
       this.navigationState.pose.position,
       this.globalToolBinder,
     );
+    // Construct the edit-session host now that `layerManager`,
+    // `chunkManager`, and `display.gl` are all available.
+    this.editSessionHost = this.registerDisposer(new EditSessionHost(this));
+    // Publish the host through a dedicated `editSessionHost` extension
+    // point on `TopLevelLayerListSpecification` so per-layer UI
+    // (data-source widgets in `layer_data_sources_tab.ts`) can consult
+    // `host.sessionLock.isLayerDataSourceLocked(...)` without taking a
+    // direct Viewer dependency.
+    this.layerSpecification.editSessionHost = this.editSessionHost;
 
     this.registerDisposer(
       display.updateStarted.add(() => {
@@ -668,6 +696,12 @@ export class Viewer extends RefCounted implements ViewerState {
     this.registerDisposer(
       new PlaybackManager(this.display, this.position, this.velocity),
     );
+
+    // Re-open any session that was persisted via `state.editSession` (e.g.,
+    // after a page reload). The call is async and tolerant of layer-manager
+    // not-yet-ready states; if the referenced bbox annotation / layers are
+    // missing, it surfaces a StatusMessage and clears the intent block.
+    void this.editSessionHost.tryRestoreFromState();
   }
 
   private updateShowBorders() {
@@ -914,6 +948,58 @@ export class Viewer extends RefCounted implements ViewerState {
       topRow.appendChild(button.element);
     }
 
+    {
+      // Editing topbar (TM-294). Hosts tool icons, Undo/Redo, Save all,
+      // and the Edit (Enter/Exit session) button. Replaces the legacy
+      // Edit-Session sidebar root and standalone Enter / Pending buttons;
+      // the per-tool settings render in the dedicated per-tool side panels
+      // registered below (one PanelMount per tool).
+      //
+      // The topbar is positioned between two flex:1 spacers so the
+      // cluster sits at the horizontal center of the neuroglancer top
+      // row: `mousePositionWidget` (flex:1, appended earlier) acts as the
+      // LEFT spacer, and the new spacer below balances on the RIGHT,
+      // pushing the trailing icon buttons to the row's right edge.
+      const topbarMount = document.createElement("div");
+      topbarMount.style.display = "contents";
+      this.registerDisposer(
+        mountComponent(topbarMount, EditingTopbar, {
+          host: this.editSessionHost,
+        }),
+      );
+      const editingTopbarRightSpacer = document.createElement("div");
+      editingTopbarRightSpacer.style.flex = "1 1 0";
+      editingTopbarRightSpacer.style.minWidth = "0";
+      // The trailing controls (Save all / tools / Undo-Redo) are rendered
+      // as absolutely-positioned children of `.neuroglancer-editing-topbar`
+      // so they overlay this spacer without contributing to the topbar's
+      // flex width — which keeps the Edit / Exit button's X coordinate
+      // constant between idle and active states. `pointer-events: none`
+      // here so those overlaid controls remain clickable.
+      editingTopbarRightSpacer.style.pointerEvents = "none";
+      const anchor = mousePositionWidget.element.nextSibling;
+      topRow.insertBefore(topbarMount, anchor);
+      topRow.insertBefore(editingTopbarRightSpacer, anchor);
+    }
+
+    {
+      // beforeunload guard: warn the user if they navigate away while
+      // there are in-memory committed patches that have not been saved
+      // to the backend. Modern browsers ignore the custom message and
+      // show their own generic prompt; setting `returnValue` is what
+      // actually triggers it.
+      const handleBeforeUnload = (ev: BeforeUnloadEvent) => {
+        if (!this.editSessionHost.hasPendingCommittedChanges()) return;
+        ev.preventDefault();
+        ev.returnValue =
+          "You have unsaved in-memory edits. They will be lost if you leave.";
+      };
+      window.addEventListener("beforeunload", handleBeforeUnload);
+      this.registerDisposer(() =>
+        window.removeEventListener("beforeunload", handleBeforeUnload),
+      );
+    }
+
     this.registerDisposer(
       new ElementVisibilityFromTrackableBoolean(
         makeDerivedWatchableValue(
@@ -1009,6 +1095,52 @@ export class Viewer extends RefCounted implements ViewerState {
           ),
       }),
     );
+
+    // Per-tool side panels (TM-294 rework). One PanelMount per tool — the
+    // host's `selectTool()` invariant keeps at most one visible at a time.
+    this.registerDisposer(
+      this.sidePanelManager.registerPanel({
+        location: this.editSessionHost.brushPanelLocation,
+        makePanel: () =>
+          makeBrushPanel(this.sidePanelManager, this.editSessionHost),
+      }),
+    );
+    this.registerDisposer(
+      this.sidePanelManager.registerPanel({
+        location: this.editSessionHost.eraserPanelLocation,
+        makePanel: () =>
+          makeEraserPanel(this.sidePanelManager, this.editSessionHost),
+      }),
+    );
+    this.registerDisposer(
+      this.sidePanelManager.registerPanel({
+        location: this.editSessionHost.fillPanelLocation,
+        makePanel: () =>
+          makeFillPanel(this.sidePanelManager, this.editSessionHost),
+      }),
+    );
+    this.registerDisposer(
+      this.sidePanelManager.registerPanel({
+        location: this.editSessionHost.zExtrapPanelLocation,
+        makePanel: () =>
+          makeZExtrapPanel(this.sidePanelManager, this.editSessionHost),
+      }),
+    );
+    this.registerDisposer(
+      this.sidePanelManager.registerPanel({
+        location: this.editSessionHost.correspondencePanelLocation,
+        makePanel: () =>
+          makeCorrespondencePanel(
+            this.sidePanelManager,
+            this.editSessionHost,
+          ),
+      }),
+    );
+
+    // The legacy Pending Changes side panel UI was removed in TM-294. The
+    // underlying SaveTracker / NgCommitTarget machinery is still in place
+    // (and surfaces via the topbar's Save all / badge); only the dedicated
+    // panel is gone.
 
     this.registerDisposer(
       new MultiToolPaletteManager(this.sidePanelManager, this.toolPalettes),
