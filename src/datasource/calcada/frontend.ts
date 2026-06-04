@@ -936,6 +936,7 @@ const CENTROIDS_JSON_KEY = "centroids";
 const PRECISION_MODE_JSON_KEY = "precision";
 
 const PIECE_SPLIT_JSON_KEY = "pieceSplit";
+const CALCADA_BRANCH_JSON_KEY = "calcadaBranch";
 
 class GrapheneState extends RefCounted implements Trackable {
   changed = new NullarySignal();
@@ -944,6 +945,9 @@ class GrapheneState extends RefCounted implements Trackable {
   public mergeState = new MergeState();
   public findPathState = new FindPathState();
   public pieceSplitState = new PieceSplitState();
+  public branchId = new TrackableValue<number>(0, (x) =>
+    typeof x === "number" && Number.isInteger(x) && x >= 0 ? x : 0,
+  );
 
   constructor() {
     super();
@@ -964,6 +968,11 @@ class GrapheneState extends RefCounted implements Trackable {
     );
     this.registerDisposer(
       this.pieceSplitState.changed.add(() => {
+        this.changed.dispatch();
+      }),
+    );
+    this.registerDisposer(
+      this.branchId.changed.add(() => {
         this.changed.dispatch();
       }),
     );
@@ -989,6 +998,7 @@ class GrapheneState extends RefCounted implements Trackable {
       [MERGE_JSON_KEY]: this.mergeState.toJSON(),
       [FIND_PATH_JSON_KEY]: this.findPathState.toJSON(),
       [PIECE_SPLIT_JSON_KEY]: this.pieceSplitState.toJSON(),
+      [CALCADA_BRANCH_JSON_KEY]: this.branchId.toJSON(),
     };
   }
 
@@ -1004,6 +1014,9 @@ class GrapheneState extends RefCounted implements Trackable {
     });
     verifyOptionalObjectProperty(x, PIECE_SPLIT_JSON_KEY, (value) => {
       this.pieceSplitState.restoreState(value);
+    });
+    verifyOptionalObjectProperty(x, CALCADA_BRANCH_JSON_KEY, (value) => {
+      this.branchId.restoreState(value);
     });
   }
 }
@@ -2720,11 +2733,12 @@ class GrapheneGraphSource extends SegmentationGraphSource {
   private l2CacheAvailable: boolean | undefined = undefined;
   private httpSource: HttpSource;
   public timestampLimit = new TrackableValue<number>(0, (x) => x);
-  public branchId = new TrackableValue<number>(0, (x) =>
-    typeof x === "number" && Number.isInteger(x) && x >= 0 ? x : 0,
-  );
   public branches = new WatchableValue<{ id: number; name: string }[]>([]);
   private branchesFetched = false;
+
+  public get branchId(): TrackableValue<number> {
+    return this.state.branchId;
+  }
 
   constructor(
     public info: GrapheneMultiscaleVolumeInfo,
@@ -3266,8 +3280,6 @@ const timeControl = {
 };
 
 registerLayerControl(SegmentationUserLayer, timeControl);
-
-const CALCADA_BRANCH_JSON_KEY = "calcadaBranch";
 
 function branchLayerControl(): LayerControlFactory<SegmentationUserLayer> {
   return {
