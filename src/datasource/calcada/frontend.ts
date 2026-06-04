@@ -2733,7 +2733,9 @@ class GrapheneGraphSource extends SegmentationGraphSource {
   private l2CacheAvailable: boolean | undefined = undefined;
   private httpSource: HttpSource;
   public timestampLimit = new TrackableValue<number>(0, (x) => x);
-  public branches = new WatchableValue<{ id: number; name: string }[]>([]);
+  public branches = new WatchableValue<
+    { id: number; name: string; status: string }[]
+  >([]);
   private branchesFetched = false;
 
   public get branchId(): TrackableValue<number> {
@@ -2755,28 +2757,57 @@ class GrapheneGraphSource extends SegmentationGraphSource {
     this.graphServer.getTimestampLimit().then((limit) => {
       this.timestampLimit.value = limit;
     });
-    this.refreshBranches().catch((e) => {
-      console.warn("Failed to fetch calcada branches:", e);
-    });
+    this.startBranchRefreshWithRetry();
+  }
+
+  // startBranchRefreshWithRetry kicks off /branches and retries on failure —
+  // the first call commonly races with the middleauth token handshake and
+  // 401s. Without retry the dropdown stays stuck on "main" even after the
+  // user is authenticated. Retries back off and stop after a few attempts so
+  // a truly broken endpoint doesn't loop forever.
+  private startBranchRefreshWithRetry(): void {
+    const maxAttempts = 5;
+    const baseDelayMs = 1500;
+    let attempt = 0;
+    const tick = () => {
+      this.refreshBranches().catch((e) => {
+        attempt++;
+        if (attempt >= maxAttempts) {
+          console.warn("Failed to fetch calcada branches:", e);
+          return;
+        }
+        setTimeout(tick, baseDelayMs * attempt);
+      });
+    };
+    tick();
   }
 
   private async refreshBranches(): Promise<void> {
     const { fetchOkImpl } = this.httpSource;
-    const url = `${this.info.app!.segmentationUrl}/branches?limit=200&include_abandoned=false`;
+    // include_abandoned=true so the dropdown shows merged/abandoned branches
+    // too — restoring state with branchId pointing at an abandoned branch
+    // (e.g. an old diff link) needs that option to exist or the select falls
+    // back to "main" and looks like the state didn't load.
+    const url = `${this.info.app!.segmentationUrl}/branches?include_abandoned=true`;
     const response = await fetchOkImpl(url);
     const data = await response.json();
     if (!Array.isArray(data)) {
       this.branches.value = [];
       return;
     }
-    const parsed: { id: number; name: string }[] = [];
+    const parsed: { id: number; name: string; status: string }[] = [];
     for (const entry of data) {
       if (!entry || typeof entry !== "object") continue;
       const id = (entry as any).branch_id;
       const name = (entry as any).branch_name;
+      const status = (entry as any).status;
       if (typeof id !== "number" || id === 0) continue;
       if (typeof name !== "string") continue;
-      parsed.push({ id, name });
+      parsed.push({
+        id,
+        name,
+        status: typeof status === "string" ? status : "active",
+      });
     }
     this.branches.value = parsed;
     this.branchesFetched = true;
@@ -3312,13 +3343,21 @@ function branchLayerControl(): LayerControlFactory<SegmentationUserLayer> {
         mainOption.value = "0";
         mainOption.textContent = "main";
         select.appendChild(mainOption);
-        for (const { id, name } of branches) {
+        // Show active branches in the dropdown. Non-active branches
+        // (merged/abandoned) are hidden unless the layer state points at one
+        // of them — restoring such state without that option would leave the
+        // select stuck on "main" even though branchId.value is set, making
+        // it look like state restore didn't work.
+        const selectedId = branchId.value;
+        for (const { id, name, status } of branches) {
+          const isActive = status === "active";
+          if (!isActive && id !== selectedId) continue;
           const opt = document.createElement("option");
           opt.value = String(id);
-          opt.textContent = name;
+          opt.textContent = isActive ? name : `${name} (${status})`;
           select.appendChild(opt);
         }
-        select.value = String(branchId.value);
+        select.value = String(selectedId);
       };
       renderOptions();
 
@@ -3389,9 +3428,10 @@ function branchLayerControl(): LayerControlFactory<SegmentationUserLayer> {
       });
 
       const sync = () => {
-        if (String(branchId.value) !== select.value) {
-          select.value = String(branchId.value);
-        }
+        // Re-render so a non-active branch becomes a visible option when
+        // branchId points at it; otherwise the select silently falls back
+        // to "main" because the matching <option> doesn't exist.
+        renderOptions();
       };
       context.registerDisposer(branchId.changed.add(sync));
       if (graph instanceof GrapheneGraphSource) {
@@ -3470,7 +3510,7 @@ function branchLayerControl(): LayerControlFactory<SegmentationUserLayer> {
           }
           graph.branches.value = [
             ...graph.branches.value,
-            { id: newId, name: newName },
+            { id: newId, name: newName, status: "active" },
           ];
           graph.branchId.value = newId;
           nameInput.value = "";
