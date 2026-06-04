@@ -111,10 +111,11 @@ function downloadFragment(
   if (parameters.sharding) {
     return downloadFragmentWithSharding(fragmentKvStore, fragmentId, signal);
   } else {
-    // TODO, is this change safe?
+    // Calcada graphene meshing serves fragments under a /dynamic/ subpath
+    // (matching the Spelunker fork); without this prefix the request 404s.
     return readKvStore(
       fragmentKvStore.store,
-      `${fragmentKvStore.path}${fragmentId}`,
+      `${fragmentKvStore.path}dynamic/${fragmentId}`,
       { signal, throwIfMissing: true },
     );
   }
@@ -323,7 +324,7 @@ export class GrapheneMultiscaleMeshSource extends WithParameters(
       return decodeManifestChunk(chunk, { fragments: [] });
     }
     const { fetchOkImpl, baseUrl } = this.manifestHttpSource;
-    const manifestPath = `/manifest/multiscale/${chunk.objectId}?verify=1`;
+    const manifestPath = `/manifest/${chunk.objectId}:0?verify=1&prepend_seg_ids=1`;
     const response = await (
       await fetchOkImpl(baseUrl + manifestPath, { signal })
     ).json();
