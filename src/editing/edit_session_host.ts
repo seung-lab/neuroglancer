@@ -543,7 +543,6 @@ export class EditSessionHost extends RefCounted {
       // we'd just persisted. The user only sees the bug on the next reload.
       this.activeSession.value = session;
       this.writeIntentToState(config);
-      this.editSessionPanelLocation.visible = true;
       this.pointerEventBridge = new PointerEventBridge(
         this,
         this.viewer.display,
