@@ -2783,12 +2783,15 @@ class GrapheneGraphSource extends SegmentationGraphSource {
   }
 
   private async refreshBranches(): Promise<void> {
-    const { fetchOkImpl } = this.httpSource;
+    const { fetchOkImpl, baseUrl } = this.httpSource;
     // include_abandoned=true so the dropdown shows merged/abandoned branches
     // too — restoring state with branchId pointing at an abandoned branch
     // (e.g. an old diff link) needs that option to exist or the select falls
-    // back to "main" and looks like the state didn't load.
-    const url = `${this.info.app!.segmentationUrl}/branches?include_abandoned=true`;
+    // back to "main" and looks like the state didn't load. baseUrl is the
+    // kvStore-resolved URL (no "middleauth+" prefix); fetchOkImpl on the raw
+    // info.app.segmentationUrl fails because browser fetch() rejects the
+    // middleauth+ scheme — the bug that left this dropdown empty all along.
+    const url = `${baseUrl}/branches?include_abandoned=true`;
     const response = await fetchOkImpl(url);
     const data = await response.json();
     if (!Array.isArray(data)) {
@@ -2827,8 +2830,8 @@ class GrapheneGraphSource extends SegmentationGraphSource {
     branchName: string,
     parentBranchId: number,
   ): Promise<Response> {
-    const { fetchOkImpl } = this.httpSource;
-    return fetchOkImpl(`${this.info.app!.segmentationUrl}/branch/create`, {
+    const { fetchOkImpl, baseUrl } = this.httpSource;
+    return fetchOkImpl(`${baseUrl}/branch/create`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -3545,7 +3548,12 @@ function branchLayerControl(): LayerControlFactory<SegmentationUserLayer> {
           diffLink.style.display = "none";
           return;
         }
-        const adminOrigin = new URL(graph.info.app!.segmentationUrl).origin;
+        // segmentationUrl may carry a "middleauth+" scheme prefix from the
+        // kvstore parser; strip it before passing to new URL() so .origin
+        // yields a plain https:// URL the browser can navigate to.
+        const rawUrl = graph.info
+          .app!.segmentationUrl.replace(/^middleauth\+/, "");
+        const adminOrigin = new URL(rawUrl).origin;
         diffLink.href = `${adminOrigin}/admin/graphs/${graph.info.app!.table}/branches/${branchId.value}/diff`;
         diffLink.style.display = branchId.value === 0 ? "none" : "";
       };
