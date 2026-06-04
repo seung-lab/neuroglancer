@@ -492,24 +492,7 @@ function parseMeshMetadata(data: any): ParsedMeshMetadata {
   const t = verifyObjectProperty(data, "@type", verifyString);
   let metadata: MultiscaleMeshMetadata | undefined;
   if (t === "neuroglancer_legacy_mesh") {
-    const sharding = verifyObjectProperty(
-      data,
-      "sharding",
-      parseGrapheneShardingParameters,
-    );
-    if (sharding === undefined) {
-      metadata = undefined;
-    } else {
-      const lodScaleMultiplier = 0;
-      const vertexQuantizationBits = 10;
-      const transform = parseTransform(data);
-      metadata = {
-        lodScaleMultiplier,
-        transform,
-        sharding,
-        vertexQuantizationBits,
-      };
-    }
+    metadata = undefined;
   } else if (t !== "neuroglancer_multilod_draco") {
     throw new Error(`Unsupported mesh type: ${JSON.stringify(t)}`);
   } else {
@@ -2246,6 +2229,7 @@ void main() {
             );
           });
 
+        this.refreshChunkSources();
         return newRoot;
       } catch (err) {
         if (i === attempts) {
@@ -2450,6 +2434,10 @@ const selectionInNanometers = (
     position: position.map((val, i) => val * annotationToNanometers[i]),
   };
 };
+
+function defaultParentForNewBranch(_graph: GrapheneGraphSource): number {
+  return 0;
+}
 
 function appendCoordParams(
   url: string,
@@ -2735,6 +2723,8 @@ class GrapheneGraphSource extends SegmentationGraphSource {
   public branchId = new TrackableValue<number>(0, (x) =>
     typeof x === "number" && Number.isInteger(x) && x >= 0 ? x : 0,
   );
+  public branches = new WatchableValue<{ id: number; name: string }[]>([]);
+  private branchesFetched = false;
 
   constructor(
     public info: GrapheneMultiscaleVolumeInfo,
@@ -2750,6 +2740,56 @@ class GrapheneGraphSource extends SegmentationGraphSource {
     this.graphServer = new GrapheneGraphServerInterface(this.httpSource);
     this.graphServer.getTimestampLimit().then((limit) => {
       this.timestampLimit.value = limit;
+    });
+    this.refreshBranches().catch((e) => {
+      console.warn("Failed to fetch calcada branches:", e);
+    });
+  }
+
+  private async refreshBranches(): Promise<void> {
+    const { fetchOkImpl } = this.httpSource;
+    const url = `${this.info.app!.segmentationUrl}/branches?limit=200&include_abandoned=false`;
+    const response = await fetchOkImpl(url);
+    const data = await response.json();
+    if (!Array.isArray(data)) {
+      this.branches.value = [];
+      return;
+    }
+    const parsed: { id: number; name: string }[] = [];
+    for (const entry of data) {
+      if (!entry || typeof entry !== "object") continue;
+      const id = (entry as any).branch_id;
+      const name = (entry as any).branch_name;
+      if (typeof id !== "number" || id === 0) continue;
+      if (typeof name !== "string") continue;
+      parsed.push({ id, name });
+    }
+    this.branches.value = parsed;
+    this.branchesFetched = true;
+  }
+
+  public get hasFetchedBranches(): boolean {
+    return this.branchesFetched;
+  }
+
+  public triggerBranchRefresh(): void {
+    this.refreshBranches().catch((e) => {
+      console.warn("Failed to refresh calcada branches:", e);
+    });
+  }
+
+  public async createBranch(
+    branchName: string,
+    parentBranchId: number,
+  ): Promise<Response> {
+    const { fetchOkImpl } = this.httpSource;
+    return fetchOkImpl(`${this.info.app!.segmentationUrl}/branch/create`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        branch_name: branchName,
+        parent_branch_id: parentBranchId,
+      }),
     });
   }
 
@@ -3245,85 +3285,222 @@ function branchLayerControl(): LayerControlFactory<SegmentationUserLayer> {
       const controlElement = document.createElement("div");
       controlElement.classList.add("neuroglancer-calcada-branch-control");
 
-      const input = document.createElement("input");
-      input.type = "number";
-      input.min = "0";
-      input.step = "1";
-      input.value = String(branchId.value);
-      input.style.width = "6em";
-      input.title =
-        "Calcada branch id (0 = main). Switching clears segments not present on the new branch.";
+      const select = document.createElement("select");
+      select.classList.add("neuroglancer-layer-control-control");
+      select.title =
+        "Calcada branch (main = 0). Switching clears segments not present on the new branch.";
+
+      const renderOptions = () => {
+        const branches =
+          graph instanceof GrapheneGraphSource ? graph.branches.value : [];
+        while (select.firstChild) {
+          select.removeChild(select.firstChild);
+        }
+        const mainOption = document.createElement("option");
+        mainOption.value = "0";
+        mainOption.textContent = "main";
+        select.appendChild(mainOption);
+        for (const { id, name } of branches) {
+          const opt = document.createElement("option");
+          opt.value = String(id);
+          opt.textContent = name;
+          select.appendChild(opt);
+        }
+        select.value = String(branchId.value);
+      };
+      renderOptions();
+
       let branchChangeGeneration = 0;
-      input.addEventListener("change", async () => {
-        const parsed = Number.parseInt(input.value, 10);
+      select.addEventListener("change", async () => {
+        const parsed = Number.parseInt(select.value, 10);
         if (!Number.isFinite(parsed) || parsed < 0) {
-          input.value = String(branchId.value);
+          select.value = String(branchId.value);
           return;
         }
         if (parsed === branchId.value) return;
         const myGeneration = ++branchChangeGeneration;
-        input.disabled = true;
+        select.disabled = true;
         try {
           if (graph instanceof GrapheneGraphSource) {
             const ts = segmentationGroupState.timestamp.value ?? 0;
-            let nonLatest: bigint[] = [];
-            try {
-              nonLatest = await graph.graphServer.filterLatestRoots(
-                [...segmentationGroupState.selectedSegments],
-                ts,
-                true,
-                parsed,
-              );
-            } catch (e) {
+            const oldSelected = [...segmentationGroupState.selectedSegments];
+            const resolvedRoots = new Set<bigint>();
+            const droppedCount = { value: 0 };
+            for (const segId of oldSelected) {
+              try {
+                const newRoot = await graph.graphServer.getRoot(
+                  segId,
+                  ts,
+                  parsed,
+                );
+                resolvedRoots.add(newRoot);
+              } catch {
+                droppedCount.value += 1;
+              }
+            }
+            if (myGeneration !== branchChangeGeneration) return;
+            const oldSet = new Set(oldSelected);
+            const toRemove: bigint[] = [];
+            const toAdd: bigint[] = [];
+            for (const id of oldSet) {
+              if (!resolvedRoots.has(id)) toRemove.push(id);
+            }
+            for (const id of resolvedRoots) {
+              if (!oldSet.has(id)) toAdd.push(id);
+            }
+            if (toRemove.length > 0) {
+              segmentationGroupState.selectedSegments.delete(toRemove);
+            }
+            if (toAdd.length > 0) {
+              segmentationGroupState.selectedSegments.add(toAdd);
+            }
+            if (droppedCount.value > 0) {
               StatusMessage.showTemporaryMessage(
-                `Branch switch failed: ${e instanceof Error ? e.message : String(e)}`,
-                5000,
+                `Dropped ${droppedCount.value} segment(s) not present on the new branch.`,
+                3000,
               );
-              if (myGeneration === branchChangeGeneration) {
-                input.value = String(branchId.value);
-              }
-              return;
-            }
-            if (myGeneration !== branchChangeGeneration) return;
-            if (
-              nonLatest.length > 0 &&
-              !confirm(
-                `Changing branch will clear ${nonLatest.length} segment(s) not present on branch ${parsed}.`,
-              )
-            ) {
-              if (myGeneration === branchChangeGeneration) {
-                input.value = String(branchId.value);
-              }
-              return;
-            }
-            if (myGeneration !== branchChangeGeneration) return;
-            const currentSelection = new Set<string>();
-            for (const id of segmentationGroupState.selectedSegments) {
-              currentSelection.add(id.toString());
-            }
-            const toDelete = nonLatest.filter((id) =>
-              currentSelection.has(id.toString()),
-            );
-            if (toDelete.length > 0) {
-              segmentationGroupState.selectedSegments.delete(toDelete);
             }
           }
           if (myGeneration !== branchChangeGeneration) return;
           branchId.value = parsed;
         } finally {
           if (myGeneration === branchChangeGeneration) {
-            input.disabled = false;
+            select.disabled = false;
           }
         }
       });
+
+      select.addEventListener("focus", () => {
+        if (graph instanceof GrapheneGraphSource) {
+          graph.triggerBranchRefresh();
+        }
+      });
+
       const sync = () => {
-        if (String(branchId.value) !== input.value) {
-          input.value = String(branchId.value);
+        if (String(branchId.value) !== select.value) {
+          select.value = String(branchId.value);
         }
       };
       context.registerDisposer(branchId.changed.add(sync));
-      controlElement.appendChild(input);
-      return { controlElement, control: input };
+      if (graph instanceof GrapheneGraphSource) {
+        context.registerDisposer(graph.branches.changed.add(renderOptions));
+      }
+      controlElement.appendChild(select);
+
+      const newBranchButton = document.createElement("button");
+      newBranchButton.type = "button";
+      newBranchButton.textContent = "+ New branch";
+      controlElement.appendChild(newBranchButton);
+
+      const createForm = document.createElement("div");
+      createForm.style.display = "none";
+      const nameInput = document.createElement("input");
+      nameInput.type = "text";
+      nameInput.name = "branch_name";
+      const createButton = document.createElement("button");
+      createButton.type = "submit";
+      createButton.textContent = "Create";
+      const errorSpan = document.createElement("span");
+      errorSpan.className = "branch-create-error";
+      createForm.appendChild(nameInput);
+      createForm.appendChild(createButton);
+      createForm.appendChild(errorSpan);
+      controlElement.appendChild(createForm);
+
+      newBranchButton.addEventListener("click", () => {
+        const isHidden = createForm.style.display === "none";
+        createForm.style.display = isHidden ? "" : "none";
+        if (isHidden) {
+          nameInput.focus();
+        }
+      });
+
+      const submitCreate = async () => {
+        if (!(graph instanceof GrapheneGraphSource)) return;
+        const name = String(nameInput.value).trim();
+        if (name.length === 0) return;
+        createButton.disabled = true;
+        try {
+          let response: Response;
+          try {
+            response = await graph.createBranch(
+              name,
+              defaultParentForNewBranch(graph),
+            );
+          } catch (e: any) {
+            const resp: Response | undefined = e?.response;
+            let msg = "";
+            if (resp) {
+              try {
+                const errBody = await resp.json();
+                msg = errBody?.error || errBody?.message || "";
+              } catch {
+                msg = "";
+              }
+              if (!msg) msg = `${resp.status} ${resp.statusText}`;
+            } else {
+              msg = e instanceof Error ? e.message : String(e);
+            }
+            errorSpan.textContent = msg;
+            return;
+          }
+          let body: any = {};
+          try {
+            body = await response.json();
+          } catch {
+            body = {};
+          }
+          const newId = body?.branch_id;
+          const newName = body?.branch_name;
+          if (typeof newId !== "number" || typeof newName !== "string") {
+            errorSpan.textContent = "Invalid response from server";
+            return;
+          }
+          graph.branches.value = [
+            ...graph.branches.value,
+            { id: newId, name: newName },
+          ];
+          graph.branchId.value = newId;
+          nameInput.value = "";
+          createForm.style.display = "none";
+          errorSpan.textContent = "";
+          graph.triggerBranchRefresh();
+        } finally {
+          createButton.disabled = false;
+        }
+      };
+
+      createButton.addEventListener("click", (e) => {
+        e.preventDefault();
+        submitCreate();
+      });
+      nameInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          submitCreate();
+        }
+      });
+
+      const diffLink = document.createElement("a");
+      diffLink.className = "calcada-open-diff";
+      diffLink.textContent = "Open diff";
+      diffLink.target = "_blank";
+      diffLink.rel = "noopener";
+      controlElement.appendChild(diffLink);
+
+      const updateDiffLink = () => {
+        if (!(graph instanceof GrapheneGraphSource)) {
+          diffLink.style.display = "none";
+          return;
+        }
+        const adminOrigin = new URL(graph.info.app!.segmentationUrl).origin;
+        diffLink.href = `${adminOrigin}/admin/graphs/${graph.info.app!.table}/branches/${branchId.value}/diff`;
+        diffLink.style.display = branchId.value === 0 ? "none" : "";
+      };
+      updateDiffLink();
+      context.registerDisposer(branchId.changed.add(updateDiffLink));
+
+      return { controlElement, control: select };
     },
     activateTool: (_activation) => {},
   };

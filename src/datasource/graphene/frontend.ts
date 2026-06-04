@@ -423,28 +423,26 @@ function parseMeshMetadata(data: any): ParsedMeshMetadata {
   } else if (t !== "neuroglancer_multilod_draco") {
     throw new Error(`Unsupported mesh type: ${JSON.stringify(t)}`);
   } else {
-    const lodScaleMultiplier = verifyObjectProperty(
-      data,
-      "lod_scale_multiplier",
-      verifyFinitePositiveFloat,
-    );
-    const vertexQuantizationBits = verifyObjectProperty(
-      data,
-      "vertex_quantization_bits",
-      verifyPositiveInt,
-    );
-    const transform = parseTransform(data);
+    // Treat multilod_draco as legacy single-LOD too: the Calcada meshing
+    // service has only a legacy /manifest/{id}:0 endpoint.
     const sharding = verifyObjectProperty(
       data,
       "sharding",
       parseGrapheneShardingParameters,
     );
-    metadata = {
-      lodScaleMultiplier,
-      transform,
-      sharding,
-      vertexQuantizationBits,
-    };
+    if (sharding === undefined) {
+      metadata = undefined;
+    } else {
+      const lodScaleMultiplier = 0;
+      const vertexQuantizationBits = 10;
+      const transform = parseTransform(data);
+      metadata = {
+        lodScaleMultiplier,
+        transform,
+        sharding,
+        vertexQuantizationBits,
+      };
+    }
   }
   const segmentPropertyMap = verifyObjectProperty(
     data,
@@ -558,10 +556,7 @@ async function getMeshSource(
     fragmentUrl,
     options,
   );
-  if (metadata === undefined) {
-    throw new Error('Mesh metadata is missing');
-  }
-  if (metadata.lodScaleMultiplier === 0) {
+  if (metadata === undefined || metadata.lodScaleMultiplier === 0) {
     const parameters: MeshSourceParameters = {
       manifestUrl: url,
       fragmentUrl: fragmentUrl,
