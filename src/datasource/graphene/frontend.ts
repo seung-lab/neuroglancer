@@ -182,7 +182,6 @@ import {
   verifyBoolean,
   verifyEnumString,
   verifyFiniteFloat,
-  verifyFinitePositiveFloat,
   verifyFloatArray,
   verifyInt,
   verifyIntegerArray,
