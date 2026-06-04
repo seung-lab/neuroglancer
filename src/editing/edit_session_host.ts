@@ -305,27 +305,34 @@ export class EditSessionHost extends RefCounted {
   readonly state = new TrackableEditSessionIntent();
 
   /**
-   * Side-panel location for the editing tool-settings side panel (TM-294).
-   * A single slot renders the active tool's settings (from
-   * `tool_settings/registry.ts`). Visibility is toggled by the topbar:
-   * selecting a tool sets `visible=true`, the X-close button sets it to
-   * false; the session stays alive across visibility flips.
+   * Per-tool side-panel locations (TM-294 rework). Each tool owns an
+   * independent `TrackableSidePanelLocation`; the host's `selectTool()`
+   * invariant guarantees at most one is `visible` at any time. Cursor has
+   * no panel — selecting it forces all five `visible=false`.
    *
-   * Default side = LEFT per TM-294. The location persists via the URL
-   * `TrackableSidePanelLocation` so a user-moved panel stays on their
-   * preferred side across reloads.
+   * All default to `side: "left"` and the same row/col so they visually
+   * replace each other in the same slot.
    */
-  readonly editSessionPanelLocation = new TrackableSidePanelLocation({
+  readonly brushPanelLocation = new TrackableSidePanelLocation({
     ...DEFAULT_SIDE_PANEL_LOCATION,
     side: "left",
   });
-
-  /**
-   * Side-panel location for the "Pending Changes" panel — the post-commit
-   * lifecycle manager. The user toggles it via a top-bar button. Lives
-   * independently of any active session.
-   */
-  readonly pendingChangesPanelLocation = new TrackableSidePanelLocation();
+  readonly eraserPanelLocation = new TrackableSidePanelLocation({
+    ...DEFAULT_SIDE_PANEL_LOCATION,
+    side: "left",
+  });
+  readonly fillPanelLocation = new TrackableSidePanelLocation({
+    ...DEFAULT_SIDE_PANEL_LOCATION,
+    side: "left",
+  });
+  readonly zExtrapPanelLocation = new TrackableSidePanelLocation({
+    ...DEFAULT_SIDE_PANEL_LOCATION,
+    side: "left",
+  });
+  readonly correspondencePanelLocation = new TrackableSidePanelLocation({
+    ...DEFAULT_SIDE_PANEL_LOCATION,
+    side: "left",
+  });
 
   // -- Save cancellation ----------------------------------------------------
   private saveAbortController: AbortController | undefined;
@@ -579,6 +586,80 @@ export class EditSessionHost extends RefCounted {
    * Chunks NOT dirtied in this session keep whatever committed state they
    * already had.
    */
+
+  /**
+   * Tool selection invariant. The only entry point allowed to flip per-tool
+   * panel visibility — every other path (topbar click, hotkey, session
+   * teardown) goes through this method so the "≤1 tool panel visible at a
+   * time, matching the active tool" invariant always holds.
+   *
+   * `toolId === undefined` clears the active tool and hides all five panels
+   * (used for cursor selection and Escape).
+   */
+  selectTool(toolId: string | undefined): void {
+    const session = this.activeSession.value;
+    if (session === undefined) return;
+    try {
+      if (toolId === undefined) {
+        session.clearActiveTool();
+      } else {
+        session.setActiveTool(toolId);
+      }
+    } catch (err) {
+      this.logger.warn(
+        "session",
+        `${toolId === undefined ? "clearActiveTool" : `setActiveTool(${toolId})`} failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return;
+    }
+    const target = toolId !== undefined
+      ? this.toolPanelLocationFor(toolId)
+      : undefined;
+    for (const loc of this.allToolPanelLocations()) {
+      loc.visible = loc === target;
+    }
+  }
+
+  /**
+   * Toggles only the given tool's panel visibility — does NOT change the
+   * active tool. Used by the topbar when the user re-clicks the icon of the
+   * currently-active tool.
+   */
+  toggleToolPanel(toolId: string): void {
+    const loc = this.toolPanelLocationFor(toolId);
+    if (loc !== undefined) loc.visible = !loc.visible;
+  }
+
+  private toolPanelLocationFor(
+    toolId: string,
+  ): TrackableSidePanelLocation | undefined {
+    switch (toolId) {
+      case "painting.brush":
+        return this.brushPanelLocation;
+      case "painting.erase":
+        return this.eraserPanelLocation;
+      case "painting.fill":
+        return this.fillPanelLocation;
+      case "z-extrapolation":
+        return this.zExtrapPanelLocation;
+      case "correspondence":
+        return this.correspondencePanelLocation;
+    }
+    return undefined;
+  }
+
+  private allToolPanelLocations(): TrackableSidePanelLocation[] {
+    return [
+      this.brushPanelLocation,
+      this.eraserPanelLocation,
+      this.fillPanelLocation,
+      this.zExtrapPanelLocation,
+      this.correspondencePanelLocation,
+    ];
+  }
+
   async discardActive(): Promise<void> {
     const session = this.activeSession.value;
     if (session === undefined) return;
@@ -1600,7 +1681,9 @@ export class EditSessionHost extends RefCounted {
     }
     this.state.value.value = null;
     this.activeSession.value = undefined;
-    this.editSessionPanelLocation.visible = false;
+    for (const loc of this.allToolPanelLocations()) {
+      loc.visible = false;
+    }
     if (this.saveAbortController !== undefined) {
       try {
         this.saveAbortController.abort();

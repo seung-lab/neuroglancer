@@ -39,7 +39,13 @@ import type { DisplayContext } from "#src/display_context.js";
 import { TrackableWindowedViewport } from "#src/display_context.js";
 import { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { mountComponent } from "#src/editing/ui/interop/component_mount.js";
-import { makeEditSessionPanel } from "#src/editing/ui/interop/edit_session_panel_mount.js";
+import {
+  makeBrushPanel,
+  makeCorrespondencePanel,
+  makeEraserPanel,
+  makeFillPanel,
+  makeZExtrapPanel,
+} from "#src/editing/ui/interop/tool_panel_mounts.js";
 import { EditingTopbar } from "#src/editing/ui/topbar/editing_topbar.js";
 import {
   HelpPanelState,
@@ -946,8 +952,8 @@ export class Viewer extends RefCounted implements ViewerState {
       // Editing topbar (TM-294). Hosts tool icons, Undo/Redo, Save all /
       // Discard, and the Edit (Enter/Exit session) button. Replaces the
       // legacy Edit-Session sidebar root and standalone Enter / Pending
-      // buttons; the per-tool settings still render in the side panel
-      // registered below via `makeEditSessionPanel`.
+      // buttons; the per-tool settings render in the dedicated per-tool
+      // side panels registered below (one PanelMount per tool).
       const topbarMount = document.createElement("div");
       topbarMount.style.display = "contents";
       this.registerDisposer(
@@ -1072,11 +1078,44 @@ export class Viewer extends RefCounted implements ViewerState {
       }),
     );
 
+    // Per-tool side panels (TM-294 rework). One PanelMount per tool — the
+    // host's `selectTool()` invariant keeps at most one visible at a time.
     this.registerDisposer(
       this.sidePanelManager.registerPanel({
-        location: this.editSessionHost.editSessionPanelLocation,
+        location: this.editSessionHost.brushPanelLocation,
         makePanel: () =>
-          makeEditSessionPanel(this.sidePanelManager, this.editSessionHost),
+          makeBrushPanel(this.sidePanelManager, this.editSessionHost),
+      }),
+    );
+    this.registerDisposer(
+      this.sidePanelManager.registerPanel({
+        location: this.editSessionHost.eraserPanelLocation,
+        makePanel: () =>
+          makeEraserPanel(this.sidePanelManager, this.editSessionHost),
+      }),
+    );
+    this.registerDisposer(
+      this.sidePanelManager.registerPanel({
+        location: this.editSessionHost.fillPanelLocation,
+        makePanel: () =>
+          makeFillPanel(this.sidePanelManager, this.editSessionHost),
+      }),
+    );
+    this.registerDisposer(
+      this.sidePanelManager.registerPanel({
+        location: this.editSessionHost.zExtrapPanelLocation,
+        makePanel: () =>
+          makeZExtrapPanel(this.sidePanelManager, this.editSessionHost),
+      }),
+    );
+    this.registerDisposer(
+      this.sidePanelManager.registerPanel({
+        location: this.editSessionHost.correspondencePanelLocation,
+        makePanel: () =>
+          makeCorrespondencePanel(
+            this.sidePanelManager,
+            this.editSessionHost,
+          ),
       }),
     );
 

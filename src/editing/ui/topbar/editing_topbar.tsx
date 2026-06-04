@@ -148,23 +148,17 @@ function ActiveTopbar({
     (toolId: string) => {
       try {
         if (toolId === CURSOR_TOOL_ID) {
-          session.clearActiveTool();
-          host.editSessionPanelLocation.visible = false;
+          host.selectTool(undefined);
           return;
         }
         if (toolId === activeToolId) {
-          // Re-clicking the active tool's icon toggles its settings panel.
-          // The panel-location's `visible` flag drives the side-panel
-          // manager; flipping it here keeps the click consistent with the
-          // X-close button on the panel.
-          host.editSessionPanelLocation.visible =
-            !host.editSessionPanelLocation.visible;
+          // Re-clicking the active tool's icon toggles only that tool's
+          // panel — the active tool stays selected so the icon remains
+          // highlighted. Matches the X-close behavior on the panel itself.
+          host.toggleToolPanel(toolId);
           return;
         }
-        session.setActiveTool(toolId);
-        // Switching to a tool always (re-)opens the side panel so the
-        // settings are visible.
-        host.editSessionPanelLocation.visible = true;
+        host.selectTool(toolId);
       } catch (err) {
         StatusMessage.showTemporaryMessage(
           err instanceof Error ? err.message : String(err),
@@ -172,7 +166,7 @@ function ActiveTopbar({
         );
       }
     },
-    [session, host, activeToolId],
+    [host, activeToolId],
   );
 
   const runUndo = useCallback(async () => {

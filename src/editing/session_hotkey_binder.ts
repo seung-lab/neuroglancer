@@ -232,18 +232,9 @@ export class EditSessionHotkeyBinder extends RefCounted {
     const target = viewer.element;
 
     const activateTool = (toolId: string) => {
-      const session = host.activeSession.value;
-      if (session === undefined) return;
-      try {
-        session.setActiveTool(toolId);
-      } catch (err) {
-        host.logger.warn(
-          "session",
-          `Failed to activate tool ${toolId}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      }
+      // Route through host.selectTool so hotkey activation keeps tool-panel
+      // visibility in sync (see TM-294 rework: per-tool panel mounts).
+      host.selectTool(toolId);
     };
 
     this.registerDisposer(
@@ -301,19 +292,11 @@ export class EditSessionHotkeyBinder extends RefCounted {
     );
 
     const clearActiveTool = (event: Event) => {
-      const s = host.activeSession.value;
-      if (s === undefined) return;
+      if (host.activeSession.value === undefined) return;
       event.stopPropagation();
-      try {
-        s.clearActiveTool();
-      } catch (err) {
-        host.logger.warn(
-          "session",
-          `Clear active tool failed: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      }
+      // Route through host.selectTool so Escape / Ctrl+V also closes the
+      // per-tool panels (TM-294 rework).
+      host.selectTool(undefined);
     };
     this.registerDisposer(
       registerActionListener(target, ACTION_IDS.exitTool, clearActiveTool),
