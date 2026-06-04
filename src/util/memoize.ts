@@ -41,6 +41,14 @@ export class Memoize<Key, Value extends RefCounted> {
     }
     return obj;
   }
+
+  /**
+   * Returns the cached value for `key` without creating one if absent. Does
+   * not addRef; subclasses doing so should layer it on top.
+   */
+  protected peek(key: Key): Value | undefined {
+    return this.map.get(key);
+  }
 }
 
 export class StringMemoize extends Memoize<string, RefCounted> {
@@ -49,6 +57,19 @@ export class StringMemoize extends Memoize<string, RefCounted> {
       x = stableStringify(x);
     }
     return super.get(x, getter);
+  }
+
+  /**
+   * Returns the existing cached value for `x` (addRef'd), or `undefined` if
+   * none. Unlike `get`, does not create a new entry. Caller must `dispose()`.
+   */
+  getIfExists<T extends RefCounted>(x: any): T | undefined {
+    if (typeof x !== "string") {
+      x = stableStringify(x);
+    }
+    const obj = this.peek(x) as T | undefined;
+    if (obj !== undefined) obj.addRef();
+    return obj;
   }
 
   getUncounted<T>(x: any, getter: () => T) {

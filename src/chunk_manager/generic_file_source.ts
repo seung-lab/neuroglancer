@@ -69,6 +69,11 @@ export class SimpleAsyncCache<Key, Value> extends ChunkSourceBase {
     progressOptions: ProgressOptions,
   ) => Promise<{ size: number; data: Value }>;
 
+  invalidate(key: Key) {
+    const encodedKey = this.encodeKeyFunction(key);
+    this.chunks.get(encodedKey)?.invalidateChunk();
+  }
+
   get(key: Key, options: Partial<ProgressOptions>): Promise<Value> {
     const encodedKey = this.encodeKeyFunction(key);
     let chunk = this.chunks.get(encodedKey);

@@ -27,7 +27,11 @@ import type {
   ManifestWithVersionTree,
 } from "#src/kvstore/ocdbt/manifest.js";
 import { decodeManifest } from "#src/kvstore/ocdbt/manifest.js";
-import type { VersionTreeNode } from "#src/kvstore/ocdbt/version_tree.js";
+import type { VersionSpecifier } from "#src/kvstore/ocdbt/version_specifier.js";
+import type {
+  BtreeGenerationReference,
+  VersionTreeNode,
+} from "#src/kvstore/ocdbt/version_tree.js";
 import { decodeVersionTreeNode } from "#src/kvstore/ocdbt/version_tree.js";
 import { pipelineUrlJoin } from "#src/kvstore/url.js";
 import type { ProgressOptions } from "#src/util/progress_listener.js";
@@ -82,6 +86,53 @@ export function getManifest(
     },
   );
   return cache.get(dataFile, options);
+}
+
+// Invalidate cached OCDBT metadata for a specific database so the next read
+// resolves a fresh root from the updated manifest. Only `ocdbt:manifest`
+// (per `{baseUrl, "manifest.ocdbt"}`) and `ocdbt:version` (per
+// `{url: baseUrl, version}`) can hold stale entries after a server-side
+// write; `ocdbt:btree` and `ocdbt:versionnode` are content-addressed by
+// `dataFile` location and self-correct (a new manifest references new
+// locations; old entries simply go unreferenced).
+//
+// `baseUrl` and `version` MUST come from the `OcdbtKvStore` whose cache is
+// being invalidated, since those are the exact keys used to populate the
+// caches. Resolve via `kvStoreContext.getKvStore(...)` first when the
+// caller only knows a pipeline URL like `kvstack:...|ocdbt:`.
+//
+// Safe to call when the caches haven't been populated yet (no-op).
+export function invalidateOcdbtCaches(
+  sharedKvStoreContext: SharedKvStoreContextCounterpart,
+  baseUrl: string,
+  version: VersionSpecifier | undefined,
+) {
+  const { memoize } = sharedKvStoreContext.chunkManager;
+  const manifestCache =
+    memoize.getIfExists<SimpleAsyncCache<DataFileId, Manifest>>(
+      "ocdbt:manifest",
+    );
+  if (manifestCache !== undefined) {
+    try {
+      manifestCache.invalidate({ baseUrl, relativePath: "manifest.ocdbt" });
+    } finally {
+      manifestCache.dispose();
+    }
+  }
+  const versionCache =
+    memoize.getIfExists<
+      SimpleAsyncCache<
+        { url: string; version: VersionSpecifier | undefined },
+        BtreeGenerationReference
+      >
+    >("ocdbt:version");
+  if (versionCache !== undefined) {
+    try {
+      versionCache.invalidate({ url: baseUrl, version });
+    } finally {
+      versionCache.dispose();
+    }
+  }
 }
 
 export async function getResolvedManifest(

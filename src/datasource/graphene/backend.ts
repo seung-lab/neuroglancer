@@ -28,6 +28,7 @@ import type {
 } from "#src/datasource/graphene/base.js";
 import {
   getGrapheneFragmentKey,
+  GRAPHENE_INVALIDATE_OCDBT_RPC_ID,
   GRAPHENE_MESH_NEW_SEGMENT_RPC_ID,
   ChunkedGraphSourceParameters,
   MeshSourceParameters,
@@ -42,6 +43,8 @@ import { decodeManifestChunk } from "#src/datasource/precomputed/backend.js";
 import { WithSharedKvStoreContextCounterpart } from "#src/kvstore/backend.js";
 import type { KvStoreWithPath, ReadResponse } from "#src/kvstore/index.js";
 import { readKvStore } from "#src/kvstore/index.js";
+import { OcdbtKvStore } from "#src/kvstore/ocdbt/backend.js";
+import { invalidateOcdbtCaches } from "#src/kvstore/ocdbt/metadata_cache.js";
 import type { FragmentChunk, ManifestChunk } from "#src/mesh/backend.js";
 import { assignMeshFragmentData, MeshSource } from "#src/mesh/backend.js";
 import { decodeDraco } from "#src/mesh/draco/index.js";
@@ -81,6 +84,7 @@ import { registerSharedObject, registerRPC } from "#src/worker_rpc.js";
 function downloadFragmentWithSharding(
   fragmentKvStore: KvStoreWithPath,
   fragmentId: string,
+  dynamicMeshDir: string,
   signal: AbortSignal,
 ): Promise<ReadResponse> {
   if (fragmentId && fragmentId.charAt(0) === "~") {
@@ -94,7 +98,7 @@ function downloadFragmentWithSharding(
   }
   return readKvStore(
     fragmentKvStore.store,
-    `${fragmentKvStore.path}dynamic/${fragmentId}`,
+    `${fragmentKvStore.path}${dynamicMeshDir}/${fragmentId}`,
     { signal, throwIfMissing: true },
   );
 }
@@ -106,7 +110,12 @@ function downloadFragment(
   signal: AbortSignal,
 ): Promise<ReadResponse> {
   if (parameters.sharding) {
-    return downloadFragmentWithSharding(fragmentKvStore, fragmentId, signal);
+    return downloadFragmentWithSharding(
+      fragmentKvStore,
+      fragmentId,
+      parameters.dynamicMeshDir,
+      signal,
+    );
   } else {
     // TODO, is this change safe?
     return readKvStore(
@@ -642,4 +651,21 @@ registerRPC(CHUNKED_GRAPH_RENDER_LAYER_UPDATE_SOURCES_RPC_ID, function (x) {
 registerRPC(GRAPHENE_MESH_NEW_SEGMENT_RPC_ID, function (x) {
   const obj = <GrapheneMeshSource>this.get(x.rpcId);
   obj.addNewSegment(x.segment);
+});
+
+registerRPC(GRAPHENE_INVALIDATE_OCDBT_RPC_ID, function (x) {
+  const source = this.get(x.layerId) as GrapheneChunkedGraphChunkSource;
+  // Resolve the pipeline URL (e.g. `kvstack:...|ocdbt:`) to the actual
+  // OcdbtKvStore so we can read its `baseUrl`/`version` — those are the
+  // keys the OCDBT manifest/version caches were populated under.
+  const { store } = source.sharedKvStoreContext.kvStoreContext.getKvStore(
+    x.baseUrl,
+  );
+  if (store instanceof OcdbtKvStore) {
+    invalidateOcdbtCaches(
+      source.sharedKvStoreContext,
+      store.baseUrl,
+      store.version,
+    );
+  }
 });
