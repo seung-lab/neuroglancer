@@ -91,15 +91,21 @@ export function getManifest(
 // Invalidate cached OCDBT metadata for a specific database so the next read
 // resolves a fresh root from the updated manifest. Only `ocdbt:manifest`
 // (per `{baseUrl, "manifest.ocdbt"}`) and `ocdbt:version` (per
-// `{url: baseUrl, version: undefined}`, i.e. "latest") can hold stale
-// entries after a server-side write; `ocdbt:btree` and `ocdbt:versionnode`
-// are content-addressed by `dataFile` location and self-correct (a new
-// manifest references new locations; old entries simply go unreferenced).
+// `{url: baseUrl, version}`) can hold stale entries after a server-side
+// write; `ocdbt:btree` and `ocdbt:versionnode` are content-addressed by
+// `dataFile` location and self-correct (a new manifest references new
+// locations; old entries simply go unreferenced).
+//
+// `baseUrl` and `version` MUST come from the `OcdbtKvStore` whose cache is
+// being invalidated, since those are the exact keys used to populate the
+// caches. Resolve via `kvStoreContext.getKvStore(...)` first when the
+// caller only knows a pipeline URL like `kvstack:...|ocdbt:`.
 //
 // Safe to call when the caches haven't been populated yet (no-op).
 export function invalidateOcdbtCaches(
   sharedKvStoreContext: SharedKvStoreContextCounterpart,
   baseUrl: string,
+  version: VersionSpecifier | undefined,
 ) {
   const { memoize } = sharedKvStoreContext.chunkManager;
   const manifestCache =
@@ -122,7 +128,7 @@ export function invalidateOcdbtCaches(
     >("ocdbt:version");
   if (versionCache !== undefined) {
     try {
-      versionCache.invalidate({ url: baseUrl, version: undefined });
+      versionCache.invalidate({ url: baseUrl, version });
     } finally {
       versionCache.dispose();
     }

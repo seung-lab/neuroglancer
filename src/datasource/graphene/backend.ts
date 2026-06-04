@@ -43,6 +43,7 @@ import { decodeManifestChunk } from "#src/datasource/precomputed/backend.js";
 import { WithSharedKvStoreContextCounterpart } from "#src/kvstore/backend.js";
 import type { KvStoreWithPath, ReadResponse } from "#src/kvstore/index.js";
 import { readKvStore } from "#src/kvstore/index.js";
+import { OcdbtKvStore } from "#src/kvstore/ocdbt/backend.js";
 import { invalidateOcdbtCaches } from "#src/kvstore/ocdbt/metadata_cache.js";
 import type { FragmentChunk, ManifestChunk } from "#src/mesh/backend.js";
 import { assignMeshFragmentData, MeshSource } from "#src/mesh/backend.js";
@@ -654,5 +655,17 @@ registerRPC(GRAPHENE_MESH_NEW_SEGMENT_RPC_ID, function (x) {
 
 registerRPC(GRAPHENE_INVALIDATE_OCDBT_RPC_ID, function (x) {
   const source = this.get(x.layerId) as GrapheneChunkedGraphChunkSource;
-  invalidateOcdbtCaches(source.sharedKvStoreContext, x.baseUrl);
+  // Resolve the pipeline URL (e.g. `kvstack:...|ocdbt:`) to the actual
+  // OcdbtKvStore so we can read its `baseUrl`/`version` — those are the
+  // keys the OCDBT manifest/version caches were populated under.
+  const { store } = source.sharedKvStoreContext.kvStoreContext.getKvStore(
+    x.baseUrl,
+  );
+  if (store instanceof OcdbtKvStore) {
+    invalidateOcdbtCaches(
+      source.sharedKvStoreContext,
+      store.baseUrl,
+      store.version,
+    );
+  }
 });
