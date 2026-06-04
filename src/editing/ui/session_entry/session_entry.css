@@ -8,6 +8,27 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
+/* Design tokens (modal-scoped) --------------------------------------------- */
+
+.neuroglancer-edit-session-entry-modal-backdrop {
+  --neuroglancer-edit-session-accent: #3b82f6;
+  --neuroglancer-edit-session-accent-strong: #2563eb;
+  --neuroglancer-edit-session-accent-soft: #1e3a5f;
+  --neuroglancer-edit-session-text: #e5e7eb;
+  --neuroglancer-edit-session-text-muted: #9ca3af;
+  --neuroglancer-edit-session-text-dim: #6b7280;
+  --neuroglancer-edit-session-bg: #1a1a1a;
+  --neuroglancer-edit-session-bg-elev: #232323;
+  --neuroglancer-edit-session-bg-row: #1f1f1f;
+  --neuroglancer-edit-session-border: #3a3a3a;
+  --neuroglancer-edit-session-border-soft: #2a2a2a;
+  --neuroglancer-edit-session-safe: #22c55e;
+  --neuroglancer-edit-session-near: #f59e0b;
+  --neuroglancer-edit-session-over: #ef4444;
+}
+
+/* Backdrop + frame --------------------------------------------------------- */
+
 .neuroglancer-edit-session-entry-modal-backdrop {
   position: fixed;
   top: 0;
@@ -22,66 +43,109 @@
 }
 
 .neuroglancer-edit-session-entry-modal {
-  background-color: #1d1d1d;
-  color: #ddd;
-  border: 1px solid #444;
-  min-width: 520px;
-  max-width: 720px;
+  background-color: var(--neuroglancer-edit-session-bg);
+  color: var(--neuroglancer-edit-session-text);
+  border: 1px solid var(--neuroglancer-edit-session-border);
+  border-radius: 6px;
+  min-width: 560px;
+  max-width: 760px;
   max-height: 90vh;
   display: flex;
   flex-direction: column;
   font: inherit;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
 }
 
 .neuroglancer-edit-session-entry-modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
-  border-bottom: 1px solid #333;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--neuroglancer-edit-session-border-soft);
   font-weight: 600;
+  font-size: 14px;
 }
 
 .neuroglancer-edit-session-entry-modal-close {
   background: none;
   border: none;
-  color: #ddd;
+  color: var(--neuroglancer-edit-session-text-muted);
   cursor: pointer;
-  font-size: 16px;
+  font-size: 20px;
   line-height: 1;
-  padding: 2px 6px;
+  padding: 4px 10px;
+  border-radius: 4px;
+}
+
+.neuroglancer-edit-session-entry-modal-close:hover {
+  color: var(--neuroglancer-edit-session-text);
+  background-color: var(--neuroglancer-edit-session-bg-elev);
 }
 
 .neuroglancer-edit-session-entry-modal-body {
-  padding: 14px;
+  padding: 18px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
   overflow-y: auto;
 }
 
 .neuroglancer-edit-session-entry-modal-section-title {
   font-weight: 600;
-  font-size: 12px;
-  color: #ccc;
-  margin: 0 0 6px 0;
+  font-size: 11px;
+  color: var(--neuroglancer-edit-session-text);
+  margin: 0 0 8px 0;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
 }
 
-.neuroglancer-bbox-picker-select,
-.neuroglancer-resolution-picker-select {
-  background-color: #2a2a2a;
-  color: #ddd;
-  border: 1px solid #444;
-  padding: 2px 4px;
-  font: inherit;
+.neuroglancer-edit-session-entry-modal-section-caption {
+  font-size: 12px;
+  color: var(--neuroglancer-edit-session-text-muted);
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+
+/* Region (bbox) section ---------------------------------------------------- */
+
+.neuroglancer-edit-session-entry-modal-bbox {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .neuroglancer-bbox-picker-select {
+  background-color: var(--neuroglancer-edit-session-bg-elev);
+  color: var(--neuroglancer-edit-session-text);
+  border: 1px solid var(--neuroglancer-edit-session-border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font: inherit;
   width: 100%;
 }
+
+.neuroglancer-bbox-picker-select:focus {
+  outline: none;
+  border-color: var(--neuroglancer-edit-session-accent);
+}
+
+.neuroglancer-edit-session-entry-modal-bbox-helper {
+  font-size: 11px;
+  color: var(--neuroglancer-edit-session-text-muted);
+  margin-top: 2px;
+}
+
+.neuroglancer-edit-session-entry-modal-bbox-empty {
+  font-size: 12px;
+  color: var(--neuroglancer-edit-session-text-muted);
+  padding: 12px;
+  border: 1px dashed var(--neuroglancer-edit-session-border-soft);
+  border-radius: 4px;
+  background-color: var(--neuroglancer-edit-session-bg-elev);
+  line-height: 1.4;
+}
+
+/* Resolution picker (multi-res dropdown) ----------------------------------- */
 
 .neuroglancer-resolution-picker-dropdown {
   position: relative;
@@ -92,13 +156,18 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background-color: #2a2a2a;
-  color: #ddd;
-  border: 1px solid #444;
-  padding: 2px 6px;
+  background-color: var(--neuroglancer-edit-session-bg-elev);
+  color: var(--neuroglancer-edit-session-text);
+  border: 1px solid var(--neuroglancer-edit-session-border);
+  border-radius: 4px;
+  padding: 4px 8px;
   font: inherit;
   cursor: pointer;
   min-width: 120px;
+}
+
+.neuroglancer-resolution-picker-dropdown-trigger:hover:not(:disabled) {
+  border-color: var(--neuroglancer-edit-session-accent);
 }
 
 .neuroglancer-resolution-picker-dropdown-trigger:disabled {
@@ -117,7 +186,7 @@
 .neuroglancer-resolution-picker-dropdown-caret {
   flex: 0 0 auto;
   font-size: 10px;
-  color: #999;
+  color: var(--neuroglancer-edit-session-text-dim);
 }
 
 .neuroglancer-resolution-picker-dropdown-panel {
@@ -125,39 +194,35 @@
   top: 100%;
   left: 0;
   margin-top: 2px;
-  background-color: #1a1a1a;
-  border: 1px solid #444;
+  background-color: var(--neuroglancer-edit-session-bg);
+  border: 1px solid var(--neuroglancer-edit-session-border);
+  border-radius: 4px;
   padding: 4px 0;
   z-index: 10;
   min-width: 100%;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
 }
 
 .neuroglancer-resolution-picker-dropdown-option {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 8px;
+  gap: 8px;
+  padding: 6px 12px;
   cursor: pointer;
   white-space: nowrap;
 }
 
 .neuroglancer-resolution-picker-dropdown-option:hover {
-  background-color: #2a2a2a;
+  background-color: var(--neuroglancer-edit-session-bg-elev);
 }
 
-.neuroglancer-edit-session-entry-modal-bbox-info {
-  font-size: 11px;
-  color: #aaa;
-  margin-top: 4px;
-}
-
-/* Layers card --------------------------------------------------------------*/
+/* Layers card -------------------------------------------------------------- */
 
 .neuroglancer-edit-session-entry-modal-layers-card {
-  border: 1px solid #333;
-  background-color: #181818;
-  padding: 4px 0;
+  border: 1px solid var(--neuroglancer-edit-session-border-soft);
+  border-radius: 4px;
+  background-color: var(--neuroglancer-edit-session-bg-row);
+  overflow: hidden;
 }
 
 .neuroglancer-edit-session-entry-modal-layers-list {
@@ -166,50 +231,48 @@
 }
 
 .neuroglancer-edit-session-entry-modal-layers-empty {
-  padding: 10px 12px;
+  padding: 14px 16px;
   font-style: italic;
-  color: #888;
+  color: var(--neuroglancer-edit-session-text-dim);
 }
 
 .neuroglancer-edit-session-entry-modal-layer-row {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) auto auto;
+  grid-template-columns: minmax(180px, 1fr) auto auto;
   align-items: center;
-  column-gap: 14px;
-  padding: 6px 12px;
-  border-bottom: 1px solid #262626;
+  column-gap: 16px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--neuroglancer-edit-session-border-soft);
+  transition: opacity 0.12s ease;
 }
 
 .neuroglancer-edit-session-entry-modal-layer-row:last-child {
   border-bottom: none;
 }
 
-.neuroglancer-edit-session-entry-modal-layer-row-excluded {
+/*
+ * `Off` rows dim in place — no reordering, no collapsing. Per spec the
+ * layer list order is stable.
+ */
+.neuroglancer-edit-session-entry-modal-layer-row-off {
   opacity: 0.55;
 }
 
-.neuroglancer-edit-session-entry-modal-layer-row-excluded
-  .neuroglancer-edit-session-entry-modal-layer-resolution,
-.neuroglancer-edit-session-entry-modal-layer-row-excluded
-  .neuroglancer-edit-session-entry-modal-layer-lock {
+.neuroglancer-edit-session-entry-modal-layer-row-off
+  .neuroglancer-edit-session-entry-modal-layer-resolution {
   pointer-events: none;
 }
 
-.neuroglancer-edit-session-entry-modal-layer-include {
+.neuroglancer-edit-session-entry-modal-layer-identity {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  cursor: pointer;
+  gap: 8px;
   min-width: 0;
-}
-
-.neuroglancer-edit-session-entry-modal-layer-include input[type="checkbox"] {
-  margin: 0;
 }
 
 .neuroglancer-edit-session-entry-modal-layer-name {
   font-weight: 500;
-  color: #e6e6e6;
+  color: var(--neuroglancer-edit-session-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -219,11 +282,11 @@
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  padding: 1px 6px;
-  border-radius: 8px;
-  border: 1px solid #2e2e2e;
-  background-color: #232323;
-  color: #aaa;
+  padding: 2px 7px;
+  border-radius: 10px;
+  border: 1px solid var(--neuroglancer-edit-session-border-soft);
+  background-color: var(--neuroglancer-edit-session-bg-elev);
+  color: var(--neuroglancer-edit-session-text-muted);
   white-space: nowrap;
 }
 
@@ -244,11 +307,11 @@
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: #bbb;
+  color: var(--neuroglancer-edit-session-text-muted);
 }
 
 .neuroglancer-edit-session-entry-modal-layer-resolution-label {
-  color: #888;
+  color: var(--neuroglancer-edit-session-text-dim);
 }
 
 .neuroglancer-edit-session-entry-modal-layer-resolution-slot {
@@ -258,86 +321,194 @@
 
 .neuroglancer-edit-session-entry-modal-layer-resolution-static {
   font-family: monospace;
-  color: #ddd;
-  background-color: #232323;
-  border: 1px solid #2e2e2e;
-  padding: 1px 6px;
+  color: var(--neuroglancer-edit-session-text);
+  background-color: var(--neuroglancer-edit-session-bg-elev);
+  border: 1px solid var(--neuroglancer-edit-session-border-soft);
+  border-radius: 3px;
+  padding: 2px 8px;
 }
 
 .neuroglancer-edit-session-entry-modal-layer-resolution-loading {
   font-style: italic;
-  color: #777;
+  color: var(--neuroglancer-edit-session-text-dim);
 }
 
 .neuroglancer-edit-session-entry-modal-layer-resolution-error {
-  color: #f87171;
+  color: var(--neuroglancer-edit-session-over);
 }
 
-.neuroglancer-edit-session-entry-modal-layer-lock {
+/* 3-state role control (Off / Reference / Editable) ----------------------- */
+
+.neuroglancer-edit-session-entry-modal-role-control {
   display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: #aaa;
+  align-items: stretch;
+  background-color: var(--neuroglancer-edit-session-bg-elev);
+  border: 1px solid var(--neuroglancer-edit-session-border);
+  border-radius: 5px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.neuroglancer-edit-session-entry-modal-role-segment {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--neuroglancer-edit-session-text-muted);
   cursor: pointer;
-  white-space: nowrap;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 14px;
+  min-width: 78px;
+  border-radius: 3px;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
 }
 
-.neuroglancer-edit-session-entry-modal-layer-lock input[type="checkbox"] {
-  margin: 0;
+.neuroglancer-edit-session-entry-modal-role-segment:hover:not(:disabled) {
+  color: var(--neuroglancer-edit-session-text);
+  background-color: rgba(255, 255, 255, 0.04);
 }
 
-.neuroglancer-edit-session-entry-modal-layer-lock input[type="checkbox"]:disabled {
+.neuroglancer-edit-session-entry-modal-role-segment-selected {
+  background-color: var(--neuroglancer-edit-session-accent);
+  color: #fff;
+}
+
+.neuroglancer-edit-session-entry-modal-role-segment-selected:hover {
+  background-color: var(--neuroglancer-edit-session-accent-strong);
+  color: #fff;
+}
+
+.neuroglancer-edit-session-entry-modal-role-segment-disabled,
+.neuroglancer-edit-session-entry-modal-role-segment:disabled {
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
-.neuroglancer-edit-session-entry-modal-memory-estimate {
-  margin-top: 6px;
+/* Memory meter ------------------------------------------------------------- */
+
+.neuroglancer-edit-session-entry-modal-memory-meter {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--neuroglancer-edit-session-border-soft);
+  border-radius: 4px;
+  background-color: var(--neuroglancer-edit-session-bg-row);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.neuroglancer-edit-session-entry-modal-memory-meter-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 11px;
-  color: #aaa;
-  padding: 4px 6px;
-  border: 1px solid #2a2a2a;
-  background-color: #181818;
 }
 
-.neuroglancer-edit-session-entry-modal-memory-estimate-over {
-  color: #fbbf24;
-  border-color: #5c4a13;
-  background-color: #2a1f10;
+.neuroglancer-edit-session-entry-modal-memory-meter-summary {
+  color: var(--neuroglancer-edit-session-text);
 }
 
-/* Footer -------------------------------------------------------------------*/
+.neuroglancer-edit-session-entry-modal-memory-meter-label {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.neuroglancer-edit-session-entry-modal-memory-meter-bar {
+  position: relative;
+  width: 100%;
+  height: 6px;
+  background-color: var(--neuroglancer-edit-session-bg-elev);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.neuroglancer-edit-session-entry-modal-memory-meter-fill {
+  height: 100%;
+  transition: width 0.2s ease, background-color 0.2s ease;
+}
+
+/* Safe / near / over signals — one accent per state. */
+.neuroglancer-edit-session-entry-modal-memory-meter-safe
+  .neuroglancer-edit-session-entry-modal-memory-meter-label {
+  color: var(--neuroglancer-edit-session-safe);
+}
+.neuroglancer-edit-session-entry-modal-memory-meter-safe
+  .neuroglancer-edit-session-entry-modal-memory-meter-fill {
+  background-color: var(--neuroglancer-edit-session-safe);
+}
+
+.neuroglancer-edit-session-entry-modal-memory-meter-near
+  .neuroglancer-edit-session-entry-modal-memory-meter-label {
+  color: var(--neuroglancer-edit-session-near);
+}
+.neuroglancer-edit-session-entry-modal-memory-meter-near
+  .neuroglancer-edit-session-entry-modal-memory-meter-fill {
+  background-color: var(--neuroglancer-edit-session-near);
+}
+
+.neuroglancer-edit-session-entry-modal-memory-meter-over
+  .neuroglancer-edit-session-entry-modal-memory-meter-label {
+  color: var(--neuroglancer-edit-session-over);
+}
+.neuroglancer-edit-session-entry-modal-memory-meter-over
+  .neuroglancer-edit-session-entry-modal-memory-meter-fill {
+  background-color: var(--neuroglancer-edit-session-over);
+}
+
+/* Footer ------------------------------------------------------------------- */
 
 .neuroglancer-edit-session-entry-modal-footer {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
-  padding: 10px 14px;
-  border-top: 1px solid #333;
+  gap: 10px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--neuroglancer-edit-session-border-soft);
 }
 
 .neuroglancer-edit-session-entry-modal-error {
-  color: #f87171;
+  color: var(--neuroglancer-edit-session-over);
   font-size: 11px;
   margin-right: auto;
 }
 
-.neuroglancer-edit-session-entry-modal button {
-  padding: 5px 12px;
+/*
+ * Two-tier button hierarchy: secondary (Cancel) and primary (Open session).
+ * Larger hit targets per the redesign spec.
+ */
+.neuroglancer-edit-session-entry-modal-btn {
+  padding: 8px 16px;
+  border-radius: 4px;
   cursor: pointer;
-  background-color: #2a2a2a;
-  color: #ddd;
-  border: 1px solid #444;
+  background-color: var(--neuroglancer-edit-session-bg-elev);
+  color: var(--neuroglancer-edit-session-text);
+  border: 1px solid var(--neuroglancer-edit-session-border);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  min-height: 32px;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
 }
 
-.neuroglancer-edit-session-entry-modal button.primary {
-  background-color: #2d6cdf;
-  border-color: #2d6cdf;
+.neuroglancer-edit-session-entry-modal-btn:hover:not(:disabled) {
+  border-color: var(--neuroglancer-edit-session-accent);
+}
+
+.neuroglancer-edit-session-entry-modal-btn-primary {
+  background-color: var(--neuroglancer-edit-session-accent);
+  border-color: var(--neuroglancer-edit-session-accent);
   color: #fff;
 }
 
-.neuroglancer-edit-session-entry-modal button:disabled {
+.neuroglancer-edit-session-entry-modal-btn-primary:hover:not(:disabled) {
+  background-color: var(--neuroglancer-edit-session-accent-strong);
+  border-color: var(--neuroglancer-edit-session-accent-strong);
+}
+
+.neuroglancer-edit-session-entry-modal-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }

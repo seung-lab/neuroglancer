@@ -18,9 +18,15 @@ import {
   layerId as toLayerId,
   Resolution,
 } from "@zettaai/edit-session";
-import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { createPortal } from "preact/compat";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "preact/hooks";
 
-import type { NgLayerMetadataSource } from "#src/editing/adapters/ng_layer_metadata_source.js";
 import type {
   EditSessionHost,
   HostSessionConfig,
@@ -28,16 +34,90 @@ import type {
 import { useSignal } from "#src/editing/ui/interop/use_signal.js";
 import type { LayerKind } from "#src/editing/ui/layer_kind.js";
 import { layerKindOf } from "#src/editing/ui/layer_kind.js";
-import type {
-  BboxSelectionModel,
-  BboxAnnotationSelection,
-} from "#src/editing/ui/session_entry/bbox_candidates.js";
+import type { NgLayerMetadataSource } from "#src/editing/adapters/ng_layer_metadata_source.js";
+import type { BboxAnnotationSelection } from "#src/editing/ui/session_entry/bbox_candidates.js";
+import { BboxSelectionModel } from "#src/editing/ui/session_entry/bbox_candidates.js";
 import { BboxPicker } from "#src/editing/ui/session_entry/bbox_picker.js";
-import type { LayerRowState } from "#src/editing/ui/session_entry/layer_row.js";
+import type {
+  LayerRole,
+  LayerRowState,
+} from "#src/editing/ui/session_entry/layer_row.js";
 import { LayerRow } from "#src/editing/ui/session_entry/layer_row.js";
 import { ResolutionSelectionModel } from "#src/editing/ui/session_entry/resolution_options.js";
 import type { LayerManager } from "#src/layer/index.js";
 import "#src/editing/ui/session_entry/session_entry.css";
+
+// ---------------------------------------------------------------------------
+// Public contract (consumed by TM-294's topbar Edit button)
+// ---------------------------------------------------------------------------
+
+export interface SessionEntryModalProps {
+  open: boolean;
+  onClose: () => void;
+  host: EditSessionHost;
+}
+
+/**
+ * Legacy props shape used by the old `EnterEditSessionButton` wrapper that
+ * mounts the modal directly (no portal, always-open). Kept while TM-294 is
+ * still in flight; the wrapper file is owned by TM-294 and will be removed
+ * once the new topbar Edit button ships.
+ */
+interface LegacySessionEntryModalProps {
+  host: EditSessionHost;
+  layerManager: LayerManager;
+  metadataSource: NgLayerMetadataSource;
+  bboxModel: BboxSelectionModel;
+  onClose: () => void;
+}
+
+export function SessionEntryModal(
+  props: SessionEntryModalProps | LegacySessionEntryModalProps,
+) {
+  // New contract: gated by `open`, mounts its own portal.
+  if ("open" in props) {
+    const { open, onClose, host } = props;
+    if (!open) return null;
+    return createPortal(
+      <SessionEntryModalBody host={host} onClose={onClose} />,
+      document.body,
+    );
+  }
+  // Legacy path: caller manages mounting, supplies pre-built bboxModel.
+  // No portal here (legacy wrapper renders inside its own portal call).
+  return (
+    <SessionEntryModalBody
+      host={props.host}
+      onClose={props.onClose}
+      bboxModelOverride={props.bboxModel}
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Microcopy (spec strings, verbatim)
+// ---------------------------------------------------------------------------
+
+const LAYERS_SECTION_CAPTION =
+  "Reference layers stay read-only; editable layers receive your edits. " +
+  "Off layers load dynamically and don't use the budget.";
+
+const OPEN_DISABLED_TOOLTIP =
+  "Set at least one layer to Editable to start a session.";
+
+const MEMORY_LABEL_WITHIN = "Within limits";
+const MEMORY_LABEL_NEAR =
+  "Near GPU budget — some chunks may not stay pinned";
+const MEMORY_LABEL_OVER =
+  "Over budget — only part of the region will be loaded.";
+
+// Amber zone starts at 80% of the GPU budget. Tunable: a single threshold
+// keeps the meter behavior predictable and easy to reason about.
+const MEMORY_NEAR_FRACTION = 0.8;
+
+// ---------------------------------------------------------------------------
+// Internal types
+// ---------------------------------------------------------------------------
 
 interface LayerEntry {
   readonly name: string;
@@ -45,14 +125,42 @@ interface LayerEntry {
   readonly visible: boolean;
 }
 
-export function SessionEntryModal(props: {
+// ---------------------------------------------------------------------------
+// Modal body (mounted only when open === true)
+// ---------------------------------------------------------------------------
+
+function SessionEntryModalBody(props: {
   host: EditSessionHost;
-  layerManager: LayerManager;
-  metadataSource: NgLayerMetadataSource;
-  bboxModel: BboxSelectionModel;
   onClose: () => void;
+  /**
+   * Legacy escape hatch: when present, the modal uses the caller-provided
+   * bbox model instead of constructing/disposing its own. Used by the
+   * pre-TM-294 wrapper to share a model with its open-gate logic.
+   */
+  bboxModelOverride?: BboxSelectionModel;
 }) {
-  const { host, layerManager, metadataSource, bboxModel, onClose } = props;
+  const { host, onClose, bboxModelOverride } = props;
+  const layerManager: LayerManager = host.viewer.layerManager;
+  const metadataSource = host.layerMetadataSource;
+
+  // The bbox model lives for the lifetime of the modal — we mount/dispose it
+  // here rather than on the host so the modal is fully self-contained per
+  // the SessionEntryModalProps contract. Legacy callers may pass their own
+  // model in; in that case we don't own its lifecycle.
+  const ownsBboxModel = bboxModelOverride === undefined;
+  const bboxModel = useMemo(
+    () => bboxModelOverride ?? new BboxSelectionModel(layerManager),
+    [bboxModelOverride, layerManager],
+  );
+  useEffect(
+    () => () => {
+      if (ownsBboxModel) bboxModel.dispose();
+    },
+    [bboxModel, ownsBboxModel],
+  );
+
+  useSignal(bboxModel.selectionChanged);
+  useSignal(bboxModel.entriesChanged);
 
   const [selectedBbox, setSelectedBbox] = useState<
     BboxAnnotationSelection | undefined
@@ -69,10 +177,9 @@ export function SessionEntryModal(props: {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const resolutionModelsRef = useRef<Map<string, ResolutionSelectionModel>>(new Map());
-
-  useSignal(bboxModel.selectionChanged);
-  useSignal(bboxModel.entriesChanged);
+  const resolutionModelsRef = useRef<Map<string, ResolutionSelectionModel>>(
+    new Map(),
+  );
 
   useEffect(() => {
     setSelectedBbox(bboxModel.selection);
@@ -187,27 +294,13 @@ export function SessionEntryModal(props: {
     };
   }, [layerStates, metadataSource]);
 
-  const setLocked = useCallback((name: string, locked: boolean) => {
+  const setRole = useCallback((name: string, role: LayerRole) => {
     setLayerStates((prev) => {
       const next = new Map(prev);
       const s = next.get(name);
       if (s === undefined) return prev;
-      next.set(name, {
-        ...s,
-        locked,
-        // Disable writable when the layer leaves the session.
-        writable: locked ? s.writable : false,
-      });
-      return next;
-    });
-  }, []);
-
-  const setWritable = useCallback((name: string, writable: boolean) => {
-    setLayerStates((prev) => {
-      const next = new Map(prev);
-      const s = next.get(name);
-      if (s === undefined) return prev;
-      next.set(name, { ...s, writable });
+      if (s.role === role) return prev;
+      next.set(name, { ...s, role });
       return next;
     });
   }, []);
@@ -230,14 +323,31 @@ export function SessionEntryModal(props: {
 
   const limits = useMemo(
     () => ({
-      gpu: host.viewer.chunkManager.chunkQueueManager.capacities.gpuMemory.sizeLimit
-        .value,
+      gpu: host.viewer.chunkManager.chunkQueueManager.capacities.gpuMemory
+        .sizeLimit.value,
       system:
         host.viewer.chunkManager.chunkQueueManager.capacities.systemMemory
           .sizeLimit.value,
     }),
     [host],
   );
+
+  // Counters derived from current state — used by the open-session gate and
+  // by the memory meter label.
+  const counters = useMemo(() => {
+    let editable = 0;
+    let reference = 0;
+    for (const state of layerStates.values()) {
+      if (state.role === "editable") editable += 1;
+      else if (state.role === "reference") reference += 1;
+    }
+    return { editable, reference };
+  }, [layerStates]);
+
+  const hasBbox = selectedBbox !== undefined;
+  const hasEditable = counters.editable > 0;
+  const openSessionDisabled = submitting || !hasBbox || !hasEditable;
+  const openSessionTooltip = !hasEditable ? OPEN_DISABLED_TOOLTIP : undefined;
 
   const handleSubmit = useCallback(async () => {
     if (submitting) return;
@@ -248,7 +358,7 @@ export function SessionEntryModal(props: {
       return;
     }
 
-    const lockedEntries: Array<{
+    const includedEntries: Array<{
       layerId: LayerId;
       name: string;
       state: LayerRowState;
@@ -256,7 +366,7 @@ export function SessionEntryModal(props: {
     let hasWritable = false;
     for (const entry of layerEntries) {
       const state = layerStates.get(entry.name);
-      if (state === undefined || !state.locked) continue;
+      if (state === undefined || state.role === "off") continue;
       if (state.loadError !== undefined) {
         setError(`Layer ${entry.name} is unavailable: ${state.loadError}`);
         return;
@@ -266,46 +376,17 @@ export function SessionEntryModal(props: {
         return;
       }
       const id = toLayerId(entry.name);
-      lockedEntries.push({ layerId: id, name: entry.name, state });
-      if (state.writable) hasWritable = true;
+      includedEntries.push({ layerId: id, name: entry.name, state });
+      if (state.role === "editable") hasWritable = true;
     }
 
-    if (lockedEntries.length === 0) {
-      setError("Lock at least one layer to include it in the session.");
-      return;
-    }
     if (!hasWritable) {
-      setError("Mark at least one locked layer as writable.");
+      setError("Mark at least one layer as Editable.");
       return;
-    }
-
-    const gpuExceeded =
-      Number.isFinite(limits.gpu) && memoryEstimate.totalBytes > limits.gpu;
-    const systemExceeded =
-      Number.isFinite(limits.system) &&
-      memoryEstimate.totalBytes > limits.system;
-    if (gpuExceeded || systemExceeded) {
-      const parts: string[] = [];
-      if (gpuExceeded) {
-        parts.push(
-          `GPU memory limit (${formatBytes(limits.gpu)})`,
-        );
-      }
-      if (systemExceeded) {
-        parts.push(
-          `system memory limit (${formatBytes(limits.system)})`,
-        );
-      }
-      const proceed = window.confirm(
-        `Locked chunks will use ~${formatBytes(memoryEstimate.totalBytes)}, ` +
-          `exceeding your ${parts.join(" and ")}. ` +
-          `Continue anyway? You can raise the limits in Settings.`,
-      );
-      if (!proceed) return;
     }
 
     const layersForConfig: HostSessionConfig["layers"][number][] = [];
-    for (const { layerId, name, state } of lockedEntries) {
+    for (const { layerId, name, state } of includedEntries) {
       try {
         const metadata = await metadataSource.resolve(layerId);
         const available = availableResolutions(metadata);
@@ -323,10 +404,14 @@ export function SessionEntryModal(props: {
         );
         return;
       }
+      // Map LayerRole → boolean `writable` per Contract 2:
+      //   editable  → writable: true
+      //   reference → writable: false
+      //   off       → not added (filtered out above)
       layersForConfig.push({
         layerId,
         resolutions: [...state.resolutions],
-        writable: state.writable,
+        writable: state.role === "editable",
       });
     }
 
@@ -356,14 +441,9 @@ export function SessionEntryModal(props: {
     metadataSource,
     host,
     onClose,
-    memoryEstimate,
-    limits,
   ]);
 
-  const bboxInfoText =
-    selectedBbox === undefined
-      ? "(no bbox selected)"
-      : `${selectedBbox.annotationLayerName} · ${Math.round(selectedBbox.voxelBbox[3] - selectedBbox.voxelBbox[0])}×${Math.round(selectedBbox.voxelBbox[4] - selectedBbox.voxelBbox[1])}×${Math.round(selectedBbox.voxelBbox[5] - selectedBbox.voxelBbox[2])} voxels`;
+  const lockedLayerCount = counters.editable + counters.reference;
 
   return (
     <div
@@ -387,22 +467,23 @@ export function SessionEntryModal(props: {
           </button>
         </div>
         <div class="neuroglancer-edit-session-entry-modal-body">
-          <div>
+          <section>
             <div class="neuroglancer-edit-session-entry-modal-section-title">
-              Bounding box annotation
+              Region
             </div>
             <BboxPicker
               entries={bboxModel.entries}
               selectedKey={bboxModel.selectedKey}
+              selection={selectedBbox}
               onChange={(k) => bboxModel.select(k)}
             />
-            <div class="neuroglancer-edit-session-entry-modal-bbox-info">
-              {bboxInfoText}
-            </div>
-          </div>
-          <div>
+          </section>
+          <section>
             <div class="neuroglancer-edit-session-entry-modal-section-title">
               Layers
+            </div>
+            <div class="neuroglancer-edit-session-entry-modal-section-caption">
+              {LAYERS_SECTION_CAPTION}
             </div>
             <div class="neuroglancer-edit-session-entry-modal-layers-card">
               <div class="neuroglancer-edit-session-entry-modal-layers-list">
@@ -423,34 +504,40 @@ export function SessionEntryModal(props: {
                         resolutionModel={resolutionModelsRef.current.get(
                           entry.name,
                         )}
-                        onLockedChange={(v) => setLocked(entry.name, v)}
-                        onWritableChange={(v) => setWritable(entry.name, v)}
+                        onRoleChange={(role) => setRole(entry.name, role)}
                       />
                     );
                   })
                 )}
               </div>
             </div>
-            <MemoryEstimate
+            <MemoryMeter
               estimate={memoryEstimate}
               limits={limits}
+              lockedLayerCount={lockedLayerCount}
             />
-          </div>
+          </section>
         </div>
         <div class="neuroglancer-edit-session-entry-modal-footer">
           <div class="neuroglancer-edit-session-entry-modal-error">{error}</div>
-          <button type="button" disabled={submitting} onClick={cancel}>
+          <button
+            type="button"
+            class="neuroglancer-edit-session-entry-modal-btn"
+            disabled={submitting}
+            onClick={cancel}
+          >
             Cancel
           </button>
           <button
             type="button"
-            class="primary"
-            disabled={submitting}
+            class="neuroglancer-edit-session-entry-modal-btn neuroglancer-edit-session-entry-modal-btn-primary"
+            disabled={openSessionDisabled}
+            title={openSessionTooltip}
             onClick={() => {
               void handleSubmit();
             }}
           >
-            Open Session
+            Open session
           </button>
         </div>
       </div>
@@ -458,31 +545,81 @@ export function SessionEntryModal(props: {
   );
 }
 
-function MemoryEstimate({
+// ---------------------------------------------------------------------------
+// Memory meter
+// ---------------------------------------------------------------------------
+
+type MemorySignal = "safe" | "near" | "over";
+
+function memorySignalOf(
+  totalBytes: number,
+  gpuLimit: number,
+): MemorySignal {
+  if (!Number.isFinite(gpuLimit) || gpuLimit <= 0) return "safe";
+  if (totalBytes > gpuLimit) return "over";
+  if (totalBytes >= gpuLimit * MEMORY_NEAR_FRACTION) return "near";
+  return "safe";
+}
+
+function MemoryMeter({
   estimate,
   limits,
+  lockedLayerCount,
 }: {
   estimate: MemoryEstimate;
   limits: { gpu: number; system: number };
+  lockedLayerCount: number;
 }) {
-  if (estimate.totalBytes === 0) return null;
-  const gpuOver =
-    Number.isFinite(limits.gpu) && estimate.totalBytes > limits.gpu;
-  const systemOver =
-    Number.isFinite(limits.system) && estimate.totalBytes > limits.system;
-  const overClass =
-    gpuOver || systemOver
-      ? "neuroglancer-edit-session-entry-modal-memory-estimate neuroglancer-edit-session-entry-modal-memory-estimate-over"
-      : "neuroglancer-edit-session-entry-modal-memory-estimate";
+  const signal = memorySignalOf(estimate.totalBytes, limits.gpu);
+  const fraction = Number.isFinite(limits.gpu) && limits.gpu > 0
+    ? Math.min(1, estimate.totalBytes / limits.gpu)
+    : 0;
+  const overFraction = Number.isFinite(limits.gpu) && limits.gpu > 0
+    ? estimate.totalBytes / limits.gpu
+    : 0;
+
+  const labelText =
+    signal === "over"
+      ? MEMORY_LABEL_OVER
+      : signal === "near"
+        ? MEMORY_LABEL_NEAR
+        : MEMORY_LABEL_WITHIN;
+
+  const meterClass = [
+    "neuroglancer-edit-session-entry-modal-memory-meter",
+    `neuroglancer-edit-session-entry-modal-memory-meter-${signal}`,
+  ].join(" ");
+
+  const summary =
+    lockedLayerCount === 0
+      ? "No layers locked"
+      : `${lockedLayerCount} layer${lockedLayerCount === 1 ? "" : "s"} locked · ` +
+        `~${formatBytes(estimate.totalBytes)} of ${formatBytes(limits.gpu)} ` +
+        `(${Math.round(overFraction * 100)}%)`;
+
   return (
-    <div class={overClass}>
-      Locked chunks: ~{formatBytes(estimate.totalBytes)}
-      {" · "}GPU limit {formatBytes(limits.gpu)}
-      {" · "}System limit {formatBytes(limits.system)}
-      {(gpuOver || systemOver) && " — over limit, will require confirmation"}
+    <div class={meterClass}>
+      <div class="neuroglancer-edit-session-entry-modal-memory-meter-header">
+        <span class="neuroglancer-edit-session-entry-modal-memory-meter-summary">
+          {summary}
+        </span>
+        <span class="neuroglancer-edit-session-entry-modal-memory-meter-label">
+          {labelText}
+        </span>
+      </div>
+      <div class="neuroglancer-edit-session-entry-modal-memory-meter-bar">
+        <div
+          class="neuroglancer-edit-session-entry-modal-memory-meter-fill"
+          style={{ width: `${fraction * 100}%` }}
+        />
+      </div>
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Memory estimate
+// ---------------------------------------------------------------------------
 
 interface MemoryEstimate {
   readonly totalBytes: number;
@@ -508,7 +645,10 @@ function estimateLockedMemory({
   let total = 0;
   for (const entry of layerEntries) {
     const state = layerStates.get(entry.name);
-    if (state === undefined || !state.locked) continue;
+    if (state === undefined) continue;
+    // Off layers do NOT count toward the session memory budget — they fall
+    // back to base Neuroglancer LRU.
+    if (state.role === "off") continue;
     const metadata = metadataByLayer.get(entry.name);
     if (metadata === undefined) continue;
     const bytesPerVoxel = bytesPerVoxelFor(metadata.voxelDataType);
@@ -587,10 +727,23 @@ function formatBytes(bytes: number): string {
   return `${value.toFixed(value >= 100 ? 0 : value >= 10 ? 1 : 2)} ${units[unitIndex]}`;
 }
 
+// ---------------------------------------------------------------------------
+// Default role on open
+// ---------------------------------------------------------------------------
+
+function defaultRoleFor(entry: LayerEntry): LayerRole {
+  // Spec:
+  //   - image → Reference
+  //   - visible segmentation → Editable
+  //   - hidden layer → Off
+  if (!entry.visible) return "off";
+  if (entry.kind === "segmentation") return "editable";
+  return "reference";
+}
+
 function defaultStateFor(entry: LayerEntry): LayerRowState {
   return {
-    locked: entry.visible,
-    writable: entry.visible && entry.kind === "segmentation",
+    role: defaultRoleFor(entry),
     resolutions: [],
     loadState: "loading",
     loadError: undefined,
@@ -611,4 +764,3 @@ function collectLayerEntries(layerManager: LayerManager): LayerEntry[] {
   }
   return entries;
 }
-

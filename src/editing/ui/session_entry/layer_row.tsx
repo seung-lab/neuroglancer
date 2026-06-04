@@ -17,46 +17,62 @@ import { ResolutionPicker } from "#src/editing/ui/session_entry/resolution_picke
 
 export type { LayerKind };
 
+/**
+ * Three-state role for a layer in the to-be-opened edit session.
+ *
+ * - `off` — layer not in the session. Loads dynamically as you move the
+ *   camera (default Neuroglancer behavior). Does NOT count toward the
+ *   session memory budget.
+ * - `reference` — included, read-only. Locked in memory for the bbox region.
+ *   Counts toward the memory budget.
+ * - `editable` — included, writable. Locked in memory and accepts edits.
+ *   Counts toward the memory budget.
+ */
+export type LayerRole = "off" | "reference" | "editable";
+
 export interface LayerRowState {
-  /**
-   * When true the layer participates in the session and its bbox-intersecting
-   * chunks are held in PERMANENT residency (protected from GPU and system
-   * memory eviction). When false the layer is not part of the session — base
-   * Neuroglancer LRU governs it.
-   */
-  locked: boolean;
-  /**
-   * When true the layer is a paint target (overlay attached). Only meaningful
-   * when `locked` is true. Defaults follow layer kind: segmentation → true,
-   * image → false.
-   */
-  writable: boolean;
+  role: LayerRole;
   resolutions: readonly Resolution[];
   loadState: "loading" | "loaded" | "error";
   loadError: string | undefined;
   availableResolutions: readonly Resolution[];
 }
 
+/** Microcopy that hovers on each role segment (spec strings, verbatim). */
+export const ROLE_TOOLTIP: Record<LayerRole, string> = {
+  off:
+    "Off — not in this session. Loads dynamically as you move the camera " +
+    "(default Neuroglancer behavior) and doesn't use the session memory budget.",
+  reference:
+    "Reference — locked in memory for the bbox region, read-only. " +
+    "Counts toward the memory budget.",
+  editable:
+    "Editable — locked in memory and writable. Counts toward the memory budget.",
+};
+
+/** Tooltip shown on the `Editable` segment when it's disabled (image layer). */
+export const EDITABLE_DISABLED_TOOLTIP =
+  "Image layers can't be edited — choose Off or Reference.";
+
 export function LayerRow({
   name,
   layerKind,
   state,
   resolutionModel,
-  onLockedChange,
-  onWritableChange,
+  onRoleChange,
 }: {
   name: string;
   layerKind: LayerKind;
   state: LayerRowState;
   resolutionModel: ResolutionSelectionModel | undefined;
-  onLockedChange: (v: boolean) => void;
-  onWritableChange: (v: boolean) => void;
+  onRoleChange: (role: LayerRole) => void;
 }) {
   useSignal(resolutionModel?.selectionChanged);
 
-  const rowClass = state.locked
-    ? "neuroglancer-edit-session-entry-modal-layer-row"
-    : "neuroglancer-edit-session-entry-modal-layer-row neuroglancer-edit-session-entry-modal-layer-row-excluded";
+  const isOff = state.role === "off";
+  const rowClass = isOff
+    ? "neuroglancer-edit-session-entry-modal-layer-row neuroglancer-edit-session-entry-modal-layer-row-off"
+    : "neuroglancer-edit-session-entry-modal-layer-row";
 
   let resolutionContent;
   if (state.loadState === "loading") {
@@ -75,20 +91,28 @@ export function LayerRow({
         {errorText}
       </span>
     );
-  } else if (state.availableResolutions.length === 1) {
+  } else if (state.availableResolutions.length <= 1) {
+    // Single-resolution (or zero, shouldn't happen here): render as static
+    // text, no dropdown.
+    const value = state.availableResolutions[0] ?? "";
     resolutionContent = (
       <span class="neuroglancer-edit-session-entry-modal-layer-resolution-static">
-        {state.availableResolutions[0]}
+        {value}
       </span>
     );
   } else if (resolutionModel !== undefined) {
     resolutionContent = (
-      <ResolutionPicker
-        resolutions={resolutionModel.resolutions}
-        selected={resolutionModel.selectedResolutions}
-        onChange={(values) => resolutionModel.setSelection(values)}
-        disabled={!state.locked}
-      />
+      <span
+        title="Choose the scale to load for this layer."
+        class="neuroglancer-edit-session-entry-modal-layer-resolution-picker"
+      >
+        <ResolutionPicker
+          resolutions={resolutionModel.resolutions}
+          selected={resolutionModel.selectedResolutions}
+          onChange={(values) => resolutionModel.setSelection(values)}
+          disabled={isOff}
+        />
+      </span>
     );
   } else {
     resolutionContent = null;
@@ -101,38 +125,114 @@ export function LayerRow({
 
   return (
     <div class={rowClass}>
-      <label class="neuroglancer-edit-session-entry-modal-layer-include">
-        <input
-          type="checkbox"
-          checked={state.locked}
-          onChange={(e) =>
-            onLockedChange((e.target as HTMLInputElement).checked)
-          }
-        />
+      <div class="neuroglancer-edit-session-entry-modal-layer-identity">
         <span class="neuroglancer-edit-session-entry-modal-layer-name">
           {name}
         </span>
         <span class={badgeClass}>{layerKind}</span>
-      </label>
+      </div>
       <span class="neuroglancer-edit-session-entry-modal-layer-resolution">
         <span class="neuroglancer-edit-session-entry-modal-layer-resolution-label">
-          Resolutions:
+          Resolution:
         </span>
         <span class="neuroglancer-edit-session-entry-modal-layer-resolution-slot">
           {resolutionContent}
         </span>
       </span>
-      <label class="neuroglancer-edit-session-entry-modal-layer-lock">
-        <input
-          type="checkbox"
-          checked={state.writable}
-          disabled={!state.locked}
-          onChange={(e) =>
-            onWritableChange((e.target as HTMLInputElement).checked)
-          }
-        />
-        <span>Writable</span>
-      </label>
+      <RoleControl
+        role={state.role}
+        layerKind={layerKind}
+        onChange={onRoleChange}
+      />
     </div>
+  );
+}
+
+function RoleControl({
+  role,
+  layerKind,
+  onChange,
+}: {
+  role: LayerRole;
+  layerKind: LayerKind;
+  onChange: (role: LayerRole) => void;
+}) {
+  const editableDisabled = layerKind === "image";
+  return (
+    <div
+      class="neuroglancer-edit-session-entry-modal-role-control"
+      role="radiogroup"
+      aria-label="Layer role"
+    >
+      <RoleSegment
+        value="off"
+        current={role}
+        label="Off"
+        tooltip={ROLE_TOOLTIP.off}
+        disabled={false}
+        onChange={onChange}
+      />
+      <RoleSegment
+        value="reference"
+        current={role}
+        label="Reference"
+        tooltip={ROLE_TOOLTIP.reference}
+        disabled={false}
+        onChange={onChange}
+      />
+      <RoleSegment
+        value="editable"
+        current={role}
+        label="Editable"
+        tooltip={editableDisabled ? EDITABLE_DISABLED_TOOLTIP : ROLE_TOOLTIP.editable}
+        disabled={editableDisabled}
+        onChange={onChange}
+      />
+    </div>
+  );
+}
+
+function RoleSegment({
+  value,
+  current,
+  label,
+  tooltip,
+  disabled,
+  onChange,
+}: {
+  value: LayerRole;
+  current: LayerRole;
+  label: string;
+  tooltip: string;
+  disabled: boolean;
+  onChange: (role: LayerRole) => void;
+}) {
+  const selected = value === current;
+  const cls = [
+    "neuroglancer-edit-session-entry-modal-role-segment",
+    selected
+      ? "neuroglancer-edit-session-entry-modal-role-segment-selected"
+      : "",
+    disabled ? "neuroglancer-edit-session-entry-modal-role-segment-disabled" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      aria-disabled={disabled}
+      disabled={disabled}
+      title={tooltip}
+      class={cls}
+      onClick={() => {
+        if (disabled) return;
+        if (selected) return;
+        onChange(value);
+      }}
+    >
+      {label}
+    </button>
   );
 }
