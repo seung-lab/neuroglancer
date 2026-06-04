@@ -15,44 +15,30 @@ import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { useEvent } from "#src/editing/ui/interop/use_event.js";
 import { PaintingTargetPicker } from "#src/editing/ui/tool_settings/painting_target_picker.js";
 
-const SIZE_PRESETS: readonly number[] = [1, 3, 5, 9, 17, 33, 65];
-const MIN_PRESET_INDEX = 0;
-const MAX_PRESET_INDEX = SIZE_PRESETS.length - 1;
+const MAX_SIZE = 129; // size = radius*2+1; max radius 64.
+const MIN_SIZE = 1;
+
+function clampSize(value: number): number {
+  if (!Number.isFinite(value)) return 1;
+  const n = Math.round(value);
+  const odd = n % 2 === 0 ? n + 1 : n;
+  return Math.max(MIN_SIZE, Math.min(MAX_SIZE, odd));
+}
 
 function sizeToRadius(size: number): number {
-  return Math.max(0, Math.floor(size / 2));
+  return Math.max(0, Math.floor((size - 1) / 2));
 }
 
 function radiusToSize(radius: number): number {
-  return radius * 2 + 1;
+  return Math.max(0, Math.floor(radius)) * 2 + 1;
 }
 
-function sizeToNearestPresetIndex(size: number): number {
-  if (!Number.isFinite(size)) return 0;
-  let bestIdx = 0;
-  let bestDelta = Math.abs(SIZE_PRESETS[0] - size);
-  for (let i = 1; i < SIZE_PRESETS.length; ++i) {
-    const delta = Math.abs(SIZE_PRESETS[i] - size);
-    if (delta < bestDelta) {
-      bestDelta = delta;
-      bestIdx = i;
-    }
-  }
-  return bestIdx;
-}
-
-function radiusToPresetIndex(radius: number): number {
-  return sizeToNearestPresetIndex(radiusToSize(radius));
-}
-
-function applyPresetByIndex(painting: PaintingTools, rawIndex: number): void {
-  const clamped = Math.max(
-    MIN_PRESET_INDEX,
-    Math.min(MAX_PRESET_INDEX, Math.round(rawIndex)),
-  );
-  painting.patchState({ radius: sizeToRadius(SIZE_PRESETS[clamped]) });
-}
-
+/**
+ * Eraser panel (TM-294 simplification): Target layer + resolution + Size
+ * slider with editable numeric input. Drops the legacy preset row, the
+ * "Erase value" display, and the Advanced section — the eraser always
+ * writes the implicit `eraseValue` (0n) and never uses a mask.
+ */
 export function PaintingEraser({
   session,
   host,
@@ -68,8 +54,13 @@ export function PaintingEraser({
   useEvent(subscribe);
   const state = painting.getState();
 
-  const idx = radiusToPresetIndex(state.radius);
-  const size = SIZE_PRESETS[idx];
+  const onSizeInput = (e: Event) => {
+    const input = e.currentTarget as HTMLInputElement;
+    const size = clampSize(input.valueAsNumber);
+    painting.patchState({ radius: sizeToRadius(size) });
+  };
+
+  const size = radiusToSize(state.radius);
 
   return (
     <div class="neuroglancer-tool-panel neuroglancer-painting-eraser-panel">
@@ -78,56 +69,20 @@ export function PaintingEraser({
         <label>Size</label>
         <input
           type="range"
-          min={MIN_PRESET_INDEX}
-          max={MAX_PRESET_INDEX}
-          step={1}
-          value={idx}
-          onInput={(e) =>
-            applyPresetByIndex(painting, (e.currentTarget as HTMLInputElement).valueAsNumber)
-          }
+          min={MIN_SIZE}
+          max={MAX_SIZE}
+          step={2}
+          value={size}
+          onInput={onSizeInput}
         />
         <input
           type="number"
-          min={SIZE_PRESETS[MIN_PRESET_INDEX]}
-          max={SIZE_PRESETS[MAX_PRESET_INDEX]}
-          step={1}
-          style={{ width: "5ch" }}
+          min={MIN_SIZE}
+          max={MAX_SIZE}
+          step={2}
           value={size}
-          onChange={(e) =>
-            applyPresetByIndex(
-              painting,
-              sizeToNearestPresetIndex((e.currentTarget as HTMLInputElement).valueAsNumber),
-            )
-          }
-          onKeyDown={(e) => {
-            if (e.key === "ArrowUp" || e.key === "ArrowDown") {
-              e.preventDefault();
-              const currentIdx = radiusToPresetIndex(painting.getState().radius);
-              applyPresetByIndex(painting, currentIdx + (e.key === "ArrowUp" ? 1 : -1));
-            }
-          }}
+          onChange={onSizeInput}
         />
-      </div>
-      <div class="neuroglancer-tool-panel-row">
-        <label>Presets</label>
-        <div class="neuroglancer-tool-panel-presets">
-          {SIZE_PRESETS.map((preset) => (
-            <button
-              key={preset}
-              type="button"
-              class={preset === size ? "active" : undefined}
-              onClick={() => painting.patchState({ radius: sizeToRadius(preset) })}
-            >
-              {preset}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div class="neuroglancer-tool-panel-row">
-        <label>Erase value</label>
-        <span class="neuroglancer-tool-panel-readonly">
-          {state.eraseValue.toString()}
-        </span>
       </div>
     </div>
   );

@@ -98,16 +98,33 @@ export class EditSessionHotkeyBinder extends RefCounted {
     // Build the session's `EventActionMap`. Note the keys are bare event
     // identifiers (no `key:` phase prefix — `parseEventIdentifier` only
     // accepts `at` / `bubble` phases; the architecture doc's `key:keyb`
-    // syntax would throw). Modifier-free letter keys do not include
-    // `control?+`/`meta?+` opt-ins, so `Ctrl+B` / `Cmd+B` fall through to
-    // any global binding for those chords.
+    // syntax would throw).
+    //
+    // TM-294 moved tool activation to **Ctrl-prefixed** bindings (and the
+    // matching `meta+` chord for macOS so Cmd works too). The previous
+    // bare-letter bindings were prone to firing accidentally while typing
+    // into input boxes outside the viewer. Bracket-based brush sizing
+    // stays unprefixed since it has no global conflict.
+    //
+    // Z-extrapolation cannot use `Ctrl+Z` (reserved for Undo). We pick
+    // `Ctrl+P` ("propagate"); engineers may swap to another free letter
+    // later if `P` becomes inconvenient. Correspondence keeps `Ctrl+R`
+    // ("relate") — `Ctrl+C` is reserved for clipboard copy.
     const actionMap = EventActionMap.fromObject({
-      keyb: ACTION_IDS.toolBrush,
-      keye: ACTION_IDS.toolErase,
-      keyf: ACTION_IDS.toolFill,
-      keyz: ACTION_IDS.toolZExtrap,
-      keyc: ACTION_IDS.toolCorrespondence,
-      keyv: ACTION_IDS.cursorMode,
+      "control+keyb": ACTION_IDS.toolBrush,
+      "meta+keyb": ACTION_IDS.toolBrush,
+      "control+keye": ACTION_IDS.toolErase,
+      "meta+keye": ACTION_IDS.toolErase,
+      "control+keyf": ACTION_IDS.toolFill,
+      "meta+keyf": ACTION_IDS.toolFill,
+      // Z-extrap: `Ctrl+P` (propagate). NOT `Ctrl+Z` — reserved for Undo.
+      "control+keyp": ACTION_IDS.toolZExtrap,
+      "meta+keyp": ACTION_IDS.toolZExtrap,
+      // Correspondence: `Ctrl+R` (relate). `Ctrl+C` conflicts with copy.
+      "control+keyr": ACTION_IDS.toolCorrespondence,
+      "meta+keyr": ACTION_IDS.toolCorrespondence,
+      "control+keyv": ACTION_IDS.cursorMode,
+      "meta+keyv": ACTION_IDS.cursorMode,
       "control+keyz": ACTION_IDS.undo,
       "control+shift+keyz": ACTION_IDS.redo,
       "meta+keyz": ACTION_IDS.undo,

@@ -3,16 +3,14 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  *
- * Styling for `EditSessionSidebar` — the per-session control surface that
- * sits inside a SidePanel slot. See
- * `docs/edit-session-integration/architecture/04-ui-shell.md` § "EditSessionSidebar"
- * for the canonical layout.
+ * Styling for the per-tool settings side panel body (TM-294). The wider
+ * Edit-Session sidebar layout from the legacy single-panel root is gone —
+ * what remains here is just the tool-panel container.
  */
 
-.neuroglancer-edit-session-sidebar {
+.neuroglancer-edit-session-tool-panel {
   display: flex;
   flex-direction: column;
-  gap: 8px;
   padding: 8px;
   min-width: 240px;
   font-size: 12px;
@@ -20,243 +18,103 @@
   overflow-y: auto;
 }
 
-.neuroglancer-edit-session-section {
+.neuroglancer-edit-session-tool-panel-body {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 6px 4px;
-  border-bottom: 1px solid #333;
+  gap: 6px;
 }
 
-.neuroglancer-edit-session-section:last-child {
-  border-bottom: none;
-}
-
-.neuroglancer-edit-session-section-title {
+.neuroglancer-tool-panel-host-placeholder {
+  margin: 0;
+  padding: 8px 0;
   font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: #999;
-  margin: 0 0 2px 0;
-}
-
-.neuroglancer-edit-session-status-row {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 11px;
-  color: #ccc;
+  color: #aaa;
+  font-style: italic;
   line-height: 1.4;
 }
 
-.neuroglancer-edit-session-status-row code {
-  background: transparent;
-  color: #aac;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
+/* Per-tool row helpers — used by the painting brush / eraser / fill panels. */
 
-.neuroglancer-edit-session-tool-row {
-  display: grid;
-  grid-template-columns: 14px 1fr auto;
-  align-items: center;
+.neuroglancer-tool-panel {
+  display: flex;
+  flex-direction: column;
   gap: 6px;
-  padding: 4px 6px;
-  cursor: pointer;
-  border-radius: 3px;
-  user-select: none;
 }
 
-.neuroglancer-edit-session-tool-row:hover {
-  background: #222;
-}
-
-.neuroglancer-edit-session-tool-row.active {
-  background: #2c3a5a;
-}
-
-.neuroglancer-edit-session-tool-row.disabled {
-  color: #888;
-}
-
-.neuroglancer-edit-session-tool-radio {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  border: 1px solid #888;
-  background: transparent;
-}
-
-.neuroglancer-edit-session-tool-row.active .neuroglancer-edit-session-tool-radio {
-  background: #6fa8ff;
-  border-color: #6fa8ff;
-}
-
-.neuroglancer-edit-session-tool-label {
-  font-size: 12px;
-}
-
-.neuroglancer-edit-session-tool-hotkey {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10px;
-  color: #999;
-  padding: 1px 4px;
-  border: 1px solid #444;
-  border-radius: 3px;
-  background: #181818;
-}
-
-.neuroglancer-edit-session-tool-disabled-marker {
-  font-size: 10px;
-  color: #666;
-  font-style: italic;
-  margin-left: 4px;
-}
-
-.neuroglancer-edit-session-tool-panel-slot {
-  /* The ToolPanelHost owns its own padding/styling; just bound the slot. */
-  min-height: 24px;
-}
-
-.neuroglancer-edit-session-history-row {
+.neuroglancer-tool-panel-row {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
 }
 
-.neuroglancer-edit-session-history-row button {
-  cursor: pointer;
-}
-
-.neuroglancer-edit-session-history-row button[disabled] {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.neuroglancer-edit-session-history-hint {
-  font-size: 10px;
-  color: #888;
-}
-
-.neuroglancer-edit-session-history-count {
+.neuroglancer-tool-panel-row label {
+  flex: 0 0 auto;
+  min-width: 96px;
   font-size: 11px;
-  color: #aaa;
-  margin-left: auto;
+  color: #ccc;
 }
 
-.neuroglancer-edit-session-action-row {
-  display: flex;
-  flex-direction: row;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.neuroglancer-edit-session-action-row button {
+.neuroglancer-tool-panel-row select,
+.neuroglancer-tool-panel-row input[type="text"],
+.neuroglancer-tool-panel-row input[type="number"] {
   flex: 1 1 auto;
-  padding: 4px 8px;
-  background: #2a2a2a;
+  min-width: 64px;
+  background: #1a1a1a;
   border: 1px solid #444;
   color: #ddd;
+  padding: 2px 4px;
+  font: inherit;
+}
+
+.neuroglancer-tool-panel-row input[type="range"] {
+  flex: 1 1 80px;
+}
+
+.neuroglancer-tool-panel-readonly {
+  color: #aaa;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+/* Static resolution display when a layer is single-resolution. */
+.neuroglancer-tool-panel-resolution-static {
+  flex: 1 1 auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #aaa;
+  padding: 2px 4px;
+  background: #181818;
+  border: 1px solid #2a2a2a;
+  border-radius: 2px;
+}
+
+/* Segmented switch (e.g. Fill's 2D/3D toggle). */
+.neuroglancer-tool-panel-segmented {
+  display: inline-flex;
+  border: 1px solid #444;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.neuroglancer-tool-panel-segmented button {
+  background: #2a2a2a;
+  border: none;
+  color: #ddd;
+  padding: 2px 10px;
   cursor: pointer;
   font: inherit;
 }
 
-.neuroglancer-edit-session-action-row button:hover:not([disabled]) {
+.neuroglancer-tool-panel-segmented button + button {
+  border-left: 1px solid #444;
+}
+
+.neuroglancer-tool-panel-segmented button:hover:not([disabled]) {
   background: #3a3a3a;
 }
 
-.neuroglancer-edit-session-action-row button[disabled] {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.neuroglancer-edit-session-action-row button.danger {
-  border-color: #6b2a2a;
-}
-
-.neuroglancer-edit-session-action-row button.danger:hover:not([disabled]) {
-  background: #4a1c1c;
-}
-
-.neuroglancer-edit-session-action-row button.saving {
-  background: #4a3a1c;
-  border-color: #8a6a2a;
-}
-
-.neuroglancer-edit-session-save-status {
-  font-size: 11px;
-  color: #aaa;
-  min-height: 14px;
-}
-
-.neuroglancer-edit-session-save-status.success {
-  color: #7fc77f;
-}
-
-.neuroglancer-edit-session-save-status.warning {
-  color: #d8c060;
-}
-
-.neuroglancer-edit-session-error-banner {
-  background: #3a1c1c;
-  border: 1px solid #6b2a2a;
-  color: #e8b0b0;
-  padding: 6px;
-  border-radius: 3px;
-  font-size: 11px;
-  white-space: pre-wrap;
-}
-
-.neuroglancer-edit-session-layer-status-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.neuroglancer-edit-session-layer-status {
-  display: grid;
-  grid-template-columns: 12px 1fr;
-  gap: 6px;
-  padding: 3px 4px;
-  border-left: 2px solid #333;
-}
-
-.neuroglancer-edit-session-layer-status.locked {
-  border-left-color: #555;
-  color: #888;
-  font-style: italic;
-}
-
-.neuroglancer-edit-session-layer-status-dot {
-  width: 8px;
-  height: 8px;
-  margin-top: 4px;
-  border-radius: 50%;
-  background: #555;
-}
-
-.neuroglancer-edit-session-layer-status.succeeded .neuroglancer-edit-session-layer-status-dot {
-  background: #5cc05c;
-}
-.neuroglancer-edit-session-layer-status.partial .neuroglancer-edit-session-layer-status-dot {
-  background: #d8c060;
-}
-.neuroglancer-edit-session-layer-status.failed .neuroglancer-edit-session-layer-status-dot {
-  background: #d05656;
-}
-.neuroglancer-edit-session-layer-status.skipped .neuroglancer-edit-session-layer-status-dot {
-  background: #888;
-}
-
-.neuroglancer-edit-session-layer-status-name {
-  font-weight: 600;
-  font-size: 11px;
-}
-
-.neuroglancer-edit-session-layer-status-detail {
-  font-size: 10px;
-  color: #aaa;
-  margin-top: 1px;
+.neuroglancer-tool-panel-segmented button.active {
+  background: #2c3a5a;
+  color: #fff;
 }

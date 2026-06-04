@@ -295,26 +295,38 @@ function AdvancedBrush({
 
   return (
     <div class="neuroglancer-painting-brush-advanced">
-      <button
-        type="button"
-        class="neuroglancer-painting-brush-advanced-summary"
-        onClick={() => setExpanded(!expanded)}
-      >
-        {expanded ? "▾" : "▸"} Advanced brush
-      </button>
+      <div class="neuroglancer-painting-brush-advanced-header">
+        <button
+          type="button"
+          class="neuroglancer-painting-brush-advanced-summary"
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? "▾" : "▸"} Advanced
+        </button>
+        {/* Enable-toggle lives on the header, per TM-294. Clicking the
+            checkbox does NOT expand the section — that's a separate
+            interaction. */}
+        <label
+          class="neuroglancer-painting-brush-advanced-toggle"
+          title={
+            toggleDisabled && disabledHint !== undefined
+              ? disabledHint
+              : enabled
+                ? "Disable advanced brush (mask)"
+                : "Enable advanced brush (mask)"
+          }
+          onClick={(e) => e.stopPropagation()}
+        >
+          <input
+            type="checkbox"
+            checked={enabled}
+            disabled={toggleDisabled}
+            onChange={onToggle}
+          />
+        </label>
+      </div>
       {expanded && (
         <div class="neuroglancer-painting-brush-advanced-body">
-          <div class="neuroglancer-tool-panel-row">
-            <label>
-              <input
-                type="checkbox"
-                checked={enabled}
-                disabled={toggleDisabled}
-                onChange={onToggle}
-              />
-              {" Enable advanced brush"}
-            </label>
-          </div>
           {disabledHint !== undefined && (
             <div class="neuroglancer-painting-brush-advanced-hint">
               {disabledHint}
@@ -337,17 +349,22 @@ function AdvancedBrush({
               </div>
               <div class="neuroglancer-tool-panel-row">
                 <label>Mask resolution</label>
-                <select
-                  value={mask!.imageResolution}
-                  onChange={onMaskResolutionChange}
-                  disabled={currentEntry.resolutions.length <= 1}
-                >
-                  {currentEntry.resolutions.map((r) => (
-                    <option key={r} value={r}>
-                      {r}
-                    </option>
-                  ))}
-                </select>
+                {currentEntry.resolutions.length <= 1 ? (
+                  <span class="neuroglancer-tool-panel-resolution-static">
+                    {mask!.imageResolution}
+                  </span>
+                ) : (
+                  <select
+                    value={mask!.imageResolution}
+                    onChange={onMaskResolutionChange}
+                  >
+                    {currentEntry.resolutions.map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
               <div class="neuroglancer-tool-panel-row neuroglancer-painting-brush-threshold">
                 <label>Threshold</label>

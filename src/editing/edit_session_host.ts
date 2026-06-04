@@ -87,7 +87,10 @@ import { SegmentationRenderLayer } from "#src/sliceview/volume/segmentation_rend
 import { StatusMessage } from "#src/status.js";
 import { WatchableValue } from "#src/trackable_value.js";
 import { vec3 } from "#src/util/geom.js";
-import { TrackableSidePanelLocation } from "#src/ui/side_panel_location.js";
+import {
+  DEFAULT_SIDE_PANEL_LOCATION,
+  TrackableSidePanelLocation,
+} from "#src/ui/side_panel_location.js";
 import { RefCounted } from "#src/util/disposable.js";
 import type { Trackable } from "#src/util/trackable.js";
 import { NullarySignal } from "#src/util/signal.js";
@@ -302,18 +305,20 @@ export class EditSessionHost extends RefCounted {
   readonly state = new TrackableEditSessionIntent();
 
   /**
-   * Side-panel location for the `EditSessionSidebar`. Visibility is toggled
-   * by `openSession` / `finalizeTeardown` so the panel auto-hides whenever
-   * no session is active. Owned here so the panel can be registered with
-   * `SidePanelManager` at viewer construction time without leaking the
-   * sidebar widget through the host's surface (the viewer constructs the
-   * sidebar and passes this location to `registerPanel`).
+   * Side-panel location for the editing tool-settings side panel (TM-294).
+   * A single slot renders the active tool's settings (from
+   * `tool_settings/registry.ts`). Visibility is toggled by the topbar:
+   * selecting a tool sets `visible=true`, the X-close button sets it to
+   * false; the session stays alive across visibility flips.
    *
-   * Per `docs/edit-session-integration/architecture/04-ui-shell.md` § "Side
-   * panel registration": the `visible` watchable is derived from
-   * `activeSession.value !== undefined`; the host sets it on open/teardown.
+   * Default side = LEFT per TM-294. The location persists via the URL
+   * `TrackableSidePanelLocation` so a user-moved panel stays on their
+   * preferred side across reloads.
    */
-  readonly editSessionPanelLocation = new TrackableSidePanelLocation();
+  readonly editSessionPanelLocation = new TrackableSidePanelLocation({
+    ...DEFAULT_SIDE_PANEL_LOCATION,
+    side: "left",
+  });
 
   /**
    * Side-panel location for the "Pending Changes" panel — the post-commit

@@ -94,17 +94,22 @@ export function PaintingTargetPicker({
       </div>
       <div class="neuroglancer-tool-panel-row">
         <label>Target resolution</label>
-        <select
-          value={currentResolution}
-          onChange={onResolutionChange}
-          disabled={layerResolutions.length <= 1}
-        >
-          {layerResolutions.map((r) => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
-        </select>
+        {layerResolutions.length <= 1 ? (
+          /* Static text for single-resolution layers (TM-294): a disabled
+             dropdown reads as interactive-but-broken; a plain readout is
+             clearer. */
+          <span class="neuroglancer-tool-panel-resolution-static">
+            {currentResolution}
+          </span>
+        ) : (
+          <select value={currentResolution} onChange={onResolutionChange}>
+            {layerResolutions.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
     </>
   );

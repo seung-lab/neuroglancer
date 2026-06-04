@@ -16,6 +16,13 @@
   padding-top: 4px;
 }
 
+.neuroglancer-painting-brush-advanced-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .neuroglancer-painting-brush-advanced-summary {
   background: none;
   border: none;
@@ -27,6 +34,18 @@
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  flex: 1 1 auto;
+}
+
+.neuroglancer-painting-brush-advanced-toggle {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  padding: 2px;
+}
+
+.neuroglancer-painting-brush-advanced-toggle input[type="checkbox"]:disabled {
+  cursor: not-allowed;
 }
 
 .neuroglancer-painting-brush-advanced-summary:hover {

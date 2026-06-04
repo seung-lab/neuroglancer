@@ -38,10 +38,9 @@ import { StateShare, stateShareEnabled } from "#src/datasource/state_share.js";
 import type { DisplayContext } from "#src/display_context.js";
 import { TrackableWindowedViewport } from "#src/display_context.js";
 import { EditSessionHost } from "#src/editing/edit_session_host.js";
-import { EditSessionButtonMount } from "#src/editing/ui/interop/edit_session_button_mount.js";
+import { mountComponent } from "#src/editing/ui/interop/component_mount.js";
 import { makeEditSessionPanel } from "#src/editing/ui/interop/edit_session_panel_mount.js";
-import { PendingChangesButtonMount } from "#src/editing/ui/interop/pending_changes_button_mount.js";
-import { makePendingChangesPanel } from "#src/editing/ui/interop/pending_changes_panel_mount.js";
+import { EditingTopbar } from "#src/editing/ui/topbar/editing_topbar.js";
 import {
   HelpPanelState,
   InputEventBindingHelpDialog,
@@ -944,25 +943,19 @@ export class Viewer extends RefCounted implements ViewerState {
     }
 
     {
-      // Enter-Edit-Session button. Per
-      // `docs/edit-session-integration/architecture/04-ui-shell.md`, this is
-      // a top-bar control sibling to the existing CheckboxIcon buttons.
-      // Clicking opens the entry modal; the modal owns its own disposal.
-      const enterButton = this.registerDisposer(
-        new EditSessionButtonMount(
-          this.editSessionHost,
-          this.layerManager,
-          this.editSessionHost.layerMetadataSource,
-        ),
+      // Editing topbar (TM-294). Hosts tool icons, Undo/Redo, Save all /
+      // Discard, and the Edit (Enter/Exit session) button. Replaces the
+      // legacy Edit-Session sidebar root and standalone Enter / Pending
+      // buttons; the per-tool settings still render in the side panel
+      // registered below via `makeEditSessionPanel`.
+      const topbarMount = document.createElement("div");
+      topbarMount.style.display = "contents";
+      this.registerDisposer(
+        mountComponent(topbarMount, EditingTopbar, {
+          host: this.editSessionHost,
+        }),
       );
-      topRow.appendChild(enterButton.element);
-    }
-
-    {
-      const pendingToggle = this.registerDisposer(
-        new PendingChangesButtonMount(this.editSessionHost),
-      );
-      topRow.appendChild(pendingToggle.element);
+      topRow.appendChild(topbarMount);
     }
 
     {
@@ -1087,13 +1080,10 @@ export class Viewer extends RefCounted implements ViewerState {
       }),
     );
 
-    this.registerDisposer(
-      this.sidePanelManager.registerPanel({
-        location: this.editSessionHost.pendingChangesPanelLocation,
-        makePanel: () =>
-          makePendingChangesPanel(this.sidePanelManager, this.editSessionHost),
-      }),
-    );
+    // The legacy Pending Changes side panel UI was removed in TM-294. The
+    // underlying SaveTracker / NgCommitTarget machinery is still in place
+    // (and surfaces via the topbar's Save all / badge); only the dedicated
+    // panel is gone.
 
     this.registerDisposer(
       new MultiToolPaletteManager(this.sidePanelManager, this.toolPalettes),

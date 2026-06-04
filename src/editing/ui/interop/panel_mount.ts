@@ -18,6 +18,13 @@ import type { Disposer } from "#src/util/disposable.js";
 
 export interface PanelMountOptions<T> {
   title: string;
+  /**
+   * Optional dynamic title source. When provided, the title bar is
+   * re-evaluated each time the body re-renders (via `subscribe`). The static
+   * `title` is still used for the initial paint so the title element exists
+   * before any subscription fires.
+   */
+  getTitle?: () => string;
   classNames?: string[];
   component: ComponentType<T>;
   getProps: () => RenderableProps<T>;
@@ -30,6 +37,7 @@ export interface PanelMountOptions<T> {
 
 export class PanelMount<T> extends SidePanel {
   private readonly bodyElement: HTMLDivElement;
+  private readonly titleElement: HTMLElement | undefined;
 
   constructor(
     sidePanelManager: SidePanelManager,
@@ -37,7 +45,8 @@ export class PanelMount<T> extends SidePanel {
     private readonly options: PanelMountOptions<T>,
   ) {
     super(sidePanelManager, location);
-    this.addTitleBar({ title: options.title });
+    const { titleElement } = this.addTitleBar({ title: options.title });
+    this.titleElement = titleElement;
     this.bodyElement = document.createElement("div");
     if (options.classNames) {
       this.bodyElement.classList.add(...options.classNames);
@@ -58,5 +67,8 @@ export class PanelMount<T> extends SidePanel {
 
   private renderBody(): void {
     mountComponent(this.bodyElement, this.options.component, this.options.getProps());
+    if (this.options.getTitle !== undefined && this.titleElement !== undefined) {
+      this.titleElement.textContent = this.options.getTitle();
+    }
   }
 }
