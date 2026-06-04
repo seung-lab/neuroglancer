@@ -33,7 +33,7 @@ export function makeEditSessionPanel(
 ): PanelMount<{ host: EditSessionHost }> {
   const getTitle = () => {
     const session = host.activeSession.value;
-    if (session === undefined) return "Edit Session";
+    if (session === undefined) return "";
     return toolPanelTitle(session.tools.getActiveToolId());
   };
   return new PanelMount(sidePanelManager, host.editSessionPanelLocation, {
@@ -98,8 +98,6 @@ function toolPanelTitle(toolId: string | undefined): string {
       return "Z-extrapolation";
     case "correspondence":
       return "Correspondence";
-    case undefined:
-      return "Edit Session";
     default:
       return "Tool";
   }

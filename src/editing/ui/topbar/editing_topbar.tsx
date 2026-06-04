@@ -149,6 +149,7 @@ function ActiveTopbar({
       try {
         if (toolId === CURSOR_TOOL_ID) {
           session.clearActiveTool();
+          host.editSessionPanelLocation.visible = false;
           return;
         }
         if (toolId === activeToolId) {
