@@ -118,12 +118,16 @@ async function decodeDracoFragmentChunk(
   assignMeshFragmentData(chunk, rawMesh);
 }
 
-// Module-level reference to the active ChunkedGraphLayer's segmentEquivalences.
-// Set by ChunkedGraphLayer constructor, used by CalcadaVolumeChunkSource to
-// build equivalences directly during chunk download (before decode).
+// Module-level reference to active ChunkedGraphLayers — used by
+// CalcadaVolumeChunkSource.download to build piece→root equivalences from
+// the LUT trailer of each chunk. Tracking the LAYER (not just its
+// equivalences) lets us read the layer's current branchId at download time
+// and skip layers whose branch doesn't match the chunk's branch — without
+// this filter, a main-branch chunk would link its LUT into a branch
+// layer's equivalences and (because of the "skip if piece already in
+// disjoint set" guard) the branch's own LUT would be silently dropped.
 import type { SharedDisjointUint64Sets } from "#src/shared_disjoint_sets.js";
-// Track ALL active ChunkedGraphLayers' equivalences (multiple calcada layers possible).
-const allActiveEquivalences = new Set<SharedDisjointUint64Sets>();
+const allActiveChunkedGraphLayers = new Set<ChunkedGraphLayer>();
 
 // Decoder map for calcada chunk formats
 const calcadaChunkDecoders = new Map<
@@ -217,10 +221,15 @@ export class CalcadaVolumeChunkSource extends WithParameters(
     const lutStart = byteLen - lutByteSize;
 
     // Build equivalences BEFORE decoding chunk so they're ready when
-    // the chunk renders. Link in ALL active layers' equivalences
-    // (multiple calcada segmentation layers may be loaded).
-    // Use local-only links + ONE batch RPC per layer.
-    for (const equivs of allActiveEquivalences) {
+    // the chunk renders. Only update layers whose current branchId
+    // matches this chunk's parameters.branchId — otherwise a main-branch
+    // chunk poisons a branch layer's equivalences (piece→main_root) and
+    // the branch layer's own chunk LUT is silently skipped by the
+    // "already in disjoint set" guard, leaving the branch displayed as
+    // the main view.
+    for (const layer of allActiveChunkedGraphLayers) {
+      if (layer.branchId.value !== branchId) continue;
+      const equivs = layer.segmentEquivalences;
       const pairs: bigint[] = [];
       for (let i = 0; i < lutCount; i++) {
         const offset = lutStart + i * 16;
@@ -534,6 +543,7 @@ export class ChunkedGraphLayer extends withSegmentationLayerBackendState(
   localPosition: SharedWatchableValue<Float32Array>;
   leafRequestsActive: SharedWatchableValue<boolean>;
   nBitsForLayerId: SharedWatchableValue<number>;
+  branchId: SharedWatchableValue<number>;
 
   constructor(rpc: RPC, options: any) {
     super(rpc, options);
@@ -543,10 +553,16 @@ export class ChunkedGraphLayer extends withSegmentationLayerBackendState(
     this.localPosition = rpc.get(options.localPosition);
     this.leafRequestsActive = rpc.get(options.leafRequestsActive);
     this.nBitsForLayerId = rpc.get(options.nBitsForLayerId);
+    this.branchId = rpc.get(options.branchId);
 
-    // Register this layer's equivalences so CalcadaVolumeChunkSource can
-    // build equivalences directly during chunk download (before decode).
-    allActiveEquivalences.add(this.segmentEquivalences);
+    // Register this layer so CalcadaVolumeChunkSource.download can apply
+    // the chunk's piece→root LUT trailer to the matching layer's
+    // equivalences. Matching is by branchId — see download() for the
+    // rationale.
+    allActiveChunkedGraphLayers.add(this);
+    this.registerDisposer(() => {
+      allActiveChunkedGraphLayers.delete(this);
+    });
 
     this.registerDisposer(
       this.chunkManager.recomputeChunkPriorities.add(() => {
