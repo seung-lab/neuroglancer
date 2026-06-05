@@ -19,6 +19,7 @@
 
 import type {
   EditSession,
+  LayerId,
   PaintingTools,
   Resolution,
 } from "@zettaai/edit-session";
@@ -60,6 +61,8 @@ export class BrushCursorState extends RefCounted {
   readonly targetResolution = new WatchableValue<Resolution | undefined>(
     undefined,
   );
+  /** Layer id the painting tool currently writes to (user-selectable). */
+  readonly targetLayerId = new WatchableValue<LayerId | undefined>(undefined);
 
   /** Per-session subscriptions, replaced whenever the active session changes. */
   private sessionSubscriptions: Array<() => void> = [];
@@ -99,6 +102,7 @@ export class BrushCursorState extends RefCounted {
       this.toolKind.value = undefined;
       this.radiusVoxels.value = 0;
       this.targetResolution.value = undefined;
+      this.targetLayerId.value = undefined;
       this.recomputeVisibility();
       this.refreshWorldCenter();
       return;
@@ -134,11 +138,13 @@ export class BrushCursorState extends RefCounted {
     if (painting === undefined) {
       this.radiusVoxels.value = 0;
       this.targetResolution.value = undefined;
+      this.targetLayerId.value = undefined;
       return;
     }
     const state = painting.getState();
     this.radiusVoxels.value = state.radius;
     this.targetResolution.value = state.targetResolution;
+    this.targetLayerId.value = state.targetLayerId;
   }
 
   private recomputeVisibility(): void {

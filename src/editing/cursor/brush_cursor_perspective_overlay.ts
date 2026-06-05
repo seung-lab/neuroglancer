@@ -85,8 +85,8 @@ function buildSphereWireframeVertices(): Float32Array {
   return verts;
 }
 
-const BRUSH_COLOR = new Float32Array([0.0, 200 / 255, 0.0, 0.6]);
-const ERASER_COLOR = new Float32Array([1.0, 0.0, 0.0, 0.6]);
+// Brush and eraser share one neutral cursor color (matches the slice overlay).
+const CURSOR_COLOR = new Float32Array([1.0, 1.0, 1.0, 0.6]);
 
 const tempMat = mat4.create();
 
@@ -171,8 +171,7 @@ export class BrushCursorPerspectiveOverlay extends PerspectiveViewRenderLayer {
     const { viewProjectionMat } = renderContext.projectionParameters;
     const mvp = mat4.multiply(mat4.create(), viewProjectionMat, model);
 
-    const toolKind = state.toolKind.value;
-    const color = toolKind === "eraser" ? ERASER_COLOR : BRUSH_COLOR;
+    const color = CURSOR_COLOR;
 
     shader.bind();
     gl.uniformMatrix4fv(shader.uniform("uProjectionMatrix"), false, mvp);

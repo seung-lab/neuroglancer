@@ -65,11 +65,11 @@ function buildLoopVertices(): Float32Array {
   return out;
 }
 
-// Colors (per architecture spec): brush = green, eraser = red.
-const BRUSH_OUTLINE = new Float32Array([0.0, 200 / 255, 0.0, 0.6]);
-const BRUSH_FILL = new Float32Array([0.0, 200 / 255, 0.0, 0.15]);
-const ERASER_OUTLINE = new Float32Array([1.0, 0.0, 0.0, 0.6]);
-const ERASER_FILL = new Float32Array([1.0, 0.0, 0.0, 0.15]);
+// Brush and eraser share one neutral cursor: a soft white disk that gently
+// brightens the slice (no color cast), with a subtle rim. Identical for both
+// tools so the cursor reads the same regardless of brush vs eraser.
+const CURSOR_OUTLINE = new Float32Array([1.0, 1.0, 1.0, 0.5]);
+const CURSOR_FILL = new Float32Array([1.0, 1.0, 1.0, 0.12]);
 
 const tempVec3 = vec3.create();
 
@@ -171,9 +171,8 @@ export class BrushCursorSliceOverlay extends SliceViewPanelRenderLayer {
     const cx = tempVec3[0];
     const cy = tempVec3[1];
 
-    const toolKind = state.toolKind.value;
-    const outline = toolKind === "eraser" ? ERASER_OUTLINE : BRUSH_OUTLINE;
-    const fill = toolKind === "eraser" ? ERASER_FILL : BRUSH_FILL;
+    const outline = CURSOR_OUTLINE;
+    const fill = CURSOR_FILL;
 
     shader.bind();
     gl.uniform2f(shader.uniform("uCenterClip"), cx, cy);
