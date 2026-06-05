@@ -791,8 +791,15 @@ export class CalcadaDataSource implements KvStoreBasedDataSourceProvider {
   ): Promise<DataSourceLookupResult> {
     ensureEmptyUrlSuffix(options.url);
     const url = kvstoreEnsureDirectoryPipelineUrl(options.kvStoreUrl);
+    // Include options.state in the memoize key so two segmentation layers
+    // sharing the same URL but different per-source state (e.g. main layer
+    // with state={} and branch layer with state={calcadaBranch:N}) get
+    // independent DataSource instances. Without this the second layer
+    // silently reuses the first's GrapheneState/branchId and ignores its
+    // restored state — the diff-link branch layer ends up showing "main".
+    const stateKey = JSON.stringify(options.state ?? null);
     return options.registry.chunkManager.memoize.getAsync(
-      { type: "calcada:get", url },
+      { type: "calcada:get", url, stateKey },
       options,
       async (progressOptions) => {
         const metadata = await getJsonMetadata(
