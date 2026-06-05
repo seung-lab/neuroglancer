@@ -18,9 +18,9 @@ import { layerId as toLayerId } from "@zettaai/edit-session";
 import { useCallback } from "preact/hooks";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
-import { ParamLabel } from "#src/editing/ui/tool_settings/param_label.js";
 import { useEvent } from "#src/editing/ui/interop/use_event.js";
 import { useWatchable } from "#src/editing/ui/interop/use_watchable.js";
+import { ParamLabel } from "#src/editing/ui/tool_settings/param_label.js";
 
 /**
  * In-session control letting the user switch the painting target layer and

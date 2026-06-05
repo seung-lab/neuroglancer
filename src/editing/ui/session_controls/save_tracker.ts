@@ -86,7 +86,9 @@ export class SaveTracker {
     if (this.state_.kind !== "saving") return;
     try {
       this.state_.controller.abort();
-    } catch {}
+    } catch {
+      // Aborting an already-settled controller can throw; nothing to recover.
+    }
     host.cancelActiveSave();
   }
 

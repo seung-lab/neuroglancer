@@ -8,11 +8,22 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
+import { Resolution, layerId, sessionId } from "@zettaai/edit-session";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+
+
+import {
+  EditSessionHost,
+  type EditSessionIntent,
+} from "#src/editing/edit_session_host.js";
+
+import { FakeLayerManager } from "#tests/editing/fixtures/fake_layer_manager.js";
+import { createFakeViewer } from "#tests/editing/fixtures/fake_viewer.js";
 
 // `EditSessionHost`'s module graph transitively imports
 // `src/webgl/shader_lib.ts`, which reads `WebGL2RenderingContext.*` at
 // module-eval time. Polyfill the global before the host module loads.
+// `vi.hoisted` runs before every static import regardless of placement.
 vi.hoisted(() => {
   if (typeof (globalThis as any).WebGL2RenderingContext === "undefined") {
     (globalThis as any).WebGL2RenderingContext = {
@@ -26,16 +37,6 @@ vi.hoisted(() => {
     };
   }
 });
-
-import { Resolution, layerId, sessionId } from "@zettaai/edit-session";
-
-import {
-  EditSessionHost,
-  type EditSessionIntent,
-} from "#src/editing/edit_session_host.js";
-
-import { createFakeViewer } from "#tests/editing/fixtures/fake_viewer.js";
-import { FakeLayerManager } from "#tests/editing/fixtures/fake_layer_manager.js";
 
 const RES = Resolution.from([8, 8, 40]);
 

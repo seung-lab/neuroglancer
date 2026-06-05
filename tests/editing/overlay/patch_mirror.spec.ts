@@ -8,7 +8,6 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type {
   EditSession,
   LayerMetadata,
@@ -17,9 +16,10 @@ import type {
   ViewBaseline,
 } from "@zettaai/edit-session";
 import { Resolution, layerId, sessionId } from "@zettaai/edit-session";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
-import { PatchMirror } from "#src/editing/overlay/patch_mirror.js";
 import { LocalPatchStore } from "#src/editing/local_patch_store.js";
+import { PatchMirror } from "#src/editing/overlay/patch_mirror.js";
 
 import { FakeLogger } from "#tests/editing/fixtures/fake_logger.js";
 

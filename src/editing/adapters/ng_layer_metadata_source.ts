@@ -31,13 +31,13 @@ import type {
   MultiscaleSliceViewChunkSource,
 } from "#src/sliceview/frontend.js";
 import type {
-  VolumeChunkSource,
-  MultiscaleVolumeChunkSource,
-} from "#src/sliceview/volume/frontend.js";
-import type {
   VolumeChunkSpecification,
   VolumeSourceOptions,
 } from "#src/sliceview/volume/base.js";
+import type {
+  VolumeChunkSource,
+  MultiscaleVolumeChunkSource,
+} from "#src/sliceview/volume/frontend.js";
 import { DataType } from "#src/util/data_type.js";
 
 /**

@@ -36,8 +36,7 @@ import type {
   ZExtrapolationState,
   ZExtrapolationTool,
   CorrespondenceState,
-} from "@zettaai/edit-session";
-import type { SavePayload, SaveLayerOutcome } from "@zettaai/edit-session";
+ SavePayload, SaveLayerOutcome } from "@zettaai/edit-session";
 import {
   ChunkId as ChunkIdFactory,
   EditSession,
@@ -58,6 +57,7 @@ import { NgCommitTarget } from "#src/editing/adapters/ng_commit_target.js";
 import { NgLayerMetadataSource } from "#src/editing/adapters/ng_layer_metadata_source.js";
 import { NgLogger } from "#src/editing/adapters/ng_logger.js";
 import { NgSaveTarget, resolveDataSourceUrl } from "#src/editing/adapters/ng_save_target.js";
+import { NgSessionLockAdapter } from "#src/editing/adapters/ng_session_lock.js";
 import type { SaveBackend } from "#src/editing/adapters/save_backend.js";
 import {
   hasAnySaveBackend,
@@ -66,7 +66,14 @@ import {
   saveBackendRegistryChanged,
 } from "#src/editing/adapters/save_backend.js";
 import { PostMessageSaveBackend } from "#src/editing/adapters/save_backends/post_message_save_backend.js";
-import { NgSessionLockAdapter } from "#src/editing/adapters/ng_session_lock.js";
+import {
+  BRUSH_SIZE_PRESETS,
+  sizeToRadius,
+} from "#src/editing/brush_size_presets.js";
+import { BrushCursorPerspectiveOverlay } from "#src/editing/cursor/brush_cursor_perspective_overlay.js";
+import { BrushCursorSliceOverlay } from "#src/editing/cursor/brush_cursor_slice_overlay.js";
+import { BrushCursorState } from "#src/editing/cursor/brush_cursor_state.js";
+import { IdleEditHotkeyBinder } from "#src/editing/idle_edit_hotkey_binder.js";
 import { LocalPatchStore } from "#src/editing/local_patch_store.js";
 // PatchMirror is created by step 9 of Phase 1; this file's runtime import
 // resolves once that step lands. Assumed constructor signature:
@@ -75,33 +82,25 @@ import { LocalPatchStore } from "#src/editing/local_patch_store.js";
 // and writes the resulting overlay bytes into `store.writeFullChunk(...)`.
 import { PatchMirror } from "#src/editing/overlay/patch_mirror.js";
 import { PatchTextureCache } from "#src/editing/patch_texture_cache.js";
-import type { PatchedMaskProvider } from "#src/editing/shaders/patched_mask_provider.js";
-import { BrushCursorPerspectiveOverlay } from "#src/editing/cursor/brush_cursor_perspective_overlay.js";
-import { BrushCursorSliceOverlay } from "#src/editing/cursor/brush_cursor_slice_overlay.js";
-import { BrushCursorState } from "#src/editing/cursor/brush_cursor_state.js";
 import { PointerEventBridge } from "#src/editing/pointer_event_bridge.js";
+import { QuickRegionCapture } from "#src/editing/quick_region_capture.js";
 import { EditSessionHotkeyBinder } from "#src/editing/session_hotkey_binder.js";
+import type { PatchedMaskProvider } from "#src/editing/shaders/patched_mask_provider.js";
 import { NgCorrespondenceCompute } from "#src/editing/tool_runtimes/correspondence_compute.js";
 import { PaintingCompute } from "#src/editing/tool_runtimes/painting_compute.js";
 import { NgZExtrapolationCompute } from "#src/editing/tool_runtimes/z_extrapolation_compute.js";
 import type { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import { SegmentationRenderLayer } from "#src/sliceview/volume/segmentation_renderlayer.js";
 import { StatusMessage } from "#src/status.js";
-import {
-  BRUSH_SIZE_PRESETS,
-  sizeToRadius,
-} from "#src/editing/brush_size_presets.js";
-import { IdleEditHotkeyBinder } from "#src/editing/idle_edit_hotkey_binder.js";
-import { QuickRegionCapture } from "#src/editing/quick_region_capture.js";
 import { WatchableValue } from "#src/trackable_value.js";
-import { vec3 } from "#src/util/geom.js";
 import {
   DEFAULT_SIDE_PANEL_LOCATION,
   TrackableSidePanelLocation,
 } from "#src/ui/side_panel_location.js";
 import { RefCounted } from "#src/util/disposable.js";
-import type { Trackable } from "#src/util/trackable.js";
+import { vec3 } from "#src/util/geom.js";
 import { NullarySignal, Signal } from "#src/util/signal.js";
+import type { Trackable } from "#src/util/trackable.js";
 import type { Viewer } from "#src/viewer.js";
 
 // ---------------------------------------------------------------------------
@@ -1555,7 +1554,7 @@ export class EditSessionHost extends RefCounted {
    * `layerId` and `layerResolution` are retained for API symmetry; the
    * current bbox is layer-agnostic in display coords.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   
   private async computeActiveRegion(
     _layerId: LayerId,
     _layerResolution: ResolutionType,

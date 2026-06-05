@@ -23,6 +23,7 @@ import {
   HashMapShaderManager,
   HashSetShaderManager,
 } from "#src/gpu_hash/shader.js";
+import { getChunkPositionFromCombinedGlobalLocalPositions } from "#src/render_coordinate_transform.js";
 import {
   SegmentColorShaderManager,
   SegmentStatedColorShaderManager,
@@ -54,7 +55,6 @@ import {
 } from "#src/trackable_value.js";
 import type { Uint64Map } from "#src/uint64_map.js";
 import type { DisjointUint64Sets } from "#src/util/disjoint_sets.js";
-import { getChunkPositionFromCombinedGlobalLocalPositions } from "#src/render_coordinate_transform.js";
 import type { vec3 } from "#src/util/geom.js";
 import type { GL } from "#src/webgl/context.js";
 import type { ShaderBuilder, ShaderProgram } from "#src/webgl/shader.js";

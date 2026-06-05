@@ -68,8 +68,8 @@ import {
 import { computeChunkBounds } from "#src/sliceview/volume/backend.js";
 import { Uint64Set } from "#src/uint64_set.js";
 import { vec3, vec3Key } from "#src/util/geom.js";
-import { HttpError } from "#src/util/http_request.js";
-import { parseUint64, verifyStringArray } from "#src/util/json.js";
+import { HttpError , isNotFoundError } from "#src/util/http_request.js";
+import { parseUint64, verifyStringArray , verifyObject } from "#src/util/json.js";
 import { Signal } from "#src/util/signal.js";
 import {
   getBasePriority,
@@ -78,8 +78,6 @@ import {
 } from "#src/visibility_priority/backend.js";
 import type { RPC } from "#src/worker_rpc.js";
 import { registerSharedObject, registerRPC } from "#src/worker_rpc.js";
-import { isNotFoundError } from "#src/util/http_request.js";
-import { verifyObject } from "#src/util/json.js";
 
 function downloadFragmentWithSharding(
   fragmentKvStore: KvStoreWithPath,
@@ -359,7 +357,7 @@ export class GrapheneMultiscaleMeshSource extends WithParameters(
         
         if (fragmentsIds.length === 1) {
           // Single fragment - use simple path
-          let { response } = await downloadFragment(
+          const { response } = await downloadFragment(
             this.fragmentKvStore,
             fragmentsIds[0],
             parameters,
@@ -404,7 +402,7 @@ export class GrapheneMultiscaleMeshSource extends WithParameters(
           }
           
           for (const fragmentId of fragmentsIds) {
-            let { response } = await downloadFragment(
+            const { response } = await downloadFragment(
               this.fragmentKvStore,
               fragmentId,
               parameters,

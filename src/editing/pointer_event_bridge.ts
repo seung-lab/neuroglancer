@@ -17,9 +17,9 @@ import type {
 } from "@zettaai/edit-session";
 import { NO_MODIFIERS, Resolution } from "@zettaai/edit-session";
 
+import type { DisplayContext, RenderedPanel } from "#src/display_context.js";
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { globalToTargetVoxel } from "#src/editing/raster/global_voxel_conversion.js";
-import type { DisplayContext, RenderedPanel } from "#src/display_context.js";
 import { RenderedDataPanel } from "#src/rendered_data_panel.js";
 import { RefCounted } from "#src/util/disposable.js";
 

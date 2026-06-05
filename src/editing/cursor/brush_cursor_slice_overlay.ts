@@ -23,17 +23,17 @@
 import { Resolution } from "@zettaai/edit-session";
 
 import type { BrushCursorState } from "#src/editing/cursor/brush_cursor_state.js";
+import { SliceViewProjectionParameters } from "#src/sliceview/base.js";
 import type {
   SliceViewPanelRenderContext,
   SliceViewPanelReadyRenderContext,
 } from "#src/sliceview/renderlayer.js";
 import { SliceViewPanelRenderLayer } from "#src/sliceview/renderlayer.js";
-import { SliceViewProjectionParameters } from "#src/sliceview/base.js";
 import { vec3 } from "#src/util/geom.js";
 import { GLBuffer } from "#src/webgl/buffer.js";
 import type { GL } from "#src/webgl/context.js";
-import { ShaderBuilder } from "#src/webgl/shader.js";
 import type { ShaderProgram } from "#src/webgl/shader.js";
+import { ShaderBuilder } from "#src/webgl/shader.js";
 
 const DISK_SEGMENTS = 24;
 // One center vertex + (DISK_SEGMENTS + 1) rim vertices for a triangle-fan.

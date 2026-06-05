@@ -8,7 +8,6 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type {
   ChunkContentRef,
   LayerId,
@@ -18,9 +17,10 @@ import type {
   SavePayload,
 } from "@zettaai/edit-session";
 import { Resolution, layerId, sessionId } from "@zettaai/edit-session";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
-import { NgSaveTarget } from "#src/editing/adapters/ng_save_target.js";
 import type { NgLayerMetadataSource } from "#src/editing/adapters/ng_layer_metadata_source.js";
+import { NgSaveTarget } from "#src/editing/adapters/ng_save_target.js";
 import type {
   SaveBackend,
   SaveBackendResult,

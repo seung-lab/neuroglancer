@@ -8,8 +8,8 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
 import { layerId, sessionId } from "@zettaai/edit-session";
+import { describe, it, expect, beforeEach } from "vitest";
 
 import { NgSessionLockAdapter } from "#src/editing/adapters/ng_session_lock.js";
 

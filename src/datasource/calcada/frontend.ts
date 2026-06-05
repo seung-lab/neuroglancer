@@ -77,24 +77,21 @@ import {
   PrecomputedMultiscaleVolumeChunkSource,
 } from "#src/datasource/precomputed/frontend.js";
 import { WithSharedKvStoreContext } from "#src/kvstore/chunk_source_frontend.js";
-import type { VolumeSourceOptions } from "#src/sliceview/volume/base.js";
-import { makeDefaultVolumeChunkSpecifications } from "#src/sliceview/volume/base.js";
-import { VolumeChunkSource } from "#src/sliceview/volume/frontend.js";
 import type { SharedKvStoreContext } from "#src/kvstore/frontend.js";
 import {
   ensureEmptyUrlSuffix,
   kvstoreEnsureDirectoryPipelineUrl,
   pipelineUrlJoin,
 } from "#src/kvstore/url.js";
+import { ImageUserLayer } from "#src/layer/image/index.js";
 import type {
   LayerView,
   MouseSelectionState,
   VisibleLayerInfo,
 } from "#src/layer/index.js";
+import { makeLayer } from "#src/layer/index.js";
 import type { LoadedDataSubsource } from "#src/layer/layer_data_source.js";
 import { LoadedLayerDataSource } from "#src/layer/layer_data_source.js";
-import { ImageUserLayer } from "#src/layer/image/index.js";
-import { makeLayer } from "#src/layer/index.js";
 import { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import { MeshSource } from "#src/mesh/frontend.js";
 import type { DisplayDimensionRenderInfo } from "#src/navigation_state.js";
@@ -128,7 +125,6 @@ import {
   SegmentationGraphSourceConnection,
 } from "#src/segmentation_graph/source.js";
 import type { SharedDisjointUint64Sets } from "#src/shared_disjoint_sets.js";
-import { registerRPC } from "#src/worker_rpc.js";
 import { SharedWatchableValue } from "#src/shared_watchable_value.js";
 import type {
   FrontendTransformedSource,
@@ -143,6 +139,9 @@ import {
   SliceViewPanelRenderLayer,
   SliceViewRenderLayer,
 } from "#src/sliceview/renderlayer.js";
+import type { VolumeSourceOptions } from "#src/sliceview/volume/base.js";
+import { makeDefaultVolumeChunkSpecifications } from "#src/sliceview/volume/base.js";
+import { VolumeChunkSource } from "#src/sliceview/volume/frontend.js";
 import { StatusMessage } from "#src/status.js";
 import {
   TrackableBoolean,
@@ -220,6 +219,7 @@ import {
   addLayerControlToOptionsTab,
   registerLayerControl,
 } from "#src/widget/layer_control.js";
+import { registerRPC } from "#src/worker_rpc.js";
 
 function vec4FromVec3(vec: vec3, alpha = 0) {
   const res = vec4.clone([...vec]);

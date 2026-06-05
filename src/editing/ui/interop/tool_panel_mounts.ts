@@ -9,8 +9,8 @@
  */
 
 import type { EditSession } from "@zettaai/edit-session";
-import { createElement } from "preact";
 import type { ComponentType } from "preact";
+import { createElement } from "preact";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { PanelMount } from "#src/editing/ui/interop/panel_mount.js";

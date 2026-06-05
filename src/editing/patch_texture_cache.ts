@@ -36,8 +36,8 @@
  */
 
 import type { LocalPatchChunk } from "#src/editing/local_patch_chunk.js";
-import type { LocalPatchStore } from "#src/editing/local_patch_store.js";
 import { chunkGridKey } from "#src/editing/local_patch_source.js";
+import type { LocalPatchStore } from "#src/editing/local_patch_store.js";
 import type { PatchedMaskProvider } from "#src/editing/shaders/patched_mask_provider.js";
 import { RefCounted } from "#src/util/disposable.js";
 import { NullarySignal } from "#src/util/signal.js";

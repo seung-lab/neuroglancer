@@ -8,12 +8,23 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
+import { Resolution, layerId } from "@zettaai/edit-session";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+
+
+import { NgSessionLockAdapter } from "#src/editing/adapters/ng_session_lock.js";
+import {
+  EditSessionHost,
+  TrackableEditSessionIntent,
+  type EditSessionIntent,
+} from "#src/editing/edit_session_host.js";
+
+import { createFakeViewer } from "#tests/editing/fixtures/fake_viewer.js";
 
 // The host module transitively imports `src/webgl/shader_lib.ts`, which reads
 // `WebGL2RenderingContext.UNSIGNED_BYTE` etc. at module-eval time. Stub the
 // global before the host module loads. `vi.hoisted` ensures this runs before
-// every other static import in this file.
+// every other static import in this file, regardless of where it appears.
 vi.hoisted(() => {
   if (typeof (globalThis as any).WebGL2RenderingContext === "undefined") {
     // Only the numeric constants accessed at module-eval time matter; we
@@ -29,17 +40,6 @@ vi.hoisted(() => {
     };
   }
 });
-
-import { Resolution, layerId } from "@zettaai/edit-session";
-
-import {
-  EditSessionHost,
-  TrackableEditSessionIntent,
-  type EditSessionIntent,
-} from "#src/editing/edit_session_host.js";
-import { NgSessionLockAdapter } from "#src/editing/adapters/ng_session_lock.js";
-
-import { createFakeViewer } from "#tests/editing/fixtures/fake_viewer.js";
 
 const RES = Resolution.from([8, 8, 40]);
 
