@@ -184,13 +184,13 @@ export class EditSessionHotkeyBinder extends RefCounted {
     //   `pointerdown`). Ctrl/Cmd+left-click+drag pans via the existing
     //   `translate-via-mouse-drag` action.
     //
-    // - `cursorNavMap` — while no tool / a non-paint tool is active. The
-    //   `at:mousedown0` no-op is dropped so plain click+drag falls through
-    //   to neuroglancer's default `translate-via-mouse-drag` on the slice
-    //   and perspective panels. The Ctrl/Cmd overrides are kept so
-    //   `Ctrl+click` inside the session pans instead of creating an
-    //   annotation (the default `at:control+mousedown0 → annotate` binding
-    //   from `getDefaultRenderedDataPanelBindings`).
+    // - `cursorNavMap` — while no tool / a non-paint tool is active. It is
+    //   empty so every native neuroglancer binding falls through unchanged:
+    //   plain click+drag pans via the default `translate-via-mouse-drag`, and
+    //   `Ctrl+click` creates an annotation via the default
+    //   `at:control+mousedown0 → annotate` binding (from
+    //   `getDefaultRenderedDataPanelBindings`). Native shortcuts are only
+    //   shadowed while a paint-like tool is active (see `paintNavMap`).
     const ctrlMetaPanEntries = {
       "at:control+mousedown0": {
         action: "translate-via-mouse-drag",
@@ -209,9 +209,7 @@ export class EditSessionHotkeyBinder extends RefCounted {
       ...ctrlMetaPanEntries,
     });
     paintNavMap.label = "Edit session navigation (paint)";
-    const cursorNavMap = EventActionMap.fromObject({
-      ...ctrlMetaPanEntries,
-    });
+    const cursorNavMap = EventActionMap.fromObject({});
     cursorNavMap.label = "Edit session navigation (cursor)";
 
     let detachNav: (() => void) | undefined;
