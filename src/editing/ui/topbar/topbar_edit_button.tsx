@@ -85,7 +85,7 @@ export function TopbarEditButton({ host }: { host: EditSessionHost }) {
           "neuroglancer-editing-topbar-edit-button" +
           (isActive ? " active" : "")
         }
-        title={
+        data-tooltip={
           isActive ? "Exit edit session" : "Open the edit-session entry modal"
         }
         onClick={handleClick}

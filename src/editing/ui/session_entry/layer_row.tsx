@@ -108,7 +108,7 @@ export function LayerRow({
   } else if (resolutionModel !== undefined) {
     resolutionContent = (
       <span
-        title="Choose the scale to load for this layer."
+        data-tooltip="Choose the scale to load for this layer."
         class="neuroglancer-edit-session-entry-modal-layer-resolution-picker"
       >
         <ResolutionPicker
@@ -215,22 +215,30 @@ function RoleSegment({
   ]
     .filter(Boolean)
     .join(" ");
+  // Wrap so the tooltip still shows while the segment is disabled (e.g. the
+  // "Editable" segment on image layers explains why it's unavailable). A
+  // disabled button emits no pointer events, so it drops to pointer-events:none
+  // in CSS and hover falls through to this wrapper.
   return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={selected}
-      aria-disabled={disabled}
-      disabled={disabled}
-      title={tooltip}
-      class={cls}
-      onClick={() => {
-        if (disabled) return;
-        if (selected) return;
-        onChange(value);
-      }}
+    <span
+      class="neuroglancer-edit-session-entry-modal-role-segment-wrap"
+      data-tooltip={tooltip}
     >
-      {label}
-    </button>
+      <button
+        type="button"
+        role="radio"
+        aria-checked={selected}
+        aria-disabled={disabled}
+        disabled={disabled}
+        class={cls}
+        onClick={() => {
+          if (disabled) return;
+          if (selected) return;
+          onChange(value);
+        }}
+      >
+        {label}
+      </button>
+    </span>
   );
 }

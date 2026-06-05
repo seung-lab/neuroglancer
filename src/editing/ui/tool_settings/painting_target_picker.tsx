@@ -18,6 +18,7 @@ import { layerId as toLayerId } from "@zettaai/edit-session";
 import { useCallback } from "preact/hooks";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
+import { ParamLabel } from "#src/editing/ui/tool_settings/param_label.js";
 import { useEvent } from "#src/editing/ui/interop/use_event.js";
 import { useWatchable } from "#src/editing/ui/interop/use_watchable.js";
 
@@ -83,7 +84,10 @@ export function PaintingTargetPicker({
   return (
     <>
       <div class="neuroglancer-tool-panel-row">
-        <label>Target layer</label>
+        <ParamLabel
+          text="Target layer"
+          hint="The segmentation layer your paint strokes are written to. Only writable (Editable) layers from the session appear here."
+        />
         <select value={currentLayer.layerId} onChange={onLayerChange}>
           {writable.map((l: { layerId: LayerId }) => (
             <option key={l.layerId} value={l.layerId}>
@@ -93,7 +97,10 @@ export function PaintingTargetPicker({
         </select>
       </div>
       <div class="neuroglancer-tool-panel-row">
-        <label>Target resolution</label>
+        <ParamLabel
+          text="Target resolution"
+          hint="The voxel scale strokes are applied at. Coarser scales cover more area per stroke but paint larger, blockier voxels."
+        />
         {layerResolutions.length <= 1 ? (
           /* Static text for single-resolution layers (TM-294): a disabled
              dropdown reads as interactive-but-broken; a plain readout is

@@ -27,6 +27,7 @@ import { useEvent } from "#src/editing/ui/interop/use_event.js";
 import { useWatchable } from "#src/editing/ui/interop/use_watchable.js";
 import { layerKindOf } from "#src/editing/ui/layer_kind.js";
 import { ToggleSwitch } from "#src/editing/ui/toggle_switch.js";
+import { ParamLabel } from "#src/editing/ui/tool_settings/param_label.js";
 import { PaintingTargetPicker } from "#src/editing/ui/tool_settings/painting_target_picker.js";
 import { PaintingThreshold } from "#src/editing/ui/tool_settings/painting_threshold.js";
 import "#src/editing/ui/tool_settings/painting_brush.css";
@@ -81,7 +82,10 @@ export function PaintingBrush({
     <div class="neuroglancer-tool-panel neuroglancer-painting-brush-panel">
       <PaintingTargetPicker session={session} host={host} />
       <div class="neuroglancer-tool-panel-row">
-        <label>Size</label>
+        <ParamLabel
+          text="Size"
+          hint="Brush diameter in voxels at the target resolution. Larger sizes paint a wider stroke."
+        />
         <input
           type="range"
           min={MIN_SIZE}
@@ -100,7 +104,10 @@ export function PaintingBrush({
         />
       </div>
       <div class="neuroglancer-tool-panel-row">
-        <label>Target value</label>
+        <ParamLabel
+          text="Target value"
+          hint="The segment ID painted into the target layer — every voxel the stroke covers is set to this value."
+        />
         <input
           type="text"
           inputMode="numeric"
@@ -302,7 +309,7 @@ function AdvancedBrush({
         <ToggleSwitch
           checked={enabled}
           disabled={toggleDisabled}
-          title={toggleTitle}
+          tooltip={toggleTitle}
           ariaLabel={
             enabled
               ? "Disable advanced brush"
@@ -319,7 +326,10 @@ function AdvancedBrush({
       {enabled && currentEntry !== undefined && (
         <div class="neuroglancer-painting-brush-advanced-body">
           <div class="neuroglancer-tool-panel-row">
-            <label>Reference layer</label>
+            <ParamLabel
+              text="Reference layer"
+              hint="The image layer the mask samples to decide which voxels a stroke may paint. Only image layers locked in the session appear here."
+            />
             <select value={mask!.imageLayerId} onChange={onMaskLayerChange}>
               {imageEntries.map((e) => (
                 <option key={e.layerId} value={e.layerId}>
@@ -329,7 +339,10 @@ function AdvancedBrush({
             </select>
           </div>
           <div class="neuroglancer-tool-panel-row">
-            <label>Reference resolution</label>
+            <ParamLabel
+              text="Reference resolution"
+              hint="The voxel scale the reference image is sampled at. Coarser scales are faster but mask less precisely."
+            />
             {currentEntry.resolutions.length <= 1 ? (
               <span class="neuroglancer-tool-panel-resolution-static">
                 {mask!.imageResolution}
@@ -349,7 +362,10 @@ function AdvancedBrush({
           </div>
           {currentRange !== null && (
             <div class="neuroglancer-painting-brush-threshold-row">
-              <label>Threshold</label>
+              <ParamLabel
+                text="Threshold"
+                hint="Limits painting to voxels whose reference-image intensity falls within the low–high range. Voxels outside it are left untouched."
+              />
               <PaintingThreshold
                 min={currentRange.min}
                 max={currentRange.max}
@@ -361,7 +377,10 @@ function AdvancedBrush({
             </div>
           )}
           <div class="neuroglancer-tool-panel-row">
-            <label>Min component</label>
+            <ParamLabel
+              text="Min component"
+              hint="Drops connected blobs smaller than this many voxels from the mask, removing speckle. 0 keeps every component."
+            />
             <input
               type="number"
               min={0}
@@ -371,7 +390,10 @@ function AdvancedBrush({
             />
           </div>
           <div class="neuroglancer-tool-panel-row">
-            <label>Binary closing</label>
+            <ParamLabel
+              text="Binary closing"
+              hint="Closes gaps and small holes in the mask by this many voxels (morphological closing). 0 disables it."
+            />
             <input
               type="number"
               min={0}
@@ -381,7 +403,10 @@ function AdvancedBrush({
             />
           </div>
           <div class="neuroglancer-tool-panel-row">
-            <label>Filter components first</label>
+            <ParamLabel
+              text="Filter components first"
+              hint="When on, min-component filtering runs before binary closing; when off, closing runs first. Changes whether holes are filled before or after small blobs are removed."
+            />
             <ToggleSwitch
               checked={mask!.filterComponentsFirst}
               ariaLabel="Filter components first"

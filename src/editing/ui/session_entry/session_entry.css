@@ -401,6 +401,18 @@
   gap: 1px;
 }
 
+/* Each segment is wrapped so its `data-tooltip` still shows while disabled;
+   the wrapper sizes to the button and stretches like the original flex item,
+   and the disabled button drops out of hit-testing so hover reaches it. */
+.neuroglancer-edit-session-entry-modal-role-segment-wrap {
+  display: inline-flex;
+}
+
+.neuroglancer-edit-session-entry-modal-role-segment-wrap
+  > .neuroglancer-edit-session-entry-modal-role-segment:disabled {
+  pointer-events: none;
+}
+
 .neuroglancer-edit-session-entry-modal-role-segment {
   appearance: none;
   background: transparent;
@@ -600,6 +612,18 @@
 .neuroglancer-edit-session-entry-modal-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* The primary button is wrapped so its `data-tooltip` hint still shows while
+   disabled; a disabled button must drop out of hit-testing for hover to reach
+   the wrapper. The wrapper sizes to the button (inline-flex) so it both anchors
+   the tooltip and becomes the hit target once the button is pointer-events:none. */
+.neuroglancer-edit-session-entry-modal-open-wrap {
+  display: inline-flex;
+}
+
+.neuroglancer-edit-session-entry-modal-open-wrap > .neuroglancer-edit-session-entry-modal-btn:disabled {
+  pointer-events: none;
 }
 
 /* Focus indicators --------------------------------------------------------- */

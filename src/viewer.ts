@@ -38,6 +38,7 @@ import { StateShare, stateShareEnabled } from "#src/datasource/state_share.js";
 import type { DisplayContext } from "#src/display_context.js";
 import { TrackableWindowedViewport } from "#src/display_context.js";
 import { EditSessionHost } from "#src/editing/edit_session_host.js";
+import { installFastTooltips } from "#src/editing/ui/fast_tooltip.js";
 import { mountComponent } from "#src/editing/ui/interop/component_mount.js";
 import {
   makeBrushPanel,
@@ -961,6 +962,8 @@ export class Viewer extends RefCounted implements ViewerState {
       // row: `mousePositionWidget` (flex:1, appended earlier) acts as the
       // LEFT spacer, and the new spacer below balances on the RIGHT,
       // pushing the trailing icon buttons to the row's right edge.
+      // Fast hover tooltips for the whole edit-session UI (data-tooltip).
+      installFastTooltips();
       const topbarMount = document.createElement("div");
       topbarMount.style.display = "contents";
       this.registerDisposer(

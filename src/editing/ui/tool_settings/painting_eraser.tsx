@@ -11,11 +11,13 @@
 import type { EditSession, PaintingTools } from "@zettaai/edit-session";
 import { useCallback } from "preact/hooks";
 
+import { radiusToSize, sizeToRadius } from "#src/editing/brush_size_presets.js";
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { useEvent } from "#src/editing/ui/interop/use_event.js";
+import { ParamLabel } from "#src/editing/ui/tool_settings/param_label.js";
 import { PaintingTargetPicker } from "#src/editing/ui/tool_settings/painting_target_picker.js";
 
-const MAX_SIZE = 129; // size = radius*2+1; max radius 64.
+const MAX_SIZE = 1000; // size = radius*2+1; max radius 64.
 const MIN_SIZE = 1;
 
 function clampSize(value: number): number {
@@ -23,14 +25,6 @@ function clampSize(value: number): number {
   const n = Math.round(value);
   const odd = n % 2 === 0 ? n + 1 : n;
   return Math.max(MIN_SIZE, Math.min(MAX_SIZE, odd));
-}
-
-function sizeToRadius(size: number): number {
-  return Math.max(0, Math.floor((size - 1) / 2));
-}
-
-function radiusToSize(radius: number): number {
-  return Math.max(0, Math.floor(radius)) * 2 + 1;
 }
 
 /**
@@ -66,7 +60,10 @@ export function PaintingEraser({
     <div class="neuroglancer-tool-panel neuroglancer-painting-eraser-panel">
       <PaintingTargetPicker session={session} host={host} />
       <div class="neuroglancer-tool-panel-row">
-        <label>Size</label>
+        <ParamLabel
+          text="Size"
+          hint="Eraser diameter in voxels at the target resolution. Larger sizes clear a wider stroke."
+        />
         <input
           type="range"
           min={MIN_SIZE}
