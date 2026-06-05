@@ -24,6 +24,9 @@
 }
 
 .neuroglancer-painting-brush-advanced-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   background: none;
   border: none;
   color: #ccc;
@@ -35,6 +38,10 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
   flex: 1 1 auto;
+}
+
+.neuroglancer-painting-brush-advanced-summary svg {
+  display: block;
 }
 
 .neuroglancer-painting-brush-advanced-toggle {

@@ -46,67 +46,53 @@
   margin: 0 4px;
 }
 
-/* Tool icons -------------------------------------------------------------- */
+/* Tool & history icon buttons --------------------------------------------- */
 
-.neuroglancer-editing-topbar-tool {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 22px;
-  padding: 0;
-  background: #2a2a2a;
-  border: 1px solid #444;
-  color: #ddd;
-  cursor: pointer;
-  font: inherit;
-  border-radius: 3px;
-  user-select: none;
-}
-
-.neuroglancer-editing-topbar-tool:hover:not(.disabled) {
-  background: #3a3a3a;
-}
-
-.neuroglancer-editing-topbar-tool.active {
-  /* Accent — matches the session-state-indicator color tokens used by the
-     legacy session controls (blue accent). */
-  background: #2c3a5a;
-  border-color: #6fa8ff;
-  color: #fff;
-}
-
-.neuroglancer-editing-topbar-tool.disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.neuroglancer-editing-topbar-tool-glyph {
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1;
-}
-
-/* Icon buttons (Undo / Redo) --------------------------------------------- */
-
+/* Shared square hit target for every icon-only topbar button (tool icons and
+   Undo/Redo). Icons are Lucide SVGs that inherit `color` via
+   `stroke="currentColor"`, so all states are driven here in CSS — the icon
+   component is never swapped. */
+.neuroglancer-editing-topbar-tool,
 .neuroglancer-editing-topbar-icon-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 22px;
+  width: 32px;
+  height: 30px;
   padding: 0;
-  background: #2a2a2a;
-  border: 1px solid #444;
-  color: #ddd;
+  background: transparent;
+  border: 1px solid transparent;
+  color: #cfcfcf;
   cursor: pointer;
   font: inherit;
-  border-radius: 3px;
-  font-size: 14px;
+  border-radius: 6px;
+  user-select: none;
 }
 
+/* Lucide SVGs render inline by default — block + centered avoids baseline
+   gaps and keeps the glyph optically centered in the square. */
+.neuroglancer-editing-topbar-tool svg,
+.neuroglancer-editing-topbar-icon-button svg {
+  display: block;
+}
+
+.neuroglancer-editing-topbar-tool:hover:not(.disabled),
 .neuroglancer-editing-topbar-icon-button:hover:not([disabled]) {
   background: #3a3a3a;
+  color: #fff;
+}
+
+.neuroglancer-editing-topbar-tool.active {
+  /* Accent-tinted background + inset accent ring + accent icon color. Matches
+     the session-state-indicator blue accent used elsewhere in the topbar. */
+  background: #2c3a5a;
+  color: #9cc3ff;
+  box-shadow: inset 0 0 0 1px #6fa8ff;
+}
+
+.neuroglancer-editing-topbar-tool.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .neuroglancer-editing-topbar-icon-button[disabled] {
@@ -165,6 +151,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   /* Fixed width keeps the button's center pinned to the topbar's midpoint
      even though the label changes between "Edit" and "Exit session". */
   min-width: 96px;
@@ -176,6 +163,10 @@
   font: inherit;
   border-radius: 3px;
   white-space: nowrap;
+}
+
+.neuroglancer-editing-topbar-edit-button svg {
+  display: block;
 }
 
 .neuroglancer-editing-topbar-edit-button:hover:not([disabled]) {

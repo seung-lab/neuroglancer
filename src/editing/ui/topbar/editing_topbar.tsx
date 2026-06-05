@@ -11,6 +11,17 @@
 import "#src/editing/ui/topbar/editing_topbar.css";
 
 import type { EditSession } from "@zettaai/edit-session";
+import type { LucideIcon } from "lucide-preact";
+import {
+  Eraser,
+  Layers,
+  MousePointer2,
+  PaintBucket,
+  Paintbrush,
+  Redo2,
+  Undo2,
+  Waypoints,
+} from "lucide-preact";
 import {
   useCallback,
   useEffect,
@@ -32,25 +43,29 @@ import { StatusMessage } from "#src/status.js";
 // root doesn't strand the constant.
 export const CURSOR_TOOL_ID = "cursor";
 
+/** Pixel size for all topbar Lucide icons — consistent across the toolbar. */
+const TOOL_ICON_SIZE = 17;
+
 interface ToolEntry {
   readonly toolId: string;
   readonly label: string;
   /** Hotkey suffix shown after `Ctrl+` in tooltips. */
   readonly hotkey: string;
   /**
-   * Single-letter / ascii-art glyph used as the icon. The mockup uses real
-   * SVGs; until those land, a short text glyph keeps the topbar functional
-   * and accessible (the label and shortcut are also exposed via `title`).
+   * Lucide icon component rendered as the button's glyph. Icons inherit the
+   * button's `color` via `stroke="currentColor"`, so all visual states
+   * (rest / hover / active / disabled) are driven by CSS — never by swapping
+   * the icon. The label and shortcut remain exposed via `title`/`aria-label`.
    */
-  readonly glyph: string;
+  readonly Icon: LucideIcon;
   readonly markDisabled?: boolean;
 }
 
 const TOOL_ENTRIES: readonly ToolEntry[] = [
-  { toolId: CURSOR_TOOL_ID, label: "Cursor", hotkey: "V", glyph: "↖" },
-  { toolId: "painting.brush", label: "Brush", hotkey: "B", glyph: "B" },
-  { toolId: "painting.erase", label: "Eraser", hotkey: "E", glyph: "E" },
-  { toolId: "painting.fill", label: "Fill", hotkey: "F", glyph: "F" },
+  { toolId: CURSOR_TOOL_ID, label: "Cursor", hotkey: "V", Icon: MousePointer2 },
+  { toolId: "painting.brush", label: "Brush", hotkey: "B", Icon: Paintbrush },
+  { toolId: "painting.erase", label: "Eraser", hotkey: "E", Icon: Eraser },
+  { toolId: "painting.fill", label: "Fill", hotkey: "F", Icon: PaintBucket },
   // Z-extrap uses Ctrl+P (propagate) since Ctrl+Z is reserved for Undo. The
   // hotkey binder mirrors this choice — see session_hotkey_binder.ts. Future
   // engineers may pick another free letter if `P` becomes inconvenient.
@@ -58,14 +73,14 @@ const TOOL_ENTRIES: readonly ToolEntry[] = [
     toolId: "z-extrapolation",
     label: "Z-extrapolation",
     hotkey: "P",
-    glyph: "Z",
+    Icon: Layers,
     markDisabled: true,
   },
   {
     toolId: "correspondence",
     label: "Correspondence",
     hotkey: "R",
-    glyph: "C",
+    Icon: Waypoints,
     markDisabled: true,
   },
 ];
@@ -256,6 +271,7 @@ function ActiveTopbarControls({
             entry.toolId === CURSOR_TOOL_ID
               ? activeToolId === undefined
               : entry.toolId === activeToolId;
+          const { Icon } = entry;
           return (
             <button
               key={entry.toolId}
@@ -269,9 +285,7 @@ function ActiveTopbarControls({
               aria-label={`${entry.label} (Ctrl+${entry.hotkey})`}
               onClick={() => handleToolClick(entry.toolId)}
             >
-              <span class="neuroglancer-editing-topbar-tool-glyph">
-                {entry.glyph}
-              </span>
+              <Icon size={TOOL_ICON_SIZE} aria-hidden="true" />
             </button>
           );
         })}
@@ -291,7 +305,7 @@ function ActiveTopbarControls({
           title={`Undo · Ctrl+Z${snapshot.undoDescription ? `\n${snapshot.undoDescription}` : ""}`}
           onClick={() => void runUndo()}
         >
-          {"↶"}
+          <Undo2 size={TOOL_ICON_SIZE} aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -300,7 +314,7 @@ function ActiveTopbarControls({
           title={`Redo · Ctrl+Shift+Z${snapshot.redoDescription ? `\n${snapshot.redoDescription}` : ""}`}
           onClick={() => void runRedo()}
         >
-          {"↷"}
+          <Redo2 size={TOOL_ICON_SIZE} aria-hidden="true" />
         </button>
       </div>
     </>

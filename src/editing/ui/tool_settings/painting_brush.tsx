@@ -17,6 +17,7 @@ import type {
   Resolution,
 } from "@zettaai/edit-session";
 import { layerId as toLayerId } from "@zettaai/edit-session";
+import { ChevronDown, ChevronRight } from "lucide-preact";
 import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
@@ -301,7 +302,12 @@ function AdvancedBrush({
           class="neuroglancer-painting-brush-advanced-summary"
           onClick={() => setExpanded(!expanded)}
         >
-          {expanded ? "▾" : "▸"} Advanced
+          {expanded ? (
+            <ChevronDown size={16} aria-hidden="true" />
+          ) : (
+            <ChevronRight size={16} aria-hidden="true" />
+          )}
+          Advanced
         </button>
         {/* Enable-toggle lives on the header, per TM-294. Clicking the
             checkbox does NOT expand the section — that's a separate

@@ -18,6 +18,7 @@ import {
   layerId as toLayerId,
   Resolution,
 } from "@zettaai/edit-session";
+import { X } from "lucide-preact";
 import { createPortal } from "preact/compat";
 import {
   useCallback,
@@ -463,7 +464,7 @@ function SessionEntryModalBody(props: {
             disabled={submitting}
             onClick={cancel}
           >
-            &times;
+            <X size={18} aria-hidden="true" />
           </button>
         </div>
         <div class="neuroglancer-edit-session-entry-modal-body">

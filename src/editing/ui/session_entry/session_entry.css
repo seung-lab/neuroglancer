@@ -67,14 +67,20 @@
 }
 
 .neuroglancer-edit-session-entry-modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: none;
   color: var(--neuroglancer-edit-session-text-muted);
   cursor: pointer;
-  font-size: 20px;
   line-height: 1;
-  padding: 4px 10px;
+  padding: 4px 8px;
   border-radius: 4px;
+}
+
+.neuroglancer-edit-session-entry-modal-close svg {
+  display: block;
 }
 
 .neuroglancer-edit-session-entry-modal-close:hover {

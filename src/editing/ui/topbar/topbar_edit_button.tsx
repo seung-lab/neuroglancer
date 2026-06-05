@@ -8,6 +8,7 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
+import { Pencil } from "lucide-preact";
 import { useCallback, useState } from "preact/hooks";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
@@ -78,6 +79,7 @@ export function TopbarEditButton({ host }: { host: EditSessionHost }) {
         }
         onClick={handleClick}
       >
+        <Pencil size={16} aria-hidden="true" />
         {isActive ? "Exit session" : "Edit"}
       </button>
       <SessionEntryModal
