@@ -698,6 +698,11 @@ async function getVolumeDataSource(
   if (stateJson) {
     state.restoreState(stateJson);
   }
+  // Sync the restored branchId onto the chunk source BEFORE NG starts
+  // fetching chunks — otherwise the first /precomputed_rp/ requests go
+  // out with branch_id=0 (the chunkSource default) and the user sees
+  // main's view until refreshChunkSources() fires on a later UI toggle.
+  volume.branchId = state.branchId.value;
   const segmentationGraph = new GrapheneGraphSource(info, volume, state);
   const { modelSpace } = info;
   const subsources: DataSubsourceEntry[] = [
@@ -1906,6 +1911,7 @@ void main() {
       displayState,
       localPosition,
       this.graph.info.graph.nBitsForLayerId,
+      this.graph.branchId,
     );
     return [this.graphRenderLayer];
   }
@@ -3082,6 +3088,7 @@ class SliceViewPanelChunkedGraphLayer extends SliceViewPanelRenderLayer {
     public displayState: ChunkedGraphLayerDisplayState,
     public localPosition: WatchableValueInterface<Float32Array>,
     nBitsForLayerId: number,
+    branchId: WatchableValueInterface<number>,
   ) {
     super();
     this.leafRequestsActive = this.registerDisposer(
@@ -3118,6 +3125,12 @@ class SliceViewPanelChunkedGraphLayer extends SliceViewPanelRenderLayer {
       leafRequestsActive: this.leafRequestsActive.rpcId,
       nBitsForLayerId: this.registerDisposer(
         SharedWatchableValue.make(chunkManager.rpc!, nBitsForLayerId),
+      ).rpcId,
+      // Shared with backend so the chunked-graph layer can identify its
+      // own chunks: CalcadaVolumeChunkSource.download filters layers by
+      // matching branchId before applying a chunk's piece→root LUT.
+      branchId: this.registerDisposer(
+        SharedWatchableValue.makeFromExisting(chunkManager.rpc!, branchId),
       ).rpcId,
     });
     this.registerDisposer(sharedObject.visibility.add(this.visibility));
