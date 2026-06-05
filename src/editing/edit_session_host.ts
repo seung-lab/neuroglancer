@@ -85,6 +85,8 @@ import { NgZExtrapolationCompute } from "#src/editing/tool_runtimes/z_extrapolat
 import type { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import { SegmentationRenderLayer } from "#src/sliceview/volume/segmentation_renderlayer.js";
 import { StatusMessage } from "#src/status.js";
+import { IdleEditHotkeyBinder } from "#src/editing/idle_edit_hotkey_binder.js";
+import { QuickRegionCapture } from "#src/editing/quick_region_capture.js";
 import { WatchableValue } from "#src/trackable_value.js";
 import { vec3 } from "#src/util/geom.js";
 import {
@@ -93,7 +95,7 @@ import {
 } from "#src/ui/side_panel_location.js";
 import { RefCounted } from "#src/util/disposable.js";
 import type { Trackable } from "#src/util/trackable.js";
-import { NullarySignal } from "#src/util/signal.js";
+import { NullarySignal, Signal } from "#src/util/signal.js";
 import type { Viewer } from "#src/viewer.js";
 
 // ---------------------------------------------------------------------------
@@ -305,6 +307,17 @@ export class EditSessionHost extends RefCounted {
   readonly state = new TrackableEditSessionIntent();
 
   /**
+   * Fired to request that the Enter-Edit-Session modal open. Dispatched by the
+   * quick-region capture flow (TM-290) once a box has been drawn; the topbar
+   * Edit button subscribes and opens the modal, pre-selecting the optional
+   * bbox key (the `BboxSelectionModel` entry key of the just-drawn box).
+   */
+  readonly requestSessionEntry = new Signal<(preselectBboxKey?: string) => void>();
+
+  /** Owns the in-flight quick-region capture; lazily constructed. */
+  private quickRegionCapture: QuickRegionCapture | undefined;
+
+  /**
    * Per-tool side-panel locations (TM-294 rework). Each tool owns an
    * independent `TrackableSidePanelLocation`; the host's `selectTool()`
    * invariant guarantees at most one is `visible` at any time. Cursor has
@@ -497,6 +510,26 @@ export class EditSessionHost extends RefCounted {
         void this.tryRestoreFromState();
       }),
     );
+
+    // Idle (no-session) hotkey layer: Ctrl+E / Cmd+E → quick edit-region
+    // capture (TM-290). Installed for the viewer's lifetime; shadowed while a
+    // session is active by the session-scoped binder.
+    this.registerDisposer(new IdleEditHotkeyBinder(this, this.viewer));
+  }
+
+  /**
+   * Begin the quick edit-region capture flow (TM-290): draw a 2-corner box,
+   * then open the entry modal pre-selected. No-op while a session is active.
+   * Also the entry point for a future host-side "Start editing" button.
+   */
+  beginQuickRegionCapture(): void {
+    if (this.activeSession.value !== undefined) return;
+    if (this.quickRegionCapture === undefined) {
+      this.quickRegionCapture = this.registerDisposer(
+        new QuickRegionCapture(this),
+      );
+    }
+    this.quickRegionCapture.start();
   }
 
   // -- Lifecycle ------------------------------------------------------------
@@ -549,6 +582,9 @@ export class EditSessionHost extends RefCounted {
       // and the failure handler clears the intent — wiping the URL state
       // we'd just persisted. The user only sees the bug on the next reload.
       this.activeSession.value = session;
+      // A session is now live — abort any quick-region capture still in flight
+      // (e.g. a restore raced an in-progress capture). No-op if idle.
+      this.quickRegionCapture?.cancel();
       this.writeIntentToState(config);
       this.pointerEventBridge = new PointerEventBridge(
         this,
