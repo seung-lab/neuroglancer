@@ -166,11 +166,22 @@ export abstract class SliceViewRenderLayer<
     const result = this.multiscaleSource.getSources(options as any);
     const predicate = this.allowedSourcePredicate?.value;
     if (predicate === undefined) return result;
-    return result.map((perScale) =>
-      perScale.filter((s) =>
+    return result.map((perScale) => {
+      const filtered = perScale.filter((s) =>
         predicate(s as SliceViewSingleResolutionSource<SliceViewChunkSource>),
-      ),
-    );
+      );
+      // Fail open: never let the allow-list filter a scale list down to
+      // *nothing* — an empty source list renders a blank layer. The
+      // edit-session allow-list is built once at session-open from a
+      // separate `getSources()` call (`NgLayerMetadataSource`), so a live
+      // view that requests an orientation/scale whose canonicalized
+      // resolution wasn't in that set would otherwise blank the layer
+      // entirely ("chunks disappear"). Falling back to the unfiltered list
+      // keeps the lock active whenever at least one allowed scale matches,
+      // and only relaxes it in the case that would render nothing — showing
+      // the wrong scale beats showing nothing.
+      return filtered.length > 0 ? filtered : perScale;
+    });
   }
 
   addSource(

@@ -189,11 +189,23 @@ export class BboxSelectionModel extends RefCounted {
 }
 
 /**
- * Pulls the first 3 output-space scales of the annotation layer's loaded
- * data source and converts them to nm. The scales are stored in meters
- * (the standard neuroglancer convention); anything else falls through
- * unchanged. Returns `undefined` when no data source has loaded yet —
- * caller skips the layer until the load completes.
+ * Pulls the first 3 INPUT-space scales of the annotation layer's loaded data
+ * source and converts them to nm. The scales are stored in meters (the
+ * standard neuroglancer convention); anything else falls through unchanged.
+ * Returns `undefined` when no data source has loaded yet — caller skips the
+ * layer until the load completes.
+ *
+ * TM-298: this reads `inputSpace` (the annotation source's own/native grid),
+ * NOT `outputSpace`. An AxisAlignedBoundingBox's `pointA`/`pointB` are stored
+ * in the source's input coordinates, so `voxelBbox` and the resolution that
+ * scales it must come from the SAME space. `outputSpace` is the transform's
+ * reconciliation with the viewer's global "dimensions": when the user relabels
+ * global (e.g. native 16 nm shown as 256 nm) `outputSpace` follows to 256 nm
+ * while the stored points stay in the 16 nm input grid. Pairing 16 nm points
+ * with a 256 nm resolution makes the library map the session region 16× off
+ * the target data — it clips to empty, so no chunks load and painting is
+ * silently dropped. `inputSpace` stays at the native scale regardless of
+ * global relabeling, keeping `voxelBbox × resolution` a stable physical region.
  */
 function extractAnnotationVoxelSizeNm(
   userLayer: AnnotationUserLayer,
@@ -202,8 +214,8 @@ function extractAnnotationVoxelSizeNm(
     const loadState = layerDataSource.loadState;
     if (loadState === undefined) continue;
     if ("error" in loadState && loadState.error !== undefined) continue;
-    const outputSpace = loadState.transform.value.outputSpace;
-    const { scales, units } = outputSpace;
+    const inputSpace = loadState.transform.value.inputSpace;
+    const { scales, units } = inputSpace;
     if (scales.length < 3) continue;
     const out: [number, number, number] = [0, 0, 0];
     for (let i = 0; i < 3; ++i) {

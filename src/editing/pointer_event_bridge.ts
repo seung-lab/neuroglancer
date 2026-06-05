@@ -15,9 +15,10 @@ import type {
   Tool,
   ToolInputEvent,
 } from "@zettaai/edit-session";
-import { NO_MODIFIERS } from "@zettaai/edit-session";
+import { NO_MODIFIERS, Resolution } from "@zettaai/edit-session";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
+import { globalToTargetVoxel } from "#src/editing/raster/global_voxel_conversion.js";
 import type { DisplayContext, RenderedPanel } from "#src/display_context.js";
 import { RenderedDataPanel } from "#src/rendered_data_panel.js";
 import { RefCounted } from "#src/util/disposable.js";
@@ -387,19 +388,32 @@ export class PointerEventBridge extends RefCounted {
     if (session === undefined) return undefined;
     const mouseState = this.host.viewer.mouseState;
     if (!mouseState.active) return undefined;
-    // The library's bbox (captured from a neuroglancer annotation's pointA/B)
-    // is in absolute global-coord-space voxel coordinates, NOT the chunk-grid-
-    // local coords that `resolveVoxelAddress` returns (which subtracts the
-    // layer's voxelOffset). Use `mouseState.unsnappedPosition` directly so
-    // pinned-chunk lookups and pointer-driven writes share the same frame.
-    //
-    // This currently assumes the global coordinate-space resolution matches
-    // the painting target resolution. If the viewer's display dimensions are
-    // configured at a coarser unit than the target (e.g., global=16nm,
-    // target=8nm), the values need to be scaled — handle that when it comes up.
     const pos = mouseState.unsnappedPosition;
     if (pos === undefined || pos.length < 3) return undefined;
-    return [pos[0], pos[1], pos[2]];
+    // `mouseState.unsnappedPosition` is in the viewer's global coordinate
+    // space. Each tool, however, interprets `voxelPosition` in its own working
+    // resolution's voxel grid (painting / z-extrapolation `targetResolution`,
+    // correspondence `writeResolution`), and the library clips every write to
+    // session bounds derived in that same frame (`computeSessionVoxelBounds`).
+    // We must therefore rescale through physical nanometers — never use the
+    // raw position, and never `resolveVoxelAddress` (it subtracts the layer's
+    // voxelOffset, yielding chunk-grid-local coords; the library expects
+    // absolute scale voxels). Without this, an annotation captured at a
+    // resolution other than the active tool's makes every stroke land outside
+    // the session bounds and get clipped — the brush silently does nothing
+    // (TM-298). When the frame data is missing (no active tool, degenerate
+    // coordinate space) fall back to the raw position, which is exactly
+    // correct whenever the two resolutions already match.
+    const targetResolution = this.host.activeToolWorkingResolution();
+    const globalScaleNm = this.host.globalVoxelSizeNm();
+    if (targetResolution === undefined || globalScaleNm === undefined) {
+      return [pos[0], pos[1], pos[2]];
+    }
+    return globalToTargetVoxel(
+      [pos[0], pos[1], pos[2]],
+      globalScaleNm,
+      Resolution.toVoxelSize(targetResolution),
+    );
   }
 
   // -- Stroke forwarding --------------------------------------------------
