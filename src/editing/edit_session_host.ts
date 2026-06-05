@@ -37,7 +37,6 @@ import type {
 import type { SavePayload, SaveLayerOutcome } from "@zettaai/edit-session";
 import {
   ChunkId as ChunkIdFactory,
-  DEFAULT_RADIUS_CYCLE,
   EditSession,
   InvalidSessionConfigError,
   OverlayKey,
@@ -85,6 +84,10 @@ import { NgZExtrapolationCompute } from "#src/editing/tool_runtimes/z_extrapolat
 import type { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import { SegmentationRenderLayer } from "#src/sliceview/volume/segmentation_renderlayer.js";
 import { StatusMessage } from "#src/status.js";
+import {
+  BRUSH_SIZE_PRESETS,
+  sizeToRadius,
+} from "#src/editing/brush_size_presets.js";
 import { IdleEditHotkeyBinder } from "#src/editing/idle_edit_hotkey_binder.js";
 import { QuickRegionCapture } from "#src/editing/quick_region_capture.js";
 import { WatchableValue } from "#src/trackable_value.js";
@@ -1254,7 +1257,7 @@ export class EditSessionHost extends RefCounted {
       targetLayerId,
       targetResolution,
       radius: 2,
-      radiusCycle: DEFAULT_RADIUS_CYCLE,
+      radiusCycle: BRUSH_SIZE_PRESETS.map(sizeToRadius),
       // The brush writes this segment id into voxels. The architect spec
       // suggested 0n (= erase) and required the user to set a value before
       // painting, but that hides successful strokes behind a confusing

@@ -20,6 +20,7 @@ import { layerId as toLayerId } from "@zettaai/edit-session";
 import { ChevronDown } from "lucide-preact";
 import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 
+import { radiusToSize, sizeToRadius } from "#src/editing/brush_size_presets.js";
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { voxelDataTypeRange } from "#src/editing/tool_runtimes/mask_coord.js";
 import { useEvent } from "#src/editing/ui/interop/use_event.js";
@@ -39,14 +40,6 @@ function clampSize(value: number): number {
   // Snap to odd integers — size is voxel-count and must be odd.
   const odd = n % 2 === 0 ? n + 1 : n;
   return Math.max(MIN_SIZE, Math.min(MAX_SIZE, odd));
-}
-
-function sizeToRadius(size: number): number {
-  return Math.max(0, Math.floor((size - 1) / 2));
-}
-
-function radiusToSize(radius: number): number {
-  return Math.max(0, Math.floor(radius)) * 2 + 1;
 }
 
 export function PaintingBrush({
