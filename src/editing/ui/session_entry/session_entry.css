@@ -60,7 +60,10 @@
   max-height: 90vh;
   display: flex;
   flex-direction: column;
-  font: inherit;
+  /* Match the neuroglancer-wide UI font (every panel declares sans-serif
+     explicitly). The modal is portaled, so without this it falls back to the
+     browser-default serif instead of the app font. */
+  font-family: sans-serif;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
 }
 
@@ -198,6 +201,9 @@
 
 .neuroglancer-resolution-picker-dropdown-summary {
   flex: 1 1 auto;
+  /* Match the single-res static value's monospace rendering (doubled keyword
+     avoids the fixed-width default font-size quirk). */
+  font-family: monospace, monospace;
   text-align: left;
   white-space: nowrap;
   overflow: hidden;
@@ -237,6 +243,9 @@
   padding: 6px 12px;
   cursor: pointer;
   white-space: nowrap;
+  /* Match the trigger summary / static value's monospace resolution glyphs
+     (doubled keyword avoids the fixed-width default font-size quirk). */
+  font-family: monospace, monospace;
 }
 
 .neuroglancer-resolution-picker-dropdown-option:hover {
@@ -358,7 +367,11 @@
 }
 
 .neuroglancer-edit-session-entry-modal-layer-resolution-static {
-  font-family: monospace;
+  /* Doubled `monospace` keyword keeps monospace glyphs without triggering the
+     browser's fixed-width default font-size quirk, so the value honors the
+     slot's inherited 11px (matching the multi-res dropdown summary). */
+  font-family: monospace, monospace;
+  font-size: 11px;
   color: var(--neuroglancer-edit-session-text);
   background-color: var(--neuroglancer-edit-session-bg-elev);
   border: 1px solid var(--neuroglancer-edit-session-border-soft);
@@ -386,6 +399,18 @@
   border-radius: 4px;
   padding: 1px;
   gap: 1px;
+}
+
+/* Each segment is wrapped so its `data-tooltip` still shows while disabled;
+   the wrapper sizes to the button and stretches like the original flex item,
+   and the disabled button drops out of hit-testing so hover reaches it. */
+.neuroglancer-edit-session-entry-modal-role-segment-wrap {
+  display: inline-flex;
+}
+
+.neuroglancer-edit-session-entry-modal-role-segment-wrap
+  > .neuroglancer-edit-session-entry-modal-role-segment:disabled {
+  pointer-events: none;
 }
 
 .neuroglancer-edit-session-entry-modal-role-segment {
@@ -587,6 +612,19 @@
 .neuroglancer-edit-session-entry-modal-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* The primary button is wrapped so its `data-tooltip` hint still shows while
+   disabled; a disabled button must drop out of hit-testing for hover to reach
+   the wrapper. The wrapper sizes to the button (inline-flex) so it both anchors
+   the tooltip and becomes the hit target once the button is pointer-events:none. */
+.neuroglancer-edit-session-entry-modal-open-wrap {
+  display: inline-flex;
+}
+
+.neuroglancer-edit-session-entry-modal-open-wrap
+  > .neuroglancer-edit-session-entry-modal-btn:disabled {
+  pointer-events: none;
 }
 
 /* Focus indicators --------------------------------------------------------- */

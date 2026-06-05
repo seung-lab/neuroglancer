@@ -503,7 +503,7 @@ function SessionEntryModalBody(props: {
           <button
             type="button"
             class="neuroglancer-edit-session-entry-modal-close"
-            title="Close"
+            data-tooltip="Close"
             aria-label="Close"
             disabled={submitting}
             onClick={cancel}
@@ -586,17 +586,26 @@ function SessionEntryModalBody(props: {
           >
             Cancel
           </button>
-          <button
-            type="button"
-            class="neuroglancer-edit-session-entry-modal-btn neuroglancer-edit-session-entry-modal-btn-primary"
-            disabled={openSessionDisabled}
-            title={openSessionTooltip}
-            onClick={() => {
-              void handleSubmit();
-            }}
+          {/* Wrapper carries the tooltip so the hint still shows while the
+              button is disabled — disabled buttons don't emit pointer events,
+              so the disabled button drops to pointer-events:none (in CSS) and
+              hover falls through to this span. `openSessionTooltip` is only set
+              when disabled, so the wrapper has no tooltip in the enabled case. */}
+          <span
+            class="neuroglancer-edit-session-entry-modal-open-wrap"
+            data-tooltip={openSessionTooltip}
           >
-            Open session
-          </button>
+            <button
+              type="button"
+              class="neuroglancer-edit-session-entry-modal-btn neuroglancer-edit-session-entry-modal-btn-primary"
+              disabled={openSessionDisabled}
+              onClick={() => {
+                void handleSubmit();
+              }}
+            >
+              Open session
+            </button>
+          </span>
         </div>
       </div>
     </div>

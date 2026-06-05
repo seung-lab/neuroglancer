@@ -8,11 +8,7 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import type {
-  LayerId,
-  LayerMetadata,
-  SavedChunk,
-} from "@zettaai/edit-session";
+import type { LayerId, LayerMetadata, SavedChunk } from "@zettaai/edit-session";
 import { Resolution, layerId as toLayerId } from "@zettaai/edit-session";
 import { describe, it, expect } from "vitest";
 
@@ -83,7 +79,10 @@ class FakePortal {
     this.responder(message, index);
   }
 
-  addEventListener(_type: "message", listener: (e: MessageEvent) => void): void {
+  addEventListener(
+    _type: "message",
+    listener: (e: MessageEvent) => void,
+  ): void {
     this.listeners.add(listener);
   }
 
@@ -130,7 +129,11 @@ describe("PostMessageSaveBackend", () => {
       new AbortController().signal,
     );
 
-    expect(result).toEqual({ status: "succeeded", layerId: LID, chunkCount: 2 });
+    expect(result).toEqual({
+      status: "succeeded",
+      layerId: LID,
+      chunkCount: 2,
+    });
     expect(portal.posted).toHaveLength(2);
 
     const [first, second] = portal.posted;
@@ -159,7 +162,11 @@ describe("PostMessageSaveBackend", () => {
       METADATA,
       new AbortController().signal,
     );
-    expect(result).toEqual({ status: "succeeded", layerId: LID, chunkCount: 0 });
+    expect(result).toEqual({
+      status: "succeeded",
+      layerId: LID,
+      chunkCount: 0,
+    });
     expect(portal.posted).toHaveLength(0);
   });
 

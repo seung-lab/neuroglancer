@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  pull_request:
+
+# Cancel superseded runs when a PR is updated.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  # Needed to install @zettaai/* packages from GitHub Packages via .npmrc.
+  packages: read
+
+jobs:
+  ci:
+    name: Lint, typecheck, test & build
+    runs-on: ubuntu-latest
+    env:
+      # Consumed by .npmrc to authenticate against npm.pkg.github.com.
+      # NOTE: must NOT be the automatic GITHUB_TOKEN — that is scoped to this
+      # repo only and gets 403 read_package for @zettaai packages published
+      # from other repos. Use a PAT with `read:packages` stored as NPM_TOKEN.
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            examples/**/package-lock.json
+
+      - name: Install dependencies
+        # The committed package-lock.json is generated on macOS and only records
+        # the darwin optional binaries for oxlint/esbuild/rollup. Both `npm ci`
+        # and `npm install` trust the locked tree as complete and never fetch the
+        # missing linux-x64 binaries, breaking lint and build on the runner.
+        # Removing the lockfile forces npm to resolve fresh on linux and install
+        # the correct platform binaries for all three tools.
+        run: |
+          rm -f package-lock.json
+          npm install --no-audit --no-fund
+
+      - name: Lint
+        run: npm run lint:check
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build client bundles
+        run: >-
+          npm run build --
+          --no-typecheck
+          --no-lint
+          --define STATE_SERVERS=$(cat config/state_servers.json | tr -d " \t\n\r")
+          --define CUSTOM_BINDINGS=$(cat config/custom-keybinds.json | tr -d " \t\n\r")

@@ -71,7 +71,9 @@ export class SaveTracker {
 
     if (thrownError !== undefined) {
       const message =
-        thrownError instanceof Error ? thrownError.message : String(thrownError);
+        thrownError instanceof Error
+          ? thrownError.message
+          : String(thrownError);
       this.applyGlobalFailure(message);
       this.changed.dispatch();
       return;
@@ -86,7 +88,9 @@ export class SaveTracker {
     if (this.state_.kind !== "saving") return;
     try {
       this.state_.controller.abort();
-    } catch {}
+    } catch {
+      // Aborting an already-settled controller can throw; nothing to recover.
+    }
     host.cancelActiveSave();
   }
 

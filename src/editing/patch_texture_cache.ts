@@ -36,8 +36,8 @@
  */
 
 import type { LocalPatchChunk } from "#src/editing/local_patch_chunk.js";
-import type { LocalPatchStore } from "#src/editing/local_patch_store.js";
 import { chunkGridKey } from "#src/editing/local_patch_source.js";
+import type { LocalPatchStore } from "#src/editing/local_patch_store.js";
 import type { PatchedMaskProvider } from "#src/editing/shaders/patched_mask_provider.js";
 import { RefCounted } from "#src/util/disposable.js";
 import { NullarySignal } from "#src/util/signal.js";
@@ -167,11 +167,7 @@ export class PatchTextureCache
     }
   }
 
-  private ensureMaskTexture(
-    gl: GL,
-    key: string,
-    chunk: LocalPatchChunk,
-  ): void {
+  private ensureMaskTexture(gl: GL, key: string, chunk: LocalPatchChunk): void {
     this.contexts.add(gl);
     let texture = this.maskTextures.get(key);
     const stored = this.maskUploadGeneration.get(chunk);
@@ -277,7 +273,8 @@ export class PatchTextureCache
     for (const gl of this.contexts) {
       for (const tex of this.valueTextures.values()) gl.deleteTexture(tex);
       for (const tex of this.maskTextures.values()) gl.deleteTexture(tex);
-      if (this.valueFallback !== undefined) gl.deleteTexture(this.valueFallback);
+      if (this.valueFallback !== undefined)
+        gl.deleteTexture(this.valueFallback);
       if (this.maskFallback !== undefined) gl.deleteTexture(this.maskFallback);
     }
     this.valueTextures.clear();

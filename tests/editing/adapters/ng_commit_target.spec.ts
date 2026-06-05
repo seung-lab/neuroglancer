@@ -8,7 +8,6 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
 import type {
   ChunkContentRef,
   CommittedChunk,
@@ -16,6 +15,7 @@ import type {
   ReadonlyChunkVoxelBuffer,
 } from "@zettaai/edit-session";
 import { Resolution, layerId, sessionId } from "@zettaai/edit-session";
+import { describe, it, expect, beforeEach } from "vitest";
 
 import { NgCommitTarget } from "#src/editing/adapters/ng_commit_target.js";
 

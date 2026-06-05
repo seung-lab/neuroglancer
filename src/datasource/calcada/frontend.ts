@@ -77,24 +77,21 @@ import {
   PrecomputedMultiscaleVolumeChunkSource,
 } from "#src/datasource/precomputed/frontend.js";
 import { WithSharedKvStoreContext } from "#src/kvstore/chunk_source_frontend.js";
-import type { VolumeSourceOptions } from "#src/sliceview/volume/base.js";
-import { makeDefaultVolumeChunkSpecifications } from "#src/sliceview/volume/base.js";
-import { VolumeChunkSource } from "#src/sliceview/volume/frontend.js";
 import type { SharedKvStoreContext } from "#src/kvstore/frontend.js";
 import {
   ensureEmptyUrlSuffix,
   kvstoreEnsureDirectoryPipelineUrl,
   pipelineUrlJoin,
 } from "#src/kvstore/url.js";
+import { ImageUserLayer } from "#src/layer/image/index.js";
 import type {
   LayerView,
   MouseSelectionState,
   VisibleLayerInfo,
 } from "#src/layer/index.js";
+import { makeLayer } from "#src/layer/index.js";
 import type { LoadedDataSubsource } from "#src/layer/layer_data_source.js";
 import { LoadedLayerDataSource } from "#src/layer/layer_data_source.js";
-import { ImageUserLayer } from "#src/layer/image/index.js";
-import { makeLayer } from "#src/layer/index.js";
 import { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import { MeshSource } from "#src/mesh/frontend.js";
 import type { DisplayDimensionRenderInfo } from "#src/navigation_state.js";
@@ -128,7 +125,6 @@ import {
   SegmentationGraphSourceConnection,
 } from "#src/segmentation_graph/source.js";
 import type { SharedDisjointUint64Sets } from "#src/shared_disjoint_sets.js";
-import { registerRPC } from "#src/worker_rpc.js";
 import { SharedWatchableValue } from "#src/shared_watchable_value.js";
 import type {
   FrontendTransformedSource,
@@ -143,6 +139,9 @@ import {
   SliceViewPanelRenderLayer,
   SliceViewRenderLayer,
 } from "#src/sliceview/renderlayer.js";
+import type { VolumeSourceOptions } from "#src/sliceview/volume/base.js";
+import { makeDefaultVolumeChunkSpecifications } from "#src/sliceview/volume/base.js";
+import { VolumeChunkSource } from "#src/sliceview/volume/frontend.js";
 import { StatusMessage } from "#src/status.js";
 import {
   TrackableBoolean,
@@ -220,6 +219,7 @@ import {
   addLayerControlToOptionsTab,
   registerLayerControl,
 } from "#src/widget/layer_control.js";
+import { registerRPC } from "#src/worker_rpc.js";
 
 function vec4FromVec3(vec: vec3, alpha = 0) {
   const res = vec4.clone([...vec]);
@@ -360,68 +360,70 @@ class GrapheneMultiscaleVolumeChunkSource extends PrecomputedMultiscaleVolumeChu
   getSources(volumeSourceOptions: VolumeSourceOptions) {
     const modelResolution = this.info.scales[0].resolution;
     const { rank } = this;
-    return transposeNestedArrays(this.info.scales
-      .filter((x) => !x.hidden)
-      .filter((x) => x.key !== "placeholder")
-      .map((scaleInfo) => {
-        const { resolution } = scaleInfo;
-        const stride = rank + 1;
-        const chunkToMultiscaleTransform = new Float32Array(stride * stride);
-        chunkToMultiscaleTransform[chunkToMultiscaleTransform.length - 1] = 1;
-        const { lowerBounds: baseLowerBound, upperBounds: baseUpperBound } =
-          this.info.modelSpace.boundingBoxes[0].box;
-        const lowerClipBound = new Float32Array(rank);
-        const upperClipBound = new Float32Array(rank);
-        for (let i = 0; i < 3; ++i) {
-          const relativeScale = resolution[i] / modelResolution[i];
-          chunkToMultiscaleTransform[stride * i + i] = relativeScale;
-          const voxelOffsetValue = scaleInfo.voxelOffset[i];
-          chunkToMultiscaleTransform[stride * rank + i] =
-            voxelOffsetValue * relativeScale;
-          lowerClipBound[i] =
-            baseLowerBound[i] / relativeScale - voxelOffsetValue;
-          upperClipBound[i] =
-            baseUpperBound[i] / relativeScale - voxelOffsetValue;
-        }
-        return makeDefaultVolumeChunkSpecifications({
-          rank,
-          dataType: this.dataType,
-          chunkToMultiscaleTransform,
-          upperVoxelBound: scaleInfo.size,
-          volumeType: this.volumeType,
-          chunkDataSizes: scaleInfo.chunkSizes,
-          baseVoxelOffset: scaleInfo.voxelOffset,
-          compressedSegmentationBlockSize:
-            scaleInfo.compressedSegmentationBlockSize,
-          volumeSourceOptions,
-        }).map(
-          (spec): SliceViewSingleResolutionSource<VolumeChunkSource> => ({
-            chunkSource: this.chunkManager.getChunkSource(
-              CalcadaVolumeChunkSource,
-              {
-                sharedKvStoreContext: this.sharedKvStoreContext,
-                spec,
-                parameters: {
-                  url: kvstoreEnsureDirectoryPipelineUrl(
-                    this.sharedKvStoreContext.kvStoreContext.resolveRelativePath(
-                      this.rpUrl,
-                      scaleInfo.key,
-                    ),
-                  ),
-                  encoding: scaleInfo.encoding as number,
-                  sharding: scaleInfo.sharding,
-                  timestampMs: this.timestampMs,
-                  branchId: this.branchId,
-                  generation: this.generation,
-                },
-              },
-            ),
+    return transposeNestedArrays(
+      this.info.scales
+        .filter((x) => !x.hidden)
+        .filter((x) => x.key !== "placeholder")
+        .map((scaleInfo) => {
+          const { resolution } = scaleInfo;
+          const stride = rank + 1;
+          const chunkToMultiscaleTransform = new Float32Array(stride * stride);
+          chunkToMultiscaleTransform[chunkToMultiscaleTransform.length - 1] = 1;
+          const { lowerBounds: baseLowerBound, upperBounds: baseUpperBound } =
+            this.info.modelSpace.boundingBoxes[0].box;
+          const lowerClipBound = new Float32Array(rank);
+          const upperClipBound = new Float32Array(rank);
+          for (let i = 0; i < 3; ++i) {
+            const relativeScale = resolution[i] / modelResolution[i];
+            chunkToMultiscaleTransform[stride * i + i] = relativeScale;
+            const voxelOffsetValue = scaleInfo.voxelOffset[i];
+            chunkToMultiscaleTransform[stride * rank + i] =
+              voxelOffsetValue * relativeScale;
+            lowerClipBound[i] =
+              baseLowerBound[i] / relativeScale - voxelOffsetValue;
+            upperClipBound[i] =
+              baseUpperBound[i] / relativeScale - voxelOffsetValue;
+          }
+          return makeDefaultVolumeChunkSpecifications({
+            rank,
+            dataType: this.dataType,
             chunkToMultiscaleTransform,
-            lowerClipBound,
-            upperClipBound,
-          }),
-        );
-      }));
+            upperVoxelBound: scaleInfo.size,
+            volumeType: this.volumeType,
+            chunkDataSizes: scaleInfo.chunkSizes,
+            baseVoxelOffset: scaleInfo.voxelOffset,
+            compressedSegmentationBlockSize:
+              scaleInfo.compressedSegmentationBlockSize,
+            volumeSourceOptions,
+          }).map(
+            (spec): SliceViewSingleResolutionSource<VolumeChunkSource> => ({
+              chunkSource: this.chunkManager.getChunkSource(
+                CalcadaVolumeChunkSource,
+                {
+                  sharedKvStoreContext: this.sharedKvStoreContext,
+                  spec,
+                  parameters: {
+                    url: kvstoreEnsureDirectoryPipelineUrl(
+                      this.sharedKvStoreContext.kvStoreContext.resolveRelativePath(
+                        this.rpUrl,
+                        scaleInfo.key,
+                      ),
+                    ),
+                    encoding: scaleInfo.encoding as number,
+                    sharding: scaleInfo.sharding,
+                    timestampMs: this.timestampMs,
+                    branchId: this.branchId,
+                    generation: this.generation,
+                  },
+                },
+              ),
+              chunkToMultiscaleTransform,
+              lowerClipBound,
+              upperClipBound,
+            }),
+          );
+        }),
+    );
   }
 
   getChunkedGraphSource() {
@@ -1539,14 +1541,22 @@ function parseEntry(value: any): PointEntry {
   // level — fall back to using it for both fields so reloads from earlier
   // sessions don't lose data.
   if (Array.isArray(value)) {
-    const arr = parseFixedLengthArray([0, 0, 0] as VoxelPoint, value, verifyInt);
+    const arr = parseFixedLengthArray(
+      [0, 0, 0] as VoxelPoint,
+      value,
+      verifyInt,
+    );
     return { voxel: arr, layer: [arr[0], arr[1], arr[2]] };
   }
   const voxel = verifyObjectProperty(value, VOXEL_KEY, (v) =>
     parseFixedLengthArray([0, 0, 0] as VoxelPoint, v, verifyInt),
   );
   const layer = verifyObjectProperty(value, LAYER_KEY, (v) =>
-    parseFixedLengthArray([0, 0, 0] as [number, number, number], v, verifyFiniteFloat),
+    parseFixedLengthArray(
+      [0, 0, 0] as [number, number, number],
+      v,
+      verifyFiniteFloat,
+    ),
   );
   return { voxel, layer };
 }
@@ -1806,8 +1816,10 @@ void main() {
   setPointMarkerBorderColor(vec4(1.0, 1.0, 1.0, 1.0));
 }
 `;
-    pieceSplitBlueAnnotation.displayState.shader.value = PIECE_SPLIT_POINT_SHADER;
-    pieceSplitRedAnnotation.displayState.shader.value = PIECE_SPLIT_POINT_SHADER;
+    pieceSplitBlueAnnotation.displayState.shader.value =
+      PIECE_SPLIT_POINT_SHADER;
+    pieceSplitRedAnnotation.displayState.shader.value =
+      PIECE_SPLIT_POINT_SHADER;
     const syncPieceSplitAnnotations = (
       points: PointEntry[],
       state: AnnotationLayerState,
@@ -1845,8 +1857,14 @@ void main() {
       ),
     );
     // Initial sync from restored state.
-    syncPieceSplitAnnotations(pieceSplitState.bluePoints.value, pieceSplitBlueAnnotation);
-    syncPieceSplitAnnotations(pieceSplitState.redPoints.value, pieceSplitRedAnnotation);
+    syncPieceSplitAnnotations(
+      pieceSplitState.bluePoints.value,
+      pieceSplitBlueAnnotation,
+    );
+    syncPieceSplitAnnotations(
+      pieceSplitState.redPoints.value,
+      pieceSplitRedAnnotation,
+    );
 
     this.registerDisposer(
       findPathState.triggerPathUpdate.add(() => {
@@ -1885,8 +1903,7 @@ void main() {
   private graphRenderLayer: SliceViewPanelChunkedGraphLayer | undefined;
 
   refreshChunkSources() {
-    const segmentsState =
-      this.layer.displayState.segmentationGroupState.value;
+    const segmentsState = this.layer.displayState.segmentationGroupState.value;
     this.chunkSource.timestampMs = segmentsState.timestamp.value ?? 0;
     this.chunkSource.branchId = this.graph.branchId.value;
     this.chunkSource.generation += 1;
@@ -1969,9 +1986,7 @@ void main() {
           this.lastDeselectionMessage.dispose();
           this.lastDeselectionMessageExists = false;
         }
-        this.lastDeselectionMessage = StatusMessage.showMessage(
-          `Hid segment.`,
-        );
+        this.lastDeselectionMessage = StatusMessage.showMessage(`Hid segment.`);
         this.lastDeselectionMessageExists = true;
         setTimeout(() => {
           if (this.lastDeselectionMessageExists) {
@@ -2021,7 +2036,8 @@ void main() {
         if (representative !== segmentId) {
           resolveAndReplace(representative);
         } else {
-          const pieceWithLayer = (segmentId & 0x00FFFFFFFFFFFFFFn) | (1n << 56n);
+          const pieceWithLayer =
+            (segmentId & 0x00ffffffffffffffn) | (1n << 56n);
           this.graph
             .getRoot(pieceWithLayer, segmentsState.timestamp.value)
             .then((rootId) => {
@@ -2227,7 +2243,8 @@ void main() {
         newValues.add(newRoot);
         this.state.replaceSegments(oldValues, newValues);
 
-        const segmentsState = this.layer.displayState.segmentationGroupState.value;
+        const segmentsState =
+          this.layer.displayState.segmentationGroupState.value;
         // Clear stale equivalences for old roots
         segmentsState.segmentEquivalences.deleteSet(oldRootA);
         segmentsState.segmentEquivalences.deleteSet(oldRootB);
@@ -2572,12 +2589,13 @@ class GrapheneGraphServerInterface {
     const promise = fetchOkImpl(
       appendCoordParams(`${baseUrl}/split?int64_as_str=1`, { branchId }),
       {
-      method: "POST",
-      body: JSON.stringify({
-        sources: first.map((x) => [String(x.segmentId), ...x.position]),
-        sinks: second.map((x) => [String(x.segmentId), ...x.position]),
-      }),
-    });
+        method: "POST",
+        body: JSON.stringify({
+          sources: first.map((x) => [String(x.segmentId), ...x.position]),
+          sinks: second.map((x) => [String(x.segmentId), ...x.position]),
+        }),
+      },
+    );
     const response = await withErrorMessageHTTP(promise, {
       initialMessage: `Splitting ${first.length} sources from ${second.length} sinks`,
       errorPrefix: "Split failed: ",
@@ -2603,17 +2621,18 @@ class GrapheneGraphServerInterface {
       response = await fetchOkImpl(
         appendCoordParams(`${baseUrl}/piece/split_preview`, { branchId }),
         {
-        method: "POST",
-        body: JSON.stringify({
-          // piece_id is a bigint > 2^53 (layer-byte 0x01 stamped) — sending as
-          // a JS Number rounds to the nearest float64 and corrupts the value.
-          // Backend uses a tagged uint64 that accepts both string and number.
-          piece_id: pieceId.toString(),
-          blue,
-          red,
-          image_source: imageSource,
-        }),
-      });
+          method: "POST",
+          body: JSON.stringify({
+            // piece_id is a bigint > 2^53 (layer-byte 0x01 stamped) — sending as
+            // a JS Number rounds to the nearest float64 and corrupts the value.
+            // Backend uses a tagged uint64 that accepts both string and number.
+            piece_id: pieceId.toString(),
+            blue,
+            red,
+            image_source: imageSource,
+          }),
+        },
+      );
     } catch (e) {
       throw await wrapCalcadaError(e);
     }
@@ -2645,14 +2664,17 @@ class GrapheneGraphServerInterface {
     let response: Response;
     try {
       response = await fetchOkImpl(
-        appendCoordParams(`${baseUrl}/piece/split?int64_as_str=1`, { branchId }),
-        {
-        method: "POST",
-        body: JSON.stringify({
-          piece_id: pieceId.toString(),
-          new_segmentation: maskUrl,
+        appendCoordParams(`${baseUrl}/piece/split?int64_as_str=1`, {
+          branchId,
         }),
-      });
+        {
+          method: "POST",
+          body: JSON.stringify({
+            piece_id: pieceId.toString(),
+            new_segmentation: maskUrl,
+          }),
+        },
+      );
     } catch (e) {
       throw await wrapCalcadaError(e);
     }
@@ -3032,7 +3054,10 @@ class GrapheneGraphSource extends SegmentationGraphSource {
     return { include, exclude };
   }
 
-  trackSegment(_id: bigint, _callback: (id: bigint | null) => void): () => void {
+  trackSegment(
+    _id: bigint,
+    _callback: (id: bigint | null) => void,
+  ): () => void {
     return () => {};
   }
 }
@@ -3571,8 +3596,10 @@ function branchLayerControl(): LayerControlFactory<SegmentationUserLayer> {
         // segmentationUrl may carry a "middleauth+" scheme prefix from the
         // kvstore parser; strip it before passing to new URL() so .origin
         // yields a plain https:// URL the browser can navigate to.
-        const rawUrl = graph.info
-          .app!.segmentationUrl.replace(/^middleauth\+/, "");
+        const rawUrl = graph.info.app!.segmentationUrl.replace(
+          /^middleauth\+/,
+          "",
+        );
         const adminOrigin = new URL(rawUrl).origin;
         diffLink.href = `${adminOrigin}/admin/graphs/${graph.info.app!.table}/branches/${branchId.value}/diff`;
         diffLink.style.display = branchId.value === 0 ? "none" : "";
@@ -4344,7 +4371,8 @@ interface ImageLayerChoice {
   cloudUrl: string;
 }
 
-const IMAGE_URL_PREFIX = /^(?:[a-z0-9]+\+)?(?:precomputed|zarr|n5|nifti|render|deepzoom|brainmaps|boss|vtk|nggraph|python|obj):\/\//i;
+const IMAGE_URL_PREFIX =
+  /^(?:[a-z0-9]+\+)?(?:precomputed|zarr|n5|nifti|render|deepzoom|brainmaps|boss|vtk|nggraph|python|obj):\/\//i;
 
 function cloudUrlFromLayerSpec(rawUrl: string): string {
   if (!rawUrl) return "";
@@ -4416,9 +4444,15 @@ function layerPointToVoxel(
   graphResolution: [number, number, number],
 ): VoxelPoint {
   return [
-    Math.floor((layerPoint[0] * annotationToNanometers[0]) / graphResolution[0]),
-    Math.floor((layerPoint[1] * annotationToNanometers[1]) / graphResolution[1]),
-    Math.floor((layerPoint[2] * annotationToNanometers[2]) / graphResolution[2]),
+    Math.floor(
+      (layerPoint[0] * annotationToNanometers[0]) / graphResolution[0],
+    ),
+    Math.floor(
+      (layerPoint[1] * annotationToNanometers[1]) / graphResolution[1],
+    ),
+    Math.floor(
+      (layerPoint[2] * annotationToNanometers[2]) / graphResolution[2],
+    ),
   ];
 }
 
@@ -4506,7 +4540,8 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
     const imageLabel = document.createElement("label");
     imageLabel.textContent = "Image layer: ";
     const imageSelect = document.createElement("select");
-    imageSelect.title = "Image layer used to weight the cut (edges across dark pixels are cheap to cut)";
+    imageSelect.title =
+      "Image layer used to weight the cut (edges across dark pixels are cheap to cut)";
     const imageHint = document.createElement("div");
     imageHint.className = "piece-split-image-hint";
     imageRow.appendChild(imageLabel);
@@ -4520,9 +4555,10 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
       removeChildren(imageSelect);
       const placeholder = document.createElement("option");
       placeholder.value = "";
-      placeholder.textContent = choices.length === 0
-        ? "— no image layers in viewer —"
-        : "— pick image layer —";
+      placeholder.textContent =
+        choices.length === 0
+          ? "— no image layers in viewer —"
+          : "— pick image layer —";
       imageSelect.appendChild(placeholder);
       let matched = "";
       for (const c of choices) {
@@ -4538,9 +4574,8 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
       // If the stored imageSource was set previously but doesn't match any
       // current layer (e.g. layer removed from viewer), show its value with a
       // hint so the user knows what's being used.
-      imageHint.textContent = current && !matched
-        ? `Using saved URL: ${current}`
-        : "";
+      imageHint.textContent =
+        current && !matched ? `Using saved URL: ${current}` : "";
     };
     imageSelect.addEventListener("change", () => {
       pieceSplitState.imageSource.value = imageSelect.value;
@@ -4616,12 +4651,8 @@ void main() {
       // which is invisible to the user (it's "off-screen" relative to where
       // they're zoomed in). Pin it into the image's world coord system
       // (x@16nm, y@16nm, z@45nm) and translate by the bbox min.
-      const graphResolution =
-        graphConnection.graph.info.scales[0].resolution as unknown as [
-          number,
-          number,
-          number,
-        ];
+      const graphResolution = graphConnection.graph.info.scales[0]
+        .resolution as unknown as [number, number, number];
       const [minX, minY, minZ] = preview.bbox;
       const spec = {
         type: "image",
@@ -4666,7 +4697,9 @@ void main() {
         removePreviewLayer();
       }
     };
-    activation.registerDisposer(pieceSplitState.preview.changed.add(syncPreviewLayer));
+    activation.registerDisposer(
+      pieceSplitState.preview.changed.add(syncPreviewLayer),
+    );
     activation.registerDisposer(removePreviewLayer);
     syncPreviewLayer();
 
@@ -4704,9 +4737,10 @@ void main() {
     const render = () => {
       // Focus piece label.
       const focus = pieceSplitState.focusPieceId.value;
-      focusRow.textContent = focus !== undefined
-        ? `Focus piece: ${focus.toString()}`
-        : "Shift+Ctrl+click on a piece to set focus and place the first point.";
+      focusRow.textContent =
+        focus !== undefined
+          ? `Focus piece: ${focus.toString()}`
+          : "Shift+Ctrl+click on a piece to set focus and place the first point.";
 
       // Active-colour indicator.
       removeChildren(groupRow);
@@ -4748,8 +4782,18 @@ void main() {
         }
         pointsContainer.appendChild(section);
       };
-      renderList("Blue points", "piece-split-blue", pieceSplitState.bluePoints.value, "blue");
-      renderList("Red points", "piece-split-red", pieceSplitState.redPoints.value, "red");
+      renderList(
+        "Blue points",
+        "piece-split-blue",
+        pieceSplitState.bluePoints.value,
+        "blue",
+      );
+      renderList(
+        "Red points",
+        "piece-split-red",
+        pieceSplitState.redPoints.value,
+        "red",
+      );
 
       // Preview summary.
       const preview = pieceSplitState.preview.value;
@@ -4788,11 +4832,17 @@ void main() {
         return;
       }
       if (pieceSplitState.bluePoints.value.length === 0) {
-        StatusMessage.showTemporaryMessage("Place at least one blue point", 5000);
+        StatusMessage.showTemporaryMessage(
+          "Place at least one blue point",
+          5000,
+        );
         return;
       }
       if (pieceSplitState.redPoints.value.length === 0) {
-        StatusMessage.showTemporaryMessage("Place at least one red point", 5000);
+        StatusMessage.showTemporaryMessage(
+          "Place at least one red point",
+          5000,
+        );
         return;
       }
       if (!pieceSplitState.imageSource.value) {
@@ -4804,13 +4854,14 @@ void main() {
       }
       previewButton.classList.toggle("disabled", true);
       try {
-        const result = await graphConnection.graph.graphServer.previewPieceSplit(
-          focus,
-          pieceSplitState.bluePoints.value.map((p) => p.voxel),
-          pieceSplitState.redPoints.value.map((p) => p.voxel),
-          pieceSplitState.imageSource.value,
-          graphConnection.graph.branchId.value,
-        );
+        const result =
+          await graphConnection.graph.graphServer.previewPieceSplit(
+            focus,
+            pieceSplitState.bluePoints.value.map((p) => p.voxel),
+            pieceSplitState.redPoints.value.map((p) => p.voxel),
+            pieceSplitState.imageSource.value,
+            graphConnection.graph.branchId.value,
+          );
         pieceSplitState.preview.value = result;
         StatusMessage.showTemporaryMessage("Preview computed", 2500);
       } catch (e: unknown) {
@@ -4827,10 +4878,7 @@ void main() {
       const focus = pieceSplitState.focusPieceId.value;
       const preview = pieceSplitState.preview.value;
       if (focus === undefined || preview === undefined) {
-        StatusMessage.showTemporaryMessage(
-          "Run Preview before applying",
-          5000,
-        );
+        StatusMessage.showTemporaryMessage("Run Preview before applying", 5000);
         return;
       }
       if (
@@ -4869,13 +4917,13 @@ void main() {
         }
       }
       try {
-        const newRoots = await graphConnection.graph.graphServer.applyPieceSplit(
-          focus,
-          preview.maskUrl,
-          graphConnection.graph.branchId.value,
-        );
-        const segmentsState =
-          layer.displayState.segmentationGroupState.value;
+        const newRoots =
+          await graphConnection.graph.graphServer.applyPieceSplit(
+            focus,
+            preview.maskUrl,
+            graphConnection.graph.branchId.value,
+          );
+        const segmentsState = layer.displayState.segmentationGroupState.value;
         // Deselect root 0 or a stray background click paints every orphan piece as one blob.
         const toRemove: bigint[] = [focus, 0n];
         if (preApplyOldRoot !== undefined) {
@@ -4915,8 +4963,7 @@ void main() {
       if (point === undefined) return;
       // baseValue is the piece (super-voxel) at the clicked voxel; value is its
       // aggregated root. We split pieces, so always work with baseValue.
-      const baseValue =
-        layer.displayState.segmentSelectionState.baseValue;
+      const baseValue = layer.displayState.segmentSelectionState.baseValue;
       if (baseValue === undefined || baseValue === null || baseValue === 0n) {
         StatusMessage.showTemporaryMessage(
           "No piece is selected at the click position",
@@ -4940,12 +4987,8 @@ void main() {
         loadedSubsource.loadedDataSource.transform.inputSpace.value.scales.map(
           (x: number) => x / 1e-9,
         );
-      const graphResolution =
-        graphConnection.graph.info.scales[0].resolution as unknown as [
-          number,
-          number,
-          number,
-        ];
+      const graphResolution = graphConnection.graph.info.scales[0]
+        .resolution as unknown as [number, number, number];
       const voxel = layerPointToVoxel(
         point,
         new Float64Array(annotationToNanometers),
@@ -4967,13 +5010,9 @@ void main() {
   }
 }
 
-registerTool(
-  SegmentationUserLayer,
-  CALCADA_PIECE_SPLIT_TOOL_ID,
-  (layer) => {
-    return new PieceSplitTool(layer, true);
-  },
-);
+registerTool(SegmentationUserLayer, CALCADA_PIECE_SPLIT_TOOL_ID, (layer) => {
+  return new PieceSplitTool(layer, true);
+});
 
 registerTool(
   SegmentationUserLayer,
@@ -4983,13 +5022,9 @@ registerTool(
   },
 );
 
-registerTool(
-  SegmentationUserLayer,
-  CALCADA_MERGE_SEGMENTS_TOOL_ID,
-  (layer) => {
-    return new MergeSegmentsTool(layer, true);
-  },
-);
+registerTool(SegmentationUserLayer, CALCADA_MERGE_SEGMENTS_TOOL_ID, (layer) => {
+  return new MergeSegmentsTool(layer, true);
+});
 
 registerTool(SegmentationUserLayer, CALCADA_FIND_PATH_TOOL_ID, (layer) => {
   return new FindPathTool(layer, true);

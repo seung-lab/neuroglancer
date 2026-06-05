@@ -29,12 +29,16 @@ import type {
   LayerSelection,
   PaintingMaskConfig,
   PaintingSharedState,
+  PaintingTools,
+  CorrespondenceTool,
   Resolution as ResolutionType,
   SaveResult,
   ZExtrapolationState,
+  ZExtrapolationTool,
   CorrespondenceState,
+  SavePayload,
+  SaveLayerOutcome,
 } from "@zettaai/edit-session";
-import type { SavePayload, SaveLayerOutcome } from "@zettaai/edit-session";
 import {
   ChunkId as ChunkIdFactory,
   EditSession,
@@ -54,7 +58,11 @@ import { NgClock } from "#src/editing/adapters/ng_clock.js";
 import { NgCommitTarget } from "#src/editing/adapters/ng_commit_target.js";
 import { NgLayerMetadataSource } from "#src/editing/adapters/ng_layer_metadata_source.js";
 import { NgLogger } from "#src/editing/adapters/ng_logger.js";
-import { NgSaveTarget, resolveDataSourceUrl } from "#src/editing/adapters/ng_save_target.js";
+import {
+  NgSaveTarget,
+  resolveDataSourceUrl,
+} from "#src/editing/adapters/ng_save_target.js";
+import { NgSessionLockAdapter } from "#src/editing/adapters/ng_session_lock.js";
 import type { SaveBackend } from "#src/editing/adapters/save_backend.js";
 import {
   hasAnySaveBackend,
@@ -63,7 +71,14 @@ import {
   saveBackendRegistryChanged,
 } from "#src/editing/adapters/save_backend.js";
 import { PostMessageSaveBackend } from "#src/editing/adapters/save_backends/post_message_save_backend.js";
-import { NgSessionLockAdapter } from "#src/editing/adapters/ng_session_lock.js";
+import {
+  BRUSH_SIZE_PRESETS,
+  sizeToRadius,
+} from "#src/editing/brush_size_presets.js";
+import { BrushCursorPerspectiveOverlay } from "#src/editing/cursor/brush_cursor_perspective_overlay.js";
+import { BrushCursorSliceOverlay } from "#src/editing/cursor/brush_cursor_slice_overlay.js";
+import { BrushCursorState } from "#src/editing/cursor/brush_cursor_state.js";
+import { IdleEditHotkeyBinder } from "#src/editing/idle_edit_hotkey_binder.js";
 import { LocalPatchStore } from "#src/editing/local_patch_store.js";
 // PatchMirror is created by step 9 of Phase 1; this file's runtime import
 // resolves once that step lands. Assumed constructor signature:
@@ -72,33 +87,25 @@ import { LocalPatchStore } from "#src/editing/local_patch_store.js";
 // and writes the resulting overlay bytes into `store.writeFullChunk(...)`.
 import { PatchMirror } from "#src/editing/overlay/patch_mirror.js";
 import { PatchTextureCache } from "#src/editing/patch_texture_cache.js";
-import type { PatchedMaskProvider } from "#src/editing/shaders/patched_mask_provider.js";
-import { BrushCursorPerspectiveOverlay } from "#src/editing/cursor/brush_cursor_perspective_overlay.js";
-import { BrushCursorSliceOverlay } from "#src/editing/cursor/brush_cursor_slice_overlay.js";
-import { BrushCursorState } from "#src/editing/cursor/brush_cursor_state.js";
 import { PointerEventBridge } from "#src/editing/pointer_event_bridge.js";
+import { QuickRegionCapture } from "#src/editing/quick_region_capture.js";
 import { EditSessionHotkeyBinder } from "#src/editing/session_hotkey_binder.js";
+import type { PatchedMaskProvider } from "#src/editing/shaders/patched_mask_provider.js";
 import { NgCorrespondenceCompute } from "#src/editing/tool_runtimes/correspondence_compute.js";
 import { PaintingCompute } from "#src/editing/tool_runtimes/painting_compute.js";
 import { NgZExtrapolationCompute } from "#src/editing/tool_runtimes/z_extrapolation_compute.js";
 import type { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import { SegmentationRenderLayer } from "#src/sliceview/volume/segmentation_renderlayer.js";
 import { StatusMessage } from "#src/status.js";
-import {
-  BRUSH_SIZE_PRESETS,
-  sizeToRadius,
-} from "#src/editing/brush_size_presets.js";
-import { IdleEditHotkeyBinder } from "#src/editing/idle_edit_hotkey_binder.js";
-import { QuickRegionCapture } from "#src/editing/quick_region_capture.js";
 import { WatchableValue } from "#src/trackable_value.js";
-import { vec3 } from "#src/util/geom.js";
 import {
   DEFAULT_SIDE_PANEL_LOCATION,
   TrackableSidePanelLocation,
 } from "#src/ui/side_panel_location.js";
 import { RefCounted } from "#src/util/disposable.js";
-import type { Trackable } from "#src/util/trackable.js";
+import { vec3 } from "#src/util/geom.js";
 import { NullarySignal, Signal } from "#src/util/signal.js";
+import type { Trackable } from "#src/util/trackable.js";
 import type { Viewer } from "#src/viewer.js";
 
 // ---------------------------------------------------------------------------
@@ -315,7 +322,9 @@ export class EditSessionHost extends RefCounted {
    * Edit button subscribes and opens the modal, pre-selecting the optional
    * bbox key (the `BboxSelectionModel` entry key of the just-drawn box).
    */
-  readonly requestSessionEntry = new Signal<(preselectBboxKey?: string) => void>();
+  readonly requestSessionEntry = new Signal<
+    (preselectBboxKey?: string) => void
+  >();
 
   /** Owns the in-flight quick-region capture; lazily constructed. */
   private quickRegionCapture: QuickRegionCapture | undefined;
@@ -454,6 +463,16 @@ export class EditSessionHost extends RefCounted {
   private attachedCursorLayerId: LayerId | undefined;
   /** Disposer for the paint-target watch that drives overlay re-anchoring. */
   private detachCursorTargetWatch: (() => void) | undefined;
+  /**
+   * Disposer for the display-dimensions watch that recomputes the bbox-alpha
+   * render region when the viewer's global "dimensions" scale changes
+   * mid-session (TM-298). Without it, relabeling global res leaves the region
+   * — which is expressed in display coordinates — stale, so the shader masks
+   * the actual fragments and chunks visually disappear.
+   */
+  private detachDisplayDimWatch: (() => void) | undefined;
+  /** Config of the active session, retained so regions can be recomputed. */
+  private activeSessionConfig: HostSessionConfig | undefined;
 
   // -- Read-only public views -----------------------------------------------
   readonly activeRegionByLayer: ReadonlyMap<
@@ -659,9 +678,8 @@ export class EditSessionHost extends RefCounted {
       );
       return;
     }
-    const target = toolId !== undefined
-      ? this.toolPanelLocationFor(toolId)
-      : undefined;
+    const target =
+      toolId !== undefined ? this.toolPanelLocationFor(toolId) : undefined;
     for (const loc of this.allToolPanelLocations()) {
       loc.visible = loc === target;
     }
@@ -675,6 +693,69 @@ export class EditSessionHost extends RefCounted {
   toggleToolPanel(toolId: string): void {
     const loc = this.toolPanelLocationFor(toolId);
     if (loc !== undefined) loc.visible = !loc.visible;
+  }
+
+  /**
+   * The working resolution of the currently-active tool — the voxel grid its
+   * `voxelPosition` input is interpreted in. Painting and z-extrapolation use
+   * their `targetResolution`; correspondence uses its `writeResolution`. The
+   * pointer bridge uses this to convert the viewer's global-space pointer
+   * position into the tool's voxel frame (see `globalToTargetVoxel`); without
+   * it, strokes are interpreted at whatever resolution the viewer happens to
+   * display and fall outside the session bounds when it differs from the
+   * tool's resolution. Returns `undefined` when no session/tool is active or
+   * the tool state can't be read.
+   */
+  activeToolWorkingResolution(): ResolutionType | undefined {
+    const session = this.activeSession.value;
+    if (session === undefined) return undefined;
+    const activeId = session.getActiveToolId();
+    if (activeId === undefined) return undefined;
+    try {
+      if (activeId.startsWith("painting")) {
+        return session.tools.getTool<PaintingTools>("painting").getState()
+          .targetResolution;
+      }
+      if (activeId.startsWith("z-extrapolation")) {
+        return session.tools
+          .getTool<ZExtrapolationTool>("z-extrapolation")
+          .getState().targetResolution;
+      }
+      if (activeId.startsWith("correspondence")) {
+        return session.tools
+          .getTool<CorrespondenceTool>("correspondence")
+          .getState().writeResolution;
+      }
+    } catch (err) {
+      this.logger.warn(
+        "session",
+        `activeToolWorkingResolution failed for ${activeId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return undefined;
+    }
+    return undefined;
+  }
+
+  /**
+   * Physical size, in nanometers, of one unit of the viewer's global
+   * coordinate space along each of the first three axes — the frame
+   * `mouseState.unsnappedPosition` is reported in. Mirrors the meters→nm
+   * convention used when capturing a bbox annotation's `voxelSizeNm`
+   * (`bbox_candidates.ts`): a dimension declared in meters is scaled to nm,
+   * anything else passes through unchanged. Returns `undefined` when the
+   * coordinate space has fewer than three dimensions.
+   */
+  globalVoxelSizeNm(): readonly [number, number, number] | undefined {
+    const space = this.viewer.coordinateSpace.value;
+    const { scales, units } = space;
+    if (scales.length < 3) return undefined;
+    const out: [number, number, number] = [0, 0, 0];
+    for (let i = 0; i < 3; ++i) {
+      out[i] = units[i] === "m" ? scales[i] * 1e9 : scales[i];
+    }
+    return out;
   }
 
   private toolPanelLocationFor(
@@ -1442,6 +1523,19 @@ export class EditSessionHost extends RefCounted {
     // construction time.
     this.refreshEditBboxWatchables();
     this.refreshAllowedResolutionsWatchables();
+
+    // Keep the bbox-alpha render region in sync if the user relabels the
+    // global "dimensions" while the session is open. The region is expressed
+    // in display coordinates (a function of `voxelPhysicalScales`), so it must
+    // be recomputed when those change — otherwise chunks visually disappear
+    // (TM-298).
+    this.activeSessionConfig = config;
+    if (this.detachDisplayDimWatch === undefined) {
+      this.detachDisplayDimWatch =
+        this.viewer.displayDimensionRenderInfo.changed.add(() =>
+          this.recomputeActiveRegions(),
+        );
+    }
   }
 
   /**
@@ -1465,12 +1559,25 @@ export class EditSessionHost extends RefCounted {
    * `layerId` and `layerResolution` are retained for API symmetry; the
    * current bbox is layer-agnostic in display coords.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
   private async computeActiveRegion(
     _layerId: LayerId,
     _layerResolution: ResolutionType,
     config: HostSessionConfig,
   ): Promise<ActiveRegion | undefined> {
+    return this.computeActiveRegionSync(config);
+  }
+
+  /**
+   * Synchronous core of `computeActiveRegion`. The region is layer-agnostic in
+   * display coordinates, so a single value applies to every session layer. It
+   * depends on `displayDimensionRenderInfo.voxelPhysicalScales`, which changes
+   * when the user relabels the global "dimensions" — see
+   * `recomputeActiveRegions`, which re-runs this on that signal.
+   */
+  private computeActiveRegionSync(
+    config: HostSessionConfig,
+  ): ActiveRegion | undefined {
     const renderInfo = this.viewer.displayDimensionRenderInfo.value;
     const scales = renderInfo.voxelPhysicalScales;
     const bboxVoxelSizeNm = Resolution.toVoxelSize(config.bboxResolution);
@@ -1493,6 +1600,25 @@ export class EditSessionHost extends RefCounted {
         display(2, config.bboxVoxelCoords[5]),
       ],
     };
+  }
+
+  /**
+   * Recompute every layer's bbox-alpha render region from the current
+   * display-dimension scales and republish to the `editBboxLoHi` watchables.
+   * Triggered whenever `displayDimensionRenderInfo` changes (e.g. the user
+   * relabels the global resolution mid-session) so the dim region tracks the
+   * new display frame instead of masking the wrong area (TM-298). Painting is
+   * unaffected — it converts pointer/region through the live scale and stable
+   * target voxels — so this only keeps rendering consistent.
+   */
+  private recomputeActiveRegions(): void {
+    const config = this.activeSessionConfig;
+    if (config === undefined) return;
+    const region = this.computeActiveRegionSync(config);
+    for (const watchable of this._activeRegionByLayer.values()) {
+      watchable.value = region;
+    }
+    this.refreshEditBboxWatchables();
   }
 
   /**
@@ -1533,7 +1659,10 @@ export class EditSessionHost extends RefCounted {
       targetLayerId !== undefined
         ? this.findSegmentationUserLayer(targetLayerId)
         : undefined;
-    if (userLayer === undefined && this.cursorOverlayFallbackLayerId !== undefined) {
+    if (
+      userLayer === undefined &&
+      this.cursorOverlayFallbackLayerId !== undefined
+    ) {
       resolvedLayerId = this.cursorOverlayFallbackLayerId;
       userLayer = this.findSegmentationUserLayer(resolvedLayerId);
     }
@@ -1830,6 +1959,16 @@ export class EditSessionHost extends RefCounted {
     this.perLayer.clear();
     this._activeRegionByLayer.clear();
     this._allowedResolutionsByLayer.clear();
+    // Stop tracking global-dimension changes — the session is ending.
+    if (this.detachDisplayDimWatch !== undefined) {
+      try {
+        this.detachDisplayDimWatch();
+      } catch {
+        // ignore
+      }
+      this.detachDisplayDimWatch = undefined;
+    }
+    this.activeSessionConfig = undefined;
     // Flip subscribers from `defined` to `undefined`; this triggers the
     // bbox-dim shader path to recompile back to the no-session variant on
     // the next render and re-enables full resolution range on slice views.

@@ -31,13 +31,13 @@ import type {
   MultiscaleSliceViewChunkSource,
 } from "#src/sliceview/frontend.js";
 import type {
-  VolumeChunkSource,
-  MultiscaleVolumeChunkSource,
-} from "#src/sliceview/volume/frontend.js";
-import type {
   VolumeChunkSpecification,
   VolumeSourceOptions,
 } from "#src/sliceview/volume/base.js";
+import type {
+  VolumeChunkSource,
+  MultiscaleVolumeChunkSource,
+} from "#src/sliceview/volume/frontend.js";
 import { DataType } from "#src/util/data_type.js";
 
 /**
@@ -414,9 +414,7 @@ function computeVoxelSizeNm(
   return result;
 }
 
-function takeXYZ(
-  arr: ArrayLike<number>,
-): readonly [number, number, number] {
+function takeXYZ(arr: ArrayLike<number>): readonly [number, number, number] {
   return [Number(arr[0]) || 0, Number(arr[1]) || 0, Number(arr[2]) || 0];
 }
 

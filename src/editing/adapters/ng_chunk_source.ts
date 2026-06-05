@@ -26,21 +26,20 @@ import {
   ChunkReadFailedError,
 } from "@zettaai/edit-session";
 
+import type { ChunkManager, Chunk } from "#src/chunk_manager/frontend.js";
 import { resolutionFor } from "#src/editing/adapters/ng_layer_metadata_source.js";
-import type { ChunkManager } from "#src/chunk_manager/frontend.js";
-import type { Chunk } from "#src/chunk_manager/frontend.js";
 import type { LayerManager, UserLayer } from "#src/layer/index.js";
 import type { LoadedLayerDataSource } from "#src/layer/layer_data_source.js";
 import type { SliceViewSingleResolutionSource } from "#src/sliceview/frontend.js";
+import type {
+  VolumeChunkSpecification,
+  VolumeSourceOptions,
+} from "#src/sliceview/volume/base.js";
 import type {
   MultiscaleVolumeChunkSource,
   VolumeChunk,
   VolumeChunkSource,
 } from "#src/sliceview/volume/frontend.js";
-import type {
-  VolumeChunkSpecification,
-  VolumeSourceOptions,
-} from "#src/sliceview/volume/base.js";
 import { DataType } from "#src/util/data_type.js";
 
 /**
@@ -66,13 +65,15 @@ export class NgChunkSource implements LibraryChunkSource {
    * chunks from a previous session become the starting state for the next
    * session's overlay. Wired by `EditSessionHost` at construction time.
    */
-  commitTarget: {
-    getChunk(
-      layerId: LayerId,
-      resolution: string,
-      chunkId: string,
-    ): { bytes: ReadonlyChunkVoxelBuffer } | undefined;
-  } | undefined;
+  commitTarget:
+    | {
+        getChunk(
+          layerId: LayerId,
+          resolution: string,
+          chunkId: string,
+        ): { bytes: ReadonlyChunkVoxelBuffer } | undefined;
+      }
+    | undefined;
 
   constructor(
     private readonly layerManager: LayerManager,
@@ -101,7 +102,8 @@ export class NgChunkSource implements LibraryChunkSource {
       try {
         source = this.resolveVolumeChunkSource(group.layerId, group.resolution);
       } catch (cause) {
-        const reason = cause instanceof Error ? cause : new Error(String(cause));
+        const reason =
+          cause instanceof Error ? cause : new Error(String(cause));
         throw new ChunkPinFailedError(group.coords, reason);
       }
       for (const coord of group.coords) {
@@ -184,7 +186,7 @@ export class NgChunkSource implements LibraryChunkSource {
         },
         { signal: fetchSignal },
       );
-    } catch (_cause) {
+    } catch {
       if (signal?.aborted) {
         throw new ChunkReadAbortedError(coord);
       }

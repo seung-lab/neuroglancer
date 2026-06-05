@@ -8,8 +8,8 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import type { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import type { MouseSelectionState } from "#src/layer/index.js";
+import type { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import { getChunkPositionFromCombinedGlobalLocalPositions } from "#src/render_coordinate_transform.js";
 import type { SegmentationRenderLayer } from "#src/sliceview/volume/segmentation_renderlayer.js";
 

@@ -40,9 +40,9 @@ export class FakeLayerManager {
     for (const l of layers) this.layers.set(l.name, l);
   }
 
-  getLayerByName(name: string):
-    | { layer: { dataSources: ReadonlyArray<unknown> } | null }
-    | undefined {
+  getLayerByName(
+    name: string,
+  ): { layer: { dataSources: ReadonlyArray<unknown> } | null } | undefined {
     const descriptor = this.layers.get(name);
     if (descriptor === undefined) return undefined;
     if (descriptor.nullUserLayer === true) {
@@ -62,7 +62,10 @@ export class FakeLayerManager {
 function buildDataSource(descriptor: FakeLayerDescriptor): unknown {
   const includeCanonical = descriptor.useSpecUrlFallback !== true;
   return {
-    spec: descriptor.specUrl !== undefined ? { url: descriptor.specUrl } : undefined,
+    spec:
+      descriptor.specUrl !== undefined
+        ? { url: descriptor.specUrl }
+        : undefined,
     loadState: {
       // `loadState.error` absent → the path-pickers treat this as loaded.
       dataSource: includeCanonical

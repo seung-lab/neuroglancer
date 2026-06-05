@@ -19,23 +19,22 @@ import "#src/editing/ui/toggle_switch.css";
 export function ToggleSwitch({
   checked,
   disabled = false,
-  title,
+  tooltip,
   ariaLabel,
   onChange,
 }: {
   checked: boolean;
   disabled?: boolean;
-  title?: string;
+  tooltip?: string;
   ariaLabel: string;
   onChange: (checked: boolean) => void;
 }) {
-  return (
+  const button = (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
       aria-label={ariaLabel}
-      title={title}
       disabled={disabled}
       data-checked={checked ? "true" : "false"}
       class="neuroglancer-toggle-switch"
@@ -45,5 +44,17 @@ export function ToggleSwitch({
     >
       <span class="neuroglancer-toggle-switch-thumb" aria-hidden="true" />
     </button>
+  );
+  if (tooltip === undefined) return button;
+  // Wrap so the `data-tooltip` hint still shows while the switch is disabled
+  // (a disabled button emits no pointer events; the CSS drops it to
+  // pointer-events:none so hover falls through to this wrapper).
+  return (
+    <span
+      class="neuroglancer-toggle-switch-tooltip-wrap"
+      data-tooltip={tooltip}
+    >
+      {button}
+    </span>
   );
 }

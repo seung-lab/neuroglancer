@@ -75,9 +75,7 @@ export interface ImageRenderLayerOptions extends RenderLayerBaseOptions {
    * the layer's GLOBAL frame (nm) so the comparison is resolution-
    * independent. Mirrors `SliceViewSegmentationDisplayState.editBboxLoHi`.
    */
-  editBboxLoHi?: WatchableValueInterface<
-    { lo: vec3; hi: vec3 } | undefined
-  >;
+  editBboxLoHi?: WatchableValueInterface<{ lo: vec3; hi: vec3 } | undefined>;
 
   /**
    * Voxel-edit resolution-display lock; mirrors the segmentation render
@@ -85,7 +83,9 @@ export interface ImageRenderLayerOptions extends RenderLayerBaseOptions {
    * by the `...options` spread in the super call.
    */
   allowedSourcePredicate?: WatchableValueInterface<
-    | ((source: SliceViewSingleResolutionSource<SliceViewChunkSource>) => boolean)
+    | ((
+        source: SliceViewSingleResolutionSource<SliceViewChunkSource>,
+      ) => boolean)
     | undefined
   >;
 }
@@ -235,7 +235,9 @@ export class ImageRenderLayer extends SliceViewVolumeRenderLayer<ImageShaderPara
     // changes don't flip the `editBboxActive` bit so they won't go through
     // `shaderParameters.changed`, but they DO need a fresh `bind()`.
     if (editBboxLoHi !== undefined) {
-      this.registerDisposer(editBboxLoHi.changed.add(this.redrawNeeded.dispatch));
+      this.registerDisposer(
+        editBboxLoHi.changed.add(this.redrawNeeded.dispatch),
+      );
     }
   }
 

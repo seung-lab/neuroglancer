@@ -21,8 +21,14 @@ import { sessionError } from "@zettaai/edit-session";
 
 import type { NgLayerMetadataSource } from "#src/editing/adapters/ng_layer_metadata_source.js";
 import type { NgLogger } from "#src/editing/adapters/ng_logger.js";
-import type { SaveBackend, SaveBackendResult } from "#src/editing/adapters/save_backend.js";
-import { getDefaultSaveBackend, getSaveBackend } from "#src/editing/adapters/save_backend.js";
+import type {
+  SaveBackend,
+  SaveBackendResult,
+} from "#src/editing/adapters/save_backend.js";
+import {
+  getDefaultSaveBackend,
+  getSaveBackend,
+} from "#src/editing/adapters/save_backend.js";
 import type { LayerManager, UserLayer } from "#src/layer/index.js";
 
 /**
@@ -222,7 +228,12 @@ function toOutcome(
   }
   const error: SessionError = sessionError({
     kind: "recoverable",
-    code: result.status === "partial" ? "save-partial" : result.status === "skipped" ? "save-skipped" : "save-failed",
+    code:
+      result.status === "partial"
+        ? "save-partial"
+        : result.status === "skipped"
+          ? "save-skipped"
+          : "save-failed",
     message: describeFailure(result),
     at: Date.now(),
   });

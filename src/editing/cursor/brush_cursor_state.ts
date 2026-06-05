@@ -24,9 +24,9 @@ import type {
   Resolution,
 } from "@zettaai/edit-session";
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
-import { vec3 } from "#src/util/geom.js";
 import { WatchableValue } from "#src/trackable_value.js";
 import { RefCounted } from "#src/util/disposable.js";
+import { vec3 } from "#src/util/geom.js";
 
 export type ToolKind = "brush" | "eraser" | "fill";
 
@@ -150,8 +150,7 @@ export class BrushCursorState extends RefCounted {
   private recomputeVisibility(): void {
     const sessionActive = this.host.activeSession.value !== undefined;
     const kind = this.toolKind.value;
-    const shouldShow =
-      sessionActive && (kind === "brush" || kind === "eraser");
+    const shouldShow = sessionActive && (kind === "brush" || kind === "eraser");
     if (this.visible.value !== shouldShow) {
       this.visible.value = shouldShow;
     }
@@ -202,9 +201,7 @@ export class BrushCursorState extends RefCounted {
  * `undefined` if painting wasn't registered (the library throws
  * `UnknownToolError` rather than returning undefined).
  */
-function safeGetPaintingTools(
-  session: EditSession,
-): PaintingTools | undefined {
+function safeGetPaintingTools(session: EditSession): PaintingTools | undefined {
   try {
     return session.tools.getTool<PaintingTools>(PAINTING_TOOL_ID);
   } catch {

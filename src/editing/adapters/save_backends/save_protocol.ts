@@ -50,7 +50,11 @@ export interface NgSaveChunkMessage {
   /** Physical voxel size key, e.g. `"8x8x40"`. */
   readonly resolution: string;
   /** Chunk grid coordinate (absolute chunk index at this resolution). */
-  readonly chunkCoord: { readonly x: number; readonly y: number; readonly z: number };
+  readonly chunkCoord: {
+    readonly x: number;
+    readonly y: number;
+    readonly z: number;
+  };
   /** Chunk shape in voxels at this resolution — bbox extent for the cutout. */
   readonly chunkDataSize: readonly [number, number, number];
   /**
@@ -65,7 +69,11 @@ export interface NgSaveChunkMessage {
 
 /** Response: outcome of persisting the chunk named by `requestId`. */
 export type NgSaveResultMessage =
-  | { readonly type: typeof NG_SAVE_RESULT; readonly requestId: string; readonly ok: true }
+  | {
+      readonly type: typeof NG_SAVE_RESULT;
+      readonly requestId: string;
+      readonly ok: true;
+    }
   | {
       readonly type: typeof NG_SAVE_RESULT;
       readonly requestId: string;
@@ -74,7 +82,9 @@ export type NgSaveResultMessage =
     };
 
 /** Narrowing guard for inbound results on the NG side. */
-export function isNgSaveResultMessage(data: unknown): data is NgSaveResultMessage {
+export function isNgSaveResultMessage(
+  data: unknown,
+): data is NgSaveResultMessage {
   if (typeof data !== "object" || data === null) return false;
   const m = data as Record<string, unknown>;
   return (

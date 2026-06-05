@@ -8,8 +8,8 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import type { VoxelAddress } from "#src/editing/raster/voxel_address.js";
 import type { LocalPatchStore } from "#src/editing/local_patch_store.js";
+import type { VoxelAddress } from "#src/editing/raster/voxel_address.js";
 
 /**
  * Paints a 2D disk-shaped brush footprint (XY plane, fixed Z) centered on

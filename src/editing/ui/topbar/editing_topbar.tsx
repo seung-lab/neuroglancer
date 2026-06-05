@@ -211,7 +211,7 @@ function ActiveTopbarControls({
             type="button"
             class="neuroglancer-editing-topbar-save-button saving"
             onClick={cancelSave}
-            title="Cancel in-flight save"
+            data-tooltip="Cancel in-flight save"
           >
             Cancel
           </button>
@@ -220,7 +220,7 @@ function ActiveTopbarControls({
             type="button"
             class="neuroglancer-editing-topbar-save-button"
             disabled={!hasDirty || !saveAvailable}
-            title={
+            data-tooltip={
               saveAvailable
                 ? "Save all dirty layers to the backend"
                 : "Saving is unavailable — no save backend is registered."
@@ -262,7 +262,7 @@ function ActiveTopbarControls({
                 (isActive ? " active" : "") +
                 (entry.markDisabled ? " disabled" : "")
               }
-              title={`${entry.label} · Ctrl+${entry.hotkey}`}
+              data-tooltip={`${entry.label} · Ctrl+${entry.hotkey}`}
               aria-label={`${entry.label} (Ctrl+${entry.hotkey})`}
               onClick={() => handleToolClick(entry.toolId)}
             >
@@ -283,7 +283,8 @@ function ActiveTopbarControls({
           type="button"
           class="neuroglancer-editing-topbar-icon-button"
           disabled={!snapshot.canUndo}
-          title={`Undo · Ctrl+Z${snapshot.undoDescription ? `\n${snapshot.undoDescription}` : ""}`}
+          aria-label="Undo (Ctrl+Z)"
+          data-tooltip={`Undo · Ctrl+Z${snapshot.undoDescription ? `\n${snapshot.undoDescription}` : ""}`}
           onClick={() => void runUndo()}
         >
           <Undo2 size={TOOL_ICON_SIZE} aria-hidden="true" />
@@ -292,7 +293,8 @@ function ActiveTopbarControls({
           type="button"
           class="neuroglancer-editing-topbar-icon-button"
           disabled={!snapshot.canRedo}
-          title={`Redo · Ctrl+Shift+Z${snapshot.redoDescription ? `\n${snapshot.redoDescription}` : ""}`}
+          aria-label="Redo (Ctrl+Shift+Z)"
+          data-tooltip={`Redo · Ctrl+Shift+Z${snapshot.redoDescription ? `\n${snapshot.redoDescription}` : ""}`}
           onClick={() => void runRedo()}
         >
           <Redo2 size={TOOL_ICON_SIZE} aria-hidden="true" />

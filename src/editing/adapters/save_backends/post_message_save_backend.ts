@@ -8,20 +8,14 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import type {
-  LayerId,
-  LayerMetadata,
-  SavedChunk,
-} from "@zettaai/edit-session";
+import type { LayerId, LayerMetadata, SavedChunk } from "@zettaai/edit-session";
 import { scaleFor } from "@zettaai/edit-session";
 
 import type {
   SaveBackend,
   SaveBackendResult,
 } from "#src/editing/adapters/save_backend.js";
-import type {
-  NgSaveChunkMessage,
-} from "#src/editing/adapters/save_backends/save_protocol.js";
+import type { NgSaveChunkMessage } from "#src/editing/adapters/save_backends/save_protocol.js";
 import {
   NG_SAVE_CHUNK,
   isNgSaveResultMessage,
@@ -94,7 +88,8 @@ export class PostMessageSaveBackend implements SaveBackend {
   ) => string | undefined;
 
   constructor(deps: PostMessageSaveBackendDeps = {}) {
-    this.postTarget = deps.postTarget ?? (window.parent as SavePostMessageTarget);
+    this.postTarget =
+      deps.postTarget ?? (window.parent as SavePostMessageTarget);
     this.messageSource = deps.messageSource ?? (window as SaveMessageSource);
     this.targetOrigin = deps.targetOrigin ?? window.location.origin;
     this.resolveDataSourceUrl = deps.resolveDataSourceUrl;

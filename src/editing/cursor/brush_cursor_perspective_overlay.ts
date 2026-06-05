@@ -30,13 +30,13 @@
 import { Resolution } from "@zettaai/edit-session";
 
 import type { BrushCursorState } from "#src/editing/cursor/brush_cursor_state.js";
-import { PerspectiveViewRenderLayer } from "#src/perspective_view/render_layer.js";
 import type { PerspectiveViewRenderContext } from "#src/perspective_view/render_layer.js";
+import { PerspectiveViewRenderLayer } from "#src/perspective_view/render_layer.js";
 import { mat4 } from "#src/util/geom.js";
 import { GLBuffer } from "#src/webgl/buffer.js";
 import type { GL } from "#src/webgl/context.js";
-import { ShaderBuilder } from "#src/webgl/shader.js";
 import type { ShaderProgram } from "#src/webgl/shader.js";
+import { ShaderBuilder } from "#src/webgl/shader.js";
 
 const SEGMENTS_PER_RING = 32;
 const NUM_RINGS = 3;

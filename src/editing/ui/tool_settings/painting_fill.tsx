@@ -14,6 +14,7 @@ import { useCallback } from "preact/hooks";
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { useEvent } from "#src/editing/ui/interop/use_event.js";
 import { PaintingTargetPicker } from "#src/editing/ui/tool_settings/painting_target_picker.js";
+import { ParamLabel } from "#src/editing/ui/tool_settings/param_label.js";
 
 /**
  * Fill panel (TM-294): Target layer + resolution + Target value. Drops the
@@ -54,7 +55,10 @@ export function PaintingFill({
     <div class="neuroglancer-tool-panel neuroglancer-painting-fill-panel">
       <PaintingTargetPicker session={session} host={host} />
       <div class="neuroglancer-tool-panel-row">
-        <label>Target value</label>
+        <ParamLabel
+          text="Target value"
+          hint="The segment ID written into the filled region — every voxel the fill reaches is set to this value."
+        />
         <input
           type="text"
           inputMode="numeric"

@@ -1,0 +1,61 @@
+/*
+ * Copyright 2026 Calcada AI / Zetta AI
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ *
+ * Shared fast-appearing hover tooltip for the edit-session UI. The native
+ * `title` attribute's show delay is OS-controlled (~0.5–1.5s), which felt
+ * sluggish. fast_tooltip.ts drives this single bubble from any element's
+ * `data-tooltip` attribute with a short delay. It's `position: fixed` and
+ * appended to <body>, so it escapes the modal/panel `overflow: hidden`
+ * clipping contexts; the z-index sits above the entry modal (z-index 200) and
+ * its portaled resolution picker (z-index 300).
+ */
+
+.neuroglancer-fast-tooltip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1000;
+  max-width: 280px;
+  padding: 4px 7px;
+  background: #1a1a1a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #eee;
+  /* Pinned because the bubble lives on <body>, outside the modal/panel cascade
+     that declares the app font — otherwise it falls back to the default serif. */
+  font-family: sans-serif;
+  font-size: 11px;
+  line-height: 1.3;
+  /* `pre-line` honors `\n` in the tooltip text (e.g. the Undo/Redo action
+     description on a second line) while still wrapping long hints. */
+  white-space: pre-line;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 60ms ease;
+}
+
+.neuroglancer-fast-tooltip.visible {
+  opacity: 1;
+}
+
+/* Inline help marker placed next to a parameter label. The bubble itself is
+   driven by the shared `data-tooltip` mechanism above. */
+.neuroglancer-param-hint {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  /* Nudge up so the icon's optical center sits on the label's text midline. */
+  margin: -2px 0 0 4px;
+  color: #8b919b;
+  cursor: help;
+}
+
+.neuroglancer-param-hint:hover {
+  color: #cfd3da;
+}
+
+.neuroglancer-param-hint svg {
+  display: block;
+}

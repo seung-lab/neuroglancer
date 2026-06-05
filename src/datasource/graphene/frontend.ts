@@ -90,6 +90,7 @@ import type {
 import type { LoadedDataSubsource } from "#src/layer/layer_data_source.js";
 import { LoadedLayerDataSource } from "#src/layer/layer_data_source.js";
 import { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
+import { VertexPositionFormat } from "#src/mesh/base.js";
 import { MeshSource, MultiscaleMeshSource } from "#src/mesh/frontend.js";
 import type { DisplayDimensionRenderInfo } from "#src/navigation_state.js";
 import type {
@@ -208,7 +209,6 @@ import {
   addLayerControlToOptionsTab,
   registerLayerControl,
 } from "#src/widget/layer_control.js";
-import { VertexPositionFormat } from "#src/mesh/base.js";
 
 function vec4FromVec3(vec: vec3, alpha = 0) {
   const res = vec4.clone([...vec]);
@@ -579,17 +579,15 @@ async function getMeshSource(
     nBitsForLayerId: nBitsForLayerId,
   };
 
-  const {chunkManager} = sharedKvStoreContext;
+  const { chunkManager } = sharedKvStoreContext;
   return {
-    source: chunkManager.getChunkSource(
-      GrapheneMultiscaleMeshSource,
-      {
-        sharedKvStoreContext,
-        parameters: parameters,
-        format: {
-          fragmentRelativeVertices: false,
-          vertexPositionFormat: VertexPositionFormat.float32,
-        }
+    source: chunkManager.getChunkSource(GrapheneMultiscaleMeshSource, {
+      sharedKvStoreContext,
+      parameters: parameters,
+      format: {
+        fragmentRelativeVertices: false,
+        vertexPositionFormat: VertexPositionFormat.float32,
+      },
     }),
     transform: metadata.transform,
     segmentPropertyMap,
