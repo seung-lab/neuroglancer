@@ -266,7 +266,7 @@ function AdvancedBrush({
     : undefined;
 
   const disabledHint = uint64Selected
-    ? "uint64 layers can't be used as mask images."
+    ? "uint64 layers can't be used as reference images."
     : noImageLayers
       ? "Lock an image layer in the session to enable advanced brush."
       : undefined;
@@ -282,8 +282,8 @@ function AdvancedBrush({
     toggleDisabled && disabledHint !== undefined
       ? disabledHint
       : enabled
-        ? "Disable advanced brush (mask)"
-        : "Enable advanced brush (mask)";
+        ? "Disable advanced brush"
+        : "Enable advanced brush";
 
   return (
     <div class="neuroglancer-painting-brush-advanced">
@@ -305,8 +305,8 @@ function AdvancedBrush({
           title={toggleTitle}
           ariaLabel={
             enabled
-              ? "Disable advanced brush (mask)"
-              : "Enable advanced brush (mask)"
+              ? "Disable advanced brush"
+              : "Enable advanced brush"
           }
           onChange={onToggle}
         />
@@ -319,7 +319,7 @@ function AdvancedBrush({
       {enabled && currentEntry !== undefined && (
         <div class="neuroglancer-painting-brush-advanced-body">
           <div class="neuroglancer-tool-panel-row">
-            <label>Mask layer</label>
+            <label>Reference layer</label>
             <select value={mask!.imageLayerId} onChange={onMaskLayerChange}>
               {imageEntries.map((e) => (
                 <option key={e.layerId} value={e.layerId}>
@@ -329,7 +329,7 @@ function AdvancedBrush({
             </select>
           </div>
           <div class="neuroglancer-tool-panel-row">
-            <label>Mask resolution</label>
+            <label>Reference resolution</label>
             {currentEntry.resolutions.length <= 1 ? (
               <span class="neuroglancer-tool-panel-resolution-static">
                 {mask!.imageResolution}
