@@ -35,12 +35,15 @@ jobs:
             examples/**/package-lock.json
 
       - name: Install dependencies
-        # Not `npm ci`: the committed package-lock.json is generated on macOS and
-        # only records darwin optional binaries (oxlint/esbuild/rollup). `npm ci`
-        # strictly follows the lockfile and would skip the linux-x64 binaries,
-        # breaking lint/build on the runner. `npm install` reconciles optional
-        # deps against the host platform and fetches the correct linux binaries.
-        run: npm install --no-audit --no-fund
+        # The committed package-lock.json is generated on macOS and only records
+        # the darwin optional binaries for oxlint/esbuild/rollup. Both `npm ci`
+        # and `npm install` trust the locked tree as complete and never fetch the
+        # missing linux-x64 binaries, breaking lint and build on the runner.
+        # Removing the lockfile forces npm to resolve fresh on linux and install
+        # the correct platform binaries for all three tools.
+        run: |
+          rm -f package-lock.json
+          npm install --no-audit --no-fund
 
       - name: Lint
         run: npm run lint:check
