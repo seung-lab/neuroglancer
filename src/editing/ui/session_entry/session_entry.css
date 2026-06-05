@@ -451,8 +451,24 @@
 }
 
 .neuroglancer-edit-session-entry-modal-memory-meter-label {
+  display: inline-flex;
+  align-items: center;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.neuroglancer-edit-session-entry-modal-memory-meter-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background-color: currentColor;
+}
+
+.neuroglancer-edit-session-entry-modal-memory-meter-budgets {
+  font-size: 11px;
+  color: var(--neuroglancer-edit-session-text-muted);
 }
 
 .neuroglancer-edit-session-entry-modal-memory-meter-bar {
@@ -501,6 +517,19 @@
 .neuroglancer-edit-session-entry-modal-memory-meter-over
   .neuroglancer-edit-session-entry-modal-memory-meter-fill {
   background-color: var(--neuroglancer-edit-session-over);
+}
+
+/* In-session summary ------------------------------------------------------- */
+
+.neuroglancer-edit-session-entry-modal-session-summary {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--neuroglancer-edit-session-text-muted);
+}
+
+.neuroglancer-edit-session-entry-modal-session-summary strong {
+  font-weight: 600;
+  color: var(--neuroglancer-edit-session-text);
 }
 
 /* Footer ------------------------------------------------------------------- */
