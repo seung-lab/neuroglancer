@@ -129,7 +129,6 @@ async function decodeDracoFragmentChunk(
 // this filter, a main-branch chunk would link its LUT into a branch
 // layer's equivalences and (because of the "skip if piece already in
 // disjoint set" guard) the branch's own LUT would be silently dropped.
-import type { SharedDisjointUint64Sets } from "#src/shared_disjoint_sets.js";
 const allActiveChunkedGraphLayers = new Set<ChunkedGraphLayer>();
 
 // Decoder map for calcada chunk formats
