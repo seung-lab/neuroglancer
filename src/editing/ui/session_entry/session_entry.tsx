@@ -631,7 +631,7 @@ function MemoryMeter({
       <div class="neuroglancer-edit-session-entry-modal-memory-meter-bar">
         <div
           class="neuroglancer-edit-session-entry-modal-memory-meter-fill"
-          style={{ width: `${fraction * 100}%` }}
+          style={{ transform: `scaleX(${fraction})` }}
         />
       </div>
     </div>

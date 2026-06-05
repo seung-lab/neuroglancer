@@ -13,10 +13,13 @@
  * one system. Scoped to the backdrop to avoid leaking into the page.
  */
 .neuroglancer-confirm-dialog-backdrop {
-  --neuroglancer-confirm-accent: #3b82f6;
-  --neuroglancer-confirm-accent-strong: #2563eb;
-  --neuroglancer-confirm-danger: #ef4444;
-  --neuroglancer-confirm-danger-strong: #dc2626;
+  /* Button fills carry white text, so the base values are the darker steps
+     that clear WCAG AA 4.5:1 (accent #2563eb = 5.17:1, danger #dc2626 =
+     4.83:1); the -strong steps are the hover states. */
+  --neuroglancer-confirm-accent: #2563eb;
+  --neuroglancer-confirm-accent-strong: #1d4ed8;
+  --neuroglancer-confirm-danger: #dc2626;
+  --neuroglancer-confirm-danger-strong: #b91c1c;
   --neuroglancer-confirm-text: #e5e7eb;
   --neuroglancer-confirm-text-muted: #b3b9c4;
   --neuroglancer-confirm-bg: #1a1a1a;

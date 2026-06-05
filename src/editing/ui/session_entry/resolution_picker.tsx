@@ -127,6 +127,10 @@ export function ResolutionPicker({
               left: `${rect.left}px`,
               minWidth: `${rect.width}px`,
             }}
+            // The panel is portaled into the modal backdrop, whose onClick
+            // closes the modal. Stop clicks here so toggling an option doesn't
+            // bubble out and dismiss the whole dialog.
+            onClick={(e) => e.stopPropagation()}
           >
             {resolutions.map((r) => (
               <label

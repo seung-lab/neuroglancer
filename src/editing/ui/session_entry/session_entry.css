@@ -11,12 +11,17 @@
 /* Design tokens (modal-scoped) --------------------------------------------- */
 
 .neuroglancer-edit-session-entry-modal-backdrop {
+  /* --accent (#3b82f6) is reserved for borders / focus rings (UI-component
+     contrast, 3:1). Fills that carry white text use the darker -strong /
+     -stronger steps so the label clears WCAG AA 4.5:1. */
   --neuroglancer-edit-session-accent: #3b82f6;
-  --neuroglancer-edit-session-accent-strong: #2563eb;
+  --neuroglancer-edit-session-accent-strong: #2563eb; /* white text: 5.17:1 */
+  --neuroglancer-edit-session-accent-stronger: #1d4ed8; /* hover: 6.70:1 */
   --neuroglancer-edit-session-accent-soft: #1e3a5f;
   --neuroglancer-edit-session-text: #e5e7eb;
   --neuroglancer-edit-session-text-muted: #9ca3af;
-  --neuroglancer-edit-session-text-dim: #6b7280;
+  /* Lifted from #6b7280 (3.4:1, failed AA) to clear 4.5:1 on every surface. */
+  --neuroglancer-edit-session-text-dim: #8b929c;
   --neuroglancer-edit-session-bg: #1a1a1a;
   --neuroglancer-edit-session-bg-elev: #232323;
   --neuroglancer-edit-session-bg-row: #1f1f1f;
@@ -24,7 +29,8 @@
   --neuroglancer-edit-session-border-soft: #2a2a2a;
   --neuroglancer-edit-session-safe: #22c55e;
   --neuroglancer-edit-session-near: #f59e0b;
-  --neuroglancer-edit-session-over: #ef4444;
+  /* Lifted from #ef4444 (4.38:1 as a label on bg-row) to clear 4.5:1. */
+  --neuroglancer-edit-session-over: #f56565;
 }
 
 /* Backdrop + frame --------------------------------------------------------- */
@@ -47,7 +53,9 @@
   color: var(--neuroglancer-edit-session-text);
   border: 1px solid var(--neuroglancer-edit-session-border);
   border-radius: 6px;
-  min-width: 560px;
+  /* 560px on desktop, but never wider than the viewport (less a 16px gutter
+     each side) so it can't overflow a narrow or split window. */
+  min-width: min(560px, 100vw - 32px);
   max-width: 760px;
   max-height: 90vh;
   display: flex;
@@ -133,6 +141,12 @@
 .neuroglancer-bbox-picker-select:focus {
   outline: none;
   border-color: var(--neuroglancer-edit-session-accent);
+}
+
+.neuroglancer-bbox-picker-select:focus-visible {
+  border-color: var(--neuroglancer-edit-session-accent);
+  outline: 2px solid var(--neuroglancer-edit-session-accent);
+  outline-offset: 1px;
 }
 
 .neuroglancer-edit-session-entry-modal-bbox-helper {
@@ -396,12 +410,12 @@
 }
 
 .neuroglancer-edit-session-entry-modal-role-segment-selected {
-  background-color: var(--neuroglancer-edit-session-accent);
+  background-color: var(--neuroglancer-edit-session-accent-strong);
   color: #fff;
 }
 
 .neuroglancer-edit-session-entry-modal-role-segment-selected:hover {
-  background-color: var(--neuroglancer-edit-session-accent-strong);
+  background-color: var(--neuroglancer-edit-session-accent-stronger);
   color: #fff;
 }
 
@@ -451,9 +465,13 @@
 }
 
 .neuroglancer-edit-session-entry-modal-memory-meter-fill {
+  /* Full width, scaled via transform so the meter animates on the compositor
+     (transform/opacity) instead of animating layout `width`. */
   height: 100%;
+  width: 100%;
+  transform-origin: left center;
   transition:
-    width 0.2s ease,
+    transform 0.2s ease,
     background-color 0.2s ease;
 }
 
@@ -527,19 +545,33 @@
 }
 
 .neuroglancer-edit-session-entry-modal-btn-primary {
-  background-color: var(--neuroglancer-edit-session-accent);
-  border-color: var(--neuroglancer-edit-session-accent);
+  background-color: var(--neuroglancer-edit-session-accent-strong);
+  border-color: var(--neuroglancer-edit-session-accent-strong);
   color: #fff;
 }
 
 .neuroglancer-edit-session-entry-modal-btn-primary:hover:not(:disabled) {
-  background-color: var(--neuroglancer-edit-session-accent-strong);
-  border-color: var(--neuroglancer-edit-session-accent-strong);
+  background-color: var(--neuroglancer-edit-session-accent-stronger);
+  border-color: var(--neuroglancer-edit-session-accent-stronger);
 }
 
 .neuroglancer-edit-session-entry-modal-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Focus indicators --------------------------------------------------------- */
+
+/*
+ * One keyboard-focus treatment across every control in the modal, matching the
+ * confirm dialog. `:focus-visible` keeps the ring off mouse clicks.
+ */
+.neuroglancer-edit-session-entry-modal-close:focus-visible,
+.neuroglancer-edit-session-entry-modal-btn:focus-visible,
+.neuroglancer-edit-session-entry-modal-role-segment:focus-visible,
+.neuroglancer-resolution-picker-dropdown-trigger:focus-visible {
+  outline: 2px solid var(--neuroglancer-edit-session-accent);
+  outline-offset: 1px;
 }
 
 /* Reduced motion ----------------------------------------------------------- */
