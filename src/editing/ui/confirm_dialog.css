@@ -49,7 +49,10 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  font: inherit;
+  /* Match the neuroglancer-wide UI font (every panel declares sans-serif
+     explicitly). Portaled dialog, so without this it falls back to the
+     browser-default serif instead of the app font. */
+  font-family: sans-serif;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
 }
 

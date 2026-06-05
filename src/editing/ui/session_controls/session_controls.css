@@ -13,6 +13,8 @@
   flex-direction: column;
   padding: 8px;
   min-width: 240px;
+  /* Match the neuroglancer-wide UI font (every panel declares sans-serif). */
+  font-family: sans-serif;
   font-size: 12px;
   color: #ddd;
   overflow-y: auto;
@@ -101,7 +103,7 @@
 
 .neuroglancer-tool-panel-readonly {
   color: #aaa;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: monospace, monospace;
   font-size: 11px;
 }
 
@@ -111,7 +113,7 @@
   flex: 0 1 auto;
   width: 110px;
   box-sizing: border-box;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: monospace, monospace;
   font-size: 11px;
   color: #8b929c;
   padding: 4px 8px;
