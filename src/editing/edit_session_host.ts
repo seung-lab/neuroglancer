@@ -1310,7 +1310,12 @@ export class EditSessionHost extends RefCounted {
       tools: [
         painting({
           initialState: paintInitial,
-          compute: new PaintingCompute(),
+          // The compute reads the active tool id so the eraser never inherits
+          // the brush's shared image mask (TM-297). `activeSession` is unset
+          // while this config is built but populated by the time a stroke runs.
+          compute: new PaintingCompute(() =>
+            this.activeSession.value?.getActiveToolId(),
+          ),
         }),
         correspondence({
           initialState: correspondenceInitial,

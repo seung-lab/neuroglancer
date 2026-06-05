@@ -19,7 +19,9 @@
  */
 
 /** Preset brush sizes the `+` / `-` hotkeys step through. */
-export const BRUSH_SIZE_PRESETS: readonly number[] = [1, 3, 5, 9, 17, 33];
+export const BRUSH_SIZE_PRESETS: readonly number[] = [
+  1, 3, 5, 9, 17, 33, 65, 129, 257, 513, 1025,
+];
 
 /** size → radius (`radius = (size - 1) / 2`). */
 export function sizeToRadius(size: number): number {

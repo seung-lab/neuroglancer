@@ -140,19 +140,9 @@ export class EditSessionHotkeyBinder extends RefCounted {
     // ("relate") — `Ctrl+C` is reserved for clipboard copy.
     const actionMap = EventActionMap.fromObject({
       "control+keyb": ACTION_IDS.toolBrush,
-      "meta+keyb": ACTION_IDS.toolBrush,
       "control+keye": ACTION_IDS.toolErase,
-      "meta+keye": ACTION_IDS.toolErase,
       "control+keyf": ACTION_IDS.toolFill,
-      "meta+keyf": ACTION_IDS.toolFill,
-      // Z-extrap: `Ctrl+P` (propagate). NOT `Ctrl+Z` — reserved for Undo.
-      "control+keyp": ACTION_IDS.toolZExtrap,
-      "meta+keyp": ACTION_IDS.toolZExtrap,
-      // Correspondence: `Ctrl+R` (relate). `Ctrl+C` conflicts with copy.
-      "control+keyr": ACTION_IDS.toolCorrespondence,
-      "meta+keyr": ACTION_IDS.toolCorrespondence,
       "control+keyv": ACTION_IDS.cursorMode,
-      "meta+keyv": ACTION_IDS.cursorMode,
       "control+keyz": ACTION_IDS.undo,
       "control+shift+keyz": ACTION_IDS.redo,
       "meta+keyz": ACTION_IDS.undo,

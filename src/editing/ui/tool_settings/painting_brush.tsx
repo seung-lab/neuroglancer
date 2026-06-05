@@ -26,12 +26,12 @@ import { voxelDataTypeRange } from "#src/editing/tool_runtimes/mask_coord.js";
 import { useEvent } from "#src/editing/ui/interop/use_event.js";
 import { useWatchable } from "#src/editing/ui/interop/use_watchable.js";
 import { layerKindOf } from "#src/editing/ui/layer_kind.js";
+import { ToggleSwitch } from "#src/editing/ui/toggle_switch.js";
 import { PaintingTargetPicker } from "#src/editing/ui/tool_settings/painting_target_picker.js";
 import { PaintingThreshold } from "#src/editing/ui/tool_settings/painting_threshold.js";
-import { ToggleSwitch } from "#src/editing/ui/toggle_switch.js";
 import "#src/editing/ui/tool_settings/painting_brush.css";
 
-const MAX_SIZE = 129; // size = radius*2+1; max radius 64.
+const MAX_SIZE = 1000; // size = radius*2+1; max radius 64.
 const MIN_SIZE = 1;
 
 function clampSize(value: number): number {
