@@ -72,12 +72,25 @@ export default (env, args) => {
       ],
     },
     devServer: {
+      port: 3008,
+      // The portal proxies this dev server under its own origin (see
+      // `rewrites()` in the portal's next.config.js) so the iframe stays
+      // same-origin and the portal can keep injecting its interceptor/save
+      // scripts into the iframe document. Proxied requests arrive with the
+      // portal's Host header, so accept any host.
+      allowedHosts: "all",
       client: {
+        // The iframe document is served from the portal origin, so the
+        // live-reload client would otherwise try to open its websocket there
+        // (where /ws is not proxied). Point it straight at this dev server.
+        webSocketURL: "ws://localhost:3008/ws",
         overlay: {
           // Prevent intrusive notification spam.
           runtimeErrors: false,
         },
       },
+      // Full reload (not HMR) on change — the portal re-injects its scripts
+      // when the iframe document reloads.
       hot: false,
     },
     plugins: [
