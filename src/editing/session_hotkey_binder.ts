@@ -44,7 +44,16 @@
 
 import type { PaintingTools } from "@zettaai/edit-session";
 
+import { radiusToSize, sizeToRadius } from "#src/editing/brush_size_presets.js";
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
+import { HeldKeyTracker } from "#src/editing/held_key_tracker.js";
+import {
+  nextBrushValue,
+  nextPresetSize,
+  nextThresholdLow,
+  nextThresholdHigh,
+} from "#src/editing/painting_hotkey_math.js";
+import { voxelDataTypeRange } from "#src/editing/tool_runtimes/mask_coord.js";
 import { RefCounted } from "#src/util/disposable.js";
 import {
   EventActionMap,
@@ -56,9 +65,6 @@ import type { Viewer } from "#src/viewer.js";
 // `viewer.inputEventMap` (e.g. neuroglancer's global `keyb` → "toggle-scale-bar"
 // in `src/ui/default_input_event_bindings.ts:28`).
 const SESSION_HOTKEY_PRIORITY = 100;
-
-const MIN_BRUSH_RADIUS = 1;
-const MAX_BRUSH_RADIUS = 64;
 
 // Centralised so the action ids stay in sync between the action map and the
 // action-listener registrations below. Mirrors the v1 hotkey table in
@@ -73,8 +79,16 @@ const ACTION_IDS = {
   undo: "edit-session-undo",
   redo: "edit-session-redo",
   exitTool: "edit-session-exit-tool",
-  brushDecr: "edit-session-brush-decr",
-  brushIncr: "edit-session-brush-incr",
+  // `+` / `-` — step brush *size* through the preset cycle.
+  sizeDecr: "edit-session-size-decr",
+  sizeIncr: "edit-session-size-incr",
+  // `[` / `]` — brush value, or low/high threshold when L/H is held.
+  valueDecr: "edit-session-value-decr",
+  valueIncr: "edit-session-value-incr",
+  // `L` / `H` — held-chord modifiers for the threshold bindings. Bound to a
+  // no-op so they shadow the global `keyl`→recolor / `keyh`→help while a
+  // session is active; the actual held state is read via `HeldKeyTracker`.
+  noopLetter: "edit-session-noop-letter",
 } as const;
 
 // Library tool ids (see `node_modules/@zettaai/edit-session/dist/index.d.mts`
@@ -92,8 +106,22 @@ const TOOL_ID_PAINTING = "painting";
  * and disposed on session-end; the host owns the lifecycle.
  */
 export class EditSessionHotkeyBinder extends RefCounted {
-  constructor(host: EditSessionHost, viewer: Viewer) {
+  // Held-key state for the L/H threshold chords (see `held_key_tracker.ts`).
+  private readonly tracker: HeldKeyTracker;
+  // Cached voxel-value range per mask image layer, used to clamp threshold
+  // adjustments. Resolved lazily on first threshold keypress for a layer.
+  private readonly thresholdRangeByLayer = new Map<
+    string,
+    { min: number; max: number }
+  >();
+  private readonly thresholdRangePending = new Set<string>();
+
+  constructor(
+    private readonly host: EditSessionHost,
+    viewer: Viewer,
+  ) {
     super();
+    this.tracker = this.registerDisposer(new HeldKeyTracker(viewer.element));
 
     // Build the session's `EventActionMap`. Note the keys are bare event
     // identifiers (no `key:` phase prefix — `parseEventIdentifier` only
@@ -130,8 +158,20 @@ export class EditSessionHotkeyBinder extends RefCounted {
       "meta+keyz": ACTION_IDS.undo,
       "meta+shift+keyz": ACTION_IDS.redo,
       escape: ACTION_IDS.exitTool,
-      bracketleft: ACTION_IDS.brushDecr,
-      bracketright: ACTION_IDS.brushIncr,
+      // Brush size presets: `+` / `-` (main row, with or without shift, plus
+      // numpad). `getEventKeyName` reports `event.code` lowercased.
+      minus: ACTION_IDS.sizeDecr,
+      numpadsubtract: ACTION_IDS.sizeDecr,
+      equal: ACTION_IDS.sizeIncr,
+      "shift+equal": ACTION_IDS.sizeIncr,
+      numpadadd: ACTION_IDS.sizeIncr,
+      // Brush value (or low/high threshold when L/H is held).
+      bracketleft: ACTION_IDS.valueDecr,
+      bracketright: ACTION_IDS.valueIncr,
+      // Shadow the global `keyl` (recolor) / `keyh` (help) so holding them as
+      // chord modifiers doesn't trigger those while a session is active.
+      keyl: ACTION_IDS.noopLetter,
+      keyh: ACTION_IDS.noopLetter,
     });
     actionMap.label = "Edit session";
 
@@ -306,15 +346,151 @@ export class EditSessionHotkeyBinder extends RefCounted {
     );
 
     this.registerDisposer(
-      registerActionListener(target, ACTION_IDS.brushDecr, () => {
-        adjustBrushRadius(host, -1);
+      registerActionListener(target, ACTION_IDS.sizeDecr, () => {
+        this.stepBrushSize(-1);
       }),
     );
     this.registerDisposer(
-      registerActionListener(target, ACTION_IDS.brushIncr, () => {
-        adjustBrushRadius(host, +1);
+      registerActionListener(target, ACTION_IDS.sizeIncr, () => {
+        this.stepBrushSize(+1);
       }),
     );
+    this.registerDisposer(
+      registerActionListener(target, ACTION_IDS.valueDecr, () => {
+        this.onBracket(-1);
+      }),
+    );
+    this.registerDisposer(
+      registerActionListener(target, ACTION_IDS.valueIncr, () => {
+        this.onBracket(+1);
+      }),
+    );
+    // `L` / `H` are bound only to keep the global recolor/help actions from
+    // firing while held; the handler itself does nothing.
+    this.registerDisposer(
+      registerActionListener(target, ACTION_IDS.noopLetter, () => {}),
+    );
+  }
+
+  // -- Painting adjustments -------------------------------------------------
+
+  /** Returns the active painting tool, or `undefined` if unavailable. */
+  private getPainting(): PaintingTools | undefined {
+    const session = this.host.activeSession.value;
+    if (session === undefined) return undefined;
+    try {
+      return session.tools.getTool<PaintingTools>(TOOL_ID_PAINTING);
+    } catch (err) {
+      this.host.logger.warn(
+        "session",
+        `PaintingTools unavailable: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return undefined;
+    }
+  }
+
+  /** `+` / `-`: step brush size through the preset cycle (brush + eraser). */
+  private stepBrushSize(dir: number): void {
+    const session = this.host.activeSession.value;
+    if (session === undefined) return;
+    const activeId = session.tools.getActiveToolId();
+    if (activeId !== TOOL_ID_BRUSH && activeId !== TOOL_ID_ERASE) return;
+    const painting = this.getPainting();
+    if (painting === undefined) return;
+    const size = radiusToSize(painting.getState().radius);
+    const nextSize = nextPresetSize(size, dir);
+    if (nextSize === size) return;
+    painting.patchState({ radius: sizeToRadius(nextSize) });
+  }
+
+  /**
+   * `[` / `]`: low/high threshold when L/H is held, else the brush value.
+   * Only active for the brush tool.
+   */
+  private onBracket(dir: number): void {
+    const session = this.host.activeSession.value;
+    if (session === undefined) return;
+    if (session.tools.getActiveToolId() !== TOOL_ID_BRUSH) return;
+    const painting = this.getPainting();
+    if (painting === undefined) return;
+    if (this.tracker.isHeld("keyh")) {
+      this.adjustThreshold(painting, "high", dir);
+    } else if (this.tracker.isHeld("keyl")) {
+      this.adjustThreshold(painting, "low", dir);
+    } else {
+      const value = painting.getState().activeValue;
+      const next = nextBrushValue(value, dir);
+      if (next === value) return;
+      painting.patchState({ activeValue: next });
+    }
+  }
+
+  private adjustThreshold(
+    painting: PaintingTools,
+    which: "low" | "high",
+    dir: number,
+  ): void {
+    const mask = painting.getState().mask;
+    if (mask === undefined) return; // thresholds only apply with a mask
+    const layerId = mask.imageLayerId;
+    const cached = this.thresholdRangeByLayer.get(layerId);
+    if (cached !== undefined) {
+      this.applyThreshold(painting, which, dir, cached);
+      return;
+    }
+    // Resolve + cache the image dtype range once, then apply this adjustment.
+    if (this.thresholdRangePending.has(layerId)) return;
+    this.thresholdRangePending.add(layerId);
+    this.host.layerMetadataSource.resolve(mask.imageLayerId).then(
+      (meta) => {
+        this.thresholdRangePending.delete(layerId);
+        const range = voxelDataTypeRange(meta.voxelDataType);
+        if (range === null) return;
+        this.thresholdRangeByLayer.set(layerId, range);
+        this.applyThreshold(painting, which, dir, range);
+      },
+      (err: unknown) => {
+        this.thresholdRangePending.delete(layerId);
+        this.host.logger.warn(
+          "session",
+          `Threshold range unavailable for ${layerId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      },
+    );
+  }
+
+  private applyThreshold(
+    painting: PaintingTools,
+    which: "low" | "high",
+    dir: number,
+    range: { min: number; max: number },
+  ): void {
+    // Re-read mask: state may have changed during an async range resolve.
+    const mask = painting.getState().mask;
+    if (mask === undefined) return;
+    if (which === "low") {
+      const low = nextThresholdLow(
+        mask.thresholdLow,
+        mask.thresholdHigh,
+        range.min,
+        dir,
+      );
+      if (low === mask.thresholdLow) return;
+      painting.patchState({ mask: { ...mask, thresholdLow: low } });
+    } else {
+      const high = nextThresholdHigh(
+        mask.thresholdLow,
+        mask.thresholdHigh,
+        range.max,
+        dir,
+      );
+      if (high === mask.thresholdHigh) return;
+      painting.patchState({ mask: { ...mask, thresholdHigh: high } });
+    }
   }
 }
 
@@ -324,30 +500,4 @@ function isPaintLikeToolId(toolId: string | undefined): boolean {
     toolId === TOOL_ID_ERASE ||
     toolId === TOOL_ID_FILL
   );
-}
-
-function adjustBrushRadius(host: EditSessionHost, delta: number): void {
-  const session = host.activeSession.value;
-  if (session === undefined) return;
-  const activeId = session.tools.getActiveToolId();
-  if (activeId !== TOOL_ID_BRUSH && activeId !== TOOL_ID_ERASE) return;
-  let painting: PaintingTools;
-  try {
-    painting = session.tools.getTool<PaintingTools>(TOOL_ID_PAINTING);
-  } catch (err) {
-    host.logger.warn(
-      "session",
-      `PaintingTools unavailable: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-    return;
-  }
-  const current = painting.getState().radius;
-  const next =
-    delta < 0
-      ? Math.max(MIN_BRUSH_RADIUS, current + delta)
-      : Math.min(MAX_BRUSH_RADIUS, current + delta);
-  if (next === current) return;
-  painting.patchState({ radius: next });
 }
