@@ -448,6 +448,12 @@ export class EditSessionHost extends RefCounted {
   private detachSliceOverlay: (() => void) | undefined;
   private perspectiveOverlay: BrushCursorPerspectiveOverlay | undefined;
   private detachPerspectiveOverlay: (() => void) | undefined;
+  /** First writable layer id — fallback anchor when no paint target resolves. */
+  private cursorOverlayFallbackLayerId: LayerId | undefined;
+  /** Layer the cursor overlays are currently anchored to (avoids redundant re-attach). */
+  private attachedCursorLayerId: LayerId | undefined;
+  /** Disposer for the paint-target watch that drives overlay re-anchoring. */
+  private detachCursorTargetWatch: (() => void) | undefined;
 
   // -- Read-only public views -----------------------------------------------
   readonly activeRegionByLayer: ReadonlyMap<
@@ -1310,7 +1316,12 @@ export class EditSessionHost extends RefCounted {
       tools: [
         painting({
           initialState: paintInitial,
-          compute: new PaintingCompute(),
+          // The compute reads the active tool id so the eraser never inherits
+          // the brush's shared image mask (TM-297). `activeSession` is unset
+          // while this config is built but populated by the time a stroke runs.
+          compute: new PaintingCompute(() =>
+            this.activeSession.value?.getActiveToolId(),
+          ),
         }),
         correspondence({
           initialState: correspondenceInitial,
@@ -1485,44 +1496,73 @@ export class EditSessionHost extends RefCounted {
   }
 
   /**
-   * Construct the shared `BrushCursorState` and a `BrushCursorSliceOverlay`
-   * attached to the first writable layer's render-layer list. v1
-   * simplification: a single overlay piggy-backs on one writable layer's
-   * draw pass; Phase 3+ may register a dedicated viewer-level overlay if
-   * multi-layer cursoring becomes a concern.
+   * Construct the shared `BrushCursorState` and anchor the brush-cursor
+   * overlays to the layer painting currently targets — re-anchoring whenever
+   * the user switches the paint target layer. Anchoring to the *target* layer
+   * (rather than always the first writable one) keeps the cursor visible
+   * whenever the painted layer is visible: hiding an unrelated writable layer
+   * no longer makes the cursor disappear. The overlay's draw pass still rides
+   * the target layer's render-layer list, so the cursor follows that layer's
+   * visibility — which is what the user controls when they hide it.
    */
   private attachCursorOverlays(config: HostSessionConfig): void {
     this.cursorState = new BrushCursorState(this);
     const firstWritable = config.layers.find((l) => l.writable);
     if (firstWritable === undefined) return;
-    const userLayer = this.findSegmentationUserLayer(firstWritable.layerId);
-    if (userLayer === undefined) return;
+    this.cursorOverlayFallbackLayerId = firstWritable.layerId;
+
+    this.reattachCursorOverlaysToTarget();
+    this.detachCursorTargetWatch = this.cursorState.targetLayerId.changed.add(
+      () => this.reattachCursorOverlaysToTarget(),
+    );
+  }
+
+  /**
+   * (Re)anchor the cursor overlays to the current paint-target layer, falling
+   * back to the first writable layer when no target resolves yet. Render-layer
+   * detach disposes the overlay instance (see `removeRenderLayer`), so each
+   * re-anchor creates fresh overlays bound to the shared `cursorState`.
+   */
+  private reattachCursorOverlaysToTarget(): void {
+    const cursorState = this.cursorState;
+    if (cursorState === undefined) return;
+
+    const targetLayerId = cursorState.targetLayerId.value;
+    let resolvedLayerId = targetLayerId;
+    let userLayer =
+      targetLayerId !== undefined
+        ? this.findSegmentationUserLayer(targetLayerId)
+        : undefined;
+    if (userLayer === undefined && this.cursorOverlayFallbackLayerId !== undefined) {
+      resolvedLayerId = this.cursorOverlayFallbackLayerId;
+      userLayer = this.findSegmentationUserLayer(resolvedLayerId);
+    }
+    if (userLayer === undefined || resolvedLayerId === undefined) return;
+    if (
+      this.attachedCursorLayerId === resolvedLayerId &&
+      this.sliceOverlay !== undefined
+    ) {
+      return; // Already anchored here.
+    }
+
+    this.detachCursorOverlayRenderLayers();
     this.sliceOverlay = new BrushCursorSliceOverlay(
       this.viewer.display.gl,
-      this.cursorState,
+      cursorState,
     );
     this.detachSliceOverlay = userLayer.addRenderLayer(this.sliceOverlay);
     this.perspectiveOverlay = new BrushCursorPerspectiveOverlay(
       this.viewer.display.gl,
-      this.cursorState,
+      cursorState,
     );
     this.detachPerspectiveOverlay = userLayer.addRenderLayer(
       this.perspectiveOverlay,
     );
+    this.attachedCursorLayerId = resolvedLayerId;
   }
 
-  private teardownHotkeyBinder(): void {
-    if (this.hotkeyBinder !== undefined) {
-      try {
-        this.hotkeyBinder.dispose();
-      } catch {
-        // ignore
-      }
-      this.hotkeyBinder = undefined;
-    }
-  }
-
-  private teardownCursorOverlays(): void {
+  /** Detach (and thereby dispose) the current cursor render-layer instances. */
+  private detachCursorOverlayRenderLayers(): void {
     if (this.detachPerspectiveOverlay !== undefined) {
       try {
         this.detachPerspectiveOverlay();
@@ -1540,9 +1580,34 @@ export class EditSessionHost extends RefCounted {
       }
       this.detachSliceOverlay = undefined;
     }
-    // The slice overlay is owned by `addRenderLayer`'s detach call (which
-    // disposes the layer); only release the reference here.
     this.sliceOverlay = undefined;
+    this.attachedCursorLayerId = undefined;
+  }
+
+  private teardownHotkeyBinder(): void {
+    if (this.hotkeyBinder !== undefined) {
+      try {
+        this.hotkeyBinder.dispose();
+      } catch {
+        // ignore
+      }
+      this.hotkeyBinder = undefined;
+    }
+  }
+
+  private teardownCursorOverlays(): void {
+    if (this.detachCursorTargetWatch !== undefined) {
+      try {
+        this.detachCursorTargetWatch();
+      } catch {
+        // ignore
+      }
+      this.detachCursorTargetWatch = undefined;
+    }
+    // Detaching each render layer disposes it (see `removeRenderLayer`); this
+    // also clears `attachedCursorLayerId`.
+    this.detachCursorOverlayRenderLayers();
+    this.cursorOverlayFallbackLayerId = undefined;
     if (this.cursorState !== undefined) {
       try {
         this.cursorState.dispose();

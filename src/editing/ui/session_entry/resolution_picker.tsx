@@ -18,6 +18,10 @@ interface PanelRect {
   width: number;
 }
 
+// Monotonic id so each picker's radios form their own native group; sharing a
+// `name` across rows would make the browser treat every layer as one group.
+let pickerGroupCounter = 0;
+
 export function ResolutionPicker({
   resolutions,
   selected,
@@ -33,6 +37,10 @@ export function ResolutionPicker({
   const [rect, setRect] = useState<PanelRect | undefined>(undefined);
   const wrapperRef = useRef<HTMLSpanElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const groupName = useRef<string>();
+  if (groupName.current === undefined) {
+    groupName.current = `neuroglancer-resolution-picker-${pickerGroupCounter++}`;
+  }
 
   // The panel is portaled to <body> so it escapes the layers card's
   // `overflow: hidden` clipping context; `position: fixed` then anchors it to
@@ -84,19 +92,13 @@ export function ResolutionPicker({
 
   const selectedSet = new Set(selected);
   const selectedInOrder = resolutions.filter((r) => selectedSet.has(r));
-  const summary =
-    selectedInOrder.length === 1
-      ? selectedInOrder[0]
-      : `resolutions (${selectedInOrder.length})`;
+  // Temporary restriction: exactly one resolution may be selected per layer,
+  // so the summary always reflects the single current choice.
+  const summary = selectedInOrder[0] ?? "";
 
-  const toggle = (r: Resolution, checked: boolean) => {
-    const next: Resolution[] = [];
-    for (const cand of resolutions) {
-      const wasSelected = selectedSet.has(cand);
-      const nowSelected = cand === r ? checked : wasSelected;
-      if (nowSelected) next.push(cand);
-    }
-    onChange(next);
+  const select = (r: Resolution) => {
+    onChange([r]);
+    setOpen(false);
   };
 
   return (
@@ -121,7 +123,6 @@ export function ResolutionPicker({
             ref={panelRef}
             class="neuroglancer-resolution-picker-dropdown-panel"
             role="listbox"
-            aria-multiselectable="true"
             style={{
               top: `${rect.top}px`,
               left: `${rect.left}px`,
@@ -136,13 +137,14 @@ export function ResolutionPicker({
               <label
                 key={r}
                 class="neuroglancer-resolution-picker-dropdown-option"
+                role="option"
+                aria-selected={selectedSet.has(r)}
               >
                 <input
-                  type="checkbox"
+                  type="radio"
+                  name={groupName.current}
                   checked={selectedSet.has(r)}
-                  onChange={(e) =>
-                    toggle(r, (e.target as HTMLInputElement).checked)
-                  }
+                  onChange={() => select(r)}
                 />
                 <span>{r}</span>
               </label>

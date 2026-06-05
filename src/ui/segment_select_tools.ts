@@ -19,6 +19,7 @@
  * limitations under the License.
  */
 
+import { isSegmentSelectionLockedByActiveTool } from "#src/editing/adapters/segment_selection_lock.js";
 import type { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import type { ToolActivation } from "#src/ui/tool.js";
 import {
@@ -96,6 +97,9 @@ export class SelectSegmentsTool extends LayerTool<SegmentationUserLayer> {
 
     const trySelectSegment = () => {
       if (currentState === ToolState.IDLE) {
+        return;
+      }
+      if (isSegmentSelectionLockedByActiveTool(layer.manager.root)) {
         return;
       }
       const { segmentSelectionState } = layer.displayState;

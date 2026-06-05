@@ -122,10 +122,9 @@ const LAYERS_SECTION_CAPTION =
 const OPEN_DISABLED_TOOLTIP =
   "Set at least one layer to Editable to start a session.";
 
-const MEMORY_LABEL_WITHIN = "Within limits";
-const MEMORY_LABEL_NEAR = "Near GPU budget — some chunks may not stay pinned";
-const MEMORY_LABEL_OVER =
-  "Over budget — only part of the region will be loaded.";
+const MEMORY_LABEL_WITHIN = "within limits";
+const MEMORY_LABEL_NEAR = "near GPU budget";
+const MEMORY_LABEL_OVER = "over budget";
 
 // Amber zone starts at 80% of the GPU budget. Tunable: a single threshold
 // keeps the meter behavior predictable and easy to reason about.
@@ -375,11 +374,13 @@ function SessionEntryModalBody(props: {
   const counters = useMemo(() => {
     let editable = 0;
     let reference = 0;
+    let off = 0;
     for (const state of layerStates.values()) {
       if (state.role === "editable") editable += 1;
       else if (state.role === "reference") reference += 1;
+      else off += 1;
     }
-    return { editable, reference };
+    return { editable, reference, off };
   }, [layerStates]);
 
   const hasBbox = selectedBbox !== undefined;
@@ -560,6 +561,13 @@ function SessionEntryModalBody(props: {
               limits={limits}
               lockedLayerCount={lockedLayerCount}
             />
+            {layerEntries.length > 0 && (
+              <SessionSummary
+                editable={counters.editable}
+                reference={counters.reference}
+                off={counters.off}
+              />
+            )}
           </section>
         </div>
         <div class="neuroglancer-edit-session-entry-modal-footer">
@@ -622,10 +630,6 @@ function MemoryMeter({
     Number.isFinite(limits.gpu) && limits.gpu > 0
       ? Math.min(1, estimate.totalBytes / limits.gpu)
       : 0;
-  const overFraction =
-    Number.isFinite(limits.gpu) && limits.gpu > 0
-      ? estimate.totalBytes / limits.gpu
-      : 0;
 
   const labelText =
     signal === "over"
@@ -641,10 +645,15 @@ function MemoryMeter({
 
   const summary =
     lockedLayerCount === 0
-      ? "No layers locked"
-      : `${lockedLayerCount} layer${lockedLayerCount === 1 ? "" : "s"} locked · ` +
-        `~${formatBytes(estimate.totalBytes)} of ${formatBytes(limits.gpu)} ` +
-        `(${Math.round(overFraction * 100)}%)`;
+      ? "Estimated memory · no locked layers"
+      : `Estimated memory · ${lockedLayerCount} locked layer${
+          lockedLayerCount === 1 ? "" : "s"
+        }`;
+
+  const budgets =
+    `${formatBytes(estimate.totalBytes)} · ` +
+    `GPU budget ${formatBytes(limits.gpu)} · ` +
+    `system ${formatBytes(limits.system)}`;
 
   return (
     <div class={meterClass}>
@@ -653,6 +662,10 @@ function MemoryMeter({
           {summary}
         </span>
         <span class="neuroglancer-edit-session-entry-modal-memory-meter-label">
+          <span
+            class="neuroglancer-edit-session-entry-modal-memory-meter-dot"
+            aria-hidden="true"
+          />
           {labelText}
         </span>
       </div>
@@ -662,6 +675,27 @@ function MemoryMeter({
           style={{ transform: `scaleX(${fraction})` }}
         />
       </div>
+      <div class="neuroglancer-edit-session-entry-modal-memory-meter-budgets">
+        {budgets}
+      </div>
+    </div>
+  );
+}
+
+function SessionSummary({
+  editable,
+  reference,
+  off,
+}: {
+  editable: number;
+  reference: number;
+  off: number;
+}) {
+  return (
+    <div class="neuroglancer-edit-session-entry-modal-session-summary">
+      In session: <strong>{editable}</strong> editable ·{" "}
+      <strong>{reference}</strong> reference · <strong>{off}</strong> layer
+      {off === 1 ? "" : "s"} off (load dynamically)
     </div>
   );
 }

@@ -36,6 +36,13 @@ import {
 } from "#src/editing/tool_runtimes/mask_coord.js";
 
 /**
+ * Tool id of the eraser leaf in the library's `painting` composite tool. The
+ * eraser shares `PaintingSharedState` (including `mask`) with the brush, so the
+ * compute keys off the active tool id to suppress masking for erase strokes.
+ */
+const TOOL_ID_ERASE = "painting.erase";
+
+/**
  * Neuroglancer-side `PaintCompute` implementation. Computes per-chunk write
  * batches for brush stamps, interpolated brush strokes, and 3D flood-fills.
  * Pure main-thread compute — no worker offload in v1. Reads baseline (or
@@ -49,13 +56,43 @@ import {
  * the framework. This is why the compute is per-session state-free.
  */
 export class PaintingCompute implements PaintCompute {
+  /**
+   * @param getActiveToolId Returns the id of the currently-active painting
+   *   tool (e.g. `"painting.brush"` / `"painting.erase"`), or `undefined` when
+   *   none is active.
+   *
+   *   This exists to keep the eraser's masking behavior explicit (TM-297). The
+   *   library shares a single `PaintingSharedState.mask` across the brush and
+   *   erase `StrokeTool`s and feeds it to BOTH through `BrushApplyInput.mask`.
+   *   Only the brush exposes mask settings, but without this guard the eraser
+   *   silently inherits the brush's hidden threshold band and fails to remove
+   *   labels the user can plainly see. The eraser must never follow the brush's
+   *   mask, so we drop it whenever the eraser is the active tool. Defaults to
+   *   "no active tool" → mask honored, leaving brush/fill behavior unchanged.
+   */
+  constructor(
+    private readonly getActiveToolId: () => string | undefined = () =>
+      undefined,
+  ) {}
+
+  /**
+   * The eraser deliberately ignores the brush's image mask (TM-297): its
+   * behavior must be predictable and not gated by another tool's hidden state.
+   * Brush strokes honor the mask normally.
+   */
+  private maskEnabledForActiveTool(): boolean {
+    return this.getActiveToolId() !== TOOL_ID_ERASE;
+  }
+
   async applyBrush(input: BrushApplyInput): Promise<PaintWriteBatch> {
     const builder = new PaintBatchBuilder(
       input.metadata,
       input.targetLayerId,
       input.targetResolution,
     );
-    const maskCtx = resolveMaskContext(input);
+    const maskCtx = this.maskEnabledForActiveTool()
+      ? resolveMaskContext(input)
+      : undefined;
     if (maskCtx === undefined) {
       stampDisk2D(builder, input.voxelPosition, input.radius, input.value);
     } else {
@@ -91,12 +128,20 @@ export class PaintingCompute implements PaintCompute {
     const dy = y1 - y0;
     const dz = z1 - z0;
     const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    const maskCtx = resolveMaskContext(input);
+    const maskCtx = this.maskEnabledForActiveTool()
+      ? resolveMaskContext(input)
+      : undefined;
     const stamp = async (pos: readonly [number, number, number]) => {
       if (maskCtx === undefined) {
         stampDisk2D(builder, pos, input.radius, input.value);
       } else {
-        await stampDisk2DMasked(builder, pos, input.radius, input.value, maskCtx);
+        await stampDisk2DMasked(
+          builder,
+          pos,
+          input.radius,
+          input.value,
+          maskCtx,
+        );
       }
     };
     // Always stamp the endpoint; if the segment is short, that's the only stamp.
@@ -312,7 +357,7 @@ let lastWarning = "";
 function warnOncePerStroke(message: string): void {
   if (lastWarning === message) return;
   lastWarning = message;
-   
+
   console.warn(message);
 }
 
@@ -432,7 +477,8 @@ async function stampDisk2DMasked(
   const low = ctx.mask.thresholdLow;
   const high = ctx.mask.thresholdHigh;
   if (r === 0) {
-    const v = imageValues[imgX[0] - loImage[0] + iShapeX * (imgY[0] - loImage[1])];
+    const v =
+      imageValues[imgX[0] - loImage[0] + iShapeX * (imgY[0] - loImage[1])];
     if (v >= low && v <= high) tMaskData[0] = 1;
   } else {
     for (let j = 0; j < tShapeY; j++) {
@@ -462,7 +508,13 @@ async function stampDisk2DMasked(
   // entry in the processed buffer. The chunk builder records the disk's
   // bounding box as the subregion; the per-voxel mask drives gating.
   if (r === 0) {
-    builder.writeVoxelMasked(cx, cy, cz, value, processed.data[0] === 1 ? 1 : 0);
+    builder.writeVoxelMasked(
+      cx,
+      cy,
+      cz,
+      value,
+      processed.data[0] === 1 ? 1 : 0,
+    );
     return;
   }
   for (let dy = -r; dy <= r; dy++) {
@@ -470,8 +522,7 @@ async function stampDisk2DMasked(
     for (let dx = -r; dx <= r; dx++) {
       if (dx * dx + dy * dy > r2) continue;
       const i = dx + r;
-      const maskByte =
-        processed.data[i + tShapeX * j] === 1 ? 1 : 0;
+      const maskByte = processed.data[i + tShapeX * j] === 1 ? 1 : 0;
       builder.writeVoxelMasked(cx + dx, cy + dy, cz, value, maskByte);
     }
   }
