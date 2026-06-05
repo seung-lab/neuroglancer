@@ -12,6 +12,7 @@ import { Pencil } from "lucide-preact";
 import { useCallback, useState } from "preact/hooks";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
+import { ConfirmDialog } from "#src/editing/ui/confirm_dialog.js";
 import { useWatchable } from "#src/editing/ui/interop/use_watchable.js";
 import { SessionEntryModal } from "#src/editing/ui/session_entry/session_entry.js";
 import { StatusMessage } from "#src/status.js";
@@ -31,21 +32,9 @@ export function TopbarEditButton({ host }: { host: EditSessionHost }) {
   const isActive = sessionOrUndefined !== undefined;
 
   const [open, setOpen] = useState(false);
+  const [confirmExitOpen, setConfirmExitOpen] = useState(false);
 
-  const handleExit = useCallback(async () => {
-    // Read dirty state at click time, not render time — this component
-    // doesn't subscribe to `session.dirty` events, so a render-time
-    // snapshot would be stale once the user starts painting.
-    const session = host.activeSession.value;
-    if (session === undefined) return;
-    const dirty =
-      session.dirty.isDirty() || host.hasPendingCommittedChanges();
-    if (dirty) {
-      const ok = window.confirm(
-        "Exit edit session? Unsaved changes will be discarded.",
-      );
-      if (!ok) return;
-    }
+  const discardActive = useCallback(async () => {
     try {
       await host.discardActive();
     } catch (err) {
@@ -57,12 +46,22 @@ export function TopbarEditButton({ host }: { host: EditSessionHost }) {
   }, [host]);
 
   const handleClick = useCallback(() => {
-    if (isActive) {
-      void handleExit();
+    if (!isActive) {
+      setOpen(true);
       return;
     }
-    setOpen(true);
-  }, [isActive, handleExit]);
+    // Read dirty state at click time, not render time — this component
+    // doesn't subscribe to `session.dirty` events, so a render-time
+    // snapshot would be stale once the user starts painting.
+    const session = host.activeSession.value;
+    if (session === undefined) return;
+    const dirty = session.dirty.isDirty() || host.hasPendingCommittedChanges();
+    if (dirty) {
+      setConfirmExitOpen(true);
+      return;
+    }
+    void discardActive();
+  }, [isActive, host, discardActive]);
 
   return (
     <>
@@ -73,9 +72,7 @@ export function TopbarEditButton({ host }: { host: EditSessionHost }) {
           (isActive ? " active" : "")
         }
         title={
-          isActive
-            ? "Exit edit session"
-            : "Open the edit-session entry modal"
+          isActive ? "Exit edit session" : "Open the edit-session entry modal"
         }
         onClick={handleClick}
       >
@@ -86,6 +83,19 @@ export function TopbarEditButton({ host }: { host: EditSessionHost }) {
         open={open}
         onClose={() => setOpen(false)}
         host={host}
+      />
+      <ConfirmDialog
+        open={confirmExitOpen}
+        title="Exit edit session?"
+        message="You have unsaved changes. Exiting now will discard them."
+        confirmLabel="Discard and exit"
+        cancelLabel="Keep editing"
+        destructive
+        onConfirm={() => {
+          setConfirmExitOpen(false);
+          void discardActive();
+        }}
+        onCancel={() => setConfirmExitOpen(false)}
       />
     </>
   );

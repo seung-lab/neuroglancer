@@ -1,0 +1,122 @@
+/**
+ * @license
+ * Copyright 2026 Calcada AI / Zetta AI
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ */
+
+/*
+ * Token values mirror the edit-session entry modal so the two dialogs read as
+ * one system. Scoped to the backdrop to avoid leaking into the page.
+ */
+.neuroglancer-confirm-dialog-backdrop {
+  --neuroglancer-confirm-accent: #3b82f6;
+  --neuroglancer-confirm-accent-strong: #2563eb;
+  --neuroglancer-confirm-danger: #ef4444;
+  --neuroglancer-confirm-danger-strong: #dc2626;
+  --neuroglancer-confirm-text: #e5e7eb;
+  --neuroglancer-confirm-text-muted: #b3b9c4;
+  --neuroglancer-confirm-bg: #1a1a1a;
+  --neuroglancer-confirm-bg-elev: #232323;
+  --neuroglancer-confirm-border: #3a3a3a;
+  --neuroglancer-confirm-border-soft: #2a2a2a;
+
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.6);
+  /* Above the edit-session modal (backdrop = 200) in the shared scale. */
+  z-index: 210;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.neuroglancer-confirm-dialog {
+  background-color: var(--neuroglancer-confirm-bg);
+  color: var(--neuroglancer-confirm-text);
+  border: 1px solid var(--neuroglancer-confirm-border);
+  border-radius: 6px;
+  width: 100%;
+  max-width: 420px;
+  margin: 16px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font: inherit;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
+}
+
+.neuroglancer-confirm-dialog-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.neuroglancer-confirm-dialog-message {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--neuroglancer-confirm-text-muted);
+}
+
+.neuroglancer-confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.neuroglancer-confirm-dialog-btn {
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  background-color: var(--neuroglancer-confirm-bg-elev);
+  color: var(--neuroglancer-confirm-text);
+  border: 1px solid var(--neuroglancer-confirm-border);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  min-height: 32px;
+  transition:
+    background-color 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.neuroglancer-confirm-dialog-btn:hover:not(:disabled) {
+  border-color: var(--neuroglancer-confirm-accent);
+}
+
+.neuroglancer-confirm-dialog-btn:focus-visible {
+  outline: 2px solid var(--neuroglancer-confirm-accent);
+  outline-offset: 1px;
+}
+
+.neuroglancer-confirm-dialog-btn-primary {
+  background-color: var(--neuroglancer-confirm-accent);
+  border-color: var(--neuroglancer-confirm-accent);
+  color: #fff;
+}
+
+.neuroglancer-confirm-dialog-btn-primary:hover:not(:disabled) {
+  background-color: var(--neuroglancer-confirm-accent-strong);
+  border-color: var(--neuroglancer-confirm-accent-strong);
+}
+
+.neuroglancer-confirm-dialog-btn-destructive {
+  background-color: var(--neuroglancer-confirm-danger);
+  border-color: var(--neuroglancer-confirm-danger);
+  color: #fff;
+}
+
+.neuroglancer-confirm-dialog-btn-destructive:hover:not(:disabled) {
+  background-color: var(--neuroglancer-confirm-danger-strong);
+  border-color: var(--neuroglancer-confirm-danger-strong);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .neuroglancer-confirm-dialog-btn {
+    transition: none;
+  }
+}

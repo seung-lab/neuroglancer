@@ -28,14 +28,15 @@ import {
   useState,
 } from "preact/hooks";
 
+import type { NgLayerMetadataSource } from "#src/editing/adapters/ng_layer_metadata_source.js";
 import type {
   EditSessionHost,
   HostSessionConfig,
 } from "#src/editing/edit_session_host.js";
+import { useModalDialog } from "#src/editing/ui/interop/use_modal_dialog.js";
 import { useSignal } from "#src/editing/ui/interop/use_signal.js";
 import type { LayerKind } from "#src/editing/ui/layer_kind.js";
 import { layerKindOf } from "#src/editing/ui/layer_kind.js";
-import type { NgLayerMetadataSource } from "#src/editing/adapters/ng_layer_metadata_source.js";
 import type { BboxAnnotationSelection } from "#src/editing/ui/session_entry/bbox_candidates.js";
 import { BboxSelectionModel } from "#src/editing/ui/session_entry/bbox_candidates.js";
 import { BboxPicker } from "#src/editing/ui/session_entry/bbox_picker.js";
@@ -99,6 +100,10 @@ export function SessionEntryModal(
 // Microcopy (spec strings, verbatim)
 // ---------------------------------------------------------------------------
 
+// `aria-labelledby` target for the dialog. Only one entry modal can be open
+// at a time (the topbar gates `open`), so a fixed id is safe.
+const MODAL_TITLE_ID = "neuroglancer-edit-session-entry-modal-title";
+
 const LAYERS_SECTION_CAPTION =
   "Reference layers stay read-only; editable layers receive your edits. " +
   "Off layers load dynamically and don't use the budget.";
@@ -107,8 +112,7 @@ const OPEN_DISABLED_TOOLTIP =
   "Set at least one layer to Editable to start a session.";
 
 const MEMORY_LABEL_WITHIN = "Within limits";
-const MEMORY_LABEL_NEAR =
-  "Near GPU budget — some chunks may not stay pinned";
+const MEMORY_LABEL_NEAR = "Near GPU budget — some chunks may not stay pinned";
 const MEMORY_LABEL_OVER =
   "Over budget — only part of the region will be loaded.";
 
@@ -181,6 +185,7 @@ function SessionEntryModalBody(props: {
   const resolutionModelsRef = useRef<Map<string, ResolutionSelectionModel>>(
     new Map(),
   );
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setSelectedBbox(bboxModel.selection);
@@ -310,6 +315,10 @@ function SessionEntryModalBody(props: {
     if (submitting) return;
     onClose();
   }, [submitting, onClose]);
+
+  // Dialog a11y: focus trap, autofocus, Escape-to-close (vetoed mid-submit by
+  // `cancel`), focus restore, and key isolation from Neuroglancer hotkeys.
+  useModalDialog({ active: true, containerRef: dialogRef, onClose: cancel });
 
   const memoryEstimate = useMemo(
     () =>
@@ -452,15 +461,21 @@ function SessionEntryModalBody(props: {
       onClick={cancel}
     >
       <div
+        ref={dialogRef}
         class="neuroglancer-edit-session-entry-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={MODAL_TITLE_ID}
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         <div class="neuroglancer-edit-session-entry-modal-header">
-          <span>Enter Edit Session</span>
+          <span id={MODAL_TITLE_ID}>Enter Edit Session</span>
           <button
             type="button"
             class="neuroglancer-edit-session-entry-modal-close"
             title="Close"
+            aria-label="Close"
             disabled={submitting}
             onClick={cancel}
           >
@@ -520,7 +535,13 @@ function SessionEntryModalBody(props: {
           </section>
         </div>
         <div class="neuroglancer-edit-session-entry-modal-footer">
-          <div class="neuroglancer-edit-session-entry-modal-error">{error}</div>
+          <div
+            class="neuroglancer-edit-session-entry-modal-error"
+            role="alert"
+            aria-live="assertive"
+          >
+            {error}
+          </div>
           <button
             type="button"
             class="neuroglancer-edit-session-entry-modal-btn"
@@ -552,10 +573,7 @@ function SessionEntryModalBody(props: {
 
 type MemorySignal = "safe" | "near" | "over";
 
-function memorySignalOf(
-  totalBytes: number,
-  gpuLimit: number,
-): MemorySignal {
+function memorySignalOf(totalBytes: number, gpuLimit: number): MemorySignal {
   if (!Number.isFinite(gpuLimit) || gpuLimit <= 0) return "safe";
   if (totalBytes > gpuLimit) return "over";
   if (totalBytes >= gpuLimit * MEMORY_NEAR_FRACTION) return "near";
@@ -572,12 +590,14 @@ function MemoryMeter({
   lockedLayerCount: number;
 }) {
   const signal = memorySignalOf(estimate.totalBytes, limits.gpu);
-  const fraction = Number.isFinite(limits.gpu) && limits.gpu > 0
-    ? Math.min(1, estimate.totalBytes / limits.gpu)
-    : 0;
-  const overFraction = Number.isFinite(limits.gpu) && limits.gpu > 0
-    ? estimate.totalBytes / limits.gpu
-    : 0;
+  const fraction =
+    Number.isFinite(limits.gpu) && limits.gpu > 0
+      ? Math.min(1, estimate.totalBytes / limits.gpu)
+      : 0;
+  const overFraction =
+    Number.isFinite(limits.gpu) && limits.gpu > 0
+      ? estimate.totalBytes / limits.gpu
+      : 0;
 
   const labelText =
     signal === "over"
@@ -685,12 +705,7 @@ function estimateLockedMemory({
         scale.chunkDataSize[1] *
         scale.chunkDataSize[2];
       total +=
-        chunksX *
-        chunksY *
-        chunksZ *
-        chunkVoxels *
-        bytesPerVoxel *
-        channels;
+        chunksX * chunksY * chunksZ * chunkVoxels * bytesPerVoxel * channels;
     }
   }
   return { totalBytes: total };

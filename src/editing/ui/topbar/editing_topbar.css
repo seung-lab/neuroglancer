@@ -103,9 +103,9 @@
 /* Save all --------------------------------------------------------------- */
 
 .neuroglancer-editing-topbar-save-button {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   padding: 2px 8px;
   background: #2a2a2a;
   border: 1px solid #444;
@@ -132,6 +132,10 @@
 }
 
 .neuroglancer-editing-topbar-badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  transform: translate(50%, -50%);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -143,6 +147,7 @@
   color: #fff;
   font-size: 10px;
   font-weight: 600;
+  pointer-events: none;
 }
 
 /* Edit / Exit-session button (center anchor) ----------------------------- */

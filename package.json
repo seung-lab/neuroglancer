@@ -121,6 +121,7 @@
       "node": "./src/async_computation/decode_zstd_node.ts",
       "default": "./src/async_computation/decode_zstd.ts"
     },
+    "#src/editing/ui/confirm_dialog.js": "./src/editing/ui/confirm_dialog.tsx",
     "#src/editing/ui/session_entry/session_entry.js": "./src/editing/ui/session_entry/session_entry.tsx",
     "#src/editing/ui/session_entry/bbox_picker.js": "./src/editing/ui/session_entry/bbox_picker.tsx",
     "#src/editing/ui/session_entry/resolution_picker.js": "./src/editing/ui/session_entry/resolution_picker.tsx",

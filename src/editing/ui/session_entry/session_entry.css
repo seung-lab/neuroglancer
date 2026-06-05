@@ -197,16 +197,22 @@
 }
 
 .neuroglancer-resolution-picker-dropdown-panel {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  margin-top: 2px;
-  background-color: var(--neuroglancer-edit-session-bg);
-  border: 1px solid var(--neuroglancer-edit-session-border);
+  /*
+   * Portaled into the modal backdrop and positioned with `fixed` so the panel
+   * escapes the layers card's `overflow: hidden` clipping context while still
+   * inheriting the modal's tokens + font. top/left/min-width are set inline
+   * from the trigger's rect; z-index sits above the modal frame (backdrop is
+   * z-index 200). Token fallbacks + an explicit font-size keep it legible even
+   * if it ever portals to <body> (no modal-scoped cascade there).
+   */
+  position: fixed;
+  background-color: var(--neuroglancer-edit-session-bg, #1a1a1a);
+  color: var(--neuroglancer-edit-session-text, #e5e7eb);
+  border: 1px solid var(--neuroglancer-edit-session-border, #3a3a3a);
   border-radius: 4px;
   padding: 4px 0;
-  z-index: 10;
-  min-width: 100%;
+  z-index: 300;
+  font-size: 11px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
 }
 
@@ -220,7 +226,7 @@
 }
 
 .neuroglancer-resolution-picker-dropdown-option:hover {
-  background-color: var(--neuroglancer-edit-session-bg-elev);
+  background-color: var(--neuroglancer-edit-session-bg-elev, #232323);
 }
 
 /* Layers card -------------------------------------------------------------- */
@@ -446,7 +452,9 @@
 
 .neuroglancer-edit-session-entry-modal-memory-meter-fill {
   height: 100%;
-  transition: width 0.2s ease, background-color 0.2s ease;
+  transition:
+    width 0.2s ease,
+    background-color 0.2s ease;
 }
 
 /* Safe / near / over signals — one accent per state. */
@@ -509,7 +517,9 @@
   font-size: 13px;
   font-weight: 500;
   min-height: 32px;
-  transition: background-color 0.12s ease, border-color 0.12s ease;
+  transition:
+    background-color 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .neuroglancer-edit-session-entry-modal-btn:hover:not(:disabled) {
@@ -530,4 +540,15 @@
 .neuroglancer-edit-session-entry-modal-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Reduced motion ----------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .neuroglancer-edit-session-entry-modal-layer-row,
+  .neuroglancer-edit-session-entry-modal-role-segment,
+  .neuroglancer-edit-session-entry-modal-memory-meter-fill,
+  .neuroglancer-edit-session-entry-modal-btn {
+    transition: none;
+  }
 }
