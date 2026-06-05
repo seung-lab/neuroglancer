@@ -754,6 +754,7 @@ export class Viewer extends RefCounted implements ViewerState {
     );
     mousePositionWidget.element.style.flex = "1";
     mousePositionWidget.element.style.alignSelf = "center";
+    mousePositionWidget.element.style.minWidth = "200px";
     this.registerDisposer(
       new ElementVisibilityFromTrackableBoolean(
         this.uiControlVisibility.showLocation,
