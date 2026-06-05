@@ -698,6 +698,11 @@ async function getVolumeDataSource(
   if (stateJson) {
     state.restoreState(stateJson);
   }
+  // Sync the restored branchId onto the chunk source BEFORE NG starts
+  // fetching chunks — otherwise the first /precomputed_rp/ requests go
+  // out with branch_id=0 (the chunkSource default) and the user sees
+  // main's view until refreshChunkSources() fires on a later UI toggle.
+  volume.branchId = state.branchId.value;
   const segmentationGraph = new GrapheneGraphSource(info, volume, state);
   const { modelSpace } = info;
   const subsources: DataSubsourceEntry[] = [
