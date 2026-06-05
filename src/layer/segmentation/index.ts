@@ -24,6 +24,7 @@ import {
   localEquivalencesUrl,
 } from "#src/datasource/local.js";
 import { getAllowedSourcePredicateForLayer } from "#src/editing/adapters/allowed_source_predicate.js";
+import { isSegmentSelectionLockedByActiveTool } from "#src/editing/adapters/segment_selection_lock.js";
 import type { PatchedMaskProvider } from "#src/editing/shaders/patched_mask_provider.js";
 import type {
   LayerActionContext,
@@ -1213,6 +1214,7 @@ export class SegmentationUserLayer extends Base {
       case "select":
       case "star": {
         if (!this.pick.value) break;
+        if (isSegmentSelectionLockedByActiveTool(this.manager.root)) break;
         const { segmentSelectionState } = this.displayState;
         if (segmentSelectionState.hasSelectedSegment) {
           const segment = segmentSelectionState.selectedSegment;
