@@ -203,7 +203,9 @@
   text-align: left;
 }
 
-.neuroglancer-layer-control-container:has(.neuroglancer-calcada-branch-control) {
+.neuroglancer-layer-control-container:has(
+    .neuroglancer-calcada-branch-control
+  ) {
   align-items: flex-start;
 }
 

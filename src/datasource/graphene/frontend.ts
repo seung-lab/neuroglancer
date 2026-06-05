@@ -579,17 +579,15 @@ async function getMeshSource(
     nBitsForLayerId: nBitsForLayerId,
   };
 
-  const {chunkManager} = sharedKvStoreContext;
+  const { chunkManager } = sharedKvStoreContext;
   return {
-    source: chunkManager.getChunkSource(
-      GrapheneMultiscaleMeshSource,
-      {
-        sharedKvStoreContext,
-        parameters: parameters,
-        format: {
-          fragmentRelativeVertices: false,
-          vertexPositionFormat: VertexPositionFormat.float32,
-        }
+    source: chunkManager.getChunkSource(GrapheneMultiscaleMeshSource, {
+      sharedKvStoreContext,
+      parameters: parameters,
+      format: {
+        fragmentRelativeVertices: false,
+        vertexPositionFormat: VertexPositionFormat.float32,
+      },
     }),
     transform: metadata.transform,
     segmentPropertyMap,

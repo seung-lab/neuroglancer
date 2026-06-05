@@ -16,7 +16,10 @@
  * IndexedDB persistence are deferred to a later iteration.
  */
 
-import { chunkGridKey, LocalPatchSource } from "#src/editing/local_patch_source.js";
+import {
+  chunkGridKey,
+  LocalPatchSource,
+} from "#src/editing/local_patch_source.js";
 import type { DebouncedFunction } from "#src/util/animation_frame_debounce.js";
 import { animationFrameDebounce } from "#src/util/animation_frame_debounce.js";
 import { RefCounted } from "#src/util/disposable.js";

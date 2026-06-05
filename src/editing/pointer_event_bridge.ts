@@ -183,7 +183,11 @@ export class PointerEventBridge extends RefCounted {
     // With Ctrl/Cmd held we bail BEFORE running the tool so the event falls
     // through to neuroglancer for default pan handling.
     const cameraLocked = this.isCameraLockedForEvent(ev);
-    if (this.isPointerEvent(ev) && this.isPaintLikeTool(tool) && !cameraLocked) {
+    if (
+      this.isPointerEvent(ev) &&
+      this.isPaintLikeTool(tool) &&
+      !cameraLocked
+    ) {
       return;
     }
 
@@ -371,7 +375,10 @@ export class PointerEventBridge extends RefCounted {
     };
   }
 
-  private translateKey(ev: KeyboardEvent, phase: "down" | "up"): ToolInputEvent {
+  private translateKey(
+    ev: KeyboardEvent,
+    phase: "down" | "up",
+  ): ToolInputEvent {
     return {
       kind: "key",
       phase,

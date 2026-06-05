@@ -47,8 +47,7 @@ function metadata(
 function zeroReader(
   chunkDataSize: readonly [number, number, number],
 ): (chunkId: ChunkIdType) => Promise<ReadonlyChunkVoxelBuffer> {
-  const volume =
-    chunkDataSize[0] * chunkDataSize[1] * chunkDataSize[2];
+  const volume = chunkDataSize[0] * chunkDataSize[1] * chunkDataSize[2];
   return async () => {
     const view = new BigUint64Array(volume);
     return { byteLength: view.byteLength, asView: () => view };
@@ -112,8 +111,11 @@ function imageReader(
             const ix = c.x * chunkDataSize[0] + lx;
             const iy = c.y * chunkDataSize[1] + ly;
             const iz = c.z * chunkDataSize[2] + lz;
-            buf[lx + chunkDataSize[0] * (ly + chunkDataSize[1] * lz)] =
-              valueFn(ix, iy, iz);
+            buf[lx + chunkDataSize[0] * (ly + chunkDataSize[1] * lz)] = valueFn(
+              ix,
+              iy,
+              iz,
+            );
           }
         }
       }

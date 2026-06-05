@@ -1134,10 +1134,7 @@ export class Viewer extends RefCounted implements ViewerState {
       this.sidePanelManager.registerPanel({
         location: this.editSessionHost.correspondencePanelLocation,
         makePanel: () =>
-          makeCorrespondencePanel(
-            this.sidePanelManager,
-            this.editSessionHost,
-          ),
+          makeCorrespondencePanel(this.sidePanelManager, this.editSessionHost),
       }),
     );
 

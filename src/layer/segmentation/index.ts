@@ -156,9 +156,7 @@ function getEditBboxLoHiForLayer(
     | {
         getActiveRegionWatchableForLayer(
           layerName: string,
-        ): WatchableValueInterface<
-          { lo: vec3; hi: vec3 } | undefined
-        >;
+        ): WatchableValueInterface<{ lo: vec3; hi: vec3 } | undefined>;
       }
     | undefined;
   return host?.getActiveRegionWatchableForLayer(layerName);
@@ -1299,7 +1297,7 @@ export class SegmentationUserLayer extends Base {
     // If equivalences map this piece to a root, use the root for display.
     // This ensures hover always shows roots even if the GPU pick buffer
     // hasn't been updated with the latest equivalences yet.
-    const displayId = (mapped !== id) ? mapped : id;
+    const displayId = mapped !== id ? mapped : id;
     const normalizedId = augmentSegmentId(displayState, displayId);
     const row = makeSegmentWidget(this.displayState, normalizedId);
     registerCallbackWhenSegmentationDisplayStateChanged(

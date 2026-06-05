@@ -80,7 +80,9 @@ export interface SliceViewRenderLayerOptions {
    * watchable invalidate the SliceView's cached transformedSources.
    */
   allowedSourcePredicate?: WatchableValueInterface<
-    | ((source: SliceViewSingleResolutionSource<SliceViewChunkSource>) => boolean)
+    | ((
+        source: SliceViewSingleResolutionSource<SliceViewChunkSource>,
+      ) => boolean)
     | undefined
   >;
 }
@@ -140,7 +142,9 @@ export abstract class SliceViewRenderLayer<
    * `SliceViewRenderLayerOptions.allowedSourcePredicate`.
    */
   allowedSourcePredicate?: WatchableValueInterface<
-    | ((source: SliceViewSingleResolutionSource<SliceViewChunkSource>) => boolean)
+    | ((
+        source: SliceViewSingleResolutionSource<SliceViewChunkSource>,
+      ) => boolean)
     | undefined
   >;
 

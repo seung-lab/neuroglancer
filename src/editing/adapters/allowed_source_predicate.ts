@@ -91,8 +91,7 @@ function resolutionForSource(
 function extractModelResolutionNm(
   loadState: LoadedLayerDataSource,
 ): readonly [number, number, number] {
-  const { scales, units } =
-    loadState.dataSource.modelTransform.outputSpace;
+  const { scales, units } = loadState.dataSource.modelTransform.outputSpace;
   const result: [number, number, number] = [0, 0, 0];
   for (let i = 0; i < 3 && i < scales.length; ++i) {
     const scale = scales[i];

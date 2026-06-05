@@ -50,7 +50,10 @@ export function ToggleSwitch({
   // (a disabled button emits no pointer events; the CSS drops it to
   // pointer-events:none so hover falls through to this wrapper).
   return (
-    <span class="neuroglancer-toggle-switch-tooltip-wrap" data-tooltip={tooltip}>
+    <span
+      class="neuroglancer-toggle-switch-tooltip-wrap"
+      data-tooltip={tooltip}
+    >
       {button}
     </span>
   );

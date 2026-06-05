@@ -414,9 +414,7 @@ function computeVoxelSizeNm(
   return result;
 }
 
-function takeXYZ(
-  arr: ArrayLike<number>,
-): readonly [number, number, number] {
+function takeXYZ(arr: ArrayLike<number>): readonly [number, number, number] {
   return [Number(arr[0]) || 0, Number(arr[1]) || 0, Number(arr[2]) || 0];
 }
 

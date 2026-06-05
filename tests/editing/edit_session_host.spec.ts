@@ -11,7 +11,6 @@
 import { Resolution, layerId } from "@zettaai/edit-session";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-
 import { NgSessionLockAdapter } from "#src/editing/adapters/ng_session_lock.js";
 import {
   EditSessionHost,

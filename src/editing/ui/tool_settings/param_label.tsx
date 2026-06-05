@@ -21,7 +21,11 @@ export function ParamLabel({ text, hint }: { text: string; hint: string }) {
   return (
     <label>
       {text}
-      <span class="neuroglancer-param-hint" data-tooltip={hint} aria-hidden="true">
+      <span
+        class="neuroglancer-param-hint"
+        data-tooltip={hint}
+        aria-hidden="true"
+      >
         <Info size={13} />
       </span>
     </label>

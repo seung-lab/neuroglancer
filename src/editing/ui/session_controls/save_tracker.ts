@@ -71,7 +71,9 @@ export class SaveTracker {
 
     if (thrownError !== undefined) {
       const message =
-        thrownError instanceof Error ? thrownError.message : String(thrownError);
+        thrownError instanceof Error
+          ? thrownError.message
+          : String(thrownError);
       this.applyGlobalFailure(message);
       this.changed.dispatch();
       return;

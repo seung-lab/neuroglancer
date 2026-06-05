@@ -68,13 +68,21 @@ function scale(
 describe("imageChunksCovering", () => {
   it("single chunk when the region is fully inside one chunk", () => {
     // chunk=64; voxels [10, 20) all live in chunk (0,0,0).
-    const out = imageChunksCovering([10, 10, 10], [20, 20, 20], scale([64, 64, 64]));
+    const out = imageChunksCovering(
+      [10, 10, 10],
+      [20, 20, 20],
+      scale([64, 64, 64]),
+    );
     expect(out).toEqual([{ x: 0, y: 0, z: 0 }]);
   });
 
   it("two chunks when region straddles a boundary on one axis", () => {
     // chunk=64 in x; voxels x in [60, 70) crosses x-boundary at 64.
-    const out = imageChunksCovering([60, 0, 0], [70, 8, 8], scale([64, 64, 64]));
+    const out = imageChunksCovering(
+      [60, 0, 0],
+      [70, 8, 8],
+      scale([64, 64, 64]),
+    );
     expect(out).toEqual([
       { x: 0, y: 0, z: 0 },
       { x: 1, y: 0, z: 0 },
@@ -94,13 +102,21 @@ describe("imageChunksCovering", () => {
   });
 
   it("empty region returns no chunks", () => {
-    expect(imageChunksCovering([5, 5, 5], [5, 5, 5], scale([64, 64, 64]))).toEqual([]);
-    expect(imageChunksCovering([10, 0, 0], [5, 8, 8], scale([64, 64, 64]))).toEqual([]);
+    expect(
+      imageChunksCovering([5, 5, 5], [5, 5, 5], scale([64, 64, 64])),
+    ).toEqual([]);
+    expect(
+      imageChunksCovering([10, 0, 0], [5, 8, 8], scale([64, 64, 64])),
+    ).toEqual([]);
   });
 
   it("respects non-cubic chunk shapes", () => {
     // chunk=32x32x16: voxel (33, 0, 17) lives in chunk (1, 0, 1).
-    const out = imageChunksCovering([33, 0, 17], [34, 1, 18], scale([32, 32, 16]));
+    const out = imageChunksCovering(
+      [33, 0, 17],
+      [34, 1, 18],
+      scale([32, 32, 16]),
+    );
     expect(out).toEqual([{ x: 1, y: 0, z: 1 }]);
   });
 });

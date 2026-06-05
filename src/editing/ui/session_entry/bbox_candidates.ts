@@ -21,14 +21,7 @@ import { NullarySignal } from "#src/util/signal.js";
 export interface BboxAnnotationSelection {
   readonly annotationLayerName: string;
   readonly annotationId: string;
-  readonly voxelBbox: readonly [
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-  ];
+  readonly voxelBbox: readonly [number, number, number, number, number, number];
   /**
    * Physical size of one voxel of `voxelBbox`, in nanometers, derived from
    * the annotation source's `modelTransform.outputSpace` at selection time.
@@ -43,14 +36,7 @@ export interface BboxEntry {
   readonly key: string;
   readonly annotationLayerName: string;
   readonly annotation: AxisAlignedBoundingBox;
-  readonly voxelBbox: readonly [
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-  ];
+  readonly voxelBbox: readonly [number, number, number, number, number, number];
   readonly voxelSizeNm: readonly [number, number, number];
   readonly sizeLabel: string;
 }

@@ -182,7 +182,9 @@ function RoleControl({
         value="editable"
         current={role}
         label="Editable"
-        tooltip={editableDisabled ? EDITABLE_DISABLED_TOOLTIP : ROLE_TOOLTIP.editable}
+        tooltip={
+          editableDisabled ? EDITABLE_DISABLED_TOOLTIP : ROLE_TOOLTIP.editable
+        }
         disabled={editableDisabled}
         onChange={onChange}
       />
@@ -211,7 +213,9 @@ function RoleSegment({
     selected
       ? "neuroglancer-edit-session-entry-modal-role-segment-selected"
       : "",
-    disabled ? "neuroglancer-edit-session-entry-modal-role-segment-disabled" : "",
+    disabled
+      ? "neuroglancer-edit-session-entry-modal-role-segment-disabled"
+      : "",
   ]
     .filter(Boolean)
     .join(" ");

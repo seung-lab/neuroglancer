@@ -11,7 +11,6 @@
 import { Resolution, layerId, sessionId } from "@zettaai/edit-session";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-
 import {
   EditSessionHost,
   type EditSessionIntent,
@@ -44,9 +43,7 @@ describe("EditSessionHost — integration (state surface)", () => {
   let host: EditSessionHost;
 
   beforeEach(() => {
-    host = new EditSessionHost(
-      createFakeViewer(new FakeLayerManager([])),
-    );
+    host = new EditSessionHost(createFakeViewer(new FakeLayerManager([])));
   });
 
   afterEach(() => {
@@ -78,9 +75,7 @@ describe("EditSessionHost — integration (state surface)", () => {
         annotationId: "id-1",
         resolution: RES,
       },
-      layers: [
-        { layerId: layerId("L1"), resolutions: [RES], writable: true },
-      ],
+      layers: [{ layerId: layerId("L1"), resolutions: [RES], writable: true }],
       capturedRegion: { lo: [0, 0, 0], hi: [16, 16, 16] },
     };
     // The host subscribes to `state.changed` and auto-triggers

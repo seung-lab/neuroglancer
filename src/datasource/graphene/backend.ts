@@ -43,9 +43,23 @@ import { decodeManifestChunk } from "#src/datasource/precomputed/backend.js";
 import { WithSharedKvStoreContextCounterpart } from "#src/kvstore/backend.js";
 import type { KvStoreWithPath, ReadResponse } from "#src/kvstore/index.js";
 import { readKvStore } from "#src/kvstore/index.js";
-import type { FragmentChunk, FragmentId, ManifestChunk, MultiscaleFragmentChunk, MultiscaleManifestChunk } from "#src/mesh/backend.js";
-import { assignMeshFragmentData, assignMultiscaleMeshFragmentData, MeshSource, MultiscaleMeshSource } from "#src/mesh/backend.js";
-import { decodeDraco, decodeDracoPartitionedWithOctantCenter } from "#src/mesh/draco/index.js";
+import type {
+  FragmentChunk,
+  FragmentId,
+  ManifestChunk,
+  MultiscaleFragmentChunk,
+  MultiscaleManifestChunk,
+} from "#src/mesh/backend.js";
+import {
+  assignMeshFragmentData,
+  assignMultiscaleMeshFragmentData,
+  MeshSource,
+  MultiscaleMeshSource,
+} from "#src/mesh/backend.js";
+import {
+  decodeDraco,
+  decodeDracoPartitionedWithOctantCenter,
+} from "#src/mesh/draco/index.js";
 import type { DisplayDimensionRenderInfo } from "#src/navigation_state.js";
 import type {
   RenderedViewBackend,
@@ -68,8 +82,12 @@ import {
 import { computeChunkBounds } from "#src/sliceview/volume/backend.js";
 import { Uint64Set } from "#src/uint64_set.js";
 import { vec3, vec3Key } from "#src/util/geom.js";
-import { HttpError , isNotFoundError } from "#src/util/http_request.js";
-import { parseUint64, verifyStringArray , verifyObject } from "#src/util/json.js";
+import { HttpError, isNotFoundError } from "#src/util/http_request.js";
+import {
+  parseUint64,
+  verifyStringArray,
+  verifyObject,
+} from "#src/util/json.js";
 import { Signal } from "#src/util/signal.js";
 import {
   getBasePriority,
@@ -211,7 +229,10 @@ interface GrapheneMultiscaleManifestChunk extends MultiscaleManifestChunk {
   shardInfo?: ShardInfo;
 }
 
-function decodeMultiscaleManifestChunk(chunk: GrapheneMultiscaleManifestChunk, response: any) {
+function decodeMultiscaleManifestChunk(
+  chunk: GrapheneMultiscaleManifestChunk,
+  response: any,
+) {
   verifyObject(response);
   chunk.manifest = {
     chunkShape: vec3.clone(response.chunkShape),
@@ -242,13 +263,15 @@ async function decodeMultiscaleFragmentChunk(
   if (lod !== 0) {
     // For GrapheneMultiscaleMeshSource, we need to calculate the octant center
     // based on the chunk's position in the octree hierarchy
-    const manifestChunk = chunk.manifestChunk! as GrapheneMultiscaleManifestChunk;
+    const manifestChunk =
+      chunk.manifestChunk! as GrapheneMultiscaleManifestChunk;
     const { manifest } = manifestChunk;
     if (!manifest) {
       throw new Error("Manifest not available for octant center calculation");
     }
 
-    const { octree, chunkShape, chunkGridSpatialOrigin, vertexOffsets } = manifest;
+    const { octree, chunkShape, chunkGridSpatialOrigin, vertexOffsets } =
+      manifest;
     const chunkIndex = chunk.chunkIndex;
 
     // Extract octree node coordinates
@@ -259,9 +282,18 @@ async function decodeMultiscaleFragmentChunk(
 
     // Calculate the center of this octant in world coordinates
     // This matches the calculation from src/mesh/frontend.ts
-    const fragmentOriginX = chunkGridSpatialOrigin[0] + x * chunkShape[0] * scale + vertexOffsets[lod * 3 + 0];
-    const fragmentOriginY = chunkGridSpatialOrigin[1] + y * chunkShape[1] * scale + vertexOffsets[lod * 3 + 1];
-    const fragmentOriginZ = chunkGridSpatialOrigin[2] + z * chunkShape[2] * scale + vertexOffsets[lod * 3 + 2];
+    const fragmentOriginX =
+      chunkGridSpatialOrigin[0] +
+      x * chunkShape[0] * scale +
+      vertexOffsets[lod * 3 + 0];
+    const fragmentOriginY =
+      chunkGridSpatialOrigin[1] +
+      y * chunkShape[1] * scale +
+      vertexOffsets[lod * 3 + 1];
+    const fragmentOriginZ =
+      chunkGridSpatialOrigin[2] +
+      z * chunkShape[2] * scale +
+      vertexOffsets[lod * 3 + 2];
 
     const fragmentShapeX = chunkShape[0] * scale;
     const fragmentShapeY = chunkShape[1] * scale;
@@ -312,7 +344,6 @@ export class GrapheneMultiscaleMeshSource extends WithParameters(
     }, TEN_MINUTES);
   }
 
-
   async download(
     chunk: GrapheneMultiscaleManifestChunk,
     signal: AbortSignal,
@@ -347,14 +378,15 @@ export class GrapheneMultiscaleMeshSource extends WithParameters(
 
   async downloadFragment(chunk: MultiscaleFragmentChunk, signal: AbortSignal) {
     const { parameters } = this;
-    const manifestChunk = chunk.manifestChunk! as GrapheneMultiscaleManifestChunk;
+    const manifestChunk =
+      chunk.manifestChunk! as GrapheneMultiscaleManifestChunk;
     const chunkIndex = chunk.chunkIndex;
     const { fragments } = manifestChunk;
 
     try {
       if (fragments !== null) {
         const fragmentsIds = fragments[chunkIndex];
-        
+
         if (fragmentsIds.length === 1) {
           // Single fragment - use simple path
           const { response } = await downloadFragment(
@@ -363,7 +395,10 @@ export class GrapheneMultiscaleMeshSource extends WithParameters(
             parameters,
             signal,
           );
-          await decodeMultiscaleFragmentChunk(chunk, await response.arrayBuffer());
+          await decodeMultiscaleFragmentChunk(
+            chunk,
+            await response.arrayBuffer(),
+          );
         } else {
           // Multiple fragments - decode each individually and merge the raw data
           const rawMeshData = [];
@@ -374,13 +409,21 @@ export class GrapheneMultiscaleMeshSource extends WithParameters(
           let octantCenterZ: number | undefined;
 
           if (chunk.lod !== 0) {
-            const manifestChunk = chunk.manifestChunk! as GrapheneMultiscaleManifestChunk;
+            const manifestChunk =
+              chunk.manifestChunk! as GrapheneMultiscaleManifestChunk;
             const { manifest } = manifestChunk;
             if (!manifest) {
-              throw new Error("Manifest not available for octant center calculation");
+              throw new Error(
+                "Manifest not available for octant center calculation",
+              );
             }
 
-            const { octree, chunkShape, chunkGridSpatialOrigin, vertexOffsets } = manifest;
+            const {
+              octree,
+              chunkShape,
+              chunkGridSpatialOrigin,
+              vertexOffsets,
+            } = manifest;
             const chunkIndex = chunk.chunkIndex;
 
             const x = octree[5 * chunkIndex];
@@ -388,9 +431,18 @@ export class GrapheneMultiscaleMeshSource extends WithParameters(
             const z = octree[5 * chunkIndex + 2];
             const scale = 1 << chunk.lod;
 
-            const fragmentOriginX = chunkGridSpatialOrigin[0] + x * chunkShape[0] * scale + vertexOffsets[chunk.lod * 3 + 0];
-            const fragmentOriginY = chunkGridSpatialOrigin[1] + y * chunkShape[1] * scale + vertexOffsets[chunk.lod * 3 + 1];
-            const fragmentOriginZ = chunkGridSpatialOrigin[2] + z * chunkShape[2] * scale + vertexOffsets[chunk.lod * 3 + 2];
+            const fragmentOriginX =
+              chunkGridSpatialOrigin[0] +
+              x * chunkShape[0] * scale +
+              vertexOffsets[chunk.lod * 3 + 0];
+            const fragmentOriginY =
+              chunkGridSpatialOrigin[1] +
+              y * chunkShape[1] * scale +
+              vertexOffsets[chunk.lod * 3 + 1];
+            const fragmentOriginZ =
+              chunkGridSpatialOrigin[2] +
+              z * chunkShape[2] * scale +
+              vertexOffsets[chunk.lod * 3 + 2];
 
             const fragmentShapeX = chunkShape[0] * scale;
             const fragmentShapeY = chunkShape[1] * scale;
@@ -400,7 +452,7 @@ export class GrapheneMultiscaleMeshSource extends WithParameters(
             octantCenterY = fragmentOriginY + fragmentShapeY / 2;
             octantCenterZ = fragmentOriginZ + fragmentShapeZ / 2;
           }
-          
+
           for (const fragmentId of fragmentsIds) {
             const { response } = await downloadFragment(
               this.fragmentKvStore,
@@ -408,9 +460,9 @@ export class GrapheneMultiscaleMeshSource extends WithParameters(
               parameters,
               signal,
             );
-            
+
             const arrayBuffer = await response.arrayBuffer();
-            
+
             // Decode this fragment individually to get raw mesh data
             const rawMesh = await decodeDracoPartitionedWithOctantCenter(
               new Uint8Array(arrayBuffer),
@@ -419,13 +471,13 @@ export class GrapheneMultiscaleMeshSource extends WithParameters(
               octantCenterY,
               octantCenterZ,
             );
-            
+
             rawMeshData.push(rawMesh);
           }
-          
+
           // Merge the raw mesh data
           const mergedMesh = this.mergeRawMeshData(rawMeshData);
-          
+
           // Assign the merged data to the chunk
           assignMultiscaleMeshFragmentData(
             chunk,
@@ -448,12 +500,14 @@ export class GrapheneMultiscaleMeshSource extends WithParameters(
     }
 
     // Calculate total sizes and validate data
-    let totalVertexCount = 0;  // Number of vertices
-    let totalIndexCount = 0;   // Number of indices
+    let totalVertexCount = 0; // Number of vertices
+    let totalIndexCount = 0; // Number of indices
 
     for (let i = 0; i < fragments.length; i++) {
       const fragment = fragments[i];
-      const vertexCount = fragment.vertexPositions ? fragment.vertexPositions.length / 3 : 0;
+      const vertexCount = fragment.vertexPositions
+        ? fragment.vertexPositions.length / 3
+        : 0;
       const indexCount = fragment.indices ? fragment.indices.length : 0;
 
       if (!fragment.vertexPositions || !fragment.indices) {
@@ -469,13 +523,16 @@ export class GrapheneMultiscaleMeshSource extends WithParameters(
     const VertexType = firstFragment.vertexPositions.constructor;
     const IndexType = firstFragment.indices.constructor;
 
-    const mergedVertices = new VertexType(totalVertexCount * 3);  // 3 components per vertex
+    const mergedVertices = new VertexType(totalVertexCount * 3); // 3 components per vertex
     const mergedIndices = new IndexType(totalIndexCount);
     const mergedSubChunkOffsets = new Uint32Array(9); // 8 subchunks + total
 
     // First pass: Copy all vertices and collect indices by octant
     let currentVertexOffset = 0;
-    const indicesByOctant: Uint32Array[] = Array.from({ length: 8 }, () => new Uint32Array(0));
+    const indicesByOctant: Uint32Array[] = Array.from(
+      { length: 8 },
+      () => new Uint32Array(0),
+    );
 
     for (let fragIdx = 0; fragIdx < fragments.length; fragIdx++) {
       const fragment = fragments[fragIdx];
@@ -534,7 +591,7 @@ export class GrapheneMultiscaleMeshSource extends WithParameters(
     return {
       vertexPositions: mergedVertices,
       indices: mergedIndices,
-      subChunkOffsets: mergedSubChunkOffsets
+      subChunkOffsets: mergedSubChunkOffsets,
     };
   }
 

@@ -311,9 +311,7 @@ function AdvancedBrush({
           disabled={toggleDisabled}
           tooltip={toggleTitle}
           ariaLabel={
-            enabled
-              ? "Disable advanced brush"
-              : "Enable advanced brush"
+            enabled ? "Disable advanced brush" : "Enable advanced brush"
           }
           onChange={onToggle}
         />

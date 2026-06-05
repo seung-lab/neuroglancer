@@ -12,9 +12,7 @@ import { useEffect, useReducer } from "preact/hooks";
 
 import type { NullaryReadonlySignal } from "#src/util/signal.js";
 
-export function useSignal(
-  signal: NullaryReadonlySignal | undefined,
-): void {
+export function useSignal(signal: NullaryReadonlySignal | undefined): void {
   const [, bump] = useReducer((x: number) => x + 1, 0);
   useEffect(() => {
     if (signal === undefined) return;

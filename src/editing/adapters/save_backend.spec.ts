@@ -23,7 +23,11 @@ import {
 } from "#src/editing/adapters/save_backend.js";
 
 const stub: SaveBackend = {
-  saveLayer: async () => ({ status: "succeeded", layerId: "x" as never, chunkCount: 0 }),
+  saveLayer: async () => ({
+    status: "succeeded",
+    layerId: "x" as never,
+    chunkCount: 0,
+  }),
 };
 
 afterEach(() => {

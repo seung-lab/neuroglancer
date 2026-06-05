@@ -131,9 +131,8 @@ function buildFakeSession(): {
   ): Promise<ReadonlyChunkVoxelBuffer> => {
     const key = overlayKey(coord);
     const bytes =
-      baselineBytes.get(key) ?? new BigUint64Array(
-        CHUNK_SIZE[0] * CHUNK_SIZE[1] * CHUNK_SIZE[2],
-      );
+      baselineBytes.get(key) ??
+      new BigUint64Array(CHUNK_SIZE[0] * CHUNK_SIZE[1] * CHUNK_SIZE[2]);
     return { byteLength: bytes.byteLength, asView: () => bytes };
   };
 

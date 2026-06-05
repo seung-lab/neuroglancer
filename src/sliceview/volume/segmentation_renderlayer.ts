@@ -101,9 +101,7 @@ export interface SliceViewSegmentationDisplayState
    * Wired by the segmentation user layer from
    * `viewer.editSessionHost.getActiveRegionWatchableForLayer(this.name)`.
    */
-  editBboxLoHi?: WatchableValueInterface<
-    { lo: vec3; hi: vec3 } | undefined
-  >;
+  editBboxLoHi?: WatchableValueInterface<{ lo: vec3; hi: vec3 } | undefined>;
 
   /**
    * Voxel-edit resolution-display lock. When set, the slice-view's
@@ -112,7 +110,9 @@ export interface SliceViewSegmentationDisplayState
    * Same wiring pattern as `editBboxLoHi`.
    */
   allowedSourcePredicate?: WatchableValueInterface<
-    | ((source: SliceViewSingleResolutionSource<SliceViewChunkSource>) => boolean)
+    | ((
+        source: SliceViewSingleResolutionSource<SliceViewChunkSource>,
+      ) => boolean)
     | undefined
   >;
 
@@ -364,7 +364,9 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
         }
         const provider = editPatchOverlay.value;
         if (provider !== undefined) {
-          unsubscribeProvider = provider.changed.add(this.redrawNeeded.dispatch);
+          unsubscribeProvider = provider.changed.add(
+            this.redrawNeeded.dispatch,
+          );
         }
       };
       updateProviderSubscription();
@@ -445,16 +447,10 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
       const ly = Math.floor(vy - sy * gy);
       const lz = Math.floor(vz - sz * gz);
       // Out-of-chunk-range guards (parity with VolumeChunkSource.getValueAt).
-      if (
-        lx < 0 || ly < 0 || lz < 0 ||
-        lx >= sx || ly >= sy || lz >= sz
-      ) {
+      if (lx < 0 || ly < 0 || lz < 0 || lx >= sx || ly >= sy || lz >= sz) {
         continue;
       }
-      const patched = provider.getPatchedValueAt(
-        [gx, gy, gz],
-        [lx, ly, lz],
-      );
+      const patched = provider.getPatchedValueAt([gx, gy, gz], [lx, ly, lz]);
       if (patched !== undefined) {
         return patched;
       }

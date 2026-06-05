@@ -135,9 +135,7 @@ function getEditBboxLoHiForLayer(
     | {
         getActiveRegionWatchableForLayer(
           layerName: string,
-        ): WatchableValueInterface<
-          { lo: vec3; hi: vec3 } | undefined
-        >;
+        ): WatchableValueInterface<{ lo: vec3; hi: vec3 } | undefined>;
       }
     | undefined;
   return host?.getActiveRegionWatchableForLayer(layerName);

@@ -66,8 +66,15 @@ export class PanelMount<T> extends SidePanel {
   }
 
   private renderBody(): void {
-    mountComponent(this.bodyElement, this.options.component, this.options.getProps());
-    if (this.options.getTitle !== undefined && this.titleElement !== undefined) {
+    mountComponent(
+      this.bodyElement,
+      this.options.component,
+      this.options.getProps(),
+    );
+    if (
+      this.options.getTitle !== undefined &&
+      this.titleElement !== undefined
+    ) {
       this.titleElement.textContent = this.options.getTitle();
     }
   }

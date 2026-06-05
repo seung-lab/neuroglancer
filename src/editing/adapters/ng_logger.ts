@@ -1,8 +1,4 @@
-import type {
-  Logger,
-  LoggerChannel,
-  LogLevel,
-} from "@zettaai/edit-session";
+import type { Logger, LoggerChannel, LogLevel } from "@zettaai/edit-session";
 
 import { StatusMessage } from "#src/status.js";
 

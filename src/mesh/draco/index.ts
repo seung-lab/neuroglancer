@@ -139,22 +139,36 @@ export async function decodeDracoPartitionedWithOctantCenter(
 
   try {
     if (partition) {
-      if (octantCenterX === undefined || octantCenterY === undefined || octantCenterZ === undefined) {
-        throw new Error("NotImplemented: Partitioned meshes require octant center coordinates");
+      if (
+        octantCenterX === undefined ||
+        octantCenterY === undefined ||
+        octantCenterZ === undefined
+      ) {
+        throw new Error(
+          "NotImplemented: Partitioned meshes require octant center coordinates",
+        );
       }
-      
+
       // Allocate memory for the coordinate array
       coordsOffset = (m.exports.malloc as Function)(12); // 3 * 4 bytes
-      const floatBuffer = new Float32Array([octantCenterX, octantCenterY, octantCenterZ]);
+      const floatBuffer = new Float32Array([
+        octantCenterX,
+        octantCenterY,
+        octantCenterZ,
+      ]);
       const uint32View = new Uint32Array(floatBuffer.buffer);
-      const coordsHeap = new Uint32Array((m.exports.memory as WebAssembly.Memory).buffer);
+      const coordsHeap = new Uint32Array(
+        (m.exports.memory as WebAssembly.Memory).buffer,
+      );
       coordsHeap.set(uint32View, coordsOffset / 4);
     } else {
       // For non-partitioned meshes, use dummy coordinates (they won't be used)
       coordsOffset = (m.exports.malloc as Function)(12); // 3 * 4 bytes
       const floatBuffer = new Float32Array([0, 0, 0]);
       const uint32View = new Uint32Array(floatBuffer.buffer);
-      const coordsHeap = new Uint32Array((m.exports.memory as WebAssembly.Memory).buffer);
+      const coordsHeap = new Uint32Array(
+        (m.exports.memory as WebAssembly.Memory).buffer,
+      );
       coordsHeap.set(uint32View, coordsOffset / 4);
     }
 

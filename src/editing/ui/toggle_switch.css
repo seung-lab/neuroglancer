@@ -57,6 +57,7 @@
   flex: 0 0 auto;
 }
 
-.neuroglancer-toggle-switch-tooltip-wrap > .neuroglancer-toggle-switch:disabled {
+.neuroglancer-toggle-switch-tooltip-wrap
+  > .neuroglancer-toggle-switch:disabled {
   pointer-events: none;
 }

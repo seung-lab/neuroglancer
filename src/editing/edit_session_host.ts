@@ -36,7 +36,9 @@ import type {
   ZExtrapolationState,
   ZExtrapolationTool,
   CorrespondenceState,
- SavePayload, SaveLayerOutcome } from "@zettaai/edit-session";
+  SavePayload,
+  SaveLayerOutcome,
+} from "@zettaai/edit-session";
 import {
   ChunkId as ChunkIdFactory,
   EditSession,
@@ -56,7 +58,10 @@ import { NgClock } from "#src/editing/adapters/ng_clock.js";
 import { NgCommitTarget } from "#src/editing/adapters/ng_commit_target.js";
 import { NgLayerMetadataSource } from "#src/editing/adapters/ng_layer_metadata_source.js";
 import { NgLogger } from "#src/editing/adapters/ng_logger.js";
-import { NgSaveTarget, resolveDataSourceUrl } from "#src/editing/adapters/ng_save_target.js";
+import {
+  NgSaveTarget,
+  resolveDataSourceUrl,
+} from "#src/editing/adapters/ng_save_target.js";
 import { NgSessionLockAdapter } from "#src/editing/adapters/ng_session_lock.js";
 import type { SaveBackend } from "#src/editing/adapters/save_backend.js";
 import {
@@ -317,7 +322,9 @@ export class EditSessionHost extends RefCounted {
    * Edit button subscribes and opens the modal, pre-selecting the optional
    * bbox key (the `BboxSelectionModel` entry key of the just-drawn box).
    */
-  readonly requestSessionEntry = new Signal<(preselectBboxKey?: string) => void>();
+  readonly requestSessionEntry = new Signal<
+    (preselectBboxKey?: string) => void
+  >();
 
   /** Owns the in-flight quick-region capture; lazily constructed. */
   private quickRegionCapture: QuickRegionCapture | undefined;
@@ -671,9 +678,8 @@ export class EditSessionHost extends RefCounted {
       );
       return;
     }
-    const target = toolId !== undefined
-      ? this.toolPanelLocationFor(toolId)
-      : undefined;
+    const target =
+      toolId !== undefined ? this.toolPanelLocationFor(toolId) : undefined;
     for (const loc of this.allToolPanelLocations()) {
       loc.visible = loc === target;
     }
@@ -707,9 +713,8 @@ export class EditSessionHost extends RefCounted {
     if (activeId === undefined) return undefined;
     try {
       if (activeId.startsWith("painting")) {
-        return session.tools
-          .getTool<PaintingTools>("painting")
-          .getState().targetResolution;
+        return session.tools.getTool<PaintingTools>("painting").getState()
+          .targetResolution;
       }
       if (activeId.startsWith("z-extrapolation")) {
         return session.tools
@@ -1554,7 +1559,7 @@ export class EditSessionHost extends RefCounted {
    * `layerId` and `layerResolution` are retained for API symmetry; the
    * current bbox is layer-agnostic in display coords.
    */
-   
+
   private async computeActiveRegion(
     _layerId: LayerId,
     _layerResolution: ResolutionType,
@@ -1654,7 +1659,10 @@ export class EditSessionHost extends RefCounted {
       targetLayerId !== undefined
         ? this.findSegmentationUserLayer(targetLayerId)
         : undefined;
-    if (userLayer === undefined && this.cursorOverlayFallbackLayerId !== undefined) {
+    if (
+      userLayer === undefined &&
+      this.cursorOverlayFallbackLayerId !== undefined
+    ) {
       resolvedLayerId = this.cursorOverlayFallbackLayerId;
       userLayer = this.findSegmentationUserLayer(resolvedLayerId);
     }

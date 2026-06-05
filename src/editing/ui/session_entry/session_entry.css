@@ -622,7 +622,8 @@
   display: inline-flex;
 }
 
-.neuroglancer-edit-session-entry-modal-open-wrap > .neuroglancer-edit-session-entry-modal-btn:disabled {
+.neuroglancer-edit-session-entry-modal-open-wrap
+  > .neuroglancer-edit-session-entry-modal-btn:disabled {
   pointer-events: none;
 }
 

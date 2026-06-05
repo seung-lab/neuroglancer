@@ -64,7 +64,10 @@ import type {
   TransformedSource,
 } from "#src/sliceview/base.js";
 import type { VolumeChunk } from "#src/sliceview/volume/backend.js";
-import { VolumeChunkSource , computeChunkBounds } from "#src/sliceview/volume/backend.js";
+import {
+  VolumeChunkSource,
+  computeChunkBounds,
+} from "#src/sliceview/volume/backend.js";
 import { Uint64Set } from "#src/uint64_set.js";
 import { vec3Key } from "#src/util/geom.js";
 import { HttpError } from "#src/util/http_request.js";
@@ -135,7 +138,10 @@ const calcadaChunkDecoders = new Map<
   VolumeChunkEncoding,
   (chunk: VolumeChunk, signal: AbortSignal, data: ArrayBuffer) => Promise<void>
 >();
-calcadaChunkDecoders.set(VolumeChunkEncoding.COMPRESSED_SEGMENTATION, decodeCompressedSegmentationChunk);
+calcadaChunkDecoders.set(
+  VolumeChunkEncoding.COMPRESSED_SEGMENTATION,
+  decodeCompressedSegmentationChunk,
+);
 calcadaChunkDecoders.set(VolumeChunkEncoding.RAW, decodeRawChunk);
 
 /**
@@ -212,7 +218,9 @@ export class CalcadaVolumeChunkSource extends WithParameters(
     const lutByteSize = lutCount * 16 + 4;
 
     if (lutCount === 0 || lutByteSize > byteLen) {
-      console.warn(`[calcada chunk] NO LUT: bbox=${chunkPath} byteLen=${byteLen} lutCount=${lutCount}`);
+      console.warn(
+        `[calcada chunk] NO LUT: bbox=${chunkPath} byteLen=${byteLen} lutCount=${lutCount}`,
+      );
       await this.chunkDecoder(chunk, signal, fullBuffer);
       return;
     }
@@ -244,10 +252,14 @@ export class CalcadaVolumeChunkSource extends WithParameters(
       }
       if (pairs.length > 0 && equivs.rpc) {
         const buf = new BigUint64Array(pairs);
-        equivs.rpc.invoke(CALCADA_BULK_LINK_RPC_ID, {
-          id: equivs.rpcId,
-          pairs: buf.buffer,
-        }, [buf.buffer]);
+        equivs.rpc.invoke(
+          CALCADA_BULK_LINK_RPC_ID,
+          {
+            id: equivs.rpcId,
+            pairs: buf.buffer,
+          },
+          [buf.buffer],
+        );
       }
     }
 
@@ -649,4 +661,3 @@ registerRPC(GRAPHENE_MESH_NEW_SEGMENT_RPC_ID, function (x) {
   const obj = <GrapheneMeshSource>this.get(x.rpcId);
   obj.addNewSegment(x.segment);
 });
-

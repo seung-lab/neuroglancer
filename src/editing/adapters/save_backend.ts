@@ -8,11 +8,7 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import type {
-  LayerId,
-  LayerMetadata,
-  SavedChunk,
-} from "@zettaai/edit-session";
+import type { LayerId, LayerMetadata, SavedChunk } from "@zettaai/edit-session";
 
 import { NullarySignal } from "#src/util/signal.js";
 
@@ -26,7 +22,11 @@ import { NullarySignal } from "#src/util/signal.js";
  * surface per-chunk progress and "no backend for this data source" cases.
  */
 export type SaveBackendResult =
-  | { readonly status: "succeeded"; readonly layerId: LayerId; readonly chunkCount: number }
+  | {
+      readonly status: "succeeded";
+      readonly layerId: LayerId;
+      readonly chunkCount: number;
+    }
   | {
       readonly status: "partial";
       readonly layerId: LayerId;
@@ -34,8 +34,16 @@ export type SaveBackendResult =
       readonly failed: number;
       readonly details: string;
     }
-  | { readonly status: "failed"; readonly layerId: LayerId; readonly error: string }
-  | { readonly status: "skipped"; readonly layerId: LayerId; readonly reason: string };
+  | {
+      readonly status: "failed";
+      readonly layerId: LayerId;
+      readonly error: string;
+    }
+  | {
+      readonly status: "skipped";
+      readonly layerId: LayerId;
+      readonly reason: string;
+    };
 
 // Uses the library's `SavedChunk` (index.d.mts line 376) directly — its
 // fields (chunkId, chunkCoord, contentRef, bytes, layerId, resolution) cover

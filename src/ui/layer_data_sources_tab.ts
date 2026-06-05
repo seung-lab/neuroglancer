@@ -447,9 +447,7 @@ export class DataSourceView extends RefCounted {
       inputElement.contentEditable = locked ? "false" : "true";
       if (locked) {
         inputElement.title = SESSION_LOCK_TOOLTIP;
-        urlInput.element.classList.add(
-          "neuroglancer-layer-data-source-locked",
-        );
+        urlInput.element.classList.add("neuroglancer-layer-data-source-locked");
       } else {
         if (inputElement.title === SESSION_LOCK_TOOLTIP) {
           inputElement.removeAttribute("title");
@@ -487,7 +485,9 @@ interface EditSessionHostLike {
   };
 }
 
-function getEditSessionHost(userLayer: UserLayer): EditSessionHostLike | undefined {
+function getEditSessionHost(
+  userLayer: UserLayer,
+): EditSessionHostLike | undefined {
   const root = userLayer.manager.root;
   const host = (root as unknown as { editSessionHost?: unknown })
     .editSessionHost;
