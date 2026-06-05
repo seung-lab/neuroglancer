@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+
+# Cancel superseded runs when a PR is updated.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  # Needed to install @zettaai/* packages from GitHub Packages via .npmrc.
+  packages: read
+
+jobs:
+  ci:
+    name: Lint, typecheck, test & build
+    runs-on: ubuntu-latest
+    env:
+      # Consumed by .npmrc to authenticate against npm.pkg.github.com.
+      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            examples/**/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint:check
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build client bundles
+        run: >-
+          npm run build --
+          --no-typecheck
+          --no-lint
+          --define STATE_SERVERS=$(cat config/state_servers.json | tr -d " \t\n\r")
+          --define CUSTOM_BINDINGS=$(cat config/custom-keybinds.json | tr -d " \t\n\r")
