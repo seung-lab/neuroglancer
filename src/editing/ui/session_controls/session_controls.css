@@ -38,37 +38,65 @@
 .neuroglancer-tool-panel {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 10px;
 }
 
+/* Every parameter row: label takes its natural width on the left, the value
+   control(s) are pushed to a shared right edge via `margin-left: auto`. */
 .neuroglancer-tool-panel-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+  gap: 10px;
+  min-height: 24px;
 }
 
 .neuroglancer-tool-panel-row label {
-  flex: 0 0 auto;
-  min-width: 96px;
-  font-size: 11px;
-  color: #ccc;
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  color: #cfd3da;
 }
 
 .neuroglancer-tool-panel-row select,
 .neuroglancer-tool-panel-row input[type="text"],
 .neuroglancer-tool-panel-row input[type="number"] {
-  flex: 1 1 auto;
-  min-width: 64px;
-  background: #1a1a1a;
-  border: 1px solid #444;
-  color: #ddd;
-  padding: 2px 4px;
+  margin-left: auto;
+  flex: 0 1 auto;
+  width: 110px;
+  min-width: 0;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  color: #e5e7eb;
+  padding: 4px 8px;
   font: inherit;
 }
 
+.neuroglancer-tool-panel-row select:focus-visible,
+.neuroglancer-tool-panel-row input[type="text"]:focus-visible,
+.neuroglancer-tool-panel-row input[type="number"]:focus-visible {
+  outline: none;
+  border-color: #3b82f6;
+}
+
 .neuroglancer-tool-panel-row input[type="range"] {
-  flex: 1 1 80px;
+  flex: 1 1 auto;
+  min-width: 0;
+  accent-color: #3b82f6;
+}
+
+/* When a range and a numeric readout share a row, the range fills the gap
+   and the number keeps its fixed width at the right edge. */
+.neuroglancer-tool-panel-row input[type="range"] + input[type="number"] {
+  margin-left: 0;
+  flex: 0 0 auto;
+  width: 56px;
+  text-align: center;
+}
+
+/* A trailing switch (e.g. "Filter components first") right-aligns. */
+.neuroglancer-tool-panel-row > .neuroglancer-toggle-switch {
+  margin-left: auto;
 }
 
 .neuroglancer-tool-panel-readonly {
@@ -79,14 +107,17 @@
 
 /* Static resolution display when a layer is single-resolution. */
 .neuroglancer-tool-panel-resolution-static {
-  flex: 1 1 auto;
+  margin-left: auto;
+  flex: 0 1 auto;
+  width: 110px;
+  box-sizing: border-box;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
-  color: #aaa;
-  padding: 2px 4px;
-  background: #181818;
-  border: 1px solid #2a2a2a;
-  border-radius: 2px;
+  color: #8b929c;
+  padding: 4px 8px;
+  background: #232323;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
 }
 
 /* Segmented switch (e.g. Fill's 2D/3D toggle). */

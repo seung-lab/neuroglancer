@@ -1,0 +1,51 @@
+/*
+ * Copyright 2026 Calcada AI / Zetta AI
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ */
+
+.neuroglancer-toggle-switch {
+  --neuroglancer-toggle-track: #3a3f4b;
+  --neuroglancer-toggle-track-on: #3b82f6;
+  position: relative;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--neuroglancer-toggle-track);
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.neuroglancer-toggle-switch[data-checked="true"] {
+  background: var(--neuroglancer-toggle-track-on);
+}
+
+.neuroglancer-toggle-switch:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.neuroglancer-toggle-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  transition: transform 120ms ease;
+}
+
+.neuroglancer-toggle-switch[data-checked="true"]
+  .neuroglancer-toggle-switch-thumb {
+  transform: translateX(16px);
+}
+
+.neuroglancer-toggle-switch:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
+}

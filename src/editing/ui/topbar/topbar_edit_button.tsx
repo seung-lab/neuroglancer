@@ -9,7 +9,7 @@
  */
 
 import { Pencil } from "lucide-preact";
-import { useCallback, useState } from "preact/hooks";
+import { useCallback, useEffect, useState } from "preact/hooks";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { ConfirmDialog } from "#src/editing/ui/confirm_dialog.js";
@@ -32,7 +32,21 @@ export function TopbarEditButton({ host }: { host: EditSessionHost }) {
   const isActive = sessionOrUndefined !== undefined;
 
   const [open, setOpen] = useState(false);
+  const [preselectBboxKey, setPreselectBboxKey] = useState<string | undefined>(
+    undefined,
+  );
   const [confirmExitOpen, setConfirmExitOpen] = useState(false);
+
+  // The quick edit-region flow (TM-290) draws a box, then asks the topbar to
+  // open the modal pre-selected on that box.
+  useEffect(
+    () =>
+      host.requestSessionEntry.add((key?: string) => {
+        setPreselectBboxKey(key);
+        setOpen(true);
+      }),
+    [host],
+  );
 
   const discardActive = useCallback(async () => {
     try {
@@ -81,8 +95,12 @@ export function TopbarEditButton({ host }: { host: EditSessionHost }) {
       </button>
       <SessionEntryModal
         open={open}
-        onClose={() => setOpen(false)}
+        onClose={() => {
+          setOpen(false);
+          setPreselectBboxKey(undefined);
+        }}
         host={host}
+        preselectBboxKey={preselectBboxKey}
       />
       <ConfirmDialog
         open={confirmExitOpen}

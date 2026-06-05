@@ -57,6 +57,13 @@ export interface SessionEntryModalProps {
   open: boolean;
   onClose: () => void;
   host: EditSessionHost;
+  /**
+   * When set, the modal selects the bbox with this `BboxSelectionModel` entry
+   * key on open (the quick edit-region flow, TM-290), overriding the default
+   * "newest bbox" auto-selection. Ignored if the key isn't among the
+   * candidate bboxes.
+   */
+  preselectBboxKey?: string;
 }
 
 /**
@@ -78,10 +85,14 @@ export function SessionEntryModal(
 ) {
   // New contract: gated by `open`, mounts its own portal.
   if ("open" in props) {
-    const { open, onClose, host } = props;
+    const { open, onClose, host, preselectBboxKey } = props;
     if (!open) return null;
     return createPortal(
-      <SessionEntryModalBody host={host} onClose={onClose} />,
+      <SessionEntryModalBody
+        host={host}
+        onClose={onClose}
+        preselectBboxKey={preselectBboxKey}
+      />,
       document.body,
     );
   }
@@ -143,8 +154,10 @@ function SessionEntryModalBody(props: {
    * pre-TM-294 wrapper to share a model with its open-gate logic.
    */
   bboxModelOverride?: BboxSelectionModel;
+  /** Bbox entry key to select on open (TM-290 quick edit-region flow). */
+  preselectBboxKey?: string;
 }) {
-  const { host, onClose, bboxModelOverride } = props;
+  const { host, onClose, bboxModelOverride, preselectBboxKey } = props;
   const layerManager: LayerManager = host.viewer.layerManager;
   const metadataSource = host.layerMetadataSource;
 
@@ -190,6 +203,21 @@ function SessionEntryModalBody(props: {
   useEffect(() => {
     setSelectedBbox(bboxModel.selection);
   }, [bboxModel.selection, bboxModel.selectedKey, bboxModel.entries]);
+
+  // Quick edit-region flow (TM-290): once the just-drawn box shows up among
+  // the candidates, select it — overriding the default newest-bbox pick.
+  // Applied at most once per requested key.
+  const preselectAppliedRef = useRef(false);
+  useEffect(() => {
+    preselectAppliedRef.current = false;
+  }, [preselectBboxKey]);
+  useEffect(() => {
+    if (preselectBboxKey === undefined || preselectAppliedRef.current) return;
+    if (bboxModel.entries.some((e) => e.key === preselectBboxKey)) {
+      preselectAppliedRef.current = true;
+      bboxModel.select(preselectBboxKey);
+    }
+  }, [bboxModel, preselectBboxKey, bboxModel.entries]);
 
   useEffect(() => {
     const removeLayers = layerManager.layersChanged.add(() => {

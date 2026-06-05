@@ -1,0 +1,149 @@
+/*
+ * Copyright 2026 Calcada AI / Zetta AI
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ */
+
+.neuroglancer-painting-threshold {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  --neuroglancer-threshold-accent: #3b82f6;
+}
+
+/* Rail + two overlapping range inputs share one stacking context. */
+.neuroglancer-painting-threshold-track {
+  position: relative;
+  height: 16px;
+  display: flex;
+  align-items: center;
+}
+
+.neuroglancer-painting-threshold-rail {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 4px;
+  border-radius: 999px;
+  background: #3a3f4b;
+}
+
+.neuroglancer-painting-threshold-fill {
+  position: absolute;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--neuroglancer-threshold-accent);
+}
+
+/* Both handles span the full rail; their tracks are click-through so the
+   highlighted fill and the other handle stay reachable. Only the thumbs
+   capture pointer events. */
+.neuroglancer-painting-threshold-handle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  width: 100%;
+  height: 16px;
+  margin: 0;
+  background: none;
+  pointer-events: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.neuroglancer-painting-threshold-handle:focus-visible {
+  outline: none;
+}
+
+.neuroglancer-painting-threshold-handle-low {
+  z-index: 2;
+}
+
+.neuroglancer-painting-threshold-handle-high {
+  z-index: 1;
+}
+
+.neuroglancer-painting-threshold-handle::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  pointer-events: auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--neuroglancer-threshold-accent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+
+.neuroglancer-painting-threshold-handle::-moz-range-thumb {
+  pointer-events: auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--neuroglancer-threshold-accent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+
+.neuroglancer-painting-threshold-handle::-webkit-slider-runnable-track {
+  background: none;
+  border: none;
+}
+
+.neuroglancer-painting-threshold-handle::-moz-range-track {
+  background: none;
+  border: none;
+}
+
+.neuroglancer-painting-threshold-handle:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid #93c5fd;
+  outline-offset: 1px;
+}
+
+.neuroglancer-painting-threshold-handle:focus-visible::-moz-range-thumb {
+  outline: 2px solid #93c5fd;
+  outline-offset: 1px;
+}
+
+/* Numeric low/high inputs pinned to the rail's two ends. */
+.neuroglancer-painting-threshold-fields {
+  display: flex;
+  justify-content: space-between;
+}
+
+.neuroglancer-painting-threshold-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+}
+
+.neuroglancer-painting-threshold-field-high {
+  align-items: flex-end;
+}
+
+.neuroglancer-painting-threshold-field span {
+  font-size: 10px;
+  color: #8b929c;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.neuroglancer-painting-threshold-field input[type="number"] {
+  width: 56px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  color: #e5e7eb;
+  padding: 3px 6px;
+  font: inherit;
+  text-align: center;
+}
+
+.neuroglancer-painting-threshold-field input[type="number"]:focus-visible {
+  outline: none;
+  border-color: var(--neuroglancer-threshold-accent);
+}

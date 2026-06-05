@@ -17,7 +17,7 @@ import type {
   Resolution,
 } from "@zettaai/edit-session";
 import { layerId as toLayerId } from "@zettaai/edit-session";
-import { ChevronDown, ChevronRight } from "lucide-preact";
+import { ChevronDown } from "lucide-preact";
 import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
@@ -26,6 +26,8 @@ import { useEvent } from "#src/editing/ui/interop/use_event.js";
 import { useWatchable } from "#src/editing/ui/interop/use_watchable.js";
 import { layerKindOf } from "#src/editing/ui/layer_kind.js";
 import { PaintingTargetPicker } from "#src/editing/ui/tool_settings/painting_target_picker.js";
+import { PaintingThreshold } from "#src/editing/ui/tool_settings/painting_threshold.js";
+import { ToggleSwitch } from "#src/editing/ui/toggle_switch.js";
 import "#src/editing/ui/tool_settings/painting_brush.css";
 
 const MAX_SIZE = 129; // size = radius*2+1; max radius 64.
@@ -132,7 +134,6 @@ function AdvancedBrush({
 }) {
   const intent = host.state.value.value;
   const layerManager = host.viewer.layerManager;
-  const [expanded, setExpanded] = useState(false);
   const [metadataByLayer, setMetadataByLayer] = useState<
     ReadonlyMap<string, LayerMetadata>
   >(new Map());
@@ -141,8 +142,7 @@ function AdvancedBrush({
     if (intent === null) return [];
     return intent.layers
       .filter(
-        (l) =>
-          layerKindOf(layerManager.getLayerByName(l.layerId)) === "image",
+        (l) => layerKindOf(layerManager.getLayerByName(l.layerId)) === "image",
       )
       .map((l) => ({
         layerId: toLayerId(l.layerId),
@@ -153,9 +153,7 @@ function AdvancedBrush({
   // Resolve metadata for each image layer once.
   useEffect(() => {
     let cancelled = false;
-    const missing = imageEntries.filter(
-      (e) => !metadataByLayer.has(e.layerId),
-    );
+    const missing = imageEntries.filter((e) => !metadataByLayer.has(e.layerId));
     if (missing.length === 0) return undefined;
     void Promise.all(
       missing.map((e) =>
@@ -256,13 +254,8 @@ function AdvancedBrush({
     painting.patchState({ mask: { ...mask, ...patch } });
   };
 
-  const onLowChange = (e: Event) => {
-    const v = (e.currentTarget as HTMLInputElement).valueAsNumber;
-    if (Number.isFinite(v)) patchMask({ thresholdLow: v });
-  };
-  const onHighChange = (e: Event) => {
-    const v = (e.currentTarget as HTMLInputElement).valueAsNumber;
-    if (Number.isFinite(v)) patchMask({ thresholdHigh: v });
+  const onThresholdChange = (low: number, high: number) => {
+    patchMask({ thresholdLow: low, thresholdHigh: high });
   };
   const onMinComponentChange = (e: Event) => {
     const v = (e.currentTarget as HTMLInputElement).valueAsNumber;
@@ -273,11 +266,6 @@ function AdvancedBrush({
     const v = (e.currentTarget as HTMLInputElement).valueAsNumber;
     if (Number.isFinite(v))
       patchMask({ binaryClosing: Math.max(0, Math.floor(v)) });
-  };
-  const onFilterFirstChange = (e: Event) => {
-    patchMask({
-      filterComponentsFirst: (e.currentTarget as HTMLInputElement).checked,
-    });
   };
 
   const currentEntry = mask
@@ -294,147 +282,119 @@ function AdvancedBrush({
   const showSliders =
     enabled && currentRange !== null && currentDtype !== "float32";
 
+  // The switch is the single control for the section: turning it on enables
+  // the mask AND reveals its parameters; turning it off hides them and clears
+  // the mask. There is no separate expand/collapse state (per TM-294 redesign).
+  const toggleTitle =
+    toggleDisabled && disabledHint !== undefined
+      ? disabledHint
+      : enabled
+        ? "Disable advanced brush (mask)"
+        : "Enable advanced brush (mask)";
+
   return (
     <div class="neuroglancer-painting-brush-advanced">
       <div class="neuroglancer-painting-brush-advanced-header">
-        <button
-          type="button"
+        <span
           class="neuroglancer-painting-brush-advanced-summary"
-          onClick={() => setExpanded(!expanded)}
+          data-on={enabled ? "true" : "false"}
         >
-          {expanded ? (
-            <ChevronDown size={16} aria-hidden="true" />
-          ) : (
-            <ChevronRight size={16} aria-hidden="true" />
-          )}
-          Advanced
-        </button>
-        {/* Enable-toggle lives on the header, per TM-294. Clicking the
-            checkbox does NOT expand the section — that's a separate
-            interaction. */}
-        <label
-          class="neuroglancer-painting-brush-advanced-toggle"
-          title={
-            toggleDisabled && disabledHint !== undefined
-              ? disabledHint
-              : enabled
-                ? "Disable advanced brush (mask)"
-                : "Enable advanced brush (mask)"
-          }
-          onClick={(e) => e.stopPropagation()}
-        >
-          <input
-            type="checkbox"
-            checked={enabled}
-            disabled={toggleDisabled}
-            onChange={onToggle}
+          <ChevronDown
+            size={14}
+            class="neuroglancer-painting-brush-advanced-chevron"
+            aria-hidden="true"
           />
-        </label>
+          Advanced
+        </span>
+        <ToggleSwitch
+          checked={enabled}
+          disabled={toggleDisabled}
+          title={toggleTitle}
+          ariaLabel={
+            enabled
+              ? "Disable advanced brush (mask)"
+              : "Enable advanced brush (mask)"
+          }
+          onChange={onToggle}
+        />
       </div>
-      {expanded && (
+      {disabledHint !== undefined && (
+        <div class="neuroglancer-painting-brush-advanced-hint">
+          {disabledHint}
+        </div>
+      )}
+      {enabled && currentEntry !== undefined && (
         <div class="neuroglancer-painting-brush-advanced-body">
-          {disabledHint !== undefined && (
-            <div class="neuroglancer-painting-brush-advanced-hint">
-              {disabledHint}
+          <div class="neuroglancer-tool-panel-row">
+            <label>Mask layer</label>
+            <select value={mask!.imageLayerId} onChange={onMaskLayerChange}>
+              {imageEntries.map((e) => (
+                <option key={e.layerId} value={e.layerId}>
+                  {e.layerId}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div class="neuroglancer-tool-panel-row">
+            <label>Mask resolution</label>
+            {currentEntry.resolutions.length <= 1 ? (
+              <span class="neuroglancer-tool-panel-resolution-static">
+                {mask!.imageResolution}
+              </span>
+            ) : (
+              <select
+                value={mask!.imageResolution}
+                onChange={onMaskResolutionChange}
+              >
+                {currentEntry.resolutions.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+          {currentRange !== null && (
+            <div class="neuroglancer-painting-brush-threshold-row">
+              <label>Threshold</label>
+              <PaintingThreshold
+                min={currentRange.min}
+                max={currentRange.max}
+                low={mask!.thresholdLow}
+                high={mask!.thresholdHigh}
+                showHandles={showSliders}
+                onChange={onThresholdChange}
+              />
             </div>
           )}
-          {enabled && currentEntry !== undefined && (
-            <>
-              <div class="neuroglancer-tool-panel-row">
-                <label>Mask layer</label>
-                <select
-                  value={mask!.imageLayerId}
-                  onChange={onMaskLayerChange}
-                >
-                  {imageEntries.map((e) => (
-                    <option key={e.layerId} value={e.layerId}>
-                      {e.layerId}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div class="neuroglancer-tool-panel-row">
-                <label>Mask resolution</label>
-                {currentEntry.resolutions.length <= 1 ? (
-                  <span class="neuroglancer-tool-panel-resolution-static">
-                    {mask!.imageResolution}
-                  </span>
-                ) : (
-                  <select
-                    value={mask!.imageResolution}
-                    onChange={onMaskResolutionChange}
-                  >
-                    {currentEntry.resolutions.map((r) => (
-                      <option key={r} value={r}>
-                        {r}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-              <div class="neuroglancer-tool-panel-row neuroglancer-painting-brush-threshold">
-                <label>Threshold</label>
-                {showSliders && currentRange !== null && (
-                  <>
-                    <input
-                      type="range"
-                      min={currentRange.min}
-                      max={currentRange.max}
-                      value={mask!.thresholdLow}
-                      onInput={onLowChange}
-                    />
-                    <input
-                      type="range"
-                      min={currentRange.min}
-                      max={currentRange.max}
-                      value={mask!.thresholdHigh}
-                      onInput={onHighChange}
-                    />
-                  </>
-                )}
-                <input
-                  type="number"
-                  value={mask!.thresholdLow}
-                  onChange={onLowChange}
-                />
-                <input
-                  type="number"
-                  value={mask!.thresholdHigh}
-                  onChange={onHighChange}
-                />
-              </div>
-              <div class="neuroglancer-tool-panel-row">
-                <label>Min component</label>
-                <input
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={mask!.minComponentSize}
-                  onChange={onMinComponentChange}
-                />
-              </div>
-              <div class="neuroglancer-tool-panel-row">
-                <label>Binary closing</label>
-                <input
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={mask!.binaryClosing}
-                  onChange={onClosingChange}
-                />
-              </div>
-              <div class="neuroglancer-tool-panel-row">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={mask!.filterComponentsFirst}
-                    onChange={onFilterFirstChange}
-                  />
-                  {" Filter components first"}
-                </label>
-              </div>
-            </>
-          )}
+          <div class="neuroglancer-tool-panel-row">
+            <label>Min component</label>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={mask!.minComponentSize}
+              onChange={onMinComponentChange}
+            />
+          </div>
+          <div class="neuroglancer-tool-panel-row">
+            <label>Binary closing</label>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={mask!.binaryClosing}
+              onChange={onClosingChange}
+            />
+          </div>
+          <div class="neuroglancer-tool-panel-row">
+            <label>Filter components first</label>
+            <ToggleSwitch
+              checked={mask!.filterComponentsFirst}
+              ariaLabel="Filter components first"
+              onChange={(v) => patchMask({ filterComponentsFirst: v })}
+            />
+          </div>
         </div>
       )}
     </div>

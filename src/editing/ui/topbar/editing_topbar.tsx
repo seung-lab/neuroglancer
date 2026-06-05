@@ -14,13 +14,11 @@ import type { EditSession } from "@zettaai/edit-session";
 import type { LucideIcon } from "lucide-preact";
 import {
   Eraser,
-  Layers,
   MousePointer2,
   PaintBucket,
   Paintbrush,
   Redo2,
   Undo2,
-  Waypoints,
 } from "lucide-preact";
 import {
   useCallback,
@@ -66,23 +64,6 @@ const TOOL_ENTRIES: readonly ToolEntry[] = [
   { toolId: "painting.brush", label: "Brush", hotkey: "B", Icon: Paintbrush },
   { toolId: "painting.erase", label: "Eraser", hotkey: "E", Icon: Eraser },
   { toolId: "painting.fill", label: "Fill", hotkey: "F", Icon: PaintBucket },
-  // Z-extrap uses Ctrl+P (propagate) since Ctrl+Z is reserved for Undo. The
-  // hotkey binder mirrors this choice — see session_hotkey_binder.ts. Future
-  // engineers may pick another free letter if `P` becomes inconvenient.
-  {
-    toolId: "z-extrapolation",
-    label: "Z-extrapolation",
-    hotkey: "P",
-    Icon: Layers,
-    markDisabled: true,
-  },
-  {
-    toolId: "correspondence",
-    label: "Correspondence",
-    hotkey: "R",
-    Icon: Waypoints,
-    markDisabled: true,
-  },
 ];
 
 export function EditingTopbar({ host }: { host: EditSessionHost }) {
