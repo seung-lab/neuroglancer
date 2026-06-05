@@ -61,7 +61,10 @@ import { withSegmentationLayerBackendState } from "#src/segmentation_display_sta
 import type { SharedWatchableValue } from "#src/shared_watchable_value.js";
 import type { SliceViewChunkSourceBackend } from "#src/sliceview/backend.js";
 import { deserializeTransformedSources } from "#src/sliceview/backend.js";
-import type { TransformedSource } from "#src/sliceview/base.js";
+import type {
+  SliceViewProjectionParameters,
+  TransformedSource,
+} from "#src/sliceview/base.js";
 import { computeChunkBounds } from "#src/sliceview/volume/backend.js";
 import { Uint64Set } from "#src/uint64_set.js";
 import { vec3Key } from "#src/util/geom.js";
@@ -602,7 +605,25 @@ export class ChunkedGraphLayer extends withSegmentationLayerBackendState(
   private updateChunkPriorities() {
     const { chunkManager } = this;
     chunkManager.registerLayer(this);
-    this.leafRequestsActive.value = false;
+    for (const attachment of this.attachments.values()) {
+      const { view } = attachment;
+      if (view.visibility.value === Number.NEGATIVE_INFINITY) {
+        continue;
+      }
+      const attachmentState =
+        attachment.state! as ChunkedGraphRenderLayerAttachmentState;
+      const { transformedSource: tsource } = attachmentState;
+      if (!tsource) {
+        continue;
+      }
+      const projectionParameters = view.projectionParameters
+        .value as SliceViewProjectionParameters;
+      const pixelSize = projectionParameters.pixelSize * 1.1;
+      const smallestVoxelSize = tsource.effectiveVoxelSize;
+      this.leafRequestsActive.value =
+        this.renderRatioLimit >= pixelSize / Math.min(...smallestVoxelSize);
+      return;
+    }
   }
 }
 
