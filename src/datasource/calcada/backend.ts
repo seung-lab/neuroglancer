@@ -41,6 +41,10 @@ import {
   getHttpSource,
 } from "#src/datasource/calcada/base.js";
 import { decodeManifestChunk } from "#src/datasource/precomputed/backend.js";
+import { decodeCompressedSegmentationChunk } from "#src/sliceview/backend_chunk_decoders/compressed_segmentation.js";
+import { decodeRawChunk } from "#src/sliceview/backend_chunk_decoders/raw.js";
+import type { VolumeChunk } from "#src/sliceview/volume/backend.js";
+import { VolumeChunkSource } from "#src/sliceview/volume/backend.js";
 import { WithSharedKvStoreContextCounterpart } from "#src/kvstore/backend.js";
 import type { KvStoreWithPath, ReadResponse } from "#src/kvstore/index.js";
 import { readKvStore } from "#src/kvstore/index.js";
@@ -57,11 +61,11 @@ import { withSegmentationLayerBackendState } from "#src/segmentation_display_sta
 import type { SharedWatchableValue } from "#src/shared_watchable_value.js";
 import type { SliceViewChunkSourceBackend } from "#src/sliceview/backend.js";
 import { deserializeTransformedSources } from "#src/sliceview/backend.js";
-import { decodeCompressedSegmentationChunk } from "#src/sliceview/backend_chunk_decoders/compressed_segmentation.js";
-import { decodeRawChunk } from "#src/sliceview/backend_chunk_decoders/raw.js";
-import type { TransformedSource } from "#src/sliceview/base.js";
-import type { VolumeChunk } from "#src/sliceview/volume/backend.js";
-import { VolumeChunkSource , computeChunkBounds } from "#src/sliceview/volume/backend.js";
+import type {
+  SliceViewProjectionParameters,
+  TransformedSource,
+} from "#src/sliceview/base.js";
+import { computeChunkBounds } from "#src/sliceview/volume/backend.js";
 import { Uint64Set } from "#src/uint64_set.js";
 import { vec3Key } from "#src/util/geom.js";
 import { HttpError } from "#src/util/http_request.js";
@@ -600,7 +604,25 @@ export class ChunkedGraphLayer extends withSegmentationLayerBackendState(
   private updateChunkPriorities() {
     const { chunkManager } = this;
     chunkManager.registerLayer(this);
-    this.leafRequestsActive.value = false;
+    for (const attachment of this.attachments.values()) {
+      const { view } = attachment;
+      if (view.visibility.value === Number.NEGATIVE_INFINITY) {
+        continue;
+      }
+      const attachmentState =
+        attachment.state! as ChunkedGraphRenderLayerAttachmentState;
+      const { transformedSource: tsource } = attachmentState;
+      if (!tsource) {
+        continue;
+      }
+      const projectionParameters = view.projectionParameters
+        .value as SliceViewProjectionParameters;
+      const pixelSize = projectionParameters.pixelSize * 1.1;
+      const smallestVoxelSize = tsource.effectiveVoxelSize;
+      this.leafRequestsActive.value =
+        this.renderRatioLimit >= pixelSize / Math.min(...smallestVoxelSize);
+      return;
+    }
   }
 }
 
