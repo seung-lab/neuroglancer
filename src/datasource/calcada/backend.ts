@@ -41,10 +41,6 @@ import {
   getHttpSource,
 } from "#src/datasource/calcada/base.js";
 import { decodeManifestChunk } from "#src/datasource/precomputed/backend.js";
-import { decodeCompressedSegmentationChunk } from "#src/sliceview/backend_chunk_decoders/compressed_segmentation.js";
-import { decodeRawChunk } from "#src/sliceview/backend_chunk_decoders/raw.js";
-import type { VolumeChunk } from "#src/sliceview/volume/backend.js";
-import { VolumeChunkSource } from "#src/sliceview/volume/backend.js";
 import { WithSharedKvStoreContextCounterpart } from "#src/kvstore/backend.js";
 import type { KvStoreWithPath, ReadResponse } from "#src/kvstore/index.js";
 import { readKvStore } from "#src/kvstore/index.js";
@@ -61,8 +57,11 @@ import { withSegmentationLayerBackendState } from "#src/segmentation_display_sta
 import type { SharedWatchableValue } from "#src/shared_watchable_value.js";
 import type { SliceViewChunkSourceBackend } from "#src/sliceview/backend.js";
 import { deserializeTransformedSources } from "#src/sliceview/backend.js";
+import { decodeCompressedSegmentationChunk } from "#src/sliceview/backend_chunk_decoders/compressed_segmentation.js";
+import { decodeRawChunk } from "#src/sliceview/backend_chunk_decoders/raw.js";
 import type { TransformedSource } from "#src/sliceview/base.js";
-import { computeChunkBounds } from "#src/sliceview/volume/backend.js";
+import type { VolumeChunk } from "#src/sliceview/volume/backend.js";
+import { VolumeChunkSource , computeChunkBounds } from "#src/sliceview/volume/backend.js";
 import { Uint64Set } from "#src/uint64_set.js";
 import { vec3Key } from "#src/util/geom.js";
 import { HttpError } from "#src/util/http_request.js";
@@ -126,7 +125,6 @@ async function decodeDracoFragmentChunk(
 // this filter, a main-branch chunk would link its LUT into a branch
 // layer's equivalences and (because of the "skip if piece already in
 // disjoint set" guard) the branch's own LUT would be silently dropped.
-import type { SharedDisjointUint64Sets } from "#src/shared_disjoint_sets.js";
 const allActiveChunkedGraphLayers = new Set<ChunkedGraphLayer>();
 
 // Decoder map for calcada chunk formats
