@@ -198,8 +198,11 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
   // fallback path binds a 1×1×1 zero mask + 1×1×1 zero value, so the
   // shader reads patched=0 and falls through to the baseline chunk value
   // — byte-identical to the pre-hook implementation.
-  private patchedMaskTextureUnit: number | undefined;
-  private patchValueTextureUnit: number | undefined;
+  //
+  // The allocated texture-unit indices are NOT stored on the instance — they
+  // are read from the active shader program at draw time (`onBeginChunk`),
+  // because the compiled shader is shared across render-layer instances
+  // (TM-303).
   private static readonly patchedMaskSamplerSymbol = Symbol(
     "SegmentationRenderLayer.patchedMaskSampler",
   );
@@ -514,21 +517,23 @@ uint64_t getUint64DataValue() {
     this.hashTableManager.defineShader(builder);
     // Patch-overlay samplers MUST be added before `defineGetUint64DataValue`
     // emits the function that calls `texelFetch(uPatch*Sampler, ...)` — the
-    // shader builder records uniform declarations in addition order.
+    // shader builder records uniform declarations in addition order. The
+    // allocated unit indices are recovered at draw time via
+    // `shader.textureUnit(symbol)` (see `onBeginChunk`); we deliberately do NOT
+    // cache them in instance fields, because this compiled shader is shared
+    // across `SegmentationRenderLayer` instances and `defineShader` runs only
+    // for the one that triggers the build (TM-303).
     if (parameters.editPatchOverlayActive) {
-      this.patchedMaskTextureUnit = builder.addTextureSampler(
+      builder.addTextureSampler(
         "usampler3D",
         "uPatchedMaskSampler",
         SegmentationRenderLayer.patchedMaskSamplerSymbol,
       );
-      this.patchValueTextureUnit = builder.addTextureSampler(
+      builder.addTextureSampler(
         "usampler3D",
         "uPatchValueSampler",
         SegmentationRenderLayer.patchValueSamplerSymbol,
       );
-    } else {
-      this.patchedMaskTextureUnit = undefined;
-      this.patchValueTextureUnit = undefined;
     }
     this.defineGetUint64DataValue(builder, parameters.editPatchOverlayActive);
     if (parameters.hasEquivalences) {
@@ -804,17 +809,32 @@ uint64_t getMappedObjectId(uint64_t value) {
 
   protected override onBeginChunk(
     gl: GL,
-    _shader: ShaderProgram,
+    shader: ShaderProgram,
     chunk: VolumeChunk,
   ) {
-    // Bind both patch-overlay samplers (mask + value) for the current
-    // chunk. Skipped entirely when the shader path is not compiled in,
-    // so non-session render paths are byte-identical to the pre-hook
-    // implementation.
-    if (
-      this.patchedMaskTextureUnit === undefined ||
-      this.patchValueTextureUnit === undefined
-    ) {
+    // Bind both patch-overlay samplers (mask + value) for the current chunk.
+    //
+    // The texture-unit indices are read from the ACTIVE SHADER PROGRAM, not
+    // from instance fields. The base layer memoizes its compiled shader per
+    // *class* + parameters (`parameterizedContextDependentShaderGetter`,
+    // `memoizeKey: volume/RenderLayer:<constructorId>`), so two
+    // `SegmentationRenderLayer` instances with identical parameters SHARE one
+    // program. `defineShader` runs only on the cache-miss (the first instance),
+    // so a per-instance unit field set there would be `undefined` on a second
+    // writable layer reusing the shared program — it would never sample the
+    // patch and its strokes would render nowhere (TM-303). Reading the unit
+    // off the program is correct for every instance that draws with it.
+    //
+    // `textureUnit` returns `undefined` for a shader compiled WITHOUT the patch
+    // path (no active session) — that keeps non-session renders byte-identical
+    // to the pre-hook implementation.
+    const maskUnit: number | undefined = shader.textureUnit(
+      SegmentationRenderLayer.patchedMaskSamplerSymbol,
+    );
+    const valueUnit: number | undefined = shader.textureUnit(
+      SegmentationRenderLayer.patchValueSamplerSymbol,
+    );
+    if (maskUnit === undefined || valueUnit === undefined) {
       return;
     }
     const provider = this.displayState.editPatchOverlay?.value;
@@ -824,16 +844,8 @@ uint64_t getMappedObjectId(uint64_t value) {
     ) as number;
     // The provider handles its own zero-fallback when no patches exist
     // for the chunk, so callers don't need to branch on a return value.
-    provider.bindPatchedMaskTexture(
-      gl,
-      this.patchedMaskTextureUnit,
-      chunk.chunkGridPosition,
-    );
-    provider.bindPatchValueTexture(
-      gl,
-      this.patchValueTextureUnit,
-      chunk.chunkGridPosition,
-    );
+    provider.bindPatchedMaskTexture(gl, maskUnit, chunk.chunkGridPosition);
+    provider.bindPatchValueTexture(gl, valueUnit, chunk.chunkGridPosition);
     gl.activeTexture(prevActive);
   }
 }

@@ -10,25 +10,31 @@
 
 /**
  * @file Slice-view brush cursor overlay. Renders a translucent filled disk
- * + outline at the brush cursor position, sized to the painting tool's
- * voxel radius (converted to nm via the target layer's voxel size, then
- * to pixels via `SliceViewProjectionParameters.pixelSize`).
+ * + outline at the brush cursor position, shaped to the painting tool's
+ * footprint.
  *
- * Approach (per `05-tools-and-cursor.md` § Option A): a 24-sided unit
- * polygon (TRIANGLE_FAN for fill, LINE_LOOP for outline) is projected via
- * `worldCenter → clip space` plus a per-vertex NDC offset. Inline shader;
- * binding pattern mirrors `src/axes_lines.ts:AxesLineHelper.draw` (133).
+ * The painted brush is a circle in TARGET voxel-index space, so on an
+ * anisotropic grid its on-screen footprint is an ELLIPSE (TM-300). Rather than
+ * collapse voxel size to one scalar, we derive the two painted-plane basis
+ * steps as display-space vectors (`computeBrushFootprintAxes`) and project them
+ * through `viewProjectionMat`. The two clip-space differences become the
+ * ellipse's semi-axis vectors — exact for any per-layer resolution and for
+ * rotated / oblique views.
+ *
+ * Approach: a 24-sided unit polygon (TRIANGLE_FAN for fill, LINE_LOOP for
+ * outline) whose unit-circle `(cos, sin)` offsets are mapped to clip space via
+ * `center + cos·axisX + sin·axisY`. Inline shader; binding pattern mirrors
+ * `src/axes_lines.ts:AxesLineHelper.draw` (133).
  */
 
-import { Resolution } from "@zettaai/edit-session";
-
+import { computeBrushFootprintAxes } from "#src/editing/cursor/brush_cursor_footprint.js";
 import type { BrushCursorState } from "#src/editing/cursor/brush_cursor_state.js";
-import { SliceViewProjectionParameters } from "#src/sliceview/base.js";
 import type {
   SliceViewPanelRenderContext,
   SliceViewPanelReadyRenderContext,
 } from "#src/sliceview/renderlayer.js";
 import { SliceViewPanelRenderLayer } from "#src/sliceview/renderlayer.js";
+import type { mat4 } from "#src/util/geom.js";
 import { vec3 } from "#src/util/geom.js";
 import { GLBuffer } from "#src/webgl/buffer.js";
 import type { GL } from "#src/webgl/context.js";
@@ -71,7 +77,27 @@ function buildLoopVertices(): Float32Array {
 const CURSOR_OUTLINE = new Float32Array([1.0, 1.0, 1.0, 0.5]);
 const CURSOR_FILL = new Float32Array([1.0, 1.0, 1.0, 0.12]);
 
-const tempVec3 = vec3.create();
+const tempCenterClip = vec3.create();
+const tempAxisPoint = vec3.create();
+const tempWorldOffset = vec3.create();
+
+/**
+ * Project `worldCenter + offset` to NDC and return the difference from the
+ * already-projected center `(cx, cy)` — i.e. one ellipse semi-axis in clip
+ * space. Returns a fresh 2-element array so the two axis calls don't clobber
+ * each other's result.
+ */
+function projectOffsetToNdc(
+  worldCenter: vec3,
+  offset: vec3,
+  cx: number,
+  cy: number,
+  viewProjectionMat: mat4,
+): [number, number] {
+  vec3.add(tempWorldOffset, worldCenter, offset);
+  vec3.transformMat4(tempAxisPoint, tempWorldOffset, viewProjectionMat);
+  return [tempAxisPoint[0] - cx, tempAxisPoint[1] - cy];
+}
 
 /**
  * Slice-view render layer that draws a 2D disk cursor for brush and eraser
@@ -133,54 +159,59 @@ export class BrushCursorSliceOverlay extends SliceViewPanelRenderLayer {
     const radiusVoxels = state.radiusVoxels.value;
     if (!Number.isFinite(radiusVoxels) || radiusVoxels <= 0) return;
 
-    const radiusNm = voxelsToNm(radiusVoxels, state.targetResolution.value);
-    if (!Number.isFinite(radiusNm) || radiusNm <= 0) return;
-
     const projectionParameters = renderContext.projectionParameters;
-    // `pixelSize` is in canonical SI units (meters) — see
-    // `src/sliceview/frontend.ts:265-272`. Convert our nm radius to meters
-    // before dividing or the result is ~1e9× too large and the disk fills the
-    // entire panel (mixing nm and m units).
-    const pixelSizeMeters =
-      projectionParameters instanceof SliceViewProjectionParameters
-        ? projectionParameters.pixelSize
-        : undefined;
-    if (
-      pixelSizeMeters === undefined ||
-      !Number.isFinite(pixelSizeMeters) ||
-      pixelSizeMeters <= 0
-    ) {
-      return;
-    }
-    const radiusMeters = radiusNm * 1e-9;
-    const radiusPixels = radiusMeters / pixelSizeMeters;
-    if (!Number.isFinite(radiusPixels) || radiusPixels < 0.5) return;
-
     const { width, height } = projectionParameters;
     if (width <= 0 || height <= 0) return;
-    // NDC offset per pixel (clip space spans [-1, 1] in both axes).
-    const ndcPerPixelX = 2 / width;
-    const ndcPerPixelY = 2 / height;
 
-    // Project worldCenter → clip coords.
+    // Two painted-plane basis steps, in display coords (the frame
+    // `viewProjectionMat` consumes), scaled to the visual brush radius.
+    const { offsetX, offsetY } = computeBrushFootprintAxes(
+      radiusVoxels,
+      state.targetResolution.value,
+      projectionParameters.displayDimensionRenderInfo,
+    );
+
+    // Project worldCenter → NDC. `vec3.transformMat4` includes the perspective
+    // divide, so these are normalized device coords ([-1, 1]).
     vec3.transformMat4(
-      tempVec3,
+      tempCenterClip,
       worldCenter,
       projectionParameters.viewProjectionMat,
     );
-    const cx = tempVec3[0];
-    const cy = tempVec3[1];
+    const cx = tempCenterClip[0];
+    const cy = tempCenterClip[1];
+
+    // Project worldCenter ± each display-space offset and take the NDC
+    // difference → the ellipse's semi-axis vectors in clip space.
+    const axisX = projectOffsetToNdc(
+      worldCenter,
+      offsetX,
+      cx,
+      cy,
+      projectionParameters.viewProjectionMat,
+    );
+    const axisY = projectOffsetToNdc(
+      worldCenter,
+      offsetY,
+      cx,
+      cy,
+      projectionParameters.viewProjectionMat,
+    );
+
+    // Sub-pixel guard: skip drawing when both semi-axes are under half a pixel.
+    // NDC spans [-1, 1] across each dimension, so one pixel is `2 / dimension`
+    // NDC units; pixel length = ndcLength × dimension / 2.
+    const axisXPx = Math.hypot(axisX[0] * width, axisX[1] * height) / 2;
+    const axisYPx = Math.hypot(axisY[0] * width, axisY[1] * height) / 2;
+    if (axisXPx < 0.5 && axisYPx < 0.5) return;
 
     const outline = CURSOR_OUTLINE;
     const fill = CURSOR_FILL;
 
     shader.bind();
     gl.uniform2f(shader.uniform("uCenterClip"), cx, cy);
-    gl.uniform2f(
-      shader.uniform("uRadiusNdc"),
-      radiusPixels * ndcPerPixelX,
-      radiusPixels * ndcPerPixelY,
-    );
+    gl.uniform2f(shader.uniform("uAxisX"), axisX[0], axisX[1]);
+    gl.uniform2f(shader.uniform("uAxisY"), axisY[0], axisY[1]);
 
     const aVertexOffset = shader.attribute("aVertexOffset");
     gl.enable(gl.BLEND);
@@ -217,39 +248,18 @@ function buildDiskShader(gl: GL): ShaderProgram {
   const builder = new ShaderBuilder(gl);
   builder.addAttribute("vec2", "aVertexOffset");
   builder.addUniform("vec2", "uCenterClip");
-  builder.addUniform("vec2", "uRadiusNdc");
+  builder.addUniform("vec2", "uAxisX");
+  builder.addUniform("vec2", "uAxisY");
   builder.addUniform("vec4", "uColor");
   builder.addOutputBuffer("vec4", "out_fragColor", 0);
   builder.addOutputBuffer("highp vec4", "out_pickId", 1);
+  // `aVertexOffset` carries unit-circle (cos, sin); map it onto the ellipse's
+  // clip-space semi-axis vectors so anisotropic footprints render correctly.
   builder.setVertexMain(
-    "gl_Position = vec4(uCenterClip + aVertexOffset * uRadiusNdc, 0.0, 1.0);",
+    "gl_Position = vec4(uCenterClip + aVertexOffset.x * uAxisX + aVertexOffset.y * uAxisY, 0.0, 1.0);",
   );
   builder.setFragmentMain(
     "out_fragColor = uColor; out_pickId = vec4(0.0, 0.0, 0.0, 1.0);",
   );
   return builder.build();
-}
-
-/**
- * Convert library radius to nm, matching the reference cursor's `size/2`
- * convention (`radius + 0.5` voxels — exactly the radius that bounds the
- * painted footprint, since the footprint extends `radius` voxels each side
- * of the center voxel for a total diameter of `size = 2*radius + 1`).
- *
- * Uses the SMALLEST axis of the target resolution. For an XY slice over
- * anisotropic 16×16×40 voxels, max would over-bound the cursor by the Z/X
- * ratio (~2.5×); min matches the X-Y plane of a typical slice view. The
- * cursor is a 2D disk on the slice plane — picking the smallest axis gives
- * the tightest bound that still encloses the painted footprint in every
- * commonly-used slice orientation.
- */
-function voxelsToNm(
-  radiusVoxels: number,
-  resolution: Resolution | undefined,
-): number {
-  const visualRadiusVoxels = radiusVoxels + 0.5;
-  if (resolution === undefined) return visualRadiusVoxels;
-  const voxelSize = Resolution.toVoxelSize(resolution);
-  const minAxis = Math.min(voxelSize[0], voxelSize[1], voxelSize[2]);
-  return visualRadiusVoxels * minAxis;
 }

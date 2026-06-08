@@ -11,15 +11,17 @@
 /**
  * @file Brush cursor overlay for the 3D perspective panel.
  *
- * Draws a translucent wireframe sphere centered on the brush cursor, sized
- * to the current brush radius. Used to give the user spatial feedback in
- * the 3D view while a brush-like tool is active.
+ * Draws a translucent wireframe centered on the brush cursor, shaped to the
+ * current brush footprint. Used to give the user spatial feedback in the 3D
+ * view while a brush-like tool is active.
  *
- * The sphere is rendered as three great-circle line loops (XY, XZ, YZ
- * planes) at 32 segments each — 96 line segments total. This is cheap and
- * reads visually as a sphere from any camera angle.
- *
- * Color depends on the active tool: green for brush, red for eraser.
+ * The painted brush is a circle in TARGET voxel-index space stamped on a
+ * single Z plane, so its footprint is a flat ellipse on an anisotropic grid
+ * (TM-300). We render a unit-sphere wireframe (three great-circle line loops at
+ * 32 segments each — 96 line segments total) whose model matrix is built from
+ * the two painted-plane semi-axis vectors plus a small out-of-plane thickness.
+ * That flattens the sphere into a THIN ELLIPSOID DISK lying in the painted
+ * plane — 1:1 with the painted z-slice, yet still legible edge-on in 3D.
  *
  * Pattern reference: line-drawing approach mirrors
  * `src/axes_lines.ts:AxesLineHelper.draw` (uses `trivialUniformColorShader`,
@@ -27,12 +29,11 @@
  * `viewProjectionMat * modelMatrix`).
  */
 
-import { Resolution } from "@zettaai/edit-session";
-
+import { computeBrushFootprintAxes } from "#src/editing/cursor/brush_cursor_footprint.js";
 import type { BrushCursorState } from "#src/editing/cursor/brush_cursor_state.js";
 import type { PerspectiveViewRenderContext } from "#src/perspective_view/render_layer.js";
 import { PerspectiveViewRenderLayer } from "#src/perspective_view/render_layer.js";
-import { mat4 } from "#src/util/geom.js";
+import { mat4, vec3 } from "#src/util/geom.js";
 import { GLBuffer } from "#src/webgl/buffer.js";
 import type { GL } from "#src/webgl/context.js";
 import type { ShaderProgram } from "#src/webgl/shader.js";
@@ -88,14 +89,19 @@ function buildSphereWireframeVertices(): Float32Array {
 // Brush and eraser share one neutral cursor color (matches the slice overlay).
 const CURSOR_COLOR = new Float32Array([1.0, 1.0, 1.0, 0.6]);
 
+// Out-of-plane thickness of the disk as a fraction of the smaller in-plane
+// semi-axis. Small enough to read as a flat disk (the paint is one voxel thick)
+// but non-zero so the disk stays visible edge-on in the 3D view.
+const DISK_THICKNESS_FRACTION = 0.08;
+
 const tempMat = mat4.create();
+const tempNormal = vec3.create();
 
 /**
- * Perspective-view render layer that draws a wireframe-sphere cursor
- * centered at the brush position with a radius matching the current
- * `radiusVoxels` setting (scaled by the largest axis of the target
- * resolution's voxel size to give a unified-looking sphere in nm/world
- * coordinates).
+ * Perspective-view render layer that draws a thin-ellipsoid-disk cursor
+ * centered at the brush position, shaped to the painted footprint via the two
+ * painted-plane semi-axis vectors (`computeBrushFootprintAxes`) so anisotropic
+ * resolutions render as the correct ellipse rather than a single-scalar sphere.
  */
 export class BrushCursorPerspectiveOverlay extends PerspectiveViewRenderLayer {
   private vertexBuffer: GLBuffer;
@@ -143,27 +149,41 @@ export class BrushCursorPerspectiveOverlay extends PerspectiveViewRenderLayer {
     const radiusVoxels = state.radiusVoxels.value;
     if (!Number.isFinite(radiusVoxels) || radiusVoxels <= 0) return;
 
-    // Visual radius = `size/2` voxels (matches the reference cursor's
-    // `(size || 1) / 2 * displayScale` convention; size = 2*radius + 1, so
-    // visual radius in voxels = radius + 0.5). Largest axis of voxel size
-    // for a unified visualization — anisotropic voxels still get a round
-    // sphere.
-    const visualRadiusVoxels = radiusVoxels + 0.5;
-    const resolution = state.targetResolution.value;
-    let voxelScale = 1;
-    if (resolution !== undefined) {
-      const voxelSize = Resolution.toVoxelSize(resolution);
-      voxelScale = Math.max(voxelSize[0], voxelSize[1], voxelSize[2]);
-    }
-    const radiusWorld = visualRadiusVoxels * voxelScale;
-    if (!Number.isFinite(radiusWorld) || radiusWorld <= 0) return;
+    // Two painted-plane semi-axis vectors in display coords (the same frame as
+    // `worldCenter` / `viewProjectionMat`). On an anisotropic grid these differ
+    // in length → the disk is an ellipse.
+    const { offsetX, offsetY } = computeBrushFootprintAxes(
+      radiusVoxels,
+      state.targetResolution.value,
+      renderContext.projectionParameters.displayDimensionRenderInfo,
+    );
+    const lenX = vec3.length(offsetX);
+    const lenY = vec3.length(offsetY);
+    if (lenX <= 0 && lenY <= 0) return;
 
-    // Model matrix: scale unit sphere → world radius, then translate to
-    // the cursor's world position.
+    // Out-of-plane basis: a small thickness along the normal of the painted
+    // plane (cross of the two in-plane axes). Degenerate (one axis edge-on) →
+    // zero thickness, leaving a flat ring, which is still correct.
+    vec3.cross(tempNormal, offsetX, offsetY);
+    const normalLen = vec3.length(tempNormal);
+    if (normalLen > 0) {
+      const thickness = DISK_THICKNESS_FRACTION * Math.min(lenX, lenY);
+      vec3.scale(tempNormal, tempNormal, thickness / normalLen);
+    }
+
+    // Model matrix columns = the three world-space basis vectors of the disk,
+    // translated to the cursor position. Maps the unit-sphere wireframe onto
+    // the thin ellipsoid disk.
     const model = mat4.identity(tempMat);
-    model[0] = radiusWorld;
-    model[5] = radiusWorld;
-    model[10] = radiusWorld;
+    model[0] = offsetX[0];
+    model[1] = offsetX[1];
+    model[2] = offsetX[2];
+    model[4] = offsetY[0];
+    model[5] = offsetY[1];
+    model[6] = offsetY[2];
+    model[8] = tempNormal[0];
+    model[9] = tempNormal[1];
+    model[10] = tempNormal[2];
     model[12] = worldCenter[0];
     model[13] = worldCenter[1];
     model[14] = worldCenter[2];
