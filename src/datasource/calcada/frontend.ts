@@ -2018,12 +2018,17 @@ void main() {
       if (layerId >= 2n) continue;
 
       const resolveAndReplace = (rootId: bigint) => {
-        // Only add root — don't delete piece from either set.
-        // Deleting from selectedSegments cascades to visibleSegments removal,
-        // which can break rendering. Piece stays but is invisible
-        // (NONREPRESENTATIVE_EXCLUDED maps it to root via equivalences).
         segmentsState.visibleSegments.add(rootId);
         segmentsState.selectedSegments.add(rootId);
+        // Drop the source piece so the segment panel only lists the
+        // resolved root. selectedSegments.delete cascades to
+        // visibleSegments removal, but the volume shader resolves the
+        // piece to its root via segmentEquivalences before consulting
+        // visibleSegments — as long as root stays selected the voxel
+        // still renders with the root's color.
+        if (segmentId !== rootId) {
+          segmentsState.selectedSegments.delete(segmentId);
+        }
       };
 
       if (layerId === 1n) {
