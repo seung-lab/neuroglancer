@@ -251,7 +251,9 @@ function parseIntent(x: unknown): EditSessionIntent | null {
 }
 
 /** Parse the persisted region (`region: { lo, hi, dimensions }`). */
-function parseRegion(obj: Record<string, unknown>): EditSessionIntent["region"] {
+function parseRegion(
+  obj: Record<string, unknown>,
+): EditSessionIntent["region"] {
   const region = obj.region as Record<string, unknown> | undefined;
   if (region === undefined || typeof region !== "object") {
     throw new Error("invalid-region");
