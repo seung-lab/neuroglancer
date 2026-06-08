@@ -44,18 +44,16 @@ const RES = Resolution.from([8, 8, 40]);
 
 function sampleIntent(): EditSessionIntent {
   return {
-    bboxRef: {
-      annotationLayerName: "annotations",
-      annotationId: "ann-1",
-      resolution: RES,
-    },
     layers: [
       { layerId: layerId("L1"), resolutions: [RES], writable: true },
       { layerId: layerId("L2"), resolutions: [RES], writable: false },
     ],
-    capturedRegion: {
+    region: {
       lo: [0, 0, 0],
       hi: [16, 16, 16],
+      // Canonical `CoordinateSpace` JSON: scale in metres, unit "m" — exactly
+      // what `coordinateSpaceToJson` emits (8/8/40 nm).
+      dimensions: { x: [8e-9, "m"], y: [8e-9, "m"], z: [4e-8, "m"] },
     },
   };
 }
@@ -154,7 +152,7 @@ describe("TrackableEditSessionIntent", () => {
 
   it("restoreState(invalid object) resets to null", () => {
     trackable.value.value = sampleIntent();
-    // Missing required `bboxRef`.
+    // Missing required `layers`.
     trackable.restoreState({ foo: 1 });
     expect(trackable.value.value).toBeNull();
   });
@@ -168,32 +166,64 @@ describe("TrackableEditSessionIntent", () => {
   it("restoreState rejects invalid layer entries", () => {
     trackable.value.value = sampleIntent();
     const bad = {
-      bboxRef: {
-        annotationLayerName: "annotations",
-        annotationId: "ann-1",
-        resolution: RES,
-      },
       // writable must be a boolean
       layers: [{ layerId: "L1", resolution: RES, writable: "bogus" }],
-      capturedRegion: { lo: [0, 0, 0], hi: [1, 1, 1] },
+      region: {
+        lo: [0, 0, 0],
+        hi: [1, 1, 1],
+        dimensions: { x: [8, "nm"], y: [8, "nm"], z: [40, "nm"] },
+      },
     };
     trackable.restoreState(bad);
     expect(trackable.value.value).toBeNull();
   });
 
-  it("restoreState rejects invalid capturedRegion shape", () => {
+  it("restoreState rejects invalid region shape", () => {
     trackable.value.value = sampleIntent();
     const bad = {
-      bboxRef: {
-        annotationLayerName: "annotations",
-        annotationId: "ann-1",
-        resolution: RES,
-      },
       layers: [],
-      capturedRegion: { lo: [0, 0], hi: [1, 1, 1] },
+      // `lo` must have three components.
+      region: {
+        lo: [0, 0],
+        hi: [1, 1, 1],
+        dimensions: { x: [8, "nm"], y: [8, "nm"], z: [40, "nm"] },
+      },
     };
     trackable.restoreState(bad);
     expect(trackable.value.value).toBeNull();
+  });
+
+  it("restoreState rejects a region with unparseable dimensions", () => {
+    trackable.value.value = sampleIntent();
+    const bad = {
+      layers: [],
+      region: {
+        lo: [0, 0, 0],
+        hi: [1, 1, 1],
+        // Fewer than three spatial dims.
+        dimensions: { x: [8, "nm"], y: [8, "nm"] },
+      },
+    };
+    trackable.restoreState(bad);
+    expect(trackable.value.value).toBeNull();
+  });
+
+  it("restoreState canonicalizes region dimensions to the ngState form", () => {
+    // A non-canonical (nm-unit) dimensions block is normalized to the canonical
+    // metre form on parse, matching how ngState serializes coordinate spaces.
+    trackable.restoreState({
+      layers: [{ layerId: "L1", resolutions: [RES], writable: true }],
+      region: {
+        lo: [0, 0, 0],
+        hi: [16, 16, 16],
+        dimensions: { x: [8, "nm"], y: [8, "nm"], z: [40, "nm"] },
+      },
+    });
+    expect(trackable.value.value?.region.dimensions).toEqual({
+      x: [8e-9, "m"],
+      y: [8e-9, "m"],
+      z: [4e-8, "m"],
+    });
   });
 
   it("reset() clears the value", () => {

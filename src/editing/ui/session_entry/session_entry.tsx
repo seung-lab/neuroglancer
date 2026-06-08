@@ -16,7 +16,6 @@ import type {
 import {
   availableResolutions,
   layerId as toLayerId,
-  Resolution,
 } from "@zettaai/edit-session";
 import { X } from "lucide-preact";
 import { createPortal } from "preact/compat";
@@ -455,12 +454,8 @@ function SessionEntryModalBody(props: {
     }
 
     const config: HostSessionConfig = {
-      bboxRef: {
-        annotationLayerName: selectedBbox.annotationLayerName,
-        annotationId: selectedBbox.annotationId,
-      },
       bboxVoxelCoords: selectedBbox.voxelBbox,
-      bboxResolution: Resolution.from(selectedBbox.voxelSizeNm),
+      regionSpace: selectedBbox.regionSpace,
       layers: layersForConfig,
     };
 
@@ -749,10 +744,11 @@ function estimateLockedMemory({
     for (const resolution of state.resolutions) {
       const scale = metadata.scales.find((s) => s.resolution === resolution);
       if (scale === undefined) continue;
+      // `regionSpace.scales` are in SI metres; ×1e9 → nm.
       const extentNm: [number, number, number] = [
-        bboxExtentVoxels[0] * bbox.voxelSizeNm[0],
-        bboxExtentVoxels[1] * bbox.voxelSizeNm[1],
-        bboxExtentVoxels[2] * bbox.voxelSizeNm[2],
+        bboxExtentVoxels[0] * bbox.regionSpace.scales[0] * 1e9,
+        bboxExtentVoxels[1] * bbox.regionSpace.scales[1] * 1e9,
+        bboxExtentVoxels[2] * bbox.regionSpace.scales[2] * 1e9,
       ];
       const extentLayerVoxels: [number, number, number] = [
         extentNm[0] / scale.voxelSizeNm[0],

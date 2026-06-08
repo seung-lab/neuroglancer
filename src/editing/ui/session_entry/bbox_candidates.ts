@@ -13,6 +13,8 @@ import type {
   AxisAlignedBoundingBox,
 } from "#src/annotation/index.js";
 import { AnnotationType } from "#src/annotation/index.js";
+import type { CoordinateSpace } from "#src/coordinate_transform.js";
+import { makeCoordinateSpace } from "#src/coordinate_transform.js";
 import { AnnotationUserLayer } from "#src/layer/annotation/index.js";
 import type { LayerManager, ManagedUserLayer } from "#src/layer/index.js";
 import { RefCounted } from "#src/util/disposable.js";
@@ -23,13 +25,14 @@ export interface BboxAnnotationSelection {
   readonly annotationId: string;
   readonly voxelBbox: readonly [number, number, number, number, number, number];
   /**
-   * Physical size of one voxel of `voxelBbox`, in nanometers, derived from
-   * the annotation source's `modelTransform.outputSpace` at selection time.
-   * Bound to the bbox so the session's clip region is always in the
-   * annotation's own coord system, regardless of which resolutions any
-   * other session layer ends up exposing.
+   * The physical frame `voxelBbox` is expressed in: the annotation source's
+   * native `inputSpace` scales/units paired with the semantic `outputSpace`
+   * names. The single source of truth for the session region's scale + names —
+   * persisted via `coordinateSpaceToJson` and used to derive the runtime
+   * `Resolution` (TM-299). Bound to the bbox so the clip region stays in the
+   * annotation's own coord system regardless of other layers' resolutions.
    */
-  readonly voxelSizeNm: readonly [number, number, number];
+  readonly regionSpace: CoordinateSpace;
 }
 
 export interface BboxEntry {
@@ -37,7 +40,7 @@ export interface BboxEntry {
   readonly annotationLayerName: string;
   readonly annotation: AxisAlignedBoundingBox;
   readonly voxelBbox: readonly [number, number, number, number, number, number];
-  readonly voxelSizeNm: readonly [number, number, number];
+  readonly regionSpace: CoordinateSpace;
   readonly sizeLabel: string;
 }
 
@@ -79,7 +82,7 @@ export class BboxSelectionModel extends RefCounted {
       annotationLayerName: entry.annotationLayerName,
       annotationId: entry.annotation.id,
       voxelBbox: entry.voxelBbox,
-      voxelSizeNm: entry.voxelSizeNm,
+      regionSpace: entry.regionSpace,
     };
   }
 
@@ -127,8 +130,8 @@ export class BboxSelectionModel extends RefCounted {
       if (!(userLayer instanceof AnnotationUserLayer)) continue;
       const source = userLayer.localAnnotations;
       if (source === undefined) continue;
-      const voxelSizeNm = extractAnnotationVoxelSizeNm(userLayer);
-      if (voxelSizeNm === undefined) continue;
+      const regionSpace = extractAnnotationRegionSpace(userLayer);
+      if (regionSpace === undefined) continue;
       for (const annotation of source as Iterable<Annotation>) {
         if (annotation.type !== AnnotationType.AXIS_ALIGNED_BOUNDING_BOX) {
           continue;
@@ -140,7 +143,7 @@ export class BboxSelectionModel extends RefCounted {
           annotationLayerName: managed.name,
           annotation: bbox,
           voxelBbox,
-          voxelSizeNm,
+          regionSpace,
           sizeLabel: formatSize(voxelBbox),
         });
       }
@@ -175,41 +178,49 @@ export class BboxSelectionModel extends RefCounted {
 }
 
 /**
- * Pulls the first 3 INPUT-space scales of the annotation layer's loaded data
- * source and converts them to nm. The scales are stored in meters (the
- * standard neuroglancer convention); anything else falls through unchanged.
- * Returns `undefined` when no data source has loaded yet — caller skips the
- * layer until the load completes.
+ * Builds the region's physical frame as a 3-dimensional `CoordinateSpace` from
+ * the annotation layer's loaded data-source transform. Returns `undefined` when
+ * no data source has loaded yet — caller skips the layer until then.
  *
- * TM-298: this reads `inputSpace` (the annotation source's own/native grid),
- * NOT `outputSpace`. An AxisAlignedBoundingBox's `pointA`/`pointB` are stored
- * in the source's input coordinates, so `voxelBbox` and the resolution that
- * scales it must come from the SAME space. `outputSpace` is the transform's
- * reconciliation with the viewer's global "dimensions": when the user relabels
- * global (e.g. native 16 nm shown as 256 nm) `outputSpace` follows to 256 nm
- * while the stored points stay in the 16 nm input grid. Pairing 16 nm points
- * with a 256 nm resolution makes the library map the session region 16× off
- * the target data — it clips to empty, so no chunks load and painting is
- * silently dropped. `inputSpace` stays at the native scale regardless of
- * global relabeling, keeping `voxelBbox × resolution` a stable physical region.
+ * Scales + units come from `inputSpace`, names from `outputSpace`:
+ *
+ * - **Scales/units — `inputSpace` (TM-298).** An AxisAlignedBoundingBox's
+ *   `pointA`/`pointB` are stored in the source's INPUT coordinates, so the
+ *   frame that scales `voxelBbox` must be the input grid. `outputSpace` is the
+ *   transform's reconciliation with the viewer's global "dimensions": when the
+ *   user relabels global (e.g. native 16 nm shown as 256 nm) `outputSpace`
+ *   follows to 256 nm while the stored points stay in the 16 nm input grid.
+ *   Pairing 16 nm points with a 256 nm frame maps the region 16× off the target
+ *   data — it clips to empty and painting is silently dropped. `inputSpace`
+ *   stays native regardless of relabeling, keeping the region stable.
+ * - **Names — `outputSpace`.** `inputSpace` dimensions are often unnamed
+ *   (`"0"/"1"/"2"`); the semantic axis names (`x/y/z`) live in `outputSpace`.
+ *   Input dim `i` corresponds to output dim `i` for these axis-aligned sources
+ *   (the transform is a diagonal scale, no axis permutation), so they pair by
+ *   index.
+ *
+ * The result is serialized for persistence with `coordinateSpaceToJson`, so the
+ * stored region frame is byte-identical to every other coordinate space in
+ * ngState (TM-299).
  */
-function extractAnnotationVoxelSizeNm(
+function extractAnnotationRegionSpace(
   userLayer: AnnotationUserLayer,
-): readonly [number, number, number] | undefined {
+): CoordinateSpace | undefined {
   for (const layerDataSource of userLayer.dataSources) {
     const loadState = layerDataSource.loadState;
     if (loadState === undefined) continue;
     if ("error" in loadState && loadState.error !== undefined) continue;
-    const inputSpace = loadState.transform.value.inputSpace;
-    const { scales, units } = inputSpace;
-    if (scales.length < 3) continue;
-    const out: [number, number, number] = [0, 0, 0];
-    for (let i = 0; i < 3; ++i) {
-      const scale = scales[i];
-      const unit = units[i];
-      out[i] = unit === "m" ? scale * 1e9 : scale;
-    }
-    return out;
+    const { inputSpace, outputSpace } = loadState.transform.value;
+    if (inputSpace.scales.length < 3 || outputSpace.names.length < 3) continue;
+    return makeCoordinateSpace({
+      names: [outputSpace.names[0], outputSpace.names[1], outputSpace.names[2]],
+      units: [inputSpace.units[0], inputSpace.units[1], inputSpace.units[2]],
+      scales: Float64Array.of(
+        inputSpace.scales[0],
+        inputSpace.scales[1],
+        inputSpace.scales[2],
+      ),
+    });
   }
   return undefined;
 }
