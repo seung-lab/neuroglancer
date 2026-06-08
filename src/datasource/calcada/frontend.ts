@@ -3422,64 +3422,22 @@ function branchLayerControl(): LayerControlFactory<SegmentationUserLayer> {
       };
       renderOptions();
 
-      let branchChangeGeneration = 0;
-      select.addEventListener("change", async () => {
+      select.addEventListener("change", () => {
         const parsed = Number.parseInt(select.value, 10);
         if (!Number.isFinite(parsed) || parsed < 0) {
           select.value = String(branchId.value);
           return;
         }
         if (parsed === branchId.value) return;
-        const myGeneration = ++branchChangeGeneration;
-        select.disabled = true;
-        try {
-          if (graph instanceof GrapheneGraphSource) {
-            const ts = segmentationGroupState.timestamp.value ?? 0;
-            const oldSelected = [...segmentationGroupState.selectedSegments];
-            const resolvedRoots = new Set<bigint>();
-            const droppedCount = { value: 0 };
-            for (const segId of oldSelected) {
-              try {
-                const newRoot = await graph.graphServer.getRoot(
-                  segId,
-                  ts,
-                  parsed,
-                );
-                resolvedRoots.add(newRoot);
-              } catch {
-                droppedCount.value += 1;
-              }
-            }
-            if (myGeneration !== branchChangeGeneration) return;
-            const oldSet = new Set(oldSelected);
-            const toRemove: bigint[] = [];
-            const toAdd: bigint[] = [];
-            for (const id of oldSet) {
-              if (!resolvedRoots.has(id)) toRemove.push(id);
-            }
-            for (const id of resolvedRoots) {
-              if (!oldSet.has(id)) toAdd.push(id);
-            }
-            if (toRemove.length > 0) {
-              segmentationGroupState.selectedSegments.delete(toRemove);
-            }
-            if (toAdd.length > 0) {
-              segmentationGroupState.selectedSegments.add(toAdd);
-            }
-            if (droppedCount.value > 0) {
-              StatusMessage.showTemporaryMessage(
-                `Dropped ${droppedCount.value} segment(s) not present on the new branch.`,
-                3000,
-              );
-            }
-          }
-          if (myGeneration !== branchChangeGeneration) return;
-          branchId.value = parsed;
-        } finally {
-          if (myGeneration === branchChangeGeneration) {
-            select.disabled = false;
-          }
-        }
+        // Drop selected segments synchronously before switching — the
+        // branchId.changed listener also clears, but doing it here too
+        // suppresses the "Could not fetch root: piece not found" spam
+        // that would otherwise fire from any in-flight selectedSegments
+        // changes referencing pieces local to the previous branch.
+        segmentationGroupState.selectedSegments.clear();
+        segmentationGroupState.visibleSegments.clear();
+        segmentationGroupState.segmentEquivalences.clear();
+        branchId.value = parsed;
       });
 
       select.addEventListener("focus", () => {
