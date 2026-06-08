@@ -2100,7 +2100,6 @@ void main() {
     if (this.splitModeActive) return;
     this.splitModeActive = true;
     const generation = ++this.splitModeGeneration;
-    // Fetch pieces for the focus segment (needed for multicut sink/source assignment)
     try {
       const segmentsState =
         this.layer.displayState.segmentationGroupState.value;
@@ -2126,25 +2125,46 @@ void main() {
   }
 
   /**
-   * After split, swap old root for new roots and refetch chunks so the
-   * fresh piece→root LUT trailers rebuild equivalences correctly.
+   * After split, re-link equivalences directly from the components the
+   * backend returned. The backend already knows which piece moved to
+   * which new root — sending the mapping in the split response lets us
+   * rebuild equivalences without round-tripping through /leaves (which
+   * the ClickHouse materialised view backing it lags behind on writes)
+   * or re-fetching chunks (which silently re-applies the stale LUT for
+   * chunks the chunk manager still has cached).
    */
-  updateAfterSplit(oldRoot: bigint, newRoots: bigint[]) {
+  updateAfterSplit(
+    oldRoot: bigint,
+    newRoots: bigint[],
+    components: bigint[][],
+  ) {
     const segmentsState = this.layer.displayState.segmentationGroupState.value;
+    // Drop the old root entirely — its equivalence class no longer
+    // represents anything, and leaving it in visibleSegments would let a
+    // stray click on a stale chunk re-select the merged blob via cached
+    // mesh data.
     segmentsState.segmentEquivalences.deleteSet(oldRoot);
-    for (const newRoot of newRoots) {
+    segmentsState.visibleSegments.delete(oldRoot);
+    segmentsState.selectedSegments.delete(oldRoot);
+    for (let i = 0; i < newRoots.length; ++i) {
+      const newRoot = newRoots[i];
       segmentsState.visibleSegments.add(newRoot);
       segmentsState.selectedSegments.add(newRoot);
+      const comp = components[i];
+      if (!comp) continue;
+      for (const piece of comp) {
+        segmentsState.segmentEquivalences.link(newRoot, piece);
+      }
     }
-    // Force chunks to refetch with the post-split LUT trailers.
-    // Per-root getLeaves would race the ClickHouse MV that backs the
-    // /leaves endpoint — when a piece is reassigned to a brand-new root,
-    // the materialized view can lag a few seconds, and getLeaves returns
-    // an empty array, leaving that root's pieces with no equivalence to
-    // a visible segment until the user manually reloads.
-    // refreshChunkSources clears equivalences and bumps the chunk source
-    // generation, so the rendered LUT is rebuilt from the live chunks.
-    this.refreshChunkSources();
+    segmentsState.segmentEquivalences.changed.dispatch();
+    // Deliberately NOT calling refreshChunkSources: it would clear the
+    // equivalences we just set, and the chunk re-fetch would race the
+    // ClickHouse materialised view that backs the LUT — when the MV
+    // hasn't propagated the new piece→root mapping yet, the refreshed
+    // chunks restore the OLD mapping and the new roots stop rendering
+    // until the user manually reloads. The pieces themselves haven't
+    // moved in storage, so the cached chunk pixel data is still valid;
+    // the in-memory equivalences here are what drive the shader.
   }
 
   meshAddNewSegments(segments: bigint[]) {
@@ -2171,13 +2191,16 @@ void main() {
       );
       return false;
     } else {
-      const splitRoots = await this.graph.graphServer.splitSegments(
-        [...sinks].map((x) => selectionInNanometers(x, annotationToNanometers)),
-        [...sources].map((x) =>
-          selectionInNanometers(x, annotationToNanometers),
-        ),
-        this.graph.branchId.value,
-      );
+      const { roots: splitRoots, components } =
+        await this.graph.graphServer.splitSegments(
+          [...sinks].map((x) =>
+            selectionInNanometers(x, annotationToNanometers),
+          ),
+          [...sources].map((x) =>
+            selectionInNanometers(x, annotationToNanometers),
+          ),
+          this.graph.branchId.value,
+        );
       if (splitRoots.length === 0) {
         StatusMessage.showTemporaryMessage(`No split found.`, 3000);
         return false;
@@ -2197,9 +2220,7 @@ void main() {
         const newValues = new Uint64Set();
         newValues.add(splitRoots);
         this.state.replaceSegments(oldValues, newValues);
-        // No chunk refetch needed — piece_ids in chunks are unchanged.
-        // Just update equivalences to map pieces to the new roots.
-        this.updateAfterSplit(focusSegment, splitRoots);
+        this.updateAfterSplit(focusSegment, splitRoots, components);
         return true;
       }
     }
@@ -2555,6 +2576,29 @@ class GrapheneGraphServerInterface {
     return leafIds.map(parseUint64);
   }
 
+  async getEdgeComponents(
+    segment: bigint,
+    timestamp = 0,
+    branchId = 0,
+  ): Promise<bigint[][]> {
+    const { fetchOkImpl, baseUrl } = this.httpSource;
+    const jsonResp = await withErrorMessageHTTP(
+      fetchOkImpl(
+        appendCoordParams(
+          `${baseUrl}/node/${String(segment)}/components?int64_as_str=1`,
+          { timestamp, branchId },
+        ),
+        {},
+      ).then((response) => response.json()),
+      {
+        initialMessage: `Retrieving components for segment ${segment}`,
+        errorPrefix: "Could not fetch components: ",
+      },
+    );
+    const components: string[][] = jsonResp.components || [];
+    return components.map((c) => c.map(parseUint64));
+  }
+
   async mergeSegments(
     first: SegmentSelection,
     second: SegmentSelection,
@@ -2588,7 +2632,7 @@ class GrapheneGraphServerInterface {
     first: SegmentSelection[],
     second: SegmentSelection[],
     branchId = 0,
-  ): Promise<bigint[]> {
+  ): Promise<{ roots: bigint[]; components: bigint[][] }> {
     const { fetchOkImpl, baseUrl } = this.httpSource;
     const promise = fetchOkImpl(
       appendCoordParams(`${baseUrl}/split?int64_as_str=1`, { branchId }),
@@ -2605,11 +2649,13 @@ class GrapheneGraphServerInterface {
       errorPrefix: "Split failed: ",
     });
     const jsonResp = await response.json();
-    const final: bigint[] = new Array(jsonResp.new_root_ids.length);
-    for (let i = 0; i < final.length; ++i) {
-      final[i] = parseUint64(jsonResp.new_root_ids[i]);
+    const roots: bigint[] = new Array(jsonResp.new_root_ids.length);
+    for (let i = 0; i < roots.length; ++i) {
+      roots[i] = parseUint64(jsonResp.new_root_ids[i]);
     }
-    return final;
+    const rawComponents: string[][] = jsonResp.components || [];
+    const components = rawComponents.map((c) => c.map(parseUint64));
+    return { roots, components };
   }
 
   async previewPieceSplit(
