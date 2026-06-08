@@ -2126,39 +2126,25 @@ void main() {
   }
 
   /**
-   * After split, map old root to first new root via equivalences.
+   * After split, swap old root for new roots and refetch chunks so the
+   * fresh piece→root LUT trailers rebuild equivalences correctly.
    */
   updateAfterSplit(oldRoot: bigint, newRoots: bigint[]) {
     const segmentsState = this.layer.displayState.segmentationGroupState.value;
-    // Clear stale equivalences for the old root — its pieces now belong
-    // to different new roots.
     segmentsState.segmentEquivalences.deleteSet(oldRoot);
-    // Add new roots to visibleSegments so they render immediately
     for (const newRoot of newRoots) {
       segmentsState.visibleSegments.add(newRoot);
       segmentsState.selectedSegments.add(newRoot);
     }
-    // Rebuild equivalences from getLeaves — no chunk refetch needed!
-    // Chunk data (piece_ids) is the same, only the mapping changed.
-    for (const newRoot of newRoots) {
-      this.graph.graphServer
-        .getLeaves(
-          newRoot,
-          segmentsState.timestamp.value ?? 0,
-          this.graph.branchId.value,
-        )
-        .then((pieces) => {
-          for (const piece of pieces) {
-            segmentsState.segmentEquivalences.link(newRoot, piece);
-          }
-        })
-        .catch((e: unknown) => {
-          StatusMessage.showTemporaryMessage(
-            `Failed to load pieces for ${newRoot}: ${e instanceof Error ? e.message : String(e)}`,
-            6000,
-          );
-        });
-    }
+    // Force chunks to refetch with the post-split LUT trailers.
+    // Per-root getLeaves would race the ClickHouse MV that backs the
+    // /leaves endpoint — when a piece is reassigned to a brand-new root,
+    // the materialized view can lag a few seconds, and getLeaves returns
+    // an empty array, leaving that root's pieces with no equivalence to
+    // a visible segment until the user manually reloads.
+    // refreshChunkSources clears equivalences and bumps the chunk source
+    // generation, so the rendered LUT is rebuilt from the live chunks.
+    this.refreshChunkSources();
   }
 
   meshAddNewSegments(segments: bigint[]) {
@@ -2266,6 +2252,11 @@ void main() {
         segmentsState.visibleSegments.add(oldRootA);
         segmentsState.visibleSegments.add(oldRootB);
         segmentsState.selectedSegments.add(newRoot);
+        // Register the new root with the mesh source so its mesh fragments
+        // are fetched — without this the post-merge 3D view rendered only
+        // the slice of pieces that happened to load via residual chunks
+        // and the full merged volume only appeared after a manual reload.
+        this.meshAddNewSegments([newRoot]);
         // Rebuild equivalences from getLeaves — no chunk refetch needed
         this.graph.graphServer
           .getLeaves(
