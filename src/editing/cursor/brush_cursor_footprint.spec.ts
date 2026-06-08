@@ -35,7 +35,11 @@ const IDENTITY_XYZ = displayInfo([0, 1, 2], [1, 1, 1]);
 describe("computeBrushFootprintAxes", () => {
   it("is a round cursor for isotropic in-plane voxels (64×64×42)", () => {
     const res = Resolution.from([64, 64, 42]);
-    const { offsetX, offsetY } = computeBrushFootprintAxes(3, res, IDENTITY_XYZ);
+    const { offsetX, offsetY } = computeBrushFootprintAxes(
+      3,
+      res,
+      IDENTITY_XYZ,
+    );
     // Each painted-plane axis maps to its own display slot.
     expect(offsetX[0]).toBeGreaterThan(0);
     expect(offsetY[1]).toBeGreaterThan(0);
@@ -52,7 +56,11 @@ describe("computeBrushFootprintAxes", () => {
 
   it("is an ellipse for anisotropic in-plane voxels (56×432×16)", () => {
     const res = Resolution.from([56, 432, 16]);
-    const { offsetX, offsetY } = computeBrushFootprintAxes(5, res, IDENTITY_XYZ);
+    const { offsetX, offsetY } = computeBrushFootprintAxes(
+      5,
+      res,
+      IDENTITY_XYZ,
+    );
     // Semi-axis ratio mirrors the in-plane voxel-size ratio exactly.
     expect(offsetX[0] / offsetY[1]).toBeCloseTo(56 / 432, 6);
   });
@@ -89,7 +97,11 @@ describe("computeBrushFootprintAxes", () => {
   it("returns zero vectors for non-positive / non-finite radius", () => {
     const res = Resolution.from([64, 64, 42]);
     for (const r of [-1, -0.5, Number.NaN]) {
-      const { offsetX, offsetY } = computeBrushFootprintAxes(r, res, IDENTITY_XYZ);
+      const { offsetX, offsetY } = computeBrushFootprintAxes(
+        r,
+        res,
+        IDENTITY_XYZ,
+      );
       expect(Array.from(offsetX)).toEqual([0, 0, 0]);
       expect(Array.from(offsetY)).toEqual([0, 0, 0]);
     }
