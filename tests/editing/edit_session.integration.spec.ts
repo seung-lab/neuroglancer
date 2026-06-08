@@ -70,13 +70,12 @@ describe("EditSessionHost — integration (state surface)", () => {
 
   it("state.restoreState with an unresolvable intent auto-clears via failRestore", () => {
     const intent: EditSessionIntent = {
-      bboxRef: {
-        annotationLayerName: "ann",
-        annotationId: "id-1",
-        resolution: RES,
-      },
       layers: [{ layerId: layerId("L1"), resolutions: [RES], writable: true }],
-      capturedRegion: { lo: [0, 0, 0], hi: [16, 16, 16] },
+      region: {
+        lo: [0, 0, 0],
+        hi: [16, 16, 16],
+        dimensions: { x: [8e-9, "m"], y: [8e-9, "m"], z: [4e-8, "m"] },
+      },
     };
     // The host subscribes to `state.changed` and auto-triggers
     // `tryRestoreFromState()`. With no matching annotation layer in the fake
@@ -99,15 +98,14 @@ describe("EditSessionHost — integration (state surface)", () => {
     // No layers are registered with the FakeLayerManager — the restore path
     // must short-circuit (no active session, intent cleared).
     const intent: EditSessionIntent = {
-      bboxRef: {
-        annotationLayerName: "missing-annotations",
-        annotationId: "id-1",
-        resolution: RES,
-      },
       layers: [
         { layerId: layerId("missing-L1"), resolutions: [RES], writable: true },
       ],
-      capturedRegion: { lo: [0, 0, 0], hi: [16, 16, 16] },
+      region: {
+        lo: [0, 0, 0],
+        hi: [16, 16, 16],
+        dimensions: { x: [8e-9, "m"], y: [8e-9, "m"], z: [4e-8, "m"] },
+      },
     };
     host.state.restoreState(intent);
     // The subscription auto-triggers `tryRestoreFromState`. Flush microtasks

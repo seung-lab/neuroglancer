@@ -53,6 +53,11 @@ import {
   zExtrapolation,
 } from "@zettaai/edit-session";
 
+import {
+  type CoordinateSpace,
+  coordinateSpaceFromJson,
+  coordinateSpaceToJson,
+} from "#src/coordinate_transform.js";
 import { NgChunkSource } from "#src/editing/adapters/ng_chunk_source.js";
 import { NgClock } from "#src/editing/adapters/ng_clock.js";
 import { NgCommitTarget } from "#src/editing/adapters/ng_commit_target.js";
@@ -113,13 +118,18 @@ import type { Viewer } from "#src/viewer.js";
 // ---------------------------------------------------------------------------
 
 export interface HostSessionConfig {
-  readonly bboxRef: {
-    readonly annotationLayerName: string;
-    readonly annotationId: string;
-  };
   /** Voxel-space bbox snapshot at modal-submit time. */
   readonly bboxVoxelCoords: BoundingBoxVoxels;
-  readonly bboxResolution: ResolutionType;
+  /**
+   * The region's physical frame as a `CoordinateSpace` — the single source of
+   * truth for the region's scale/units/names. Captured from the source the
+   * bbox was measured in (the annotation's native `inputSpace` scales, with
+   * the semantic `outputSpace` names). Persisted via `coordinateSpaceToJson`
+   * (byte-identical to every other coordinate space in ngState) and the
+   * library `Resolution` tag is derived from it on demand — neither is stored
+   * twice (TM-299).
+   */
+  readonly regionSpace: CoordinateSpace;
   readonly layers: ReadonlyArray<{
     readonly layerId: LayerId;
     /**
@@ -140,19 +150,36 @@ export interface HostSessionConfig {
 
 type Vec3Voxels = readonly [number, number, number];
 
+/**
+ * ngState `CoordinateSpace` JSON for the region's spatial axes:
+ * `{ x: [scale, unit], y: [scale, unit], z: [scale, unit] }` — the exact
+ * encoding {@link coordinateSpaceToJson} emits (scale in meters, unit `"m"`).
+ * Parsed back via {@link coordinateSpaceFromJson}. Carries real physical scale
+ * + unit, so the region is self-describing and relabel-stable.
+ */
+type RegionDimensionsJson = Record<string, readonly [number, string]>;
+
 export interface EditSessionIntent {
-  readonly bboxRef: {
-    readonly annotationLayerName: string;
-    readonly annotationId: string;
-    readonly resolution: ResolutionType;
-  };
   readonly layers: ReadonlyArray<{
     readonly layerId: LayerId;
     /** Non-empty. First entry is the default painting resolution. */
     readonly resolutions: readonly ResolutionType[];
     readonly writable: boolean;
   }>;
-  readonly capturedRegion: { readonly lo: Vec3Voxels; readonly hi: Vec3Voxels };
+  /**
+   * The edit region, stored **annotation-independent and layer-agnostic**
+   * (TM-299). `lo`/`hi` are voxel coords in the self-describing frame given by
+   * `dimensions` — a physical box bound to no layer. Per-layer conversion into
+   * each writable layer's voxel grid happens at runtime, so storing the region
+   * in any one layer's native frame is deliberately avoided. There is no
+   * back-reference to the source annotation: restore depends solely on
+   * `lo`/`hi` + `dimensions`.
+   */
+  readonly region: {
+    readonly lo: Vec3Voxels;
+    readonly hi: Vec3Voxels;
+    readonly dimensions: RegionDimensionsJson;
+  };
 }
 
 /**
@@ -190,16 +217,6 @@ function parseIntent(x: unknown): EditSessionIntent | null {
   if (x === null || x === undefined) return null;
   if (typeof x !== "object") throw new Error("not-an-object");
   const obj = x as Record<string, unknown>;
-  const bboxRef = obj.bboxRef as Record<string, unknown> | undefined;
-  if (
-    bboxRef === undefined ||
-    typeof bboxRef !== "object" ||
-    typeof bboxRef.annotationLayerName !== "string" ||
-    typeof bboxRef.annotationId !== "string" ||
-    typeof bboxRef.resolution !== "string"
-  ) {
-    throw new Error("invalid-bboxRef");
-  }
   const rawLayers = obj.layers;
   if (!Array.isArray(rawLayers)) throw new Error("invalid-layers");
   const layers = rawLayers.map((entry): EditSessionIntent["layers"][number] => {
@@ -230,28 +247,64 @@ function parseIntent(x: unknown): EditSessionIntent | null {
       writable: e.writable,
     };
   });
-  const cr = obj.capturedRegion as Record<string, unknown> | undefined;
-  if (
-    cr === undefined ||
-    typeof cr !== "object" ||
-    !Array.isArray(cr.lo) ||
-    !Array.isArray(cr.hi) ||
-    cr.lo.length !== 3 ||
-    cr.hi.length !== 3
-  ) {
-    throw new Error("invalid-capturedRegion");
+  return { layers, region: parseRegion(obj) };
+}
+
+/** Parse the persisted region (`region: { lo, hi, dimensions }`). */
+function parseRegion(
+  obj: Record<string, unknown>,
+): EditSessionIntent["region"] {
+  const region = obj.region as Record<string, unknown> | undefined;
+  if (region === undefined || typeof region !== "object") {
+    throw new Error("invalid-region");
   }
-  const lo: Vec3Voxels = [Number(cr.lo[0]), Number(cr.lo[1]), Number(cr.lo[2])];
-  const hi: Vec3Voxels = [Number(cr.hi[0]), Number(cr.hi[1]), Number(cr.hi[2])];
   return {
-    bboxRef: {
-      annotationLayerName: bboxRef.annotationLayerName,
-      annotationId: bboxRef.annotationId,
-      resolution: bboxRef.resolution as ResolutionType,
-    },
-    layers,
-    capturedRegion: { lo, hi },
+    lo: parseVec3(region.lo, "region.lo"),
+    hi: parseVec3(region.hi, "region.hi"),
+    dimensions: parseRegionDimensions(region.dimensions),
   };
+}
+
+function parseVec3(value: unknown, label: string): Vec3Voxels {
+  if (!Array.isArray(value) || value.length !== 3) {
+    throw new Error(`invalid-${label}`);
+  }
+  return [Number(value[0]), Number(value[1]), Number(value[2])];
+}
+
+/**
+ * Validate the persisted `dimensions` block and return it in ngState's
+ * canonical `CoordinateSpace` JSON form. Validation and serialization are
+ * delegated to the official helpers: {@link coordinateSpaceFromJson} throws on
+ * a non-object, invalid dimension names, or uninterpretable units, and
+ * {@link coordinateSpaceToJson} re-emits the canonical encoding — so the stored
+ * block is always identical to how every other coordinate space in ngState is
+ * serialized. Requires the three spatial dimensions.
+ */
+function parseRegionDimensions(raw: unknown): RegionDimensionsJson {
+  const space = coordinateSpaceFromJson(raw);
+  if (space.rank < 3) throw new Error("invalid-region-dimensions");
+  return coordinateSpaceToJson(space) as RegionDimensionsJson;
+}
+
+/**
+ * Per-axis voxel size in nm for the region's three spatial dimensions. A
+ * `CoordinateSpace` always stores scales in SI metres, so this is a pure m→nm
+ * conversion; the rounding strips the float noise that would otherwise make
+ * the derived `Resolution` tag miss the layer's exact available resolutions.
+ */
+function regionVoxelSizeNm(space: CoordinateSpace): [number, number, number] {
+  const out: [number, number, number] = [0, 0, 0];
+  for (let i = 0; i < 3; ++i) {
+    const nm = space.scales[i] * 1e9;
+    out[i] = Math.round(nm * 1e6) / 1e6;
+  }
+  return out;
+}
+
+/** The library `Resolution` tag for a region frame, derived on demand. */
+function regionResolution(space: CoordinateSpace): ResolutionType {
+  return Resolution.from(regionVoxelSizeNm(space));
 }
 
 // ---------------------------------------------------------------------------
@@ -1208,10 +1261,11 @@ export class EditSessionHost extends RefCounted {
    *
    * Layers and their data sources load asynchronously after URL parse, so
    * this method awaits per-layer readiness via the metadata source's
-   * `waitForLayer` / `waitForVolumetricReady` gates before validating
-   * resolutions. Without those gates, restore would race data-source
-   * loading and clear the persisted session on a transient
-   * "no-volumetric-data-source" error.
+   * `waitForVolumetricReady` gate before validating resolutions. Without it,
+   * restore would race data-source loading and clear the persisted session on
+   * a transient "no-volumetric-data-source" error. Restore is otherwise
+   * annotation-independent (TM-299): the region comes from `intent.region`, so
+   * a deleted source annotation layer does not break reopening.
    */
   async tryRestoreFromState(): Promise<void> {
     if (this.restoreInFlight !== undefined) return this.restoreInFlight;
@@ -1231,24 +1285,9 @@ export class EditSessionHost extends RefCounted {
     const intent = this.state.value.value;
     if (intent === null) return;
 
-    try {
-      await this.layerMetadataSource.waitForLayer(
-        intent.bboxRef.annotationLayerName,
-      );
-    } catch (err) {
-      if (!this.intentIsStillCurrent(intent)) return;
-      const message = err instanceof Error ? err.message : String(err);
-      this.failRestore(
-        `Edit session reference invalid: annotation layer ${JSON.stringify(intent.bboxRef.annotationLayerName)} not found (${message}).`,
-      );
-      return;
-    }
-    if (!this.intentIsStillCurrent(intent)) return;
-    // Walking the annotation source for the specific id is a downstream
-    // concern (annotation sources expose `references`). For v1 we trust the
-    // captured bbox bytes and let the modal-style flow re-validate against
-    // the live annotation if/when the UI tab is opened. If the annotation
-    // is missing from the source, downstream consumers degrade gracefully.
+    // Restore is annotation-independent (TM-299): the region is reconstructed
+    // from `intent.region` (self-describing `lo`/`hi` + `dimensions`), so a
+    // deleted source annotation layer no longer breaks reopening the session.
 
     for (const layer of intent.layers) {
       try {
@@ -1275,20 +1314,18 @@ export class EditSessionHost extends RefCounted {
       }
     }
 
+    // Reconstruct the single region frame from the persisted dimensions; the
+    // library `Resolution` tag is derived from it on demand at use sites.
     const config: HostSessionConfig = {
-      bboxRef: {
-        annotationLayerName: intent.bboxRef.annotationLayerName,
-        annotationId: intent.bboxRef.annotationId,
-      },
       bboxVoxelCoords: [
-        intent.capturedRegion.lo[0],
-        intent.capturedRegion.lo[1],
-        intent.capturedRegion.lo[2],
-        intent.capturedRegion.hi[0],
-        intent.capturedRegion.hi[1],
-        intent.capturedRegion.hi[2],
+        intent.region.lo[0],
+        intent.region.lo[1],
+        intent.region.lo[2],
+        intent.region.hi[0],
+        intent.region.hi[1],
+        intent.region.hi[2],
       ],
-      bboxResolution: intent.bboxRef.resolution,
+      regionSpace: coordinateSpaceFromJson(intent.region.dimensions),
       layers: intent.layers,
     };
     if (!this.intentIsStillCurrent(intent)) return;
@@ -1392,7 +1429,7 @@ export class EditSessionHost extends RefCounted {
       layers,
       region: {
         bbox: config.bboxVoxelCoords,
-        resolution: config.bboxResolution,
+        resolution: regionResolution(config.regionSpace),
       },
       tools: [
         painting({
@@ -1543,7 +1580,7 @@ export class EditSessionHost extends RefCounted {
    * space (the same frame as `viewer.position.value`). The conversion is:
    *
    *   bbox_displayVoxel[i] =
-   *     bboxVoxels[i] × bboxResolutionVoxelSize_nm[i] × 1e-9 /
+   *     bboxVoxels[i] × regionVoxelSizeNm[i] × 1e-9 /
    *     voxelPhysicalScales[i]
    *
    * where `voxelPhysicalScales[i]` is the display dimension's voxel size in
@@ -1580,7 +1617,7 @@ export class EditSessionHost extends RefCounted {
   ): ActiveRegion | undefined {
     const renderInfo = this.viewer.displayDimensionRenderInfo.value;
     const scales = renderInfo.voxelPhysicalScales;
-    const bboxVoxelSizeNm = Resolution.toVoxelSize(config.bboxResolution);
+    const bboxVoxelSizeNm = regionVoxelSizeNm(config.regionSpace);
     const display = (axis: number, voxelCoord: number): number => {
       const scale = scales[axis];
       if (!Number.isFinite(scale) || scale === 0) {
@@ -1779,17 +1816,12 @@ export class EditSessionHost extends RefCounted {
 
   private writeIntentToState(config: HostSessionConfig): void {
     const intent: EditSessionIntent = {
-      bboxRef: {
-        annotationLayerName: config.bboxRef.annotationLayerName,
-        annotationId: config.bboxRef.annotationId,
-        resolution: config.bboxResolution,
-      },
       layers: config.layers.map((l) => ({
         layerId: l.layerId,
         resolutions: [...l.resolutions],
         writable: l.writable,
       })),
-      capturedRegion: {
+      region: {
         lo: [
           config.bboxVoxelCoords[0],
           config.bboxVoxelCoords[1],
@@ -1800,6 +1832,9 @@ export class EditSessionHost extends RefCounted {
           config.bboxVoxelCoords[4],
           config.bboxVoxelCoords[5],
         ],
+        // Serialize the single region frame with the official encoder — same
+        // `CoordinateSpace` JSON as the rest of ngState (TM-299).
+        dimensions: coordinateSpaceToJson(config.regionSpace),
       },
     };
     this.state.value.value = intent;
