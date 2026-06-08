@@ -1623,6 +1623,14 @@ class GraphConnection extends SegmentationGraphSourceConnection {
 
     this.registerDisposer(
       this.graph.branchId.changed.add(() => {
+        // Drop selections + equivalences: piece IDs are branch-local, so
+        // a selected piece from the previous branch may not exist in the
+        // new one and triggers "piece not found" errors on getRoot.
+        // refreshChunkSources re-populates equivalences from the new
+        // branch's LUT trailers as chunks load.
+        segmentsState.selectedSegments.clear();
+        segmentsState.visibleSegments.clear();
+        segmentsState.segmentEquivalences.clear();
         this.refreshChunkSources();
       }),
     );
