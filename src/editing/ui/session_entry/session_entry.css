@@ -10,27 +10,47 @@
 
 /* Design tokens (modal-scoped) --------------------------------------------- */
 
+/*
+ * The modal keeps its local `--neuroglancer-edit-session-*` names (consumed by
+ * the rules below) but sources the shared roles from the global --nge-* tokens
+ * in editing_theme.css, so accent, danger, overlay surfaces, and primary text
+ * are single-source with the confirm dialog and the tool panels. The literal
+ * after each var() is the prior value, kept as a fallback in case the theme
+ * module isn't loaded. Modal-specific tones (accent-soft selection wash, the
+ * bg-row stripe, the memory-meter safe/near/over colors) stay local.
+ */
 .neuroglancer-edit-session-entry-modal-backdrop {
   /* --accent (#3b82f6) is reserved for borders / focus rings (UI-component
      contrast, 3:1). Fills that carry white text use the darker -strong /
      -stronger steps so the label clears WCAG AA 4.5:1. */
-  --neuroglancer-edit-session-accent: #3b82f6;
-  --neuroglancer-edit-session-accent-strong: #2563eb; /* white text: 5.17:1 */
-  --neuroglancer-edit-session-accent-stronger: #1d4ed8; /* hover: 6.70:1 */
+  --neuroglancer-edit-session-accent: var(--nge-accent, #3b82f6);
+  --neuroglancer-edit-session-accent-strong: var(
+    --nge-accent-strong,
+    #2563eb
+  ); /* white text: 5.17:1 */
+  --neuroglancer-edit-session-accent-stronger: var(
+    --nge-accent-strong-hover,
+    #1d4ed8
+  ); /* hover: 6.70:1 */
   --neuroglancer-edit-session-accent-soft: #1e3a5f;
-  --neuroglancer-edit-session-text: #e5e7eb;
+  --neuroglancer-edit-session-text: var(--nge-text, #e5e7eb);
   --neuroglancer-edit-session-text-muted: #9ca3af;
   /* Lifted from #6b7280 (3.4:1, failed AA) to clear 4.5:1 on every surface. */
-  --neuroglancer-edit-session-text-dim: #8b929c;
-  --neuroglancer-edit-session-bg: #1a1a1a;
-  --neuroglancer-edit-session-bg-elev: #232323;
+  --neuroglancer-edit-session-text-dim: var(--nge-text-faint, #8b929c);
+  --neuroglancer-edit-session-bg: var(--nge-overlay-bg, #1a1a1a);
+  --neuroglancer-edit-session-bg-elev: var(--nge-overlay-bg-elev, #232323);
   --neuroglancer-edit-session-bg-row: #1f1f1f;
-  --neuroglancer-edit-session-border: #3a3a3a;
-  --neuroglancer-edit-session-border-soft: #2a2a2a;
+  --neuroglancer-edit-session-border: var(--nge-overlay-border, #3a3a3a);
+  --neuroglancer-edit-session-border-soft: var(
+    --nge-overlay-border-soft,
+    #2a2a2a
+  );
+  /* Memory-meter traffic light. `over` is the shared error red (--nge-danger,
+     #f56565 — the value this meter was already tuned to for 4.5:1 on bg-row);
+     `safe`/`near` stay local to keep the brighter green/amber meter scale. */
   --neuroglancer-edit-session-safe: #22c55e;
   --neuroglancer-edit-session-near: #f59e0b;
-  /* Lifted from #ef4444 (4.38:1 as a label on bg-row) to clear 4.5:1. */
-  --neuroglancer-edit-session-over: #f56565;
+  --neuroglancer-edit-session-over: var(--nge-danger, #f56565);
 }
 
 /* Backdrop + frame --------------------------------------------------------- */

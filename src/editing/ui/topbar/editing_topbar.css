@@ -76,7 +76,7 @@
   align-items: center;
   justify-content: center;
   width: 28px;
-  height: 24px;
+  height: var(--nge-control-h-compact);
   padding: 0;
   background: transparent;
   border: 1px solid transparent;
@@ -133,7 +133,7 @@
      top-row widgets' height so they define the row height and our controls
      get an even gutter above/below. */
   box-sizing: border-box;
-  height: 24px;
+  height: var(--nge-control-h-compact);
   padding: 0 var(--nge-space-3);
   background: var(--nge-control-bg);
   border: 1px solid var(--nge-border-strong);
@@ -200,7 +200,7 @@
   /* Match the fixed height of the icon tool buttons so the whole topbar
      row of controls aligns to one consistent height. */
   box-sizing: border-box;
-  height: 24px;
+  height: var(--nge-control-h-compact);
   padding: 0 var(--nge-space-4);
   background: var(--nge-control-bg);
   border: 1px solid var(--nge-border-strong);

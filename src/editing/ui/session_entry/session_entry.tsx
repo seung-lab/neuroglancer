@@ -46,6 +46,9 @@ import type {
 import { LayerRow } from "#src/editing/ui/session_entry/layer_row.js";
 import { ResolutionSelectionModel } from "#src/editing/ui/session_entry/resolution_options.js";
 import type { LayerManager } from "#src/layer/index.js";
+// Load the shared --nge-* design tokens (declared on :root) so the modal's
+// local token aliases resolve them even before any tool panel is mounted.
+import "#src/editing/ui/editing_theme.css";
 import "#src/editing/ui/session_entry/session_entry.css";
 
 // ---------------------------------------------------------------------------

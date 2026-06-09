@@ -13,6 +13,9 @@ import { useRef } from "preact/hooks";
 
 import { useModalDialog } from "#src/editing/ui/interop/use_modal_dialog.js";
 
+// Load the shared --nge-* design tokens (declared on :root) so the portaled
+// dialog resolves them even when no tool panel/topbar happens to be mounted.
+import "#src/editing/ui/editing_theme.css";
 import "#src/editing/ui/confirm_dialog.css";
 
 const TITLE_ID = "neuroglancer-confirm-dialog-title";

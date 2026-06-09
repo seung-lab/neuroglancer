@@ -9,24 +9,12 @@
  */
 
 /*
- * Token values mirror the edit-session entry modal so the two dialogs read as
- * one system. Scoped to the backdrop to avoid leaking into the page.
+ * Consumes the shared --nge-* design tokens (editing_theme.css), imported as a
+ * side effect by confirm_dialog.tsx. The dialog uses the overlay surfaces and
+ * the -strong accent/danger steps (dark enough for white button text at AA),
+ * so it reads as one system with the session-entry modal and the tool panels.
  */
 .neuroglancer-confirm-dialog-backdrop {
-  /* Button fills carry white text, so the base values are the darker steps
-     that clear WCAG AA 4.5:1 (accent #2563eb = 5.17:1, danger #dc2626 =
-     4.83:1); the -strong steps are the hover states. */
-  --neuroglancer-confirm-accent: #2563eb;
-  --neuroglancer-confirm-accent-strong: #1d4ed8;
-  --neuroglancer-confirm-danger: #dc2626;
-  --neuroglancer-confirm-danger-strong: #b91c1c;
-  --neuroglancer-confirm-text: #e5e7eb;
-  --neuroglancer-confirm-text-muted: #b3b9c4;
-  --neuroglancer-confirm-bg: #1a1a1a;
-  --neuroglancer-confirm-bg-elev: #232323;
-  --neuroglancer-confirm-border: #3a3a3a;
-  --neuroglancer-confirm-border-soft: #2a2a2a;
-
   position: fixed;
   inset: 0;
   background-color: rgba(0, 0, 0, 0.6);
@@ -38,21 +26,18 @@
 }
 
 .neuroglancer-confirm-dialog {
-  background-color: var(--neuroglancer-confirm-bg);
-  color: var(--neuroglancer-confirm-text);
-  border: 1px solid var(--neuroglancer-confirm-border);
-  border-radius: 6px;
+  background-color: var(--nge-overlay-bg);
+  color: var(--nge-text);
+  border: 1px solid var(--nge-overlay-border);
+  border-radius: var(--nge-radius-md);
   width: 100%;
   max-width: 420px;
-  margin: 16px;
+  margin: var(--nge-space-6);
   padding: 18px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  /* Match the neuroglancer-wide UI font (every panel declares sans-serif
-     explicitly). Portaled dialog, so without this it falls back to the
-     browser-default serif instead of the app font. */
-  font-family: sans-serif;
+  gap: var(--nge-space-5);
+  font-family: var(--nge-font);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
 }
 
@@ -64,61 +49,61 @@
 .neuroglancer-confirm-dialog-message {
   font-size: 13px;
   line-height: 1.5;
-  color: var(--neuroglancer-confirm-text-muted);
+  color: var(--nge-text-subtle);
 }
 
 .neuroglancer-confirm-dialog-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
-  margin-top: 4px;
+  gap: var(--nge-space-4);
+  margin-top: var(--nge-space-1);
 }
 
 .neuroglancer-confirm-dialog-btn {
   padding: 8px 16px;
-  border-radius: 4px;
+  border-radius: var(--nge-radius-sm);
   cursor: pointer;
-  background-color: var(--neuroglancer-confirm-bg-elev);
-  color: var(--neuroglancer-confirm-text);
-  border: 1px solid var(--neuroglancer-confirm-border);
+  background-color: var(--nge-overlay-bg-elev);
+  color: var(--nge-text);
+  border: 1px solid var(--nge-overlay-border);
   font: inherit;
   font-size: 13px;
   font-weight: 500;
-  min-height: 32px;
+  min-height: var(--nge-control-h-lg);
   transition:
-    background-color 0.12s ease,
-    border-color 0.12s ease;
+    background-color var(--nge-transition),
+    border-color var(--nge-transition);
 }
 
 .neuroglancer-confirm-dialog-btn:hover:not(:disabled) {
-  border-color: var(--neuroglancer-confirm-accent);
+  border-color: var(--nge-accent-strong);
 }
 
 .neuroglancer-confirm-dialog-btn:focus-visible {
-  outline: 2px solid var(--neuroglancer-confirm-accent);
+  outline: 2px solid var(--nge-accent-ring);
   outline-offset: 1px;
 }
 
 .neuroglancer-confirm-dialog-btn-primary {
-  background-color: var(--neuroglancer-confirm-accent);
-  border-color: var(--neuroglancer-confirm-accent);
-  color: #fff;
+  background-color: var(--nge-accent-strong);
+  border-color: var(--nge-accent-strong);
+  color: var(--nge-accent-fg);
 }
 
 .neuroglancer-confirm-dialog-btn-primary:hover:not(:disabled) {
-  background-color: var(--neuroglancer-confirm-accent-strong);
-  border-color: var(--neuroglancer-confirm-accent-strong);
+  background-color: var(--nge-accent-strong-hover);
+  border-color: var(--nge-accent-strong-hover);
 }
 
 .neuroglancer-confirm-dialog-btn-destructive {
-  background-color: var(--neuroglancer-confirm-danger);
-  border-color: var(--neuroglancer-confirm-danger);
-  color: #fff;
+  background-color: var(--nge-danger-strong);
+  border-color: var(--nge-danger-strong);
+  color: var(--nge-accent-fg);
 }
 
 .neuroglancer-confirm-dialog-btn-destructive:hover:not(:disabled) {
-  background-color: var(--neuroglancer-confirm-danger-strong);
-  border-color: var(--neuroglancer-confirm-danger-strong);
+  background-color: var(--nge-danger-strong-hover);
+  border-color: var(--nge-danger-strong-hover);
 }
 
 @media (prefers-reduced-motion: reduce) {

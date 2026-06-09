@@ -29,6 +29,14 @@
   /* Slider rails and other neutral tracks. */
   --nge-rail: #3a3f4b;
 
+  /* Overlay surfaces — modals and dialogs float over a dimmed backdrop and are
+     intentionally darker than the inline control surfaces above. Shared by the
+     session-entry modal and the confirm dialog so the two read as one system. */
+  --nge-overlay-bg: #1a1a1a;
+  --nge-overlay-bg-elev: #232323;
+  --nge-overlay-border: #3a3a3a;
+  --nge-overlay-border-soft: #2a2a2a;
+
   /* --- Borders ---------------------------------------------------------- */
   --nge-border: #3a3d43;
   --nge-border-strong: #4a4e55;
@@ -58,10 +66,23 @@
   --nge-accent-fg-soft: #9cc3ff;
   /* Accent border/ring on active or tinted surfaces. */
   --nge-accent-border: #6fa8ff;
+  /* Accent steps dark enough to carry WHITE text at AA 4.5:1. The base
+     --nge-accent (#3b82f6) only reaches ~3.3:1 on white, so filled buttons with
+     white labels (primary dialog/modal actions) use these instead. */
+  --nge-accent-strong: #2563eb; /* white text: 5.17:1 */
+  --nge-accent-strong-hover: #1d4ed8; /* hover: 6.70:1 */
 
   /* --- Semantic --------------------------------------------------------- */
-  --nge-danger: #f0795a;
-  --nge-danger-bg: rgba(240, 121, 90, 0.12);
+  /* Error/danger — one red hue family. The light step carries inline error
+     text, borders, and focus outlines on the dark panels (AA as text: 4.9:1 on
+     the lightest control surface). The same red the memory meter uses for
+     over-budget, so panels, modal, and dialog all read as one error color. */
+  --nge-danger: #f56565;
+  --nge-danger-bg: rgba(245, 101, 101, 0.12);
+  /* Dark step dark enough for WHITE text at AA (destructive *filled* buttons,
+     e.g. "Discard edits"); the light --nge-danger would fail white-on-fill. */
+  --nge-danger-strong: #dc2626; /* white text: 4.83:1 */
+  --nge-danger-strong-hover: #b91c1c;
   --nge-warning: #d97706;
   /* Warning *surface* trio for the in-flight "saving" button state. */
   --nge-warning-bg: #4a3a1c;
@@ -83,7 +104,11 @@
   --nge-radius-pill: 999px;
 
   /* --- Control sizing (larger targets for occasional users) ------------- */
-  --nge-control-h: 28px;
+  /* Deliberate three-step height ladder by surface density:
+     compact (dense topbar row) < base (panel inputs) < lg (dialog actions). */
+  --nge-control-h: 28px; /* panel inputs, selects, buttons */
+  --nge-control-h-compact: 24px; /* dense topbar row controls */
+  --nge-control-h-lg: 32px; /* prominent modal/dialog action buttons */
   --nge-control-w: 120px;
   --nge-control-w-narrow: 60px;
   --nge-control-pad-x: 8px;
