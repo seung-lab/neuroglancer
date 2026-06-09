@@ -76,6 +76,7 @@ export class MeshSourceParameters {
   lod: number;
   sharding: Array<ShardingParameters> | undefined;
   nBitsForLayerId: number;
+  branchId: number;
 
   static RPC_ID = "graphene/MeshSource";
 }

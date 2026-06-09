@@ -98,6 +98,11 @@ function isRootElement(v: Entry) {
  */
 export class DisjointUint64Sets {
   private map = new Map<bigint, Entry>();
+  // Tracks pieces whose hashMap representation needs (re-)insertion since the
+  // last consumeDirty(). null = a full rebuild is required (an operation
+  // changed the representative of pre-existing pieces, which we can't
+  // efficiently express as a delta because HashMapUint64.set is insert-only).
+  private dirty: bigint[] | null = [];
   visibleSegmentEquivalencePolicy: WatchableValueInterface<VisibleSegmentEquivalencePolicy> =
     new WatchableValue<VisibleSegmentEquivalencePolicy>(
       VisibleSegmentEquivalencePolicy.MIN_REPRESENTATIVE,
@@ -126,9 +131,22 @@ export class DisjointUint64Sets {
     if (entry === undefined) {
       entry = new Entry(x);
       map.set(x, entry);
+      if (this.dirty !== null) this.dirty.push(x);
       return entry;
     }
     return findRepresentative(entry);
+  }
+
+  /**
+   * Returns and resets the list of pieces added since the last consume.
+   * Returns null if a full rebuild is required (representative of pre-existing
+   * pieces changed, set was cleared, etc.); the caller must re-iterate
+   * `mappings()` instead.
+   */
+  consumeDirty(): bigint[] | null {
+    const d = this.dirty;
+    this.dirty = [];
+    return d;
   }
 
   /**
@@ -136,21 +154,35 @@ export class DisjointUint64Sets {
    * @returns `false` if `a` and `b` are already in the same set, otherwise `true`.
    */
   link(a: bigint, b: bigint): boolean {
+    const aWasNew = !this.map.has(a);
+    const bWasNew = !this.map.has(b);
     const aEntry = this.makeSet(a);
     const bEntry = this.makeSet(b);
     if (aEntry === bEntry) {
       return false;
     }
     this.generation++;
+    const aOldMin = aEntry.min;
+    const bOldMin = bEntry.min;
     const newNode = linkUnequalSetRepresentatives(aEntry, bEntry);
     spliceCircularLists(aEntry, bEntry);
-    const aMin = aEntry.min;
-    const bMin = bEntry.min;
     const isMax =
       (this.visibleSegmentEquivalencePolicy.value &
         VisibleSegmentEquivalencePolicy.MAX_REPRESENTATIVE) !==
       0;
-    newNode.min = aMin < bMin === isMax ? bMin : aMin;
+    const newMin = aOldMin < bOldMin === isMax ? bOldMin : aOldMin;
+    newNode.min = newMin;
+    // If the representative changed for a pre-existing multi-element set,
+    // every member of that set needs its hashMap mapping updated. We can't
+    // express that incrementally with insert-only HashMapUint64.set, so fall
+    // back to a full rebuild on the next consume. The chunk-LUT path
+    // (`link(root_id, new_piece)`) never hits this: with MAX_REPRESENTATIVE
+    // and calcada's layer-byte stamping the root_id is always the max, so
+    // aOldMin === newMin for the existing root side.
+    if (this.dirty !== null) {
+      if (!aWasNew && aOldMin !== newMin) this.dirty = null;
+      else if (!bWasNew && bOldMin !== newMin) this.dirty = null;
+    }
     return true;
   }
 
@@ -172,6 +204,7 @@ export class DisjointUint64Sets {
     }
     if (changed) {
       ++this.generation;
+      this.dirty = null;
     }
     return changed;
   }
@@ -192,6 +225,7 @@ export class DisjointUint64Sets {
     }
     ++this.generation;
     map.clear();
+    this.dirty = null;
     return true;
   }
 

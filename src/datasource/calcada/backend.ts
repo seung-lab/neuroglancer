@@ -299,7 +299,10 @@ export class GrapheneMeshSource extends WithParameters(
       return decodeManifestChunk(chunk, { fragments: [] });
     }
     const { fetchOkImpl, baseUrl } = this.manifestHttpSource;
-    const manifestPath = `/manifest/${chunk.objectId}:${parameters.lod}?verify=1&prepend_seg_ids=1`;
+    let manifestPath = `/manifest/${chunk.objectId}:${parameters.lod}?verify=1&prepend_seg_ids=1`;
+    if (parameters.branchId && parameters.branchId > 0) {
+      manifestPath += `&branch_id=${parameters.branchId}`;
+    }
     const response = await (
       await fetchOkImpl(baseUrl + manifestPath, { signal })
     ).json();

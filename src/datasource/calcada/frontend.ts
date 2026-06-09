@@ -626,6 +626,7 @@ async function getMeshSource(
   url: string,
   fragmentUrl: string,
   nBitsForLayerId: number,
+  branchId: number,
   options: ProgressOptions,
 ) {
   const { metadata, segmentPropertyMap } = await getMeshMetadata(
@@ -639,6 +640,7 @@ async function getMeshSource(
     lod: 0,
     sharding: metadata?.sharding,
     nBitsForLayerId,
+    branchId,
   };
   const transform = metadata?.transform || mat4.create();
   return {
@@ -759,6 +761,7 @@ async function getVolumeDataSource(
         ),
       ),
       info.graph.nBitsForLayerId,
+      state.branchId.value,
       options,
     );
     const subsourceToModelSubspaceTransform =
