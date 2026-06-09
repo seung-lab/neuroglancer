@@ -5048,6 +5048,14 @@ registerLegacyTool(
 
 // Bulk link handler — receives all piece→root pairs from the worker in one
 // transferable buffer. ONE postMessage instead of 52K individual link() RPCs.
+// changed.dispatch is coalesced across all chunks that arrive in the same
+// animation frame: re-uploading the equivalences hash map to the GPU is the
+// expensive part (10-50ms per dispatch), so firing it once a frame instead of
+// once per chunk turns 10 paralellel chunk arrivals from ~500ms of
+// main-thread jank into ~50ms.
+const pendingDispatch = new Set<SharedDisjointUint64Sets>();
+let dispatchScheduled = false;
+
 registerRPC(CALCADA_BULK_LINK_RPC_ID, function (x) {
   const obj = this.get(x.id) as SharedDisjointUint64Sets;
   const buf = new BigUint64Array(x.pairs);
@@ -5057,13 +5065,16 @@ registerRPC(CALCADA_BULK_LINK_RPC_ID, function (x) {
       linked++;
     }
   }
-  if (linked > 0) {
-    obj.changed.dispatch();
-    // Force a redraw so the equivalences hash map is uploaded to GPU
-    // on the next animation frame. Without this, the first render frame
-    // after chunk load may show pieces instead of roots.
-    requestAnimationFrame(() => {
-      obj.changed.dispatch();
-    });
-  }
+  if (linked === 0) return;
+  pendingDispatch.add(obj);
+  if (dispatchScheduled) return;
+  dispatchScheduled = true;
+  requestAnimationFrame(() => {
+    dispatchScheduled = false;
+    const targets = Array.from(pendingDispatch);
+    pendingDispatch.clear();
+    for (const target of targets) {
+      target.changed.dispatch();
+    }
+  });
 });
