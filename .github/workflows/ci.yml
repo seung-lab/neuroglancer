@@ -25,7 +25,7 @@ jobs:
           node-version: 22.x
           cache: npm
           registry-url: https://npm.pkg.github.com
-          scope: '@zettaai'
+          scope: "@zettaai"
           cache-dependency-path: |
             package-lock.json
             examples/**/package-lock.json
