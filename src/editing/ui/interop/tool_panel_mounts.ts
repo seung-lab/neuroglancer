@@ -21,8 +21,11 @@ import { PaintingFill } from "#src/editing/ui/tool_settings/painting_fill.js";
 import { ZExtrapolation } from "#src/editing/ui/tool_settings/z_extrapolation.js";
 import type { SidePanelManager } from "#src/ui/side_panel.js";
 import type { TrackableSidePanelLocation } from "#src/ui/side_panel_location.js";
-// Shared row/label/input styling for every tool-settings panel body. Imported
-// here (rather than per-tool) so it loads once for the whole subsystem.
+// Design tokens first (defines the --nge-* custom properties every editing
+// stylesheet below resolves against), then the shared row/label/input styling
+// for every tool-settings panel body. Imported here (rather than per-tool) so
+// they load once for the whole subsystem.
+import "#src/editing/ui/editing_theme.css";
 import "#src/editing/ui/session_controls/session_controls.css";
 
 /**

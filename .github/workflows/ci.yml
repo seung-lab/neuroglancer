@@ -17,12 +17,6 @@ jobs:
   ci:
     name: Lint, typecheck, test & build
     runs-on: ubuntu-latest
-    env:
-      # Consumed by .npmrc to authenticate against npm.pkg.github.com.
-      # NOTE: must NOT be the automatic GITHUB_TOKEN — that is scoped to this
-      # repo only and gets 403 read_package for @zettaai packages published
-      # from other repos. Use a PAT with `read:packages` stored as NPM_TOKEN.
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -30,20 +24,18 @@ jobs:
         with:
           node-version: 22.x
           cache: npm
+          registry-url: https://npm.pkg.github.com
+          scope: "@zettaai"
           cache-dependency-path: |
             package-lock.json
             examples/**/package-lock.json
 
       - name: Install dependencies
-        # The committed package-lock.json is generated on macOS and only records
-        # the darwin optional binaries for oxlint/esbuild/rollup. Both `npm ci`
-        # and `npm install` trust the locked tree as complete and never fetch the
-        # missing linux-x64 binaries, breaking lint and build on the runner.
-        # Removing the lockfile forces npm to resolve fresh on linux and install
-        # the correct platform binaries for all three tools.
-        run: |
-          rm -f package-lock.json
-          npm install --no-audit --no-fund
+        # Skip post-install scripts here, as a malicious
+        # script could steal NODE_AUTH_TOKEN.
+        run: npm ci --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Lint
         run: npm run lint:check
@@ -53,6 +45,20 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Install uv
+        # The kvstore S3 + icechunk suites spawn `uv ... run moto_server` (a
+        # mock S3) and the vitest workspace setup runs `uv sync`. uv is not
+        # preinstalled on the runner; the action also adds it to PATH.
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Playwright browser
+        # `npm ci --ignore-scripts` skips the browser download that
+        # @playwright/browser-chromium normally does on postinstall, so the
+        # vitest browser project (chromium, *.browser_test.ts) has no binary to
+        # launch. Fetch chromium (+ its headless shell) and the OS libraries it
+        # needs on the runner.
+        run: npx playwright install --with-deps chromium
 
       - name: Test
         run: npm test

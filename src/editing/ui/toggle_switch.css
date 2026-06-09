@@ -2,25 +2,25 @@
  * Copyright 2026 Calcada AI / Zetta AI
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
+ *
+ * Values resolve against the --nge-* design tokens in editing_theme.css.
  */
 
 .neuroglancer-toggle-switch {
-  --neuroglancer-toggle-track: #3a3f4b;
-  --neuroglancer-toggle-track-on: #3b82f6;
   position: relative;
   flex: 0 0 auto;
-  width: 34px;
-  height: 18px;
+  width: 38px;
+  height: 20px;
   padding: 0;
   border: none;
-  border-radius: 999px;
-  background: var(--neuroglancer-toggle-track);
+  border-radius: var(--nge-radius-pill);
+  background: var(--nge-rail);
   cursor: pointer;
-  transition: background 120ms ease;
+  transition: background var(--nge-transition);
 }
 
 .neuroglancer-toggle-switch[data-checked="true"] {
-  background: var(--neuroglancer-toggle-track-on);
+  background: var(--nge-accent);
 }
 
 .neuroglancer-toggle-switch:disabled {
@@ -32,21 +32,21 @@
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-  transition: transform 120ms ease;
+  transition: transform var(--nge-transition);
 }
 
 .neuroglancer-toggle-switch[data-checked="true"]
   .neuroglancer-toggle-switch-thumb {
-  transform: translateX(16px);
+  transform: translateX(18px);
 }
 
 .neuroglancer-toggle-switch:focus-visible {
-  outline: 2px solid #93c5fd;
+  outline: 2px solid var(--nge-accent-ring);
   outline-offset: 2px;
 }
 
@@ -60,4 +60,11 @@
 .neuroglancer-toggle-switch-tooltip-wrap
   > .neuroglancer-toggle-switch:disabled {
   pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .neuroglancer-toggle-switch,
+  .neuroglancer-toggle-switch-thumb {
+    transition: none;
+  }
 }

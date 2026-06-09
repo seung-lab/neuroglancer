@@ -14,7 +14,7 @@ import { useCallback } from "preact/hooks";
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { useEvent } from "#src/editing/ui/interop/use_event.js";
 import { PaintingTargetPicker } from "#src/editing/ui/tool_settings/painting_target_picker.js";
-import { ParamLabel } from "#src/editing/ui/tool_settings/param_label.js";
+import { TargetValueField } from "#src/editing/ui/tool_settings/target_value_field.js";
 
 /**
  * Fill panel (TM-294): Target layer + resolution + Target value. Drops the
@@ -40,32 +40,14 @@ export function PaintingFill({
   useEvent(subscribe);
   const state = painting.getState();
 
-  const onTargetChange = (e: Event) => {
-    const input = e.currentTarget as HTMLInputElement;
-    const raw = input.value.trim();
-    try {
-      const parsed = BigInt(raw);
-      painting.patchState({ activeValue: parsed });
-    } catch {
-      input.value = painting.getState().activeValue.toString();
-    }
-  };
-
   return (
     <div class="neuroglancer-tool-panel neuroglancer-painting-fill-panel">
       <PaintingTargetPicker session={session} host={host} />
-      <div class="neuroglancer-tool-panel-row">
-        <ParamLabel
-          text="Target value"
-          hint="The segment ID written into the filled region — every voxel the fill reaches is set to this value."
-        />
-        <input
-          type="text"
-          inputMode="numeric"
-          value={state.activeValue.toString()}
-          onChange={onTargetChange}
-        />
-      </div>
+      <TargetValueField
+        value={state.activeValue}
+        onCommit={(activeValue) => painting.patchState({ activeValue })}
+        hint="The segment ID written into the filled region — every voxel the fill reaches is set to this value."
+      />
     </div>
   );
 }

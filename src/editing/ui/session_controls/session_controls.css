@@ -6,32 +6,36 @@
  * Styling for the per-tool settings side panel body (TM-294). The wider
  * Edit-Session sidebar layout from the legacy single-panel root is gone —
  * what remains here is just the tool-panel container.
+ *
+ * All values resolve against the --nge-* design tokens in editing_theme.css.
  */
 
 .neuroglancer-edit-session-tool-panel {
   display: flex;
   flex-direction: column;
-  padding: 8px;
+  padding: var(--nge-space-3);
   min-width: 240px;
-  /* Match the neuroglancer-wide UI font (every panel declares sans-serif). */
-  font-family: sans-serif;
-  font-size: 12px;
-  color: #ddd;
+  font-family: var(--nge-font);
+  font-size: var(--nge-text-size);
+  color: var(--nge-text);
+  /* Tells the browser to render native widget chrome (number-input spin
+     buttons, scrollbars) in their dark variant, so they sit in the panel
+     instead of flashing a light-mode control. */
+  color-scheme: dark;
   overflow-y: auto;
 }
 
 .neuroglancer-edit-session-tool-panel-body {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--nge-space-2);
 }
 
 .neuroglancer-tool-panel-host-placeholder {
   margin: 0;
-  padding: 8px 0;
-  font-size: 11px;
-  color: #aaa;
-  font-style: italic;
+  padding: var(--nge-space-3) 0;
+  font-size: var(--nge-text-size-sm);
+  color: var(--nge-text-subtle);
   line-height: 1.4;
 }
 
@@ -40,7 +44,7 @@
 .neuroglancer-tool-panel {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--nge-space-4);
 }
 
 /* Every parameter row: label takes its natural width on the left, the value
@@ -48,43 +52,130 @@
 .neuroglancer-tool-panel-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 24px;
+  gap: var(--nge-space-4);
+  min-height: var(--nge-control-h);
 }
 
 .neuroglancer-tool-panel-row label {
   flex: 0 1 auto;
   min-width: 0;
-  font-size: 12px;
-  color: #cfd3da;
+  font-size: var(--nge-text-size);
+  color: var(--nge-text-muted);
 }
+
+/* --- Text / number / select controls ----------------------------------- */
 
 .neuroglancer-tool-panel-row select,
 .neuroglancer-tool-panel-row input[type="text"],
 .neuroglancer-tool-panel-row input[type="number"] {
   margin-left: auto;
   flex: 0 1 auto;
-  width: 110px;
+  box-sizing: border-box;
+  width: var(--nge-control-w);
   min-width: 0;
-  background: #2a2a2a;
-  border: 1px solid #3a3a3a;
-  border-radius: 4px;
-  color: #e5e7eb;
-  padding: 4px 8px;
+  height: var(--nge-control-h);
+  background: var(--nge-control-bg);
+  border: 1px solid var(--nge-border);
+  border-radius: var(--nge-radius-sm);
+  color: var(--nge-text);
+  padding: 0 var(--nge-control-pad-x);
   font: inherit;
+  transition:
+    border-color var(--nge-transition),
+    background var(--nge-transition);
 }
 
+.neuroglancer-tool-panel-row select:hover:not(:disabled),
+.neuroglancer-tool-panel-row input[type="text"]:hover:not(:disabled),
+.neuroglancer-tool-panel-row input[type="number"]:hover:not(:disabled) {
+  border-color: var(--nge-border-strong);
+}
+
+/* One focus treatment across every editing control: accent border + accent
+   ring (the toggle and threshold thumbs use the same ring token). */
 .neuroglancer-tool-panel-row select:focus-visible,
 .neuroglancer-tool-panel-row input[type="text"]:focus-visible,
 .neuroglancer-tool-panel-row input[type="number"]:focus-visible {
-  outline: none;
-  border-color: #3b82f6;
+  outline: 2px solid var(--nge-accent-ring);
+  outline-offset: 1px;
+  border-color: var(--nge-accent);
 }
+
+/* Invalid value (e.g. a non-integer segment ID): red border + ring, value
+   preserved so the user can correct it rather than losing what they typed. */
+.neuroglancer-tool-panel-row input[aria-invalid="true"] {
+  border-color: var(--nge-danger);
+  background: var(--nge-danger-bg);
+}
+
+.neuroglancer-tool-panel-row input[aria-invalid="true"]:focus-visible {
+  outline-color: var(--nge-danger);
+  border-color: var(--nge-danger);
+}
+
+/* --- Range slider (unified with the threshold handle visual language) --- */
 
 .neuroglancer-tool-panel-row input[type="range"] {
   flex: 1 1 auto;
   min-width: 0;
-  accent-color: #3b82f6;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.neuroglancer-tool-panel-row
+  input[type="range"]::-webkit-slider-runnable-track {
+  height: 5px;
+  border-radius: var(--nge-radius-pill);
+  background: var(--nge-rail);
+}
+
+.neuroglancer-tool-panel-row input[type="range"]::-moz-range-track {
+  height: 5px;
+  border-radius: var(--nge-radius-pill);
+  background: var(--nge-rail);
+}
+
+.neuroglancer-tool-panel-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  margin-top: -5.5px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--nge-accent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+
+.neuroglancer-tool-panel-row input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--nge-accent);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+
+.neuroglancer-tool-panel-row input[type="range"]:focus-visible {
+  outline: none;
+}
+
+.neuroglancer-tool-panel-row
+  input[type="range"]:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--nge-accent-ring);
+  outline-offset: 1px;
+}
+
+.neuroglancer-tool-panel-row
+  input[type="range"]:focus-visible::-moz-range-thumb {
+  outline: 2px solid var(--nge-accent-ring);
+  outline-offset: 1px;
 }
 
 /* When a range and a numeric readout share a row, the range fills the gap
@@ -92,62 +183,91 @@
 .neuroglancer-tool-panel-row input[type="range"] + input[type="number"] {
   margin-left: 0;
   flex: 0 0 auto;
-  width: 56px;
+  width: var(--nge-control-w-narrow);
   text-align: center;
 }
 
 /* A trailing switch (e.g. "Filter components first") right-aligns. */
-.neuroglancer-tool-panel-row > .neuroglancer-toggle-switch {
+.neuroglancer-tool-panel-row > .neuroglancer-toggle-switch,
+.neuroglancer-tool-panel-row > .neuroglancer-toggle-switch-tooltip-wrap {
   margin-left: auto;
 }
 
+/* A parameter row plus an optional inline message stacked beneath it (e.g. a
+   validation error). The wrapper is one item in the panel's flex column. */
+.neuroglancer-tool-panel-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--nge-space-2);
+}
+
+.neuroglancer-tool-panel-error {
+  font-size: var(--nge-text-size-sm);
+  color: var(--nge-danger);
+  line-height: 1.4;
+}
+
 .neuroglancer-tool-panel-readonly {
-  color: #aaa;
-  font-family: monospace, monospace;
-  font-size: 11px;
+  color: var(--nge-text-faint);
+  font-family: var(--nge-font-mono);
+  font-size: var(--nge-text-size-sm);
 }
 
 /* Static resolution display when a layer is single-resolution. */
 .neuroglancer-tool-panel-resolution-static {
   margin-left: auto;
   flex: 0 1 auto;
-  width: 110px;
   box-sizing: border-box;
-  font-family: monospace, monospace;
-  font-size: 11px;
-  color: #8b929c;
-  padding: 4px 8px;
-  background: #232323;
-  border: 1px solid #3a3a3a;
-  border-radius: 4px;
+  width: var(--nge-control-w);
+  min-height: var(--nge-control-h);
+  display: flex;
+  align-items: center;
+  font-family: var(--nge-font-mono);
+  font-size: var(--nge-text-size-sm);
+  color: var(--nge-text-faint);
+  padding: 0 var(--nge-control-pad-x);
+  background: var(--nge-control-bg-inert);
+  border: 1px solid var(--nge-border);
+  border-radius: var(--nge-radius-sm);
 }
 
 /* Segmented switch (e.g. Fill's 2D/3D toggle). */
 .neuroglancer-tool-panel-segmented {
   display: inline-flex;
-  border: 1px solid #444;
-  border-radius: 3px;
+  border: 1px solid var(--nge-border-strong);
+  border-radius: var(--nge-radius-sm);
   overflow: hidden;
 }
 
 .neuroglancer-tool-panel-segmented button {
-  background: #2a2a2a;
+  background: var(--nge-control-bg);
   border: none;
-  color: #ddd;
-  padding: 2px 10px;
+  color: var(--nge-text-muted);
+  padding: 0 var(--nge-space-4);
+  height: calc(var(--nge-control-h) - 4px);
   cursor: pointer;
   font: inherit;
+  transition: background var(--nge-transition);
 }
 
 .neuroglancer-tool-panel-segmented button + button {
-  border-left: 1px solid #444;
+  border-left: 1px solid var(--nge-border-strong);
 }
 
 .neuroglancer-tool-panel-segmented button:hover:not([disabled]) {
-  background: #3a3a3a;
+  background: var(--nge-control-bg-hover);
 }
 
 .neuroglancer-tool-panel-segmented button.active {
-  background: #2c3a5a;
-  color: #fff;
+  background: var(--nge-accent-tint);
+  color: var(--nge-accent-fg);
+}
+
+/* --- Reduced motion ---------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .neuroglancer-tool-panel-row select,
+  .neuroglancer-tool-panel-row input,
+  .neuroglancer-tool-panel-segmented button {
+    transition: none;
+  }
 }

@@ -30,6 +30,7 @@ import { ToggleSwitch } from "#src/editing/ui/toggle_switch.js";
 import { PaintingTargetPicker } from "#src/editing/ui/tool_settings/painting_target_picker.js";
 import { PaintingThreshold } from "#src/editing/ui/tool_settings/painting_threshold.js";
 import { ParamLabel } from "#src/editing/ui/tool_settings/param_label.js";
+import { TargetValueField } from "#src/editing/ui/tool_settings/target_value_field.js";
 import "#src/editing/ui/tool_settings/painting_brush.css";
 
 const MAX_SIZE = 1000; // size = radius*2+1; max radius 64.
@@ -65,17 +66,6 @@ export function PaintingBrush({
     painting.patchState({ radius: sizeToRadius(size) });
   };
 
-  const onTargetChange = (e: Event) => {
-    const input = e.currentTarget as HTMLInputElement;
-    const raw = input.value.trim();
-    try {
-      const parsed = BigInt(raw);
-      painting.patchState({ activeValue: parsed });
-    } catch {
-      input.value = painting.getState().activeValue.toString();
-    }
-  };
-
   const size = radiusToSize(state.radius);
 
   return (
@@ -103,18 +93,11 @@ export function PaintingBrush({
           onChange={onSizeInput}
         />
       </div>
-      <div class="neuroglancer-tool-panel-row">
-        <ParamLabel
-          text="Target value"
-          hint="The segment ID painted into the target layer — every voxel the stroke covers is set to this value."
-        />
-        <input
-          type="text"
-          inputMode="numeric"
-          value={state.activeValue.toString()}
-          onChange={onTargetChange}
-        />
-      </div>
+      <TargetValueField
+        value={state.activeValue}
+        onCommit={(activeValue) => painting.patchState({ activeValue })}
+        hint="The segment ID painted into the target layer — every voxel the stroke covers is set to this value."
+      />
       <AdvancedBrush host={host} painting={painting} />
     </div>
   );

@@ -9,6 +9,7 @@
  */
 
 import type { Resolution } from "@zettaai/edit-session";
+import { useRef } from "preact/hooks";
 
 import { useSignal } from "#src/editing/ui/interop/use_signal.js";
 import type { LayerKind } from "#src/editing/ui/layer_kind.js";
@@ -146,6 +147,13 @@ export function LayerRow({
   );
 }
 
+interface RoleSegmentSpec {
+  readonly value: LayerRole;
+  readonly label: string;
+  readonly tooltip: string;
+  readonly disabled: boolean;
+}
+
 function RoleControl({
   role,
   layerKind,
@@ -156,38 +164,92 @@ function RoleControl({
   onChange: (role: LayerRole) => void;
 }) {
   const editableDisabled = layerKind === "image";
+  const segments: readonly RoleSegmentSpec[] = [
+    { value: "off", label: "Off", tooltip: ROLE_TOOLTIP.off, disabled: false },
+    {
+      value: "reference",
+      label: "Reference",
+      tooltip: ROLE_TOOLTIP.reference,
+      disabled: false,
+    },
+    {
+      value: "editable",
+      label: "Editable",
+      tooltip: editableDisabled
+        ? EDITABLE_DISABLED_TOOLTIP
+        : ROLE_TOOLTIP.editable,
+      disabled: editableDisabled,
+    },
+  ];
+  const btnRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  // Move selection to a segment by index (radiogroup arrows both move focus AND
+  // select, unlike the browse-only listbox); no-op on a disabled segment.
+  const selectAt = (index: number) => {
+    const seg = segments[index];
+    if (seg === undefined || seg.disabled || seg.value === role) {
+      btnRefs.current[index]?.focus();
+      return;
+    }
+    onChange(seg.value);
+    btnRefs.current[index]?.focus();
+  };
+
+  // Next enabled index in `dir`, wrapping, skipping disabled segments.
+  const nextEnabled = (from: number, dir: number) => {
+    const n = segments.length;
+    for (let step = 1; step <= n; step++) {
+      const idx = (from + dir * step + n * n) % n;
+      if (!segments[idx].disabled) return idx;
+    }
+    return from;
+  };
+
+  const onKeyDown = (e: KeyboardEvent) => {
+    const currentIndex = segments.findIndex((s) => s.value === role);
+    switch (e.key) {
+      case "ArrowRight":
+      case "ArrowDown":
+        e.preventDefault();
+        selectAt(nextEnabled(currentIndex, 1));
+        break;
+      case "ArrowLeft":
+      case "ArrowUp":
+        e.preventDefault();
+        selectAt(nextEnabled(currentIndex, -1));
+        break;
+      case "Home":
+        e.preventDefault();
+        selectAt(nextEnabled(-1, 1));
+        break;
+      case "End":
+        e.preventDefault();
+        selectAt(nextEnabled(segments.length, -1));
+        break;
+    }
+  };
+
   return (
     <div
       class="neuroglancer-edit-session-entry-modal-role-control"
       role="radiogroup"
       aria-label="Layer role"
+      onKeyDown={onKeyDown}
     >
-      <RoleSegment
-        value="off"
-        current={role}
-        label="Off"
-        tooltip={ROLE_TOOLTIP.off}
-        disabled={false}
-        onChange={onChange}
-      />
-      <RoleSegment
-        value="reference"
-        current={role}
-        label="Reference"
-        tooltip={ROLE_TOOLTIP.reference}
-        disabled={false}
-        onChange={onChange}
-      />
-      <RoleSegment
-        value="editable"
-        current={role}
-        label="Editable"
-        tooltip={
-          editableDisabled ? EDITABLE_DISABLED_TOOLTIP : ROLE_TOOLTIP.editable
-        }
-        disabled={editableDisabled}
-        onChange={onChange}
-      />
+      {segments.map((seg, i) => (
+        <RoleSegment
+          key={seg.value}
+          value={seg.value}
+          current={role}
+          label={seg.label}
+          tooltip={seg.tooltip}
+          disabled={seg.disabled}
+          onChange={onChange}
+          buttonRef={(el) => {
+            btnRefs.current[i] = el;
+          }}
+        />
+      ))}
     </div>
   );
 }
@@ -199,6 +261,7 @@ function RoleSegment({
   tooltip,
   disabled,
   onChange,
+  buttonRef,
 }: {
   value: LayerRole;
   current: LayerRole;
@@ -206,6 +269,7 @@ function RoleSegment({
   tooltip: string;
   disabled: boolean;
   onChange: (role: LayerRole) => void;
+  buttonRef: (el: HTMLButtonElement | null) => void;
 }) {
   const selected = value === current;
   const cls = [
@@ -229,11 +293,15 @@ function RoleSegment({
       data-tooltip={tooltip}
     >
       <button
+        ref={buttonRef}
         type="button"
         role="radio"
         aria-checked={selected}
         aria-disabled={disabled}
         disabled={disabled}
+        // Roving tabindex: only the selected segment is a tab stop, so Tab
+        // lands on the group once and the arrow keys move within it.
+        tabIndex={selected ? 0 : -1}
         class={cls}
         onClick={() => {
           if (disabled) return;

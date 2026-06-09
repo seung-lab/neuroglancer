@@ -2,6 +2,8 @@
  * Copyright 2026 Calcada AI / Zetta AI
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
+ *
+ * Values resolve against the --nge-* design tokens in editing_theme.css.
  */
 
 .neuroglancer-painting-threshold {
@@ -9,8 +11,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  --neuroglancer-threshold-accent: #3b82f6;
+  gap: var(--nge-space-3);
 }
 
 /* Rail + two overlapping range inputs share one stacking context. */
@@ -25,16 +26,16 @@
   position: absolute;
   left: 0;
   right: 0;
-  height: 4px;
-  border-radius: 999px;
-  background: #3a3f4b;
+  height: 5px;
+  border-radius: var(--nge-radius-pill);
+  background: var(--nge-rail);
 }
 
 .neuroglancer-painting-threshold-fill {
   position: absolute;
-  height: 4px;
-  border-radius: 999px;
-  background: var(--neuroglancer-threshold-accent);
+  height: 5px;
+  border-radius: var(--nge-radius-pill);
+  background: var(--nge-accent);
 }
 
 /* Both handles span the full rail; their tracks are click-through so the
@@ -68,22 +69,22 @@
 .neuroglancer-painting-threshold-handle::-webkit-slider-thumb {
   -webkit-appearance: none;
   pointer-events: auto;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: #fff;
-  border: 2px solid var(--neuroglancer-threshold-accent);
+  border: 2px solid var(--nge-accent);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   cursor: pointer;
 }
 
 .neuroglancer-painting-threshold-handle::-moz-range-thumb {
   pointer-events: auto;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: #fff;
-  border: 2px solid var(--neuroglancer-threshold-accent);
+  border: 2px solid var(--nge-accent);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   cursor: pointer;
 }
@@ -99,12 +100,12 @@
 }
 
 .neuroglancer-painting-threshold-handle:focus-visible::-webkit-slider-thumb {
-  outline: 2px solid #93c5fd;
+  outline: 2px solid var(--nge-accent-ring);
   outline-offset: 1px;
 }
 
 .neuroglancer-painting-threshold-handle:focus-visible::-moz-range-thumb {
-  outline: 2px solid #93c5fd;
+  outline: 2px solid var(--nge-accent-ring);
   outline-offset: 1px;
 }
 
@@ -127,23 +128,37 @@
 
 .neuroglancer-painting-threshold-field span {
   font-size: 10px;
-  color: #8b929c;
+  color: var(--nge-text-faint);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 
 .neuroglancer-painting-threshold-field input[type="number"] {
+  box-sizing: border-box;
   width: 56px;
-  background: #2a2a2a;
-  border: 1px solid #3a3a3a;
-  border-radius: 4px;
-  color: #e5e7eb;
-  padding: 3px 6px;
+  height: var(--nge-control-h);
+  background: var(--nge-control-bg);
+  border: 1px solid var(--nge-border);
+  border-radius: var(--nge-radius-sm);
+  color: var(--nge-text);
+  padding: 0 var(--nge-space-2);
   font: inherit;
   text-align: center;
+  transition: border-color var(--nge-transition);
+}
+
+.neuroglancer-painting-threshold-field input[type="number"]:hover {
+  border-color: var(--nge-border-strong);
 }
 
 .neuroglancer-painting-threshold-field input[type="number"]:focus-visible {
-  outline: none;
-  border-color: var(--neuroglancer-threshold-accent);
+  outline: 2px solid var(--nge-accent-ring);
+  outline-offset: 1px;
+  border-color: var(--nge-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .neuroglancer-painting-threshold-field input[type="number"] {
+    transition: none;
+  }
 }

@@ -68,7 +68,7 @@ describe("EditSessionHost — integration (state surface)", () => {
     expect(host.sessionLock.isLayerDataSourceLocked(layerId("L1"))).toBe(false);
   });
 
-  it("state.restoreState with an unresolvable intent auto-clears via failRestore", () => {
+  it("state.restoreState with an unresolvable intent auto-clears via failRestore", async () => {
     const intent: EditSessionIntent = {
       layers: [{ layerId: layerId("L1"), resolutions: [RES], writable: true }],
       region: {
@@ -78,9 +78,11 @@ describe("EditSessionHost — integration (state surface)", () => {
       },
     };
     // The host subscribes to `state.changed` and auto-triggers
-    // `tryRestoreFromState()`. With no matching annotation layer in the fake
-    // LayerManager, failRestore clears the intent synchronously.
+    // `tryRestoreFromState()`. With no matching layer in the fake LayerManager,
+    // the async restore attempt fails and `failRestore` clears the intent.
+    // Flush microtasks so the attempt completes.
     host.state.restoreState(intent);
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(host.state.value.value).toBeNull();
     // reset() on an already-null trackable is a no-op.
     host.state.reset();

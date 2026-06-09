@@ -8,6 +8,7 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
+import "#src/editing/ui/editing_theme.css";
 import "#src/editing/ui/topbar/editing_topbar.css";
 
 import type { EditSession } from "@zettaai/edit-session";
