@@ -16,29 +16,36 @@ Strategy: **Restrained** — tinted-neutral surfaces plus one accent.
 Values are hex (the surrounding codebase and Neuroglancer are hex; exact
 chrome-match beats perceptual-space novelty here). Defined once as tokens.
 
-| Role                      | Token                    | Value                  |
-| ------------------------- | ------------------------ | ---------------------- |
-| Control surface           | `--nge-control-bg`       | `#26282c`              |
-| Control hover             | `--nge-control-bg-hover` | `#2f3137`              |
-| Inert surface             | `--nge-control-bg-inert` | `#202225`              |
-| Slider rail               | `--nge-rail`             | `#3a3f4b`              |
-| Border                    | `--nge-border`           | `#3a3d43`              |
-| Border (strong)           | `--nge-border-strong`    | `#4a4e55`              |
-| Divider                   | `--nge-divider`          | `#2f2f2f`              |
-| Text (primary)            | `--nge-text`             | `#e6e8ec`              |
-| Text (label)              | `--nge-text-muted`       | `#cfd3da`              |
-| Text (help/secondary)     | `--nge-text-subtle`      | `#aab1bb`              |
-| Text (faint/mono)         | `--nge-text-faint`       | `#8b929c`              |
-| Accent                    | `--nge-accent`           | `#3b82f6`              |
-| Accent hover              | `--nge-accent-hover`     | `#5a96f8`              |
-| Accent tint (selected bg) | `--nge-accent-tint`      | `#2c3a5a`              |
-| Focus ring                | `--nge-accent-ring`      | `#93c5fd`              |
-| Danger                    | `--nge-danger`           | `#f0795a`              |
-| Danger bg                 | `--nge-danger-bg`        | `rgba(240,121,90,.12)` |
+| Role                     | Token                                  | Value                             |
+| ------------------------ | -------------------------------------- | --------------------------------- |
+| Control surface          | `--nge-control-bg`                     | `#26282c`                         |
+| Control/ghost hover      | `--nge-control-bg-hover`               | `#34373d`                         |
+| Inert surface            | `--nge-control-bg-inert`               | `#202225`                         |
+| Slider rail              | `--nge-rail`                           | `#3a3f4b`                         |
+| Border                   | `--nge-border`                         | `#3a3d43`                         |
+| Border (strong)          | `--nge-border-strong`                  | `#4a4e55`                         |
+| Divider                  | `--nge-divider`                        | `#2f2f2f`                         |
+| Text (primary)           | `--nge-text`                           | `#e6e8ec`                         |
+| Text (label)             | `--nge-text-muted`                     | `#cfd3da`                         |
+| Text (help/secondary)    | `--nge-text-subtle`                    | `#aab1bb`                         |
+| Text (faint/mono)        | `--nge-text-faint`                     | `#8b929c`                         |
+| Accent                   | `--nge-accent`                         | `#3b82f6`                         |
+| Accent hover             | `--nge-accent-hover`                   | `#5a96f8`                         |
+| Accent tint (active bg)  | `--nge-accent-tint`                    | `#2c3a5a`                         |
+| Accent fg on tint (icon) | `--nge-accent-fg-soft`                 | `#9cc3ff`                         |
+| Accent border (active)   | `--nge-accent-border`                  | `#6fa8ff`                         |
+| Accent fg (on fill)      | `--nge-accent-fg`                      | `#ffffff`                         |
+| Focus ring               | `--nge-accent-ring`                    | `#93c5fd`                         |
+| Danger                   | `--nge-danger`                         | `#f0795a`                         |
+| Danger bg                | `--nge-danger-bg`                      | `rgba(240,121,90,.12)`            |
+| Warning (badge)          | `--nge-warning`                        | `#d97706`                         |
+| Warning surface          | `--nge-warning-bg` / `-border` / `-fg` | `#4a3a1c` / `#8a6a2a` / `#ffd591` |
 
-The accent ramp replaces four near-duplicate blues that were scattered across
-the old stylesheets. Help/secondary text was lifted from `#9ca3af`/`#8b929c` to
-`#aab1bb` to clear AA on the dark panel.
+The accent set is one deliberate blue ramp with distinct roles (base, hover,
+tint, on-tint icon, active border, focus ring), replacing the near-duplicate
+blues that were scattered one-off across the old stylesheets. Help/secondary
+text was lifted from `#9ca3af`/`#8b929c` to `#aab1bb` to clear AA on the dark
+panel.
 
 ## Typography
 
@@ -82,9 +89,18 @@ mask section is an indented nested group revealed by its toggle.
 transition has a `prefers-reduced-motion: reduce` fallback. No page-load
 choreography; motion conveys state, nothing else.
 
+## Coverage
+
+Tokenized: the tool panels (Brush/Eraser/Fill) and their shared controls, the
+dual-handle threshold, the toggle switch, the fast-tooltip, and the editing
+**topbar** (`editing_topbar.css`) — buttons, tool/history icons, the Save-all
+button + unsaved badge, the saving state, and the Edit/Exit anchor. The topbar
+also gained a visible `:focus-visible` ring on every button (previously none)
+and hover transitions.
+
 ## Known follow-ups (deliberately out of current scope)
 
-- Topbar (`editing_topbar.css`) still uses hardcoded colors; migrate it onto
-  the same tokens.
 - Brush/Eraser/Fill remain three panels; a unified panel with a tool switch and
   grouped "Target"/"Settings" sections was considered and deferred.
+- Other edit-session surfaces outside the panels and topbar (the session-entry
+  modal, confirm dialog) are not yet on the tokens.

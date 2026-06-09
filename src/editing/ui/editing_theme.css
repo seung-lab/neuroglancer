@@ -21,7 +21,9 @@
   /* --- Surfaces ---------------------------------------------------------- */
   /* Filled controls (inputs, selects, buttons) over the panel background. */
   --nge-control-bg: #26282c;
-  --nge-control-bg-hover: #2f3137;
+  /* Hover surface for raised/ghost controls (panel segmented buttons + topbar
+     buttons). One noticeable cool-grey step above the base. */
+  --nge-control-bg-hover: #34373d;
   /* Read-only / inert fills (static resolution readout). */
   --nge-control-bg-inert: #202225;
   /* Slider rails and other neutral tracks. */
@@ -52,11 +54,19 @@
   --nge-accent-ring: #93c5fd;
   /* Foreground on a filled accent surface. */
   --nge-accent-fg: #ffffff;
+  /* Accent text/icon sitting on the accent *tint* (e.g. an active tool icon). */
+  --nge-accent-fg-soft: #9cc3ff;
+  /* Accent border/ring on active or tinted surfaces. */
+  --nge-accent-border: #6fa8ff;
 
   /* --- Semantic --------------------------------------------------------- */
   --nge-danger: #f0795a;
   --nge-danger-bg: rgba(240, 121, 90, 0.12);
   --nge-warning: #d97706;
+  /* Warning *surface* trio for the in-flight "saving" button state. */
+  --nge-warning-bg: #4a3a1c;
+  --nge-warning-border: #8a6a2a;
+  --nge-warning-fg: #ffd591;
   --nge-success: #2bb673;
 
   /* --- Spacing scale ---------------------------------------------------- */
