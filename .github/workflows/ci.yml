@@ -46,6 +46,12 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Install uv
+        # The kvstore S3 + icechunk suites spawn `uv ... run moto_server` (a
+        # mock S3) and the vitest workspace setup runs `uv sync`. uv is not
+        # preinstalled on the runner; the action also adds it to PATH.
+        uses: astral-sh/setup-uv@v5
+
       - name: Install Playwright browser
         # `npm ci --ignore-scripts` skips the browser download that
         # @playwright/browser-chromium normally does on postinstall, so the
