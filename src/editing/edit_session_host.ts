@@ -97,6 +97,7 @@ import { QuickRegionCapture } from "#src/editing/quick_region_capture.js";
 import { EditSessionHotkeyBinder } from "#src/editing/session_hotkey_binder.js";
 import type { PatchedMaskProvider } from "#src/editing/shaders/patched_mask_provider.js";
 import { NgCorrespondenceCompute } from "#src/editing/tool_runtimes/correspondence_compute.js";
+import { MorphologyClient } from "#src/editing/tool_runtimes/morphology_client.js";
 import { PaintingCompute } from "#src/editing/tool_runtimes/painting_compute.js";
 import { NgZExtrapolationCompute } from "#src/editing/tool_runtimes/z_extrapolation_compute.js";
 import type { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
@@ -427,6 +428,15 @@ export class EditSessionHost extends RefCounted {
   readonly commitTarget: NgCommitTarget;
   private readonly saveTarget: NgSaveTarget;
   private readonly clock: NgClock;
+
+  /**
+   * Pyodide morphology worker (TM-304), shared by every `PaintingCompute` this
+   * host builds. Lazily boots pyodide on `warmup()`/first masked stroke and is
+   * terminated when the host is disposed.
+   */
+  private readonly morphologyClient = this.registerDisposer(
+    new MorphologyClient(),
+  );
 
   /**
    * Reactive flag: whether any save backend is registered (so persistence is
@@ -1364,6 +1374,9 @@ export class EditSessionHost extends RefCounted {
         "EditSessionConfig.layers must be non-empty",
       );
     }
+    // Boot pyodide eagerly as the session opens so the multi-second cold start
+    // is hidden before the user's first masked brush stroke (TM-304).
+    this.morphologyClient.warmup();
     const layers: LayerSelection[] = config.layers.map((l) => ({
       layerId: l.layerId,
       selectedResolutions: [...l.resolutions],
@@ -1437,8 +1450,9 @@ export class EditSessionHost extends RefCounted {
           // The compute reads the active tool id so the eraser never inherits
           // the brush's shared image mask (TM-297). `activeSession` is unset
           // while this config is built but populated by the time a stroke runs.
-          compute: new PaintingCompute(() =>
-            this.activeSession.value?.getActiveToolId(),
+          compute: new PaintingCompute(
+            () => this.activeSession.value?.getActiveToolId(),
+            this.morphologyClient,
           ),
         }),
         correspondence({

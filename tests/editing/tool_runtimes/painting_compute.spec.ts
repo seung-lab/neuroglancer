@@ -17,9 +17,24 @@ import type {
   ReadonlyChunkVoxelBuffer,
 } from "@zettaai/edit-session";
 import { ChunkId, Resolution, layerId } from "@zettaai/edit-session";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 
+import type { MorphologyClient } from "#src/editing/tool_runtimes/morphology_client.js";
+import type { MorphologyRequest } from "#src/editing/tool_runtimes/morphology_request.js";
 import { PaintingCompute } from "#src/editing/tool_runtimes/painting_compute.js";
+
+/**
+ * Minimal stand-in for the pyodide `MorphologyClient` — only `apply` is used by
+ * `PaintingCompute`. `apply` is a vitest mock so tests can assert the offload
+ * request and control the processed mask (or force a failure to exercise the
+ * TS fallback).
+ */
+function fakeMorphology(
+  impl: (req: MorphologyRequest) => Promise<Uint8Array>,
+): { client: MorphologyClient; apply: ReturnType<typeof vi.fn> } {
+  const apply = vi.fn(impl);
+  return { client: { apply } as unknown as MorphologyClient, apply };
+}
 
 const TARGET_RES = Resolution.from([8, 8, 40]);
 const TARGET_LAYER = layerId("L1");
@@ -510,5 +525,100 @@ describe("PaintingCompute.applyBrush with mask", () => {
     let setBits = 0;
     for (const b of batch.chunks[0].valueMask!) if (b !== 0) setBits++;
     expect(setBits).toBe(diskFootprint(3));
+  });
+});
+
+describe("PaintingCompute morphology offload (TM-304)", () => {
+  function maskedBrushInput(radius: number) {
+    return {
+      targetLayerId: TARGET_LAYER,
+      targetResolution: TARGET_RES,
+      metadata: metadata([64, 64, 64]),
+      voxelPosition: [32, 32, 16] as [number, number, number],
+      radius,
+      value: 7n,
+      mask: {
+        imageLayerId: MASK_LAYER,
+        imageResolution: TARGET_RES,
+        thresholdLow: 0,
+        thresholdHigh: 255,
+        minComponentSize: 5,
+        binaryClosing: 2,
+        filterComponentsFirst: true,
+      },
+      maskMetadata: imageMetadata([64, 64, 64]),
+      readChunk: zeroReader([64, 64, 64]),
+      readChunkAt: imageReader([64, 64, 64], () => 128).readChunkAt,
+    };
+  }
+
+  it("offloads morphology to the client with the disk-bbox request", async () => {
+    const radius = 3;
+    const side = 2 * radius + 1;
+    // Echo the input mask back so the stamp reflects the worker's output.
+    const { client, apply } = fakeMorphology(async (req) => req.mask);
+    const compute = new PaintingCompute(() => undefined, client);
+
+    await compute.applyBrush(maskedBrushInput(radius));
+
+    expect(apply).toHaveBeenCalledTimes(1);
+    const req = apply.mock.calls[0][0] as MorphologyRequest;
+    expect(req.shape).toEqual([side, side, 1]);
+    expect(req.mask).toHaveLength(side * side);
+    // Params forwarded verbatim from the mask context.
+    expect(req.binaryClosing).toBe(2);
+    expect(req.minComponentSize).toBe(5);
+    expect(req.filterComponentsFirst).toBe(true);
+  });
+
+  it("uses the worker's processed mask to drive the stamp", async () => {
+    // Worker returns an all-zero mask → nothing should be painted, even though
+    // the threshold band (0..255) would otherwise pass every voxel.
+    const { client } = fakeMorphology(
+      async (req) => new Uint8Array(req.mask.length),
+    );
+    const compute = new PaintingCompute(() => undefined, client);
+
+    const batch = await compute.applyBrush(maskedBrushInput(3));
+    let setBits = 0;
+    for (const b of batch.chunks[0]?.valueMask ?? []) if (b !== 0) setBits++;
+    expect(setBits).toBe(0);
+  });
+
+  it("falls back to the TS pipeline when the worker rejects", async () => {
+    const { client, apply } = fakeMorphology(async () => {
+      throw new Error("worker boot failed");
+    });
+    const withWorker = new PaintingCompute(() => undefined, client);
+    const withoutWorker = new PaintingCompute(); // pure TS path
+
+    // Morphology IS requested (binaryClosing > 0) so the worker is invoked and
+    // can fail — closing of a full-band solid disk is identity, so both the
+    // fallback and the pure-TS compute still paint the full disk footprint.
+    const input = {
+      ...maskedBrushInput(3),
+      mask: {
+        imageLayerId: MASK_LAYER,
+        imageResolution: TARGET_RES,
+        thresholdLow: 0,
+        thresholdHigh: 255,
+        minComponentSize: 0,
+        binaryClosing: 1,
+        filterComponentsFirst: false,
+      },
+    };
+    const fallbackBatch = await withWorker.applyBrush(input);
+    const tsBatch = await withoutWorker.applyBrush(input);
+
+    expect(apply).toHaveBeenCalled(); // worker was attempted...
+    // ...and the fallback produced the same result as the pure-TS compute
+    // (closing shrinks the bbox-edge voxels, so this is < the raw disk).
+    const count = (b: typeof fallbackBatch) => {
+      let n = 0;
+      for (const v of b.chunks[0]?.valueMask ?? []) if (v !== 0) n++;
+      return n;
+    };
+    expect(count(fallbackBatch)).toBeGreaterThan(0);
+    expect(count(fallbackBatch)).toBe(count(tsBatch));
   });
 });

@@ -26,14 +26,22 @@ import type {
 } from "@zettaai/edit-session";
 import { ChunkId, scaleFor } from "@zettaai/edit-session";
 
-import {
-  applyMorphologyPipeline,
-  type MaskBuffer,
-} from "#src/editing/tool_runtimes/mask_compute.js";
+import { applyMorphologyPipeline } from "#src/editing/tool_runtimes/mask_compute.js";
 import {
   imageChunksCovering,
   type VoxelTriple,
 } from "#src/editing/tool_runtimes/mask_coord.js";
+import type { MorphologyClient } from "#src/editing/tool_runtimes/morphology_client.js";
+import type { MorphologyRequest } from "#src/editing/tool_runtimes/morphology_request.js";
+
+/**
+ * Runs the post-threshold morphology pipeline (binary closing + component
+ * filter) and returns the processed 1/0 mask data. Injected into
+ * `stampDisk2DMasked` so the stamp logic is agnostic to whether morphology
+ * runs in the pyodide worker (`PaintingCompute.runMorphology`) or, in tests,
+ * synchronously in TS.
+ */
+type RunMorphology = (req: MorphologyRequest) => Promise<Uint8Array>;
 
 /**
  * Tool id of the eraser leaf in the library's `painting` composite tool. The
@@ -70,10 +78,57 @@ export class PaintingCompute implements PaintCompute {
    *   mask, so we drop it whenever the eraser is the active tool. Defaults to
    *   "no active tool" → mask honored, leaving brush/fill behavior unchanged.
    */
+  /**
+   * @param getActiveToolId See the note above.
+   * @param morphology Optional pyodide morphology worker (TM-304). When
+   *   provided, the masked brush offloads `binary_closing` + component
+   *   filtering to scipy in the worker; on any worker failure it falls back to
+   *   the in-process TS `applyMorphologyPipeline`. When omitted (e.g. unit
+   *   tests), morphology always runs in TS, preserving prior behavior.
+   */
   constructor(
     private readonly getActiveToolId: () => string | undefined = () =>
       undefined,
+    private readonly morphology?: MorphologyClient,
   ) {}
+
+  /** Guards the fallback warning so it logs once per instance, not per dab. */
+  private fallbackWarned = false;
+
+  /**
+   * Pyodide-first morphology with a TS fallback. The fallback guarantees a
+   * masked stroke never hard-breaks if the worker fails to boot or a call
+   * errors — painting degrades to the in-process pipeline instead. Whenever the
+   * fallback is taken because the worker failed (as opposed to no worker being
+   * configured at all, e.g. in tests), a single console warning is emitted so
+   * it is obvious the scipy path is NOT in use.
+   */
+  private runMorphology = async (
+    req: MorphologyRequest,
+  ): Promise<Uint8Array> => {
+    if (this.morphology !== undefined) {
+      try {
+        return await this.morphology.apply(req);
+      } catch (e) {
+        if (!this.fallbackWarned) {
+          this.fallbackWarned = true;
+          console.warn(
+            "[painting] pyodide morphology worker unavailable — falling back to " +
+              "the TypeScript morphology pipeline on the main thread. Brush " +
+              "results stay correct, but are NOT computed via scipy/pyodide. " +
+              "First failure:",
+            e,
+          );
+        }
+      }
+    }
+    return applyMorphologyPipeline({
+      mask: { data: req.mask, shape: req.shape },
+      binaryClosing: req.binaryClosing,
+      minComponentSize: req.minComponentSize,
+      filterComponentsFirst: req.filterComponentsFirst,
+    }).data;
+  };
 
   /**
    * The eraser deliberately ignores the brush's image mask (TM-297): its
@@ -102,6 +157,7 @@ export class PaintingCompute implements PaintCompute {
         input.radius,
         input.value,
         maskCtx,
+        this.runMorphology,
       );
     }
     return builder.build();
@@ -113,15 +169,13 @@ export class PaintingCompute implements PaintCompute {
       input.targetLayerId,
       input.targetResolution,
     );
-    // Step size: caller may pass a coarse stepVoxels, but to avoid gaps the
-    // stamp spacing must be no larger than the brush radius. We use the
-    // smaller of the supplied step and max(1, radius / 2) — radius/2 is the
-    // conventional dab-spacing for an opaque disk brush.
-    const stepRequested = input.stepVoxels > 0 ? input.stepVoxels : 1;
-    const safeStep = Math.max(
-      1,
-      Math.min(stepRequested, Math.max(1, Math.floor(input.radius / 2))),
-    );
+    // Dab spacing for an opaque disk brush. radius/2 gives heavily-overlapping,
+    // gap-free coverage along the stroke. We derive spacing from the radius and
+    // ignore the caller's `stepVoxels`: the library passes `stepVoxels: 1`
+    // (sample every voxel), which for a large brush stamps ~2*radius times more
+    // dabs than needed — each an O(r^2) mask build plus a morphology round-trip
+    // — and was the dominant source of live-paint lag (TM-304).
+    const safeStep = Math.max(1, Math.floor(input.radius / 2));
     const [x0, y0, z0] = input.from;
     const [x1, y1, z1] = input.to;
     const dx = x1 - x0;
@@ -141,6 +195,7 @@ export class PaintingCompute implements PaintCompute {
           input.radius,
           input.value,
           maskCtx,
+          this.runMorphology,
         );
       }
     };
@@ -390,6 +445,7 @@ async function stampDisk2DMasked(
   radius: number,
   value: number | bigint,
   ctx: MaskContext,
+  runMorphology: RunMorphology,
 ): Promise<void> {
   const r = Math.max(0, Math.floor(radius));
   const cx = Math.floor(voxelPosition[0]);
@@ -494,27 +550,32 @@ async function stampDisk2DMasked(
     }
   }
 
-  // Apply binary closing + component filter in TARGET voxel space.
-  // Shape `[tShapeX, tShapeY, 1]` makes the 3D helpers degrade to
+  // Apply binary closing + component filter in TARGET voxel space, via the
+  // injected runner (pyodide worker in production, TS pipeline in tests/
+  // fallback). Shape `[tShapeX, tShapeY, 1]` makes the morphology degrade to
   // 4-connected planar ops — same as scipy's default in the reference.
-  const processed: MaskBuffer = applyMorphologyPipeline({
-    mask: { data: tMaskData, shape: tMaskShape },
-    binaryClosing: ctx.mask.binaryClosing,
-    minComponentSize: ctx.mask.minComponentSize,
-    filterComponentsFirst: ctx.mask.filterComponentsFirst,
-  });
+  //
+  // Short-circuit when no morphology is requested (the default: closing 0,
+  // minComponentSize 0). In that case the pipeline is an identity transform, so
+  // calling the worker would round-trip to compute nothing — a pure latency hit
+  // on the live-paint path. Skip it and stamp the raw threshold mask directly.
+  const needsMorphology =
+    ctx.mask.binaryClosing > 0 || ctx.mask.minComponentSize > 1;
+  const processed: Uint8Array = needsMorphology
+    ? await runMorphology({
+        mask: tMaskData,
+        shape: tMaskShape,
+        binaryClosing: ctx.mask.binaryClosing,
+        minComponentSize: ctx.mask.minComponentSize,
+        filterComponentsFirst: ctx.mask.filterComponentsFirst,
+      })
+    : tMaskData;
 
   // Sample back: for each target voxel in the disk, the mask byte is its
   // entry in the processed buffer. The chunk builder records the disk's
   // bounding box as the subregion; the per-voxel mask drives gating.
   if (r === 0) {
-    builder.writeVoxelMasked(
-      cx,
-      cy,
-      cz,
-      value,
-      processed.data[0] === 1 ? 1 : 0,
-    );
+    builder.writeVoxelMasked(cx, cy, cz, value, processed[0] === 1 ? 1 : 0);
     return;
   }
   for (let dy = -r; dy <= r; dy++) {
@@ -522,7 +583,7 @@ async function stampDisk2DMasked(
     for (let dx = -r; dx <= r; dx++) {
       if (dx * dx + dy * dy > r2) continue;
       const i = dx + r;
-      const maskByte = processed.data[i + tShapeX * j] === 1 ? 1 : 0;
+      const maskByte = processed[i + tShapeX * j] === 1 ? 1 : 0;
       builder.writeVoxelMasked(cx + dx, cy + dy, cz, value, maskByte);
     }
   }
