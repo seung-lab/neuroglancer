@@ -66,13 +66,28 @@ export class EquivalencesHashMap {
   update() {
     const { disjointSets } = this;
     const { generation } = disjointSets;
-    if (this.generation !== generation) {
-      this.generation = generation;
-      const { hashMap } = this;
+    if (this.generation === generation) return;
+    this.generation = generation;
+    const { hashMap } = this;
+    // Drain pending dirty pieces. consumeDirty() returns null only when the
+    // disjoint set was cleared/deleted or a merge changed the representative
+    // of pre-existing pieces — in those cases we fall back to a full rebuild
+    // because HashMapUint64.set is insert-only and can't express updates.
+    const dirty = disjointSets.consumeDirty();
+    if (dirty === null) {
       hashMap.clear();
       for (const [objectId, minObjectId] of disjointSets.mappings()) {
         hashMap.set(objectId, minObjectId);
       }
+      return;
+    }
+    // Incremental: every piece in dirty is brand new (never previously
+    // inserted into hashMap), so .set() is guaranteed to take the insert
+    // branch and avoid the cuckoo-hash insert-or-lookup cycle on hundreds of
+    // thousands of stale entries.
+    for (let i = 0, n = dirty.length; i < n; i++) {
+      const piece = dirty[i];
+      hashMap.set(piece, disjointSets.get(piece));
     }
   }
 }
