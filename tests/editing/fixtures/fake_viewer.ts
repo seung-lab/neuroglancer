@@ -10,6 +10,7 @@
 
 import type { ChunkManager } from "#src/chunk_manager/frontend.js";
 import type { LayerManager } from "#src/layer/index.js";
+import { EventActionMap } from "#src/util/event_action_map.js";
 import type { Viewer } from "#src/viewer.js";
 
 import { FakeLayerManager } from "#tests/editing/fixtures/fake_layer_manager.js";
@@ -18,11 +19,19 @@ import { FakeLayerManager } from "#tests/editing/fixtures/fake_layer_manager.js"
  * Minimal stand-in for `Viewer` exposing only the fields read by
  * `EditSessionHost` during construction and the lifecycle helpers we test
  * in isolation (no `openSession` calls — those require a richer fake).
+ *
+ * `inputEventMap` (a real {@link EventActionMap}) and `element` (a real
+ * `EventTarget`) back the `IdleEditHotkeyBinder` the host wires up in its
+ * constructor — it calls `inputEventMap.addParent(...)` and
+ * `registerActionListener(element, ...)`, both of which work against genuine
+ * instances with no DOM.
  */
 export interface FakeViewer {
   readonly layerManager: LayerManager;
   readonly chunkManager: ChunkManager;
   readonly display: unknown;
+  readonly inputEventMap: EventActionMap;
+  readonly element: EventTarget;
 }
 
 export function createFakeViewer(
@@ -32,6 +41,8 @@ export function createFakeViewer(
     layerManager: layerManager.asLayerManager(),
     chunkManager: {} as unknown as ChunkManager,
     display: {},
+    inputEventMap: new EventActionMap(),
+    element: new EventTarget(),
   };
   return fake as unknown as Viewer;
 }
