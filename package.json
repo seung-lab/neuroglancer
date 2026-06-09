@@ -125,6 +125,7 @@
     "#src/editing/ui/confirm_dialog.js": "./src/editing/ui/confirm_dialog.tsx",
     "#src/editing/ui/session_entry/session_entry.js": "./src/editing/ui/session_entry/session_entry.tsx",
     "#src/editing/ui/session_entry/bbox_picker.js": "./src/editing/ui/session_entry/bbox_picker.tsx",
+    "#src/editing/ui/session_entry/listbox_dropdown.js": "./src/editing/ui/session_entry/listbox_dropdown.tsx",
     "#src/editing/ui/session_entry/resolution_picker.js": "./src/editing/ui/session_entry/resolution_picker.tsx",
     "#src/editing/ui/session_entry/layer_row.js": "./src/editing/ui/session_entry/layer_row.tsx",
     "#src/editing/ui/session_controls/active_tool_settings.js": "./src/editing/ui/session_controls/active_tool_settings.tsx",

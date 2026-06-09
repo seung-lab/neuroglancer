@@ -52,18 +52,21 @@
   background-color: var(--neuroglancer-edit-session-bg);
   color: var(--neuroglancer-edit-session-text);
   border: 1px solid var(--neuroglancer-edit-session-border);
-  border-radius: 6px;
-  /* 560px on desktop, but never wider than the viewport (less a 16px gutter
-     each side) so it can't overflow a narrow or split window. */
-  min-width: min(560px, 100vw - 32px);
-  max-width: 760px;
+  border-radius: 8px;
+  /* Medium size: opens at 680px on desktop, but never wider than the viewport
+     (less a 16px gutter each side) so it can't overflow a narrow or split
+     window; grows to 920px for dense layer lists. */
+  min-width: min(680px, 100vw - 32px);
+  max-width: 920px;
   max-height: 90vh;
   display: flex;
   flex-direction: column;
   /* Match the neuroglancer-wide UI font (every panel declares sans-serif
      explicitly). The modal is portaled, so without this it falls back to the
-     browser-default serif instead of the app font. */
+     browser-default serif instead of the app font. A base size of 14px sets
+     the medium type scale for elements that don't declare their own. */
   font-family: sans-serif;
+  font-size: 14px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
 }
 
@@ -71,10 +74,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 18px;
+  padding: 16px 22px;
   border-bottom: 1px solid var(--neuroglancer-edit-session-border-soft);
   font-weight: 600;
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .neuroglancer-edit-session-entry-modal-close {
@@ -100,16 +103,16 @@
 }
 
 .neuroglancer-edit-session-entry-modal-body {
-  padding: 18px;
+  padding: 22px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 22px;
   overflow-y: auto;
 }
 
 .neuroglancer-edit-session-entry-modal-section-title {
   font-weight: 600;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--neuroglancer-edit-session-text);
   margin: 0 0 8px 0;
   text-transform: uppercase;
@@ -117,7 +120,7 @@
 }
 
 .neuroglancer-edit-session-entry-modal-section-caption {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--neuroglancer-edit-session-text-muted);
   margin-bottom: 10px;
   line-height: 1.4;
@@ -131,35 +134,14 @@
   gap: 6px;
 }
 
-.neuroglancer-bbox-picker-select {
-  background-color: var(--neuroglancer-edit-session-bg-elev);
-  color: var(--neuroglancer-edit-session-text);
-  border: 1px solid var(--neuroglancer-edit-session-border);
-  border-radius: 4px;
-  padding: 6px 8px;
-  font: inherit;
-  width: 100%;
-}
-
-.neuroglancer-bbox-picker-select:focus {
-  outline: none;
-  border-color: var(--neuroglancer-edit-session-accent);
-}
-
-.neuroglancer-bbox-picker-select:focus-visible {
-  border-color: var(--neuroglancer-edit-session-accent);
-  outline: 2px solid var(--neuroglancer-edit-session-accent);
-  outline-offset: 1px;
-}
-
 .neuroglancer-edit-session-entry-modal-bbox-helper {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--neuroglancer-edit-session-text-muted);
   margin-top: 2px;
 }
 
 .neuroglancer-edit-session-entry-modal-bbox-empty {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--neuroglancer-edit-session-text-muted);
   padding: 12px;
   border: 1px dashed var(--neuroglancer-edit-session-border-soft);
@@ -168,62 +150,61 @@
   line-height: 1.4;
 }
 
-/* Resolution picker (multi-res dropdown) ----------------------------------- */
+/* Listbox dropdown (shared by the Region + per-layer Resolution pickers) ---- */
 
-.neuroglancer-resolution-picker-dropdown {
-  position: relative;
-  display: inline-block;
+.neuroglancer-edit-session-listbox {
+  display: block;
+  width: 100%;
 }
 
-.neuroglancer-resolution-picker-dropdown-trigger {
+.neuroglancer-edit-session-listbox-trigger {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background-color: var(--neuroglancer-edit-session-bg-elev);
-  color: var(--neuroglancer-edit-session-text);
-  border: 1px solid var(--neuroglancer-edit-session-border-soft);
-  border-radius: 3px;
-  padding: 3px 8px;
-  font: inherit;
-  cursor: pointer;
   width: 100%;
   box-sizing: border-box;
+  background-color: var(--neuroglancer-edit-session-bg-elev);
+  color: var(--neuroglancer-edit-session-text);
+  border: 1px solid var(--neuroglancer-edit-session-border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.neuroglancer-resolution-picker-dropdown-trigger:hover:not(:disabled) {
+.neuroglancer-edit-session-listbox-trigger:hover:not(:disabled) {
   border-color: var(--neuroglancer-edit-session-accent);
 }
 
-.neuroglancer-resolution-picker-dropdown-trigger:disabled {
+.neuroglancer-edit-session-listbox-trigger:disabled {
   cursor: default;
   opacity: 0.5;
 }
 
-.neuroglancer-resolution-picker-dropdown-summary {
+.neuroglancer-edit-session-listbox-summary {
   flex: 1 1 auto;
-  /* Match the single-res static value's monospace rendering (doubled keyword
-     avoids the fixed-width default font-size quirk). */
-  font-family: monospace, monospace;
   text-align: left;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.neuroglancer-resolution-picker-dropdown-caret {
+.neuroglancer-edit-session-listbox-caret {
   flex: 0 0 auto;
-  font-size: 10px;
+  /* Lucide SVG inherits `color` via stroke="currentColor"; `block` removes the
+     inline-svg baseline gap so it sits centered against the summary text. */
+  display: block;
   color: var(--neuroglancer-edit-session-text-dim);
 }
 
-.neuroglancer-resolution-picker-dropdown-panel {
+.neuroglancer-edit-session-listbox-panel {
   /*
    * Portaled into the modal backdrop and positioned with `fixed` so the panel
-   * escapes the layers card's `overflow: hidden` clipping context while still
-   * inheriting the modal's tokens + font. top/left/min-width are set inline
-   * from the trigger's rect; z-index sits above the modal frame (backdrop is
-   * z-index 200). Token fallbacks + an explicit font-size keep it legible even
-   * if it ever portals to <body> (no modal-scoped cascade there).
+   * escapes any `overflow: hidden` clipping while still inheriting the modal's
+   * tokens. top/left/min-width are set inline from the trigger's rect; z-index
+   * sits above the modal frame (backdrop is z-index 200). The backdrop, not the
+   * modal body, is the portal host, so set the font cascade explicitly here.
    */
   position: fixed;
   background-color: var(--neuroglancer-edit-session-bg, #1a1a1a);
@@ -232,24 +213,43 @@
   border-radius: 4px;
   padding: 4px 0;
   z-index: 300;
-  font-size: 11px;
+  font-family: sans-serif;
+  font-size: 13px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
 }
 
-.neuroglancer-resolution-picker-dropdown-option {
+.neuroglancer-edit-session-listbox-option {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 12px;
+  padding: 7px 12px;
   cursor: pointer;
   white-space: nowrap;
-  /* Match the trigger summary / static value's monospace resolution glyphs
-     (doubled keyword avoids the fixed-width default font-size quirk). */
-  font-family: monospace, monospace;
+  color: var(--neuroglancer-edit-session-text);
+  outline: none;
 }
 
-.neuroglancer-resolution-picker-dropdown-option:hover {
+/* Hover and the roving keyboard cursor share one highlight — `:focus` because
+   the active option is programmatically focused as the arrow keys move it. */
+.neuroglancer-edit-session-listbox-option:hover,
+.neuroglancer-edit-session-listbox-option:focus {
   background-color: var(--neuroglancer-edit-session-bg-elev, #232323);
+}
+
+/* Fixed-width leading slot for the selected-row check; kept (empty) on the
+   other rows so every label stays aligned to the same left edge. */
+.neuroglancer-edit-session-listbox-check {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--neuroglancer-edit-session-accent);
+}
+
+.neuroglancer-edit-session-listbox-check svg {
+  display: block;
 }
 
 /* Layers card -------------------------------------------------------------- */
@@ -275,10 +275,10 @@
 .neuroglancer-edit-session-entry-modal-layer-row {
   display: grid;
   /* name (flex) | kind chip | resolution slot (fixed) | role control */
-  grid-template-columns: minmax(120px, 1fr) auto 130px auto;
+  grid-template-columns: minmax(160px, 1fr) auto 150px auto;
   align-items: center;
-  column-gap: 10px;
-  padding: 4px 12px;
+  column-gap: 12px;
+  padding: 8px 14px;
   border-bottom: 1px solid var(--neuroglancer-edit-session-border-soft);
   transition: opacity 0.12s ease;
 }
@@ -310,10 +310,10 @@
 }
 
 .neuroglancer-edit-session-entry-modal-layer-kind {
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  padding: 2px 7px;
+  padding: 3px 8px;
   border-radius: 10px;
   border: 1px solid var(--neuroglancer-edit-session-border-soft);
   background-color: var(--neuroglancer-edit-session-bg-elev);
@@ -339,10 +339,10 @@
   /* Fixed column width so the dropdown trigger (multi-res) and the
      static value (single-res) occupy the same visual width — keeps the
      role-control column aligned across rows. */
-  width: 130px;
+  width: 150px;
   display: inline-flex;
   align-items: center;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--neuroglancer-edit-session-text-muted);
 }
 
@@ -351,32 +351,22 @@
 }
 
 /*
- * The picker wraps a `.neuroglancer-resolution-picker-dropdown` span (which
- * defaults to inline-block at content size). Force the intermediate
- * elements to block-fill so the trigger button stretches to the slot's
- * 130px — matching the static-value cell's width on single-res rows.
+ * Force the picker wrapper to block-fill so the listbox trigger stretches to
+ * the slot's width — matching the static-value cell on single-res rows. The
+ * shared `.neuroglancer-edit-session-listbox` is already block/100%, so the
+ * wrapper just needs to stop shrinking to content.
  */
 .neuroglancer-edit-session-entry-modal-layer-resolution-picker {
   display: block;
 }
 
-.neuroglancer-edit-session-entry-modal-layer-resolution-picker
-  .neuroglancer-resolution-picker-dropdown {
-  display: block;
-  width: 100%;
-}
-
 .neuroglancer-edit-session-entry-modal-layer-resolution-static {
-  /* Doubled `monospace` keyword keeps monospace glyphs without triggering the
-     browser's fixed-width default font-size quirk, so the value honors the
-     slot's inherited 11px (matching the multi-res dropdown summary). */
-  font-family: monospace, monospace;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--neuroglancer-edit-session-text);
   background-color: var(--neuroglancer-edit-session-bg-elev);
   border: 1px solid var(--neuroglancer-edit-session-border-soft);
   border-radius: 3px;
-  padding: 3px 8px;
+  padding: 5px 8px;
   box-sizing: border-box;
 }
 
@@ -420,9 +410,9 @@
   color: var(--neuroglancer-edit-session-text-muted);
   cursor: pointer;
   font: inherit;
-  font-size: 11px;
-  padding: 3px 10px;
-  min-width: 56px;
+  font-size: 12px;
+  padding: 5px 12px;
+  min-width: 64px;
   border-radius: 3px;
   transition:
     background-color 0.12s ease,
@@ -454,7 +444,7 @@
 
 .neuroglancer-edit-session-entry-modal-memory-meter {
   margin-top: 10px;
-  padding: 10px 12px;
+  padding: 12px 14px;
   border: 1px solid var(--neuroglancer-edit-session-border-soft);
   border-radius: 4px;
   background-color: var(--neuroglancer-edit-session-bg-row);
@@ -468,7 +458,7 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .neuroglancer-edit-session-entry-modal-memory-meter-summary {
@@ -492,7 +482,7 @@
 }
 
 .neuroglancer-edit-session-entry-modal-memory-meter-budgets {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--neuroglancer-edit-session-text-muted);
 }
 
@@ -548,7 +538,7 @@
 
 .neuroglancer-edit-session-entry-modal-session-summary {
   margin-top: 8px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--neuroglancer-edit-session-text-muted);
 }
 
@@ -563,14 +553,14 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
-  padding: 14px 18px;
+  gap: 12px;
+  padding: 16px 22px;
   border-top: 1px solid var(--neuroglancer-edit-session-border-soft);
 }
 
 .neuroglancer-edit-session-entry-modal-error {
   color: var(--neuroglancer-edit-session-over);
-  font-size: 11px;
+  font-size: 12px;
   margin-right: auto;
 }
 
@@ -579,16 +569,16 @@
  * Larger hit targets per the redesign spec.
  */
 .neuroglancer-edit-session-entry-modal-btn {
-  padding: 8px 16px;
+  padding: 10px 20px;
   border-radius: 4px;
   cursor: pointer;
   background-color: var(--neuroglancer-edit-session-bg-elev);
   color: var(--neuroglancer-edit-session-text);
   border: 1px solid var(--neuroglancer-edit-session-border);
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
-  min-height: 32px;
+  min-height: 38px;
   transition:
     background-color 0.12s ease,
     border-color 0.12s ease;
@@ -636,7 +626,7 @@
 .neuroglancer-edit-session-entry-modal-close:focus-visible,
 .neuroglancer-edit-session-entry-modal-btn:focus-visible,
 .neuroglancer-edit-session-entry-modal-role-segment:focus-visible,
-.neuroglancer-resolution-picker-dropdown-trigger:focus-visible {
+.neuroglancer-edit-session-listbox-trigger:focus-visible {
   outline: 2px solid var(--neuroglancer-edit-session-accent);
   outline-offset: 1px;
 }
