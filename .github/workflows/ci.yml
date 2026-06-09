@@ -46,6 +46,14 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Install Playwright browser
+        # `npm ci --ignore-scripts` skips the browser download that
+        # @playwright/browser-chromium normally does on postinstall, so the
+        # vitest browser project (chromium, *.browser_test.ts) has no binary to
+        # launch. Fetch chromium (+ its headless shell) and the OS libraries it
+        # needs on the runner.
+        run: npx playwright install --with-deps chromium
+
       - name: Test
         run: npm test
 
