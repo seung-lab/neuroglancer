@@ -8,6 +8,8 @@
  * session controls flow left-to-right in the right column in this order:
  * Save all → tool icons → Undo/Redo. Mounted by viewer.ts into the
  * top-row container next to the existing Settings / Layer-list buttons.
+ *
+ * All values resolve against the --nge-* design tokens in editing_theme.css.
  */
 
 .neuroglancer-editing-topbar {
@@ -24,18 +26,17 @@
      controls within it, yielding an even gutter above and below them (and
      headroom for the Save-all badge). */
   padding: 7px 6px;
-  /* Match the neuroglancer-wide UI font (every panel declares sans-serif). */
-  font-family: sans-serif;
-  font-size: 12px;
-  color: #ddd;
+  font-family: var(--nge-font);
+  font-size: var(--nge-text-size);
+  color: var(--nge-text-muted);
   flex: 1 1 0;
 }
 
 .neuroglancer-editing-topbar-trailing {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding-left: 8px;
+  gap: var(--nge-space-1);
+  padding-left: var(--nge-space-3);
   white-space: nowrap;
 }
 
@@ -48,8 +49,19 @@
 .neuroglancer-editing-topbar-divider {
   width: 1px;
   height: 18px;
-  background: #333;
-  margin: 0 4px;
+  background: var(--nge-divider);
+  margin: 0 var(--nge-space-1);
+}
+
+/* Shared focus treatment for every topbar button — the same accent ring the
+   tool panels use, so keyboard focus is visible and consistent across the
+   editing UI. */
+.neuroglancer-editing-topbar-tool:focus-visible,
+.neuroglancer-editing-topbar-icon-button:focus-visible,
+.neuroglancer-editing-topbar-save-button:focus-visible,
+.neuroglancer-editing-topbar-edit-button:focus-visible {
+  outline: 2px solid var(--nge-accent-ring);
+  outline-offset: 2px;
 }
 
 /* Tool & history icon buttons --------------------------------------------- */
@@ -64,15 +76,19 @@
   align-items: center;
   justify-content: center;
   width: 28px;
-  height: 24px;
+  height: var(--nge-control-h-compact);
   padding: 0;
   background: transparent;
   border: 1px solid transparent;
-  color: #cfcfcf;
+  color: var(--nge-text-muted);
   cursor: pointer;
   font: inherit;
-  border-radius: 6px;
+  border-radius: var(--nge-radius-md);
   user-select: none;
+  transition:
+    background var(--nge-transition),
+    color var(--nge-transition),
+    box-shadow var(--nge-transition);
 }
 
 /* Lucide SVGs render inline by default — block + centered avoids baseline
@@ -84,16 +100,16 @@
 
 .neuroglancer-editing-topbar-tool:hover:not(.disabled),
 .neuroglancer-editing-topbar-icon-button:hover:not([disabled]) {
-  background: #3a3a3a;
-  color: #fff;
+  background: var(--nge-control-bg-hover);
+  color: var(--nge-text);
 }
 
 .neuroglancer-editing-topbar-tool.active {
   /* Accent-tinted background + inset accent ring + accent icon color. Matches
-     the session-state-indicator blue accent used elsewhere in the topbar. */
-  background: #2c3a5a;
-  color: #9cc3ff;
-  box-shadow: inset 0 0 0 1px #6fa8ff;
+     the active-state accent used by the Edit/Exit button and the panels. */
+  background: var(--nge-accent-tint);
+  color: var(--nge-accent-fg-soft);
+  box-shadow: inset 0 0 0 1px var(--nge-accent-border);
 }
 
 .neuroglancer-editing-topbar-tool.disabled {
@@ -117,19 +133,23 @@
      top-row widgets' height so they define the row height and our controls
      get an even gutter above/below. */
   box-sizing: border-box;
-  height: 24px;
-  padding: 0 8px;
-  background: #2a2a2a;
-  border: 1px solid #444;
-  color: #ddd;
+  height: var(--nge-control-h-compact);
+  padding: 0 var(--nge-space-3);
+  background: var(--nge-control-bg);
+  border: 1px solid var(--nge-border-strong);
+  color: var(--nge-text-muted);
   cursor: pointer;
   font: inherit;
-  border-radius: 3px;
+  border-radius: var(--nge-radius-md);
   white-space: nowrap;
+  transition:
+    background var(--nge-transition),
+    border-color var(--nge-transition),
+    color var(--nge-transition);
 }
 
 .neuroglancer-editing-topbar-save-button:hover:not([disabled]) {
-  background: #3a3a3a;
+  background: var(--nge-control-bg-hover);
 }
 
 .neuroglancer-editing-topbar-save-button[disabled] {
@@ -138,9 +158,9 @@
 }
 
 .neuroglancer-editing-topbar-save-button.saving {
-  background: #4a3a1c;
-  border-color: #8a6a2a;
-  color: #ffd591;
+  background: var(--nge-warning-bg);
+  border-color: var(--nge-warning-border);
+  color: var(--nge-warning-fg);
 }
 
 .neuroglancer-editing-topbar-badge {
@@ -158,9 +178,9 @@
   min-width: 15px;
   height: 14px;
   padding: 0 3px;
-  border-radius: 7px;
-  background: #d97706;
-  color: #fff;
+  border-radius: var(--nge-radius-pill);
+  background: var(--nge-warning);
+  color: var(--nge-accent-fg);
   font-size: 9px;
   font-weight: 600;
   line-height: 1;
@@ -173,22 +193,26 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--nge-space-2);
   /* Fixed width keeps the button's center pinned to the topbar's midpoint
      even though the label changes between "Edit" and "Exit session". */
   min-width: 96px;
   /* Match the fixed height of the icon tool buttons so the whole topbar
      row of controls aligns to one consistent height. */
   box-sizing: border-box;
-  height: 24px;
-  padding: 0 10px;
-  background: #2a2a2a;
-  border: 1px solid #444;
-  color: #ddd;
+  height: var(--nge-control-h-compact);
+  padding: 0 var(--nge-space-4);
+  background: var(--nge-control-bg);
+  border: 1px solid var(--nge-border-strong);
+  color: var(--nge-text-muted);
   cursor: pointer;
   font: inherit;
-  border-radius: 3px;
+  border-radius: var(--nge-radius-md);
   white-space: nowrap;
+  transition:
+    background var(--nge-transition),
+    border-color var(--nge-transition),
+    color var(--nge-transition);
 }
 
 .neuroglancer-editing-topbar-edit-button svg {
@@ -196,7 +220,7 @@
 }
 
 .neuroglancer-editing-topbar-edit-button:hover:not([disabled]) {
-  background: #3a3a3a;
+  background: var(--nge-control-bg-hover);
 }
 
 .neuroglancer-editing-topbar-edit-button[disabled] {
@@ -205,9 +229,18 @@
 }
 
 .neuroglancer-editing-topbar-edit-button.active {
-  /* Session-active accent — same blue used for the legacy
-     `session-state-indicator` accent on the active tool row. */
-  background: #2c3a5a;
-  border-color: #6fa8ff;
-  color: #fff;
+  /* Session-active accent — same tint + accent border as an active tool. */
+  background: var(--nge-accent-tint);
+  border-color: var(--nge-accent-border);
+  color: var(--nge-accent-fg);
+}
+
+/* --- Reduced motion ---------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .neuroglancer-editing-topbar-tool,
+  .neuroglancer-editing-topbar-icon-button,
+  .neuroglancer-editing-topbar-save-button,
+  .neuroglancer-editing-topbar-edit-button {
+    transition: none;
+  }
 }

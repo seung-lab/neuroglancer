@@ -20,7 +20,7 @@
 
 /** Preset brush sizes the `+` / `-` hotkeys step through. */
 export const BRUSH_SIZE_PRESETS: readonly number[] = [
-  1, 3, 5, 9, 17, 33, 65, 129, 257, 513, 1025,
+  1, 3, 5, 9, 15, 25, 43, 75, 131, 229, 401, 701, 1000,
 ];
 
 /** size → radius (`radius = (size - 1) / 2`). */

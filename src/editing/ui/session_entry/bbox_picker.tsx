@@ -12,6 +12,7 @@ import type {
   BboxAnnotationSelection,
   BboxEntry,
 } from "#src/editing/ui/session_entry/bbox_candidates.js";
+import { ListboxDropdown } from "#src/editing/ui/session_entry/listbox_dropdown.js";
 
 export const BBOX_EMPTY_STATE_TEXT =
   "No bounding-box annotations found. Create a bounding box in the " +
@@ -37,28 +38,22 @@ export function BboxPicker({
       </div>
     );
   }
+  const options = entries.map((entry) => {
+    const desc = entry.annotation.description?.trim();
+    const parts = [entry.annotationLayerName];
+    if (desc) parts.push(desc);
+    parts.push(entry.sizeLabel);
+    return { key: entry.key, label: parts.join(" · ") };
+  });
+
   return (
     <div class="neuroglancer-edit-session-entry-modal-bbox">
-      <select
-        class="neuroglancer-bbox-picker-select"
-        value={selectedKey ?? ""}
-        onChange={(e) => {
-          const raw = (e.target as HTMLSelectElement).value;
-          onChange(raw === "" ? undefined : raw);
-        }}
-      >
-        {entries.map((entry) => {
-          const desc = entry.annotation.description?.trim();
-          const parts = [entry.annotationLayerName];
-          if (desc) parts.push(desc);
-          parts.push(entry.sizeLabel);
-          return (
-            <option key={entry.key} value={entry.key}>
-              {parts.join(" · ")}
-            </option>
-          );
-        })}
-      </select>
+      <ListboxDropdown
+        options={options}
+        value={selectedKey}
+        onChange={(key) => onChange(key)}
+        ariaLabel="Region"
+      />
       {selection !== undefined && (
         <div class="neuroglancer-edit-session-entry-modal-bbox-helper">
           {formatBboxHelperLine(selection)}
