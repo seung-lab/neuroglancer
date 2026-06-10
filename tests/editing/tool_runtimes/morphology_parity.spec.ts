@@ -49,7 +49,11 @@ function makeRng(seed: number): () => number {
   };
 }
 
-function randomMask(rng: () => number, side: number, density: number): Uint8Array {
+function randomMask(
+  rng: () => number,
+  side: number,
+  density: number,
+): Uint8Array {
   const data = new Uint8Array(side * side);
   for (let i = 0; i < data.length; i++) data[i] = rng() < density ? 1 : 0;
   return data;
@@ -102,7 +106,9 @@ suite("morphology parity: pyodide scipy === TS applyMorphologyPipeline", () => {
   for (const side of [5, 7, 11]) {
     for (const p of PARAM_GRID) {
       it(`side=${side} bc=${p.binaryClosing} min=${p.minComponentSize} fcf=${p.filterComponentsFirst}`, () => {
-        const rng = makeRng(side * 131 + p.binaryClosing * 17 + p.minComponentSize);
+        const rng = makeRng(
+          side * 131 + p.binaryClosing * 17 + p.minComponentSize,
+        );
         const shape: VoxelTriple = [side, side, 1];
         for (let trial = 0; trial < 8; trial++) {
           const base = randomMask(rng, side, 0.35 + 0.3 * rng());

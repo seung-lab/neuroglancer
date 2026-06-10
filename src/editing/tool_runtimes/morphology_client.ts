@@ -67,7 +67,10 @@ export class MorphologyClient extends RefCounted {
    * Rejects if the worker fails; the caller (`PaintingCompute`) catches and
    * falls back to the TS pipeline so painting never hard-breaks.
    */
-  async apply(req: MorphologyRequest, signal?: AbortSignal): Promise<Uint8Array> {
+  async apply(
+    req: MorphologyRequest,
+    signal?: AbortSignal,
+  ): Promise<Uint8Array> {
     const rpc = this.ensureWorker();
     this.inFlight++;
     try {
