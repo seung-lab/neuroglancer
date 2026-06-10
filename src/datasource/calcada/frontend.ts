@@ -220,6 +220,7 @@ import {
   registerLayerControl,
 } from "#src/widget/layer_control.js";
 import { registerRPC } from "#src/worker_rpc.js";
+import type { RPC } from "#src/worker_rpc.js";
 
 function vec4FromVec3(vec: vec3, alpha = 0) {
   const res = vec4.clone([...vec]);
@@ -244,6 +245,27 @@ class GrapheneMeshSource extends WithParameters(
   WithSharedKvStoreContext(MeshSource),
   MeshSourceParameters,
 ) {
+  // Live branch value shared with the backend counterpart. parameters.branchId
+  // only captures the branch at datasource-creation time; switching branches
+  // via the Graph-tab dropdown mutates GrapheneState.branchId on the same
+  // datasource, and manifest requests must follow it or they resolve against
+  // main and return empty piece lists for branch-only roots.
+  private readonly liveBranchId: WatchableValueInterface<number> | undefined;
+
+  constructor(chunkManager: ChunkManager, options: any) {
+    super(chunkManager, options);
+    this.liveBranchId = options.branchId;
+  }
+
+  initializeCounterpart(rpc: RPC, options: any) {
+    if (this.liveBranchId !== undefined) {
+      options.branchId = this.registerDisposer(
+        SharedWatchableValue.makeFromExisting(rpc, this.liveBranchId),
+      ).rpcId;
+    }
+    super.initializeCounterpart(rpc, options);
+  }
+
   getFragmentKey(objectKey: string | null, fragmentId: string) {
     objectKey;
     return getGrapheneFragmentKey(fragmentId);
@@ -614,11 +636,16 @@ function parseGrapheneShardingParameters(
 function getShardedMeshSource(
   sharedKvStoreContext: SharedKvStoreContext,
   parameters: MeshSourceParameters,
+  branchId: WatchableValueInterface<number>,
 ) {
+  // branchId rides alongside the mixin-typed options; the GrapheneMeshSource
+  // constructor picks it up, but the WithParameters options type doesn't know
+  // about it, hence the cast.
   return sharedKvStoreContext.chunkManager.getChunkSource(GrapheneMeshSource, {
     sharedKvStoreContext,
     parameters,
-  });
+    branchId,
+  } as never);
 }
 
 async function getMeshSource(
@@ -626,7 +653,7 @@ async function getMeshSource(
   url: string,
   fragmentUrl: string,
   nBitsForLayerId: number,
-  branchId: number,
+  branchId: WatchableValueInterface<number>,
   options: ProgressOptions,
 ) {
   const { metadata, segmentPropertyMap } = await getMeshMetadata(
@@ -640,11 +667,11 @@ async function getMeshSource(
     lod: 0,
     sharding: metadata?.sharding,
     nBitsForLayerId,
-    branchId,
+    branchId: branchId.value,
   };
   const transform = metadata?.transform || mat4.create();
   return {
-    source: getShardedMeshSource(sharedKvStoreContext, parameters),
+    source: getShardedMeshSource(sharedKvStoreContext, parameters, branchId),
     transform,
     segmentPropertyMap,
   };
@@ -761,7 +788,7 @@ async function getVolumeDataSource(
         ),
       ),
       info.graph.nBitsForLayerId,
-      state.branchId.value,
+      state.branchId,
       options,
     );
     const subsourceToModelSubspaceTransform =
@@ -2254,11 +2281,12 @@ void main() {
         const oldRootA = submission.sink.rootId;
         const oldRootB = submission.source!.rootId;
 
-        const newRoot = await this.graph.graphServer.mergeSegments(
-          selectionInNanometers(submission.sink, annotationToNanometers),
-          selectionInNanometers(submission.source!, annotationToNanometers),
-          this.graph.branchId.value,
-        );
+        const { root: newRoot, pieces: mergedPieces } =
+          await this.graph.graphServer.mergeSegments(
+            selectionInNanometers(submission.sink, annotationToNanometers),
+            selectionInNanometers(submission.source!, annotationToNanometers),
+            this.graph.branchId.value,
+          );
         const oldValues = new Uint64Set();
         oldValues.add(oldRootA);
         oldValues.add(oldRootB);
@@ -2281,24 +2309,36 @@ void main() {
         // the slice of pieces that happened to load via residual chunks
         // and the full merged volume only appeared after a manual reload.
         this.meshAddNewSegments([newRoot]);
-        // Rebuild equivalences from getLeaves — no chunk refetch needed
-        this.graph.graphServer
-          .getLeaves(
-            newRoot,
-            segmentsState.timestamp.value ?? 0,
-            this.graph.branchId.value,
-          )
-          .then((pieces) => {
-            for (const piece of pieces) {
-              segmentsState.segmentEquivalences.link(newRoot, piece);
-            }
-          })
-          .catch((e: unknown) => {
-            StatusMessage.showTemporaryMessage(
-              `Failed to load pieces for ${newRoot}: ${e instanceof Error ? e.message : String(e)}`,
-              6000,
-            );
-          });
+        // Populate equivalences directly from the merge response's `pieces`
+        // field — server returns the union of pieces from both pre-merge
+        // roots, so we avoid the post-edit /leaves round-trip that goes
+        // through the lagging pieces_latest_by_root MV and used to leave
+        // the merged mesh blank for ~5 min after the edit. Fall back to
+        // /leaves if the server is an older build that didn't include the
+        // field.
+        if (mergedPieces.length > 0) {
+          for (const piece of mergedPieces) {
+            segmentsState.segmentEquivalences.link(newRoot, piece);
+          }
+        } else {
+          this.graph.graphServer
+            .getLeaves(
+              newRoot,
+              segmentsState.timestamp.value ?? 0,
+              this.graph.branchId.value,
+            )
+            .then((pieces) => {
+              for (const piece of pieces) {
+                segmentsState.segmentEquivalences.link(newRoot, piece);
+              }
+            })
+            .catch((e: unknown) => {
+              StatusMessage.showTemporaryMessage(
+                `Failed to load pieces for ${newRoot}: ${e instanceof Error ? e.message : String(e)}`,
+                6000,
+              );
+            });
+        }
 
         this.refreshChunkSources();
         return newRoot;
@@ -2606,7 +2646,7 @@ class GrapheneGraphServerInterface {
     first: SegmentSelection,
     second: SegmentSelection,
     branchId = 0,
-  ): Promise<bigint> {
+  ): Promise<{ root: bigint; pieces: bigint[] }> {
     const { fetchOkImpl, baseUrl } = this.httpSource;
     const promise = fetchOkImpl(
       appendCoordParams(`${baseUrl}/merge?int64_as_str=1`, { branchId }),
@@ -2621,7 +2661,13 @@ class GrapheneGraphServerInterface {
     try {
       const response = await promise;
       const jsonResp = await response.json();
-      return parseUint64(jsonResp.new_root_ids[0]);
+      const root = parseUint64(jsonResp.new_root_ids[0]);
+      // Server returns the union of pieces from the two merged roots so the
+      // client can populate equivalences without an extra /leaves round-trip
+      // that goes through the lagging pieces_latest_by_root MV.
+      const rawPieces: string[] = jsonResp.pieces ?? [];
+      const pieces = rawPieces.map(parseUint64);
+      return { root, pieces };
     } catch (e) {
       if (e instanceof HttpError) {
         const msg = await parseGrapheneError(e);

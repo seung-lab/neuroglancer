@@ -275,6 +275,11 @@ export class GrapheneMeshSource extends WithParameters(
 ) {
   manifestRequestCount = new Map<string, number>();
   newSegments = new Uint64Set();
+  // Live branch shared from the frontend. parameters.branchId is frozen at
+  // datasource creation; the dropdown branch switch mutates the frontend's
+  // GrapheneState.branchId without recreating sources, so manifest requests
+  // must read the live value or branch-only roots resolve against main.
+  branchId: SharedWatchableValue<number> | undefined;
 
   manifestHttpSource = getHttpSource(
     this.sharedKvStoreContext.kvStoreContext,
@@ -283,6 +288,13 @@ export class GrapheneMeshSource extends WithParameters(
   fragmentKvStore = this.sharedKvStoreContext.kvStoreContext.getKvStore(
     this.parameters.fragmentUrl,
   );
+
+  constructor(rpc: RPC, options: any) {
+    super(rpc, options);
+    if (options.branchId !== undefined) {
+      this.branchId = rpc.get(options.branchId);
+    }
+  }
 
   addNewSegment(segment: bigint) {
     const { newSegments } = this;
@@ -300,8 +312,9 @@ export class GrapheneMeshSource extends WithParameters(
     }
     const { fetchOkImpl, baseUrl } = this.manifestHttpSource;
     let manifestPath = `/manifest/${chunk.objectId}:${parameters.lod}?verify=1&prepend_seg_ids=1`;
-    if (parameters.branchId && parameters.branchId > 0) {
-      manifestPath += `&branch_id=${parameters.branchId}`;
+    const branchId = this.branchId?.value ?? parameters.branchId;
+    if (branchId && branchId > 0) {
+      manifestPath += `&branch_id=${branchId}`;
     }
     const response = await (
       await fetchOkImpl(baseUrl + manifestPath, { signal })
