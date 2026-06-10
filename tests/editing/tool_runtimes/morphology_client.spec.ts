@@ -119,7 +119,9 @@ describe("MorphologyClient", () => {
   });
 
   it("reinits on idle after heap pressure: terminates and recreates the worker", async () => {
-    promiseInvoke.mockResolvedValueOnce(ok(new Uint8Array(4), /*heapPressure=*/ true));
+    promiseInvoke.mockResolvedValueOnce(
+      ok(new Uint8Array(4), /*heapPressure=*/ true),
+    );
     promiseInvoke.mockResolvedValue(ok(new Uint8Array(4)));
     const client = new MorphologyClient();
 

@@ -219,8 +219,8 @@ import {
   addLayerControlToOptionsTab,
   registerLayerControl,
 } from "#src/widget/layer_control.js";
-import { registerRPC } from "#src/worker_rpc.js";
 import type { RPC } from "#src/worker_rpc.js";
+import { registerRPC } from "#src/worker_rpc.js";
 
 function vec4FromVec3(vec: vec3, alpha = 0) {
   const res = vec4.clone([...vec]);

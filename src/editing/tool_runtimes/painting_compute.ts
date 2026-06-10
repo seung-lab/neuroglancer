@@ -249,7 +249,13 @@ export class PaintingCompute implements PaintCompute {
     // and collapsing N morphology round-trips into one (TM-304).
     if (r >= 1 && sameZ) {
       if (maskCtx === undefined) {
-        stampCapsule2D(builder, input.from, input.to, input.radius, input.value);
+        stampCapsule2D(
+          builder,
+          input.from,
+          input.to,
+          input.radius,
+          input.value,
+        );
       } else {
         await stampCapsule2DMasked(
           builder,
@@ -627,7 +633,13 @@ async function stampShape2DMasked(
 ): Promise<void> {
   if (tShapeX <= 0 || tShapeY <= 0) return;
   if (useSlice) {
-    builder.beginSliceStamp(loTx, loTy, loTx + tShapeX - 1, loTy + tShapeY - 1, cz);
+    builder.beginSliceStamp(
+      loTx,
+      loTy,
+      loTx + tShapeX - 1,
+      loTy + tShapeY - 1,
+      cz,
+    );
   }
 
   // Per-target-voxel image coord mapping. Uses physical nm ratio so any
@@ -725,7 +737,8 @@ async function stampShape2DMasked(
       if (v >= low && v <= high) tMaskData[i + tShapeX * j] = 1;
     }
   }
-  if (prof) paintProfiler.record("2a.maskBuild(cpu)", performance.now() - tMask);
+  if (prof)
+    paintProfiler.record("2a.maskBuild(cpu)", performance.now() - tMask);
 
   // Apply binary closing + component filter in TARGET voxel space, via the
   // injected runner (pyodide worker in production, TS pipeline in tests/
@@ -1053,9 +1066,7 @@ class PaintBatchBuilder {
     const gy1 = Math.floor(hiTy / sy);
     this.sliceNcols = gx1 - this.sliceGx0 + 1;
     const nrows = gy1 - this.sliceGy0 + 1;
-    this.sliceCells = new Array<SliceCell | undefined>(
-      this.sliceNcols * nrows,
-    );
+    this.sliceCells = new Array<SliceCell | undefined>(this.sliceNcols * nrows);
     this.sliceLoTx = loTx;
     this.sliceLoTy = loTy;
     this.sliceHiTx = hiTx;
@@ -1136,13 +1147,7 @@ class PaintBatchBuilder {
     if (cells !== undefined && vz === this.sliceZGlobal) {
       if (maskByte === 0) return;
       let c = this.sliceCacheCell;
-      if (
-        c === undefined ||
-        vx < c.x0 ||
-        vx > c.x1 ||
-        vy < c.y0 ||
-        vy > c.y1
-      ) {
+      if (c === undefined || vx < c.x0 || vx > c.x1 || vy < c.y0 || vy > c.y1) {
         const [sx, sy] = this.chunkDataSize;
         const gx = Math.floor(vx / sx);
         const gy = Math.floor(vy / sy);
