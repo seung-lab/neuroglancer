@@ -1,34 +1,12 @@
-import { createRequire } from "node:module";
 import path from "node:path";
-import {
-  CopyRspackPlugin,
-  HtmlRspackPlugin,
-  ProgressPlugin,
-} from "@rspack/core";
+import { HtmlRspackPlugin, ProgressPlugin } from "@rspack/core";
 import { normalizeConfigurationWithDefine } from "./build_tools/rspack/configuration_with_define.js";
 import packageJson from "./package.json";
 
-// Directory of the installed `pyodide` package, resolved so the self-hosted
-// morphology worker assets (TM-304) can be copied into the build output.
-const pyodideDir = path.dirname(
-  createRequire(import.meta.url).resolve("pyodide/package.json"),
-);
-
-// Minimal asset set the morphology worker needs at runtime: the pyodide core
-// plus exactly the wheels for numpy + scipy (and scipy's openblas dependency).
-// Copied to `<output>/pyodide/` and loaded same-origin via `loadPyodide({
-// indexURL })`. Kept explicit (not a blanket dir copy) so we don't ship the
-// other ~50 MB of wheels bundled in the npm package.
-const PYODIDE_ASSETS = [
-  "pyodide.mjs",
-  "pyodide.asm.js",
-  "pyodide.asm.wasm",
-  "python_stdlib.zip",
-  "pyodide-lock.json",
-  "numpy-*.whl",
-  "scipy-*.whl",
-  "openblas-*.zip",
-];
+// The painting morphology worker (TM-304) loads pyodide + numpy/scipy from the
+// jsDelivr CDN at runtime (see `morphology_handler.ts`), so pyodide is neither a
+// build dependency nor a bundled/self-hosted asset here. This keeps clean
+// installs (CI, Vercel) from needing the package at all.
 
 export default (env, args) => {
   const mode = args.mode === "production" ? "production" : "development";
@@ -124,14 +102,6 @@ export default (env, args) => {
       new ProgressPlugin(),
       new HtmlRspackPlugin({
         title: "neuroglancer",
-      }),
-      // Self-host pyodide + numpy/scipy for the painting morphology worker
-      // (TM-304). Serves from `<output>/pyodide/` same-origin under the iframe.
-      new CopyRspackPlugin({
-        patterns: PYODIDE_ASSETS.map((file) => ({
-          from: path.join(pyodideDir, file),
-          to: "pyodide/[name][ext]",
-        })),
       }),
     ],
     output: {

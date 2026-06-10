@@ -29,21 +29,16 @@ import type { RPC, RPCPromise } from "#src/worker_rpc.js";
 import { registerPromiseRPC } from "#src/worker_rpc.js";
 
 /**
- * Self-hosted pyodide assets, copied to `<output>/pyodide/` by the rspack
- * `CopyRspackPlugin` (see `rspack.config.js`) and served same-origin under the
- * iframe.
- *
- * The base is `self.location.href` — the worker script's actual served URL —
- * NOT `import.meta.url`. Under rspack's worker code-splitting, a bare
- * `import.meta.url` inside a worker module resolves to a `file://` source path
- * (only the `new Worker(new URL(...))` creation site is rewritten), which would
- * make these fetches fail. `self.location` is the real http(s) URL of the
- * running worker, so `pyodide/` resolves next to the bundle regardless of the
- * proxy path the portal serves us under.
+ * Pyodide is loaded from the jsDelivr CDN at runtime (matching the old
+ * voxel-editor worker, `src/lib/voxel-editor/workers/pyodide.worker.ts`), so
+ * there is nothing to self-host or copy at build time. `loadPyodide({ indexURL
+ * })` pulls the numpy + scipy wheels from the same CDN base on demand. Pinned to
+ * a known-good version for reproducibility; the iframe origin must allow
+ * `cdn.jsdelivr.net` in its CSP `script-src`/`connect-src`.
  */
-const PYODIDE_INDEX_URL = new URL("pyodide/", self.location.href).href;
-const PYODIDE_MODULE_URL = new URL("pyodide/pyodide.mjs", self.location.href)
-  .href;
+const PYODIDE_CDN_BASE = "https://cdn.jsdelivr.net/pyodide/v0.26.2/full/";
+const PYODIDE_INDEX_URL = PYODIDE_CDN_BASE;
+const PYODIDE_MODULE_URL = `${PYODIDE_CDN_BASE}pyodide.mjs`;
 
 /** Heap watermark above which we ask the client to reinit (ported from old worker). */
 const HEAP_WATERMARK_BYTES = 500 * 1024 * 1024;
