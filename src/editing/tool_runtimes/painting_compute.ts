@@ -26,14 +26,53 @@ import type {
 } from "@zettaai/edit-session";
 import { ChunkId, scaleFor } from "@zettaai/edit-session";
 
-import {
-  applyMorphologyPipeline,
-  type MaskBuffer,
-} from "#src/editing/tool_runtimes/mask_compute.js";
+import { applyMorphologyPipeline } from "#src/editing/tool_runtimes/mask_compute.js";
 import {
   imageChunksCovering,
   type VoxelTriple,
 } from "#src/editing/tool_runtimes/mask_coord.js";
+import type { MorphologyClient } from "#src/editing/tool_runtimes/morphology_client.js";
+import type { MorphologyRequest } from "#src/editing/tool_runtimes/morphology_request.js";
+import { paintProfiler } from "#src/editing/tool_runtimes/paint_profiler.js";
+
+/**
+ * Runs the post-threshold morphology pipeline (binary closing + component
+ * filter) and returns the processed 1/0 mask data. Injected into
+ * `stampDisk2DMasked` so the stamp logic is agnostic to whether morphology
+ * runs in the pyodide worker (`PaintingCompute.runMorphology`) or, in tests,
+ * synchronously in TS.
+ */
+type RunMorphology = (req: MorphologyRequest) => Promise<Uint8Array>;
+
+/**
+ * Attach the current brush params to the paint profiler so each stroke summary
+ * is self-describing (size, mask band, morphology, dtypes, code path). No-op
+ * unless profiling is enabled.
+ */
+function recordPaintContext(
+  radius: number,
+  maskCtx: MaskContext | undefined,
+  path: string,
+  targetDataType: VoxelDataType,
+): void {
+  if (!paintProfiler.enabled) return;
+  const r = Math.max(0, Math.floor(radius));
+  const ctx: Record<string, string | number | boolean> = {
+    brush: 2 * r + 1,
+    r,
+    mask: maskCtx === undefined ? "off" : "on",
+    path,
+    target: targetDataType,
+  };
+  if (maskCtx !== undefined) {
+    ctx.band = `${maskCtx.mask.thresholdLow}..${maskCtx.mask.thresholdHigh}`;
+    ctx.closing = maskCtx.mask.binaryClosing;
+    ctx.minSize = maskCtx.mask.minComponentSize;
+    ctx.fcf = maskCtx.mask.filterComponentsFirst;
+    ctx.image = maskCtx.maskMetadata.voxelDataType;
+  }
+  paintProfiler.setContext(ctx);
+}
 
 /**
  * Tool id of the eraser leaf in the library's `painting` composite tool. The
@@ -70,10 +109,64 @@ export class PaintingCompute implements PaintCompute {
    *   mask, so we drop it whenever the eraser is the active tool. Defaults to
    *   "no active tool" → mask honored, leaving brush/fill behavior unchanged.
    */
+  /**
+   * @param getActiveToolId See the note above.
+   * @param morphology Optional pyodide morphology worker (TM-304). When
+   *   provided, the masked brush offloads `binary_closing` + component
+   *   filtering to scipy in the worker; on any worker failure it falls back to
+   *   the in-process TS `applyMorphologyPipeline`. When omitted (e.g. unit
+   *   tests), morphology always runs in TS, preserving prior behavior.
+   */
   constructor(
     private readonly getActiveToolId: () => string | undefined = () =>
       undefined,
+    private readonly morphology?: MorphologyClient,
   ) {}
+
+  /**
+   * Image-chunk cache shared across this compute's strokes (P2, TM-304). The
+   * image layer is read-only during a paint session, so caching decoded chunks
+   * avoids re-reading the same EM data on every overlapping stroke segment.
+   */
+  private readonly imageChunkCache = new ImageChunkCache();
+
+  /** Guards the fallback warning so it logs once per instance, not per dab. */
+  private fallbackWarned = false;
+
+  /**
+   * Pyodide-first morphology with a TS fallback. The fallback guarantees a
+   * masked stroke never hard-breaks if the worker fails to boot or a call
+   * errors — painting degrades to the in-process pipeline instead. Whenever the
+   * fallback is taken because the worker failed (as opposed to no worker being
+   * configured at all, e.g. in tests), a single console warning is emitted so
+   * it is obvious the scipy path is NOT in use.
+   */
+  private runMorphology = async (
+    req: MorphologyRequest,
+  ): Promise<Uint8Array> => {
+    if (this.morphology !== undefined) {
+      try {
+        return await this.morphology.apply(req);
+      } catch (e) {
+        if (!this.fallbackWarned) {
+          this.fallbackWarned = true;
+          console.warn(
+            "[painting] pyodide morphology worker unavailable — falling back to " +
+              "the TypeScript morphology pipeline on the main thread. Brush " +
+              "results stay correct, but are NOT computed via scipy/pyodide. " +
+              "First failure:",
+            e,
+          );
+        }
+      }
+    }
+    return applyMorphologyPipeline({
+      mask: { data: req.mask, shape: req.shape },
+      binaryClosing: req.binaryClosing,
+      minComponentSize: req.minComponentSize,
+      filterComponentsFirst: req.filterComponentsFirst,
+    }).data;
+  };
 
   /**
    * The eraser deliberately ignores the brush's image mask (TM-297): its
@@ -91,46 +184,96 @@ export class PaintingCompute implements PaintCompute {
       input.targetResolution,
     );
     const maskCtx = this.maskEnabledForActiveTool()
-      ? resolveMaskContext(input)
+      ? resolveMaskContext(input, this.imageChunkCache)
       : undefined;
+    recordPaintContext(
+      input.radius,
+      maskCtx,
+      "click",
+      input.metadata.voxelDataType,
+    );
+    // A single click is a degenerate (from === to) capsule, so route it through
+    // the capsule stamps to get the fast slice write path (TM-304).
+    const pos = input.voxelPosition;
     if (maskCtx === undefined) {
-      stampDisk2D(builder, input.voxelPosition, input.radius, input.value);
+      stampCapsule2D(builder, pos, pos, input.radius, input.value);
     } else {
-      await stampDisk2DMasked(
+      await stampCapsule2DMasked(
         builder,
-        input.voxelPosition,
+        pos,
+        pos,
         input.radius,
         input.value,
         maskCtx,
+        this.runMorphology,
       );
     }
-    return builder.build();
+    return paintProfiler.time("3.build(cpu)", () => builder.build());
   }
 
   async applyBrushStroke(input: BrushStrokeInput): Promise<PaintWriteBatch> {
+    const t0 = paintProfiler.enabled ? performance.now() : 0;
+    try {
+      return await this.applyBrushStrokeInner(input);
+    } finally {
+      if (paintProfiler.enabled) {
+        paintProfiler.record("0.stroke(total)", performance.now() - t0);
+      }
+    }
+  }
+
+  private async applyBrushStrokeInner(
+    input: BrushStrokeInput,
+  ): Promise<PaintWriteBatch> {
     const builder = new PaintBatchBuilder(
       input.metadata,
       input.targetLayerId,
       input.targetResolution,
     );
-    // Step size: caller may pass a coarse stepVoxels, but to avoid gaps the
-    // stamp spacing must be no larger than the brush radius. We use the
-    // smaller of the supplied step and max(1, radius / 2) — radius/2 is the
-    // conventional dab-spacing for an opaque disk brush.
-    const stepRequested = input.stepVoxels > 0 ? input.stepVoxels : 1;
-    const safeStep = Math.max(
-      1,
-      Math.min(stepRequested, Math.max(1, Math.floor(input.radius / 2))),
+    const maskCtx = this.maskEnabledForActiveTool()
+      ? resolveMaskContext(input, this.imageChunkCache)
+      : undefined;
+    const r = Math.max(0, Math.floor(input.radius));
+    const sameZ = Math.floor(input.from[2]) === Math.floor(input.to[2]);
+    recordPaintContext(
+      input.radius,
+      maskCtx,
+      r >= 1 && sameZ ? "capsule" : sameZ ? "fallback(r0)" : "fallback(zvary)",
+      input.metadata.voxelDataType,
     );
+
+    // Fast path: when the segment stays on one z-slice and the brush has a real
+    // radius, rasterize its swept area as a single capsule (stadium) instead of
+    // many overlapping dabs. Each voxel — and the morphology over the whole
+    // capsule — is computed exactly once, eliminating per-dab overlap recompute
+    // and collapsing N morphology round-trips into one (TM-304).
+    if (r >= 1 && sameZ) {
+      if (maskCtx === undefined) {
+        stampCapsule2D(builder, input.from, input.to, input.radius, input.value);
+      } else {
+        await stampCapsule2DMasked(
+          builder,
+          input.from,
+          input.to,
+          input.radius,
+          input.value,
+          maskCtx,
+          this.runMorphology,
+        );
+      }
+      return paintProfiler.time("3.build(cpu)", () => builder.build());
+    }
+
+    // Fallback: interpolate dabs along the segment. Used for a 1-voxel brush
+    // (r === 0) and z-varying segments (the swept volume is a 3D capsule we
+    // don't rasterize directly). Spacing = radius/2 for gap-free coverage.
+    const safeStep = Math.max(1, Math.floor(input.radius / 2));
     const [x0, y0, z0] = input.from;
     const [x1, y1, z1] = input.to;
     const dx = x1 - x0;
     const dy = y1 - y0;
     const dz = z1 - z0;
     const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    const maskCtx = this.maskEnabledForActiveTool()
-      ? resolveMaskContext(input)
-      : undefined;
     const stamp = async (pos: readonly [number, number, number]) => {
       if (maskCtx === undefined) {
         stampDisk2D(builder, pos, input.radius, input.value);
@@ -141,13 +284,14 @@ export class PaintingCompute implements PaintCompute {
           input.radius,
           input.value,
           maskCtx,
+          this.runMorphology,
         );
       }
     };
     // Always stamp the endpoint; if the segment is short, that's the only stamp.
     if (dist <= safeStep) {
       await stamp(input.to);
-      return builder.build();
+      return paintProfiler.time("3.build(cpu)", () => builder.build());
     }
     const steps = Math.ceil(dist / safeStep);
     // Start at i = 1 so we don't re-stamp `from` — the previous brush call
@@ -159,7 +303,7 @@ export class PaintingCompute implements PaintCompute {
       const pz = z0 + dz * t;
       await stamp([px, py, pz]);
     }
-    return builder.build();
+    return paintProfiler.time("3.build(cpu)", () => builder.build());
   }
 
   async fill3d(input: FillInput): Promise<PaintWriteBatch> {
@@ -270,6 +414,8 @@ function stampDisk2D(
   const cy = Math.floor(voxelPosition[1]);
   const cz = Math.floor(voxelPosition[2]);
   const r2 = r * r;
+  // No slice mode here: stampDisk2D is used by the per-dab fallback (many
+  // stamps per builder), which must accumulate on the legacy path.
   if (r === 0) {
     builder.writeVoxel(cx, cy, cz, value);
     return;
@@ -282,8 +428,70 @@ function stampDisk2D(
   }
 }
 
+/**
+ * Squared distance from point `(px, py)` to the segment `a→b`, with the
+ * projection parameter clamped to `[0, 1]` so the ends round off into caps.
+ * For a degenerate segment (`a === b`) this is the squared distance to the
+ * point — i.e. the footprint becomes a plain disk. This is the shape test that
+ * turns a brush stroke into a single "capsule" (stadium) instead of many
+ * overlapping dabs.
+ */
+function segmentDistanceSq(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const len2 = abx * abx + aby * aby;
+  let t = len2 > 0 ? ((px - ax) * abx + (py - ay) * aby) / len2 : 0;
+  if (t < 0) t = 0;
+  else if (t > 1) t = 1;
+  const dx = px - (ax + t * abx);
+  const dy = py - (ay + t * aby);
+  return dx * dx + dy * dy;
+}
+
+/**
+ * Unmasked swept-stroke stamp: rasterize the capsule (all voxels within
+ * `radius` of the segment `from→to`) on a single z-slice, writing each voxel
+ * exactly once. Replaces stamping many overlapping disks along the segment, so
+ * overlap voxels aren't written repeatedly. Caller guarantees `from`/`to` share
+ * a z-slice.
+ */
+function stampCapsule2D(
+  builder: PaintBatchBuilder,
+  from: readonly [number, number, number],
+  to: readonly [number, number, number],
+  radius: number,
+  value: number | bigint,
+): void {
+  const r = Math.max(0, Math.floor(radius));
+  const r2 = r * r;
+  const ax = from[0];
+  const ay = from[1];
+  const bx = to[0];
+  const by = to[1];
+  const cz = Math.floor(from[2]);
+  const loTx = Math.floor(Math.min(ax, bx)) - r;
+  const loTy = Math.floor(Math.min(ay, by)) - r;
+  const hiTx = Math.ceil(Math.max(ax, bx)) + r;
+  const hiTy = Math.ceil(Math.max(ay, by)) + r;
+  builder.beginSliceStamp(loTx, loTy, hiTx, hiTy, cz);
+  for (let vy = loTy; vy <= hiTy; vy++) {
+    for (let vx = loTx; vx <= hiTx; vx++) {
+      if (segmentDistanceSq(vx, vy, ax, ay, bx, by) <= r2) {
+        builder.writeVoxel(vx, vy, cz, value);
+      }
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
-// Mask-aware disk stamp
+// Mask-aware stamp (single disk or swept capsule, sharing one core)
 // ---------------------------------------------------------------------------
 
 interface MaskContext {
@@ -297,6 +505,7 @@ interface MaskContext {
 
 function resolveMaskContext(
   input: BrushApplyInput | BrushStrokeInput,
+  imageChunkCache: ImageChunkCache,
 ): MaskContext | undefined {
   if (input.mask === undefined) return undefined;
   if (input.maskMetadata === undefined) {
@@ -349,6 +558,7 @@ function resolveMaskContext(
         imageScale.chunkDataSize[1],
         imageScale.chunkDataSize[2],
       ],
+      imageChunkCache,
     ),
   };
 }
@@ -384,24 +594,41 @@ function warnOncePerStroke(message: string): void {
  *  - Morphology near the disk bbox boundary erodes (border=false), same as
  *    `scipy.ndimage.binary_closing` defaults.
  */
-async function stampDisk2DMasked(
+/**
+ * Shared masked-stamp core for a single z-slice. Rasterizes an arbitrary 2D
+ * brush footprint (the `inShape` predicate, in absolute target voxel coords)
+ * over the bbox `[loTx, loTx+tShapeX) × [loTy, loTy+tShapeY)`:
+ *
+ *  1. project each target voxel to its image voxel (nm ratio → anisotropy),
+ *  2. assemble the EM slab once,
+ *  3. gate by `inShape ∧ threshold-band` into a dense mask,
+ *  4. run morphology ONCE over the whole footprint (or skip if it's a no-op),
+ *  5. stamp each in-shape voxel with its processed mask byte.
+ *
+ * Both the single-disk stamp and the swept-capsule stamp delegate here. Because
+ * the capsule covers the whole stroke segment in one footprint, overlap voxels
+ * are thresholded, morphology'd, and written exactly once — not once per dab.
+ */
+async function stampShape2DMasked(
   builder: PaintBatchBuilder,
-  voxelPosition: readonly [number, number, number],
-  radius: number,
+  loTx: number,
+  loTy: number,
+  tShapeX: number,
+  tShapeY: number,
+  cz: number,
   value: number | bigint,
   ctx: MaskContext,
+  runMorphology: RunMorphology,
+  inShape: (vx: number, vy: number) => boolean,
+  // Slice-stamp fast write path. Only safe when this is the SOLE stamp for the
+  // builder (single click / one capsule); the per-dab fallback writes many
+  // stamps into one builder and must stay on the legacy accumulating path.
+  useSlice: boolean,
 ): Promise<void> {
-  const r = Math.max(0, Math.floor(radius));
-  const cx = Math.floor(voxelPosition[0]);
-  const cy = Math.floor(voxelPosition[1]);
-  const cz = Math.floor(voxelPosition[2]);
-  const r2 = r * r;
-
-  // Disk bbox in target voxel coords (closed-open).
-  const loTx = cx - r;
-  const loTy = cy - r;
-  const tShapeX = 2 * r + 1;
-  const tShapeY = 2 * r + 1;
+  if (tShapeX <= 0 || tShapeY <= 0) return;
+  if (useSlice) {
+    builder.beginSliceStamp(loTx, loTy, loTx + tShapeX - 1, loTy + tShapeY - 1, cz);
+  }
 
   // Per-target-voxel image coord mapping. Uses physical nm ratio so any
   // anisotropic ratio works (matches reference's `scale = image_size/target_size`
@@ -438,8 +665,13 @@ async function stampDisk2DMasked(
 
   const chunks = imageChunksCovering(loImage, hiImage, ctx.imageScale);
   const ics = ctx.imageScale.chunkDataSize;
+  const prof = paintProfiler.enabled;
+  let readMs = 0;
+  let copyMs = 0;
   for (const coord of chunks) {
+    let t = prof ? performance.now() : 0;
     const chunkBuf = await ctx.reader.readChunk(coord);
+    if (prof) readMs += performance.now() - t;
     if (chunkBuf === undefined) continue;
     const view = chunkBuf.asView();
     const cox = coord.x * ics[0];
@@ -451,6 +683,7 @@ async function stampDisk2DMasked(
     const x1 = Math.min(hiImage[0], cox + ics[0]);
     const y1 = Math.min(hiImage[1], coy + ics[1]);
     const z1 = Math.min(hiImage[2], coz + ics[2]);
+    if (prof) t = performance.now();
     for (let iz = z0; iz < z1; iz++) {
       const lz = iz - coz;
       for (let iy = y0; iy < y1; iy++) {
@@ -469,71 +702,196 @@ async function stampDisk2DMasked(
         }
       }
     }
+    if (prof) copyMs += performance.now() - t;
+  }
+  if (prof) {
+    paintProfiler.record("1a.chunkRead(io)", readMs);
+    paintProfiler.record("1b.slabCopy(cpu)", copyMs);
   }
 
-  // Build the 2D target-space mask: gate by circle ∧ threshold-band.
+  // Build the 2D target-space mask: gate by footprint ∧ threshold-band.
   const tMaskShape: VoxelTriple = [tShapeX, tShapeY, 1];
   const tMaskData = new Uint8Array(tShapeX * tShapeY);
   const low = ctx.mask.thresholdLow;
   const high = ctx.mask.thresholdHigh;
-  if (r === 0) {
-    const v =
-      imageValues[imgX[0] - loImage[0] + iShapeX * (imgY[0] - loImage[1])];
-    if (v >= low && v <= high) tMaskData[0] = 1;
-  } else {
-    for (let j = 0; j < tShapeY; j++) {
-      const dy = j - r;
-      const iyLocal = imgY[j] - loImage[1];
-      for (let i = 0; i < tShapeX; i++) {
-        const dx = i - r;
-        if (dx * dx + dy * dy > r2) continue;
-        const ixLocal = imgX[i] - loImage[0];
-        const v = imageValues[ixLocal + iShapeX * iyLocal];
-        if (v >= low && v <= high) tMaskData[i + tShapeX * j] = 1;
-      }
+  const tMask = prof ? performance.now() : 0;
+  for (let j = 0; j < tShapeY; j++) {
+    const vy = loTy + j;
+    const iyLocal = imgY[j] - loImage[1];
+    for (let i = 0; i < tShapeX; i++) {
+      if (!inShape(loTx + i, vy)) continue;
+      const ixLocal = imgX[i] - loImage[0];
+      const v = imageValues[ixLocal + iShapeX * iyLocal];
+      if (v >= low && v <= high) tMaskData[i + tShapeX * j] = 1;
     }
   }
+  if (prof) paintProfiler.record("2a.maskBuild(cpu)", performance.now() - tMask);
 
-  // Apply binary closing + component filter in TARGET voxel space.
-  // Shape `[tShapeX, tShapeY, 1]` makes the 3D helpers degrade to
+  // Apply binary closing + component filter in TARGET voxel space, via the
+  // injected runner (pyodide worker in production, TS pipeline in tests/
+  // fallback). Shape `[tShapeX, tShapeY, 1]` makes the morphology degrade to
   // 4-connected planar ops — same as scipy's default in the reference.
-  const processed: MaskBuffer = applyMorphologyPipeline({
-    mask: { data: tMaskData, shape: tMaskShape },
-    binaryClosing: ctx.mask.binaryClosing,
-    minComponentSize: ctx.mask.minComponentSize,
-    filterComponentsFirst: ctx.mask.filterComponentsFirst,
-  });
+  //
+  // Short-circuit when no morphology is requested (the default: closing 0,
+  // minComponentSize 0). In that case the pipeline is an identity transform, so
+  // calling the worker would round-trip to compute nothing — a pure latency hit
+  // on the live-paint path. Skip it and stamp the raw threshold mask directly.
+  const needsMorphology =
+    ctx.mask.binaryClosing > 0 || ctx.mask.minComponentSize > 1;
+  const processed: Uint8Array = needsMorphology
+    ? await paintProfiler.timeAsync("2b.morphology(worker)", () =>
+        runMorphology({
+          mask: tMaskData,
+          shape: tMaskShape,
+          binaryClosing: ctx.mask.binaryClosing,
+          minComponentSize: ctx.mask.minComponentSize,
+          filterComponentsFirst: ctx.mask.filterComponentsFirst,
+        }),
+      )
+    : tMaskData;
 
-  // Sample back: for each target voxel in the disk, the mask byte is its
-  // entry in the processed buffer. The chunk builder records the disk's
-  // bounding box as the subregion; the per-voxel mask drives gating.
-  if (r === 0) {
-    builder.writeVoxelMasked(
-      cx,
-      cy,
-      cz,
-      value,
-      processed.data[0] === 1 ? 1 : 0,
-    );
-    return;
-  }
-  for (let dy = -r; dy <= r; dy++) {
-    const j = dy + r;
-    for (let dx = -r; dx <= r; dx++) {
-      if (dx * dx + dy * dy > r2) continue;
-      const i = dx + r;
-      const maskByte = processed.data[i + tShapeX * j] === 1 ? 1 : 0;
-      builder.writeVoxelMasked(cx + dx, cy + dy, cz, value, maskByte);
+  // Sample back: each in-footprint voxel takes its mask byte from the processed
+  // buffer. The chunk builder records the footprint's bounding box as the
+  // subregion; the per-voxel mask drives gating.
+  const tWrite = prof ? performance.now() : 0;
+  let painted = 0;
+  for (let j = 0; j < tShapeY; j++) {
+    const vy = loTy + j;
+    for (let i = 0; i < tShapeX; i++) {
+      const vx = loTx + i;
+      if (!inShape(vx, vy)) continue;
+      const maskByte = processed[i + tShapeX * j] === 1 ? 1 : 0;
+      if (maskByte === 1) painted++;
+      builder.writeVoxelMasked(vx, vy, cz, value, maskByte);
     }
+  }
+  if (prof) {
+    paintProfiler.record("2c.write(cpu)", performance.now() - tWrite);
+    paintProfiler.count("voxels.footprintBbox", tShapeX * tShapeY);
+    paintProfiler.count("voxels.painted", painted);
   }
 }
 
-class MaskChunkReader {
-  private readonly cache = new Map<
+/** Mask-aware single-disk stamp — a degenerate (point) capsule. */
+function stampDisk2DMasked(
+  builder: PaintBatchBuilder,
+  voxelPosition: readonly [number, number, number],
+  radius: number,
+  value: number | bigint,
+  ctx: MaskContext,
+  runMorphology: RunMorphology,
+): Promise<void> {
+  const r = Math.max(0, Math.floor(radius));
+  const cx = Math.floor(voxelPosition[0]);
+  const cy = Math.floor(voxelPosition[1]);
+  const cz = Math.floor(voxelPosition[2]);
+  const r2 = r * r;
+  return stampShape2DMasked(
+    builder,
+    cx - r,
+    cy - r,
+    2 * r + 1,
+    2 * r + 1,
+    cz,
+    value,
+    ctx,
+    runMorphology,
+    (vx, vy) => {
+      const dx = vx - cx;
+      const dy = vy - cy;
+      return dx * dx + dy * dy <= r2;
+    },
+    // Disk masked stamp is used by the per-dab fallback (many stamps per
+    // builder) → must accumulate on the legacy path, not slice mode.
+    /* useSlice */ false,
+  );
+}
+
+/**
+ * Mask-aware swept-stroke stamp: one pass over the capsule (stadium) covering
+ * the whole segment `from→to` on a single z-slice. Each voxel — and the
+ * morphology over the whole capsule — is computed exactly once, replacing the
+ * per-dab stamp loop (which recomputed overlap voxels and round-tripped to the
+ * worker once per dab). Morphology now acts on the union shape rather than each
+ * disk independently. Caller guarantees `from`/`to` share a z-slice.
+ */
+function stampCapsule2DMasked(
+  builder: PaintBatchBuilder,
+  from: readonly [number, number, number],
+  to: readonly [number, number, number],
+  radius: number,
+  value: number | bigint,
+  ctx: MaskContext,
+  runMorphology: RunMorphology,
+): Promise<void> {
+  const r = Math.max(0, Math.floor(radius));
+  const r2 = r * r;
+  const ax = from[0];
+  const ay = from[1];
+  const bx = to[0];
+  const by = to[1];
+  const cz = Math.floor(from[2]);
+  const loTx = Math.floor(Math.min(ax, bx)) - r;
+  const loTy = Math.floor(Math.min(ay, by)) - r;
+  const hiTx = Math.ceil(Math.max(ax, bx)) + r;
+  const hiTy = Math.ceil(Math.max(ay, by)) + r;
+  return stampShape2DMasked(
+    builder,
+    loTx,
+    loTy,
+    hiTx - loTx + 1,
+    hiTy - loTy + 1,
+    cz,
+    value,
+    ctx,
+    runMorphology,
+    (vx, vy) => segmentDistanceSq(vx, vy, ax, ay, bx, by) <= r2,
+    // Single capsule per builder → safe to use the fast slice write path.
+    /* useSlice */ true,
+  );
+}
+
+/**
+ * Bounded image-chunk cache shared across all strokes of a `PaintingCompute`
+ * (P2, TM-304). The image (mask source) layer is read-only for the lifetime of
+ * a paint session, so decoded chunks can be cached indefinitely and reused
+ * across stroke segments — eliminating the per-segment re-reads that dominated
+ * the `chunkRead` await time. Keyed by `layerId | resolution | chunkCoord` so
+ * different layers/resolutions never collide. Bounded by chunk count with
+ * insertion-order (FIFO) eviction; entries are references to already-decoded
+ * buffers, not copies.
+ */
+class ImageChunkCache {
+  private readonly entries = new Map<
     string,
     Promise<ReadonlyChunkVoxelBuffer> | ReadonlyChunkVoxelBuffer
   >();
 
+  constructor(private readonly capacity = 192) {}
+
+  get(
+    key: string,
+  ): Promise<ReadonlyChunkVoxelBuffer> | ReadonlyChunkVoxelBuffer | undefined {
+    return this.entries.get(key);
+  }
+
+  set(
+    key: string,
+    value: Promise<ReadonlyChunkVoxelBuffer> | ReadonlyChunkVoxelBuffer,
+  ): void {
+    this.entries.set(key, value);
+    if (this.entries.size > this.capacity) {
+      const oldest = this.entries.keys().next().value;
+      if (oldest !== undefined) this.entries.delete(oldest);
+    }
+  }
+
+  delete(key: string): void {
+    this.entries.delete(key);
+  }
+}
+
+class MaskChunkReader {
   constructor(
     private readonly layerId: BrushApplyInput["targetLayerId"],
     private readonly resolution: ResolutionType,
@@ -541,6 +899,7 @@ class MaskChunkReader {
     // chunkDataSize intentionally retained for parity with ChunkReader and
     // potential per-voxel access patterns later.
     private readonly chunkDataSize: readonly [number, number, number],
+    private readonly cache: ImageChunkCache,
   ) {
     void this.chunkDataSize;
   }
@@ -548,7 +907,7 @@ class MaskChunkReader {
   async readChunk(
     coord: ChunkCoord,
   ): Promise<ReadonlyChunkVoxelBuffer | undefined> {
-    const key = `${coord.x},${coord.y},${coord.z}`;
+    const key = `${this.layerId}|${this.resolution}|${coord.x},${coord.y},${coord.z}`;
     const entry = this.cache.get(key);
     if (entry === undefined) {
       const chunkId = ChunkId.fromCoord(coord);
@@ -609,10 +968,51 @@ interface PendingChunkWrite {
   }>;
 }
 
+/**
+ * A single chunk's dense write block for slice-stamp mode (P1, TM-304). Sized
+ * to `stampBbox ∩ chunk` for one z-layer, written into directly so a 2D stamp
+ * avoids the per-voxel string key + `Map.get` + object allocation that
+ * dominated the write cost at large brush sizes.
+ */
+interface SliceCell {
+  readonly gx: number;
+  readonly gy: number;
+  readonly ox: number; // chunk-local x origin of the sub-bbox
+  readonly oy: number; // chunk-local y origin of the sub-bbox
+  readonly w: number;
+  readonly h: number;
+  readonly lz: number; // chunk-local z (single layer)
+  // Global voxel ranges this cell covers — used by the 1-entry write cache.
+  readonly x0: number;
+  readonly x1: number;
+  readonly y0: number;
+  readonly y1: number;
+  readonly values: ChunkVoxelBuffer;
+  readonly valueMask: Uint8Array;
+  touched: boolean;
+}
+
 class PaintBatchBuilder {
   private readonly chunks = new Map<string, PendingChunkWrite>();
   private readonly chunkDataSize: readonly [number, number, number];
   private readonly voxelDataType: VoxelDataType;
+
+  // Slice-stamp mode state (P1). Active between `beginSliceStamp` and the next
+  // `beginSliceStamp`/`build`. `fill3d` never enters slice mode (it stays on
+  // the legacy per-voxel path), so its 3D, sparse writes are unaffected.
+  private readonly sliceWrites: PaintChunkWrite[] = [];
+  private sliceCells: (SliceCell | undefined)[] | undefined;
+  private sliceGx0 = 0;
+  private sliceGy0 = 0;
+  private sliceGz = 0;
+  private sliceNcols = 0;
+  private sliceLz = 0;
+  private sliceZGlobal = Number.NaN;
+  private sliceLoTx = 0;
+  private sliceLoTy = 0;
+  private sliceHiTx = 0;
+  private sliceHiTy = 0;
+  private sliceCacheCell: SliceCell | undefined;
 
   constructor(
     metadata: LayerMetadata,
@@ -626,6 +1026,86 @@ class PaintBatchBuilder {
       scale.chunkDataSize[2],
     ];
     this.voxelDataType = metadata.voxelDataType;
+  }
+
+  /**
+   * Enter slice-stamp mode for a single z-slice footprint bounded (inclusive)
+   * by `[loTx, hiTx] × [loTy, hiTy]` at `z`. Pre-establishes a lazy per-chunk
+   * dense grid so subsequent `writeVoxelMasked`/`writeVoxel` calls write
+   * straight into dense buffers. Finalizes any previous slice first, so the
+   * z-varying per-dab fallback can call this once per dab.
+   */
+  beginSliceStamp(
+    loTx: number,
+    loTy: number,
+    hiTx: number,
+    hiTy: number,
+    z: number,
+  ): void {
+    this.finalizeSlice();
+    const [sx, sy, sz] = this.chunkDataSize;
+    this.sliceGx0 = Math.floor(loTx / sx);
+    this.sliceGy0 = Math.floor(loTy / sy);
+    this.sliceGz = Math.floor(z / sz);
+    this.sliceLz = z - this.sliceGz * sz;
+    this.sliceZGlobal = z;
+    const gx1 = Math.floor(hiTx / sx);
+    const gy1 = Math.floor(hiTy / sy);
+    this.sliceNcols = gx1 - this.sliceGx0 + 1;
+    const nrows = gy1 - this.sliceGy0 + 1;
+    this.sliceCells = new Array<SliceCell | undefined>(
+      this.sliceNcols * nrows,
+    );
+    this.sliceLoTx = loTx;
+    this.sliceLoTy = loTy;
+    this.sliceHiTx = hiTx;
+    this.sliceHiTy = hiTy;
+    this.sliceCacheCell = undefined;
+  }
+
+  private makeSliceCell(gx: number, gy: number): SliceCell {
+    const [sx, sy] = this.chunkDataSize;
+    const x0 = Math.max(this.sliceLoTx, gx * sx);
+    const x1 = Math.min(this.sliceHiTx, (gx + 1) * sx - 1);
+    const y0 = Math.max(this.sliceLoTy, gy * sy);
+    const y1 = Math.min(this.sliceHiTy, (gy + 1) * sy - 1);
+    const w = x1 - x0 + 1;
+    const h = y1 - y0 + 1;
+    return {
+      gx,
+      gy,
+      ox: x0 - gx * sx,
+      oy: y0 - gy * sy,
+      w,
+      h,
+      lz: this.sliceLz,
+      x0,
+      x1,
+      y0,
+      y1,
+      values: allocateVoxelBuffer(this.voxelDataType, w * h),
+      valueMask: new Uint8Array(w * h),
+      touched: false,
+    };
+  }
+
+  /** Flush the current slice's touched cells into `sliceWrites` and exit mode. */
+  private finalizeSlice(): void {
+    const cells = this.sliceCells;
+    if (cells === undefined) return;
+    for (const c of cells) {
+      if (c === undefined || !c.touched) continue;
+      this.sliceWrites.push({
+        chunkId: ChunkId.fromCoord({ x: c.gx, y: c.gy, z: this.sliceGz }),
+        chunkCoord: { x: c.gx, y: c.gy, z: this.sliceGz },
+        subregion: { origin: [c.ox, c.oy, c.lz], size: [c.w, c.h, 1] },
+        values: c.values,
+        valueMask: c.valueMask,
+      });
+    }
+    this.sliceCells = undefined;
+    this.sliceCacheCell = undefined;
+    this.sliceZGlobal = Number.NaN;
   }
 
   /** Mark a single voxel for write. Coordinates are in resolution voxel space. */
@@ -647,6 +1127,58 @@ class PaintBatchBuilder {
     value: number | bigint,
     maskByte: 0 | 1,
   ): void {
+    // Slice-stamp fast path (P1): for a 2D single-z stamp, write straight into
+    // the pre-sized dense per-chunk buffer. Skips masked-off voxels entirely
+    // (the subregion is fixed to bbox∩chunk, so 0-bytes need not be recorded).
+    // A 1-entry cell cache makes the common case (contiguous run along a row)
+    // free of `Math.floor`/grid lookups.
+    const cells = this.sliceCells;
+    if (cells !== undefined && vz === this.sliceZGlobal) {
+      if (maskByte === 0) return;
+      let c = this.sliceCacheCell;
+      if (
+        c === undefined ||
+        vx < c.x0 ||
+        vx > c.x1 ||
+        vy < c.y0 ||
+        vy > c.y1
+      ) {
+        const [sx, sy] = this.chunkDataSize;
+        const gx = Math.floor(vx / sx);
+        const gy = Math.floor(vy / sy);
+        const cgx = gx - this.sliceGx0;
+        const cgy = gy - this.sliceGy0;
+        if (
+          cgx >= 0 &&
+          cgy >= 0 &&
+          cgx < this.sliceNcols &&
+          vx >= this.sliceLoTx &&
+          vx <= this.sliceHiTx &&
+          vy >= this.sliceLoTy &&
+          vy <= this.sliceHiTy
+        ) {
+          const gi = cgx + this.sliceNcols * cgy;
+          c = cells[gi];
+          if (c === undefined) {
+            c = this.makeSliceCell(gx, gy);
+            cells[gi] = c;
+          }
+          this.sliceCacheCell = c;
+        } else {
+          c = undefined; // out of slice bbox → fall through to legacy path
+        }
+      }
+      if (c !== undefined) {
+        // Dense index is relative to the cell's sub-bbox origin (x0, y0); ox/oy
+        // are only the chunk-local origin recorded in the emitted subregion.
+        const idx = vx - c.x0 + c.w * (vy - c.y0);
+        writeIntoBuffer(c.values, this.voxelDataType, idx, value);
+        c.valueMask[idx] = 1;
+        c.touched = true;
+        return;
+      }
+    }
+
     // Out-of-bbox voxels are NOT filtered here — the library's paint write
     // path clamps every write to the session region (`SessionVoxelBounds`).
     const sx = this.chunkDataSize[0];
@@ -685,7 +1217,10 @@ class PaintBatchBuilder {
   }
 
   build(truncated?: PaintWriteBatch["truncated"]): PaintWriteBatch {
-    const writes: PaintChunkWrite[] = [];
+    // Flush any in-progress slice stamp, then emit its dense chunks alongside
+    // any legacy per-voxel chunks (e.g. from a z-varying fallback or fill3d).
+    this.finalizeSlice();
+    const writes: PaintChunkWrite[] = [...this.sliceWrites];
     for (const entry of this.chunks.values()) {
       const sx = entry.hiX - entry.loX + 1;
       const sy = entry.hiY - entry.loY + 1;
