@@ -35,6 +35,13 @@ export class StateShare extends RefCounted {
       );
     }
 
+    // The top row is `align-items: stretch`, so this wrapper stretches to the
+    // (taller) row height defined by the editing topbar. Center its contents
+    // vertically so the "Share" label lines up with the sibling icons (which
+    // center themselves via `.neuroglancer-icon { align-self: center }`).
+    this.element.style.display = "flex";
+    this.element.style.alignItems = "center";
+
     // if more than one state server, add UI so users can select the state server to use
     if (Object.keys(STATE_SERVERS).length > 1) {
       const selectEl = document.createElement("select");
