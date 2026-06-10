@@ -2299,10 +2299,7 @@ void main() {
         // Clear stale equivalences for old roots
         segmentsState.segmentEquivalences.deleteSet(oldRootA);
         segmentsState.segmentEquivalences.deleteSet(oldRootB);
-        // Add new root and keep old roots visible during equivalence rebuild
         segmentsState.visibleSegments.add(newRoot);
-        segmentsState.visibleSegments.add(oldRootA);
-        segmentsState.visibleSegments.add(oldRootB);
         segmentsState.selectedSegments.add(newRoot);
         // Register the new root with the mesh source so its mesh fragments
         // are fetched — without this the post-merge 3D view rendered only
@@ -2312,15 +2309,24 @@ void main() {
         // Populate equivalences directly from the merge response's `pieces`
         // field — server returns the union of pieces from both pre-merge
         // roots, so we avoid the post-edit /leaves round-trip that goes
-        // through the lagging pieces_latest_by_root MV and used to leave
-        // the merged mesh blank for ~5 min after the edit. Fall back to
-        // /leaves if the server is an older build that didn't include the
-        // field.
+        // through the lagging pieces_latest_by_root MV. Mirror
+        // updateAfterSplit: deliberately NO refreshChunkSources here — it
+        // clears the equivalences we just set and the chunk re-fetch races
+        // the same MV, intermittently leaving one of the merged segments
+        // unhighlighted in 2D until the MV catches up. The chunk pixel data
+        // is unchanged by a merge; these in-memory links are all the shader
+        // needs.
         if (mergedPieces.length > 0) {
           for (const piece of mergedPieces) {
             segmentsState.segmentEquivalences.link(newRoot, piece);
           }
+          segmentsState.segmentEquivalences.changed.dispatch();
         } else {
+          // Legacy-server fallback (no `pieces` in the merge response): keep
+          // the old roots visible while the async /leaves resolves, and
+          // refresh chunks so their LUT trailers rebuild the mapping.
+          segmentsState.visibleSegments.add(oldRootA);
+          segmentsState.visibleSegments.add(oldRootB);
           this.graph.graphServer
             .getLeaves(
               newRoot,
@@ -2338,9 +2344,8 @@ void main() {
                 6000,
               );
             });
+          this.refreshChunkSources();
         }
-
-        this.refreshChunkSources();
         return newRoot;
       } catch (err) {
         if (i === attempts) {
