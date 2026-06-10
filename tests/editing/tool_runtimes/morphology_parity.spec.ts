@@ -69,9 +69,13 @@ suite("morphology parity: pyodide scipy === TS applyMorphologyPipeline", () => {
     // wasm/stdlib assets (otherwise pyodide.mjs resolves them to the wrong base).
     const req = createRequire(pathToFileURL(`${process.cwd()}/`));
     const indexURL = `${dirname(req.resolve("pyodide"))}/`;
-    // pyodide is an opt-in test-only runtime, not a project dependency.
-    // eslint-disable-next-line import/no-extraneous-dependencies
-    const { loadPyodide } = await import("pyodide");
+    // pyodide is an opt-in test-only runtime, not a project dependency, so the
+    // specifier is kept dynamic (a variable). Static import-resolution lint
+    // rules (no-unresolved / no-extraneous-dependencies) and the typechecker
+    // therefore don't require it to be installed; it is only resolved at runtime
+    // when this opt-in suite actually runs (RUN_PYODIDE_PARITY=1).
+    const pyodideSpecifier = "pyodide";
+    const { loadPyodide } = await import(pyodideSpecifier);
     const py = await loadPyodide({ indexURL });
     await py.loadPackage(["numpy", "scipy"]);
     py.runPython(PYTHON_SRC);
