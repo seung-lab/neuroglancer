@@ -8,89 +8,135 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import { useEffect, useState } from "preact/hooks";
+import type { VoxelDataType } from "@zettaai/edit-session";
+import { useMemo, useState } from "preact/hooks";
 
+import {
+  UINT64_MAX,
+  voxelDataTypeRange,
+} from "#src/editing/tool_runtimes/mask_coord.js";
+import { ParamInput } from "#src/editing/ui/tool_settings/param_input.js";
 import { ParamLabel } from "#src/editing/ui/tool_settings/param_label.js";
 
 /**
- * The "Target value" parameter row, shared by the Brush and Fill panels: a
- * numeric segment-ID input that commits a `bigint` on change.
+ * The "Target value" parameter row, shared by the Brush and Fill panels: the
+ * segment ID / value painted into the target layer.
  *
- * Unlike the previous inline handler — which silently reverted bad input,
- * making the typed value vanish with no explanation — this surfaces a visible
- * invalid state (red field + an inline message) and *keeps* the user's text so
- * they can correct it. Validation is live on input; the value commits on
- * change (blur / Enter) only when it parses to a non-negative integer.
+ * Validation is driven by the target layer's `voxelDataType`: the accepted
+ * range matches the layer's representable values, so signed layers (int8 etc.)
+ * permit negatives and every type rejects values it can't hold. Built on
+ * {@link ParamInput} (the draft pattern), so the user can clear the field,
+ * type `0`/`-5`, or edit freely; invalid input shows a red field + the valid
+ * range and the value commits only when it's in range.
+ *
+ * Until the layer type resolves (`voxelDataType === undefined`) the field
+ * accepts any non-negative whole number — the safe default for segment IDs.
  */
 export function TargetValueField({
   value,
   onCommit,
+  voxelDataType,
   label = "Target value",
   hint,
 }: {
   value: number | bigint;
-  onCommit: (value: bigint) => void;
+  onCommit: (value: number | bigint) => void;
+  voxelDataType?: VoxelDataType;
   label?: string;
   hint: string;
 }) {
-  const [draft, setDraft] = useState(() => value.toString());
   const [invalid, setInvalid] = useState(false);
-
-  // Sync the draft to the committed value whenever it changes from outside
-  // (e.g. a fresh session, or our own successful commit normalising "007" →
-  // "7"). Bad input never commits, so the prop is unchanged and the draft is
-  // left intact for the user to fix.
-  useEffect(() => {
-    setDraft(value.toString());
-    setInvalid(false);
-  }, [value]);
-
-  const onInput = (e: Event) => {
-    const raw = (e.currentTarget as HTMLInputElement).value;
-    setDraft(raw);
-    setInvalid(parseSegmentId(raw) === null);
-  };
-
-  const onChange = (e: Event) => {
-    const parsed = parseSegmentId((e.currentTarget as HTMLInputElement).value);
-    if (parsed === null) {
-      setInvalid(true);
-      return;
-    }
-    setInvalid(false);
-    onCommit(parsed);
-  };
+  const rule = useMemo(() => valueRule(voxelDataType), [voxelDataType]);
 
   return (
     <div class="neuroglancer-tool-panel-field">
       <div class="neuroglancer-tool-panel-row">
         <ParamLabel text={label} hint={hint} />
-        <input
+        <ParamInput<number | bigint>
           type="text"
-          inputMode="numeric"
-          aria-invalid={invalid ? "true" : undefined}
-          value={draft}
-          onInput={onInput}
-          onChange={onChange}
+          inputMode={rule.inputMode}
+          value={value}
+          parse={rule.parse}
+          onCommit={onCommit}
+          onInvalidChange={setInvalid}
         />
       </div>
       {invalid && (
         <div class="neuroglancer-tool-panel-error" role="alert">
-          Enter a whole number of 0 or greater.
+          {rule.message}
         </div>
       )}
     </div>
   );
 }
 
-/** Parse a non-negative integer segment ID, or null if the text is invalid. */
-function parseSegmentId(raw: string): bigint | null {
+interface ValueRule {
+  /** Parse + range-check raw text; null means empty/invalid (don't commit). */
+  parse: (raw: string) => number | bigint | null;
+  /** Inline message shown when the field is invalid. */
+  message: string;
+  inputMode: "numeric" | "decimal" | "text";
+}
+
+/** Build the validation rule for a target layer's voxel data type. */
+function valueRule(voxelDataType?: VoxelDataType): ValueRule {
+  if (voxelDataType === undefined) {
+    return {
+      parse: parseUnsignedBigInt,
+      message: "Enter a whole number of 0 or greater.",
+      inputMode: "numeric",
+    };
+  }
+  if (voxelDataType === "uint64") {
+    return {
+      parse: (raw) => {
+        const v = parseUnsignedBigInt(raw);
+        return v === null || v > UINT64_MAX ? null : v;
+      },
+      message: `Enter a whole number from 0 to ${UINT64_MAX}.`,
+      inputMode: "numeric",
+    };
+  }
+  if (voxelDataType === "float32") {
+    return {
+      parse: (raw) => {
+        const trimmed = raw.trim();
+        if (trimmed === "") return null;
+        const n = Number(trimmed);
+        return Number.isFinite(n) ? n : null;
+      },
+      message: "Enter a number.",
+      inputMode: "decimal",
+    };
+  }
+  // Signed/unsigned integer types (8/16/32-bit).
+  const { min, max } = voxelDataTypeRange(voxelDataType)!;
+  return {
+    parse: (raw) => {
+      const n = parseInteger(raw, min < 0);
+      return n === null || n < min || n > max ? null : n;
+    },
+    message: `Enter a whole number from ${min} to ${max}.`,
+    inputMode: min < 0 ? "text" : "numeric",
+  };
+}
+
+/** Parse a non-negative integer as a bigint, or null if the text is invalid. */
+function parseUnsignedBigInt(raw: string): bigint | null {
   const trimmed = raw.trim();
-  if (trimmed === "") return null;
+  if (!/^\d+$/.test(trimmed)) return null;
   try {
-    const parsed = BigInt(trimmed);
-    return parsed < 0n ? null : parsed;
+    return BigInt(trimmed);
   } catch {
     return null;
   }
+}
+
+/** Parse a decimal integer (optionally signed), or null if the text is invalid. */
+function parseInteger(raw: string, allowNegative: boolean): number | null {
+  const trimmed = raw.trim();
+  const pattern = allowNegative ? /^-?\d+$/ : /^\d+$/;
+  if (!pattern.test(trimmed)) return null;
+  const n = Number(trimmed);
+  return Number.isInteger(n) ? n : null;
 }

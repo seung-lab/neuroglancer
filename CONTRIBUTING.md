@@ -25,6 +25,11 @@ All submissions, including submissions by project members, require review.
 For consistency, please ensure that all TypeScript/JavaScript files
 are linted with `eslint` and formatted by `prettier`.
 
+Editing-panel numeric/text inputs must use `ParamInput` (the draft pattern —
+see `DESIGN.md`). Never bind a control to a parsed number and clamp/revert in
+`onChange`, and never re-sync external state into a **focused** field — both
+block the user from clearing the field or editing freely (e.g. typing `0`).
+
 You can check for lint/format issues with:
 
 ```shell
