@@ -33,9 +33,7 @@ import type {
   CorrespondenceTool,
   Resolution as ResolutionType,
   SaveResult,
-  ZExtrapolationState,
   ZExtrapolationTool,
-  CorrespondenceState,
   SavePayload,
   SaveLayerOutcome,
 } from "@zettaai/edit-session";
@@ -46,11 +44,9 @@ import {
   OverlayKey,
   Resolution,
   SessionPhaseViolationError,
-  correspondence,
   layerId as toLayerId,
   painting,
   sessionId as toSessionId,
-  zExtrapolation,
 } from "@zettaai/edit-session";
 
 import {
@@ -96,10 +92,8 @@ import { PointerEventBridge } from "#src/editing/pointer_event_bridge.js";
 import { QuickRegionCapture } from "#src/editing/quick_region_capture.js";
 import { EditSessionHotkeyBinder } from "#src/editing/session_hotkey_binder.js";
 import type { PatchedMaskProvider } from "#src/editing/shaders/patched_mask_provider.js";
-import { NgCorrespondenceCompute } from "#src/editing/tool_runtimes/correspondence_compute.js";
 import { MorphologyClient } from "#src/editing/tool_runtimes/morphology_client.js";
 import { PaintingCompute } from "#src/editing/tool_runtimes/painting_compute.js";
-import { NgZExtrapolationCompute } from "#src/editing/tool_runtimes/z_extrapolation_compute.js";
 import type { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import { SegmentationRenderLayer } from "#src/sliceview/volume/segmentation_renderlayer.js";
 import { StatusMessage } from "#src/status.js";
@@ -1385,7 +1379,6 @@ export class EditSessionHost extends RefCounted {
     const targetLayer = firstWritable ?? config.layers[0];
     const targetLayerId = targetLayer.layerId;
     const targetResolution = targetLayer.resolutions[0];
-    const sourceImageLayerId = config.layers[0].layerId;
 
     // The user-facing "Size" is `radius * 2 + 1` (see brush panel). Default
     // size 5 paints a 13-voxel diamond — visible enough to confirm the brush
@@ -1405,39 +1398,6 @@ export class EditSessionHost extends RefCounted {
       mask: undefined as PaintingMaskConfig | undefined,
     };
 
-    const correspondenceInitial: CorrespondenceState = {
-      lines: [],
-      markers: [],
-      pending: undefined,
-      hoveredId: undefined,
-      hoveredKind: undefined,
-      selectedId: undefined,
-      selectedKind: undefined,
-      reversedArrowMode: false,
-      sourceImageLayerId,
-      targetImageLayerId: targetLayerId,
-      fieldLayerId: targetLayerId,
-      warpedLayerId: targetLayerId,
-      writeResolution: targetResolution,
-      numIter: 200,
-      rigidity: 1,
-      learningRate: 0.1,
-      optimizer: "adam",
-      mseWeight: 1,
-    };
-
-    const zExtInitial: ZExtrapolationState = {
-      targetLayerId,
-      targetResolution,
-      imageLayerId: sourceImageLayerId,
-      imageResolution: targetResolution,
-      bboxXY: undefined,
-      sourceZ: undefined,
-      zRange: undefined,
-      trackingSegments: [],
-      modelHint: undefined,
-    };
-
     return {
       layers,
       region: {
@@ -1455,14 +1415,16 @@ export class EditSessionHost extends RefCounted {
             this.morphologyClient,
           ),
         }),
-        correspondence({
-          initialState: correspondenceInitial,
-          compute: new NgCorrespondenceCompute(),
-        }),
-        zExtrapolation({
-          initialState: zExtInitial,
-          compute: new NgZExtrapolationCompute(),
-        }),
+        // TM-310: v1 supports painting only. The correspondence and
+        // z-extrapolation tools are not available yet (their UI panels say so
+        // and their compute methods are deferred stubs). Registering them
+        // constructed the library tools, whose constructors run
+        // validateAgainstSession and threw when their seeded resolution wasn't
+        // a scale on every referenced layer (e.g. a 32x32x45 writable/target
+        // layer alongside a 256x256x45 image) — blocking the user from
+        // entering an otherwise-valid painting session. Painting itself
+        // supports mixed resolutions, so register only it until these tools
+        // actually ship.
       ],
     };
   }
