@@ -20,6 +20,7 @@ import { NO_MODIFIERS, Resolution } from "@zettaai/edit-session";
 import type { DisplayContext, RenderedPanel } from "#src/display_context.js";
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { globalToTargetVoxel } from "#src/editing/raster/global_voxel_conversion.js";
+import { paintProfiler } from "#src/editing/tool_runtimes/paint_profiler.js";
 import { RenderedDataPanel } from "#src/rendered_data_panel.js";
 import { RefCounted } from "#src/util/disposable.js";
 
@@ -498,15 +499,30 @@ export class PointerEventBridge extends RefCounted {
       at: nowMs(),
       modifiers: NO_MODIFIERS,
     };
+    // Profiling (Step 1): time the WHOLE handleInput — compute
+    // (`applyBrushStroke`, bucketed as `0.stroke(total)`) plus the library apply
+    // (`withBatch` + `applyPaintBatch`). `4.handleInput(total) - 0.stroke(total)`
+    // is the apply half. (GPU upload happens later on the render frame and is
+    // not captured here — read it from a Performance flame chart.)
+    const applyStart = paintProfiler.enabled ? performance.now() : 0;
     try {
       const result = tool.handleInput(event);
       if (result instanceof Promise) {
-        result.catch((err) =>
-          this.host.logger.error(
-            "tooling",
-            `PointerEventBridge: stroke handleInput rejected: ${stringifyError(err)}`,
-          ),
-        );
+        result
+          .catch((err) =>
+            this.host.logger.error(
+              "tooling",
+              `PointerEventBridge: stroke handleInput rejected: ${stringifyError(err)}`,
+            ),
+          )
+          .finally(() => {
+            if (paintProfiler.enabled) {
+              paintProfiler.record(
+                "4.handleInput(total)",
+                performance.now() - applyStart,
+              );
+            }
+          });
       }
     } catch (err) {
       this.host.logger.error(
