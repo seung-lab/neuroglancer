@@ -1675,9 +1675,8 @@ export class EditSessionHost extends RefCounted {
    */
   private attachHoverHighlightSuppression(): void {
     const apply = () => this.applyHoverHighlightSuppression();
-    this.detachHoverSuppressionToolWatch = this.cursorState?.toolKind.changed.add(
-      apply,
-    );
+    this.detachHoverSuppressionToolWatch =
+      this.cursorState?.toolKind.changed.add(apply);
     this.detachHoverSuppressionLayerWatch =
       this.viewer.layerManager.layersChanged.add(apply);
     apply();
