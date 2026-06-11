@@ -104,32 +104,7 @@
   font-weight: 600;
 }
 
-.graphene-piece-split .piece-split-image-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.graphene-piece-split .piece-split-image-row select {
-  flex: 1;
-  font-family: monospace;
-  font-size: 12px;
-}
-
-.graphene-piece-split .piece-split-image-hint {
-  font-family: monospace;
-  font-size: 11px;
-  opacity: 0.6;
-  margin-left: 5em;
-}
-
-.graphene-piece-split .piece-split-group-row .active-blue {
-  color: #4ad;
-  font-weight: 700;
-}
-
-.graphene-piece-split .piece-split-group-row .active-red {
-  color: #e55;
+.graphene-piece-split .piece-split-group-row {
   font-weight: 700;
 }
 
@@ -143,14 +118,6 @@
 .graphene-piece-split .piece-split-red > div:first-child {
   font-weight: 700;
   margin-bottom: 2px;
-}
-
-.graphene-piece-split .piece-split-blue > div:first-child {
-  color: #4ad;
-}
-
-.graphene-piece-split .piece-split-red > div:first-child {
-  color: #e55;
 }
 
 .graphene-piece-split .piece-split-point-row {
@@ -174,6 +141,22 @@
 .graphene-piece-split .neuroglancer-icon.disabled {
   opacity: 0.4;
   pointer-events: none;
+}
+
+.graphene-piece-split .piece-split-spinner {
+  width: 14px;
+  height: 14px;
+  align-self: center;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: piece-split-spin 0.8s linear infinite;
+}
+
+@keyframes piece-split-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Time-travel read-only mode: visually grey-out toolbox buttons. Clicking
