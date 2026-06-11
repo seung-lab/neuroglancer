@@ -521,6 +521,14 @@ export class EditSessionHost extends RefCounted {
   /** Disposer for the paint-target watch that drives overlay re-anchoring. */
   private detachCursorTargetWatch: (() => void) | undefined;
   /**
+   * Disposers for the watches that suppress segment hover-highlight while a
+   * painting tool (brush/eraser/fill) is active. One tracks active-tool
+   * changes; the other re-applies the current suppression to layers that
+   * appear mid-session.
+   */
+  private detachHoverSuppressionToolWatch: (() => void) | undefined;
+  private detachHoverSuppressionLayerWatch: (() => void) | undefined;
+  /**
    * Disposer for the display-dimensions watch that recomputes the bbox-alpha
    * render region when the viewer's global "dimensions" scale changes
    * mid-session (TM-298). Without it, relabeling global res leaves the region
@@ -1646,6 +1654,7 @@ export class EditSessionHost extends RefCounted {
    */
   private attachCursorOverlays(config: HostSessionConfig): void {
     this.cursorState = new BrushCursorState(this);
+    this.attachHoverHighlightSuppression();
     const firstWritable = config.layers.find((l) => l.writable);
     if (firstWritable === undefined) return;
     this.cursorOverlayFallbackLayerId = firstWritable.layerId;
@@ -1654,6 +1663,47 @@ export class EditSessionHost extends RefCounted {
     this.detachCursorTargetWatch = this.cursorState.targetLayerId.changed.add(
       () => this.reattachCursorOverlaysToTarget(),
     );
+  }
+
+  /**
+   * Suppress segment hover-highlight on every segmentation layer while a
+   * painting tool (brush/eraser/fill) is active, restoring it for navigate.
+   * `BrushCursorState.toolKind` is exactly the paint-like classification
+   * (`undefined` for navigate / non-paint tools), so it is the single signal we
+   * watch. A second watch on `layersChanged` re-applies the current suppression
+   * to layers that appear mid-session.
+   */
+  private attachHoverHighlightSuppression(): void {
+    const apply = () => this.applyHoverHighlightSuppression();
+    this.detachHoverSuppressionToolWatch = this.cursorState?.toolKind.changed.add(
+      apply,
+    );
+    this.detachHoverSuppressionLayerWatch =
+      this.viewer.layerManager.layersChanged.add(apply);
+    apply();
+  }
+
+  private applyHoverHighlightSuppression(): void {
+    const suppress = this.cursorState?.toolKind.value !== undefined;
+    this.setHoverHighlightSuppressedOnAllSegmentationLayers(suppress);
+  }
+
+  /**
+   * Duck-typed sweep over all managed layers: any layer whose display state
+   * carries a `hoverHighlightSuppressed` watchable is a segmentation layer (see
+   * `findSegmentationUserLayer` for why we avoid a hard `instanceof`).
+   */
+  private setHoverHighlightSuppressedOnAllSegmentationLayers(
+    suppress: boolean,
+  ): void {
+    for (const managed of this.viewer.layerManager.managedLayers) {
+      const displayState = (managed.layer as SegmentationUserLayer | null)
+        ?.displayState;
+      const flag = displayState?.hoverHighlightSuppressed;
+      if (flag !== undefined && flag.value !== suppress) {
+        flag.value = suppress;
+      }
+    }
   }
 
   /**
@@ -1746,6 +1796,25 @@ export class EditSessionHost extends RefCounted {
       }
       this.detachCursorTargetWatch = undefined;
     }
+    // Stop watching for tool/layer changes and lift suppression so navigate
+    // (and the next session) sees the user's hover-highlight preference again.
+    if (this.detachHoverSuppressionToolWatch !== undefined) {
+      try {
+        this.detachHoverSuppressionToolWatch();
+      } catch {
+        // ignore
+      }
+      this.detachHoverSuppressionToolWatch = undefined;
+    }
+    if (this.detachHoverSuppressionLayerWatch !== undefined) {
+      try {
+        this.detachHoverSuppressionLayerWatch();
+      } catch {
+        // ignore
+      }
+      this.detachHoverSuppressionLayerWatch = undefined;
+    }
+    this.setHoverHighlightSuppressedOnAllSegmentationLayers(false);
     // Detaching each render layer disposes it (see `removeRenderLayer`); this
     // also clears `attachedCursorLayerId`.
     this.detachCursorOverlayRenderLayers();

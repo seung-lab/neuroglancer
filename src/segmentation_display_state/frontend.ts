@@ -191,6 +191,11 @@ export interface SegmentationDisplayState {
   segmentSelectionState: SegmentSelectionState;
   saturation: TrackableAlphaValue;
   hoverHighlight: WatchableValueInterface<boolean>;
+  // Transient, non-persisted override that disables hover highlight while it is
+  // `true` (driven by the edit-session host so painting tools don't brighten the
+  // segment under the cursor). Leaves the user-facing `hoverHighlight`
+  // preference untouched.
+  hoverHighlightSuppressed: WatchableValueInterface<boolean>;
   baseSegmentColoring: WatchableValueInterface<boolean>;
   baseSegmentHighlighting: WatchableValueInterface<boolean>;
   segmentationGroupState: WatchableValueInterface<SegmentationGroupState>;
@@ -921,6 +926,9 @@ export function registerCallbackWhenSegmentationDisplayStateChanged(
   );
   context.registerDisposer(displayState.hoverHighlight.changed.add(callback));
   context.registerDisposer(
+    displayState.hoverHighlightSuppressed.changed.add(callback),
+  );
+  context.registerDisposer(
     displayState.segmentStatedColors.changed.add(callback),
   );
 }
@@ -1028,6 +1036,7 @@ export function getObjectColor(
   let saturation = displayState.saturation.value;
   if (
     displayState.hoverHighlight.value &&
+    !displayState.hoverHighlightSuppressed.value &&
     displayState.segmentSelectionState.isSelected(objectId)
   ) {
     if (saturation > 0.5) {
