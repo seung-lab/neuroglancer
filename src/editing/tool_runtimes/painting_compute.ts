@@ -28,6 +28,7 @@ import { ChunkId, scaleFor } from "@zettaai/edit-session";
 
 import { applyMorphologyPipeline } from "#src/editing/tool_runtimes/mask_compute.js";
 import {
+  clampToVoxelDataType,
   imageChunksCovering,
   type VoxelTriple,
 } from "#src/editing/tool_runtimes/mask_coord.js";
@@ -1306,13 +1307,16 @@ function writeIntoBuffer(
   index: number,
   value: number | bigint,
 ): void {
+  // Clamp to the dtype range so an out-of-range value (e.g. from the +/-
+  // hotkeys, which aren't dtype-aware) is pinned to the nearest bound rather
+  // than silently wrapping via typed-array truncation.
+  const clamped = clampToVoxelDataType(type, value);
   if (type === "uint64") {
-    const b = buffer as BigUint64Array;
-    b[index] = typeof value === "bigint" ? value : BigInt(value);
+    (buffer as BigUint64Array)[index] = clamped as bigint;
     return;
   }
-  const numericValue = typeof value === "bigint" ? Number(value) : value;
-  (buffer as Exclude<ChunkVoxelBuffer, BigUint64Array>)[index] = numericValue;
+  (buffer as Exclude<ChunkVoxelBuffer, BigUint64Array>)[index] =
+    clamped as number;
 }
 
 function voxelEqualsTarget(a: number | bigint, b: number | bigint): boolean {

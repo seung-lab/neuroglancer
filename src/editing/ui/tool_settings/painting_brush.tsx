@@ -20,7 +20,13 @@ import { layerId as toLayerId } from "@zettaai/edit-session";
 import { ChevronDown } from "lucide-preact";
 import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 
-import { radiusToSize, sizeToRadius } from "#src/editing/brush_size_presets.js";
+import {
+  clampBrushSize,
+  MAX_BRUSH_SIZE,
+  MIN_BRUSH_SIZE,
+  radiusToSize,
+  sizeToRadius,
+} from "#src/editing/brush_size_presets.js";
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { voxelDataTypeRange } from "#src/editing/tool_runtimes/mask_coord.js";
 import { useEvent } from "#src/editing/ui/interop/use_event.js";
@@ -29,19 +35,24 @@ import { layerKindOf } from "#src/editing/ui/layer_kind.js";
 import { ToggleSwitch } from "#src/editing/ui/toggle_switch.js";
 import { PaintingTargetPicker } from "#src/editing/ui/tool_settings/painting_target_picker.js";
 import { PaintingThreshold } from "#src/editing/ui/tool_settings/painting_threshold.js";
+import { ParamInput } from "#src/editing/ui/tool_settings/param_input.js";
 import { ParamLabel } from "#src/editing/ui/tool_settings/param_label.js";
 import { TargetValueField } from "#src/editing/ui/tool_settings/target_value_field.js";
+import { useLayerVoxelType } from "#src/editing/ui/tool_settings/use_layer_voxel_type.js";
 import "#src/editing/ui/tool_settings/painting_brush.css";
 
-const MAX_SIZE = 1000; // size = radius*2+1; max radius 64.
-const MIN_SIZE = 1;
+/** Parse a typed size into a valid brush size, or null if empty/invalid. */
+function parseSize(raw: string): number | null {
+  const n = Number(raw);
+  return raw.trim() !== "" && Number.isFinite(n) ? clampBrushSize(n) : null;
+}
 
-function clampSize(value: number): number {
-  if (!Number.isFinite(value)) return 1;
-  const n = Math.round(value);
-  // Snap to odd integers — size is voxel-count and must be odd.
-  const odd = n % 2 === 0 ? n + 1 : n;
-  return Math.max(MIN_SIZE, Math.min(MAX_SIZE, odd));
+/** Parse a non-negative voxel count (min component / closing), or null. */
+function parseCount(raw: string): number | null {
+  const n = Number(raw);
+  return raw.trim() !== "" && Number.isFinite(n)
+    ? Math.max(0, Math.floor(n))
+    : null;
 }
 
 export function PaintingBrush({
@@ -60,13 +71,18 @@ export function PaintingBrush({
   useEvent(subscribe);
   const state = painting.getState();
 
-  const onSizeInput = (e: Event) => {
-    const input = e.currentTarget as HTMLInputElement;
-    const size = clampSize(input.valueAsNumber);
+  const commitSize = (size: number) =>
     painting.patchState({ radius: sizeToRadius(size) });
-  };
+
+  // The slider commits live as it's dragged (direct manipulation); the number
+  // box uses the draft pattern and commits on blur.
+  const onSizeSlide = (e: Event) =>
+    commitSize(
+      clampBrushSize((e.currentTarget as HTMLInputElement).valueAsNumber),
+    );
 
   const size = radiusToSize(state.radius);
+  const targetVoxelType = useLayerVoxelType(host, state.targetLayerId);
 
   return (
     <div class="neuroglancer-tool-panel neuroglancer-painting-brush-panel">
@@ -78,23 +94,25 @@ export function PaintingBrush({
         />
         <input
           type="range"
-          min={MIN_SIZE}
-          max={MAX_SIZE}
+          min={MIN_BRUSH_SIZE}
+          max={MAX_BRUSH_SIZE}
           step={2}
           value={size}
-          onInput={onSizeInput}
+          onInput={onSizeSlide}
         />
-        <input
+        <ParamInput<number>
           type="number"
-          min={MIN_SIZE}
-          max={MAX_SIZE}
+          min={MIN_BRUSH_SIZE}
+          max={MAX_BRUSH_SIZE}
           step={2}
           value={size}
-          onChange={onSizeInput}
+          parse={parseSize}
+          onCommit={commitSize}
         />
       </div>
       <TargetValueField
         value={state.activeValue}
+        voxelDataType={targetVoxelType}
         onCommit={(activeValue) => painting.patchState({ activeValue })}
         hint="The segment ID painted into the target layer — every voxel the stroke covers is set to this value."
       />
@@ -240,16 +258,6 @@ function AdvancedBrush({
   const onThresholdChange = (low: number, high: number) => {
     patchMask({ thresholdLow: low, thresholdHigh: high });
   };
-  const onMinComponentChange = (e: Event) => {
-    const v = (e.currentTarget as HTMLInputElement).valueAsNumber;
-    if (Number.isFinite(v))
-      patchMask({ minComponentSize: Math.max(0, Math.floor(v)) });
-  };
-  const onClosingChange = (e: Event) => {
-    const v = (e.currentTarget as HTMLInputElement).valueAsNumber;
-    if (Number.isFinite(v))
-      patchMask({ binaryClosing: Math.max(0, Math.floor(v)) });
-  };
 
   const currentEntry = mask
     ? imageEntries.find((x) => x.layerId === mask.imageLayerId)
@@ -362,12 +370,13 @@ function AdvancedBrush({
               text="Min component"
               hint="Drops connected blobs smaller than this many voxels from the mask, removing speckle. 0 keeps every component."
             />
-            <input
+            <ParamInput<number>
               type="number"
               min={0}
               step={1}
               value={mask!.minComponentSize}
-              onChange={onMinComponentChange}
+              parse={parseCount}
+              onCommit={(minComponentSize) => patchMask({ minComponentSize })}
             />
           </div>
           <div class="neuroglancer-tool-panel-row">
@@ -375,12 +384,13 @@ function AdvancedBrush({
               text="Binary closing"
               hint="Closes gaps and small holes in the mask by this many voxels (morphological closing). 0 disables it."
             />
-            <input
+            <ParamInput<number>
               type="number"
               min={0}
               step={1}
               value={mask!.binaryClosing}
-              onChange={onClosingChange}
+              parse={parseCount}
+              onCommit={(binaryClosing) => patchMask({ binaryClosing })}
             />
           </div>
           <div class="neuroglancer-tool-panel-row">

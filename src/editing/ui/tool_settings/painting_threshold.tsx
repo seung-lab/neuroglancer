@@ -8,7 +8,14 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
+import { ParamInput } from "#src/editing/ui/tool_settings/param_input.js";
 import "#src/editing/ui/tool_settings/painting_threshold.css";
+
+/** Parse a finite number from raw text, or null if empty/invalid. */
+function parseFinite(raw: string): number | null {
+  const n = Number(raw);
+  return raw.trim() !== "" && Number.isFinite(n) ? n : null;
+}
 
 /**
  * Dual-handle threshold control: a single rail carrying two draggable
@@ -58,23 +65,6 @@ export function PaintingThreshold({
   const onHighSlide = (e: Event) =>
     emitHigh((e.currentTarget as HTMLInputElement).valueAsNumber);
 
-  const onLowCommit = (e: Event) => {
-    const input = e.currentTarget as HTMLInputElement;
-    if (!Number.isFinite(input.valueAsNumber)) {
-      input.value = String(low);
-      return;
-    }
-    emitLow(input.valueAsNumber);
-  };
-  const onHighCommit = (e: Event) => {
-    const input = e.currentTarget as HTMLInputElement;
-    if (!Number.isFinite(input.valueAsNumber)) {
-      input.value = String(high);
-      return;
-    }
-    emitHigh(input.valueAsNumber);
-  };
-
   return (
     <div class="neuroglancer-painting-threshold">
       {showHandles && (
@@ -108,22 +98,24 @@ export function PaintingThreshold({
       )}
       <div class="neuroglancer-painting-threshold-fields">
         <label class="neuroglancer-painting-threshold-field">
-          <input
+          <ParamInput<number>
             type="number"
             min={min}
             max={max}
             value={low}
-            onChange={onLowCommit}
+            parse={parseFinite}
+            onCommit={emitLow}
           />
           <span>low</span>
         </label>
         <label class="neuroglancer-painting-threshold-field neuroglancer-painting-threshold-field-high">
-          <input
+          <ParamInput<number>
             type="number"
             min={min}
             max={max}
             value={high}
-            onChange={onHighCommit}
+            parse={parseFinite}
+            onCommit={emitHigh}
           />
           <span>high</span>
         </label>
