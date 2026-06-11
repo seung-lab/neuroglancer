@@ -42,7 +42,7 @@
  * `Ctrl+Z`) return to normal.
  */
 
-import type { PaintingTools } from "@zettaai/edit-session";
+import type { PaintingTools, VoxelDataType } from "@zettaai/edit-session";
 
 import { radiusToSize, sizeToRadius } from "#src/editing/brush_size_presets.js";
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
@@ -53,7 +53,10 @@ import {
   nextThresholdLow,
   nextThresholdHigh,
 } from "#src/editing/painting_hotkey_math.js";
-import { voxelDataTypeRange } from "#src/editing/tool_runtimes/mask_coord.js";
+import {
+  clampToVoxelDataType,
+  voxelDataTypeRange,
+} from "#src/editing/tool_runtimes/mask_coord.js";
 import { RefCounted } from "#src/util/disposable.js";
 import {
   EventActionMap,
@@ -115,6 +118,11 @@ export class EditSessionHotkeyBinder extends RefCounted {
     { min: number; max: number }
   >();
   private readonly thresholdRangePending = new Set<string>();
+  // Cached voxel data type per target layer, used to clamp brush-value
+  // (+/-) adjustments to the layer's representable range. Resolved lazily on
+  // first value keypress for a layer, mirroring the threshold cache above.
+  private readonly targetTypeByLayer = new Map<string, VoxelDataType>();
+  private readonly targetTypePending = new Set<string>();
 
   constructor(
     private readonly host: EditSessionHost,
@@ -408,11 +416,67 @@ export class EditSessionHotkeyBinder extends RefCounted {
     } else if (this.tracker.isHeld("keyl")) {
       this.adjustThreshold(painting, "low", dir);
     } else {
-      const value = painting.getState().activeValue;
-      const next = nextBrushValue(value, dir);
-      if (next === value) return;
-      painting.patchState({ activeValue: next });
+      this.adjustValue(painting, dir);
     }
+  }
+
+  /**
+   * Step the brush value ±1 and clamp it to the target layer's data type
+   * range (so +/- can't push the value past e.g. uint8's 255 or below int8's
+   * −128). Mirrors {@link adjustThreshold}: the dtype is resolved + cached per
+   * layer on first use; an unresolved/failed lookup falls back to plain ±1
+   * stepping so the hotkey still works.
+   */
+  private adjustValue(painting: PaintingTools, dir: number): void {
+    const layerId = painting.getState().targetLayerId;
+    const cached = this.targetTypeByLayer.get(layerId);
+    if (cached !== undefined) {
+      this.applyValue(painting, dir, cached);
+      return;
+    }
+    if (this.targetTypePending.has(layerId)) return;
+    this.targetTypePending.add(layerId);
+    this.host.layerMetadataSource.resolve(layerId).then(
+      (meta) => {
+        this.targetTypePending.delete(layerId);
+        this.targetTypeByLayer.set(layerId, meta.voxelDataType);
+        this.applyValue(painting, dir, meta.voxelDataType);
+      },
+      (err: unknown) => {
+        this.targetTypePending.delete(layerId);
+        this.host.logger.warn(
+          "session",
+          `Value range unavailable for ${layerId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        this.applyValue(painting, dir, undefined);
+      },
+    );
+  }
+
+  private applyValue(
+    painting: PaintingTools,
+    dir: number,
+    type: VoxelDataType | undefined,
+  ): void {
+    // Re-read state: it may have changed during an async dtype resolve.
+    const value = painting.getState().activeValue;
+    if (type === undefined) {
+      // Dtype unknown (resolve failed): fall back to ≥0-only stepping.
+      const next = nextBrushValue(value, dir);
+      if (next !== value) painting.patchState({ activeValue: next });
+      return;
+    }
+    // Step ±1 (preserving bigint vs number), then clamp to the layer's
+    // representable range. The clamp supplies BOTH bounds — including the
+    // negative minimum for signed types — so we must NOT pre-floor at 0.
+    const step = Math.sign(dir);
+    const stepped =
+      typeof value === "bigint" ? value + BigInt(step) : value + step;
+    const next = clampToVoxelDataType(type, stepped);
+    if (next === value) return;
+    painting.patchState({ activeValue: next });
   }
 
   private adjustThreshold(

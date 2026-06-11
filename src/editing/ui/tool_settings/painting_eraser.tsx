@@ -11,20 +11,23 @@
 import type { EditSession, PaintingTools } from "@zettaai/edit-session";
 import { useCallback } from "preact/hooks";
 
-import { radiusToSize, sizeToRadius } from "#src/editing/brush_size_presets.js";
+import {
+  clampBrushSize,
+  MAX_BRUSH_SIZE,
+  MIN_BRUSH_SIZE,
+  radiusToSize,
+  sizeToRadius,
+} from "#src/editing/brush_size_presets.js";
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { useEvent } from "#src/editing/ui/interop/use_event.js";
 import { PaintingTargetPicker } from "#src/editing/ui/tool_settings/painting_target_picker.js";
+import { ParamInput } from "#src/editing/ui/tool_settings/param_input.js";
 import { ParamLabel } from "#src/editing/ui/tool_settings/param_label.js";
 
-const MAX_SIZE = 1000; // size = radius*2+1; max radius 64.
-const MIN_SIZE = 1;
-
-function clampSize(value: number): number {
-  if (!Number.isFinite(value)) return 1;
-  const n = Math.round(value);
-  const odd = n % 2 === 0 ? n + 1 : n;
-  return Math.max(MIN_SIZE, Math.min(MAX_SIZE, odd));
+/** Parse a typed size into a valid brush size, or null if empty/invalid. */
+function parseSize(raw: string): number | null {
+  const n = Number(raw);
+  return raw.trim() !== "" && Number.isFinite(n) ? clampBrushSize(n) : null;
 }
 
 /**
@@ -48,11 +51,13 @@ export function PaintingEraser({
   useEvent(subscribe);
   const state = painting.getState();
 
-  const onSizeInput = (e: Event) => {
-    const input = e.currentTarget as HTMLInputElement;
-    const size = clampSize(input.valueAsNumber);
+  const commitSize = (size: number) =>
     painting.patchState({ radius: sizeToRadius(size) });
-  };
+
+  const onSizeSlide = (e: Event) =>
+    commitSize(
+      clampBrushSize((e.currentTarget as HTMLInputElement).valueAsNumber),
+    );
 
   const size = radiusToSize(state.radius);
 
@@ -66,19 +71,20 @@ export function PaintingEraser({
         />
         <input
           type="range"
-          min={MIN_SIZE}
-          max={MAX_SIZE}
+          min={MIN_BRUSH_SIZE}
+          max={MAX_BRUSH_SIZE}
           step={2}
           value={size}
-          onInput={onSizeInput}
+          onInput={onSizeSlide}
         />
-        <input
+        <ParamInput<number>
           type="number"
-          min={MIN_SIZE}
-          max={MAX_SIZE}
+          min={MIN_BRUSH_SIZE}
+          max={MAX_BRUSH_SIZE}
           step={2}
           value={size}
-          onChange={onSizeInput}
+          parse={parseSize}
+          onCommit={commitSize}
         />
       </div>
     </div>

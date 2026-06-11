@@ -113,7 +113,33 @@ topbar and dialog can no longer drift off on hardcoded values:
 - **Toggle** (`role="switch"`): `38×20` pill, accent when on.
 - **Validation**: invalid inputs get `aria-invalid` → danger border + tinted
   fill, with an inline `role="alert"` message; the typed value is preserved,
-  never reverted.
+  never reverted. See the draft pattern below.
+
+## Numeric & text input — the draft pattern
+
+Every editable numeric/text field uses the **draft pattern**, implemented once
+in the canonical component `ParamInput`
+(`src/editing/ui/tool_settings/param_input.tsx`). The rule:
+
+- **While the field is focused, the user owns the text.** Never block a
+  keystroke, never reformat, never revert. Empty and intermediate strings —
+  including a bare `0` — are always allowed so the user can clear the field and
+  retype from scratch.
+- **Validate visually only while typing** (`aria-invalid`); never mutate the
+  value.
+- **Parse / clamp / normalise and commit on blur or Enter** — never
+  per-keystroke. All clamping (odd-snapping a brush size, `≥ 0`, range limits)
+  lives in the caller's `parse`, so it runs on commit only. An invalid or empty
+  field restores the last committed value on blur, never leaving a broken state.
+- **The sync from external state into the draft is focus-guarded**
+  (`document.activeElement !== input`). This is non-negotiable: the panels
+  re-render constantly, and without the guard those re-renders overwrite the
+  draft mid-edit — the original "can't clear the input / can't type 0" bug.
+
+Do **not** bind a control directly to a parsed number and clamp/revert in
+`onChange`; that is exactly the anti-pattern `ParamInput` replaces. New numeric
+or free-entry inputs must use `ParamInput` (supplying a `parse`), not a raw
+`<input>`.
 
 ## Layout
 

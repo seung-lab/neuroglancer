@@ -15,6 +15,7 @@ import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { useEvent } from "#src/editing/ui/interop/use_event.js";
 import { PaintingTargetPicker } from "#src/editing/ui/tool_settings/painting_target_picker.js";
 import { TargetValueField } from "#src/editing/ui/tool_settings/target_value_field.js";
+import { useLayerVoxelType } from "#src/editing/ui/tool_settings/use_layer_voxel_type.js";
 
 /**
  * Fill panel (TM-294): Target layer + resolution + Target value. Drops the
@@ -39,12 +40,14 @@ export function PaintingFill({
   );
   useEvent(subscribe);
   const state = painting.getState();
+  const targetVoxelType = useLayerVoxelType(host, state.targetLayerId);
 
   return (
     <div class="neuroglancer-tool-panel neuroglancer-painting-fill-panel">
       <PaintingTargetPicker session={session} host={host} />
       <TargetValueField
         value={state.activeValue}
+        voxelDataType={targetVoxelType}
         onCommit={(activeValue) => painting.patchState({ activeValue })}
         hint="The segment ID written into the filled region — every voxel the fill reaches is set to this value."
       />

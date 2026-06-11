@@ -3,6 +3,11 @@ import { HtmlRspackPlugin, ProgressPlugin } from "@rspack/core";
 import { normalizeConfigurationWithDefine } from "./build_tools/rspack/configuration_with_define.js";
 import packageJson from "./package.json";
 
+// The painting morphology worker (TM-304) loads pyodide + numpy/scipy from the
+// jsDelivr CDN at runtime (see `morphology_handler.ts`), so pyodide is neither a
+// build dependency nor a bundled/self-hosted asset here. This keeps clean
+// installs (CI, Vercel) from needing the package at all.
+
 export default (env, args) => {
   const mode = args.mode === "production" ? "production" : "development";
   const config = {

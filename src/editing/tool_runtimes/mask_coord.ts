@@ -71,33 +71,60 @@ export function imageChunksCovering(
   return out;
 }
 
+/** Largest value a `uint64` voxel can hold (2^64 − 1). */
+export const UINT64_MAX = 2n ** 64n - 1n;
+
+/**
+ * Inclusive value range for every `VoxelDataType` except `uint64`, whose
+ * range exceeds `Number` precision and is represented by {@link UINT64_MAX}.
+ * Shared frozen objects so callers (including the per-voxel write path) can
+ * read a range without allocating on every lookup.
+ */
+const VOXEL_DATA_TYPE_RANGES: Readonly<
+  Record<
+    Exclude<VoxelDataType, "uint64">,
+    { readonly min: number; readonly max: number }
+  >
+> = {
+  uint8: { min: 0, max: 0xff },
+  int8: { min: -0x80, max: 0x7f },
+  uint16: { min: 0, max: 0xffff },
+  int16: { min: -0x8000, max: 0x7fff },
+  uint32: { min: 0, max: 0xffffffff },
+  int32: { min: -0x80000000, max: 0x7fffffff },
+  float32: { min: -Number.MAX_VALUE, max: Number.MAX_VALUE },
+};
+
 /**
  * Threshold range for a `VoxelDataType`. Returns `null` for `uint64` —
  * uint64 layers cannot be used as mask images (bigint comparisons against a
  * number threshold would lose precision).
  *
- * float32 has no fixed range; the caller decides (use Number.MIN/MAX_VALUE
- * as the slider stops, or fall back to text inputs).
+ * float32 has no fixed integer range; its bounds are `±Number.MAX_VALUE`, so
+ * the caller decides how to use them (slider stops vs. plain text inputs).
  */
 export function voxelDataTypeRange(
   type: VoxelDataType,
 ): { readonly min: number; readonly max: number } | null {
-  switch (type) {
-    case "uint8":
-      return { min: 0, max: 0xff };
-    case "int8":
-      return { min: -0x80, max: 0x7f };
-    case "uint16":
-      return { min: 0, max: 0xffff };
-    case "int16":
-      return { min: -0x8000, max: 0x7fff };
-    case "uint32":
-      return { min: 0, max: 0xffffffff };
-    case "int32":
-      return { min: -0x80000000, max: 0x7fffffff };
-    case "float32":
-      return { min: -Number.MAX_VALUE, max: Number.MAX_VALUE };
-    case "uint64":
-      return null;
+  return type === "uint64" ? null : VOXEL_DATA_TYPE_RANGES[type];
+}
+
+/**
+ * Clamp a value to the representable range of `type`, so an out-of-range
+ * value is pinned to the nearest bound rather than silently wrapping when
+ * assigned into a typed array (e.g. `300` into `uint8` becomes `255`, not
+ * `44`). Preserves bigint for `uint64` and number for every other type.
+ */
+export function clampToVoxelDataType(
+  type: VoxelDataType,
+  value: number | bigint,
+): number | bigint {
+  if (type === "uint64") {
+    const v =
+      typeof value === "bigint" ? value : BigInt(Math.trunc(Number(value)));
+    return v < 0n ? 0n : v > UINT64_MAX ? UINT64_MAX : v;
   }
+  const { min, max } = VOXEL_DATA_TYPE_RANGES[type];
+  const n = typeof value === "bigint" ? Number(value) : value;
+  return n < min ? min : n > max ? max : n;
 }

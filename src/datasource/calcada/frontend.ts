@@ -83,7 +83,6 @@ import {
   kvstoreEnsureDirectoryPipelineUrl,
   pipelineUrlJoin,
 } from "#src/kvstore/url.js";
-import { ImageUserLayer } from "#src/layer/image/index.js";
 import type {
   LayerView,
   MouseSelectionState,
@@ -219,6 +218,7 @@ import {
   addLayerControlToOptionsTab,
   registerLayerControl,
 } from "#src/widget/layer_control.js";
+import type { RPC } from "#src/worker_rpc.js";
 import { registerRPC } from "#src/worker_rpc.js";
 
 function vec4FromVec3(vec: vec3, alpha = 0) {
@@ -244,6 +244,27 @@ class GrapheneMeshSource extends WithParameters(
   WithSharedKvStoreContext(MeshSource),
   MeshSourceParameters,
 ) {
+  // Live branch value shared with the backend counterpart. parameters.branchId
+  // only captures the branch at datasource-creation time; switching branches
+  // via the Graph-tab dropdown mutates GrapheneState.branchId on the same
+  // datasource, and manifest requests must follow it or they resolve against
+  // main and return empty piece lists for branch-only roots.
+  private readonly liveBranchId: WatchableValueInterface<number> | undefined;
+
+  constructor(chunkManager: ChunkManager, options: any) {
+    super(chunkManager, options);
+    this.liveBranchId = options.branchId;
+  }
+
+  initializeCounterpart(rpc: RPC, options: any) {
+    if (this.liveBranchId !== undefined) {
+      options.branchId = this.registerDisposer(
+        SharedWatchableValue.makeFromExisting(rpc, this.liveBranchId),
+      ).rpcId;
+    }
+    super.initializeCounterpart(rpc, options);
+  }
+
   getFragmentKey(objectKey: string | null, fragmentId: string) {
     objectKey;
     return getGrapheneFragmentKey(fragmentId);
@@ -614,11 +635,16 @@ function parseGrapheneShardingParameters(
 function getShardedMeshSource(
   sharedKvStoreContext: SharedKvStoreContext,
   parameters: MeshSourceParameters,
+  branchId: WatchableValueInterface<number>,
 ) {
+  // branchId rides alongside the mixin-typed options; the GrapheneMeshSource
+  // constructor picks it up, but the WithParameters options type doesn't know
+  // about it, hence the cast.
   return sharedKvStoreContext.chunkManager.getChunkSource(GrapheneMeshSource, {
     sharedKvStoreContext,
     parameters,
-  });
+    branchId,
+  } as never);
 }
 
 async function getMeshSource(
@@ -626,7 +652,7 @@ async function getMeshSource(
   url: string,
   fragmentUrl: string,
   nBitsForLayerId: number,
-  branchId: number,
+  branchId: WatchableValueInterface<number>,
   options: ProgressOptions,
 ) {
   const { metadata, segmentPropertyMap } = await getMeshMetadata(
@@ -640,11 +666,11 @@ async function getMeshSource(
     lod: 0,
     sharding: metadata?.sharding,
     nBitsForLayerId,
-    branchId,
+    branchId: branchId.value,
   };
   const transform = metadata?.transform || mat4.create();
   return {
-    source: getShardedMeshSource(sharedKvStoreContext, parameters),
+    source: getShardedMeshSource(sharedKvStoreContext, parameters, branchId),
     transform,
     segmentPropertyMap,
   };
@@ -761,7 +787,7 @@ async function getVolumeDataSource(
         ),
       ),
       info.graph.nBitsForLayerId,
-      state.branchId.value,
+      state.branchId,
       options,
     );
     const subsourceToModelSubspaceTransform =
@@ -1440,11 +1466,9 @@ interface PreviewResult {
 const PIECE_SPLIT_FOCUS_KEY = "focusPieceId";
 const PIECE_SPLIT_BLUE_KEY = "blue";
 const PIECE_SPLIT_RED_KEY = "red";
-const PIECE_SPLIT_IMAGE_KEY = "imageSource";
 
 // PieceSplitState holds the working state of the point-driven piece split
-// tool: the focus piece, the two coloured point lists, the active colour, and
-// the URL of the image volume used to weight the cut.
+// tool: the focus piece, the two coloured point lists, and the active colour.
 class PieceSplitState extends RefCounted implements Trackable {
   changed = new NullarySignal();
 
@@ -1452,7 +1476,6 @@ class PieceSplitState extends RefCounted implements Trackable {
   blueGroup = new WatchableValue<boolean>(true);
   bluePoints = new WatchableValue<PointEntry[]>([]);
   redPoints = new WatchableValue<PointEntry[]>([]);
-  imageSource = new TrackableValue<string>("", verifyString);
   preview = new WatchableValue<PreviewResult | undefined>(undefined);
 
   constructor() {
@@ -1462,7 +1485,6 @@ class PieceSplitState extends RefCounted implements Trackable {
     this.registerDisposer(this.blueGroup.changed.add(reemit));
     this.registerDisposer(this.bluePoints.changed.add(reemit));
     this.registerDisposer(this.redPoints.changed.add(reemit));
-    this.registerDisposer(this.imageSource.changed.add(reemit));
     this.registerDisposer(this.preview.changed.add(reemit));
   }
 
@@ -1472,7 +1494,6 @@ class PieceSplitState extends RefCounted implements Trackable {
     this.bluePoints.value = [];
     this.redPoints.value = [];
     this.preview.value = undefined;
-    // Intentionally do NOT clear imageSource — it's typically set once per session.
   }
 
   swapGroup() {
@@ -1486,6 +1507,8 @@ class PieceSplitState extends RefCounted implements Trackable {
     } else {
       this.redPoints.value = [...this.redPoints.value, p];
     }
+    // Any point change invalidates a previously computed mask.
+    this.preview.value = undefined;
   }
 
   removePoint(group: "blue" | "red", index: number) {
@@ -1494,6 +1517,15 @@ class PieceSplitState extends RefCounted implements Trackable {
     const next = [...src.value];
     next.splice(index, 1);
     src.value = next;
+    this.preview.value = undefined;
+    // Removing the last point releases the focus piece so the user can start
+    // over on a different segment without pressing Clear.
+    if (
+      this.bluePoints.value.length === 0 &&
+      this.redPoints.value.length === 0
+    ) {
+      this.focusPieceId.reset();
+    }
   }
 
   // replaceSegments mirrors the contract of MulticutState.replaceSegments —
@@ -1512,7 +1544,6 @@ class PieceSplitState extends RefCounted implements Trackable {
       [PIECE_SPLIT_FOCUS_KEY]: this.focusPieceId.toJSON()?.toString(),
       [PIECE_SPLIT_BLUE_KEY]: this.bluePoints.value.map(entryToJSON),
       [PIECE_SPLIT_RED_KEY]: this.redPoints.value.map(entryToJSON),
-      [PIECE_SPLIT_IMAGE_KEY]: this.imageSource.value || undefined,
     };
   }
 
@@ -1525,9 +1556,6 @@ class PieceSplitState extends RefCounted implements Trackable {
     });
     verifyOptionalObjectProperty(x, PIECE_SPLIT_RED_KEY, (value) => {
       this.redPoints.value = parseArray(value, parseEntry);
-    });
-    verifyOptionalObjectProperty(x, PIECE_SPLIT_IMAGE_KEY, (value) => {
-      this.imageSource.value = verifyString(value);
     });
   }
 }
@@ -2254,11 +2282,12 @@ void main() {
         const oldRootA = submission.sink.rootId;
         const oldRootB = submission.source!.rootId;
 
-        const newRoot = await this.graph.graphServer.mergeSegments(
-          selectionInNanometers(submission.sink, annotationToNanometers),
-          selectionInNanometers(submission.source!, annotationToNanometers),
-          this.graph.branchId.value,
-        );
+        const { root: newRoot, pieces: mergedPieces } =
+          await this.graph.graphServer.mergeSegments(
+            selectionInNanometers(submission.sink, annotationToNanometers),
+            selectionInNanometers(submission.source!, annotationToNanometers),
+            this.graph.branchId.value,
+          );
         const oldValues = new Uint64Set();
         oldValues.add(oldRootA);
         oldValues.add(oldRootB);
@@ -2271,36 +2300,53 @@ void main() {
         // Clear stale equivalences for old roots
         segmentsState.segmentEquivalences.deleteSet(oldRootA);
         segmentsState.segmentEquivalences.deleteSet(oldRootB);
-        // Add new root and keep old roots visible during equivalence rebuild
         segmentsState.visibleSegments.add(newRoot);
-        segmentsState.visibleSegments.add(oldRootA);
-        segmentsState.visibleSegments.add(oldRootB);
         segmentsState.selectedSegments.add(newRoot);
         // Register the new root with the mesh source so its mesh fragments
         // are fetched — without this the post-merge 3D view rendered only
         // the slice of pieces that happened to load via residual chunks
         // and the full merged volume only appeared after a manual reload.
         this.meshAddNewSegments([newRoot]);
-        // Rebuild equivalences from getLeaves — no chunk refetch needed
-        this.graph.graphServer
-          .getLeaves(
-            newRoot,
-            segmentsState.timestamp.value ?? 0,
-            this.graph.branchId.value,
-          )
-          .then((pieces) => {
-            for (const piece of pieces) {
-              segmentsState.segmentEquivalences.link(newRoot, piece);
-            }
-          })
-          .catch((e: unknown) => {
-            StatusMessage.showTemporaryMessage(
-              `Failed to load pieces for ${newRoot}: ${e instanceof Error ? e.message : String(e)}`,
-              6000,
-            );
-          });
-
-        this.refreshChunkSources();
+        // Populate equivalences directly from the merge response's `pieces`
+        // field — server returns the union of pieces from both pre-merge
+        // roots, so we avoid the post-edit /leaves round-trip that goes
+        // through the lagging pieces_latest_by_root MV. Mirror
+        // updateAfterSplit: deliberately NO refreshChunkSources here — it
+        // clears the equivalences we just set and the chunk re-fetch races
+        // the same MV, intermittently leaving one of the merged segments
+        // unhighlighted in 2D until the MV catches up. The chunk pixel data
+        // is unchanged by a merge; these in-memory links are all the shader
+        // needs.
+        if (mergedPieces.length > 0) {
+          for (const piece of mergedPieces) {
+            segmentsState.segmentEquivalences.link(newRoot, piece);
+          }
+          segmentsState.segmentEquivalences.changed.dispatch();
+        } else {
+          // Legacy-server fallback (no `pieces` in the merge response): keep
+          // the old roots visible while the async /leaves resolves, and
+          // refresh chunks so their LUT trailers rebuild the mapping.
+          segmentsState.visibleSegments.add(oldRootA);
+          segmentsState.visibleSegments.add(oldRootB);
+          this.graph.graphServer
+            .getLeaves(
+              newRoot,
+              segmentsState.timestamp.value ?? 0,
+              this.graph.branchId.value,
+            )
+            .then((pieces) => {
+              for (const piece of pieces) {
+                segmentsState.segmentEquivalences.link(newRoot, piece);
+              }
+            })
+            .catch((e: unknown) => {
+              StatusMessage.showTemporaryMessage(
+                `Failed to load pieces for ${newRoot}: ${e instanceof Error ? e.message : String(e)}`,
+                6000,
+              );
+            });
+          this.refreshChunkSources();
+        }
         return newRoot;
       } catch (err) {
         if (i === attempts) {
@@ -2606,7 +2652,7 @@ class GrapheneGraphServerInterface {
     first: SegmentSelection,
     second: SegmentSelection,
     branchId = 0,
-  ): Promise<bigint> {
+  ): Promise<{ root: bigint; pieces: bigint[] }> {
     const { fetchOkImpl, baseUrl } = this.httpSource;
     const promise = fetchOkImpl(
       appendCoordParams(`${baseUrl}/merge?int64_as_str=1`, { branchId }),
@@ -2621,7 +2667,13 @@ class GrapheneGraphServerInterface {
     try {
       const response = await promise;
       const jsonResp = await response.json();
-      return parseUint64(jsonResp.new_root_ids[0]);
+      const root = parseUint64(jsonResp.new_root_ids[0]);
+      // Server returns the union of pieces from the two merged roots so the
+      // client can populate equivalences without an extra /leaves round-trip
+      // that goes through the lagging pieces_latest_by_root MV.
+      const rawPieces: string[] = jsonResp.pieces ?? [];
+      const pieces = rawPieces.map(parseUint64);
+      return { root, pieces };
     } catch (e) {
       if (e instanceof HttpError) {
         const msg = await parseGrapheneError(e);
@@ -2665,7 +2717,6 @@ class GrapheneGraphServerInterface {
     pieceId: bigint,
     blue: VoxelPoint[],
     red: VoxelPoint[],
-    imageSource: string,
     branchId = 0,
   ): Promise<PreviewResult> {
     const { fetchOkImpl, baseUrl } = this.httpSource;
@@ -2682,7 +2733,6 @@ class GrapheneGraphServerInterface {
             piece_id: pieceId.toString(),
             blue,
             red,
-            image_source: imageSource,
           }),
         },
       );
@@ -4370,39 +4420,6 @@ const PIECE_SPLIT_INPUT_EVENT_MAP = EventActionMap.fromObject({
   "at:shift?+enter": { action: "preview" },
 });
 
-// An image layer the user can pick as the weighting source for the cut.
-interface ImageLayerChoice {
-  name: string;
-  // The neuroglancer-style URL as it appears in the layer spec
-  // (e.g. "precomputed://gs://bucket/path" or "zarr://gs://..."). Kept
-  // for display.
-  rawUrl: string;
-  // The cloud URL with the neuroglancer datasource prefix stripped, ready to
-  // hand to the backend (e.g. "gs://bucket/path").
-  cloudUrl: string;
-}
-
-const IMAGE_URL_PREFIX =
-  /^(?:[a-z0-9]+\+)?(?:precomputed|zarr|n5|nifti|render|deepzoom|brainmaps|boss|vtk|nggraph|python|obj):\/\//i;
-
-function cloudUrlFromLayerSpec(rawUrl: string): string {
-  if (!rawUrl) return "";
-  // Newer neuroglancer URL shape uses pipe-separated form:
-  //   "<kvstore-url>|<driver-name>:"
-  // e.g. "gs://bucket/path/|neuroglancer-precomputed:" — strip the pipe suffix
-  // so what remains is the raw kvstore URL the backend can hand to tensorstore.
-  let cleaned = rawUrl;
-  const pipeIdx = cleaned.indexOf("|");
-  if (pipeIdx > 0) {
-    cleaned = cleaned.slice(0, pipeIdx);
-  }
-  cleaned = cleaned.replace(IMAGE_URL_PREFIX, "");
-  cleaned = cleaned.replace(/^middleauth\+/i, "");
-  // Drop a trailing slash so e.g. "gs://bucket/path/" matches "gs://bucket/path"
-  // that the backend's graph_metadata.piece_source typically uses.
-  return cleaned.replace(/\/+$/, "");
-}
-
 // wrapCalcadaError turns an HttpError from a Calcada endpoint into a regular
 // Error whose message is the server's `error` field (or `message`, or the raw
 // body). Calcada's error envelope is `{"code":"X","error":"...","message":""}`,
@@ -4424,25 +4441,6 @@ async function wrapCalcadaError(e: unknown): Promise<Error> {
   } catch {
     return new Error(`HTTP ${resp.status}`);
   }
-}
-
-function listImageLayers(layer: SegmentationUserLayer): ImageLayerChoice[] {
-  const out: ImageLayerChoice[] = [];
-  const layers = layer.manager?.rootLayers?.managedLayers ?? [];
-  for (const managed of layers) {
-    const userLayer = managed.layer;
-    if (!(userLayer instanceof ImageUserLayer)) continue;
-    const sources = userLayer.dataSources;
-    if (!sources || sources.length === 0) continue;
-    const rawUrl = sources[0].spec.url ?? "";
-    if (!rawUrl) continue;
-    out.push({
-      name: managed.name,
-      rawUrl,
-      cloudUrl: cloudUrlFromLayerSpec(rawUrl),
-    });
-  }
-  return out;
 }
 
 // Convert a layer-space point (the form returned by getPoint) into integer
@@ -4545,66 +4543,6 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
     const focusRow = document.createElement("div");
     focusRow.className = "piece-split-focus";
     body.appendChild(focusRow);
-
-    const imageRow = document.createElement("div");
-    imageRow.className = "piece-split-image-row";
-    const imageLabel = document.createElement("label");
-    imageLabel.textContent = "Image layer: ";
-    const imageSelect = document.createElement("select");
-    imageSelect.title =
-      "Image layer used to weight the cut (edges across dark pixels are cheap to cut)";
-    const imageHint = document.createElement("div");
-    imageHint.className = "piece-split-image-hint";
-    imageRow.appendChild(imageLabel);
-    imageRow.appendChild(imageSelect);
-    body.appendChild(imageRow);
-    body.appendChild(imageHint);
-
-    const refreshImageOptions = () => {
-      const choices = listImageLayers(layer);
-      const current = pieceSplitState.imageSource.value;
-      removeChildren(imageSelect);
-      const placeholder = document.createElement("option");
-      placeholder.value = "";
-      placeholder.textContent =
-        choices.length === 0
-          ? "— no image layers in viewer —"
-          : "— pick image layer —";
-      imageSelect.appendChild(placeholder);
-      let matched = "";
-      for (const c of choices) {
-        const opt = document.createElement("option");
-        opt.value = c.cloudUrl;
-        opt.textContent = `${c.name}  (${c.cloudUrl})`;
-        if (c.cloudUrl === current) {
-          opt.selected = true;
-          matched = c.cloudUrl;
-        }
-        imageSelect.appendChild(opt);
-      }
-      // If the stored imageSource was set previously but doesn't match any
-      // current layer (e.g. layer removed from viewer), show its value with a
-      // hint so the user knows what's being used.
-      imageHint.textContent =
-        current && !matched ? `Using saved URL: ${current}` : "";
-    };
-    imageSelect.addEventListener("change", () => {
-      pieceSplitState.imageSource.value = imageSelect.value;
-      refreshImageOptions();
-    });
-    // Prevent the tool's input-event bindings from swallowing the native
-    // dropdown's mousedown — without this the picker may refuse to open.
-    for (const evt of ["mousedown", "click", "keydown"] as const) {
-      imageSelect.addEventListener(evt, (e) => e.stopPropagation());
-    }
-    refreshImageOptions();
-    // Refresh dropdown whenever layers are added/removed in the viewer.
-    const layerManager = layer.manager?.rootLayers;
-    if (layerManager) {
-      activation.registerDisposer(
-        layerManager.layersChanged.add(refreshImageOptions),
-      );
-    }
 
     const groupRow = document.createElement("div");
     groupRow.className = "piece-split-group-row";
@@ -4740,9 +4678,26 @@ void main() {
     actions.appendChild(clearButton);
     actions.appendChild(previewButton);
     actions.appendChild(applyButton);
+    const spinner = document.createElement("div");
+    spinner.className = "piece-split-spinner";
+    spinner.style.display = "none";
+    actions.appendChild(spinner);
 
     const setApplyEnabled = (enabled: boolean) => {
       applyButton.classList.toggle("disabled", !enabled);
+    };
+    const setBusy = (busy: boolean) => {
+      spinner.style.display = busy ? "" : "none";
+      for (const button of [
+        swapButton,
+        clearButton,
+        previewButton,
+        applyButton,
+      ]) {
+        button.classList.toggle("disabled", busy);
+      }
+      // Re-render so the Apply button returns to its preview-dependent state.
+      if (!busy) render();
     };
 
     const render = () => {
@@ -4751,14 +4706,11 @@ void main() {
       focusRow.textContent =
         focus !== undefined
           ? `Focus piece: ${focus.toString()}`
-          : "Shift+Ctrl+click on a piece to set focus and place the first point.";
+          : "Shift+Ctrl+click on a selected segment to place the first point.";
 
       // Active-colour indicator.
       removeChildren(groupRow);
       const indicator = document.createElement("span");
-      indicator.className = pieceSplitState.blueGroup.value
-        ? "active-blue"
-        : "active-red";
       indicator.textContent = pieceSplitState.blueGroup.value
         ? "Active: BLUE (will place blue point on click)"
         : "Active: RED (will place red point on click)";
@@ -4856,21 +4808,13 @@ void main() {
         );
         return;
       }
-      if (!pieceSplitState.imageSource.value) {
-        StatusMessage.showTemporaryMessage(
-          "Set an image source URL in the side panel first",
-          5000,
-        );
-        return;
-      }
-      previewButton.classList.toggle("disabled", true);
+      setBusy(true);
       try {
         const result =
           await graphConnection.graph.graphServer.previewPieceSplit(
             focus,
             pieceSplitState.bluePoints.value.map((p) => p.voxel),
             pieceSplitState.redPoints.value.map((p) => p.voxel),
-            pieceSplitState.imageSource.value,
             graphConnection.graph.branchId.value,
           );
         pieceSplitState.preview.value = result;
@@ -4881,7 +4825,7 @@ void main() {
           8000,
         );
       } finally {
-        previewButton.classList.toggle("disabled", false);
+        setBusy(false);
       }
     };
 
@@ -4902,7 +4846,7 @@ void main() {
         );
         return;
       }
-      applyButton.classList.toggle("disabled", true);
+      setBusy(true);
       // segmentEquivalences returns the input id (not undefined) when there's no entry — resolve via backend.
       let preApplyOldRoot: bigint | undefined;
       try {
@@ -4961,20 +4905,20 @@ void main() {
           `Apply failed: ${e instanceof Error ? e.message : String(e)}`,
           8000,
         );
-        applyButton.classList.toggle("disabled", false);
+      } finally {
+        setBusy(false);
       }
     };
 
     // --- Click placement ---
     activation.bindInputEventMap(PIECE_SPLIT_INPUT_EVENT_MAP);
-    activation.bindAction("place-point", (event) => {
-      event.stopPropagation();
+    const placePoint = async () => {
       const { mouseState } = this;
       const point = getPoint(layer, mouseState);
       if (point === undefined) return;
       // baseValue is the piece (super-voxel) at the clicked voxel; value is its
       // aggregated root. We split pieces, so always work with baseValue.
-      const baseValue = layer.displayState.segmentSelectionState.baseValue;
+      const { value, baseValue } = layer.displayState.segmentSelectionState;
       if (baseValue === undefined || baseValue === null || baseValue === 0n) {
         StatusMessage.showTemporaryMessage(
           "No piece is selected at the click position",
@@ -4982,13 +4926,43 @@ void main() {
         );
         return;
       }
-      const currentFocus = pieceSplitState.focusPieceId.value;
-      if (currentFocus === undefined) {
-        // First click sets the focus piece.
-        pieceSplitState.focusPieceId.value = baseValue;
-      } else if (baseValue !== currentFocus) {
+      if (!value || !segmentationGroupState.visibleSegments.has(value)) {
         StatusMessage.showTemporaryMessage(
-          `Point must be inside piece ${currentFocus.toString()} (clicked: ${baseValue.toString()}). Press Clear to reset focus.`,
+          "Points can only be placed on selected segments",
+          5000,
+        );
+        return;
+      }
+      if (pieceSplitState.focusPieceId.value === undefined) {
+        // Reject multi-piece segments at the first click instead of letting
+        // the user place every point and only hear about it from Preview.
+        let pieces: bigint[];
+        try {
+          pieces = await graphConnection.graph.graphServer.getLeaves(
+            value,
+            segmentationGroupState.timestamp.value ?? 0,
+            graphConnection.graph.branchId.value,
+          );
+        } catch {
+          // getLeaves already surfaced the error in a status message.
+          return;
+        }
+        if (pieces.length > 1) {
+          StatusMessage.showTemporaryMessage(
+            `Segment ${value.toString()} contains ${pieces.length} pieces — separate them with the split tool first`,
+            8000,
+          );
+          return;
+        }
+        if (pieceSplitState.focusPieceId.value === undefined) {
+          // First point sets the focus piece.
+          pieceSplitState.focusPieceId.value = baseValue;
+        }
+      }
+      const currentFocus = pieceSplitState.focusPieceId.value;
+      if (baseValue !== currentFocus) {
+        StatusMessage.showTemporaryMessage(
+          `Point must be inside piece ${currentFocus!.toString()} (clicked: ${baseValue.toString()}). Remove all points or press Clear to change focus.`,
           6000,
         );
         return;
@@ -5009,6 +4983,10 @@ void main() {
         voxel,
         layer: [point[0], point[1], point[2]],
       });
+    };
+    activation.bindAction("place-point", (event) => {
+      event.stopPropagation();
+      void placePoint();
     });
     activation.bindAction("swap-group", (event) => {
       event.stopPropagation();

@@ -17,9 +17,24 @@ import type {
   ReadonlyChunkVoxelBuffer,
 } from "@zettaai/edit-session";
 import { ChunkId, Resolution, layerId } from "@zettaai/edit-session";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 
+import type { MorphologyClient } from "#src/editing/tool_runtimes/morphology_client.js";
+import type { MorphologyRequest } from "#src/editing/tool_runtimes/morphology_request.js";
 import { PaintingCompute } from "#src/editing/tool_runtimes/painting_compute.js";
+
+/**
+ * Minimal stand-in for the pyodide `MorphologyClient` — only `apply` is used by
+ * `PaintingCompute`. `apply` is a vitest mock so tests can assert the offload
+ * request and control the processed mask (or force a failure to exercise the
+ * TS fallback).
+ */
+function fakeMorphology(
+  impl: (req: MorphologyRequest) => Promise<Uint8Array>,
+): { client: MorphologyClient; apply: ReturnType<typeof vi.fn> } {
+  const apply = vi.fn(impl);
+  return { client: { apply } as unknown as MorphologyClient, apply };
+}
 
 const TARGET_RES = Resolution.from([8, 8, 40]);
 const TARGET_LAYER = layerId("L1");
@@ -360,7 +375,7 @@ describe("PaintingCompute.applyBrush with mask", () => {
     expect(setBits).toBe(diskFootprint(3));
   });
 
-  it("low > all image values stamps the disk but valueMask is all 0", async () => {
+  it("low > all image values paints nothing (no painted voxels)", async () => {
     const compute = new PaintingCompute();
     const meta = metadata([64, 64, 64]);
     const maskMeta = imageMetadata([64, 64, 64]);
@@ -385,10 +400,12 @@ describe("PaintingCompute.applyBrush with mask", () => {
       readChunk: zeroReader([64, 64, 64]),
       readChunkAt: image.readChunkAt,
     });
-    expect(batch.chunks).toHaveLength(1);
-    const c = batch.chunks[0];
+    // Slice-mode write skips masked-off voxels, so a fully-rejected stamp emits
+    // no chunks at all (equivalent to a chunk whose valueMask is all zero).
     let setBits = 0;
-    for (const b of c.valueMask!) if (b !== 0) setBits++;
+    for (const c of batch.chunks) {
+      for (const b of c.valueMask!) if (b !== 0) setBits++;
+    }
     expect(setBits).toBe(0);
   });
 
@@ -510,5 +527,195 @@ describe("PaintingCompute.applyBrush with mask", () => {
     let setBits = 0;
     for (const b of batch.chunks[0].valueMask!) if (b !== 0) setBits++;
     expect(setBits).toBe(diskFootprint(3));
+  });
+});
+
+describe("PaintingCompute morphology offload (TM-304)", () => {
+  function maskedBrushInput(radius: number) {
+    return {
+      targetLayerId: TARGET_LAYER,
+      targetResolution: TARGET_RES,
+      metadata: metadata([64, 64, 64]),
+      voxelPosition: [32, 32, 16] as [number, number, number],
+      radius,
+      value: 7n,
+      mask: {
+        imageLayerId: MASK_LAYER,
+        imageResolution: TARGET_RES,
+        thresholdLow: 0,
+        thresholdHigh: 255,
+        minComponentSize: 5,
+        binaryClosing: 2,
+        filterComponentsFirst: true,
+      },
+      maskMetadata: imageMetadata([64, 64, 64]),
+      readChunk: zeroReader([64, 64, 64]),
+      readChunkAt: imageReader([64, 64, 64], () => 128).readChunkAt,
+    };
+  }
+
+  it("offloads morphology to the client with the disk-bbox request", async () => {
+    const radius = 3;
+    const side = 2 * radius + 1;
+    // Echo the input mask back so the stamp reflects the worker's output.
+    const { client, apply } = fakeMorphology(async (req) => req.mask);
+    const compute = new PaintingCompute(() => undefined, client);
+
+    await compute.applyBrush(maskedBrushInput(radius));
+
+    expect(apply).toHaveBeenCalledTimes(1);
+    const req = apply.mock.calls[0][0] as MorphologyRequest;
+    expect(req.shape).toEqual([side, side, 1]);
+    expect(req.mask).toHaveLength(side * side);
+    // Params forwarded verbatim from the mask context.
+    expect(req.binaryClosing).toBe(2);
+    expect(req.minComponentSize).toBe(5);
+    expect(req.filterComponentsFirst).toBe(true);
+  });
+
+  it("uses the worker's processed mask to drive the stamp", async () => {
+    // Worker returns an all-zero mask → nothing should be painted, even though
+    // the threshold band (0..255) would otherwise pass every voxel.
+    const { client } = fakeMorphology(
+      async (req) => new Uint8Array(req.mask.length),
+    );
+    const compute = new PaintingCompute(() => undefined, client);
+
+    const batch = await compute.applyBrush(maskedBrushInput(3));
+    let setBits = 0;
+    for (const b of batch.chunks[0]?.valueMask ?? []) if (b !== 0) setBits++;
+    expect(setBits).toBe(0);
+  });
+
+  it("falls back to the TS pipeline when the worker rejects", async () => {
+    const { client, apply } = fakeMorphology(async () => {
+      throw new Error("worker boot failed");
+    });
+    const withWorker = new PaintingCompute(() => undefined, client);
+    const withoutWorker = new PaintingCompute(); // pure TS path
+
+    // Morphology IS requested (binaryClosing > 0) so the worker is invoked and
+    // can fail — closing of a full-band solid disk is identity, so both the
+    // fallback and the pure-TS compute still paint the full disk footprint.
+    const input = {
+      ...maskedBrushInput(3),
+      mask: {
+        imageLayerId: MASK_LAYER,
+        imageResolution: TARGET_RES,
+        thresholdLow: 0,
+        thresholdHigh: 255,
+        minComponentSize: 0,
+        binaryClosing: 1,
+        filterComponentsFirst: false,
+      },
+    };
+    const fallbackBatch = await withWorker.applyBrush(input);
+    const tsBatch = await withoutWorker.applyBrush(input);
+
+    expect(apply).toHaveBeenCalled(); // worker was attempted...
+    // ...and the fallback produced the same result as the pure-TS compute
+    // (closing shrinks the bbox-edge voxels, so this is < the raw disk).
+    const count = (b: typeof fallbackBatch) => {
+      let n = 0;
+      for (const v of b.chunks[0]?.valueMask ?? []) if (v !== 0) n++;
+      return n;
+    };
+    expect(count(fallbackBatch)).toBeGreaterThan(0);
+    expect(count(fallbackBatch)).toBe(count(tsBatch));
+  });
+});
+
+describe("PaintingCompute capsule stroke (TM-304)", () => {
+  // A masked stroke input on a single z-slice with morphology requested.
+  function maskedStrokeInput(
+    from: [number, number, number],
+    to: [number, number, number],
+    radius: number,
+    morphology = true,
+  ) {
+    return {
+      targetLayerId: TARGET_LAYER,
+      targetResolution: TARGET_RES,
+      metadata: metadata([64, 64, 64]),
+      from,
+      to,
+      stepVoxels: 1,
+      radius,
+      value: 7n,
+      mask: {
+        imageLayerId: MASK_LAYER,
+        imageResolution: TARGET_RES,
+        thresholdLow: 0,
+        thresholdHigh: 255,
+        minComponentSize: 0,
+        binaryClosing: morphology ? 1 : 0,
+        filterComponentsFirst: false,
+      },
+      maskMetadata: imageMetadata([64, 64, 64]),
+      readChunk: zeroReader([64, 64, 64]),
+      readChunkAt: imageReader([64, 64, 64], () => 128).readChunkAt,
+    };
+  }
+
+  it("runs morphology ONCE for a whole same-z segment (per-segment union)", async () => {
+    // A 24-voxel segment with radius 6: the old per-dab path (spacing radius/2)
+    // would call morphology ~ceil(24/3)=8 times; the capsule calls it once.
+    const { client, apply } = fakeMorphology(async (req) => req.mask);
+    const compute = new PaintingCompute(() => undefined, client);
+
+    await compute.applyBrushStroke(
+      maskedStrokeInput([20, 32, 16], [44, 32, 16], 6),
+    );
+
+    expect(apply).toHaveBeenCalledTimes(1);
+    // The single request's footprint spans the whole segment bbox + radius.
+    const req = apply.mock.calls[0][0] as MorphologyRequest;
+    expect(req.shape[0]).toBeGreaterThanOrEqual(24 + 2 * 6); // x: |to-from| + 2r
+    expect(req.shape[2]).toBe(1); // single z-slice
+  });
+
+  it("falls back to per-dab (morphology per dab) for a z-varying segment", async () => {
+    const { apply, client } = fakeMorphology(async (req) => req.mask);
+    const compute = new PaintingCompute(() => undefined, client);
+
+    // from/to on different z-slices → 3D sweep → per-dab fallback.
+    await compute.applyBrushStroke(
+      maskedStrokeInput([20, 32, 10], [20, 32, 34], 6),
+    );
+
+    expect(apply.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it("unmasked stroke paints a gap-free capsule covering both endpoints", async () => {
+    const compute = new PaintingCompute(); // no mask
+    const batch = await compute.applyBrushStroke({
+      targetLayerId: TARGET_LAYER,
+      targetResolution: TARGET_RES,
+      metadata: metadata([64, 64, 64]),
+      from: [16, 32, 16],
+      to: [40, 32, 16],
+      stepVoxels: 1,
+      radius: 4,
+      value: 7n,
+      readChunk: zeroReader([64, 64, 64]),
+      readChunkAt: unusedReadChunkAt,
+    });
+
+    // Collect painted (x) along the centerline row y=32, z=16 within the chunk.
+    const c = batch.chunks[0];
+    const [ox, oy, oz] = c.subregion.origin;
+    const [sx, sy] = c.subregion.size;
+    const painted = new Set<number>();
+    for (let i = 0; i < c.valueMask!.length; i++) {
+      if (c.valueMask![i] === 0) continue;
+      const rz = Math.floor(i / (sx * sy));
+      const ry = Math.floor((i - rz * sx * sy) / sx);
+      const rx = i - rz * sx * sy - ry * sx;
+      if (oy + ry === 32 && oz + rz === 16) painted.add(ox + rx);
+    }
+    // The centerline must be solid from x=16 to x=40 (no gaps).
+    for (let x = 16; x <= 40; x++) {
+      expect(painted.has(x)).toBe(true);
+    }
   });
 });
