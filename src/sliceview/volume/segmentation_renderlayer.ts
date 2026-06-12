@@ -703,7 +703,8 @@ uint64_t getMappedObjectId(uint64_t value) {
     let flags = 0;
     if (
       segmentSelectionState.hasSelectedSegment &&
-      displayState.hoverHighlight.value
+      displayState.hoverHighlight.value &&
+      !displayState.hoverHighlightSuppressed.value
     ) {
       const seg = displayState.baseSegmentHighlighting.value
         ? segmentSelectionState.baseSelectedSegment

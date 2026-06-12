@@ -33,11 +33,13 @@ import { computeBrushFootprintAxes } from "#src/editing/cursor/brush_cursor_foot
 import type { BrushCursorState } from "#src/editing/cursor/brush_cursor_state.js";
 import type { PerspectiveViewRenderContext } from "#src/perspective_view/render_layer.js";
 import { PerspectiveViewRenderLayer } from "#src/perspective_view/render_layer.js";
+import { constantWatchableValue } from "#src/trackable_value.js";
 import { mat4, vec3 } from "#src/util/geom.js";
 import { GLBuffer } from "#src/webgl/buffer.js";
 import type { GL } from "#src/webgl/context.js";
-import type { ShaderProgram } from "#src/webgl/shader.js";
-import { ShaderBuilder } from "#src/webgl/shader.js";
+import type { ParameterizedEmitterDependentShaderGetter } from "#src/webgl/dynamic_shader.js";
+import { parameterizedEmitterDependentShaderGetter } from "#src/webgl/dynamic_shader.js";
+import type { ShaderBuilder } from "#src/webgl/shader.js";
 
 const SEGMENTS_PER_RING = 32;
 const NUM_RINGS = 3;
@@ -105,14 +107,18 @@ const tempNormal = vec3.create();
  */
 export class BrushCursorPerspectiveOverlay extends PerspectiveViewRenderLayer {
   private vertexBuffer: GLBuffer;
-  private shader;
+  private shaderGetter: ParameterizedEmitterDependentShaderGetter<null>;
 
   constructor(
     public gl: GL,
     public state: BrushCursorState,
   ) {
     super();
-    this.shader = this.registerDisposer(buildSphereShader(gl));
+    this.shaderGetter = parameterizedEmitterDependentShaderGetter(this, gl, {
+      memoizeKey: "editing/cursor/BrushCursorPerspectiveOverlay",
+      parameters: constantWatchableValue(null),
+      defineShader: (builder: ShaderBuilder) => defineSphereShader(builder),
+    });
     this.vertexBuffer = this.registerDisposer(
       GLBuffer.fromData(
         gl,
@@ -142,7 +148,7 @@ export class BrushCursorPerspectiveOverlay extends PerspectiveViewRenderLayer {
 
   draw(renderContext: PerspectiveViewRenderContext): void {
     if (!renderContext.emitColor) return;
-    const { state, gl, vertexBuffer, shader } = this;
+    const { state, gl, vertexBuffer } = this;
     if (state.visible.value !== true) return;
     const worldCenter = state.worldCenter.value;
     if (worldCenter === undefined) return;
@@ -193,6 +199,9 @@ export class BrushCursorPerspectiveOverlay extends PerspectiveViewRenderLayer {
 
     const color = CURSOR_COLOR;
 
+    const { shader } = this.shaderGetter(renderContext.emitter);
+    if (shader === null) return;
+
     shader.bind();
     gl.uniformMatrix4fv(shader.uniform("uProjectionMatrix"), false, mvp);
     gl.uniform4fv(shader.uniform("uColor"), color);
@@ -200,18 +209,18 @@ export class BrushCursorPerspectiveOverlay extends PerspectiveViewRenderLayer {
     const aVertexPosition = shader.attribute("aVertexPosition");
     vertexBuffer.bindToVertexAttrib(aVertexPosition, 3);
 
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    // Leave ALL blend/depth state untouched: this layer is transparent, so
+    // it draws inside the perspective panel's OIT pass, which configures
+    // blending once for every transparent layer AND for the final composite
+    // that blends the transparent buffer over the opaque image. Mutating
+    // blend state here corrupts that composite (a disabled blend blacks out
+    // the whole 3D view). The pass keeps depth-test on / depth-write off,
+    // which is exactly the grounded-in-3D behavior the cursor wants.
+    //
     // `lineWidth(2)` is honored only at width 1 on most WebGL2 drivers, but
     // it's harmless to request and matches the design spec.
     gl.lineWidth(2);
-    // Draw without depth-write so the cursor is visible through geometry
-    // without occluding picks. Keep depth-test so it's hidden behind near
-    // surfaces (looks more grounded in 3D than a flat overlay).
-    gl.depthMask(false);
     gl.drawArrays(gl.LINES, 0, TOTAL_VERTICES);
-    gl.depthMask(true);
-    gl.disable(gl.BLEND);
     gl.lineWidth(1);
 
     gl.disableVertexAttribArray(aVertexPosition);
@@ -219,30 +228,17 @@ export class BrushCursorPerspectiveOverlay extends PerspectiveViewRenderLayer {
 }
 
 /**
- * Inline sphere shader. Perspective panel binds three color attachments
- * (color / z / pickId) via `perspectivePanelEmit`; writing to only one
- * triggers `GL_INVALID_OPERATION`. The cursor is non-pickable and
- * non-depth-contributing — emit a far-plane depth and zero pickId.
+ * Sphere wireframe shader. The fragment output goes through the pass's
+ * emitter (`emit(color, pickId)` — e.g. OIT accumulate/revealage in the
+ * transparent pass), so the cursor composites correctly regardless of which
+ * pass draws it. The cursor is non-pickable: pickId 0.
  */
-function buildSphereShader(gl: GL): ShaderProgram {
-  const builder = new ShaderBuilder(gl);
+function defineSphereShader(builder: ShaderBuilder) {
   builder.addAttribute("vec3", "aVertexPosition");
   builder.addUniform("mat4", "uProjectionMatrix");
   builder.addUniform("vec4", "uColor");
-  builder.addOutputBuffer("vec4", "out_color", 0);
-  builder.addOutputBuffer("highp vec4", "out_z", 1);
-  builder.addOutputBuffer("highp vec4", "out_pickId", 2);
   builder.setVertexMain(
     "gl_Position = uProjectionMatrix * vec4(aVertexPosition, 1.0);",
   );
-  builder.setFragmentMain(`
-out_color = uColor;
-out_z = vec4(0.0, 0.0, 0.0, 1.0);
-out_pickId = vec4(0.0, 0.0, 0.0, 1.0);
-`);
-  return builder.build();
+  builder.setFragmentMain("emit(uColor, 0u);");
 }
-
-// Expected host wiring (see step 13 / wave-3 integration pass):
-//   const overlay = new BrushCursorPerspectiveOverlay(viewer.display.gl, brushCursorState);
-//   viewer.layerManager.addRenderLayer(overlay); // or attach as a perspective overlay

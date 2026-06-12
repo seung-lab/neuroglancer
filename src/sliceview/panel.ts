@@ -394,7 +394,13 @@ export class SliceViewPanel extends RenderedDataPanel {
       bindFramebuffer,
       frameNumber: this.context.frameNumber,
     };
-    for (const [renderLayer, attachment] of visibleLayers) {
+    // Stable sort by draw-order priority: higher-priority layers (session
+    // overlays) draw later, i.e. on top; equal priorities keep first-seen
+    // order, preserving the previous behavior for ordinary layers.
+    const orderedVisibleLayers = [...visibleLayers].sort(
+      (a, b) => a[0].drawOrderPriority - b[0].drawOrderPriority,
+    );
+    for (const [renderLayer, attachment] of orderedVisibleLayers) {
       renderLayer.draw(renderContext, attachment);
     }
     gl.disable(WebGL2RenderingContext.BLEND);

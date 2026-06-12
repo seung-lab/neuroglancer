@@ -611,6 +611,11 @@ class SegmentationUserLayerDisplayState implements SegmentationDisplayState {
   saturation = trackableAlphaValue(1.0);
   notSelectedAlpha = trackableAlphaValue(0);
   hoverHighlight = new TrackableBoolean(true, true);
+  // Transient runtime override (not persisted, no UI). The edit-session host
+  // sets this `true` while a painting tool is active so hovering doesn't
+  // brighten the segment under the cursor; the `hoverHighlight` preference above
+  // is left untouched.
+  hoverHighlightSuppressed = new WatchableValue<boolean>(false);
   silhouetteRendering = new TrackableValue<number>(
     0,
     verifyFiniteNonNegativeFloat,

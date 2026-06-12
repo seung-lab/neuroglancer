@@ -90,9 +90,13 @@ import { PatchMirror } from "#src/editing/overlay/patch_mirror.js";
 import { PatchTextureCache } from "#src/editing/patch_texture_cache.js";
 import { PointerEventBridge } from "#src/editing/pointer_event_bridge.js";
 import { QuickRegionCapture } from "#src/editing/quick_region_capture.js";
+import { positionAtBoxCenter } from "#src/editing/region/region_geometry.js";
+import { EditRegionPerspectiveOverlay } from "#src/editing/region/region_perspective_overlay.js";
+import { EditRegionSliceOverlay } from "#src/editing/region/region_slice_overlay.js";
 import { EditSessionHotkeyBinder } from "#src/editing/session_hotkey_binder.js";
 import type { PatchedMaskProvider } from "#src/editing/shaders/patched_mask_provider.js";
 import { MorphologyClient } from "#src/editing/tool_runtimes/morphology_client.js";
+import { paintProfilerMetrics } from "#src/editing/tool_runtimes/paint_profiler_metrics.js";
 import { PaintingCompute } from "#src/editing/tool_runtimes/painting_compute.js";
 import type { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import { SegmentationRenderLayer } from "#src/sliceview/volume/segmentation_renderlayer.js";
@@ -514,12 +518,27 @@ export class EditSessionHost extends RefCounted {
   private detachSliceOverlay: (() => void) | undefined;
   private perspectiveOverlay: BrushCursorPerspectiveOverlay | undefined;
   private detachPerspectiveOverlay: (() => void) | undefined;
+  // Session-owned edit-region visuals (TM-302). Anchored to the same user
+  // layer as the cursor overlays and created/destroyed strictly together
+  // with them, so the cursor attach/reattach/teardown flow covers both.
+  private regionSliceOverlay: EditRegionSliceOverlay | undefined;
+  private detachRegionSliceOverlay: (() => void) | undefined;
+  private regionPerspectiveOverlay: EditRegionPerspectiveOverlay | undefined;
+  private detachRegionPerspectiveOverlay: (() => void) | undefined;
   /** First writable layer id — fallback anchor when no paint target resolves. */
   private cursorOverlayFallbackLayerId: LayerId | undefined;
   /** Layer the cursor overlays are currently anchored to (avoids redundant re-attach). */
   private attachedCursorLayerId: LayerId | undefined;
   /** Disposer for the paint-target watch that drives overlay re-anchoring. */
   private detachCursorTargetWatch: (() => void) | undefined;
+  /**
+   * Disposers for the watches that suppress segment hover-highlight while a
+   * painting tool (brush/eraser/fill) is active. One tracks active-tool
+   * changes; the other re-applies the current suppression to layers that
+   * appear mid-session.
+   */
+  private detachHoverSuppressionToolWatch: (() => void) | undefined;
+  private detachHoverSuppressionLayerWatch: (() => void) | undefined;
   /**
    * Disposer for the display-dimensions watch that recomputes the bbox-alpha
    * render region when the viewer's global "dimensions" scale changes
@@ -677,6 +696,10 @@ export class EditSessionHost extends RefCounted {
       );
       this.hotkeyBinder = new EditSessionHotkeyBinder(this, this.viewer);
       this.attachCursorOverlays(config);
+      // Bring the user to the freshly opened session's region; entering a
+      // session whose bbox is elsewhere in the volume would otherwise leave
+      // them staring at unrelated (now hard-clipped) data.
+      this.teleportToActiveRegionCenter();
     } catch (err) {
       // If post-open wiring throws, attempt to terminate the session and
       // surface the error.
@@ -1171,6 +1194,30 @@ export class EditSessionHost extends RefCounted {
   }
 
   /**
+   * Move the viewer's global position to the center of the active edit
+   * region. Only the display-dimension coordinates change; other global
+   * coordinates (e.g. `t`) are left untouched. Returns `false` when no
+   * session is active (no region to teleport to).
+   *
+   * Used by the topbar's "center on edit region" button and called
+   * automatically at the end of `openSession`.
+   */
+  teleportToActiveRegionCenter(): boolean {
+    const config = this.activeSessionConfig;
+    if (config === undefined) return false;
+    const region = this.computeActiveRegionSync(config);
+    if (region === undefined) return false;
+    const renderInfo = this.viewer.displayDimensionRenderInfo.value;
+    this.viewer.position.value = positionAtBoxCenter(
+      this.viewer.position.value,
+      renderInfo.displayDimensionIndices,
+      region.lo,
+      region.hi,
+    );
+    return true;
+  }
+
+  /**
    * Returns the persistent per-layer watchable for the patched-mask
    * provider hook the base `SegmentationRenderLayer` consumes via
    * `editPatchOverlay`. The watchable's current value is the active
@@ -1438,6 +1485,9 @@ export class EditSessionHost extends RefCounted {
       lock: this.sessionLock,
       clock: this.clock,
       logger: this.logger,
+      // Routes the library's apply-path timings into the paint profiler (no-op
+      // unless profiling is enabled). See `paintProfilerMetrics`.
+      metrics: paintProfilerMetrics,
     };
   }
 
@@ -1646,6 +1696,7 @@ export class EditSessionHost extends RefCounted {
    */
   private attachCursorOverlays(config: HostSessionConfig): void {
     this.cursorState = new BrushCursorState(this);
+    this.attachHoverHighlightSuppression();
     const firstWritable = config.layers.find((l) => l.writable);
     if (firstWritable === undefined) return;
     this.cursorOverlayFallbackLayerId = firstWritable.layerId;
@@ -1654,6 +1705,46 @@ export class EditSessionHost extends RefCounted {
     this.detachCursorTargetWatch = this.cursorState.targetLayerId.changed.add(
       () => this.reattachCursorOverlaysToTarget(),
     );
+  }
+
+  /**
+   * Suppress segment hover-highlight on every segmentation layer while a
+   * painting tool (brush/eraser/fill) is active, restoring it for navigate.
+   * `BrushCursorState.toolKind` is exactly the paint-like classification
+   * (`undefined` for navigate / non-paint tools), so it is the single signal we
+   * watch. A second watch on `layersChanged` re-applies the current suppression
+   * to layers that appear mid-session.
+   */
+  private attachHoverHighlightSuppression(): void {
+    const apply = () => this.applyHoverHighlightSuppression();
+    this.detachHoverSuppressionToolWatch =
+      this.cursorState?.toolKind.changed.add(apply);
+    this.detachHoverSuppressionLayerWatch =
+      this.viewer.layerManager.layersChanged.add(apply);
+    apply();
+  }
+
+  private applyHoverHighlightSuppression(): void {
+    const suppress = this.cursorState?.toolKind.value !== undefined;
+    this.setHoverHighlightSuppressedOnAllSegmentationLayers(suppress);
+  }
+
+  /**
+   * Duck-typed sweep over all managed layers: any layer whose display state
+   * carries a `hoverHighlightSuppressed` watchable is a segmentation layer (see
+   * `findSegmentationUserLayer` for why we avoid a hard `instanceof`).
+   */
+  private setHoverHighlightSuppressedOnAllSegmentationLayers(
+    suppress: boolean,
+  ): void {
+    for (const managed of this.viewer.layerManager.managedLayers) {
+      const displayState = (managed.layer as SegmentationUserLayer | null)
+        ?.displayState;
+      const flag = displayState?.hoverHighlightSuppressed;
+      if (flag !== undefined && flag.value !== suppress) {
+        flag.value = suppress;
+      }
+    }
   }
 
   /**
@@ -1688,6 +1779,30 @@ export class EditSessionHost extends RefCounted {
     }
 
     this.detachCursorOverlayRenderLayers();
+    // Session-owned region visuals (TM-302): driven by the active-region
+    // watchable (display coords), so they track the shader hard-clip exactly
+    // and survive hiding/deleting the source annotation layer. The watchable
+    // flips to undefined on session teardown, at which point they draw
+    // nothing regardless of detach ordering. In slice views the overlays'
+    // `drawOrderPriority` keeps them above ordinary layers (annotations
+    // included) and the cursor above the region outline, no matter when
+    // other layers (re)create their render layers.
+    const regionWatchable =
+      this.getActiveRegionWatchableForLayer(resolvedLayerId);
+    this.regionSliceOverlay = new EditRegionSliceOverlay(
+      this.viewer.display.gl,
+      regionWatchable,
+    );
+    this.detachRegionSliceOverlay = userLayer.addRenderLayer(
+      this.regionSliceOverlay,
+    );
+    this.regionPerspectiveOverlay = new EditRegionPerspectiveOverlay(
+      this.viewer.display.gl,
+      regionWatchable,
+    );
+    this.detachRegionPerspectiveOverlay = userLayer.addRenderLayer(
+      this.regionPerspectiveOverlay,
+    );
     this.sliceOverlay = new BrushCursorSliceOverlay(
       this.viewer.display.gl,
       cursorState,
@@ -1703,8 +1818,29 @@ export class EditSessionHost extends RefCounted {
     this.attachedCursorLayerId = resolvedLayerId;
   }
 
-  /** Detach (and thereby dispose) the current cursor render-layer instances. */
+  /**
+   * Detach (and thereby dispose) the current cursor and region render-layer
+   * instances.
+   */
   private detachCursorOverlayRenderLayers(): void {
+    if (this.detachRegionPerspectiveOverlay !== undefined) {
+      try {
+        this.detachRegionPerspectiveOverlay();
+      } catch {
+        // ignore
+      }
+      this.detachRegionPerspectiveOverlay = undefined;
+    }
+    this.regionPerspectiveOverlay = undefined;
+    if (this.detachRegionSliceOverlay !== undefined) {
+      try {
+        this.detachRegionSliceOverlay();
+      } catch {
+        // ignore
+      }
+      this.detachRegionSliceOverlay = undefined;
+    }
+    this.regionSliceOverlay = undefined;
     if (this.detachPerspectiveOverlay !== undefined) {
       try {
         this.detachPerspectiveOverlay();
@@ -1746,6 +1882,25 @@ export class EditSessionHost extends RefCounted {
       }
       this.detachCursorTargetWatch = undefined;
     }
+    // Stop watching for tool/layer changes and lift suppression so navigate
+    // (and the next session) sees the user's hover-highlight preference again.
+    if (this.detachHoverSuppressionToolWatch !== undefined) {
+      try {
+        this.detachHoverSuppressionToolWatch();
+      } catch {
+        // ignore
+      }
+      this.detachHoverSuppressionToolWatch = undefined;
+    }
+    if (this.detachHoverSuppressionLayerWatch !== undefined) {
+      try {
+        this.detachHoverSuppressionLayerWatch();
+      } catch {
+        // ignore
+      }
+      this.detachHoverSuppressionLayerWatch = undefined;
+    }
+    this.setHoverHighlightSuppressedOnAllSegmentationLayers(false);
     // Detaching each render layer disposes it (see `removeRenderLayer`); this
     // also clears `attachedCursorLayerId`.
     this.detachCursorOverlayRenderLayers();

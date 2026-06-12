@@ -20,11 +20,11 @@
 
 /** Preset brush sizes the `+` / `-` hotkeys step through. */
 export const BRUSH_SIZE_PRESETS: readonly number[] = [
-  1, 3, 5, 9, 15, 25, 43, 75, 131, 229, 401, 701, 1000,
+  1, 3, 5, 9, 15, 25, 43, 75, 131, 229, 401, 701, 1025,
 ];
 
 export const MIN_BRUSH_SIZE = 1;
-export const MAX_BRUSH_SIZE = 1000; // size = radius * 2 + 1.
+export const MAX_BRUSH_SIZE = 1025; // size = radius * 2 + 1.
 
 /**
  * Normalise a raw size to a valid brush size: a finite, odd integer within

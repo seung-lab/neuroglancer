@@ -104,6 +104,8 @@ function projectOffsetToNdc(
  * tools. Visibility and radius are derived from `BrushCursorState`.
  */
 export class BrushCursorSliceOverlay extends SliceViewPanelRenderLayer {
+  // Topmost session visual: above ordinary layers and the region outline.
+  override drawOrderPriority = 20;
   private fanBuffer: GLBuffer;
   private loopBuffer: GLBuffer;
   private shader: ShaderProgram;

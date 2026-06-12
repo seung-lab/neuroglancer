@@ -23,3 +23,31 @@ export function layerKindOf(
   if (userLayer instanceof ImageUserLayer) return "image";
   return undefined;
 }
+
+/**
+ * Data source schemes that cannot participate in an edit session as
+ * Reference or Editable layers (TM-312). Layers backed by these sources
+ * may only be Off.
+ */
+export type BlockedScheme = "calcada" | "graphene";
+
+const BLOCKED_SCHEMES: readonly BlockedScheme[] = ["calcada", "graphene"];
+
+/**
+ * Returns the blocked data source scheme backing `managed`, if any. Reads
+ * the data source spec URLs, which are available synchronously (no need to
+ * wait for the sources to load).
+ */
+export function blockedSchemeOf(
+  managed: ManagedUserLayer | undefined,
+): BlockedScheme | undefined {
+  const userLayer = managed?.layer;
+  if (userLayer == null) return undefined;
+  for (const dataSource of userLayer.dataSources) {
+    const url = dataSource.spec.url;
+    for (const scheme of BLOCKED_SCHEMES) {
+      if (url.startsWith(`${scheme}://`)) return scheme;
+    }
+  }
+  return undefined;
+}
