@@ -30,6 +30,50 @@ type PointerKind =
   | "pointer-up"
   | "pointer-cancel";
 
+type VoxelPos = readonly [number, number, number];
+
+/**
+ * Per-stroke dispatch state implementing latest-wins backpressure (TM-304).
+ *
+ * At most ONE stroke `handleInput` is dispatched at a time (`inFlight`).
+ * While one is in flight, new pointer positions accumulate in
+ * `pendingVia`/`pendingTo` instead of dispatching; when the op settles,
+ * `drainStroke` dispatches ONE coalesced `pointer-move` carrying the skipped
+ * positions as `viaVoxelPositions`. The compute rasterizes the whole polyline
+ * as one footprint, so coverage is exact and morphology stays at one worker
+ * round-trip per *delivered* segment — the dispatch cadence adapts to the op
+ * throughput and the worker queue can never grow beyond one op. When every
+ * op completes faster than the pick cadence (~30 ms, e.g. morphology off),
+ * the gate never engages and behavior is identical to direct dispatch.
+ */
+interface ActiveStrokeState {
+  readonly panel: RenderedDataPanel;
+  unsubscribeMouseState: () => void;
+  /** Last voxel delivered (or queued) — used to dedup repeat positions. */
+  lastVoxel: VoxelPos | undefined;
+  /** True while a dispatched `handleInput` promise has not settled. */
+  inFlight: boolean;
+  /** Coalesced waypoints skipped while in flight (oldest first). */
+  pendingVia: VoxelPos[];
+  /** Latest coalesced position — the next dispatch's `voxelPosition`. */
+  pendingTo: VoxelPos | undefined;
+  /**
+   * Deferred stroke finish (`pointer-up` / `pointer-cancel`), dispatched
+   * after the coalesced queue drains so the library records history AFTER
+   * the last segment has applied. `event === undefined` ends the stroke
+   * without delivering a finish event (parity with the non-camera-locked
+   * dispatch path, which never reaches the tool).
+   */
+  finish: { readonly event: ToolInputEvent | undefined } | undefined;
+  /**
+   * Callbacks released when the stroke fully drains (idle, no finish left).
+   * Used to chain the NEXT stroke's `pointer-down` behind this stroke when
+   * the user starts a new stroke while this one is still draining — the
+   * shared library StrokeTool must see strictly ordered down/move/up.
+   */
+  onDrained: (() => void)[];
+}
+
 /**
  * Translates DOM pointer / wheel / key events on neuroglancer's slice and
  * perspective panels into the edit-session library's normalized
@@ -53,18 +97,13 @@ export class PointerEventBridge extends RefCounted {
   private readonly attached = new Map<RenderedDataPanel, () => void>();
   /**
    * In-flight paint stroke. While set, every `mouseState.changed` event
-   * is forwarded to the tool as a synthetic `pointer-move` so the stroke
-   * advances in lockstep with neuroglancer's (async) picking pipeline.
-   * Set on `pointerdown` when a paint-like tool is active; cleared on
-   * `pointerup` / `pointercancel`.
+   * feeds the latest-wins dispatch queue (see `ActiveStrokeState`) so the
+   * stroke advances in lockstep with neuroglancer's (async) picking pipeline
+   * without ever queueing more than one tool op. Set on `pointerdown` when a
+   * paint-like tool is active; cleared on `pointerup` / `pointercancel`
+   * (the detached stroke object keeps draining its remaining queue).
    */
-  private activeStroke:
-    | {
-        readonly panel: RenderedDataPanel;
-        unsubscribeMouseState: () => void;
-        lastVoxel: readonly [number, number, number] | undefined;
-      }
-    | undefined;
+  private activeStroke: ActiveStrokeState | undefined;
 
   constructor(
     private readonly host: EditSessionHost,
@@ -127,18 +166,47 @@ export class PointerEventBridge extends RefCounted {
       // (or on pointerup if the cursor re-enters). With Ctrl/Cmd held we
       // bail entirely from `dispatch` so the event falls through to
       // neuroglancer's pan binding.
-      this.dispatch(ev, () => this.translatePointer(panel, ev, "pointer-down"));
       const cameraLocked = this.isCameraLockedForEvent(ev);
-      if (cameraLocked && ev.button === 0) {
-        this.beginStrokeForwarding(panel);
+      const strokeStart = cameraLocked && ev.button === 0;
+      const prev = this.activeStroke;
+      if (strokeStart && prev !== undefined && this.strokeHasWork(prev)) {
+        // The previous stroke is still draining its coalesced queue (its
+        // deferred pointer-up included). Chain this stroke's pointer-down
+        // behind it so the shared library StrokeTool sees strictly ordered
+        // down/move/up events; the gate releases within one op.
+        const event = this.translatePointer(panel, ev, "pointer-down");
+        this.consume(ev);
+        const stroke = this.beginStrokeForwarding(panel, { gated: true });
+        prev.onDrained.push(() => {
+          if (event !== undefined) {
+            this.dispatchStrokeEvent(stroke, event);
+          } else {
+            stroke.inFlight = false;
+            this.drainStroke(stroke);
+          }
+        });
+        return;
+      }
+      const result = this.dispatch(ev, () =>
+        this.translatePointer(panel, ev, "pointer-down"),
+      );
+      if (strokeStart) {
+        // Gate the first moves behind the pointer-down op itself, so the
+        // down-stamp and the first segment can't interleave.
+        this.beginStrokeForwarding(
+          panel,
+          result instanceof Promise ? { downOp: result } : {},
+        );
       }
     };
     const onPointerMove = onPointer("pointer-move");
     const onPointerUp = (ev: PointerEvent) => {
+      if (this.requestStrokeFinish(panel, ev, "pointer-up")) return;
       this.dispatch(ev, () => this.translatePointer(panel, ev, "pointer-up"));
       this.endActiveStroke();
     };
     const onPointerCancel = (ev: PointerEvent) => {
+      if (this.requestStrokeFinish(panel, ev, "pointer-cancel")) return;
       this.dispatch(ev, () =>
         this.translatePointer(panel, ev, "pointer-cancel"),
       );
@@ -169,10 +237,15 @@ export class PointerEventBridge extends RefCounted {
     };
   }
 
+  /**
+   * Returns the tool's `handleInput` result (or `undefined` when the event
+   * never reached the tool) so stroke begin can gate behind the pointer-down
+   * op.
+   */
   private dispatch(
     ev: Event,
     translate: () => ToolInputEvent | undefined,
-  ): void {
+  ): InputHandling | Promise<InputHandling> | undefined {
     const session = this.host.activeSession.value;
     if (session === undefined) return;
     const tool: Tool | undefined = session.tools.getActiveTool();
@@ -243,6 +316,7 @@ export class PointerEventBridge extends RefCounted {
       );
     }
     if (shouldStopPropagation) this.consume(ev);
+    return result;
   }
 
   /**
@@ -437,19 +511,46 @@ export class PointerEventBridge extends RefCounted {
   // tool each time the position resolves. The library sees a fresh
   // position on every update and the stroke moves correctly.
 
-  private beginStrokeForwarding(panel: RenderedDataPanel): void {
+  private beginStrokeForwarding(
+    panel: RenderedDataPanel,
+    opts: { downOp?: Promise<InputHandling>; gated?: boolean } = {},
+  ): ActiveStrokeState {
     this.endActiveStroke();
     const mouseState = this.host.viewer.mouseState;
-    const unsub = mouseState.changed.add(() =>
+    const stroke: ActiveStrokeState = {
+      panel,
+      unsubscribeMouseState: () => {},
+      lastVoxel: undefined,
+      // Gated until the pointer-down op settles (or, for a chained stroke,
+      // until the previous stroke drains and the deferred down dispatches).
+      inFlight: opts.downOp !== undefined || opts.gated === true,
+      pendingVia: [],
+      pendingTo: undefined,
+      finish: undefined,
+      onDrained: [],
+    };
+    stroke.unsubscribeMouseState = mouseState.changed.add(() =>
       this.forwardPointerMoveFromMouseState(panel),
     );
-    this.activeStroke = {
-      panel,
-      unsubscribeMouseState: unsub,
-      lastVoxel: undefined,
-    };
+    this.activeStroke = stroke;
+    if (opts.downOp !== undefined) {
+      // `dispatch` already logs rejections; here we only need the settle
+      // signal to open the gate.
+      const settle = () => {
+        stroke.inFlight = false;
+        this.drainStroke(stroke);
+      };
+      opts.downOp.then(settle, settle);
+    }
+    return stroke;
   }
 
+  /**
+   * Stop feeding the active stroke and detach it. The detached stroke object
+   * keeps draining whatever is already queued (its in-flight op's settle
+   * handler drives `drainStroke`); only the mouseState subscription and the
+   * `activeStroke` slot are released here.
+   */
   private endActiveStroke(): void {
     const stroke = this.activeStroke;
     if (stroke === undefined) return;
@@ -459,6 +560,47 @@ export class PointerEventBridge extends RefCounted {
       // ignore
     }
     this.activeStroke = undefined;
+  }
+
+  private strokeHasWork(stroke: ActiveStrokeState): boolean {
+    return (
+      stroke.inFlight ||
+      stroke.pendingTo !== undefined ||
+      stroke.finish !== undefined
+    );
+  }
+
+  /**
+   * Defer the stroke finish (`pointer-up` / `pointer-cancel`) behind the
+   * stroke's coalesced queue, so the library records history AFTER the last
+   * segment has applied. Returns false when there is no active stroke on
+   * `panel` or it is idle — the caller falls back to the direct dispatch
+   * path, which is then equivalent.
+   */
+  private requestStrokeFinish(
+    panel: RenderedDataPanel,
+    ev: PointerEvent,
+    kind: "pointer-up" | "pointer-cancel",
+  ): boolean {
+    const stroke = this.activeStroke;
+    if (stroke === undefined || stroke.panel !== panel) return false;
+    if (!this.strokeHasWork(stroke)) return false;
+    const cameraLocked = this.isCameraLockedForEvent(ev);
+    // Without the camera lock (Ctrl/Cmd held) the direct path would never
+    // deliver the event to the tool — mirror that by ending the stroke with
+    // no finish event.
+    const event = cameraLocked
+      ? this.translatePointer(panel, ev, kind)
+      : undefined;
+    if (kind === "pointer-cancel") {
+      // A canceled stroke must not paint its trailing coalesced segment.
+      stroke.pendingTo = undefined;
+      stroke.pendingVia = [];
+    }
+    stroke.finish = { event };
+    this.endActiveStroke();
+    if (cameraLocked) this.consume(ev);
+    return true;
   }
 
   private forwardPointerMoveFromMouseState(panel: RenderedDataPanel): void {
@@ -480,55 +622,151 @@ export class PointerEventBridge extends RefCounted {
     }
     const voxelPosition = this.resolveVoxelPosition();
     if (voxelPosition === undefined) return;
+    const last = stroke.pendingTo ?? stroke.lastVoxel;
     if (
-      stroke.lastVoxel !== undefined &&
-      stroke.lastVoxel[0] === voxelPosition[0] &&
-      stroke.lastVoxel[1] === voxelPosition[1] &&
-      stroke.lastVoxel[2] === voxelPosition[2]
+      last !== undefined &&
+      last[0] === voxelPosition[0] &&
+      last[1] === voxelPosition[1] &&
+      last[2] === voxelPosition[2]
     ) {
       return;
     }
+    // Latest-wins backpressure (TM-304): while a stroke op is in flight,
+    // accumulate instead of dispatching. The skipped positions ride along as
+    // `viaVoxelPositions` on the next dispatched move, so the painted path is
+    // exact — only the dispatch cadence adapts to the op throughput.
+    if (stroke.inFlight) {
+      if (stroke.pendingTo !== undefined) {
+        stroke.pendingVia.push(stroke.pendingTo);
+      }
+      stroke.pendingTo = voxelPosition;
+      return;
+    }
+    this.dispatchStrokeMove(stroke, voxelPosition, []);
+  }
+
+  /**
+   * Dispatch the next queued item once the in-flight op has settled:
+   * first the coalesced move (if any), then the deferred finish, and when the
+   * queue is empty release anything chained behind this stroke (a deferred
+   * next-stroke pointer-down).
+   */
+  private drainStroke(stroke: ActiveStrokeState): void {
+    if (stroke.inFlight) return;
+    if (stroke.pendingTo !== undefined) {
+      const to = stroke.pendingTo;
+      const via = stroke.pendingVia;
+      stroke.pendingTo = undefined;
+      stroke.pendingVia = [];
+      this.dispatchStrokeMove(stroke, to, via);
+      return;
+    }
+    if (stroke.finish !== undefined) {
+      const event = stroke.finish.event;
+      stroke.finish = undefined;
+      if (event !== undefined) {
+        this.dispatchStrokeEvent(stroke, event);
+        return;
+      }
+    }
+    const callbacks = stroke.onDrained.splice(0);
+    for (const cb of callbacks) cb();
+  }
+
+  private dispatchStrokeMove(
+    stroke: ActiveStrokeState,
+    voxelPosition: VoxelPos,
+    via: readonly VoxelPos[],
+  ): void {
     stroke.lastVoxel = voxelPosition;
     const mouseState = this.host.viewer.mouseState;
     const event: ToolInputEvent = {
       kind: "pointer-move",
       button: "primary",
       voxelPosition,
+      ...(via.length > 0 ? { viaVoxelPositions: via } : {}),
       screenPosition: [mouseState.pageX ?? 0, mouseState.pageY ?? 0],
-      panelHint: panel.constructor.name,
+      panelHint: panelKind(stroke.panel),
       at: nowMs(),
       modifiers: NO_MODIFIERS,
     };
+    if (paintProfiler.enabled && via.length > 0) {
+      paintProfiler.count("segments.coalescedVia", via.length);
+    }
+    this.dispatchStrokeEvent(stroke, event);
+  }
+
+  /**
+   * Dispatch one stroke event to the active paint tool and wire its settle
+   * into the drain loop. Any failure (session/tool gone, sync throw) drops
+   * the remaining queue but still releases chained strokes.
+   */
+  private dispatchStrokeEvent(
+    stroke: ActiveStrokeState,
+    event: ToolInputEvent,
+  ): void {
+    const session = this.host.activeSession.value;
+    const tool = session?.tools.getActiveTool();
+    if (
+      session === undefined ||
+      tool === undefined ||
+      tool.handleInput === undefined ||
+      !this.isPaintLikeTool(tool)
+    ) {
+      stroke.inFlight = false;
+      stroke.pendingTo = undefined;
+      stroke.pendingVia = [];
+      stroke.finish = undefined;
+      this.drainStroke(stroke);
+      return;
+    }
     // Profiling (Step 1): time the WHOLE handleInput — compute
     // (`applyBrushStroke`, bucketed as `0.stroke(total)`) plus the library apply
     // (`withBatch` + `applyPaintBatch`). `4.handleInput(total) - 0.stroke(total)`
     // is the apply half. (GPU upload happens later on the render frame and is
     // not captured here — read it from a Performance flame chart.)
-    const applyStart = paintProfiler.enabled ? performance.now() : 0;
+    const profileMove = paintProfiler.enabled && event.kind === "pointer-move";
+    const applyStart = profileMove ? performance.now() : 0;
+    let result: InputHandling | Promise<InputHandling>;
     try {
-      const result = tool.handleInput(event);
-      if (result instanceof Promise) {
-        result
-          .catch((err) =>
-            this.host.logger.error(
-              "tooling",
-              `PointerEventBridge: stroke handleInput rejected: ${stringifyError(err)}`,
-            ),
-          )
-          .finally(() => {
-            if (paintProfiler.enabled) {
-              paintProfiler.record(
-                "4.handleInput(total)",
-                performance.now() - applyStart,
-              );
-            }
-          });
-      }
+      result = tool.handleInput(event);
     } catch (err) {
       this.host.logger.error(
         "tooling",
         `PointerEventBridge: stroke handleInput threw: ${stringifyError(err)}`,
       );
+      stroke.inFlight = false;
+      this.drainStroke(stroke);
+      return;
+    }
+    if (result instanceof Promise) {
+      stroke.inFlight = true;
+      result
+        .catch((err) =>
+          this.host.logger.error(
+            "tooling",
+            `PointerEventBridge: stroke handleInput rejected: ${stringifyError(err)}`,
+          ),
+        )
+        .finally(() => {
+          if (profileMove) {
+            paintProfiler.record(
+              "4.handleInput(total)",
+              performance.now() - applyStart,
+            );
+          }
+          stroke.inFlight = false;
+          this.drainStroke(stroke);
+        });
+    } else {
+      if (profileMove) {
+        paintProfiler.record(
+          "4.handleInput(total)",
+          performance.now() - applyStart,
+        );
+      }
+      stroke.inFlight = false;
+      this.drainStroke(stroke);
     }
   }
 }
