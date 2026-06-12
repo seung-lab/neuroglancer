@@ -96,6 +96,7 @@ import { EditRegionSliceOverlay } from "#src/editing/region/region_slice_overlay
 import { EditSessionHotkeyBinder } from "#src/editing/session_hotkey_binder.js";
 import type { PatchedMaskProvider } from "#src/editing/shaders/patched_mask_provider.js";
 import { MorphologyClient } from "#src/editing/tool_runtimes/morphology_client.js";
+import { paintProfilerMetrics } from "#src/editing/tool_runtimes/paint_profiler_metrics.js";
 import { PaintingCompute } from "#src/editing/tool_runtimes/painting_compute.js";
 import type { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import { SegmentationRenderLayer } from "#src/sliceview/volume/segmentation_renderlayer.js";
@@ -1484,6 +1485,9 @@ export class EditSessionHost extends RefCounted {
       lock: this.sessionLock,
       clock: this.clock,
       logger: this.logger,
+      // Routes the library's apply-path timings into the paint profiler (no-op
+      // unless profiling is enabled). See `paintProfilerMetrics`.
+      metrics: paintProfilerMetrics,
     };
   }
 
