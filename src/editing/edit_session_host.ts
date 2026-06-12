@@ -90,6 +90,7 @@ import { PatchMirror } from "#src/editing/overlay/patch_mirror.js";
 import { PatchTextureCache } from "#src/editing/patch_texture_cache.js";
 import { PointerEventBridge } from "#src/editing/pointer_event_bridge.js";
 import { QuickRegionCapture } from "#src/editing/quick_region_capture.js";
+import { positionAtBoxCenter } from "#src/editing/region/region_geometry.js";
 import { EditRegionPerspectiveOverlay } from "#src/editing/region/region_perspective_overlay.js";
 import { EditRegionSliceOverlay } from "#src/editing/region/region_slice_overlay.js";
 import { EditSessionHotkeyBinder } from "#src/editing/session_hotkey_binder.js";
@@ -686,6 +687,10 @@ export class EditSessionHost extends RefCounted {
       );
       this.hotkeyBinder = new EditSessionHotkeyBinder(this, this.viewer);
       this.attachCursorOverlays(config);
+      // Bring the user to the freshly opened session's region; entering a
+      // session whose bbox is elsewhere in the volume would otherwise leave
+      // them staring at unrelated (now hard-clipped) data.
+      this.teleportToActiveRegionCenter();
     } catch (err) {
       // If post-open wiring throws, attempt to terminate the session and
       // surface the error.
@@ -1177,6 +1182,30 @@ export class EditSessionHost extends RefCounted {
       this.editBboxByLayer.set(layerName, w);
     }
     return w;
+  }
+
+  /**
+   * Move the viewer's global position to the center of the active edit
+   * region. Only the display-dimension coordinates change; other global
+   * coordinates (e.g. `t`) are left untouched. Returns `false` when no
+   * session is active (no region to teleport to).
+   *
+   * Used by the topbar's "center on edit region" button and called
+   * automatically at the end of `openSession`.
+   */
+  teleportToActiveRegionCenter(): boolean {
+    const config = this.activeSessionConfig;
+    if (config === undefined) return false;
+    const region = this.computeActiveRegionSync(config);
+    if (region === undefined) return false;
+    const renderInfo = this.viewer.displayDimensionRenderInfo.value;
+    this.viewer.position.value = positionAtBoxCenter(
+      this.viewer.position.value,
+      renderInfo.displayDimensionIndices,
+      region.lo,
+      region.hi,
+    );
+    return true;
   }
 
   /**

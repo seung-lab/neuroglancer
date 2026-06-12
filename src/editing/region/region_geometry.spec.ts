@@ -14,6 +14,7 @@ import {
   BOX_EDGE_VERTEX_COUNT,
   buildUnitBoxEdgeVertices,
   planeIntersectsBox,
+  positionAtBoxCenter,
 } from "#src/editing/region/region_geometry.js";
 import { vec3 } from "#src/util/geom.js";
 
@@ -91,5 +92,57 @@ describe("planeIntersectsBox", () => {
     const normal = vec3.fromValues(0, 0, 1);
     expect(planeIntersectsBox(lo, flatHi, normal, 30)).toBe(true);
     expect(planeIntersectsBox(lo, flatHi, normal, 31)).toBe(false);
+  });
+});
+
+describe("positionAtBoxCenter", () => {
+  const lo = vec3.fromValues(10, 20, 30);
+  const hi = vec3.fromValues(40, 60, 80);
+
+  it("maps box axes onto identity display dimensions (rank 3)", () => {
+    const position = Float32Array.from([1, 2, 3]);
+    const out = positionAtBoxCenter(
+      position,
+      Int32Array.from([0, 1, 2]),
+      lo,
+      hi,
+    );
+    expect(Array.from(out)).toEqual([25, 40, 55]);
+    // Input untouched.
+    expect(Array.from(position)).toEqual([1, 2, 3]);
+  });
+
+  it("leaves non-display coordinates untouched (rank 4)", () => {
+    const position = Float32Array.from([1, 2, 3, 99]);
+    const out = positionAtBoxCenter(
+      position,
+      Int32Array.from([0, 1, 2]),
+      lo,
+      hi,
+    );
+    expect(Array.from(out)).toEqual([25, 40, 55, 99]);
+  });
+
+  it("respects non-trivial display dimension order", () => {
+    const position = Float32Array.from([1, 2, 3, 4]);
+    const out = positionAtBoxCenter(
+      position,
+      Int32Array.from([3, 0, 1]),
+      lo,
+      hi,
+    );
+    // Box axis 0 → dim 3, axis 1 → dim 0, axis 2 → dim 1.
+    expect(Array.from(out)).toEqual([40, 55, 3, 25]);
+  });
+
+  it("skips unused (-1) display dimensions", () => {
+    const position = Float32Array.from([1, 2]);
+    const out = positionAtBoxCenter(
+      position,
+      Int32Array.from([0, 1, -1]),
+      lo,
+      hi,
+    );
+    expect(Array.from(out)).toEqual([25, 40]);
   });
 });

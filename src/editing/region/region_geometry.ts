@@ -51,6 +51,28 @@ export function buildUnitBoxEdgeVertices(): Float32Array {
 }
 
 /**
+ * Returns a copy of `position` (full-rank global coordinates) with the
+ * display-dimension coordinates set to the center of the box `[lo, hi]`.
+ * Box axis `i` corresponds to global dimension `displayDimensionIndices[i]`;
+ * indices of `-1` (unused display dimensions) are skipped, and non-display
+ * coordinates (e.g. `t`) are left untouched.
+ */
+export function positionAtBoxCenter(
+  position: Float32Array,
+  displayDimensionIndices: Int32Array,
+  lo: ArrayLike<number>,
+  hi: ArrayLike<number>,
+): Float32Array {
+  const out = Float32Array.from(position);
+  for (let i = 0; i < 3; ++i) {
+    const dim = displayDimensionIndices[i];
+    if (dim === undefined || dim < 0 || dim >= out.length) continue;
+    out[dim] = (lo[i] + hi[i]) / 2;
+  }
+  return out;
+}
+
+/**
  * Whether the plane `dot(planeNormal, p) == planeDistance` intersects the
  * axis-aligned box `[lo, hi]`. Computed from the min/max of the corner
  * projections accumulated per axis (no corner enumeration). The epsilon

@@ -15,6 +15,7 @@ import type { EditSession } from "@zettaai/edit-session";
 import type { LucideIcon } from "lucide-preact";
 import {
   Eraser,
+  LocateFixed,
   MousePointer2,
   PaintBucket,
   Paintbrush,
@@ -196,6 +197,12 @@ function ActiveTopbarControls({
     void saveTracker.startSave(host, session);
   }, [saveTracker, host, session]);
 
+  const teleportToRegion = useCallback(() => {
+    if (!host.teleportToActiveRegionCenter()) {
+      StatusMessage.showTemporaryMessage("No active edit region", 3000);
+    }
+  }, [host]);
+
   const cancelSave = useCallback(() => {
     saveTracker.cancel(host);
   }, [saveTracker, host]);
@@ -271,6 +278,24 @@ function ActiveTopbarControls({
             </button>
           );
         })}
+      </div>
+
+      <div class="neuroglancer-editing-topbar-divider" />
+
+      <div
+        class="neuroglancer-editing-topbar-group"
+        role="toolbar"
+        aria-label="View"
+      >
+        <button
+          type="button"
+          class="neuroglancer-editing-topbar-icon-button"
+          aria-label="Center view on edit region"
+          data-tooltip="Center view on edit region"
+          onClick={teleportToRegion}
+        >
+          <LocateFixed size={TOOL_ICON_SIZE} aria-hidden="true" />
+        </button>
       </div>
 
       <div class="neuroglancer-editing-topbar-divider" />
