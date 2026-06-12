@@ -34,8 +34,8 @@ import type {
 } from "#src/editing/edit_session_host.js";
 import { useModalDialog } from "#src/editing/ui/interop/use_modal_dialog.js";
 import { useSignal } from "#src/editing/ui/interop/use_signal.js";
-import type { LayerKind } from "#src/editing/ui/layer_kind.js";
-import { layerKindOf } from "#src/editing/ui/layer_kind.js";
+import type { BlockedScheme, LayerKind } from "#src/editing/ui/layer_kind.js";
+import { blockedSchemeOf, layerKindOf } from "#src/editing/ui/layer_kind.js";
 import type { BboxAnnotationSelection } from "#src/editing/ui/session_entry/bbox_candidates.js";
 import { BboxSelectionModel } from "#src/editing/ui/session_entry/bbox_candidates.js";
 import { BboxPicker } from "#src/editing/ui/session_entry/bbox_picker.js";
@@ -140,6 +140,11 @@ interface LayerEntry {
   readonly name: string;
   readonly kind: LayerKind;
   readonly visible: boolean;
+  /**
+   * Set when the layer's data source scheme blocks it from the session
+   * (TM-312: `calcada://` / `graphene://`). Such layers may only be Off.
+   */
+  readonly blockedScheme: BlockedScheme | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -234,10 +239,17 @@ function SessionEntryModalBody(props: {
       const next = new Map<string, LayerRowState>();
       for (const entry of layerEntries) {
         const existing = prev.get(entry.name);
-        if (existing !== undefined) {
-          next.set(entry.name, existing);
-        } else {
+        if (existing === undefined) {
           next.set(entry.name, defaultStateFor(entry));
+        } else if (
+          entry.blockedScheme !== undefined &&
+          existing.role !== "off"
+        ) {
+          // A blocked layer can never hold a role — clamp stale state (e.g.
+          // the layer's data sources changed while the modal was open).
+          next.set(entry.name, { ...existing, role: "off" });
+        } else {
+          next.set(entry.name, existing);
         }
       }
       for (const [name] of resolutionModelsRef.current) {
@@ -408,6 +420,12 @@ function SessionEntryModalBody(props: {
     for (const entry of layerEntries) {
       const state = layerStates.get(entry.name);
       if (state === undefined || state.role === "off") continue;
+      if (entry.blockedScheme !== undefined) {
+        setError(
+          `Layer ${entry.name} (${entry.blockedScheme}://) can't be used in an edit session — set it to Off.`,
+        );
+        return;
+      }
       if (state.loadError !== undefined) {
         setError(`Layer ${entry.name} is unavailable: ${state.loadError}`);
         return;
@@ -543,6 +561,7 @@ function SessionEntryModalBody(props: {
                         key={entry.name}
                         name={entry.name}
                         layerKind={entry.kind}
+                        blockedScheme={entry.blockedScheme}
                         state={state}
                         resolutionModel={resolutionModelsRef.current.get(
                           entry.name,
@@ -819,9 +838,11 @@ function formatBytes(bytes: number): string {
 
 function defaultRoleFor(entry: LayerEntry): LayerRole {
   // Spec:
+  //   - blocked data source scheme (calcada://, graphene://) → Off
   //   - image → Reference
   //   - visible segmentation → Editable
   //   - hidden layer → Off
+  if (entry.blockedScheme !== undefined) return "off";
   if (!entry.visible) return "off";
   if (entry.kind === "segmentation") return "editable";
   return "reference";
@@ -846,6 +867,7 @@ function collectLayerEntries(layerManager: LayerManager): LayerEntry[] {
       name: managed.name,
       kind,
       visible: managed.visible,
+      blockedScheme: blockedSchemeOf(managed),
     });
   }
   return entries;

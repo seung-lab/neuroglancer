@@ -12,7 +12,7 @@ import type { Resolution } from "@zettaai/edit-session";
 import { useRef } from "preact/hooks";
 
 import { useSignal } from "#src/editing/ui/interop/use_signal.js";
-import type { LayerKind } from "#src/editing/ui/layer_kind.js";
+import type { BlockedScheme, LayerKind } from "#src/editing/ui/layer_kind.js";
 import type { ResolutionSelectionModel } from "#src/editing/ui/session_entry/resolution_options.js";
 import { ResolutionPicker } from "#src/editing/ui/session_entry/resolution_picker.js";
 
@@ -55,6 +55,19 @@ export const ROLE_TOOLTIP: Record<LayerRole, string> = {
 export const EDITABLE_DISABLED_TOOLTIP =
   "Image layers can't be edited — choose Off or Reference.";
 
+const BLOCKED_SCHEME_LABEL: Record<BlockedScheme, string> = {
+  calcada: "Calcada",
+  graphene: "Graphene",
+};
+
+/**
+ * Tooltip shown on the `Reference`/`Editable` segments when the layer's data
+ * source scheme blocks it from the session entirely (TM-312).
+ */
+export function blockedSchemeTooltip(scheme: BlockedScheme): string {
+  return `${BLOCKED_SCHEME_LABEL[scheme]} layers can't be used in an edit session — only Off is available.`;
+}
+
 const LAYER_KIND_LABEL: Record<LayerKind, string> = {
   image: "IMG",
   segmentation: "SEG",
@@ -63,12 +76,14 @@ const LAYER_KIND_LABEL: Record<LayerKind, string> = {
 export function LayerRow({
   name,
   layerKind,
+  blockedScheme,
   state,
   resolutionModel,
   onRoleChange,
 }: {
   name: string;
   layerKind: LayerKind;
+  blockedScheme: BlockedScheme | undefined;
   state: LayerRowState;
   resolutionModel: ResolutionSelectionModel | undefined;
   onRoleChange: (role: LayerRole) => void;
@@ -141,6 +156,7 @@ export function LayerRow({
       <RoleControl
         role={state.role}
         layerKind={layerKind}
+        blockedScheme={blockedScheme}
         onChange={onRoleChange}
       />
     </div>
@@ -157,27 +173,34 @@ interface RoleSegmentSpec {
 function RoleControl({
   role,
   layerKind,
+  blockedScheme,
   onChange,
 }: {
   role: LayerRole;
   layerKind: LayerKind;
+  blockedScheme: BlockedScheme | undefined;
   onChange: (role: LayerRole) => void;
 }) {
-  const editableDisabled = layerKind === "image";
+  const blockedTooltip =
+    blockedScheme === undefined
+      ? undefined
+      : blockedSchemeTooltip(blockedScheme);
+  const editableDisabled =
+    blockedTooltip !== undefined || layerKind === "image";
   const segments: readonly RoleSegmentSpec[] = [
     { value: "off", label: "Off", tooltip: ROLE_TOOLTIP.off, disabled: false },
     {
       value: "reference",
       label: "Reference",
-      tooltip: ROLE_TOOLTIP.reference,
-      disabled: false,
+      tooltip: blockedTooltip ?? ROLE_TOOLTIP.reference,
+      disabled: blockedTooltip !== undefined,
     },
     {
       value: "editable",
       label: "Editable",
-      tooltip: editableDisabled
-        ? EDITABLE_DISABLED_TOOLTIP
-        : ROLE_TOOLTIP.editable,
+      tooltip:
+        blockedTooltip ??
+        (editableDisabled ? EDITABLE_DISABLED_TOOLTIP : ROLE_TOOLTIP.editable),
       disabled: editableDisabled,
     },
   ];
