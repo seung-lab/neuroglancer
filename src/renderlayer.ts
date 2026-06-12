@@ -67,6 +67,14 @@ export function allRenderLayerRoles() {
 export class RenderLayer extends RefCounted {
   userLayer: UserLayer | undefined;
   role: RenderLayerRole = RenderLayerRole.DATA;
+  /**
+   * Layers with a higher priority draw later (on top). Panels stable-sort
+   * their visible layers by this value, so layers sharing a priority keep
+   * their relative order. Used by session-owned overlays (e.g. the edit
+   * region box) that must render above ordinary layers regardless of when
+   * those layers (re)create their render layers.
+   */
+  drawOrderPriority = 0;
   messages = new MessageList();
   layerChanged = new NullarySignal();
   redrawNeeded = new NullarySignal();
