@@ -90,6 +90,9 @@ import { PatchMirror } from "#src/editing/overlay/patch_mirror.js";
 import { PatchTextureCache } from "#src/editing/patch_texture_cache.js";
 import { PointerEventBridge } from "#src/editing/pointer_event_bridge.js";
 import { QuickRegionCapture } from "#src/editing/quick_region_capture.js";
+import { positionAtBoxCenter } from "#src/editing/region/region_geometry.js";
+import { EditRegionPerspectiveOverlay } from "#src/editing/region/region_perspective_overlay.js";
+import { EditRegionSliceOverlay } from "#src/editing/region/region_slice_overlay.js";
 import { EditSessionHotkeyBinder } from "#src/editing/session_hotkey_binder.js";
 import type { PatchedMaskProvider } from "#src/editing/shaders/patched_mask_provider.js";
 import { MorphologyClient } from "#src/editing/tool_runtimes/morphology_client.js";
@@ -514,6 +517,13 @@ export class EditSessionHost extends RefCounted {
   private detachSliceOverlay: (() => void) | undefined;
   private perspectiveOverlay: BrushCursorPerspectiveOverlay | undefined;
   private detachPerspectiveOverlay: (() => void) | undefined;
+  // Session-owned edit-region visuals (TM-302). Anchored to the same user
+  // layer as the cursor overlays and created/destroyed strictly together
+  // with them, so the cursor attach/reattach/teardown flow covers both.
+  private regionSliceOverlay: EditRegionSliceOverlay | undefined;
+  private detachRegionSliceOverlay: (() => void) | undefined;
+  private regionPerspectiveOverlay: EditRegionPerspectiveOverlay | undefined;
+  private detachRegionPerspectiveOverlay: (() => void) | undefined;
   /** First writable layer id — fallback anchor when no paint target resolves. */
   private cursorOverlayFallbackLayerId: LayerId | undefined;
   /** Layer the cursor overlays are currently anchored to (avoids redundant re-attach). */
@@ -685,6 +695,10 @@ export class EditSessionHost extends RefCounted {
       );
       this.hotkeyBinder = new EditSessionHotkeyBinder(this, this.viewer);
       this.attachCursorOverlays(config);
+      // Bring the user to the freshly opened session's region; entering a
+      // session whose bbox is elsewhere in the volume would otherwise leave
+      // them staring at unrelated (now hard-clipped) data.
+      this.teleportToActiveRegionCenter();
     } catch (err) {
       // If post-open wiring throws, attempt to terminate the session and
       // surface the error.
@@ -1176,6 +1190,30 @@ export class EditSessionHost extends RefCounted {
       this.editBboxByLayer.set(layerName, w);
     }
     return w;
+  }
+
+  /**
+   * Move the viewer's global position to the center of the active edit
+   * region. Only the display-dimension coordinates change; other global
+   * coordinates (e.g. `t`) are left untouched. Returns `false` when no
+   * session is active (no region to teleport to).
+   *
+   * Used by the topbar's "center on edit region" button and called
+   * automatically at the end of `openSession`.
+   */
+  teleportToActiveRegionCenter(): boolean {
+    const config = this.activeSessionConfig;
+    if (config === undefined) return false;
+    const region = this.computeActiveRegionSync(config);
+    if (region === undefined) return false;
+    const renderInfo = this.viewer.displayDimensionRenderInfo.value;
+    this.viewer.position.value = positionAtBoxCenter(
+      this.viewer.position.value,
+      renderInfo.displayDimensionIndices,
+      region.lo,
+      region.hi,
+    );
+    return true;
   }
 
   /**
@@ -1737,6 +1775,30 @@ export class EditSessionHost extends RefCounted {
     }
 
     this.detachCursorOverlayRenderLayers();
+    // Session-owned region visuals (TM-302): driven by the active-region
+    // watchable (display coords), so they track the shader hard-clip exactly
+    // and survive hiding/deleting the source annotation layer. The watchable
+    // flips to undefined on session teardown, at which point they draw
+    // nothing regardless of detach ordering. In slice views the overlays'
+    // `drawOrderPriority` keeps them above ordinary layers (annotations
+    // included) and the cursor above the region outline, no matter when
+    // other layers (re)create their render layers.
+    const regionWatchable =
+      this.getActiveRegionWatchableForLayer(resolvedLayerId);
+    this.regionSliceOverlay = new EditRegionSliceOverlay(
+      this.viewer.display.gl,
+      regionWatchable,
+    );
+    this.detachRegionSliceOverlay = userLayer.addRenderLayer(
+      this.regionSliceOverlay,
+    );
+    this.regionPerspectiveOverlay = new EditRegionPerspectiveOverlay(
+      this.viewer.display.gl,
+      regionWatchable,
+    );
+    this.detachRegionPerspectiveOverlay = userLayer.addRenderLayer(
+      this.regionPerspectiveOverlay,
+    );
     this.sliceOverlay = new BrushCursorSliceOverlay(
       this.viewer.display.gl,
       cursorState,
@@ -1752,8 +1814,29 @@ export class EditSessionHost extends RefCounted {
     this.attachedCursorLayerId = resolvedLayerId;
   }
 
-  /** Detach (and thereby dispose) the current cursor render-layer instances. */
+  /**
+   * Detach (and thereby dispose) the current cursor and region render-layer
+   * instances.
+   */
   private detachCursorOverlayRenderLayers(): void {
+    if (this.detachRegionPerspectiveOverlay !== undefined) {
+      try {
+        this.detachRegionPerspectiveOverlay();
+      } catch {
+        // ignore
+      }
+      this.detachRegionPerspectiveOverlay = undefined;
+    }
+    this.regionPerspectiveOverlay = undefined;
+    if (this.detachRegionSliceOverlay !== undefined) {
+      try {
+        this.detachRegionSliceOverlay();
+      } catch {
+        // ignore
+      }
+      this.detachRegionSliceOverlay = undefined;
+    }
+    this.regionSliceOverlay = undefined;
     if (this.detachPerspectiveOverlay !== undefined) {
       try {
         this.detachPerspectiveOverlay();
