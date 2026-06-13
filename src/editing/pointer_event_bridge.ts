@@ -90,6 +90,13 @@ interface ActiveStrokeState {
    */
   samples: VoxelPos[];
   /**
+   * True while an idle→dispatch drain is scheduled on the next animation frame
+   * (TM-317 fix 2): caps dispatch at the display refresh rate and collapses
+   * multiple `pointermove`s within a frame into a single coalesced segment,
+   * instead of one synchronous compute per delivered move.
+   */
+  drainScheduled: boolean;
+  /**
    * Deferred stroke finish (`pointer-up` / `pointer-cancel`), dispatched
    * after the sample buffer drains so the library records history AFTER
    * the last segment has applied. `event === undefined` ends the stroke
@@ -137,6 +144,11 @@ export class PointerEventBridge extends RefCounted {
    * object keeps draining its remaining buffer).
    */
   private activeStroke: ActiveStrokeState | undefined;
+  /**
+   * Pending `requestAnimationFrame` handles for idle→dispatch drains (one per
+   * stroke), tracked so disposal can cancel them. See `scheduleStrokeDrain`.
+   */
+  private readonly drainHandles = new Set<number>();
 
   constructor(
     private readonly host: EditSessionHost,
@@ -151,6 +163,8 @@ export class PointerEventBridge extends RefCounted {
 
   override disposed(): void {
     this.endActiveStroke();
+    for (const handle of this.drainHandles) cancelAnimationFrame(handle);
+    this.drainHandles.clear();
     for (const detach of this.attached.values()) {
       try {
         detach();
@@ -672,6 +686,7 @@ export class PointerEventBridge extends RefCounted {
       // until the previous stroke drains and the deferred down dispatches).
       inFlight: opts.downOp !== undefined || opts.gated === true,
       samples: [],
+      drainScheduled: false,
       finish: undefined,
       onDrained: [],
     };
@@ -750,6 +765,11 @@ export class PointerEventBridge extends RefCounted {
     }
     stroke.finish = { event };
     this.endActiveStroke();
+    // Flush now rather than waiting for the scheduled frame drain (TM-317
+    // fix 2), so the stroke commits deterministically on pointer-up: dispatch
+    // any buffered samples (their settle then drives the finish) or the finish
+    // directly. A pending frame drain, if any, no-ops once this has run.
+    if (!stroke.inFlight) this.drainStroke(stroke);
     if (cameraLocked) this.consume(ev);
     return true;
   }
@@ -816,7 +836,7 @@ export class PointerEventBridge extends RefCounted {
         this.voxelFromClient(ctx, e.clientX, e.clientY),
       );
     }
-    if (!stroke.inFlight) this.drainStroke(stroke);
+    if (!stroke.inFlight) this.scheduleStrokeDrain(stroke);
   }
 
   /**
@@ -830,7 +850,28 @@ export class PointerEventBridge extends RefCounted {
     const voxelPosition = this.resolveVoxelPosition();
     if (voxelPosition === undefined) return;
     this.pushStrokeSample(stroke, voxelPosition);
-    if (!stroke.inFlight) this.drainStroke(stroke);
+    if (!stroke.inFlight) this.scheduleStrokeDrain(stroke);
+  }
+
+  /**
+   * Coalesce idle→dispatch to one per animation frame (TM-317 fix 2). While a
+   * stroke is idle, accumulating samples schedule a single rAF drain rather
+   * than dispatching synchronously per `pointermove`; multiple moves in a frame
+   * then collapse into one coalesced segment, bounding main-thread compute to
+   * the refresh rate. Settle-driven drains stay immediate (see `drainStroke`
+   * callers), so a slow (worker) brush gains no extra latency. The handle is
+   * captured per stroke so a detached stroke still flushes; disposal cancels
+   * all pending handles.
+   */
+  private scheduleStrokeDrain(stroke: ActiveStrokeState): void {
+    if (stroke.drainScheduled) return;
+    stroke.drainScheduled = true;
+    const handle = requestAnimationFrame(() => {
+      this.drainHandles.delete(handle);
+      stroke.drainScheduled = false;
+      if (!stroke.inFlight) this.drainStroke(stroke);
+    });
+    this.drainHandles.add(handle);
   }
 
   /**
