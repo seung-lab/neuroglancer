@@ -23,6 +23,29 @@
 
 import type { vec3 } from "#src/util/geom.js";
 
+/** Chunk-local inclusive voxel box, used to bound partial GPU uploads. */
+export interface ChunkVoxelBox {
+  x0: number;
+  y0: number;
+  z0: number;
+  x1: number;
+  y1: number;
+  z1: number;
+}
+
+/**
+ * GPU upload obligation for a chunk. `box === null` means the WHOLE chunk
+ * must be (re)uploaded; otherwise only `box` is stale. `valueDone` /
+ * `maskDone` track which of the two textures (RG32UI value, R8UI mask) has
+ * already consumed this obligation — the box is released only when both
+ * have, so the visible mask and value always reflect the same snapshot.
+ */
+export interface PendingUpload {
+  box: ChunkVoxelBox | null;
+  valueDone: boolean;
+  maskDone: boolean;
+}
+
 export class LocalPatchChunk {
   data: BigUint64Array;
   /**
@@ -32,11 +55,53 @@ export class LocalPatchChunk {
    */
   patched: Uint8Array;
   dirty = true;
+  /**
+   * Outstanding GPU upload, or `null` when the textures are current.
+   * `PatchTextureCache` consumes this instead of re-uploading every chunk on
+   * a global generation bump: untouched chunks skip upload entirely, and
+   * touched chunks upload only their stale sub-box via `texSubImage3D`.
+   */
+  pendingUpload: PendingUpload | null = {
+    box: null,
+    valueDone: false,
+    maskDone: false,
+  };
 
   constructor(public readonly chunkDataSize: vec3) {
     const volume = chunkDataSize[0] * chunkDataSize[1] * chunkDataSize[2];
     this.data = new BigUint64Array(volume);
     this.patched = new Uint8Array(volume);
+  }
+
+  /** Require a full re-upload of both textures (e.g. whole-chunk replace). */
+  markFullUpload(): void {
+    this.pendingUpload = { box: null, valueDone: false, maskDone: false };
+  }
+
+  /**
+   * Union `box` into the outstanding upload obligation. Any new write
+   * invalidates prior partial consumption, so both done-flags reset.
+   */
+  mergePendingUpload(box: ChunkVoxelBox): void {
+    const pending = this.pendingUpload;
+    if (pending === null) {
+      this.pendingUpload = {
+        box: { ...box },
+        valueDone: false,
+        maskDone: false,
+      };
+      return;
+    }
+    pending.valueDone = false;
+    pending.maskDone = false;
+    if (pending.box === null) return; // already full — stays full
+    const b = pending.box;
+    if (box.x0 < b.x0) b.x0 = box.x0;
+    if (box.y0 < b.y0) b.y0 = box.y0;
+    if (box.z0 < b.z0) b.z0 = box.z0;
+    if (box.x1 > b.x1) b.x1 = box.x1;
+    if (box.y1 > b.y1) b.y1 = box.y1;
+    if (box.z1 > b.z1) b.z1 = box.z1;
   }
 
   private flatIndex(x: number, y: number, z: number): number {
@@ -56,6 +121,7 @@ export class LocalPatchChunk {
     this.data[idx] = value;
     this.patched[idx] = 1;
     this.dirty = true;
+    this.mergePendingUpload({ x0: x, y0: y, z0: z, x1: x, y1: y, z1: z });
     return true;
   }
 
