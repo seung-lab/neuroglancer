@@ -224,7 +224,7 @@ describe("ConsumerPaintingTools — stroke lifecycle (TM-315)", () => {
     expect(log.metas[0]).toMatchObject({
       description: "Brush stroke",
       tag: "painting.brush",
-      redo: { kind: "image" },
+      redo: { kind: "replay" }, // unmasked brush is deterministic (TM-319)
     });
     expect(log.records).toBe(1);
     expect(log.discards).toBe(0);
@@ -267,6 +267,94 @@ describe("ConsumerPaintingTools — stroke lifecycle (TM-315)", () => {
         expect(via[i][0] - via[i - 1][0]).toBeCloseTo(1, 5);
       }
     }
+  });
+
+  it("unmasked brush and eraser use replay redo; masked brush uses image (TM-319)", async () => {
+    const { tools, log } = setup();
+
+    await tools.brush.handleInput(down(0, 0, 0));
+    await tools.brush.handleInput(up(0, 0, 0));
+    expect(log.metas.at(-1)!.redo?.kind).toBe("replay");
+
+    await tools.erase.handleInput(down(1, 1, 1));
+    await tools.erase.handleInput(up(1, 1, 1));
+    expect(log.metas.at(-1)!.redo?.kind).toBe("replay");
+
+    tools.state.patchState({
+      mask: {
+        imageLayerId: layerId("img"),
+        imageResolution: RES,
+        thresholdLow: 1,
+        thresholdHigh: 255,
+        minComponentSize: 0,
+        binaryClosing: 0,
+        filterComponentsFirst: false,
+      },
+    });
+    await tools.brush.handleInput(down(2, 2, 2));
+    await tools.brush.handleInput(up(2, 2, 2));
+    // Masked morphology is not decomposable across batches → keep image redo.
+    expect(log.metas.at(-1)!.redo?.kind).toBe("image");
+  });
+
+  it("reapply re-issues the exact recorded paint operations (TM-319)", async () => {
+    const { tools, log, calls } = setup();
+    await tools.brush.handleInput(down(0, 0, 0));
+    await tools.brush.handleInput(
+      move(9, 0, 0, [
+        [3, 0, 0],
+        [6, 0, 0],
+      ]),
+    );
+    await tools.brush.handleInput(up(9, 0, 0));
+
+    // Snapshot the live ops (the down stamp + each painted segment).
+    const liveStamp = calls.applyBrush.map((b) => b.voxelPosition);
+    const liveStrokes = calls.applyBrushStroke.map((s) => ({
+      from: s.from,
+      to: s.to,
+      via: s.via,
+    }));
+    expect(liveStamp).toHaveLength(1);
+    expect(liveStrokes.length).toBeGreaterThanOrEqual(1);
+
+    const redo = log.metas[0]!.redo!;
+    expect(redo.kind).toBe("replay");
+
+    // Re-run the replay against a fresh edit and capture what it issues.
+    calls.applyBrush.length = 0;
+    calls.applyBrushStroke.length = 0;
+    const replayEdit: Edit = {
+      readChunk: async () =>
+        ({
+          byteLength: 0,
+          asView: () => new Uint32Array(0),
+        }) as ReadonlyChunkVoxelBuffer,
+      beginWrite: async () => {
+        throw new Error("not used");
+      },
+      commitWrites: () => {},
+      writeRegion: async () => {},
+      readRegion: async () => {
+        throw new Error("not used");
+      },
+      sessionVoxelBoundsFor: () => undefined,
+      withBatch: <R>(fn: () => R): R => fn(),
+      record: () => true,
+      discard: async () => {},
+    };
+    if (redo.kind === "replay") await redo.reapply(replayEdit);
+
+    // Replay issues the identical down stamp and identical stroke segments, in
+    // order — the basis for byte-for-byte redo (unmasked writes are absolute).
+    expect(calls.applyBrush.map((b) => b.voxelPosition)).toEqual(liveStamp);
+    expect(
+      calls.applyBrushStroke.map((s) => ({
+        from: s.from,
+        to: s.to,
+        via: s.via,
+      })),
+    ).toEqual(liveStrokes);
   });
 
   it("pointer-cancel discards the edit (no record)", async () => {

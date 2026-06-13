@@ -156,6 +156,30 @@ function validateTargetBinding(deps: PaintingToolDeps): BindingValidation {
 }
 
 /**
+ * Everything needed to deterministically re-apply a stroke for replay-based
+ * redo (TM-319). Instead of an after-image, the history entry stores the exact
+ * paint operations the stroke performed: the pointer-down stamp plus each
+ * painted segment polyline (the `path`s handed to `paintStrokePath`). Because
+ * unmasked brush/erase writes are *absolute* (set-value, no read of prior
+ * content), replaying these same calls on the post-undo baseline reproduces the
+ * stroke byte-for-byte — including the provisional head-stamp residue, which a
+ * `canonical()`-only replay would miss. Masked strokes do not use this (their
+ * morphology is not decomposable across batches); they keep `image` redo.
+ */
+interface StrokeReplay {
+  /** Brush state snapshot at pointer-down (immutable; `patchState` replaces it). */
+  readonly shared: PaintingSharedState;
+  readonly metadata: LayerMetadata;
+  readonly value: number | bigint;
+  /** The pointer-down stamp position (mirrors the live `applyBrush`). */
+  readonly initialPoint: readonly [number, number, number];
+  /** Each painted segment's polyline, in the order it was applied. */
+  readonly segments: (readonly (readonly [number, number, number])[])[];
+  /** Spacing passed through to `applyBrushStroke` (no effect on output today). */
+  spacingVoxels: number;
+}
+
+/**
  * Brush / Erase. Both run the identical stroke flow; only the written value
  * (active vs erase) and the history label/tag differ. One stroke is one
  * `Edit`: pointer-down opens it, each move writes into it, pointer-up records
@@ -179,6 +203,13 @@ export class StrokeTool implements EditTool {
    * legacy raw-polyline path.
    */
   private geometry: StrokeGeometry | null = null;
+  /**
+   * Replay record for the current stroke (TM-319), or null when this stroke
+   * uses `image` redo (masked brush, or the 1-voxel brush). Mutated as segments
+   * are painted; the `reapply` closure captured at pointer-down holds the same
+   * reference, so it sees the finalized record after commit.
+   */
+  private activeReplay: StrokeReplay | null = null;
 
   constructor(
     private readonly deps: PaintingToolDeps,
@@ -215,6 +246,7 @@ export class StrokeTool implements EditTool {
     }
     this.lastVoxel = null;
     this.geometry = null;
+    this.activeReplay = null;
   }
 
   /**
@@ -259,6 +291,58 @@ export class StrokeTool implements EditTool {
     await edit.withBatch(() => applyPaintBatch(edit, batch, chunkSize));
   }
 
+  /**
+   * Deterministically re-apply a stroke for replay-based redo (TM-319). The
+   * library calls this with a fresh edit on the post-undo baseline; we re-issue
+   * the exact same paint operations the stroke performed (the pointer-down stamp
+   * then each painted segment). Must NOT call `record()` / `discard()` — the
+   * journal owns the stack. Only ever set for unmasked strokes, so no mask
+   * config is threaded.
+   */
+  private async replayStroke(edit: Edit, replay: StrokeReplay): Promise<void> {
+    const { shared, metadata, value, initialPoint, segments, spacingVoxels } =
+      replay;
+    const readChunk = (chunkId: ChunkId) =>
+      edit.readChunk({
+        layerId: shared.targetLayerId,
+        resolution: shared.targetResolution,
+        chunkId,
+      });
+    const batch = await this.deps.compute.applyBrush({
+      targetLayerId: shared.targetLayerId,
+      targetResolution: shared.targetResolution,
+      metadata,
+      voxelPosition: initialPoint,
+      radius: shared.radius,
+      value,
+      readChunk,
+      readChunkAt: this.deps.readChunkAt,
+    });
+    const chunkSize = scaleFor(metadata, shared.targetResolution).chunkDataSize;
+    await edit.withBatch(() => applyPaintBatch(edit, batch, chunkSize));
+    for (const path of segments) {
+      await this.paintStrokePath(
+        edit,
+        path,
+        shared,
+        metadata,
+        value,
+        {},
+        this.deps.readChunkAt,
+        spacingVoxels,
+      );
+    }
+  }
+
+  /** Record a painted segment for replay-based redo (no-op unless replaying). */
+  private recordReplaySegment(
+    path: readonly (readonly [number, number, number])[],
+  ): void {
+    if (this.activeReplay !== null && path.length >= 2) {
+      this.activeReplay.segments.push(path);
+    }
+  }
+
   async handleInput(ev: ToolInputEvent): Promise<InputHandling> {
     const shared = this.deps.state.getState();
     const metadata = this.deps.metadataByLayer.get(shared.targetLayerId);
@@ -287,22 +371,44 @@ export class StrokeTool implements EditTool {
     const readChunkAt = this.deps.readChunkAt;
 
     if (ev.kind === "pointer-down" && ev.button === "primary") {
-      const handle = this.deps.scope.beginInteraction({
-        description: this.preset.description,
-        tag: this.preset.tag,
-        redo: { kind: "image" },
-      });
-      this.handle = handle;
-      const edit = handle.edit;
       const pos: readonly [number, number, number] = [
         ev.voxelPosition[0],
         ev.voxelPosition[1],
         ev.voxelPosition[2],
       ];
-      this.lastVoxel = pos;
       // Distance-resampled geometry (TM-318) drives real-radius strokes; the
       // 1-voxel brush keeps the legacy raw-polyline path (geometry === null).
       const r = Math.floor(shared.radius);
+      // Replay-based redo (TM-319) for deterministic strokes: unmasked brush /
+      // eraser write absolute values, so re-issuing their paint ops reproduces
+      // the result with no after-image. Masked strokes (non-decomposable
+      // morphology) and the legacy 1-voxel path keep `image` redo.
+      const replay: StrokeReplay | null =
+        !useMask && r >= 1
+          ? {
+              shared,
+              metadata,
+              value,
+              initialPoint: pos,
+              segments: [],
+              spacingVoxels: 0,
+            }
+          : null;
+      const handle = this.deps.scope.beginInteraction({
+        description: this.preset.description,
+        tag: this.preset.tag,
+        redo:
+          replay !== null
+            ? {
+                kind: "replay",
+                reapply: (edit) => this.replayStroke(edit, replay),
+              }
+            : { kind: "image" },
+      });
+      this.handle = handle;
+      this.activeReplay = replay;
+      const edit = handle.edit;
+      this.lastVoxel = pos;
       this.geometry =
         r >= 1
           ? new StrokeGeometry({
@@ -311,6 +417,9 @@ export class StrokeTool implements EditTool {
             })
           : null;
       this.geometry?.pushSamples([pos]);
+      if (replay !== null && this.geometry !== null) {
+        replay.spacingVoxels = this.geometry.spacingVoxels;
+      }
       const readChunk = (chunkId: ChunkId) =>
         edit.readChunk({
           layerId: shared.targetLayerId,
@@ -360,6 +469,7 @@ export class StrokeTool implements EditTool {
         if (stamps.length > 0) {
           this.lastVoxel = stamps[stamps.length - 1];
         }
+        this.recordReplaySegment(path);
         await this.paintStrokePath(
           edit,
           path,
@@ -394,9 +504,11 @@ export class StrokeTool implements EditTool {
       if (this.geometry !== null && this.lastVoxel !== null) {
         const stamps = this.geometry.finish();
         if (stamps.length > 0) {
+          const path = [this.lastVoxel, ...stamps];
+          this.recordReplaySegment(path);
           await this.paintStrokePath(
             this.handle.edit,
-            [this.lastVoxel, ...stamps],
+            path,
             shared,
             metadata,
             value,
@@ -410,6 +522,7 @@ export class StrokeTool implements EditTool {
       this.handle = null;
       this.lastVoxel = null;
       this.geometry = null;
+      this.activeReplay = null;
       return { consumed: true };
     }
 
@@ -418,6 +531,7 @@ export class StrokeTool implements EditTool {
       this.handle = null;
       this.lastVoxel = null;
       this.geometry = null;
+      this.activeReplay = null;
       await handle.cancel();
       return { consumed: true };
     }
