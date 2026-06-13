@@ -14,7 +14,10 @@ import type { DisplayContext, RenderedPanel } from "#src/display_context.js";
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { globalToTargetVoxel } from "#src/editing/raster/global_voxel_conversion.js";
 import type { SliceProjectionInfo } from "#src/editing/raster/slice_pixel_to_voxel.js";
-import { slicePixelToTargetVoxel } from "#src/editing/raster/slice_pixel_to_voxel.js";
+import {
+  slicePixelToGlobalPosition,
+  slicePixelToTargetVoxel,
+} from "#src/editing/raster/slice_pixel_to_voxel.js";
 import { paintProfiler } from "#src/editing/tool_runtimes/paint_profiler.js";
 import type {
   InputHandling,
@@ -27,6 +30,7 @@ import { NO_MODIFIERS } from "#src/editing/tool_runtimes/tool_input.js";
 import { RenderedDataPanel } from "#src/rendered_data_panel.js";
 import { SliceViewPanel } from "#src/sliceview/panel.js";
 import { RefCounted } from "#src/util/disposable.js";
+import { vec3 } from "#src/util/geom.js";
 
 type PointerKind =
   | "pointer-down"
@@ -245,6 +249,9 @@ export class PointerEventBridge extends RefCounted {
       }
     };
     const onPointerMove = (ev: PointerEvent) => {
+      // Keep the brush cursor on the pointer synchronously (TM-325): paint
+      // input no longer waits for the pick pass, so the cursor must not either.
+      this.updateSliceCursorCenter(panel, ev);
       // A slice stroke is driven directly from `pointermove`: convert every
       // coalesced sample synchronously and feed the sample buffer (TM-320).
       // Other cases fall through to the standard dispatch (which skips
@@ -645,6 +652,39 @@ export class PointerEventBridge extends RefCounted {
       clientY - ctx.originTop,
       ctx.globalScaleNm,
       ctx.voxelSize,
+    );
+  }
+
+  /**
+   * Feed the brush cursor a synchronous global center (TM-325) so it tracks the
+   * pointer as tightly as the pick-independent paint does. Set on every slice
+   * paint `pointermove` (hover or active stroke); cleared otherwise so the
+   * cursor falls back to the pick-driven `mouseState` (perspective panels,
+   * non-paint tools).
+   */
+  private updateSliceCursorCenter(
+    panel: RenderedDataPanel,
+    ev: PointerEvent,
+  ): void {
+    const cursor = this.host.brushCursor;
+    if (cursor === undefined) return;
+    if (!(panel instanceof SliceViewPanel) || !this.isActiveToolPaintLike()) {
+      cursor.setSliceCenterOverride(undefined);
+      return;
+    }
+    const ctx = this.sliceContext(panel);
+    if (ctx === undefined) {
+      cursor.setSliceCenterOverride(undefined);
+      return;
+    }
+    const global = slicePixelToGlobalPosition(
+      ctx.proj,
+      ctx.navPosition,
+      ev.clientX - ctx.originLeft,
+      ev.clientY - ctx.originTop,
+    );
+    cursor.setSliceCenterOverride(
+      vec3.fromValues(global[0], global[1], global[2]),
     );
   }
 

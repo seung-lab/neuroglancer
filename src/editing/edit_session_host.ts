@@ -587,6 +587,10 @@ export class EditSessionHost extends RefCounted {
   private pointerEventBridge: PointerEventBridge | undefined;
   private hotkeyBinder: EditSessionHotkeyBinder | undefined;
   private cursorState: BrushCursorState | undefined;
+  /** Shared brush-cursor state, for the pointer bridge to feed synchronous centers (TM-325). */
+  get brushCursor(): BrushCursorState | undefined {
+    return this.cursorState;
+  }
   private sliceOverlay: BrushCursorSliceOverlay | undefined;
   private detachSliceOverlay: (() => void) | undefined;
   private perspectiveOverlay: BrushCursorPerspectiveOverlay | undefined;
