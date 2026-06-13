@@ -40,6 +40,50 @@ export interface MorphologyRequest {
    * Matches `MorphologyPipelineInput.filterComponentsFirst`.
    */
   readonly filterComponentsFirst: boolean;
+  /**
+   * `Date.now()` on the client at dispatch. `Date.now()` is the one clock
+   * shared by both threads (`performance.now()` origins differ), so the
+   * handler can measure how long the request sat in transit + the worker's
+   * event loop. Millisecond precision — diagnostics only.
+   */
+  readonly postedAtEpochMs?: number;
+}
+
+/**
+ * Per-call phase timings measured INSIDE the worker (python `perf_counter` +
+ * worker-JS `performance.now`). Unlike the main-thread profiler's awaited
+ * buckets these cannot include main-thread scheduling or RPC queueing, so
+ * they split the true per-call cost into marshalling vs scipy compute.
+ */
+export interface MorphologyTimings {
+  /** JS→python buffer copy + numpy array construction (`to_py`/`frombuffer`). */
+  readonly marshalInMs: number;
+  /** scipy `binary_closing`. 0 when closing is disabled. */
+  readonly closingMs: number;
+  /** scipy `label` + size filter. 0 when min-component-size is disabled. */
+  readonly componentsMs: number;
+  /** Result `astype(uint8).tobytes()`. */
+  readonly marshalOutMs: number;
+  /** Whole pyodide call as seen from worker JS (includes JS↔py bridging). */
+  readonly workerCallMs: number;
+  /**
+   * PyProxy(bytes) → Uint8Array conversion in worker JS (`toJs()` memcpy +
+   * `destroy()`). Kept visible so a conversion regression can't hide in the
+   * request/response gap again.
+   */
+  readonly convertOutMs: number;
+  /**
+   * Handler entry `Date.now()` minus `MorphologyRequest.postedAtEpochMs`:
+   * message transit + time queued in the worker's event loop. Absent when
+   * the request carried no timestamp.
+   */
+  readonly requestQueueMs?: number;
+  /**
+   * Time this call spent awaiting the pyodide boot promise. ~0 on a warm
+   * worker; multi-second after a (re)boot — e.g. the post-heap-pressure
+   * reinit — which otherwise masquerades as queue time.
+   */
+  readonly bootWaitMs: number;
 }
 
 export interface MorphologyResponse {
@@ -51,4 +95,13 @@ export interface MorphologyResponse {
    * (memory-pressure reinit, ported from the old `pyodide.bridge.ts`).
    */
   readonly heapPressure: boolean;
+  /** Absent only if the worker failed to collect timings (defensive). */
+  readonly timings?: MorphologyTimings;
+  /**
+   * `Date.now()` on the worker just before posting this response. The client
+   * subtracts it from its own `Date.now()` at receipt to measure how long
+   * the response sat waiting for the MAIN thread's event loop — the
+   * decisive split between "worker was slow" and "main thread was busy".
+   */
+  readonly respondedAtEpochMs?: number;
 }
