@@ -29,6 +29,7 @@
 
 import type {
   ChunkId,
+  Edit,
   LayerId,
   LayerMetadata,
   ReadonlyChunkVoxelBuffer,
@@ -41,6 +42,7 @@ import type {
   PaintCompute,
   PaintingMaskConfig,
 } from "#src/editing/tool_runtimes/paint_types.js";
+import { StrokeGeometry } from "#src/editing/tool_runtimes/stroke_geometry.js";
 import type {
   InputHandling,
   ToolInputEvent,
@@ -72,6 +74,13 @@ export interface PaintingSharedState {
   readonly activeValue: number | bigint;
   readonly eraseValue: number | bigint;
   readonly mask: PaintingMaskConfig | undefined;
+  /**
+   * Stamp spacing as a fraction of brush diameter for distance-based stroke
+   * resampling (TM-318). See `StrokeGeometry`; defaults to
+   * `DEFAULT_SPACING_FRACTION`. No UI yet — plumbed so behavior is deterministic
+   * and tunable.
+   */
+  readonly spacingFraction: number;
 }
 
 /**
@@ -157,7 +166,19 @@ export class StrokeTool implements EditTool {
   readonly description: string;
   readonly interactionPolicy: InteractionPolicyKind = "stroke";
   private handle: InteractionHandle | null = null;
+  /**
+   * The last point the stroke painted up to — the `from` for the next segment.
+   * Under distance resampling (`geometry !== null`) this advances only to
+   * canonical stamps, never to the provisional head, so the head segment is
+   * re-drawn cleanly each batch.
+   */
   private lastVoxel: readonly [number, number, number] | null = null;
+  /**
+   * Deterministic stroke geometry for the current stroke (TM-318). Non-null for
+   * real-radius (`r >= 1`) strokes; null for the 1-voxel brush, which keeps the
+   * legacy raw-polyline path.
+   */
+  private geometry: StrokeGeometry | null = null;
 
   constructor(
     private readonly deps: PaintingToolDeps,
@@ -193,6 +214,49 @@ export class StrokeTool implements EditTool {
       void handle.cancel();
     }
     this.lastVoxel = null;
+    this.geometry = null;
+  }
+
+  /**
+   * Rasterize a polyline path (≥2 points) into the live edit as one coalesced
+   * stroke segment, reusing the compute's capsule/polyline-union kernel. Shared
+   * by the move and pointer-up flows. A path with fewer than two points is a
+   * no-op (the start was already stamped on pointer-down).
+   */
+  private async paintStrokePath(
+    edit: Edit,
+    path: readonly (readonly [number, number, number])[],
+    shared: PaintingSharedState,
+    metadata: LayerMetadata,
+    value: number | bigint,
+    maskFields: { mask?: PaintingMaskConfig; maskMetadata?: LayerMetadata },
+    readChunkAt: ReadChunkAt,
+    stepVoxels: number,
+  ): Promise<void> {
+    if (path.length < 2) return;
+    const readChunk = (chunkId: ChunkId) =>
+      edit.readChunk({
+        layerId: shared.targetLayerId,
+        resolution: shared.targetResolution,
+        chunkId,
+      });
+    const via = path.slice(1, -1);
+    const batch = await this.deps.compute.applyBrushStroke({
+      targetLayerId: shared.targetLayerId,
+      targetResolution: shared.targetResolution,
+      metadata,
+      from: path[0],
+      to: path[path.length - 1],
+      ...(via.length > 0 ? { via } : {}),
+      stepVoxels,
+      radius: shared.radius,
+      value,
+      ...maskFields,
+      readChunk,
+      readChunkAt,
+    });
+    const chunkSize = scaleFor(metadata, shared.targetResolution).chunkDataSize;
+    await edit.withBatch(() => applyPaintBatch(edit, batch, chunkSize));
   }
 
   async handleInput(ev: ToolInputEvent): Promise<InputHandling> {
@@ -236,6 +300,17 @@ export class StrokeTool implements EditTool {
         ev.voxelPosition[2],
       ];
       this.lastVoxel = pos;
+      // Distance-resampled geometry (TM-318) drives real-radius strokes; the
+      // 1-voxel brush keeps the legacy raw-polyline path (geometry === null).
+      const r = Math.floor(shared.radius);
+      this.geometry =
+        r >= 1
+          ? new StrokeGeometry({
+              diameterVoxels: 2 * r + 1,
+              spacingFraction: shared.spacingFraction,
+            })
+          : null;
+      this.geometry?.pushSamples([pos]);
       const readChunk = (chunkId: ChunkId) =>
         edit.readChunk({
           layerId: shared.targetLayerId,
@@ -267,46 +342,74 @@ export class StrokeTool implements EditTool {
       this.lastVoxel !== null
     ) {
       const edit = this.handle.edit;
-      const from = this.lastVoxel;
-      const to: readonly [number, number, number] = [
+      const cursor: readonly [number, number, number] = [
         ev.voxelPosition[0],
         ev.voxelPosition[1],
         ev.voxelPosition[2],
       ];
-      this.lastVoxel = to;
-      const via = ev.viaVoxelPositions;
-      const readChunk = (chunkId: ChunkId) =>
-        edit.readChunk({
-          layerId: shared.targetLayerId,
-          resolution: shared.targetResolution,
-          chunkId,
-        });
-      const batch = await this.deps.compute.applyBrushStroke({
-        targetLayerId: shared.targetLayerId,
-        targetResolution: shared.targetResolution,
-        metadata,
-        from,
-        to,
-        ...(via !== undefined && via.length > 0 ? { via } : {}),
-        stepVoxels: 1,
-        radius: shared.radius,
-        value,
-        ...maskFields,
-        readChunk,
-        readChunkAt,
-      });
-      const chunkSize = scaleFor(
-        metadata,
-        shared.targetResolution,
-      ).chunkDataSize;
-      await edit.withBatch(() => applyPaintBatch(edit, batch, chunkSize));
+      if (this.geometry !== null) {
+        // Feed the raw delivered samples (coalesced waypoints + cursor) to the
+        // geometry, then paint tail → canonical stamps → live cursor. The
+        // trailing segment to the cursor is the provisional head stamp; it is
+        // re-drawn from the last canonical stamp next batch (idempotent under
+        // the overlay's overwrite semantics), so it never double-paints.
+        const samples = [...(ev.viaVoxelPositions ?? []), cursor];
+        this.geometry.pushSamples(samples);
+        const stamps = this.geometry.drain();
+        const path = [this.lastVoxel, ...stamps, cursor];
+        if (stamps.length > 0) {
+          this.lastVoxel = stamps[stamps.length - 1];
+        }
+        await this.paintStrokePath(
+          edit,
+          path,
+          shared,
+          metadata,
+          value,
+          maskFields,
+          readChunkAt,
+          this.geometry.spacingVoxels,
+        );
+      } else {
+        // Legacy 1-voxel brush: rasterize the raw delivered polyline as-is.
+        const path = [this.lastVoxel, ...(ev.viaVoxelPositions ?? []), cursor];
+        this.lastVoxel = cursor;
+        await this.paintStrokePath(
+          edit,
+          path,
+          shared,
+          metadata,
+          value,
+          maskFields,
+          readChunkAt,
+          1,
+        );
+      }
       return { consumed: true };
     }
 
     if (ev.kind === "pointer-up" && this.handle !== null) {
+      // Finalize the trailing geometry the head stamp had only provisionally
+      // shown, so the committed stroke reaches the exact stroke end.
+      if (this.geometry !== null && this.lastVoxel !== null) {
+        const stamps = this.geometry.finish();
+        if (stamps.length > 0) {
+          await this.paintStrokePath(
+            this.handle.edit,
+            [this.lastVoxel, ...stamps],
+            shared,
+            metadata,
+            value,
+            maskFields,
+            readChunkAt,
+            this.geometry.spacingVoxels,
+          );
+        }
+      }
       this.handle.commit();
       this.handle = null;
       this.lastVoxel = null;
+      this.geometry = null;
       return { consumed: true };
     }
 
@@ -314,6 +417,7 @@ export class StrokeTool implements EditTool {
       const handle = this.handle;
       this.handle = null;
       this.lastVoxel = null;
+      this.geometry = null;
       await handle.cancel();
       return { consumed: true };
     }

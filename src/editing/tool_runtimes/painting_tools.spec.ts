@@ -144,6 +144,9 @@ function initialState(): PaintingSharedState {
     activeValue: 7,
     eraseValue: 0,
     mask: undefined,
+    // diameter 7 × 0.1 → clamped to a 1-voxel spacing, so canonical stamps land
+    // on integer positions along an axis-aligned stroke (keeps assertions clean).
+    spacingFraction: 0.1,
   };
 }
 
@@ -226,10 +229,14 @@ describe("ConsumerPaintingTools — stroke lifecycle (TM-315)", () => {
     expect(log.records).toBe(1);
     expect(log.discards).toBe(0);
     expect(calls.applyBrush).toHaveLength(1);
-    expect(calls.applyBrushStroke).toHaveLength(2);
+    // Distance resampling (TM-318) drives one stroke segment per move plus a
+    // trailing segment at pointer-up (the finalized tail the head stamp only
+    // showed provisionally). The lifecycle invariant — one edit, one record —
+    // is what matters here, not the exact segment count.
+    expect(calls.applyBrushStroke.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("threads coalesced via points into applyBrushStroke", async () => {
+  it("resamples coalesced samples into evenly-spaced canonical stamps (TM-318)", async () => {
     const { tools, calls } = setup();
     await tools.brush.handleInput(down(0, 0, 0));
     await tools.brush.handleInput(
@@ -240,14 +247,26 @@ describe("ConsumerPaintingTools — stroke lifecycle (TM-315)", () => {
     );
     await tools.brush.handleInput(up(9, 0, 0));
 
-    expect(calls.applyBrushStroke).toHaveLength(1);
-    const stroke = calls.applyBrushStroke[0]!;
-    expect(stroke.from).toEqual([0, 0, 0]);
-    expect(stroke.to).toEqual([9, 0, 0]);
-    expect(stroke.via).toEqual([
-      [3, 0, 0],
-      [6, 0, 0],
-    ]);
+    const strokes = calls.applyBrushStroke;
+    expect(strokes.length).toBeGreaterThanOrEqual(1);
+    // The painted path still spans the gesture exactly end-to-end.
+    expect(strokes[0]!.from).toEqual([0, 0, 0]);
+    expect(strokes[strokes.length - 1]!.to).toEqual([9, 0, 0]);
+
+    // The raw coalesced waypoints ([3,0,0],[6,0,0]) are NOT forwarded verbatim;
+    // they are replaced by canonical stamps resampled at the 1-voxel spacing —
+    // on-axis, strictly increasing in x, ~1 apart.
+    const via = strokes.flatMap((s) => s.via ?? []);
+    expect(via.length).toBeGreaterThan(2);
+    for (let i = 0; i < via.length; i++) {
+      expect(via[i][1]).toBeCloseTo(0, 6);
+      expect(via[i][2]).toBeCloseTo(0, 6);
+      expect(via[i][0]).toBeGreaterThan(0);
+      expect(via[i][0]).toBeLessThan(9);
+      if (i > 0) {
+        expect(via[i][0] - via[i - 1][0]).toBeCloseTo(1, 5);
+      }
+    }
   });
 
   it("pointer-cancel discards the edit (no record)", async () => {

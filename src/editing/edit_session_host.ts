@@ -100,6 +100,7 @@ import {
   type PaintingSharedState,
   type ReadChunkAt,
 } from "#src/editing/tool_runtimes/painting_tools.js";
+import { DEFAULT_SPACING_FRACTION } from "#src/editing/tool_runtimes/stroke_geometry.js";
 import { EditScope } from "#src/editing/tooling/edit_scope.js";
 import type { EditToolContext } from "#src/editing/tooling/edit_tool.js";
 import { SessionToolBinder } from "#src/editing/tooling/session_tool_binder.js";
@@ -1535,6 +1536,7 @@ export class EditSessionHost extends RefCounted {
       activeValue: 1n,
       eraseValue: 0n,
       mask: undefined as PaintingMaskConfig | undefined,
+      spacingFraction: DEFAULT_SPACING_FRACTION,
     };
 
     // Build the layer-metadata map the compute + tools need (target layer for
