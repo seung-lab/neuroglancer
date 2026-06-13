@@ -39,6 +39,7 @@ import type {
   PointerUpEvent,
 } from "#src/editing/tool_runtimes/tool_input.js";
 import { NO_MODIFIERS } from "#src/editing/tool_runtimes/tool_input.js";
+import { EditScope } from "#src/editing/tooling/edit_scope.js";
 
 const RES: Resolution = ResolutionCtor.from([8, 8, 40]);
 const TARGET: LayerId = layerId("target");
@@ -155,7 +156,7 @@ function setup() {
   };
   const metadataByLayer = new Map<LayerId, LayerMetadata>([[TARGET, meta()]]);
   const tools = new ConsumerPaintingTools({
-    session: fakeSession(log),
+    scope: new EditScope(fakeSession(log)),
     compute: fakeCompute(calls),
     metadataByLayer,
     readChunkAt: async (
@@ -275,6 +276,26 @@ describe("ConsumerPaintingTools — stroke lifecycle (TM-315)", () => {
     await tools.erase.handleInput(up(5, 5, 5));
     expect(log.metas[0]).toMatchObject({ tag: "painting.erase" });
     expect(calls.applyBrush[0]!.value).toBe(0); // eraseValue
+  });
+
+  it("eraser omits the shared mask; brush threads it (TM-297)", async () => {
+    const { tools, calls } = setup();
+    const mask = {
+      imageLayerId: layerId("img"),
+      imageResolution: RES,
+      thresholdLow: 1,
+      thresholdHigh: 255,
+      minComponentSize: 0,
+      binaryClosing: 0,
+      filterComponentsFirst: false,
+    };
+    tools.state.patchState({ mask });
+    await tools.brush.handleInput(down(0, 0, 0));
+    await tools.brush.handleInput(up(0, 0, 0));
+    await tools.erase.handleInput(down(0, 0, 0));
+    await tools.erase.handleInput(up(0, 0, 0));
+    expect(calls.applyBrush[0]!.mask).toEqual(mask); // brush passes the mask
+    expect(calls.applyBrush[1]!.mask).toBeUndefined(); // eraser omits it
   });
 
   it("fill is one click = one beginEdit + one record", async () => {

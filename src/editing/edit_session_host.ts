@@ -43,6 +43,7 @@ import {
   layerId as toLayerId,
   sessionId as toSessionId,
 } from "@zettaai/edit-session";
+import { debounce } from "lodash-es";
 
 import {
   type CoordinateSpace,
@@ -97,7 +98,19 @@ import { PaintingCompute } from "#src/editing/tool_runtimes/painting_compute.js"
 import {
   ConsumerPaintingTools,
   type PaintingSharedState,
+  type ReadChunkAt,
 } from "#src/editing/tool_runtimes/painting_tools.js";
+import { EditScope } from "#src/editing/tooling/edit_scope.js";
+import type { EditToolContext } from "#src/editing/tooling/edit_tool.js";
+import { SessionToolBinder } from "#src/editing/tooling/session_tool_binder.js";
+import { ToolRegistry } from "#src/editing/tooling/tool_registry.js";
+import {
+  paintingPatchFromPersist,
+  parseTooling,
+  serializeTooling,
+  type EditKeybindOverrides,
+  type ToolingPersistState,
+} from "#src/editing/tooling/tooling_persist.js";
 import type { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import { SegmentationRenderLayer } from "#src/sliceview/volume/segmentation_renderlayer.js";
 import { StatusMessage } from "#src/status.js";
@@ -179,6 +192,12 @@ export interface EditSessionIntent {
     readonly hi: Vec3Voxels;
     readonly dimensions: RegionDimensionsJson;
   };
+  /**
+   * Persisted consumer tool state (TM-315, decision C): active tool id +
+   * painting family config. Absent until the user has tools set up; restored
+   * on reopen (validated against the session layers, dropped if stale).
+   */
+  readonly tooling?: ToolingPersistState;
 }
 
 /**
@@ -246,7 +265,12 @@ function parseIntent(x: unknown): EditSessionIntent | null {
       writable: e.writable,
     };
   });
-  return { layers, region: parseRegion(obj) };
+  const tooling = parseTooling(obj.tooling);
+  return {
+    layers,
+    region: parseRegion(obj),
+    ...(tooling !== undefined ? { tooling } : {}),
+  };
 }
 
 /** Parse the persisted region (`region: { lo, hi, dimensions }`). */
@@ -374,6 +398,14 @@ export class EditSessionHost extends RefCounted {
    */
   readonly activeToolId = new WatchableValue<string | undefined>(undefined);
   /**
+   * Per-user edit-hotkey overrides (TM-315 runtime rebind): friendly action
+   * name → key identifier(s). Merged by the session hotkey binder OVER the
+   * build-time `custom-keybinds.json` defaults, so a rebind takes effect live.
+   * Persisted into the `editSession` tooling block and restored on reopen.
+   * Empty `{}` means "use the configured defaults". The binder watches this.
+   */
+  readonly editKeybindOverrides = new WatchableValue<EditKeybindOverrides>({});
+  /**
    * Consumer-owned painting tools for the active session (TM-315), constructed
    * after `EditSession.open(...)`. Undefined when no session is active. The
    * pointer bridge dispatches input to it; the cursor overlay / hotkeys / UI
@@ -383,6 +415,29 @@ export class EditSessionHost extends RefCounted {
   get painting(): ConsumerPaintingTools | undefined {
     return this.paintingTools;
   }
+  /** Per-session tool activation/selection binder (TM-315). */
+  private toolBinder: SessionToolBinder | undefined;
+  /**
+   * Per-session tool registry (TM-315) — the single source of truth for tool
+   * identity (cursor kind, panel key, activation hotkey). The cursor overlay
+   * and topbar read it instead of hardcoding tool-id lists. Undefined when no
+   * session is active.
+   */
+  private _toolRegistry: ToolRegistry | undefined;
+  get toolRegistry(): ToolRegistry | undefined {
+    return this._toolRegistry;
+  }
+  /**
+   * Fires when the per-session tool registry / painting tools are (re)built or
+   * torn down (TM-315). The registry is constructed asynchronously after
+   * `activeSession` is set, so UI that lists the registered tools (e.g. the
+   * topbar tool buttons) must re-read `toolRegistry` on this signal rather than
+   * only on session-open — otherwise it renders before the registry exists and
+   * never picks it up.
+   */
+  readonly toolingChanged = new NullarySignal();
+  /** Disposers for the per-session tooling-persistence subscriptions (TM-315). */
+  private toolingSubscriptions: (() => void)[] = [];
   readonly state = new TrackableEditSessionIntent();
 
   /**
@@ -661,6 +716,11 @@ export class EditSessionHost extends RefCounted {
       throw new Error("A session is already active");
     }
 
+    // Capture any persisted tooling BEFORE `writeIntentToState` overwrites the
+    // intent with a fresh config-derived block (TM-315 restore). For a fresh
+    // session this is the prior (cleared) intent's tooling — undefined.
+    const restoreTooling = this.state.value.value?.tooling;
+
     // NOTE: previously we tore down all per-layer machinery here so each
     // session started fresh. That broke the cross-session "in-memory
     // commits stay visible and editable" workflow — we now preserve any
@@ -716,6 +776,10 @@ export class EditSessionHost extends RefCounted {
       );
       this.hotkeyBinder = new EditSessionHotkeyBinder(this, this.viewer);
       this.attachCursorOverlays(config);
+      // Restore persisted tool state (TM-315) now that the tools + UI are
+      // wired: patches the family config + re-selects the active tool. Patches
+      // are validated against the session layers (stale bindings dropped).
+      this.applyRestoredTooling(restoreTooling);
       // Bring the user to the freshly opened session's region; entering a
       // session whose bbox is elsewhere in the volume would otherwise leave
       // them staring at unrelated (now hard-clipped) data.
@@ -763,14 +827,10 @@ export class EditSessionHost extends RefCounted {
   selectTool(toolId: string | undefined): void {
     const session = this.activeSession.value;
     if (session === undefined) return;
-    // Consumer-owned tool selection (TM-315). `undefined` = cursor mode.
-    const prev = this.activeToolId.value;
-    if (prev !== toolId) {
-      // A tool switch abandons any in-flight stroke on the previous painting
-      // tool (rolls back its open Edit) so a half-applied stroke never lingers.
-      this.paintingTools?.deactivate(prev);
-      this.activeToolId.value = toolId;
-    }
+    // Consumer-owned tool selection (TM-315). The binder manages the active
+    // tool's activation (disposing the previous one rolls back any in-flight
+    // stroke) and writes the stable `activeToolId` watchable.
+    this.toolBinder?.select(toolId);
     const target =
       toolId !== undefined ? this.toolPanelLocationFor(toolId) : undefined;
     for (const loc of this.allToolPanelLocations()) {
@@ -786,6 +846,26 @@ export class EditSessionHost extends RefCounted {
   toggleToolPanel(toolId: string): void {
     const loc = this.toolPanelLocationFor(toolId);
     if (loc !== undefined) loc.visible = !loc.visible;
+  }
+
+  /**
+   * Rebind an edit hotkey at runtime (TM-315). `name` is the friendly action
+   * name (e.g. `"brush"`, `"undo"`); `keys` are the NG event identifier(s)
+   * (e.g. `"control+keyb"`) that should trigger it, replacing the configured
+   * default. The session hotkey binder rebuilds its input layer live, and the
+   * override is persisted into the `editSession` block so it survives reload.
+   * Passing an empty `keys` array reverts `name` to its configured default.
+   */
+  setEditKeybind(name: string, keys: readonly string[]): void {
+    const next: { [n: string]: readonly string[] } = {
+      ...this.editKeybindOverrides.value,
+    };
+    if (keys.length === 0) {
+      delete next[name];
+    } else {
+      next[name] = keys;
+    }
+    this.editKeybindOverrides.value = next;
   }
 
   /**
@@ -1469,25 +1549,110 @@ export class EditSessionHost extends RefCounted {
       }),
     );
 
-    const compute = new PaintingCompute(
-      () => this.activeToolId.value,
-      this.morphologyClient,
-    );
+    const compute = new PaintingCompute(this.morphologyClient);
+    // Cross-layer baseline reader → the chunk-source adapter. Mirrors the
+    // library runtime's old `readChunkAt`.
+    const readChunkAt: ReadChunkAt = (layerId, resolution, chunkId) =>
+      this.chunkSource.readBaselineChunk(
+        layerId,
+        resolution,
+        chunkId,
+        ChunkIdFactory.toCoord(chunkId),
+      );
+
+    // One Edit lifecycle owner per session, shared by the tools (so they open
+    // edits) and the binder's activations (so a tool switch rolls back any
+    // in-flight stroke) — the single-live-edit invariant (TM-315).
+    const editScope = new EditScope(session);
     this.paintingTools = new ConsumerPaintingTools({
-      session,
+      scope: editScope,
       compute,
       metadataByLayer,
-      // Cross-layer baseline reader → the chunk-source adapter. Mirrors the
-      // library runtime's old `readChunkAt`.
-      readChunkAt: (layerId, resolution, chunkId) =>
-        this.chunkSource.readBaselineChunk(
-          layerId,
-          resolution,
-          chunkId,
-          ChunkIdFactory.toCoord(chunkId),
-        ),
+      readChunkAt,
       initialState,
     });
+
+    // Registry + session-scoped binder own active-tool selection + the
+    // per-tool activation lifecycle. The binder writes the host's stable
+    // `activeToolId` watchable so cursor / hotkeys / UI subscriptions survive
+    // across sessions.
+    const registry = new ToolRegistry();
+    for (const def of this.paintingTools.toolDefinitions()) {
+      registry.register(def);
+    }
+    this._toolRegistry = registry;
+    const toolContext: EditToolContext = {
+      session,
+      metadataByLayer,
+      readChunkAt,
+      logger: this.logger,
+      sessionLayers: session.config.layers,
+    };
+    this.toolBinder = new SessionToolBinder(
+      this.viewer,
+      registry,
+      toolContext,
+      this.activeToolId,
+      editScope,
+    );
+
+    // Persist tool state into the `editSession` block on change (TM-315,
+    // decision C). Debounced so a brush-size drag doesn't rewrite the URL per
+    // tick. Disposed on session teardown.
+    const persist = debounce(() => this.persistTooling(), 300);
+    this.toolingSubscriptions.push(
+      this.paintingTools.state.changed.add(() => persist()),
+      this.activeToolId.changed.add(() => persist()),
+      this.editKeybindOverrides.changed.add(() => persist()),
+      () => persist.cancel(),
+    );
+
+    // The registry is now populated — notify UI (e.g. the topbar tool buttons)
+    // that rendered against an empty registry when `activeSession` was first set.
+    this.toolingChanged.dispatch();
+  }
+
+  /** Rebuild the persisted tooling block from the live tool state (TM-315). */
+  private persistTooling(): void {
+    const intent = this.state.value.value;
+    const painting = this.paintingTools?.state.getState();
+    if (intent === null || painting === undefined) return;
+    const tooling = serializeTooling(
+      this.activeToolId.value,
+      painting,
+      this.editKeybindOverrides.value,
+    );
+    this.state.value.value = { ...intent, tooling };
+  }
+
+  /**
+   * Apply persisted tool state after a session reopens (TM-315): patch the
+   * painting family config (validated against the session layers; stale
+   * bindings dropped) and re-select the active tool.
+   */
+  private applyRestoredTooling(tooling: ToolingPersistState | undefined): void {
+    const session = this.activeSession.value;
+    if (session === undefined) return;
+    // Restore per-user keybind overrides (or clear any left over from a prior
+    // session). Done before the early-return so a fresh session always starts
+    // from the configured defaults. The binder watches this and rebuilds.
+    this.editKeybindOverrides.value = tooling?.keybinds ?? {};
+    if (tooling === undefined) return;
+    if (this.paintingTools !== undefined && tooling.painting !== undefined) {
+      const layerIds = new Set<string>(
+        session.config.layers.map((l) => l.layerId),
+      );
+      const patch = paintingPatchFromPersist(tooling.painting, layerIds);
+      if (patch !== undefined) {
+        this.paintingTools.state.patchState(patch);
+      }
+    }
+    if (
+      tooling.activeToolId !== null &&
+      this.toolRegistry?.has(tooling.activeToolId)
+    ) {
+      this.selectTool(tooling.activeToolId);
+    }
   }
 
   private buildAdapters(): EditSessionAdapters {
@@ -2070,13 +2235,32 @@ export class EditSessionHost extends RefCounted {
       }
       this.pointerEventBridge = undefined;
     }
-    // Drop any in-flight stroke and release the consumer painting tools
-    // (TM-315) before the session is cleared.
-    this.paintingTools?.deactivate(this.activeToolId.value);
+    // Stop persisting tool state, then dispose the binder (deactivates the
+    // active tool → rolls back any in-flight stroke and clears `activeToolId`)
+    // and release the consumer painting tools (TM-315) before the session is
+    // cleared.
+    for (const dispose of this.toolingSubscriptions) {
+      try {
+        dispose();
+      } catch {
+        // best-effort
+      }
+    }
+    this.toolingSubscriptions = [];
+    if (this.toolBinder !== undefined) {
+      try {
+        this.toolBinder.dispose();
+      } catch {
+        // ignore
+      }
+      this.toolBinder = undefined;
+    }
+    this._toolRegistry = undefined;
     this.paintingTools = undefined;
-    this.activeToolId.value = undefined;
     this.teardownHotkeyBinder();
     this.teardownCursorOverlays();
+    // The registry is gone — let any live UI drop the tool buttons.
+    this.toolingChanged.dispatch();
   }
 
   private tearDownSessionState(): void {

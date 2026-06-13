@@ -1,0 +1,128 @@
+/**
+ * @license
+ * Copyright 2026 Calcada AI / Zetta AI
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ */
+
+import { describe, it, expect } from "vitest";
+
+import {
+  EDIT_KEYBIND_NAMES,
+  effectiveEditKeybinds,
+  mergeEditKeybinds,
+} from "#src/editing/session_hotkey_binder.js";
+
+const A = {
+  brush: "edit-session-tool-brush",
+  erase: "edit-session-tool-erase",
+  fill: "edit-session-tool-fill",
+  cursor: "edit-session-cursor-mode",
+  undo: "edit-session-undo",
+  redo: "edit-session-redo",
+  sizeDecr: "edit-session-size-decr",
+  sizeIncr: "edit-session-size-incr",
+  valueDecr: "edit-session-value-decr",
+  valueIncr: "edit-session-value-incr",
+  exit: "edit-session-exit-tool",
+  noop: "edit-session-noop-letter",
+} as const;
+
+describe("mergeEditKeybinds", () => {
+  it("uses built-in defaults when there are no overrides", () => {
+    const m = mergeEditKeybinds(undefined);
+    expect(m["control+keyb"]).toBe(A.brush);
+    expect(m["control+keye"]).toBe(A.erase);
+    expect(m["control+keyf"]).toBe(A.fill);
+    expect(m["control+keyv"]).toBe(A.cursor);
+    // Multi-key defaults (undo/redo + size) all map to their action.
+    expect(m["control+keyz"]).toBe(A.undo);
+    expect(m["meta+keyz"]).toBe(A.undo);
+    expect(m["minus"]).toBe(A.sizeDecr);
+    expect(m["numpadsubtract"]).toBe(A.sizeDecr);
+    expect(m["bracketleft"]).toBe(A.valueDecr);
+  });
+
+  it("always includes the fixed (non-configurable) bindings", () => {
+    const m = mergeEditKeybinds({ brush: "control+keyq" });
+    expect(m["escape"]).toBe(A.exit);
+    expect(m["keyl"]).toBe(A.noop);
+    expect(m["keyh"]).toBe(A.noop);
+  });
+
+  it("a single-key override replaces the default for that action", () => {
+    const m = mergeEditKeybinds({ brush: "control+keyq" });
+    expect(m["control+keyq"]).toBe(A.brush);
+    // The old default key is no longer bound to brush.
+    expect(m["control+keyb"]).toBeUndefined();
+    // Other actions keep their defaults.
+    expect(m["control+keye"]).toBe(A.erase);
+  });
+
+  it("an array override binds every listed key", () => {
+    const m = mergeEditKeybinds({ undo: ["control+keyu", "keyz"] });
+    expect(m["control+keyu"]).toBe(A.undo);
+    expect(m["keyz"]).toBe(A.undo);
+    expect(m["control+keyz"]).toBeUndefined(); // default replaced
+  });
+
+  it("ignores unknown override names", () => {
+    const m = mergeEditKeybinds({ nonsense: "control+keyq" } as never);
+    expect(m["control+keyq"]).toBeUndefined();
+    expect(m["control+keyb"]).toBe(A.brush); // defaults intact
+  });
+});
+
+describe("effectiveEditKeybinds", () => {
+  it("returns the built-in defaults when there are no overrides", () => {
+    // No `custom-keybinds.json` is injected in the test build, so the result
+    // is exactly the built-in defaults.
+    const e = effectiveEditKeybinds(undefined);
+    expect(e.brush).toEqual(["control+keyb"]);
+    expect(e.undo).toEqual(["control+keyz", "meta+keyz"]);
+    expect(e.sizeDecrease).toEqual(["minus", "numpadsubtract"]);
+  });
+
+  it("applies a per-user override (whole list replace) for one action", () => {
+    const e = effectiveEditKeybinds({ brush: ["control+keyq"] });
+    expect(e.brush).toEqual(["control+keyq"]);
+    // Other actions keep their defaults.
+    expect(e.erase).toEqual(["control+keye"]);
+  });
+
+  it("covers every configurable action name", () => {
+    const e = effectiveEditKeybinds(undefined);
+    for (const name of EDIT_KEYBIND_NAMES) {
+      expect(Array.isArray(e[name])).toBe(true);
+      expect(e[name].length).toBeGreaterThan(0);
+    }
+  });
+
+  it("stays in lock-step with the action map the binder installs", () => {
+    // Every key the effective map advertises for an action must route to that
+    // action's id in the binder's actual key→action map.
+    const overrides = { brush: ["control+keyq"], fill: ["keyg"] };
+    const effective = effectiveEditKeybinds(overrides);
+    const keyToAction = mergeEditKeybinds(overrides);
+    const NAME_TO_ACTION: Record<string, string> = {
+      brush: A.brush,
+      erase: A.erase,
+      fill: A.fill,
+      cursor: A.cursor,
+      undo: A.undo,
+      redo: A.redo,
+      sizeDecrease: A.sizeDecr,
+      sizeIncrease: A.sizeIncr,
+      valueDecrease: A.valueDecr,
+      valueIncrease: A.valueIncr,
+    };
+    for (const name of EDIT_KEYBIND_NAMES) {
+      for (const key of effective[name]) {
+        expect(keyToAction[key]).toBe(NAME_TO_ACTION[name]);
+      }
+    }
+  });
+});

@@ -20,14 +20,6 @@ import type {
 } from "@zettaai/edit-session";
 import { ChunkId, scaleFor } from "@zettaai/edit-session";
 
-import type {
-  BrushApplyInput,
-  BrushStrokeInput,
-  FillInput,
-  PaintChunkWrite,
-  PaintCompute,
-  PaintWriteBatch,
-} from "#src/editing/tool_runtimes/paint_types.js";
 
 import { applyMorphologyPipeline } from "#src/editing/tool_runtimes/mask_compute.js";
 import {
@@ -38,6 +30,14 @@ import {
 import type { MorphologyClient } from "#src/editing/tool_runtimes/morphology_client.js";
 import type { MorphologyRequest } from "#src/editing/tool_runtimes/morphology_request.js";
 import { paintProfiler } from "#src/editing/tool_runtimes/paint_profiler.js";
+import type {
+  BrushApplyInput,
+  BrushStrokeInput,
+  FillInput,
+  PaintChunkWrite,
+  PaintCompute,
+  PaintWriteBatch,
+} from "#src/editing/tool_runtimes/paint_types.js";
 
 /**
  * Runs the post-threshold morphology pipeline (binary closing + component
@@ -79,13 +79,6 @@ function recordPaintContext(
 }
 
 /**
- * Tool id of the eraser leaf in the library's `painting` composite tool. The
- * eraser shares `PaintingSharedState` (including `mask`) with the brush, so the
- * compute keys off the active tool id to suppress masking for erase strokes.
- */
-const TOOL_ID_ERASE = "painting.erase";
-
-/**
  * Neuroglancer-side `PaintCompute` implementation. Computes per-chunk write
  * batches for brush stamps, interpolated brush strokes, and 3D flood-fills.
  * Pure main-thread compute — no worker offload in v1. Reads baseline (or
@@ -100,32 +93,18 @@ const TOOL_ID_ERASE = "painting.erase";
  */
 export class PaintingCompute implements PaintCompute {
   /**
-   * @param getActiveToolId Returns the id of the currently-active painting
-   *   tool (e.g. `"painting.brush"` / `"painting.erase"`), or `undefined` when
-   *   none is active.
+   * The compute honors `input.mask` whenever it is present. Suppressing the
+   * mask for the eraser is the TOOL's concern (TM-315): the erase tool simply
+   * omits `mask` from its compute call, so the compute no longer reaches back
+   * to global active-tool state (the old `getActiveToolId` coupling, TM-297).
    *
-   *   This exists to keep the eraser's masking behavior explicit (TM-297). The
-   *   library shares a single `PaintingSharedState.mask` across the brush and
-   *   erase `StrokeTool`s and feeds it to BOTH through `BrushApplyInput.mask`.
-   *   Only the brush exposes mask settings, but without this guard the eraser
-   *   silently inherits the brush's hidden threshold band and fails to remove
-   *   labels the user can plainly see. The eraser must never follow the brush's
-   *   mask, so we drop it whenever the eraser is the active tool. Defaults to
-   *   "no active tool" → mask honored, leaving brush/fill behavior unchanged.
-   */
-  /**
-   * @param getActiveToolId See the note above.
    * @param morphology Optional pyodide morphology worker (TM-304). When
    *   provided, the masked brush offloads `binary_closing` + component
    *   filtering to scipy in the worker; on any worker failure it falls back to
    *   the in-process TS `applyMorphologyPipeline`. When omitted (e.g. unit
    *   tests), morphology always runs in TS, preserving prior behavior.
    */
-  constructor(
-    private readonly getActiveToolId: () => string | undefined = () =>
-      undefined,
-    private readonly morphology?: MorphologyClient,
-  ) {}
+  constructor(private readonly morphology?: MorphologyClient) {}
 
   /**
    * Image-chunk cache shared across this compute's strokes (P2, TM-304). The
@@ -172,24 +151,15 @@ export class PaintingCompute implements PaintCompute {
     }).data;
   };
 
-  /**
-   * The eraser deliberately ignores the brush's image mask (TM-297): its
-   * behavior must be predictable and not gated by another tool's hidden state.
-   * Brush strokes honor the mask normally.
-   */
-  private maskEnabledForActiveTool(): boolean {
-    return this.getActiveToolId() !== TOOL_ID_ERASE;
-  }
-
   async applyBrush(input: BrushApplyInput): Promise<PaintWriteBatch> {
     const builder = new PaintBatchBuilder(
       input.metadata,
       input.targetLayerId,
       input.targetResolution,
     );
-    const maskCtx = this.maskEnabledForActiveTool()
-      ? resolveMaskContext(input, this.imageChunkCache)
-      : undefined;
+    // Honor the mask whenever the caller supplies one. The eraser tool omits
+    // `mask` from its input (TM-315), so no active-tool reach-back is needed.
+    const maskCtx = resolveMaskContext(input, this.imageChunkCache);
     recordPaintContext(
       input.radius,
       maskCtx,
@@ -234,9 +204,7 @@ export class PaintingCompute implements PaintCompute {
       input.targetLayerId,
       input.targetResolution,
     );
-    const maskCtx = this.maskEnabledForActiveTool()
-      ? resolveMaskContext(input, this.imageChunkCache)
-      : undefined;
+    const maskCtx = resolveMaskContext(input, this.imageChunkCache);
     const r = Math.max(0, Math.floor(input.radius));
     // The swept path `from → …via → to`. `via` is present when the host
     // coalesced pointer positions while the previous segment was still in

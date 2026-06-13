@@ -17,11 +17,11 @@ import type {
 } from "@zettaai/edit-session";
 import { Resolution as ResolutionCtor, layerId } from "@zettaai/edit-session";
 
+import { describe, it, expect } from "vitest";
 import type {
   BrushStrokeInput,
   PaintWriteBatch,
 } from "#src/editing/tool_runtimes/paint_types.js";
-import { describe, it, expect } from "vitest";
 
 import { PaintingCompute } from "#src/editing/tool_runtimes/painting_compute.js";
 
@@ -140,7 +140,7 @@ const TO: readonly [number, number, number] = [40, 40, 32];
 
 describe("PaintingCompute polyline stroke (coalesced via points)", () => {
   it("unmasked: polyline paints exactly the union of its per-pair capsules", async () => {
-    const compute = new PaintingCompute(() => "painting.brush");
+    const compute = new PaintingCompute();
     const poly = paintedVoxelSet(
       await compute.applyBrushStroke(strokeInput(FROM, TO, [MID])),
     );
@@ -156,7 +156,7 @@ describe("PaintingCompute polyline stroke (coalesced via points)", () => {
   });
 
   it("unmasked: polyline differs from the straight from→to capsule (corner kept)", async () => {
-    const compute = new PaintingCompute(() => "painting.brush");
+    const compute = new PaintingCompute();
     const poly = paintedVoxelSet(
       await compute.applyBrushStroke(strokeInput(FROM, TO, [MID])),
     );
@@ -170,7 +170,7 @@ describe("PaintingCompute polyline stroke (coalesced via points)", () => {
   });
 
   it("masked (all-pass band, no morphology): same union as unmasked", async () => {
-    const compute = new PaintingCompute(() => "painting.brush");
+    const compute = new PaintingCompute();
     const masked = paintedVoxelSet(
       await compute.applyBrushStroke(allPassMask(strokeInput(FROM, TO, [MID]))),
     );
@@ -182,7 +182,7 @@ describe("PaintingCompute polyline stroke (coalesced via points)", () => {
   });
 
   it("masked (excluding band): polyline paints nothing", async () => {
-    const compute = new PaintingCompute(() => "painting.brush");
+    const compute = new PaintingCompute();
     const input = allPassMask(strokeInput(FROM, TO, [MID]));
     const excluded: BrushStrokeInput = {
       ...input,
@@ -193,7 +193,7 @@ describe("PaintingCompute polyline stroke (coalesced via points)", () => {
   });
 
   it("via points duplicating the endpoints collapse to the plain capsule", async () => {
-    const compute = new PaintingCompute(() => "painting.brush");
+    const compute = new PaintingCompute();
     const withDupVia = paintedVoxelSet(
       await compute.applyBrushStroke(strokeInput(FROM, TO, [FROM, TO])),
     );
@@ -205,7 +205,7 @@ describe("PaintingCompute polyline stroke (coalesced via points)", () => {
   });
 
   it("r=0 fallback: dabs follow every pair of the polyline", async () => {
-    const compute = new PaintingCompute(() => "painting.brush");
+    const compute = new PaintingCompute();
     const batch = await compute.applyBrushStroke(
       strokeInput([20, 20, 32], [24, 24, 32], [[24, 20, 32]], 0),
     );

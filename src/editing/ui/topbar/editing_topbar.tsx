@@ -28,9 +28,18 @@ import {
   useMemo,
   useReducer,
   useRef,
+  useState,
 } from "preact/hooks";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
+import {
+  formatKeyIdentifier,
+  keyboardEventToIdentifier,
+} from "#src/editing/keybind_event.js";
+import {
+  effectiveEditKeybinds,
+  type EditKeybindName,
+} from "#src/editing/session_hotkey_binder.js";
 import { useSignal } from "#src/editing/ui/interop/use_signal.js";
 import { useWatchable } from "#src/editing/ui/interop/use_watchable.js";
 import { SaveTracker } from "#src/editing/ui/session_controls/save_tracker.js";
@@ -49,8 +58,8 @@ const TOOL_ICON_SIZE = 17;
 interface ToolEntry {
   readonly toolId: string;
   readonly label: string;
-  /** Hotkey suffix shown after `Ctrl+` in tooltips. */
-  readonly hotkey: string;
+  /** The configurable keybind action this tool's button rebinds. */
+  readonly keybind: EditKeybindName;
   /**
    * Lucide icon component rendered as the button's glyph. Icons inherit the
    * button's `color` via `stroke="currentColor"`, so all visual states
@@ -62,22 +71,26 @@ interface ToolEntry {
 }
 
 const TOOL_ENTRIES: readonly ToolEntry[] = [
-  { toolId: CURSOR_TOOL_ID, label: "Cursor", hotkey: "V", Icon: MousePointer2 },
-  { toolId: "painting.brush", label: "Brush", hotkey: "B", Icon: Paintbrush },
-  { toolId: "painting.erase", label: "Eraser", hotkey: "E", Icon: Eraser },
-  { toolId: "painting.fill", label: "Fill", hotkey: "F", Icon: PaintBucket },
+  {
+    toolId: CURSOR_TOOL_ID,
+    label: "Cursor",
+    keybind: "cursor",
+    Icon: MousePointer2,
+  },
+  {
+    toolId: "painting.brush",
+    label: "Brush",
+    keybind: "brush",
+    Icon: Paintbrush,
+  },
+  { toolId: "painting.erase", label: "Eraser", keybind: "erase", Icon: Eraser },
+  {
+    toolId: "painting.fill",
+    label: "Fill",
+    keybind: "fill",
+    Icon: PaintBucket,
+  },
 ];
-
-/**
- * Tool ids the consumer actually ships (TM-315). Drives which toolbar buttons
- * are enabled. Correspondence / z-extrapolation are not registered yet
- * (TM-310), so they are absent here.
- */
-const KNOWN_TOOL_IDS: ReadonlySet<string> = new Set([
-  "painting.brush",
-  "painting.erase",
-  "painting.fill",
-]);
 
 export function EditingTopbar({ host }: { host: EditSessionHost }) {
   const session = useWatchable(host.activeSession);
@@ -124,6 +137,10 @@ function ActiveTopbarControls({
     const unsubs = [
       // Active-tool selection is consumer-owned on the host (TM-315).
       host.activeToolId.changed.add(() => bump(0)),
+      // The tool registry is built asynchronously after the session opens; this
+      // re-renders once it lands (and when it's torn down) so the tool buttons
+      // appear/disappear with it.
+      host.toolingChanged.add(() => bump(0)),
       session.on("history-changed", () => bump(0)),
       session.dirty.on("dirty-changed", () => bump(0)),
     ];
@@ -133,9 +150,11 @@ function ActiveTopbarControls({
   }, [session, host]);
   useSignal(saveTracker.changed);
 
-  // The consumer ships exactly the painting tools (TM-315); correspondence /
-  // z-extrapolation are not registered yet (TM-310).
-  const knownToolIds = KNOWN_TOOL_IDS;
+  // Registry-driven: which toolbar buttons are enabled comes from the tools
+  // actually registered for this session (TM-315), not a hardcoded list.
+  // Computed inline (not memoized) so each `toolingChanged` bump re-reads the
+  // registry — it does not exist yet on the first render after session-open.
+  const knownToolIds = new Set(host.toolRegistry?.ids() ?? []);
   const activeToolId = host.activeToolId.value;
   const snapshot = session.getHistory();
   const hasDirty = session.dirty.isDirty();
@@ -180,6 +199,62 @@ function ActiveTopbarControls({
     },
     [host, activeToolId],
   );
+
+  // -- Runtime hotkey rebinding (TM-315) ----------------------------------
+  // The effective binding per action (defaults ← custom-keybinds.json ←
+  // per-user overrides). Recomputed whenever the user rebinds.
+  const overrides = useWatchable(host.editKeybindOverrides);
+  const effective = useMemo(
+    () => effectiveEditKeybinds(overrides),
+    [overrides],
+  );
+  const hotkeyLabel = useCallback(
+    (name: EditKeybindName): string => {
+      const keys = effective[name];
+      return keys.length > 0 ? formatKeyIdentifier(keys[0]) : "unbound";
+    },
+    [effective],
+  );
+
+  // The action currently awaiting a key-capture, or null when not rebinding.
+  const [capturing, setCapturing] = useState<EditKeybindName | null>(null);
+  useEffect(() => {
+    if (capturing === null) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      // Swallow the keypress so it neither triggers a session hotkey nor types
+      // into anything while we are capturing.
+      event.preventDefault();
+      event.stopPropagation();
+      // Escape cancels the capture without binding.
+      if (event.code === "Escape") {
+        setCapturing(null);
+        return;
+      }
+      const identifier = keyboardEventToIdentifier(event);
+      if (identifier === undefined) return; // lone modifier — keep waiting
+      host.setEditKeybind(capturing, [identifier]);
+      setCapturing(null);
+      StatusMessage.showTemporaryMessage(
+        `Bound "${capturing}" to ${formatKeyIdentifier(identifier)}`,
+        2500,
+      );
+    };
+    // Capture phase so we intercept before the session-scoped action map.
+    window.addEventListener("keydown", onKeyDown, { capture: true });
+    return () =>
+      window.removeEventListener("keydown", onKeyDown, { capture: true });
+  }, [capturing, host]);
+
+  const startRebind = useCallback((name: EditKeybindName, event: Event) => {
+    // Right-click (or the dedicated affordance) — never open the browser
+    // context menu here.
+    event.preventDefault();
+    setCapturing(name);
+    StatusMessage.showTemporaryMessage(
+      `Press a key combination for "${name}" — Esc to cancel`,
+      4000,
+    );
+  }, []);
 
   const runUndo = useCallback(async () => {
     try {
@@ -271,6 +346,8 @@ function ActiveTopbarControls({
               ? activeToolId === undefined
               : entry.toolId === activeToolId;
           const { Icon } = entry;
+          const isCapturing = capturing === entry.keybind;
+          const keyLabel = hotkeyLabel(entry.keybind);
           return (
             <button
               key={entry.toolId}
@@ -278,11 +355,17 @@ function ActiveTopbarControls({
               class={
                 "neuroglancer-editing-topbar-tool" +
                 (isActive ? " active" : "") +
+                (isCapturing ? " capturing" : "") +
                 (entry.markDisabled ? " disabled" : "")
               }
-              data-tooltip={`${entry.label} · Ctrl+${entry.hotkey}`}
-              aria-label={`${entry.label} (Ctrl+${entry.hotkey})`}
+              data-tooltip={
+                isCapturing
+                  ? `Press a key for ${entry.label} · Esc to cancel`
+                  : `${entry.label} · ${keyLabel}\nRight-click to rebind`
+              }
+              aria-label={`${entry.label} (${keyLabel})`}
               onClick={() => handleToolClick(entry.toolId)}
+              onContextMenu={(e) => startRebind(entry.keybind, e)}
             >
               <Icon size={TOOL_ICON_SIZE} aria-hidden="true" />
             </button>
@@ -317,21 +400,37 @@ function ActiveTopbarControls({
       >
         <button
           type="button"
-          class="neuroglancer-editing-topbar-icon-button"
+          class={
+            "neuroglancer-editing-topbar-icon-button" +
+            (capturing === "undo" ? " capturing" : "")
+          }
           disabled={!snapshot.canUndo}
-          aria-label="Undo (Ctrl+Z)"
-          data-tooltip={`Undo · Ctrl+Z${snapshot.undoDescription ? `\n${snapshot.undoDescription}` : ""}`}
+          aria-label={`Undo (${hotkeyLabel("undo")})`}
+          data-tooltip={
+            capturing === "undo"
+              ? "Press a key for Undo · Esc to cancel"
+              : `Undo · ${hotkeyLabel("undo")}\nRight-click to rebind${snapshot.undoDescription ? `\n${snapshot.undoDescription}` : ""}`
+          }
           onClick={() => void runUndo()}
+          onContextMenu={(e) => startRebind("undo", e)}
         >
           <Undo2 size={TOOL_ICON_SIZE} aria-hidden="true" />
         </button>
         <button
           type="button"
-          class="neuroglancer-editing-topbar-icon-button"
+          class={
+            "neuroglancer-editing-topbar-icon-button" +
+            (capturing === "redo" ? " capturing" : "")
+          }
           disabled={!snapshot.canRedo}
-          aria-label="Redo (Ctrl+Shift+Z)"
-          data-tooltip={`Redo · Ctrl+Shift+Z${snapshot.redoDescription ? `\n${snapshot.redoDescription}` : ""}`}
+          aria-label={`Redo (${hotkeyLabel("redo")})`}
+          data-tooltip={
+            capturing === "redo"
+              ? "Press a key for Redo · Esc to cancel"
+              : `Redo · ${hotkeyLabel("redo")}\nRight-click to rebind${snapshot.redoDescription ? `\n${snapshot.redoDescription}` : ""}`
+          }
           onClick={() => void runRedo()}
+          onContextMenu={(e) => startRebind("redo", e)}
         >
           <Redo2 size={TOOL_ICON_SIZE} aria-hidden="true" />
         </button>

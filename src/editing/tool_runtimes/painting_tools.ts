@@ -18,19 +18,17 @@
  *  - the numerical kernels stay in `PaintingCompute` (untouched);
  *  - one stroke (pointer-down → moves → up) is ONE `Edit` → one undo entry;
  *  - one fill click is one `Edit` → one undo entry;
- *  - the eraser is the brush flow with the erase value; its mask is suppressed
- *    inside `PaintingCompute` (keyed on the active tool id) exactly as before.
+ *  - the eraser is the brush flow with the erase value; it omits the image
+ *    mask entirely (TM-297), so the compute no longer needs to suppress it.
  *
- * The shared paint state (radius, radiusCycle, activeValue, eraseValue, mask,
- * target layer/resolution) keeps the `getState()` / `patchState()` /
- * `changed` surface of the old library `PaintingTools`, so the cursor overlay
- * and tool-settings UI only need to swap WHERE they obtain it.
+ * The tools implement `EditTool` and are selected/activated through the
+ * `SessionToolBinder`; they share one `EditScope` (the one-live-edit
+ * invariant) and the family `PaintingState` (`getState` / `patchState` /
+ * `changed`), which the cursor overlay and tool-settings UI subscribe to.
  */
 
 import type {
   ChunkId,
-  Edit,
-  EditSession,
   LayerId,
   LayerMetadata,
   ReadonlyChunkVoxelBuffer,
@@ -45,9 +43,19 @@ import type {
 } from "#src/editing/tool_runtimes/paint_types.js";
 import type {
   InputHandling,
-  Tool,
   ToolInputEvent,
 } from "#src/editing/tool_runtimes/tool_input.js";
+import type {
+  EditScope,
+  InteractionHandle,
+} from "#src/editing/tooling/edit_scope.js";
+import type {
+  BindingValidation,
+  EditTool,
+  InteractionPolicyKind,
+} from "#src/editing/tooling/edit_tool.js";
+import type { EditToolActivation } from "#src/editing/tooling/edit_tool_activation.js";
+import type { ToolDefinition } from "#src/editing/tooling/tool_registry.js";
 import { NullarySignal } from "#src/util/signal.js";
 
 export const PAINTING_BRUSH_TOOL_ID = "painting.brush";
@@ -108,11 +116,34 @@ interface StrokePreset {
 }
 
 interface PaintingToolDeps {
-  readonly session: EditSession;
+  /** Owns the Edit lifecycle (one live edit, record/discard, rollback). */
+  readonly scope: EditScope;
   readonly state: PaintingState;
   readonly compute: PaintCompute;
   readonly metadataByLayer: ReadonlyMap<LayerId, LayerMetadata>;
   readonly readChunkAt: ReadChunkAt;
+}
+
+/**
+ * Validate the painting family's target binding against the session layers:
+ * the target layer must be present and expose the chosen resolution.
+ */
+function validateTargetBinding(deps: PaintingToolDeps): BindingValidation {
+  const shared = deps.state.getState();
+  const metadata = deps.metadataByLayer.get(shared.targetLayerId);
+  if (metadata === undefined) {
+    return {
+      ok: false,
+      reason: `target layer "${shared.targetLayerId}" is not in the session`,
+    };
+  }
+  if (!metadata.scales.some((s) => s.resolution === shared.targetResolution)) {
+    return {
+      ok: false,
+      reason: `resolution "${shared.targetResolution}" not available on "${shared.targetLayerId}"`,
+    };
+  }
+  return { ok: true };
 }
 
 /**
@@ -121,9 +152,11 @@ interface PaintingToolDeps {
  * `Edit`: pointer-down opens it, each move writes into it, pointer-up records
  * it as a single undo entry, pointer-cancel discards it.
  */
-export class StrokeTool implements Tool {
+export class StrokeTool implements EditTool {
   readonly id: string;
-  private edit: Edit | null = null;
+  readonly description: string;
+  readonly interactionPolicy: InteractionPolicyKind = "stroke";
+  private handle: InteractionHandle | null = null;
   private lastVoxel: readonly [number, number, number] | null = null;
 
   constructor(
@@ -131,14 +164,33 @@ export class StrokeTool implements Tool {
     private readonly preset: StrokePreset,
   ) {
     this.id = preset.toolId;
+    this.description = preset.description;
+  }
+
+  workingResolution(): Resolution {
+    return this.deps.state.getState().targetResolution;
+  }
+
+  validateBinding(): BindingValidation {
+    return validateTargetBinding(this.deps);
+  }
+
+  /** Drop in-flight stroke state when this tool's activation is disposed. */
+  activate(activation: EditToolActivation): void {
+    activation.registerDisposer(() => this.onDeactivate());
+  }
+
+  toJSON(): unknown {
+    return { type: this.id };
   }
 
   onDeactivate(): void {
     // A tool switch mid-stroke abandons the in-flight edit. Roll it back so a
     // half-applied stroke never lingers without a history entry.
-    if (this.edit !== null) {
-      void this.edit.discard();
-      this.edit = null;
+    if (this.handle !== null) {
+      const handle = this.handle;
+      this.handle = null;
+      void handle.cancel();
     }
     this.lastVoxel = null;
   }
@@ -154,26 +206,30 @@ export class StrokeTool implements Tool {
     }
     const value =
       this.preset.source === "active" ? shared.activeValue : shared.eraseValue;
-    const maskMetadata =
-      shared.mask !== undefined
-        ? this.deps.metadataByLayer.get(shared.mask.imageLayerId)
-        : undefined;
-    const maskFields =
-      shared.mask !== undefined
-        ? {
-            mask: shared.mask,
-            ...(maskMetadata !== undefined ? { maskMetadata } : {}),
-          }
-        : {};
+    // The eraser deliberately ignores the brush's image mask (TM-297): it omits
+    // `mask` entirely rather than relying on the compute to suppress it. Only
+    // the brush (source 'active') threads the shared mask config.
+    const useMask =
+      this.preset.source === "active" && shared.mask !== undefined;
+    const maskMetadata = useMask
+      ? this.deps.metadataByLayer.get(shared.mask!.imageLayerId)
+      : undefined;
+    const maskFields = useMask
+      ? {
+          mask: shared.mask,
+          ...(maskMetadata !== undefined ? { maskMetadata } : {}),
+        }
+      : {};
     const readChunkAt = this.deps.readChunkAt;
 
     if (ev.kind === "pointer-down" && ev.button === "primary") {
-      const edit = this.deps.session.beginEdit({
+      const handle = this.deps.scope.beginInteraction({
         description: this.preset.description,
         tag: this.preset.tag,
         redo: { kind: "image" },
       });
-      this.edit = edit;
+      this.handle = handle;
+      const edit = handle.edit;
       const pos: readonly [number, number, number] = [
         ev.voxelPosition[0],
         ev.voxelPosition[1],
@@ -207,10 +263,10 @@ export class StrokeTool implements Tool {
 
     if (
       ev.kind === "pointer-move" &&
-      this.edit !== null &&
+      this.handle !== null &&
       this.lastVoxel !== null
     ) {
-      const edit = this.edit;
+      const edit = this.handle.edit;
       const from = this.lastVoxel;
       const to: readonly [number, number, number] = [
         ev.voxelPosition[0],
@@ -247,18 +303,18 @@ export class StrokeTool implements Tool {
       return { consumed: true };
     }
 
-    if (ev.kind === "pointer-up" && this.edit !== null) {
-      this.edit.record();
-      this.edit = null;
+    if (ev.kind === "pointer-up" && this.handle !== null) {
+      this.handle.commit();
+      this.handle = null;
       this.lastVoxel = null;
       return { consumed: true };
     }
 
-    if (ev.kind === "pointer-cancel" && this.edit !== null) {
-      const edit = this.edit;
-      this.edit = null;
+    if (ev.kind === "pointer-cancel" && this.handle !== null) {
+      const handle = this.handle;
+      this.handle = null;
       this.lastVoxel = null;
-      await edit.discard();
+      await handle.cancel();
       return { consumed: true };
     }
 
@@ -267,10 +323,30 @@ export class StrokeTool implements Tool {
 }
 
 /** 3D flood fill: a single click is one `Edit` → one undo entry. */
-export class FillTool implements Tool {
+export class FillTool implements EditTool {
   readonly id = PAINTING_FILL_TOOL_ID;
+  readonly description = "Fill";
+  // A fill is a single click — each pointer-down is delivered as-is.
+  readonly interactionPolicy: InteractionPolicyKind = "discrete";
 
   constructor(private readonly deps: PaintingToolDeps) {}
+
+  workingResolution(): Resolution {
+    return this.deps.state.getState().targetResolution;
+  }
+
+  validateBinding(): BindingValidation {
+    return validateTargetBinding(this.deps);
+  }
+
+  /** Fill is atomic (one `runOperation`); no per-activation state to reset. */
+  activate(_activation: EditToolActivation): void {
+    void _activation;
+  }
+
+  toJSON(): unknown {
+    return { type: this.id };
+  }
 
   async handleInput(ev: ToolInputEvent): Promise<InputHandling> {
     if (ev.kind !== "pointer-down" || ev.button !== "primary") {
@@ -284,48 +360,48 @@ export class FillTool implements Tool {
     ) {
       return { consumed: false };
     }
-    const edit = this.deps.session.beginEdit({
-      description: "Fill",
-      tag: PAINTING_FILL_TOOL_ID,
-      redo: { kind: "image" },
-    });
-    try {
-      const readChunk = (chunkId: ChunkId) =>
-        edit.readChunk({
-          layerId: shared.targetLayerId,
-          resolution: shared.targetResolution,
-          chunkId,
+    await this.deps.scope.runOperation(
+      {
+        description: "Fill",
+        tag: PAINTING_FILL_TOOL_ID,
+        redo: { kind: "image" },
+      },
+      async (edit) => {
+        const readChunk = (chunkId: ChunkId) =>
+          edit.readChunk({
+            layerId: shared.targetLayerId,
+            resolution: shared.targetResolution,
+            chunkId,
+          });
+        const batch = await this.deps.compute.fill3d({
+          targetLayerId: shared.targetLayerId,
+          targetResolution: shared.targetResolution,
+          metadata,
+          seedVoxelPosition: [
+            ev.voxelPosition[0],
+            ev.voxelPosition[1],
+            ev.voxelPosition[2],
+          ],
+          value: shared.activeValue,
+          readChunk,
         });
-      const batch = await this.deps.compute.fill3d({
-        targetLayerId: shared.targetLayerId,
-        targetResolution: shared.targetResolution,
-        metadata,
-        seedVoxelPosition: [
-          ev.voxelPosition[0],
-          ev.voxelPosition[1],
-          ev.voxelPosition[2],
-        ],
-        value: shared.activeValue,
-        readChunk,
-      });
-      const chunkSize = scaleFor(
-        metadata,
-        shared.targetResolution,
-      ).chunkDataSize;
-      await edit.withBatch(() => applyPaintBatch(edit, batch, chunkSize));
-      edit.record();
-    } catch (err) {
-      await edit.discard();
-      throw err;
-    }
+        const chunkSize = scaleFor(
+          metadata,
+          shared.targetResolution,
+        ).chunkDataSize;
+        await edit.withBatch(() => applyPaintBatch(edit, batch, chunkSize));
+      },
+    );
     return { consumed: true };
   }
 }
 
 /**
- * Owns the three painting tools and the shared paint state. Constructed by the
- * host AFTER `EditSession.open(...)`. `dispatch` routes one input event to the
- * currently-active painting tool (the host owns active-tool selection state).
+ * Owns the three painting tools and the shared family state. Constructed by
+ * the host AFTER `EditSession.open(...)`. The tools share one `EditScope` (the
+ * one-live-edit invariant) supplied by the host so the `SessionToolBinder`'s
+ * activations roll back the same edits. Selection / dispatch is owned by the
+ * binder + input bridge; this only holds the instances + their definitions.
  */
 export class ConsumerPaintingTools {
   readonly state: PaintingState;
@@ -334,7 +410,7 @@ export class ConsumerPaintingTools {
   readonly fill: FillTool;
 
   constructor(opts: {
-    session: EditSession;
+    scope: EditScope;
     compute: PaintCompute;
     metadataByLayer: ReadonlyMap<LayerId, LayerMetadata>;
     readChunkAt: ReadChunkAt;
@@ -342,7 +418,7 @@ export class ConsumerPaintingTools {
   }) {
     this.state = new PaintingState(opts.initialState);
     const deps: PaintingToolDeps = {
-      session: opts.session,
+      scope: opts.scope,
       state: this.state,
       compute: opts.compute,
       metadataByLayer: opts.metadataByLayer,
@@ -364,7 +440,7 @@ export class ConsumerPaintingTools {
   }
 
   /** The painting tool for `toolId`, or undefined if it isn't a painting tool. */
-  getTool(toolId: string | undefined): Tool | undefined {
+  getTool(toolId: string | undefined): EditTool | undefined {
     switch (toolId) {
       case PAINTING_BRUSH_TOOL_ID:
         return this.brush;
@@ -377,8 +453,37 @@ export class ConsumerPaintingTools {
     }
   }
 
-  /** Drop in-flight stroke state for the active tool (tool switch / teardown). */
-  deactivate(toolId: string | undefined): void {
-    this.getTool(toolId)?.onDeactivate?.();
+  /**
+   * Registry definitions for the three painting tools. `createTool` returns the
+   * persistent instance (they hold the shared family state), so activations
+   * reuse the same tool rather than re-constructing it.
+   */
+  toolDefinitions(): readonly ToolDefinition[] {
+    return [
+      {
+        id: PAINTING_BRUSH_TOOL_ID,
+        interactionPolicy: "stroke",
+        cursorKind: "brush",
+        activationHotkey: "control+keyb",
+        panelKey: PAINTING_BRUSH_TOOL_ID,
+        createTool: () => this.brush,
+      },
+      {
+        id: PAINTING_ERASE_TOOL_ID,
+        interactionPolicy: "stroke",
+        cursorKind: "eraser",
+        activationHotkey: "control+keye",
+        panelKey: PAINTING_ERASE_TOOL_ID,
+        createTool: () => this.erase,
+      },
+      {
+        id: PAINTING_FILL_TOOL_ID,
+        interactionPolicy: "discrete",
+        cursorKind: "fill",
+        activationHotkey: "control+keyf",
+        panelKey: PAINTING_FILL_TOOL_ID,
+        createTool: () => this.fill,
+      },
+    ];
   }
 }

@@ -15,15 +15,15 @@ import type {
 } from "@zettaai/edit-session";
 import { ChunkId, Resolution, layerId } from "@zettaai/edit-session";
 
+import { describe, it, expect, vi } from "vitest";
+
+import type { MorphologyClient } from "#src/editing/tool_runtimes/morphology_client.js";
+import type { MorphologyRequest } from "#src/editing/tool_runtimes/morphology_request.js";
 import type {
   BrushApplyInput,
   BrushStrokeInput,
   FillInput,
 } from "#src/editing/tool_runtimes/paint_types.js";
-import { describe, it, expect, vi } from "vitest";
-
-import type { MorphologyClient } from "#src/editing/tool_runtimes/morphology_client.js";
-import type { MorphologyRequest } from "#src/editing/tool_runtimes/morphology_request.js";
 import { PaintingCompute } from "#src/editing/tool_runtimes/painting_compute.js";
 
 /**
@@ -562,7 +562,7 @@ describe("PaintingCompute morphology offload (TM-304)", () => {
     const side = 2 * radius + 1;
     // Echo the input mask back so the stamp reflects the worker's output.
     const { client, apply } = fakeMorphology(async (req) => req.mask);
-    const compute = new PaintingCompute(() => undefined, client);
+    const compute = new PaintingCompute(client);
 
     await compute.applyBrush(maskedBrushInput(radius));
 
@@ -582,7 +582,7 @@ describe("PaintingCompute morphology offload (TM-304)", () => {
     const { client } = fakeMorphology(
       async (req) => new Uint8Array(req.mask.length),
     );
-    const compute = new PaintingCompute(() => undefined, client);
+    const compute = new PaintingCompute(client);
 
     const batch = await compute.applyBrush(maskedBrushInput(3));
     let setBits = 0;
@@ -594,7 +594,7 @@ describe("PaintingCompute morphology offload (TM-304)", () => {
     const { client, apply } = fakeMorphology(async () => {
       throw new Error("worker boot failed");
     });
-    const withWorker = new PaintingCompute(() => undefined, client);
+    const withWorker = new PaintingCompute(client);
     const withoutWorker = new PaintingCompute(); // pure TS path
 
     // Morphology IS requested (binaryClosing > 0) so the worker is invoked and
@@ -664,7 +664,7 @@ describe("PaintingCompute capsule stroke (TM-304)", () => {
     // A 24-voxel segment with radius 6: the old per-dab path (spacing radius/2)
     // would call morphology ~ceil(24/3)=8 times; the capsule calls it once.
     const { client, apply } = fakeMorphology(async (req) => req.mask);
-    const compute = new PaintingCompute(() => undefined, client);
+    const compute = new PaintingCompute(client);
 
     await compute.applyBrushStroke(
       maskedStrokeInput([20, 32, 16], [44, 32, 16], 6),
@@ -679,7 +679,7 @@ describe("PaintingCompute capsule stroke (TM-304)", () => {
 
   it("falls back to per-dab (morphology per dab) for a z-varying segment", async () => {
     const { apply, client } = fakeMorphology(async (req) => req.mask);
-    const compute = new PaintingCompute(() => undefined, client);
+    const compute = new PaintingCompute(client);
 
     // from/to on different z-slices → 3D sweep → per-dab fallback.
     await compute.applyBrushStroke(
