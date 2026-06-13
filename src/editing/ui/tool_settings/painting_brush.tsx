@@ -12,8 +12,6 @@ import type {
   EditSession,
   LayerId,
   LayerMetadata,
-  PaintingMaskConfig,
-  PaintingTools,
   Resolution,
 } from "@zettaai/edit-session";
 import { layerId as toLayerId } from "@zettaai/edit-session";
@@ -29,6 +27,8 @@ import {
 } from "#src/editing/brush_size_presets.js";
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { voxelDataTypeRange } from "#src/editing/tool_runtimes/mask_coord.js";
+import type { PaintingMaskConfig } from "#src/editing/tool_runtimes/paint_types.js";
+import type { PaintingState } from "#src/editing/tool_runtimes/painting_tools.js";
 import { useEvent } from "#src/editing/ui/interop/use_event.js";
 import { useWatchable } from "#src/editing/ui/interop/use_watchable.js";
 import { layerKindOf } from "#src/editing/ui/layer_kind.js";
@@ -56,16 +56,18 @@ function parseCount(raw: string): number | null {
 }
 
 export function PaintingBrush({
-  session,
   host,
 }: {
   session: EditSession;
   host: EditSessionHost;
 }) {
   useWatchable(host.state.value);
-  const painting = session.tools.getTool<PaintingTools>("painting");
+  // Consumer-owned painting state (TM-315). The panel only mounts for an
+  // active session with painting tools, so `host.painting` is defined here —
+  // matching the old `session.tools.getTool('painting')` throw-on-missing.
+  const painting = host.painting!.state;
   const subscribe = useCallback(
-    (h: () => void) => painting.on("changed", h),
+    (h: () => void) => painting.changed.add(h),
     [painting],
   );
   useEvent(subscribe);
@@ -86,7 +88,7 @@ export function PaintingBrush({
 
   return (
     <div class="neuroglancer-tool-panel neuroglancer-painting-brush-panel">
-      <PaintingTargetPicker session={session} host={host} />
+      <PaintingTargetPicker host={host} />
       <div class="neuroglancer-tool-panel-row">
         <ParamLabel
           text="Size"
@@ -103,7 +105,6 @@ export function PaintingBrush({
         <ParamInput<number>
           type="number"
           min={MIN_BRUSH_SIZE}
-          max={MAX_BRUSH_SIZE}
           step={2}
           value={size}
           parse={parseSize}
@@ -131,7 +132,7 @@ function AdvancedBrush({
   painting,
 }: {
   host: EditSessionHost;
-  painting: PaintingTools;
+  painting: PaintingState;
 }) {
   const intent = host.state.value.value;
   const layerManager = host.viewer.layerManager;

@@ -9,15 +9,18 @@
  */
 
 import type {
-  BrushApplyInput,
   ChunkId,
   LayerId,
   LayerMetadata,
-  PaintWriteBatch,
   ReadonlyChunkVoxelBuffer,
   Resolution,
 } from "@zettaai/edit-session";
 import { Resolution as ResolutionCtor, layerId } from "@zettaai/edit-session";
+
+import type {
+  BrushApplyInput,
+  PaintWriteBatch,
+} from "#src/editing/tool_runtimes/paint_types.js";
 import { describe, it, expect } from "vitest";
 
 import { PaintingCompute } from "#src/editing/tool_runtimes/painting_compute.js";

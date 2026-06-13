@@ -26,14 +26,10 @@ import type {
   EditSessionAdapters,
   EditSessionConfig,
   LayerId,
+  LayerMetadata,
   LayerSelection,
-  PaintingMaskConfig,
-  PaintingSharedState,
-  PaintingTools,
-  CorrespondenceTool,
   Resolution as ResolutionType,
   SaveResult,
-  ZExtrapolationTool,
   SavePayload,
   SaveLayerOutcome,
 } from "@zettaai/edit-session";
@@ -45,7 +41,6 @@ import {
   Resolution,
   SessionPhaseViolationError,
   layerId as toLayerId,
-  painting,
   sessionId as toSessionId,
 } from "@zettaai/edit-session";
 
@@ -97,7 +92,12 @@ import { EditSessionHotkeyBinder } from "#src/editing/session_hotkey_binder.js";
 import type { PatchedMaskProvider } from "#src/editing/shaders/patched_mask_provider.js";
 import { MorphologyClient } from "#src/editing/tool_runtimes/morphology_client.js";
 import { paintProfilerMetrics } from "#src/editing/tool_runtimes/paint_profiler_metrics.js";
+import type { PaintingMaskConfig } from "#src/editing/tool_runtimes/paint_types.js";
 import { PaintingCompute } from "#src/editing/tool_runtimes/painting_compute.js";
+import {
+  ConsumerPaintingTools,
+  type PaintingSharedState,
+} from "#src/editing/tool_runtimes/painting_tools.js";
 import type { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import { SegmentationRenderLayer } from "#src/sliceview/volume/segmentation_renderlayer.js";
 import { StatusMessage } from "#src/status.js";
@@ -366,6 +366,23 @@ export class EditSessionHost extends RefCounted {
   readonly activeSession = new WatchableValue<EditSession | undefined>(
     undefined,
   );
+  /**
+   * The active tool id — consumer-owned tool selection (TM-315). Replaces the
+   * library's removed `session.getActiveToolId()` / `active-tool-changed`.
+   * `undefined` = cursor mode (no tool). The cursor overlay, hotkey binder,
+   * pointer bridge, and `activeToolWorkingResolution` all read this.
+   */
+  readonly activeToolId = new WatchableValue<string | undefined>(undefined);
+  /**
+   * Consumer-owned painting tools for the active session (TM-315), constructed
+   * after `EditSession.open(...)`. Undefined when no session is active. The
+   * pointer bridge dispatches input to it; the cursor overlay / hotkeys / UI
+   * read its shared `state`.
+   */
+  private paintingTools: ConsumerPaintingTools | undefined;
+  get painting(): ConsumerPaintingTools | undefined {
+    return this.paintingTools;
+  }
   readonly state = new TrackableEditSessionIntent();
 
   /**
@@ -690,6 +707,9 @@ export class EditSessionHost extends RefCounted {
       // (e.g. a restore raced an in-progress capture). No-op if idle.
       this.quickRegionCapture?.cancel();
       this.writeIntentToState(config);
+      // Construct the consumer-owned painting tools (TM-315) before the input
+      // bridge — the bridge dispatches pointer input to them.
+      await this.instantiatePaintingTools(session, config);
       this.pointerEventBridge = new PointerEventBridge(
         this,
         this.viewer.display,
@@ -743,20 +763,13 @@ export class EditSessionHost extends RefCounted {
   selectTool(toolId: string | undefined): void {
     const session = this.activeSession.value;
     if (session === undefined) return;
-    try {
-      if (toolId === undefined) {
-        session.clearActiveTool();
-      } else {
-        session.setActiveTool(toolId);
-      }
-    } catch (err) {
-      this.logger.warn(
-        "session",
-        `${toolId === undefined ? "clearActiveTool" : `setActiveTool(${toolId})`} failed: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-      return;
+    // Consumer-owned tool selection (TM-315). `undefined` = cursor mode.
+    const prev = this.activeToolId.value;
+    if (prev !== toolId) {
+      // A tool switch abandons any in-flight stroke on the previous painting
+      // tool (rolls back its open Edit) so a half-applied stroke never lingers.
+      this.paintingTools?.deactivate(prev);
+      this.activeToolId.value = toolId;
     }
     const target =
       toolId !== undefined ? this.toolPanelLocationFor(toolId) : undefined;
@@ -787,34 +800,13 @@ export class EditSessionHost extends RefCounted {
    * the tool state can't be read.
    */
   activeToolWorkingResolution(): ResolutionType | undefined {
-    const session = this.activeSession.value;
-    if (session === undefined) return undefined;
-    const activeId = session.getActiveToolId();
+    const activeId = this.activeToolId.value;
     if (activeId === undefined) return undefined;
-    try {
-      if (activeId.startsWith("painting")) {
-        return session.tools.getTool<PaintingTools>("painting").getState()
-          .targetResolution;
-      }
-      if (activeId.startsWith("z-extrapolation")) {
-        return session.tools
-          .getTool<ZExtrapolationTool>("z-extrapolation")
-          .getState().targetResolution;
-      }
-      if (activeId.startsWith("correspondence")) {
-        return session.tools
-          .getTool<CorrespondenceTool>("correspondence")
-          .getState().writeResolution;
-      }
-    } catch (err) {
-      this.logger.warn(
-        "session",
-        `activeToolWorkingResolution failed for ${activeId}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-      return undefined;
+    if (activeId.startsWith("painting")) {
+      return this.paintingTools?.state.getState().targetResolution;
     }
+    // z-extrapolation / correspondence are not registered yet (TM-310); their
+    // working-resolution wiring returns when those ported tools ship (TM-315).
     return undefined;
   }
 
@@ -1422,58 +1414,80 @@ export class EditSessionHost extends RefCounted {
       layerId: l.layerId,
       selectedResolutions: [...l.resolutions],
     }));
-    const firstWritable = config.layers.find((l) => l.writable);
-    const targetLayer = firstWritable ?? config.layers[0];
-    const targetLayerId = targetLayer.layerId;
-    const targetResolution = targetLayer.resolutions[0];
 
-    // The user-facing "Size" is `radius * 2 + 1` (see brush panel). Default
-    // size 5 paints a 13-voxel diamond — visible enough to confirm the brush
-    // works, small enough not to overshoot a precision edit.
-    const paintInitial: PaintingSharedState = {
-      targetLayerId,
-      targetResolution,
-      radius: 2,
-      radiusCycle: BRUSH_SIZE_PRESETS.map(sizeToRadius),
-      // The brush writes this segment id into voxels. The architect spec
-      // suggested 0n (= erase) and required the user to set a value before
-      // painting, but that hides successful strokes behind a confusing
-      // "nothing happens" UX. Default to 1n so the brush produces visible
-      // results immediately; the user can change it via the brush panel.
-      activeValue: 1n,
-      eraseValue: 0n,
-      mask: undefined as PaintingMaskConfig | undefined,
-    };
-
+    // The library no longer ships tools (TM-315): the config carries only the
+    // session region + layers. The host constructs its own painting tools
+    // AFTER `EditSession.open(...)` via `instantiatePaintingTools`.
     return {
       layers,
       region: {
         bbox: config.bboxVoxelCoords,
         resolution: regionResolution(config.regionSpace),
       },
-      tools: [
-        painting({
-          initialState: paintInitial,
-          // The compute reads the active tool id so the eraser never inherits
-          // the brush's shared image mask (TM-297). `activeSession` is unset
-          // while this config is built but populated by the time a stroke runs.
-          compute: new PaintingCompute(
-            () => this.activeSession.value?.getActiveToolId(),
-            this.morphologyClient,
-          ),
-        }),
-        // TM-310: v1 supports painting only. The correspondence and
-        // z-extrapolation tools are not available yet (their UI panels say so
-        // and their compute methods are deferred stubs). Registering them
-        // constructed the library tools, whose constructors run
-        // validateAgainstSession and threw when their seeded resolution wasn't
-        // a scale on every referenced layer (e.g. a 32x32x45 writable/target
-        // layer alongside a 256x256x45 image) — blocking the user from
-        // entering an otherwise-valid painting session. Painting itself
-        // supports mixed resolutions, so register only it until these tools
-        // actually ship.
-      ],
     };
+  }
+
+  /**
+   * Construct the consumer-owned painting tools for a freshly-opened session
+   * (TM-315). Resolves per-layer metadata (the library no longer exposes its
+   * internal `metadataByLayer`), wires `PaintingCompute` to read the host's
+   * active-tool id (so the eraser never inherits the brush's image mask,
+   * TM-297), and builds the cross-layer baseline reader the masked brush uses
+   * for its image (mask) layer.
+   */
+  private async instantiatePaintingTools(
+    session: EditSession,
+    config: HostSessionConfig,
+  ): Promise<void> {
+    const firstWritable = config.layers.find((l) => l.writable);
+    const targetLayer = firstWritable ?? config.layers[0];
+    // The user-facing "Size" is `radius * 2 + 1` (see brush panel). Default
+    // size 5 paints a 13-voxel diamond — visible enough to confirm the brush
+    // works, small enough not to overshoot a precision edit.
+    const initialState: PaintingSharedState = {
+      targetLayerId: targetLayer.layerId,
+      targetResolution: targetLayer.resolutions[0],
+      radius: 2,
+      radiusCycle: BRUSH_SIZE_PRESETS.map(sizeToRadius),
+      // The brush writes this segment id into voxels. Default to 1n so the
+      // brush produces visible results immediately; the user can change it via
+      // the brush panel.
+      activeValue: 1n,
+      eraseValue: 0n,
+      mask: undefined as PaintingMaskConfig | undefined,
+    };
+
+    // Build the layer-metadata map the compute + tools need (target layer for
+    // the stamp, image layer for the mask threshold).
+    const metadataByLayer = new Map<LayerId, LayerMetadata>();
+    await Promise.all(
+      config.layers.map(async (l) => {
+        metadataByLayer.set(
+          l.layerId,
+          await this.layerMetadataSource.resolve(l.layerId),
+        );
+      }),
+    );
+
+    const compute = new PaintingCompute(
+      () => this.activeToolId.value,
+      this.morphologyClient,
+    );
+    this.paintingTools = new ConsumerPaintingTools({
+      session,
+      compute,
+      metadataByLayer,
+      // Cross-layer baseline reader → the chunk-source adapter. Mirrors the
+      // library runtime's old `readChunkAt`.
+      readChunkAt: (layerId, resolution, chunkId) =>
+        this.chunkSource.readBaselineChunk(
+          layerId,
+          resolution,
+          chunkId,
+          ChunkIdFactory.toCoord(chunkId),
+        ),
+      initialState,
+    });
   }
 
   private buildAdapters(): EditSessionAdapters {
@@ -2056,6 +2070,11 @@ export class EditSessionHost extends RefCounted {
       }
       this.pointerEventBridge = undefined;
     }
+    // Drop any in-flight stroke and release the consumer painting tools
+    // (TM-315) before the session is cleared.
+    this.paintingTools?.deactivate(this.activeToolId.value);
+    this.paintingTools = undefined;
+    this.activeToolId.value = undefined;
     this.teardownHotkeyBinder();
     this.teardownCursorOverlays();
   }

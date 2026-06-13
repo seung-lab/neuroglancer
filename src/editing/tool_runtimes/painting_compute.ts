@@ -9,22 +9,25 @@
  */
 
 import type {
-  BrushApplyInput,
-  BrushStrokeInput,
   ChunkCoord,
   ChunkId as ChunkIdType,
   ChunkVoxelBuffer,
-  FillInput,
   LayerMetadata,
-  PaintChunkWrite,
-  PaintCompute,
-  PaintWriteBatch,
   ReadonlyChunkVoxelBuffer,
   Resolution as ResolutionType,
   ScaleMetadata,
   VoxelDataType,
 } from "@zettaai/edit-session";
 import { ChunkId, scaleFor } from "@zettaai/edit-session";
+
+import type {
+  BrushApplyInput,
+  BrushStrokeInput,
+  FillInput,
+  PaintChunkWrite,
+  PaintCompute,
+  PaintWriteBatch,
+} from "#src/editing/tool_runtimes/paint_types.js";
 
 import { applyMorphologyPipeline } from "#src/editing/tool_runtimes/mask_compute.js";
 import {

@@ -8,19 +8,20 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
+import { Resolution } from "@zettaai/edit-session";
+
+import type { DisplayContext, RenderedPanel } from "#src/display_context.js";
+import type { EditSessionHost } from "#src/editing/edit_session_host.js";
+import { globalToTargetVoxel } from "#src/editing/raster/global_voxel_conversion.js";
+import { paintProfiler } from "#src/editing/tool_runtimes/paint_profiler.js";
 import type {
   InputHandling,
   ModifierState,
   PointerButton,
   Tool,
   ToolInputEvent,
-} from "@zettaai/edit-session";
-import { NO_MODIFIERS, Resolution } from "@zettaai/edit-session";
-
-import type { DisplayContext, RenderedPanel } from "#src/display_context.js";
-import type { EditSessionHost } from "#src/editing/edit_session_host.js";
-import { globalToTargetVoxel } from "#src/editing/raster/global_voxel_conversion.js";
-import { paintProfiler } from "#src/editing/tool_runtimes/paint_profiler.js";
+} from "#src/editing/tool_runtimes/tool_input.js";
+import { NO_MODIFIERS } from "#src/editing/tool_runtimes/tool_input.js";
 import { RenderedDataPanel } from "#src/rendered_data_panel.js";
 import { RefCounted } from "#src/util/disposable.js";
 
@@ -248,7 +249,7 @@ export class PointerEventBridge extends RefCounted {
   ): InputHandling | Promise<InputHandling> | undefined {
     const session = this.host.activeSession.value;
     if (session === undefined) return;
-    const tool: Tool | undefined = session.tools.getActiveTool();
+    const tool: Tool | undefined = this.activeTool();
     if (tool === undefined || tool.handleInput === undefined) return;
 
     // Camera lock: when a paint-like tool is active and the user is using
@@ -283,7 +284,7 @@ export class PointerEventBridge extends RefCounted {
       translated = translate();
     } catch (err) {
       this.host.logger.error(
-        "tooling",
+        "editing",
         `PointerEventBridge: translation failed: ${stringifyError(err)}`,
       );
       return;
@@ -294,7 +295,7 @@ export class PointerEventBridge extends RefCounted {
       result = tool.handleInput(translated);
     } catch (err) {
       this.host.logger.error(
-        "tooling",
+        "editing",
         `PointerEventBridge: tool.handleInput threw: ${stringifyError(err)}`,
       );
       return;
@@ -310,7 +311,7 @@ export class PointerEventBridge extends RefCounted {
       // We still capture rejections.
       result.catch((err) =>
         this.host.logger.error(
-          "tooling",
+          "editing",
           `PointerEventBridge: tool.handleInput rejected: ${stringifyError(err)}`,
         ),
       );
@@ -380,11 +381,20 @@ export class PointerEventBridge extends RefCounted {
     );
   }
 
+  /**
+   * The currently-active consumer tool, resolved from the host's active-tool
+   * id and its painting tools (TM-315). Replaces the library's removed
+   * `session.tools.getActiveTool()`.
+   */
+  private activeTool(): Tool | undefined {
+    return this.host.painting?.getTool(this.host.activeToolId.value);
+  }
+
   private isCameraLockedForEvent(ev: Event): boolean {
     if (!this.isPointerEvent(ev)) return false;
     const session = this.host.activeSession.value;
     if (session === undefined) return false;
-    const tool = session.tools.getActiveTool();
+    const tool = this.activeTool();
     if (tool === undefined || !this.isPaintLikeTool(tool)) return false;
     // Ctrl / Cmd = explicit "pan instead of paint" — release the lock.
     if (ev.ctrlKey || ev.metaKey) return false;
@@ -611,7 +621,7 @@ export class PointerEventBridge extends RefCounted {
       this.endActiveStroke();
       return;
     }
-    const tool = session.tools.getActiveTool();
+    const tool = this.activeTool();
     if (
       tool === undefined ||
       tool.handleInput === undefined ||
@@ -706,7 +716,7 @@ export class PointerEventBridge extends RefCounted {
     event: ToolInputEvent,
   ): void {
     const session = this.host.activeSession.value;
-    const tool = session?.tools.getActiveTool();
+    const tool = this.activeTool();
     if (
       session === undefined ||
       tool === undefined ||
@@ -732,7 +742,7 @@ export class PointerEventBridge extends RefCounted {
       result = tool.handleInput(event);
     } catch (err) {
       this.host.logger.error(
-        "tooling",
+        "editing",
         `PointerEventBridge: stroke handleInput threw: ${stringifyError(err)}`,
       );
       stroke.inFlight = false;
@@ -744,7 +754,7 @@ export class PointerEventBridge extends RefCounted {
       result
         .catch((err) =>
           this.host.logger.error(
-            "tooling",
+            "editing",
             `PointerEventBridge: stroke handleInput rejected: ${stringifyError(err)}`,
           ),
         )

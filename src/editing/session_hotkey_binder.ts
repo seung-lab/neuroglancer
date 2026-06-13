@@ -42,7 +42,7 @@
  * `Ctrl+Z`) return to normal.
  */
 
-import type { PaintingTools, VoxelDataType } from "@zettaai/edit-session";
+import type { VoxelDataType } from "@zettaai/edit-session";
 
 import { radiusToSize, sizeToRadius } from "#src/editing/brush_size_presets.js";
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
@@ -57,6 +57,7 @@ import {
   clampToVoxelDataType,
   voxelDataTypeRange,
 } from "#src/editing/tool_runtimes/mask_coord.js";
+import type { PaintingState } from "#src/editing/tool_runtimes/painting_tools.js";
 import { RefCounted } from "#src/util/disposable.js";
 import {
   EventActionMap,
@@ -101,7 +102,6 @@ const TOOL_ID_ERASE = "painting.erase";
 const TOOL_ID_FILL = "painting.fill";
 const TOOL_ID_Z_EXTRAP = "z-extrapolation";
 const TOOL_ID_CORRESPONDENCE = "correspondence";
-const TOOL_ID_PAINTING = "painting";
 
 /**
  * Installs a session-scoped keyboard shortcut layer for the duration of an
@@ -245,15 +245,14 @@ export class EditSessionHotkeyBinder extends RefCounted {
         detachPerspective();
       };
     };
-    const session = host.activeSession.value;
-    applyNavMode(session?.getActiveToolId());
-    if (session !== undefined) {
-      const offActiveTool = session.on(
-        "active-tool-changed",
-        ({ to }: { to: string | undefined }) => applyNavMode(to),
-      );
-      this.registerDisposer(offActiveTool);
-    }
+    // Active-tool selection is consumer-owned (TM-315): drive nav mode off the
+    // host's `activeToolId` watchable instead of the removed library event.
+    applyNavMode(host.activeToolId.value);
+    this.registerDisposer(
+      host.activeToolId.changed.add(() =>
+        applyNavMode(host.activeToolId.value),
+      ),
+    );
     this.registerDisposer(() => {
       if (detachNav !== undefined) {
         try {
@@ -370,28 +369,14 @@ export class EditSessionHotkeyBinder extends RefCounted {
 
   // -- Painting adjustments -------------------------------------------------
 
-  /** Returns the active painting tool, or `undefined` if unavailable. */
-  private getPainting(): PaintingTools | undefined {
-    const session = this.host.activeSession.value;
-    if (session === undefined) return undefined;
-    try {
-      return session.tools.getTool<PaintingTools>(TOOL_ID_PAINTING);
-    } catch (err) {
-      this.host.logger.warn(
-        "session",
-        `PaintingTools unavailable: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-      return undefined;
-    }
+  /** Returns the shared painting state, or `undefined` if unavailable. */
+  private getPainting(): PaintingState | undefined {
+    return this.host.painting?.state;
   }
 
   /** `+` / `-`: step brush size through the preset cycle (brush + eraser). */
   private stepBrushSize(dir: number): void {
-    const session = this.host.activeSession.value;
-    if (session === undefined) return;
-    const activeId = session.tools.getActiveToolId();
+    const activeId = this.host.activeToolId.value;
     if (activeId !== TOOL_ID_BRUSH && activeId !== TOOL_ID_ERASE) return;
     const painting = this.getPainting();
     if (painting === undefined) return;
@@ -406,9 +391,7 @@ export class EditSessionHotkeyBinder extends RefCounted {
    * Only active for the brush tool.
    */
   private onBracket(dir: number): void {
-    const session = this.host.activeSession.value;
-    if (session === undefined) return;
-    if (session.tools.getActiveToolId() !== TOOL_ID_BRUSH) return;
+    if (this.host.activeToolId.value !== TOOL_ID_BRUSH) return;
     const painting = this.getPainting();
     if (painting === undefined) return;
     if (this.tracker.isHeld("keyh")) {
@@ -427,7 +410,7 @@ export class EditSessionHotkeyBinder extends RefCounted {
    * layer on first use; an unresolved/failed lookup falls back to plain ±1
    * stepping so the hotkey still works.
    */
-  private adjustValue(painting: PaintingTools, dir: number): void {
+  private adjustValue(painting: PaintingState, dir: number): void {
     const layerId = painting.getState().targetLayerId;
     const cached = this.targetTypeByLayer.get(layerId);
     if (cached !== undefined) {
@@ -456,7 +439,7 @@ export class EditSessionHotkeyBinder extends RefCounted {
   }
 
   private applyValue(
-    painting: PaintingTools,
+    painting: PaintingState,
     dir: number,
     type: VoxelDataType | undefined,
   ): void {
@@ -480,7 +463,7 @@ export class EditSessionHotkeyBinder extends RefCounted {
   }
 
   private adjustThreshold(
-    painting: PaintingTools,
+    painting: PaintingState,
     which: "low" | "high",
     dir: number,
   ): void {
@@ -516,7 +499,7 @@ export class EditSessionHotkeyBinder extends RefCounted {
   }
 
   private applyThreshold(
-    painting: PaintingTools,
+    painting: PaintingState,
     which: "low" | "high",
     dir: number,
     range: { min: number; max: number },

@@ -17,20 +17,15 @@
  * does NOT show a cursor).
  */
 
-import type {
-  EditSession,
-  LayerId,
-  PaintingTools,
-  Resolution,
-} from "@zettaai/edit-session";
+import type { LayerId, Resolution } from "@zettaai/edit-session";
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
+import type { PaintingState } from "#src/editing/tool_runtimes/painting_tools.js";
 import { WatchableValue } from "#src/trackable_value.js";
 import { RefCounted } from "#src/util/disposable.js";
 import { vec3 } from "#src/util/geom.js";
 
 export type ToolKind = "brush" | "eraser" | "fill";
 
-const PAINTING_TOOL_ID = "painting";
 const BRUSH_TOOL_ID = "painting.brush";
 const ERASER_TOOL_ID = "painting.erase";
 const FILL_TOOL_ID = "painting.fill";
@@ -108,15 +103,17 @@ export class BrushCursorState extends RefCounted {
       return;
     }
 
-    // Initial snapshot.
-    this.activeToolId.value = session.getActiveToolId();
+    // Initial snapshot. Active-tool selection and painting state are now
+    // consumer-owned on the host (TM-315), not the session.
+    this.activeToolId.value = this.host.activeToolId.value;
     this.toolKind.value = classifyToolKind(this.activeToolId.value);
-    this.syncPaintingState(session);
+    this.syncPaintingState();
     this.recomputeVisibility();
     this.refreshWorldCenter();
 
     // 1. Active-tool changes.
-    const offActive = session.on("active-tool-changed", ({ to }) => {
+    const offActive = this.host.activeToolId.changed.add(() => {
+      const to = this.host.activeToolId.value;
       this.activeToolId.value = to;
       this.toolKind.value = classifyToolKind(to);
       this.recomputeVisibility();
@@ -124,17 +121,17 @@ export class BrushCursorState extends RefCounted {
     this.sessionSubscriptions.push(offActive);
 
     // 2. Painting tool state (radius / target resolution).
-    const painting = safeGetPaintingTools(session);
+    const painting = this.host.painting?.state;
     if (painting !== undefined) {
-      const offPainting = painting.on("changed", () => {
-        this.syncPaintingState(session);
+      const offPainting = painting.changed.add(() => {
+        this.syncPaintingState();
       });
       this.sessionSubscriptions.push(offPainting);
     }
   }
 
-  private syncPaintingState(session: EditSession): void {
-    const painting = safeGetPaintingTools(session);
+  private syncPaintingState(): void {
+    const painting = this.paintingState();
     if (painting === undefined) {
       this.radiusVoxels.value = 0;
       this.targetResolution.value = undefined;
@@ -145,6 +142,10 @@ export class BrushCursorState extends RefCounted {
     this.radiusVoxels.value = state.radius;
     this.targetResolution.value = state.targetResolution;
     this.targetLayerId.value = state.targetLayerId;
+  }
+
+  private paintingState(): PaintingState | undefined {
+    return this.host.painting?.state;
   }
 
   private recomputeVisibility(): void {
@@ -193,20 +194,6 @@ export class BrushCursorState extends RefCounted {
       }
     }
     this.sessionSubscriptions = [];
-  }
-}
-
-/**
- * Safely fetch the `PaintingTools` composite from a session. Returns
- * `undefined` if painting wasn't registered (the library throws
- * `UnknownToolError` rather than returning undefined).
- */
-function safeGetPaintingTools(session: EditSession): PaintingTools | undefined {
-  try {
-    return session.tools.getTool<PaintingTools>(PAINTING_TOOL_ID);
-  } catch {
-    // The painting tool group may not be registered (degraded sessions).
-    return undefined;
   }
 }
 

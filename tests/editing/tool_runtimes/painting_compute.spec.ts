@@ -9,14 +9,17 @@
  */
 
 import type {
-  BrushApplyInput,
-  BrushStrokeInput,
   ChunkId as ChunkIdType,
-  FillInput,
   LayerMetadata,
   ReadonlyChunkVoxelBuffer,
 } from "@zettaai/edit-session";
 import { ChunkId, Resolution, layerId } from "@zettaai/edit-session";
+
+import type {
+  BrushApplyInput,
+  BrushStrokeInput,
+  FillInput,
+} from "#src/editing/tool_runtimes/paint_types.js";
 import { describe, it, expect, vi } from "vitest";
 
 import type { MorphologyClient } from "#src/editing/tool_runtimes/morphology_client.js";

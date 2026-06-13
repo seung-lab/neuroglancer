@@ -36,7 +36,8 @@ export function clampBrushSize(value: number): number {
   if (!Number.isFinite(value)) return MIN_BRUSH_SIZE;
   const n = Math.round(value);
   const odd = n % 2 === 0 ? n + 1 : n;
-  return Math.max(MIN_BRUSH_SIZE, Math.min(MAX_BRUSH_SIZE, odd));
+  // return Math.max(MIN_BRUSH_SIZE, Math.min(MAX_BRUSH_SIZE, odd));
+  return Math.max(MIN_BRUSH_SIZE, odd);
 }
 
 /** size → radius (`radius = (size - 1) / 2`). */

@@ -68,6 +68,17 @@ const TOOL_ENTRIES: readonly ToolEntry[] = [
   { toolId: "painting.fill", label: "Fill", hotkey: "F", Icon: PaintBucket },
 ];
 
+/**
+ * Tool ids the consumer actually ships (TM-315). Drives which toolbar buttons
+ * are enabled. Correspondence / z-extrapolation are not registered yet
+ * (TM-310), so they are absent here.
+ */
+const KNOWN_TOOL_IDS: ReadonlySet<string> = new Set([
+  "painting.brush",
+  "painting.erase",
+  "painting.fill",
+]);
+
 export function EditingTopbar({ host }: { host: EditSessionHost }) {
   const session = useWatchable(host.activeSession);
   // The Edit / Exit button is the only flex child of the topbar — that
@@ -111,22 +122,21 @@ function ActiveTopbarControls({
   const [, bump] = useReducer((x: number) => x + 1, 0);
   useEffect(() => {
     const unsubs = [
-      session.on("active-tool-changed", () => bump(0)),
+      // Active-tool selection is consumer-owned on the host (TM-315).
+      host.activeToolId.changed.add(() => bump(0)),
       session.on("history-changed", () => bump(0)),
       session.dirty.on("dirty-changed", () => bump(0)),
     ];
     return () => {
       for (const unsub of unsubs) unsub();
     };
-  }, [session]);
+  }, [session, host]);
   useSignal(saveTracker.changed);
 
-  const knownToolIds = useMemo(
-    () => new Set(session.tools.toolIds),
-    // `toolIds` is set at construction; safe to memo on session identity.
-    [session],
-  );
-  const activeToolId = session.tools.getActiveToolId();
+  // The consumer ships exactly the painting tools (TM-315); correspondence /
+  // z-extrapolation are not registered yet (TM-310).
+  const knownToolIds = KNOWN_TOOL_IDS;
+  const activeToolId = host.activeToolId.value;
   const snapshot = session.getHistory();
   const hasDirty = session.dirty.isDirty();
   const saveAvailable = useWatchable(host.saveBackendAvailable);
