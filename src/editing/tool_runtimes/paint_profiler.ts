@@ -35,7 +35,47 @@ interface Bucket {
 }
 
 class PaintProfiler {
-  enabled = false;
+  private _enabled = false;
+  private longTaskObserver: PerformanceObserver | undefined;
+
+  get enabled(): boolean {
+    return this._enabled;
+  }
+
+  /**
+   * Toggling on also starts a `longtask` PerformanceObserver: any main-thread
+   * task > 50 ms during a stroke lands in the `mt.longtask(>50ms)` bucket.
+   * This is the catch-all for un-instrumented main-thread stalls (GC, layout,
+   * render frames, third-party work) that delay worker-response delivery —
+   * compare its total against `2b.w.q.response`.
+   */
+  set enabled(value: boolean) {
+    this._enabled = value;
+    if (value) this.startLongTaskObserver();
+    else this.stopLongTaskObserver();
+  }
+
+  private startLongTaskObserver(): void {
+    if (this.longTaskObserver !== undefined) return;
+    if (typeof PerformanceObserver === "undefined") return;
+    try {
+      const observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          this.record("mt.longtask(>50ms)", entry.duration);
+        }
+      });
+      observer.observe({ type: "longtask", buffered: false });
+      this.longTaskObserver = observer;
+    } catch {
+      // 'longtask' unsupported in this browser — diagnostics only, ignore.
+    }
+  }
+
+  private stopLongTaskObserver(): void {
+    this.longTaskObserver?.disconnect();
+    this.longTaskObserver = undefined;
+  }
+
   private readonly buckets = new Map<string, Bucket>();
   private readonly counters = new Map<string, number>();
   private context: Record<string, string | number | boolean> = {};

@@ -8,8 +8,16 @@
 # Bundled as a string via `?raw` and `runPython`-ed once at worker boot; the
 # worker then calls `apply_morphology` per request.
 
+import json
+import time
+
 import numpy as np
 from scipy.ndimage import label, binary_closing
+
+# Per-call phase timings of the last `apply_morphology` run, as a JSON string.
+# Read by the worker handler after each call and forwarded to the main-thread
+# paint profiler, so the per-call cost splits into marshalling vs scipy compute.
+last_timings_json = "{}"
 
 
 def filter_components(mask, min_size):
@@ -52,6 +60,8 @@ def apply_morphology(
     Returns:
         A `bytes` object of 0/1 in the same (x, y, z) row-major layout.
     """
+    global last_timings_json
+    t0 = time.perf_counter()
     buf = mask_bytes.to_py()
     # Row-major (x, y, z) with x fastest <=> C-order (z, y, x) with x last/fastest.
     m = np.frombuffer(buf, dtype=np.uint8).reshape((sz, sy, sx)).astype(bool)
@@ -65,14 +75,36 @@ def apply_morphology(
     # (r = 0). Squeezing length-1 axes preserves C-order byte layout, so the
     # result's `tobytes()` matches the original (z, y, x) ordering.
     m = np.atleast_1d(np.squeeze(m))
+    t1 = time.perf_counter()
 
+    closing_ms = 0.0
+    components_ms = 0.0
     if filter_components_first:
+        tc = time.perf_counter()
         m = filter_components(m, min_component_size)
+        components_ms = (time.perf_counter() - tc) * 1000.0
         if binary_closing_iterations > 0:
+            tc = time.perf_counter()
             m = binary_closing(m, iterations=binary_closing_iterations)
+            closing_ms = (time.perf_counter() - tc) * 1000.0
     else:
         if binary_closing_iterations > 0:
+            tc = time.perf_counter()
             m = binary_closing(m, iterations=binary_closing_iterations)
+            closing_ms = (time.perf_counter() - tc) * 1000.0
+        tc = time.perf_counter()
         m = filter_components(m, min_component_size)
+        components_ms = (time.perf_counter() - tc) * 1000.0
 
-    return m.astype(np.uint8).tobytes()
+    t2 = time.perf_counter()
+    out = m.astype(np.uint8).tobytes()
+    t3 = time.perf_counter()
+    last_timings_json = json.dumps(
+        {
+            "marshalInMs": (t1 - t0) * 1000.0,
+            "closingMs": closing_ms,
+            "componentsMs": components_ms,
+            "marshalOutMs": (t3 - t2) * 1000.0,
+        }
+    )
+    return out

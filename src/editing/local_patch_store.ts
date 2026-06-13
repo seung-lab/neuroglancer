@@ -72,6 +72,16 @@ export class LocalPatchStore extends RefCounted {
     this.scheduleGPUFlush();
   }
 
+  /**
+   * Record that `PatchMirror` mutated a chunk's buffers in place (fused
+   * diff/widen path) and schedule the coalesced GPU flush. The chunk's own
+   * `pendingUpload` carries the stale sub-box for the texture cache.
+   */
+  noteChunkMutated(chunkGridPosition: ArrayLike<number>): void {
+    this.source.dirtyKeys.add(chunkGridKey(chunkGridPosition));
+    this.scheduleGPUFlush();
+  }
+
   /** Drop every patch in this store. */
   clearAll(): void {
     this.source.clearAll();
