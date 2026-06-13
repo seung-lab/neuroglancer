@@ -13,6 +13,8 @@ import { Resolution } from "@zettaai/edit-session";
 import type { DisplayContext, RenderedPanel } from "#src/display_context.js";
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { globalToTargetVoxel } from "#src/editing/raster/global_voxel_conversion.js";
+import type { SliceProjectionInfo } from "#src/editing/raster/slice_pixel_to_voxel.js";
+import { slicePixelToTargetVoxel } from "#src/editing/raster/slice_pixel_to_voxel.js";
 import { paintProfiler } from "#src/editing/tool_runtimes/paint_profiler.js";
 import type {
   InputHandling,
@@ -23,6 +25,7 @@ import type {
 } from "#src/editing/tool_runtimes/tool_input.js";
 import { NO_MODIFIERS } from "#src/editing/tool_runtimes/tool_input.js";
 import { RenderedDataPanel } from "#src/rendered_data_panel.js";
+import { SliceViewPanel } from "#src/sliceview/panel.js";
 import { RefCounted } from "#src/util/disposable.js";
 
 type PointerKind =
@@ -33,34 +36,62 @@ type PointerKind =
 
 type VoxelPos = readonly [number, number, number];
 
+/** How a stroke's positions are sourced (see {@link ActiveStrokeState}). */
+type StrokeSource = "slice" | "perspective";
+
 /**
- * Per-stroke dispatch state implementing latest-wins backpressure (TM-304).
+ * Per-`pointermove` snapshot for the synchronous slice transform, reused across
+ * that event's coalesced samples (see `sliceContext`). `originLeft`/`originTop`
+ * convert a client pixel to a panel-relative pixel.
+ */
+interface SliceContext {
+  readonly proj: SliceProjectionInfo;
+  readonly navPosition: ArrayLike<number>;
+  readonly globalScaleNm: readonly [number, number, number];
+  readonly voxelSize: readonly [number, number, number];
+  readonly originLeft: number;
+  readonly originTop: number;
+}
+
+/**
+ * Per-stroke dispatch state: a free-running sample buffer drained one segment
+ * at a time (TM-320 / TM-321).
  *
- * At most ONE stroke `handleInput` is dispatched at a time (`inFlight`).
- * While one is in flight, new pointer positions accumulate in
- * `pendingVia`/`pendingTo` instead of dispatching; when the op settles,
- * `drainStroke` dispatches ONE coalesced `pointer-move` carrying the skipped
- * positions as `viaVoxelPositions`. The compute rasterizes the whole polyline
- * as one footprint, so coverage is exact and morphology stays at one worker
- * round-trip per *delivered* segment — the dispatch cadence adapts to the op
- * throughput and the worker queue can never grow beyond one op. When every
- * op completes faster than the pick cadence (~30 ms, e.g. morphology off),
- * the gate never engages and behavior is identical to direct dispatch.
+ * Input arrives at the full pointer-event rate and is appended to `samples` in
+ * O(1) — the raw stroke-sample buffer. A consumer drains it: at most ONE stroke
+ * `handleInput` is dispatched at a time (`inFlight`); while one is in flight,
+ * samples keep accumulating, and when it settles `drainStroke` takes the WHOLE
+ * accumulated buffer as one coalesced segment (`to` = last sample, the rest as
+ * `viaVoxelPositions`). The compute rasterizes the whole polyline as one
+ * footprint, so coverage is exact and morphology stays at one worker round-trip
+ * per *delivered* segment — the dispatch cadence adapts to op throughput and the
+ * queue can never grow beyond one op. This is self-balancing backpressure with
+ * zero sample loss.
+ *
+ * Position source depends on the panel (`source`):
+ *  - `slice`: the DOM `pointermove` handler converts every coalesced event
+ *    synchronously to a voxel (no GPU pick lag, no dropped sub-frame samples).
+ *  - `perspective`: no synchronous slice transform exists, so we keep the
+ *    legacy path — subscribe to `mouseState.changed` and read the (pick-pass)
+ *    `unsnappedPosition` once per frame.
  */
 interface ActiveStrokeState {
   readonly panel: RenderedDataPanel;
+  readonly source: StrokeSource;
+  /** Releases the `mouseState.changed` subscription (perspective only; no-op for slice). */
   unsubscribeMouseState: () => void;
-  /** Last voxel delivered (or queued) — used to dedup repeat positions. */
+  /** Last voxel dispatched — used to dedup repeat positions. */
   lastVoxel: VoxelPos | undefined;
   /** True while a dispatched `handleInput` promise has not settled. */
   inFlight: boolean;
-  /** Coalesced waypoints skipped while in flight (oldest first). */
-  pendingVia: VoxelPos[];
-  /** Latest coalesced position — the next dispatch's `voxelPosition`. */
-  pendingTo: VoxelPos | undefined;
+  /**
+   * Raw stroke-sample buffer: resampled voxels appended since the last
+   * dispatch, oldest first. The whole buffer drains as one coalesced segment.
+   */
+  samples: VoxelPos[];
   /**
    * Deferred stroke finish (`pointer-up` / `pointer-cancel`), dispatched
-   * after the coalesced queue drains so the library records history AFTER
+   * after the sample buffer drains so the library records history AFTER
    * the last segment has applied. `event === undefined` ends the stroke
    * without delivering a finish event (parity with the non-camera-locked
    * dispatch path, which never reaches the tool).
@@ -97,12 +128,13 @@ interface ActiveStrokeState {
 export class PointerEventBridge extends RefCounted {
   private readonly attached = new Map<RenderedDataPanel, () => void>();
   /**
-   * In-flight paint stroke. While set, every `mouseState.changed` event
-   * feeds the latest-wins dispatch queue (see `ActiveStrokeState`) so the
-   * stroke advances in lockstep with neuroglancer's (async) picking pipeline
-   * without ever queueing more than one tool op. Set on `pointerdown` when a
-   * paint-like tool is active; cleared on `pointerup` / `pointercancel`
-   * (the detached stroke object keeps draining its remaining queue).
+   * In-flight paint stroke. While set, each new position (coalesced
+   * `pointermove` samples for a slice stroke, or `mouseState.changed` for a
+   * perspective stroke) is appended to the sample buffer and drained one
+   * segment at a time (see `ActiveStrokeState`), so the stroke never queues
+   * more than one tool op. Set on `pointerdown` when a paint-like tool is
+   * active; cleared on `pointerup` / `pointercancel` (the detached stroke
+   * object keeps draining its remaining buffer).
    */
   private activeStroke: ActiveStrokeState | undefined;
 
@@ -152,8 +184,6 @@ export class PointerEventBridge extends RefCounted {
 
   private attachPanel(panel: RenderedDataPanel): () => void {
     const el = panel.element;
-    const onPointer = (kind: PointerKind) => (ev: PointerEvent) =>
-      this.dispatch(ev, () => this.translatePointer(panel, ev, kind));
     const onPointerDown = (ev: PointerEvent) => {
       // Camera lock: when a paint-like tool (brush/erase/fill) is active and
       // the user clicks WITHOUT Ctrl/Cmd, prevent neuroglancer's pan from
@@ -200,7 +230,23 @@ export class PointerEventBridge extends RefCounted {
         );
       }
     };
-    const onPointerMove = onPointer("pointer-move");
+    const onPointerMove = (ev: PointerEvent) => {
+      // A slice stroke is driven directly from `pointermove`: convert every
+      // coalesced sample synchronously and feed the sample buffer (TM-320).
+      // Other cases fall through to the standard dispatch (which skips
+      // `pointermove` for paint tools — perspective strokes are driven from
+      // `mouseState.changed` instead).
+      const stroke = this.activeStroke;
+      if (
+        stroke !== undefined &&
+        stroke.panel === panel &&
+        stroke.source === "slice"
+      ) {
+        this.forwardSliceCoalescedMove(stroke, ev);
+        return;
+      }
+      this.dispatch(ev, () => this.translatePointer(panel, ev, "pointer-move"));
+    };
     const onPointerUp = (ev: PointerEvent) => {
       if (this.requestStrokeFinish(panel, ev, "pointer-up")) return;
       this.dispatch(ev, () => this.translatePointer(panel, ev, "pointer-up"));
@@ -411,7 +457,7 @@ export class PointerEventBridge extends RefCounted {
     if (kind === "pointer-cancel") {
       return { kind: "pointer-cancel", at, modifiers };
     }
-    const voxelPosition = this.resolveVoxelPosition();
+    const voxelPosition = this.resolveVoxelForPointer(panel, ev);
     if (voxelPosition === undefined) return undefined;
     const screenPosition: readonly [number, number] = [ev.clientX, ev.clientY];
     const panelHint = panelKind(panel);
@@ -508,6 +554,95 @@ export class PointerEventBridge extends RefCounted {
     );
   }
 
+  private isActiveToolPaintLike(): boolean {
+    const tool = this.activeTool();
+    return tool !== undefined && this.isPaintLikeTool(tool);
+  }
+
+  /**
+   * Resolve the target voxel for a pointer event. On a slice panel with a
+   * paint-like tool active, use the synchronous slice transform (full rate, no
+   * pick-pass lag); otherwise fall back to the pick-driven `mouseState`
+   * position (perspective panels, non-paint tools).
+   */
+  private resolveVoxelForPointer(
+    panel: RenderedDataPanel,
+    ev: PointerEvent,
+  ): VoxelPos | undefined {
+    if (panel instanceof SliceViewPanel && this.isActiveToolPaintLike()) {
+      const ctx = this.sliceContext(panel);
+      if (ctx !== undefined) {
+        return this.voxelFromClient(ctx, ev.clientX, ev.clientY);
+      }
+    }
+    return this.resolveVoxelPosition();
+  }
+
+  /**
+   * Snapshot everything needed to map a client pixel on `panel` to a target
+   * voxel synchronously, computed once per `pointermove` and reused across that
+   * event's coalesced samples. Returns undefined when prerequisites are missing
+   * (no active tool resolution / global scale, or the viewport is not yet laid
+   * out) so callers fall back to the pick-driven path.
+   */
+  private sliceContext(panel: SliceViewPanel): SliceContext | undefined {
+    const targetResolution = this.host.activeToolWorkingResolution();
+    const globalScaleNm = this.host.globalVoxelSizeNm();
+    if (targetResolution === undefined || globalScaleNm === undefined) {
+      return undefined;
+    }
+    const vp = panel.renderViewport;
+    if (vp.width <= 0 || vp.height <= 0) return undefined;
+    const pp = panel.sliceView.projectionParameters.value;
+    const { displayDimensionRenderInfo } = pp;
+    const el = panel.element;
+    const bounds = el.getBoundingClientRect();
+    const proj: SliceProjectionInfo = {
+      invViewProjectionMat: pp.invViewProjectionMat,
+      width: vp.width,
+      height: vp.height,
+      logicalWidth: vp.logicalWidth,
+      logicalHeight: vp.logicalHeight,
+      visibleLeftFraction: vp.visibleLeftFraction,
+      visibleTopFraction: vp.visibleTopFraction,
+      displayDimensionIndices:
+        displayDimensionRenderInfo.displayDimensionIndices,
+      displayRank: displayDimensionRenderInfo.displayRank,
+    };
+    return {
+      proj,
+      navPosition: this.host.viewer.navigationState.position.value,
+      globalScaleNm,
+      voxelSize: Resolution.toVoxelSize(targetResolution),
+      originLeft: bounds.left + el.clientLeft,
+      originTop: bounds.top + el.clientTop,
+    };
+  }
+
+  private voxelFromClient(
+    ctx: SliceContext,
+    clientX: number,
+    clientY: number,
+  ): VoxelPos {
+    return slicePixelToTargetVoxel(
+      ctx.proj,
+      ctx.navPosition,
+      clientX - ctx.originLeft,
+      clientY - ctx.originTop,
+      ctx.globalScaleNm,
+      ctx.voxelSize,
+    );
+  }
+
+  /** Coalesced samples of a pointermove, or the event itself when unsupported. */
+  private coalescedEvents(ev: PointerEvent): readonly PointerEvent[] {
+    const events =
+      typeof ev.getCoalescedEvents === "function"
+        ? ev.getCoalescedEvents()
+        : [];
+    return events.length > 0 ? events : [ev];
+  }
+
   // -- Stroke forwarding --------------------------------------------------
   // The DOM `pointermove` event fires synchronously, BEFORE
   // `mouseState.unsnappedPosition` has been recomputed for the new pixel
@@ -526,22 +661,29 @@ export class PointerEventBridge extends RefCounted {
     opts: { downOp?: Promise<InputHandling>; gated?: boolean } = {},
   ): ActiveStrokeState {
     this.endActiveStroke();
-    const mouseState = this.host.viewer.mouseState;
+    const source: StrokeSource =
+      panel instanceof SliceViewPanel ? "slice" : "perspective";
     const stroke: ActiveStrokeState = {
       panel,
+      source,
       unsubscribeMouseState: () => {},
       lastVoxel: undefined,
       // Gated until the pointer-down op settles (or, for a chained stroke,
       // until the previous stroke drains and the deferred down dispatches).
       inFlight: opts.downOp !== undefined || opts.gated === true,
-      pendingVia: [],
-      pendingTo: undefined,
+      samples: [],
       finish: undefined,
       onDrained: [],
     };
-    stroke.unsubscribeMouseState = mouseState.changed.add(() =>
-      this.forwardPointerMoveFromMouseState(panel),
-    );
+    if (source === "perspective") {
+      // No synchronous slice transform for 3D views — drive moves from the
+      // pick-updated mouseState, as before. Slice strokes are driven from the
+      // DOM `pointermove` handler instead (see `forwardSliceCoalescedMove`).
+      const mouseState = this.host.viewer.mouseState;
+      stroke.unsubscribeMouseState = mouseState.changed.add(() =>
+        this.forwardPointerMoveFromMouseState(panel),
+      );
+    }
     this.activeStroke = stroke;
     if (opts.downOp !== undefined) {
       // `dispatch` already logs rejections; here we only need the settle
@@ -575,7 +717,7 @@ export class PointerEventBridge extends RefCounted {
   private strokeHasWork(stroke: ActiveStrokeState): boolean {
     return (
       stroke.inFlight ||
-      stroke.pendingTo !== undefined ||
+      stroke.samples.length > 0 ||
       stroke.finish !== undefined
     );
   }
@@ -604,8 +746,7 @@ export class PointerEventBridge extends RefCounted {
       : undefined;
     if (kind === "pointer-cancel") {
       // A canceled stroke must not paint its trailing coalesced segment.
-      stroke.pendingTo = undefined;
-      stroke.pendingVia = [];
+      stroke.samples = [];
     }
     stroke.finish = { event };
     this.endActiveStroke();
@@ -613,13 +754,14 @@ export class PointerEventBridge extends RefCounted {
     return true;
   }
 
-  private forwardPointerMoveFromMouseState(panel: RenderedDataPanel): void {
-    const stroke = this.activeStroke;
-    if (stroke === undefined || stroke.panel !== panel) return;
-    const session = this.host.activeSession.value;
-    if (session === undefined) {
+  /**
+   * Verify the stroke's session and paint tool are still live; tear the stroke
+   * down and return false otherwise. Shared by both position sources.
+   */
+  private strokeStillPaintable(): boolean {
+    if (this.host.activeSession.value === undefined) {
       this.endActiveStroke();
-      return;
+      return false;
     }
     const tool = this.activeTool();
     if (
@@ -628,46 +770,83 @@ export class PointerEventBridge extends RefCounted {
       !this.isPaintLikeTool(tool)
     ) {
       this.endActiveStroke();
-      return;
+      return false;
     }
-    const voxelPosition = this.resolveVoxelPosition();
-    if (voxelPosition === undefined) return;
-    const last = stroke.pendingTo ?? stroke.lastVoxel;
-    if (
-      last !== undefined &&
-      last[0] === voxelPosition[0] &&
-      last[1] === voxelPosition[1] &&
-      last[2] === voxelPosition[2]
-    ) {
-      return;
-    }
-    // Latest-wins backpressure (TM-304): while a stroke op is in flight,
-    // accumulate instead of dispatching. The skipped positions ride along as
-    // `viaVoxelPositions` on the next dispatched move, so the painted path is
-    // exact — only the dispatch cadence adapts to the op throughput.
-    if (stroke.inFlight) {
-      if (stroke.pendingTo !== undefined) {
-        stroke.pendingVia.push(stroke.pendingTo);
-      }
-      stroke.pendingTo = voxelPosition;
-      return;
-    }
-    this.dispatchStrokeMove(stroke, voxelPosition, []);
+    return true;
   }
 
   /**
-   * Dispatch the next queued item once the in-flight op has settled:
-   * first the coalesced move (if any), then the deferred finish, and when the
-   * queue is empty release anything chained behind this stroke (a deferred
-   * next-stroke pointer-down).
+   * Append a resampled voxel to the stroke's sample buffer, deduping repeats
+   * (against the buffer tail, or the last dispatched voxel when empty).
+   */
+  private pushStrokeSample(stroke: ActiveStrokeState, voxel: VoxelPos): void {
+    const last =
+      stroke.samples.length > 0
+        ? stroke.samples[stroke.samples.length - 1]
+        : stroke.lastVoxel;
+    if (
+      last !== undefined &&
+      last[0] === voxel[0] &&
+      last[1] === voxel[1] &&
+      last[2] === voxel[2]
+    ) {
+      return;
+    }
+    stroke.samples.push(voxel);
+  }
+
+  /**
+   * Slice stroke position source (TM-320): convert every coalesced sample of a
+   * DOM `pointermove` synchronously and append it to the buffer, then kick the
+   * drain if idle. Full pointer-event rate, no pick-pass lag, no dropped
+   * sub-frame samples.
+   */
+  private forwardSliceCoalescedMove(
+    stroke: ActiveStrokeState,
+    ev: PointerEvent,
+  ): void {
+    if (!this.strokeStillPaintable()) return;
+    const panel = stroke.panel;
+    if (!(panel instanceof SliceViewPanel)) return;
+    const ctx = this.sliceContext(panel);
+    if (ctx === undefined) return;
+    for (const e of this.coalescedEvents(ev)) {
+      this.pushStrokeSample(
+        stroke,
+        this.voxelFromClient(ctx, e.clientX, e.clientY),
+      );
+    }
+    if (!stroke.inFlight) this.drainStroke(stroke);
+  }
+
+  /**
+   * Perspective stroke position source: read the pick-updated mouseState once
+   * per frame (no synchronous transform for 3D views) and append it.
+   */
+  private forwardPointerMoveFromMouseState(panel: RenderedDataPanel): void {
+    const stroke = this.activeStroke;
+    if (stroke === undefined || stroke.panel !== panel) return;
+    if (!this.strokeStillPaintable()) return;
+    const voxelPosition = this.resolveVoxelPosition();
+    if (voxelPosition === undefined) return;
+    this.pushStrokeSample(stroke, voxelPosition);
+    if (!stroke.inFlight) this.drainStroke(stroke);
+  }
+
+  /**
+   * Dispatch the next work once the in-flight op has settled: drain the WHOLE
+   * accumulated sample buffer as one coalesced segment (`to` = last sample,
+   * the rest as `viaVoxelPositions`), then the deferred finish, and when empty
+   * release anything chained behind this stroke (a deferred next-stroke
+   * pointer-down).
    */
   private drainStroke(stroke: ActiveStrokeState): void {
     if (stroke.inFlight) return;
-    if (stroke.pendingTo !== undefined) {
-      const to = stroke.pendingTo;
-      const via = stroke.pendingVia;
-      stroke.pendingTo = undefined;
-      stroke.pendingVia = [];
+    if (stroke.samples.length > 0) {
+      const samples = stroke.samples;
+      stroke.samples = [];
+      const to = samples[samples.length - 1];
+      const via = samples.slice(0, -1);
       this.dispatchStrokeMove(stroke, to, via);
       return;
     }
@@ -724,8 +903,7 @@ export class PointerEventBridge extends RefCounted {
       !this.isPaintLikeTool(tool)
     ) {
       stroke.inFlight = false;
-      stroke.pendingTo = undefined;
-      stroke.pendingVia = [];
+      stroke.samples = [];
       stroke.finish = undefined;
       this.drainStroke(stroke);
       return;
