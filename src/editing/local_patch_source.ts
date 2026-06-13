@@ -110,6 +110,7 @@ export class LocalPatchSource extends RefCounted {
       }
     }
     chunk.dirty = true;
+    chunk.markFullUpload();
     this.dirtyKeys.add(chunkGridKey(chunkGridPosition));
   }
 

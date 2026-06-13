@@ -866,37 +866,109 @@ async function stampShape2DMasked(
   }
 
   // Build the 2D target-space mask: gate by footprint ∧ threshold-band.
+  // While building, track the tight bounding box of set bytes — the threshold
+  // mask is typically much sparser than the footprint bbox (the band rejects
+  // most of it), and morphology cost scales with the ARRAY size, not the set
+  // size, so cropping to this bbox before the worker call is a large win.
   const tMaskShape: VoxelTriple = [tShapeX, tShapeY, 1];
   const tMaskData = new Uint8Array(tShapeX * tShapeY);
   const low = ctx.mask.thresholdLow;
   const high = ctx.mask.thresholdHigh;
   const tMask = prof ? performance.now() : 0;
+  let mMinI = tShapeX;
+  let mMaxI = -1;
+  let mMinJ = tShapeY;
+  let mMaxJ = -1;
   for (let j = 0; j < tShapeY; j++) {
     const vy = loTy + j;
     const iyLocal = imgY[j] - loImage[1];
+    let rowHasSet = false;
     for (let i = 0; i < tShapeX; i++) {
       if (!inShape(loTx + i, vy)) continue;
       const ixLocal = imgX[i] - loImage[0];
       const v = imageValues[ixLocal + iShapeX * iyLocal];
-      if (v >= low && v <= high) tMaskData[i + tShapeX * j] = 1;
+      if (v >= low && v <= high) {
+        tMaskData[i + tShapeX * j] = 1;
+        rowHasSet = true;
+        if (i < mMinI) mMinI = i;
+        if (i > mMaxI) mMaxI = i;
+      }
+    }
+    if (rowHasSet) {
+      if (j < mMinJ) mMinJ = j;
+      mMaxJ = j;
     }
   }
   if (prof)
     paintProfiler.record("2a.maskBuild(cpu)", performance.now() - tMask);
+  const maskEmpty = mMaxJ < 0;
 
   // Apply binary closing + component filter in TARGET voxel space, via the
   // injected runner (pyodide worker in production, TS pipeline in tests/
-  // fallback). Shape `[tShapeX, tShapeY, 1]` makes the morphology degrade to
+  // fallback). A planar `[w, h, 1]` shape makes the morphology degrade to
   // 4-connected planar ops — same as scipy's default in the reference.
   //
-  // Short-circuit when no morphology is requested (the default: closing 0,
-  // minComponentSize 0). In that case the pipeline is an identity transform, so
-  // calling the worker would round-trip to compute nothing — a pure latency hit
-  // on the live-paint path. Skip it and stamp the raw threshold mask directly.
+  // Short-circuits:
+  //  - No morphology requested (the default: closing 0, minComponentSize 0):
+  //    the pipeline is an identity transform, so calling the worker would
+  //    round-trip to compute nothing — a pure latency hit on the live-paint
+  //    path. Stamp the raw threshold mask directly.
+  //  - Empty threshold mask: closing and component filtering of an all-zero
+  //    mask are identity too — skip the round-trip.
   const needsMorphology =
-    ctx.mask.binaryClosing > 0 || ctx.mask.minComponentSize > 1;
-  const processed: Uint8Array = needsMorphology
-    ? await paintProfiler.timeAsync("2b.morphology(worker)", () =>
+    !maskEmpty && (ctx.mask.binaryClosing > 0 || ctx.mask.minComponentSize > 1);
+  let processed: Uint8Array = tMaskData;
+  if (needsMorphology) {
+    // Crop the worker input to the set-byte bbox padded by the closing reach.
+    // Binary closing is dilation^k ∘ erosion^k: nothing it produces can extend
+    // more than `k` voxels past the input set, and with one extra guard
+    // row/column every neighborhood the erosion reads is identical to the
+    // full-footprint array's (all zeros beyond the set), so the cropped result
+    // is bit-identical inside the window and zero outside — exactly what the
+    // uncropped call would return. The component filter only ever clears
+    // voxels, so it cannot escape the window either.
+    const pad = ctx.mask.binaryClosing + 1;
+    const cLoI = Math.max(0, mMinI - pad);
+    const cHiI = Math.min(tShapeX - 1, mMaxI + pad);
+    const cLoJ = Math.max(0, mMinJ - pad);
+    const cHiJ = Math.min(tShapeY - 1, mMaxJ + pad);
+    const cw = cHiI - cLoI + 1;
+    const ch = cHiJ - cLoJ + 1;
+    const useCrop = cw * ch < tShapeX * tShapeY;
+    if (prof) {
+      paintProfiler.count("voxels.morphInput", cw * ch);
+      paintProfiler.count("voxels.morphInputFull", tShapeX * tShapeY);
+    }
+    if (useCrop) {
+      const cropped = new Uint8Array(cw * ch);
+      for (let j = 0; j < ch; j++) {
+        const srcStart = (cLoJ + j) * tShapeX + cLoI;
+        cropped.set(tMaskData.subarray(srcStart, srcStart + cw), j * cw);
+      }
+      const processedCrop = await paintProfiler.timeAsync(
+        "2b.morphology(worker)",
+        () =>
+          runMorphology({
+            mask: cropped,
+            shape: [cw, ch, 1],
+            binaryClosing: ctx.mask.binaryClosing,
+            minComponentSize: ctx.mask.minComponentSize,
+            filterComponentsFirst: ctx.mask.filterComponentsFirst,
+          }),
+      );
+      // Paste the processed window back over its source region. Outside the
+      // window `tMaskData` is all zero by construction (the window covers
+      // every set byte plus the closing reach), so the patched buffer IS the
+      // full-size result.
+      for (let j = 0; j < ch; j++) {
+        tMaskData.set(
+          processedCrop.subarray(j * cw, (j + 1) * cw),
+          (cLoJ + j) * tShapeX + cLoI,
+        );
+      }
+      processed = tMaskData;
+    } else {
+      processed = await paintProfiler.timeAsync("2b.morphology(worker)", () =>
         runMorphology({
           mask: tMaskData,
           shape: tMaskShape,
@@ -904,8 +976,9 @@ async function stampShape2DMasked(
           minComponentSize: ctx.mask.minComponentSize,
           filterComponentsFirst: ctx.mask.filterComponentsFirst,
         }),
-      )
-    : tMaskData;
+      );
+    }
+  }
 
   // Sample back: each in-footprint voxel takes its mask byte from the processed
   // buffer. The chunk builder records the footprint's bounding box as the

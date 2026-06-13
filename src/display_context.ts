@@ -17,6 +17,7 @@
 import { debounce } from "lodash-es";
 
 import type { FrameNumberCounter } from "#src/chunk_manager/frontend.js";
+import { paintProfiler } from "#src/editing/tool_runtimes/paint_profiler.js";
 import { TrackableValue } from "#src/trackable_value.js";
 import { animationFrameDebounce } from "#src/util/animation_frame_debounce.js";
 import type { Borrowed } from "#src/util/disposable.js";
@@ -629,6 +630,23 @@ export class DisplayContext extends RefCounted implements FrameNumberCounter {
   }
 
   draw() {
+    // Paint-profiling diagnostic (TM-304): when the paint profiler is on,
+    // time every full frame draw so main-thread stalls that delay worker
+    // message delivery can be attributed to (or ruled out as) render frames.
+    // One boolean check when profiling is off.
+    if (paintProfiler.enabled) {
+      const t0 = performance.now();
+      try {
+        this.drawInner();
+      } finally {
+        paintProfiler.record("mt.frameDraw", performance.now() - t0);
+      }
+      return;
+    }
+    this.drawInner();
+  }
+
+  private drawInner() {
     ++this.frameNumber;
     this.updateStarted.dispatch();
     const gl = this.gl;

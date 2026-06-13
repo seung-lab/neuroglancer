@@ -28,6 +28,7 @@ import {
   type MorphologyRequest,
   type MorphologyResponse,
 } from "#src/editing/tool_runtimes/morphology_request.js";
+import { paintProfiler } from "#src/editing/tool_runtimes/paint_profiler.js";
 import { RefCounted } from "#src/util/disposable.js";
 import { RPC } from "#src/worker_rpc.js";
 
@@ -37,8 +38,16 @@ export class MorphologyClient extends RefCounted {
   private inFlight = 0;
   private needsReinit = false;
 
+  private everBooted = false;
+
   private ensureWorker(): RPC {
     if (this.rpc !== undefined) return this.rpc;
+    if (this.everBooted && paintProfiler.enabled) {
+      // A re-creation (e.g. post-heap-pressure reinit) — the next call pays a
+      // cold pyodide boot, which shows up as `2b.w.q.boot`.
+      paintProfiler.count("morphology.workerReinit", 1);
+    }
+    this.everBooted = true;
     // For multi-bundler compatibility the worker URL must be a literal
     // `new URL(..., import.meta.url)` (same constraint as
     // data_management_context.ts). The bundle lives at `src/`, this file at
@@ -73,13 +82,52 @@ export class MorphologyClient extends RefCounted {
   ): Promise<Uint8Array> {
     const rpc = this.ensureWorker();
     this.inFlight++;
+    const prof = paintProfiler.enabled;
+    const t0 = prof ? performance.now() : 0;
+    const request: MorphologyRequest = prof
+      ? { ...req, postedAtEpochMs: Date.now() }
+      : req;
     try {
       const res = await rpc.promiseInvoke<MorphologyResponse>(
         MORPHOLOGY_APPLY_RPC,
-        req,
+        request,
         { transfers: [req.mask.buffer], signal },
       );
-      if (res.heapPressure) this.needsReinit = true;
+      if (res.heapPressure) {
+        this.needsReinit = true;
+        if (prof) paintProfiler.count("morphology.heapPressure", 1);
+      }
+      // Worker-side phase timings → profiler. These are measured inside the
+      // worker, so unlike the awaited `2b.morphology(worker)` bucket they
+      // cannot include main-thread scheduling or RPC queue-wait; the residual
+      // `rpc+queue` bucket is exactly that difference, and the `2b.w.q.*`
+      // buckets split it by direction: `request` = transit + worker event
+      // loop, `boot` = pyodide (re)boot wait, `response` = the response
+      // sitting in the MAIN thread's event loop (Date.now() is the shared
+      // clock; ms precision).
+      if (prof && res.timings !== undefined) {
+        const t = res.timings;
+        paintProfiler.record("2b.w.marshalIn(py)", t.marshalInMs);
+        paintProfiler.record("2b.w.closing(py)", t.closingMs);
+        paintProfiler.record("2b.w.components(py)", t.componentsMs);
+        paintProfiler.record("2b.w.marshalOut(py)", t.marshalOutMs);
+        paintProfiler.record("2b.w.call(js)", t.workerCallMs);
+        paintProfiler.record("2b.w.convertOut(js)", t.convertOutMs);
+        paintProfiler.record("2b.w.q.boot", t.bootWaitMs);
+        if (t.requestQueueMs !== undefined) {
+          paintProfiler.record("2b.w.q.request", t.requestQueueMs);
+        }
+        if (res.respondedAtEpochMs !== undefined) {
+          paintProfiler.record(
+            "2b.w.q.response",
+            Math.max(0, Date.now() - res.respondedAtEpochMs),
+          );
+        }
+        paintProfiler.record(
+          "2b.w.rpc+queue",
+          Math.max(0, performance.now() - t0 - t.workerCallMs),
+        );
+      }
       return res.mask;
     } finally {
       this.inFlight--;
