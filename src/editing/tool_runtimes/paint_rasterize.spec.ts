@@ -20,6 +20,7 @@ import { describe, it, expect } from "vitest";
 
 import {
   rasterizeStrokeIntoChunk,
+  stampMaskIntoChunk,
   type Vec3,
 } from "#src/editing/tool_runtimes/paint_rasterize.js";
 import type { PaintWriteBatch } from "#src/editing/tool_runtimes/paint_types.js";
@@ -237,6 +238,190 @@ describe("rasterizeStrokeIntoChunk — clipping and bounds", () => {
     expect(maxX).toBe(ox + w - 1);
     void oy;
     void h;
+  });
+});
+
+describe("stampMaskIntoChunk — masked footprint stamp", () => {
+  // Footprint box [loTx, loTx+maskW) × [loTy, loTy+maskH) at z=cz; mask 1=paint.
+  // The reference set is exactly {value @ mask=1}, intersected with each chunk.
+  function maskVoxelSet(
+    mask: Uint8Array,
+    maskW: number,
+    maskH: number,
+    loTx: number,
+    loTy: number,
+    cz: number,
+    chunkOrigins: readonly Vec3[],
+  ): Set<string> {
+    const out = new Set<string>();
+    for (const origin of chunkOrigins) {
+      const view = new Uint32Array(CHUNK * CHUNK * CHUNK);
+      const sub = stampMaskIntoChunk(view, {
+        mask,
+        maskW,
+        maskH,
+        loTx,
+        loTy,
+        cz,
+        value: PAINT_VALUE,
+        chunkOrigin: origin,
+        chunkSize: [CHUNK, CHUNK, CHUNK],
+      });
+      if (sub === undefined) continue;
+      // Every written voxel must lie within the reported sub-box.
+      for (let i = 0; i < view.length; i++) {
+        if (view[i] !== PAINT_VALUE) continue;
+        const x = i % CHUNK;
+        const y = Math.floor(i / CHUNK) % CHUNK;
+        const z = Math.floor(i / (CHUNK * CHUNK));
+        expect(x).toBeGreaterThanOrEqual(sub.origin[0]);
+        expect(x).toBeLessThanOrEqual(sub.origin[0] + sub.size[0] - 1);
+        expect(y).toBeGreaterThanOrEqual(sub.origin[1]);
+        expect(y).toBeLessThanOrEqual(sub.origin[1] + sub.size[1] - 1);
+        expect(z).toBe(sub.origin[2]);
+        out.add(`${origin[0] + x},${origin[1] + y},${origin[2] + z}`);
+      }
+    }
+    return out;
+  }
+
+  /** Reference: the set the main-thread sample-back loop would paint. */
+  function referenceSet(
+    mask: Uint8Array,
+    maskW: number,
+    maskH: number,
+    loTx: number,
+    loTy: number,
+    cz: number,
+  ): Set<string> {
+    const out = new Set<string>();
+    for (let j = 0; j < maskH; j++) {
+      for (let i = 0; i < maskW; i++) {
+        if (mask[j * maskW + i] === 1) {
+          out.add(`${loTx + i},${loTy + j},${cz}`);
+        }
+      }
+    }
+    return out;
+  }
+
+  it("stamps exactly {value @ mask=1} within a single chunk", () => {
+    const maskW = 5;
+    const maskH = 4;
+    const mask = new Uint8Array(maskW * maskH);
+    // A small diagonal + a stray voxel.
+    mask[0 * maskW + 0] = 1;
+    mask[1 * maskW + 1] = 1;
+    mask[2 * maskW + 2] = 1;
+    mask[3 * maskW + 4] = 1;
+    const expected = referenceSet(mask, maskW, maskH, 10, 20, 30);
+    const actual = maskVoxelSet(mask, maskW, maskH, 10, 20, 30, [[0, 0, 0]]);
+    expectSameSet(actual, expected);
+  });
+
+  it("splits a footprint across a chunk boundary, union = whole footprint", () => {
+    // Footprint straddles x=64. maskW spans [60, 70).
+    const maskW = 10;
+    const maskH = 3;
+    const mask = new Uint8Array(maskW * maskH).fill(1);
+    const loTx = 60;
+    const loTy = 20;
+    const cz = 5;
+    const expected = referenceSet(mask, maskW, maskH, loTx, loTy, cz);
+    const actual = maskVoxelSet(mask, maskW, maskH, loTx, loTy, cz, [
+      [0, 0, 0],
+      [64, 0, 0],
+    ]);
+    expect(actual.size).toBe(maskW * maskH);
+    expectSameSet(actual, expected);
+  });
+
+  it("returns undefined when the z-slice or footprint misses the chunk", () => {
+    const mask = new Uint8Array(4).fill(1);
+    // z outside chunk:
+    expect(
+      stampMaskIntoChunk(new Uint32Array(CHUNK * CHUNK * CHUNK), {
+        mask,
+        maskW: 2,
+        maskH: 2,
+        loTx: 10,
+        loTy: 10,
+        cz: 200,
+        value: PAINT_VALUE,
+        chunkOrigin: [0, 0, 0],
+        chunkSize: [CHUNK, CHUNK, CHUNK],
+      }),
+    ).toBeUndefined();
+    // footprint outside chunk in x/y:
+    expect(
+      stampMaskIntoChunk(new Uint32Array(CHUNK * CHUNK * CHUNK), {
+        mask,
+        maskW: 2,
+        maskH: 2,
+        loTx: 200,
+        loTy: 200,
+        cz: 10,
+        value: PAINT_VALUE,
+        chunkOrigin: [0, 0, 0],
+        chunkSize: [CHUNK, CHUNK, CHUNK],
+      }),
+    ).toBeUndefined();
+  });
+
+  it("returns undefined when the masked overlap is all-zero", () => {
+    const mask = new Uint8Array(9); // all zero
+    expect(
+      stampMaskIntoChunk(new Uint32Array(CHUNK * CHUNK * CHUNK), {
+        mask,
+        maskW: 3,
+        maskH: 3,
+        loTx: 10,
+        loTy: 10,
+        cz: 10,
+        value: PAINT_VALUE,
+        chunkOrigin: [0, 0, 0],
+        chunkSize: [CHUNK, CHUNK, CHUNK],
+      }),
+    ).toBeUndefined();
+  });
+
+  it("writes bigint values into a 64-bit view", () => {
+    const view = new BigUint64Array(CHUNK * CHUNK * CHUNK);
+    const mask = new Uint8Array(1).fill(1);
+    const sub = stampMaskIntoChunk(view, {
+      mask,
+      maskW: 1,
+      maskH: 1,
+      loTx: 10,
+      loTy: 12,
+      cz: 3,
+      value: 12345678901234567890n,
+      chunkOrigin: [0, 0, 0],
+      chunkSize: [CHUNK, CHUNK, CHUNK],
+    });
+    expect(sub).toBeDefined();
+    const idx = (3 * CHUNK + 12) * CHUNK + 10;
+    expect(view[idx]).toBe(12345678901234567890n);
+  });
+
+  it("bails (returns undefined) when shouldCancel fires", () => {
+    const mask = new Uint8Array(64).fill(1);
+    const sub = stampMaskIntoChunk(
+      new Uint32Array(CHUNK * CHUNK * CHUNK),
+      {
+        mask,
+        maskW: 8,
+        maskH: 8,
+        loTx: 10,
+        loTy: 10,
+        cz: 0,
+        value: PAINT_VALUE,
+        chunkOrigin: [0, 0, 0],
+        chunkSize: [CHUNK, CHUNK, CHUNK],
+      },
+      () => true,
+    );
+    expect(sub).toBeUndefined();
   });
 });
 

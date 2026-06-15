@@ -16,23 +16,25 @@
  * the stroke's generation has been superseded (cooperative cancellation).
  */
 
-import {
-  rasterizeStrokeIntoChunk,
-  type RasterizedSubregion,
-} from "#src/editing/tool_runtimes/paint_rasterize.js";
 import type {
-  BrushRasterizeRequest,
-  BrushRasterizeResult,
+  BrushWorkerRequest,
+  BrushWorkerResult,
 } from "#src/editing/tool_runtimes/brush_worker_protocol.js";
 import {
   GENERATION_INDEX,
+  maskViewForJob,
   viewForJob,
 } from "#src/editing/tool_runtimes/brush_worker_protocol.js";
+import {
+  rasterizeStrokeIntoChunk,
+  stampMaskIntoChunk,
+  type RasterizedSubregion,
+} from "#src/editing/tool_runtimes/paint_rasterize.js";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
 ctx.onmessage = (event: MessageEvent) => {
-  const { id, job } = event.data as BrushRasterizeRequest;
+  const { id, job } = event.data as BrushWorkerRequest;
   try {
     const control = new Int32Array(job.controlBuffer);
     const superseded = () =>
@@ -41,23 +43,40 @@ ctx.onmessage = (event: MessageEvent) => {
     // were scheduled).
     let written: RasterizedSubregion | null = null;
     if (!superseded()) {
+      const view = viewForJob(job);
       written =
-        rasterizeStrokeIntoChunk(
-          viewForJob(job),
-          {
-            points: job.points,
-            radius: job.radius,
-            value: job.value,
-            chunkOrigin: job.chunkOrigin,
-            chunkSize: job.chunkSize,
-          },
-          superseded,
-        ) ?? null;
+        (job.kind === "mask"
+          ? stampMaskIntoChunk(
+              view,
+              {
+                mask: maskViewForJob(job),
+                maskW: job.maskW,
+                maskH: job.maskH,
+                loTx: job.loTx,
+                loTy: job.loTy,
+                cz: job.cz,
+                value: job.value,
+                chunkOrigin: job.chunkOrigin,
+                chunkSize: job.chunkSize,
+              },
+              superseded,
+            )
+          : rasterizeStrokeIntoChunk(
+              view,
+              {
+                points: job.points,
+                radius: job.radius,
+                value: job.value,
+                chunkOrigin: job.chunkOrigin,
+                chunkSize: job.chunkSize,
+              },
+              superseded,
+            )) ?? null;
     }
-    const result: BrushRasterizeResult = { id, written };
+    const result: BrushWorkerResult = { id, written };
     ctx.postMessage(result);
   } catch (error) {
-    const result: BrushRasterizeResult = { id, error: String(error) };
+    const result: BrushWorkerResult = { id, error: String(error) };
     ctx.postMessage(result);
   }
 };

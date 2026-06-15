@@ -24,12 +24,14 @@
  * generation word (see `brush_worker_protocol`), not the worker queue.
  */
 
-import type { RasterizedSubregion } from "#src/editing/tool_runtimes/paint_rasterize.js";
 import type {
+  BrushMaskStampJob,
   BrushRasterizeJob,
-  BrushRasterizeRequest,
-  BrushRasterizeResult,
+  BrushWorkerJob,
+  BrushWorkerRequest,
+  BrushWorkerResult,
 } from "#src/editing/tool_runtimes/brush_worker_protocol.js";
+import type { RasterizedSubregion } from "#src/editing/tool_runtimes/paint_rasterize.js";
 
 type Resolve = (value: RasterizedSubregion | null) => void;
 type Reject = (error: unknown) => void;
@@ -38,7 +40,7 @@ let numWorkers = 0;
 const freeWorkers: Worker[] = [];
 const pendingJobs = new Map<
   number,
-  { msg: BrushRasterizeRequest; cleanup?: () => void }
+  { msg: BrushWorkerRequest; cleanup?: () => void }
 >();
 const tasks = new Map<number, { resolve: Resolve; reject: Reject }>();
 let nextTaskId = 0;
@@ -70,7 +72,7 @@ function returnWorker(worker: Worker): void {
  * hanging). Returns to the synchronous fallback is the caller's concern.
  */
 function failPool(detail: string): void {
-  // eslint-disable-next-line no-console
+   
   console.error(`[brush-worker] ${detail}`);
   for (const [, job] of pendingJobs) job.cleanup?.();
   pendingJobs.clear();
@@ -100,7 +102,7 @@ function launchWorker(): void {
       returnWorker(worker);
       return;
     }
-    const data = msg.data as BrushRasterizeResult;
+    const data = msg.data as BrushWorkerResult;
     returnWorker(worker);
     const task = tasks.get(data.id);
     if (task === undefined) return; // superseded/aborted before completion
@@ -125,17 +127,36 @@ function launchWorker(): void {
 }
 
 /**
- * Rasterize one stroke tile on the pool. Resolves with the chunk-local bbox of
- * written voxels, or null when nothing committable was produced (the tile was a
- * miss or the job was superseded). `signal` cancels a still-queued job; an
- * in-flight job is stopped cooperatively via its generation word.
+ * Rasterize one unmasked stroke tile on the pool. Resolves with the chunk-local
+ * bbox of written voxels, or null when nothing committable was produced (a miss
+ * or a superseded job). `signal` cancels a still-queued job; an in-flight job is
+ * stopped cooperatively via its generation word.
  */
 export function requestBrushRasterize(
   job: BrushRasterizeJob,
   signal?: AbortSignal,
 ): Promise<RasterizedSubregion | null> {
+  return enqueueJob(job, signal);
+}
+
+/**
+ * Stamp one footprint-mask tile on the pool (masked brush, TM-317 Phase B).
+ * Same contract as `requestBrushRasterize`: resolves with the written bbox or
+ * null (mask all-zero in this chunk / superseded).
+ */
+export function requestBrushMaskStamp(
+  job: BrushMaskStampJob,
+  signal?: AbortSignal,
+): Promise<RasterizedSubregion | null> {
+  return enqueueJob(job, signal);
+}
+
+function enqueueJob(
+  job: BrushWorkerJob,
+  signal?: AbortSignal,
+): Promise<RasterizedSubregion | null> {
   const id = nextTaskId++;
-  const msg: BrushRasterizeRequest = { id, job };
+  const msg: BrushWorkerRequest = { id, job };
   signal?.throwIfAborted();
 
   const promise = new Promise<RasterizedSubregion | null>((resolve, reject) => {

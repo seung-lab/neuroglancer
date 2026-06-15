@@ -166,3 +166,97 @@ export function rasterizeStrokeIntoChunk(
     size: [wHiX - wLoX + 1, wHiY - wLoY + 1, 1],
   };
 }
+
+/** A precomputed footprint mask to stamp into chunks (masked-brush worker route). */
+export interface StampMaskParams {
+  /**
+   * Footprint mask, `1` = paint. Dense, x-fastest, over the box
+   * `[loTx, loTx+maskW) × [loTy, loTy+maskH)` on z-slice `cz` (GLOBAL voxel
+   * coords). This is the exact mask the pyodide whole-pipeline returns, so the
+   * stamp is byte-identical to the main-thread `writeVoxel` sample-back loop.
+   */
+  readonly mask: Uint8Array;
+  readonly maskW: number;
+  readonly maskH: number;
+  readonly loTx: number;
+  readonly loTy: number;
+  readonly cz: number;
+  /** Value written at masked voxels (bigint for 64-bit views). */
+  readonly value: number | bigint;
+  /** Global voxel coord of this chunk's local (0,0,0). */
+  readonly chunkOrigin: Vec3;
+  /** Chunk dimensions `[sx, sy, sz]` in voxels. */
+  readonly chunkSize: Vec3;
+}
+
+/**
+ * Stamp a precomputed footprint mask into ONE chunk's dense voxel buffer:
+ * write `value` at every voxel inside the footprint box where the mask bit is
+ * set, leaving the rest untouched (the chunk already holds the materialized
+ * baseline). Returns the chunk-local bbox of written voxels, or undefined when
+ * the footprint misses this chunk (in X/Y or Z, or all-zero overlap) or
+ * `shouldCancel` fired.
+ *
+ * This is the masked analogue of `rasterizeStrokeIntoChunk` and the worker unit
+ * of work for the masked brush (TM-317 Phase B): it fuses the main-thread
+ * `scatter` (sample-back) and `writeRegion` (slot scatter) into a single
+ * off-thread pass over the footprint∩chunk intersection. The result is
+ * byte-identical to scattering the same mask through `builder.writeVoxel` +
+ * `writeRegion`, because both write exactly `{value @ mask=1}`.
+ */
+export function stampMaskIntoChunk(
+  view: VoxelView,
+  params: StampMaskParams,
+  shouldCancel?: () => boolean,
+): RasterizedSubregion | undefined {
+  const { mask, maskW, maskH, loTx, loTy, cz, value, chunkOrigin, chunkSize } =
+    params;
+  const [ox, oy, oz] = chunkOrigin;
+  const [sx, sy, sz] = chunkSize;
+
+  // Single z-slice: bail if it falls outside this chunk.
+  const lz = cz - oz;
+  if (lz < 0 || lz >= sz) return undefined;
+  const zBase = lz * sy;
+
+  // Intersection of the footprint box with this chunk, in global coords.
+  const x0 = Math.max(ox, loTx);
+  const x1 = Math.min(ox + sx - 1, loTx + maskW - 1);
+  const y0 = Math.max(oy, loTy);
+  const y1 = Math.min(oy + sy - 1, loTy + maskH - 1);
+  if (x0 > x1 || y0 > y1) return undefined;
+
+  const big = isBigIntView(view);
+  const bigValue = big ? BigInt(value) : 0n;
+  const numValue = big ? 0 : Number(value);
+
+  let wLoX = Number.POSITIVE_INFINITY;
+  let wLoY = Number.POSITIVE_INFINITY;
+  let wHiX = Number.NEGATIVE_INFINITY;
+  let wHiY = Number.NEGATIVE_INFINITY;
+
+  for (let vy = y0; vy <= y1; vy++) {
+    if (shouldCancel?.()) return undefined;
+    const maskRow = (vy - loTy) * maskW;
+    const slotRow = (zBase + (vy - oy)) * sx;
+    for (let vx = x0; vx <= x1; vx++) {
+      if (mask[maskRow + (vx - loTx)] !== 1) continue;
+      const idx = slotRow + (vx - ox);
+      if (big) {
+        (view as BigUint64Array)[idx] = bigValue;
+      } else {
+        (view as Uint8Array)[idx] = numValue;
+      }
+      if (vx < wLoX) wLoX = vx;
+      if (vx > wHiX) wHiX = vx;
+      if (vy < wLoY) wLoY = vy;
+      if (vy > wHiY) wHiY = vy;
+    }
+  }
+
+  if (wHiX < wLoX) return undefined; // mask was all-zero within this chunk
+  return {
+    origin: [wLoX - ox, wLoY - oy, lz],
+    size: [wHiX - wLoX + 1, wHiY - wLoY + 1, 1],
+  };
+}

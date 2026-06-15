@@ -41,20 +41,17 @@ export type BrushVoxelDataType =
 export const GENERATION_INDEX = 0;
 
 /**
- * One tile of work: rasterize `points` (radius, value) into the chunk whose
- * `slot.data` lives at `[byteOffset, byteOffset + elementCount*bytes)` of the
- * shared `dataBuffer`. The worker reconstructs the same typed-array view and
- * writes in place. It cooperatively stops if the shared `controlBuffer`'s
- * generation word no longer equals `generation` (the stroke was superseded).
+ * The shared chunk slot a job writes into: `slot.data` lives at
+ * `[byteOffset, byteOffset + elementCount*bytes)` of the shared `dataBuffer`.
+ * The worker reconstructs the typed-array view (`viewForJob`) and writes in
+ * place. It cooperatively stops if the shared `controlBuffer`'s generation word
+ * no longer equals `generation` (the stroke was superseded).
  */
-export interface BrushRasterizeJob {
+interface BrushSlotRef {
   readonly dataBuffer: SharedArrayBuffer;
   readonly byteOffset: number;
   readonly elementCount: number;
   readonly voxelDataType: BrushVoxelDataType;
-  readonly points: readonly Vec3[];
-  readonly radius: number;
-  readonly value: number | bigint;
   readonly chunkOrigin: Vec3;
   readonly chunkSize: Vec3;
   /** `Int32Array` control word; `[GENERATION_INDEX]` is the live generation. */
@@ -62,19 +59,51 @@ export interface BrushRasterizeJob {
   readonly generation: number;
 }
 
+/**
+ * One tile of work: rasterize the swept-capsule / polyline `points` (radius,
+ * value) into the chunk slot. The unmasked-brush worker unit (TM-322).
+ */
+export interface BrushRasterizeJob extends BrushSlotRef {
+  readonly kind: "stroke";
+  readonly points: readonly Vec3[];
+  readonly radius: number;
+  readonly value: number | bigint;
+}
+
+/**
+ * One tile of work: stamp a precomputed footprint mask into the chunk slot —
+ * write `value` where the shared, read-only mask bit is set (TM-317 Phase B).
+ * The mask covers `[loTx, loTx+maskW) × [loTy, loTy+maskH)` on slice `cz` in
+ * GLOBAL voxel coords. `maskBuffer` is a `SharedArrayBuffer` shared (never
+ * transferred) across all of a footprint's tiles — the worker only reads it.
+ */
+export interface BrushMaskStampJob extends BrushSlotRef {
+  readonly kind: "mask";
+  readonly maskBuffer: SharedArrayBuffer;
+  readonly maskW: number;
+  readonly maskH: number;
+  readonly loTx: number;
+  readonly loTy: number;
+  readonly cz: number;
+  readonly value: number | bigint;
+}
+
+/** Either worker unit of work. */
+export type BrushWorkerJob = BrushRasterizeJob | BrushMaskStampJob;
+
 /** Main thread → worker. */
-export interface BrushRasterizeRequest {
+export interface BrushWorkerRequest {
   readonly id: number;
-  readonly job: BrushRasterizeJob;
+  readonly job: BrushWorkerJob;
 }
 
 /** Worker → main thread. `written === null` means nothing committable (miss/canceled). */
-export type BrushRasterizeResult =
+export type BrushWorkerResult =
   | { readonly id: number; readonly written: RasterizedSubregion | null }
   | { readonly id: number; readonly error: string };
 
-/** Reconstruct the chunk's typed-array view over the shared buffer. */
-export function viewForJob(job: BrushRasterizeJob): VoxelView {
+/** Reconstruct the chunk's typed-array view over the shared slot buffer. */
+export function viewForJob(job: BrushWorkerJob): VoxelView {
   const { dataBuffer: b, byteOffset: o, elementCount: n } = job;
   switch (job.voxelDataType) {
     case "uint8":
@@ -94,4 +123,9 @@ export function viewForJob(job: BrushRasterizeJob): VoxelView {
     case "uint64":
       return new BigUint64Array(b, o, n);
   }
+}
+
+/** Reconstruct the read-only footprint mask view over the shared mask buffer. */
+export function maskViewForJob(job: BrushMaskStampJob): Uint8Array {
+  return new Uint8Array(job.maskBuffer, 0, job.maskW * job.maskH);
 }
