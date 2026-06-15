@@ -100,6 +100,7 @@
     "nifti-reader-js": "^0.6.8",
     "numcodecs": "^0.3.2",
     "preact": "^10.25.0",
+    "pyodide": "0.26.2",
     "valibot": "^1.0.0-beta.15"
   },
   "overrides": {
