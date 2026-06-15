@@ -123,9 +123,15 @@ function paintedVoxelSet(batch: PaintWriteBatch): Set<string> {
   return out;
 }
 
-/** Fake worker client: records requests, applies an identity transform. */
+/**
+ * Fake worker client: records morphology requests, applies an identity
+ * transform. `isReady: false` keeps the masked stamp on the main-thread compute
+ * path (the crop + morphology-round-trip behaviour under test), rather than the
+ * TM-317 whole-pipeline route.
+ */
 function fakeMorphologyClient(calls: MorphologyRequest[]): MorphologyClient {
   return {
+    isReady: () => false,
     apply: async (req: MorphologyRequest) => {
       calls.push(req);
       return req.mask;

@@ -25,6 +25,13 @@ import {
   type MorphologyResponse,
   type MorphologyTimings,
 } from "#src/editing/tool_runtimes/morphology_request.js";
+import {
+  PAINT_PIPELINE_RPC,
+  PAINT_PIPELINE_READY_RPC,
+  type PaintPipelineRequest,
+  type PaintPipelineResponse,
+  type PaintPipelineTimings,
+} from "#src/editing/tool_runtimes/paint_pipeline_request.js";
 import PYTHON_SRC from "#src/editing/tool_runtimes/python_painter.py?raw";
 import type { RPC, RPCPromise } from "#src/worker_rpc.js";
 import { registerPromiseRPC } from "#src/worker_rpc.js";
@@ -63,10 +70,37 @@ type ApplyMorphologyFn = (
   filterComponentsFirst: boolean,
 ) => unknown;
 
+/**
+ * Whole-pipeline paint compute (TM-317). Returns python `bytes` (a `PyProxy`).
+ * Arg order mirrors `apply_paint_pipeline` in `python_painter.py`.
+ */
+type ApplyPaintPipelineFn = (
+  imageBytes: ArrayBufferView,
+  iSx: number,
+  iSy: number,
+  imageDataType: string,
+  loImageX: number,
+  loImageY: number,
+  loTx: number,
+  loTy: number,
+  tSx: number,
+  tSy: number,
+  sxRatio: number,
+  syRatio: number,
+  thrLow: number,
+  thrHigh: number,
+  pathPoints: ArrayBufferView,
+  radius: number,
+  binaryClosing: number,
+  minComponentSize: number,
+  filterComponentsFirst: boolean,
+) => unknown;
+
 // Typed loosely as `any` to avoid a hard dependency on `@types/pyodide`; the
 // surface we touch (`runPython`, `globals.get`, `_module.HEAPU8`) is stable.
 let pyodide: any = null;
 let applyFn: ApplyMorphologyFn | null = null;
+let applyPipelineFn: ApplyPaintPipelineFn | null = null;
 
 const pyodideReady: Promise<void> = (async () => {
   // Phase-0 integration point: the dynamic import is left for the runtime
@@ -81,6 +115,9 @@ const pyodideReady: Promise<void> = (async () => {
   });
   pyodide.runPython(PYTHON_SRC);
   applyFn = pyodide.globals.get("apply_morphology") as ApplyMorphologyFn;
+  applyPipelineFn = pyodide.globals.get(
+    "apply_paint_pipeline",
+  ) as ApplyPaintPipelineFn;
 })();
 
 function heapBytes(): number {
@@ -118,6 +155,82 @@ registerPromiseRPC<MorphologyResponse>(
     const mask = extractMask(out);
     const convertOutMs = performance.now() - convertStart;
     const timings = readLastTimings(workerCallMs, bootWaitMs, convertOutMs, {
+      receivedAtEpochMs,
+      postedAtEpochMs: req.postedAtEpochMs,
+    });
+    return {
+      value: {
+        mask,
+        heapPressure: heapBytes() >= HEAP_WATERMARK_BYTES,
+        ...(timings !== undefined ? { timings } : {}),
+        respondedAtEpochMs: Date.now(),
+      },
+      transfers: [mask.buffer],
+    };
+  },
+);
+
+registerPromiseRPC<PaintPipelineResponse>(
+  PAINT_PIPELINE_READY_RPC,
+  async function (
+    this: RPC,
+    _req: unknown,
+    { signal },
+  ): RPCPromise<PaintPipelineResponse> {
+    // Resolves only once pyodide (numpy + scipy) has fully booted, so the
+    // client can flip its non-blocking "ready" flag and start routing masked
+    // strokes through the whole-pipeline path. `mask` is an empty placeholder —
+    // this RPC carries no payload.
+    await pyodideReady;
+    if (signal?.aborted) throw signal.reason;
+    return {
+      value: { mask: new Uint8Array(0), heapPressure: false },
+      transfers: [],
+    };
+  },
+);
+
+registerPromiseRPC<PaintPipelineResponse>(
+  PAINT_PIPELINE_RPC,
+  async function (
+    this: RPC,
+    req: PaintPipelineRequest,
+    { signal },
+  ): RPCPromise<PaintPipelineResponse> {
+    const receivedAtEpochMs = Date.now();
+    const bootWaitStart = performance.now();
+    await pyodideReady;
+    const bootWaitMs = performance.now() - bootWaitStart;
+    if (signal?.aborted) throw signal.reason;
+    const [iSx, iSy] = req.imageShape;
+    const [tSx, tSy] = req.targetShape;
+    const callStart = performance.now();
+    const out = applyPipelineFn!(
+      req.image,
+      iSx,
+      iSy,
+      req.imageDataType,
+      req.loImageX,
+      req.loImageY,
+      req.loTx,
+      req.loTy,
+      tSx,
+      tSy,
+      req.sxRatio,
+      req.syRatio,
+      req.thresholdLow,
+      req.thresholdHigh,
+      req.pathPoints,
+      req.radius,
+      req.binaryClosing,
+      req.minComponentSize,
+      req.filterComponentsFirst,
+    );
+    const workerCallMs = performance.now() - callStart;
+    const convertStart = performance.now();
+    const mask = extractMask(out);
+    const convertOutMs = performance.now() - convertStart;
+    const timings = readPipelineTimings(workerCallMs, bootWaitMs, convertOutMs, {
       receivedAtEpochMs,
       postedAtEpochMs: req.postedAtEpochMs,
     });
@@ -182,6 +295,44 @@ function readLastTimings(
     const num = (v: unknown) => (typeof v === "number" ? v : 0);
     return {
       marshalInMs: num(parsed.marshalInMs),
+      closingMs: num(parsed.closingMs),
+      componentsMs: num(parsed.componentsMs),
+      marshalOutMs: num(parsed.marshalOutMs),
+      workerCallMs,
+      bootWaitMs,
+      convertOutMs,
+      ...(queue.postedAtEpochMs !== undefined
+        ? {
+            requestQueueMs: Math.max(
+              0,
+              queue.receivedAtEpochMs - queue.postedAtEpochMs,
+            ),
+          }
+        : {}),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Pipeline analogue of {@link readLastTimings}: pulls the phase timings
+ * `apply_paint_pipeline` stashed in the python global `last_pipeline_timings_json`.
+ * Defensive — a parse failure must never fail the paint call.
+ */
+function readPipelineTimings(
+  workerCallMs: number,
+  bootWaitMs: number,
+  convertOutMs: number,
+  queue: { receivedAtEpochMs: number; postedAtEpochMs: number | undefined },
+): PaintPipelineTimings | undefined {
+  try {
+    const raw = pyodide.runPython("last_pipeline_timings_json") as string;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const num = (v: unknown) => (typeof v === "number" ? v : 0);
+    return {
+      marshalInMs: num(parsed.marshalInMs),
+      maskBuildMs: num(parsed.maskBuildMs),
       closingMs: num(parsed.closingMs),
       componentsMs: num(parsed.componentsMs),
       marshalOutMs: num(parsed.marshalOutMs),
