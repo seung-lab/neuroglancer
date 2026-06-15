@@ -19,6 +19,7 @@ import {
   slicePixelToTargetVoxel,
 } from "#src/editing/raster/slice_pixel_to_voxel.js";
 import { paintProfiler } from "#src/editing/tool_runtimes/paint_profiler.js";
+import { paintScheduler } from "#src/editing/tool_runtimes/paint_scheduler_config.js";
 import type {
   InputHandling,
   ModifierState,
@@ -915,11 +916,20 @@ export class PointerEventBridge extends RefCounted {
   }
 
   /**
-   * Dispatch the next work once the in-flight op has settled: drain the WHOLE
-   * accumulated sample buffer as one coalesced segment (`to` = last sample,
-   * the rest as `viaVoxelPositions`), then the deferred finish, and when empty
-   * release anything chained behind this stroke (a deferred next-stroke
-   * pointer-down).
+   * Dispatch the next work once the in-flight op has settled, then the deferred
+   * finish, and when empty release anything chained behind this stroke (a
+   * deferred next-stroke pointer-down).
+   *
+   * Segment formation depends on the scheduler mode (`__paintScheduler.mode`,
+   * TM-317):
+   *  - `latestWins` (default fix): DROP every intermediate sample — dispatch
+   *    only the latest cursor (`via = []`). True drop-to-latest, NOT
+   *    serialize-the-backlog: stale queued positions are discarded, never
+   *    replayed in order. The per-call painted span is then bounded by the cap
+   *    in `StrokeTool` (a disk at the latest cursor once the cursor outran the
+   *    cap). This is what stops paint falling unboundedly behind under load.
+   *  - `coalesce` (current): drain the whole buffer as one swept capsule
+   *    (`to` = last sample, the rest as `viaVoxelPositions`).
    */
   private drainStroke(stroke: ActiveStrokeState): void {
     if (stroke.inFlight) return;
@@ -927,7 +937,8 @@ export class PointerEventBridge extends RefCounted {
       const samples = stroke.samples;
       stroke.samples = [];
       const to = samples[samples.length - 1];
-      const via = samples.slice(0, -1);
+      const via =
+        paintScheduler.mode === "latestWins" ? [] : samples.slice(0, -1);
       this.dispatchStrokeMove(stroke, to, via);
       return;
     }

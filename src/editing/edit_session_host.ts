@@ -50,6 +50,7 @@ import {
   coordinateSpaceFromJson,
   coordinateSpaceToJson,
 } from "#src/coordinate_transform.js";
+import { createChunkBufferAllocator } from "#src/editing/adapters/ng_chunk_buffer_allocator.js";
 import { NgChunkSource } from "#src/editing/adapters/ng_chunk_source.js";
 import { NgClock } from "#src/editing/adapters/ng_clock.js";
 import { NgCommitTarget } from "#src/editing/adapters/ng_commit_target.js";
@@ -84,6 +85,10 @@ import { LocalPatchStore } from "#src/editing/local_patch_store.js";
 // and writes the resulting overlay bytes into `store.writeFullChunk(...)`.
 import { PatchMirror } from "#src/editing/overlay/patch_mirror.js";
 import { PatchTextureCache } from "#src/editing/patch_texture_cache.js";
+// Side-effect: attaches `window.__editPaintBench` for the Playwright paint
+// benchmark (a dev tool, like `window.__paintProfiler` — only does work when
+// invoked). Tree-shake-safe: no value import.
+import "#src/editing/benchmarks/edit_paint_bench.js";
 import { PointerEventBridge } from "#src/editing/pointer_event_bridge.js";
 import { QuickRegionCapture } from "#src/editing/quick_region_capture.js";
 import { positionAtBoxCenter } from "#src/editing/region/region_geometry.js";
@@ -1673,9 +1678,11 @@ export class EditSessionHost extends RefCounted {
       // Routes the library's apply-path timings into the paint profiler (no-op
       // unless profiling is enabled). See `paintProfilerMetrics`.
       metrics: paintProfilerMetrics,
-      // NOTE (TM-322): the SAB-backed chunk allocator is intentionally NOT wired
-      // — the brush worker path is disabled (see `PaintStrokePipeline`), so
-      // overlay working buffers stay on the plain heap.
+      // Back overlay working buffers with SharedArrayBuffer so the brush worker
+      // pool can read/write them zero-copy (TM-322 / TM-317 Phase B); falls back
+      // to ArrayBuffer when not cross-origin isolated (the worker path then
+      // stays off — see `PaintStrokePipeline.available`).
+      chunkBufferAllocator: createChunkBufferAllocator(),
     };
   }
 

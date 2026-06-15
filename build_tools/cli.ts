@@ -226,6 +226,14 @@ function parseArgs() {
             devServer: {
               port: argv.port === 0 ? "auto" : argv.port,
               host: argv.host,
+              // Cross-origin isolation (TM-324): required for SharedArrayBuffer
+              // / self.crossOriginIsolated. Mirrors the production vercel.json
+              // and the portal's next.config headers so local dev matches the
+              // deployed embedding.
+              headers: {
+                "Cross-Origin-Opener-Policy": "same-origin",
+                "Cross-Origin-Embedder-Policy": "require-corp",
+              },
             },
           }),
         );

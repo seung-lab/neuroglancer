@@ -28,21 +28,26 @@
  */
 
 import type {
-  ChunkId,
   Edit,
   LayerId,
   LayerMetadata,
   ReadonlyChunkVoxelBuffer,
   Resolution,
+  WriteTarget,
 } from "@zettaai/edit-session";
-import { scaleFor } from "@zettaai/edit-session";
+import { ChunkId, scaleFor } from "@zettaai/edit-session";
 
 import { applyPaintBatch } from "#src/editing/tool_runtimes/paint_batch_apply.js";
+import { paintProfiler } from "#src/editing/tool_runtimes/paint_profiler.js";
+import { paintScheduler } from "#src/editing/tool_runtimes/paint_scheduler_config.js";
+import {
+  chunksForStroke,
+  PaintStrokePipeline,
+} from "#src/editing/tool_runtimes/paint_stroke_pipeline.js";
 import type {
   PaintCompute,
   PaintingMaskConfig,
 } from "#src/editing/tool_runtimes/paint_types.js";
-import { PaintStrokePipeline } from "#src/editing/tool_runtimes/paint_stroke_pipeline.js";
 import { StrokeGeometry } from "#src/editing/tool_runtimes/stroke_geometry.js";
 import type {
   InputHandling,
@@ -66,6 +71,17 @@ export const PAINTING_ERASE_TOOL_ID = "painting.erase";
 export const PAINTING_FILL_TOOL_ID = "painting.fill";
 
 export const DEFAULT_RADIUS_CYCLE: readonly number[] = [1, 3, 5, 9, 17, 33];
+
+/** Euclidean distance between two voxel positions (latestWins cap test). */
+function dist3(
+  a: readonly [number, number, number],
+  b: readonly [number, number, number],
+): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const dz = b[2] - a[2];
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
+}
 
 export interface PaintingSharedState {
   readonly targetLayerId: LayerId;
@@ -278,39 +294,89 @@ export class StrokeTool implements EditTool {
     useWorker: boolean,
   ): Promise<void> {
     if (path.length < 2) return;
-    // Worker-pool fast path (TM-322): unmasked, single-z, real-radius live
-    // strokes rasterize off the main thread directly into the SAB overlay. The
-    // legacy 1-voxel brush (r === 0), z-varying paths, masked strokes, and
-    // replay-redo fall through to the synchronous compute path below.
-    if (
-      useWorker &&
-      maskFields.mask === undefined &&
-      this.deps.pipeline.available
-    ) {
-      const r = Math.floor(shared.radius);
-      const z0 = Math.floor(path[0][2]);
-      const sameZ = path.every((p) => Math.floor(p[2]) === z0);
-      if (r >= 1 && sameZ) {
-        await this.deps.pipeline.paintSegment(
-          edit,
-          {
-            layerId: shared.targetLayerId,
-            resolution: shared.targetResolution,
-          },
-          metadata,
-          path,
-          shared.radius,
-          value,
-        );
-        return;
+    const target: WriteTarget = {
+      layerId: shared.targetLayerId,
+      resolution: shared.targetResolution,
+    };
+    const readChunk = (chunkId: ChunkId) =>
+      edit.readChunk({ ...target, chunkId });
+    const chunkSize = scaleFor(metadata, shared.targetResolution).chunkDataSize;
+    // P1 (TM-317): warm the overlay chunks under the stroke footprint NOW, in
+    // parallel, so they are resident by the time the apply (worker OR
+    // synchronous) calls `beginWrite` → `materializeForWrite.fetchBaseline`. For
+    // a masked stroke the warm overlaps the pyodide compute (~120 ms), so the
+    // previously-cold per-chunk baseline IO (spiking to ~150 ms) becomes a
+    // resident clone. Best-effort: the real read still happens at write time,
+    // and the undo pre-image is still captured there — we only relocate the
+    // fetch, never drop it.
+    const warm = warmStrokeFootprint(edit, target, path, shared.radius, chunkSize);
+
+    // Worker write path (TM-322 unmasked / TM-317 Phase B masked): single-z,
+    // real-radius live strokes apply off the main thread directly into the SAB
+    // overlay slots — the unmasked rasterize kernel, or the masked footprint
+    // mask stamped where set. This removes `scatter` + `writeRegion` (the
+    // measured ~84% of BLOCKS-UI) from the main thread. On ANY worker failure we
+    // latch the path off and fall through to the synchronous compute below, so a
+    // broken worker degrades gracefully instead of breaking the stroke. The
+    // 1-voxel brush (r === 0), z-varying paths, and replay-redo always take the
+    // synchronous path.
+    const r = Math.floor(shared.radius);
+    const z0 = Math.floor(path[0][2]);
+    const sameZ = path.every((p) => Math.floor(p[2]) === z0);
+    if (useWorker && this.deps.pipeline.available && r >= 1 && sameZ) {
+      if (maskFields.mask === undefined) {
+        try {
+          await this.deps.pipeline.paintSegment(
+            edit,
+            target,
+            metadata,
+            path,
+            shared.radius,
+            value,
+          );
+          return;
+        } catch (e) {
+          this.deps.pipeline.markFailed();
+          warnWorkerFallback(e);
+        }
+      } else if (this.deps.compute.computeMaskedStrokeFootprint !== undefined) {
+        try {
+          const wvia = path.slice(1, -1);
+          const footprint = await this.deps.compute.computeMaskedStrokeFootprint(
+            {
+              targetLayerId: shared.targetLayerId,
+              targetResolution: shared.targetResolution,
+              metadata,
+              from: path[0],
+              to: path[path.length - 1],
+              ...(wvia.length > 0 ? { via: wvia } : {}),
+              stepVoxels,
+              radius: shared.radius,
+              value,
+              ...maskFields,
+              readChunk,
+              readChunkAt,
+            },
+          );
+          // `null` = not worker-eligible / worker not ready / pyodide failed →
+          // take the synchronous path (which re-runs the proven compute).
+          if (footprint !== null) {
+            await this.deps.pipeline.stampMaskedFootprint(
+              edit,
+              target,
+              metadata,
+              footprint,
+              value,
+            );
+            return;
+          }
+        } catch (e) {
+          this.deps.pipeline.markFailed();
+          warnWorkerFallback(e);
+        }
       }
     }
-    const readChunk = (chunkId: ChunkId) =>
-      edit.readChunk({
-        layerId: shared.targetLayerId,
-        resolution: shared.targetResolution,
-        chunkId,
-      });
+
     const via = path.slice(1, -1);
     const batch = await this.deps.compute.applyBrushStroke({
       targetLayerId: shared.targetLayerId,
@@ -326,8 +392,12 @@ export class StrokeTool implements EditTool {
       readChunk,
       readChunkAt,
     });
-    const chunkSize = scaleFor(metadata, shared.targetResolution).chunkDataSize;
-    await edit.withBatch(() => applyPaintBatch(edit, batch, chunkSize));
+    // Normally already settled (it raced the compute); the recorded cost is the
+    // residual wait, which should be ~0 once warming wins the race.
+    await paintProfiler.timeAsync("P1.warm(io)", () => warm);
+    await paintProfiler.timeAsync("apply.total(cpu)", () =>
+      edit.withBatch(() => applyPaintBatch(edit, batch, chunkSize)),
+    );
   }
 
   /**
@@ -358,7 +428,9 @@ export class StrokeTool implements EditTool {
       readChunkAt: this.deps.readChunkAt,
     });
     const chunkSize = scaleFor(metadata, shared.targetResolution).chunkDataSize;
-    await edit.withBatch(() => applyPaintBatch(edit, batch, chunkSize));
+    await paintProfiler.timeAsync("apply.total(cpu)", () =>
+      edit.withBatch(() => applyPaintBatch(edit, batch, chunkSize)),
+    );
     for (const path of segments) {
       await this.paintStrokePath(
         edit,
@@ -481,7 +553,9 @@ export class StrokeTool implements EditTool {
         metadata,
         shared.targetResolution,
       ).chunkDataSize;
-      await edit.withBatch(() => applyPaintBatch(edit, batch, chunkSize));
+      await paintProfiler.timeAsync("apply.total(cpu)", () =>
+        edit.withBatch(() => applyPaintBatch(edit, batch, chunkSize)),
+      );
       return { consumed: true };
     }
 
@@ -497,6 +571,42 @@ export class StrokeTool implements EditTool {
         ev.voxelPosition[2],
       ];
       if (this.geometry !== null) {
+        // latestWins scheduling (TM-317): bound the per-call painted span. Once
+        // the cursor outran the cap (a fast drag while the worker was busy),
+        // DROP the connecting capsule and stamp a single disk at the latest
+        // cursor — the old voxel-editor model — then restart the geometry from
+        // there so the next capsule is bounded too. This is true drop-to-latest
+        // (skip + one disk), NOT serialize-the-backlog. Compute (pyodide /
+        // morphology) and commit are reached exactly as for any other segment,
+        // just with a bounded footprint.
+        if (paintScheduler.mode === "latestWins") {
+          const cap = paintScheduler.resolveCap(shared.radius);
+          if (dist3(this.lastVoxel, cursor) > cap) {
+            this.lastVoxel = cursor;
+            this.geometry = new StrokeGeometry({
+              diameterVoxels: 2 * Math.floor(shared.radius) + 1,
+              spacingFraction: shared.spacingFraction,
+            });
+            this.geometry.pushSamples([cursor]);
+            const diskPath: readonly (readonly [number, number, number])[] = [
+              cursor,
+              cursor,
+            ];
+            this.recordReplaySegment(diskPath);
+            await this.paintStrokePath(
+              edit,
+              diskPath,
+              shared,
+              metadata,
+              value,
+              maskFields,
+              readChunkAt,
+              this.geometry.spacingVoxels,
+              true,
+            );
+            return { consumed: true };
+          }
+        }
         // Feed the raw delivered samples (coalesced waypoints + cursor) to the
         // geometry, then paint tail → canonical stamps → live cursor. The
         // trailing segment to the cursor is the provisional head stamp; it is
@@ -652,7 +762,9 @@ export class FillTool implements EditTool {
           metadata,
           shared.targetResolution,
         ).chunkDataSize;
-        await edit.withBatch(() => applyPaintBatch(edit, batch, chunkSize));
+        await paintProfiler.timeAsync("apply.total(cpu)", () =>
+          edit.withBatch(() => applyPaintBatch(edit, batch, chunkSize)),
+        );
       },
     );
     return { consumed: true };
@@ -750,4 +862,73 @@ export class ConsumerPaintingTools {
       },
     ];
   }
+}
+
+/**
+ * Warm (make resident) the overlay chunks the stroke footprint will write into,
+ * so the subsequent `writeRegion` → `beginWrite` → `materializeForWrite`
+ * baseline fetch is a resident clone instead of a cold IO await (P1, TM-317).
+ *
+ * The footprint chunks are derived from the swept-capsule / polyline-union
+ * geometry (`chunksForStroke`, clipped to the session bounds) — the exact
+ * superset of chunks `applyPaintBatch` touches. Issuing `edit.readChunk` for
+ * each routes through the same `EditOverlayStore.read` → `fetchBaseline` →
+ * `NgChunkSource.readBaselineChunk` path the write later hits, priming
+ * neuroglancer's chunk cache; concurrent duplicate reads dedup via the chunk
+ * pipeline and the overlay's `readInFlight`, so warming costs no extra IO.
+ *
+ * Only the well-defined single-z, radius ≥ 1 case is warmed — that is the
+ * expensive masked footprint whose cold baseline IO this targets; the rare
+ * z-varying / 1-voxel fallback paints tiny dabs and is left to the write path.
+ * Best-effort: per-chunk read errors are swallowed (the real read in
+ * `writeRegion` surfaces any genuine failure), and warming NEVER mutates or
+ * captures the undo pre-image — that still happens at `beginWrite`.
+ */
+let workerFallbackWarned = false;
+/**
+ * Warn once per session when the brush worker path fails and we fall back to the
+ * synchronous main-thread apply. The stroke still paints correctly (the
+ * synchronous path is the byte-identical reference) — this just makes it visible
+ * that the off-thread acceleration is not in effect.
+ */
+function warnWorkerFallback(e: unknown): void {
+  if (workerFallbackWarned) return;
+  workerFallbackWarned = true;
+  console.warn(
+    "[painting] brush worker write path failed — falling back to the " +
+      "synchronous main-thread apply for the rest of this session. Painting " +
+      "stays correct but is not accelerated off-thread. First failure:",
+    e,
+  );
+}
+
+function warmStrokeFootprint(
+  edit: Edit,
+  target: WriteTarget,
+  path: readonly (readonly [number, number, number])[],
+  radius: number,
+  chunkSize: readonly [number, number, number],
+): Promise<void> {
+  if (path.length === 0) return Promise.resolve();
+  const r = Math.floor(radius);
+  const z0 = Math.floor(path[0][2]);
+  if (r < 1 || !path.every((p) => Math.floor(p[2]) === z0)) {
+    return Promise.resolve();
+  }
+  const bounds = edit.sessionVoxelBoundsFor({
+    ...target,
+    chunkId: ChunkId.fromCoord({ x: 0, y: 0, z: 0 }),
+  });
+  const tiles = chunksForStroke(path, r, chunkSize, bounds);
+  if (tiles.length === 0) return Promise.resolve();
+  return Promise.all(
+    tiles.map((tile) =>
+      edit
+        .readChunk({ ...target, chunkId: ChunkId.fromCoord(tile.coord) })
+        .then(
+          () => undefined,
+          () => undefined,
+        ),
+    ),
+  ).then(() => undefined);
 }

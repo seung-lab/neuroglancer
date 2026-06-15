@@ -19,7 +19,9 @@ import type {
   Resolution,
 } from "@zettaai/edit-session";
 import { Resolution as ResolutionCtor, layerId } from "@zettaai/edit-session";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
+
+import { paintScheduler } from "#src/editing/tool_runtimes/paint_scheduler_config.js";
 
 import type {
   BrushApplyInput,
@@ -213,6 +215,14 @@ const cancel = (): PointerCancelEvent => ({
 });
 
 describe("ConsumerPaintingTools — stroke lifecycle (TM-315)", () => {
+  // Default scheduling is `latestWins` (TM-317) — bounded + drop-to-latest. Tests
+  // that assert the coalesce/geometry resampling feature opt into `coalesce`;
+  // restore the default after each.
+  afterEach(() => {
+    paintScheduler.mode = "latestWins";
+    paintScheduler.maxStampSpacing = 0;
+  });
+
   it("one brush stroke = one beginEdit + one record", async () => {
     const { tools, log, calls } = setup();
     await tools.brush.handleInput(down(10, 10, 10));
@@ -237,6 +247,10 @@ describe("ConsumerPaintingTools — stroke lifecycle (TM-315)", () => {
   });
 
   it("resamples coalesced samples into evenly-spaced canonical stamps (TM-318)", async () => {
+    // This is the coalesce-mode resampling feature: the swept path is rebuilt
+    // from the coalesced via-waypoints. latestWins deliberately drops via, so
+    // pin coalesce here.
+    paintScheduler.mode = "coalesce";
     const { tools, calls } = setup();
     await tools.brush.handleInput(down(0, 0, 0));
     await tools.brush.handleInput(
@@ -267,6 +281,50 @@ describe("ConsumerPaintingTools — stroke lifecycle (TM-315)", () => {
         expect(via[i][0] - via[i - 1][0]).toBeCloseTo(1, 5);
       }
     }
+  });
+
+  it("latestWins drops a far move to a single disk at the latest cursor (TM-317)", async () => {
+    // Default mode is latestWins; radius 3 → cap = 3. A move whose cursor outran
+    // the cap is painted as ONE disk at the latest cursor (from === to), NOT a
+    // swept capsule spanning the gap — true drop-to-latest, gap accepted.
+    const { tools, calls } = setup();
+    await tools.brush.handleInput(down(0, 0, 0));
+    await tools.brush.handleInput(move(20, 0, 0)); // gap 20 > cap 3
+    await tools.brush.handleInput(up(20, 0, 0));
+
+    const strokes = calls.applyBrushStroke;
+    const disk = strokes.find((s) => s.from[0] === 20 && s.to[0] === 20);
+    expect(disk).toBeDefined();
+    // Nothing connects the dropped span from the origin to the latest cursor.
+    const spanning = strokes.find((s) => s.from[0] === 0 && s.to[0] === 20);
+    expect(spanning).toBeUndefined();
+  });
+
+  it("latestWins keeps a bounded capsule when within the cap (TM-317)", async () => {
+    // radius 3 → cap 3; a 2-voxel move stays a smooth capsule (no disk skip).
+    const { tools, calls } = setup();
+    await tools.brush.handleInput(down(0, 0, 0));
+    await tools.brush.handleInput(move(2, 0, 0)); // gap 2 <= cap 3
+    await tools.brush.handleInput(up(2, 0, 0));
+
+    const seg = calls.applyBrushStroke.find(
+      (s) => s.from[0] === 0 && s.to[0] === 2,
+    );
+    expect(seg).toBeDefined();
+  });
+
+  it("coalesce mode still sweeps the full span (A/B reference, TM-317)", async () => {
+    paintScheduler.mode = "coalesce";
+    const { tools, calls } = setup();
+    await tools.brush.handleInput(down(0, 0, 0));
+    await tools.brush.handleInput(move(20, 0, 0));
+    await tools.brush.handleInput(up(20, 0, 0));
+    // No disk-skip: the swept path reaches the cursor from the origin.
+    const strokes = calls.applyBrushStroke;
+    expect(strokes[0]!.from).toEqual([0, 0, 0]);
+    expect(strokes[strokes.length - 1]!.to).toEqual([20, 0, 0]);
+    const diskSkip = strokes.find((s) => s.from[0] === 20 && s.to[0] === 20);
+    expect(diskSkip).toBeUndefined();
   });
 
   it("unmasked brush and eraser use replay redo; masked brush uses image (TM-319)", async () => {
