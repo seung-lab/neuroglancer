@@ -60,6 +60,29 @@ function returnWorker(worker: Worker): void {
   freeWorkers.push(worker);
 }
 
+/**
+ * Fail fast on a fatal worker error (a load failure, or a runtime throw outside
+ * the handler's try/catch). Without this the worker's job is never answered,
+ * the stroke's `Promise.all` never settles, and painting freezes after the
+ * first dab. Surface the error and reject all outstanding work so the stroke
+ * errors visibly instead; the pool relaunches a fresh worker on the next
+ * request (a persistently broken bundle then errors every stroke rather than
+ * hanging). Returns to the synchronous fallback is the caller's concern.
+ */
+function failPool(detail: string): void {
+  // eslint-disable-next-line no-console
+  console.error(`[brush-worker] ${detail}`);
+  for (const [, job] of pendingJobs) job.cleanup?.();
+  pendingJobs.clear();
+  const error = new Error(`brush worker failed: ${detail}`);
+  for (const [id, task] of tasks) {
+    tasks.delete(id);
+    task.reject(error);
+  }
+  freeWorkers.length = 0;
+  numWorkers = 0;
+}
+
 function launchWorker(): void {
   ++numWorkers;
   // A literal `new URL(..., import.meta.url)` is required for bundler worker
@@ -88,6 +111,17 @@ function launchWorker(): void {
       task.resolve(data.written);
     }
   };
+  // A worker that dies before/after posting `ready` (failed bundle load, fatal
+  // runtime error) would otherwise hang every queued job — surface it.
+  worker.onerror = (event: ErrorEvent) => {
+    failPool(
+      event.message
+        ? `worker error: ${event.message}`
+        : "worker error (failed to load?)",
+    );
+  };
+  worker.onmessageerror = () =>
+    failPool("worker message deserialization error");
 }
 
 /**

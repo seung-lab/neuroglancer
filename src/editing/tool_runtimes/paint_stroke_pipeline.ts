@@ -104,6 +104,20 @@ export function chunksForStroke(
 }
 
 /**
+ * Master switch for the worker rasterization path (TM-322).
+ *
+ * DISABLED: profiling showed stroke rasterization is <1 ms — never the
+ * bottleneck. The main-thread cost is the GPU mirror (`fuseOverlayIntoChunk`
+ * full-chunk scan) and the commit/upload pipeline, which the worker path does
+ * not touch (and per-tile commit made worse). The worker path also regressed
+ * live painting (strokes paint only the pointer-down dab). Until the mirror
+ * pipeline is the proven target and the worker path is re-validated, strokes
+ * use the synchronous main-thread compute path. The worker code is retained
+ * (dormant) behind this flag rather than deleted.
+ */
+const WORKER_PATH_ENABLED = false;
+
+/**
  * Owns the generation word and drives unmasked stroke segments across the brush
  * worker pool. One instance per painting session.
  */
@@ -113,13 +127,13 @@ export class PaintStrokePipeline {
   private generation = 0;
 
   constructor() {
-    if (sharedArrayBufferAvailable()) {
+    if (WORKER_PATH_ENABLED && sharedArrayBufferAvailable()) {
       this.controlBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
       this.control = new Int32Array(this.controlBuffer);
     }
   }
 
-  /** Whether the worker path is usable (cross-origin isolated / SAB present). */
+  /** Whether the worker path is usable (enabled, cross-origin isolated, SAB present). */
   get available(): boolean {
     return this.control !== undefined;
   }
