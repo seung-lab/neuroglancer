@@ -50,6 +50,7 @@ import {
   coordinateSpaceFromJson,
   coordinateSpaceToJson,
 } from "#src/coordinate_transform.js";
+import { createChunkBufferAllocator } from "#src/editing/adapters/ng_chunk_buffer_allocator.js";
 import { NgChunkSource } from "#src/editing/adapters/ng_chunk_source.js";
 import { NgClock } from "#src/editing/adapters/ng_clock.js";
 import { NgCommitTarget } from "#src/editing/adapters/ng_commit_target.js";
@@ -1673,6 +1674,10 @@ export class EditSessionHost extends RefCounted {
       // Routes the library's apply-path timings into the paint profiler (no-op
       // unless profiling is enabled). See `paintProfilerMetrics`.
       metrics: paintProfilerMetrics,
+      // Back overlay working buffers with SharedArrayBuffer so the brush worker
+      // pool can read/write them zero-copy (TM-322); falls back to ArrayBuffer
+      // when not cross-origin isolated.
+      chunkBufferAllocator: createChunkBufferAllocator(),
     };
   }
 
