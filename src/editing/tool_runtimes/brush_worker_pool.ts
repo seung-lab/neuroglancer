@@ -65,6 +65,7 @@ function launchWorker(): void {
   // A literal `new URL(..., import.meta.url)` is required for bundler worker
   // resolution (no `#src/...` subpath import).
   const worker = new Worker(
+    /* webpackChunkName: "neuroglancer_brush_worker" */
     new URL("../../brush_worker.bundle.js", import.meta.url),
     { type: "module" },
   );

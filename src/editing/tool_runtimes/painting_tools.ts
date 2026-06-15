@@ -42,6 +42,7 @@ import type {
   PaintCompute,
   PaintingMaskConfig,
 } from "#src/editing/tool_runtimes/paint_types.js";
+import { PaintStrokePipeline } from "#src/editing/tool_runtimes/paint_stroke_pipeline.js";
 import { StrokeGeometry } from "#src/editing/tool_runtimes/stroke_geometry.js";
 import type {
   InputHandling,
@@ -131,6 +132,12 @@ interface PaintingToolDeps {
   readonly compute: PaintCompute;
   readonly metadataByLayer: ReadonlyMap<LayerId, LayerMetadata>;
   readonly readChunkAt: ReadChunkAt;
+  /**
+   * Worker-pool stroke pipeline (TM-322). Used for the unmasked same-z r>=1 fast
+   * path when cross-origin isolation makes it available; otherwise strokes fall
+   * back to the synchronous main-thread compute path.
+   */
+  readonly pipeline: PaintStrokePipeline;
 }
 
 /**
@@ -238,10 +245,14 @@ export class StrokeTool implements EditTool {
 
   onDeactivate(): void {
     // A tool switch mid-stroke abandons the in-flight edit. Roll it back so a
-    // half-applied stroke never lingers without a history entry.
+    // half-applied stroke never lingers without a history entry. Supersede any
+    // in-flight worker tiles FIRST (TM-322/TM-323) so a late tile cannot
+    // commitWrites into the just-discarded edit — this is the real race, since
+    // onDeactivate is a direct disposer call, not gated by the bridge.
     if (this.handle !== null) {
       const handle = this.handle;
       this.handle = null;
+      this.deps.pipeline.invalidate();
       void handle.cancel();
     }
     this.lastVoxel = null;
@@ -264,8 +275,36 @@ export class StrokeTool implements EditTool {
     maskFields: { mask?: PaintingMaskConfig; maskMetadata?: LayerMetadata },
     readChunkAt: ReadChunkAt,
     stepVoxels: number,
+    useWorker: boolean,
   ): Promise<void> {
     if (path.length < 2) return;
+    // Worker-pool fast path (TM-322): unmasked, single-z, real-radius live
+    // strokes rasterize off the main thread directly into the SAB overlay. The
+    // legacy 1-voxel brush (r === 0), z-varying paths, masked strokes, and
+    // replay-redo fall through to the synchronous compute path below.
+    if (
+      useWorker &&
+      maskFields.mask === undefined &&
+      this.deps.pipeline.available
+    ) {
+      const r = Math.floor(shared.radius);
+      const z0 = Math.floor(path[0][2]);
+      const sameZ = path.every((p) => Math.floor(p[2]) === z0);
+      if (r >= 1 && sameZ) {
+        await this.deps.pipeline.paintSegment(
+          edit,
+          {
+            layerId: shared.targetLayerId,
+            resolution: shared.targetResolution,
+          },
+          metadata,
+          path,
+          shared.radius,
+          value,
+        );
+        return;
+      }
+    }
     const readChunk = (chunkId: ChunkId) =>
       edit.readChunk({
         layerId: shared.targetLayerId,
@@ -330,6 +369,7 @@ export class StrokeTool implements EditTool {
         {},
         this.deps.readChunkAt,
         spacingVoxels,
+        false, // replay-redo stays on the deterministic main-thread path
       );
     }
   }
@@ -479,6 +519,7 @@ export class StrokeTool implements EditTool {
           maskFields,
           readChunkAt,
           this.geometry.spacingVoxels,
+          true,
         );
       } else {
         // Legacy 1-voxel brush: rasterize the raw delivered polyline as-is.
@@ -493,6 +534,7 @@ export class StrokeTool implements EditTool {
           maskFields,
           readChunkAt,
           1,
+          true,
         );
       }
       return { consumed: true };
@@ -515,6 +557,7 @@ export class StrokeTool implements EditTool {
             maskFields,
             readChunkAt,
             this.geometry.spacingVoxels,
+            true,
           );
         }
       }
@@ -532,6 +575,8 @@ export class StrokeTool implements EditTool {
       this.lastVoxel = null;
       this.geometry = null;
       this.activeReplay = null;
+      // Supersede in-flight worker tiles before discarding (TM-322/TM-323).
+      this.deps.pipeline.invalidate();
       await handle.cancel();
       return { consumed: true };
     }
@@ -641,6 +686,7 @@ export class ConsumerPaintingTools {
       compute: opts.compute,
       metadataByLayer: opts.metadataByLayer,
       readChunkAt: opts.readChunkAt,
+      pipeline: new PaintStrokePipeline(),
     };
     this.brush = new StrokeTool(deps, {
       toolId: PAINTING_BRUSH_TOOL_ID,
