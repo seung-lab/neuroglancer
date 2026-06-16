@@ -32,6 +32,7 @@ function state(over: Partial<PaintingSharedState> = {}): PaintingSharedState {
     activeValue: 42n,
     eraseValue: 0n,
     mask: undefined,
+    spacingFraction: 0.1,
     ...over,
   };
 }

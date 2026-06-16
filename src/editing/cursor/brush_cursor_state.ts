@@ -62,6 +62,17 @@ export class BrushCursorState extends RefCounted {
   /** Per-session subscriptions, replaced whenever the active session changes. */
   private sessionSubscriptions: Array<() => void> = [];
 
+  /**
+   * Synchronous cursor center in global coordinates (TM-325). When set, it is
+   * used in preference to the pick-lagged `mouseState.unsnappedPosition`, so the
+   * cursor tracks the pointer as tightly as the (now pick-independent) paint
+   * does on slice views. The pointer bridge sets this from the same synchronous
+   * slice transform the stroke uses, and clears it (undefined) when the pointer
+   * is not over a slice panel with a paint-like tool — falling back to
+   * `mouseState`.
+   */
+  private sliceCenterOverride: vec3 | undefined;
+
   constructor(private readonly host: EditSessionHost) {
     super();
 
@@ -74,6 +85,20 @@ export class BrushCursorState extends RefCounted {
     // The mouse state lives on the viewer (across sessions); subscribe once.
     this.registerDisposer(
       host.viewer.mouseState.changed.add(() => this.refreshWorldCenter()),
+    );
+
+    // The synchronous center (TM-325) is computed for a specific pointer pixel
+    // under the current view; a pan/zoom invalidates it (the same pixel now
+    // maps elsewhere). Drop it on navigation changes so the cursor falls back
+    // to `mouseState` until the next `pointermove` re-establishes a fresh
+    // center — without this, zooming while hovering would strand the cursor.
+    this.registerDisposer(
+      host.viewer.navigationState.changed.add(() => {
+        if (this.sliceCenterOverride !== undefined) {
+          this.sliceCenterOverride = undefined;
+          this.refreshWorldCenter();
+        }
+      }),
     );
 
     // Initial wiring against whatever session is currently active (typically
@@ -157,6 +182,16 @@ export class BrushCursorState extends RefCounted {
     }
   }
 
+  /**
+   * Set (or clear) the synchronous global cursor center. Called by the pointer
+   * bridge on every slice paint `pointermove`; clearing falls back to
+   * `mouseState`. See {@link sliceCenterOverride}.
+   */
+  setSliceCenterOverride(center: vec3 | undefined): void {
+    this.sliceCenterOverride = center;
+    this.refreshWorldCenter();
+  }
+
   private refreshWorldCenter(): void {
     const mouseState = this.host.viewer.mouseState;
     if (!mouseState.active) {
@@ -165,7 +200,8 @@ export class BrushCursorState extends RefCounted {
       }
       return;
     }
-    const src = mouseState.unsnappedPosition;
+    // Prefer the synchronous slice center (no pick-pass lag) when available.
+    const src = this.sliceCenterOverride ?? mouseState.unsnappedPosition;
     if (src === undefined || src.length < 3) {
       if (this.worldCenter.value !== undefined) {
         this.worldCenter.value = undefined;

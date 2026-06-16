@@ -19,7 +19,9 @@ import type {
   Resolution,
 } from "@zettaai/edit-session";
 import { Resolution as ResolutionCtor, layerId } from "@zettaai/edit-session";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
+
+import { paintScheduler } from "#src/editing/tool_runtimes/paint_scheduler_config.js";
 
 import type {
   BrushApplyInput,
@@ -144,6 +146,9 @@ function initialState(): PaintingSharedState {
     activeValue: 7,
     eraseValue: 0,
     mask: undefined,
+    // diameter 7 × 0.1 → clamped to a 1-voxel spacing, so canonical stamps land
+    // on integer positions along an axis-aligned stroke (keeps assertions clean).
+    spacingFraction: 0.1,
   };
 }
 
@@ -210,6 +215,14 @@ const cancel = (): PointerCancelEvent => ({
 });
 
 describe("ConsumerPaintingTools — stroke lifecycle (TM-315)", () => {
+  // Default scheduling is `latestWins` (TM-317) — bounded + drop-to-latest. Tests
+  // that assert the coalesce/geometry resampling feature opt into `coalesce`;
+  // restore the default after each.
+  afterEach(() => {
+    paintScheduler.mode = "latestWins";
+    paintScheduler.maxStampSpacing = 0;
+  });
+
   it("one brush stroke = one beginEdit + one record", async () => {
     const { tools, log, calls } = setup();
     await tools.brush.handleInput(down(10, 10, 10));
@@ -221,15 +234,23 @@ describe("ConsumerPaintingTools — stroke lifecycle (TM-315)", () => {
     expect(log.metas[0]).toMatchObject({
       description: "Brush stroke",
       tag: "painting.brush",
-      redo: { kind: "image" },
+      redo: { kind: "replay" }, // unmasked brush is deterministic (TM-319)
     });
     expect(log.records).toBe(1);
     expect(log.discards).toBe(0);
     expect(calls.applyBrush).toHaveLength(1);
-    expect(calls.applyBrushStroke).toHaveLength(2);
+    // Distance resampling (TM-318) drives one stroke segment per move plus a
+    // trailing segment at pointer-up (the finalized tail the head stamp only
+    // showed provisionally). The lifecycle invariant — one edit, one record —
+    // is what matters here, not the exact segment count.
+    expect(calls.applyBrushStroke.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("threads coalesced via points into applyBrushStroke", async () => {
+  it("resamples coalesced samples into evenly-spaced canonical stamps (TM-318)", async () => {
+    // This is the coalesce-mode resampling feature: the swept path is rebuilt
+    // from the coalesced via-waypoints. latestWins deliberately drops via, so
+    // pin coalesce here.
+    paintScheduler.mode = "coalesce";
     const { tools, calls } = setup();
     await tools.brush.handleInput(down(0, 0, 0));
     await tools.brush.handleInput(
@@ -240,14 +261,158 @@ describe("ConsumerPaintingTools — stroke lifecycle (TM-315)", () => {
     );
     await tools.brush.handleInput(up(9, 0, 0));
 
-    expect(calls.applyBrushStroke).toHaveLength(1);
-    const stroke = calls.applyBrushStroke[0]!;
-    expect(stroke.from).toEqual([0, 0, 0]);
-    expect(stroke.to).toEqual([9, 0, 0]);
-    expect(stroke.via).toEqual([
-      [3, 0, 0],
-      [6, 0, 0],
-    ]);
+    const strokes = calls.applyBrushStroke;
+    expect(strokes.length).toBeGreaterThanOrEqual(1);
+    // The painted path still spans the gesture exactly end-to-end.
+    expect(strokes[0]!.from).toEqual([0, 0, 0]);
+    expect(strokes[strokes.length - 1]!.to).toEqual([9, 0, 0]);
+
+    // The raw coalesced waypoints ([3,0,0],[6,0,0]) are NOT forwarded verbatim;
+    // they are replaced by canonical stamps resampled at the 1-voxel spacing —
+    // on-axis, strictly increasing in x, ~1 apart.
+    const via = strokes.flatMap((s) => s.via ?? []);
+    expect(via.length).toBeGreaterThan(2);
+    for (let i = 0; i < via.length; i++) {
+      expect(via[i][1]).toBeCloseTo(0, 6);
+      expect(via[i][2]).toBeCloseTo(0, 6);
+      expect(via[i][0]).toBeGreaterThan(0);
+      expect(via[i][0]).toBeLessThan(9);
+      if (i > 0) {
+        expect(via[i][0] - via[i - 1][0]).toBeCloseTo(1, 5);
+      }
+    }
+  });
+
+  it("latestWins drops a far move to a single disk at the latest cursor (TM-317)", async () => {
+    // Default mode is latestWins; radius 3 → cap = 3. A move whose cursor outran
+    // the cap is painted as ONE disk at the latest cursor (from === to), NOT a
+    // swept capsule spanning the gap — true drop-to-latest, gap accepted.
+    const { tools, calls } = setup();
+    await tools.brush.handleInput(down(0, 0, 0));
+    await tools.brush.handleInput(move(20, 0, 0)); // gap 20 > cap 3
+    await tools.brush.handleInput(up(20, 0, 0));
+
+    const strokes = calls.applyBrushStroke;
+    const disk = strokes.find((s) => s.from[0] === 20 && s.to[0] === 20);
+    expect(disk).toBeDefined();
+    // Nothing connects the dropped span from the origin to the latest cursor.
+    const spanning = strokes.find((s) => s.from[0] === 0 && s.to[0] === 20);
+    expect(spanning).toBeUndefined();
+  });
+
+  it("latestWins keeps a bounded capsule when within the cap (TM-317)", async () => {
+    // radius 3 → cap 3; a 2-voxel move stays a smooth capsule (no disk skip).
+    const { tools, calls } = setup();
+    await tools.brush.handleInput(down(0, 0, 0));
+    await tools.brush.handleInput(move(2, 0, 0)); // gap 2 <= cap 3
+    await tools.brush.handleInput(up(2, 0, 0));
+
+    const seg = calls.applyBrushStroke.find(
+      (s) => s.from[0] === 0 && s.to[0] === 2,
+    );
+    expect(seg).toBeDefined();
+  });
+
+  it("coalesce mode still sweeps the full span (A/B reference, TM-317)", async () => {
+    paintScheduler.mode = "coalesce";
+    const { tools, calls } = setup();
+    await tools.brush.handleInput(down(0, 0, 0));
+    await tools.brush.handleInput(move(20, 0, 0));
+    await tools.brush.handleInput(up(20, 0, 0));
+    // No disk-skip: the swept path reaches the cursor from the origin.
+    const strokes = calls.applyBrushStroke;
+    expect(strokes[0]!.from).toEqual([0, 0, 0]);
+    expect(strokes[strokes.length - 1]!.to).toEqual([20, 0, 0]);
+    const diskSkip = strokes.find((s) => s.from[0] === 20 && s.to[0] === 20);
+    expect(diskSkip).toBeUndefined();
+  });
+
+  it("unmasked brush and eraser use replay redo; masked brush uses image (TM-319)", async () => {
+    const { tools, log } = setup();
+
+    await tools.brush.handleInput(down(0, 0, 0));
+    await tools.brush.handleInput(up(0, 0, 0));
+    expect(log.metas.at(-1)!.redo?.kind).toBe("replay");
+
+    await tools.erase.handleInput(down(1, 1, 1));
+    await tools.erase.handleInput(up(1, 1, 1));
+    expect(log.metas.at(-1)!.redo?.kind).toBe("replay");
+
+    tools.state.patchState({
+      mask: {
+        imageLayerId: layerId("img"),
+        imageResolution: RES,
+        thresholdLow: 1,
+        thresholdHigh: 255,
+        minComponentSize: 0,
+        binaryClosing: 0,
+        filterComponentsFirst: false,
+      },
+    });
+    await tools.brush.handleInput(down(2, 2, 2));
+    await tools.brush.handleInput(up(2, 2, 2));
+    // Masked morphology is not decomposable across batches → keep image redo.
+    expect(log.metas.at(-1)!.redo?.kind).toBe("image");
+  });
+
+  it("reapply re-issues the exact recorded paint operations (TM-319)", async () => {
+    const { tools, log, calls } = setup();
+    await tools.brush.handleInput(down(0, 0, 0));
+    await tools.brush.handleInput(
+      move(9, 0, 0, [
+        [3, 0, 0],
+        [6, 0, 0],
+      ]),
+    );
+    await tools.brush.handleInput(up(9, 0, 0));
+
+    // Snapshot the live ops (the down stamp + each painted segment).
+    const liveStamp = calls.applyBrush.map((b) => b.voxelPosition);
+    const liveStrokes = calls.applyBrushStroke.map((s) => ({
+      from: s.from,
+      to: s.to,
+      via: s.via,
+    }));
+    expect(liveStamp).toHaveLength(1);
+    expect(liveStrokes.length).toBeGreaterThanOrEqual(1);
+
+    const redo = log.metas[0]!.redo!;
+    expect(redo.kind).toBe("replay");
+
+    // Re-run the replay against a fresh edit and capture what it issues.
+    calls.applyBrush.length = 0;
+    calls.applyBrushStroke.length = 0;
+    const replayEdit: Edit = {
+      readChunk: async () =>
+        ({
+          byteLength: 0,
+          asView: () => new Uint32Array(0),
+        }) as ReadonlyChunkVoxelBuffer,
+      beginWrite: async () => {
+        throw new Error("not used");
+      },
+      commitWrites: () => {},
+      writeRegion: async () => {},
+      readRegion: async () => {
+        throw new Error("not used");
+      },
+      sessionVoxelBoundsFor: () => undefined,
+      withBatch: <R>(fn: () => R): R => fn(),
+      record: () => true,
+      discard: async () => {},
+    };
+    if (redo.kind === "replay") await redo.reapply(replayEdit);
+
+    // Replay issues the identical down stamp and identical stroke segments, in
+    // order — the basis for byte-for-byte redo (unmasked writes are absolute).
+    expect(calls.applyBrush.map((b) => b.voxelPosition)).toEqual(liveStamp);
+    expect(
+      calls.applyBrushStroke.map((s) => ({
+        from: s.from,
+        to: s.to,
+        via: s.via,
+      })),
+    ).toEqual(liveStrokes);
   });
 
   it("pointer-cancel discards the edit (no record)", async () => {

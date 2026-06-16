@@ -10,7 +10,10 @@
  * Values resolve against the --nge-* design tokens in editing_theme.css.
  */
 
-.neuroglancer-painting-brush-advanced {
+/* Flat mask section: reference picker + its dependent parameters, no
+   collapsible header (per TM-317). Separated from the brush basics above by a
+   divider. */
+.neuroglancer-painting-brush-mask {
   display: flex;
   flex-direction: column;
   gap: var(--nge-space-4);
@@ -19,42 +22,55 @@
   padding-top: var(--nge-space-4);
 }
 
-.neuroglancer-painting-brush-advanced-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--nge-space-3);
-}
-
-/* Same type size/weight as a normal parameter label (per consistency
-   feedback) — only the accent color + chevron mark it as the section head. */
-.neuroglancer-painting-brush-advanced-summary {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--nge-space-1);
+/* Section heading. Same type size/weight as a parameter label — only the
+   accent color marks it as the group head (matches the panel's flat style). */
+.neuroglancer-painting-brush-mask-title {
   color: var(--nge-accent);
   font-size: var(--nge-text-size);
   font-weight: 400;
 }
 
-.neuroglancer-painting-brush-advanced-chevron {
-  display: block;
-  transition: transform var(--nge-transition);
-  transform: rotate(-90deg);
+/* Reference layer select + its inline clear (×) button. */
+.neuroglancer-painting-brush-mask-reference {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--nge-space-2);
 }
 
-.neuroglancer-painting-brush-advanced-summary[data-on="true"]
-  .neuroglancer-painting-brush-advanced-chevron {
-  transform: rotate(0deg);
+.neuroglancer-painting-brush-mask-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: none;
+  background: transparent;
+  color: var(--nge-text-muted);
+  cursor: pointer;
+  border-radius: var(--nge-radius-sm);
 }
 
-/* Mask parameters revealed when the switch is on. Indented (no divider line)
-   so they read as a nested group. */
-.neuroglancer-painting-brush-advanced-body {
+.neuroglancer-painting-brush-mask-clear:hover:not(:disabled) {
+  color: var(--nge-text);
+  background: var(--nge-surface-hover);
+}
+
+.neuroglancer-painting-brush-mask-clear:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* The dependent parameters. When gated (no locked image layer, no reference
+   selected, or an unusable dtype) the whole block dims and stops accepting
+   input — the `data-tooltip` on the block explains why on hover. */
+.neuroglancer-painting-brush-mask-params {
   display: flex;
   flex-direction: column;
   gap: var(--nge-space-4);
-  padding-left: var(--nge-space-5);
+}
+
+.neuroglancer-painting-brush-mask-params[data-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* Threshold stacks: label on its own line, the dual-handle control spans the
@@ -70,16 +86,10 @@
   color: var(--nge-text-muted);
 }
 
-/* Helper line shown when the section is unavailable. Non-italic with a
+/* Helper line explaining why the parameters are inert. Non-italic with a
    readable contrast (the panel serves occasional users, not only experts). */
-.neuroglancer-painting-brush-advanced-hint {
+.neuroglancer-painting-brush-mask-hint {
   font-size: var(--nge-text-size-sm);
   color: var(--nge-text-subtle);
   line-height: 1.4;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .neuroglancer-painting-brush-advanced-chevron {
-    transition: none;
-  }
 }
