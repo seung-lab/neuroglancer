@@ -33,6 +33,7 @@ export function PaintingThreshold({
   low,
   high,
   showHandles = true,
+  disabled = false,
   onChange,
 }: {
   min: number;
@@ -45,6 +46,8 @@ export function PaintingThreshold({
    * low/high fields are shown.
    */
   showHandles?: boolean;
+  /** When true the control is read-only: handles are hidden and fields locked. */
+  disabled?: boolean;
   onChange: (low: number, high: number) => void;
 }) {
   const span = max - min || 1;
@@ -67,7 +70,7 @@ export function PaintingThreshold({
 
   return (
     <div class="neuroglancer-painting-threshold">
-      {showHandles && (
+      {showHandles && !disabled && (
         <div class="neuroglancer-painting-threshold-track">
           <div class="neuroglancer-painting-threshold-rail" />
           <div
@@ -105,6 +108,7 @@ export function PaintingThreshold({
             value={low}
             parse={parseFinite}
             onCommit={emitLow}
+            disabled={disabled}
           />
           <span>low</span>
         </label>
@@ -116,6 +120,7 @@ export function PaintingThreshold({
             value={high}
             parse={parseFinite}
             onCommit={emitHigh}
+            disabled={disabled}
           />
           <span>high</span>
         </label>

@@ -28,6 +28,12 @@ import {
   type MorphologyRequest,
   type MorphologyResponse,
 } from "#src/editing/tool_runtimes/morphology_request.js";
+import {
+  PAINT_PIPELINE_RPC,
+  PAINT_PIPELINE_READY_RPC,
+  type PaintPipelineRequest,
+  type PaintPipelineResponse,
+} from "#src/editing/tool_runtimes/paint_pipeline_request.js";
 import { paintProfiler } from "#src/editing/tool_runtimes/paint_profiler.js";
 import { RefCounted } from "#src/util/disposable.js";
 import { RPC } from "#src/worker_rpc.js";
@@ -39,6 +45,20 @@ export class MorphologyClient extends RefCounted {
   private needsReinit = false;
 
   private everBooted = false;
+
+  /**
+   * Non-blocking readiness flag for the whole-pipeline path (TM-317). Flips
+   * `true` once the worker's pyodide boot completes (signalled via the
+   * {@link PAINT_PIPELINE_READY_RPC} probe). While `false` the masked brush
+   * uses the main-thread fallback so the cold-init window never stalls a
+   * stroke on the boot await. Reset to `false` on every (re)init.
+   */
+  private ready = false;
+
+  /** Whether the whole-pipeline worker path is warm and safe to route to. */
+  isReady(): boolean {
+    return this.ready;
+  }
 
   private ensureWorker(): RPC {
     if (this.rpc !== undefined) return this.rpc;
@@ -56,8 +76,22 @@ export class MorphologyClient extends RefCounted {
       new URL("../../pyodide_morphology.bundle.js", import.meta.url),
       { type: "module" },
     );
-    this.rpc = new RPC(this.worker, /*waitUntilReady=*/ true);
-    return this.rpc;
+    const rpc = new RPC(this.worker, /*waitUntilReady=*/ true);
+    this.rpc = rpc;
+    // Probe readiness off the critical path: the RPC's `waitUntilReady` queue
+    // absorbs the multi-second boot, and we only flip `ready` once pyodide is
+    // actually up. A probe failure leaves `ready` false → masked strokes stay
+    // on the main-thread fallback, which is the safe default.
+    this.ready = false;
+    rpc.promiseInvoke<PaintPipelineResponse>(PAINT_PIPELINE_READY_RPC, {}).then(
+      () => {
+        if (this.rpc === rpc) this.ready = true;
+      },
+      () => {
+        /* stay not-ready; fallback handles it */
+      },
+    );
+    return rpc;
   }
 
   /**
@@ -136,6 +170,69 @@ export class MorphologyClient extends RefCounted {
   }
 
   /**
+   * Run the WHOLE masked-brush pipeline in the worker (TM-317): resample,
+   * threshold, footprint gate, binary closing, and component filtering in one
+   * numpy/scipy pass. `req.image` and `req.pathPoints` buffers are transferred,
+   * so the caller must not reuse them. The returned `Uint8Array` is the
+   * footprint mask (1 = paint), a freshly-transferred buffer owned by the
+   * caller.
+   *
+   * Rejects if the worker fails; the caller (`PaintingCompute`) catches and
+   * falls back to the main-thread masked compute so painting never hard-breaks.
+   */
+  async applyPipeline(
+    req: PaintPipelineRequest,
+    signal?: AbortSignal,
+  ): Promise<Uint8Array> {
+    const rpc = this.ensureWorker();
+    this.inFlight++;
+    const prof = paintProfiler.enabled;
+    const t0 = prof ? performance.now() : 0;
+    const request: PaintPipelineRequest = prof
+      ? { ...req, postedAtEpochMs: Date.now() }
+      : req;
+    try {
+      const res = await rpc.promiseInvoke<PaintPipelineResponse>(
+        PAINT_PIPELINE_RPC,
+        request,
+        { transfers: [req.image.buffer, req.pathPoints.buffer], signal },
+      );
+      if (res.heapPressure) {
+        this.needsReinit = true;
+        if (prof) paintProfiler.count("morphology.heapPressure", 1);
+      }
+      if (prof && res.timings !== undefined) {
+        const t = res.timings;
+        paintProfiler.record("P.w.marshalIn(py)", t.marshalInMs);
+        paintProfiler.record("P.w.maskBuild(py)", t.maskBuildMs);
+        paintProfiler.record("P.w.closing(py)", t.closingMs);
+        paintProfiler.record("P.w.components(py)", t.componentsMs);
+        paintProfiler.record("P.w.marshalOut(py)", t.marshalOutMs);
+        paintProfiler.record("P.w.call(js)", t.workerCallMs);
+        paintProfiler.record("P.w.convertOut(js)", t.convertOutMs);
+        paintProfiler.record("P.w.q.boot", t.bootWaitMs);
+        if (t.requestQueueMs !== undefined) {
+          paintProfiler.record("P.w.q.request", t.requestQueueMs);
+        }
+        if (res.respondedAtEpochMs !== undefined) {
+          paintProfiler.record(
+            "P.w.q.response",
+            Math.max(0, Date.now() - res.respondedAtEpochMs),
+          );
+        }
+        paintProfiler.record(
+          "P.w.rpc+queue",
+          Math.max(0, performance.now() - t0 - t.workerCallMs),
+        );
+      }
+      return res.mask;
+    } finally {
+      this.inFlight--;
+      this.maybeReinitOnIdle();
+    }
+  }
+
+  /**
    * Memory-pressure reinit (ported from `pyodide.bridge.ts`): once the worker
    * reports heap pressure and we go idle, terminate it. The next `apply()`
    * lazily recreates a fresh worker; its cold start is absorbed by the RPC
@@ -151,6 +248,7 @@ export class MorphologyClient extends RefCounted {
     this.worker?.terminate();
     this.worker = undefined;
     this.rpc = undefined;
+    this.ready = false;
   }
 
   disposed(): void {

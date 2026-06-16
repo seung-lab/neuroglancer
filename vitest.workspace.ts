@@ -70,9 +70,14 @@ export default defineWorkspace([
     test: {
       name: "node",
       include: ["src/**/*.spec.ts", "tests/**/*.spec.ts"],
-      exclude: KVSTORE_TESTS_WITH_CUSTOM_CONDITIONS.map(
-        ({ name }) => `tests/kvstore/${name}.spec.ts`,
-      ),
+      exclude: [
+        ...KVSTORE_TESTS_WITH_CUSTOM_CONDITIONS.map(
+          ({ name }) => `tests/kvstore/${name}.spec.ts`,
+        ),
+        // Playwright-driven paint benchmark — run via playwright.bench.config.ts,
+        // not vitest (it calls @playwright/test's `test()`).
+        "tests/editing/bench/**",
+      ],
       benchmark: {
         include: ["src/**/*.benchmark.ts"],
       },

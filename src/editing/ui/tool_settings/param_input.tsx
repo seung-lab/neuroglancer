@@ -43,6 +43,7 @@ export function ParamInput<T>({
   step,
   class: className,
   ariaLabel,
+  disabled = false,
 }: {
   /** The committed value the field reflects when not being edited. */
   value: T;
@@ -61,6 +62,8 @@ export function ParamInput<T>({
   step?: number;
   class?: string;
   ariaLabel?: string;
+  /** When true the field is read-only and reflects the committed value. */
+  disabled?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState(() => format(value));
@@ -129,6 +132,7 @@ export function ParamInput<T>({
       class={className}
       aria-label={ariaLabel}
       aria-invalid={invalid ? "true" : undefined}
+      disabled={disabled}
       value={draft}
       onInput={onInput}
       onBlur={commit}
