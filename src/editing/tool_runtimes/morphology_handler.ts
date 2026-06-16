@@ -230,10 +230,15 @@ registerPromiseRPC<PaintPipelineResponse>(
     const convertStart = performance.now();
     const mask = extractMask(out);
     const convertOutMs = performance.now() - convertStart;
-    const timings = readPipelineTimings(workerCallMs, bootWaitMs, convertOutMs, {
-      receivedAtEpochMs,
-      postedAtEpochMs: req.postedAtEpochMs,
-    });
+    const timings = readPipelineTimings(
+      workerCallMs,
+      bootWaitMs,
+      convertOutMs,
+      {
+        receivedAtEpochMs,
+        postedAtEpochMs: req.postedAtEpochMs,
+      },
+    );
     return {
       value: {
         mask,

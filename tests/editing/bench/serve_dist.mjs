@@ -24,9 +24,9 @@
  * missing — run `npm run build:zetta` first (or `npm run bench:paint`).
  */
 
-import { createServer } from "node:http";
 import { existsSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import mime from "mime-types";
@@ -65,8 +65,7 @@ createServer(async (req, res) => {
     ) {
       filePath = INDEX;
     }
-    const type =
-      mime.lookup(filePath) || "application/octet-stream";
+    const type = mime.lookup(filePath) || "application/octet-stream";
     const body = await readFile(filePath);
     res.writeHead(200, {
       "Content-Type": type,

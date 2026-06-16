@@ -72,7 +72,6 @@ function returnWorker(worker: Worker): void {
  * hanging). Returns to the synchronous fallback is the caller's concern.
  */
 function failPool(detail: string): void {
-   
   console.error(`[brush-worker] ${detail}`);
   for (const [, job] of pendingJobs) job.cleanup?.();
   pendingJobs.clear();

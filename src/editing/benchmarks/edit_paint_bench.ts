@@ -100,7 +100,6 @@ const COUNTER_KEYS = [
   "morphology.workerReinit",
 ];
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Any = any;
 
 function nextFrame(): Promise<void> {
@@ -121,7 +120,9 @@ function pickTimings(
   }
   return out;
 }
-function pickCounters(counters: Record<string, number>): Record<string, number> {
+function pickCounters(
+  counters: Record<string, number>,
+): Record<string, number> {
   const out: Record<string, number> = {};
   for (const k of COUNTER_KEYS) {
     if (counters[k] !== undefined) out[k] = counters[k];
@@ -233,13 +234,31 @@ function dispatchStamp(el: HTMLElement, x: number, y: number): void {
     cancelable: true,
   } as const;
   el.dispatchEvent(
-    new PointerEvent("pointerdown", { ...c, clientX: x, clientY: y, button: 0, buttons: 1 }),
+    new PointerEvent("pointerdown", {
+      ...c,
+      clientX: x,
+      clientY: y,
+      button: 0,
+      buttons: 1,
+    }),
   );
   el.dispatchEvent(
-    new PointerEvent("pointermove", { ...c, clientX: x + 2, clientY: y, button: -1, buttons: 1 }),
+    new PointerEvent("pointermove", {
+      ...c,
+      clientX: x + 2,
+      clientY: y,
+      button: -1,
+      buttons: 1,
+    }),
   );
   el.dispatchEvent(
-    new PointerEvent("pointerup", { ...c, clientX: x + 2, clientY: y, button: 0, buttons: 0 }),
+    new PointerEvent("pointerup", {
+      ...c,
+      clientX: x + 2,
+      clientY: y,
+      button: 0,
+      buttons: 0,
+    }),
   );
 }
 
@@ -253,7 +272,10 @@ function dispatchStamp(el: HTMLElement, x: number, y: number): void {
  * Profiler is reset after, so warmup doesn't pollute the measured window.
  */
 export async function warmupEditPaintBench(
-  opts: EditPaintBenchOptions & { warmupStamps?: number; warmupSettleMs?: number } = {},
+  opts: EditPaintBenchOptions & {
+    warmupStamps?: number;
+    warmupSettleMs?: number;
+  } = {},
 ): Promise<{ stamps: number; ms: number }> {
   const t0 = performance.now();
   const viewer = (globalThis as unknown as { viewer?: Any }).viewer;
@@ -285,10 +307,16 @@ export async function warmupEditPaintBench(
 }
 
 /** Wait until the host has auto-opened the session from the ngState block. */
-async function waitForActiveSession(host: Any, timeoutMs: number): Promise<void> {
+async function waitForActiveSession(
+  host: Any,
+  timeoutMs: number,
+): Promise<void> {
   const start = performance.now();
   while (performance.now() - start < timeoutMs) {
-    if (host.activeSession?.value !== undefined && host.painting !== undefined) {
+    if (
+      host.activeSession?.value !== undefined &&
+      host.painting !== undefined
+    ) {
       return;
     }
     await delay(100);
@@ -354,20 +382,22 @@ export async function prepareEditPaintBench(
 ): Promise<EditPaintBenchDiag> {
   const viewer = (globalThis as unknown as { viewer?: Any }).viewer;
   const host = viewer?.editSessionHost;
-  const diag: { -readonly [K in keyof EditPaintBenchDiag]: EditPaintBenchDiag[K] } =
-    {
-      sessionActive: false,
-      crossOriginIsolated:
-        (globalThis as unknown as { crossOriginIsolated?: boolean })
-          .crossOriginIsolated === true,
-      hasMaskPreset: false,
-      targetLayerId: undefined,
-      maskImageLayerId: undefined,
-      canvas: null,
-      dispatchTarget: "none",
-    };
+  const diag: {
+    -readonly [K in keyof EditPaintBenchDiag]: EditPaintBenchDiag[K];
+  } = {
+    sessionActive: false,
+    crossOriginIsolated:
+      (globalThis as unknown as { crossOriginIsolated?: boolean })
+        .crossOriginIsolated === true,
+    hasMaskPreset: false,
+    targetLayerId: undefined,
+    maskImageLayerId: undefined,
+    canvas: null,
+    dispatchTarget: "none",
+  };
   try {
-    if (host === undefined) throw new Error("window.viewer.editSessionHost missing");
+    if (host === undefined)
+      throw new Error("window.viewer.editSessionHost missing");
     await waitForActiveSession(host, opts.sessionTimeoutMs ?? 120000);
     diag.sessionActive = true;
     await delay(opts.warmupMs ?? 4000); // pyodide warmup
@@ -381,7 +411,8 @@ export async function prepareEditPaintBench(
     const r = el.getBoundingClientRect();
     diag.canvas = { w: Math.round(r.width), h: Math.round(r.height) };
     diag.dispatchTarget =
-      (el.tagName || "?") + (el.className ? "." + String(el.className).split(" ")[0] : "");
+      (el.tagName || "?") +
+      (el.className ? "." + String(el.className).split(" ")[0] : "");
   } catch (e) {
     diag.error = e instanceof Error ? e.message : String(e);
   }
@@ -428,7 +459,9 @@ export async function stepEditPaintBench(input: {
       radius,
       mask: input.case === "masked-brush" ? presetMask : undefined,
     });
-    host.selectTool(input.case === "eraser" ? "painting.erase" : "painting.brush");
+    host.selectTool(
+      input.case === "eraser" ? "painting.erase" : "painting.brush",
+    );
     await nextFrame();
 
     paintProfiler.enabled = true;
@@ -440,7 +473,8 @@ export async function stepEditPaintBench(input: {
       input.strokeStepMs ?? 80,
     );
     await waitForSettle(input.settleTimeoutMs ?? 60000);
-    for (let i = 0; i < (input.renderFramesAfterStroke ?? 4); i++) await nextFrame();
+    for (let i = 0; i < (input.renderFramesAfterStroke ?? 4); i++)
+      await nextFrame();
 
     // The full sectioned block (same format as the console summary) — captured
     // BEFORE resetWindow() clears the accumulation.

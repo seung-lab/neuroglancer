@@ -131,12 +131,24 @@ describe("fuseOverlayIntoChunk · scanBox (P2)", () => {
   function expectBoundedMatchesFull(
     overlay: Uint16Array,
     baseline: Uint16Array,
-    scanBox: { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number },
+    scanBox: {
+      x0: number;
+      y0: number;
+      z0: number;
+      x1: number;
+      y1: number;
+      z1: number;
+    },
   ): void {
     const full = new LocalPatchChunk(SIZE);
     const bounded = new LocalPatchChunk(SIZE);
     const fullBox = fuseOverlayIntoChunk(full, overlay, baseline);
-    const boundedBox = fuseOverlayIntoChunk(bounded, overlay, baseline, scanBox);
+    const boundedBox = fuseOverlayIntoChunk(
+      bounded,
+      overlay,
+      baseline,
+      scanBox,
+    );
     expect(Array.from(bounded.data)).toEqual(Array.from(full.data));
     expect(Array.from(bounded.patched)).toEqual(Array.from(full.patched));
     expect(boundedBox).toEqual(fullBox);
@@ -227,7 +239,14 @@ describe("paintedSubBoxRegistry (P2)", () => {
   });
 
   it("keys are distinct per (layer, resolution, chunk)", () => {
-    notePaintedSubBox(L, R, "1,0,0", { x0: 0, y0: 0, z0: 0, x1: 0, y1: 0, z1: 0 });
+    notePaintedSubBox(L, R, "1,0,0", {
+      x0: 0,
+      y0: 0,
+      z0: 0,
+      x1: 0,
+      y1: 0,
+      z1: 0,
+    });
     expect(takePaintedSubBox(L, R, "2,0,0")).toBeUndefined();
     expect(takePaintedSubBox(L, R, "1,0,0")).toBeDefined();
   });

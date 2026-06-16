@@ -1,5 +1,6 @@
 import eslint from "@eslint/js";
 import importPlugin from "eslint-plugin-import";
+import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
@@ -22,6 +23,8 @@ export default tseslint.config(
       "src/mesh/draco/stub.js",
       "**/tsconfig.tsbuildinfo",
       "examples",
+      ".claude",
+      "tmp",
     ],
   },
   eslint.configs.recommended,
@@ -117,6 +120,15 @@ export default tseslint.config(
     files: ["build_tools/**/*.cjs"],
     languageOptions: {
       sourceType: "commonjs",
+    },
+  },
+  {
+    // Node scripts (the paint-benchmark static server) run under Node, not the
+    // browser — provide Node globals so `process`/`console`/`URL` resolve.
+    // Scoped to the bench `.mjs` so browser code is unaffected.
+    files: ["tests/editing/bench/**/*.mjs"],
+    languageOptions: {
+      globals: globals.node,
     },
   },
 );

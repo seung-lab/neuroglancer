@@ -309,7 +309,13 @@ export class StrokeTool implements EditTool {
     // resident clone. Best-effort: the real read still happens at write time,
     // and the undo pre-image is still captured there — we only relocate the
     // fetch, never drop it.
-    const warm = warmStrokeFootprint(edit, target, path, shared.radius, chunkSize);
+    const warm = warmStrokeFootprint(
+      edit,
+      target,
+      path,
+      shared.radius,
+      chunkSize,
+    );
 
     // Worker write path (TM-322 unmasked / TM-317 Phase B masked): single-z,
     // real-radius live strokes apply off the main thread directly into the SAB
@@ -343,8 +349,8 @@ export class StrokeTool implements EditTool {
       } else if (this.deps.compute.computeMaskedStrokeFootprint !== undefined) {
         try {
           const wvia = path.slice(1, -1);
-          const footprint = await this.deps.compute.computeMaskedStrokeFootprint(
-            {
+          const footprint =
+            await this.deps.compute.computeMaskedStrokeFootprint({
               targetLayerId: shared.targetLayerId,
               targetResolution: shared.targetResolution,
               metadata,
@@ -357,8 +363,7 @@ export class StrokeTool implements EditTool {
               ...maskFields,
               readChunk,
               readChunkAt,
-            },
-          );
+            });
           // `null` = not worker-eligible / worker not ready / pyodide failed →
           // take the synchronous path (which re-runs the proven compute).
           if (footprint !== null) {

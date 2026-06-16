@@ -39,7 +39,6 @@ const PYODIDE_DIR = path.resolve(
   "../../../dist/client/pyodide",
 );
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let pyodide: any = null;
 let bootError: unknown = null;
 
@@ -114,8 +113,12 @@ function makeRequest(o: ReqOpts): PaintPipelineRequest {
       image[i + iSx * j] = imageValueAt(loImageX + i, loImageY + j);
     }
   }
-  const pts =
-    o.pathPoints ?? [loTx + tSx / 2, loTy + tSy / 2, loTx + tSx / 2, loTy + tSy / 2];
+  const pts = o.pathPoints ?? [
+    loTx + tSx / 2,
+    loTy + tSy / 2,
+    loTx + tSx / 2,
+    loTy + tSy / 2,
+  ];
   return {
     image,
     imageShape: [iSx, iSy],
@@ -206,11 +209,23 @@ CASES.push({
 });
 CASES.push({
   name: "anisotropic coarse image (sxRatio 0.5)",
-  opts: { sxRatio: 0.5, syRatio: 0.5, radius: 16, binaryClosing: 1, minComponentSize: 6 },
+  opts: {
+    sxRatio: 0.5,
+    syRatio: 0.5,
+    radius: 16,
+    binaryClosing: 1,
+    minComponentSize: 6,
+  },
 });
 CASES.push({
   name: "anisotropic fine image (sxRatio 2)",
-  opts: { sxRatio: 2, syRatio: 2, radius: 12, binaryClosing: 3, minComponentSize: 8 },
+  opts: {
+    sxRatio: 2,
+    syRatio: 2,
+    radius: 12,
+    binaryClosing: 3,
+    minComponentSize: 8,
+  },
 });
 CASES.push({
   name: "threshold edge band [90,150] tightened to [120,120]",
@@ -220,19 +235,52 @@ CASES.push({
 // an exact superset for diagonal / near-axis capsules and steep polylines.
 CASES.push({
   name: "long diagonal capsule (x-clip)",
-  opts: { loTx: 100, loTy: 100, tSx: 240, tSy: 240, pathPoints: [120, 120, 320, 320], radius: 18, binaryClosing: 1, minComponentSize: 6 },
+  opts: {
+    loTx: 100,
+    loTy: 100,
+    tSx: 240,
+    tSy: 240,
+    pathPoints: [120, 120, 320, 320],
+    radius: 18,
+    binaryClosing: 1,
+    minComponentSize: 6,
+  },
 });
 CASES.push({
   name: "near-vertical capsule (x-clip)",
-  opts: { loTx: 100, loTy: 100, tSx: 80, tSy: 300, pathPoints: [130, 120, 138, 380], radius: 16 },
+  opts: {
+    loTx: 100,
+    loTy: 100,
+    tSx: 80,
+    tSy: 300,
+    pathPoints: [130, 120, 138, 380],
+    radius: 16,
+  },
 });
 CASES.push({
   name: "near-horizontal capsule (x-clip)",
-  opts: { loTx: 100, loTy: 100, tSx: 300, tSy: 80, pathPoints: [120, 130, 380, 138], radius: 16 },
+  opts: {
+    loTx: 100,
+    loTy: 100,
+    tSx: 300,
+    tSy: 80,
+    pathPoints: [120, 130, 380, 138],
+    radius: 16,
+  },
 });
 CASES.push({
   name: "steep zigzag polyline (x-clip)",
-  opts: { loTx: 100, loTy: 100, tSx: 240, tSy: 320, pathPoints: [120, 120, 300, 200, 130, 300, 320, 380], radius: 13, binaryClosing: 2, minComponentSize: 8, filterComponentsFirst: true },
+  opts: {
+    loTx: 100,
+    loTy: 100,
+    tSx: 240,
+    tSy: 320,
+    pathPoints: [120, 120, 300, 200, 130, 300, 320, 380],
+    radius: 13,
+    binaryClosing: 2,
+    minComponentSize: 8,
+    filterComponentsFirst: true,
+  },
 });
 
 describe("apply_paint_pipeline live pyodide == TS twin (TM-317)", () => {

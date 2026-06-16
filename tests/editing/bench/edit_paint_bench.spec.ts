@@ -120,13 +120,14 @@ function cellBlock(r: BenchRow): string {
 
 const CASES = ["masked-brush", "unmasked-brush", "eraser"] as const;
 
-/* eslint-disable no-console */
 test("edit-session paint benchmark (masked / unmasked / eraser × sizes)", async ({
   page,
 }) => {
   page.on("console", (msg) => {
     const t = msg.text();
-    if (/paint-scheduler|paint-profile|editPaintBench|pyodide|error|warn/i.test(t)) {
+    if (
+      /paint-scheduler|paint-profile|editPaintBench|pyodide|error|warn/i.test(t)
+    ) {
       console.log(`[page] ${t}`);
     }
   });
@@ -142,9 +143,9 @@ test("edit-session paint benchmark (masked / unmasked / eraser × sizes)", async
   // Wait for the viewer + the auto-opened session + the harness hooks.
   await page.waitForFunction(
     () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const v = (window as any).viewer;
-      if (typeof (window as any).__editPaintBenchStep !== "function") return false;
+      if (typeof (window as any).__editPaintBenchStep !== "function")
+        return false;
       return v?.editSessionHost?.activeSession?.value !== undefined;
     },
     undefined,
@@ -153,7 +154,6 @@ test("edit-session paint benchmark (masked / unmasked / eraser × sizes)", async
 
   // Diagnostics first (one short evaluate): session/mask/canvas usable?
   const diag = await page.evaluate(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async () => await (window as any).__editPaintBenchPrepare({}),
   );
   console.log("\n[bench] prepare diag: " + JSON.stringify(diag, null, 2));
@@ -181,8 +181,8 @@ test("edit-session paint benchmark (masked / unmasked / eraser × sizes)", async
   // cold `gs://` chunkRead that collapses the stroke to one segment.
   console.log("[bench] warming data (chunks + pyodide)…");
   const warm = await page.evaluate(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    async () => await (window as any).__editPaintBenchWarmup({ warmupStamps: 8 }),
+    async () =>
+      await (window as any).__editPaintBenchWarmup({ warmupStamps: 8 }),
   );
   console.log(`[bench] warmup done: ${JSON.stringify(warm)}`);
 
@@ -193,7 +193,6 @@ test("edit-session paint benchmark (masked / unmasked / eraser × sizes)", async
       let row: BenchRow & { maskedComputeRan?: boolean; strokeFired?: boolean };
       try {
         row = (await page.evaluate(
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           async (arg) => await (window as any).__editPaintBenchStep(arg),
           { case: c, size },
         )) as BenchRow;
@@ -242,4 +241,3 @@ test("edit-session paint benchmark (masked / unmasked / eraser × sizes)", async
   }
   expect(rows.length).toBeGreaterThan(0);
 });
-/* eslint-enable no-console */

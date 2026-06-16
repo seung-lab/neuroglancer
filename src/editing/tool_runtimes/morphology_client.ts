@@ -83,16 +83,14 @@ export class MorphologyClient extends RefCounted {
     // actually up. A probe failure leaves `ready` false → masked strokes stay
     // on the main-thread fallback, which is the safe default.
     this.ready = false;
-    rpc
-      .promiseInvoke<PaintPipelineResponse>(PAINT_PIPELINE_READY_RPC, {})
-      .then(
-        () => {
-          if (this.rpc === rpc) this.ready = true;
-        },
-        () => {
-          /* stay not-ready; fallback handles it */
-        },
-      );
+    rpc.promiseInvoke<PaintPipelineResponse>(PAINT_PIPELINE_READY_RPC, {}).then(
+      () => {
+        if (this.rpc === rpc) this.ready = true;
+      },
+      () => {
+        /* stay not-ready; fallback handles it */
+      },
+    );
     return rpc;
   }
 

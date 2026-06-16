@@ -20,7 +20,6 @@ import type {
 } from "@zettaai/edit-session";
 import { ChunkId, scaleFor } from "@zettaai/edit-session";
 
-
 import { applyMorphologyPipeline } from "#src/editing/tool_runtimes/mask_compute.js";
 import {
   clampToVoxelDataType,

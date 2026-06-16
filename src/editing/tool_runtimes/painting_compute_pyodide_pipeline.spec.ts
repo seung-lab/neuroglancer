@@ -158,7 +158,12 @@ function commonInput(scene: SceneCfg, m: MaskCfg) {
   return {
     targetLayerId: TARGET_LAYER,
     targetResolution: targetRes,
-    metadata: metadataAt(TARGET_LAYER, "uint32", targetRes, scene.targetVoxelSizeNm),
+    metadata: metadataAt(
+      TARGET_LAYER,
+      "uint32",
+      targetRes,
+      scene.targetVoxelSizeNm,
+    ),
     value: scene.value,
     mask: maskConfig(scene, m),
     maskMetadata: metadataAt(
@@ -355,7 +360,9 @@ describe("PaintingCompute whole-pipeline parity (TM-317)", () => {
       filterComponentsFirst: false,
     };
     const { paintedCount } = await expectParity((c) =>
-      c.applyBrushStroke(strokeInput(FINE_IMAGE, m, [40, 50, Z], [70, 58, Z], 10)),
+      c.applyBrushStroke(
+        strokeInput(FINE_IMAGE, m, [40, 50, Z], [70, 58, Z], 10),
+      ),
     );
     expect(paintedCount).toBeGreaterThan(0);
   });

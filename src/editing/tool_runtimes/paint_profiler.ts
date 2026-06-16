@@ -103,66 +103,242 @@ const PHASE_TITLE: Record<Phase, string> = {
  */
 const BUCKET_META: Record<string, BucketMeta> = {
   // ── spans (containers) ───────────────────────────────────────────────
-  "0.stroke(total)": { phase: "spans", label: "stroke — compute (incl. worker await)", role: "container" },
-  "4.handleInput(total)": { phase: "spans", label: "handleInput — compute + apply", role: "container" },
+  "0.stroke(total)": {
+    phase: "spans",
+    label: "stroke — compute (incl. worker await)",
+    role: "container",
+  },
+  "4.handleInput(total)": {
+    phase: "spans",
+    label: "handleInput — compute + apply",
+    role: "container",
+  },
 
   // ── compute · main-thread ────────────────────────────────────────────
-  "1a.chunkRead(io)": { phase: "compute", label: "chunkRead (await)", role: "io" },
-  "P.chunkRead(io)": { phase: "compute", label: "chunkRead (await)", role: "io" },
-  "1b.slabCopy(cpu)": { phase: "compute", label: "slabCopy (EM → slab)", role: "cpu" },
-  "P.slabCopy(cpu)": { phase: "compute", label: "slabCopy (EM → slab)", role: "cpu" },
-  "2a.maskBuild(cpu)": { phase: "compute", label: "maskBuild (threshold+gate)", role: "cpu" },
-  "cmp.footprint(cpu)": { phase: "compute", label: "footprint raster", role: "cpu" },
-  "2c.write(cpu)": { phase: "compute", label: "scatter (sample-back)", role: "cpu" },
-  "P.write(cpu)": { phase: "compute", label: "scatter (sample-back)", role: "cpu" },
+  "1a.chunkRead(io)": {
+    phase: "compute",
+    label: "chunkRead (await)",
+    role: "io",
+  },
+  "P.chunkRead(io)": {
+    phase: "compute",
+    label: "chunkRead (await)",
+    role: "io",
+  },
+  "1b.slabCopy(cpu)": {
+    phase: "compute",
+    label: "slabCopy (EM → slab)",
+    role: "cpu",
+  },
+  "P.slabCopy(cpu)": {
+    phase: "compute",
+    label: "slabCopy (EM → slab)",
+    role: "cpu",
+  },
+  "2a.maskBuild(cpu)": {
+    phase: "compute",
+    label: "maskBuild (threshold+gate)",
+    role: "cpu",
+  },
+  "cmp.footprint(cpu)": {
+    phase: "compute",
+    label: "footprint raster",
+    role: "cpu",
+  },
+  "2c.write(cpu)": {
+    phase: "compute",
+    label: "scatter (sample-back)",
+    role: "cpu",
+  },
+  "P.write(cpu)": {
+    phase: "compute",
+    label: "scatter (sample-back)",
+    role: "cpu",
+  },
   "3.build(cpu)": { phase: "compute", label: "batchBuild", role: "cpu" },
 
   // ── compute · worker (off-thread) ────────────────────────────────────
-  "2b.morphology(worker)": { phase: "worker", label: "Σ morphology round-trip", role: "container" },
-  "P.pipeline(worker)": { phase: "worker", label: "Σ pipeline round-trip", role: "container" },
-  "2b.w.maskBuild(py)": { phase: "worker", label: "· maskBuild (py)", role: "worker" },
-  "P.w.maskBuild(py)": { phase: "worker", label: "· maskBuild (py)", role: "worker" },
-  "2b.w.closing(py)": { phase: "worker", label: "· closing (py)", role: "worker" },
-  "P.w.closing(py)": { phase: "worker", label: "· closing (py)", role: "worker" },
-  "2b.w.components(py)": { phase: "worker", label: "· components (py)", role: "worker" },
-  "P.w.components(py)": { phase: "worker", label: "· components (py)", role: "worker" },
-  "2b.w.marshalIn(py)": { phase: "worker", label: "· marshalIn (py)", role: "worker" },
-  "P.w.marshalIn(py)": { phase: "worker", label: "· marshalIn (py)", role: "worker" },
-  "2b.w.marshalOut(py)": { phase: "worker", label: "· marshalOut (py)", role: "worker" },
-  "P.w.marshalOut(py)": { phase: "worker", label: "· marshalOut (py)", role: "worker" },
-  "2b.w.convertOut(js)": { phase: "worker", label: "· convertOut (js)", role: "worker" },
-  "P.w.convertOut(js)": { phase: "worker", label: "· convertOut (js)", role: "worker" },
-  "2b.w.call(js)": { phase: "worker", label: "· callJs (js↔py span ⊇ py rows)", role: "worker" },
-  "P.w.call(js)": { phase: "worker", label: "· callJs (js↔py span ⊇ py rows)", role: "worker" },
-  "2b.w.q.boot": { phase: "worker", label: "· bootWait (cold pyodide)", role: "worker" },
-  "P.w.q.boot": { phase: "worker", label: "· bootWait (cold pyodide)", role: "worker" },
-  "2b.w.q.request": { phase: "worker", label: "· queueWait (transit+evloop)", role: "worker" },
-  "P.w.q.request": { phase: "worker", label: "· queueWait (transit+evloop)", role: "worker" },
-  "2b.w.q.response": { phase: "worker", label: "· respWait (main evloop)", role: "worker" },
-  "P.w.q.response": { phase: "worker", label: "· respWait (main evloop)", role: "worker" },
-  "2b.w.rpc+queue": { phase: "worker", label: "· rpcOverhead (marshal+sched)", role: "worker" },
-  "P.w.rpc+queue": { phase: "worker", label: "· rpcOverhead (marshal+sched)", role: "worker" },
+  "2b.morphology(worker)": {
+    phase: "worker",
+    label: "Σ morphology round-trip",
+    role: "container",
+  },
+  "P.pipeline(worker)": {
+    phase: "worker",
+    label: "Σ pipeline round-trip",
+    role: "container",
+  },
+  "2b.w.maskBuild(py)": {
+    phase: "worker",
+    label: "· maskBuild (py)",
+    role: "worker",
+  },
+  "P.w.maskBuild(py)": {
+    phase: "worker",
+    label: "· maskBuild (py)",
+    role: "worker",
+  },
+  "2b.w.closing(py)": {
+    phase: "worker",
+    label: "· closing (py)",
+    role: "worker",
+  },
+  "P.w.closing(py)": {
+    phase: "worker",
+    label: "· closing (py)",
+    role: "worker",
+  },
+  "2b.w.components(py)": {
+    phase: "worker",
+    label: "· components (py)",
+    role: "worker",
+  },
+  "P.w.components(py)": {
+    phase: "worker",
+    label: "· components (py)",
+    role: "worker",
+  },
+  "2b.w.marshalIn(py)": {
+    phase: "worker",
+    label: "· marshalIn (py)",
+    role: "worker",
+  },
+  "P.w.marshalIn(py)": {
+    phase: "worker",
+    label: "· marshalIn (py)",
+    role: "worker",
+  },
+  "2b.w.marshalOut(py)": {
+    phase: "worker",
+    label: "· marshalOut (py)",
+    role: "worker",
+  },
+  "P.w.marshalOut(py)": {
+    phase: "worker",
+    label: "· marshalOut (py)",
+    role: "worker",
+  },
+  "2b.w.convertOut(js)": {
+    phase: "worker",
+    label: "· convertOut (js)",
+    role: "worker",
+  },
+  "P.w.convertOut(js)": {
+    phase: "worker",
+    label: "· convertOut (js)",
+    role: "worker",
+  },
+  "2b.w.call(js)": {
+    phase: "worker",
+    label: "· callJs (js↔py span ⊇ py rows)",
+    role: "worker",
+  },
+  "P.w.call(js)": {
+    phase: "worker",
+    label: "· callJs (js↔py span ⊇ py rows)",
+    role: "worker",
+  },
+  "2b.w.q.boot": {
+    phase: "worker",
+    label: "· bootWait (cold pyodide)",
+    role: "worker",
+  },
+  "P.w.q.boot": {
+    phase: "worker",
+    label: "· bootWait (cold pyodide)",
+    role: "worker",
+  },
+  "2b.w.q.request": {
+    phase: "worker",
+    label: "· queueWait (transit+evloop)",
+    role: "worker",
+  },
+  "P.w.q.request": {
+    phase: "worker",
+    label: "· queueWait (transit+evloop)",
+    role: "worker",
+  },
+  "2b.w.q.response": {
+    phase: "worker",
+    label: "· respWait (main evloop)",
+    role: "worker",
+  },
+  "P.w.q.response": {
+    phase: "worker",
+    label: "· respWait (main evloop)",
+    role: "worker",
+  },
+  "2b.w.rpc+queue": {
+    phase: "worker",
+    label: "· rpcOverhead (marshal+sched)",
+    role: "worker",
+  },
+  "P.w.rpc+queue": {
+    phase: "worker",
+    label: "· rpcOverhead (marshal+sched)",
+    role: "worker",
+  },
 
   // ── apply → commit · main-thread ─────────────────────────────────────
   // P1 (TM-317): footprint chunks warmed concurrently with the worker compute
   // so `materialize.fetchBaseline` below hits a resident chunk (sub-ms clone)
   // instead of a cold IO await. This await is normally already settled by the
   // time the worker mask returns, so its recorded cost should be ~0.
-  "P1.warm(io)": { phase: "apply", label: "· prefetch.warm (await, overlapped)", role: "io" },
-  "apply.total(cpu)": { phase: "apply", label: "Σ withBatch (writeRegion+commit)", role: "container" },
-  "overlay.paint.apply.writeRegion": { phase: "apply", label: "· writeRegion", role: "cpu" },
-  "overlay.paint.materialize.clones": { phase: "apply", label: "· materialize.clones", role: "cpu" },
-  "overlay.paint.materialize.fetchBaseline": { phase: "apply", label: "· materialize.fetchBaseline (await)", role: "io" },
+  "P1.warm(io)": {
+    phase: "apply",
+    label: "· prefetch.warm (await, overlapped)",
+    role: "io",
+  },
+  "apply.total(cpu)": {
+    phase: "apply",
+    label: "Σ withBatch (writeRegion+commit)",
+    role: "container",
+  },
+  "overlay.paint.apply.writeRegion": {
+    phase: "apply",
+    label: "· writeRegion",
+    role: "cpu",
+  },
+  "overlay.paint.materialize.clones": {
+    phase: "apply",
+    label: "· materialize.clones",
+    role: "cpu",
+  },
+  "overlay.paint.materialize.fetchBaseline": {
+    phase: "apply",
+    label: "· materialize.fetchBaseline (await)",
+    role: "io",
+  },
   "5.mirror.fuse(cpu)": { phase: "apply", label: "mirror.fuse", role: "cpu" },
-  "5.mirror.read(io)": { phase: "apply", label: "mirror.read (await)", role: "io" },
+  "5.mirror.read(io)": {
+    phase: "apply",
+    label: "mirror.read (await)",
+    role: "io",
+  },
 
   // ── render · main-thread ─────────────────────────────────────────────
-  "6.gpu.upload(value)": { phase: "render", label: "gpu.upload value", role: "render" },
-  "6.gpu.upload(mask)": { phase: "render", label: "gpu.upload mask", role: "render" },
-  "mt.frameDraw": { phase: "render", label: "frameDraw (render loop)", role: "render" },
+  "6.gpu.upload(value)": {
+    phase: "render",
+    label: "gpu.upload value",
+    role: "render",
+  },
+  "6.gpu.upload(mask)": {
+    phase: "render",
+    label: "gpu.upload mask",
+    role: "render",
+  },
+  "mt.frameDraw": {
+    phase: "render",
+    label: "frameDraw (render loop)",
+    role: "render",
+  },
 
   // ── health ───────────────────────────────────────────────────────────
-  "mt.longtask(>50ms)": { phase: "health", label: "longtask >50ms (un-instrumented stalls)", role: "stall" },
+  "mt.longtask(>50ms)": {
+    phase: "health",
+    label: "longtask >50ms (un-instrumented stalls)",
+    role: "stall",
+  },
 };
 
 function classify(name: string): BucketMeta {
@@ -360,7 +536,8 @@ class PaintProfiler {
       this.buckets.get("4.handleInput(total)");
     const segs = stroke ? stroke.calls : 0;
     const wallTotal = stroke ? stroke.totalMs : undefined;
-    const perSeg = wallTotal !== undefined && segs > 0 ? wallTotal / segs : undefined;
+    const perSeg =
+      wallTotal !== undefined && segs > 0 ? wallTotal / segs : undefined;
 
     const reinit = this.counters.get("morphology.workerReinit") ?? 0;
     const heap = this.counters.get("morphology.heapPressure") ?? 0;

@@ -63,7 +63,6 @@ class PaintSchedulerConfig {
 
   /** Print the modes and current values to the console. */
   help(): void {
-    // eslint-disable-next-line no-console
     console.log(
       [
         "[paint-scheduler] stroke scheduling mode",
@@ -90,7 +89,6 @@ if (
   typeof navigator !== "undefined" &&
   !/jsdom/i.test(navigator.userAgent ?? "")
 ) {
-  // eslint-disable-next-line no-console
   console.log(
     `[paint-scheduler] mode='${paintScheduler.mode}' — toggle live via __paintScheduler.help()`,
   );
