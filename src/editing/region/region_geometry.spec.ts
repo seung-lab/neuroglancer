@@ -15,6 +15,7 @@ import {
   buildUnitBoxEdgeVertices,
   planeIntersectsBox,
   positionAtBoxCenter,
+  voxelCenterInBox,
 } from "#src/editing/region/region_geometry.js";
 import { vec3 } from "#src/util/geom.js";
 
@@ -144,5 +145,61 @@ describe("positionAtBoxCenter", () => {
       hi,
     );
     expect(Array.from(out)).toEqual([25, 40]);
+  });
+});
+
+describe("voxelCenterInBox", () => {
+  it("snaps a one-voxel-thick slab off the boundary to the covered voxel center", () => {
+    // The bug case: midpoint of [920.5, 921.5] is 921.0 (a voxel boundary),
+    // which floors to the UNCOVERED voxel 921. The covered voxel is
+    // floor(920.5) = 920, whose center is 920.5.
+    const out = voxelCenterInBox(
+      Float32Array.from([0, 0, 921]),
+      Int32Array.from([0, 1, 2]),
+      vec3.fromValues(44194.93, 46102.61, 920.5),
+      vec3.fromValues(49199.38, 49815.16, 921.5),
+    );
+    expect(out[2]).toBe(920.5);
+    expect(Math.floor(out[2])).toBe(920); // floor lands inside [floor(lo),floor(hi))
+    // Wide axes: a voxel center inside the box.
+    expect(out[0]).toBe(46696.5);
+    expect(out[1]).toBe(47958.5);
+  });
+
+  it("returns a voxel center whose floor is always within the covered range", () => {
+    const lo = vec3.fromValues(10, 20.2, 30.9);
+    const hi = vec3.fromValues(40, 60.7, 31.9);
+    const out = voxelCenterInBox(
+      Float32Array.from([0, 0, 0]),
+      Int32Array.from([0, 1, 2]),
+      lo,
+      hi,
+    );
+    for (let i = 0; i < 3; ++i) {
+      const f = Math.floor(out[i]);
+      expect(f).toBeGreaterThanOrEqual(Math.floor(lo[i]));
+      expect(f).toBeLessThan(Math.floor(hi[i]));
+      expect(out[i] - f).toBe(0.5); // a voxel center
+    }
+  });
+
+  it("handles a sub-voxel span by selecting floor(lo)", () => {
+    const out = voxelCenterInBox(
+      Float32Array.from([0]),
+      Int32Array.from([0, -1, -1]),
+      vec3.fromValues(7.2, 0, 0),
+      vec3.fromValues(7.6, 0, 0),
+    );
+    expect(out[0]).toBe(7.5); // floor(7.2) + 0.5
+  });
+
+  it("leaves non-display coordinates untouched", () => {
+    const out = voxelCenterInBox(
+      Float32Array.from([1, 2, 3, 99]),
+      Int32Array.from([0, 1, 2]),
+      vec3.fromValues(10, 20, 30),
+      vec3.fromValues(11, 21, 31),
+    );
+    expect(out[3]).toBe(99);
   });
 });
