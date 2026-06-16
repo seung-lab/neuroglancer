@@ -36,7 +36,13 @@ function fakeMorphology(
   impl: (req: MorphologyRequest) => Promise<Uint8Array>,
 ): { client: MorphologyClient; apply: ReturnType<typeof vi.fn> } {
   const apply = vi.fn(impl);
-  return { client: { apply } as unknown as MorphologyClient, apply };
+  // `isReady: () => false` keeps these TM-304 tests on the morphology `apply`
+  // offload path: the TM-317 whole-pipeline route is only taken when the worker
+  // reports ready (covered separately in painting_compute_pyodide_pipeline.spec).
+  return {
+    client: { apply, isReady: () => false } as unknown as MorphologyClient,
+    apply,
+  };
 }
 
 const TARGET_RES = Resolution.from([8, 8, 40]);
