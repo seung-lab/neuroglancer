@@ -226,6 +226,21 @@ function parseArgs() {
             devServer: {
               port: argv.port === 0 ? "auto" : argv.port,
               host: argv.host,
+              // Keep the live-reload WebSocket endpoint in sync with the port
+              // the server actually binds. rspack.config.js hardcodes a
+              // webSocketURL but cannot know the CLI `--port`, so deriving it
+              // here prevents the browser from connecting to a stale/other dev
+              // server (e.g. a second worktree on a different port) and getting
+              // spurious full-page reloads. Pin the hostname to reach this
+              // server directly (the page itself is proxied under the portal
+              // origin); infer the port only when it was left to "auto".
+              client: {
+                webSocketURL: {
+                  hostname: argv.host,
+                  pathname: "/ws",
+                  ...(argv.port === 0 ? {} : { port: argv.port }),
+                },
+              },
             },
           }),
         );
