@@ -96,6 +96,7 @@ import { EditRegionPerspectiveOverlay } from "#src/editing/region/region_perspec
 import { EditRegionSliceOverlay } from "#src/editing/region/region_slice_overlay.js";
 import { EditSessionHotkeyBinder } from "#src/editing/session_hotkey_binder.js";
 import type { PatchedMaskProvider } from "#src/editing/shaders/patched_mask_provider.js";
+import { voxelDataTypeRange } from "#src/editing/tool_runtimes/mask_coord.js";
 import { MorphologyClient } from "#src/editing/tool_runtimes/morphology_client.js";
 import { paintProfilerMetrics } from "#src/editing/tool_runtimes/paint_profiler_metrics.js";
 import type { PaintingMaskConfig } from "#src/editing/tool_runtimes/paint_types.js";
@@ -117,6 +118,7 @@ import {
   type EditKeybindOverrides,
   type ToolingPersistState,
 } from "#src/editing/tooling/tooling_persist.js";
+import { layerKindOf } from "#src/editing/ui/layer_kind.js";
 import type { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import { SegmentationRenderLayer } from "#src/sliceview/volume/segmentation_renderlayer.js";
 import { StatusMessage } from "#src/status.js";
@@ -1525,12 +1527,56 @@ export class EditSessionHost extends RefCounted {
    * TM-297), and builds the cross-layer baseline reader the masked brush uses
    * for its image (mask) layer.
    */
+  /**
+   * Pick the default brush mask for a freshly-opened session: the first
+   * session layer that is an image (reference) layer with a thresholdable
+   * voxel type. Mirrors the brush panel's reference-layer filtering so the
+   * default matches what the user would pick first. Returns `undefined` when
+   * the session has no usable image layer (e.g. only segmentation or uint64).
+   */
+  private defaultBrushMask(
+    config: HostSessionConfig,
+    metadataByLayer: ReadonlyMap<LayerId, LayerMetadata>,
+  ): PaintingMaskConfig | undefined {
+    for (const l of config.layers) {
+      const managed = this.viewer.layerManager.getLayerByName(l.layerId);
+      if (layerKindOf(managed) !== "image") continue;
+      const meta = metadataByLayer.get(l.layerId);
+      if (meta === undefined) continue;
+      const range = voxelDataTypeRange(meta.voxelDataType);
+      if (range === null) continue;
+      return {
+        imageLayerId: l.layerId,
+        imageResolution: l.resolutions[0],
+        thresholdLow: range.min,
+        thresholdHigh: range.max,
+        minComponentSize: 0,
+        binaryClosing: 0,
+        filterComponentsFirst: false,
+      };
+    }
+    return undefined;
+  }
+
   private async instantiatePaintingTools(
     session: EditSession,
     config: HostSessionConfig,
   ): Promise<void> {
     const firstWritable = config.layers.find((l) => l.writable);
     const targetLayer = firstWritable ?? config.layers[0];
+
+    // Build the layer-metadata map the compute + tools need (target layer for
+    // the stamp, image layer for the mask threshold).
+    const metadataByLayer = new Map<LayerId, LayerMetadata>();
+    await Promise.all(
+      config.layers.map(async (l) => {
+        metadataByLayer.set(
+          l.layerId,
+          await this.layerMetadataSource.resolve(l.layerId),
+        );
+      }),
+    );
+
     // The user-facing "Size" is `radius * 2 + 1` (see brush panel). Default
     // size 5 paints a 13-voxel diamond — visible enough to confirm the brush
     // works, small enough not to overshoot a precision edit.
@@ -1544,21 +1590,14 @@ export class EditSessionHost extends RefCounted {
       // the brush panel.
       activeValue: 1n,
       eraseValue: 0n,
-      mask: undefined as PaintingMaskConfig | undefined,
+      // Default the mask to the first usable image (reference) layer so a fresh
+      // session can mask straight away (TM-317). The user clears it with the
+      // reference picker's × button. A reopened session overrides this default
+      // via `applyRestoredTooling` (which always patches `mask`), so a
+      // previously-cleared mask stays cleared on reload.
+      mask: this.defaultBrushMask(config, metadataByLayer),
       spacingFraction: DEFAULT_SPACING_FRACTION,
     };
-
-    // Build the layer-metadata map the compute + tools need (target layer for
-    // the stamp, image layer for the mask threshold).
-    const metadataByLayer = new Map<LayerId, LayerMetadata>();
-    await Promise.all(
-      config.layers.map(async (l) => {
-        metadataByLayer.set(
-          l.layerId,
-          await this.layerMetadataSource.resolve(l.layerId),
-        );
-      }),
-    );
 
     const compute = new PaintingCompute(this.morphologyClient);
     // Cross-layer baseline reader → the chunk-source adapter. Mirrors the
