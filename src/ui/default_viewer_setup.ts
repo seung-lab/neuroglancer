@@ -17,6 +17,7 @@
 import type { UserLayer, UserLayerConstructor } from "#src/layer/index.js";
 import { layerTypes } from "#src/layer/index.js";
 import { StatusMessage } from "#src/status.js";
+import { EDIT_SESSION_BINDINGS_KEY } from "#src/ui/custom_keybinds.js";
 import {
   bindDefaultCopyHandler,
   bindDefaultPasteHandler,
@@ -115,6 +116,9 @@ export function setupDefaultViewer() {
     };
 
     for (const [key, val] of Object.entries(CUSTOM_BINDINGS!)) {
+      // The `editSession` section is session-scoped keybind config consumed by
+      // the edit-session hotkey binder (TM-315), not a global keyboard binding.
+      if (key === EDIT_SESSION_BINDINGS_KEY) continue;
       deleteKey(viewer.inputEventBindings.global, key);
       deleteKey(viewer.inputEventBindings.perspectiveView, key);
       deleteKey(viewer.inputEventBindings.sliceView, key);

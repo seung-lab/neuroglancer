@@ -9,16 +9,10 @@
  */
 
 import type {
-  BrushApplyInput,
-  BrushStrokeInput,
   ChunkCoord,
   ChunkId as ChunkIdType,
   ChunkVoxelBuffer,
-  FillInput,
   LayerMetadata,
-  PaintChunkWrite,
-  PaintCompute,
-  PaintWriteBatch,
   ReadonlyChunkVoxelBuffer,
   Resolution as ResolutionType,
   ScaleMetadata,
@@ -34,7 +28,21 @@ import {
 } from "#src/editing/tool_runtimes/mask_coord.js";
 import type { MorphologyClient } from "#src/editing/tool_runtimes/morphology_client.js";
 import type { MorphologyRequest } from "#src/editing/tool_runtimes/morphology_request.js";
+import type {
+  ImageSlab,
+  PaintPipelineDataType,
+  PaintPipelineRequest,
+} from "#src/editing/tool_runtimes/paint_pipeline_request.js";
 import { paintProfiler } from "#src/editing/tool_runtimes/paint_profiler.js";
+import type {
+  BrushApplyInput,
+  BrushStrokeInput,
+  FillInput,
+  PaintChunkWrite,
+  PaintCompute,
+  PaintWriteBatch,
+  StrokeFootprintMask,
+} from "#src/editing/tool_runtimes/paint_types.js";
 
 /**
  * Runs the post-threshold morphology pipeline (binary closing + component
@@ -44,6 +52,29 @@ import { paintProfiler } from "#src/editing/tool_runtimes/paint_profiler.js";
  * synchronously in TS.
  */
 type RunMorphology = (req: MorphologyRequest) => Promise<Uint8Array>;
+
+/**
+ * Whole-pipeline route (TM-317). When `ready`, the masked `useSlice` stamps
+ * offload the ENTIRE compute (resample → threshold → footprint gate →
+ * morphology) to `run` (the pyodide worker), instead of doing
+ * slab-copy/threshold/sample-back on the main thread and round-tripping only
+ * morphology. `ready` is a non-blocking flag: during the worker's cold-init
+ * window it is `false`, so masked strokes stay on the original main-thread
+ * path. `run` returns the footprint mask (1 = paint), and may reject — callers
+ * fall back to the main-thread path on any failure.
+ */
+interface PipelineRoute {
+  readonly ready: boolean;
+  readonly run: (req: PaintPipelineRequest) => Promise<Uint8Array>;
+}
+
+/** Footprint geometry handed to the pyodide whole-pipeline path. */
+interface PipelineGeometry {
+  /** Swept-capsule polyline, ABSOLUTE target voxel coords `[x0,y0,x1,y1,…]`. */
+  readonly points: Float64Array;
+  /** Brush radius in target voxels (already `floor`ed). */
+  readonly radius: number;
+}
 
 /**
  * Attach the current brush params to the paint profiler so each stroke summary
@@ -76,13 +107,6 @@ function recordPaintContext(
 }
 
 /**
- * Tool id of the eraser leaf in the library's `painting` composite tool. The
- * eraser shares `PaintingSharedState` (including `mask`) with the brush, so the
- * compute keys off the active tool id to suppress masking for erase strokes.
- */
-const TOOL_ID_ERASE = "painting.erase";
-
-/**
  * Neuroglancer-side `PaintCompute` implementation. Computes per-chunk write
  * batches for brush stamps, interpolated brush strokes, and 3D flood-fills.
  * Pure main-thread compute — no worker offload in v1. Reads baseline (or
@@ -97,32 +121,18 @@ const TOOL_ID_ERASE = "painting.erase";
  */
 export class PaintingCompute implements PaintCompute {
   /**
-   * @param getActiveToolId Returns the id of the currently-active painting
-   *   tool (e.g. `"painting.brush"` / `"painting.erase"`), or `undefined` when
-   *   none is active.
+   * The compute honors `input.mask` whenever it is present. Suppressing the
+   * mask for the eraser is the TOOL's concern (TM-315): the erase tool simply
+   * omits `mask` from its compute call, so the compute no longer reaches back
+   * to global active-tool state (the old `getActiveToolId` coupling, TM-297).
    *
-   *   This exists to keep the eraser's masking behavior explicit (TM-297). The
-   *   library shares a single `PaintingSharedState.mask` across the brush and
-   *   erase `StrokeTool`s and feeds it to BOTH through `BrushApplyInput.mask`.
-   *   Only the brush exposes mask settings, but without this guard the eraser
-   *   silently inherits the brush's hidden threshold band and fails to remove
-   *   labels the user can plainly see. The eraser must never follow the brush's
-   *   mask, so we drop it whenever the eraser is the active tool. Defaults to
-   *   "no active tool" → mask honored, leaving brush/fill behavior unchanged.
-   */
-  /**
-   * @param getActiveToolId See the note above.
    * @param morphology Optional pyodide morphology worker (TM-304). When
    *   provided, the masked brush offloads `binary_closing` + component
    *   filtering to scipy in the worker; on any worker failure it falls back to
    *   the in-process TS `applyMorphologyPipeline`. When omitted (e.g. unit
    *   tests), morphology always runs in TS, preserving prior behavior.
    */
-  constructor(
-    private readonly getActiveToolId: () => string | undefined = () =>
-      undefined,
-    private readonly morphology?: MorphologyClient,
-  ) {}
+  constructor(private readonly morphology?: MorphologyClient) {}
 
   /**
    * Image-chunk cache shared across this compute's strokes (P2, TM-304). The
@@ -170,12 +180,18 @@ export class PaintingCompute implements PaintCompute {
   };
 
   /**
-   * The eraser deliberately ignores the brush's image mask (TM-297): its
-   * behavior must be predictable and not gated by another tool's hidden state.
-   * Brush strokes honor the mask normally.
+   * The whole-pipeline route for masked `useSlice` stamps (TM-317), or
+   * `undefined` when no worker is configured (e.g. unit tests that exercise the
+   * main-thread path). `ready` reflects the worker's non-blocking readiness, so
+   * the cold-init window transparently uses the main-thread fallback.
    */
-  private maskEnabledForActiveTool(): boolean {
-    return this.getActiveToolId() !== TOOL_ID_ERASE;
+  private pipelineRoute(): PipelineRoute | undefined {
+    const client = this.morphology;
+    if (client === undefined) return undefined;
+    return {
+      ready: client.isReady(),
+      run: (req: PaintPipelineRequest) => client.applyPipeline(req),
+    };
   }
 
   async applyBrush(input: BrushApplyInput): Promise<PaintWriteBatch> {
@@ -184,9 +200,9 @@ export class PaintingCompute implements PaintCompute {
       input.targetLayerId,
       input.targetResolution,
     );
-    const maskCtx = this.maskEnabledForActiveTool()
-      ? resolveMaskContext(input, this.imageChunkCache)
-      : undefined;
+    // Honor the mask whenever the caller supplies one. The eraser tool omits
+    // `mask` from its input (TM-315), so no active-tool reach-back is needed.
+    const maskCtx = resolveMaskContext(input, this.imageChunkCache);
     recordPaintContext(
       input.radius,
       maskCtx,
@@ -207,6 +223,7 @@ export class PaintingCompute implements PaintCompute {
         input.value,
         maskCtx,
         this.runMorphology,
+        this.pipelineRoute(),
       );
     }
     return paintProfiler.time("3.build(cpu)", () => builder.build());
@@ -231,9 +248,7 @@ export class PaintingCompute implements PaintCompute {
       input.targetLayerId,
       input.targetResolution,
     );
-    const maskCtx = this.maskEnabledForActiveTool()
-      ? resolveMaskContext(input, this.imageChunkCache)
-      : undefined;
+    const maskCtx = resolveMaskContext(input, this.imageChunkCache);
     const r = Math.max(0, Math.floor(input.radius));
     // The swept path `from → …via → to`. `via` is present when the host
     // coalesced pointer positions while the previous segment was still in
@@ -282,6 +297,7 @@ export class PaintingCompute implements PaintCompute {
             input.value,
             maskCtx,
             this.runMorphology,
+            this.pipelineRoute(),
           );
         }
       } else if (maskCtx === undefined) {
@@ -294,6 +310,7 @@ export class PaintingCompute implements PaintCompute {
           input.value,
           maskCtx,
           this.runMorphology,
+          this.pipelineRoute(),
         );
       }
       return paintProfiler.time("3.build(cpu)", () => builder.build());
@@ -347,6 +364,88 @@ export class PaintingCompute implements PaintCompute {
       }
     }
     return paintProfiler.time("3.build(cpu)", () => builder.build());
+  }
+
+  /**
+   * Worker-SAB route (TM-317 Phase B): compute the masked-brush footprint mask
+   * for a stroke via the pyodide whole-pipeline and return it RAW (no batch
+   * scatter), so the caller can stamp it into the overlay SAB slots off the main
+   * thread. Returns `null` when the stroke is not eligible — no mask, 1-voxel
+   * brush, z-varying path, the worker is not ready, or the worker call failed —
+   * and the caller then falls back to `applyBrushStroke` + main-thread apply.
+   *
+   * Eligibility and footprint geometry mirror `applyBrushStrokeInner`'s capsule
+   * / polyline branch EXACTLY (same dedup, same bbox, same `pathPoints`/radius),
+   * and the mask is produced by the SAME `runFootprintMaskViaPipeline` the
+   * scatter path uses — so the painted result is byte-identical.
+   */
+  async computeMaskedStrokeFootprint(
+    input: BrushStrokeInput,
+  ): Promise<StrokeFootprintMask | null> {
+    const maskCtx = resolveMaskContext(input, this.imageChunkCache);
+    if (maskCtx === undefined) return null;
+    if (maskCtx.maskMetadata.voxelDataType === "uint64") return null;
+    const pipeline = this.pipelineRoute();
+    if (pipeline === undefined || !pipeline.ready) return null;
+
+    const r = Math.max(0, Math.floor(input.radius));
+    const pts = dedupConsecutivePoints([
+      input.from,
+      ...(input.via ?? []),
+      input.to,
+    ]);
+    const cz = Math.floor(pts[0][2]);
+    const sameZ = pts.every((p) => Math.floor(p[2]) === cz);
+    // Only the capsule / polyline-union route (single z-slice, real radius) is
+    // worker-stamped; the 1-voxel brush and z-varying paths stay on the
+    // synchronous per-dab path (small footprints, not the measured bottleneck).
+    if (r < 1 || !sameZ) return null;
+
+    // Footprint bbox in target voxels — identical to `stampCapsule2DMasked` /
+    // `stampPolyline2DMasked`. The pyodide path rebuilds the footprint from
+    // `pathPoints`+radius via segment-distance, so we need only the bbox here
+    // (no main-thread bitmap raster).
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    for (const p of pts) {
+      if (p[0] < minX) minX = p[0];
+      if (p[0] > maxX) maxX = p[0];
+      if (p[1] < minY) minY = p[1];
+      if (p[1] > maxY) maxY = p[1];
+    }
+    const loTx = Math.floor(minX) - r;
+    const loTy = Math.floor(minY) - r;
+    const hiTx = Math.ceil(maxX) + r;
+    const hiTy = Math.ceil(maxY) + r;
+    const tShapeX = hiTx - loTx + 1;
+    const tShapeY = hiTy - loTy + 1;
+    const points = new Float64Array(pts.length * 2);
+    for (let i = 0; i < pts.length; i++) {
+      points[2 * i] = pts[i][0];
+      points[2 * i + 1] = pts[i][1];
+    }
+
+    recordPaintContext(
+      input.radius,
+      maskCtx,
+      pts.length > 2 ? `worker-mask(${pts.length - 1})` : "worker-mask",
+      input.metadata.voxelDataType,
+    );
+
+    const mask = await runFootprintMaskViaPipeline(
+      loTx,
+      loTy,
+      tShapeX,
+      tShapeY,
+      cz,
+      maskCtx,
+      pipeline.run,
+      { points, radius: r },
+    );
+    if (mask === null) return null;
+    return { loTx, loTy, maskW: tShapeX, maskH: tShapeY, cz, mask };
   }
 
   async fill3d(input: FillInput): Promise<PaintWriteBatch> {
@@ -774,8 +873,41 @@ async function stampShape2DMasked(
   // builder (single click / one capsule); the per-dab fallback writes many
   // stamps into one builder and must stay on the legacy accumulating path.
   useSlice: boolean,
+  // Whole-pipeline route (TM-317) + the footprint geometry it needs. Present
+  // only for the `useSlice` callers (click/capsule/polyline); when the route is
+  // ready the entire compute runs in pyodide and the main-thread path below is
+  // skipped. Absent / not-ready / on failure → the main-thread path runs.
+  pipeline?: PipelineRoute,
+  geometry?: PipelineGeometry,
 ): Promise<void> {
   if (tShapeX <= 0 || tShapeY <= 0) return;
+
+  // Primary path (TM-317): offload the whole masked compute to the pyodide
+  // worker. Only for `useSlice` stamps with a ready worker and a non-uint64
+  // image (uint64 is rejected upstream, but defend in depth). On any failure,
+  // fall through to the unchanged main-thread path below — painting never
+  // hard-breaks.
+  if (
+    useSlice &&
+    pipeline?.ready === true &&
+    geometry !== undefined &&
+    ctx.maskMetadata.voxelDataType !== "uint64"
+  ) {
+    const handled = await stampViaPipeline(
+      builder,
+      loTx,
+      loTy,
+      tShapeX,
+      tShapeY,
+      cz,
+      value,
+      ctx,
+      pipeline.run,
+      geometry,
+    );
+    if (handled) return;
+  }
+
   if (useSlice) {
     builder.beginSliceStamp(
       loTx,
@@ -1002,6 +1134,231 @@ async function stampShape2DMasked(
   }
 }
 
+/**
+ * Whole-pipeline masked stamp (TM-317). Assembles a footprint-bounded,
+ * native-dtype EM image slab (one contiguous row-memcpy per covering chunk),
+ * hands the entire compute — resample, threshold, footprint gate, morphology —
+ * to the pyodide worker, then scatters the returned footprint mask into the
+ * builder via the SAME `beginSliceStamp`/`writeVoxel` calls the main-thread
+ * path uses, so the resulting batch is byte-identical.
+ *
+ * Returns `true` when the worker computed and the result was scattered; returns
+ * `false` if the worker call failed (the caller then runs the main-thread
+ * fallback). The slice stamp is only begun AFTER the worker resolves, so a
+ * failed call leaves the builder untouched and the fallback cannot double-write.
+ */
+async function stampViaPipeline(
+  builder: PaintBatchBuilder,
+  loTx: number,
+  loTy: number,
+  tShapeX: number,
+  tShapeY: number,
+  cz: number,
+  value: number | bigint,
+  ctx: MaskContext,
+  run: (req: PaintPipelineRequest) => Promise<Uint8Array>,
+  geometry: PipelineGeometry,
+): Promise<boolean> {
+  const mask = await runFootprintMaskViaPipeline(
+    loTx,
+    loTy,
+    tShapeX,
+    tShapeY,
+    cz,
+    ctx,
+    run,
+    geometry,
+  );
+  if (mask === null) return false;
+
+  // Scatter: identical to the main-thread sample-back, but driven by the
+  // worker's footprint mask. `beginSliceStamp` fixes the per-chunk dense grid;
+  // only painted voxels set `valueMask`, so the emitted batch matches the
+  // main-thread path exactly.
+  const prof = paintProfiler.enabled;
+  const tWrite = prof ? performance.now() : 0;
+  builder.beginSliceStamp(
+    loTx,
+    loTy,
+    loTx + tShapeX - 1,
+    loTy + tShapeY - 1,
+    cz,
+  );
+  let painted = 0;
+  for (let j = 0; j < tShapeY; j++) {
+    const rowBase = tShapeX * j;
+    const vy = loTy + j;
+    for (let i = 0; i < tShapeX; i++) {
+      if (mask[rowBase + i] === 1) {
+        builder.writeVoxel(loTx + i, vy, cz, value);
+        painted++;
+      }
+    }
+  }
+  if (prof) {
+    paintProfiler.record("P.write(cpu)", performance.now() - tWrite);
+    paintProfiler.count("voxels.footprintBbox", tShapeX * tShapeY);
+    paintProfiler.count("voxels.painted", painted);
+  }
+  return true;
+}
+
+/**
+ * Run the pyodide whole-pipeline for a single-slice footprint and return the
+ * raw footprint mask (`1` = paint) over `[loTx, loTx+tShapeX) × [loTy,
+ * loTy+tShapeY)` at `cz`, or `null` if the worker call failed. Shared by the
+ * main-thread scatter path (`stampViaPipeline`) and the worker-SAB apply route
+ * (`PaintingCompute.computeMaskedStrokeFootprint`), so both compute the SAME
+ * mask — the apply route is byte-identical to the scatter route, it just writes
+ * the mask off-thread instead of into a `PaintWriteBatch`.
+ */
+async function runFootprintMaskViaPipeline(
+  loTx: number,
+  loTy: number,
+  tShapeX: number,
+  tShapeY: number,
+  cz: number,
+  ctx: MaskContext,
+  run: (req: PaintPipelineRequest) => Promise<Uint8Array>,
+  geometry: PipelineGeometry,
+): Promise<Uint8Array | null> {
+  const sxRatio = ctx.targetVoxelSizeNm[0] / ctx.imageVoxelSizeNm[0];
+  const syRatio = ctx.targetVoxelSizeNm[1] / ctx.imageVoxelSizeNm[1];
+  const szRatio = ctx.targetVoxelSizeNm[2] / ctx.imageVoxelSizeNm[2];
+  const imageZ = Math.floor(cz * szRatio);
+  // Image-voxel region the footprint projects to. The per-axis map
+  // `floor((loT + i) * ratio)` is monotonic in `i` (ratio > 0), so the extremes
+  // are at the footprint corners — exactly the indices the worker recomputes,
+  // so the slab spans them with no clipping (parity with the main-thread map).
+  const minIx = Math.floor(loTx * sxRatio);
+  const maxIx = Math.floor((loTx + tShapeX - 1) * sxRatio);
+  const minIy = Math.floor(loTy * syRatio);
+  const maxIy = Math.floor((loTy + tShapeY - 1) * syRatio);
+  const iSx = maxIx - minIx + 1;
+  const iSy = maxIy - minIy + 1;
+
+  const dataType = ctx.maskMetadata.voxelDataType as PaintPipelineDataType;
+  // `assembleImageSlabNative` splits its own io (chunkRead await) vs cpu (row
+  // memcpy) timing into `P.chunkRead(io)` / `P.slabCopy(cpu)`.
+  const slab = await assembleImageSlabNative(
+    ctx,
+    dataType,
+    minIx,
+    minIy,
+    imageZ,
+    iSx,
+    iSy,
+  );
+
+  try {
+    return await paintProfiler.timeAsync("P.pipeline(worker)", () =>
+      run({
+        image: slab,
+        imageShape: [iSx, iSy],
+        imageDataType: dataType,
+        loImageX: minIx,
+        loImageY: minIy,
+        loTx,
+        loTy,
+        targetShape: [tShapeX, tShapeY],
+        sxRatio,
+        syRatio,
+        szRatio,
+        thresholdLow: ctx.mask.thresholdLow,
+        thresholdHigh: ctx.mask.thresholdHigh,
+        pathPoints: geometry.points,
+        radius: geometry.radius,
+        binaryClosing: ctx.mask.binaryClosing,
+        minComponentSize: ctx.mask.minComponentSize,
+        filterComponentsFirst: ctx.mask.filterComponentsFirst,
+      }),
+    );
+  } catch (e) {
+    warnPipelineFallback(e);
+    return null;
+  }
+}
+
+/**
+ * Copy the footprint's EM data into a contiguous native-dtype slab over the
+ * image-voxel region `[minIx, minIx+iSx) × [minIy, minIy+iSy)` on slice
+ * `imageZ`. Unlike the main-thread `Float64Array` slab (per-voxel scalar copy),
+ * this is one `TypedArray.set` row-memcpy per chunk row — much cheaper — and in
+ * the image's native dtype so the worker can `np.frombuffer` it directly. uint64
+ * is never reached here (rejected upstream), so every dtype is a numeric typed
+ * array.
+ */
+async function assembleImageSlabNative(
+  ctx: MaskContext,
+  dataType: PaintPipelineDataType,
+  minIx: number,
+  minIy: number,
+  imageZ: number,
+  iSx: number,
+  iSy: number,
+): Promise<ImageSlab> {
+  const slab = allocateVoxelBuffer(dataType, iSx * iSy) as ImageSlab;
+  const loImage: VoxelTriple = [minIx, minIy, imageZ];
+  const hiImage: VoxelTriple = [minIx + iSx, minIy + iSy, imageZ + 1];
+  const chunks = imageChunksCovering(loImage, hiImage, ctx.imageScale);
+  const ics = ctx.imageScale.chunkDataSize;
+  // Split the per-chunk `readChunk` AWAIT (io, yields the main thread) from the
+  // row memcpy (cpu, blocks it) so the profiler doesn't lump a cache miss into
+  // the copy bucket — mirrors the old split path's `1a.chunkRead`/`1b.slabCopy`.
+  const prof = paintProfiler.enabled;
+  let readMs = 0;
+  let copyMs = 0;
+  for (const coord of chunks) {
+    let t = prof ? performance.now() : 0;
+    const chunkBuf = await ctx.reader.readChunk(coord);
+    if (prof) readMs += performance.now() - t;
+    if (chunkBuf === undefined) continue;
+    const view = chunkBuf.asView() as Exclude<ChunkVoxelBuffer, BigUint64Array>;
+    const cox = coord.x * ics[0];
+    const coy = coord.y * ics[1];
+    const coz = coord.z * ics[2];
+    const x0 = Math.max(minIx, cox);
+    const y0 = Math.max(minIy, coy);
+    const x1 = Math.min(minIx + iSx, cox + ics[0]);
+    const y1 = Math.min(minIy + iSy, coy + ics[1]);
+    const lz = imageZ - coz;
+    const rowLen = x1 - x0;
+    if (rowLen <= 0) continue;
+    if (prof) t = performance.now();
+    for (let iy = y0; iy < y1; iy++) {
+      const ly = iy - coy;
+      const srcStart = x0 - cox + ics[0] * (ly + ics[1] * lz);
+      const dstStart = x0 - minIx + iSx * (iy - minIy);
+      // Both `slab` and `view` are the SAME concrete dtype at runtime, so the
+      // `Float32Array` cast is a TS-only convenience: the real prototype's
+      // `set`/`subarray` (e.g. Uint16Array's) runs and copies element values
+      // correctly. Never cast ACROSS dtypes — that would reinterpret bytes.
+      (slab as Float32Array).set(
+        (view as Float32Array).subarray(srcStart, srcStart + rowLen),
+        dstStart,
+      );
+    }
+    if (prof) copyMs += performance.now() - t;
+  }
+  if (prof) {
+    paintProfiler.record("P.chunkRead(io)", readMs);
+    paintProfiler.record("P.slabCopy(cpu)", copyMs);
+  }
+  return slab;
+}
+
+let pipelineFallbackWarned = false;
+function warnPipelineFallback(e: unknown): void {
+  if (pipelineFallbackWarned) return;
+  pipelineFallbackWarned = true;
+  console.warn(
+    "[painting] pyodide whole-pipeline worker call failed — falling back to " +
+      "the main-thread masked compute for this stamp. Brush results stay " +
+      "correct. First failure:",
+    e,
+  );
+}
+
 /** Mask-aware single-disk stamp — a degenerate (point) capsule. */
 function stampDisk2DMasked(
   builder: PaintBatchBuilder,
@@ -1053,6 +1410,7 @@ function stampCapsule2DMasked(
   value: number | bigint,
   ctx: MaskContext,
   runMorphology: RunMorphology,
+  pipeline?: PipelineRoute,
 ): Promise<void> {
   const r = Math.max(0, Math.floor(radius));
   const r2 = r * r;
@@ -1078,6 +1436,9 @@ function stampCapsule2DMasked(
     (vx, vy) => segmentDistanceSq(vx, vy, ax, ay, bx, by) <= r2,
     // Single capsule per builder → safe to use the fast slice write path.
     /* useSlice */ true,
+    pipeline,
+    // Capsule (incl. degenerate single click, from === to) = one segment.
+    { points: new Float64Array([ax, ay, bx, by]), radius: r },
   );
 }
 
@@ -1096,10 +1457,22 @@ function stampPolyline2DMasked(
   value: number | bigint,
   ctx: MaskContext,
   runMorphology: RunMorphology,
+  pipeline?: PipelineRoute,
 ): Promise<void> {
   const r = Math.max(0, Math.floor(radius));
   const cz = Math.floor(pts[0][2]);
-  const fp = rasterizePolylineFootprint(pts, r);
+  const fp = paintProfiler.time("cmp.footprint(cpu)", () =>
+    rasterizePolylineFootprint(pts, r),
+  );
+  // Flatten the polyline's xy points for the worker. Its segment-distance
+  // footprint is the exact union the `fp.bitmap` predicate encodes (both use
+  // `segmentDistanceSq` per segment), so the pyodide and main-thread footprints
+  // agree voxel-for-voxel.
+  const points = new Float64Array(pts.length * 2);
+  for (let i = 0; i < pts.length; i++) {
+    points[2 * i] = pts[i][0];
+    points[2 * i + 1] = pts[i][1];
+  }
   return stampShape2DMasked(
     builder,
     fp.loTx,
@@ -1113,6 +1486,8 @@ function stampPolyline2DMasked(
     (vx, vy) => fp.bitmap[vx - fp.loTx + fp.w * (vy - fp.loTy)] === 1,
     // Single polyline stamp per builder → safe to use the fast slice path.
     /* useSlice */ true,
+    pipeline,
+    { points, radius: r },
   );
 }
 

@@ -42,7 +42,7 @@
  * `Ctrl+Z`) return to normal.
  */
 
-import type { PaintingTools, VoxelDataType } from "@zettaai/edit-session";
+import type { VoxelDataType } from "@zettaai/edit-session";
 
 import { radiusToSize, sizeToRadius } from "#src/editing/brush_size_presets.js";
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
@@ -57,6 +57,12 @@ import {
   clampToVoxelDataType,
   voxelDataTypeRange,
 } from "#src/editing/tool_runtimes/mask_coord.js";
+import type { PaintingState } from "#src/editing/tool_runtimes/painting_tools.js";
+import type { EditKeybindOverrides } from "#src/editing/tooling/tooling_persist.js";
+import {
+  getEditSessionKeybinds,
+  type EditSessionKeybinds,
+} from "#src/ui/custom_keybinds.js";
 import { RefCounted } from "#src/util/disposable.js";
 import {
   EventActionMap,
@@ -94,6 +100,132 @@ const ACTION_IDS = {
   noopLetter: "edit-session-noop-letter",
 } as const;
 
+/**
+ * User-configurable edit hotkeys (TM-315). Friendly name → default key event
+ * identifier(s). Overridable per-deployment via the `editSession` section of
+ * `config/custom-keybinds.json`; merged in `mergeEditKeybinds`. The fixed
+ * bindings (escape, the L/H chord shadows) are NOT user-configurable and are
+ * added directly in the action map.
+ */
+export type EditKeybindName =
+  | "brush"
+  | "erase"
+  | "fill"
+  | "cursor"
+  | "undo"
+  | "redo"
+  | "sizeDecrease"
+  | "sizeIncrease"
+  | "valueDecrease"
+  | "valueIncrease";
+
+const DEFAULT_EDIT_KEYBINDS: Record<EditKeybindName, readonly string[]> = {
+  brush: ["control+keyb"],
+  erase: ["control+keye"],
+  fill: ["control+keyf"],
+  cursor: ["control+keyv"],
+  undo: ["control+keyz", "meta+keyz"],
+  redo: ["control+shift+keyz", "meta+shift+keyz"],
+  sizeDecrease: ["minus", "numpadsubtract"],
+  sizeIncrease: ["equal", "shift+equal", "numpadadd"],
+  valueDecrease: ["bracketleft"],
+  valueIncrease: ["bracketright"],
+};
+
+const EDIT_KEYBIND_ACTION: Record<EditKeybindName, string> = {
+  brush: ACTION_IDS.toolBrush,
+  erase: ACTION_IDS.toolErase,
+  fill: ACTION_IDS.toolFill,
+  cursor: ACTION_IDS.cursorMode,
+  undo: ACTION_IDS.undo,
+  redo: ACTION_IDS.redo,
+  sizeDecrease: ACTION_IDS.sizeDecr,
+  sizeIncrease: ACTION_IDS.sizeIncr,
+  valueDecrease: ACTION_IDS.valueDecr,
+  valueIncrease: ACTION_IDS.valueIncr,
+};
+
+/**
+ * Build the `key → action` map for the session input layer: defaults overridden
+ * by `overrides` (the `editSession` section of `custom-keybinds.json`), plus the
+ * fixed (non-configurable) bindings. Last write wins on key collisions. Pure +
+ * exported for unit testing.
+ */
+export function mergeEditKeybinds(
+  overrides: EditSessionKeybinds | undefined,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const name of Object.keys(EDIT_KEYBIND_ACTION) as EditKeybindName[]) {
+    const override = overrides?.[name];
+    const keys =
+      override !== undefined
+        ? Array.isArray(override)
+          ? override
+          : [override]
+        : DEFAULT_EDIT_KEYBINDS[name];
+    for (const key of keys) {
+      out[key] = EDIT_KEYBIND_ACTION[name];
+    }
+  }
+  // Fixed bindings — not user-configurable.
+  out["escape"] = ACTION_IDS.exitTool;
+  // Shadow the global `keyl` (recolor) / `keyh` (help) so holding them as chord
+  // modifiers doesn't trigger those while a session is active.
+  out["keyl"] = ACTION_IDS.noopLetter;
+  out["keyh"] = ACTION_IDS.noopLetter;
+  return out;
+}
+
+/**
+ * The configurable edit-hotkey action names, in display order. Exported so the
+ * topbar rebind UI can iterate them without re-declaring the list.
+ */
+export const EDIT_KEYBIND_NAMES = Object.keys(
+  EDIT_KEYBIND_ACTION,
+) as EditKeybindName[];
+
+/**
+ * Resolve the EFFECTIVE key identifier(s) bound to each configurable action,
+ * applying the same precedence the binder uses: built-in defaults ←
+ * `custom-keybinds.json` ← per-user runtime overrides. A whole-list replace per
+ * action name. Pure + exported so the UI can display the live binding and the
+ * behaviour stays in lock-step with {@link buildEditActionBindings}.
+ */
+export function effectiveEditKeybinds(
+  perUser: EditKeybindOverrides | undefined,
+): Record<EditKeybindName, readonly string[]> {
+  const config = getEditSessionKeybinds();
+  const out = {} as Record<EditKeybindName, readonly string[]>;
+  for (const name of EDIT_KEYBIND_NAMES) {
+    const chosen =
+      perUser?.[name] ?? config?.[name] ?? DEFAULT_EDIT_KEYBINDS[name];
+    out[name] = Array.isArray(chosen) ? chosen : [chosen];
+  }
+  return out;
+}
+
+/**
+ * Resolve the live `key → action` map from the three layers, lowest priority
+ * first: built-in defaults ← `custom-keybinds.json` `editSession` overrides ←
+ * per-user runtime overrides (`host.editKeybindOverrides`). A per-user entry
+ * replaces the whole key list for that action name. `mergeEditKeybinds` folds
+ * in the defaults and the fixed bindings.
+ */
+function buildEditActionBindings(
+  perUser: EditKeybindOverrides | undefined,
+): Record<string, string> {
+  const config = getEditSessionKeybinds();
+  const merged: { [name: string]: string | readonly string[] } = {
+    ...(config ?? {}),
+  };
+  if (perUser !== undefined) {
+    for (const [name, keys] of Object.entries(perUser)) {
+      merged[name] = keys;
+    }
+  }
+  return mergeEditKeybinds(merged);
+}
+
 // Library tool ids (see `node_modules/@zettaai/edit-session/dist/index.d.mts`
 // lines 1178, 1213, 1425, 1568, and 1148 for the `StrokeTool` toolId values).
 const TOOL_ID_BRUSH = "painting.brush";
@@ -101,7 +233,6 @@ const TOOL_ID_ERASE = "painting.erase";
 const TOOL_ID_FILL = "painting.fill";
 const TOOL_ID_Z_EXTRAP = "z-extrapolation";
 const TOOL_ID_CORRESPONDENCE = "correspondence";
-const TOOL_ID_PAINTING = "painting";
 
 /**
  * Installs a session-scoped keyboard shortcut layer for the duration of an
@@ -124,6 +255,13 @@ export class EditSessionHotkeyBinder extends RefCounted {
   private readonly targetTypeByLayer = new Map<string, VoxelDataType>();
   private readonly targetTypePending = new Set<string>();
 
+  // The viewer whose `inputEventMap` we parent our session layer onto. Stored
+  // so `rebuildActionMap` can re-attach after a runtime rebind.
+  private viewer!: Viewer;
+  // Detaches the currently-installed session action map; replaced on each
+  // rebuild and called on dispose.
+  private detachActionMap: (() => void) | undefined;
+
   constructor(
     private readonly host: EditSessionHost,
     viewer: Viewer,
@@ -131,56 +269,36 @@ export class EditSessionHotkeyBinder extends RefCounted {
     super();
     this.tracker = this.registerDisposer(new HeldKeyTracker(viewer.element));
 
-    // Build the session's `EventActionMap`. Note the keys are bare event
-    // identifiers (no `key:` phase prefix — `parseEventIdentifier` only
-    // accepts `at` / `bubble` phases; the architecture doc's `key:keyb`
-    // syntax would throw).
+    // Build the session's `EventActionMap` from the configurable edit keybinds
+    // (defaults + `custom-keybinds.json` `editSession` overrides + per-user
+    // runtime rebinds) plus the fixed bindings (TM-315). Keys are bare event
+    // identifiers (no `key:` phase prefix — `parseEventIdentifier` only accepts
+    // `at` / `bubble` phases). Edit hotkeys are Ctrl-prefixed by default (avoid
+    // accidental firing while typing + no global conflict); bracket/size keys
+    // stay unprefixed but are session-scoped so they don't shadow defaults
+    // outside a session.
     //
-    // TM-294 moved tool activation to **Ctrl-prefixed** bindings (and the
-    // matching `meta+` chord for macOS so Cmd works too). The previous
-    // bare-letter bindings were prone to firing accidentally while typing
-    // into input boxes outside the viewer. Bracket-based brush sizing
-    // stays unprefixed since it has no global conflict.
-    //
-    // Z-extrapolation cannot use `Ctrl+Z` (reserved for Undo). We pick
-    // `Ctrl+P` ("propagate"); engineers may swap to another free letter
-    // later if `P` becomes inconvenient. Correspondence keeps `Ctrl+R`
-    // ("relate") — `Ctrl+C` is reserved for clipboard copy.
-    const actionMap = EventActionMap.fromObject({
-      "control+keyb": ACTION_IDS.toolBrush,
-      "control+keye": ACTION_IDS.toolErase,
-      "control+keyf": ACTION_IDS.toolFill,
-      "control+keyv": ACTION_IDS.cursorMode,
-      "control+keyz": ACTION_IDS.undo,
-      "control+shift+keyz": ACTION_IDS.redo,
-      "meta+keyz": ACTION_IDS.undo,
-      "meta+shift+keyz": ACTION_IDS.redo,
-      escape: ACTION_IDS.exitTool,
-      // Brush size presets: `+` / `-` (main row, with or without shift, plus
-      // numpad). `getEventKeyName` reports `event.code` lowercased.
-      minus: ACTION_IDS.sizeDecr,
-      numpadsubtract: ACTION_IDS.sizeDecr,
-      equal: ACTION_IDS.sizeIncr,
-      "shift+equal": ACTION_IDS.sizeIncr,
-      numpadadd: ACTION_IDS.sizeIncr,
-      // Brush value (or low/high threshold when L/H is held).
-      bracketleft: ACTION_IDS.valueDecr,
-      bracketright: ACTION_IDS.valueIncr,
-      // Shadow the global `keyl` (recolor) / `keyh` (help) so holding them as
-      // chord modifiers doesn't trigger those while a session is active.
-      keyl: ACTION_IDS.noopLetter,
-      keyh: ACTION_IDS.noopLetter,
-    });
-    actionMap.label = "Edit session";
-
-    // Install as a high-priority parent of the viewer's input map. The
-    // returned thunk both removes the parent linkage and is safe to call
-    // exactly once on dispose.
-    const detachParent = viewer.inputEventMap.addParent(
-      actionMap,
-      SESSION_HOTKEY_PRIORITY,
+    // The map is rebuilt live when the user rebinds a hotkey: we detach the old
+    // parent and install a freshly built one. The action LISTENERS below are
+    // keyed by action id (not by key), so they survive a rebuild untouched —
+    // only the key→action routing changes.
+    this.viewer = viewer;
+    this.rebuildActionMap(host.editKeybindOverrides.value);
+    this.registerDisposer(
+      host.editKeybindOverrides.changed.add(() => {
+        this.rebuildActionMap(host.editKeybindOverrides.value);
+      }),
     );
-    this.registerDisposer(detachParent);
+    this.registerDisposer(() => {
+      if (this.detachActionMap !== undefined) {
+        try {
+          this.detachActionMap();
+        } catch {
+          // best-effort detach during disposal
+        }
+        this.detachActionMap = undefined;
+      }
+    });
 
     // Camera-pan navigation maps. Swapped based on the active tool:
     //
@@ -245,15 +363,14 @@ export class EditSessionHotkeyBinder extends RefCounted {
         detachPerspective();
       };
     };
-    const session = host.activeSession.value;
-    applyNavMode(session?.getActiveToolId());
-    if (session !== undefined) {
-      const offActiveTool = session.on(
-        "active-tool-changed",
-        ({ to }: { to: string | undefined }) => applyNavMode(to),
-      );
-      this.registerDisposer(offActiveTool);
-    }
+    // Active-tool selection is consumer-owned (TM-315): drive nav mode off the
+    // host's `activeToolId` watchable instead of the removed library event.
+    applyNavMode(host.activeToolId.value);
+    this.registerDisposer(
+      host.activeToolId.changed.add(() =>
+        applyNavMode(host.activeToolId.value),
+      ),
+    );
     this.registerDisposer(() => {
       if (detachNav !== undefined) {
         try {
@@ -368,30 +485,43 @@ export class EditSessionHotkeyBinder extends RefCounted {
     );
   }
 
+  /**
+   * (Re)build the session-scoped `EventActionMap` from the current keybind
+   * layers and install it as a high-priority parent of the viewer's input map,
+   * detaching any previously-installed one. Called once at construction and
+   * again whenever the user rebinds a hotkey at runtime.
+   */
+  private rebuildActionMap(overrides: EditKeybindOverrides | undefined): void {
+    if (this.detachActionMap !== undefined) {
+      try {
+        this.detachActionMap();
+      } catch {
+        // best-effort detach of the previous map
+      }
+      this.detachActionMap = undefined;
+    }
+    const actionMap = EventActionMap.fromObject(
+      buildEditActionBindings(overrides),
+    );
+    actionMap.label = "Edit session";
+    // `addParent` returns a thunk that removes the parent linkage; safe to call
+    // exactly once.
+    this.detachActionMap = this.viewer.inputEventMap.addParent(
+      actionMap,
+      SESSION_HOTKEY_PRIORITY,
+    );
+  }
+
   // -- Painting adjustments -------------------------------------------------
 
-  /** Returns the active painting tool, or `undefined` if unavailable. */
-  private getPainting(): PaintingTools | undefined {
-    const session = this.host.activeSession.value;
-    if (session === undefined) return undefined;
-    try {
-      return session.tools.getTool<PaintingTools>(TOOL_ID_PAINTING);
-    } catch (err) {
-      this.host.logger.warn(
-        "session",
-        `PaintingTools unavailable: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-      return undefined;
-    }
+  /** Returns the shared painting state, or `undefined` if unavailable. */
+  private getPainting(): PaintingState | undefined {
+    return this.host.painting?.state;
   }
 
   /** `+` / `-`: step brush size through the preset cycle (brush + eraser). */
   private stepBrushSize(dir: number): void {
-    const session = this.host.activeSession.value;
-    if (session === undefined) return;
-    const activeId = session.tools.getActiveToolId();
+    const activeId = this.host.activeToolId.value;
     if (activeId !== TOOL_ID_BRUSH && activeId !== TOOL_ID_ERASE) return;
     const painting = this.getPainting();
     if (painting === undefined) return;
@@ -406,9 +536,7 @@ export class EditSessionHotkeyBinder extends RefCounted {
    * Only active for the brush tool.
    */
   private onBracket(dir: number): void {
-    const session = this.host.activeSession.value;
-    if (session === undefined) return;
-    if (session.tools.getActiveToolId() !== TOOL_ID_BRUSH) return;
+    if (this.host.activeToolId.value !== TOOL_ID_BRUSH) return;
     const painting = this.getPainting();
     if (painting === undefined) return;
     if (this.tracker.isHeld("keyh")) {
@@ -427,7 +555,7 @@ export class EditSessionHotkeyBinder extends RefCounted {
    * layer on first use; an unresolved/failed lookup falls back to plain ±1
    * stepping so the hotkey still works.
    */
-  private adjustValue(painting: PaintingTools, dir: number): void {
+  private adjustValue(painting: PaintingState, dir: number): void {
     const layerId = painting.getState().targetLayerId;
     const cached = this.targetTypeByLayer.get(layerId);
     if (cached !== undefined) {
@@ -456,7 +584,7 @@ export class EditSessionHotkeyBinder extends RefCounted {
   }
 
   private applyValue(
-    painting: PaintingTools,
+    painting: PaintingState,
     dir: number,
     type: VoxelDataType | undefined,
   ): void {
@@ -480,7 +608,7 @@ export class EditSessionHotkeyBinder extends RefCounted {
   }
 
   private adjustThreshold(
-    painting: PaintingTools,
+    painting: PaintingState,
     which: "low" | "high",
     dir: number,
   ): void {
@@ -516,7 +644,7 @@ export class EditSessionHotkeyBinder extends RefCounted {
   }
 
   private applyThreshold(
-    painting: PaintingTools,
+    painting: PaintingState,
     which: "low" | "high",
     dir: number,
     range: { min: number; max: number },

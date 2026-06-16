@@ -9,20 +9,23 @@
  */
 
 import type {
-  BrushApplyInput,
   ChunkId,
   LayerId,
   LayerMetadata,
-  PaintWriteBatch,
   ReadonlyChunkVoxelBuffer,
   Resolution,
 } from "@zettaai/edit-session";
 import { Resolution as ResolutionCtor, layerId } from "@zettaai/edit-session";
+
 import { describe, it, expect } from "vitest";
 
 import { applyMorphologyPipeline } from "#src/editing/tool_runtimes/mask_compute.js";
 import type { MorphologyClient } from "#src/editing/tool_runtimes/morphology_client.js";
 import type { MorphologyRequest } from "#src/editing/tool_runtimes/morphology_request.js";
+import type {
+  BrushApplyInput,
+  PaintWriteBatch,
+} from "#src/editing/tool_runtimes/paint_types.js";
 import { PaintingCompute } from "#src/editing/tool_runtimes/painting_compute.js";
 
 // ---------------------------------------------------------------------------
@@ -120,9 +123,15 @@ function paintedVoxelSet(batch: PaintWriteBatch): Set<string> {
   return out;
 }
 
-/** Fake worker client: records requests, applies an identity transform. */
+/**
+ * Fake worker client: records morphology requests, applies an identity
+ * transform. `isReady: false` keeps the masked stamp on the main-thread compute
+ * path (the crop + morphology-round-trip behaviour under test), rather than the
+ * TM-317 whole-pipeline route.
+ */
 function fakeMorphologyClient(calls: MorphologyRequest[]): MorphologyClient {
   return {
+    isReady: () => false,
     apply: async (req: MorphologyRequest) => {
       calls.push(req);
       return req.mask;
@@ -133,10 +142,7 @@ function fakeMorphologyClient(calls: MorphologyRequest[]): MorphologyClient {
 describe("PaintingCompute morphology input crop + empty-mask skip", () => {
   it("sends the worker only the set-byte bbox padded by the closing reach", async () => {
     const calls: MorphologyRequest[] = [];
-    const compute = new PaintingCompute(
-      () => "painting.brush",
-      fakeMorphologyClient(calls),
-    );
+    const compute = new PaintingCompute(fakeMorphologyClient(calls));
     // 4×4 in-band square at [30..33]² inside a 17×17 footprint (r=8 around 32):
     // mask bbox is i,j ∈ [6..9]; pad = closing + 1 = 2 → crop [4..11]² = 8×8.
     const square: (readonly [number, number])[] = [];
@@ -162,10 +168,7 @@ describe("PaintingCompute morphology input crop + empty-mask skip", () => {
 
   it("skips the worker round-trip entirely when the threshold mask is empty", async () => {
     const calls: MorphologyRequest[] = [];
-    const compute = new PaintingCompute(
-      () => "painting.brush",
-      fakeMorphologyClient(calls),
-    );
+    const compute = new PaintingCompute(fakeMorphologyClient(calls));
     const batch = await compute.applyBrush(
       brushInput(imageChunkWith([]), {
         radius: 8,
@@ -194,7 +197,7 @@ describe("PaintingCompute morphology input crop + empty-mask skip", () => {
     const minComponentSize = 3;
 
     // Compute under test (in-process TS fallback; crop applies before it).
-    const compute = new PaintingCompute(() => "painting.brush");
+    const compute = new PaintingCompute();
     const batch = await compute.applyBrush(
       brushInput(imageChunkWith(pixels), {
         radius,

@@ -9,16 +9,19 @@
  */
 
 import type {
-  BrushApplyInput,
   ChunkId,
   LayerId,
   LayerMetadata,
-  PaintWriteBatch,
   ReadonlyChunkVoxelBuffer,
   Resolution,
 } from "@zettaai/edit-session";
 import { Resolution as ResolutionCtor, layerId } from "@zettaai/edit-session";
+
 import { describe, it, expect } from "vitest";
+import type {
+  BrushApplyInput,
+  PaintWriteBatch,
+} from "#src/editing/tool_runtimes/paint_types.js";
 
 import { PaintingCompute } from "#src/editing/tool_runtimes/painting_compute.js";
 
@@ -104,28 +107,22 @@ function paintedVoxelCount(batch: PaintWriteBatch): number {
   return painted;
 }
 
-// A radius-1 2D disk covers 5 voxels: centre + 4 edge-adjacent neighbours.
-const DISK_R1_VOXELS = 5;
-
 // ---------------------------------------------------------------------------
-// TM-297: the eraser must never inherit the brush's image mask.
+// The compute honors `input.mask` whenever it is present (TM-315). Suppressing
+// the mask for the eraser is the tool's concern (it omits `mask`); see
+// painting_tools.spec.ts. The compute no longer reaches back to active-tool
+// state.
 // ---------------------------------------------------------------------------
 
-describe("PaintingCompute mask gating by active tool (TM-297)", () => {
-  it("brush honors the shared mask (excluding band paints nothing)", async () => {
-    const compute = new PaintingCompute(() => "painting.brush");
+describe("PaintingCompute honors the supplied mask", () => {
+  it("an excluding threshold band paints nothing (applyBrush)", async () => {
+    const compute = new PaintingCompute();
     const batch = await compute.applyBrush(brushInput());
     expect(paintedVoxelCount(batch)).toBe(0);
   });
 
-  it("eraser ignores the shared mask (full disk is written)", async () => {
-    const compute = new PaintingCompute(() => "painting.erase");
-    const batch = await compute.applyBrush(brushInput());
-    expect(paintedVoxelCount(batch)).toBe(DISK_R1_VOXELS);
-  });
-
-  it("eraser ignores the mask along an interpolated stroke too", async () => {
-    const compute = new PaintingCompute(() => "painting.erase");
+  it("an excluding threshold band paints nothing (applyBrushStroke)", async () => {
+    const compute = new PaintingCompute();
     const base = brushInput();
     const batch = await compute.applyBrushStroke({
       ...base,
@@ -133,12 +130,6 @@ describe("PaintingCompute mask gating by active tool (TM-297)", () => {
       to: [34, 32, 32],
       stepVoxels: 1,
     });
-    expect(paintedVoxelCount(batch)).toBeGreaterThan(0);
-  });
-
-  it("defaults to honoring the mask when no active-tool getter is supplied", async () => {
-    const compute = new PaintingCompute();
-    const batch = await compute.applyBrush(brushInput());
     expect(paintedVoxelCount(batch)).toBe(0);
   });
 });

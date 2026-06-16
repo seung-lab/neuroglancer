@@ -15,18 +15,16 @@
  * While an edit session is active and a non-cursor tool (brush, eraser,
  * fill, z-extrapolation, correspondence) is selected, picking in the
  * viewport must not toggle segment visibility/selection — those clicks
- * belong to the active tool. The host exposes the active tool through
- * `activeSession.value?.getActiveToolId()`; `undefined` means cursor mode
- * (selection allowed).
+ * belong to the active tool. Active-tool selection is consumer-owned on the
+ * host (TM-315): `host.activeToolId.value`; `undefined` means cursor mode (or
+ * no session) and selection is allowed.
  */
 
 import type { TopLevelLayerListSpecification } from "#src/layer/index.js";
 
 interface SegmentSelectionLockHost {
-  activeSession?: {
-    value?: {
-      getActiveToolId(): string | undefined;
-    };
+  activeToolId?: {
+    value?: string | undefined;
   };
 }
 
@@ -43,6 +41,5 @@ export function isSegmentSelectionLockedByActiveTool(
 ): boolean {
   const host = (root as { editSessionHost?: SegmentSelectionLockHost })
     .editSessionHost;
-  const session = host?.activeSession?.value;
-  return session !== undefined && session.getActiveToolId() !== undefined;
+  return host?.activeToolId?.value !== undefined;
 }

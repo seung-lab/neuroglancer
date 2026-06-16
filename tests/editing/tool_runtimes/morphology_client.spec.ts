@@ -28,7 +28,15 @@ const rpcInstances: Array<{ target: unknown; waitUntilReady: boolean }> = [];
 
 vi.mock("#src/worker_rpc.js", () => ({
   RPC: class {
-    promiseInvoke = promiseInvoke;
+    // `ensureWorker` fires a readiness probe (PAINT_PIPELINE_READY_RPC =
+    // "painting.ready") before any morphology call. Resolve it here so it
+    // neither returns undefined (the boot probe `.then`s on it) nor consumes the
+    // per-test morphology mocks (mockResolvedValueOnce / call-index asserts).
+    // Literal string because a hoisted vi.mock factory can't reference imports.
+    promiseInvoke = (name: string, x: any, opts?: any) =>
+      name === "painting.ready"
+        ? Promise.resolve({})
+        : promiseInvoke(name, x, opts);
     constructor(
       public target: unknown,
       public waitUntilReady: boolean,

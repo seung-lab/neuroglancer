@@ -8,9 +8,14 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
+import type { LayerId, Resolution } from "@zettaai/edit-session";
 import { describe, it, expect } from "vitest";
 
 import { LocalPatchChunk } from "#src/editing/local_patch_chunk.js";
+import {
+  notePaintedSubBox,
+  takePaintedSubBox,
+} from "#src/editing/overlay/painted_subbox_registry.js";
 import { fuseOverlayIntoChunk } from "#src/editing/overlay/patch_mirror.js";
 import type { vec3 } from "#src/util/geom.js";
 
@@ -115,6 +120,135 @@ describe("fuseOverlayIntoChunk", () => {
         new Float32Array(VOLUME),
       ),
     ).toThrow(/unsupported voxel data type/);
+  });
+});
+
+describe("fuseOverlayIntoChunk · scanBox (P2)", () => {
+  // Fuse `overlay` into two fresh chunks — one full-scan, one bounded by
+  // `scanBox` — and assert the bounded result is byte-identical (data, patched,
+  // returned change box). This is the core P2 correctness claim: bounding to a
+  // superset of the touched voxels changes nothing observable.
+  function expectBoundedMatchesFull(
+    overlay: Uint16Array,
+    baseline: Uint16Array,
+    scanBox: {
+      x0: number;
+      y0: number;
+      z0: number;
+      x1: number;
+      y1: number;
+      z1: number;
+    },
+  ): void {
+    const full = new LocalPatchChunk(SIZE);
+    const bounded = new LocalPatchChunk(SIZE);
+    const fullBox = fuseOverlayIntoChunk(full, overlay, baseline);
+    const boundedBox = fuseOverlayIntoChunk(
+      bounded,
+      overlay,
+      baseline,
+      scanBox,
+    );
+    expect(Array.from(bounded.data)).toEqual(Array.from(full.data));
+    expect(Array.from(bounded.patched)).toEqual(Array.from(full.patched));
+    expect(boundedBox).toEqual(fullBox);
+  }
+
+  it("tight box covering exactly the written voxels matches a full scan", () => {
+    const overlay = new Uint16Array(VOLUME);
+    const baseline = new Uint16Array(VOLUME);
+    overlay[idx(1, 2, 3)] = 5;
+    overlay[idx(2, 2, 3)] = 65535;
+    expectBoundedMatchesFull(overlay, baseline, {
+      x0: 1,
+      y0: 2,
+      z0: 3,
+      x1: 2,
+      y1: 2,
+      z1: 3,
+    });
+  });
+
+  it("a box that is a strict superset of the change still matches a full scan", () => {
+    const overlay = new Uint16Array(VOLUME);
+    const baseline = new Uint16Array(VOLUME);
+    overlay[idx(2, 2, 2)] = 11;
+    // Superset: covers the whole chunk-local half — includes many unchanged
+    // voxels, which must early-continue and not widen the returned box.
+    expectBoundedMatchesFull(overlay, baseline, {
+      x0: 0,
+      y0: 0,
+      z0: 0,
+      x1: 3,
+      y1: 3,
+      z1: 3,
+    });
+  });
+
+  it("an out-of-range box is clamped to the chunk (no out-of-bounds index)", () => {
+    const overlay = new Uint16Array(VOLUME);
+    const baseline = new Uint16Array(VOLUME);
+    overlay[idx(3, 3, 3)] = 42;
+    // x1/y1/z1 beyond the chunk and x0 negative: must clamp, not throw/corrupt.
+    expectBoundedMatchesFull(overlay, baseline, {
+      x0: -5,
+      y0: -5,
+      z0: -5,
+      x1: 99,
+      y1: 99,
+      z1: 99,
+    });
+  });
+
+  it("only the written sub-box is touched: a stale voxel outside it is left intact on first sync", () => {
+    // A chunk freshly created (data/patched all zero). A bounded fuse over a box
+    // that excludes voxel (3,3,3) must leave its mirror state at the zero-init,
+    // proving the scan never reads/writes outside the box.
+    const chunk = new LocalPatchChunk(SIZE);
+    const overlay = new Uint16Array(VOLUME);
+    const baseline = new Uint16Array(VOLUME);
+    overlay[idx(0, 0, 0)] = 7; // inside the box
+    overlay[idx(3, 3, 3)] = 9; // outside the box — must be ignored
+    fuseOverlayIntoChunk(chunk, overlay, baseline, {
+      x0: 0,
+      y0: 0,
+      z0: 0,
+      x1: 1,
+      y1: 1,
+      z1: 1,
+    });
+    expect(chunk.data[idx(0, 0, 0)]).toBe(7n);
+    expect(chunk.patched[idx(0, 0, 0)]).toBe(1);
+    expect(chunk.data[idx(3, 3, 3)]).toBe(0n);
+    expect(chunk.patched[idx(3, 3, 3)]).toBe(0);
+  });
+});
+
+describe("paintedSubBoxRegistry (P2)", () => {
+  const L = "seg" as LayerId;
+  const R = "8,8,8" as Resolution;
+  const C = "0,0,0";
+
+  it("take returns the recorded box once, then undefined (consumed)", () => {
+    const box = { x0: 1, y0: 1, z0: 1, x1: 2, y1: 2, z1: 2 };
+    notePaintedSubBox(L, R, C, box);
+    expect(takePaintedSubBox(L, R, C)).toEqual(box);
+    // Consumed: a second take (e.g. a later non-paint commit) sees nothing →
+    // full-chunk scan, which is what history replay requires.
+    expect(takePaintedSubBox(L, R, C)).toBeUndefined();
+  });
+
+  it("keys are distinct per (layer, resolution, chunk)", () => {
+    notePaintedSubBox(L, R, "1,0,0", {
+      x0: 0,
+      y0: 0,
+      z0: 0,
+      x1: 0,
+      y1: 0,
+      z1: 0,
+    });
+    expect(takePaintedSubBox(L, R, "2,0,0")).toBeUndefined();
+    expect(takePaintedSubBox(L, R, "1,0,0")).toBeDefined();
   });
 });
 
