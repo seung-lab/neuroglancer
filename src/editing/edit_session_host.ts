@@ -90,7 +90,7 @@ import { PatchMirror } from "#src/editing/overlay/patch_mirror.js";
 import { PatchTextureCache } from "#src/editing/patch_texture_cache.js";
 import { PointerEventBridge } from "#src/editing/pointer_event_bridge.js";
 import { QuickRegionCapture } from "#src/editing/quick_region_capture.js";
-import { positionAtBoxCenter } from "#src/editing/region/region_geometry.js";
+import { voxelCenterInBox } from "#src/editing/region/region_geometry.js";
 import { EditRegionPerspectiveOverlay } from "#src/editing/region/region_perspective_overlay.js";
 import { EditRegionSliceOverlay } from "#src/editing/region/region_slice_overlay.js";
 import { EditSessionHotkeyBinder } from "#src/editing/session_hotkey_binder.js";
@@ -1208,7 +1208,12 @@ export class EditSessionHost extends RefCounted {
     const region = this.computeActiveRegionSync(config);
     if (region === undefined) return false;
     const renderInfo = this.viewer.displayDimensionRenderInfo.value;
-    this.viewer.position.value = positionAtBoxCenter(
+    // Snap to a covered voxel center rather than the geometric midpoint: a
+    // one-voxel-thick region's midpoint can sit on a voxel boundary, which
+    // `floor`s to a voxel outside the library's `[floor(lo), floor(hi))` clip
+    // range, so every stroke is silently dropped until a manual nudge. See
+    // `voxelCenterInBox`.
+    this.viewer.position.value = voxelCenterInBox(
       this.viewer.position.value,
       renderInfo.displayDimensionIndices,
       region.lo,

@@ -73,6 +73,45 @@ export function positionAtBoxCenter(
 }
 
 /**
+ * Like {@link positionAtBoxCenter}, but snaps each display-dimension coordinate
+ * to the CENTER of a voxel the region actually covers, rather than the
+ * geometric midpoint.
+ *
+ * Why this matters: the paint write path maps a continuous position to a voxel
+ * index with `floor`, and the library clips writes to the integer voxel range
+ * `[floor(lo), floor(hi))`. The geometric midpoint can land on a voxel
+ * boundary — e.g. a one-voxel-thick z-slab `[920.5, 921.5]` has midpoint
+ * `921.0`, which `floor`s to voxel 921, but the only covered voxel is
+ * `floor(920.5) = 920`. The slice then shows an in-region box while every
+ * stroke is silently clipped. Centering on `coveredCenterVoxel + 0.5`
+ * guarantees `floor(position)` is an in-region voxel, so the first stroke
+ * lands and z-stepping stays on clean voxel centers.
+ *
+ * The covered integer range per axis is `[floor(lo), floor(hi))` (half-open,
+ * matching the library); the chosen voxel is the lower-middle of that range,
+ * clamped so a degenerate (sub-voxel) span still yields `floor(lo)`.
+ */
+export function voxelCenterInBox(
+  position: Float32Array,
+  displayDimensionIndices: Int32Array,
+  lo: ArrayLike<number>,
+  hi: ArrayLike<number>,
+): Float32Array {
+  const out = Float32Array.from(position);
+  for (let i = 0; i < 3; ++i) {
+    const dim = displayDimensionIndices[i];
+    if (dim === undefined || dim < 0 || dim >= out.length) continue;
+    const loVoxel = Math.floor(lo[i]);
+    // Last covered voxel: `floor(hi) - 1` for a half-open range, but never
+    // below `loVoxel` (degenerate spans thinner than one voxel).
+    const hiVoxel = Math.max(loVoxel, Math.floor(hi[i]) - 1);
+    const centerVoxel = Math.floor((loVoxel + hiVoxel) / 2);
+    out[dim] = centerVoxel + 0.5;
+  }
+  return out;
+}
+
+/**
  * Whether the plane `dot(planeNormal, p) == planeDistance` intersects the
  * axis-aligned box `[lo, hi]`. Computed from the min/max of the corner
  * projections accumulated per axis (no corner enumeration). The epsilon
