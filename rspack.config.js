@@ -1,12 +1,26 @@
 import path from "node:path";
-import { HtmlRspackPlugin, ProgressPlugin } from "@rspack/core";
+import {
+  CopyRspackPlugin,
+  HtmlRspackPlugin,
+  ProgressPlugin,
+} from "@rspack/core";
 import { normalizeConfigurationWithDefine } from "./build_tools/rspack/configuration_with_define.js";
 import packageJson from "./package.json";
 
-// The painting morphology worker (TM-304) loads pyodide + numpy/scipy from the
-// jsDelivr CDN at runtime (see `morphology_handler.ts`), so pyodide is neither a
-// build dependency nor a bundled/self-hosted asset here. This keeps clean
-// installs (CI, Vercel) from needing the package at all.
+// Pyodide is self-hosted (TM-322): cross-origin isolation
+// (`Cross-Origin-Embedder-Policy: require-corp`, needed for SharedArrayBuffer)
+// forbids streaming pyodide from the jsDelivr CDN, so all pyodide assets must be
+// served same-origin. The core runtime comes from the `pyodide` npm package; the
+// numpy/scipy/openblas wheels (not in that package) are vendored under
+// `pyodide_packages/`. Both are emitted to `dist/client/pyodide/` below and
+// loaded same-origin by `morphology_handler.ts`.
+const PYODIDE_CORE_FILES = [
+  "pyodide.mjs",
+  "pyodide.asm.js",
+  "pyodide.asm.wasm",
+  "python_stdlib.zip",
+  "pyodide-lock.json",
+];
 
 export default (env, args) => {
   const mode = args.mode === "production" ? "production" : "development";
@@ -78,6 +92,10 @@ export default (env, args) => {
     },
     devServer: {
       port: 3008,
+      // Cross-origin isolation headers (COOP/COEP require-corp) for
+      // SharedArrayBuffer are set by the dev `serve` command in
+      // `build_tools/cli.ts` and by `vercel.json` in production (TM-324) — the
+      // single source of truth — so they are intentionally not duplicated here.
       // The portal proxies this dev server under its own origin (see
       // `rewrites()` in the portal's next.config.js) so the iframe stays
       // same-origin and the portal can keep injecting its interceptor/save
@@ -102,6 +120,27 @@ export default (env, args) => {
       new ProgressPlugin(),
       new HtmlRspackPlugin({
         title: "neuroglancer",
+      }),
+      // Self-host pyodide (TM-322): emit the core runtime (from the npm package)
+      // and the vendored numpy/scipy/openblas wheels to `dist/client/pyodide/`,
+      // which `morphology_handler.ts` loads same-origin.
+      new CopyRspackPlugin({
+        patterns: [
+          ...PYODIDE_CORE_FILES.map((file) => ({
+            from: path.resolve(
+              import.meta.dirname,
+              "node_modules",
+              "pyodide",
+              file,
+            ),
+            to: "pyodide/[name][ext]",
+          })),
+          {
+            from: path.resolve(import.meta.dirname, "pyodide_packages"),
+            to: "pyodide",
+            globOptions: { ignore: ["**/README.md"] },
+          },
+        ],
       }),
     ],
     output: {

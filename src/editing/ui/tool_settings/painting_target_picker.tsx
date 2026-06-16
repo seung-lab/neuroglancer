@@ -8,12 +8,7 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import type {
-  EditSession,
-  LayerId,
-  PaintingTools,
-  Resolution,
-} from "@zettaai/edit-session";
+import type { LayerId, Resolution } from "@zettaai/edit-session";
 import { layerId as toLayerId } from "@zettaai/edit-session";
 import { useCallback } from "preact/hooks";
 
@@ -30,17 +25,11 @@ import { ParamLabel } from "#src/editing/ui/tool_settings/param_label.js";
  * doesn't include the current `targetResolution`, the picker auto-snaps
  * to the new layer's first allowed resolution.
  */
-export function PaintingTargetPicker({
-  session,
-  host,
-}: {
-  session: EditSession;
-  host: EditSessionHost;
-}) {
+export function PaintingTargetPicker({ host }: { host: EditSessionHost }) {
   useWatchable(host.state.value);
-  const painting = session.tools.getTool<PaintingTools>("painting");
+  const painting = host.painting!.state;
   const subscribe = useCallback(
-    (h: () => void) => painting.on("changed", h),
+    (h: () => void) => painting.changed.add(h),
     [painting],
   );
   useEvent(subscribe);

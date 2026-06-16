@@ -8,7 +8,7 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import type { EditSession, PaintingTools } from "@zettaai/edit-session";
+import type { EditSession } from "@zettaai/edit-session";
 import { useCallback } from "preact/hooks";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
@@ -27,15 +27,14 @@ import { useLayerVoxelType } from "#src/editing/ui/tool_settings/use_layer_voxel
  * the library gains a real `fill2d` path.
  */
 export function PaintingFill({
-  session,
   host,
 }: {
   session: EditSession;
   host: EditSessionHost;
 }) {
-  const painting = session.tools.getTool<PaintingTools>("painting");
+  const painting = host.painting!.state;
   const subscribe = useCallback(
-    (h: () => void) => painting.on("changed", h),
+    (h: () => void) => painting.changed.add(h),
     [painting],
   );
   useEvent(subscribe);
@@ -44,7 +43,7 @@ export function PaintingFill({
 
   return (
     <div class="neuroglancer-tool-panel neuroglancer-painting-fill-panel">
-      <PaintingTargetPicker session={session} host={host} />
+      <PaintingTargetPicker host={host} />
       <TargetValueField
         value={state.activeValue}
         voxelDataType={targetVoxelType}

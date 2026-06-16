@@ -8,7 +8,7 @@
  *      http://www.apache.org/licenses/LICENSE-2.0
  */
 
-import type { EditSession, PaintingTools } from "@zettaai/edit-session";
+import type { EditSession } from "@zettaai/edit-session";
 import { useCallback } from "preact/hooks";
 
 import {
@@ -37,15 +37,14 @@ function parseSize(raw: string): number | null {
  * writes the implicit `eraseValue` (0n) and never uses a mask.
  */
 export function PaintingEraser({
-  session,
   host,
 }: {
   session: EditSession;
   host: EditSessionHost;
 }) {
-  const painting = session.tools.getTool<PaintingTools>("painting");
+  const painting = host.painting!.state;
   const subscribe = useCallback(
-    (h: () => void) => painting.on("changed", h),
+    (h: () => void) => painting.changed.add(h),
     [painting],
   );
   useEvent(subscribe);
@@ -63,7 +62,7 @@ export function PaintingEraser({
 
   return (
     <div class="neuroglancer-tool-panel neuroglancer-painting-eraser-panel">
-      <PaintingTargetPicker session={session} host={host} />
+      <PaintingTargetPicker host={host} />
       <div class="neuroglancer-tool-panel-row">
         <ParamLabel
           text="Size"
@@ -80,7 +79,6 @@ export function PaintingEraser({
         <ParamInput<number>
           type="number"
           min={MIN_BRUSH_SIZE}
-          max={MAX_BRUSH_SIZE}
           step={2}
           value={size}
           parse={parseSize}

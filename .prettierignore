@@ -11,3 +11,5 @@ package.json
 package-lock.json
 .venv
 pnpm-lock.yaml
+.claude
+tmp

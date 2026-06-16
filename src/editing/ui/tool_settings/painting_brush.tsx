@@ -12,12 +12,10 @@ import type {
   EditSession,
   LayerId,
   LayerMetadata,
-  PaintingMaskConfig,
-  PaintingTools,
   Resolution,
 } from "@zettaai/edit-session";
 import { layerId as toLayerId } from "@zettaai/edit-session";
-import { ChevronDown } from "lucide-preact";
+import { X } from "lucide-preact";
 import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 
 import {
@@ -29,6 +27,8 @@ import {
 } from "#src/editing/brush_size_presets.js";
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { voxelDataTypeRange } from "#src/editing/tool_runtimes/mask_coord.js";
+import type { PaintingMaskConfig } from "#src/editing/tool_runtimes/paint_types.js";
+import type { PaintingState } from "#src/editing/tool_runtimes/painting_tools.js";
 import { useEvent } from "#src/editing/ui/interop/use_event.js";
 import { useWatchable } from "#src/editing/ui/interop/use_watchable.js";
 import { layerKindOf } from "#src/editing/ui/layer_kind.js";
@@ -56,16 +56,18 @@ function parseCount(raw: string): number | null {
 }
 
 export function PaintingBrush({
-  session,
   host,
 }: {
   session: EditSession;
   host: EditSessionHost;
 }) {
   useWatchable(host.state.value);
-  const painting = session.tools.getTool<PaintingTools>("painting");
+  // Consumer-owned painting state (TM-315). The panel only mounts for an
+  // active session with painting tools, so `host.painting` is defined here —
+  // matching the old `session.tools.getTool('painting')` throw-on-missing.
+  const painting = host.painting!.state;
   const subscribe = useCallback(
-    (h: () => void) => painting.on("changed", h),
+    (h: () => void) => painting.changed.add(h),
     [painting],
   );
   useEvent(subscribe);
@@ -86,7 +88,7 @@ export function PaintingBrush({
 
   return (
     <div class="neuroglancer-tool-panel neuroglancer-painting-brush-panel">
-      <PaintingTargetPicker session={session} host={host} />
+      <PaintingTargetPicker host={host} />
       <div class="neuroglancer-tool-panel-row">
         <ParamLabel
           text="Size"
@@ -103,7 +105,6 @@ export function PaintingBrush({
         <ParamInput<number>
           type="number"
           min={MIN_BRUSH_SIZE}
-          max={MAX_BRUSH_SIZE}
           step={2}
           value={size}
           parse={parseSize}
@@ -116,7 +117,7 @@ export function PaintingBrush({
         onCommit={(activeValue) => painting.patchState({ activeValue })}
         hint="The segment ID painted into the target layer — every voxel the stroke covers is set to this value."
       />
-      <AdvancedBrush host={host} painting={painting} />
+      <BrushMask host={host} painting={painting} />
     </div>
   );
 }
@@ -126,12 +127,12 @@ interface ImageLayerEntry {
   readonly resolutions: readonly Resolution[];
 }
 
-function AdvancedBrush({
+function BrushMask({
   host,
   painting,
 }: {
   host: EditSessionHost;
-  painting: PaintingTools;
+  painting: PaintingState;
 }) {
   const intent = host.state.value.value;
   const layerManager = host.viewer.layerManager;
@@ -212,25 +213,24 @@ function AdvancedBrush({
     painting.patchState({ mask: next });
   };
 
+  // Clearing the reference layer is what disables the mask: there is no
+  // separate on/off switch — the picker is the single gate (per TM-317).
   const disableMask = () => painting.patchState({ mask: undefined });
 
-  const onToggle = () => {
-    if (enabled) {
+  const onReferenceChange = (e: Event) => {
+    const value = (e.currentTarget as HTMLSelectElement).value as LayerId | "";
+    if (value === "") {
       disableMask();
       return;
     }
-    if (noImageLayers) return;
-    const first = imageEntries[0];
-    const meta = metadataByLayer.get(first.layerId);
-    enableMask(first, meta);
-  };
-
-  const onMaskLayerChange = (e: Event) => {
-    if (mask === undefined) return;
-    const value = (e.currentTarget as HTMLSelectElement).value as LayerId;
     const entry = imageEntries.find((x) => x.layerId === value);
     if (entry === undefined) return;
     const meta = metadataByLayer.get(value);
+    if (mask === undefined) {
+      enableMask(entry, meta);
+      return;
+    }
+    // Switching reference layers resets the threshold to the new layer's range.
     const range =
       meta !== undefined ? voxelDataTypeRange(meta.voxelDataType) : null;
     painting.patchState({
@@ -263,149 +263,148 @@ function AdvancedBrush({
     ? imageEntries.find((x) => x.layerId === mask.imageLayerId)
     : undefined;
 
-  const disabledHint = uint64Selected
-    ? "uint64 layers can't be used as reference images."
-    : noImageLayers
-      ? "Lock an image layer in the session to enable advanced brush."
-      : undefined;
+  // The single reason the dependent parameters are inert, surfaced both as a
+  // visible hint and a tooltip on the locked rows. `undefined` => editable.
+  const gateReason = noImageLayers
+    ? "Lock an image layer in the session to use a reference mask."
+    : mask === undefined
+      ? "Select a reference layer to enable mask filtering."
+      : uint64Selected
+        ? "uint64 layers can't be used as a reference image."
+        : undefined;
+  const paramsDisabled = gateReason !== undefined;
 
-  const toggleDisabled = noImageLayers || uint64Selected;
+  // Display fallbacks so the locked rows still render a sensible value when no
+  // mask is configured. The real config is shown once a reference is picked.
+  const range = currentRange ?? { min: 0, max: 0 };
+  const thresholdLow = mask?.thresholdLow ?? range.min;
+  const thresholdHigh = mask?.thresholdHigh ?? range.max;
+  const resolutions = currentEntry?.resolutions ?? [];
   const showSliders =
-    enabled && currentRange !== null && currentDtype !== "float32";
-
-  // The switch is the single control for the section: turning it on enables
-  // the mask AND reveals its parameters; turning it off hides them and clears
-  // the mask. There is no separate expand/collapse state (per TM-294 redesign).
-  const toggleTitle =
-    toggleDisabled && disabledHint !== undefined
-      ? disabledHint
-      : enabled
-        ? "Disable advanced brush"
-        : "Enable advanced brush";
+    !paramsDisabled && currentRange !== null && currentDtype !== "float32";
 
   return (
-    <div class="neuroglancer-painting-brush-advanced">
-      <div class="neuroglancer-painting-brush-advanced-header">
-        <span
-          class="neuroglancer-painting-brush-advanced-summary"
-          data-on={enabled ? "true" : "false"}
-        >
-          <ChevronDown
-            size={14}
-            class="neuroglancer-painting-brush-advanced-chevron"
-            aria-hidden="true"
-          />
-          Advanced
-        </span>
-        <ToggleSwitch
-          checked={enabled}
-          disabled={toggleDisabled}
-          tooltip={toggleTitle}
-          ariaLabel={
-            enabled ? "Disable advanced brush" : "Enable advanced brush"
-          }
-          onChange={onToggle}
+    <div class="neuroglancer-painting-brush-mask">
+      <div class="neuroglancer-painting-brush-mask-title">Mask filter</div>
+      <div class="neuroglancer-tool-panel-row">
+        <ParamLabel
+          text="Reference layer"
+          hint="The image layer the mask samples to decide which voxels a stroke may paint. Only image layers locked in the session appear here."
         />
+        <span class="neuroglancer-painting-brush-mask-reference">
+          <select
+            value={mask?.imageLayerId ?? ""}
+            disabled={noImageLayers}
+            onChange={onReferenceChange}
+          >
+            <option value="">— None —</option>
+            {imageEntries.map((e) => (
+              <option key={e.layerId} value={e.layerId}>
+                {e.layerId}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            class="neuroglancer-painting-brush-mask-clear"
+            aria-label="Clear reference layer"
+            data-tooltip="Clear reference layer"
+            disabled={!enabled}
+            onClick={disableMask}
+          >
+            <X size={13} aria-hidden="true" />
+          </button>
+        </span>
       </div>
-      {disabledHint !== undefined && (
-        <div class="neuroglancer-painting-brush-advanced-hint">
-          {disabledHint}
-        </div>
+      {gateReason !== undefined && (
+        <div class="neuroglancer-painting-brush-mask-hint">{gateReason}</div>
       )}
-      {enabled && currentEntry !== undefined && (
-        <div class="neuroglancer-painting-brush-advanced-body">
-          <div class="neuroglancer-tool-panel-row">
-            <ParamLabel
-              text="Reference layer"
-              hint="The image layer the mask samples to decide which voxels a stroke may paint. Only image layers locked in the session appear here."
-            />
-            <select value={mask!.imageLayerId} onChange={onMaskLayerChange}>
-              {imageEntries.map((e) => (
-                <option key={e.layerId} value={e.layerId}>
-                  {e.layerId}
+      <div
+        class="neuroglancer-painting-brush-mask-params"
+        data-disabled={paramsDisabled ? "true" : "false"}
+        data-tooltip={gateReason}
+      >
+        <div class="neuroglancer-tool-panel-row">
+          <ParamLabel
+            text="Reference resolution"
+            hint="The voxel scale the reference image is sampled at. Coarser scales are faster but mask less precisely."
+          />
+          {resolutions.length <= 1 ? (
+            <span class="neuroglancer-tool-panel-resolution-static">
+              {mask?.imageResolution ?? "—"}
+            </span>
+          ) : (
+            <select
+              value={mask!.imageResolution}
+              disabled={paramsDisabled}
+              onChange={onMaskResolutionChange}
+            >
+              {resolutions.map((r) => (
+                <option key={r} value={r}>
+                  {r}
                 </option>
               ))}
             </select>
-          </div>
-          <div class="neuroglancer-tool-panel-row">
-            <ParamLabel
-              text="Reference resolution"
-              hint="The voxel scale the reference image is sampled at. Coarser scales are faster but mask less precisely."
-            />
-            {currentEntry.resolutions.length <= 1 ? (
-              <span class="neuroglancer-tool-panel-resolution-static">
-                {mask!.imageResolution}
-              </span>
-            ) : (
-              <select
-                value={mask!.imageResolution}
-                onChange={onMaskResolutionChange}
-              >
-                {currentEntry.resolutions.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-          {currentRange !== null && (
-            <div class="neuroglancer-painting-brush-threshold-row">
-              <ParamLabel
-                text="Threshold"
-                hint="Limits painting to voxels whose reference-image intensity falls within the low–high range. Voxels outside it are left untouched."
-              />
-              <PaintingThreshold
-                min={currentRange.min}
-                max={currentRange.max}
-                low={mask!.thresholdLow}
-                high={mask!.thresholdHigh}
-                showHandles={showSliders}
-                onChange={onThresholdChange}
-              />
-            </div>
           )}
-          <div class="neuroglancer-tool-panel-row">
-            <ParamLabel
-              text="Min component"
-              hint="Drops connected blobs smaller than this many voxels from the mask, removing speckle. 0 keeps every component."
-            />
-            <ParamInput<number>
-              type="number"
-              min={0}
-              step={1}
-              value={mask!.minComponentSize}
-              parse={parseCount}
-              onCommit={(minComponentSize) => patchMask({ minComponentSize })}
-            />
-          </div>
-          <div class="neuroglancer-tool-panel-row">
-            <ParamLabel
-              text="Binary closing"
-              hint="Closes gaps and small holes in the mask by this many voxels (morphological closing). 0 disables it."
-            />
-            <ParamInput<number>
-              type="number"
-              min={0}
-              step={1}
-              value={mask!.binaryClosing}
-              parse={parseCount}
-              onCommit={(binaryClosing) => patchMask({ binaryClosing })}
-            />
-          </div>
-          <div class="neuroglancer-tool-panel-row">
-            <ParamLabel
-              text="Filter components first"
-              hint="When on, min-component filtering runs before binary closing; when off, closing runs first. Changes whether holes are filled before or after small blobs are removed."
-            />
-            <ToggleSwitch
-              checked={mask!.filterComponentsFirst}
-              ariaLabel="Filter components first"
-              onChange={(v) => patchMask({ filterComponentsFirst: v })}
-            />
-          </div>
         </div>
-      )}
+        <div class="neuroglancer-painting-brush-threshold-row">
+          <ParamLabel
+            text="Threshold"
+            hint="Limits painting to voxels whose reference-image intensity falls within the low–high range. Voxels outside it are left untouched."
+          />
+          <PaintingThreshold
+            min={range.min}
+            max={range.max}
+            low={thresholdLow}
+            high={thresholdHigh}
+            showHandles={showSliders}
+            disabled={paramsDisabled}
+            onChange={onThresholdChange}
+          />
+        </div>
+        <div class="neuroglancer-tool-panel-row">
+          <ParamLabel
+            text="Min component"
+            hint="Drops connected blobs smaller than this many voxels from the mask, removing speckle. 0 keeps every component."
+          />
+          <ParamInput<number>
+            type="number"
+            min={0}
+            step={1}
+            value={mask?.minComponentSize ?? 0}
+            parse={parseCount}
+            disabled={paramsDisabled}
+            onCommit={(minComponentSize) => patchMask({ minComponentSize })}
+          />
+        </div>
+        <div class="neuroglancer-tool-panel-row">
+          <ParamLabel
+            text="Binary closing"
+            hint="Closes gaps and small holes in the mask by this many voxels (morphological closing). 0 disables it."
+          />
+          <ParamInput<number>
+            type="number"
+            min={0}
+            step={1}
+            value={mask?.binaryClosing ?? 0}
+            parse={parseCount}
+            disabled={paramsDisabled}
+            onCommit={(binaryClosing) => patchMask({ binaryClosing })}
+          />
+        </div>
+        <div class="neuroglancer-tool-panel-row">
+          <ParamLabel
+            text="Filter components first"
+            hint="When on, min-component filtering runs before binary closing; when off, closing runs first. Changes whether holes are filled before or after small blobs are removed."
+          />
+          <ToggleSwitch
+            checked={mask?.filterComponentsFirst ?? false}
+            disabled={paramsDisabled}
+            ariaLabel="Filter components first"
+            onChange={(v) => patchMask({ filterComponentsFirst: v })}
+          />
+        </div>
+      </div>
     </div>
   );
 }

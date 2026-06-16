@@ -23,6 +23,7 @@ import type {
   LocalPatchChunk,
 } from "#src/editing/local_patch_chunk.js";
 import type { LocalPatchStore } from "#src/editing/local_patch_store.js";
+import { takePaintedSubBox } from "#src/editing/overlay/painted_subbox_registry.js";
 import { paintProfiler } from "#src/editing/tool_runtimes/paint_profiler.js";
 import { RefCounted } from "#src/util/disposable.js";
 
@@ -66,12 +67,26 @@ export class PatchMirror extends RefCounted {
     super();
     const unsubscribe = this.session.dirty.on("chunk-changed", (payload) => {
       if (payload.coord.layerId !== this.layerId) return;
-      void this.syncChunk(payload.coord);
+      // Consume the painted-sub-box hint SYNCHRONOUSLY here — this handler runs
+      // synchronously from the library's `commitWrites`, so the hint for this
+      // exact commit is live now and would be ambiguous if read later in the
+      // async `syncChunk`. A paint write left a hint (→ bounded fuse); any other
+      // commit (history replay / undo-to-baseline / save rebaseline) left none
+      // (→ full-chunk scan, which those paths require). See the registry docs.
+      const scanBox = takePaintedSubBox(
+        payload.coord.layerId,
+        payload.coord.resolution,
+        payload.coord.chunkId,
+      );
+      void this.syncChunk(payload.coord, scanBox);
     });
     this.registerDisposer(() => unsubscribe());
   }
 
-  private async syncChunk(coord: OverlayCoord): Promise<void> {
+  private async syncChunk(
+    coord: OverlayCoord,
+    scanBox: ChunkVoxelBox | undefined,
+  ): Promise<void> {
     const chunkKey = `${coord.layerId}|${coord.resolution}|${coord.chunkId}`;
     try {
       const chunkDataSize = this.resolveChunkDataSize(coord.resolution);
@@ -104,6 +119,7 @@ export class PatchMirror extends RefCounted {
         chunk,
         overlayBuffer.asView(),
         baselineBuffer.asView(),
+        scanBox,
       );
       if (prof) {
         paintProfiler.record("5.mirror.fuse(cpu)", performance.now() - t);
@@ -185,6 +201,13 @@ export function fuseOverlayIntoChunk(
   chunk: LocalPatchChunk,
   overlayView: ArrayBufferView & { length: number },
   baselineView: ArrayBufferView & { length: number },
+  // P2 (TM-317): when present, only this chunk-local box is scanned — it is a
+  // superset of the voxels the firing commit touched, and only touched voxels
+  // can change the mirror state, so the (data, patched) updates and the
+  // returned change-bbox are byte-identical to a full-chunk scan. Absent →
+  // full chunk (history replay / undo-to-baseline / save rebaseline, which can
+  // change voxels anywhere and so must scan everything).
+  scanBox?: ChunkVoxelBox,
 ): ChunkVoxelBox | null {
   const volume = chunk.data.length;
   if (overlayView.length !== volume || baselineView.length !== volume) {
@@ -194,6 +217,15 @@ export function fuseOverlayIntoChunk(
     );
   }
   const [sx, sy, sz] = chunk.chunkDataSize;
+  // Scan range, clamped to the chunk. A scanBox is chunk-local and already
+  // within bounds, but clamp defensively so a malformed hint can never index
+  // out of the chunk.
+  const x0 = scanBox === undefined ? 0 : Math.max(0, scanBox.x0);
+  const y0 = scanBox === undefined ? 0 : Math.max(0, scanBox.y0);
+  const z0 = scanBox === undefined ? 0 : Math.max(0, scanBox.z0);
+  const x1 = scanBox === undefined ? sx - 1 : Math.min(sx - 1, scanBox.x1);
+  const y1 = scanBox === undefined ? sy - 1 : Math.min(sy - 1, scanBox.y1);
+  const z1 = scanBox === undefined ? sz - 1 : Math.min(sz - 1, scanBox.z1);
   const patched = chunk.patched;
   let minX = sx;
   let minY = sy;
@@ -206,10 +238,10 @@ export function fuseOverlayIntoChunk(
     baselineView instanceof BigUint64Array
   ) {
     const data = chunk.data;
-    let i = 0;
-    for (let z = 0; z < sz; z++) {
-      for (let y = 0; y < sy; y++) {
-        for (let x = 0; x < sx; x++, i++) {
+    for (let z = z0; z <= z1; z++) {
+      for (let y = y0; y <= y1; y++) {
+        let i = (z * sy + y) * sx + x0;
+        for (let x = x0; x <= x1; x++, i++) {
           const v = overlayView[i];
           const p = v !== baselineView[i] ? 1 : 0;
           if (data[i] === v && patched[i] === p) continue;
@@ -233,10 +265,10 @@ export function fuseOverlayIntoChunk(
       chunk.data.byteOffset,
       volume * 2,
     );
-    let i = 0;
-    for (let z = 0; z < sz; z++) {
-      for (let y = 0; y < sy; y++) {
-        for (let x = 0; x < sx; x++, i++) {
+    for (let z = z0; z <= z1; z++) {
+      for (let y = y0; y <= y1; y++) {
+        let i = (z * sy + y) * sx + x0;
+        for (let x = x0; x <= x1; x++, i++) {
           const lo = overlayView[i] >>> 0;
           const p = overlayView[i] !== baselineView[i] ? 1 : 0;
           if (u32[2 * i] === lo && u32[2 * i + 1] === 0 && patched[i] === p) {
