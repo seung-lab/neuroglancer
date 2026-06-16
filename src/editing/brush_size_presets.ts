@@ -40,6 +40,27 @@ export function clampBrushSize(value: number): number {
   return Math.max(MIN_BRUSH_SIZE, odd);
 }
 
+/**
+ * The preset size closest to `value` (a raw, possibly-fractional voxel count).
+ * Used to seed the brush from a continuous, zoom-derived target size so the
+ * stored size is always one of the canonical presets the `+`/`-` hotkeys step
+ * through. Ties go to the smaller preset; non-finite input falls back to the
+ * first preset.
+ */
+export function nearestPresetSize(value: number): number {
+  if (!Number.isFinite(value)) return BRUSH_SIZE_PRESETS[0];
+  let best = BRUSH_SIZE_PRESETS[0];
+  let bestDelta = Math.abs(value - best);
+  for (const preset of BRUSH_SIZE_PRESETS) {
+    const delta = Math.abs(value - preset);
+    if (delta < bestDelta) {
+      best = preset;
+      bestDelta = delta;
+    }
+  }
+  return best;
+}
+
 /** size → radius (`radius = (size - 1) / 2`). */
 export function sizeToRadius(size: number): number {
   return Math.max(0, Math.floor((size - 1) / 2));
