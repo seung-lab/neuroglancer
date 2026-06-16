@@ -74,6 +74,7 @@ import {
 import { PostMessageSaveBackend } from "#src/editing/adapters/save_backends/post_message_save_backend.js";
 import {
   BRUSH_SIZE_PRESETS,
+  nearestPresetSize,
   sizeToRadius,
 } from "#src/editing/brush_size_presets.js";
 import { BrushCursorPerspectiveOverlay } from "#src/editing/cursor/brush_cursor_perspective_overlay.js";
@@ -357,6 +358,13 @@ interface ActiveRegion {
   readonly hi: readonly [number, number, number];
 }
 
+/**
+ * Target on-screen brush diameter, in CSS pixels, used to seed the brush size
+ * from the current zoom on first paint-tool activation. Chosen to be clearly
+ * visible without dominating the slice; the user adjusts from here with `+`/`-`.
+ */
+const TARGET_BRUSH_DIAMETER_PX = 28;
+
 // ---------------------------------------------------------------------------
 // EditSessionHost
 // ---------------------------------------------------------------------------
@@ -540,6 +548,13 @@ export class EditSessionHost extends RefCounted {
   private detachHoverSuppressionToolWatch: (() => void) | undefined;
   private detachHoverSuppressionLayerWatch: (() => void) | undefined;
   /**
+   * Set once the brush size has been seeded from the zoom for the active
+   * session, so the zoom-adaptive sizing runs only on the first paint-tool
+   * activation and never clobbers a size the user has since adjusted. Reset on
+   * each `openSession`.
+   */
+  private brushSizeAutoSized = false;
+  /**
    * Disposer for the display-dimensions watch that recomputes the bbox-alpha
    * render region when the viewer's global "dimensions" scale changes
    * mid-session (TM-298). Without it, relabeling global res leaves the region
@@ -686,6 +701,9 @@ export class EditSessionHost extends RefCounted {
       // and the failure handler clears the intent — wiping the URL state
       // we'd just persisted. The user only sees the bug on the next reload.
       this.activeSession.value = session;
+      // Fresh session: the brush size will be re-seeded from the zoom on the
+      // first paint-tool activation.
+      this.brushSizeAutoSized = false;
       // A session is now live — abort any quick-region capture still in flight
       // (e.g. a restore raced an in-progress capture). No-op if idle.
       this.quickRegionCapture?.cancel();
@@ -763,6 +781,74 @@ export class EditSessionHost extends RefCounted {
     for (const loc of this.allToolPanelLocations()) {
       loc.visible = loc === target;
     }
+    if (toolId === "painting.brush" || toolId === "painting.erase") {
+      this.maybeSeedBrushSizeFromZoom();
+    }
+  }
+
+  /**
+   * On the first paint-tool activation of a session, seed the brush size from
+   * the current zoom so its on-screen footprint is a usable, visible size
+   * regardless of how far the user is zoomed in/out. A fixed default reads as
+   * either a sub-pixel speck (zoomed out) or a screen-filling blob (zoomed in);
+   * scaling to a target on-screen diameter avoids both. Runs once per session
+   * (`brushSizeAutoSized`) so it never overrides a size the user later picks.
+   */
+  private maybeSeedBrushSizeFromZoom(): void {
+    if (this.brushSizeAutoSized) return;
+    const session = this.activeSession.value;
+    if (session === undefined) return;
+    let painting: PaintingTools;
+    try {
+      painting = session.tools.getTool<PaintingTools>("painting");
+    } catch {
+      return; // painting group not registered (degraded session)
+    }
+    const pixelSizeMeters = this.sliceViewPixelSizeMeters();
+    if (pixelSizeMeters === undefined) return;
+    const voxelSizeNm = Resolution.toVoxelSize(
+      painting.getState().targetResolution,
+    );
+    // The brush stamps in the X/Y plane; size to the finer in-plane axis so an
+    // anisotropic grid never yields an oversized footprint.
+    const inPlaneNm = Math.min(voxelSizeNm[0], voxelSizeNm[1]);
+    if (!Number.isFinite(inPlaneNm) || inPlaneNm <= 0) return;
+    // voxels spanned by one screen pixel = (m/px) / (m/voxel).
+    const voxelsPerPixel = pixelSizeMeters / (inPlaneNm * 1e-9);
+    if (!Number.isFinite(voxelsPerPixel) || voxelsPerPixel <= 0) return;
+    const desiredSize = TARGET_BRUSH_DIAMETER_PX * voxelsPerPixel;
+    const size = nearestPresetSize(desiredSize);
+    painting.patchState({ radius: sizeToRadius(size) });
+    this.brushSizeAutoSized = true;
+  }
+
+  /**
+   * Physical size (meters per screen pixel) of the first laid-out slice view,
+   * or `undefined` when none is available yet. Slice panels share the viewer
+   * zoom, so any one is representative for sizing the brush.
+   */
+  private sliceViewPixelSizeMeters(): number | undefined {
+    const panels = (
+      this.viewer.display as unknown as { panels?: Iterable<unknown> }
+    ).panels;
+    if (panels === undefined) return undefined;
+    for (const panel of panels) {
+      const pixelSize = (
+        panel as {
+          sliceView?: {
+            projectionParameters?: { value?: { pixelSize?: number } };
+          };
+        }
+      ).sliceView?.projectionParameters?.value?.pixelSize;
+      if (
+        pixelSize !== undefined &&
+        Number.isFinite(pixelSize) &&
+        pixelSize > 0
+      ) {
+        return pixelSize;
+      }
+    }
+    return undefined;
   }
 
   /**
