@@ -881,14 +881,11 @@ export class EditSessionHost extends RefCounted {
    */
   private maybeSeedBrushSizeFromZoom(): void {
     if (this.brushSizeAutoSized) return;
-    const session = this.activeSession.value;
-    if (session === undefined) return;
-    let painting: PaintingTools;
-    try {
-      painting = session.tools.getTool<PaintingTools>("painting");
-    } catch {
-      return; // painting group not registered (degraded session)
-    }
+    // Consumer-owned painting state (TM-315): the library no longer ships a
+    // `PaintingTools` reachable via `session.tools`. Seed through the host's
+    // own `PaintingState` (`getState`/`patchState`), same as elsewhere.
+    const painting = this.paintingTools?.state;
+    if (painting === undefined) return; // painting not registered (degraded session)
     const pixelSizeMeters = this.sliceViewPixelSizeMeters();
     if (pixelSizeMeters === undefined) return;
     const voxelSizeNm = Resolution.toVoxelSize(
