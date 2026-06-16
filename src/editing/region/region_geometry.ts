@@ -112,6 +112,44 @@ export function voxelCenterInBox(
 }
 
 /**
+ * Snap a raw voxel bbox (the min/max of an annotation's corners) to whole
+ * voxels, so the captured edit region aligns to the voxel grid.
+ *
+ * Native neuroglancer's bounding-box tool stores the *unsnapped* mouse position
+ * and bumps any zero-thickness axis by `+1` (`PlaceBoundingBoxTool`). A box
+ * drawn on a single slice at voxel `i` — whose center is `i + 0.5` for these
+ * sources — therefore comes out as `[i + 0.5, i + 1.5]`: one voxel wide, but
+ * offset half a voxel off the grid so it straddles voxels `i` and `i + 1`.
+ * Downstream, the library clips writes to `[floor(lo), floor(hi))` (→ voxel
+ * `i`) while the region outline and the geometric-center teleport drift toward
+ * `i + 1` — so the region "covers" `i` yet visually reads as `i + 1`.
+ *
+ * Flooring both faces collapses the box back onto the voxel it was drawn on
+ * (`floor(i + 0.5) = i`), keeping every axis at least one voxel thick. The
+ * result is unambiguous: region, outline, library clip, and entry teleport all
+ * agree on the same whole voxels. Already grid-aligned boxes are unchanged.
+ */
+export function snapVoxelBbox(
+  raw: readonly [number, number, number, number, number, number],
+): [number, number, number, number, number, number] {
+  const lo: [number, number, number] = [
+    Math.floor(raw[0]),
+    Math.floor(raw[1]),
+    Math.floor(raw[2]),
+  ];
+  return [
+    lo[0],
+    lo[1],
+    lo[2],
+    // At least one voxel thick: a sub-voxel drag would otherwise floor to a
+    // zero-width box that the library clips to nothing.
+    Math.max(Math.floor(raw[3]), lo[0] + 1),
+    Math.max(Math.floor(raw[4]), lo[1] + 1),
+    Math.max(Math.floor(raw[5]), lo[2] + 1),
+  ];
+}
+
+/**
  * Whether the plane `dot(planeNormal, p) == planeDistance` intersects the
  * axis-aligned box `[lo, hi]`. Computed from the min/max of the corner
  * projections accumulated per axis (no corner enumeration). The epsilon

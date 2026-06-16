@@ -15,6 +15,7 @@ import {
   buildUnitBoxEdgeVertices,
   planeIntersectsBox,
   positionAtBoxCenter,
+  snapVoxelBbox,
   voxelCenterInBox,
 } from "#src/editing/region/region_geometry.js";
 import { vec3 } from "#src/util/geom.js";
@@ -201,5 +202,34 @@ describe("voxelCenterInBox", () => {
       vec3.fromValues(11, 21, 31),
     );
     expect(out[3]).toBe(99);
+  });
+});
+
+describe("snapVoxelBbox", () => {
+  it("collapses a half-off-grid one-voxel slab onto the drawn voxel", () => {
+    // Native tool: drawn at voxel 1000 (center 1000.5), +1 thickness →
+    // [1000.5, 1001.5]. Snap → voxel 1000's cell [1000, 1001].
+    expect(snapVoxelBbox([12.5, 8.5, 1000.5, 13.5, 9.5, 1001.5])).toEqual([
+      12, 8, 1000, 13, 9, 1001,
+    ]);
+  });
+
+  it("leaves already grid-aligned boxes unchanged", () => {
+    expect(snapVoxelBbox([10, 20, 1000, 15, 26, 1001])).toEqual([
+      10, 20, 1000, 15, 26, 1001,
+    ]);
+  });
+
+  it("floors wide spans without changing their voxel coverage", () => {
+    // floor(lo), floor(hi) preserves the [floor(lo), floor(hi)) covered set.
+    expect(
+      snapVoxelBbox([44194.93, 46102.61, 920.5, 49199.38, 49815.16, 921.5]),
+    ).toEqual([44194, 46102, 920, 49199, 49815, 921]);
+  });
+
+  it("guarantees at least one voxel of thickness on every axis", () => {
+    // A sub-voxel drag (here on z) must not floor to a zero-width box.
+    const out = snapVoxelBbox([5.2, 5.2, 30.1, 5.8, 5.8, 30.4]);
+    expect(out).toEqual([5, 5, 30, 6, 6, 31]);
   });
 });
