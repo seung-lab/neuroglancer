@@ -15,6 +15,7 @@ import type {
 import { AnnotationType } from "#src/annotation/index.js";
 import type { CoordinateSpace } from "#src/coordinate_transform.js";
 import { makeCoordinateSpace } from "#src/coordinate_transform.js";
+import { snapVoxelBbox } from "#src/editing/region/region_geometry.js";
 import { AnnotationUserLayer } from "#src/layer/annotation/index.js";
 import type { LayerManager, ManagedUserLayer } from "#src/layer/index.js";
 import { RefCounted } from "#src/util/disposable.js";
@@ -230,14 +231,19 @@ function computeVoxelBbox(
 ): readonly [number, number, number, number, number, number] {
   const a = bbox.pointA;
   const b = bbox.pointB;
-  return [
+  // Snap to whole voxels: the native bbox tool stores unsnapped mouse positions
+  // (plus a `+1` thickness bump on flat axes), so a single-slice box is half a
+  // voxel off the grid and straddles two voxels. `snapVoxelBbox` collapses it
+  // onto the drawn voxel so the region, its outline, the library clip, and the
+  // entry teleport all agree. See `snapVoxelBbox`.
+  return snapVoxelBbox([
     Math.min(Number(a[0]) || 0, Number(b[0]) || 0),
     Math.min(Number(a[1]) || 0, Number(b[1]) || 0),
     Math.min(Number(a[2]) || 0, Number(b[2]) || 0),
     Math.max(Number(a[0]) || 0, Number(b[0]) || 0),
     Math.max(Number(a[1]) || 0, Number(b[1]) || 0),
     Math.max(Number(a[2]) || 0, Number(b[2]) || 0),
-  ];
+  ]);
 }
 
 function formatSize(
