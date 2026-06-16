@@ -156,14 +156,31 @@ def _footprint_mask(tx, ty, lo_tx, lo_ty, points, radius, r2):
         Because the window is a superset, the exact `dist² <= r²` test over it is
         byte-identical to testing the full sub-bbox.
 
-    Striping also caps peak float64 temporaries to `stripe × window × 8` bytes,
-    so a huge stamp never allocates the 100s of MB that tripped the worker's heap
-    watermark. All arithmetic is float64 to match the main thread's IEEE-double
-    `segmentDistanceSq`.
+    Striping also caps peak temporaries to `stripe × window × 4` bytes, so a huge
+    stamp never allocates the 100s of MB that tripped the worker's heap watermark.
+
+    The per-voxel distance test runs in FLOAT32 over LOCAL footprint coordinates
+    (`0..w-1`, `0..h-1`). Distance is translation-invariant, so shifting to a
+    local origin is exact in reals and keeps float32 precise — absolute target
+    coords (~1e5) would catastrophically cancel in float32 (resolution ~0.016
+    voxel). This is ~2x cheaper than float64 but NOT bit-identical to the float64
+    main-thread `segmentDistanceSq`: capsule-EDGE voxels can differ sub-voxel
+    (~0.3% of the footprint). The main-thread fallback (cold-init / worker
+    failure) stays float64, so a stroke can differ by those edge voxels depending
+    on which path ran — an accepted trade-off (TM-317 P3) for the off-thread
+    speedup. The window/clip math below stays float64; it only needs to be a
+    superset of the inside set, which it remains (it pads the segment by an
+    integer `radius`, far more than the sub-voxel float32 boundary shift).
     """
     w = tx.shape[0]
     h = ty.shape[0]
     inside = np.zeros((h, w), dtype=bool)
+    # Local float32 coordinate axes (`txl[i] = i`). Integer-valued and < 2^24, so
+    # exactly representable in float32; the float32 rounding enters only through
+    # the fractional segment endpoints (`axl32` etc.) below.
+    txl = np.arange(w, dtype=np.float32)
+    tyl = np.arange(h, dtype=np.float32)
+    r2_32 = np.float32(r2)
     n = points.shape[0]
     n_segments = max(1, n - 1)
     for k in range(n_segments):
@@ -193,6 +210,14 @@ def _footprint_mask(tx, ty, lo_tx, lo_ty, points, radius, r2):
         abx = bx - ax
         aby = by - ay
         len2 = abx * abx + aby * aby
+        # float32 LOCAL-coordinate segment params for the per-voxel distance
+        # (window/clip math above stays float64). The endpoints carry the brush's
+        # fractional position; everything else (txl/tyl) is integer-exact.
+        axl32 = np.float32(ax - lo_tx)
+        ayl32 = np.float32(ay - lo_ty)
+        abx32 = np.float32(abx)
+        aby32 = np.float32(aby)
+        len2_32 = abx32 * abx32 + aby32 * aby32
         for ys in range(iy0, iy1 + 1, _FOOTPRINT_STRIPE_ROWS):
             ye = min(ys + _FOOTPRINT_STRIPE_ROWS, iy1 + 1)
             # Per-stripe x-window: superset of the stadium's x-extent over these
@@ -223,38 +248,34 @@ def _footprint_mask(tx, ty, lo_tx, lo_ty, points, radius, r2):
                 wx1 = ix1
             if wx1 < wx0:
                 continue
-            sub_x = tx[wx0 : wx1 + 1][np.newaxis, :]  # (1, sw)
-            sub_y = ty[ys:ye][:, np.newaxis]  # (sh, 1)
+            sub_x = txl[wx0 : wx1 + 1][np.newaxis, :]  # (1, sw) float32 local
+            sub_y = tyl[ys:ye][:, np.newaxis]  # (sh, 1) float32 local
             if len2 > 0.0:
-                # Perpendicular-foot distance, computed with the SAME float64
-                # operations and order as the main-thread `segmentDistanceSq`
-                # (so the result is byte-identical), but in place to cut the big
-                # (sh, sw) temporaries from ~11 to ~4 per stripe — the dominant
-                # allocation/GC churn in the wasm footprint pass:
-                #   t  = ((sub_x-ax)*abx + (sub_y-ay)*aby) / len2, clipped to [0,1]
-                #   dx = sub_x - (ax + t*abx);  dy = sub_y - (ay + t*aby)
+                # Perpendicular-foot distance, same structure as the main-thread
+                # `segmentDistanceSq`, in float32 over local coords and in place
+                # to bound the (sh, sw) temporaries:
+                #   t  = ((sub_x-axl)*abx + (sub_y-ayl)*aby) / len2, clipped [0,1]
+                #   dx = sub_x - (axl + t*abx);  dy = sub_y - (ayl + t*aby)
                 #   inside |= dx*dx + dy*dy <= r2
-                # (`a*b + c` == `c + a*b` under IEEE-754, so folding `+= ax`
-                # then subtracting reproduces `sub_x - (ax + t*abx)` exactly.)
-                xterm = (sub_x - ax) * abx  # (1, sw)
-                yterm = (sub_y - ay) * aby  # (sh, 1)
-                t = xterm + yterm  # (sh, sw) via broadcast
-                t /= len2
+                xterm = (sub_x - axl32) * abx32  # (1, sw) f32
+                yterm = (sub_y - ayl32) * aby32  # (sh, 1) f32
+                t = xterm + yterm  # (sh, sw) f32 via broadcast
+                t /= len2_32
                 np.clip(t, 0.0, 1.0, out=t)
-                dx = t * abx
-                dx += ax  # ax + t*abx
-                np.subtract(sub_x, dx, out=dx)  # sub_x - (ax + t*abx)
+                dx = t * abx32
+                dx += axl32  # axl + t*abx
+                np.subtract(sub_x, dx, out=dx)  # sub_x - (axl + t*abx)
                 dx *= dx  # dx²
-                dy = t * aby
-                dy += ay  # ay + t*aby
-                np.subtract(sub_y, dy, out=dy)  # sub_y - (ay + t*aby)
+                dy = t * aby32
+                dy += ayl32  # ayl + t*aby
+                np.subtract(sub_y, dy, out=dy)  # sub_y - (ayl + t*aby)
                 dy *= dy  # dy²
                 dx += dy  # dx² + dy²
-                inside[ys:ye, wx0 : wx1 + 1] |= dx <= r2
+                inside[ys:ye, wx0 : wx1 + 1] |= dx <= r2_32
             else:
-                dx = sub_x - ax
-                dy = sub_y - ay
-                inside[ys:ye, wx0 : wx1 + 1] |= (dx * dx + dy * dy) <= r2
+                dx = sub_x - axl32
+                dy = sub_y - ayl32
+                inside[ys:ye, wx0 : wx1 + 1] |= (dx * dx + dy * dy) <= r2_32
     return inside
 
 

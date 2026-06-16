@@ -256,7 +256,88 @@ describe("apply_paint_pipeline live pyodide == TS twin (TM-317)", () => {
       const fromPython = runPython(req);
       const fromTwin = runPaintPipelineTS(req);
       expect(fromPython.length).toBe(fromTwin.length);
+      // At these radii (<= 18) the worker's float32 footprint is byte-identical
+      // to the float64 twin: float32 is exact when local coords stay small.
       expect(Array.from(fromPython)).toEqual(Array.from(fromTwin));
     });
   }
+
+  // Characterize the float32 footprint trade-off in the regime where it ACTUALLY
+  // diverges from the float64 twin (TM-317 P3): a large brush at large absolute
+  // coordinates. The worker computes the distance in float32 over LOCAL coords;
+  // the twin (and the main-thread fallback) use float64. The divergence must be
+  // (a) small and (b) confined to the capsule EDGE — never a scattered/interior
+  // flip, which is what a naive float32 (absolute-coord cancellation) would
+  // produce. No morphology and an all-pass band, so the mask IS the footprint.
+  it("large brush at large coords: float32 footprint diverges only at the edge, bounded", (ctx) => {
+    if (pyodide === null) {
+      ctx.skip();
+      return;
+    }
+    const loTx = 100_000;
+    const loTy = 100_000;
+    const tSx = 720;
+    const tSy = 720;
+    const radius = 300;
+    const cx = loTx + tSx / 2;
+    const cy = loTy + tSy / 2;
+    // Fractional endpoints so float32 endpoint rounding is actually exercised.
+    const ax = cx - 40.3;
+    const ay = cy - 12.7;
+    const bx = cx + 55.6;
+    const by = cy + 33.2;
+    const req = makeRequest({
+      loTx,
+      loTy,
+      tSx,
+      tSy,
+      radius,
+      pathPoints: [ax, ay, bx, by],
+      thresholdLow: 0,
+      thresholdHigh: 255, // all image values pass → mask == footprint
+      binaryClosing: 0,
+      minComponentSize: 1, // no morphology → isolate the raw footprint
+    });
+    const py = runPython(req);
+    const tw = runPaintPipelineTS(req);
+    expect(py.length).toBe(tw.length);
+
+    // float64 segment distance (doubles are exact enough at ~1e5), to classify
+    // each differing voxel by how far it sits from the segment.
+    const segDist = (px: number, qy: number): number => {
+      const abx = bx - ax;
+      const aby = by - ay;
+      const len2 = abx * abx + aby * aby;
+      let t = len2 > 0 ? ((px - ax) * abx + (qy - ay) * aby) / len2 : 0;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const dx = px - (ax + t * abx);
+      const dy = qy - (ay + t * aby);
+      return Math.sqrt(dx * dx + dy * dy);
+    };
+
+    let setTwin = 0;
+    let diff = 0;
+    let maxEdgeDelta = 0; // worst |dist - radius| over differing voxels
+    for (let i = 0; i < py.length; i++) {
+      if (tw[i]) setTwin++;
+      if (py[i] !== tw[i]) {
+        diff++;
+        const x = loTx + (i % tSx);
+        const y = loTy + Math.floor(i / tSx);
+        maxEdgeDelta = Math.max(maxEdgeDelta, Math.abs(segDist(x, y) - radius));
+      }
+    }
+
+    expect(setTwin).toBeGreaterThan(100_000); // sanity: the capsule is large
+    // In practice the divergence is ~0 voxels: the float32 error in dist²
+    // (~r²·2⁻²³ ≈ 0.03 at r=300) is tiny next to the ~2r gap between adjacent
+    // voxels' dist² near the boundary, so almost no voxel flips. The assertions
+    // are therefore mainly a regression GUARD on the local-coordinate shift —
+    // dropping it (naive float32 at absolute coords ~1e5) catastrophically
+    // cancels and would blow both bounds far past their limits.
+    // (a) bounded: well under 1% of painted voxels differ.
+    expect(diff / setTwin).toBeLessThan(0.01);
+    // (b) edge-only: any differing voxel sits within ~1 voxel of dist == radius.
+    expect(maxEdgeDelta).toBeLessThan(1.5);
+  });
 });
