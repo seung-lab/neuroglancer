@@ -127,6 +127,20 @@ function launchWorker(): void {
 }
 
 /**
+ * Pre-boot one worker so the first stroke of a session does not pay the
+ * worker-bundle load latency mid-stroke (mirrors the pyodide `warmup()`).
+ * Idempotent and best-effort: only launches when the pool is empty; a load
+ * failure is surfaced by `failPool` (which resets `numWorkers` to 0, so the next
+ * real request retries). Safe to call when the worker path is unavailable —
+ * callers gate on cross-origin isolation first.
+ */
+export function warmBrushWorkerPool(): void {
+  if (numWorkers === 0 && freeWorkers.length === 0) {
+    launchWorker();
+  }
+}
+
+/**
  * Rasterize one unmasked stroke tile on the pool. Resolves with the chunk-local
  * bbox of written voxels, or null when nothing committable was produced (a miss
  * or a superseded job). `signal` cancels a still-queued job; an in-flight job is

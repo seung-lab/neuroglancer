@@ -334,6 +334,7 @@ export class StrokeTool implements EditTool {
             shared.radius,
             value,
           );
+          this.deps.pipeline.markSucceeded();
           return;
         } catch (e) {
           this.deps.pipeline.markFailed();
@@ -368,6 +369,7 @@ export class StrokeTool implements EditTool {
               footprint,
               value,
             );
+            this.deps.pipeline.markSucceeded();
             return;
           }
         } catch (e) {

@@ -43,6 +43,7 @@ import {
 import {
   requestBrushMaskStamp,
   requestBrushRasterize,
+  warmBrushWorkerPool,
 } from "#src/editing/tool_runtimes/brush_worker_pool.js";
 import type { BrushVoxelDataType } from "#src/editing/tool_runtimes/brush_worker_protocol.js";
 import { GENERATION_INDEX } from "#src/editing/tool_runtimes/brush_worker_protocol.js";
@@ -132,6 +133,16 @@ export function chunksForStroke(
 const WORKER_PATH_ENABLED = true;
 
 /**
+ * Consecutive worker-path stroke failures before the path latches OFF for the
+ * session. A transient first-stroke hiccup (e.g. a one-off worker-bundle load
+ * error) must NOT disable the off-thread path for the whole session — the caller
+ * falls back per stroke and we retry the next one; only a genuinely broken
+ * worker (this many failures in a row, with no successful stroke between)
+ * latches off. A single success resets the counter.
+ */
+const MAX_CONSECUTIVE_WORKER_FAILURES = 3;
+
+/**
  * Owns the generation word and drives unmasked stroke segments across the brush
  * worker pool. One instance per painting session.
  */
@@ -140,32 +151,43 @@ export class PaintStrokePipeline {
   private readonly control: Int32Array | undefined;
   private generation = 0;
   /**
-   * Sticky latch: set the first time a worker job fails (broken bundle, reject,
-   * non-SAB slot). Once set, `available` is false for the rest of the session,
-   * so every subsequent stroke uses the synchronous main-thread path instead of
-   * re-attempting (and re-failing) the worker per segment. The caller falls back
-   * for the current segment; this prevents the thrash thereafter.
+   * Count of CONSECUTIVE worker-path stroke failures (reset by any success).
+   * `available` latches off only once this reaches
+   * `MAX_CONSECUTIVE_WORKER_FAILURES`, so a transient first-stroke hiccup falls
+   * back for that stroke and retries the next, rather than disabling the
+   * off-thread path for the whole session.
    */
-  private failed = false;
+  private consecutiveFailures = 0;
 
   constructor() {
     if (WORKER_PATH_ENABLED && sharedArrayBufferAvailable()) {
       this.controlBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
       this.control = new Int32Array(this.controlBuffer);
+      // Pre-boot a worker so the first stroke doesn't race the bundle load.
+      warmBrushWorkerPool();
     }
   }
 
-  /** Whether the worker path is usable (enabled, cross-origin isolated, SAB present, not failed). */
+  /** Whether the worker path is usable (enabled, cross-origin isolated, SAB present, not latched off). */
   get available(): boolean {
-    return this.control !== undefined && !this.failed;
+    return (
+      this.control !== undefined &&
+      this.consecutiveFailures < MAX_CONSECUTIVE_WORKER_FAILURES
+    );
+  }
+
+  /** Record a clean worker stroke; clears the transient-failure counter. */
+  markSucceeded(): void {
+    this.consecutiveFailures = 0;
   }
 
   /**
-   * Latch the worker path off after a failure so the rest of the session uses
-   * the synchronous path. Called by the caller's fallback handler.
+   * Record a worker-path failure. The caller falls back to the synchronous path
+   * for THIS stroke; only `MAX_CONSECUTIVE_WORKER_FAILURES` in a row (no success
+   * between) latch the path off for the session.
    */
   markFailed(): void {
-    this.failed = true;
+    this.consecutiveFailures += 1;
   }
 
   /**
