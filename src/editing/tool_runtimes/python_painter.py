@@ -226,14 +226,35 @@ def _footprint_mask(tx, ty, lo_tx, lo_ty, points, radius, r2):
             sub_x = tx[wx0 : wx1 + 1][np.newaxis, :]  # (1, sw)
             sub_y = ty[ys:ye][:, np.newaxis]  # (sh, 1)
             if len2 > 0.0:
-                t = ((sub_x - ax) * abx + (sub_y - ay) * aby) / len2
+                # Perpendicular-foot distance, computed with the SAME float64
+                # operations and order as the main-thread `segmentDistanceSq`
+                # (so the result is byte-identical), but in place to cut the big
+                # (sh, sw) temporaries from ~11 to ~4 per stripe — the dominant
+                # allocation/GC churn in the wasm footprint pass:
+                #   t  = ((sub_x-ax)*abx + (sub_y-ay)*aby) / len2, clipped to [0,1]
+                #   dx = sub_x - (ax + t*abx);  dy = sub_y - (ay + t*aby)
+                #   inside |= dx*dx + dy*dy <= r2
+                # (`a*b + c` == `c + a*b` under IEEE-754, so folding `+= ax`
+                # then subtracting reproduces `sub_x - (ax + t*abx)` exactly.)
+                xterm = (sub_x - ax) * abx  # (1, sw)
+                yterm = (sub_y - ay) * aby  # (sh, 1)
+                t = xterm + yterm  # (sh, sw) via broadcast
+                t /= len2
                 np.clip(t, 0.0, 1.0, out=t)
-                dx = sub_x - (ax + t * abx)
-                dy = sub_y - (ay + t * aby)
+                dx = t * abx
+                dx += ax  # ax + t*abx
+                np.subtract(sub_x, dx, out=dx)  # sub_x - (ax + t*abx)
+                dx *= dx  # dx²
+                dy = t * aby
+                dy += ay  # ay + t*aby
+                np.subtract(sub_y, dy, out=dy)  # sub_y - (ay + t*aby)
+                dy *= dy  # dy²
+                dx += dy  # dx² + dy²
+                inside[ys:ye, wx0 : wx1 + 1] |= dx <= r2
             else:
                 dx = sub_x - ax
                 dy = sub_y - ay
-            inside[ys:ye, wx0 : wx1 + 1] |= (dx * dx + dy * dy) <= r2
+                inside[ys:ye, wx0 : wx1 + 1] |= (dx * dx + dy * dy) <= r2
     return inside
 
 
