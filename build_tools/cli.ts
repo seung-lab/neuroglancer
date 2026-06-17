@@ -231,7 +231,7 @@ function parseArgs() {
               // and the portal's next.config headers so local dev matches the
               // deployed embedding.
               headers: {
-                "Cross-Origin-Opener-Policy": "same-origin",
+                "Cross-Origin-Opener-Policy": "restrict-properties",
                 "Cross-Origin-Embedder-Policy": "require-corp",
               },
               // Keep the live-reload WebSocket endpoint in sync with the port

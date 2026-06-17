@@ -55,11 +55,12 @@ describe("targetToImageVoxel", () => {
 
 function scale(
   chunkDataSize: readonly [number, number, number],
+  voxelOffset: readonly [number, number, number] = [0, 0, 0],
 ): ScaleMetadata {
   return {
     resolution: Resolution.from([8, 8, 40]),
     voxelSizeNm: [8, 8, 40],
-    voxelOffset: [0, 0, 0],
+    voxelOffset,
     sizeVoxels: [10000, 10000, 10000],
     chunkDataSize,
   };
@@ -99,6 +100,19 @@ describe("imageChunksCovering", () => {
     // First and last:
     expect(out[0]).toEqual({ x: 0, y: 0, z: 0 });
     expect(out[out.length - 1]).toEqual({ x: 1, y: 1, z: 1 });
+  });
+
+  it("anchors the chunk grid on the image voxel_offset", () => {
+    // Chunk-aligned offset (23552 = 23*1024). A global image voxel at 162208
+    // lives in the backend-native chunk floor((162208 - 23552)/1024) = 135,
+    // NOT the voxel-0-anchored floor(162208/1024) = 158. Reading the latter
+    // would threshold the masked brush against EM data ~offset away.
+    const out = imageChunksCovering(
+      [162208, 21504, 0],
+      [162209, 21505, 1],
+      scale([1024, 1024, 1], [23552, 21504, 0]),
+    );
+    expect(out).toEqual([{ x: 135, y: 0, z: 0 }]);
   });
 
   it("empty region returns no chunks", () => {

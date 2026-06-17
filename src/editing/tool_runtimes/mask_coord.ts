@@ -54,13 +54,22 @@ export function imageChunksCovering(
     return out;
   }
   const cs = scale.chunkDataSize;
-  const gx0 = Math.floor(loImageVoxel[0] / cs[0]);
-  const gy0 = Math.floor(loImageVoxel[1] / cs[1]);
-  const gz0 = Math.floor(loImageVoxel[2] / cs[2]);
+  // The chunk grid is anchored on the image's `voxelOffset` (the backend's
+  // `voxel_offset`), so the returned chunk indices are the backend-native ones
+  // the chunk source fetches — `chunkIndex = floor((globalVoxel - offset) /
+  // chunkSize)`. The image voxel range here is GLOBAL (it includes the offset,
+  // since it comes from the global nm frame), so without subtracting the offset
+  // every fetch would land `offset/chunkSize` chunks away — the masked brush
+  // would threshold against EM data from the wrong location. No-op for
+  // offset-free images.
+  const off = scale.voxelOffset;
+  const gx0 = Math.floor((loImageVoxel[0] - off[0]) / cs[0]);
+  const gy0 = Math.floor((loImageVoxel[1] - off[1]) / cs[1]);
+  const gz0 = Math.floor((loImageVoxel[2] - off[2]) / cs[2]);
   // `hi` is exclusive — last chunk index is `floor((hi - 1) / cs)`.
-  const gx1 = Math.floor((hiImageVoxelExclusive[0] - 1) / cs[0]);
-  const gy1 = Math.floor((hiImageVoxelExclusive[1] - 1) / cs[1]);
-  const gz1 = Math.floor((hiImageVoxelExclusive[2] - 1) / cs[2]);
+  const gx1 = Math.floor((hiImageVoxelExclusive[0] - 1 - off[0]) / cs[0]);
+  const gy1 = Math.floor((hiImageVoxelExclusive[1] - 1 - off[1]) / cs[1]);
+  const gz1 = Math.floor((hiImageVoxelExclusive[2] - 1 - off[2]) / cs[2]);
   for (let gz = gz0; gz <= gz1; gz++) {
     for (let gy = gy0; gy <= gy1; gy++) {
       for (let gx = gx0; gx <= gx1; gx++) {
