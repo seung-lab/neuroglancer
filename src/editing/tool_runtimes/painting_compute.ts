@@ -962,9 +962,13 @@ async function stampShape2DMasked(
     if (prof) readMs += performance.now() - t;
     if (chunkBuf === undefined) continue;
     const view = chunkBuf.asView();
-    const cox = coord.x * ics[0];
-    const coy = coord.y * ics[1];
-    const coz = coord.z * ics[2];
+    // `coord` is offset-anchored (see `imageChunksCovering`), so the chunk's
+    // GLOBAL voxel origin adds the image's `voxelOffset` back. Without this the
+    // local index `ix - cox` would address the wrong row of EM data.
+    const ivo = ctx.imageScale.voxelOffset;
+    const cox = coord.x * ics[0] + ivo[0];
+    const coy = coord.y * ics[1] + ivo[1];
+    const coz = coord.z * ics[2] + ivo[2];
     const x0 = Math.max(loImage[0], cox);
     const y0 = Math.max(loImage[1], coy);
     const z0 = Math.max(loImage[2], coz);
@@ -1314,9 +1318,13 @@ async function assembleImageSlabNative(
     if (prof) readMs += performance.now() - t;
     if (chunkBuf === undefined) continue;
     const view = chunkBuf.asView() as Exclude<ChunkVoxelBuffer, BigUint64Array>;
-    const cox = coord.x * ics[0];
-    const coy = coord.y * ics[1];
-    const coz = coord.z * ics[2];
+    // `coord` is offset-anchored (see `imageChunksCovering`); add the image's
+    // `voxelOffset` to get the chunk's GLOBAL voxel origin so `x0 - cox` indexes
+    // the correct EM row.
+    const ivo = ctx.imageScale.voxelOffset;
+    const cox = coord.x * ics[0] + ivo[0];
+    const coy = coord.y * ics[1] + ivo[1];
+    const coz = coord.z * ics[2] + ivo[2];
     const x0 = Math.max(minIx, cox);
     const y0 = Math.max(minIy, coy);
     const x1 = Math.min(minIx + iSx, cox + ics[0]);
