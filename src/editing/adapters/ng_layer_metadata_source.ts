@@ -390,10 +390,23 @@ function buildScaleMetadata(
     source.chunkToMultiscaleTransform,
     modelResolutionNm,
   );
+  // The voxel offset that places this scale's data in the GLOBAL voxel frame
+  // (the same frame the viewer position, annotations, and the edit region live
+  // in) is NG's `baseVoxelOffset` — for precomputed it is the `voxel_offset`
+  // from `info`. `lowerVoxelBound` is the chunk-layout clip bound RELATIVE to
+  // that offset (≈ 0 for the base scale), NOT the global origin. Reading the
+  // offset from `lowerVoxelBound` (the old code) yielded 0 for any volume with a
+  // non-zero `voxel_offset`, so the session's voxel bounds collapsed to
+  // `[0, sizeVoxels]`. When the edit region sat above that (its global coords
+  // include the offset), every paint write clipped to nothing — silently, with
+  // no patch, no history, no dirty signal (TM-317 paint-not-drawing bug). The
+  // global lower bound is `baseVoxelOffset + lowerVoxelBound`; the size is
+  // `upperVoxelBound - lowerVoxelBound`, so the global upper bound
+  // (`offset + size`) correctly becomes `baseVoxelOffset + upperVoxelBound`.
   return {
     resolution: resolutionFor(voxelSizeNm),
     voxelSizeNm,
-    voxelOffset: takeXYZ(spec.lowerVoxelBound),
+    voxelOffset: addXYZ(spec.baseVoxelOffset, spec.lowerVoxelBound),
     sizeVoxels: subtractXYZ(spec.upperVoxelBound, spec.lowerVoxelBound),
     chunkDataSize: takeXYZUint(spec.chunkDataSize),
   };
@@ -414,10 +427,6 @@ function computeVoxelSizeNm(
   return result;
 }
 
-function takeXYZ(arr: ArrayLike<number>): readonly [number, number, number] {
-  return [Number(arr[0]) || 0, Number(arr[1]) || 0, Number(arr[2]) || 0];
-}
-
 function takeXYZUint(
   arr: ArrayLike<number>,
 ): readonly [number, number, number] {
@@ -436,5 +445,16 @@ function subtractXYZ(
     Math.floor((Number(upper[0]) || 0) - (Number(lower[0]) || 0)),
     Math.floor((Number(upper[1]) || 0) - (Number(lower[1]) || 0)),
     Math.floor((Number(upper[2]) || 0) - (Number(lower[2]) || 0)),
+  ];
+}
+
+function addXYZ(
+  a: ArrayLike<number>,
+  b: ArrayLike<number>,
+): readonly [number, number, number] {
+  return [
+    Math.floor((Number(a[0]) || 0) + (Number(b[0]) || 0)),
+    Math.floor((Number(a[1]) || 0) + (Number(b[1]) || 0)),
+    Math.floor((Number(a[2]) || 0) + (Number(b[2]) || 0)),
   ];
 }

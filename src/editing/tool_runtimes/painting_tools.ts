@@ -300,7 +300,8 @@ export class StrokeTool implements EditTool {
     };
     const readChunk = (chunkId: ChunkId) =>
       edit.readChunk({ ...target, chunkId });
-    const chunkSize = scaleFor(metadata, shared.targetResolution).chunkDataSize;
+    const targetScale = scaleFor(metadata, shared.targetResolution);
+    const chunkSize = targetScale.chunkDataSize;
     // P1 (TM-317): warm the overlay chunks under the stroke footprint NOW, in
     // parallel, so they are resident by the time the apply (worker OR
     // synchronous) calls `beginWrite` → `materializeForWrite.fetchBaseline`. For
@@ -315,6 +316,7 @@ export class StrokeTool implements EditTool {
       path,
       shared.radius,
       chunkSize,
+      targetScale.voxelOffset,
     );
 
     // Worker write path (TM-322 unmasked / TM-317 Phase B masked): single-z,
@@ -915,6 +917,7 @@ function warmStrokeFootprint(
   path: readonly (readonly [number, number, number])[],
   radius: number,
   chunkSize: readonly [number, number, number],
+  voxelOffset: readonly [number, number, number],
 ): Promise<void> {
   if (path.length === 0) return Promise.resolve();
   const r = Math.floor(radius);
@@ -926,7 +929,7 @@ function warmStrokeFootprint(
     ...target,
     chunkId: ChunkId.fromCoord({ x: 0, y: 0, z: 0 }),
   });
-  const tiles = chunksForStroke(path, r, chunkSize, bounds);
+  const tiles = chunksForStroke(path, r, chunkSize, bounds, voxelOffset);
   if (tiles.length === 0) return Promise.resolve();
   return Promise.all(
     tiles.map((tile) =>
