@@ -72,13 +72,19 @@ export function chunksForStroke(
   radius: number,
   chunkSize: readonly [number, number, number],
   bounds?: SessionVoxelBounds,
+  // Chunk-grid origin in global voxels (NG's `voxel_offset`). The chunk grid is
+  // anchored on it (`chunkIndex = floor((voxel - offset) / chunkSize)`), so tile
+  // ids and origins match the library's `ChunkId` and the rendered chunks for a
+  // volume with a non-zero offset. Defaults to zero (offset-free volumes).
+  voxelOffset: readonly [number, number, number] = [0, 0, 0],
 ): ChunkTile[] {
   if (points.length === 0) return [];
   const r = Math.max(0, Math.floor(radius));
   const [csx, csy, csz] = chunkSize;
+  const [offX, offY, offZ] = voxelOffset;
   const cz = Math.floor(points[0][2]);
   if (bounds !== undefined && (cz < bounds.loZ || cz >= bounds.hiZ)) return [];
-  const gz = Math.floor(cz / csz);
+  const gz = Math.floor((cz - offZ) / csz);
 
   const seen = new Set<string>();
   const tiles: ChunkTile[] = [];
@@ -97,14 +103,18 @@ export function chunksForStroke(
       hiY = Math.min(hiY, bounds.hiY - 1);
     }
     if (loX > hiX || loY > hiY) continue;
-    for (let gy = Math.floor(loY / csy); gy <= Math.floor(hiY / csy); gy++) {
-      for (let gx = Math.floor(loX / csx); gx <= Math.floor(hiX / csx); gx++) {
+    const gyLo = Math.floor((loY - offY) / csy);
+    const gyHi = Math.floor((hiY - offY) / csy);
+    const gxLo = Math.floor((loX - offX) / csx);
+    const gxHi = Math.floor((hiX - offX) / csx);
+    for (let gy = gyLo; gy <= gyHi; gy++) {
+      for (let gx = gxLo; gx <= gxHi; gx++) {
         const key = `${gx},${gy},${gz}`;
         if (seen.has(key)) continue;
         seen.add(key);
         tiles.push({
           coord: { x: gx, y: gy, z: gz },
-          origin: [gx * csx, gy * csy, gz * csz],
+          origin: [gx * csx + offX, gy * csy + offY, gz * csz + offZ],
         });
       }
     }
@@ -218,13 +228,20 @@ export class PaintStrokePipeline {
     const controlBuffer = this.controlBuffer;
     if (controlBuffer === undefined || points.length === 0) return;
     const generation = this.generation;
-    const chunkSize = scaleFor(metadata, target.resolution).chunkDataSize;
+    const scale = scaleFor(metadata, target.resolution);
+    const chunkSize = scale.chunkDataSize;
     const bounds = edit.sessionVoxelBoundsFor({
       layerId: target.layerId,
       resolution: target.resolution,
       chunkId: ChunkId.fromCoord({ x: 0, y: 0, z: 0 }),
     });
-    const tiles = chunksForStroke(points, radius, chunkSize, bounds);
+    const tiles = chunksForStroke(
+      points,
+      radius,
+      chunkSize,
+      bounds,
+      scale.voxelOffset,
+    );
     const voxelDataType = metadata.voxelDataType as BrushVoxelDataType;
 
     try {
@@ -292,14 +309,24 @@ export class PaintStrokePipeline {
     const controlBuffer = this.controlBuffer;
     if (controlBuffer === undefined) return;
     const generation = this.generation;
-    const chunkSize = scaleFor(metadata, target.resolution).chunkDataSize;
+    const scale = scaleFor(metadata, target.resolution);
+    const chunkSize = scale.chunkDataSize;
     const bounds = edit.sessionVoxelBoundsFor({
       layerId: target.layerId,
       resolution: target.resolution,
       chunkId: ChunkId.fromCoord({ x: 0, y: 0, z: 0 }),
     });
     const { loTx, loTy, maskW, maskH, cz, mask } = footprint;
-    const tiles = chunksForBox(loTx, loTy, maskW, maskH, cz, chunkSize, bounds);
+    const tiles = chunksForBox(
+      loTx,
+      loTy,
+      maskW,
+      maskH,
+      cz,
+      chunkSize,
+      bounds,
+      scale.voxelOffset,
+    );
     if (tiles.length === 0) return;
     const voxelDataType = metadata.voxelDataType as BrushVoxelDataType;
     // Share the mask read-only across all tiles (one copy, never transferred).
@@ -404,10 +431,12 @@ function chunksForBox(
   cz: number,
   chunkSize: readonly [number, number, number],
   bounds?: SessionVoxelBounds,
+  voxelOffset: readonly [number, number, number] = [0, 0, 0],
 ): ChunkTile[] {
   const [csx, csy, csz] = chunkSize;
+  const [offX, offY, offZ] = voxelOffset;
   if (bounds !== undefined && (cz < bounds.loZ || cz >= bounds.hiZ)) return [];
-  const gz = Math.floor(cz / csz);
+  const gz = Math.floor((cz - offZ) / csz);
   let loX = loTx;
   let hiX = loTx + w - 1;
   let loY = loTy;
@@ -420,11 +449,15 @@ function chunksForBox(
   }
   if (loX > hiX || loY > hiY) return [];
   const tiles: ChunkTile[] = [];
-  for (let gy = Math.floor(loY / csy); gy <= Math.floor(hiY / csy); gy++) {
-    for (let gx = Math.floor(loX / csx); gx <= Math.floor(hiX / csx); gx++) {
+  const gyLo = Math.floor((loY - offY) / csy);
+  const gyHi = Math.floor((hiY - offY) / csy);
+  const gxLo = Math.floor((loX - offX) / csx);
+  const gxHi = Math.floor((hiX - offX) / csx);
+  for (let gy = gyLo; gy <= gyHi; gy++) {
+    for (let gx = gxLo; gx <= gxHi; gx++) {
       tiles.push({
         coord: { x: gx, y: gy, z: gz },
-        origin: [gx * csx, gy * csy, gz * csz],
+        origin: [gx * csx + offX, gy * csy + offY, gz * csz + offZ],
       });
     }
   }
