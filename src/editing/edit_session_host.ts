@@ -610,13 +610,31 @@ export class EditSessionHost extends RefCounted {
   private detachSliceOverlay: (() => void) | undefined;
   private perspectiveOverlay: BrushCursorPerspectiveOverlay | undefined;
   private detachPerspectiveOverlay: (() => void) | undefined;
-  // Session-owned edit-region visuals (TM-302). Anchored to the same user
-  // layer as the cursor overlays and created/destroyed strictly together
-  // with them, so the cursor attach/reattach/teardown flow covers both.
+  // Session-owned edit-region visuals (TM-302). Unlike the cursor overlays,
+  // these are NOT tied to the paint-target layer: neuroglancer only draws a
+  // render layer while its host layer is visible, so the outline is re-hosted
+  // on whatever session layer is currently visible (`reanchorRegionOverlays`),
+  // and only disappears when the user hides every session layer.
   private regionSliceOverlay: EditRegionSliceOverlay | undefined;
   private detachRegionSliceOverlay: (() => void) | undefined;
   private regionPerspectiveOverlay: EditRegionPerspectiveOverlay | undefined;
   private detachRegionPerspectiveOverlay: (() => void) | undefined;
+  /**
+   * Session layer ids eligible to host the region overlays, captured
+   * synchronously at session open (`activeSessionConfig` is populated later,
+   * after an `await` in `attachPerLayer`, so it can't be relied on here).
+   */
+  private regionHostLayerIds: readonly LayerId[] = [];
+  /** Layer the region overlays are currently hosted on (avoids redundant re-host). */
+  private attachedRegionLayerId: LayerId | undefined;
+  /** Disposer for the visibility watch that re-hosts the region overlays. */
+  private detachRegionVisibilityWatch: (() => void) | undefined;
+  /**
+   * Re-entrancy guard for `reanchorRegionOverlays`: attaching/detaching a render
+   * layer dispatches `layersChanged`, which is the very signal that drives the
+   * re-host — so without this the first `addRenderLayer` would recurse forever.
+   */
+  private reanchoringRegionOverlays = false;
   /** First writable layer id — fallback anchor when no paint target resolves. */
   private cursorOverlayFallbackLayerId: LayerId | undefined;
   /** Layer the cursor overlays are currently anchored to (avoids redundant re-attach). */
@@ -2027,6 +2045,16 @@ export class EditSessionHost extends RefCounted {
     this.detachCursorTargetWatch = this.cursorState.targetLayerId.changed.add(
       () => this.reattachCursorOverlaysToTarget(),
     );
+
+    // Region overlays are hosted independently of the paint target: re-host
+    // on any visible session layer whenever layer visibility changes, so the
+    // outline persists when the user hides individual layers.
+    this.regionHostLayerIds = config.layers.map((l) => l.layerId);
+    this.reanchorRegionOverlays();
+    this.detachRegionVisibilityWatch =
+      this.viewer.layerManager.layersChanged.add(() =>
+        this.reanchorRegionOverlays(),
+      );
   }
 
   /**
@@ -2101,30 +2129,6 @@ export class EditSessionHost extends RefCounted {
     }
 
     this.detachCursorOverlayRenderLayers();
-    // Session-owned region visuals (TM-302): driven by the active-region
-    // watchable (display coords), so they track the shader hard-clip exactly
-    // and survive hiding/deleting the source annotation layer. The watchable
-    // flips to undefined on session teardown, at which point they draw
-    // nothing regardless of detach ordering. In slice views the overlays'
-    // `drawOrderPriority` keeps them above ordinary layers (annotations
-    // included) and the cursor above the region outline, no matter when
-    // other layers (re)create their render layers.
-    const regionWatchable =
-      this.getActiveRegionWatchableForLayer(resolvedLayerId);
-    this.regionSliceOverlay = new EditRegionSliceOverlay(
-      this.viewer.display.gl,
-      regionWatchable,
-    );
-    this.detachRegionSliceOverlay = userLayer.addRenderLayer(
-      this.regionSliceOverlay,
-    );
-    this.regionPerspectiveOverlay = new EditRegionPerspectiveOverlay(
-      this.viewer.display.gl,
-      regionWatchable,
-    );
-    this.detachRegionPerspectiveOverlay = userLayer.addRenderLayer(
-      this.regionPerspectiveOverlay,
-    );
     this.sliceOverlay = new BrushCursorSliceOverlay(
       this.viewer.display.gl,
       cursorState,
@@ -2141,10 +2145,93 @@ export class EditSessionHost extends RefCounted {
   }
 
   /**
-   * Detach (and thereby dispose) the current cursor and region render-layer
-   * instances.
+   * (Re)host the region overlays on a currently-visible session layer. The
+   * outline must persist while the session is active regardless of which layers
+   * the user hides, but neuroglancer only draws a render layer while its host
+   * layer is visible (`LayerManager.readyRenderLayers`). So we host on whatever
+   * session layer is visible — preferring the current host to avoid churn — and
+   * draw nothing only when every session layer is hidden.
+   *
+   * TODO(Option D): replace with a panel-level session overlay that does not
+   * depend on any layer's visibility.
    */
-  private detachCursorOverlayRenderLayers(): void {
+  private reanchorRegionOverlays(): void {
+    // Attaching/detaching render layers below dispatches `layersChanged`, which
+    // re-enters this method; ignore those nested calls.
+    if (this.reanchoringRegionOverlays) return;
+    this.reanchoringRegionOverlays = true;
+    try {
+      this.reanchorRegionOverlaysImpl();
+    } finally {
+      this.reanchoringRegionOverlays = false;
+    }
+  }
+
+  private reanchorRegionOverlaysImpl(): void {
+    if (this.regionHostLayerIds.length === 0) {
+      this.detachRegionOverlayRenderLayers();
+      return;
+    }
+    const layerManager = this.viewer.layerManager;
+    const visibleManaged = (layerId: LayerId) => {
+      const managed = layerManager.getLayerByName(layerId);
+      if (managed === undefined || !managed.visible || managed.layer === null) {
+        return undefined;
+      }
+      return managed;
+    };
+
+    // Keep the current host if it is still visible; otherwise take the first
+    // visible session layer (the image layer counts — it is rarely hidden).
+    let host =
+      this.attachedRegionLayerId !== undefined
+        ? visibleManaged(this.attachedRegionLayerId)
+        : undefined;
+    let hostId = host !== undefined ? this.attachedRegionLayerId : undefined;
+    if (host === undefined) {
+      for (const layerId of this.regionHostLayerIds) {
+        const managed = visibleManaged(layerId);
+        if (managed !== undefined) {
+          host = managed;
+          hostId = layerId;
+          break;
+        }
+      }
+    }
+    if (host === undefined || hostId === undefined) {
+      this.detachRegionOverlayRenderLayers();
+      return;
+    }
+    if (
+      this.attachedRegionLayerId === hostId &&
+      this.regionSliceOverlay !== undefined
+    ) {
+      return; // Already hosted on a still-visible layer.
+    }
+
+    this.detachRegionOverlayRenderLayers();
+    // `visibleManaged` guarantees `host.layer` is non-null.
+    const userLayer = host.layer!;
+    const regionWatchable = this.getActiveRegionWatchableForLayer(hostId);
+    this.regionSliceOverlay = new EditRegionSliceOverlay(
+      this.viewer.display.gl,
+      regionWatchable,
+    );
+    this.detachRegionSliceOverlay = userLayer.addRenderLayer(
+      this.regionSliceOverlay,
+    );
+    this.regionPerspectiveOverlay = new EditRegionPerspectiveOverlay(
+      this.viewer.display.gl,
+      regionWatchable,
+    );
+    this.detachRegionPerspectiveOverlay = userLayer.addRenderLayer(
+      this.regionPerspectiveOverlay,
+    );
+    this.attachedRegionLayerId = hostId;
+  }
+
+  /** Detach (and thereby dispose) the current region render-layer instances. */
+  private detachRegionOverlayRenderLayers(): void {
     if (this.detachRegionPerspectiveOverlay !== undefined) {
       try {
         this.detachRegionPerspectiveOverlay();
@@ -2163,6 +2250,13 @@ export class EditSessionHost extends RefCounted {
       this.detachRegionSliceOverlay = undefined;
     }
     this.regionSliceOverlay = undefined;
+    this.attachedRegionLayerId = undefined;
+  }
+
+  /**
+   * Detach (and thereby dispose) the current cursor render-layer instances.
+   */
+  private detachCursorOverlayRenderLayers(): void {
     if (this.detachPerspectiveOverlay !== undefined) {
       try {
         this.detachPerspectiveOverlay();
@@ -2204,6 +2298,16 @@ export class EditSessionHost extends RefCounted {
       }
       this.detachCursorTargetWatch = undefined;
     }
+    if (this.detachRegionVisibilityWatch !== undefined) {
+      try {
+        this.detachRegionVisibilityWatch();
+      } catch {
+        // ignore
+      }
+      this.detachRegionVisibilityWatch = undefined;
+    }
+    this.regionHostLayerIds = [];
+    this.detachRegionOverlayRenderLayers();
     // Stop watching for tool/layer changes and lift suppression so navigate
     // (and the next session) sees the user's hover-highlight preference again.
     if (this.detachHoverSuppressionToolWatch !== undefined) {
