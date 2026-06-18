@@ -28,9 +28,9 @@ import {
 
 import type { ChunkManager, Chunk } from "#src/chunk_manager/frontend.js";
 import { resolutionFor } from "#src/editing/adapters/ng_layer_metadata_source.js";
-import { decodeChannels } from "#src/sliceview/compressed_segmentation/decode_common.js";
 import type { LayerManager, UserLayer } from "#src/layer/index.js";
 import type { LoadedLayerDataSource } from "#src/layer/layer_data_source.js";
+import { decodeChannels } from "#src/sliceview/compressed_segmentation/decode_common.js";
 import type { SliceViewSingleResolutionSource } from "#src/sliceview/frontend.js";
 import type {
   VolumeChunkSpecification,
