@@ -28,6 +28,7 @@ import {
 
 import type { ChunkManager, Chunk } from "#src/chunk_manager/frontend.js";
 import { resolutionFor } from "#src/editing/adapters/ng_layer_metadata_source.js";
+import { decodeChannels } from "#src/sliceview/compressed_segmentation/decode_common.js";
 import type { LayerManager, UserLayer } from "#src/layer/index.js";
 import type { LoadedLayerDataSource } from "#src/layer/layer_data_source.js";
 import type { SliceViewSingleResolutionSource } from "#src/sliceview/frontend.js";
@@ -180,8 +181,18 @@ export class NgChunkSource implements LibraryChunkSource {
             // Treat empty chunks as all-zero baselines (see comment below).
             return makeZeroFilledChunkBuffer(source);
           }
-          // Snapshot the bytes: fetchChunk only guarantees presence inside the
-          // transform callback. We need a stable view to hand to the library.
+          // Neuroglancer transcodes uint32/uint64 SEGMENTATION volumes to the
+          // compressed-segmentation format for GPU rendering, so `chunk.data` is
+          // the COMPRESSED block (a small Uint32Array), not the per-voxel values
+          // the edit library expects. Decode it back to a dense, per-voxel
+          // buffer; otherwise the library writes 8 bytes/voxel past the end of
+          // the tiny compressed buffer (`offset is out of bounds`) and the
+          // baseline values are garbage. Plain (non-transcoded) chunks are
+          // snapshotted as-is — `fetchChunk` only guarantees `chunk.data` inside
+          // this callback, so we clone for a stable view.
+          if (source.spec.compressedSegmentationBlockSize !== undefined) {
+            return decodeCompressedSegmentationChunk(source, raw);
+          }
           return cloneTypedArray(raw);
         },
         { signal: fetchSignal },
@@ -406,6 +417,52 @@ function makeZeroFilledChunkBuffer(
       // size for a single byte per voxel which is the safest minimum.
       return new Uint8Array(voxelCount);
   }
+}
+
+/**
+ * Decode a compressed-segmentation chunk (`chunk.data` is the compressed block)
+ * into a dense per-voxel buffer of the source's data type. NG transcodes
+ * uint32/uint64 segmentation to this format for rendering; the edit library
+ * needs the raw per-voxel values. `decodeChannels` is NG's CPU decoder; it runs
+ * once per chunk per session (the overlay caches the materialized slot), so the
+ * per-voxel cost is paid lazily and only for edited chunks.
+ */
+function decodeCompressedSegmentationChunk(
+  source: VolumeChunkSource,
+  data: ChunkVoxelBuffer,
+): ChunkVoxelBuffer {
+  const { chunkDataSize, dataType, compressedSegmentationBlockSize } =
+    source.spec;
+  if (compressedSegmentationBlockSize === undefined) {
+    return cloneTypedArray(data);
+  }
+  let voxelCount = 1;
+  for (let i = 0; i < chunkDataSize.length; ++i) {
+    voxelCount *= chunkDataSize[i];
+  }
+  const out =
+    dataType === DataType.UINT64
+      ? new BigUint64Array(voxelCount)
+      : new Uint32Array(voxelCount);
+  // `decodeChannels` indexes `chunkDataSize[3]` for the channel count, but the
+  // spec's `chunkDataSize` is 3D `[x, y, z]` here. Segmentation (the only thing
+  // NG transcodes to compressed-segmentation) is single-channel, so pass an
+  // explicit 4D shape with one channel; otherwise `chunkDataSize[3]` is
+  // undefined and the decoder throws on a NaN expected length.
+  const chunkDataSize4d = [
+    chunkDataSize[0],
+    chunkDataSize[1],
+    chunkDataSize[2],
+    1,
+  ];
+  decodeChannels(
+    out,
+    data as Uint32Array,
+    0,
+    chunkDataSize4d,
+    compressedSegmentationBlockSize,
+  );
+  return out as ChunkVoxelBuffer;
 }
 
 function wrapAsReadonlyBuffer(
