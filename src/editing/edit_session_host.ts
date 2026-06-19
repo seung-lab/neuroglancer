@@ -832,6 +832,11 @@ export class EditSessionHost extends RefCounted {
       // session whose bbox is elsewhere in the volume would otherwise leave
       // them staring at unrelated (now hard-clipped) data.
       this.teleportToActiveRegionCenter();
+      // Make a writable target the selected layer (TM-334). Otherwise, if an
+      // annotation layer stays selected, its `Ctrl`-based bindings (notably
+      // `annotate`, which targets `viewer.selectedLayer.layer`) collide with
+      // the session's `Ctrl` painting hotkeys and the session "bugs out".
+      this.selectSessionTargetLayer(config);
     } catch (err) {
       // If post-open wiring throws, attempt to terminate the session and
       // surface the error.
@@ -846,6 +851,23 @@ export class EditSessionHost extends RefCounted {
       throw err;
     }
     return session;
+  }
+
+  /**
+   * Switch the UI's selected layer to one of the session's writable targets
+   * (TM-334). The `annotate` action (`Ctrl+click`) dispatches to
+   * `viewer.selectedLayer.layer`'s tool, so leaving an annotation layer
+   * selected when a session opens makes its `Ctrl` bindings collide with the
+   * session's `Ctrl` painting hotkeys. Picking a writable target keeps the
+   * selected layer aligned with what is being edited. No-op when the config
+   * has no writable layer or it can't be resolved to a managed layer.
+   */
+  private selectSessionTargetLayer(config: HostSessionConfig): void {
+    const target = config.layers.find((l) => l.writable);
+    if (target === undefined) return;
+    const managed = this.viewer.layerManager.getLayerByName(target.layerId);
+    if (managed === undefined) return;
+    this.viewer.selectedLayer.layer = managed;
   }
 
   /**
