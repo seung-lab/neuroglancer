@@ -15,6 +15,7 @@ import { createElement } from "preact";
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { PanelMount } from "#src/editing/ui/interop/panel_mount.js";
 import { Correspondence } from "#src/editing/ui/tool_settings/correspondence.js";
+import { NavigationSummary } from "#src/editing/ui/tool_settings/navigation_summary.js";
 import { PaintingBrush } from "#src/editing/ui/tool_settings/painting_brush.js";
 import { PaintingEraser } from "#src/editing/ui/tool_settings/painting_eraser.js";
 import { PaintingFill } from "#src/editing/ui/tool_settings/painting_fill.js";
@@ -72,6 +73,19 @@ function buildToolPanel(
       return false;
     },
   });
+}
+
+export function makeNavigationPanel(
+  sidePanelManager: SidePanelManager,
+  host: EditSessionHost,
+): PanelMount<{ host: EditSessionHost }> {
+  return buildToolPanel(
+    sidePanelManager,
+    host,
+    "Navigation",
+    host.navPanelLocation,
+    NavigationSummary,
+  );
 }
 
 export function makeBrushPanel(

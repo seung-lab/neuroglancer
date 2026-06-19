@@ -19,7 +19,11 @@
  * module isn't loaded. Modal-specific tones (accent-soft selection wash, the
  * bg-row stripe, the memory-meter safe/near/over colors) stay local.
  */
-.neuroglancer-edit-session-entry-modal-backdrop {
+/* The navigation summary panel (TM-338) reuses the layer-row, role and
+   memory-meter markup, so it needs the same design tokens — the modal scoped
+   them to its backdrop, so they're declared here for both contexts. */
+.neuroglancer-edit-session-entry-modal-backdrop,
+.neuroglancer-navigation-summary-panel {
   /* --accent (#3b82f6) is reserved for borders / focus rings (UI-component
      contrast, 3:1). Fills that carry white text use the darker -strong /
      -stronger steps so the label clears WCAG AA 4.5:1. */

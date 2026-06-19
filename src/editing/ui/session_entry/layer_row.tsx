@@ -80,6 +80,7 @@ export function LayerRow({
   state,
   resolutionModel,
   onRoleChange,
+  readOnly = false,
 }: {
   name: string;
   layerKind: LayerKind;
@@ -87,6 +88,13 @@ export function LayerRow({
   state: LayerRowState;
   resolutionModel: ResolutionSelectionModel | undefined;
   onRoleChange: (role: LayerRole) => void;
+  /**
+   * Read-only display (TM-338): the role control becomes a non-interactive
+   * indicator and the resolution renders as static text. Used by the
+   * navigation tool's session-summary panel, which recaps an already-open
+   * session's configuration rather than editing it.
+   */
+  readOnly?: boolean;
 }) {
   useSignal(resolutionModel?.selectionChanged);
 
@@ -96,7 +104,17 @@ export function LayerRow({
     : "neuroglancer-edit-session-entry-modal-layer-row";
 
   let resolutionContent;
-  if (state.loadState === "loading") {
+  if (readOnly) {
+    // The session's selected resolutions are fixed once it's open — show them
+    // as plain text (joined when a layer locked more than one).
+    const text =
+      state.resolutions.length > 0 ? state.resolutions.join(", ") : "—";
+    resolutionContent = (
+      <span class="neuroglancer-edit-session-entry-modal-layer-resolution-static">
+        {text}
+      </span>
+    );
+  } else if (state.loadState === "loading") {
     resolutionContent = (
       <span class="neuroglancer-edit-session-entry-modal-layer-resolution-loading">
         (loading&hellip;)
@@ -153,13 +171,40 @@ export function LayerRow({
       <span class="neuroglancer-edit-session-entry-modal-layer-resolution-slot">
         {resolutionContent}
       </span>
-      <RoleControl
-        role={state.role}
-        layerKind={layerKind}
-        blockedScheme={blockedScheme}
-        onChange={onRoleChange}
-      />
+      {readOnly ? (
+        <RoleBadge role={state.role} />
+      ) : (
+        <RoleControl
+          role={state.role}
+          layerKind={layerKind}
+          blockedScheme={blockedScheme}
+          onChange={onRoleChange}
+        />
+      )}
     </div>
+  );
+}
+
+/** Role labels, shared by the interactive control and the read-only badge. */
+const ROLE_LABEL: Record<LayerRole, string> = {
+  off: "Off",
+  reference: "Reference",
+  editable: "Editable",
+};
+
+/**
+ * Static, non-interactive role indicator (TM-338). Shown instead of the
+ * three-segment `RoleControl` in read-only contexts (the navigation summary),
+ * where the role is fixed and the row must stay narrow for a side panel.
+ */
+function RoleBadge({ role }: { role: LayerRole }) {
+  return (
+    <span
+      class="neuroglancer-edit-session-entry-modal-role-badge"
+      data-role={role}
+    >
+      {ROLE_LABEL[role]}
+    </span>
   );
 }
 
