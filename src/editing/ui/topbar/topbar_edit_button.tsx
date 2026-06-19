@@ -30,6 +30,10 @@ import "#src/editing/ui/topbar/editing_topbar.css";
 export function TopbarEditButton({ host }: { host: EditSessionHost }) {
   const sessionOrUndefined = useWatchable(host.activeSession);
   const isActive = sessionOrUndefined !== undefined;
+  // Block exiting while a save is in flight: leaving would abort it. The Save
+  // button (in ActiveTopbarControls) is the place to cancel a save on purpose.
+  const isSaving = useWatchable(host.saveInProgress);
+  const exitDisabled = isActive && isSaving;
 
   const [open, setOpen] = useState(false);
   const [preselectBboxKey, setPreselectBboxKey] = useState<string | undefined>(
@@ -85,8 +89,13 @@ export function TopbarEditButton({ host }: { host: EditSessionHost }) {
           "neuroglancer-editing-topbar-edit-button" +
           (isActive ? " active" : "")
         }
+        disabled={exitDisabled}
         data-tooltip={
-          isActive ? "Exit edit session" : "Open the edit-session entry modal"
+          exitDisabled
+            ? "Can't exit while saving…"
+            : isActive
+              ? "Exit edit session"
+              : "Open the edit-session entry modal"
         }
         onClick={handleClick}
       >

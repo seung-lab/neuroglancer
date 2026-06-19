@@ -502,6 +502,16 @@ export class EditSessionHost extends RefCounted {
   // -- Save cancellation ----------------------------------------------------
   private saveAbortController: AbortController | undefined;
 
+  /**
+   * Reactive flag: whether a save started by `saveActive()` is currently in
+   * flight. The topbar's Save button drives its loading state from this, and
+   * the Exit-session button disables itself while it is `true` so a save can't
+   * be interrupted by leaving the session. Set `true` for the duration of
+   * `saveActive()` and reset in its `finally` (covers success, failure, and
+   * cancellation alike).
+   */
+  readonly saveInProgress = new WatchableValue<boolean>(false);
+
   // -- Adapters (constructed once, reused across sessions) ------------------
   readonly logger: NgLogger;
   readonly sessionLock: NgSessionLockAdapter;
@@ -1192,6 +1202,7 @@ export class EditSessionHost extends RefCounted {
     }
     const controller = new AbortController();
     this.saveAbortController = controller;
+    this.saveInProgress.value = true;
     const onExternalAbort = () => controller.abort();
     if (signal !== undefined) {
       if (signal.aborted) controller.abort();
@@ -1205,6 +1216,7 @@ export class EditSessionHost extends RefCounted {
       }
       if (this.saveAbortController === controller) {
         this.saveAbortController = undefined;
+        this.saveInProgress.value = false;
       }
     }
   }
