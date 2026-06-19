@@ -482,12 +482,20 @@ export class EditSessionHost extends RefCounted {
   /**
    * Per-tool side-panel locations (TM-294 rework). Each tool owns an
    * independent `TrackableSidePanelLocation`; the host's `selectTool()`
-   * invariant guarantees at most one is `visible` at any time. Cursor has
-   * no panel — selecting it forces all five `visible=false`.
+   * invariant guarantees at most one is `visible` at any time.
+   *
+   * The navigation (cursor) tool now has its own panel too (TM-338): a
+   * read-only session summary. Selecting cursor / pressing Escape shows it
+   * instead of collapsing the left column, so the field of view no longer
+   * jumps when switching between a paint tool and navigation.
    *
    * All default to `side: "left"` and the same row/col so they visually
    * replace each other in the same slot.
    */
+  readonly navPanelLocation = new TrackableSidePanelLocation({
+    ...DEFAULT_SIDE_PANEL_LOCATION,
+    side: "left",
+  });
   readonly brushPanelLocation = new TrackableSidePanelLocation({
     ...DEFAULT_SIDE_PANEL_LOCATION,
     side: "left",
@@ -861,6 +869,12 @@ export class EditSessionHost extends RefCounted {
       // wired: patches the family config + re-selects the active tool. Patches
       // are validated against the session layers (stale bindings dropped).
       this.applyRestoredTooling(restoreTooling);
+      // When no tool was restored, land on navigation: `selectTool(undefined)`
+      // shows the read-only session-summary panel so the left column is
+      // occupied from the first frame (TM-338).
+      if (this.activeToolId.value === undefined) {
+        this.selectTool(undefined);
+      }
       // Bring the user to the freshly opened session's region; entering a
       // session whose bbox is elsewhere in the volume would otherwise leave
       // them staring at unrelated (now hard-clipped) data.
@@ -934,8 +948,14 @@ export class EditSessionHost extends RefCounted {
     // tool's activation (disposing the previous one rolls back any in-flight
     // stroke) and writes the stable `activeToolId` watchable.
     this.toolBinder?.select(toolId);
+    // The navigation (cursor) tool has no real tool id — it maps to
+    // `undefined`. Its panel is the default shown whenever no paint/edit tool
+    // panel is active, so the left column stays occupied and the field of view
+    // doesn't jump on tool switches (TM-338).
     const target =
-      toolId !== undefined ? this.toolPanelLocationFor(toolId) : undefined;
+      toolId !== undefined
+        ? this.toolPanelLocationFor(toolId)
+        : this.navPanelLocation;
     for (const loc of this.allToolPanelLocations()) {
       loc.visible = loc === target;
     }
@@ -1098,6 +1118,7 @@ export class EditSessionHost extends RefCounted {
 
   private allToolPanelLocations(): TrackableSidePanelLocation[] {
     return [
+      this.navPanelLocation,
       this.brushPanelLocation,
       this.eraserPanelLocation,
       this.fillPanelLocation,
