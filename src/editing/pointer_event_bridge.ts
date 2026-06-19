@@ -18,6 +18,7 @@ import {
   slicePixelToGlobalPosition,
   slicePixelToTargetVoxel,
 } from "#src/editing/raster/slice_pixel_to_voxel.js";
+import { isLiveEditConflictError } from "#src/editing/tooling/edit_scope.js";
 import { paintProfiler } from "#src/editing/tool_runtimes/paint_profiler.js";
 import { paintScheduler } from "#src/editing/tool_runtimes/paint_scheduler_config.js";
 import type {
@@ -362,9 +363,9 @@ export class PointerEventBridge extends RefCounted {
     try {
       result = tool.handleInput(translated);
     } catch (err) {
-      this.host.logger.error(
-        "editing",
+      this.logToolInputFailure(
         `PointerEventBridge: tool.handleInput threw: ${stringifyError(err)}`,
+        err,
       );
       return;
     }
@@ -378,9 +379,9 @@ export class PointerEventBridge extends RefCounted {
       // return a sync `{consumed: true}` if they want to block the camera.
       // We still capture rejections.
       result.catch((err) =>
-        this.host.logger.error(
-          "editing",
+        this.logToolInputFailure(
           `PointerEventBridge: tool.handleInput rejected: ${stringifyError(err)}`,
+          err,
         ),
       );
     }
@@ -413,6 +414,23 @@ export class PointerEventBridge extends RefCounted {
     if (cameraLocked) return true;
     if (!(result instanceof Promise) && result.consumed) return true;
     return false;
+  }
+
+  /**
+   * Log a `handleInput` failure. The "already live" edit conflict is a benign
+   * race — a new stroke starts a hair before the previous stroke's async commit
+   * settles, i.e. event processing can't keep up with event production under a
+   * heavy (huge masked/morphology) brush. The prior stroke committed fine and
+   * the user did nothing wrong, so log it to the console only (`debug`) rather
+   * than flashing an alarming user-facing status banner (`error`). Genuine
+   * failures still surface as before.
+   */
+  private logToolInputFailure(message: string, err: unknown): void {
+    if (isLiveEditConflictError(err)) {
+      this.host.logger.debug("editing", message);
+    } else {
+      this.host.logger.error("editing", message);
+    }
   }
 
   private consume(ev: Event): void {
@@ -1011,9 +1029,9 @@ export class PointerEventBridge extends RefCounted {
     try {
       result = tool.handleInput(event);
     } catch (err) {
-      this.host.logger.error(
-        "editing",
+      this.logToolInputFailure(
         `PointerEventBridge: stroke handleInput threw: ${stringifyError(err)}`,
+        err,
       );
       stroke.inFlight = false;
       this.drainStroke(stroke);
@@ -1023,9 +1041,9 @@ export class PointerEventBridge extends RefCounted {
       stroke.inFlight = true;
       result
         .catch((err) =>
-          this.host.logger.error(
-            "editing",
+          this.logToolInputFailure(
             `PointerEventBridge: stroke handleInput rejected: ${stringifyError(err)}`,
+            err,
           ),
         )
         .finally(() => {
