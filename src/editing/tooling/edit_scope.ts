@@ -34,6 +34,34 @@ export interface InteractionHandle {
   cancel(): Promise<void>;
 }
 
+/**
+ * Thrown by {@link EditScope.open} when an edit is already live. This is a
+ * benign concurrency race during rapid painting (a new stroke starts a hair
+ * before the previous stroke's async commit has settled), NOT an integration
+ * bug — so callers downgrade it to a debug log rather than an alarming
+ * user-facing error banner. A dedicated class lets the surfacing layer tell it
+ * apart from real failures.
+ */
+export class LiveEditConflictError extends Error {
+  readonly isLiveEditConflict = true as const;
+  constructor() {
+    super(
+      "EditScope: an edit is already live; commit/cancel it before opening another",
+    );
+    this.name = "LiveEditConflictError";
+  }
+}
+
+/** Type guard for {@link LiveEditConflictError} across module/bundle boundaries. */
+export function isLiveEditConflictError(err: unknown): boolean {
+  return (
+    err instanceof LiveEditConflictError ||
+    (typeof err === "object" &&
+      err !== null &&
+      (err as { isLiveEditConflict?: unknown }).isLiveEditConflict === true)
+  );
+}
+
 export class EditScope {
   private live: Edit | null = null;
 
@@ -103,9 +131,7 @@ export class EditScope {
 
   private open(meta: EditMeta): Edit {
     if (this.live !== null) {
-      throw new Error(
-        "EditScope: an edit is already live; commit/cancel it before opening another",
-      );
+      throw new LiveEditConflictError();
     }
     const edit = this.session.beginEdit(meta);
     this.live = edit;

@@ -492,6 +492,21 @@ export class StrokeTool implements EditTool {
     const readChunkAt = this.deps.readChunkAt;
 
     if (ev.kind === "pointer-down" && ev.button === "primary") {
+      // Benign race guard: a fresh stroke can begin a hair before the previous
+      // stroke's async commit has settled. pointer-up finalizes through a
+      // separate queue and only clears the live edit AFTER its compute resolves
+      // (`handle.commit()` in the pointer-up branch), while pointer-down arrives
+      // on the direct dispatch path. If the two overlap, `beginInteraction`
+      // below would hit EditScope's "already live" guard and throw — surfacing
+      // as an alarming error banner even though the prior stroke committed fine
+      // and the user did nothing wrong. Drop this racing down silently instead;
+      // the throw already dropped it too, just noisily.
+      if (this.deps.scope.hasLiveEdit) {
+        console.debug(
+          "StrokeTool: pointer-down ignored; previous edit still committing",
+        );
+        return { consumed: true };
+      }
       const pos: readonly [number, number, number] = [
         ev.voxelPosition[0],
         ev.voxelPosition[1],
