@@ -139,6 +139,7 @@
     "#src/editing/ui/session_entry/layer_row.js": "./src/editing/ui/session_entry/layer_row.tsx",
     "#src/editing/ui/session_controls/active_tool_settings.js": "./src/editing/ui/session_controls/active_tool_settings.tsx",
     "#src/editing/ui/toggle_switch.js": "./src/editing/ui/toggle_switch.tsx",
+    "#src/editing/ui/topbar/chunk_load_progress.js": "./src/editing/ui/topbar/chunk_load_progress.tsx",
     "#src/editing/ui/topbar/editing_topbar.js": "./src/editing/ui/topbar/editing_topbar.tsx",
     "#src/editing/ui/topbar/topbar_edit_button.js": "./src/editing/ui/topbar/topbar_edit_button.tsx",
     "#src/editing/ui/tool_settings/correspondence.js": "./src/editing/ui/tool_settings/correspondence.tsx",

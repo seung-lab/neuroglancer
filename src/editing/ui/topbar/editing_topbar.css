@@ -196,6 +196,53 @@
   }
 }
 
+/* Background bbox-chunk preload indicator (TM-316). Sits next to Save while a
+   session's region is loading; carries an accent (loading), success, or
+   warning treatment. */
+.neuroglancer-editing-topbar-chunkload {
+  gap: var(--nge-space-1);
+  padding: 0 var(--nge-space-2);
+  height: 24px;
+  border-radius: var(--nge-radius-md);
+  background: var(--nge-accent-tint);
+  color: var(--nge-accent-fg-soft);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.neuroglancer-editing-topbar-chunkload.success {
+  background: transparent;
+  color: var(--nge-success);
+}
+
+.neuroglancer-editing-topbar-chunkload.warning {
+  background: var(--nge-warning-bg);
+  color: var(--nge-warning-fg);
+  cursor: default;
+}
+
+.neuroglancer-editing-topbar-chunkload-label {
+  font-variant-numeric: tabular-nums;
+}
+
+.neuroglancer-editing-topbar-chunkload-bar {
+  display: inline-block;
+  width: 56px;
+  height: 4px;
+  border-radius: var(--nge-radius-pill);
+  background: var(--nge-control-bg);
+  overflow: hidden;
+}
+
+.neuroglancer-editing-topbar-chunkload-fill {
+  display: block;
+  height: 100%;
+  background: var(--nge-accent);
+  border-radius: inherit;
+  transition: width var(--nge-transition);
+}
+
 .neuroglancer-editing-topbar-badge {
   /* Corner notification badge overhanging the button's top-right corner. The
      topbar's vertical gutter gives it headroom, so it overhangs upward without

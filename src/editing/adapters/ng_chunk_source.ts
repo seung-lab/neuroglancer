@@ -20,14 +20,15 @@ import type {
   SessionId,
 } from "@zettaai/edit-session";
 import {
-  ChunkId as ChunkIdFactory,
-  ChunkPinFailedError,
   ChunkReadAbortedError,
   ChunkReadFailedError,
 } from "@zettaai/edit-session";
 
 import type { ChunkManager, Chunk } from "#src/chunk_manager/frontend.js";
+import { makeChunkGridPosition } from "#src/editing/adapters/ng_chunk_grid.js";
 import { resolutionFor } from "#src/editing/adapters/ng_layer_metadata_source.js";
+import type { ChunkLoadProgressState } from "#src/editing/adapters/session_chunk_preloader.js";
+import { SessionChunkPreloader } from "#src/editing/adapters/session_chunk_preloader.js";
 import type { LayerManager, UserLayer } from "#src/layer/index.js";
 import type { LoadedLayerDataSource } from "#src/layer/layer_data_source.js";
 import { decodeChannels } from "#src/sliceview/compressed_segmentation/decode_common.js";
@@ -38,9 +39,9 @@ import type {
 } from "#src/sliceview/volume/base.js";
 import type {
   MultiscaleVolumeChunkSource,
-  VolumeChunk,
   VolumeChunkSource,
 } from "#src/sliceview/volume/frontend.js";
+import { WatchableValue } from "#src/trackable_value.js";
 import { DataType } from "#src/util/data_type.js";
 
 /**
@@ -51,15 +52,19 @@ import { DataType } from "#src/util/data_type.js";
  * through `SliceViewChunkSource.fetchChunk`, which awaits chunk arrival via
  * the existing chunk pipeline without blocking the main thread.
  */
-interface PinnedChunkRecord {
-  readonly source: VolumeChunkSource;
-  readonly key: string;
-  readonly chunk: VolumeChunk;
-}
-
 export class NgChunkSource implements LibraryChunkSource {
   private currentSessionId: SessionId | undefined;
-  private currentPinnedChunks: PinnedChunkRecord[] = [];
+  private preloader: SessionChunkPreloader | undefined;
+  private preloadAbort: AbortController | undefined;
+  private preloadProgressUnsub: (() => void) | undefined;
+  /**
+   * Background preload progress for the active session, surfaced to the editing
+   * topbar. Stable across sessions (the per-session `SessionChunkPreloader`
+   * forwards into it); resets to `idle` on release.
+   */
+  readonly chunkLoadProgress = new WatchableValue<ChunkLoadProgressState>({
+    kind: "idle",
+  });
   /**
    * Optional handle to the host's committed-buffer store. When set, baseline
    * reads consult it before falling through to the data source — committed
@@ -87,44 +92,43 @@ export class NgChunkSource implements LibraryChunkSource {
     coords: readonly OverlayCoord[],
     signal?: AbortSignal,
   ): Promise<void> {
+    // Tear down any preload still running for a previous session (the library
+    // guarantees one session at a time, but be defensive on re-open).
+    this.teardownPreload();
     if (signal?.aborted) {
-      this.releaseTrackedPins();
       throw signal.reason;
-    }
-    // Group coords by (layerId, resolution) so we resolve the source once per
-    // group.
-    const groups = groupByLayerAndResolution(coords);
-    for (const group of groups) {
-      if (signal?.aborted) {
-        this.releaseTrackedPins();
-        throw signal.reason;
-      }
-      let source: VolumeChunkSource;
-      try {
-        source = this.resolveVolumeChunkSource(group.layerId, group.resolution);
-      } catch (cause) {
-        const reason =
-          cause instanceof Error ? cause : new Error(String(cause));
-        throw new ChunkPinFailedError(group.coords, reason);
-      }
-      for (const coord of group.coords) {
-        const chunkCoord = ChunkIdFactory.toCoord(coord.chunkId);
-        const key = chunkKeyForSource(source, chunkCoord);
-        const chunk = source.chunks.get(key) as VolumeChunk | undefined;
-        if (chunk !== undefined) {
-          source.chunkManager.markChunkPermanent(source, key, true);
-          this.currentPinnedChunks.push({ source, key, chunk });
-        }
-        // Missing-from-cache chunks are not a pin failure: pinChunks only
-        // records intent. The library will call readBaselineChunk later,
-        // which triggers loading via the normal chunk pipeline.
-      }
     }
     // Stash the session id once any coord-bearing call comes in; releasePins
     // uses it to assert the lifecycle.
     if (coords.length > 0 && this.currentSessionId === undefined) {
       this.currentSessionId = sessionIdFromCoord(coords[0]);
     }
+
+    // Kick off the background preload of every bbox chunk and resolve
+    // immediately so the session goes ACTIVE and painting is allowed right
+    // away. Reads that race the preload await their own fetch as before; the
+    // preload simply warms (and pins) the chunk manager so later strokes don't
+    // stall on a cold fetch.
+    const abort = new AbortController();
+    this.preloadAbort = abort;
+    if (signal !== undefined) {
+      if (signal.aborted) {
+        abort.abort(signal.reason);
+      } else {
+        signal.addEventListener("abort", () => abort.abort(signal.reason), {
+          once: true,
+        });
+      }
+    }
+    const preloader = new SessionChunkPreloader((layerId, resolution) =>
+      this.resolveVolumeChunkSource(layerId, resolution),
+    );
+    this.preloader = preloader;
+    this.preloadProgressUnsub = preloader.progress.changed.add(() => {
+      this.chunkLoadProgress.value = preloader.progress.value;
+    });
+    // Intentionally not awaited: the library awaits pinChunks before ACTIVE.
+    void preloader.start(coords, abort.signal);
   }
 
   releasePins(sessionId: SessionId): void {
@@ -136,8 +140,19 @@ export class NgChunkSource implements LibraryChunkSource {
       // guarantees one session at a time; nothing to do.
       return;
     }
-    this.releaseTrackedPins();
+    this.teardownPreload();
     this.currentSessionId = undefined;
+  }
+
+  /** Abort the in-flight preload, release its pins, and reset progress. */
+  private teardownPreload(): void {
+    this.preloadAbort?.abort();
+    this.preloadAbort = undefined;
+    this.preloadProgressUnsub?.();
+    this.preloadProgressUnsub = undefined;
+    this.preloader?.release();
+    this.preloader = undefined;
+    this.chunkLoadProgress.value = { kind: "idle" };
   }
 
   async readBaselineChunk(
@@ -212,13 +227,6 @@ export class NgChunkSource implements LibraryChunkSource {
     return wrapAsReadonlyBuffer(data);
   }
 
-  private releaseTrackedPins(): void {
-    for (const { source, key } of this.currentPinnedChunks) {
-      source.chunkManager.markChunkPermanent(source, key, false);
-    }
-    this.currentPinnedChunks.length = 0;
-  }
-
   private resolveVolumeChunkSource(
     layerId: LayerId,
     resolution: Resolution,
@@ -250,54 +258,6 @@ export class NgChunkSource implements LibraryChunkSource {
     }
     throw new Error(`no-matching-scale:${layerId}@${resolution}`);
   }
-}
-
-interface CoordGroup {
-  readonly layerId: LayerId;
-  readonly resolution: Resolution;
-  readonly coords: OverlayCoord[];
-}
-
-function groupByLayerAndResolution(
-  coords: readonly OverlayCoord[],
-): CoordGroup[] {
-  const groups = new Map<string, CoordGroup>();
-  for (const coord of coords) {
-    const key = `${coord.layerId}|${coord.resolution}`;
-    let group = groups.get(key);
-    if (group === undefined) {
-      group = {
-        layerId: coord.layerId,
-        resolution: coord.resolution,
-        coords: [],
-      };
-      groups.set(key, group);
-    }
-    (group.coords as OverlayCoord[]).push(coord);
-  }
-  return Array.from(groups.values());
-}
-
-function chunkKeyForSource(
-  source: VolumeChunkSource,
-  chunkCoord: ChunkCoord,
-): string {
-  const grid = makeChunkGridPosition(source, chunkCoord);
-  return grid.join();
-}
-
-function makeChunkGridPosition(
-  source: VolumeChunkSource,
-  chunkCoord: ChunkCoord,
-): Float32Array {
-  const rank = source.spec.rank;
-  const grid = new Float32Array(rank);
-  grid[0] = chunkCoord.x;
-  if (rank > 1) grid[1] = chunkCoord.y;
-  if (rank > 2) grid[2] = chunkCoord.z;
-  // Any extra dimensions (e.g. channel) stay at 0; the library's ChunkCoord
-  // is 3D and assumes per-channel chunks are not addressed separately.
-  return grid;
 }
 
 interface VolumetricFound {
