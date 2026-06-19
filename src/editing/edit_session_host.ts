@@ -69,6 +69,7 @@ import {
   saveBackendRegistryChanged,
 } from "#src/editing/adapters/save_backend.js";
 import { PostMessageSaveBackend } from "#src/editing/adapters/save_backends/post_message_save_backend.js";
+import type { ChunkLoadProgressState } from "#src/editing/adapters/session_chunk_preloader.js";
 import {
   BRUSH_SIZE_PRESETS,
   nearestPresetSize,
@@ -123,6 +124,7 @@ import { layerKindOf } from "#src/editing/ui/layer_kind.js";
 import type { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import { SegmentationRenderLayer } from "#src/sliceview/volume/segmentation_renderlayer.js";
 import { StatusMessage } from "#src/status.js";
+import type { WatchableValueInterface } from "#src/trackable_value.js";
 import { WatchableValue } from "#src/trackable_value.js";
 import {
   DEFAULT_SIDE_PANEL_LOCATION,
@@ -542,6 +544,15 @@ export class EditSessionHost extends RefCounted {
   readonly saveBackendAvailable = new WatchableValue<boolean>(
     hasAnySaveBackend(),
   );
+
+  /**
+   * Background preload progress for the active session's bbox chunks (TM-316),
+   * surfaced to the topbar's `ChunkLoadProgress` indicator. Forwards the chunk
+   * adapter's stable watchable; resets to `idle` between sessions.
+   */
+  get chunkLoadProgress(): WatchableValueInterface<ChunkLoadProgressState> {
+    return this.chunkSource.chunkLoadProgress;
+  }
 
   /**
    * The NG-provided postMessage save backend, exposed so the embedding host
