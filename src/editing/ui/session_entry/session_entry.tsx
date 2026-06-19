@@ -32,6 +32,7 @@ import type {
   EditSessionHost,
   HostSessionConfig,
 } from "#src/editing/edit_session_host.js";
+import { validateRememberedResolutions } from "#src/editing/tooling/edit_preferences.js";
 import { useModalDialog } from "#src/editing/ui/interop/use_modal_dialog.js";
 import { useSignal } from "#src/editing/ui/interop/use_signal.js";
 import type { BlockedScheme, LayerKind } from "#src/editing/ui/layer_kind.js";
@@ -291,6 +292,17 @@ function SessionEntryModalBody(props: {
             return;
           }
           const model = new ResolutionSelectionModel(metadata);
+          // Autofill from the last-used selection for this layer (TM-336),
+          // re-validated against the freshly-computed resolutions. Stale
+          // entries are dropped; if nothing survives, keep the model's default
+          // (highest resolution). Applied before the `selectionChanged`
+          // subscription and the `loaded` state write below, so the initial
+          // `model.selectedResolutions` snapshot reflects the autofill.
+          const autofill = validateRememberedResolutions(
+            host.editPreferences.value.value?.resolutions?.[layerId],
+            resolutions,
+          );
+          if (autofill !== undefined) model.setSelection(autofill);
           resolutionModelsRef.current.set(name, model);
           model.selectionChanged.add(() => {
             setLayerStates((prev) => {

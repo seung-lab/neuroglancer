@@ -301,6 +301,7 @@ class TrackableViewerState extends CompoundTrackable {
     this.add("toolBindings", viewer.toolBinder);
     this.add("toolPalettes", viewer.toolPalettes);
     this.add("editSession", viewer.editSessionHost.state);
+    this.add("editPreferences", viewer.editSessionHost.editPreferences);
   }
 
   restoreState(obj: any) {
