@@ -176,9 +176,24 @@
 }
 
 .neuroglancer-editing-topbar-save-button.saving {
+  /* Warning tint signals "work in progress"; the spinner carries the loading
+     state and the button stays clickable to cancel the in-flight save. */
+  gap: var(--nge-space-1);
   background: var(--nge-warning-bg);
   border-color: var(--nge-warning-border);
   color: var(--nge-warning-fg);
+}
+
+.neuroglancer-editing-topbar-spinner {
+  display: block;
+  flex: none;
+  animation: nge-topbar-spin 0.7s linear infinite;
+}
+
+@keyframes nge-topbar-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .neuroglancer-editing-topbar-badge {
@@ -260,5 +275,11 @@
   .neuroglancer-editing-topbar-save-button,
   .neuroglancer-editing-topbar-edit-button {
     transition: none;
+  }
+
+  /* The static loader glyph plus the "Saving…" label still convey the
+     in-progress state without the rotation. */
+  .neuroglancer-editing-topbar-spinner {
+    animation: none;
   }
 }

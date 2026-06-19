@@ -15,6 +15,7 @@ import type { EditSession } from "@zettaai/edit-session";
 import type { LucideIcon } from "lucide-preact";
 import {
   Eraser,
+  Loader2,
   LocateFixed,
   MousePointer2,
   PaintBucket,
@@ -304,9 +305,15 @@ function ActiveTopbarControls({
             type="button"
             class="neuroglancer-editing-topbar-save-button saving"
             onClick={cancelSave}
-            data-tooltip="Cancel in-flight save"
+            data-tooltip="Saving changes… click to cancel"
+            aria-label="Saving changes — click to cancel"
           >
-            Cancel
+            <Loader2
+              size={14}
+              class="neuroglancer-editing-topbar-spinner"
+              aria-hidden="true"
+            />
+            Saving&hellip;
           </button>
         ) : (
           <button
