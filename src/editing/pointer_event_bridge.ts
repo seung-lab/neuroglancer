@@ -18,7 +18,6 @@ import {
   slicePixelToGlobalPosition,
   slicePixelToTargetVoxel,
 } from "#src/editing/raster/slice_pixel_to_voxel.js";
-import { isLiveEditConflictError } from "#src/editing/tooling/edit_scope.js";
 import { paintProfiler } from "#src/editing/tool_runtimes/paint_profiler.js";
 import { paintScheduler } from "#src/editing/tool_runtimes/paint_scheduler_config.js";
 import type {
@@ -29,6 +28,7 @@ import type {
   ToolInputEvent,
 } from "#src/editing/tool_runtimes/tool_input.js";
 import { NO_MODIFIERS } from "#src/editing/tool_runtimes/tool_input.js";
+import { isLiveEditConflictError } from "#src/editing/tooling/edit_scope.js";
 import { RenderedDataPanel } from "#src/rendered_data_panel.js";
 import { SliceViewPanel } from "#src/sliceview/panel.js";
 import { RefCounted } from "#src/util/disposable.js";
