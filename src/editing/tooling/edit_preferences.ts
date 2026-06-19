@@ -44,7 +44,9 @@ export interface EditPreferences {
    * `availableResolutions` at modal open; stale entries are dropped and an
    * empty result falls back to the modal default.
    */
-  readonly resolutions?: { readonly [layerId: string]: readonly ResolutionType[] };
+  readonly resolutions?: {
+    readonly [layerId: string]: readonly ResolutionType[];
+  };
   /**
    * Cross-session tool state: painting family config + active tool id +
    * per-user keybind overrides. Same shape as `editSession.tooling`, but
