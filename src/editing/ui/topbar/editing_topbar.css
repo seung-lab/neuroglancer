@@ -176,9 +176,71 @@
 }
 
 .neuroglancer-editing-topbar-save-button.saving {
+  /* Warning tint signals "work in progress"; the spinner carries the loading
+     state and the button stays clickable to cancel the in-flight save. */
+  gap: var(--nge-space-1);
   background: var(--nge-warning-bg);
   border-color: var(--nge-warning-border);
   color: var(--nge-warning-fg);
+}
+
+.neuroglancer-editing-topbar-spinner {
+  display: block;
+  flex: none;
+  animation: nge-topbar-spin 0.7s linear infinite;
+}
+
+@keyframes nge-topbar-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Background bbox-chunk preload indicator (TM-316). Sits next to Save while a
+   session's region is loading; carries an accent (loading), success, or
+   warning treatment. */
+.neuroglancer-editing-topbar-chunkload {
+  gap: var(--nge-space-1);
+  padding: 0 var(--nge-space-2);
+  height: 24px;
+  border-radius: var(--nge-radius-md);
+  background: var(--nge-accent-tint);
+  color: var(--nge-accent-fg-soft);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.neuroglancer-editing-topbar-chunkload.success {
+  background: transparent;
+  color: var(--nge-success);
+}
+
+.neuroglancer-editing-topbar-chunkload.warning {
+  background: var(--nge-warning-bg);
+  color: var(--nge-warning-fg);
+  cursor: default;
+}
+
+.neuroglancer-editing-topbar-chunkload-label {
+  font-variant-numeric: tabular-nums;
+}
+
+.neuroglancer-editing-topbar-chunkload-bar {
+  display: inline-block;
+  width: 56px;
+  height: 4px;
+  border-radius: var(--nge-radius-pill);
+  background: var(--nge-control-bg);
+  overflow: hidden;
+}
+
+.neuroglancer-editing-topbar-chunkload-fill {
+  display: block;
+  height: 100%;
+  background: var(--nge-accent);
+  border-radius: inherit;
+  transition: width var(--nge-transition);
 }
 
 .neuroglancer-editing-topbar-badge {
@@ -260,5 +322,11 @@
   .neuroglancer-editing-topbar-save-button,
   .neuroglancer-editing-topbar-edit-button {
     transition: none;
+  }
+
+  /* The static loader glyph plus the "Saving…" label still convey the
+     in-progress state without the rotation. */
+  .neuroglancer-editing-topbar-spinner {
+    animation: none;
   }
 }

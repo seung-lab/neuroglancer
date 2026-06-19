@@ -15,6 +15,7 @@ import type { EditSession } from "@zettaai/edit-session";
 import type { LucideIcon } from "lucide-preact";
 import {
   Eraser,
+  Loader2,
   LocateFixed,
   MousePointer2,
   PaintBucket,
@@ -43,6 +44,7 @@ import {
 import { useSignal } from "#src/editing/ui/interop/use_signal.js";
 import { useWatchable } from "#src/editing/ui/interop/use_watchable.js";
 import { SaveTracker } from "#src/editing/ui/session_controls/save_tracker.js";
+import { ChunkLoadProgress } from "#src/editing/ui/topbar/chunk_load_progress.js";
 import { TopbarEditButton } from "#src/editing/ui/topbar/topbar_edit_button.js";
 import { StatusMessage } from "#src/status.js";
 
@@ -304,9 +306,15 @@ function ActiveTopbarControls({
             type="button"
             class="neuroglancer-editing-topbar-save-button saving"
             onClick={cancelSave}
-            data-tooltip="Cancel in-flight save"
+            data-tooltip="Saving changes… click to cancel"
+            aria-label="Saving changes — click to cancel"
           >
-            Cancel
+            <Loader2
+              size={14}
+              class="neuroglancer-editing-topbar-spinner"
+              aria-hidden="true"
+            />
+            Saving&hellip;
           </button>
         ) : (
           <button
@@ -329,6 +337,8 @@ function ActiveTopbarControls({
           </button>
         )}
       </div>
+
+      <ChunkLoadProgress host={host} />
 
       <div class="neuroglancer-editing-topbar-divider" />
 

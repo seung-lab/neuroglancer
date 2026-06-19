@@ -69,6 +69,7 @@ import {
   saveBackendRegistryChanged,
 } from "#src/editing/adapters/save_backend.js";
 import { PostMessageSaveBackend } from "#src/editing/adapters/save_backends/post_message_save_backend.js";
+import type { ChunkLoadProgressState } from "#src/editing/adapters/session_chunk_preloader.js";
 import {
   BRUSH_SIZE_PRESETS,
   nearestPresetSize,
@@ -108,6 +109,7 @@ import {
   type ReadChunkAt,
 } from "#src/editing/tool_runtimes/painting_tools.js";
 import { DEFAULT_SPACING_FRACTION } from "#src/editing/tool_runtimes/stroke_geometry.js";
+import { TrackableEditPreferences } from "#src/editing/tooling/edit_preferences.js";
 import { EditScope } from "#src/editing/tooling/edit_scope.js";
 import type { EditToolContext } from "#src/editing/tooling/edit_tool.js";
 import { SessionToolBinder } from "#src/editing/tooling/session_tool_binder.js";
@@ -123,6 +125,7 @@ import { layerKindOf } from "#src/editing/ui/layer_kind.js";
 import type { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import { SegmentationRenderLayer } from "#src/sliceview/volume/segmentation_renderlayer.js";
 import { StatusMessage } from "#src/status.js";
+import type { WatchableValueInterface } from "#src/trackable_value.js";
 import { WatchableValue } from "#src/trackable_value.js";
 import {
   DEFAULT_SIDE_PANEL_LOCATION,
@@ -455,6 +458,13 @@ export class EditSessionHost extends RefCounted {
   /** Disposers for the per-session tooling-persistence subscriptions (TM-315). */
   private toolingSubscriptions: (() => void)[] = [];
   readonly state = new TrackableEditSessionIntent();
+  /**
+   * Cross-session edit preferences (TM-336): last-used resolution selection +
+   * tool state, persisted independently of `state` so they survive an
+   * open → close → open flow. Seeds the entry modal + fresh sessions; never
+   * trusted as ground truth (always re-validated against fresh metadata).
+   */
+  readonly editPreferences = new TrackableEditPreferences();
 
   /**
    * Fired to request that the Enter-Edit-Session modal open. Dispatched by the
@@ -472,12 +482,20 @@ export class EditSessionHost extends RefCounted {
   /**
    * Per-tool side-panel locations (TM-294 rework). Each tool owns an
    * independent `TrackableSidePanelLocation`; the host's `selectTool()`
-   * invariant guarantees at most one is `visible` at any time. Cursor has
-   * no panel — selecting it forces all five `visible=false`.
+   * invariant guarantees at most one is `visible` at any time.
+   *
+   * The navigation (cursor) tool now has its own panel too (TM-338): a
+   * read-only session summary. Selecting cursor / pressing Escape shows it
+   * instead of collapsing the left column, so the field of view no longer
+   * jumps when switching between a paint tool and navigation.
    *
    * All default to `side: "left"` and the same row/col so they visually
    * replace each other in the same slot.
    */
+  readonly navPanelLocation = new TrackableSidePanelLocation({
+    ...DEFAULT_SIDE_PANEL_LOCATION,
+    side: "left",
+  });
   readonly brushPanelLocation = new TrackableSidePanelLocation({
     ...DEFAULT_SIDE_PANEL_LOCATION,
     side: "left",
@@ -501,6 +519,16 @@ export class EditSessionHost extends RefCounted {
 
   // -- Save cancellation ----------------------------------------------------
   private saveAbortController: AbortController | undefined;
+
+  /**
+   * Reactive flag: whether a save started by `saveActive()` is currently in
+   * flight. The topbar's Save button drives its loading state from this, and
+   * the Exit-session button disables itself while it is `true` so a save can't
+   * be interrupted by leaving the session. Set `true` for the duration of
+   * `saveActive()` and reset in its `finally` (covers success, failure, and
+   * cancellation alike).
+   */
+  readonly saveInProgress = new WatchableValue<boolean>(false);
 
   // -- Adapters (constructed once, reused across sessions) ------------------
   readonly logger: NgLogger;
@@ -532,6 +560,15 @@ export class EditSessionHost extends RefCounted {
   readonly saveBackendAvailable = new WatchableValue<boolean>(
     hasAnySaveBackend(),
   );
+
+  /**
+   * Background preload progress for the active session's bbox chunks (TM-316),
+   * surfaced to the topbar's `ChunkLoadProgress` indicator. Forwards the chunk
+   * adapter's stable watchable; resets to `idle` between sessions.
+   */
+  get chunkLoadProgress(): WatchableValueInterface<ChunkLoadProgressState> {
+    return this.chunkSource.chunkLoadProgress;
+  }
 
   /**
    * The NG-provided postMessage save backend, exposed so the embedding host
@@ -815,6 +852,10 @@ export class EditSessionHost extends RefCounted {
       // (e.g. a restore raced an in-progress capture). No-op if idle.
       this.quickRegionCapture?.cancel();
       this.writeIntentToState(config);
+      // Memoize the resolution selection (TM-336) so the next entry modal can
+      // autofill it. Written from the config — i.e. the modal output, which is
+      // the source of truth for the open — not from any prior preference.
+      this.rememberResolutions(config);
       // Construct the consumer-owned painting tools (TM-315) before the input
       // bridge — the bridge dispatches pointer input to them.
       await this.instantiatePaintingTools(session, config);
@@ -828,10 +869,21 @@ export class EditSessionHost extends RefCounted {
       // wired: patches the family config + re-selects the active tool. Patches
       // are validated against the session layers (stale bindings dropped).
       this.applyRestoredTooling(restoreTooling);
+      // When no tool was restored, land on navigation: `selectTool(undefined)`
+      // shows the read-only session-summary panel so the left column is
+      // occupied from the first frame (TM-338).
+      if (this.activeToolId.value === undefined) {
+        this.selectTool(undefined);
+      }
       // Bring the user to the freshly opened session's region; entering a
       // session whose bbox is elsewhere in the volume would otherwise leave
       // them staring at unrelated (now hard-clipped) data.
       this.teleportToActiveRegionCenter();
+      // Make a writable target the selected layer (TM-334). Otherwise, if an
+      // annotation layer stays selected, its `Ctrl`-based bindings (notably
+      // `annotate`, which targets `viewer.selectedLayer.layer`) collide with
+      // the session's `Ctrl` painting hotkeys and the session "bugs out".
+      this.selectSessionTargetLayer(config);
     } catch (err) {
       // If post-open wiring throws, attempt to terminate the session and
       // surface the error.
@@ -846,6 +898,23 @@ export class EditSessionHost extends RefCounted {
       throw err;
     }
     return session;
+  }
+
+  /**
+   * Switch the UI's selected layer to one of the session's writable targets
+   * (TM-334). The `annotate` action (`Ctrl+click`) dispatches to
+   * `viewer.selectedLayer.layer`'s tool, so leaving an annotation layer
+   * selected when a session opens makes its `Ctrl` bindings collide with the
+   * session's `Ctrl` painting hotkeys. Picking a writable target keeps the
+   * selected layer aligned with what is being edited. No-op when the config
+   * has no writable layer or it can't be resolved to a managed layer.
+   */
+  private selectSessionTargetLayer(config: HostSessionConfig): void {
+    const target = config.layers.find((l) => l.writable);
+    if (target === undefined) return;
+    const managed = this.viewer.layerManager.getLayerByName(target.layerId);
+    if (managed === undefined) return;
+    this.viewer.selectedLayer.layer = managed;
   }
 
   /**
@@ -879,8 +948,14 @@ export class EditSessionHost extends RefCounted {
     // tool's activation (disposing the previous one rolls back any in-flight
     // stroke) and writes the stable `activeToolId` watchable.
     this.toolBinder?.select(toolId);
+    // The navigation (cursor) tool has no real tool id — it maps to
+    // `undefined`. Its panel is the default shown whenever no paint/edit tool
+    // panel is active, so the left column stays occupied and the field of view
+    // doesn't jump on tool switches (TM-338).
     const target =
-      toolId !== undefined ? this.toolPanelLocationFor(toolId) : undefined;
+      toolId !== undefined
+        ? this.toolPanelLocationFor(toolId)
+        : this.navPanelLocation;
     for (const loc of this.allToolPanelLocations()) {
       loc.visible = loc === target;
     }
@@ -1043,6 +1118,7 @@ export class EditSessionHost extends RefCounted {
 
   private allToolPanelLocations(): TrackableSidePanelLocation[] {
     return [
+      this.navPanelLocation,
       this.brushPanelLocation,
       this.eraserPanelLocation,
       this.fillPanelLocation,
@@ -1170,6 +1246,7 @@ export class EditSessionHost extends RefCounted {
     }
     const controller = new AbortController();
     this.saveAbortController = controller;
+    this.saveInProgress.value = true;
     const onExternalAbort = () => controller.abort();
     if (signal !== undefined) {
       if (signal.aborted) controller.abort();
@@ -1183,6 +1260,7 @@ export class EditSessionHost extends RefCounted {
       }
       if (this.saveAbortController === controller) {
         this.saveAbortController = undefined;
+        this.saveInProgress.value = false;
       }
     }
   }
@@ -1770,25 +1848,42 @@ export class EditSessionHost extends RefCounted {
 
   /** Rebuild the persisted tooling block from the live tool state (TM-315). */
   private persistTooling(): void {
-    const intent = this.state.value.value;
     const painting = this.paintingTools?.state.getState();
-    if (intent === null || painting === undefined) return;
+    if (painting === undefined) return;
     const tooling = serializeTooling(
       this.activeToolId.value,
       painting,
       this.editKeybindOverrides.value,
     );
-    this.state.value.value = { ...intent, tooling };
+    const intent = this.state.value.value;
+    if (intent !== null) {
+      this.state.value.value = { ...intent, tooling };
+    }
+    // Mirror into the cross-session preferences (TM-336) so the tool setup
+    // survives session teardown and seeds the next fresh open.
+    const prefs = this.editPreferences.value.value ?? {};
+    this.editPreferences.value.value = { ...prefs, tooling };
   }
 
   /**
    * Apply persisted tool state after a session reopens (TM-315): patch the
    * painting family config (validated against the session layers; stale
    * bindings dropped) and re-select the active tool.
+   *
+   * `restoreTooling` is the per-session block from `editSession.tooling`,
+   * present only when reloading an already-open session — it wins when set. For
+   * a fresh open → close → open it is `undefined`, and we fall back to the
+   * cross-session `editPreferences.tooling` (TM-336) to seed brush / tool /
+   * keybind defaults. Either way the painting patch is re-validated against the
+   * session layers, so a stale binding is dropped back to the hardcoded
+   * defaults.
    */
-  private applyRestoredTooling(tooling: ToolingPersistState | undefined): void {
+  private applyRestoredTooling(
+    restoreTooling: ToolingPersistState | undefined,
+  ): void {
     const session = this.activeSession.value;
     if (session === undefined) return;
+    const tooling = restoreTooling ?? this.editPreferences.value.value?.tooling;
     // Restore per-user keybind overrides (or clear any left over from a prior
     // session). Done before the early-return so a fresh session always starts
     // from the configured defaults. The binder watches this and rebuilds.
@@ -2395,6 +2490,22 @@ export class EditSessionHost extends RefCounted {
       },
     };
     this.state.value.value = intent;
+  }
+
+  /**
+   * Persist the session's per-layer resolution selection into the cross-session
+   * `editPreferences` block (TM-336), keyed by `layerId`. The entry modal reads
+   * this to autofill the resolution picker on the next open; the value is
+   * re-validated against fresh metadata there, so a now-stale resolution is
+   * silently dropped.
+   */
+  private rememberResolutions(config: HostSessionConfig): void {
+    const resolutions: { [layerId: string]: readonly ResolutionType[] } = {};
+    for (const l of config.layers) {
+      resolutions[l.layerId] = [...l.resolutions];
+    }
+    const prev = this.editPreferences.value.value ?? {};
+    this.editPreferences.value.value = { ...prev, resolutions };
   }
 
   private handleOpenFailure(err: unknown): void {

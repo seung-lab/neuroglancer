@@ -45,6 +45,7 @@ import {
   makeCorrespondencePanel,
   makeEraserPanel,
   makeFillPanel,
+  makeNavigationPanel,
   makeZExtrapPanel,
 } from "#src/editing/ui/interop/tool_panel_mounts.js";
 import { EditingTopbar } from "#src/editing/ui/topbar/editing_topbar.js";
@@ -301,6 +302,7 @@ class TrackableViewerState extends CompoundTrackable {
     this.add("toolBindings", viewer.toolBinder);
     this.add("toolPalettes", viewer.toolPalettes);
     this.add("editSession", viewer.editSessionHost.state);
+    this.add("editPreferences", viewer.editSessionHost.editPreferences);
   }
 
   restoreState(obj: any) {
@@ -1102,6 +1104,15 @@ export class Viewer extends RefCounted implements ViewerState {
 
     // Per-tool side panels (TM-294 rework). One PanelMount per tool — the
     // host's `selectTool()` invariant keeps at most one visible at a time.
+    // The navigation panel (TM-338) is the default shown when no paint/edit
+    // tool is active, keeping the left column from collapsing on tool switch.
+    this.registerDisposer(
+      this.sidePanelManager.registerPanel({
+        location: this.editSessionHost.navPanelLocation,
+        makePanel: () =>
+          makeNavigationPanel(this.sidePanelManager, this.editSessionHost),
+      }),
+    );
     this.registerDisposer(
       this.sidePanelManager.registerPanel({
         location: this.editSessionHost.brushPanelLocation,
