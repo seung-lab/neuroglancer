@@ -43,6 +43,7 @@ import type {
 import { LayerRow } from "#src/editing/ui/session_entry/layer_row.js";
 import {
   estimateLockedMemory,
+  formatBytes,
   MemoryMeter,
 } from "#src/editing/ui/session_entry/memory_estimate.js";
 import { ResolutionSelectionModel } from "#src/editing/ui/session_entry/resolution_options.js";
@@ -578,9 +579,20 @@ function SessionEntryModalBody(props: {
               </div>
             </div>
             <MemoryMeter
-              estimate={memoryEstimate}
-              limits={limits}
-              lockedLayerCount={lockedLayerCount}
+              usedBytes={memoryEstimate.totalBytes}
+              gpuLimit={limits.gpu}
+              summary={
+                lockedLayerCount === 0
+                  ? "Estimated memory · no locked layers"
+                  : `Estimated memory · ${lockedLayerCount} locked layer${
+                      lockedLayerCount === 1 ? "" : "s"
+                    }`
+              }
+              detail={
+                `${formatBytes(memoryEstimate.totalBytes)} · ` +
+                `GPU budget ${formatBytes(limits.gpu)} · ` +
+                `system ${formatBytes(limits.system)}`
+              }
             />
             {layerEntries.length > 0 && (
               <SessionSummary
