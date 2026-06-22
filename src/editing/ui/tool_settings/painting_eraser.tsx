@@ -21,6 +21,14 @@ import {
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { useEvent } from "#src/editing/ui/interop/use_event.js";
 import { PaintingTargetPicker } from "#src/editing/ui/tool_settings/painting_target_picker.js";
+import {
+  PARAM_IDS,
+  rowClass,
+  sizeDescriptor,
+  useParamSelection,
+  usePublishParams,
+  useTargetParamDescriptors,
+} from "#src/editing/ui/tool_settings/param_descriptors.js";
 import { ParamInput } from "#src/editing/ui/tool_settings/param_input.js";
 import { ParamLabel } from "#src/editing/ui/tool_settings/param_label.js";
 
@@ -60,10 +68,20 @@ export function PaintingEraser({
 
   const size = radiusToSize(state.radius);
 
+  const selectedId = useParamSelection(host);
+  const targetDescriptors = useTargetParamDescriptors(host);
+  usePublishParams(host, [...targetDescriptors, sizeDescriptor(painting)]);
+
   return (
     <div class="neuroglancer-tool-panel neuroglancer-painting-eraser-panel">
       <PaintingTargetPicker host={host} />
-      <div class="neuroglancer-tool-panel-row">
+      <div
+        class={rowClass(
+          "neuroglancer-tool-panel-row",
+          PARAM_IDS.size,
+          selectedId,
+        )}
+      >
         <ParamLabel
           text="Size"
           hint="Eraser diameter in voxels at the target resolution. Larger sizes clear a wider stroke."

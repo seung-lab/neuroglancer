@@ -63,6 +63,26 @@
   color: var(--nge-text-muted);
 }
 
+/* The parameter currently targeted by the Ctrl+Arrow keyboard cursor (TM-337).
+   The row carries the `--selected` marker, but the accent outline hugs only the
+   actual value control(s) inside it — the select / text / number input(s) or
+   the toggle — not the full-width row (which also spans the label). Outline does
+   not participate in the box model, so nothing shifts. The size slider
+   (`input[type="range"]`) and threshold rail handles are intentionally left out;
+   their editable number box is outlined instead. The threshold row carries the
+   same marker, so both its low/high number inputs are outlined. */
+.neuroglancer-tool-panel-row--selected
+  :is(
+    select,
+    input[type="text"],
+    input[type="number"],
+    .neuroglancer-toggle-switch
+  ),
+.neuroglancer-param-selected {
+  outline: 2px solid var(--nge-accent);
+  outline-offset: 2px;
+}
+
 /* --- Text / number / select controls ----------------------------------- */
 
 .neuroglancer-tool-panel-row select,

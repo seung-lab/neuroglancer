@@ -48,6 +48,7 @@ import type {
   PaintCompute,
   PaintingMaskConfig,
 } from "#src/editing/tool_runtimes/paint_types.js";
+import { PaintParamCursor } from "#src/editing/tool_runtimes/param_cursor.js";
 import { StrokeGeometry } from "#src/editing/tool_runtimes/stroke_geometry.js";
 import type {
   InputHandling,
@@ -804,6 +805,13 @@ export class FillTool implements EditTool {
  */
 export class ConsumerPaintingTools {
   readonly state: PaintingState;
+  /**
+   * Keyboard parameter cursor for the Ctrl+Arrow scheme (TM-337). The active
+   * paint tool's settings panel publishes its enabled parameters here in render
+   * order; the session hotkey binder selects + nudges them. Session-lifetime,
+   * like {@link state}.
+   */
+  readonly paramCursor = new PaintParamCursor();
   readonly brush: StrokeTool;
   readonly erase: StrokeTool;
   readonly fill: FillTool;

@@ -38,19 +38,27 @@ export function TargetValueField({
   voxelDataType,
   label = "Target value",
   hint,
+  highlighted = false,
 }: {
   value: number | bigint;
   onCommit: (value: number | bigint) => void;
   voxelDataType?: VoxelDataType;
   label?: string;
   hint: string;
+  /** Outline the row when it is the keyboard-selected parameter (TM-337). */
+  highlighted?: boolean;
 }) {
   const [invalid, setInvalid] = useState(false);
   const rule = useMemo(() => valueRule(voxelDataType), [voxelDataType]);
 
   return (
     <div class="neuroglancer-tool-panel-field">
-      <div class="neuroglancer-tool-panel-row">
+      <div
+        class={
+          "neuroglancer-tool-panel-row" +
+          (highlighted ? " neuroglancer-tool-panel-row--selected" : "")
+        }
+      >
         <ParamLabel text={label} hint={hint} />
         <ParamInput<number | bigint>
           type="text"

@@ -14,6 +14,13 @@ import { useCallback } from "preact/hooks";
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { useEvent } from "#src/editing/ui/interop/use_event.js";
 import { PaintingTargetPicker } from "#src/editing/ui/tool_settings/painting_target_picker.js";
+import {
+  PARAM_IDS,
+  useParamSelection,
+  usePublishParams,
+  useTargetParamDescriptors,
+  valueDescriptor,
+} from "#src/editing/ui/tool_settings/param_descriptors.js";
 import { TargetValueField } from "#src/editing/ui/tool_settings/target_value_field.js";
 import { useLayerVoxelType } from "#src/editing/ui/tool_settings/use_layer_voxel_type.js";
 
@@ -41,6 +48,13 @@ export function PaintingFill({
   const state = painting.getState();
   const targetVoxelType = useLayerVoxelType(host, state.targetLayerId);
 
+  const selectedId = useParamSelection(host);
+  const targetDescriptors = useTargetParamDescriptors(host);
+  usePublishParams(host, [
+    ...targetDescriptors,
+    valueDescriptor(painting, targetVoxelType),
+  ]);
+
   return (
     <div class="neuroglancer-tool-panel neuroglancer-painting-fill-panel">
       <PaintingTargetPicker host={host} />
@@ -49,6 +63,7 @@ export function PaintingFill({
         voxelDataType={targetVoxelType}
         onCommit={(activeValue) => painting.patchState({ activeValue })}
         hint="The segment ID written into the filled region — every voxel the fill reaches is set to this value."
+        highlighted={selectedId === PARAM_IDS.value}
       />
     </div>
   );
