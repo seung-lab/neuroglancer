@@ -30,6 +30,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import type { PaintPipelineRequest } from "#src/editing/tool_runtimes/paint_pipeline_request.js";
 import { runPaintPipelineTS } from "#src/editing/tool_runtimes/paint_pipeline_ts.js";
+import { DEFAULT_COVERAGE_THRESHOLD } from "#src/editing/tool_runtimes/paint_types.js";
 import PYTHON_SRC from "#src/editing/tool_runtimes/python_painter.py?raw";
 
 // Self-hosted pyodide runtime (core + numpy/scipy/openblas wheels), as served
@@ -90,6 +91,7 @@ interface ReqOpts {
   binaryClosing?: number;
   minComponentSize?: number;
   filterComponentsFirst?: boolean;
+  coverageThreshold?: number;
 }
 
 /** Build a self-consistent request + its native image slab from `imageValueAt`. */
@@ -100,11 +102,13 @@ function makeRequest(o: ReqOpts): PaintPipelineRequest {
   const tSy = o.tSy ?? 29;
   const sxRatio = o.sxRatio ?? 1;
   const syRatio = o.syRatio ?? 1;
-  // Image-voxel region the footprint projects to (matches the main thread).
+  // Image-voxel region the footprint projects to (matches the main thread's
+  // block-aware slab sizing, TM-339): first voxel's block-lo to last voxel's
+  // block-hi, where a target voxel covers `[floor(v·r), ceil((v+1)·r) - 1]`.
   const loImageX = Math.floor(loTx * sxRatio);
   const loImageY = Math.floor(loTy * syRatio);
-  const maxIx = Math.floor((loTx + tSx - 1) * sxRatio);
-  const maxIy = Math.floor((loTy + tSy - 1) * syRatio);
+  const maxIx = Math.ceil((loTx + tSx) * sxRatio) - 1;
+  const maxIy = Math.ceil((loTy + tSy) * syRatio) - 1;
   const iSx = maxIx - loImageX + 1;
   const iSy = maxIy - loImageY + 1;
   const image = new Uint8Array(iSx * iSy);
@@ -138,6 +142,9 @@ function makeRequest(o: ReqOpts): PaintPipelineRequest {
     binaryClosing: o.binaryClosing ?? 0,
     minComponentSize: o.minComponentSize ?? 1,
     filterComponentsFirst: o.filterComponentsFirst ?? false,
+    ...(o.coverageThreshold !== undefined
+      ? { coverageThreshold: o.coverageThreshold }
+      : {}),
   };
 }
 
@@ -160,6 +167,7 @@ function runPython(req: PaintPipelineRequest): Uint8Array {
       req.syRatio,
       req.thresholdLow,
       req.thresholdHigh,
+      req.coverageThreshold ?? DEFAULT_COVERAGE_THRESHOLD,
       req.pathPoints,
       req.radius,
       req.binaryClosing,
@@ -231,6 +239,14 @@ CASES.push({
   name: "threshold edge band [90,150] tightened to [120,120]",
   opts: { thresholdLow: 120, thresholdHigh: 120, radius: 14 },
 });
+// Coverage aggregation at ratio 2 (TM-339): every coverage fraction must match
+// the TS twin bit-for-bit, including all-in-range (1) and any-in-range (≈0).
+for (const coverageThreshold of [0.01, 0.25, 0.5, 0.75, 1]) {
+  CASES.push({
+    name: `coverage ${coverageThreshold} @ sxRatio 2`,
+    opts: { sxRatio: 2, syRatio: 2, radius: 14, coverageThreshold },
+  });
+}
 // x-clip stress geometries (TM-317 perf rework): the per-stripe x-window must be
 // an exact superset for diagonal / near-axis capsules and steep polylines.
 CASES.push({

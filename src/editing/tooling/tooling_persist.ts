@@ -26,6 +26,7 @@
 import type { LayerId, Resolution } from "@zettaai/edit-session";
 
 import type { PaintingMaskConfig } from "#src/editing/tool_runtimes/paint_types.js";
+import { DEFAULT_COVERAGE_THRESHOLD } from "#src/editing/tool_runtimes/paint_types.js";
 import type { PaintingSharedState } from "#src/editing/tool_runtimes/painting_tools.js";
 
 /** Type-tagged numeric/bigint value, JSON-safe. */
@@ -123,7 +124,11 @@ function parseMask(x: unknown): PaintingMaskConfig | null | undefined {
     typeof o.thresholdHigh !== "number" ||
     typeof o.minComponentSize !== "number" ||
     typeof o.binaryClosing !== "number" ||
-    typeof o.filterComponentsFirst !== "boolean"
+    typeof o.filterComponentsFirst !== "boolean" ||
+    // Optional (added TM-339); reject only a present-but-wrong-typed value so
+    // older persisted configs without the field still parse.
+    (o.coverageThreshold !== undefined &&
+      typeof o.coverageThreshold !== "number")
   ) {
     return undefined;
   }
@@ -132,6 +137,10 @@ function parseMask(x: unknown): PaintingMaskConfig | null | undefined {
     imageResolution: o.imageResolution as Resolution,
     thresholdLow: o.thresholdLow,
     thresholdHigh: o.thresholdHigh,
+    coverageThreshold:
+      typeof o.coverageThreshold === "number"
+        ? o.coverageThreshold
+        : DEFAULT_COVERAGE_THRESHOLD,
     minComponentSize: o.minComponentSize,
     binaryClosing: o.binaryClosing,
     filterComponentsFirst: o.filterComponentsFirst,

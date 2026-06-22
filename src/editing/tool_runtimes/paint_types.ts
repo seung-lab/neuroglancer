@@ -30,6 +30,13 @@ import type {
   Resolution,
 } from "@zettaai/edit-session";
 
+/**
+ * Default fraction of in-band image voxels required to paint a target voxel
+ * when the target resolution is coarser than the image resolution (TM-339).
+ * `0.5` = majority. See {@link PaintingMaskConfig.coverageThreshold}.
+ */
+export const DEFAULT_COVERAGE_THRESHOLD = 0.5;
+
 export interface PaintingMaskConfig {
   readonly imageLayerId: LayerId;
   /**
@@ -41,6 +48,17 @@ export interface PaintingMaskConfig {
   readonly imageResolution: Resolution;
   readonly thresholdLow: number;
   readonly thresholdHigh: number;
+  /**
+   * Fraction (0, 1] of the image voxels a target voxel covers that must fall
+   * inside `[thresholdLow, thresholdHigh]` for that target voxel to be painted
+   * (TM-339). Only has an effect when the target resolution is COARSER than
+   * `imageResolution` (so one target voxel covers a block of >1 image voxels);
+   * at equal/finer target resolution the block is a single voxel and the test
+   * reduces to the plain in-band check. `0.5` = majority, `1.0` = every covered
+   * voxel in-band, →0 = any covered voxel in-band. Optional for back-compat
+   * with persisted configs; absent ⇒ {@link DEFAULT_COVERAGE_THRESHOLD}.
+   */
+  readonly coverageThreshold?: number;
   readonly minComponentSize: number;
   readonly binaryClosing: number;
   readonly filterComponentsFirst: boolean;
