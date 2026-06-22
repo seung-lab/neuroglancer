@@ -83,3 +83,27 @@ export function nextThresholdHigh(
 ): number {
   return clampNumber(high + Math.sign(dir), low, max);
 }
+
+/**
+ * Hold-to-accelerate curve for Ctrl+Up / Ctrl+Down (TM-337). Given the time the
+ * arrow has been held, returns the value-change *rate* in unit steps per
+ * second. The binder applies one step immediately on key-down, then integrates
+ * this rate (rate × frame-dt) into a fractional accumulator while the key stays
+ * held — so the step size stays small (±1 preset / ±1 value) and the *speed*
+ * ramps with the hold, per the ticket.
+ *
+ * Shape: a gentle constant repeat for the first {@link ACCEL_HOLD_DELAY_MS}, then
+ * a linear ramp from {@link ACCEL_SLOW_RATE} up to {@link ACCEL_MAX_RATE} over
+ * {@link ACCEL_RAMP_MS}, capped thereafter. Pure + exported so the curve can be
+ * unit tested and tuned without a viewer.
+ */
+export const ACCEL_HOLD_DELAY_MS = 350;
+export const ACCEL_RAMP_MS = 2500;
+export const ACCEL_SLOW_RATE = 6;
+export const ACCEL_MAX_RATE = 60;
+
+export function accelStepsPerSecond(elapsedMs: number): number {
+  if (!(elapsedMs > ACCEL_HOLD_DELAY_MS)) return ACCEL_SLOW_RATE;
+  const t = Math.min(1, (elapsedMs - ACCEL_HOLD_DELAY_MS) / ACCEL_RAMP_MS);
+  return ACCEL_SLOW_RATE + (ACCEL_MAX_RATE - ACCEL_SLOW_RATE) * t;
+}

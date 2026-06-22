@@ -15,6 +15,11 @@ import { useCallback } from "preact/hooks";
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { useEvent } from "#src/editing/ui/interop/use_event.js";
 import { useWatchable } from "#src/editing/ui/interop/use_watchable.js";
+import {
+  PARAM_IDS,
+  rowClass,
+  useParamSelection,
+} from "#src/editing/ui/tool_settings/param_descriptors.js";
 import { ParamLabel } from "#src/editing/ui/tool_settings/param_label.js";
 
 /**
@@ -33,6 +38,7 @@ export function PaintingTargetPicker({ host }: { host: EditSessionHost }) {
     [painting],
   );
   useEvent(subscribe);
+  const selectedId = useParamSelection(host);
 
   const intent = host.state.value.value;
   const writable =
@@ -71,7 +77,13 @@ export function PaintingTargetPicker({ host }: { host: EditSessionHost }) {
 
   return (
     <>
-      <div class="neuroglancer-tool-panel-row">
+      <div
+        class={rowClass(
+          "neuroglancer-tool-panel-row",
+          PARAM_IDS.targetLayer,
+          selectedId,
+        )}
+      >
         <ParamLabel
           text="Target layer"
           hint="The segmentation layer your paint strokes are written to. Only writable (Editable) layers from the session appear here."
@@ -84,7 +96,13 @@ export function PaintingTargetPicker({ host }: { host: EditSessionHost }) {
           ))}
         </select>
       </div>
-      <div class="neuroglancer-tool-panel-row">
+      <div
+        class={rowClass(
+          "neuroglancer-tool-panel-row",
+          PARAM_IDS.targetResolution,
+          selectedId,
+        )}
+      >
         <ParamLabel
           text="Target resolution"
           hint="The voxel scale strokes are applied at. Coarser scales cover more area per stroke but paint larger, blockier voxels."

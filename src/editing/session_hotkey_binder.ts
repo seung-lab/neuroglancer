@@ -48,16 +48,19 @@ import { radiusToSize, sizeToRadius } from "#src/editing/brush_size_presets.js";
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { HeldKeyTracker } from "#src/editing/held_key_tracker.js";
 import {
+  accelStepsPerSecond,
   nextBrushValue,
   nextPresetSize,
   nextThresholdLow,
   nextThresholdHigh,
 } from "#src/editing/painting_hotkey_math.js";
+import { ParamStatusOverlay } from "#src/editing/param_status_overlay.js";
 import {
   clampToVoxelDataType,
   voxelDataTypeRange,
 } from "#src/editing/tool_runtimes/mask_coord.js";
 import type { PaintingState } from "#src/editing/tool_runtimes/painting_tools.js";
+import type { PaintParamCursor } from "#src/editing/tool_runtimes/param_cursor.js";
 import type { EditKeybindOverrides } from "#src/editing/tooling/tooling_persist.js";
 import {
   getEditSessionKeybinds,
@@ -94,6 +97,14 @@ const ACTION_IDS = {
   // `[` / `]` — brush value, or low/high threshold when L/H is held.
   valueDecr: "edit-session-value-decr",
   valueIncr: "edit-session-value-incr",
+  // Ctrl+Left / Ctrl+Right (Option+Arrow on macOS) — move the parameter
+  // selection cursor through the active tool panel's enabled controls (TM-337).
+  paramPrev: "edit-session-param-prev",
+  paramNext: "edit-session-param-next",
+  // Ctrl+Up / Ctrl+Down (Option+Arrow on macOS) — increment / decrement the
+  // selected parameter, with hold-to-accelerate for numeric params.
+  paramIncr: "edit-session-param-incr",
+  paramDecr: "edit-session-param-decr",
   // `L` / `H` — held-chord modifiers for the threshold bindings. Bound to a
   // no-op so they shadow the global `keyl`→recolor / `keyh`→help while a
   // session is active; the actual held state is read via `HeldKeyTracker`.
@@ -117,7 +128,43 @@ export type EditKeybindName =
   | "sizeDecrease"
   | "sizeIncrease"
   | "valueDecrease"
-  | "valueIncrease";
+  | "valueIncrease"
+  | "paramPrev"
+  | "paramNext"
+  | "paramIncrease"
+  | "paramDecrease";
+
+/** True when running on macOS (best-effort; false in non-browser contexts). */
+export function isMacPlatform(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const platform = navigator.platform ?? "";
+  const ua = navigator.userAgent ?? "";
+  return /mac/i.test(platform) || /mac os x/i.test(ua);
+}
+
+/**
+ * Default keys for the Ctrl+Arrow parameter scheme (TM-337), chosen per
+ * platform: macOS reserves `Ctrl+Arrow` for Spaces / Mission Control at the
+ * window-server level — the browser never receives those events and
+ * `preventDefault` can't reclaim them — so macOS uses `Option(Alt)+Arrow`
+ * instead, which the OS leaves free. Windows/Linux keep `Ctrl+Arrow` (matches
+ * the ticket; no system conflict there). Pure + exported so the binder and the
+ * unit tests agree on the mapping. Still user-overridable like the other binds.
+ */
+export function paramArrowDefaults(mac: boolean): {
+  paramPrev: readonly string[];
+  paramNext: readonly string[];
+  paramIncrease: readonly string[];
+  paramDecrease: readonly string[];
+} {
+  const mod = mac ? "alt" : "control";
+  return {
+    paramPrev: [`${mod}+arrowleft`],
+    paramNext: [`${mod}+arrowright`],
+    paramIncrease: [`${mod}+arrowup`],
+    paramDecrease: [`${mod}+arrowdown`],
+  };
+}
 
 const DEFAULT_EDIT_KEYBINDS: Record<EditKeybindName, readonly string[]> = {
   brush: ["control+keyb"],
@@ -130,6 +177,7 @@ const DEFAULT_EDIT_KEYBINDS: Record<EditKeybindName, readonly string[]> = {
   sizeIncrease: ["equal", "shift+equal", "numpadadd"],
   valueDecrease: ["bracketleft"],
   valueIncrease: ["bracketright"],
+  ...paramArrowDefaults(isMacPlatform()),
 };
 
 const EDIT_KEYBIND_ACTION: Record<EditKeybindName, string> = {
@@ -143,6 +191,10 @@ const EDIT_KEYBIND_ACTION: Record<EditKeybindName, string> = {
   sizeIncrease: ACTION_IDS.sizeIncr,
   valueDecrease: ACTION_IDS.valueDecr,
   valueIncrease: ACTION_IDS.valueIncr,
+  paramPrev: ACTION_IDS.paramPrev,
+  paramNext: ACTION_IDS.paramNext,
+  paramIncrease: ACTION_IDS.paramIncr,
+  paramDecrease: ACTION_IDS.paramDecr,
 };
 
 /**
@@ -255,6 +307,19 @@ export class EditSessionHotkeyBinder extends RefCounted {
   private readonly targetTypeByLayer = new Map<string, VoxelDataType>();
   private readonly targetTypePending = new Set<string>();
 
+  // Center-screen readout for the Ctrl+Arrow parameter scheme (TM-337).
+  private readonly statusOverlay: ParamStatusOverlay;
+  // Active hold-to-accelerate session for Ctrl+Up / Ctrl+Down, or null when no
+  // arrow is held. `accum` carries fractional steps between animation frames.
+  private ramp: {
+    dir: number;
+    arrowCode: string;
+    startMs: number;
+    lastMs: number;
+    accum: number;
+    rafId: number;
+  } | null = null;
+
   // The viewer whose `inputEventMap` we parent our session layer onto. Stored
   // so `rebuildActionMap` can re-attach after a runtime rebind.
   private viewer!: Viewer;
@@ -268,6 +333,8 @@ export class EditSessionHotkeyBinder extends RefCounted {
   ) {
     super();
     this.tracker = this.registerDisposer(new HeldKeyTracker(viewer.element));
+    this.statusOverlay = this.registerDisposer(new ParamStatusOverlay());
+    this.registerDisposer(() => this.stopRamp());
 
     // Build the session's `EventActionMap` from the configurable edit keybinds
     // (defaults + `custom-keybinds.json` `editSession` overrides + per-user
@@ -478,6 +545,30 @@ export class EditSessionHotkeyBinder extends RefCounted {
         this.onBracket(+1);
       }),
     );
+
+    // Ctrl+Arrow parameter scheme (TM-337; Option+Arrow on macOS). Left/Right
+    // move the selection cursor through the active panel's enabled parameters;
+    // Up/Down nudge the selected one (hold to accelerate for numeric params).
+    this.registerDisposer(
+      registerActionListener(target, ACTION_IDS.paramPrev, (event) => {
+        if (this.moveParam(-1)) event.stopPropagation();
+      }),
+    );
+    this.registerDisposer(
+      registerActionListener(target, ACTION_IDS.paramNext, (event) => {
+        if (this.moveParam(+1)) event.stopPropagation();
+      }),
+    );
+    this.registerDisposer(
+      registerActionListener(target, ACTION_IDS.paramIncr, (event) => {
+        if (this.startParamRamp(+1, "arrowup")) event.stopPropagation();
+      }),
+    );
+    this.registerDisposer(
+      registerActionListener(target, ACTION_IDS.paramDecr, (event) => {
+        if (this.startParamRamp(-1, "arrowdown")) event.stopPropagation();
+      }),
+    );
     // `L` / `H` are bound only to keep the global recolor/help actions from
     // firing while held; the handler itself does nothing.
     this.registerDisposer(
@@ -670,6 +761,123 @@ export class EditSessionHotkeyBinder extends RefCounted {
       );
       if (high === mask.thresholdHigh) return;
       painting.patchState({ mask: { ...mask, thresholdHigh: high } });
+    }
+  }
+
+  // -- Ctrl+Arrow parameter scheme (TM-337) ---------------------------------
+
+  /** The active session's parameter cursor, or undefined when unavailable. */
+  private getCursor(): PaintParamCursor | undefined {
+    return this.host.painting?.paramCursor;
+  }
+
+  /** True while a brush/eraser/fill tool is active (the scheme's scope). */
+  private isPaintToolActive(): boolean {
+    return isPaintLikeToolId(this.host.activeToolId.value);
+  }
+
+  /** Surface the currently-selected parameter + its value in the center readout. */
+  private showSelected(cursor: PaintParamCursor): void {
+    const sel = cursor.selected();
+    if (sel !== undefined) {
+      this.statusOverlay.show(`${sel.label}: ${sel.format()}`);
+    }
+  }
+
+  /**
+   * Ctrl+Left / Ctrl+Right: move the selection cursor through the active panel's
+   * enabled parameters. Returns whether the keypress was handled (so the caller
+   * stops propagation only then, leaving the binding inert outside a paint tool).
+   */
+  private moveParam(dir: number): boolean {
+    if (!this.isPaintToolActive()) return false;
+    const cursor = this.getCursor();
+    if (cursor === undefined || cursor.getDescriptors().length === 0) {
+      return false;
+    }
+    cursor.moveSelection(dir);
+    this.showSelected(cursor);
+    return true;
+  }
+
+  /**
+   * Ctrl+Up / Ctrl+Down: begin a hold-to-accelerate session for the selected
+   * parameter. Applies one step immediately (so a tap always nudges by one),
+   * then — for numeric params — an animation-frame loop integrates the
+   * acceleration curve while the arrow stays held. Enum/boolean params step once
+   * and do not accelerate. Auto-repeat key-downs are ignored while a session is
+   * already running. Returns whether the keypress was handled.
+   */
+  private startParamRamp(dir: number, arrowCode: string): boolean {
+    if (!this.isPaintToolActive()) return false;
+    const cursor = this.getCursor();
+    if (cursor === undefined || cursor.getDescriptors().length === 0) {
+      return false;
+    }
+    // Already running (OS auto-repeat or the opposite arrow): keep the first.
+    if (this.ramp !== null) return true;
+    const sel = cursor.ensureSelection();
+    if (sel === undefined) return false;
+    sel.adjust(dir, 1);
+    this.showSelected(cursor);
+    const now = performance.now();
+    this.ramp = {
+      dir,
+      arrowCode,
+      startMs: now,
+      lastMs: now,
+      accum: 0,
+      rafId: requestAnimationFrame(this.rampTick),
+    };
+    return true;
+  }
+
+  /** Animation-frame step of the active hold-to-accelerate session. */
+  private readonly rampTick = (): void => {
+    const ramp = this.ramp;
+    if (ramp === null) return;
+    const cursor = this.getCursor();
+    const sel = cursor?.selected();
+    // Stop on release of the arrow or the chord modifier, a tool switch, or a
+    // vanished cursor. The modifier is Ctrl (Win/Linux) or Option (macOS), and
+    // may be rebound, so accept any of Ctrl/Alt/Meta rather than a specific one.
+    const modifierHeld =
+      this.tracker.isHeld("controlleft") ||
+      this.tracker.isHeld("controlright") ||
+      this.tracker.isHeld("altleft") ||
+      this.tracker.isHeld("altright") ||
+      this.tracker.isHeld("metaleft") ||
+      this.tracker.isHeld("metaright");
+    if (
+      sel === undefined ||
+      !this.isPaintToolActive() ||
+      !this.tracker.isHeld(ramp.arrowCode) ||
+      !modifierHeld
+    ) {
+      this.stopRamp();
+      return;
+    }
+    // Only numeric params accelerate; enum/boolean already stepped once.
+    if (sel.kind === "number") {
+      const t = performance.now();
+      const dt = (t - ramp.lastMs) / 1000;
+      ramp.lastMs = t;
+      ramp.accum += accelStepsPerSecond(t - ramp.startMs) * dt;
+      const steps = Math.floor(ramp.accum);
+      if (steps >= 1) {
+        ramp.accum -= steps;
+        sel.adjust(ramp.dir, steps);
+        this.showSelected(cursor!);
+      }
+    }
+    ramp.rafId = requestAnimationFrame(this.rampTick);
+  };
+
+  /** Cancel the active hold-to-accelerate session, if any. */
+  private stopRamp(): void {
+    if (this.ramp !== null) {
+      cancelAnimationFrame(this.ramp.rafId);
+      this.ramp = null;
     }
   }
 }

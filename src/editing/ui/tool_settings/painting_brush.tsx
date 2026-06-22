@@ -29,12 +29,27 @@ import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { voxelDataTypeRange } from "#src/editing/tool_runtimes/mask_coord.js";
 import type { PaintingMaskConfig } from "#src/editing/tool_runtimes/paint_types.js";
 import type { PaintingState } from "#src/editing/tool_runtimes/painting_tools.js";
+import {
+  booleanDescriptor,
+  enumDescriptor,
+  numberDescriptor,
+  type ParamDescriptor,
+} from "#src/editing/tool_runtimes/param_cursor.js";
 import { useEvent } from "#src/editing/ui/interop/use_event.js";
 import { useWatchable } from "#src/editing/ui/interop/use_watchable.js";
 import { layerKindOf } from "#src/editing/ui/layer_kind.js";
 import { ToggleSwitch } from "#src/editing/ui/toggle_switch.js";
 import { PaintingTargetPicker } from "#src/editing/ui/tool_settings/painting_target_picker.js";
 import { PaintingThreshold } from "#src/editing/ui/tool_settings/painting_threshold.js";
+import {
+  PARAM_IDS,
+  rowClass,
+  sizeDescriptor,
+  useParamSelection,
+  usePublishParams,
+  useTargetParamDescriptors,
+  valueDescriptor,
+} from "#src/editing/ui/tool_settings/param_descriptors.js";
 import { ParamInput } from "#src/editing/ui/tool_settings/param_input.js";
 import { ParamLabel } from "#src/editing/ui/tool_settings/param_label.js";
 import { TargetValueField } from "#src/editing/ui/tool_settings/target_value_field.js";
@@ -86,10 +101,27 @@ export function PaintingBrush({
   const size = radiusToSize(state.radius);
   const targetVoxelType = useLayerVoxelType(host, state.targetLayerId);
 
+  const selectedId = useParamSelection(host);
+  // Leading (non-mask) parameters in render order: target layer/resolution,
+  // size, value. The mask section appends its own descriptors and publishes the
+  // combined list (single publisher per tool — see `BrushMask`).
+  const targetDescriptors = useTargetParamDescriptors(host);
+  const leadingDescriptors: ParamDescriptor[] = [
+    ...targetDescriptors,
+    sizeDescriptor(painting),
+    valueDescriptor(painting, targetVoxelType),
+  ];
+
   return (
     <div class="neuroglancer-tool-panel neuroglancer-painting-brush-panel">
       <PaintingTargetPicker host={host} />
-      <div class="neuroglancer-tool-panel-row">
+      <div
+        class={rowClass(
+          "neuroglancer-tool-panel-row",
+          PARAM_IDS.size,
+          selectedId,
+        )}
+      >
         <ParamLabel
           text="Size"
           hint="Brush diameter in voxels at the target resolution. Larger sizes paint a wider stroke."
@@ -116,8 +148,13 @@ export function PaintingBrush({
         voxelDataType={targetVoxelType}
         onCommit={(activeValue) => painting.patchState({ activeValue })}
         hint="The segment ID painted into the target layer — every voxel the stroke covers is set to this value."
+        highlighted={selectedId === PARAM_IDS.value}
       />
-      <BrushMask host={host} painting={painting} />
+      <BrushMask
+        host={host}
+        painting={painting}
+        leadingDescriptors={leadingDescriptors}
+      />
     </div>
   );
 }
@@ -130,10 +167,14 @@ interface ImageLayerEntry {
 function BrushMask({
   host,
   painting,
+  leadingDescriptors,
 }: {
   host: EditSessionHost;
   painting: PaintingState;
+  /** Non-mask descriptors (target/size/value) this panel prepends. */
+  leadingDescriptors: ParamDescriptor[];
 }) {
+  const selectedId = useParamSelection(host);
   const intent = host.state.value.value;
   const layerManager = host.viewer.layerManager;
   const [metadataByLayer, setMetadataByLayer] = useState<
@@ -217,8 +258,9 @@ function BrushMask({
   // separate on/off switch — the picker is the single gate (per TM-317).
   const disableMask = () => painting.patchState({ mask: undefined });
 
-  const onReferenceChange = (e: Event) => {
-    const value = (e.currentTarget as HTMLSelectElement).value as LayerId | "";
+  // Apply a reference-layer selection. Shared by the dropdown's `onChange` and
+  // the Ctrl+Arrow enum descriptor. `""` clears the reference (disables mask).
+  const applyReference = (value: LayerId | "") => {
     if (value === "") {
       disableMask();
       return;
@@ -244,10 +286,21 @@ function BrushMask({
     });
   };
 
-  const onMaskResolutionChange = (e: Event) => {
+  const onReferenceChange = (e: Event) => {
+    applyReference(
+      (e.currentTarget as HTMLSelectElement).value as LayerId | "",
+    );
+  };
+
+  const applyMaskResolution = (value: Resolution) => {
     if (mask === undefined) return;
-    const value = (e.currentTarget as HTMLSelectElement).value as Resolution;
     painting.patchState({ mask: { ...mask, imageResolution: value } });
+  };
+
+  const onMaskResolutionChange = (e: Event) => {
+    applyMaskResolution(
+      (e.currentTarget as HTMLSelectElement).value as Resolution,
+    );
   };
 
   const patchMask = (patch: Partial<PaintingMaskConfig>) => {
@@ -283,10 +336,134 @@ function BrushMask({
   const showSliders =
     !paramsDisabled && currentRange !== null && currentDtype !== "float32";
 
+  // Mask parameters in render order, appended to the leading (target/size/value)
+  // descriptors. Built only for the controls the panel actually exposes for
+  // changing: the reference picker is always cyclable when image layers exist;
+  // the dependent rows join only once a usable reference is selected
+  // (`!paramsDisabled`), matching the "skip disabled" rule. All closures read
+  // mask state live so the status readout reflects the post-change value.
+  const maskDescriptors: ParamDescriptor[] = [];
+  if (!noImageLayers) {
+    const refValues: (LayerId | "")[] = [
+      "",
+      ...imageEntries.map((e) => e.layerId),
+    ];
+    maskDescriptors.push(
+      enumDescriptor({
+        id: PARAM_IDS.referenceLayer,
+        label: "Reference layer",
+        options: () => refValues,
+        index: () =>
+          refValues.indexOf(painting.getState().mask?.imageLayerId ?? ""),
+        select: (i) => applyReference(refValues[i] ?? ""),
+        format: (o) => (o === "" ? "None" : o),
+      }),
+    );
+    if (!paramsDisabled) {
+      if (resolutions.length > 1) {
+        maskDescriptors.push(
+          enumDescriptor({
+            id: PARAM_IDS.referenceResolution,
+            label: "Reference resolution",
+            options: () => resolutions,
+            index: () =>
+              resolutions.indexOf(
+                painting.getState().mask?.imageResolution ?? resolutions[0],
+              ),
+            select: (i) => {
+              const r = resolutions[i];
+              if (r !== undefined) applyMaskResolution(r);
+            },
+          }),
+        );
+      }
+      maskDescriptors.push(
+        numberDescriptor({
+          id: PARAM_IDS.thresholdLow,
+          label: "Threshold low",
+          format: () =>
+            String(painting.getState().mask?.thresholdLow ?? range.min),
+          apply: (steps) => {
+            const m = painting.getState().mask;
+            if (m === undefined) return;
+            const low = Math.min(
+              Math.max(m.thresholdLow + steps, range.min),
+              m.thresholdHigh,
+            );
+            if (low !== m.thresholdLow) {
+              painting.patchState({ mask: { ...m, thresholdLow: low } });
+            }
+          },
+        }),
+        numberDescriptor({
+          id: PARAM_IDS.thresholdHigh,
+          label: "Threshold high",
+          format: () =>
+            String(painting.getState().mask?.thresholdHigh ?? range.max),
+          apply: (steps) => {
+            const m = painting.getState().mask;
+            if (m === undefined) return;
+            const high = Math.max(
+              Math.min(m.thresholdHigh + steps, range.max),
+              m.thresholdLow,
+            );
+            if (high !== m.thresholdHigh) {
+              painting.patchState({ mask: { ...m, thresholdHigh: high } });
+            }
+          },
+        }),
+        numberDescriptor({
+          id: PARAM_IDS.minComponent,
+          label: "Min component",
+          format: () => String(painting.getState().mask?.minComponentSize ?? 0),
+          apply: (steps) => {
+            const m = painting.getState().mask;
+            if (m === undefined) return;
+            const v = Math.max(0, m.minComponentSize + steps);
+            if (v !== m.minComponentSize) {
+              painting.patchState({ mask: { ...m, minComponentSize: v } });
+            }
+          },
+        }),
+        numberDescriptor({
+          id: PARAM_IDS.binaryClosing,
+          label: "Binary closing",
+          format: () => String(painting.getState().mask?.binaryClosing ?? 0),
+          apply: (steps) => {
+            const m = painting.getState().mask;
+            if (m === undefined) return;
+            const v = Math.max(0, m.binaryClosing + steps);
+            if (v !== m.binaryClosing) {
+              painting.patchState({ mask: { ...m, binaryClosing: v } });
+            }
+          },
+        }),
+        booleanDescriptor({
+          id: PARAM_IDS.filterComponentsFirst,
+          label: "Filter components first",
+          value: () => painting.getState().mask?.filterComponentsFirst ?? false,
+          set: (v) => {
+            const m = painting.getState().mask;
+            if (m !== undefined) {
+              painting.patchState({ mask: { ...m, filterComponentsFirst: v } });
+            }
+          },
+        }),
+      );
+    }
+  }
+  usePublishParams(host, [...leadingDescriptors, ...maskDescriptors]);
+
   return (
     <div class="neuroglancer-painting-brush-mask">
       <div class="neuroglancer-painting-brush-mask-title">Mask filter</div>
-      <div class="neuroglancer-tool-panel-row">
+      <div
+        class={rowClass(
+          "neuroglancer-tool-panel-row",
+          PARAM_IDS.referenceLayer,
+          selectedId,
+        )}
+      >
         <ParamLabel
           text="Reference layer"
           hint="The image layer the mask samples to decide which voxels a stroke may paint. Only image layers locked in the session appear here."
@@ -324,7 +501,13 @@ function BrushMask({
         data-disabled={paramsDisabled ? "true" : "false"}
         data-tooltip={gateReason}
       >
-        <div class="neuroglancer-tool-panel-row">
+        <div
+          class={rowClass(
+            "neuroglancer-tool-panel-row",
+            PARAM_IDS.referenceResolution,
+            selectedId,
+          )}
+        >
           <ParamLabel
             text="Reference resolution"
             hint="The voxel scale the reference image is sampled at. Coarser scales are faster but mask less precisely."
@@ -360,9 +543,22 @@ function BrushMask({
             showHandles={showSliders}
             disabled={paramsDisabled}
             onChange={onThresholdChange}
+            selected={
+              selectedId === PARAM_IDS.thresholdLow
+                ? "low"
+                : selectedId === PARAM_IDS.thresholdHigh
+                  ? "high"
+                  : undefined
+            }
           />
         </div>
-        <div class="neuroglancer-tool-panel-row">
+        <div
+          class={rowClass(
+            "neuroglancer-tool-panel-row",
+            PARAM_IDS.minComponent,
+            selectedId,
+          )}
+        >
           <ParamLabel
             text="Min component"
             hint="Drops connected blobs smaller than this many voxels from the mask, removing speckle. 0 keeps every component."
@@ -377,7 +573,13 @@ function BrushMask({
             onCommit={(minComponentSize) => patchMask({ minComponentSize })}
           />
         </div>
-        <div class="neuroglancer-tool-panel-row">
+        <div
+          class={rowClass(
+            "neuroglancer-tool-panel-row",
+            PARAM_IDS.binaryClosing,
+            selectedId,
+          )}
+        >
           <ParamLabel
             text="Binary closing"
             hint="Closes gaps and small holes in the mask by this many voxels (morphological closing). 0 disables it."
@@ -392,7 +594,13 @@ function BrushMask({
             onCommit={(binaryClosing) => patchMask({ binaryClosing })}
           />
         </div>
-        <div class="neuroglancer-tool-panel-row">
+        <div
+          class={rowClass(
+            "neuroglancer-tool-panel-row",
+            PARAM_IDS.filterComponentsFirst,
+            selectedId,
+          )}
+        >
           <ParamLabel
             text="Filter components first"
             hint="When on, min-component filtering runs before binary closing; when off, closing runs first. Changes whether holes are filled before or after small blobs are removed."
