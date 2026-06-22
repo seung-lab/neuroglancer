@@ -108,6 +108,16 @@ export interface PaintPipelineRequest {
   readonly thresholdHigh: number;
 
   /**
+   * Fraction (0, 1] of the image voxels a target voxel covers that must be
+   * in-band to paint it (TM-339, area-aware downsampling). Only affects target
+   * voxels covering >1 image voxel (i.e. `sxRatio`/`syRatio` > 1); for a 1-voxel
+   * block the test is the plain in-band check, byte-identical to the legacy
+   * nearest-neighbour path. `0.5` = majority. Defaults to
+   * {@link DEFAULT_COVERAGE_THRESHOLD} when omitted.
+   */
+  readonly coverageThreshold?: number;
+
+  /**
    * Footprint geometry: the swept-capsule polyline points in ABSOLUTE
    * target voxel coordinates (un-floored, matching the main-thread
    * `segmentDistanceSq` inputs), flattened as `[x0, y0, x1, y1, …]`. A single

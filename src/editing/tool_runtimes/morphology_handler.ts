@@ -32,6 +32,7 @@ import {
   type PaintPipelineResponse,
   type PaintPipelineTimings,
 } from "#src/editing/tool_runtimes/paint_pipeline_request.js";
+import { DEFAULT_COVERAGE_THRESHOLD } from "#src/editing/tool_runtimes/paint_types.js";
 import PYTHON_SRC from "#src/editing/tool_runtimes/python_painter.py?raw";
 import type { RPC, RPCPromise } from "#src/worker_rpc.js";
 import { registerPromiseRPC } from "#src/worker_rpc.js";
@@ -89,6 +90,7 @@ type ApplyPaintPipelineFn = (
   syRatio: number,
   thrLow: number,
   thrHigh: number,
+  coverageThreshold: number,
   pathPoints: ArrayBufferView,
   radius: number,
   binaryClosing: number,
@@ -220,6 +222,7 @@ registerPromiseRPC<PaintPipelineResponse>(
       req.syRatio,
       req.thresholdLow,
       req.thresholdHigh,
+      req.coverageThreshold ?? DEFAULT_COVERAGE_THRESHOLD,
       req.pathPoints,
       req.radius,
       req.binaryClosing,

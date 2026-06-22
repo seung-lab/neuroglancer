@@ -102,6 +102,7 @@ import { voxelDataTypeRange } from "#src/editing/tool_runtimes/mask_coord.js";
 import { MorphologyClient } from "#src/editing/tool_runtimes/morphology_client.js";
 import { paintProfilerMetrics } from "#src/editing/tool_runtimes/paint_profiler_metrics.js";
 import type { PaintingMaskConfig } from "#src/editing/tool_runtimes/paint_types.js";
+import { DEFAULT_COVERAGE_THRESHOLD } from "#src/editing/tool_runtimes/paint_types.js";
 import { PaintingCompute } from "#src/editing/tool_runtimes/painting_compute.js";
 import {
   ConsumerPaintingTools,
@@ -1734,6 +1735,7 @@ export class EditSessionHost extends RefCounted {
         imageResolution: l.resolutions[0],
         thresholdLow: range.min,
         thresholdHigh: range.max,
+        coverageThreshold: DEFAULT_COVERAGE_THRESHOLD,
         minComponentSize: 0,
         binaryClosing: 0,
         filterComponentsFirst: false,

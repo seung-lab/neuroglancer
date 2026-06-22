@@ -81,6 +81,7 @@ describe("tooling_persist", () => {
       imageResolution: RES,
       thresholdLow: 10,
       thresholdHigh: 200,
+      coverageThreshold: 0.75,
       minComponentSize: 4,
       binaryClosing: 1,
       filterComponentsFirst: true,
@@ -92,6 +93,30 @@ describe("tooling_persist", () => {
       new Set([TARGET, IMAGE]),
     );
     expect(patch!.mask).toEqual(mask);
+  });
+
+  it("defaults coverageThreshold for legacy configs lacking the field", () => {
+    // Pre-TM-339 persisted masks have no `coverageThreshold`; parsing must
+    // still succeed and fill the default rather than reject the whole config.
+    const legacy = {
+      imageLayerId: IMAGE,
+      imageResolution: RES,
+      thresholdLow: 10,
+      thresholdHigh: 200,
+      minComponentSize: 4,
+      binaryClosing: 1,
+      filterComponentsFirst: true,
+    };
+    const serialized = serializeTooling(
+      "painting.brush",
+      state({ mask: legacy }),
+    );
+    const parsed = parseTooling(roundTrip(serialized));
+    const patch = paintingPatchFromPersist(
+      parsed!.painting!,
+      new Set([TARGET, IMAGE]),
+    );
+    expect(patch!.mask).toEqual({ ...legacy, coverageThreshold: 0.5 });
   });
 
   it("cursor mode serializes activeToolId null", () => {
