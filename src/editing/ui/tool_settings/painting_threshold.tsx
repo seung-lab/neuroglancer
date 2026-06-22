@@ -35,6 +35,7 @@ export function PaintingThreshold({
   showHandles = true,
   disabled = false,
   onChange,
+  selected,
 }: {
   min: number;
   max: number;
@@ -49,6 +50,12 @@ export function PaintingThreshold({
   /** When true the control is read-only: handles are hidden and fields locked. */
   disabled?: boolean;
   onChange: (low: number, high: number) => void;
+  /**
+   * Which numeric field is the keyboard-selected parameter (TM-337), so only
+   * that single input is outlined — the low and high thresholds are distinct
+   * parameters in the Ctrl+Arrow rotation.
+   */
+  selected?: "low" | "high";
 }) {
   const span = max - min || 1;
   const lowPct = ((low - min) / span) * 100;
@@ -109,6 +116,9 @@ export function PaintingThreshold({
             parse={parseFinite}
             onCommit={emitLow}
             disabled={disabled}
+            class={
+              selected === "low" ? "neuroglancer-param-selected" : undefined
+            }
           />
           <span>low</span>
         </label>
@@ -121,6 +131,9 @@ export function PaintingThreshold({
             parse={parseFinite}
             onCommit={emitHigh}
             disabled={disabled}
+            class={
+              selected === "high" ? "neuroglancer-param-selected" : undefined
+            }
           />
           <span>high</span>
         </label>

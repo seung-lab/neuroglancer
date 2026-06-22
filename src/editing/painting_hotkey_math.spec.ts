@@ -11,6 +11,10 @@
 import { describe, it, expect } from "vitest";
 
 import {
+  ACCEL_HOLD_DELAY_MS,
+  ACCEL_MAX_RATE,
+  ACCEL_SLOW_RATE,
+  accelStepsPerSecond,
   nextBrushValue,
   nextPresetSize,
   nextThresholdHigh,
@@ -80,5 +84,24 @@ describe("nextThresholdHigh", () => {
   it("never crosses low or exceeds max", () => {
     expect(nextThresholdHigh(10, 10, 255, -1)).toBe(10); // can't drop below low
     expect(nextThresholdHigh(10, 255, 255, +1)).toBe(255); // can't exceed max
+  });
+});
+
+describe("accelStepsPerSecond", () => {
+  it("holds a gentle constant rate for the initial delay", () => {
+    expect(accelStepsPerSecond(0)).toBe(ACCEL_SLOW_RATE);
+    expect(accelStepsPerSecond(ACCEL_HOLD_DELAY_MS)).toBe(ACCEL_SLOW_RATE);
+  });
+
+  it("ramps up monotonically after the delay", () => {
+    const a = accelStepsPerSecond(ACCEL_HOLD_DELAY_MS + 500);
+    const b = accelStepsPerSecond(ACCEL_HOLD_DELAY_MS + 1500);
+    expect(a).toBeGreaterThan(ACCEL_SLOW_RATE);
+    expect(b).toBeGreaterThan(a);
+  });
+
+  it("caps at the maximum rate", () => {
+    expect(accelStepsPerSecond(60_000)).toBe(ACCEL_MAX_RATE);
+    expect(accelStepsPerSecond(Number.MAX_SAFE_INTEGER)).toBe(ACCEL_MAX_RATE);
   });
 });

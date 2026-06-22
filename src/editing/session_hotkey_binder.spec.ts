@@ -13,7 +13,9 @@ import { describe, it, expect } from "vitest";
 import {
   EDIT_KEYBIND_NAMES,
   effectiveEditKeybinds,
+  isMacPlatform,
   mergeEditKeybinds,
+  paramArrowDefaults,
 } from "#src/editing/session_hotkey_binder.js";
 
 const A = {
@@ -27,6 +29,10 @@ const A = {
   sizeIncr: "edit-session-size-incr",
   valueDecr: "edit-session-value-decr",
   valueIncr: "edit-session-value-incr",
+  paramPrev: "edit-session-param-prev",
+  paramNext: "edit-session-param-next",
+  paramIncr: "edit-session-param-incr",
+  paramDecr: "edit-session-param-decr",
   exit: "edit-session-exit-tool",
   noop: "edit-session-noop-letter",
 } as const;
@@ -44,6 +50,12 @@ describe("mergeEditKeybinds", () => {
     expect(m["minus"]).toBe(A.sizeDecr);
     expect(m["numpadsubtract"]).toBe(A.sizeDecr);
     expect(m["bracketleft"]).toBe(A.valueDecr);
+    // Ctrl+Arrow parameter scheme (TM-337), per-platform default keys.
+    const arrows = paramArrowDefaults(isMacPlatform());
+    expect(m[arrows.paramPrev[0]]).toBe(A.paramPrev);
+    expect(m[arrows.paramNext[0]]).toBe(A.paramNext);
+    expect(m[arrows.paramIncrease[0]]).toBe(A.paramIncr);
+    expect(m[arrows.paramDecrease[0]]).toBe(A.paramDecr);
   });
 
   it("always includes the fixed (non-configurable) bindings", () => {
@@ -73,6 +85,24 @@ describe("mergeEditKeybinds", () => {
     const m = mergeEditKeybinds({ nonsense: "control+keyq" } as never);
     expect(m["control+keyq"]).toBeUndefined();
     expect(m["control+keyb"]).toBe(A.brush); // defaults intact
+  });
+});
+
+describe("paramArrowDefaults", () => {
+  it("uses Ctrl+Arrow on non-mac platforms", () => {
+    const d = paramArrowDefaults(false);
+    expect(d.paramPrev).toEqual(["control+arrowleft"]);
+    expect(d.paramNext).toEqual(["control+arrowright"]);
+    expect(d.paramIncrease).toEqual(["control+arrowup"]);
+    expect(d.paramDecrease).toEqual(["control+arrowdown"]);
+  });
+
+  it("uses Option/Alt+Arrow on macOS (Ctrl+Arrow is reserved by Spaces)", () => {
+    const d = paramArrowDefaults(true);
+    expect(d.paramPrev).toEqual(["alt+arrowleft"]);
+    expect(d.paramNext).toEqual(["alt+arrowright"]);
+    expect(d.paramIncrease).toEqual(["alt+arrowup"]);
+    expect(d.paramDecrease).toEqual(["alt+arrowdown"]);
   });
 });
 
@@ -118,6 +148,10 @@ describe("effectiveEditKeybinds", () => {
       sizeIncrease: A.sizeIncr,
       valueDecrease: A.valueDecr,
       valueIncrease: A.valueIncr,
+      paramPrev: A.paramPrev,
+      paramNext: A.paramNext,
+      paramIncrease: A.paramIncr,
+      paramDecrease: A.paramDecr,
     };
     for (const name of EDIT_KEYBIND_NAMES) {
       for (const key of effective[name]) {
