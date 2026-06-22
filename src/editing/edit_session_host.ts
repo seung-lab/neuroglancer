@@ -389,7 +389,7 @@ interface PerLayerMachinery {
  *     the annotation render layer — so this matches the visible yellow
  *     rectangle exactly.
  */
-interface ActiveRegion {
+export interface ActiveRegion {
   readonly lo: readonly [number, number, number];
   readonly hi: readonly [number, number, number];
 }
@@ -1482,6 +1482,42 @@ export class EditSessionHost extends RefCounted {
       renderInfo.displayDimensionIndices,
       region.lo,
       region.hi,
+    );
+    return true;
+  }
+
+  /**
+   * Active edit region in the viewer's global display-voxel frame — the same
+   * frame as the position readout — or `undefined` when no session/region is
+   * active. Surfaced for the navigation panel's coordinate readout (TM-338).
+   */
+  activeRegionDisplayBounds(): ActiveRegion | undefined {
+    const config = this.activeSessionConfig;
+    if (config === undefined) return undefined;
+    return this.computeActiveRegionSync(config);
+  }
+
+  /**
+   * Move the viewer to a corner of the active edit region — the lower
+   * (`"lo"`) or upper (`"hi"`) bound. Like {@link teleportToActiveRegionCenter}
+   * but targets a corner; only the display-dimension coordinates change.
+   * Snaps to the covered voxel center at that corner (a degenerate
+   * `[point, point]` box resolves to `floor(point) + 0.5`), so the move lands
+   * on the same whole voxel the readout floors to. Returns `false` when no
+   * session is active.
+   */
+  teleportToActiveRegionCorner(corner: "lo" | "hi"): boolean {
+    const config = this.activeSessionConfig;
+    if (config === undefined) return false;
+    const region = this.computeActiveRegionSync(config);
+    if (region === undefined) return false;
+    const renderInfo = this.viewer.displayDimensionRenderInfo.value;
+    const point = corner === "lo" ? region.lo : region.hi;
+    this.viewer.position.value = voxelCenterInBox(
+      this.viewer.position.value,
+      renderInfo.displayDimensionIndices,
+      point,
+      point,
     );
     return true;
   }

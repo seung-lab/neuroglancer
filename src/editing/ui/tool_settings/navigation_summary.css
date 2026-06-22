@@ -25,6 +25,52 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Lower/Upper corner coordinates with copy + go-to controls. */
+.neuroglancer-navigation-summary-coords {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.neuroglancer-navigation-summary-coord-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  column-gap: 6px;
+}
+
+.neuroglancer-navigation-summary-coord-label {
+  color: var(--neuroglancer-edit-session-text-muted, #9ca3af);
+  font-size: 11px;
+}
+
+.neuroglancer-navigation-summary-coord-value {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.neuroglancer-navigation-summary-coord-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--neuroglancer-edit-session-text-muted, #9ca3af);
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.neuroglancer-navigation-summary-coord-btn:hover {
+  color: var(--neuroglancer-edit-session-text, #e5e7eb);
+  background-color: rgba(255, 255, 255, 0.06);
+}
+
 /*
  * The modal lays each layer out as a wide 4-column grid (name | kind | 150px
  * resolution | role control) that needs ~560px — far wider than this side
