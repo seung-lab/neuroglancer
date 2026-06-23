@@ -46,40 +46,55 @@ export interface PatchedMaskProvider {
   readonly changed: NullarySignal;
 
   /**
-   * Bind the R8UI 3D texture holding the per-voxel patched mask for the
-   * chunk at `chunkGridPosition` to `gl.TEXTURE0 + textureUnit`. The
-   * provider is responsible for any lazy upload, dirty-state tracking,
-   * and texture parameters; it ALSO binds a 1×1×1 zero fallback texture
-   * for chunks with no patches (so the shader can read patched=0 and
-   * fall through to the baseline value path). The caller's only contract
-   * is to consume the bound sampler in the current shader program — it
-   * never has to manage a fallback itself.
-   *
-   * The provider does NOT save/restore the active texture unit — callers
-   * must set `gl.activeTexture` before calling, or restore it after.
+   * Whether the overlay textures for this layer are 3D (`true`) or 2D
+   * (`false`). Chunks are packed into a 2D or 3D texture exactly like
+   * neuroglancer's base volume chunks — a large flat chunk (e.g.
+   * `[4096, 4096, 1]`) becomes a 2D texture because a 3D texture of that
+   * extent overflows `gl.max3dTextureSize`. The base layer sets the
+   * `uPatchIs3D` uniform from this so the shader samples the matching
+   * sampler. Constant for the life of the provider once a chunk exists.
    */
-  bindPatchedMaskTexture(
+  readonly is3D: boolean;
+
+  /**
+   * Per-chunk-axis texel strides, packed for an `ivec3[3]` uniform
+   * (`strides[axis * 3 + texDim]`), so the shader can map a chunk-local
+   * voxel position `p` to a texel coordinate
+   * `t = p.x*strides[0] + p.y*strides[1] + p.z*strides[2]`. Matches how the
+   * provider laid the data out on upload. Constant for the life of the
+   * provider once a chunk exists.
+   */
+  readonly patchStrides: Int32Array;
+
+  /**
+   * Bind the R8UI patched-mask texture for the chunk at `chunkGridPosition`.
+   * The real texture (2D or 3D per {@link is3D}) is bound to its matching
+   * unit; a 1-texel fallback is bound to the other so BOTH declared samplers
+   * stay texture-complete. Chunks with no patches get the zero fallback on
+   * both units (so the shader reads patched=0 and falls through to the
+   * baseline value path).
+   *
+   * The provider sets `gl.activeTexture` itself for each unit; callers should
+   * save/restore the previously-active unit around the call.
+   */
+  bindPatchedMaskTextures(
     gl: GL,
-    textureUnit: number,
+    unit2D: number,
+    unit3D: number,
     chunkGridPosition: ArrayLike<number>,
   ): void;
 
   /**
-   * Bind the RG32UI 3D texture holding the per-voxel patched VALUE for
-   * the chunk at `chunkGridPosition` (packed `(lo32, hi32)` of a uint64
-   * segment id). Same fallback semantics as `bindPatchedMaskTexture`:
-   * binds a zero RG32UI texture when no patches exist for the chunk —
-   * the value would never be consulted in that case anyway because the
-   * mask sampler reads 0 first, but the sampler still must be bound
-   * (WebGL2 forbids leaving samplers unbound).
-   *
-   * The two textures are upload-synchronized — a single per-chunk
-   * generation counter gates both — so the mask and value seen at the
-   * same fragment always come from the same overlay snapshot.
+   * Bind the RG32UI patched-VALUE texture (packed `(lo32, hi32)` of a uint64
+   * segment id) for the chunk at `chunkGridPosition`. Same 2D/3D + fallback
+   * semantics as {@link bindPatchedMaskTextures}. The value and mask textures
+   * are upload-synchronized so the mask and value seen at the same fragment
+   * always come from the same overlay snapshot.
    */
-  bindPatchValueTexture(
+  bindPatchValueTextures(
     gl: GL,
-    textureUnit: number,
+    unit2D: number,
+    unit3D: number,
     chunkGridPosition: ArrayLike<number>,
   ): void;
 
