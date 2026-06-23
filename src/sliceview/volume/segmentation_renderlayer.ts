@@ -218,11 +218,21 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
   // are read from the active shader program at draw time (`onBeginChunk`),
   // because the compiled shader is shared across render-layer instances
   // (TM-303).
-  private static readonly patchedMaskSamplerSymbol = Symbol(
-    "SegmentationRenderLayer.patchedMaskSampler",
+  // The overlay textures are 2D or 3D depending on the layer's chunk shape
+  // (see `PatchTextureCache`). Both dimensionalities are declared and the
+  // `uPatchIs3D` uniform selects which the shader samples at draw time, so we
+  // need a sampler unit symbol for each.
+  private static readonly patchedMaskSampler2DSymbol = Symbol(
+    "SegmentationRenderLayer.patchedMaskSampler2D",
   );
-  private static readonly patchValueSamplerSymbol = Symbol(
-    "SegmentationRenderLayer.patchValueSampler",
+  private static readonly patchedMaskSampler3DSymbol = Symbol(
+    "SegmentationRenderLayer.patchedMaskSampler3D",
+  );
+  private static readonly patchValueSampler2DSymbol = Symbol(
+    "SegmentationRenderLayer.patchValueSampler2D",
+  );
+  private static readonly patchValueSampler3DSymbol = Symbol(
+    "SegmentationRenderLayer.patchValueSampler3D",
   );
 
   constructor(
@@ -506,13 +516,31 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
   ) {
     if (withPatchOverlay) {
       builder.addFragmentCode(`
+// Map a chunk-local voxel position to its texel coordinate in the patch
+// overlay texture, using the per-axis strides the provider uploaded with.
+highp ivec3 patchTexelCoord(highp ivec3 p) {
+  return p.x * uPatchStrides[0] + p.y * uPatchStrides[1] + p.z * uPatchStrides[2];
+}
+uint patchMaskAt(highp ivec3 p) {
+  highp ivec3 t = patchTexelCoord(p);
+  if (uPatchIs3D != 0) {
+    return texelFetch(uPatchedMaskSampler3D, t, 0).r;
+  }
+  return texelFetch(uPatchedMaskSampler2D, t.xy, 0).r;
+}
+highp uvec2 patchValueAt(highp ivec3 p) {
+  highp ivec3 t = patchTexelCoord(p);
+  highp uvec4 raw = uPatchIs3D != 0
+      ? texelFetch(uPatchValueSampler3D, t, 0)
+      : texelFetch(uPatchValueSampler2D, t.xy, 0);
+  return uvec2(raw.r, raw.g);
+}
 uint64_t getUint64DataValue() {
   highp ivec3 patchedP = ivec3(max(vec3(0.0, 0.0, 0.0), min(floor(vChunkPosition), uChunkDataSize - 1.0)));
-  uint patched = texelFetch(uPatchedMaskSampler, patchedP, 0).r;
+  uint patched = patchMaskAt(patchedP);
   if (patched != 0u) {
-    highp uvec4 raw = texelFetch(uPatchValueSampler, patchedP, 0);
     uint64_t v;
-    v.value = uvec2(raw.r, raw.g);
+    v.value = patchValueAt(patchedP);
     return v;
   }
   return toUint64(getDataValue());
@@ -539,16 +567,31 @@ uint64_t getUint64DataValue() {
     // across `SegmentationRenderLayer` instances and `defineShader` runs only
     // for the one that triggers the build (TM-303).
     if (parameters.editPatchOverlayActive) {
+      // Both 2D and 3D samplers are declared; `uPatchIs3D` selects which is
+      // sampled. The provider binds the real texture to the matching unit and
+      // a 1-texel fallback to the other so both stay texture-complete.
       builder.addTextureSampler(
-        "usampler3D",
-        "uPatchedMaskSampler",
-        SegmentationRenderLayer.patchedMaskSamplerSymbol,
+        "usampler2D",
+        "uPatchedMaskSampler2D",
+        SegmentationRenderLayer.patchedMaskSampler2DSymbol,
       );
       builder.addTextureSampler(
         "usampler3D",
-        "uPatchValueSampler",
-        SegmentationRenderLayer.patchValueSamplerSymbol,
+        "uPatchedMaskSampler3D",
+        SegmentationRenderLayer.patchedMaskSampler3DSymbol,
       );
+      builder.addTextureSampler(
+        "usampler2D",
+        "uPatchValueSampler2D",
+        SegmentationRenderLayer.patchValueSampler2DSymbol,
+      );
+      builder.addTextureSampler(
+        "usampler3D",
+        "uPatchValueSampler3D",
+        SegmentationRenderLayer.patchValueSampler3DSymbol,
+      );
+      builder.addUniform("highp ivec3", "uPatchStrides", 3);
+      builder.addUniform("highp int", "uPatchIs3D");
     }
     this.defineGetUint64DataValue(builder, parameters.editPatchOverlayActive);
     if (parameters.hasEquivalences) {
@@ -844,13 +887,24 @@ uint64_t getMappedObjectId(uint64_t value) {
     // `textureUnit` returns `undefined` for a shader compiled WITHOUT the patch
     // path (no active session) — that keeps non-session renders byte-identical
     // to the pre-hook implementation.
-    const maskUnit: number | undefined = shader.textureUnit(
-      SegmentationRenderLayer.patchedMaskSamplerSymbol,
+    const maskUnit2D: number | undefined = shader.textureUnit(
+      SegmentationRenderLayer.patchedMaskSampler2DSymbol,
     );
-    const valueUnit: number | undefined = shader.textureUnit(
-      SegmentationRenderLayer.patchValueSamplerSymbol,
+    const maskUnit3D: number | undefined = shader.textureUnit(
+      SegmentationRenderLayer.patchedMaskSampler3DSymbol,
     );
-    if (maskUnit === undefined || valueUnit === undefined) {
+    const valueUnit2D: number | undefined = shader.textureUnit(
+      SegmentationRenderLayer.patchValueSampler2DSymbol,
+    );
+    const valueUnit3D: number | undefined = shader.textureUnit(
+      SegmentationRenderLayer.patchValueSampler3DSymbol,
+    );
+    if (
+      maskUnit2D === undefined ||
+      maskUnit3D === undefined ||
+      valueUnit2D === undefined ||
+      valueUnit3D === undefined
+    ) {
       return;
     }
     const provider = this.displayState.editPatchOverlay?.value;
@@ -859,9 +913,24 @@ uint64_t getMappedObjectId(uint64_t value) {
       WebGL2RenderingContext.ACTIVE_TEXTURE,
     ) as number;
     // The provider handles its own zero-fallback when no patches exist
-    // for the chunk, so callers don't need to branch on a return value.
-    provider.bindPatchedMaskTexture(gl, maskUnit, chunk.chunkGridPosition);
-    provider.bindPatchValueTexture(gl, valueUnit, chunk.chunkGridPosition);
+    // for the chunk (and the off-dimensionality fallback), so callers don't
+    // need to branch on a return value.
+    provider.bindPatchedMaskTextures(
+      gl,
+      maskUnit2D,
+      maskUnit3D,
+      chunk.chunkGridPosition,
+    );
+    provider.bindPatchValueTextures(
+      gl,
+      valueUnit2D,
+      valueUnit3D,
+      chunk.chunkGridPosition,
+    );
     gl.activeTexture(prevActive);
+    // Texel-coordinate mapping (constant per layer; the binds above ensured
+    // the provider's layout is resolved before we read it).
+    gl.uniform3iv(shader.uniform("uPatchStrides"), provider.patchStrides);
+    gl.uniform1i(shader.uniform("uPatchIs3D"), provider.is3D ? 1 : 0);
   }
 }
