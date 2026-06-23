@@ -39,6 +39,7 @@ export function TargetValueField({
   label = "Target value",
   hint,
   highlighted = false,
+  onSelect,
 }: {
   value: number | bigint;
   onCommit: (value: number | bigint) => void;
@@ -47,6 +48,11 @@ export function TargetValueField({
   hint: string;
   /** Outline the row when it is the keyboard-selected parameter (TM-337). */
   highlighted?: boolean;
+  /**
+   * Focus this row's parameter for the Ctrl+Arrow scheme when its control is
+   * clicked or focused (TM-345). Fired on pointerdown and focus (capture phase).
+   */
+  onSelect?: () => void;
 }) {
   const [invalid, setInvalid] = useState(false);
   const rule = useMemo(() => valueRule(voxelDataType), [voxelDataType]);
@@ -58,6 +64,8 @@ export function TargetValueField({
           "neuroglancer-tool-panel-row" +
           (highlighted ? " neuroglancer-tool-panel-row--selected" : "")
         }
+        onPointerDownCapture={onSelect}
+        onFocusCapture={onSelect}
       >
         <ParamLabel text={label} hint={hint} />
         <ParamInput<number | bigint>

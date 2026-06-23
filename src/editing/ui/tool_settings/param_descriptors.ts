@@ -89,6 +89,37 @@ export function useParamSelection(host: EditSessionHost): string | undefined {
 }
 
 /**
+ * Capture-phase handler props that focus parameter `id` for the Ctrl+Arrow
+ * scheme when the user interacts with a control inside the row (TM-345). Spread
+ * onto the row element (or a control). Capture phase is used so it fires for the
+ * non-bubbling `focus` event and still wins if an inner control stops
+ * propagation; `pointerdown` covers mouse/touch (sliders, dropdowns, toggles)
+ * and `focus` covers keyboard tabbing into inputs.
+ */
+export function paramFocusHandlers(
+  select: (id: string) => void,
+  id: string,
+): {
+  onPointerDownCapture: () => void;
+  onFocusCapture: () => void;
+} {
+  return {
+    onPointerDownCapture: () => select(id),
+    onFocusCapture: () => select(id),
+  };
+}
+
+/**
+ * Returns a stable setter that focuses a parameter by id in the session param
+ * cursor (TM-345). Panels call it from {@link paramFocusHandlers} so clicking or
+ * focusing a field's control makes that field the Ctrl+Arrow target.
+ */
+export function useParamFocus(host: EditSessionHost): (id: string) => void {
+  const cursor = host.painting?.paramCursor;
+  return useCallback((id: string) => cursor?.select(id), [cursor]);
+}
+
+/**
  * Publish `descriptors` into the session param cursor for as long as the panel
  * is mounted. Republishes on every render so the captured closures stay current
  * (`publish` only dispatches when the id set / selection actually changes), and

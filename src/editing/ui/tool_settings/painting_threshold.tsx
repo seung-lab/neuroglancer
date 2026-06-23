@@ -36,6 +36,7 @@ export function PaintingThreshold({
   disabled = false,
   onChange,
   selected,
+  onSelect,
 }: {
   min: number;
   max: number;
@@ -56,6 +57,12 @@ export function PaintingThreshold({
    * parameters in the Ctrl+Arrow rotation.
    */
   selected?: "low" | "high";
+  /**
+   * Focus the low / high parameter for the Ctrl+Arrow scheme when its handle or
+   * numeric field is clicked or focused (TM-345). They are distinct parameters,
+   * so the handler is wired per control rather than at the row level.
+   */
+  onSelect?: (which: "low" | "high") => void;
 }) {
   const span = max - min || 1;
   const lowPct = ((low - min) / span) * 100;
@@ -94,6 +101,8 @@ export function PaintingThreshold({
             value={low}
             aria-label="Threshold low"
             onInput={onLowSlide}
+            onPointerDownCapture={() => onSelect?.("low")}
+            onFocusCapture={() => onSelect?.("low")}
           />
           <input
             type="range"
@@ -103,11 +112,17 @@ export function PaintingThreshold({
             value={high}
             aria-label="Threshold high"
             onInput={onHighSlide}
+            onPointerDownCapture={() => onSelect?.("high")}
+            onFocusCapture={() => onSelect?.("high")}
           />
         </div>
       )}
       <div class="neuroglancer-painting-threshold-fields">
-        <label class="neuroglancer-painting-threshold-field">
+        <label
+          class="neuroglancer-painting-threshold-field"
+          onPointerDownCapture={() => onSelect?.("low")}
+          onFocusCapture={() => onSelect?.("low")}
+        >
           <ParamInput<number>
             type="number"
             min={min}
@@ -122,7 +137,11 @@ export function PaintingThreshold({
           />
           <span>low</span>
         </label>
-        <label class="neuroglancer-painting-threshold-field neuroglancer-painting-threshold-field-high">
+        <label
+          class="neuroglancer-painting-threshold-field neuroglancer-painting-threshold-field-high"
+          onPointerDownCapture={() => onSelect?.("high")}
+          onFocusCapture={() => onSelect?.("high")}
+        >
           <ParamInput<number>
             type="number"
             min={min}
