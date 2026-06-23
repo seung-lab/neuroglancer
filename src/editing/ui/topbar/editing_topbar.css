@@ -146,6 +146,16 @@
   position: relative;
   display: inline-flex;
   align-items: center;
+  /* Constant icon→label spacing in every state (the spinner and the Save
+     glyph share this gap, so the box never jumps when one replaces the
+     other). */
+  gap: var(--nge-space-1);
+  /* Reserve a stable width sized to the widest state ("Save all"). The
+     narrower "Saving…" label is pinned to this floor and centered, so the
+     button never resizes when a save starts or finishes — nothing to its
+     right shifts. */
+  min-width: 96px;
+  justify-content: center;
   /* Match the fixed height of the icon tool buttons so the whole topbar
      row of controls aligns to one consistent height. Kept below the legacy
      top-row widgets' height so they define the row height and our controls
@@ -177,11 +187,20 @@
 
 .neuroglancer-editing-topbar-save-button.saving {
   /* Warning tint signals "work in progress"; the spinner carries the loading
-     state and the button stays clickable to cancel the in-flight save. */
-  gap: var(--nge-space-1);
+     state and the button stays clickable to cancel the in-flight save. The
+     box geometry (width, gap, icon slot) is identical to the rest state — only
+     the color changes here, so nothing reflows. */
   background: var(--nge-warning-bg);
   border-color: var(--nge-warning-border);
   color: var(--nge-warning-fg);
+}
+
+/* Fixed-size leading glyph slot. Both the static Save icon and the spinner
+   that replaces it occupy the same box, so swapping them never changes the
+   button's width. */
+.neuroglancer-editing-topbar-save-icon {
+  display: block;
+  flex: none;
 }
 
 .neuroglancer-editing-topbar-spinner {
@@ -209,11 +228,6 @@
   font-size: 11px;
   line-height: 1;
   white-space: nowrap;
-}
-
-.neuroglancer-editing-topbar-chunkload.success {
-  background: transparent;
-  color: var(--nge-success);
 }
 
 .neuroglancer-editing-topbar-chunkload.warning {

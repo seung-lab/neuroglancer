@@ -23,8 +23,10 @@ import { useEvent } from "#src/editing/ui/interop/use_event.js";
 import { PaintingTargetPicker } from "#src/editing/ui/tool_settings/painting_target_picker.js";
 import {
   PARAM_IDS,
+  paramFocusHandlers,
   rowClass,
   sizeDescriptor,
+  useParamFocus,
   useParamSelection,
   usePublishParams,
   useTargetParamDescriptors,
@@ -69,6 +71,7 @@ export function PaintingEraser({
   const size = radiusToSize(state.radius);
 
   const selectedId = useParamSelection(host);
+  const selectParam = useParamFocus(host);
   const targetDescriptors = useTargetParamDescriptors(host);
   usePublishParams(host, [...targetDescriptors, sizeDescriptor(painting)]);
 
@@ -81,6 +84,7 @@ export function PaintingEraser({
           PARAM_IDS.size,
           selectedId,
         )}
+        {...paramFocusHandlers(selectParam, PARAM_IDS.size)}
       >
         <ParamLabel
           text="Size"

@@ -139,6 +139,7 @@
     "#src/editing/ui/session_entry/layer_row.js": "./src/editing/ui/session_entry/layer_row.tsx",
     "#src/editing/ui/session_entry/memory_estimate.js": "./src/editing/ui/session_entry/memory_estimate.tsx",
     "#src/editing/ui/session_controls/active_tool_settings.js": "./src/editing/ui/session_controls/active_tool_settings.tsx",
+    "#src/editing/ui/segmented_control.js": "./src/editing/ui/segmented_control.tsx",
     "#src/editing/ui/toggle_switch.js": "./src/editing/ui/toggle_switch.tsx",
     "#src/editing/ui/topbar/chunk_load_progress.js": "./src/editing/ui/topbar/chunk_load_progress.tsx",
     "#src/editing/ui/topbar/editing_topbar.js": "./src/editing/ui/topbar/editing_topbar.tsx",

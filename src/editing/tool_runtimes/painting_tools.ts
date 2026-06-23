@@ -45,8 +45,10 @@ import {
   PaintStrokePipeline,
 } from "#src/editing/tool_runtimes/paint_stroke_pipeline.js";
 import type {
+  FillMode,
   PaintCompute,
   PaintingMaskConfig,
+  PaintWriteBatch,
 } from "#src/editing/tool_runtimes/paint_types.js";
 import { PaintParamCursor } from "#src/editing/tool_runtimes/param_cursor.js";
 import { StrokeGeometry } from "#src/editing/tool_runtimes/stroke_geometry.js";
@@ -92,6 +94,8 @@ export interface PaintingSharedState {
   readonly activeValue: number | bigint;
   readonly eraseValue: number | bigint;
   readonly mask: PaintingMaskConfig | undefined;
+  /** Fill connectivity mode (TM-269): `"2d"` (seed slice) or `"3d"`. */
+  readonly fillMode: FillMode;
   /**
    * Stamp spacing as a fraction of brush diameter for distance-based stroke
    * resampling (TM-318). See `StrokeGeometry`; defaults to
@@ -155,6 +159,28 @@ interface PaintingToolDeps {
    * back to the synchronous main-thread compute path.
    */
   readonly pipeline: PaintStrokePipeline;
+  /**
+   * Optional sink the host wires to a watchable so UI (the cursor loader) can
+   * reflect a running fill (TM-269). Absent in tests / headless contexts.
+   */
+  readonly fillProgress?: FillProgressSink;
+  /**
+   * Optional one-off user notification (host wires it to a transient status
+   * toast). Used to explain a memory-bounded fill that stopped short (TM-269).
+   */
+  readonly notify?: (message: string) => void;
+}
+
+/**
+ * Lifecycle hooks for a running fill, surfaced to the host so it can drive the
+ * cursor-attached progress spinner (TM-269). `start`/`end` always bracket a
+ * fill (including a canceled or failed one); `update` fires on each progressive
+ * flush with the running voxel count.
+ */
+export interface FillProgressSink {
+  start(): void;
+  update(voxelsWritten: number): void;
+  end(): void;
 }
 
 /**
@@ -720,12 +746,24 @@ export class StrokeTool implements EditTool {
   }
 }
 
-/** 3D flood fill: a single click is one `Edit` → one undo entry. */
+/**
+ * Flood fill: a single click is one `Edit` → one undo entry. 2D (seed slice) or
+ * 3D per the shared `fillMode` (TM-269). Progressive — the compute flushes
+ * partial batches as it floods, so the screen updates and the UI stays
+ * responsive — and cancelable mid-fill via Escape or a secondary (right) click.
+ */
 export class FillTool implements EditTool {
   readonly id = PAINTING_FILL_TOOL_ID;
   readonly description = "Fill";
   // A fill is a single click — each pointer-down is delivered as-is.
   readonly interactionPolicy: InteractionPolicyKind = "discrete";
+  /**
+   * Controls the in-flight fill (TM-269). Non-null only while a fill runs; the
+   * cancel paths (`Escape` / secondary click) abort it. The input bridge
+   * dispatches discrete events without serializing on the prior `handleInput`,
+   * so a cancel event reaches us while the fill's promise is still pending.
+   */
+  private activeFill: AbortController | null = null;
 
   constructor(private readonly deps: PaintingToolDeps) {}
 
@@ -737,9 +775,10 @@ export class FillTool implements EditTool {
     return validateTargetBinding(this.deps);
   }
 
-  /** Fill is atomic (one `runOperation`); no per-activation state to reset. */
+  /** Abort any in-flight fill when the tool is deactivated. */
   activate(_activation: EditToolActivation): void {
     void _activation;
+    this.activeFill?.abort();
   }
 
   toJSON(): unknown {
@@ -747,6 +786,23 @@ export class FillTool implements EditTool {
   }
 
   async handleInput(ev: ToolInputEvent): Promise<InputHandling> {
+    // While a fill runs, route the cancel gestures to its abort controller and
+    // swallow any other input (a second primary click would only conflict with
+    // the live edit).
+    if (this.activeFill !== null) {
+      const isEscape =
+        ev.kind === "key" && ev.phase === "down" && ev.key === "Escape";
+      const isSecondaryDown =
+        ev.kind === "pointer-down" && ev.button === "secondary";
+      if (isEscape || isSecondaryDown) {
+        this.activeFill.abort();
+        return { consumed: true };
+      }
+      return ev.kind === "pointer-down"
+        ? { consumed: true }
+        : { consumed: false };
+    }
+
     if (ev.kind !== "pointer-down" || ev.button !== "primary") {
       return { consumed: false };
     }
@@ -758,40 +814,77 @@ export class FillTool implements EditTool {
     ) {
       return { consumed: false };
     }
-    await this.deps.scope.runOperation(
-      {
-        description: "Fill",
-        tag: PAINTING_FILL_TOOL_ID,
-        redo: { kind: "image" },
-      },
-      async (edit) => {
-        const readChunk = (chunkId: ChunkId) =>
-          edit.readChunk({
+    const seedVoxelPosition: readonly [number, number, number] = [
+      ev.voxelPosition[0],
+      ev.voxelPosition[1],
+      ev.voxelPosition[2],
+    ];
+    const controller = new AbortController();
+    this.activeFill = controller;
+    this.deps.fillProgress?.start();
+    let truncation: PaintWriteBatch["truncated"];
+    try {
+      await this.deps.scope.runOperation(
+        {
+          description: "Fill",
+          tag: PAINTING_FILL_TOOL_ID,
+          redo: { kind: "image" },
+        },
+        async (edit) => {
+          const target = {
             layerId: shared.targetLayerId,
             resolution: shared.targetResolution,
-            chunkId,
+          };
+          // Session region bounds at the fill resolution — the wall the flood
+          // must not cross (so an open 2D region terminates, no runaway fill).
+          const bounds = edit.sessionVoxelBoundsFor({
+            ...target,
+            chunkId: ChunkId.fromCoord({ x: 0, y: 0, z: 0 }),
           });
-        const batch = await this.deps.compute.fill3d({
-          targetLayerId: shared.targetLayerId,
-          targetResolution: shared.targetResolution,
-          metadata,
-          seedVoxelPosition: [
-            ev.voxelPosition[0],
-            ev.voxelPosition[1],
-            ev.voxelPosition[2],
-          ],
-          value: shared.activeValue,
-          readChunk,
-        });
-        const chunkSize = scaleFor(
-          metadata,
-          shared.targetResolution,
-        ).chunkDataSize;
-        await paintProfiler.timeAsync("apply.total(cpu)", () =>
-          edit.withBatch(() => applyPaintBatch(edit, batch, chunkSize)),
-        );
-      },
-    );
+          if (bounds === undefined) return;
+          const chunkSize = scaleFor(
+            metadata,
+            shared.targetResolution,
+          ).chunkDataSize;
+          const applyBatch = (batch: PaintWriteBatch) =>
+            paintProfiler.timeAsync("apply.total(cpu)", () =>
+              edit.withBatch(() => applyPaintBatch(edit, batch, chunkSize)),
+            );
+          const finalBatch = await this.deps.compute.fill({
+            targetLayerId: shared.targetLayerId,
+            targetResolution: shared.targetResolution,
+            metadata,
+            seedVoxelPosition,
+            value: shared.activeValue,
+            mode: shared.fillMode,
+            bounds,
+            readChunk: (chunkId: ChunkId) =>
+              edit.readChunk({ ...target, chunkId }),
+            onFlush: applyBatch,
+            onProgress: (p) => this.deps.fillProgress?.update(p.voxelsWritten),
+            signal: controller.signal,
+          });
+          await applyBatch(finalBatch);
+          truncation = finalBatch.truncated;
+        },
+      );
+    } catch (err) {
+      // A cancel rejects the operation (which already discarded the edit, so no
+      // undo entry is recorded). Any other error is a real failure — rethrow.
+      if (!controller.signal.aborted) throw err;
+    } finally {
+      this.activeFill = null;
+      this.deps.fillProgress?.end();
+    }
+    // A memory-bounded fill keeps what it painted (the op was recorded), but
+    // tell the user it stopped short so the partial result isn't a surprise.
+    if (truncation?.reason === "out-of-memory") {
+      this.deps.notify?.(
+        `Fill stopped — the region is too large to fill in available memory. ` +
+          `Painted ${truncation.voxelsWritten.toLocaleString()} voxels; ` +
+          `try a 2D fill or a smaller region.`,
+      );
+    }
     return { consumed: true };
   }
 }
@@ -822,6 +915,10 @@ export class ConsumerPaintingTools {
     metadataByLayer: ReadonlyMap<LayerId, LayerMetadata>;
     readChunkAt: ReadChunkAt;
     initialState: PaintingSharedState;
+    /** Host sink for fill progress → cursor loader UI (TM-269). */
+    fillProgress?: FillProgressSink;
+    /** Host transient-notification sink (TM-269). */
+    notify?: (message: string) => void;
   }) {
     this.state = new PaintingState(opts.initialState);
     const deps: PaintingToolDeps = {
@@ -831,6 +928,8 @@ export class ConsumerPaintingTools {
       metadataByLayer: opts.metadataByLayer,
       readChunkAt: opts.readChunkAt,
       pipeline: new PaintStrokePipeline(),
+      fillProgress: opts.fillProgress,
+      notify: opts.notify,
     };
     this.brush = new StrokeTool(deps, {
       toolId: PAINTING_BRUSH_TOOL_ID,

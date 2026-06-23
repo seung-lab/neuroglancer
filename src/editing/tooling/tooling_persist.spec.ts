@@ -32,6 +32,7 @@ function state(over: Partial<PaintingSharedState> = {}): PaintingSharedState {
     activeValue: 42n,
     eraseValue: 0n,
     mask: undefined,
+    fillMode: "3d",
     spacingFraction: 0.1,
     ...over,
   };
@@ -59,6 +60,40 @@ describe("tooling_persist", () => {
       eraseValue: 0n,
       mask: undefined,
     });
+  });
+
+  it("round-trips the fill mode", () => {
+    const serialized = serializeTooling(
+      "painting.fill",
+      state({ fillMode: "2d" }),
+    );
+    const parsed = parseTooling(roundTrip(serialized));
+    const patch = paintingPatchFromPersist(
+      parsed!.painting!,
+      new Set([TARGET]),
+    );
+    expect(patch!.fillMode).toBe("2d");
+  });
+
+  it("defaults the fill mode to 2d for legacy configs lacking the field", () => {
+    // Pre-TM-269 persisted painting blocks have no `fillMode`; parsing must
+    // succeed and default to 2D (the app default).
+    const parsed = parseTooling({
+      activeToolId: "painting.fill",
+      painting: {
+        targetLayerId: "target",
+        targetResolution: RES.toString(),
+        radius: 9,
+        activeValue: { t: "b", v: "42" },
+        eraseValue: { t: "n", v: 0 },
+        mask: null,
+      },
+    });
+    const patch = paintingPatchFromPersist(
+      parsed!.painting!,
+      new Set([TARGET]),
+    );
+    expect(patch!.fillMode).toBe("2d");
   });
 
   it("preserves a number activeValue as a number (uint8 layer)", () => {

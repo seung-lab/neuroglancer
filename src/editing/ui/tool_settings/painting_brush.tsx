@@ -44,8 +44,10 @@ import { PaintingTargetPicker } from "#src/editing/ui/tool_settings/painting_tar
 import { PaintingThreshold } from "#src/editing/ui/tool_settings/painting_threshold.js";
 import {
   PARAM_IDS,
+  paramFocusHandlers,
   rowClass,
   sizeDescriptor,
+  useParamFocus,
   useParamSelection,
   usePublishParams,
   useTargetParamDescriptors,
@@ -103,6 +105,7 @@ export function PaintingBrush({
   const targetVoxelType = useLayerVoxelType(host, state.targetLayerId);
 
   const selectedId = useParamSelection(host);
+  const selectParam = useParamFocus(host);
   // Leading (non-mask) parameters in render order: target layer/resolution,
   // size, value. The mask section appends its own descriptors and publishes the
   // combined list (single publisher per tool — see `BrushMask`).
@@ -122,6 +125,7 @@ export function PaintingBrush({
           PARAM_IDS.size,
           selectedId,
         )}
+        {...paramFocusHandlers(selectParam, PARAM_IDS.size)}
       >
         <ParamLabel
           text="Size"
@@ -150,6 +154,7 @@ export function PaintingBrush({
         onCommit={(activeValue) => painting.patchState({ activeValue })}
         hint="The segment ID painted into the target layer — every voxel the stroke covers is set to this value."
         highlighted={selectedId === PARAM_IDS.value}
+        onSelect={() => selectParam(PARAM_IDS.value)}
       />
       <BrushMask
         host={host}
@@ -176,6 +181,7 @@ function BrushMask({
   leadingDescriptors: ParamDescriptor[];
 }) {
   const selectedId = useParamSelection(host);
+  const selectParam = useParamFocus(host);
   const intent = host.state.value.value;
   const layerManager = host.viewer.layerManager;
   const [metadataByLayer, setMetadataByLayer] = useState<
@@ -465,6 +471,7 @@ function BrushMask({
           PARAM_IDS.referenceLayer,
           selectedId,
         )}
+        {...paramFocusHandlers(selectParam, PARAM_IDS.referenceLayer)}
       >
         <ParamLabel
           text="Reference layer"
@@ -509,6 +516,7 @@ function BrushMask({
             PARAM_IDS.referenceResolution,
             selectedId,
           )}
+          {...paramFocusHandlers(selectParam, PARAM_IDS.referenceResolution)}
         >
           <ParamLabel
             text="Reference resolution"
@@ -552,6 +560,13 @@ function BrushMask({
                   ? "high"
                   : undefined
             }
+            onSelect={(which) =>
+              selectParam(
+                which === "low"
+                  ? PARAM_IDS.thresholdLow
+                  : PARAM_IDS.thresholdHigh,
+              )
+            }
           />
         </div>
         <div
@@ -560,6 +575,7 @@ function BrushMask({
             PARAM_IDS.minComponent,
             selectedId,
           )}
+          {...paramFocusHandlers(selectParam, PARAM_IDS.minComponent)}
         >
           <ParamLabel
             text="Min component"
@@ -581,6 +597,7 @@ function BrushMask({
             PARAM_IDS.binaryClosing,
             selectedId,
           )}
+          {...paramFocusHandlers(selectParam, PARAM_IDS.binaryClosing)}
         >
           <ParamLabel
             text="Binary closing"
@@ -602,6 +619,7 @@ function BrushMask({
             PARAM_IDS.filterComponentsFirst,
             selectedId,
           )}
+          {...paramFocusHandlers(selectParam, PARAM_IDS.filterComponentsFirst)}
         >
           <ParamLabel
             text="Filter components first"

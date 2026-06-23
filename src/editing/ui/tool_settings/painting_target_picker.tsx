@@ -17,7 +17,9 @@ import { useEvent } from "#src/editing/ui/interop/use_event.js";
 import { useWatchable } from "#src/editing/ui/interop/use_watchable.js";
 import {
   PARAM_IDS,
+  paramFocusHandlers,
   rowClass,
+  useParamFocus,
   useParamSelection,
 } from "#src/editing/ui/tool_settings/param_descriptors.js";
 import { ParamLabel } from "#src/editing/ui/tool_settings/param_label.js";
@@ -39,6 +41,7 @@ export function PaintingTargetPicker({ host }: { host: EditSessionHost }) {
   );
   useEvent(subscribe);
   const selectedId = useParamSelection(host);
+  const selectParam = useParamFocus(host);
 
   const intent = host.state.value.value;
   const writable =
@@ -83,6 +86,7 @@ export function PaintingTargetPicker({ host }: { host: EditSessionHost }) {
           PARAM_IDS.targetLayer,
           selectedId,
         )}
+        {...paramFocusHandlers(selectParam, PARAM_IDS.targetLayer)}
       >
         <ParamLabel
           text="Target layer"
@@ -102,6 +106,7 @@ export function PaintingTargetPicker({ host }: { host: EditSessionHost }) {
           PARAM_IDS.targetResolution,
           selectedId,
         )}
+        {...paramFocusHandlers(selectParam, PARAM_IDS.targetResolution)}
       >
         <ParamLabel
           text="Target resolution"

@@ -25,7 +25,10 @@
 
 import type { LayerId, Resolution } from "@zettaai/edit-session";
 
-import type { PaintingMaskConfig } from "#src/editing/tool_runtimes/paint_types.js";
+import type {
+  FillMode,
+  PaintingMaskConfig,
+} from "#src/editing/tool_runtimes/paint_types.js";
 import { DEFAULT_COVERAGE_THRESHOLD } from "#src/editing/tool_runtimes/paint_types.js";
 import type { PaintingSharedState } from "#src/editing/tool_runtimes/painting_tools.js";
 
@@ -41,6 +44,13 @@ interface SerializedPainting {
   readonly activeValue: SerializedValue;
   readonly eraseValue: SerializedValue;
   readonly mask: PaintingMaskConfig | null;
+  /** Fill connectivity mode (TM-269). Optional: older blocks default to 2D. */
+  readonly fillMode?: FillMode;
+}
+
+/** Coerce an unknown to a `FillMode`, defaulting to `"2d"` (the app default). */
+function parseFillMode(x: unknown): FillMode {
+  return x === "3d" ? "3d" : "2d";
 }
 
 /** Per-user edit-hotkey overrides: friendly action name → key identifier(s). */
@@ -75,6 +85,7 @@ function serializePainting(state: PaintingSharedState): SerializedPainting {
     activeValue: serializeValue(state.activeValue),
     eraseValue: serializeValue(state.eraseValue),
     mask: state.mask ?? null,
+    fillMode: state.fillMode,
   };
 }
 
@@ -174,6 +185,7 @@ function parsePainting(x: unknown): SerializedPainting | undefined {
     activeValue: serializeValue(activeValue),
     eraseValue: serializeValue(eraseValue),
     mask,
+    fillMode: parseFillMode(o.fillMode),
   };
 }
 
@@ -245,5 +257,6 @@ export function paintingPatchFromPersist(
     activeValue,
     eraseValue,
     mask,
+    fillMode: parseFillMode(p.fillMode),
   };
 }

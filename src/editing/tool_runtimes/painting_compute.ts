@@ -449,98 +449,307 @@ export class PaintingCompute implements PaintCompute {
     return { loTx, loTy, maskW: tShapeX, maskH: tShapeY, cz, mask };
   }
 
-  async fill3d(input: FillInput): Promise<PaintWriteBatch> {
+  /**
+   * Connected-component flood fill seeded at `seedVoxelPosition` (TM-269).
+   *
+   * - `mode === "2d"`: 4-connected flood confined to the seed's XY slice (Z
+   *   fixed). Empty space enclosed on the slice is a finite component; an open
+   *   region is walled by `bounds`.
+   * - `mode === "3d"`: 6-connected flood across sections.
+   *
+   * Chunk-local, not per-voxel-async: each chunk is read once and scanned
+   * synchronously with a typed-array view and a per-chunk visited mask;
+   * cross-chunk steps are queued and resumed when their chunk loads. This
+   * avoids the ~1M `await`s + string-keyed `Set` the old per-voxel BFS paid
+   * (the source of the multi-second freeze).
+   *
+   * Progressive: every ~{@link FILL_FLUSH_INTERVAL_MS} of compute it hands the
+   * voxels accumulated so far to `onFlush` and yields a frame, so the screen
+   * updates and the UI stays responsive mid-fill. Cancelable via `signal`.
+   */
+  async fill(input: FillInput): Promise<PaintWriteBatch> {
     const scale = scaleFor(input.metadata, input.targetResolution);
-    const chunkDataSize = scale.chunkDataSize;
-    const builder = new PaintBatchBuilder(
-      input.metadata,
-      input.targetLayerId,
-      input.targetResolution,
-    );
+    const csx = scale.chunkDataSize[0];
+    const csy = scale.chunkDataSize[1];
+    const csz = scale.chunkDataSize[2];
+    const is3d = input.mode === "3d";
+
+    const newBuilder = () =>
+      new PaintBatchBuilder(
+        input.metadata,
+        input.targetLayerId,
+        input.targetResolution,
+      );
 
     const seedX = Math.floor(input.seedVoxelPosition[0]);
     const seedY = Math.floor(input.seedVoxelPosition[1]);
     const seedZ = Math.floor(input.seedVoxelPosition[2]);
 
-    const cap = Math.max(
-      1,
-      Math.min(input.maxVoxels ?? FILL_DEFAULT_MAX_VOXELS, FILL_HARD_CAP),
-    );
+    const { loX, loY, loZ, hiX, hiY, hiZ } = input.bounds; // hi exclusive
+    const inBounds = (x: number, y: number, z: number) =>
+      x >= loX && x < hiX && y >= loY && y < hiY && z >= loZ && z < hiZ;
 
-    // Read the seed voxel's baseline value via the per-chunk reader. The
-    // chunk reader caches reads inside the builder.
-    const chunkReader = new ChunkReader(input.readChunk, chunkDataSize);
-    const seedValue = await chunkReader.readVoxel(seedX, seedY, seedZ);
-    if (seedValue === undefined) {
-      return builder.build();
-    }
-    // If the seed already equals the target value, painting it would be a
-    // no-op — short-circuit to avoid the BFS entirely.
-    if (voxelEqualsTarget(seedValue, input.value)) {
-      return builder.build();
-    }
+    // Seed outside the session region → nothing to do.
+    if (!inBounds(seedX, seedY, seedZ)) return newBuilder().build();
 
-    // BFS with 6-connectivity. We use a string-keyed Set to mark visited
-    // voxels — 3D flood fills cross chunk boundaries so per-chunk Uint8Array
-    // visited bitmaps would blow up. A Map<string, true> is acceptable for
-    // the v1 1M-voxel cap (~80 MB worst case; tightened by the cap below).
-    const visited = new Set<string>();
-    const queueX: number[] = [seedX];
-    const queueY: number[] = [seedY];
-    const queueZ: number[] = [seedZ];
-    let head = 0;
+    // The flood is walled by `bounds` (the edit region) and cancelable via
+    // `signal`, so it terminates naturally at the region edge — a fill covers
+    // the ENTIRE region, not an arbitrary blob, and never truncates on a voxel
+    // count (TM-269). The only backstop is memory pressure (see
+    // `memoryExhausted` below), which stops the flood gracefully rather than
+    // letting a pathologically large 3D region exhaust the tab's heap. An
+    // explicit `maxVoxels` is still honored (tests), but the tool never sets it.
+    const cap = input.maxVoxels ?? Number.POSITIVE_INFINITY;
+
+    const throwIfAborted = () => {
+      if (input.signal?.aborted) {
+        throw (
+          input.signal.reason ?? new DOMException("Fill aborted", "AbortError")
+        );
+      }
+    };
+
+    // Per-chunk view + visited mask, held for the whole flood so re-entering a
+    // chunk from another face stays fully synchronous. For 2D the mask is a
+    // single z-plane (csx*csy); for 3D it is the full chunk (csx*csy*csz).
+    const views = new Map<string, ChunkVoxelBuffer | null>();
+    const visitedMasks = new Map<string, Uint8Array>();
+    // Bytes the flood itself holds for the duration (the per-chunk visited
+    // bitmaps — ~1 byte per voxel touched). Used as the portable memory-pressure
+    // signal where `performance.memory` is unavailable.
+    let visitedBytes = 0;
+    const loadView = async (
+      cx: number,
+      cy: number,
+      cz: number,
+    ): Promise<ChunkVoxelBuffer | null> => {
+      const key = `${cx},${cy},${cz}`;
+      let view = views.get(key);
+      if (view === undefined) {
+        try {
+          const buf = await input.readChunk(
+            ChunkId.fromCoord({ x: cx, y: cy, z: cz }),
+          );
+          view = buf.asView();
+        } catch {
+          view = null; // unreadable chunk → flood does not cross into it
+        }
+        views.set(key, view);
+      }
+      return view;
+    };
+    const visitedFor = (key: string): Uint8Array => {
+      let m = visitedMasks.get(key);
+      if (m === undefined) {
+        m = new Uint8Array(is3d ? csx * csy * csz : csx * csy);
+        visitedMasks.set(key, m);
+        visitedBytes += m.length;
+      }
+      return m;
+    };
+
+    // Memory-pressure backstop: stop the flood before it can exhaust the heap.
+    // Prefer Chrome's `performance.memory` (real heap usage); fall back to the
+    // flood's own tracked allocation where it is unavailable.
+    const selfBudget = input.memoryBudgetBytes ?? FILL_SELF_BUDGET_BYTES;
+    const memoryExhausted = (): boolean => {
+      const frac = heapUsageFraction();
+      return frac !== undefined
+        ? frac >= FILL_HEAP_WATERMARK
+        : visitedBytes >= selfBudget;
+    };
+
+    // Seed value: read once. A no-op (seed already equals target) short-circuits.
+    const seedCx = Math.floor(seedX / csx);
+    const seedCy = Math.floor(seedY / csy);
+    const seedCz = Math.floor(seedZ / csz);
+    const seedView = await loadView(seedCx, seedCy, seedCz);
+    if (seedView === null) return newBuilder().build();
+    const seedValue =
+      seedView[
+        seedX -
+          seedCx * csx +
+          csx * (seedY - seedCy * csy + csy * (seedZ - seedCz * csz))
+      ];
+    if (seedValue === undefined) return newBuilder().build();
+    if (voxelEqualsTarget(seedValue, input.value)) return newBuilder().build();
+
+    // Progressive flushing only happens when the caller supplies a sink to
+    // apply intermediate batches; otherwise a flush would `build()` + reset the
+    // builder and DROP those voxels (they live only in the returned remainder).
+    // Without `onFlush` we accumulate everything into one batch and return it.
+    const progressive = input.onFlush !== undefined;
+    const flushInterval = input.flushIntervalMs ?? FILL_FLUSH_INTERVAL_MS;
+    let builder = newBuilder();
     let voxelsWritten = 0;
     let truncated = false;
+    let outOfMemory = false;
+    let deadline = performance.now() + flushInterval;
 
-    while (head < queueX.length) {
-      if (voxelsWritten >= cap) {
-        truncated = true;
-        break;
+    const flush = async () => {
+      const batch = builder.build();
+      if (batch.chunks.length > 0) {
+        await input.onFlush!(batch);
       }
-      const x = queueX[head];
-      const y = queueY[head];
-      const z = queueZ[head];
-      head++;
-      const key = `${x},${y},${z}`;
-      if (visited.has(key)) continue;
-      visited.add(key);
+      input.onProgress?.({ voxelsWritten });
+      builder = newBuilder();
+      // Macrotask yield so the viewer can repaint the just-applied voxels.
+      await yieldToEventLoop();
+      throwIfAborted();
+      deadline = performance.now() + flushInterval;
+    };
 
-      const value = await chunkReader.readVoxel(x, y, z);
-      if (value === undefined) continue;
-      if (!voxelEqualsTarget(value, seedValue)) continue;
+    // Outer frontier: cross-chunk entry voxels in GLOBAL coords.
+    const frontierX: number[] = [seedX];
+    const frontierY: number[] = [seedY];
+    const frontierZ: number[] = [seedZ];
+    let fhead = 0;
 
-      // Mark the voxel for write. The builder coalesces per-chunk writes.
-      builder.writeVoxel(x, y, z, input.value);
-      voxelsWritten++;
+    outer: while (fhead < frontierX.length) {
+      throwIfAborted();
+      const ex = frontierX[fhead];
+      const ey = frontierY[fhead];
+      const ez = frontierZ[fhead];
+      fhead++;
+      const cx = Math.floor(ex / csx);
+      const cy = Math.floor(ey / csy);
+      const cz = Math.floor(ez / csz);
+      const key = `${cx},${cy},${cz}`;
+      const view = await loadView(cx, cy, cz);
+      if (view === null) continue;
+      const visited = visitedFor(key);
+      const baseX = cx * csx;
+      const baseY = cy * csy;
+      const baseZ = cz * csz;
 
-      // 6-neighbors.
-      queueX.push(x + 1, x - 1, x, x, x, x);
-      queueY.push(y, y, y + 1, y - 1, y, y);
-      queueZ.push(z, z, z, z, z + 1, z - 1);
+      // Intra-chunk DFS over local coords. Cross-chunk neighbors spill to the
+      // outer frontier; in-chunk neighbors stay on this stack.
+      const stackX: number[] = [ex - baseX];
+      const stackY: number[] = [ey - baseY];
+      const stackZ: number[] = [ez - baseZ];
+      while (stackX.length > 0) {
+        const lx = stackX.pop()!;
+        const ly = stackY.pop()!;
+        const lz = stackZ.pop()!;
+        const mIdx = is3d ? lx + csx * (ly + csy * lz) : lx + csx * ly;
+        if (visited[mIdx]) continue;
+        visited[mIdx] = 1;
+        const value = view[lx + csx * (ly + csy * lz)];
+        if (value === undefined) continue;
+        if (!voxelEqualsTarget(value, seedValue)) continue;
+
+        const gx = baseX + lx;
+        const gy = baseY + ly;
+        const gz = baseZ + lz;
+        builder.writeVoxel(gx, gy, gz, input.value);
+        voxelsWritten++;
+        if (voxelsWritten >= cap) {
+          truncated = true;
+          break outer;
+        }
+
+        // Enqueue a neighbor: dropped if out of bounds, kept local when it
+        // stays in this chunk, else spilled to the outer frontier.
+        const consider = (nx: number, ny: number, nz: number) => {
+          if (!inBounds(nx, ny, nz)) return;
+          if (
+            Math.floor(nx / csx) === cx &&
+            Math.floor(ny / csy) === cy &&
+            Math.floor(nz / csz) === cz
+          ) {
+            stackX.push(nx - baseX);
+            stackY.push(ny - baseY);
+            stackZ.push(nz - baseZ);
+          } else {
+            frontierX.push(nx);
+            frontierY.push(ny);
+            frontierZ.push(nz);
+          }
+        };
+        consider(gx + 1, gy, gz);
+        consider(gx - 1, gy, gz);
+        consider(gx, gy + 1, gz);
+        consider(gx, gy - 1, gz);
+        if (is3d) {
+          consider(gx, gy, gz + 1);
+          consider(gx, gy, gz - 1);
+        }
+
+        if (performance.now() >= deadline) {
+          if (memoryExhausted()) {
+            outOfMemory = true;
+            break outer;
+          }
+          if (progressive) {
+            await flush();
+          } else {
+            // No sink to apply to — just honor cancellation and keep going.
+            throwIfAborted();
+            deadline = performance.now() + flushInterval;
+          }
+        }
+      }
     }
 
+    input.onProgress?.({ voxelsWritten });
     return builder.build(
-      truncated ? { reason: "max-voxels", voxelsWritten } : undefined,
+      outOfMemory
+        ? { reason: "out-of-memory", voxelsWritten }
+        : truncated
+          ? { reason: "max-voxels", voxelsWritten }
+          : undefined,
     );
   }
 }
 
+/**
+ * Heap-usage fraction in [0, 1] from Chrome's non-standard `performance.memory`,
+ * or `undefined` where it is unavailable (Firefox / Safari). Lets the fill stop
+ * before the tab's heap is exhausted rather than at an arbitrary voxel count.
+ */
+interface ChromeMemoryInfo {
+  readonly usedJSHeapSize: number;
+  readonly jsHeapSizeLimit: number;
+}
+function heapUsageFraction(): number | undefined {
+  const mem = (performance as { memory?: ChromeMemoryInfo }).memory;
+  if (mem === undefined || !(mem.jsHeapSizeLimit > 0)) return undefined;
+  return mem.usedJSHeapSize / mem.jsHeapSizeLimit;
+}
+
+/** Macrotask yield, letting the viewer repaint between progressive flushes. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 // ---------------------------------------------------------------------------
-// Fill cap constants
+// Fill memory-pressure backstop
 // ---------------------------------------------------------------------------
 
 /**
- * Default voxel cap when `FillInput.maxVoxels` is unspecified. Matches the v1
- * single-chunk fill cap (`1 << 20` voxels ≈ 1.05 M).
+ * Stop a fill when Chrome's reported heap usage crosses this fraction of the
+ * heap limit. A fill is otherwise unbounded except by the edit region and the
+ * user (Escape) — this guards a pathologically large 3D region from exhausting
+ * the tab's memory. Chosen below 1.0 to leave headroom for the in-flight
+ * allocation between checks (~12 ms apart).
  */
-const FILL_DEFAULT_MAX_VOXELS = 1 << 20;
+const FILL_HEAP_WATERMARK = 0.9;
 
 /**
- * Absolute hard cap regardless of `FillInput.maxVoxels` — guards against
- * runaway fills if a caller passes an unreasonably large value. Set well
- * above `FILL_DEFAULT_MAX_VOXELS` to leave the per-call cap effective.
+ * Portable fallback when `performance.memory` is unavailable: stop once the
+ * flood's own visited bitmaps reach this many bytes (~1 byte per voxel
+ * touched). ~1 GiB tolerates very large 2D slices while still bounding a runaway
+ * 3D region.
  */
-const FILL_HARD_CAP = 1 << 24; // ~16.7 M voxels
+const FILL_SELF_BUDGET_BYTES = 1 << 30; // ~1 GiB
+
+/**
+ * Compute budget between progressive flushes (TM-269). After this many ms of
+ * uninterrupted flooding, `fill` flushes the accumulated voxels and yields a
+ * frame so the viewer repaints and the cancel signal is observed. ~12 ms keeps
+ * the fill visibly advancing without thrashing the apply path.
+ */
+const FILL_FLUSH_INTERVAL_MS = 12;
 
 // ---------------------------------------------------------------------------
 // Disk stamp — 2D disk in the XY plane at fixed Z (matches v1 behavior).
@@ -1996,71 +2205,4 @@ function voxelEqualsTarget(a: number | bigint, b: number | bigint): boolean {
   const an = typeof a === "bigint" ? Number(a) : a;
   const bn = typeof b === "bigint" ? Number(b) : b;
   return an === bn;
-}
-
-// ---------------------------------------------------------------------------
-// ChunkReader — caches `readChunk(chunkId)` results per-chunk.
-// ---------------------------------------------------------------------------
-
-/**
- * Caches the result of `readChunk(chunkId)` so a BFS that revisits a chunk
- * does not re-fetch. Buffer reads are returned as typed-array views.
- */
-class ChunkReader {
-  private readonly cache = new Map<
-    string,
-    Promise<ReadonlyChunkVoxelBuffer> | ReadonlyChunkVoxelBuffer
-  >();
-
-  constructor(
-    private readonly readChunk: (
-      chunkId: ChunkIdType,
-    ) => Promise<ReadonlyChunkVoxelBuffer>,
-    private readonly chunkDataSize: readonly [number, number, number],
-  ) {}
-
-  async readVoxel(
-    vx: number,
-    vy: number,
-    vz: number,
-  ): Promise<number | bigint | undefined> {
-    const sx = this.chunkDataSize[0];
-    const sy = this.chunkDataSize[1];
-    const sz = this.chunkDataSize[2];
-    const gx = Math.floor(vx / sx);
-    const gy = Math.floor(vy / sy);
-    const gz = Math.floor(vz / sz);
-    const lx = vx - gx * sx;
-    const ly = vy - gy * sy;
-    const lz = vz - gz * sz;
-    if (lx < 0 || ly < 0 || lz < 0) return undefined;
-    if (lx >= sx || ly >= sy || lz >= sz) return undefined;
-    const key = `${gx},${gy},${gz}`;
-    let entry = this.cache.get(key);
-    if (entry === undefined) {
-      const chunkId = ChunkId.fromCoord({ x: gx, y: gy, z: gz });
-      const promise = this.readChunk(chunkId);
-      this.cache.set(key, promise);
-      try {
-        const resolved = await promise;
-        this.cache.set(key, resolved);
-        entry = resolved;
-      } catch {
-        this.cache.delete(key);
-        return undefined;
-      }
-    } else if (entry instanceof Promise) {
-      try {
-        entry = await entry;
-        this.cache.set(key, entry);
-      } catch {
-        this.cache.delete(key);
-        return undefined;
-      }
-    }
-    const view = (entry as ReadonlyChunkVoxelBuffer).asView();
-    const linear = lx + sx * (ly + sy * lz);
-    if (view instanceof BigUint64Array) return view[linear];
-    return view[linear];
-  }
 }
