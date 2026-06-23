@@ -226,7 +226,7 @@ export class SessionChunkPreloader {
   /** Aggregate a single failed chunk into the per-`(layer, resolution)` tally. */
   private recordFailure(layerId: LayerId, resolution: Resolution): void {
     const existing = this.failures.find(
-      f => f.layerId === layerId && f.resolution === resolution,
+      (f) => f.layerId === layerId && f.resolution === resolution,
     );
     if (existing !== undefined) {
       this.failures[this.failures.indexOf(existing)] = {

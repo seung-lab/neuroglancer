@@ -88,7 +88,9 @@ describe("SessionChunkPreloader", () => {
     // surfaced as a failure, not masked as loaded: the lazy `readBaselineChunk`
     // now retries and then throws rather than returning a false-empty baseline.
     const fake = makeFakeSource((key) =>
-      key === "1,0,0" ? Promise.reject(new Error("network")) : Promise.resolve(),
+      key === "1,0,0"
+        ? Promise.reject(new Error("network"))
+        : Promise.resolve(),
     );
     const preloader = new SessionChunkPreloader(() => fake.source);
     const coords = [coord(0, 0, 0), coord(1, 0, 0), coord(2, 0, 0)];
