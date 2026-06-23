@@ -21,6 +21,7 @@ import {
   PaintBucket,
   Paintbrush,
   Redo2,
+  Save,
   Undo2,
 } from "lucide-preact";
 import {
@@ -301,44 +302,53 @@ function ActiveTopbarControls({
         role="toolbar"
         aria-label="Save"
       >
-        {isSaving ? (
-          <button
-            type="button"
-            class="neuroglancer-editing-topbar-save-button saving"
-            onClick={cancelSave}
-            data-tooltip="Saving changes… click to cancel"
-            aria-label="Saving changes — click to cancel"
-          >
-            <Loader2
-              size={14}
-              class="neuroglancer-editing-topbar-spinner"
-              aria-hidden="true"
-            />
-            Saving&hellip;
-          </button>
-        ) : (
-          <button
-            type="button"
-            class="neuroglancer-editing-topbar-save-button"
-            disabled={!hasDirty || !saveAvailable}
-            data-tooltip={
-              saveAvailable
+        {/*
+          One fixed-geometry button across every state. A constant-size leading
+          icon slot swaps its glyph (Save → spinner) without resizing, and the
+          button reserves a stable width (see `min-width` in the stylesheet) so
+          the "Saving…" label never widens the box and shoves the toolbar. The
+          badge is position:absolute, so it stays out of the width entirely.
+        */}
+        <button
+          type="button"
+          class={
+            "neuroglancer-editing-topbar-save-button" +
+            (isSaving ? " saving" : "")
+          }
+          disabled={!isSaving && (!hasDirty || !saveAvailable)}
+          data-tooltip={
+            isSaving
+              ? "Saving changes… click to cancel"
+              : saveAvailable
                 ? "Save all dirty layers to the backend"
                 : "Saving is unavailable — no save backend is registered."
-            }
-            onClick={runSaveAll}
-          >
-            Save all
-            {pendingCount > 0 && (
-              <span class="neuroglancer-editing-topbar-badge">
-                {pendingCount}
-              </span>
-            )}
-          </button>
-        )}
+          }
+          aria-label={isSaving ? "Saving changes — click to cancel" : undefined}
+          onClick={isSaving ? cancelSave : runSaveAll}
+        >
+          {isSaving ? (
+            <Loader2
+              size={14}
+              class="neuroglancer-editing-topbar-save-icon neuroglancer-editing-topbar-spinner"
+              aria-hidden="true"
+            />
+          ) : (
+            <Save
+              size={14}
+              class="neuroglancer-editing-topbar-save-icon"
+              aria-hidden="true"
+            />
+          )}
+          <span class="neuroglancer-editing-topbar-save-label">
+            {isSaving ? "Saving…" : "Save all"}
+          </span>
+          {!isSaving && pendingCount > 0 && (
+            <span class="neuroglancer-editing-topbar-badge">
+              {pendingCount}
+            </span>
+          )}
+        </button>
       </div>
-
-      <ChunkLoadProgress host={host} />
 
       <div class="neuroglancer-editing-topbar-divider" />
 
@@ -445,6 +455,15 @@ function ActiveTopbarControls({
           <Redo2 size={TOOL_ICON_SIZE} aria-hidden="true" />
         </button>
       </div>
+
+      {/*
+        Transient region-preload status lives at the trailing edge so that when
+        it appears (session open) and disappears (load done) it extends into the
+        empty right-edge space rather than shoving Save / tools / Undo-Redo. It
+        renders nothing while idle and after a clean load — only the persistent
+        "N chunks unavailable" warning lingers.
+      */}
+      <ChunkLoadProgress host={host} />
     </>
   );
 }
