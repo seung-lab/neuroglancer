@@ -43,6 +43,7 @@ import type {
   PaintWriteBatch,
   StrokeFootprintMask,
 } from "#src/editing/tool_runtimes/paint_types.js";
+import { DEFAULT_COVERAGE_THRESHOLD } from "#src/editing/tool_runtimes/paint_types.js";
 
 /**
  * Runs the post-threshold morphology pipeline (binary closing + component
@@ -925,23 +926,34 @@ async function stampShape2DMasked(
   const syRatio = ctx.targetVoxelSizeNm[1] / ctx.imageVoxelSizeNm[1];
   const szRatio = ctx.targetVoxelSizeNm[2] / ctx.imageVoxelSizeNm[2];
   const imageZ = Math.floor(cz * szRatio);
-  const imgX = new Int32Array(tShapeX);
-  const imgY = new Int32Array(tShapeY);
+  // Per-target-voxel image BLOCK extents (TM-339): a target voxel at absolute
+  // coord `v` covers image voxels `[floor(v·ratio), ceil((v+1)·ratio) - 1]`. At
+  // ratio ≤ 1 the block is a single voxel (lo === hi) and the coverage test
+  // below reduces bit-for-bit to the legacy nearest-neighbour sample. The slab
+  // must span every covered voxel, so its bounds come from the block lo/hi.
+  const imgXLo = new Int32Array(tShapeX);
+  const imgXHi = new Int32Array(tShapeX);
+  const imgYLo = new Int32Array(tShapeY);
+  const imgYHi = new Int32Array(tShapeY);
   let minIx = Number.POSITIVE_INFINITY;
   let maxIx = Number.NEGATIVE_INFINITY;
   let minIy = Number.POSITIVE_INFINITY;
   let maxIy = Number.NEGATIVE_INFINITY;
   for (let i = 0; i < tShapeX; i++) {
-    const ix = Math.floor((loTx + i) * sxRatio);
-    imgX[i] = ix;
-    if (ix < minIx) minIx = ix;
-    if (ix > maxIx) maxIx = ix;
+    const lo = Math.floor((loTx + i) * sxRatio);
+    const hi = Math.ceil((loTx + i + 1) * sxRatio) - 1;
+    imgXLo[i] = lo;
+    imgXHi[i] = hi;
+    if (lo < minIx) minIx = lo;
+    if (hi > maxIx) maxIx = hi;
   }
   for (let j = 0; j < tShapeY; j++) {
-    const iy = Math.floor((loTy + j) * syRatio);
-    imgY[j] = iy;
-    if (iy < minIy) minIy = iy;
-    if (iy > maxIy) maxIy = iy;
+    const lo = Math.floor((loTy + j) * syRatio);
+    const hi = Math.ceil((loTy + j + 1) * syRatio) - 1;
+    imgYLo[j] = lo;
+    imgYHi[j] = hi;
+    if (lo < minIy) minIy = lo;
+    if (hi > maxIy) maxIy = hi;
   }
 
   // Image-voxel region we need (single z-slice).
@@ -1010,6 +1022,7 @@ async function stampShape2DMasked(
   const tMaskData = new Uint8Array(tShapeX * tShapeY);
   const low = ctx.mask.thresholdLow;
   const high = ctx.mask.thresholdHigh;
+  const coverage = ctx.mask.coverageThreshold ?? DEFAULT_COVERAGE_THRESHOLD;
   const tMask = prof ? performance.now() : 0;
   let mMinI = tShapeX;
   let mMaxI = -1;
@@ -1017,13 +1030,29 @@ async function stampShape2DMasked(
   let mMaxJ = -1;
   for (let j = 0; j < tShapeY; j++) {
     const vy = loTy + j;
-    const iyLocal = imgY[j] - loImage[1];
+    const iy0 = imgYLo[j] - loImage[1];
+    const iy1 = imgYHi[j] - loImage[1];
     let rowHasSet = false;
     for (let i = 0; i < tShapeX; i++) {
       if (!inShape(loTx + i, vy)) continue;
-      const ixLocal = imgX[i] - loImage[0];
-      const v = imageValues[ixLocal + iShapeX * iyLocal];
-      if (v >= low && v <= high) {
+      const ix0 = imgXLo[i] - loImage[0];
+      const ix1 = imgXHi[i] - loImage[0];
+      // Coverage: paint iff ≥ `minPass` of the block's image voxels are in-band.
+      // `minPass = clamp(ceil(coverage·total), 1, total)` — identical arithmetic
+      // in `paint_pipeline_ts.ts` and `python_painter.py`.
+      const total = (ix1 - ix0 + 1) * (iy1 - iy0 + 1);
+      let minPass = Math.ceil(coverage * total);
+      if (minPass < 1) minPass = 1;
+      if (minPass > total) minPass = total;
+      let pass = 0;
+      for (let iy = iy0; iy <= iy1; iy++) {
+        const rowBase = iShapeX * iy;
+        for (let ix = ix0; ix <= ix1; ix++) {
+          const v = imageValues[ix + rowBase];
+          if (v >= low && v <= high) pass++;
+        }
+      }
+      if (pass >= minPass) {
         tMaskData[i + tShapeX * j] = 1;
         rowHasSet = true;
         if (i < mMinI) mMinI = i;
@@ -1230,14 +1259,16 @@ async function runFootprintMaskViaPipeline(
   const syRatio = ctx.targetVoxelSizeNm[1] / ctx.imageVoxelSizeNm[1];
   const szRatio = ctx.targetVoxelSizeNm[2] / ctx.imageVoxelSizeNm[2];
   const imageZ = Math.floor(cz * szRatio);
-  // Image-voxel region the footprint projects to. The per-axis map
-  // `floor((loT + i) * ratio)` is monotonic in `i` (ratio > 0), so the extremes
-  // are at the footprint corners — exactly the indices the worker recomputes,
-  // so the slab spans them with no clipping (parity with the main-thread map).
+  // Image-voxel region the footprint projects to. Each target voxel covers the
+  // image BLOCK `[floor(v·ratio), ceil((v+1)·ratio) - 1]` (TM-339 area-aware
+  // coverage); both bounds are monotonic in `v` (ratio > 0), so the slab extent
+  // is the first voxel's block-lo to the last voxel's block-hi — exactly the
+  // voxels the worker / TS twin gather, so the slab spans them with no clipping.
+  // At ratio ≤ 1 block-hi === block-lo, recovering the legacy 1-voxel slab.
   const minIx = Math.floor(loTx * sxRatio);
-  const maxIx = Math.floor((loTx + tShapeX - 1) * sxRatio);
+  const maxIx = Math.ceil((loTx + tShapeX) * sxRatio) - 1;
   const minIy = Math.floor(loTy * syRatio);
-  const maxIy = Math.floor((loTy + tShapeY - 1) * syRatio);
+  const maxIy = Math.ceil((loTy + tShapeY) * syRatio) - 1;
   const iSx = maxIx - minIx + 1;
   const iSy = maxIy - minIy + 1;
 
@@ -1270,6 +1301,8 @@ async function runFootprintMaskViaPipeline(
         szRatio,
         thresholdLow: ctx.mask.thresholdLow,
         thresholdHigh: ctx.mask.thresholdHigh,
+        coverageThreshold:
+          ctx.mask.coverageThreshold ?? DEFAULT_COVERAGE_THRESHOLD,
         pathPoints: geometry.points,
         radius: geometry.radius,
         binaryClosing: ctx.mask.binaryClosing,

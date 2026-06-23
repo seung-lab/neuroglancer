@@ -9,6 +9,7 @@
  */
 
 import type { EditSession } from "@zettaai/edit-session";
+import { Copy, LocateFixed } from "lucide-preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 
 import {
@@ -28,6 +29,7 @@ import {
   formatBytes,
   MemoryMeter,
 } from "#src/editing/ui/session_entry/memory_estimate.js";
+import { setClipboard } from "#src/util/clipboard.js";
 // The summary reuses the entry modal's layer-row, role-control and memory-meter
 // markup, so it depends on the same stylesheet for those classes.
 import "#src/editing/ui/session_entry/session_entry.css";
@@ -88,7 +90,7 @@ function SummaryBody({
 
   return (
     <div class="neuroglancer-tool-panel neuroglancer-navigation-summary-panel">
-      <RegionSection region={intent.region} />
+      <RegionSection host={host} region={intent.region} />
       <div class="neuroglancer-edit-session-entry-modal-section-title">
         Layers
       </div>
@@ -115,7 +117,17 @@ function SummaryBody({
   );
 }
 
-function RegionSection({ region }: { region: EditSessionIntent["region"] }) {
+function RegionSection({
+  host,
+  region,
+}: {
+  host: EditSessionHost;
+  region: EditSessionIntent["region"];
+}) {
+  // The corner coordinates live in the viewer's display-voxel frame, which
+  // shifts if the user relabels the global dimensions; re-read on that change.
+  useWatchable(host.viewer.displayDimensionRenderInfo);
+
   const extent: [number, number, number] = [
     Math.round(region.hi[0] - region.lo[0]),
     Math.round(region.hi[1] - region.lo[1]),
@@ -129,6 +141,8 @@ function RegionSection({ region }: { region: EditSessionIntent["region"] }) {
         `${formatLength(extent[1] * scales[1])} × ` +
         `${formatLength(extent[2] * scales[2])}`
       : undefined;
+
+  const bounds = host.activeRegionDisplayBounds();
 
   return (
     <>
@@ -145,7 +159,62 @@ function RegionSection({ region }: { region: EditSessionIntent["region"] }) {
           </div>
         )}
       </div>
+      {bounds !== undefined && (
+        <div class="neuroglancer-navigation-summary-coords">
+          <CoordRow
+            label="Lower"
+            coords={bounds.lo}
+            onGo={() => host.teleportToActiveRegionCorner("lo")}
+          />
+          <CoordRow
+            label="Upper"
+            coords={bounds.hi}
+            onGo={() => host.teleportToActiveRegionCorner("hi")}
+          />
+        </div>
+      )}
     </>
+  );
+}
+
+/**
+ * One edit-region corner: its `x, y, z` voxel coordinate (in the viewer frame)
+ * with a copy button and a go-to button that teleports the viewer there —
+ * mirroring the per-coordinate copy/move-to controls in the annotations panel.
+ */
+function CoordRow({
+  label,
+  coords,
+  onGo,
+}: {
+  label: string;
+  coords: readonly number[];
+  onGo: () => void;
+}) {
+  const text = coords.map((c) => Math.floor(c)).join(", ");
+  return (
+    <div class="neuroglancer-navigation-summary-coord-row">
+      <span class="neuroglancer-navigation-summary-coord-label">{label}</span>
+      <span class="neuroglancer-navigation-summary-coord-value">{text}</span>
+      <button
+        type="button"
+        class="neuroglancer-navigation-summary-coord-btn"
+        title="Copy coordinate"
+        aria-label={`Copy ${label} coordinate`}
+        onClick={() => setClipboard(text)}
+      >
+        <Copy size={13} aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        class="neuroglancer-navigation-summary-coord-btn"
+        title="Go to coordinate"
+        aria-label={`Go to ${label} coordinate`}
+        onClick={onGo}
+      >
+        <LocateFixed size={13} aria-hidden="true" />
+      </button>
+    </div>
   );
 }
 

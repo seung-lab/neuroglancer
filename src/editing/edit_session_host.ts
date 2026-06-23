@@ -102,6 +102,7 @@ import { voxelDataTypeRange } from "#src/editing/tool_runtimes/mask_coord.js";
 import { MorphologyClient } from "#src/editing/tool_runtimes/morphology_client.js";
 import { paintProfilerMetrics } from "#src/editing/tool_runtimes/paint_profiler_metrics.js";
 import type { PaintingMaskConfig } from "#src/editing/tool_runtimes/paint_types.js";
+import { DEFAULT_COVERAGE_THRESHOLD } from "#src/editing/tool_runtimes/paint_types.js";
 import { PaintingCompute } from "#src/editing/tool_runtimes/painting_compute.js";
 import {
   ConsumerPaintingTools,
@@ -388,7 +389,7 @@ interface PerLayerMachinery {
  *     the annotation render layer — so this matches the visible yellow
  *     rectangle exactly.
  */
-interface ActiveRegion {
+export interface ActiveRegion {
   readonly lo: readonly [number, number, number];
   readonly hi: readonly [number, number, number];
 }
@@ -1486,6 +1487,42 @@ export class EditSessionHost extends RefCounted {
   }
 
   /**
+   * Active edit region in the viewer's global display-voxel frame — the same
+   * frame as the position readout — or `undefined` when no session/region is
+   * active. Surfaced for the navigation panel's coordinate readout (TM-338).
+   */
+  activeRegionDisplayBounds(): ActiveRegion | undefined {
+    const config = this.activeSessionConfig;
+    if (config === undefined) return undefined;
+    return this.computeActiveRegionSync(config);
+  }
+
+  /**
+   * Move the viewer to a corner of the active edit region — the lower
+   * (`"lo"`) or upper (`"hi"`) bound. Like {@link teleportToActiveRegionCenter}
+   * but targets a corner; only the display-dimension coordinates change.
+   * Snaps to the covered voxel center at that corner (a degenerate
+   * `[point, point]` box resolves to `floor(point) + 0.5`), so the move lands
+   * on the same whole voxel the readout floors to. Returns `false` when no
+   * session is active.
+   */
+  teleportToActiveRegionCorner(corner: "lo" | "hi"): boolean {
+    const config = this.activeSessionConfig;
+    if (config === undefined) return false;
+    const region = this.computeActiveRegionSync(config);
+    if (region === undefined) return false;
+    const renderInfo = this.viewer.displayDimensionRenderInfo.value;
+    const point = corner === "lo" ? region.lo : region.hi;
+    this.viewer.position.value = voxelCenterInBox(
+      this.viewer.position.value,
+      renderInfo.displayDimensionIndices,
+      point,
+      point,
+    );
+    return true;
+  }
+
+  /**
    * Returns the persistent per-layer watchable for the patched-mask
    * provider hook the base `SegmentationRenderLayer` consumes via
    * `editPatchOverlay`. The watchable's current value is the active
@@ -1734,6 +1771,7 @@ export class EditSessionHost extends RefCounted {
         imageResolution: l.resolutions[0],
         thresholdLow: range.min,
         thresholdHigh: range.max,
+        coverageThreshold: DEFAULT_COVERAGE_THRESHOLD,
         minComponentSize: 0,
         binaryClosing: 0,
         filterComponentsFirst: false,
@@ -2084,7 +2122,14 @@ export class EditSessionHost extends RefCounted {
       if (!Number.isFinite(scale) || scale === 0) {
         return voxelCoord;
       }
-      return (voxelCoord * bboxVoxelSizeNm[axis] * 1e-9) / scale;
+      // Form the ratio in rounded nm on both sides so matching region/display
+      // resolutions yield exactly 1.0. Dividing rounded-nm by the raw-metres
+      // scale leaves IEEE-754 noise (e.g. 45nm / 4.5000000000000006e-8 m =
+      // 0.9999999999999999), which floors a 3000 boundary to 2999 and drops
+      // teleport-to-center and the corner readout a whole voxel.
+      const displayVoxelSizeNm = Math.round(scale * 1e9 * 1e6) / 1e6;
+      if (displayVoxelSizeNm === 0) return voxelCoord;
+      return (voxelCoord * bboxVoxelSizeNm[axis]) / displayVoxelSizeNm;
     };
     return {
       lo: [

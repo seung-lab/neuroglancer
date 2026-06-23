@@ -28,6 +28,7 @@ import {
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { voxelDataTypeRange } from "#src/editing/tool_runtimes/mask_coord.js";
 import type { PaintingMaskConfig } from "#src/editing/tool_runtimes/paint_types.js";
+import { DEFAULT_COVERAGE_THRESHOLD } from "#src/editing/tool_runtimes/paint_types.js";
 import type { PaintingState } from "#src/editing/tool_runtimes/painting_tools.js";
 import {
   booleanDescriptor,
@@ -247,6 +248,7 @@ function BrushMask({
       imageResolution: entry.resolutions[0],
       thresholdLow: range.min,
       thresholdHigh: range.max,
+      coverageThreshold: DEFAULT_COVERAGE_THRESHOLD,
       minComponentSize: 0,
       binaryClosing: 0,
       filterComponentsFirst: false,

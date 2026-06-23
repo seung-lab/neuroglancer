@@ -279,29 +279,57 @@ def _footprint_mask(tx, ty, lo_tx, lo_ty, points, radius, r2):
     return inside
 
 
-def _threshold_footprint_inplace(inside, image, ix, iy, thr_low, thr_high):
-    """In place, zero footprint voxels whose image value is outside the band.
+def _threshold_footprint_coverage_inplace(
+    inside, image, ix_lo, ix_hi, iy_lo, iy_hi, thr_low, thr_high, coverage
+):
+    """In place, zero footprint voxels whose covered image block fails coverage.
 
-    `inside` is the (t_sy, t_sx) bool footprint. Gathers + thresholds ONLY
-    footprint voxels (the old `apply_brush` invariant) and exactly ONCE each —
-    unlike fusing into the per-segment loop, overlapping polyline segments don't
-    re-gather shared voxels. Striped over rows so no full-bbox `gathered`/`band`
-    array is ever allocated; each stripe gathers only the x-extent that actually
-    contains footprint voxels (tight for diagonal strokes). Result is
-    byte-identical to `footprint & (image in [low, high])`.
+    `inside` is the (t_sy, t_sx) bool footprint. For each target voxel `(i, j)`,
+    its covered image block is `[ix_lo[i]..ix_hi[i]] x [iy_lo[j]..iy_hi[j]]`
+    (slab-local indices, TM-339). The voxel is kept iff at least
+    `min_pass = clip(ceil(coverage * total), 1, total)` of the block's image
+    voxels are within `[thr_low, thr_high]` — the SAME integer arithmetic as the
+    TS twin (`paint_pipeline_ts.ts`) and main-thread fallback
+    (`painting_compute.ts`), so the painted set is byte-identical across paths.
+
+    Striped over target rows to bound the summed-area-table temporary to one
+    stripe's image rows. At ratio <= 1 every block is a single voxel
+    (`ix_lo == ix_hi`, `iy_lo == iy_hi`), `total == 1`, `min_pass == 1`, so this
+    reduces bit-for-bit to `footprint & (image in [low, high])`.
     """
-    h = inside.shape[0]
-    for ys in range(0, h, _FOOTPRINT_STRIPE_ROWS):
-        ye = min(ys + _FOOTPRINT_STRIPE_ROWS, h)
+    t_sy = inside.shape[0]
+    # Per-column block widths in image voxels (length t_sx).
+    bw = ix_hi - ix_lo + 1
+    for ys in range(0, t_sy, _FOOTPRINT_STRIPE_ROWS):
+        ye = min(ys + _FOOTPRINT_STRIPE_ROWS, t_sy)
         stripe = inside[ys:ye]
-        cols = stripe.any(axis=0)
-        if not bool(cols.any()):
+        if not bool(stripe.any()):
             continue
-        x0 = int(cols.argmax())
-        x1 = cols.shape[0] - 1 - int(cols[::-1].argmax())
-        vals = image[iy[ys:ye][:, np.newaxis], ix[x0 : x1 + 1][np.newaxis, :]]
-        band = (vals >= thr_low) & (vals <= thr_high)
-        stripe[:, x0 : x1 + 1] &= band
+        # Image rows this target-row stripe covers (bounds are monotonic in j).
+        r0 = int(iy_lo[ys])
+        r1 = int(iy_hi[ye - 1])
+        sub = image[r0 : r1 + 1, :]
+        band = (sub >= thr_low) & (sub <= thr_high)
+        # Summed-area table padded by a zero row/col: sat[a, b] = sum of
+        # band[0:a, 0:b]. int64 keeps exact counts for any block size.
+        sat = np.zeros((band.shape[0] + 1, band.shape[1] + 1), dtype=np.int64)
+        np.cumsum(np.cumsum(band, axis=0, dtype=np.int64), axis=1, out=sat[1:, 1:])
+        # Stripe-local y block bounds and heights.
+        yl = iy_lo[ys:ye] - r0
+        yh = iy_hi[ys:ye] - r0
+        bh = yh - yl + 1
+        # Block in-band counts for every (j in stripe, i) via the four SAT
+        # corners (broadcast over the stripe × target-x grid).
+        pass_count = (
+            sat[np.ix_(yh + 1, ix_hi + 1)]
+            - sat[np.ix_(yl, ix_hi + 1)]
+            - sat[np.ix_(yh + 1, ix_lo)]
+            + sat[np.ix_(yl, ix_lo)]
+        )
+        total = np.outer(bh, bw)
+        min_pass = np.ceil(coverage * total).astype(np.int64)
+        np.clip(min_pass, 1, total, out=min_pass)
+        stripe &= pass_count >= min_pass
 
 
 def apply_paint_pipeline(
@@ -319,6 +347,7 @@ def apply_paint_pipeline(
     sy_ratio,
     thr_low,
     thr_high,
+    coverage_threshold,
     path_points,
     radius,
     binary_closing_iterations,
@@ -328,10 +357,13 @@ def apply_paint_pipeline(
     """Whole masked-brush compute for one z-slice (TM-317).
 
     Replicates `painting_compute.ts::stampShape2DMasked` end-to-end in numpy:
-    resample each target voxel to its image voxel (nearest-neighbour via nm
-    ratio), threshold against `[thr_low, thr_high]`, gate by the swept-capsule
-    footprint, then run binary closing + min-component-size filtering in the
-    ordering selected by `filter_components_first`.
+    for each target voxel, gather the image BLOCK it covers (`[floor(v·ratio),
+    ceil((v+1)·ratio) - 1]` per axis, TM-339), paint iff at least
+    `coverage_threshold` of that block is inside `[thr_low, thr_high]`, gate by
+    the swept-capsule footprint, then run binary closing + min-component-size
+    filtering in the ordering selected by `filter_components_first`. At
+    ratio ≤ 1 the block is a single voxel and this matches the legacy
+    nearest-neighbour threshold bit-for-bit.
 
     Args:
         image_bytes: JS native-dtype image slab (PyProxy), row-major (x fast)
@@ -343,6 +375,10 @@ def apply_paint_pipeline(
         t_sx, t_sy: target footprint dimensions.
         sx_ratio, sy_ratio: target->image nm ratios (target_size_nm / image_size_nm).
         thr_low, thr_high: inclusive threshold band.
+        coverage_threshold: fraction (0, 1] of a target voxel's covered image
+            block that must be in-band to paint it. 0.5 = majority. Only matters
+            when a ratio > 1 (target coarser than image); at ratio <= 1 the block
+            is one voxel and this reduces to the plain in-band test.
         path_points: flattened [x0, y0, x1, y1, ...] un-floored target voxel
             coords of the swept-capsule polyline.
         radius: brush radius in target voxels (already floored).
@@ -362,22 +398,29 @@ def apply_paint_pipeline(
     pts = np.asarray(path_points.to_py(), dtype=np.float64).reshape((-1, 2))
     t1 = time.perf_counter()
 
-    # Resample: per-axis nearest-neighbour image index for each target voxel,
-    # floored toward -inf (matches JS `Math.floor`, NOT truncation), then made
-    # slab-local. The main thread sizes the slab to exactly span these indices,
-    # so no clipping is needed (parity with the un-clipped main-thread path).
-    # These per-axis index arrays are tiny (length t_sx / t_sy); the gather
-    # itself happens only over footprint voxels inside `_threshold_footprint_inplace`.
+    # Resample: per-axis image BLOCK each target voxel covers (TM-339). A target
+    # voxel at absolute coord `v` spans image voxels
+    # `[floor(v·ratio), ceil((v+1)·ratio) - 1]`; both bounds use the same
+    # floor/ceil as JS, then made slab-local. The main thread sizes the slab to
+    # exactly span these blocks, so no clipping is needed. At ratio <= 1 the
+    # block collapses to one voxel (lo == hi) and coverage reduces to the plain
+    # in-band test. These per-axis arrays are tiny (length t_sx / t_sy); the
+    # gather happens only over footprint voxels inside the coverage pass.
     tm = time.perf_counter()
     radius = int(radius)
     tx = lo_tx + np.arange(t_sx, dtype=np.float64)
     ty = lo_ty + np.arange(t_sy, dtype=np.float64)
-    ix = np.floor(tx * sx_ratio).astype(np.int64) - lo_image_x
-    iy = np.floor(ty * sy_ratio).astype(np.int64) - lo_image_y
+    ix_lo = np.floor(tx * sx_ratio).astype(np.int64) - lo_image_x
+    ix_hi = np.ceil((tx + 1.0) * sx_ratio).astype(np.int64) - 1 - lo_image_x
+    iy_lo = np.floor(ty * sy_ratio).astype(np.int64) - lo_image_y
+    iy_hi = np.ceil((ty + 1.0) * sy_ratio).astype(np.int64) - 1 - lo_image_y
 
     r2 = float(radius) * float(radius)
     combined = _footprint_mask(tx, ty, lo_tx, lo_ty, pts, radius, r2)
-    _threshold_footprint_inplace(combined, image, ix, iy, thr_low, thr_high)
+    _threshold_footprint_coverage_inplace(
+        combined, image, ix_lo, ix_hi, iy_lo, iy_hi, thr_low, thr_high,
+        coverage_threshold,
+    )
     mask_build_ms = (time.perf_counter() - tm) * 1000.0
 
     closing_ms = 0.0

@@ -124,6 +124,8 @@ interface MaskCfg {
   binaryClosing: number;
   minComponentSize: number;
   filterComponentsFirst: boolean;
+  /** Optional coverage fraction (TM-339); omitted ⇒ config default (0.5). */
+  coverageThreshold?: number;
 }
 
 interface SceneCfg {
@@ -146,6 +148,9 @@ function maskConfig(scene: SceneCfg, m: MaskCfg) {
     minComponentSize: m.minComponentSize,
     binaryClosing: m.binaryClosing,
     filterComponentsFirst: m.filterComponentsFirst,
+    ...(m.coverageThreshold !== undefined
+      ? { coverageThreshold: m.coverageThreshold }
+      : {}),
   };
 }
 
@@ -379,5 +384,72 @@ describe("PaintingCompute whole-pipeline parity (TM-317)", () => {
       c.applyBrush(clickInput(ISO, m, [62, 62, Z], 18)),
     );
     expect(paintedCount).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Coverage aggregation (TM-339): when the target is coarser than the image, a
+// target voxel covers a block of image voxels and `coverageThreshold` decides
+// how many must be in-band to paint it. FINE_IMAGE is sxRatio 2 (2×2 block).
+// ---------------------------------------------------------------------------
+
+describe("PaintingCompute coverage aggregation (TM-339)", () => {
+  const baseM: MaskCfg = {
+    binaryClosing: 0,
+    minComponentSize: 1,
+    filterComponentsFirst: false,
+  };
+
+  it("main-thread and twin agree for every coverage at ratio 2", async () => {
+    for (const coverageThreshold of [0.01, 0.25, 0.5, 0.75, 1]) {
+      await expectParity((c) =>
+        c.applyBrush(
+          clickInput(
+            FINE_IMAGE,
+            { ...baseM, coverageThreshold },
+            [100, 100, Z],
+            16,
+          ),
+        ),
+      );
+    }
+  });
+
+  it("higher coverage paints no more voxels — overpaint shrinks monotonically", async () => {
+    const counts: number[] = [];
+    for (const coverageThreshold of [0.01, 0.5, 1]) {
+      const { paintedCount } = await expectParity((c) =>
+        c.applyBrush(
+          clickInput(
+            FINE_IMAGE,
+            { ...baseM, coverageThreshold },
+            [100, 100, Z],
+            16,
+          ),
+        ),
+      );
+      counts.push(paintedCount);
+    }
+    const [anyIn, majority, allIn] = counts;
+    // any-in-range ≥ majority ≥ all-in-range.
+    expect(anyIn).toBeGreaterThanOrEqual(majority);
+    expect(majority).toBeGreaterThanOrEqual(allIn);
+    // The rule actually does something at ratio > 1: requiring the whole block
+    // in-band paints strictly fewer voxels than requiring just one (this is the
+    // overpaint the bug report was about).
+    expect(anyIn).toBeGreaterThan(allIn);
+  });
+
+  it("coverage is a no-op at equal resolution (ratio 1)", async () => {
+    let prev: number | undefined;
+    for (const coverageThreshold of [0.01, 0.5, 1]) {
+      const { paintedCount } = await expectParity((c) =>
+        c.applyBrush(
+          clickInput(ISO, { ...baseM, coverageThreshold }, [100, 100, Z], 14),
+        ),
+      );
+      if (prev !== undefined) expect(paintedCount).toBe(prev);
+      prev = paintedCount;
+    }
   });
 });
