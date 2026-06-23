@@ -184,47 +184,7 @@ export class NgChunkSource implements LibraryChunkSource {
       throw new ChunkReadFailedError(coord, cause);
     }
     const chunkGridPosition = makeChunkGridPosition(source, chunkCoord);
-    const fetchSignal = signal ?? new AbortController().signal;
-    let data: ChunkVoxelBuffer;
-    try {
-      data = await source.fetchChunk(
-        chunkGridPosition,
-        (chunk: Chunk) => {
-          const raw = (chunk as unknown as { data?: ChunkVoxelBuffer | null })
-            .data;
-          if (raw == null) {
-            // Treat empty chunks as all-zero baselines (see comment below).
-            return makeZeroFilledChunkBuffer(source);
-          }
-          // Neuroglancer transcodes uint32/uint64 SEGMENTATION volumes to the
-          // compressed-segmentation format for GPU rendering, so `chunk.data` is
-          // the COMPRESSED block (a small Uint32Array), not the per-voxel values
-          // the edit library expects. Decode it back to a dense, per-voxel
-          // buffer; otherwise the library writes 8 bytes/voxel past the end of
-          // the tiny compressed buffer (`offset is out of bounds`) and the
-          // baseline values are garbage. Plain (non-transcoded) chunks are
-          // snapshotted as-is — `fetchChunk` only guarantees `chunk.data` inside
-          // this callback, so we clone for a stable view.
-          if (source.spec.compressedSegmentationBlockSize !== undefined) {
-            return decodeCompressedSegmentationChunk(source, raw);
-          }
-          return cloneTypedArray(raw);
-        },
-        { signal: fetchSignal },
-      );
-    } catch {
-      if (signal?.aborted) {
-        throw new ChunkReadAbortedError(coord);
-      }
-      // Sparse data sources (most precomputed segmentations) only store
-      // chunks that actually contain non-zero voxels; the rest 404. From the
-      // editing layer's perspective an absent chunk means "no segments here"
-      // which the user expects to be able to paint into. Treat any
-      // (non-abort) fetch failure as an all-zero baseline so the brush can
-      // proceed.
-      return wrapAsReadonlyBuffer(makeZeroFilledChunkBuffer(source));
-    }
-    return wrapAsReadonlyBuffer(data);
+    return fetchBaselineWithRetry(source, coord, chunkGridPosition, signal);
   }
 
   private resolveVolumeChunkSource(
@@ -423,6 +383,125 @@ function decodeCompressedSegmentationChunk(
     compressedSegmentationBlockSize,
   );
   return out as ChunkVoxelBuffer;
+}
+
+/**
+ * A baseline fetch is retried before being surfaced as a hard read failure: a
+ * transient network/RPC hiccup must NOT be mistaken for an empty chunk (see
+ * `fetchBaselineWithRetry`). Total attempts, and the backoff before each retry
+ * — the array has one entry fewer than `BASELINE_FETCH_ATTEMPTS` so the final
+ * attempt has no trailing wait.
+ */
+const BASELINE_FETCH_ATTEMPTS = 3;
+const BASELINE_FETCH_BACKOFF_MS: readonly number[] = [50, 150];
+
+/**
+ * Snapshot a fetched chunk into a baseline voxel buffer. The outcome taxonomy
+ * has only ONE empty-baseline case:
+ *   • `chunk.data == null` after a SUCCESSFUL fetch: the chunk is sparse /
+ *     absent. The kvStore read returns `undefined` for a 404/403 and the volume
+ *     download leaves `data` null without throwing (see
+ *     `PrecomputedVolumeChunkSource.download` and `handleThrowIfMissing`). This
+ *     is the only definitive "no voxels here" signal, so we zero-fill it and
+ *     let the brush paint into it.
+ *   • a THROWN error never reaches here — it's handled by the retry loop in
+ *     `fetchBaselineWithRetry`; a genuine fetch failure is NEVER an empty chunk.
+ */
+function decodeBaselineChunk(
+  source: VolumeChunkSource,
+  chunk: Chunk,
+): ChunkVoxelBuffer {
+  const raw = (chunk as unknown as { data?: ChunkVoxelBuffer | null }).data;
+  if (raw == null) {
+    return makeZeroFilledChunkBuffer(source);
+  }
+  // Neuroglancer transcodes uint32/uint64 SEGMENTATION volumes to the
+  // compressed-segmentation format for GPU rendering, so `chunk.data` is the
+  // COMPRESSED block (a small Uint32Array), not the per-voxel values the edit
+  // library expects. Decode it back to a dense, per-voxel buffer; otherwise the
+  // library writes 8 bytes/voxel past the end of the tiny compressed buffer
+  // (`offset is out of bounds`) and the baseline values are garbage. Plain
+  // (non-transcoded) chunks are snapshotted as-is — `fetchChunk` only
+  // guarantees `chunk.data` inside this callback, so we clone for a stable view.
+  if (source.spec.compressedSegmentationBlockSize !== undefined) {
+    return decodeCompressedSegmentationChunk(source, raw);
+  }
+  return cloneTypedArray(raw);
+}
+
+/**
+ * Read a chunk's baseline bytes, retrying on a genuine fetch error and then
+ * propagating it as `ChunkReadFailedError` rather than masking it as a
+ * false-empty baseline. Masking the error would silently corrupt the session:
+ * a full ERASE over a false-empty baseline produces no byte difference, so the
+ * chunk never goes dirty, the Save button stays disabled, and the erasure is
+ * lost on reload; a PAINT drops the real underlying voxels on save. A sparse /
+ * absent chunk is NOT an error — it resolves with null data and zero-fills via
+ * `decodeBaselineChunk`. Exported for unit testing.
+ */
+export async function fetchBaselineWithRetry(
+  source: VolumeChunkSource,
+  coord: OverlayCoord,
+  chunkGridPosition: Float32Array,
+  signal: AbortSignal | undefined,
+): Promise<ReadonlyChunkVoxelBuffer> {
+  const fetchSignal = signal ?? new AbortController().signal;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < BASELINE_FETCH_ATTEMPTS; ++attempt) {
+    if (signal?.aborted) {
+      throw new ChunkReadAbortedError(coord);
+    }
+    try {
+      const data = await source.fetchChunk(
+        chunkGridPosition,
+        (chunk: Chunk) => decodeBaselineChunk(source, chunk),
+        { signal: fetchSignal },
+      );
+      return wrapAsReadonlyBuffer(data);
+    } catch (cause) {
+      if (signal?.aborted) {
+        throw new ChunkReadAbortedError(coord);
+      }
+      lastError = cause;
+      const backoffMs = BASELINE_FETCH_BACKOFF_MS[attempt];
+      if (backoffMs !== undefined) {
+        await delayWithAbort(backoffMs, signal);
+      }
+    }
+  }
+  // Retries exhausted on a genuine error. Surface it instead of silently
+  // returning a false-empty baseline.
+  console.warn(
+    `[edit-session:overlay] baseline fetch failed for ` +
+      `${coord.layerId}@resolution${coord.resolution}:${coord.chunkId} after ` +
+      `${BASELINE_FETCH_ATTEMPTS} attempts; propagating as a read failure`,
+    lastError,
+  );
+  throw new ChunkReadFailedError(coord, lastError);
+}
+
+/**
+ * Resolve after `ms`, or early if `signal` aborts — it always RESOLVES (never
+ * rejects). The caller re-checks `signal.aborted` at the top of its retry loop
+ * and throws the appropriate `ChunkReadAbortedError` there, so this helper
+ * stays a plain delay with no error semantics of its own.
+ */
+function delayWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function wrapAsReadonlyBuffer(
