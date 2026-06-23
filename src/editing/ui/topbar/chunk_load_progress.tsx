@@ -10,40 +10,23 @@
 
 import "#src/editing/ui/topbar/editing_topbar.css";
 
-import { Check, Loader2, TriangleAlert } from "lucide-preact";
-import { useEffect, useState } from "preact/hooks";
+import { Loader2, TriangleAlert } from "lucide-preact";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { useWatchable } from "#src/editing/ui/interop/use_watchable.js";
-
-/** How long the "loaded" confirmation stays up before clearing. */
-const CONFIRM_VISIBLE_MS = 3000;
 
 /**
  * Topbar indicator for the background bbox-chunk preload (TM-316).
  *
  * - while `loading`: `chunks N/M` + a progress bar (painting is already usable);
- * - on `done` with no failures: a brief "loaded ✓" confirmation, then nothing;
+ * - on `done` with no failures: nothing — a clean load is the expected outcome,
+ *   so we avoid a transient "loaded" badge that would pop in and then out (per
+ *   the "nothing moves unless necessary" UX principle);
  * - on `done` with failures: a warning with per-(layer, resolution) detail —
  *   painting still works (unavailable chunks zero-fill lazily on first read).
  */
 export function ChunkLoadProgress({ host }: { host: EditSessionHost }) {
   const progress = useWatchable(host.chunkLoadProgress);
-
-  const doneSuccess = progress.kind === "done" && progress.failed === 0;
-  const [confirmVisible, setConfirmVisible] = useState(false);
-  useEffect(() => {
-    if (!doneSuccess) {
-      setConfirmVisible(false);
-      return;
-    }
-    setConfirmVisible(true);
-    const timer = setTimeout(
-      () => setConfirmVisible(false),
-      CONFIRM_VISIBLE_MS,
-    );
-    return () => clearTimeout(timer);
-  }, [doneSuccess]);
 
   if (progress.kind === "idle") return null;
 
@@ -102,19 +85,6 @@ export function ChunkLoadProgress({ host }: { host: EditSessionHost }) {
     );
   }
 
-  if (confirmVisible) {
-    return (
-      <div
-        class="neuroglancer-editing-topbar-group neuroglancer-editing-topbar-chunkload success"
-        role="status"
-        aria-label="Edit region loaded"
-        data-tooltip="Edit region fully loaded"
-      >
-        <Check size={13} aria-hidden="true" />
-        <span class="neuroglancer-editing-topbar-chunkload-label">loaded</span>
-      </div>
-    );
-  }
-
+  // Clean `done`: render nothing — no transient confirmation badge.
   return null;
 }
