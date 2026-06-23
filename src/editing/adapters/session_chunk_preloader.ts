@@ -36,9 +36,12 @@ export interface ChunkLoadFailure {
  *
  * - `idle`: no session / preload not running (also the reset state).
  * - `loading`: chunks are being fetched in the background; painting is allowed.
- * - `done`: every chunk has been fetched (or counted as a valid zero baseline);
- *   `failed > 0` with non-empty `failures` indicates genuinely unavailable
- *   chunks — painting still works (they zero-fill lazily on first read).
+ * - `done`: every chunk has been fetched (a sparse / absent chunk resolves as a
+ *   valid zero baseline and counts as loaded); `failed > 0` with non-empty
+ *   `failures` indicates chunks whose fetch genuinely errored. Painting into a
+ *   pinned chunk still works; a failed chunk re-fetches lazily on first read,
+ *   which retries and then surfaces a hard read failure rather than a
+ *   false-empty baseline.
  */
 export type ChunkLoadProgressState =
   | { readonly kind: "idle" }
@@ -70,6 +73,8 @@ interface PreloadItem {
   readonly source: VolumeChunkSource;
   readonly key: string;
   readonly gridPosition: Float32Array;
+  readonly layerId: LayerId;
+  readonly resolution: Resolution;
 }
 
 /**
@@ -173,7 +178,13 @@ export class SessionChunkPreloader {
         const chunkCoord: ChunkCoord = ChunkIdFactory.toCoord(coord.chunkId);
         const gridPosition = makeChunkGridPosition(source, chunkCoord);
         const key = chunkKeyForSource(source, chunkCoord);
-        items.push({ source, key, gridPosition });
+        items.push({
+          source,
+          key,
+          gridPosition,
+          layerId: group.layerId,
+          resolution: group.resolution,
+        });
       }
     }
     return items;
@@ -199,13 +210,33 @@ export class SessionChunkPreloader {
       this.loaded += 1;
     } catch {
       if (signal.aborted) return;
-      // Sparse data sources 404 chunks with no non-zero voxels; from the
-      // editing layer's perspective an absent chunk is a valid all-zero
-      // baseline (see NgChunkSource.readBaselineChunk). Count it as loaded so
-      // the bar completes; the lazy read zero-fills it if painted.
-      this.loaded += 1;
+      // A sparse / absent chunk does NOT land here — it resolves successfully
+      // with null data (the kvStore read returns `undefined` for a 404/403
+      // without throwing), so it is counted as `loaded` above. Reaching the
+      // catch means a genuine fetch failure (5xx, network/CORS, decode, RPC).
+      // Record it as failed rather than masking it as loaded: the chunk was
+      // not pinned, and the matching lazy `readBaselineChunk` now retries and
+      // then surfaces a hard read failure instead of a false-empty baseline.
+      this.failed += 1;
+      this.recordFailure(item.layerId, item.resolution);
     }
     this.publishLoading(false);
+  }
+
+  /** Aggregate a single failed chunk into the per-`(layer, resolution)` tally. */
+  private recordFailure(layerId: LayerId, resolution: Resolution): void {
+    const existing = this.failures.find(
+      f => f.layerId === layerId && f.resolution === resolution,
+    );
+    if (existing !== undefined) {
+      this.failures[this.failures.indexOf(existing)] = {
+        layerId,
+        resolution,
+        count: existing.count + 1,
+      };
+    } else {
+      this.failures.push({ layerId, resolution, count: 1 });
+    }
   }
 
   private publishLoading(force: boolean): void {
