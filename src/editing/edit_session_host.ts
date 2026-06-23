@@ -78,6 +78,10 @@ import {
 import { BrushCursorPerspectiveOverlay } from "#src/editing/cursor/brush_cursor_perspective_overlay.js";
 import { BrushCursorSliceOverlay } from "#src/editing/cursor/brush_cursor_slice_overlay.js";
 import { BrushCursorState } from "#src/editing/cursor/brush_cursor_state.js";
+import {
+  FillCursorProgress,
+  type FillProgressState,
+} from "#src/editing/cursor/fill_cursor_progress.js";
 import { IdleEditHotkeyBinder } from "#src/editing/idle_edit_hotkey_binder.js";
 import { LocalPatchStore } from "#src/editing/local_patch_store.js";
 // PatchMirror is created by step 9 of Phase 1; this file's runtime import
@@ -570,6 +574,19 @@ export class EditSessionHost extends RefCounted {
   get chunkLoadProgress(): WatchableValueInterface<ChunkLoadProgressState> {
     return this.chunkSource.chunkLoadProgress;
   }
+
+  /**
+   * Progress of the in-flight flood fill (TM-269), driving the cursor-attached
+   * spinner. `running` while a fill floods (updated per progressive flush),
+   * `idle` otherwise. Session-lifetime; the fill tool's progress sink writes it.
+   */
+  private readonly fillProgressState = new WatchableValue<FillProgressState>({
+    kind: "idle",
+  });
+  get fillProgress(): WatchableValueInterface<FillProgressState> {
+    return this.fillProgressState;
+  }
+  private fillCursorProgress: FillCursorProgress | undefined;
 
   /**
    * The NG-provided postMessage save backend, exposed so the embedding host
@@ -1819,6 +1836,10 @@ export class EditSessionHost extends RefCounted {
       // previously-cleared mask stays cleared on reload.
       mask: this.defaultBrushMask(config, metadataByLayer),
       spacingFraction: DEFAULT_SPACING_FRACTION,
+      // Fill defaults to 2D per-section (the common case — fill the interior of
+      // a shape on one slice); the user switches to a 3D flood across sections
+      // from the fill panel (TM-269).
+      fillMode: "2d",
     };
 
     const compute = new PaintingCompute(this.morphologyClient);
@@ -1842,6 +1863,21 @@ export class EditSessionHost extends RefCounted {
       metadataByLayer,
       readChunkAt,
       initialState,
+      // Drive the cursor-attached fill spinner (TM-269). `start`/`end` bracket
+      // every fill (including canceled / failed); `update` fires per flush.
+      fillProgress: {
+        start: () => {
+          this.fillProgressState.value = { kind: "running", voxelsWritten: 0 };
+        },
+        update: (voxelsWritten) => {
+          this.fillProgressState.value = { kind: "running", voxelsWritten };
+        },
+        end: () => {
+          this.fillProgressState.value = { kind: "idle" };
+        },
+      },
+      // Surface a memory-bounded fill that stopped short (TM-269).
+      notify: (message) => StatusMessage.showTemporaryMessage(message, 8000),
     });
 
     // Registry + session-scoped binder own active-tool selection + the
@@ -2176,6 +2212,9 @@ export class EditSessionHost extends RefCounted {
    */
   private attachCursorOverlays(config: HostSessionConfig): void {
     this.cursorState = new BrushCursorState(this);
+    // Cursor-attached spinner for the in-flight fill (TM-269). DOM overlay, no
+    // layer anchoring — independent of the paint target re-host below.
+    this.fillCursorProgress = new FillCursorProgress(this.fillProgressState);
     this.attachHoverHighlightSuppression();
     const firstWritable = config.layers.find((l) => l.writable);
     if (firstWritable === undefined) return;
@@ -2471,6 +2510,15 @@ export class EditSessionHost extends RefCounted {
     // also clears `attachedCursorLayerId`.
     this.detachCursorOverlayRenderLayers();
     this.cursorOverlayFallbackLayerId = undefined;
+    if (this.fillCursorProgress !== undefined) {
+      try {
+        this.fillCursorProgress.dispose();
+      } catch {
+        // ignore
+      }
+      this.fillCursorProgress = undefined;
+    }
+    this.fillProgressState.value = { kind: "idle" };
     if (this.cursorState !== undefined) {
       try {
         this.cursorState.dispose();

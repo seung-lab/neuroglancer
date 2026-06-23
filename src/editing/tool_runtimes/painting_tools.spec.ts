@@ -96,7 +96,14 @@ function makeFakeEdit(log: EditLog, meta: EditMeta): Edit {
     readRegion: async () => {
       throw new Error("not used");
     },
-    sessionVoxelBoundsFor: () => undefined,
+    sessionVoxelBoundsFor: () => ({
+      loX: 0,
+      loY: 0,
+      loZ: 0,
+      hiX: 64,
+      hiY: 64,
+      hiZ: 64,
+    }),
     withBatch: <R>(fn: () => R): R => fn(),
     record: () => {
       log.records++;
@@ -117,7 +124,7 @@ function fakeSession(log: EditLog): EditSession {
 interface ComputeCalls {
   applyBrush: BrushApplyInput[];
   applyBrushStroke: BrushStrokeInput[];
-  fill3d: FillInput[];
+  fill: FillInput[];
 }
 
 function fakeCompute(calls: ComputeCalls): PaintCompute {
@@ -130,8 +137,8 @@ function fakeCompute(calls: ComputeCalls): PaintCompute {
       calls.applyBrushStroke.push(input);
       return EMPTY_BATCH;
     },
-    async fill3d(input) {
-      calls.fill3d.push(input);
+    async fill(input) {
+      calls.fill.push(input);
       return EMPTY_BATCH;
     },
   };
@@ -146,6 +153,7 @@ function initialState(): PaintingSharedState {
     activeValue: 7,
     eraseValue: 0,
     mask: undefined,
+    fillMode: "3d",
     // diameter 7 × 0.1 → clamped to a 1-voxel spacing, so canonical stamps land
     // on integer positions along an axis-aligned stroke (keeps assertions clean).
     spacingFraction: 0.1,
@@ -157,7 +165,7 @@ function setup() {
   const calls: ComputeCalls = {
     applyBrush: [],
     applyBrushStroke: [],
-    fill3d: [],
+    fill: [],
   };
   const metadataByLayer = new Map<LayerId, LayerMetadata>([[TARGET, meta()]]);
   const tools = new ConsumerPaintingTools({
@@ -396,7 +404,14 @@ describe("ConsumerPaintingTools — stroke lifecycle (TM-315)", () => {
       readRegion: async () => {
         throw new Error("not used");
       },
-      sessionVoxelBoundsFor: () => undefined,
+      sessionVoxelBoundsFor: () => ({
+        loX: 0,
+        loY: 0,
+        loZ: 0,
+        hiX: 64,
+        hiY: 64,
+        hiZ: 64,
+      }),
       withBatch: <R>(fn: () => R): R => fn(),
       record: () => true,
       discard: async () => {},
@@ -469,8 +484,70 @@ describe("ConsumerPaintingTools — stroke lifecycle (TM-315)", () => {
     expect(log.metas).toHaveLength(1);
     expect(log.metas[0]).toMatchObject({ tag: "painting.fill" });
     expect(log.records).toBe(1);
-    expect(calls.fill3d).toHaveLength(1);
-    expect(calls.fill3d[0]!.value).toBe(7); // activeValue
+    expect(calls.fill).toHaveLength(1);
+    expect(calls.fill[0]!.value).toBe(7); // activeValue
+    expect(calls.fill[0]!.mode).toBe("3d"); // default mode
+    // Bounds threaded from the edit's session voxel bounds (the flood wall).
+    expect(calls.fill[0]!.bounds).toMatchObject({ hiX: 64, hiY: 64, hiZ: 64 });
+  });
+
+  it("fill passes the shared fillMode through to compute", async () => {
+    const { tools, calls } = setup();
+    tools.state.patchState({ fillMode: "2d" });
+    await tools.fill.handleInput(down(20, 20, 20));
+    expect(calls.fill).toHaveLength(1);
+    expect(calls.fill[0]!.mode).toBe("2d");
+  });
+
+  it("Escape during a running fill aborts the operation (discard, no record)", async () => {
+    const log: EditLog = {
+      metas: [],
+      records: 0,
+      discards: 0,
+      writeRegions: 0,
+    };
+    // A fill that never settles on its own — it only rejects when its abort
+    // signal fires, mirroring a long flood the user cancels mid-flight.
+    const blockingCompute: PaintCompute = {
+      async applyBrush() {
+        return EMPTY_BATCH;
+      },
+      async applyBrushStroke() {
+        return EMPTY_BATCH;
+      },
+      fill(input) {
+        return new Promise((_resolve, reject) => {
+          input.signal?.addEventListener("abort", () =>
+            reject(input.signal!.reason),
+          );
+        });
+      },
+    };
+    const tools = new ConsumerPaintingTools({
+      scope: new EditScope(fakeSession(log)),
+      compute: blockingCompute,
+      metadataByLayer: new Map<LayerId, LayerMetadata>([[TARGET, meta()]]),
+      readChunkAt: async () => ({
+        byteLength: 0,
+        asView: () => new Uint32Array(0),
+      }),
+      initialState: initialState(),
+    });
+    // Start the fill but don't await — it stays in flight until canceled.
+    const pending = tools.fill.handleInput(down(20, 20, 20));
+    // Escape is delivered concurrently (the bridge does not serialize discrete
+    // dispatch); it routes to the in-flight fill's abort controller.
+    await tools.fill.handleInput({
+      kind: "key",
+      phase: "down",
+      key: "Escape",
+      at: 0,
+      modifiers: NO_MODIFIERS,
+    });
+    await pending;
+    // The operation was discarded (canceled): no history record landed.
+    expect(log.records).toBe(0);
+    expect(log.discards).toBe(1);
   });
 
   it("shared state patch is visible to the next stroke", async () => {

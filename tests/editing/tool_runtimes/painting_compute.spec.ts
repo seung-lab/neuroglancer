@@ -23,6 +23,7 @@ import type {
   BrushApplyInput,
   BrushStrokeInput,
   FillInput,
+  PaintChunkWrite,
 } from "#src/editing/tool_runtimes/paint_types.js";
 import { PaintingCompute } from "#src/editing/tool_runtimes/painting_compute.js";
 
@@ -306,48 +307,318 @@ describe("PaintingCompute.applyBrushStroke", () => {
   });
 });
 
-describe("PaintingCompute.fill3d", () => {
+// -- Fill helpers -----------------------------------------------------------
+
+type Bounds = {
+  loX: number;
+  loY: number;
+  loZ: number;
+  hiX: number;
+  hiY: number;
+  hiZ: number;
+};
+
+function bounds(
+  loX: number,
+  loY: number,
+  loZ: number,
+  hiX: number,
+  hiY: number,
+  hiZ: number,
+): Bounds {
+  return { loX, loY, loZ, hiX, hiY, hiZ };
+}
+
+/** Whole-volume bounds (matches the 1024³ metadata extent). */
+function fullBounds(): Bounds {
+  return bounds(0, 0, 0, 1024, 1024, 1024);
+}
+
+/**
+ * uint64 chunk reader whose voxels are `valueFn(gx, gy, gz)` in GLOBAL voxel
+ * coords — lets a test paint a baseline (e.g. a wall around an empty pocket).
+ */
+function patternReader(
+  chunkDataSize: readonly [number, number, number],
+  valueFn: (gx: number, gy: number, gz: number) => bigint,
+): (chunkId: ChunkIdType) => Promise<ReadonlyChunkVoxelBuffer> {
+  const [sx, sy, sz] = chunkDataSize;
+  const volume = sx * sy * sz;
+  return async (chunkId) => {
+    const c = ChunkId.toCoord(chunkId);
+    const view = new BigUint64Array(volume);
+    for (let lz = 0; lz < sz; lz++) {
+      for (let ly = 0; ly < sy; ly++) {
+        for (let lx = 0; lx < sx; lx++) {
+          view[lx + sx * (ly + sy * lz)] = valueFn(
+            c.x * sx + lx,
+            c.y * sy + ly,
+            c.z * sz + lz,
+          );
+        }
+      }
+    }
+    return { byteLength: view.byteLength, asView: () => view };
+  };
+}
+
+/** Collect the GLOBAL coords of every mask-set voxel in a write batch. */
+function writtenVoxels(
+  batch: { chunks: readonly PaintChunkWrite[] },
+  chunkDataSize: readonly [number, number, number],
+): Array<[number, number, number]> {
+  const [sx, sy, sz] = chunkDataSize;
+  const out: Array<[number, number, number]> = [];
+  for (const w of batch.chunks) {
+    const [ox, oy, oz] = w.subregion.origin;
+    const [wx, wy, wz] = w.subregion.size;
+    const mask = w.valueMask;
+    for (let z = 0; z < wz; z++) {
+      for (let y = 0; y < wy; y++) {
+        for (let x = 0; x < wx; x++) {
+          if (mask !== undefined && mask[x + wx * (y + wy * z)] === 0) continue;
+          out.push([
+            w.chunkCoord.x * sx + ox + x,
+            w.chunkCoord.y * sy + oy + y,
+            w.chunkCoord.z * sz + oz + z,
+          ]);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+describe("PaintingCompute.fill", () => {
   it("caps total voxels written at maxVoxels (truncated batch)", async () => {
     const compute = new PaintingCompute();
     // 64^3 chunk full of zero baseline; fill seed 0 -> 1 would mark every
     // voxel; cap of 50 forces early termination.
-    const meta = metadata([64, 64, 64]);
     const input: FillInput = {
       targetLayerId: TARGET_LAYER,
       targetResolution: TARGET_RES,
-      metadata: meta,
+      metadata: metadata([64, 64, 64]),
       seedVoxelPosition: [32, 32, 32],
       value: 1n,
+      mode: "3d",
+      bounds: fullBounds(),
       maxVoxels: 50,
       readChunk: zeroReader([64, 64, 64]),
     };
-    const batch = await compute.fill3d(input);
+    const batch = await compute.fill(input);
     expect(batch.truncated).toBeDefined();
     expect(batch.truncated!.reason).toBe("max-voxels");
     expect(batch.truncated!.voxelsWritten).toBe(50);
-    const written = batch.chunks.reduce((acc, c) => {
-      let s = 0;
-      for (const b of c.valueMask!) if (b !== 0) s++;
-      return acc + s;
-    }, 0);
-    expect(written).toBe(50);
+    expect(writtenVoxels(batch, [64, 64, 64])).toHaveLength(50);
   });
 
   it("short-circuits when seed value already equals target", async () => {
     const compute = new PaintingCompute();
-    const meta = metadata([64, 64, 64]);
-    const input: FillInput = {
+    const batch = await compute.fill({
       targetLayerId: TARGET_LAYER,
       targetResolution: TARGET_RES,
-      metadata: meta,
+      metadata: metadata([64, 64, 64]),
       seedVoxelPosition: [32, 32, 32],
       value: 0n,
+      mode: "3d",
+      bounds: fullBounds(),
       maxVoxels: 1000,
       readChunk: zeroReader([64, 64, 64]),
-    };
-    const batch = await compute.fill3d(input);
+    });
     expect(batch.chunks).toHaveLength(0);
     expect(batch.truncated).toBeUndefined();
+  });
+
+  it("2D fill stays on the seed's Z slice", async () => {
+    const compute = new PaintingCompute();
+    // 10×10 in-plane region; Z bounds span the chunk but 2D must not leave z=32.
+    const batch = await compute.fill({
+      targetLayerId: TARGET_LAYER,
+      targetResolution: TARGET_RES,
+      metadata: metadata([64, 64, 64]),
+      seedVoxelPosition: [32, 32, 32],
+      value: 1n,
+      mode: "2d",
+      bounds: bounds(28, 28, 0, 38, 38, 64),
+      readChunk: zeroReader([64, 64, 64]),
+    });
+    const voxels = writtenVoxels(batch, [64, 64, 64]);
+    expect(voxels).toHaveLength(100); // the full 10×10 bounded slice
+    expect(voxels.every(([, , z]) => z === 32)).toBe(true);
+    expect(batch.truncated).toBeUndefined();
+  });
+
+  it("3D fill propagates across Z slices", async () => {
+    const compute = new PaintingCompute();
+    // 4×4×4 bounded box; 3D fills all of it, spanning multiple sections.
+    const batch = await compute.fill({
+      targetLayerId: TARGET_LAYER,
+      targetResolution: TARGET_RES,
+      metadata: metadata([64, 64, 64]),
+      seedVoxelPosition: [32, 32, 32],
+      value: 1n,
+      mode: "3d",
+      bounds: bounds(30, 30, 30, 34, 34, 34),
+      readChunk: zeroReader([64, 64, 64]),
+    });
+    const voxels = writtenVoxels(batch, [64, 64, 64]);
+    expect(voxels).toHaveLength(64); // 4×4×4
+    expect(voxels.some(([, , z]) => z !== 32)).toBe(true);
+  });
+
+  it("2D fill of an enclosed empty pocket stays inside the wall", async () => {
+    const compute = new PaintingCompute();
+    // A square ring of segment id 9 on z=32 around an empty 9×9 interior; the
+    // same value also rings nothing outside, which stays empty. Seeding the
+    // interior must fill only the interior — not the wall, not the outside.
+    const onWall = (x: number, y: number) =>
+      (x === 30 || x === 40) && y >= 30 && y <= 40
+        ? true
+        : (y === 30 || y === 40) && x >= 30 && x <= 40;
+    const reader = patternReader([64, 64, 64], (gx, gy, gz) =>
+      gz === 32 && onWall(gx, gy) ? 9n : 0n,
+    );
+    const batch = await compute.fill({
+      targetLayerId: TARGET_LAYER,
+      targetResolution: TARGET_RES,
+      metadata: metadata([64, 64, 64]),
+      seedVoxelPosition: [35, 35, 32],
+      value: 1n,
+      mode: "2d",
+      bounds: fullBounds(),
+      readChunk: reader,
+    });
+    const voxels = writtenVoxels(batch, [64, 64, 64]);
+    expect(voxels).toHaveLength(81); // interior 9×9
+    // Every written voxel is strictly inside the wall (31..39) on z=32.
+    expect(
+      voxels.every(
+        ([x, y, z]) => z === 32 && x >= 31 && x <= 39 && y >= 31 && y <= 39,
+      ),
+    ).toBe(true);
+    // The wall itself is never overwritten.
+    expect(voxels.some(([x, y]) => onWall(x, y))).toBe(false);
+  });
+
+  it("2D fill of an open region terminates at the bounds (no runaway)", async () => {
+    const compute = new PaintingCompute();
+    // All-empty slice with no walls: only the bounds stop the flood. Without a
+    // bound this is the old diamond/cap runaway; here it fills the 8×8 box.
+    const batch = await compute.fill({
+      targetLayerId: TARGET_LAYER,
+      targetResolution: TARGET_RES,
+      metadata: metadata([64, 64, 64]),
+      seedVoxelPosition: [33, 33, 32],
+      value: 1n,
+      mode: "2d",
+      bounds: bounds(30, 30, 0, 38, 38, 64),
+      maxVoxels: 1 << 20,
+      readChunk: zeroReader([64, 64, 64]),
+    });
+    expect(writtenVoxels(batch, [64, 64, 64])).toHaveLength(64); // 8×8
+    expect(batch.truncated).toBeUndefined(); // bounded, not cap-truncated
+  });
+
+  it("fills a large region entirely (no default-cap truncation)", async () => {
+    const compute = new PaintingCompute();
+    // A bounded slice well past the old 1<<20 (~1.05M) default cap — the bug a
+    // user hit: the fill stopped at a ~1M-voxel blob instead of covering the
+    // whole edit region. The region bound now terminates the flood, so the
+    // entire slice fills and nothing is reported truncated. Thin Z chunks keep
+    // the test's per-chunk allocations small.
+    const chunk: readonly [number, number, number] = [64, 64, 1];
+    const W = 1100;
+    const H = 1000; // 1.1M voxels > old 1<<20 default cap
+    const batch = await compute.fill({
+      targetLayerId: TARGET_LAYER,
+      targetResolution: TARGET_RES,
+      metadata: metadata(chunk),
+      seedVoxelPosition: [W / 2, H / 2, 0],
+      value: 1n,
+      mode: "2d",
+      bounds: bounds(0, 0, 0, W, H, 1),
+      readChunk: zeroReader(chunk),
+    });
+    expect(batch.truncated).toBeUndefined();
+    expect(writtenVoxels(batch, chunk)).toHaveLength(W * H);
+  });
+
+  it("stops on memory pressure and reports out-of-memory (keeps partial)", async () => {
+    const compute = new PaintingCompute();
+    // A tiny memory budget trips the portable backstop (Node has no
+    // `performance.memory`) after the first chunk's visited bitmap is allocated.
+    // The fill stops gracefully, reports out-of-memory, and keeps what it
+    // painted so far (not discarded).
+    const batch = await compute.fill({
+      targetLayerId: TARGET_LAYER,
+      targetResolution: TARGET_RES,
+      metadata: metadata([64, 64, 64]),
+      seedVoxelPosition: [200, 200, 0],
+      value: 1n,
+      mode: "2d",
+      bounds: bounds(0, 0, 0, 4096, 4096, 1),
+      readChunk: zeroReader([64, 64, 64]),
+      flushIntervalMs: 0, // check the budget on essentially every step
+      memoryBudgetBytes: 1, // any allocation trips it
+    });
+    expect(batch.truncated).toBeDefined();
+    expect(batch.truncated!.reason).toBe("out-of-memory");
+    // Partial work is kept (some voxels were painted before the stop).
+    expect(batch.truncated!.voxelsWritten).toBeGreaterThan(0);
+    expect(writtenVoxels(batch, [64, 64, 64]).length).toBeGreaterThan(0);
+  });
+
+  it("flushes progressively and reports progress", async () => {
+    const compute = new PaintingCompute();
+    const flushes: Array<{ chunks: readonly PaintChunkWrite[] }> = [];
+    const progress: number[] = [];
+    // flushIntervalMs:0 forces a flush after essentially every step.
+    const finalBatch = await compute.fill({
+      targetLayerId: TARGET_LAYER,
+      targetResolution: TARGET_RES,
+      metadata: metadata([64, 64, 64]),
+      seedVoxelPosition: [31, 31, 32],
+      value: 1n,
+      mode: "2d",
+      bounds: bounds(30, 30, 0, 33, 33, 64), // 3×3 = 9 voxels
+      readChunk: zeroReader([64, 64, 64]),
+      flushIntervalMs: 0,
+      onFlush: async (b) => {
+        flushes.push({ chunks: b.chunks });
+      },
+      onProgress: (p) => progress.push(p.voxelsWritten),
+    });
+    // Progressive: at least one intermediate flush happened.
+    expect(flushes.length).toBeGreaterThan(0);
+    // The flushes plus the returned remainder cover exactly the 9 voxels once.
+    const all = [
+      ...flushes.flatMap((b) => writtenVoxels(b, [64, 64, 64])),
+      ...writtenVoxels(finalBatch, [64, 64, 64]),
+    ];
+    const distinct = new Set(all.map(([x, y, z]) => `${x},${y},${z}`));
+    expect(all).toHaveLength(9);
+    expect(distinct.size).toBe(9);
+    // Progress is monotonic and ends at the full count.
+    expect(progress[progress.length - 1]).toBe(9);
+  });
+
+  it("rejects when the abort signal fires", async () => {
+    const compute = new PaintingCompute();
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      compute.fill({
+        targetLayerId: TARGET_LAYER,
+        targetResolution: TARGET_RES,
+        metadata: metadata([64, 64, 64]),
+        seedVoxelPosition: [32, 32, 32],
+        value: 1n,
+        mode: "2d",
+        bounds: bounds(28, 28, 0, 38, 38, 64),
+        readChunk: zeroReader([64, 64, 64]),
+        signal: controller.signal,
+      }),
+    ).rejects.toBeDefined();
   });
 });
 

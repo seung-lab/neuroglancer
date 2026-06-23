@@ -1,0 +1,62 @@
+/**
+ * @license
+ * Copyright 2026 Calcada AI / Zetta AI
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ */
+
+.neuroglancer-segmented-control {
+  display: inline-flex;
+  height: var(--nge-control-h);
+  border: 1px solid var(--nge-border);
+  border-radius: var(--nge-radius-sm);
+  overflow: hidden;
+  background: var(--nge-control-bg);
+}
+
+.neuroglancer-segmented-control-option {
+  appearance: none;
+  border: 0;
+  margin: 0;
+  padding: 0 var(--nge-control-pad-x);
+  min-width: 36px;
+  height: 100%;
+  background: transparent;
+  color: var(--nge-text-muted);
+  font: inherit;
+  font-size: var(--nge-text-size);
+  cursor: pointer;
+  transition:
+    background var(--nge-transition),
+    color var(--nge-transition);
+}
+
+.neuroglancer-segmented-control-option
+  + .neuroglancer-segmented-control-option {
+  border-left: 1px solid var(--nge-border);
+}
+
+.neuroglancer-segmented-control-option:hover:not(:disabled):not(
+    [data-active="true"]
+  ) {
+  background: var(--nge-control-bg-hover);
+  color: var(--nge-text);
+}
+
+.neuroglancer-segmented-control-option[data-active="true"] {
+  background: var(--nge-accent-strong);
+  color: var(--nge-accent-fg);
+}
+
+.neuroglancer-segmented-control-option:focus-visible {
+  outline: 2px solid var(--nge-accent-ring);
+  outline-offset: -2px;
+}
+
+.neuroglancer-segmented-control-option:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
