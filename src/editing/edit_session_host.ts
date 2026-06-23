@@ -2122,7 +2122,14 @@ export class EditSessionHost extends RefCounted {
       if (!Number.isFinite(scale) || scale === 0) {
         return voxelCoord;
       }
-      return (voxelCoord * bboxVoxelSizeNm[axis] * 1e-9) / scale;
+      // Form the ratio in rounded nm on both sides so matching region/display
+      // resolutions yield exactly 1.0. Dividing rounded-nm by the raw-metres
+      // scale leaves IEEE-754 noise (e.g. 45nm / 4.5000000000000006e-8 m =
+      // 0.9999999999999999), which floors a 3000 boundary to 2999 and drops
+      // teleport-to-center and the corner readout a whole voxel.
+      const displayVoxelSizeNm = Math.round(scale * 1e9 * 1e6) / 1e6;
+      if (displayVoxelSizeNm === 0) return voxelCoord;
+      return (voxelCoord * bboxVoxelSizeNm[axis]) / displayVoxelSizeNm;
     };
     return {
       lo: [
