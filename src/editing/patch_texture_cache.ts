@@ -458,7 +458,11 @@ export class PatchTextureCache
    * sampler texture-incomplete), but the mask sampler reads 0 first so the
    * patch value is never consulted. This call sets `gl.activeTexture` itself.
    */
-  private bindValueFallback(gl: GL, textureUnit: number, threeD: boolean): void {
+  private bindValueFallback(
+    gl: GL,
+    textureUnit: number,
+    threeD: boolean,
+  ): void {
     gl.activeTexture(WebGL2RenderingContext.TEXTURE0 + textureUnit);
     const target = threeD
       ? WebGL2RenderingContext.TEXTURE_3D
