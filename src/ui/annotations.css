@@ -83,6 +83,24 @@
   visibility: visible;
 }
 
+.neuroglancer-annotation-edit-region-button {
+  grid-column: edit;
+  margin-left: 1ch;
+  align-self: start;
+  visibility: hidden;
+}
+
+.neuroglancer-annotation-list-entry:hover
+  > .neuroglancer-annotation-edit-region-button {
+  visibility: visible;
+}
+
+/* No new session can be entered while one is active, so hide the shortcut. */
+.neuroglancer-annotation-list-session-active
+  .neuroglancer-annotation-edit-region-button {
+  display: none;
+}
+
 .neuroglancer-annotation-hover {
   background-color: #333;
 }

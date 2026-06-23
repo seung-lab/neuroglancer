@@ -162,6 +162,60 @@
   font-size: 12px;
   color: var(--neuroglancer-edit-session-text-muted);
   margin-top: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.neuroglancer-edit-session-entry-modal-bbox-coords {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.neuroglancer-edit-session-entry-modal-bbox-coord-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  column-gap: 6px;
+}
+
+.neuroglancer-edit-session-entry-modal-bbox-coord-label {
+  color: var(--neuroglancer-edit-session-text-muted);
+  font-size: 11px;
+}
+
+.neuroglancer-edit-session-entry-modal-bbox-coord-value {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--neuroglancer-edit-session-text);
+}
+
+.neuroglancer-edit-session-entry-modal-bbox-coord-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--neuroglancer-edit-session-text-muted);
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.neuroglancer-edit-session-entry-modal-bbox-coord-btn:hover {
+  color: var(--neuroglancer-edit-session-text);
+  background-color: rgba(255, 255, 255, 0.06);
+}
+
+.neuroglancer-edit-session-entry-modal-bbox-extent {
+  font-size: 11px;
+  color: var(--neuroglancer-edit-session-text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .neuroglancer-edit-session-entry-modal-bbox-empty {

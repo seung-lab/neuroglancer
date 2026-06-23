@@ -18,6 +18,7 @@
  * @file User interface for display and editing annotations.
  */
 
+import svg_edit from "ikonate/icons/edit.svg?raw";
 import svg_help from "ikonate/icons/help.svg?raw";
 import "#src/ui/annotations.css";
 import {
@@ -587,6 +588,24 @@ export class AnnotationLayerView extends Tab {
         this.updateView();
       }),
     );
+    // Hide the per-row "Edit region" buttons while an edit session is active —
+    // a new session can't be entered until the current one is finished. One
+    // subscription toggling an ancestor class beats wiring (and leaking) a
+    // listener per virtual-list row.
+    const editHost = getEditSessionHost(this.layer);
+    if (editHost !== undefined) {
+      const applyEditSessionActive = () => {
+        this.element.classList.toggle(
+          "neuroglancer-annotation-list-session-active",
+          editHost.activeSession.value !== undefined,
+        );
+      };
+      applyEditSessionActive();
+      this.registerDisposer(
+        editHost.activeSession.changed.add(applyEditSessionActive),
+      );
+    }
+
     this.updateCoordinateSpace();
     this.updateAttachedAnnotationLayerStates();
     this.updateSelectionView();
@@ -801,8 +820,11 @@ export class AnnotationLayerView extends Tab {
       for (const localDim of this.localDimensionIndices) {
         addDimension(localCoordinateSpace, localDim);
       }
+      const editPlaceholder = document.createElement("div");
+      editPlaceholder.style.gridColumn = "edit";
+      headerRow.appendChild(editPlaceholder);
       headerRow.appendChild(deletePlaceholder);
-      gridTemplate += " [delete] 2ch";
+      gridTemplate += " [edit] 2ch [delete] 2ch";
       this.gridTemplate = gridTemplate;
       headerRow.style.gridTemplateColumns = gridTemplate;
       this.prevCoordinateSpaceGeneration = this.curCoordinateSpaceGeneration;
@@ -2233,6 +2255,30 @@ type UserLayerWithAnnotationsClass = ReturnType<
 export type UserLayerWithAnnotations =
   InstanceType<UserLayerWithAnnotationsClass>;
 
+/**
+ * Minimal duck-typed view of the `EditSessionHost` the viewer publishes onto
+ * `TopLevelLayerListSpecification.editSessionHost`. Typed here instead of
+ * imported to avoid pulling an `#src/editing/...` dependency into the core
+ * annotation UI; the viewer is the only writer to this extension slot. Mirrors
+ * the same pattern in `layer_data_sources_tab.ts`.
+ */
+interface EditSessionHostLike {
+  readonly activeSession: {
+    readonly value: unknown;
+    readonly changed: { add(handler: () => void): () => void };
+  };
+  readonly requestSessionEntry: { dispatch(preselectBboxKey?: string): void };
+}
+
+function getEditSessionHost(
+  layer: UserLayerWithAnnotations,
+): EditSessionHostLike | undefined {
+  const root = layer.manager.root as unknown as { editSessionHost?: unknown };
+  const host = root.editSessionHost;
+  if (host === undefined || host === null) return undefined;
+  return host as EditSessionHostLike;
+}
+
 export function makeAnnotationListElement(
   layer: UserLayerWithAnnotations,
   annotation: Annotation,
@@ -2271,6 +2317,37 @@ export function makeAnnotationListElement(
     });
     deleteButton.classList.add("neuroglancer-annotation-list-entry-delete");
     element.appendChild(deleteButton);
+  };
+
+  // An "Edit region" shortcut on bounding-box rows: opens the Enter Edit
+  // Session modal pre-scoped to this box, sparing the user from re-finding it in
+  // the modal's region dropdown. Only for editable (non-readonly) local sources
+  // — the only annotations `BboxSelectionModel` can scope a session to. The
+  // button is hidden while a session is active (CSS, via an ancestor class
+  // toggled by `AnnotationLayerView`). The pre-select is a silent no-op when the
+  // box has no loaded/3-D source, so no extra readiness gate is needed.
+  let editButton: HTMLElement | undefined;
+
+  const maybeAddEditButton = () => {
+    if (editButton !== undefined) return;
+    if (state.source.readonly) return;
+    if (annotation.type !== AnnotationType.AXIS_ALIGNED_BOUNDING_BOX) return;
+    const host = getEditSessionHost(layer);
+    if (host === undefined) return;
+    editButton = makeIcon({
+      svg: svg_edit,
+      title: "Edit this region",
+      onClick: (event) => {
+        event.stopPropagation();
+        event.preventDefault();
+        host.requestSessionEntry.dispatch(
+          `${layer.managedLayer.name} ${annotation.id}`,
+        );
+      },
+    });
+    editButton.classList.add("neuroglancer-annotation-edit-region-button");
+    editButton.style.gridColumn = "edit";
+    element.appendChild(editButton);
   };
 
   const columnWidths: number[] = [];
@@ -2314,6 +2391,7 @@ export function makeAnnotationListElement(
         chunkTransform.modelTransform.localToRenderLayerDimensions,
       );
       maybeAddDeleteButton();
+      maybeAddEditButton();
     },
   );
   if (annotation.description) {
@@ -2346,6 +2424,13 @@ export function makeAnnotationListElement(
   icon.style.gridRow = `span ${numRows}`;
   if (deleteButton !== undefined) {
     deleteButton.style.gridRow = `span ${numRows}`;
+  }
+  if (editButton !== undefined) {
+    // Pin to an explicit start line: the `[edit]` column is left of `[delete]`,
+    // but this button is appended after the delete button, so sparse grid
+    // auto-placement would otherwise bump it down a row to avoid moving the
+    // cursor backwards — leaving the pencil misaligned below the trash icon.
+    editButton.style.gridRow = `1 / span ${numRows}`;
   }
   element.addEventListener("mouseenter", () => {
     layer.selectAnnotation(state, annotation.id, false);
