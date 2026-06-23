@@ -50,7 +50,7 @@ import {
   TextureAccessHelper,
 } from "#src/webgl/texture_access.js";
 
-class TextureLayout extends RefCounted {
+export class TextureLayout extends RefCounted {
   strides: Uint32Array;
   textureShape: Uint32Array;
   constructor(
