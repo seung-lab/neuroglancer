@@ -82,23 +82,28 @@ describe("SessionChunkPreloader", () => {
     expect(new Set(pins.map((c) => c.key)).size).toBe(3);
   });
 
-  it("treats a fetch rejection as a valid zero baseline (loaded, not failed)", async () => {
+  it("records a genuine fetch rejection as a failure (not a zero baseline)", async () => {
+    // A sparse / absent chunk RESOLVES with null data — it never rejects — so a
+    // rejection here is a real fetch error (5xx, network, decode). It must be
+    // surfaced as a failure, not masked as loaded: the lazy `readBaselineChunk`
+    // now retries and then throws rather than returning a false-empty baseline.
     const fake = makeFakeSource((key) =>
-      key === "1,0,0" ? Promise.reject(new Error("404")) : Promise.resolve(),
+      key === "1,0,0"
+        ? Promise.reject(new Error("network"))
+        : Promise.resolve(),
     );
     const preloader = new SessionChunkPreloader(() => fake.source);
     const coords = [coord(0, 0, 0), coord(1, 0, 0), coord(2, 0, 0)];
 
     await preloader.start(coords, new AbortController().signal);
 
-    // Still completes; the 404 chunk is counted as loaded, not a failure.
     expect(preloader.progress.value).toEqual({
       kind: "done",
       total: 3,
-      failed: 0,
-      failures: [],
+      failed: 1,
+      failures: [{ layerId: "seg", resolution: "8x8x8", count: 1 }],
     });
-    // Only the two resolved chunks get pinned.
+    // Only the two resolved chunks get pinned; the failed one is not.
     expect(fake.perm.filter((c) => c.permanent)).toHaveLength(2);
   });
 
