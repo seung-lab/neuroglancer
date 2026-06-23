@@ -323,9 +323,7 @@ function ActiveTopbarControls({
                 ? "Save all dirty layers to the backend"
                 : "Saving is unavailable — no save backend is registered."
           }
-          aria-label={
-            isSaving ? "Saving changes — click to cancel" : undefined
-          }
+          aria-label={isSaving ? "Saving changes — click to cancel" : undefined}
           onClick={isSaving ? cancelSave : runSaveAll}
         >
           {isSaving ? (
@@ -345,7 +343,9 @@ function ActiveTopbarControls({
             {isSaving ? "Saving…" : "Save all"}
           </span>
           {!isSaving && pendingCount > 0 && (
-            <span class="neuroglancer-editing-topbar-badge">{pendingCount}</span>
+            <span class="neuroglancer-editing-topbar-badge">
+              {pendingCount}
+            </span>
           )}
         </button>
       </div>
