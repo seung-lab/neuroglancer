@@ -83,6 +83,12 @@
   outline-offset: 2px;
 }
 
+/* Fill mode row (TM-269): push the 2D/3D segmented control to the row's right
+   edge, mirroring how the text/number/select controls align. */
+.neuroglancer-painting-fill-mode-row .neuroglancer-segmented-control {
+  margin-left: auto;
+}
+
 /* --- Text / number / select controls ----------------------------------- */
 
 .neuroglancer-tool-panel-row select,

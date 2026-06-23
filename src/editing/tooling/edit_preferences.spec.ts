@@ -37,6 +37,7 @@ function painting(): PaintingSharedState {
     activeValue: 42n,
     eraseValue: 0n,
     mask: undefined,
+    fillMode: "3d",
     spacingFraction: 0.1,
   };
 }

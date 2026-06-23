@@ -28,6 +28,7 @@ import type {
   LayerMetadata,
   ReadonlyChunkVoxelBuffer,
   Resolution,
+  SessionVoxelBounds,
 } from "@zettaai/edit-session";
 
 /**
@@ -112,15 +113,65 @@ export interface BrushStrokeInput
   readonly stepVoxels: number;
 }
 
+/**
+ * Flood-fill connectivity mode (TM-269).
+ *
+ * - `"2d"`: 4-connected flood confined to the seed's XY slice (Z fixed). A
+ *   circle drawn on one section fills only that section's interior — empty
+ *   space enclosed on the slice is a finite component, and an open region is
+ *   walled by the session bounds.
+ * - `"3d"`: 6-connected flood propagating across sections (Z). The original
+ *   behavior.
+ */
+export type FillMode = "2d" | "3d";
+
+/** Progress report emitted as a progressive fill flushes (TM-269). */
+export interface FillProgress {
+  /** Voxels written so far (monotonic across the operation). */
+  readonly voxelsWritten: number;
+}
+
 export interface FillInput {
   readonly targetLayerId: LayerId;
   readonly targetResolution: Resolution;
   readonly metadata: LayerMetadata;
   readonly seedVoxelPosition: readonly [number, number, number];
   readonly value: number | bigint;
+  /** Connectivity mode — see {@link FillMode}. */
+  readonly mode: FillMode;
+  /**
+   * Voxel bounds (half-open: `lo` inclusive, `hi` exclusive) the flood must not
+   * cross — the session region at `targetResolution`. The flood is walled by
+   * these, so an open 2D region terminates instead of expanding to the cap.
+   */
+  readonly bounds: SessionVoxelBounds;
   /** Optional cap; implementations report `truncated` on the result. */
   readonly maxVoxels?: number;
   readonly readChunk: (chunkId: ChunkId) => Promise<ReadonlyChunkVoxelBuffer>;
+  /**
+   * Apply a partial batch as the flood progresses (time-sliced). Called zero or
+   * more times before the final returned batch; each call hands off the voxels
+   * accumulated since the previous flush. The flood `await`s this so the caller
+   * can write + yield a frame (keeping the UI responsive). The final remainder
+   * is still returned from `fill` for the caller to apply.
+   */
+  readonly onFlush?: (batch: PaintWriteBatch) => Promise<void>;
+  /** Progress callback fired after each flush. */
+  readonly onProgress?: (progress: FillProgress) => void;
+  /** Aborts the flood; `fill` rejects with the signal's reason when aborted. */
+  readonly signal?: AbortSignal;
+  /**
+   * Override the progressive-flush cadence in ms (default ~12). Mainly a test
+   * seam: `0` flushes after essentially every step so progressive behavior is
+   * deterministic without depending on wall-clock timing.
+   */
+  readonly flushIntervalMs?: number;
+  /**
+   * Override the portable memory budget (bytes) the flood's visited bitmaps may
+   * reach before it stops with a `truncated: "out-of-memory"` result, used only
+   * where Chrome's `performance.memory` is unavailable. Mainly a test seam.
+   */
+  readonly memoryBudgetBytes?: number;
 }
 
 export interface PaintChunkWrite {
@@ -146,7 +197,7 @@ export interface PaintWriteBatch {
   readonly targetResolution: Resolution;
   readonly chunks: readonly PaintChunkWrite[];
   readonly truncated?: {
-    readonly reason: "max-voxels" | "out-of-bounds";
+    readonly reason: "max-voxels" | "out-of-bounds" | "out-of-memory";
     readonly voxelsWritten: number;
   };
 }
@@ -174,8 +225,11 @@ export interface PaintCompute {
   applyBrush(input: BrushApplyInput): Promise<PaintWriteBatch>;
   /** Interpolated brush stamps along a line from `from` to `to`. */
   applyBrushStroke(input: BrushStrokeInput): Promise<PaintWriteBatch>;
-  /** 3D connected-component fill seeded at `seedVoxelPosition`. */
-  fill3d(input: FillInput): Promise<PaintWriteBatch>;
+  /**
+   * Connected-component fill seeded at `seedVoxelPosition`. 2D (seed slice) or
+   * 3D depending on `input.mode`; progressive + cancelable (TM-269).
+   */
+  fill(input: FillInput): Promise<PaintWriteBatch>;
   /**
    * Compute the masked-brush footprint mask for a stroke via the pyodide
    * whole-pipeline, WITHOUT scattering it into a write batch — for the

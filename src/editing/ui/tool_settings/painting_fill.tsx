@@ -13,6 +13,7 @@ import { useCallback } from "preact/hooks";
 
 import type { EditSessionHost } from "#src/editing/edit_session_host.js";
 import { useEvent } from "#src/editing/ui/interop/use_event.js";
+import { SegmentedControl } from "#src/editing/ui/segmented_control.js";
 import { PaintingTargetPicker } from "#src/editing/ui/tool_settings/painting_target_picker.js";
 import {
   PARAM_IDS,
@@ -25,13 +26,8 @@ import { TargetValueField } from "#src/editing/ui/tool_settings/target_value_fie
 import { useLayerVoxelType } from "#src/editing/ui/tool_settings/use_layer_voxel_type.js";
 
 /**
- * Fill panel (TM-294): Target layer + resolution + Target value. Drops the
- * Size control and the Advanced section.
- *
- * The 2D/3D mode switch is hidden for now (TM-269): the only fill mode the
- * library implements is the 3D flood (`PaintCompute.fill3d`), so the toggle
- * had nothing to drive. Fill always runs in 3D. Re-introduce the switch once
- * the library gains a real `fill2d` path.
+ * Fill panel (TM-294): Target layer + resolution + Target value + the 2D/3D
+ * mode toggle (TM-269). Drops the Size control and the Advanced section.
  */
 export function PaintingFill({
   host,
@@ -65,6 +61,21 @@ export function PaintingFill({
         hint="The segment ID written into the filled region — every voxel the fill reaches is set to this value."
         highlighted={selectedId === PARAM_IDS.value}
       />
+      <div
+        class="neuroglancer-tool-panel-row neuroglancer-painting-fill-mode-row"
+        data-tooltip="2D fills only the clicked section (Z fixed) — e.g. the interior of a shape drawn on one slice. 3D floods across sections."
+      >
+        <label>Fill mode</label>
+        <SegmentedControl
+          ariaLabel="Fill mode"
+          value={state.fillMode}
+          options={[
+            { value: "2d", label: "2D" },
+            { value: "3d", label: "3D" },
+          ]}
+          onChange={(fillMode) => painting.patchState({ fillMode })}
+        />
+      </div>
     </div>
   );
 }
