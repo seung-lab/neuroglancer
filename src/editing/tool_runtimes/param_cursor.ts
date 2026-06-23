@@ -205,6 +205,20 @@ export class PaintParamCursor {
   }
 
   /**
+   * Select a specific parameter by id, e.g. when the user clicks or focuses its
+   * control in the panel so the Ctrl+Arrow scheme follows the touched field
+   * (TM-345). No-ops when the id is already selected or isn't a currently
+   * published (adjustable) descriptor, so interacting with a disabled row never
+   * moves the cursor onto a parameter the keyboard can't change.
+   */
+  select(id: string): void {
+    if (id === this.selectedId) return;
+    if (!this.descriptors.some((d) => d.id === id)) return;
+    this.selectedId = id;
+    this.changed.dispatch();
+  }
+
+  /**
    * Move the selection cursor by `dir` (+1 next / -1 prev), wrapping at both
    * ends. When nothing is selected yet, selects the first entry regardless of
    * direction. Returns the newly-selected descriptor (or `undefined` if the

@@ -17,6 +17,7 @@ import { SegmentedControl } from "#src/editing/ui/segmented_control.js";
 import { PaintingTargetPicker } from "#src/editing/ui/tool_settings/painting_target_picker.js";
 import {
   PARAM_IDS,
+  useParamFocus,
   useParamSelection,
   usePublishParams,
   useTargetParamDescriptors,
@@ -45,6 +46,7 @@ export function PaintingFill({
   const targetVoxelType = useLayerVoxelType(host, state.targetLayerId);
 
   const selectedId = useParamSelection(host);
+  const selectParam = useParamFocus(host);
   const targetDescriptors = useTargetParamDescriptors(host);
   usePublishParams(host, [
     ...targetDescriptors,
@@ -60,6 +62,7 @@ export function PaintingFill({
         onCommit={(activeValue) => painting.patchState({ activeValue })}
         hint="The segment ID written into the filled region — every voxel the fill reaches is set to this value."
         highlighted={selectedId === PARAM_IDS.value}
+        onSelect={() => selectParam(PARAM_IDS.value)}
       />
       <div
         class="neuroglancer-tool-panel-row neuroglancer-painting-fill-mode-row"
