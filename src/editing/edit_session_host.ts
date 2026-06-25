@@ -70,6 +70,14 @@ import {
 } from "#src/editing/adapters/save_backend.js";
 import { PostMessageSaveBackend } from "#src/editing/adapters/save_backends/post_message_save_backend.js";
 import type { ChunkLoadProgressState } from "#src/editing/adapters/session_chunk_preloader.js";
+import { BackendClient } from "#src/editing/backend/backend_client.js";
+import type { BackendEndpoint } from "#src/editing/backend/backend_endpoint.js";
+import {
+  backendEndpointChanged,
+  clearBackendEndpoint,
+  hasBackendEndpoint,
+  registerBackendEndpoint,
+} from "#src/editing/backend/backend_endpoint.js";
 import {
   BRUSH_SIZE_PRESETS,
   nearestPresetSize,
@@ -567,6 +575,23 @@ export class EditSessionHost extends RefCounted {
   );
 
   /**
+   * Reactive flag: whether a layer-independent Zetta backend endpoint is
+   * registered (TM-347), i.e. whether tool compute backends (and, after
+   * TM-348, save) can reach the server. Mirrors `hasBackendEndpoint()`.
+   * Backend-dependent tool controls subscribe to this and disable themselves
+   * while it is `false`. NG does not auto-register an endpoint — the embedding
+   * host (the portal) installs one via `configureBackend()`.
+   */
+  readonly backendAvailable = new WatchableValue<boolean>(hasBackendEndpoint());
+
+  /**
+   * Shared HTTP client for the Zetta backend, used by tool compute backends.
+   * Resolves the injected endpoint lazily per request, so it works the moment
+   * the host calls `configureBackend()` and reflects any later re-injection.
+   */
+  readonly backendClient = new BackendClient();
+
+  /**
    * Background preload progress for the active session's bbox chunks (TM-316),
    * surfaced to the topbar's `ChunkLoadProgress` indicator. Forwards the chunk
    * adapter's stable watchable; resets to `idle` between sessions.
@@ -645,6 +670,15 @@ export class EditSessionHost extends RefCounted {
     LayerId,
     ReadonlySet<ResolutionType>
   >();
+
+  // Resolutions the session opened per layer, in config order, captured during
+  // `instantiatePaintingTools` (which is awaited before `applyRestoredTooling`,
+  // unlike the late-populated `_allowedResolutionsByLayer`). Used to repair a
+  // stale persisted `mask.imageResolution` on restore (TM-350).
+  private _sessionResolutionsByLayer: ReadonlyMap<
+    LayerId,
+    readonly ResolutionType[]
+  > = new Map();
 
   // -- Per-session machinery (cleared on session end) -----------------------
   private readonly perLayer = new Map<LayerId, PerLayerMachinery>();
@@ -760,6 +794,9 @@ export class EditSessionHost extends RefCounted {
       this.viewer.layerManager,
       this.layerMetadataSource,
       this.logger,
+      // Read-back verification: confirm saved chunks are durable in storage
+      // before the session is marked clean (TM-352).
+      this.chunkSource,
     );
 
     // NG does NOT register a save backend itself. NG runs as a same-origin
@@ -774,6 +811,17 @@ export class EditSessionHost extends RefCounted {
         this.saveBackendAvailable.value = hasAnySaveBackend();
       }),
     );
+
+    // Same pattern for the tool/compute backend endpoint (TM-347): NG does not
+    // register one itself; the host injects it via `configureBackend()`. The
+    // process-wide registry is cleared on dispose so a torn-down host never
+    // leaves a stale endpoint behind for the next viewer.
+    this.registerDisposer(
+      backendEndpointChanged.add(() => {
+        this.backendAvailable.value = hasBackendEndpoint();
+      }),
+    );
+    this.registerDisposer(() => clearBackendEndpoint());
 
     // The viewer constructor calls `tryRestoreFromState()` once, but the URL
     // hash is parsed AFTER construction, so the first call is a no-op. Watch
@@ -1271,6 +1319,10 @@ export class EditSessionHost extends RefCounted {
       else signal.addEventListener("abort", onExternalAbort, { once: true });
     }
     try {
+      // `NgSaveTarget` read-back-verifies each saved chunk before the library
+      // marks it clean, and that verification re-reads from the backend (which
+      // also refreshes the base layer to the saved bytes) — so the host no
+      // longer invalidates the cache out-of-band here (TM-352).
       return await session.save(layerIds, controller.signal);
     } finally {
       if (signal !== undefined) {
@@ -1311,6 +1363,30 @@ export class EditSessionHost extends RefCounted {
    */
   registerDefaultSaveBackend(backend: SaveBackend): void {
     registerDefaultSaveBackend(backend);
+  }
+
+  /**
+   * Install the layer-independent Zetta backend endpoint (TM-347), reachable
+   * via `window.viewer.editSessionHost`. The embedding host (the portal) calls
+   * this at viewer-ready so tool compute backends can reach the server; a later
+   * call replaces the previous endpoint (e.g. on re-auth). Endpoint and auth
+   * are entirely the host's concern — see `BackendEndpoint`:
+   *
+   *   const host = window.viewer.editSessionHost;
+   *   host.configureBackend({
+   *     // Backend ROOT, not a single API group. Request paths carry the group,
+   *     // e.g. "/segmentation/propagate_mask" or later "/painting/...".
+   *     baseUrl: "https://.../api",
+   *     async authorize(init) {
+   *       const token = await portalFetchToken(subportalId);
+   *       const headers = new Headers(init.headers);
+   *       headers.set("Authorization", token);
+   *       return { ...init, headers };
+   *     },
+   *   });
+   */
+  configureBackend(endpoint: BackendEndpoint): void {
+    registerBackendEndpoint(endpoint);
   }
 
   /**
@@ -1426,8 +1502,9 @@ export class EditSessionHost extends RefCounted {
         continue;
       }
       for (const o of layerResult.outcomes) outcomes.push(o);
-      // Clear the committed buffer + render machinery for any layer whose
-      // outcome reports success.
+      // `NgSaveTarget.save` (used above) read-back-verifies each chunk before
+      // reporting `succeeded` (TM-352), so a success here is confirmed durable.
+      // Clear the committed buffer + render machinery for any succeeded layer.
       for (const o of layerResult.outcomes) {
         if (o.status === "succeeded") this.resetLayer(o.layerId);
       }
@@ -1816,6 +1893,15 @@ export class EditSessionHost extends RefCounted {
       }),
     );
 
+    // Resolutions the session actually opened (and the host preloads/pins) per
+    // layer. Threaded into the painting tools so a masked stroke can never read
+    // an un-pinned scale of the image layer's datasource pyramid (TM-350).
+    const allowedResolutionsByLayer = new Map<
+      LayerId,
+      readonly ResolutionType[]
+    >(config.layers.map((l) => [l.layerId, l.resolutions]));
+    this._sessionResolutionsByLayer = allowedResolutionsByLayer;
+
     // The user-facing "Size" is `radius * 2 + 1` (see brush panel). Default
     // size 5 paints a 13-voxel diamond — visible enough to confirm the brush
     // works, small enough not to overshoot a precision edit.
@@ -1861,6 +1947,7 @@ export class EditSessionHost extends RefCounted {
       scope: editScope,
       compute,
       metadataByLayer,
+      allowedResolutionsByLayer,
       readChunkAt,
       initialState,
       // Drive the cursor-attached fill spinner (TM-269). `start`/`end` bracket
@@ -1964,10 +2051,15 @@ export class EditSessionHost extends RefCounted {
     this.editKeybindOverrides.value = tooling?.keybinds ?? {};
     if (tooling === undefined) return;
     if (this.paintingTools !== undefined && tooling.painting !== undefined) {
-      const layerIds = new Set<string>(
-        session.config.layers.map((l) => l.layerId),
+      // A stale persisted `mask.imageResolution` (e.g. a finer scale from the
+      // image layer's datasource pyramid the session never pinned) is repaired
+      // to a resident resolution instead of driving cold full-res EM reads
+      // (TM-350). `_sessionResolutionsByLayer` holds the opened resolutions per
+      // layer, captured in the awaited `instantiatePaintingTools`.
+      const patch = paintingPatchFromPersist(
+        tooling.painting,
+        this._sessionResolutionsByLayer,
       );
-      const patch = paintingPatchFromPersist(tooling.painting, layerIds);
       if (patch !== undefined) {
         this.paintingTools.state.patchState(patch);
       }
@@ -2672,6 +2764,7 @@ export class EditSessionHost extends RefCounted {
     }
     this._activeRegionByLayer.clear();
     this._allowedResolutionsByLayer.clear();
+    this._sessionResolutionsByLayer = new Map();
     this.refreshEditBboxWatchables();
     this.refreshAllowedResolutionsWatchables();
     this.tearDownSessionState();
@@ -2779,6 +2872,7 @@ export class EditSessionHost extends RefCounted {
     this.perLayer.clear();
     this._activeRegionByLayer.clear();
     this._allowedResolutionsByLayer.clear();
+    this._sessionResolutionsByLayer = new Map();
     // Stop tracking global-dimension changes — the session is ending.
     if (this.detachDisplayDimWatch !== undefined) {
       try {

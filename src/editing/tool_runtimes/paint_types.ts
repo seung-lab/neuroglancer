@@ -82,6 +82,15 @@ export interface BrushApplyInput {
    * `scaleFor(maskMetadata, mask.imageResolution)` for voxel size + chunk shape.
    */
   readonly maskMetadata?: LayerMetadata;
+  /**
+   * The resolutions the host opened (and preloads/pins) for `mask.imageLayerId`
+   * in THIS session. When present and `mask.imageResolution` is not among them,
+   * compute falls back to an unmasked stroke instead of cold-reading an
+   * un-pinned scale from the layer's full datasource pyramid — a defense in
+   * depth behind the host's restore-time repair (TM-350). Absent ⇒ no check
+   * (back-compat with `PaintCompute` mocks and direct callers).
+   */
+  readonly maskAllowedResolutions?: readonly Resolution[];
   /** Lazy reader for adjacent chunk content at the target (layer, resolution). */
   readonly readChunk: (chunkId: ChunkId) => Promise<ReadonlyChunkVoxelBuffer>;
   /**

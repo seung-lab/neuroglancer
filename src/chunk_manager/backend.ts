@@ -24,6 +24,7 @@ import {
   CHUNK_MANAGER_RPC_ID,
   CHUNK_QUEUE_MANAGER_RPC_ID,
   CHUNK_SET_PERMANENT_RPC_ID,
+  CHUNK_SOURCE_INVALIDATE_CHUNKS_RPC_ID,
   CHUNK_SOURCE_INVALIDATE_RPC_ID,
   ChunkDownloadStatistics,
   ChunkMemoryStatistics,
@@ -1135,19 +1136,41 @@ export class ChunkQueueManager extends SharedObjectCounterpart {
 
   invalidateSourceCache(source: ChunkSource) {
     for (const chunk of source.chunks.values()) {
-      switch (chunk.state) {
-        case ChunkState.DOWNLOADING:
-          cancelChunkDownload(chunk);
-          break;
-        case ChunkState.SYSTEM_MEMORY_WORKER:
-          chunk.freeSystemMemory();
-          break;
-      }
-      // Note: After calling this, chunk may no longer be valid.
-      this.updateChunkState(chunk, ChunkState.QUEUED);
+      this.requeueChunk(chunk);
     }
     this.rpc!.invoke("Chunk.update", { source: source.rpcId });
     this.scheduleUpdate();
+  }
+
+  /**
+   * Re-queue only the named chunks of `source` (by chunk key) so they
+   * re-download on next request, leaving every other resident chunk untouched.
+   * Unknown keys are skipped.
+   */
+  invalidateChunkCache(source: ChunkSource, keys: readonly string[]) {
+    let mutated = false;
+    for (const key of keys) {
+      const chunk = source.chunks.get(key);
+      if (chunk === undefined) continue;
+      this.requeueChunk(chunk);
+      mutated = true;
+    }
+    if (!mutated) return;
+    this.rpc!.invoke("Chunk.update", { source: source.rpcId });
+    this.scheduleUpdate();
+  }
+
+  private requeueChunk(chunk: Chunk) {
+    switch (chunk.state) {
+      case ChunkState.DOWNLOADING:
+        cancelChunkDownload(chunk);
+        break;
+      case ChunkState.SYSTEM_MEMORY_WORKER:
+        chunk.freeSystemMemory();
+        break;
+    }
+    // Note: After calling this, chunk may no longer be valid.
+    this.updateChunkState(chunk, ChunkState.QUEUED);
   }
 }
 
@@ -1434,6 +1457,15 @@ export function withChunkManager<
 registerRPC(CHUNK_SOURCE_INVALIDATE_RPC_ID, function (x) {
   const source = <ChunkSource>this.get(x.id);
   source.chunkManager.queueManager.invalidateSourceCache(source);
+});
+
+registerRPC(CHUNK_SOURCE_INVALIDATE_CHUNKS_RPC_ID, function (x) {
+  const source = <ChunkSource>this.get(x.id);
+  if (source === undefined) return;
+  source.chunkManager.queueManager.invalidateChunkCache(
+    source,
+    x.keys as string[],
+  );
 });
 
 registerRPC(CHUNK_SET_PERMANENT_RPC_ID, function (x) {
