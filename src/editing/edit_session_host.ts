@@ -769,6 +769,9 @@ export class EditSessionHost extends RefCounted {
       this.viewer.layerManager,
       this.layerMetadataSource,
       this.logger,
+      // Read-back verification: confirm saved chunks are durable in storage
+      // before the session is marked clean (TM-352).
+      this.chunkSource,
     );
 
     // NG does NOT register a save backend itself. NG runs as a same-origin
@@ -1280,6 +1283,10 @@ export class EditSessionHost extends RefCounted {
       else signal.addEventListener("abort", onExternalAbort, { once: true });
     }
     try {
+      // `NgSaveTarget` read-back-verifies each saved chunk before the library
+      // marks it clean, and that verification re-reads from the backend (which
+      // also refreshes the base layer to the saved bytes) — so the host no
+      // longer invalidates the cache out-of-band here (TM-352).
       return await session.save(layerIds, controller.signal);
     } finally {
       if (signal !== undefined) {
@@ -1435,8 +1442,9 @@ export class EditSessionHost extends RefCounted {
         continue;
       }
       for (const o of layerResult.outcomes) outcomes.push(o);
-      // Clear the committed buffer + render machinery for any layer whose
-      // outcome reports success.
+      // `NgSaveTarget.save` (used above) read-back-verifies each chunk before
+      // reporting `succeeded` (TM-352), so a success here is confirmed durable.
+      // Clear the committed buffer + render machinery for any succeeded layer.
       for (const o of layerResult.outcomes) {
         if (o.status === "succeeded") this.resetLayer(o.layerId);
       }
