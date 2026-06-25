@@ -65,11 +65,16 @@ export class SaveTracker {
     const details: string[] = [];
     for (const id of failed) {
       const detail = this.layerStatuses_.get(id)?.detail;
-      if (detail !== undefined && detail.length > 0 && !details.includes(detail)) {
+      if (
+        detail !== undefined &&
+        detail.length > 0 &&
+        !details.includes(detail)
+      ) {
         details.push(detail);
       }
     }
-    const body = details.length > 0 ? details.join(" ") : "The save didn't complete.";
+    const body =
+      details.length > 0 ? details.join(" ") : "The save didn't complete.";
     // Name the affected layers only when more than one writable layer failed,
     // so the common single-layer case stays a clean one-liner.
     if (failed.length > 1) {

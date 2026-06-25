@@ -64,10 +64,7 @@ describe("tooling_persist", () => {
     const serialized = serializeTooling("painting.brush", state());
     const parsed = parseTooling(roundTrip(serialized));
     expect(parsed?.activeToolId).toBe("painting.brush");
-    const patch = paintingPatchFromPersist(
-      parsed!.painting!,
-      allowed(TARGET),
-    );
+    const patch = paintingPatchFromPersist(parsed!.painting!, allowed(TARGET));
     expect(patch).toMatchObject({
       targetLayerId: TARGET,
       targetResolution: RES,
@@ -84,10 +81,7 @@ describe("tooling_persist", () => {
       state({ fillMode: "2d" }),
     );
     const parsed = parseTooling(roundTrip(serialized));
-    const patch = paintingPatchFromPersist(
-      parsed!.painting!,
-      allowed(TARGET),
-    );
+    const patch = paintingPatchFromPersist(parsed!.painting!, allowed(TARGET));
     expect(patch!.fillMode).toBe("2d");
   });
 
@@ -105,10 +99,7 @@ describe("tooling_persist", () => {
         mask: null,
       },
     });
-    const patch = paintingPatchFromPersist(
-      parsed!.painting!,
-      allowed(TARGET),
-    );
+    const patch = paintingPatchFromPersist(parsed!.painting!, allowed(TARGET));
     expect(patch!.fillMode).toBe("2d");
   });
 
@@ -118,10 +109,7 @@ describe("tooling_persist", () => {
       state({ activeValue: 200, eraseValue: 0 }),
     );
     const parsed = parseTooling(roundTrip(serialized));
-    const patch = paintingPatchFromPersist(
-      parsed!.painting!,
-      allowed(TARGET),
-    );
+    const patch = paintingPatchFromPersist(parsed!.painting!, allowed(TARGET));
     expect(patch!.activeValue).toBe(200);
     expect(typeof patch!.activeValue).toBe("number");
   });
@@ -225,10 +213,7 @@ describe("tooling_persist", () => {
     const serialized = serializeTooling("painting.brush", state({ mask }));
     const parsed = parseTooling(roundTrip(serialized));
     // IMAGE layer gone from the session → mask dropped, target still applies.
-    const patch = paintingPatchFromPersist(
-      parsed!.painting!,
-      allowed(TARGET),
-    );
+    const patch = paintingPatchFromPersist(parsed!.painting!, allowed(TARGET));
     expect(patch).toBeDefined();
     expect(patch!.mask).toBeUndefined();
   });

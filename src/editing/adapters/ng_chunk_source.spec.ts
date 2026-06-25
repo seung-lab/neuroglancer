@@ -260,10 +260,7 @@ function makeChunkSourceResolving(source: FakeVolumeSource): NgChunkSource {
 }
 
 /** Minimal `SavedChunk` for `(LAYER, RES_8)` at chunk grid (0,0,0). */
-function savedChunk(
-  bytes: Uint32Array,
-  layerId: LayerId = LAYER,
-): SavedChunk {
+function savedChunk(bytes: Uint32Array, layerId: LayerId = LAYER): SavedChunk {
   return {
     layerId,
     resolution: RES_8,

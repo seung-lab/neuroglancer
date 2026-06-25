@@ -158,7 +158,10 @@ interface PaintingToolDeps {
    * resolution the session never pinned instead of cold-reading a finer scale
    * from the layer's datasource pyramid (TM-350).
    */
-  readonly allowedResolutionsByLayer: ReadonlyMap<LayerId, readonly Resolution[]>;
+  readonly allowedResolutionsByLayer: ReadonlyMap<
+    LayerId,
+    readonly Resolution[]
+  >;
   readonly readChunkAt: ReadChunkAt;
   /**
    * Worker-pool stroke pipeline (TM-322). Used for the unmasked same-z r>=1 fast

@@ -1836,9 +1836,10 @@ export class EditSessionHost extends RefCounted {
     // Resolutions the session actually opened (and the host preloads/pins) per
     // layer. Threaded into the painting tools so a masked stroke can never read
     // an un-pinned scale of the image layer's datasource pyramid (TM-350).
-    const allowedResolutionsByLayer = new Map<LayerId, readonly ResolutionType[]>(
-      config.layers.map((l) => [l.layerId, l.resolutions]),
-    );
+    const allowedResolutionsByLayer = new Map<
+      LayerId,
+      readonly ResolutionType[]
+    >(config.layers.map((l) => [l.layerId, l.resolutions]));
     this._sessionResolutionsByLayer = allowedResolutionsByLayer;
 
     // The user-facing "Size" is `radius * 2 + 1` (see brush panel). Default

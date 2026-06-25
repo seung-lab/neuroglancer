@@ -19,6 +19,18 @@ import type {
 } from "@zettaai/edit-session";
 import { sessionError } from "@zettaai/edit-session";
 
+import type { NgLayerMetadataSource } from "#src/editing/adapters/ng_layer_metadata_source.js";
+import type { NgLogger } from "#src/editing/adapters/ng_logger.js";
+import type {
+  SaveBackend,
+  SaveBackendResult,
+} from "#src/editing/adapters/save_backend.js";
+import {
+  getDefaultSaveBackend,
+  getSaveBackend,
+} from "#src/editing/adapters/save_backend.js";
+import type { LayerManager, UserLayer } from "#src/layer/index.js";
+
 /**
  * Read-back verifier injected into {@link NgSaveTarget}. Confirms that the
  * chunks the backend acked are actually retrievable from storage with the bytes
@@ -31,18 +43,6 @@ export interface ChunkPersistenceVerifier {
     signal?: AbortSignal,
   ): Promise<{ ok: boolean; unverified: readonly SavedChunk[] }>;
 }
-
-import type { NgLayerMetadataSource } from "#src/editing/adapters/ng_layer_metadata_source.js";
-import type { NgLogger } from "#src/editing/adapters/ng_logger.js";
-import type {
-  SaveBackend,
-  SaveBackendResult,
-} from "#src/editing/adapters/save_backend.js";
-import {
-  getDefaultSaveBackend,
-  getSaveBackend,
-} from "#src/editing/adapters/save_backend.js";
-import type { LayerManager, UserLayer } from "#src/layer/index.js";
 
 /**
  * `SaveTarget` adapter that routes per-layer chunk persistence through the

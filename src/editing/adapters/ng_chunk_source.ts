@@ -308,9 +308,10 @@ export class NgChunkSource implements LibraryChunkSource {
       timer = setTimeout(() => resolve("bail"), VERIFY_READBACK_TIMEOUT_MS);
       if (signal !== undefined) {
         if (signal.aborted) resolve("bail");
-        else signal.addEventListener("abort", () => resolve("bail"), {
-          once: true,
-        });
+        else
+          signal.addEventListener("abort", () => resolve("bail"), {
+            once: true,
+          });
       }
     });
     try {
