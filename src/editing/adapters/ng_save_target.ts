@@ -81,11 +81,9 @@ export class NgSaveTarget implements SaveTarget {
         );
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        // Console-only diagnostics — NOT a user toast. The user-facing signal
-        // is surfaced once by the topbar from the returned outcome; a thrown
-        // error and an unconfirmed read-back are indistinguishable to the user
-        // ("we couldn't confirm"), so we don't assert "failed" in the UI here.
-        console.error(`[edit-session:save] Save errored for layer ${layerId}`, {
+        // A thrown `saveLayer` is a definite failure (network/RPC), so log it
+        // at error level (the per-layer outcome below is the user-facing path).
+        this.logger.error("save", `Save failed for layer ${layerId}`, {
           layerId,
           error: message,
         });
