@@ -17,11 +17,13 @@ import type {
   OverlayCoord,
   ReadonlyChunkVoxelBuffer,
   Resolution,
+  SavedChunk,
   SessionId,
 } from "@zettaai/edit-session";
 import {
   ChunkReadAbortedError,
   ChunkReadFailedError,
+  contentRefFromBuffer,
 } from "@zettaai/edit-session";
 
 import type { ChunkManager, Chunk } from "#src/chunk_manager/frontend.js";
@@ -43,6 +45,16 @@ import type {
 } from "#src/sliceview/volume/frontend.js";
 import { WatchableValue } from "#src/trackable_value.js";
 import { DataType } from "#src/util/data_type.js";
+
+/**
+ * Safety cap on a single chunk's read-back verification (TM-352). The read-back
+ * re-downloads through the chunk pipeline, whose `fetchChunk` resolves only when
+ * the chunk arrives — there is no inherent timeout, so a chunk that never lands
+ * (e.g. a misconfigured backend) would otherwise hang `save()` in the SAVING
+ * phase forever. On timeout the chunk is reported UNVERIFIED (never a false
+ * "confirmed"), so the save completes and the user can retry.
+ */
+const VERIFY_READBACK_TIMEOUT_MS = 15000;
 
 /**
  * Adapter that exposes neuroglancer's per-layer volumetric chunk storage
@@ -185,6 +197,147 @@ export class NgChunkSource implements LibraryChunkSource {
     }
     const chunkGridPosition = makeChunkGridPosition(source, chunkCoord);
     return fetchBaselineWithRetry(source, coord, chunkGridPosition, signal);
+  }
+
+  /**
+   * Read each just-saved chunk back from the backend and confirm it matches the
+   * bytes we sent (TM-352). The save backend (the portal) reports `ok`, but
+   * that is only a write *acknowledgement* — to be sure the change is durable
+   * we re-read the chunk from storage and compare content hashes. A mismatch
+   * (or an unreadable chunk) means the save is NOT confirmed, so the caller
+   * keeps the layer dirty and lets the user retry instead of silently dropping
+   * their edits.
+   *
+   * Freshness is forced through NG's own datasource decoder, not a
+   * reimplementation: `invalidateCache()` re-queues the source's chunks on the
+   * backend (so the next request re-reads kvStore), and a frontend
+   * `deleteChunk` drops the resident copy so `fetchChunk` cannot early-return
+   * the stale pre-save bytes. The RPC channel is ordered, so the invalidate is
+   * processed before the read request. This also refreshes the base layer to
+   * the backed-up bytes as a side effect (the kept-invalidation behavior).
+   *
+   * Returns `ok` plus the chunks that could not be confirmed. Aborting
+   * `signal` reports the unchecked remainder as unverified (never a false
+   * "confirmed").
+   */
+  async verifyChunksPersisted(
+    chunks: readonly SavedChunk[],
+    signal?: AbortSignal,
+  ): Promise<{ ok: boolean; unverified: readonly SavedChunk[] }> {
+    if (chunks.length === 0) return { ok: true, unverified: [] };
+
+    // Resolve the source per (layer, resolution) once; a layer that no longer
+    // resolves cannot be confirmed and counts as unverified.
+    const sourceByGroup = new Map<string, VolumeChunkSource | null>();
+    const sourceFor = (
+      layerId: LayerId,
+      resolution: Resolution,
+    ): VolumeChunkSource | null => {
+      const key = `${layerId}|${resolution}`;
+      let source = sourceByGroup.get(key);
+      if (source === undefined) {
+        try {
+          source = this.resolveVolumeChunkSource(layerId, resolution);
+        } catch {
+          source = null;
+        }
+        sourceByGroup.set(key, source);
+      }
+      return source;
+    };
+
+    // Invalidate ONLY the saved chunks on each source (not the whole scale, to
+    // avoid evicting/refetching every resident chunk — the whole-layer blink +
+    // GPU churn). This re-queues just these chunks so the read-back below comes
+    // from storage.
+    const keysBySource = new Map<VolumeChunkSource, string[]>();
+    for (const chunk of chunks) {
+      const source = sourceFor(chunk.layerId, chunk.resolution);
+      if (source === null) continue;
+      const grid = makeChunkGridPosition(source, chunk.chunkCoord);
+      const keys = keysBySource.get(source);
+      if (keys === undefined) keysBySource.set(source, [grid.join()]);
+      else keys.push(grid.join());
+    }
+    for (const [source, keys] of keysBySource) {
+      source.invalidateChunkCache(keys);
+    }
+
+    // Read the chunks back concurrently — each settles to verified/unverified,
+    // never hangs (bounded + abortable), so `save()` always leaves the SAVING
+    // phase even against a backend that never serves the re-read.
+    const verdicts = await Promise.all(
+      chunks.map((chunk) => {
+        const source = sourceFor(chunk.layerId, chunk.resolution);
+        if (source === null) return Promise.resolve(false);
+        return this.chunkReadsBackEqual(source, chunk, signal);
+      }),
+    );
+    const unverified = chunks.filter((_, i) => !verdicts[i]);
+    return { ok: unverified.length === 0, unverified };
+  }
+
+  /**
+   * Fresh-read one chunk from the backend and compare its content hash to the
+   * saved chunk's. Assumes the source was already invalidated by the caller.
+   * Always settles: a read that exceeds {@link VERIFY_READBACK_TIMEOUT_MS} or
+   * whose `signal` aborts resolves to `false` (unverified) rather than hanging.
+   */
+  private async chunkReadsBackEqual(
+    source: VolumeChunkSource,
+    chunk: SavedChunk,
+    signal: AbortSignal | undefined,
+  ): Promise<boolean> {
+    const grid = makeChunkGridPosition(source, chunk.chunkCoord);
+    const key = grid.join();
+    // Drop the resident frontend copy so `fetchChunk` re-requests from the
+    // (invalidated) backend rather than early-returning the stale chunk.
+    if (source.chunks.has(key)) {
+      try {
+        source.deleteChunk(key);
+      } catch {
+        // best-effort — a missing/odd chunk just means the fetch re-downloads.
+      }
+    }
+    // `fetchChunk` resolves only when the chunk arrives and aborting the RPC
+    // does not reject the arrival wait, so race the read against a timeout/abort
+    // at this level. A timed-out/aborted read leaves the in-flight fetch to
+    // resolve harmlessly into a discarded requester.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const bail = new Promise<"bail">((resolve) => {
+      timer = setTimeout(() => resolve("bail"), VERIFY_READBACK_TIMEOUT_MS);
+      if (signal !== undefined) {
+        if (signal.aborted) resolve("bail");
+        else
+          signal.addEventListener("abort", () => resolve("bail"), {
+            once: true,
+          });
+      }
+    });
+    try {
+      const outcome = await Promise.race([
+        fetchBaselineWithRetry(
+          source,
+          {
+            layerId: chunk.layerId,
+            resolution: chunk.resolution,
+            chunkId: chunk.chunkId,
+          },
+          grid,
+          signal,
+        ).then((readBack) => ({ readBack }) as const),
+        bail,
+      ]);
+      if (outcome === "bail") return false;
+      return (
+        contentRefFromBuffer(outcome.readBack.asView()).hash ===
+        chunk.contentRef.hash
+      );
+    } catch {
+      return false;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 
   private resolveVolumeChunkSource(

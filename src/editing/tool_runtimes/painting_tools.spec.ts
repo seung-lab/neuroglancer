@@ -172,6 +172,10 @@ function setup() {
     scope: new EditScope(fakeSession(log)),
     compute: fakeCompute(calls),
     metadataByLayer,
+    allowedResolutionsByLayer: new Map<LayerId, readonly Resolution[]>([
+      [TARGET, [RES]],
+      [layerId("img"), [RES]],
+    ]),
     readChunkAt: async (
       _l: LayerId,
       _r: Resolution,
@@ -527,6 +531,9 @@ describe("ConsumerPaintingTools — stroke lifecycle (TM-315)", () => {
       scope: new EditScope(fakeSession(log)),
       compute: blockingCompute,
       metadataByLayer: new Map<LayerId, LayerMetadata>([[TARGET, meta()]]),
+      allowedResolutionsByLayer: new Map<LayerId, readonly Resolution[]>([
+        [TARGET, [RES]],
+      ]),
       readChunkAt: async () => ({
         byteLength: 0,
         asView: () => new Uint32Array(0),

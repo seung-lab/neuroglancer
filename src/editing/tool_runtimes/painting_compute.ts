@@ -983,6 +983,22 @@ function resolveMaskContext(
     );
     return undefined;
   }
+  // The image layer's metadata enumerates its FULL datasource pyramid, so
+  // `scaleFor` below would happily resolve a finer scale the session never
+  // pinned — triggering a cold full-resolution EM read per stamp. Reject a
+  // resolution the host didn't open for this session and fall back to an
+  // unmasked stroke (TM-350; the host also repairs this at restore time).
+  if (
+    input.maskAllowedResolutions !== undefined &&
+    !input.maskAllowedResolutions.includes(input.mask.imageResolution)
+  ) {
+    warnOncePerStroke(
+      `advanced brush: image resolution "${input.mask.imageResolution}" is not one of ` +
+        `the session's opened resolutions for layer "${input.mask.imageLayerId}"; ` +
+        `falling back to unmasked stroke.`,
+    );
+    return undefined;
+  }
   let imageScale: ScaleMetadata;
   try {
     imageScale = scaleFor(input.maskMetadata, input.mask.imageResolution);

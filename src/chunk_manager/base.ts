@@ -97,6 +97,11 @@ export const PREFETCH_PRIORITY_MULTIPLIER = 1e13;
 export const CHUNK_QUEUE_MANAGER_RPC_ID = "ChunkQueueManager";
 export const CHUNK_MANAGER_RPC_ID = "ChunkManager";
 export const CHUNK_SOURCE_INVALIDATE_RPC_ID = "ChunkSource.invalidate";
+// Like `ChunkSource.invalidate`, but scoped to specific chunk keys instead of
+// the whole source — re-queues just those chunks so they re-download without
+// evicting (and re-fetching) every resident chunk of the source.
+export const CHUNK_SOURCE_INVALIDATE_CHUNKS_RPC_ID =
+  "ChunkSource.invalidateChunks";
 
 export const REQUEST_CHUNK_STATISTICS_RPC_ID =
   "ChunkQueueManager.requestChunkStatistics";

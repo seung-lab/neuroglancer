@@ -23,6 +23,22 @@ const RES: Resolution = ResolutionCtor.from([8, 8, 40]);
 const TARGET: LayerId = layerId("target");
 const IMAGE: LayerId = layerId("image");
 
+/**
+ * Build the `allowedByLayer` map `paintingPatchFromPersist` now takes: each
+ * given layer opened at `RES` by default. Pass `[layer, resolutions]` tuples to
+ * override the opened resolutions for a layer (e.g. to exercise the stale-mask
+ * repair).
+ */
+function allowed(
+  ...layers: (LayerId | readonly [LayerId, readonly Resolution[]])[]
+): Map<string, readonly Resolution[]> {
+  return new Map(
+    layers.map((l): readonly [LayerId, readonly Resolution[]] =>
+      typeof l === "string" ? [l, [RES]] : l,
+    ),
+  );
+}
+
 function state(over: Partial<PaintingSharedState> = {}): PaintingSharedState {
   return {
     targetLayerId: TARGET,
@@ -48,10 +64,7 @@ describe("tooling_persist", () => {
     const serialized = serializeTooling("painting.brush", state());
     const parsed = parseTooling(roundTrip(serialized));
     expect(parsed?.activeToolId).toBe("painting.brush");
-    const patch = paintingPatchFromPersist(
-      parsed!.painting!,
-      new Set([TARGET]),
-    );
+    const patch = paintingPatchFromPersist(parsed!.painting!, allowed(TARGET));
     expect(patch).toMatchObject({
       targetLayerId: TARGET,
       targetResolution: RES,
@@ -68,10 +81,7 @@ describe("tooling_persist", () => {
       state({ fillMode: "2d" }),
     );
     const parsed = parseTooling(roundTrip(serialized));
-    const patch = paintingPatchFromPersist(
-      parsed!.painting!,
-      new Set([TARGET]),
-    );
+    const patch = paintingPatchFromPersist(parsed!.painting!, allowed(TARGET));
     expect(patch!.fillMode).toBe("2d");
   });
 
@@ -89,10 +99,7 @@ describe("tooling_persist", () => {
         mask: null,
       },
     });
-    const patch = paintingPatchFromPersist(
-      parsed!.painting!,
-      new Set([TARGET]),
-    );
+    const patch = paintingPatchFromPersist(parsed!.painting!, allowed(TARGET));
     expect(patch!.fillMode).toBe("2d");
   });
 
@@ -102,10 +109,7 @@ describe("tooling_persist", () => {
       state({ activeValue: 200, eraseValue: 0 }),
     );
     const parsed = parseTooling(roundTrip(serialized));
-    const patch = paintingPatchFromPersist(
-      parsed!.painting!,
-      new Set([TARGET]),
-    );
+    const patch = paintingPatchFromPersist(parsed!.painting!, allowed(TARGET));
     expect(patch!.activeValue).toBe(200);
     expect(typeof patch!.activeValue).toBe("number");
   });
@@ -125,9 +129,35 @@ describe("tooling_persist", () => {
     const parsed = parseTooling(roundTrip(serialized));
     const patch = paintingPatchFromPersist(
       parsed!.painting!,
-      new Set([TARGET, IMAGE]),
+      allowed(TARGET, IMAGE),
     );
     expect(patch!.mask).toEqual(mask);
+  });
+
+  it("repairs a stale mask resolution to a resolution the session opened", () => {
+    // A persisted `imageResolution` that the session never opened (e.g. a finer
+    // scale from the image layer's datasource pyramid) would otherwise drive
+    // cold full-res EM reads. It must be swapped for the layer's first opened
+    // resolution while the rest of the mask is preserved (TM-350).
+    const stale = ResolutionCtor.from([5, 5, 40]);
+    const opened = ResolutionCtor.from([80, 80, 40]);
+    const mask = {
+      imageLayerId: IMAGE,
+      imageResolution: stale,
+      thresholdLow: 10,
+      thresholdHigh: 200,
+      coverageThreshold: 0.5,
+      minComponentSize: 4,
+      binaryClosing: 1,
+      filterComponentsFirst: true,
+    };
+    const serialized = serializeTooling("painting.brush", state({ mask }));
+    const parsed = parseTooling(roundTrip(serialized));
+    const patch = paintingPatchFromPersist(
+      parsed!.painting!,
+      allowed(TARGET, [IMAGE, [opened]]),
+    );
+    expect(patch!.mask).toEqual({ ...mask, imageResolution: opened });
   });
 
   it("defaults coverageThreshold for legacy configs lacking the field", () => {
@@ -149,7 +179,7 @@ describe("tooling_persist", () => {
     const parsed = parseTooling(roundTrip(serialized));
     const patch = paintingPatchFromPersist(
       parsed!.painting!,
-      new Set([TARGET, IMAGE]),
+      allowed(TARGET, IMAGE),
     );
     expect(patch!.mask).toEqual({ ...legacy, coverageThreshold: 0.5 });
   });
@@ -166,7 +196,7 @@ describe("tooling_persist", () => {
     const parsed = parseTooling(roundTrip(serialized));
     // Session no longer has the target layer → patch refused, keep defaults.
     expect(
-      paintingPatchFromPersist(parsed!.painting!, new Set(["other"])),
+      paintingPatchFromPersist(parsed!.painting!, allowed("other" as LayerId)),
     ).toBeUndefined();
   });
 
@@ -183,10 +213,7 @@ describe("tooling_persist", () => {
     const serialized = serializeTooling("painting.brush", state({ mask }));
     const parsed = parseTooling(roundTrip(serialized));
     // IMAGE layer gone from the session → mask dropped, target still applies.
-    const patch = paintingPatchFromPersist(
-      parsed!.painting!,
-      new Set([TARGET]),
-    );
+    const patch = paintingPatchFromPersist(parsed!.painting!, allowed(TARGET));
     expect(patch).toBeDefined();
     expect(patch!.mask).toBeUndefined();
   });

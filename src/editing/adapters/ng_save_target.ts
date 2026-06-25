@@ -32,6 +32,19 @@ import {
 import type { LayerManager, UserLayer } from "#src/layer/index.js";
 
 /**
+ * Read-back verifier injected into {@link NgSaveTarget}. Confirms that the
+ * chunks the backend acked are actually retrievable from storage with the bytes
+ * we sent — `NgChunkSource` implements this (TM-352). When absent, the save is
+ * trusted as soon as the backend returns `succeeded` (legacy behavior / tests).
+ */
+export interface ChunkPersistenceVerifier {
+  verifyChunksPersisted(
+    chunks: readonly SavedChunk[],
+    signal?: AbortSignal,
+  ): Promise<{ ok: boolean; unverified: readonly SavedChunk[] }>;
+}
+
+/**
  * `SaveTarget` adapter that routes per-layer chunk persistence through the
  * `SaveBackend` registry. Picks a backend by the layer's primary data-source
  * scheme (e.g. `"calcada"`, `"precomputed"`); layers whose scheme has no
@@ -43,6 +56,7 @@ export class NgSaveTarget implements SaveTarget {
     private readonly layerManager: LayerManager,
     private readonly metadataSource: NgLayerMetadataSource,
     private readonly logger: NgLogger,
+    private readonly verifier?: ChunkPersistenceVerifier,
   ) {}
 
   async save(payload: SavePayload, signal?: AbortSignal): Promise<SaveResult> {
@@ -67,6 +81,8 @@ export class NgSaveTarget implements SaveTarget {
         );
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        // A thrown `saveLayer` is a definite failure (network/RPC), so log it
+        // at error level (the per-layer outcome below is the user-facing path).
         this.logger.error("save", `Save failed for layer ${layerId}`, {
           layerId,
           error: message,
@@ -87,10 +103,11 @@ export class NgSaveTarget implements SaveTarget {
       if (outcome.status === "succeeded") {
         this.logger.info("save", `Saved layer ${layerId}`, { layerId });
       } else {
-        this.logger.error("save", `Save failed for layer ${layerId}`, {
-          layerId,
-          error: outcome.error.message,
-        });
+        // Console-only — the topbar surfaces the single user-facing message.
+        console.error(
+          `[edit-session:save] Save not confirmed for layer ${layerId}`,
+          { layerId, error: outcome.error.message },
+        );
       }
       outcomes.push(outcome);
     }
@@ -125,7 +142,45 @@ export class NgSaveTarget implements SaveTarget {
     }
     const metadata = await this.metadataSource.resolve(layerId);
     const result = await backend.saveLayer(layerId, chunks, metadata, signal);
-    return toOutcome(layerId, result);
+    const outcome = toOutcome(layerId, result);
+    // A backend `ok` is only a write acknowledgement. Before declaring the
+    // layer saved (which lets the library rebaseline / mark it clean), read the
+    // chunks back from storage and confirm they match. A miss returns `failed`
+    // so the layer stays dirty and the user can retry — their edits are never
+    // dropped on an unconfirmed save (TM-352).
+    if (
+      outcome.status === "succeeded" &&
+      this.verifier !== undefined &&
+      chunks.length > 0
+    ) {
+      const verification = await this.verifier.verifyChunksPersisted(
+        chunks,
+        signal,
+      );
+      if (!verification.ok) {
+        // Return a failed outcome with a single, user-facing message. The
+        // outer `save()` loop logs the failure once, so don't double-log here;
+        // the per-chunk counts ride in `cause` for diagnostics.
+        return {
+          layerId,
+          status: "failed",
+          error: sessionError({
+            kind: "recoverable",
+            code: "save-verification-failed",
+            message:
+              "Your changes couldn't be confirmed as saved. They're kept " +
+              "here — please try saving again.",
+            cause: {
+              layerId,
+              unverifiedChunks: verification.unverified.length,
+              totalChunks: chunks.length,
+            },
+            at: Date.now(),
+          }),
+        };
+      }
+    }
+    return outcome;
   }
 }
 

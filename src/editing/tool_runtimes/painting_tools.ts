@@ -152,6 +152,16 @@ interface PaintingToolDeps {
   readonly state: PaintingState;
   readonly compute: PaintCompute;
   readonly metadataByLayer: ReadonlyMap<LayerId, LayerMetadata>;
+  /**
+   * Resolutions the host opened (and preloads/pins) per layer. Threaded into
+   * every masked stroke as `maskAllowedResolutions` so compute rejects a mask
+   * resolution the session never pinned instead of cold-reading a finer scale
+   * from the layer's datasource pyramid (TM-350).
+   */
+  readonly allowedResolutionsByLayer: ReadonlyMap<
+    LayerId,
+    readonly Resolution[]
+  >;
   readonly readChunkAt: ReadChunkAt;
   /**
    * Worker-pool stroke pipeline (TM-322). Used for the unmasked same-z r>=1 fast
@@ -315,7 +325,11 @@ export class StrokeTool implements EditTool {
     shared: PaintingSharedState,
     metadata: LayerMetadata,
     value: number | bigint,
-    maskFields: { mask?: PaintingMaskConfig; maskMetadata?: LayerMetadata },
+    maskFields: {
+      mask?: PaintingMaskConfig;
+      maskMetadata?: LayerMetadata;
+      maskAllowedResolutions?: readonly Resolution[];
+    },
     readChunkAt: ReadChunkAt,
     stepVoxels: number,
     useWorker: boolean,
@@ -510,10 +524,16 @@ export class StrokeTool implements EditTool {
     const maskMetadata = useMask
       ? this.deps.metadataByLayer.get(shared.mask!.imageLayerId)
       : undefined;
+    const maskAllowedResolutions = useMask
+      ? this.deps.allowedResolutionsByLayer.get(shared.mask!.imageLayerId)
+      : undefined;
     const maskFields = useMask
       ? {
           mask: shared.mask,
           ...(maskMetadata !== undefined ? { maskMetadata } : {}),
+          ...(maskAllowedResolutions !== undefined
+            ? { maskAllowedResolutions }
+            : {}),
         }
       : {};
     const readChunkAt = this.deps.readChunkAt;
@@ -913,6 +933,7 @@ export class ConsumerPaintingTools {
     scope: EditScope;
     compute: PaintCompute;
     metadataByLayer: ReadonlyMap<LayerId, LayerMetadata>;
+    allowedResolutionsByLayer: ReadonlyMap<LayerId, readonly Resolution[]>;
     readChunkAt: ReadChunkAt;
     initialState: PaintingSharedState;
     /** Host sink for fill progress → cursor loader UI (TM-269). */
@@ -926,6 +947,7 @@ export class ConsumerPaintingTools {
       state: this.state,
       compute: opts.compute,
       metadataByLayer: opts.metadataByLayer,
+      allowedResolutionsByLayer: opts.allowedResolutionsByLayer,
       readChunkAt: opts.readChunkAt,
       pipeline: new PaintStrokePipeline(),
       fillProgress: opts.fillProgress,
