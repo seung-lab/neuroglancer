@@ -282,7 +282,16 @@ function ActiveTopbarControls({
   }, [session]);
 
   const runSaveAll = useCallback(() => {
-    void saveTracker.startSave(host, session);
+    void (async () => {
+      await saveTracker.startSave(host, session);
+      // Surface a failed/unconfirmed save as a prominent toast — the per-layer
+      // status is otherwise only visible in the panel, so without this the user
+      // gets no clear signal that their changes did not reach the server.
+      const failure = saveTracker.lastFailureMessage();
+      if (failure !== undefined) {
+        StatusMessage.showTemporaryMessage(failure, 10000);
+      }
+    })();
   }, [saveTracker, host, session]);
 
   const teleportToRegion = useCallback(() => {

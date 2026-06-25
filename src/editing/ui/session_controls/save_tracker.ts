@@ -51,6 +51,33 @@ export class SaveTracker {
     return this.layerStatuses_;
   }
 
+  /**
+   * A clear, user-facing message describing why the last save did not fully
+   * succeed — or `undefined` if the last save succeeded or none has run. Built
+   * from the failed layers' detail strings (the backend / verification error
+   * text), so the caller can surface it as a toast. The detail strings are
+   * already user-facing (see `NgSaveTarget`).
+   */
+  lastFailureMessage(): string | undefined {
+    if (this.state_.kind !== "done-partial") return undefined;
+    const failed = this.state_.failedLayers;
+    if (failed.length === 0) return undefined;
+    const details: string[] = [];
+    for (const id of failed) {
+      const detail = this.layerStatuses_.get(id)?.detail;
+      if (detail !== undefined && detail.length > 0 && !details.includes(detail)) {
+        details.push(detail);
+      }
+    }
+    const body = details.length > 0 ? details.join(" ") : "The save didn't complete.";
+    // Name the affected layers only when more than one writable layer failed,
+    // so the common single-layer case stays a clean one-liner.
+    if (failed.length > 1) {
+      return `Couldn't save ${failed.length} layers (${failed.join(", ")}). ${body}`;
+    }
+    return body;
+  }
+
   async startSave(host: EditSessionHost, session: EditSession): Promise<void> {
     if (this.state_.kind === "saving") return;
     if (!session.dirty.isDirty()) return;
