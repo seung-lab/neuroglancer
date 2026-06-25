@@ -239,17 +239,25 @@ export function parseTooling(x: unknown): ToolingPersistState | undefined {
  * undefined if the target binding is no longer valid (the caller keeps
  * defaults). A persisted mask referencing a missing layer is dropped while the
  * rest of the config still applies.
+ *
+ * `allowedByLayer` maps each session layer to the resolutions the session
+ * actually opened (and the host preloads/pins). A persisted
+ * `mask.imageResolution` that is NOT among them is repaired to the layer's
+ * first allowed resolution rather than restored verbatim: the image layer's
+ * datasource pyramid usually contains finer scales the session never pinned, so
+ * a stale value would otherwise drive every masked stamp to cold-read native
+ * full-resolution EM (a 10–20 s/chunk stall). Repairing keeps masking on at a
+ * resident scale instead of dropping it.
  */
 export function paintingPatchFromPersist(
   p: SerializedPainting,
-  layerIds: ReadonlySet<string>,
+  allowedByLayer: ReadonlyMap<string, readonly Resolution[]>,
 ): Partial<PaintingSharedState> | undefined {
-  if (!layerIds.has(p.targetLayerId)) return undefined;
+  if (!allowedByLayer.has(p.targetLayerId)) return undefined;
   const activeValue = parseValue(p.activeValue);
   const eraseValue = parseValue(p.eraseValue);
   if (activeValue === undefined || eraseValue === undefined) return undefined;
-  const mask =
-    p.mask !== null && layerIds.has(p.mask.imageLayerId) ? p.mask : undefined;
+  const mask = repairMaskResolution(p.mask, allowedByLayer);
   return {
     targetLayerId: p.targetLayerId as LayerId,
     targetResolution: p.targetResolution as Resolution,
@@ -259,4 +267,23 @@ export function paintingPatchFromPersist(
     mask,
     fillMode: parseFillMode(p.fillMode),
   };
+}
+
+/**
+ * Validate a persisted mask against the session's opened resolutions. Returns:
+ *   • `undefined` — no mask persisted, or its image layer is gone from the
+ *     session (dropped, same as the missing-target-layer behavior).
+ *   • the mask unchanged — its `imageResolution` is one the session opened.
+ *   • the mask with `imageResolution` swapped for the layer's first allowed
+ *     resolution — a stale/finer value the session never pinned.
+ */
+function repairMaskResolution(
+  mask: PaintingMaskConfig | null,
+  allowedByLayer: ReadonlyMap<string, readonly Resolution[]>,
+): PaintingMaskConfig | undefined {
+  if (mask === null) return undefined;
+  const allowed = allowedByLayer.get(mask.imageLayerId);
+  if (allowed === undefined || allowed.length === 0) return undefined;
+  if (allowed.includes(mask.imageResolution)) return mask;
+  return { ...mask, imageResolution: allowed[0] };
 }

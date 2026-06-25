@@ -646,6 +646,15 @@ export class EditSessionHost extends RefCounted {
     ReadonlySet<ResolutionType>
   >();
 
+  // Resolutions the session opened per layer, in config order, captured during
+  // `instantiatePaintingTools` (which is awaited before `applyRestoredTooling`,
+  // unlike the late-populated `_allowedResolutionsByLayer`). Used to repair a
+  // stale persisted `mask.imageResolution` on restore (TM-350).
+  private _sessionResolutionsByLayer: ReadonlyMap<
+    LayerId,
+    readonly ResolutionType[]
+  > = new Map();
+
   // -- Per-session machinery (cleared on session end) -----------------------
   private readonly perLayer = new Map<LayerId, PerLayerMachinery>();
   private readonly _activeRegionByLayer = new Map<
@@ -1816,6 +1825,14 @@ export class EditSessionHost extends RefCounted {
       }),
     );
 
+    // Resolutions the session actually opened (and the host preloads/pins) per
+    // layer. Threaded into the painting tools so a masked stroke can never read
+    // an un-pinned scale of the image layer's datasource pyramid (TM-350).
+    const allowedResolutionsByLayer = new Map<LayerId, readonly ResolutionType[]>(
+      config.layers.map((l) => [l.layerId, l.resolutions]),
+    );
+    this._sessionResolutionsByLayer = allowedResolutionsByLayer;
+
     // The user-facing "Size" is `radius * 2 + 1` (see brush panel). Default
     // size 5 paints a 13-voxel diamond — visible enough to confirm the brush
     // works, small enough not to overshoot a precision edit.
@@ -1861,6 +1878,7 @@ export class EditSessionHost extends RefCounted {
       scope: editScope,
       compute,
       metadataByLayer,
+      allowedResolutionsByLayer,
       readChunkAt,
       initialState,
       // Drive the cursor-attached fill spinner (TM-269). `start`/`end` bracket
@@ -1964,10 +1982,15 @@ export class EditSessionHost extends RefCounted {
     this.editKeybindOverrides.value = tooling?.keybinds ?? {};
     if (tooling === undefined) return;
     if (this.paintingTools !== undefined && tooling.painting !== undefined) {
-      const layerIds = new Set<string>(
-        session.config.layers.map((l) => l.layerId),
+      // A stale persisted `mask.imageResolution` (e.g. a finer scale from the
+      // image layer's datasource pyramid the session never pinned) is repaired
+      // to a resident resolution instead of driving cold full-res EM reads
+      // (TM-350). `_sessionResolutionsByLayer` holds the opened resolutions per
+      // layer, captured in the awaited `instantiatePaintingTools`.
+      const patch = paintingPatchFromPersist(
+        tooling.painting,
+        this._sessionResolutionsByLayer,
       );
-      const patch = paintingPatchFromPersist(tooling.painting, layerIds);
       if (patch !== undefined) {
         this.paintingTools.state.patchState(patch);
       }
@@ -2672,6 +2695,7 @@ export class EditSessionHost extends RefCounted {
     }
     this._activeRegionByLayer.clear();
     this._allowedResolutionsByLayer.clear();
+    this._sessionResolutionsByLayer = new Map();
     this.refreshEditBboxWatchables();
     this.refreshAllowedResolutionsWatchables();
     this.tearDownSessionState();
@@ -2779,6 +2803,7 @@ export class EditSessionHost extends RefCounted {
     this.perLayer.clear();
     this._activeRegionByLayer.clear();
     this._allowedResolutionsByLayer.clear();
+    this._sessionResolutionsByLayer = new Map();
     // Stop tracking global-dimension changes — the session is ending.
     if (this.detachDisplayDimWatch !== undefined) {
       try {

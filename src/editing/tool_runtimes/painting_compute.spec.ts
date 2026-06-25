@@ -132,4 +132,28 @@ describe("PaintingCompute honors the supplied mask", () => {
     });
     expect(paintedVoxelCount(batch)).toBe(0);
   });
+
+  it("falls back to unmasked when the mask resolution was not opened (TM-350)", async () => {
+    // `maskAllowedResolutions` lists only a resolution the session opened; the
+    // mask's `imageResolution` (RES) is not among them, so compute must ignore
+    // the mask rather than cold-read an un-pinned scale. With the mask dropped,
+    // the otherwise-excluding band no longer gates and the full disk paints.
+    const compute = new PaintingCompute();
+    const batch = await compute.applyBrush({
+      ...brushInput(),
+      maskAllowedResolutions: [ResolutionCtor.from([80, 80, 40])],
+    });
+    expect(paintedVoxelCount(batch)).toBeGreaterThan(0);
+  });
+
+  it("keeps masking when the mask resolution is among the opened set", async () => {
+    // The guard is permissive when the resolution IS allowed: masking still
+    // applies and the excluding band paints nothing.
+    const compute = new PaintingCompute();
+    const batch = await compute.applyBrush({
+      ...brushInput(),
+      maskAllowedResolutions: [RES],
+    });
+    expect(paintedVoxelCount(batch)).toBe(0);
+  });
 });
