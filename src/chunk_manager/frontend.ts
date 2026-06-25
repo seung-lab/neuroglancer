@@ -23,6 +23,7 @@ import {
   CHUNK_MANAGER_RPC_ID,
   CHUNK_QUEUE_MANAGER_RPC_ID,
   CHUNK_SET_PERMANENT_RPC_ID,
+  CHUNK_SOURCE_INVALIDATE_CHUNKS_RPC_ID,
   CHUNK_SOURCE_INVALIDATE_RPC_ID,
   ChunkState,
   REQUEST_CHUNK_STATISTICS_RPC_ID,
@@ -498,6 +499,20 @@ export class ChunkSource extends SharedObject {
    */
   invalidateCache(): void {
     this.rpc!.invoke(CHUNK_SOURCE_INVALIDATE_RPC_ID, { id: this.rpcId });
+  }
+
+  /**
+   * Invalidate only the given chunk keys (`chunkGridPosition.join()`), leaving
+   * every other resident chunk in place — so they re-download on next request
+   * without the whole-source eviction/refetch storm of `invalidateCache`.
+   * Operates asynchronously.
+   */
+  invalidateChunkCache(keys: readonly string[]): void {
+    if (keys.length === 0) return;
+    this.rpc!.invoke(CHUNK_SOURCE_INVALIDATE_CHUNKS_RPC_ID, {
+      id: this.rpcId,
+      keys,
+    });
   }
 
   static encodeOptions(_options: object): { [key: string]: any } {
