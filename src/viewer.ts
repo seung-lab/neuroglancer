@@ -995,10 +995,18 @@ export class Viewer extends RefCounted implements ViewerState {
       // show their own generic prompt; setting `returnValue` is what
       // actually triggers it.
       const handleBeforeUnload = (ev: BeforeUnloadEvent) => {
-        if (!this.editSessionHost.hasPendingCommittedChanges()) return;
+        // Warn on in-memory committed patches OR saves that were sent but not
+        // yet confirmed durable by read-back (TM-352) — the user must not lose
+        // unconfirmed work by leaving.
+        if (
+          !this.editSessionHost.hasPendingCommittedChanges() &&
+          !this.editSessionHost.hasUnconfirmedSaves()
+        ) {
+          return;
+        }
         ev.preventDefault();
         ev.returnValue =
-          "You have unsaved in-memory edits. They will be lost if you leave.";
+          "You have edits that are not confirmed saved. They may be lost if you leave.";
       };
       window.addEventListener("beforeunload", handleBeforeUnload);
       this.registerDisposer(() =>

@@ -787,6 +787,11 @@ export const SLICEVIEW_ADD_VISIBLE_LAYER_RPC_ID = "SliceView.addVisibleLayer";
 export const SLICEVIEW_REMOVE_VISIBLE_LAYER_RPC_ID =
   "SliceView.removeVisibleLayer";
 export const SLICEVIEW_REQUEST_CHUNK_RPC_ID = "ChunkManager.requestChunk";
+// One-off fresh download+decode of a single volume chunk that does NOT enter
+// the source's chunk cache — used by the edit-session save verification to read
+// back what was written without evicting the resident (rendered) chunk.
+export const VOLUME_FETCH_FRESH_DECODED_CHUNK_RPC_ID =
+  "VolumeChunkSource.fetchFreshDecodedChunk";
 
 const tempVisibleVolumetricChunkLower = new Float32Array(3);
 const tempVisibleVolumetricChunkUpper = new Float32Array(3);

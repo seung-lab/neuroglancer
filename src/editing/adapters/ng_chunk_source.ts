@@ -17,7 +17,6 @@ import type {
   OverlayCoord,
   ReadonlyChunkVoxelBuffer,
   Resolution,
-  SavedChunk,
   SessionId,
 } from "@zettaai/edit-session";
 import {
@@ -45,16 +44,6 @@ import type {
 } from "#src/sliceview/volume/frontend.js";
 import { WatchableValue } from "#src/trackable_value.js";
 import { DataType } from "#src/util/data_type.js";
-
-/**
- * Safety cap on a single chunk's read-back verification (TM-352). The read-back
- * re-downloads through the chunk pipeline, whose `fetchChunk` resolves only when
- * the chunk arrives — there is no inherent timeout, so a chunk that never lands
- * (e.g. a misconfigured backend) would otherwise hang `save()` in the SAVING
- * phase forever. On timeout the chunk is reported UNVERIFIED (never a false
- * "confirmed"), so the save completes and the user can retry.
- */
-const VERIFY_READBACK_TIMEOUT_MS = 15000;
 
 /**
  * Adapter that exposes neuroglancer's per-layer volumetric chunk storage
@@ -93,11 +82,113 @@ export class NgChunkSource implements LibraryChunkSource {
       }
     | undefined;
 
+  /**
+   * Client-retained copy of the bytes the host has SAVED this page-session
+   * (TM-352). `readBaselineChunk` consults it after `commitTarget` and before
+   * the datasource, so a re-entry reads the saved state without evicting the
+   * rendered chunk. Host-lifetime (survives session exit within the page; gone
+   * on reload). Also holds each chunk's content hash for save verification.
+   */
+  private readonly savedBaseline = new SavedBaselineStore();
+
   constructor(
     private readonly layerManager: LayerManager,
     _chunkManager: ChunkManager,
   ) {
     void _chunkManager;
+  }
+
+  /**
+   * Record the bytes just written for `(layerId, resolution, chunkId)` as the
+   * client's authoritative saved copy + its content hash (TM-352). Called by the
+   * host right after a save write. The bytes are COPIED (detached from any
+   * pooled / overlay storage).
+   */
+  recordSavedBaseline(
+    layerId: LayerId,
+    resolution: Resolution,
+    chunkId: ChunkId,
+    bytes: ReadonlyChunkVoxelBuffer,
+  ): void {
+    this.savedBaseline.set(
+      savedBaselineKey(layerId, resolution, chunkId),
+      bytes,
+    );
+  }
+
+  /** Content hash of the saved bytes for a chunk, for read-back comparison. */
+  getSavedBaselineHash(
+    layerId: LayerId,
+    resolution: Resolution,
+    chunkId: ChunkId,
+  ): string | undefined {
+    return this.savedBaseline.get(
+      savedBaselineKey(layerId, resolution, chunkId),
+    )?.hash;
+  }
+
+  /**
+   * The client's stable saved copy of a chunk's bytes — used to RE-SEND on a
+   * "Retry" after an unconfirmed save (the library is already rebaselined, so we
+   * resend from here, not the overlay).
+   */
+  getSavedBytes(
+    layerId: LayerId,
+    resolution: Resolution,
+    chunkId: ChunkId,
+  ): ReadonlyChunkVoxelBuffer | undefined {
+    return this.savedBaseline.get(
+      savedBaselineKey(layerId, resolution, chunkId),
+    )?.bytes;
+  }
+
+  /**
+   * Drop the entire client-retained saved-baseline cache (TM-352). Called on
+   * session exit: the saved bytes are a WITHIN-SESSION checkpoint (the snapshot
+   * the user pressed "Save" on), useful while the session is alive for
+   * verification, retry, and no-blink re-paint. After the session ends, keeping
+   * them would let a stale snapshot shadow the backend on re-entry — reverting
+   * the visible canvas and risking a silent overwrite of a concurrent external
+   * edit. Re-entry must reconcile with the backend instead, so we clear here and
+   * pair this with {@link invalidateDatasourceChunks}.
+   */
+  clearSavedBaseline(): void {
+    this.savedBaseline.clear();
+  }
+
+  /**
+   * Evict the given chunks from the datasource render cache so they re-download
+   * fresh from the backend (TM-352). The main slice-view render path reads
+   * `source.chunks` directly and never consults the saved-baseline cache, so
+   * after a save the resident chunk still holds the PRE-save bytes; without this
+   * eviction the canvas reverts to pre-save data on re-entry until a full page
+   * reload. Used on session exit to replace the stale resident chunks with the
+   * saved+verified bytes. Per-chunk eviction (no whole-source refetch storm);
+   * a `(layerId, resolution)` that no longer resolves to a source is skipped.
+   */
+  invalidateDatasourceChunks(
+    coords: readonly {
+      readonly layerId: LayerId;
+      readonly resolution: Resolution;
+      readonly chunkCoord: ChunkCoord;
+    }[],
+  ): void {
+    const keysBySource = new Map<VolumeChunkSource, string[]>();
+    for (const { layerId, resolution, chunkCoord } of coords) {
+      let source: VolumeChunkSource;
+      try {
+        source = this.resolveVolumeChunkSource(layerId, resolution);
+      } catch {
+        continue; // layer/source gone — nothing to evict
+      }
+      const key = makeChunkGridPosition(source, chunkCoord).join();
+      const existing = keysBySource.get(source);
+      if (existing === undefined) keysBySource.set(source, [key]);
+      else existing.push(key);
+    }
+    for (const [source, keys] of keysBySource) {
+      source.invalidateChunkCache(keys);
+    }
   }
 
   async pinChunks(
@@ -189,6 +280,54 @@ export class NgChunkSource implements LibraryChunkSource {
     if (committed !== undefined) {
       return committed.bytes;
     }
+    // Then the client-retained saved bytes (TM-352): after a save we keep our
+    // own copy of what was written, so a re-entry (same page, no reload) reads
+    // the SAVED state as baseline instead of the datasource's stale chunk —
+    // without evicting/refetching the rendered chunk (no blink). This is the
+    // client's authoritative copy; it never depends on the backend being right.
+    const saved = this.savedBaseline.get(
+      savedBaselineKey(layerId, resolution, chunkId),
+    );
+    if (saved !== undefined) {
+      return saved.bytes;
+    }
+    return this.readDatasourceBaseline(
+      layerId,
+      resolution,
+      chunkId,
+      chunkCoord,
+      signal,
+    );
+  }
+
+  /**
+   * Read ONLY the datasource render base for a chunk — the decoded bytes the
+   * base segmentation render layer shows from `source.chunks`, with NO
+   * `commitTarget` / `savedBaseline` short-circuit.
+   *
+   * This is what {@link PatchMirror} must diff the overlay against to build the
+   * per-voxel patched mask. The render composites the GPU patch where
+   * `patched === 1` and falls back to the datasource chunk where `patched === 0`
+   * — so the composite equals the overlay if and only if
+   * `patched = (overlay !== datasourceBase)`. Diffing against the edit baseline
+   * ({@link readBaselineChunk}, which returns the saved/committed bytes) instead
+   * breaks that invariant the moment the edit baseline diverges from the
+   * resident datasource chunk (i.e. right after a save, before the datasource
+   * cache is refreshed on exit): the saved voxels then compare equal to the
+   * baseline, drop out of the mask, and revert to the stale datasource value on
+   * screen (TM-352).
+   */
+  async readDatasourceBaseline(
+    layerId: LayerId,
+    resolution: Resolution,
+    chunkId: ChunkId,
+    chunkCoord: ChunkCoord,
+    signal?: AbortSignal,
+  ): Promise<ReadonlyChunkVoxelBuffer> {
+    const coord: OverlayCoord = { layerId, resolution, chunkId };
+    if (signal?.aborted) {
+      throw new ChunkReadAbortedError(coord);
+    }
     let source: VolumeChunkSource;
     try {
       source = this.resolveVolumeChunkSource(layerId, resolution);
@@ -200,144 +339,59 @@ export class NgChunkSource implements LibraryChunkSource {
   }
 
   /**
-   * Read each just-saved chunk back from the backend and confirm it matches the
-   * bytes we sent (TM-352). The save backend (the portal) reports `ok`, but
-   * that is only a write *acknowledgement* — to be sure the change is durable
-   * we re-read the chunk from storage and compare content hashes. A mismatch
-   * (or an unreadable chunk) means the save is NOT confirmed, so the caller
-   * keeps the layer dirty and lets the user retry instead of silently dropping
-   * their edits.
-   *
-   * Freshness is forced through NG's own datasource decoder, not a
-   * reimplementation: `invalidateCache()` re-queues the source's chunks on the
-   * backend (so the next request re-reads kvStore), and a frontend
-   * `deleteChunk` drops the resident copy so `fetchChunk` cannot early-return
-   * the stale pre-save bytes. The RPC channel is ordered, so the invalidate is
-   * processed before the read request. This also refreshes the base layer to
-   * the backed-up bytes as a side effect (the kept-invalidation behavior).
-   *
-   * Returns `ok` plus the chunks that could not be confirmed. Aborting
-   * `signal` reports the unchecked remainder as unverified (never a false
-   * "confirmed").
+   * Fresh-read one chunk from the backend, decoded to per-voxel values, WITHOUT
+   * evicting the resident/rendered chunk (TM-352 save verification). Routes
+   * through `VolumeChunkSource.fetchFreshDecodedChunk` (a throwaway backend
+   * download that never enters the chunk cache) and applies the SAME
+   * `decodeBaselineChunk` as the baseline read, so the representation matches the
+   * saved overlay bytes for a content-hash compare. Returns `undefined` when the
+   * `(layerId, resolution)` no longer resolves to a source.
    */
-  async verifyChunksPersisted(
-    chunks: readonly SavedChunk[],
+  async readFreshDecoded(
+    layerId: LayerId,
+    resolution: Resolution,
+    chunkCoord: ChunkCoord,
     signal?: AbortSignal,
-  ): Promise<{ ok: boolean; unverified: readonly SavedChunk[] }> {
-    if (chunks.length === 0) return { ok: true, unverified: [] };
-
-    // Resolve the source per (layer, resolution) once; a layer that no longer
-    // resolves cannot be confirmed and counts as unverified.
-    const sourceByGroup = new Map<string, VolumeChunkSource | null>();
-    const sourceFor = (
-      layerId: LayerId,
-      resolution: Resolution,
-    ): VolumeChunkSource | null => {
-      const key = `${layerId}|${resolution}`;
-      let source = sourceByGroup.get(key);
-      if (source === undefined) {
-        try {
-          source = this.resolveVolumeChunkSource(layerId, resolution);
-        } catch {
-          source = null;
-        }
-        sourceByGroup.set(key, source);
-      }
-      return source;
-    };
-
-    // Invalidate ONLY the saved chunks on each source (not the whole scale, to
-    // avoid evicting/refetching every resident chunk — the whole-layer blink +
-    // GPU churn). This re-queues just these chunks so the read-back below comes
-    // from storage.
-    const keysBySource = new Map<VolumeChunkSource, string[]>();
-    for (const chunk of chunks) {
-      const source = sourceFor(chunk.layerId, chunk.resolution);
-      if (source === null) continue;
-      const grid = makeChunkGridPosition(source, chunk.chunkCoord);
-      const keys = keysBySource.get(source);
-      if (keys === undefined) keysBySource.set(source, [grid.join()]);
-      else keys.push(grid.join());
+  ): Promise<ReadonlyChunkVoxelBuffer | undefined> {
+    let source: VolumeChunkSource;
+    try {
+      source = this.resolveVolumeChunkSource(layerId, resolution);
+    } catch {
+      return undefined;
     }
-    for (const [source, keys] of keysBySource) {
-      source.invalidateChunkCache(keys);
-    }
-
-    // Read the chunks back concurrently — each settles to verified/unverified,
-    // never hangs (bounded + abortable), so `save()` always leaves the SAVING
-    // phase even against a backend that never serves the re-read.
-    const verdicts = await Promise.all(
-      chunks.map((chunk) => {
-        const source = sourceFor(chunk.layerId, chunk.resolution);
-        if (source === null) return Promise.resolve(false);
-        return this.chunkReadsBackEqual(source, chunk, signal);
-      }),
+    const grid = makeChunkGridPosition(source, chunkCoord);
+    const { data } = await source.fetchFreshDecodedChunk(
+      grid,
+      signal ?? new AbortController().signal,
     );
-    const unverified = chunks.filter((_, i) => !verdicts[i]);
-    return { ok: unverified.length === 0, unverified };
+    const decoded = decodeBaselineChunk(source, { data } as unknown as Chunk);
+    return wrapAsReadonlyBuffer(decoded);
   }
 
   /**
-   * Fresh-read one chunk from the backend and compare its content hash to the
-   * saved chunk's. Assumes the source was already invalidated by the caller.
-   * Always settles: a read that exceeds {@link VERIFY_READBACK_TIMEOUT_MS} or
-   * whose `signal` aborts resolves to `false` (unverified) rather than hanging.
+   * One read-back attempt for the save verification (TM-352): fresh-read the
+   * chunk and compare its content hash to the bytes we recorded as saved for it.
+   * Returns `true` only on a confirmed match. Throws on a read error (the caller
+   * retries); returns `false` on a value mismatch or when there is no recorded
+   * saved hash / no resolvable source.
    */
-  private async chunkReadsBackEqual(
-    source: VolumeChunkSource,
-    chunk: SavedChunk,
-    signal: AbortSignal | undefined,
+  async confirmChunkPersisted(
+    layerId: LayerId,
+    resolution: Resolution,
+    chunkId: ChunkId,
+    chunkCoord: ChunkCoord,
+    signal?: AbortSignal,
   ): Promise<boolean> {
-    const grid = makeChunkGridPosition(source, chunk.chunkCoord);
-    const key = grid.join();
-    // Drop the resident frontend copy so `fetchChunk` re-requests from the
-    // (invalidated) backend rather than early-returning the stale chunk.
-    if (source.chunks.has(key)) {
-      try {
-        source.deleteChunk(key);
-      } catch {
-        // best-effort — a missing/odd chunk just means the fetch re-downloads.
-      }
-    }
-    // `fetchChunk` resolves only when the chunk arrives and aborting the RPC
-    // does not reject the arrival wait, so race the read against a timeout/abort
-    // at this level. A timed-out/aborted read leaves the in-flight fetch to
-    // resolve harmlessly into a discarded requester.
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const bail = new Promise<"bail">((resolve) => {
-      timer = setTimeout(() => resolve("bail"), VERIFY_READBACK_TIMEOUT_MS);
-      if (signal !== undefined) {
-        if (signal.aborted) resolve("bail");
-        else
-          signal.addEventListener("abort", () => resolve("bail"), {
-            once: true,
-          });
-      }
-    });
-    try {
-      const outcome = await Promise.race([
-        fetchBaselineWithRetry(
-          source,
-          {
-            layerId: chunk.layerId,
-            resolution: chunk.resolution,
-            chunkId: chunk.chunkId,
-          },
-          grid,
-          signal,
-        ).then((readBack) => ({ readBack }) as const),
-        bail,
-      ]);
-      if (outcome === "bail") return false;
-      return (
-        contentRefFromBuffer(outcome.readBack.asView()).hash ===
-        chunk.contentRef.hash
-      );
-    } catch {
-      return false;
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
-    }
+    const savedHash = this.getSavedBaselineHash(layerId, resolution, chunkId);
+    if (savedHash === undefined) return false;
+    const readBack = await this.readFreshDecoded(
+      layerId,
+      resolution,
+      chunkCoord,
+      signal,
+    );
+    if (readBack === undefined) return false;
+    return contentRefFromBuffer(readBack.asView()).hash === savedHash;
   }
 
   private resolveVolumeChunkSource(
@@ -674,4 +728,51 @@ function sessionIdFromCoord(_coord: OverlayCoord): SessionId | undefined {
   // any subsequent release call (the library guarantees exactly one session
   // at a time, see edit-session.runtime.ts:313, :513).
   return undefined;
+}
+
+/** `(layerId, resolution, chunkId)` key for the saved-baseline store. */
+function savedBaselineKey(
+  layerId: LayerId,
+  resolution: Resolution,
+  chunkId: ChunkId,
+): string {
+  return `${layerId}|${resolution}|${chunkId}`;
+}
+
+interface SavedBaselineEntry {
+  readonly bytes: ReadonlyChunkVoxelBuffer;
+  readonly hash: string;
+}
+
+/**
+ * Bounded (FIFO) client-side store of saved chunk bytes + their content hash
+ * (TM-352). Detaches the bytes it is given so it owns a stable copy that
+ * `readBaselineChunk` can hand back without the caller mutating it.
+ */
+class SavedBaselineStore {
+  private readonly entries = new Map<string, SavedBaselineEntry>();
+  constructor(private readonly capacity = 512) {}
+
+  set(key: string, bytes: ReadonlyChunkVoxelBuffer): void {
+    const view = bytes.asView();
+    const copied = (view as unknown as { slice(): ChunkVoxelBuffer }).slice();
+    const entry: SavedBaselineEntry = {
+      bytes: { byteLength: copied.byteLength, asView: () => copied },
+      hash: contentRefFromBuffer(copied).hash,
+    };
+    this.entries.delete(key); // refresh FIFO order
+    this.entries.set(key, entry);
+    if (this.entries.size > this.capacity) {
+      const oldest = this.entries.keys().next().value;
+      if (oldest !== undefined) this.entries.delete(oldest);
+    }
+  }
+
+  get(key: string): SavedBaselineEntry | undefined {
+    return this.entries.get(key);
+  }
+
+  clear(): void {
+    this.entries.clear();
+  }
 }

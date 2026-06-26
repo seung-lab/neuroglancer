@@ -163,6 +163,12 @@ function ActiveTopbarControls({
   const hasDirty = session.dirty.isDirty();
   const saveAvailable = useWatchable(host.saveBackendAvailable);
   const isSaving = saveTracker.state.kind === "saving";
+  // Granular save+verify progress (TM-352). Drives the save-progress messages,
+  // and keeps the Save button CLICKABLE while there are unconfirmed saves so the
+  // user can re-save (its label/badge are intentionally left unchanged — we
+  // don't repurpose a user-important control to display verification state).
+  const saveProgress = useWatchable(host.saveProgress);
+  const hasUnconfirmed = host.hasUnconfirmedSaves();
 
   // Number of layers with unsaved chunks. We approximate using the
   // SaveTracker statuses: writable layers in non-succeeded state count as
@@ -304,6 +310,49 @@ function ActiveTopbarControls({
     saveTracker.cancel(host);
   }, [saveTracker, host]);
 
+  // Re-save the chunks a previous save couldn't confirm (TM-352). Routes through
+  // the same SaveTracker state machine as a normal save, so the button shows the
+  // spinner / can be cancelled during the retry.
+  const runRetry = useCallback(() => {
+    void (async () => {
+      await saveTracker.retry(host);
+      const failure = saveTracker.lastFailureMessage();
+      if (failure !== undefined) {
+        StatusMessage.showTemporaryMessage(failure, 10000);
+      }
+    })();
+  }, [saveTracker, host]);
+
+  // Case 1 — requests still in flight (write / first read-back not yet
+  // answered): only reassure after a while, since this is the slow-connection
+  // case. Reset the timer whenever the phase changes.
+  const inFlight =
+    saveProgress.kind === "writing" || saveProgress.kind === "verifying";
+  useEffect(() => {
+    if (!inFlight) return;
+    const id = setInterval(() => {
+      StatusMessage.showTemporaryMessage(
+        "Still saving your changes… this can take a while on a slow connection.",
+        8000,
+      );
+    }, 20000);
+    return () => clearInterval(id);
+  }, [inFlight]);
+
+  // Case 2 — the request DID answer but the change isn't verified yet, so we're
+  // retrying. Tell the user immediately on each additional attempt (this is NOT
+  // a slow connection — the data just hasn't been confirmed).
+  const reverifyAttempt =
+    saveProgress.kind === "reverifying" ? saveProgress.attempt : 0;
+  useEffect(() => {
+    if (reverifyAttempt === 0) return;
+    StatusMessage.showTemporaryMessage(
+      "Your changes were sent but aren't confirmed yet — re-checking… " +
+        `(attempt ${reverifyAttempt})`,
+      8000,
+    );
+  }, [reverifyAttempt]);
+
   return (
     <>
       <div
@@ -324,7 +373,9 @@ function ActiveTopbarControls({
             "neuroglancer-editing-topbar-save-button" +
             (isSaving ? " saving" : "")
           }
-          disabled={!isSaving && (!hasDirty || !saveAvailable)}
+          disabled={
+            !isSaving && (!saveAvailable || (!hasDirty && !hasUnconfirmed))
+          }
           data-tooltip={
             isSaving
               ? "Saving changes… click to cancel"
@@ -333,7 +384,7 @@ function ActiveTopbarControls({
                 : "Saving is unavailable — no save backend is registered."
           }
           aria-label={isSaving ? "Saving changes — click to cancel" : undefined}
-          onClick={isSaving ? cancelSave : runSaveAll}
+          onClick={isSaving ? cancelSave : hasDirty ? runSaveAll : runRetry}
         >
           {isSaving ? (
             <Loader2

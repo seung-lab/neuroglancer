@@ -44,12 +44,18 @@ export type BaselineChunkReader = (
  * is handled inside `LocalPatchStore.scheduleGPUFlush`.
  *
  * The per-voxel patched mask is derived by comparing overlay bytes against
- * baseline bytes (the latter via `readBaseline`, which already folds in any
- * committed snapshot from a previous session). Voxels where
- * `overlay[i] !== baseline[i]` are marked patched. Voxels where the user
- * erased to the same value as baseline (e.g., erasing a baseline-0 voxel)
- * compare equal and stay unpatched — the visible result is identical to
- * "not patched", so the mask is correct in practice.
+ * baseline bytes. The baseline here MUST be the datasource render base — the
+ * decoded bytes the base segmentation render layer shows from `source.chunks`
+ * (via `readBaseline` → `NgChunkSource.readDatasourceBaseline`) — NOT the edit
+ * baseline (saved/committed bytes). The render composites the GPU patch where
+ * the mask is 1 and falls back to the datasource chunk where it is 0, so the
+ * composite equals the overlay only when `patched = (overlay !== datasourceBase)`.
+ * Diffing against the saved/committed bytes instead would drop just-saved voxels
+ * out of the mask (they equal that baseline) and revert them to the stale
+ * datasource value on screen (TM-352). Voxels where `overlay[i] !== baseline[i]`
+ * are marked patched. Voxels the user erased back to the datasource value
+ * compare equal and stay unpatched — the visible result is identical to "not
+ * patched", so the mask is correct in practice.
  */
 export class PatchMirror extends RefCounted {
   private readonly chunkDataSizeByResolution = new Map<
