@@ -39,7 +39,11 @@ declare let NEUROGLANCER_DEFAULT_STATE_FRAGMENT: string | undefined;
 
 type CustomToolBinding = {
   layer: string;
-  tool: unknown;
+  // A single tool id, or a map of datasource scheme -> tool id so the same key
+  // activates the datasource-appropriate tool for the active layer (e.g.
+  // `calcadaMergeSegments` on a calcada layer, `grapheneMergeSegments` on a
+  // graphene layer).
+  tool: string | { readonly [scheme: string]: string };
   provider?: string;
 };
 
@@ -107,6 +111,53 @@ export function setupDefaultViewer() {
     });
   };
 
+  // Like `bindNonLayerSpecificTool`, but selects the tool to activate based on
+  // the active layer's datasource scheme, so a single key maps to the
+  // datasource-appropriate tool (e.g. `keym` -> calcadaMergeSegments on a
+  // calcada layer, grapheneMergeSegments on a graphene layer). Bails silently
+  // when no matching layer/scheme is present.
+  const bindProviderSpecificTool = (
+    toolByScheme: { readonly [scheme: string]: string },
+    toolKey: string,
+    actionName: string,
+    desiredLayerType: UserLayerConstructor,
+  ) => {
+    let previousTool: Tool<object> | undefined;
+    let previousLayer: UserLayer | undefined;
+    let previousToolType: string | undefined;
+    viewer.bindAction(actionName, () => {
+      for (const managedLayer of viewer.layerManager.managedLayers) {
+        const layer = managedLayer.layer;
+        if (!(layer instanceof desiredLayerType)) continue;
+        let toolType: string | undefined;
+        for (const dataSource of layer.dataSources || []) {
+          let scheme: string | undefined;
+          try {
+            scheme = viewer.dataSourceProvider.getProvider(
+              dataSource.spec.url,
+            )[2];
+          } catch {
+            continue;
+          }
+          if (scheme !== undefined && toolByScheme[scheme] !== undefined) {
+            toolType = toolByScheme[scheme];
+            break;
+          }
+        }
+        if (toolType === undefined) continue;
+        if (layer !== previousLayer || toolType !== previousToolType) {
+          previousTool = restoreTool(layer, { type: toolType });
+          previousLayer = layer;
+          previousToolType = toolType;
+        }
+        if (previousTool) {
+          viewer.activateTool(toolKey, previousTool);
+        }
+        return;
+      }
+    });
+  };
+
   if (hasCustomBindings) {
     const deleteKey = (map: EventActionMap, key: string) => {
       map.delete(key);
@@ -127,16 +178,32 @@ export function setupDefaultViewer() {
       } else if (typeof val === "boolean") {
         // not doing anything because we just use this to delete keybinds
       } else {
-        viewer.inputEventBindings.global.set(key, `tool-${val.tool}`);
         const layerConstructor = layerTypes.get(val.layer);
-        if (layerConstructor) {
-          const toolKey = key.charAt(key.length - 1).toUpperCase();
-          bindNonLayerSpecificTool(
-            val.tool,
-            toolKey,
-            layerConstructor,
-            val.provider,
-          );
+        const toolKey = key.charAt(key.length - 1).toUpperCase();
+        if (typeof val.tool === "object" && val.tool !== null) {
+          // Datasource-aware binding: one key, scheme -> tool id map. The key
+          // maps to a synthetic action that resolves the tool at press time
+          // from the active layer's datasource scheme.
+          const actionName = `tool-custom-${key}`;
+          viewer.inputEventBindings.global.set(key, actionName);
+          if (layerConstructor) {
+            bindProviderSpecificTool(
+              val.tool,
+              toolKey,
+              actionName,
+              layerConstructor,
+            );
+          }
+        } else {
+          viewer.inputEventBindings.global.set(key, `tool-${val.tool}`);
+          if (layerConstructor) {
+            bindNonLayerSpecificTool(
+              val.tool,
+              toolKey,
+              layerConstructor,
+              val.provider,
+            );
+          }
         }
       }
     }
