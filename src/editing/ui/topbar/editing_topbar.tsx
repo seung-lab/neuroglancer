@@ -170,19 +170,29 @@ function ActiveTopbarControls({
   const saveProgress = useWatchable(host.saveProgress);
   const hasUnconfirmed = host.hasUnconfirmedSaves();
 
-  // Number of layers with unsaved chunks. We approximate using the
-  // SaveTracker statuses: writable layers in non-succeeded state count as
-  // pending. Falls back to a coarse "1" when dirty but no per-layer info.
+  // Distinct layers with saved-but-unconfirmed chunks. Read inline (cheap) so
+  // it stays in sync with `hasUnconfirmed`; the component already re-renders on
+  // `saveProgress` / SaveTracker changes, which is when this count moves.
+  const unconfirmedLayers = host.unconfirmedLayerCount();
+
+  // Number of layers with changes to save/verify, shown as the Save-button
+  // badge. We approximate the dirty case using the SaveTracker statuses
+  // (writable layers in non-succeeded state count as pending). When nothing is
+  // dirty but a previous save couldn't be confirmed, fall back to the
+  // unconfirmed-layer count — an active Save button must always show a matching
+  // counter (TM-352), since those chunks were rebaselined and no longer read as
+  // dirty.
   const pendingCount = useMemo(() => {
-    if (!hasDirty) return 0;
     let count = 0;
     for (const entry of saveTracker.layerStatuses.values()) {
       if (!entry.writable) continue;
       if (entry.status === "succeeded") continue;
       count += 1;
     }
-    return count > 0 ? count : 1;
-  }, [hasDirty, saveTracker.layerStatuses]);
+    if (hasDirty) return count > 0 ? count : 1;
+    if (hasUnconfirmed) return unconfirmedLayers > 0 ? unconfirmedLayers : 1;
+    return 0;
+  }, [hasDirty, hasUnconfirmed, unconfirmedLayers, saveTracker.layerStatuses]);
 
   const handleToolClick = useCallback(
     (toolId: string) => {
