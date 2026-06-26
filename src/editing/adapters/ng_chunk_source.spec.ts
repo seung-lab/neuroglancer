@@ -194,7 +194,10 @@ interface FakeVolumeSource {
   fetchFreshDecodedChunk: (
     grid: Float32Array,
     signal: AbortSignal,
-  ) => Promise<{ data: ArrayBufferView | null; chunkDataSize: Uint32Array | null }>;
+  ) => Promise<{
+    data: ArrayBufferView | null;
+    chunkDataSize: Uint32Array | null;
+  }>;
   fetchChunk?: (
     grid: Float32Array,
     transform: (chunk: { data: ArrayBufferView | null }) => ChunkVoxelBuffer,
@@ -448,7 +451,10 @@ describe("NgChunkSource exit reconciliation (TM-352)", () => {
     ]);
 
     expect(source.invalidateChunkCache).toHaveBeenCalledTimes(1);
-    expect(source.invalidateChunkCache).toHaveBeenCalledWith(["0,0,0", "1,2,3"]);
+    expect(source.invalidateChunkCache).toHaveBeenCalledWith([
+      "0,0,0",
+      "1,2,3",
+    ]);
   });
 
   it("skips chunks whose layer no longer resolves to a source", () => {

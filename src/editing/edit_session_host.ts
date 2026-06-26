@@ -409,7 +409,11 @@ export type SaveProgressState =
   // Requests in flight (write, or a first read-back not yet answered) — this is
   // the "slow connection" case.
   | { readonly kind: "writing" }
-  | { readonly kind: "verifying"; readonly confirmed: number; readonly total: number }
+  | {
+      readonly kind: "verifying";
+      readonly confirmed: number;
+      readonly total: number;
+    }
   // A read-back came back but did NOT confirm (the request succeeded, the data
   // just isn't verified yet), so we're making additional attempts — distinct
   // from a slow connection.
@@ -419,7 +423,11 @@ export type SaveProgressState =
       readonly total: number;
       readonly attempt: number;
     }
-  | { readonly kind: "failed"; readonly unconfirmed: number; readonly total: number };
+  | {
+      readonly kind: "failed";
+      readonly unconfirmed: number;
+      readonly total: number;
+    };
 
 /**
  * Read-back verification retry budget per chunk (TM-352). On a slow/flaky link
@@ -427,7 +435,9 @@ export type SaveProgressState =
  * after the last backoff a chunk that still can't be confirmed is surfaced as a
  * failure (never a false confirm). Cancellable at any point.
  */
-const VERIFY_BACKOFF_MS: readonly number[] = [500, 1000, 2000, 4000, 8000, 8000];
+const VERIFY_BACKOFF_MS: readonly number[] = [
+  500, 1000, 2000, 4000, 8000, 8000,
+];
 
 /**
  * Target on-screen brush diameter, in CSS pixels, used to seed the brush size

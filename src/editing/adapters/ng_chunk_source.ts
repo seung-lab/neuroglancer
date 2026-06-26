@@ -122,8 +122,9 @@ export class NgChunkSource implements LibraryChunkSource {
     resolution: Resolution,
     chunkId: ChunkId,
   ): string | undefined {
-    return this.savedBaseline.get(savedBaselineKey(layerId, resolution, chunkId))
-      ?.hash;
+    return this.savedBaseline.get(
+      savedBaselineKey(layerId, resolution, chunkId),
+    )?.hash;
   }
 
   /**
@@ -136,8 +137,9 @@ export class NgChunkSource implements LibraryChunkSource {
     resolution: Resolution,
     chunkId: ChunkId,
   ): ReadonlyChunkVoxelBuffer | undefined {
-    return this.savedBaseline.get(savedBaselineKey(layerId, resolution, chunkId))
-      ?.bytes;
+    return this.savedBaseline.get(
+      savedBaselineKey(layerId, resolution, chunkId),
+    )?.bytes;
   }
 
   /**

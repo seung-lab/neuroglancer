@@ -179,9 +179,7 @@ registerPromiseRPC(
     chunkDataSize: number[] | null;
   }> {
     const source = this.get(x.source) as VolumeChunkSource;
-    const chunk = source.getNewChunk_(
-      source.chunkConstructor,
-    ) as VolumeChunk;
+    const chunk = source.getNewChunk_(source.chunkConstructor) as VolumeChunk;
     chunk.initializeVolumeChunk(
       x.chunkGridPosition.join(),
       x.chunkGridPosition as unknown as vec3,

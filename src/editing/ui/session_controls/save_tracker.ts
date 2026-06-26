@@ -151,7 +151,9 @@ export class SaveTracker {
 
     if (thrownError !== undefined) {
       this.applyGlobalFailure(
-        thrownError instanceof Error ? thrownError.message : String(thrownError),
+        thrownError instanceof Error
+          ? thrownError.message
+          : String(thrownError),
       );
       this.changed.dispatch();
       return;

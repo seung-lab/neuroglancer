@@ -326,7 +326,8 @@ function ActiveTopbarControls({
   // Case 1 — requests still in flight (write / first read-back not yet
   // answered): only reassure after a while, since this is the slow-connection
   // case. Reset the timer whenever the phase changes.
-  const inFlight = saveProgress.kind === "writing" || saveProgress.kind === "verifying";
+  const inFlight =
+    saveProgress.kind === "writing" || saveProgress.kind === "verifying";
   useEffect(() => {
     if (!inFlight) return;
     const id = setInterval(() => {
@@ -373,8 +374,7 @@ function ActiveTopbarControls({
             (isSaving ? " saving" : "")
           }
           disabled={
-            !isSaving &&
-            (!saveAvailable || (!hasDirty && !hasUnconfirmed))
+            !isSaving && (!saveAvailable || (!hasDirty && !hasUnconfirmed))
           }
           data-tooltip={
             isSaving
@@ -384,9 +384,7 @@ function ActiveTopbarControls({
                 : "Saving is unavailable — no save backend is registered."
           }
           aria-label={isSaving ? "Saving changes — click to cancel" : undefined}
-          onClick={
-            isSaving ? cancelSave : hasDirty ? runSaveAll : runRetry
-          }
+          onClick={isSaving ? cancelSave : hasDirty ? runSaveAll : runRetry}
         >
           {isSaving ? (
             <Loader2
