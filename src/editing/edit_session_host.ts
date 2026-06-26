@@ -602,6 +602,20 @@ export class EditSessionHost extends RefCounted {
   }
 
   /**
+   * Number of distinct writable layers that have at least one saved-but-
+   * unconfirmed chunk (TM-352). Drives the topbar's pending counter so an active
+   * Save button (re-save still available) always shows a matching count, even
+   * after the write succeeded but read-back couldn't confirm it (the chunks are
+   * no longer dirty, so the dirty-based count alone would read 0).
+   */
+  unconfirmedLayerCount(): number {
+    if (this.unconfirmedChunks.size === 0) return 0;
+    const layers = new Set<LayerId>();
+    for (const c of this.unconfirmedChunks.values()) layers.add(c.layerId);
+    return layers.size;
+  }
+
+  /**
    * Chunks confirmed-saved (read-back verified) during the CURRENT session,
    * keyed `layer|res|chunk`. On session exit these are evicted from the
    * datasource render cache so re-entry reads the saved+verified bytes fresh
