@@ -1236,10 +1236,26 @@ export class EditSessionHost extends RefCounted {
     // Snapshot the dirty set BEFORE discarding — `session.discard()` clears
     // the library's DirtyTracker.
     const dirty = Array.from(session.dirty.getDirtyChunks());
+    // Saved-but-unconfirmed chunks (TM-352): a `save()` already rebaselined
+    // them, so they are NO LONGER in the dirty set — yet their GPU patch is
+    // still on screen and their client copy (`savedBaseline`) is about to be
+    // cleared on teardown. The exit confirm dialog told the user that leaving
+    // discards their changes, so make that real: roll these back too. Otherwise
+    // the patch lingers over the original datasource chunk and painting that
+    // area on re-entry materializes the original baseline — reverting the change
+    // inconsistently (the user still sees it but can't build on it).
+    const unconfirmedKeys = Array.from(this.unconfirmedChunks.values()).map(
+      (c) =>
+        OverlayKey.fromCoord({
+          layerId: c.layerId,
+          resolution: c.resolution,
+          chunkId: c.chunkId,
+        }),
+    );
     try {
       await session.discard();
     } finally {
-      this.rollbackDirtyChunks(dirty);
+      this.rollbackDirtyChunks([...dirty, ...unconfirmedKeys]);
       this.commitTeardown();
     }
   }
@@ -3078,6 +3094,14 @@ export class EditSessionHost extends RefCounted {
       }
       this.saveAbortController = undefined;
     }
+    // Reset per-session save state so it never leaks into the next session: an
+    // unconfirmed save the user discarded on exit must not keep
+    // `hasUnconfirmedSaves()` true (which would wrongly arm the exit warning /
+    // beforeunload on re-entry) or leave `saveProgress` stuck on `failed`
+    // (TM-352). The patches/datasource for those chunks are handled by
+    // `discardActive` / `reconcileSavedChunksWithBackend`.
+    this.unconfirmedChunks.clear();
+    this.saveProgress.value = { kind: "idle" };
   }
 
   private teardownPerLayer(): void {
