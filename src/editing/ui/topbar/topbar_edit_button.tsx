@@ -73,7 +73,13 @@ export function TopbarEditButton({ host }: { host: EditSessionHost }) {
     // snapshot would be stale once the user starts painting.
     const session = host.activeSession.value;
     if (session === undefined) return;
-    const dirty = session.dirty.isDirty() || host.hasPendingCommittedChanges();
+    // Confirm exit on live dirty edits, in-memory committed patches, OR saves
+    // that were sent but not yet confirmed durable (TM-352) — leaving with
+    // unconfirmed saves risks silent data loss.
+    const dirty =
+      session.dirty.isDirty() ||
+      host.hasPendingCommittedChanges() ||
+      host.hasUnconfirmedSaves();
     if (dirty) {
       setConfirmExitOpen(true);
       return;

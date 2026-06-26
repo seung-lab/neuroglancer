@@ -112,7 +112,61 @@ export class SaveTracker {
     }
 
     if (result === undefined) return;
-    this.applySaveResult(result);
+    // The write may report `succeeded` while read-back verification has NOT yet
+    // confirmed the bytes are durable (TM-352). In that case the save is NOT
+    // done — surface a persistent failure (kept until a successful re-save)
+    // instead of a green "saved", so the user knows their data is unconfirmed.
+    if (host.hasUnconfirmedSaves()) {
+      this.applyGlobalFailure(
+        "Your changes were sent but couldn't be confirmed as saved. " +
+          "They're kept here and not lost.",
+      );
+    } else {
+      this.applySaveResult(result);
+    }
+    this.changed.dispatch();
+  }
+
+  /**
+   * Re-save the chunks a previous save couldn't confirm (TM-352). Drives the
+   * SAME `saving` state machine as {@link startSave} — so the Save button shows
+   * the spinner (and can be cancelled) during the retry, then returns to active
+   * (still unconfirmed) or clears (now confirmed).
+   */
+  async retry(host: EditSessionHost): Promise<void> {
+    if (this.state_.kind === "saving") return;
+    if (!host.hasUnconfirmedSaves()) return;
+
+    const controller = new AbortController();
+    this.state_ = { kind: "saving", controller };
+    this.saveStartedAt_ = Date.now();
+    this.changed.dispatch();
+
+    let thrownError: unknown;
+    try {
+      await host.retryUnconfirmedSaves(controller.signal);
+    } catch (err) {
+      thrownError = err;
+    }
+
+    if (thrownError !== undefined) {
+      this.applyGlobalFailure(
+        thrownError instanceof Error ? thrownError.message : String(thrownError),
+      );
+      this.changed.dispatch();
+      return;
+    }
+
+    if (host.hasUnconfirmedSaves()) {
+      this.applyGlobalFailure(
+        "Your changes were sent but couldn't be confirmed as saved. " +
+          "They're kept here and not lost.",
+      );
+    } else {
+      const savedAt = Date.now();
+      this.state_ = { kind: "done-success", savedAt };
+      this.scheduleAutoClear(savedAt);
+    }
     this.changed.dispatch();
   }
 
