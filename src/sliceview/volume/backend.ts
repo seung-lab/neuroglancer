@@ -23,13 +23,15 @@ import type {
   DataType,
   SliceViewChunkSpecification,
 } from "#src/sliceview/base.js";
+import { VOLUME_FETCH_FRESH_DECODED_CHUNK_RPC_ID } from "#src/sliceview/base.js";
 import type {
   VolumeChunkSource as VolumeChunkSourceInterface,
   VolumeChunkSpecification,
 } from "#src/sliceview/volume/base.js";
 import type { vec3 } from "#src/util/geom.js";
 import * as vector from "#src/util/vector.js";
-import type { RPC } from "#src/worker_rpc.js";
+import type { RPC, RPCPromise } from "#src/worker_rpc.js";
+import { registerPromiseRPC } from "#src/worker_rpc.js";
 
 export class VolumeChunk extends SliceViewChunk {
   source: VolumeChunkSource | null = null;
@@ -157,3 +159,49 @@ export class VolumeChunkSource
   }
 }
 VolumeChunkSource.prototype.chunkConstructor = VolumeChunk;
+
+/**
+ * Fresh download+decode of a single chunk into a THROWAWAY `VolumeChunk` that is
+ * never added to `source.chunks` — so the resident (rendered) chunk and its GPU
+ * texture are untouched (no eviction, no on-screen flicker). Reuses the source's
+ * existing `download` (raw / compressed-segmentation / sharded all handled).
+ * Returns the decoded `data` (transferable) plus the chunk's actual (possibly
+ * edge-clipped) `chunkDataSize`. Used by the edit-session save read-back
+ * verification (TM-352).
+ */
+registerPromiseRPC(
+  VOLUME_FETCH_FRESH_DECODED_CHUNK_RPC_ID,
+  async function (
+    x: { source: number; chunkGridPosition: Float32Array },
+    progressOptions,
+  ): RPCPromise<{
+    data: ArrayBufferView | null;
+    chunkDataSize: number[] | null;
+  }> {
+    const source = this.get(x.source) as VolumeChunkSource;
+    const chunk = source.getNewChunk_(
+      source.chunkConstructor,
+    ) as VolumeChunk;
+    chunk.initializeVolumeChunk(
+      x.chunkGridPosition.join(),
+      x.chunkGridPosition as unknown as vec3,
+    );
+    const signal = progressOptions.signal ?? new AbortController().signal;
+    try {
+      await source.download(chunk, signal);
+      const data = chunk.data;
+      // `chunk.chunkDataSize` aliases `source.spec.chunkDataSize` for non-edge
+      // chunks (see `computeChunkBounds`), so COPY it — transferring it would
+      // detach the shared spec array. `data` is owned by this throwaway chunk,
+      // so its buffer is safe to transfer.
+      const chunkDataSize =
+        chunk.chunkDataSize !== null ? Array.from(chunk.chunkDataSize) : null;
+      chunk.data = null;
+      const transfers = data !== null ? [data.buffer] : [];
+      return { value: { data, chunkDataSize }, transfers };
+    } finally {
+      chunk.freeSystemMemory();
+      chunk.dispose();
+    }
+  },
+);

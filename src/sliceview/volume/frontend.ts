@@ -20,6 +20,7 @@ import type {
   DataType,
   SliceViewChunkSpecification,
 } from "#src/sliceview/base.js";
+import { VOLUME_FETCH_FRESH_DECODED_CHUNK_RPC_ID } from "#src/sliceview/base.js";
 import {
   MultiscaleSliceViewChunkSource,
   SliceViewChunk,
@@ -210,6 +211,35 @@ export class VolumeChunkSource
 
   get chunkFormat() {
     return this.chunkFormatHandler.chunkFormat;
+  }
+
+  /**
+   * Fresh download+decode of one chunk from the backend that does NOT enter this
+   * source's chunk cache (so the resident/rendered chunk is untouched — no
+   * eviction, no flicker). Returns the decoded `data` (in the same encoded form
+   * `download` produces, i.e. raw per-voxel or transcoded compressed-seg) and
+   * the chunk's actual `chunkDataSize` (edge-clipped at volume boundaries).
+   * Used by the edit-session save read-back verification (TM-352).
+   */
+  async fetchFreshDecodedChunk(
+    chunkGridPosition: Float32Array,
+    signal: AbortSignal,
+  ): Promise<{
+    data: ArrayBufferView | null;
+    chunkDataSize: Uint32Array | null;
+  }> {
+    const result = (await this.rpc!.promiseInvoke(
+      VOLUME_FETCH_FRESH_DECODED_CHUNK_RPC_ID,
+      { source: this.rpcId, chunkGridPosition },
+      { signal },
+    )) as { data: ArrayBufferView | null; chunkDataSize: number[] | null };
+    return {
+      data: result.data,
+      chunkDataSize:
+        result.chunkDataSize !== null
+          ? Uint32Array.from(result.chunkDataSize)
+          : null,
+    };
   }
 
   getValueAt(
