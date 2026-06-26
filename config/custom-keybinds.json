@@ -1,15 +1,24 @@
 {
   "keym": {
     "layer": "segmentation",
-    "tool": "calcadaMergeSegments"
+    "tool": {
+      "calcada": "calcadaMergeSegments",
+      "graphene": "grapheneMergeSegments"
+    }
   },
   "keyc": {
     "layer": "segmentation",
-    "tool": "calcadaMulticutSegments"
+    "tool": {
+      "calcada": "calcadaMulticutSegments",
+      "graphene": "grapheneMulticutSegments"
+    }
   },
   "keyf": {
     "layer": "segmentation",
-    "tool": "calcadaFindPath"
+    "tool": {
+      "calcada": "calcadaFindPath",
+      "graphene": "grapheneFindPath"
+    }
   },
   "keyp": {
     "layer": "segmentation",
