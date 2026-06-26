@@ -12,7 +12,7 @@ import type {
   ChunkVoxelBuffer,
   LayerId,
   OverlayCoord,
-  SavedChunk,
+  ReadonlyChunkVoxelBuffer,
 } from "@zettaai/edit-session";
 import {
   ChunkId as ChunkIdFactory,
@@ -175,8 +175,14 @@ describe("fetchBaselineWithRetry", () => {
 
 const LAYER = "seg" as LayerId;
 const RES_8 = ResolutionCtor.from([8, 8, 8]);
+const CHUNK_ID = ChunkIdFactory.fromCoord({ x: 0, y: 0, z: 0 });
+const CHUNK_COORD = { x: 0, y: 0, z: 0 };
 // 2x2x2 UINT32 chunk → eight voxels (matches the fake source's chunkDataSize).
 const SAVED = Uint32Array.from([10, 11, 12, 13, 14, 15, 16, 17]);
+
+function buffer(bytes: Uint32Array): ReadonlyChunkVoxelBuffer {
+  return { byteLength: bytes.byteLength, asView: () => bytes };
+}
 
 interface FakeVolumeSource {
   spec: {
@@ -185,26 +191,31 @@ interface FakeVolumeSource {
     dataType: DataType;
     compressedSegmentationBlockSize: undefined;
   };
-  invalidateChunkCache: ReturnType<typeof vi.fn>;
-  deleteChunk: ReturnType<typeof vi.fn>;
-  chunks: Map<string, unknown>;
-  fetchChunk: (
+  fetchFreshDecodedChunk: (
     grid: Float32Array,
-    transform: (chunk: unknown) => ChunkVoxelBuffer,
+    signal: AbortSignal,
+  ) => Promise<{
+    data: ArrayBufferView | null;
+    chunkDataSize: Uint32Array | null;
+  }>;
+  fetchChunk?: (
+    grid: Float32Array,
+    transform: (chunk: { data: ArrayBufferView | null }) => ChunkVoxelBuffer,
   ) => Promise<ChunkVoxelBuffer>;
+  invalidateChunkCache: ReturnType<typeof vi.fn>;
 }
 
 /**
- * Fake `VolumeChunkSource` exercising what `verifyChunksPersisted` touches:
- * `invalidateCache`, the resident-`chunks` map + `deleteChunk`, and
- * `fetchChunk` (whose `transform` is the baseline decoder). `readBack` controls
- * what storage returns: a `Uint32Array` (decoded bytes), `null` (sparse/empty →
- * zero-filled), or `"throw"` (read failure after retries).
+ * Fake `VolumeChunkSource` exercising what the read-back verification touches:
+ * `spec` (for resolution resolution + `decodeBaselineChunk`) and the
+ * non-evicting `fetchFreshDecodedChunk`. `readBack` controls what storage
+ * returns: a `Uint32Array` (decoded bytes), `null` (sparse/empty → zero-filled),
+ * or `"throw"` (read failure → caller retries).
  */
 function fakeSource(
-  readBack: Uint32Array | null | "throw" | "hang",
+  readBack: Uint32Array | null | "throw",
+  datasource?: Uint32Array | null,
 ): FakeVolumeSource {
-  const chunks = new Map<string, unknown>();
   return {
     spec: {
       rank: 3,
@@ -212,16 +223,22 @@ function fakeSource(
       dataType: DataType.UINT32,
       compressedSegmentationBlockSize: undefined,
     },
-    invalidateChunkCache: vi.fn(),
-    deleteChunk: vi.fn((key: string) => chunks.delete(key)),
-    chunks,
-    fetchChunk: (_grid, transform) => {
-      // "hang" models the real `fetchChunk`, whose chunk-arrival wait never
-      // rejects on abort — so verification must bail on its own.
-      if (readBack === "hang") return new Promise<ChunkVoxelBuffer>(() => {});
+    fetchFreshDecodedChunk: () => {
       if (readBack === "throw") return Promise.reject(new Error("read failed"));
-      return Promise.resolve(transform({ data: readBack }));
+      return Promise.resolve({
+        data: readBack,
+        chunkDataSize: Uint32Array.from([2, 2, 2]),
+      });
     },
+    // The datasource render-base read path (`readDatasourceBaseline` →
+    // `fetchBaselineWithRetry` → `source.fetchChunk`). Only wired when a
+    // `datasource` buffer is supplied.
+    fetchChunk:
+      datasource === undefined
+        ? undefined
+        : (_grid, transform) =>
+            Promise.resolve(transform({ data: datasource })),
+    invalidateChunkCache: vi.fn(),
   };
 }
 
@@ -259,110 +276,214 @@ function makeChunkSourceResolving(source: FakeVolumeSource): NgChunkSource {
   );
 }
 
-/** Minimal `SavedChunk` for `(LAYER, RES_8)` at chunk grid (0,0,0). */
-function savedChunk(bytes: Uint32Array, layerId: LayerId = LAYER): SavedChunk {
-  return {
-    layerId,
-    resolution: RES_8,
-    chunkId: ChunkIdFactory.fromCoord({ x: 0, y: 0, z: 0 }),
-    chunkCoord: { x: 0, y: 0, z: 0 },
-    contentRef: contentRefFromBuffer(bytes),
-    bytes: { byteLength: bytes.byteLength, asView: () => bytes },
-  } as unknown as SavedChunk;
-}
+describe("NgChunkSource saved-baseline (re-entry)", () => {
+  it("readBaselineChunk returns the client-retained saved bytes", async () => {
+    // The fake source has no `fetchChunk`, so a fall-through to the datasource
+    // would throw — returning SAVED proves the saved-baseline short-circuit.
+    const chunkSource = makeChunkSourceResolving(fakeSource(SAVED.slice()));
+    chunkSource.recordSavedBaseline(LAYER, RES_8, CHUNK_ID, buffer(SAVED));
 
-describe("NgChunkSource.verifyChunksPersisted", () => {
-  it("confirms a chunk whose read-back matches and invalidates only that chunk", async () => {
+    const result = await chunkSource.readBaselineChunk(
+      LAYER,
+      RES_8,
+      CHUNK_ID,
+      CHUNK_COORD,
+    );
+
+    expect(Array.from(result.asView() as Uint32Array)).toEqual([
+      10, 11, 12, 13, 14, 15, 16, 17,
+    ]);
+  });
+
+  it("records the content hash of the saved bytes", () => {
+    const chunkSource = makeChunkSourceResolving(fakeSource(SAVED.slice()));
+    chunkSource.recordSavedBaseline(LAYER, RES_8, CHUNK_ID, buffer(SAVED));
+
+    expect(chunkSource.getSavedBaselineHash(LAYER, RES_8, CHUNK_ID)).toBe(
+      contentRefFromBuffer(SAVED).hash,
+    );
+  });
+});
+
+describe("NgChunkSource.readDatasourceBaseline (render base)", () => {
+  it("reads the datasource render base, ignoring the saved edit baseline", async () => {
+    // The render composites the GPU patch over the datasource chunk, so the
+    // PatchMirror mask must diff against THIS, not the saved bytes — otherwise
+    // just-saved voxels drop out of the mask and revert on screen (TM-352).
+    const DATASOURCE = Uint32Array.from([1, 1, 1, 1, 1, 1, 1, 1]);
+    const source = fakeSource(SAVED.slice(), DATASOURCE.slice());
+    const chunkSource = makeChunkSourceResolving(source);
+    // Record DIFFERENT saved bytes; readDatasourceBaseline must NOT return them.
+    chunkSource.recordSavedBaseline(LAYER, RES_8, CHUNK_ID, buffer(SAVED));
+
+    const datasource = await chunkSource.readDatasourceBaseline(
+      LAYER,
+      RES_8,
+      CHUNK_ID,
+      CHUNK_COORD,
+    );
+    const editBaseline = await chunkSource.readBaselineChunk(
+      LAYER,
+      RES_8,
+      CHUNK_ID,
+      CHUNK_COORD,
+    );
+
+    // readDatasourceBaseline → the datasource render base (all 1s).
+    expect(Array.from(datasource.asView() as Uint32Array)).toEqual([
+      1, 1, 1, 1, 1, 1, 1, 1,
+    ]);
+    // readBaselineChunk → still the saved edit baseline (proves they diverge).
+    expect(Array.from(editBaseline.asView() as Uint32Array)).toEqual([
+      10, 11, 12, 13, 14, 15, 16, 17,
+    ]);
+  });
+});
+
+describe("NgChunkSource.confirmChunkPersisted (read-back verify)", () => {
+  it("confirms when the fresh read-back matches the saved hash", async () => {
+    const chunkSource = makeChunkSourceResolving(fakeSource(SAVED.slice()));
+    chunkSource.recordSavedBaseline(LAYER, RES_8, CHUNK_ID, buffer(SAVED));
+
+    expect(
+      await chunkSource.confirmChunkPersisted(
+        LAYER,
+        RES_8,
+        CHUNK_ID,
+        CHUNK_COORD,
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects a value mismatch", async () => {
+    const chunkSource = makeChunkSourceResolving(
+      fakeSource(Uint32Array.from([0, 0, 0, 0, 0, 0, 0, 99])),
+    );
+    chunkSource.recordSavedBaseline(LAYER, RES_8, CHUNK_ID, buffer(SAVED));
+
+    expect(
+      await chunkSource.confirmChunkPersisted(
+        LAYER,
+        RES_8,
+        CHUNK_ID,
+        CHUNK_COORD,
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a sparse/empty read-back (saved non-zero data)", async () => {
+    const chunkSource = makeChunkSourceResolving(fakeSource(null));
+    chunkSource.recordSavedBaseline(LAYER, RES_8, CHUNK_ID, buffer(SAVED));
+
+    expect(
+      await chunkSource.confirmChunkPersisted(
+        LAYER,
+        RES_8,
+        CHUNK_ID,
+        CHUNK_COORD,
+      ),
+    ).toBe(false);
+  });
+
+  it("propagates a read error so the caller can retry", async () => {
+    const chunkSource = makeChunkSourceResolving(fakeSource("throw"));
+    chunkSource.recordSavedBaseline(LAYER, RES_8, CHUNK_ID, buffer(SAVED));
+
+    await expect(
+      chunkSource.confirmChunkPersisted(LAYER, RES_8, CHUNK_ID, CHUNK_COORD),
+    ).rejects.toThrow();
+  });
+
+  it("is false when nothing was recorded as saved", async () => {
+    const chunkSource = makeChunkSourceResolving(fakeSource(SAVED.slice()));
+
+    expect(
+      await chunkSource.confirmChunkPersisted(
+        LAYER,
+        RES_8,
+        CHUNK_ID,
+        CHUNK_COORD,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("NgChunkSource exit reconciliation (TM-352)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("clearSavedBaseline drops the retained saved bytes", () => {
+    const chunkSource = makeChunkSourceResolving(fakeSource(SAVED.slice()));
+    chunkSource.recordSavedBaseline(LAYER, RES_8, CHUNK_ID, buffer(SAVED));
+    expect(chunkSource.getSavedBaselineHash(LAYER, RES_8, CHUNK_ID)).toBe(
+      contentRefFromBuffer(SAVED).hash,
+    );
+
+    chunkSource.clearSavedBaseline();
+
+    expect(
+      chunkSource.getSavedBaselineHash(LAYER, RES_8, CHUNK_ID),
+    ).toBeUndefined();
+    expect(chunkSource.getSavedBytes(LAYER, RES_8, CHUNK_ID)).toBeUndefined();
+  });
+
+  it("invalidateDatasourceChunks evicts the saved chunk's datasource cache key", () => {
     const source = fakeSource(SAVED.slice());
     const chunkSource = makeChunkSourceResolving(source);
 
-    const result = await chunkSource.verifyChunksPersisted([savedChunk(SAVED)]);
+    chunkSource.invalidateDatasourceChunks([
+      { layerId: LAYER, resolution: RES_8, chunkCoord: CHUNK_COORD },
+    ]);
 
-    expect(result.ok).toBe(true);
-    expect(result.unverified).toHaveLength(0);
-    // Only the saved chunk's key is re-queued — no whole-source invalidation.
+    // makeChunkGridPosition({0,0,0}).join() === "0,0,0".
+    expect(source.invalidateChunkCache).toHaveBeenCalledTimes(1);
     expect(source.invalidateChunkCache).toHaveBeenCalledWith(["0,0,0"]);
   });
 
-  it("reports a mismatch as unverified", async () => {
-    const source = fakeSource(Uint32Array.from([0, 0, 0, 0, 0, 0, 0, 99]));
-    const chunkSource = makeChunkSourceResolving(source);
-
-    const result = await chunkSource.verifyChunksPersisted([savedChunk(SAVED)]);
-
-    expect(result.ok).toBe(false);
-    expect(result.unverified).toHaveLength(1);
-  });
-
-  it("treats a sparse/empty read-back as unverified", async () => {
-    // The backend returned no object (zero-filled) but we saved non-zero data.
-    const source = fakeSource(null);
-    const chunkSource = makeChunkSourceResolving(source);
-
-    const result = await chunkSource.verifyChunksPersisted([savedChunk(SAVED)]);
-
-    expect(result.ok).toBe(false);
-    expect(result.unverified).toHaveLength(1);
-  });
-
-  it("treats an unreadable chunk as unverified", async () => {
-    const source = fakeSource("throw");
-    const chunkSource = makeChunkSourceResolving(source);
-
-    const result = await chunkSource.verifyChunksPersisted([savedChunk(SAVED)]);
-
-    expect(result.ok).toBe(false);
-    expect(result.unverified).toHaveLength(1);
-  });
-
-  it("drops a resident frontend chunk before reading back", async () => {
-    const source = fakeSource(SAVED.slice());
-    // Pre-seed the resident chunk at grid key "0,0,0" so the delete path runs.
-    source.chunks.set("0,0,0", {});
-    const chunkSource = makeChunkSourceResolving(source);
-
-    const result = await chunkSource.verifyChunksPersisted([savedChunk(SAVED)]);
-
-    expect(result.ok).toBe(true);
-    expect(source.deleteChunk).toHaveBeenCalledWith("0,0,0");
-  });
-
-  it("reports a chunk whose layer no longer resolves as unverified", async () => {
+  it("batches multiple chunks of one source into a single eviction call", () => {
     const source = fakeSource(SAVED.slice());
     const chunkSource = makeChunkSourceResolving(source);
 
-    const result = await chunkSource.verifyChunksPersisted([
-      savedChunk(SAVED, "gone" as LayerId),
+    chunkSource.invalidateDatasourceChunks([
+      { layerId: LAYER, resolution: RES_8, chunkCoord: { x: 0, y: 0, z: 0 } },
+      { layerId: LAYER, resolution: RES_8, chunkCoord: { x: 1, y: 2, z: 3 } },
     ]);
 
-    expect(result.ok).toBe(false);
-    expect(result.unverified).toHaveLength(1);
+    expect(source.invalidateChunkCache).toHaveBeenCalledTimes(1);
+    expect(source.invalidateChunkCache).toHaveBeenCalledWith([
+      "0,0,0",
+      "1,2,3",
+    ]);
   });
 
-  it("settles to unverified when aborted mid-read (never hangs)", async () => {
-    // A read-back that never resolves must not hang the save: an aborted signal
-    // bails it to unverified so `save()` always leaves the SAVING phase.
-    const source = fakeSource("hang");
-    const chunkSource = makeChunkSourceResolving(source);
-    const controller = new AbortController();
-    controller.abort();
-
-    const result = await chunkSource.verifyChunksPersisted(
-      [savedChunk(SAVED)],
-      controller.signal,
-    );
-
-    expect(result.ok).toBe(false);
-    expect(result.unverified).toHaveLength(1);
-  });
-
-  it("is a no-op for an empty chunk list", async () => {
+  it("skips chunks whose layer no longer resolves to a source", () => {
     const source = fakeSource(SAVED.slice());
     const chunkSource = makeChunkSourceResolving(source);
 
-    const result = await chunkSource.verifyChunksPersisted([]);
-
-    expect(result.ok).toBe(true);
+    expect(() =>
+      chunkSource.invalidateDatasourceChunks([
+        {
+          layerId: "gone" as LayerId,
+          resolution: RES_8,
+          chunkCoord: CHUNK_COORD,
+        },
+      ]),
+    ).not.toThrow();
     expect(source.invalidateChunkCache).not.toHaveBeenCalled();
+  });
+
+  it("after clear, readBaselineChunk no longer short-circuits to the saved bytes", async () => {
+    // The fake source has no `fetchChunk`, so once the saved short-circuit is
+    // gone the baseline read falls through to the datasource and fails — proving
+    // the cleared cache no longer shadows the backend on re-entry.
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const chunkSource = makeChunkSourceResolving(fakeSource(SAVED.slice()));
+    chunkSource.recordSavedBaseline(LAYER, RES_8, CHUNK_ID, buffer(SAVED));
+    chunkSource.clearSavedBaseline();
+
+    await expect(
+      chunkSource.readBaselineChunk(LAYER, RES_8, CHUNK_ID, CHUNK_COORD),
+    ).rejects.toBeInstanceOf(ChunkReadFailedError);
   });
 });

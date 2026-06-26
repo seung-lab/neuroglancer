@@ -32,9 +32,11 @@ import type {
   SaveResult,
   SavePayload,
   SaveLayerOutcome,
+  SavedChunk,
 } from "@zettaai/edit-session";
 import {
   ChunkId as ChunkIdFactory,
+  collectDirtyChunks,
   EditSession,
   InvalidSessionConfigError,
   OverlayKey,
@@ -407,6 +409,45 @@ export interface ActiveRegion {
 }
 
 /**
+ * Progress of the save+verify pipeline (TM-352). See
+ * {@link EditSessionHost.saveProgress}.
+ */
+export type SaveProgressState =
+  | { readonly kind: "idle" }
+  // Requests in flight (write, or a first read-back not yet answered) — this is
+  // the "slow connection" case.
+  | { readonly kind: "writing" }
+  | {
+      readonly kind: "verifying";
+      readonly confirmed: number;
+      readonly total: number;
+    }
+  // A read-back came back but did NOT confirm (the request succeeded, the data
+  // just isn't verified yet), so we're making additional attempts — distinct
+  // from a slow connection.
+  | {
+      readonly kind: "reverifying";
+      readonly confirmed: number;
+      readonly total: number;
+      readonly attempt: number;
+    }
+  | {
+      readonly kind: "failed";
+      readonly unconfirmed: number;
+      readonly total: number;
+    };
+
+/**
+ * Read-back verification retry budget per chunk (TM-352). On a slow/flaky link
+ * we keep retrying (the spinner stays up) rather than falsely reporting "saved";
+ * after the last backoff a chunk that still can't be confirmed is surfaced as a
+ * failure (never a false confirm). Cancellable at any point.
+ */
+const VERIFY_BACKOFF_MS: readonly number[] = [
+  500, 1000, 2000, 4000, 8000, 8000,
+];
+
+/**
  * Target on-screen brush diameter, in CSS pixels, used to seed the brush size
  * from the current zoom on first paint-tool activation. Chosen to be clearly
  * visible without dominating the slice; the user adjusts from here with `+`/`-`.
@@ -542,6 +583,41 @@ export class EditSessionHost extends RefCounted {
    * cancellation alike).
    */
   readonly saveInProgress = new WatchableValue<boolean>(false);
+
+  /**
+   * Granular progress of the save+verify pipeline (TM-352), for the topbar:
+   * `writing` (sending to the backend) → `verifying` (reading each saved chunk
+   * back and confirming it matches) → `idle` (all confirmed) or `failed` (some
+   * chunk could not be confirmed). Verification is the gate for "Saved"; the
+   * spinner stays up the whole time `saveActive()` runs.
+   */
+  readonly saveProgress = new WatchableValue<SaveProgressState>({
+    kind: "idle",
+  });
+
+  /**
+   * Saved chunks (keyed `layer|res|chunk`) whose durability has NOT been
+   * confirmed by read-back. Pending during verification and retained on
+   * failure, so `hasUnconfirmedSaves()` can gate the `beforeunload` warning and
+   * session exit — the user must never leave believing data is saved when it is
+   * not — and `retryUnconfirmedSaves()` can re-send them (TM-352).
+   */
+  private readonly unconfirmedChunks = new Map<string, SavedChunk>();
+
+  /** True while any saved chunk is still unconfirmed (in-flight or failed). */
+  hasUnconfirmedSaves(): boolean {
+    return this.unconfirmedChunks.size > 0;
+  }
+
+  /**
+   * Chunks confirmed-saved (read-back verified) during the CURRENT session,
+   * keyed `layer|res|chunk`. On session exit these are evicted from the
+   * datasource render cache so re-entry reads the saved+verified bytes fresh
+   * from the backend instead of the stale resident chunk, and the matching
+   * saved-baseline snapshot is dropped (TM-352, see
+   * {@link reconcileSavedChunksWithBackend}). Cleared on teardown.
+   */
+  private readonly verifiedSavedChunks = new Map<string, SavedChunk>();
 
   // -- Adapters (constructed once, reused across sessions) ------------------
   readonly logger: NgLogger;
@@ -794,9 +870,6 @@ export class EditSessionHost extends RefCounted {
       this.viewer.layerManager,
       this.layerMetadataSource,
       this.logger,
-      // Read-back verification: confirm saved chunks are durable in storage
-      // before the session is marked clean (TM-352).
-      this.chunkSource,
     );
 
     // NG does NOT register a save backend itself. NG runs as a same-origin
@@ -1319,11 +1392,195 @@ export class EditSessionHost extends RefCounted {
       else signal.addEventListener("abort", onExternalAbort, { once: true });
     }
     try {
-      // `NgSaveTarget` read-back-verifies each saved chunk before the library
-      // marks it clean, and that verification re-reads from the backend (which
-      // also refreshes the base layer to the saved bytes) — so the host no
-      // longer invalidates the cache out-of-band here (TM-352).
-      return await session.save(layerIds, controller.signal);
+      // 1. Snapshot the dirty chunks (coords + bytes + content hash) BEFORE the
+      //    write — `session.save()` rebaselines/clears the dirty set on success,
+      //    and these bytes are exactly what we're sending.
+      this.saveProgress.value = { kind: "writing" };
+      const layerFilter =
+        layerIds !== undefined ? new Set<LayerId>(layerIds) : undefined;
+      const snapshot: SavedChunk[] = await collectDirtyChunks(
+        session.overlay,
+        layerFilter,
+      );
+      // 2. Write to the backend.
+      const result = await session.save(layerIds, controller.signal);
+      // 3. Retain the client's own copy of every saved chunk and mark it
+      //    unconfirmed until read-back proves it durable. Scope to layers the
+      //    write reported as succeeded.
+      const savedLayers = new Set<LayerId>();
+      for (const o of result.outcomes) {
+        if (o.status === "succeeded") savedLayers.add(o.layerId);
+      }
+      const toVerify = snapshot.filter((c) => savedLayers.has(c.layerId));
+      for (const c of toVerify) {
+        this.chunkSource.recordSavedBaseline(
+          c.layerId,
+          c.resolution,
+          c.chunkId,
+          c.bytes,
+        );
+        this.unconfirmedChunks.set(
+          `${c.layerId}|${c.resolution}|${c.chunkId}`,
+          c,
+        );
+      }
+      // 4. Read back each saved chunk and confirm — the gate for "Saved".
+      await this.verifySavedChunks(toVerify, controller.signal);
+      return result;
+    } finally {
+      if (signal !== undefined) {
+        signal.removeEventListener("abort", onExternalAbort);
+      }
+      if (this.saveAbortController === controller) {
+        this.saveAbortController = undefined;
+        this.saveInProgress.value = false;
+      }
+    }
+  }
+
+  /**
+   * Read each just-saved chunk back from the backend (non-evicting, decode-aware)
+   * and confirm it matches what we sent (TM-352). Drives {@link saveProgress};
+   * a confirmed chunk is removed from {@link unconfirmedChunks}. Any chunk that
+   * stays unconfirmed (after the retry budget, or on cancel) keeps its entry and
+   * leaves `saveProgress` in `failed` — the save is NOT reported clean and the
+   * user keeps their (client-retained) copy.
+   */
+  private async verifySavedChunks(
+    chunks: readonly SavedChunk[],
+    signal: AbortSignal,
+  ): Promise<void> {
+    const total = chunks.length;
+    if (total === 0) {
+      this.saveProgress.value = { kind: "idle" };
+      return;
+    }
+    let confirmed = 0;
+    this.saveProgress.value = { kind: "verifying", confirmed, total };
+    for (const c of chunks) {
+      const ok = await this.verifyOneSavedChunk(c, signal, (attempt) => {
+        // The first read-back didn't confirm (the request succeeded, the data
+        // just isn't verified) — surface that we're re-checking, NOT that the
+        // connection is slow.
+        this.saveProgress.value = {
+          kind: "reverifying",
+          confirmed,
+          total,
+          attempt,
+        };
+      });
+      if (ok) {
+        const key = `${c.layerId}|${c.resolution}|${c.chunkId}`;
+        this.unconfirmedChunks.delete(key);
+        // Track the verified chunk so exit can evict its stale datasource cache
+        // entry (TM-352) — the backend provably holds these bytes.
+        this.verifiedSavedChunks.set(key, c);
+        confirmed += 1;
+      }
+      // Back to the in-progress state for the next chunk's first attempt.
+      this.saveProgress.value = { kind: "verifying", confirmed, total };
+    }
+    const unconfirmed = total - confirmed;
+    this.saveProgress.value =
+      unconfirmed === 0
+        ? { kind: "idle" }
+        : { kind: "failed", unconfirmed, total };
+  }
+
+  /**
+   * Confirm a single saved chunk, retrying read errors and transient mismatches
+   * (read-after-write lag / backend mid-write) with backoff. Returns `false`
+   * (unconfirmed) once the retry budget is exhausted or `signal` aborts — never
+   * a false positive. The spinner stays up across the retries.
+   */
+  private async verifyOneSavedChunk(
+    chunk: SavedChunk,
+    signal: AbortSignal,
+    onRetry: (attempt: number) => void,
+  ): Promise<boolean> {
+    for (let attempt = 0; ; attempt++) {
+      if (signal.aborted) return false;
+      try {
+        const ok = await this.chunkSource.confirmChunkPersisted(
+          chunk.layerId,
+          chunk.resolution,
+          chunk.chunkId,
+          chunk.chunkCoord,
+          signal,
+        );
+        if (ok) return true;
+      } catch {
+        // read error — fall through to retry
+      }
+      if (attempt >= VERIFY_BACKOFF_MS.length) return false;
+      // The request answered (or errored) without confirming — report the
+      // upcoming additional attempt before backing off.
+      onRetry(attempt + 1);
+      await this.delayWithAbort(VERIFY_BACKOFF_MS[attempt], signal);
+    }
+  }
+
+  /** Resolve after `ms`, or early when `signal` aborts. Never rejects. */
+  private delayWithAbort(ms: number, signal: AbortSignal): Promise<void> {
+    return new Promise<void>((resolve) => {
+      if (signal.aborted) {
+        resolve();
+        return;
+      }
+      const onAbort = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+
+  /**
+   * Re-send every still-unconfirmed saved chunk from the client's retained copy
+   * and re-verify (TM-352, the "Retry" action). The library is already
+   * rebaselined, so we resend from `NgChunkSource`'s saved bytes rather than the
+   * overlay. Cancellable; updates {@link saveProgress} like a normal save.
+   */
+  async retryUnconfirmedSaves(signal?: AbortSignal): Promise<void> {
+    if (this.unconfirmedChunks.size === 0) return;
+    if (this.saveAbortController !== undefined) {
+      throw new Error("A save is already in flight");
+    }
+    const controller = new AbortController();
+    this.saveAbortController = controller;
+    this.saveInProgress.value = true;
+    const onExternalAbort = () => controller.abort();
+    if (signal !== undefined) {
+      if (signal.aborted) controller.abort();
+      else signal.addEventListener("abort", onExternalAbort, { once: true });
+    }
+    try {
+      const chunks = Array.from(this.unconfirmedChunks.values());
+      this.saveProgress.value = { kind: "writing" };
+      const payload: SavePayload = {
+        sessionId: toSessionId("retry-unconfirmed-save"),
+        savedAt: this.clock.now(),
+        layerIds: [...new Set(chunks.map((c) => c.layerId))],
+        chunks: chunks.map((c) => ({
+          layerId: c.layerId,
+          resolution: c.resolution,
+          chunkId: c.chunkId,
+          chunkCoord: c.chunkCoord,
+          contentRef: c.contentRef,
+          bytes:
+            this.chunkSource.getSavedBytes(
+              c.layerId,
+              c.resolution,
+              c.chunkId,
+            ) ?? c.bytes,
+        })),
+      };
+      await this.saveTarget.save(payload, controller.signal);
+      await this.verifySavedChunks(chunks, controller.signal);
     } finally {
       if (signal !== undefined) {
         signal.removeEventListener("abort", onExternalAbort);
@@ -2165,8 +2422,14 @@ export class EditSessionHost extends RefCounted {
         layer.layerId,
         entry.patchStore,
         this.logger,
+        // The patched mask is `overlay !== baseline`, and the render falls back
+        // to the datasource chunk where the mask is 0 — so PatchMirror MUST diff
+        // against the datasource render base, NOT the edit baseline
+        // (`readBaselineChunk`, which returns the saved/committed bytes). Diffing
+        // against the saved bytes makes just-saved voxels drop out of the mask
+        // and revert to the stale datasource value on screen (TM-352).
         (coord) =>
-          this.chunkSource.readBaselineChunk(
+          this.chunkSource.readDatasourceBaseline(
             coord.layerId,
             coord.resolution,
             coord.chunkId,
@@ -2713,6 +2976,41 @@ export class EditSessionHost extends RefCounted {
   }
 
   /**
+   * On session exit, reconcile our client-side saved state with the backend
+   * (TM-352). The saved baseline is a WITHIN-SESSION checkpoint — the snapshot
+   * the user pressed "Save" on, verified against the backend at save time. Once
+   * the session ends it must not outlive the session: keeping it would let a
+   * stale snapshot shadow the backend on re-entry (the edit/paint baseline path
+   * reads it before the datasource), reverting the visible canvas and risking a
+   * silent overwrite of a concurrent external edit. So on exit we:
+   *   1. evict every confirmed-saved chunk from the datasource render cache, so
+   *      the render path (which reads `source.chunks` and never the saved
+   *      baseline) refetches the saved+verified bytes fresh — replicating what a
+   *      page reload does, scoped to just these chunks; and
+   *   2. drop the saved-baseline snapshot, so the edit path also reconciles with
+   *      the backend on re-entry.
+   * Committed-but-unsaved chunks (held in `commitTarget`, NOT on the backend)
+   * are EXCLUDED from eviction so their in-memory work is not refetched away.
+   */
+  private reconcileSavedChunksWithBackend(): void {
+    const toInvalidate: SavedChunk[] = [];
+    for (const c of this.verifiedSavedChunks.values()) {
+      const committed = this.commitTarget.getChunk(
+        c.layerId,
+        c.resolution,
+        c.chunkId,
+      );
+      if (committed !== undefined) continue; // in-memory commit — keep it
+      toInvalidate.push(c);
+    }
+    this.verifiedSavedChunks.clear();
+    if (toInvalidate.length > 0) {
+      this.chunkSource.invalidateDatasourceChunks(toInvalidate);
+    }
+    this.chunkSource.clearSavedBaseline();
+  }
+
+  /**
    * Full teardown. Used by `discardActive` and the disposed path:
    *   - tools (pointer bridge, hotkey binder, cursor),
    *   - per-layer rendering (LocalPatchStore, PatchedSegmentationRenderLayer,
@@ -2722,6 +3020,7 @@ export class EditSessionHost extends RefCounted {
   private finalizeTeardown(): void {
     this.tearDownSessionTools();
     this.teardownPerLayer();
+    this.reconcileSavedChunksWithBackend();
     this.tearDownSessionState();
   }
 
@@ -2767,6 +3066,7 @@ export class EditSessionHost extends RefCounted {
     this._sessionResolutionsByLayer = new Map();
     this.refreshEditBboxWatchables();
     this.refreshAllowedResolutionsWatchables();
+    this.reconcileSavedChunksWithBackend();
     this.tearDownSessionState();
   }
 
