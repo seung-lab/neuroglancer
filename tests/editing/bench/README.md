@@ -15,6 +15,13 @@ npm run bench:paint:ui       # Playwright UI mode (inspect/step the run)
 npm run bench:paint:run      # skip the build (dist/client already fresh)
 ```
 
+Each `{case × brush size}` is its **own test** — a tree in the UI
+(`masked-brush › brush 1025`, `unmasked-brush › brush 5`, …), runnable and
+inspectable individually, with the full sectioned `__paintProfiler` block
+attached to each. The expensive setup (load · session · pyodide boot · chunk
+warmup) runs **once per worker** in `beforeAll`; every test then drives a single
+stroke on the shared page.
+
 **Use `:headed` for fully-real numbers.** Headless chromium does not run the
 render loop, so `frameDraw` / `gpu.upload` / `mirror.fuse` (the ④ RENDER phase
 and render-driven commit costs) are absent — only a headed (visible) browser
@@ -93,3 +100,49 @@ The harness honors `window.__paintScheduler.mode` (`latestWins` default vs
 `coalesce`). To compare, set it from the spec via `page.evaluate` before the
 sweep, or run twice. `latestWins` should keep per-stroke `maskBuild` bounded as
 size grows; `coalesce` reproduces the unbounded swept-capsule cost.
+
+## Correctness read-back (TM-331, phase 2)
+
+Beyond the perf sweep, the harness can read back **what got painted** so a spec
+can assert correctness (not just timing). After a stroke the painted voxels live
+in the target layer's overlay `LocalPatchStore`; the read-back summarizes them
+into a count, bbox, distinct values, a small sample, and a stable `signature`
+(FNV-1a over the sorted `x,y,z=value` set) — same inputs ⇒ same signature.
+
+Window API (added alongside the bench steps):
+
+- `__editPaintBenchReadback(opts?)` → `{ targetLayerId, paintedVoxels, chunkCount,
+  bbox, signature, distinctValues, sample, truncated }` — read the current target
+  overlay (call it after any `__editPaintBenchStep`).
+- `__editPaintBenchStampReadback(input?)` → the same summary `+ strokeFired` —
+  drives ONE **deterministic** stamp at a fixed panel position (not the sweeping
+  perf stroke) through the full stack, then reads back. `input`: `{ masked?,
+  radius?, erase?, fracX?, fracY?, clearFirst?, settleTimeoutMs? }`.
+- `__editPaintBenchClearTarget()` → drop the target's patches between stamps for
+  isolated read-back.
+
+The summarizer (`src/editing/benchmarks/patch_readback.ts`) is pure and
+unit-verified (`tests/editing/benchmarks/patch_readback.spec.ts`); only the
+stamp/dispatch + overlay access run in the COI browser.
+
+## Correctness e2e (`edit_paint_correctness.spec.ts`)
+
+`npm run bench:correctness` (fixtures → build → run, config
+`playwright.correctness.config.ts`) points the app at the **local fake-gcs
+fixtures** (no `gs://` auth) via the route-rewrite in
+`tests/editing/harness/gcs_route.ts`, builds each scenario's ngState with
+`build_ng_state.ts`, drives a deterministic stamp, and asserts the read-back:
+painted-voxel count, value, region-containment, and a stable signature across a
+repeated stamp. Scenarios exercise the data axes the in-memory matrix can't reach
+end-to-end (offset target, encodings, multi-res). See `testdata/editing/README.md`.
+
+**Visual check (manual review).** The first test in each scenario saves
+`before` / `after` / `after-fullpage` PNGs to `test-results/correctness/` (and
+attaches them to the Playwright report — view with
+`npm run bench:correctness:run:ui`). It uses a big radius-64 stamp at the panel
+centre and **fails loudly if nothing painted**, so a blank "after" means the
+stamp didn't land — usually camera framing (`crossSectionScale` in
+`build_ng_state.ts` frames the region so the centre pixel is inside the session
+bounds; a mis-framed small fixture maps the centre outside bounds and the write
+is silently clipped) or pointer dispatch. Run headed to watch it live:
+`npm run bench:correctness:run:headed`.
