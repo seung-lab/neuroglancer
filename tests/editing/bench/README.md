@@ -1,8 +1,16 @@
 # Edit-session paint benchmark
 
-A Playwright benchmark that drives a real edit session in the dev-server app and
+A Playwright benchmark that drives a real edit session in the built app and
 sweeps brush sizes for three cases — **masked brush** (threshold + morphology),
 **unmasked brush**, **eraser** — measuring per-size cost from `__paintProfiler`.
+
+Runs against the **local fake-gcs fixtures** (TM-331) — no live `gs://`, no auth,
+reproducible. Shares its boot path (`fixtures → fake-gcs → route-rewrite →
+buildNgState → warmup`) with the correctness suite via
+`tests/editing/harness/e2e_setup.ts`; the perf scenario is defined in
+`edit_paint_bench.spec.ts` (`PERF_SCENARIO`) on the large `perf_*` fixtures
+(2048², room for the radius-up-to-512 sweep). Generate first:
+`uv run testdata/editing/generate.py`.
 
 ## Run
 
@@ -30,29 +38,28 @@ masked path (so ⑤ SPANS shows only `handleInput`) — that matches the real
 profiler.
 
 Before measuring, the harness **warms the data** (8 max-radius stamps across the
-band) so the EM/target chunks are resident. Otherwise the first measured segment
-pays a multi-second cold `gs://` `chunkRead`, which — longer than the move pacing
-— makes `latestWins` drop every other move and collapse the stroke to ONE
+band) so the target/image chunks are resident and pyodide is booted. Otherwise
+the first measured segment pays a cold `chunkRead`, which — longer than the move
+pacing — makes `latestWins` drop every other move and collapse the stroke to ONE
 segment (no per-segment numbers).
 
-Portal-style (`zetta-ai-portal/e2e`): `bench:paint` **builds the prod bundle**
-(`build:zetta`), then Playwright starts a **fresh static server**
-(`serve_dist.mjs`, port 9777, `reuseExistingServer: false`) that serves
-`dist/client` with `COOP: same-origin` + `COEP: require-corp` →
-`crossOriginIsolated` → SAB + self-hosted pyodide. **No webpack dev-server / no
-HMR**, so the page never recompiles or reloads mid-run (the stale-bundle /
-mid-stroke-reload problem the dev-server had).
+`bench:paint` **builds the prod bundle** (`build:zetta`), then Playwright starts
+a **fresh static server** (`serve_dist.mjs`, port 9777, `reuseExistingServer:
+false`) that serves `dist/client` with `COOP: same-origin` + `COEP:
+require-corp` → `crossOriginIsolated` → SAB + self-hosted pyodide. **No webpack
+dev-server / no HMR**, so the page never recompiles or reloads mid-run (the
+stale-bundle / mid-stroke-reload problem the dev-server had). The spec boots a
+`fake-gcs-server` over the generated fixtures and route-rewrites
+`storage.googleapis.com` onto it, so `buildNgState`'s `precomputed://gs://…`
+sources resolve locally.
 
-It opens headless chromium with software WebGL2, loads the project ngState (EM
-image + `seg_uint8` target, region ~5000×3700, brush+mask preset). The state
-carries an `editSession` block so the host **auto-opens the session** — the
-harness waits for it, then paints. Output: a table in stdout +
-`test-results/edit_paint_bench.json`.
+Output: a table in stdout + `test-results/edit_paint_bench.json`.
 
-Needs **access to the `gs://` buckets in the state** (auth as in the portal) +
-WebGL2. Benchmark, **not a gating test**. Rebuild (`npm run bench:paint`, or
-`npm run bench:paint:build`) after changing any `src/` used by the harness — the
-static server serves the built bundle, not live source.
+Needs the **generated fixtures** (`uv run testdata/editing/generate.py`) +
+WebGL2. Benchmark, **not a gating test** (perf-regression baseline comparison is
+TM-331 Phase 3). Rebuild (`npm run bench:paint`, or `npm run bench:paint:build`)
+after changing any `src/` used by the harness — the static server serves the
+built bundle, not live source.
 
 ## Pieces
 
@@ -69,10 +76,10 @@ static server serves the built bundle, not live source.
 
 The end-to-end run cannot be executed/verified offline. Expect to adjust:
 
-1. **Bucket access** to the `gs://` sources in `VIEWER_STATE` — the built app
-   must be able to read `gs://stroeh_sem_mouse_retina/...` and
-   `gs://sergiy_exp/...` (auth as in the portal). If a layer doesn't load, the
-   session won't auto-open and the harness fast-fails with a clear message.
+1. **Fixtures generated** — `uv run testdata/editing/generate.py` must have run so
+   the `perf_*` buckets exist and fake-gcs can serve them. If a layer doesn't
+   load, the session won't auto-open and the harness fast-fails with a clear
+   message. (No `gs://` auth is needed — the data is local.)
 2. **WebGL flags** (`playwright.bench.config.ts`) if the canvas stays black /
    WebGL2 is unavailable in your headless chromium.
 3. **`findDispatchTarget` / `dispatchStroke`** — selector + pointer mapping if
@@ -112,12 +119,12 @@ into a count, bbox, distinct values, a small sample, and a stable `signature`
 Window API (added alongside the bench steps):
 
 - `__editPaintBenchReadback(opts?)` → `{ targetLayerId, paintedVoxels, chunkCount,
-  bbox, signature, distinctValues, sample, truncated }` — read the current target
+bbox, signature, distinctValues, sample, truncated }` — read the current target
   overlay (call it after any `__editPaintBenchStep`).
 - `__editPaintBenchStampReadback(input?)` → the same summary `+ strokeFired` —
   drives ONE **deterministic** stamp at a fixed panel position (not the sweeping
   perf stroke) through the full stack, then reads back. `input`: `{ masked?,
-  radius?, erase?, fracX?, fracY?, clearFirst?, settleTimeoutMs? }`.
+radius?, erase?, fracX?, fracY?, clearFirst?, settleTimeoutMs? }`.
 - `__editPaintBenchClearTarget()` → drop the target's patches between stamps for
   isolated read-back.
 

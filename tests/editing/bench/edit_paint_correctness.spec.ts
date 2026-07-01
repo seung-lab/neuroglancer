@@ -26,28 +26,27 @@
  * clear reason — run `npm run bench:correctness`.
  */
 
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { test, expect, type Browser, type Page } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
 import {
-  buildNgState,
   type FixturesIndex,
   type Scenario,
   type Vec3,
 } from "#tests/editing/harness/build_ng_state.js";
-import { installGcsRoute } from "#tests/editing/harness/gcs_route.js";
-import { startFakeGcsFixtures } from "../harness/fake_gcs_fixtures.mjs";
+import {
+  loadFixturesIndex,
+  openScenarioPage,
+  startFixtureGcs,
+  warmupPaintPath,
+  type FixtureGcs,
+} from "#tests/editing/harness/e2e_setup.js";
 
 const PORT = Number(process.env.CORRECTNESS_PORT ?? 9782);
-const GCS_PORT = Number(process.env.CORRECTNESS_GCS_PORT ?? 9783);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const FIXTURES_JSON = path.resolve(
-  HERE,
-  "../../../testdata/editing/fixtures.json",
-);
 
 interface ReadbackShape {
   targetLayerId: unknown;
@@ -88,21 +87,19 @@ const SCENARIOS: ReadonlyArray<{
 ];
 
 let fixtures: FixturesIndex | undefined;
-let fakeGcs:
-  | { url: string; [Symbol.asyncDispose](): Promise<void> }
-  | undefined;
+let fakeGcs: FixtureGcs | undefined;
 let topSetupError: string | undefined;
 
 try {
-  fixtures = JSON.parse(readFileSync(FIXTURES_JSON, "utf8")) as FixturesIndex;
-} catch {
-  topSetupError = `no fixtures index at ${FIXTURES_JSON} — run: uv run testdata/editing/generate.py`;
+  fixtures = loadFixturesIndex();
+} catch (e) {
+  topSetupError = e instanceof Error ? e.message : String(e);
 }
 
 test.beforeAll(async () => {
   if (topSetupError !== undefined) return;
   try {
-    fakeGcs = await startFakeGcsFixtures({ port: GCS_PORT });
+    fakeGcs = await startFixtureGcs();
   } catch (e) {
     topSetupError = `fake-gcs boot failed: ${e instanceof Error ? e.message : e}`;
   }
@@ -136,59 +133,6 @@ function within(bbox: { lo: Vec3; hi: Vec3 }, region: { lo: Vec3; hi: Vec3 }) {
     if (bbox.hi[d] > region.hi[d]) return false;
   }
   return true;
-}
-
-async function openScenario(
-  browser: Browser,
-  scenario: Scenario,
-): Promise<Page> {
-  const context = await browser.newContext({
-    baseURL: `http://localhost:${PORT}`,
-  });
-  const page = await context.newPage();
-  page.on("console", (m) => {
-    if (/error|warn|pyodide|editPaintBench/i.test(m.text())) {
-      console.log(`[page] ${m.text()}`);
-    }
-  });
-  await installGcsRoute(page, fakeGcs!.url);
-  const state = buildNgState(scenario, fixtures!);
-  await page.goto(`/#!${encodeURIComponent(JSON.stringify(state))}`, {
-    waitUntil: "domcontentloaded",
-  });
-  await page.waitForFunction(
-    () => {
-      const v = (window as unknown as { viewer?: any }).viewer;
-      return (
-        typeof (window as any).__editPaintBenchStampReadback === "function" &&
-        v?.editSessionHost?.activeSession?.value !== undefined
-      );
-    },
-    undefined,
-    { timeout: 5 * 60 * 1000 },
-  );
-
-  // Warm the paint path (like the perf bench): the first stamps on a cold page
-  // often don't register (slice transform not laid out, pyodide not booted,
-  // params not propagated). A few discarded stamps make measured stamps reliable
-  // and deterministic. Bounded — each gives up fast if nothing paints.
-  await page.waitForTimeout(1000);
-  for (let i = 0; i < 4; i++) {
-    const w = (await page.evaluate(
-      async () =>
-        await (window as any).__editPaintBenchStampReadback({
-          radius: 8,
-          prime: 0,
-          clearFirst: true,
-        }),
-    )) as ReadbackShape;
-    console.log(
-      `[warmup] ${scenario.name} stamp ${i + 1}/4: painted=${w.paintedVoxels}`,
-    );
-    if (w.paintedVoxels > 0 && i >= 1) break; // warm once it reliably paints
-  }
-  await page.evaluate(() => (window as any).__editPaintBenchClearTarget());
-  return page;
 }
 
 async function stamp(
@@ -253,7 +197,13 @@ for (const { scenario, hasImage } of SCENARIOS) {
       }
       try {
         region = regionOf(fixtures!, scenario);
-        page = await openScenario(browser, scenario);
+        page = await openScenarioPage(browser, {
+          scenario,
+          fixtures: fixtures!,
+          fakeGcsUrl: fakeGcs!.url,
+          appPort: PORT,
+        });
+        await warmupPaintPath(page, { label: scenario.name });
       } catch (e) {
         scenarioError = e instanceof Error ? e.message : String(e);
       }

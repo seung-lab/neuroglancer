@@ -9,90 +9,92 @@
  */
 
 /**
- * Edit-session paint benchmark (TM-317 follow-up).
+ * Edit-session paint benchmark (TM-331).
  *
  * Loads the BUILT prod bundle (served fresh by `serve_dist.mjs` with COOP/COEP —
- * no dev-server/HMR) with the project ngState below, which carries an
- * `editSession` block, so the host AUTO-OPENS the session (EM image + seg_uint8
- * target, region ~5000×3700, brush+mask preset). The harness then sweeps brush
- * sizes for three cases (masked brush, unmasked brush, eraser), tabulating
- * per-size cost from `__paintProfiler`.
+ * no dev-server/HMR) against the LOCAL fake-gcs fixtures via `buildNgState` (a
+ * perf scenario whose `editSession` block AUTO-OPENS the session) — reproducible,
+ * no live `gs://` auth. Shares the boot path with the correctness suite
+ * (`tests/editing/harness/e2e_setup.ts`).
  *
- * Run:  npm run bench:paint   (builds the prod bundle, then runs this)
+ * Each {case × brush size} is its OWN Playwright test (a tree of
+ * `masked-brush › brush 1025`, …) so they show up — and can be run/inspected —
+ * separately in the Playwright UI (`npm run bench:paint:ui`). The expensive
+ * setup (page load · session · pyodide boot · chunk warmup) runs ONCE per worker
+ * in `beforeAll`; every test then drives a single stroke on the shared page and
+ * attaches its full sectioned `__paintProfiler` block.
  *
- * ⚠ Benchmark, not a gating test. Needs access to the `gs://` buckets in the
- * state (auth as in the portal) + WebGL2 + pyodide (the static server provides
- * COEP). Pointer dispatch and settle waits are best-effort — see `// TUNE:`
- * markers here and in `src/editing/benchmarks/edit_paint_bench.ts`.
+ * Run:  npm run bench:paint        (headless)
+ *       npm run bench:paint:headed (real window — captures the ④ RENDER phase)
+ *       npm run bench:paint:ui     (Playwright UI — per-config tests)
+ *
+ * ⚠ Benchmark, not a gating test. Needs the generated fixtures
+ * (`uv run testdata/editing/generate.py`) + the prod build + WebGL2 + pyodide.
+ * Perf-regression baseline comparison is a follow-up (TM-331 Phase 3).
  */
 
 import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { test, expect } from "@playwright/test";
 
-// Project ngState (provided). Its `editSession` block auto-opens the session.
-const VIEWER_STATE = {
-  dimensions: { x: [1.6e-8, "m"], y: [1.6e-8, "m"], z: [4e-8, "m"] },
-  position: [46832.21484375, 47814.0546875, 920.5],
-  crossSectionScale: 2.2818807653288458,
-  crossSectionDepth: -5.62704868806956,
-  projectionOrientation: [
-    -0.02896018885076046, -0.14331857860088348, 0.04050016030669212,
-    0.9884234070777893,
-  ],
-  projectionScale: 12625.85619814712,
+import { test, expect, type Page } from "@playwright/test";
+
+import type {
+  FixturesIndex,
+  Scenario,
+} from "#tests/editing/harness/build_ng_state.js";
+import {
+  loadFixturesIndex,
+  openScenarioPage,
+  startFixtureGcs,
+  type FixtureGcs,
+} from "#tests/editing/harness/e2e_setup.js";
+
+const PORT = Number(process.env.BENCH_PORT ?? 9777);
+
+// Perf scenario: a representative EM-image + segmentation target on the LARGE
+// local fixture (2048² — room for the radius-up-to-512 sweep), with the real
+// threshold + morphology mask preset. Replaces the old hard-coded live-gs://
+// VIEWER_STATE; `buildNgState` assembles the ngState + editSession block.
+const PERF_SCENARIO: Scenario = {
+  name: "perf: EM-image + seg target",
+  crossSectionScale: 2.0,
   layers: [
     {
-      type: "image",
-      source: "precomputed://gs://stroeh_sem_mouse_retina/image/v2",
-      tab: "source",
+      fixtureId: "perf_img_u8_raw",
+      role: "image",
+      writable: false,
       name: "EM",
     },
     {
-      type: "segmentation",
-      source: "precomputed://gs://sergiy_exp/vlad/samples/seg_uint8",
-      tab: "source",
-      segments: [],
-      name: "seg_uint8",
+      fixtureId: "perf_seg_u64_cseg",
+      role: "target",
+      writable: true,
+      name: "seg",
     },
   ],
-  showScaleBar: false,
-  selectedLayer: { visible: true, layer: "seg_uint8" },
-  layout: "xy",
-  selection: {},
-  editSession: {
-    layers: [
-      { layerId: "EM", resolutions: ["16x16x40"], writable: false },
-      { layerId: "seg_uint8", resolutions: ["16x16x40"], writable: true },
-    ],
-    region: {
-      lo: [44194.93359375, 46102.61328125, 920.5],
-      hi: [49199.3828125, 49815.15625, 921.5],
-      dimensions: { x: [1.6e-8, "m"], y: [1.6e-8, "m"], z: [4e-8, "m"] },
-    },
-    tooling: {
-      activeToolId: "painting.brush",
-      painting: {
-        targetLayerId: "seg_uint8",
-        targetResolution: "16x16x40",
-        radius: 512,
-        activeValue: { t: "b", v: "1" },
-        eraseValue: { t: "b", v: "0" },
-        mask: {
-          imageLayerId: "EM",
-          imageResolution: "16x16x40",
-          thresholdLow: 99,
-          thresholdHigh: 160,
-          minComponentSize: 32,
-          binaryClosing: 1,
-          filterComponentsFirst: false,
-        },
+  tooling: {
+    activeToolId: "painting.brush",
+    painting: {
+      targetLayerId: "seg",
+      targetResolution: "16x16x40",
+      radius: 512,
+      activeValue: { t: "b", v: "1" },
+      eraseValue: { t: "b", v: "0" },
+      mask: {
+        imageLayerId: "EM",
+        imageResolution: "16x16x40",
+        thresholdLow: 99,
+        thresholdHigh: 160,
+        minComponentSize: 32,
+        binaryClosing: 1,
+        filterComponentsFirst: false,
       },
     },
   },
 };
 
 const SIZES = [5, 51, 251, 501, 751, 1025];
+const CASES = ["masked-brush", "unmasked-brush", "eraser"] as const;
 
 interface BenchRow {
   case: string;
@@ -104,10 +106,92 @@ interface BenchRow {
   summary: string;
   timings: Record<string, number>;
   counters: Record<string, number>;
+  maskedComputeRan?: boolean;
+  strokeFired?: boolean;
 }
 
-/** A boxed section header so each cell's profiler block is easy to find. */
-function cellBlock(r: BenchRow): string {
+// ---------------------------------------------------------------------------
+// Shared, once-per-worker setup: load the built app, wait for the auto-opened
+// session, run diagnostics, warm the chunks + pyodide. All tests reuse `page`.
+// ---------------------------------------------------------------------------
+
+let page: Page;
+let fakeGcs: FixtureGcs | undefined;
+let fixtures: FixturesIndex | undefined;
+let setupError: string | undefined;
+const collected: BenchRow[] = [];
+
+try {
+  fixtures = loadFixturesIndex();
+} catch (e) {
+  setupError = e instanceof Error ? e.message : String(e);
+}
+
+test.beforeAll(async ({ browser }) => {
+  test.setTimeout(8 * 60 * 1000);
+  if (setupError !== undefined) return;
+  try {
+    fakeGcs = await startFixtureGcs();
+    page = await openScenarioPage(browser, {
+      scenario: PERF_SCENARIO,
+      fixtures: fixtures!,
+      fakeGcsUrl: fakeGcs.url,
+      appPort: PORT,
+    });
+
+    const diag = await page.evaluate(
+      async () => await (window as any).__editPaintBenchPrepare({}),
+    );
+    console.log("\n[bench] prepare diag: " + JSON.stringify(diag, null, 2));
+    if (!diag.sessionActive || diag.error || diag.dispatchTarget === "none") {
+      throw new Error(
+        "setup not usable (stale/broken bundle? fixtures generated? canvas?). diag=" +
+          JSON.stringify(diag),
+      );
+    }
+    if (!diag.crossOriginIsolated) {
+      console.warn(
+        "[bench] crossOriginIsolated=false — masked case falls back to the " +
+          "main-thread compute (no pyodide worker). Check COOP/COEP.",
+      );
+    }
+
+    console.log("[bench] warming data (chunks + pyodide)…");
+    const warm = await page.evaluate(
+      async () =>
+        await (window as any).__editPaintBenchWarmup({ warmupStamps: 8 }),
+    );
+    console.log(`[bench] warmup done: ${JSON.stringify(warm)}`);
+  } catch (e) {
+    setupError = e instanceof Error ? e.message : String(e);
+    console.error(`[bench] SETUP FAILED: ${setupError}`);
+  }
+});
+
+test.afterAll(async () => {
+  if (page !== undefined) {
+    await page
+
+      .evaluate(() => (window as any).__editPaintBenchFinish?.())
+      .catch(() => {});
+    if (collected.length > 0) {
+      mkdirSync("test-results", { recursive: true });
+      writeFileSync(
+        path.join("test-results", "edit_paint_bench.txt"),
+        collected.map(blockFor).join("\n"),
+      );
+      writeFileSync(
+        path.join("test-results", "edit_paint_bench.json"),
+        JSON.stringify(collected, null, 2),
+      );
+    }
+    await page.close().catch(() => {});
+  }
+  await fakeGcs?.[Symbol.asyncDispose]?.();
+});
+
+/** Boxed header + the full profiler block for a row. */
+function blockFor(r: BenchRow): string {
   const head =
     `\n══════════════════════════════════════════════════════════════════\n` +
     ` ${r.case}  ·  brush ${r.size}  (r=${r.radius})\n` +
@@ -118,126 +202,37 @@ function cellBlock(r: BenchRow): string {
   return `${head}\n${body}`;
 }
 
-const CASES = ["masked-brush", "unmasked-brush", "eraser"] as const;
+// ---------------------------------------------------------------------------
+// One test per {case × size} — a tree in the Playwright UI.
+// ---------------------------------------------------------------------------
 
-test("edit-session paint benchmark (masked / unmasked / eraser × sizes)", async ({
-  page,
-}) => {
-  page.on("console", (msg) => {
-    const t = msg.text();
-    if (
-      /paint-scheduler|paint-profile|editPaintBench|pyodide|error|warn/i.test(t)
-    ) {
-      console.log(`[page] ${t}`);
-    }
-  });
-  // Detect the navigation that destroyed the context last time.
-  page.on("framenavigated", (frame) => {
-    if (frame === page.mainFrame()) console.log(`[nav] → ${frame.url()}`);
-  });
-  page.on("load", () => console.log(`[load] ${page.url()}`));
-
-  const stateUrl = `/#!${encodeURIComponent(JSON.stringify(VIEWER_STATE))}`;
-  await page.goto(stateUrl, { waitUntil: "domcontentloaded" });
-
-  // Wait for the viewer + the auto-opened session + the harness hooks.
-  await page.waitForFunction(
-    () => {
-      const v = (window as any).viewer;
-      if (typeof (window as any).__editPaintBenchStep !== "function")
-        return false;
-      return v?.editSessionHost?.activeSession?.value !== undefined;
-    },
-    undefined,
-    { timeout: 5 * 60 * 1000 },
-  );
-
-  // Diagnostics first (one short evaluate): session/mask/canvas usable?
-  const diag = await page.evaluate(
-    async () => await (window as any).__editPaintBenchPrepare({}),
-  );
-  console.log("\n[bench] prepare diag: " + JSON.stringify(diag, null, 2));
-
-  // Fail FAST with an actionable message rather than 18 ERR rows. The usual
-  // cause is a STALE/broken dev-server bundle (HMR "Reload prevented" on a
-  // compile error → the page runs an old bundle): restart the dev-server and
-  // make sure the tree compiles (`npx tsc --noEmit`).
-  if (!diag.sessionActive || diag.error || diag.dispatchTarget === "none") {
-    throw new Error(
-      "edit-paint-bench setup not usable — likely a stale/broken dev-server " +
-        "bundle. Restart `npm run dev-server` (and ensure `tsc` is clean), then " +
-        "re-run. diag=" +
-        JSON.stringify(diag),
-    );
-  }
-  if (!diag.crossOriginIsolated) {
-    console.warn(
-      "[bench] crossOriginIsolated=false — masked case will use the main-thread " +
-        "fallback (no pyodide worker). Check dev-server COOP/COEP headers.",
-    );
-  }
-
-  // Warm the EM/target chunks (and pyodide) so the measured strokes don't pay a
-  // cold `gs://` chunkRead that collapses the stroke to one segment.
-  console.log("[bench] warming data (chunks + pyodide)…");
-  const warm = await page.evaluate(
-    async () =>
-      await (window as any).__editPaintBenchWarmup({ warmupStamps: 8 }),
-  );
-  console.log(`[bench] warmup done: ${JSON.stringify(warm)}`);
-
-  const rows: BenchRow[] = [];
-  let aborted: string | undefined;
-  outer: for (const c of CASES) {
+for (const c of CASES) {
+  test.describe(c, () => {
     for (const size of SIZES) {
-      let row: BenchRow & { maskedComputeRan?: boolean; strokeFired?: boolean };
-      try {
-        row = (await page.evaluate(
+      const radius = (size - 1) / 2;
+      test(`brush ${size} (r=${radius})`, async () => {
+        test.skip(setupError !== undefined, `setup failed: ${setupError}`);
+
+        const row = (await page.evaluate(
           async (arg) => await (window as any).__editPaintBenchStep(arg),
           { case: c, size },
         )) as BenchRow;
-      } catch (e) {
-        aborted = `${c} size=${size}: ${e instanceof Error ? e.message : String(e)}`;
-        console.log(`[bench] ABORT at ${aborted}`);
-        break outer;
-      }
-      rows.push(row);
-      const md = (row as { maskedComputeRan?: boolean }).maskedComputeRan;
-      const sf = (row as { strokeFired?: boolean }).strokeFired;
-      const mb = row.timings["P.w.maskBuild(py)"];
-      console.log(
-        `[bench] ${c.padEnd(14)} size=${String(size).padStart(4)}  ` +
-          `strokeFired=${sf} maskedCompute=${md} ` +
-          `maskBuild=${mb === undefined ? "-" : mb.toFixed(1)} ` +
-          `footprint=${row.counters["voxels.footprintBbox"] ?? "-"} ` +
-          `painted=${row.counters["voxels.painted"] ?? "-"}` +
-          (row.error ? `  ERR=${row.error}` : ""),
-      );
+        collected.push(row);
+
+        const block = blockFor(row);
+        console.log(block);
+        await test.info().attach(`${c}-brush${size}.txt`, {
+          body: row.summary || `(no output)${row.error ? ` ${row.error}` : ""}`,
+          contentType: "text/plain",
+        });
+
+        // Green = a real measurement; red = errored or produced nothing.
+        expect(row.error ?? "", `step error: ${row.error}`).toBe("");
+        expect(
+          row.summary.length,
+          "no profiler output (stroke did not register?)",
+        ).toBeGreaterThan(0);
+      });
     }
-  }
-
-  await page
-    .evaluate(() => (window as any).__editPaintBenchFinish?.())
-    .catch(() => {});
-
-  // Primary output: the full sectioned profiler block per {case × size}, exactly
-  // as the in-app console prints it (params · BLOCKS-UI · ①..⑥ sections · counts).
-  const report = rows.map(cellBlock).join("\n");
-  console.log(
-    "\n\n##################  EDIT-SESSION PAINT BENCHMARK  ##################\n" +
-      report +
-      "\n",
-  );
-  mkdirSync("test-results", { recursive: true });
-  writeFileSync(path.join("test-results", "edit_paint_bench.txt"), report);
-  writeFileSync(
-    path.join("test-results", "edit_paint_bench.json"),
-    JSON.stringify({ diag, aborted, rows }, null, 2),
-  );
-
-  // Soft assertions — surface problems without hard-failing the benchmark.
-  if (aborted !== undefined) {
-    console.warn(`[bench] aborted early (navigation/context lost): ${aborted}`);
-  }
-  expect(rows.length).toBeGreaterThan(0);
-});
+  });
+}

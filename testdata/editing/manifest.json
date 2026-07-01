@@ -58,5 +58,25 @@
     "offset": [0, 0, 0],
     "size": [8192, 128, 1],
     "resolutions": [[16, 16, 40]]
+  },
+  {
+    "id": "perf_img_u8_raw",
+    "kind": "image",
+    "dtype": "uint8",
+    "encoding": "raw",
+    "chunk": [512, 512, 1],
+    "offset": [0, 0, 0],
+    "size": [2048, 2048, 4],
+    "resolutions": [[16, 16, 40]]
+  },
+  {
+    "id": "perf_seg_u64_cseg",
+    "kind": "segmentation",
+    "dtype": "uint64",
+    "encoding": "compressed_segmentation",
+    "chunk": [512, 512, 1],
+    "offset": [0, 0, 0],
+    "size": [2048, 2048, 4],
+    "resolutions": [[16, 16, 40]]
   }
 ]

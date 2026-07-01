@@ -29,6 +29,7 @@
 
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -44,12 +45,28 @@ const BIN = path.join(
   "fake-gcs-server" + (process.platform === "win32" ? ".exe" : ""),
 );
 
+/** Ask the OS for a currently-free localhost port. */
+function findFreePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.on("error", reject);
+    srv.listen(0, "localhost", () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
 /**
  * Start the server. Resolves to `{ url, bucketsRoot, [Symbol.asyncDispose] }`
  * once the server reports ready. `url` is the GCS JSON-API origin
  * (`http://localhost:<port>`).
+ *
+ * `port` defaults to a FREE OS-assigned port so a leaked server from a prior run
+ * (the spawned process can orphan if the parent dies before dispose) never blocks
+ * a fresh run. Pass an explicit `port` only for manual/standalone debugging.
  */
-export async function startFakeGcsFixtures({ port = 9778 } = {}) {
+export async function startFakeGcsFixtures({ port } = {}) {
   if (!existsSync(BIN)) {
     throw new Error(
       `fake-gcs-server not built at ${BIN}\n` +
@@ -63,6 +80,7 @@ export async function startFakeGcsFixtures({ port = 9778 } = {}) {
     );
   }
 
+  const boundPort = port ?? (await findFreePort());
   const proc = spawn(
     BIN,
     [
@@ -77,38 +95,62 @@ export async function startFakeGcsFixtures({ port = 9778 } = {}) {
       "-host",
       "localhost",
       "-port",
-      `${port}`,
+      `${boundPort}`,
       // Don't rewrite object URLs in responses — we serve the JSON API directly.
       "-public-host",
-      `localhost:${port}`,
+      `localhost:${boundPort}`,
     ],
     { stdio: ["ignore", "ignore", "pipe"] },
   );
 
+  // Best-effort: kill the child if the parent exits before dispose runs (a
+  // crashed/killed Playwright worker would otherwise orphan the server and hold
+  // its port). Doesn't fire on SIGKILL — hence the free-port default above.
+  const killChild = () => {
+    try {
+      proc.kill();
+    } catch {
+      /* already gone */
+    }
+  };
+  process.once("exit", killChild);
+
   const { resolve, reject, promise } = Promise.withResolvers();
+  let lastError;
   (async () => {
     for await (const line of readline.createInterface({ input: proc.stderr })) {
       if (process.env.FAKE_GCS_VERBOSE) console.log(`fake_gcs: ${line}`);
+      if (/address already in use|level=ERROR/i.test(line)) lastError = line;
       if (/server started at/.test(line)) resolve();
     }
-    reject(new Error("fake-gcs-server exited before reporting ready"));
+    reject(
+      new Error(
+        lastError
+          ? `fake-gcs-server failed to start: ${lastError}`
+          : "fake-gcs-server exited before reporting ready",
+      ),
+    );
   })();
+  proc.on("error", reject);
   await promise;
 
   return {
-    url: `http://localhost:${port}`,
+    url: `http://localhost:${boundPort}`,
     bucketsRoot: BUCKETS_ROOT,
     async [Symbol.asyncDispose]() {
+      process.removeListener("exit", killChild);
       proc.kill();
     },
   };
 }
 
-// Standalone mode: boot and stay up until killed.
+// Standalone mode: boot and stay up until killed. `--port N` forces a port;
+// otherwise a free one is picked.
 if (import.meta.url === `file://${process.argv[1]}`) {
   const portArg = process.argv.indexOf("--port");
-  const port = portArg !== -1 ? Number(process.argv[portArg + 1]) : 9778;
-  const server = await startFakeGcsFixtures({ port });
+  const server = await startFakeGcsFixtures(
+    portArg !== -1 ? { port: Number(process.argv[portArg + 1]) } : {},
+  );
   console.log(`[fake-gcs-fixtures] serving ${server.bucketsRoot}`);
   console.log(`[fake-gcs-fixtures] GCS JSON API → ${server.url}`);
   console.log(
