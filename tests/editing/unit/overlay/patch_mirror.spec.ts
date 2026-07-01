@@ -21,7 +21,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { LocalPatchStore } from "#src/editing/local_patch_store.js";
 import { PatchMirror } from "#src/editing/overlay/patch_mirror.js";
 
-import { FakeLogger } from "#tests/editing/fixtures/fake_logger.js";
+import { FakeLogger } from "#tests/editing/fakes/fake_logger.js";
 
 const TARGET_LAYER = layerId("L1");
 const RES = Resolution.from([8, 8, 40]);

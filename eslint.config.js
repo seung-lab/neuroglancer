@@ -123,10 +123,11 @@ export default tseslint.config(
     },
   },
   {
-    // Node scripts (the paint-benchmark static server) run under Node, not the
-    // browser — provide Node globals so `process`/`console`/`URL` resolve.
-    // Scoped to the bench `.mjs` so browser code is unaffected.
-    files: ["tests/editing/bench/**/*.mjs"],
+    // Node scripts (the paint-benchmark static server, the e2e fixture/fake-gcs
+    // harness) run under Node, not the browser — provide Node globals so
+    // `process`/`console`/`URL` resolve. Scoped to these `.mjs` so browser code
+    // is unaffected.
+    files: ["tests/editing/bench/**/*.mjs", "tests/editing/harness/**/*.mjs"],
     languageOptions: {
       globals: globals.node,
     },

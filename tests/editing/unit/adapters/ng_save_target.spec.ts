@@ -30,8 +30,8 @@ import {
   unregisterSaveBackend,
 } from "#src/editing/adapters/save_backend.js";
 
-import { FakeLayerManager } from "#tests/editing/fixtures/fake_layer_manager.js";
-import { FakeLogger } from "#tests/editing/fixtures/fake_logger.js";
+import { FakeLayerManager } from "#tests/editing/fakes/fake_layer_manager.js";
+import { FakeLogger } from "#tests/editing/fakes/fake_logger.js";
 
 const RESOLUTION = Resolution.from([8, 8, 40]);
 

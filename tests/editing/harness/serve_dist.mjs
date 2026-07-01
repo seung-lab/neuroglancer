@@ -19,9 +19,9 @@
  * → SharedArrayBuffer + self-hosted pyodide work. Same-origin subresources also
  * get `Cross-Origin-Resource-Policy: cross-origin` so COEP lets them load.
  *
- * Run (the bench config's webServer does this):  node tests/editing/bench/serve_dist.mjs
+ * Run (the bench config's webServer does this):  node tests/editing/harness/serve_dist.mjs
  * Port via BENCH_PORT (default 9777). Exits with a clear error if the build is
- * missing — run `npm run build:zetta` first (or `npm run bench:paint`).
+ * missing — run `npm run build:zetta` first (or `npm run e2e`).
  */
 
 import { existsSync, statSync } from "node:fs";
@@ -39,7 +39,7 @@ const INDEX = path.join(ROOT, "index.html");
 if (!existsSync(INDEX)) {
   console.error(
     `[bench-serve] no built client at ${ROOT}\n` +
-      `Run a prod build first:  npm run build:zetta   (or just: npm run bench:paint)`,
+      `Run a prod build first:  npm run build:zetta   (or just: npm run e2e)`,
   );
   process.exit(1);
 }
