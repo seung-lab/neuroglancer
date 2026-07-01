@@ -352,8 +352,12 @@ function parseGrapheneMultiscaleVolumeInfo(
 }
 
 // Frontend chunk source that pairs with CalcadaVolumeChunkSource backend.
-// Uses the calcada RPC_ID ("graphene/VolumeChunkSource") so the backend
-// can intercept downloads and extract the piece→root LUT trailer.
+// Uses the calcada-specific RPC_ID ("calcada/VolumeChunkSource") so the
+// backend can intercept downloads and extract the piece→root LUT trailer.
+// This id MUST stay distinct from graphene's ("graphene/VolumeChunkSource"):
+// both datasources register shared objects into one global last-write-wins
+// map, so a shared id would make calcada silently shadow graphene (see the
+// note in calcada/base.ts).
 class CalcadaVolumeChunkSource extends WithParameters(
   WithSharedKvStoreContext(VolumeChunkSource),
   CalcadaVolumeChunkSourceParameters,
