@@ -18,7 +18,7 @@ import {
   type EditSessionIntent,
 } from "#src/editing/edit_session_host.js";
 
-import { createFakeViewer } from "#tests/editing/fixtures/fake_viewer.js";
+import { createFakeViewer } from "#tests/editing/fakes/fake_viewer.js";
 
 // The host module transitively imports `src/webgl/shader_lib.ts`, which reads
 // `WebGL2RenderingContext.UNSIGNED_BYTE` etc. at module-eval time. Stub the

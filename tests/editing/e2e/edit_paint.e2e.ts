@@ -23,7 +23,7 @@
  *
  * Setup that can't be satisfied offline (missing prod build, ungenerated
  * fixtures, no WebGL2) fails fast in `beforeAll` and SKIPS the asserts with a
- * clear reason — run `npm run bench:correctness`.
+ * clear reason — run `npm run e2e`.
  */
 
 import { mkdirSync } from "node:fs";
@@ -45,7 +45,7 @@ import {
   type FixtureGcs,
 } from "#tests/editing/harness/e2e_setup.js";
 
-const PORT = Number(process.env.CORRECTNESS_PORT ?? 9782);
+const PORT = Number(process.env.EDITING_APP_PORT ?? 9777);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 interface ReadbackShape {

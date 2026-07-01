@@ -19,14 +19,14 @@
  *
  * Each {case × brush size} is its OWN Playwright test (a tree of
  * `masked-brush › brush 1025`, …) so they show up — and can be run/inspected —
- * separately in the Playwright UI (`npm run bench:paint:ui`). The expensive
+ * separately in the Playwright UI (`npm run perf --ui`). The expensive
  * setup (page load · session · pyodide boot · chunk warmup) runs ONCE per worker
  * in `beforeAll`; every test then drives a single stroke on the shared page and
  * attaches its full sectioned `__paintProfiler` block.
  *
- * Run:  npm run bench:paint        (headless)
- *       npm run bench:paint:headed (real window — captures the ④ RENDER phase)
- *       npm run bench:paint:ui     (Playwright UI — per-config tests)
+ * Run:  npm run perf        (headless)
+ *       npm run perf:headed (real window — captures the ④ RENDER phase)
+ *       npm run perf --ui     (Playwright UI — per-config tests)
  *
  * ⚠ Benchmark, not a gating test. Needs the generated fixtures
  * (`uv run testdata/editing/generate.py`) + the prod build + WebGL2 + pyodide.
@@ -49,7 +49,7 @@ import {
   type FixtureGcs,
 } from "#tests/editing/harness/e2e_setup.js";
 
-const PORT = Number(process.env.BENCH_PORT ?? 9777);
+const PORT = Number(process.env.EDITING_APP_PORT ?? 9777);
 
 // Perf scenario: a representative EM-image + segmentation target on the LARGE
 // local fixture (2048² — room for the radius-up-to-512 sweep), with the real

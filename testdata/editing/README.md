@@ -52,14 +52,14 @@ IDs, never 0), so reads are reproducible run-to-run.
 
 ## End-to-end correctness suite
 
-All wired up — `npm run bench:correctness` (fixtures → build → run):
+All wired up — `npm run e2e` (fixtures → build → run):
 
 - `tests/editing/harness/gcs_route.ts` route-rewrites the app's
   `storage.googleapis.com` reads onto the local fake-gcs (COEP-safe `fulfill`).
 - `tests/editing/harness/build_ng_state.ts` turns a scenario into the ngState.
 - `src/editing/benchmarks/edit_paint_bench.ts` drives a deterministic stamp and
   reads back the painted voxels (`src/editing/benchmarks/patch_readback.ts`).
-- `tests/editing/bench/edit_paint_correctness.spec.ts` ties it together:
+- `tests/editing/e2e/edit_paint.e2e.ts` ties it together:
   load → stamp → assert count / value / region-containment / deterministic
   signature, per scenario (incl. the offset target).
 

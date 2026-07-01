@@ -13,7 +13,7 @@ import type { LayerManager } from "#src/layer/index.js";
 import { EventActionMap } from "#src/util/event_action_map.js";
 import type { Viewer } from "#src/viewer.js";
 
-import { FakeLayerManager } from "#tests/editing/fixtures/fake_layer_manager.js";
+import { FakeLayerManager } from "#tests/editing/fakes/fake_layer_manager.js";
 
 /**
  * Minimal stand-in for `Viewer` exposing only the fields read by
