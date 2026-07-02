@@ -9,7 +9,7 @@
  */
 
 import type { EditSession } from "@zettaai/edit-session";
-import { Copy, LocateFixed } from "lucide-preact";
+import { Copy, LocateFixed, TriangleAlert } from "lucide-preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 
 import {
@@ -70,6 +70,11 @@ function SummaryBody({
   intent: EditSessionIntent;
 }) {
   const layerManager = host.viewer.layerManager;
+  // Layers whose bounds (voxel_offset + size) don't contain the edit region
+  // (TM-360). Non-empty only for a restored/hand-edited session (a fresh open
+  // is blocked at the entry modal); painting into them is disabled, so warn the
+  // user here.
+  const incompatible = useWatchable(host.incompatibleLayers);
 
   // Each session layer is locked in memory (reference) or writable (editable);
   // a layer is never "off" inside an open session. Build the read-only row
@@ -91,6 +96,20 @@ function SummaryBody({
   return (
     <div class="neuroglancer-tool-panel neuroglancer-navigation-summary-panel">
       <RegionSection host={host} region={intent.region} />
+      {incompatible.size > 0 && (
+        <div class="neuroglancer-navigation-summary-warning" role="alert">
+          <TriangleAlert size={14} aria-hidden="true" />
+          <span>
+            The edit region is outside{" "}
+            {incompatible.size === 1 ? "layer " : "layers "}
+            {[...incompatible].join(", ")}
+            {incompatible.size === 1 ? "'s" : "'"} bounds (voxel_offset + size)
+            — painting into {incompatible.size === 1 ? "it" : "them"} is
+            disabled. Re-enter the session with a region within the layer's
+            bounds.
+          </span>
+        </div>
+      )}
       <div class="neuroglancer-edit-session-entry-modal-section-title">
         Layers
       </div>

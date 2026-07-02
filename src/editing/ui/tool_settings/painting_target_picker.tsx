@@ -43,6 +43,12 @@ export function PaintingTargetPicker({ host }: { host: EditSessionHost }) {
   const selectedId = useParamSelection(host);
   const selectParam = useParamFocus(host);
 
+  // A restored session can include writable layers whose `voxel_offset + size`
+  // bounds don't contain the edit region (TM-360). Painting into them clips to
+  // nothing, so they can't be a target — but we DISABLE them here rather than
+  // hide them, so the control keeps its place and the reason stays discoverable.
+  // A fresh open is blocked at the entry modal, so this only bites on restore.
+  const incompatible = useWatchable(host.incompatibleLayers);
   const intent = host.state.value.value;
   const writable =
     intent === null ? [] : intent.layers.filter((l) => l.writable);
@@ -51,9 +57,16 @@ export function PaintingTargetPicker({ host }: { host: EditSessionHost }) {
     return null;
   }
 
+  const selectable = writable.filter((l) => !incompatible.has(l.layerId));
+  // No writable layer's bounds contain the region — the picker is inert.
+  const allBlocked = selectable.length === 0;
+
   const state = painting.getState();
   const currentLayer =
-    writable.find((l) => l.layerId === state.targetLayerId) ?? writable[0];
+    selectable.find((l) => l.layerId === state.targetLayerId) ??
+    selectable[0] ??
+    writable.find((l) => l.layerId === state.targetLayerId) ??
+    writable[0];
   const layerResolutions = currentLayer.resolutions;
   const currentResolution = layerResolutions.includes(state.targetResolution)
     ? state.targetResolution
@@ -62,7 +75,7 @@ export function PaintingTargetPicker({ host }: { host: EditSessionHost }) {
   const onLayerChange = (e: Event) => {
     const value = (e.currentTarget as HTMLSelectElement).value;
     const next = writable.find((l) => l.layerId === value);
-    if (next === undefined) return;
+    if (next === undefined || incompatible.has(next.layerId)) return;
     const nextResolution = next.resolutions.includes(state.targetResolution)
       ? state.targetResolution
       : next.resolutions[0];
@@ -92,10 +105,24 @@ export function PaintingTargetPicker({ host }: { host: EditSessionHost }) {
           text="Target layer"
           hint="The segmentation layer your paint strokes are written to. Only writable (Editable) layers from the session appear here."
         />
-        <select value={currentLayer.layerId} onChange={onLayerChange}>
+        <select
+          value={currentLayer.layerId}
+          onChange={onLayerChange}
+          disabled={allBlocked}
+          title={
+            allBlocked
+              ? "No editable layer's bounds contain the edit region — re-enter the session with an overlapping region."
+              : undefined
+          }
+        >
           {writable.map((l: { layerId: LayerId }) => (
-            <option key={l.layerId} value={l.layerId}>
+            <option
+              key={l.layerId}
+              value={l.layerId}
+              disabled={incompatible.has(l.layerId)}
+            >
               {l.layerId}
+              {incompatible.has(l.layerId) ? " (region outside bounds)" : ""}
             </option>
           ))}
         </select>
@@ -120,7 +147,11 @@ export function PaintingTargetPicker({ host }: { host: EditSessionHost }) {
             {currentResolution}
           </span>
         ) : (
-          <select value={currentResolution} onChange={onResolutionChange}>
+          <select
+            value={currentResolution}
+            onChange={onResolutionChange}
+            disabled={allBlocked}
+          >
             {layerResolutions.map((r) => (
               <option key={r} value={r}>
                 {r}
