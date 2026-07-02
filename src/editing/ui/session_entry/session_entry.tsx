@@ -28,6 +28,10 @@ import type {
   EditSessionHost,
   HostSessionConfig,
 } from "#src/editing/edit_session_host.js";
+import {
+  checkLayerCompat,
+  formatNmBounds,
+} from "#src/editing/region/edit_target_compat.js";
 import { validateRememberedResolutions } from "#src/editing/tooling/edit_preferences.js";
 import { useModalDialog } from "#src/editing/ui/interop/use_modal_dialog.js";
 import { useSignal } from "#src/editing/ui/interop/use_signal.js";
@@ -346,6 +350,55 @@ function SessionEntryModalBody(props: {
     };
   }, [layerStates, metadataSource]);
 
+  // Per-layer region compatibility (TM-360). When the edit region falls outside
+  // a layer's addressable bounds (`voxel_offset + size` from its info), the
+  // layer can't take part — so we block it to Off-only exactly like an
+  // unsupported data-source scheme (calcada/graphene): the Reference/Editable
+  // segments disable and a hover tooltip explains why. Recomputed whenever the
+  // region or a layer's resolved metadata changes. Compared in nm — the region
+  // grid and a layer's grid can differ in scale and origin, so a raw voxel
+  // comparison would be meaningless.
+  const regionBlockedLayers = useMemo(() => {
+    const map = new Map<string, string>();
+    if (selectedBbox === undefined) return map;
+    for (const [name, metadata] of metadataByLayer) {
+      const { status, regionNm, layerNm } = checkLayerCompat(
+        selectedBbox.voxelBbox,
+        selectedBbox.regionSpace,
+        metadata,
+      );
+      if (status === "none") {
+        map.set(
+          name,
+          `Edit region is outside this layer's bounds ` +
+            `(voxel_offset + size). Region ${formatNmBounds(regionNm)}; ` +
+            `layer bounds ${formatNmBounds(layerNm)}. Only Off is available — ` +
+            `move the region or pick a layer whose bounds contain it.`,
+        );
+      }
+    }
+    return map;
+  }, [selectedBbox, metadataByLayer]);
+
+  // Clamp a layer to Off when it becomes region-incompatible (e.g. the user
+  // switched to a non-overlapping region after marking it Editable), mirroring
+  // the blocked-scheme clamp above.
+  useEffect(() => {
+    if (regionBlockedLayers.size === 0) return;
+    setLayerStates((prev) => {
+      let changed = false;
+      const next = new Map(prev);
+      for (const name of regionBlockedLayers.keys()) {
+        const s = next.get(name);
+        if (s !== undefined && s.role !== "off") {
+          next.set(name, { ...s, role: "off" });
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [regionBlockedLayers]);
+
   const setRole = useCallback((name: string, role: LayerRole) => {
     setLayerStates((prev) => {
       const next = new Map(prev);
@@ -567,6 +620,7 @@ function SessionEntryModalBody(props: {
                         name={entry.name}
                         layerKind={entry.kind}
                         blockedScheme={entry.blockedScheme}
+                        regionBlockReason={regionBlockedLayers.get(entry.name)}
                         state={state}
                         resolutionModel={resolutionModelsRef.current.get(
                           entry.name,
