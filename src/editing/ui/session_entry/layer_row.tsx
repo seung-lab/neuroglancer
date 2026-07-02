@@ -77,6 +77,7 @@ export function LayerRow({
   name,
   layerKind,
   blockedScheme,
+  regionBlockReason,
   state,
   resolutionModel,
   onRoleChange,
@@ -85,6 +86,14 @@ export function LayerRow({
   name: string;
   layerKind: LayerKind;
   blockedScheme: BlockedScheme | undefined;
+  /**
+   * Set when the edit region falls outside the layer's `voxel_offset + size`
+   * bounds (TM-360). Blocks the layer to Off-only exactly like `blockedScheme`
+   * — the string is the hover tooltip on the disabled Reference/Editable
+   * segments. Region-dependent, so it clears when the user picks a region the
+   * layer's bounds contain.
+   */
+  regionBlockReason?: string;
   state: LayerRowState;
   resolutionModel: ResolutionSelectionModel | undefined;
   onRoleChange: (role: LayerRole) => void;
@@ -178,6 +187,7 @@ export function LayerRow({
           role={state.role}
           layerKind={layerKind}
           blockedScheme={blockedScheme}
+          regionBlockReason={regionBlockReason}
           onChange={onRoleChange}
         />
       )}
@@ -219,32 +229,36 @@ function RoleControl({
   role,
   layerKind,
   blockedScheme,
+  regionBlockReason,
   onChange,
 }: {
   role: LayerRole;
   layerKind: LayerKind;
   blockedScheme: BlockedScheme | undefined;
+  regionBlockReason: string | undefined;
   onChange: (role: LayerRole) => void;
 }) {
-  const blockedTooltip =
-    blockedScheme === undefined
-      ? undefined
-      : blockedSchemeTooltip(blockedScheme);
-  const editableDisabled =
-    blockedTooltip !== undefined || layerKind === "image";
+  // Both an unsupported scheme (calcada/graphene) and a region the layer holds
+  // no data for (TM-360) block the layer to Off-only; the scheme reason wins
+  // when both apply (it's the more fundamental problem).
+  const blockTooltip =
+    blockedScheme !== undefined
+      ? blockedSchemeTooltip(blockedScheme)
+      : regionBlockReason;
+  const editableDisabled = blockTooltip !== undefined || layerKind === "image";
   const segments: readonly RoleSegmentSpec[] = [
     { value: "off", label: "Off", tooltip: ROLE_TOOLTIP.off, disabled: false },
     {
       value: "reference",
       label: "Reference",
-      tooltip: blockedTooltip ?? ROLE_TOOLTIP.reference,
-      disabled: blockedTooltip !== undefined,
+      tooltip: blockTooltip ?? ROLE_TOOLTIP.reference,
+      disabled: blockTooltip !== undefined,
     },
     {
       value: "editable",
       label: "Editable",
       tooltip:
-        blockedTooltip ??
+        blockTooltip ??
         (editableDisabled ? EDITABLE_DISABLED_TOOLTIP : ROLE_TOOLTIP.editable),
       disabled: editableDisabled,
     },
