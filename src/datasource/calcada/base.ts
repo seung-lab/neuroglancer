@@ -31,7 +31,15 @@ import type { mat4 } from "#src/util/geom.js";
 import type { FetchOk, HttpError } from "#src/util/http_request.js";
 
 export const PYCG_APP_VERSION = 1;
-export const GRAPHENE_MESH_NEW_SEGMENT_RPC_ID = "GrapheneMeshSource:NewSegment";
+// NOTE: every RPC_ID / shared-object identifier below MUST be calcada-specific.
+// `registerSharedObject`/`registerRPC` keep a single global id->class map with
+// last-write-wins semantics, and both graphene and calcada backend modules are
+// always loaded together (see enabled_backend_modules.ts). Reusing graphene's
+// ids (e.g. "ChunkedGraphLayer", "graphene/VolumeChunkSource") makes calcada's
+// classes silently shadow graphene's for ALL layers — which broke graphene
+// segmentation slice coloring (calcada's leaves-less ChunkedGraphLayer stub
+// replaced graphene's real leaves-fetching one, so equivalences never loaded).
+export const GRAPHENE_MESH_NEW_SEGMENT_RPC_ID = "CalcadaMeshSource:NewSegment";
 export const CALCADA_BULK_LINK_RPC_ID = "CalcadaChunkedGraphLayer:BulkLink";
 
 export enum VolumeChunkEncoding {
@@ -61,13 +69,13 @@ export class VolumeChunkSourceParameters {
   // the disjoint set).
   generation: number;
 
-  static RPC_ID = "graphene/VolumeChunkSource";
+  static RPC_ID = "calcada/VolumeChunkSource";
 }
 
 export class ChunkedGraphSourceParameters {
   url: string;
 
-  static RPC_ID = "graphene/ChunkedGraphSource";
+  static RPC_ID = "calcada/ChunkedGraphSource";
 }
 
 export class MeshSourceParameters {
@@ -78,7 +86,7 @@ export class MeshSourceParameters {
   nBitsForLayerId: number;
   branchId: number;
 
-  static RPC_ID = "graphene/MeshSource";
+  static RPC_ID = "calcada/MeshSource";
 }
 
 export class MultiscaleMeshMetadata {
@@ -103,9 +111,9 @@ export function getGrapheneFragmentKey(fragmentId: string) {
   return { key: fragmentId, fragmentId: fragmentId };
 }
 
-export const CHUNKED_GRAPH_LAYER_RPC_ID = "ChunkedGraphLayer";
+export const CHUNKED_GRAPH_LAYER_RPC_ID = "CalcadaChunkedGraphLayer";
 export const CHUNKED_GRAPH_RENDER_LAYER_UPDATE_SOURCES_RPC_ID =
-  "ChunkedGraphLayer:updateSources";
+  "CalcadaChunkedGraphLayer:updateSources";
 export const RENDER_RATIO_LIMIT = 5.0;
 
 export interface ChunkedGraphChunkSpecificationBaseOptions

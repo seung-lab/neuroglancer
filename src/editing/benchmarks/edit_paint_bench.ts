@@ -29,6 +29,10 @@
  * reusable, verified pieces are `paintProfiler.snapshot()/resetWindow()`.
  */
 
+import {
+  summarizePatchedVoxels,
+  type PatchReadbackSummary,
+} from "#src/editing/benchmarks/patch_readback.js";
 import { paintProfiler } from "#src/editing/tool_runtimes/paint_profiler.js";
 
 /** One {case × size} measurement. */
@@ -511,6 +515,234 @@ export function finishEditPaintBench(): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Read-back (TM-331, phase 2) — turn the painted overlay into an assertable
+// summary so the e2e spec can check CORRECTNESS (not just perf): what voxels
+// landed, their values, a bbox, and a stable signature for regression.
+// ---------------------------------------------------------------------------
+
+export interface EditPaintReadback extends PatchReadbackSummary {
+  /** The target layer the patches were read from. */
+  readonly targetLayerId: unknown;
+  /** Set when the target layer's patch store could not be resolved. */
+  readonly error?: string;
+}
+
+/** Resolve the active target layer's `LocalPatchStore` (best-effort). */
+function targetPatchStore(host: Any): { layerId: unknown; store: Any } {
+  const layerId = host?.painting?.state?.getState?.()?.targetLayerId;
+  const store = host?.perLayer?.get?.(layerId)?.patchStore;
+  return { layerId, store };
+}
+
+/**
+ * Read the painted voxels currently in the target layer's overlay patch store
+ * and summarize them (count · bbox · distinct values · stable signature). This
+ * reflects exactly what a save would persist for the target.
+ */
+export function readbackEditPaintTarget(
+  opts: {
+    maxVoxels?: number;
+    sampleSize?: number;
+    originOffset?: readonly [number, number, number];
+  } = {},
+): EditPaintReadback {
+  const viewer = (globalThis as unknown as { viewer?: Any }).viewer;
+  const host = viewer?.editSessionHost;
+  const { layerId, store } = targetPatchStore(host);
+  if (store?.source?.chunks === undefined) {
+    return {
+      targetLayerId: layerId,
+      error: "no patch store for the active target layer",
+      paintedVoxels: 0,
+      chunkCount: 0,
+      bbox: null,
+      signature: "00000000",
+      distinctValues: [],
+      sample: [],
+      truncated: false,
+    };
+  }
+  const summary = summarizePatchedVoxels(store.source.chunks.entries(), opts);
+  return { targetLayerId: layerId, ...summary };
+}
+
+/**
+ * Drop every patch in the target layer's overlay so the next stamp's read-back
+ * is isolated. Test hygiene only (the harness inspects, never saves), so the
+ * session dirty/baseline bookkeeping is intentionally left untouched.
+ */
+export function clearEditPaintTargetPatches(): boolean {
+  const viewer = (globalThis as unknown as { viewer?: Any }).viewer;
+  const host = viewer?.editSessionHost;
+  const { store } = targetPatchStore(host);
+  if (store?.clearAll === undefined) return false;
+  store.clearAll();
+  return true;
+}
+
+export interface StampReadbackInput {
+  /** Apply the loaded threshold/morphology mask preset (default false). */
+  readonly masked?: boolean;
+  /** Brush radius in voxels (default 8 — small, for a deterministic read-back). */
+  readonly radius?: number;
+  /** Erase instead of paint (default false). */
+  readonly erase?: boolean;
+  /** Fractional panel position of the stamp (default centre). */
+  readonly fracX?: number;
+  readonly fracY?: number;
+  /** Clear the target's existing patches first, so read-back is just this stamp. */
+  readonly clearFirst?: boolean;
+  /**
+   * Discarded warm-up stamps before the measured one, to settle async brush-param
+   * (radius/mask) propagation so the measure is deterministic. Default 2; only
+   * applied when `clearFirst` (a fresh measure).
+   */
+  readonly prime?: number;
+  readonly settleTimeoutMs?: number;
+  readonly maxVoxels?: number;
+  readonly sampleSize?: number;
+  /**
+   * Added to read-back coordinates to report ABSOLUTE global voxels (the patch
+   * store is offset-relative). Pass the target layer's scale `voxelOffset` so the
+   * bbox is comparable to the edit region.
+   */
+  readonly originOffset?: readonly [number, number, number];
+}
+
+/**
+ * Wait until the target's painted-voxel count stops changing across consecutive
+ * polls (the overlay write settles AFTER `handleInput`'s promise resolves, so a
+ * profiler-based settle can race it), and return the final count. Gives up fast
+ * when nothing is painting — a mis-registered stamp would otherwise spin the
+ * whole timeout (that was the multi-minute hang). `zeroGiveupMs` bounds the
+ * "still empty" wait (kept above pyodide's cold-boot so a masked stamp isn't
+ * abandoned mid-boot).
+ */
+async function waitForPaintStable(
+  timeoutMs: number,
+  zeroGiveupMs = 5000,
+): Promise<number> {
+  const viewer = (globalThis as unknown as { viewer?: Any }).viewer;
+  const host = viewer?.editSessionHost;
+  const start = performance.now();
+  let prev = -1;
+  let stable = 0;
+  let zeroMs = 0;
+  while (performance.now() - start < timeoutMs) {
+    await delay(80);
+    const { store } = targetPatchStore(host);
+    const count =
+      typeof store?.countPatchedVoxels === "function"
+        ? store.countPatchedVoxels()
+        : 0;
+    if (count === 0) {
+      zeroMs += 80;
+      if (zeroMs >= zeroGiveupMs) return 0;
+      stable = 0;
+      prev = 0;
+      continue;
+    }
+    zeroMs = 0;
+    if (count === prev) {
+      if (++stable >= 3) return count;
+    } else {
+      stable = 0;
+    }
+    prev = count;
+  }
+  return prev < 0 ? 0 : prev;
+}
+
+/**
+ * Drive ONE deterministic stamp at a fixed panel position (not the sweeping
+ * perf stroke) through the full real stack, then read back the painted result.
+ * This is the correctness primitive: same inputs ⇒ same `signature`.
+ */
+export async function stampAndReadbackEditPaint(
+  input: StampReadbackInput = {},
+): Promise<EditPaintReadback & { strokeFired: boolean }> {
+  const viewer = (globalThis as unknown as { viewer?: Any }).viewer;
+  const host = viewer?.editSessionHost;
+  try {
+    await waitForActiveSession(host, 120000);
+    const ps = host.painting.state;
+    if (presetMask === undefined) presetMask = ps.getState().mask;
+    ps.patchState({
+      radius: input.radius ?? 8,
+      mask: input.masked ? presetMask : undefined,
+    });
+    host.selectTool(input.erase ? "painting.erase" : "painting.brush");
+    await nextFrame();
+
+    const el = findDispatchTarget();
+    const rect = el.getBoundingClientRect();
+    const x = rect.left + rect.width * (input.fracX ?? 0.5);
+    const y = rect.top + rect.height * (input.fracY ?? 0.5);
+    // Bounded (was 60s) — a mis-registered stamp used to spin the full minute
+    // per stamp; `waitForPaintStable` also gives up fast on zero paint.
+    const settleMs = input.settleTimeoutMs ?? 15000;
+    const doStamp = async (): Promise<number> => {
+      dispatchStamp(el, x, y);
+      await waitForSettle(settleMs);
+      // The overlay write lands after the apply promise; wait for the painted
+      // count to settle so the read-back is deterministic (not a race).
+      return waitForPaintStable(settleMs);
+    };
+
+    // Brush-param changes (radius/mask) propagate to the tool asynchronously, so
+    // the FIRST stamp after a change can paint with the stale value (radius lag).
+    // On a fresh measure, prime with discarded stamp(s) so the measured stamp
+    // uses the settled params. Skipped when clearFirst=false (e.g. erase-after-
+    // paint, which must keep the prior stamp).
+    const clearFirst = input.clearFirst ?? true;
+    if (clearFirst) {
+      const primes = input.prime ?? 1;
+      for (let i = 0; i < primes; i++) {
+        clearEditPaintTargetPatches();
+        const n = await doStamp();
+        console.log(`[editPaintBench] prime ${i + 1}/${primes}: painted=${n}`);
+      }
+      clearEditPaintTargetPatches();
+      await nextFrame();
+    }
+
+    paintProfiler.enabled = true;
+    paintProfiler.resetWindow();
+    const measured = await doStamp();
+    console.log(`[editPaintBench] measure: painted=${measured}`);
+
+    const readback = readbackEditPaintTarget({
+      maxVoxels: input.maxVoxels,
+      sampleSize: input.sampleSize,
+      originOffset: input.originOffset,
+    });
+    // A real registration = something was painted, or (for a legitimately-empty
+    // masked stamp) any profiler activity. The old `4.handleInput(total)` bucket
+    // only fires on pointer-MOVE, so a single down-stamp read false — hence this.
+    const strokeFired =
+      readback.paintedVoxels > 0 ||
+      Object.keys(paintProfiler.snapshot().buckets).length > 0;
+    return { ...readback, strokeFired };
+  } catch (e) {
+    return {
+      targetLayerId: undefined,
+      error: e instanceof Error ? e.message : String(e),
+      paintedVoxels: 0,
+      chunkCount: 0,
+      bbox: null,
+      signature: "00000000",
+      distinctValues: [],
+      sample: [],
+      truncated: false,
+      strokeFired: false,
+    };
+  } finally {
+    paintProfiler.enabled = false;
+    paintProfiler.resetWindow();
+  }
+}
+
 /** Convenience: full sweep in one call (the spec prefers prepare + step). */
 export async function runEditPaintBench(
   opts: EditPaintBenchOptions = {},
@@ -545,4 +777,8 @@ Object.assign(globalThis as unknown as Record<string, unknown>, {
   __editPaintBenchWarmup: warmupEditPaintBench,
   __editPaintBenchStep: stepEditPaintBench,
   __editPaintBenchFinish: finishEditPaintBench,
+  // TM-331 phase 2 — correctness read-back.
+  __editPaintBenchReadback: readbackEditPaintTarget,
+  __editPaintBenchStampReadback: stampAndReadbackEditPaint,
+  __editPaintBenchClearTarget: clearEditPaintTargetPatches,
 });

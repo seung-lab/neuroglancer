@@ -16,8 +16,8 @@ import {
   type EditSessionIntent,
 } from "#src/editing/edit_session_host.js";
 
-import { FakeLayerManager } from "#tests/editing/fixtures/fake_layer_manager.js";
-import { createFakeViewer } from "#tests/editing/fixtures/fake_viewer.js";
+import { FakeLayerManager } from "#tests/editing/fakes/fake_layer_manager.js";
+import { createFakeViewer } from "#tests/editing/fakes/fake_viewer.js";
 
 // `EditSessionHost`'s module graph transitively imports
 // `src/webgl/shader_lib.ts`, which reads `WebGL2RenderingContext.*` at

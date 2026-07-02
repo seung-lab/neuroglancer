@@ -1,0 +1,82 @@
+[
+  {
+    "id": "img_u8_raw",
+    "kind": "image",
+    "dtype": "uint8",
+    "encoding": "raw",
+    "chunk": [64, 64, 16],
+    "offset": [0, 0, 0],
+    "size": [128, 128, 16],
+    "resolutions": [[16, 16, 40]]
+  },
+  {
+    "id": "seg_u64_cseg",
+    "kind": "segmentation",
+    "dtype": "uint64",
+    "encoding": "compressed_segmentation",
+    "chunk": [64, 64, 16],
+    "offset": [0, 0, 0],
+    "size": [128, 128, 16],
+    "resolutions": [[16, 16, 40]]
+  },
+  {
+    "id": "seg_u32_raw_offset",
+    "kind": "segmentation",
+    "dtype": "uint32",
+    "encoding": "raw",
+    "chunk": [64, 64, 16],
+    "offset": [128, 128, 8],
+    "size": [128, 128, 16],
+    "resolutions": [[16, 16, 40]]
+  },
+  {
+    "id": "img_u8_jpeg",
+    "kind": "image",
+    "dtype": "uint8",
+    "encoding": "jpeg",
+    "chunk": [64, 64, 1],
+    "offset": [0, 0, 0],
+    "size": [128, 128, 8],
+    "resolutions": [[16, 16, 40]]
+  },
+  {
+    "id": "seg_u64_multires",
+    "kind": "segmentation",
+    "dtype": "uint64",
+    "encoding": "compressed_segmentation",
+    "chunk": [64, 64, 16],
+    "offset": [0, 0, 0],
+    "size": [128, 128, 16],
+    "resolutions": [[16, 16, 40], [32, 32, 40]]
+  },
+  {
+    "id": "seg_u8_bigchunk",
+    "kind": "segmentation",
+    "dtype": "uint8",
+    "encoding": "raw",
+    "chunk": [8192, 128, 1],
+    "offset": [0, 0, 0],
+    "size": [8192, 128, 1],
+    "resolutions": [[16, 16, 40]]
+  },
+  {
+    "id": "perf_img_u8_raw",
+    "kind": "image",
+    "dtype": "uint8",
+    "encoding": "raw",
+    "chunk": [512, 512, 1],
+    "offset": [0, 0, 0],
+    "size": [2048, 2048, 4],
+    "resolutions": [[16, 16, 40]]
+  },
+  {
+    "id": "perf_seg_u64_cseg",
+    "kind": "segmentation",
+    "dtype": "uint64",
+    "encoding": "compressed_segmentation",
+    "chunk": [512, 512, 1],
+    "offset": [0, 0, 0],
+    "size": [2048, 2048, 4],
+    "resolutions": [[16, 16, 40]]
+  }
+]
