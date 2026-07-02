@@ -173,6 +173,100 @@ describe("fetchBaselineWithRetry", () => {
   });
 });
 
+/**
+ * Fake `VolumeChunkSource` for the edge-chunk padding path (TM-353): `spec`
+ * carries the NOMINAL `chunkDataSize`; `fetchChunk` hands the transform a chunk
+ * with the given `data` and (optionally) an edge-clipped `chunkDataSize`,
+ * mimicking how NG exposes a boundary chunk's actual extent on
+ * `VolumeChunk.chunkDataSize`.
+ */
+function makeEdgeSource(
+  data: ArrayBufferView | null,
+  opts: { chunkDataSize: number[]; clipped?: number[] },
+): VolumeChunkSource {
+  const source = {
+    spec: {
+      rank: 3,
+      chunkDataSize: opts.chunkDataSize,
+      dataType: DataType.UINT8,
+      compressedSegmentationBlockSize: undefined,
+    },
+    async fetchChunk(
+      _grid: Float32Array,
+      transform: (chunk: unknown) => ChunkVoxelBuffer,
+    ): Promise<ChunkVoxelBuffer> {
+      const chunk =
+        opts.clipped === undefined
+          ? { data }
+          : { data, chunkDataSize: Uint32Array.from(opts.clipped) };
+      return transform(chunk);
+    },
+  };
+  return source as unknown as VolumeChunkSource;
+}
+
+describe("decodeBaselineChunk edge-chunk padding (TM-353)", () => {
+  it("pads a boundary chunk (data smaller than nominal) into the low corner", async () => {
+    // NG decodes this 4x4 chunk clipped to its 2x2 data extent; the library
+    // indexes slots with the nominal 4x4 stride, so the baseline must be the
+    // full 16-voxel nominal buffer with the 2x2 data in the corner and zeros
+    // elsewhere — otherwise the nominal-stride write/fuse overruns the 4-voxel
+    // clipped buffer.
+    const source = makeEdgeSource(Uint8Array.from([1, 2, 3, 4]), {
+      chunkDataSize: [4, 4, 1],
+      clipped: [2, 2, 1],
+    });
+
+    const result = await fetchBaselineWithRetry(source, COORD, GRID, undefined);
+
+    expect(Array.from(result.asView() as Uint8Array)).toEqual([
+      1, 2, 0, 0, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ]);
+  });
+
+  it("leaves an interior chunk (already nominal) unchanged", async () => {
+    const full = Uint8Array.from([
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+    ]);
+    const source = makeEdgeSource(full, {
+      chunkDataSize: [4, 4, 1],
+      clipped: [4, 4, 1],
+    });
+
+    const result = await fetchBaselineWithRetry(source, COORD, GRID, undefined);
+
+    expect(Array.from(result.asView() as Uint8Array)).toEqual(Array.from(full));
+  });
+
+  it("pads a z-clipped chunk into the first slice", async () => {
+    // Nominal 2x2x2, data clipped to the first z-slice (2x2x1) → four voxels in
+    // slice 0, the second slice zero.
+    const source = makeEdgeSource(Uint8Array.from([1, 2, 3, 4]), {
+      chunkDataSize: [2, 2, 2],
+      clipped: [2, 2, 1],
+    });
+
+    const result = await fetchBaselineWithRetry(source, COORD, GRID, undefined);
+
+    expect(Array.from(result.asView() as Uint8Array)).toEqual([
+      1, 2, 3, 4, 0, 0, 0, 0,
+    ]);
+  });
+
+  it("zero-fills a sparse (null-data) edge chunk at the nominal size", async () => {
+    const source = makeEdgeSource(null, {
+      chunkDataSize: [4, 4, 1],
+      clipped: [2, 2, 1],
+    });
+
+    const result = await fetchBaselineWithRetry(source, COORD, GRID, undefined);
+
+    const view = result.asView() as Uint8Array;
+    expect(view.length).toBe(16);
+    expect(Array.from(view).every((v) => v === 0)).toBe(true);
+  });
+});
+
 const LAYER = "seg" as LayerId;
 const RES_8 = ResolutionCtor.from([8, 8, 8]);
 const CHUNK_ID = ChunkIdFactory.fromCoord({ x: 0, y: 0, z: 0 });

@@ -360,11 +360,19 @@ export class NgChunkSource implements LibraryChunkSource {
       return undefined;
     }
     const grid = makeChunkGridPosition(source, chunkCoord);
-    const { data } = await source.fetchFreshDecodedChunk(
+    // `fetchFreshDecodedChunk` returns the edge-clipped `chunkDataSize`; thread
+    // it through so `decodeBaselineChunk` pads boundary chunks to nominal (the
+    // resident-read path gets this from `VolumeChunk.chunkDataSize`). Without
+    // it the fresh-decoded baseline would be clipped-sized and mismatch the
+    // saved overlay bytes it's hashed against (TM-353 / TM-352).
+    const { data, chunkDataSize } = await source.fetchFreshDecodedChunk(
       grid,
       signal ?? new AbortController().signal,
     );
-    const decoded = decodeBaselineChunk(source, { data } as unknown as Chunk);
+    const decoded = decodeBaselineChunk(source, {
+      data,
+      chunkDataSize,
+    } as unknown as Chunk);
     return wrapAsReadonlyBuffer(decoded);
   }
 
@@ -548,40 +556,41 @@ function makeZeroFilledChunkBuffer(
 
 /**
  * Decode a compressed-segmentation chunk (`chunk.data` is the compressed block)
- * into a dense per-voxel buffer of the source's data type. NG transcodes
- * uint32/uint64 segmentation to this format for rendering; the edit library
- * needs the raw per-voxel values. `decodeChannels` is NG's CPU decoder; it runs
- * once per chunk per session (the overlay caches the materialized slot), so the
- * per-voxel cost is paid lazily and only for edited chunks.
+ * into a dense per-voxel buffer of the source's data type, at the chunk's
+ * `clippedSize`. NG transcodes uint32/uint64 segmentation to this format for
+ * rendering; the edit library needs the raw per-voxel values. `decodeChannels`
+ * is NG's CPU decoder; it runs once per chunk per session (the overlay caches
+ * the materialized slot), so the per-voxel cost is paid lazily and only for
+ * edited chunks.
+ *
+ * The decode MUST use the chunk's edge-clipped extent, not the nominal
+ * `chunkDataSize`: NG encodes a boundary chunk's compressed block for the
+ * clipped data only, so decoding it with nominal dims runs the block-index math
+ * off the end of the small compressed buffer (`offset is out of bounds`,
+ * TM-353). The returned buffer is therefore clipped-sized; `decodeBaselineChunk`
+ * pads it up to nominal.
  */
 function decodeCompressedSegmentationChunk(
   source: VolumeChunkSource,
   data: ChunkVoxelBuffer,
+  clippedSize: readonly [number, number, number],
 ): ChunkVoxelBuffer {
-  const { chunkDataSize, dataType, compressedSegmentationBlockSize } =
-    source.spec;
+  const { dataType, compressedSegmentationBlockSize } = source.spec;
   if (compressedSegmentationBlockSize === undefined) {
     return cloneTypedArray(data);
   }
-  let voxelCount = 1;
-  for (let i = 0; i < chunkDataSize.length; ++i) {
-    voxelCount *= chunkDataSize[i];
-  }
+  const [cx, cy, cz] = clippedSize;
+  const voxelCount = cx * cy * cz;
   const out =
     dataType === DataType.UINT64
       ? new BigUint64Array(voxelCount)
       : new Uint32Array(voxelCount);
-  // `decodeChannels` indexes `chunkDataSize[3]` for the channel count, but the
-  // spec's `chunkDataSize` is 3D `[x, y, z]` here. Segmentation (the only thing
-  // NG transcodes to compressed-segmentation) is single-channel, so pass an
-  // explicit 4D shape with one channel; otherwise `chunkDataSize[3]` is
-  // undefined and the decoder throws on a NaN expected length.
-  const chunkDataSize4d = [
-    chunkDataSize[0],
-    chunkDataSize[1],
-    chunkDataSize[2],
-    1,
-  ];
+  // `decodeChannels` indexes `chunkDataSize[3]` for the channel count.
+  // Segmentation (the only thing NG transcodes to compressed-segmentation) is
+  // single-channel, so pass an explicit 4D shape with one channel; otherwise
+  // `chunkDataSize[3]` is undefined and the decoder throws on a NaN expected
+  // length.
+  const chunkDataSize4d = [cx, cy, cz, 1];
   decodeChannels(
     out,
     data as Uint32Array,
@@ -590,6 +599,67 @@ function decodeCompressedSegmentationChunk(
     compressedSegmentationBlockSize,
   );
   return out as ChunkVoxelBuffer;
+}
+
+/**
+ * The chunk's edge-clipped voxel extent `[x, y, z]`. NG clips boundary chunks
+ * to the volume's data bounds, exposing the actual extent on
+ * `VolumeChunk.chunkDataSize` (`sliceview/volume/frontend.ts`). Falls back to
+ * the nominal `spec.chunkDataSize` when the size is absent (e.g. the
+ * `readFreshDecoded` `{ data }` path must supply it explicitly).
+ */
+function clippedSizeOf(
+  source: VolumeChunkSource,
+  chunk: Chunk,
+): [number, number, number] {
+  const clipped = (chunk as unknown as { chunkDataSize?: ArrayLike<number> })
+    .chunkDataSize;
+  const nominal = source.spec.chunkDataSize;
+  const dim = (i: number): number =>
+    clipped !== undefined && clipped[i] !== undefined ? clipped[i] : nominal[i];
+  return [dim(0), dim(1), dim(2)];
+}
+
+/**
+ * Pad a chunk buffer decoded at the edge-clipped `clippedSize` into a buffer of
+ * the source's NOMINAL `chunkDataSize`, with the clipped data in the low corner
+ * and the remainder zero. Returns `decoded` unchanged when the chunk already
+ * fills the nominal extent (every interior chunk — the common case).
+ *
+ * NG decodes boundary chunks clipped to the data extent, but the edit-session
+ * library indexes chunk slots with the nominal `chunkDataSize` (its
+ * `writeRegion`/overlay copy uses nominal strides), so every baseline the
+ * library sees must be nominal-sized. Handing it a clipped buffer makes the
+ * nominal-stride copy run off the end (`offset is out of bounds`) and breaks
+ * `PatchMirror.fuseOverlayIntoChunk`'s equal-length invariant (overlay/baseline
+ * clipped vs. patch chunk nominal) — the two TM-353 crashes. Padding to nominal
+ * fixes both without any change to the mirror, patch-texture cache, or shader:
+ * the patch texture stays nominal and the base render already clamps its sample
+ * to the clipped `uChunkDataSize` while indexing with nominal strides.
+ */
+function padChunkToNominal(
+  source: VolumeChunkSource,
+  decoded: ChunkVoxelBuffer,
+  clippedSize: readonly [number, number, number],
+): ChunkVoxelBuffer {
+  const nominal = source.spec.chunkDataSize;
+  const [cx, cy, cz] = clippedSize;
+  const [nx, ny, nz] = [nominal[0], nominal[1], nominal[2]];
+  if (cx === nx && cy === ny && cz === nz) return decoded;
+  const out = makeZeroFilledChunkBuffer(source);
+  // Blit row-by-row: clipped index `(z*cy + y)*cx + x` → nominal index
+  // `(z*ny + y)*nx + x`. Both buffers share the source's element type at
+  // runtime; the `Uint8Array` casts only satisfy the typed-array union — `.set`
+  // / `.subarray` operate element-wise for every variant (incl. BigUint64Array).
+  const dst = out as Uint8Array;
+  const src = decoded as Uint8Array;
+  for (let z = 0; z < cz; ++z) {
+    for (let y = 0; y < cy; ++y) {
+      const srcStart = (z * cy + y) * cx;
+      dst.set(src.subarray(srcStart, srcStart + cx), (z * ny + y) * nx);
+    }
+  }
+  return out;
 }
 
 /**
@@ -622,6 +692,11 @@ function decodeBaselineChunk(
   if (raw == null) {
     return makeZeroFilledChunkBuffer(source);
   }
+  // NG decodes boundary chunks clipped to the volume's data bounds, so `raw`
+  // (and the compressed decode below) can be smaller than the nominal chunk.
+  // The edit library indexes slots with the nominal `chunkDataSize`, so every
+  // decoded baseline is padded up to nominal before it leaves here (TM-353).
+  const clippedSize = clippedSizeOf(source, chunk);
   // Neuroglancer transcodes uint32/uint64 SEGMENTATION volumes to the
   // compressed-segmentation format for GPU rendering, so `chunk.data` is the
   // COMPRESSED block (a small Uint32Array), not the per-voxel values the edit
@@ -630,10 +705,11 @@ function decodeBaselineChunk(
   // (`offset is out of bounds`) and the baseline values are garbage. Plain
   // (non-transcoded) chunks are snapshotted as-is — `fetchChunk` only
   // guarantees `chunk.data` inside this callback, so we clone for a stable view.
-  if (source.spec.compressedSegmentationBlockSize !== undefined) {
-    return decodeCompressedSegmentationChunk(source, raw);
-  }
-  return cloneTypedArray(raw);
+  const decoded =
+    source.spec.compressedSegmentationBlockSize !== undefined
+      ? decodeCompressedSegmentationChunk(source, raw, clippedSize)
+      : cloneTypedArray(raw);
+  return padChunkToNominal(source, decoded, clippedSize);
 }
 
 /**
