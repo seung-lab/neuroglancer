@@ -41,6 +41,22 @@ import type {
 import { DataType } from "#src/util/data_type.js";
 
 /**
+ * Thrown by {@link NgLayerMetadataSource.validate} when a layer's data sources
+ * never settle within the timeout — a transient, retriable state (the modal
+ * classifies it as `fetch-failed`), distinct from a terminal error. A typed
+ * class so classification stays type-based, never message-string matching.
+ */
+export class LayerMetadataTimeoutError extends Error {
+  override readonly name = "LayerMetadataTimeoutError";
+  constructor(
+    public readonly layerId: LayerId,
+    options?: { cause?: unknown },
+  ) {
+    super(`Timed out validating layer metadata for ${layerId}.`, options);
+  }
+}
+
+/**
  * Adapter that translates a neuroglancer `UserLayer` into the library's
  * flat per-scale `LayerMetadata` shape.
  */
@@ -59,6 +75,15 @@ export class NgLayerMetadataSource implements LayerMetadataSource {
 
     const found = findFirstVolumetricSubsource(userLayer);
     if (found === undefined) {
+      // A data source that failed to load carries the ORIGINAL typed error
+      // (HttpError with a status, NotFoundError, or a plain parse Error) on
+      // its `loadState.error`. Surface it verbatim so the modal can classify
+      // transport vs. absence vs. unparseable-format by type — collapsing all
+      // of these into "no-volumetric-data-source" is exactly what made every
+      // failure read as "No metadata" (TM-374). Only when the sources loaded
+      // cleanly but expose no volume is this a genuine no-metadata layer.
+      const loadError = firstDataSourceError(userLayer);
+      if (loadError !== undefined) throw loadError;
       throw new LayerMetadataUnavailableError(
         layerId,
         "no-volumetric-data-source",
@@ -162,6 +187,100 @@ export class NgLayerMetadataSource implements LayerMetadataSource {
     });
   }
 
+  /**
+   * The SINGLE classification path shared by the modal's initial validation,
+   * reopen, and retry (TM-374) — so all three produce identical results.
+   *
+   * Always waits for the layer's data sources to settle before resolving, so a
+   * still-loading layer is never snapshot mid-flight and misclassified as a
+   * terminal error (the modal shows it as pending until this resolves).
+   *
+   * With `refetch: true` (retry) it first re-runs resolution for any errored
+   * source: re-assigning a data source's spec disposes the failed attempt and
+   * calls the datasource registry afresh. Combined with the async memoize no
+   * longer caching rejections, this genuinely re-fetches rather than replaying
+   * the cached error — so a layer that failed while offline recovers once the
+   * network is back. Callers MUST serialize `refetch` calls per layer (no two
+   * in flight at once): concurrent spec re-assignments race and can leave the
+   * source transiently unsettled at resolve time.
+   *
+   * Defers to {@link resolve} once settled, so the fresh typed error surfaces
+   * on repeated failure and the caller re-classifies. A hung load that never
+   * settles throws {@link LayerMetadataTimeoutError} (a retriable transport
+   * state), never a terminal error.
+   */
+  async validate(
+    layerId: LayerId,
+    {
+      refetch = false,
+      timeoutMs = 30000,
+    }: { refetch?: boolean; timeoutMs?: number } = {},
+  ): Promise<LayerMetadata> {
+    const userLayer = this.findUserLayer(layerId);
+    if (userLayer === undefined) {
+      throw new LayerMetadataUnavailableError(layerId, "layer-not-found");
+    }
+    if (refetch) {
+      for (const dataSource of userLayer.dataSources) {
+        const loadState = dataSource.loadState;
+        if (loadState !== undefined && loadState.error !== undefined) {
+          // A shallow clone triggers the spec setter (which re-runs
+          // resolution) without a self-assignment.
+          dataSource.spec = { ...dataSource.spec };
+        }
+      }
+    }
+    try {
+      await this.waitForSettled(layerId, { timeoutMs });
+    } catch (cause) {
+      // The sources never settled — a transient, retriable state, NOT a
+      // terminal "no metadata". Surface it as a typed timeout the classifier
+      // maps to `fetch-failed`.
+      throw new LayerMetadataTimeoutError(layerId, { cause });
+    }
+    return this.resolve(layerId);
+  }
+
+  /** Back-compat alias for {@link validate} with a forced re-fetch. */
+  reload(
+    layerId: LayerId,
+    { timeoutMs = 30000 }: { timeoutMs?: number } = {},
+  ): Promise<LayerMetadata> {
+    return this.validate(layerId, { refetch: true, timeoutMs });
+  }
+
+  /**
+   * Resolve once every data source on the layer has settled (loaded or
+   * errored) or a volumetric subsource is available. Unlike
+   * {@link waitForVolumetricReady} this never rejects on a settled failure —
+   * it just returns, leaving {@link resolve} to surface the typed error.
+   */
+  private async waitForSettled(
+    layerId: LayerId,
+    { timeoutMs = 30000 }: { timeoutMs?: number } = {},
+  ): Promise<void> {
+    const check = (): { done: boolean } => {
+      const userLayer = this.findUserLayer(layerId);
+      if (userLayer === undefined) return { done: true };
+      if (findFirstVolumetricSubsource(userLayer) !== undefined) {
+        return { done: true };
+      }
+      if (
+        userLayer.dataSources.length > 0 &&
+        userLayer.dataSources.every(allDataSourceSettled)
+      ) {
+        return { done: true };
+      }
+      return { done: false };
+    };
+    if (check().done) return;
+    await this.subscribeUntil(check, {
+      trackPerLayer: true,
+      timeoutMs,
+      layerName: layerId,
+    });
+  }
+
   private findUserLayer(layerName: string): UserLayer | undefined {
     const managed = this.layerManager.getLayerByName(layerName);
     if (managed === undefined) return undefined;
@@ -244,6 +363,22 @@ export class NgLayerMetadataSource implements LayerMetadataSource {
 
 function allDataSourceSettled(ds: LayerDataSource): boolean {
   return ds.loadState !== undefined;
+}
+
+/**
+ * The first data-source load error on the layer, if any. Returns the ORIGINAL
+ * thrown object (an `HttpError`, `NotFoundError`, or a plain parse `Error`) —
+ * its runtime type is preserved on `loadState.error` even though the static
+ * type is `Error`, so the caller can classify it by `instanceof`.
+ */
+function firstDataSourceError(userLayer: UserLayer): Error | undefined {
+  for (const dataSource of userLayer.dataSources) {
+    const loadState = dataSource.loadState;
+    if (loadState !== undefined && loadState.error !== undefined) {
+      return loadState.error;
+    }
+  }
+  return undefined;
 }
 
 /**

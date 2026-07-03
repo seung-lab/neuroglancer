@@ -26,12 +26,24 @@ export function layerKindOf(
 
 /**
  * Data source schemes that cannot participate in an edit session as
- * Reference or Editable layers (TM-312). Layers backed by these sources
- * may only be Off.
+ * Reference or Editable layers (TM-312, TM-374). Layers backed by these
+ * sources may only be Off — this is a product restriction, not a technical
+ * fault of the layer, which stays fully usable outside the session.
  */
-export type BlockedScheme = "calcada" | "graphene";
+export type BlockedScheme = "calcada" | "graphene" | "middleauth";
 
-const BLOCKED_SCHEMES: readonly BlockedScheme[] = ["calcada", "graphene"];
+/**
+ * URL-prefix test for each blocked scheme. `middleauth` layers carry a
+ * `middleauth+<httpScheme>://` URL (the kvstore registers the scheme as
+ * `middleauth+https`), so match the `middleauth+` prefix rather than a bare
+ * `scheme://`.
+ */
+const BLOCKED_SCHEME_PREFIXES: ReadonlyArray<readonly [BlockedScheme, string]> =
+  [
+    ["calcada", "calcada://"],
+    ["graphene", "graphene://"],
+    ["middleauth", "middleauth+"],
+  ];
 
 /**
  * Returns the blocked data source scheme backing `managed`, if any. Reads
@@ -45,8 +57,8 @@ export function blockedSchemeOf(
   if (userLayer == null) return undefined;
   for (const dataSource of userLayer.dataSources) {
     const url = dataSource.spec.url;
-    for (const scheme of BLOCKED_SCHEMES) {
-      if (url.startsWith(`${scheme}://`)) return scheme;
+    for (const [scheme, prefix] of BLOCKED_SCHEME_PREFIXES) {
+      if (url.startsWith(prefix)) return scheme;
     }
   }
   return undefined;

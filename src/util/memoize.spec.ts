@@ -45,6 +45,25 @@ function asyncMemoizeTests(asyncMemoizeImpl: typeof asyncMemoize) {
     expect(getter).toHaveBeenCalledTimes(1);
   });
 
+  test("should not cache a rejection — a later call re-runs the getter", async () => {
+    // A failed fetch must not be pinned for the process lifetime: a
+    // subsequent call (e.g. a user-triggered retry after the network
+    // recovers) re-invokes the getter and can succeed.
+    const getter = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("transient"))
+      .mockResolvedValue("recovered");
+    const memoizedGetter = asyncMemoizeImpl(getter);
+
+    await expect(memoizedGetter({})).rejects.toThrow("transient");
+    // Second, sequential call after the rejection settled.
+    await expect(memoizedGetter({})).resolves.toBe("recovered");
+    expect(getter).toHaveBeenCalledTimes(2);
+    // Now that it succeeded, the success IS cached.
+    await expect(memoizedGetter({})).resolves.toBe("recovered");
+    expect(getter).toHaveBeenCalledTimes(2);
+  });
+
   test("should abort the getter if the signal is aborted before the call", async () => {
     const getter = vi.fn();
     const memoizedGetter = asyncMemoizeImpl(getter);
