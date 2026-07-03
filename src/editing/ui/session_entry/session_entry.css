@@ -39,6 +39,10 @@
   --neuroglancer-edit-session-accent-soft: #1e3a5f;
   --neuroglancer-edit-session-text: var(--nge-text, #e5e7eb);
   --neuroglancer-edit-session-text-muted: #9ca3af;
+  /* Distinctly dimmer than -muted so a disabled segment reads as unavailable,
+     not merely unselected (TM-374 item 6). Disabled controls are exempt from
+     the AA contrast minimum. */
+  --neuroglancer-edit-session-text-disabled: #656b76;
   /* Lifted from #6b7280 (3.4:1, failed AA) to clear 4.5:1 on every surface. */
   --neuroglancer-edit-session-text-dim: var(--nge-text-faint, #8b929c);
   --neuroglancer-edit-session-bg: var(--nge-overlay-bg, #1a1a1a);
@@ -55,6 +59,10 @@
   --neuroglancer-edit-session-safe: #22c55e;
   --neuroglancer-edit-session-near: #f59e0b;
   --neuroglancer-edit-session-over: var(--nge-danger, #f56565);
+  /* Availability badges (TM-374): danger reuses the shared error red; warning
+     is a shared amber (falls back to the meter's amber). */
+  --neuroglancer-edit-session-danger: var(--nge-danger, #f56565);
+  --neuroglancer-edit-session-warning: var(--nge-warning, #f59e0b);
 }
 
 /* Backdrop + frame --------------------------------------------------------- */
@@ -352,8 +360,10 @@
 
 .neuroglancer-edit-session-entry-modal-layer-row {
   display: grid;
-  /* name (flex) | kind chip | resolution slot (fixed) | role control */
-  grid-template-columns: minmax(160px, 1fr) auto 150px auto;
+  /* name (flex) | kind chip | resolution slot (fixed) | role control.
+     The slot is wide enough for the tier-2 status-chip labels to sit on one
+     line (e.g. "Not available in sessions"). */
+  grid-template-columns: minmax(160px, 1fr) auto 210px auto;
   align-items: center;
   column-gap: 12px;
   padding: 8px 14px;
@@ -366,16 +376,16 @@
 }
 
 /*
- * `Off` rows dim in place — no reordering, no collapsing. Per spec the
- * layer list order is stable.
+ * Inside the entry modal every row keeps an identical height regardless of
+ * state (TM-374): a healthy single-line name, a name + tier-2 inline note, and
+ * a tier-1 error badge all occupy the same box. Scoped to the modal so the
+ * read-only navigation-summary panel (which reuses the row class but never
+ * shows notes/badges) stays compact.
  */
-.neuroglancer-edit-session-entry-modal-layer-row-off {
-  opacity: 0.55;
-}
-
-.neuroglancer-edit-session-entry-modal-layer-row-off
-  .neuroglancer-edit-session-entry-modal-layer-resolution-slot {
-  pointer-events: none;
+.neuroglancer-edit-session-entry-modal
+  .neuroglancer-edit-session-entry-modal-layer-row {
+  box-sizing: border-box;
+  min-height: 56px;
 }
 
 .neuroglancer-edit-session-entry-modal-layer-name {
@@ -414,10 +424,10 @@
 }
 
 .neuroglancer-edit-session-entry-modal-layer-resolution-slot {
-  /* Fixed column width so the dropdown trigger (multi-res) and the
-     static value (single-res) occupy the same visual width — keeps the
-     role-control column aligned across rows. */
-  width: 150px;
+  /* Fixed column width so the dropdown (multi-res), static value (single-res),
+     tier-1 badge, and tier-2 status chip all occupy the same visual width —
+     keeps the role-control column aligned across rows. */
+  width: 210px;
   display: inline-flex;
   align-items: center;
   font-size: 12px;
@@ -457,6 +467,134 @@
   color: var(--neuroglancer-edit-session-over);
 }
 
+/* Availability treatments (TM-374) ---------------------------------------- */
+
+/* Name + type badge dim on any effective-Off row (participation, not health) —
+   a muted color/opacity, never a whole-row wash that would mute the control. */
+.neuroglancer-edit-session-entry-modal-layer-name-dim {
+  color: var(--neuroglancer-edit-session-text-dim);
+}
+
+.neuroglancer-edit-session-entry-modal-layer-kind-dim {
+  opacity: 0.45;
+}
+
+/* Tier-1 error badge / tier-2 status chip occupy the resolution slot; keeps the
+   row height and the middle-column alignment. */
+.neuroglancer-edit-session-entry-modal-layer-badge-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  /* Fill the resolution slot so the badge tracks the dropdown width above/below
+     it and the middle column stays a single aligned rhythm (item 7). */
+  flex: 1 1 auto;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 9px;
+  border-radius: 6px;
+  cursor: default;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-badge > svg {
+  flex: none;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-badge > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-badge-danger {
+  color: #fca5a5;
+  background-color: rgba(245, 101, 101, 0.14);
+  border: 1px solid rgba(245, 101, 101, 0.4);
+}
+
+.neuroglancer-edit-session-entry-modal-layer-badge-warning {
+  color: #fcd34d;
+  background-color: rgba(245, 158, 11, 0.14);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+/* Tier-2 status chip: neutral/gray, clearly distinct from the danger/warning
+   error badges — the layer is fine, just restricted for this session. */
+.neuroglancer-edit-session-entry-modal-layer-badge-neutral {
+  color: var(--neuroglancer-edit-session-text-muted);
+  background-color: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--neuroglancer-edit-session-border-soft);
+  font-weight: 400;
+}
+
+/* Icon-only retry beside a fetch-failed badge. */
+.neuroglancer-edit-session-entry-modal-layer-retry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 5px;
+  border: 1px solid var(--neuroglancer-edit-session-border);
+  background-color: var(--neuroglancer-edit-session-bg-elev);
+  color: var(--neuroglancer-edit-session-text-muted);
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.neuroglancer-edit-session-entry-modal-layer-retry:hover:not(:disabled) {
+  color: var(--neuroglancer-edit-session-text);
+  background-color: rgba(255, 255, 255, 0.06);
+}
+
+.neuroglancer-edit-session-entry-modal-layer-retry:disabled {
+  cursor: default;
+}
+
+@keyframes neuroglancer-edit-session-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.neuroglancer-edit-session-entry-modal-spin {
+  animation: neuroglancer-edit-session-spin 0.8s linear infinite;
+}
+
+/* Keyboard focus rings for the focusable badge / status chip and retry. */
+.neuroglancer-edit-session-entry-modal-layer-badge:focus-visible,
+.neuroglancer-edit-session-entry-modal-layer-retry:focus-visible {
+  outline: 2px solid var(--neuroglancer-edit-session-accent);
+  outline-offset: 2px;
+}
+
+/* Reason text kept in the DOM for assistive tech (visually hidden). */
+.neuroglancer-edit-session-entry-modal-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* 3-state role control (Off / Reference / Editable) ----------------------- */
 
 .neuroglancer-edit-session-entry-modal-role-control {
@@ -477,7 +615,10 @@
 }
 
 .neuroglancer-edit-session-entry-modal-role-segment-wrap
-  > .neuroglancer-edit-session-entry-modal-role-segment:disabled {
+  > .neuroglancer-edit-session-entry-modal-role-segment-disabled {
+  /* Disabled segments keep `aria-disabled` (not the `disabled` attribute) so
+     they stay focusable for SRs; drop them out of hit-testing so hover falls
+     through to the wrapper tooltip. */
   pointer-events: none;
 }
 
@@ -497,7 +638,9 @@
     color 0.12s ease;
 }
 
-.neuroglancer-edit-session-entry-modal-role-segment:hover:not(:disabled) {
+.neuroglancer-edit-session-entry-modal-role-segment:not(
+    .neuroglancer-edit-session-entry-modal-role-segment-disabled
+  ):hover {
   color: var(--neuroglancer-edit-session-text);
   background-color: rgba(255, 255, 255, 0.04);
 }
@@ -512,10 +655,37 @@
   color: #fff;
 }
 
-.neuroglancer-edit-session-entry-modal-role-segment-disabled,
-.neuroglancer-edit-session-entry-modal-role-segment:disabled {
-  opacity: 0.4;
+/* Disabled segment: a distinct dim tier (not merely opacity-washed) so it's
+   readable as unavailable at a glance, with no hover feedback (item 6). */
+.neuroglancer-edit-session-entry-modal-role-segment-disabled {
+  color: var(--neuroglancer-edit-session-text-disabled);
   cursor: not-allowed;
+}
+
+/* Non-operable control (tier-1 error, or tier-2 with only Off left): the whole
+   control is muted and the forced-Off selection loses its accent fill, so it
+   reads as an absence of choice rather than a live selection (item 5). */
+.neuroglancer-edit-session-entry-modal-role-control-disabled
+  .neuroglancer-edit-session-entry-modal-role-segment {
+  color: var(--neuroglancer-edit-session-text-disabled);
+  cursor: not-allowed;
+}
+
+/* The forced-Off selection stays visibly SELECTED — a subdued neutral fill,
+   lighter than the control's own bg-elev container so it doesn't vanish, with
+   secondary-tier text and no accent. Grammar: accent = operable choice, this
+   muted fill = forced effective state (item 2). */
+.neuroglancer-edit-session-entry-modal-role-control-disabled
+  .neuroglancer-edit-session-entry-modal-role-segment-selected,
+.neuroglancer-edit-session-entry-modal-role-control-disabled
+  .neuroglancer-edit-session-entry-modal-role-segment-selected:hover {
+  background-color: rgba(255, 255, 255, 0.09);
+  color: var(--neuroglancer-edit-session-text-muted);
+}
+
+.neuroglancer-edit-session-entry-modal-role-control-disabled
+  .neuroglancer-edit-session-entry-modal-role-segment:hover {
+  background-color: transparent;
 }
 
 /* Memory meter ------------------------------------------------------------- */

@@ -82,11 +82,14 @@ function SummaryBody({
   const layerStates = useMemo(() => {
     const map = new Map<string, LayerRowState>();
     for (const l of intent.layers) {
+      const role = l.writable ? "editable" : "reference";
       map.set(l.layerId, {
-        role: l.writable ? "editable" : "reference",
+        role,
+        intent: role,
         resolutions: l.resolutions,
         loadState: "loaded",
-        loadError: undefined,
+        error: undefined,
+        retrying: false,
         availableResolutions: l.resolutions,
       });
     }
@@ -122,7 +125,6 @@ function SummaryBody({
               key={l.layerId}
               name={l.layerId}
               layerKind={kind ?? "segmentation"}
-              blockedScheme={undefined}
               state={state}
               resolutionModel={undefined}
               onRoleChange={NO_OP}

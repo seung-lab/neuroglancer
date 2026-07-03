@@ -28,10 +28,7 @@ import type {
   EditSessionHost,
   HostSessionConfig,
 } from "#src/editing/edit_session_host.js";
-import {
-  checkLayerCompat,
-  formatNmBounds,
-} from "#src/editing/region/edit_target_compat.js";
+import { checkLayerCompat } from "#src/editing/region/edit_target_compat.js";
 import { validateRememberedResolutions } from "#src/editing/tooling/edit_preferences.js";
 import { useModalDialog } from "#src/editing/ui/interop/use_modal_dialog.js";
 import { useSignal } from "#src/editing/ui/interop/use_signal.js";
@@ -40,6 +37,13 @@ import { blockedSchemeOf, layerKindOf } from "#src/editing/ui/layer_kind.js";
 import type { BboxAnnotationSelection } from "#src/editing/ui/session_entry/bbox_candidates.js";
 import { BboxSelectionModel } from "#src/editing/ui/session_entry/bbox_candidates.js";
 import { BboxPicker } from "#src/editing/ui/session_entry/bbox_picker.js";
+import type { LayerAvailability } from "#src/editing/ui/session_entry/layer_availability.js";
+import {
+  classifyMetadataError,
+  computeLayerAvailability,
+  effectiveRole,
+  noRegionOverlapDetail,
+} from "#src/editing/ui/session_entry/layer_availability.js";
 import type {
   LayerRole,
   LayerRowState,
@@ -237,18 +241,14 @@ function SessionEntryModalBody(props: {
       const next = new Map<string, LayerRowState>();
       for (const entry of layerEntries) {
         const existing = prev.get(entry.name);
-        if (existing === undefined) {
-          next.set(entry.name, defaultStateFor(entry));
-        } else if (
-          entry.blockedScheme !== undefined &&
-          existing.role !== "off"
-        ) {
-          // A blocked layer can never hold a role — clamp stale state (e.g.
-          // the layer's data sources changed while the modal was open).
-          next.set(entry.name, { ...existing, role: "off" });
-        } else {
-          next.set(entry.name, existing);
-        }
+        // New layers get their default state; existing rows are preserved
+        // verbatim. Forcing an unavailable layer to Off is the reconcile
+        // effect's job (it derives effective role from intent + availability),
+        // so no clamping happens here.
+        next.set(
+          entry.name,
+          existing === undefined ? defaultStateFor(entry) : existing,
+        );
       }
       for (const [name] of resolutionModelsRef.current) {
         if (!layerEntries.some((e) => e.name === name)) {
@@ -259,21 +259,103 @@ function SessionEntryModalBody(props: {
     });
   }, [layerEntries]);
 
+  // In-flight dedup: at most one validation per layer at a time. The effect
+  // re-fires on every `layerStates` change (role reconcile, sibling loads);
+  // without this, a retry would spawn concurrent `validate({refetch})` calls
+  // that race on the shared data-source spec re-assignment, leaving the source
+  // transiently unsettled — which `resolve` then misclassified as a terminal
+  // `no-metadata` (the retry-lands-in-No-metadata bug).
+  const inFlightRef = useRef<Set<string>>(new Set());
+  const aliveRef = useRef(true);
+  useEffect(
+    () => () => {
+      aliveRef.current = false;
+    },
+    [],
+  );
+
   useEffect(() => {
-    let cancelled = false;
-    const toLoad: string[] = [];
     for (const [name, state] of layerStates) {
-      if (state.loadState === "loading") {
-        toLoad.push(name);
-      }
-    }
-    for (const name of toLoad) {
+      if (state.loadState !== "loading") continue;
+      if (inFlightRef.current.has(name)) continue;
+      inFlightRef.current.add(name);
       const layerId = toLayerId(name);
-      metadataSource.resolve(layerId).then(
-        (metadata: LayerMetadata) => {
-          if (cancelled) return;
-          const resolutions = availableResolutions(metadata);
-          if (resolutions.length === 0) {
+      const retrying = state.retrying;
+      // Initial validation, reopen, and retry all go through the ONE `validate`
+      // path so they classify identically. `refetch` re-runs the underlying
+      // data-source resolution (the retry case); `validate` first waits for the
+      // sources to settle, so a still-loading layer is never snapshot mid-flight
+      // as a terminal error.
+      metadataSource
+        .validate(layerId, { refetch: retrying })
+        .then(
+          (metadata: LayerMetadata) => {
+            if (!aliveRef.current) return;
+            const resolutions = availableResolutions(metadata);
+            if (resolutions.length === 0) {
+              setLayerStates((prev) => {
+                const next = new Map(prev);
+                const s = next.get(name);
+                if (s === undefined || s.loadState !== "loading") return prev;
+                next.set(name, {
+                  ...s,
+                  loadState: "error",
+                  error: { code: "no-scales", retriable: false },
+                  retrying: false,
+                  availableResolutions: [],
+                });
+                return next;
+              });
+              return;
+            }
+            const model = new ResolutionSelectionModel(metadata);
+            // Autofill from the last-used selection for this layer (TM-336),
+            // re-validated against the freshly-computed resolutions. Stale
+            // entries are dropped; if nothing survives, keep the model's
+            // default (highest resolution). Applied before the
+            // `selectionChanged` subscription and the `loaded` state write
+            // below, so the initial `model.selectedResolutions` snapshot
+            // reflects the autofill.
+            const autofill = validateRememberedResolutions(
+              host.editPreferences.value.value?.resolutions?.[layerId],
+              resolutions,
+            );
+            if (autofill !== undefined) model.setSelection(autofill);
+            resolutionModelsRef.current.set(name, model);
+            model.selectionChanged.add(() => {
+              setLayerStates((prev) => {
+                const next = new Map(prev);
+                const s = next.get(name);
+                if (s === undefined) return prev;
+                next.set(name, {
+                  ...s,
+                  resolutions: model.selectedResolutions,
+                });
+                return next;
+              });
+            });
+            setMetadataByLayer((prev) => {
+              const next = new Map(prev);
+              next.set(name, metadata);
+              return next;
+            });
+            setLayerStates((prev) => {
+              const next = new Map(prev);
+              const s = next.get(name);
+              if (s === undefined || s.loadState !== "loading") return prev;
+              next.set(name, {
+                ...s,
+                loadState: "loaded",
+                error: undefined,
+                retrying: false,
+                resolutions: model.selectedResolutions,
+                availableResolutions: resolutions,
+              });
+              return next;
+            });
+          },
+          (err: unknown) => {
+            if (!aliveRef.current) return;
             setLayerStates((prev) => {
               const next = new Map(prev);
               const s = next.get(name);
@@ -281,73 +363,18 @@ function SessionEntryModalBody(props: {
               next.set(name, {
                 ...s,
                 loadState: "error",
-                loadError: "no resolutions",
+                error: classifyMetadataError(err),
+                retrying: false,
                 availableResolutions: [],
               });
               return next;
             });
-            return;
-          }
-          const model = new ResolutionSelectionModel(metadata);
-          // Autofill from the last-used selection for this layer (TM-336),
-          // re-validated against the freshly-computed resolutions. Stale
-          // entries are dropped; if nothing survives, keep the model's default
-          // (highest resolution). Applied before the `selectionChanged`
-          // subscription and the `loaded` state write below, so the initial
-          // `model.selectedResolutions` snapshot reflects the autofill.
-          const autofill = validateRememberedResolutions(
-            host.editPreferences.value.value?.resolutions?.[layerId],
-            resolutions,
-          );
-          if (autofill !== undefined) model.setSelection(autofill);
-          resolutionModelsRef.current.set(name, model);
-          model.selectionChanged.add(() => {
-            setLayerStates((prev) => {
-              const next = new Map(prev);
-              const s = next.get(name);
-              if (s === undefined) return prev;
-              next.set(name, { ...s, resolutions: model.selectedResolutions });
-              return next;
-            });
-          });
-          setMetadataByLayer((prev) => {
-            const next = new Map(prev);
-            next.set(name, metadata);
-            return next;
-          });
-          setLayerStates((prev) => {
-            const next = new Map(prev);
-            const s = next.get(name);
-            if (s === undefined || s.loadState !== "loading") return prev;
-            next.set(name, {
-              ...s,
-              loadState: "loaded",
-              resolutions: model.selectedResolutions,
-              availableResolutions: resolutions,
-            });
-            return next;
-          });
-        },
-        (err: unknown) => {
-          if (cancelled) return;
-          setLayerStates((prev) => {
-            const next = new Map(prev);
-            const s = next.get(name);
-            if (s === undefined || s.loadState !== "loading") return prev;
-            next.set(name, {
-              ...s,
-              loadState: "error",
-              loadError: err instanceof Error ? err.message : String(err),
-              availableResolutions: [],
-            });
-            return next;
-          });
-        },
-      );
+          },
+        )
+        .finally(() => {
+          inFlightRef.current.delete(name);
+        });
     }
-    return () => {
-      cancelled = true;
-    };
   }, [layerStates, metadataSource]);
 
   // Per-layer region compatibility (TM-360). When the edit region falls outside
@@ -368,44 +395,87 @@ function SessionEntryModalBody(props: {
         metadata,
       );
       if (status === "none") {
-        map.set(
-          name,
-          `Edit region is outside this layer's bounds ` +
-            `(voxel_offset + size). Region ${formatNmBounds(regionNm)}; ` +
-            `layer bounds ${formatNmBounds(layerNm)}. Only Off is available — ` +
-            `move the region or pick a layer whose bounds contain it.`,
-        );
+        map.set(name, noRegionOverlapDetail(layerNm, regionNm));
       }
     }
     return map;
   }, [selectedBbox, metadataByLayer]);
 
-  // Clamp a layer to Off when it becomes region-incompatible (e.g. the user
-  // switched to a non-overlapping region after marking it Editable), mirroring
-  // the blocked-scheme clamp above.
+  // Structured availability per layer (TM-374), the single input the row maps
+  // to UI. An errored (or in-flight retry) layer is a tier-1 error; otherwise
+  // the layer is healthy and its role options are gated by the data-source
+  // scheme (`unsupported-in-session`) and region overlap (`no-region-overlap`).
+  // Scheme/overlap are evaluated even while metadata is still loading, so a
+  // blocked layer disables its segments immediately.
+  const availabilityByLayer = useMemo(() => {
+    const map = new Map<string, LayerAvailability>();
+    for (const entry of layerEntries) {
+      const state = layerStates.get(entry.name);
+      if (state === undefined) continue;
+      const errored = state.loadState === "error" || state.retrying;
+      if (errored && state.error !== undefined) {
+        map.set(entry.name, { kind: "error", ...state.error });
+        continue;
+      }
+      map.set(
+        entry.name,
+        computeLayerAvailability({
+          status: "ok",
+          unsupportedInSession: entry.blockedScheme !== undefined,
+          noRegionOverlapDetail: regionBlockedLayers.get(entry.name),
+        }),
+      );
+    }
+    return map;
+  }, [layerEntries, layerStates, regionBlockedLayers]);
+
+  // Reconcile each layer's effective `role` from its preserved `intent` and
+  // current availability. This replaces the old per-cause clamps: a tier-1
+  // error or a constraint disabling the intended option forces `off`, and
+  // when availability is restored (retry succeeds, region moves back in
+  // bounds) the intent is re-applied — the selection-preservation contract.
   useEffect(() => {
-    if (regionBlockedLayers.size === 0) return;
     setLayerStates((prev) => {
       let changed = false;
       const next = new Map(prev);
-      for (const name of regionBlockedLayers.keys()) {
-        const s = next.get(name);
-        if (s !== undefined && s.role !== "off") {
-          next.set(name, { ...s, role: "off" });
+      for (const entry of layerEntries) {
+        const s = prev.get(entry.name);
+        if (s === undefined) continue;
+        const availability = availabilityByLayer.get(entry.name);
+        const effective = effectiveRole(s.intent, availability, entry.kind);
+        if (effective !== s.role) {
+          next.set(entry.name, { ...s, role: effective });
           changed = true;
         }
       }
       return changed ? next : prev;
     });
-  }, [regionBlockedLayers]);
+  }, [availabilityByLayer, layerEntries]);
 
+  // A user pick sets the intent (and, optimistically, the effective role —
+  // segments are only clickable when enabled, so the pick is always valid).
   const setRole = useCallback((name: string, role: LayerRole) => {
     setLayerStates((prev) => {
       const next = new Map(prev);
       const s = next.get(name);
       if (s === undefined) return prev;
-      if (s.role === role) return prev;
-      next.set(name, { ...s, role });
+      if (s.role === role && s.intent === role) return prev;
+      next.set(name, { ...s, role, intent: role });
+      return next;
+    });
+  }, []);
+
+  // Re-validate one fetch-failed layer in place: keep the error badge and its
+  // spinner (retrying) while a fresh resolve runs. Setting `loadState` back to
+  // "loading" re-arms the resolve effect for this layer only.
+  const retryLayer = useCallback((name: string) => {
+    setLayerStates((prev) => {
+      const s = prev.get(name);
+      if (s === undefined || s.loadState !== "error" || !s.error?.retriable) {
+        return prev;
+      }
+      const next = new Map(prev);
+      next.set(name, { ...s, loadState: "loading", retrying: true });
       return next;
     });
   }, []);
@@ -478,14 +548,19 @@ function SessionEntryModalBody(props: {
     for (const entry of layerEntries) {
       const state = layerStates.get(entry.name);
       if (state === undefined || state.role === "off") continue;
+      // Blocked and errored layers are forced to Off (effective role) and so
+      // are skipped by the `role === "off"` guard above; these checks are a
+      // defensive backstop against a stale role slipping through.
       if (entry.blockedScheme !== undefined) {
         setError(
-          `Layer ${entry.name} (${entry.blockedScheme}://) can't be used in an edit session — set it to Off.`,
+          `Layer ${entry.name} can't be used in an edit session — set it to Off.`,
         );
         return;
       }
-      if (state.loadError !== undefined) {
-        setError(`Layer ${entry.name} is unavailable: ${state.loadError}`);
+      if (state.error !== undefined) {
+        setError(
+          `Layer ${entry.name} is unavailable (${state.error.code}) — set it to Off.`,
+        );
         return;
       }
       if (state.resolutions.length === 0) {
@@ -619,13 +694,13 @@ function SessionEntryModalBody(props: {
                         key={entry.name}
                         name={entry.name}
                         layerKind={entry.kind}
-                        blockedScheme={entry.blockedScheme}
-                        regionBlockReason={regionBlockedLayers.get(entry.name)}
+                        availability={availabilityByLayer.get(entry.name)}
                         state={state}
                         resolutionModel={resolutionModelsRef.current.get(
                           entry.name,
                         )}
                         onRoleChange={(role) => setRole(entry.name, role)}
+                        onRetry={() => retryLayer(entry.name)}
                       />
                     );
                   })
@@ -734,11 +809,16 @@ function defaultRoleFor(entry: LayerEntry): LayerRole {
 }
 
 function defaultStateFor(entry: LayerEntry): LayerRowState {
+  const role = defaultRoleFor(entry);
   return {
-    role: defaultRoleFor(entry),
+    role,
+    // Intent starts at the same default; the reconcile effect derives the
+    // effective `role` from it whenever availability changes.
+    intent: role,
     resolutions: [],
     loadState: "loading",
-    loadError: undefined,
+    error: undefined,
+    retrying: false,
     availableResolutions: [],
   };
 }
