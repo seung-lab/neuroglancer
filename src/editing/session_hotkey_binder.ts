@@ -268,7 +268,7 @@ function buildEditActionBindings(
 ): Record<string, string> {
   const config = getEditSessionKeybinds();
   const merged: { [name: string]: string | readonly string[] } = {
-    ...(config ?? {}),
+    ...config,
   };
   if (perUser !== undefined) {
     for (const [name, keys] of Object.entries(perUser)) {

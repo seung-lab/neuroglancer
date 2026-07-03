@@ -70,13 +70,9 @@ export default defineWorkspace([
     test: {
       name: "node",
       include: ["src/**/*.spec.ts", "tests/**/*.spec.ts"],
-      exclude: [
-        ...KVSTORE_TESTS_WITH_CUSTOM_CONDITIONS.map(
-          ({ name }) => `tests/kvstore/${name}.spec.ts`,
-        ),
-        // Playwright e2e/perf use `*.e2e.ts` / `*.perf.ts` (not `*.spec.ts`), so
-        // they are not matched by the include above — no exclude needed.
-      ],
+      exclude: KVSTORE_TESTS_WITH_CUSTOM_CONDITIONS.map(
+        ({ name }) => `tests/kvstore/${name}.spec.ts`,
+      ),
       benchmark: {
         include: ["src/**/*.benchmark.ts"],
       },

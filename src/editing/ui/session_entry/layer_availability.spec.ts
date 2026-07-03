@@ -14,6 +14,7 @@ import {
 } from "@zettaai/edit-session";
 import { describe, expect, it } from "vitest";
 
+import { LayerMetadataTimeoutError } from "#src/editing/adapters/ng_layer_metadata_source.js";
 import type { NmBounds } from "#src/editing/region/edit_target_compat.js";
 import type { LayerAvailability } from "#src/editing/ui/session_entry/layer_availability.js";
 import {
@@ -25,7 +26,6 @@ import {
   noRegionOverlapDetail,
   UNSUPPORTED_IN_SESSION_DETAIL,
 } from "#src/editing/ui/session_entry/layer_availability.js";
-import { LayerMetadataTimeoutError } from "#src/editing/adapters/ng_layer_metadata_source.js";
 import { NotFoundError } from "#src/kvstore/index.js";
 import { HttpError } from "#src/util/http_request.js";
 
