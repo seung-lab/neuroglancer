@@ -15,8 +15,14 @@
  */
 
 import { describe, it, expect } from "vitest";
+import type {
+  SliceViewBase,
+  SliceViewRenderLayer,
+  TransformedSource,
+} from "#src/sliceview/base.js";
 import {
   estimateSliceAreaPerChunk,
+  filterVisibleSources,
   getNearIsotropicBlockSize,
 } from "#src/sliceview/base.js";
 import { ChunkLayout } from "#src/sliceview/chunk_layout.js";
@@ -123,6 +129,52 @@ describe("sliceview/base", () => {
         maxVoxelsPerChunkLog2: 8,
       }),
     ).toEqual(Uint32Array.of(1, 64, 4));
+  });
+});
+
+describe("filterVisibleSources", () => {
+  const makeSource = (voxelSize: number) =>
+    ({
+      effectiveVoxelSize: vec3.fromValues(voxelSize, voxelSize, voxelSize),
+    }) as unknown as TransformedSource;
+
+  const makeSliceView = (pixelSize: number) =>
+    ({
+      projectionParameters: { value: { pixelSize } },
+    }) as unknown as SliceViewBase;
+
+  const makeRenderLayer = (renderRatioLimit?: number) =>
+    ({
+      renderScaleTarget: { value: 1 },
+      renderRatioLimit,
+    }) as unknown as SliceViewRenderLayer;
+
+  // Ordered by increasing voxel size (finest first), like getSources output.
+  const sources = [makeSource(8), makeSource(16), makeSource(32)];
+
+  it("yields sources without a renderRatioLimit", () => {
+    const zoomedIn = [
+      ...filterVisibleSources(makeSliceView(8), makeRenderLayer(), sources),
+    ];
+    expect(zoomedIn.length).toBeGreaterThan(0);
+    const zoomedOut = [
+      ...filterVisibleSources(makeSliceView(400), makeRenderLayer(), sources),
+    ];
+    expect(zoomedOut).toEqual([sources[2]]);
+  });
+
+  it("yields sources when within renderRatioLimit", () => {
+    const visible = [
+      ...filterVisibleSources(makeSliceView(8), makeRenderLayer(5), sources),
+    ];
+    expect(visible.length).toBeGreaterThan(0);
+  });
+
+  it("yields nothing when pixelSize exceeds renderRatioLimit times the finest voxel size", () => {
+    const visible = [
+      ...filterVisibleSources(makeSliceView(400), makeRenderLayer(5), sources),
+    ];
+    expect(visible).toEqual([]);
   });
 });
 

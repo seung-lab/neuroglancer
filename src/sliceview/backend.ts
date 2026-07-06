@@ -413,6 +413,7 @@ export class SliceViewRenderLayerBackend
 {
   declare rpcId: number;
   renderScaleTarget: SharedWatchableValue<number>;
+  renderRatioLimit?: number;
   localPosition: WatchableValueInterface<Float32Array>;
 
   numVisibleChunksNeeded: number;
@@ -424,6 +425,7 @@ export class SliceViewRenderLayerBackend
   constructor(rpc: RPC, options: any) {
     super(rpc, options);
     this.renderScaleTarget = rpc.get(options.renderScaleTarget);
+    this.renderRatioLimit = options.renderRatioLimit;
     this.localPosition = rpc.get(options.localPosition);
     this.numVisibleChunksNeeded = 0;
     this.numVisibleChunksAvailable = 0;
