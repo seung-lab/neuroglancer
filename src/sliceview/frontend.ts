@@ -913,6 +913,12 @@ export abstract class MultiscaleSliceViewChunkSource<
   abstract get rank(): number;
 
   /**
+   * See `SliceViewRenderLayer.renderRatioLimit` — propagated to render layers
+   * built on this source.
+   */
+  renderRatioLimit?: number;
+
+  /**
    * @return Chunk sources for each scale, ordered by increasing minVoxelSize.  Outer array indexes
    * over alternative chunk orientations.  The inner array indexes over scale.
    *

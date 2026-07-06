@@ -111,6 +111,7 @@ export abstract class SliceViewRenderLayer<
   transform: WatchableValueInterface<RenderLayerTransformOrError>;
 
   renderScaleTarget: WatchableValueInterface<number>;
+  renderRatioLimit?: number;
   renderScaleHistogram?: RenderScaleHistogram;
 
   // This is only used by `ImageRenderLayer` currently, but is defined here because
@@ -243,6 +244,7 @@ export abstract class SliceViewRenderLayer<
 
     const { renderScaleTarget = trackableRenderScaleTarget(1) } = options;
     this.renderScaleTarget = renderScaleTarget;
+    this.renderRatioLimit = multiscaleSource.renderRatioLimit;
     this.renderScaleHistogram = options.renderScaleHistogram;
     this.transform = options.transform;
     this.localPosition = options.localPosition;
@@ -288,6 +290,7 @@ export abstract class SliceViewRenderLayer<
       renderScaleTarget: this.registerDisposer(
         SharedWatchableValue.makeFromExisting(rpc, this.renderScaleTarget),
       ).rpcId,
+      renderRatioLimit: this.renderRatioLimit,
       ...this.rpcTransfer,
     });
     this.rpcId = sharedObject.rpcId;

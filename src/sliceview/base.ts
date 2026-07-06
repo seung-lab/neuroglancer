@@ -169,6 +169,12 @@ export interface SliceViewRenderLayer {
   localPosition: WatchableValueInterface<Float32Array>;
   renderScaleTarget: WatchableValueInterface<number>;
 
+  /**
+   * If set, no sources are displayed (and no chunks requested) once the view
+   * pixel size exceeds this multiple of the finest voxel size.
+   */
+  renderRatioLimit?: number;
+
   filterVisibleSources(
     sliceView: SliceViewBase<SliceViewChunkSource, SliceViewRenderLayer>,
     sources: readonly TransformedSource[],
@@ -691,6 +697,14 @@ export function* filterVisibleSources(
   // At the smallest scale, all alternative sources must have the same voxel size, which is
   // considered to be the base voxel size.
   const smallestVoxelSize = sources[0].effectiveVoxelSize;
+
+  const { renderRatioLimit } = renderLayer;
+  if (
+    renderRatioLimit !== undefined &&
+    pixelSize / Math.min(...smallestVoxelSize) > renderRatioLimit
+  ) {
+    return;
+  }
 
   const renderScaleTarget = renderLayer.renderScaleTarget.value;
 

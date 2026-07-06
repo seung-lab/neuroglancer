@@ -55,6 +55,7 @@ import {
   makeChunkedGraphChunkSpecification,
   MeshSourceParameters,
   PYCG_APP_VERSION,
+  RENDER_RATIO_LIMIT,
   VolumeChunkSourceParameters as CalcadaVolumeChunkSourceParameters,
   getHttpSource,
 } from "#src/datasource/calcada/base.js";
@@ -366,6 +367,10 @@ class CalcadaVolumeChunkSource extends WithParameters(
 class GrapheneMultiscaleVolumeChunkSource extends PrecomputedMultiscaleVolumeChunkSource {
   // URL for the /precomputed_rp/ endpoint (piece_ids + LUT trailer)
   private rpUrl: string;
+
+  // Keeps chunk loading in sync with the "zoom in to load" message: beyond
+  // this ratio the slice view stops requesting /precomputed_rp/ chunks.
+  override renderRatioLimit = RENDER_RATIO_LIMIT;
 
   timestampMs = 0;
   branchId = 0;
