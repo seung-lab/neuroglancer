@@ -12,7 +12,7 @@ import json
 import time
 
 import numpy as np
-from scipy.ndimage import label, binary_closing
+from scipy.ndimage import label, binary_closing, generate_binary_structure
 
 # Per-call phase timings of the last `apply_morphology` run, as a JSON string.
 # Read by the worker handler after each call and forwarded to the main-thread
@@ -58,6 +58,17 @@ def filter_components(mask, min_size):
     return valid[labels]
 
 
+def _create_binary_structure(arr):
+    """Create 6-connected cross-shaped structuring element matching array rank.
+
+    Matches the TypeScript binaryClose3D implementation which uses 6-connected
+    (axis-aligned) neighbors only, not diagonal connectivity. This preserves
+    circular shapes during morphological closing.
+    """
+    rank = arr.ndim
+    return generate_binary_structure(rank, connectivity=1)
+
+
 def apply_morphology(
     mask_bytes,
     sx,
@@ -99,18 +110,19 @@ def apply_morphology(
 
     closing_ms = 0.0
     components_ms = 0.0
+    struct = _create_binary_structure(m)
     if filter_components_first:
         tc = time.perf_counter()
         m = filter_components(m, min_component_size)
         components_ms = (time.perf_counter() - tc) * 1000.0
         if binary_closing_iterations > 0:
             tc = time.perf_counter()
-            m = binary_closing(m, iterations=binary_closing_iterations)
+            m = binary_closing(m, iterations=binary_closing_iterations, structure=struct)
             closing_ms = (time.perf_counter() - tc) * 1000.0
     else:
         if binary_closing_iterations > 0:
             tc = time.perf_counter()
-            m = binary_closing(m, iterations=binary_closing_iterations)
+            m = binary_closing(m, iterations=binary_closing_iterations, structure=struct)
             closing_ms = (time.perf_counter() - tc) * 1000.0
         tc = time.perf_counter()
         m = filter_components(m, min_component_size)
@@ -453,18 +465,19 @@ def apply_paint_pipeline(
             cj0 = max(0, j0 - pad)
             cj1 = min(t_sy - 1, j1 + pad)
             crop = combined[cj0 : cj1 + 1, ci0 : ci1 + 1].copy()
+            struct = _create_binary_structure(crop)
             if filter_components_first:
                 tc = time.perf_counter()
                 crop = filter_components(crop, min_component_size)
                 components_ms = (time.perf_counter() - tc) * 1000.0
                 if binary_closing_iterations > 0:
                     tc = time.perf_counter()
-                    crop = binary_closing(crop, iterations=binary_closing_iterations)
+                    crop = binary_closing(crop, iterations=binary_closing_iterations, structure=struct)
                     closing_ms = (time.perf_counter() - tc) * 1000.0
             else:
                 if binary_closing_iterations > 0:
                     tc = time.perf_counter()
-                    crop = binary_closing(crop, iterations=binary_closing_iterations)
+                    crop = binary_closing(crop, iterations=binary_closing_iterations, structure=struct)
                     closing_ms = (time.perf_counter() - tc) * 1000.0
                 tc = time.perf_counter()
                 crop = filter_components(crop, min_component_size)

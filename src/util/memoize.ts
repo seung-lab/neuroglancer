@@ -98,9 +98,13 @@ export function asyncMemoize<T>(
             signal: curAbortController.signal,
           });
         } catch (e) {
-          if (curAbortController.signal.aborted) {
-            promise = undefined;
-          }
+          // Never memoize a failure: clearing `promise` keeps `completed`
+          // false in the finally below, so the next call re-runs the getter.
+          // Caching a rejection would pin a transient failure (a network
+          // blip, an expired token, a 5xx) for the lifetime of the process —
+          // there'd be no way to recover without recreating the memoize
+          // entry, and an in-place "retry" would just replay the stale error.
+          promise = undefined;
           throw e;
         } finally {
           if (promise !== undefined) {
@@ -143,9 +147,11 @@ export function asyncMemoizeWithProgress<T>(
             progressListener: progressListener!,
           });
         } catch (e) {
-          if (curAbortController.signal.aborted) {
-            promise = undefined;
-          }
+          // Never memoize a failure — see asyncMemoize above. Clearing
+          // `promise` leaves `completed` false so the next call re-runs the
+          // getter, which is what makes an in-place metadata retry actually
+          // re-fetch instead of replaying the cached rejection.
+          promise = undefined;
           throw e;
         } finally {
           if (promise !== undefined) {

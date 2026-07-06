@@ -15,6 +15,27 @@
   margin-bottom: 8px;
 }
 
+/* Warning shown when a session layer's data doesn't overlap the edit region
+ * (TM-360) — restored/hand-edited sessions only. */
+.neuroglancer-navigation-summary-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #fbbf24;
+  background-color: rgba(251, 191, 36, 0.1);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+}
+
+.neuroglancer-navigation-summary-warning svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
 .neuroglancer-navigation-summary-region-voxels {
   font-variant-numeric: tabular-nums;
 }

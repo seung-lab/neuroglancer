@@ -107,6 +107,11 @@ import { PatchTextureCache } from "#src/editing/patch_texture_cache.js";
 import "#src/editing/benchmarks/edit_paint_bench.js";
 import { PointerEventBridge } from "#src/editing/pointer_event_bridge.js";
 import { QuickRegionCapture } from "#src/editing/quick_region_capture.js";
+import {
+  checkLayerCompat,
+  regionResolution,
+  regionVoxelSizeNm,
+} from "#src/editing/region/edit_target_compat.js";
 import { voxelCenterInBox } from "#src/editing/region/region_geometry.js";
 import { EditRegionPerspectiveOverlay } from "#src/editing/region/region_perspective_overlay.js";
 import { EditRegionSliceOverlay } from "#src/editing/region/region_slice_overlay.js";
@@ -337,26 +342,6 @@ function parseRegionDimensions(raw: unknown): RegionDimensionsJson {
   return coordinateSpaceToJson(space) as RegionDimensionsJson;
 }
 
-/**
- * Per-axis voxel size in nm for the region's three spatial dimensions. A
- * `CoordinateSpace` always stores scales in SI metres, so this is a pure m→nm
- * conversion; the rounding strips the float noise that would otherwise make
- * the derived `Resolution` tag miss the layer's exact available resolutions.
- */
-function regionVoxelSizeNm(space: CoordinateSpace): [number, number, number] {
-  const out: [number, number, number] = [0, 0, 0];
-  for (let i = 0; i < 3; ++i) {
-    const nm = space.scales[i] * 1e9;
-    out[i] = Math.round(nm * 1e6) / 1e6;
-  }
-  return out;
-}
-
-/** The library `Resolution` tag for a region frame, derived on demand. */
-function regionResolution(space: CoordinateSpace): ResolutionType {
-  return Resolution.from(regionVoxelSizeNm(space));
-}
-
 // ---------------------------------------------------------------------------
 // Per-session machinery container
 // ---------------------------------------------------------------------------
@@ -470,6 +455,19 @@ export class EditSessionHost extends RefCounted {
    * pointer bridge, and `activeToolWorkingResolution` all read this.
    */
   readonly activeToolId = new WatchableValue<string | undefined>(undefined);
+  /**
+   * Session layers whose data does NOT overlap the edit region (TM-360). The
+   * entry modal blocks a fresh open on this (so it is empty for a session
+   * opened via the modal), but a session RESTORED from ngState is not blocked —
+   * a layer's `info` may have changed, or the state may have been hand-edited —
+   * so we surface the mismatch instead: the navigation summary warns, and the
+   * painting target picker hides these layers so the user can't paint into a
+   * region the layer has no data for (every write there would clip to nothing).
+   * Computed in `instantiatePaintingTools`; cleared when the session ends.
+   */
+  readonly incompatibleLayers = new WatchableValue<ReadonlySet<LayerId>>(
+    new Set(),
+  );
   /**
    * Per-user edit-hotkey overrides (TM-315 runtime rebind): friendly action
    * name → key identifier(s). Merged by the session hotkey binder OVER the
@@ -2165,9 +2163,6 @@ export class EditSessionHost extends RefCounted {
     session: EditSession,
     config: HostSessionConfig,
   ): Promise<void> {
-    const firstWritable = config.layers.find((l) => l.writable);
-    const targetLayer = firstWritable ?? config.layers[0];
-
     // Build the layer-metadata map the compute + tools need (target layer for
     // the stamp, image layer for the mask threshold).
     const metadataByLayer = new Map<LayerId, LayerMetadata>();
@@ -2179,6 +2174,36 @@ export class EditSessionHost extends RefCounted {
         );
       }),
     );
+
+    // Flag any layer whose data does not overlap the edit region (TM-360). The
+    // entry modal already blocks this for a fresh open, so it only bites on a
+    // restored/hand-edited ngState; we don't fail the restore, we just surface
+    // it (nav summary warns, target picker hides the layer). Compared in nm —
+    // the region grid and the layer grid can differ in scale and origin, so raw
+    // voxel numbers are not comparable.
+    const incompatible = new Set<LayerId>();
+    for (const l of config.layers) {
+      const meta = metadataByLayer.get(l.layerId);
+      if (meta === undefined) continue;
+      const { status } = checkLayerCompat(
+        config.bboxVoxelCoords,
+        config.regionSpace,
+        meta,
+      );
+      if (status === "none") incompatible.add(l.layerId);
+    }
+    this.incompatibleLayers.value = incompatible;
+
+    // Default the painting target to the first writable layer that actually
+    // overlaps the region, so a restored session with a dead layer doesn't land
+    // on a target every stroke would clip away. Fall back to any writable (then
+    // any) layer when none overlap — the target picker is empty in that case
+    // and the nav summary explains why.
+    const writable = config.layers.filter((l) => l.writable);
+    const targetLayer =
+      writable.find((l) => !incompatible.has(l.layerId)) ??
+      writable[0] ??
+      config.layers[0];
 
     // Resolutions the session actually opened (and the host preloads/pins) per
     // layer. Threaded into the painting tools so a masked stroke can never read
@@ -3157,6 +3182,9 @@ export class EditSessionHost extends RefCounted {
     }
     this.state.value.value = null;
     this.activeSession.value = undefined;
+    if (this.incompatibleLayers.value.size > 0) {
+      this.incompatibleLayers.value = new Set();
+    }
     for (const loc of this.allToolPanelLocations()) {
       loc.visible = false;
     }
