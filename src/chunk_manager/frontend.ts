@@ -182,6 +182,12 @@ export class ChunkQueueManager extends SharedObject {
         if (this.applyChunkUpdate(update)) {
           visibleChunksChanged = true;
         }
+      } catch (error) {
+        // Updates are only (re)scheduled when the queue transitions from
+        // empty (`updateChunk`), so an exception escaping here would leave
+        // the rest of the queue unprocessed forever and freeze all chunk
+        // loading (TM-375). Drop the bad update and keep draining.
+        console.error("Error applying chunk update:", error);
       } finally {
         ++numUpdates;
         const nextUpdate = (this.pendingChunkUpdates = update.nextUpdate);
@@ -262,7 +268,20 @@ export class ChunkQueueManager extends SharedObject {
           chunk = source.getChunk(update);
           source.addChunk(key, chunk);
         } else {
-          chunk = source.chunks.get(key)!;
+          const existing = source.chunks.get(key);
+          if (existing === undefined) {
+            // Desync guard (TM-375): a state-only update references a chunk
+            // this frontend no longer holds. Dropping it is safe — the
+            // chunk's data can only arrive via a later `new` update — whereas
+            // dereferencing `undefined` would throw and stall the pending
+            // chunk-update queue for good.
+            console.warn(
+              `Ignoring chunk update for unknown chunk ${key} of source ` +
+                `${source.rpcId} (state ${ChunkState[newState]})`,
+            );
+            return visibleChunksChanged;
+          }
+          chunk = existing;
         }
         const oldState = chunk.state;
         if (newState !== oldState) {
@@ -476,7 +495,11 @@ export class ChunkSource extends SharedObject {
   }
 
   deleteChunk(key: string) {
-    const chunk = this.chunks.get(key)!;
+    // Tolerate an already-absent chunk: after an eviction / invalidation race
+    // the backend may EXPIRE a chunk this frontend no longer holds, and a
+    // throw here would stall the pending chunk-update queue (TM-375).
+    const chunk = this.chunks.get(key);
+    if (chunk === undefined) return;
     if (chunk.state === ChunkState.GPU_MEMORY) {
       chunk.freeGPUMemory(this.gl);
     }
