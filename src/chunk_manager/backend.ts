@@ -1027,23 +1027,33 @@ export class ChunkQueueManager extends SharedObjectCounterpart {
     rpc.invoke("Chunk.update", msg, transfers);
   }
 
+  /**
+   * Evict `chunk` from wherever it currently resides — cancel an in-flight
+   * download, free worker / frontend memory — and return it to the QUEUED
+   * state so it re-downloads on next request. Frontend-resident states
+   * (GPU_MEMORY / SYSTEM_MEMORY) are freed via per-chunk `Chunk.update`
+   * messages, so the frontend's `source.chunks` stays in lockstep with the
+   * backend's notion of where each chunk lives.
+   */
+  evictAndRequeueChunk(chunk: Chunk) {
+    switch (chunk.state) {
+      case ChunkState.DOWNLOADING:
+        cancelChunkDownload(chunk);
+        break;
+      case ChunkState.GPU_MEMORY:
+        this.freeChunkGPUMemory(chunk);
+      // fallthrough
+      case ChunkState.SYSTEM_MEMORY_WORKER:
+      case ChunkState.SYSTEM_MEMORY:
+        this.freeChunkSystemMemory(chunk);
+        break;
+    }
+    // Note: After calling this, chunk may no longer be valid.
+    this.updateChunkState(chunk, ChunkState.QUEUED);
+  }
+
   private processQueuePromotions_() {
-    const evict = (chunk: Chunk) => {
-      switch (chunk.state) {
-        case ChunkState.DOWNLOADING:
-          cancelChunkDownload(chunk);
-          break;
-        case ChunkState.GPU_MEMORY:
-          this.freeChunkGPUMemory(chunk);
-        // fallthrough
-        case ChunkState.SYSTEM_MEMORY_WORKER:
-        case ChunkState.SYSTEM_MEMORY:
-          this.freeChunkSystemMemory(chunk);
-          break;
-      }
-      // Note: After calling this, chunk may no longer be valid.
-      this.updateChunkState(chunk, ChunkState.QUEUED);
-    };
+    const evict = (chunk: Chunk) => this.evictAndRequeueChunk(chunk);
 
     const promotionLambda = (
       promotionCandidates: Iterator<Chunk>,
@@ -1143,20 +1153,29 @@ export class ChunkQueueManager extends SharedObjectCounterpart {
   }
 
   /**
-   * Re-queue only the named chunks of `source` (by chunk key) so they
-   * re-download on next request, leaving every other resident chunk untouched.
-   * Unknown keys are skipped.
+   * Evict only the named chunks of `source` (by chunk key) so they re-download
+   * on next request, leaving every other resident chunk untouched. Unknown
+   * keys are skipped.
+   *
+   * Eviction must be per-chunk on BOTH sides: `evictAndRequeueChunk` frees a
+   * frontend-resident chunk via a per-chunk `Chunk.update` message, so the
+   * frontend drops exactly the named keys. Sending the id-less source-wide
+   * update (as `invalidateSourceCache` does) is NOT an option here — it wipes
+   * every frontend chunk of the source while the backend still counts the
+   * non-invalidated ones as frontend-resident, which deadlocks later
+   * `fetchChunk` calls ("already available on frontend" with nothing to
+   * deliver) and crashes the frontend update loop on the next state-only
+   * message for a wiped chunk (TM-375).
    */
   invalidateChunkCache(source: ChunkSource, keys: readonly string[]) {
     let mutated = false;
     for (const key of keys) {
       const chunk = source.chunks.get(key);
       if (chunk === undefined) continue;
-      this.requeueChunk(chunk);
+      this.evictAndRequeueChunk(chunk);
       mutated = true;
     }
     if (!mutated) return;
-    this.rpc!.invoke("Chunk.update", { source: source.rpcId });
     this.scheduleUpdate();
   }
 
