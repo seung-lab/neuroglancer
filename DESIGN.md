@@ -1,8 +1,8 @@
 # Design
 
 Visual system for the **edit-session UI** (topbar + tool panels) in
-`neuroglancer-calcada`. It does not redefine Neuroglancer's own viewer styling;
-it governs the Calcada editing additions and is implemented as a token layer in
+`zettaai-neuroglancer`. It does not redefine Neuroglancer's own viewer styling;
+it governs the Zetta editing additions and is implemented as a token layer in
 `src/editing/ui/editing_theme.css` (`--nge-*` custom properties on `:root`).
 
 ## Theme
@@ -146,6 +146,20 @@ or free-entry inputs must use `ParamInput` (supplying a `parse`), not a raw
 Panels are fixed-width side panels (`min-width: 240px`) mounted by
 Neuroglancer's `SidePanelManager`. Rows stack vertically; the Brush "Advanced"
 mask section is an indented nested group revealed by its toggle.
+
+## Layout stability
+
+The UI is static in place: elements never move, resize, or push their
+neighbors on a state change unless the movement itself carries meaning.
+State renders into reserved space:
+
+- A button that gains a spinner (e.g. Save while saving) keeps its
+  dimensions — the spinner's box is reserved up front, the button never
+  grows and never pushes the adjacent button.
+- Status icons (e.g. "loaded") occupy a fixed slot; they toggle via
+  visibility/opacity, not by inserting into the flow and shifting siblings.
+- Swapping content in place (label ↔ spinner, icon ↔ icon) happens inside a
+  fixed-size container.
 
 ## Motion
 
