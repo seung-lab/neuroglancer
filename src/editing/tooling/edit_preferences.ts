@@ -17,8 +17,9 @@
  *
  *   - autofilling the resolution picker in the enter-edit-session modal
  *     (`resolutions`), and
- *   - seeding brush / active-tool / keybind defaults at session open
- *     (`tooling`).
+ *   - seeding brush / keybind defaults at session open (`tooling`). The
+ *     remembered active tool is deliberately not re-selected (TM-381):
+ *     sessions always enter in navigation mode.
  *
  * Nothing here is ever trusted as ground truth: every value is re-validated
  * against fresh layer metadata when consumed (a remembered resolution missing
@@ -48,10 +49,10 @@ export interface EditPreferences {
     readonly [layerId: string]: readonly ResolutionType[];
   };
   /**
-   * Cross-session tool state: painting family config + active tool id +
-   * per-user keybind overrides. Same shape as `editSession.tooling`, but
-   * survives session teardown so an open → close → open flow keeps the user's
-   * tool setup.
+   * Cross-session tool state: painting family config + per-user keybind
+   * overrides (the stored active tool id is ignored at restore, TM-381). Same
+   * shape as `editSession.tooling`, but survives session teardown so an
+   * open → close → open flow keeps the user's tool parameters.
    */
   readonly tooling?: ToolingPersistState;
 }
