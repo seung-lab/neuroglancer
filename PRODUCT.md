@@ -20,12 +20,27 @@ flow.
 
 ## Product Purpose
 
-`neuroglancer-calcada` is a fork of Google's Neuroglancer that adds an
+`zettaai-neuroglancer` is a fork of Google's Neuroglancer that adds an
 edit-session layer: a topbar of session controls and a set of per-tool side
-panels (Brush, Eraser, Fill, plus Correspondence and Z-extrapolation). It lets
-users make and save voxel edits to segmentation layers directly in the viewer.
-Success is when an annotator can configure a tool and edit confidently without
-guessing what a control does or losing input to a silent failure.
+panels for the tool groups listed below. It lets users make and save voxel
+edits to segmentation layers and run alignment workflows directly in the
+viewer. Success is when an annotator can configure a tool and edit confidently
+without guessing what a control does or losing input to a silent failure.
+
+## Tools
+
+Tool groups below are either already implemented or arriving in the near term.
+
+- **Painting tools — Brush, Erase, Fill.** Paint segmentation directly in the
+  viewer. All three use mask settings (threshold, binary closing, etc.) and
+  will be extended with preprocessors with flexible configuration.
+- **Alignment tools — Affine, Correspondence.** Produce a displacement field
+  and a warped image from source and target images. Correspondence
+  additionally supports defect/tissue masks for the source and target images.
+- **Z-extrapolation.** Runs propagate mask over a bounding box in one
+  direction (forward or backward) along an axis.
+- **Mask selected segments.** Writes the selected segments from one layer
+  into another layer, with the option to change the segment value.
 
 ## Brand Personality
 
@@ -55,6 +70,9 @@ words: **exact, quiet, dependable.** The tool should disappear into the task.
    treatment, one toggle, one input — the same everywhere in the editing UI.
 5. **Clarity for the occasional user, speed for the expert.** Readable copy and
    comfortable targets that never get in a power user's way.
+6. **Static in place.** Nothing moves, grows, or pushes neighbors on a state
+   change unless the movement itself is the message. Spinners, badges, and
+   status icons render into space reserved for them.
 
 ## Accessibility & Inclusion
 

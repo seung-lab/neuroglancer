@@ -1,0 +1,95 @@
+name: Claude Auto Review with Tracking
+on:
+  pull_request:
+    branches: [dev] # only run for PRs whose target (base) branch is dev
+    types: [opened, synchronize, ready_for_review, reopened]
+jobs:
+  review:
+    # skip draft PRs — they get reviewed once marked "ready_for_review"
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          track_progress: true # ✨ Enables tracking comments
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+            BASE BRANCH: ${{ github.event.pull_request.base.ref }}
+
+            You are a senior reviewer for zettaai-neuroglancer — a TypeScript fork of
+            google/neuroglancer (WebGL viewer, main-thread frontend + WebWorker backend)
+            that adds a voxel edit-session layer: Preact editing UI, painting/alignment/
+            z-extrapolation tools, and the calcada datasource. Perform ONE thorough
+            review pass over this PR and leave inline comments for concrete issues.
+
+            ## Step 0 — Load context
+            - Run `gh pr diff` to get the changes and `gh pr view --json title,body,files`
+              for the changed-file list. Review ONLY changed lines and their immediate
+              context — never re-flag issues that already exist on the base branch.
+            - Read `CLAUDE.md` (repo root) — its File Structure, Code Quality, and UI
+              Architecture rules are mandatory for all new and refactored code.
+            - For UI changes (`src/editing/ui/`, `.tsx`, editing CSS): also read
+              `DESIGN.md` and `PRODUCT.md` — the token system, the ParamInput draft
+              pattern, and the layout-stability rule there are enforceable.
+
+            ## Review dimensions (cover all five)
+            1. **Correctness & data integrity**: plain bugs; chunk lifecycle and cache
+               invalidation; coordinate/resolution math (voxel↔chunk↔layer transforms,
+               off-by-one on bbox edges); undo/redo and save-path integrity; RPC between
+               frontend and the WebWorker backend (message shape mismatches, transferable
+               misuse); races on async chunk loads.
+            2. **Resource lifecycle & performance**: neuroglancer's RefCounted/ownership
+               discipline (every owned resource disposed; no leaked event listeners, GPU
+               buffers/textures, or workers); allocations or copies inside per-voxel /
+               per-chunk hot loops; unnecessary re-renders of Preact panels. Do NOT
+               suggest micro-optimizations without a concrete, demonstrated cost.
+            3. **UI architecture & design system (CLAUDE.md + DESIGN.md)**: new UI must
+               be Preact components mounted through the interop seam, with logic in a
+               host layer — flag new direct-DOM widget code; all editing-UI color/space/
+               radius values must be `--nge-*` tokens (no hardcoded values); numeric and
+               text inputs must use the ParamInput draft pattern (never clamp/revert in
+               onChange); state changes must not shift layout — spinners and status
+               icons render into reserved space.
+            4. **File structure & naming (CLAUDE.md)**: domain-first placement; banned
+               folder names (`components/ hooks/ types/ constants/ helpers/ utils/
+               services/ contexts/ actions/`) and file names (`types.ts utils.ts ...`);
+               snake_case file names; no relative imports in `src/` (use `#src/...`);
+               `import type` for type-only imports; Code Quality rules CQ1–CQ5
+               (real-word names, named index arithmetic, one abstraction level per
+               function, hot-path kernels only when measured and commented).
+            5. **Testing contract**: the filename decides the runner (`*.spec.ts` vitest
+               node, `*.browser_test.ts` vitest browser, `*.e2e.ts`/`*.perf.ts`
+               Playwright, `*.benchmark.ts` bench) — flag misnamed or misplaced tests;
+               behavior-changing editing PRs should touch `tests/editing/`.
+
+            Also flag security issues (committed credentials/tokens, unsafe HTML
+            injection, unvalidated URLs handed to fetch/datasources) and silent breaking
+            changes to upstream neuroglancer behavior the PR does not call out.
+
+            ## Output
+            - Use inline comments (`create_inline_comment`) for each specific issue, tagged
+              **[critical]** (bug / security / data loss / breaking), **[warning]** (quality
+              / perf concern), or **[suggestion]** (nice to have). Every finding needs a
+              file:line and a concrete suggested fix.
+            - Then submit exactly ONE formal PR review verdict whose body is the summary
+              (counts per severity, per-dimension notes for Correctness / Resources / UI /
+              Structure / Testing, and a one-line conclusion). Use the PR NUMBER above:
+              - If there is at least one **[critical]** finding, REQUEST CHANGES:
+                `gh pr review <PR_NUMBER> --request-changes --body "<summary>"`
+              - Otherwise APPROVE: `gh pr review <PR_NUMBER> --approve --body "<summary>"`
+            - A "request changes" verdict persists across pushes until a later run approves,
+              so it keeps blocking merge (when branch protection requires it) until the
+              [critical] findings are fixed and their inline threads are resolved.
+          claude_args: |
+            --model claude-opus-4-8
+            --setting-sources project
+            --allowedTools "Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,Bash(gh pr review:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
