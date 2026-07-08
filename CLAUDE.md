@@ -79,15 +79,13 @@ Each folder is named after its business responsibility, never its technical role
 
 Banned at every nesting level:
 
-> `components/` `hooks/` `types/` `constants/` `helpers/` `utils/` `services/`
-> `contexts/` `actions/`
+> `components/` `hooks/` `types/` `constants/` `helpers/` `utils/` `services/` `contexts/` `actions/`
 
 ### Rule 3: Banned File Names
 
 Banned at every nesting level:
 
-> `types.ts` `interfaces.ts` `constants.ts` `helpers.ts` `utils.ts` `reducer.ts`
-> `index.ts` used as an internal barrel
+> `types.ts` `interfaces.ts` `constants.ts` `helpers.ts` `utils.ts` `reducer.ts` `index.ts` used as an internal barrel
 
 Domain prefix + generic suffix is still banned (`brush_types.ts`, `paint_helpers.ts`).
 Types live alongside the logic they describe, or in a file named for what the content
@@ -165,12 +163,12 @@ See `DESIGN.md`.
 
 The filename decides the runner and tier — never mix:
 
-| Pattern              | Runner                         |
-| -------------------- | ------------------------------ |
-| `*.spec.ts`          | Vitest (node/jsdom)            |
-| `*.browser_test.ts`  | Vitest browser (real Chromium) |
-| `*.e2e.ts` / `*.perf.ts` | Playwright                 |
-| `*.benchmark.ts`     | Vitest bench                   |
+| Pattern                  | Runner                         |
+| ------------------------ | ------------------------------ |
+| `*.spec.ts`              | Vitest (node/jsdom)            |
+| `*.browser_test.ts`      | Vitest browser (real Chromium) |
+| `*.e2e.ts` / `*.perf.ts` | Playwright                     |
+| `*.benchmark.ts`         | Vitest bench                   |
 
 Zetta editing suites live in `tests/editing/` (`unit/ integration/ e2e/ perf/ fakes/
 harness/`). Read `docs/TESTING.md` before writing tests.
