@@ -140,6 +140,9 @@
   flex-direction: column;
   gap: 22px;
   overflow-y: auto;
+  /* Suppress the macOS elastic rubber-band on a long layer list, matching the
+     listbox panel, so overscroll can't detach the body from the modal frame. */
+  overscroll-behavior: none;
 }
 
 .neuroglancer-edit-session-entry-modal-section-title {
@@ -302,6 +305,16 @@
   font-family: sans-serif;
   font-size: 13px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  /* Cap the popup height and scroll internally so a long option list (e.g. many
+     bounding-box annotations in the Region picker) stays reachable instead of
+     running off-screen. `updateRect` tightens `max-height` inline to the real
+     space below/above the trigger; this is the fallback ceiling. `none` stops
+     wheel-scroll at the panel edge from chaining to the modal body AND
+     suppresses the macOS elastic rubber-band, which would otherwise open a gap
+     between the list and the trigger when overscrolled past its top. */
+  max-height: 320px;
+  overflow-y: auto;
+  overscroll-behavior: none;
 }
 
 .neuroglancer-edit-session-listbox-option {
