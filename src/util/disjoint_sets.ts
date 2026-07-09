@@ -103,6 +103,7 @@ export class DisjointUint64Sets {
   // changed the representative of pre-existing pieces, which we can't
   // efficiently express as a delta because HashMapUint64.set is insert-only).
   private dirty: bigint[] | null = [];
+  private dirtyTrackingEnabled = true;
   visibleSegmentEquivalencePolicy: WatchableValueInterface<VisibleSegmentEquivalencePolicy> =
     new WatchableValue<VisibleSegmentEquivalencePolicy>(
       VisibleSegmentEquivalencePolicy.MIN_REPRESENTATIVE,
@@ -131,7 +132,9 @@ export class DisjointUint64Sets {
     if (entry === undefined) {
       entry = new Entry(x);
       map.set(x, entry);
-      if (this.dirty !== null) this.dirty.push(x);
+      if (this.dirtyTrackingEnabled && this.dirty !== null) {
+        this.dirty.push(x);
+      }
       return entry;
     }
     return findRepresentative(entry);
@@ -147,6 +150,17 @@ export class DisjointUint64Sets {
     const d = this.dirty;
     this.dirty = [];
     return d;
+  }
+
+  /**
+   * Stops accumulating the dirty list. Called when hash-map maintenance
+   * moves to the worker's copy of this set (table mirroring): nothing on
+   * this side consumes the list anymore, and without a consumer it would
+   * grow unboundedly.
+   */
+  disableDirtyTracking() {
+    this.dirtyTrackingEnabled = false;
+    this.dirty = [];
   }
 
   /**

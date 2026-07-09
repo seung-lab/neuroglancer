@@ -34,6 +34,8 @@ import type {
   SegmentationGroupState,
 } from "#src/segmentation_display_state/frontend.js";
 import { registerRedrawWhenSegmentationDisplayStateChanged } from "#src/segmentation_display_state/frontend.js";
+import type { SharedDisjointUint64Sets } from "#src/shared_disjoint_sets.js";
+import { updateHashMapFromDisjointSets } from "#src/shared_disjoint_sets.js";
 import type { SliceViewSourceOptions } from "#src/sliceview/base.js";
 import type {
   SliceView,
@@ -54,40 +56,76 @@ import {
   makeCachedDerivedWatchableValue,
 } from "#src/trackable_value.js";
 import type { Uint64Map } from "#src/uint64_map.js";
-import type { DisjointUint64Sets } from "#src/util/disjoint_sets.js";
 import type { vec3 } from "#src/util/geom.js";
 import type { GL } from "#src/webgl/context.js";
 import type { ShaderBuilder, ShaderProgram } from "#src/webgl/shader.js";
 
+// Consuming pending equivalences is deliberately batched on a fixed
+// interval once the map is large: the GPU mirror re-uploads the ENTIRE
+// table on any generation change (tens of MB once millions of pieces are
+// loaded), so consuming on every frame while calcada chunk LUTs stream in
+// re-uploads the full table per frame and freezes the UI. Small maps (and
+// the temporary multicut map) stay below the threshold and update
+// immediately.
+const EQUIVALENCES_BATCH_INTERVAL_MS = 200;
+const EQUIVALENCES_BATCH_SIZE_THRESHOLD = 65536;
+
+// Past this size the cuckoo-hash maintenance itself becomes the freeze:
+// every table doubling rehashes ALL entries (~1s at 2M entries), and a
+// post-edit full rebuild is even worse. Hand the table over to the worker
+// (see `SharedDisjointUint64Sets.requestTableMirror`), which ships
+// ready-to-upload snapshots; the main thread then only adopts and uploads.
+const EQUIVALENCES_WORKER_MIRROR_THRESHOLD = 262144;
+
 export class EquivalencesHashMap {
   generation = Number.NaN;
   hashMap = new HashMapUint64();
-  constructor(public disjointSets: DisjointUint64Sets) {}
+  private lastConsumeTime = Number.NEGATIVE_INFINITY;
+  private deferredUpdateTimer: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * Invoked after the batching interval elapses when update() postponed
+   * consuming pending equivalences. The render layer wires this to
+   * `redrawNeeded` so the deferred batch is consumed even when nothing else
+   * schedules a redraw (e.g. the final chunk of a load).
+   */
+  onDeferredUpdate: (() => void) | undefined;
+  constructor(public sharedSets: SharedDisjointUint64Sets) {}
   update() {
-    const { disjointSets } = this;
-    const { generation } = disjointSets;
-    if (this.generation === generation) return;
-    this.generation = generation;
-    const { hashMap } = this;
-    // Drain pending dirty pieces. consumeDirty() returns null only when the
-    // disjoint set was cleared/deleted or a merge changed the representative
-    // of pre-existing pieces — in those cases we fall back to a full rebuild
-    // because HashMapUint64.set is insert-only and can't express updates.
-    const dirty = disjointSets.consumeDirty();
-    if (dirty === null) {
-      hashMap.clear();
-      for (const [objectId, minObjectId] of disjointSets.mappings()) {
-        hashMap.set(objectId, minObjectId);
+    const { sharedSets, hashMap } = this;
+    const { disjointSets } = sharedSets;
+    if (sharedSets.tableMirrorRequested) {
+      // Worker-mirrored mode: adopt the latest worker-built table instead
+      // of doing any O(size) insert/rehash work here. The worker's disjoint
+      // set receives every mutation via RPC mirroring, so its snapshots
+      // already include them; local dirty tracking is off.
+      const snapshot = sharedSets.takeTableMirrorSnapshot();
+      if (snapshot !== undefined) {
+        hashMap.adoptSnapshot(snapshot);
+        this.generation = disjointSets.generation;
       }
       return;
     }
-    // Incremental: every piece in dirty is brand new (never previously
-    // inserted into hashMap), so .set() is guaranteed to take the insert
-    // branch and avoid the cuckoo-hash insert-or-lookup cycle on hundreds of
-    // thousands of stale entries.
-    for (let i = 0, n = dirty.length; i < n; i++) {
-      const piece = dirty[i];
-      hashMap.set(piece, disjointSets.get(piece));
+    const { generation } = disjointSets;
+    if (this.generation === generation) return;
+    const now = performance.now();
+    const sinceLastConsume = now - this.lastConsumeTime;
+    if (
+      hashMap.size >= EQUIVALENCES_BATCH_SIZE_THRESHOLD &&
+      sinceLastConsume < EQUIVALENCES_BATCH_INTERVAL_MS
+    ) {
+      if (this.deferredUpdateTimer === undefined) {
+        this.deferredUpdateTimer = setTimeout(() => {
+          this.deferredUpdateTimer = undefined;
+          this.onDeferredUpdate?.();
+        }, EQUIVALENCES_BATCH_INTERVAL_MS - sinceLastConsume);
+      }
+      return;
+    }
+    this.lastConsumeTime = now;
+    this.generation = generation;
+    updateHashMapFromDisjointSets(hashMap, disjointSets);
+    if (hashMap.size >= EQUIVALENCES_WORKER_MIRROR_THRESHOLD) {
+      sharedSets.requestTableMirror();
     }
   }
 }
@@ -333,11 +371,14 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
       this.segmentationGroupState.temporaryVisibleSegments.hashTable,
     );
     this.equivalencesHashMap = new EquivalencesHashMap(
-      this.segmentationGroupState.segmentEquivalences.disjointSets,
+      this.segmentationGroupState.segmentEquivalences,
     );
     this.temporaryEquivalencesHashMap = new EquivalencesHashMap(
-      this.segmentationGroupState.temporarySegmentEquivalences.disjointSets,
+      this.segmentationGroupState.temporarySegmentEquivalences,
     );
+    this.equivalencesHashMap.onDeferredUpdate =
+      this.temporaryEquivalencesHashMap.onDeferredUpdate = () =>
+        this.redrawNeeded.dispatch();
     this.gpuEquivalencesHashTable = this.registerDisposer(
       GPUHashTable.get(this.gl, this.equivalencesHashMap.hashMap),
     );
