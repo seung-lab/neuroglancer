@@ -15,7 +15,9 @@
  */
 
 import "#src/datasource/calcada/calcada.css";
+
 import { debounce } from "lodash-es";
+
 import {
   AnnotationDisplayState,
   AnnotationLayerState,
@@ -44,20 +46,20 @@ import type {
   MultiscaleMeshMetadata,
 } from "#src/datasource/calcada/base.js";
 import {
-  parseGrapheneError,
+  CALCADA_BULK_LINK_RPC_ID,
   CHUNKED_GRAPH_LAYER_RPC_ID,
   CHUNKED_GRAPH_RENDER_LAYER_UPDATE_SOURCES_RPC_ID,
   ChunkedGraphSourceParameters,
   getGrapheneFragmentKey,
+  getHttpSource,
   GRAPHENE_MESH_NEW_SEGMENT_RPC_ID,
-  CALCADA_BULK_LINK_RPC_ID,
   isBaseSegmentId,
   makeChunkedGraphChunkSpecification,
   MeshSourceParameters,
+  parseGrapheneError,
   PYCG_APP_VERSION,
   RENDER_RATIO_LIMIT,
   VolumeChunkSourceParameters as CalcadaVolumeChunkSourceParameters,
-  getHttpSource,
 } from "#src/datasource/calcada/base.js";
 import type {
   DataSource,
@@ -2413,9 +2415,7 @@ void main() {
                 loop(completed, failed);
                 failed = [];
                 checkDone();
-                wait(5000).then(() => {
-                  this.deleteMergeSubmission(submission);
-                });
+                this.deleteMergeSubmission(submission);
               })
               .catch(() => {
                 merges.changed.dispatch();
@@ -4045,12 +4045,6 @@ const maybeGetSelection = (
     segmentId: baseValue,
     position: point,
   };
-};
-
-const wait = (t: number) => {
-  return new Promise((f, _r) => {
-    setTimeout(f, t);
-  });
 };
 
 interface MergeSubmission {
