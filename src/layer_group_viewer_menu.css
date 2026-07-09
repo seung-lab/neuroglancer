@@ -1,0 +1,100 @@
+/*
+ * Copyright 2026 Zetta AI
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ *
+ * Layer-group viewer dropdown, on the editing design tokens
+ * (editing_theme.css). The ContextMenu shell is restyled from the stock
+ * black/white chrome to the shared overlay surface.
+ */
+
+.neuroglancer-context-menu.neuroglancer-layer-group-viewer-context-menu {
+  background: var(--nge-overlay-bg);
+  border: 1px solid var(--nge-overlay-border);
+  border-radius: var(--nge-radius-md);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.45);
+  padding: var(--nge-space-3);
+  font-family: var(--nge-font);
+  font-size: var(--nge-text-size);
+  color: var(--nge-text);
+  color-scheme: dark;
+}
+
+.neuroglancer-layer-group-menu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--nge-space-1);
+  min-width: 280px;
+}
+
+.neuroglancer-layer-group-menu-remove {
+  align-self: stretch;
+  height: var(--nge-control-h);
+  margin-bottom: var(--nge-space-2);
+  background: none;
+  border: 1px solid var(--nge-border);
+  border-radius: var(--nge-radius-sm);
+  color: var(--nge-danger);
+  font: inherit;
+  cursor: pointer;
+  transition:
+    border-color var(--nge-transition),
+    background var(--nge-transition);
+}
+
+.neuroglancer-layer-group-menu-remove:hover {
+  border-color: var(--nge-danger);
+  background: var(--nge-danger-bg);
+}
+
+.neuroglancer-layer-group-menu-remove:focus-visible {
+  outline: 2px solid var(--nge-accent-ring);
+  outline-offset: 2px;
+}
+
+.neuroglancer-layer-group-menu-row {
+  display: flex;
+  align-items: center;
+  gap: var(--nge-space-4);
+  min-height: var(--nge-control-h-compact);
+  color: var(--nge-text-muted);
+  white-space: nowrap;
+}
+
+.neuroglancer-layer-group-menu-row select {
+  margin-left: auto;
+  box-sizing: border-box;
+  height: var(--nge-control-h-compact);
+  min-width: 110px;
+  background: var(--nge-control-bg);
+  border: 1px solid var(--nge-border);
+  border-radius: var(--nge-radius-sm);
+  color: var(--nge-text);
+  padding: 0 var(--nge-space-2);
+  font: inherit;
+  transition:
+    border-color var(--nge-transition),
+    background var(--nge-transition);
+}
+
+.neuroglancer-layer-group-menu-row select:hover:not(:disabled) {
+  border-color: var(--nge-border-strong);
+}
+
+.neuroglancer-layer-group-menu-row select:focus-visible {
+  outline: 2px solid var(--nge-accent-ring);
+  outline-offset: 2px;
+  border-color: var(--nge-accent-border);
+}
+
+.neuroglancer-layer-group-menu-row select:disabled {
+  background: var(--nge-control-bg-inert);
+  color: var(--nge-text-faint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .neuroglancer-layer-group-menu-remove,
+  .neuroglancer-layer-group-menu-row select {
+    transition: none;
+  }
+}
