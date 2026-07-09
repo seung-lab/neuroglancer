@@ -2447,8 +2447,20 @@ void main() {
       } else if (submission.mergedRoot) {
         segmentsToAdd.push(submission.mergedRoot);
       }
-      const segmentsState =
-        this.layer.displayState.segmentationGroupState.value;
+    }
+    const segmentsState = this.layer.displayState.segmentationGroupState.value;
+    // submitMerge already applied every merged root to the display: mesh,
+    // visible+selected, and equivalences (linked from the merge response's
+    // pieces). All that remains for a single merge is dropping the retired
+    // roots from the selection.
+    segmentsState.selectedSegments.delete(segmentsToRemove);
+    // The re-resolve + getLeaves below only matter for chained BATCH merges,
+    // where a root submitMerge just showed may have been merged again earlier in
+    // the same batch. For a single interactive merge it only re-does submitMerge's
+    // work and, worse, mutates segmentEquivalences twice more (deleteSet + async
+    // link) — each forcing another full GPU equivalences-table rebuild (~1s at
+    // FAFB scale) on top of the one submitMerge already triggered.
+    if (submissions.length > 1) {
       const latestRoots = await this.graph.graphServer.filterLatestRoots(
         segmentsToAdd,
         segmentsState.timestamp.value ?? 0,
@@ -2456,46 +2468,31 @@ void main() {
         this.graph.branchId.value,
       );
       const { visibleSegments, selectedSegments } = segmentsState;
-      selectedSegments.delete(segmentsToRemove);
       this.meshAddNewSegments(latestRoots);
       selectedSegments.add(latestRoots);
       visibleSegments.add(latestRoots);
-      merges.changed.dispatch();
-    }
-    const segmentsState = this.layer.displayState.segmentationGroupState.value;
-    const { visibleSegments, selectedSegments } = segmentsState;
-    selectedSegments.delete(segmentsToRemove);
-    const latestRoots = await this.graph.graphServer.filterLatestRoots(
-      segmentsToAdd,
-      segmentsState.timestamp.value ?? 0,
-      false,
-      this.graph.branchId.value,
-    );
-    selectedSegments.add(latestRoots);
-    visibleSegments.add(latestRoots);
-    // Clear stale equivalences for old roots and rebuild for new roots.
-    // No chunk refetch needed — piece_ids unchanged, only mapping changes.
-    for (const oldRoot of segmentsToRemove) {
-      segmentsState.segmentEquivalences.deleteSet(oldRoot);
-    }
-    for (const newRoot of latestRoots) {
-      this.graph.graphServer
-        .getLeaves(
-          newRoot,
-          segmentsState.timestamp.value ?? 0,
-          this.graph.branchId.value,
-        )
-        .then((pieces) => {
-          for (const piece of pieces) {
-            segmentsState.segmentEquivalences.link(newRoot, piece);
-          }
-        })
-        .catch((e: unknown) => {
-          StatusMessage.showTemporaryMessage(
-            `Failed to load pieces for ${newRoot}: ${e instanceof Error ? e.message : String(e)}`,
-            6000,
-          );
-        });
+      for (const oldRoot of segmentsToRemove) {
+        segmentsState.segmentEquivalences.deleteSet(oldRoot);
+      }
+      for (const newRoot of latestRoots) {
+        this.graph.graphServer
+          .getLeaves(
+            newRoot,
+            segmentsState.timestamp.value ?? 0,
+            this.graph.branchId.value,
+          )
+          .then((pieces) => {
+            for (const piece of pieces) {
+              segmentsState.segmentEquivalences.link(newRoot, piece);
+            }
+          })
+          .catch((e: unknown) => {
+            StatusMessage.showTemporaryMessage(
+              `Failed to load pieces for ${newRoot}: ${e instanceof Error ? e.message : String(e)}`,
+              6000,
+            );
+          });
+      }
     }
     merges.changed.dispatch();
   }
