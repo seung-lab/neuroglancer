@@ -2672,6 +2672,10 @@ class GrapheneGraphServerInterface {
       appendCoordParams(`${baseUrl}/merge?int64_as_str=1`, { branchId }),
       {
         method: "POST",
+        // Edits are user-blocking: hint the browser to send this ahead of the
+        // low-priority chunk/mesh downloads that otherwise saturate the
+        // connection and stall the request in the queue.
+        priority: "high",
         body: JSON.stringify([
           [String(first.segmentId), ...first.position],
           [String(second.segmentId), ...second.position],
@@ -2707,6 +2711,8 @@ class GrapheneGraphServerInterface {
       appendCoordParams(`${baseUrl}/split?int64_as_str=1`, { branchId }),
       {
         method: "POST",
+        // See mergeSegments: edits jump the chunk/mesh download queue.
+        priority: "high",
         body: JSON.stringify({
           sources: first.map((x) => [String(x.segmentId), ...x.position]),
           sinks: second.map((x) => [String(x.segmentId), ...x.position]),
