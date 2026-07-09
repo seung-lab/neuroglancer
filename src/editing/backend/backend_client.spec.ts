@@ -69,7 +69,20 @@ describe("joinBackendUrl", () => {
         "https://h/api?subportal_id=abc&keep=1",
         "segmentation/x?subportal_id=z",
       ),
-    ).toBe("https://h/api/segmentation/x?subportal_id=z&keep=1");
+    ).toBe("https://h/api/segmentation/x?keep=1&subportal_id=z");
+  });
+
+  it("preserves repeated path query keys (e.g. per-axis resolution/bbox)", () => {
+    const url = joinBackendUrl(
+      "https://h/api?subportal_id=abc",
+      "painting/cutout?path=gs://b/p&resolution=64&resolution=64&resolution=45" +
+        "&bbox_start=6144&bbox_start=4864&bbox_start=5304",
+    );
+    const params = new URL(url).searchParams;
+    expect(params.getAll("resolution")).toEqual(["64", "64", "45"]);
+    expect(params.getAll("bbox_start")).toEqual(["6144", "4864", "5304"]);
+    // Base-only keys survive alongside the repeated path keys.
+    expect(params.get("subportal_id")).toBe("abc");
   });
 });
 

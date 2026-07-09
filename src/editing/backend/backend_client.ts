@@ -66,8 +66,15 @@ export function joinBackendUrl(baseUrl: string, path: string): string {
 
   if (rawQuery) {
     const pathParams = new URLSearchParams(rawQuery);
+    // Drop base values for any key the path also sets, then append every path
+    // value. `append` (not `set`) is essential: repeated keys like
+    // `resolution`/`bbox_start` carry a value per axis, and `set` would collapse
+    // each to a single value (→ backend tuple validation fails).
+    for (const key of new Set(pathParams.keys())) {
+      url.searchParams.delete(key);
+    }
     for (const [key, value] of pathParams) {
-      url.searchParams.set(key, value);
+      url.searchParams.append(key, value);
     }
   }
   return url.toString();

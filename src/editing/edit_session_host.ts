@@ -70,6 +70,7 @@ import {
   registerSaveBackend,
   saveBackendRegistryChanged,
 } from "#src/editing/adapters/save_backend.js";
+import { HttpSaveBackend } from "#src/editing/adapters/save_backends/http_save_backend.js";
 import { PostMessageSaveBackend } from "#src/editing/adapters/save_backends/post_message_save_backend.js";
 import type { ChunkLoadProgressState } from "#src/editing/adapters/session_chunk_preloader.js";
 import { BackendClient } from "#src/editing/backend/backend_client.js";
@@ -80,6 +81,10 @@ import {
   hasBackendEndpoint,
   registerBackendEndpoint,
 } from "#src/editing/backend/backend_endpoint.js";
+import {
+  buildTimeBackendEndpoint,
+  logoutBuildTimeBackendAuth,
+} from "#src/editing/backend/build_time_endpoint.js";
 import {
   BRUSH_SIZE_PRESETS,
   nearestPresetSize,
@@ -908,6 +913,36 @@ export class EditSessionHost extends RefCounted {
     );
     this.registerDisposer(() => clearBackendEndpoint());
 
+    // Standalone / dev fallback (TM-349): if the bundle was built with the
+    // `NEUROGLANCER_ZETTA_BACKEND_URL` define, register that endpoint now so
+    // the backend is reachable without a portal. Guarded on `!hasBackendEndpoint`
+    // and installed at construction (before the portal's viewer-ready
+    // `configureBackend()`), so an embedding host still wins.
+    if (!hasBackendEndpoint()) {
+      const buildTimeEndpoint = buildTimeBackendEndpoint();
+      if (buildTimeEndpoint !== undefined) {
+        console.info(
+          "Set up backend endpoint in build time: " + buildTimeEndpoint.baseUrl
+        );
+        registerBackendEndpoint(buildTimeEndpoint);
+      }
+    }
+
+    // Standalone save (TM-348): when a backend endpoint is reachable (build-time
+    // or injected) but nothing has registered a save backend, write chunks
+    // directly to `/cutout` through the shared client. Runs at construction, so
+    // a portal that later calls `registerDefaultSaveBackend()` (its own
+    // `PostMessageSaveBackend`) still wins. Without an endpoint, save stays
+    // unavailable exactly as before.
+    if (hasBackendEndpoint() && !hasAnySaveBackend()) {
+      registerDefaultSaveBackend(
+        new HttpSaveBackend({
+          client: this.backendClient,
+          resolveDataSourceUrl: (id) => this.resolveLayerDataSourceUrl(id),
+        }),
+      );
+    }
+
     // The viewer constructor calls `tryRestoreFromState()` once, but the URL
     // hash is parsed AFTER construction, so the first call is a no-op. Watch
     // `state.changed` so that when the URL parse populates the intent block —
@@ -1671,6 +1706,26 @@ export class EditSessionHost extends RefCounted {
    */
   configureBackend(endpoint: BackendEndpoint): void {
     registerBackendEndpoint(endpoint);
+  }
+
+  /**
+   * Dev-only logout for the build-time Google-login backend (TM-349). Clears
+   * NG's cached id_token, best-effort revokes the grant at Google, and forces
+   * the account chooser on the next login. Reachable from the console as
+   * `window.viewer.editSessionHost.logoutBackend()`. Returns `false` if no
+   * Google-login backend is active.
+   *
+   * Cannot end Google's own SSO session (no third-party app can) — for a full
+   * Google sign-out the user must do so at accounts.google.com.
+   */
+  logoutBackend(): boolean {
+    const cleared = logoutBuildTimeBackendAuth();
+    console.info(
+      cleared
+        ? "[backend] logged out; next request forces a fresh Google login."
+        : "[backend] no Google-login backend active; nothing to clear.",
+    );
+    return cleared;
   }
 
   /**

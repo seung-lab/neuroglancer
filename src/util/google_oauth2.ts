@@ -42,6 +42,13 @@ export const AUTH_SERVER = "https://accounts.google.com/o/oauth2/v2/auth";
  */
 export interface OAuth2Token {
   accessToken: string;
+  /**
+   * The OpenID Connect ID token (a signed JWT), present when the `openid` +
+   * `email` scopes are requested. Its audience is the OAuth `client_id`, which
+   * is what an Identity-Aware Proxy (IAP) validates — so this, not
+   * `accessToken`, is the bearer to send to an IAP-protected backend.
+   */
+  idToken: string;
   expiresIn: string;
   tokenType: string;
   scope: string;
@@ -94,6 +101,7 @@ function waitForAuthResponseMessage(
               "access_token",
               verifyString,
             ),
+            idToken,
             tokenType: verifyObjectProperty(obj, "token_type", verifyString),
             expiresIn: verifyObjectProperty(obj, "expires_in", verifyString),
             scope: verifyObjectProperty(obj, "scope", verifyString),
@@ -124,6 +132,7 @@ function makeAuthRequestUrl(options: {
   authUser?: number;
   includeGrantedScopes?: boolean;
   immediate?: boolean;
+  prompt?: string;
 }) {
   let url = `${AUTH_SERVER}?client_id=${encodeURIComponent(options.clientId)}`;
   const redirectUri = new URL("./google_oauth2_redirect.html", import.meta.url)
@@ -147,6 +156,9 @@ function makeAuthRequestUrl(options: {
   }
   if (options.immediate) {
     url += "&immediate=true";
+  }
+  if (options.prompt !== undefined) {
+    url += `&prompt=${encodeURIComponent(options.prompt)}`;
   }
   if (options.nonce !== undefined) {
     url += `&nonce=${options.nonce}`;
@@ -193,6 +205,8 @@ export async function authenticateGoogleOAuth2(
     loginHint?: string;
     immediate?: boolean;
     authUser?: number;
+    /** OAuth `prompt` (e.g. `select_account`, `login`) to force re-auth. */
+    prompt?: "login" | "select_account" | "consent";
   },
   signal: AbortSignal,
 ) {
@@ -207,6 +221,7 @@ export async function authenticateGoogleOAuth2(
     loginHint: options.loginHint,
     immediate: options.immediate,
     authUser: options.authUser,
+    prompt: options.prompt,
   });
   const abortController = new AbortController();
   signal = AbortSignal.any([abortController.signal, signal]);
@@ -233,7 +248,13 @@ export async function authenticateGoogleOAuth2(
 
 export class GoogleOAuth2CredentialsProvider extends CredentialsProvider<OAuth2Token> {
   constructor(
-    public options: { clientId: string; scopes: string[]; description: string },
+    public options: {
+      clientId: string;
+      scopes: string[];
+      description: string;
+      /** OAuth `prompt` forwarded to each auth request (e.g. `select_account`). */
+      prompt?: "login" | "select_account" | "consent";
+    },
   ) {
     super();
   }
@@ -253,6 +274,11 @@ export class GoogleOAuth2CredentialsProvider extends CredentialsProvider<OAuth2T
               scopes: this.options.scopes,
               immediate: immediate,
               authUser: 0,
+              // `prompt` (e.g. `select_account`) requires user interaction, so
+              // it is incompatible with the silent `immediate` attempt — sending
+              // it there makes Google reject the request as `invalid_request`.
+              // Apply it only to the interactive attempt.
+              prompt: immediate ? undefined : this.options.prompt,
             },
             signal,
           ),
