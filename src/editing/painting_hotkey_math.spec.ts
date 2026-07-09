@@ -21,10 +21,11 @@ import {
   nextThresholdLow,
 } from "#src/editing/painting_hotkey_math.js";
 
-// Presets: [1, 3, 5, 9, 15, 25, 43, 75, 131, 229, 401, 701, 1025].
+// Presets: [1, 3, 5, 7, 9, 11, 13, 17, 21, 25, 31, 37, 45, 55, 67, 81, 97, 117,
+//   141, 169, 203, 245, 295, 355, 427, 513, 617, 741, 889, 1025].
 describe("nextPresetSize", () => {
   it("steps one preset up/down from a preset member", () => {
-    expect(nextPresetSize(5, +1)).toBe(9);
+    expect(nextPresetSize(5, +1)).toBe(7);
     expect(nextPresetSize(5, -1)).toBe(3);
   });
 
@@ -34,8 +35,8 @@ describe("nextPresetSize", () => {
   });
 
   it("snaps an off-preset size toward the requested direction", () => {
-    expect(nextPresetSize(7, +1)).toBe(9);
-    expect(nextPresetSize(7, -1)).toBe(5);
+    expect(nextPresetSize(15, +1)).toBe(17);
+    expect(nextPresetSize(15, -1)).toBe(13);
   });
 
   it("is a no-op above the largest preset when increasing", () => {
@@ -44,7 +45,7 @@ describe("nextPresetSize", () => {
   });
 
   it("only uses the sign of dir (fixed step)", () => {
-    expect(nextPresetSize(5, +10)).toBe(9);
+    expect(nextPresetSize(5, +10)).toBe(7);
     expect(nextPresetSize(5, -10)).toBe(3);
   });
 });
