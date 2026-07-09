@@ -31,6 +31,22 @@ const DEBUG = false;
 let pending = 0n;
 let backupPending = 0n;
 
+/**
+ * Serialized state of a HashTableBase, sufficient to reconstruct lookups on
+ * another instance (typically across the worker/frontend boundary, so that
+ * O(size) insert/rehash work stays off the main thread). The hash seeds and
+ * empty key must travel with the table: lookups recompute the same hash
+ * chain from them.
+ */
+export interface HashTableSnapshot {
+  table: BigUint64Array;
+  tableSize: number;
+  entryStride: number;
+  hashSeeds: Uint32Array<ArrayBuffer>;
+  empty: bigint;
+  size: number;
+}
+
 export abstract class HashTableBase {
   loadFactor = DEFAULT_LOAD_FACTOR;
   size = 0;
@@ -236,6 +252,46 @@ export abstract class HashTableBase {
     return false;
   }
 
+  /**
+   * Copies out this table's state for adoption by another instance. The
+   * table is copied (callers typically transfer the copy's buffer across a
+   * postMessage boundary, which would otherwise detach the live table).
+   */
+  takeSnapshot(): HashTableSnapshot {
+    return {
+      table: this.table.slice(),
+      tableSize: this.tableSize,
+      entryStride: this.entryStride,
+      hashSeeds: this.hashSeeds,
+      empty: this.empty,
+      size: this.size,
+    };
+  }
+
+  /** Replaces this table's entire contents with a snapshot. */
+  adoptSnapshot(snapshot: HashTableSnapshot) {
+    if (snapshot.entryStride !== this.entryStride) {
+      throw new Error(
+        `Cannot adopt snapshot with entryStride ${snapshot.entryStride} ` +
+          `into table with entryStride ${this.entryStride}.`,
+      );
+    }
+    this.table = snapshot.table;
+    this.hashSeeds = snapshot.hashSeeds;
+    this.empty = snapshot.empty;
+    this.size = snapshot.size;
+    this.updateDerivedTableState(snapshot.tableSize);
+    ++this.generation;
+  }
+
+  /** Table-geometry invariants shared by `allocate` and `adoptSnapshot`. */
+  private updateDerivedTableState(tableSize: number) {
+    this.tableSize = tableSize;
+    this.maxAttempts = tableSize;
+    this.capacity = tableSize * this.loadFactor;
+    this.mungedEmptyKey = undefined;
+  }
+
   protected swapPending(table: BigUint64Array, offset: number) {
     const temp = pending;
     this.storePending(table, offset);
@@ -280,13 +336,9 @@ export abstract class HashTableBase {
   }
 
   private allocate(tableSize: number) {
-    this.tableSize = tableSize;
-    const { entryStride } = this;
-    this.table = new BigUint64Array(tableSize * entryStride);
-    this.maxAttempts = tableSize;
+    this.updateDerivedTableState(tableSize);
+    this.table = new BigUint64Array(tableSize * this.entryStride);
     this.clearTable();
-    this.capacity = tableSize * this.loadFactor;
-    this.mungedEmptyKey = undefined;
   }
 
   private rehash(oldTable: BigUint64Array, tableSize: number) {

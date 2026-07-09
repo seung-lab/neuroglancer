@@ -1614,6 +1614,11 @@ class GraphConnection extends SegmentationGraphSourceConnection {
   ) {
     super(graph, layer.displayState.segmentationGroupState.value);
     const segmentsState = layer.displayState.segmentationGroupState.value;
+    // Calcada floods equivalences with per-chunk piece→root LUT trailers
+    // (millions of entries): opt in to the batched / worker-mirrored table
+    // maintenance in EquivalencesHashMap. Datasources that don't set this
+    // (graphene, local) keep the default immediate-update path.
+    segmentsState.segmentEquivalences.largeEquivalencesExpected = true;
     this.previousVisibleSegmentCount = segmentsState.visibleSegments.size;
     segmentsState.selectedSegments.changed.add(
       (segmentIds: bigint[] | bigint | null, add: boolean) => {

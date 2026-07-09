@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import type { HashTableSnapshot } from "#src/gpu_hash/hash_table.js";
+import { HashMapUint64 } from "#src/gpu_hash/hash_table.js";
 import type { VisibleSegmentEquivalencePolicy } from "#src/segmentation_graph/segment_id.js";
 import type { WatchableValueInterface } from "#src/trackable_value.js";
 import { DisjointUint64Sets } from "#src/util/disjoint_sets.js";
@@ -32,6 +34,50 @@ const CLEAR_METHOD_ID = "DisjointUint64Sets.clear";
 const HIGH_BIT_REPRESENTATIVE_CHANGED_ID =
   "DisjointUint64Sets.highBitRepresentativeChanged";
 const DELETE_SET_METHOD_ID = "DisjointUint64Sets.deleteSet";
+const ENABLE_TABLE_MIRROR_ID = "DisjointUint64Sets.enableTableMirror";
+const TABLE_MIRROR_SNAPSHOT_ID = "DisjointUint64Sets.tableMirrorSnapshot";
+const TABLE_MIRROR_ACK_ID = "DisjointUint64Sets.tableMirrorAck";
+
+/**
+ * Interval between piece→representative table snapshots shipped from the
+ * worker once table mirroring is enabled. Deliberately slightly above the
+ * frontend's `EQUIVALENCES_BATCH_INTERVAL_MS` (200ms) consume cadence so at
+ * most one snapshot is ever pending; more frequent shipping would only add
+ * copy/transfer traffic without visible benefit.
+ */
+const TABLE_MIRROR_INTERVAL_MS = 250;
+
+/**
+ * Applies the pending delta of `disjointSets` to a piece→representative
+ * HashMapUint64. consumeDirty() returns null only when the disjoint set was
+ * cleared/deleted or a merge changed the representative of pre-existing
+ * pieces — in those cases fall back to a full rebuild because
+ * HashMapUint64.set is insert-only and can't express updates. Otherwise
+ * every dirty piece is brand new (never previously inserted), so .set() is
+ * guaranteed to take the insert branch. Reserving up front replaces the
+ * ladder of doubling rehashes (each one re-inserts every existing entry)
+ * with at most one.
+ */
+export function updateHashMapFromDisjointSets(
+  hashMap: HashMapUint64,
+  disjointSets: DisjointUint64Sets,
+) {
+  const dirty = disjointSets.consumeDirty();
+  if (dirty === null) {
+    hashMap.clear();
+    hashMap.reserve(Math.ceil(disjointSets.size / hashMap.loadFactor));
+    for (const [pieceId, representativeId] of disjointSets.mappings()) {
+      hashMap.set(pieceId, representativeId);
+    }
+  } else {
+    hashMap.reserve(
+      Math.ceil((hashMap.size + dirty.length) / hashMap.loadFactor),
+    );
+    for (const pieceId of dirty) {
+      hashMap.set(pieceId, disjointSets.get(pieceId));
+    }
+  }
+}
 
 @registerSharedObject(RPC_TYPE_ID)
 export class SharedDisjointUint64Sets
@@ -127,6 +173,111 @@ export class SharedDisjointUint64Sets
     return this.disjointSets.size;
   }
 
+  /**
+   * Datasource opt-in: set when this equivalences set is expected to reach
+   * chunk-LUT scale (millions of pieces — calcada, where every chunk
+   * carries a piece→root LUT). `EquivalencesHashMap.update()` then
+   * escalates to interval batching and worker-side table mirroring. Left
+   * off (the default) table maintenance keeps the original
+   * consume-on-every-change behavior — graphene and local layers are
+   * untouched by these optimizations.
+   */
+  largeEquivalencesExpected = false;
+
+  /**
+   * Frontend side: set when a large equivalences map should be maintained on
+   * the worker instead of the main thread. Once requested, the worker ships
+   * `HashTableSnapshot`s and the frontend stops doing O(size) insert/rehash
+   * work (see `EquivalencesHashMap.update()`).
+   */
+  tableMirrorRequested = false;
+  private latestTableMirrorSnapshot: HashTableSnapshot | undefined;
+  private latestTableMirrorSnapshotAcked = false;
+
+  // Worker side: mirror table + shipping loop state.
+  private tableMirror: HashMapUint64 | undefined;
+  private tableMirrorTimer: ReturnType<typeof setInterval> | undefined;
+  private tableMirrorGeneration = -1;
+  // Ships only after the frontend consumed the previous snapshot (set back
+  // to true by the ack RPC handler) — a hidden tab never draws, and copying
+  // tens of MB per tick at it would be wasted.
+  tableMirrorAcked = true;
+
+  /** Frontend side: ask the worker to take over table maintenance. */
+  requestTableMirror() {
+    if (this.tableMirrorRequested) return;
+    this.tableMirrorRequested = true;
+    // Nothing on this side consumes the dirty list once the worker owns the
+    // table; without a consumer it would grow unboundedly.
+    this.disjointSets.disableDirtyTracking();
+    this.rpc?.invoke(ENABLE_TABLE_MIRROR_ID, { id: this.rpcId });
+  }
+
+  /**
+   * Frontend side: the latest worker-built snapshot. Kept until replaced so
+   * that EVERY consumer bound to this group adopts it — linked segmentation
+   * layers share one instance across several render layers. Consumers adopt
+   * the same table by reference, which is safe: in mirror mode nothing
+   * mutates it outside the transient munge during GPU upload.
+   */
+  get tableMirrorSnapshot(): HashTableSnapshot | undefined {
+    return this.latestTableMirrorSnapshot;
+  }
+
+  /**
+   * Frontend side: called by the first consumer that adopts the current
+   * snapshot (subsequent consumers no-op). Acking on adoption rather than
+   * receipt keeps the worker from shipping to a tab that never draws.
+   */
+  ackTableMirrorSnapshot() {
+    if (this.latestTableMirrorSnapshotAcked) return;
+    this.latestTableMirrorSnapshotAcked = true;
+    this.rpc?.invoke(TABLE_MIRROR_ACK_ID, { id: this.rpcId });
+  }
+
+  /** Frontend side: called by the snapshot RPC handler. */
+  receiveTableMirrorSnapshot(snapshot: HashTableSnapshot) {
+    this.latestTableMirrorSnapshot = snapshot;
+    this.latestTableMirrorSnapshotAcked = false;
+    this.changed.dispatch();
+  }
+
+  /** Worker side: start maintaining and shipping the mirror table. */
+  startTableMirror() {
+    if (this.tableMirror !== undefined) return;
+    this.tableMirror = new HashMapUint64();
+    this.tableMirrorTick();
+    this.tableMirrorTimer = setInterval(
+      () => this.tableMirrorTick(),
+      TABLE_MIRROR_INTERVAL_MS,
+    );
+  }
+
+  private tableMirrorTick() {
+    const { disjointSets } = this;
+    if (!this.tableMirrorAcked) return;
+    if (this.tableMirrorGeneration === disjointSets.generation) return;
+    this.tableMirrorGeneration = disjointSets.generation;
+    const mirror = this.tableMirror!;
+    // The worker-side dirty list has accumulated since object creation
+    // (nothing consumed it before mirroring started), so the first
+    // incremental pass naturally covers the full backlog.
+    updateHashMapFromDisjointSets(mirror, disjointSets);
+    this.tableMirrorAcked = false;
+    const snapshot = mirror.takeSnapshot();
+    this.rpc?.invoke(TABLE_MIRROR_SNAPSHOT_ID, { id: this.rpcId, snapshot }, [
+      snapshot.table.buffer,
+    ]);
+  }
+
+  disposed() {
+    if (this.tableMirrorTimer !== undefined) {
+      clearInterval(this.tableMirrorTimer);
+      this.tableMirrorTimer = undefined;
+    }
+    super.disposed();
+  }
+
   toJSON() {
     return this.disjointSets.toJSON();
   }
@@ -191,4 +342,19 @@ registerRPC(DELETE_SET_METHOD_ID, function (x) {
   if (obj.disjointSets.deleteSet(x.x)) {
     obj.changed.dispatch();
   }
+});
+
+registerRPC(ENABLE_TABLE_MIRROR_ID, function (x) {
+  const obj = <SharedDisjointUint64Sets>this.get(x.id);
+  obj.startTableMirror();
+});
+
+registerRPC(TABLE_MIRROR_SNAPSHOT_ID, function (x) {
+  const obj = <SharedDisjointUint64Sets>this.get(x.id);
+  obj.receiveTableMirrorSnapshot(x.snapshot);
+});
+
+registerRPC(TABLE_MIRROR_ACK_ID, function (x) {
+  const obj = <SharedDisjointUint64Sets>this.get(x.id);
+  obj.tableMirrorAcked = true;
 });
