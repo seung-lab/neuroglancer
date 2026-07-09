@@ -13,9 +13,14 @@ import { createPortal } from "preact/compat";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 
 interface PanelRect {
-  top: number;
   left: number;
   width: number;
+  /** Cap on the panel's own height; it scrolls internally past this. */
+  maxHeight: number;
+  /** Set when the panel opens downward (anchored below the trigger). */
+  top?: number;
+  /** Set when the panel flips upward (anchored above the trigger). */
+  bottom?: number;
 }
 
 export interface ListboxOption {
@@ -62,11 +67,40 @@ export function ListboxDropdown({
   // The panel is portaled out of its container so it escapes any `overflow`
   // clipping; `position: fixed` then anchors it to the trigger. Recompute on
   // open and whenever the trigger moves (the modal body scrolls, window resize).
+  //
+  // A long option list (many bbox annotations) is capped to the space actually
+  // available in the viewport and scrolls internally; when the trigger sits low
+  // and the list won't fit below, the panel flips to open above it — so it can
+  // never run off-screen regardless of where the trigger lands in a tall modal.
   const updateRect = useCallback(() => {
     const node = wrapperRef.current;
     if (node === null) return;
-    const r = node.getBoundingClientRect();
-    setRect({ top: r.bottom + 2, left: r.left, width: r.width });
+    const triggerRect = node.getBoundingClientRect();
+    const triggerGap = 2;
+    const viewportMargin = 8;
+    const preferredMaxHeight = 320;
+    const minHeight = 120;
+    const spaceBelow =
+      window.innerHeight - triggerRect.bottom - triggerGap - viewportMargin;
+    const spaceAbove = triggerRect.top - triggerGap - viewportMargin;
+    // Prefer opening downward; flip up only when the list won't fit below and
+    // there is more room above.
+    const openUpward =
+      spaceBelow < preferredMaxHeight && spaceAbove > spaceBelow;
+    const availableHeight = openUpward ? spaceAbove : spaceBelow;
+    const maxHeight = Math.min(
+      preferredMaxHeight,
+      Math.max(minHeight, availableHeight),
+    );
+    setRect({
+      left: triggerRect.left,
+      width: triggerRect.width,
+      maxHeight,
+      top: openUpward ? undefined : triggerRect.bottom + triggerGap,
+      bottom: openUpward
+        ? window.innerHeight - triggerRect.top + triggerGap
+        : undefined,
+    });
   }, []);
 
   useEffect(() => {
@@ -185,9 +219,11 @@ export function ListboxDropdown({
             tabIndex={-1}
             onKeyDown={onPanelKeyDown}
             style={{
-              top: `${rect.top}px`,
               left: `${rect.left}px`,
               minWidth: `${rect.width}px`,
+              maxHeight: `${rect.maxHeight}px`,
+              ...(rect.top !== undefined && { top: `${rect.top}px` }),
+              ...(rect.bottom !== undefined && { bottom: `${rect.bottom}px` }),
             }}
             // The panel is portaled into the modal backdrop, whose onClick
             // closes the modal. Stop clicks here so picking an option doesn't

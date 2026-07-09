@@ -10,10 +10,12 @@
 
 /**
  * Serialization of consumer tool state for the persisted `editSession` block
- * (TM-315, decision C). Captures the active tool id + the painting family
- * config (size, value, erase value, mask, target binding) so a reload restores
- * the user's tool setup. Lives separately from the host so the encode/parse
- * round-trip is unit-testable in isolation.
+ * (TM-315, decision C). Captures the painting family config (size, value,
+ * erase value, mask, target binding) so a reload restores the user's tool
+ * parameters. The active tool id is still serialized (keeping the block shape
+ * backward/forward compatible) but no longer acted on at restore — every
+ * session entry lands in navigation mode (TM-381). Lives separately from the
+ * host so the encode/parse round-trip is unit-testable in isolation.
  *
  * `activeValue` / `eraseValue` are `number | bigint` (segment ids). JSON has no
  * bigint, so they are stored type-tagged and decoded back to the original kind.
@@ -59,7 +61,11 @@ export type EditKeybindOverrides = {
 };
 
 export interface ToolingPersistState {
-  /** Active tool id, or null for cursor mode. */
+  /**
+   * Active tool id, or null for cursor mode. Persisted for block-shape
+   * compatibility but ignored at restore (TM-381): sessions always enter in
+   * navigation mode.
+   */
   readonly activeToolId: string | null;
   /** Painting family config; absent if it could not be parsed. */
   readonly painting?: SerializedPainting;

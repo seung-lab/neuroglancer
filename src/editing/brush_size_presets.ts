@@ -18,9 +18,14 @@
  * the library's former `DEFAULT_RADIUS_CYCLE` export is being removed.
  */
 
-/** Preset brush sizes the `+` / `-` hotkeys step through. */
+/**
+ * Preset brush sizes the `+` / `-` hotkeys step through. Roughly a +20%
+ * geometric progression (sizes are odd voxel counts, so the low end steps by
+ * the minimum +2 until 20% exceeds that granularity).
+ */
 export const BRUSH_SIZE_PRESETS: readonly number[] = [
-  1, 3, 5, 9, 15, 25, 43, 75, 131, 229, 401, 701, 1025,
+  1, 3, 5, 7, 9, 11, 13, 17, 21, 25, 31, 37, 45, 55, 67, 81, 97, 117, 141, 169,
+  203, 245, 295, 355, 427, 513, 617, 741, 889, 1025,
 ];
 
 export const MIN_BRUSH_SIZE = 1;

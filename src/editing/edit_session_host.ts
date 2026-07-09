@@ -1016,16 +1016,15 @@ export class EditSessionHost extends RefCounted {
       );
       this.hotkeyBinder = new EditSessionHotkeyBinder(this, this.viewer);
       this.attachCursorOverlays(config);
-      // Restore persisted tool state (TM-315) now that the tools + UI are
-      // wired: patches the family config + re-selects the active tool. Patches
-      // are validated against the session layers (stale bindings dropped).
+      // Restore persisted tool parameters (TM-315) now that the tools + UI
+      // are wired: patches the painting family config + keybind overrides,
+      // validated against the session layers (stale bindings dropped). The
+      // active tool is deliberately NOT restored (TM-381).
       this.applyRestoredTooling(restoreTooling);
-      // When no tool was restored, land on navigation: `selectTool(undefined)`
-      // shows the read-only session-summary panel so the left column is
-      // occupied from the first frame (TM-338).
-      if (this.activeToolId.value === undefined) {
-        this.selectTool(undefined);
-      }
+      // Always land on navigation (TM-381): `selectTool(undefined)` shows the
+      // read-only session-summary panel so the left column is occupied from
+      // the first frame (TM-338).
+      this.selectTool(undefined);
       // Bring the user to the freshly opened session's region; entering a
       // session whose bbox is elsewhere in the volume would otherwise leave
       // them staring at unrelated (now hard-clipped) data.
@@ -2339,15 +2338,18 @@ export class EditSessionHost extends RefCounted {
   }
 
   /**
-   * Apply persisted tool state after a session reopens (TM-315): patch the
+   * Apply persisted tool parameters after a session opens (TM-315): patch the
    * painting family config (validated against the session layers; stale
-   * bindings dropped) and re-select the active tool.
+   * bindings dropped) and restore keybind overrides. The persisted
+   * `activeToolId` is deliberately ignored (TM-381) — every session entry,
+   * fresh open or reload, lands in navigation mode via the caller's
+   * `selectTool(undefined)`.
    *
    * `restoreTooling` is the per-session block from `editSession.tooling`,
    * present only when reloading an already-open session — it wins when set. For
    * a fresh open → close → open it is `undefined`, and we fall back to the
-   * cross-session `editPreferences.tooling` (TM-336) to seed brush / tool /
-   * keybind defaults. Either way the painting patch is re-validated against the
+   * cross-session `editPreferences.tooling` (TM-336) to seed brush / keybind
+   * defaults. Either way the painting patch is re-validated against the
    * session layers, so a stale binding is dropped back to the hardcoded
    * defaults.
    */
@@ -2375,12 +2377,6 @@ export class EditSessionHost extends RefCounted {
       if (patch !== undefined) {
         this.paintingTools.state.patchState(patch);
       }
-    }
-    if (
-      tooling.activeToolId !== null &&
-      this.toolRegistry?.has(tooling.activeToolId)
-    ) {
-      this.selectTool(tooling.activeToolId);
     }
   }
 
