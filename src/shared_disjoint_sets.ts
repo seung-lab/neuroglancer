@@ -174,6 +174,17 @@ export class SharedDisjointUint64Sets
   }
 
   /**
+   * Datasource opt-in: set when this equivalences set is expected to reach
+   * chunk-LUT scale (millions of pieces — calcada, where every chunk
+   * carries a piece→root LUT). `EquivalencesHashMap.update()` then
+   * escalates to interval batching and worker-side table mirroring. Left
+   * off (the default) table maintenance keeps the original
+   * consume-on-every-change behavior — graphene and local layers are
+   * untouched by these optimizations.
+   */
+  largeEquivalencesExpected = false;
+
+  /**
    * Frontend side: set when a large equivalences map should be maintained on
    * the worker instead of the main thread. Once requested, the worker ships
    * `HashTableSnapshot`s and the frontend stops doing O(size) insert/rehash

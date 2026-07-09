@@ -61,13 +61,16 @@ import type { vec3 } from "#src/util/geom.js";
 import type { GL } from "#src/webgl/context.js";
 import type { ShaderBuilder, ShaderProgram } from "#src/webgl/shader.js";
 
-// Consuming pending equivalences is deliberately batched on a fixed
-// interval once the map is large: the GPU mirror re-uploads the ENTIRE
-// table on any generation change (tens of MB once millions of pieces are
-// loaded), so consuming on every frame while calcada chunk LUTs stream in
-// re-uploads the full table per frame and freezes the UI. Small maps (and
-// the temporary multicut map) stay below the threshold and update
-// immediately.
+// The two escalations below apply ONLY to sets whose datasource opted in
+// via `SharedDisjointUint64Sets.largeEquivalencesExpected` (calcada, whose
+// chunk LUTs flood the set with millions of piece→root pairs). Everything
+// else — graphene, local equivalences, the temporary multicut map —
+// consumes on every generation change exactly as before.
+//
+// Batching: the GPU mirror re-uploads the ENTIRE table on any generation
+// change (tens of MB once millions of pieces are loaded), so consuming on
+// every frame while chunk LUTs stream in re-uploads the full table per
+// frame and freezes the UI.
 const EQUIVALENCES_BATCH_INTERVAL_MS = 200;
 const EQUIVALENCES_BATCH_SIZE_THRESHOLD = 65536;
 
@@ -117,24 +120,29 @@ export class EquivalencesHashMap {
     }
     const { generation } = disjointSets;
     if (this.generation === generation) return;
-    const now = performance.now();
-    const sinceLastConsume = now - this.lastConsumeTime;
-    if (
-      hashMap.size >= EQUIVALENCES_BATCH_SIZE_THRESHOLD &&
-      sinceLastConsume < EQUIVALENCES_BATCH_INTERVAL_MS
-    ) {
-      if (this.deferredUpdateTimer === undefined) {
-        this.deferredUpdateTimer = setTimeout(() => {
-          this.deferredUpdateTimer = undefined;
-          this.onDeferredUpdate?.();
-        }, EQUIVALENCES_BATCH_INTERVAL_MS - sinceLastConsume);
+    if (sharedSets.largeEquivalencesExpected) {
+      const now = performance.now();
+      const sinceLastConsume = now - this.lastConsumeTime;
+      if (
+        hashMap.size >= EQUIVALENCES_BATCH_SIZE_THRESHOLD &&
+        sinceLastConsume < EQUIVALENCES_BATCH_INTERVAL_MS
+      ) {
+        if (this.deferredUpdateTimer === undefined) {
+          this.deferredUpdateTimer = setTimeout(() => {
+            this.deferredUpdateTimer = undefined;
+            this.onDeferredUpdate?.();
+          }, EQUIVALENCES_BATCH_INTERVAL_MS - sinceLastConsume);
+        }
+        return;
       }
-      return;
+      this.lastConsumeTime = now;
     }
-    this.lastConsumeTime = now;
     this.generation = generation;
     updateHashMapFromDisjointSets(hashMap, disjointSets);
-    if (hashMap.size >= EQUIVALENCES_WORKER_MIRROR_THRESHOLD) {
+    if (
+      sharedSets.largeEquivalencesExpected &&
+      hashMap.size >= EQUIVALENCES_WORKER_MIRROR_THRESHOLD
+    ) {
       sharedSets.requestTableMirror();
     }
   }
