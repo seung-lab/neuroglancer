@@ -20,6 +20,7 @@
 
 import "#src/layer_group_viewer.css";
 import { debounce } from "lodash-es";
+import type { AlignmentLinkSession } from "#src/alignment_link/alignment_link_session.js";
 import type { InputEventBindings as DataPanelInputEventBindings } from "#src/data_panel_layout.js";
 import { DataPanelLayoutContainer } from "#src/data_panel_layout.js";
 import type { DisplayContext } from "#src/display_context.js";
@@ -29,10 +30,10 @@ import type {
   SelectedLayerState,
 } from "#src/layer/index.js";
 import { LayerSubsetSpecification } from "#src/layer/index.js";
+import { mountLayerGroupViewerMenu } from "#src/layer_group_viewer_menu.js";
 import type {
   CoordinateSpacePlaybackVelocity,
   TrackableCrossSectionZoom,
-  TrackableNavigationLink,
   TrackableProjectionZoom,
 } from "#src/navigation_state.js";
 import {
@@ -78,13 +79,14 @@ import {
   optionallyRestoreFromJsonMember,
 } from "#src/util/trackable.js";
 import type { WatchableVisibilityPriority } from "#src/visibility_priority/frontend.js";
-import { EnumSelectWidget } from "#src/widget/enum_widget.js";
 import type { TrackableScaleBarOptions } from "#src/widget/scale_bar.js";
 
 declare let NEUROGLANCER_SHOW_LAYER_BAR_EXTRA_BUTTONS: boolean | undefined;
 
 export interface LayerGroupViewerState {
   display: Borrowed<DisplayContext>;
+  /** Annotation-linked view sync controller (global; provided by the Viewer). */
+  alignmentLink?: Borrowed<AlignmentLinkSession>;
   navigationState: Owned<NavigationState>;
   perspectiveNavigationState: Owned<NavigationState>;
   velocity: Owned<CoordinateSpacePlaybackVelocity>;
@@ -274,47 +276,10 @@ export class LinkedViewerNavigationState extends RefCounted {
 
 function makeViewerMenu(parent: HTMLElement, viewer: LayerGroupViewer) {
   const contextMenu = new ContextMenu(parent);
-  const menu = contextMenu.element;
-  menu.classList.add("neuroglancer-layer-group-viewer-context-menu");
-  const closeButton = document.createElement("button");
-  closeButton.textContent = "Remove layer group";
-  menu.appendChild(closeButton);
-  contextMenu.registerEventListener(closeButton, "click", () => {
-    viewer.layerSpecification.layerManager.clear();
-  });
-  const { viewerNavigationState } = viewer;
-  for (const [name, model] of <[string, TrackableNavigationLink][]>[
-    ["Render scale factors", viewerNavigationState.relativeDisplayScales.link],
-    ["Render dimensions", viewerNavigationState.displayDimensions.link],
-    ["Position", viewerNavigationState.position.link],
-    [
-      "Cross-section orientation",
-      viewerNavigationState.crossSectionOrientation.link,
-    ],
-    ["Cross-section zoom", viewerNavigationState.crossSectionScale.link],
-    [
-      "Cross-section depth range",
-      viewerNavigationState.crossSectionDepthRange.link,
-    ],
-    [
-      "3-D projection orientation",
-      viewerNavigationState.projectionOrientation.link,
-    ],
-    ["3-D projection zoom", viewerNavigationState.projectionScale.link],
-    [
-      "3-D projection depth range",
-      viewerNavigationState.projectionDepthRange.link,
-    ],
-  ]) {
-    const widget = contextMenu.registerDisposer(new EnumSelectWidget(model));
-    const label = document.createElement("label");
-    label.style.display = "flex";
-    label.style.flexDirection = "row";
-    label.style.whiteSpace = "nowrap";
-    label.textContent = name;
-    label.appendChild(widget.element);
-    menu.appendChild(label);
-  }
+  contextMenu.element.classList.add(
+    "neuroglancer-layer-group-viewer-context-menu",
+  );
+  contextMenu.registerDisposer(mountLayerGroupViewerMenu(contextMenu, viewer));
   return contextMenu;
 }
 

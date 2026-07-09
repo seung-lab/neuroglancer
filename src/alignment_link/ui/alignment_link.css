@@ -1,0 +1,127 @@
+/*
+ * Copyright 2026 Zetta AI
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ *
+ * Alignment-link section of the layer-group viewer dropdown. Values resolve
+ * against the --nge-* design tokens (editing_theme.css, imported as a side
+ * effect by the component).
+ */
+
+.neuroglancer-alignment-link-menu-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--nge-space-2);
+  max-width: 320px;
+  margin-top: var(--nge-space-2);
+  padding-top: var(--nge-space-2);
+  border-top: 1px solid var(--nge-divider);
+  color: var(--nge-text-muted);
+}
+
+.neuroglancer-alignment-link-title {
+  color: var(--nge-text);
+  font-weight: 600;
+}
+
+.neuroglancer-alignment-link-row {
+  display: flex;
+  align-items: center;
+  gap: var(--nge-space-4);
+  min-height: var(--nge-control-h-compact);
+  white-space: nowrap;
+}
+
+.neuroglancer-alignment-link-row .neuroglancer-toggle-switch,
+.neuroglancer-alignment-link-row select {
+  margin-left: auto;
+}
+
+.neuroglancer-alignment-link-row select {
+  box-sizing: border-box;
+  height: var(--nge-control-h-compact);
+  min-width: 110px;
+  max-width: 180px;
+  background: var(--nge-control-bg);
+  border: 1px solid var(--nge-border);
+  border-radius: var(--nge-radius-sm);
+  color: var(--nge-text);
+  padding: 0 var(--nge-space-2);
+  font: inherit;
+  transition:
+    border-color var(--nge-transition),
+    background var(--nge-transition);
+}
+
+.neuroglancer-alignment-link-row select:hover:not(:disabled) {
+  border-color: var(--nge-border-strong);
+}
+
+.neuroglancer-alignment-link-row select:focus-visible {
+  outline: 2px solid var(--nge-accent-ring);
+  outline-offset: 2px;
+  border-color: var(--nge-accent-border);
+}
+
+.neuroglancer-alignment-link-row select:disabled {
+  background: var(--nge-control-bg-inert);
+  color: var(--nge-text-faint);
+}
+
+.neuroglancer-alignment-link-swap {
+  align-self: flex-start;
+  box-sizing: border-box;
+  height: var(--nge-control-h-compact);
+  padding: 0 var(--nge-space-3);
+  background: var(--nge-control-bg);
+  border: 1px solid var(--nge-border);
+  border-radius: var(--nge-radius-sm);
+  color: var(--nge-text);
+  font: inherit;
+  cursor: pointer;
+  transition:
+    border-color var(--nge-transition),
+    background var(--nge-transition);
+}
+
+.neuroglancer-alignment-link-swap:hover:not(:disabled) {
+  border-color: var(--nge-border-strong);
+  background: var(--nge-control-bg-hover);
+}
+
+.neuroglancer-alignment-link-swap:focus-visible {
+  outline: 2px solid var(--nge-accent-ring);
+  outline-offset: 2px;
+}
+
+.neuroglancer-alignment-link-swap:disabled {
+  background: var(--nge-control-bg-inert);
+  color: var(--nge-text-faint);
+  cursor: default;
+}
+
+.neuroglancer-alignment-link-status {
+  margin: 0;
+  font-size: var(--nge-text-size-sm);
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.neuroglancer-alignment-link-status-muted {
+  color: var(--nge-text-subtle);
+}
+
+.neuroglancer-alignment-link-status-warn {
+  color: var(--nge-warning-fg);
+}
+
+.neuroglancer-alignment-link-status-error {
+  color: var(--nge-danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .neuroglancer-alignment-link-row select,
+  .neuroglancer-alignment-link-swap {
+    transition: none;
+  }
+}
