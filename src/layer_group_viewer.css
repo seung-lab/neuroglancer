@@ -32,22 +32,9 @@
   outline: 0px;
 }
 
+/* Menu content styling lives in layer_group_viewer_menu.css (Preact menu on
+   the editing design tokens). */
 .neuroglancer-layer-group-viewer-context-menu {
   flex-direction: column;
   align-items: stretch;
-}
-
-.neuroglancer-layer-group-viewer-context-menu label {
-  display: flex;
-  flex-direction: row;
-  justify-content: space-between;
-}
-
-.neuroglancer-layer-group-viewer-context-menu select::before {
-  flex: 1;
-  content: " ";
-}
-
-.neuroglancer-layer-group-viewer-context-menu select {
-  margin-left: 5px;
 }
