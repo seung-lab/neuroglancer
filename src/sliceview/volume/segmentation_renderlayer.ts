@@ -17,6 +17,7 @@
 import type { BboxAlphaShaderHook } from "#src/editing/shaders/bbox_alpha_chunk.js";
 import { createBboxAlphaShaderHook } from "#src/editing/shaders/bbox_alpha_chunk.js";
 import type { PatchedMaskProvider } from "#src/editing/shaders/patched_mask_provider.js";
+import type { HashTableSnapshot } from "#src/gpu_hash/hash_table.js";
 import { HashMapUint64 } from "#src/gpu_hash/hash_table.js";
 import {
   GPUHashTable,
@@ -82,6 +83,7 @@ export class EquivalencesHashMap {
   hashMap = new HashMapUint64();
   private lastConsumeTime = Number.NEGATIVE_INFINITY;
   private deferredUpdateTimer: ReturnType<typeof setTimeout> | undefined;
+  private adoptedTableMirrorSnapshot: HashTableSnapshot | undefined;
   /**
    * Invoked after the batching interval elapses when update() postponed
    * consuming pending equivalences. The render layer wires this to
@@ -97,11 +99,19 @@ export class EquivalencesHashMap {
       // Worker-mirrored mode: adopt the latest worker-built table instead
       // of doing any O(size) insert/rehash work here. The worker's disjoint
       // set receives every mutation via RPC mirroring, so its snapshots
-      // already include them; local dirty tracking is off.
-      const snapshot = sharedSets.takeTableMirrorSnapshot();
-      if (snapshot !== undefined) {
+      // already include them; local dirty tracking is off. The snapshot
+      // stays on sharedSets until replaced — several EquivalencesHashMaps
+      // may be bound to one group (linked segmentation layers), and each
+      // adopts it independently.
+      const snapshot = sharedSets.tableMirrorSnapshot;
+      if (
+        snapshot !== undefined &&
+        snapshot !== this.adoptedTableMirrorSnapshot
+      ) {
         hashMap.adoptSnapshot(snapshot);
+        this.adoptedTableMirrorSnapshot = snapshot;
         this.generation = disjointSets.generation;
+        sharedSets.ackTableMirrorSnapshot();
       }
       return;
     }
@@ -126,6 +136,13 @@ export class EquivalencesHashMap {
     updateHashMapFromDisjointSets(hashMap, disjointSets);
     if (hashMap.size >= EQUIVALENCES_WORKER_MIRROR_THRESHOLD) {
       sharedSets.requestTableMirror();
+    }
+  }
+
+  dispose() {
+    if (this.deferredUpdateTimer !== undefined) {
+      clearTimeout(this.deferredUpdateTimer);
+      this.deferredUpdateTimer = undefined;
     }
   }
 }
@@ -453,6 +470,8 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
 
   disposed() {
     this.gpuSegmentStatedColorHashTable?.dispose();
+    this.equivalencesHashMap.dispose();
+    this.temporaryEquivalencesHashMap.dispose();
   }
 
   getSources(

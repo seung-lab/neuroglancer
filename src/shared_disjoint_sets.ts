@@ -180,7 +180,8 @@ export class SharedDisjointUint64Sets
    * work (see `EquivalencesHashMap.update()`).
    */
   tableMirrorRequested = false;
-  private pendingTableMirrorSnapshot: HashTableSnapshot | undefined;
+  private latestTableMirrorSnapshot: HashTableSnapshot | undefined;
+  private latestTableMirrorSnapshotAcked = false;
 
   // Worker side: mirror table + shipping loop state.
   private tableMirror: HashMapUint64 | undefined;
@@ -201,19 +202,32 @@ export class SharedDisjointUint64Sets
     this.rpc?.invoke(ENABLE_TABLE_MIRROR_ID, { id: this.rpcId });
   }
 
-  /** Frontend side: hand out the latest worker-built snapshot (once). */
-  takeTableMirrorSnapshot(): HashTableSnapshot | undefined {
-    const snapshot = this.pendingTableMirrorSnapshot;
-    if (snapshot !== undefined) {
-      this.pendingTableMirrorSnapshot = undefined;
-      this.rpc?.invoke(TABLE_MIRROR_ACK_ID, { id: this.rpcId });
-    }
-    return snapshot;
+  /**
+   * Frontend side: the latest worker-built snapshot. Kept until replaced so
+   * that EVERY consumer bound to this group adopts it — linked segmentation
+   * layers share one instance across several render layers. Consumers adopt
+   * the same table by reference, which is safe: in mirror mode nothing
+   * mutates it outside the transient munge during GPU upload.
+   */
+  get tableMirrorSnapshot(): HashTableSnapshot | undefined {
+    return this.latestTableMirrorSnapshot;
+  }
+
+  /**
+   * Frontend side: called by the first consumer that adopts the current
+   * snapshot (subsequent consumers no-op). Acking on adoption rather than
+   * receipt keeps the worker from shipping to a tab that never draws.
+   */
+  ackTableMirrorSnapshot() {
+    if (this.latestTableMirrorSnapshotAcked) return;
+    this.latestTableMirrorSnapshotAcked = true;
+    this.rpc?.invoke(TABLE_MIRROR_ACK_ID, { id: this.rpcId });
   }
 
   /** Frontend side: called by the snapshot RPC handler. */
   receiveTableMirrorSnapshot(snapshot: HashTableSnapshot) {
-    this.pendingTableMirrorSnapshot = snapshot;
+    this.latestTableMirrorSnapshot = snapshot;
+    this.latestTableMirrorSnapshotAcked = false;
     this.changed.dispatch();
   }
 
