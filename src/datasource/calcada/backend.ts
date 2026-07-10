@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { decodeDracoMesh } from "#src/async_computation/decode_draco_request.js";
+import { requestAsyncComputation } from "#src/async_computation/request.js";
 import {
   WithParameters,
   withChunkManager,
@@ -46,7 +48,6 @@ import type { KvStoreWithPath, ReadResponse } from "#src/kvstore/index.js";
 import { readKvStore } from "#src/kvstore/index.js";
 import type { FragmentChunk, ManifestChunk } from "#src/mesh/backend.js";
 import { assignMeshFragmentData, MeshSource } from "#src/mesh/backend.js";
-import { decodeDraco } from "#src/mesh/draco/index.js";
 import type { DisplayDimensionRenderInfo } from "#src/navigation_state.js";
 import type {
   RenderedViewBackend,
@@ -118,8 +119,18 @@ function downloadFragment(
 async function decodeDracoFragmentChunk(
   chunk: FragmentChunk,
   response: Uint8Array,
+  signal: AbortSignal,
 ) {
-  const rawMesh = await decodeDraco(response);
+  // Decode Draco on the async-computation worker pool rather than inline on the
+  // chunk worker: a neuron's many per-piece fragments then decode in parallel
+  // across the pool and off the thread that also runs 2D chunk decode and
+  // equivalence updates.
+  const { data: rawMesh } = await requestAsyncComputation(
+    decodeDracoMesh,
+    signal,
+    [response.buffer],
+    response,
+  );
   assignMeshFragmentData(chunk, rawMesh);
 }
 
@@ -291,6 +302,14 @@ export class GrapheneMeshSource extends WithParameters(
 
   constructor(rpc: RPC, options: any) {
     super(rpc, options);
+    // Move calcada mesh manifest + fragment downloads to their own download
+    // pool (sourceQueueLevel 1) so they never contend for the level-0 slots
+    // that 2D slice chunks use. Otherwise mesh chunks — which carry a far
+    // higher chunk priority than slice chunks — monopolize the shared 100-slot
+    // budget after an edit and stall the 2D data the user is looking at.
+    // Graphene's own mesh sources are a different class and stay on level 0.
+    this.sourceQueueLevel = 1;
+    this.fragmentSource.sourceQueueLevel = 1;
     if (options.branchId !== undefined) {
       this.branchId = rpc.get(options.branchId);
     }
@@ -348,6 +367,7 @@ export class GrapheneMeshSource extends WithParameters(
     await decodeDracoFragmentChunk(
       chunk,
       new Uint8Array(await response.arrayBuffer()),
+      signal,
     );
   }
 
