@@ -138,7 +138,11 @@ export class EquivalencesHashMap {
       this.lastConsumeTime = now;
     }
     this.generation = generation;
-    updateHashMapFromDisjointSets(hashMap, disjointSets);
+    updateHashMapFromDisjointSets(
+      hashMap,
+      disjointSets,
+      sharedSets.largeEquivalencesExpected,
+    );
     if (
       sharedSets.largeEquivalencesExpected &&
       hashMap.size >= EQUIVALENCES_WORKER_MIRROR_THRESHOLD

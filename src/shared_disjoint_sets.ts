@@ -67,6 +67,9 @@ const DEBUG_EQUIV = false;
 export function updateHashMapFromDisjointSets(
   hashMap: HashMapUint64,
   disjointSets: DisjointUint64Sets,
+  // calcada only: gate the reserve on real overflow (see the reserve block).
+  // Left false, graphene/local/multicut keep the original unconditional reserve.
+  largeEquivalencesExpected = false,
 ) {
   const dirty = disjointSets.consumeDirty();
   const valueDirty = disjointSets.consumeValueDirty();
@@ -82,9 +85,24 @@ export function updateHashMapFromDisjointSets(
     return;
   }
   if (dirty.length > 0) {
-    hashMap.reserve(
-      Math.ceil((hashMap.size + dirty.length) / hashMap.loadFactor),
-    );
+    if (largeEquivalencesExpected) {
+      // Only reserve when the batch would actually overflow current capacity.
+      // reserve() rehashes the WHOLE table (O(size)) via grow(); its own guard
+      // compares a tableSize-scale argument against capacity
+      // (=tableSize*loadFactor), so it re-fires this rehash every tick while
+      // load sits in [loadFactor², loadFactor) even though no growth is needed.
+      // At calcada's millions of entries that is a ~1s rehash per tick during
+      // chunk loading. Gate on real overflow so a rehash happens at most once
+      // per genuine doubling.
+      const projectedSize = hashMap.size + dirty.length;
+      if (projectedSize > hashMap.capacity) {
+        hashMap.reserve(Math.ceil(projectedSize / hashMap.loadFactor));
+      }
+    } else {
+      hashMap.reserve(
+        Math.ceil((hashMap.size + dirty.length) / hashMap.loadFactor),
+      );
+    }
     for (const pieceId of dirty) {
       hashMap.set(pieceId, disjointSets.get(pieceId));
     }
@@ -338,8 +356,10 @@ export class SharedDisjointUint64Sets
     const mirror = this.tableMirror!;
     // The worker-side dirty list has accumulated since object creation
     // (nothing consumed it before mirroring started), so the first
-    // incremental pass naturally covers the full backlog.
-    updateHashMapFromDisjointSets(mirror, disjointSets);
+    // incremental pass naturally covers the full backlog. The worker mirror
+    // only ever runs for calcada, so the large-equivalences reserve gate
+    // always applies here.
+    updateHashMapFromDisjointSets(mirror, disjointSets, true);
     this.tableMirrorAcked = false;
     const snapshot = mirror.takeSnapshot();
     this.rpc?.invoke(TABLE_MIRROR_SNAPSHOT_ID, { id: this.rpcId, snapshot }, [
