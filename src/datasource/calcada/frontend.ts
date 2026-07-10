@@ -285,6 +285,8 @@ class GrapheneMeshSource extends WithParameters(
 
   getFragmentPickId(fragmentId: string): bigint {
     // fragmentId is "{piece_id}:0" (":0" is the LOD suffix); take the piece id.
+    // Piece ids are always non-zero, so MeshLayer's `getFragmentPickId(...) ||
+    // objectId` fallback only fires when a fragment genuinely has no id.
     const colon = fragmentId.indexOf(":");
     return parseUint64(colon === -1 ? fragmentId : fragmentId.slice(0, colon));
   }
@@ -2239,9 +2241,13 @@ void main() {
     // 1-2s after an edit. requestIdleCallback fires once the main thread goes
     // idle — i.e. after the 2D paint — with a timeout so the mesh always loads.
     const fetchMeshes = () => {
+      // Deferred: the source may have been disposed (layer removed / chunk
+      // sources refreshed) between scheduling and firing, so re-check.
+      const { rpc, rpcId } = meshSource;
+      if (!rpc || rpcId === undefined) return;
       for (const segment of segments) {
-        meshSource.rpc!.invoke(GRAPHENE_MESH_NEW_SEGMENT_RPC_ID, {
-          rpcId: meshSource.rpcId!,
+        rpc.invoke(GRAPHENE_MESH_NEW_SEGMENT_RPC_ID, {
+          rpcId,
           segment,
         });
       }

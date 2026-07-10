@@ -72,4 +72,21 @@ describe("updateHashMapFromDisjointSets incremental value-dirty", () => {
     expect(m.get(4n)).toBe(21n);
     expect(m.get(10n)).toBeUndefined();
   });
+
+  it("keeps a retired key that is also re-linked (no delete-after-update desync)", () => {
+    const s = maxPolicySet();
+    s.link(10n, 1n);
+    const m = new HashMapUint64();
+    updateHashMapFromDisjointSets(m, s); // m: 10->10, 1->10
+    // Retire 10 but also re-link it as a piece under new root 20.
+    s.applyDelta([{ root: 20n, pieces: [1n, 10n] }], [10n]);
+    updateHashMapFromDisjointSets(m, s);
+    // 10 was retired AND re-linked -> still in the set, must NOT be deleted.
+    expect(s.has(10n)).toBe(true);
+    expect(m.get(10n)).toBe(20n);
+    expect(m.get(1n)).toBe(20n);
+    for (const [piece, rep] of s.mappings()) {
+      expect(m.get(piece)).toBe(rep);
+    }
+  });
 });

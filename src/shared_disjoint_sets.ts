@@ -97,9 +97,14 @@ export function updateHashMapFromDisjointSets(
       hashMap.set(pieceId, rep);
     }
   }
-  // Retired roots: drop their self-entry.
+  // Retired roots: drop their self-entry — but only if the key really left the
+  // disjoint set. A key that was retired AND re-linked (so it also appears in
+  // valueDirty) is still present and must keep its updated mapping, not be
+  // deleted (which would silently desync the hash map from disjointSets).
   for (const key of deletedDirty) {
-    hashMap.delete(key);
+    if (!disjointSets.has(key)) {
+      hashMap.delete(key);
+    }
   }
   if (DEBUG_EQUIV) {
     for (const [piece, rep] of disjointSets.mappings()) {
