@@ -922,7 +922,7 @@ export class EditSessionHost extends RefCounted {
       const buildTimeEndpoint = buildTimeBackendEndpoint();
       if (buildTimeEndpoint !== undefined) {
         console.info(
-          "Set up backend endpoint in build time: " + buildTimeEndpoint.baseUrl
+          "Set up backend endpoint in build time: " + buildTimeEndpoint.baseUrl,
         );
         registerBackendEndpoint(buildTimeEndpoint);
       }
