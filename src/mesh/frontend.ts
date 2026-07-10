@@ -538,7 +538,8 @@ export class MeshLayer extends PerspectiveViewRenderLayer<ThreeDimensionalRender
             fragment.state === ChunkState.GPU_MEMORY
           ) {
             if (pickFragments) {
-              const pickId = this.source.getFragmentPickId(fragmentId) || objectId;
+              const pickId =
+                this.source.getFragmentPickId(fragmentId) || objectId;
               meshShaderManager.setPickID(
                 gl,
                 shader,
