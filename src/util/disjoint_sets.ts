@@ -103,6 +103,12 @@ export class DisjointUint64Sets {
   // changed the representative of pre-existing pieces, which we can't
   // efficiently express as a delta because HashMapUint64.set is insert-only).
   private dirty: bigint[] | null = [];
+  // Existing pieces whose representative was reassigned by applyDelta (a value
+  // change, not an insert). Applied to the hash map via HashMapUint64.update().
+  private valueDirty: bigint[] = [];
+  // Roots retired by retireRoot (all their pieces re-pointed elsewhere).
+  // Applied to the hash map via HashMapUint64.delete().
+  private deletedDirty: bigint[] = [];
   private dirtyTrackingEnabled = true;
   visibleSegmentEquivalencePolicy: WatchableValueInterface<VisibleSegmentEquivalencePolicy> =
     new WatchableValue<VisibleSegmentEquivalencePolicy>(
@@ -161,6 +167,70 @@ export class DisjointUint64Sets {
   disableDirtyTracking() {
     this.dirtyTrackingEnabled = false;
     this.dirty = [];
+    this.valueDirty = [];
+    this.deletedDirty = [];
+  }
+
+  /**
+   * Apply an interactive merge/split delta: retire the old roots' sets and
+   * re-partition their pieces under the new roots. Uses deleteSet + link, NOT
+   * link alone — union-find link can only merge sets, never split one, so a
+   * split must first deleteSet the old root (unlinking every piece) and only
+   * then re-link each component into its own new root. deleteSet also cleanly
+   * removes the old roots (no dangling circular-list references).
+   *
+   * Records the precise per-key hash-map operations — new roots to insert,
+   * re-pointed pieces to update, retired roots to delete — instead of letting
+   * deleteSet/link nullify dirty into a full ~1-2M-entry rebuild.
+   */
+  applyDelta(
+    groups: { root: bigint; pieces: bigint[] }[],
+    retire: bigint[],
+  ): void {
+    // Snapshot pending inserts before deleteSet nulls the dirty channel.
+    const savedDirty = this.dirty;
+    for (const root of retire) {
+      this.deleteSet(root);
+    }
+    for (const g of groups) {
+      for (const piece of g.pieces) {
+        this.link(g.root, piece);
+      }
+    }
+    if (!this.dirtyTrackingEnabled) {
+      // This side does not maintain the hash map (the worker owns it).
+      return;
+    }
+    if (savedDirty === null) {
+      // A full rebuild was already pending; it covers this delta.
+      return;
+    }
+    // deleteSet nulled dirty; restore the pre-delta inserts and record the exact
+    // operations. New roots are new keys (insert); re-pointed pieces still exist
+    // in the hash map with their old value (update); retired roots are gone
+    // (delete).
+    this.dirty = savedDirty;
+    for (const g of groups) {
+      this.dirty.push(g.root);
+      for (const piece of g.pieces) {
+        this.valueDirty.push(piece);
+      }
+    }
+    for (const root of retire) {
+      this.deletedDirty.push(root);
+    }
+  }
+
+  consumeValueDirty(): bigint[] {
+    const d = this.valueDirty;
+    this.valueDirty = [];
+    return d;
+  }
+
+  consumeDeletedDirty(): bigint[] {
+    const d = this.deletedDirty;
+    this.deletedDirty = [];
+    return d;
   }
 
   /**

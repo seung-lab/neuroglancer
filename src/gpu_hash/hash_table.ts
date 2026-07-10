@@ -462,6 +462,22 @@ export class HashMapUint64 extends HashTableBase {
     return this.table[h + 1];
   }
 
+  /**
+   * Overwrites the value of an existing key in place. Returns false if the key
+   * is absent (does NOT insert). O(1), no rehash — the key set is unchanged,
+   * so this cannot trigger cuckoo eviction/growth. Value lives at table[h + 1]
+   * (entryStride === 2).
+   */
+  update(key: bigint, value: bigint): boolean {
+    const h = this.indexOf(key);
+    if (h === -1) {
+      return false;
+    }
+    this.table[h + 1] = value;
+    ++this.generation;
+    return true;
+  }
+
   protected swapPending(table: BigUint64Array, offset: number) {
     const temp = pendingValue;
     super.swapPending(table, offset);
