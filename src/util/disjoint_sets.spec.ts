@@ -15,6 +15,8 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { VisibleSegmentEquivalencePolicy } from "#src/segmentation_graph/segment_id.js";
+import { WatchableValue } from "#src/trackable_value.js";
 import { bigintCompare } from "#src/util/bigint.js";
 import { DisjointUint64Sets } from "#src/util/disjoint_sets.js";
 
@@ -97,5 +99,56 @@ describe("disjoint_sets", () => {
     disjointSets.link(2n, 10n);
     disjointSets.link(2n, 3n);
     expect(JSON.stringify(disjointSets)).toEqual('[["0","5"],["2","3","10"]]');
+  });
+});
+
+describe("DisjointUint64Sets.applyDelta / value-dirty", () => {
+  function maxPolicySet() {
+    const s = new DisjointUint64Sets();
+    s.visibleSegmentEquivalencePolicy = new WatchableValue(
+      VisibleSegmentEquivalencePolicy.MAX_REPRESENTATIVE,
+    );
+    return s;
+  }
+
+  it("merge: re-points pieces to newRoot, retires old roots, records deltas", () => {
+    const s = maxPolicySet();
+    s.link(10n, 1n); // rep = max = 10
+    s.link(10n, 2n);
+    s.link(11n, 3n);
+    s.consumeDirty(); // drain the initial inserts
+    s.applyDelta([{ root: 20n, pieces: [1n, 2n, 3n] }], [10n, 11n]);
+    expect(s.get(1n)).toBe(20n);
+    expect(s.get(2n)).toBe(20n);
+    expect(s.get(3n)).toBe(20n);
+    expect(s.has(10n)).toBe(false);
+    expect(s.has(11n)).toBe(false);
+    expect(s.consumeValueDirty().sort(bigintCompare)).toEqual([1n, 2n, 3n]);
+    expect(s.consumeDeletedDirty().sort(bigintCompare)).toEqual([10n, 11n]);
+    // No full rebuild forced; the new-root insert remains in the dirty list.
+    expect(s.consumeDirty()).not.toBeNull();
+  });
+
+  it("split: separates one root's pieces into distinct new roots", () => {
+    const s = maxPolicySet();
+    s.link(10n, 1n);
+    s.link(10n, 2n);
+    s.link(10n, 3n);
+    s.link(10n, 4n);
+    s.consumeDirty();
+    // Split root 10: {1,2} -> 20, {3,4} -> 21. link-only would re-union these;
+    // deleteSet-then-link keeps them in separate sets.
+    s.applyDelta(
+      [
+        { root: 20n, pieces: [1n, 2n] },
+        { root: 21n, pieces: [3n, 4n] },
+      ],
+      [10n],
+    );
+    expect(s.get(1n)).toBe(20n);
+    expect(s.get(2n)).toBe(20n);
+    expect(s.get(3n)).toBe(21n);
+    expect(s.get(4n)).toBe(21n);
+    expect(s.has(10n)).toBe(false);
   });
 });

@@ -138,3 +138,21 @@ describe("gpu_hash/hash_table", () => {
     testInsert(empty1, randomUint64());
   });
 });
+
+describe("HashMapUint64.update", () => {
+  it("overwrites an existing key's value in place and bumps generation", () => {
+    const m = new HashMapUint64();
+    m.set(5n, 100n);
+    const gen = m.generation;
+    const sizeBefore = m.size;
+    expect(m.update(5n, 200n)).toBe(true);
+    expect(m.get(5n)).toBe(200n);
+    expect(m.size).toBe(sizeBefore);
+    expect(m.generation).not.toBe(gen);
+  });
+  it("returns false and does not insert when key is absent", () => {
+    const m = new HashMapUint64();
+    expect(m.update(7n, 1n)).toBe(false);
+    expect(m.has(7n)).toBe(false);
+  });
+});

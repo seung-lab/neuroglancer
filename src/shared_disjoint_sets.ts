@@ -34,6 +34,7 @@ const CLEAR_METHOD_ID = "DisjointUint64Sets.clear";
 const HIGH_BIT_REPRESENTATIVE_CHANGED_ID =
   "DisjointUint64Sets.highBitRepresentativeChanged";
 const DELETE_SET_METHOD_ID = "DisjointUint64Sets.deleteSet";
+const APPLY_DELTA_METHOD_ID = "DisjointUint64Sets.applyDelta";
 const ENABLE_TABLE_MIRROR_ID = "DisjointUint64Sets.enableTableMirror";
 const TABLE_MIRROR_SNAPSHOT_ID = "DisjointUint64Sets.tableMirrorSnapshot";
 const TABLE_MIRROR_ACK_ID = "DisjointUint64Sets.tableMirrorAck";
@@ -58,23 +59,55 @@ const TABLE_MIRROR_INTERVAL_MS = 250;
  * ladder of doubling rehashes (each one re-inserts every existing entry)
  * with at most one.
  */
+// Dev safety net: when true, every incremental patch is verified against the
+// disjoint set's full mapping and throws on any desync. O(size) — leave OFF in
+// production; flip on locally to catch delta bugs early.
+const DEBUG_EQUIV = false;
+
 export function updateHashMapFromDisjointSets(
   hashMap: HashMapUint64,
   disjointSets: DisjointUint64Sets,
 ) {
   const dirty = disjointSets.consumeDirty();
+  const valueDirty = disjointSets.consumeValueDirty();
+  const deletedDirty = disjointSets.consumeDeletedDirty();
   if (dirty === null) {
+    // Full rebuild (unchanged path). It already reflects any pending
+    // value/deleted deltas, which were drained above.
     hashMap.clear();
     hashMap.reserve(Math.ceil(disjointSets.size / hashMap.loadFactor));
     for (const [pieceId, representativeId] of disjointSets.mappings()) {
       hashMap.set(pieceId, representativeId);
     }
-  } else {
+    return;
+  }
+  if (dirty.length > 0) {
     hashMap.reserve(
       Math.ceil((hashMap.size + dirty.length) / hashMap.loadFactor),
     );
     for (const pieceId of dirty) {
       hashMap.set(pieceId, disjointSets.get(pieceId));
+    }
+  }
+  // Existing pieces re-pointed by applyDelta: overwrite in place. If a piece is
+  // somehow not yet present, insert it.
+  for (const pieceId of valueDirty) {
+    const rep = disjointSets.get(pieceId);
+    if (!hashMap.update(pieceId, rep)) {
+      hashMap.set(pieceId, rep);
+    }
+  }
+  // Retired roots: drop their self-entry.
+  for (const key of deletedDirty) {
+    hashMap.delete(key);
+  }
+  if (DEBUG_EQUIV) {
+    for (const [piece, rep] of disjointSets.mappings()) {
+      if (hashMap.get(piece) !== rep) {
+        throw new Error(
+          `equiv desync: ${piece} -> ${hashMap.get(piece)} != ${rep}`,
+        );
+      }
     }
   }
 }
@@ -166,6 +199,45 @@ export class SharedDisjointUint64Sets
         });
       }
       this.changed.dispatch();
+    }
+  }
+
+  /**
+   * Interactive merge/split delta: re-point each group's pieces under its root
+   * and retire the roots in `retire`. When `largeEquivalencesExpected` is off
+   * (graphene, local layers) this is byte-identical to the legacy
+   * deleteSet+link path. When on (calcada) it records value-dirty deltas so the
+   * hash table is patched in place — not rebuilt from scratch — and mirrors the
+   * delta to the worker.
+   */
+  applyEquivalenceDelta(
+    groups: { root: bigint; pieces: bigint[] }[],
+    retire: bigint[],
+  ): void {
+    if (!this.largeEquivalencesExpected) {
+      for (const r of retire) this.deleteSet(r);
+      for (const g of groups) {
+        for (const p of g.pieces) this.link(g.root, p);
+      }
+      return;
+    }
+    this.disjointSets.applyDelta(groups, retire);
+    const { rpc } = this;
+    if (rpc) {
+      rpc.invoke(APPLY_DELTA_METHOD_ID, { id: this.rpcId, groups, retire });
+    }
+    this.changed.dispatch();
+  }
+
+  /**
+   * Worker side: ship a mirror snapshot immediately instead of waiting for the
+   * next interval tick. Called after an interactive delta so the frontend's 2D
+   * recolour lands within a round-trip, not up to TABLE_MIRROR_INTERVAL_MS.
+   * No-op on the frontend (it does not maintain the mirror).
+   */
+  flushTableMirror() {
+    if (this.tableMirror !== undefined) {
+      this.tableMirrorTick();
     }
   }
 
@@ -342,6 +414,17 @@ registerRPC(DELETE_SET_METHOD_ID, function (x) {
   if (obj.disjointSets.deleteSet(x.x)) {
     obj.changed.dispatch();
   }
+});
+
+registerRPC(APPLY_DELTA_METHOD_ID, function (x) {
+  const obj = <SharedDisjointUint64Sets>this.get(x.id);
+  const groups = x.groups as { root: bigint; pieces: bigint[] }[];
+  const retire = x.retire as bigint[];
+  obj.disjointSets.applyDelta(groups, retire);
+  obj.changed.dispatch();
+  // Ship the patched snapshot immediately so the frontend recolours within a
+  // round-trip rather than up to the interval tick.
+  obj.flushTableMirror();
 });
 
 registerRPC(ENABLE_TABLE_MIRROR_ID, function (x) {

@@ -517,7 +517,12 @@ export class MeshLayer extends PerspectiveViewRenderLayer<ThreeDimensionalRender
         if (renderContext.emitColor) {
           meshShaderManager.setColor(gl, shader, color!);
         }
-        if (renderContext.emitPickID) {
+        // Per-fragment picking (opt-in): assign a pick id per fragment so a 3D
+        // pick resolves to the fragment's segment (e.g. supervoxel) instead of
+        // the object (root). Otherwise keep the one-pick-id-per-object default.
+        const pickFragments =
+          renderContext.emitPickID && this.source.pickFragments;
+        if (renderContext.emitPickID && !pickFragments) {
           meshShaderManager.setPickID(gl, shader, pickIndex!);
         }
         totalChunks += manifestChunk.fragmentIds.length;
@@ -532,6 +537,14 @@ export class MeshLayer extends PerspectiveViewRenderLayer<ThreeDimensionalRender
             fragment !== undefined &&
             fragment.state === ChunkState.GPU_MEMORY
           ) {
+            if (pickFragments) {
+              const pickId = this.source.getFragmentPickId(fragmentId) || objectId;
+              meshShaderManager.setPickID(
+                gl,
+                shader,
+                renderContext.pickIDs!.registerUint64(this, pickId),
+              );
+            }
             meshShaderManager.drawFragment(gl, shader, fragment);
             ++presentChunks;
           }
@@ -718,6 +731,23 @@ export class MeshSource extends ChunkSource {
   }
   getFragmentKey(objectKey: string, fragmentId: string) {
     return { key: `${objectKey}/${fragmentId}`, fragmentId: fragmentId };
+  }
+
+  // Per-fragment picking opt-in. When true, MeshLayer.draw assigns a distinct
+  // pick id per mesh fragment (resolved via getFragmentPickId) instead of one
+  // per object, so a 3D mesh pick selects the underlying fragment's segment
+  // (e.g. the supervoxel/piece) rather than the root. Default off — only sources
+  // that override this are affected.
+  get pickFragments(): boolean {
+    return false;
+  }
+
+  // Returns the segment id a picked fragment should resolve to. Only consulted
+  // when pickFragments is true. The returned id is run through the layer's
+  // segment equivalences like any other picked value.
+  getFragmentPickId(fragmentId: string): bigint {
+    fragmentId;
+    return 0n;
   }
 }
 

@@ -272,6 +272,22 @@ class GrapheneMeshSource extends WithParameters(
     objectKey;
     return getGrapheneFragmentKey(fragmentId);
   }
+
+  // Calcada mesh fragments are per-piece (the manifest lists "{piece_id}:0" per
+  // supervoxel). Opt into per-fragment picking so a 3D mesh pick resolves to the
+  // clicked piece; the layer's equivalences then map that piece to its current
+  // root, giving segmentSelectionState { baseValue: piece, value: root }. This
+  // lets merge/split send the exact piece instead of a (possibly stale) root and
+  // avoids the backend's surface-voxel resolution.
+  get pickFragments(): boolean {
+    return true;
+  }
+
+  getFragmentPickId(fragmentId: string): bigint {
+    // fragmentId is "{piece_id}:0" (":0" is the LOD suffix); take the piece id.
+    const colon = fragmentId.indexOf(":");
+    return parseUint64(colon === -1 ? fragmentId : fragmentId.slice(0, colon));
+  }
 }
 
 class AppInfo {
@@ -2190,20 +2206,20 @@ void main() {
     // represents anything, and leaving it in visibleSegments would let a
     // stray click on a stale chunk re-select the merged blob via cached
     // mesh data.
-    segmentsState.segmentEquivalences.deleteSet(oldRoot);
     segmentsState.visibleSegments.delete(oldRoot);
     segmentsState.selectedSegments.delete(oldRoot);
     for (let i = 0; i < newRoots.length; ++i) {
-      const newRoot = newRoots[i];
-      segmentsState.visibleSegments.add(newRoot);
-      segmentsState.selectedSegments.add(newRoot);
-      const comp = components[i];
-      if (!comp) continue;
-      for (const piece of comp) {
-        segmentsState.segmentEquivalences.link(newRoot, piece);
-      }
+      segmentsState.visibleSegments.add(newRoots[i]);
+      segmentsState.selectedSegments.add(newRoots[i]);
     }
-    segmentsState.segmentEquivalences.changed.dispatch();
+    // One delta: re-point each component's pieces onto its new root and retire
+    // the old root. Patches the equivalences table in place instead of forcing
+    // a full ~1s rebuild (the old deleteSet + per-piece link path did).
+    const groups = newRoots.map((root, i) => ({
+      root,
+      pieces: components[i] ?? [],
+    }));
+    segmentsState.segmentEquivalences.applyEquivalenceDelta(groups, [oldRoot]);
     // Deliberately NOT calling refreshChunkSources: it would clear the
     // equivalences we just set, and the chunk re-fetch would race the
     // ClickHouse materialised view that backs the LUT — when the MV
@@ -2216,13 +2232,25 @@ void main() {
 
   meshAddNewSegments(segments: bigint[]) {
     const meshSource = this.getMeshSource();
-    if (meshSource) {
+    if (!meshSource) return;
+    // Defer the mesh fetch until the 2D equivalences update has painted. The
+    // mesh pipeline (fetch/decode/GPU upload of a large neuron) hogs the main
+    // thread and the worker-snapshot ack path, delaying the 2D recolour by
+    // 1-2s after an edit. requestIdleCallback fires once the main thread goes
+    // idle — i.e. after the 2D paint — with a timeout so the mesh always loads.
+    const fetchMeshes = () => {
       for (const segment of segments) {
         meshSource.rpc!.invoke(GRAPHENE_MESH_NEW_SEGMENT_RPC_ID, {
           rpcId: meshSource.rpcId!,
           segment,
         });
       }
+    };
+    const idle = window.requestIdleCallback?.bind(window);
+    if (idle) {
+      idle(fetchMeshes, { timeout: 500 });
+    } else {
+      setTimeout(fetchMeshes, 100);
     }
   }
 
@@ -2313,9 +2341,6 @@ void main() {
 
         const segmentsState =
           this.layer.displayState.segmentationGroupState.value;
-        // Clear stale equivalences for old roots
-        segmentsState.segmentEquivalences.deleteSet(oldRootA);
-        segmentsState.segmentEquivalences.deleteSet(oldRootB);
         segmentsState.visibleSegments.add(newRoot);
         segmentsState.selectedSegments.add(newRoot);
         // Register the new root with the mesh source so its mesh fragments
@@ -2334,14 +2359,20 @@ void main() {
         // is unchanged by a merge; these in-memory links are all the shader
         // needs.
         if (mergedPieces.length > 0) {
-          for (const piece of mergedPieces) {
-            segmentsState.segmentEquivalences.link(newRoot, piece);
-          }
-          segmentsState.segmentEquivalences.changed.dispatch();
+          // One delta: re-point the merged pieces onto newRoot and retire the
+          // old roots. Patches the equivalences table in place rather than
+          // forcing a full ~1s rebuild (the old deleteSet + per-piece link each
+          // bumped the generation into a full rebuild).
+          segmentsState.segmentEquivalences.applyEquivalenceDelta(
+            [{ root: newRoot, pieces: mergedPieces }],
+            [oldRootA, oldRootB],
+          );
         } else {
           // Legacy-server fallback (no `pieces` in the merge response): keep
           // the old roots visible while the async /leaves resolves, and
           // refresh chunks so their LUT trailers rebuild the mapping.
+          segmentsState.segmentEquivalences.deleteSet(oldRootA);
+          segmentsState.segmentEquivalences.deleteSet(oldRootB);
           segmentsState.visibleSegments.add(oldRootA);
           segmentsState.visibleSegments.add(oldRootB);
           this.graph.graphServer
