@@ -37,6 +37,7 @@ import {
   isBaseSegmentId,
   parseGrapheneError,
   getHttpSource,
+  MESH_MANIFEST_V2_ACCEPT,
 } from "#src/datasource/graphene/base.js";
 import { decodeManifestChunk } from "#src/datasource/precomputed/backend.js";
 import { WithSharedKvStoreContextCounterpart } from "#src/kvstore/backend.js";
@@ -78,6 +79,21 @@ import {
 import type { RPC } from "#src/worker_rpc.js";
 import { registerSharedObject, registerRPC } from "#src/worker_rpc.js";
 
+// v2 manifest fragments are grouped by absolute bucket path; each fragment id is
+// tagged with its bucket using this separator so the fetch path routes to the
+// right store. Neither bucket URLs nor fragment strings contain it.
+const V2_BUCKET_SEP = "|";
+
+function flattenV2Manifest(response: any): { fragments: string[] } {
+  const fragments: string[] = [];
+  for (const bucket of Object.keys(response.fragments)) {
+    for (const frag of response.fragments[bucket].fragments) {
+      fragments.push(`${bucket}${V2_BUCKET_SEP}${frag}`);
+    }
+  }
+  return { fragments };
+}
+
 function downloadFragmentWithSharding(
   fragmentKvStore: KvStoreWithPath,
   fragmentId: string,
@@ -115,6 +131,28 @@ function downloadFragment(
       { signal, throwIfMissing: true },
     );
   }
+}
+
+function downloadV2Fragment(
+  bucketKvStore: KvStoreWithPath,
+  fragment: string,
+  signal: AbortSignal,
+): Promise<ReadResponse> {
+  // The fragment is the v1 string `~<segid>:<inner>`; strip the seg id, then the
+  // inner leading `~` marks a sharded (byte-range) read vs a whole-file read.
+  const { fragmentId } = getGrapheneFragmentKey(fragment);
+  if (fragmentId.charAt(0) === "~") {
+    const parts = fragmentId.substring(1).split(":");
+    return readKvStore(bucketKvStore.store, `${bucketKvStore.path}${parts[0]}`, {
+      signal,
+      byteRange: { offset: Number(parts[1]), length: Number(parts[2]) },
+      throwIfMissing: true,
+    });
+  }
+  return readKvStore(bucketKvStore.store, `${bucketKvStore.path}${fragmentId}`, {
+    signal,
+    throwIfMissing: true,
+  });
 }
 
 async function decodeDracoFragmentChunk(
@@ -158,7 +196,10 @@ export class GrapheneMeshSource extends WithParameters(
     const { fetchOkImpl, baseUrl } = this.manifestHttpSource;
     const manifestPath = `/manifest/${chunk.objectId}:${parameters.lod}?verify=1&prepend_seg_ids=1`;
     const response = await (
-      await fetchOkImpl(baseUrl + manifestPath, { signal })
+      await fetchOkImpl(baseUrl + manifestPath, {
+        signal,
+        headers: { Accept: MESH_MANIFEST_V2_ACCEPT },
+      })
     ).json();
     const chunkIdentifier = manifestPath;
     if (newSegments.has(chunk.objectId)) {
@@ -176,19 +217,33 @@ export class GrapheneMeshSource extends WithParameters(
     } else {
       manifestRequestCount.delete(chunkIdentifier);
     }
+    if (response?.manifest_version >= 2) {
+      return decodeManifestChunk(chunk, flattenV2Manifest(response));
+    }
     return decodeManifestChunk(chunk, response);
   }
 
   async downloadFragment(chunk: FragmentChunk, signal: AbortSignal) {
-    const { response } = await downloadFragment(
-      this.fragmentKvStore,
-      chunk.fragmentId!,
-      this.parameters,
-      signal,
-    );
+    const fragmentId = chunk.fragmentId!;
+    const sepIdx = fragmentId.indexOf(V2_BUCKET_SEP);
+    let readResponse: ReadResponse;
+    if (sepIdx !== -1) {
+      const bucket = fragmentId.substring(0, sepIdx);
+      const fragment = fragmentId.substring(sepIdx + 1);
+      const bucketKvStore =
+        this.sharedKvStoreContext.kvStoreContext.getKvStore(bucket + "/");
+      readResponse = await downloadV2Fragment(bucketKvStore, fragment, signal);
+    } else {
+      readResponse = await downloadFragment(
+        this.fragmentKvStore,
+        fragmentId,
+        this.parameters,
+        signal,
+      );
+    }
     await decodeDracoFragmentChunk(
       chunk,
-      new Uint8Array(await response.arrayBuffer()),
+      new Uint8Array(await readResponse.response.arrayBuffer()),
     );
   }
 
