@@ -65,6 +65,19 @@ export interface BackendEndpoint {
    * implementation — NG never sees them. May be async (e.g. token refresh).
    */
   authorize(init: RequestInit): Promise<RequestInit> | RequestInit;
+
+  /**
+   * Drop whatever credential {@link authorize} last handed out, so the next
+   * `authorize` call mints a fresh one. `BackendClient` calls this after a `401`
+   * response — the signal that the credential went stale between mint and use —
+   * then re-authorizes and retries the request exactly once.
+   *
+   * Opaque like {@link authorize}: it says nothing about tokens, so every
+   * deployment fits. A bearer-token host clears its cached token; a same-origin
+   * cookie host has nothing to drop and may omit this entirely (a `401` then
+   * simply propagates, since a retry could not help). Optional for that reason.
+   */
+  invalidate?(): void;
 }
 
 /**

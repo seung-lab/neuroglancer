@@ -1702,6 +1702,12 @@ export class EditSessionHost extends RefCounted {
    *       headers.set("Authorization", token);
    *       return { ...init, headers };
    *     },
+   *     // Optional: called after a 401 so the client can drop the stale
+   *     // credential and retry once. Omit for cookie-based auth (see
+   *     // `BackendEndpoint.invalidate`).
+   *     invalidate() {
+   *       clearCachedToken();
+   *     },
    *   });
    */
   configureBackend(endpoint: BackendEndpoint): void {

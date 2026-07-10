@@ -26,7 +26,7 @@ import {
   type BackendEndpoint,
   getBackendEndpoint,
 } from "#src/editing/backend/backend_endpoint.js";
-import { fetchOk } from "#src/util/http_request.js";
+import { fetchOk, HttpError } from "#src/util/http_request.js";
 
 /**
  * Thrown by {@link BackendClient} when a request is attempted but no
@@ -92,14 +92,38 @@ export class BackendClient {
    * `fetchOk` (which retries transient 429/503/504 and throws `HttpError` on a
    * non-OK final response).
    *
+   * On a `401` — the credential `authorize` supplied was rejected, typically a
+   * token that went stale between mint and use — give the endpoint one chance to
+   * {@link BackendEndpoint.invalidate} its cached credential, re-authorize, and
+   * retry **exactly once**. Any other status, a second `401`, or an endpoint
+   * without `invalidate` propagates unchanged: those are genuine failures, not
+   * staleness, and retrying would loop. `fetchOk`'s transient (429/503/504)
+   * retries are unaffected — they never surface here.
+   *
+   * The single retry re-sends the same `init`, so its `body` must be replayable.
+   * Today's callers pass `FormData` (`postMultipart`) or `ArrayBuffer`/`Blob`
+   * (`postBinary`) bodies, all re-readable; a one-shot `ReadableStream` body
+   * could not be retried, but nothing sends one.
+   *
    * @throws {BackendUnavailableError} if no endpoint is registered.
    * @throws {HttpError} on network/CORS failure or a non-OK HTTP status.
    */
   async request(path: string, init: RequestInit = {}): Promise<Response> {
     const endpoint = this.requireEndpoint(path);
     const url = joinBackendUrl(endpoint.baseUrl, path);
-    const authorized = await endpoint.authorize(init);
-    return fetchOk(url, authorized);
+    try {
+      return await fetchOk(url, await endpoint.authorize(init));
+    } catch (error) {
+      if (
+        error instanceof HttpError &&
+        error.status === 401 &&
+        endpoint.invalidate !== undefined
+      ) {
+        endpoint.invalidate();
+        return await fetchOk(url, await endpoint.authorize(init));
+      }
+      throw error;
+    }
   }
 
   /** POST a `multipart/form-data` body (e.g. tool compute inputs). */
