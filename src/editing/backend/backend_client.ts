@@ -109,7 +109,10 @@ export class BackendClient {
    * {@link setBackendAuthExpired} and rethrow a typed
    * {@link BackendAuthExpiredError} without retrying (a retry can't help, and
    * the host drives re-auth out of band). A subsequent successful request
-   * clears the flag.
+   * clears the flag. Both the initial and the retry attempt run through
+   * {@link attempt}, so an auth-expired re-mint on the retry path is flagged and
+   * typed too (not leaked raw) — this is the common trigger: a stale token 401s,
+   * `invalidate()` clears it, and the re-mint then fails because the session died.
    *
    * The single retry re-sends the same `init`, so its `body` must be replayable.
    * Today's callers pass `FormData` (`postMultipart`) or `ArrayBuffer`/`Blob`
@@ -124,29 +127,50 @@ export class BackendClient {
     const endpoint = this.requireEndpoint(path);
     const url = joinBackendUrl(endpoint.baseUrl, path);
     try {
-      const response = await fetchOk(url, await endpoint.authorize(init));
-      // A request got through — auth is healthy again; clear any expired flag.
-      setBackendAuthExpired(false);
-      return response;
+      return await this.attempt(endpoint, url, init);
     } catch (error) {
-      // Host can't mint a credential (portal session expired). Terminal here —
-      // re-auth is the host's job — so flag it and surface a typed error; do
-      // NOT retry.
-      if (isAuthExpiredSignal(error)) {
-        setBackendAuthExpired(true);
-        throw error instanceof BackendAuthExpiredError
-          ? error
-          : new BackendAuthExpiredError();
-      }
+      // Stale credential → invalidate + retry ONCE. The retry runs through the
+      // same guard (`attempt`), so an auth-expired re-mint is flagged + typed,
+      // not leaked raw. Any other status, a second failure, an endpoint without
+      // `invalidate`, or an already-typed BackendAuthExpiredError propagates —
+      // those are genuine failures, and retrying would loop.
       if (
         error instanceof HttpError &&
         error.status === 401 &&
         endpoint.invalidate !== undefined
       ) {
         endpoint.invalidate();
-        const response = await fetchOk(url, await endpoint.authorize(init));
-        setBackendAuthExpired(false);
-        return response;
+        return await this.attempt(endpoint, url, init);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * One authorize→fetch attempt. Applies `authorize`, fetches via `fetchOk`, and
+   * on success clears the auth-expired flag. If `authorize` (or the fetch)
+   * rejects with an auth-expired signal, flips {@link setBackendAuthExpired} and
+   * rethrows a typed {@link BackendAuthExpiredError}; every other error passes
+   * through unchanged (e.g. an `HttpError 401` the caller may retry).
+   */
+  private async attempt(
+    endpoint: BackendEndpoint,
+    url: string,
+    init: RequestInit,
+  ): Promise<Response> {
+    try {
+      const response = await fetchOk(url, await endpoint.authorize(init));
+      // A request got through — auth is healthy again; clear any expired flag.
+      setBackendAuthExpired(false);
+      return response;
+    } catch (error) {
+      // Host can't mint a credential (portal session expired). Terminal — re-auth
+      // is the host's job — so flag it and surface a typed error.
+      if (isAuthExpiredSignal(error)) {
+        setBackendAuthExpired(true);
+        throw error instanceof BackendAuthExpiredError
+          ? error
+          : new BackendAuthExpiredError();
       }
       throw error;
     }
