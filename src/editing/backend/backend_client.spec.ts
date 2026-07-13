@@ -16,12 +16,23 @@ import {
   joinBackendUrl,
 } from "#src/editing/backend/backend_client.js";
 import {
+  BACKEND_AUTH_EXPIRED_CODE,
+  BackendAuthExpiredError,
   clearBackendEndpoint,
+  isBackendAuthExpired,
   registerBackendEndpoint,
+  setBackendAuthExpired,
 } from "#src/editing/backend/backend_endpoint.js";
 import { HttpError } from "#src/util/http_request.js";
 
 let fetchMock: ReturnType<typeof vi.fn>;
+
+/** An error tagged like the portal bootstrap's rejection (no shared class). */
+function authExpiredRejection(): Promise<never> {
+  return Promise.reject(
+    Object.assign(new Error("expired"), { code: BACKEND_AUTH_EXPIRED_CODE }),
+  );
+}
 
 beforeEach(() => {
   fetchMock = vi.fn(async () => new Response("ok", { status: 200 }));
@@ -30,6 +41,7 @@ beforeEach(() => {
 
 afterEach(() => {
   clearBackendEndpoint();
+  setBackendAuthExpired(false);
   vi.unstubAllGlobals();
 });
 
@@ -181,5 +193,112 @@ describe("BackendClient", () => {
     expect(new Headers((init as RequestInit).headers).get("Content-Type")).toBe(
       "application/octet-stream",
     );
+  });
+});
+
+describe("BackendClient — 401 retry & auth expiry", () => {
+  it("invalidates and retries once on a backend 401, then succeeds", async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response("stale", { status: 401 }))
+      .mockResolvedValueOnce(new Response("ok", { status: 200 }));
+    let token = "stale";
+    const invalidate = vi.fn(() => {
+      token = "fresh";
+    });
+    const authorize = vi.fn((init: RequestInit) => {
+      const headers = new Headers(init.headers);
+      headers.set("Authorization", token);
+      return { ...init, headers };
+    });
+    registerBackendEndpoint({ baseUrl: "https://h/api", authorize, invalidate });
+
+    const client = new BackendClient();
+    const res = await client.request("/x");
+
+    expect(res.status).toBe(200);
+    expect(invalidate).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // The retry carried the refreshed credential.
+    expect(
+      new Headers((fetchMock.mock.calls[1][1] as RequestInit).headers).get(
+        "Authorization",
+      ),
+    ).toBe("fresh");
+  });
+
+  it("retries at most once — a second 401 propagates as HttpError", async () => {
+    fetchMock.mockResolvedValue(new Response("nope", { status: 401 }));
+    const invalidate = vi.fn();
+    registerBackendEndpoint({
+      baseUrl: "https://h/api",
+      authorize: (init) => init,
+      invalidate,
+    });
+
+    const client = new BackendClient();
+    await expect(client.request("/x")).rejects.toBeInstanceOf(HttpError);
+    expect(invalidate).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a 401 when the endpoint has no invalidate", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("nope", { status: 401 }));
+    registerBackendEndpoint({
+      baseUrl: "https://h/api",
+      authorize: (init) => init,
+    });
+
+    const client = new BackendClient();
+    await expect(client.request("/x")).rejects.toBeInstanceOf(HttpError);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("throws BackendAuthExpiredError and flags expiry when authorize signals it, without fetching or retrying", async () => {
+    const authorize = vi.fn(() => authExpiredRejection());
+    const invalidate = vi.fn();
+    registerBackendEndpoint({ baseUrl: "https://h/api", authorize, invalidate });
+
+    const client = new BackendClient();
+    await expect(client.request("/x")).rejects.toBeInstanceOf(
+      BackendAuthExpiredError,
+    );
+    expect(isBackendAuthExpired()).toBe(true);
+    expect(authorize).toHaveBeenCalledOnce();
+    expect(invalidate).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("flags + types an auth-expired re-mint on the retry path (stale 401 → invalidate → re-auth fails)", async () => {
+    // First mint OK (stale) → backend 401 → invalidate → retry mint rejects expired.
+    fetchMock.mockResolvedValueOnce(new Response("stale", { status: 401 }));
+    let call = 0;
+    const authorize = vi.fn((init: RequestInit) => {
+      call += 1;
+      if (call === 1) return init;
+      return authExpiredRejection();
+    });
+    const invalidate = vi.fn();
+    registerBackendEndpoint({ baseUrl: "https://h/api", authorize, invalidate });
+
+    const client = new BackendClient();
+    // Before the fix this leaked a raw error and never set the flag.
+    await expect(client.request("/x")).rejects.toBeInstanceOf(
+      BackendAuthExpiredError,
+    );
+    expect(invalidate).toHaveBeenCalledOnce();
+    expect(authorize).toHaveBeenCalledTimes(2);
+    expect(isBackendAuthExpired()).toBe(true);
+  });
+
+  it("clears the auth-expired flag once a request succeeds", async () => {
+    setBackendAuthExpired(true); // simulate a prior expiry
+    registerBackendEndpoint({
+      baseUrl: "https://h/api",
+      authorize: (init) => init,
+    });
+
+    const client = new BackendClient();
+    await client.request("/x");
+    expect(isBackendAuthExpired()).toBe(false);
   });
 });
