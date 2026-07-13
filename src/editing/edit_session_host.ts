@@ -63,22 +63,21 @@ import {
   resolveDataSourceUrl,
 } from "#src/editing/adapters/ng_save_target.js";
 import { NgSessionLockAdapter } from "#src/editing/adapters/ng_session_lock.js";
-import type { SaveBackend } from "#src/editing/adapters/save_backend.js";
 import {
   hasAnySaveBackend,
   registerDefaultSaveBackend,
-  registerSaveBackend,
   saveBackendRegistryChanged,
 } from "#src/editing/adapters/save_backend.js";
 import { HttpSaveBackend } from "#src/editing/adapters/save_backends/http_save_backend.js";
-import { PostMessageSaveBackend } from "#src/editing/adapters/save_backends/post_message_save_backend.js";
 import type { ChunkLoadProgressState } from "#src/editing/adapters/session_chunk_preloader.js";
 import { BackendClient } from "#src/editing/backend/backend_client.js";
 import type { BackendEndpoint } from "#src/editing/backend/backend_endpoint.js";
 import {
+  backendAuthExpiredChanged,
   backendEndpointChanged,
   clearBackendEndpoint,
   hasBackendEndpoint,
+  isBackendAuthExpired,
   registerBackendEndpoint,
 } from "#src/editing/backend/backend_endpoint.js";
 import {
@@ -678,6 +677,19 @@ export class EditSessionHost extends RefCounted {
   readonly backendAvailable = new WatchableValue<boolean>(hasBackendEndpoint());
 
   /**
+   * Reactive flag: whether the most recent backend request failed because the
+   * host's auth expired (the portal's session lapsed and its token refresh
+   * failed) — see `BackendAuthExpiredError`. Distinct from `backendAvailable`
+   * (an endpoint IS registered; it just can't authenticate right now). Tool UI
+   * can gate on this to show a "session expired" state; cleared once a request
+   * succeeds again after the host re-authenticates. Mirrors
+   * `backendAuthExpiredChanged`.
+   */
+  readonly backendAuthExpired = new WatchableValue<boolean>(
+    isBackendAuthExpired(),
+  );
+
+  /**
    * Shared HTTP client for the Zetta backend, used by tool compute backends.
    * Resolves the injected endpoint lazily per request, so it works the moment
    * the host calls `configureBackend()` and reflects any later re-injection.
@@ -705,20 +717,6 @@ export class EditSessionHost extends RefCounted {
     return this.fillProgressState;
   }
   private fillCursorProgress: FillCursorProgress | undefined;
-
-  /**
-   * The NG-provided postMessage save backend, exposed so the embedding host
-   * (the portal) can construct and register it from an injected script without
-   * importing the NG bundle:
-   *
-   *   const host = window.viewer.editSessionHost;
-   *   host.registerDefaultSaveBackend(
-   *     new host.PostMessageSaveBackend({
-   *       resolveDataSourceUrl: (id) => host.resolveLayerDataSourceUrl(id),
-   *     }),
-   *   );
-   */
-  readonly PostMessageSaveBackend = PostMessageSaveBackend;
 
   // -- Per-layer persistent watchables for `editBboxLoHi` -------------------
   // Per `06-bbox-rendering.md` § "Wiring to the render layers", every
@@ -889,13 +887,12 @@ export class EditSessionHost extends RefCounted {
       this.logger,
     );
 
-    // NG does NOT register a save backend itself. NG runs as a same-origin
-    // iframe and cannot perform the authenticated write; the embedding host
-    // (the portal) installs a backend at viewer-ready via the public
-    // registration surface below — typically the NG-provided
-    // `PostMessageSaveBackend` (reachable as
-    // `window.viewer.editSessionHost.PostMessageSaveBackend`). Until it does,
-    // `saveBackendAvailable` is false and the Save controls stay disabled.
+    // Save backends live in a process-wide registry. NG auto-registers the
+    // default `HttpSaveBackend` (writes via the shared `BackendClient`) as soon
+    // as a backend endpoint is available — see `ensureDefaultSaveBackend()`,
+    // wired both at construction and on `backendEndpointChanged` below. Until a
+    // backend is registered `saveBackendAvailable` is false and the Save
+    // controls stay disabled.
     this.registerDisposer(
       saveBackendRegistryChanged.add(() => {
         this.saveBackendAvailable.value = hasAnySaveBackend();
@@ -909,6 +906,14 @@ export class EditSessionHost extends RefCounted {
     this.registerDisposer(
       backendEndpointChanged.add(() => {
         this.backendAvailable.value = hasBackendEndpoint();
+        // The portal injects the endpoint AFTER construction; register the
+        // default save backend as soon as it lands (idempotent).
+        this.ensureDefaultSaveBackend();
+      }),
+    );
+    this.registerDisposer(
+      backendAuthExpiredChanged.add(() => {
+        this.backendAuthExpired.value = isBackendAuthExpired();
       }),
     );
     this.registerDisposer(() => clearBackendEndpoint());
@@ -928,20 +933,11 @@ export class EditSessionHost extends RefCounted {
       }
     }
 
-    // Standalone save (TM-348): when a backend endpoint is reachable (build-time
-    // or injected) but nothing has registered a save backend, write chunks
-    // directly to `/cutout` through the shared client. Runs at construction, so
-    // a portal that later calls `registerDefaultSaveBackend()` (its own
-    // `PostMessageSaveBackend`) still wins. Without an endpoint, save stays
-    // unavailable exactly as before.
-    if (hasBackendEndpoint() && !hasAnySaveBackend()) {
-      registerDefaultSaveBackend(
-        new HttpSaveBackend({
-          client: this.backendClient,
-          resolveDataSourceUrl: (id) => this.resolveLayerDataSourceUrl(id),
-        }),
-      );
-    }
+    // Save (TM-348) routes through the shared `BackendClient` via
+    // `HttpSaveBackend`. A build-time endpoint is already present here, so
+    // standalone registers now; the portal injects its endpoint after
+    // construction, so `backendEndpointChanged` (above) registers it then.
+    this.ensureDefaultSaveBackend();
 
     // The viewer constructor calls `tryRestoreFromState()` once, but the URL
     // hash is parsed AFTER construction, so the first call is a no-op. Watch
@@ -1664,24 +1660,21 @@ export class EditSessionHost extends RefCounted {
   }
 
   /**
-   * Public host-level registration surface for save backends, reachable via
-   * `window.viewer.editSessionHost`. Hosts embedding neuroglancer (e.g. the
-   * portal) can register a backend for a specific data-source kind (the URL
-   * scheme, e.g. `"calcada"`, `"gs"`); a scheme-specific backend takes
-   * precedence over the default. See `src/editing/adapters/save_backend.ts`.
+   * Register the default `HttpSaveBackend` (writes dirty chunks via the shared
+   * {@link backendClient} to `POST /painting/cutout`) when a backend endpoint is
+   * available and nothing else has registered a save backend. Idempotent, so it
+   * is safe to call both at construction and again when the portal injects the
+   * endpoint (`backendEndpointChanged`).
    */
-  registerSaveBackend(kind: string, backend: SaveBackend): void {
-    registerSaveBackend(kind, backend);
-  }
-
-  /**
-   * Register the catch-all backend used for any data-source kind without a
-   * scheme-specific backend. NG does not install one itself — the embedding
-   * host (the portal) calls this at viewer-ready, typically with
-   * `new this.PostMessageSaveBackend({ ... })`.
-   */
-  registerDefaultSaveBackend(backend: SaveBackend): void {
-    registerDefaultSaveBackend(backend);
+  private ensureDefaultSaveBackend(): void {
+    if (hasBackendEndpoint() && !hasAnySaveBackend()) {
+      registerDefaultSaveBackend(
+        new HttpSaveBackend({
+          client: this.backendClient,
+          resolveDataSourceUrl: (id) => this.resolveLayerDataSourceUrl(id),
+        }),
+      );
+    }
   }
 
   /**
@@ -1736,9 +1729,8 @@ export class EditSessionHost extends RefCounted {
 
   /**
    * Resolve the canonical data-source URL for a layer (e.g.
-   * `gs://bucket/path|precomputed:`). Exposed so an embedder constructing a
-   * `PostMessageSaveBackend` can wire its `resolveDataSourceUrl` option without
-   * reaching into the viewer's `LayerManager` directly.
+   * `gs://bucket/path|precomputed:`). Used by the default `HttpSaveBackend` to
+   * map a layer to its `/cutout` `path`.
    */
   resolveLayerDataSourceUrl(layerId: LayerId): string | undefined {
     return resolveDataSourceUrl(this.viewer.layerManager, layerId);
@@ -2550,12 +2542,11 @@ export class EditSessionHost extends RefCounted {
       );
     }
 
-    // Save backend: persistence routes through whatever backend the embedding
-    // host (the portal) registers via `registerDefaultSaveBackend` — typically
-    // the protocol-agnostic `PostMessageSaveBackend`, which ships dirty chunks
-    // to the portal over postMessage to be written there (TM-289, Option A).
-    // NG registers none itself. The earlier calcada `/edit_write` HttpSource
-    // path is retired, so no per-layer `HttpSource` resolution is needed.
+    // Save backend: persistence routes through the default `HttpSaveBackend`
+    // (auto-registered by `ensureDefaultSaveBackend()` once the backend endpoint
+    // is available), which writes dirty chunks to `POST /painting/cutout` via the
+    // shared `BackendClient`. The earlier calcada `/edit_write` HttpSource path
+    // is retired, so no per-layer `HttpSource` resolution is needed.
 
     // Propagate the newly-set per-layer regions into any persistent
     // watchables that segmentation/image user layers subscribed to at their

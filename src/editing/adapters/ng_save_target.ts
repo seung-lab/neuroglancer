@@ -119,8 +119,8 @@ export class NgSaveTarget implements SaveTarget {
       });
     }
     // Prefer a scheme-specific backend; otherwise fall back to the registered
-    // default (the protocol-agnostic `PostMessageSaveBackend`). Only skip when
-    // neither exists, so saving works for every data-source kind out of the box.
+    // default (`HttpSaveBackend`). Only skip when neither exists, so saving works
+    // for every data-source kind out of the box.
     const backend: SaveBackend | undefined =
       getSaveBackend(kind) ?? getDefaultSaveBackend();
     if (backend === undefined) {
@@ -171,10 +171,9 @@ function resolveDataSourceKind(
 
 /**
  * Resolve the canonical data-source URL for `layerId` (the same URL
- * `resolveDataSourceKind` derives its scheme from). Save backends that hand
- * chunks off to an external writer (e.g. `PostMessageSaveBackend` → portal)
- * pass this along so the writer can map the layer to its storage `path`
- * regardless of protocol. Returns `undefined` when no data source is loaded.
+ * `resolveDataSourceKind` derives its scheme from). The default `HttpSaveBackend`
+ * uses this to map the layer to its `/cutout` storage `path` regardless of
+ * protocol. Returns `undefined` when no data source is loaded.
  */
 export function resolveDataSourceUrl(
   layerManager: LayerManager,

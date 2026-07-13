@@ -11,8 +11,7 @@
 /**
  * @file `HttpSaveBackend` (TM-348): a `SaveBackend` that writes dirty chunks
  * directly to the Zetta backend's `POST /painting/cutout` endpoint through the
- * shared {@link BackendClient}, instead of delegating them to the portal over
- * `postMessage` (`PostMessageSaveBackend`).
+ * shared {@link BackendClient}, rather than delegating the write to the portal.
  *
  * This is what lets a standalone neuroglancer (no portal) actually persist
  * edits: the same build-time / injected {@link BackendEndpoint} that powers the
@@ -20,12 +19,9 @@
  * needs no separate wiring.
  *
  * The request is reconstructed entirely from NG-local data — `scaleFor` yields
- * the scale's `voxelOffset` + `chunkDataSize`, so unlike the portal handler this
- * does not fetch the layer's `info` file. Bytes are posted exactly as the portal
- * path posts them (native dtype, X-fastest, gzipped, no axis reorder — the
- * `/cutout` default `is_fortran=true` consumes that layout), so this is
- * byte-for-byte equivalent to the proven `PostMessageSaveBackend` + portal
- * handler path.
+ * the scale's `voxelOffset` + `chunkDataSize`, so it does not fetch the layer's
+ * `info` file. Bytes are posted native dtype, X-fastest, gzipped, with no axis
+ * reorder — the `/cutout` default `is_fortran=true` consumes that layout.
  */
 
 import type { LayerId, LayerMetadata, SavedChunk } from "@zettaai/edit-session";
@@ -141,7 +137,7 @@ export interface HttpSaveBackendDeps {
 /**
  * `SaveBackend` that persists each dirty chunk via `POST /cutout` through the
  * shared {@link BackendClient}. Per-chunk outcomes aggregate into
- * succeeded / partial / failed, matching `PostMessageSaveBackend`.
+ * succeeded / partial / failed `SaveBackendResult` states.
  */
 export class HttpSaveBackend implements SaveBackend {
   private readonly client: BackendClient;
