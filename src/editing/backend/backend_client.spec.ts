@@ -210,7 +210,11 @@ describe("BackendClient — 401 retry & auth expiry", () => {
       headers.set("Authorization", token);
       return { ...init, headers };
     });
-    registerBackendEndpoint({ baseUrl: "https://h/api", authorize, invalidate });
+    registerBackendEndpoint({
+      baseUrl: "https://h/api",
+      authorize,
+      invalidate,
+    });
 
     const client = new BackendClient();
     const res = await client.request("/x");
@@ -256,7 +260,11 @@ describe("BackendClient — 401 retry & auth expiry", () => {
   it("throws BackendAuthExpiredError and flags expiry when authorize signals it, without fetching or retrying", async () => {
     const authorize = vi.fn(() => authExpiredRejection());
     const invalidate = vi.fn();
-    registerBackendEndpoint({ baseUrl: "https://h/api", authorize, invalidate });
+    registerBackendEndpoint({
+      baseUrl: "https://h/api",
+      authorize,
+      invalidate,
+    });
 
     const client = new BackendClient();
     await expect(client.request("/x")).rejects.toBeInstanceOf(
@@ -278,7 +286,11 @@ describe("BackendClient — 401 retry & auth expiry", () => {
       return authExpiredRejection();
     });
     const invalidate = vi.fn();
-    registerBackendEndpoint({ baseUrl: "https://h/api", authorize, invalidate });
+    registerBackendEndpoint({
+      baseUrl: "https://h/api",
+      authorize,
+      invalidate,
+    });
 
     const client = new BackendClient();
     // Before the fix this leaked a raw error and never set the flag.
