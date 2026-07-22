@@ -155,6 +155,77 @@ calcadaChunkDecoders.set(
 );
 calcadaChunkDecoders.set(VolumeChunkEncoding.RAW, decodeRawChunk);
 
+// fetchLutTrailer fetches the standalone piece→root LUT trailer for a chunk
+// from calcada (…/precomputed_rp/{scale}/{bounds}?lut_only=true).
+async function fetchLutTrailer(
+  src: HttpSource,
+  chunkPath: string,
+  branchQuery: string,
+  signal: AbortSignal,
+): Promise<ArrayBuffer> {
+  const response = await src.fetchOkImpl(
+    `${src.baseUrl}${chunkPath}?lut_only=true${branchQuery}`,
+    { signal },
+  );
+  return response.arrayBuffer();
+}
+
+// parseLutTrailer parses the LUT trailer format
+// [N × (piece u64 LE, root u64 LE)][N as u32 LE] into parallel arrays.
+function parseLutTrailer(buffer: ArrayBuffer): {
+  pieces: BigUint64Array;
+  roots: BigUint64Array;
+} {
+  const empty = { pieces: new BigUint64Array(0), roots: new BigUint64Array(0) };
+  const byteLen = buffer.byteLength;
+  if (byteLen < 4) return empty;
+  const view = new DataView(buffer);
+  const count = view.getUint32(byteLen - 4, true);
+  if (count === 0 || count * 16 + 4 > byteLen) return empty;
+  const start = byteLen - (count * 16 + 4);
+  const pieces = new BigUint64Array(count);
+  const roots = new BigUint64Array(count);
+  for (let i = 0; i < count; i++) {
+    const offset = start + i * 16;
+    pieces[i] = view.getBigUint64(offset, true);
+    roots[i] = view.getBigUint64(offset + 8, true);
+  }
+  return { pieces, roots };
+}
+
+// linkChunkEquivalences feeds piece→root pairs into each matching layer's
+// segmentEquivalences — identical to the LUT-trailer path (see download), so
+// root colouring of the whole visible volume is preserved without selection.
+function linkChunkEquivalences(
+  pieces: BigUint64Array,
+  roots: BigUint64Array,
+  branchId: number,
+) {
+  for (const layer of allActiveChunkedGraphLayers) {
+    if (layer.branchId.value !== branchId) continue;
+    const equivs = layer.segmentEquivalences;
+    const pairs: bigint[] = [];
+    const n = Math.min(pieces.length, roots.length);
+    for (let i = 0; i < n; i++) {
+      const pieceId = pieces[i];
+      const rootId = roots[i];
+      if (pieceId === 0n || rootId === 0n) continue;
+      if (!equivs.disjointSets.has(pieceId)) {
+        equivs.disjointSets.link(rootId, pieceId);
+        pairs.push(rootId, pieceId);
+      }
+    }
+    if (pairs.length > 0 && equivs.rpc) {
+      const buf = new BigUint64Array(pairs);
+      equivs.rpc.invoke(
+        CALCADA_BULK_LINK_RPC_ID,
+        { id: equivs.rpcId, pairs: buf.buffer },
+        [buf.buffer],
+      );
+    }
+  }
+}
+
 /**
  * Backend volume chunk source for calcada that handles /precomputed_rp/ responses.
  * Downloads chunks, strips the piece→root LUT trailer, feeds LUT to equivalences,
@@ -183,18 +254,41 @@ export class CalcadaVolumeChunkSource extends WithParameters(
     // normal kvstore code path so caching and request batching keep
     // working unchanged.
     const { timestampMs, branchId } = this.parameters;
-    const liveState =
-      (!timestampMs || timestampMs <= 0) && (!branchId || branchId <= 0);
+    const timeTravel = !!timestampMs && timestampMs > 0;
+
+    // Main + branch (no time-travel): redirect voxels — calcada resolves the
+    // exact object (base / per-branch overlay) and 302s the client straight to
+    // the public bucket — AND fetch the piece→root LUT trailer from calcada in
+    // parallel. Feeds the same per-chunk equivalences (root colouring of the
+    // whole visible volume) with no heavy client-side decode.
+    if (!timeTravel) {
+      const httpStore = kvStore.store as any; // ReadableHttpKvStore (calcada _rp)
+      const lutSource = getHttpSource(
+        this.sharedKvStoreContext.kvStoreContext,
+        this.parameters.lutUrl,
+      );
+      // Voxels: calcada _rp redirects to the public bucket by default (base or
+      // per-branch overlay); fetchOkImpl follows the 302 to GCS.
+      const voxelQuery = branchId && branchId > 0 ? `?branch_id=${branchId}` : "";
+      const lutBranchQuery =
+        branchId && branchId > 0 ? `&branch_id=${branchId}` : "";
+      const voxelUrl = `${httpStore.baseUrl}${kvStore.path}${chunkPath}${voxelQuery}`;
+      const [voxelResp, lutBuffer] = await Promise.all([
+        httpStore.fetchOkImpl(voxelUrl, { signal }), // follows the 302 → GCS
+        fetchLutTrailer(lutSource, chunkPath, lutBranchQuery, signal),
+      ]);
+      if (!voxelResp.ok) return;
+      const rawChunk = await voxelResp.arrayBuffer();
+      await this.chunkDecoder(chunk, signal, rawChunk);
+      const { pieces, roots } = parseLutTrailer(lutBuffer);
+      if (pieces.length > 0) {
+        linkChunkEquivalences(pieces, roots, branchId);
+      }
+      return;
+    }
 
     let fullBuffer: ArrayBuffer;
-    if (liveState) {
-      const readResponse = await kvStore.store.read(
-        `${kvStore.path}${chunkPath}`,
-        { signal },
-      );
-      if (readResponse === undefined) return;
-      fullBuffer = await readResponse.response.arrayBuffer();
-    } else {
+    {
       // Time-travel / branch path: kvstore would URL-encode `?` in the path,
       // which would put `timestamp=…` into the bbox segment and break the
       // backend parser. Bypass the kvstore and issue a direct fetch using
