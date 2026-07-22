@@ -96,11 +96,11 @@ export function unregisterSaveBackend(dataSourceKind: string): void {
 
 /**
  * Catch-all backend used when no scheme-specific backend is registered for a
- * layer's data-source kind. The `PostMessageSaveBackend` registers here so a
+ * layer's data-source kind. The default `HttpSaveBackend` registers here so a
  * single transport persists chunks for every protocol (`calcada`, `gs`,
- * `precomputed`, `https`, ...) — the host doesn't write the bytes, it ships
- * them to the portal, which owns the per-protocol `path` mapping. Per-scheme
- * backends (if any are ever registered) take precedence over this default.
+ * `precomputed`, `https`, ...) via `POST /cutout` through the shared
+ * `BackendClient`. Per-scheme backends (if any are ever registered) take
+ * precedence over this default.
  */
 let defaultSaveBackend: SaveBackend | undefined;
 
