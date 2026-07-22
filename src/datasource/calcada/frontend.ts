@@ -410,6 +410,11 @@ class GrapheneMultiscaleVolumeChunkSource extends PrecomputedMultiscaleVolumeChu
   getSources(volumeSourceOptions: VolumeSourceOptions) {
     const modelResolution = this.info.scales[0].resolution;
     const { rank } = this;
+    // Voxels are always requested from calcada _rp: for main + branch the
+    // backend fetches the chunk from _rp, which 302-redirects to the public
+    // bucket by default (resolving base vs per-branch overlay server-side),
+    // plus a separate ?lut_only=true trailer fetch for the mapping;
+    // time-travel keeps the bundled _rp?timestamp= path.
     return transposeNestedArrays(
       this.info.scales
         .filter((x) => !x.hidden)

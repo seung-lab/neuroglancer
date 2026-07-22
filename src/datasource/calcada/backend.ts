@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { decodeDracoMesh } from "#src/async_computation/decode_draco_request.js";
+import { requestAsyncComputation } from "#src/async_computation/request.js";
 import {
   WithParameters,
   withChunkManager,
@@ -46,7 +48,6 @@ import type { KvStoreWithPath, ReadResponse } from "#src/kvstore/index.js";
 import { readKvStore } from "#src/kvstore/index.js";
 import type { FragmentChunk, ManifestChunk } from "#src/mesh/backend.js";
 import { assignMeshFragmentData, MeshSource } from "#src/mesh/backend.js";
-import { decodeDraco } from "#src/mesh/draco/index.js";
 import type { DisplayDimensionRenderInfo } from "#src/navigation_state.js";
 import type {
   RenderedViewBackend,
@@ -118,8 +119,18 @@ function downloadFragment(
 async function decodeDracoFragmentChunk(
   chunk: FragmentChunk,
   response: Uint8Array,
+  signal: AbortSignal,
 ) {
-  const rawMesh = await decodeDraco(response);
+  // Decode Draco on the async-computation worker pool rather than inline on the
+  // chunk worker: a neuron's many per-piece fragments then decode in parallel
+  // across the pool and off the thread that also runs 2D chunk decode and
+  // equivalence updates.
+  const { data: rawMesh } = await requestAsyncComputation(
+    decodeDracoMesh,
+    signal,
+    [response.buffer],
+    response,
+  );
   assignMeshFragmentData(chunk, rawMesh);
 }
 
@@ -144,6 +155,81 @@ calcadaChunkDecoders.set(
 );
 calcadaChunkDecoders.set(VolumeChunkEncoding.RAW, decodeRawChunk);
 
+// fetchLutTrailer fetches the standalone piece→root LUT trailer for a chunk
+// from calcada (…/precomputed_rp/{scale}/{bounds}?lut_only=true).
+async function fetchLutTrailer(
+  src: HttpSource,
+  chunkPath: string,
+  branchQuery: string,
+  signal: AbortSignal,
+): Promise<ArrayBuffer> {
+  const response = await src.fetchOkImpl(
+    `${src.baseUrl}${chunkPath}?lut_only=true${branchQuery}`,
+    { signal },
+  );
+  return response.arrayBuffer();
+}
+
+// parseLutTrailer parses the LUT trailer format
+// [N × (piece u64 LE, root u64 LE)][N as u32 LE] into parallel arrays.
+function parseLutTrailer(buffer: ArrayBuffer): {
+  pieces: BigUint64Array;
+  roots: BigUint64Array;
+} {
+  const empty = { pieces: new BigUint64Array(0), roots: new BigUint64Array(0) };
+  const byteLen = buffer.byteLength;
+  if (byteLen < 4) return empty;
+  const view = new DataView(buffer);
+  const count = view.getUint32(byteLen - 4, true);
+  if (count === 0 || count * 16 + 4 > byteLen) return empty;
+  const start = byteLen - (count * 16 + 4);
+  const pieces = new BigUint64Array(count);
+  const roots = new BigUint64Array(count);
+  for (let i = 0; i < count; i++) {
+    const offset = start + i * 16;
+    pieces[i] = view.getBigUint64(offset, true);
+    roots[i] = view.getBigUint64(offset + 8, true);
+  }
+  return { pieces, roots };
+}
+
+// linkChunkEquivalences feeds piece→root pairs into each matching layer's
+// segmentEquivalences so the whole visible volume colours by root without a
+// selection. Only layers whose current branchId matches the chunk's branchId
+// are updated — otherwise a main-branch chunk poisons a branch layer's
+// equivalences (piece→main_root) and the branch layer's own chunk LUT is
+// silently skipped by the "already in disjoint set" guard, leaving the branch
+// displayed as the main view.
+function linkChunkEquivalences(
+  pieces: BigUint64Array,
+  roots: BigUint64Array,
+  branchId: number,
+) {
+  for (const layer of allActiveChunkedGraphLayers) {
+    if (layer.branchId.value !== branchId) continue;
+    const equivs = layer.segmentEquivalences;
+    const pairs: bigint[] = [];
+    const n = Math.min(pieces.length, roots.length);
+    for (let i = 0; i < n; i++) {
+      const pieceId = pieces[i];
+      const rootId = roots[i];
+      if (pieceId === 0n || rootId === 0n) continue;
+      if (!equivs.disjointSets.has(pieceId)) {
+        equivs.disjointSets.link(rootId, pieceId);
+        pairs.push(rootId, pieceId);
+      }
+    }
+    if (pairs.length > 0 && equivs.rpc) {
+      const buf = new BigUint64Array(pairs);
+      equivs.rpc.invoke(
+        CALCADA_BULK_LINK_RPC_ID,
+        { id: equivs.rpcId, pairs: buf.buffer },
+        [buf.buffer],
+      );
+    }
+  }
+}
+
 /**
  * Backend volume chunk source for calcada that handles /precomputed_rp/ responses.
  * Downloads chunks, strips the piece→root LUT trailer, feeds LUT to equivalences,
@@ -158,6 +244,12 @@ export class CalcadaVolumeChunkSource extends WithParameters(
   kvStore = this.sharedKvStoreContext.kvStoreContext.getKvStore(
     this.parameters.url,
   );
+  // HTTP source for the ?lut_only=true trailer fetches — same scale-dir URL
+  // as the voxel kvstore, resolved once instead of per download().
+  lutSource = getHttpSource(
+    this.sharedKvStoreContext.kvStoreContext,
+    this.parameters.url,
+  );
 
   async download(chunk: VolumeChunk, signal: AbortSignal): Promise<void> {
     const { kvStore } = this;
@@ -168,22 +260,64 @@ export class CalcadaVolumeChunkSource extends WithParameters(
       `${chunkPosition[1]}-${chunkPosition[1] + chunkDataSize[1]}_` +
       `${chunkPosition[2]}-${chunkPosition[2] + chunkDataSize[2]}`;
 
-    // Live-state path (no time-travel / non-default branch): take the
-    // normal kvstore code path so caching and request batching keep
-    // working unchanged.
+    // Live-state path (no time-travel): bypass the kvstore and fetch from
+    // calcada _rp directly — the voxel request 302-redirects to the public
+    // bucket, so kvstore-level caching/coalescing does not apply here.
     const { timestampMs, branchId } = this.parameters;
-    const liveState =
-      (!timestampMs || timestampMs <= 0) && (!branchId || branchId <= 0);
+    const timeTravel = !!timestampMs && timestampMs > 0;
+
+    // Main + branch (no time-travel): redirect voxels — calcada resolves the
+    // exact object (base / per-branch overlay) and 302s the client straight to
+    // the public bucket — AND fetch the piece→root LUT trailer from calcada in
+    // parallel. Feeds the same per-chunk equivalences (root colouring of the
+    // whole visible volume) with no heavy client-side decode.
+    if (!timeTravel) {
+      const httpStore = kvStore.store as any; // ReadableHttpKvStore (calcada _rp)
+      // Voxels: calcada _rp redirects to the public bucket by default (base or
+      // per-branch overlay); fetchOkImpl follows the 302 to GCS.
+      const voxelQuery =
+        branchId && branchId > 0 ? `?branch_id=${branchId}` : "";
+      const lutBranchQuery =
+        branchId && branchId > 0 ? `&branch_id=${branchId}` : "";
+      const voxelUrl = `${httpStore.baseUrl}${kvStore.path}${chunkPath}${voxelQuery}`;
+      let voxelResp: Response;
+      let lutBuffer: ArrayBuffer | undefined;
+      try {
+        [voxelResp, lutBuffer] = await Promise.all([
+          httpStore.fetchOkImpl(voxelUrl, { signal }), // follows the 302 → GCS
+          // Best-effort: voxels don't depend on the LUT (it only affects root
+          // colouring), so a failed trailer fetch must not blank the chunk.
+          fetchLutTrailer(
+            this.lutSource,
+            chunkPath,
+            lutBranchQuery,
+            signal,
+          ).catch((e) => {
+            if (e instanceof Error && e.name === "AbortError") throw e;
+            return undefined;
+          }),
+        ]);
+      } catch (e) {
+        // A 404 means the chunk has no data; render it empty, matching the
+        // read()-returns-undefined semantics of the kvstore path.
+        if (e instanceof HttpError && e.status === 404) return;
+        throw e;
+      }
+      const rawChunk = await voxelResp.arrayBuffer();
+      // Link equivalences before decoding so they're ready when the chunk
+      // renders — same ordering as the bundled-trailer path below.
+      if (lutBuffer !== undefined) {
+        const { pieces, roots } = parseLutTrailer(lutBuffer);
+        if (pieces.length > 0) {
+          linkChunkEquivalences(pieces, roots, branchId);
+        }
+      }
+      await this.chunkDecoder(chunk, signal, rawChunk);
+      return;
+    }
 
     let fullBuffer: ArrayBuffer;
-    if (liveState) {
-      const readResponse = await kvStore.store.read(
-        `${kvStore.path}${chunkPath}`,
-        { signal },
-      );
-      if (readResponse === undefined) return;
-      fullBuffer = await readResponse.response.arrayBuffer();
-    } else {
+    {
       // Time-travel / branch path: kvstore would URL-encode `?` in the path,
       // which would put `timestamp=…` into the bbox segment and break the
       // backend parser. Bypass the kvstore and issue a direct fetch using
@@ -205,65 +339,27 @@ export class CalcadaVolumeChunkSource extends WithParameters(
       fullBuffer = await response.arrayBuffer();
     }
 
-    // Extract LUT trailer: last 4 bytes = N (uint32 LE), then N × 16 bytes of (piece, root) pairs
-    const fullView = new DataView(fullBuffer);
+    // Bundled trailer: [voxels][N × (piece u64 LE, root u64 LE)][N u32 LE].
     const byteLen = fullBuffer.byteLength;
+    const { pieces, roots } = parseLutTrailer(fullBuffer);
 
-    if (byteLen < 4) {
-      await this.chunkDecoder(chunk, signal, fullBuffer);
-      return;
-    }
-
-    const lutCount = fullView.getUint32(byteLen - 4, true);
-    const lutByteSize = lutCount * 16 + 4;
-
-    if (lutCount === 0 || lutByteSize > byteLen) {
-      console.warn(
-        `[calcada chunk] NO LUT: bbox=${chunkPath} byteLen=${byteLen} lutCount=${lutCount}`,
-      );
-      await this.chunkDecoder(chunk, signal, fullBuffer);
-      return;
-    }
-
-    // Split: chunk data + LUT trailer
-    const chunkData = fullBuffer.slice(0, byteLen - lutByteSize);
-    const lutStart = byteLen - lutByteSize;
-
-    // Build equivalences BEFORE decoding chunk so they're ready when
-    // the chunk renders. Only update layers whose current branchId
-    // matches this chunk's parameters.branchId — otherwise a main-branch
-    // chunk poisons a branch layer's equivalences (piece→main_root) and
-    // the branch layer's own chunk LUT is silently skipped by the
-    // "already in disjoint set" guard, leaving the branch displayed as
-    // the main view.
-    for (const layer of allActiveChunkedGraphLayers) {
-      if (layer.branchId.value !== branchId) continue;
-      const equivs = layer.segmentEquivalences;
-      const pairs: bigint[] = [];
-      for (let i = 0; i < lutCount; i++) {
-        const offset = lutStart + i * 16;
-        const pieceId = fullView.getBigUint64(offset, true);
-        const rootId = fullView.getBigUint64(offset + 8, true);
-        if (pieceId === 0n || rootId === 0n) continue;
-        if (!equivs.disjointSets.has(pieceId)) {
-          equivs.disjointSets.link(rootId, pieceId);
-          pairs.push(rootId, pieceId);
-        }
-      }
-      if (pairs.length > 0 && equivs.rpc) {
-        const buf = new BigUint64Array(pairs);
-        equivs.rpc.invoke(
-          CALCADA_BULK_LINK_RPC_ID,
-          {
-            id: equivs.rpcId,
-            pairs: buf.buffer,
-          },
-          [buf.buffer],
+    if (pieces.length === 0) {
+      if (byteLen >= 4) {
+        console.warn(
+          `[calcada chunk] NO LUT: bbox=${chunkPath} byteLen=${byteLen}`,
         );
       }
+      await this.chunkDecoder(chunk, signal, fullBuffer);
+      return;
     }
 
-    // Decode chunk data (piece_ids in compressed_segmentation)
+    // Build equivalences BEFORE decoding chunk so they're ready when the
+    // chunk renders.
+    linkChunkEquivalences(pieces, roots, branchId);
+
+    // Decode chunk data (piece_ids in compressed_segmentation) with the
+    // trailer stripped.
+    const chunkData = fullBuffer.slice(0, byteLen - (pieces.length * 16 + 4));
     await this.chunkDecoder(chunk, signal, chunkData);
   }
 }
@@ -291,6 +387,14 @@ export class GrapheneMeshSource extends WithParameters(
 
   constructor(rpc: RPC, options: any) {
     super(rpc, options);
+    // Move calcada mesh manifest + fragment downloads to their own download
+    // pool (sourceQueueLevel 1) so they never contend for the level-0 slots
+    // that 2D slice chunks use. Otherwise mesh chunks — which carry a far
+    // higher chunk priority than slice chunks — monopolize the shared 100-slot
+    // budget after an edit and stall the 2D data the user is looking at.
+    // Graphene's own mesh sources are a different class and stay on level 0.
+    this.sourceQueueLevel = 1;
+    this.fragmentSource.sourceQueueLevel = 1;
     if (options.branchId !== undefined) {
       this.branchId = rpc.get(options.branchId);
     }
@@ -348,6 +452,7 @@ export class GrapheneMeshSource extends WithParameters(
     await decodeDracoFragmentChunk(
       chunk,
       new Uint8Array(await response.arrayBuffer()),
+      signal,
     );
   }
 
