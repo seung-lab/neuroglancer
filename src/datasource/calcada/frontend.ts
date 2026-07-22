@@ -411,9 +411,10 @@ class GrapheneMultiscaleVolumeChunkSource extends PrecomputedMultiscaleVolumeChu
     const modelResolution = this.info.scales[0].resolution;
     const { rank } = this;
     // Voxels are always requested from calcada _rp: for main + branch the
-    // backend uses ?redirect=true (calcada resolves base/overlay and 302s to the
-    // public bucket) + a separate ?lut_only=true for the mapping; time-travel
-    // keeps the bundled _rp?timestamp= path.
+    // backend fetches the chunk from _rp, which 302-redirects to the public
+    // bucket by default (resolving base vs per-branch overlay server-side),
+    // plus a separate ?lut_only=true trailer fetch for the mapping;
+    // time-travel keeps the bundled _rp?timestamp= path.
     return transposeNestedArrays(
       this.info.scales
         .filter((x) => !x.hidden)
@@ -468,12 +469,6 @@ class GrapheneMultiscaleVolumeChunkSource extends PrecomputedMultiscaleVolumeChu
                     timestampMs: this.timestampMs,
                     branchId: this.branchId,
                     generation: this.generation,
-                    lutUrl: kvstoreEnsureDirectoryPipelineUrl(
-                      this.sharedKvStoreContext.kvStoreContext.resolveRelativePath(
-                        this.rpUrl,
-                        scaleInfo.key,
-                      ),
-                    ),
                   },
                 },
               ),
