@@ -464,6 +464,12 @@ class GrapheneMultiscaleVolumeChunkSource extends PrecomputedMultiscaleVolumeChu
                     timestampMs: this.timestampMs,
                     branchId: this.branchId,
                     generation: this.generation,
+                    lutUrl: kvstoreEnsureDirectoryPipelineUrl(
+                      this.sharedKvStoreContext.kvStoreContext.resolveRelativePath(
+                        this.rpUrl,
+                        scaleInfo.key,
+                      ),
+                    ),
                   },
                 },
               ),

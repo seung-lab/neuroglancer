@@ -69,6 +69,9 @@ export class VolumeChunkSourceParameters {
   // the disjoint set).
   generation: number;
 
+  // calcada _rp scale dir for the ?lut_only=true trailer fetch.
+  lutUrl: string;
+
   static RPC_ID = "calcada/VolumeChunkSource";
 }
 
