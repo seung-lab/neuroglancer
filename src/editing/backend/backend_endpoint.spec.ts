@@ -12,11 +12,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { BackendEndpoint } from "#src/editing/backend/backend_endpoint.js";
 import {
+  BACKEND_AUTH_EXPIRED_CODE,
+  BackendAuthExpiredError,
+  backendAuthExpiredChanged,
   backendEndpointChanged,
   clearBackendEndpoint,
   getBackendEndpoint,
   hasBackendEndpoint,
+  isAuthExpiredSignal,
+  isBackendAuthExpired,
   registerBackendEndpoint,
+  setBackendAuthExpired,
 } from "#src/editing/backend/backend_endpoint.js";
 
 const stub: BackendEndpoint = {
@@ -64,6 +70,37 @@ describe("backend endpoint registry", () => {
     const unsubscribe = backendEndpointChanged.add(listener);
     clearBackendEndpoint();
     expect(listener).not.toHaveBeenCalled();
+    unsubscribe();
+  });
+});
+
+describe("backend auth-expiry signal", () => {
+  afterEach(() => setBackendAuthExpired(false));
+
+  it("recognizes the tagged code and the typed error, and nothing else", () => {
+    expect(isAuthExpiredSignal({ code: BACKEND_AUTH_EXPIRED_CODE })).toBe(true);
+    expect(isAuthExpiredSignal(new BackendAuthExpiredError())).toBe(true);
+    expect(isAuthExpiredSignal(new Error("nope"))).toBe(false);
+    expect(isAuthExpiredSignal({ code: "other" })).toBe(false);
+    expect(isAuthExpiredSignal(undefined)).toBe(false);
+    expect(isAuthExpiredSignal(null)).toBe(false);
+  });
+
+  it("BackendAuthExpiredError carries the auth-expired code", () => {
+    expect(new BackendAuthExpiredError().code).toBe(BACKEND_AUTH_EXPIRED_CODE);
+  });
+
+  it("flips the flag and dispatches only on change", () => {
+    const listener = vi.fn();
+    const unsubscribe = backendAuthExpiredChanged.add(listener);
+    expect(isBackendAuthExpired()).toBe(false);
+
+    setBackendAuthExpired(true);
+    setBackendAuthExpired(true); // same value — no dispatch
+    expect(isBackendAuthExpired()).toBe(true);
+    setBackendAuthExpired(false);
+
+    expect(listener).toHaveBeenCalledTimes(2);
     unsubscribe();
   });
 });

@@ -63,8 +63,92 @@ export interface BackendEndpoint {
    *
    * Subportal scoping and token lifetime live entirely inside the host's
    * implementation — NG never sees them. May be async (e.g. token refresh).
+   *
+   * May reject with an error tagged `code === BACKEND_AUTH_EXPIRED_CODE` when
+   * the host cannot mint a credential and only user re-authentication can fix it
+   * (portal session expired). {@link BackendClient} treats that as terminal (no
+   * retry) — see {@link BackendAuthExpiredError}.
    */
   authorize(init: RequestInit): Promise<RequestInit> | RequestInit;
+
+  /**
+   * Drop whatever credential {@link authorize} last handed out, so the next
+   * `authorize` call mints a fresh one. `BackendClient` calls this after a `401`
+   * response — the signal that the credential went stale between mint and use —
+   * then re-authorizes and retries the request exactly once.
+   *
+   * Opaque like {@link authorize}: it says nothing about tokens, so every
+   * deployment fits. A bearer-token host clears its cached token; a same-origin
+   * cookie host has nothing to drop and may omit this entirely (a `401` then
+   * simply propagates, since a retry could not help). Optional for that reason.
+   */
+  invalidate?(): void;
+}
+
+/**
+ * Code an {@link BackendEndpoint.authorize} rejection carries when the host
+ * cannot currently mint a credential and only user re-authentication can fix it
+ * (e.g. the portal's session expired and its token refresh failed). Distinct
+ * from a stale credential (which is a `401` the host recovers via
+ * {@link BackendEndpoint.invalidate} + retry): re-authenticating is out of the
+ * client's hands, so {@link BackendClient} must not retry — it surfaces a typed
+ * {@link BackendAuthExpiredError} and flips {@link isBackendAuthExpired}.
+ *
+ * Stringly-typed on purpose: the portal's `authorize` is an injected ES5 script
+ * that cannot import this class, so it rejects with a plain error tagged
+ * `code === BACKEND_AUTH_EXPIRED_CODE`. Keep this value in sync with the portal
+ * bootstrap (`backend-access.bootstrap.ts`).
+ */
+export const BACKEND_AUTH_EXPIRED_CODE = "auth-expired";
+
+/**
+ * Typed error surfaced by {@link BackendClient} when a request fails because the
+ * host's auth expired (see {@link BACKEND_AUTH_EXPIRED_CODE}). Tools can catch
+ * this to show a "session expired" state instead of a generic failure, and know
+ * the operation is not retryable until the host re-authenticates.
+ */
+export class BackendAuthExpiredError extends Error {
+  readonly code = BACKEND_AUTH_EXPIRED_CODE;
+  constructor(
+    message = "Backend authentication expired; re-authentication required.",
+  ) {
+    super(message);
+    this.name = "BackendAuthExpiredError";
+  }
+}
+
+/** Whether `err` carries the {@link BACKEND_AUTH_EXPIRED_CODE} auth-expiry tag. */
+export function isAuthExpiredSignal(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    (err as { code?: unknown }).code === BACKEND_AUTH_EXPIRED_CODE
+  );
+}
+
+let authExpired = false;
+
+/**
+ * Dispatched whenever {@link isBackendAuthExpired} flips. The host mirrors this
+ * into a reactive `backendAuthExpired` watchable so tool UI can gate on it
+ * (mirrors {@link backendEndpointChanged} → `backendAvailable`).
+ */
+export const backendAuthExpiredChanged = new NullarySignal();
+
+/** Whether the last backend request failed because the host's auth expired. */
+export function isBackendAuthExpired(): boolean {
+  return authExpired;
+}
+
+/**
+ * Set by {@link BackendClient}: `true` on an auth-expired failure, `false` on
+ * any successful request. Dispatches {@link backendAuthExpiredChanged} on change.
+ */
+export function setBackendAuthExpired(value: boolean): void {
+  if (authExpired !== value) {
+    authExpired = value;
+    backendAuthExpiredChanged.dispatch();
+  }
 }
 
 /**

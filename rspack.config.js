@@ -1,4 +1,5 @@
 import path from "node:path";
+import process from "node:process";
 import {
   CopyRspackPlugin,
   HtmlRspackPlugin,
@@ -6,6 +7,23 @@ import {
 } from "@rspack/core";
 import { normalizeConfigurationWithDefine } from "./build_tools/rspack/configuration_with_define.js";
 import packageJson from "./package.json";
+
+// Load `.env` (if present) so the NEUROGLANCER_ZETTA_* defines below can be set
+// per-developer without editing this file or committing secrets. Node >=20.12
+// provides `process.loadEnvFile` natively, so no dotenv dependency is needed.
+try {
+  process.loadEnvFile(path.resolve(import.meta.dirname, ".env"));
+} catch {
+  // No `.env` present — fall back to the real process environment (or nothing).
+}
+
+// Emit a DefinePlugin entry only when its env var is actually set, so an unset
+// var stays an undeclared global and the source-side `typeof … === "undefined"`
+// guards keep working. Value is JSON-stringified as DefinePlugin requires.
+function zettaDefine(name) {
+  const value = process.env[name];
+  return value ? { [name]: JSON.stringify(value) } : {};
+}
 
 // Pyodide is self-hosted (TM-322): cross-origin isolation
 // (`Cross-Origin-Embedder-Policy: require-corp`, needed for SharedArrayBuffer)
@@ -178,6 +196,21 @@ export default (env, args) => {
       // NEUROGLANCER_DEFAULT_STATE_FRAGMENT: JSON.stringify('gs://bucket/state.json'),
       // NEUROGLANCER_SHOW_LAYER_BAR_EXTRA_BUTTONS: true,
       // NEUROGLANCER_SHOW_OBJECT_SELECTION_TOOLTIP: true
+
+      // Standalone / dev edit-session backend (TM-349), supplied via `.env`
+      // (see `.env.example`). All optional:
+      //  - NEUROGLANCER_ZETTA_BACKEND_URL — root URL of the Zetta backend; the
+      //    edit session's tools append their own API group (e.g.
+      //    `/segmentation/propagate_mask`). Without it the backend is only
+      //    reachable when an embedding host injects it via `configureBackend()`.
+      //  - NEUROGLANCER_ZETTA_GOOGLE_CLIENT_ID_IAP — enables browser Google
+      //    OAuth (client id only, NO secret) and sends the OIDC id_token as the
+      //    bearer for an IAP-protected backend. Precedence over the static token.
+      //  - NEUROGLANCER_ZETTA_BACKEND_TOKEN — static bearer token, DEV ONLY
+      //    (ships in the bundle).
+      ...zettaDefine("NEUROGLANCER_ZETTA_BACKEND_URL"),
+      ...zettaDefine("NEUROGLANCER_ZETTA_GOOGLE_CLIENT_ID_IAP"),
+      ...zettaDefine("NEUROGLANCER_ZETTA_BACKEND_TOKEN"),
 
       // NEUROGLANCER_GOOGLE_TAG_MANAGER: JSON.stringify('GTM-XXXXXX'),
     },
