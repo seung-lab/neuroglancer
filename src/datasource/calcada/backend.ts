@@ -269,7 +269,8 @@ export class CalcadaVolumeChunkSource extends WithParameters(
       );
       // Voxels: calcada _rp redirects to the public bucket by default (base or
       // per-branch overlay); fetchOkImpl follows the 302 to GCS.
-      const voxelQuery = branchId && branchId > 0 ? `?branch_id=${branchId}` : "";
+      const voxelQuery =
+        branchId && branchId > 0 ? `?branch_id=${branchId}` : "";
       const lutBranchQuery =
         branchId && branchId > 0 ? `&branch_id=${branchId}` : "";
       const voxelUrl = `${httpStore.baseUrl}${kvStore.path}${chunkPath}${voxelQuery}`;
