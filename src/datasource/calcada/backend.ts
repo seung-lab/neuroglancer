@@ -155,6 +155,8 @@ calcadaChunkDecoders.set(
 );
 calcadaChunkDecoders.set(VolumeChunkEncoding.RAW, decodeRawChunk);
 
+// fetchLutTrailer fetches the standalone piece→root LUT trailer for a chunk
+// from calcada (…/precomputed_rp/{scale}/{bounds}?lut_only=true).
 async function fetchLutTrailer(
   src: HttpSource,
   chunkPath: string,
@@ -168,7 +170,8 @@ async function fetchLutTrailer(
   return response.arrayBuffer();
 }
 
-// Trailer format: [N × (piece u64 LE, root u64 LE)][N as u32 LE].
+// parseLutTrailer parses the LUT trailer format
+// [N × (piece u64 LE, root u64 LE)][N as u32 LE] into parallel arrays.
 function parseLutTrailer(buffer: ArrayBuffer): {
   pieces: BigUint64Array;
   roots: BigUint64Array;
@@ -190,8 +193,9 @@ function parseLutTrailer(buffer: ArrayBuffer): {
   return { pieces, roots };
 }
 
-// Links piece→root pairs into each matching layer's equivalences so the whole
-// visible volume colours by root without a selection (as the bundled trailer did).
+// linkChunkEquivalences feeds piece→root pairs into each matching layer's
+// segmentEquivalences — identical to the LUT-trailer path (see download), so
+// root colouring of the whole visible volume is preserved without selection.
 function linkChunkEquivalences(
   pieces: BigUint64Array,
   roots: BigUint64Array,
@@ -252,21 +256,25 @@ export class CalcadaVolumeChunkSource extends WithParameters(
     const { timestampMs, branchId } = this.parameters;
     const timeTravel = !!timestampMs && timestampMs > 0;
 
-    // Main + branch: calcada _rp 302-redirects the voxel request to the public
-    // bucket; the mapping comes from a separate lut_only trailer. Time-travel
-    // uses the bundled path below.
+    // Main + branch (no time-travel): redirect voxels — calcada resolves the
+    // exact object (base / per-branch overlay) and 302s the client straight to
+    // the public bucket — AND fetch the piece→root LUT trailer from calcada in
+    // parallel. Feeds the same per-chunk equivalences (root colouring of the
+    // whole visible volume) with no heavy client-side decode.
     if (!timeTravel) {
-      const httpStore = kvStore.store as any;
+      const httpStore = kvStore.store as any; // ReadableHttpKvStore (calcada _rp)
       const lutSource = getHttpSource(
         this.sharedKvStoreContext.kvStoreContext,
         this.parameters.lutUrl,
       );
+      // Voxels: calcada _rp redirects to the public bucket by default (base or
+      // per-branch overlay); fetchOkImpl follows the 302 to GCS.
       const voxelQuery = branchId && branchId > 0 ? `?branch_id=${branchId}` : "";
       const lutBranchQuery =
         branchId && branchId > 0 ? `&branch_id=${branchId}` : "";
       const voxelUrl = `${httpStore.baseUrl}${kvStore.path}${chunkPath}${voxelQuery}`;
       const [voxelResp, lutBuffer] = await Promise.all([
-        httpStore.fetchOkImpl(voxelUrl, { signal }),
+        httpStore.fetchOkImpl(voxelUrl, { signal }), // follows the 302 → GCS
         fetchLutTrailer(lutSource, chunkPath, lutBranchQuery, signal),
       ]);
       if (!voxelResp.ok) return;

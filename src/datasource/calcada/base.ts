@@ -69,7 +69,8 @@ export class VolumeChunkSourceParameters {
   // the disjoint set).
   generation: number;
 
-  // calcada _rp scale dir for the ?lut_only=true trailer fetch.
+  // calcada _rp scale directory URL (…/precomputed_rp/{scale}/) for the
+  // ?lut_only=true piece→root trailer fetch that pairs with the voxel redirect.
   lutUrl: string;
 
   static RPC_ID = "calcada/VolumeChunkSource";
