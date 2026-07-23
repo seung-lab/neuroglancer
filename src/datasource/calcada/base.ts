@@ -14,10 +14,12 @@
  * limitations under the License.
  */
 
+import { asyncComputation } from "#src/async_computation/index.js";
 import type { ShardingParameters } from "#src/datasource/precomputed/base.js";
 import type { KvStoreContext } from "#src/kvstore/context.js";
 import { ReadableHttpKvStore } from "#src/kvstore/http/common.js";
 import { joinBaseUrlAndPath } from "#src/kvstore/url.js";
+import type { RawMeshData } from "#src/mesh/backend.js";
 import type {
   ChunkLayoutOptions,
   SliceViewChunkSource,
@@ -41,6 +43,19 @@ export const PYCG_APP_VERSION = 1;
 // replaced graphene's real leaves-fetching one, so equivalences never loaded).
 export const GRAPHENE_MESH_NEW_SEGMENT_RPC_ID = "CalcadaMeshSource:NewSegment";
 export const CALCADA_BULK_LINK_RPC_ID = "CalcadaChunkedGraphLayer:BulkLink";
+
+// Off-thread decode of a per-piece multilod-draco mesh: parse the manifest,
+// decode + place the LOD-0 fragments, and merge into one mesh. Runs on the
+// async-computation pool so a neuron's many pieces decode in parallel instead
+// of serializing on the chunk worker. Registered in ./async_computation.ts.
+export const decodeCalcadaMultilodMesh = asyncComputation<
+  (
+    manifest: Uint8Array,
+    draco: Uint8Array,
+    vertexQuantizationBits: number,
+    targetLod: number,
+  ) => { data: RawMeshData; size: number }
+>("calcada/decodeMultilodMesh");
 
 export enum VolumeChunkEncoding {
   RAW = 0,
