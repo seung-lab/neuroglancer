@@ -82,7 +82,8 @@ export class MeshSourceParameters {
   manifestUrl: string;
   fragmentUrl: string;
   lod: number;
-  sharding: Array<ShardingParameters> | undefined;
+  sharding: ShardingParameters | undefined;
+  vertexQuantizationBits: number;
   nBitsForLayerId: number;
   branchId: number;
 
@@ -93,7 +94,7 @@ export class MultiscaleMeshMetadata {
   transform: mat4;
   lodScaleMultiplier: number;
   vertexQuantizationBits: number;
-  sharding: Array<ShardingParameters> | undefined;
+  sharding: ShardingParameters | undefined;
 }
 
 export function isBaseSegmentId(segmentId: bigint, nBitsForLayerId: number) {

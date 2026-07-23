@@ -43,10 +43,17 @@ import {
   getHttpSource,
 } from "#src/datasource/calcada/base.js";
 import { decodeManifestChunk } from "#src/datasource/precomputed/backend.js";
+import type { ShardedKvStore } from "#src/datasource/precomputed/sharded.js";
+import { getShardedKvStoreIfApplicable } from "#src/datasource/precomputed/sharded.js";
+import { decodeDracoPartitioned } from "#src/mesh/draco/index.js";
 import { WithSharedKvStoreContextCounterpart } from "#src/kvstore/backend.js";
 import type { KvStoreWithPath, ReadResponse } from "#src/kvstore/index.js";
 import { readKvStore } from "#src/kvstore/index.js";
-import type { FragmentChunk, ManifestChunk } from "#src/mesh/backend.js";
+import type {
+  FragmentChunk,
+  ManifestChunk,
+  RawMeshData,
+} from "#src/mesh/backend.js";
 import { assignMeshFragmentData, MeshSource } from "#src/mesh/backend.js";
 import type { DisplayDimensionRenderInfo } from "#src/navigation_state.js";
 import type {
@@ -132,6 +139,156 @@ async function decodeDracoFragmentChunk(
     response,
   );
   assignMeshFragmentData(chunk, rawMesh);
+}
+
+// A neuroglancer_multilod_draco per-object manifest, parsed from the bytes the
+// sharded kvstore returns for a piece id (the Draco blob sits immediately
+// before it in the shard). Layout matches igneous/tensorstore output; see the
+// `_parse_multilod_manifest` reference in scripts/ts_server.py.
+interface MultilodLod {
+  numFragments: number;
+  // Fragment grid positions, stored column-major (all X, then all Y, then all
+  // Z). Fragment i is (positions[i], positions[n+i], positions[2n+i]).
+  positions: Uint32Array;
+  // Cumulative byte offsets into the Draco blob, length numFragments + 1.
+  fragOffsets: number[];
+}
+
+interface MultilodManifest {
+  chunkShape: [number, number, number];
+  gridOrigin: [number, number, number];
+  numLods: number;
+  vertexOffsets: [number, number, number][];
+  lods: MultilodLod[];
+  totalDracoSize: number;
+}
+
+function parseMultilodManifest(buf: ArrayBuffer): MultilodManifest {
+  const dv = new DataView(buf);
+  let off = 0;
+  const readVec3f = (): [number, number, number] => {
+    const v: [number, number, number] = [
+      dv.getFloat32(off, true),
+      dv.getFloat32(off + 4, true),
+      dv.getFloat32(off + 8, true),
+    ];
+    off += 12;
+    return v;
+  };
+  const chunkShape = readVec3f();
+  const gridOrigin = readVec3f();
+  const numLods = dv.getUint32(off, true);
+  off += 4;
+  off += 4 * numLods; // lod_scales (unused: LOD 0 scale is 1)
+  const vertexOffsets: [number, number, number][] = [];
+  for (let i = 0; i < numLods; i++) vertexOffsets.push(readVec3f());
+  const numFragmentsPerLod = new Uint32Array(numLods);
+  for (let i = 0; i < numLods; i++) {
+    numFragmentsPerLod[i] = dv.getUint32(off, true);
+    off += 4;
+  }
+  const lods: MultilodLod[] = [];
+  let globalByteOffset = 0;
+  for (let lod = 0; lod < numLods; lod++) {
+    const n = numFragmentsPerLod[lod];
+    const positions = new Uint32Array(n * 3);
+    for (let k = 0; k < n * 3; k++) {
+      positions[k] = dv.getUint32(off, true);
+      off += 4;
+    }
+    const fragOffsets: number[] = [globalByteOffset];
+    for (let i = 0; i < n; i++) {
+      const size = dv.getUint32(off, true);
+      off += 4;
+      fragOffsets.push(fragOffsets[fragOffsets.length - 1] + size);
+    }
+    globalByteOffset = fragOffsets[fragOffsets.length - 1];
+    lods.push({ numFragments: n, positions, fragOffsets });
+  }
+  return {
+    chunkShape,
+    gridOrigin,
+    numLods,
+    vertexOffsets,
+    lods,
+    totalDracoSize: globalByteOffset,
+  };
+}
+
+// Decode every LOD-`targetLod` Draco fragment of a piece, dequantize+position
+// into voxel coordinates, and merge into a single mesh. The mesh source's
+// transform (voxel→physical) is applied downstream. Returns undefined when the
+// piece has no drawable geometry at this LOD. Mirrors ts_server's
+// `_decode_merge_encode_lod`, minus the re-encode (we hand raw arrays to the
+// renderer instead of round-tripping through Draco).
+async function decodeMultilodPieceMesh(
+  manifest: MultilodManifest,
+  dracoBlob: ArrayBuffer,
+  vertexQuantizationBits: number,
+  targetLod: number,
+): Promise<RawMeshData | undefined> {
+  if (manifest.totalDracoSize === 0 || targetLod >= manifest.numLods) {
+    return undefined;
+  }
+  const lodInfo = manifest.lods[targetLod];
+  const n = lodInfo.numFragments;
+  if (n === 0) return undefined;
+  const qMax = 2 ** vertexQuantizationBits - 1;
+  const [csx, csy, csz] = manifest.chunkShape;
+  const [gox, goy, goz] = manifest.gridOrigin;
+  const [vox, voy, voz] = manifest.vertexOffsets[targetLod];
+  const lodScale = 2 ** targetLod;
+  const dracoU8 = new Uint8Array(dracoBlob);
+  const vertGroups: Float32Array[] = [];
+  const idxGroups: Uint32Array[] = [];
+  let vertexCount = 0;
+  for (let i = 0; i < n; i++) {
+    const start = lodInfo.fragOffsets[i];
+    const end = lodInfo.fragOffsets[i + 1];
+    if (end <= start) continue;
+    const decoded = await decodeDracoPartitioned(
+      dracoU8.subarray(start, end),
+      vertexQuantizationBits,
+      /*partition=*/ false,
+      /*skipDequantization=*/ true,
+    );
+    const raw = decoded.vertexPositions as Uint32Array; // quantized [0, qMax]
+    const indices = decoded.indices as Uint32Array;
+    if (indices.length === 0) continue;
+    const nv = raw.length / 3;
+    const fx = lodInfo.positions[i];
+    const fy = lodInfo.positions[n + i];
+    const fz = lodInfo.positions[2 * n + i];
+    const verts = new Float32Array(nv * 3);
+    for (let v = 0; v < nv; v++) {
+      verts[v * 3] = gox + vox + csx * lodScale * (fx + raw[v * 3] / qMax);
+      verts[v * 3 + 1] =
+        goy + voy + csy * lodScale * (fy + raw[v * 3 + 1] / qMax);
+      verts[v * 3 + 2] =
+        goz + voz + csz * lodScale * (fz + raw[v * 3 + 2] / qMax);
+    }
+    const shifted = new Uint32Array(indices.length);
+    for (let k = 0; k < indices.length; k++) shifted[k] = indices[k] + vertexCount;
+    vertexCount += nv;
+    vertGroups.push(verts);
+    idxGroups.push(shifted);
+  }
+  if (vertGroups.length === 0) return undefined;
+  const totalVerts = vertGroups.reduce((a, b) => a + b.length, 0);
+  const totalIdx = idxGroups.reduce((a, b) => a + b.length, 0);
+  const vertexPositions = new Float32Array(totalVerts);
+  const indices = new Uint32Array(totalIdx);
+  let vOff = 0;
+  for (const g of vertGroups) {
+    vertexPositions.set(g, vOff);
+    vOff += g.length;
+  }
+  let iOff = 0;
+  for (const g of idxGroups) {
+    indices.set(g, iOff);
+    iOff += g.length;
+  }
+  return { vertexPositions, indices };
 }
 
 // Module-level reference to active ChunkedGraphLayers — used by
@@ -260,107 +417,40 @@ export class CalcadaVolumeChunkSource extends WithParameters(
       `${chunkPosition[1]}-${chunkPosition[1] + chunkDataSize[1]}_` +
       `${chunkPosition[2]}-${chunkPosition[2] + chunkDataSize[2]}`;
 
-    // Live-state path (no time-travel): bypass the kvstore and fetch from
-    // calcada _rp directly — the voxel request 302-redirects to the public
-    // bucket, so kvstore-level caching/coalescing does not apply here.
+    // Voxels: calcada _rp 302-redirects to the public bucket (base / per-branch
+    // overlay / time-travel generation); fetchOkImpl follows the redirect to
+    // GCS. The mapping comes from a parallel ?lut_only=true trailer.
     const { timestampMs, branchId } = this.parameters;
-    const timeTravel = !!timestampMs && timestampMs > 0;
-
-    // Main + branch (no time-travel): redirect voxels — calcada resolves the
-    // exact object (base / per-branch overlay) and 302s the client straight to
-    // the public bucket — AND fetch the piece→root LUT trailer from calcada in
-    // parallel. Feeds the same per-chunk equivalences (root colouring of the
-    // whole visible volume) with no heavy client-side decode.
-    if (!timeTravel) {
-      const httpStore = kvStore.store as any; // ReadableHttpKvStore (calcada _rp)
-      // Voxels: calcada _rp redirects to the public bucket by default (base or
-      // per-branch overlay); fetchOkImpl follows the 302 to GCS.
-      const voxelQuery =
-        branchId && branchId > 0 ? `?branch_id=${branchId}` : "";
-      const lutBranchQuery =
-        branchId && branchId > 0 ? `&branch_id=${branchId}` : "";
-      const voxelUrl = `${httpStore.baseUrl}${kvStore.path}${chunkPath}${voxelQuery}`;
-      let voxelResp: Response;
-      let lutBuffer: ArrayBuffer | undefined;
-      try {
-        [voxelResp, lutBuffer] = await Promise.all([
-          httpStore.fetchOkImpl(voxelUrl, { signal }), // follows the 302 → GCS
-          // Best-effort: voxels don't depend on the LUT (it only affects root
-          // colouring), so a failed trailer fetch must not blank the chunk.
-          fetchLutTrailer(
-            this.lutSource,
-            chunkPath,
-            lutBranchQuery,
-            signal,
-          ).catch((e) => {
-            if (e instanceof Error && e.name === "AbortError") throw e;
-            return undefined;
-          }),
-        ]);
-      } catch (e) {
-        // A 404 means the chunk has no data; render it empty, matching the
-        // read()-returns-undefined semantics of the kvstore path.
-        if (e instanceof HttpError && e.status === 404) return;
-        throw e;
-      }
-      const rawChunk = await voxelResp.arrayBuffer();
-      // Link equivalences before decoding so they're ready when the chunk
-      // renders — same ordering as the bundled-trailer path below.
-      if (lutBuffer !== undefined) {
-        const { pieces, roots } = parseLutTrailer(lutBuffer);
-        if (pieces.length > 0) {
-          linkChunkEquivalences(pieces, roots, branchId);
-        }
-      }
-      await this.chunkDecoder(chunk, signal, rawChunk);
-      return;
+    const httpStore = kvStore.store as any;
+    const q: string[] = [];
+    if (timestampMs && timestampMs > 0) q.push(`timestamp=${timestampMs / 1000}`);
+    if (branchId && branchId > 0) q.push(`branch_id=${branchId}`);
+    const voxelUrl = `${httpStore.baseUrl}${kvStore.path}${chunkPath}${q.length ? `?${q.join("&")}` : ""}`;
+    const lutQuery = q.length ? `&${q.join("&")}` : "";
+    let voxelResp: Response;
+    let lutBuffer: ArrayBuffer | undefined;
+    try {
+      [voxelResp, lutBuffer] = await Promise.all([
+        httpStore.fetchOkImpl(voxelUrl, { signal }),
+        // Best-effort: voxels don't depend on the LUT (it only affects root
+        // colouring), so a failed trailer fetch must not blank the chunk.
+        fetchLutTrailer(this.lutSource, chunkPath, lutQuery, signal).catch((e) => {
+          if (e instanceof Error && e.name === "AbortError") throw e;
+          return undefined;
+        }),
+      ]);
+    } catch (e) {
+      // 404 => chunk has no data; render empty (matches kvstore read=undefined).
+      if (e instanceof HttpError && e.status === 404) return;
+      throw e;
     }
-
-    let fullBuffer: ArrayBuffer;
-    {
-      // Time-travel / branch path: kvstore would URL-encode `?` in the path,
-      // which would put `timestamp=…` into the bbox segment and break the
-      // backend parser. Bypass the kvstore and issue a direct fetch using
-      // the same HTTP fetcher the kvstore would have used.
-      // The runtime kvstore is a ReadableHttpKvStore but the generic type is
-      // not statically visible here, so we cast through `any` for the field
-      // accesses we need (baseUrl, fetchOkImpl). Reads are protocol-safe.
-      const httpStore = kvStore.store as any;
-      const query: string[] = [];
-      if (timestampMs && timestampMs > 0) {
-        query.push(`timestamp=${timestampMs / 1000}`);
-      }
-      if (branchId && branchId > 0) {
-        query.push(`branch_id=${branchId}`);
-      }
-      const url = `${httpStore.baseUrl}${kvStore.path}${chunkPath}?${query.join("&")}`;
-      const response = await httpStore.fetchOkImpl(url, { signal });
-      if (!response.ok) return;
-      fullBuffer = await response.arrayBuffer();
+    const rawChunk = await voxelResp.arrayBuffer();
+    // Link equivalences before decoding so they're ready when the chunk renders.
+    if (lutBuffer !== undefined) {
+      const { pieces, roots } = parseLutTrailer(lutBuffer);
+      if (pieces.length > 0) linkChunkEquivalences(pieces, roots, branchId);
     }
-
-    // Bundled trailer: [voxels][N × (piece u64 LE, root u64 LE)][N u32 LE].
-    const byteLen = fullBuffer.byteLength;
-    const { pieces, roots } = parseLutTrailer(fullBuffer);
-
-    if (pieces.length === 0) {
-      if (byteLen >= 4) {
-        console.warn(
-          `[calcada chunk] NO LUT: bbox=${chunkPath} byteLen=${byteLen}`,
-        );
-      }
-      await this.chunkDecoder(chunk, signal, fullBuffer);
-      return;
-    }
-
-    // Build equivalences BEFORE decoding chunk so they're ready when the
-    // chunk renders.
-    linkChunkEquivalences(pieces, roots, branchId);
-
-    // Decode chunk data (piece_ids in compressed_segmentation) with the
-    // trailer stripped.
-    const chunkData = fullBuffer.slice(0, byteLen - (pieces.length * 16 + 4));
-    await this.chunkDecoder(chunk, signal, chunkData);
+    await this.chunkDecoder(chunk, signal, rawChunk);
   }
 }
 
@@ -383,6 +473,15 @@ export class GrapheneMeshSource extends WithParameters(
   );
   fragmentKvStore = this.sharedKvStoreContext.kvStoreContext.getKvStore(
     this.parameters.fragmentUrl,
+  );
+  // Read per-piece multilod-draco meshes straight from the sharded mesh store.
+  // The sharded reader issues byte-range reads against {mesh_dir}/{shard}.shard,
+  // which calcada 302-redirects to the public bucket — so the mesh bytes never
+  // pass through calcada. undefined for legacy unsharded meshes (dynamic path).
+  shardedKvStore: ShardedKvStore | undefined = getShardedKvStoreIfApplicable(
+    this,
+    this.fragmentKvStore,
+    this.parameters.sharding,
   );
 
   constructor(rpc: RPC, options: any) {
@@ -443,17 +542,58 @@ export class GrapheneMeshSource extends WithParameters(
   }
 
   async downloadFragment(chunk: FragmentChunk, signal: AbortSignal) {
-    const { response } = await downloadFragment(
-      this.fragmentKvStore,
-      chunk.fragmentId!,
-      this.parameters,
+    const { shardedKvStore } = this;
+    if (shardedKvStore === undefined) {
+      // Legacy unsharded mesh: fetch the whole per-piece Draco object.
+      const { response } = await downloadFragment(
+        this.fragmentKvStore,
+        chunk.fragmentId!,
+        this.parameters,
+        signal,
+      );
+      await decodeDracoFragmentChunk(
+        chunk,
+        new Uint8Array(await response.arrayBuffer()),
+        signal,
+      );
+      return;
+    }
+
+    // Sharded multilod-draco: read the piece's manifest, then the Draco blob
+    // that precedes it in the shard, decode + place client-side.
+    const pieceId = BigInt(chunk.fragmentId!.replace(/:0$/, ""));
+    const readResult = await shardedKvStore.readWithShardInfo(pieceId, {
       signal,
+    });
+    if (readResult === undefined) return; // missing piece → empty fragment
+    const { response: manifestResponse, shardInfo } = readResult;
+    const manifest = parseMultilodManifest(
+      await manifestResponse.response.arrayBuffer(),
     );
-    await decodeDracoFragmentChunk(
-      chunk,
-      new Uint8Array(await response.arrayBuffer()),
-      signal,
+    if (manifest.totalDracoSize === 0) return;
+
+    const dracoResponse = await readKvStore(
+      this.fragmentKvStore.store,
+      shardInfo.shardPath,
+      {
+        signal,
+        byteRange: {
+          offset: shardInfo.offset - manifest.totalDracoSize,
+          length: manifest.totalDracoSize,
+        },
+        throwIfMissing: true,
+        strictByteRange: true,
+      },
     );
+    const rawMesh = await decodeMultilodPieceMesh(
+      manifest,
+      await dracoResponse.response.arrayBuffer(),
+      this.parameters.vertexQuantizationBits,
+      this.parameters.lod,
+    );
+    if (rawMesh !== undefined) {
+      assignMeshFragmentData(chunk, rawMesh);
+    }
   }
 
   getFragmentKey(objectKey: string | null, fragmentId: string) {
