@@ -41,8 +41,12 @@ import {
   isBaseSegmentId,
   parseGrapheneError,
   getHttpSource,
+  decodeCalcadaMultilodMesh,
 } from "#src/datasource/calcada/base.js";
+import { parseMultilodManifest } from "#src/datasource/calcada/multilod_mesh.js";
 import { decodeManifestChunk } from "#src/datasource/precomputed/backend.js";
+import type { ShardedKvStore } from "#src/datasource/precomputed/sharded.js";
+import { getShardedKvStoreIfApplicable } from "#src/datasource/precomputed/sharded.js";
 import { WithSharedKvStoreContextCounterpart } from "#src/kvstore/backend.js";
 import type { KvStoreWithPath, ReadResponse } from "#src/kvstore/index.js";
 import { readKvStore } from "#src/kvstore/index.js";
@@ -260,107 +264,43 @@ export class CalcadaVolumeChunkSource extends WithParameters(
       `${chunkPosition[1]}-${chunkPosition[1] + chunkDataSize[1]}_` +
       `${chunkPosition[2]}-${chunkPosition[2] + chunkDataSize[2]}`;
 
-    // Live-state path (no time-travel): bypass the kvstore and fetch from
-    // calcada _rp directly — the voxel request 302-redirects to the public
-    // bucket, so kvstore-level caching/coalescing does not apply here.
+    // Voxels: calcada _rp 302-redirects to the public bucket (base / per-branch
+    // overlay / time-travel generation); fetchOkImpl follows the redirect to
+    // GCS. The mapping comes from a parallel ?lut_only=true trailer.
     const { timestampMs, branchId } = this.parameters;
-    const timeTravel = !!timestampMs && timestampMs > 0;
-
-    // Main + branch (no time-travel): redirect voxels — calcada resolves the
-    // exact object (base / per-branch overlay) and 302s the client straight to
-    // the public bucket — AND fetch the piece→root LUT trailer from calcada in
-    // parallel. Feeds the same per-chunk equivalences (root colouring of the
-    // whole visible volume) with no heavy client-side decode.
-    if (!timeTravel) {
-      const httpStore = kvStore.store as any; // ReadableHttpKvStore (calcada _rp)
-      // Voxels: calcada _rp redirects to the public bucket by default (base or
-      // per-branch overlay); fetchOkImpl follows the 302 to GCS.
-      const voxelQuery =
-        branchId && branchId > 0 ? `?branch_id=${branchId}` : "";
-      const lutBranchQuery =
-        branchId && branchId > 0 ? `&branch_id=${branchId}` : "";
-      const voxelUrl = `${httpStore.baseUrl}${kvStore.path}${chunkPath}${voxelQuery}`;
-      let voxelResp: Response;
-      let lutBuffer: ArrayBuffer | undefined;
-      try {
-        [voxelResp, lutBuffer] = await Promise.all([
-          httpStore.fetchOkImpl(voxelUrl, { signal }), // follows the 302 → GCS
-          // Best-effort: voxels don't depend on the LUT (it only affects root
-          // colouring), so a failed trailer fetch must not blank the chunk.
-          fetchLutTrailer(
-            this.lutSource,
-            chunkPath,
-            lutBranchQuery,
-            signal,
-          ).catch((e) => {
+    const httpStore = kvStore.store as any;
+    const q: string[] = [];
+    if (timestampMs && timestampMs > 0)
+      q.push(`timestamp=${timestampMs / 1000}`);
+    if (branchId && branchId > 0) q.push(`branch_id=${branchId}`);
+    const voxelUrl = `${httpStore.baseUrl}${kvStore.path}${chunkPath}${q.length ? `?${q.join("&")}` : ""}`;
+    const lutQuery = q.length ? `&${q.join("&")}` : "";
+    let voxelResp: Response;
+    let lutBuffer: ArrayBuffer | undefined;
+    try {
+      [voxelResp, lutBuffer] = await Promise.all([
+        httpStore.fetchOkImpl(voxelUrl, { signal }),
+        // Best-effort: voxels don't depend on the LUT (it only affects root
+        // colouring), so a failed trailer fetch must not blank the chunk.
+        fetchLutTrailer(this.lutSource, chunkPath, lutQuery, signal).catch(
+          (e) => {
             if (e instanceof Error && e.name === "AbortError") throw e;
             return undefined;
-          }),
-        ]);
-      } catch (e) {
-        // A 404 means the chunk has no data; render it empty, matching the
-        // read()-returns-undefined semantics of the kvstore path.
-        if (e instanceof HttpError && e.status === 404) return;
-        throw e;
-      }
-      const rawChunk = await voxelResp.arrayBuffer();
-      // Link equivalences before decoding so they're ready when the chunk
-      // renders — same ordering as the bundled-trailer path below.
-      if (lutBuffer !== undefined) {
-        const { pieces, roots } = parseLutTrailer(lutBuffer);
-        if (pieces.length > 0) {
-          linkChunkEquivalences(pieces, roots, branchId);
-        }
-      }
-      await this.chunkDecoder(chunk, signal, rawChunk);
-      return;
+          },
+        ),
+      ]);
+    } catch (e) {
+      // 404 => chunk has no data; render empty (matches kvstore read=undefined).
+      if (e instanceof HttpError && e.status === 404) return;
+      throw e;
     }
-
-    let fullBuffer: ArrayBuffer;
-    {
-      // Time-travel / branch path: kvstore would URL-encode `?` in the path,
-      // which would put `timestamp=…` into the bbox segment and break the
-      // backend parser. Bypass the kvstore and issue a direct fetch using
-      // the same HTTP fetcher the kvstore would have used.
-      // The runtime kvstore is a ReadableHttpKvStore but the generic type is
-      // not statically visible here, so we cast through `any` for the field
-      // accesses we need (baseUrl, fetchOkImpl). Reads are protocol-safe.
-      const httpStore = kvStore.store as any;
-      const query: string[] = [];
-      if (timestampMs && timestampMs > 0) {
-        query.push(`timestamp=${timestampMs / 1000}`);
-      }
-      if (branchId && branchId > 0) {
-        query.push(`branch_id=${branchId}`);
-      }
-      const url = `${httpStore.baseUrl}${kvStore.path}${chunkPath}?${query.join("&")}`;
-      const response = await httpStore.fetchOkImpl(url, { signal });
-      if (!response.ok) return;
-      fullBuffer = await response.arrayBuffer();
+    const rawChunk = await voxelResp.arrayBuffer();
+    // Link equivalences before decoding so they're ready when the chunk renders.
+    if (lutBuffer !== undefined) {
+      const { pieces, roots } = parseLutTrailer(lutBuffer);
+      if (pieces.length > 0) linkChunkEquivalences(pieces, roots, branchId);
     }
-
-    // Bundled trailer: [voxels][N × (piece u64 LE, root u64 LE)][N u32 LE].
-    const byteLen = fullBuffer.byteLength;
-    const { pieces, roots } = parseLutTrailer(fullBuffer);
-
-    if (pieces.length === 0) {
-      if (byteLen >= 4) {
-        console.warn(
-          `[calcada chunk] NO LUT: bbox=${chunkPath} byteLen=${byteLen}`,
-        );
-      }
-      await this.chunkDecoder(chunk, signal, fullBuffer);
-      return;
-    }
-
-    // Build equivalences BEFORE decoding chunk so they're ready when the
-    // chunk renders.
-    linkChunkEquivalences(pieces, roots, branchId);
-
-    // Decode chunk data (piece_ids in compressed_segmentation) with the
-    // trailer stripped.
-    const chunkData = fullBuffer.slice(0, byteLen - (pieces.length * 16 + 4));
-    await this.chunkDecoder(chunk, signal, chunkData);
+    await this.chunkDecoder(chunk, signal, rawChunk);
   }
 }
 
@@ -384,6 +324,27 @@ export class GrapheneMeshSource extends WithParameters(
   fragmentKvStore = this.sharedKvStoreContext.kvStoreContext.getKvStore(
     this.parameters.fragmentUrl,
   );
+  // Read per-piece multilod-draco meshes straight from the sharded mesh store.
+  // The sharded reader issues byte-range reads against {mesh_dir}/{shard}.shard,
+  // which calcada 302-redirects to the public bucket — so the mesh bytes never
+  // pass through calcada. undefined for legacy unsharded meshes (dynamic path).
+  shardedKvStore: ShardedKvStore | undefined = getShardedKvStoreIfApplicable(
+    this,
+    this.fragmentKvStore,
+    this.parameters.sharding,
+  );
+  // piece id → its combined [Draco][manifest] byte-range, supplied by calcada's
+  // /manifest. When present, downloadFragment reads the piece in one range
+  // request straight from the bucket instead of resolving the shard client-side.
+  fragLocations = new Map<
+    string,
+    {
+      shard: string;
+      offset: number;
+      dracoLength: number;
+      manifestLength: number;
+    }
+  >();
 
   constructor(rpc: RPC, options: any) {
     super(rpc, options);
@@ -423,6 +384,20 @@ export class GrapheneMeshSource extends WithParameters(
     const response = await (
       await fetchOkImpl(baseUrl + manifestPath, { signal })
     ).json();
+    // Stash calcada's per-piece byte-ranges (if any) so downloadFragment can
+    // read each piece in one direct-from-bucket range request.
+    const fragLocations = response?.frag_locations;
+    if (fragLocations && typeof fragLocations === "object") {
+      for (const piece of Object.keys(fragLocations)) {
+        const l = fragLocations[piece];
+        this.fragLocations.set(`${piece}:0`, {
+          shard: l.shard,
+          offset: l.offset,
+          dracoLength: l.draco_length,
+          manifestLength: l.manifest_length,
+        });
+      }
+    }
     const chunkIdentifier = manifestPath;
     if (newSegments.has(chunk.objectId)) {
       const requestCount = (manifestRequestCount.get(chunkIdentifier) ?? 0) + 1;
@@ -443,17 +418,104 @@ export class GrapheneMeshSource extends WithParameters(
   }
 
   async downloadFragment(chunk: FragmentChunk, signal: AbortSignal) {
-    const { response } = await downloadFragment(
-      this.fragmentKvStore,
-      chunk.fragmentId!,
-      this.parameters,
+    // Fast path: calcada resolved this piece's byte-range, so read the combined
+    // [Draco][manifest] blob in one range request straight from the bucket — no
+    // client-side shard/minishard resolution.
+    const loc = this.fragLocations.get(chunk.fragmentId!);
+    if (loc !== undefined) {
+      const combinedResponse = await readKvStore(
+        this.fragmentKvStore.store,
+        `${this.fragmentKvStore.path}${loc.shard}`,
+        {
+          signal,
+          byteRange: {
+            offset: loc.offset,
+            length: loc.dracoLength + loc.manifestLength,
+          },
+          throwIfMissing: true,
+          strictByteRange: true,
+        },
+      );
+      const combined = new Uint8Array(
+        await combinedResponse.response.arrayBuffer(),
+      );
+      const dracoU8 = combined.slice(0, loc.dracoLength);
+      const manifestU8 = combined.slice(loc.dracoLength);
+      const { data: rawMesh } = await requestAsyncComputation(
+        decodeCalcadaMultilodMesh,
+        signal,
+        [manifestU8.buffer, dracoU8.buffer],
+        manifestU8,
+        dracoU8,
+        this.parameters.vertexQuantizationBits,
+        this.parameters.lod,
+      );
+      if (rawMesh.vertexPositions.length > 0) {
+        assignMeshFragmentData(chunk, rawMesh);
+      }
+      return;
+    }
+
+    const { shardedKvStore } = this;
+    if (shardedKvStore === undefined) {
+      // Legacy unsharded mesh: fetch the whole per-piece Draco object.
+      const { response } = await downloadFragment(
+        this.fragmentKvStore,
+        chunk.fragmentId!,
+        this.parameters,
+        signal,
+      );
+      await decodeDracoFragmentChunk(
+        chunk,
+        new Uint8Array(await response.arrayBuffer()),
+        signal,
+      );
+      return;
+    }
+
+    // Sharded multilod-draco: read the piece's manifest, then the Draco blob
+    // that precedes it in the shard, decode + place client-side.
+    const pieceId = BigInt(chunk.fragmentId!.replace(/:0$/, ""));
+    const readResult = await shardedKvStore.readWithShardInfo(pieceId, {
       signal,
+    });
+    if (readResult === undefined) return; // missing piece → empty fragment
+    const { response: manifestResponse, shardInfo } = readResult;
+    const manifestU8 = new Uint8Array(
+      await manifestResponse.response.arrayBuffer(),
     );
-    await decodeDracoFragmentChunk(
-      chunk,
-      new Uint8Array(await response.arrayBuffer()),
+    // Parse here only to size the Draco byte-range; the pool re-parses to decode.
+    const manifest = parseMultilodManifest(manifestU8);
+    if (manifest.totalDracoSize === 0) return;
+
+    const dracoResponse = await readKvStore(
+      this.fragmentKvStore.store,
+      shardInfo.shardPath,
+      {
+        signal,
+        byteRange: {
+          offset: shardInfo.offset - manifest.totalDracoSize,
+          length: manifest.totalDracoSize,
+        },
+        throwIfMissing: true,
+        strictByteRange: true,
+      },
+    );
+    const dracoU8 = new Uint8Array(await dracoResponse.response.arrayBuffer());
+    // Decode + place on the async-computation pool so a neuron's pieces decode
+    // in parallel across workers instead of serializing on the chunk thread.
+    const { data: rawMesh } = await requestAsyncComputation(
+      decodeCalcadaMultilodMesh,
       signal,
+      [manifestU8.buffer, dracoU8.buffer],
+      manifestU8,
+      dracoU8,
+      this.parameters.vertexQuantizationBits,
+      this.parameters.lod,
     );
+    if (rawMesh.vertexPositions.length > 0) {
+      assignMeshFragmentData(chunk, rawMesh);
+    }
   }
 
   getFragmentKey(objectKey: string | null, fragmentId: string) {

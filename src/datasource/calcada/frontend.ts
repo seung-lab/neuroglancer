@@ -352,6 +352,7 @@ class GraphInfo {
 
 interface GrapheneMultiscaleVolumeInfo extends MultiscaleVolumeInfo {
   dataUrl: string;
+  meshSourceUrl: string | undefined;
   app: AppInfo;
   graph: GraphInfo;
 }
@@ -362,6 +363,11 @@ function parseGrapheneMultiscaleVolumeInfo(
 ): GrapheneMultiscaleVolumeInfo {
   const volumeInfo = parseMultiscaleVolumeInfo(obj);
   const dataUrl = verifyObjectProperty(obj, "data_dir", verifyString);
+  const meshSourceUrl = verifyObjectProperty(
+    obj,
+    "mesh_source_url",
+    verifyOptionalString,
+  );
   const app = verifyObjectProperty(obj, "app", (x) => new AppInfo(url, x));
   const graph = verifyObjectProperty(obj, "graph", (x) => new GraphInfo(x));
   return {
@@ -369,6 +375,7 @@ function parseGrapheneMultiscaleVolumeInfo(
     app,
     graph,
     dataUrl,
+    meshSourceUrl,
   };
 }
 
@@ -567,7 +574,7 @@ function parseMeshMetadata(data: any): ParsedMeshMetadata {
     const sharding = verifyObjectProperty(
       data,
       "sharding",
-      parseGrapheneShardingParameters,
+      parseShardingParameters,
     );
     metadata = {
       lodScaleMultiplier,
@@ -651,21 +658,6 @@ function parseShardingParameters(
   };
 }
 
-function parseGrapheneShardingParameters(
-  shardingData: any,
-): Array<ShardingParameters> | undefined {
-  if (shardingData === undefined) return undefined;
-  verifyObject(shardingData);
-  const grapheneShardingParameters = new Array<ShardingParameters>();
-  for (const layer in shardingData) {
-    const index = Number(layer);
-    grapheneShardingParameters[index] = parseShardingParameters(
-      shardingData[index],
-    )!;
-  }
-  return grapheneShardingParameters;
-}
-
 function getShardedMeshSource(
   sharedKvStoreContext: SharedKvStoreContext,
   parameters: MeshSourceParameters,
@@ -699,6 +691,7 @@ async function getMeshSource(
     fragmentUrl: fragmentUrl,
     lod: 0,
     sharding: metadata?.sharding,
+    vertexQuantizationBits: metadata?.vertexQuantizationBits ?? 16,
     nBitsForLayerId,
     branchId: branchId.value,
   };
@@ -811,15 +804,20 @@ async function getVolumeDataSource(
     });
   }
   if (info.mesh !== undefined) {
-    const { source: meshSource, transform } = await getMeshSource(
-      sharedKvStoreContext,
-      info.app!.meshingUrl,
-      kvstoreEnsureDirectoryPipelineUrl(
+    // Read sharded mesh bytes straight from the public bucket when calcada
+    // advertises it (mesh_source_url) — avoids the per-shard 302 redirect.
+    // Falls back to the data_dir-relative path (calcada _rp) otherwise.
+    const meshFragmentUrl = kvstoreEnsureDirectoryPipelineUrl(
+      info.meshSourceUrl ??
         sharedKvStoreContext.kvStoreContext.resolveRelativePath(
           info.dataUrl,
           info.mesh,
         ),
-      ),
+    );
+    const { source: meshSource, transform } = await getMeshSource(
+      sharedKvStoreContext,
+      info.app!.meshingUrl,
+      meshFragmentUrl,
       info.graph.nBitsForLayerId,
       state.branchId,
       options,
