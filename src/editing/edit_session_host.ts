@@ -133,6 +133,10 @@ import {
   type ReadChunkAt,
 } from "#src/editing/tool_runtimes/painting_tools.js";
 import { DEFAULT_SPACING_FRACTION } from "#src/editing/tool_runtimes/stroke_geometry.js";
+import {
+  ZExtrapolationTool,
+  zExtrapolationToolDefinition,
+} from "#src/editing/tool_runtimes/z_extrapolation_tool.js";
 import { TrackableEditPreferences } from "#src/editing/tooling/edit_preferences.js";
 import { EditScope } from "#src/editing/tooling/edit_scope.js";
 import type { EditToolContext } from "#src/editing/tooling/edit_tool.js";
@@ -489,6 +493,15 @@ export class EditSessionHost extends RefCounted {
   private paintingTools: ConsumerPaintingTools | undefined;
   get painting(): ConsumerPaintingTools | undefined {
     return this.paintingTools;
+  }
+  /**
+   * The z-extrapolation tool + run controller for the active session (TM-326),
+   * constructed alongside the painting tools. Undefined when no session is
+   * active. The panel reads its reactive state and drives runNextSlice/reset.
+   */
+  private zExtrapolationTool: ZExtrapolationTool | undefined;
+  get zExtrapolation(): ZExtrapolationTool | undefined {
+    return this.zExtrapolationTool;
   }
   /** Per-session tool activation/selection binder (TM-315). */
   private toolBinder: SessionToolBinder | undefined;
@@ -1254,8 +1267,11 @@ export class EditSessionHost extends RefCounted {
     if (activeId.startsWith("painting")) {
       return this.paintingTools?.state.getState().targetResolution;
     }
-    // z-extrapolation / correspondence are not registered yet (TM-310); their
-    // working-resolution wiring returns when those ported tools ship (TM-315).
+    if (activeId === "z-extrapolation") {
+      return this.zExtrapolationTool?.workingResolution();
+    }
+    // correspondence is not registered yet (TM-310); its working-resolution
+    // wiring returns when that ported tool ships.
     return undefined;
   }
 
@@ -2339,6 +2355,28 @@ export class EditSessionHost extends RefCounted {
     for (const def of this.paintingTools.toolDefinitions()) {
       registry.register(def);
     }
+    // Z-extrapolation (TM-326): a session-scoped tool + run controller that
+    // shares the same edit scope, chunk reader, and metadata as painting. The
+    // panel reads/drives it via `host.zExtrapolation`.
+    const zExtrapolationTool = new ZExtrapolationTool({
+      session,
+      scope: editScope,
+      backendClient: this.backendClient,
+      readChunkAt,
+      metadataByLayer,
+      resolutionFor: (layerId) => allowedResolutionsByLayer.get(layerId)?.[0],
+      globalVoxelSizeNm: () => this.globalVoxelSizeNm(),
+      trackedSegmentsFor: (maskLayerId) =>
+        this.trackedSegmentsForLayer(maskLayerId),
+      addTrackedSegments: (maskLayerId, ids) =>
+        this.addTrackedSegmentsForLayer(maskLayerId, ids),
+      getViewportPosition: () => this.viewer.position.value,
+      setViewportPosition: (position) => {
+        this.viewer.position.value = position;
+      },
+    });
+    this.zExtrapolationTool = zExtrapolationTool;
+    registry.register(zExtrapolationToolDefinition(zExtrapolationTool));
     this._toolRegistry = registry;
     const toolContext: EditToolContext = {
       session,
@@ -2987,6 +3025,31 @@ export class EditSessionHost extends RefCounted {
     }
   }
 
+  /**
+   * The mask layer's currently-selected segment IDs — the z-extrapolation
+   * tracked set (TM-326). Reuses the segmentation layer's own selection, so the
+   * user manages it with the normal NG controls (and viewport double-click,
+   * which z-extrapolation is exempted from suppressing).
+   */
+  private trackedSegmentsForLayer(maskLayerId: LayerId): readonly bigint[] {
+    const layer = this.findSegmentationUserLayer(maskLayerId);
+    const selected =
+      layer?.displayState.segmentationGroupState.value.selectedSegments;
+    return selected === undefined ? [] : [...selected];
+  }
+
+  /** Add IDs to the mask layer's selection — z-extrapolation auto-detect (TM-326). */
+  private addTrackedSegmentsForLayer(
+    maskLayerId: LayerId,
+    ids: readonly bigint[],
+  ): void {
+    const layer = this.findSegmentationUserLayer(maskLayerId);
+    const selected =
+      layer?.displayState.segmentationGroupState.value.selectedSegments;
+    if (selected === undefined) return;
+    for (const id of ids) selected.add(id);
+  }
+
   private findSegmentationUserLayer(
     layerId: LayerId,
   ): SegmentationUserLayer | undefined {
@@ -3204,6 +3267,7 @@ export class EditSessionHost extends RefCounted {
     }
     this._toolRegistry = undefined;
     this.paintingTools = undefined;
+    this.zExtrapolationTool = undefined;
     this.teardownHotkeyBinder();
     this.teardownCursorOverlays();
     // The registry is gone — let any live UI drop the tool buttons.
