@@ -14,7 +14,6 @@ import type {
   LayerMetadata,
   Resolution,
 } from "@zettaai/edit-session";
-import { layerId as toLayerId } from "@zettaai/edit-session";
 import { X } from "lucide-preact";
 import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 
@@ -38,7 +37,6 @@ import {
 } from "#src/editing/tool_runtimes/param_cursor.js";
 import { useEvent } from "#src/editing/ui/interop/use_event.js";
 import { useWatchable } from "#src/editing/ui/interop/use_watchable.js";
-import { layerKindOf } from "#src/editing/ui/layer_kind.js";
 import { ToggleSwitch } from "#src/editing/ui/toggle_switch.js";
 import { PaintingTargetPicker } from "#src/editing/ui/tool_settings/painting_target_picker.js";
 import { PaintingThreshold } from "#src/editing/ui/tool_settings/painting_threshold.js";
@@ -55,6 +53,14 @@ import {
 } from "#src/editing/ui/tool_settings/param_descriptors.js";
 import { ParamInput } from "#src/editing/ui/tool_settings/param_input.js";
 import { ParamLabel } from "#src/editing/ui/tool_settings/param_label.js";
+import {
+  buildReferenceEntries,
+  collectReferenceCandidates,
+  defaultReferenceResolution,
+  type ReferenceCandidate,
+  type ReferenceLayerEntry,
+  UINT64_REFERENCE_DISABLED,
+} from "#src/editing/ui/tool_settings/reference_layer_options.js";
 import { TargetValueField } from "#src/editing/ui/tool_settings/target_value_field.js";
 import { useLayerVoxelType } from "#src/editing/ui/tool_settings/use_layer_voxel_type.js";
 import "#src/editing/ui/tool_settings/painting_brush.css";
@@ -165,11 +171,6 @@ export function PaintingBrush({
   );
 }
 
-interface ImageLayerEntry {
-  readonly layerId: LayerId;
-  readonly resolutions: readonly Resolution[];
-}
-
 function BrushMask({
   host,
   painting,
@@ -188,28 +189,32 @@ function BrushMask({
     ReadonlyMap<string, LayerMetadata>
   >(new Map());
 
-  const imageEntries: readonly ImageLayerEntry[] = useMemo(() => {
-    if (intent === null) return [];
-    return intent.layers
-      .filter(
-        (l) => layerKindOf(layerManager.getLayerByName(l.layerId)) === "image",
-      )
-      .map((l) => ({
-        layerId: toLayerId(l.layerId),
-        resolutions: l.resolutions,
-      }));
-  }, [intent, layerManager]);
+  // Re-render when layers are added/removed/toggled so external (non-session)
+  // candidates stay current. Per-layer changes also dispatch `layersChanged`
+  // (see LayerManager.addManagedLayer), so this covers archive/visibility too.
+  const [layersVersion, setLayersVersion] = useState(0);
+  useEffect(
+    () => layerManager.layersChanged.add(() => setLayersVersion((v) => v + 1)),
+    [layerManager],
+  );
 
-  // Resolve metadata for each image layer once.
+  const candidates: readonly ReferenceCandidate[] = useMemo(
+    () => collectReferenceCandidates(intent?.layers ?? [], layerManager),
+    // `layersVersion` forces recompute on layer changes (managedLayers is a
+    // stable reference the memo can't otherwise observe).
+    [intent, layerManager, layersVersion],
+  );
+
+  // Resolve metadata for each candidate image layer once (session + external).
   useEffect(() => {
     let cancelled = false;
-    const missing = imageEntries.filter((e) => !metadataByLayer.has(e.layerId));
+    const missing = candidates.filter((c) => !metadataByLayer.has(c.layerId));
     if (missing.length === 0) return undefined;
     void Promise.all(
-      missing.map((e) =>
+      missing.map((c) =>
         host.layerMetadataSource
-          .resolve(e.layerId)
-          .then((m) => [e.layerId, m] as const)
+          .resolve(c.layerId)
+          .then((m) => [c.layerId, m] as const)
           .catch(() => null),
       ),
     ).then((results) => {
@@ -227,13 +232,24 @@ function BrushMask({
     return () => {
       cancelled = true;
     };
-  }, [imageEntries, host, metadataByLayer]);
+  }, [candidates, host, metadataByLayer]);
+
+  const entries: readonly ReferenceLayerEntry[] = useMemo(
+    () => buildReferenceEntries(candidates, metadataByLayer),
+    [candidates, metadataByLayer],
+  );
+
+  const sessionEntries = entries.filter((e) => e.origin === "session");
+  const externalEntries = entries.filter((e) => e.origin === "external");
+  const selectableEntries = entries.filter(
+    (e) => e.disabledReason === undefined,
+  );
 
   const state = painting.getState();
   const mask = state.mask;
   const enabled = mask !== undefined;
 
-  const noImageLayers = imageEntries.length === 0;
+  const noReferenceLayers = selectableEntries.length === 0;
   const currentMetadata: LayerMetadata | undefined = mask
     ? metadataByLayer.get(mask.imageLayerId)
     : undefined;
@@ -242,16 +258,34 @@ function BrushMask({
     currentDtype !== undefined ? voxelDataTypeRange(currentDtype) : null;
   const uint64Selected = enabled && currentDtype === "uint64";
 
+  // Register a non-session ("external") reference layer with the host so a
+  // masked stroke can sample it: the host resolves its metadata and pins the
+  // chosen resolution. Fire-and-forget — a stroke before it settles simply
+  // paints unmasked. Session layers are already registered at session open.
+  const registerExternal = (
+    entry: ReferenceLayerEntry,
+    resolution: Resolution,
+  ) => {
+    if (entry.origin === "external") {
+      void host.ensureMaskReference(entry.layerId, resolution);
+    }
+  };
+
   const enableMask = (
-    entry: ImageLayerEntry,
+    entry: ReferenceLayerEntry,
     meta: LayerMetadata | undefined,
   ) => {
     if (meta === undefined) return;
     const range = voxelDataTypeRange(meta.voxelDataType);
     if (range === null) return;
+    const imageResolution = defaultReferenceResolution(
+      entry,
+      painting.getState().targetResolution,
+    );
+    registerExternal(entry, imageResolution);
     const next: PaintingMaskConfig = {
       imageLayerId: entry.layerId,
-      imageResolution: entry.resolutions[0],
+      imageResolution,
       thresholdLow: range.min,
       thresholdHigh: range.max,
       coverageThreshold: DEFAULT_COVERAGE_THRESHOLD,
@@ -273,7 +307,7 @@ function BrushMask({
       disableMask();
       return;
     }
-    const entry = imageEntries.find((x) => x.layerId === value);
+    const entry = selectableEntries.find((x) => x.layerId === value);
     if (entry === undefined) return;
     const meta = metadataByLayer.get(value);
     if (mask === undefined) {
@@ -283,11 +317,16 @@ function BrushMask({
     // Switching reference layers resets the threshold to the new layer's range.
     const range =
       meta !== undefined ? voxelDataTypeRange(meta.voxelDataType) : null;
+    const imageResolution = defaultReferenceResolution(
+      entry,
+      painting.getState().targetResolution,
+    );
+    registerExternal(entry, imageResolution);
     painting.patchState({
       mask: {
         ...mask,
         imageLayerId: entry.layerId,
-        imageResolution: entry.resolutions[0],
+        imageResolution,
         thresholdLow: range?.min ?? mask.thresholdLow,
         thresholdHigh: range?.max ?? mask.thresholdHigh,
       },
@@ -302,6 +341,9 @@ function BrushMask({
 
   const applyMaskResolution = (value: Resolution) => {
     if (mask === undefined) return;
+    // Pin the newly chosen scale for an external layer before the next stroke.
+    const entry = entries.find((x) => x.layerId === mask.imageLayerId);
+    if (entry !== undefined) registerExternal(entry, value);
     painting.patchState({ mask: { ...mask, imageResolution: value } });
   };
 
@@ -321,17 +363,17 @@ function BrushMask({
   };
 
   const currentEntry = mask
-    ? imageEntries.find((x) => x.layerId === mask.imageLayerId)
+    ? entries.find((x) => x.layerId === mask.imageLayerId)
     : undefined;
 
   // The single reason the dependent parameters are inert, surfaced both as a
   // visible hint and a tooltip on the locked rows. `undefined` => editable.
-  const gateReason = noImageLayers
-    ? "Lock an image layer in the session to use a reference mask."
+  const gateReason = noReferenceLayers
+    ? "No image layer is available to use as a reference mask."
     : mask === undefined
       ? "Select a reference layer to enable mask filtering."
       : uint64Selected
-        ? "uint64 layers can't be used as a reference image."
+        ? UINT64_REFERENCE_DISABLED
         : undefined;
   const paramsDisabled = gateReason !== undefined;
 
@@ -351,10 +393,12 @@ function BrushMask({
   // (`!paramsDisabled`), matching the "skip disabled" rule. All closures read
   // mask state live so the status readout reflects the post-change value.
   const maskDescriptors: ParamDescriptor[] = [];
-  if (!noImageLayers) {
+  if (!noReferenceLayers) {
+    // Only selectable (non-uint64) layers join the Ctrl+Arrow cycle; disabled
+    // entries are shown in the dropdown but never cycled to.
     const refValues: (LayerId | "")[] = [
       "",
-      ...imageEntries.map((e) => e.layerId),
+      ...selectableEntries.map((e) => e.layerId),
     ];
     maskDescriptors.push(
       enumDescriptor({
@@ -462,6 +506,19 @@ function BrushMask({
   }
   usePublishParams(host, [...leadingDescriptors, ...maskDescriptors]);
 
+  const renderReferenceOption = (entry: ReferenceLayerEntry) => (
+    <option
+      key={entry.layerId}
+      value={entry.layerId}
+      disabled={entry.disabledReason !== undefined}
+      title={entry.disabledReason}
+    >
+      {entry.disabledReason !== undefined
+        ? `${entry.layerId} (unsupported)`
+        : entry.layerId}
+    </option>
+  );
+
   return (
     <div class="neuroglancer-painting-brush-mask">
       <div class="neuroglancer-painting-brush-mask-title">Mask filter</div>
@@ -475,20 +532,25 @@ function BrushMask({
       >
         <ParamLabel
           text="Reference layer"
-          hint="The image layer the mask samples to decide which voxels a stroke may paint. Only image layers locked in the session appear here."
+          hint="The image layer the mask samples to decide which voxels a stroke may paint. Session image layers plus any other loaded image layer can be used; non-session layers are read on demand."
         />
         <span class="neuroglancer-painting-brush-mask-reference">
           <select
             value={mask?.imageLayerId ?? ""}
-            disabled={noImageLayers}
+            disabled={entries.length === 0}
             onChange={onReferenceChange}
           >
             <option value="">— None —</option>
-            {imageEntries.map((e) => (
-              <option key={e.layerId} value={e.layerId}>
-                {e.layerId}
-              </option>
-            ))}
+            {sessionEntries.length > 0 && (
+              <optgroup label="Session layers">
+                {sessionEntries.map(renderReferenceOption)}
+              </optgroup>
+            )}
+            {externalEntries.length > 0 && (
+              <optgroup label="Other image layers">
+                {externalEntries.map(renderReferenceOption)}
+              </optgroup>
+            )}
           </select>
           <button
             type="button"

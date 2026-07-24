@@ -784,6 +784,18 @@ export class EditSessionHost extends RefCounted {
     readonly ResolutionType[]
   > = new Map();
 
+  // Layer metadata + allowed resolutions handed to the painting and
+  // z-extrapolation tools. Populated at session open with the session's own
+  // layers; extended on demand by `ensureMaskReference` when a NON-session
+  // image layer (one left "off" on entry) is chosen as a brush reference mask.
+  // The tools read these by `.get()` at stroke time, so a late insertion takes
+  // effect without re-wiring. Cleared on session end.
+  private readonly toolMetadataByLayer = new Map<LayerId, LayerMetadata>();
+  private readonly toolAllowedResolutionsByLayer = new Map<
+    LayerId,
+    readonly ResolutionType[]
+  >();
+
   // -- Per-session machinery (cleared on session end) -----------------------
   private readonly perLayer = new Map<LayerId, PerLayerMachinery>();
   private readonly _activeRegionByLayer = new Map<
@@ -2227,13 +2239,59 @@ export class EditSessionHost extends RefCounted {
     return undefined;
   }
 
+  /**
+   * Register a NON-session image layer as an available brush reference mask
+   * (TM-317 follow-up): a layer left "off" on session entry can still be used
+   * to threshold-mask strokes. The read path (`readChunkAt` →
+   * `resolveVolumeChunkSource`) already resolves any loaded layer by name — it
+   * only needs the layer's metadata and an allowed resolution registered on the
+   * host-owned maps the tools consult. This resolves the metadata once (cached)
+   * and pins `resolution` so the TM-350 gate passes without opening the layer's
+   * full pyramid.
+   *
+   * Idempotent; safe to call on every reference-picker change. A no-op for
+   * session layers (already registered), when there is no active session, or on
+   * a metadata failure — the stroke simply stays unmasked until it succeeds.
+   * uint64 / scale-less layers are rejected as a backstop; the picker disables
+   * them up front.
+   */
+  async ensureMaskReference(
+    layerId: LayerId,
+    resolution: ResolutionType,
+  ): Promise<void> {
+    if (this.activeSession.value === undefined) return;
+    if (!this.toolMetadataByLayer.has(layerId)) {
+      let metadata: LayerMetadata;
+      try {
+        metadata = await this.layerMetadataSource.resolve(layerId);
+      } catch {
+        return;
+      }
+      // Re-check: a concurrent call (or session teardown) may have resolved the
+      // race while we awaited.
+      if (this.activeSession.value === undefined) return;
+      if (metadata.voxelDataType === "uint64" || metadata.scales.length === 0) {
+        return;
+      }
+      if (!this.toolMetadataByLayer.has(layerId)) {
+        this.toolMetadataByLayer.set(layerId, metadata);
+      }
+    }
+    const allowed = this.toolAllowedResolutionsByLayer.get(layerId) ?? [];
+    if (!allowed.includes(resolution)) {
+      this.toolAllowedResolutionsByLayer.set(layerId, [...allowed, resolution]);
+    }
+  }
+
   private async instantiatePaintingTools(
     session: EditSession,
     config: HostSessionConfig,
   ): Promise<void> {
     // Build the layer-metadata map the compute + tools need (target layer for
-    // the stamp, image layer for the mask threshold).
-    const metadataByLayer = new Map<LayerId, LayerMetadata>();
+    // the stamp, image layer for the mask threshold). Host-owned + mutable so
+    // `ensureMaskReference` can add non-session reference layers later.
+    const metadataByLayer = this.toolMetadataByLayer;
+    metadataByLayer.clear();
     await Promise.all(
       config.layers.map(async (l) => {
         metadataByLayer.set(
@@ -2276,11 +2334,18 @@ export class EditSessionHost extends RefCounted {
     // Resolutions the session actually opened (and the host preloads/pins) per
     // layer. Threaded into the painting tools so a masked stroke can never read
     // an un-pinned scale of the image layer's datasource pyramid (TM-350).
-    const allowedResolutionsByLayer = new Map<
-      LayerId,
-      readonly ResolutionType[]
-    >(config.layers.map((l) => [l.layerId, l.resolutions]));
-    this._sessionResolutionsByLayer = allowedResolutionsByLayer;
+    // Host-owned + mutable (superset grows via `ensureMaskReference`). Seed it
+    // with the session's own layers. `_sessionResolutionsByLayer` stays a
+    // session-only snapshot — the restore-repair path (TM-350) must not see
+    // resolutions pinned later for an external reference layer.
+    const allowedResolutionsByLayer = this.toolAllowedResolutionsByLayer;
+    allowedResolutionsByLayer.clear();
+    for (const l of config.layers) {
+      allowedResolutionsByLayer.set(l.layerId, l.resolutions);
+    }
+    this._sessionResolutionsByLayer = new Map(
+      config.layers.map((l) => [l.layerId, l.resolutions]),
+    );
 
     // The user-facing "Size" is `radius * 2 + 1` (see brush panel). Default
     // size 5 paints a 13-voxel diamond — visible enough to confirm the brush
@@ -3230,6 +3295,8 @@ export class EditSessionHost extends RefCounted {
     this._activeRegionByLayer.clear();
     this._allowedResolutionsByLayer.clear();
     this._sessionResolutionsByLayer = new Map();
+    this.toolMetadataByLayer.clear();
+    this.toolAllowedResolutionsByLayer.clear();
     this.refreshEditBboxWatchables();
     this.refreshAllowedResolutionsWatchables();
     this.reconcileSavedChunksWithBackend();
@@ -3351,6 +3418,8 @@ export class EditSessionHost extends RefCounted {
     this._activeRegionByLayer.clear();
     this._allowedResolutionsByLayer.clear();
     this._sessionResolutionsByLayer = new Map();
+    this.toolMetadataByLayer.clear();
+    this.toolAllowedResolutionsByLayer.clear();
     // Stop tracking global-dimension changes — the session is ending.
     if (this.detachDisplayDimWatch !== undefined) {
       try {
