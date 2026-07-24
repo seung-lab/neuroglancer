@@ -17,12 +17,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   fetchOk,
-  maxTimeoutRetries,
-  requestTimeoutMilliseconds,
+  hedgeDelayMilliseconds,
+  maxConcurrentAttempts,
 } from "#src/util/http_request.js";
 
 // A request that never returns response headers on its own; it settles only when the signal passed
-// to `fetch` is aborted (by the per-attempt timeout or by the caller).
+// to `fetch` is aborted (by a hedge losing, or by the caller cancelling).
 function hangUntilAborted(init: RequestInit | undefined): Promise<Response> {
   return new Promise((_resolve, reject) => {
     const signal = init?.signal;
@@ -32,7 +32,7 @@ function hangUntilAborted(init: RequestInit | undefined): Promise<Response> {
   });
 }
 
-describe("fetchOk per-request timeout and retry", () => {
+describe("fetchOk header hedging", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -41,23 +41,51 @@ describe("fetchOk per-request timeout and retry", () => {
     vi.unstubAllGlobals();
   });
 
-  it("re-issues a GET that times out, then resolves on the retry", async () => {
+  it("keeps the slow original alive: it can still win, and the hedge is aborted", async () => {
+    const signals: AbortSignal[] = [];
+    let resolveFirst!: (response: Response) => void;
     const fetchMock = vi.fn((_input: RequestInfo, init?: RequestInit) => {
-      // First attempt hangs (the "stuck" head node); the nudge succeeds.
+      signals.push(init!.signal!);
+      // First attempt is slow (triggers a hedge) but ultimately answers; the hedge hangs and loses.
+      if (fetchMock.mock.calls.length === 1) {
+        return new Promise<Response>((resolve) => {
+          resolveFirst = resolve;
+        });
+      }
+      return hangUntilAborted(init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const responsePromise = fetchOk("http://example.test/chunk");
+    // No headers within the hedge delay: a second (parallel) request is issued.
+    await vi.advanceTimersByTimeAsync(hedgeDelayMilliseconds);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // The original — never cancelled — answers and wins.
+    resolveFirst(new Response("ok", { status: 200 }));
+    const response = await responsePromise;
+
+    expect(response.status).toBe(200);
+    expect(signals[0].aborted).toBe(false); // winner (original) still running for its body
+    expect(signals[1].aborted).toBe(true); // hedge (loser) cancelled
+  });
+
+  it("returns the hedged response when the first request is stuck", async () => {
+    const fetchMock = vi.fn((_input: RequestInfo, init?: RequestInit) => {
       if (fetchMock.mock.calls.length === 1) return hangUntilAborted(init);
       return Promise.resolve(new Response("ok", { status: 200 }));
     });
     vi.stubGlobal("fetch", fetchMock);
 
     const responsePromise = fetchOk("http://example.test/chunk");
-    await vi.advanceTimersByTimeAsync(requestTimeoutMilliseconds);
+    await vi.advanceTimersByTimeAsync(hedgeDelayMilliseconds);
     const response = await responsePromise;
 
     expect(response.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("gives up after exhausting the timeout-retry cap", async () => {
+  it("gives up with a timeout once the concurrency cap is reached", async () => {
     const fetchMock = vi.fn((_input: RequestInfo, init?: RequestInit) =>
       hangUntilAborted(init),
     );
@@ -68,14 +96,14 @@ describe("fetchOk per-request timeout and retry", () => {
       (error: unknown) => error,
     );
     await vi.advanceTimersByTimeAsync(
-      requestTimeoutMilliseconds * (maxTimeoutRetries + 1) + 10,
+      hedgeDelayMilliseconds * maxConcurrentAttempts + 10,
     );
 
     expect(((await result) as DOMException).name).toBe("TimeoutError");
-    expect(fetchMock).toHaveBeenCalledTimes(maxTimeoutRetries + 1);
+    expect(fetchMock).toHaveBeenCalledTimes(maxConcurrentAttempts);
   });
 
-  it("does not retry when the caller aborts", async () => {
+  it("does not hedge when the caller aborts", async () => {
     const fetchMock = vi.fn((_input: RequestInfo, init?: RequestInit) =>
       hangUntilAborted(init),
     );
@@ -89,14 +117,14 @@ describe("fetchOk per-request timeout and retry", () => {
       (error: unknown) => error,
     );
     controller.abort(new DOMException("Cancelled", "AbortError"));
-    await vi.advanceTimersByTimeAsync(requestTimeoutMilliseconds * 3);
+    await vi.advanceTimersByTimeAsync(hedgeDelayMilliseconds * 3);
 
     const error = await result;
     expect((error as DOMException).name).toBe("AbortError");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("does not apply the timeout to non-idempotent POST requests", async () => {
+  it("does not hedge non-idempotent POST requests", async () => {
     let sawAbort = false;
     const fetchMock = vi.fn((_input: RequestInfo, init?: RequestInit) => {
       init?.signal?.addEventListener("abort", () => {
@@ -115,7 +143,7 @@ describe("fetchOk per-request timeout and retry", () => {
         settled = true;
       },
     );
-    await vi.advanceTimersByTimeAsync(requestTimeoutMilliseconds * 5);
+    await vi.advanceTimersByTimeAsync(hedgeDelayMilliseconds * 5);
 
     expect(sawAbort).toBe(false);
     expect(settled).toBe(false);
