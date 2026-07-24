@@ -12,13 +12,6 @@ import type { LayerMetadata, Resolution } from "@zettaai/edit-session";
 import { Resolution as ResolutionValue, layerId } from "@zettaai/edit-session";
 import { describe, expect, it, vi } from "vitest";
 
-// Replace the real layer-kind helpers (which reach into heavy NG layer modules
-// via `instanceof`) with field reads on our plain fake managed layers.
-vi.mock("#src/editing/ui/layer_kind.js", () => ({
-  layerKindOf: (managed: FakeManaged | undefined) => managed?.kind,
-  blockedSchemeOf: (managed: FakeManaged | undefined) => managed?.blockedScheme,
-}));
-
 import {
   buildReferenceEntries,
   collectReferenceCandidates,
@@ -27,6 +20,15 @@ import {
   type ReferenceLayerEntry,
 } from "#src/editing/ui/tool_settings/reference_layer_options.js";
 import type { LayerManager } from "#src/layer/index.js";
+
+// Replace the real layer-kind helpers (which reach into heavy NG layer modules
+// via `instanceof`) with field reads on our plain fake managed layers.
+// `vi.mock` is hoisted above these imports by vitest, so the mock is still in
+// place before `reference_layer_options.js` (which imports layer_kind) loads.
+vi.mock("#src/editing/ui/layer_kind.js", () => ({
+  layerKindOf: (managed: FakeManaged | undefined) => managed?.kind,
+  blockedSchemeOf: (managed: FakeManaged | undefined) => managed?.blockedScheme,
+}));
 
 interface FakeManaged {
   readonly name: string;
