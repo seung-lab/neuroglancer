@@ -35,11 +35,16 @@ interface SegmentSelectionLockHost {
  * Returns `false` when no `editSessionHost` is wired on the layer manager
  * (test viewers, alternative embeddings) or when the session is in cursor
  * mode, leaving the stock selection behavior unchanged.
+ *
+ * Z-extrapolation is deliberately exempt (TM-326): its tracked set IS the
+ * segmentation layer's selection, so viewport double-click must keep toggling
+ * selection while that tool is active.
  */
 export function isSegmentSelectionLockedByActiveTool(
   root: TopLevelLayerListSpecification,
 ): boolean {
   const host = (root as { editSessionHost?: SegmentSelectionLockHost })
     .editSessionHost;
-  return host?.activeToolId?.value !== undefined;
+  const activeToolId = host?.activeToolId?.value;
+  return activeToolId !== undefined && activeToolId !== "z-extrapolation";
 }

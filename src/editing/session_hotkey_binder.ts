@@ -122,6 +122,7 @@ export type EditKeybindName =
   | "brush"
   | "erase"
   | "fill"
+  | "zextrap"
   | "cursor"
   | "undo"
   | "redo"
@@ -170,6 +171,7 @@ const DEFAULT_EDIT_KEYBINDS: Record<EditKeybindName, readonly string[]> = {
   brush: ["control+keyb"],
   erase: ["control+keye"],
   fill: ["control+keyf"],
+  zextrap: ["control+keyx"],
   cursor: ["control+keyv"],
   undo: ["control+keyz", "meta+keyz"],
   redo: ["control+shift+keyz", "meta+shift+keyz"],
@@ -184,6 +186,7 @@ const EDIT_KEYBIND_ACTION: Record<EditKeybindName, string> = {
   brush: ACTION_IDS.toolBrush,
   erase: ACTION_IDS.toolErase,
   fill: ACTION_IDS.toolFill,
+  zextrap: ACTION_IDS.toolZExtrap,
   cursor: ACTION_IDS.cursorMode,
   undo: ACTION_IDS.undo,
   redo: ACTION_IDS.redo,

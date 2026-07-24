@@ -15,6 +15,7 @@ import type { EditSession } from "@zettaai/edit-session";
 import type { LucideIcon } from "lucide-preact";
 import {
   Eraser,
+  Layers,
   Loader2,
   LocateFixed,
   MousePointer2,
@@ -92,6 +93,12 @@ const TOOL_ENTRIES: readonly ToolEntry[] = [
     label: "Fill",
     keybind: "fill",
     Icon: PaintBucket,
+  },
+  {
+    toolId: "z-extrapolation",
+    label: "Z-extrapolation",
+    keybind: "zextrap",
+    Icon: Layers,
   },
 ];
 
