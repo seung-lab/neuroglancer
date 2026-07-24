@@ -91,24 +91,96 @@ export function pickDelay(attemptNumber: number): number {
 }
 
 /**
+ * A "stuck" request — a connection that opens but never returns response headers — is aborted after
+ * this many milliseconds and re-issued on a fresh connection.  On a clustered storage backend the
+ * retry may be routed to a healthy head node ("nudged"), which is the common cause of image chunks
+ * that otherwise hang indefinitely.  The value must sit comfortably above the real response latency
+ * so that healthy-but-slow requests are not retried needlessly.
+ */
+export const requestTimeoutMilliseconds = 7000;
+
+/**
+ * Maximum number of times a request aborted by {@link requestTimeoutMilliseconds} is re-issued.  The
+ * initial attempt is not counted, so a stuck request is attempted at most `maxTimeoutRetries + 1`
+ * times before the timeout error propagates.
+ */
+export const maxTimeoutRetries = 2;
+
+/**
+ * Only idempotent reads are re-issued automatically on timeout; retrying a hung POST/PUT/DELETE
+ * could apply a side effect twice.
+ */
+function isIdempotentRequest(init: RequestInit | undefined): boolean {
+  const method = (init?.method ?? "GET").toUpperCase();
+  return method === "GET" || method === "HEAD";
+}
+
+function combineAbortSignals(
+  signals: (AbortSignal | null | undefined)[],
+): AbortSignal | undefined {
+  const present = signals.filter(
+    (signal): signal is AbortSignal => signal != null,
+  );
+  if (present.length === 0) return undefined;
+  if (present.length === 1) return present[0];
+  return AbortSignal.any(present);
+}
+
+/**
  * Issues a `fetch` request.
  *
  * If the request fails due to an HTTP status outside `[200, 300)`, throws an `HttpError`.  If the
  * request fails due to a network or CORS restriction, throws an `HttpError` with a `status` of `0`.
  *
  * If the request fails due to a transient error (429, 503, 504), retry.
+ *
+ * Idempotent (GET/HEAD) requests are additionally guarded by a per-attempt timeout: if response
+ * headers do not arrive within {@link requestTimeoutMilliseconds}, the in-flight request is aborted
+ * and re-issued (up to {@link maxTimeoutRetries} times) on a fresh connection.  The timeout guards
+ * only the wait for response headers; once they arrive it is cleared, so a slow body download is
+ * never interrupted.  A request cancelled by the caller's `signal` is never retried.
  */
 export async function fetchOk(
   input: RequestInfo,
   init?: RequestInitWithProgress,
 ): Promise<Response> {
+  const callerSignal = init?.signal;
+  const timeoutEnabled = isIdempotentRequest(init);
+  let timeoutRetry = 0;
   for (let requestAttempt = 0; ; ) {
-    init?.signal?.throwIfAborted();
+    callerSignal?.throwIfAborted();
+    const timeoutController = timeoutEnabled
+      ? new AbortController()
+      : undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    if (timeoutController !== undefined) {
+      timeoutId = setTimeout(() => {
+        timeoutController.abort(
+          new DOMException("Request timed out", "TimeoutError"),
+        );
+      }, requestTimeoutMilliseconds);
+    }
     let response: Response;
     try {
-      response = await fetch(input, init);
+      response = await fetch(input, {
+        ...init,
+        signal: combineAbortSignals([callerSignal, timeoutController?.signal]),
+      });
     } catch (error) {
+      // The caller cancelled the request (e.g. the chunk is no longer needed): never retry.
+      callerSignal?.throwIfAborted();
+      // Our own per-attempt timeout fired: nudge the storage cluster with a fresh request.
+      if (
+        timeoutController?.signal.aborted === true &&
+        timeoutRetry++ < maxTimeoutRetries
+      ) {
+        continue;
+      }
       throw HttpError.fromRequestError(input, error);
+    } finally {
+      // Stop guarding once headers have arrived (or the attempt failed) so the response body,
+      // which may still be streaming, is not aborted by this attempt's timeout.
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
     }
     if (!response.ok) {
       const { status } = response;
