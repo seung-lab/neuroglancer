@@ -87,8 +87,7 @@
 .neuroglancer-z-extrapolation-tracked-list {
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  max-height: 9rem;
+  max-height: var(--nge-list-max-h);
   margin: 0;
   padding: 0;
   overflow-y: auto;
@@ -96,7 +95,7 @@
 }
 
 .neuroglancer-z-extrapolation-tracked-list li {
-  padding: 2px var(--nge-space-2);
+  padding: var(--nge-space-1) var(--nge-space-2);
   font-family: var(--nge-font-mono);
   font-size: var(--nge-text-size-sm);
   color: var(--nge-text);

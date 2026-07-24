@@ -197,7 +197,13 @@ export class ZExtrapolationTool implements EditTool {
 
   /** Propagate the tracked segments from the current slice to the next one. */
   async runNextSlice(): Promise<void> {
-    if (this.state.isRunning) return;
+    // Gate on the in-flight AbortController, not the UI `isRunning` flag: cancel()
+    // flips `isRunning` to false optimistically for immediate feedback while the
+    // aborted runOperation may still be unwinding (its writeRegion in flight).
+    // `abortController` is cleared only in the `finally` below, once the operation
+    // has actually settled, so this prevents a Cancel→Run race from starting a
+    // second overlapping runOperation on the same EditScope.
+    if (this.abortController !== undefined) return;
     const plan = this.buildRunPlan();
     if (typeof plan === "string") {
       // The panel disables Run with this reason; surface it too as a fallback

@@ -25,10 +25,19 @@ import type { ZExtrapolationTool } from "#src/editing/tool_runtimes/z_extrapolat
 import { useEvent } from "#src/editing/ui/interop/use_event.js";
 import { useWatchable } from "#src/editing/ui/interop/use_watchable.js";
 import { layerKindOf } from "#src/editing/ui/layer_kind.js";
+import { ParamInput } from "#src/editing/ui/tool_settings/param_input.js";
 import type { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import "#src/editing/ui/tool_settings/z_extrapolation.css";
 
 type Props = { session: EditSession; host: EditSessionHost };
+
+/** Parse a non-negative integer Z, or null for empty/invalid input. */
+function parseCurrentZ(raw: string): number | null {
+  const n = Number(raw);
+  return raw.trim() !== "" && Number.isFinite(n) && n >= 0
+    ? Math.floor(n)
+    : null;
+}
 
 export function ZExtrapolation({ host }: Props) {
   // The tools are (re)built asynchronously after `openSession`; re-read on the
@@ -135,12 +144,6 @@ function ZExtrapolationBody({
     const value = (event.currentTarget as HTMLSelectElement).value;
     if (value !== "") set(value as LayerId);
   };
-  const onCurrentZInput = (event: Event) => {
-    const value = (event.currentTarget as HTMLInputElement).value;
-    if (value === "") return;
-    const n = Number(value);
-    if (Number.isFinite(n) && n >= 0) tool.setCurrentZ(Math.floor(n));
-  };
 
   return (
     <div class="neuroglancer-tool-panel neuroglancer-z-extrapolation-panel">
@@ -192,12 +195,13 @@ function ZExtrapolationBody({
 
       <div class="neuroglancer-tool-panel-row">
         <label>Current Z</label>
-        <input
+        <ParamInput<number>
           type="number"
           min={0}
           step={1}
-          value={state.currentZ ?? ""}
-          onChange={onCurrentZInput}
+          value={state.currentZ ?? 0}
+          parse={parseCurrentZ}
+          onCommit={(z) => tool.setCurrentZ(z)}
         />
         <button
           type="button"
