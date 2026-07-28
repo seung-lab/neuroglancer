@@ -112,6 +112,7 @@
   --nge-control-w: 120px;
   --nge-control-w-narrow: 60px;
   --nge-control-pad-x: 8px;
+  --nge-list-max-h: 9rem; /* scrollable tool-panel list cap before it scrolls */
 
   /* --- Typography ------------------------------------------------------- */
   --nge-font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial,
