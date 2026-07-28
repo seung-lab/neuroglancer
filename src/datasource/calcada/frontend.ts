@@ -3830,7 +3830,10 @@ registerLayerControl(SegmentationUserLayer, branchControl);
 // the value they WANT into intermediateTimestamp; the guard below either
 // commits it to segmentsState.timestamp (after confirming the segment clear)
 // or snaps it back when the timestamp is locked.
-function makeGuardedTimestampState(layer: SegmentationUserLayer) {
+function makeGuardedTimestampState(
+  layer: SegmentationUserLayer,
+  context: RefCounted,
+) {
   const segmentationGroupState =
     layer.displayState.segmentationGroupState.value;
   const {
@@ -3891,18 +3894,23 @@ function makeGuardedTimestampState(layer: SegmentationUserLayer) {
       StatusMessage.showTemporaryMessage("Timestamp is locked.");
     }
   });
-  timestamp.changed.add(() => {
-    if (timestamp.value !== intermediateTimestamp.value) {
-      intermediateTimestamp.value = timestamp.value;
-    }
-  });
+  context.registerDisposer(
+    timestamp.changed.add(() => {
+      if (timestamp.value !== intermediateTimestamp.value) {
+        intermediateTimestamp.value = timestamp.value;
+      }
+    }),
+  );
   return { graph, timestamp, intermediateTimestamp };
 }
 
 function timeLayerControl(): LayerControlFactory<SegmentationUserLayer> {
   return {
     makeControl: (layer, context) => {
-      const { graph, intermediateTimestamp } = makeGuardedTimestampState(layer);
+      const { graph, intermediateTimestamp } = makeGuardedTimestampState(
+        layer,
+        context,
+      );
       const timestampLimit =
         graph instanceof GrapheneGraphSource
           ? graph.timestampLimit
@@ -3930,8 +3938,10 @@ function timeLayerControl(): LayerControlFactory<SegmentationUserLayer> {
 function labeledTimestampLayerControl(): LayerControlFactory<SegmentationUserLayer> {
   return {
     makeControl: (layer, context) => {
-      const { graph, timestamp, intermediateTimestamp } =
-        makeGuardedTimestampState(layer);
+      const { graph, intermediateTimestamp } = makeGuardedTimestampState(
+        layer,
+        context,
+      );
 
       const controlElement = document.createElement("div");
       controlElement.classList.add(
@@ -3953,14 +3963,17 @@ function labeledTimestampLayerControl(): LayerControlFactory<SegmentationUserLay
         liveOption.value = LIVE_VALUE;
         liveOption.textContent = "— live —";
         labelSelect.appendChild(liveOption);
-        for (const { id, label, timestampMs } of labels) {
+        for (const { id, label, timestampMs, visibility } of labels) {
           const option = document.createElement("option");
           option.value = String(timestampMs);
           option.dataset.labelId = id;
-          option.textContent = label;
+          option.textContent =
+            visibility === "admin" ? `${label} (admins)` : label;
           labelSelect.appendChild(option);
         }
-        const currentTimestamp = timestamp.value;
+        // Reflect the PENDING value: on a rejected switch the guard snaps
+        // intermediateTimestamp back, which re-renders the select to reality.
+        const currentTimestamp = intermediateTimestamp.value;
         const match =
           currentTimestamp === undefined
             ? undefined
@@ -3983,13 +3996,12 @@ function labeledTimestampLayerControl(): LayerControlFactory<SegmentationUserLay
         }
       });
 
-      context.registerDisposer(timestamp.changed.add(renderLabelOptions));
+      context.registerDisposer(
+        intermediateTimestamp.changed.add(renderLabelOptions),
+      );
       if (graph instanceof GrapheneGraphSource) {
         context.registerDisposer(
           graph.labeledTimestamps.changed.add(renderLabelOptions),
-        );
-        context.registerDisposer(
-          graph.branchId.changed.add(renderLabelOptions),
         );
       }
       controlElement.appendChild(labelSelect);
