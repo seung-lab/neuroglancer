@@ -4944,6 +4944,10 @@ void main() {
           segmentsState.selectedSegments.add(newRoot);
           segmentsState.visibleSegments.add(newRoot);
         }
+        // Register the new roots with the mesh source so their fragments are
+        // (re)fetched with exponential-backoff retry until the async per-piece
+        // mesh generation lands — mirrors multicut/merge.
+        graphConnection.meshAddNewSegments(newRoots.filter((r) => r !== 0n));
         graphConnection.refreshChunkSources();
         StatusMessage.showTemporaryMessage(
           `Piece split applied — ${newRoots.length} new root(s)`,

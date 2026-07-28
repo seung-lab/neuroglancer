@@ -138,6 +138,19 @@ async function decodeDracoFragmentChunk(
   assignMeshFragmentData(chunk, rawMesh);
 }
 
+// assignEmptyMesh assigns zero-geometry mesh data to a fragment. A piece with no
+// (or an empty/undecodable) mesh must STILL set chunk.meshData; otherwise the base
+// FragmentChunk.downloadSucceeded reads chunk.meshData (null) in getMeshDataSize
+// and throws "Cannot destructure property 'vertexPositions' of null". This happens
+// for pieces whose mesh isn't present (e.g. not yet generated, or moved to a new
+// mesh dir) — they simply render nothing in 3D instead of crashing.
+function assignEmptyMesh(chunk: FragmentChunk) {
+  assignMeshFragmentData(chunk, {
+    vertexPositions: new Float32Array(0),
+    indices: new Uint32Array(0),
+  });
+}
+
 // Module-level reference to active ChunkedGraphLayers — used by
 // CalcadaVolumeChunkSource.download to build piece→root equivalences from
 // the LUT trailer of each chunk. Tracking the LAYER (not just its
@@ -279,7 +292,12 @@ export class CalcadaVolumeChunkSource extends WithParameters(
     let lutBuffer: ArrayBuffer | undefined;
     try {
       [voxelResp, lutBuffer] = await Promise.all([
-        httpStore.fetchOkImpl(voxelUrl, { signal }),
+        // Revalidate (conditional GET) instead of serving the browser-cached
+        // copy: piece-split rewrites the overlay chunk at the same version-less
+        // URL, so a plain cached read shows stale voxels (old piece ids) until a
+        // hard refresh. no-cache forces GCS to confirm the ETag — 304 (cheap)
+        // when unchanged, 200 (fresh) after an edit.
+        httpStore.fetchOkImpl(voxelUrl, { signal, cache: "no-cache" }),
         // Best-effort: voxels don't depend on the LUT (it only affects root
         // colouring), so a failed trailer fetch must not blank the chunk.
         fetchLutTrailer(this.lutSource, chunkPath, lutQuery, signal).catch(
@@ -343,6 +361,11 @@ export class GrapheneMeshSource extends WithParameters(
       offset: number;
       dracoLength: number;
       manifestLength: number;
+      // Full URL for split-piece meshes stored outside the source bucket
+      // (mesh_write_dir), served via calcada's authenticated proxy. When set,
+      // the blob is fetched from here instead of resolving shard against the
+      // source mesh bucket.
+      url?: string;
     }
   >();
 
@@ -395,6 +418,7 @@ export class GrapheneMeshSource extends WithParameters(
           offset: l.offset,
           dracoLength: l.draco_length,
           manifestLength: l.manifest_length,
+          url: l.url,
         });
       }
     }
@@ -423,22 +447,33 @@ export class GrapheneMeshSource extends WithParameters(
     // client-side shard/minishard resolution.
     const loc = this.fragLocations.get(chunk.fragmentId!);
     if (loc !== undefined) {
-      const combinedResponse = await readKvStore(
-        this.fragmentKvStore.store,
-        `${this.fragmentKvStore.path}${loc.shard}`,
-        {
+      let combined: Uint8Array;
+      if (loc.url) {
+        // Split-piece mesh lives in mesh_write_dir (a different bucket than the
+        // source shards); fetch the whole [Draco][manifest] blob via calcada's
+        // authenticated proxy rather than resolving shard against the source.
+        const resp = await this.manifestHttpSource.fetchOkImpl(loc.url, {
           signal,
-          byteRange: {
-            offset: loc.offset,
-            length: loc.dracoLength + loc.manifestLength,
+        });
+        combined = new Uint8Array(await resp.arrayBuffer());
+      } else {
+        const combinedResponse = await readKvStore(
+          this.fragmentKvStore.store,
+          `${this.fragmentKvStore.path}${loc.shard}`,
+          {
+            signal,
+            byteRange: {
+              offset: loc.offset,
+              length: loc.dracoLength + loc.manifestLength,
+            },
+            throwIfMissing: true,
+            strictByteRange: true,
           },
-          throwIfMissing: true,
-          strictByteRange: true,
-        },
-      );
-      const combined = new Uint8Array(
-        await combinedResponse.response.arrayBuffer(),
-      );
+        );
+        combined = new Uint8Array(
+          await combinedResponse.response.arrayBuffer(),
+        );
+      }
       const dracoU8 = combined.slice(0, loc.dracoLength);
       const manifestU8 = combined.slice(loc.dracoLength);
       const { data: rawMesh } = await requestAsyncComputation(
@@ -450,8 +485,10 @@ export class GrapheneMeshSource extends WithParameters(
         this.parameters.vertexQuantizationBits,
         this.parameters.lod,
       );
-      if (rawMesh.vertexPositions.length > 0) {
+      if (rawMesh && rawMesh.vertexPositions.length > 0) {
         assignMeshFragmentData(chunk, rawMesh);
+      } else {
+        assignEmptyMesh(chunk);
       }
       return;
     }
@@ -479,14 +516,21 @@ export class GrapheneMeshSource extends WithParameters(
     const readResult = await shardedKvStore.readWithShardInfo(pieceId, {
       signal,
     });
-    if (readResult === undefined) return; // missing piece → empty fragment
+    if (readResult === undefined) {
+      // Missing piece (e.g. mesh not generated yet) → render nothing, don't crash.
+      assignEmptyMesh(chunk);
+      return;
+    }
     const { response: manifestResponse, shardInfo } = readResult;
     const manifestU8 = new Uint8Array(
       await manifestResponse.response.arrayBuffer(),
     );
     // Parse here only to size the Draco byte-range; the pool re-parses to decode.
     const manifest = parseMultilodManifest(manifestU8);
-    if (manifest.totalDracoSize === 0) return;
+    if (manifest.totalDracoSize === 0) {
+      assignEmptyMesh(chunk);
+      return;
+    }
 
     const dracoResponse = await readKvStore(
       this.fragmentKvStore.store,
@@ -513,8 +557,10 @@ export class GrapheneMeshSource extends WithParameters(
       this.parameters.vertexQuantizationBits,
       this.parameters.lod,
     );
-    if (rawMesh.vertexPositions.length > 0) {
+    if (rawMesh && rawMesh.vertexPositions.length > 0) {
       assignMeshFragmentData(chunk, rawMesh);
+    } else {
+      assignEmptyMesh(chunk);
     }
   }
 
