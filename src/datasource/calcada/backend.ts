@@ -292,12 +292,11 @@ export class CalcadaVolumeChunkSource extends WithParameters(
     let lutBuffer: ArrayBuffer | undefined;
     try {
       [voxelResp, lutBuffer] = await Promise.all([
-        // Revalidate (conditional GET) instead of serving the browser-cached
-        // copy: piece-split rewrites the overlay chunk at the same version-less
-        // URL, so a plain cached read shows stale voxels (old piece ids) until a
-        // hard refresh. no-cache forces GCS to confirm the ETag — 304 (cheap)
-        // when unchanged, 200 (fresh) after an edit.
-        httpStore.fetchOkImpl(voxelUrl, { signal, cache: "no-cache" }),
+        // Voxel bytes are browser-cacheable: calcada pins each live branch-overlay
+        // redirect to the object's current GCS generation (?generation=N), so a
+        // piece-split rewrite yields a fresh URL and the stale cached copy is
+        // never served. Base chunks are immutable and cache freely too.
+        httpStore.fetchOkImpl(voxelUrl, { signal }),
         // Best-effort: voxels don't depend on the LUT (it only affects root
         // colouring), so a failed trailer fetch must not blank the chunk.
         fetchLutTrailer(this.lutSource, chunkPath, lutQuery, signal).catch(
