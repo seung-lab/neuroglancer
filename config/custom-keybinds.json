@@ -36,8 +36,6 @@
     "undo": ["control+keyz", "meta+keyz"],
     "redo": ["control+shift+keyz", "meta+shift+keyz"],
     "sizeDecrease": ["minus", "numpadsubtract"],
-    "sizeIncrease": ["equal", "shift+equal", "numpadadd"],
-    "valueDecrease": "bracketleft",
-    "valueIncrease": "bracketright"
+    "sizeIncrease": ["equal", "shift+equal", "numpadadd"]
   }
 }

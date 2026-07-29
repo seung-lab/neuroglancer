@@ -48,11 +48,8 @@ import { HeldKeyTracker } from "#src/editing/held_key_tracker.js";
 import {
   accelStepsPerSecond,
   nextPresetSize,
-  nextThresholdLow,
-  nextThresholdHigh,
 } from "#src/editing/painting_hotkey_math.js";
 import { ParamStatusOverlay } from "#src/editing/param_status_overlay.js";
-import { voxelDataTypeRange } from "#src/editing/tool_runtimes/mask_coord.js";
 import type { PaintingState } from "#src/editing/tool_runtimes/painting_tools.js";
 import type { PaintParamCursor } from "#src/editing/tool_runtimes/param_cursor.js";
 import type { EditKeybindOverrides } from "#src/editing/tooling/tooling_persist.js";
@@ -88,10 +85,6 @@ const ACTION_IDS = {
   // `+` / `-` — step brush *size* through the preset cycle.
   sizeDecr: "edit-session-size-decr",
   sizeIncr: "edit-session-size-incr",
-  // `[` / `]` — low/high threshold when L/H is held (brush tool only). Plain
-  // `[` / `]` with no modifier is inert (brush-value stepping was removed).
-  valueDecr: "edit-session-value-decr",
-  valueIncr: "edit-session-value-incr",
   // Ctrl+Left / Ctrl+Right (Option+Arrow on macOS) — move the parameter
   // selection cursor through the active tool panel's enabled controls (TM-337).
   paramPrev: "edit-session-param-prev",
@@ -100,18 +93,14 @@ const ACTION_IDS = {
   // selected parameter, with hold-to-accelerate for numeric params.
   paramIncr: "edit-session-param-incr",
   paramDecr: "edit-session-param-decr",
-  // `L` / `H` — held-chord modifiers for the threshold bindings. Bound to a
-  // no-op so they shadow the global `keyl`→recolor / `keyh`→help while a
-  // session is active; the actual held state is read via `HeldKeyTracker`.
-  noopLetter: "edit-session-noop-letter",
 } as const;
 
 /**
  * User-configurable edit hotkeys (TM-315). Friendly name → default key event
  * identifier(s). Overridable per-deployment via the `editSession` section of
  * `config/custom-keybinds.json`; merged in `mergeEditKeybinds`. The fixed
- * bindings (escape, the L/H chord shadows) are NOT user-configurable and are
- * added directly in the action map.
+ * binding (escape) is NOT user-configurable and is added directly in the
+ * action map.
  */
 export type EditKeybindName =
   | "brush"
@@ -123,8 +112,6 @@ export type EditKeybindName =
   | "redo"
   | "sizeDecrease"
   | "sizeIncrease"
-  | "valueDecrease"
-  | "valueIncrease"
   | "paramPrev"
   | "paramNext"
   | "paramIncrease"
@@ -172,8 +159,6 @@ const DEFAULT_EDIT_KEYBINDS: Record<EditKeybindName, readonly string[]> = {
   redo: ["control+shift+keyz", "meta+shift+keyz"],
   sizeDecrease: ["minus", "numpadsubtract"],
   sizeIncrease: ["equal", "shift+equal", "numpadadd"],
-  valueDecrease: ["bracketleft"],
-  valueIncrease: ["bracketright"],
   ...paramArrowDefaults(isMacPlatform()),
 };
 
@@ -187,8 +172,6 @@ const EDIT_KEYBIND_ACTION: Record<EditKeybindName, string> = {
   redo: ACTION_IDS.redo,
   sizeDecrease: ACTION_IDS.sizeDecr,
   sizeIncrease: ACTION_IDS.sizeIncr,
-  valueDecrease: ACTION_IDS.valueDecr,
-  valueIncrease: ACTION_IDS.valueIncr,
   paramPrev: ACTION_IDS.paramPrev,
   paramNext: ACTION_IDS.paramNext,
   paramIncrease: ACTION_IDS.paramIncr,
@@ -217,12 +200,8 @@ export function mergeEditKeybinds(
       out[key] = EDIT_KEYBIND_ACTION[name];
     }
   }
-  // Fixed bindings — not user-configurable.
+  // Fixed binding — not user-configurable.
   out["escape"] = ACTION_IDS.exitTool;
-  // Shadow the global `keyl` (recolor) / `keyh` (help) so holding them as chord
-  // modifiers doesn't trigger those while a session is active.
-  out["keyl"] = ACTION_IDS.noopLetter;
-  out["keyh"] = ACTION_IDS.noopLetter;
   return out;
 }
 
@@ -290,15 +269,9 @@ const TOOL_ID_CORRESPONDENCE = "correspondence";
  * and disposed on session-end; the host owns the lifecycle.
  */
 export class EditSessionHotkeyBinder extends RefCounted {
-  // Held-key state for the L/H threshold chords (see `held_key_tracker.ts`).
+  // Held-key state for the Ctrl+Arrow hold-to-accelerate ramp (see
+  // `held_key_tracker.ts`): tracks the chord modifier + arrow key on release.
   private readonly tracker: HeldKeyTracker;
-  // Cached voxel-value range per mask image layer, used to clamp threshold
-  // adjustments. Resolved lazily on first threshold keypress for a layer.
-  private readonly thresholdRangeByLayer = new Map<
-    string,
-    { min: number; max: number }
-  >();
-  private readonly thresholdRangePending = new Set<string>();
 
   // Center-screen readout for the Ctrl+Arrow parameter scheme (TM-337).
   private readonly statusOverlay: ParamStatusOverlay;
@@ -528,16 +501,6 @@ export class EditSessionHotkeyBinder extends RefCounted {
         this.stepBrushSize(+1);
       }),
     );
-    this.registerDisposer(
-      registerActionListener(target, ACTION_IDS.valueDecr, () => {
-        this.onBracket(-1);
-      }),
-    );
-    this.registerDisposer(
-      registerActionListener(target, ACTION_IDS.valueIncr, () => {
-        this.onBracket(+1);
-      }),
-    );
 
     // Ctrl+Arrow parameter scheme (TM-337; Option+Arrow on macOS). Left/Right
     // move the selection cursor through the active panel's enabled parameters;
@@ -561,11 +524,6 @@ export class EditSessionHotkeyBinder extends RefCounted {
       registerActionListener(target, ACTION_IDS.paramDecr, (event) => {
         if (this.startParamRamp(-1, "arrowdown")) event.stopPropagation();
       }),
-    );
-    // `L` / `H` are bound only to keep the global recolor/help actions from
-    // firing while held; the handler itself does nothing.
-    this.registerDisposer(
-      registerActionListener(target, ACTION_IDS.noopLetter, () => {}),
     );
   }
 
@@ -613,88 +571,6 @@ export class EditSessionHotkeyBinder extends RefCounted {
     const nextSize = nextPresetSize(size, dir);
     if (nextSize === size) return;
     painting.patchState({ radius: sizeToRadius(nextSize) });
-  }
-
-  /**
-   * `[` / `]`: low/high threshold when L/H is held. Only active for the brush
-   * tool. Plain `[` / `]` with no modifier is inert — the brush-value stepping
-   * that used to live here was removed.
-   */
-  private onBracket(dir: number): void {
-    if (this.host.activeToolId.value !== TOOL_ID_BRUSH) return;
-    const painting = this.getPainting();
-    if (painting === undefined) return;
-    if (this.tracker.isHeld("keyh")) {
-      this.adjustThreshold(painting, "high", dir);
-    } else if (this.tracker.isHeld("keyl")) {
-      this.adjustThreshold(painting, "low", dir);
-    }
-  }
-
-  private adjustThreshold(
-    painting: PaintingState,
-    which: "low" | "high",
-    dir: number,
-  ): void {
-    const mask = painting.getState().mask;
-    if (mask === undefined) return; // thresholds only apply with a mask
-    const layerId = mask.imageLayerId;
-    const cached = this.thresholdRangeByLayer.get(layerId);
-    if (cached !== undefined) {
-      this.applyThreshold(painting, which, dir, cached);
-      return;
-    }
-    // Resolve + cache the image dtype range once, then apply this adjustment.
-    if (this.thresholdRangePending.has(layerId)) return;
-    this.thresholdRangePending.add(layerId);
-    this.host.layerMetadataSource.resolve(mask.imageLayerId).then(
-      (meta) => {
-        this.thresholdRangePending.delete(layerId);
-        const range = voxelDataTypeRange(meta.voxelDataType);
-        if (range === null) return;
-        this.thresholdRangeByLayer.set(layerId, range);
-        this.applyThreshold(painting, which, dir, range);
-      },
-      (err: unknown) => {
-        this.thresholdRangePending.delete(layerId);
-        this.host.logger.warn(
-          "session",
-          `Threshold range unavailable for ${layerId}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      },
-    );
-  }
-
-  private applyThreshold(
-    painting: PaintingState,
-    which: "low" | "high",
-    dir: number,
-    range: { min: number; max: number },
-  ): void {
-    // Re-read mask: state may have changed during an async range resolve.
-    const mask = painting.getState().mask;
-    if (mask === undefined) return;
-    if (which === "low") {
-      const low = nextThresholdLow(
-        mask.thresholdLow,
-        mask.thresholdHigh,
-        range.min,
-        dir,
-      );
-      if (low === mask.thresholdLow) return;
-      painting.patchState({ mask: { ...mask, thresholdLow: low } });
-    } else {
-      const high = nextThresholdHigh(
-        mask.thresholdLow,
-        mask.thresholdHigh,
-        range.max,
-        dir,
-      );
-      if (high === mask.thresholdHigh) return;
-      painting.patchState({ mask: { ...mask, thresholdHigh: high } });
-    }
   }
 
   // -- Ctrl+Arrow parameter scheme (TM-337) ---------------------------------
