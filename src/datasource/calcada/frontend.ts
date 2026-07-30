@@ -2923,6 +2923,13 @@ class GrapheneGraphServerInterface {
   }
 }
 
+export interface CalcadaLabeledTimestamp {
+  id: string;
+  label: string;
+  timestampMs: number;
+  visibility: string;
+}
+
 class GrapheneGraphSource extends SegmentationGraphSource {
   public graphServer: GrapheneGraphServerInterface;
   private l2CacheAvailable: boolean | undefined = undefined;
@@ -2931,6 +2938,7 @@ class GrapheneGraphSource extends SegmentationGraphSource {
   public branches = new WatchableValue<
     { id: number; name: string; status: string }[]
   >([]);
+  public labeledTimestamps = new WatchableValue<CalcadaLabeledTimestamp[]>([]);
   private branchesFetched = false;
 
   public get branchId(): TrackableValue<number> {
@@ -2953,6 +2961,8 @@ class GrapheneGraphSource extends SegmentationGraphSource {
       this.timestampLimit.value = limit;
     });
     this.startBranchRefreshWithRetry();
+    this.startLabeledTimestampRefreshWithRetry();
+    this.branchId.changed.add(() => this.triggerLabeledTimestampRefresh());
   }
 
   // startBranchRefreshWithRetry kicks off /branches and retries on failure —
@@ -3018,6 +3028,61 @@ class GrapheneGraphSource extends SegmentationGraphSource {
   public triggerBranchRefresh(): void {
     this.refreshBranches().catch((e) => {
       console.warn("Failed to refresh calcada branches:", e);
+    });
+  }
+
+  // Same middleauth-handshake race as startBranchRefreshWithRetry: the first
+  // fetch commonly 401s before the token is ready, so back off and retry.
+  private startLabeledTimestampRefreshWithRetry(): void {
+    const maxAttempts = 5;
+    const baseDelayMs = 1500;
+    let attempt = 0;
+    const tick = () => {
+      this.refreshLabeledTimestamps().catch((e) => {
+        attempt++;
+        if (attempt >= maxAttempts) {
+          console.warn("Failed to fetch calcada labeled timestamps:", e);
+          return;
+        }
+        setTimeout(tick, baseDelayMs * attempt);
+      });
+    };
+    tick();
+  }
+
+  private async refreshLabeledTimestamps(): Promise<void> {
+    const { fetchOkImpl, baseUrl } = this.httpSource;
+    const url = `${baseUrl}/labeled_timestamps?branch_id=${this.branchId.value}`;
+    const response = await fetchOkImpl(url);
+    const data = await response.json();
+    if (!Array.isArray(data)) {
+      this.labeledTimestamps.value = [];
+      return;
+    }
+    const parsed: CalcadaLabeledTimestamp[] = [];
+    for (const entry of data) {
+      if (!entry || typeof entry !== "object") continue;
+      const id = (entry as any).id;
+      const label = (entry as any).label;
+      const timestampSeconds = (entry as any).timestamp;
+      const visibility = (entry as any).visibility;
+      if (typeof id !== "string" || typeof label !== "string") continue;
+      if (typeof timestampSeconds !== "number" || timestampSeconds <= 0) {
+        continue;
+      }
+      parsed.push({
+        id,
+        label,
+        timestampMs: Math.round(timestampSeconds * 1000),
+        visibility: typeof visibility === "string" ? visibility : "public",
+      });
+    }
+    this.labeledTimestamps.value = parsed;
+  }
+
+  public triggerLabeledTimestampRefresh(): void {
+    this.refreshLabeledTimestamps().catch((e) => {
+      console.warn("Failed to refresh calcada labeled timestamps:", e);
     });
   }
 
@@ -3141,6 +3206,14 @@ class GrapheneGraphSource extends SegmentationGraphSource {
     toolbox.className = "neuroglancer-segmentation-toolbox";
     parent.appendChild(
       addLayerControlToOptionsTab(tab, layer, tab.visibility, timeControl),
+    );
+    parent.appendChild(
+      addLayerControlToOptionsTab(
+        tab,
+        layer,
+        tab.visibility,
+        labeledTimestampControl,
+      ),
     );
     parent.appendChild(
       addLayerControlToOptionsTab(tab, layer, tab.visibility, branchControl),
@@ -3520,6 +3593,19 @@ const timeControl = {
 
 registerLayerControl(SegmentationUserLayer, timeControl);
 
+const CALCADA_LABELED_TIMESTAMP_JSON_KEY = "calcadaLabeledTimestamp";
+const LABELED_TIMESTAMP_CONTROL_TITLE =
+  "Labeled timestamps for the current branch. Selecting one switches the view to that point in time (read-only).";
+
+const labeledTimestampControl = {
+  label: "Label",
+  title: LABELED_TIMESTAMP_CONTROL_TITLE,
+  toolJson: CALCADA_LABELED_TIMESTAMP_JSON_KEY,
+  ...labeledTimestampLayerControl(),
+};
+
+registerLayerControl(SegmentationUserLayer, labeledTimestampControl);
+
 function branchLayerControl(): LayerControlFactory<SegmentationUserLayer> {
   return {
     makeControl: (layer, context) => {
@@ -3740,76 +3826,98 @@ const branchControl = {
 
 registerLayerControl(SegmentationUserLayer, branchControl);
 
+// Shared between the Time date-picker and the Label dropdown: widgets write
+// the value they WANT into intermediateTimestamp; the guard below either
+// commits it to segmentsState.timestamp (after confirming the segment clear)
+// or snaps it back when the timestamp is locked.
+function makeGuardedTimestampState(
+  layer: SegmentationUserLayer,
+  context: RefCounted,
+) {
+  const segmentationGroupState =
+    layer.displayState.segmentationGroupState.value;
+  const {
+    graph: { value: graph },
+  } = segmentationGroupState;
+  const timestamp =
+    graph instanceof GrapheneGraphSource
+      ? segmentationGroupState.timestamp
+      : new WatchableValue<number | undefined>(undefined);
+  const timestampOwner =
+    graph instanceof GrapheneGraphSource
+      ? segmentationGroupState.timestampOwner
+      : new WatchableSet<string>();
+  const intermediateTimestamp = new WatchableValue<number | undefined>(
+    timestamp.value,
+  );
+  intermediateTimestamp.changed.add(async () => {
+    if (intermediateTimestamp.value === timestamp.value) {
+      return;
+    }
+    // resetting timestamp back to unset
+    if (
+      intermediateTimestamp.value === undefined &&
+      segmentationGroupState.canSetTimestamp(layer.managedLayer.name)
+    ) {
+      timestamp.value = intermediateTimestamp.value;
+      timestampOwner.delete(layer.managedLayer.name);
+      return;
+    }
+    if (graph instanceof GrapheneGraphSource) {
+      const selfLock = segmentationGroupState.timestampOwner.has(
+        layer.managedLayer.name,
+      );
+      const canSetTimestamp = segmentationGroupState.canSetTimestamp(
+        layer.managedLayer.name,
+      );
+      // if we have a lock while the timestamp is unset, it is a tool-based lock (this check can be improved)
+      if (canSetTimestamp && (!selfLock || timestamp.value !== undefined)) {
+        const nonLatestRoots = await graph.graphServer.filterLatestRoots(
+          [...segmentationGroupState.selectedSegments],
+          timestamp.value,
+          true,
+          graph.branchId.value,
+        );
+        if (
+          !nonLatestRoots.length ||
+          confirm(
+            `Changing graphene time will clear ${nonLatestRoots.length} segment(s).`,
+          )
+        ) {
+          timestamp.value = intermediateTimestamp.value;
+          // is this where it is done
+          timestampOwner.add(layer.managedLayer.name);
+          return;
+        }
+      }
+      intermediateTimestamp.value = timestamp.value;
+      StatusMessage.showTemporaryMessage("Timestamp is locked.");
+    }
+  });
+  context.registerDisposer(
+    timestamp.changed.add(() => {
+      if (timestamp.value !== intermediateTimestamp.value) {
+        intermediateTimestamp.value = timestamp.value;
+      }
+    }),
+  );
+  return { graph, timestamp, intermediateTimestamp };
+}
+
 function timeLayerControl(): LayerControlFactory<SegmentationUserLayer> {
   return {
     makeControl: (layer, context) => {
-      const segmentationGroupState =
-        layer.displayState.segmentationGroupState.value;
-      const {
-        graph: { value: graph },
-      } = segmentationGroupState;
-      const timestamp =
-        graph instanceof GrapheneGraphSource
-          ? segmentationGroupState.timestamp
-          : new WatchableValue<number | undefined>(undefined);
+      const { graph, intermediateTimestamp } = makeGuardedTimestampState(
+        layer,
+        context,
+      );
       const timestampLimit =
         graph instanceof GrapheneGraphSource
           ? graph.timestampLimit
           : new WatchableValue<number>(0);
-      const timestampOwner =
-        graph instanceof GrapheneGraphSource
-          ? segmentationGroupState.timestampOwner
-          : new WatchableSet<string>();
 
       const controlElement = document.createElement("div");
       controlElement.classList.add("neuroglancer-time-control");
-      const intermediateTimestamp = new WatchableValue<number | undefined>(
-        timestamp.value,
-      );
-      intermediateTimestamp.changed.add(async () => {
-        if (intermediateTimestamp.value === timestamp.value) {
-          return;
-        }
-        // resetting timestamp back to unset
-        if (
-          intermediateTimestamp.value === undefined &&
-          segmentationGroupState.canSetTimestamp(layer.managedLayer.name)
-        ) {
-          timestamp.value = intermediateTimestamp.value;
-          timestampOwner.delete(layer.managedLayer.name);
-          return;
-        }
-        if (graph instanceof GrapheneGraphSource) {
-          const selfLock = segmentationGroupState.timestampOwner.has(
-            layer.managedLayer.name,
-          );
-          const canSetTimestamp = segmentationGroupState.canSetTimestamp(
-            layer.managedLayer.name,
-          );
-          // if we have a lock while the timestamp is unset, it is a tool-based lock (this check can be improved)
-          if (canSetTimestamp && (!selfLock || timestamp.value !== undefined)) {
-            const nonLatestRoots = await graph.graphServer.filterLatestRoots(
-              [...segmentationGroupState.selectedSegments],
-              timestamp.value,
-              true,
-              graph.branchId.value,
-            );
-            if (
-              !nonLatestRoots.length ||
-              confirm(
-                `Changing graphene time will clear ${nonLatestRoots.length} segment(s).`,
-              )
-            ) {
-              timestamp.value = intermediateTimestamp.value;
-              // is this where it is done
-              timestampOwner.add(layer.managedLayer.name);
-              return;
-            }
-          }
-          intermediateTimestamp.value = timestamp.value;
-          StatusMessage.showTemporaryMessage("Timestamp is locked.");
-        }
-      });
       const widget = context.registerDisposer(
         new DateTimeInputWidget(
           intermediateTimestamp,
@@ -3820,13 +3928,84 @@ function timeLayerControl(): LayerControlFactory<SegmentationUserLayer> {
       timestampLimit.changed.add(() => {
         widget.setMin(new Date(timestampLimit.value));
       });
-      timestamp.changed.add(() => {
-        if (timestamp.value !== intermediateTimestamp.value) {
-          intermediateTimestamp.value = timestamp.value;
-        }
-      });
       controlElement.appendChild(widget.element);
       return { controlElement, control: widget };
+    },
+    activateTool: (_activation) => {},
+  };
+}
+
+function labeledTimestampLayerControl(): LayerControlFactory<SegmentationUserLayer> {
+  return {
+    makeControl: (layer, context) => {
+      const { graph, intermediateTimestamp } = makeGuardedTimestampState(
+        layer,
+        context,
+      );
+
+      const controlElement = document.createElement("div");
+      controlElement.classList.add(
+        "neuroglancer-calcada-labeled-timestamp-control",
+      );
+      const labelSelect = document.createElement("select");
+      labelSelect.classList.add("neuroglancer-layer-control-control");
+      labelSelect.title = LABELED_TIMESTAMP_CONTROL_TITLE;
+      const LIVE_VALUE = "";
+      const renderLabelOptions = () => {
+        const labels =
+          graph instanceof GrapheneGraphSource
+            ? graph.labeledTimestamps.value
+            : [];
+        while (labelSelect.firstChild) {
+          labelSelect.removeChild(labelSelect.firstChild);
+        }
+        const liveOption = document.createElement("option");
+        liveOption.value = LIVE_VALUE;
+        liveOption.textContent = "— live —";
+        labelSelect.appendChild(liveOption);
+        for (const { id, label, timestampMs, visibility } of labels) {
+          const option = document.createElement("option");
+          option.value = String(timestampMs);
+          option.dataset.labelId = id;
+          option.textContent =
+            visibility === "admin" ? `${label} (admins)` : label;
+          labelSelect.appendChild(option);
+        }
+        // Reflect the PENDING value: on a rejected switch the guard snaps
+        // intermediateTimestamp back, which re-renders the select to reality.
+        const currentTimestamp = intermediateTimestamp.value;
+        const match =
+          currentTimestamp === undefined
+            ? undefined
+            : labels.find(
+                (candidate) => candidate.timestampMs === currentTimestamp,
+              );
+        labelSelect.value = match ? String(match.timestampMs) : LIVE_VALUE;
+      };
+      renderLabelOptions();
+
+      labelSelect.addEventListener("change", () => {
+        intermediateTimestamp.value =
+          labelSelect.value === LIVE_VALUE
+            ? undefined
+            : Number.parseInt(labelSelect.value, 10);
+      });
+      labelSelect.addEventListener("focus", () => {
+        if (graph instanceof GrapheneGraphSource) {
+          graph.triggerLabeledTimestampRefresh();
+        }
+      });
+
+      context.registerDisposer(
+        intermediateTimestamp.changed.add(renderLabelOptions),
+      );
+      if (graph instanceof GrapheneGraphSource) {
+        context.registerDisposer(
+          graph.labeledTimestamps.changed.add(renderLabelOptions),
+        );
+      }
+      controlElement.appendChild(labelSelect);
+      return { controlElement, control: labelSelect };
     },
     activateTool: (_activation) => {},
   };

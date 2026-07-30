@@ -207,3 +207,8 @@
 .neuroglancer-calcada-branch-control .calcada-open-diff:hover {
   background: rgba(255, 255, 255, 0.12);
 }
+
+.neuroglancer-calcada-labeled-timestamp-control > select {
+  width: auto;
+  max-width: 100%;
+}
