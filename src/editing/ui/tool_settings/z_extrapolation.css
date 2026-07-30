@@ -1,0 +1,148 @@
+/**
+ * @license
+ * Copyright 2026 Calcada AI / Zetta AI
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ */
+
+.neuroglancer-z-extrapolation-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--nge-space-3);
+}
+
+.neuroglancer-z-extrapolation-lock {
+  flex: 0 0 auto;
+  height: var(--nge-control-h);
+  padding: 0 var(--nge-control-pad-x);
+  border: 1px solid var(--nge-border);
+  border-radius: var(--nge-radius-sm);
+  background: var(--nge-control-bg);
+  color: var(--nge-text);
+  font: inherit;
+  cursor: pointer;
+  transition: var(--nge-transition);
+}
+
+.neuroglancer-z-extrapolation-lock:hover {
+  background: var(--nge-control-bg-hover);
+}
+
+.neuroglancer-z-extrapolation-lock[aria-pressed="true"] {
+  border-color: var(--nge-accent-border);
+  background: var(--nge-accent-tint);
+  color: var(--nge-accent-fg);
+}
+
+/* --- Tracked segments ------------------------------------------------- */
+
+.neuroglancer-z-extrapolation-tracked {
+  display: flex;
+  flex-direction: column;
+  gap: var(--nge-space-2);
+  padding: var(--nge-space-3);
+  border: 1px solid var(--nge-border);
+  border-radius: var(--nge-radius-md);
+  background: var(--nge-control-bg-inert);
+}
+
+.neuroglancer-z-extrapolation-tracked-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--nge-space-2);
+  font-size: var(--nge-text-size-sm);
+  color: var(--nge-text-muted);
+}
+
+.neuroglancer-z-extrapolation-tracked-head button {
+  height: var(--nge-control-h-compact);
+  padding: 0 var(--nge-space-3);
+  border: 1px solid var(--nge-border);
+  border-radius: var(--nge-radius-sm);
+  background: var(--nge-control-bg);
+  color: var(--nge-text);
+  font: inherit;
+  cursor: pointer;
+  transition: var(--nge-transition);
+}
+
+.neuroglancer-z-extrapolation-tracked-head button:hover:not(:disabled) {
+  background: var(--nge-control-bg-hover);
+}
+
+.neuroglancer-z-extrapolation-tracked-head button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.neuroglancer-z-extrapolation-tracked-empty {
+  font-size: var(--nge-text-size-sm);
+  color: var(--nge-text-faint);
+}
+
+.neuroglancer-z-extrapolation-tracked-list {
+  display: flex;
+  flex-direction: column;
+  max-height: var(--nge-list-max-h);
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.neuroglancer-z-extrapolation-tracked-list li {
+  padding: var(--nge-space-1) var(--nge-space-2);
+  font-family: var(--nge-font-mono);
+  font-size: var(--nge-text-size-sm);
+  color: var(--nge-text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Actions ---------------------------------------------------------- */
+
+.neuroglancer-z-extrapolation-run {
+  height: var(--nge-control-h-lg);
+  border: 1px solid var(--nge-accent-border);
+  border-radius: var(--nge-radius-md);
+  background: var(--nge-accent);
+  color: var(--nge-accent-fg);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--nge-transition);
+}
+
+.neuroglancer-z-extrapolation-run:hover:not(:disabled) {
+  background: var(--nge-accent-hover);
+}
+
+.neuroglancer-z-extrapolation-run:disabled {
+  border-color: var(--nge-border);
+  background: var(--nge-control-bg-inert);
+  color: var(--nge-text-faint);
+  cursor: default;
+}
+
+.neuroglancer-z-extrapolation-reset {
+  height: var(--nge-control-h);
+  border: 1px solid var(--nge-border);
+  border-radius: var(--nge-radius-sm);
+  background: var(--nge-control-bg);
+  color: var(--nge-text);
+  font: inherit;
+  cursor: pointer;
+  transition: var(--nge-transition);
+}
+
+.neuroglancer-z-extrapolation-reset:hover:not(:disabled) {
+  background: var(--nge-control-bg-hover);
+}
+
+.neuroglancer-z-extrapolation-reset:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
