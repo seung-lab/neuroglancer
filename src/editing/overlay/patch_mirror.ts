@@ -37,6 +37,31 @@ export type BaselineChunkReader = (
 ) => Promise<ReadonlyChunkVoxelBuffer>;
 
 /**
+ * Delays before each automatic full-rescan retry of a chunk whose sync failed.
+ * Its length caps the retries; a chunk that exhausts them keeps `needsResync`
+ * set, so the next commit to it still repairs the mirror.
+ */
+const RESYNC_BACKOFF_MS = [100, 500, 2000];
+
+/** Per-chunk sync bookkeeping. See {@link PatchMirror.driveChunk}. */
+interface ChunkSyncState {
+  /** A pass is running; a concurrent pass would race its fuse. */
+  inFlight: boolean;
+  /**
+   * The chunk may hold voxels no bounded pass has mirrored (a pass failed, or
+   * a commit landed mid-pass). Forces the next pass to scan the whole chunk.
+   */
+  needsResync: boolean;
+  /** Consecutive failed passes, bounding the automatic retries. */
+  failedAttempts: number;
+  retryTimer: ReturnType<typeof setTimeout> | undefined;
+}
+
+function keyOfCoord(coord: OverlayCoord): string {
+  return `${coord.layerId}|${coord.resolution}|${coord.chunkId}`;
+}
+
+/**
  * One-way mirror that propagates dirty-chunk events from the library's
  * `EditOverlayStore` into a per-layer GPU `LocalPatchStore`. The mirror is
  * single-step (library -> GPU only) and never writes back. Created and torn
@@ -62,6 +87,7 @@ export class PatchMirror extends RefCounted {
     Resolution,
     readonly [number, number, number]
   >();
+  private readonly syncState = new Map<string, ChunkSyncState>();
 
   constructor(
     private readonly session: EditSession,
@@ -84,16 +110,134 @@ export class PatchMirror extends RefCounted {
         payload.coord.resolution,
         payload.coord.chunkId,
       );
-      void this.syncChunk(payload.coord, scanBox);
+      void this.driveChunk(payload.coord, scanBox);
     });
     this.registerDisposer(() => unsubscribe());
+    this.registerDisposer(() => {
+      for (const state of this.syncState.values()) {
+        if (state.retryTimer !== undefined) clearTimeout(state.retryTimer);
+      }
+      this.syncState.clear();
+    });
   }
 
-  private async syncChunk(
+  /**
+   * Serialize and repair the sync passes for one chunk.
+   *
+   * A bounded (`scanBox`) fuse only mirrors the voxels of the commit that
+   * carried the hint, so it can only ever be applied on top of an up-to-date
+   * chunk. Two things break that premise, and both used to strand the chunk's
+   * earlier paint until the session was reloaded:
+   *
+   *  - a pass that FAILS (baseline/overlay read rejects, missing chunkDataSize)
+   *    never fuses its box, and the hint was already consumed, so the voxels it
+   *    covered are lost to the mirror;
+   *  - a commit that lands WHILE a pass is awaiting its reads races the fuse.
+   *
+   * Either case sets `needsResync`, which forces the next pass to scan the
+   * whole chunk — the only scan that can rediscover voxels no bounded pass
+   * covered. A failing chunk also retries on a bounded backoff so recovery does
+   * not depend on the user happening to paint that chunk again.
+   */
+  private async driveChunk(
     coord: OverlayCoord,
     scanBox: ChunkVoxelBox | undefined,
   ): Promise<void> {
-    const chunkKey = `${coord.layerId}|${coord.resolution}|${coord.chunkId}`;
+    const chunkKey = keyOfCoord(coord);
+    const state = this.getSyncState(chunkKey);
+    if (state.inFlight) {
+      // A pass is mid-await; its fuse may not observe this commit. Let the
+      // in-flight pass loop again over the whole chunk instead of racing it.
+      state.needsResync = true;
+      return;
+    }
+    if (state.retryTimer !== undefined) {
+      clearTimeout(state.retryTimer);
+      state.retryTimer = undefined;
+    }
+    state.inFlight = true;
+    try {
+      // A chunk that is behind must be scanned in full: a bounded box cannot
+      // recover voxels an earlier pass dropped.
+      let box = state.needsResync ? undefined : scanBox;
+      for (;;) {
+        state.needsResync = false;
+        const ok = await this.syncChunk(coord, box);
+        if (!ok) {
+          state.needsResync = true;
+          this.scheduleRetry(coord, chunkKey, state);
+          return;
+        }
+        state.failedAttempts = 0;
+        // Nothing landed while we were awaiting — the mirror is current.
+        if (!state.needsResync) return;
+        if (this.wasDisposed) return;
+        box = undefined;
+      }
+    } finally {
+      state.inFlight = false;
+      // Keep the map proportional to the chunks that are behind or retrying,
+      // not to every chunk the session has ever painted. A later commit just
+      // recreates the entry.
+      if (
+        !state.needsResync &&
+        state.failedAttempts === 0 &&
+        state.retryTimer === undefined
+      ) {
+        this.syncState.delete(chunkKey);
+      }
+    }
+  }
+
+  private getSyncState(chunkKey: string): ChunkSyncState {
+    let state = this.syncState.get(chunkKey);
+    if (state === undefined) {
+      state = {
+        inFlight: false,
+        needsResync: false,
+        failedAttempts: 0,
+        retryTimer: undefined,
+      };
+      this.syncState.set(chunkKey, state);
+    }
+    return state;
+  }
+
+  private scheduleRetry(
+    coord: OverlayCoord,
+    chunkKey: string,
+    state: ChunkSyncState,
+  ): void {
+    if (this.wasDisposed) return;
+    if (state.failedAttempts >= RESYNC_BACKOFF_MS.length) {
+      // Out of retries. `needsResync` stays set, so any later commit to this
+      // chunk still triggers a full rescan and repairs it.
+      this.logger.error(
+        "overlay",
+        `PatchMirror gave up resyncing chunk ${chunkKey} after ` +
+          `${state.failedAttempts} attempts; its overlay is stale until the ` +
+          `next write to it or a session reload`,
+      );
+      return;
+    }
+    const delay = RESYNC_BACKOFF_MS[state.failedAttempts];
+    state.failedAttempts++;
+    state.retryTimer = setTimeout(() => {
+      state.retryTimer = undefined;
+      if (this.wasDisposed) return;
+      void this.driveChunk(coord, undefined);
+    }, delay);
+  }
+
+  /**
+   * Run one fuse pass. Returns `false` when the pass did not complete, so the
+   * caller can force a full rescan rather than leaving the chunk behind.
+   */
+  private async syncChunk(
+    coord: OverlayCoord,
+    scanBox: ChunkVoxelBox | undefined,
+  ): Promise<boolean> {
+    const chunkKey = keyOfCoord(coord);
     try {
       const chunkDataSize = this.resolveChunkDataSize(coord.resolution);
       if (chunkDataSize === undefined) {
@@ -102,7 +246,7 @@ export class PatchMirror extends RefCounted {
           `PatchMirror sync failed for chunk ${chunkKey}: no chunkDataSize ` +
             `for resolution ${coord.resolution} on layer ${coord.layerId}`,
         );
-        return;
+        return false;
       }
       const prof = paintProfiler.enabled;
       let t = prof ? performance.now() : 0;
@@ -113,7 +257,7 @@ export class PatchMirror extends RefCounted {
       if (prof) {
         paintProfiler.record("5.mirror.read(io)", performance.now() - t);
       }
-      if (this.wasDisposed) return;
+      if (this.wasDisposed) return true;
       const { x, y, z } = ChunkId.toCoord(coord.chunkId);
       const chunkGridPosition = new Float32Array([x, y, z]);
       const chunk = this.store.source.getOrCreateChunk(
@@ -136,12 +280,14 @@ export class PatchMirror extends RefCounted {
         chunk.mergePendingUpload(box);
         this.store.noteChunkMutated(chunkGridPosition);
       }
+      return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(
         "overlay",
         `PatchMirror sync failed for chunk ${chunkKey}: ${message}`,
       );
+      return false;
     }
   }
 
