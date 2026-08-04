@@ -30,6 +30,7 @@ import type {
 import {
   getGrapheneFragmentKey,
   GRAPHENE_MESH_NEW_SEGMENT_RPC_ID,
+  CALCADA_MESH_REFRESH_SEGMENT_RPC_ID,
   CALCADA_BULK_LINK_RPC_ID,
   ChunkedGraphSourceParameters,
   VolumeChunkSourceParameters as CalcadaVolumeChunkSourceParameters,
@@ -59,6 +60,7 @@ import type {
 } from "#src/render_layer_backend.js";
 import { RenderLayerBackend } from "#src/render_layer_backend.js";
 import { withSegmentationLayerBackendState } from "#src/segmentation_display_state/backend.js";
+import { getObjectKey } from "#src/segmentation_display_state/base.js";
 import type { SharedWatchableValue } from "#src/shared_watchable_value.js";
 import type { SliceViewChunkSourceBackend } from "#src/sliceview/backend.js";
 import { deserializeTransformedSources } from "#src/sliceview/backend.js";
@@ -390,6 +392,21 @@ export class GrapheneMeshSource extends WithParameters(
     setTimeout(() => {
       newSegments.delete(segment);
     }, TEN_MINUTES);
+  }
+
+  // Force a re-download of a root whose manifest is already cached. A keep-whole
+  // piece split keeps the root id but changes its leaves, so addNewSegment alone
+  // (which only re-fetches manifests the mesh layer requests fresh) never
+  // refreshes it. Requeue the cached manifest chunk and mark it new so the
+  // backoff loop keeps re-fetching until the async per-piece mesh lands.
+  refreshSegment(segment: bigint) {
+    this.addNewSegment(segment);
+    const chunk = this.chunks.get(getObjectKey(segment)) as
+      | ManifestChunk
+      | undefined;
+    if (chunk !== undefined) {
+      this.chunkManager.queueManager.updateChunkState(chunk, ChunkState.QUEUED);
+    }
   }
 
   async download(chunk: ManifestChunk, signal: AbortSignal) {
@@ -888,4 +905,9 @@ registerRPC(CHUNKED_GRAPH_RENDER_LAYER_UPDATE_SOURCES_RPC_ID, function (x) {
 registerRPC(GRAPHENE_MESH_NEW_SEGMENT_RPC_ID, function (x) {
   const obj = <GrapheneMeshSource>this.get(x.rpcId);
   obj.addNewSegment(x.segment);
+});
+
+registerRPC(CALCADA_MESH_REFRESH_SEGMENT_RPC_ID, function (x) {
+  const obj = <GrapheneMeshSource>this.get(x.rpcId);
+  obj.refreshSegment(x.segment);
 });

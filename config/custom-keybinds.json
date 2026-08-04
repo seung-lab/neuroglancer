@@ -9,7 +9,7 @@
   "keyc": {
     "layer": "segmentation",
     "tool": {
-      "calcada": "calcadaMulticutSegments",
+      "calcada": "calcadaPieceSplit",
       "graphene": "grapheneMulticutSegments"
     }
   },
