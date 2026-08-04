@@ -92,7 +92,6 @@ import type {
   MouseSelectionState,
   VisibleLayerInfo,
 } from "#src/layer/index.js";
-import { makeLayer } from "#src/layer/index.js";
 import type { LoadedDataSubsource } from "#src/layer/layer_data_source.js";
 import { LoadedLayerDataSource } from "#src/layer/layer_data_source.js";
 import { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
@@ -264,7 +263,9 @@ const DEBUG_PIECE_PALETTE: bigint[] = (
     [1, 0.5, 0.5],
     [0.9, 0.75, 0.1],
   ] as [number, number, number][]
-).map((rgb) => BigInt(packColor(vec4FromVec3(vec3.fromValues(...rgb), 0.6))));
+).map((rgbColor) =>
+  BigInt(packColor(vec4FromVec3(vec3.fromValues(...rgbColor), 0.6))),
+);
 const MULTICUT_OFF_COLOR = vec4.fromValues(0, 0, 0, 0.5);
 const WHITE_COLOR = vec3.fromValues(1, 1, 1);
 
@@ -1513,18 +1514,6 @@ interface PointEntry {
   origin: "2d" | "3d";
 }
 
-// PreviewResult is the parsed response from POST /piece/split_preview.
-interface PreviewResult {
-  bbox: [number, number, number, number, number, number];
-  // Inline gzipped+base64 mask; empty when the server omitted it due to size.
-  maskBase64: string;
-  maskUrl: string;
-  expiresAt: number; // unix-ms
-  maskVoxels: number;
-  sourceVoxels: number;
-  sinkVoxels: number;
-}
-
 const PIECE_SPLIT_FOCUS_KEY = "focusRootId";
 const PIECE_SPLIT_BLUE_KEY = "blue";
 const PIECE_SPLIT_RED_KEY = "red";
@@ -1538,7 +1527,6 @@ class PieceSplitState extends RefCounted implements Trackable {
   blueGroup = new WatchableValue<boolean>(true);
   bluePoints = new WatchableValue<PointEntry[]>([]);
   redPoints = new WatchableValue<PointEntry[]>([]);
-  preview = new WatchableValue<PreviewResult | undefined>(undefined);
 
   constructor() {
     super();
@@ -1547,7 +1535,6 @@ class PieceSplitState extends RefCounted implements Trackable {
     this.registerDisposer(this.blueGroup.changed.add(reemit));
     this.registerDisposer(this.bluePoints.changed.add(reemit));
     this.registerDisposer(this.redPoints.changed.add(reemit));
-    this.registerDisposer(this.preview.changed.add(reemit));
   }
 
   reset() {
@@ -1555,7 +1542,6 @@ class PieceSplitState extends RefCounted implements Trackable {
     this.blueGroup.value = true;
     this.bluePoints.value = [];
     this.redPoints.value = [];
-    this.preview.value = undefined;
   }
 
   swapGroup() {
@@ -1569,8 +1555,6 @@ class PieceSplitState extends RefCounted implements Trackable {
     } else {
       this.redPoints.value = [...this.redPoints.value, p];
     }
-    // Any point change invalidates a previously computed mask.
-    this.preview.value = undefined;
   }
 
   removePoint(group: "blue" | "red", index: number) {
@@ -1579,7 +1563,6 @@ class PieceSplitState extends RefCounted implements Trackable {
     const next = [...src.value];
     next.splice(index, 1);
     src.value = next;
-    this.preview.value = undefined;
     // Removing the last point releases the focus piece so the user can start
     // over on a different segment without pressing Clear.
     if (
@@ -1749,6 +1732,9 @@ class GraphConnection extends SegmentationGraphSourceConnection {
         segmentsState.selectedSegments.clear();
         segmentsState.visibleSegments.clear();
         segmentsState.segmentEquivalences.clear();
+        // Undo entries are branch-scoped operation ids; drop them so a Ctrl+Z
+        // after switching branches can't revert an op on the wrong branch.
+        this.undoStack.length = 0;
         this.refreshChunkSources();
       }),
     );
@@ -2299,13 +2285,18 @@ void main() {
   }
 
   // Undo stack of recent operations (calcada-only). Ctrl+Z pops the newest and
-  // reverts it via the backend. v1 records unified-split applies; merge/multicut
-  // undo is a follow-up (their client methods must first return operation_id).
+  // reverts it via the backend. Records unified-split applies, merges, and
+  // multicuts — each of those pushes its operation_id here.
   private undoStack: { operationId: number; branchId: number }[] = [];
+
+  private static readonly MAX_UNDO_ENTRIES = 50;
 
   pushUndo(operationId: number, branchId: number) {
     if (operationId > 0) {
       this.undoStack.push({ operationId, branchId });
+      if (this.undoStack.length > GraphConnection.MAX_UNDO_ENTRIES) {
+        this.undoStack.shift();
+      }
     }
   }
 
@@ -2414,9 +2405,10 @@ void main() {
 
   setDebugEdges(edgeLines: Line[], siblingLines: Line[]) {
     this.clearDebugEdges();
-    for (const l of edgeLines) this.debugEdgeAnnotationState.source.add(l);
-    for (const l of siblingLines)
-      this.debugSiblingAnnotationState.source.add(l);
+    for (const line of edgeLines)
+      this.debugEdgeAnnotationState.source.add(line);
+    for (const line of siblingLines)
+      this.debugSiblingAnnotationState.source.add(line);
   }
 
   clearDebugEdges() {
@@ -2993,116 +2985,6 @@ class GrapheneGraphServerInterface {
     const components = rawComponents.map((c) => c.map(parseUint64));
     const operationId = Number(jsonResp.operation_id ?? 0);
     return { roots, components, operationId };
-  }
-
-  // splitSegmentsByPieces runs the same graph multicut as splitSegments, but the
-  // source/sink pieces are named by id (from unifiedSplit) instead of resolved
-  // from click coordinates — so it never re-reads voxels a just-committed piece
-  // split may not have flushed yet.
-  async splitSegmentsByPieces(
-    sourcePieces: bigint[],
-    sinkPieces: bigint[],
-    branchId = 0,
-    excludePieces: bigint[] = [],
-  ): Promise<{ roots: bigint[]; components: bigint[][]; operationId: number }> {
-    const { fetchOkImpl, baseUrl } = this.httpSource;
-    const promise = fetchOkImpl(
-      appendCoordParams(`${baseUrl}/split?int64_as_str=1`, { branchId }),
-      {
-        method: "POST",
-        priority: "high",
-        body: JSON.stringify({
-          source_pieces: sourcePieces.map((x) => x.toString()),
-          sink_pieces: sinkPieces.map((x) => x.toString()),
-          exclude_pieces: excludePieces.map((x) => x.toString()),
-        }),
-      },
-    );
-    const response = await withErrorMessageHTTP(promise, {
-      initialMessage: `Splitting ${sourcePieces.length} sources from ${sinkPieces.length} sinks`,
-      errorPrefix: "Split failed: ",
-    });
-    const jsonResp = await response.json();
-    const roots: bigint[] = (jsonResp.new_root_ids ?? []).map((x: string) =>
-      parseUint64(x),
-    );
-    const rawComponents: string[][] = jsonResp.components || [];
-    const components = rawComponents.map((c) => c.map(parseUint64));
-    const operationId = Number(jsonResp.operation_id ?? 0);
-    return { roots, components, operationId };
-  }
-
-  async previewPieceSplit(
-    pieceId: bigint,
-    blue: VoxelPoint[],
-    red: VoxelPoint[],
-    branchId = 0,
-  ): Promise<PreviewResult> {
-    const { fetchOkImpl, baseUrl } = this.httpSource;
-    let response: Response;
-    try {
-      response = await fetchOkImpl(
-        appendCoordParams(`${baseUrl}/piece/split_preview`, { branchId }),
-        {
-          method: "POST",
-          body: JSON.stringify({
-            // piece_id is a bigint > 2^53 (layer-byte 0x01 stamped) — sending as
-            // a JS Number rounds to the nearest float64 and corrupts the value.
-            // Backend uses a tagged uint64 that accepts both string and number.
-            piece_id: pieceId.toString(),
-            blue,
-            red,
-          }),
-        },
-      );
-    } catch (e) {
-      throw await wrapCalcadaError(e);
-    }
-    const jsonResp = await response.json();
-    const bboxArr = parseFixedLengthArray(
-      new Array(6).fill(0) as [number, number, number, number, number, number],
-      jsonResp.bbox,
-      verifyInt,
-    );
-    return {
-      bbox: bboxArr,
-      maskBase64: typeof jsonResp.mask === "string" ? jsonResp.mask : "",
-      maskUrl: verifyString(jsonResp.mask_url),
-      expiresAt: jsonResp.expires_at
-        ? new Date(jsonResp.expires_at).getTime()
-        : Date.now() + 60 * 60 * 1000,
-      maskVoxels: Number(jsonResp.mask_voxels ?? 0),
-      sourceVoxels: Number(jsonResp.source_voxels ?? 0),
-      sinkVoxels: Number(jsonResp.sink_voxels ?? 0),
-    };
-  }
-
-  async applyPieceSplit(
-    pieceId: bigint,
-    maskUrl: string,
-    branchId = 0,
-  ): Promise<bigint[]> {
-    const { fetchOkImpl, baseUrl } = this.httpSource;
-    let response: Response;
-    try {
-      response = await fetchOkImpl(
-        appendCoordParams(`${baseUrl}/piece/split?int64_as_str=1`, {
-          branchId,
-        }),
-        {
-          method: "POST",
-          body: JSON.stringify({
-            piece_id: pieceId.toString(),
-            new_segmentation: maskUrl,
-          }),
-        },
-      );
-    } catch (e) {
-      throw await wrapCalcadaError(e);
-    }
-    const jsonResp = await response.json();
-    const rootIds: string[] = jsonResp.new_root_ids ?? [];
-    return rootIds.map((x) => parseUint64(x));
   }
 
   // unifiedSplit runs the whole split in one atomic backend operation: it cuts
@@ -4929,6 +4811,13 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
       ? BLUE_COLOR_HIGHTLIGHT
       : RED_COLOR_HIGHLIGHT;
 
+    // Pending post-apply mesh re-fetch timers, cleared when the tool deactivates
+    // so back-to-back splits don't leak timers that fire after the tool is gone.
+    const meshRefetchTimers: ReturnType<typeof setTimeout>[] = [];
+    activation.registerDisposer(() => {
+      for (const timer of meshRefetchTimers) clearTimeout(timer);
+    });
+
     // Debug overlay state (toggled by the Debug button): the debugged root and a
     // per-piece colour map fetched from the backend. When on, every piece of the
     // root is tinted a distinct colour so a kept-whole segment's internal pieces
@@ -5055,105 +4944,9 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
     pointsContainer.className = "piece-split-points";
     body.appendChild(pointsContainer);
 
-    const previewSummary = document.createElement("div");
-    previewSummary.className = "piece-split-preview-summary";
-    body.appendChild(previewSummary);
-
     const actions = document.createElement("div");
     actions.className = "piece-split-actions";
     body.appendChild(actions);
-
-    // ----- Preview overlay layer management -----
-    const PREVIEW_LAYER_NAME = `__piece_split_preview`;
-    const PREVIEW_SHADER = `
-void main() {
-  uint v = getDataValue().value;
-  if (v == 0u) {
-    emitTransparent();
-  } else if (v == 1u) {
-    // Bright blue for the source-side voxels.
-    emitRGB(vec3(0.1, 0.4, 1.0));
-  } else {
-    // Bright red for the sink-side voxels.
-    emitRGB(vec3(1.0, 0.1, 0.1));
-  }
-}
-`;
-    const findPreviewLayer = () => {
-      const layers = layer.manager?.rootLayers?.managedLayers ?? [];
-      for (const m of layers) {
-        if (m.name === PREVIEW_LAYER_NAME) return m;
-      }
-      return undefined;
-    };
-    const removePreviewLayer = () => {
-      const ml = findPreviewLayer();
-      if (ml) {
-        layer.manager?.rootLayers?.removeManagedLayer(ml);
-      }
-    };
-    const addPreviewLayer = (preview: PreviewResult) => {
-      removePreviewLayer();
-      const manager = layer.manager;
-      if (!manager) return;
-      // The mask zarr is written as (z, y, x) starting at voxel (0,0,0) in
-      // its own local space — but it should overlay the focus piece at the
-      // bbox origin in world voxel-space. Without an explicit transform NG
-      // renders the zarr at world (0,0,0) using abstract d0/d1/d2 axes,
-      // which is invisible to the user (it's "off-screen" relative to where
-      // they're zoomed in). Pin it into the image's world coord system
-      // (x@16nm, y@16nm, z@45nm) and translate by the bbox min.
-      const graphResolution = graphConnection.graph.info.scales[0]
-        .resolution as unknown as [number, number, number];
-      const [minX, minY, minZ] = preview.bbox;
-      const spec = {
-        type: "image",
-        source: {
-          url: `${preview.maskUrl}/|zarr2:`,
-          transform: {
-            outputDimensions: {
-              x: [graphResolution[0] * 1e-9, "m"],
-              y: [graphResolution[1] * 1e-9, "m"],
-              z: [graphResolution[2] * 1e-9, "m"],
-            },
-            inputDimensions: {
-              d0: [graphResolution[2] * 1e-9, "m"],
-              d1: [graphResolution[1] * 1e-9, "m"],
-              d2: [graphResolution[0] * 1e-9, "m"],
-            },
-            matrix: [
-              [0, 0, 1, minX],
-              [0, 1, 0, minY],
-              [1, 0, 0, minZ],
-            ],
-          },
-        },
-        shader: PREVIEW_SHADER,
-        opacity: 0.85,
-      };
-      try {
-        const ml = makeLayer(manager, PREVIEW_LAYER_NAME, spec);
-        manager.add(ml);
-      } catch (e) {
-        StatusMessage.showTemporaryMessage(
-          `Failed to add preview overlay: ${e instanceof Error ? e.message : String(e)}`,
-          6000,
-        );
-      }
-    };
-    const syncPreviewLayer = () => {
-      const preview = pieceSplitState.preview.value;
-      if (preview) {
-        addPreviewLayer(preview);
-      } else {
-        removePreviewLayer();
-      }
-    };
-    activation.registerDisposer(
-      pieceSplitState.preview.changed.add(syncPreviewLayer),
-    );
-    activation.registerDisposer(removePreviewLayer);
-    syncPreviewLayer();
 
     const swapButton = makeIcon({
       text: "Swap",
@@ -5216,8 +5009,8 @@ void main() {
         busy || !graphConnection.canUndo(),
       );
     };
-    const setBusy = (b: boolean) => {
-      busy = b;
+    const setBusy = (nextBusy: boolean) => {
+      busy = nextBusy;
       spinner.style.display = busy ? "" : "none";
       for (const button of [
         swapButton,
@@ -5290,7 +5083,6 @@ void main() {
       );
 
       // Apply is enabled once both colours have at least one point.
-      removeChildren(previewSummary);
       setApplyEnabled(
         pieceSplitState.bluePoints.value.length > 0 &&
           pieceSplitState.redPoints.value.length > 0,
@@ -5319,13 +5111,13 @@ void main() {
     // Pick the root to debug: the focus piece if set, else the single visible
     // segment.
     const debugTargetRoot = (): bigint | undefined => {
-      const f = pieceSplitState.focusRootId.value;
-      if (f !== undefined) return f;
+      const focusRoot = pieceSplitState.focusRootId.value;
+      if (focusRoot !== undefined) return focusRoot;
       let only: bigint | undefined;
-      for (const s of segmentationGroupState.visibleSegments) {
-        if (s === 0n) continue;
+      for (const segment of segmentationGroupState.visibleSegments) {
+        if (segment === 0n) continue;
         if (only !== undefined) return undefined; // ambiguous
-        only = s;
+        only = segment;
       }
       return only;
     };
@@ -5366,27 +5158,27 @@ void main() {
         debugRootId = root;
         debugPieceColors = new Map<bigint, bigint>();
         const centerById = new Map<bigint, [number, number, number]>();
-        pieces.forEach((p, i) => {
+        pieces.forEach((piece, i) => {
           debugPieceColors!.set(
-            p.id,
+            piece.id,
             DEBUG_PIECE_PALETTE[i % DEBUG_PIECE_PALETTE.length],
           );
-          centerById.set(p.id, p.center);
+          centerById.set(piece.id, piece.center);
         });
         const edgeLines: Line[] = [];
         const siblingLines: Line[] = [];
-        for (const e of edges) {
-          const a = centerById.get(e.a);
-          const b = centerById.get(e.b);
-          if (!a || !b) continue;
+        for (const edge of edges) {
+          const centerA = centerById.get(edge.a);
+          const centerB = centerById.get(edge.b);
+          if (!centerA || !centerB) continue;
           const line: Line = {
-            pointA: vec3.fromValues(a[0], a[1], a[2]),
-            pointB: vec3.fromValues(b[0], b[1], b[2]),
+            pointA: vec3.fromValues(centerA[0], centerA[1], centerA[2]),
+            pointB: vec3.fromValues(centerB[0], centerB[1], centerB[2]),
             id: "",
             type: AnnotationType.LINE,
             properties: [],
           };
-          if (e.affinity === 0 && e.status === "enabled") {
+          if (edge.affinity === 0 && edge.status === "enabled") {
             siblingLines.push(line);
           } else {
             edgeLines.push(line);
@@ -5463,6 +5255,12 @@ void main() {
             points,
             branchId,
           );
+        const newRoots = roots.filter((root) => root !== 0n);
+        if (newRoots.length === 0) {
+          // The backend produced no separation; leave the selection untouched.
+          StatusMessage.showTemporaryMessage("No split found.", 3000);
+          return;
+        }
         graphConnection.pushUndo(operationId, branchId);
 
         // Swap the old segment for the new roots. The split rewrote voxels in the
@@ -5473,10 +5271,9 @@ void main() {
         const segmentsState = layer.displayState.segmentationGroupState.value;
         segmentsState.selectedSegments.delete(focus);
         segmentsState.visibleSegments.delete(focus);
-        const newRoots = roots.filter((r) => r !== 0n);
-        for (const nr of newRoots) {
-          segmentsState.selectedSegments.add(nr);
-          segmentsState.visibleSegments.add(nr);
+        for (const newRoot of newRoots) {
+          segmentsState.selectedSegments.add(newRoot);
+          segmentsState.visibleSegments.add(newRoot);
         }
         graphConnection.meshAddNewSegments(newRoots);
         graphConnection.refreshChunkSources();
@@ -5484,10 +5281,13 @@ void main() {
         // the sidecar generates it async. The first manifest fetch resolves that
         // fragment to a miss; re-fetch the new roots' manifests a few times so
         // their 3D meshes appear once generation lands, without a manual reload.
+        // Track the timers so a tool deactivation cancels any pending re-fetches.
         for (const delayMs of [1500, 4000, 9000, 20000]) {
-          setTimeout(
-            () => graphConnection.meshRefreshSegments(newRoots),
-            delayMs,
+          meshRefetchTimers.push(
+            setTimeout(
+              () => graphConnection.meshRefreshSegments(newRoots),
+              delayMs,
+            ),
           );
         }
         StatusMessage.showTemporaryMessage(
