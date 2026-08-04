@@ -282,12 +282,19 @@ export class CalcadaVolumeChunkSource extends WithParameters(
     // Voxels: calcada _rp 302-redirects to the public bucket (base / per-branch
     // overlay / time-travel generation); fetchOkImpl follows the redirect to
     // GCS. The mapping comes from a parallel ?lut_only=true trailer.
-    const { timestampMs, branchId } = this.parameters;
+    const { timestampMs, branchId, generation } = this.parameters;
     const httpStore = kvStore.store as any;
     const q: string[] = [];
     if (timestampMs && timestampMs > 0)
       q.push(`timestamp=${timestampMs / 1000}`);
     if (branchId && branchId > 0) q.push(`branch_id=${branchId}`);
+    // Cache-bust: refreshChunkSources() bumps generation after every edit/undo.
+    // The redirect target is a specific (immutable, browser-cached) GCS
+    // generation, so without varying the request URL the browser reuses the
+    // stale redirect and 404s once the branch overlay is rewritten. calcada
+    // ignores this param and does not forward it to the bucket, so caching still
+    // works within a generation and only busts across edits.
+    if (generation > 0) q.push(`_g=${generation}`);
     const voxelUrl = `${httpStore.baseUrl}${kvStore.path}${chunkPath}${q.length ? `?${q.join("&")}` : ""}`;
     const lutQuery = q.length ? `&${q.join("&")}` : "";
     let voxelResp: Response;
