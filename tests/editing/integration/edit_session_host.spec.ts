@@ -119,6 +119,14 @@ describe("EditSessionHost (no active session)", () => {
   it("attachedPatchTextureCaches is empty when no session is active", () => {
     expect(host.attachedPatchTextureCaches.size).toBe(0);
   });
+
+  it("ensureMaskReference is a no-op (no metadata fetch) with no active session", async () => {
+    const resolve = vi.spyOn(host.layerMetadataSource, "resolve");
+    await expect(
+      host.ensureMaskReference(layerId("L1"), RES),
+    ).resolves.toBeUndefined();
+    expect(resolve).not.toHaveBeenCalled();
+  });
 });
 
 describe("TrackableEditSessionIntent", () => {

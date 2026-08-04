@@ -22,19 +22,17 @@ const A = {
   brush: "edit-session-tool-brush",
   erase: "edit-session-tool-erase",
   fill: "edit-session-tool-fill",
+  zextrap: "edit-session-tool-zextrap",
   cursor: "edit-session-cursor-mode",
   undo: "edit-session-undo",
   redo: "edit-session-redo",
   sizeDecr: "edit-session-size-decr",
   sizeIncr: "edit-session-size-incr",
-  valueDecr: "edit-session-value-decr",
-  valueIncr: "edit-session-value-incr",
   paramPrev: "edit-session-param-prev",
   paramNext: "edit-session-param-next",
   paramIncr: "edit-session-param-incr",
   paramDecr: "edit-session-param-decr",
   exit: "edit-session-exit-tool",
-  noop: "edit-session-noop-letter",
 } as const;
 
 describe("mergeEditKeybinds", () => {
@@ -49,7 +47,11 @@ describe("mergeEditKeybinds", () => {
     expect(m["meta+keyz"]).toBe(A.undo);
     expect(m["minus"]).toBe(A.sizeDecr);
     expect(m["numpadsubtract"]).toBe(A.sizeDecr);
-    expect(m["bracketleft"]).toBe(A.valueDecr);
+    // `[` / `]` are intentionally NOT bound by the session layer, so they fall
+    // through to the global `select-previous` / `select-next` annotation
+    // navigation while a session is active (TM-439).
+    expect(m["bracketleft"]).toBeUndefined();
+    expect(m["bracketright"]).toBeUndefined();
     // Ctrl+Arrow parameter scheme (TM-337), per-platform default keys.
     const arrows = paramArrowDefaults(isMacPlatform());
     expect(m[arrows.paramPrev[0]]).toBe(A.paramPrev);
@@ -61,8 +63,10 @@ describe("mergeEditKeybinds", () => {
   it("always includes the fixed (non-configurable) bindings", () => {
     const m = mergeEditKeybinds({ brush: "control+keyq" });
     expect(m["escape"]).toBe(A.exit);
-    expect(m["keyl"]).toBe(A.noop);
-    expect(m["keyh"]).toBe(A.noop);
+    // `keyl` / `keyh` are no longer shadowed (the L/H threshold chord was
+    // removed in TM-439), so global recolor/help stay live during a session.
+    expect(m["keyl"]).toBeUndefined();
+    expect(m["keyh"]).toBeUndefined();
   });
 
   it("a single-key override replaces the default for that action", () => {
@@ -141,13 +145,12 @@ describe("effectiveEditKeybinds", () => {
       brush: A.brush,
       erase: A.erase,
       fill: A.fill,
+      zextrap: A.zextrap,
       cursor: A.cursor,
       undo: A.undo,
       redo: A.redo,
       sizeDecrease: A.sizeDecr,
       sizeIncrease: A.sizeIncr,
-      valueDecrease: A.valueDecr,
-      valueIncrease: A.valueIncr,
       paramPrev: A.paramPrev,
       paramNext: A.paramNext,
       paramIncrease: A.paramIncr,
