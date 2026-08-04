@@ -53,6 +53,7 @@ import {
   getGrapheneFragmentKey,
   getHttpSource,
   GRAPHENE_MESH_NEW_SEGMENT_RPC_ID,
+  CALCADA_MESH_REFRESH_SEGMENT_RPC_ID,
   isBaseSegmentId,
   makeChunkedGraphChunkSpecification,
   MeshSourceParameters,
@@ -97,6 +98,7 @@ import { LoadedLayerDataSource } from "#src/layer/layer_data_source.js";
 import { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import { MeshSource } from "#src/mesh/frontend.js";
 import type { DisplayDimensionRenderInfo } from "#src/navigation_state.js";
+import { PerspectiveViewRenderLayer } from "#src/perspective_view/render_layer.js";
 import type {
   ChunkTransformParameters,
   RenderLayerTransformOrError,
@@ -232,6 +234,7 @@ function vec4FromVec3(vec: vec3, alpha = 0) {
 
 const RED_COLOR = vec3.fromValues(1, 0, 0);
 const BLUE_COLOR = vec3.fromValues(0, 0, 1);
+const GREEN_COLOR = vec3.fromValues(0, 1, 0);
 const RED_COLOR_SEGMENT = vec4FromVec3(RED_COLOR, 0.5);
 const BLUE_COLOR_SEGMENT = vec4FromVec3(BLUE_COLOR, 0.5);
 const RED_COLOR_HIGHLIGHT = vec4FromVec3(RED_COLOR, 0.25);
@@ -240,6 +243,28 @@ const TRANSPARENT_COLOR = vec4.fromValues(0.5, 0.5, 0.5, 0.01);
 const RED_COLOR_SEGMENT_PACKED = BigInt(packColor(RED_COLOR_SEGMENT));
 const BLUE_COLOR_SEGMENT_PACKED = BigInt(packColor(BLUE_COLOR_SEGMENT));
 const TRANSPARENT_COLOR_PACKED = BigInt(packColor(TRANSPARENT_COLOR));
+// A piece holding BOTH colours is the split target — tint it green so it stands
+// out as "this piece will be cut" instead of looking deselected.
+const SPLIT_TARGET_COLOR = vec4FromVec3(vec3.fromValues(0, 1, 0), 0.6);
+const SPLIT_TARGET_COLOR_PACKED = BigInt(packColor(SPLIT_TARGET_COLOR));
+// Distinct per-piece colours for the debug overlay (green is reserved for
+// sibling edge lines, so it is intentionally excluded here).
+const DEBUG_PIECE_PALETTE: bigint[] = (
+  [
+    [1, 0.5, 0],
+    [0, 0.8, 0.8],
+    [1, 0, 1],
+    [1, 1, 0],
+    [0.6, 0.2, 0.9],
+    [0, 0.6, 0.5],
+    [1, 0.4, 0.7],
+    [0.6, 0.4, 0.2],
+    [0.7, 0.9, 0.2],
+    [0.3, 0.6, 1],
+    [1, 0.5, 0.5],
+    [0.9, 0.75, 0.1],
+  ] as [number, number, number][]
+).map((rgb) => BigInt(packColor(vec4FromVec3(vec3.fromValues(...rgb), 0.6))));
 const MULTICUT_OFF_COLOR = vec4.fromValues(0, 0, 0, 0.5);
 const WHITE_COLOR = vec3.fromValues(1, 1, 1);
 
@@ -1481,6 +1506,11 @@ type VoxelPoint = [number, number, number];
 interface PointEntry {
   voxel: VoxelPoint;
   layer: [number, number, number];
+  // The piece (super-voxel) the point was placed on, and whether it was placed
+  // in a 2D cross-section (exact voxel) or a 3D mesh view (backend snaps to the
+  // nearest in-piece voxel).
+  pieceId: bigint;
+  origin: "2d" | "3d";
 }
 
 // PreviewResult is the parsed response from POST /piece/split_preview.
@@ -1495,7 +1525,7 @@ interface PreviewResult {
   sinkVoxels: number;
 }
 
-const PIECE_SPLIT_FOCUS_KEY = "focusPieceId";
+const PIECE_SPLIT_FOCUS_KEY = "focusRootId";
 const PIECE_SPLIT_BLUE_KEY = "blue";
 const PIECE_SPLIT_RED_KEY = "red";
 
@@ -1504,7 +1534,7 @@ const PIECE_SPLIT_RED_KEY = "red";
 class PieceSplitState extends RefCounted implements Trackable {
   changed = new NullarySignal();
 
-  focusPieceId = new TrackableValue<bigint | undefined>(undefined, (x) => x);
+  focusRootId = new TrackableValue<bigint | undefined>(undefined, (x) => x);
   blueGroup = new WatchableValue<boolean>(true);
   bluePoints = new WatchableValue<PointEntry[]>([]);
   redPoints = new WatchableValue<PointEntry[]>([]);
@@ -1513,7 +1543,7 @@ class PieceSplitState extends RefCounted implements Trackable {
   constructor() {
     super();
     const reemit = () => this.changed.dispatch();
-    this.registerDisposer(this.focusPieceId.changed.add(reemit));
+    this.registerDisposer(this.focusRootId.changed.add(reemit));
     this.registerDisposer(this.blueGroup.changed.add(reemit));
     this.registerDisposer(this.bluePoints.changed.add(reemit));
     this.registerDisposer(this.redPoints.changed.add(reemit));
@@ -1521,7 +1551,7 @@ class PieceSplitState extends RefCounted implements Trackable {
   }
 
   reset() {
-    this.focusPieceId.reset();
+    this.focusRootId.reset();
     this.blueGroup.value = true;
     this.bluePoints.value = [];
     this.redPoints.value = [];
@@ -1556,7 +1586,7 @@ class PieceSplitState extends RefCounted implements Trackable {
       this.bluePoints.value.length === 0 &&
       this.redPoints.value.length === 0
     ) {
-      this.focusPieceId.reset();
+      this.focusRootId.reset();
     }
   }
 
@@ -1565,7 +1595,7 @@ class PieceSplitState extends RefCounted implements Trackable {
   // invalid and we should clear it. Points are voxel-space so they survive
   // graph mutations; the focus reference does not.
   replaceSegments(oldValues: Uint64Set, _newValues: Uint64Set) {
-    const focus = this.focusPieceId.value;
+    const focus = this.focusRootId.value;
     if (focus !== undefined && oldValues.has(focus)) {
       this.reset();
     }
@@ -1573,7 +1603,7 @@ class PieceSplitState extends RefCounted implements Trackable {
 
   toJSON() {
     return {
-      [PIECE_SPLIT_FOCUS_KEY]: this.focusPieceId.toJSON()?.toString(),
+      [PIECE_SPLIT_FOCUS_KEY]: this.focusRootId.toJSON()?.toString(),
       [PIECE_SPLIT_BLUE_KEY]: this.bluePoints.value.map(entryToJSON),
       [PIECE_SPLIT_RED_KEY]: this.redPoints.value.map(entryToJSON),
     };
@@ -1581,7 +1611,7 @@ class PieceSplitState extends RefCounted implements Trackable {
 
   restoreState(x: any) {
     verifyOptionalObjectProperty(x, PIECE_SPLIT_FOCUS_KEY, (value) => {
-      this.focusPieceId.restoreState(parseUint64(value));
+      this.focusRootId.restoreState(parseUint64(value));
     });
     verifyOptionalObjectProperty(x, PIECE_SPLIT_BLUE_KEY, (value) => {
       this.bluePoints.value = parseArray(value, parseEntry);
@@ -1596,7 +1626,12 @@ const VOXEL_KEY = "voxel";
 const LAYER_KEY = "layer";
 
 function entryToJSON(e: PointEntry) {
-  return { [VOXEL_KEY]: e.voxel, [LAYER_KEY]: e.layer };
+  return {
+    [VOXEL_KEY]: e.voxel,
+    [LAYER_KEY]: e.layer,
+    piece_id: e.pieceId.toString(),
+    origin: e.origin,
+  };
 }
 
 function parseEntry(value: any): PointEntry {
@@ -1609,7 +1644,12 @@ function parseEntry(value: any): PointEntry {
       value,
       verifyInt,
     );
-    return { voxel: arr, layer: [arr[0], arr[1], arr[2]] };
+    return {
+      voxel: arr,
+      layer: [arr[0], arr[1], arr[2]],
+      pieceId: 0n,
+      origin: "2d",
+    };
   }
   const voxel = verifyObjectProperty(value, VOXEL_KEY, (v) =>
     parseFixedLengthArray([0, 0, 0] as VoxelPoint, v, verifyInt),
@@ -1621,13 +1661,23 @@ function parseEntry(value: any): PointEntry {
       verifyFiniteFloat,
     ),
   );
-  return { voxel, layer };
+  let pieceId = 0n;
+  if (value.piece_id !== undefined) {
+    pieceId = parseUint64(value.piece_id);
+  }
+  const origin: "2d" | "3d" = value.origin === "3d" ? "3d" : "2d";
+  return { voxel, layer, pieceId, origin };
 }
 
 class GraphConnection extends SegmentationGraphSourceConnection {
   public annotationLayerStates: AnnotationLayerState[] = [];
   public mergeAnnotationState: AnnotationLayerState;
   public findPathAnnotationState: AnnotationLayerState;
+  // Piece-split debug overlay: one line per edge among a root's pieces. Enabled
+  // edges render neutral; zero-affinity sibling edges (the connections a piece
+  // split creates to keep the segment whole) render green so they stand out.
+  public debugEdgeAnnotationState!: AnnotationLayerState;
+  public debugSiblingAnnotationState!: AnnotationLayerState;
 
   constructor(
     public graph: GrapheneGraphSource,
@@ -1729,6 +1779,19 @@ class GraphConnection extends SegmentationGraphSourceConnection {
       loadedSubsource,
       "grapheneMerge",
       RED_COLOR,
+    );
+
+    this.debugEdgeAnnotationState = makeColoredAnnotationState(
+      layer,
+      loadedSubsource,
+      "calcadaDebugEdges",
+      WHITE_COLOR,
+    );
+    this.debugSiblingAnnotationState = makeColoredAnnotationState(
+      layer,
+      loadedSubsource,
+      "calcadaDebugSiblings",
+      GREEN_COLOR,
     );
 
     {
@@ -2235,6 +2298,70 @@ void main() {
     // the in-memory equivalences here are what drive the shader.
   }
 
+  // Undo stack of recent operations (calcada-only). Ctrl+Z pops the newest and
+  // reverts it via the backend. v1 records unified-split applies; merge/multicut
+  // undo is a follow-up (their client methods must first return operation_id).
+  private undoStack: { operationId: number; branchId: number }[] = [];
+
+  pushUndo(operationId: number, branchId: number) {
+    if (operationId > 0) {
+      this.undoStack.push({ operationId, branchId });
+    }
+  }
+
+  canUndo(): boolean {
+    return this.undoStack.length > 0;
+  }
+
+  async undo(): Promise<void> {
+    const entry = this.undoStack.pop();
+    if (entry === undefined) {
+      StatusMessage.showTemporaryMessage("Nothing to undo", 2500);
+      return;
+    }
+    let restoredRoots: bigint[];
+    let supersededRoots: bigint[];
+    try {
+      const result = await this.graph.graphServer.revertOperation(
+        entry.operationId,
+        entry.branchId,
+      );
+      restoredRoots = result.restoredRoots;
+      supersededRoots = result.supersededRoots;
+    } catch (e) {
+      // Re-push so the user can retry (e.g. "undo later edits first").
+      this.undoStack.push(entry);
+      StatusMessage.showTemporaryMessage(
+        `Undo failed: ${e instanceof Error ? e.message : String(e)}`,
+        8000,
+      );
+      return;
+    }
+    const segmentsState = this.layer.displayState.segmentationGroupState.value;
+    // Drop the roots this undo retired (the reverted op's outputs), else their
+    // stale meshes keep rendering over the restored segment.
+    for (const root of supersededRoots) {
+      if (root === 0n) continue;
+      segmentsState.selectedSegments.delete(root);
+      segmentsState.visibleSegments.delete(root);
+    }
+    for (const root of restoredRoots) {
+      if (root === 0n) continue;
+      segmentsState.selectedSegments.add(root);
+      segmentsState.visibleSegments.add(root);
+    }
+    const restored = restoredRoots.filter((r) => r !== 0n);
+    // Restored roots keep the same id as before the edit, so force their cached
+    // 3D meshes to re-download (their leaves reverted to the original pieces).
+    this.meshAddNewSegments(restored);
+    this.meshRefreshSegments(restored);
+    this.refreshChunkSources();
+    StatusMessage.showTemporaryMessage(
+      `Undo applied — restored ${restoredRoots.length} root(s)`,
+      5000,
+    );
+  }
+
   meshAddNewSegments(segments: bigint[]) {
     const meshSource = this.getMeshSource();
     if (!meshSource) return;
@@ -2263,6 +2390,40 @@ void main() {
     }
   }
 
+  // Force a re-download of roots whose id did not change but whose leaves did
+  // (keep-whole piece split / its undo). meshAddNewSegments only re-fetches
+  // manifests the mesh layer requests fresh, so a still-cached root would keep
+  // showing its pre-split 3D mesh; this requeues the cached manifest chunk.
+  meshRefreshSegments(segments: bigint[]) {
+    const meshSource = this.getMeshSource();
+    if (!meshSource) return;
+    const refresh = () => {
+      const { rpc, rpcId } = meshSource;
+      if (!rpc || rpcId === undefined) return;
+      for (const segment of segments) {
+        rpc.invoke(CALCADA_MESH_REFRESH_SEGMENT_RPC_ID, { rpcId, segment });
+      }
+    };
+    const idle = window.requestIdleCallback?.bind(window);
+    if (idle) {
+      idle(refresh, { timeout: 500 });
+    } else {
+      setTimeout(refresh, 100);
+    }
+  }
+
+  setDebugEdges(edgeLines: Line[], siblingLines: Line[]) {
+    this.clearDebugEdges();
+    for (const l of edgeLines) this.debugEdgeAnnotationState.source.add(l);
+    for (const l of siblingLines)
+      this.debugSiblingAnnotationState.source.add(l);
+  }
+
+  clearDebugEdges() {
+    (this.debugEdgeAnnotationState.source as AnnotationSource).clear();
+    (this.debugSiblingAnnotationState.source as AnnotationSource).clear();
+  }
+
   async submitMulticut(annotationToNanometers: Float64Array): Promise<boolean> {
     const {
       state: { multicutState },
@@ -2275,16 +2436,17 @@ void main() {
       );
       return false;
     } else {
-      const { roots: splitRoots, components } =
-        await this.graph.graphServer.splitSegments(
-          [...sinks].map((x) =>
-            selectionInNanometers(x, annotationToNanometers),
-          ),
-          [...sources].map((x) =>
-            selectionInNanometers(x, annotationToNanometers),
-          ),
-          this.graph.branchId.value,
-        );
+      const {
+        roots: splitRoots,
+        components,
+        operationId,
+      } = await this.graph.graphServer.splitSegments(
+        [...sinks].map((x) => selectionInNanometers(x, annotationToNanometers)),
+        [...sources].map((x) =>
+          selectionInNanometers(x, annotationToNanometers),
+        ),
+        this.graph.branchId.value,
+      );
       if (splitRoots.length === 0) {
         StatusMessage.showTemporaryMessage(`No split found.`, 3000);
         return false;
@@ -2305,6 +2467,7 @@ void main() {
         newValues.add(splitRoots);
         this.state.replaceSegments(oldValues, newValues);
         this.updateAfterSplit(focusSegment, splitRoots, components);
+        this.pushUndo(operationId, this.graph.branchId.value);
         return true;
       }
     }
@@ -2335,12 +2498,15 @@ void main() {
         const oldRootA = submission.sink.rootId;
         const oldRootB = submission.source!.rootId;
 
-        const { root: newRoot, pieces: mergedPieces } =
-          await this.graph.graphServer.mergeSegments(
-            selectionInNanometers(submission.sink, annotationToNanometers),
-            selectionInNanometers(submission.source!, annotationToNanometers),
-            this.graph.branchId.value,
-          );
+        const {
+          root: newRoot,
+          pieces: mergedPieces,
+          operationId,
+        } = await this.graph.graphServer.mergeSegments(
+          selectionInNanometers(submission.sink, annotationToNanometers),
+          selectionInNanometers(submission.source!, annotationToNanometers),
+          this.graph.branchId.value,
+        );
         const oldValues = new Uint64Set();
         oldValues.add(oldRootA);
         oldValues.add(oldRootB);
@@ -2357,6 +2523,7 @@ void main() {
         // the slice of pieces that happened to load via residual chunks
         // and the full merged volume only appeared after a manual reload.
         this.meshAddNewSegments([newRoot]);
+        this.pushUndo(operationId, this.graph.branchId.value);
         // Populate equivalences directly from the merge response's `pieces`
         // field — server returns the union of pieces from both pre-merge
         // roots, so we avoid the post-edit /leaves round-trip that goes
@@ -2699,11 +2866,67 @@ class GrapheneGraphServerInterface {
     return components.map((c) => c.map(parseUint64));
   }
 
+  // debugGraph fetches a root's pieces (with bbox centres) and edges (with
+  // status), for the piece-split tool's debug overlay: colour each piece
+  // distinctly and draw a line per edge. Reveals a kept-whole segment's internal
+  // structure once a piece split has left it a single colour.
+  async debugGraph(
+    segment: bigint,
+    timestamp = 0,
+    branchId = 0,
+  ): Promise<{
+    pieces: { id: bigint; center: [number, number, number] }[];
+    edges: {
+      a: bigint;
+      b: bigint;
+      affinity: number;
+      area: number;
+      status: string;
+    }[];
+  }> {
+    const { fetchOkImpl, baseUrl } = this.httpSource;
+    const jsonResp = await withErrorMessageHTTP(
+      fetchOkImpl(
+        appendCoordParams(
+          `${baseUrl}/node/${String(segment)}/debug_graph?int64_as_str=1`,
+          { timestamp, branchId },
+        ),
+        {},
+      ).then((response) => response.json()),
+      {
+        initialMessage: `Retrieving debug graph for segment ${segment}`,
+        errorPrefix: "Could not fetch debug graph: ",
+      },
+    );
+    const pieces = (jsonResp.pieces || []).map(
+      (p: { id: string; center: [number, number, number] }) => ({
+        id: parseUint64(p.id),
+        center: p.center,
+      }),
+    );
+    const edges = (jsonResp.edges || []).map(
+      (e: {
+        a: string;
+        b: string;
+        affinity: number;
+        area: number;
+        status: string;
+      }) => ({
+        a: parseUint64(e.a),
+        b: parseUint64(e.b),
+        affinity: e.affinity,
+        area: e.area,
+        status: e.status,
+      }),
+    );
+    return { pieces, edges };
+  }
+
   async mergeSegments(
     first: SegmentSelection,
     second: SegmentSelection,
     branchId = 0,
-  ): Promise<{ root: bigint; pieces: bigint[] }> {
+  ): Promise<{ root: bigint; pieces: bigint[]; operationId: number }> {
     const { fetchOkImpl, baseUrl } = this.httpSource;
     const promise = fetchOkImpl(
       appendCoordParams(`${baseUrl}/merge?int64_as_str=1`, { branchId }),
@@ -2728,7 +2951,8 @@ class GrapheneGraphServerInterface {
       // that goes through the lagging pieces_latest_by_root MV.
       const rawPieces: string[] = jsonResp.pieces ?? [];
       const pieces = rawPieces.map(parseUint64);
-      return { root, pieces };
+      const operationId = Number(jsonResp.operation_id ?? 0);
+      return { root, pieces, operationId };
     } catch (e) {
       if (e instanceof HttpError) {
         const msg = await parseGrapheneError(e);
@@ -2742,7 +2966,7 @@ class GrapheneGraphServerInterface {
     first: SegmentSelection[],
     second: SegmentSelection[],
     branchId = 0,
-  ): Promise<{ roots: bigint[]; components: bigint[][] }> {
+  ): Promise<{ roots: bigint[]; components: bigint[][]; operationId: number }> {
     const { fetchOkImpl, baseUrl } = this.httpSource;
     const promise = fetchOkImpl(
       appendCoordParams(`${baseUrl}/split?int64_as_str=1`, { branchId }),
@@ -2767,7 +2991,45 @@ class GrapheneGraphServerInterface {
     }
     const rawComponents: string[][] = jsonResp.components || [];
     const components = rawComponents.map((c) => c.map(parseUint64));
-    return { roots, components };
+    const operationId = Number(jsonResp.operation_id ?? 0);
+    return { roots, components, operationId };
+  }
+
+  // splitSegmentsByPieces runs the same graph multicut as splitSegments, but the
+  // source/sink pieces are named by id (from unifiedSplit) instead of resolved
+  // from click coordinates — so it never re-reads voxels a just-committed piece
+  // split may not have flushed yet.
+  async splitSegmentsByPieces(
+    sourcePieces: bigint[],
+    sinkPieces: bigint[],
+    branchId = 0,
+    excludePieces: bigint[] = [],
+  ): Promise<{ roots: bigint[]; components: bigint[][]; operationId: number }> {
+    const { fetchOkImpl, baseUrl } = this.httpSource;
+    const promise = fetchOkImpl(
+      appendCoordParams(`${baseUrl}/split?int64_as_str=1`, { branchId }),
+      {
+        method: "POST",
+        priority: "high",
+        body: JSON.stringify({
+          source_pieces: sourcePieces.map((x) => x.toString()),
+          sink_pieces: sinkPieces.map((x) => x.toString()),
+          exclude_pieces: excludePieces.map((x) => x.toString()),
+        }),
+      },
+    );
+    const response = await withErrorMessageHTTP(promise, {
+      initialMessage: `Splitting ${sourcePieces.length} sources from ${sinkPieces.length} sinks`,
+      errorPrefix: "Split failed: ",
+    });
+    const jsonResp = await response.json();
+    const roots: bigint[] = (jsonResp.new_root_ids ?? []).map((x: string) =>
+      parseUint64(x),
+    );
+    const rawComponents: string[][] = jsonResp.components || [];
+    const components = rawComponents.map((c) => c.map(parseUint64));
+    const operationId = Number(jsonResp.operation_id ?? 0);
+    return { roots, components, operationId };
   }
 
   async previewPieceSplit(
@@ -2841,6 +3103,96 @@ class GrapheneGraphServerInterface {
     const jsonResp = await response.json();
     const rootIds: string[] = jsonResp.new_root_ids ?? [];
     return rootIds.map((x) => parseUint64(x));
+  }
+
+  // unifiedSplit runs the whole split in one atomic backend operation: it cuts
+  // every piece holding BOTH colours in two, then multicuts the segment into two
+  // roots — returned as roots + components (Components[i] belongs to roots[i]).
+  // One op, so a single Ctrl+Z reverts it. origin records 2D (exact voxel) vs 3D
+  // (mesh pick; the backend snaps to the nearest in-piece voxel).
+  async unifiedSplit(
+    points: {
+      color: "blue" | "red";
+      pieceId: bigint;
+      x: number;
+      y: number;
+      z: number;
+      origin: "2d" | "3d";
+    }[],
+    branchId = 0,
+  ): Promise<{
+    operationId: number;
+    roots: bigint[];
+    components: bigint[][];
+  }> {
+    const { fetchOkImpl, baseUrl } = this.httpSource;
+    let response: Response;
+    try {
+      response = await fetchOkImpl(
+        appendCoordParams(`${baseUrl}/split/unified?int64_as_str=1`, {
+          branchId,
+        }),
+        {
+          method: "POST",
+          body: JSON.stringify({
+            points: points.map((p) => ({
+              color: p.color,
+              // piece_id is a tagged uint64 > 2^53; send as a string.
+              piece_id: p.pieceId.toString(),
+              x: p.x,
+              y: p.y,
+              z: p.z,
+              origin: p.origin,
+            })),
+          }),
+        },
+      );
+    } catch (e) {
+      throw await wrapCalcadaError(e);
+    }
+    const jsonResp = await response.json();
+    const rootIds: string[] = jsonResp.new_root_ids ?? [];
+    const comps: string[][] = jsonResp.components ?? [];
+    return {
+      operationId: Number(jsonResp.operation_id ?? 0),
+      roots: rootIds.map((x) => parseUint64(x)),
+      components: comps.map((c) => c.map((x) => parseUint64(x))),
+    };
+  }
+
+  // revertOperation asks the backend to undo a prior edit (calcada-only). It
+  // re-asserts the operation's pre-edit graph state and, for voxel-changing
+  // splits, restores the branch-overlay voxels. Returns the restored roots so
+  // the caller can refresh selection/mesh.
+  async revertOperation(
+    operationId: number,
+    branchId = 0,
+  ): Promise<{
+    operationId: number;
+    restoredRoots: bigint[];
+    supersededRoots: bigint[];
+  }> {
+    const { fetchOkImpl, baseUrl } = this.httpSource;
+    let response: Response;
+    try {
+      response = await fetchOkImpl(
+        appendCoordParams(
+          `${baseUrl}/operation/${operationId}/revert?int64_as_str=1`,
+          { branchId },
+        ),
+        { method: "POST" },
+      );
+    } catch (e) {
+      throw await wrapCalcadaError(e);
+    }
+    const jsonResp = await response.json();
+    const rootIds: string[] = jsonResp.restored_root_ids ?? [];
+    const superseded: string[] = jsonResp.superseded_root_ids ?? [];
+    return {
+      operationId: Number(jsonResp.operation_id ?? 0),
+      restoredRoots: rootIds.map((x) => parseUint64(x)),
+      supersededRoots: superseded.map((x) => parseUint64(x)),
+    };
   }
 
   async filterLatestRoots(
@@ -4029,6 +4381,7 @@ const MULTICUT_SEGMENTS_INPUT_EVENT_MAP = EventActionMap.fromObject({
   "at:shift?+control+mousedown0": { action: "set-anchor" },
   "at:shift?+keyg": { action: "swap-group" },
   "at:shift?+enter": { action: "submit" },
+  "at:control+keyz": { action: "undo" },
 });
 
 class MulticutSegmentsTool extends LayerTool<SegmentationUserLayer> {
@@ -4127,6 +4480,10 @@ class MulticutSegmentsTool extends LayerTool<SegmentationUserLayer> {
     const priorHideSegmentZero = displayState.hideSegmentZero.value;
 
     activation.bindInputEventMap(MULTICUT_SEGMENTS_INPUT_EVENT_MAP);
+    activation.bindAction("undo", (event) => {
+      event.stopPropagation();
+      void graphConnection.undo();
+    });
     activation.registerDisposer(() => {
       resetMulticutDisplay();
       displayState.baseSegmentHighlighting.value = priorBaseSegmentHighlighting;
@@ -4357,6 +4714,7 @@ const MAX_MERGE_COUNT = 20;
 
 const MERGE_SEGMENTS_INPUT_EVENT_MAP = EventActionMap.fromObject({
   "at:shift?+enter": { action: "submit" },
+  "at:control+keyz": { action: "undo" },
 });
 
 class MergeSegmentsTool extends LayerTool<SegmentationUserLayer> {
@@ -4391,6 +4749,10 @@ class MergeSegmentsTool extends LayerTool<SegmentationUserLayer> {
     header.textContent = "Merge segments";
     body.classList.add("graphene-tool-status", "graphene-merge-segments");
     activation.bindInputEventMap(MERGE_SEGMENTS_INPUT_EVENT_MAP);
+    activation.bindAction("undo", (event) => {
+      event.stopPropagation();
+      void graphConnection.undo();
+    });
     const submitAction = async () => {
       if (merges.value.filter((x) => x.locked).length) return;
       submitIcon.classList.toggle("disabled", true);
@@ -4647,7 +5009,8 @@ class FindPathTool extends LayerTool<SegmentationUserLayer> {
 const PIECE_SPLIT_INPUT_EVENT_MAP = EventActionMap.fromObject({
   "at:shift?+control+mousedown0": { action: "place-point" },
   "at:shift?+keyg": { action: "swap-group" },
-  "at:shift?+enter": { action: "preview" },
+  "at:shift?+enter": { action: "apply" },
+  "at:control+keyz": { action: "undo" },
 });
 
 // wrapCalcadaError turns an HttpError from a Calcada endpoint into a regular
@@ -4733,6 +5096,25 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
     // tool deactivation so the segmentation returns to its normal rendering.
     const { displayState } = layer;
     const priorHideSegmentZero = displayState.hideSegmentZero.value;
+    const priorBaseSegmentHighlighting =
+      displayState.baseSegmentHighlighting.value;
+    const priorHighlightColor = displayState.highlightColor.value;
+    // Highlight the individual piece under the cursor (not the whole segment) so
+    // hovering reveals the piece boundaries (point 1). A defined highlightColor is
+    // required — otherwise the hovered piece renders washed-out, which reads like a
+    // chunk-boundary gap; updatePieceSplitDisplay keeps it in sync with the group.
+    displayState.baseSegmentHighlighting.value = true;
+    displayState.highlightColor.value = pieceSplitState.blueGroup.value
+      ? BLUE_COLOR_HIGHTLIGHT
+      : RED_COLOR_HIGHLIGHT;
+
+    // Debug overlay state (toggled by the Debug button): the debugged root and a
+    // per-piece colour map fetched from the backend. When on, every piece of the
+    // root is tinted a distinct colour so a kept-whole segment's internal pieces
+    // are individually visible; edge lines are drawn via the annotation states.
+    let debugMode = false;
+    let debugRootId: bigint | undefined;
+    let debugPieceColors: Map<bigint, bigint> | undefined;
 
     const resetPieceSplitDisplay = () => {
       resetTemporaryVisibleSegmentsState(segmentationGroupState);
@@ -4742,27 +5124,97 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
     };
     const updatePieceSplitDisplay = () => {
       resetPieceSplitDisplay();
-      // Render the segmentation overlay as transparent for the focus piece's
-      // root (so the image and our preview-mask shine through) and dim every
-      // other segment with MULTICUT_OFF_COLOR. We intentionally do NOT enable
-      // baseSegmentHighlighting — that follows the cursor's hovered piece,
-      // not the focus piece, and ends up tinting whatever segment the cursor
-      // happens to cross.
       displayState.hideSegmentZero.value = false;
-      displayState.tempSegmentDefaultColor2d.value = MULTICUT_OFF_COLOR;
-      const focus = pieceSplitState.focusPieceId.value;
-      if (focus !== undefined) {
-        const focusRoot = segmentationGroupState.segmentEquivalences.get(focus);
-        displayState.tempSegmentStatedColors2d.value.set(
-          focusRoot,
-          TRANSPARENT_COLOR_PACKED,
-        );
+      // Keep the base-segment hover tint matching the active colour.
+      displayState.highlightColor.value = pieceSplitState.blueGroup.value
+        ? BLUE_COLOR_HIGHTLIGHT
+        : RED_COLOR_HIGHLIGHT;
+
+      // Debug overlay takes precedence: colour every piece of the debugged root
+      // distinctly from the authoritative backend piece list.
+      if (debugMode && debugRootId !== undefined && debugPieceColors) {
+        segmentationGroupState.useTemporaryVisibleSegments.value = true;
+        segmentationGroupState.useTemporarySegmentEquivalences.value = true;
+        segmentationGroupState.temporaryVisibleSegments.add(debugRootId);
+        for (const [piece, color] of debugPieceColors) {
+          segmentationGroupState.temporaryVisibleSegments.add(piece);
+          displayState.tempSegmentStatedColors2d.value.set(piece, color);
+        }
+        displayState.useTempSegmentStatedColors2d.value = true;
+        return;
       }
-      displayState.useTempSegmentStatedColors2d.value = true;
+
+      const focus = pieceSplitState.focusRootId.value;
+      if (focus === undefined) {
+        displayState.useTempSegmentStatedColors2d.value = false;
+        return;
+      }
+      // Colour each piece by the points placed on it — blue-only piece → blue,
+      // red-only → red, a piece holding BOTH colours → left transparent so its
+      // point markers show where it will be split. Mirrors the per-piece
+      // recolouring MulticutSegmentsTool does, but driven by placed points and
+      // allowing multiple points (both colours) inside one piece.
+      const pieceColor = new Map<bigint, "blue" | "red" | "both">();
+      const notePiece = (pieceId: bigint, color: "blue" | "red") => {
+        const cur = pieceColor.get(pieceId);
+        if (cur === undefined) pieceColor.set(pieceId, color);
+        else if (cur !== color) pieceColor.set(pieceId, "both");
+      };
+      for (const p of pieceSplitState.bluePoints.value) {
+        notePiece(p.pieceId, "blue");
+      }
+      for (const p of pieceSplitState.redPoints.value) {
+        notePiece(p.pieceId, "red");
+      }
+
+      // Tint each constraint piece so it reads at a glance: blue-only → blue,
+      // red-only → red, BOTH colours → green ("this piece will be cut"). Green
+      // keeps the split target clearly highlighted instead of looking deselected.
+      // Uncoloured pieces stay merged into the focus root at the segment's normal
+      // colour, so the rest of the segment never looks deselected while you place
+      // points. We do NOT dim the rest of the view (no MULTICUT_OFF_COLOR).
+      segmentationGroupState.useTemporaryVisibleSegments.value = true;
+      segmentationGroupState.useTemporarySegmentEquivalences.value = true;
+      segmentationGroupState.temporaryVisibleSegments.add(focus);
+      let anyTint = false;
+      for (const piece of segmentationGroupState.segmentEquivalences.setElements(
+        focus,
+      )) {
+        segmentationGroupState.temporaryVisibleSegments.add(piece);
+        const color = pieceColor.get(piece);
+        if (color === "blue") {
+          displayState.tempSegmentStatedColors2d.value.set(
+            piece,
+            BLUE_COLOR_SEGMENT_PACKED,
+          );
+          anyTint = true;
+        } else if (color === "red") {
+          displayState.tempSegmentStatedColors2d.value.set(
+            piece,
+            RED_COLOR_SEGMENT_PACKED,
+          );
+          anyTint = true;
+        } else if (color === "both") {
+          displayState.tempSegmentStatedColors2d.value.set(
+            piece,
+            SPLIT_TARGET_COLOR_PACKED,
+          );
+          anyTint = true;
+        } else {
+          segmentationGroupState.temporarySegmentEquivalences.link(
+            focus,
+            piece,
+          );
+        }
+      }
+      displayState.useTempSegmentStatedColors2d.value = anyTint;
     };
     activation.registerDisposer(() => {
       resetPieceSplitDisplay();
       displayState.hideSegmentZero.value = priorHideSegmentZero;
+      displayState.baseSegmentHighlighting.value = priorBaseSegmentHighlighting;
+      displayState.highlightColor.value = priorHighlightColor;
+      graphConnection.clearDebugEdges();
     });
     activation.registerDisposer(
       pieceSplitState.changed.add(updatePieceSplitDisplay),
@@ -4889,54 +5341,82 @@ void main() {
     });
     const clearButton = makeIcon({
       text: "Clear",
-      title: "Remove all points and reset focus piece",
+      title: "Remove all points, reset focus piece, and hide debug overlay",
       onClick: () => {
+        clearDebug();
         pieceSplitState.reset();
       },
     });
-    const previewButton = makeIcon({
-      text: "Preview",
-      title: "Compute split mask (shift+enter)",
-      onClick: () => void runPreview(),
-    });
     const applyButton = makeIcon({
       text: "Apply",
-      title: "Commit the previewed split",
+      title: "Apply the unified split (shift+enter)",
       onClick: () => void runApply(),
     });
+    const undoButton = makeIcon({
+      text: "Undo",
+      title: "Undo the last edit (Ctrl+Z)",
+      onClick: () => void runUndo(),
+    });
+    const DEBUG_OFF_TITLE =
+      "Show debug overlay: colour each piece distinctly and draw a line per edge (green = zero-affinity split edges)";
+    const debugButton = makeIcon({
+      text: "Debug",
+      title: DEBUG_OFF_TITLE,
+      onClick: () => void runDebug(),
+    });
+    // Reflect the toggle state on the button itself: without this the overlay
+    // looks impossible to remove because nothing signals it is currently on.
+    const setDebugButtonActive = (active: boolean) => {
+      debugButton.textContent = active ? "Hide Debug" : "Debug";
+      debugButton.title = active
+        ? "Debug overlay is ON — click to hide it"
+        : DEBUG_OFF_TITLE;
+      debugButton.style.backgroundColor = active ? "rgba(0, 200, 0, 0.35)" : "";
+      debugButton.style.outline = active ? "1px solid rgba(0,255,0,0.85)" : "";
+    };
     actions.appendChild(swapButton);
     actions.appendChild(clearButton);
-    actions.appendChild(previewButton);
     actions.appendChild(applyButton);
+    actions.appendChild(undoButton);
+    actions.appendChild(debugButton);
     const spinner = document.createElement("div");
     spinner.className = "piece-split-spinner";
     spinner.style.display = "none";
     actions.appendChild(spinner);
 
+    let busy = false;
     const setApplyEnabled = (enabled: boolean) => {
-      applyButton.classList.toggle("disabled", !enabled);
+      applyButton.classList.toggle("disabled", busy || !enabled);
     };
-    const setBusy = (busy: boolean) => {
+    const setUndoEnabled = () => {
+      // Disabled until there is at least one edit to revert (point 3).
+      undoButton.classList.toggle(
+        "disabled",
+        busy || !graphConnection.canUndo(),
+      );
+    };
+    const setBusy = (b: boolean) => {
+      busy = b;
       spinner.style.display = busy ? "" : "none";
       for (const button of [
         swapButton,
         clearButton,
-        previewButton,
         applyButton,
+        undoButton,
+        debugButton,
       ]) {
         button.classList.toggle("disabled", busy);
       }
-      // Re-render so the Apply button returns to its preview-dependent state.
       if (!busy) render();
     };
 
     const render = () => {
       // Focus piece label.
-      const focus = pieceSplitState.focusPieceId.value;
+      const focus = pieceSplitState.focusRootId.value;
       focusRow.textContent =
         focus !== undefined
           ? `Focus piece: ${focus.toString()}`
-          : "Shift+Ctrl+click on a selected segment to place the first point.";
+          : "Ctrl+click on a selected segment to place the first point.";
 
       // Active-colour indicator.
       removeChildren(groupRow);
@@ -4988,70 +5468,121 @@ void main() {
         "red",
       );
 
-      // Preview summary.
-      const preview = pieceSplitState.preview.value;
+      // Apply is enabled once both colours have at least one point.
       removeChildren(previewSummary);
-      if (preview !== undefined) {
-        const [minX, minY, minZ, maxX, maxY, maxZ] = preview.bbox;
-        const line1 = document.createElement("div");
-        line1.textContent = `Preview ready — bbox [${minX},${minY},${minZ}] → [${maxX},${maxY},${maxZ}]`;
-        previewSummary.appendChild(line1);
-        const line2 = document.createElement("div");
-        line2.textContent =
-          `Voxels: ${preview.maskVoxels} in piece` +
-          ` (source=${preview.sourceVoxels}, sink=${preview.sinkVoxels})`;
-        previewSummary.appendChild(line2);
-        const line3 = document.createElement("div");
-        line3.textContent = `Mask: ${preview.maskUrl}`;
-        line3.style.fontSize = "0.85em";
-        line3.style.opacity = "0.75";
-        previewSummary.appendChild(line3);
-        setApplyEnabled(true);
-      } else {
-        setApplyEnabled(false);
-      }
+      setApplyEnabled(
+        pieceSplitState.bluePoints.value.length > 0 &&
+          pieceSplitState.redPoints.value.length > 0,
+      );
+      setUndoEnabled();
     };
     render();
     activation.registerDisposer(pieceSplitState.changed.add(render));
 
     // --- Actions ---
-    const runPreview = async () => {
-      const focus = pieceSplitState.focusPieceId.value;
-      if (focus === undefined) {
-        StatusMessage.showTemporaryMessage(
-          "Select exactly one piece to split first",
-          5000,
-        );
+    const runUndo = async () => {
+      if (busy) return;
+      if (!graphConnection.canUndo()) {
+        StatusMessage.showTemporaryMessage("Nothing to undo", 2500);
         return;
       }
-      if (pieceSplitState.bluePoints.value.length === 0) {
-        StatusMessage.showTemporaryMessage(
-          "Place at least one blue point",
-          5000,
-        );
+      setBusy(true);
+      try {
+        await graphConnection.undo();
+        clearDebug(); // the overlay's piece ids are now stale
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    // Pick the root to debug: the focus piece if set, else the single visible
+    // segment.
+    const debugTargetRoot = (): bigint | undefined => {
+      const f = pieceSplitState.focusRootId.value;
+      if (f !== undefined) return f;
+      let only: bigint | undefined;
+      for (const s of segmentationGroupState.visibleSegments) {
+        if (s === 0n) continue;
+        if (only !== undefined) return undefined; // ambiguous
+        only = s;
+      }
+      return only;
+    };
+
+    const clearDebug = () => {
+      if (!debugMode) return;
+      debugMode = false;
+      debugRootId = undefined;
+      debugPieceColors = undefined;
+      graphConnection.clearDebugEdges();
+      setDebugButtonActive(false);
+      updatePieceSplitDisplay();
+    };
+
+    const runDebug = async () => {
+      if (busy) return;
+      if (debugMode) {
+        clearDebug();
         return;
       }
-      if (pieceSplitState.redPoints.value.length === 0) {
+      const root = debugTargetRoot();
+      if (root === undefined) {
         StatusMessage.showTemporaryMessage(
-          "Place at least one red point",
+          "Select a single segment (or place a point) to debug",
           5000,
         );
         return;
       }
       setBusy(true);
       try {
-        const result =
-          await graphConnection.graph.graphServer.previewPieceSplit(
-            focus,
-            pieceSplitState.bluePoints.value.map((p) => p.voxel),
-            pieceSplitState.redPoints.value.map((p) => p.voxel),
+        const { pieces, edges } =
+          await graphConnection.graph.graphServer.debugGraph(
+            root,
+            layer.displayState.segmentationGroupState.value.timestamp.value ??
+              0,
             graphConnection.graph.branchId.value,
           );
-        pieceSplitState.preview.value = result;
-        StatusMessage.showTemporaryMessage("Preview computed", 2500);
+        debugRootId = root;
+        debugPieceColors = new Map<bigint, bigint>();
+        const centerById = new Map<bigint, [number, number, number]>();
+        pieces.forEach((p, i) => {
+          debugPieceColors!.set(
+            p.id,
+            DEBUG_PIECE_PALETTE[i % DEBUG_PIECE_PALETTE.length],
+          );
+          centerById.set(p.id, p.center);
+        });
+        const edgeLines: Line[] = [];
+        const siblingLines: Line[] = [];
+        for (const e of edges) {
+          const a = centerById.get(e.a);
+          const b = centerById.get(e.b);
+          if (!a || !b) continue;
+          const line: Line = {
+            pointA: vec3.fromValues(a[0], a[1], a[2]),
+            pointB: vec3.fromValues(b[0], b[1], b[2]),
+            id: "",
+            type: AnnotationType.LINE,
+            properties: [],
+          };
+          if (e.affinity === 0 && e.status === "enabled") {
+            siblingLines.push(line);
+          } else {
+            edgeLines.push(line);
+          }
+        }
+        graphConnection.setDebugEdges(edgeLines, siblingLines);
+        debugMode = true;
+        setDebugButtonActive(true);
+        updatePieceSplitDisplay();
+        StatusMessage.showTemporaryMessage(
+          `Debug: ${pieces.length} pieces, ${edges.length} edges ` +
+            `(${siblingLines.length} green zero-affinity split edge(s)). Press Debug again to hide.`,
+          6000,
+        );
       } catch (e: unknown) {
         StatusMessage.showTemporaryMessage(
-          `Preview failed: ${e instanceof Error ? e.message : String(e)}`,
+          `Debug failed: ${e instanceof Error ? e.message : String(e)}`,
           8000,
         );
       } finally {
@@ -5060,10 +5591,22 @@ void main() {
     };
 
     const runApply = async () => {
-      const focus = pieceSplitState.focusPieceId.value;
-      const preview = pieceSplitState.preview.value;
-      if (focus === undefined || preview === undefined) {
-        StatusMessage.showTemporaryMessage("Run Preview before applying", 5000);
+      const focus = pieceSplitState.focusRootId.value;
+      if (focus === undefined) {
+        StatusMessage.showTemporaryMessage(
+          "Place blue and red points first",
+          5000,
+        );
+        return;
+      }
+      if (
+        pieceSplitState.bluePoints.value.length === 0 ||
+        pieceSplitState.redPoints.value.length === 0
+      ) {
+        StatusMessage.showTemporaryMessage(
+          "Place at least one blue and one red point",
+          5000,
+        );
         return;
       }
       if (
@@ -5077,63 +5620,64 @@ void main() {
         return;
       }
       setBusy(true);
-      // segmentEquivalences returns the input id (not undefined) when there's no entry — resolve via backend.
-      let preApplyOldRoot: bigint | undefined;
+      const branchId = graphConnection.graph.branchId.value;
       try {
-        const candidate = await graphConnection.graph.graphServer.getRoot(
-          focus,
-          0,
-          graphConnection.graph.branchId.value,
-        );
-        if (candidate !== 0n && candidate !== focus) {
-          preApplyOldRoot = candidate;
+        // One atomic backend op: cut every multi-colour piece in two AND multicut
+        // the segment into two new roots. Returns the two roots — a single Ctrl+Z
+        // reverts the whole thing.
+        const toPayload = (p: PointEntry, color: "blue" | "red") => ({
+          color,
+          pieceId: p.pieceId,
+          x: p.voxel[0],
+          y: p.voxel[1],
+          z: p.voxel[2],
+          origin: p.origin,
+        });
+        const points = [
+          ...pieceSplitState.bluePoints.value.map((p) => toPayload(p, "blue")),
+          ...pieceSplitState.redPoints.value.map((p) => toPayload(p, "red")),
+        ];
+        const { roots, operationId } =
+          await graphConnection.graph.graphServer.unifiedSplit(
+            points,
+            branchId,
+          );
+        graphConnection.pushUndo(operationId, branchId);
+
+        // Swap the old segment for the new roots. The split rewrote voxels in the
+        // overlay, so the cached 2D chunks are stale. refreshChunkSources re-fetches
+        // them AND re-reads the piece→root LUT (the backend bridged the ClickHouse
+        // MV lag via cache), so the two new roots render immediately instead of
+        // only after a manual reload.
+        const segmentsState = layer.displayState.segmentationGroupState.value;
+        segmentsState.selectedSegments.delete(focus);
+        segmentsState.visibleSegments.delete(focus);
+        const newRoots = roots.filter((r) => r !== 0n);
+        for (const nr of newRoots) {
+          segmentsState.selectedSegments.add(nr);
+          segmentsState.visibleSegments.add(nr);
         }
-      } catch (e) {
+        graphConnection.meshAddNewSegments(newRoots);
+        graphConnection.refreshChunkSources();
+        // A new root made mostly of a freshly-split sub-piece has no mesh yet —
+        // the sidecar generates it async. The first manifest fetch resolves that
+        // fragment to a miss; re-fetch the new roots' manifests a few times so
+        // their 3D meshes appear once generation lands, without a manual reload.
+        for (const delayMs of [1500, 4000, 9000, 20000]) {
+          setTimeout(
+            () => graphConnection.meshRefreshSegments(newRoots),
+            delayMs,
+          );
+        }
         StatusMessage.showTemporaryMessage(
-          `Could not resolve old root before split (${e instanceof Error ? e.message : String(e)}); old segment may stay in the selection panel.`,
+          `Split applied — segment separated into ${newRoots.length} root(s). Press Ctrl+Z to undo.`,
           6000,
         );
-        const fallback =
-          layer.displayState.segmentationGroupState.value.segmentEquivalences.get(
-            focus,
-          );
-        if (fallback !== undefined && fallback !== focus && fallback !== 0n) {
-          preApplyOldRoot = fallback;
-        }
-      }
-      try {
-        const newRoots =
-          await graphConnection.graph.graphServer.applyPieceSplit(
-            focus,
-            preview.maskUrl,
-            graphConnection.graph.branchId.value,
-          );
-        const segmentsState = layer.displayState.segmentationGroupState.value;
-        // Deselect root 0 or a stray background click paints every orphan piece as one blob.
-        const toRemove: bigint[] = [focus, 0n];
-        if (preApplyOldRoot !== undefined) {
-          toRemove.push(preApplyOldRoot);
-        }
-        for (const id of toRemove) {
-          segmentsState.selectedSegments.delete(id);
-          segmentsState.visibleSegments.delete(id);
-        }
-        for (const newRoot of newRoots) {
-          if (newRoot === 0n) continue;
-          segmentsState.selectedSegments.add(newRoot);
-          segmentsState.visibleSegments.add(newRoot);
-        }
-        // Register the new roots with the mesh source so their fragments are
-        // (re)fetched with exponential-backoff retry until the async per-piece
-        // mesh generation lands — mirrors multicut/merge.
-        graphConnection.meshAddNewSegments(newRoots.filter((r) => r !== 0n));
-        graphConnection.refreshChunkSources();
-        StatusMessage.showTemporaryMessage(
-          `Piece split applied — ${newRoots.length} new root(s)`,
-          5000,
-        );
+        // The debug overlay (if on) now references superseded piece ids; drop it.
+        clearDebug();
+        // Keep the tool open (do NOT cancel) so the user can immediately place
+        // the next split or undo this one.
         pieceSplitState.reset();
-        activation.cancel();
       } catch (e: unknown) {
         StatusMessage.showTemporaryMessage(
           `Apply failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -5167,36 +5711,15 @@ void main() {
         );
         return;
       }
-      if (pieceSplitState.focusPieceId.value === undefined) {
-        // Reject multi-piece segments at the first click instead of letting
-        // the user place every point and only hear about it from Preview.
-        let pieces: bigint[];
-        try {
-          pieces = await graphConnection.graph.graphServer.getLeaves(
-            value,
-            segmentationGroupState.timestamp.value ?? 0,
-            graphConnection.graph.branchId.value,
-          );
-        } catch {
-          // getLeaves already surfaced the error in a status message.
-          return;
-        }
-        if (pieces.length > 1) {
-          StatusMessage.showTemporaryMessage(
-            `Segment ${value.toString()} contains ${pieces.length} pieces — separate them with the split tool first`,
-            8000,
-          );
-          return;
-        }
-        if (pieceSplitState.focusPieceId.value === undefined) {
-          // First point sets the focus piece.
-          pieceSplitState.focusPieceId.value = baseValue;
-        }
+      if (pieceSplitState.focusRootId.value === undefined) {
+        // First point pins the focus root (segment); later points may land in
+        // any piece of that segment, in the same piece or across pieces.
+        pieceSplitState.focusRootId.value = value;
       }
-      const currentFocus = pieceSplitState.focusPieceId.value;
-      if (baseValue !== currentFocus) {
+      const currentFocus = pieceSplitState.focusRootId.value;
+      if (value !== currentFocus) {
         StatusMessage.showTemporaryMessage(
-          `Point must be inside piece ${currentFocus!.toString()} (clicked: ${baseValue.toString()}). Remove all points or press Clear to change focus.`,
+          `Point must be inside segment ${currentFocus!.toString()} (clicked segment: ${value.toString()}). Remove all points to change focus.`,
           6000,
         );
         return;
@@ -5213,9 +5736,15 @@ void main() {
         new Float64Array(annotationToNanometers),
         graphResolution,
       );
+      const origin: "2d" | "3d" =
+        mouseState.pickedRenderLayer instanceof PerspectiveViewRenderLayer
+          ? "3d"
+          : "2d";
       pieceSplitState.addPoint({
         voxel,
         layer: [point[0], point[1], point[2]],
+        pieceId: baseValue,
+        origin,
       });
     };
     activation.bindAction("place-point", (event) => {
@@ -5226,9 +5755,13 @@ void main() {
       event.stopPropagation();
       pieceSplitState.swapGroup();
     });
-    activation.bindAction("preview", (event) => {
+    activation.bindAction("apply", (event) => {
       event.stopPropagation();
-      void runPreview();
+      void runApply();
+    });
+    activation.bindAction("undo", (event) => {
+      event.stopPropagation();
+      void runUndo();
     });
   }
 }
