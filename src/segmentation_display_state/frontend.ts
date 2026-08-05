@@ -924,9 +924,7 @@ export function registerCallbackWhenSegmentationDisplayStateChanged(
   context.registerDisposer(
     displayState.baseSegmentColoring.changed.add(callback),
   );
-  context.registerDisposer(
-    displayState.highlightColor.changed.add(callback),
-  );
+  context.registerDisposer(displayState.highlightColor.changed.add(callback));
   context.registerDisposer(displayState.hoverHighlight.changed.add(callback));
   context.registerDisposer(
     displayState.hoverHighlightSuppressed.changed.add(callback),

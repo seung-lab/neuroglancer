@@ -461,28 +461,38 @@ export class GrapheneMeshSource extends WithParameters(
     } else {
       manifestRequestCount.delete(chunkIdentifier);
     }
-    // Link every piece the manifest lists to this root (chunk.objectId) so a 3D
-    // mesh pick anywhere on the mesh resolves piece->root — even over a part with
-    // no loaded 2D chunk, whose LUT trailer would otherwise be the only source of
-    // the mapping (a pick outside the 2D view would leave the root unknown).
+    // Link every piece the manifest lists to its root (chunk.objectId), so a 3D
+    // mesh pick anywhere on the mesh resolves piece->root even over a part with no
+    // loaded 2D chunk (whose LUT trailer would otherwise be the only source of the
+    // mapping). The manifest is fetched for a currently-visible root, so its
+    // piece->root is current; linkChunkEquivalences is link-once, so it never
+    // overrides a piece the authoritative LUT already mapped, and
+    // refreshChunkSources clears equivalences after every edit. Fragment ids are
+    // strings ("{piece}:0", per getFragmentPickId).
     const fragments = (response as { fragments?: unknown })?.fragments;
     if (Array.isArray(fragments) && fragments.length > 0) {
       const pieces = new BigUint64Array(fragments.length);
       const roots = new BigUint64Array(fragments.length);
-      let n = 0;
+      let count = 0;
       for (const frag of fragments) {
-        const s = String(frag);
-        const colon = s.indexOf(":");
+        const fragmentString = String(frag);
+        const colon = fragmentString.indexOf(":");
         try {
-          pieces[n] = BigInt(colon === -1 ? s : s.slice(0, colon));
-          roots[n] = chunk.objectId;
-          n++;
+          pieces[count] = BigInt(
+            colon === -1 ? fragmentString : fragmentString.slice(0, colon),
+          );
+          roots[count] = chunk.objectId;
+          count++;
         } catch {
           // skip malformed fragment id
         }
       }
-      if (n > 0) {
-        linkChunkEquivalences(pieces.subarray(0, n), roots.subarray(0, n), branchId);
+      if (count > 0) {
+        linkChunkEquivalences(
+          pieces.subarray(0, count),
+          roots.subarray(0, count),
+          branchId,
+        );
       }
     }
     return decodeManifestChunk(chunk, response);

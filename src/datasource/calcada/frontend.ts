@@ -309,9 +309,10 @@ class GrapheneMeshSource extends WithParameters(
     return true;
   }
 
-  // Each fragment is a distinct piece, so when the piece-split tool turns on
-  // base-segment colouring the 3D mesh tints each piece by its own id (piece
-  // boundaries become visible). Calcada-only; graphene keeps the root colour.
+  // Each fragment is a distinct piece, so while a split tool is active (it sets
+  // the transient displayState.highlightColor) the 3D mesh tints each piece by its
+  // own id (piece boundaries become visible). Calcada-only; graphene keeps the
+  // root colour.
   get colorFragmentsBySegment(): boolean {
     return true;
   }

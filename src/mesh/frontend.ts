@@ -773,11 +773,12 @@ export class MeshSource extends ChunkSource {
     return 0n;
   }
 
-  // Per-fragment colouring opt-in. When true AND base-segment colouring is on,
-  // MeshLayer.draw tints each fragment by its own segment (getFragmentPickId)
-  // instead of the shared root colour — the manifest is per-root, so the
-  // per-object colour path cannot show piece boundaries otherwise. Default off,
-  // so graphene and other sources are unaffected.
+  // Per-fragment colouring opt-in. When true AND a split tool is active (the
+  // transient displayState.highlightColor is set), MeshLayer.draw tints each
+  // fragment by its own segment (getFragmentPickId) instead of the shared root
+  // colour — the manifest is per-root, so the per-object colour path cannot show
+  // piece boundaries otherwise. Default off, so graphene and other sources are
+  // unaffected.
   get colorFragmentsBySegment(): boolean {
     return false;
   }
