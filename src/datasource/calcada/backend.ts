@@ -461,6 +461,40 @@ export class GrapheneMeshSource extends WithParameters(
     } else {
       manifestRequestCount.delete(chunkIdentifier);
     }
+    // Link every piece the manifest lists to its root (chunk.objectId), so a 3D
+    // mesh pick anywhere on the mesh resolves piece->root even over a part with no
+    // loaded 2D chunk (whose LUT trailer would otherwise be the only source of the
+    // mapping). The manifest is fetched for a currently-visible root, so its
+    // piece->root is current; linkChunkEquivalences is link-once, so it never
+    // overrides a piece the authoritative LUT already mapped, and
+    // refreshChunkSources clears equivalences after every edit. Fragment ids are
+    // strings ("{piece}:0", per getFragmentPickId).
+    const fragments = (response as { fragments?: unknown })?.fragments;
+    if (Array.isArray(fragments) && fragments.length > 0) {
+      const pieces = new BigUint64Array(fragments.length);
+      const roots = new BigUint64Array(fragments.length);
+      let count = 0;
+      for (const frag of fragments) {
+        const fragmentString = String(frag);
+        const colon = fragmentString.indexOf(":");
+        try {
+          pieces[count] = BigInt(
+            colon === -1 ? fragmentString : fragmentString.slice(0, colon),
+          );
+          roots[count] = chunk.objectId;
+          count++;
+        } catch {
+          // skip malformed fragment id
+        }
+      }
+      if (count > 0) {
+        linkChunkEquivalences(
+          pieces.subarray(0, count),
+          roots.subarray(0, count),
+          branchId,
+        );
+      }
+    }
     return decodeManifestChunk(chunk, response);
   }
 
