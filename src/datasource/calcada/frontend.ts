@@ -2285,7 +2285,7 @@ void main() {
   }
 
   // Undo stack of recent operations (calcada-only). Ctrl+Z pops the newest and
-  // reverts it via the backend. Records unified-split applies, merges, and
+  // reverts it via the backend. Records general-split applies, merges, and
   // multicuts — each of those pushes its operation_id here.
   private undoStack: { operationId: number; branchId: number }[] = [];
 
@@ -2987,12 +2987,12 @@ class GrapheneGraphServerInterface {
     return { roots, components, operationId };
   }
 
-  // unifiedSplit runs the whole split in one atomic backend operation: it cuts
+  // generalSplit runs the whole split in one atomic backend operation: it cuts
   // every piece holding BOTH colours in two, then multicuts the segment into two
   // roots — returned as roots + components (Components[i] belongs to roots[i]).
   // One op, so a single Ctrl+Z reverts it. origin records 2D (exact voxel) vs 3D
   // (mesh pick; the backend snaps to the nearest in-piece voxel).
-  async unifiedSplit(
+  async generalSplit(
     points: {
       color: "blue" | "red";
       pieceId: bigint;
@@ -3011,7 +3011,7 @@ class GrapheneGraphServerInterface {
     let response: Response;
     try {
       response = await fetchOkImpl(
-        appendCoordParams(`${baseUrl}/split/unified?int64_as_str=1`, {
+        appendCoordParams(`${baseUrl}/split/general?int64_as_str=1`, {
           branchId,
         }),
         {
@@ -5142,7 +5142,7 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
     });
     const applyButton = makeIcon({
       text: "Apply",
-      title: "Apply the unified split (shift+enter)",
+      title: "Apply the general split (shift+enter)",
       onClick: () => void runApply(),
     });
     const undoButton = makeIcon({
@@ -5430,7 +5430,7 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
           ...pieceSplitState.redPoints.value.map((p) => toPayload(p, "red")),
         ];
         const { roots, operationId } =
-          await graphConnection.graph.graphServer.unifiedSplit(
+          await graphConnection.graph.graphServer.generalSplit(
             points,
             branchId,
           );
