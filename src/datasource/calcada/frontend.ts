@@ -309,6 +309,13 @@ class GrapheneMeshSource extends WithParameters(
     return true;
   }
 
+  // Each fragment is a distinct piece, so when the piece-split tool turns on
+  // base-segment colouring the 3D mesh tints each piece by its own id (piece
+  // boundaries become visible). Calcada-only; graphene keeps the root colour.
+  get colorFragmentsBySegment(): boolean {
+    return true;
+  }
+
   getFragmentPickId(fragmentId: string): bigint {
     // fragmentId is "{piece_id}:0" (":0" is the LOD suffix); take the piece id.
     // Piece ids are always non-zero, so MeshLayer's `getFragmentPickId(...) ||
@@ -4982,9 +4989,13 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
       displayState.baseSegmentHighlighting.value;
     const priorHighlightColor = displayState.highlightColor.value;
     // Highlight the individual piece under the cursor (not the whole segment) so
-    // hovering reveals the piece boundaries (point 1). A defined highlightColor is
-    // required — otherwise the hovered piece renders washed-out, which reads like a
-    // chunk-boundary gap; updatePieceSplitDisplay keeps it in sync with the group.
+    // hovering reveals the piece boundaries. A defined highlightColor is required —
+    // otherwise the hovered piece renders washed-out, which reads like a
+    // chunk-boundary gap. The set highlightColor also gates per-fragment 3D mesh
+    // colouring (MeshLayer.draw), so each piece shows its own colour while the tool
+    // is active and reverts to the root colour on exit — without touching the
+    // persisted baseSegmentColoring toggle. updatePieceSplitDisplay keeps it in
+    // sync with the group.
     displayState.baseSegmentHighlighting.value = true;
     displayState.highlightColor.value = pieceSplitState.blueGroup.value
       ? BLUE_COLOR_HIGHTLIGHT

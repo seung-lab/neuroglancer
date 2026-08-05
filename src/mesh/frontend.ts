@@ -50,6 +50,7 @@ import {
 import type { SegmentationDisplayState3D } from "#src/segmentation_display_state/frontend.js";
 import {
   forEachVisibleSegmentToDraw,
+  getObjectColor,
   registerRedrawWhenSegmentationDisplayState3DChanged,
   SegmentationLayerSharedObject,
 } from "#src/segmentation_display_state/frontend.js";
@@ -503,6 +504,18 @@ export class MeshLayer extends PerspectiveViewRenderLayer<ThreeDimensionalRender
     const { renderScaleHistogram } = this.displayState;
     const fragmentChunks = this.source.fragmentSource.chunks;
 
+    const objectAlpha = Math.min(1, displayState.objectAlpha.value);
+    // Per-fragment colouring: when a highlight colour is set (a split tool is
+    // active) and the source opts in per-fragment (calcada, where fragments are
+    // per-piece), tint each fragment by its own piece id instead of the shared
+    // root colour, so a 3D mesh shows its piece boundaries. Gated on the tool's
+    // transient highlightColor rather than the persisted baseSegmentColoring so it
+    // never sticks on outside the tool. The manifest is keyed by the root, so the
+    // per-object colour path alone cannot do this.
+    const colorFragments =
+      renderContext.emitColor &&
+      displayState.highlightColor.value !== undefined &&
+      this.source.colorFragmentsBySegment;
     forEachVisibleSegmentToDraw(
       displayState,
       this,
@@ -514,7 +527,7 @@ export class MeshLayer extends PerspectiveViewRenderLayer<ThreeDimensionalRender
         ++totalChunks;
         if (manifestChunk === undefined) return;
         ++presentChunks;
-        if (renderContext.emitColor) {
+        if (renderContext.emitColor && !colorFragments) {
           meshShaderManager.setColor(gl, shader, color!);
         }
         // Per-fragment picking (opt-in): assign a pick id per fragment so a 3D
@@ -537,13 +550,22 @@ export class MeshLayer extends PerspectiveViewRenderLayer<ThreeDimensionalRender
             fragment !== undefined &&
             fragment.state === ChunkState.GPU_MEMORY
           ) {
+            const fragmentSegment =
+              pickFragments || colorFragments
+                ? this.source.getFragmentPickId(fragmentId) || objectId
+                : objectId;
+            if (colorFragments) {
+              meshShaderManager.setColor(
+                gl,
+                shader,
+                getObjectColor(displayState, fragmentSegment, objectAlpha),
+              );
+            }
             if (pickFragments) {
-              const pickId =
-                this.source.getFragmentPickId(fragmentId) || objectId;
               meshShaderManager.setPickID(
                 gl,
                 shader,
-                renderContext.pickIDs!.registerUint64(this, pickId),
+                renderContext.pickIDs!.registerUint64(this, fragmentSegment),
               );
             }
             meshShaderManager.drawFragment(gl, shader, fragment);
@@ -749,6 +771,15 @@ export class MeshSource extends ChunkSource {
   getFragmentPickId(fragmentId: string): bigint {
     fragmentId;
     return 0n;
+  }
+
+  // Per-fragment colouring opt-in. When true AND base-segment colouring is on,
+  // MeshLayer.draw tints each fragment by its own segment (getFragmentPickId)
+  // instead of the shared root colour — the manifest is per-root, so the
+  // per-object colour path cannot show piece boundaries otherwise. Default off,
+  // so graphene and other sources are unaffected.
+  get colorFragmentsBySegment(): boolean {
+    return false;
   }
 }
 

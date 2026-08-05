@@ -461,6 +461,30 @@ export class GrapheneMeshSource extends WithParameters(
     } else {
       manifestRequestCount.delete(chunkIdentifier);
     }
+    // Link every piece the manifest lists to this root (chunk.objectId) so a 3D
+    // mesh pick anywhere on the mesh resolves piece->root — even over a part with
+    // no loaded 2D chunk, whose LUT trailer would otherwise be the only source of
+    // the mapping (a pick outside the 2D view would leave the root unknown).
+    const fragments = (response as { fragments?: unknown })?.fragments;
+    if (Array.isArray(fragments) && fragments.length > 0) {
+      const pieces = new BigUint64Array(fragments.length);
+      const roots = new BigUint64Array(fragments.length);
+      let n = 0;
+      for (const frag of fragments) {
+        const s = String(frag);
+        const colon = s.indexOf(":");
+        try {
+          pieces[n] = BigInt(colon === -1 ? s : s.slice(0, colon));
+          roots[n] = chunk.objectId;
+          n++;
+        } catch {
+          // skip malformed fragment id
+        }
+      }
+      if (n > 0) {
+        linkChunkEquivalences(pieces.subarray(0, n), roots.subarray(0, n), branchId);
+      }
+    }
     return decodeManifestChunk(chunk, response);
   }
 
