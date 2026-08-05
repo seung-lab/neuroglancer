@@ -221,9 +221,9 @@ describe("PatchMirror chunk resync", () => {
     harness.commit({ x0: 0, y0: 0, x1: 0, y1: 0 });
     await vi.advanceTimersByTimeAsync(5000);
 
-    expect(harness.errors.some((m) => m.includes("gave up resyncing"))).toBe(
-      true,
-    );
+    expect(
+      harness.errors.some((m) => m.includes("no longer retrying chunk")),
+    ).toBe(true);
     const readsAfterGivingUp = harness.baselineReadCount();
 
     // Reads recover; the next commit still rescans the whole chunk.

@@ -210,13 +210,17 @@ export class PatchMirror extends RefCounted {
   ): void {
     if (this.wasDisposed) return;
     if (state.failedAttempts >= RESYNC_BACKOFF_MS.length) {
-      // Out of retries. `needsResync` stays set, so any later commit to this
+      // Out of retries. `failedAttempts` is deliberately not reset, so this
+      // chunk stops scheduling its own retries for the rest of the session --
+      // a chunk that has failed this often is failing for a reason a timer
+      // will not fix. `needsResync` stays set, so any later commit to this
       // chunk still triggers a full rescan and repairs it.
       this.logger.error(
         "overlay",
-        `PatchMirror gave up resyncing chunk ${chunkKey} after ` +
-          `${state.failedAttempts} attempts; its overlay is stale until the ` +
-          `next write to it or a session reload`,
+        `PatchMirror is no longer retrying chunk ${chunkKey} on its own ` +
+          `(it already exhausted ${RESYNC_BACKOFF_MS.length} backoff ` +
+          `attempts); its overlay is stale until the next write to it or a ` +
+          `session reload`,
       );
       return;
     }
