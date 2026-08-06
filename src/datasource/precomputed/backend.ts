@@ -75,6 +75,7 @@ import { decodeJpegChunk } from "#src/sliceview/backend_chunk_decoders/jpeg.js";
 import { decodeJxlChunk } from "#src/sliceview/backend_chunk_decoders/jxl.js";
 import { decodePngChunk } from "#src/sliceview/backend_chunk_decoders/png.js";
 import { decodeRawChunk } from "#src/sliceview/backend_chunk_decoders/raw.js";
+import { decodeZfpcChunk } from "#src/sliceview/backend_chunk_decoders/zfpc.js";
 import type { VolumeChunk } from "#src/sliceview/volume/backend.js";
 import { VolumeChunkSource } from "#src/sliceview/volume/backend.js";
 import { convertEndian32, Endianness } from "#src/util/endian.js";
@@ -104,6 +105,7 @@ chunkDecoders.set(
 chunkDecoders.set(VolumeChunkEncoding.COMPRESSO, decodeCompressoChunk);
 chunkDecoders.set(VolumeChunkEncoding.PNG, decodePngChunk);
 chunkDecoders.set(VolumeChunkEncoding.JXL, decodeJxlChunk);
+chunkDecoders.set(VolumeChunkEncoding.ZFPC, decodeZfpcChunk);
 
 @registerSharedObject()
 export class PrecomputedVolumeChunkSource extends WithParameters(
