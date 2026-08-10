@@ -1522,16 +1522,16 @@ interface PointEntry {
   origin: "2d" | "3d";
 }
 
-const PIECE_SPLIT_FOCUS_KEY = "focusRootId";
 const PIECE_SPLIT_BLUE_KEY = "blue";
 const PIECE_SPLIT_RED_KEY = "red";
 
-// PieceSplitState holds the working state of the point-driven piece split
-// tool: the focus piece, the two coloured point lists, and the active colour.
+// PieceSplitState holds the working state of the point-driven piece split tool:
+// the two coloured point lists and the active colour. The focused segment is not
+// held here — it is derived from the points' current root when needed, so it can
+// never go stale against the graph.
 class PieceSplitState extends RefCounted implements Trackable {
   changed = new NullarySignal();
 
-  focusRootId = new TrackableValue<bigint | undefined>(undefined, (x) => x);
   blueGroup = new WatchableValue<boolean>(true);
   bluePoints = new WatchableValue<PointEntry[]>([]);
   redPoints = new WatchableValue<PointEntry[]>([]);
@@ -1539,14 +1539,12 @@ class PieceSplitState extends RefCounted implements Trackable {
   constructor() {
     super();
     const reemit = () => this.changed.dispatch();
-    this.registerDisposer(this.focusRootId.changed.add(reemit));
     this.registerDisposer(this.blueGroup.changed.add(reemit));
     this.registerDisposer(this.bluePoints.changed.add(reemit));
     this.registerDisposer(this.redPoints.changed.add(reemit));
   }
 
   reset() {
-    this.focusRootId.reset();
     this.blueGroup.value = true;
     this.bluePoints.value = [];
     this.redPoints.value = [];
@@ -1571,39 +1569,26 @@ class PieceSplitState extends RefCounted implements Trackable {
     const next = [...src.value];
     next.splice(index, 1);
     src.value = next;
-    // Removing the last point releases the focus piece so the user can start
-    // over on a different segment without pressing Clear.
-    if (
-      this.bluePoints.value.length === 0 &&
-      this.redPoints.value.length === 0
-    ) {
-      this.focusRootId.reset();
-    }
+    // Removing the last point releases the focus segment implicitly: with no
+    // points left there is nothing to derive a focus from.
   }
 
-  // replaceSegments mirrors the contract of MulticutState.replaceSegments —
-  // when a piece is split or merged externally, the saved focus may become
-  // invalid and we should clear it. Points are voxel-space so they survive
-  // graph mutations; the focus reference does not.
-  replaceSegments(oldValues: Uint64Set, _newValues: Uint64Set) {
-    const focus = this.focusRootId.value;
-    if (focus !== undefined && oldValues.has(focus)) {
-      this.reset();
-    }
-  }
+  // replaceSegments mirrors the contract of MulticutState.replaceSegments. Points
+  // are voxel-space and their pieces outlive a re-rooting, and the focus is
+  // derived from them rather than stored, so an external merge or split needs no
+  // fixup here — the focus follows the segment on its own.
+  replaceSegments(_oldValues: Uint64Set, _newValues: Uint64Set) {}
 
   toJSON() {
     return {
-      [PIECE_SPLIT_FOCUS_KEY]: this.focusRootId.toJSON()?.toString(),
       [PIECE_SPLIT_BLUE_KEY]: this.bluePoints.value.map(entryToJSON),
       [PIECE_SPLIT_RED_KEY]: this.redPoints.value.map(entryToJSON),
     };
   }
 
   restoreState(x: any) {
-    verifyOptionalObjectProperty(x, PIECE_SPLIT_FOCUS_KEY, (value) => {
-      this.focusRootId.restoreState(parseUint64(value));
-    });
+    // A "focusRootId" from an older state is intentionally ignored: it is now
+    // derived from the points.
     verifyOptionalObjectProperty(x, PIECE_SPLIT_BLUE_KEY, (value) => {
       this.bluePoints.value = parseArray(value, parseEntry);
     });
@@ -2770,8 +2755,45 @@ const selectionInNanometers = (
   };
 };
 
-function defaultParentForNewBranch(_graph: GrapheneGraphSource): number {
-  return 0;
+function defaultParentForNewBranch(graph: GrapheneGraphSource): number {
+  return graph.branchId.value;
+}
+
+const BRANCH_CREATING_POLL_MS = 2000;
+const BRANCH_CREATING_POLL_LIMIT = 300;
+
+function watchBranchUntilActive(
+  graph: GrapheneGraphSource,
+  id: number,
+  originBranchId: number,
+  isCancelled: () => boolean,
+  attempt = 0,
+): void {
+  if (isCancelled() || attempt >= BRANCH_CREATING_POLL_LIMIT) return;
+  const entry = graph.branches.value.find((branch) => branch.id === id);
+  if (entry !== undefined && entry.status === "active") {
+    // Only follow the user onto the new branch if they're still where they
+    // were when the fork was requested — a slow copy can take minutes, and
+    // switching branchId out from under someone who navigated elsewhere
+    // would wipe their selected segments and undo stack.
+    if (graph.branchId.value === originBranchId) {
+      graph.branchId.value = id;
+    }
+    return;
+  }
+  if (entry !== undefined && entry.status === "abandoned") return;
+  graph.triggerBranchRefresh();
+  setTimeout(
+    () =>
+      watchBranchUntilActive(
+        graph,
+        id,
+        originBranchId,
+        isCancelled,
+        attempt + 1,
+      ),
+    BRANCH_CREATING_POLL_MS,
+  );
 }
 
 function appendCoordParams(
@@ -2875,7 +2897,11 @@ class GrapheneGraphServerInterface {
     timestamp = 0,
     branchId = 0,
   ): Promise<{
-    pieces: { id: bigint; center: [number, number, number] }[];
+    pieces: {
+      id: bigint;
+      center: [number, number, number];
+      external: boolean;
+    }[];
     edges: {
       a: bigint;
       b: bigint;
@@ -2899,9 +2925,14 @@ class GrapheneGraphServerInterface {
       },
     );
     const pieces = (jsonResp.pieces || []).map(
-      (p: { id: string; center: [number, number, number] }) => ({
+      (p: {
+        id: string;
+        center: [number, number, number];
+        external?: boolean;
+      }) => ({
         id: parseUint64(p.id),
         center: p.center,
+        external: p.external === true,
       }),
     );
     const edges = (jsonResp.edges || []).map(
@@ -2995,6 +3026,41 @@ class GrapheneGraphServerInterface {
     return { roots, components, operationId };
   }
 
+  // splitByPieces is the second half of a stepped split: the regular multicut,
+  // told which pieces are the blue side and which the red rather than deriving
+  // them from coordinates. After generalSplit(piecesOnly) the parent piece no
+  // longer exists, so its sub-pieces have to be named directly.
+  async splitByPieces(
+    sourcePieces: bigint[],
+    sinkPieces: bigint[],
+    branchId = 0,
+  ): Promise<{ roots: bigint[]; components: bigint[][]; operationId: number }> {
+    const { fetchOkImpl, baseUrl } = this.httpSource;
+    const promise = fetchOkImpl(
+      appendCoordParams(`${baseUrl}/split?int64_as_str=1`, { branchId }),
+      {
+        method: "POST",
+        priority: "high",
+        body: JSON.stringify({
+          source_pieces: sourcePieces.map((x) => x.toString()),
+          sink_pieces: sinkPieces.map((x) => x.toString()),
+        }),
+      },
+    );
+    const response = await withErrorMessageHTTP(promise, {
+      initialMessage: `Cutting ${sourcePieces.length} source piece(s) from ${sinkPieces.length}`,
+      errorPrefix: "Split failed: ",
+    });
+    const jsonResp = await response.json();
+    const rootIds: string[] = jsonResp.new_root_ids ?? [];
+    const rawComponents: string[][] = jsonResp.components || [];
+    return {
+      roots: rootIds.map((x) => parseUint64(x)),
+      components: rawComponents.map((c) => c.map(parseUint64)),
+      operationId: Number(jsonResp.operation_id ?? 0),
+    };
+  }
+
   // generalSplit runs the whole split in one atomic backend operation: it cuts
   // every piece holding BOTH colours in two, then multicuts the segment into two
   // roots — returned as roots + components (Components[i] belongs to roots[i]).
@@ -3010,18 +3076,25 @@ class GrapheneGraphServerInterface {
       origin: "2d" | "3d";
     }[],
     branchId = 0,
+    // piecesOnly stops after the piece split: the sub-pieces and the edges
+    // derived for them are written, the segment stays whole, and the multicut is
+    // left to a separate call. It exists to make that intermediate graph
+    // inspectable, which is otherwise invisible.
+    piecesOnly = false,
   ): Promise<{
     operationId: number;
     roots: bigint[];
     components: bigint[][];
+    splitPieces: { old: bigint; blue: bigint; red: bigint }[];
   }> {
     const { fetchOkImpl, baseUrl } = this.httpSource;
     let response: Response;
     try {
       response = await fetchOkImpl(
-        appendCoordParams(`${baseUrl}/split/general?int64_as_str=1`, {
-          branchId,
-        }),
+        appendCoordParams(
+          `${baseUrl}/split/general?int64_as_str=1${piecesOnly ? "&pieces_only=true" : ""}`,
+          { branchId },
+        ),
         {
           method: "POST",
           body: JSON.stringify({
@@ -3043,10 +3116,17 @@ class GrapheneGraphServerInterface {
     const jsonResp = await response.json();
     const rootIds: string[] = jsonResp.new_root_ids ?? [];
     const comps: string[][] = jsonResp.components ?? [];
+    const subs: { old: string; blue: string; red: string }[] =
+      jsonResp.split_pieces ?? [];
     return {
       operationId: Number(jsonResp.operation_id ?? 0),
       roots: rootIds.map((x) => parseUint64(x)),
       components: comps.map((c) => c.map((x) => parseUint64(x))),
+      splitPieces: subs.map((sp) => ({
+        old: parseUint64(sp.old),
+        blue: parseUint64(sp.blue),
+        red: parseUint64(sp.red),
+      })),
     };
   }
 
@@ -3178,7 +3258,7 @@ class GrapheneGraphSource extends SegmentationGraphSource {
   private httpSource: HttpSource;
   public timestampLimit = new TrackableValue<number>(0, (x) => x);
   public branches = new WatchableValue<
-    { id: number; name: string; status: string }[]
+    { id: number; name: string; status: string; parentId: number }[]
   >([]);
   public labeledTimestamps = new WatchableValue<CalcadaLabeledTimestamp[]>([]);
   private branchesFetched = false;
@@ -3245,18 +3325,25 @@ class GrapheneGraphSource extends SegmentationGraphSource {
       this.branches.value = [];
       return;
     }
-    const parsed: { id: number; name: string; status: string }[] = [];
+    const parsed: {
+      id: number;
+      name: string;
+      status: string;
+      parentId: number;
+    }[] = [];
     for (const entry of data) {
       if (!entry || typeof entry !== "object") continue;
       const id = (entry as any).branch_id;
       const name = (entry as any).branch_name;
       const status = (entry as any).status;
+      const parentId = (entry as any).parent_branch_id;
       if (typeof id !== "number" || id === 0) continue;
       if (typeof name !== "string") continue;
       parsed.push({
         id,
         name,
         status: typeof status === "string" ? status : "active",
+        parentId: typeof parentId === "number" ? parentId : 0,
       });
     }
     this.branches.value = parsed;
@@ -3879,18 +3966,33 @@ function branchLayerControl(): LayerControlFactory<SegmentationUserLayer> {
         mainOption.value = "0";
         mainOption.textContent = "main";
         select.appendChild(mainOption);
-        // Show active branches in the dropdown. Non-active branches
-        // (merged/abandoned) are hidden unless the layer state points at one
-        // of them — restoring such state without that option would leave the
-        // select stuck on "main" even though branchId.value is set, making
-        // it look like state restore didn't work.
+        // Show active and creating branches in the dropdown; creating
+        // branches are disabled until their copy completes. Other
+        // non-active branches (merged/abandoned) are hidden unless the
+        // layer state points at one of them — restoring such state without
+        // that option would leave the select stuck on "main" even though
+        // branchId.value is set, making it look like state restore didn't
+        // work.
         const selectedId = branchId.value;
-        for (const { id, name, status } of branches) {
+        for (const { id, name, status, parentId } of branches) {
           const isActive = status === "active";
-          if (!isActive && id !== selectedId) continue;
+          const isCreating = status === "creating";
+          if (!isActive && !isCreating && id !== selectedId) continue;
           const opt = document.createElement("option");
           opt.value = String(id);
-          opt.textContent = isActive ? name : `${name} (${status})`;
+          if (isCreating) {
+            opt.textContent = `${name} (creating…)`;
+          } else if (!isActive) {
+            opt.textContent = `${name} (${status})`;
+          } else if (parentId !== 0) {
+            const parentName =
+              branches.find((branch) => branch.id === parentId)?.name ??
+              `#${parentId}`;
+            opt.textContent = `${name} ← ${parentName}`;
+          } else {
+            opt.textContent = name;
+          }
+          opt.disabled = isCreating;
           select.appendChild(opt);
         }
         select.value = String(selectedId);
@@ -3904,6 +4006,14 @@ function branchLayerControl(): LayerControlFactory<SegmentationUserLayer> {
           return;
         }
         if (parsed === branchId.value) return;
+        const targetBranch =
+          graph instanceof GrapheneGraphSource
+            ? graph.branches.value.find((branch) => branch.id === parsed)
+            : undefined;
+        if (targetBranch !== undefined && targetBranch.status === "creating") {
+          select.value = String(branchId.value);
+          return;
+        }
         // Drop selected segments synchronously before switching — the
         // branchId.changed listener also clears, but doing it here too
         // suppresses the "Could not fetch root: piece not found" spam
@@ -3940,6 +4050,45 @@ function branchLayerControl(): LayerControlFactory<SegmentationUserLayer> {
 
       const createForm = document.createElement("div");
       createForm.style.display = "none";
+      const parentSelect = document.createElement("select");
+      parentSelect.name = "parent_branch";
+      // resetToDefault distinguishes "form just opened" (jump to the
+      // default parent) from "branches list refreshed under an open form"
+      // (keep whatever the user already picked, unless that option is gone).
+      const renderParentOptions = (resetToDefault: boolean) => {
+        const previousValue = parentSelect.value;
+        parentSelect.textContent = "";
+        const mainOption = document.createElement("option");
+        mainOption.value = "0";
+        mainOption.textContent = "from: main";
+        parentSelect.appendChild(mainOption);
+        const branches =
+          graph instanceof GrapheneGraphSource ? graph.branches.value : [];
+        for (const { id, name, status } of branches) {
+          if (status !== "active") continue;
+          const option = document.createElement("option");
+          option.value = String(id);
+          option.textContent = `from: ${name}`;
+          parentSelect.appendChild(option);
+        }
+        const defaultValue = String(
+          graph instanceof GrapheneGraphSource
+            ? defaultParentForNewBranch(graph)
+            : 0,
+        );
+        parentSelect.value = resetToDefault ? defaultValue : previousValue;
+        if (parentSelect.selectedIndex === -1) {
+          parentSelect.value = defaultValue;
+        }
+        if (parentSelect.selectedIndex === -1) parentSelect.value = "0";
+      };
+      renderParentOptions(true);
+      if (graph instanceof GrapheneGraphSource) {
+        context.registerDisposer(
+          graph.branches.changed.add(() => renderParentOptions(false)),
+        );
+      }
+      createForm.appendChild(parentSelect);
       const nameInput = document.createElement("input");
       nameInput.type = "text";
       nameInput.name = "branch_name";
@@ -3957,6 +4106,7 @@ function branchLayerControl(): LayerControlFactory<SegmentationUserLayer> {
         const isHidden = createForm.style.display === "none";
         createForm.style.display = isHidden ? "" : "none";
         if (isHidden) {
+          renderParentOptions(true);
           nameInput.focus();
         }
       });
@@ -3965,14 +4115,16 @@ function branchLayerControl(): LayerControlFactory<SegmentationUserLayer> {
         if (!(graph instanceof GrapheneGraphSource)) return;
         const name = String(nameInput.value).trim();
         if (name.length === 0) return;
+        const originBranchId = graph.branchId.value;
         createButton.disabled = true;
         try {
           let response: Response;
+          const parsedParentId = Number.parseInt(parentSelect.value, 10);
+          const resolvedParentId = Number.isFinite(parsedParentId)
+            ? parsedParentId
+            : defaultParentForNewBranch(graph);
           try {
-            response = await graph.createBranch(
-              name,
-              defaultParentForNewBranch(graph),
-            );
+            response = await graph.createBranch(name, resolvedParentId);
           } catch (e: any) {
             const resp: Response | undefined = e?.response;
             let msg = "";
@@ -4002,11 +4154,31 @@ function branchLayerControl(): LayerControlFactory<SegmentationUserLayer> {
             errorSpan.textContent = "Invalid response from server";
             return;
           }
+          const newStatus =
+            typeof body?.status === "string" ? body.status : "active";
           graph.branches.value = [
             ...graph.branches.value,
-            { id: newId, name: newName, status: "active" },
+            {
+              id: newId,
+              name: newName,
+              status: newStatus,
+              parentId: resolvedParentId,
+            },
           ];
-          graph.branchId.value = newId;
+          if (newStatus === "active") {
+            graph.branchId.value = newId;
+          } else {
+            let cancelled = false;
+            context.registerDisposer(() => {
+              cancelled = true;
+            });
+            watchBranchUntilActive(
+              graph,
+              newId,
+              originBranchId,
+              () => cancelled,
+            );
+          }
           nameInput.value = "";
           createForm.style.display = "none";
           errorSpan.textContent = "";
@@ -4989,18 +5161,10 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
     const priorBaseSegmentHighlighting =
       displayState.baseSegmentHighlighting.value;
     const priorHighlightColor = displayState.highlightColor.value;
-    // Highlight the individual piece under the cursor (not the whole segment) so
-    // hovering reveals the piece boundaries. A defined highlightColor is required —
-    // otherwise the hovered piece renders washed-out, which reads like a
-    // chunk-boundary gap. The set highlightColor also gates per-fragment 3D mesh
-    // colouring (MeshLayer.draw), so each piece shows its own colour while the tool
-    // is active and reverts to the root colour on exit — without touching the
-    // persisted baseSegmentColoring toggle. updatePieceSplitDisplay keeps it in
-    // sync with the group.
-    displayState.baseSegmentHighlighting.value = true;
-    displayState.highlightColor.value = pieceSplitState.blueGroup.value
-      ? BLUE_COLOR_HIGHTLIGHT
-      : RED_COLOR_HIGHLIGHT;
+    // The tool renders the segment the way the rest of the app does: as one
+    // segment. Breaking it into its pieces — hover highlighting a single piece in
+    // 2D, and tinting each mesh fragment separately in 3D — is a debugging view,
+    // so it is turned on only while Debug is active (see setPieceView).
 
     // Pending post-apply mesh re-fetch timers, cleared when the tool deactivates
     // so back-to-back splits don't leak timers that fire after the tool is gone.
@@ -5013,9 +5177,55 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
     // per-piece colour map fetched from the backend. When on, every piece of the
     // root is tinted a distinct colour so a kept-whole segment's internal pieces
     // are individually visible; edge lines are drawn via the annotation states.
+    // Result of a stepped split's first half, held until the second runs. Cleared
+    // whenever the points change, since it names sub-pieces derived from them.
+    let steppedSplit:
+      | { sources: bigint[]; sinks: bigint[]; branchId: number }
+      | undefined;
+
     let debugMode = false;
     let debugRootId: bigint | undefined;
     let debugPieceColors: Map<bigint, bigint> | undefined;
+
+    // The focused segment is DERIVED from the placed points rather than stored:
+    // it is the current root of the first point's piece. Storing it would let it
+    // drift — any edit that re-roots the segment (a merge or split by anyone, or
+    // an undo) leaves a saved id pointing at a superseded root, and the display
+    // below would then show an empty segment. Deriving it means the focus follows
+    // the segment automatically.
+    //
+    // Returns undefined when there are no points, or when the piece's
+    // equivalences are not loaded yet (get() maps a piece to itself then, and a
+    // piece id is never a root id) — callers must not hijack the display in that
+    // case, or the segment would vanish while the mapping is still in flight.
+    const currentFocusRoot = (): bigint | undefined => {
+      const first =
+        pieceSplitState.bluePoints.value[0] ??
+        pieceSplitState.redPoints.value[0];
+      if (first === undefined) return undefined;
+      const root = segmentationGroupState.segmentEquivalences.get(
+        first.pieceId,
+      );
+      return root === first.pieceId ? undefined : root;
+    };
+
+    // setPieceView switches between showing the selection as one segment (the
+    // default, matching the rest of the app) and breaking it into its pieces.
+    // baseSegmentHighlighting makes 2D hover pick out a single piece, and a
+    // defined highlightColor is what gates per-fragment mesh colouring in
+    // MeshLayer.draw — together they are the "piece view". Neither touches the
+    // persisted baseSegmentColoring toggle, so leaving the tool restores whatever
+    // the user had.
+    const setPieceView = (on: boolean) => {
+      displayState.baseSegmentHighlighting.value = on
+        ? true
+        : priorBaseSegmentHighlighting;
+      displayState.highlightColor.value = on
+        ? pieceSplitState.blueGroup.value
+          ? BLUE_COLOR_HIGHTLIGHT
+          : RED_COLOR_HIGHLIGHT
+        : priorHighlightColor;
+    };
 
     const resetPieceSplitDisplay = () => {
       resetTemporaryVisibleSegmentsState(segmentationGroupState);
@@ -5026,10 +5236,11 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
     const updatePieceSplitDisplay = () => {
       resetPieceSplitDisplay();
       displayState.hideSegmentZero.value = false;
-      // Keep the base-segment hover tint matching the active colour.
-      displayState.highlightColor.value = pieceSplitState.blueGroup.value
-        ? BLUE_COLOR_HIGHTLIGHT
-        : RED_COLOR_HIGHLIGHT;
+      // Keep the hover tint matching the active colour, but only while the piece
+      // view is on — otherwise this would silently re-enable it.
+      if (debugMode) {
+        setPieceView(true);
+      }
 
       // Debug overlay takes precedence: colour every piece of the debugged root
       // distinctly from the authoritative backend piece list.
@@ -5045,7 +5256,7 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
         return;
       }
 
-      const focus = pieceSplitState.focusRootId.value;
+      const focus = currentFocusRoot();
       if (focus === undefined) {
         displayState.useTempSegmentStatedColors2d.value = false;
         return;
@@ -5157,6 +5368,20 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
       title: "Apply the general split (shift+enter)",
       onClick: () => void runApply(),
     });
+    // The split in two halves, for inspecting the graph between them: the first
+    // writes the sub-pieces and their edges but leaves the segment whole, the
+    // second runs the ordinary multicut over what the first produced.
+    const splitPiecesButton = makeIcon({
+      text: "1. Pieces",
+      title:
+        "Step 1: split the pieces and add their edges, keeping one segment (inspect with Debug)",
+      onClick: () => void runSplitPieces(),
+    });
+    const cutButton = makeIcon({
+      text: "2. Cut",
+      title: "Step 2: run the regular multicut over the pieces from step 1",
+      onClick: () => void runCut(),
+    });
     const undoButton = makeIcon({
       text: "Undo",
       title: "Undo the last edit (Ctrl+Z)",
@@ -5182,6 +5407,8 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
     actions.appendChild(swapButton);
     actions.appendChild(clearButton);
     actions.appendChild(applyButton);
+    actions.appendChild(splitPiecesButton);
+    actions.appendChild(cutButton);
     actions.appendChild(undoButton);
     actions.appendChild(debugButton);
     const spinner = document.createElement("div");
@@ -5192,6 +5419,12 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
     let busy = false;
     const setApplyEnabled = (enabled: boolean) => {
       applyButton.classList.toggle("disabled", busy || !enabled);
+      splitPiecesButton.classList.toggle("disabled", busy || !enabled);
+      // Step 2 only means anything once step 1 has produced pieces to cut.
+      cutButton.classList.toggle(
+        "disabled",
+        busy || steppedSplit === undefined,
+      );
     };
     const setUndoEnabled = () => {
       // Disabled until there is at least one edit to revert (point 3).
@@ -5207,6 +5440,8 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
         swapButton,
         clearButton,
         applyButton,
+        splitPiecesButton,
+        cutButton,
         undoButton,
         debugButton,
       ]) {
@@ -5217,7 +5452,7 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
 
     const render = () => {
       // Focus piece label.
-      const focus = pieceSplitState.focusRootId.value;
+      const focus = currentFocusRoot();
       focusRow.textContent =
         focus !== undefined
           ? `Focus piece: ${focus.toString()}`
@@ -5285,6 +5520,9 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
 
     // --- Actions ---
     const runUndo = async () => {
+      // An undo may take step 1's sub-pieces back out of the graph, so the
+      // pending cut no longer refers to anything.
+      steppedSplit = undefined;
       if (busy) return;
       if (!graphConnection.canUndo()) {
         StatusMessage.showTemporaryMessage("Nothing to undo", 2500);
@@ -5302,7 +5540,7 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
     // Pick the root to debug: the focus piece if set, else the single visible
     // segment.
     const debugTargetRoot = (): bigint | undefined => {
-      const focusRoot = pieceSplitState.focusRootId.value;
+      const focusRoot = currentFocusRoot();
       if (focusRoot !== undefined) return focusRoot;
       let only: bigint | undefined;
       for (const segment of segmentationGroupState.visibleSegments) {
@@ -5316,6 +5554,7 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
     const clearDebug = () => {
       if (!debugMode) return;
       debugMode = false;
+      setPieceView(false);
       debugRootId = undefined;
       debugPieceColors = undefined;
       graphConnection.clearDebugEdges();
@@ -5349,19 +5588,26 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
         debugRootId = root;
         debugPieceColors = new Map<bigint, bigint>();
         const centerById = new Map<bigint, [number, number, number]>();
-        pieces.forEach((piece, i) => {
+        let owned = 0;
+        for (const piece of pieces) {
+          centerById.set(piece.id, piece.center);
+          if (piece.external) continue;
           debugPieceColors!.set(
             piece.id,
-            DEBUG_PIECE_PALETTE[i % DEBUG_PIECE_PALETTE.length],
+            DEBUG_PIECE_PALETTE[owned % DEBUG_PIECE_PALETTE.length],
           );
-          centerById.set(piece.id, piece.center);
-        });
+          owned++;
+        }
         const edgeLines: Line[] = [];
         const siblingLines: Line[] = [];
+        let undrawable = 0;
         for (const edge of edges) {
           const centerA = centerById.get(edge.a);
           const centerB = centerById.get(edge.b);
-          if (!centerA || !centerB) continue;
+          if (!centerA || !centerB) {
+            undrawable++;
+            continue;
+          }
           const line: Line = {
             pointA: vec3.fromValues(centerA[0], centerA[1], centerA[2]),
             pointB: vec3.fromValues(centerB[0], centerB[1], centerB[2]),
@@ -5378,10 +5624,13 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
         graphConnection.setDebugEdges(edgeLines, siblingLines);
         debugMode = true;
         setDebugButtonActive(true);
+        setPieceView(true);
         updatePieceSplitDisplay();
         StatusMessage.showTemporaryMessage(
           `Debug: ${pieces.length} pieces, ${edges.length} edges ` +
-            `(${siblingLines.length} green zero-affinity split edge(s)). Press Debug again to hide.`,
+            `(${siblingLines.length} green zero-affinity split edge(s)` +
+            (undrawable > 0 ? `, ${undrawable} not drawable` : "") +
+            `). Press Debug again to hide.`,
           6000,
         );
       } catch (e: unknown) {
@@ -5394,8 +5643,153 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
       }
     };
 
+    // Step 1: cut every multi-colour piece and write the edges its halves inherit,
+    // but leave everything in one segment. What the multicut will act on is then
+    // in the graph and can be looked at with Debug before anything is separated.
+    const runSplitPieces = async () => {
+      if (
+        pieceSplitState.bluePoints.value.length === 0 ||
+        pieceSplitState.redPoints.value.length === 0
+      ) {
+        StatusMessage.showTemporaryMessage(
+          "Place at least one blue and one red point",
+          5000,
+        );
+        return;
+      }
+      setBusy(true);
+      const branchId = graphConnection.graph.branchId.value;
+      try {
+        const toPayload = (p: PointEntry, color: "blue" | "red") => ({
+          color,
+          pieceId: p.pieceId,
+          x: p.voxel[0],
+          y: p.voxel[1],
+          z: p.voxel[2],
+          origin: p.origin,
+        });
+        const points = [
+          ...pieceSplitState.bluePoints.value.map((p) => toPayload(p, "blue")),
+          ...pieceSplitState.redPoints.value.map((p) => toPayload(p, "red")),
+        ];
+        const { roots, operationId, splitPieces } =
+          await graphConnection.graph.graphServer.generalSplit(
+            points,
+            branchId,
+            true,
+          );
+        graphConnection.pushUndo(operationId, branchId);
+
+        // Name the two sides for step 2. A piece that was split contributes its
+        // blue half to the sources and its red half to the sinks; a piece holding
+        // only one colour is untouched and stands for itself.
+        const wasSplit = new Set(splitPieces.map((sp) => sp.old));
+        const sources = new Set<bigint>();
+        const sinks = new Set<bigint>();
+        for (const sp of splitPieces) {
+          sources.add(sp.blue);
+          sinks.add(sp.red);
+        }
+        for (const p of pieceSplitState.bluePoints.value) {
+          if (!wasSplit.has(p.pieceId)) sources.add(p.pieceId);
+        }
+        for (const p of pieceSplitState.redPoints.value) {
+          if (!wasSplit.has(p.pieceId)) sinks.add(p.pieceId);
+        }
+        steppedSplit = {
+          sources: [...sources],
+          sinks: [...sinks],
+          branchId,
+        };
+
+        // The segment stays whole but its pieces changed, so the rendered chunks
+        // and the piece->root mapping are stale.
+        const segmentsState = layer.displayState.segmentationGroupState.value;
+        const newRoots = roots.filter((root) => root !== 0n);
+        const focus = currentFocusRoot();
+        if (newRoots.length > 0 && focus !== undefined) {
+          segmentsState.selectedSegments.delete(focus);
+          segmentsState.visibleSegments.delete(focus);
+          for (const newRoot of newRoots) {
+            segmentsState.selectedSegments.add(newRoot);
+            segmentsState.visibleSegments.add(newRoot);
+          }
+          graphConnection.meshAddNewSegments(newRoots);
+        }
+        graphConnection.refreshChunkSources();
+        clearDebug();
+        StatusMessage.showTemporaryMessage(
+          `Step 1 done — ${splitPieces.length} piece(s) split, segment still whole. ` +
+            `Press Debug to inspect the edges, then "2. Cut".`,
+          8000,
+        );
+        render();
+      } catch (e: unknown) {
+        StatusMessage.showTemporaryMessage(
+          `Step 1 failed: ${e instanceof Error ? e.message : String(e)}`,
+          8000,
+        );
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    // Step 2: the ordinary multicut, over the pieces step 1 left behind.
+    const runCut = async () => {
+      if (steppedSplit === undefined) {
+        StatusMessage.showTemporaryMessage('Run "1. Pieces" first', 5000);
+        return;
+      }
+      setBusy(true);
+      const { sources, sinks, branchId } = steppedSplit;
+      try {
+        const { roots, operationId } =
+          await graphConnection.graph.graphServer.splitByPieces(
+            sources,
+            sinks,
+            branchId,
+          );
+        const newRoots = roots.filter((root) => root !== 0n);
+        if (newRoots.length === 0) {
+          StatusMessage.showTemporaryMessage("No split found.", 3000);
+          return;
+        }
+        graphConnection.pushUndo(operationId, branchId);
+        const segmentsState = layer.displayState.segmentationGroupState.value;
+        for (const piece of [...sources, ...sinks]) {
+          segmentsState.selectedSegments.delete(piece);
+          segmentsState.visibleSegments.delete(piece);
+        }
+        const focus = currentFocusRoot();
+        if (focus !== undefined) {
+          segmentsState.selectedSegments.delete(focus);
+          segmentsState.visibleSegments.delete(focus);
+        }
+        for (const newRoot of newRoots) {
+          segmentsState.selectedSegments.add(newRoot);
+          segmentsState.visibleSegments.add(newRoot);
+        }
+        graphConnection.meshAddNewSegments(newRoots);
+        graphConnection.refreshChunkSources();
+        clearDebug();
+        steppedSplit = undefined;
+        pieceSplitState.reset();
+        StatusMessage.showTemporaryMessage(
+          `Step 2 done — separated into ${newRoots.length} root(s). Press Ctrl+Z to undo.`,
+          6000,
+        );
+      } catch (e: unknown) {
+        StatusMessage.showTemporaryMessage(
+          `Step 2 failed: ${e instanceof Error ? e.message : String(e)}`,
+          8000,
+        );
+      } finally {
+        setBusy(false);
+      }
+    };
+
     const runApply = async () => {
-      const focus = pieceSplitState.focusRootId.value;
+      const focus = currentFocusRoot();
       if (focus === undefined) {
         StatusMessage.showTemporaryMessage(
           "Place blue and red points first",
@@ -5523,15 +5917,13 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
         );
         return;
       }
-      if (pieceSplitState.focusRootId.value === undefined) {
-        // First point pins the focus root (segment); later points may land in
-        // any piece of that segment, in the same piece or across pieces.
-        pieceSplitState.focusRootId.value = value;
-      }
-      const currentFocus = pieceSplitState.focusRootId.value;
-      if (value !== currentFocus) {
+      // The first point establishes the focus segment implicitly (the focus is
+      // derived from it); later points may land in any piece of that segment, in
+      // the same piece or across pieces.
+      const currentFocus = currentFocusRoot();
+      if (currentFocus !== undefined && value !== currentFocus) {
         StatusMessage.showTemporaryMessage(
-          `Point must be inside segment ${currentFocus!.toString()} (clicked segment: ${value.toString()}). Remove all points to change focus.`,
+          `Point must be inside segment ${currentFocus.toString()} (clicked segment: ${value.toString()}). Remove all points to change focus.`,
           6000,
         );
         return;
