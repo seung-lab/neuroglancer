@@ -5516,18 +5516,13 @@ class PieceSplitTool extends LayerTool<SegmentationUserLayer> {
       setUndoEnabled();
     };
     render();
-    activation.registerDisposer(
-      pieceSplitState.changed.add(() => {
-        // A pending step-1 result names sub-pieces derived from exactly these
-        // points, so any edit to them retires it rather than letting step 2 cut
-        // against a stale set.
-        steppedSplit = undefined;
-        render();
-      }),
-    );
+    activation.registerDisposer(pieceSplitState.changed.add(render));
 
     // --- Actions ---
     const runUndo = async () => {
+      // An undo may take step 1's sub-pieces back out of the graph, so the
+      // pending cut no longer refers to anything.
+      steppedSplit = undefined;
       if (busy) return;
       if (!graphConnection.canUndo()) {
         StatusMessage.showTemporaryMessage("Nothing to undo", 2500);
