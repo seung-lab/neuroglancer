@@ -10,9 +10,9 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { Chunk, ChunkSource } from "#src/chunk_manager/backend.js";
-import { ChunkQueueManager } from "#src/chunk_manager/backend.js";
-import { ChunkState } from "#src/chunk_manager/base.js";
+import type { ChunkSource } from "#src/chunk_manager/backend.js";
+import { Chunk, ChunkQueueManager } from "#src/chunk_manager/backend.js";
+import { ChunkPriorityTier, ChunkState } from "#src/chunk_manager/base.js";
 
 interface SentMessage {
   readonly name: string;
@@ -141,5 +141,99 @@ describe("ChunkQueueManager.invalidateChunkCache (TM-375)", () => {
     expect(sent).toEqual([]);
     expect(updateChunkState).not.toHaveBeenCalled();
     expect(scheduleUpdate).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Surgical harness for `performChunkPriorityUpdate`: the REAL prototype method
+ * and the REAL `Chunk.updatePriorityProperties`, with the queue-membership
+ * helpers replaced by spies (queue re-derivation itself needs the full
+ * pairing-heap machinery and is out of scope).
+ */
+function makePriorityHarness() {
+  const qm = Object.create(ChunkQueueManager.prototype) as ChunkQueueManager;
+  const removeChunkFromQueues_ = vi.fn();
+  const addChunkToQueues_ = vi.fn();
+  const adjustCapacitiesForChunk = vi.fn();
+  Object.assign(qm as unknown as Record<string, unknown>, {
+    removeChunkFromQueues_,
+    addChunkToQueues_,
+    adjustCapacitiesForChunk,
+  });
+  return { qm, removeChunkFromQueues_, addChunkToQueues_ };
+}
+
+function makePriorityChunk(fields: Partial<Chunk>): Chunk {
+  const chunk = Object.create(Chunk.prototype) as Chunk;
+  // Mirrors `Chunk.initialize` field-by-field; `initialize` itself is not
+  // usable here because the `state` setter notifies `source.chunkStateChanged`,
+  // which needs the full source machinery.
+  Object.assign(chunk as unknown as Record<string, unknown>, {
+    key: "0,0,0",
+    source: { chunkStateChanged: () => {} },
+    priority: Number.NEGATIVE_INFINITY,
+    priorityTier: ChunkPriorityTier.RECENT,
+    newPriority: Number.NEGATIVE_INFINITY,
+    newPriorityTier: ChunkPriorityTier.RECENT,
+    error: null,
+    state_: ChunkState.NEW,
+    requestedState: ChunkState.NEW,
+    newRequestedState: ChunkState.NEW,
+    permanent: false,
+  });
+  Object.assign(chunk, fields);
+  return chunk;
+}
+
+describe("ChunkQueueManager.performChunkPriorityUpdate", () => {
+  it("applies a residency upgrade even when tier and priority are unchanged", () => {
+    // Regression: a chunk first requested by the fetch RPC at
+    // (VISIBLE, +Infinity, SYSTEM_MEMORY) — e.g. a brush baseline read of a
+    // chunk the renderer had not yet promoted — then re-requested at the SAME
+    // tier/priority with GPU_MEMORY residency (permanent pin + render layer).
+    // The early return keyed only on (tier, priority) never applied the
+    // upgrade, so the chunk could never enter the GPU promotion queue and its
+    // paint overlay stayed invisible for the rest of the session.
+    const { qm, addChunkToQueues_ } = makePriorityHarness();
+    const chunk = makePriorityChunk({
+      state: ChunkState.SYSTEM_MEMORY,
+      priorityTier: ChunkPriorityTier.VISIBLE,
+      priority: Number.POSITIVE_INFINITY,
+      requestedState: ChunkState.SYSTEM_MEMORY,
+      newPriorityTier: ChunkPriorityTier.VISIBLE,
+      newPriority: Number.POSITIVE_INFINITY,
+      newRequestedState: ChunkState.GPU_MEMORY,
+    });
+
+    qm.performChunkPriorityUpdate(chunk);
+
+    expect(chunk.requestedState).toBe(ChunkState.GPU_MEMORY);
+    // Queues must be re-derived so `chunkQueuesForChunk` can now yield the
+    // GPU promotion queue for this SYSTEM_MEMORY chunk.
+    expect(addChunkToQueues_).toHaveBeenCalledOnce();
+  });
+
+  it("early-returns without queue churn when nothing changed, resetting accumulators", () => {
+    const { qm, removeChunkFromQueues_, addChunkToQueues_ } =
+      makePriorityHarness();
+    const chunk = makePriorityChunk({
+      state: ChunkState.SYSTEM_MEMORY,
+      priorityTier: ChunkPriorityTier.VISIBLE,
+      priority: 5,
+      requestedState: ChunkState.GPU_MEMORY,
+      newPriorityTier: ChunkPriorityTier.VISIBLE,
+      newPriority: 5,
+      newRequestedState: ChunkState.GPU_MEMORY,
+    });
+
+    qm.performChunkPriorityUpdate(chunk);
+
+    expect(removeChunkFromQueues_).not.toHaveBeenCalled();
+    expect(addChunkToQueues_).not.toHaveBeenCalled();
+    expect(chunk.newPriorityTier).toBe(ChunkPriorityTier.RECENT);
+    expect(chunk.newPriority).toBe(Number.NEGATIVE_INFINITY);
+    // The accumulator must reset on this path too, or a stale min() survives
+    // into the next recompute cycle.
+    expect(chunk.newRequestedState).toBe(ChunkState.NEW);
   });
 });

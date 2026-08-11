@@ -891,10 +891,21 @@ export class ChunkQueueManager extends SharedObjectCounterpart {
   performChunkPriorityUpdate(chunk: Chunk) {
     if (
       chunk.priorityTier === chunk.newPriorityTier &&
-      chunk.priority === chunk.newPriority
+      chunk.priority === chunk.newPriority &&
+      chunk.requestedState === chunk.newRequestedState
     ) {
+      // Nothing changed — including the requested residency. The residency
+      // check matters: a chunk first requested at (VISIBLE, +Infinity,
+      // SYSTEM_MEMORY) by the fetch RPC (e.g. a brush baseline read of a
+      // chunk the renderer had not yet promoted) and later re-requested at
+      // the SAME tier/priority with GPU_MEMORY residency (permanent pin /
+      // render layer) used to early-return here with the upgrade unapplied —
+      // so `chunkQueuesForChunk` never yielded the GPU promotion queue and
+      // the chunk (with any paint overlay riding on it) stayed off-GPU, i.e.
+      // invisible, for the rest of the session.
       chunk.newPriorityTier = ChunkPriorityTier.RECENT;
       chunk.newPriority = Number.NEGATIVE_INFINITY;
+      chunk.newRequestedState = ChunkState.NEW;
       return;
     }
     if (DEBUG_CHUNK_UPDATES) {
