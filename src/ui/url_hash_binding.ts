@@ -51,6 +51,7 @@ export function encodeStateAsFragment(state: any): string {
 export interface UrlHashBindingOptions {
   defaultFragment?: string;
   updateDelayMilliseconds?: number;
+  upgradeState?: (state: any) => any;
 }
 
 /**
@@ -74,6 +75,7 @@ export class UrlHashBinding extends RefCounted {
   parseError = new WatchableValue<Error | undefined>(undefined);
 
   private defaultFragment: string;
+  private upgradeState: (state: any) => any;
 
   constructor(
     public root: Trackable,
@@ -81,7 +83,11 @@ export class UrlHashBinding extends RefCounted {
     options: UrlHashBindingOptions = {},
   ) {
     super();
-    const { updateDelayMilliseconds = 200, defaultFragment = "{}" } = options;
+    const {
+      updateDelayMilliseconds = 200,
+      defaultFragment = "{}",
+      upgradeState = (state) => state,
+    } = options;
     this.registerEventListener(window, "hashchange", () =>
       this.updateFromUrlHash(),
     );
@@ -93,6 +99,7 @@ export class UrlHashBinding extends RefCounted {
     this.registerDisposer(root.changed.add(throttledSetUrlHash));
     this.registerDisposer(() => throttledSetUrlHash.cancel());
     this.defaultFragment = defaultFragment;
+    this.upgradeState = upgradeState;
   }
 
   /**
@@ -119,7 +126,7 @@ export class UrlHashBinding extends RefCounted {
    * Sets the current state to match the URL hash.  If it is desired to initialize the state based
    * on the URL hash, then this should be called immediately after construction.
    */
-  updateFromUrlHash(upgradeState: (a: any) => any = (x) => x) {
+  updateFromUrlHash() {
     try {
       let s = location.href.replace(/^[^#]+/, "");
       if (s === "" || s === "#" || s === "#!") {
@@ -135,7 +142,7 @@ export class UrlHashBinding extends RefCounted {
             .then((json) => {
               verifyObject(json);
               this.root.reset();
-              this.root.restoreState(json);
+              this.root.restoreState(this.upgradeState(json));
             }),
           {
             initialMessage: `Loading state from ${url}`,
@@ -148,7 +155,7 @@ export class UrlHashBinding extends RefCounted {
         s = decodeURIComponent(s);
         const state = urlSafeParse(s);
         verifyObject(state);
-        this.root.restoreState(state);
+        this.root.restoreState(this.upgradeState(state));
         this.prevStateString = undefined;
       } else if (s.startsWith("#!")) {
         s = s.slice(2);
@@ -160,7 +167,7 @@ export class UrlHashBinding extends RefCounted {
         this.root.reset();
         const state = urlSafeParse(s);
         verifyObject(state);
-        this.root.restoreState(upgradeState(state));
+        this.root.restoreState(this.upgradeState(state));
       } else {
         throw new Error(
           `URL hash is expected to be of the form "#!{...}" or "#!+{...}".`,
@@ -168,7 +175,10 @@ export class UrlHashBinding extends RefCounted {
       }
       this.parseError.value = undefined;
     } catch (parseError) {
-      this.parseError.value = parseError;
+      this.parseError.value =
+        parseError instanceof Error
+          ? parseError
+          : new Error(String(parseError));
     }
   }
 }

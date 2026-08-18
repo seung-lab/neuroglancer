@@ -15,6 +15,7 @@
  */
 
 import { schemePattern } from "#src/kvstore/url.js";
+import { toggleBoolPropertyToolJson } from "#src/layer/annotation/tool_state.js";
 import type { UserLayer } from "#src/layer/index.js";
 import { layerTypes } from "#src/layer/index.js";
 import { StatusMessage } from "#src/status.js";
@@ -147,6 +148,39 @@ function setCustomInputEventBindings(viewer: Viewer, bindings: CustomBindings) {
   }
 }
 
+export function convertLegacyAnnotationTags(layer: any) {
+  if (!Array.isArray(layer?.annotationProperties)) return;
+  const properties = layer.annotationProperties;
+  const usedIdentifiers = new Set(
+    properties
+      .filter((property: any) => typeof property?.tag !== "string")
+      .map((property: any) => property?.id)
+      .filter((identifier: any) => typeof identifier === "string"),
+  );
+  const convertedIdentifiers = new Map<string, string>();
+  layer.annotationProperties = properties.map((property: any) => {
+    if (typeof property?.tag !== "string") return property;
+    const { tag, enum_labels, enum_values, ...booleanProperty } = property;
+    let identifier = tag;
+    for (let suffix = 1; usedIdentifiers.has(identifier); ++suffix) {
+      identifier = `${tag}${suffix}`;
+    }
+    usedIdentifiers.add(identifier);
+    if (typeof property.id === "string") {
+      convertedIdentifiers.set(property.id, identifier);
+    }
+    return { ...booleanProperty, id: identifier, type: "bool" };
+  });
+  if (layer.toolBindings === undefined) return;
+  for (const [key, tool] of Object.entries(layer.toolBindings)) {
+    if (typeof tool !== "string" || !tool.startsWith("tagTool_")) continue;
+    const identifier = convertedIdentifiers.get(tool.slice("tagTool_".length));
+    if (identifier !== undefined) {
+      layer.toolBindings[key] = toggleBoolPropertyToolJson(identifier);
+    }
+  }
+}
+
 /**
  * Sets up the default neuroglancer viewer.
  */
@@ -157,6 +191,24 @@ export function setupDefaultViewer() {
     setCustomInputEventBindings(viewer, NEUROGLANCER_CUSTOM_INPUT_BINDINGS!);
   }
 
+  viewer.stateUpgrader = (state) => {
+    // convert graphene state timestamp to layer timestamp
+    const fixTimestamp = (layer: any) => {
+      if (layer.source?.state?.timestamp) {
+        layer.timestamp = layer.source.state.timestamp;
+        layer.source.state.timestamp = undefined;
+      }
+    };
+    if (state.layers) {
+      const layers = Array.isArray(state.layers)
+        ? state.layers
+        : Object.values(state.layers);
+      layers.map(fixTimestamp);
+      layers.map(convertLegacyAnnotationTags);
+    }
+    return state;
+  };
+
   const hashBinding = viewer.registerDisposer(
     new UrlHashBinding(
       viewer.state,
@@ -166,6 +218,7 @@ export function setupDefaultViewer() {
           typeof NEUROGLANCER_DEFAULT_STATE_FRAGMENT !== "undefined"
             ? NEUROGLANCER_DEFAULT_STATE_FRAGMENT
             : undefined,
+        upgradeState: viewer.stateUpgrader,
       },
     ),
   );
@@ -180,22 +233,7 @@ export function setupDefaultViewer() {
       hashBinding.parseError;
     }),
   );
-  hashBinding.updateFromUrlHash((state) => {
-    // convert graphene state timestamp to layer timestamp
-    const fixTimestamp = (layer: any) => {
-      if (layer.source?.state?.timestamp) {
-        layer.timestamp = layer.source.state.timestamp;
-        layer.source.state.timestamp = undefined;
-      }
-    };
-    if (state.layers) {
-      const layers = Array.isArray(state.layers)
-        ? state.layers
-        : Object.values(state.layers);
-      layers.map(fixTimestamp);
-    }
-    return state;
-  });
+  hashBinding.updateFromUrlHash();
   viewer.registerDisposer(bindTitle(viewer.title));
 
   bindDefaultCopyHandler(viewer);

@@ -94,7 +94,9 @@ export class StateEditorDialog extends Overlay {
   private applyChanges() {
     if (this.parsedValue !== null) {
       this.viewer.state.reset();
-      this.viewer.state.restoreState(this.parsedValue);
+      this.viewer.state.restoreState(
+        this.viewer.stateUpgrader(this.parsedValue),
+      );
     }
     this.applyButton.disabled = true;
   }

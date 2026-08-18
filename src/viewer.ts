@@ -380,6 +380,7 @@ class TrackableViewerState extends CompoundTrackable {
 }
 
 export class Viewer extends RefCounted implements ViewerState {
+  stateUpgrader = (state: any) => state;
   title = new TrackableValue<string | undefined>(undefined, verifyString);
   coordinateSpace = new TrackableCoordinateSpace();
   position = this.registerDisposer(new Position(this.coordinateSpace));
