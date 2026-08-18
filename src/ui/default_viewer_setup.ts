@@ -14,10 +14,16 @@
  * limitations under the License.
  */
 
+import { parseAnnotationPropertyId } from "#src/annotation/index.js";
 import { schemePattern } from "#src/kvstore/url.js";
+import { toggleBoolPropertyToolJson } from "#src/layer/annotation/tool_state.js";
 import type { UserLayer } from "#src/layer/index.js";
 import { layerTypes } from "#src/layer/index.js";
 import { StatusMessage } from "#src/status.js";
+import {
+  ensureUniquePropertyIdentifier,
+  sanitizeAnnotationPropertyIdentifier,
+} from "#src/ui/annotation_schema_tab.js";
 import { bindCommandPalette } from "#src/ui/command_palette.js";
 import {
   bindDefaultCopyHandler,
@@ -152,6 +158,76 @@ function setCustomInputEventBindings(viewer: Viewer, bindings: CustomBindings) {
   }
 }
 
+export function convertLegacyAnnotationTags(layer: any) {
+  if (layer?.tab === "tags") {
+    layer.tab = "schema";
+  }
+  if (Array.isArray(layer?.panels)) {
+    for (const panel of layer.panels) {
+      if (panel?.tab === "tags") {
+        panel.tab = "schema";
+      }
+    }
+  }
+  if (!Array.isArray(layer?.annotationProperties)) return false;
+  const properties = layer.annotationProperties;
+  const usedIdentifiers = new Set<string>();
+  for (const property of properties) {
+    if (typeof property?.tag !== "string" && typeof property?.id === "string") {
+      usedIdentifiers.add(property.id);
+    }
+  }
+  const convertedIdentifiers = new Map<string, string>();
+  let converted = false;
+  layer.annotationProperties = properties.map((property: any) => {
+    if (typeof property?.tag !== "string") return property;
+    converted = true;
+    const { tag, enum_labels, enum_values, ...booleanProperty } = property;
+    let suggestedIdentifier =
+      sanitizeAnnotationPropertyIdentifier(tag) || "tag";
+    try {
+      parseAnnotationPropertyId(suggestedIdentifier);
+    } catch {
+      suggestedIdentifier = sanitizeAnnotationPropertyIdentifier(
+        `tag_${suggestedIdentifier}`,
+      );
+    }
+    const identifier = ensureUniquePropertyIdentifier(
+      suggestedIdentifier,
+      usedIdentifiers,
+    );
+    usedIdentifiers.add(identifier);
+    if (typeof property.id === "string") {
+      convertedIdentifiers.set(property.id, identifier);
+    }
+    return { ...booleanProperty, id: identifier, type: "bool" };
+  });
+  if (typeof layer.shader === "string") {
+    for (const [oldIdentifier, newIdentifier] of convertedIdentifiers) {
+      const escapedIdentifier = oldIdentifier.replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&",
+      );
+      layer.shader = layer.shader.replace(
+        new RegExp(`\\bprop_${escapedIdentifier}(?=\\s*\\()`, "g"),
+        `prop_${newIdentifier}`,
+      );
+    }
+  }
+  if (layer.toolBindings !== undefined) {
+    for (const [key, tool] of Object.entries(layer.toolBindings)) {
+      if (typeof tool !== "string" || !tool.startsWith("tagTool_")) continue;
+      const identifier = convertedIdentifiers.get(
+        tool.slice("tagTool_".length),
+      );
+      if (identifier !== undefined) {
+        layer.toolBindings[key] = toggleBoolPropertyToolJson(identifier);
+      }
+    }
+  }
+  return converted;
+}
+
 /**
  * Sets up the default neuroglancer viewer.
  */
@@ -162,6 +238,34 @@ export function setupDefaultViewer(options?: Partial<MinimalViewerOptions>) {
     setCustomInputEventBindings(viewer, NEUROGLANCER_CUSTOM_INPUT_BINDINGS!);
   }
 
+  viewer.stateUpgrader = (state) => {
+    // convert graphene state timestamp to layer timestamp
+    const fixTimestamp = (layer: any) => {
+      if (layer.source?.state?.timestamp) {
+        layer.timestamp = layer.source.state.timestamp;
+        layer.source.state.timestamp = undefined;
+      }
+    };
+    if (state.layers) {
+      const layers = Array.isArray(state.layers)
+        ? state.layers
+        : Object.values(state.layers);
+      layers.map(fixTimestamp);
+      let convertedLegacyAnnotationTags = false;
+      for (const layer of layers) {
+        convertedLegacyAnnotationTags =
+          convertLegacyAnnotationTags(layer) || convertedLegacyAnnotationTags;
+      }
+      if (convertedLegacyAnnotationTags) {
+        const status = new StatusMessage();
+        status.setErrorMessage(
+          "Warning: Local annotations in deprecated format have been safely converted.  Copy this state again to preserve in the new format.",
+        );
+      }
+    }
+    return state;
+  };
+
   const hashBinding = viewer.registerDisposer(
     new UrlHashBinding(
       viewer.state,
@@ -171,6 +275,7 @@ export function setupDefaultViewer(options?: Partial<MinimalViewerOptions>) {
           typeof NEUROGLANCER_DEFAULT_STATE_FRAGMENT !== "undefined"
             ? NEUROGLANCER_DEFAULT_STATE_FRAGMENT
             : undefined,
+        upgradeState: viewer.stateUpgrader,
       },
     ),
   );
@@ -185,22 +290,7 @@ export function setupDefaultViewer(options?: Partial<MinimalViewerOptions>) {
       hashBinding.parseError;
     }),
   );
-  hashBinding.updateFromUrlHash((state) => {
-    // convert graphene state timestamp to layer timestamp
-    const fixTimestamp = (layer: any) => {
-      if (layer.source?.state?.timestamp) {
-        layer.timestamp = layer.source.state.timestamp;
-        layer.source.state.timestamp = undefined;
-      }
-    };
-    if (state.layers) {
-      const layers = Array.isArray(state.layers)
-        ? state.layers
-        : Object.values(state.layers);
-      layers.map(fixTimestamp);
-    }
-    return state;
-  });
+  hashBinding.updateFromUrlHash();
   viewer.registerDisposer(bindTitle(viewer.title));
 
   bindDefaultCopyHandler(viewer);
