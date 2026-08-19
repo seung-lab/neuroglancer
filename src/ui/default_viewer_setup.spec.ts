@@ -44,10 +44,14 @@ describe("convertLegacyAnnotationTags", () => {
           enum_labels: ["no", "yes"],
         },
         { id: "tag1", type: "uint8", tag: "reviewed" },
+        { id: "tag2", type: "uint8", tag: "!!!" },
+        { id: "tag3", type: "uint8", tag: "123 Label" },
+        { id: "tag4", type: "uint8", tag: "_hidden" },
       ],
       toolBindings: {
         A: "tagTool_tag0",
         B: "tagTool_tag1",
+        D: "tagTool_tag2",
         C: "annotatePoint",
       },
     };
@@ -58,15 +62,19 @@ describe("convertLegacyAnnotationTags", () => {
       { id: "reviewed", type: "uint8" },
       { id: "reviewed2", type: "float32" },
       {
-        id: "reviewed1",
+        id: "reviewed_1",
         type: "bool",
         description: "First review",
       },
-      { id: "reviewed3", type: "bool" },
+      { id: "reviewed_2", type: "bool" },
+      { id: "tag", type: "bool" },
+      { id: "tag_123_label", type: "bool" },
+      { id: "tag__hidden", type: "bool" },
     ]);
     expect(layer.toolBindings).toEqual({
-      A: { type: "toggleBoolProperty", property: "reviewed1" },
-      B: { type: "toggleBoolProperty", property: "reviewed3" },
+      A: { type: "toggleBoolProperty", property: "reviewed_1" },
+      B: { type: "toggleBoolProperty", property: "reviewed_2" },
+      D: { type: "toggleBoolProperty", property: "tag" },
       C: "annotatePoint",
     });
   });

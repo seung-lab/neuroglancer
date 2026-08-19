@@ -14,11 +14,16 @@
  * limitations under the License.
  */
 
+import { parseAnnotationPropertyId } from "#src/annotation/index.js";
 import { schemePattern } from "#src/kvstore/url.js";
 import { toggleBoolPropertyToolJson } from "#src/layer/annotation/tool_state.js";
 import type { UserLayer } from "#src/layer/index.js";
 import { layerTypes } from "#src/layer/index.js";
 import { StatusMessage } from "#src/status.js";
+import {
+  ensureUniquePropertyIdentifier,
+  sanitizeAnnotationPropertyIdentifier,
+} from "#src/ui/annotation_schema_tab.js";
 import {
   bindDefaultCopyHandler,
   bindDefaultPasteHandler,
@@ -151,20 +156,27 @@ function setCustomInputEventBindings(viewer: Viewer, bindings: CustomBindings) {
 export function convertLegacyAnnotationTags(layer: any) {
   if (!Array.isArray(layer?.annotationProperties)) return;
   const properties = layer.annotationProperties;
-  const usedIdentifiers = new Set(
-    properties
-      .filter((property: any) => typeof property?.tag !== "string")
-      .map((property: any) => property?.id)
-      .filter((identifier: any) => typeof identifier === "string"),
-  );
+  const usedIdentifiers = new Set<string>();
+  for (const property of properties) {
+    if (typeof property?.tag !== "string" && typeof property?.id === "string") {
+      usedIdentifiers.add(property.id);
+    }
+  }
   const convertedIdentifiers = new Map<string, string>();
   layer.annotationProperties = properties.map((property: any) => {
     if (typeof property?.tag !== "string") return property;
     const { tag, enum_labels, enum_values, ...booleanProperty } = property;
-    let identifier = tag;
-    for (let suffix = 1; usedIdentifiers.has(identifier); ++suffix) {
-      identifier = `${tag}${suffix}`;
+    let suggestedIdentifier =
+      sanitizeAnnotationPropertyIdentifier(tag) || "tag";
+    try {
+      parseAnnotationPropertyId(suggestedIdentifier);
+    } catch {
+      suggestedIdentifier = `tag_${suggestedIdentifier}`;
     }
+    const identifier = ensureUniquePropertyIdentifier(
+      suggestedIdentifier,
+      usedIdentifiers,
+    );
     usedIdentifiers.add(identifier);
     if (typeof property.id === "string") {
       convertedIdentifiers.set(property.id, identifier);

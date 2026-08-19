@@ -92,6 +92,29 @@ import { makeCopyButton } from "#src/widget/copy_button.js";
 import { makeIcon } from "#src/widget/icon.js";
 import { Tab } from "#src/widget/tab_view.js";
 
+export function sanitizeAnnotationPropertyIdentifier(rawValue: string) {
+  // Replace dash and spaces with underscores
+  // Remove any non-alphanumeric characters except underscores
+  return rawValue
+    .replace(/-/g, "_")
+    .replace(/\s+/g, "_")
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "");
+}
+
+export function ensureUniquePropertyIdentifier(
+  suggestedIdentifier: string,
+  identifiers: Iterable<string>,
+) {
+  const existingIdentifiers = new Set(identifiers);
+  let uniqueIdentifier = suggestedIdentifier;
+  let suffix = 0;
+  while (existingIdentifiers.has(uniqueIdentifier)) {
+    uniqueIdentifier = `${suggestedIdentifier}_${++suffix}`;
+  }
+  return uniqueIdentifier;
+}
+
 function getPropertyToolJson(
   property: AnnotationPropertySpec,
   identifier = property.identifier,
@@ -359,12 +382,7 @@ class AnnotationUIProperty extends RefCounted {
     this.registerEventListener(nameInput, "change", (event: Event) => {
       if (!event.target) return;
       const rawValue = (event.target as HTMLInputElement).value;
-      // Replace dash and spaces with underscores
-      let sanitizedValue = rawValue.replace(/-/g, "_");
-      sanitizedValue = sanitizedValue.replace(/\s+/g, "_");
-      sanitizedValue = sanitizedValue.toLowerCase();
-      // Remove any non-alphanumeric characters except underscores
-      sanitizedValue = sanitizedValue.replace(/[^a-z0-9_]/g, "");
+      let sanitizedValue = sanitizeAnnotationPropertyIdentifier(rawValue);
       if (sanitizedValue === "") {
         sanitizedValue = identifier;
         (event.target as HTMLInputElement).value = identifier; // Revert input value
@@ -1633,16 +1651,10 @@ export class AnnotationSchemaView extends Tab {
   }
 
   ensureUniquePropertyIdentifier(suggestedIdentifier: string) {
-    const allProperties = this.schema;
-    const initialName = suggestedIdentifier;
-    let uniqueIdentifier = suggestedIdentifier;
-    let suffix = 0;
-    while (
-      allProperties.some((property) => property.identifier === uniqueIdentifier)
-    ) {
-      uniqueIdentifier = `${initialName}_${++suffix}`;
-    }
-    return uniqueIdentifier;
+    return ensureUniquePropertyIdentifier(
+      suggestedIdentifier,
+      this.schema.map((property) => property.identifier),
+    );
   }
 
   private getCategoryForType(
