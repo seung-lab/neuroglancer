@@ -417,7 +417,7 @@ const Base = UserLayerWithAnnotationsMixin(UserLayer);
 
 class SelectPreviousAnnotationTool extends LayerTool<AnnotationUserLayer> {
   activate(activation: ToolActivation<this>) {
-    this.layer.shiftSelectedIndexBy(-1);
+    this.layer.dispatchLayerEvent("select-previous");
     activation.cancel();
   }
   toJSON() {
@@ -430,7 +430,7 @@ class SelectPreviousAnnotationTool extends LayerTool<AnnotationUserLayer> {
 
 class SelectNextAnnotationTool extends LayerTool<AnnotationUserLayer> {
   activate(activation: ToolActivation<this>) {
-    this.layer.shiftSelectedIndexBy(1);
+    this.layer.dispatchLayerEvent("select-next");
     activation.cancel();
   }
   toJSON() {
@@ -470,6 +470,16 @@ export class AnnotationUserLayer extends Base {
 
   constructor(managedLayer: Borrowed<ManagedUserLayer>) {
     super(managedLayer);
+    this.registerDisposer(
+      this.registerLayerEvent("select-previous", () =>
+        this.shiftSelectedIndexBy(-1),
+      ),
+    );
+    this.registerDisposer(
+      this.registerLayerEvent("select-next", () =>
+        this.shiftSelectedIndexBy(1),
+      ),
+    );
     this.linkedSegmentationLayers.changed.add(
       this.specificationChanged.dispatch,
     );
