@@ -1092,6 +1092,17 @@ export class Viewer extends RefCounted implements ViewerState {
    * Called once by the constructor to register the action listeners.
    */
   private registerActionListeners() {
+    const sendEventToSelectedLayer = (type: string) => {
+      this.selectedLayer.layer?.layer?.dispatchLayerEvent(type);
+    };
+
+    this.bindAction("select-previous", () => {
+      sendEventToSelectedLayer("select-previous");
+    });
+    this.bindAction("select-next", () => {
+      sendEventToSelectedLayer("select-next");
+    });
+
     for (const action of ["recolor", "clear-segments"]) {
       this.bindAction(action, () => {
         this.layerManager.invokeAction(action);
