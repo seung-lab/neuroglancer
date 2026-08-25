@@ -2122,16 +2122,23 @@ class GrapheneGraphSource extends SegmentationGraphSource {
           table,
           l2_path,
         );
-        // many reasons why an l2 id might not have info
-        // l2 cache has a process that takes time for new ids (even hours)
-        // maybe a small fraction have no info
-        // sometime l2 is so small (single voxel), it is ignored by l2
-        // best to just drop those points
+        // The l2 cache always includes an entry for every requested id, but
+        // that entry has no rep_coord_nm when the properties have not been
+        // computed yet. That is common right after an edit: a split creates
+        // new l2 ids and immediately retriggers find path. It also happens for
+        // an l2 so small that the cache ignores it.
+        //
+        // Fall back to the chunk level approximation of the point rather than
+        // dropping it. Because the l2 cache is available we requested
+        // precision_mode=0 above, so centroids is the graph server's rough
+        // coordinate path: one chunk center per l2 id, in order.
+        const roughCentroids = centroids;
         centroids = l2_path
-          .map((id) => {
-            return verifyOptionalObjectProperty(attributes, id, (x) => {
-              return verifyFloatArray(x["rep_coord_nm"]);
-            });
+          .map((id, i) => {
+            const repCoord = verifyObjectProperty(attributes, id, (x) =>
+              verifyOptionalObjectProperty(x, "rep_coord_nm", verifyFloatArray),
+            );
+            return repCoord ?? roughCentroids[i];
           })
           .filter((x): x is number[] => x !== undefined);
       } catch (e) {
