@@ -183,6 +183,18 @@ export function convertLegacyAnnotationTags(layer: any) {
     }
     return { ...booleanProperty, id: identifier, type: "bool" };
   });
+  if (typeof layer.shader === "string") {
+    for (const [oldIdentifier, newIdentifier] of convertedIdentifiers) {
+      const escapedIdentifier = oldIdentifier.replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&",
+      );
+      layer.shader = layer.shader.replace(
+        new RegExp(`\\bprop_${escapedIdentifier}(?=\\s*\\()`, "g"),
+        `prop_${newIdentifier}`,
+      );
+    }
+  }
   if (layer.toolBindings === undefined) return;
   for (const [key, tool] of Object.entries(layer.toolBindings)) {
     if (typeof tool !== "string" || !tool.startsWith("tagTool_")) continue;

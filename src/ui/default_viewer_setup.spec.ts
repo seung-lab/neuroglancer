@@ -64,6 +64,13 @@ describe("convertLegacyAnnotationTags", () => {
         D: "tagTool_tag2",
         C: "annotatePoint",
       },
+      shader: `
+void main() {
+  if (prop_tag0() == uint(1) || prop_tag1 () == uint(1)) {
+    setColor(vec3(1.0));
+  }
+  bool unchanged = prop_tag01() == uint(1);
+}`,
     };
 
     convertLegacyAnnotationTags(layer);
@@ -87,5 +94,12 @@ describe("convertLegacyAnnotationTags", () => {
       D: { type: "toggleBoolProperty", property: "tag" },
       C: "annotatePoint",
     });
+    expect(layer.shader).toBe(`
+void main() {
+  if (prop_reviewed_1() == uint(1) || prop_reviewed_2 () == uint(1)) {
+    setColor(vec3(1.0));
+  }
+  bool unchanged = prop_tag01() == uint(1);
+}`);
   });
 });
