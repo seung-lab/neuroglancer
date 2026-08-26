@@ -171,7 +171,9 @@ export function convertLegacyAnnotationTags(layer: any) {
     try {
       parseAnnotationPropertyId(suggestedIdentifier);
     } catch {
-      suggestedIdentifier = `tag_${suggestedIdentifier}`;
+      suggestedIdentifier = sanitizeAnnotationPropertyIdentifier(
+        `tag_${suggestedIdentifier}`,
+      );
     }
     const identifier = ensureUniquePropertyIdentifier(
       suggestedIdentifier,

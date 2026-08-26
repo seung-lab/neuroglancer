@@ -98,7 +98,8 @@ export function sanitizeAnnotationPropertyIdentifier(rawValue: string) {
   const sanitizedValue = rawValue
     .replace(/-/g, "_")
     .replace(/\s+/g, "_")
-    .replace(/[^a-zA-Z0-9_]/g, "");
+    .replace(/[^a-zA-Z0-9_]/g, "")
+    .replace(/_+/g, "_");
   return sanitizedValue.charAt(0).toLowerCase() + sanitizedValue.slice(1);
 }
 
@@ -109,8 +110,9 @@ export function ensureUniquePropertyIdentifier(
   const existingIdentifiers = new Set(identifiers);
   let uniqueIdentifier = suggestedIdentifier;
   let suffix = 0;
+  const separator = suggestedIdentifier.endsWith("_") ? "" : "_";
   while (existingIdentifiers.has(uniqueIdentifier)) {
-    uniqueIdentifier = `${suggestedIdentifier}_${++suffix}`;
+    uniqueIdentifier = `${suggestedIdentifier}${separator}${++suffix}`;
   }
   return uniqueIdentifier;
 }

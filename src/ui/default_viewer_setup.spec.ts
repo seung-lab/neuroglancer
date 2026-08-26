@@ -18,6 +18,10 @@ import { beforeAll, describe, expect, test, vi } from "vitest";
 
 let convertLegacyAnnotationTags: (layer: any) => void;
 let sanitizeAnnotationPropertyIdentifier: (rawValue: string) => string;
+let ensureUniquePropertyIdentifier: (
+  suggestedIdentifier: string,
+  identifiers: Iterable<string>,
+) => string;
 
 beforeAll(async () => {
   vi.stubGlobal("WebGL2RenderingContext", {
@@ -27,14 +31,19 @@ beforeAll(async () => {
   ({ convertLegacyAnnotationTags } = await import(
     "#src/ui/default_viewer_setup.js"
   ));
-  ({ sanitizeAnnotationPropertyIdentifier } = await import(
-    "#src/ui/annotation_schema_tab.js"
-  ));
+  ({ ensureUniquePropertyIdentifier, sanitizeAnnotationPropertyIdentifier } =
+    await import("#src/ui/annotation_schema_tab.js"));
 });
 
 test("sanitizes an annotation property identifier without lowercasing its interior", () => {
   expect(sanitizeAnnotationPropertyIdentifier("Review Status-ID")).toBe(
     "review_Status_ID",
+  );
+  expect(sanitizeAnnotationPropertyIdentifier("Review__ Status--ID")).toBe(
+    "review_Status_ID",
+  );
+  expect(ensureUniquePropertyIdentifier("review_", ["review_"])).toBe(
+    "review_1",
   );
 });
 
@@ -86,7 +95,7 @@ void main() {
       { id: "reviewed_2", type: "bool" },
       { id: "tag", type: "bool" },
       { id: "tag_123_Label", type: "bool" },
-      { id: "tag__hidden", type: "bool" },
+      { id: "tag_hidden", type: "bool" },
     ]);
     expect(layer.toolBindings).toEqual({
       A: { type: "toggleBoolProperty", property: "reviewed_1" },
