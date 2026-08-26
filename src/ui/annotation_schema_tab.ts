@@ -95,11 +95,11 @@ import { Tab } from "#src/widget/tab_view.js";
 export function sanitizeAnnotationPropertyIdentifier(rawValue: string) {
   // Replace dash and spaces with underscores
   // Remove any non-alphanumeric characters except underscores
-  return rawValue
+  const sanitizedValue = rawValue
     .replace(/-/g, "_")
     .replace(/\s+/g, "_")
-    .toLowerCase()
-    .replace(/[^a-z0-9_]/g, "");
+    .replace(/[^a-zA-Z0-9_]/g, "");
+  return sanitizedValue.charAt(0).toLowerCase() + sanitizedValue.slice(1);
 }
 
 export function ensureUniquePropertyIdentifier(
