@@ -154,6 +154,16 @@ function setCustomInputEventBindings(viewer: Viewer, bindings: CustomBindings) {
 }
 
 export function convertLegacyAnnotationTags(layer: any) {
+  if (layer?.tab === "tags") {
+    layer.tab = "schema";
+  }
+  if (Array.isArray(layer?.panels)) {
+    for (const panel of layer.panels) {
+      if (panel?.tab === "tags") {
+        panel.tab = "schema";
+      }
+    }
+  }
   if (!Array.isArray(layer?.annotationProperties)) return;
   const properties = layer.annotationProperties;
   const usedIdentifiers = new Set<string>();

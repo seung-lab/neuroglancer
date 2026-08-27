@@ -48,6 +48,20 @@ test("sanitizes an annotation property identifier without lowercasing its interi
 });
 
 describe("convertLegacyAnnotationTags", () => {
+  test("converts legacy active tags tabs to schema tabs", () => {
+    const layer = {
+      tab: "tags",
+      panels: [{ tab: "tags" }, { tab: "rendering" }],
+    };
+
+    convertLegacyAnnotationTags(layer);
+
+    expect(layer).toEqual({
+      tab: "schema",
+      panels: [{ tab: "schema" }, { tab: "rendering" }],
+    });
+  });
+
   test("converts tags to uniquely-named boolean properties and tools", () => {
     const layer = {
       type: "annotation",
