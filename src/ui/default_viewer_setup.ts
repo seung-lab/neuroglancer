@@ -164,7 +164,7 @@ export function convertLegacyAnnotationTags(layer: any) {
       }
     }
   }
-  if (!Array.isArray(layer?.annotationProperties)) return;
+  if (!Array.isArray(layer?.annotationProperties)) return false;
   const properties = layer.annotationProperties;
   const usedIdentifiers = new Set<string>();
   for (const property of properties) {
@@ -173,8 +173,10 @@ export function convertLegacyAnnotationTags(layer: any) {
     }
   }
   const convertedIdentifiers = new Map<string, string>();
+  let converted = false;
   layer.annotationProperties = properties.map((property: any) => {
     if (typeof property?.tag !== "string") return property;
+    converted = true;
     const { tag, enum_labels, enum_values, ...booleanProperty } = property;
     let suggestedIdentifier =
       sanitizeAnnotationPropertyIdentifier(tag) || "tag";
@@ -207,14 +209,18 @@ export function convertLegacyAnnotationTags(layer: any) {
       );
     }
   }
-  if (layer.toolBindings === undefined) return;
-  for (const [key, tool] of Object.entries(layer.toolBindings)) {
-    if (typeof tool !== "string" || !tool.startsWith("tagTool_")) continue;
-    const identifier = convertedIdentifiers.get(tool.slice("tagTool_".length));
-    if (identifier !== undefined) {
-      layer.toolBindings[key] = toggleBoolPropertyToolJson(identifier);
+  if (layer.toolBindings !== undefined) {
+    for (const [key, tool] of Object.entries(layer.toolBindings)) {
+      if (typeof tool !== "string" || !tool.startsWith("tagTool_")) continue;
+      const identifier = convertedIdentifiers.get(
+        tool.slice("tagTool_".length),
+      );
+      if (identifier !== undefined) {
+        layer.toolBindings[key] = toggleBoolPropertyToolJson(identifier);
+      }
     }
   }
+  return converted;
 }
 
 /**
@@ -240,7 +246,17 @@ export function setupDefaultViewer() {
         ? state.layers
         : Object.values(state.layers);
       layers.map(fixTimestamp);
-      layers.map(convertLegacyAnnotationTags);
+      let convertedLegacyAnnotationTags = false;
+      for (const layer of layers) {
+        convertedLegacyAnnotationTags =
+          convertLegacyAnnotationTags(layer) || convertedLegacyAnnotationTags;
+      }
+      if (convertedLegacyAnnotationTags) {
+        const status = new StatusMessage();
+        status.setErrorMessage(
+          "Warning: Local annotations in deprecated format have been safely converted.  Copy this state again to preserve in the new format.",
+        );
+      }
     }
     return state;
   };

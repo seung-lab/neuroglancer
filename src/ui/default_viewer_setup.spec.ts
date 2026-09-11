@@ -16,7 +16,7 @@
 
 import { beforeAll, describe, expect, test, vi } from "vitest";
 
-let convertLegacyAnnotationTags: (layer: any) => void;
+let convertLegacyAnnotationTags: (layer: any) => boolean;
 let sanitizeAnnotationPropertyIdentifier: (rawValue: string) => string;
 let ensureUniquePropertyIdentifier: (
   suggestedIdentifier: string,
@@ -54,7 +54,7 @@ describe("convertLegacyAnnotationTags", () => {
       panels: [{ tab: "tags" }, { tab: "rendering" }],
     };
 
-    convertLegacyAnnotationTags(layer);
+    expect(convertLegacyAnnotationTags(layer)).toBe(false);
 
     expect(layer).toEqual({
       tab: "schema",
@@ -96,7 +96,7 @@ void main() {
 }`,
     };
 
-    convertLegacyAnnotationTags(layer);
+    expect(convertLegacyAnnotationTags(layer)).toBe(true);
 
     expect(layer.annotationProperties).toEqual([
       { id: "reviewed", type: "uint8" },
