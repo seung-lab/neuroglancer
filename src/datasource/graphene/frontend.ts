@@ -300,6 +300,18 @@ interface GrapheneMultiscaleVolumeInfo extends MultiscaleVolumeInfo {
   dataUrl: string;
   app: AppInfo;
   graph: GraphInfo;
+  // Directory holding the mesh info, undefined when the server publishes no mesh location.
+  meshUrl: string | undefined;
+}
+
+/** The mesh directory: parent of the published `initial/` path, which the info sits beside. */
+function parseMeshUrl(obj: unknown): string | undefined {
+  const initial = verifyOptionalObjectProperty(obj, "mesh_metadata", (x) =>
+    verifyOptionalObjectProperty(x, "initial_mesh_path", verifyString),
+  );
+  // A parent that lost its authority names no directory, so `data_dir` stays the source.
+  const parent = initial?.replace(/\/+[^/]+\/*$/, "");
+  return /:\/\/[^/]/.test(parent ?? "") ? parent : undefined;
 }
 
 function parseGrapheneMultiscaleVolumeInfo(
@@ -315,6 +327,7 @@ function parseGrapheneMultiscaleVolumeInfo(
     app,
     graph,
     dataUrl,
+    meshUrl: parseMeshUrl(obj),
   };
 }
 
@@ -670,10 +683,11 @@ async function getVolumeDataSource(
       sharedKvStoreContext,
       info.app!.meshingUrl,
       kvstoreEnsureDirectoryPipelineUrl(
-        sharedKvStoreContext.kvStoreContext.resolveRelativePath(
-          info.dataUrl,
-          info.mesh,
-        ),
+        info.meshUrl ??
+          sharedKvStoreContext.kvStoreContext.resolveRelativePath(
+            info.dataUrl,
+            info.mesh,
+          ),
       ),
       info.graph.nBitsForLayerId,
       options,
