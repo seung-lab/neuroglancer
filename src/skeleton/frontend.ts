@@ -249,7 +249,8 @@ vec4 segmentColor() {
 }
 void emitRGBA(vec4 color) {
   vec4 borderColor = color;
-  emit(getCircleColor(color, borderColor), uPickID);
+  vec4 circleColor = getCircleColor(color, borderColor);
+  emit(circleColor, uPickID);
 }
 void emitRGB(vec3 color) {
   emitRGBA(vec4(color, 1.0));
