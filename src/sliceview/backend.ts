@@ -534,50 +534,58 @@ function getPrefetchChunkOffsets(
 registerPromiseRPC(
   SLICEVIEW_REQUEST_CHUNK_RPC_ID,
   async function (
-    x: { this: RPC; source: number; chunkGridPosition: Float32Array },
+    x: {
+      this: RPC;
+      source: { id: number; gen: number };
+      chunkGridPosition: Float32Array;
+    },
     progressOptions,
   ): RPCPromise<void> {
-    const source = this.get(x.source) as SliceViewChunkSourceBackend;
-    const { chunkManager } = source;
-    const chunk = source.getChunk(x.chunkGridPosition);
-    const key = chunk.key!;
-    if (chunk.state <= ChunkState.SYSTEM_MEMORY) {
-      // Already available on frontend.
-      return { value: undefined };
-    }
-    if (chunk.state === ChunkState.FAILED) {
-      // Already failed
-      throw chunk.error;
-    }
-    const disposeRecompute = chunkManager.recomputeChunkPriorities.add(() => {
-      chunkManager.requestChunk(
-        chunk,
-        ChunkPriorityTier.VISIBLE,
-        Number.POSITIVE_INFINITY,
-        ChunkState.SYSTEM_MEMORY,
-      );
-    });
-    chunkManager.scheduleUpdateChunkPriorities();
-    let listener: (chunk: Chunk) => void;
-    const promise = new Promise<void>((resolve, reject) => {
-      listener = (chunk) => {
-        if (chunk.state === ChunkState.FAILED) {
-          reject(chunk.error);
-          return;
-        }
-        if (chunk.state <= ChunkState.SYSTEM_MEMORY) {
-          resolve();
-        }
-      };
-    });
-    source.registerChunkListener(key, listener!);
+    const source = this.getRef<SliceViewChunkSourceBackend>(x.source);
     try {
-      await raceWithAbort(promise, progressOptions.signal);
-      return { value: undefined };
-    } finally {
-      source.unregisterChunkListener(key, listener!);
-      disposeRecompute();
+      const { chunkManager } = source;
+      const chunk = source.getChunk(x.chunkGridPosition);
+      const key = chunk.key!;
+      if (chunk.state <= ChunkState.SYSTEM_MEMORY) {
+        // Already available on frontend.
+        return { value: undefined };
+      }
+      if (chunk.state === ChunkState.FAILED) {
+        // Already failed
+        throw chunk.error;
+      }
+      const disposeRecompute = chunkManager.recomputeChunkPriorities.add(() => {
+        chunkManager.requestChunk(
+          chunk,
+          ChunkPriorityTier.VISIBLE,
+          Number.POSITIVE_INFINITY,
+          ChunkState.SYSTEM_MEMORY,
+        );
+      });
       chunkManager.scheduleUpdateChunkPriorities();
+      let listener: (chunk: Chunk) => void;
+      const promise = new Promise<void>((resolve, reject) => {
+        listener = (chunk) => {
+          if (chunk.state === ChunkState.FAILED) {
+            reject(chunk.error);
+            return;
+          }
+          if (chunk.state <= ChunkState.SYSTEM_MEMORY) {
+            resolve();
+          }
+        };
+      });
+      source.registerChunkListener(key, listener!);
+      try {
+        await raceWithAbort(promise, progressOptions.signal);
+        return { value: undefined };
+      } finally {
+        source.unregisterChunkListener(key, listener!);
+        disposeRecompute();
+        chunkManager.scheduleUpdateChunkPriorities();
+      }
+    } finally {
+      source.dispose();
     }
   },
 );

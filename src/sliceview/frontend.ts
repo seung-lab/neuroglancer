@@ -666,6 +666,7 @@ export abstract class SliceViewChunkSource<
     ) {
       return transform(existingChunk);
     }
+    progressOptions.signal?.throwIfAborted();
     this.addRef();
     let { chunkRequesters } = this;
     if (chunkRequesters === undefined) {
@@ -684,7 +685,7 @@ export abstract class SliceViewChunkSource<
     try {
       await this.rpc!.promiseInvoke(
         SLICEVIEW_REQUEST_CHUNK_RPC_ID,
-        { source: this.rpcId, chunkGridPosition },
+        { source: this.addCounterpartRef(), chunkGridPosition },
         progressOptions,
       );
       return await promise;
