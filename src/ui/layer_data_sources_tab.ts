@@ -19,7 +19,11 @@
  */
 
 import "#src/ui/layer_data_sources_tab.css";
+import "codemirror/lib/codemirror.css";
+import "codemirror/mode/javascript/javascript.js";
+import CodeMirror from "codemirror";
 import { LocalDataSource } from "#src/datasource/local.js";
+import { INFERENCE_RECIPE_URL } from "#src/inference/recipe.js";
 import type { UserLayer, UserLayerConstructor } from "#src/layer/index.js";
 import {
   changeLayerName,
@@ -322,6 +326,8 @@ export class DataSourceView extends RefCounted {
   seenGeneration = 0;
   generation = -1;
   private loadedView: LoadedDataSourceView | undefined;
+  private stateElement = document.createElement("div");
+  private stateEditor: CodeMirror.Editor | undefined;
 
   constructor(
     public tab: Borrowed<LayerDataSourcesTab>,
@@ -366,6 +372,13 @@ export class DataSourceView extends RefCounted {
     const { element } = this;
     element.classList.add("neuroglancer-layer-data-source");
     element.appendChild(urlInput.element);
+    const { stateElement } = this;
+    stateElement.classList.add("neuroglancer-layer-data-source-state");
+    stateElement.hidden = true;
+    const stateTitle = document.createElement("div");
+    stateTitle.textContent = "Inference source state (read-only)";
+    stateElement.appendChild(stateTitle);
+    element.appendChild(stateElement);
     element.appendChild(
       this.registerDisposer(new MessagesView(source.messages)).element,
     );
@@ -384,6 +397,39 @@ export class DataSourceView extends RefCounted {
     this.generation = generation;
     this.urlInput.value = this.source.spec.url;
     this.urlInput.dirty.value = false;
+    const { state, url } = this.source.spec;
+    const showState = url === INFERENCE_RECIPE_URL && state !== undefined;
+    this.stateElement.hidden = !showState;
+    if (showState && this.stateEditor === undefined) {
+      const editor = (this.stateEditor = CodeMirror(this.stateElement, {
+        value: "",
+        mode: { name: "javascript", json: true },
+        readOnly: true,
+        lineWrapping: true,
+        lineNumbers: true,
+      }));
+      editor
+        .getWrapperElement()
+        .setAttribute("aria-label", "Inference source state");
+      editor
+        .getInputField()
+        .setAttribute("aria-label", "Inference source state JSON");
+      const observer = new IntersectionObserver(
+        (entries) => {
+          if (entries.some((entry) => entry.isIntersecting)) editor.refresh();
+        },
+        { root: document.body },
+      );
+      observer.observe(editor.getWrapperElement());
+      this.registerDisposer(() => observer.disconnect());
+    }
+    const json = showState ? JSON.stringify(state, null, 2) : "";
+    if (
+      this.stateEditor !== undefined &&
+      this.stateEditor.getValue() !== json
+    ) {
+      this.stateEditor.setValue(json);
+    }
     const { loadState } = this.source;
     let { loadedView } = this;
     if (loadedView !== undefined) {
