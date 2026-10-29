@@ -9,6 +9,7 @@ import "#src/sliceview/backend.js";
 import "#src/perspective_view/backend.js";
 import "#src/volume_rendering/backend.js";
 import "#src/annotation/backend.js";
+import "#src/datasource/inference/backend.js";
 import "#src/datasource/enabled_backend_modules.js";
 import "#src/kvstore/enabled_backend_modules.js";
 import "#src/worker_rpc_context.js";

@@ -24,6 +24,7 @@ import type {
   KvStoreBasedDataSourceProvider,
 } from "#src/datasource/index.js";
 import { DataSourceRegistry } from "#src/datasource/index.js";
+import { installInferenceDataSourceProvider } from "#src/datasource/inference/register_default.js";
 import { LocalDataSourceProvider } from "#src/datasource/local.js";
 import { AutoDetectRegistry } from "#src/kvstore/auto_detect.js";
 import type { SharedKvStoreContext } from "#src/kvstore/frontend.js";
@@ -50,6 +51,7 @@ export function registerKvStoreBasedDataProvider(
 export function getDefaultDataSourceProvider(options: ProviderOptions) {
   const registry = new DataSourceRegistry(options.kvStoreContext);
   registry.register(new LocalDataSourceProvider());
+  installInferenceDataSourceProvider(registry);
   for (const provider of providers) {
     registry.register(provider);
   }
