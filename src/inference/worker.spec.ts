@@ -200,20 +200,35 @@ describe("worker native runtime configuration", () => {
   });
 
   it.each([
-    [false, 16, 1],
-    [false, 2, 1],
-    [false, undefined, 1],
-    [true, 16, 4],
-    [true, 4, 4],
-    [true, 2, 2],
-    [true, 1, 1],
-    [true, 0, 1],
-    [true, -2, 1],
-    [true, undefined, 1],
+    [undefined, false, 16, 1],
+    [undefined, false, 2, 1],
+    [undefined, false, undefined, 1],
+    [undefined, true, 16, 4],
+    [undefined, true, 8, 4],
+    [undefined, true, 4, 4],
+    [undefined, true, 2, 2],
+    [undefined, true, 1, 1],
+    [undefined, true, 0, 1],
+    [undefined, true, -2, 1],
+    [undefined, true, undefined, 1],
+    [8, false, 16, 1],
+    [8, false, 8, 1],
+    [8, false, 2, 1],
+    [8, false, undefined, 1],
+    [8, true, 16, 8],
+    [8, true, 8, 8],
+    [8, true, 4, 4],
+    [8, true, 2, 2],
+    [8, true, 1, 1],
+    [8, true, 0, 1],
+    [8, true, -2, 1],
+    [8, true, undefined, 1],
   ])(
-    "isolation=%s with %s logical cores configures and reports %s WASM threads",
-    async (isolated, cores, threads) => {
+    "CPU cap=%s, isolation=%s with %s logical cores configures and reports %s WASM threads",
+    async (maxCpuThreads, isolated, cores, threads) => {
       vi.resetModules();
+      if (maxCpuThreads !== undefined)
+        vi.stubGlobal("NEUROGLANCER_INFERENCE_MAX_CPU_THREADS", maxCpuThreads);
       vi.stubGlobal("crossOriginIsolated", isolated);
       vi.stubGlobal("navigator", { hardwareConcurrency: cores });
       await import("#src/inference/worker.js");
