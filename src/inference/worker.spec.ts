@@ -154,6 +154,49 @@ describe("worker native runtime configuration", () => {
       proxy: false,
     });
     expect(mocks.env.webgpu).toEqual({}); // No custom device.
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(mocks.prepareFp16).not.toHaveBeenCalled();
+  });
+
+  describe.each(["cpu", "webgpu"] as const)("%s provider", (provider) => {
+    it.each([
+      [
+        "/ort-conv3d-cd11e2c068ae/",
+        "https://inference.example/ort-conv3d-cd11e2c068ae/",
+      ],
+      [
+        "https://runtime.example/ort-conv3d-cd11e2c068ae/",
+        "https://runtime.example/ort-conv3d-cd11e2c068ae/",
+      ],
+    ])(
+      "resolves custom runtime directory %s without changing lazy sessions or provider options",
+      async (base, expectedBase) => {
+        vi.resetModules();
+        vi.stubGlobal("NEUROGLANCER_INFERENCE_WASM_BASE", base);
+        vi.stubGlobal("isSecureContext", true);
+        vi.stubGlobal("navigator", {
+          gpu: { requestAdapter: async () => ({}) },
+        });
+        await import("#src/inference/worker.js");
+        handler = self.onmessage!;
+        expect(mocks.env.wasm).toEqual({
+          wasmPaths: {
+            mjs: `${expectedBase}ort-wasm-simd-threaded.asyncify.mjs`,
+            wasm: `${expectedBase}ort-wasm-simd-threaded.asyncify.wasm`,
+          },
+          numThreads: 1,
+          proxy: false,
+        });
+        expect(mocks.env.webgpu).toEqual({});
+        expect(mocks.create).not.toHaveBeenCalled();
+        expect(await load(undefined, undefined, provider)).toMatchObject({
+          requestedProvider: provider,
+          actualProvider: provider === "cpu" ? "wasm" : "webgpu",
+          threads: 1,
+        });
+        expect(mocks.prepareFp16).not.toHaveBeenCalled();
+      },
+    );
   });
 
   it.each([
