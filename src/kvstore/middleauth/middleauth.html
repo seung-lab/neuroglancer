@@ -1,0 +1,180 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Neuroglancer sign in</title>
+  </head>
+  <body>
+    <h1>Neuroglancer sign in</h1>
+    <p id="status" role="status">Continue to the authentication server.</p>
+    <button id="signin" type="button" disabled>Sign in with Google</button>
+    <script>
+      // Standalone asset: no viewer bundle, credentials in URLs, or storage.
+      // Serve with COOP same-origin-allow-popups and COEP unsafe-none.
+      // Protocol counterpart: auth_helper.ts.
+      (() => {
+        const params = new URLSearchParams(location.hash.slice(1));
+        history.replaceState(null, "", location.pathname + location.search);
+        const status = document.getElementById("status");
+        const button = document.getElementById("signin");
+        let server;
+        let channel;
+        try {
+          server = new URL(params.get("server"));
+          if (
+            !["http:", "https:"].includes(server.protocol) ||
+            server.username ||
+            server.password ||
+            server.search ||
+            server.hash ||
+            !/^middleauth-[0-9a-f-]{36}$/.test(params.get("channel"))
+          ) {
+            throw new Error();
+          }
+          channel = new BroadcastChannel(params.get("channel"));
+        } catch {
+          status.textContent =
+            "Invalid authentication helper request. Close this window and retry.";
+          return;
+        }
+        const authorizeUrl =
+          server.href.replace(/\/$/, "") + "/api/v1/authorize";
+        let popup;
+        let phase = "active";
+        let lastSeen = Date.now();
+        const started = lastSeen;
+        let closeTimer;
+        let ackTimer;
+        function closePopup() {
+          if (popup) {
+            try {
+              popup.close();
+            } catch {
+              // The popup may have navigated or already closed.
+            }
+            popup = undefined;
+          }
+        }
+        function cleanup() {
+          clearInterval(timer);
+          clearTimeout(closeTimer);
+          clearTimeout(ackTimer);
+          window.removeEventListener("message", response);
+          window.removeEventListener("pagehide", pagehide);
+          button.disabled = true;
+          closePopup();
+        }
+        function finish(type, code, close = false) {
+          if (phase === "done") return;
+          phase = "done";
+          cleanup();
+          if (type) channel.postMessage({ type, code });
+          channel.close();
+          if (close) window.close();
+        }
+        function relay(message) {
+          phase = "sent";
+          cleanup();
+          channel.postMessage(message);
+          // Wait for the viewer to acknowledge (or cancel) before closing.
+          // This also bounds cleanup if the viewer disappeared.
+          ackTimer = setTimeout(() => finish(undefined, undefined, true), 5000);
+        }
+        function fail(code, message) {
+          status.textContent = message;
+          relay({ type: "error", code });
+        }
+        function pagehide() {
+          // A credentials message precedes any close notification on this
+          // channel. Do not turn successful self-close into a failure.
+          finish(phase === "active" ? "closed" : undefined);
+        }
+        function response(event) {
+          if (
+            phase !== "active" ||
+            !popup ||
+            event.source !== popup ||
+            event.origin !== server.origin
+          )
+            return;
+          const data = event.data;
+          if (
+            typeof data !== "object" ||
+            data === null ||
+            typeof data.token !== "string" ||
+            data.token.length === 0 ||
+            !Array.isArray(data.app_urls) ||
+            !data.app_urls.every((url) => typeof url === "string")
+          ) {
+            fail(
+              "invalid-response",
+              "Received unexpected authentication response. Close this window and retry.",
+            );
+            return;
+          }
+          status.textContent = "Signed in. You may close this window.";
+          // Relay only the validated fields, not arbitrary server properties.
+          // pagehide is removed before sending, so self-close cannot race it.
+          relay({
+            type: "credentials",
+            response: { token: data.token, app_urls: data.app_urls },
+          });
+        }
+        const timer = setInterval(() => {
+          if (
+            Date.now() - lastSeen >= 15_000 ||
+            Date.now() - started >= 300_000
+          ) {
+            status.textContent =
+              "Authentication timed out. Close this window and retry.";
+            finish("error", "timeout", true);
+            return;
+          }
+          channel.postMessage({ type: "heartbeat" });
+          if (phase === "active" && popup?.closed && closeTimer === undefined) {
+            // The callback may close itself immediately after postMessage.
+            // Allow its already-queued response to run before reporting close.
+            closeTimer = setTimeout(() => {
+              status.textContent =
+                "Authentication window was closed. Close this window and retry.";
+              relay({ type: "closed" });
+            }, 250);
+          }
+        }, 1000);
+        channel.onmessage = (event) => {
+          const type = event.data?.type;
+          if (type === "ping") lastSeen = Date.now();
+          if (type === "cancel" || type === "complete") {
+            finish(undefined, undefined, true);
+          }
+        };
+        window.addEventListener("message", response);
+        window.addEventListener("pagehide", pagehide);
+        button.addEventListener("click", () => {
+          if (phase !== "active" || popup) return;
+          try {
+            popup = window.open(
+              authorizeUrl,
+              "_blank",
+              "popup,width=400,height=650",
+            );
+          } catch {
+            // Treat an exception opening the popup like a blocked popup.
+          }
+          if (!popup) {
+            fail(
+              "popup-blocked",
+              "Authentication popup was blocked. Allow popups, close this window and retry.",
+            );
+            return;
+          }
+          button.disabled = true;
+          status.textContent = "Waiting for sign in…";
+        });
+        button.disabled = false;
+        channel.postMessage({ type: "ready" });
+      })();
+    </script>
+  </body>
+</html>
