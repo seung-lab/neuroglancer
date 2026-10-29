@@ -33,8 +33,9 @@
  * CPU-requested FP16 and unavailable-WebGPU FP16 fallback, URL recipe replay.
  * SCALE=1 also checks a two-scale pyramid: coarse selection, automatic output
  * spacing, distinct coarse-chunk numerical oracle and fresh-context shared replay.
- * It retains all default precision cases. For the strict-header deployment:
- *   SCALE=1 ISOLATED=1 BASE_URL=https://host/app/ CHROME=/usr/bin/google-chrome \
+ * It retains all default precision cases. For an up-to-eight-thread strict build:
+ *   MAX_CPU_THREADS=8 SCALE=1 ISOLATED=1 BASE_URL=https://host/app/ \
+ *   CHROME=/usr/bin/google-chrome \
  *   node tests/inference/precision_production.mjs
  * HARDWARE=1 additionally requires a real shader-f16 adapter (no silent skip),
  * checks unverified-model FP16 on WebGPU, and, with MODEL, compares the
@@ -53,8 +54,11 @@
  * LAUNCH_OPTIONS (JSON) are optional; supplied args are appended, not substituted.
  * TRACE_ASSETS=1 logs served/observed runtime asset details. ISOLATED=1 uses
  * strict local COOP/COEP headers as a deliberate regression fixture; ISOLATED=0
- * uses auth-compatible headers. Isolated workers must use hardwareConcurrency
- * capped at four and floored at one WASM thread; nonisolated workers use one.
+ * uses auth-compatible headers. MAX_CPU_THREADS (integer 1..8, default 4) is the
+ * expected build cap, not a runtime override: it must match the build's explicit
+ * NEUROGLANCER_INFERENCE_MAX_CPU_THREADS define (or its default). Isolated workers
+ * use hardwareConcurrency capped at MAX_CPU_THREADS and floored at one WASM
+ * thread; nonisolated workers use one.
  * Both modes require correct CPU outputs and fresh-context URL replay, not just
  * thread metadata or output shapes. BASE_URL must match the requested isolation.
  * No source imports, session stubs, converted model fixtures or app changes.
@@ -86,6 +90,11 @@ const hardware = process.env.HARDWARE === "1";
 const traceAssets = process.env.TRACE_ASSETS === "1";
 const isolated = process.env.ISOLATED === "1";
 const scaleSmoke = process.env.SCALE === "1";
+const maxCpuThreads = Number(process.env.MAX_CPU_THREADS ?? 4);
+assert(
+  Number.isInteger(maxCpuThreads) && maxCpuThreads >= 1 && maxCpuThreads <= 8,
+  "MAX_CPU_THREADS must be an integer from 1 to 8",
+);
 const runtimeManifest = process.env.RUNTIME_MANIFEST
   ? JSON.parse(await fs.readFile(process.env.RUNTIME_MANIFEST, "utf8"))
   : undefined;
@@ -696,7 +705,10 @@ try {
   };
   const assertMetadata = (metadata, c, environment) => {
     const expectedThreads = environment.isolated
-      ? Math.max(1, Math.min(4, environment.hardwareConcurrency || 1))
+      ? Math.max(
+          1,
+          Math.min(maxCpuThreads, environment.hardwareConcurrency || 1),
+        )
       : 1;
     assert.equal(
       metadata.threads,

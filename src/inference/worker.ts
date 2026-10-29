@@ -24,6 +24,7 @@ import { validateModelGeometry } from "#src/inference/model.js";
 import { ProviderSession } from "#src/inference/provider.js";
 
 declare const NEUROGLANCER_INFERENCE_WASM_BASE: string | undefined;
+declare const NEUROGLANCER_INFERENCE_MAX_CPU_THREADS: number | undefined;
 
 // Default to the pinned native Asyncify CDN pair for GPU and CPU.
 // Explicit custom bundles can instead supply a runtime directory.
@@ -36,9 +37,14 @@ ort.env.wasm.wasmPaths = {
   mjs: `${runtimeBase}ort-wasm-simd-threaded.asyncify.mjs`,
   wasm: `${runtimeBase}ort-wasm-simd-threaded.asyncify.wasm`,
 };
+// Keep the isolated default at four; trusted builds can explicitly override it.
+const maxCpuThreads =
+  typeof NEUROGLANCER_INFERENCE_MAX_CPU_THREADS === "undefined"
+    ? 4
+    : NEUROGLANCER_INFERENCE_MAX_CPU_THREADS;
 // Isolated viewers can use a capped CPU pool; relaxed-header pages stay at one.
 ort.env.wasm.numThreads = globalThis.crossOriginIsolated
-  ? Math.max(1, Math.min(4, navigator.hardwareConcurrency || 1))
+  ? Math.max(1, Math.min(maxCpuThreads, navigator.hardwareConcurrency || 1))
   : 1;
 ort.env.wasm.proxy = false;
 const session = new ProviderSession(

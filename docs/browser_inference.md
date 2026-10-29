@@ -15,9 +15,9 @@ or CPU (WASM) execution;
 no Python or inference server is involved. Normal source-data requests still
 occur. The runtime and its matching WASM asset are loaded only when a model is
 loaded, not on ordinary viewer startup or merely opening the dialog. The unchanged
-production `ng-onnx` service uses relaxed headers and one WASM thread. The separate
-TEST `bundle-onnx` experiment uses an isolated viewer and up to four CPU threads,
-with a relaxed-header middleauth helper for Google login.
+production `ng-onnx` deployment uses an isolated viewer and up to eight CPU
+threads, with a relaxed-header middleauth helper for Google login. The separate
+`bundle-onnx` deployment retains its existing four-thread cap.
 See [CPU inference performance](#cpu-inference-performance)
 for deployment requirements and measurements.
 
@@ -31,18 +31,17 @@ browser verification, traffic promotion, and rollback. In Pi, run `/reload`
 and then `/skill:ng-onnx-deploy` to reuse it. Deployment requires explicit
 permission; loading the skill alone does not authorize a release.
 
-**Production `ng-onnx` is unchanged by the auth-helper/multithread experiment:**
-its deployment configuration remains `appengine/ng-onnx/app.yaml`, with relaxed
-headers and single-thread CPU inference. The skill above describes that production
-service, not the isolated experiment.
+**Production `ng-onnx`** uses `appengine/ng-onnx/app.yaml`: strict viewer and
+worker isolation headers, with a relaxed `/middleauth.html` helper exception.
+Its build explicitly defines `NEUROGLANCER_INFERENCE_MAX_CPU_THREADS=8`.
+Other builds default to a four-thread cap; nonisolated pages still use one.
 
-**TEST `bundle-onnx`** at <https://bundle-onnx-dot-seung-lab.appspot.com/> is the
-only deployment target for this experiment, using `appengine/bundle-onnx/app.yaml`.
-The viewer and worker responses use strict isolation headers; only
-`/middleauth.html` uses relaxed headers. Existing shared links remain supported.
-This is not a production `ng-onnx` rollout or a claim that full OAuth login has
-been completed. App Engine service names cannot be changed in place. The separate
-`onnx-test` service is unchanged.
+**TEST `bundle-onnx`** at <https://bundle-onnx-dot-seung-lab.appspot.com/> retains
+its existing deployment and four-thread cap, using
+`appengine/bundle-onnx/app.yaml`. Existing shared links remain supported.
+The helper checks do not claim that full OAuth login has been completed.
+App Engine service names cannot be changed in place. The separate `onnx-test`
+service and development-server header policy are unchanged.
 
 ## Default external model experiment
 
@@ -184,39 +183,29 @@ Keep FP32 unless the model owner has validated FP16 on representative real data.
 ## CPU inference performance
 
 CPU inference uses ORT's SIMD-enabled WASM backend in a dedicated worker. The
-experiment restores the isolation-dependent thread setting:
+worker uses an isolation-dependent thread setting:
 
 ```js
 numThreads = globalThis.crossOriginIsolated
-  ? Math.max(1, Math.min(4, navigator.hardwareConcurrency || 1))
+  ? Math.max(1, Math.min(maxCpuThreads, navigator.hardwareConcurrency || 1))
   : 1;
 ```
 
-The CPU provider status and worker load/output metadata report this configured
-count. Nonisolated pages use one thread; isolated pages use the reported logical
-CPU count capped at four and floored at one. No thread-pool setting in Python or
+`maxCpuThreads` defaults to four. The `ng-onnx` production build sets
+`NEUROGLANCER_INFERENCE_MAX_CPU_THREADS=8`; it uses at most eight threads and
+never more than the browser-reported logical CPU count. The CPU provider status
+and worker load/output metadata report this configured count. Nonisolated pages
+use one thread; missing or invalid-low logical CPU counts also fall back to one.
+This is a maximum pool size, not a guarantee that every operator saturates every
+core. No thread-pool setting in Python or
 native ORT affects this browser backend. This does not change the native WebGPU
 runtime, GPU execution, or optional FP16 support.
 
-### Unchanged production: `ng-onnx`
+### Isolated `ng-onnx` and `bundle-onnx` with middleauth helper
 
-The rspack development server and `appengine/ng-onnx/app.yaml` remain unchanged
-and send:
-
-```text
-Cross-Origin-Opener-Policy: same-origin-allow-popups
-Cross-Origin-Embedder-Policy: unsafe-none
-```
-
-Production `ng-onnx` therefore remains nonisolated and single-threaded. Preserve
-these headers on its HTML and worker responses; do not apply the test service's
-strict policy to production. Direct Google popup authentication keeps its existing
-opener-based response path. HTTPS (or localhost) is still required for WebGPU,
-and external model/volume servers still need appropriate CORS permissions.
-
-### TEST: isolated `bundle-onnx` with middleauth helper
-
-The test deployment uses the following default headers on viewer and worker assets:
+The authorized `ng-onnx` eight-thread rollout reuses the existing `bundle-onnx`
+helper design. Both deployment configurations use the following default headers
+on viewer and worker assets:
 
 ```text
 Cross-Origin-Opener-Policy: same-origin
@@ -224,7 +213,11 @@ Cross-Origin-Embedder-Policy: require-corp
 ```
 
 Verify `window.crossOriginIsolated === true` and the expected capped thread count
-in load and output metadata. Its `/middleauth.html` exception instead uses
+in load and output metadata. HTTPS (or localhost), SharedArrayBuffer and a
+threaded runtime are required. External model/volume resources must be permitted
+by CORS or CORP under the strict embedder policy; other authenticated providers
+need separate validation. The development-server header policy is unchanged.
+The `/middleauth.html` exception instead uses
 `same-origin-allow-popups` / `unsafe-none` and is nonisolated. Strict viewer COOP
 can sever a cross-origin Google popup's opener. For **middleauth only**, the
 isolated viewer opens the same-origin helper and receives the result over
@@ -236,7 +229,7 @@ abort, closure, or timeout. Isolated helper credentials stay in memory rather
 than the legacy localStorage cache. Other authentication flows are unmodified;
 this helper is not a general solution for every provider under strict isolation.
 
-Run `BASE_URL=https://bundle-onnx-dot-seung-lab.appspot.com/ node tests/inference/auth_helper_production.mjs`
+Run `BASE_URL=https://ng-onnx-dot-seung-lab.appspot.com/ node tests/inference/auth_helper_production.mjs`
 to check the relevant headers, the full synthetic credential relay, the real
 Google popup's opener, wrong-origin rejection and cancellation cleanup. It does **not** complete account OAuth or prove that
 full Google login works end to end. Actual sign-in still requires separate
@@ -834,12 +827,14 @@ Runtime WASM content-type and hash checks distinguish native Asyncify from JSEP.
 hardware FP16 and reports retained/published-output deltas against original-model
 CPU FP32 and native GPU FP32. See the script header for browser/desktop options;
 the NVIDIA test uses the explicitly experimental Dawn flag described above.
-`BASE_URL=https://ng-onnx-dot-seung-lab.appspot.com/ ISOLATED=0` tests the unchanged
-relaxed-header production service rather than local assets and requires one worker
-WASM thread. `BASE_URL=https://bundle-onnx-dot-seung-lab.appspot.com/ ISOLATED=1`
-tests the strict isolated TEST viewer and requires
-`Math.max(1, Math.min(4, navigator.hardwareConcurrency || 1))` threads on load and
-output. Omitting `BASE_URL` serves local build assets with the selected headers.
+`BASE_URL=https://ng-onnx-dot-seung-lab.appspot.com/ ISOLATED=1 MAX_CPU_THREADS=8`
+tests the isolated production service and requires
+`Math.max(1, Math.min(8, navigator.hardwareConcurrency || 1))` threads on load and
+output. Pass its custom `RUNTIME_MANIFEST` to check the deployed native pair.
+`BASE_URL=https://bundle-onnx-dot-seung-lab.appspot.com/ ISOLATED=1` retains the
+existing four-thread expectation. `ISOLATED=0` still tests the one-thread
+nonisolated fallback on matching local/remote headers. Omitting `BASE_URL` serves
+local build assets with the selected headers.
 Both modes require actual correct CPU numeric outputs and identical fresh-context
 URL replay (including the legacy absent-precision recipe), not shape-only success.
 Existing native runtime hashes remain checked. Numerical differences are reported,
