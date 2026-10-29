@@ -23,10 +23,15 @@ import type {
 import { validateModelGeometry } from "#src/inference/model.js";
 import { ProviderSession } from "#src/inference/provider.js";
 
-// Pin the native Asyncify pair to the installed ORT version for GPU and CPU.
-// Fetch it independently of App Engine, only when this lazy worker is loaded.
+declare const NEUROGLANCER_INFERENCE_WASM_BASE: string | undefined;
+
+// Default to the pinned native Asyncify CDN pair for GPU and CPU.
+// Explicit custom bundles can instead supply a runtime directory.
 // The onnxruntime-web-use-extern-wasm condition avoids embedding another factory.
-const runtimeBase = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/";
+const runtimeBase =
+  typeof NEUROGLANCER_INFERENCE_WASM_BASE === "undefined"
+    ? "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/"
+    : new URL(NEUROGLANCER_INFERENCE_WASM_BASE, self.location.href).href;
 ort.env.wasm.wasmPaths = {
   mjs: `${runtimeBase}ort-wasm-simd-threaded.asyncify.mjs`,
   wasm: `${runtimeBase}ort-wasm-simd-threaded.asyncify.wasm`,

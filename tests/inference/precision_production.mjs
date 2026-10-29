@@ -21,6 +21,13 @@
  *
  *   node tests/inference/precision_production.mjs
  *   BASE_URL=https://host/app/ node tests/inference/precision_production.mjs
+ *   RUNTIME_MANIFEST=/path/to/runtime-manifest.json BASE_URL=https://host/app/ \
+ *   node tests/inference/precision_production.mjs
+ *
+ * RUNTIME_MANIFEST optionally verifies a custom native Asyncify pair from the app
+ * origin or an explicit HTTPS base (CORS *), instead of the pinned CDN pair,
+ * including browser-observed WASM Brotli headers.
+ * Bodies are decoded: encodedSha256 requires separate raw-network verification.
  *
  * Default: GPU disabled, deterministic Conv/Concat oracle, default FP32,
  * CPU-requested FP16 and unavailable-WebGPU FP16 fallback, URL recipe replay.
@@ -53,7 +60,8 @@
  * No source imports, session stubs, converted model fixtures or app changes.
  * Only model/source HTTP fixtures are fulfilled by Playwright; production JS
  * and workers come from the actual app, native Asyncify assets from pinned CDN
- * URLs. No production resource is intercepted.
+ * URLs (or the explicit custom runtime manifest). No production resource is
+ * intercepted.
  * BASE_URL needs to be a secure context and expose window.viewer like /app/.
  * Numerical deltas are observations, NOT segmentation-equivalence assertions.
  * The production worker checks every uncropped raw value for finiteness before
@@ -78,7 +86,10 @@ const hardware = process.env.HARDWARE === "1";
 const traceAssets = process.env.TRACE_ASSETS === "1";
 const isolated = process.env.ISOLATED === "1";
 const scaleSmoke = process.env.SCALE === "1";
-// Verify the exact, unmodified native ORT 1.31.1 Asyncify pair on jsDelivr.
+const runtimeManifest = process.env.RUNTIME_MANIFEST
+  ? JSON.parse(await fs.readFile(process.env.RUNTIME_MANIFEST, "utf8"))
+  : undefined;
+// By default, verify the exact, unmodified native ORT 1.31.1 pair on jsDelivr.
 const nativeWasmHash =
   "ca319e9539cd0f1e291cf56074760121eaf39650f5dbf84b6e52c07f4b2944ec";
 const nativeRuntimeAssets = {
@@ -93,6 +104,75 @@ const nativeRuntimeAssets = {
     sha256: nativeWasmHash,
   },
 };
+if (runtimeManifest !== undefined) {
+  assert(process.env.BASE_URL, "RUNTIME_MANIFEST requires explicit BASE_URL");
+  const baseUrl = new URL(process.env.BASE_URL);
+  assert(
+    /^https?:$/.test(baseUrl.protocol) &&
+      !baseUrl.username &&
+      !baseUrl.password,
+    "RUNTIME_MANIFEST requires an HTTP(S) BASE_URL without credentials",
+  );
+  assert(runtimeManifest && typeof runtimeManifest === "object");
+  assert.equal(runtimeManifest.name, "onnxruntime-web");
+  assert.equal(runtimeManifest.version, "1.31.1");
+  assert.equal(runtimeManifest.custom, true);
+  for (const key of ["commit", "kernelCommit"])
+    assert.match(runtimeManifest[key], /^[0-9a-f]{7,40}$/i);
+  assert.equal(typeof runtimeManifest.base, "string");
+  const base = new URL(runtimeManifest.base, baseUrl);
+  assert(
+    (base.origin === baseUrl.origin ||
+      (base.protocol === "https:" &&
+        /^https:\/\//i.test(runtimeManifest.base))) &&
+      !base.username &&
+      !base.password &&
+      !base.search &&
+      !base.hash &&
+      base.pathname.endsWith("/"),
+    "Runtime manifest base must be a same-origin or explicit HTTPS directory without credentials, query or hash",
+  );
+  assert(Array.isArray(runtimeManifest.artifacts));
+  assert.equal(runtimeManifest.artifacts.length, 2);
+  for (const extension of ["mjs", "wasm"]) {
+    const name = `ort-wasm-simd-threaded.asyncify.${extension}`;
+    const artifact = runtimeManifest.artifacts.find((a) => a?.name === name);
+    assert(
+      artifact,
+      `Runtime manifest must contain exactly the native ${name}`,
+    );
+    assert.equal(typeof artifact.path, "string");
+    const url = new URL(artifact.path, baseUrl);
+    assert.equal(url.origin, base.origin);
+    assert.equal(url.href, new URL(name, base).href);
+    assert(Number.isSafeInteger(artifact.bytes) && artifact.bytes > 0);
+    assert.match(artifact.sha256, /^[0-9a-f]{64}$/);
+    if (extension === "wasm") {
+      assert.equal(artifact.contentType, "application/wasm");
+      assert.equal(artifact.contentEncoding ?? "br", "br");
+    } else {
+      assert.match(
+        artifact.contentType,
+        /^(application|text)\/(javascript|ecmascript)$/,
+      );
+    }
+    if (artifact.contentEncoding !== undefined)
+      assert(
+        ["br", "gzip", "deflate", "identity"].includes(
+          artifact.contentEncoding,
+        ),
+      );
+    if (artifact.encodedBytes !== undefined)
+      assert(
+        Number.isSafeInteger(artifact.encodedBytes) &&
+          artifact.encodedBytes > 0,
+      );
+    // Validate metadata only: decoded response bodies cannot attest encodedSha256.
+    if (artifact.encodedSha256 !== undefined)
+      assert.match(artifact.encodedSha256, /^[0-9a-f]{64}$/);
+    nativeRuntimeAssets[extension] = { ...artifact, url: url.href };
+  }
+}
 const jsepWasmHash =
   "5ab8361783822d02a57d1e97cf2514bceb451a628f2b29ae0d7b6e618201ff8f";
 assert(Number.isFinite(timeout) && timeout > 0);
@@ -341,14 +421,17 @@ try {
       assetInspections = [],
       errors = [];
     context.on("response", (response) => {
+      const headers = response.headers();
       const asset = {
         url: response.url(),
+        requestedUrl: response.request().url(),
+        redirectedFrom: response.request().redirectedFrom()?.url(),
         status: response.status(),
-        contentType: response.headers()["content-type"],
-        accessControlAllowOrigin:
-          response.headers()["access-control-allow-origin"],
-        contentLength:
-          Number(response.headers()["content-length"]) || undefined,
+        contentType: headers["content-type"],
+        contentEncoding: headers["content-encoding"],
+        vary: headers.vary,
+        accessControlAllowOrigin: headers["access-control-allow-origin"],
+        contentLength: Number(headers["content-length"]) || undefined,
         resourceType: response.request().resourceType(),
       };
       assets.push(asset);
@@ -362,30 +445,49 @@ try {
               body = await response.body();
               asset.bodySource = "browser response";
             } catch (error) {
-              // Chrome's inspector evicts the 27.416 MiB native WASM body.
+              // Chrome's inspector can evict bodies or reject worker targets.
               // Inspect the URL actually requested by the unmodified worker via
               // a separate GET, not the worker response's observed bytes.
               // Never fulfill/intercept production resources.
               if (
-                !String(error).includes(
-                  "Request content was evicted from inspector cache",
+                !/Request content was evicted from inspector cache|Network\.loadNetworkResource\): Target not supported/.test(
+                  String(error),
                 )
               )
                 throw error;
-              const verification = await context.request.get(asset.url);
+              asset.inspectionLimitation = String(error);
+              const requestHeaders = {};
+              for (const name of ["accept-encoding", "origin"]) {
+                const value = await response.request().headerValue(name);
+                if (value) requestHeaders[name] = value;
+              }
+              const verification = await context.request.get(asset.url, {
+                headers: requestHeaders,
+              });
               try {
+                assert.equal(verification.url(), asset.url);
                 assert.equal(verification.status(), asset.status);
-                assert.equal(
-                  verification.headers()["content-type"],
-                  asset.contentType,
-                );
-                assert.equal(
-                  verification.headers()["access-control-allow-origin"],
-                  asset.accessControlAllowOrigin,
-                );
+                const verificationHeaders = verification.headers();
+                for (const [header, field] of [
+                  ["content-type", "contentType"],
+                  ["access-control-allow-origin", "accessControlAllowOrigin"],
+                  ["content-encoding", "contentEncoding"],
+                  ["vary", "vary"],
+                ])
+                  assert.equal(
+                    verificationHeaders[header],
+                    asset[field],
+                    `Verification GET ${header} must match the observed browser response`,
+                  );
+                if (runtimeManifest)
+                  assert.equal(
+                    Number(verificationHeaders["content-length"]) || undefined,
+                    asset.contentLength,
+                    "Verification GET Content-Length must match the observed browser response",
+                  );
                 body = await verification.body();
                 asset.bodySource =
-                  "verification GET (inspector cache eviction)";
+                  "verification GET (browser body unavailable)";
               } finally {
                 await verification.dispose();
               }
@@ -403,7 +505,8 @@ try {
                 text,
               );
             } else {
-              asset.nativeAsyncify = asset.sha256 === nativeWasmHash;
+              asset.nativeAsyncify =
+                asset.sha256 === nativeRuntimeAssets.wasm.sha256;
               asset.jsep = asset.sha256 === jsepWasmHash;
             }
           } catch (error) {
@@ -932,22 +1035,56 @@ try {
     const runtimeAssets = run.assets.filter((a) =>
       /\.(mjs|wasm)$/.test(new URL(a.url).pathname),
     );
-    for (const [extension, expected] of Object.entries(nativeRuntimeAssets))
-      assert(
-        runtimeAssets.some(
-          (a) =>
-            a.url === expected.url &&
-            a.status === 200 &&
-            a.accessControlAllowOrigin === "*" &&
-            a.nativeAsyncify &&
-            a.bytes === expected.bytes &&
-            a.sha256 === expected.sha256 &&
+    if (runtimeManifest)
+      assert.deepEqual(
+        [...new Set(runtimeAssets.map((a) => a.url))].sort(),
+        Object.values(nativeRuntimeAssets)
+          .map((a) => a.url)
+          .sort(),
+        "Only the exact manifest runtime URLs may be fetched",
+      );
+    for (const [extension, expected] of Object.entries(nativeRuntimeAssets)) {
+      const observed = runtimeAssets.filter((a) => a.url === expected.url);
+      const expectedOrigin = new URL(expected.url).origin;
+      const sameOrigin = expectedOrigin === appUrl.origin;
+      const verified = (a) =>
+        a.status === 200 &&
+        a.nativeAsyncify &&
+        a.bytes === expected.bytes &&
+        a.sha256 === expected.sha256 &&
+        (runtimeManifest
+          ? a.requestedUrl === expected.url &&
+            !a.redirectedFrom &&
+            new URL(a.url).origin === expectedOrigin &&
+            (sameOrigin || a.accessControlAllowOrigin === "*") &&
+            !a.inspectionError &&
+            a.contentType?.split(";", 1)[0].trim().toLowerCase() ===
+              expected.contentType &&
+            (extension !== "wasm" ||
+              (a.contentEncoding === "br" &&
+                (!sameOrigin ||
+                  a.vary
+                    ?.split(",")
+                    .some(
+                      (v) => v.trim().toLowerCase() === "accept-encoding",
+                    )))) &&
+            (expected.contentEncoding === undefined ||
+              a.contentEncoding === expected.contentEncoding) &&
+            (expected.encodedBytes === undefined ||
+              a.contentLength === undefined ||
+              a.contentLength === expected.encodedBytes)
+          : a.accessControlAllowOrigin === "*" &&
             (extension === "wasm"
               ? a.contentType?.includes("application/wasm")
-              : /javascript|ecmascript/.test(a.contentType || "")),
-        ),
-        `Pinned native Asyncify ${extension} URL, status, CORS, MIME and inspected bytes must match; observed: ${JSON.stringify(runtimeAssets)}`,
+              : /javascript|ecmascript/.test(a.contentType || "")));
+      assert(
+        observed.length > 0 &&
+          (runtimeManifest
+            ? observed.every(verified)
+            : observed.some(verified)),
+        `${runtimeManifest ? "Manifest" : "Pinned"} native Asyncify ${extension} URL, status, CORS, MIME, inspected bytes and declared encoding must match; observed: ${JSON.stringify(runtimeAssets)}`,
       );
+    }
     assert(
       !run.assets.some((a) => a.jsep || /jsep/i.test(new URL(a.url).pathname)),
       "No JSEP asset may be fetched (including content-hashed assets)",
