@@ -33,6 +33,7 @@ import { registerDefaultCommands } from "#src/ui/default_commands.js";
 import { setDefaultInputEventBindings } from "#src/ui/default_input_event_bindings.js";
 import { makeDefaultViewer } from "#src/ui/default_viewer.js";
 import type { MinimalViewerOptions } from "#src/ui/minimal_viewer.js";
+import { bindOnnxInference } from "#src/ui/onnx_inference.js";
 import { bindScreenshotDialog } from "#src/ui/screenshot_menu.js";
 import { bindStateEditor } from "#src/ui/state_editor.js";
 import { bindTitle } from "#src/ui/title.js";
@@ -233,6 +234,7 @@ export function convertLegacyAnnotationTags(layer: any) {
  */
 export function setupDefaultViewer(options?: Partial<MinimalViewerOptions>) {
   const viewer = ((<any>window).viewer = makeDefaultViewer(options));
+  bindOnnxInference(viewer);
   setDefaultInputEventBindings(viewer.inputEventBindings);
   if (hasCustomBindings) {
     setCustomInputEventBindings(viewer, NEUROGLANCER_CUSTOM_INPUT_BINDINGS!);
