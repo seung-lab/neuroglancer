@@ -27,15 +27,13 @@ import {
   monitorAuthPopupWindow,
 } from "#src/credentials_provider/interactive_credentials_provider.js";
 import type { OAuth2Credentials } from "#src/credentials_provider/oauth2.js";
+import {
+  loginWithMiddleAuthHelper,
+  parseMiddleAuthResponse,
+} from "#src/kvstore/middleauth/auth_helper.js";
 import { StatusMessage } from "#src/status.js";
 import { raceWithAbort } from "#src/util/abort.js";
 import type { HttpError } from "#src/util/http_request.js";
-import {
-  verifyObject,
-  verifyObjectProperty,
-  verifyString,
-  verifyStringArray,
-} from "#src/util/json.js";
 import { ProgressSpan } from "#src/util/progress_listener.js";
 
 export type MiddleAuthToken = {
@@ -61,13 +59,14 @@ function openPopupCenter(url: string, width: number, height: number) {
 
 function waitForPopupResponseMessage(
   source: Window,
+  origin: string,
   signal: AbortSignal,
 ): Promise<any> {
   return new Promise((resolve) => {
     window.addEventListener(
       "message",
       (event) => {
-        if (event.source !== source) return;
+        if (event.source !== source || event.origin !== origin) return;
         resolve(event.data);
       },
       { signal },
@@ -140,6 +139,16 @@ async function waitForLogin(
   serverUrl: string,
   signal: AbortSignal,
 ): Promise<MiddleAuthToken> {
+  signal.throwIfAborted();
+  if (window.crossOriginIsolated) {
+    const data = await loginWithMiddleAuthHelper(serverUrl, signal);
+    return {
+      tokenType: "Bearer",
+      accessToken: data.token,
+      url: serverUrl,
+      appUrls: data.app_urls,
+    };
+  }
   const abortController = new AbortController();
   signal = AbortSignal.any([abortController.signal, signal]);
   try {
@@ -153,33 +162,19 @@ async function waitForLogin(
     }
     monitorAuthPopupWindow(newWindow, abortController);
     return await raceWithAbort(
-      waitForPopupResponseMessage(newWindow, abortController.signal).then(
-        async (data) => {
-          try {
-            const obj = verifyObject(data);
-            const accessToken = verifyObjectProperty(
-              obj,
-              "token",
-              verifyString,
-            );
-            const appUrls = verifyObjectProperty(
-              obj,
-              "app_urls",
-              verifyStringArray,
-            );
-            return {
-              tokenType: "Bearer",
-              accessToken,
-              url: serverUrl,
-              appUrls,
-            } satisfies MiddleAuthToken;
-          } catch (parseError) {
-            throw new Error(
-              `Received unexpected authentication response: ${parseError.message}`,
-            );
-          }
-        },
-      ),
+      waitForPopupResponseMessage(
+        newWindow,
+        new URL(serverUrl).origin,
+        abortController.signal,
+      ).then((data) => {
+        const response = parseMiddleAuthResponse(data);
+        return {
+          tokenType: "Bearer",
+          accessToken: response.token,
+          url: serverUrl,
+          appUrls: response.app_urls,
+        } satisfies MiddleAuthToken;
+      }),
       signal,
     );
   } finally {
@@ -213,7 +208,9 @@ export class MiddleAuthCredentialsProvider extends CredentialsProvider<MiddleAut
   get = makeCredentialsGetter(async (options) => {
     let token = undefined;
 
-    if (!this.alreadyTriedLocalStorage) {
+    // The isolated helper flow keeps credentials in memory only. Preserve
+    // legacy persistence for the nonisolated direct-popup flow.
+    if (!window.crossOriginIsolated && !this.alreadyTriedLocalStorage) {
       this.alreadyTriedLocalStorage = true;
       token = getAuthTokenFromLocalStorage(this.serverUrl);
       if (token) return token;
@@ -230,7 +227,9 @@ export class MiddleAuthCredentialsProvider extends CredentialsProvider<MiddleAut
       },
       options.signal,
     );
-    saveAuthTokenToLocalStorage(this.serverUrl, token);
+    if (!window.crossOriginIsolated) {
+      saveAuthTokenToLocalStorage(this.serverUrl, token);
+    }
     return token;
   });
 }

@@ -66,10 +66,9 @@ export default defineConfig((env, args) => {
           resourceQuery: /raw/,
           type: "asset/source",
         },
-        // Needed for .html assets used for auth redirect pages for the
-        // brainmaps and bossDB data sources.
+        // Auth redirect pages and the relaxed middleauth popup helper.
         {
-          test: /(bossauth|google_oauth2_redirect)\.html$/,
+          test: /(bossauth|google_oauth2_redirect|middleauth)\.html$/,
           type: "asset/resource",
           generator: {
             // Filename must be preserved since exact redirect URLs must be allowlisted.
@@ -79,6 +78,10 @@ export default defineConfig((env, args) => {
       ],
     },
     devServer: {
+      headers: {
+        "Cross-Origin-Opener-Policy": "same-origin-allow-popups",
+        "Cross-Origin-Embedder-Policy": "unsafe-none",
+      },
       client: {
         overlay: {
           // Prevent intrusive notification spam.
