@@ -101,6 +101,15 @@ export default defineWorkspace([
   ),
   {
     define: browserDefines,
+    resolve: {
+      // Match the production worker's non-embedded native WebGPU runtime entry.
+      conditions: [
+        "onnxruntime-web-use-extern-wasm",
+        "module",
+        "browser",
+        "development|production",
+      ],
+    },
     esbuild: {
       target: "es2022",
     },

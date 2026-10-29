@@ -95,6 +95,7 @@
     "msgpackr": "^1.11.5",
     "nifti-reader-js": "^0.8.0",
     "numcodecs": "^0.3.2",
+    "onnxruntime-web": "1.31.1",
     "valibot": "^1.1.0"
   },
   "overrides": {

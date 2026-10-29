@@ -23,6 +23,10 @@ export default defineConfig((env, args) => {
       },
     },
     devtool: "source-map",
+    resolve: {
+      // Keep ORT's JSEP JS factory external, alongside its matching WASM.
+      conditionNames: ["onnxruntime-web-use-extern-wasm", "..."],
+    },
     module: {
       rules: [
         // Needed to support Neuroglancer TypeScript sources.
@@ -44,6 +48,15 @@ export default defineConfig((env, args) => {
         },
         {
           test: /\.wasm$/,
+          generator: {
+            filename: "[name].[contenthash][ext]",
+          },
+        },
+        {
+          // Emit the factory unchanged, not as a JS chunk: ORT imports its URL
+          // directly and Emscripten also uses it to start WASM thread workers.
+          test: /ort-wasm-simd-threaded\.jsep\.mjs$/,
+          type: "asset/resource",
           generator: {
             filename: "[name].[contenthash][ext]",
           },
