@@ -138,9 +138,17 @@ export type FetchOk = (
   init?: RequestInitWithProgress,
 ) => Promise<Response>;
 
+/**
+ * Network/CORS failures only. HTTP 429/503/504 already have a retry budget in `fetchOk`.
+ * Do not classify raw TypeErrors or wrapped errors: they may be decode/model failures.
+ */
+export function isTransientNetworkError(error: unknown): boolean {
+  return error instanceof HttpError && error.status === 0;
+}
+
 export function isNotFoundError(e: any) {
   if (!(e instanceof HttpError)) return false;
-  // Treat CORS errors (0) or 403 as not found.  S3 returns 403 if the file does not exist because
-  // permissions are per-file.
-  return e.status === 0 || e.status === 403 || e.status === 404;
+  // S3 returns 403 if the file does not exist because permissions are per-file.
+  // Network/CORS errors (0) must propagate rather than masquerade as missing data.
+  return e.status === 403 || e.status === 404;
 }
