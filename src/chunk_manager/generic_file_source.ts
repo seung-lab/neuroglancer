@@ -24,7 +24,9 @@ import { Chunk, ChunkSourceBase } from "#src/chunk_manager/backend.js";
 import { ChunkState } from "#src/chunk_manager/base.js";
 import type { SharedKvStoreContextCounterpart } from "#src/kvstore/backend.js";
 import type { ReadResponse } from "#src/kvstore/index.js";
+import { scopedAbortCallback } from "#src/util/abort.js";
 import type { Owned } from "#src/util/disposable.js";
+import { isTransientNetworkError } from "#src/util/http_request.js";
 import { stableStringify } from "#src/util/json.js";
 import type { AsyncMemoize } from "#src/util/memoize.js";
 import { asyncMemoizeWithProgress } from "#src/util/memoize.js";
@@ -36,6 +38,7 @@ class AsyncCacheChunk<Data> extends Chunk {
 
   initialize(key: string) {
     super.initialize(key);
+    this.asyncMemoize = undefined;
   }
 
   freeSystemMemory() {
@@ -78,23 +81,52 @@ export class SimpleAsyncCache<Key, Value> extends ChunkSourceBase {
       this.addChunk(chunk);
     }
     if (chunk.asyncMemoize === undefined) {
-      chunk.asyncMemoize = asyncMemoizeWithProgress(async (progressOptions) => {
+      const cacheChunk = chunk;
+      const memoize = asyncMemoizeWithProgress(async (progressOptions) => {
+        // QUEUED may remove the last chunk and release its source reference.
+        using _sourceLifetime = this.addRef();
+        const isCurrent = () =>
+          cacheChunk.source === this &&
+          this.chunks.get(encodedKey) === cacheChunk &&
+          cacheChunk.asyncMemoize === memoize;
+        // A cancelled generation needs a distinct memoizer: its late completion
+        // must not affect either the replacement chunk or its memoized promise.
+        using _abort = scopedAbortCallback(progressOptions.signal, () => {
+          if (isCurrent()) cacheChunk.asyncMemoize = undefined;
+        });
         try {
           const { data, size } = await this.downloadFunction(
             key,
             progressOptions,
           );
-          chunk.systemMemoryBytes = size;
-          chunk!.queueManager.updateChunkState(
-            chunk!,
-            ChunkState.SYSTEM_MEMORY_WORKER,
-          );
+          if (isCurrent()) {
+            cacheChunk.systemMemoryBytes = size;
+            cacheChunk.queueManager.updateChunkState(
+              cacheChunk,
+              ChunkState.SYSTEM_MEMORY_WORKER,
+            );
+          }
           return data;
         } catch (e) {
-          chunk!.queueManager.updateChunkState(chunk!, ChunkState.FAILED);
+          if (isCurrent()) {
+            if (isTransientNetworkError(e)) {
+              cacheChunk.asyncMemoize = undefined;
+              // Use normal queue removal/accounting; the next get can retry.
+              cacheChunk.queueManager.updateChunkState(
+                cacheChunk,
+                ChunkState.QUEUED,
+              );
+            } else {
+              cacheChunk.queueManager.updateChunkState(
+                cacheChunk,
+                ChunkState.FAILED,
+              );
+            }
+          }
           throw e;
         }
       });
+      chunk.asyncMemoize = memoize;
     }
     if (chunk.state === ChunkState.SYSTEM_MEMORY_WORKER) {
       chunk.chunkManager.queueManager.markRecentlyUsed(chunk);
