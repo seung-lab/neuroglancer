@@ -656,7 +656,9 @@ export abstract class SliceViewChunkSource<
   async fetchChunk<T>(
     chunkGridPosition: Float32Array,
     transform: (chunk: Chunk) => T,
-    progressOptions: Partial<ProgressOptions>,
+    progressOptions: Partial<ProgressOptions> & {
+      retryTransientErrors?: boolean;
+    },
   ): Promise<T> {
     const key = chunkGridPosition.join();
     const existingChunk = this.chunks.get(key);
@@ -685,7 +687,11 @@ export abstract class SliceViewChunkSource<
     try {
       await this.rpc!.promiseInvoke(
         SLICEVIEW_REQUEST_CHUNK_RPC_ID,
-        { source: this.addCounterpartRef(), chunkGridPosition },
+        {
+          source: this.addCounterpartRef(),
+          chunkGridPosition,
+          retryTransientErrors: progressOptions.retryTransientErrors,
+        },
         progressOptions,
       );
       return await promise;

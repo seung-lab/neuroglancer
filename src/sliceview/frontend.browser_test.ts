@@ -114,9 +114,14 @@ describe("SliceViewChunkSource.fetchChunk RPC ownership", () => {
     const f = await fixture();
     const started = Promise.withResolvers<TestCounterpart>();
     const complete = Promise.withResolvers<void>();
+    let retryTransientErrors: boolean | undefined;
     registerPromiseRPC(
       SLICEVIEW_REQUEST_CHUNK_RPC_ID,
-      async function (x: { source: { id: number; gen: number } }) {
+      async function (x: {
+        source: { id: number; gen: number };
+        retryTransientErrors?: boolean;
+      }) {
+        retryTransientErrors = x.retryTransientErrors;
         const source = this.getRef<TestCounterpart>(x.source);
         started.resolve(source);
         try {
@@ -133,8 +138,10 @@ describe("SliceViewChunkSource.fetchChunk RPC ownership", () => {
     const transform = vi.fn(() => 42);
     const pending = f.source.fetchChunk(new Float32Array(3), transform, {
       signal: new AbortController().signal,
+      retryTransientErrors: true,
     });
     expect(await started.promise).toBe(f.counterpart);
+    expect(retryTransientErrors).toBe(true);
     expect(f.counterpart.refCount).toBe(1);
     f.source.dispose();
     expect(f.disposed).not.toHaveBeenCalled();

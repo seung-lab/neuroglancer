@@ -765,7 +765,7 @@ export function prepareInferenceInput(
                     return { ok: false as const, error };
                   }
                 },
-                { signal: combinedSignal },
+                { signal: combinedSignal, retryTransientErrors: true },
               );
               if (!result.ok) throw result.error;
             }

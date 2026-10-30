@@ -52,6 +52,7 @@ import type { WatchableValueInterface } from "#src/trackable_value.js";
 import { raceWithAbort } from "#src/util/abort.js";
 import { erf } from "#src/util/erf.js";
 import { vec3, vec3Key } from "#src/util/geom.js";
+import { isTransientNetworkError } from "#src/util/http_request.js";
 import { VelocityEstimator } from "#src/util/velocity_estimation.js";
 import {
   getBasePriority,
@@ -538,22 +539,15 @@ registerPromiseRPC(
       this: RPC;
       source: { id: number; gen: number };
       chunkGridPosition: Float32Array;
+      retryTransientErrors?: boolean;
     },
     progressOptions,
   ): RPCPromise<void> {
     const source = this.getRef<SliceViewChunkSourceBackend>(x.source);
     try {
       const { chunkManager } = source;
-      const chunk = source.getChunk(x.chunkGridPosition);
+      let chunk = source.getChunk(x.chunkGridPosition);
       const key = chunk.key!;
-      if (chunk.state <= ChunkState.SYSTEM_MEMORY) {
-        // Already available on frontend.
-        return { value: undefined };
-      }
-      if (chunk.state === ChunkState.FAILED) {
-        // Already failed
-        throw chunk.error;
-      }
       const disposeRecompute = chunkManager.recomputeChunkPriorities.add(() => {
         chunkManager.requestChunk(
           chunk,
@@ -562,25 +556,75 @@ registerPromiseRPC(
           ChunkState.SYSTEM_MEMORY,
         );
       });
-      chunkManager.scheduleUpdateChunkPriorities();
-      let listener: (chunk: Chunk) => void;
-      const promise = new Promise<void>((resolve, reject) => {
-        listener = (chunk) => {
-          if (chunk.state === ChunkState.FAILED) {
-            reject(chunk.error);
-            return;
-          }
-          if (chunk.state <= ChunkState.SYSTEM_MEMORY) {
-            resolve();
-          }
-        };
-      });
-      source.registerChunkListener(key, listener!);
       try {
-        await raceWithAbort(promise, progressOptions.signal);
-        return { value: undefined };
+        let retries = 0;
+        while (true) {
+          progressOptions.signal?.throwIfAborted();
+          chunk = source.getChunk(x.chunkGridPosition);
+          if (chunk.state <= ChunkState.SYSTEM_MEMORY) {
+            return { value: undefined };
+          }
+          chunkManager.scheduleUpdateChunkPriorities();
+          if (chunk.state === ChunkState.FAILED) {
+            if (
+              !x.retryTransientErrors ||
+              !isTransientNetworkError(chunk.error)
+            ) {
+              throw chunk.error;
+            }
+            if (retries === 3) {
+              throw new Error(
+                `Input chunk download failed after ${retries} retries: ${chunk.error}`,
+                { cause: chunk.error },
+              );
+            }
+            const failedError = chunk.error;
+            const delay = 500 * 2 ** retries++ * (0.75 + Math.random() * 0.5);
+            let timeout: ReturnType<typeof setTimeout> | undefined;
+            try {
+              await raceWithAbort(
+                new Promise<void>((resolve) => {
+                  timeout = setTimeout(resolve, delay);
+                }),
+                progressOptions.signal,
+              );
+            } finally {
+              clearTimeout(timeout);
+            }
+            progressOptions.signal?.throwIfAborted();
+            // Another consumer may have retried and failed again during our delay.
+            if (
+              source.chunks.get(key) === chunk &&
+              chunk.state === ChunkState.FAILED &&
+              chunk.error === failedError
+            ) {
+              chunk.error = undefined;
+              chunkManager.queueManager.updateChunkState(
+                chunk,
+                ChunkState.QUEUED,
+              );
+            }
+            continue;
+          }
+          let listener: (chunk: Chunk) => void;
+          const promise = new Promise<void>((resolve) => {
+            listener = (chunk) => {
+              if (
+                chunk.state === ChunkState.FAILED ||
+                chunk.state <= ChunkState.SYSTEM_MEMORY
+              ) {
+                resolve();
+              }
+            };
+          });
+          source.registerChunkListener(key, listener!);
+          try {
+            await raceWithAbort(promise, progressOptions.signal);
+          } finally {
+            source.unregisterChunkListener(key, listener!);
+          }
+        }
       } finally {
-        source.unregisterChunkListener(key, listener!);
         disposeRecompute();
         chunkManager.scheduleUpdateChunkPriorities();
       }

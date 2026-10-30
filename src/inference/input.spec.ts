@@ -335,6 +335,9 @@ describe("selected multiscale inference input", () => {
     ).toEqual(codedPatch([0, 1, 1], [3, 3, 4], [1, 2, 2]));
     expect(fine.source.fetchChunk).not.toHaveBeenCalled();
     expect(coarse.source.fetchChunk).toHaveBeenCalledTimes(8);
+    for (const [, , progress] of coarse.source.fetchChunk.mock.calls) {
+      expect(progress).toMatchObject({ retryTransientErrors: true });
+    }
     input.dispose();
     input.dispose();
     expect(coarse.source.refCount).toBe(1);
