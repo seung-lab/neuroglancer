@@ -444,6 +444,7 @@ describe("live globally anchored inference", () => {
         overlap,
       );
       workers[0].hold = true;
+      const post = vi.spyOn(workers[0], "postMessage");
       const keep = new AbortController(),
         drop = new AbortController();
       const active = live.readTile([0, 0, 0], keep.signal);
@@ -456,7 +457,10 @@ describe("live globally anchored inference", () => {
         "only this subscriber",
       );
       await vi.waitFor(() => expect(workers[0].held).toBeTypeOf("function"));
-      expect(source.readPatch).toHaveBeenCalledTimes(1);
+      expect(source.readPatch).toHaveBeenCalledTimes(overlap ? 2 : 1);
+      expect(
+        post.mock.calls.filter(([request]) => request.kind === "run"),
+      ).toHaveLength(1);
       workers[0].hold = false;
       workers[0].held!();
       await Promise.all([duplicate, canceled, activeCanceled]);
@@ -507,6 +511,7 @@ describe("live globally anchored inference", () => {
         overlap,
       );
       workers[0].hold = true;
+      const post = vi.spyOn(workers[0], "postMessage");
       const a = live.readTile([0, 0, 0], signal()),
         b = live.readTile([0, 0, 1], signal());
       const rejected = [
@@ -518,7 +523,15 @@ describe("live globally anchored inference", () => {
       workers[0].held!();
       await Promise.all(rejected);
       expect(workers[0].terminated).toBe(true);
-      expect(source.readPatch).toHaveBeenCalledTimes(1);
+      expect(source.readPatch).toHaveBeenCalledTimes(overlap ? 2 : 1);
+      expect(
+        post.mock.calls.filter(([request]) => request.kind === "run"),
+      ).toHaveLength(1);
+      expect(
+        vi
+          .mocked(source.readPatch)
+          .mock.calls.every(([, , signal]) => signal.aborted),
+      ).toBe(true);
       expect(onError).toHaveBeenCalledTimes(1);
       await expect(live.readTile([0, 0, 0], signal())).rejects.toThrow(
         "stopped",

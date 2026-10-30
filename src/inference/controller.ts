@@ -22,6 +22,7 @@ import {
   planBlendedInferenceTiles,
   stitchCroppedTile,
   type InferenceGeometry,
+  type InferenceTile,
   type Zyx,
 } from "#src/inference/geometry.js";
 import type { PreparedInferenceInput } from "#src/inference/input.js";
@@ -387,35 +388,101 @@ export class OnnxInferenceController {
       const patchMask = overlap
         ? this.getWuPatchMask(retainedShape, outputStride)
         : undefined;
-      let completed = 0;
-      onProgress(0, total);
-      for (const tile of tiles) {
-        check();
-        const key = JSON.stringify([tile.input.origin, tile.input.shape]);
-        let output = this.patchCache.get(key);
-        const cached = output !== undefined;
-        if (output === undefined) {
-          const patch = await input.readPatch(
-            [...tile.input.origin],
-            [...tile.input.shape],
-            abort.signal,
-          );
+      const readPatch = async (tile: InferenceTile) => {
+        try {
+          check();
+          return {
+            patch: await input.readPatch(
+              [...tile.input.origin],
+              [...tile.input.shape],
+              abort.signal,
+            ),
+          };
+        } catch (error) {
+          // A speculative read may fail before its turn or be abandoned on cancel.
+          return { error };
+        }
+      };
+      const runPatch = async (patch: Float32Array) => {
+        try {
           check();
           for (let i = 0; i < patch.length; ++i) {
             if (!Number.isFinite(patch[i]))
               throw new Error("Inference input values must be finite");
           }
-          const response = await this.request(
-            { id: ++this.requestId, kind: "run", input: patch, geometry },
-            [patch.buffer],
-          );
+          return {
+            response: await this.request(
+              { id: ++this.requestId, kind: "run", input: patch, geometry },
+              [patch.buffer],
+            ),
+          };
+        } catch (error) {
+          return { error };
+        }
+      };
+      type PrefetchedPatch = {
+        pending: ReturnType<typeof readPatch>;
+        ready?: Awaited<ReturnType<typeof readPatch>>;
+      };
+      let prefetched: PrefetchedPatch | undefined;
+      let responsePending: ReturnType<typeof runPatch> | undefined;
+      let next = tiles.next();
+      let completed = 0;
+      onProgress(0, total);
+      while (!next.done) {
+        check();
+        const tile = next.value;
+        next = tiles.next();
+        const pendingPatch = prefetched;
+        prefetched = undefined;
+        const key = JSON.stringify([tile.input.origin, tile.input.shape]);
+        let output =
+          responsePending === undefined ? this.patchCache.get(key) : undefined;
+        const cached = output !== undefined;
+        if (output === undefined) {
+          if (responsePending === undefined) {
+            const prepared = await (pendingPatch?.pending ?? readPatch(tile));
+            if ("error" in prepared) throw prepared.error;
+            responsePending = runPatch(prepared.patch);
+          }
+          if (
+            !next.done &&
+            this.pending.size > 0 &&
+            !this.patchCache.has(
+              JSON.stringify([next.value.input.origin, next.value.input.shape]),
+            )
+          ) {
+            const ahead: PrefetchedPatch = {
+              pending: readPatch(next.value),
+            };
+            ahead.pending.then((ready) => {
+              ahead.ready = ready;
+            });
+            prefetched = ahead;
+          }
+          const outcome = await responsePending;
+          responsePending = undefined;
+          if ("error" in outcome) throw outcome.error;
           check();
+          const { response } = outcome;
           if (
             response.kind !== "output" ||
             !(response.output instanceof Float32Array)
           )
             throw new Error("Invalid inference worker output response");
           output = response.output;
+          if (
+            !next.done &&
+            prefetched?.ready !== undefined &&
+            !("error" in prefetched.ready) &&
+            !this.patchCache.has(
+              JSON.stringify([next.value.input.origin, next.value.input.shape]),
+            )
+          ) {
+            // Post ready work before CPU stitching, without waiting for a slow read.
+            responsePending = runPatch(prefetched.ready.patch);
+            prefetched = undefined;
+          }
         }
         if (overlap) {
           blendCroppedTile(
@@ -511,9 +578,16 @@ export class OnnxInferenceController {
       };
     } catch (error) {
       // An older canceled operation must not clear a newer operation's cache.
-      if (generation === this.generation) this.clearPatchCache();
+      if (generation === this.generation) {
+        if (this.pending.size > 0) {
+          this.stopWorker(
+            error instanceof Error ? error : new Error(String(error)),
+          );
+        } else this.clearPatchCache();
+      }
       throw error;
     } finally {
+      abort.abort();
       if (this.active === operation) this.active = undefined;
       if (this.abort === abort) this.abort = undefined;
     }

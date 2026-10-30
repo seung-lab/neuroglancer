@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import { OnnxInferenceController } from "#src/inference/controller.js";
 import * as geometry from "#src/inference/geometry.js";
 import { getRetainedOutputShape } from "#src/inference/geometry.js";
@@ -41,6 +41,7 @@ class FakeWorker {
   patchOriginBias = false;
   outputFailure: "error" | "short" | "nan" | "infinity" | undefined;
   hold = false;
+  runDelayMs = 0;
   held: (() => void) | undefined;
   postMessage(message: InferenceWorkerRequest, transfer: Transferable[]) {
     const request = structuredClone(message, { transfer });
@@ -130,11 +131,18 @@ class FakeWorker {
       }
     };
     if (this.hold && request.kind === "run") this.held = respond;
+    else if (this.runDelayMs > 0 && request.kind === "run")
+      setTimeout(respond, this.runDelayMs);
     else queueMicrotask(respond);
   }
   terminate() {
     this.terminated = true;
   }
+}
+
+// Count attempted posts, including calls whose mocked implementation throws.
+function runPostCalls(post: MockInstance<FakeWorker["postMessage"]>) {
+  return post.mock.calls.filter(([request]) => request.kind === "run");
 }
 
 function input() {
@@ -825,24 +833,46 @@ describe("OnnxInferenceController", () => {
     },
   );
 
-  it("never reuses predictions when only the requested precision changes", async () => {
-    const { controller, workers, file } = setup();
-    const { source, origins } = input();
-    const roi = { ...options, shapeZYX: [1, 1, 1] };
-    for (const precision of [
-      undefined,
-      "float16",
-      "float32",
-      "float16",
-    ] as const) {
-      await controller.loadModel(file, "webgpu", false, precision);
-      await controller.run(source, roi);
-      await controller.run(source, roi);
-    }
-    expect(origins).toHaveLength(4);
-    expect(workers.map((worker) => worker.runs)).toEqual([1, 1, 1, 1]);
-    controller.dispose();
-  });
+  it.each([
+    {
+      setting: "precision",
+      selections: [
+        [false, undefined],
+        [false, "float16"],
+        [false, "float32"],
+        [false, "float16"],
+      ],
+    },
+    {
+      setting: "compatibility flag",
+      selections: [
+        [undefined, undefined],
+        [false, undefined],
+        [true, undefined],
+        [false, undefined],
+      ],
+    },
+  ] as const)(
+    "never reuses cached predictions when only the requested $setting changes",
+    async ({ selections }) => {
+      const { controller, workers, file } = setup();
+      const { source, origins } = input();
+      const roi = { ...options, shapeZYX: [1, 1, 1] };
+      for (const [compatibilityFixes, precision] of selections) {
+        await controller.loadModel(
+          file,
+          "webgpu",
+          compatibilityFixes,
+          precision,
+        );
+        await controller.run(source, roi);
+        await controller.run(source, roi);
+      }
+      expect(origins).toHaveLength(4);
+      expect(workers.map((worker) => worker.runs)).toEqual([1, 1, 1, 1]);
+      controller.dispose();
+    },
+  );
 
   it("invalidates patches on precision metadata changes and records visible fallback provenance", async () => {
     const { controller, workers, file } = setup();
@@ -879,20 +909,6 @@ describe("OnnxInferenceController", () => {
     await controller.run(source, { ...a, originZYX: [2, 10, 110] });
     await controller.run(source, a);
     expect(workers[0].runs).toBe(5);
-    controller.dispose();
-  });
-
-  it("never reuses cached predictions when only the requested compatibility flag changes", async () => {
-    const { controller, workers, file } = setup();
-    const { source, origins } = input();
-    const roi = { ...options, shapeZYX: [1, 1, 1] };
-    for (const enabled of [undefined, false, true, false]) {
-      await controller.loadModel(file, "webgpu", enabled);
-      await controller.run(source, roi);
-      await controller.run(source, roi);
-    }
-    expect(origins).toHaveLength(4);
-    expect(workers.map((worker) => worker.runs)).toEqual([1, 1, 1, 1]);
     controller.dispose();
   });
 
@@ -1074,6 +1090,641 @@ describe("OnnxInferenceController", () => {
     expect(workers[0].loads).toBe(1);
     controller.dispose();
     expect(workers[0].terminated).toBe(true);
+  });
+
+  describe("one-patch prefetch", () => {
+    const modelShapes = {
+      inputShape: [1, 1, 8, 16, 16],
+      outputShape: [1, 2, 8, 16, 16],
+    };
+    const roi = { originZYX: [1, 2, 2], shapeZYX: [1, 1, 25] };
+    async function prepare(patchCacheBudget?: number) {
+      const fixture = setup(patchCacheBudget, modelShapes);
+      await fixture.controller.loadModel(fixture.file);
+      return { ...fixture, ...input() };
+    }
+    afterEach(() => vi.useRealTimers());
+
+    it.each([true, false])(
+      "prepares only the next patch with one GPU request outstanding (overlap=%s)",
+      async (overlap) => {
+        const { controller, workers, source, patches, origins } =
+          await prepare(0);
+        const worker = workers[0];
+        worker.hold = true;
+        const post = vi.spyOn(worker, "postMessage");
+        const read = vi.spyOn(source, "readPatch");
+        const progress: number[] = [];
+        const pending = controller.run(source, { ...roi, overlap }, (n) =>
+          progress.push(n),
+        );
+        try {
+          await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+          expect(runPostCalls(post)).toHaveLength(1);
+          expect(origins).toEqual([
+            [0, 0, 0],
+            [0, 0, overlap ? 8 : 12],
+          ]);
+          expect(patches[0].byteLength).toBe(0);
+          expect(patches[1].byteLength).toBe(8 * 16 * 16 * 4);
+          expect(progress).toEqual([0]);
+          worker.hold = false;
+          worker.held!();
+          const result = await pending;
+          const count = overlap ? 4 : 3;
+          expect(read).toHaveBeenCalledTimes(count);
+          expect(worker.runs).toBe(count);
+          expect(progress).toEqual(
+            Array.from({ length: count + 1 }, (_, n) => n),
+          );
+          expect(result.data).toEqual(
+            new Float32Array([...Array(25).fill(1), ...Array(25).fill(2)]),
+          );
+          expect(patches.every((patch) => patch.byteLength === 0)).toBe(true);
+        } finally {
+          controller.dispose();
+          await pending.catch(() => {});
+        }
+      },
+    );
+
+    it.each([true, false])(
+      "starts the next ready GPU request before stitching the current output (overlap=%s)",
+      async (overlap) => {
+        const { controller, workers, source } = await prepare(0);
+        const worker = workers[0];
+        worker.hold = true;
+        const pendingOnPost: number[] = [];
+        const originalPost = worker.postMessage.bind(worker);
+        const post = vi
+          .spyOn(worker, "postMessage")
+          .mockImplementation((request, transfer) => {
+            if (request.kind === "run")
+              pendingOnPost.push(controller["pending"].size);
+            originalPost(request, transfer);
+          });
+        const read = vi.spyOn(source, "readPatch");
+        const snapshots: {
+          posted: number;
+          pending: number;
+          completed: number;
+        }[] = [];
+        const beforeStitch = () => {
+          snapshots.push({
+            posted: runPostCalls(post).length,
+            pending: controller["pending"].size,
+            completed: worker.runs,
+          });
+        };
+        const blend = geometry.blendCroppedTile;
+        const stitch = geometry.stitchCroppedTile;
+        const blendSpy = vi
+          .spyOn(geometry, "blendCroppedTile")
+          .mockImplementation((...args) => {
+            beforeStitch();
+            return blend(...args);
+          });
+        const stitchSpy = vi
+          .spyOn(geometry, "stitchCroppedTile")
+          .mockImplementation((...args) => {
+            beforeStitch();
+            return stitch(...args);
+          });
+        const progress: number[] = [];
+        const pending = controller.run(source, { ...roi, overlap }, (n) =>
+          progress.push(n),
+        );
+        try {
+          await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+          worker.hold = false;
+          worker.held!();
+          const result = await pending;
+          expect(snapshots[0]).toEqual({ posted: 2, pending: 1, completed: 1 });
+          expect(snapshots.every(({ pending }) => pending <= 1)).toBe(true);
+          const count = overlap ? 4 : 3;
+          expect(pendingOnPost).toEqual(Array(count).fill(1));
+          expect(snapshots).toHaveLength(count);
+          expect(snapshots.at(-1)).toEqual({
+            posted: count,
+            pending: 0,
+            completed: count,
+          });
+          expect(progress).toEqual(
+            Array.from({ length: count + 1 }, (_, n) => n),
+          );
+          expect(result.data).toEqual(
+            new Float32Array([...Array(25).fill(1), ...Array(25).fill(2)]),
+          );
+        } finally {
+          controller.dispose();
+          await pending.catch(() => {});
+          blendSpy.mockRestore();
+          stitchSpy.mockRestore();
+        }
+      },
+    );
+
+    it("stitches immediately instead of waiting for an unresolved next input", async () => {
+      const { controller, workers, source } = await prepare();
+      const worker = workers[0];
+      worker.hold = true;
+      const post = vi.spyOn(worker, "postMessage");
+      const originalRead = source.readPatch.bind(source);
+      let release: (() => void) | undefined;
+      let reads = 0;
+      vi.spyOn(source, "readPatch").mockImplementation(async (...args) => {
+        if (++reads === 2) {
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+        return originalRead(...args);
+      });
+      const progress: number[] = [];
+      const pending = controller.run(source, roi, (n) => progress.push(n));
+      try {
+        await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+        worker.held!();
+        await vi.waitFor(() => expect(progress).toEqual([0, 1]));
+        expect(runPostCalls(post)).toHaveLength(1);
+        expect(controller["pending"].size).toBe(0);
+        expect(controller["active"]).toBeDefined();
+        worker.hold = false;
+        release!();
+        const result = await pending;
+        expect(result.provenance).toMatchObject({ completedTiles: 4 });
+        expect(worker.runs).toBe(4);
+      } finally {
+        controller.dispose();
+        release?.();
+        await pending.catch(() => {});
+      }
+    });
+
+    it.each(["short", "nan", "infinity", "stitch", "progress"] as const)(
+      "stops an already submitted next request after current %s failure",
+      async (failure) => {
+        const { controller, workers, source } = await prepare();
+        const worker = workers[0];
+        worker.hold = true;
+        const post = vi.spyOn(worker, "postMessage");
+        const read = vi.spyOn(source, "readPatch");
+        const blend = vi.spyOn(geometry, "blendCroppedTile");
+        if (failure === "stitch")
+          blend.mockImplementation(() => {
+            throw new Error("stitch failed");
+          });
+        const pending = controller.run(source, roi, (n) => {
+          if (n === 1 && failure === "progress")
+            throw new Error("progress failed");
+        });
+        const rejected = expect(pending).rejects.toThrow(
+          failure === "short"
+            ? "buffer lengths"
+            : failure === "nan" || failure === "infinity"
+              ? "predictions must be finite"
+              : `${failure} failed`,
+        );
+        try {
+          await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+          if (
+            failure === "short" ||
+            failure === "nan" ||
+            failure === "infinity"
+          )
+            worker.outputFailure = failure;
+          worker.held!();
+          await rejected;
+          expect(runPostCalls(post)).toHaveLength(2);
+          expect(worker.terminated).toBe(true);
+          expect(controller["pending"].size).toBe(0);
+          expect(controller["active"]).toBeUndefined();
+          expect(controller["patchCache"].size).toBe(0);
+          expect(read.mock.calls.every(([, , signal]) => signal.aborted)).toBe(
+            true,
+          );
+          blend.mockRestore();
+          const result = await controller.run(source, roi);
+          expect(workers).toHaveLength(2);
+          expect(workers[1].runs).toBe(4);
+          worker.metadata.fallbackReason = "late obsolete response";
+          worker.held!();
+          worker.onerror?.({ message: "late obsolete error" });
+          await Promise.resolve();
+          const cached = await controller.run(source, roi);
+          expect(cached.data).toEqual(result.data);
+          expect(workers[1].runs).toBe(4);
+          expect(cached.provenance).not.toHaveProperty("fallbackReason");
+        } finally {
+          controller.dispose();
+          await pending.catch(() => {});
+          blend.mockRestore();
+        }
+      },
+    );
+
+    it("preserves a replacement run when canceled from progress with the next request active", async () => {
+      const { controller, workers, source } = await prepare();
+      const worker = workers[0];
+      worker.hold = true;
+      const post = vi.spyOn(worker, "postMessage");
+      const read = vi.spyOn(source, "readPatch");
+      let replacement: ReturnType<typeof controller.run> | undefined;
+      const pending = controller.run(source, roi, (n) => {
+        if (n === 1) {
+          expect(runPostCalls(post)).toHaveLength(2);
+          expect(controller["pending"].size).toBe(1);
+          controller.cancel();
+          replacement = controller.run(source, roi);
+        }
+      });
+      const rejected = expect(pending).rejects.toThrow(/aborted|canceled/i);
+      try {
+        await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+        worker.held!();
+        await rejected;
+        expect(replacement).toBeDefined();
+        const result = await replacement!;
+        expect(worker.terminated).toBe(true);
+        expect(workers).toHaveLength(2);
+        expect(workers[1].terminated).toBe(false);
+        expect(workers[1].runs).toBe(4);
+        worker.metadata.fallbackReason = "obsolete";
+        worker.held!();
+        await Promise.resolve();
+        const cached = await controller.run(source, roi);
+        expect(cached.data).toEqual(result.data);
+        expect(cached.provenance).not.toHaveProperty("fallbackReason");
+        expect(workers[1].runs).toBe(4);
+      } finally {
+        controller.dispose();
+        await pending.catch(() => {});
+        await replacement?.catch(() => {});
+      }
+    });
+
+    it.each(["disposed", "changed"])(
+      "stops the next GPU request if progress exposes a %s source",
+      async (state) => {
+        const { controller, workers, source } = await prepare();
+        const worker = workers[0];
+        worker.hold = true;
+        const post = vi.spyOn(worker, "postMessage");
+        const read = vi.spyOn(source, "readPatch");
+        const progress: number[] = [];
+        const pending = controller.run(source, roi, (n) => {
+          progress.push(n);
+          if (n === 1) {
+            if (state === "disposed") source.dispose();
+            else source.spacingZYX[0] *= 2;
+          }
+        });
+        const rejected = expect(pending).rejects.toThrow("source changed");
+        try {
+          await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+          worker.held!();
+          await rejected;
+          expect(runPostCalls(post)).toHaveLength(2);
+          expect(progress).toEqual([0, 1]);
+          expect(worker.terminated).toBe(true);
+          expect(controller["pending"].size).toBe(0);
+          expect(controller["patchCache"].size).toBe(0);
+          const result = await controller.run(input().source, roi);
+          expect(result.provenance).toMatchObject({ completedTiles: 4 });
+          expect(workers).toHaveLength(2);
+        } finally {
+          controller.dispose();
+          await pending.catch(() => {});
+        }
+      },
+    );
+
+    it.each(["post", "execution"])(
+      "observes next-request %s failure after publishing the current patch",
+      async (failure) => {
+        const { controller, workers, source } = await prepare();
+        const worker = workers[0];
+        worker.hold = true;
+        const originalPost = worker.postMessage.bind(worker);
+        let posts = 0;
+        const post = vi
+          .spyOn(worker, "postMessage")
+          .mockImplementation((request, transfer) => {
+            if (request.kind === "run" && ++posts === 2 && failure === "post")
+              throw new Error("next post failed");
+            originalPost(request, transfer);
+          });
+        const read = vi.spyOn(source, "readPatch");
+        const progress: number[] = [];
+        const pending = controller.run(source, roi, (n) => progress.push(n));
+        const rejected = expect(pending).rejects.toThrow(
+          failure === "post" ? "next post failed" : "execution failed",
+        );
+        try {
+          await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+          worker.held!();
+          if (failure === "execution") {
+            await vi.waitFor(() => expect(progress).toEqual([0, 1]));
+            worker.outputFailure = "error";
+            worker.held!();
+          }
+          await rejected;
+          expect(progress).toEqual([0, 1]);
+          expect(runPostCalls(post)).toHaveLength(2);
+          expect(controller["pending"].size).toBe(0);
+          expect(controller["patchCache"].size).toBe(0);
+          expect(read.mock.calls.every(([, , signal]) => signal.aborted)).toBe(
+            true,
+          );
+          worker.hold = false;
+          worker.outputFailure = undefined;
+          const result = await controller.run(source, roi);
+          expect(result.provenance).toMatchObject({ completedTiles: 4 });
+          expect(worker.loads).toBe(1);
+        } finally {
+          controller.dispose();
+          await pending.catch(() => {});
+        }
+      },
+    );
+
+    it("overlaps CPU stitching with the next GPU execution", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      const { controller, workers, source } = await prepare(0);
+      workers[0].runDelayMs = 60;
+      const blend = geometry.blendCroppedTile;
+      const stitch = vi
+        .spyOn(geometry, "blendCroppedTile")
+        .mockImplementation((...args) => {
+          const result = blend(...args);
+          vi.advanceTimersByTime(20);
+          return result;
+        });
+      const start = Date.now();
+      const pending = controller.run(source, roi);
+      try {
+        await vi.runAllTimersAsync();
+        const result = await pending;
+        expect(stitch).toHaveBeenCalledTimes(4);
+        expect(workers[0].runs).toBe(4);
+        expect(result.provenance).toMatchObject({ completedTiles: 4 });
+        expect(Date.now() - start).toBe(4 * 60 + 20);
+      } finally {
+        controller.dispose();
+        await pending.catch(() => {});
+        stitch.mockRestore();
+      }
+    });
+
+    it.each(["retained", "evicted", "metadata-invalidated"])(
+      "rechecks the next cached prediction when it is %s",
+      async (state) => {
+        const bytes = 2 * 6 * 12 * 12 * 4;
+        const { controller, workers, source, origins } = await prepare(
+          state === "evicted" ? bytes : undefined,
+        );
+        await controller.run(source, {
+          originZYX: [1, 2, 14],
+          shapeZYX: [1, 1, 1],
+        });
+        expect(origins).toEqual([[0, 0, 8]]);
+        const worker = workers[0];
+        worker.hold = true;
+        const read = vi.spyOn(source, "readPatch");
+        const pending = controller.run(source, roi);
+        try {
+          await vi.waitFor(() => expect(worker.held).toBeTypeOf("function"));
+          expect(read).toHaveBeenCalledTimes(1);
+          if (state === "metadata-invalidated")
+            worker.metadata.fallbackReason = "changed";
+          worker.hold = false;
+          worker.held!();
+          const result = await pending;
+          const count = state === "retained" ? 3 : 4;
+          expect(read).toHaveBeenCalledTimes(count);
+          expect(worker.runs).toBe(1 + count);
+          expect(origins.slice(1).map((origin) => origin[2])).toEqual(
+            state === "retained" ? [0, 16, 24] : [0, 8, 16, 24],
+          );
+          expect(result.provenance).toMatchObject({ completedTiles: 4 });
+          if (state !== "evicted") {
+            const cached = await controller.run(source, roi);
+            expect(cached.data).toEqual(result.data);
+            expect(read).toHaveBeenCalledTimes(count);
+            expect(worker.runs).toBe(1 + count);
+          }
+        } finally {
+          controller.dispose();
+          await pending.catch(() => {});
+        }
+      },
+    );
+
+    it.each(["rejection", "synchronous throw", "nonfinite"])(
+      "observes speculative %s without interrupting the current GPU request",
+      async (failure) => {
+        const { controller, workers, source } = await prepare();
+        const worker = workers[0];
+        worker.hold = true;
+        const readPatch = source.readPatch.bind(source);
+        let count = 0;
+        const read = vi
+          .spyOn(source, "readPatch")
+          .mockImplementation((...args) => {
+            if (++count === 2) {
+              if (failure === "synchronous throw")
+                throw new Error("prefetch failed");
+              if (failure === "rejection")
+                return Promise.reject(new Error("prefetch failed"));
+              return readPatch(...args).then((patch: Float32Array) => {
+                patch[0] = NaN;
+                return patch;
+              });
+            }
+            return readPatch(...args);
+          });
+        const progress: number[] = [];
+        const pending = controller.run(source, roi, (n) => progress.push(n));
+        const rejected = expect(pending).rejects.toThrow(
+          failure === "nonfinite"
+            ? "input values must be finite"
+            : "prefetch failed",
+        );
+        try {
+          await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+          expect(progress).toEqual([0]);
+          expect(controller["pending"].size).toBe(1);
+          worker.hold = false;
+          worker.held!();
+          await rejected;
+          expect(worker.runs).toBe(1);
+          expect(progress).toEqual([0, 1]);
+          expect(controller["patchCache"].size).toBe(0);
+          expect(controller["pending"].size).toBe(0);
+          expect(read.mock.calls.every(([, , signal]) => signal.aborted)).toBe(
+            true,
+          );
+          await controller.run(source, roi);
+          expect(worker.loads).toBe(1);
+          expect(worker.runs).toBe(5);
+        } finally {
+          controller.dispose();
+          await pending.catch(() => {});
+        }
+      },
+    );
+
+    it.each(["error", "short", "progress"] as const)(
+      "aborts a pending lookahead when current processing fails (%s)",
+      async (failure) => {
+        const { controller, workers, source } = await prepare();
+        const worker = workers[0];
+        worker.hold = true;
+        const readPatch = source.readPatch.bind(source);
+        let count = 0;
+        let lookaheadAborted = false;
+        const read = vi
+          .spyOn(source, "readPatch")
+          .mockImplementation((...args) => {
+            if (++count !== 2) return readPatch(...args);
+            const signal = args[2];
+            return new Promise<Float32Array>((_resolve, reject) => {
+              signal.addEventListener(
+                "abort",
+                () => {
+                  lookaheadAborted = true;
+                  reject(signal.reason);
+                },
+                { once: true },
+              );
+            });
+          });
+        const pending = controller.run(source, roi, (n) => {
+          if (n === 1 && failure === "progress")
+            throw new Error("progress failed");
+        });
+        const rejected = expect(pending).rejects.toThrow(
+          failure === "error"
+            ? "execution failed"
+            : failure === "short"
+              ? "buffer lengths"
+              : "progress failed",
+        );
+        try {
+          await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+          if (failure !== "progress") worker.outputFailure = failure;
+          worker.held!();
+          await rejected;
+          expect(lookaheadAborted).toBe(true);
+          expect(worker.runs).toBe(1);
+          expect(controller["pending"].size).toBe(0);
+          expect(controller["active"]).toBeUndefined();
+          expect(controller["patchCache"].size).toBe(0);
+        } finally {
+          controller.dispose();
+          await pending.catch(() => {});
+        }
+      },
+    );
+
+    it.each(["pending", "ready"])(
+      "cancels %s lookahead without disturbing a replacement run or accepting late work",
+      async (state) => {
+        const { controller, workers, source } = await prepare();
+        const worker = workers[0];
+        worker.hold = true;
+        const readPatch = source.readPatch.bind(source);
+        let count = 0;
+        let finishRead: ((patch: Float32Array) => void) | undefined;
+        const read = vi
+          .spyOn(source, "readPatch")
+          .mockImplementation((...args) => {
+            if (++count === 2 && state === "pending") {
+              // Deliberately ignore abort to exercise late completion/generation isolation.
+              return new Promise<Float32Array>((resolve) => {
+                finishRead = resolve;
+              });
+            }
+            return readPatch(...args);
+          });
+        const pending = controller.run(source, roi);
+        const rejected = expect(pending).rejects.toThrow("canceled");
+        try {
+          await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+          controller.cancel();
+          const replacement = controller.run(source, roi);
+          await rejected;
+          const result = await replacement;
+          expect(worker.terminated).toBe(true);
+          expect(read.mock.calls[1][2].aborted).toBe(true);
+          expect(workers).toHaveLength(2);
+          expect(workers[1].runs).toBe(4);
+          expect(controller["patchCache"].size).toBe(4);
+          finishRead?.(new Float32Array(8 * 16 * 16));
+          worker.held!();
+          await new Promise<void>((resolve) => queueMicrotask(resolve));
+          expect(controller["patchCache"].size).toBe(4);
+          const cached = await controller.run(source, roi);
+          expect(cached.data).toEqual(result.data);
+          expect(workers[1].runs).toBe(4);
+        } finally {
+          controller.dispose();
+          await pending.catch(() => {});
+        }
+      },
+    );
+
+    it.each(["disposed", "changed"])(
+      "rejects a %s source before transferring a fulfilled lookahead",
+      async (state) => {
+        const { controller, workers, source, patches } = await prepare();
+        const worker = workers[0];
+        worker.hold = true;
+        const read = vi.spyOn(source, "readPatch");
+        const pending = controller.run(source, roi);
+        const rejected = expect(pending).rejects.toThrow("source changed");
+        try {
+          await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+          if (state === "disposed") source.dispose();
+          else source.spacingZYX[0] *= 2;
+          worker.held!();
+          await rejected;
+          expect(worker.runs).toBe(1);
+          expect(patches[1].byteLength).toBe(8 * 16 * 16 * 4);
+          expect(read.mock.calls[1][2].aborted).toBe(true);
+          expect(controller["patchCache"].size).toBe(0);
+        } finally {
+          controller.dispose();
+          await pending.catch(() => {});
+        }
+      },
+    );
+
+    it("overlaps preparation with execution rather than summing both delays", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      const { controller, workers, source } = await prepare(0);
+      workers[0].runDelayMs = 60;
+      const readPatch = source.readPatch.bind(source);
+      const read = vi
+        .spyOn(source, "readPatch")
+        .mockImplementation(async (...args) => {
+          await new Promise<void>((resolve) => setTimeout(resolve, 40));
+          return readPatch(...args);
+        });
+      const start = Date.now();
+      const pending = controller.run(source, roi);
+      try {
+        await vi.runAllTimersAsync();
+        const result = await pending;
+        expect(read).toHaveBeenCalledTimes(4);
+        expect(workers[0].runs).toBe(4);
+        expect(result.provenance).toMatchObject({ completedTiles: 4 });
+        expect(Date.now() - start).toBe(40 + 4 * 60);
+      } finally {
+        controller.dispose();
+        await pending.catch(() => {});
+      }
+    });
   });
 
   it("Wu-weights nonidentical predictions per channel across changing overlap counts and clipped edges", async () => {
