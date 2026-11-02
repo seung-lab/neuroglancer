@@ -63,22 +63,26 @@ const geometry = makeModelGeometry(metadata, [40, 16, 10]);
 const elements = (shape: readonly number[]) => shape.reduce((a, b) => a * b, 1);
 let handler: (event: MessageEvent<InferenceWorkerRequest>) => void;
 
-beforeEach(async () => {
-  vi.resetModules();
-  vi.clearAllMocks();
-  mocks.prepareFp16.mockResolvedValue({ model: new ArrayBuffer(2) });
+function mockModel(model: ModelMetadata) {
   mocks.create.mockResolvedValue({
-    inputNames: metadata.inputNames,
-    outputNames: metadata.outputNames,
+    inputNames: model.inputNames,
+    outputNames: model.outputNames,
     inputMetadata: [
-      { isTensor: true, type: "float32", shape: metadata.inputShape },
+      { isTensor: true, type: "float32", shape: model.inputShape },
     ],
     outputMetadata: [
-      { isTensor: true, type: "float32", shape: metadata.outputShape },
+      { isTensor: true, type: "float32", shape: model.outputShape },
     ],
     run: mocks.run,
     release: vi.fn(),
   });
+}
+
+beforeEach(async () => {
+  vi.resetModules();
+  vi.clearAllMocks();
+  mocks.prepareFp16.mockResolvedValue({ model: new ArrayBuffer(2) });
+  mockModel(metadata);
   const scope = {
     onmessage: undefined,
     location: new URL("https://inference.example/app/inference-worker.js"),
@@ -131,12 +135,12 @@ function run(
   return send({ id: 7, kind: "run", input, geometry: customGeometry });
 }
 
-function rawOutput() {
+function rawOutput(model = metadata) {
   return {
     type: "float32",
-    dims: [...metadata.outputShape],
+    dims: [...model.outputShape],
     data: Float32Array.from(
-      { length: elements(metadata.outputShape) },
+      { length: elements(model.outputShape) },
       (_, i) => i,
     ),
     dispose: vi.fn(),
@@ -309,6 +313,104 @@ describe("worker precision plumbing", () => {
       });
       expect(mocks.create).toHaveBeenCalledTimes(1);
       expect(mocks.prepareFp16).toHaveBeenCalledTimes(1);
+      expect(raw.dispose).toHaveBeenCalledTimes(1);
+    },
+  );
+});
+
+describe("worker fixed-batch tensor contract", () => {
+  const batched: ModelMetadata = {
+    ...metadata,
+    inputShape: [2, 1, 4, 5, 7],
+    outputShape: [2, 3, 8, 10, 12],
+  };
+
+  beforeEach(() => mockModel(batched));
+
+  it("requires a fully packed input and returns every cropped sample/channel", async () => {
+    const loaded = await load();
+    const batchedGeometry = makeModelGeometry(batched, [40, 16, 10]);
+    expect(
+      await run(
+        new Float32Array(elements(batched.inputShape) / 2),
+        batchedGeometry,
+      ),
+    ).toMatchObject({
+      kind: "error",
+      message: "Input length/type does not match model NCDHW metadata",
+    });
+    expect(mocks.tensor).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+
+    const input = Float32Array.from(
+      { length: elements(batched.inputShape) },
+      (_, i) => i + 0.25,
+    );
+    const raw = rawOutput(batched);
+    mocks.run.mockResolvedValue({ [batched.outputNames[0]]: raw });
+    const response = await run(input, batchedGeometry);
+    expect(mocks.tensor).toHaveBeenCalledExactlyOnceWith(
+      "float32",
+      input,
+      batched.inputShape,
+    );
+    expect(mocks.tensor.mock.calls[0][1]).toBe(input);
+    expect(Object.keys(mocks.run.mock.calls[0][0])).toEqual(batched.inputNames);
+    expect(response.kind).toBe("output");
+    if (response.kind !== "output") throw new Error("Expected output");
+    const retainedVolume = 6 * 8 * 10;
+    expect(response.output).toHaveLength(2 * 3 * retainedVolume);
+    for (let n = 0; n < 2; ++n)
+      for (let c = 0; c < 3; ++c)
+        for (let z = 0; z < 6; ++z)
+          for (let y = 0; y < 8; ++y)
+            for (let x = 0; x < 10; ++x) {
+              const slab = n * 3 + c;
+              expect(
+                response.output[slab * retainedVolume + (z * 8 + y) * 10 + x],
+              ).toBe(
+                raw.data[
+                  slab * 8 * 10 * 12 + ((z + 1) * 10 + y + 1) * 12 + x + 1
+                ],
+              );
+            }
+    expect(response.metadata).toEqual(loaded);
+    expect(response.output.buffer).not.toBe(raw.data.buffer);
+    expect(postMessage).toHaveBeenLastCalledWith(response, {
+      transfer: [response.output.buffer],
+    });
+    expect(mocks.dispose).toHaveBeenCalledTimes(1);
+    expect(raw.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["batch", "equal-size shape", "length", "nonfinite second sample"])(
+    "rejects invalid full-batch runtime output: %s",
+    async (kind) => {
+      await load();
+      const batchedGeometry = makeModelGeometry(batched, [40, 16, 10]);
+      const raw = rawOutput(batched);
+      if (kind === "batch") raw.dims[0] = 1;
+      if (kind === "equal-size shape") raw.dims = [3, 2, 8, 10, 12];
+      if (kind === "length")
+        raw.data = raw.data.subarray(0, raw.data.length / 2);
+      // Include a discarded-border value in the second sample in validation.
+      if (kind === "nonfinite second sample") raw.data[3 * 8 * 10 * 12] = NaN;
+      mocks.run.mockResolvedValue({ [batched.outputNames[0]]: raw });
+      expect(
+        await run(
+          new Float32Array(elements(batched.inputShape)),
+          batchedGeometry,
+        ),
+      ).toMatchObject({
+        kind: "error",
+        message: expect.stringContaining(
+          kind === "nonfinite second sample"
+            ? "non-finite output"
+            : "Runtime output",
+        ),
+      });
+      expect(mocks.create).toHaveBeenCalledTimes(1);
+      expect(mocks.dispose).toHaveBeenCalledTimes(1);
       expect(raw.dispose).toHaveBeenCalledTimes(1);
     },
   );

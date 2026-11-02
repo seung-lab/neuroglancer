@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/** Bounded, concrete batch-one float32 NCDHW model contract. */
+/** Bounded, concrete fixed-batch float32 NCDHW model contract. */
 import type { InferenceResult as StoredInferenceResult } from "#src/datasource/inference/base.js";
 import type { InferenceGeometry, Zyx } from "#src/inference/geometry.js";
 import { getRetainedOutputShape } from "#src/inference/geometry.js";
@@ -85,11 +85,10 @@ function validateTensorShape(
   if (
     !Array.isArray(shape) ||
     shape.length !== 5 ||
-    shape[0] !== 1 ||
     (singleChannel && shape[1] !== 1)
   ) {
     throw new Error(
-      `Unsupported ${name} shape: expected batch-one rank-5 NCDHW${singleChannel ? " with one input channel" : ""}`,
+      `Unsupported ${name} shape: expected rank-5 NCDHW${singleChannel ? " with one input channel" : ""}`,
     );
   }
   let elements = 1;
@@ -110,6 +109,8 @@ function validateTensorShape(
 function validateModelShapes(metadata: ModelShapes): void {
   validateTensorShape(metadata.inputShape, "Input", MAX_MODEL_BYTES, true);
   validateTensorShape(metadata.outputShape, "Output", MAX_RESULT_BYTES, false);
+  if (metadata.inputShape[0] !== metadata.outputShape[0])
+    throw new Error("Input and output batch sizes must match");
 }
 
 /** Construct a centered field of view with a one-eighth raw-output border. */

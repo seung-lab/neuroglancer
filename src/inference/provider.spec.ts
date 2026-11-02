@@ -99,6 +99,142 @@ function setup() {
 
 afterEach(() => vi.unstubAllGlobals());
 
+describe("symbolic batch specialization", () => {
+  function setupSymbolicBatch() {
+    const state = setup();
+    const symbolic = fakeSession();
+    symbolic.fake.inputMetadata[0].shape = [
+      "samples",
+      1,
+      48,
+      96,
+      96,
+    ] as unknown as number[];
+    symbolic.fake.outputMetadata[0].shape = [
+      "samples",
+      6,
+      "depth",
+      "height",
+      "width",
+    ] as unknown as number[];
+    for (const { fake } of [state.gpu, state.cpu, state.fp16]) {
+      fake.inputMetadata[0].shape = [1, 1, 48, 96, 96];
+      fake.outputMetadata[0].shape = [1, 6, 48, 96, 96];
+    }
+    state.create.mockImplementation(async (model, options) =>
+      options.freeDimensionOverrides === undefined
+        ? symbolic.session
+        : options.executionProviders[0] === "wasm"
+          ? state.cpu.session
+          : model === state.fp16Model
+            ? state.fp16.session
+            : state.gpu.session,
+    );
+    return { ...state, symbolic };
+  }
+
+  it.each(["cpu", "auto", "webgpu"] as const)(
+    "%s specializes only the named batch and accepts ORT-inferred output dimensions",
+    async (provider) => {
+      const { policy, model, create, symbolic, gpu, cpu } =
+        setupSymbolicBatch();
+      expect(await policy.load(model, provider)).toMatchObject({
+        inputShape: [1, 1, 48, 96, 96],
+        outputShape: [1, 6, 48, 96, 96],
+        actualProvider: provider === "cpu" ? "wasm" : "webgpu",
+      });
+      expect(create).toHaveBeenCalledTimes(2);
+      expect(create.mock.calls[0][1].freeDimensionOverrides).toBeUndefined();
+      expect(create.mock.calls[1][1]).toEqual({
+        ...(provider === "cpu"
+          ? { executionProviders: ["wasm"] }
+          : WEBGPU_SESSION_OPTIONS),
+        freeDimensionOverrides: { samples: 1 },
+      });
+      expect(WEBGPU_SESSION_OPTIONS.freeDimensionOverrides).toBeUndefined();
+      expect(symbolic.fake.release).toHaveBeenCalledTimes(1);
+      expect(await policy.run({})).toEqual({ output: "sentinel" });
+      expect((provider === "cpu" ? cpu : gpu).fake.run).toHaveBeenCalledTimes(
+        1,
+      );
+    },
+  );
+
+  it("preserves the chosen batch on first-execution CPU fallback", async () => {
+    const { policy, model, create, gpu, cpu } = setupSymbolicBatch();
+    await policy.load(model, "auto");
+    gpu.fake.run.mockRejectedValue(new Error("device lost"));
+    expect(await policy.run({})).toEqual({ output: "sentinel" });
+    expect(create).toHaveBeenCalledTimes(3);
+    expect(create.mock.calls[2][1]).toEqual({
+      executionProviders: ["wasm"],
+      freeDimensionOverrides: { samples: 1 },
+    });
+    expect(cpu.fake.run).toHaveBeenCalledTimes(1);
+    expect(policy.metadata).toMatchObject({
+      inputShape: [1, 1, 48, 96, 96],
+      outputShape: [1, 6, 48, 96, 96],
+      actualProvider: "wasm",
+    });
+  });
+
+  it("preserves the chosen batch across FP16, FP32 and CPU execution retries", async () => {
+    const { policy, model, create, check, fp16, gpu, cpu } =
+      setupSymbolicBatch();
+    check.mockResolvedValue({ features: new Set(["shader-f16"]) });
+    expect(
+      await policy.load(model, "auto", undefined, "float16"),
+    ).toMatchObject({
+      actualPrecision: "float16",
+    });
+    fp16.fake.run.mockRejectedValue(new Error("FP16 execution failed"));
+    gpu.fake.run.mockRejectedValue(new Error("FP32 execution failed"));
+    expect(await policy.run({})).toEqual({ output: "sentinel" });
+    expect(create).toHaveBeenCalledTimes(4);
+    for (const [, options] of create.mock.calls.slice(1))
+      expect(options.freeDimensionOverrides).toEqual({ samples: 1 });
+    expect(cpu.fake.run).toHaveBeenCalledTimes(1);
+    expect(policy.metadata).toMatchObject({
+      inputShape: [1, 1, 48, 96, 96],
+      outputShape: [1, 6, 48, 96, 96],
+      actualPrecision: "float32",
+      actualProvider: "wasm",
+    });
+  });
+
+  it("resets the symbolic name when another model is loaded", async () => {
+    const { policy, model, create, symbolic } = setupSymbolicBatch();
+    await policy.load(model, "cpu");
+    symbolic.fake.inputMetadata[0].shape[0] =
+      "different_batch" as unknown as number;
+    await policy.load(model, "cpu");
+    expect(create).toHaveBeenCalledTimes(4);
+    expect(create.mock.calls[2][1].freeDimensionOverrides).toBeUndefined();
+    expect(create.mock.calls[3][1].freeDimensionOverrides).toEqual({
+      different_batch: 1,
+    });
+  });
+
+  it("rejects still-unresolved output dimensions without provider fallback", async () => {
+    const { policy, model, create, gpu, symbolic } = setupSymbolicBatch();
+    gpu.fake.outputMetadata[0].shape[2] = "depth" as unknown as number;
+    await expect(policy.load(model, "auto")).rejects.toThrow("concrete");
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(symbolic.fake.release).toHaveBeenCalledTimes(1);
+    expect(gpu.fake.release).toHaveBeenCalledTimes(1);
+    expect(policy.metadata).toBeUndefined();
+  });
+
+  it("does not guess a symbolic spatial input size", async () => {
+    const { policy, model, create, symbolic } = setupSymbolicBatch();
+    symbolic.fake.inputMetadata[0].shape[2] = "depth" as unknown as number;
+    await expect(policy.load(model, "auto")).rejects.toThrow("concrete");
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(symbolic.fake.release).toHaveBeenCalledTimes(1);
+    expect(policy.metadata).toBeUndefined();
+  });
+});
+
 describe("worker WebGPU detection", () => {
   it("requires a secure context and the dedicated worker API", async () => {
     vi.stubGlobal("isSecureContext", false);
@@ -609,6 +745,25 @@ describe("inference provider policy", () => {
     expect(create).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["cpu", "auto", "webgpu"] as const)(
+    "%s accepts matching fixed N=2 metadata",
+    async (provider) => {
+      const { policy, model, gpu, cpu, create } = setup();
+      const { fake } = provider === "cpu" ? cpu : gpu;
+      fake.inputMetadata[0].shape = [2, 1, 24, 64, 64];
+      fake.outputMetadata[0].shape = [2, 3, 48, 128, 128];
+      expect(await policy.load(model, provider)).toMatchObject({
+        inputShape: [2, 1, 24, 64, 64],
+        outputShape: [2, 3, 48, 128, 128],
+        requestedProvider: provider,
+        actualProvider: provider === "cpu" ? "wasm" : "webgpu",
+      });
+      expect(await policy.run({})).toEqual({ output: "sentinel" });
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(fake.run).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it.each([
     "multiple inputs",
     "multiple outputs",
@@ -618,7 +773,7 @@ describe("inference provider policy", () => {
     "dynamic",
     "oversize input",
     "oversize output",
-    "batch",
+    "mismatched batch",
     "input channels",
     "output type",
     "nontensor",
@@ -658,7 +813,7 @@ describe("inference provider policy", () => {
       case "oversize output":
         fake.outputMetadata[0].shape = [1, 1024, 48, 128, 128];
         break;
-      case "batch":
+      case "mismatched batch":
         fake.outputMetadata[0].shape = [2, 1, 48, 128, 128];
         break;
       case "input channels":

@@ -387,6 +387,38 @@ describe("cropNcdhwOutput", () => {
     expect(cropped.buffer).not.toBe(raw.buffer);
   });
 
+  it.each([2, 3])(
+    "crops all samples/channels in batch-major then channel-major order for N=%s",
+    (batchSize) => {
+      const geometry: InferenceGeometry = {
+        ...fixed,
+        rawOutputShape: [4, 5, 7],
+        cropBefore: [1, 2, 1],
+        cropAfter: [1, 1, 2],
+        outputChannels: 3,
+      };
+      const raw = Float32Array.from(
+        { length: batchSize * 3 * 4 * 5 * 7 },
+        (_, i) => i + 0.25,
+      );
+      const before = raw.slice();
+      const cropped = cropNcdhwOutput(raw, geometry, batchSize);
+      expect(cropped).toHaveLength(batchSize * 3 * 2 * 2 * 4);
+      for (let n = 0; n < batchSize; ++n)
+        for (let c = 0; c < 3; ++c)
+          for (let z = 0; z < 2; ++z)
+            for (let y = 0; y < 2; ++y)
+              for (let x = 0; x < 4; ++x) {
+                const slab = n * 3 + c;
+                expect(cropped[index([2, 2, 4], slab, z, y, x)]).toBe(
+                  raw[index([4, 5, 7], slab, z + 1, y + 2, x + 1)],
+                );
+              }
+      expect(raw).toEqual(before);
+      expect(cropped.buffer).not.toBe(raw.buffer);
+    },
+  );
+
   it("copies all channels even with no crop", () => {
     const geometry = {
       ...fixed,
@@ -399,6 +431,51 @@ describe("cropNcdhwOutput", () => {
     expect(cropNcdhwOutput(raw, geometry)).not.toBe(raw);
   });
 
+  it.each([1, 2, 3])("copies uncropped batches for N=%s", (batchSize) => {
+    const geometry: InferenceGeometry = {
+      ...fixed,
+      rawOutputShape: [1, 1, 2],
+      cropBefore: [0, 0, 0],
+      cropAfter: [0, 0, 0],
+    };
+    const raw = Float32Array.from({ length: batchSize * 4 * 2 }, (_, i) => i);
+    const cropped = cropNcdhwOutput(raw, geometry, batchSize);
+    expect(cropped).toEqual(raw);
+    expect(cropped.buffer).not.toBe(raw.buffer);
+  });
+
+  it.each([
+    0,
+    -1,
+    1.5,
+    NaN,
+    Infinity,
+    Number.MAX_SAFE_INTEGER + 1,
+    "batch",
+    "2",
+    null,
+  ])("rejects invalid batch size %s before allocation", (batchSize) => {
+    expect(() =>
+      cropNcdhwOutput(new Float32Array(0), fixed, batchSize as number),
+    ).toThrow("batchSize must be a safe integer >= 1");
+  });
+
+  it.each<Partial<InferenceGeometry>>([
+    { rawOutputShape: [1, 1, 1], outputChannels: 2 },
+    { rawOutputShape: [2, 1, 1], outputChannels: 1 },
+  ])(
+    "rejects unsafe combined batch/channel/voxel counts before allocation: %j",
+    (change) => {
+      expect(() =>
+        cropNcdhwOutput(
+          new Float32Array(0),
+          { ...fixed, ...change, cropBefore: [0, 0, 0], cropAfter: [0, 0, 0] },
+          Number.MAX_SAFE_INTEGER,
+        ),
+      ).toThrow("must be a safe integer");
+    },
+  );
+
   it.each([-1, 1])("rejects raw buffers with length mismatch %s", (delta) => {
     expect(() =>
       cropNcdhwOutput(
@@ -407,6 +484,24 @@ describe("cropNcdhwOutput", () => {
       ),
     ).toThrow("Raw NCDHW output length");
   });
+
+  it.each([1, 2, 3])(
+    "rejects incorrect full-batch raw lengths for N=%s",
+    (batchSize) => {
+      const sampleElements = fixed.outputChannels * count(fixed.rawOutputShape);
+      for (const length of [
+        sampleElements * batchSize - 1,
+        sampleElements * batchSize + 1,
+      ])
+        expect(() =>
+          cropNcdhwOutput(new Float32Array(length), fixed, batchSize),
+        ).toThrow("Raw NCDHW output length");
+      if (batchSize > 1)
+        expect(() =>
+          cropNcdhwOutput(new Float32Array(sampleElements), fixed, batchSize),
+        ).toThrow("Raw NCDHW output length");
+    },
+  );
 });
 
 describe("crop and stitch integration", () => {

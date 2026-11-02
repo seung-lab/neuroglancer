@@ -38,6 +38,7 @@ class FakeWorker {
   loadRequests: Extract<InferenceWorkerRequest, { kind: "load" }>[] = [];
   metadata!: ModelMetadata;
   runs = 0;
+  runRequests: Extract<InferenceWorkerRequest, { kind: "run" }>[] = [];
   patchOriginBias = false;
   outputFailure: "error" | "short" | "nan" | "infinity" | undefined;
   hold = false;
@@ -45,6 +46,7 @@ class FakeWorker {
   held: (() => void) | undefined;
   postMessage(message: InferenceWorkerRequest, transfer: Transferable[]) {
     const request = structuredClone(message, { transfer });
+    if (request.kind === "run") this.runRequests.push(request);
     const respond = () => {
       if (request.kind === "load") {
         ++this.loads;
@@ -107,13 +109,27 @@ class FakeWorker {
             (a, b) => a * b,
             1,
           );
-          output = new Float32Array(voxels * request.geometry.outputChannels);
-          for (let c = 0; c < request.geometry.outputChannels; ++c)
-            output.fill(
-              c + 1 + (this.patchOriginBias ? request.input[0] * (c + 1) : 0),
-              c * voxels,
-              (c + 1) * voxels,
-            );
+          const batchSize = this.modelShapes.inputShape[0];
+          const inputVoxels = request.geometry.inputShape.reduce(
+            (a, b) => a * b,
+            1,
+          );
+          output = new Float32Array(
+            batchSize * voxels * request.geometry.outputChannels,
+          );
+          for (let n = 0; n < batchSize; ++n)
+            for (let c = 0; c < request.geometry.outputChannels; ++c) {
+              const channel = n * request.geometry.outputChannels + c;
+              output.fill(
+                c +
+                  1 +
+                  (this.patchOriginBias
+                    ? request.input[n * inputVoxels] * (c + 1)
+                    : 0),
+                channel * voxels,
+                (channel + 1) * voxels,
+              );
+            }
         }
         if (this.outputFailure === "short") output = output.slice(1);
         if (this.outputFailure === "nan") output[output.length - 1] = NaN;
@@ -1090,6 +1106,369 @@ describe("OnnxInferenceController", () => {
     expect(workers[0].loads).toBe(1);
     controller.dispose();
     expect(workers[0].terminated).toBe(true);
+  });
+
+  describe("fixed-size model batches", () => {
+    const spatialShape = [8, 16, 16];
+    const roi = { originZYX: [1, 2, 2], shapeZYX: [1, 1, 25] };
+
+    it.each([
+      [2, true],
+      [2, false],
+      [3, true],
+      [3, false],
+    ] as const)(
+      "matches batch-one predictions with N=%s and overlap=%s, including tail padding and cached replay",
+      async (batchSize, overlap) => {
+        const batched = setup(undefined, {
+          inputShape: [batchSize, 1, ...spatialShape],
+          outputShape: [batchSize, 2, ...spatialShape],
+        });
+        const single = setup(0, {
+          inputShape: [1, 1, ...spatialShape],
+          outputShape: [1, 2, ...spatialShape],
+        });
+        const { source, origins } = input();
+        try {
+          await batched.controller.loadModel(batched.file);
+          await single.controller.loadModel(single.file);
+          batched.workers[0].patchOriginBias = true;
+          single.workers[0].patchOriginBias = true;
+          const expected = await single.controller.run(input().source, {
+            ...roi,
+            overlap,
+          });
+          const progress: number[] = [];
+          const actual = await batched.controller.run(
+            source,
+            { ...roi, overlap },
+            (n) => progress.push(n),
+          );
+          const count = overlap ? 4 : 3;
+          const worker = batched.workers[0];
+          expect(actual.data).toEqual(expected.data);
+          expect(new Set(actual.data.subarray(0, 25)).size).toBeGreaterThan(1);
+          expect(actual.channels).toBe(2);
+          expect(actual.provenance).toMatchObject({ completedTiles: count });
+          expect(progress).toEqual(
+            Array.from({ length: count + 1 }, (_, n) => n),
+          );
+          expect(origins).toHaveLength(count);
+          expect(worker.runs).toBe(Math.ceil(count / batchSize));
+          const inputVoxels = 8 * 16 * 16;
+          for (const [i, request] of worker.runRequests.entries()) {
+            expect(request.input.length).toBe(batchSize * inputVoxels);
+            for (let n = 0; n < batchSize; ++n) {
+              const tile = Math.min(i * batchSize + n, count - 1);
+              const [z, y, x] = origins[tile];
+              expect(request.input[n * inputVoxels]).toBe(
+                z * 10000 + y * 100 + x,
+              );
+              if (i * batchSize + n >= count)
+                expect(
+                  request.input.subarray(
+                    n * inputVoxels,
+                    (n + 1) * inputVoxels,
+                  ),
+                ).toEqual(
+                  request.input.subarray(
+                    (n - 1) * inputVoxels,
+                    n * inputVoxels,
+                  ),
+                );
+            }
+          }
+          actual.data.fill(-999);
+          const cached = await batched.controller.run(source, {
+            ...roi,
+            overlap,
+          });
+          expect(cached.data).toEqual(expected.data);
+          expect(worker.runs).toBe(Math.ceil(count / batchSize));
+          expect(origins).toHaveLength(count);
+        } finally {
+          batched.controller.dispose();
+          single.controller.dispose();
+        }
+      },
+    );
+
+    it("runs a single valid patch without reading outside the source to fill the model batch", async () => {
+      const { controller, workers, file } = setup(undefined, {
+        inputShape: [3, 1, ...spatialShape],
+        outputShape: [3, 2, ...spatialShape],
+      });
+      const { source, origins } = input();
+      source.shapeZYX = [...spatialShape];
+      try {
+        await controller.loadModel(file);
+        const result = await controller.run(source, {
+          originZYX: [1, 2, 2],
+          shapeZYX: [6, 12, 12],
+          overlap: false,
+        });
+        expect(origins).toEqual([[0, 0, 0]]);
+        expect(workers[0].runs).toBe(1);
+        expect(result.data).toEqual(
+          Float32Array.from({ length: 2 * 6 * 12 * 12 }, (_, i) =>
+            i < 6 * 12 * 12 ? 1 : 2,
+          ),
+        );
+      } finally {
+        controller.dispose();
+      }
+    });
+
+    async function prepare(batchSize: number, patchCacheBudget?: number) {
+      const fixture = setup(patchCacheBudget, {
+        inputShape: [batchSize, 1, ...spatialShape],
+        outputShape: [batchSize, 2, ...spatialShape],
+      });
+      await fixture.controller.loadModel(fixture.file);
+      return { ...fixture, ...input() };
+    }
+
+    it("recomputes a partially cached group, replaces its bytes and refreshes its LRU position", async () => {
+      const bytes = 2 * 6 * 12 * 12 * Float32Array.BYTES_PER_ELEMENT;
+      const budget = 3 * bytes + 17;
+      const { controller, workers, source, origins } = await prepare(2, budget);
+      const worker = workers[0];
+      const run = async (x: number, width = 1) => {
+        const result = await controller.run(source, {
+          originZYX: [1, 2, x],
+          shapeZYX: [1, 1, width],
+          overlap: false,
+        });
+        const cached = [...controller["patchCache"].values()];
+        expect(controller["patchCacheBytes"]).toBe(
+          cached.reduce((sum, patch) => sum + patch.byteLength, 0),
+        );
+        expect(controller["patchCacheBytes"]).toBeLessThanOrEqual(budget);
+        // Each real tile owns only its prediction, not the whole batch buffer.
+        for (const patch of cached) {
+          expect(patch.byteLength).toBe(bytes);
+          expect(patch.buffer.byteLength).toBe(bytes);
+        }
+        return result;
+      };
+      try {
+        await run(26); // C
+        const cKey = controller["patchCache"].keys().next().value!;
+        const cachedC = controller["patchCache"].get(cKey)!;
+        await run(2); // A: cache order is C, A.
+        worker.patchOriginBias = true;
+        const recomputed = await run(14, 13); // B misses, C must also rerun.
+        expect(origins.map((origin) => origin[2])).toEqual([24, 0, 12, 24]);
+        expect(worker.runs).toBe(3);
+        expect(recomputed.data).toEqual(
+          new Float32Array([
+            ...Array(12).fill(13),
+            25,
+            ...Array(12).fill(26),
+            50,
+          ]),
+        );
+        expect(controller["patchCache"].get(cKey)).not.toBe(cachedC);
+        expect(cachedC[0]).toBe(1);
+        expect(controller["patchCache"].size).toBe(3);
+        expect(controller["patchCacheBytes"]).toBe(3 * bytes);
+        await run(38); // D evicts A, not the replaced C (order was A, B, C).
+        expect((await run(14, 13)).data).toEqual(recomputed.data);
+        expect(worker.runs).toBe(4); // Both B and C still hit as a full group.
+        expect(origins.map((origin) => origin[2])).toEqual([24, 0, 12, 24, 36]);
+        await run(2); // A was evicted.
+        expect(worker.runs).toBe(5);
+        expect(origins.at(-1)).toEqual([0, 0, 0]);
+        expect(controller["patchCacheBytes"]).toBe(3 * bytes);
+      } finally {
+        controller.dispose();
+      }
+    });
+
+    it.each(["short", "nan", "infinity"] as const)(
+      "rejects a %s sample in the third input slot before posting the batch",
+      async (failure) => {
+        const { controller, workers, source, patches } = await prepare(3);
+        const readPatch = source.readPatch.bind(source);
+        let reads = 0;
+        const read = vi
+          .spyOn(source, "readPatch")
+          .mockImplementation(async (...args) => {
+            const patch = await readPatch(...args);
+            if (++reads !== 3) return patch;
+            if (failure === "short") return patch.subarray(1);
+            patch[patch.length - 1] = failure === "nan" ? NaN : Infinity;
+            return patch;
+          });
+        const progress: number[] = [];
+        try {
+          await expect(
+            controller.run(source, roi, (n) => progress.push(n)),
+          ).rejects.toThrow(
+            failure === "short"
+              ? "Input patch length/type does not match model geometry"
+              : "Inference input values must be finite",
+          );
+          expect(read).toHaveBeenCalledTimes(3);
+          expect(workers[0].runRequests).toHaveLength(0);
+          expect(progress).toEqual([0]);
+          expect(
+            patches.every((patch) => patch.byteLength === 8 * 16 * 16 * 4),
+          ).toBe(true);
+          expect(read.mock.calls.every(([, , signal]) => signal.aborted)).toBe(
+            true,
+          );
+          expect(controller["pending"].size).toBe(0);
+          expect(controller["active"]).toBeUndefined();
+          expect(controller["patchCacheBytes"]).toBe(0);
+          read.mockRestore();
+          await controller.run(source, roi);
+          expect(workers[0].loads).toBe(1);
+          expect(workers[0].runs).toBe(2);
+        } finally {
+          controller.dispose();
+        }
+      },
+    );
+
+    it.each([
+      ["short", 2],
+      ["nan", 2],
+      ["infinity", 1], // The corrupt last output belongs only to padding.
+    ] as const)(
+      "rejects %s batch output with %i real samples before publishing any tile",
+      async (failure, realSamples) => {
+        const { controller, workers, source } = await prepare(2);
+        const worker = workers[0];
+        const warm = {
+          originZYX: [1, 2, 38],
+          shapeZYX: [1, 1, 1],
+          overlap: false,
+        };
+        const target = {
+          originZYX: [1, 2, 2],
+          shapeZYX: [1, 1, realSamples === 2 ? 13 : 1],
+          overlap: false,
+        };
+        const progress: number[] = [];
+        try {
+          await controller.run(source, warm);
+          worker.outputFailure = failure;
+          await expect(
+            controller.run(source, target, (n) => progress.push(n)),
+          ).rejects.toThrow(
+            failure === "short"
+              ? "batch output length does not match model geometry"
+              : "Inference predictions must be finite",
+          );
+          expect(progress).toEqual([0]);
+          expect(worker.runs).toBe(2);
+          expect(controller["patchCache"].size).toBe(0);
+          expect(controller["patchCacheBytes"]).toBe(0);
+          expect(controller["pending"].size).toBe(0);
+          expect(controller["active"]).toBeUndefined();
+          worker.outputFailure = undefined;
+          await controller.run(source, target);
+          await controller.run(source, warm); // Earlier predictions were cleared too.
+          expect(worker.runs).toBe(4);
+          expect(worker.loads).toBe(1);
+        } finally {
+          controller.dispose();
+        }
+      },
+    );
+
+    it.each(["source change", "progress throw"] as const)(
+      "stops a pending next batch after a %s during the first tile's progress",
+      async (failure) => {
+        const { controller, workers, source } = await prepare(2);
+        const worker = workers[0];
+        worker.hold = true;
+        const read = vi.spyOn(source, "readPatch");
+        const progress: number[] = [];
+        const pending = controller.run(source, roi, (n) => {
+          progress.push(n);
+          if (n !== 1) return;
+          expect(worker.runRequests).toHaveLength(2);
+          expect(controller["pending"].size).toBe(1);
+          if (failure === "source change") source.spacingZYX[0] *= 2;
+          else throw new Error("progress failed");
+        });
+        const rejected = expect(pending).rejects.toThrow(
+          failure === "source change" ? "source changed" : "progress failed",
+        );
+        try {
+          await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(4));
+          worker.held!();
+          await rejected;
+          expect(progress).toEqual([0, 1]); // Never publishes the second real slot.
+          expect(worker.terminated).toBe(true);
+          expect(controller["pending"].size).toBe(0);
+          expect(controller["active"]).toBeUndefined();
+          expect(controller["patchCache"].size).toBe(0);
+          expect(controller["patchCacheBytes"]).toBe(0);
+          expect(read.mock.calls.every(([, , signal]) => signal.aborted)).toBe(
+            true,
+          );
+          const result = await controller.run(source, roi);
+          expect(workers).toHaveLength(2);
+          expect(workers[1].runs).toBe(2);
+          worker.metadata.fallbackReason = "late obsolete batch";
+          worker.held!();
+          worker.onerror?.({ message: "late obsolete error" });
+          const cached = await controller.run(source, roi);
+          expect(cached.data).toEqual(result.data);
+          expect(cached.provenance).not.toHaveProperty("fallbackReason");
+          expect(workers[1].runs).toBe(2);
+        } finally {
+          controller.dispose();
+          await pending.catch(() => {});
+        }
+      },
+    );
+
+    it("preserves a replacement run when progress cancels with the next batch pending", async () => {
+      const { controller, workers, source } = await prepare(2);
+      const worker = workers[0];
+      worker.hold = true;
+      const read = vi.spyOn(source, "readPatch");
+      const progress: number[] = [];
+      let replacement: ReturnType<typeof controller.run> | undefined;
+      const pending = controller.run(source, roi, (n) => {
+        progress.push(n);
+        if (n !== 1) return;
+        expect(worker.runRequests).toHaveLength(2);
+        expect(controller["pending"].size).toBe(1);
+        controller.cancel();
+        replacement = controller.run(source, roi);
+      });
+      const rejected = expect(pending).rejects.toThrow(/aborted|canceled/i);
+      try {
+        await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(4));
+        worker.held!();
+        await rejected;
+        expect(progress).toEqual([0, 1]);
+        expect(replacement).toBeDefined();
+        const result = await replacement!;
+        expect(worker.terminated).toBe(true);
+        expect(workers).toHaveLength(2);
+        expect(workers[1].terminated).toBe(false);
+        expect(workers[1].runs).toBe(2);
+        expect(controller["patchCache"].size).toBe(4);
+        const bytes = controller["patchCacheBytes"];
+        worker.metadata.fallbackReason = "obsolete batch";
+        worker.held!();
+        const cached = await controller.run(source, roi);
+        expect(cached.data).toEqual(result.data);
+        expect(cached.provenance).not.toHaveProperty("fallbackReason");
+        expect(workers[1].runs).toBe(2);
+        expect(controller["patchCacheBytes"]).toBe(bytes);
+      } finally {
+        controller.dispose();
+        await pending.catch(() => {});
+        await replacement?.catch(() => {});
+      }
+    });
   });
 
   describe("one-patch prefetch", () => {

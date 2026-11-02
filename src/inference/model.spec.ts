@@ -52,6 +52,33 @@ describe("bounded concrete model metadata", () => {
     ).not.toThrow();
   });
 
+  it.each([1, 2, 3, 7])("accepts matching fixed batch size %s", (batchSize) => {
+    expect(() =>
+      validateModelMetadata({
+        ...dynamic,
+        inputShape: [batchSize, 1, 24, 64, 64],
+        outputShape: [batchSize, 3, 48, 128, 128],
+      }),
+    ).not.toThrow();
+  });
+
+  it.each([
+    [1, 2],
+    [2, 1],
+    [2, 3],
+  ])(
+    "rejects mismatched input/output batches %s/%s",
+    (inputBatch, outputBatch) => {
+      expect(() =>
+        validateModelMetadata({
+          ...dynamic,
+          inputShape: [inputBatch, 1, 24, 64, 64],
+          outputShape: [outputBatch, 1, 48, 128, 128],
+        }),
+      ).toThrow("Input and output batch sizes must match");
+    },
+  );
+
   it.each(["inputNames", "outputNames"] as const)(
     "rejects absent/ambiguous/empty %s",
     (field) => {
@@ -68,7 +95,6 @@ describe("bounded concrete model metadata", () => {
       const invalid: readonly unknown[][] = [
         [1, 1, 2, 3],
         [1, 1, 2, 3, 4, 5],
-        [2, 1, 2, 3, 4],
         [1, 1, 0, 3, 4],
         [1, 1, -1, 3, 4],
         [1, 1, 2.5, 3, 4],
@@ -92,6 +118,58 @@ describe("bounded concrete model metadata", () => {
       ).toThrow();
     },
   );
+
+  it.each(["inputShape", "outputShape"] as const)(
+    "rejects nonconcrete, nonpositive and unsafe batches in %s",
+    (field) => {
+      for (const batchSize of [
+        0,
+        -1,
+        1.5,
+        NaN,
+        Infinity,
+        Number.MAX_SAFE_INTEGER + 1,
+        "batch",
+        "2",
+        undefined,
+      ]) {
+        expect(() =>
+          validateModelMetadata({
+            ...dynamic,
+            [field]: [batchSize, 1, 2, 3, 4],
+          } as typeof dynamic),
+        ).toThrow("concrete positive safe integers");
+      }
+    },
+  );
+
+  it("includes batch in both raw tensor byte limits", () => {
+    const batched = {
+      ...dynamic,
+      inputShape: [2, 1, 1, 1, 1],
+      outputShape: [2, 1, 1, 1, 1],
+    };
+    for (const [field, limit] of [
+      ["inputShape", MAX_MODEL_BYTES],
+      ["outputShape", MAX_RESULT_BYTES],
+    ] as const) {
+      expect(() =>
+        validateModelMetadata({ ...batched, [field]: [2, 1, 1, 1, limit / 8] }),
+      ).not.toThrow();
+      expect(() =>
+        validateModelMetadata({
+          ...batched,
+          [field]: [2, 1, 1, 1, limit / 8 + 1],
+        }),
+      ).toThrow("byte limit");
+      expect(() =>
+        validateModelMetadata({
+          ...batched,
+          [field]: [Number.MAX_SAFE_INTEGER, 1, 1, 1, 1],
+        }),
+      ).toThrow("byte limit");
+    }
+  });
 
   it("bounds both raw tensors before allocation, including safe dimensions with unsafe products", () => {
     for (const [field, limit] of [
@@ -133,6 +211,13 @@ describe("bounded concrete model metadata", () => {
     expect(() =>
       validateLegacyModelMetadata({
         ...legacy,
+        inputShape: [2, 1, 20, 80, 80],
+        outputShape: [2, 4, 20, 80, 80],
+      }),
+    ).toThrow("Unsupported model profile");
+    expect(() =>
+      validateLegacyModelMetadata({
+        ...legacy,
         outputShape: [1, 1, 20, 80, 80],
       }),
     ).toThrow();
@@ -154,6 +239,24 @@ describe("model-derived geometry", () => {
     });
     expect(getRetainedOutputShape(geometry)).toEqual([36, 96, 96]);
     expect(() => validateModelGeometry(dynamic, geometry)).not.toThrow();
+  });
+
+  it("keeps geometry per sample for fixed batches", () => {
+    const batched = {
+      ...dynamic,
+      inputShape: [2, 1, 24, 64, 64],
+      outputShape: [2, 1, 48, 128, 128],
+    };
+    const geometry = makeModelGeometry(batched, spacing);
+    expect(geometry).toEqual(makeModelGeometry(dynamic, spacing));
+    expect(() => validateModelGeometry(batched, geometry)).not.toThrow();
+    const mismatched = { ...batched, outputShape: [3, 1, 48, 128, 128] };
+    expect(() => makeModelGeometry(mismatched, spacing)).toThrow(
+      "Input and output batch sizes must match",
+    );
+    expect(() => validateModelGeometry(mismatched, geometry)).toThrow(
+      "Input and output batch sizes must match",
+    );
   });
 
   it("preserves the legacy fixture geometry exactly", () => {

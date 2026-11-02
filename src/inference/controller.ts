@@ -124,6 +124,11 @@ export class OnnxInferenceController {
   }
 
   private cachePatch(key: string, output: Float32Array) {
+    const previous = this.patchCache.get(key);
+    if (previous !== undefined) {
+      this.patchCache.delete(key);
+      this.patchCacheBytes -= previous.byteLength;
+    }
     if (output.byteLength > this.patchCacheBudget) return;
     while (this.patchCacheBytes + output.byteLength > this.patchCacheBudget) {
       const oldest = this.patchCache.keys().next().value!;
@@ -388,16 +393,78 @@ export class OnnxInferenceController {
       const patchMask = overlap
         ? this.getWuPatchMask(retainedShape, outputStride)
         : undefined;
-      const readPatch = async (tile: InferenceTile) => {
+      const batchSize = this.metadata!.inputShape[0];
+      const inputVoxels = geometry.inputShape.reduce((a, b) => a * b, 1);
+      const outputElements = retainedShape.reduce(
+        (a, b) => a * b,
+        geometry.outputChannels,
+      );
+      const batches = (function* () {
+        let batch: InferenceTile[] = [];
+        for (const tile of tiles) {
+          batch.push(tile);
+          if (batch.length === batchSize) {
+            yield batch;
+            batch = [];
+          }
+        }
+        if (batch.length > 0) yield batch;
+      })();
+      const tileKey = (tile: InferenceTile) =>
+        JSON.stringify([tile.input.origin, tile.input.shape]);
+      const isCached = (batch: InferenceTile[]) =>
+        batch.every((tile) => this.patchCache.has(tileKey(tile)));
+      const getCached = (batch: InferenceTile[]) => {
+        const outputs: Float32Array[] = [];
+        for (const tile of batch) {
+          const output = this.patchCache.get(tileKey(tile));
+          if (output === undefined) return undefined;
+          outputs.push(output);
+        }
+        return outputs;
+      };
+      const readPatch = async (batch: InferenceTile[]) => {
         try {
           check();
-          return {
-            patch: await input.readPatch(
+          // Preserve the zero-copy batch-one path. Larger batches own their
+          // packed buffer; each tile still reads only its native spatial patch.
+          if (batchSize === 1) {
+            const tile = batch[0];
+            return {
+              patch: await input.readPatch(
+                [...tile.input.origin],
+                [...tile.input.shape],
+                abort.signal,
+              ),
+            };
+          }
+          const patch = new Float32Array(batchSize * inputVoxels);
+          for (const [n, tile] of batch.entries()) {
+            check();
+            const sample = await input.readPatch(
               [...tile.input.origin],
               [...tile.input.shape],
               abort.signal,
-            ),
-          };
+            );
+            check();
+            if (
+              !(sample instanceof Float32Array) ||
+              sample.length !== inputVoxels
+            )
+              throw new Error(
+                "Input patch length/type does not match model geometry",
+              );
+            patch.set(sample, n * inputVoxels);
+          }
+          // A short final batch repeats a real patch, never reads beyond the
+          // source bounds. Only the real tiles' predictions are published.
+          for (let n = batch.length; n < batchSize; ++n)
+            patch.copyWithin(
+              n * inputVoxels,
+              (n - 1) * inputVoxels,
+              n * inputVoxels,
+            );
+          return { patch };
         } catch (error) {
           // A speculative read may fail before its turn or be abandoned on cancel.
           return { error };
@@ -426,32 +493,27 @@ export class OnnxInferenceController {
       };
       let prefetched: PrefetchedPatch | undefined;
       let responsePending: ReturnType<typeof runPatch> | undefined;
-      let next = tiles.next();
+      let next = batches.next();
       let completed = 0;
       onProgress(0, total);
       while (!next.done) {
         check();
-        const tile = next.value;
-        next = tiles.next();
+        const batch = next.value;
+        next = batches.next();
         const pendingPatch = prefetched;
         prefetched = undefined;
-        const key = JSON.stringify([tile.input.origin, tile.input.shape]);
-        let output =
-          responsePending === undefined ? this.patchCache.get(key) : undefined;
-        const cached = output !== undefined;
-        if (output === undefined) {
+        // Recompute a whole batch on a partial cache hit: every sample then
+        // comes from the same execution, including after provider fallback.
+        let outputs =
+          responsePending === undefined ? getCached(batch) : undefined;
+        const cached = outputs !== undefined;
+        if (outputs === undefined) {
           if (responsePending === undefined) {
-            const prepared = await (pendingPatch?.pending ?? readPatch(tile));
+            const prepared = await (pendingPatch?.pending ?? readPatch(batch));
             if ("error" in prepared) throw prepared.error;
             responsePending = runPatch(prepared.patch);
           }
-          if (
-            !next.done &&
-            this.pending.size > 0 &&
-            !this.patchCache.has(
-              JSON.stringify([next.value.input.origin, next.value.input.shape]),
-            )
-          ) {
+          if (!next.done && this.pending.size > 0 && !isCached(next.value)) {
             const ahead: PrefetchedPatch = {
               pending: readPatch(next.value),
             };
@@ -470,42 +532,61 @@ export class OnnxInferenceController {
             !(response.output instanceof Float32Array)
           )
             throw new Error("Invalid inference worker output response");
-          output = response.output;
+          if (batchSize === 1) outputs = [response.output];
+          else {
+            if (response.output.length !== batchSize * outputElements)
+              throw new Error(
+                "Inference worker batch output length does not match model geometry",
+              );
+            if (!response.output.every(Number.isFinite))
+              throw new Error("Inference predictions must be finite");
+            // Independent buffers keep per-tile LRU byte accounting accurate
+            // and do not retain the rest of a potentially large batch.
+            outputs = batch.map((_, n) =>
+              response.output.slice(
+                n * outputElements,
+                (n + 1) * outputElements,
+              ),
+            );
+          }
           if (
             !next.done &&
             prefetched?.ready !== undefined &&
             !("error" in prefetched.ready) &&
-            !this.patchCache.has(
-              JSON.stringify([next.value.input.origin, next.value.input.shape]),
-            )
+            !isCached(next.value)
           ) {
             // Post ready work before CPU stitching, without waiting for a slow read.
             responsePending = runPatch(prefetched.ready.patch);
             prefetched = undefined;
           }
         }
-        if (overlap) {
-          blendCroppedTile(
-            output,
-            data,
-            weights!,
-            geometry,
-            roi,
-            tile.output,
-            patchMask!,
-          );
-        } else {
-          stitchCroppedTile(output, data, geometry, roi, tile.output);
+        for (const [n, tile] of batch.entries()) {
+          check();
+          const output = outputs[n];
+          if (overlap) {
+            blendCroppedTile(
+              output,
+              data,
+              weights!,
+              geometry,
+              roi,
+              tile.output,
+              patchMask!,
+            );
+          } else {
+            stitchCroppedTile(output, data, geometry, roi, tile.output);
+          }
+          // Both stitch helpers validate the entire prediction and never mutate it.
+          // Cache only successful, full cropped predictions, never ROI result data.
+          const key = tileKey(tile);
+          if (cached) {
+            this.patchCache.delete(key);
+            this.patchCache.set(key, output);
+          } else {
+            this.cachePatch(key, output);
+          }
+          onProgress(++completed, total);
         }
-        // Both stitch helpers validate the entire prediction and never mutate it.
-        // Cache only successful, full cropped predictions, never ROI result data.
-        if (cached) {
-          this.patchCache.delete(key);
-          this.patchCache.set(key, output);
-        } else {
-          this.cachePatch(key, output);
-        }
-        onProgress(++completed, total);
       }
       check();
       if (weights !== undefined) {

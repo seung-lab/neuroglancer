@@ -110,7 +110,11 @@ async function handle(request: InferenceWorkerRequest) {
               "Model produced non-finite output; no result published",
             );
         }
-        const output = cropNcdhwOutput(raw.data, request.geometry);
+        const output = cropNcdhwOutput(
+          raw.data,
+          request.geometry,
+          current.outputShape[0],
+        );
         reply(
           {
             id,

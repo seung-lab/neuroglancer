@@ -85,6 +85,7 @@ export class ProviderSession {
   private requestedPrecision: InferencePrecision = "float32";
   private precisionFallbackReason: string | undefined;
   private prepared: Awaited<ReturnType<ProviderSession["prepare"]>> | undefined;
+  private freeDimensionOverrides: Record<string, number> | undefined;
 
   constructor(
     private readonly create: (
@@ -109,6 +110,45 @@ export class ProviderSession {
     ) => Promise<{ model: ArrayBuffer }> = async (model) =>
       (await import("#src/inference/precision.js")).prepareModelForFp16(model),
   ) {}
+
+  private async createSession(
+    model: ArrayBuffer,
+    options: ort.InferenceSession.SessionOptions,
+  ) {
+    const next = await this.create(
+      model,
+      this.freeDimensionOverrides === undefined
+        ? options
+        : { ...options, freeDimensionOverrides: this.freeDimensionOverrides },
+    );
+    const input = next.inputMetadata[0];
+    if (
+      this.freeDimensionOverrides === undefined &&
+      next.inputNames.length === 1 &&
+      next.outputNames.length === 1 &&
+      next.inputMetadata.length === 1 &&
+      next.outputMetadata.length === 1 &&
+      input?.isTensor &&
+      input.type === "float32" &&
+      input.shape.length === 5 &&
+      typeof input.shape[0] === "string" &&
+      input.shape[0].length > 0 &&
+      input.shape[1] === 1 &&
+      input.shape
+        .slice(1)
+        .every((x) => Number.isSafeInteger(x) && Number(x) > 0)
+    ) {
+      // Specialize only a symbolic batch, never guess spatial dimensions.
+      // ORT propagates the override through shape inference to the output.
+      this.freeDimensionOverrides = { [input.shape[0]]: 1 };
+      await next.release();
+      return this.create(model, {
+        ...options,
+        freeDimensionOverrides: this.freeDimensionOverrides,
+      });
+    }
+    return next;
+  }
 
   private async accept(
     next: ort.InferenceSession,
@@ -186,6 +226,7 @@ export class ProviderSession {
     this.requestedPrecision = precision;
     this.precisionFallbackReason = undefined;
     this.prepared = undefined;
+    this.freeDimensionOverrides = undefined;
     this.firstRun = true;
     if (model.byteLength === 0 || model.byteLength > MAX_MODEL_BYTES)
       throw new Error(
@@ -225,7 +266,10 @@ export class ProviderSession {
         try {
           const converted = await this.prepareFp16(model);
           // ORT owns its device, including shader-f16 feature negotiation.
-          native = await this.create(converted.model, WEBGPU_SESSION_OPTIONS);
+          native = await this.createSession(
+            converted.model,
+            WEBGPU_SESSION_OPTIONS,
+          );
         } catch (error) {
           this.precisionFallbackReason = `FP16 initialization failed: ${message(error)}; using FP32 WebGPU`;
         }
@@ -246,7 +290,7 @@ export class ProviderSession {
     }
     if (requested === "cpu" || fallbackReason !== undefined) {
       this.compatibilityAnalysis = await this.inspect(model);
-      next = await this.create(model, { executionProviders: ["wasm"] });
+      next = await this.createSession(model, { executionProviders: ["wasm"] });
     } else {
       // Inspect exactly once per load. Preparation returns its own analysis;
       // disabled fixes inspect without ever invoking a graph rewrite.
@@ -254,14 +298,16 @@ export class ProviderSession {
       const prepared = await this.prepareFp32(model);
       try {
         // Native ORT owns its device/limits; do not inject a custom GPUDevice.
-        next = await this.create(prepared.model, WEBGPU_SESSION_OPTIONS);
+        next = await this.createSession(prepared.model, WEBGPU_SESSION_OPTIONS);
         preparation = prepared.preparation;
         actual = "webgpu";
       } catch (error) {
         if (requested === "webgpu")
           throw new Error(`WebGPU initialization failed: ${message(error)}`);
         fallbackReason = `WebGPU initialization failed: ${message(error)}`;
-        next = await this.create(model, { executionProviders: ["wasm"] });
+        next = await this.createSession(model, {
+          executionProviders: ["wasm"],
+        });
       }
     }
     if (actual === "wasm" && precision === "float16" && requested !== "cpu")
@@ -294,7 +340,7 @@ export class ProviderSession {
 
   private async retryCpu(reason: string) {
     const start = performance.now();
-    const next = await this.create(this.model!, {
+    const next = await this.createSession(this.model!, {
       executionProviders: ["wasm"],
     });
     if (this.requestedPrecision === "float16")
@@ -308,7 +354,7 @@ export class ProviderSession {
     const prepared = await this.prepareFp32(this.model!);
     let next: ort.InferenceSession;
     try {
-      next = await this.create(prepared.model, WEBGPU_SESSION_OPTIONS);
+      next = await this.createSession(prepared.model, WEBGPU_SESSION_OPTIONS);
     } catch (error) {
       const reason = `WebGPU initialization failed: ${message(error)}`;
       if (this.requested !== "auto") throw new Error(reason);

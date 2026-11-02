@@ -24,7 +24,7 @@ export interface VoxelBox {
 }
 
 /**
- * Fixed, batch-one NCDHW model geometry. Spacings and rawOutputOrigin use the
+ * Fixed, per-sample NCDHW model geometry. Spacings and rawOutputOrigin use the
  * same physical units. Global input and output voxel index zero share physical
  * center zero: input i has center i * inputSpacing, output o has center
  * o * outputSpacing. Origins are CENTER coordinates, not voxel-corner offsets.
@@ -554,28 +554,43 @@ export function blendCroppedTile(
 }
 
 /**
- * Worker-safe crop of contiguous float32 [1,C,Z,Y,X] raw output. Returns a new
- * [1,C,retainedZ,retainedY,retainedX] buffer, preserving every channel. Perform
- * this full crop even for final tiles; stitchCroppedTile trims the high edges.
+ * Worker-safe crop of contiguous float32 [N,C,Z,Y,X] raw output. Returns a new
+ * [N,C,retainedZ,retainedY,retainedX] buffer in batch-major then channel-major
+ * order. Geometry is per sample. Perform this full crop even for final tiles;
+ * stitchCroppedTile trims the high edges of each sample.
  */
 export function cropNcdhwOutput(
   rawOutput: Float32Array,
   geometry: InferenceGeometry,
+  batchSize = 1,
 ): Float32Array {
+  integer(batchSize, "batchSize", 1);
   const retained = getRetainedOutputShape(geometry);
   const rawVolume = volume(geometry.rawOutputShape);
-  if (rawOutput.length !== rawVolume * geometry.outputChannels) {
+  const slabs = integer(
+    batchSize * geometry.outputChannels,
+    "Output slab count",
+    1,
+  );
+  const rawElements = integer(rawVolume * slabs, "Output element count", 1);
+  const retainedElements = integer(
+    volume(retained) * slabs,
+    "Cropped output element count",
+    1,
+  );
+  if (rawOutput.length !== rawElements) {
     throw new Error("Raw NCDHW output length does not match geometry");
   }
-  const result = new Float32Array(volume(retained) * geometry.outputChannels);
+  const result = new Float32Array(retainedElements);
   const [nz, ny, nx] = retained;
   const [, rawY, rawX] = geometry.rawOutputShape;
   const [cz, cy, cx] = geometry.cropBefore;
   let destination = 0;
-  for (let c = 0; c < geometry.outputChannels; ++c) {
+  for (let slab = 0; slab < slabs; ++slab) {
     for (let z = 0; z < nz; ++z) {
       for (let y = 0; y < ny; ++y) {
-        const source = c * rawVolume + ((z + cz) * rawY + y + cy) * rawX + cx;
+        const source =
+          slab * rawVolume + ((z + cz) * rawY + y + cy) * rawX + cx;
         result.set(rawOutput.subarray(source, source + nx), destination);
         destination += nx;
       }
