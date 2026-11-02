@@ -18,6 +18,8 @@ import type {
   VolumeChunkSource,
 } from "#src/sliceview/volume/frontend.js";
 import { SliceViewVolumeRenderLayer } from "#src/sliceview/volume/renderlayer.js";
+import type { TypedArray } from "#src/util/array.js";
+import { DataType } from "#src/util/data_type.js";
 import { valueOrThrow } from "#src/util/error.js";
 import type { ProgressOptions } from "#src/util/progress_listener.js";
 import { NullarySignal } from "#src/util/signal.js";
@@ -64,6 +66,7 @@ function fixture(options: FixtureOptions = {}) {
   } = options;
   const spec = {
     rank: 3,
+    dataType: DataType.FLOAT32,
     lowerVoxelBound: new Float32Array(lower),
     upperVoxelBound: new Float32Array(upper),
     chunkDataSize: new Uint32Array(chunkSize),
@@ -274,6 +277,89 @@ function fixture(options: FixtureOptions = {}) {
 
 const signal = () => new AbortController().signal;
 
+function scalarFixture(dataType: DataType, values: TypedArray) {
+  const f = fixture({
+    upper: [values.length, 1, 1],
+    chunkSize: [values.length, 1, 1],
+  });
+  f.source.spec.dataType = dataType;
+  const chunk = {
+    chunkDataSize: new Uint32Array([values.length, 1, 1]),
+    getValueAt: vi.fn((position: Uint32Array) => values[position[0]]),
+  };
+  f.source.fetchChunk.mockImplementation(async (_grid, copy, progress) => {
+    progress.signal?.throwIfAborted();
+    return copy(chunk as unknown as VolumeChunk);
+  });
+  return { ...f, chunk };
+}
+
+const normalizationCases = [
+  {
+    dataType: DataType.UINT8,
+    maximum: 255,
+    values: new Uint8Array([0, 1, 64, 127, 128, 254, 255]),
+    fillValue: 64,
+  },
+  {
+    dataType: DataType.INT8,
+    maximum: 127,
+    values: new Int8Array([-128, -127, -64, -1, 0, 1, 63, 64, 126, 127]),
+    fillValue: -64,
+  },
+  {
+    dataType: DataType.UINT16,
+    maximum: 65535,
+    values: new Uint16Array([0, 1, 16384, 32767, 32768, 65534, 65535]),
+    fillValue: 32768,
+  },
+  {
+    dataType: DataType.INT16,
+    maximum: 32767,
+    values: new Int16Array([
+      -32768, -32767, -16384, -1, 0, 1, 16383, 16384, 32766, 32767,
+    ]),
+    fillValue: -16384,
+  },
+  {
+    dataType: DataType.UINT32,
+    maximum: 4294967295,
+    values: new Uint32Array([
+      0, 1, 1073741824, 2147483647, 2147483648, 4294967294, 4294967295,
+    ]),
+    fillValue: 2147483648,
+  },
+  {
+    dataType: DataType.INT32,
+    maximum: 2147483647,
+    values: new Int32Array([
+      -2147483648, -2147483647, -1073741824, -1, 0, 1, 1073741823, 1073741824,
+      2147483646, 2147483647,
+    ]),
+    fillValue: -1073741824,
+  },
+  {
+    dataType: DataType.UINT64,
+    maximum: 0xffffffffffffffffn,
+    values: new BigUint64Array([
+      0n,
+      1n,
+      0x4000000000000000n,
+      0x7fffffffffffffffn,
+      0x8000000000000000n,
+      0xfffffffffffffffen,
+      0xffffffffffffffffn,
+    ]),
+    fillValue: 0x8000000000000000n,
+  },
+  {
+    dataType: DataType.FLOAT32,
+    maximum: 1,
+    values: new Float32Array([-3.5, -0, 0, 0.25, 0.5, 1.5, 3, 1]),
+    fillValue: -3.5,
+  },
+].map((test) => ({ ...test, name: DataType[test.dataType] }));
+
 function codedPatch(origin: number[], shape: number[], scaleZYX = [1, 1, 1]) {
   const data = [];
   for (let z = origin[0]; z < origin[0] + shape[0]; ++z) {
@@ -303,6 +389,98 @@ function multiscaleFixture(coarseOptions: FixtureOptions = {}) {
   });
   return { fine, coarse };
 }
+
+describe("inference input intensity normalization", () => {
+  it.each(normalizationCases)(
+    "packs $name endpoints, zero and midpoints as normalized float32 without mutating source data",
+    async ({ dataType, maximum, values }) => {
+      const before = values.slice();
+      const f = scalarFixture(dataType, values);
+      const input = f.prepare();
+      const shape = [1, 1, values.length];
+      const expected = Float32Array.from(
+        [...values],
+        (value) => Number(value) / Number(maximum),
+      );
+      const output = await input.readPatch([0, 0, 0], shape, signal());
+      expect(output).toBeInstanceOf(Float32Array);
+      expect(output).toEqual(expected);
+      expect(output.at(-1)).toBe(1);
+      expect(output.buffer).not.toBe(values.buffer);
+      expect(f.chunk.getValueAt).toHaveBeenCalledTimes(values.length);
+      expect(f.chunk.getValueAt).toHaveReturnedWith(values[values.length - 1]);
+      expect(values).toEqual(before);
+      expect(values.buffer.byteLength).toBe(before.buffer.byteLength);
+      output.fill(99);
+      expect(await input.readPatch([0, 0, 0], shape, signal())).toEqual(
+        expected,
+      );
+      expect(await input.readPatch([0, 0, 2], [1, 1, 2], signal())).toEqual(
+        expected.slice(2, 4),
+      );
+      expect(values).toEqual(before);
+      input.dispose();
+      expect(f.source.refCount).toBe(0);
+    },
+  );
+
+  it.each(normalizationCases)(
+    "uses the $name dtype maximum, not the observed data maximum",
+    async ({ dataType, maximum, values }) => {
+      const partialValues = values.subarray(2, 4);
+      const f = scalarFixture(dataType, partialValues);
+      const input = f.prepare();
+      const output = await input.readPatch([0, 0, 0], [1, 1, 2], signal());
+      expect(output).toEqual(
+        Float32Array.from(
+          [...partialValues],
+          (value) => Number(value) / Number(maximum),
+        ),
+      );
+      expect(output).not.toContain(1);
+      input.dispose();
+    },
+  );
+
+  it.each(normalizationCases)(
+    "scales legitimate sparse $name fill values exactly like accessor values",
+    async ({ dataType, maximum, fillValue }) => {
+      const f = fixture({
+        upper: [5, 1, 1],
+        chunkSize: [3, 1, 1],
+        absent: ["0,0,0", "1,0,0"],
+        fillValue,
+      });
+      f.source.spec.dataType = dataType;
+      const input = f.prepare();
+      const output = await input.readPatch([0, 0, 0], [1, 1, 5], signal());
+      expect(output).toEqual(
+        new Float32Array(5).fill(Number(fillValue) / Number(maximum)),
+      );
+      expect(f.source.fetchChunk).toHaveBeenCalledTimes(2);
+      expect([...f.cache.values()].every((chunk) => chunk.data === null)).toBe(
+        true,
+      );
+      expect(f.source.spec.fillValue).toBe(fillValue);
+      input.dispose();
+    },
+  );
+
+  it("normalizes integer input only once and passes normalized Float32 input through unchanged", async () => {
+    const integer = scalarFixture(
+      DataType.UINT8,
+      new Uint8Array([0, 64, 128, 255]),
+    ).prepare();
+    const normalized = await integer.readPatch([0, 0, 0], [1, 1, 4], signal());
+    expect(normalized).toEqual(new Float32Array([0, 64 / 255, 128 / 255, 1]));
+    const float = scalarFixture(DataType.FLOAT32, normalized).prepare();
+    const output = await float.readPatch([0, 0, 0], [1, 1, 4], signal());
+    expect(output).toEqual(normalized);
+    expect(output.buffer).not.toBe(normalized.buffer);
+    float.dispose();
+    integer.dispose();
+  });
+});
 
 describe("selected multiscale inference input", () => {
   it("enumerates 16/16/45 and 32/32/45 nm scales and reads the actual coarse source", async () => {
@@ -339,6 +517,28 @@ describe("selected multiscale inference input", () => {
       expect(progress).toMatchObject({ retryTransientErrors: true });
     }
     input.dispose();
+    input.dispose();
+    expect(coarse.source.refCount).toBe(1);
+    expect(fine.source.refCount).toBe(1);
+  });
+
+  it("uses and snapshots the selected scale's dtype for intensity normalization", async () => {
+    const { fine, coarse } = multiscaleFixture({
+      absent: ["0,0,0"],
+      fillValue: 32768,
+    });
+    coarse.source.spec.dataType = DataType.UINT16;
+    const input = fine.prepare(1);
+    expect(await input.readPatch([0, 0, 0], [1, 1, 2], signal())).toEqual(
+      new Float32Array([32768 / 65535, 32768 / 65535]),
+    );
+    fine.source.spec.dataType = DataType.UINT8;
+    expect(input.isValid()).toBe(true);
+    coarse.source.spec.dataType = DataType.UINT8;
+    expect(input.isValid()).toBe(false);
+    await expect(
+      input.readPatch([0, 0, 0], [1, 1, 2], signal()),
+    ).rejects.toThrow("disposed or stale");
     input.dispose();
     expect(coarse.source.refCount).toBe(1);
     expect(fine.source.refCount).toBe(1);
@@ -854,6 +1054,7 @@ describe("prepareInferenceInput", () => {
     "nativeTransformInPlace",
     "userTransformInPlace",
     "chunkSizeInPlace",
+    "dataTypeInPlace",
     "additionalVolume",
     "nativeSpacingInPlace",
     "loadedSourceReplacement",
@@ -885,6 +1086,7 @@ describe("prepareInferenceInput", () => {
     if (change === "userTransformInPlace")
       f.transform.modelToRenderLayerTransform[12] = 1;
     if (change === "chunkSizeInPlace") f.source.spec.chunkDataSize[0] = 1;
+    if (change === "dataTypeInPlace") f.source.spec.dataType = DataType.UINT8;
     if (change === "additionalVolume") f.layer.renderLayers.push(f.renderLayer);
     if (change === "nativeSpacingInPlace") {
       f.nativeSpace.scales[0] *= 2;
@@ -1046,6 +1248,28 @@ describe("prepareInferenceInput", () => {
     input.dispose();
   });
 
+  it("rejects an in-flight read if the selected dtype changes before packing", async () => {
+    const f = scalarFixture(DataType.UINT8, new Uint8Array([128, 255]));
+    const input = f.prepare();
+    const fetch = f.source.fetchChunk.getMockImplementation()!;
+    let resume!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    f.source.fetchChunk.mockImplementationOnce(async (grid, copy, progress) => {
+      await gate;
+      return fetch(grid, copy, progress);
+    });
+    const pending = input.readPatch([0, 0, 0], [1, 1, 2], signal());
+    f.source.spec.dataType = DataType.UINT16;
+    expect(input.isValid()).toBe(false);
+    resume();
+    await expect(pending).rejects.toThrow("disposed or stale");
+    expect(f.chunk.getValueAt).not.toHaveBeenCalled();
+    input.dispose();
+    expect(f.source.refCount).toBe(0);
+  });
+
   it("snapshots caller coordinate arrays across asynchronous fetches", async () => {
     const f = fixture();
     const input = f.prepare();
@@ -1092,6 +1316,30 @@ describe("prepareInferenceInput", () => {
 });
 
 describe("unsupported inference sources", () => {
+  it.each([
+    undefined,
+    null,
+    -1,
+    8,
+    0.5,
+    NaN,
+    Infinity,
+    "uint8",
+    "0",
+    "toString",
+  ])(
+    "rejects missing or unknown dtype %s without retaining source refs",
+    (dataType) => {
+      const f = fixture();
+      f.source.spec.dataType = dataType as unknown as DataType;
+      expect(f.prepare).toThrow(
+        `Unsupported inference input: data type ${String(dataType)} cannot be normalized`,
+      );
+      expect(f.source.fetchChunk).not.toHaveBeenCalled();
+      expect(f.source.refCount).toBe(0);
+    },
+  );
+
   it.each([
     ["X", "y", "z"],
     ["x", "x", "z"],
@@ -1168,6 +1416,7 @@ describe("copyChunkToZYXPatch", () => {
     copyChunkToZYXPatch(
       chunk,
       {
+        dataType: DataType.FLOAT32,
         chunkOrigin: [3, 3, 2],
         chunkDimensionsZYX: [2, 1, 0],
         patchLowerChunk: [3, 3, 2],

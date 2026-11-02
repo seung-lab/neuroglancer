@@ -28,8 +28,9 @@
  * Hand-constructed recipe restores also enter through ordinary URLs. No inference
  * module, session registry, or publish function is accessed. The Worker observer
  * forwards unmodified messages and only counts actual computation.
- * concat.onnx repeats the input into four channels; the oracle below is the
- * independently generated native XYZ uint8 source, not another inference run.
+ * concat.onnx repeats the input into four channels; the oracle below uses the
+ * independent native XYZ uint8 source divided by 255 once and rounded to float32,
+ * not another inference run.
  */
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
@@ -41,6 +42,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, URL } from "node:url";
 import { chromium } from "playwright";
+import { httpContentType } from "./http_content_type.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const dist = path.join(root, "dist/client");
@@ -140,20 +142,7 @@ const server = http.createServer(async (req, res) => {
     }
     assert(url.startsWith("/app/") && !url.includes(".."));
     const file = path.join(dist, url === "/app/" ? "index.html" : url.slice(5));
-    const mime = {
-      ".js": "text/javascript",
-      ".mjs": "text/javascript",
-      ".wasm": "application/wasm",
-      ".html": "text/html",
-      ".css": "text/css",
-      ".svg": "image/svg+xml",
-      ".png": "image/png",
-      ".json": "application/json",
-    };
-    res.setHeader(
-      "Content-Type",
-      mime[path.extname(file)] || "application/octet-stream",
-    );
+    res.setHeader("Content-Type", httpContentType(file));
     res.end(await fs.readFile(file));
   } catch (error) {
     res.statusCode = 404;
@@ -417,7 +406,7 @@ try {
                   const gz =
                     outputOrigin[2] + grid[2] * spec.chunkDataSize[2] + z;
                   const raw = (((gx * 3 + gy * 5 + gz * 7) % 251) + 251) % 251;
-                  const expected = raw;
+                  const expected = Math.fround(raw / 255);
                   const actual = chunk.data[i++];
                   check(
                     Number.isFinite(actual) &&

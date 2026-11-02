@@ -4,8 +4,10 @@
 `neuroglancer-test`. Its graph is `Concat(input,input,input,input, axis=1)`, with
 float32 input `[1,1,20,80,80]` and output `[1,4,20,80,80]`. Every output channel is
 exactly the input. The live browser smokes therefore compare every displayed
-voxel in all four channels to the raw source value after float32 conversion,
-cropping and blending, without affine scale/offset or normalization. Output uses
+voxel in all four channels to `Float32(raw uint8 / 255)` after cropping and
+blending. Source samples are divided once by their dtype maximum before inference;
+there is no user-selectable affine scale/offset. Direct float32 model inputs are
+unchanged. Output uses
 full 60×60×16 XYZ display chunks. No Python inference service is required, and
 these checks do not claim correctness of nooverseg.
 

@@ -29,10 +29,12 @@
  * including browser-observed WASM Brotli headers.
  * Bodies are decoded: encodedSha256 requires separate raw-network verification.
  *
- * Default: GPU disabled, deterministic Conv/Concat oracle, default FP32,
- * CPU-requested FP16 and unavailable-WebGPU FP16 fallback, URL recipe replay.
- * SCALE=1 also checks a two-scale pyramid: coarse selection, automatic output
- * spacing, distinct coarse-chunk numerical oracle and fresh-context shared replay.
+ * Default: GPU disabled, deterministic Conv/Concat oracle on Float32(uint8/255),
+ * default FP32, CPU-requested FP16 and unavailable-WebGPU FP16 fallback, URL
+ * recipe replay. A separate raw-uint16 viewer source checks /65535 values,
+ * finite numeric outputs and replay (not /255 or observed-max scaling).
+ * SCALE=1 also checks a two-scale uint8 pyramid: coarse selection, automatic
+ * output spacing, distinct normalized coarse-chunk oracle and shared replay.
  * It retains all default precision cases. For an up-to-eight-thread strict build:
  *   MAX_CPU_THREADS=8 SCALE=1 ISOLATED=1 BASE_URL=https://host/app/ \
  *   CHROME=/usr/bin/google-chrome \
@@ -42,7 +44,7 @@
  * original known model6280000 CPU FP32 / native GPU FP32 / native GPU FP16,
  * plus padding-only compatibility fixes on native GPU FP32.
  *
- * After coordinating GPU use with the main agent, on the NVIDIA host:
+ * After coordinating GPU use, on the NVIDIA host:
  *   HEADFUL=1 HARDWARE=1 CHROME=/usr/bin/google-chrome \
  *   XDG_RUNTIME_DIR=/run/user/2050 WAYLAND_DISPLAY=wayland-0 \
  *   VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json \
@@ -83,6 +85,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, URL } from "node:url";
 import { chromium } from "playwright";
+import { httpContentType } from "./http_content_type.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const timeout = Number(process.env.TIMEOUT || 180000);
@@ -294,8 +297,41 @@ const retainedLength = 36 * 96 * 96;
 const sourceValue = (x, y, z) => (((3 * x + 5 * y + 7 * z) % 251) + 251) % 251;
 const scaleValue = (x, y, z, coarse) =>
   (sourceValue(x, y, z) + (coarse ? 113 : 0)) % 251;
-const expectedValue = (x, y, z, coarse) =>
-  Math.fround(Math.fround(0.75 * scaleValue(x, y, z, coarse)) + 0.25);
+// Keep uint8 transport unchanged. The uint16 fixture stays below 65535 so an
+// observed-max divisor is distinguishable, and includes values above 255.
+const fixtureValue = (x, y, z, c) => {
+  const value = scaleValue(x, y, z, c.coarse);
+  return c.uint16 ? 241 * value + 13 : value;
+};
+const inputDivisor = (c) => (c.uint16 ? 65535 : 255);
+const normalizedValue = (x, y, z, c) =>
+  Math.fround(fixtureValue(x, y, z, c) / inputDivisor(c));
+const sourcePath = (c) =>
+  c.coarse ? "pyramid" : c.uint16 ? "source16" : "source";
+// Independent nearest-even binary16 rounding, only for this nonnegative fixture.
+// Do not import the production converter or change model/geometry to avoid it.
+const roundHalf = (value) => {
+  if (value === 0) return value;
+  const step = 2 ** Math.max(-24, Math.floor(Math.log2(value)) - 10);
+  const scaled = value / step;
+  const lower = Math.floor(scaled);
+  const fraction = scaled - lower;
+  return (
+    (lower + (fraction > 0.5 || (fraction === 0.5 && lower % 2) ? 1 : 0)) * step
+  );
+};
+const expectedValues = (x, y, z, c) => {
+  const value = normalizedValue(x, y, z, c);
+  if (c.actualPrecision !== "float16")
+    return [Math.fround(Math.fround(0.75 * value) + 0.25)];
+  const halfInput = roundHalf(value);
+  // Allow fused accumulation or a half-rounded product before bias addition.
+  // Both include boundary input/output casts; keep the strict 2e-6 value check.
+  return [
+    roundHalf(0.75 * halfInput + 0.25),
+    roundHalf(roundHalf(0.75 * halfInput) + 0.25),
+  ];
+};
 const report = {
   cases: [],
   comparisons: [],
@@ -320,20 +356,7 @@ try {
           decodeURIComponent(url.pathname).slice(5) || "index.html";
         const file = path.resolve(dist, relative);
         assert(url.pathname.startsWith("/app/") && file.startsWith(`${dist}/`));
-        const mime = {
-          ".js": "text/javascript",
-          ".mjs": "text/javascript",
-          ".wasm": "application/wasm",
-          ".html": "text/html",
-          ".css": "text/css",
-          ".json": "application/json",
-          ".svg": "image/svg+xml",
-          ".png": "image/png",
-        };
-        res.setHeader(
-          "Content-Type",
-          mime[path.extname(file)] || "application/octet-stream",
-        );
+        res.setHeader("Content-Type", httpContentType(file));
         res.setHeader("Cache-Control", "no-store");
         if (isolated) {
           res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
@@ -379,7 +402,7 @@ try {
       {
         type: "image",
         name: sourceName,
-        source: `precomputed://${fixtureBase}${c.coarse ? "pyramid" : "source"}`,
+        source: `precomputed://${fixtureBase}${sourcePath(c)}`,
       },
     ],
   });
@@ -537,12 +560,15 @@ try {
       else if (resource === "known.onnx") {
         assert(known);
         body = known;
-      } else if (resource === "source/info" || resource === "pyramid/info") {
+      } else if (
+        ["source/info", "source16/info", "pyramid/info"].includes(resource)
+      ) {
         const pyramid = resource === "pyramid/info";
+        const uint16 = resource === "source16/info";
         contentType = "application/json";
         body = JSON.stringify({
           type: "image",
-          data_type: "uint8",
+          data_type: uint16 ? "uint16" : "uint8",
           num_channels: 1,
           scales: [
             {
@@ -569,11 +595,12 @@ try {
         });
       } else {
         const match =
-          /^(source|pyramid)\/(native|coarse)\/(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)$/.exec(
+          /^(source|source16|pyramid)\/(native|coarse)\/(\d+)-(\d+)_(\d+)-(\d+)_(\d+)-(\d+)$/.exec(
             resource,
           );
         assert(match, `Unexpected fixture request: ${resource}`);
         const pyramid = match[1] === "pyramid";
+        const uint16 = match[1] === "source16";
         const coarse = match[2] === "coarse";
         assert(!coarse || pyramid);
         const chunkOrigin = coarse ? coarseOrigin : origin;
@@ -583,12 +610,19 @@ try {
           [x0, y0, z0].every((v, i) => v >= chunkOrigin[i]) &&
             [x1, y1, z1].every((v, i) => v <= chunkOrigin[i] + chunkSize[i]),
         );
-        body = Buffer.alloc((x1 - x0) * (y1 - y0) * (z1 - z0));
+        body = Buffer.alloc(
+          (x1 - x0) * (y1 - y0) * (z1 - z0) * (uint16 ? 2 : 1),
+        );
         let n = 0;
         for (let z = z0; z < z1; ++z)
           for (let y = y0; y < y1; ++y)
-            for (let x = x0; x < x1; ++x)
-              body[n++] = scaleValue(x, y, z, coarse);
+            for (let x = x0; x < x1; ++x) {
+              const value = fixtureValue(x, y, z, { coarse, uint16 });
+              if (uint16) {
+                body.writeUInt16LE(value, n);
+                n += 2;
+              } else body[n++] = value;
+            }
       }
       await route.fulfill({
         status: 200,
@@ -644,6 +678,7 @@ try {
               type: data.input.constructor.name,
               length: data.input.length,
               finite: data.input.every(Number.isFinite),
+              values: Array.from(data.input),
               geometry: data.geometry,
             });
           return super.postMessage(data, ...args);
@@ -933,6 +968,57 @@ try {
     assert.equal(p.inputs[0].type, "Float32Array", "Public input stays FP32");
     assert.equal(p.inputs[0].finite, true);
     assert.equal(p.inputs[0].length, 16 * 128 * 128);
+    assert.equal(p.inputs[0].values.length, 16 * 128 * 128);
+    const baseOrigin = c.coarse ? coarseOrigin : origin;
+    let inputIndex = 0,
+      inputMismatches = 0,
+      min = Infinity,
+      max = -Infinity,
+      rawMax = -Infinity,
+      firstMismatch = null;
+    for (let z = 0; z < 16; ++z)
+      for (let y = 0; y < 128; ++y)
+        for (let x = 0; x < 128; ++x) {
+          const xyz = [baseOrigin[0] + x, baseOrigin[1] + y, baseOrigin[2] + z];
+          const raw = fixtureValue(...xyz, c);
+          const expected = normalizedValue(...xyz, c);
+          const actual = p.inputs[0].values[inputIndex];
+          min = Math.min(min, actual);
+          max = Math.max(max, actual);
+          rawMax = Math.max(rawMax, raw);
+          if (actual !== expected) {
+            ++inputMismatches;
+            firstMismatch ??= { index: inputIndex, raw, actual, expected };
+          }
+          ++inputIndex;
+        }
+    const inputNormalization = {
+      sourceDataType: c.uint16 ? "uint16" : "uint8",
+      divisor: inputDivisor(c),
+      rule: "Float32(raw / positive dtype maximum), once; no resampling",
+      elements: inputIndex,
+      finite: p.inputs[0].finite,
+      min,
+      max,
+      rawMax,
+      mismatches: inputMismatches,
+      firstMismatch,
+    };
+    assert.equal(
+      inputMismatches,
+      0,
+      `Every worker-bound value must equal Float32(raw / ${inputDivisor(c)}) exactly: ${JSON.stringify(inputNormalization)}`,
+    );
+    if (c.uint16) {
+      assert.equal(rawMax, 60263);
+      assert.equal(max, Math.fround(rawMax / 65535));
+      assert.notEqual(
+        max,
+        Math.fround(rawMax / 255),
+        "Not uint8 normalization",
+      );
+      assert.notEqual(max, 1, "Not observed-max normalization");
+    }
     const geometry = p.inputs[0].geometry;
     assert.deepEqual(geometry.inputShape, [16, 128, 128]);
     assert.deepEqual(geometry.rawOutputShape, [48, 128, 128]);
@@ -961,18 +1047,21 @@ try {
           for (let x = 0; x < 96; ++x) {
             max = Math.max(
               max,
-              Math.abs(
-                values[i++] -
-                  expectedValue(
-                    (c.coarse ? coarseOrigin[0] : origin[0]) + 16 + x,
-                    (c.coarse ? coarseOrigin[1] : origin[1]) + 16 + y,
-                    (c.coarse ? coarseOrigin[2] : origin[2]) + ((6 + z) % 16),
-                    c.coarse,
-                  ),
+              Math.min(
+                ...expectedValues(
+                  baseOrigin[0] + 16 + x,
+                  baseOrigin[1] + 16 + y,
+                  baseOrigin[2] + ((6 + z) % 16),
+                  c,
+                ).map((expected) => Math.abs(values[i] - expected)),
               ),
             );
+            ++i;
           }
-      assert(max < 2e-6, `Conv/Concat independent oracle max error ${max}`);
+      assert(
+        max < 2e-6,
+        `Normalized Conv/Concat independent oracle max error ${max}`,
+      );
     }
     assert.deepEqual(published.bounds, [...liveSize, 1]);
     assert.deepEqual(published.chunkSize, [60, 60, 16, 1]);
@@ -1035,11 +1124,10 @@ try {
     assert.equal(recipe.model.sha256, c.real ? knownHash : hash(fixture));
     assert.deepEqual(recipe.model.urls, [modelUrl(c.real)]);
     assert(run.requests.includes(c.real ? "known.onnx" : "fixture.onnx"));
-    const sourcePath = c.coarse ? "pyramid" : "source";
-    assert(run.requests.includes(`${sourcePath}/info`));
+    assert(run.requests.includes(`${sourcePath(c)}/info`));
     assert(
       run.requests.some((r) =>
-        r.startsWith(`${sourcePath}/${c.coarse ? "coarse" : "native"}/`),
+        r.startsWith(`${sourcePath(c)}/${c.coarse ? "coarse" : "native"}/`),
       ),
       "selected scale chunks must actually be fetched",
     );
@@ -1106,6 +1194,7 @@ try {
       pixels,
       recipe,
       metadata: p.metadata,
+      inputNormalization,
       runtimeAssets,
       environment: run.environment,
     };
@@ -1149,7 +1238,13 @@ try {
         "Fresh URL replay must recompute the same retained outputs",
       );
       assert.deepEqual(replay.pixels, first.pixels);
-      if (!c.fp16 && !c.real && !c.coarse && c.provider === "cpu") {
+      if (
+        !c.fp16 &&
+        !c.real &&
+        !c.coarse &&
+        !c.uint16 &&
+        c.provider === "cpu"
+      ) {
         for (const omitted of ["precision", "inputScaleIndex"]) {
           const legacyState = JSON.parse(
             decodeURIComponent(new URL(copiedUrl).hash.slice(2)),
@@ -1180,6 +1275,7 @@ try {
         publishedElements: Object.keys(first.pixels).length,
         freshContextReplay: true,
         publicTensorType: "float32",
+        inputNormalization: first.inputNormalization,
         nativeAsyncify: true,
         runtimeAssets: first.runtimeAssets,
         environment: first.environment,
@@ -1223,7 +1319,7 @@ try {
 
   const cpuBrowser = await launch(false);
   const baseline = await execute(cpuBrowser, {
-    name: "default FP32 unchanged",
+    name: "default FP32 with normalized uint8 input",
     provider: "cpu",
     actualProvider: "wasm",
     fp16: false,
@@ -1251,6 +1347,13 @@ try {
     actualProvider: "wasm",
     fp16: true,
     reason: /unavailable|adapter|WebGPU/i,
+  });
+  await execute(cpuBrowser, {
+    name: "uint16 viewer /65535 values, finite Conv/Concat output and shared replay",
+    provider: "cpu",
+    actualProvider: "wasm",
+    fp16: false,
+    uint16: true,
   });
   if (scaleSmoke)
     await execute(cpuBrowser, {

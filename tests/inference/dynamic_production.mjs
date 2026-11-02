@@ -18,7 +18,7 @@
 
 /**
  * Dynamic NCDHW / output spacing / C1 production browser regression.
- * Run with Node 24 AFTER the main agent has rebuilt the production assets:
+ * Run with Node 24 AFTER rebuilding the production assets:
  *   CHROME=/usr/bin/google-chrome node tests/inference/dynamic_production.mjs
  * Never builds, deploys, or modifies application files. Default: deterministic
  * CPU/WASM, headless Chrome/SwiftShader (no hardware GPU required).
@@ -28,9 +28,10 @@
  * PROVIDER=cpu|auto|webgpu, HEADFUL=1, LAUNCH_OPTIONS='{"...":...}' optional.
  * OVERLAP defaults to 1 for this test, not the UI; explicitly select blending.
  * OVERLAP=0 selects no overlap/blending through the actual UI toggle.
- * The inline fixture checks every displayed voxel against raw direct patch
- * values with OVERLAP=0. Overlap-on checks raw values in the first display tile
- * (one source context), and finite values elsewhere; it is not a blend oracle.
+ * The inline fixture checks every displayed voxel against float32(raw/255)
+ * direct patch values with OVERLAP=0. Overlap-on checks these normalized values
+ * in the first display tile (one context), and finite values elsewhere; it is
+ * not a blend oracle.
  * Live inference, fresh-context replay and demand after a pan are always tested.
  * LARGE=1 uses the full img_jxl spatial extent with generated source chunks,
  * verifying tiled inference without a whole-volume allocation.
@@ -53,6 +54,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, URL } from "node:url";
 import { chromium } from "playwright";
+import { httpContentType } from "./http_content_type.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const dist = path.join(root, "dist/client");
@@ -114,7 +116,7 @@ for (const file of await fs.readdir(dist)) {
 }
 assert(
   dynamicBuild,
-  "Production assets lack ncdhw-centered-v2; ask the main agent to rebuild before running this test",
+  "Production assets lack ncdhw-centered-v2; rebuild before running this test",
 );
 
 const server = http.createServer(async (req, res) => {
@@ -171,20 +173,7 @@ const server = http.createServer(async (req, res) => {
     // Same-origin /app/ mapping preserves production worker and ORT WASM URLs.
     assert(url.startsWith("/app/") && !url.includes(".."));
     const file = path.join(dist, url === "/app/" ? "index.html" : url.slice(5));
-    const mime = {
-      ".js": "text/javascript",
-      ".mjs": "text/javascript",
-      ".wasm": "application/wasm",
-      ".html": "text/html",
-      ".css": "text/css",
-      ".svg": "image/svg+xml",
-      ".png": "image/png",
-      ".json": "application/json",
-    };
-    res.setHeader(
-      "Content-Type",
-      mime[path.extname(file)] || "application/octet-stream",
-    );
+    res.setHeader("Content-Type", httpContentType(file));
     res.end(await fs.readFile(file));
   } catch (error) {
     serverErrors.push(`${req.url}: ${String(error)}`);
@@ -685,7 +674,7 @@ try {
                 check(Number.isFinite(actual), "finite output");
                 // The first live tile lies wholly before the next overlapping
                 // context starts (XYZ stride 64,64,24). Its values therefore have
-                // an independent raw oracle even with blending enabled.
+                // an independent uint8/255 oracle even with blending enabled.
                 if (
                   deterministic &&
                   (!overlap || grid.slice(0, 3).every((n) => n === 0))
@@ -706,7 +695,7 @@ try {
                     30 + Math.floor(dz / 36) * 12 + ((6 + (dz % 36)) % 16);
                   const raw =
                     (((gx * 3 + gy * 5 + sourceZ * 7) % 251) + 251) % 251;
-                  const expected = raw;
+                  const expected = Math.fround(raw / 255);
                   ++oracleElements;
                   check(
                     Math.abs(actual - expected) <=
@@ -778,7 +767,7 @@ try {
   if (deterministic)
     assert(
       first.oracleElements >= 60 * 60 * 16,
-      "raw numeric oracle checks at least one full live display tile",
+      "normalized numeric oracle checks at least one full live display tile",
     );
   const recipe = resultSource(await snapshot(created.page)).state;
   assert.equal(recipe.version, 2);

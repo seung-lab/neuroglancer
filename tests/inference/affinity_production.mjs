@@ -5,7 +5,9 @@
  * MODEL_URL is native HTTPS; MODEL is the matching local audit copy.
  * INPUT: raw uint8 NCDHW [1,1,48,96,96], X fastest (442368 bytes).
  * REFERENCE: uncropped CPU FP32 logits [1,6,48,96,96], little endian
- * (2654208 values), computed from Float32(INPUT), NOT INPUT/255.
+ * (2654208 values), computed from Float32(raw uint8 INPUT / 255).
+ * INPUT stays raw bytes; generate NEW normalized-input CPU references for the
+ * same original/exact converted models. Never reuse/overwrite old raw-input refs.
  * PRECISION is requested; EXPECTED_PRECISION defaults to that same precision.
  * Expected float32: REFERENCE is CPU ORT original FP32, abs/rel gate 1e-3.
  * Expected float16: REFERENCE is CPU ORT EXACT browser-converted graph, raw
@@ -95,9 +97,9 @@ const report = {
     model:
       "Native browser HTTPS delivery; exact local SHA/size must match the app recipe, without sending model response bodies through DevTools",
     input:
-      "Exact raw uint8 -> Float32 intensities 0..255; NO normalization/resampling",
+      "Raw uint8 transport; every Window-sent AND actual worker-received value must equal Float32(INPUT/255) exactly, once only, with no resampling",
     reference:
-      "Caller-supplied same-graph CPU ORT logits on Float32(INPUT), full uncropped NCDHW little-endian FP32; CPU/converter provenance is not independently attested",
+      "Caller-supplied NEW same-graph CPU ORT logits on Float32(raw uint8 INPUT/255), full uncropped NCDHW little-endian FP32; never reuse/overwrite raw-input references; CPU/converter provenance is not independently attested",
     sensitivity:
       "Reference-close spatial variation on this real input, not a perturbed-input or segmentation-quality experiment",
     precision:
@@ -350,7 +352,13 @@ const watchWorkers = async (context, page, record) => {
           compatibilityFixes: data.compatibilityFixes,
           bytes: data.model?.byteLength,
         });
-      if (data?.kind === "run") state.runs.push({ id: data.id });
+      if (data?.kind === "run")
+        state.runs.push({
+          id: data.id,
+          type: data.input.constructor.name,
+          values: Array.from(data.input),
+          geometry: data.geometry,
+        });
     });
     const { GPUAdapter, GPUQueue, Worker: OriginalWorker } = globalThis;
     if (GPUAdapter && GPUQueue) {
@@ -859,6 +867,14 @@ try {
     input.some((v) => v !== input[0]),
     "INPUT must contain real, nonconstant intensities",
   );
+  report.inputNormalization = {
+    sourceDataType: "uint8",
+    divisor: 255,
+    rule: "Float32(raw uint8 / 255), once before worker delivery; no resampling",
+    referenceInput:
+      "Both CPU models must use the same normalized Float32 tensor",
+    referenceProvenance: "Caller contract, not independently attested",
+  };
   const [expected, originalExpected] = [reference, originalReference]
     .filter(Boolean)
     .map((bytes, r) => {
@@ -1600,34 +1616,53 @@ try {
     }
     assert.equal(p.inputs.length, 1);
     const observedInput = p.inputs[0];
-    assert.equal(observedInput.type, "Float32Array");
-    assert.equal(observedInput.values.length, input.length);
-    let mismatches = 0,
-      min = Infinity,
-      max = -Infinity,
-      firstMismatch = null;
-    for (let i = 0; i < input.length; ++i) {
-      const actual = observedInput.values[i];
-      min = Math.min(min, actual);
-      max = Math.max(max, actual);
-      if (actual !== input[i]) {
-        ++mismatches;
-        firstMismatch ??= { index: i, actual, expected: input[i] };
+    record.input = { ...report.inputNormalization };
+    for (const [name, observation] of [
+      ["windowPostMessage", observedInput],
+      ["actualWorkerDelivery", actual.runs[0]],
+    ]) {
+      assert.equal(observation.type, "Float32Array");
+      assert.equal(observation.values.length, input.length);
+      let mismatches = 0,
+        nonFiniteCount = 0,
+        min = Infinity,
+        max = -Infinity,
+        firstMismatch = null;
+      for (let i = 0; i < input.length; ++i) {
+        const value = observation.values[i];
+        const expected = Math.fround(input[i] / 255);
+        min = Math.min(min, value);
+        max = Math.max(max, value);
+        if (!Number.isFinite(value)) ++nonFiniteCount;
+        if (value !== expected) {
+          ++mismatches;
+          firstMismatch ??= {
+            index: i,
+            raw: input[i],
+            actual: value,
+            expected,
+          };
+        }
       }
+      const stats = {
+        type: observation.type,
+        elements: input.length,
+        min,
+        max,
+        mismatches,
+        nonFiniteCount,
+        firstMismatch,
+      };
+      if (name === "windowPostMessage") Object.assign(record.input, stats);
+      else record.input.actualWorkerDelivery = stats;
+      assert.equal(nonFiniteCount, 0, `${name}: every input must be finite`);
+      assert.equal(
+        mismatches,
+        0,
+        `${name}: ALL input elements must equal Float32(raw uint8 / 255) exactly; no double normalization/resampling`,
+      );
     }
-    record.input = {
-      type: observedInput.type,
-      elements: input.length,
-      min,
-      max,
-      mismatches,
-      firstMismatch,
-    };
-    assert.equal(
-      mismatches,
-      0,
-      "ALL input elements must equal raw uint8 intensities, NOT /255",
-    );
+    assert.deepEqual(actual.runs[0].geometry, observedInput.geometry);
     const geometry = observedInput.geometry;
     record.geometry = geometry;
     assert.deepEqual(geometry.inputShape, [48, 96, 96]);

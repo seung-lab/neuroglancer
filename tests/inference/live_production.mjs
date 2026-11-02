@@ -41,6 +41,7 @@ import process from "node:process";
 import { setTimeout } from "node:timers";
 import { fileURLToPath, URL } from "node:url";
 import { chromium } from "playwright";
+import { httpContentType } from "./http_content_type.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const bundled = process.env.BUNDLED_MODEL === "1";
@@ -221,20 +222,7 @@ const server = http.createServer(async (req, res) => {
     const rel = p === "/app/" ? "index.html" : p.slice(5);
     assert(!rel.includes(".."));
     const f = path.join(root, "dist/client", rel);
-    const mime = {
-      ".js": "text/javascript",
-      ".mjs": "text/javascript",
-      ".wasm": "application/wasm",
-      ".html": "text/html",
-      ".css": "text/css",
-      ".svg": "image/svg+xml",
-      ".png": "image/png",
-      ".json": "application/json",
-    };
-    res.setHeader(
-      "Content-Type",
-      mime[path.extname(f)] || "application/octet-stream",
-    );
+    res.setHeader("Content-Type", httpContentType(f));
     res.end(await fs.readFile(f));
   } catch (error) {
     res.statusCode = 404;
@@ -451,8 +439,10 @@ try {
                     const gx = -21 + grid[0] * 60 + x,
                       gy = 63 + grid[1] * 60 + y,
                       gz = 109 + grid[2] * 16 + z;
-                    const expected =
+                    const raw =
                       (((gx * 3 + gy * 5 + gz * 7) % 251) + 251) % 251;
+                    // uint8 is divided by 255 once when packed as float32.
+                    const expected = Math.fround(raw / 255);
                     // Identical context predictions survive wu weighting up to
                     // floating-point roundoff, not necessarily bit-for-bit. This
                     // fixture checks placement/channels, not distinct-context
@@ -660,8 +650,8 @@ try {
   );
   console.log("Initial tiles verified", first);
   if (process.env.REFERENCE_MODEL) {
-    // Recreate exact raw float32 inputs from the served fixture rather than
-    // guessing patch origins from periodic uint8 data or retaining first-run
+    // Recreate exact normalized float32 inputs from the raw uint8 fixture rather
+    // than guessing patch origins from periodic data or retaining first-run
     // tensors (a single worker crop is NOT a displayed blended chunk).
     const key = firstKeys[0];
     const grid = key.split(",").map(Number);
@@ -727,7 +717,8 @@ try {
                       251) +
                       251) %
                     251;
-                  input[i++] = raw;
+                  // Float32Array assignment rounds the single uint8/255 division.
+                  input[i++] = raw / 255;
                 }
             const result = await request({
               kind: "run",

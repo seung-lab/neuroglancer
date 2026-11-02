@@ -1,6 +1,7 @@
 /**
- * Native-grid image input for browser inference. No rendering, interpolation,
- * normalization, Python export, or ONNX runtime dependency is involved.
+ * Native-grid image input for browser inference with dtype-maximum intensity
+ * normalization. No rendering, interpolation, Python export, or ONNX runtime
+ * dependency is involved.
  */
 import type { CoordinateSpace } from "#src/coordinate_transform.js";
 import { makeIdentityTransform } from "#src/coordinate_transform.js";
@@ -13,7 +14,9 @@ import type {
 } from "#src/sliceview/volume/frontend.js";
 import { SliceViewVolumeRenderLayer } from "#src/sliceview/volume/renderlayer.js";
 import { arraysEqual } from "#src/util/array.js";
+import type { DataType } from "#src/util/data_type.js";
 import { valueOrThrow } from "#src/util/error.js";
+import { defaultDataTypeRange } from "#src/util/lerp.js";
 import * as matrix from "#src/util/matrix.js";
 
 type Triple<T> = readonly [T, T, T];
@@ -47,7 +50,9 @@ export interface PreparedInferenceInput {
    * NOT viewer or backend coordinates. The full patch must be within bounds;
    * spec.fillValue applies only to legitimate absent chunks inside the dataset.
    * The owned Float32Array is contiguous ZYX (X fastest), for [1,1,Z,Y,X].
-   * Numeric conversion to float32 is intentional; no intensity scaling occurs.
+   * Integers are divided once by their positive dtype maximum before float32
+   * conversion; FLOAT32 is unchanged. No shifting, clamping, or observed-data
+   * min/max scaling is applied, so signed negatives remain negative.
    */
   readPatch(
     originZYX: readonly number[],
@@ -374,7 +379,20 @@ function getMetadata(
   return metadata;
 }
 
+function getNormalizationDivisor(dataType: DataType): number {
+  if (
+    !Number.isInteger(dataType) ||
+    !Object.hasOwn(defaultDataTypeRange, dataType)
+  ) {
+    unsupported(`data type ${String(dataType)} cannot be normalized`);
+  }
+  // Use only the positive maximum, not invlerp (which would shift signed data).
+  // FLOAT32's default maximum is 1; bigint maxima convert before division.
+  return Number(defaultDataTypeRange[dataType][1]);
+}
+
 export interface ChunkToZYXPatchOptions {
+  readonly dataType: DataType;
   readonly chunkOrigin: readonly number[];
   readonly chunkDimensionsZYX: readonly number[];
   readonly patchLowerChunk: readonly number[];
@@ -384,9 +402,9 @@ export interface ChunkToZYXPatchOptions {
 }
 
 /**
- * Pure packing helper. Reads via the format-independent accessor; does not
- * retain, mutate, or transfer source data. Call ONLY inside fetchChunk's callback.
- * Only overlaps are written; the caller must ensure complete patch coverage.
+ * Pure packing/normalization helper. Reads via the format-independent accessor;
+ * does not retain, mutate, or transfer source data. Call ONLY inside fetchChunk's
+ * callback. Only overlaps are written; the caller must ensure complete coverage.
  */
 export function copyChunkToZYXPatch(
   chunk: Pick<VolumeChunk, "chunkDataSize" | "getValueAt">,
@@ -401,6 +419,7 @@ export function copyChunkToZYXPatch(
     lowerBoundChunk,
     upperBoundChunk,
   } = options;
+  const divisor = getNormalizationDivisor(options.dataType);
   const lower = new Array<number>(3);
   const upper = new Array<number>(3);
   for (let a = 0; a < 3; ++a) {
@@ -430,7 +449,7 @@ export function copyChunkToZYXPatch(
             "Inference chunk accessor did not return a scalar number",
           );
         }
-        output[offset++] = Number(value);
+        output[offset++] = Number(value) / divisor;
       }
     }
   }
@@ -471,6 +490,8 @@ export function prepareInferenceInput(
     const source: VolumeChunkSource = selected.chunkSource;
     const { spec } = source;
     if (spec.rank !== 3) unsupported("only rank-3 chunks are supported");
+    const { dataType } = spec;
+    const divisor = getNormalizationDivisor(dataType);
     const {
       chunkDimensionsZYX: dims,
       chunkScalesZYX,
@@ -617,6 +638,7 @@ export function prepareInferenceInput(
       layer.renderLayers.filter((r) => r instanceof SliceViewVolumeRenderLayer)
         .length === 1 &&
       source.spec === spec &&
+      spec.dataType === dataType &&
       spec.fillValue === fillValue &&
       arraysEqual(spec.chunkDataSize, chunkSize) &&
       arraysEqual(spec.baseVoxelOffset, validitySnapshot.baseVoxelOffset) &&
@@ -688,7 +710,7 @@ export function prepareInferenceInput(
         if (!Number.isSafeInteger(count))
           throw new RangeError("Patch is too large");
         const output = new Float32Array(count);
-        output.fill(Number(spec.fillValue));
+        output.fill(Number(fillValue) / divisor);
         const patchLower = new Array<number>(3);
         const gridLower = new Array<number>(3);
         const gridUpper = new Array<number>(3);
@@ -751,6 +773,7 @@ export function prepareInferenceInput(
                     copyChunkToZYXPatch(
                       volumeChunk,
                       {
+                        dataType,
                         chunkOrigin,
                         chunkDimensionsZYX: dims,
                         patchLowerChunk: patchLower,
