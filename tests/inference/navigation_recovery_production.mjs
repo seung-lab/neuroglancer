@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* global window, navigator, performance, fetch, AbortSignal */
+/* global window, navigator, performance, fetch, AbortSignal, globalThis */
 
 /**
  * Bounded, real-volume production regression; NEVER builds or rewrites app JS.
@@ -30,9 +30,9 @@
  * Fresh browsers run: stationary, navigation, transient. The stationary recipe,
  * layout, source, model and HTTP responses are unchanged. Navigation starts only
  * after a visible live layer AND a loaded worker actually running inference,
- * never the earlier model-inspection load. Navigation returns to the EXACT base
- * position. Transient stays at base, aborts a real selected-input-scale GCS
- * image-data request AFTER that gate, clears routing, then requires a successful
+ * never the earlier model-inspection load. Default navigation returns to the
+ * EXACT base position. Transient stays at base, aborts a real selected-input-scale
+ * GCS image-data request AFTER that gate, clears routing, then requires a successful
  * source retry AND all 25 original outputs. No simultaneous pan can make the
  * injected request irrelevant. Sharded inputs require minishard_bits=0 so only
  * proven image-data bytes, never shard/minishard indexes, are aborted. A retry
@@ -41,6 +41,27 @@
  * bytes, finish successfully and have response.finished() === null.
  * No missing-data/404 fixtures, model/runtime replacements, API mocks or reloads.
  * Worker wrappers only observe messages; tensor contents/transfers are unchanged.
+ * NAVIGATION_MODE=actual opts into alternating real mouse pans (8 steps) and
+ * Shift+wheel (-120). Before the first gesture and after EVERY main gesture,
+ * require a NEW run still pending in a loaded, live worker within 45 s, then
+ * pause (200 ms by default; also exercise MOVE_INTERVAL_MS=1000). Finish with a
+ * six-Shift+wheel burst into an uncached slab, never return to cached base, and
+ * require fresh inference plus dynamic full visible coverage within TIMEOUT.
+ * PREFETCH=0 disables prefetch in this test viewer ONLY, as a diagnostic variant;
+ * PREFETCH=1 (default) never changes the app's normal prefetch setting. Use the
+ * original saved XY-panel layout; coordinates are relative to its rightmost
+ * visible slice panel. Repeat actual navigation at least three times per variant
+ * and pause, alongside the unchanged default stationary/transient controls.
+ * Native ChunkManager.requestChunk IDs remain pending even after cancellation
+ * until their RPC response arrives; final idle requires none outstanding.
+ * Failed cases alone add failureDiagnostics (one shared 3 s budget): frontend
+ * pending native RPC flags, matching chunk requesters/chunks/pending updates, and
+ * ONLY probe worker 0's backend globalThis.rpc.objects for the same source/grid.
+ * Backend fields include requestedState/systemMemoryRequested and new* fields,
+ * priorities, listener counts, promise/abort presence, capacities and read-only
+ * queue membership (null if unavailable/truncated). Shapes/byte lengths only;
+ * no buffers, source parameters, error/abort payloads, hooks or state changes.
+ * Partial captures, timeouts and capture errors never replace the case error.
  * This is a liveness/finite-output check, not a segmentation-quality oracle.
  *
  * Optional env (all bounds are enforced):
@@ -48,15 +69,18 @@
  *   REPORT_DIR=... (default: a new OS temporary directory; JSON + screenshots)
  *   EXPECTED_VISIBLE=25, TIMEOUT=90000 (each startup/recovery wait, ms)
  *   CASE_TIMEOUT=240000, RUN_TIMEOUT=800000 (hard run watchdog)
- *   MOVES=36, MOVE_INTERVAL_MS=70, PAN_STEP_XYZ=144,113,9
- *   MOVE_OFFSETS_JSON=[[0,0,0],[144,113,9],...] (cycled relative XYZ offsets)
+ *   NAVIGATION_MODE=position (default) or actual; PREFETCH=1 (0 requires actual)
+ *   MOVES=36, MOVE_INTERVAL_MS=70 (actual defaults: 24, 200; max pause 10000 ms)
+ *   PAN_STEP_XYZ=144,113,9 (position mode only)
+ *   MOVE_OFFSETS_JSON=[[0,0,0],[144,113,9],...] (position mode relative XYZ offsets)
  *   FAULT_COUNT=1 (1..3), FAULT_TIMEOUT=15000
  *   LAUNCH_OPTIONS={...} (Playwright options; args appended to GPU flags)
  *
  * Offsets use viewer coordinates, not native input voxels. Before launch, real
- * source metadata bounds-checks the entire sweep with generous
- * input-context margins. Keep custom offsets within independently known image
- * coverage: rectangular metadata bounds cannot certify absence of internal holes.
+ * source metadata bounds-checks the position sweep with generous input-context
+ * margins; actual mode checks measured positions after each gesture. Keep custom
+ * offsets within independently known image coverage: rectangular metadata bounds
+ * cannot certify absence of internal holes.
  * Launch errors, missing GPU/shader-f16, CPU/FP32 fallback, a fault that never
  * fires, missing successful retry, incomplete tiles and deadlines are FAILURES,
  * never skips. TIMEOUT does not silently turn a stall into success.
@@ -126,11 +150,297 @@ function coversRange(failed, successful) {
     !!a && !!b && BigInt(b[1]) <= BigInt(a[1]) && BigInt(b[2]) >= BigInt(a[2])
   );
 }
+// Serialized into the frontend or the single chunk worker ONLY after failure.
+function nativeFailureSnapshot({ backend = false, requests = [] }) {
+  const scalar = (v) =>
+    typeof v === "number"
+      ? Number.isFinite(v)
+        ? v
+        : String(v)
+      : typeof v === "boolean"
+        ? v
+        : null;
+  const fields = (v, names) =>
+    Object.fromEntries(names.map((name) => [name, scalar(v?.[name])]));
+  const shape = (v) =>
+    v == null
+      ? null
+      : {
+          type: v.constructor?.name,
+          ...fields(v, ["length", "byteLength"]),
+        };
+  const vector = (v) =>
+    Array.from({ length: Math.min(v?.length ?? 0, 8) }, (_, i) => scalar(v[i]));
+  const rpc = backend ? globalThis.rpc : globalThis.viewer?.dataContext?.rpc;
+  const objects = rpc?.objects;
+  const result = {
+    time: performance.now(),
+    rpcExists: !!rpc,
+    numObjects: objects?.size,
+  };
+  if (!backend) {
+    const probe = globalThis.__navigationRecovery;
+    const worker = probe?.workers[0];
+    result.workerUrl = worker?.url; // Used for exact matching, not saved verbatim.
+    result.nativePending = worker?.nativePending.size ?? 0;
+    result.eventsDropped = probe?.eventsDropped;
+    requests = Array.from(worker?.nativePending ?? [])
+      .slice(0, 128)
+      .map((id) => ({ id }));
+    const byId = new Map(requests.map((r) => [r.id, r]));
+    for (let i = (probe?.events.length ?? 0) - 1; i >= 0; --i) {
+      const e = probe.events[i],
+        r = e.worker === 0 && byId.get(e.id);
+      if (!r) continue;
+      if (e.kind === "native.cancel") r.cancelRecorded = true;
+      if (e.kind === "native.request" && r.source === undefined) {
+        r.source = e.source;
+        r.grid = vector(e.grid);
+        r.key = r.grid.join();
+        r.ageMs = result.time - e.time;
+      }
+    }
+    // If an old request event fell out of the capped trace, retain bounded
+    // active native requesters rather than guess which source/grid it used.
+    if (requests.some((r) => r.source === undefined)) {
+      for (const [source, value] of objects ?? []) {
+        for (const [key] of value?.chunkRequesters ?? []) {
+          if (requests.length >= 128) break;
+          if (/^-?\d+(?:,-?\d+){1,7}$/.test(key))
+            requests.push({
+              source,
+              key,
+              grid: key.split(",").map(Number),
+              requesterFallback: true,
+            });
+        }
+        if (requests.length >= 128) break;
+      }
+    }
+    result.requestsTruncated = result.nativePending > 128;
+  }
+  result.requests = requests;
+  result.pendingRPCs = requests
+    .filter((r) => r.id !== undefined)
+    .map(({ id }) => {
+      const value = objects?.get(id);
+      return {
+        id,
+        present: !!value,
+        resolve: typeof value?.resolve === "function",
+        reject: typeof value?.reject === "function",
+        promise: !!value?.promise,
+        abortController: !!value?.abortController,
+        aborted: value?.abortController?.signal.aborted ?? null,
+      };
+    });
+  const relevant = new Map(
+    requests
+      .filter((r) => r.source !== undefined && r.key !== undefined)
+      .map((r) => [`${r.source}:${r.key}`, r]),
+  );
+  result.chunks = Array.from(relevant.values(), ({ source, key, grid }) => {
+    const s = objects?.get(source),
+      c = s?.chunks?.get(key);
+    const row = {
+      source,
+      key,
+      grid,
+      sourceExists: !!s,
+      chunkExists: !!c,
+      sourceChunkCount: s?.chunks?.size,
+      requesterKeys: s?.chunkRequesters?.size,
+      requesters: s?.chunkRequesters?.get(key)?.length ?? 0,
+      listeners: s?.listeners_?.get(key)?.length ?? 0,
+      ...fields(s, ["refCount", "sourceQueueLevel"]),
+      ...fields(c, [
+        "state",
+        "requestedState",
+        "newRequestedState",
+        "systemMemoryRequested",
+        "newSystemMemoryRequested",
+        "priorityTier",
+        "priority",
+        "newPriorityTier",
+        "newPriority",
+        "systemMemoryBytes",
+        "gpuMemoryBytes",
+        "downloadSlots",
+        "isComputational",
+      ]),
+      chunkDataSize: vector(c?.chunkDataSize),
+      data: shape(c?.data),
+      errorPresent: c?.error != null,
+      downloadAbortController: !!c?.downloadAbortController,
+      downloadAborted: c?.downloadAbortController?.signal.aborted ?? null,
+    };
+    if (backend) {
+      const manager = s?.chunkManager,
+        queue = manager?.queueManager;
+      const capacity = (v) =>
+        v
+          ? {
+              ...fields(v, [
+                "currentItems",
+                "currentSize",
+                "availableItems",
+                "availableSize",
+              ]),
+              itemLimit: scalar(v.itemLimit?.value),
+              sizeLimit: scalar(v.sizeLimit?.value),
+            }
+          : null;
+      row.manager = {
+        id: manager?.rpcId,
+        updatePending: manager?.updatePending != null,
+        recomputeCount: manager?.recomputeChunkPriorities?.count,
+        recomputeListeners: manager?.recomputeChunkPriorities?.handlers?.size,
+        inNewTierChunks: manager?.newTierChunks?.includes(c),
+        inExistingTierChunks: manager?.existingTierChunks?.map((tier) =>
+          tier?.includes(c),
+        ),
+      };
+      row.queue = {
+        id: queue?.rpcId,
+        updatePending: queue?.updatePending != null,
+        ...fields(queue, ["numQueued", "numFailed"]),
+        prefetch: queue?.enablePrefetch?.value,
+        download: queue?.downloadCapacity?.map(capacity),
+        compute: capacity(queue?.computeCapacity),
+        systemMemory: capacity(queue?.systemMemoryCapacity),
+        gpuMemory: capacity(queue?.gpuMemoryCapacity),
+      };
+      // Walk only this chunk's ancestor/previous links; never call queue
+      // candidates() (not a normal iterator) or any application method.
+      const paths = [0, 1].map((slot) => {
+        const nodes = new Set();
+        let node = c;
+        while (node && !nodes.has(node) && nodes.size < 4096) {
+          nodes.add(node);
+          node = node[`prev${slot}`];
+        }
+        return { nodes, truncated: !!node && !nodes.has(node) };
+      });
+      const member = (q, slot) => {
+        if (!q?.heapRoots || !c) return null;
+        const { nodes, truncated } = paths[slot];
+        return q.heapRoots.some((root) => root && nodes.has(root)) ||
+          nodes.has(q.recentHead)
+          ? true
+          : truncated
+            ? null
+            : false;
+      };
+      row.queueMembership = {
+        systemMemoryEviction: member(queue?.systemMemoryEvictionQueue, 0),
+        systemMemoryPromotion: member(queue?.systemMemoryPromotionQueue, 1),
+        gpuMemoryPromotion: member(queue?.gpuMemoryPromotionQueue, 1),
+        gpuMemoryEviction: member(queue?.gpuMemoryEvictionQueue, 1),
+        queuedDownload: queue?.queuedDownloadPromotionQueue?.map((q) =>
+          member(q, 1),
+        ),
+        downloadEviction: queue?.downloadEvictionQueue?.map((q) =>
+          member(q, 1),
+        ),
+        queuedCompute: member(queue?.queuedComputePromotionQueue, 1),
+        computeEviction: member(queue?.computeEvictionQueue, 1),
+        traversalTruncated: paths.map((p) => p.truncated),
+      };
+    }
+    return row;
+  });
+  if (!backend) {
+    const queue = globalThis.viewer?.dataContext?.chunkQueueManager;
+    const updates = [];
+    let update = queue?.pendingChunkUpdates,
+      visited = 0;
+    const seen = new Set();
+    while (update && !seen.has(update) && visited < 4096) {
+      seen.add(update);
+      ++visited;
+      if (relevant.has(`${update.source}:${update.id}`))
+        updates.push({
+          source: update.source,
+          key: update.id,
+          ...fields(update, ["state", "new"]),
+          data: shape(update.data),
+        });
+      update = update.nextUpdate;
+    }
+    result.updates = {
+      matching: updates,
+      visited,
+      truncatedOrCyclic: !!update,
+      deadline: scalar(queue?.chunkUpdateDeadline),
+      prefetch: queue?.enablePrefetch?.value,
+    };
+  }
+  return result;
+}
+async function captureNativeFailure(page) {
+  const result = { timeoutMs: 3000, timedOut: false };
+  const started = Date.now();
+  let expired = false,
+    timer;
+  const collect = async () => {
+    result.phase = "frontend";
+    const { workerUrl, ...frontend } = await page.evaluate(
+      nativeFailureSnapshot,
+      {},
+    );
+    if (expired) return;
+    result.frontend = frontend;
+    if (!frontend.nativePending) {
+      result.backend = {
+        skipped: "No outstanding native RPCs in chunk worker 0",
+      };
+      return;
+    }
+    result.phase = "backend";
+    const worker =
+      workerUrl && page.workers().find((w) => w.url() === workerUrl);
+    if (!worker) {
+      result.backend = { skipped: "Probe chunk worker 0 URL not found" };
+      return;
+    }
+    const url = new URL(workerUrl);
+    url.username = url.password = url.search = url.hash = "";
+    result.chunkWorker = { index: 0, url: url.href };
+    const backend = await worker.evaluate(nativeFailureSnapshot, {
+      backend: true,
+      requests: frontend.requests,
+    });
+    if (!expired) result.backend = backend;
+  };
+  try {
+    await Promise.race([
+      collect().catch(() => {
+        if (!expired) result.captureError = `${result.phase} evaluation failed`;
+      }),
+      new Promise((resolve) => {
+        timer = setTimeout(() => {
+          expired = result.timedOut = true;
+          resolve();
+        }, result.timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    result.elapsedMs = Date.now() - started;
+  }
+  return result;
+}
 function observeWorkers() {
   const probe = (window.__navigationRecovery = {
     workers: [],
     events: [],
     outputCount: 0,
+    tileCount: 0,
+    runSequence: 0,
+    nativeRequests: 0,
+    nativeResponses: 0,
+    nativeCancels: 0,
+    eventsDropped: 0,
     nonfinite: 0,
     invalidOutputs: 0,
     wrongPrecision: 0,
@@ -140,7 +450,10 @@ function observeWorkers() {
   const record = (event) => {
     probe.lastActivity = performance.now();
     probe.events.push({ time: probe.lastActivity, ...event });
-    if (probe.events.length > 2000) probe.events.shift();
+    if (probe.events.length > 20000) {
+      probe.events.shift();
+      probe.eventsDropped++;
+    }
   };
   const NativeWorker = window.Worker;
   window.Worker = class extends NativeWorker {
@@ -153,11 +466,43 @@ function observeWorkers() {
         runs: 0,
         outputs: 0,
         pending: new Set(),
+        nativePending: new Set(),
+        tileRequests: new Map(),
         terminated: false,
       });
       probe.workers.push(worker);
       record({ kind: "worker.create", worker: worker.index, url: worker.url });
       this.addEventListener("message", ({ data }) => {
+        if (
+          data?.functionName === "rpc.promise.response" &&
+          worker.nativePending.delete(data.id)
+        ) {
+          probe.nativeResponses++;
+          record({
+            kind: "native.response",
+            worker: worker.index,
+            id: data.id,
+            error: data.error?.message,
+          });
+        } else if (data?.functionName === "inference/tile") {
+          worker.tileRequests.set(data.id, Array.from(data.gridZYX));
+          record({
+            kind: "tile.request",
+            worker: worker.index,
+            id: data.id,
+            grid: Array.from(data.gridZYX),
+          });
+        } else if (
+          data?.functionName === "rpc.promise.cancel" &&
+          worker.tileRequests.has(data.id)
+        ) {
+          record({
+            kind: "tile.cancel",
+            worker: worker.index,
+            id: data.id,
+            grid: worker.tileRequests.get(data.id),
+          });
+        }
         if (
           data?.functionName === "rpc.promise.response" &&
           Object.hasOwn(data, "error")
@@ -243,6 +588,45 @@ function observeWorkers() {
     }
     postMessage(data, ...args) {
       const worker = this.observation;
+      if (data?.functionName === "ChunkManager.requestChunk") {
+        worker.nativePending.add(data.id);
+        probe.nativeRequests++;
+        record({
+          kind: "native.request",
+          worker: worker.index,
+          id: data.id,
+          source: data.source?.id,
+          grid: Array.from(data.chunkGridPosition),
+        });
+      } else if (
+        data?.functionName === "rpc.promise.cancel" &&
+        worker.nativePending.has(data.id)
+      ) {
+        // Cancel requests abort; only a response proves the native RPC settled.
+        probe.nativeCancels++;
+        record({ kind: "native.cancel", worker: worker.index, id: data.id });
+      } else if (
+        data?.functionName === "rpc.promise.response" &&
+        worker.tileRequests.has(data.id)
+      ) {
+        if (Object.hasOwn(data, "value")) {
+          probe.tileCount++;
+          if (!(data.value instanceof Float32Array) || !data.value.length)
+            probe.invalidOutputs++;
+          if (data.value instanceof Float32Array)
+            for (const value of data.value)
+              if (!Number.isFinite(value)) probe.nonfinite++;
+        }
+        record({
+          kind: "tile.result",
+          worker: worker.index,
+          id: data.id,
+          grid: worker.tileRequests.get(data.id),
+          error: data.error?.message,
+          length: data.value?.length,
+        });
+        worker.tileRequests.delete(data.id);
+      }
       if (data?.kind === "load") {
         worker.load = {
           provider: data.provider,
@@ -254,7 +638,12 @@ function observeWorkers() {
         worker.runs++;
         worker.geometry = data.geometry;
         worker.pending.add(data.id);
-        record({ kind: "run", worker: worker.index, id: data.id });
+        worker.lastRun = {
+          id: data.id,
+          sequence: ++probe.runSequence,
+          time: performance.now(),
+        };
+        record({ kind: "run", worker: worker.index, ...worker.lastRun });
       }
       return super.postMessage(data, ...args);
     }
@@ -280,6 +669,15 @@ function observeWorkers() {
       .map((w) => ({
         ...w,
         pending: w.pending.size,
+        nativePending: [...w.nativePending],
+        tileRequests: w.tileRequests.size,
+      }));
+    const native = probe.workers
+      .filter((w) => w.nativePending.size)
+      .map((w) => ({
+        worker: w.index,
+        ids: [...w.nativePending],
+        terminated: w.terminated,
       }));
     return {
       time: performance.now(),
@@ -292,6 +690,14 @@ function observeWorkers() {
       liveLoaded: workers.some((w) => !w.terminated && w.loaded && w.runs > 0),
       workers,
       outputs: probe.outputCount,
+      tiles: probe.tileCount,
+      runSequence: probe.runSequence,
+      nativeRequests: probe.nativeRequests,
+      nativeResponses: probe.nativeResponses,
+      nativeCancels: probe.nativeCancels,
+      nativePending: native.reduce((n, w) => n + w.ids.length, 0),
+      native,
+      eventsDropped: probe.eventsDropped,
       lastOutputAt: probe.lastOutputAt,
       nonfinite: probe.nonfinite,
       invalidOutputs: probe.invalidOutputs,
@@ -390,6 +796,22 @@ try {
     scale?.key && scale.size?.length === 3 && scale.resolution?.length === 3,
   );
   const scalePrefix = prefix + scale.key.replace(/\/$/, "") + "/";
+  const navigationMode = process.env.NAVIGATION_MODE ?? "position";
+  assert(
+    ["position", "actual"].includes(navigationMode),
+    "Invalid NAVIGATION_MODE",
+  );
+  const actual = navigationMode === "actual";
+  const prefetch = integer("PREFETCH", 1, 0, 1);
+  assert(
+    prefetch || actual,
+    "PREFETCH=0 diagnostic requires NAVIGATION_MODE=actual",
+  );
+  assert(
+    !actual || (!process.env.PAN_STEP_XYZ && !process.env.MOVE_OFFSETS_JSON),
+    "Position offsets do not apply to NAVIGATION_MODE=actual",
+  );
+  const gateTimeout = 45000;
   const step = xyz(process.env.PAN_STEP_XYZ ?? "144,113,9", "PAN_STEP_XYZ");
   const offsets = process.env.MOVE_OFFSETS_JSON
     ? JSON.parse(process.env.MOVE_OFFSETS_JSON)
@@ -412,13 +834,20 @@ try {
     offsets.some((p) => p[2] !== 0),
     "Navigation must scroll Z",
   );
-  const moves = integer("MOVES", 36, 2, 120);
-  const interval = integer("MOVE_INTERVAL_MS", 70, 20, 1000);
-  const positions = Array.from({ length: moves }, (_, i) =>
-    base.map((v, j) => v + offsets[i % offsets.length][j]),
+  const moves = integer("MOVES", actual ? 24 : 36, 2, 120);
+  const interval = integer(
+    "MOVE_INTERVAL_MS",
+    actual ? 200 : 70,
+    actual ? 200 : 20,
+    10000,
   );
+  const positions = actual
+    ? []
+    : Array.from({ length: moves }, (_, i) =>
+        base.map((v, j) => v + offsets[i % offsets.length][j]),
+      );
   const faultPosition = base;
-  const checkCoverage = (metadata) => {
+  const checkCoverage = (metadata, points = [base, ...positions]) => {
     // Two full input contexts plus one native chunk on each side is deliberately
     // conservative. Gate-time model metadata supplies the real tensor shape.
     const context = metadata?.inputShape?.slice(-3).reverse();
@@ -426,7 +855,7 @@ try {
       context?.length === 3 &&
         context.every((v) => Number.isSafeInteger(v) && v > 0),
     );
-    for (const p of [base, ...positions])
+    for (const p of points)
       p.forEach((v, i) => {
         const dimension = state.dimensions[["x", "y", "z"][i]];
         assert.equal(dimension[1], "m");
@@ -439,8 +868,8 @@ try {
         );
       });
   };
-  // The full tensor-aware check runs before any movement. This early check keeps
-  // even a malformed custom sweep from launching a browser out of image bounds.
+  // Tensor-aware checks run again at the startup gate and measured actual
+  // positions. This early check rejects an out-of-bounds base or position sweep.
   checkCoverage({ inputShape: [1, 1, 1, 1, 1] });
   const expectedVisible = integer("EXPECTED_VISIBLE", 25, 1, 10000);
   const faultCount = integer("FAULT_COUNT", 1, 1, 3);
@@ -485,6 +914,10 @@ try {
     timeout,
     caseTimeout,
     runTimeout,
+    navigationMode,
+    prefetch: !!prefetch,
+    gateTimeout,
+    moves,
     positions,
     interval,
     faultPosition,
@@ -619,7 +1052,9 @@ try {
             needed: s.needed,
             available: s.available,
             outputs: s.outputs,
+            tiles: s.tiles,
             pending: s.pending,
+            nativePending: s.nativePending,
             liveLoaded: s.liveLoaded,
           });
           lastLog = Date.now();
@@ -628,7 +1063,7 @@ try {
         await sleep(250);
       }
       throw new Error(
-        `${name}: ${stage} exceeded ${limit}ms; last progress ${s?.available}/${s?.needed}, outputs ${s?.outputs}`,
+        `${name}: ${stage} exceeded ${limit}ms; last progress ${s?.available}/${s?.needed}, outputs ${s?.outputs}, native pending ${JSON.stringify(s?.native)}`,
       );
     };
     const complete = (s, position, count) =>
@@ -640,6 +1075,7 @@ try {
       (count === undefined || s.needed === count) &&
       s.outputs > 0 &&
       s.pending === 0 &&
+      s.nativePending === 0 &&
       s.quietMs >= 500;
     const move = async (position) => {
       assert(!stopped, "Case already stopped");
@@ -820,6 +1256,13 @@ try {
         await page.waitForFunction(() => window.viewer?.state, null, {
           timeout,
         });
+        entry.prefetchControl = await page.evaluate((disable) => {
+          const setting =
+            window.viewer.dataContext.chunkQueueManager.enablePrefetch;
+          if (disable) setting.value = false;
+          return { enabled: setting.value, disabledByTest: disable };
+        }, !prefetch);
+        assert.equal(entry.prefetchControl.enabled, !!prefetch);
         entry.adapter = await page.evaluate(async () => {
           const adapter = await navigator.gpu?.requestAdapter();
           return {
@@ -866,7 +1309,140 @@ try {
           timeout: 5000,
         });
 
-        if (name === "navigation") {
+        if (name === "navigation" && actual) {
+          entry.stage = "bounded actual-input navigation";
+          entry.inputPanel = await page.evaluate(() => {
+            const panels = [...window.viewer.display.panels]
+              .filter((p) => p.visible && p.sliceView)
+              .map((p) => p.element.getBoundingClientRect())
+              .filter((r) => r.width > 100 && r.height > 100)
+              .sort((a, b) => b.x - a.x);
+            const r = panels[0];
+            return r && { x: r.x, y: r.y, width: r.width, height: r.height };
+          });
+          assert(
+            entry.inputPanel,
+            "Actual input needs a visible XY slice panel",
+          );
+          const panel = entry.inputPanel;
+          const point = (x, y) => [
+            panel.x + panel.width * x,
+            panel.y + panel.height * y,
+          ];
+          const gate = async (after, index, gesture) => {
+            entry.stage = `actual input gate ${index} (${gesture})`;
+            const handle = await page.waitForFunction(
+              ({ after, name }) => {
+                const w = window.__navigationRecovery.workers.find(
+                  (w) =>
+                    !w.terminated &&
+                    w.loaded &&
+                    w.lastRun?.sequence > after &&
+                    w.pending.has(w.lastRun.id),
+                );
+                return (
+                  w && {
+                    ...window.__navigationRecoverySnapshot(name),
+                    activeRun: { worker: w.index, ...w.lastRun },
+                  }
+                );
+              },
+              { after, name: layer.name },
+              { timeout: gateTimeout, polling: "raf" },
+            );
+            const s = await handle.jsonValue();
+            await handle.dispose();
+            healthy(s);
+            checkCoverage(live.metadata, [s.position]);
+            entry.samples.push({ stage: entry.stage, index, gesture, ...s });
+            log({
+              case: name,
+              stage: entry.stage,
+              activeRun: s.activeRun,
+              position: s.position,
+              outputs: s.outputs,
+              tiles: s.tiles,
+              available: s.available,
+              needed: s.needed,
+              pending: s.pending,
+              nativePending: s.nativePending,
+            });
+            await sleep(interval);
+          };
+          // Gate the first move too. Thereafter, only a run newer than the
+          // preceding gesture can release the next move; stale/idle loads cannot.
+          await gate(0, -1, "before first gesture");
+          for (let index = 0; index < moves; index++) {
+            assert(!stopped, "Case already stopped");
+            const before = await snapshot();
+            const gesture = index % 2 === 0 ? "drag" : "shift-wheel";
+            if (gesture === "drag") {
+              await page.mouse.move(...point(0.28, 0.36));
+              await page.mouse.down();
+              try {
+                await page.mouse.move(...point(0.9, 0.56), { steps: 8 });
+              } finally {
+                await page.mouse.up();
+              }
+            } else {
+              await page.mouse.move(...point(0.43, 0.46));
+              await page.keyboard.down("Shift");
+              try {
+                await page.mouse.wheel(0, -120);
+              } finally {
+                await page.keyboard.up("Shift");
+              }
+            }
+            await gate(before.runSequence, index, gesture);
+            assert(
+              !at((await snapshot()).position, before.position),
+              "Actual gesture did not navigate",
+            );
+          }
+          entry.stage = "six-Shift+wheel fresh-slab burst";
+          const before = await snapshot();
+          await page.mouse.move(...point(0.43, 0.46));
+          await page.keyboard.down("Shift");
+          try {
+            for (let i = 0; i < 6; i++) await page.mouse.wheel(0, -120);
+          } finally {
+            await page.keyboard.up("Shift");
+          }
+          // Wheel dispatch does not wait for consumption/rendering. Let visible
+          // chunk demand catch up before choosing the exact recovery position.
+          await page.evaluate(
+            () =>
+              new Promise((resolve) =>
+                window.requestAnimationFrame(() =>
+                  window.requestAnimationFrame(resolve),
+                ),
+              ),
+          );
+          entry.recoveryStart = await snapshot();
+          healthy(entry.recoveryStart);
+          entry.recoveryPosition = entry.recoveryStart.position;
+          checkCoverage(live.metadata, [entry.recoveryPosition]);
+          assert(
+            entry.recoveryPosition[2] > before.position[2] &&
+              !at(entry.recoveryPosition, base),
+            "Final burst must reach a fresh Z position",
+          );
+          assert(
+            entry.recoveryStart.needed > entry.recoveryStart.available,
+            "Final viewport must contain uncached tiles, not cached coverage",
+          );
+          entry.navigationStopped = Date.now();
+          entry.samples.push({ stage: entry.stage, ...entry.recoveryStart });
+          log({
+            case: name,
+            stage: entry.stage,
+            position: entry.recoveryPosition,
+            outputs: entry.recoveryStart.outputs,
+            available: entry.recoveryStart.available,
+            needed: entry.recoveryStart.needed,
+            nativePending: entry.recoveryStart.nativePending,
+          });
+        } else if (name === "navigation") {
           entry.stage = "bounded XYZ navigation";
           for (const position of positions) {
             await move(position);
@@ -908,10 +1484,27 @@ try {
             timeout: 5000,
           });
         }
-        entry.stage = "all original visible outputs without reload";
+        const actualRecovery = name === "navigation" && actual;
+        entry.stage = actualRecovery
+          ? "all fresh-position visible outputs without reload or unresolved native RPCs"
+          : "all original visible outputs without reload";
         entry.final = await wait(entry.stage, (s) =>
-          complete(s, base, expectedVisible),
+          actualRecovery
+            ? complete(s, entry.recoveryPosition) &&
+              s.outputs > entry.recoveryStart.outputs &&
+              s.tiles > entry.recoveryStart.tiles
+            : complete(s, base, expectedVisible),
         );
+        assert.deepEqual(
+          entry.final.native,
+          [],
+          "Unresolved native chunk RPCs at idle",
+        );
+        if (actualRecovery)
+          assert(
+            entry.final.nativeRequests > 0,
+            "Native chunk RPC observation must be exercised",
+          );
         assert(
           entry.final.firstOutput.max > entry.final.firstOutput.min,
           "First real model output must not be constant",
@@ -984,6 +1577,13 @@ try {
             .catch(() => null),
           sleep(3000).then(() => null),
         ]);
+        if (!entry.ok)
+          entry.failureDiagnostics = await captureNativeFailure(page).catch(
+            () => ({
+              captureError:
+                "Failure diagnostics unavailable; original case error retained",
+            }),
+          );
         await page
           .screenshot({
             path: path.join(
