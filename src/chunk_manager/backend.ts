@@ -122,6 +122,10 @@ export class Chunk implements Disposable {
 
   newRequestedState = ChunkState.NEW;
 
+  // Explicit frontend system-memory demand, independent of any GPU demand.
+  systemMemoryRequested = false;
+  newSystemMemoryRequested = false;
+
   /**
    * Abort controller used to cancel the pending download.  Set to undefined except when state !==
    * DOWNLOADING.  This should not be accessed by code outside this module.
@@ -138,6 +142,8 @@ export class Chunk implements Disposable {
     this.state = ChunkState.NEW;
     this.requestedState = ChunkState.NEW;
     this.newRequestedState = ChunkState.NEW;
+    this.systemMemoryRequested = false;
+    this.newSystemMemoryRequested = false;
   }
 
   /**
@@ -153,6 +159,8 @@ export class Chunk implements Disposable {
     this.newPriority = Number.NEGATIVE_INFINITY;
     this.requestedState = this.newRequestedState;
     this.newRequestedState = ChunkState.NEW;
+    this.systemMemoryRequested = this.newSystemMemoryRequested;
+    this.newSystemMemoryRequested = false;
   }
 
   dispose() {
@@ -174,7 +182,7 @@ export class Chunk implements Disposable {
   }
 
   downloadSucceeded() {
-    if (this.requestedState === ChunkState.SYSTEM_MEMORY) {
+    if (this.systemMemoryRequested) {
       this.queueManager.moveChunkToFrontend(this);
       this.queueManager.updateChunkState(this, ChunkState.SYSTEM_MEMORY);
     } else {
@@ -711,6 +719,13 @@ export class ChunkQueueManager extends SharedObjectCounterpart {
   );
 
   /**
+   * Contains worker-resident chunks requested in frontend system memory.
+   */
+  private systemMemoryPromotionQueue = makeChunkPriorityQueue1(
+    Chunk.priorityGreater,
+  );
+
+  /**
    * Contains all chunks in SYSTEM_MEMORY state not in RECENT priority tier.
    */
   private gpuMemoryPromotionQueue = makeChunkPriorityQueue1(
@@ -783,7 +798,13 @@ export class ChunkQueueManager extends SharedObjectCounterpart {
       case ChunkState.SYSTEM_MEMORY_WORKER:
       case ChunkState.SYSTEM_MEMORY:
         yield this.systemMemoryEvictionQueue;
-        if (chunk.requestedState === ChunkState.GPU_MEMORY) {
+        if (
+          chunk.state === ChunkState.SYSTEM_MEMORY_WORKER &&
+          chunk.systemMemoryRequested &&
+          chunk.priorityTier !== ChunkPriorityTier.RECENT
+        ) {
+          yield this.systemMemoryPromotionQueue;
+        } else if (chunk.requestedState === ChunkState.GPU_MEMORY) {
           yield this.gpuMemoryPromotionQueue;
         }
         break;
@@ -867,10 +888,11 @@ export class ChunkQueueManager extends SharedObjectCounterpart {
   performChunkPriorityUpdate(chunk: Chunk) {
     if (
       chunk.priorityTier === chunk.newPriorityTier &&
-      chunk.priority === chunk.newPriority
+      chunk.priority === chunk.newPriority &&
+      chunk.requestedState === chunk.newRequestedState &&
+      chunk.systemMemoryRequested === chunk.newSystemMemoryRequested
     ) {
-      chunk.newPriorityTier = ChunkPriorityTier.RECENT;
-      chunk.newPriority = Number.NEGATIVE_INFINITY;
+      chunk.updatePriorityProperties();
       return;
     }
     if (DEBUG_CHUNK_UPDATES) {
@@ -910,6 +932,18 @@ export class ChunkQueueManager extends SharedObjectCounterpart {
   markRecentlyUsed(chunk: Chunk) {
     this.removeChunkFromQueues_(chunk);
     this.addChunkToQueues_(chunk);
+  }
+
+  private processSystemMemoryPromotions_() {
+    const promotionCandidates = this.systemMemoryPromotionQueue.candidates();
+    while (true) {
+      const promotionCandidate = promotionCandidates.next().value;
+      if (promotionCandidate === undefined) {
+        break;
+      }
+      this.moveChunkToFrontend(promotionCandidate);
+      this.updateChunkState(promotionCandidate, ChunkState.SYSTEM_MEMORY);
+    }
   }
 
   private processGPUPromotions_() {
@@ -1092,6 +1126,7 @@ export class ChunkQueueManager extends SharedObjectCounterpart {
     }
     this.updatePending = null;
     const gpuMemoryGeneration = this.gpuMemoryGeneration;
+    this.processSystemMemoryPromotions_();
     this.processGPUPromotions_();
     this.processQueuePromotions_();
     this.logStatistics();
@@ -1271,6 +1306,9 @@ export class ChunkManager extends SharedObjectCounterpart {
       throw new Error("Not going to request a chunk with the RECENT tier");
     }
     chunk.newRequestedState = Math.min(chunk.newRequestedState, requestedState);
+    if (requestedState === ChunkState.SYSTEM_MEMORY) {
+      chunk.newSystemMemoryRequested = true;
+    }
     if (chunk.newPriorityTier === ChunkPriorityTier.RECENT) {
       this.newTierChunks.push(chunk);
     }

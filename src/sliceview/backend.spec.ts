@@ -42,16 +42,10 @@ import {
 } from "#src/datasource/inference/base.js";
 import { publishLiveInference } from "#src/datasource/inference/frontend.js";
 import type { LiveInference } from "#src/inference/live.js";
-import {
-  SliceViewChunk,
-  SliceViewChunkSourceBackend,
-} from "#src/sliceview/backend.js";
-import {
-  makeSliceViewChunkSpecification,
-  SLICEVIEW_REQUEST_CHUNK_RPC_ID,
-} from "#src/sliceview/base.js";
+import { SLICEVIEW_REQUEST_CHUNK_RPC_ID } from "#src/sliceview/base.js";
 import { SliceViewChunkSource } from "#src/sliceview/frontend.js";
 import type { VolumeChunk } from "#src/sliceview/volume/backend.js";
+import { VolumeChunkSource } from "#src/sliceview/volume/backend.js";
 import {
   DataType,
   makeVolumeChunkSpecification,
@@ -78,6 +72,7 @@ const GRID = Float32Array.of(0, 0, 0);
 const KEY = "0,0,0";
 const NETWORK_URL = "https://example.invalid/input.shard";
 const TWENTY_MINUTES = 20 * 60 * 1000;
+const NATIVE_DATA = [3, 17, 129, 254];
 
 interface RpcTarget {
   onmessage: ((event: MessageEvent) => void) | null;
@@ -85,7 +80,7 @@ interface RpcTarget {
 }
 
 interface Download {
-  chunk: SliceViewChunk;
+  chunk: VolumeChunk;
   key: string;
   signal: AbortSignal;
   startedAt: number;
@@ -123,14 +118,20 @@ function fixture(options: { immediateDownloadFailure?: () => unknown } = {}) {
   const delivered: { to: string; functionName: string; id: number }[] = [];
   const frontendTarget: RpcTarget = {
     onmessage: null,
-    postMessage(data) {
-      traffic.push({ to: "backend", data: structuredClone(data) });
+    postMessage(data, transfers) {
+      traffic.push({
+        to: "backend",
+        data: structuredClone(data, { transfer: transfers }),
+      });
     },
   };
   const backendTarget: RpcTarget = {
     onmessage: null,
-    postMessage(data) {
-      traffic.push({ to: "frontend", data: structuredClone(data) });
+    postMessage(data, transfers) {
+      traffic.push({
+        to: "frontend",
+        data: structuredClone(data, { transfer: transfers }),
+      });
     },
   };
   const frontendRpc = new RPC(frontendTarget, false);
@@ -196,18 +197,21 @@ function fixture(options: { immediateDownloadFailure?: () => unknown } = {}) {
   }) as unknown as FrontendManager;
   frontendRpc.set(11, frontendManager);
 
-  class NativeBackend extends SliceViewChunkSourceBackend {
-    chunkConstructor = SliceViewChunk;
+  class NativeBackend extends VolumeChunkSource {
     downloads: Download[] = [];
 
-    download(chunk: SliceViewChunk, signal: AbortSignal) {
+    download(chunk: VolumeChunk, signal: AbortSignal) {
       const { promise, resolve, reject } = Promise.withResolvers<void>();
       this.downloads.push({
         chunk,
         key: chunk.key!,
         signal,
         startedAt: Date.now(),
-        resolve,
+        resolve: () => {
+          chunk.data = Uint8Array.from(NATIVE_DATA);
+          chunk.chunkDataSize = this.spec.chunkDataSize;
+          resolve();
+        },
         reject,
       });
       if (options.immediateDownloadFailure !== undefined) {
@@ -217,14 +221,16 @@ function fixture(options: { immediateDownloadFailure?: () => unknown } = {}) {
     }
   }
   class NativeFrontend extends SliceViewChunkSource {
-    getChunk() {
-      return new FrontendChunk(this);
+    getChunk(update: { data: Uint8Array }) {
+      // Retain the real deserialized payload without constructing a GL format.
+      return Object.assign(new FrontendChunk(this), { data: update.data });
     }
   }
-  const spec = makeSliceViewChunkSpecification({
+  const spec = makeVolumeChunkSpecification({
     rank: 3,
-    chunkDataSize: Uint32Array.of(1, 1, 1),
-    upperVoxelBound: Float32Array.of(2, 1, 1),
+    dataType: DataType.UINT8,
+    chunkDataSize: Uint32Array.of(4, 1, 1),
+    upperVoxelBound: Float32Array.of(8, 1, 1),
   });
   const source = new NativeBackend(backendRpc, {
     id: 12,
@@ -257,6 +263,19 @@ function fixture(options: { immediateDownloadFailure?: () => unknown } = {}) {
           retryTransientErrors: options.retryTransientErrors,
         },
         { signal: options.signal },
+      ),
+    );
+    return { ...result, id };
+  }
+
+  function fetch() {
+    const id = Reflect.get(frontendRpc, "nextId") as number;
+    const result = observe(
+      frontendSource.fetchChunk(
+        GRID,
+        (chunk) =>
+          Array.from((chunk as FrontendChunk & { data: Uint8Array }).data),
+        {},
       ),
     );
     return { ...result, id };
@@ -298,6 +317,7 @@ function fixture(options: { immediateDownloadFailure?: () => unknown } = {}) {
     deliver,
     tick,
     request,
+    fetch,
     listenerCount,
     demandCount,
     expectRequestCleaned,
@@ -609,6 +629,9 @@ describe("sliceview input RPC transient download recovery", () => {
     await failDownload(h);
     await h.tick(100);
     const captured = h.source.chunks.get(KEY)!;
+    expect(captured.systemMemoryRequested).toBe(true);
+    // Recycling must also clear demand accumulated but not yet committed.
+    captured.newSystemMemoryRequested = true;
     // Force eviction/replacement at the cache boundary while preserving queue
     // accounting. The retry must check both cache identity and current state;
     // the same object is now an unrelated FAILED chunk, not the requested key.
@@ -616,6 +639,8 @@ describe("sliceview input RPC transient download recovery", () => {
     h.source.removeChunk(captured);
     const other = h.source.getChunk(Float32Array.of(1, 0, 0));
     expect(other).toBe(captured);
+    expect(other.systemMemoryRequested).toBe(false);
+    expect(other.newSystemMemoryRequested).toBe(false);
     const otherError = networkError();
     other.error = otherError;
     h.backendQueue.updateChunkState(other, ChunkState.FAILED);
@@ -632,6 +657,550 @@ describe("sliceview input RPC transient download recovery", () => {
     await expect(request.promise).resolves.toBeUndefined();
     h.expectRequestCleaned(request.id);
   });
+});
+
+// Fixed iteration counts keep a broken handoff from turning into a test timeout.
+async function drainNativeHandoff(h: Fixture) {
+  for (let pass = 0; pass < 4; ++pass) {
+    await h.tick();
+    h.frontendQueue.flushPendingChunkUpdates();
+    await h.deliver();
+  }
+}
+
+async function cacheNativeInWorker(h: Fixture, keepDemand = false) {
+  let requestedState = ChunkState.SYSTEM_MEMORY_WORKER;
+  const disposeDemand = h.backendManager.recomputeChunkPriorities.add(() => {
+    h.backendManager.requestChunk(
+      h.source.getChunk(GRID),
+      ChunkPriorityTier.VISIBLE,
+      Infinity,
+      requestedState,
+    );
+  });
+  h.backendManager.scheduleUpdateChunkPriorities();
+  await h.tick();
+  expect(h.source.downloads).toHaveLength(1);
+  const download = h.source.downloads[0];
+  download.resolve();
+  await h.deliver();
+  expect(download.chunk.state).toBe(ChunkState.SYSTEM_MEMORY_WORKER);
+  if (!keepDemand) {
+    disposeDemand();
+    h.backendManager.scheduleUpdateChunkPriorities();
+    await h.tick();
+  }
+  return {
+    chunk: download.chunk,
+    disposeDemand,
+    requestState(state: ChunkState) {
+      requestedState = state;
+      h.backendManager.scheduleUpdateChunkPriorities();
+    },
+  };
+}
+
+async function expectNativeHandoff(h: Fixture, chunk: VolumeChunk) {
+  const data = chunk.data as Uint8Array;
+  expect(Array.from(data)).toEqual(NATIVE_DATA);
+  const buffer = data.buffer;
+  const transfer = vi.spyOn(h.backendQueue, "moveChunkToFrontend");
+  const gpuUpload = vi.spyOn(h.backendQueue, "copyChunkToGPU");
+  const request = h.request();
+  const consumer = h.fetch();
+  await drainNativeHandoff(h);
+  expect(request.state(), "native RPC must finish without GPU capacity").toBe(
+    "resolved",
+  );
+  expect(consumer.state(), "frontend data consumer must finish").toBe(
+    "resolved",
+  );
+  await expect(request.promise).resolves.toBeUndefined();
+  await expect(consumer.promise).resolves.toEqual(NATIVE_DATA);
+  expect(chunk.state).toBe(ChunkState.SYSTEM_MEMORY);
+  expect(transfer).toHaveBeenCalledExactlyOnceWith(chunk);
+  expect(gpuUpload).not.toHaveBeenCalled();
+  expect(buffer.byteLength).toBe(0);
+  expect(chunk.data).toBeNull();
+  expect(h.source.downloads).toHaveLength(1);
+  expect(h.frontendSource.chunks.get(KEY)!.state).toBe(
+    ChunkState.SYSTEM_MEMORY,
+  );
+  expect(h.backendQueue.systemMemoryCapacity.currentItems).toBe(1);
+  expect(h.backendQueue.systemMemoryCapacity.currentSize).toBe(
+    NATIVE_DATA.length,
+  );
+  expect(h.backendQueue.downloadCapacity[0].currentItems).toBe(0);
+  expect(h.backendQueue.gpuMemoryCapacity.currentItems).toBe(0);
+  expect(h.backendQueue.gpuMemoryCapacity.currentSize).toBe(0);
+  expect(h.frontendSource.chunkRequesters).toBeUndefined();
+  h.expectRequestCleaned(request.id);
+  h.expectRequestCleaned(consumer.id);
+  await drainNativeHandoff(h);
+  expect(transfer).toHaveBeenCalledTimes(1);
+  expect(chunk.priorityTier).toBe(ChunkPriorityTier.RECENT);
+  expect(chunk.requestedState).toBe(ChunkState.NEW);
+}
+
+describe("native worker-to-frontend system memory handoff", () => {
+  it("promotes a late download after its only requester aborts and is demoted", async () => {
+    const h = fixture();
+    h.backendQueue.gpuMemoryCapacity.itemLimit.value = 0;
+    const controller = new AbortController();
+    const canceled = await beginRequest(h, undefined, controller.signal);
+    const download = h.source.downloads[0];
+    const { chunk } = download;
+    expect(chunk.state).toBe(ChunkState.DOWNLOADING);
+    expect(h.listenerCount()).toBe(1);
+    controller.abort();
+    await h.deliver();
+    await h.tick();
+    expect(canceled.state()).toBe("rejected");
+    await expect(canceled.promise).rejects.toHaveProperty("name", "AbortError");
+    h.expectRequestCleaned(canceled.id);
+    expect(chunk.priorityTier).toBe(ChunkPriorityTier.RECENT);
+    expect(chunk.requestedState).toBe(ChunkState.NEW);
+    // Ordinary native downloads intentionally survive removal of their requester.
+    expect(download.signal.aborted).toBe(false);
+    expect(chunk.state).toBe(ChunkState.DOWNLOADING);
+    download.resolve();
+    await h.deliver();
+    await h.tick();
+    expect(chunk.state).toBe(ChunkState.SYSTEM_MEMORY_WORKER);
+    expect(h.frontendSource.chunks.size).toBe(0);
+    expect(h.backendQueue.downloadCapacity[0].currentItems).toBe(0);
+    await expectNativeHandoff(h, chunk);
+  });
+
+  it("promotes an already worker-resident chunk once for concurrent native consumers", async () => {
+    const h = fixture();
+    h.backendQueue.gpuMemoryCapacity.itemLimit.value = 0;
+    const { chunk } = await cacheNativeInWorker(h);
+    expect(chunk.priorityTier).toBe(ChunkPriorityTier.RECENT);
+    await expectNativeHandoff(h, chunk);
+  });
+
+  it.each(["cached", "cold", "inflight"] as const)(
+    "completes a %s native read alongside GPU demand before GPU admission, then promotes without another transfer",
+    async (phase) => {
+      const h = fixture();
+      h.backendQueue.gpuMemoryCapacity.itemLimit.value = 0;
+      const chunk =
+        phase === "cached"
+          ? (await cacheNativeInWorker(h)).chunk
+          : (h.source.getChunk(GRID) as VolumeChunk);
+      let data = chunk.data as Uint8Array | null;
+      const serialize = vi.spyOn(chunk, "serialize");
+      const transfer = vi.spyOn(h.backendQueue, "moveChunkToFrontend");
+      const gpuUpload = vi.spyOn(h.backendQueue, "copyChunkToGPU");
+      const disposeGpuDemand = h.backendManager.recomputeChunkPriorities.add(
+        () => {
+          h.backendManager.requestChunk(
+            chunk,
+            ChunkPriorityTier.VISIBLE,
+            Infinity,
+            ChunkState.GPU_MEMORY,
+          );
+        },
+      );
+      h.backendManager.scheduleUpdateChunkPriorities();
+      if (phase !== "cold") {
+        await drainNativeHandoff(h);
+        expect(chunk.state).toBe(
+          phase === "cached"
+            ? ChunkState.SYSTEM_MEMORY_WORKER
+            : ChunkState.DOWNLOADING,
+        );
+        expect(chunk.requestedState).toBe(ChunkState.GPU_MEMORY);
+        expect(chunk.systemMemoryRequested).toBe(false);
+        expect(transfer).not.toHaveBeenCalled();
+      }
+      const notifications: unknown[] = [];
+      const listener = () => {
+        if (chunk.state !== ChunkState.SYSTEM_MEMORY) return;
+        notifications.push({
+          transfers: transfer.mock.calls.length,
+          workerData: chunk.data,
+          workerBufferBytes: data!.buffer.byteLength,
+        });
+      };
+      h.source.registerChunkListener(KEY, listener);
+
+      // The native request must remain independently satisfiable even though
+      // Math.min(GPU_MEMORY, SYSTEM_MEMORY) still aggregates to GPU_MEMORY.
+      // Tier and priority also remain unchanged when this demand is added.
+      const request = h.request();
+      const consumer = h.fetch();
+      await h.deliver();
+      await h.tick();
+      if (phase !== "cached") {
+        expect(h.source.downloads).toHaveLength(1);
+        expect(chunk.state).toBe(ChunkState.DOWNLOADING);
+        expect(chunk.requestedState).toBe(ChunkState.GPU_MEMORY);
+        expect(chunk.systemMemoryRequested).toBe(true);
+        expect(chunk.newSystemMemoryRequested).toBe(false);
+        h.source.downloads[0].resolve();
+        data = chunk.data as Uint8Array;
+      }
+      await drainNativeHandoff(h);
+      h.source.unregisterChunkListener(KEY, listener);
+      expect(notifications).toEqual([
+        { transfers: 1, workerData: null, workerBufferBytes: 0 },
+      ]);
+      expect(chunk.requestedState).toBe(ChunkState.GPU_MEMORY);
+      expect(chunk.priorityTier).toBe(ChunkPriorityTier.VISIBLE);
+      expect(chunk.priority).toBe(Infinity);
+      expect(h.backendQueue.gpuMemoryCapacity.currentItems).toBe(0);
+      expect(gpuUpload).not.toHaveBeenCalled();
+      expect(h.source.downloads).toHaveLength(1);
+      expect.soft(chunk.state).toBe(ChunkState.SYSTEM_MEMORY);
+      expect(
+        request.state(),
+        "native RPC must finish despite concurrent GPU demand and zero GPU capacity",
+      ).toBe("resolved");
+      expect(consumer.state()).toBe("resolved");
+      await expect(request.promise).resolves.toBeUndefined();
+      await expect(consumer.promise).resolves.toEqual(NATIVE_DATA);
+      expect(transfer).toHaveBeenCalledExactlyOnceWith(chunk);
+      expect(data!.buffer.byteLength).toBe(0);
+      expect(chunk.data).toBeNull();
+      expect(h.frontendSource.chunks.get(KEY)!.state).toBe(
+        ChunkState.SYSTEM_MEMORY,
+      );
+      expect(h.backendQueue.systemMemoryCapacity.currentItems).toBe(1);
+      expect(h.backendQueue.systemMemoryCapacity.currentSize).toBe(
+        NATIVE_DATA.length,
+      );
+      expect(h.backendQueue.downloadCapacity[0].currentItems).toBe(0);
+      expect(h.frontendSource.chunkRequesters).toBeUndefined();
+      expect(h.frontendRpc.get(request.id)).toBeUndefined();
+      expect(h.backendRpc.get(request.id)).toBeUndefined();
+      expect(h.frontendRpc.get(consumer.id)).toBeUndefined();
+      expect(h.backendRpc.get(consumer.id)).toBeUndefined();
+      expect(h.listenerCount()).toBe(0);
+      expect(h.demandCount()).toBe(1); // Only the intentional GPU demand remains.
+
+      h.backendQueue.gpuMemoryCapacity.itemLimit.value = 1;
+      await drainNativeHandoff(h);
+      expect(chunk.state).toBe(ChunkState.GPU_MEMORY);
+      expect(chunk.requestedState).toBe(ChunkState.GPU_MEMORY);
+      expect(h.frontendSource.chunks.get(KEY)!.state).toBe(
+        ChunkState.GPU_MEMORY,
+      );
+      expect(gpuUpload).toHaveBeenCalledExactlyOnceWith(chunk);
+      expect(transfer).toHaveBeenCalledTimes(1);
+      expect(serialize).toHaveBeenCalledTimes(1);
+      expect(h.backendQueue.gpuMemoryCapacity.currentItems).toBe(1);
+      expect(h.backendQueue.gpuMemoryCapacity.currentSize).toBe(
+        NATIVE_DATA.length,
+      );
+      expect(h.source.downloads).toHaveLength(1);
+      disposeGpuDemand();
+      h.backendManager.scheduleUpdateChunkPriorities();
+      await h.tick();
+      h.expectRequestCleaned(request.id);
+      h.expectRequestCleaned(consumer.id);
+    },
+  );
+
+  it("leaves GPU-only demand worker-resident and untransferred when GPU capacity is zero", async () => {
+    const h = fixture();
+    h.backendQueue.gpuMemoryCapacity.itemLimit.value = 0;
+    const { chunk } = await cacheNativeInWorker(h);
+    const data = chunk.data as Uint8Array;
+    const transfer = vi.spyOn(h.backendQueue, "moveChunkToFrontend");
+    const gpuUpload = vi.spyOn(h.backendQueue, "copyChunkToGPU");
+    const disposeGpuDemand = h.backendManager.recomputeChunkPriorities.add(
+      () => {
+        h.backendManager.requestChunk(
+          chunk,
+          ChunkPriorityTier.VISIBLE,
+          Infinity,
+          ChunkState.GPU_MEMORY,
+        );
+      },
+    );
+    h.backendManager.scheduleUpdateChunkPriorities();
+    await drainNativeHandoff(h);
+    expect(chunk.state).toBe(ChunkState.SYSTEM_MEMORY_WORKER);
+    expect(chunk.requestedState).toBe(ChunkState.GPU_MEMORY);
+    expect(chunk.priorityTier).toBe(ChunkPriorityTier.VISIBLE);
+    expect(chunk.priority).toBe(Infinity);
+    expect(transfer).not.toHaveBeenCalled();
+    expect(gpuUpload).not.toHaveBeenCalled();
+    expect(chunk.data).toBe(data);
+    expect(Array.from(data)).toEqual(NATIVE_DATA);
+    expect(data.buffer.byteLength).toBe(NATIVE_DATA.length);
+    expect(h.frontendSource.chunks.size).toBe(0);
+    expect(h.frontendSource.chunkRequesters).toBeUndefined();
+    expect(h.source.downloads).toHaveLength(1);
+    expect(h.backendQueue.systemMemoryCapacity.currentItems).toBe(1);
+    expect(h.backendQueue.systemMemoryCapacity.currentSize).toBe(
+      NATIVE_DATA.length,
+    );
+    expect(h.backendQueue.gpuMemoryCapacity.currentItems).toBe(0);
+    expect(h.backendQueue.downloadCapacity[0].currentItems).toBe(0);
+    expect(h.listenerCount()).toBe(0);
+    expect(h.demandCount()).toBe(1);
+    disposeGpuDemand();
+    h.backendManager.scheduleUpdateChunkPriorities();
+    await h.tick();
+    expect(chunk.state).toBe(ChunkState.SYSTEM_MEMORY_WORKER);
+    expect(chunk.requestedState).toBe(ChunkState.NEW);
+    expect(transfer).not.toHaveBeenCalled();
+    expect(h.demandCount()).toBe(0);
+  });
+
+  it("adds and removes only native demand at the same GPU state, tier, and priority", async () => {
+    const h = fixture();
+    h.backendQueue.gpuMemoryCapacity.itemLimit.value = 0;
+    const { chunk } = await cacheNativeInWorker(h);
+    const data = chunk.data as Uint8Array;
+    const transfer = vi.spyOn(h.backendQueue, "moveChunkToFrontend");
+    const gpuUpload = vi.spyOn(h.backendQueue, "copyChunkToGPU");
+    const tiers = [ChunkPriorityTier.VISIBLE, ChunkPriorityTier.PREFETCH];
+    function updateDemand(native: boolean) {
+      h.backendManager.requestChunk(
+        chunk,
+        ChunkPriorityTier.VISIBLE,
+        Infinity,
+        ChunkState.GPU_MEMORY,
+      );
+      if (native) {
+        h.backendManager.requestChunk(
+          chunk,
+          ChunkPriorityTier.VISIBLE,
+          Infinity,
+          ChunkState.SYSTEM_MEMORY,
+        );
+      }
+      h.backendManager.updateQueueState(tiers);
+      expect(chunk.requestedState).toBe(ChunkState.GPU_MEMORY);
+      expect(chunk.priorityTier).toBe(ChunkPriorityTier.VISIBLE);
+      expect(chunk.priority).toBe(Infinity);
+      expect(chunk.systemMemoryRequested).toBe(native);
+      expect(chunk.newSystemMemoryRequested).toBe(false);
+    }
+    updateDemand(false);
+    updateDemand(true); // Enqueue a frontend promotion without processing it.
+    updateDemand(true); // Unchanged pass must consume/reset the pending flag.
+    expect(chunk.newPriorityTier).toBe(ChunkPriorityTier.RECENT);
+    expect(chunk.newPriority).toBe(-Infinity);
+    expect(chunk.newRequestedState).toBe(ChunkState.NEW);
+    updateDemand(false); // Remove only native demand before the queued handoff.
+    await drainNativeHandoff(h);
+    expect(chunk.state).toBe(ChunkState.SYSTEM_MEMORY_WORKER);
+    expect(chunk.data).toBe(data);
+    expect(data.buffer.byteLength).toBe(NATIVE_DATA.length);
+    expect(transfer).not.toHaveBeenCalled();
+    expect(h.frontendSource.chunks.size).toBe(0);
+    updateDemand(true);
+    await drainNativeHandoff(h);
+    expect(chunk.state).toBe(ChunkState.SYSTEM_MEMORY);
+    expect(transfer).toHaveBeenCalledExactlyOnceWith(chunk);
+    expect(gpuUpload).not.toHaveBeenCalled();
+    expect(data.buffer.byteLength).toBe(0);
+    const consumer = h.fetch();
+    await h.deliver();
+    expect(consumer.state()).toBe("resolved");
+    await expect(consumer.promise).resolves.toEqual(NATIVE_DATA);
+    expect(h.source.downloads).toHaveLength(1);
+    h.backendManager.updateQueueState(tiers);
+    await h.tick();
+    expect(chunk.systemMemoryRequested).toBe(false);
+    expect(chunk.newSystemMemoryRequested).toBe(false);
+    expect(chunk.requestedState).toBe(ChunkState.NEW);
+    expect(h.demandCount()).toBe(0);
+    expect(h.listenerCount()).toBe(0);
+  });
+
+  it("retains a surviving native consumer when another cancels a mixed GPU/native handoff", async () => {
+    const h = fixture();
+    h.backendQueue.gpuMemoryCapacity.itemLimit.value = 0;
+    const { chunk } = await cacheNativeInWorker(h);
+    const transfer = vi.spyOn(h.backendQueue, "moveChunkToFrontend");
+    const gpuUpload = vi.spyOn(h.backendQueue, "copyChunkToGPU");
+    const disposeGpuDemand = h.backendManager.recomputeChunkPriorities.add(
+      () => {
+        h.backendManager.requestChunk(
+          chunk,
+          ChunkPriorityTier.VISIBLE,
+          Infinity,
+          ChunkState.GPU_MEMORY,
+        );
+      },
+    );
+    h.backendManager.scheduleUpdateChunkPriorities();
+    await h.tick();
+    const controller = new AbortController();
+    const canceled = h.request({ signal: controller.signal });
+    const survivor = h.fetch();
+    await h.deliver();
+    const tiers = [ChunkPriorityTier.VISIBLE, ChunkPriorityTier.PREFETCH];
+    // Run real demand handlers, but stop before the scheduler process timer.
+    h.backendManager.recomputeChunkPriorities.dispatch();
+    h.backendManager.updateQueueState(tiers);
+    expect(h.listenerCount()).toBe(2);
+    expect(chunk.systemMemoryRequested).toBe(true);
+    expect(chunk.requestedState).toBe(ChunkState.GPU_MEMORY);
+    expect(transfer).not.toHaveBeenCalled();
+    controller.abort();
+    await h.deliver();
+    expect(canceled.state()).toBe("rejected");
+    await expect(canceled.promise).rejects.toHaveProperty("name", "AbortError");
+    expect(h.listenerCount()).toBe(1);
+    expect(h.demandCount()).toBe(2); // GPU demand and the surviving native RPC.
+    h.backendManager.recomputeChunkPriorities.dispatch();
+    h.backendManager.updateQueueState(tiers);
+    expect(chunk.systemMemoryRequested).toBe(true);
+    expect(chunk.newSystemMemoryRequested).toBe(false);
+    expect(chunk.requestedState).toBe(ChunkState.GPU_MEMORY);
+    await drainNativeHandoff(h);
+    expect(survivor.state()).toBe("resolved");
+    await expect(survivor.promise).resolves.toEqual(NATIVE_DATA);
+    expect(chunk.state).toBe(ChunkState.SYSTEM_MEMORY);
+    expect(transfer).toHaveBeenCalledExactlyOnceWith(chunk);
+    expect(gpuUpload).not.toHaveBeenCalled();
+    expect(h.source.downloads).toHaveLength(1);
+    expect(chunk.systemMemoryRequested).toBe(false);
+    expect(h.frontendSource.chunkRequesters).toBeUndefined();
+    disposeGpuDemand();
+    h.backendManager.scheduleUpdateChunkPriorities();
+    await h.tick();
+    h.expectRequestCleaned(canceled.id);
+    h.expectRequestCleaned(survivor.id);
+  });
+
+  it("honors requested-state-only changes at the same tier and priority", async () => {
+    const h = fixture();
+    h.backendQueue.gpuMemoryCapacity.itemLimit.value = 0;
+    const { chunk, disposeDemand, requestState } = await cacheNativeInWorker(
+      h,
+      true,
+    );
+    expect(chunk.priorityTier).toBe(ChunkPriorityTier.VISIBLE);
+    expect(chunk.priority).toBe(Infinity);
+    requestState(ChunkState.SYSTEM_MEMORY);
+    const request = h.request();
+    const consumer = h.fetch();
+    await drainNativeHandoff(h);
+    expect(chunk.requestedState).toBe(ChunkState.SYSTEM_MEMORY);
+    expect(request.state()).toBe("resolved");
+    expect(consumer.state()).toBe("resolved");
+    await expect(consumer.promise).resolves.toEqual(NATIVE_DATA);
+    expect(h.source.downloads).toHaveLength(1);
+    expect(chunk.state).toBe(ChunkState.SYSTEM_MEMORY);
+    disposeDemand();
+    h.backendManager.scheduleUpdateChunkPriorities();
+    await h.tick();
+    h.expectRequestCleaned(request.id);
+    h.expectRequestCleaned(consumer.id);
+  });
+
+  it("resets all pending accumulators on an unchanged pass rather than retaining old demand", async () => {
+    const h = fixture();
+    const { chunk, disposeDemand } = await cacheNativeInWorker(h, true);
+    h.backendManager.scheduleUpdateChunkPriorities();
+    await h.tick();
+    expect
+      .soft({
+        tier: chunk.newPriorityTier,
+        priority: chunk.newPriority,
+        state: chunk.newRequestedState,
+        systemMemoryRequested: chunk.newSystemMemoryRequested,
+      })
+      .toEqual({
+        tier: ChunkPriorityTier.RECENT,
+        priority: -Infinity,
+        state: ChunkState.NEW,
+        systemMemoryRequested: false,
+      });
+    disposeDemand();
+    h.backendManager.scheduleUpdateChunkPriorities();
+    await h.tick();
+    expect(chunk.priorityTier).toBe(ChunkPriorityTier.RECENT);
+    expect(chunk.requestedState).toBe(ChunkState.NEW);
+    expect(chunk.state).toBe(ChunkState.SYSTEM_MEMORY_WORKER);
+    expect(h.demandCount()).toBe(0);
+  });
+
+  it.each(["demotion", "invalidation"] as const)(
+    "removes a queued frontend promotion on normal %s before processing",
+    async (kind) => {
+      const h = fixture();
+      h.backendQueue.gpuMemoryCapacity.itemLimit.value = 0;
+      const { chunk } = await cacheNativeInWorker(h);
+      const data = chunk.data as Uint8Array;
+      const transfer = vi.spyOn(h.backendQueue, "moveChunkToFrontend");
+      const gpuUpload = vi.spyOn(h.backendQueue, "copyChunkToGPU");
+      const tiers = [ChunkPriorityTier.VISIBLE, ChunkPriorityTier.PREFETCH];
+      // Apply real demand without running the scheduled process timer. This
+      // leaves a worker-to-frontend promotion pending at the queue boundary.
+      h.backendManager.requestChunk(
+        chunk,
+        ChunkPriorityTier.VISIBLE,
+        Infinity,
+        ChunkState.SYSTEM_MEMORY,
+      );
+      h.backendManager.updateQueueState(tiers);
+      expect(chunk.state).toBe(ChunkState.SYSTEM_MEMORY_WORKER);
+      expect(chunk.requestedState).toBe(ChunkState.SYSTEM_MEMORY);
+      expect(transfer).not.toHaveBeenCalled();
+      if (kind === "demotion") {
+        h.backendManager.updateQueueState(tiers);
+      } else {
+        h.backendQueue.downloadCapacity[0].itemLimit.value = 0;
+        h.backendQueue.invalidateSourceCache(h.source);
+      }
+      await drainNativeHandoff(h);
+      expect(transfer).not.toHaveBeenCalled();
+      expect(gpuUpload).not.toHaveBeenCalled();
+      expect(data.buffer.byteLength).toBe(NATIVE_DATA.length);
+      expect(h.frontendSource.chunks.size).toBe(0);
+      expect(h.source.downloads).toHaveLength(1);
+      expect(h.backendQueue.downloadCapacity[0].currentItems).toBe(0);
+      expect(h.backendQueue.gpuMemoryCapacity.currentItems).toBe(0);
+      expect(h.backendQueue.systemMemoryCapacity.currentItems).toBe(
+        kind === "demotion" ? 1 : 0,
+      );
+      expect(h.backendQueue.systemMemoryCapacity.currentSize).toBe(
+        kind === "demotion" ? NATIVE_DATA.length : 0,
+      );
+      if (kind === "demotion") {
+        expect(chunk.state).toBe(ChunkState.SYSTEM_MEMORY_WORKER);
+        expect(chunk.priorityTier).toBe(ChunkPriorityTier.RECENT);
+        expect(chunk.requestedState).toBe(ChunkState.NEW);
+        expect(chunk.data).toBe(data);
+      } else {
+        expect(chunk.state).toBe(ChunkState.QUEUED);
+        expect(chunk.data).toBeNull();
+        // Finish the legitimate replacement download as well: removing the
+        // stale handoff must not damage the download or memory queues.
+        const request = h.request();
+        const consumer = h.fetch();
+        await h.deliver();
+        h.backendQueue.downloadCapacity[0].itemLimit.value = 2;
+        await h.tick();
+        expect(h.source.downloads).toHaveLength(2);
+        h.source.downloads[1].resolve();
+        await drainNativeHandoff(h);
+        expect(request.state()).toBe("resolved");
+        expect(consumer.state()).toBe("resolved");
+        await expect(consumer.promise).resolves.toEqual(NATIVE_DATA);
+        expect(transfer).toHaveBeenCalledExactlyOnceWith(chunk);
+        h.expectRequestCleaned(request.id);
+        h.expectRequestCleaned(consumer.id);
+        expect(h.frontendSource.chunkRequesters).toBeUndefined();
+        expect(h.backendQueue.downloadCapacity[0].currentItems).toBe(0);
+        expect(h.backendQueue.systemMemoryCapacity.currentItems).toBe(1);
+        expect(h.backendQueue.systemMemoryCapacity.currentSize).toBe(
+          NATIVE_DATA.length,
+        );
+      }
+      expect(h.demandCount()).toBe(0);
+      expect(h.listenerCount()).toBe(0);
+    },
+  );
 });
 
 async function liveFixture() {
