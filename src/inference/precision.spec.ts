@@ -170,6 +170,46 @@ function fixture(values: number[] = [1], packed = false): Bytes {
   );
   return concat(int(1, 8), record(7, graph), record(8, int(2, 17)), unknown);
 }
+function withGraph(...extra: Bytes[]): Bytes {
+  return concat(
+    ...decode(fixture()).map((f) =>
+      f.id === 7 ? record(7, concat(f.data, ...extra)) : f.raw,
+    ),
+  );
+}
+function node(
+  op: string,
+  inputs: string[],
+  output: string,
+  ...fields: Bytes[]
+): Bytes {
+  return record(
+    1,
+    concat(
+      ...inputs.map((n) => str(1, n)),
+      str(2, output),
+      str(4, op),
+      ...fields,
+      unknown,
+    ),
+  );
+}
+function tensor64(values: bigint[], n?: string): Bytes {
+  const raw = new Uint8Array(values.length * 8);
+  const view = new DataView(raw.buffer);
+  values.forEach((x, i) => view.setBigInt64(i * 8, x, true));
+  return concat(
+    int(1, values.length),
+    int(2, 7),
+    ...(n === undefined ? [] : [str(8, n)]),
+    record(9, raw),
+    unknown,
+  );
+}
+const tensorValue = (tensor: Bytes) =>
+  record(5, concat(str(1, "value"), record(5, tensor), int(20, 4)));
+const toInt64 = record(5, concat(str(1, "to"), int(3, 7), int(20, 2), unknown));
+
 async function convertFixture(b: Bytes) {
   return new Uint8Array((await prepareModelForFp16(b.buffer)).model);
 }
@@ -254,6 +294,333 @@ describe("experimental native FP16 preparation", () => {
       }
     }
   });
+
+  it.each([false, true])(
+    "keeps non-Cast fixture output byte-identical (packed=%s)",
+    async (packed) => {
+      // Captured from the original converter, before integer-Cast support.
+      const output = await convertFixture(fixture([1, -2], packed));
+      expect(output.byteLength).toBe(815);
+      expect(createHash("sha256").update(output).digest("hex")).toBe(
+        "334122105732e116ac102e144f2f182e44e02ea776975c68ff599bd77587fb10",
+      );
+    },
+  );
+
+  it("proves integer padding shape paths and preserves all eight existing Casts and integer records exactly", async () => {
+    const initializers = (
+      [
+        ["padCount", [4n]],
+        ["matrixShape", [-1n, 2n]],
+        ["starts", [-1n]],
+        ["ends", [-(2n ** 63n) + 1n]],
+        ["axes", [0n]],
+        ["steps", [-1n]],
+      ] satisfies [string, bigint[]][]
+    ).map(([n, values]) => record(5, tensor64(values, n)));
+    const integers = [
+      node(
+        "Constant",
+        [],
+        "prefix",
+        tensorValue(tensor64([1n, 0n, 1n, 0n, 1n, 0n])),
+      ),
+      node(
+        "ConstantOfShape",
+        ["padCount"],
+        "zeros",
+        tensorValue(tensor64([0n])),
+      ),
+      node(
+        "Concat",
+        ["prefix", "zeros"],
+        "joined",
+        record(5, concat(str(1, "axis"), int(3, 0), int(20, 2))),
+      ),
+      node("Reshape", ["joined", "matrixShape"], "matrix"),
+      node("Slice", ["matrix", "starts", "ends", "axes", "steps"], "sliced"),
+      node(
+        "Transpose",
+        ["sliced"],
+        "transposed",
+        record(
+          5,
+          concat(str(1, "perm"), record(8, concat(v(1), v(0))), int(20, 7)),
+        ),
+      ),
+      node("Reshape", ["transposed", "shape"], "pads"),
+    ];
+    const casts = Array.from({ length: 8 }, (_, i) => {
+      const data = get(
+        node(
+          "Cast",
+          ["pads"],
+          `castPads${i}`,
+          toInt64,
+          str(7, i % 2 ? "ai.onnx" : ""),
+        ),
+        1,
+      );
+      // A legal noncanonical tag detects accidental re-encoding of the record.
+      return concat(new Uint8Array([0x8a, 0]), v(data.length), data);
+    });
+    const integerInfo = record(
+      13,
+      concat(str(1, "pads"), record(2, record(1, int(1, 7))), unknown),
+    );
+    const source = withGraph(
+      ...initializers,
+      ...integers,
+      ...casts,
+      ...casts.map((_, i) =>
+        node("Pad", ["middle", `castPads${i}`], `padded${i}`),
+      ),
+      integerInfo,
+    );
+    const before = source.slice();
+    const output = await convertFixture(source);
+    expect(source).toEqual(before);
+    expect(halfWeights(output)).toEqual([0x3c00]);
+    const oldGraph = get(source, 7),
+      graph = get(output, 7);
+    const records = decode(graph).map((f) => f.raw);
+    expect(records).toEqual(
+      expect.arrayContaining([
+        ...initializers,
+        ...integers,
+        ...casts,
+        integerInfo,
+        decode(oldGraph).find((f) => f.id === 5 && scalar(f.data, 2) === 7)!
+          .raw,
+        decode(oldGraph).find(
+          (f) => f.id === 1 && td.decode(get(f.data, 2)) === "constantShape",
+        )!.raw,
+      ]),
+    );
+    expect(
+      decode(graph).filter(
+        (f) => f.id === 1 && td.decode(get(f.data, 4)) === "Cast",
+      ),
+    ).toHaveLength(10);
+    for (const id of [11, 12])
+      expect(get(graph, id)).toEqual(get(oldGraph, id));
+  });
+
+  it.each(["shape", "constantShape"])(
+    "also proves a direct integer root %s",
+    async (input) => {
+      const cast = node("Cast", [input], "integerIdentity", toInt64);
+      const output = await convertFixture(withGraph(cast));
+      expect(decode(get(output, 7)).map((f) => f.raw)).toContainEqual(cast);
+    },
+  );
+
+  it.each(["w", "input", "middle", "constant", "unknown"])(
+    "still rejects floating or unknown Cast source %s",
+    async (input) => {
+      // Intermediate annotations alone must not establish an integer proof.
+      const annotation = record(
+        13,
+        concat(str(1, input), record(2, record(1, int(1, 7)))),
+      );
+      await expect(
+        convertFixture(
+          withGraph(annotation, node("Cast", [input], "castOutput", toInt64)),
+        ),
+      ).rejects.toThrow(/existing Cast nodes are unsupported/);
+    },
+  );
+
+  it.each([
+    ["missing to", []],
+    ["duplicate to", [toInt64, toInt64]],
+    ["wrong name", [record(5, concat(str(1, "other"), int(3, 7), int(20, 2)))]],
+    ["missing integer", [record(5, concat(str(1, "to"), int(20, 2)))]],
+    [
+      "duplicate integer",
+      [record(5, concat(str(1, "to"), int(3, 7), int(3, 7), int(20, 2)))],
+    ],
+    [
+      "wrong integer wire",
+      [record(5, concat(str(1, "to"), record(3, v(7)), int(20, 2)))],
+    ],
+    ["missing type", [record(5, concat(str(1, "to"), int(3, 7)))]],
+    ["wrong type", [record(5, concat(str(1, "to"), int(3, 7), int(20, 1)))]],
+    [
+      "duplicate type",
+      [record(5, concat(str(1, "to"), int(3, 7), int(20, 2), int(20, 2)))],
+    ],
+    [
+      "duplicate name",
+      [record(5, concat(str(1, "to"), str(1, "to"), int(3, 7), int(20, 2)))],
+    ],
+    [
+      "competing float payload",
+      [
+        record(
+          5,
+          concat(
+            str(1, "to"),
+            int(3, 7),
+            record(2, new Uint8Array(4), 5),
+            int(20, 2),
+          ),
+        ),
+      ],
+    ],
+    [
+      "attribute reference",
+      [
+        record(
+          5,
+          concat(str(1, "to"), int(3, 7), int(20, 2), str(21, "target")),
+        ),
+      ],
+    ],
+  ] as const)(
+    "fails closed on malformed Cast attribute: %s",
+    async (_label, attrs) => {
+      await expect(
+        convertFixture(
+          withGraph(node("Cast", ["shape"], "castOutput", ...attrs)),
+        ),
+      ).rejects.toThrow(/FP16 preparation failed/);
+    },
+  );
+
+  it.each([0, 1, 6, 10, 11])(
+    "rejects unsupported Cast target %s",
+    async (target) => {
+      const attr = record(5, concat(str(1, "to"), int(3, target), int(20, 2)));
+      await expect(
+        convertFixture(withGraph(node("Cast", ["shape"], "castOutput", attr))),
+      ).rejects.toThrow(/existing Cast nodes are unsupported/);
+    },
+  );
+
+  it.each([
+    [
+      "custom Cast domain",
+      node("Cast", ["shape"], "castOutput", toInt64, str(7, "custom")),
+    ],
+    [
+      "duplicate domain",
+      node("Cast", ["shape"], "castOutput", toInt64, str(7, ""), str(7, "")),
+    ],
+    [
+      "extra Cast input",
+      node("Cast", ["shape", "shape"], "castOutput", toInt64),
+    ],
+    [
+      "extra Cast output",
+      node("Cast", ["shape"], "castOutput", toInt64, str(2, "extra")),
+    ],
+    ["public output alias", node("Cast", ["shape"], "output", toInt64)],
+    ["self cycle", node("Cast", ["castOutput"], "castOutput", toInt64)],
+    [
+      "indirect cycle",
+      concat(
+        node("Transpose", ["b"], "a"),
+        node("Transpose", ["a"], "b"),
+        node("Cast", ["a"], "castOutput", toInt64),
+      ),
+    ],
+    [
+      "duplicate producer",
+      concat(
+        node("Transpose", ["shape"], "shape"),
+        node("Cast", ["shape"], "castOutput", toInt64),
+      ),
+    ],
+    [
+      "custom shape operator",
+      concat(
+        node("Transpose", ["shape"], "customShape", str(7, "custom")),
+        node("Cast", ["customShape"], "castOutput", toInt64),
+      ),
+    ],
+    [
+      "mixed Concat",
+      concat(
+        node("Concat", ["shape", "w"], "mixed"),
+        node("Cast", ["mixed"], "castOutput", toInt64),
+      ),
+    ],
+    [
+      "unknown Concat input",
+      concat(
+        node("Concat", ["shape", "absent"], "mixed"),
+        node("Cast", ["mixed"], "castOutput", toInt64),
+      ),
+    ],
+    [
+      "floating Reshape data",
+      concat(
+        node("Reshape", ["w", "shape"], "reshaped"),
+        node("Cast", ["reshaped"], "castOutput", toInt64),
+      ),
+    ],
+    [
+      "floating Reshape shape",
+      concat(
+        node("Reshape", ["shape", "w"], "reshaped"),
+        node("Cast", ["reshaped"], "castOutput", toInt64),
+      ),
+    ],
+    [
+      "default FLOAT ConstantOfShape",
+      concat(
+        node("ConstantOfShape", ["shape"], "filled"),
+        node("Cast", ["filled"], "castOutput", toInt64),
+      ),
+    ],
+    [
+      "floating ConstantOfShape value",
+      concat(
+        node(
+          "ConstantOfShape",
+          ["shape"],
+          "filled",
+          tensorValue(
+            concat(int(1, 1), int(2, 1), record(9, new Uint8Array(4))),
+          ),
+        ),
+        node("Cast", ["filled"], "castOutput", toInt64),
+      ),
+    ],
+    [
+      "unknown ConstantOfShape input",
+      concat(
+        node(
+          "ConstantOfShape",
+          ["absent"],
+          "filled",
+          tensorValue(tensor64([0n])),
+        ),
+        node("Cast", ["filled"], "castOutput", toInt64),
+      ),
+    ],
+    [
+      "ambiguous Constant value",
+      concat(
+        node(
+          "Constant",
+          [],
+          "ambiguous",
+          tensorValue(tensor64([0n])),
+          tensorValue(tensor64([0n])),
+        ),
+        node("Cast", ["ambiguous"], "castOutput", toInt64),
+      ),
+    ],
+  ])(
+    "rejects unproven or ambiguous integer paths: %s",
+    async (_label, nodes) => {
+      await expect(convertFixture(withGraph(nodes))).rejects.toThrow(
+        /FP16 preparation failed/,
+      );
+    },
+  );
 
   it("rounds ties to even, gradual underflow, signed zero, and finite overflow edge without clamping", async () => {
     const values = [

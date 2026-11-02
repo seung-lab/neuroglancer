@@ -24,8 +24,9 @@
  * value types, renames the public boundary uses, and inserts two Casts. Unknown
  * field records and nonfloating tensors are copied verbatim. Scalar FLOAT/FLOATS
  * attributes remain schema FLOAT. Functions, subgraphs, sparse/external FLOAT
- * tensors and existing Casts are unsupported; other operator/type incompatibilities
- * may be rejected by ORT during session creation or execution.
+ * tensors and existing Casts (except proven INT64 identities) are unsupported;
+ * other operator/type incompatibilities may be rejected by ORT during session
+ * creation or execution.
  * Verification: build_tools/verify_inference_fp16.py (checker, NumPy and CPU).
  *
  * Weights use IEEE nearest-even, including signed zero and gradual underflow;
@@ -322,6 +323,96 @@ class Converter {
     );
   }
 
+  // A forward, constant-rooted INT64 proof, not general dtype inference. Only
+  // previously proven inputs count: unknown, mixed, cyclic and non-topological
+  // shape paths fail closed without recursion or repeated ancestor walks.
+  private checkIntegerCasts(
+    fields: Field[],
+    nodes: Iterable<Field[]>,
+    inName: string,
+  ): void {
+    const defined = new Set([inName]);
+    const int64 = new Set<string>();
+    const define = (name: string) => {
+      if (name === "" || defined.has(name))
+        fail("ambiguous integer Cast source");
+      defined.add(name);
+    };
+    const isInt64 = (tensor: Bytes) =>
+      uint(one(this.fields(tensor), 2, 0).data) === 7;
+    for (const f of fields.filter((f) => f.id === 5)) {
+      const tensor = this.fields(f.data);
+      const name = string(one(tensor, 8, 2));
+      define(name);
+      if (uint(one(tensor, 2, 0).data) === 7) int64.add(name);
+    }
+    for (const node of nodes) {
+      const op = string(one(node, 4, 2));
+      const inputs = node.filter((n) => n.id === 1).map(string);
+      const outputs = node.filter((n) => n.id === 2).map(string);
+      for (const name of outputs) if (name !== "") define(name);
+      const domains = node.filter((n) => n.id === 7);
+      const standard =
+        domains.length <= 1 &&
+        (domains.length === 0 ||
+          ["", "ai.onnx"].includes(string(domains[0]))) &&
+        !node.some((n) => n.id === 8); // No overloaded operator semantics.
+      let proven = false;
+      if (standard && outputs.length === 1 && outputs[0] !== "") {
+        const integers = inputs.length > 0 && inputs.every((n) => int64.has(n));
+        let value = false;
+        if (["Constant", "ConstantOfShape", "Cast"].includes(op)) {
+          const attrs = node.filter((n) => n.id === 5);
+          if (attrs.length === 1) {
+            const a = this.fields(one(attrs, 5, 2).data);
+            const cast = op === "Cast";
+            const payload = cast ? 3 : 5;
+            // Exactly one correctly typed literal, with no competing payload or
+            // ref_attr_name. Unknown records/documentation remain untouched.
+            value =
+              string(one(a, 1, 2)) === (cast ? "to" : "value") &&
+              uint(one(a, 20, 0).data) === (cast ? 2 : 4) &&
+              !a.some(
+                (f) =>
+                  [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15, 21, 22, 23].includes(
+                    f.id,
+                  ) && f.id !== payload,
+              ) &&
+              (cast
+                ? uint(one(a, 3, 0).data) === 7
+                : isInt64(one(a, 5, 2).data));
+          }
+        }
+        switch (op) {
+          case "Constant":
+            proven = inputs.length === 0 && value;
+            break;
+          case "ConstantOfShape": // Its implicit/default value is FLOAT.
+          case "Cast":
+            proven = inputs.length === 1 && integers && value;
+            break;
+          case "Reshape":
+            proven = inputs.length === 2 && integers;
+            break;
+          case "Slice":
+            proven = inputs.length >= 3 && inputs.length <= 5 && integers;
+            break;
+          case "Transpose":
+            proven = inputs.length === 1 && integers;
+            break;
+          case "Concat":
+            proven = integers;
+            break;
+        }
+      }
+      if (op === "Cast" && !proven)
+        fail(
+          "existing Cast nodes are unsupported unless proven INT64 identities",
+        );
+      if (proven) int64.add(outputs[0]);
+    }
+  }
+
   private graph(b: Bytes): Bytes {
     const fields = this.fields(b);
     if (fields.some((f) => f.id === 15))
@@ -353,15 +444,29 @@ class Converter {
         fail("boundary name collision");
       return names.has(name) ? text(f.id, names.get(name)!) : f.raw;
     };
+    // Parse nodes once, sharing the existing protobuf record budget. Non-Cast
+    // models skip the proof entirely and retain the original conversion path.
+    const nodes = new Map(
+      fields.filter((f) => f.id === 1).map((f) => [f, this.fields(f.data)]),
+    );
+    if ([...nodes.values()].some((n) => string(one(n, 4, 2)) === "Cast"))
+      this.checkIntegerCasts(fields, nodes.values(), inName);
     const result: Bytes[] = [
       this.cast(inName, names.get(inName)!, "graph_input_cast0", 10),
     ];
     for (const f of fields) {
       switch (f.id) {
         case 1: {
-          const node = this.fields(f.data);
-          if (string(one(node, 4, 2)) === "Cast")
-            fail("existing Cast nodes are unsupported");
+          const node = nodes.get(f)!;
+          if (string(one(node, 4, 2)) === "Cast") {
+            for (const n of node.filter((n) => n.id === 1 || n.id === 2)) {
+              rename(n); // Still check reserved boundary-name collisions.
+              if (names.has(string(n)))
+                fail("integer Cast overlaps public boundary");
+            }
+            result.push(f.raw); // Preserve the complete existing Cast record.
+            break;
+          }
           result.push(
             field(
               1,
