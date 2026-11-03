@@ -396,13 +396,30 @@ export function prepareAffinityInput(
         unsupported(
           "integer native bounds, chunk sizes, and backend offsets are required",
         );
-      for (const b of [lower[d], upper[d] - 1]) {
-        const grid = Math.floor(b / spec.chunkDataSize[d]);
+      const size = spec.chunkDataSize[d];
+      const grid = [lower[d], upper[d] - 1].map((b) => Math.floor(b / size));
+      if (grid.some((v) => Math.abs(v) > 2 ** 24)) {
+        unsupported("chunk grid exceeds exact float32 indexing");
+      }
+      for (const offset of [0, spec.baseVoxelOffset[d]]) {
+        const first = grid[0] * size + offset;
+        const last = grid[1] * size + offset;
+        const quantum =
+          2 **
+          Math.max(
+            0,
+            Math.floor(Math.log2(Math.max(Math.abs(first), Math.abs(last)))) -
+              23,
+          );
+        // Exact endpoints alone can hide rounded intermediate backend origins.
         if (
-          Math.abs(grid) > 2 ** 24 ||
-          !Number.isSafeInteger(grid * spec.chunkDataSize[d])
+          !Number.isSafeInteger(first) ||
+          !Number.isSafeInteger(last) ||
+          Math.fround(first) !== first ||
+          Math.fround(last) !== last ||
+          (grid[0] !== grid[1] && size % quantum !== 0)
         ) {
-          unsupported("chunk grid exceeds exact float32 indexing");
+          unsupported("backend chunk origins exceed exact float32 indexing");
         }
       }
     }
@@ -515,6 +532,7 @@ export function prepareAffinityInput(
       layer.managedLayer.localCoordinateSpace.changed,
       layer.managedLayer.manager.root.coordinateSpace.changed,
     ].map((changed) => changed.add(check));
+    removers.push(source.cacheInvalidated.add(invalidate));
     source.addRef();
     return {
       lowerBoundXYZ,

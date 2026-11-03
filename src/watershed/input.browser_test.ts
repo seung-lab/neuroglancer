@@ -62,7 +62,8 @@ function session() {
   backendRpc.set(managerId, backendManager);
   let source: VolumeChunkSource | undefined;
   const fetches: string[] = [];
-  const invalidateCache = vi.fn();
+  const cacheInvalidated = new NullarySignal();
+  const invalidateCache = vi.fn(() => cacheInvalidated.dispatch());
   const getChunkSource = (
     _ctor: unknown,
     options: {
@@ -85,6 +86,7 @@ function session() {
         {
           spec: options.spec,
           chunks: new Map(),
+          cacheInvalidated,
           invalidateCache,
           disposed() {},
           // Populate the actual CPU chunk cache from the actual inference backend.
@@ -280,8 +282,8 @@ describe("affinity input with an inference:// volume", () => {
     await input.readRegion([0, 0, 0], [1, 1, 1], [0, 1, 2], signal);
     handle.dispose();
     expect(s.invalidateCache).toHaveBeenCalledOnce();
-    expect(input.isValid()).toBe(false);
     expect(input.signal.aborted).toBe(true);
+    expect(input.isValid()).toBe(false);
     await expect(
       input.readRegion([0, 0, 0], [1, 1, 1], [0, 1, 2], signal),
     ).rejects.toThrow("disposed or stale");

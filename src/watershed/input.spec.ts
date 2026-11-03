@@ -83,6 +83,7 @@ function fixture(options: FixtureOptions = {}) {
     spec,
     refCount: 1,
     wasDisposed: false,
+    cacheInvalidated: new NullarySignal(),
     addRef: vi.fn(() => {
       ++source.refCount;
       return source;
@@ -572,6 +573,35 @@ describe("native affinity input", () => {
     },
   );
 
+  it.each<FixtureOptions>([
+    { upper: [16777224, 4, 3, 5] },
+    // Both endpoint origins are exact, but an intermediate 3-voxel step is not.
+    { upper: [16777226, 4, 3, 5] },
+    { lower: [-16777224, 0, 0, 0], upper: [-16777216, 4, 3, 5] },
+    { upper: [7, 4, 3, 5], baseOffset: [2 ** 24, 0, 0, 0] },
+  ])("rejects rounded backend chunk origins before reads: %j", (options) => {
+    const f = fixture(options);
+    expect(f.prepare).toThrow("backend chunk origins exceed exact float32");
+    expect(f.source.fetchChunk).not.toHaveBeenCalled();
+    expect(f.source.refCount).toBe(1);
+  });
+
+  it.each<FixtureOptions>([
+    {
+      upper: [2 ** 28, 4, 3, 5],
+      chunkSize: [64, 3, 2, 2],
+      baseOffset: [2 ** 29, 0, 0, 0],
+    },
+    { lower: [16777224, 0, 0, 0], upper: [16777226, 4, 3, 5] },
+  ])("accepts exactly indexed large or single-chunk grids: %j", (options) => {
+    const f = fixture(options);
+    const input = f.prepare();
+    expect(input.upperBoundXYZ).toEqual(options.upper!.slice(0, 3));
+    expect(f.source.fetchChunk).not.toHaveBeenCalled();
+    input.dispose();
+    expect(f.source.refCount).toBe(1);
+  });
+
   it("caps reads at 2**21 spatial voxels before allocation/fetch", async () => {
     const f = fixture({ upper: [2097153, 1, 1, 5] });
     const input = f.prepare();
@@ -690,6 +720,17 @@ describe("native affinity input", () => {
     expect(input.isValid()).toBe(false);
     expect(input.signal.aborted).toBe(true);
     expect(input.assertValid).toThrow("disposed or stale");
+    input.dispose();
+    expect(f.source.refCount).toBe(1);
+  });
+
+  it("aborts on source cache invalidation without polling or another read", () => {
+    const f = fixture();
+    const input = f.prepare();
+    expect(input.signal.aborted).toBe(false);
+    f.source.cacheInvalidated.dispatch();
+    expect(input.signal.aborted).toBe(true);
+    expect(f.source.fetchChunk).not.toHaveBeenCalled();
     input.dispose();
     expect(f.source.refCount).toBe(1);
   });
