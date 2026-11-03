@@ -431,6 +431,9 @@ export class ChunkSource extends SharedObject {
   declare OPTIONS: object;
   chunks = new Map<string, Chunk>();
 
+  /** Synchronous invalidation notification; cache eviction is asynchronous. */
+  readonly cacheInvalidated = new NullarySignal();
+
   chunkRequesters: Map<string, ChunkRequesterState[]> | undefined;
 
   /**
@@ -476,10 +479,15 @@ export class ChunkSource extends SharedObject {
   }
 
   /**
-   * Invalidates the chunk cache.  Operates asynchronously.
+   * Requests asynchronous cache eviction and synchronously notifies observers,
+   * even if the RPC fails.  Posts the RPC first so observers may dispose this source.
    */
   invalidateCache(): void {
-    this.rpc!.invoke(CHUNK_SOURCE_INVALIDATE_RPC_ID, { id: this.rpcId });
+    try {
+      this.rpc!.invoke(CHUNK_SOURCE_INVALIDATE_RPC_ID, { id: this.rpcId });
+    } finally {
+      this.cacheInvalidated.dispatch();
+    }
   }
 
   static encodeOptions(_options: object): { [key: string]: any } {
