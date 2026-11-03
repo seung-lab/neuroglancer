@@ -15,10 +15,13 @@
  */
 
 import { describe, expect, it } from "vitest";
+import type { LiveWatershedInfo } from "#src/datasource/watershed/base.js";
 import {
   copyWatershedResultChunk,
+  getLiveWatershedInfo,
   getWatershedResultInfo,
   parseWatershedUrl,
+  validateLiveWatershedChunkBounds,
 } from "#src/datasource/watershed/base.js";
 import type { WatershedResult } from "#src/watershed/base.js";
 import { MAX_WATERSHED_VOXELS } from "#src/watershed/base.js";
@@ -128,6 +131,151 @@ describe("watershed snapshot metadata", () => {
         "Invalid watershed result URL",
       );
     }
+  });
+});
+
+function makeLiveInfo(): LiveWatershedInfo {
+  return {
+    shapeXYZ: [5, 4, 3],
+    offsetXYZ: [23.5, -11.25, 7],
+    spacingXYZ: [1e-8, 2e-8, 3e-8],
+    unitsXYZ: ["m", "m", "m"],
+    chunkShapeXYZ: [3, 3, 2],
+  };
+}
+
+describe("live watershed metadata and tile bounds", () => {
+  it("freezes independent metadata, including the producer's tile shape", () => {
+    const input = makeLiveInfo();
+    const info = getLiveWatershedInfo(input);
+    expect(info).toEqual(input);
+    expect(Object.isFrozen(info)).toBe(true);
+    for (const key of Object.keys(info) as (keyof LiveWatershedInfo)[]) {
+      expect(Object.isFrozen(info[key])).toBe(true);
+      expect(info[key]).not.toBe(input[key]);
+    }
+    (input.chunkShapeXYZ as number[])[0] = 99;
+    expect(info.chunkShapeXYZ).toEqual([3, 3, 2]);
+    expect(info).not.toHaveProperty("data");
+  });
+
+  it("does not apply snapshot or safe-product voxel limits to live domains", () => {
+    const shapeXYZ = [327680, 327680, 327680];
+    expect(shapeXYZ.reduce((a, b) => a * b, 1)).toBeGreaterThan(
+      Number.MAX_SAFE_INTEGER,
+    );
+    expect(
+      getLiveWatershedInfo({
+        ...makeLiveInfo(),
+        shapeXYZ,
+        chunkShapeXYZ: [64, 64, 32],
+        unitsXYZ: ["m", "", "s"],
+      }).shapeXYZ,
+    ).toEqual(shapeXYZ);
+  });
+
+  it.each([
+    { shapeXYZ: [5, 4] },
+    { shapeXYZ: [5, 0, 3] },
+    { shapeXYZ: [5, -1, 3] },
+    { shapeXYZ: [5, 1.5, 3] },
+    { shapeXYZ: [5, NaN, 3] },
+    { shapeXYZ: [5, Infinity, 3] },
+    { shapeXYZ: [Number.MAX_SAFE_INTEGER + 1, 1, 1] },
+    { shapeXYZ: new Array(3) },
+    { chunkShapeXYZ: [3, 3] },
+    { chunkShapeXYZ: [3, 0, 2] },
+    { chunkShapeXYZ: [3, -1, 2] },
+    { chunkShapeXYZ: [3, 1.5, 2] },
+    { chunkShapeXYZ: [3, NaN, 2] },
+    { chunkShapeXYZ: [3, Infinity, 2] },
+    { chunkShapeXYZ: [2 ** 32, 1, 1] },
+    { chunkShapeXYZ: new Array(3) },
+    { unitsXYZ: ["nm", "m", "m"] },
+    { unitsXYZ: ["unknown", "m", "m"] },
+    { spacingXYZ: [0, 1, 1] },
+    { offsetXYZ: [Infinity, 0, 0] },
+    { shapeXYZ: [256, 256, 256], chunkShapeXYZ: [256, 256, 256] },
+  ])("rejects invalid live metadata %j", (override) => {
+    expect(() =>
+      getLiveWatershedInfo({ ...makeLiveInfo(), ...override }),
+    ).toThrow();
+  });
+
+  it("requires aligned full tiles or exact clipped final tiles, in local XYZ", () => {
+    const info = getLiveWatershedInfo(makeLiveInfo());
+    expect(validateLiveWatershedChunkBounds(info, [0, 0, 0], [3, 3, 2])).toBe(
+      18,
+    );
+    expect(validateLiveWatershedChunkBounds(info, [3, 0, 0], [2, 3, 2])).toBe(
+      12,
+    );
+    expect(validateLiveWatershedChunkBounds(info, [3, 3, 2], [2, 1, 1])).toBe(
+      2,
+    );
+  });
+
+  it.each([
+    [
+      [0, 0],
+      [3, 3, 2],
+    ],
+    [
+      [0, 0, 0],
+      [3, 3],
+    ],
+    [
+      [-3, 0, 0],
+      [3, 3, 2],
+    ],
+    [
+      [1, 0, 0],
+      [3, 3, 2],
+    ],
+    [
+      [5, 0, 0],
+      [1, 3, 2],
+    ],
+    [
+      [6, 0, 0],
+      [1, 3, 2],
+    ],
+    [
+      [NaN, 0, 0],
+      [3, 3, 2],
+    ],
+    [
+      [Infinity, 0, 0],
+      [3, 3, 2],
+    ],
+    [
+      [0.5, 0, 0],
+      [3, 3, 2],
+    ],
+    [
+      [0, 0, 0],
+      [2, 3, 2],
+    ],
+    [
+      [0, 0, 0],
+      [4, 3, 2],
+    ],
+    [
+      [3, 0, 0],
+      [3, 3, 2],
+    ],
+    [
+      [3, 0, 0],
+      [0, 3, 2],
+    ],
+    [
+      [3, 0, 0],
+      [NaN, 3, 2],
+    ],
+  ])("rejects non-tile or out-of-bounds requests %j %j", (lower, size) => {
+    expect(() =>
+      validateLiveWatershedChunkBounds(makeLiveInfo(), lower, size),
+    ).toThrow();
   });
 });
 

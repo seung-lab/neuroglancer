@@ -22,9 +22,13 @@ export const WATERSHED_TILE_RPC_ID = "watershed/tile";
 /** Per ChunkManager; private snapshots and metadata, not render caches. */
 export const WATERSHED_RESULT_MEMORY_LIMIT = 128 * 1024 * 1024;
 export type WatershedResultInfo = Omit<WatershedResult, "data">;
+export interface LiveWatershedInfo extends WatershedResultInfo {
+  readonly chunkShapeXYZ: readonly number[];
+}
 
 export class VolumeSourceParameters {
   resultId: string;
+  live?: boolean;
   static RPC_ID = "watershed/VolumeChunkSource";
 }
 
@@ -41,12 +45,7 @@ export function parseWatershedUrl(url: string): string {
 }
 
 /** Validate detached metadata, including the units used by coordinate spaces. */
-export function getWatershedResultInfo(
-  result: WatershedResult,
-): WatershedResultInfo {
-  if (!(result.data instanceof Uint32Array)) {
-    throw new Error("Watershed data must be Uint32Array XYZ");
-  }
+function getSpatialInfo(result: WatershedResultInfo): WatershedResultInfo {
   for (const vector of [
     result.shapeXYZ,
     result.offsetXYZ,
@@ -62,10 +61,6 @@ export function getWatershedResultInfo(
   const offsetXYZ = Object.freeze(Array.from(result.offsetXYZ));
   const spacingXYZ = Object.freeze(Array.from(result.spacingXYZ));
   const unitsXYZ = Object.freeze(Array.from(result.unitsXYZ));
-  const voxels = validateWatershedShape(shapeXYZ);
-  if (result.data.length !== voxels) {
-    throw new Error("Watershed data length does not match XYZ shape");
-  }
   // Native-grid origins may be scaled/fractional; they are not chunk offsets.
   if (!offsetXYZ.every(Number.isFinite)) {
     throw new Error("Watershed offset must contain finite XYZ coordinates");
@@ -88,6 +83,79 @@ export function getWatershedResultInfo(
     }
   }
   return Object.freeze({ shapeXYZ, offsetXYZ, spacingXYZ, unitsXYZ });
+}
+
+export function getWatershedResultInfo(
+  result: WatershedResult,
+): WatershedResultInfo {
+  if (!(result.data instanceof Uint32Array)) {
+    throw new Error("Watershed data must be Uint32Array XYZ");
+  }
+  const info = getSpatialInfo(result);
+  const voxels = validateWatershedShape(info.shapeXYZ);
+  if (result.data.length !== voxels) {
+    throw new Error("Watershed data length does not match XYZ shape");
+  }
+  return info;
+}
+
+/** Metadata only: the compute voxel limit must not cap the live output domain.
+ * LiveWatershed additionally checks float32 indexing and its UINT64 namespace. */
+export function getLiveWatershedInfo(
+  result: LiveWatershedInfo,
+): LiveWatershedInfo {
+  const info = getSpatialInfo(result);
+  if (!info.shapeXYZ.every((x) => Number.isSafeInteger(x) && x > 0)) {
+    throw new Error("Watershed shape must contain three positive XYZ integers");
+  }
+  if (info.unitsXYZ.some((x) => supportedUnits.get(x)!.exponent !== 0)) {
+    throw new Error("Live watershed spatial units must be canonical");
+  }
+  if (
+    !Array.isArray(result.chunkShapeXYZ) ||
+    result.chunkShapeXYZ.length !== 3
+  ) {
+    throw new Error("Watershed chunk shape must contain positive XYZ integers");
+  }
+  const chunkShapeXYZ = Object.freeze(Array.from(result.chunkShapeXYZ));
+  if (
+    !chunkShapeXYZ.every((x) => Number.isSafeInteger(x) && x > 0 && x < 2 ** 32)
+  ) {
+    throw new Error("Watershed chunk shape must contain positive XYZ integers");
+  }
+  validateWatershedShape(
+    chunkShapeXYZ.map((x, i) => Math.min(x, info.shapeXYZ[i])),
+  );
+  return Object.freeze({ ...info, chunkShapeXYZ });
+}
+
+/** Require exactly one aligned, possibly clipped local output tile. */
+export function validateLiveWatershedChunkBounds(
+  info: LiveWatershedInfo,
+  lowerXYZ: readonly number[],
+  sizeXYZ: readonly number[],
+): number {
+  if (
+    !Array.isArray(lowerXYZ) ||
+    !Array.isArray(sizeXYZ) ||
+    lowerXYZ.length !== 3 ||
+    sizeXYZ.length !== 3
+  ) {
+    throw new Error("Watershed chunk bounds must be XYZ triples");
+  }
+  for (let i = 0; i < 3; ++i) {
+    if (
+      !Number.isSafeInteger(lowerXYZ[i]) ||
+      lowerXYZ[i] < 0 ||
+      lowerXYZ[i] >= info.shapeXYZ[i] ||
+      lowerXYZ[i] % info.chunkShapeXYZ[i] !== 0 ||
+      sizeXYZ[i] !==
+        Math.min(info.chunkShapeXYZ[i], info.shapeXYZ[i] - lowerXYZ[i])
+    ) {
+      throw new Error("Live watershed chunk is outside aligned tile bounds");
+    }
+  }
+  return validateWatershedShape(sizeXYZ);
 }
 
 /**

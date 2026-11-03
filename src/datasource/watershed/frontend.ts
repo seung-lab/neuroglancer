@@ -25,12 +25,17 @@ import type {
   DataSourceProvider,
   GetDataSourceOptions,
 } from "#src/datasource/index.js";
-import type { WatershedResultInfo } from "#src/datasource/watershed/base.js";
+import type {
+  LiveWatershedInfo,
+  WatershedResultInfo,
+} from "#src/datasource/watershed/base.js";
 import {
   copyWatershedResultChunk,
+  getLiveWatershedInfo,
   getWatershedResultInfo,
   missingWatershedResult,
   parseWatershedUrl,
+  validateLiveWatershedChunkBounds,
   VolumeSourceParameters,
   WATERSHED_RESULT_MEMORY_LIMIT,
   WATERSHED_TILE_RPC_ID,
@@ -45,16 +50,20 @@ import {
   MultiscaleVolumeChunkSource,
   VolumeChunkSource,
 } from "#src/sliceview/volume/frontend.js";
+import { raceWithAbort } from "#src/util/abort.js";
 import * as matrix from "#src/util/matrix.js";
 import { getRandomHexString } from "#src/util/random.js";
 import { scaleByExp10, supportedUnits } from "#src/util/si_units.js";
 import type { WatershedResult } from "#src/watershed/base.js";
+import type { LiveWatershed } from "#src/watershed/live.js";
 import { registerPromiseRPC } from "#src/worker_rpc.js";
 
 interface PublishedResult {
-  readonly info: WatershedResultInfo;
+  readonly info: WatershedResultInfo | LiveWatershedInfo;
   readonly byteLength: number;
-  data: Uint32Array | undefined;
+  data?: Uint32Array;
+  live?: LiveWatershed;
+  removeInvalidation?: () => void;
   readonly sources: Set<WatershedVolumeChunkSource>;
 }
 
@@ -73,10 +82,18 @@ function disposeResult(session: Session, resultId: string) {
   session.bytes -= entry.byteLength;
   // Handles and source disposers can outlive the publication. Release its input.
   entry.data = undefined;
-  for (const source of entry.sources) {
-    if (!source.wasDisposed) source.invalidateCache();
+  const live = entry.live;
+  entry.live = undefined;
+  entry.removeInvalidation?.();
+  entry.removeInvalidation = undefined;
+  try {
+    live?.dispose();
+  } finally {
+    for (const source of entry.sources) {
+      if (!source.wasDisposed) source.invalidateCache();
+    }
+    entry.sources.clear();
   }
-  entry.sources.clear();
 }
 
 function getSession(chunkManager: ChunkManager): Session {
@@ -106,13 +123,22 @@ function getSession(chunkManager: ChunkManager): Session {
 function requireResult(
   chunkManager: ChunkManager,
   resultId: string,
-): PublishedResult & { data: Uint32Array } {
+): PublishedResult {
   const session = sessions.get(chunkManager);
   const entry = session?.results.get(resultId);
-  if (session?.disposed || entry === undefined || entry.data === undefined) {
+  if (session?.disposed || entry === undefined) {
     throw missingWatershedResult(resultId);
   }
-  return entry as PublishedResult & { data: Uint32Array };
+  if (entry.live !== undefined) {
+    try {
+      entry.live.signal.throwIfAborted();
+      entry.live.assertValid();
+    } catch {
+      disposeResult(session!, resultId);
+      throw missingWatershedResult(resultId);
+    }
+  }
+  return entry;
 }
 
 // A separate scope ensures handles never capture the caller's result or array.
@@ -168,17 +194,118 @@ export function publishWatershedResult(
   return makePublication(session, resultId);
 }
 
-registerPromiseRPC(WATERSHED_TILE_RPC_ID, async function (x, { signal }) {
-  signal?.throwIfAborted();
-  const entry = requireResult(this.get(x.chunkManager), x.resultId);
-  const data = copyWatershedResultChunk(
-    entry.data,
-    entry.info.shapeXYZ,
-    x.lowerXYZ,
-    x.sizeXYZ,
-  );
-  return { value: data, transfers: [data.buffer] };
-});
+/**
+ * Synchronous metadata-only publication. Takes lifetime ownership of live,
+ * including on failure; no output tiles are retained outside the normal chunk
+ * cache. A source invalidation expires the URL and invalidates every dependent
+ * chunk cache, just like explicit disposal or ChunkManager teardown.
+ */
+export function publishLiveWatershed(
+  chunkManager: ChunkManager,
+  live: LiveWatershed,
+): { url: string; dispose(): void } {
+  let session: Session | undefined;
+  let resultId: string | undefined;
+  try {
+    session = getSession(chunkManager);
+    live.signal.throwIfAborted();
+    live.assertValid();
+    const info = getLiveWatershedInfo(live.info);
+    const byteLength = new TextEncoder().encode(
+      JSON.stringify(info),
+    ).byteLength;
+    if (session.bytes + byteLength > WATERSHED_RESULT_MEMORY_LIMIT) {
+      throw new Error(
+        "Watershed results exceed the 128 MiB session memory limit; dispose old results first",
+      );
+    }
+    do {
+      resultId = getRandomHexString();
+    } while (session.results.has(resultId));
+    const entry: PublishedResult = {
+      info,
+      byteLength,
+      live,
+      sources: new Set(),
+    };
+    session.results.set(resultId, entry);
+    session.bytes += byteLength;
+    const capturedSession = session;
+    const capturedId = resultId;
+    const invalidate = () => disposeResult(capturedSession, capturedId);
+    live.signal.addEventListener("abort", invalidate, { once: true });
+    entry.removeInvalidation = () =>
+      live.signal.removeEventListener("abort", invalidate);
+    return makePublication(session, resultId);
+  } catch (error) {
+    if (session !== undefined && resultId !== undefined) {
+      disposeResult(session, resultId);
+    } else {
+      live.dispose();
+    }
+    throw error;
+  }
+}
+
+registerPromiseRPC<Uint32Array | BigUint64Array | undefined>(
+  WATERSHED_TILE_RPC_ID,
+  async function (x, { signal }) {
+    signal ??= new AbortController().signal;
+    signal.throwIfAborted();
+    const manager: ChunkManager = this.get(x.chunkManager);
+    let entry: PublishedResult;
+    try {
+      entry = requireResult(manager, x.resultId);
+    } catch (error) {
+      // A removed live layer can still have stale worker demand. An unavailable
+      // sentinel lets the worker await scheduler cancellation, not cache FAILED.
+      if (x.live === true) return { value: undefined };
+      throw error;
+    }
+    const live = entry.live;
+    if (live === undefined) {
+      if (x.live === true) throw new Error("Not a live watershed source");
+      const data = copyWatershedResultChunk(
+        entry.data!,
+        entry.info.shapeXYZ,
+        x.lowerXYZ,
+        x.sizeXYZ,
+      );
+      return { value: data, transfers: [data.buffer] };
+    }
+    const count = validateLiveWatershedChunkBounds(
+      entry.info as LiveWatershedInfo,
+      x.lowerXYZ,
+      x.sizeXYZ,
+    );
+    const combined = AbortSignal.any([signal, live.signal]);
+    try {
+      const data = await raceWithAbort(
+        live.readTile(x.lowerXYZ, x.sizeXYZ, combined),
+        combined,
+      );
+      combined.throwIfAborted();
+      // Recheck lifetime after computation, even if the producer ignored abort.
+      requireResult(manager, x.resultId);
+      if (!(data instanceof BigUint64Array) || data.length !== count) {
+        throw new Error("Invalid live watershed tile data");
+      }
+      // A private exact-sized transfer also protects shared in-flight subscribers
+      // and producer subarrays from detachment. This is never an output cache.
+      const copy = BigUint64Array.from(data);
+      return { value: copy, transfers: [copy.buffer] };
+    } catch (error) {
+      signal.throwIfAborted();
+      if (
+        live.signal.aborted ||
+        sessions.get(manager)?.results.get(x.resultId) !== entry
+      ) {
+        return { value: undefined };
+      }
+      throw error;
+    }
+  },
+);
 
 export class WatershedVolumeChunkSource extends WithParameters(
   VolumeChunkSource,
@@ -189,12 +316,12 @@ export class WatershedMultiscaleVolumeChunkSource extends MultiscaleVolumeChunkS
   constructor(
     chunkManager: ChunkManager,
     public readonly resultId: string,
-    public readonly info: WatershedResultInfo,
+    public readonly info: WatershedResultInfo | LiveWatershedInfo,
   ) {
     super(chunkManager);
   }
   get dataType() {
-    return DataType.UINT32;
+    return "chunkShapeXYZ" in this.info ? DataType.UINT64 : DataType.UINT32;
   }
   get volumeType() {
     return VolumeType.SEGMENTATION;
@@ -207,17 +334,21 @@ export class WatershedMultiscaleVolumeChunkSource extends MultiscaleVolumeChunkS
     const entry = requireResult(this.chunkManager, this.resultId);
     const spec = makeVolumeChunkSpecification({
       rank: 3,
-      dataType: DataType.UINT32,
-      chunkDataSize: Uint32Array.from(this.info.shapeXYZ, (x) =>
-        Math.min(x, 32),
-      ),
+      dataType: this.dataType,
+      chunkDataSize:
+        "chunkShapeXYZ" in this.info
+          ? Uint32Array.from(this.info.chunkShapeXYZ)
+          : Uint32Array.from(this.info.shapeXYZ, (x) => Math.min(x, 32)),
       upperVoxelBound: Float32Array.from(this.info.shapeXYZ),
       // Translation belongs in the model transform, not chunk lookup bounds.
       baseVoxelOffset: new Float32Array(3),
     });
     const chunkSource = this.chunkManager.getChunkSource(
       WatershedVolumeChunkSource,
-      { spec, parameters: { resultId: this.resultId } },
+      {
+        spec,
+        parameters: { resultId: this.resultId, live: entry.live !== undefined },
+      },
     );
     if (!entry.sources.has(chunkSource)) {
       entry.sources.add(chunkSource);
@@ -239,7 +370,7 @@ export class WatershedDataSourceProvider implements DataSourceProvider {
     return "watershed";
   }
   get description() {
-    return "Session-local watershed snapshot (not shareable)";
+    return "Session-local live watershed or snapshot (not shareable)";
   }
 
   async get(options: GetDataSourceOptions): Promise<DataSource> {
