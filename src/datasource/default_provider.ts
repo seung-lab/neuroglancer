@@ -26,6 +26,7 @@ import type {
 import { DataSourceRegistry } from "#src/datasource/index.js";
 import { installInferenceDataSourceProvider } from "#src/datasource/inference/register_default.js";
 import { LocalDataSourceProvider } from "#src/datasource/local.js";
+import { installWatershedDataSourceProvider } from "#src/datasource/watershed/register_default.js";
 import { AutoDetectRegistry } from "#src/kvstore/auto_detect.js";
 import type { SharedKvStoreContext } from "#src/kvstore/frontend.js";
 
@@ -52,6 +53,7 @@ export function getDefaultDataSourceProvider(options: ProviderOptions) {
   const registry = new DataSourceRegistry(options.kvStoreContext);
   registry.register(new LocalDataSourceProvider());
   installInferenceDataSourceProvider(registry);
+  installWatershedDataSourceProvider(registry);
   for (const provider of providers) {
     registry.register(provider);
   }
