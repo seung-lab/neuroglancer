@@ -161,7 +161,7 @@ describe("watershed job coordination", () => {
   });
 
   it.each(["user", "source"])(
-    "immediately discards a running worker on %s cancellation",
+    "holds the running worker slot until completion on %s cancellation",
     async (kind) => {
       const { input, controller } = makeInput();
       const user = new AbortController();
@@ -176,13 +176,18 @@ describe("watershed job coordination", () => {
         user.signal,
       );
       await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
+      const settled = vi.fn();
+      void pending.then(settled, settled);
       const reason = new Error(`${kind} cancelled`);
       (kind === "user" ? user : controller).abort(reason);
-      await expect(pending).rejects.toBe(reason);
+      await new Promise((resolve) => setTimeout(resolve, 0));
       expect(request.mock.calls[0][1].aborted).toBe(true);
-      // Already running synchronous work can still finish, but cannot publish.
+      expect(settled).not.toHaveBeenCalled();
+      // The live consumer cancels immediately, but its serial queue must retain
+      // this physical worker slot until the uninterruptible kernel finishes.
       work.resolve(new Uint32Array(8).fill(42));
-      await Promise.resolve();
+      await expect(pending).rejects.toBe(reason);
+      expect(settled).toHaveBeenCalledOnce();
     },
   );
 

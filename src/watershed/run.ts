@@ -15,7 +15,6 @@
  */
 
 import { requestAsyncComputation } from "#src/async_computation/request.js";
-import { raceWithAbort } from "#src/util/abort.js";
 import {
   validateWatershedOptions,
   validateWatershedShape,
@@ -72,16 +71,15 @@ export async function computeWatershed(
   input.assertValid();
   // Own the transferable, even if a custom input returned a shared/subarray buffer.
   const owned = Float32Array.from(affinities);
-  const data = await raceWithAbort(
-    requestAsyncComputation(
-      watershedComputation,
-      combinedSignal,
-      [owned.buffer],
-      owned,
-      shape,
-      parameters,
-    ),
+  // Keep the live queue's slot until an already-running synchronous kernel
+  // finishes. Its consumer cancels immediately, independently of this promise.
+  const data = await requestAsyncComputation(
+    watershedComputation,
     combinedSignal,
+    [owned.buffer],
+    owned,
+    shape,
+    parameters,
   );
   combinedSignal.throwIfAborted();
   input.assertValid();
