@@ -694,6 +694,42 @@ describe("native affinity input", () => {
     expect(f.source.refCount).toBe(1);
   });
 
+  it("rejects a generation change without layer or geometry notifications", () => {
+    const f = fixture();
+    const source = Object.assign(f.source, { generation: 1 });
+    const input = f.prepare();
+    try {
+      source.generation = 2;
+      expect(input.isValid()).toBe(false);
+      expect(input.signal.aborted).toBe(true);
+    } finally {
+      input.dispose();
+    }
+    expect(source.refCount).toBe(1);
+  });
+
+  it("never packs mixed-generation chunks when a mutable source updates mid-read", async () => {
+    const f = fixture();
+    const source = Object.assign(f.source, { generation: 1 });
+    const original = source.fetchChunk.getMockImplementation()!;
+    source.fetchChunk.mockImplementation(async (grid, copy, progress) => {
+      const result = await original(grid, copy, progress);
+      ++source.generation;
+      return result;
+    });
+    const input = f.prepare();
+    try {
+      await expect(
+        input.readRegion([0, 0, 0], [4, 3, 2], [0, 1, 2], signal),
+      ).rejects.toThrow("disposed or stale");
+      expect(source.fetchChunk).toHaveBeenCalledTimes(1);
+      expect(input.signal.aborted).toBe(true);
+    } finally {
+      input.dispose();
+    }
+    expect(source.refCount).toBe(1);
+  });
+
   it.each(["caller", "dispose", "stale"])(
     "aborts in-flight %s cancellation with no next fetch or leaked listeners/refs",
     async (kind) => {
