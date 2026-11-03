@@ -282,7 +282,7 @@ export interface ChunkConstructor<T extends Chunk> {
   new (): T;
 }
 
-const numSourceQueueLevels = 2;
+const numSourceQueueLevels = 3;
 
 /**
  * Base class inherited by both ChunkSource, for implementing the backend part of chunk sources that
@@ -685,10 +685,10 @@ export class ChunkQueueManager extends SharedObjectCounterpart {
   /**
    * Contains all chunks in QUEUED state pending download, for each sourceQueueLevel.
    */
-  private queuedDownloadPromotionQueue = [
-    makeChunkPriorityQueue1(Chunk.priorityGreater),
-    makeChunkPriorityQueue1(Chunk.priorityGreater),
-  ];
+  private queuedDownloadPromotionQueue = Array.from(
+    { length: numSourceQueueLevels },
+    () => makeChunkPriorityQueue1(Chunk.priorityGreater),
+  );
 
   /**
    * Contains all chunks in QUEUED state pending compute.
@@ -700,10 +700,10 @@ export class ChunkQueueManager extends SharedObjectCounterpart {
   /**
    * Contains all chunks in DOWNLOADING state, for each sourceQueueLevel.
    */
-  private downloadEvictionQueue = [
-    makeChunkPriorityQueue1(Chunk.priorityLess),
-    makeChunkPriorityQueue1(Chunk.priorityLess),
-  ];
+  private downloadEvictionQueue = Array.from(
+    { length: numSourceQueueLevels },
+    () => makeChunkPriorityQueue1(Chunk.priorityLess),
+  );
 
   /**
    * Contains all chunks in COMPUTING state.
@@ -761,10 +761,9 @@ export class ChunkQueueManager extends SharedObjectCounterpart {
     this.gpuMemoryCapacity = getCapacity(options.gpuMemoryCapacity);
     this.systemMemoryCapacity = getCapacity(options.systemMemoryCapacity);
     this.enablePrefetch = rpc.get(options.enablePrefetch);
-    this.downloadCapacity = [
+    this.downloadCapacity = Array.from({ length: numSourceQueueLevels }, () =>
       getCapacity(options.downloadCapacity),
-      getCapacity(options.downloadCapacity),
-    ];
+    );
     this.computeCapacity = getCapacity(options.computeCapacity);
   }
 
