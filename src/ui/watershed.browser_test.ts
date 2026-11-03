@@ -30,15 +30,13 @@ import {
   WatershedSession,
   type WatershedDependencies,
 } from "#src/ui/watershed.js";
-import { RefCounted } from "#src/util/disposable.js";
+import { disposableOnce, RefCounted } from "#src/util/disposable.js";
 import { registerActionListener } from "#src/util/event_action_map.js";
 import { NullarySignal } from "#src/util/signal.js";
 import type { Viewer } from "#src/viewer.js";
-import {
-  DEFAULT_WATERSHED_OPTIONS,
-  type WatershedResult,
-} from "#src/watershed/base.js";
+import { DEFAULT_WATERSHED_OPTIONS } from "#src/watershed/base.js";
 import type { PreparedAffinityInput } from "#src/watershed/input.js";
+import type { LiveWatershed } from "#src/watershed/live.js";
 
 vi.mock("#src/layer/index.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -52,28 +50,10 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-const result: WatershedResult = {
-  data: Uint32Array.of(0, 1),
-  shapeXYZ: [2, 1, 1],
-  offsetXYZ: [10, 20, -30],
-  spacingXYZ: [2e-9, 2e-9, 8e-9],
-  unitsXYZ: ["m", "m", "m"],
-};
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (error: unknown) => void;
-  const promise = new Promise<T>((r, e) => {
-    resolve = r;
-    reject = e;
-  });
-  return { promise, resolve, reject };
-}
-
 function makeInput(scaleIndex: number) {
   const abort = new AbortController();
   let valid = true;
-  const input = {
+  return {
     lowerBoundXYZ: scaleIndex === 0 ? [10, 20, -30] : [-4, 10, 2],
     upperBoundXYZ: scaleIndex === 0 ? [310, 220, 70] : [60, 90, 42],
     channelCount: 4,
@@ -87,13 +67,27 @@ function makeInput(scaleIndex: number) {
         throw new Error("Source snapshot changed");
     }),
     readRegion: vi.fn<PreparedAffinityInput["readRegion"]>(),
-    dispose: vi.fn(() => abort.abort()),
+    dispose: vi.fn(disposableOnce(() => abort.abort())),
     invalidate: (signal = true) => {
       valid = false;
       if (signal) abort.abort();
     },
   } satisfies PreparedAffinityInput & { invalidate(signal?: boolean): void };
-  return input;
+}
+
+function makeLive(input: PreparedAffinityInput) {
+  return {
+    info: {
+      shapeXYZ: input.upperBoundXYZ.map((x, i) => x - input.lowerBoundXYZ[i]),
+      offsetXYZ: input.lowerBoundXYZ.map((x, i) => x + input.originXYZ[i]),
+      spacingXYZ: [...input.spacingXYZ],
+      unitsXYZ: [...input.unitsXYZ],
+      chunkShapeXYZ: [64, 64, 32],
+    },
+    signal: input.signal,
+    assertValid: vi.fn(() => input.assertValid()),
+    dispose: vi.fn(disposableOnce(() => input.dispose())),
+  };
 }
 
 function fixture() {
@@ -163,17 +157,24 @@ function fixture() {
       return input;
     },
   );
-  const compute = vi
-    .fn<WatershedDependencies["compute"]>()
-    .mockResolvedValue(result);
+  const lives: ReturnType<typeof makeLive>[] = [];
+  const onErrors: Array<(error: unknown) => void> = [];
+  const createLive = vi.fn<WatershedDependencies["createLive"]>(
+    (input, _channels, _options, onError) => {
+      const live = makeLive(input);
+      lives.push(live);
+      onErrors.push(onError);
+      return live as unknown as LiveWatershed;
+    },
+  );
   const publications: Array<{
     url: string;
     dispose: ReturnType<typeof vi.fn>;
   }> = [];
-  const publish = vi.fn<WatershedDependencies["publish"]>(() => {
+  const publish = vi.fn<WatershedDependencies["publish"]>((_manager, live) => {
     const publication = {
       url: `watershed://session/${publications.length}`,
-      dispose: vi.fn(),
+      dispose: vi.fn(disposableOnce(() => live.dispose())),
     };
     publications.push(publication);
     return publication;
@@ -191,8 +192,7 @@ function fixture() {
       const segmentation = Object.assign(
         Object.create(SegmentationUserLayer.prototype),
         {
-          // Successful LoadedLayerDataSource also has an `error` property,
-          // whose value is undefined: testing key presence is not sufficient.
+          // Successful LoadedLayerDataSource also has an undefined `error` key.
           dataSources: [{ loadState: { error: resultState.error } }],
           dataSourcesChanged: new NullarySignal(),
           displayState: { hasVolume: { value: resultState.hasVolume } },
@@ -217,7 +217,7 @@ function fixture() {
     layout,
   } as unknown as Viewer;
   const session = owner.registerDisposer(
-    new WatershedSession(viewer, { prepareInput, compute, publish }),
+    new WatershedSession(viewer, { prepareInput, createLive, publish }),
   );
   session.selectSource(a);
   return {
@@ -233,7 +233,9 @@ function fixture() {
     b,
     inputs,
     prepareInput,
-    compute,
+    createLive,
+    lives,
+    onErrors,
     publish,
     publications,
     resultState,
@@ -255,8 +257,14 @@ function fill(session: WatershedSession, label: string, value: string) {
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
+function addButton(session: WatershedSession) {
+  return [...session.dialog!.footer.querySelectorAll("button")].find(
+    (button) => button.textContent === "Add watershed layer",
+  )!;
+}
+
 describe("WASM watershed UI", () => {
-  it("binds its palette action feature-locally and lets the viewer dispose the dialog", () => {
+  it("preserves the feature-local palette binding and viewer-owned dialog", () => {
     const { viewer } = fixture();
     const owner = new RefCounted();
     disposers.push(() => {
@@ -284,39 +292,49 @@ describe("WASM watershed UI", () => {
     expect(commandRegistry.get("open-watershed")).toBeUndefined();
   });
 
-  it("initializes native XYZ bounds and defaults, explains semantics, and selects sources by identity", () => {
+  it("offers one Add operation, defaults/advanced controls, and source identity selection without crop fields", () => {
     const { session, inputs, b } = fixture();
     session.open();
     expect(field(session, "Source scale index").value).toBe("0");
-    expect(field(session, "ROI lower X Y Z").value).toBe("10, 20, -30");
-    expect(field(session, "ROI size X Y Z").value).toBe("128, 128, 64");
     expect(field(session, "Channels for −X −Y −Z").value).toBe("0, 1, 2");
-    expect(session.highThreshold).toBe(
-      String(DEFAULT_WATERSHED_OPTIONS.highThreshold),
-    );
-    expect(session.lowThreshold).toBe(
-      String(DEFAULT_WATERSHED_OPTIONS.lowThreshold),
-    );
-    expect(session.sizeThreshold).toBe("50");
-    expect(session.dustThreshold).toBe("50");
+    for (const key of [
+      "highThreshold",
+      "lowThreshold",
+      "sizeThreshold",
+      "dustThreshold",
+    ] as const)
+      expect(session[key]).toBe(String(DEFAULT_WATERSHED_OPTIONS[key]));
     expect(inputs[0].dispose).toHaveBeenCalledOnce();
-    const text = session.dialog!.body.textContent!;
+    const body = session.dialog!.body;
+    expect(body.querySelector('input[aria-label*="ROI"]')).toBeNull();
+    expect(body.querySelector("details")!.open).toBe(false);
+    expect(
+      [...session.dialog!.footer.querySelectorAll("button")].map(
+        (x) => x.textContent,
+      ),
+    ).toEqual(["Add watershed layer", "Close"]);
+    expect(addButton(session).disabled).toBe(false);
     for (const explanation of [
+      "current view",
+      "as you navigate",
+      "64 × 64 × 32",
+      "8-voxel halo per face",
+      "stable block-local IDs",
+      "no global stitching",
+      "UINT64",
       "negative axes",
       "data type maximum",
       "floating-point values are unchanged",
-      "Non-native transforms are rejected",
-      "SINGLE volume",
-      "no tiled stitching",
-      "padding",
-      "2**21",
+      "Non-native transforms",
+      "session-local",
       "not shareable",
-      "restored URL",
       "GPL v3+",
-      "worker",
     ])
-      expect(text).toContain(explanation);
-    const select = session.dialog!.body.querySelector<HTMLSelectElement>(
+      expect(body.textContent).toContain(explanation);
+    expect(
+      body.querySelectorAll('a[target="_blank"][rel="noopener"]').length,
+    ).toBe(2);
+    const select = body.querySelector<HTMLSelectElement>(
       '[aria-label="Affinity image source"]',
     )!;
     expect(select.options.length).toBe(3);
@@ -325,27 +343,24 @@ describe("WASM watershed UI", () => {
     expect(session.source).toBe(b);
   });
 
-  it("passes the selected scale, XYZ ROI, negative-axis channels and options once and overlays a visible segmentation", async () => {
+  it("publishes the selected scale/channels/options without reading data and overlays a standard segmentation", async () => {
     const f = fixture();
-    const { session, compute, prepareInput, viewer, groups, root } = f;
+    const { session, prepareInput, createLive, viewer, groups, root } = f;
     session.open();
     fill(session, "Source scale index", "1");
-    expect(field(session, "ROI lower X Y Z").value).toBe("-4, 10, 2");
-    expect(field(session, "ROI size X Y Z").value).toBe("64, 80, 40");
-    fill(session, "ROI lower X Y Z", "-3, 15, 3");
-    fill(session, "ROI size X Y Z", "5 6 7");
     fill(session, "Channels for −X −Y −Z", "3, 1, 2");
     fill(session, "High threshold", "0.8");
     fill(session, "Low threshold", "0.2");
     fill(session, "Size threshold", "12");
     fill(session, "Dust threshold", "3");
     const originalSource = f.a.layer!.toJSON();
-    await session.run();
+    addButton(session).click();
+    await vi.waitFor(() =>
+      expect(session.status).toContain("Added live layer:"),
+    );
     expect(prepareInput).toHaveBeenLastCalledWith(f.a.layer, 1);
-    expect(compute).toHaveBeenCalledExactlyOnceWith(
+    expect(createLive).toHaveBeenCalledExactlyOnceWith(
       f.inputs.at(-1),
-      [-3, 15, 3],
-      [5, 6, 7],
       [3, 1, 2],
       {
         highThreshold: 0.8,
@@ -353,11 +368,11 @@ describe("WASM watershed UI", () => {
         sizeThreshold: 12,
         dustThreshold: 3,
       },
-      expect.any(AbortSignal),
+      expect.any(Function),
     );
     expect(f.publish).toHaveBeenCalledExactlyOnceWith(
       viewer.chunkManager,
-      result,
+      f.lives[0],
     );
     const layer = f.resultLayers[0];
     expect(makeLayer).toHaveBeenCalledWith(root, "affinities watershed", {
@@ -374,279 +389,351 @@ describe("WASM watershed UI", () => {
     expect(viewer.layout).toBe(f.layout);
     expect(f.layout).toEqual({ untouched: true });
     expect(f.a.layer!.toJSON()).toEqual(originalSource);
-    expect(session.status).toContain("Completed:");
     expect(session.busy).toBe(false);
-    for (const input of f.inputs) expect(input.dispose).toHaveBeenCalledOnce();
+    expect(f.inputs.at(-1)!.dispose).not.toHaveBeenCalled();
+    for (const input of f.inputs)
+      expect(input.readRegion).not.toHaveBeenCalled();
     expect(f.publications[0].dispose).not.toHaveBeenCalled();
     deleteLayer(layer);
     expect(f.publications[0].dispose).toHaveBeenCalledOnce();
+    expect(f.lives[0].dispose).toHaveBeenCalledOnce();
+    expect(f.inputs.at(-1)!.dispose).toHaveBeenCalledOnce();
     session.reset();
     expect(f.publications[0].dispose).toHaveBeenCalledOnce();
   });
 
-  it("uses an existing dynamic ONNX image exactly like a static affinity image", async () => {
+  it("uses an existing dynamic ONNX affinity image without changing its source or layout", async () => {
     const f = fixture();
     f.session.selectSource(f.b);
     const originalSource = f.b.layer!.toJSON();
-    await f.session.run();
+    await f.session.addLayer();
     expect(f.prepareInput).toHaveBeenLastCalledWith(f.b.layer, 0);
     expect(f.groups[0].add).not.toHaveBeenCalled();
     expect(f.groups[1].add).toHaveBeenCalledExactlyOnceWith(f.resultLayers[0]);
     expect(f.b.layer!.toJSON()).toEqual(originalSource);
     expect(f.viewer.layout).toBe(f.layout);
-    expect(f.session.status).toContain("Completed:");
+    expect(f.session.status).toContain("Added live layer:");
   });
 
-  it("accepts exactly 2**21 voxels through the Run button", async () => {
+  it("does not impose an overall voxel limit or read the whole source at creation", async () => {
     const f = fixture();
-    f.session.open();
-    fill(f.session, "ROI size X Y Z", "256, 128, 64");
-    const run = [...f.session.dialog!.footer.querySelectorAll("button")].find(
-      (button) => button.textContent === "Run watershed",
-    )!;
-    run.click();
-    await vi.waitFor(() => expect(f.session.status).toContain("Completed:"));
-    expect(f.compute).toHaveBeenCalledOnce();
-    expect(f.compute.mock.calls[0][2]).toEqual([256, 128, 64]);
+    f.prepareInput.mockImplementationOnce(() => {
+      const input = makeInput(0);
+      input.upperBoundXYZ = [10010, 10020, 9970];
+      f.inputs.push(input);
+      return input;
+    });
+    await f.session.addLayer();
+    expect(f.lives[0].info.shapeXYZ).toEqual([10000, 10000, 10000]);
+    expect(f.session.statusLevel).toBe("info");
+    expect(f.inputs.at(-1)!.readRegion).not.toHaveBeenCalled();
   });
 
-  it("retries metadata when a selected dynamic image becomes ready", () => {
+  it("waits for selected source readiness and releases temporary metadata inputs", () => {
     const f = fixture();
     f.session.selectSource(undefined);
     f.prepareInput.mockImplementationOnce(() => {
       throw new Error("Image is still loading");
     });
     f.session.selectSource(f.b);
+    f.session.open();
     expect(f.session.metadata).toBeUndefined();
     expect(f.session.statusLevel).toBe("error");
+    expect(addButton(f.session).disabled).toBe(true);
     f.layerManager.readyStateChanged.dispatch();
     expect(f.session.metadata?.lowerBoundXYZ).toEqual([10, 20, -30]);
-    expect(f.session.shapeXYZ).toBe("128, 128, 64");
     expect(f.session.statusLevel).toBe("info");
+    expect(addButton(f.session).disabled).toBe(false);
     expect(f.inputs.at(-1)!.dispose).toHaveBeenCalledOnce();
   });
 
-  it("completed snapshots outlive deletion of their source without retaining inputs", async () => {
+  it("closing/reopening preserves drafts, pending activation, and live layers", async () => {
     const f = fixture();
-    await f.session.run();
-    deleteLayer(f.a);
-    expect(f.a.wasDisposed).toBe(true);
-    expect(f.session.source).toBeUndefined();
-    expect(f.sourceGroup.has(f.resultLayers[0])).toBe(true);
-    expect(f.publications[0].dispose).not.toHaveBeenCalled();
-    for (const input of f.inputs) expect(input.dispose).toHaveBeenCalledOnce();
-    deleteLayer(f.resultLayers[0]);
-    expect(f.publications[0].dispose).toHaveBeenCalledOnce();
-  });
-
-  it("closing/reopening the dialog preserves drafts, running work, and completed snapshots", async () => {
-    const f = fixture();
-    const pending = deferred<WatershedResult>();
-    f.compute.mockReturnValue(pending.promise);
+    f.resultState.ready = false;
     f.session.open();
-    fill(f.session, "ROI size X Y Z", "2 1 1");
-    const running = f.session.run();
-    const signal = f.compute.mock.calls[0][5];
+    fill(f.session, "High threshold", "0.8");
+    const adding = f.session.addLayer();
+    const input = f.inputs.at(-1)!;
     f.session.dialog!.close();
     expect(f.session.dialog).toBeUndefined();
     expect(f.session.busy).toBe(true);
-    expect(signal.aborted).toBe(false);
+    expect(input.signal.aborted).toBe(false);
     f.session.open();
-    expect(field(f.session, "ROI size X Y Z").value).toBe("2 1 1");
-    expect(field(f.session, "ROI size X Y Z").disabled).toBe(true);
+    expect(field(f.session, "High threshold").value).toBe("0.8");
+    expect(field(f.session, "High threshold").disabled).toBe(true);
+    expect(addButton(f.session).disabled).toBe(true);
+    await f.session.addLayer();
+    expect(f.createLive).toHaveBeenCalledOnce();
     f.session.dialog!.close();
-    pending.resolve(result);
-    await running;
+    f.resultState.ready = true;
+    f.resultLayers[0].readyStateChanged.dispatch();
+    await adding;
     expect(f.root.add).toHaveBeenCalledOnce();
     expect(f.publications[0].dispose).not.toHaveBeenCalled();
     f.session.open();
     expect(
       f.session.dialog!.body.querySelector('[role="status"]')!.textContent,
-    ).toContain("Completed:");
+    ).toContain("Added live layer:");
     f.session.dialog!.close();
-    expect(f.publications[0].dispose).not.toHaveBeenCalled();
+    expect(input.dispose).not.toHaveBeenCalled();
   });
 
-  it.each(["reset", "state reset", "dispose"])(
-    "releases completed published data on viewer %s",
-    async (action) => {
+  it("gives each output its own lifetime independent of subsequent source, scale, and settings selection", async () => {
+    const f = fixture();
+    await f.session.addLayer();
+    const firstInput = f.inputs.at(-1)!;
+    f.session.selectScale("1");
+    f.session.selectSource(f.b);
+    f.session.highThreshold = "0.8";
+    expect(f.publications[0].dispose).not.toHaveBeenCalled();
+    await f.session.addLayer();
+    expect(f.createLive).toHaveBeenCalledTimes(2);
+    expect(f.resultLayers.map((layer) => f.layerManager.has(layer))).toEqual([
+      true,
+      true,
+    ]);
+    expect(firstInput.dispose).not.toHaveBeenCalled();
+    firstInput.invalidate(false);
+    f.a.layer!.dataSourcesChanged.dispatch();
+    await Promise.resolve();
+    expect(f.publications[0].dispose).toHaveBeenCalledOnce();
+    expect(f.publications[1].dispose).not.toHaveBeenCalled();
+    expect(f.sourceGroup.has(f.resultLayers[0])).toBe(false);
+    expect(f.otherGroup.has(f.resultLayers[1])).toBe(true);
+    expect(f.session.source).toBe(f.b);
+    expect(f.session.statusLevel).toBe("error");
+  });
+
+  it("stops on source deletion even if another owner retains the source object", async () => {
+    const f = fixture();
+    await f.session.addLayer();
+    const retained = f.a.addRef();
+    deleteLayer(f.a);
+    expect(f.a.wasDisposed).not.toBe(true);
+    expect(f.session.source).toBeUndefined();
+    expect(f.sourceGroup.has(f.resultLayers[0])).toBe(false);
+    expect(f.publications[0].dispose).toHaveBeenCalledOnce();
+    expect(f.session.statusLevel).toBe("error");
+    retained.dispose();
+  });
+
+  it("releases on output deletion even if another owner retains the output object", async () => {
+    const f = fixture();
+    await f.session.addLayer();
+    const retained = f.resultLayers[0].addRef();
+    deleteLayer(f.resultLayers[0]);
+    expect(f.resultLayers[0].wasDisposed).not.toBe(true);
+    expect(f.publications[0].dispose).toHaveBeenCalledOnce();
+    retained.dispose();
+    expect(f.publications[0].dispose).toHaveBeenCalledOnce();
+  });
+
+  for (const phase of ["activating", "active"] as const) {
+    it.each([
+      "delete",
+      "replace",
+      "data",
+      "transform",
+      "silent invalidation",
+      "reset",
+      "state reset",
+      "dispose",
+    ])(`cancels and removes an ${phase} layer after %s`, async (action) => {
       const f = fixture();
-      await f.session.run();
-      if (action === "reset") f.viewer.resetInitiated.dispatch();
+      f.resultState.ready = phase === "active";
+      const adding = f.session.addLayer();
+      if (phase === "active") await adding;
+      const input = f.inputs.at(-1)!;
+      if (action === "delete") deleteLayer(f.a);
+      else if (action === "replace") {
+        f.a.layer = f.b.layer;
+        f.a.layerChanged.dispatch();
+      } else if (action === "data") {
+        input.invalidate(false);
+        f.a.layer!.dataSourcesChanged.dispatch();
+      } else if (action === "transform") input.invalidate();
+      else if (action === "silent invalidation") {
+        input.invalidate(false);
+        f.layerManager.readyStateChanged.dispatch();
+      } else if (action === "reset") f.viewer.resetInitiated.dispatch();
       else if (action === "state reset") f.viewer.state.stateReset.dispatch();
       else f.owner.dispose();
+      await adding;
+      expect(input.signal.aborted).toBe(true);
+      expect(input.dispose).toHaveBeenCalledOnce();
+      expect(f.session.busy).toBe(false);
       expect(f.publications[0].dispose).toHaveBeenCalledOnce();
-      deleteLayer(f.resultLayers[0]);
-      expect(f.publications[0].dispose).toHaveBeenCalledOnce();
-    },
-  );
-
-  it.each([
-    "cancel",
-    "source",
-    "delete",
-    "replace",
-    "data",
-    "transform",
-    "invalid snapshot",
-    "scale",
-    "reset",
-    "dispose",
-  ])("aborts reads and discards late compute after %s", async (action) => {
-    const f = fixture();
-    const pending = deferred<WatershedResult>();
-    f.compute.mockReturnValue(pending.promise);
-    const running = f.session.run();
-    const input = f.inputs.at(-1)!;
-    const signal = f.compute.mock.calls[0][5];
-    if (action === "cancel") f.session.cancel();
-    else if (action === "source") f.session.selectSource(f.b);
-    else if (action === "delete") deleteLayer(f.a);
-    else if (action === "replace") {
-      f.a.layer = f.b.layer;
-      f.a.layerChanged.dispatch();
-    } else if (action === "data") f.a.layer!.dataSourcesChanged.dispatch();
-    else if (action === "transform") input.invalidate();
-    else if (action === "invalid snapshot") {
-      input.invalidate(false);
-      f.layerManager.readyStateChanged.dispatch();
-    } else if (action === "scale") f.session.selectScale("1");
-    else if (action === "reset") f.viewer.resetInitiated.dispatch();
-    else f.owner.dispose();
-    expect(signal.aborted).toBe(true);
-    expect(input.dispose).toHaveBeenCalledOnce();
-    expect(f.session.busy).toBe(false);
-    pending.resolve(result);
-    await running;
-    expect(f.publish).not.toHaveBeenCalled();
-    expect(makeLayer).not.toHaveBeenCalled();
-    expect(f.root.add).not.toHaveBeenCalled();
-    expect(f.session.status).not.toContain("Completed:");
-  });
-
-  it("checks silent snapshot invalidation again immediately before publishing", async () => {
-    const f = fixture();
-    const pending = deferred<WatershedResult>();
-    f.compute.mockReturnValue(pending.promise);
-    const running = f.session.run();
-    f.inputs.at(-1)!.invalidate(false);
-    pending.resolve(result);
-    await running;
-    expect(f.publish).not.toHaveBeenCalled();
-    expect(f.root.add).not.toHaveBeenCalled();
-    expect(f.session.status).not.toContain("Completed:");
-    expect(f.inputs.at(-1)!.dispose).toHaveBeenCalledOnce();
-  });
-
-  it("does not start compute after a reentrant cancellation", async () => {
-    const f = fixture();
-    const remove = f.session.changed.add(() => {
-      if (f.session.busy) f.session.cancel();
+      expect(f.lives[0].dispose).toHaveBeenCalledOnce();
+      expect(f.layerManager.has(f.resultLayers[0])).toBe(false);
+      expect(f.sourceGroup.has(f.resultLayers[0])).toBe(false);
+      expect(f.resultLayers[0].wasDisposed).toBe(true);
+      expect(f.session.status).not.toContain("Added live layer:");
+      if (!["reset", "state reset", "dispose"].includes(action))
+        expect(f.session.statusLevel).toBe("error");
     });
-    await f.session.run();
-    remove();
-    expect(f.compute).not.toHaveBeenCalled();
-    expect(f.publish).not.toHaveBeenCalled();
-    expect(f.inputs.at(-1)!.dispose).toHaveBeenCalledOnce();
-  });
+  }
 
-  it("ignores late errors without replacing a newer job's completion", async () => {
+  it("does not cancel for navigation, shader, visibility, rename, or unrelated readiness changes", async () => {
     const f = fixture();
-    const pending = deferred<WatershedResult>();
-    f.compute.mockReturnValueOnce(pending.promise);
-    const first = f.session.run();
-    f.session.cancel();
-    await f.session.run();
-    const status = f.session.status;
-    expect(status).toContain("Completed:");
-    pending.reject(new Error("old worker failure"));
-    await first;
-    expect(f.session.status).toBe(status);
-    expect(f.publish).toHaveBeenCalledOnce();
-  });
-
-  it("does not cancel on source navigation, shader, visibility, rename, or unrelated ready changes", async () => {
-    const f = fixture();
-    const pending = deferred<WatershedResult>();
-    f.compute.mockReturnValue(pending.promise);
-    const running = f.session.run();
+    await f.session.addLayer();
     f.a.name = "renamed";
     f.a.visible = false;
     f.a.layerChanged.dispatch();
     f.layerManager.readyStateChanged.dispatch();
     f.layerManager.layersChanged.dispatch();
-    expect(f.compute.mock.calls[0][5].aborted).toBe(false);
+    expect(f.inputs.at(-1)!.signal.aborted).toBe(false);
+    expect(f.publications[0].dispose).not.toHaveBeenCalled();
     expect(f.session.source).toBe(f.a);
-    expect(f.inputs.at(-1)!.dispose).not.toHaveBeenCalled();
-    pending.resolve(result);
-    await running;
-    expect(f.publish).toHaveBeenCalledOnce();
-    expect(f.session.status).toContain("Completed: renamed watershed");
   });
 
-  it.each(["cancel", "transform", "reset"])(
-    "discards a result still loading after %s, releasing its publication",
-    async (action) => {
-      const f = fixture();
-      f.resultState.ready = false;
-      f.session.open();
-      const running = f.session.run();
-      await vi.waitFor(() => expect(makeLayer).toHaveBeenCalledOnce());
-      if (action === "cancel")
-        [...f.session.dialog!.footer.querySelectorAll("button")]
-          .find((button) => button.textContent === "Cancel")!
-          .click();
-      else if (action === "transform") f.inputs.at(-1)!.invalidate();
-      else f.viewer.resetInitiated.dispatch();
-      await running;
-      expect(f.root.add).not.toHaveBeenCalled();
-      expect(f.publications[0].dispose).toHaveBeenCalledOnce();
-      expect(f.resultLayers[0].wasDisposed).toBe(true);
-      expect(f.session.status).not.toContain("Completed:");
-    },
-  );
+  it("preserves a valid live layer/publication on non-semantic dataSourcesChanged notifications", async () => {
+    const f = fixture();
+    await f.session.addLayer();
+    const input = f.inputs.at(-1)!;
+    const live = f.lives[0];
+    expect(() => input.assertValid()).not.toThrow();
+    expect(() => live.assertValid()).not.toThrow();
+    live.assertValid.mockClear();
+    const status = f.session.status;
+    // Toggling "Enable default subsource set" can emit this notification
+    // without changing the enabled subsources or invalidating the input.
+    f.a.layer!.dataSourcesChanged.dispatch();
+    await Promise.resolve();
+    expect(f.layerManager.has(f.resultLayers[0])).toBe(true);
+    expect(f.sourceGroup.has(f.resultLayers[0])).toBe(true);
+    expect(live.assertValid).toHaveBeenCalled();
+    expect(() => input.assertValid()).not.toThrow();
+    expect(() => live.assertValid()).not.toThrow();
+    expect(input.dispose).not.toHaveBeenCalled();
+    expect(live.dispose).not.toHaveBeenCalled();
+    expect(f.publications[0].dispose).not.toHaveBeenCalled();
+    expect(f.session.status).toBe(status);
+    expect(f.session.statusLevel).toBe("info");
+  });
 
-  it.each(["input", "compute", "publish", "load", "activation"])(
-    "never reports completion on %s failure",
+  it("reports live computation errors and removes cached valid-looking output, ignoring late errors", async () => {
+    const f = fixture();
+    await f.session.addLayer();
+    f.session.open();
+    f.onErrors[0](new Error("worker failed"));
+    expect(f.session.statusLevel).toBe("error");
+    expect(
+      f.session.dialog!.body.querySelector('[role="status"]')!.textContent,
+    ).toContain("worker failed");
+    expect(f.layerManager.has(f.resultLayers[0])).toBe(false);
+    expect(f.publications[0].dispose).toHaveBeenCalledOnce();
+    await f.session.addLayer();
+    const status = f.session.status;
+    f.onErrors[0](new Error("old worker failure"));
+    expect(f.session.status).toBe(status);
+    expect(f.publications[1].dispose).not.toHaveBeenCalled();
+  });
+
+  it("does not let a successful metadata refresh hide live source invalidation", async () => {
+    const f = fixture();
+    await f.session.addLayer();
+    f.inputs.at(-1)!.invalidate(false);
+    f.a.layer!.dataSourcesChanged.dispatch();
+    await Promise.resolve();
+    expect(f.session.metadata).toBeDefined();
+    expect(f.session.statusLevel).toBe("error");
+    expect(f.session.status).toContain("Watershed stopped");
+    expect(f.session.status).toContain("Source snapshot changed");
+    expect(f.layerManager.has(f.resultLayers[0])).toBe(false);
+    expect(f.publications[0].dispose).toHaveBeenCalledOnce();
+  });
+
+  it("handles reset reentrantly before layer construction", async () => {
+    const f = fixture();
+    const remove = f.session.changed.add(() => {
+      if (f.session.busy) f.session.reset();
+    });
+    await f.session.addLayer();
+    remove();
+    expect(makeLayer).not.toHaveBeenCalled();
+    expect(f.publications[0].dispose).toHaveBeenCalledOnce();
+    expect(f.inputs.at(-1)!.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("does not re-add a layer to groups after a reentrant reset during publication", async () => {
+    const f = fixture();
+    vi.mocked(f.root.add).mockImplementationOnce((layer) => {
+      f.layerManager.addManagedLayer(layer);
+      f.session.reset();
+    });
+    await f.session.addLayer();
+    expect(f.groups[0].add).not.toHaveBeenCalled();
+    expect(f.layerManager.has(f.resultLayers[0])).toBe(false);
+    expect(f.publications[0].dispose).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    "input",
+    "constructor",
+    "publish",
+    "make layer",
+    "load",
+    "activation",
+  ])(
+    "never reports success or leaks ownership on %s failure",
     async (stage) => {
       const f = fixture();
       if (stage === "input")
         f.prepareInput.mockImplementation(() => {
           throw new Error("Non-native transform");
         });
-      else if (stage === "compute")
-        f.compute.mockRejectedValue(new Error("worker failed"));
+      else if (stage === "constructor")
+        f.createLive.mockImplementation(() => {
+          throw new Error("Invalid live configuration");
+        });
       else if (stage === "publish")
         f.publish.mockImplementation(() => {
           throw new Error("publish failed");
         });
+      else if (stage === "make layer")
+        vi.mocked(makeLayer).mockImplementation(() => {
+          throw new Error("layer failed");
+        });
       else if (stage === "load")
         f.resultState.error = new Error("result missing");
       else f.resultState.hasVolume = false;
-      await f.session.run();
+      await f.session.addLayer();
       expect(f.session.busy).toBe(false);
       expect(f.session.statusLevel).toBe("error");
       expect(f.session.status).toContain("Watershed failed:");
-      expect(f.session.status).not.toContain("Completed:");
+      expect(f.session.status).not.toContain("Added live layer:");
       expect(f.root.add).not.toHaveBeenCalled();
-      if (f.publications.length)
-        expect(f.publications[0].dispose).toHaveBeenCalledOnce();
+      for (const publication of f.publications)
+        expect(publication.dispose).toHaveBeenCalledOnce();
+      for (const live of f.lives) expect(live.dispose).toHaveBeenCalledOnce();
       for (const input of f.inputs)
         expect(input.dispose).toHaveBeenCalledOnce();
     },
   );
 
+  it("safely handles a synchronous onError callback during construction", async () => {
+    const f = fixture();
+    f.createLive.mockImplementationOnce(
+      (input, _channels, _options, onError) => {
+        const live = makeLive(input);
+        f.lives.push(live);
+        onError(new Error("startup failed"));
+        return live as unknown as LiveWatershed;
+      },
+    );
+    await f.session.addLayer();
+    expect(f.session.status).toContain("startup failed");
+    expect(f.publish).not.toHaveBeenCalled();
+    expect(f.lives[0].dispose).toHaveBeenCalledOnce();
+    expect(f.inputs.at(-1)!.dispose).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ["scaleIndex", "-1", "Source scale index"],
     ["scaleIndex", "0.5", "Source scale index"],
     ["scaleIndex", "", "Source scale index"],
-    ["lowerXYZ", "10, 20", "three integers"],
-    ["lowerXYZ", "foo, 20, -30", "integer"],
-    ["lowerXYZ", "9, 20, -30", "fully inside"],
-    ["shapeXYZ", "0, 1, 1", "integer ≥ 1"],
-    ["shapeXYZ", "1.5, 1, 1", "integer ≥ 1"],
-    ["shapeXYZ", "129, 129, 129", "2**21 maximum"],
-    ["shapeXYZ", "301, 1, 1", "fully inside"],
+    ["channelsXYZ", "0, 1", "three integers"],
+    ["channelsXYZ", "foo, 1, 2", "integer ≥ 0"],
     ["channelsXYZ", "0, 1, 4", "less than 4"],
     ["channelsXYZ", "-1, 1, 2", "integer ≥ 0"],
     ["channelsXYZ", "0, 0, 2", "distinct affinity channels"],
@@ -661,12 +748,12 @@ describe("WASM watershed UI", () => {
     ["sizeThreshold", "4294967296", "uint32"],
     ["dustThreshold", "NaN", "integer ≥ 0"],
   ] as const)(
-    "rejects invalid %s = %s before compute",
+    "rejects invalid %s = %s before creating a live volume",
     async (key, value, message) => {
       const f = fixture();
       f.session[key] = value;
-      await f.session.run();
-      expect(f.compute).not.toHaveBeenCalled();
+      await f.session.addLayer();
+      expect(f.createLive).not.toHaveBeenCalled();
       expect(f.publish).not.toHaveBeenCalled();
       expect(f.session.statusLevel).toBe("error");
       expect(f.session.status).toContain(message);

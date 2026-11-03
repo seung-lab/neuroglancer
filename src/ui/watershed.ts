@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { publishWatershedResult } from "#src/datasource/watershed/frontend.js";
+import { publishLiveWatershed } from "#src/datasource/watershed/frontend.js";
 import { ImageUserLayer } from "#src/layer/image/index.js";
 import type { ManagedUserLayer } from "#src/layer/index.js";
 import { deleteLayer, makeLayer } from "#src/layer/index.js";
@@ -28,7 +28,6 @@ import {
   ABISS_WATERSHED_LICENSE_URL,
   ABISS_WATERSHED_SOURCE_URL,
   DEFAULT_WATERSHED_OPTIONS,
-  MAX_WATERSHED_VOXELS,
   validateWatershedOptions,
   type WatershedOptions,
 } from "#src/watershed/base.js";
@@ -36,18 +35,23 @@ import {
   prepareAffinityInput,
   type PreparedAffinityInput,
 } from "#src/watershed/input.js";
-import { computeWatershed } from "#src/watershed/run.js";
+import { LiveWatershed } from "#src/watershed/live.js";
 
 export interface WatershedDependencies {
   prepareInput: typeof prepareAffinityInput;
-  compute: typeof computeWatershed;
-  publish: typeof publishWatershedResult;
+  createLive(
+    input: PreparedAffinityInput,
+    channelsXYZ: readonly number[],
+    options: WatershedOptions,
+    onError: (error: unknown) => void,
+  ): LiveWatershed;
+  publish: typeof publishLiveWatershed;
 }
 
 const defaultDependencies: WatershedDependencies = {
   prepareInput: prepareAffinityInput,
-  compute: computeWatershed,
-  publish: publishWatershedResult,
+  createLive: (...args) => new LiveWatershed(...args),
+  publish: publishLiveWatershed,
 };
 
 type InputMetadata = Pick<
@@ -55,29 +59,23 @@ type InputMetadata = Pick<
   "lowerBoundXYZ" | "upperBoundXYZ" | "channelCount" | "spacingXYZ" | "unitsXYZ"
 >;
 
-type Job = {
-  input: PreparedAffinityInput;
-  abort: AbortController;
+type LiveLayer = {
+  check(): void;
   release(): void;
 };
 
-function integer(text: string, name: string, minimum?: number) {
+function integer(text: string, name: string, minimum = 0) {
   const value = text.trim() === "" ? NaN : Number(text);
-  if (
-    !Number.isSafeInteger(value) ||
-    (minimum !== undefined && value < minimum)
-  )
-    throw new Error(
-      `${name} must be ${minimum === undefined ? "an integer" : `an integer ≥ ${minimum}`}`,
-    );
+  if (!Number.isSafeInteger(value) || value < minimum)
+    throw new Error(`${name} must be an integer ≥ ${minimum}`);
   return value;
 }
 
-function triple(text: string, name: string, minimum?: number) {
+function channels(text: string) {
   const parts = text.trim().split(/[\s,]+/);
   if (parts.length !== 3)
-    throw new Error(`${name} must contain three integers in X Y Z order`);
-  return parts.map((part) => integer(part, name, minimum));
+    throw new Error("Channels for −X −Y −Z must contain three integers");
+  return parts.map((part) => integer(part, "Channels for −X −Y −Z"));
 }
 
 function threshold(text: string, name: string) {
@@ -87,26 +85,29 @@ function threshold(text: string, name: string) {
   return value;
 }
 
-/** Viewer-owned job and drafts. Neither jobs nor results belong to the dialog. */
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Viewer-owned drafts; each created layer has an independent live lifetime. */
 export class WatershedSession extends RefCounted {
   readonly changed = new NullarySignal();
   dialog: WatershedDialog | undefined;
   source: ManagedUserLayer | undefined;
   metadata: InputMetadata | undefined;
   scaleIndex = "0";
-  lowerXYZ = "";
-  shapeXYZ = "";
   channelsXYZ = "0, 1, 2";
   highThreshold = String(DEFAULT_WATERSHED_OPTIONS.highThreshold);
   lowThreshold = String(DEFAULT_WATERSHED_OPTIONS.lowThreshold);
   sizeThreshold = String(DEFAULT_WATERSHED_OPTIONS.sizeThreshold);
   dustThreshold = String(DEFAULT_WATERSHED_OPTIONS.dustThreshold);
-  status = "Select an affinity image layer and a native voxel ROI.";
+  status = "Select a ready affinity image layer, then add a watershed layer.";
   statusLevel: "info" | "error" = "info";
   private alive = true;
-  private pending: Job | undefined;
+  private pending: LiveLayer | undefined;
   private sourceDisposers: Array<() => void> = [];
-  private resultDisposers = new Set<() => void>();
+  private liveLayers = new Set<LiveLayer>();
+  private metadataError: string | undefined;
 
   constructor(
     readonly viewer: Viewer,
@@ -120,7 +121,7 @@ export class WatershedSession extends RefCounted {
       viewer.layerManager.readyStateChanged.add(() => {
         this.refreshSources();
         if (this.alive && !this.busy && this.metadata === undefined) {
-          this.inspectSource(false);
+          this.inspectSource();
           this.changed.dispatch();
         }
       }),
@@ -129,6 +130,7 @@ export class WatershedSession extends RefCounted {
     this.registerDisposer(viewer.state.stateReset.add(() => this.reset()));
   }
 
+  /** Only layer activation is pending; viewport computation never blocks Add. */
   get busy() {
     return this.pending !== undefined;
   }
@@ -150,58 +152,58 @@ export class WatershedSession extends RefCounted {
     if (!this.alive) return;
     if (this.source !== undefined && !this.sources.includes(this.source))
       this.selectSource(undefined);
-    if (this.pending !== undefined && !this.pending.input.isValid())
-      this.invalidate("Source data or transform changed; result discarded.");
+    for (const layer of this.liveLayers) layer.check();
     this.changed.dispatch();
   }
 
   selectSource(source: ManagedUserLayer | undefined) {
     if (source === this.source) return;
-    this.invalidate("Select a native voxel ROI, then run watershed.");
     for (const dispose of this.sourceDisposers.splice(0)) dispose();
+    // Changing the draft must not cancel layers already using another source.
     this.source = source;
     this.metadata = undefined;
+    this.metadataError = undefined;
     this.scaleIndex = "0";
-    this.lowerXYZ = this.shapeXYZ = "";
+    // Manager notifications may already have reported a live source failure.
+    // Clearing that source must not replace the error with a neutral prompt.
+    if (source !== undefined || this.statusLevel !== "error")
+      this.setStatus(
+        "Select a ready affinity image layer, then add a watershed layer.",
+      );
     const image = source?.layer;
     if (source !== undefined && image instanceof ImageUserLayer) {
       this.sourceDisposers.push(
         source.layerChanged.add(() => {
-          // Rename, visibility and shader/render-layer notifications are not
-          // replacements. Snapshot validity handles changes to source geometry.
           if (source.layer !== image) this.selectSource(undefined);
           else this.refreshSources();
         }),
         image.dataSourcesChanged.add(() => {
-          this.invalidate("Source data changed; result discarded.");
           this.metadata = undefined;
           // Signal visits newly added handlers during the current dispatch.
-          // Never prepare a replacement snapshot inside that dispatch.
+          // Inspect only after existing prepared inputs have been invalidated.
           queueMicrotask(() => {
             if (this.alive && this.source === source && !this.busy) {
-              this.inspectSource(false);
+              this.inspectSource();
               this.changed.dispatch();
             }
           });
         }),
       );
-      this.inspectSource(true);
+      this.inspectSource();
     }
     this.changed.dispatch();
   }
 
   selectScale(text: string) {
     if (text === this.scaleIndex) return;
-    this.invalidate("Source scale changed; verify the native voxel ROI.");
     this.scaleIndex = text;
     this.metadata = undefined;
-    this.lowerXYZ = this.shapeXYZ = "";
-    this.inspectSource(true);
+    this.inspectSource();
     this.changed.dispatch();
   }
 
   private rememberMetadata(input: PreparedAffinityInput) {
-    // Copy values only: an idle draft/result must not retain source chunk refs.
+    // The draft retains values only, never source chunk references.
     this.metadata = {
       lowerBoundXYZ: [...input.lowerBoundXYZ],
       upperBoundXYZ: [...input.upperBoundXYZ],
@@ -211,32 +213,24 @@ export class WatershedSession extends RefCounted {
     };
   }
 
-  private inspectSource(initializeRoi: boolean) {
+  private inspectSource() {
     const image = this.source?.layer;
     if (!(image instanceof ImageUserLayer)) return;
     let input: PreparedAffinityInput | undefined;
     try {
       input = this.dependencies.prepareInput(
         image,
-        integer(this.scaleIndex, "Source scale index", 0),
+        integer(this.scaleIndex, "Source scale index"),
       );
       input.assertValid();
       this.rememberMetadata(input);
-      if (this.statusLevel === "error")
-        this.setStatus("Select a native voxel ROI, then run watershed.");
-      if (initializeRoi || (this.lowerXYZ === "" && this.shapeXYZ === "")) {
-        this.lowerXYZ = input.lowerBoundXYZ.join(", ");
-        this.shapeXYZ = input.upperBoundXYZ
-          .map((upper, i) =>
-            Math.min(upper - input!.lowerBoundXYZ[i], [128, 128, 64][i]),
-          )
-          .join(", ");
-      }
+      // A successful draft inspection must not hide a live layer's failure.
+      if (this.status === this.metadataError)
+        this.setStatus("Ready to add a live watershed layer.");
+      this.metadataError = undefined;
     } catch (error) {
-      this.setStatus(
-        error instanceof Error ? error.message : String(error),
-        "error",
-      );
+      this.metadataError = `Affinity source unavailable: ${errorMessage(error)}`;
+      this.setStatus(this.metadataError, "error");
     } finally {
       input?.dispose();
     }
@@ -250,32 +244,42 @@ export class WatershedSession extends RefCounted {
     this.statusLevel = level;
   }
 
-  private invalidate(message: string) {
-    const job = this.pending;
-    this.pending = undefined;
-    job?.abort.abort();
-    job?.release();
-    this.setStatus(message);
+  reset() {
+    this.selectSource(undefined);
+    for (const layer of this.liveLayers) layer.release();
+    this.setStatus("Viewer reset; select an affinity image layer.");
     this.changed.dispatch();
   }
 
-  cancel() {
-    if (!this.alive || !this.busy) return;
-    this.invalidate(
-      "Cancelled; results discarded. Already-started bounded WASM work may finish in the worker.",
-    );
-  }
-
-  reset() {
-    this.selectSource(undefined);
-    this.invalidate("Viewer reset; select an affinity image layer.");
-    for (const dispose of this.resultDisposers) dispose();
-  }
-
-  async run() {
+  /** Publish a lazy volume; only VolumeChunkSource demand computes labels. */
+  async addLayer() {
     if (!this.alive || this.busy) return;
     let input: PreparedAffinityInput | undefined;
-    let job: Job | undefined;
+    let live: LiveWatershed | undefined;
+    let publication: ReturnType<WatershedDependencies["publish"]> | undefined;
+    let layer: ManagedUserLayer | undefined;
+    let entry: LiveLayer | undefined;
+    let attached = false;
+    let activated = false;
+    let released = false;
+    const abort = new AbortController();
+    const removers: Array<() => void> = [];
+    const release = disposableOnce(() => {
+      released = true;
+      if (entry !== undefined) this.liveLayers.delete(entry);
+      if (this.pending === entry) this.pending = undefined;
+      for (const remove of removers.splice(0)) remove();
+      abort.abort();
+      if (layer !== undefined) {
+        layer.unregisterDisposer(release);
+        // Do not leave cached labels looking valid after source invalidation.
+        deleteLayer(layer);
+      }
+      // Each successful ownership transfer replaces the caller's disposer.
+      if (publication !== undefined) publication.dispose();
+      else if (live !== undefined) live.dispose();
+      else input?.dispose();
+    });
     try {
       const source = this.source;
       const image = source?.layer;
@@ -283,143 +287,133 @@ export class WatershedSession extends RefCounted {
         throw new Error("Select an affinity image layer");
       input = this.dependencies.prepareInput(
         image,
-        integer(this.scaleIndex, "Source scale index", 0),
+        integer(this.scaleIndex, "Source scale index"),
       );
       input.assertValid();
       this.rememberMetadata(input);
-      const lower = triple(this.lowerXYZ, "ROI lower X Y Z");
-      const shape = triple(this.shapeXYZ, "ROI size X Y Z", 1);
-      const channels = triple(this.channelsXYZ, "Channels for −X −Y −Z", 0);
-      if (shape.reduce((a, b) => a * b, 1) > MAX_WATERSHED_VOXELS)
-        throw new Error(
-          `ROI exceeds ${MAX_WATERSHED_VOXELS} voxels (2**21 maximum)`,
-        );
-      if (
-        lower.some(
-          (x, i) =>
-            x < input!.lowerBoundXYZ[i] ||
-            x + shape[i] > input!.upperBoundXYZ[i],
-        )
-      )
-        throw new Error(
-          "ROI must be fully inside the selected scale bounds; no padding",
-        );
-      if (new Set(channels).size !== 3)
+      const channelsXYZ = channels(this.channelsXYZ);
+      if (new Set(channelsXYZ).size !== 3)
         throw new Error("Select three distinct affinity channels");
-      if (channels.some((channel) => channel >= input!.channelCount))
+      if (channelsXYZ.some((channel) => channel >= input!.channelCount))
         throw new Error(
           `Channel indices must be less than ${input.channelCount}`,
         );
       const options: WatershedOptions = {
         highThreshold: threshold(this.highThreshold, "High threshold"),
         lowThreshold: threshold(this.lowThreshold, "Low threshold"),
-        sizeThreshold: integer(this.sizeThreshold, "Size threshold", 0),
-        dustThreshold: integer(this.dustThreshold, "Dust threshold", 0),
+        sizeThreshold: integer(this.sizeThreshold, "Size threshold"),
+        dustThreshold: integer(this.dustThreshold, "Dust threshold"),
       };
       validateWatershedOptions(options);
-      const abort = new AbortController();
-      const snapshot = input;
-      let removeInvalidation = () => {};
-      job = {
-        input,
-        abort,
-        release: disposableOnce(() => {
-          removeInvalidation();
-          snapshot.dispose();
-        }),
+      // Buffer synchronous errors until ownership has safely transferred.
+      const startupErrors: unknown[] = [];
+      let reportError = (error: unknown) => {
+        startupErrors.push(error);
       };
-      this.pending = job;
-      const invalidate = () => {
-        if (this.pending === job)
-          this.invalidate(
-            "Source data or transform changed; result discarded.",
-          );
-      };
-      input.signal.addEventListener("abort", invalidate, { once: true });
-      removeInvalidation = () =>
-        snapshot.signal.removeEventListener("abort", invalidate);
-      if (input.signal.aborted) {
-        invalidate();
-        return;
-      }
-      this.setStatus("Computing one bounded ROI in WASM…");
-      this.changed.dispatch();
-      if (!this.alive || this.pending !== job) return;
-      const result = await this.dependencies.compute(
+      live = this.dependencies.createLive(
         input,
-        lower,
-        shape,
-        channels,
+        channelsXYZ,
         options,
-        abort.signal,
+        (error) => reportError(error),
       );
-      if (!this.alive || this.pending !== job) return;
-      abort.signal.throwIfAborted();
-      input.assertValid();
-      const publication = this.dependencies.publish(
-        this.viewer.chunkManager,
-        result,
-      );
-      const release = disposableOnce(publication);
-      let layer: ManagedUserLayer | undefined;
-      let published = false;
-      try {
-        if (!this.alive || this.pending !== job) return;
-        layer = makeLayer(
-          this.viewer.layerSpecification,
-          this.viewer.layerManager.getUniqueLayerName(
-            `${source.name} watershed`,
-          ),
-          {
-            type: "segmentation",
-            source: publication.url,
-            // With an empty selection, show every nonzero label in the ROI.
-            ignoreNullVisibleSet: true,
-            selectedAlpha: 0.5,
-          },
-        );
-        await waitForWatershedLayer(layer, abort.signal);
-        if (!this.alive || this.pending !== job) return;
-        input.assertValid();
-        this.viewer.layerSpecification.add(layer.addRef());
-        // Reuse current source-group membership, never split/rewrite a layout.
-        for (const subset of this.viewer.layerSpecification.subsets) {
-          if (
-            subset.layerManager.has(source) &&
-            !subset.layerManager.has(layer)
-          )
-            subset.add(layer.addRef());
-        }
-        if (!this.alive || this.pending !== job) return;
-        input.assertValid();
-        const releaseResult = disposableOnce(() => {
-          this.resultDisposers.delete(releaseResult);
-          release();
-        });
-        this.resultDisposers.add(releaseResult);
-        layer.registerDisposer(releaseResult);
-        published = true;
+      input = undefined;
+      if (startupErrors.length !== 0) throw startupErrors[0];
+      publication = this.dependencies.publish(this.viewer.chunkManager, live);
+      if (startupErrors.length !== 0) throw startupErrors[0];
+      const stop = (error: unknown) => {
+        if (released) return;
+        release();
+        if (!this.alive) return;
         this.setStatus(
-          `Completed: ${layer.name}. Session-local snapshot; not shareable or recomputed from URL state.`,
-        );
-      } finally {
-        if (!published) {
-          if (layer !== undefined) deleteLayer(layer);
-          release();
-        }
-        layer?.dispose();
-      }
-    } catch (error) {
-      if (this.alive && (job === undefined || this.pending === job))
-        this.setStatus(
-          `Watershed failed: ${error instanceof Error ? error.message : error}`,
+          `Watershed stopped (${layer?.name ?? source.name}): ${errorMessage(error)}`,
           "error",
         );
+        this.changed.dispatch();
+      };
+      entry = {
+        release,
+        check: () => {
+          if (released) return;
+          if (
+            attached &&
+            layer !== undefined &&
+            !this.viewer.layerManager.has(layer)
+          ) {
+            release();
+            return;
+          }
+          if (!this.viewer.layerManager.has(source) || source.layer !== image) {
+            stop(
+              new Error(
+                "Affinity source deleted or replaced; live layer removed.",
+              ),
+            );
+            return;
+          }
+          try {
+            live!.assertValid();
+            if (live!.signal.aborted)
+              throw new Error(
+                "Affinity source invalidated; live layer removed.",
+              );
+          } catch (error) {
+            stop(error);
+          }
+        },
+      };
+      this.liveLayers.add(entry);
+      this.pending = entry;
+      reportError = stop;
+      const invalidated = () =>
+        stop(new Error("Affinity source invalidated; live layer removed."));
+      live.signal.addEventListener("abort", invalidated, { once: true });
+      removers.push(
+        () => live!.signal.removeEventListener("abort", invalidated),
+        source.layerChanged.add(entry.check),
+        image.dataSourcesChanged.add(entry.check),
+      );
+      entry.check();
+      if (released) return;
+      this.setStatus("Adding live watershed layer…");
+      this.changed.dispatch();
+      if (released) return;
+      layer = makeLayer(
+        this.viewer.layerSpecification,
+        this.viewer.layerManager.getUniqueLayerName(`${source.name} watershed`),
+        {
+          type: "segmentation",
+          source: publication.url,
+          // With an empty selection, show every nonzero label.
+          ignoreNullVisibleSet: true,
+          selectedAlpha: 0.5,
+        },
+      );
+      layer.registerDisposer(release);
+      await waitForWatershedLayer(layer, abort.signal);
+      entry.check();
+      if (released) return;
+      attached = true;
+      this.viewer.layerSpecification.add(layer.addRef());
+      if (released) return;
+      // Reuse current source-group membership, never split/rewrite a layout.
+      for (const subset of this.viewer.layerSpecification.subsets) {
+        if (subset.layerManager.has(source) && !subset.layerManager.has(layer))
+          subset.add(layer.addRef());
+        if (released) return;
+      }
+      entry.check();
+      if (released) return;
+      activated = true;
+      this.setStatus(
+        `Added live layer: ${layer.name}. Labels load for the current view and as you navigate. Session-local URL; not shareable.`,
+      );
+    } catch (error) {
+      if (this.alive && !released)
+        this.setStatus(`Watershed failed: ${errorMessage(error)}`, "error");
     } finally {
-      if (job !== undefined) {
-        if (this.pending === job) this.pending = undefined;
-        job.release();
-      } else input?.dispose();
+      if (!activated) release();
+      if (this.pending === entry) this.pending = undefined;
+      layer?.dispose();
       if (this.alive) this.changed.dispatch();
     }
   }
@@ -481,7 +475,7 @@ export function waitForWatershedLayer(
   });
 }
 
-/** Closing the view does not cancel a job or dispose completed snapshots. */
+/** Closing the dialog never stops pending activation or created live layers. */
 export class WatershedDialog extends FramedDialog {
   constructor(readonly session: WatershedSession) {
     super("WASM Watershed", "Close");
@@ -497,13 +491,13 @@ export class WatershedDialog extends FramedDialog {
       return element;
     };
     text(
-      "Affinities connect each voxel towards its negative axes (−X, −Y, −Z). Integer values are normalized by their data type maximum; floating-point values are unchanged. Non-native transforms are rejected.",
+      "Add a segmentation that loads for the current view and as you navigate. Automatic 64 × 64 × 32 cores use an 8-voxel halo per face. UINT64 labels have stable block-local IDs; block seams remain, with no global stitching.",
     );
     text(
-      `Compute one ROI as a SINGLE volume: no tiled stitching, resampling or padding. Maximum ${MAX_WATERSHED_VOXELS} (2**21) voxels. Coordinates are selected-scale native voxel indices in X Y Z order, not viewer coordinates.`,
+      "Affinities connect each voxel towards its negative axes (−X, −Y, −Z). Integer values are normalized by their data type maximum; floating-point values are unchanged. Non-native transforms and mutable Python volume sources are rejected.",
     );
     text(
-      "Results are session-local snapshots, not shareable and not recomputed on a restored URL. Closing this dialog keeps the job and results. Cancel aborts chunk reads and discards results; bounded already-started WASM work may finish in the worker.",
+      "Closing this dialog keeps created layers active. Deleting an output or its affinity source stops its work. Affinity data/transform changes and viewer reset also release dependent layers. Selecting another source here keeps existing layers active. URLs are session-local, not shareable or restored from saved state.",
     );
     const license = text(
       "Algorithm license: GNU General Public License v3 or later (GPL v3+). ",
@@ -522,11 +516,15 @@ export class WatershedDialog extends FramedDialog {
       link.rel = "noopener";
       license.append(link, " ");
     }
-    const row = (title: string, control: HTMLElement) => {
+    const row = (
+      title: string,
+      control: HTMLElement,
+      parent: HTMLElement = this.body,
+    ) => {
       const label = document.createElement("label");
       control.setAttribute("aria-label", title);
       label.append(title, " ", control);
-      this.body.append(label);
+      parent.append(label);
     };
     const source = document.createElement("select");
     row("Affinity image source", source);
@@ -536,17 +534,13 @@ export class WatershedDialog extends FramedDialog {
     );
     const fields: Array<{
       input: HTMLInputElement;
-      key:
-        | "scaleIndex"
-        | "lowerXYZ"
-        | "shapeXYZ"
-        | "channelsXYZ"
-        | keyof WatershedOptions;
+      key: "scaleIndex" | "channelsXYZ" | keyof WatershedOptions;
     }> = [];
     const field = (
       title: string,
       key: (typeof fields)[number]["key"],
       numeric = false,
+      parent: HTMLElement = this.body,
     ) => {
       const input = document.createElement("input");
       input.type = numeric ? "number" : "text";
@@ -556,7 +550,7 @@ export class WatershedDialog extends FramedDialog {
           key === "highThreshold" || key === "lowThreshold" ? "any" : "1";
       }
       if (key === "highThreshold" || key === "lowThreshold") input.max = "1";
-      row(title, input);
+      row(title, input, parent);
       input.addEventListener("input", () => {
         if (key === "scaleIndex") session.selectScale(input.value);
         else session[key] = input.value;
@@ -566,23 +560,23 @@ export class WatershedDialog extends FramedDialog {
     field("Source scale index", "scaleIndex", true);
     const metadata = text("");
     metadata.setAttribute("aria-label", "Selected scale bounds and voxel size");
-    field("ROI lower X Y Z", "lowerXYZ");
-    field("ROI size X Y Z", "shapeXYZ");
-    field("Channels for −X −Y −Z", "channelsXYZ");
-    field("High threshold", "highThreshold", true);
-    field("Low threshold", "lowThreshold", true);
-    field("Size threshold", "sizeThreshold", true);
-    field("Dust threshold", "dustThreshold", true);
+    const advanced = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = "Advanced: channels and thresholds";
+    advanced.append(summary);
+    this.body.append(advanced);
+    field("Channels for −X −Y −Z", "channelsXYZ", false, advanced);
+    field("High threshold", "highThreshold", true, advanced);
+    field("Low threshold", "lowThreshold", true, advanced);
+    field("Size threshold", "sizeThreshold", true, advanced);
+    field("Dust threshold", "dustThreshold", true, advanced);
     const status = text("");
     status.setAttribute("role", "status");
     status.style.cssText = "font-weight:bold;overflow-wrap:anywhere";
-    const run = document.createElement("button");
-    run.textContent = "Run watershed";
-    run.addEventListener("click", () => void session.run());
-    const cancel = document.createElement("button");
-    cancel.textContent = "Cancel";
-    cancel.addEventListener("click", () => session.cancel());
-    this.footer.prepend(run, cancel);
+    const add = document.createElement("button");
+    add.textContent = "Add watershed layer";
+    add.addEventListener("click", () => void session.addLayer());
+    this.footer.prepend(add);
     const update = () => {
       identities = session.sources;
       source.replaceChildren(new Option("Select image layer…", "-1"));
@@ -606,8 +600,8 @@ export class WatershedDialog extends FramedDialog {
       status.dataset.severity = session.statusLevel;
       status.style.color =
         session.statusLevel === "error" ? "#b71c1c" : "inherit";
-      run.disabled = session.busy || session.source === undefined;
-      cancel.disabled = !session.busy;
+      add.disabled =
+        session.busy || session.source === undefined || m === undefined;
     };
     this.registerDisposer(session.changed.add(update));
     this.registerDisposer(() => {
@@ -624,7 +618,7 @@ export function bindWatershed(viewer: Viewer): WatershedSession {
       new ActionCommand(
         "open-watershed",
         "WASM Watershed",
-        "Segment one bounded native affinity ROI locally with WASM watershed (GPL v3+).",
+        "Add viewport-driven affinity watershed segmentation locally with WASM (GPL v3+).",
       ),
     ),
   );
