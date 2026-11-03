@@ -108,14 +108,16 @@ export async function buildPackage(options: {
     });
   }
 
-  const otherSources = await glob(["**/*.{css,js,html,wasm}"], {
-    cwd: srcDir,
-    nodir: true,
-  });
+  const otherSources = await glob(
+    ["**/*.{css,js,html,wasm}", "watershed/abiss/{LICENSE,*.tar.gz}"],
+    { cwd: srcDir, nodir: true },
+  );
   await Promise.all(
-    otherSources.map((name) =>
-      fs.copyFile(path.resolve(srcDir, name), path.resolve(libDir, name)),
-    ),
+    otherSources.map(async (name) => {
+      const target = path.resolve(libDir, name);
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.copyFile(path.resolve(srcDir, name), target);
+    }),
   );
 
   if (!inplace) {
