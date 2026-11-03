@@ -309,6 +309,11 @@ export function prepareAffinityInput(
     }
     const selected = sources[0][scaleIndex];
     const source = selected.chunkSource;
+    if ("generation" in source) {
+      unsupported(
+        "mutable generation-based volumes cannot provide live watershed input; use a static affinity volume or ONNX publication",
+      );
+    }
     const { spec } = source;
     const { dataType } = spec;
     const divisor = divisorFor(dataType);
@@ -439,10 +444,6 @@ export function prepareAffinityInput(
         (_, value) => (typeof value === "bigint" ? String(value) : value),
       );
     const initialSpecKey = specKey();
-    // Python volume invalidation changes generation without layer notifications.
-    const generation = () =>
-      "generation" in source ? source.generation : undefined;
-    const initialGeneration = generation();
     const lifetime = new AbortController();
     let disposed = false;
     const invalidate = () =>
@@ -460,7 +461,6 @@ export function prepareAffinityInput(
           renderLayer.multiscaleSource !== multiscale ||
           source.wasDisposed ||
           source.spec !== spec ||
-          generation() !== initialGeneration ||
           specKey() !== initialSpecKey
         )
           throw new Error("Changed affinity source");
