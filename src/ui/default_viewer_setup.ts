@@ -40,6 +40,7 @@ import { bindTitle } from "#src/ui/title.js";
 import type { Tool } from "#src/ui/tool.js";
 import { restoreTool } from "#src/ui/tool.js";
 import { UrlHashBinding } from "#src/ui/url_hash_binding.js";
+import { bindWatershed } from "#src/ui/watershed.js";
 import type {
   ActionIdentifier,
   EventAction,
@@ -235,6 +236,7 @@ export function convertLegacyAnnotationTags(layer: any) {
 export function setupDefaultViewer(options?: Partial<MinimalViewerOptions>) {
   const viewer = ((<any>window).viewer = makeDefaultViewer(options));
   bindOnnxInference(viewer);
+  bindWatershed(viewer);
   setDefaultInputEventBindings(viewer.inputEventBindings);
   if (hasCustomBindings) {
     setCustomInputEventBindings(viewer, NEUROGLANCER_CUSTOM_INPUT_BINDINGS!);
