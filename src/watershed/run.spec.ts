@@ -95,6 +95,56 @@ describe("watershed job coordination", () => {
   });
 
   it.each([
+    { latePlane: "final affinity", maskThreshold: undefined },
+    { latePlane: "last-channel mask", maskThreshold: 0.3 },
+  ])(
+    "waits for the $latePlane plane before requesting WASM",
+    async ({ maskThreshold }) => {
+      const { input } = makeInput();
+      const channels = [2, 0, 1];
+      const readChannels =
+        maskThreshold === undefined ? channels : [...channels, 3];
+      const planes = readChannels.map(() =>
+        Promise.withResolvers<Float32Array>(),
+      );
+      vi.mocked(input.readRegion).mockImplementation(async () => {
+        const ready = await Promise.all(planes.map((plane) => plane.promise));
+        return Float32Array.from(ready.flatMap((plane) => [...plane]));
+      });
+      const pending = computeWatershed(
+        input,
+        [10, 20, 30],
+        [2, 2, 2],
+        channels,
+        { ...DEFAULT_WATERSHED_OPTIONS, maskThreshold },
+        new AbortController().signal,
+      );
+      expect(input.readRegion).toHaveBeenCalledExactlyOnceWith(
+        [10, 20, 30],
+        [2, 2, 2],
+        readChannels,
+        expect.any(AbortSignal),
+      );
+      expect(request).not.toHaveBeenCalled();
+      const values = readChannels.map((_, i) =>
+        new Float32Array(8).fill((i + 1) / 8),
+      );
+      // Even every earlier requested plane being ready is insufficient. With
+      // masking enabled the late plane is the mask, not an affinity direction.
+      for (let i = 0; i < planes.length - 1; ++i) planes[i].resolve(values[i]);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(request).not.toHaveBeenCalled();
+      planes.at(-1)!.resolve(values.at(-1)!);
+      await pending;
+      expect(request).toHaveBeenCalledOnce();
+      expect(request.mock.calls[0][3]).toEqual(
+        Float32Array.from(values.flatMap((plane) => [...plane])),
+      );
+      expect(request.mock.calls[0][4]).toEqual([2, 2, 2]);
+    },
+  );
+
+  it.each([
     { lower: [9, 20, 30], shape: [2, 2, 2], channels: [0, 1, 2] },
     { lower: [19, 20, 30], shape: [2, 2, 2], channels: [0, 1, 2] },
     { lower: [10.5, 20, 30], shape: [2, 2, 2], channels: [0, 1, 2] },
@@ -192,25 +242,8 @@ describe("watershed job coordination", () => {
     },
   );
 
-  it("propagates source read failures without starting WASM", async () => {
+  it("propagates a deferred source read failure without starting WASM", async () => {
     const { input } = makeInput();
-    const error = new Error("affinity download failed");
-    vi.mocked(input.readRegion).mockRejectedValue(error);
-    await expect(
-      computeWatershed(
-        input,
-        [10, 20, 30],
-        [2, 2, 2],
-        [0, 1, 2],
-        DEFAULT_WATERSHED_OPTIONS,
-        new AbortController().signal,
-      ),
-    ).rejects.toBe(error);
-    expect(request).not.toHaveBeenCalled();
-  });
-
-  it("does not submit a read invalidated before completion", async () => {
-    const { input, controller, affinities } = makeInput();
     const read = Promise.withResolvers<Float32Array>();
     vi.mocked(input.readRegion).mockReturnValue(read.promise);
     const pending = computeWatershed(
@@ -221,12 +254,46 @@ describe("watershed job coordination", () => {
       DEFAULT_WATERSHED_OPTIONS,
       new AbortController().signal,
     );
-    const reason = new Error("source replaced");
-    controller.abort(reason);
-    read.resolve(affinities);
-    await expect(pending).rejects.toBe(reason);
+    const error = new Error("affinity download failed");
+    const rejected = expect(pending).rejects.toBe(error);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(input.readRegion).toHaveBeenCalledOnce();
+    expect(request).not.toHaveBeenCalled();
+    read.reject(error);
+    await rejected;
     expect(request).not.toHaveBeenCalled();
   });
+
+  it.each(["user", "source"])(
+    "never starts WASM after %s cancellation before affinity readiness",
+    async (kind) => {
+      const { input, controller, affinities } = makeInput();
+      const user = new AbortController();
+      const read = Promise.withResolvers<Float32Array>();
+      vi.mocked(input.readRegion).mockReturnValue(read.promise);
+      const pending = computeWatershed(
+        input,
+        [10, 20, 30],
+        [2, 2, 2],
+        [0, 1, 2],
+        DEFAULT_WATERSHED_OPTIONS,
+        user.signal,
+      );
+      expect(input.readRegion).toHaveBeenCalledOnce();
+      expect(request).not.toHaveBeenCalled();
+      const reason = new Error(`${kind} cancelled before affinities ready`);
+      const rejected = expect(pending).rejects.toBe(reason);
+      (kind === "user" ? user : controller).abort(reason);
+      expect(vi.mocked(input.readRegion).mock.calls[0][3].aborted).toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(request).not.toHaveBeenCalled();
+      // A dependency may still finish after cancellation; that must not open
+      // the WASM barrier, regardless of which lifetime was cancelled.
+      read.resolve(affinities);
+      await rejected;
+      expect(request).not.toHaveBeenCalled();
+    },
+  );
 
   it.each(["user", "source"])(
     "holds the running worker slot until completion on %s cancellation",
