@@ -25,12 +25,23 @@ required.
    the last source channel, which cannot also be selected as an affinity.
 5. Click **Add watershed layer**. A standard segmentation layer is added to the
    source's existing layer group, without changing the affinity layer or layout.
-   Labels load for the **current view**, then on demand as you navigate.
+   One shared result covers the **XYZ bounding box enclosing all visible relevant
+   slice views**, and follows navigation, resizing, and layout changes. There are
+   no region/ROI fields or manual Run step.
 
-There is no crop to enter or full-volume computation step. Creation publishes
-metadata, not a precomputed segmentation of the whole source. Normal segmentation
-visibility, selection, opacity, and colors apply; initially all nonzero labels are
-shown with selected opacity `0.5`.
+Creation publishes metadata, not a precomputed segmentation of the whole source.
+The box is expressed in the selected scale's **native grid coordinates**. After a
+**150 ms debounce**, one watershed computation runs over the entire box plus an
+**8-voxel halo per face**, clipped to source bounds. Labels from this single shared
+result are fetched and rendered in ordinary chunks; display-chunk requests never
+run watershed. Normal segmentation visibility, selection, opacity, and colors
+apply; initially all nonzero labels are shown with selected opacity `0.5`.
+
+The computation box is limited to `2**21` (2,097,152) voxels, **including the clipped
+halo**. An oversized view reports a visible error, not a partial segmentation:
+**zoom in**, or select a coarser native scale and add a new layer. The box is never
+silently split into separate computations. The existing layer and viewport
+watcher stay active so navigation to a smaller box can retry.
 
 The selected scale's native voxel spacing and origin are preserved. Arbitrary
 user transforms, reflected grids, and resampling are not supported; unsupported
@@ -67,32 +78,38 @@ immutable for the lifetime of a source publication.
 - High and low thresholds satisfy `0 ≤ low < high ≤ 1` in float32. Defaults are
   high `0.99999`, low `0.00005`, size `50`, and dust `50`. Size and dust are
   unsigned integer cleanup thresholds and can independently be zero.
-- The automatic fixed grid has **64 × 64 × 32 voxel cores**, each computed with
-  an **8-voxel halo per face**, clipped to the source bounds. The halo supplies
-  context; only core labels are displayed. Affinities leaving the available
-  computation domain are ignored.
-- Output is **UINT64**: zero is background; positive labels encode stable
-  **block-local IDs**, distinct across core blocks for a given configuration.
-  Recomputing an evicted block does not renumber it. These are not global object
-  identities: neighboring blocks are segmented independently, and an object
-  crossing a boundary may have different IDs on either side.
+- All visible relevant slice rectangles contribute to **one enclosing XYZ box**,
+  even if they lie in different views. A single computation includes the clipped
+  halo as context; affinities leaving that computation domain are ignored.
+- Output is **UINT64**: zero is background; positive labels are the local labels
+  from the one completed shared result. Labels are consistent across display
+  chunks within that result. Pending, hidden, unavailable, or failed regions
+  return zero labels, not stale results.
 
-Halos reduce edge effects but do not eliminate seams. There is **no global
-stitching or whole-volume watershed**. Changing the source, scale, channel mapping,
-or thresholds (including mask settings) creates a different segmentation; IDs
-should not be compared across configurations. Automatic channel defaults follow
-source/scale changes; valid user-entered mappings are preserved, while mappings
-that become invalid when the channel count changes are reset. Masking is turned
-off when the selected source/scale has fewer than four channels.
+The halo provides context but this bounded computation is **not equivalent to
+whole-volume watershed**. Labels may change across navigation as the enclosing
+box changes; they are not persistent object identities. Changing the source,
+scale, channel mapping, or thresholds (including mask settings) creates a
+different segmentation; IDs should not be compared across configurations.
+Automatic channel defaults follow source/scale changes; valid user-entered
+mappings are preserved, while mappings that become invalid when the channel count
+changes are reset. Masking is turned off when the selected source/scale has fewer
+than four channels.
 
 ## Demand, caches, cancellation, and lifetime
 
-The output is an ordinary demand-driven `VolumeChunkSource`: viewport requests
-schedule bounded watershed work, and navigation requests additional blocks. It
-uses Neuroglancer's standard chunk scheduling and CPU/GPU caches, rather than
-retaining a full-volume label snapshot or a separate snapshot-memory budget.
-Evicted blocks may be recomputed when revisited. Existing ONNX affinity images
-are requested through their normal inference datasource, not a second ONNX path.
+The output is an ordinary `VolumeChunkSource`, using Neuroglancer's standard chunk
+scheduling and CPU/GPU caches to fetch and render labels copied from **one retained
+completed region result**. Display-chunk requests never trigger watershed or
+independent label numbering. Existing ONNX affinity images are requested through
+their normal inference datasource, not a second ONNX path.
+
+A changed viewport box immediately clears obsolete labels and invalidates cached
+output chunks, then schedules one new full-domain computation after the debounce.
+Completion also invalidates output caches so previously empty chunks can reload.
+Hiding the output, or having no visible relevant slice view, clears the region and
+cancels pending work. Showing it again resumes viewport tracking. The source may
+be much larger than the computation cap; it is not read in full at creation.
 
 The watershed module runs in an asynchronous computation worker, without threads,
 `SharedArrayBuffer`, or cross-origin-isolation requirements. Supported browsers
@@ -109,9 +126,12 @@ and mask controls are drafts for the next layer; editing them does not change an
 existing layer's configuration. Delete an output to stop its queued work and
 release its resources. Deleting or replacing its affinity source, changing source
 data or transforms, or resetting/disposal of the viewer also stops the dependent
-live layer. Errors and source invalidation are reported in the watershed dialog's
-status; the stopped output is removed so cached labels cannot remain looking
-valid.
+live layer. Source invalidation is reported in the watershed dialog's status and
+removes the stopped output so cached labels cannot remain looking valid.
+Computation errors (including an oversized region) are also reported visibly and
+clear the result, but **keep the layer and watcher alive** so a later viewport box
+can retry. Fatal construction, publication, or activation errors still clean up
+the failed output.
 
 Result URLs use `watershed://…` and are **session-local**. Saving or sharing viewer
 state does not serialize labels or a watershed recipe. A restored URL cannot
