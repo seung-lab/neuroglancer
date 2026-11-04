@@ -22,7 +22,7 @@ export function installWatershedDataSourceProvider(
 ) {
   registry.register({
     scheme: "watershed",
-    description: "Session-local watershed snapshot (not shareable)",
+    description: "Viewport watershed recipe or session-local result",
     hidden: true,
     async get(options) {
       // Default registries must remain usable in GL-free tools and Node tests.

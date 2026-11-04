@@ -51,11 +51,19 @@ import {
   VolumeChunkSource,
 } from "#src/sliceview/volume/frontend.js";
 import { raceWithAbort } from "#src/util/abort.js";
+import { RefCounted } from "#src/util/disposable.js";
 import * as matrix from "#src/util/matrix.js";
 import { getRandomHexString } from "#src/util/random.js";
 import { scaleByExp10, supportedUnits } from "#src/util/si_units.js";
+import { registerWatershedAttachment } from "#src/watershed/attachment.js";
 import type { WatershedResult } from "#src/watershed/base.js";
 import type { LiveWatershed } from "#src/watershed/live.js";
+import type { WatershedRecipe } from "#src/watershed/recipe.js";
+import {
+  parseWatershedRecipe,
+  WATERSHED_RECIPE_URL,
+} from "#src/watershed/recipe.js";
+import type { restoreWatershedRecipe } from "#src/watershed/restore.js";
 import { registerPromiseRPC } from "#src/worker_rpc.js";
 
 interface PublishedResult {
@@ -75,6 +83,27 @@ interface Session {
 }
 
 const sessions = new WeakMap<ChunkManager, Session>();
+
+// Initial UI publications are reused only by object identity, never saved JSON.
+const recipePublications = new WeakMap<
+  object,
+  {
+    url: string;
+    globalCoordinateSpace: GetDataSourceOptions["globalCoordinateSpace"];
+  }
+>();
+
+export function makeWatershedRecipeSource(
+  publication: { url: string },
+  recipe: WatershedRecipe,
+  globalCoordinateSpace: GetDataSourceOptions["globalCoordinateSpace"],
+): { url: string; state: WatershedRecipe } {
+  recipePublications.set(recipe, {
+    url: publication.url,
+    globalCoordinateSpace,
+  });
+  return { url: WATERSHED_RECIPE_URL, state: recipe };
+}
 
 function invalidateResultSources(entry: PublishedResult) {
   if (entry.invalidatingSources) return;
@@ -335,6 +364,16 @@ export class WatershedVolumeChunkSource extends WithParameters(
 ) {}
 
 export class WatershedMultiscaleVolumeChunkSource extends MultiscaleVolumeChunkSource {
+  private readonly lifetime = new RefCounted();
+
+  registerDisposer(dispose: () => void) {
+    return this.lifetime.registerDisposer(dispose);
+  }
+
+  dispose() {
+    if (!this.lifetime.wasDisposed) this.lifetime.dispose();
+  }
+
   constructor(
     chunkManager: ChunkManager,
     public readonly resultId: string,
@@ -392,12 +431,60 @@ export class WatershedDataSourceProvider implements DataSourceProvider {
     return "watershed";
   }
   get description() {
-    return "Session-local live watershed or snapshot (not shareable)";
+    return "Viewport watershed recipe or session-local result";
   }
 
   async get(options: GetDataSourceOptions): Promise<DataSource> {
     options.signal.throwIfAborted();
-    const resultId = parseWatershedUrl(options.url);
+    let url = options.url;
+    let owned: Awaited<ReturnType<typeof restoreWatershedRecipe>> | undefined;
+    if (url === WATERSHED_RECIPE_URL) {
+      const hint =
+        options.state !== null && typeof options.state === "object"
+          ? recipePublications.get(options.state)
+          : undefined;
+      const recipe = parseWatershedRecipe(options.state);
+      let seeded = false;
+      if (
+        hint !== undefined &&
+        hint.globalCoordinateSpace === options.globalCoordinateSpace
+      ) {
+        try {
+          requireResult(
+            options.registry.chunkManager,
+            parseWatershedUrl(hint.url),
+          );
+          url = hint.url;
+          recipePublications.delete(options.state);
+          seeded = true;
+        } catch {
+          // Deleted publications reconstruct just like copied recipes.
+        }
+      }
+      if (!seeded) {
+        const { restoreWatershedRecipe } = await import(
+          "#src/watershed/restore.js"
+        );
+        options.signal.throwIfAborted();
+        owned = await restoreWatershedRecipe(options, recipe);
+        url = owned.url;
+      }
+    }
+    try {
+      options.signal.throwIfAborted();
+      return this.getPublished(options, url, owned);
+    } catch (error) {
+      owned?.dispose();
+      throw error;
+    }
+  }
+
+  private getPublished(
+    options: GetDataSourceOptions,
+    url: string,
+    owned?: Awaited<ReturnType<typeof restoreWatershedRecipe>>,
+  ): DataSource {
+    const resultId = parseWatershedUrl(url);
     const chunkManager = options.registry.chunkManager;
     const { info } = requireResult(chunkManager, resultId);
     const names = ["x", "y", "z"];
@@ -423,8 +510,30 @@ export class WatershedDataSourceProvider implements DataSourceProvider {
     const outputSpace = makeCoordinateSpace({ rank: 3, names, units, scales });
     const transform = matrix.createIdentity(Float64Array, 4);
     transform.set(info.offsetXYZ, 12);
+    const volume = new WatershedMultiscaleVolumeChunkSource(
+      chunkManager,
+      resultId,
+      info,
+    );
+    if (owned !== undefined) {
+      volume.registerDisposer(owned.dispose);
+      volume.registerDisposer(
+        registerWatershedAttachment(volume, (layer) => owned.attach(layer)),
+      );
+      const dispose = () => volume.dispose();
+      options.signal.addEventListener("abort", dispose, { once: true });
+      chunkManager.registerDisposer(dispose);
+      volume.registerDisposer(() => {
+        options.signal.removeEventListener("abort", dispose);
+        if (chunkManager.refCount !== 0)
+          chunkManager.unregisterDisposer(dispose);
+      });
+    }
     return {
-      canonicalUrl: `watershed://${resultId}`,
+      canonicalUrl:
+        options.url === WATERSHED_RECIPE_URL
+          ? WATERSHED_RECIPE_URL
+          : `watershed://${resultId}`,
       canChangeModelSpaceRank: false,
       modelTransform: {
         rank: 3,
@@ -438,11 +547,7 @@ export class WatershedDataSourceProvider implements DataSourceProvider {
           id: "default",
           default: true,
           subsource: {
-            volume: new WatershedMultiscaleVolumeChunkSource(
-              chunkManager,
-              resultId,
-              info,
-            ),
+            volume,
           },
         },
       ],
