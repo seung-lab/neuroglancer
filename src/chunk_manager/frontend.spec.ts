@@ -17,7 +17,10 @@
  */
 
 import { describe, expect, test, vi } from "vitest";
-import { CHUNK_SOURCE_INVALIDATE_RPC_ID } from "#src/chunk_manager/base.js";
+import {
+  CHUNK_SOURCE_INVALIDATE_RPC_ID,
+  ChunkState,
+} from "#src/chunk_manager/base.js";
 import type { ChunkManager } from "#src/chunk_manager/frontend.js";
 import { Chunk, ChunkSource } from "#src/chunk_manager/frontend.js";
 import { RPC } from "#src/worker_rpc.js";
@@ -38,6 +41,61 @@ function makeSource() {
     },
   };
 }
+
+describe("Chunk.update", () => {
+  test.each([
+    { source: SOURCE_RPC_ID },
+    {
+      source: SOURCE_RPC_ID,
+      id: "0,0,0",
+      state: ChunkState.SYSTEM_MEMORY,
+      new: true,
+    },
+  ])("ignores late updates after source removal: %j", (update) => {
+    using fixture = makeSource();
+    const rpc = fixture.source.rpc!;
+    rpc.set(SOURCE_RPC_ID, fixture.source);
+    fixture.source.dispose();
+    rpc.delete(SOURCE_RPC_ID);
+
+    expect(() =>
+      rpc.target.onmessage!({
+        data: { functionName: "Chunk.update", ...update },
+      } as MessageEvent),
+    ).not.toThrow();
+    expect(fixture.postMessage).not.toHaveBeenCalled();
+  });
+
+  test("still queues updates for a live source in order", () => {
+    using fixture = makeSource();
+    const rpc = fixture.source.rpc!;
+    const queueManager = {
+      pendingChunkUpdates: null,
+      pendingChunkUpdatesTail: null,
+      scheduleChunkUpdate: vi.fn(),
+    };
+    Object.assign(fixture.source.chunkManager, {
+      chunkQueueManager: queueManager,
+    });
+    rpc.set(SOURCE_RPC_ID, fixture.source);
+    const first = { functionName: "Chunk.update", source: SOURCE_RPC_ID };
+    const second = {
+      functionName: "Chunk.update",
+      source: SOURCE_RPC_ID,
+      id: "0,0,0",
+      state: ChunkState.SYSTEM_MEMORY,
+      new: true,
+    };
+
+    rpc.target.onmessage!({ data: first } as MessageEvent);
+    rpc.target.onmessage!({ data: second } as MessageEvent);
+
+    expect(queueManager.pendingChunkUpdates).toBe(first);
+    expect(queueManager.pendingChunkUpdatesTail).toBe(second);
+    expect(first).toHaveProperty("nextUpdate", second);
+    expect(queueManager.scheduleChunkUpdate).toHaveBeenCalledExactlyOnceWith();
+  });
+});
 
 describe("ChunkSource.invalidateCache", () => {
   test("posts the RPC before exactly one synchronous notification per invalidation", () => {

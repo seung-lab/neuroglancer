@@ -346,6 +346,7 @@ function updateChunk(rpc: RPC, x: any) {
 }
 
 registerRPC("Chunk.update", function (x) {
+  if (this.get(x.source) === undefined) return;
   updateChunk(this, x);
 });
 
