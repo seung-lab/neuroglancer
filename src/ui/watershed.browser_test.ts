@@ -50,13 +50,13 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function makeInput(scaleIndex: number) {
+function makeInput(scaleIndex: number, channelCount = 4) {
   const abort = new AbortController();
   let valid = true;
   return {
     lowerBoundXYZ: scaleIndex === 0 ? [10, 20, -30] : [-4, 10, 2],
     upperBoundXYZ: scaleIndex === 0 ? [310, 220, 70] : [60, 90, 42],
-    channelCount: 4,
+    channelCount,
     spacingXYZ: [2e-9, 2e-9, 8e-9],
     unitsXYZ: ["m", "m", "m"],
     originXYZ: [0, 0, 0],
@@ -90,7 +90,7 @@ function makeLive(input: PreparedAffinityInput) {
   };
 }
 
-function fixture() {
+function fixture(channelCount = 4) {
   const owner = new RefCounted();
   disposers.push(() => {
     if (!owner.wasDisposed) owner.dispose();
@@ -150,9 +150,14 @@ function fixture() {
   sourceGroup.addManagedLayer(a.addRef());
   otherGroup.addManagedLayer(b.addRef());
   const inputs: ReturnType<typeof makeInput>[] = [];
+  const channelCounts = new Map([
+    [a.layer!, [channelCount]],
+    [b.layer!, [channelCount]],
+  ]);
   const prepareInput = vi.fn<WatershedDependencies["prepareInput"]>(
-    (_layer, scaleIndex = 0) => {
-      const input = makeInput(scaleIndex);
+    (layer, scaleIndex = 0) => {
+      const counts = channelCounts.get(layer)!;
+      const input = makeInput(scaleIndex, counts[scaleIndex] ?? counts[0]);
       inputs.push(input);
       return input;
     },
@@ -232,6 +237,7 @@ function fixture() {
     a,
     b,
     inputs,
+    channelCounts,
     prepareInput,
     createLive,
     lives,
@@ -255,6 +261,14 @@ function fill(session: WatershedSession, label: string, value: string) {
   expect(input.disabled).toBe(false);
   input.value = value;
   input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function selectSource(session: WatershedSession, index: number) {
+  const select = session.dialog!.body.querySelector<HTMLSelectElement>(
+    '[aria-label="Affinity image source"]',
+  )!;
+  select.value = String(index);
+  select.dispatchEvent(new Event("change"));
 }
 
 function addButton(session: WatershedSession) {
@@ -286,6 +300,8 @@ describe("WASM watershed UI", () => {
     });
     const dialog = session.dialog!;
     expect(dialog.headerTitle.textContent).toBe("WASM Watershed");
+    expect(field(session, "Use last channel as mask").disabled).toBe(true);
+    expect(field(session, "Mask threshold").disabled).toBe(true);
     owner.dispose();
     expect(dialog.wasDisposed).toBe(true);
     expect(session.wasDisposed).toBe(true);
@@ -297,6 +313,21 @@ describe("WASM watershed UI", () => {
     session.open();
     expect(field(session, "Source scale index").value).toBe("0");
     expect(field(session, "Channels for −X −Y −Z").value).toBe("0, 1, 2");
+    // Public mask drafts: useLastChannelAsMask is boolean, maskThreshold is text.
+    expect(session.useLastChannelAsMask).toBe(false);
+    expect(session.maskThreshold).toBe("0.3");
+    const useMask = field(session, "Use last channel as mask");
+    expect(useMask.type).toBe("checkbox");
+    expect(useMask.checked).toBe(false);
+    expect(useMask.disabled).toBe(false);
+    const maskThreshold = field(session, "Mask threshold");
+    expect(maskThreshold.type).toBe("number");
+    expect(maskThreshold.value).toBe("0.3");
+    expect(maskThreshold.min).toBe("0");
+    expect(maskThreshold.max).toBe("1");
+    expect(maskThreshold.step).toBe("any");
+    expect(maskThreshold.disabled).toBe(true);
+    expect(maskThreshold.closest("details")).not.toBeNull();
     for (const key of [
       "highThreshold",
       "lowThreshold",
@@ -325,6 +356,9 @@ describe("WASM watershed UI", () => {
       "negative axes",
       "data type maximum",
       "floating-point values are unchanged",
+      "Repeated channel indices are allowed and copied literally",
+      "Values below threshold are kept; edges touching a masked voxel are zeroed",
+      "normalized units in [0, 1]",
       "Non-native transforms",
       "session-local",
       "not shareable",
@@ -342,6 +376,268 @@ describe("WASM watershed UI", () => {
     select.dispatchEvent(new Event("change"));
     expect(session.source).toBe(b);
   });
+
+  it("defaults a single-channel image to literal copies for all three axes", async () => {
+    const f = fixture(1);
+    f.session.open();
+    expect(field(f.session, "Channels for −X −Y −Z").value).toBe("0, 0, 0");
+    expect(field(f.session, "Use last channel as mask").disabled).toBe(true);
+    addButton(f.session).click();
+    await vi.waitFor(() =>
+      expect(f.session.status).toContain("Added live layer:"),
+    );
+    expect(f.createLive).toHaveBeenCalledExactlyOnceWith(
+      f.inputs.at(-1),
+      [0, 0, 0],
+      DEFAULT_WATERSHED_OPTIONS,
+      expect.any(Function),
+    );
+    expect(f.inputs.at(-1)!.readRegion).not.toHaveBeenCalled();
+  });
+
+  it.each(["0, 0, 0", "2, 2, 2", "2, 0, 2", "3, 3, 3"])(
+    "accepts repeated affinity mapping %s with masking off",
+    async (mapping) => {
+      const f = fixture();
+      f.session.open();
+      fill(f.session, "Channels for −X −Y −Z", mapping);
+      await f.session.addLayer();
+      expect(f.createLive).toHaveBeenCalledExactlyOnceWith(
+        f.inputs.at(-1),
+        mapping.split(", ").map(Number),
+        DEFAULT_WATERSHED_OPTIONS,
+        expect.any(Function),
+      );
+    },
+  );
+
+  it("updates automatic defaults for source/scale changes but preserves an explicit scalar mapping", () => {
+    const f = fixture(1);
+    f.channelCounts.set(f.b.layer!, [4, 1]);
+    f.session.open();
+    selectSource(f.session, 1);
+    expect(f.session.source).toBe(f.b);
+    expect(field(f.session, "Channels for −X −Y −Z").value).toBe("0, 1, 2");
+    fill(f.session, "Source scale index", "1");
+    expect(field(f.session, "Channels for −X −Y −Z").value).toBe("0, 0, 0");
+    fill(f.session, "Source scale index", "0");
+    expect(field(f.session, "Channels for −X −Y −Z").value).toBe("0, 1, 2");
+    selectSource(f.session, 0);
+    expect(field(f.session, "Channels for −X −Y −Z").value).toBe("0, 0, 0");
+    fill(f.session, "Channels for −X −Y −Z", "0,0,0");
+    selectSource(f.session, 1);
+    expect(field(f.session, "Channels for −X −Y −Z").value).toBe("0,0,0");
+  });
+
+  it("preserves valid custom mappings across sources/scales and resets only stale out-of-bounds mappings", () => {
+    const f = fixture();
+    f.channelCounts.set(f.b.layer!, [5, 1]);
+    f.session.open();
+    fill(f.session, "Channels for −X −Y −Z", "2, 0, 2");
+    fill(f.session, "Source scale index", "1");
+    expect(field(f.session, "Channels for −X −Y −Z").value).toBe("2, 0, 2");
+    selectSource(f.session, 1);
+    expect(f.session.scaleIndex).toBe("0");
+    expect(field(f.session, "Channels for −X −Y −Z").value).toBe("2, 0, 2");
+    fill(f.session, "Channels for −X −Y −Z", "3, 1, 2");
+    selectSource(f.session, 0);
+    expect(field(f.session, "Channels for −X −Y −Z").value).toBe("3, 1, 2");
+    selectSource(f.session, 1);
+    fill(f.session, "Source scale index", "1");
+    expect(field(f.session, "Channels for −X −Y −Z").value).toBe("0, 0, 0");
+    fill(f.session, "Source scale index", "0");
+    expect(field(f.session, "Channels for −X −Y −Z").value).toBe("0, 1, 2");
+  });
+
+  it.each([1, 2, 3])(
+    "disables mask controls for %i source channels and rejects a forced enabled draft",
+    async (count) => {
+      const f = fixture(count);
+      f.session.open();
+      const useMask = field(f.session, "Use last channel as mask");
+      expect(useMask.disabled).toBe(true);
+      useMask.click();
+      expect(f.session.useLastChannelAsMask).toBe(false);
+      expect(field(f.session, "Mask threshold").disabled).toBe(true);
+      f.session.useLastChannelAsMask = true;
+      await f.session.addLayer();
+      expect(f.session.status).toContain(
+        "requires at least four source channels",
+      );
+      expect(f.createLive).not.toHaveBeenCalled();
+      expect(f.publish).not.toHaveBeenCalled();
+      for (const input of f.inputs)
+        expect(input.dispose).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(["0", "0.3", "1"])(
+    "passes mask threshold %s only when enabled",
+    async (value) => {
+      const f = fixture();
+      f.session.open();
+      field(f.session, "Use last channel as mask").click();
+      expect(f.session.useLastChannelAsMask).toBe(true);
+      fill(f.session, "Mask threshold", value);
+      await f.session.addLayer();
+      expect(f.createLive).toHaveBeenCalledExactlyOnceWith(
+        f.inputs.at(-1),
+        [0, 1, 2],
+        { ...DEFAULT_WATERSHED_OPTIONS, maskThreshold: Number(value) },
+        expect.any(Function),
+      );
+    },
+  );
+
+  it("reserves only the actual last channel, not always channel 3, when masking", async () => {
+    const f = fixture(5);
+    f.session.open();
+    fill(f.session, "Channels for −X −Y −Z", "3, 3, 3");
+    field(f.session, "Use last channel as mask").click();
+    await f.session.addLayer();
+    expect(f.createLive).toHaveBeenCalledExactlyOnceWith(
+      f.inputs.at(-1),
+      [3, 3, 3],
+      { ...DEFAULT_WATERSHED_OPTIONS, maskThreshold: 0.3 },
+      expect.any(Function),
+    );
+  });
+
+  it.each(["source", "scale"] as const)(
+    "resets a custom affinity mapping reserved by the mask after a %s channel-count change",
+    async (transition) => {
+      const f = fixture(5);
+      f.channelCounts.set(f.a.layer!, [5, 4]);
+      f.channelCounts.set(f.b.layer!, [4]);
+      f.session.open();
+      fill(f.session, "Channels for −X −Y −Z", "3, 3, 3");
+      field(f.session, "Use last channel as mask").click();
+      await f.session.addLayer();
+      expect(f.createLive).toHaveBeenCalledExactlyOnceWith(
+        f.inputs.at(-1),
+        [3, 3, 3],
+        { ...DEFAULT_WATERSHED_OPTIONS, maskThreshold: 0.3 },
+        expect.any(Function),
+      );
+
+      // Same-count metadata refreshes must leave even unfinished drafts alone.
+      fill(f.session, "Channels for −X −Y −Z", "3, ");
+      f.a.layer!.dataSourcesChanged.dispatch();
+      await Promise.resolve();
+      expect(field(f.session, "Channels for −X −Y −Z").value).toBe("3, ");
+      fill(f.session, "Channels for −X −Y −Z", "3, 3, 3");
+
+      if (transition === "source") selectSource(f.session, 1);
+      else fill(f.session, "Source scale index", "1");
+      expect(f.session.metadata?.channelCount).toBe(4);
+      expect(field(f.session, "Use last channel as mask").checked).toBe(true);
+      expect(field(f.session, "Mask threshold").disabled).toBe(false);
+      await f.session.addLayer();
+      expect(f.session.status).toContain("Added live layer:");
+      expect(field(f.session, "Channels for −X −Y −Z").value).toBe("0, 1, 2");
+      expect(f.createLive).toHaveBeenNthCalledWith(
+        2,
+        f.inputs.at(-1),
+        [0, 1, 2],
+        { ...DEFAULT_WATERSHED_OPTIONS, maskThreshold: 0.3 },
+        expect.any(Function),
+      );
+      expect(f.createLive.mock.calls[0][1]).toEqual([3, 3, 3]);
+      expect(f.publications[0].dispose).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["source", "scale"] as const)(
+    "preserves an explicit scalar mapping when a %s channel-count change disables masking",
+    async (transition) => {
+      const f = fixture(5);
+      f.channelCounts.set(f.a.layer!, [5, 1]);
+      f.channelCounts.set(f.b.layer!, [1]);
+      f.session.open();
+      fill(f.session, "Channels for −X −Y −Z", "0,0,0");
+      field(f.session, "Use last channel as mask").click();
+      if (transition === "source") selectSource(f.session, 1);
+      else fill(f.session, "Source scale index", "1");
+      expect(field(f.session, "Channels for −X −Y −Z").value).toBe("0,0,0");
+      expect(field(f.session, "Use last channel as mask").checked).toBe(false);
+      expect(field(f.session, "Use last channel as mask").disabled).toBe(true);
+      expect(field(f.session, "Mask threshold").disabled).toBe(true);
+      await f.session.addLayer();
+      expect(f.createLive).toHaveBeenCalledExactlyOnceWith(
+        f.inputs.at(-1),
+        [0, 0, 0],
+        DEFAULT_WATERSHED_OPTIONS,
+        expect.any(Function),
+      );
+      if (transition === "source") selectSource(f.session, 0);
+      else fill(f.session, "Source scale index", "0");
+      // Preserve the custom choice, not just the text of an automatic default.
+      expect(field(f.session, "Channels for −X −Y −Z").value).toBe("0,0,0");
+      expect(field(f.session, "Use last channel as mask").checked).toBe(false);
+    },
+  );
+
+  it("keeps created configurations independent of mask toggles and source/scale changes", async () => {
+    const f = fixture();
+    f.channelCounts.set(f.b.layer!, [1, 4]);
+    f.session.open();
+    await f.session.addLayer();
+    const first = f.createLive.mock.calls[0];
+    field(f.session, "Use last channel as mask").click();
+    fill(f.session, "Mask threshold", "0.4");
+    fill(f.session, "Channels for −X −Y −Z", "2, 2, 2");
+    await f.session.addLayer();
+    const second = f.createLive.mock.calls[1];
+    fill(f.session, "Mask threshold", "");
+    field(f.session, "Use last channel as mask").click();
+    expect(field(f.session, "Mask threshold").disabled).toBe(true);
+    // A disabled threshold draft is ignored, even if invalid.
+    await f.session.addLayer();
+    expect(f.createLive.mock.calls[2][2]).toEqual(DEFAULT_WATERSHED_OPTIONS);
+    field(f.session, "Use last channel as mask").click();
+    selectSource(f.session, 1);
+    expect(f.session.useLastChannelAsMask).toBe(false);
+    expect(field(f.session, "Use last channel as mask").checked).toBe(false);
+    expect(field(f.session, "Use last channel as mask").disabled).toBe(true);
+    expect(field(f.session, "Mask threshold").disabled).toBe(true);
+    fill(f.session, "Source scale index", "1");
+    expect(field(f.session, "Use last channel as mask").disabled).toBe(false);
+    expect(field(f.session, "Use last channel as mask").checked).toBe(false);
+    expect(field(f.session, "Mask threshold").disabled).toBe(true);
+    expect(first[1]).toEqual([0, 1, 2]);
+    expect(first[2]).toEqual(DEFAULT_WATERSHED_OPTIONS);
+    expect(first[2]).not.toHaveProperty("maskThreshold");
+    expect(second[1]).toEqual([2, 2, 2]);
+    expect(second[2]).toEqual({
+      ...DEFAULT_WATERSHED_OPTIONS,
+      maskThreshold: 0.4,
+    });
+    for (const publication of f.publications)
+      expect(publication.dispose).not.toHaveBeenCalled();
+    for (const live of f.lives) expect(live.dispose).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [4, "0, 1, 3"],
+    [4, "3, 3, 3"],
+    [5, "0, 1, 4"],
+  ] as const)(
+    "rejects affinity mapping for %i channels (%s) that includes the enabled last-channel mask",
+    async (count, mapping) => {
+      const f = fixture(count);
+      f.session.open();
+      fill(f.session, "Channels for −X −Y −Z", mapping);
+      field(f.session, "Use last channel as mask").click();
+      await f.session.addLayer();
+      expect(f.session.status).toContain(
+        "last source channel is reserved for the mask",
+      );
+      expect(f.createLive).not.toHaveBeenCalled();
+      expect(f.publish).not.toHaveBeenCalled();
+      for (const input of f.inputs)
+        expect(input.dispose).toHaveBeenCalledOnce();
+    },
+  );
 
   it("publishes the selected scale/channels/options without reading data and overlays a standard segmentation", async () => {
     const f = fixture();
@@ -452,6 +748,8 @@ describe("WASM watershed UI", () => {
     f.resultState.ready = false;
     f.session.open();
     fill(f.session, "High threshold", "0.8");
+    field(f.session, "Use last channel as mask").click();
+    fill(f.session, "Mask threshold", "0.7");
     const adding = f.session.addLayer();
     const input = f.inputs.at(-1)!;
     f.session.dialog!.close();
@@ -461,6 +759,10 @@ describe("WASM watershed UI", () => {
     f.session.open();
     expect(field(f.session, "High threshold").value).toBe("0.8");
     expect(field(f.session, "High threshold").disabled).toBe(true);
+    expect(field(f.session, "Use last channel as mask").disabled).toBe(true);
+    expect(field(f.session, "Use last channel as mask").checked).toBe(true);
+    expect(field(f.session, "Mask threshold").value).toBe("0.7");
+    expect(field(f.session, "Mask threshold").disabled).toBe(true);
     expect(addButton(f.session).disabled).toBe(true);
     await f.session.addLayer();
     expect(f.createLive).toHaveBeenCalledOnce();
@@ -586,9 +888,12 @@ describe("WASM watershed UI", () => {
     expect(f.session.source).toBe(f.a);
   });
 
-  it("preserves a valid live layer/publication on non-semantic dataSourcesChanged notifications", async () => {
+  it("preserves a valid live layer/publication and unfinished draft on non-semantic metadata notifications", async () => {
     const f = fixture();
+    f.session.open();
+    fill(f.session, "Channels for −X −Y −Z", "2, 0, 2");
     await f.session.addLayer();
+    fill(f.session, "Channels for −X −Y −Z", "2, ");
     const input = f.inputs.at(-1)!;
     const live = f.lives[0];
     expect(() => input.assertValid()).not.toThrow();
@@ -598,7 +903,11 @@ describe("WASM watershed UI", () => {
     // Toggling "Enable default subsource set" can emit this notification
     // without changing the enabled subsources or invalidating the input.
     f.a.layer!.dataSourcesChanged.dispatch();
+    f.layerManager.layersChanged.dispatch();
+    f.layerManager.readyStateChanged.dispatch();
     await Promise.resolve();
+    expect(field(f.session, "Channels for −X −Y −Z").value).toBe("2, ");
+    expect(f.createLive.mock.calls[0][1]).toEqual([2, 0, 2]);
     expect(f.layerManager.has(f.resultLayers[0])).toBe(true);
     expect(f.sourceGroup.has(f.resultLayers[0])).toBe(true);
     expect(live.assertValid).toHaveBeenCalled();
@@ -733,10 +1042,34 @@ describe("WASM watershed UI", () => {
     ["scaleIndex", "0.5", "Source scale index"],
     ["scaleIndex", "", "Source scale index"],
     ["channelsXYZ", "0, 1", "three integers"],
+    ["channelsXYZ", "0, 1, 2, 3", "three integers"],
     ["channelsXYZ", "foo, 1, 2", "integer ≥ 0"],
+    ["channelsXYZ", "0.5, 1, 2", "integer ≥ 0"],
+    ["channelsXYZ", "Infinity, 1, 2", "integer ≥ 0"],
     ["channelsXYZ", "0, 1, 4", "less than 4"],
     ["channelsXYZ", "-1, 1, 2", "integer ≥ 0"],
-    ["channelsXYZ", "0, 0, 2", "distinct affinity channels"],
+    ["maskThreshold", "", "Mask threshold must be a number between 0 and 1"],
+    ["maskThreshold", "NaN", "Mask threshold must be a number between 0 and 1"],
+    [
+      "maskThreshold",
+      "Infinity",
+      "Mask threshold must be a number between 0 and 1",
+    ],
+    [
+      "maskThreshold",
+      "-Infinity",
+      "Mask threshold must be a number between 0 and 1",
+    ],
+    [
+      "maskThreshold",
+      "-0.01",
+      "Mask threshold must be a number between 0 and 1",
+    ],
+    [
+      "maskThreshold",
+      "1.01",
+      "Mask threshold must be a number between 0 and 1",
+    ],
     ["highThreshold", "NaN", "between 0 and 1"],
     ["highThreshold", "1.01", "between 0 and 1"],
     ["lowThreshold", "", "between 0 and 1"],
@@ -752,6 +1085,7 @@ describe("WASM watershed UI", () => {
     async (key, value, message) => {
       const f = fixture();
       f.session[key] = value;
+      f.session.useLastChannelAsMask = key === "maskThreshold";
       await f.session.addLayer();
       expect(f.createLive).not.toHaveBeenCalled();
       expect(f.publish).not.toHaveBeenCalled();

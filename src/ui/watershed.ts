@@ -96,7 +96,8 @@ export class WatershedSession extends RefCounted {
   source: ManagedUserLayer | undefined;
   metadata: InputMetadata | undefined;
   scaleIndex = "0";
-  channelsXYZ = "0, 1, 2";
+  useLastChannelAsMask = false;
+  maskThreshold = "0.3";
   highThreshold = String(DEFAULT_WATERSHED_OPTIONS.highThreshold);
   lowThreshold = String(DEFAULT_WATERSHED_OPTIONS.lowThreshold);
   sizeThreshold = String(DEFAULT_WATERSHED_OPTIONS.sizeThreshold);
@@ -108,6 +109,19 @@ export class WatershedSession extends RefCounted {
   private sourceDisposers: Array<() => void> = [];
   private liveLayers = new Set<LiveLayer>();
   private metadataError: string | undefined;
+  private channelMapping = "0, 1, 2";
+  private automaticChannels = true;
+  private mappingChannelCount: number | undefined;
+
+  get channelsXYZ() {
+    return this.channelMapping;
+  }
+
+  set channelsXYZ(value: string) {
+    this.channelMapping = value;
+    // Even an explicitly entered default/repeated mapping is a user choice.
+    this.automaticChannels = false;
+  }
 
   constructor(
     readonly viewer: Viewer,
@@ -202,6 +216,33 @@ export class WatershedSession extends RefCounted {
     this.changed.dispatch();
   }
 
+  private updateChannelDraft(channelCount: number) {
+    // Retain the last known count across temporary metadata unavailability.
+    // Harmless notifications must not reset a custom (even unfinished) draft.
+    if (channelCount !== this.mappingChannelCount) {
+      let reset = this.automaticChannels;
+      if (!reset) {
+        try {
+          reset = channels(this.channelsXYZ).some(
+            (c) =>
+              c >= channelCount ||
+              (this.useLastChannelAsMask &&
+                channelCount >= 4 &&
+                c === channelCount - 1),
+          );
+        } catch {
+          reset = true;
+        }
+      }
+      if (reset) {
+        this.channelMapping = channelCount >= 3 ? "0, 1, 2" : "0, 0, 0";
+        this.automaticChannels = true;
+      }
+      this.mappingChannelCount = channelCount;
+    }
+    if (channelCount < 4) this.useLastChannelAsMask = false;
+  }
+
   private rememberMetadata(input: PreparedAffinityInput) {
     // The draft retains values only, never source chunk references.
     this.metadata = {
@@ -223,6 +264,7 @@ export class WatershedSession extends RefCounted {
         integer(this.scaleIndex, "Source scale index"),
       );
       input.assertValid();
+      this.updateChannelDraft(input.channelCount);
       this.rememberMetadata(input);
       // A successful draft inspection must not hide a live layer's failure.
       if (this.status === this.metadataError)
@@ -292,17 +334,26 @@ export class WatershedSession extends RefCounted {
       input.assertValid();
       this.rememberMetadata(input);
       const channelsXYZ = channels(this.channelsXYZ);
-      if (new Set(channelsXYZ).size !== 3)
-        throw new Error("Select three distinct affinity channels");
       if (channelsXYZ.some((channel) => channel >= input!.channelCount))
         throw new Error(
           `Channel indices must be less than ${input.channelCount}`,
         );
+      if (this.useLastChannelAsMask) {
+        if (input.channelCount < 4)
+          throw new Error("Masking requires at least four source channels");
+        if (channelsXYZ.includes(input.channelCount - 1))
+          throw new Error(
+            "The last source channel is reserved for the mask; select other affinity channels",
+          );
+      }
       const options: WatershedOptions = {
         highThreshold: threshold(this.highThreshold, "High threshold"),
         lowThreshold: threshold(this.lowThreshold, "Low threshold"),
         sizeThreshold: integer(this.sizeThreshold, "Size threshold"),
         dustThreshold: integer(this.dustThreshold, "Dust threshold"),
+        ...(this.useLastChannelAsMask
+          ? { maskThreshold: threshold(this.maskThreshold, "Mask threshold") }
+          : {}),
       };
       validateWatershedOptions(options);
       // Buffer synchronous errors until ownership has safely transferred.
@@ -544,12 +595,15 @@ export class WatershedDialog extends FramedDialog {
     ) => {
       const input = document.createElement("input");
       input.type = numeric ? "number" : "text";
+      const probability =
+        key === "highThreshold" ||
+        key === "lowThreshold" ||
+        key === "maskThreshold";
       if (numeric) {
         input.min = "0";
-        input.step =
-          key === "highThreshold" || key === "lowThreshold" ? "any" : "1";
+        input.step = probability ? "any" : "1";
       }
-      if (key === "highThreshold" || key === "lowThreshold") input.max = "1";
+      if (probability) input.max = "1";
       row(title, input, parent);
       input.addEventListener("input", () => {
         if (key === "scaleIndex") session.selectScale(input.value);
@@ -566,6 +620,22 @@ export class WatershedDialog extends FramedDialog {
     advanced.append(summary);
     this.body.append(advanced);
     field("Channels for −X −Y −Z", "channelsXYZ", false, advanced);
+    const channelHelp = document.createElement("div");
+    channelHelp.textContent =
+      "Repeated channel indices are allowed and copied literally, not converted to neighbor-minimum affinities. Defaults: 0, 0, 0 for fewer than three channels; 0, 1, 2 otherwise.";
+    advanced.append(channelHelp);
+    const useMask = document.createElement("input");
+    useMask.type = "checkbox";
+    row("Use last channel as mask", useMask, advanced);
+    useMask.addEventListener("change", () => {
+      session.useLastChannelAsMask = useMask.checked;
+      session.changed.dispatch();
+    });
+    field("Mask threshold", "maskThreshold", true, advanced);
+    const maskHelp = document.createElement("div");
+    maskHelp.textContent =
+      "Values below threshold are kept; edges touching a masked voxel are zeroed. Mask values use normalized units in [0, 1]. Requires at least four channels; the last channel cannot also be an affinity.";
+    advanced.append(maskHelp);
     field("High threshold", "highThreshold", true, advanced);
     field("Low threshold", "lowThreshold", true, advanced);
     field("Size threshold", "sizeThreshold", true, advanced);
@@ -587,11 +657,17 @@ export class WatershedDialog extends FramedDialog {
         session.source === undefined ? -1 : identities.indexOf(session.source),
       );
       source.disabled = session.busy;
+      const m = session.metadata;
+      const maskAvailable = m !== undefined && m.channelCount >= 4;
+      useMask.checked = session.useLastChannelAsMask;
+      useMask.disabled = session.busy || !maskAvailable;
       for (const { input, key } of fields) {
         if (input.value !== session[key]) input.value = session[key];
-        input.disabled = session.busy;
+        input.disabled =
+          session.busy ||
+          (key === "maskThreshold" &&
+            (!maskAvailable || !session.useLastChannelAsMask));
       }
-      const m = session.metadata;
       metadata.textContent =
         m === undefined
           ? "Selected scale metadata unavailable."
