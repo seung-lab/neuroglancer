@@ -131,6 +131,7 @@ import {
   verifyStringArray,
 } from "#src/util/json.js";
 import { Signal } from "#src/util/signal.js";
+import { attachWatershedVolume } from "#src/watershed/attachment.js";
 import { makeWatchableShaderError } from "#src/webgl/dynamic_shader.js";
 import type { DependentViewContext } from "#src/widget/dependent_view_widget.js";
 import { registerLayerShaderControlsTool } from "#src/widget/shader_controls.js";
@@ -814,19 +815,19 @@ export class SegmentationUserLayer extends Base {
             continue;
         }
         hasVolume = true;
-        loadedSubsource.activate(
-          () =>
-            loadedSubsource.addRenderLayer(
-              new SegmentationRenderLayer(volume, {
-                ...this.displayState,
-                transform: loadedSubsource.getRenderLayerTransform(),
-                renderScaleTarget: this.sliceViewRenderScaleTarget,
-                renderScaleHistogram: this.sliceViewRenderScaleHistogram,
-                localPosition: this.localPosition,
-              }),
-            ),
-          this.displayState.segmentationGroupState.value,
-        );
+        loadedSubsource.activate((activated) => {
+          loadedSubsource.addRenderLayer(
+            new SegmentationRenderLayer(volume, {
+              ...this.displayState,
+              transform: loadedSubsource.getRenderLayerTransform(),
+              renderScaleTarget: this.sliceViewRenderScaleTarget,
+              renderScaleHistogram: this.sliceViewRenderScaleHistogram,
+              localPosition: this.localPosition,
+            }),
+          );
+          const detach = attachWatershedVolume(volume, this.managedLayer);
+          if (detach !== undefined) activated.registerDisposer(detach);
+        }, this.displayState.segmentationGroupState.value);
       } else if (mesh !== undefined) {
         loadedSubsource.activate(() => {
           const displayState = {
