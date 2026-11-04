@@ -14,7 +14,10 @@
  * limitations under the License.
  */
 
-import { publishLiveWatershed } from "#src/datasource/watershed/frontend.js";
+import {
+  makeWatershedRecipeSource,
+  publishLiveWatershed,
+} from "#src/datasource/watershed/frontend.js";
 import { ImageUserLayer } from "#src/layer/image/index.js";
 import type { ManagedUserLayer } from "#src/layer/index.js";
 import { deleteLayer, makeLayer } from "#src/layer/index.js";
@@ -36,6 +39,8 @@ import {
   type PreparedAffinityInput,
 } from "#src/watershed/input.js";
 import { LiveWatershed } from "#src/watershed/live.js";
+import { parseWatershedRecipe } from "#src/watershed/recipe.js";
+import { installWatershedRecipeContext } from "#src/watershed/restore.js";
 import { watchWatershedViewport } from "#src/watershed/viewport.js";
 
 export interface WatershedDependencies {
@@ -330,10 +335,8 @@ export class WatershedSession extends RefCounted {
       const image = source?.layer;
       if (source === undefined || !(image instanceof ImageUserLayer))
         throw new Error("Select an affinity image layer");
-      input = this.dependencies.prepareInput(
-        image,
-        integer(this.scaleIndex, "Source scale index"),
-      );
+      const inputScaleIndex = integer(this.scaleIndex, "Source scale index");
+      input = this.dependencies.prepareInput(image, inputScaleIndex);
       input.assertValid();
       this.rememberMetadata(input);
       const channelsXYZ = channels(this.channelsXYZ);
@@ -359,6 +362,18 @@ export class WatershedSession extends RefCounted {
           : {}),
       };
       validateWatershedOptions(options);
+      // Validate and snapshot saved settings before constructing or publishing
+      // a live computation. No labels or runtime references enter shared state.
+      const recipe = parseWatershedRecipe({
+        version: 1,
+        profile: "visible-slice-union-v1",
+        mode: "live",
+        source: { name: source.name, source: image.toJSON().source },
+        inputScaleIndex,
+        channelsXYZ,
+        options,
+        spacingXYZ: input.spacingXYZ,
+      });
       // Buffer synchronous errors until ownership has safely transferred.
       const startupErrors: unknown[] = [];
       let reportError = (error: unknown) => {
@@ -438,7 +453,11 @@ export class WatershedSession extends RefCounted {
         this.viewer.layerManager.getUniqueLayerName(`${source.name} watershed`),
         {
           type: "segmentation",
-          source: publication.url,
+          source: makeWatershedRecipeSource(
+            publication,
+            recipe,
+            this.viewer.layerSpecification.coordinateSpace,
+          ),
           // With an empty selection, show every nonzero label.
           ignoreNullVisibleSet: true,
           selectedAlpha: 0.5,
@@ -460,7 +479,7 @@ export class WatershedSession extends RefCounted {
       entry.check();
       if (released) return;
       this.setStatus(
-        `Added live layer: ${layer.name}. One shared result follows all visible slice views as you navigate. Labels may change; session-local URL, not shareable.`,
+        `Added live layer: ${layer.name}. One shared result follows all visible slice views as you navigate. Labels may change; settings are saved as a JSON recipe, not computed labels.`,
       );
       // Constructor/publication/activation errors remain fatal. Once viewport
       // tracking starts, computation failures may recover on the next box.
@@ -596,7 +615,7 @@ export class WatershedDialog extends FramedDialog {
       "Affinities connect each voxel towards its negative axes (−X, −Y, −Z). Integer values are normalized by their data type maximum; floating-point values are unchanged. Non-native transforms and mutable Python volume sources are rejected.",
     );
     text(
-      "Closing this dialog keeps created layers active. Deleting an output or its affinity source stops its work. Affinity data/transform changes and viewer reset also release dependent layers. Selecting another source here keeps existing layers active. URLs are session-local, not shareable or restored from saved state.",
+      "Closing this dialog keeps created layers active. Deleting an output or its affinity source stops its work. Affinity data/transform changes and viewer reset also release dependent layers. Selecting another source here keeps existing layers active. Settings are saved as a JSON recipe and restored by recomputing one current-view union, after ALL affinity data for that box is available, not the whole dataset. Shared state contains no computed labels or local file bytes. Upstream ONNX layers need accessible source and model URLs to restore; legacy session-local URLs remain nonportable.",
     );
     const license = text(
       "Algorithm license: GNU General Public License v3 or later (GPL v3+). ",
@@ -736,6 +755,7 @@ export class WatershedDialog extends FramedDialog {
 }
 
 export function bindWatershed(viewer: Viewer): WatershedSession {
+  viewer.registerDisposer(installWatershedRecipeContext(viewer));
   const session = viewer.registerDisposer(new WatershedSession(viewer));
   viewer.registerDisposer(
     viewer.commandRegistry.register(

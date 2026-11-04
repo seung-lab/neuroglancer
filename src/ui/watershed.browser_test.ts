@@ -16,6 +16,10 @@
 
 /** Session/UI tests without a WebGL viewer, network reads or WASM worker. */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  INFERENCE_RECIPE_URL,
+  type InferenceRecipe,
+} from "#src/inference/recipe.js";
 import { ImageUserLayer } from "#src/layer/image/index.js";
 import type {
   ManagedUserLayer,
@@ -37,10 +41,20 @@ import type { Viewer } from "#src/viewer.js";
 import { DEFAULT_WATERSHED_OPTIONS } from "#src/watershed/base.js";
 import type { PreparedAffinityInput } from "#src/watershed/input.js";
 import type { LiveWatershed } from "#src/watershed/live.js";
+import {
+  parseWatershedRecipe,
+  WATERSHED_RECIPE_URL,
+  type WatershedRecipe,
+} from "#src/watershed/recipe.js";
+import { installWatershedRecipeContext } from "#src/watershed/restore.js";
 
 vi.mock("#src/layer/index.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   makeLayer: vi.fn(),
+}));
+
+vi.mock("#src/watershed/restore.js", () => ({
+  installWatershedRecipeContext: vi.fn(),
 }));
 
 const disposers: Array<() => void> = [];
@@ -57,7 +71,7 @@ function makeInput(scaleIndex: number, channelCount = 4) {
     lowerBoundXYZ: scaleIndex === 0 ? [10, 20, -30] : [-4, 10, 2],
     upperBoundXYZ: scaleIndex === 0 ? [310, 220, 70] : [60, 90, 42],
     channelCount,
-    spacingXYZ: [2e-9, 2e-9, 8e-9],
+    spacingXYZ: scaleIndex === 0 ? [2e-9, 2e-9, 8e-9] : [4e-9, 4e-9, 16e-9],
     unitsXYZ: ["m", "m", "m"],
     originXYZ: [0, 0, 0],
     signal: abort.signal,
@@ -136,17 +150,41 @@ function fixture(channelCount = 4) {
       visible: true,
     }) as unknown as ManagedUserLayer;
   }
-  const image = (url: string) =>
+  const sourceSpecs = {
+    a: { url: "precomputed://https://example.com/affinities" },
+    b: {
+      url: INFERENCE_RECIPE_URL,
+      state: {
+        version: 2,
+        profile: "ncdhw-centered-v2",
+        mode: "live",
+        source: {
+          name: "raw image",
+          source: { url: "precomputed://https://example.com/raw" },
+        },
+        model: {
+          kind: "url",
+          name: "affinities.onnx",
+          urls: ["https://example.com/affinities.onnx"],
+          size: 12345,
+          sha256: "ab".repeat(32),
+        },
+        provider: "cpu",
+        inputScaleIndex: 1,
+        spacingZYX: [8e-9, 2e-9, 2e-9],
+        outputSpacingZYX: [8e-9, 2e-9, 2e-9],
+      } satisfies InferenceRecipe,
+    },
+  };
+  const image = (source: unknown) =>
     Object.assign(Object.create(ImageUserLayer.prototype), {
       dataSourcesChanged: new NullarySignal(),
-      toJSON: () => ({ type: "image", source: url }),
+      toJSON: () => ({ type: "image", source }),
     }) as ImageUserLayer;
-  const a = managed(
-    "affinities",
-    image("precomputed://https://example.com/affinities"),
-  );
-  // A live ONNX result is just another existing ImageUserLayer to this UI.
-  const b = managed("affinities", image("inference://session/live"));
+  const a = managed("affinities", image(sourceSpecs.a));
+  // A live ONNX result is just another existing ImageUserLayer to this UI,
+  // with the same portable source state returned by a real layer's toJSON.
+  const b = managed("affinities", image(sourceSpecs.b));
   layerManager.addManagedLayer(a);
   layerManager.addManagedLayer(b);
   sourceGroup.addManagedLayer(a.addRef());
@@ -195,7 +233,7 @@ function fixture(channelCount = 4) {
   const resultLayers: ManagedUserLayer[] = [];
   vi.mocked(makeLayer)
     .mockReset()
-    .mockImplementation((_manager, name) => {
+    .mockImplementation((_manager, name, spec) => {
       const segmentation = Object.assign(
         Object.create(SegmentationUserLayer.prototype),
         {
@@ -207,6 +245,7 @@ function fixture(channelCount = 4) {
             { length: resultState.renderLayerCount },
             () => ({}),
           ),
+          toJSON: () => ({ ...spec }),
         },
       ) as SegmentationUserLayer;
       const layer = managed(name, segmentation);
@@ -257,6 +296,7 @@ function fixture(channelCount = 4) {
     groups,
     a,
     b,
+    sourceSpecs,
     inputs,
     channelCounts,
     prepareInput,
@@ -315,7 +355,13 @@ describe("WASM watershed UI", () => {
       bindAction: (id: string, handler: () => void) =>
         owner.registerDisposer(registerActionListener(element, id, handler)),
     });
+    const uninstall = vi.fn();
+    vi.mocked(installWatershedRecipeContext).mockReturnValueOnce(uninstall);
     const session = bindWatershed(viewer);
+    expect(installWatershedRecipeContext).toHaveBeenCalledExactlyOnceWith(
+      viewer,
+    );
+    expect(uninstall).not.toHaveBeenCalled();
     expect(session.dialog).toBeUndefined();
     expect(commandRegistry.get("open-watershed")?.label).toBe("WASM Watershed");
     new ActionCommand("open-watershed", "WASM Watershed").invoke({
@@ -328,6 +374,7 @@ describe("WASM watershed UI", () => {
     owner.dispose();
     expect(dialog.wasDisposed).toBe(true);
     expect(session.wasDisposed).toBe(true);
+    expect(uninstall).toHaveBeenCalledOnce();
     expect(commandRegistry.get("open-watershed")).toBeUndefined();
   });
 
@@ -403,8 +450,13 @@ describe("WASM watershed UI", () => {
       "Values below threshold are kept; edges touching a masked voxel are zeroed",
       "normalized units in [0, 1]",
       "Non-native transforms",
-      "session-local",
-      "not shareable",
+      "JSON recipe",
+      "one current-view union",
+      "ALL affinity data for that box",
+      "not the whole dataset",
+      "no computed labels or local file bytes",
+      "source and model URLs",
+      "legacy session-local URLs remain nonportable",
       "GPL v3+",
     ])
       expect(body.textContent).toContain(explanation);
@@ -736,7 +788,24 @@ describe("WASM watershed UI", () => {
     const layer = f.resultLayers[0];
     expect(makeLayer).toHaveBeenCalledWith(root, "affinities watershed", {
       type: "segmentation",
-      source: f.publications[0].url,
+      source: {
+        url: WATERSHED_RECIPE_URL,
+        state: {
+          version: 1,
+          profile: "visible-slice-union-v1",
+          mode: "live",
+          source: { name: "affinities", source: originalSource.source },
+          inputScaleIndex: 1,
+          channelsXYZ: [3, 1, 2],
+          options: {
+            highThreshold: 0.8,
+            lowThreshold: 0.2,
+            sizeThreshold: 12,
+            dustThreshold: 3,
+          },
+          spacingXYZ: [4e-9, 4e-9, 16e-9],
+        },
+      },
       ignoreNullVisibleSet: true,
       selectedAlpha: 0.5,
     });
@@ -759,6 +828,84 @@ describe("WASM watershed UI", () => {
     expect(f.inputs.at(-1)!.dispose).toHaveBeenCalledOnce();
     session.reset();
     expect(f.publications[0].dispose).toHaveBeenCalledOnce();
+  });
+
+  it("saves nested ONNX, mask, scale, channels and thresholds as isolated JSON before live construction", async () => {
+    const f = fixture();
+    f.session.selectSource(f.b);
+    f.session.selectScale("1");
+    f.session.channelsXYZ = "2, 0, 2";
+    f.session.useLastChannelAsMask = true;
+    f.session.maskThreshold = "0.4";
+    f.session.highThreshold = "0.8";
+    f.session.lowThreshold = "0.2";
+    f.session.sizeThreshold = "12";
+    f.session.dustThreshold = "3";
+    const savedSource = structuredClone(f.sourceSpecs.b);
+    const serialize = vi.spyOn(f.b.layer!, "toJSON");
+    const create = f.createLive.getMockImplementation()!;
+    f.createLive.mockImplementationOnce((...args) => {
+      expect(serialize).toHaveBeenCalledOnce();
+      // Construction must not be able to change the already validated snapshot.
+      f.sourceSpecs.b.state.model.urls[0] = "https://example.com/changed.onnx";
+      f.sourceSpecs.b.state.source.source.url = "precomputed://changed/raw";
+      f.inputs.at(-1)!.spacingXYZ[0] = 1;
+      Object.assign(args[2], { maskThreshold: 0.9 });
+      return create(...args);
+    });
+    await f.session.addLayer();
+    const json = JSON.parse(JSON.stringify(f.resultLayers[0].layer!.toJSON()));
+    const recipe: WatershedRecipe = {
+      version: 1,
+      profile: "visible-slice-union-v1",
+      mode: "live",
+      source: { name: "affinities", source: savedSource },
+      inputScaleIndex: 1,
+      channelsXYZ: [2, 0, 2],
+      options: {
+        highThreshold: 0.8,
+        lowThreshold: 0.2,
+        sizeThreshold: 12,
+        dustThreshold: 3,
+        maskThreshold: 0.4,
+      },
+      spacingXYZ: [4e-9, 4e-9, 16e-9],
+    };
+    expect(json.source).toEqual({ url: WATERSHED_RECIPE_URL, state: recipe });
+    expect(parseWatershedRecipe(json.source.state)).toEqual(recipe);
+    expect(json).not.toHaveProperty("data");
+    expect(JSON.stringify(json)).not.toContain(f.publications[0].url);
+    f.session.selectSource(f.a);
+    f.session.channelsXYZ = "0, 0, 0";
+    f.session.highThreshold = "0.7";
+    f.session.maskThreshold = "0.6";
+    f.b.name = "renamed ONNX layer";
+    expect(f.resultLayers[0].layer!.toJSON().source.state).toEqual(recipe);
+    // Later edits to the saved recipe cannot mutate source state or live args.
+    const saved = f.resultLayers[0].layer!.toJSON().source
+      .state as WatershedRecipe;
+    saved.channelsXYZ[0] = 1;
+    Object.assign(saved.options, { maskThreshold: 0.5 });
+    expect(f.createLive.mock.calls[0][1]).toEqual([2, 0, 2]);
+    expect(f.createLive.mock.calls[0][2].maskThreshold).toBe(0.9);
+    expect(f.sourceSpecs.b).not.toEqual(savedSource);
+    expect(f.watchViewport).toHaveBeenCalledOnce();
+    expect(f.inputs.at(-1)!.readRegion).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unserializable source before constructing or publishing a live result", async () => {
+    const f = fixture();
+    vi.spyOn(f.a.layer!, "toJSON").mockReturnValue({
+      type: "image",
+      source: undefined,
+    });
+    await f.session.addLayer();
+    expect(f.session.statusLevel).toBe("error");
+    expect(f.session.status).toContain("recipe");
+    expect(f.createLive).not.toHaveBeenCalled();
+    expect(f.publish).not.toHaveBeenCalled();
+    expect(makeLayer).not.toHaveBeenCalled();
+    for (const input of f.inputs) expect(input.dispose).toHaveBeenCalledOnce();
   });
 
   it("watches the owned selected-scale input only after activation and group membership, forwarding native boxes unchanged", async () => {
