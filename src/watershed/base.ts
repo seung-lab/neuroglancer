@@ -21,6 +21,8 @@ export interface WatershedOptions {
   readonly lowThreshold: number;
   readonly sizeThreshold: number;
   readonly dustThreshold: number;
+  /** Optional last-channel background mask: keep values strictly below this. */
+  readonly maskThreshold?: number;
 }
 
 export const DEFAULT_WATERSHED_OPTIONS: WatershedOptions = Object.freeze({
@@ -80,11 +82,44 @@ export function validateWatershedOptions(options: WatershedOptions): void {
       "Watershed thresholds must satisfy 0 <= low < high <= 1 in float32",
     );
   }
+  if (
+    options.maskThreshold !== undefined &&
+    (!Number.isFinite(options.maskThreshold) ||
+      options.maskThreshold < 0 ||
+      options.maskThreshold > 1)
+  ) {
+    throw new Error("Watershed mask threshold must be finite and in [0,1]");
+  }
   for (const value of [options.sizeThreshold, options.dustThreshold]) {
     if (!Number.isInteger(value) || value < 0 || value > 0xffffffff) {
       throw new Error(
         "Watershed size and dust thresholds must be uint32 integers",
       );
     }
+  }
+}
+
+export function validateWatershedChannels(
+  channelCount: number,
+  channelsXYZ: readonly number[],
+  options: WatershedOptions,
+): void {
+  if (
+    channelsXYZ.length !== 3 ||
+    channelsXYZ.some(
+      (c) => !Number.isSafeInteger(c) || c < 0 || c >= channelCount,
+    )
+  ) {
+    throw new Error("Watershed needs three in-bounds affinity channels");
+  }
+  if (options.maskThreshold !== undefined) {
+    if (channelCount < 4)
+      throw new Error(
+        "Last-channel masking requires at least four source channels",
+      );
+    if (channelsXYZ.includes(channelCount - 1))
+      throw new Error(
+        "The last input channel is a mask, not an affinity channel",
+      );
   }
 }

@@ -76,6 +76,91 @@ describe("standalone Abiss watershed WASM", () => {
     },
   );
 
+  it.each([0, 1, 2])(
+    "masks both endpoints of negative-axis %s edges using strict thresholds",
+    async (axis) => {
+      const shape = [1, 1, 1];
+      shape[axis] = 5;
+      const input = new Float32Array(4 * 5).fill(1);
+      input.set([0.25, 0.25, 0.5, 0.25, 0.25], 3 * 5);
+      const before = input.slice();
+      const output = await runWatershedWasm(input, shape, {
+        ...keep,
+        maskThreshold: 0.5,
+      });
+      expect(Array.from(output)).toEqual([1, 1, 0, 2, 2]);
+      expect(input).toEqual(before);
+      const manual = new Float32Array(3 * 5).fill(1);
+      for (let c = 0; c < 3; ++c) manual[c * 5 + 2] = 0;
+      manual[axis * 5 + 3] = 0;
+      expect(output).toEqual(await runWatershedWasm(manual, shape, keep));
+    },
+  );
+
+  it("uses the XYZ strides of a full three-dimensional mask", async () => {
+    const input = new Float32Array(4 * 27).fill(1);
+    input.fill(0, 3 * 27);
+    input[3 * 27 + 13] = 1;
+    const output = await runWatershedWasm(input, [3, 3, 3], {
+      ...keep,
+      maskThreshold: 0.3,
+    });
+    const expected = new Uint32Array(27).fill(1);
+    expected[13] = 0;
+    expect(output).toEqual(expected);
+    const manual = new Float32Array(3 * 27).fill(1);
+    manual[13] = manual[27 + 13] = manual[54 + 13] = 0;
+    manual[14] = manual[27 + 16] = manual[54 + 22] = 0;
+    expect(output).toEqual(await runWatershedWasm(manual, [3, 3, 3], keep));
+  });
+
+  it("does not wrap masks across the low domain face and can mask the whole domain", async () => {
+    const input = new Float32Array(4 * 5).fill(1);
+    input.set([0, 0, 0, 0, 1], 15);
+    expect(
+      Array.from(
+        await runWatershedWasm(input, [5, 1, 1], { ...keep, maskThreshold: 1 }),
+      ),
+    ).toEqual([1, 1, 1, 1, 0]);
+    expect(
+      Array.from(
+        await runWatershedWasm(input, [5, 1, 1], { ...keep, maskThreshold: 0 }),
+      ),
+    ).toEqual([0, 0, 0, 0, 0]);
+  });
+
+  it.each([NaN, Infinity, -0.1, 1.01])(
+    "rejects invalid mask values %s without poisoning the instance",
+    async (invalid) => {
+      const input = new Float32Array(4 * 5).fill(1);
+      input.fill(0, 15);
+      input[17] = invalid;
+      await expect(
+        runWatershedWasm(input, [5, 1, 1], { ...keep, maskThreshold: 0.3 }),
+      ).rejects.toThrow("mask values");
+      input[17] = 0;
+      expect(
+        Array.from(
+          await runWatershedWasm(input, [5, 1, 1], {
+            ...keep,
+            maskThreshold: 0.3,
+          }),
+        ),
+      ).toEqual([1, 1, 1, 1, 1]);
+    },
+  );
+
+  it.each([NaN, Infinity, -0.1, 1.01])(
+    "does not conceal invalid affinities %s inside masked voxels",
+    async (invalid) => {
+      const input = new Float32Array(4 * 5).fill(1);
+      input[2] = invalid;
+      await expect(
+        runWatershedWasm(input, [5, 1, 1], { ...keep, maskThreshold: 0.3 }),
+      ).rejects.toThrow("before masking");
+    },
+  );
+
   it("copies stable output even when a later call grows WASM memory", async () => {
     const first = await runWatershedWasm(
       new Float32Array(3 * 24).fill(1),
@@ -109,6 +194,15 @@ describe("standalone Abiss watershed WASM", () => {
     await expect(
       runWatershedWasm(new Float32Array(2), [1, 1, 1], keep),
     ).rejects.toThrow("planar Float32");
+    await expect(
+      runWatershedWasm(new Float32Array(15), [5, 1, 1], {
+        ...keep,
+        maskThreshold: 0.3,
+      }),
+    ).rejects.toThrow("[4,Z,Y,X]");
+    await expect(
+      runWatershedWasm(new Float32Array(20), [5, 1, 1], keep),
+    ).rejects.toThrow("[3,Z,Y,X]");
     await expect(
       runWatershedWasm(new Float32Array(), [129, 129, 129], keep),
     ).rejects.toThrow("2**21");

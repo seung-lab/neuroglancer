@@ -79,28 +79,74 @@ export async function runWatershedWasm(
 ): Promise<Uint32Array<ArrayBuffer>> {
   const voxels = validateWatershedShape(shapeXYZ);
   validateWatershedOptions(options);
-  if (!(affinities instanceof Float32Array) || affinities.length !== 3 * voxels)
-    throw new Error("Watershed requires planar Float32 affinities [3,Z,Y,X]");
+  const affinityCount = 3 * voxels;
+  const { maskThreshold } = options;
+  const planes = maskThreshold === undefined ? 3 : 4;
+  if (
+    !(affinities instanceof Float32Array) ||
+    affinities.length !== planes * voxels
+  )
+    throw new Error(
+      `Watershed requires planar Float32 affinities [${planes},Z,Y,X]`,
+    );
+  let mask: Uint8Array | undefined;
+  if (maskThreshold !== undefined) {
+    // Do not hide invalid affinity probabilities by zeroing a masked voxel.
+    for (let i = 0; i < affinityCount; ++i) {
+      const value = affinities[i];
+      if (!Number.isFinite(value) || value < 0 || value > 1)
+        throw new Error(
+          "Affinity values must be finite and in [0,1] before masking",
+        );
+    }
+    mask = new Uint8Array(voxels);
+    for (let i = 0; i < voxels; ++i) {
+      const value = affinities[affinityCount + i];
+      if (!Number.isFinite(value) || value < 0 || value > 1)
+        throw new Error(
+          "Watershed mask values must be finite probabilities in [0,1]",
+        );
+      mask[i] = Number(value < maskThreshold);
+    }
+  }
   const wasm = await loadModule();
   // No awaits after allocation: calls sharing one instance cannot interleave.
   let affinityPointer = 0;
   let labelPointer = 0;
   try {
-    affinityPointer = wasm.malloc(affinities.byteLength);
+    affinityPointer = wasm.malloc(
+      affinityCount * Float32Array.BYTES_PER_ELEMENT,
+    );
     labelPointer = wasm.malloc(voxels * Uint32Array.BYTES_PER_ELEMENT);
     if (affinityPointer === 0 || labelPointer === 0)
       throw new Error(
         "Abiss watershed WASM allocation failed; use a smaller ROI",
       );
     // malloc and the algorithm may grow memory, detaching earlier views.
-    new Float32Array(
+    const nativeAffinities = new Float32Array(
       wasm.memory.buffer,
       affinityPointer,
-      affinities.length,
-    ).set(affinities);
+      affinityCount,
+    );
+    nativeAffinities.set(affinities.subarray(0, affinityCount));
+    if (mask !== undefined) {
+      // Abiss myelin-mask semantics: remove edges touching either endpoint.
+      const strides = [1, shapeXYZ[0], shapeXYZ[0] * shapeXYZ[1]];
+      for (let axis = 0; axis < 3; ++axis) {
+        const stride = strides[axis];
+        for (let i = 0; i < voxels; ++i) {
+          if (
+            mask[i] === 0 ||
+            (Math.floor(i / stride) % shapeXYZ[axis] !== 0 &&
+              mask[i - stride] === 0)
+          )
+            nativeAffinities[axis * voxels + i] = 0;
+        }
+      }
+    }
     const status = wasm.abiss_watershed(
       affinityPointer,
-      affinities.length,
+      affinityCount,
       shapeXYZ[0],
       shapeXYZ[1],
       shapeXYZ[2],

@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_WATERSHED_OPTIONS,
   MAX_WATERSHED_VOXELS,
+  validateWatershedChannels,
   validateWatershedOptions,
   validateWatershedShape,
 } from "#src/watershed/base.js";
@@ -36,6 +37,33 @@ describe("watershed validation", () => {
     expect(() =>
       validateWatershedOptions(DEFAULT_WATERSHED_OPTIONS),
     ).not.toThrow();
+  });
+  it("accepts repeated channel mappings and optional normalized mask thresholds", () => {
+    expect(() =>
+      validateWatershedChannels(1, [0, 0, 0], DEFAULT_WATERSHED_OPTIONS),
+    ).not.toThrow();
+    expect(() =>
+      validateWatershedChannels(4, [0, 0, 2], DEFAULT_WATERSHED_OPTIONS),
+    ).not.toThrow();
+    for (const maskThreshold of [0, 0.3, 1]) {
+      const options = { ...DEFAULT_WATERSHED_OPTIONS, maskThreshold };
+      expect(() => validateWatershedOptions(options)).not.toThrow();
+      expect(() =>
+        validateWatershedChannels(4, [0, 1, 2], options),
+      ).not.toThrow();
+    }
+    expect(() =>
+      validateWatershedChannels(3, [0, 1, 2], {
+        ...DEFAULT_WATERSHED_OPTIONS,
+        maskThreshold: 0.3,
+      }),
+    ).toThrow("at least four");
+    expect(() =>
+      validateWatershedChannels(4, [0, 1, 3], {
+        ...DEFAULT_WATERSHED_OPTIONS,
+        maskThreshold: 0.3,
+      }),
+    ).toThrow("mask, not an affinity");
   });
   it.each([
     [],
@@ -62,6 +90,10 @@ describe("watershed validation", () => {
     { sizeThreshold: 2 ** 32 },
     { dustThreshold: NaN },
     { dustThreshold: 2 ** 32 },
+    { maskThreshold: NaN },
+    { maskThreshold: Infinity },
+    { maskThreshold: -0.01 },
+    { maskThreshold: 1.01 },
   ])("rejects invalid options %j", (options) => {
     expect(() =>
       validateWatershedOptions({
