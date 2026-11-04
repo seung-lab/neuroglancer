@@ -99,7 +99,6 @@ describe("watershed job coordination", () => {
     { lower: [19, 20, 30], shape: [2, 2, 2], channels: [0, 1, 2] },
     { lower: [10.5, 20, 30], shape: [2, 2, 2], channels: [0, 1, 2] },
     { lower: [10, 20], shape: [2, 2, 2], channels: [0, 1, 2] },
-    { lower: [10, 20, 30], shape: [2, 2, 2], channels: [0, 0, 2] },
     { lower: [10, 20, 30], shape: [2, 2, 2], channels: [0, 1, 4] },
     { lower: [10, 20, 30], shape: [2, 2, 2], channels: [-1, 1, 2] },
     { lower: [10, 20, 30], shape: [2, 2, 2], channels: [0, 1.5, 2] },
@@ -116,6 +115,75 @@ describe("watershed job coordination", () => {
           shape,
           channels,
           DEFAULT_WATERSHED_OPTIONS,
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow();
+      expect(input.readRegion).not.toHaveBeenCalled();
+      expect(request).not.toHaveBeenCalled();
+    },
+  );
+
+  it("requests repeated planes from a single-channel input", async () => {
+    const { input } = makeInput();
+    const scalar = { ...input, channelCount: 1 };
+    await computeWatershed(
+      scalar,
+      [10, 20, 30],
+      [2, 2, 2],
+      [0, 0, 0],
+      DEFAULT_WATERSHED_OPTIONS,
+      new AbortController().signal,
+    );
+    expect(input.readRegion).toHaveBeenCalledWith(
+      [10, 20, 30],
+      [2, 2, 2],
+      [0, 0, 0],
+      expect.any(AbortSignal),
+    );
+    expect(request).toHaveBeenCalledOnce();
+  });
+
+  it("reads the last channel only when masking is enabled and snapshots its threshold", async () => {
+    const { input } = makeInput();
+    const planes = new Float32Array(4 * 8).fill(0.25);
+    vi.mocked(input.readRegion).mockResolvedValue(planes);
+    const options = { ...DEFAULT_WATERSHED_OPTIONS, maskThreshold: 0.3 };
+    const pending = computeWatershed(
+      input,
+      [10, 20, 30],
+      [2, 2, 2],
+      [2, 0, 1],
+      options,
+      new AbortController().signal,
+    );
+    options.maskThreshold = 0.9;
+    await pending;
+    expect(input.readRegion).toHaveBeenCalledWith(
+      [10, 20, 30],
+      [2, 2, 2],
+      [2, 0, 1, 3],
+      expect.any(AbortSignal),
+    );
+    expect(request.mock.calls[0][3]).toEqual(planes);
+    expect(request.mock.calls[0][3].buffer).not.toBe(planes.buffer);
+    expect(request.mock.calls[0][5].maskThreshold).toBe(0.3);
+  });
+
+  it.each([
+    { channelCount: 1, channels: [0, 0, 0], maskThreshold: 0.3 },
+    { channelCount: 4, channels: [0, 1, 3], maskThreshold: 0.3 },
+    { channelCount: 4, channels: [0, 1, 2], maskThreshold: NaN },
+  ])(
+    "rejects invalid mask requests before reading: %j",
+    async ({ channelCount, channels, maskThreshold }) => {
+      const { input } = makeInput();
+      await expect(
+        computeWatershed(
+          { ...input, channelCount },
+          [10, 20, 30],
+          [2, 2, 2],
+          channels,
+          { ...DEFAULT_WATERSHED_OPTIONS, maskThreshold },
           new AbortController().signal,
         ),
       ).rejects.toThrow();

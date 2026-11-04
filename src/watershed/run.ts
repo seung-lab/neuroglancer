@@ -16,6 +16,7 @@
 
 import { requestAsyncComputation } from "#src/async_computation/request.js";
 import {
+  validateWatershedChannels,
   validateWatershedOptions,
   validateWatershedShape,
   type WatershedOptions,
@@ -51,20 +52,15 @@ export async function computeWatershed(
     )
   )
     throw new Error("Watershed ROI must be inside the native source bounds");
-  if (
-    channels.length !== 3 ||
-    new Set(channels).size !== 3 ||
-    channels.some(
-      (c) => !Number.isInteger(c) || c < 0 || c >= input.channelCount,
-    )
-  )
-    throw new Error(
-      "Watershed needs three distinct in-bounds affinity channels",
-    );
+  validateWatershedChannels(input.channelCount, channels, parameters);
+  const readChannels =
+    parameters.maskThreshold === undefined
+      ? channels
+      : [...channels, input.channelCount - 1];
   const affinities = await input.readRegion(
     lower,
     shape,
-    channels,
+    readChannels,
     combinedSignal,
   );
   combinedSignal.throwIfAborted();

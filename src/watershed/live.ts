@@ -17,6 +17,7 @@
 import type { WatershedOptions, WatershedResult } from "#src/watershed/base.js";
 import {
   DEFAULT_WATERSHED_OPTIONS,
+  validateWatershedChannels,
   validateWatershedOptions,
 } from "#src/watershed/base.js";
 import type { PreparedAffinityInput } from "#src/watershed/input.js";
@@ -58,22 +59,16 @@ export class LiveWatershed {
 
   constructor(
     private readonly input: PreparedAffinityInput,
-    channelsXYZ: readonly number[] = [0, 1, 2],
+    channelsXYZ: readonly number[] = input.channelCount < 3
+      ? [0, 0, 0]
+      : [0, 1, 2],
     options: WatershedOptions = DEFAULT_WATERSHED_OPTIONS,
     private readonly onError: (error: unknown) => void = () => {},
   ) {
     input.assertValid();
     validateWatershedOptions(options);
     this.options = Object.freeze({ ...options });
-    if (
-      channelsXYZ.length !== 3 ||
-      new Set(channelsXYZ).size !== 3 ||
-      channelsXYZ.some(
-        (c) => !Number.isSafeInteger(c) || c < 0 || c >= input.channelCount,
-      )
-    ) {
-      throw new Error("Select three distinct in-bounds affinity channels");
-    }
+    validateWatershedChannels(input.channelCount, channelsXYZ, options);
     this.channels = Object.freeze(Array.from(channelsXYZ));
     this.lowerBound = Object.freeze(Array.from(input.lowerBoundXYZ));
     const shapeXYZ = input.upperBoundXYZ.map((n, i) => n - this.lowerBound[i]);

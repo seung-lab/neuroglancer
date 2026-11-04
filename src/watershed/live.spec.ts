@@ -78,6 +78,39 @@ describe("live demand-driven watershed", () => {
     live.dispose();
   });
 
+  it.each([1, 2])(
+    "defaults a %s-channel volume to three identical affinity planes",
+    async (channelCount) => {
+      const { input } = fixture([4, 1, 1]);
+      const scalar = { ...input, channelCount };
+      const live = new LiveWatershed(scalar);
+      expect(await live.readTile([0, 0, 0], [4, 1, 1], signal)).toEqual(
+        new BigUint64Array(4).fill(1n),
+      );
+      expect(compute.mock.calls[0][3]).toEqual([0, 0, 0]);
+      live.dispose();
+    },
+  );
+
+  it("freezes optional mask configuration for subsequent viewport demand", async () => {
+    const { input } = fixture([4, 1, 1]);
+    const options = { ...DEFAULT_WATERSHED_OPTIONS, maskThreshold: 0.3 };
+    const live = new LiveWatershed(input, [0, 1, 2], options);
+    options.maskThreshold = 1;
+    await live.readTile([0, 0, 0], [4, 1, 1], signal);
+    expect(compute.mock.calls[0][4].maskThreshold).toBe(0.3);
+    live.dispose();
+    const { input: other } = fixture();
+    expect(
+      () =>
+        new LiveWatershed(other, [0, 1, 3], {
+          ...DEFAULT_WATERSHED_OPTIONS,
+          maskThreshold: 0.3,
+        }),
+    ).toThrow("mask, not an affinity");
+    expect(other.dispose).not.toHaveBeenCalled();
+  });
+
   it("reads a clipped halo and crops the correct XYZ core before namespacing labels", async () => {
     const { input } = fixture();
     compute.mockImplementation(async (_input, lower, shape) => {
@@ -195,7 +228,6 @@ describe("live demand-driven watershed", () => {
   });
 
   it.each([
-    [0, 0, 1],
     [-1, 1, 2],
     [0, 1, 4],
     [0, 1],
@@ -205,7 +237,7 @@ describe("live demand-driven watershed", () => {
     (...channels) => {
       const { input } = fixture();
       expect(() => new LiveWatershed(input, channels)).toThrow(
-        "three distinct",
+        "three in-bounds",
       );
       expect(input.dispose).not.toHaveBeenCalled();
       expect(compute).not.toHaveBeenCalled();
