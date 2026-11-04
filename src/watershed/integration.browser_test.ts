@@ -109,10 +109,16 @@ function openWatershed(viewer: Viewer, source: ManagedUserLayer) {
   return session;
 }
 
-function fill(session: WatershedSession, label: string, value: string) {
+function field(session: WatershedSession, label: string) {
   const input = session.dialog!.body.querySelector<HTMLInputElement>(
     `input[aria-label="${label}"]`,
-  )!;
+  );
+  expect(input, label).not.toBeNull();
+  return input!;
+}
+
+function fill(session: WatershedSession, label: string, value: string) {
+  const input = field(session, label);
   expect(input.disabled).toBe(false);
   input.value = value;
   input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -120,6 +126,10 @@ function fill(session: WatershedSession, label: string, value: string) {
 
 function configure(session: WatershedSession, channels = [0, 1, 2]) {
   fill(session, "Channels for −X −Y −Z", channels.join(", "));
+  configureThresholds(session);
+}
+
+function configureThresholds(session: WatershedSession) {
   fill(session, "High threshold", "1");
   fill(session, "Low threshold", "0");
   fill(session, "Size threshold", "0");
@@ -861,5 +871,267 @@ describe("live watershed integration (real WebGL, chunk RPC and WASM workers)", 
     ]);
     expect(jobs()).toEqual([[72, 60, 16]]);
     expect(f.session.statusLevel, f.session.status).toBe("info");
+  }, 90_000);
+
+  it("automatically duplicates native scalar probabilities and demands aligned UINT64 tiles as the viewer navigates, without an ROI", async () => {
+    const jobs = observeWatershedWorker();
+    const native = await precomputed(
+      "https://watershed-integration.invalid/scalar-probabilities",
+      [148, 5, 4],
+      [10, 20, -3],
+      [32, 5, 4],
+      1,
+      (x) => ((x >= 30 && x < 34) || (x >= 94 && x < 98) || x >= 136 ? 0 : 255),
+    );
+    const viewer = makeViewer();
+    viewer.coordinateSpace.restoreState({
+      x: [5e-9, "m"],
+      y: [10e-9, "m"],
+      z: [15e-9, "m"],
+    });
+    const image = await addImage(viewer, native.url);
+    const imageRenderLayer = (image.layer as ImageUserLayer).renderLayers.find(
+      (r): r is SliceViewVolumeRenderLayer =>
+        r instanceof SliceViewVolumeRenderLayer,
+    )!;
+    expect(imageRenderLayer.multiscaleSource.rank).toBe(3);
+    const session = openWatershed(viewer, image);
+    expect(field(session, "Channels for −X −Y −Z").value).toBe("0, 0, 0");
+    expect(field(session, "Use last channel as mask").checked).toBe(false);
+    expect(field(session, "Use last channel as mask").disabled).toBe(true);
+    // Leave the automatic channel mapping untouched; edit only algorithm knobs.
+    configureThresholds(session);
+    const result = await addFromDialog(session);
+    const output = outputSource(
+      result,
+      [148, 5, 4],
+      [10, 20, -3],
+      [1e-8, 2e-8, 3e-8],
+    );
+    await settleView();
+    expect(native.chunks).toEqual([]);
+    expect(jobs()).toEqual([]);
+
+    viewer.position.value = output.worldPosition([16.5, 2.5, 1.5]);
+    const first = await readTile(output.chunkSource, 0);
+    expect(first.size).toEqual([64, 5, 4]);
+    // Probabilities are duplicated to all three negative-axis affinities, not
+    // post-masked: x=33 has zero probability but connects to positive x=34.
+    // The other three zero columns are background and split positive regions.
+    expect(first.labels).toEqual(
+      expectedTile(first.size, (x) => (x < 30 ? 1n : x < 33 ? 0n : 34n)),
+    );
+    expect(jobs()).toEqual([[72, 5, 4]]);
+    expect(native.chunks).toEqual([
+      "10-42_20-25_-3-1",
+      "42-74_20-25_-3-1",
+      "74-106_20-25_-3-1",
+    ]);
+    expect(output.chunkSource.chunks.has("1,0,0")).toBe(false);
+
+    viewer.crossSectionScale.value = 0.01;
+    result.setVisible(true);
+    await expect
+      .poll(() => output.chunkSource.chunks.get("0,0,0")?.state)
+      .toBe(ChunkState.GPU_MEMORY);
+    expect(
+      output.renderLayer.getValueAt(output.worldPosition([30.5, 2.5, 1.5])),
+    ).toBe(0n);
+    expect(
+      output.renderLayer.getValueAt(output.worldPosition([33.5, 2.5, 1.5])),
+    ).toBe(34n);
+
+    viewer.position.value = output.worldPosition([110.5, 2.5, 1.5]);
+    // Only navigation, not a test-owned fetch, demands this new tile.
+    await expect
+      .poll(() => output.chunkSource.chunks.get("1,0,0")?.state, {
+        timeout: 60_000,
+      })
+      .toBe(ChunkState.GPU_MEMORY);
+    const second = await readTile(output.chunkSource, 1);
+    expect(second.size).toEqual([64, 5, 4]);
+    expect(second.labels).toEqual(
+      expectedTile(second.size, (x) =>
+        x < 30 ? 131073n : x < 33 ? 0n : 131106n,
+      ),
+    );
+    expect(jobs()).toEqual([
+      [72, 5, 4],
+      [80, 5, 4],
+    ]);
+    expect(native.chunks).toEqual([
+      "10-42_20-25_-3-1",
+      "42-74_20-25_-3-1",
+      "74-106_20-25_-3-1",
+      "106-138_20-25_-3-1",
+      "138-158_20-25_-3-1",
+    ]);
+    expect(
+      output.renderLayer.getValueAt(output.worldPosition([98.5, 2.5, 1.5])),
+    ).toBe(131106n);
+
+    viewer.position.value = output.worldPosition([140.5, 2.5, 1.5]);
+    await expect
+      .poll(() => output.chunkSource.chunks.get("2,0,0")?.state, {
+        timeout: 60_000,
+      })
+      .toBe(ChunkState.GPU_MEMORY);
+    const edge = await readTile(output.chunkSource, 2);
+    expect(edge.size).toEqual([20, 5, 4]);
+    expect(edge.labels).toEqual(
+      expectedTile(edge.size, (x) => (x < 8 ? 262145n : 0n)),
+    );
+    expect(
+      output.renderLayer.getValueAt(output.worldPosition([135.5, 2.5, 1.5])),
+    ).toBe(262145n);
+    expect(
+      output.renderLayer.getValueAt(output.worldPosition([136.5, 2.5, 1.5])),
+    ).toBe(0n);
+    expect(
+      output.renderLayer.getValueAt(output.worldPosition([148.5, 2.5, 1.5])),
+    ).toBeNull();
+    expect(
+      output.renderLayer.getValueAt(output.worldPosition([-0.5, 2.5, 1.5])),
+    ).toBeNull();
+    expect(jobs()).toEqual([
+      [72, 5, 4],
+      [80, 5, 4],
+      [28, 5, 4],
+    ]);
+    expect(native.chunks).toHaveLength(5);
+    expect(session.statusLevel, session.status).toBe("info");
+  }, 90_000);
+
+  it("uses the real mask controls to split normalized UINT8 affinities before WASM, while default-off layers stay connected", async () => {
+    const jobs = observeWatershedWorker();
+    const native = await precomputed(
+      "https://watershed-integration.invalid/masked-affinities",
+      [148, 5, 4],
+      [10, 20, -3],
+      [32, 5, 4],
+      4,
+      (x, _y, _z, c) =>
+        c !== 3 || x >= 136 ? 255 : x === 32 || x === 96 ? 77 : 76,
+    );
+    const viewer = makeViewer();
+    viewer.coordinateSpace.restoreState({
+      x: [5e-9, "m"],
+      y: [10e-9, "m"],
+      z: [15e-9, "m"],
+    });
+    const image = await addImage(viewer, native.url);
+    const session = openWatershed(viewer, image);
+    configure(session);
+    const useMask = field(session, "Use last channel as mask");
+    const maskThreshold = field(session, "Mask threshold");
+    expect(useMask.type).toBe("checkbox");
+    expect(useMask.checked).toBe(false);
+    expect(maskThreshold.type).toBe("number");
+    expect(maskThreshold.value).toBe("0.3");
+    expect(maskThreshold.disabled).toBe(true);
+    const unmasked = await addFromDialog(session);
+    const off = outputSource(
+      unmasked,
+      [148, 5, 4],
+      [10, 20, -3],
+      [1e-8, 2e-8, 3e-8],
+    );
+    expect(useMask.disabled).toBe(false);
+    useMask.click();
+    expect(useMask.checked).toBe(true);
+    fill(session, "Mask threshold", "0.3");
+    const masked = await addFromDialog(session);
+    const on = outputSource(
+      masked,
+      [148, 5, 4],
+      [10, 20, -3],
+      [1e-8, 2e-8, 3e-8],
+    );
+    await settleView();
+    expect(native.chunks).toEqual([]);
+    expect(jobs()).toEqual([]);
+
+    viewer.position.value = on.worldPosition([16.5, 2.5, 1.5]);
+    // The previous layer retains its default-off options after the form changes.
+    const offFirst = await readTile(off.chunkSource, 0);
+    expect(offFirst.labels).toEqual(expectedTile(offFirst.size, () => 1n));
+    const first = await readTile(on.chunkSource, 0);
+    expect(first.size).toEqual([64, 5, 4]);
+    // 76/255 < .3 stays connected; 77/255 > .3 becomes background. Both
+    // endpoints of each incident edge must be gated: x=33 must not reconnect
+    // masked x=32. Merely zeroing output would leave both sides with ID 1.
+    expect(first.labels).toEqual(
+      expectedTile(first.size, (x) => (x < 32 ? 1n : x === 32 ? 0n : 34n)),
+    );
+    expect(jobs()).toEqual([
+      [72, 5, 4],
+      [72, 5, 4],
+    ]);
+    expect(native.chunks).toEqual([
+      "10-42_20-25_-3-1",
+      "42-74_20-25_-3-1",
+      "74-106_20-25_-3-1",
+    ]);
+    expect(on.chunkSource.chunks.has("1,0,0")).toBe(false);
+
+    viewer.crossSectionScale.value = 0.01;
+    masked.setVisible(true);
+    await expect
+      .poll(() => on.chunkSource.chunks.get("0,0,0")?.state)
+      .toBe(ChunkState.GPU_MEMORY);
+    expect(on.renderLayer.getValueAt(on.worldPosition([31.5, 2.5, 1.5]))).toBe(
+      1n,
+    );
+    expect(on.renderLayer.getValueAt(on.worldPosition([32.5, 2.5, 1.5]))).toBe(
+      0n,
+    );
+    expect(on.renderLayer.getValueAt(on.worldPosition([33.5, 2.5, 1.5]))).toBe(
+      34n,
+    );
+
+    viewer.position.value = on.worldPosition([110.5, 2.5, 1.5]);
+    await expect
+      .poll(() => on.chunkSource.chunks.get("1,0,0")?.state, {
+        timeout: 60_000,
+      })
+      .toBe(ChunkState.GPU_MEMORY);
+    const second = await readTile(on.chunkSource, 1);
+    expect(second.labels).toEqual(
+      expectedTile(second.size, (x) =>
+        x < 32 ? 131073n : x === 32 ? 0n : 131106n,
+      ),
+    );
+    expect(native.chunks).toHaveLength(5);
+
+    viewer.position.value = on.worldPosition([140.5, 2.5, 1.5]);
+    await expect
+      .poll(() => on.chunkSource.chunks.get("2,0,0")?.state, {
+        timeout: 60_000,
+      })
+      .toBe(ChunkState.GPU_MEMORY);
+    const edge = await readTile(on.chunkSource, 2);
+    expect(edge.size).toEqual([20, 5, 4]);
+    expect(edge.labels).toEqual(
+      expectedTile(edge.size, (x) => (x < 8 ? 262145n : 0n)),
+    );
+    expect(on.renderLayer.getValueAt(on.worldPosition([135.5, 2.5, 1.5]))).toBe(
+      262145n,
+    );
+    expect(on.renderLayer.getValueAt(on.worldPosition([136.5, 2.5, 1.5]))).toBe(
+      0n,
+    );
+    // Even a mask value of 255 is ignored in the default-off publication.
+    const offEdge = await readTile(off.chunkSource, 2);
+    expect(offEdge.labels).toEqual(expectedTile(offEdge.size, () => 262145n));
+    expect(jobs()).toEqual([
+      [72, 5, 4],
+      [72, 5, 4],
+      [80, 5, 4],
+      [28, 5, 4],
+      [28, 5, 4],
+    ]);
+    expect(native.chunks).toHaveLength(5);
+    expect(unmasked.visible).toBe(false);
+    expect(session.statusLevel, session.status).toBe("info");
   }, 90_000);
 });
