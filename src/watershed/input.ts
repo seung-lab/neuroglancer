@@ -19,7 +19,6 @@ import { supportedUnits } from "#src/util/si_units.js";
 
 // Keep input usable independently of the watershed runtime.
 const MAX_VOXELS = 2 ** 21;
-const RANK = 4;
 const AXES = ["x", "y", "z"] as const;
 
 export interface PreparedAffinityInput {
@@ -34,7 +33,10 @@ export interface PreparedAffinityInput {
   readonly signal: AbortSignal;
   isValid(): boolean;
   assertValid(): void;
-  /** Owned planar [3,Z,Y,X], X fastest; channels point toward -X, -Y, -Z. */
+  /**
+   * Owned planar [N,Z,Y,X], X fastest, for 1..4 requested channels in order.
+   * Repeats are allowed; scalar inputs expose only channel 0. No mapping is inferred.
+   */
   readRegion(
     lowerXYZ: readonly number[],
     shapeXYZ: readonly number[],
@@ -50,19 +52,21 @@ function unsupported(message: string): never {
 }
 
 function getAxes(space: CoordinateSpace) {
-  const { names, scales, units } = space;
+  const { rank, names, scales, units } = space;
   const channel = names.findIndex(isChannelDimension);
   if (
     !space.valid ||
-    space.rank !== RANK ||
-    names.length !== RANK ||
-    new Set(names).size !== RANK ||
+    (rank !== 3 && rank !== 4) ||
+    names.length !== rank ||
+    new Set(names).size !== rank ||
     !AXES.every((name) => names.includes(name)) ||
-    channel === -1
+    (rank === 4 && channel === -1)
   ) {
-    unsupported("expected rank-4 x, y, z and exactly one channel dimension");
+    unsupported(
+      "expected rank-3 x, y, z or rank-4 x, y, z and one channel dimension",
+    );
   }
-  for (let d = 0; d < RANK; ++d) {
+  for (let d = 0; d < rank; ++d) {
     const unit = supportedUnits.get(units[d]);
     if (
       !(scales[d] > 0) ||
@@ -74,27 +78,30 @@ function getAxes(space: CoordinateSpace) {
       unsupported("uniform positive spacing and canonical units are required");
     }
   }
-  if (scales[channel] !== 1 || units[channel] !== "") {
+  if (channel !== -1 && (scales[channel] !== 1 || units[channel] !== "")) {
     unsupported("channel coordinates must be unscaled and unitless");
   }
   return { xyz: AXES.map((name) => names.indexOf(name)), channel };
 }
 
 /** Row -> column mapping; translations are kept separate from fetch indices. */
-function positiveGrid(transform: ArrayLike<number>) {
+function positiveGrid(transform: ArrayLike<number>, rank: number) {
+  const stride = rank + 1;
   if (
-    transform.length !== 25 ||
-    [4, 9, 14, 19].some((i) => transform[i] !== 0) ||
-    transform[24] !== 1
+    transform.length !== stride ** 2 ||
+    Array.from({ length: rank }, (_, c) => transform[c * stride + rank]).some(
+      (v) => v !== 0,
+    ) ||
+    transform[stride ** 2 - 1] !== 1
   ) {
     unsupported("expected a positive scaled axis permutation (no resampling)");
   }
-  const dimensions = new Array<number>(RANK).fill(-1);
-  const scales = new Array<number>(RANK);
-  for (let c = 0; c < RANK; ++c) {
+  const dimensions = new Array<number>(rank).fill(-1);
+  const scales = new Array<number>(rank);
+  for (let c = 0; c < rank; ++c) {
     let row = -1;
-    for (let r = 0; r < RANK; ++r) {
-      const v = transform[c * 5 + r];
+    for (let r = 0; r < rank; ++r) {
+      const v = transform[c * stride + r];
       if (v === 0) continue;
       if (!Number.isFinite(v) || v <= 0 || row !== -1 || dimensions[r] !== -1) {
         unsupported("shear, reflection, or ambiguous axes (no resampling)");
@@ -105,7 +112,10 @@ function positiveGrid(transform: ArrayLike<number>) {
     }
     if (row === -1) unsupported("singular native grid");
   }
-  const translation = Array.from({ length: RANK }, (_, r) => transform[20 + r]);
+  const translation = Array.from(
+    { length: rank },
+    (_, r) => transform[rank * stride + r],
+  );
   if (!translation.every(Number.isFinite))
     unsupported("nonfinite native origin");
   return { dimensions, scales, translation };
@@ -122,8 +132,11 @@ function getActiveVolume(layer: ImageUserLayer) {
   if (volumes.length !== 1)
     unsupported("expected exactly one active image volume");
   const renderLayer = volumes[0];
-  if (renderLayer.wasDisposed || renderLayer.multiscaleSource.rank !== RANK) {
-    unsupported("expected a live rank-4 affinity volume");
+  if (
+    renderLayer.wasDisposed ||
+    ![3, 4].includes(renderLayer.multiscaleSource.rank)
+  ) {
+    unsupported("expected a live rank-3 scalar or rank-4 affinity volume");
   }
   const matches = layer.dataSources.flatMap(({ loadState }) => {
     if (loadState === undefined || loadState.error !== undefined) return [];
@@ -156,15 +169,22 @@ function getNativeState(layer: ImageUserLayer) {
   const active = getActiveVolume(layer);
   const { loadState, subsource, renderLayer } = active;
   const native = loadState.dataSource.modelTransform;
+  const rank = renderLayer.multiscaleSource.rank;
   const inputAxes = getAxes(native.inputSpace);
   const outputAxes = getAxes(native.outputSpace);
-  if (native.rank !== RANK || native.sourceRank !== RANK)
-    unsupported("padded model dimensions");
-  const grid = positiveGrid(native.transform);
   if (
-    grid.dimensions[outputAxes.channel] !== inputAxes.channel ||
-    grid.scales[outputAxes.channel] !== 1 ||
-    grid.translation[outputAxes.channel] !== 0 ||
+    native.rank !== rank ||
+    native.sourceRank !== rank ||
+    native.inputSpace.rank !== rank ||
+    native.outputSpace.rank !== rank
+  )
+    unsupported("padded model dimensions");
+  const grid = positiveGrid(native.transform, rank);
+  if (
+    (outputAxes.channel !== -1 &&
+      (grid.dimensions[outputAxes.channel] !== inputAxes.channel ||
+        grid.scales[outputAxes.channel] !== 1 ||
+        grid.translation[outputAxes.channel] !== 0)) ||
     grid.dimensions.some(
       (c, r) => native.inputSpace.units[c] !== native.outputSpace.units[r],
     )
@@ -180,17 +200,20 @@ function getNativeState(layer: ImageUserLayer) {
     raw.outputSpace.scales,
   );
   if (
-    raw.rank !== RANK ||
-    raw.sourceRank !== RANK ||
+    raw.rank !== rank ||
+    raw.sourceRank !== rank ||
     JSON.stringify(spaceKey(raw.inputSpace)) !==
       JSON.stringify(spaceKey(native.inputSpace)) ||
     !arraysEqual(raw.outputSpace.names, native.outputSpace.names) ||
     !arraysEqual(raw.outputSpace.units, native.outputSpace.units) ||
     !arraysEqual(raw.transform, expectedRaw) ||
-    !arraysEqual(subsource.modelSubspaceDimensionIndices, [0, 1, 2, 3]) ||
+    !arraysEqual(
+      subsource.modelSubspaceDimensionIndices,
+      Array.from({ length: rank }, (_, d) => d),
+    ) ||
     !arraysEqual(
       subsource.subsourceToModelSubspaceTransform,
-      matrix.createIdentity(Float32Array, 5),
+      matrix.createIdentity(Float32Array, rank + 1),
     )
   ) {
     unsupported("user/subsource transforms must remain native (no resampling)");
@@ -204,12 +227,13 @@ function getNativeState(layer: ImageUserLayer) {
     getRenderLayerTransform(global, local, raw, undefined, channel),
   );
   if (
-    current.rank !== RANK ||
-    current.unpaddedRank !== RANK ||
+    current.rank !== rank ||
+    current.unpaddedRank !== rank ||
     !renderLayerTransformsEqual(current, expected) ||
-    channel.rank !== 1 ||
-    channel.names[0] !== native.outputSpace.names[outputAxes.channel] ||
-    current.channelToModelDimensions[0] !== inputAxes.channel
+    channel.rank !== (inputAxes.channel === -1 ? 0 : 1) ||
+    (inputAxes.channel !== -1 &&
+      (channel.names[0] !== native.outputSpace.names[outputAxes.channel] ||
+        current.channelToModelDimensions[0] !== inputAxes.channel))
   )
     unsupported("ambiguous or non-native render-layer dimensions");
   // All native output axes must have explicit, compatible viewer metadata.
@@ -225,7 +249,7 @@ function getNativeState(layer: ImageUserLayer) {
         !space.valid ||
         covered.has(d) ||
         d < 0 ||
-        d >= RANK ||
+        d >= rank ||
         space.units[i] !== raw.outputSpace.units[d] ||
         space.scales[i] !== raw.outputSpace.scales[d] ||
         !(space.scales[i] > 0) ||
@@ -236,9 +260,10 @@ function getNativeState(layer: ImageUserLayer) {
       covered.add(d);
     });
   }
-  if (covered.size !== RANK) unsupported("incomplete native dimension mapping");
+  if (covered.size !== rank) unsupported("incomplete native dimension mapping");
   return {
     ...active,
+    rank,
     native,
     inputAxes,
     outputAxes,
@@ -283,13 +308,14 @@ export function prepareAffinityInput(
   scaleIndex = 0,
 ): PreparedAffinityInput {
   const state = getNativeState(layer);
-  const { renderLayer, loadState, subsource, native } = state;
+  const { renderLayer, loadState, subsource, native, rank } = state;
   const multiscale = renderLayer.multiscaleSource;
   const getSources = () =>
     multiscale.getSources({
       discreteValues: true,
       displayRank: 3,
-      modelChannelDimensionIndices: [state.inputAxes.channel],
+      modelChannelDimensionIndices:
+        state.inputAxes.channel === -1 ? [] : [state.inputAxes.channel],
       multiscaleToViewTransform: matrix.createIdentity(Float32Array, 3),
     });
   const releaseSources = (sources: ReturnType<typeof getSources>) => {
@@ -317,11 +343,15 @@ export function prepareAffinityInput(
     const { spec } = source;
     const { dataType } = spec;
     const divisor = divisorFor(dataType);
-    const chunkGrid = positiveGrid(selected.chunkToMultiscaleTransform);
-    const channelDim = chunkGrid.dimensions[state.inputAxes.channel];
+    const chunkGrid = positiveGrid(selected.chunkToMultiscaleTransform, rank);
+    const channelDim =
+      state.inputAxes.channel === -1
+        ? -1
+        : chunkGrid.dimensions[state.inputAxes.channel];
     if (
-      chunkGrid.scales[state.inputAxes.channel] !== 1 ||
-      chunkGrid.translation[state.inputAxes.channel] !== 0
+      channelDim !== -1 &&
+      (chunkGrid.scales[state.inputAxes.channel] !== 1 ||
+        chunkGrid.translation[state.inputAxes.channel] !== 0)
     )
       unsupported("source channel dimension must be unscaled and untranslated");
     const dims: number[] = [],
@@ -364,17 +394,17 @@ export function prepareAffinityInput(
     const lower: number[] = [],
       upper: number[] = [];
     if (
-      spec.rank !== RANK ||
+      spec.rank !== rank ||
       [
         spec.lowerVoxelBound,
         spec.upperVoxelBound,
         spec.chunkDataSize,
         spec.baseVoxelOffset,
-      ].some((x) => x.length !== RANK)
+      ].some((x) => x.length !== rank)
     ) {
-      unsupported("expected rank-4 chunk metadata");
+      unsupported(`expected rank-${rank} chunk metadata`);
     }
-    for (let d = 0; d < RANK; ++d) {
+    for (let d = 0; d < rank; ++d) {
       lower[d] = Math.max(
         spec.lowerVoxelBound[d],
         selected.lowerClipBound?.[d] ?? -Infinity,
@@ -424,14 +454,16 @@ export function prepareAffinityInput(
       }
     }
     if (
-      lower[channelDim] !== 0 ||
-      upper[channelDim] < 3 ||
-      upper[channelDim] >= 2 ** 32
+      channelDim !== -1 &&
+      (lower[channelDim] !== 0 ||
+        upper[channelDim] < 1 ||
+        upper[channelDim] >= 2 ** 32)
     ) {
       unsupported(
-        "channel bounds must start at zero and include at least three affinities",
+        "channel bounds must start at zero and include at least one channel",
       );
     }
+    const channelCount = channelDim === -1 ? 1 : upper[channelDim];
     const lowerBoundXYZ = Object.freeze(dims.map((d) => lower[d]));
     const upperBoundXYZ = Object.freeze(dims.map((d) => upper[d]));
     if (
@@ -537,7 +569,7 @@ export function prepareAffinityInput(
     return {
       lowerBoundXYZ,
       upperBoundXYZ,
-      channelCount: upper[channelDim],
+      channelCount,
       spacingXYZ: Object.freeze(spacing),
       unitsXYZ: Object.freeze(
         state.outputAxes.xyz.map((d) => native.outputSpace.units[d]),
@@ -580,20 +612,20 @@ export function prepareAffinityInput(
         if (!Number.isSafeInteger(count) || count > MAX_VOXELS)
           throw new RangeError("Affinity region exceeds 2**21 voxels");
         if (
-          channelsXYZ.length !== 3 ||
-          new Set(channelsXYZ).size !== 3 ||
+          channelsXYZ.length < 1 ||
+          channelsXYZ.length > 4 ||
           channelsXYZ.some(
-            (c) => !Number.isSafeInteger(c) || c < 0 || c >= upper[channelDim],
+            (c) => !Number.isSafeInteger(c) || c < 0 || c >= channelCount,
           )
         )
           throw new RangeError(
-            "Select three distinct in-bounds affinity channels for -X, -Y, -Z",
+            "Select 1..4 in-bounds affinity channels (repeats allowed)",
           );
-        const output = new Float32Array(3 * count);
-        const gridLower = new Array<number>(RANK),
-          gridUpper = new Array<number>(RANK);
-        const regionLower = new Array<number>(RANK),
-          regionUpper = new Array<number>(RANK);
+        const output = new Float32Array(channelsXYZ.length * count);
+        const gridLower = new Array<number>(rank),
+          gridUpper = new Array<number>(rank);
+        const regionLower = new Array<number>(rank),
+          regionUpper = new Array<number>(rank);
         dims.forEach((d, a) => {
           regionLower[d] = lowerXYZ[a];
           regionUpper[d] = lowerXYZ[a] + shapeXYZ[a];
@@ -601,31 +633,37 @@ export function prepareAffinityInput(
           gridUpper[d] = Math.ceil(regionUpper[d] / chunkSize[d]);
         });
         // Fetch only selected channel chunks, once each. Do not iterate gaps.
-        const channelGrids = [
-          ...new Set(
-            channelsXYZ.map((c) => Math.floor(c / chunkSize[channelDim])),
-          ),
-        ];
+        const channelGrids =
+          channelDim === -1
+            ? [0]
+            : [
+                ...new Set(
+                  channelsXYZ.map((c) => Math.floor(c / chunkSize[channelDim])),
+                ),
+              ];
         const [dx, dy, dz] = dims;
         for (const gc of channelGrids) {
+          const planes = channelsXYZ
+            .map((_, a) => a)
+            .filter(
+              (a) =>
+                channelDim === -1 ||
+                Math.floor(channelsXYZ[a] / chunkSize[channelDim]) === gc,
+            );
           for (let gz = gridLower[dz]; gz < gridUpper[dz]; ++gz) {
             for (let gy = gridLower[dy]; gy < gridUpper[dy]; ++gy) {
               for (let gx = gridLower[dx]; gx < gridUpper[dx]; ++gx) {
                 combined.throwIfAborted();
                 assertValid();
-                const grid = new Float32Array(RANK);
+                const grid = new Float32Array(rank);
                 grid[dx] = gx;
                 grid[dy] = gy;
                 grid[dz] = gz;
-                grid[channelDim] = gc;
+                if (channelDim !== -1) grid[channelDim] = gc;
                 // baseVoxelOffset is backend-only, never added to this key.
                 const chunkOrigin = Array.from(
                   grid,
                   (g, d) => g * chunkSize[d],
-                );
-                const planes = [0, 1, 2].filter(
-                  (a) =>
-                    Math.floor(channelsXYZ[a] / chunkSize[channelDim]) === gc,
                 );
                 const result = await source.fetchChunk(
                   grid,
@@ -635,9 +673,11 @@ export function prepareAffinityInput(
                       combined.throwIfAborted();
                       assertValid();
                       const volume = chunk as VolumeChunk;
-                      if (volume.chunkDataSize.length !== RANK)
-                        throw new Error("Affinity chunk must have rank-4 data");
-                      for (let d = 0; d < RANK; ++d) {
+                      if (volume.chunkDataSize.length !== rank)
+                        throw new Error(
+                          `Affinity chunk must have rank-${rank} data`,
+                        );
+                      for (let d = 0; d < rank; ++d) {
                         const n = volume.chunkDataSize[d];
                         const end =
                           d === channelDim
@@ -666,10 +706,11 @@ export function prepareAffinityInput(
                           chunkOrigin[d] + volume.chunkDataSize[d],
                         ),
                       );
-                      const position = new Uint32Array(RANK);
+                      const position = new Uint32Array(rank);
                       for (const a of planes) {
-                        position[channelDim] =
-                          channelsXYZ[a] - chunkOrigin[channelDim];
+                        if (channelDim !== -1)
+                          position[channelDim] =
+                            channelsXYZ[a] - chunkOrigin[channelDim];
                         for (let z = lo[2]; z < hi[2]; ++z) {
                           position[dz] = z - chunkOrigin[dz];
                           for (let y = lo[1]; y < hi[1]; ++y) {

@@ -29,7 +29,7 @@ vi.mock("#src/sliceview/volume/renderlayer.js", () => ({
 }));
 
 const signal = new AbortController().signal;
-const identity = () => matrix.createIdentity(Float32Array, 5);
+const identity = (rank = 4) => matrix.createIdentity(Float32Array, rank + 1);
 function watchable<T>(value: T) {
   return { value, changed: new NullarySignal() };
 }
@@ -53,19 +53,21 @@ interface FixtureOptions {
 function fixture(options: FixtureOptions = {}) {
   const {
     names = ["x", "y", "z", "c^"],
-    lower = [0, 0, 0, 0],
-    upper = [5, 4, 3, 5],
-    chunkSize = [3, 3, 2, 2],
-    baseOffset = [0, 0, 0, 0],
-    sourceTransform = identity(),
-    nativeOrigin = [0, 0, 0, 0],
+    lower = [0, 0, 0, 0].slice(0, names.length),
+    upper = [5, 4, 3, 5].slice(0, names.length),
+    chunkSize = [3, 3, 2, 2].slice(0, names.length),
+    baseOffset = [0, 0, 0, 0].slice(0, names.length),
+    sourceTransform = identity(names.length),
+    nativeOrigin = [0, 0, 0, 0].slice(0, names.length),
     dataType = DataType.FLOAT32,
     absent = [],
     fillValue = 0.25,
-    value = (p) => (p[0] + 6 * p[1] + 30 * p[2] + 100 * p[3]) / 1000,
+    value = (p) => (p[0] + 6 * p[1] + 30 * p[2] + 100 * (p[3] ?? 0)) / 1000,
   } = options;
+  const rank = names.length;
+  const channelDim = names.indexOf("c^");
   const spec = {
-    rank: 4,
+    rank,
     dataType,
     fillValue,
     lowerVoxelBound: Float32Array.from(lower),
@@ -161,7 +163,7 @@ function fixture(options: FixtureOptions = {}) {
     modelTransform.transform.set(options.nativeTransform);
   } else {
     nativeOrigin.forEach((n, d) => {
-      modelTransform.transform[20 + d] = n;
+      modelTransform.transform[rank * (rank + 1) + d] = n;
     });
   }
   const transform = new WatchableCoordinateSpaceTransform(modelTransform);
@@ -176,17 +178,19 @@ function fixture(options: FixtureOptions = {}) {
   );
   const localSpace = watchable(emptyValidCoordinateSpace);
   const channelSpace = watchable(
-    makeCoordinateSpace({
-      names: ["c^"],
-      units: [""],
-      scales: Float64Array.of(1),
-      boundingBoxes: [
-        makeIdentityTransformedBoundingBox({
-          lowerBounds: Float64Array.of(0),
-          upperBounds: Float64Array.of(upper[names.indexOf("c^")]),
+    channelDim === -1
+      ? emptyValidCoordinateSpace
+      : makeCoordinateSpace({
+          names: ["c^"],
+          units: [""],
+          scales: Float64Array.of(1),
+          boundingBoxes: [
+            makeIdentityTransformedBoundingBox({
+              lowerBounds: Float64Array.of(0),
+              upperBounds: Float64Array.of(upper[channelDim]),
+            }),
+          ],
         }),
-      ],
-    }),
   );
   // Simulate CoordinateSpaceCombiner rebinding output metadata to viewer scales.
   transform.outputSpace.value = makeCoordinateSpace({
@@ -207,12 +211,12 @@ function fixture(options: FixtureOptions = {}) {
   const subsource = {
     enabled: true,
     activated: {} as object | undefined,
-    subsourceToModelSubspaceTransform: identity(),
-    modelSubspaceDimensionIndices: [0, 1, 2, 3],
+    subsourceToModelSubspaceTransform: identity(rank),
+    modelSubspaceDimensionIndices: Array.from({ length: rank }, (_, d) => d),
     subsourceEntry: { subsource: { volume: undefined as unknown } },
   };
   const multiscale = {
-    rank: 4,
+    rank,
     getSources: vi.fn((_options: unknown) => {
       if (!available) throw new Error("Inference publication was deleted");
       source.addRef();
@@ -345,6 +349,186 @@ describe("native affinity input", () => {
     ).toThrow("outside fetch callback");
   });
 
+  it.each([3, 4])(
+    "reads genuine rank-%i single-channel chunks at nonzero bounds/origins and partial edges without refetching repeated planes",
+    async (rank) => {
+      const value = ([x, y, z]: number[]) =>
+        (x + 10 * (y + 3) + 60 * (z - 3)) / 1000;
+      const f = fixture({
+        names: ["x", "y", "z", "c^"].slice(0, rank),
+        lower: [1, -2, 3, 0].slice(0, rank),
+        upper: [6, 3, 6, 1].slice(0, rank),
+        chunkSize: [4, 3, 4, 1].slice(0, rank),
+        baseOffset: [19, -11, 7, 0].slice(0, rank),
+        nativeOrigin: [20, -12, 7, 0].slice(0, rank),
+        globalScales: [8, 12, 20],
+        value,
+      });
+      const input = f.prepare();
+      try {
+        expect(input.channelCount).toBe(1);
+        expect(input.lowerBoundXYZ).toEqual([1, -2, 3]);
+        expect(input.upperBoundXYZ).toEqual([6, 3, 6]);
+        expect(input.originXYZ).toEqual([20, -12, 7]);
+        expect(input.spacingXYZ).toEqual([2, 3, 5]);
+        expect(input.unitsXYZ).toEqual(["m", "m", "m"]);
+        const actual = await input.readRegion(
+          [2, -1, 3],
+          [4, 4, 3],
+          [0, 0, 0],
+          signal,
+        );
+        expect(actual).toEqual(
+          expected([2, -1, 3], [4, 4, 3], [0, 0, 0], value),
+        );
+        const grids = f.source.fetchChunk.mock.calls.map(([grid]) =>
+          grid.join(),
+        );
+        expect(grids).toHaveLength(8);
+        expect(new Set(grids).size).toBe(8);
+        expect(f.source.fetchChunk.mock.calls[0][0]).toEqual(
+          Float32Array.from([0, -1, 0, 0].slice(0, rank)),
+        );
+        expect(f.multiscale.getSources.mock.calls[0][0]).toMatchObject({
+          modelChannelDimensionIndices: rank === 3 ? [] : [3],
+        });
+        const edge = f.cache.get([1, 0, 1, 0].slice(0, rank).join())!;
+        expect(edge.chunkDataSize).toEqual(
+          Uint32Array.from([2, 3, 2, 1].slice(0, rank)),
+        );
+        for (const chunk of f.cache.values()) {
+          expect(chunk.chunkDataSize).toHaveLength(rank);
+          expect(actual.buffer).not.toBe(chunk.data!.buffer);
+        }
+        // Repeated planes share values, not storage, and the caller owns the output.
+        const first = actual[0];
+        actual[0] = -1;
+        expect(actual[4 * 4 * 3]).toBe(first);
+        expect(
+          await input.readRegion([2, -1, 3], [1, 1, 1], [0], signal),
+        ).toEqual(Float32Array.of(first));
+      } finally {
+        input.dispose();
+      }
+      expect(f.source.refCount).toBe(1);
+    },
+  );
+
+  it.each([
+    { channels: [0] },
+    { channels: [4, 0] },
+    { channels: [4, 0, 4] },
+    { channels: [4, 4, 4, 4] },
+    { channels: [4, 0, 4, 2] },
+    { channels: [0, 1, 2, 3] },
+  ])(
+    "packs requested planes $channels, fetching each necessary channel/spatial chunk once",
+    async ({ channels }) => {
+      const value = ([x, y, z, c]: number[]) =>
+        (x + 6 * y + 30 * z + 100 * c) / 1000;
+      const f = fixture({ value });
+      expect(await read(f, [1, 1, 1], [4, 3, 2], channels)).toEqual(
+        expected([1, 1, 1], [4, 3, 2], channels, value),
+      );
+      const grids = f.source.fetchChunk.mock.calls.map(([grid]) => grid.join());
+      expect(grids).toHaveLength(
+        8 * new Set(channels.map((c) => Math.floor(c / 2))).size,
+      );
+      expect(new Set(grids).size).toBe(grids.length);
+      expect(f.source.refCount).toBe(1);
+    },
+  );
+
+  it.each([3, 4])(
+    "accepts 1..4 repeated planes from a rank-%i scalar without implicit duplication",
+    async (rank) => {
+      const f = fixture({
+        names: ["x", "y", "z", "c^"].slice(0, rank),
+        upper: [5, 4, 3, 1].slice(0, rank),
+        value: () => 0.75,
+      });
+      const input = f.prepare();
+      try {
+        for (let n = 1; n <= 4; ++n) {
+          f.source.fetchChunk.mockClear();
+          expect(
+            await input.readRegion(
+              [0, 0, 0],
+              [1, 1, 1],
+              new Array(n).fill(0),
+              signal,
+            ),
+          ).toEqual(new Float32Array(n).fill(0.75));
+          expect(f.source.fetchChunk).toHaveBeenCalledOnce();
+        }
+        f.source.fetchChunk.mockClear();
+        await expect(
+          input.readRegion([0, 0, 0], [1, 1, 1], [1], signal),
+        ).rejects.toThrow("in-bounds affinity channels");
+        expect(f.source.fetchChunk).not.toHaveBeenCalled();
+      } finally {
+        input.dispose();
+      }
+    },
+  );
+
+  it("allows two-channel sources and packs only the caller's chosen planes", async () => {
+    const f = fixture({ upper: [5, 4, 3, 2], chunkSize: [3, 3, 2, 1] });
+    const input = f.prepare();
+    try {
+      expect(input.channelCount).toBe(2);
+      expect(
+        await input.readRegion([0, 0, 0], [1, 1, 1], [1, 0, 1, 0], signal),
+      ).toEqual(Float32Array.of(0.1, 0, 0.1, 0));
+      expect(f.source.fetchChunk).toHaveBeenCalledTimes(2);
+    } finally {
+      input.dispose();
+    }
+  });
+
+  it("supports scalar spatial permutations and scaled/translated native chunks without a channel dimension", async () => {
+    // Chunk [z,x,y] -> model [y,z,x].
+    const t = new Float32Array(16);
+    t[15] = 1;
+    t[1] = 4;
+    t[6] = 2;
+    t[8] = 3;
+    t[12] = -9;
+    t[13] = 20;
+    t[14] = 14;
+    const f = fixture({
+      names: ["y", "z", "x"],
+      upper: [3, 5, 4],
+      chunkSize: [2, 3, 3],
+      baseOffset: [100, -50, 20],
+      sourceTransform: t,
+    });
+    const input = f.prepare();
+    try {
+      expect(input.channelCount).toBe(1);
+      expect(input.upperBoundXYZ).toEqual([5, 4, 3]);
+      expect(input.spacingXYZ).toEqual([4, 9, 20]);
+      expect(input.originXYZ).toEqual([7, -3, 5]);
+      expect(
+        await input.readRegion([1, 1, 1], [4, 3, 2], [0, 0, 0], signal),
+      ).toEqual(
+        expected(
+          [1, 1, 1],
+          [4, 3, 2],
+          [0, 0, 0],
+          ([x, y, z]) => (z + 6 * x + 30 * y) / 1000,
+        ),
+      );
+      expect(f.source.fetchChunk).toHaveBeenCalledTimes(8);
+      expect(f.source.fetchChunk.mock.calls[0][0]).toEqual(
+        Float32Array.of(0, 0, 0),
+      );
+    } finally {
+      input.dispose();
+    }
+    expect(f.source.refCount).toBe(1);
+  });
+
   it("supports spatial/channel permutations and scaled/translated precomputed grids without double backend offsets", async () => {
     // Chunk [z,c,x,y] -> model [y,z,c,x].
     const t = new Float32Array(25);
@@ -402,34 +586,42 @@ describe("native affinity input", () => {
     input.dispose();
   });
 
-  it("composes a native model-to-output positive axis permutation in physical units", async () => {
-    const t = new Float64Array(25);
-    t[24] = 1;
-    t[2] = 4; // Model X -> output Z.
-    t[5] = 2; // Model Y -> output X.
-    t[11] = 3; // Model Z -> output Y.
-    t[18] = 1;
-    t[20] = 6;
-    t[21] = 10;
-    t[22] = 8;
-    const f = fixture({ nativeTransform: t });
-    const input = f.prepare();
-    expect(input.upperBoundXYZ).toEqual([4, 3, 5]);
-    expect(input.spacingXYZ).toEqual([6, 15, 8]);
-    expect(input.originXYZ).toEqual([2, 2, 5]);
-    expect(
-      await input.readRegion([1, 1, 1], [3, 2, 4], [4, 0, 2], signal),
-    ).toEqual(
-      expected(
-        [1, 1, 1],
-        [3, 2, 4],
-        [4, 0, 2],
-        ([x, y, z, c]) => (z + 6 * x + 30 * y + 100 * c) / 1000,
-      ),
-    );
-    input.dispose();
-    expect(f.source.refCount).toBe(1);
-  });
+  it.each([3, 4])(
+    "composes a rank-%i native model-to-output positive axis permutation in physical units",
+    async (rank) => {
+      const stride = rank + 1;
+      const t = new Float64Array(stride ** 2);
+      t[stride ** 2 - 1] = 1;
+      t[2] = 4; // Model X -> output Z.
+      t[stride] = 2; // Model Y -> output X.
+      t[2 * stride + 1] = 3; // Model Z -> output Y.
+      if (rank === 4) t[3 * stride + 3] = 1;
+      t[rank * stride] = 6;
+      t[rank * stride + 1] = 10;
+      t[rank * stride + 2] = 8;
+      const f = fixture({
+        names: ["x", "y", "z", "c^"].slice(0, rank),
+        nativeTransform: t,
+      });
+      const channels = rank === 3 ? [0, 0, 0] : [4, 0, 2];
+      const input = f.prepare();
+      expect(input.upperBoundXYZ).toEqual([4, 3, 5]);
+      expect(input.spacingXYZ).toEqual([6, 15, 8]);
+      expect(input.originXYZ).toEqual([2, 2, 5]);
+      expect(
+        await input.readRegion([1, 1, 1], [3, 2, 4], channels, signal),
+      ).toEqual(
+        expected(
+          [1, 1, 1],
+          [3, 2, 4],
+          channels,
+          ([x, y, z, c]) => (z + 6 * x + 30 * y + 100 * c) / 1000,
+        ),
+      );
+      input.dispose();
+      expect(f.source.refCount).toBe(1);
+    },
+  );
 
   it("uses the selected non-default scale's spacing/origin but unshifted voxel keys", async () => {
     const f = fixture();
@@ -465,8 +657,8 @@ describe("native affinity input", () => {
     [DataType.FLOAT32, 1],
   ])("normalizes dtype %s only by its maximum", async (dataType, max) => {
     const f = fixture({ dataType, value: (p) => [0, max / 3, max][p[3] % 3] });
-    expect(await read(f, [0, 0, 0], [1, 1, 1], [2, 0, 1])).toEqual(
-      Float32Array.of(1, 0, 1 / 3),
+    expect(await read(f, [0, 0, 0], [1, 1, 1], [2, 0, 1, 2])).toEqual(
+      Float32Array.of(1, 0, 1 / 3, 1),
     );
   });
 
@@ -507,6 +699,69 @@ describe("native affinity input", () => {
     input.dispose();
   });
 
+  it.each([
+    { dataType: DataType.UINT8, max: 255 },
+    { dataType: DataType.UINT16, max: 65535 },
+    { dataType: DataType.FLOAT32, max: 1 },
+  ])(
+    "normalizes scalar values and legitimate absent fills for dtype $dataType",
+    async ({ dataType, max }) => {
+      const f = fixture({
+        names: ["x", "y", "z"],
+        dataType,
+        value: () => max,
+        absent: ["0,0,0"],
+        fillValue: max / 5,
+      });
+      expect(await read(f, [2, 0, 0], [3, 1, 1], [0, 0, 0, 0])).toEqual(
+        Float32Array.from([0.2, 1, 1, 0.2, 1, 1, 0.2, 1, 1, 0.2, 1, 1]),
+      );
+      expect(f.source.fetchChunk).toHaveBeenCalledTimes(2);
+      expect(f.source.refCount).toBe(1);
+    },
+  );
+
+  it.each([NaN, Infinity, -0.01, 1.001])(
+    "rejects invalid scalar value %s with a tagged callback error",
+    async (value) => {
+      const f = fixture({ names: ["x", "y", "z"], value: () => value });
+      await expect(read(f, [0, 0, 0], [1, 1, 1], [0, 0, 0])).rejects.toThrow(
+        "Affinity values must be finite",
+      );
+      expect(f.callbackResult()).toMatchObject({
+        ok: false,
+        error: expect.any(Error),
+      });
+      expect(f.source.refCount).toBe(1);
+    },
+  );
+
+  it.each(["rank", "coverage"])(
+    "rejects malformed scalar chunk %s without padding",
+    async (kind) => {
+      const f = fixture({ names: ["x", "y", "z"] });
+      const original = f.source.fetchChunk.getMockImplementation()!;
+      f.source.fetchChunk.mockImplementation((grid, copy, progress) =>
+        original(
+          grid,
+          (chunk) => {
+            chunk.chunkDataSize =
+              kind === "rank"
+                ? Uint32Array.of(3, 3, 2, 1)
+                : Uint32Array.of(1, 3, 2);
+            return copy(chunk);
+          },
+          progress,
+        ),
+      );
+      await expect(read(f, [0, 0, 0], [2, 1, 1], [0, 0, 0])).rejects.toThrow(
+        kind === "rank" ? "must have rank-3 data" : "does not cover",
+      );
+      expect(f.callbackResult()).toMatchObject({ ok: false });
+      expect(f.source.refCount).toBe(1);
+    },
+  );
+
   it("rejects partial spatial or channel chunks instead of silently filling holes", async () => {
     for (const d of [0, 3]) {
       const f = fixture();
@@ -545,11 +800,14 @@ describe("native affinity input", () => {
       [1, 0, 1],
       [0, 1, 2],
     ],
+    [[0, 0, 0], [1, 1, 1], []],
     [
       [0, 0, 0],
       [1, 1, 1],
-      [0, 0, 2],
+      [0, 0, 0, 0, 0],
     ],
+    [[0, 0, 0], [1, 1, 1], [-1]],
+    [[0, 0, 0], [1, 1, 1], [NaN]],
     [
       [0, 0, 0],
       [1, 1, 1],
@@ -579,6 +837,13 @@ describe("native affinity input", () => {
     { upper: [16777226, 4, 3, 5] },
     { lower: [-16777224, 0, 0, 0], upper: [-16777216, 4, 3, 5] },
     { upper: [7, 4, 3, 5], baseOffset: [2 ** 24, 0, 0, 0] },
+    { names: ["x", "y", "z"], upper: [16777226, 4, 3] },
+    {
+      names: ["x", "y", "z"],
+      lower: [-16777224, 0, 0],
+      upper: [-16777216, 4, 3],
+    },
+    { names: ["x", "y", "z"], upper: [7, 4, 3], baseOffset: [2 ** 24, 0, 0] },
   ])("rejects rounded backend chunk origins before reads: %j", (options) => {
     const f = fixture(options);
     expect(f.prepare).toThrow("backend chunk origins exceed exact float32");
@@ -593,6 +858,17 @@ describe("native affinity input", () => {
       baseOffset: [2 ** 29, 0, 0, 0],
     },
     { lower: [16777224, 0, 0, 0], upper: [16777226, 4, 3, 5] },
+    {
+      names: ["x", "y", "z"],
+      upper: [2 ** 28, 4, 3],
+      chunkSize: [64, 3, 2],
+      baseOffset: [2 ** 29, 0, 0],
+    },
+    {
+      names: ["x", "y", "z"],
+      lower: [16777224, 0, 0],
+      upper: [16777226, 4, 3],
+    },
   ])("accepts exactly indexed large or single-chunk grids: %j", (options) => {
     const f = fixture(options);
     const input = f.prepare();
@@ -655,6 +931,56 @@ describe("native affinity input", () => {
     f.transform.reset();
     f.subsource.subsourceToModelSubspaceTransform[0] = 2;
     expect(f.prepare).toThrow("user/subsource transforms");
+  });
+
+  it.each([
+    "source shear",
+    "source reflection",
+    "source fractional origin",
+    "native shear",
+    "user transform",
+    "subsource transform",
+    "viewer metadata",
+    "channel metadata",
+    "chunk rank",
+    "chunk grid precision",
+  ])("keeps strict scalar native-grid guards: %s", (kind) => {
+    const f = fixture({ names: ["x", "y", "z"] });
+    if (kind === "source shear") f.selected.chunkToMultiscaleTransform[1] = 0.1;
+    if (kind === "source reflection")
+      f.selected.chunkToMultiscaleTransform[0] = -1;
+    if (kind === "source fractional origin")
+      f.selected.chunkToMultiscaleTransform[12] = 0.5;
+    if (kind === "native shear") f.modelTransform.transform[1] = 0.1;
+    if (kind === "user transform") {
+      const t = new Float64Array(f.transform.value.transform);
+      t[12] = 1;
+      f.transform.transform = t;
+    }
+    if (kind === "subsource transform")
+      f.subsource.subsourceToModelSubspaceTransform[0] = 2;
+    if (kind === "viewer metadata") f.globalSpace.value.scales[0] = 0;
+    if (kind === "channel metadata") {
+      f.channelSpace.value = makeCoordinateSpace({
+        names: ["c^"],
+        units: [""],
+        scales: Float64Array.of(1),
+        boundingBoxes: [
+          makeIdentityTransformedBoundingBox({
+            lowerBounds: Float64Array.of(0),
+            upperBounds: Float64Array.of(1),
+          }),
+        ],
+      });
+    }
+    if (kind === "chunk rank") f.spec.rank = 4;
+    if (kind === "chunk grid precision") {
+      f.spec.chunkDataSize[0] = 1;
+      f.spec.upperVoxelBound[0] = 2 ** 25;
+    }
+    expect(f.prepare).toThrow("Unsupported affinity input");
+    expect(f.source.fetchChunk).not.toHaveBeenCalled();
+    expect(f.source.refCount).toBe(1);
   });
 
   it("releases all getSources refs on bad scale/orientation and retains only its selected scale", () => {
@@ -724,16 +1050,19 @@ describe("native affinity input", () => {
     expect(f.source.refCount).toBe(1);
   });
 
-  it("aborts on source cache invalidation without polling or another read", () => {
-    const f = fixture();
-    const input = f.prepare();
-    expect(input.signal.aborted).toBe(false);
-    f.source.cacheInvalidated.dispatch();
-    expect(input.signal.aborted).toBe(true);
-    expect(f.source.fetchChunk).not.toHaveBeenCalled();
-    input.dispose();
-    expect(f.source.refCount).toBe(1);
-  });
+  it.each([3, 4])(
+    "aborts rank-%i input on source cache invalidation without polling or another read",
+    (rank) => {
+      const f = fixture({ names: ["x", "y", "z", "c^"].slice(0, rank) });
+      const input = f.prepare();
+      expect(input.signal.aborted).toBe(false);
+      f.source.cacheInvalidated.dispatch();
+      expect(input.signal.aborted).toBe(true);
+      expect(f.source.fetchChunk).not.toHaveBeenCalled();
+      input.dispose();
+      expect(f.source.refCount).toBe(1);
+    },
+  );
 
   it("rejects mutable generation-based sources rather than leaving warm output tiles stale", () => {
     const f = fixture();
@@ -743,10 +1072,14 @@ describe("native affinity input", () => {
     expect(source.refCount).toBe(1);
   });
 
-  it.each(["caller", "dispose", "stale"])(
-    "aborts in-flight %s cancellation with no next fetch or leaked listeners/refs",
-    async (kind) => {
-      const f = fixture();
+  it.each(
+    ["caller", "dispose", "stale"].flatMap((kind) =>
+      [3, 4].map((rank) => ({ kind, rank })),
+    ),
+  )(
+    "aborts in-flight $kind cancellation for rank-$rank with no next fetch or leaked listeners/refs",
+    async ({ kind, rank }) => {
+      const f = fixture({ names: ["x", "y", "z", "c^"].slice(0, rank) });
       const input = f.prepare();
       const abort = new AbortController();
       let entered!: () => void;
@@ -766,7 +1099,7 @@ describe("native affinity input", () => {
       const pending = input.readRegion(
         [0, 0, 0],
         [4, 3, 2],
-        [0, 1, 2],
+        rank === 3 ? [0, 0, 0] : [0, 1, 2],
         abort.signal,
       );
       const rejected = expect(pending).rejects.toThrow();
