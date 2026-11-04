@@ -255,6 +255,197 @@ describe("whole-viewport live watershed", () => {
     live.dispose();
   });
 
+  it.each([0, 1, 2])(
+    "reuses completed labels while moving to either halo boundary on axis %s",
+    async (axis) => {
+      const { input } = fixture([64, 64, 64]);
+      const live = new LiveWatershed(input);
+      const changed = vi.fn();
+      live.changed.add(changed);
+      const lower = [34, 44, 21],
+        shape = [8, 8, 1];
+      live.setRegion(lower, shape);
+      await settle();
+      const labels = await live.readTile([0, 0, 0], [64, 64, 32], signal);
+      expect(labels.some((x) => x === 7n)).toBe(true);
+      for (const delta of [-8, 8, 0]) {
+        const next = [...lower];
+        next[axis] += delta;
+        live.setRegion(next, shape);
+        const retained = await live.readTile([0, 0, 0], [64, 64, 32], signal);
+        expect(retained.every((n, i) => n === labels[i])).toBe(true);
+        await settle();
+        expect(compute).toHaveBeenCalledTimes(1);
+        expect(compute.mock.calls[0][5].aborted).toBe(false);
+        expect(changed).toHaveBeenCalledTimes(2);
+      }
+      live.dispose();
+    },
+  );
+
+  it.each([0, 1, 2])(
+    "recomputes when the visible region extends beyond either halo boundary on axis %s",
+    async (axis) => {
+      for (const delta of [-9, 9]) {
+        compute.mockClear();
+        const { input } = fixture([64, 64, 64]);
+        const live = new LiveWatershed(input);
+        const lower = [34, 44, 21],
+          shape = [8, 8, 1];
+        live.setRegion(lower, shape);
+        await settle();
+        const next = [...lower];
+        next[axis] += delta;
+        live.setRegion(next, shape);
+        expect(await live.readTile([0, 0, 0], [64, 64, 32], signal)).toEqual(
+          new BigUint64Array(64 * 64 * 32),
+        );
+        await vi.advanceTimersByTimeAsync(149);
+        expect(compute).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(compute).toHaveBeenCalledTimes(2);
+        expect(compute.mock.calls[1].slice(1, 3)).toEqual([
+          next.map((n) => n - 8),
+          [24, 24, 17],
+        ]);
+        expect(
+          (await live.readTile([0, 0, 0], [64, 64, 32], signal)).some(
+            (x) => x === 7n,
+          ),
+        ).toBe(true);
+        live.dispose();
+      }
+    },
+  );
+
+  it("reuses a clipped halo with negative native bounds until the first uncovered slice", async () => {
+    const { input } = fixture([32, 32, 40]);
+    const live = new LiveWatershed(input);
+    live.setRegion([10, 20, -3], [8, 8, 1]);
+    await settle();
+    expect(compute.mock.calls[0].slice(1, 3)).toEqual([
+      [10, 20, -3],
+      [16, 16, 9],
+    ]);
+    live.setRegion([10, 20, 5], [8, 8, 1]);
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(1);
+    const labels = await live.readTile([0, 0, 0], [32, 32, 32], signal);
+    expect(labels[8 * 32 * 32]).toBe(7n);
+    live.setRegion([10, 20, 6], [8, 8, 1]);
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(2);
+    expect(compute.mock.calls[1].slice(1, 3)).toEqual([
+      [10, 20, -2],
+      [16, 16, 17],
+    ]);
+    live.dispose();
+  });
+
+  it("does not treat an unfinished halo as a reusable result", async () => {
+    const { input } = fixture([64, 64, 64]);
+    const gate = Promise.withResolvers<WatershedResult>();
+    compute.mockImplementationOnce(async () => gate.promise);
+    const live = new LiveWatershed(input);
+    live.setRegion([34, 44, 21], [8, 8, 1]);
+    await settle();
+    live.setRegion([34, 44, 22], [8, 8, 1]);
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(1);
+    expect(compute.mock.calls[0][5].aborted).toBe(true);
+    gate.resolve(result([24, 24, 17], 999));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(compute).toHaveBeenCalledTimes(2);
+    expect(compute.mock.calls[1].slice(1, 3)).toEqual([
+      [26, 36, 14],
+      [24, 24, 17],
+    ]);
+    const labels = await live.readTile([0, 0, 0], [64, 64, 32], signal);
+    expect(labels.some((x) => x === 7n)).toBe(true);
+    expect(labels.some((x) => x === 999n)).toBe(false);
+    live.dispose();
+  });
+
+  it("reuses a completed region at the voxel cap without demanding another halo", async () => {
+    const { input } = fixture([512, 512, 512]);
+    const onError = vi.fn();
+    const live = new LiveWatershed(
+      input,
+      [0, 1, 2],
+      DEFAULT_WATERSHED_OPTIONS,
+      onError,
+    );
+    live.setRegion([74, 84, 61], [112, 112, 112]);
+    await settle();
+    expect(compute.mock.calls[0].slice(1, 3)).toEqual([
+      [66, 76, 53],
+      [128, 128, 128],
+    ]);
+    live.setRegion([66, 76, 53], [128, 128, 128]);
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(1);
+    expect(onError).not.toHaveBeenCalled();
+    live.dispose();
+  });
+
+  it.each([
+    { lower: [34.5, 44, 21], shape: [8, 8, 1] },
+    { lower: [34, 44, 21], shape: [0, 8, 1] },
+    { lower: [34, 44, 21], shape: [8, 8] },
+    { lower: [34, 44, 21], shape: [8, 8, NaN] },
+  ])(
+    "does not reuse completed labels for invalid viewport bounds %j",
+    async ({ lower, shape }) => {
+      const { input } = fixture([64, 64, 64]);
+      const onError = vi.fn();
+      const live = new LiveWatershed(
+        input,
+        [0, 1, 2],
+        DEFAULT_WATERSHED_OPTIONS,
+        onError,
+      );
+      live.setRegion([34, 44, 21], [8, 8, 1]);
+      await settle();
+      live.setRegion(lower, shape);
+      await settle();
+      expect(onError).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: "Watershed viewport must be inside the native source bounds",
+        }),
+      );
+      expect(compute).toHaveBeenCalledTimes(1);
+      expect(await live.readTile([0, 0, 0], [64, 64, 32], signal)).toEqual(
+        new BigUint64Array(64 * 64 * 32),
+      );
+      live.dispose();
+    },
+  );
+
+  it("still retires a completed reused result when the input is invalidated", async () => {
+    const { input, changed } = fixture([64, 64, 64]);
+    const onError = vi.fn();
+    const live = new LiveWatershed(
+      input,
+      [0, 1, 2],
+      DEFAULT_WATERSHED_OPTIONS,
+      onError,
+    );
+    live.setRegion([34, 44, 21], [8, 8, 1]);
+    await settle();
+    live.setRegion([34, 44, 29], [8, 8, 1]);
+    changed.abort(new Error("Source replaced"));
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(1);
+    expect(live.signal.aborted).toBe(true);
+    expect(input.dispose).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        message: "Watershed affinity source changed; add the layer again",
+      }),
+    );
+    expect(() => live.setRegion([34, 44, 21], [8, 8, 1])).toThrow("stopped");
+  });
+
   it("clears stale labels immediately and waits for physical completion before running only the latest region", async () => {
     const { input } = fixture([140, 1, 1]);
     const gate = Promise.withResolvers<WatershedResult>();

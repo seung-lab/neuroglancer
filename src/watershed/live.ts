@@ -50,9 +50,10 @@ function sameRegion(a: Region | undefined, b: Region | undefined): boolean {
 }
 
 /** One bounded watershed result for all visible slice views, plus a halo.
- * Display chunk requests only copy that shared result. Region changes discard
- * obsolete labels immediately; an already-running kernel finishes before the
- * latest debounced region starts. Owns input after successful construction. */
+ * Display chunk requests only copy that shared result. Views contained in the
+ * completed region reuse its labels; leaving it discards obsolete labels. An
+ * already-running kernel finishes before the latest debounced region starts.
+ * Owns input after successful construction. */
 export class LiveWatershed {
   readonly info: LiveWatershedInfo;
   readonly changed = new NullarySignal();
@@ -152,16 +153,7 @@ export class LiveWatershed {
             shape: Array.from(shapeXYZ ?? []),
           };
     if (sameRegion(requested, this.requested)) return;
-    this.requested = requested;
-    const revision = ++this.revision;
-    clearTimeout(this.timer);
-    this.timer = undefined;
-    this.ready = false;
-    this.region = undefined;
-    this.result = undefined;
-    this.active?.abort(
-      new DOMException("Watershed viewport changed", "AbortError"),
-    );
+    let region: Region | undefined;
     let error: unknown;
     if (requested !== undefined) {
       try {
@@ -181,6 +173,19 @@ export class LiveWatershed {
           throw new Error(
             "Watershed viewport must be inside the native source bounds",
           );
+        const result = this.result;
+        if (
+          result !== undefined &&
+          requested.lower.every(
+            (n, i) =>
+              n >= result.region.lower[i] &&
+              n + requested.shape[i] <=
+                result.region.lower[i] + result.region.shape[i],
+          )
+        ) {
+          this.requested = requested;
+          return;
+        }
         const lower = requested.lower.map((n, i) =>
           Math.max(this.lowerBound[i], n - LIVE_WATERSHED_HALO_XYZ[i]),
         );
@@ -198,11 +203,21 @@ export class LiveWatershed {
             "Visible watershed region including its halo exceeds the 2**21 voxel limit; zoom in or select a coarser native source scale. The region will not be split into separate watersheds.",
           );
         }
-        this.region = { lower, shape };
+        region = { lower, shape };
       } catch (caught) {
         error = caught;
       }
     }
+    this.requested = requested;
+    const revision = ++this.revision;
+    clearTimeout(this.timer);
+    this.timer = undefined;
+    this.ready = false;
+    this.region = region;
+    this.result = undefined;
+    this.active?.abort(
+      new DOMException("Watershed viewport changed", "AbortError"),
+    );
     this.changed.dispatch();
     if (this.signal.aborted || revision !== this.revision) return;
     if (error !== undefined) {

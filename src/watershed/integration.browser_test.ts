@@ -883,10 +883,11 @@ function shareableWatershedRecipeTests() {
       expect(box.origin).toEqual([0, 0, 0]);
       expect(box.shape[0]).toBeGreaterThan(34);
       expect(box.shape[0]).toBeLessThan(64);
-      await expectTiles(restoredOutput.chunkSource, shape, (x) =>
-        x < box.shape[0] ? label(x) : 0n,
-      );
-      expect(jobs.shapes()).toEqual([shape, shape, box.shape]);
+      // Shrinking stays inside the completed full-domain result: retain all
+      // labels, including those now outside the viewport, without another job.
+      await delay(250);
+      await expectTiles(restoredOutput.chunkSource, shape, label);
+      expect(jobs.shapes()).toEqual([shape, shape]);
       expect(restored.layerManager.managedLayers).toEqual([restoredResult]);
       expect(native.chunks).toHaveLength(10); // Native cache, not another producer.
       saveOnlyWatershed(restored, restoredResult, recipe);
@@ -1199,6 +1200,121 @@ describe("regional live watershed (real WebGL, chunk RPC and native WASM)", () =
       output.renderLayer.getValueAt(output.worldPosition([64.5, 25.5, 24.5])),
     ).toBe(1n);
     expect(native.chunks.length).toBeGreaterThan(1);
+  }, 90_000);
+
+  it("reuses completed labels through both inclusive XY-only Z halo limits and a shrinking view, then debounces one out-of-bounds computation", async () => {
+    const jobs = observeWatershedWorker();
+    const shape = [148, 50, 48],
+      offset = [10, 20, -3];
+    const native = await precomputed(
+      "https://watershed-integration.invalid/completed-z-halo",
+      shape,
+      offset,
+      [32, 25, 16],
+      3,
+      (x, _y, _z, c) => (c === 0 && x === 64 ? 0 : 255),
+    );
+    const viewer = makeViewer(); // One actual XY panel, not a three-view union.
+    const image = await addImage(viewer, native.url);
+    positionViewer(viewer, [74.5, 25.5, 24.5], offset);
+    const session = openWatershed(viewer, image);
+    configure(session);
+    const result = await addFromDialog(session);
+    const output = outputSource(result, shape, offset);
+    await expect
+      .poll(
+        () =>
+          output.renderLayer.getValueAt(
+            output.worldPosition([63.5, 25.5, 24.5]),
+          ),
+        { timeout: 60_000 },
+      )
+      .toBe(1n);
+    const initialBox = visibleHaloBox(viewer, shape, offset);
+    expect(initialBox).toEqual({ origin: [0, 0, 16], shape: [148, 50, 17] });
+    expect(jobs.shapes()).toEqual([initialBox.shape]);
+    expect(
+      [...viewer.display.panels].filter((p) => p instanceof SliceViewPanel),
+    ).toHaveLength(1);
+
+    // Read every real UINT64 in tiles on BOTH sides of the basin boundary and
+    // BOTH Z display chunks. Only completed Z voxels [16, 33) have labels.
+    const grids = [
+      [0, 0, 0],
+      [1, 0, 0],
+      [0, 0, 1],
+      [1, 0, 1],
+    ];
+    const before = [];
+    for (const grid of grids) {
+      const tile = await readTile(output.chunkSource, grid);
+      expect(tile.labels).toEqual(
+        Array.from({ length: tile.labels.length }, (_, i) => {
+          const z =
+            grid[2] * 32 + Math.floor(i / (tile.size[0] * tile.size[1]));
+          return z >= 16 && z < 33 ? (grid[0] === 0 ? 1n : 2n) : 0n;
+        }),
+      );
+      before.push(tile);
+    }
+
+    // +/-8 includes both edge voxel centers; neither a changed halo request
+    // nor returning/shrinking inside the completed box may clear publication.
+    for (const [z, scale] of [
+      [16.5, 2],
+      [32.5, 2],
+      [24.5, 2],
+      [24.5, 0.08],
+    ]) {
+      positionViewer(viewer, [74.5, 25.5, z], offset, scale);
+      await settleView();
+      if (scale === 0.08) {
+        const smaller = visibleHaloBox(viewer, shape, offset);
+        expect(smaller.shape[0]).toBeLessThan(initialBox.shape[0]);
+        expect(smaller.shape[1]).toBeLessThan(initialBox.shape[1]);
+      }
+      // Check immediately AND beyond the 150 ms debounce, rather than polling
+      // until disappearing labels happen to be recomputed with the same IDs.
+      for (const wait of [0, 250]) {
+        await delay(wait);
+        expect(jobs.shapes()).toEqual([initialBox.shape]);
+        expectPublicationActive(output);
+        for (const [i, grid] of grids.entries())
+          expect((await readTile(output.chunkSource, grid)).labels).toEqual(
+            before[i].labels,
+          );
+        for (const [x, label] of [
+          [63.5, 1n],
+          [64.5, 2n],
+        ] as const)
+          expect(
+            output.renderLayer.getValueAt(output.worldPosition([x, 25.5, z])),
+          ).toBe(label);
+      }
+    }
+
+    // The next Z voxel is outside the ORIGINAL completed [16, 33) box, even
+    // though each in-bounds navigation requested a different halo of its own.
+    viewer.position.value = output.worldPosition([74.5, 25.5, 33.5]);
+    await settleView();
+    const nextBox = visibleHaloBox(viewer, shape, offset);
+    expect(nextBox.origin[2]).toBe(25);
+    expect(nextBox.shape[2]).toBe(17);
+    await expect
+      .poll(() => jobs.shapes(), { timeout: 60_000 })
+      .toEqual([initialBox.shape, nextBox.shape]);
+    for (const [x, label] of [
+      [63.5, 1n],
+      [64.5, 2n],
+    ] as const)
+      await expect
+        .poll(() =>
+          output.renderLayer.getValueAt(output.worldPosition([x, 25.5, 33.5])),
+        )
+        .toBe(label);
+    await delay(250);
+    expect(jobs.shapes()).toEqual([initialBox.shape, nextBox.shape]);
+    expect(session.statusLevel, session.status).toBe("info");
   }, 90_000);
 
   it("debounces navigation, clears old labels, and discards an obsolete real kernel before serially starting the latest region", async () => {
