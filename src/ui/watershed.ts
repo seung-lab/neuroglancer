@@ -36,6 +36,7 @@ import {
   type PreparedAffinityInput,
 } from "#src/watershed/input.js";
 import { LiveWatershed } from "#src/watershed/live.js";
+import { watchWatershedViewport } from "#src/watershed/viewport.js";
 
 export interface WatershedDependencies {
   prepareInput: typeof prepareAffinityInput;
@@ -46,12 +47,14 @@ export interface WatershedDependencies {
     onError: (error: unknown) => void,
   ): LiveWatershed;
   publish: typeof publishLiveWatershed;
+  watchViewport: typeof watchWatershedViewport;
 }
 
 const defaultDependencies: WatershedDependencies = {
   prepareInput: prepareAffinityInput,
   createLive: (...args) => new LiveWatershed(...args),
   publish: publishLiveWatershed,
+  watchViewport: watchWatershedViewport,
 };
 
 type InputMetadata = Pick<
@@ -293,7 +296,7 @@ export class WatershedSession extends RefCounted {
     this.changed.dispatch();
   }
 
-  /** Publish a lazy volume; only VolumeChunkSource demand computes labels. */
+  /** Publish a volume whose shared result follows the visible slice bounds. */
   async addLayer() {
     if (!this.alive || this.busy) return;
     let input: PreparedAffinityInput | undefined;
@@ -361,8 +364,10 @@ export class WatershedSession extends RefCounted {
       let reportError = (error: unknown) => {
         startupErrors.push(error);
       };
+      // Retain geometry access after ownership transfers to the live layer.
+      const preparedInput = input;
       live = this.dependencies.createLive(
-        input,
+        preparedInput,
         channelsXYZ,
         options,
         (error) => reportError(error),
@@ -454,10 +459,50 @@ export class WatershedSession extends RefCounted {
       }
       entry.check();
       if (released) return;
-      activated = true;
       this.setStatus(
-        `Added live layer: ${layer.name}. Labels load for the current view and as you navigate. Session-local URL; not shareable.`,
+        `Added live layer: ${layer.name}. One shared result follows all visible slice views as you navigate. Labels may change; session-local URL, not shareable.`,
       );
+      // Constructor/publication/activation errors remain fatal. Once viewport
+      // tracking starts, computation failures may recover on the next box.
+      const reportComputeError = (error: unknown) => {
+        if (released) return;
+        entry!.check();
+        if (released || !this.alive) return;
+        this.setStatus(
+          `Watershed error (${layer!.name}): ${errorMessage(error)}. Navigate to retry; for an oversized region, zoom in or add a layer at a coarser native scale.`,
+          "error",
+        );
+        this.changed.dispatch();
+      };
+      reportError = reportComputeError;
+      const unwatch = this.dependencies.watchViewport(
+        this.viewer,
+        preparedInput,
+        layer,
+        (region) => {
+          if (released) return;
+          entry!.check();
+          if (released) return;
+          live!.setRegion(region?.lowerXYZ, region?.shapeXYZ);
+        },
+        (error) => {
+          if (released) return;
+          entry!.check();
+          if (released) return;
+          // Bad viewport geometry must not leave the previous labels visible.
+          live!.setRegion();
+          reportComputeError(error);
+        },
+      );
+      // Initial callbacks may synchronously reset/delete the layer.
+      if (released) {
+        unwatch();
+        return;
+      }
+      removers.push(unwatch);
+      entry.check();
+      if (released) return;
+      activated = true;
     } catch (error) {
       if (this.alive && !released)
         this.setStatus(`Watershed failed: ${errorMessage(error)}`, "error");
@@ -542,7 +587,10 @@ export class WatershedDialog extends FramedDialog {
       return element;
     };
     text(
-      "Add a segmentation that loads for the current view and as you navigate. Automatic 64 × 64 × 32 cores use an 8-voxel halo per face. UINT64 labels have stable block-local IDs; block seams remain, with no global stitching.",
+      "Add a segmentation with one shared result over the XYZ bounding box enclosing all visible slice views. As you navigate, a new box is computed after a 150 ms debounce, with an 8-voxel halo per face clipped to source bounds. UINT64 labels are fetched and rendered in chunks, not computed per display chunk; labels may change across navigation. This is not equivalent to whole-volume watershed.",
+    );
+    text(
+      "The computation is limited to 2**21 (2,097,152) voxels INCLUDING the halo. Oversized views report an error: zoom in or add a layer at a coarser native scale. Computation is never silently split. Hiding the output or removing all relevant slice views clears its result.",
     );
     text(
       "Affinities connect each voxel towards its negative axes (−X, −Y, −Z). Integer values are normalized by their data type maximum; floating-point values are unchanged. Non-native transforms and mutable Python volume sources are rejected.",

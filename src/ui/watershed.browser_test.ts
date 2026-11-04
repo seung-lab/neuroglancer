@@ -85,6 +85,8 @@ function makeLive(input: PreparedAffinityInput) {
       chunkShapeXYZ: [64, 64, 32],
     },
     signal: input.signal,
+    changed: new NullarySignal(),
+    setRegion: vi.fn<LiveWatershed["setRegion"]>(),
     assertValid: vi.fn(() => input.assertValid()),
     dispose: vi.fn(disposableOnce(() => input.dispose())),
   };
@@ -221,8 +223,27 @@ function fixture(channelCount = 4) {
     state: { stateReset: new NullarySignal() },
     layout,
   } as unknown as Viewer;
+  const watchers: Array<{
+    input: PreparedAffinityInput;
+    layer: ManagedUserLayer;
+    onRegion: Parameters<WatershedDependencies["watchViewport"]>[3];
+    onError: Parameters<WatershedDependencies["watchViewport"]>[4];
+    dispose: ReturnType<typeof vi.fn>;
+  }> = [];
+  const watchViewport = vi.fn<WatershedDependencies["watchViewport"]>(
+    (_viewer, input, layer, onRegion, onError) => {
+      const dispose = vi.fn();
+      watchers.push({ input, layer, onRegion, onError, dispose });
+      return dispose;
+    },
+  );
   const session = owner.registerDisposer(
-    new WatershedSession(viewer, { prepareInput, createLive, publish }),
+    new WatershedSession(viewer, {
+      prepareInput,
+      createLive,
+      publish,
+      watchViewport,
+    }),
   );
   session.selectSource(a);
   return {
@@ -246,6 +267,8 @@ function fixture(channelCount = 4) {
     publications,
     resultState,
     resultLayers,
+    watchViewport,
+    watchers,
     layout,
   };
 }
@@ -337,7 +360,20 @@ describe("WASM watershed UI", () => {
       expect(session[key]).toBe(String(DEFAULT_WATERSHED_OPTIONS[key]));
     expect(inputs[0].dispose).toHaveBeenCalledOnce();
     const body = session.dialog!.body;
-    expect(body.querySelector('input[aria-label*="ROI"]')).toBeNull();
+    expect(
+      [...body.querySelectorAll("input")].map((input) =>
+        input.getAttribute("aria-label"),
+      ),
+    ).toEqual([
+      "Source scale index",
+      "Channels for −X −Y −Z",
+      "Use last channel as mask",
+      "Mask threshold",
+      "High threshold",
+      "Low threshold",
+      "Size threshold",
+      "Dust threshold",
+    ]);
     expect(body.querySelector("details")!.open).toBe(false);
     expect(
       [...session.dialog!.footer.querySelectorAll("button")].map(
@@ -346,12 +382,19 @@ describe("WASM watershed UI", () => {
     ).toEqual(["Add watershed layer", "Close"]);
     expect(addButton(session).disabled).toBe(false);
     for (const explanation of [
-      "current view",
-      "as you navigate",
-      "64 × 64 × 32",
+      "one shared result",
+      "all visible slice views",
+      "As you navigate",
+      "150 ms debounce",
       "8-voxel halo per face",
-      "stable block-local IDs",
-      "no global stitching",
+      "not computed per display chunk",
+      "labels may change across navigation",
+      "not equivalent to whole-volume watershed",
+      "2**21 (2,097,152) voxels INCLUDING the halo",
+      "zoom in",
+      "coarser native scale",
+      "never silently split",
+      "Hiding the output",
       "UINT64",
       "negative axes",
       "data type maximum",
@@ -556,6 +599,8 @@ describe("WASM watershed UI", () => {
       f.session.open();
       fill(f.session, "Channels for −X −Y −Z", "0,0,0");
       field(f.session, "Use last channel as mask").click();
+      await f.session.addLayer();
+      const maskedInput = f.inputs.at(-1)!;
       if (transition === "source") selectSource(f.session, 1);
       else fill(f.session, "Source scale index", "1");
       expect(field(f.session, "Channels for −X −Y −Z").value).toBe("0,0,0");
@@ -563,12 +608,30 @@ describe("WASM watershed UI", () => {
       expect(field(f.session, "Use last channel as mask").disabled).toBe(true);
       expect(field(f.session, "Mask threshold").disabled).toBe(true);
       await f.session.addLayer();
-      expect(f.createLive).toHaveBeenCalledExactlyOnceWith(
+      expect(f.createLive).toHaveBeenNthCalledWith(
+        2,
         f.inputs.at(-1),
         [0, 0, 0],
         DEFAULT_WATERSHED_OPTIONS,
         expect.any(Function),
       );
+      expect(f.createLive.mock.calls[0][2]).toEqual({
+        ...DEFAULT_WATERSHED_OPTIONS,
+        maskThreshold: 0.3,
+      });
+      expect(f.watchers[0].input).toBe(maskedInput);
+      expect(f.watchers[1].input).toBe(f.inputs.at(-1));
+      f.watchers[0].onRegion({
+        lowerXYZ: [10, 20, -30],
+        shapeXYZ: [24, 16, 8],
+      });
+      expect(f.lives[0].setRegion).toHaveBeenLastCalledWith(
+        [10, 20, -30],
+        [24, 16, 8],
+      );
+      expect(f.lives[1].setRegion).not.toHaveBeenCalled();
+      expect(f.publications[0].dispose).not.toHaveBeenCalled();
+      expect(f.watchers[0].dispose).not.toHaveBeenCalled();
       if (transition === "source") selectSource(f.session, 0);
       else fill(f.session, "Source scale index", "0");
       // Preserve the custom choice, not just the text of an automatic default.
@@ -698,6 +761,137 @@ describe("WASM watershed UI", () => {
     expect(f.publications[0].dispose).toHaveBeenCalledOnce();
   });
 
+  it("watches the owned selected-scale input only after activation and group membership, forwarding native boxes unchanged", async () => {
+    const f = fixture();
+    f.session.selectScale("1");
+    f.prepareInput.mockImplementationOnce(() => {
+      const input = makeInput(1);
+      // Distinguish native coordinates from source-relative or physical ones.
+      input.originXYZ = [100, -200, 300];
+      f.inputs.push(input);
+      return input;
+    });
+    f.resultState.ready = false;
+    const watch = f.watchViewport.getMockImplementation()!;
+    f.watchViewport.mockImplementationOnce((...args) => {
+      const [viewer, input, layer] = args;
+      expect(viewer).toBe(f.viewer);
+      expect(input).toBe(f.createLive.mock.calls[0][0]);
+      expect(input.dispose).not.toHaveBeenCalled();
+      expect(f.layerManager.has(layer)).toBe(true);
+      expect(f.sourceGroup.has(layer)).toBe(true);
+      expect(f.otherGroup.has(layer)).toBe(false);
+      return watch(...args);
+    });
+    const adding = f.session.addLayer();
+    const input = f.inputs.at(-1)!;
+    expect(f.watchViewport).not.toHaveBeenCalled();
+    f.resultState.ready = true;
+    f.resultLayers[0].readyStateChanged.dispatch();
+    await adding;
+    expect(f.watchViewport).toHaveBeenCalledExactlyOnceWith(
+      f.viewer,
+      input,
+      f.resultLayers[0],
+      expect.any(Function),
+      expect.any(Function),
+    );
+    const first = {
+      lowerXYZ: Object.freeze([-4, 10, 2]),
+      shapeXYZ: Object.freeze([32, 24, 8]),
+    };
+    const navigated = {
+      lowerXYZ: Object.freeze([0, 12, 3]),
+      shapeXYZ: Object.freeze([40, 30, 12]),
+    };
+    f.watchers[0].onRegion(first);
+    f.watchers[0].onRegion(navigated);
+    expect(f.lives[0].setRegion.mock.calls).toEqual([
+      [first.lowerXYZ, first.shapeXYZ],
+      [navigated.lowerXYZ, navigated.shapeXYZ],
+    ]);
+    expect(f.lives[0].setRegion.mock.calls[0][0]).toBe(first.lowerXYZ);
+    expect(f.lives[0].setRegion.mock.calls[1][1]).toBe(navigated.shapeXYZ);
+    expect(f.createLive).toHaveBeenCalledOnce();
+    expect(input.readRegion).not.toHaveBeenCalled();
+    expect(input.dispose).not.toHaveBeenCalled();
+  });
+
+  it("clears hidden/no-view regions without stopping tracking, resumes on show, and ignores callbacks after reset", async () => {
+    const f = fixture();
+    await f.session.addLayer();
+    const watcher = f.watchers[0];
+    const region = { lowerXYZ: [10, 20, -30], shapeXYZ: [32, 24, 8] };
+    watcher.onRegion(region);
+    watcher.onRegion(undefined);
+    expect(f.lives[0].setRegion).toHaveBeenLastCalledWith(undefined, undefined);
+    expect(f.publications[0].dispose).not.toHaveBeenCalled();
+    expect(watcher.dispose).not.toHaveBeenCalled();
+    watcher.onRegion(region);
+    expect(f.lives[0].setRegion).toHaveBeenLastCalledWith(
+      region.lowerXYZ,
+      region.shapeXYZ,
+    );
+    f.session.reset();
+    expect(watcher.dispose).toHaveBeenCalledOnce();
+    expect(f.publications[0].dispose).toHaveBeenCalledOnce();
+    const status = f.session.status;
+    watcher.onRegion(region);
+    watcher.onRegion(undefined);
+    watcher.onError(new Error("late geometry error"));
+    expect(f.lives[0].setRegion).toHaveBeenCalledTimes(3);
+    expect(f.session.status).toBe(status);
+  });
+
+  it("clears a viewport geometry error and keeps the watcher for a later valid box", async () => {
+    const f = fixture();
+    await f.session.addLayer();
+    f.session.open();
+    const watcher = f.watchers[0];
+    watcher.onRegion({ lowerXYZ: [10, 20, -30], shapeXYZ: [32, 24, 8] });
+    watcher.onError(new Error("Unsupported slice geometry"));
+    expect(f.lives[0].setRegion).toHaveBeenLastCalledWith();
+    expect(f.session.statusLevel).toBe("error");
+    expect(
+      f.session.dialog!.body.querySelector('[role="status"]')!.textContent,
+    ).toContain("Unsupported slice geometry");
+    expect(f.layerManager.has(f.resultLayers[0])).toBe(true);
+    expect(watcher.dispose).not.toHaveBeenCalled();
+    watcher.onRegion({ lowerXYZ: [12, 22, -24], shapeXYZ: [12, 12, 8] });
+    expect(f.lives[0].setRegion).toHaveBeenLastCalledWith(
+      [12, 22, -24],
+      [12, 12, 8],
+    );
+    expect(f.publications[0].dispose).not.toHaveBeenCalled();
+  });
+
+  it.each(["compute", "geometry"])(
+    "keeps an initial recoverable %s error visible instead of replacing it with Add success",
+    async (kind) => {
+      const f = fixture();
+      const message =
+        kind === "compute"
+          ? "Region exceeds 2**21 voxels including halo"
+          : "Unsupported slice geometry";
+      const watch = f.watchViewport.getMockImplementation()!;
+      f.watchViewport.mockImplementationOnce((...args) => {
+        const dispose = watch(...args);
+        args[3]({ lowerXYZ: [10, 20, -30], shapeXYZ: [300, 200, 100] });
+        if (kind === "compute") f.onErrors[0](new Error(message));
+        else args[4](new Error(message));
+        return dispose;
+      });
+      await f.session.addLayer();
+      expect(f.session.busy).toBe(false);
+      expect(f.session.statusLevel).toBe("error");
+      expect(f.session.status).toContain(message);
+      expect(f.session.status).not.toContain("Added live layer:");
+      expect(f.layerManager.has(f.resultLayers[0])).toBe(true);
+      expect(f.watchers[0].dispose).not.toHaveBeenCalled();
+      expect(f.publications[0].dispose).not.toHaveBeenCalled();
+    },
+  );
+
   it("uses an existing dynamic ONNX affinity image without changing its source or layout", async () => {
     const f = fixture();
     f.session.selectSource(f.b);
@@ -711,7 +905,7 @@ describe("WASM watershed UI", () => {
     expect(f.session.status).toContain("Added live layer:");
   });
 
-  it("does not impose an overall voxel limit or read the whole source at creation", async () => {
+  it("does not limit overall source size or read the whole source at creation", async () => {
     const f = fixture();
     f.prepareInput.mockImplementationOnce(() => {
       const input = makeInput(0);
@@ -800,6 +994,15 @@ describe("WASM watershed UI", () => {
     await Promise.resolve();
     expect(f.publications[0].dispose).toHaveBeenCalledOnce();
     expect(f.publications[1].dispose).not.toHaveBeenCalled();
+    expect(f.watchers[0].dispose).toHaveBeenCalledOnce();
+    expect(f.watchers[1].dispose).not.toHaveBeenCalled();
+    const secondRegion = { lowerXYZ: [12, 22, -24], shapeXYZ: [12, 12, 8] };
+    f.watchers[1].onRegion(secondRegion);
+    expect(f.lives[0].setRegion).not.toHaveBeenCalled();
+    expect(f.lives[1].setRegion).toHaveBeenLastCalledWith(
+      secondRegion.lowerXYZ,
+      secondRegion.shapeXYZ,
+    );
     expect(f.sourceGroup.has(f.resultLayers[0])).toBe(false);
     expect(f.otherGroup.has(f.resultLayers[1])).toBe(true);
     expect(f.session.source).toBe(f.b);
@@ -869,6 +1072,9 @@ describe("WASM watershed UI", () => {
       expect(f.layerManager.has(f.resultLayers[0])).toBe(false);
       expect(f.sourceGroup.has(f.resultLayers[0])).toBe(false);
       expect(f.resultLayers[0].wasDisposed).toBe(true);
+      if (phase === "active")
+        expect(f.watchers[0].dispose).toHaveBeenCalledOnce();
+      else expect(f.watchViewport).not.toHaveBeenCalled();
       expect(f.session.status).not.toContain("Added live layer:");
       if (!["reset", "state reset", "dispose"].includes(action))
         expect(f.session.statusLevel).toBe("error");
@@ -920,22 +1126,55 @@ describe("WASM watershed UI", () => {
     expect(f.session.statusLevel).toBe("info");
   });
 
-  it("reports live computation errors and removes cached valid-looking output, ignoring late errors", async () => {
+  it.each(["worker failed", "Region exceeds 2**21 voxels including halo"])(
+    "keeps a live layer and watcher after recoverable computation error: %s",
+    async (message) => {
+      const f = fixture();
+      await f.session.addLayer();
+      f.session.open();
+      f.onErrors[0](new Error(message));
+      expect(f.session.statusLevel).toBe("error");
+      const status = f.session.dialog!.body.querySelector('[role="status"]')!;
+      expect(status.textContent).toContain(message);
+      expect(status.textContent).toContain("zoom in");
+      expect(status.textContent).toContain("coarser native scale");
+      expect(status.getAttribute("data-severity")).toBe("error");
+      expect(f.layerManager.has(f.resultLayers[0])).toBe(true);
+      expect(f.publications[0].dispose).not.toHaveBeenCalled();
+      expect(f.watchers[0].dispose).not.toHaveBeenCalled();
+      expect(f.lives[0].signal.aborted).toBe(false);
+      // Runtime owns clearing failed results/cache invalidation. The UI must
+      // leave tracking active so a smaller box can schedule a fresh computation.
+      const region = { lowerXYZ: [12, 24, -20], shapeXYZ: [16, 12, 8] };
+      f.watchers[0].onRegion(region);
+      expect(f.lives[0].setRegion).toHaveBeenLastCalledWith(
+        region.lowerXYZ,
+        region.shapeXYZ,
+      );
+      expect(f.createLive).toHaveBeenCalledOnce();
+      expect(f.publish).toHaveBeenCalledOnce();
+      deleteLayer(f.resultLayers[0]);
+      expect(f.publications[0].dispose).toHaveBeenCalledOnce();
+      expect(f.watchers[0].dispose).toHaveBeenCalledOnce();
+      const finalStatus = f.session.status;
+      f.onErrors[0](new Error("old worker failure"));
+      f.watchers[0].onRegion(region);
+      expect(f.session.status).toBe(finalStatus);
+      expect(f.lives[0].setRegion).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("still removes an invalid source when an error arrives without a lifetime abort", async () => {
     const f = fixture();
     await f.session.addLayer();
-    f.session.open();
-    f.onErrors[0](new Error("worker failed"));
+    f.inputs.at(-1)!.invalidate(false);
+    f.onErrors[0](new Error("Compute noticed an invalid source"));
     expect(f.session.statusLevel).toBe("error");
-    expect(
-      f.session.dialog!.body.querySelector('[role="status"]')!.textContent,
-    ).toContain("worker failed");
+    expect(f.session.status).toContain("Watershed stopped");
+    expect(f.session.status).toContain("Source snapshot changed");
     expect(f.layerManager.has(f.resultLayers[0])).toBe(false);
+    expect(f.watchers[0].dispose).toHaveBeenCalledOnce();
     expect(f.publications[0].dispose).toHaveBeenCalledOnce();
-    await f.session.addLayer();
-    const status = f.session.status;
-    f.onErrors[0](new Error("old worker failure"));
-    expect(f.session.status).toBe(status);
-    expect(f.publications[1].dispose).not.toHaveBeenCalled();
   });
 
   it("does not let a successful metadata refresh hide live source invalidation", async () => {
@@ -976,6 +1215,44 @@ describe("WASM watershed UI", () => {
     expect(f.publications[0].dispose).toHaveBeenCalledOnce();
   });
 
+  it("disposes a watcher returned after reentrant reset in its initial callback", async () => {
+    const f = fixture();
+    const watch = f.watchViewport.getMockImplementation()!;
+    f.watchViewport.mockImplementationOnce((...args) => {
+      const dispose = watch(...args);
+      f.session.reset();
+      args[3]({ lowerXYZ: [10, 20, -30], shapeXYZ: [12, 12, 8] });
+      return dispose;
+    });
+    await f.session.addLayer();
+    expect(f.session.statusLevel).toBe("info");
+    expect(f.session.status).toContain("Viewer reset");
+    expect(f.watchers[0].dispose).toHaveBeenCalledOnce();
+    expect(f.publications[0].dispose).toHaveBeenCalledOnce();
+    expect(f.lives[0].setRegion).not.toHaveBeenCalled();
+    expect(f.layerManager.has(f.resultLayers[0])).toBe(false);
+    expect(f.sourceGroup.has(f.resultLayers[0])).toBe(false);
+    expect(f.session.busy).toBe(false);
+  });
+
+  it("cleans up a fatal watcher startup exception after group activation", async () => {
+    const f = fixture();
+    f.watchViewport.mockImplementationOnce(() => {
+      throw new Error("Watcher startup failed");
+    });
+    await f.session.addLayer();
+    expect(f.session.statusLevel).toBe("error");
+    expect(f.session.status).toContain(
+      "Watershed failed: Watcher startup failed",
+    );
+    expect(f.session.busy).toBe(false);
+    expect(f.layerManager.has(f.resultLayers[0])).toBe(false);
+    expect(f.sourceGroup.has(f.resultLayers[0])).toBe(false);
+    expect(f.publications[0].dispose).toHaveBeenCalledOnce();
+    expect(f.lives[0].dispose).toHaveBeenCalledOnce();
+    expect(f.inputs.at(-1)!.dispose).toHaveBeenCalledOnce();
+  });
+
   it.each([
     "input",
     "constructor",
@@ -1012,6 +1289,7 @@ describe("WASM watershed UI", () => {
       expect(f.session.status).toContain("Watershed failed:");
       expect(f.session.status).not.toContain("Added live layer:");
       expect(f.root.add).not.toHaveBeenCalled();
+      expect(f.watchViewport).not.toHaveBeenCalled();
       for (const publication of f.publications)
         expect(publication.dispose).toHaveBeenCalledOnce();
       for (const live of f.lives) expect(live.dispose).toHaveBeenCalledOnce();
@@ -1020,21 +1298,53 @@ describe("WASM watershed UI", () => {
     },
   );
 
-  it("safely handles a synchronous onError callback during construction", async () => {
+  it.each(["construction", "publication"])(
+    "safely handles a synchronous onError callback during %s",
+    async (stage) => {
+      const f = fixture();
+      if (stage === "construction")
+        f.createLive.mockImplementationOnce(
+          (input, _channels, _options, onError) => {
+            const live = makeLive(input);
+            f.lives.push(live);
+            onError(new Error("startup failed"));
+            return live as unknown as LiveWatershed;
+          },
+        );
+      else {
+        const publish = f.publish.getMockImplementation()!;
+        f.publish.mockImplementationOnce((...args) => {
+          const publication = publish(...args);
+          f.onErrors[0](new Error("startup failed"));
+          return publication;
+        });
+      }
+      await f.session.addLayer();
+      expect(f.session.statusLevel).toBe("error");
+      expect(f.session.status).toContain("startup failed");
+      expect(f.watchViewport).not.toHaveBeenCalled();
+      expect(f.root.add).not.toHaveBeenCalled();
+      if (stage === "construction") expect(f.publish).not.toHaveBeenCalled();
+      else expect(f.publications[0].dispose).toHaveBeenCalledOnce();
+      expect(f.lives[0].dispose).toHaveBeenCalledOnce();
+      expect(f.inputs.at(-1)!.dispose).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("cleans up a fatal error while output activation is still pending", async () => {
     const f = fixture();
-    f.createLive.mockImplementationOnce(
-      (input, _channels, _options, onError) => {
-        const live = makeLive(input);
-        f.lives.push(live);
-        onError(new Error("startup failed"));
-        return live as unknown as LiveWatershed;
-      },
-    );
-    await f.session.addLayer();
-    expect(f.session.status).toContain("startup failed");
-    expect(f.publish).not.toHaveBeenCalled();
-    expect(f.lives[0].dispose).toHaveBeenCalledOnce();
+    f.resultState.ready = false;
+    const adding = f.session.addLayer();
+    f.onErrors[0](new Error("Output startup failed"));
+    await adding;
+    expect(f.session.statusLevel).toBe("error");
+    expect(f.session.status).toContain("Output startup failed");
+    expect(f.session.status).not.toContain("Added live layer:");
+    expect(f.watchViewport).not.toHaveBeenCalled();
+    expect(f.root.add).not.toHaveBeenCalled();
+    expect(f.publications[0].dispose).toHaveBeenCalledOnce();
     expect(f.inputs.at(-1)!.dispose).toHaveBeenCalledOnce();
+    expect(f.resultLayers[0].wasDisposed).toBe(true);
   });
 
   it.each([
