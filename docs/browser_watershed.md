@@ -41,7 +41,10 @@ The computation box is limited to `2**21` (2,097,152) voxels, **including the cl
 halo**. An oversized view reports a visible error, not a partial segmentation:
 **zoom in**, or select a coarser native scale and add a new layer. The box is never
 silently split into separate computations. The existing layer and viewport
-watcher stay active so navigation to a smaller box can retry.
+watcher stay active so navigation to a smaller box can retry. Computation waits
+for **ALL affinity data needed for the current box**, including its clipped halo,
+not just whichever display chunks arrive first. It does **not** wait for or read
+the whole dataset.
 
 The selected scale's native voxel spacing and origin are preserved. Arbitrary
 user transforms, reflected grids, and resampling are not supported; unsupported
@@ -126,16 +129,42 @@ and mask controls are drafts for the next layer; editing them does not change an
 existing layer's configuration. Delete an output to stop its queued work and
 release its resources. Deleting or replacing its affinity source, changing source
 data or transforms, or resetting/disposal of the viewer also stops the dependent
-live layer. Source invalidation is reported in the watershed dialog's status and
-removes the stopped output so cached labels cannot remain looking valid.
+live layer. For outputs created in the dialog, source invalidation is reported
+there and removes the stopped output so cached labels cannot remain looking
+valid. Restored layers own an independent hidden input, without depending on a
+visible source layer's name or lifetime. If that hidden input fails, its data is
+retired but the saved layer and recipe remain visible with an error until deleted.
 Computation errors (including an oversized region) are also reported visibly and
 clear the result, but **keep the layer and watcher alive** so a later viewport box
 can retry. Fatal construction, publication, or activation errors still clean up
 the failed output.
 
-Result URLs use `watershed://…` and are **session-local**. Saving or sharing viewer
-state does not serialize labels or a watershed recipe. A restored URL cannot
-recreate the live layer: select the affinity source and add it again.
+## Saving, sharing, and restoration
+
+New output layers use `watershed://recipe` with a JSON `source.state` recipe.
+Saving or sharing viewer JSON preserves the affinity source specification
+(including a nested ONNX recipe), native input scale and voxel spacing, literal
+XYZ channel mapping, thresholds, and optional last-channel mask threshold. Masking
+is enabled exactly when `options.maskThreshold` is present. The Source sidebar
+shows the complete, read-only recipe JSON even while loading or after an error.
+Draft changes in the watershed dialog apply only to newly added layers.
+
+Restoring copied JSON reconstructs an independently owned live layer and
+**recomputes one current-view union** using the saved settings. It does not
+restore the old navigation box or its labels, compute the whole volume, or start
+independent computations per display chunk. Restored computation likewise waits
+for all affinity data needed for its current box, including the halo. Labels may
+change with navigation just as for a newly created layer.
+
+Shared state contains **no computed labels, affinity data, or local file bytes**.
+The recipient still needs access and credentials for all upstream source URLs.
+For ONNX-derived affinities, the nested inference recipe must use accessible
+source and **model URLs**; the referenced model bytes must remain available and
+match the saved model identity/hash. A model chosen from a local file is not
+embedded in viewer JSON and cannot be restored by sharing that JSON alone. Old
+session-only watershed or ONNX publication URLs remain **legacy, nonportable**
+references; they cannot recreate their publications in another session. Recreate
+those layers from portable source/model URLs before sharing.
 
 ## WASM provenance and licensing
 
