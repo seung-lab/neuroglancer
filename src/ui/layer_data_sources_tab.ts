@@ -57,6 +57,7 @@ import {
 import type { MessageList } from "#src/util/message_list.js";
 import { MessageSeverity } from "#src/util/message_list.js";
 import type { ProgressListener } from "#src/util/progress_listener.js";
+import { WATERSHED_RECIPE_URL } from "#src/watershed/recipe.js";
 import { makeAddButton } from "#src/widget/add_button.js";
 import { CoordinateSpaceTransformWidget } from "#src/widget/coordinate_transform.js";
 import type {
@@ -327,6 +328,7 @@ export class DataSourceView extends RefCounted {
   generation = -1;
   private loadedView: LoadedDataSourceView | undefined;
   private stateElement = document.createElement("div");
+  private stateTitle = document.createElement("div");
   private stateEditor: CodeMirror.Editor | undefined;
 
   constructor(
@@ -375,9 +377,7 @@ export class DataSourceView extends RefCounted {
     const { stateElement } = this;
     stateElement.classList.add("neuroglancer-layer-data-source-state");
     stateElement.hidden = true;
-    const stateTitle = document.createElement("div");
-    stateTitle.textContent = "Inference source state (read-only)";
-    stateElement.appendChild(stateTitle);
+    stateElement.appendChild(this.stateTitle);
     element.appendChild(stateElement);
     element.appendChild(
       this.registerDisposer(new MessagesView(source.messages)).element,
@@ -398,8 +398,17 @@ export class DataSourceView extends RefCounted {
     this.urlInput.value = this.source.spec.url;
     this.urlInput.dirty.value = false;
     const { state, url } = this.source.spec;
-    const showState = url === INFERENCE_RECIPE_URL && state !== undefined;
+    const stateKind =
+      url === INFERENCE_RECIPE_URL
+        ? "Inference"
+        : url === WATERSHED_RECIPE_URL
+          ? "Watershed"
+          : undefined;
+    const showState = stateKind !== undefined && state !== undefined;
     this.stateElement.hidden = !showState;
+    this.stateTitle.textContent = showState
+      ? `${stateKind} source state (read-only)`
+      : "";
     if (showState && this.stateEditor === undefined) {
       const editor = (this.stateEditor = CodeMirror(this.stateElement, {
         value: "",
@@ -408,12 +417,6 @@ export class DataSourceView extends RefCounted {
         lineWrapping: true,
         lineNumbers: true,
       }));
-      editor
-        .getWrapperElement()
-        .setAttribute("aria-label", "Inference source state");
-      editor
-        .getInputField()
-        .setAttribute("aria-label", "Inference source state JSON");
       const observer = new IntersectionObserver(
         (entries) => {
           if (entries.some((entry) => entry.isIntersecting)) editor.refresh();
@@ -424,11 +427,20 @@ export class DataSourceView extends RefCounted {
       this.registerDisposer(() => observer.disconnect());
     }
     const json = showState ? JSON.stringify(state, null, 2) : "";
-    if (
-      this.stateEditor !== undefined &&
-      this.stateEditor.getValue() !== json
-    ) {
-      this.stateEditor.setValue(json);
+    if (this.stateEditor !== undefined) {
+      this.stateEditor
+        .getWrapperElement()
+        .setAttribute(
+          "aria-label",
+          showState ? `${stateKind} source state` : "",
+        );
+      this.stateEditor
+        .getInputField()
+        .setAttribute(
+          "aria-label",
+          showState ? `${stateKind} source state JSON` : "",
+        );
+      if (this.stateEditor.getValue() !== json) this.stateEditor.setValue(json);
     }
     const { loadState } = this.source;
     let { loadedView } = this;

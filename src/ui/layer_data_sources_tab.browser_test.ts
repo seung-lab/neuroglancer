@@ -30,6 +30,7 @@ import { DataSourceView } from "#src/ui/layer_data_sources_tab.js";
 import { MessageList, MessageSeverity } from "#src/util/message_list.js";
 import { MultiConsumerProgressListener } from "#src/util/progress_listener.js";
 import { NullarySignal } from "#src/util/signal.js";
+import { WATERSHED_RECIPE_URL } from "#src/watershed/recipe.js";
 
 const disposers: Array<() => void> = [];
 
@@ -38,7 +39,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function recipeState() {
+function inferenceRecipeState() {
   return {
     version: 2,
     profile: "ncdhw-centered-v2",
@@ -62,7 +63,7 @@ function recipeState() {
   };
 }
 
-function fixture(
+function sourceFixture(
   options: {
     url?: string;
     state?: unknown;
@@ -73,7 +74,7 @@ function fixture(
   let spec: DataSourceSpecification = {
     ...makeEmptyDataSourceSpecification(),
     url,
-    state: "state" in options ? options.state : recipeState(),
+    state: "state" in options ? options.state : inferenceRecipeState(),
   };
   const setSpec = vi.fn((value: DataSourceSpecification) => {
     spec = value;
@@ -125,19 +126,39 @@ function fixture(
   };
 }
 
+function watershedRecipeState() {
+  return {
+    version: 1,
+    profile: "visible-slice-union-v1",
+    mode: "live",
+    source: {
+      name: "ONNX affinities",
+      source: { url: INFERENCE_RECIPE_URL, state: inferenceRecipeState() },
+    },
+    inputScaleIndex: 2,
+    channelsXYZ: [2, 0, 2],
+    options: {
+      highThreshold: 0.8,
+      lowThreshold: 0.2,
+      sizeThreshold: 12,
+      dustThreshold: 3,
+      maskThreshold: 0.4,
+    },
+    spacingXYZ: [4e-9, 4e-9, 16e-9],
+  };
+}
+
 type CodeMirrorWrapper = HTMLElement & { CodeMirror: CodeMirror.Editor };
 const stateSelector = ".neuroglancer-layer-data-source-state";
 
-function visibleEditor(view: DataSourceView) {
+function sourceStateEditor(view: DataSourceView, kind: string) {
   const container = view.element.querySelector<HTMLElement>(stateSelector);
   expect(container).not.toBeNull();
   expect(container!.checkVisibility()).toBe(true);
-  expect(container!.textContent).toContain(
-    "Inference source state (read-only)",
-  );
+  expect(container!.textContent).toContain(`${kind} source state (read-only)`);
   const wrapper = container!.querySelector<CodeMirrorWrapper>(".CodeMirror");
   expect(wrapper).not.toBeNull();
-  expect(wrapper!.getAttribute("aria-label")).toBe("Inference source state");
+  expect(wrapper!.getAttribute("aria-label")).toBe(`${kind} source state`);
   // CodeMirror attaches its real editor to the wrapper; do not mock it.
   expect(wrapper!.CodeMirror.getWrapperElement()).toBe(wrapper);
   return wrapper!.CodeMirror;
@@ -159,7 +180,21 @@ function nextFrame() {
   return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 }
 
-describe("DataSourceView inference source state", () => {
+describe.each([
+  {
+    kind: "Inference",
+    url: INFERENCE_RECIPE_URL,
+    recipeState: inferenceRecipeState,
+  },
+  {
+    kind: "Watershed",
+    url: WATERSHED_RECIPE_URL,
+    recipeState: watershedRecipeState,
+  },
+])("DataSourceView $kind source state", ({ kind, url, recipeState }) => {
+  const fixture = (options: Parameters<typeof sourceFixture>[0] = {}) =>
+    sourceFixture({ url, state: recipeState(), ...options });
+  const visibleEditor = (view: DataSourceView) => sourceStateEditor(view, kind);
   it("shows the complete pretty-printed recipe in a read-only, wrapping CodeMirror", () => {
     const { view, source } = fixture();
     const editor = visibleEditor(view);
@@ -168,7 +203,7 @@ describe("DataSourceView inference source state", () => {
     expect(editor.getOption("readOnly")).toBe(true);
     expect(editor.getOption("lineWrapping")).toBe(true);
     expect(editor.getInputField().getAttribute("aria-label")).toBe(
-      "Inference source state JSON",
+      `${kind} source state JSON`,
     );
     expect(view.element.querySelector(`${stateSelector} button`)).toBeNull();
   });
@@ -225,9 +260,19 @@ describe("DataSourceView inference source state", () => {
     expect(loadedControls).not.toBeNull();
     visibleEditor(view);
     const state = recipeState();
-    state.spacingZYX = [30, 5, 2];
-    state.metadata.note = "updated metadata";
-    state.model.name = "updated.onnx";
+    if ("options" in state) {
+      state.inputScaleIndex = 1;
+      state.channelsXYZ = [1, 1, 0];
+      state.options.maskThreshold = 0.7;
+      state.options.highThreshold = 0.9;
+      state.spacingXYZ = [8e-9, 8e-9, 32e-9];
+      state.source.source.state.model.name = "updated.onnx";
+      state.source.source.state.metadata.note = "updated nested metadata";
+    } else {
+      state.spacingZYX = [30, 5, 2];
+      state.metadata.note = "updated metadata";
+      state.model.name = "updated.onnx";
+    }
     state.source.name = "updated source";
     update({ state });
     expect(source.loadState).toBe(loaded);
@@ -238,7 +283,7 @@ describe("DataSourceView inference source state", () => {
     ).toBe(loadedControls);
     expect(visibleEditor(view).getValue()).toBe(JSON.stringify(state, null, 2));
     // A change signal must also refresh an existing state object in place.
-    state.metadata.note = "metadata changed in place";
+    state.source.name = "source name changed in place";
     update();
     expect(source.spec.state).toBe(state);
     expect(visibleEditor(view).getValue()).toBe(JSON.stringify(state, null, 2));
@@ -249,7 +294,9 @@ describe("DataSourceView inference source state", () => {
   it.each([
     "precomputed://https://example.com/raw",
     "inference://live/result",
+    "watershed://legacy-session-result",
     `${INFERENCE_RECIPE_URL}/other`,
+    `${WATERSHED_RECIPE_URL}/other`,
   ])("does not show state for non-recipe URL %s", (url) => {
     const { view } = fixture({ url });
     expectHiddenState(view);
@@ -279,12 +326,12 @@ describe("DataSourceView inference source state", () => {
     update({ state: undefined });
     expectHiddenState(view);
     const state = recipeState();
-    state.metadata.note = "replacement state";
+    state.source.name = "replacement state";
     update({ state });
     expect(visibleEditor(view).getValue()).toBe(JSON.stringify(state, null, 2));
     update({ url: "precomputed://https://example.com/other" });
     expectHiddenState(view);
-    update({ url: INFERENCE_RECIPE_URL });
+    update({ url });
     expect(visibleEditor(view).getValue()).toBe(JSON.stringify(state, null, 2));
   });
 
@@ -306,6 +353,23 @@ describe("DataSourceView inference source state", () => {
     expect(source.changed.count).toBe(generation);
     expect(setSpec).not.toHaveBeenCalled();
     expect(registry.get).not.toHaveBeenCalled();
+  });
+
+  it("updates the title and accessibility labels when changing recipe kinds", () => {
+    const { view, update } = fixture();
+    const editor = visibleEditor(view);
+    const otherKind = kind === "Inference" ? "Watershed" : "Inference";
+    const state =
+      kind === "Inference" ? watershedRecipeState() : inferenceRecipeState();
+    update({
+      url: kind === "Inference" ? WATERSHED_RECIPE_URL : INFERENCE_RECIPE_URL,
+      state,
+    });
+    expect(sourceStateEditor(view, otherKind)).toBe(editor);
+    expect(editor.getValue()).toBe(JSON.stringify(state, null, 2));
+    expect(editor.getInputField().getAttribute("aria-label")).toBe(
+      `${otherKind} source state JSON`,
+    );
   });
 
   it("refreshes when intersecting and disconnects the observer on disposal", async () => {
