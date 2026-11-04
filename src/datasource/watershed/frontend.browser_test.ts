@@ -51,7 +51,7 @@ import { WatchableValue } from "#src/trackable_value.js";
 import { RefCounted } from "#src/util/disposable.js";
 import { vec3 } from "#src/util/geom.js";
 import * as matrix from "#src/util/matrix.js";
-import { Signal } from "#src/util/signal.js";
+import { NullarySignal, Signal } from "#src/util/signal.js";
 import type { WatershedResult } from "#src/watershed/base.js";
 import { MAX_WATERSHED_VOXELS } from "#src/watershed/base.js";
 import type { LiveWatershed } from "#src/watershed/live.js";
@@ -78,6 +78,7 @@ const labelBase = 1n << 50n;
 /** Contract-only producer: tests publication independently of input preparation. */
 function makeLive(infoOverrides: Partial<LiveWatershedInfo> = {}) {
   const controller = new AbortController();
+  const changed = new NullarySignal();
   const info: LiveWatershedInfo = {
     shapeXYZ: [5, 4, 3],
     offsetXYZ: [23, -11, 7],
@@ -114,11 +115,12 @@ function makeLive(infoOverrides: Partial<LiveWatershedInfo> = {}) {
   const live = {
     info,
     signal: controller.signal,
+    changed,
     assertValid,
     dispose,
     readTile,
   } as unknown as LiveWatershed;
-  return { live, info, controller, assertValid, dispose, readTile };
+  return { live, info, controller, changed, assertValid, dispose, readTile };
 }
 
 /** Real RPC handlers, async structured clone, and buffer transfer semantics. */
@@ -611,7 +613,88 @@ describe("session-local live watershed volume RPC", () => {
     );
   });
 
-  it("transfers exact UINT64 full/partial tiles using local bounds and recomputes after transfer", async () => {
+  it("invalidates all registered display caches synchronously on regional changes without retiring the URL", async () => {
+    const session = makeSession();
+    const producer = makeLive();
+    const removeChanged = vi.spyOn(producer.changed, "remove");
+    const handle = publishLiveWatershed(session.frontendManager, producer.live);
+    const dataSource = await getSource(session.registry, handle.url);
+    const volume = dataSource.subsources[0].subsource
+      .volume as WatershedMultiscaleVolumeChunkSource;
+    const otherSource = Object.assign(new RefCounted(), {
+      invalidateCache: vi.fn(),
+    });
+    session.getChunkSource
+      .mockReturnValueOnce(session.source)
+      .mockReturnValueOnce(otherSource);
+    volume.getSources(sourceOptions);
+    volume.getSources(sourceOptions);
+    volume.getSources(sourceOptions);
+    producer.changed.dispatch();
+    expect(session.invalidateCache).toHaveBeenCalledTimes(1);
+    expect(otherSource.invalidateCache).toHaveBeenCalledTimes(1);
+    expect(producer.dispose).not.toHaveBeenCalled();
+    expect(producer.live.signal.aborted).toBe(false);
+    expect((await getSource(session.registry, handle.url)).canonicalUrl).toBe(
+      handle.url,
+    );
+    expect(producer.readTile).not.toHaveBeenCalled();
+    otherSource.dispose();
+    producer.changed.dispatch();
+    expect(session.invalidateCache).toHaveBeenCalledTimes(2);
+    expect(otherSource.invalidateCache).toHaveBeenCalledTimes(1);
+    handle.dispose();
+    handle.dispose();
+    expect(removeChanged).toHaveBeenCalledTimes(1);
+    expect(producer.dispose).toHaveBeenCalledTimes(1);
+    expect(session.invalidateCache).toHaveBeenCalledTimes(3);
+    producer.changed.dispatch();
+    expect(session.invalidateCache).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(["changed observer", "cache observer"] as const)(
+    "allows a %s to dispose the publication reentrantly without skipping caches or recursing",
+    async (kind) => {
+      const session = makeSession();
+      const producer = makeLive();
+      const removeChanged = vi.spyOn(producer.changed, "remove");
+      if (kind === "changed observer") {
+        producer.changed.add(() => handle.dispose());
+      } else {
+        session.invalidateCache.mockImplementationOnce(() => handle.dispose());
+      }
+      const handle = publishLiveWatershed(
+        session.frontendManager,
+        producer.live,
+      );
+      const dataSource = await getSource(session.registry, handle.url);
+      const volume = dataSource.subsources[0].subsource
+        .volume as WatershedMultiscaleVolumeChunkSource;
+      const otherSource = Object.assign(new RefCounted(), {
+        invalidateCache: vi.fn(),
+      });
+      session.getChunkSource
+        .mockReturnValueOnce(session.source)
+        .mockReturnValueOnce(otherSource);
+      volume.getSources(sourceOptions);
+      volume.getSources(sourceOptions);
+      producer.changed.dispatch();
+      expect(session.invalidateCache).toHaveBeenCalledTimes(1);
+      expect(otherSource.invalidateCache).toHaveBeenCalledTimes(1);
+      expect(producer.dispose).toHaveBeenCalledTimes(1);
+      expect(removeChanged).toHaveBeenCalledTimes(1);
+      await expect(getSource(session.registry, handle.url)).rejects.toThrow(
+        "unavailable",
+      );
+      producer.changed.dispatch();
+      handle.dispose();
+      expect(session.invalidateCache).toHaveBeenCalledTimes(1);
+      expect(otherSource.invalidateCache).toHaveBeenCalledTimes(1);
+      otherSource.dispose();
+    },
+  );
+
+  it("transfers exact UINT64 full/partial tile copies using local bounds repeatedly", async () => {
     const session = makeSession();
     const producer = makeLive();
     const handle = publishLiveWatershed(session.frontendManager, producer.live);
@@ -779,6 +862,8 @@ describe("session-local live watershed volume RPC", () => {
     async (kind) => {
       const session = makeSession();
       const producer = makeLive();
+      const removeChanged = vi.spyOn(producer.changed, "remove");
+      const removeAbort = vi.spyOn(producer.live.signal, "removeEventListener");
       const late = Promise.withResolvers<BigUint64Array<ArrayBuffer>>();
       producer.readTile.mockImplementationOnce(() => late.promise);
       const handle = publishLiveWatershed(
@@ -808,6 +893,9 @@ describe("session-local live watershed volume RPC", () => {
         producer.controller.abort(new Error("Input source disappeared"));
       else session.frontendManager.dispose();
       expect(producer.dispose).toHaveBeenCalledTimes(1);
+      expect(removeChanged).toHaveBeenCalledTimes(1);
+      expect(removeAbort).toHaveBeenCalledWith("abort", expect.any(Function));
+      producer.changed.dispatch();
       expect(session.invalidateCache).toHaveBeenCalledTimes(1);
       expect(producer.readTile.mock.calls[0][2].aborted).toBe(true);
       await expect(getSource(session.registry, handle.url)).rejects.toThrow(
@@ -885,6 +973,28 @@ describe("session-local live watershed volume RPC", () => {
       publishLiveWatershed(session.frontendManager, disposedManager.live),
     ).toThrow("disposed ChunkManager");
     expect(disposedManager.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("unsubscribes regional changes if publication fails after subscribing", () => {
+    const session = makeSession();
+    const producer = makeLive();
+    const addChanged = vi.spyOn(producer.changed, "add");
+    const removeChanged = vi.spyOn(producer.changed, "remove");
+    const removeAbort = vi.spyOn(producer.live.signal, "removeEventListener");
+    vi.spyOn(producer.live.signal, "addEventListener").mockImplementationOnce(
+      () => {
+        throw new Error("abort listener setup failed");
+      },
+    );
+    expect(() =>
+      publishLiveWatershed(session.frontendManager, producer.live),
+    ).toThrow("abort listener setup failed");
+    expect(addChanged).toHaveBeenCalledTimes(1);
+    expect(removeChanged).toHaveBeenCalledTimes(1);
+    expect(removeAbort).toHaveBeenCalledWith("abort", expect.any(Function));
+    expect(producer.dispose).toHaveBeenCalledTimes(1);
+    producer.changed.dispatch();
+    expect(session.invalidateCache).not.toHaveBeenCalled();
   });
 
   it("rechecks producer validity on access and invalidates previously resolved sources", async () => {
@@ -1074,6 +1184,123 @@ describe("production chunk worker watershed registration", () => {
         "unavailable",
       );
     } finally {
+      handle.dispose();
+      source.dispose();
+    }
+  }, 20000);
+
+  it("refreshes cached display chunks from one regional result on changed while keeping the real-worker URL alive", async () => {
+    const registry = await registryFixture();
+    const producer = makeLive({
+      shapeXYZ: [67, 65, 33],
+      chunkShapeXYZ: [64, 64, 32],
+    });
+    const voxelCount = 67 * 65 * 33;
+    const initial = new Uint32Array(voxelCount).fill(17);
+    let result: Uint32Array | undefined = initial;
+    const copies: BigUint64Array[] = [];
+    producer.readTile.mockImplementation(async (lower, size, signal) => {
+      signal.throwIfAborted();
+      const copy = new BigUint64Array(size[0] * size[1] * size[2]);
+      let target = 0;
+      for (let z = 0; z < size[2]; ++z) {
+        for (let y = 0; y < size[1]; ++y) {
+          const start = lower[0] + 67 * (lower[1] + y + 65 * (lower[2] + z));
+          for (let x = 0; x < size[0]; ++x) {
+            copy[target++] = BigInt(result?.[start + x] ?? 0);
+          }
+        }
+      }
+      copies.push(copy);
+      return copy;
+    });
+    const handle = publishLiveWatershed(registry.chunkManager, producer.live);
+    const dataSource = await getSource(registry, handle.url);
+    const volume = dataSource.subsources[0].subsource
+      .volume as WatershedMultiscaleVolumeChunkSource;
+    const source = volume.getSources(sourceOptions)[0][0].chunkSource;
+    const invalidated = vi.fn();
+    const removeInvalidated = source.cacheInvalidated.add(invalidated);
+    const read = (grid: number[], local: number[]) =>
+      source.fetchChunk(
+        Float32Array.from(grid),
+        (chunk) => {
+          const volumeChunk = chunk as FrontendVolumeChunk;
+          return {
+            shape: Array.from(volumeChunk.chunkDataSize),
+            label: volumeChunk.getValueAt(Uint32Array.from(local)),
+          };
+        },
+        {},
+      );
+    const readAcrossChunks = async (label: bigint) => {
+      // Adjacent voxels across a transport boundary share regional label IDs.
+      expect(await read([0, 0, 0], [63, 0, 0])).toEqual({
+        shape: [64, 64, 32],
+        label,
+      });
+      expect(await read([1, 0, 0], [0, 0, 0])).toEqual({
+        shape: [3, 64, 32],
+        label,
+      });
+      expect(await read([1, 1, 1], [2, 0, 0])).toEqual({
+        shape: [3, 1, 1],
+        label,
+      });
+    };
+    const change = async () => {
+      const count = invalidated.mock.calls.length;
+      producer.changed.dispatch();
+      expect(invalidated).toHaveBeenCalledTimes(count + 1);
+      expect(producer.live.signal.aborted).toBe(false);
+      expect(producer.dispose).not.toHaveBeenCalled();
+      expect((await getSource(registry, handle.url)).canonicalUrl).toBe(
+        handle.url,
+      );
+      await expect.poll(() => source.chunks.size).toBe(0);
+    };
+    try {
+      expect(volume.dataType).toBe(DataType.UINT64);
+      await readAcrossChunks(17n);
+      await readAcrossChunks(17n);
+      expect(producer.readTile).toHaveBeenCalledTimes(3);
+      expect(source.chunks.size).toBe(3);
+      // A desired-region change clears old labels before the next result exists.
+      result = undefined;
+      await change();
+      await readAcrossChunks(0n);
+      const completed = new Uint32Array(voxelCount).fill(29);
+      result = completed;
+      await change();
+      await readAcrossChunks(29n);
+      await readAcrossChunks(29n);
+      expect(producer.readTile).toHaveBeenCalledTimes(9);
+      // Neither the authoritative regional result nor producer tile replies may
+      // be detached by either RPC leg or mutated by the normal display cache.
+      expect(initial.byteLength).toBe(voxelCount * 4);
+      expect(initial.every((x) => x === 17)).toBe(true);
+      expect(completed.byteLength).toBe(voxelCount * 4);
+      expect(completed.every((x) => x === 29)).toBe(true);
+      expect(copies.every((copy) => copy.byteLength > 0)).toBe(true);
+      expect(copies[0][0]).toBe(17n);
+      expect(copies[6][0]).toBe(29n);
+      // A regional error also clears the display without expiring publication.
+      result = undefined;
+      await change();
+      await readAcrossChunks(0n);
+      expect(producer.readTile).toHaveBeenCalledTimes(12);
+      handle.dispose();
+      handle.dispose();
+      await expect.poll(() => source.chunks.size).toBe(0);
+      expect(producer.dispose).toHaveBeenCalledTimes(1);
+      const count = invalidated.mock.calls.length;
+      producer.changed.dispatch();
+      expect(invalidated).toHaveBeenCalledTimes(count);
+      await expect(getSource(registry, handle.url)).rejects.toThrow(
+        "unavailable",
+      );
+    } finally {
+      removeInvalidated();
       handle.dispose();
       source.dispose();
     }

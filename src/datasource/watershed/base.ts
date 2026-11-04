@@ -99,8 +99,8 @@ export function getWatershedResultInfo(
   return info;
 }
 
-/** Metadata only: the compute voxel limit must not cap the live output domain.
- * LiveWatershed additionally checks float32 indexing and its UINT64 namespace. */
+/** Metadata only: the compute voxel limit applies to the shared viewport region,
+ * not to the full output domain or to independently numbered display chunks. */
 export function getLiveWatershedInfo(
   result: LiveWatershedInfo,
 ): LiveWatershedInfo {

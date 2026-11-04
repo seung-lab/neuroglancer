@@ -65,6 +65,7 @@ interface PublishedResult {
   live?: LiveWatershed;
   removeInvalidation?: () => void;
   readonly sources: Set<WatershedVolumeChunkSource>;
+  invalidatingSources?: boolean;
 }
 
 interface Session {
@@ -74,6 +75,21 @@ interface Session {
 }
 
 const sessions = new WeakMap<ChunkManager, Session>();
+
+function invalidateResultSources(entry: PublishedResult) {
+  if (entry.invalidatingSources) return;
+  entry.invalidatingSources = true;
+  try {
+    // Observers may dispose the publication during invalidation. Finish the
+    // captured sources even if disposal clears the set, without invalidating
+    // them recursively through disposeResult.
+    for (const source of Array.from(entry.sources)) {
+      if (!source.wasDisposed) source.invalidateCache();
+    }
+  } finally {
+    entry.invalidatingSources = false;
+  }
+}
 
 function disposeResult(session: Session, resultId: string) {
   const entry = session.results.get(resultId);
@@ -89,9 +105,7 @@ function disposeResult(session: Session, resultId: string) {
   try {
     live?.dispose();
   } finally {
-    for (const source of entry.sources) {
-      if (!source.wasDisposed) source.invalidateCache();
-    }
+    invalidateResultSources(entry);
     entry.sources.clear();
   }
 }
@@ -196,9 +210,11 @@ export function publishWatershedResult(
 
 /**
  * Synchronous metadata-only publication. Takes lifetime ownership of live,
- * including on failure; no output tiles are retained outside the normal chunk
- * cache. A source invalidation expires the URL and invalidates every dependent
- * chunk cache, just like explicit disposal or ChunkManager teardown.
+ * including on failure. The producer retains one bounded completed regional
+ * UINT32 result, not a private per-tile cache; display chunks are only transport
+ * copies in the ordinary chunk cache. Regional changes invalidate all dependent
+ * chunk caches but keep the URL alive. Only a lifetime abort, explicit disposal,
+ * or ChunkManager teardown expires the URL.
  */
 export function publishLiveWatershed(
   chunkManager: ChunkManager,
@@ -232,10 +248,16 @@ export function publishLiveWatershed(
     session.bytes += byteLength;
     const capturedSession = session;
     const capturedId = resultId;
-    const invalidate = () => disposeResult(capturedSession, capturedId);
-    live.signal.addEventListener("abort", invalidate, { once: true });
-    entry.removeInvalidation = () =>
-      live.signal.removeEventListener("abort", invalidate);
+    const retire = () => disposeResult(capturedSession, capturedId);
+    const removeChanged = live.changed.add(() =>
+      invalidateResultSources(entry),
+    );
+    entry.removeInvalidation = () => {
+      removeChanged();
+      live.signal.removeEventListener("abort", retire);
+    };
+    live.signal.addEventListener("abort", retire, { once: true });
+    live.signal.throwIfAborted();
     return makePublication(session, resultId);
   } catch (error) {
     if (session !== undefined && resultId !== undefined) {
