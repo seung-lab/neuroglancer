@@ -31,12 +31,14 @@ import type { ManagedUserLayer } from "#src/layer/index.js";
 import { deleteLayer, makeLayer } from "#src/layer/index.js";
 import { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import type { ChunkChannelAccessParameters } from "#src/render_coordinate_transform.js";
+import { SliceViewPanel } from "#src/sliceview/panel.js";
 import { UncompressedVolumeChunk } from "#src/sliceview/uncompressed_chunk_format.js";
 import { DataType, VolumeType } from "#src/sliceview/volume/base.js";
 import type { VolumeChunkSource } from "#src/sliceview/volume/frontend.js";
 import { SliceViewVolumeRenderLayer } from "#src/sliceview/volume/renderlayer.js";
 import { makeMinimalViewer } from "#src/ui/minimal_viewer.js";
 import { bindWatershed, type WatershedSession } from "#src/ui/watershed.js";
+import { vec3 } from "#src/util/geom.js";
 import * as matrix from "#src/util/matrix.js";
 import type { Viewer } from "#src/viewer.js";
 import { mswFixture } from "#tests/fixtures/msw_browser.js";
@@ -75,18 +77,16 @@ async function addImage(viewer: Viewer, url: string) {
   const layer = makeLayer(viewer.layerSpecification, "affinities", {
     type: "image",
     source: url,
-    // Explicit native requests below isolate demand from viewport prefetch.
+    // Only the derived segmentation is displayed; source reads remain real.
     visible: false,
     shader: "void main() { emitGrayscale(toNormalized(getDataValue(0))); }",
   });
   viewer.layerSpecification.add(layer);
   await expect.poll(() => layer.isReady(), { timeout: 30_000 }).toBe(true);
   expect(layer.layer).toBeInstanceOf(ImageUserLayer);
-  const image = layer.layer as ImageUserLayer;
-  expect(image.dataSources.map((s) => s.loadState?.error)).toEqual([undefined]);
   expect(
-    image.renderLayers.filter((r) => r instanceof SliceViewVolumeRenderLayer),
-  ).toHaveLength(1);
+    (layer.layer as ImageUserLayer).dataSources.map((s) => s.loadState?.error),
+  ).toEqual([undefined]);
   return layer;
 }
 
@@ -97,11 +97,10 @@ function openWatershed(viewer: Viewer, source: ManagedUserLayer) {
     dispatchTarget: viewer.element,
   });
   expect(session.dialog).toBeDefined();
-  const body = session.dialog!.body;
-  expect(body.querySelector('input[aria-label*="ROI"]')).toBeNull();
-  expect(body.querySelector('input[aria-label="ROI lower X Y Z"]')).toBeNull();
-  expect(body.querySelector('input[aria-label="ROI size X Y Z"]')).toBeNull();
-  const select = body.querySelector("select")!;
+  expect(
+    session.dialog!.body.querySelector('input[aria-label*="ROI"]'),
+  ).toBeNull();
+  const select = session.dialog!.body.querySelector("select")!;
   select.value = String(session.sources.indexOf(source));
   select.dispatchEvent(new Event("change", { bubbles: true }));
   expect(session.source).toBe(source);
@@ -124,11 +123,6 @@ function fill(session: WatershedSession, label: string, value: string) {
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-function configure(session: WatershedSession, channels = [0, 1, 2]) {
-  fill(session, "Channels for −X −Y −Z", channels.join(", "));
-  configureThresholds(session);
-}
-
 function configureThresholds(session: WatershedSession) {
   fill(session, "High threshold", "1");
   fill(session, "Low threshold", "0");
@@ -136,16 +130,30 @@ function configureThresholds(session: WatershedSession) {
   fill(session, "Dust threshold", "0");
 }
 
-async function addFromDialog(session: WatershedSession) {
+function configure(session: WatershedSession, channels = [0, 1, 2]) {
+  fill(session, "Channels for −X −Y −Z", channels.join(", "));
+  configureThresholds(session);
+}
+
+async function addFromDialog(
+  session: WatershedSession,
+  hidden = false,
+  expectedStatus: "info" | "error" = "info",
+) {
   const { viewer } = session;
   const previous = new Set(viewer.layerManager.managedLayers);
-  // Observe, rather than replace, layer creation. Hide synchronously on attach,
-  // before the slice view can demand data: publication must be metadata-only.
-  const hideNewLayer = viewer.layerManager.layersChanged.add(() => {
-    for (const layer of viewer.layerManager.managedLayers)
-      if (!previous.has(layer) && layer.layer instanceof SegmentationUserLayer)
-        layer.setVisible(false);
-  });
+  // Default visibility is part of the contract. Only the explicit hidden-layer
+  // test suppresses visibility synchronously before attachment can demand data.
+  const hideNewLayer = hidden
+    ? viewer.layerManager.layersChanged.add(() => {
+        for (const layer of viewer.layerManager.managedLayers)
+          if (
+            !previous.has(layer) &&
+            layer.layer instanceof SegmentationUserLayer
+          )
+            layer.setVisible(false);
+      })
+    : () => {};
   try {
     const button = Array.from(
       session.dialog!.footer.querySelectorAll("button"),
@@ -159,10 +167,12 @@ async function addFromDialog(session: WatershedSession) {
       );
     await expect.poll(findResult, { timeout: 60_000 }).toBeDefined();
     await expect.poll(() => session.busy).toBe(false);
-    expect(session.statusLevel, session.status).toBe("info");
+    await expect
+      .poll(() => session.statusLevel, { message: session.status })
+      .toBe(expectedStatus);
     const result = findResult()!;
     await expect.poll(() => result.isReady()).toBe(true);
-    expect(result.visible).toBe(false);
+    expect(result.visible).toBe(!hidden);
     return result;
   } finally {
     hideNewLayer();
@@ -181,12 +191,38 @@ const sourceOptions = {
   modelChannelDimensionIndices: [],
   multiscaleToViewTransform: matrix.createIdentity(Float32Array, 3),
 };
+const spacing = [1e-8, 2e-8, 3e-8];
+
+function worldPosition(
+  viewer: {
+    readonly coordinateSpace: Pick<Viewer["coordinateSpace"], "value">;
+  },
+  xyz: number[],
+  offset: number[],
+) {
+  const global = viewer.coordinateSpace.value;
+  return Float32Array.from(global.names, (name, d) => {
+    const axis = ["x", "y", "z"].indexOf(name);
+    return axis === -1
+      ? 0
+      : ((offset[axis] + xyz[axis]) * spacing[axis]) / global.scales[d];
+  });
+}
+
+function positionViewer(
+  viewer: Viewer,
+  xyz: number[],
+  offset: number[],
+  scale = 2,
+) {
+  viewer.position.value = worldPosition(viewer, xyz, offset);
+  viewer.crossSectionScale.value = scale;
+}
 
 function outputSource(
   result: ManagedUserLayer,
-  shapeXYZ: number[],
-  offsetXYZ: number[],
-  spacingXYZ: number[],
+  shape: number[],
+  offset: number[],
 ) {
   const segmentation = result.layer as SegmentationUserLayer;
   expect(segmentation.displayState.hasVolume.value).toBe(true);
@@ -205,14 +241,13 @@ function outputSource(
   expect(dataSource.canonicalUrl).toMatch(/^watershed:\/\/[a-f0-9]+$/);
   const { modelTransform } = dataSource;
   expect([...modelTransform.inputSpace.bounds.lowerBounds]).toEqual([0, 0, 0]);
-  expect([...modelTransform.inputSpace.bounds.upperBounds]).toEqual(shapeXYZ);
+  expect([...modelTransform.inputSpace.bounds.upperBounds]).toEqual(shape);
   expect(modelTransform.outputSpace.names).toEqual(["x", "y", "z"]);
   expect(modelTransform.outputSpace.units).toEqual(["m", "m", "m"]);
-  expect([...modelTransform.outputSpace.scales]).toEqual(spacingXYZ);
+  expect([...modelTransform.outputSpace.scales]).toEqual(spacing);
   const transform = matrix.createIdentity(Float64Array, 4);
-  transform.set(offsetXYZ, 12);
+  transform.set(offset, 12);
   expect(modelTransform.transform).toEqual(transform);
-
   const sources = volume.getSources(sourceOptions);
   cleanup.push(() => {
     for (const alternatives of sources)
@@ -223,21 +258,16 @@ function outputSource(
     matrix.createIdentity(Float32Array, 4),
   );
   expect([...chunkSource.spec.baseVoxelOffset]).toEqual([0, 0, 0]);
-  expect([...chunkSource.spec.upperVoxelBound]).toEqual(shapeXYZ);
+  expect([...chunkSource.spec.upperVoxelBound]).toEqual(shape);
   expect([...chunkSource.spec.chunkDataSize]).toEqual([64, 64, 32]);
   expect(chunkSource.spec.dataType).toBe(DataType.UINT64);
-
-  // Viewer coordinates deliberately need not use the native voxel spacing.
-  const worldPosition = (xyz: number[]) => {
-    const global = result.manager.root.coordinateSpace.value;
-    return Float32Array.from(global.names, (name, d) => {
-      const axis = ["x", "y", "z"].indexOf(name);
-      return axis === -1
-        ? 0
-        : ((offsetXYZ[axis] + xyz[axis]) * spacingXYZ[axis]) / global.scales[d];
-    });
+  return {
+    volume,
+    chunkSource,
+    renderLayer,
+    worldPosition: (xyz: number[]) =>
+      worldPosition(result.manager.root, xyz, offset),
   };
-  return { volume, chunkSource, renderLayer, worldPosition };
 }
 
 function expectPublicationActive(output: ReturnType<typeof outputSource>) {
@@ -250,14 +280,11 @@ function expectPublicationActive(output: ReturnType<typeof outputSource>) {
   }
 }
 
-/** Fetch via real chunk RPC; read the actual UINT64 chunk, not fixture labels. */
-async function readTile(
-  source: VolumeChunkSource,
-  gridX: number,
-  signal = new AbortController().signal,
-) {
+/** Fetch via real chunk RPC; read every actual UINT64 value, not fixture labels. */
+async function readTile(source: VolumeChunkSource, grid: number | number[]) {
+  const gridXYZ = typeof grid === "number" ? [grid, 0, 0] : grid;
   const tile = await source.fetchChunk(
-    Float32Array.of(gridX, 0, 0),
+    Float32Array.from(gridXYZ),
     (chunk) => {
       const volumeChunk = chunk as UncompressedVolumeChunk;
       const size = [...volumeChunk.chunkDataSize];
@@ -266,8 +293,8 @@ async function readTile(
         for (let y = 0; y < size[1]; ++y)
           for (let x = 0; x < size[0]; ++x)
             labels.push(volumeChunk.getValueAt(Uint32Array.of(x, y, z)));
-      // Assertions stay outside the callback: a throwing requester could leave
-      // fetchChunk waiting forever instead of reporting the failed assertion.
+      // Assertions stay outside the callback: a throwing requester can otherwise
+      // leave fetchChunk waiting rather than report the assertion failure.
       return {
         uncompressed: chunk instanceof UncompressedVolumeChunk,
         uint64: volumeChunk.data instanceof BigUint64Array,
@@ -275,16 +302,16 @@ async function readTile(
         size,
         labels,
         firstViaSource: source.getValueAt(
-          Float32Array.of(gridX * 64, 0, 0),
+          Float32Array.from(gridXYZ, (n, d) => n * [64, 64, 32][d]),
           scalarAccess,
         ),
       };
     },
-    { signal },
+    { signal: new AbortController().signal },
   );
   expect(tile.uncompressed).toBe(true);
   expect(tile.uint64).toBe(true);
-  expect(tile.grid).toEqual([gridX, 0, 0]);
+  expect(tile.grid).toEqual(gridXYZ);
   expect(typeof tile.labels[0]).toBe("bigint");
   expect(tile.firstViaSource).toBe(tile.labels[0]);
   return tile;
@@ -299,21 +326,122 @@ function expectedTile(
   );
 }
 
+/** A GPU_MEMORY chunk can still contain pending zeros. Wait for real labels and
+ * publication-driven invalidation, without manually invalidating the cache. */
+async function awaitTile(
+  source: VolumeChunkSource,
+  grid: number | number[],
+  first: bigint,
+) {
+  await expect
+    .poll(async () => (await readTile(source, grid)).labels[0], {
+      timeout: 60_000,
+    })
+    .toBe(first);
+  return readTile(source, grid);
+}
+
+const delay = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
 async function settleView() {
-  // Let both viewport priority updates and their worker messages settle.
   for (let i = 0; i < 2; ++i)
     await new Promise<void>((resolve) =>
       requestAnimationFrame(() => resolve()),
     );
 }
 
-function observeWatershedWorker() {
-  // A call-through spy on the real async worker protocol, not fake compute.
-  const messages = vi.spyOn(Worker.prototype, "postMessage");
-  return () =>
-    messages.mock.calls
-      .filter(([message]) => message?.t === "abissWatershed")
-      .map(([message]) => [...message.args[1]] as number[]);
+/** Call through to the real computation worker. Optionally hold delivery of its
+ * first replies, never replacing the native computation or its returned data. */
+function observeWatershedWorker(holdReplies = 0) {
+  const jobs: Array<{ shape: number[]; release?: () => void }> = [];
+  const original = Worker.prototype.postMessage;
+  vi.spyOn(Worker.prototype, "postMessage").mockImplementation(function (
+    this: Worker,
+    ...args
+  ) {
+    const [message] = args;
+    if (message?.t === "abissWatershed") {
+      const index = jobs.length;
+      const job: (typeof jobs)[number] = { shape: [...message.args[1]] };
+      jobs.push(job);
+      if (index < holdReplies) {
+        const worker = this;
+        const onmessage = worker.onmessage;
+        const intercept = (event: MessageEvent) => {
+          if (event.data?.id !== message.id) {
+            onmessage?.call(worker, event);
+            return;
+          }
+          worker.onmessage = onmessage;
+          let released = false;
+          job.release = () => {
+            if (released) return;
+            released = true;
+            onmessage?.call(worker, event);
+          };
+        };
+        // Worker EventTarget dispatches handlers in registration order, so a
+        // later capture listener cannot prevent its earlier onmessage handler.
+        worker.onmessage = intercept;
+        cleanup.push(() => {
+          if (worker.onmessage === intercept) worker.onmessage = onmessage;
+          job.release?.();
+        });
+      }
+    }
+    return Reflect.apply(original, this, args);
+  });
+  return {
+    shapes: () => jobs.map((job) => job.shape),
+    hasReply: (index: number) => jobs[index]?.release !== undefined,
+    release: (index: number) => {
+      expect(jobs[index]?.release).toBeDefined();
+      jobs[index].release!();
+    },
+  };
+}
+
+/** Independent oracle for these axis-aligned, actual panel rectangles. NDC z=0
+ * is the selected slice, NOT the perspective camera near/far frustum. */
+function visibleHaloShape(viewer: Viewer, shape: number[], offset: number[]) {
+  const lower = [Infinity, Infinity, Infinity];
+  const upper = [-Infinity, -Infinity, -Infinity];
+  const global = viewer.coordinateSpace.value;
+  const panels = [...viewer.display.panels].filter(
+    (panel): panel is SliceViewPanel =>
+      panel instanceof SliceViewPanel &&
+      panel.renderViewport.width > 0 &&
+      panel.renderViewport.height > 0,
+  );
+  expect(panels.length).toBeGreaterThan(0);
+  for (const panel of panels) {
+    const p = panel.sliceView.projectionParameters.value;
+    for (const x of [-1, 1])
+      for (const y of [-1, 1]) {
+        const point = vec3.transformMat4(
+          vec3.create(),
+          [x, y, 0],
+          p.invViewProjectionMat,
+        );
+        for (let axis = 0; axis < 3; ++axis) {
+          const d = global.names.indexOf(["x", "y", "z"][axis]);
+          const displayAxis =
+            p.displayDimensionRenderInfo.displayDimensionIndices.indexOf(d);
+          const native =
+            (point[displayAxis] * global.scales[d]) / spacing[axis] -
+            offset[axis];
+          const rounded = Math.round(native);
+          const n = Math.abs(native - rounded) < 1e-4 ? rounded : native;
+          lower[axis] = Math.min(lower[axis], n);
+          upper[axis] = Math.max(upper[axis], n);
+        }
+      }
+  }
+  return lower.map((n, d) => {
+    const lo = Math.max(0, Math.floor(n));
+    const hi = Math.min(shape[d], Math.max(lo + 1, Math.ceil(upper[d])));
+    return Math.min(shape[d], hi + 8) - Math.max(0, lo - 8);
+  });
 }
 
 async function precomputed(
@@ -381,8 +509,6 @@ async function liveFixture(viewer: Viewer, gateX?: number) {
   const input = prepareInferenceInput(raw.layer as ImageUserLayer);
   cleanup.push(() => input.dispose());
   const readPatch = vi.spyOn(input, "readPatch");
-  // A per-voxel identity geometry keeps the fixture small, with the actual
-  // published inference chunks still 60x60x16 (crossing watershed's x=64).
   const geometry = makeModelGeometry(
     { inputShape: [1, 1, 1, 1, 1], outputShape: [1, 4, 1, 1, 1] },
     [input.spacingZYX[0], input.spacingZYX[1], input.spacingZYX[2]],
@@ -399,7 +525,6 @@ async function liveFixture(viewer: Viewer, gateX?: number) {
   const run = vi.fn<OnnxInferenceController["run"]>(async (source, options) => {
     const abort = (active = new AbortController());
     signals.push(abort.signal);
-    // This awaited native read is essential to the three-tier scheduling test.
     const patch = await source.readPatch(
       options.originZYX,
       options.shapeZYX,
@@ -411,7 +536,7 @@ async function liveFixture(viewer: Viewer, gateX?: number) {
       lateReturned = true;
     }
     const data = new Float32Array(patch.length * 4).fill(1);
-    data.set(patch); // Real normalized raw values become the -X affinities.
+    data.set(patch);
     active = undefined;
     return {
       data,
@@ -463,8 +588,8 @@ async function liveFixture(viewer: Viewer, gateX?: number) {
   };
 }
 
-describe("live watershed integration (real WebGL, chunk RPC and WASM workers)", () => {
-  it("publishes lazily with native UINT64 placement, preserves cache on default-subsource toggles and recomputes identical labels after eviction", async () => {
+describe("regional live watershed (real WebGL, chunk RPC and native WASM)", () => {
+  it("copies zeros while hidden, then computes one shared domain with identical basin IDs across display chunks and cache eviction", async () => {
     const jobs = observeWatershedWorker();
     const wasmRequests: string[] = [];
     (await server()).use(
@@ -474,7 +599,7 @@ describe("live watershed integration (real WebGL, chunk RPC and WASM workers)", 
       }),
     );
     const native = await precomputed(
-      "https://watershed-integration.invalid/static",
+      "https://watershed-integration.invalid/regional",
       [148, 5, 4],
       [10, 20, -3],
       [32, 5, 4],
@@ -489,68 +614,38 @@ describe("live watershed integration (real WebGL, chunk RPC and WASM workers)", 
       z: [15e-9, "m"],
     });
     const image = await addImage(viewer, native.url);
+    positionViewer(viewer, [74.5, 2.5, 1.5], [10, 20, -3]);
     const session = openWatershed(viewer, image);
-    expect(session.metadata?.upperBoundXYZ).toEqual([148, 5, 4]);
     configure(session, [2, 0, 3]);
-    const result = await addFromDialog(session);
-    const output = outputSource(
-      result,
-      [148, 5, 4],
-      [10, 20, -3],
-      [1e-8, 2e-8, 3e-8],
-    );
-    // Frames have passed after publication, yet neither source nor WASM ran.
-    await settleView();
+    const result = await addFromDialog(session, true);
+    const output = outputSource(result, [148, 5, 4], [10, 20, -3]);
+    for (const grid of [0, 1, 2]) {
+      const pending = await readTile(output.chunkSource, grid);
+      expect(pending.labels).toEqual(expectedTile(pending.size, () => 0n));
+    }
+    await delay(250);
     expect(native.chunks).toEqual([]);
-    expect(jobs()).toEqual([]);
-
-    viewer.position.value = output.worldPosition([16.5, 2.5, 1.5]);
-    const first = await readTile(output.chunkSource, 0);
+    expect(jobs.shapes()).toEqual([]); // Reads NEVER schedule WASM, even on a miss.
+    result.setVisible(true);
+    const first = await awaitTile(output.chunkSource, 0, 1n);
+    const second = await awaitTile(output.chunkSource, 1, 2n);
+    const edge = await awaitTile(output.chunkSource, 2, 3n);
     expect(first.size).toEqual([64, 5, 4]);
-    expect(first.labels).toEqual(
-      expectedTile(first.size, (x) => (x < 32 ? 1n : 33n)),
-    );
-    expect(jobs()).toEqual([[72, 5, 4]]); // Eight-voxel halo, clipped at the domain.
-    expect(native.chunks).toEqual([
-      "10-42_20-25_-3-1",
-      "42-74_20-25_-3-1",
-      "74-106_20-25_-3-1",
-    ]);
-    const firstCached = output.chunkSource.chunks.get("0,0,0");
-
-    viewer.position.value = output.worldPosition([80.5, 2.5, 1.5]);
-    const second = await readTile(output.chunkSource, 1);
-    expect(second.size).toEqual([64, 5, 4]);
-    expect(second.labels).toEqual(
-      expectedTile(second.size, (x) => (x < 32 ? 131073n : 131105n)),
-    );
-    // Even connected neighbors x=63/64 have disjoint, stable block namespaces:
-    // no accidental cross-block merges and no claim of global stitching.
-    expect(first.labels[63]).not.toBe(second.labels[0]);
-    expect(jobs()).toEqual([
-      [72, 5, 4],
-      [80, 5, 4],
-    ]);
-    const fetches = native.chunks.length;
-    viewer.position.value = output.worldPosition([16.5, 2.5, 1.5]);
-    expect((await readTile(output.chunkSource, 0)).labels).toEqual(
-      first.labels,
-    );
-    expect(output.chunkSource.chunks.get("0,0,0")).toBe(firstCached);
-    await settleView();
-    expect(native.chunks).toHaveLength(fetches);
-    expect(jobs()).toHaveLength(2);
-
-    viewer.position.value = output.worldPosition([130.5, 2.5, 1.5]);
-    const edge = await readTile(output.chunkSource, 2);
     expect(edge.size).toEqual([20, 5, 4]);
-    expect(edge.labels).toEqual(
-      expectedTile(edge.size, (x) => (x < 8 ? 262145n : 0n)),
+    expect(first.labels).toEqual(
+      expectedTile(first.size, (x) => (x < 32 ? 1n : 2n)),
     );
-    expect(jobs()).toEqual([
-      [72, 5, 4],
-      [80, 5, 4],
-      [28, 5, 4],
+    expect(second.labels).toEqual(
+      expectedTile(second.size, (x) => (x < 32 ? 2n : 3n)),
+    );
+    expect(edge.labels).toEqual(
+      expectedTile(edge.size, (x) => (x < 8 ? 3n : 0n)),
+    );
+    expect(first.labels[63]).toBe(second.labels[0]);
+    expect(second.labels[63]).toBe(edge.labels[0]);
+    expect(jobs.shapes()).toEqual([[148, 5, 4]]);
+    expect(visibleHaloShape(viewer, [148, 5, 4], [10, 20, -3])).toEqual([
+      148, 5, 4,
     ]);
     expect(new Set(native.chunks)).toEqual(
       new Set([
@@ -561,75 +656,42 @@ describe("live watershed integration (real WebGL, chunk RPC and WASM workers)", 
         "138-158_20-25_-3-1",
       ]),
     );
+    expect(native.chunks).toHaveLength(5); // Input fetching remains chunked.
     expect(wasmRequests.length).toBeGreaterThan(0);
-    expect(native.chunks).toHaveLength(5);
 
-    // Match the Data sources tab's checkbox setter: disabling default selection
-    // changes serialization metadata, NOT the currently enabled subsource flags.
     const source = (image.layer as ImageUserLayer).dataSources[0].loadState;
     if (source === undefined || source.error !== undefined)
-      throw new Error("Affinity datasource did not load successfully");
-    expect(source.enableDefaultSubsources).toBe(true);
-    const enabledBefore = source.subsources.map((s) => s.enabled);
-    const cachedBefore = new Map(output.chunkSource.chunks);
-    expect(cachedBefore.size).toBe(3);
-    const fetchesBeforeToggle = native.chunks.length;
+      throw new Error("Affinity datasource unavailable");
+    const enabled = source.subsources.map((s) => s.enabled);
+    const cached = new Map(output.chunkSource.chunks);
     source.enableDefaultSubsources = false;
     source.enabledSubsourcesChanged.dispatch();
     await settleView();
-    expect(source.enableDefaultSubsources).toBe(false);
-    expect(source.subsources.map((s) => s.enabled)).toEqual(enabledBefore);
-    expect(viewer.layerManager.has(result)).toBe(true);
-    expect(session.statusLevel, session.status).toBe("info");
+    await delay(200);
+    expect(source.subsources.map((s) => s.enabled)).toEqual(enabled);
     expectPublicationActive(output);
-    expect(output.chunkSource.chunks.size).toBe(cachedBefore.size);
-    for (const [key, chunk] of cachedBefore)
+    for (const [key, chunk] of cached)
       expect(output.chunkSource.chunks.get(key)).toBe(chunk);
-    expect((await readTile(output.chunkSource, 0)).labels).toEqual(
-      first.labels,
-    );
-    expect(native.chunks).toHaveLength(fetchesBeforeToggle);
-    expect(jobs()).toHaveLength(3);
+    expect(jobs.shapes()).toHaveLength(1);
 
-    // Evict the actual frontend/backend output cache, not the publication.
-    // With the layer hidden, only the explicit requests below can recompute it.
-    const nativeFetchesBeforeEviction = native.chunks.length;
+    // Evict only display copies: a finished regional result survives and must
+    // refill them without another native input read or watershed kernel.
     output.chunkSource.invalidateCache();
-    await expect.poll(() => output.chunkSource.chunks.size).toBe(0);
-    expectPublicationActive(output);
-    for (const [gridX, before] of [first, second, edge].entries()) {
-      const recomputed = await readTile(output.chunkSource, gridX);
-      expect(recomputed.size).toEqual(before.size);
-      expect(recomputed.labels).toEqual(before.labels);
-    }
-    // Three more real WASM jobs prove there is no private output cache; exact
-    // bigint equality includes disjoint block namespaces and edge background.
-    expect(jobs()).toEqual([
-      [72, 5, 4],
-      [80, 5, 4],
-      [28, 5, 4],
-      [72, 5, 4],
-      [80, 5, 4],
-      [28, 5, 4],
-    ]);
-    expect(output.chunkSource.chunks.size).toBe(3);
-    // Invalidating only output must leave the independent native input cache.
-    expect(native.chunks).toHaveLength(nativeFetchesBeforeEviction);
-    expect(result.isReady()).toBe(true);
-    expect(session.statusLevel, session.status).toBe("info");
-
-    // Exercise the displayed layer's global transform and real GPU upload too.
-    viewer.crossSectionScale.value = 0.01;
-    result.setVisible(true);
+    for (const [grid, before] of [first, second, edge].entries())
+      expect((await readTile(output.chunkSource, grid)).labels).toEqual(
+        before.labels,
+      );
+    expect(jobs.shapes()).toEqual([[148, 5, 4]]);
+    expect(native.chunks).toHaveLength(5);
     await expect
-      .poll(() => output.renderLayer.visibleSourcesList.length)
-      .toBeGreaterThan(0);
-    await expect
-      .poll(() => output.chunkSource.chunks.get("2,0,0")?.state)
+      .poll(() => output.chunkSource.chunks.get("1,0,0")?.state)
       .toBe(ChunkState.GPU_MEMORY);
     expect(
-      output.renderLayer.getValueAt(output.worldPosition([130.5, 2.5, 1.5])),
-    ).toBe(262145n);
+      output.renderLayer.getValueAt(output.worldPosition([63.5, 2.5, 1.5])),
+    ).toBe(2n);
+    expect(
+      output.renderLayer.getValueAt(output.worldPosition([64.5, 2.5, 1.5])),
+    ).toBe(2n);
     expect(
       output.renderLayer.getValueAt(output.worldPosition([140.5, 2.5, 1.5])),
     ).toBe(0n);
@@ -639,244 +701,146 @@ describe("live watershed integration (real WebGL, chunk RPC and WASM workers)", 
     expect(
       output.renderLayer.getValueAt(output.worldPosition([-0.5, 2.5, 1.5])),
     ).toBeNull();
-    expect(jobs()).toHaveLength(6);
-    deleteLayer(result);
+    deleteLayer(image);
+    await expect.poll(() => viewer.layerManager.has(result)).toBe(false);
+    expect(session.statusLevel).toBe("error");
     expect(() => output.volume.getSources(sourceOptions)).toThrow(
       /unavailable/,
     );
-    expect(viewer.layerManager.managedLayers).toEqual([image]);
+    await expect.poll(() => output.chunkSource.chunks.size).toBe(0);
   }, 90_000);
 
-  it("schedules tier2 → tier1 → tier0 with download itemLimit=1, reuses cached tiles and reacts to ONNX revocation with its image retained", async () => {
+  it("unions all three actual orthogonal slice rectangles into ONE domain, ignoring the 3D camera frustum", async () => {
     const jobs = observeWatershedWorker();
+    const shape = [148, 50, 48],
+      offset = [10, 20, -3];
+    const native = await precomputed(
+      "https://watershed-integration.invalid/multiview",
+      shape,
+      offset,
+      [32, 25, 16],
+      3,
+      () => 255,
+    );
     const viewer = makeViewer();
-    const capacity =
-      viewer.dataContext.chunkManager.chunkQueueManager.capacities.download;
-    capacity.itemLimit.value = 1;
-    expect(capacity.itemLimit.value).toBe(1);
-    const f = await liveFixture(viewer);
-    const result = await addFromDialog(f.session);
-    const output = outputSource(
-      result,
-      [180, 60, 16],
-      [4, 6, -2],
-      [1e-8, 2e-8, 3e-8],
-    );
-    await settleView();
-    expect(f.native.chunks).toEqual([]);
-    expect(f.run).not.toHaveBeenCalled();
-    expect(f.readPatch).not.toHaveBeenCalled();
-    expect(jobs()).toEqual([]);
-
-    viewer.position.value = output.worldPosition([32.5, 20.5, 8.5]);
-    const first = await readTile(output.chunkSource, 0);
-    expect(first.size).toEqual([64, 60, 16]);
-    expect(first.labels).toEqual(
-      expectedTile(first.size, (x) => (x < 60 ? 1n : 61n)),
-    );
-    expect(f.origins()).toEqual([
-      [0, 0, 0],
-      [0, 0, 60],
-    ]);
-    expect(f.readPatch).toHaveBeenCalledTimes(2);
-    expect(f.native.chunks).toHaveLength(4);
-    expect(jobs()).toEqual([[72, 60, 16]]);
-
-    viewer.crossSectionScale.value = 0.01;
-    result.setVisible(true);
-    await expect
-      .poll(() => output.chunkSource.chunks.get("0,0,0")?.state)
-      .toBe(ChunkState.GPU_MEMORY);
-    viewer.position.value = output.worldPosition([96.5, 20.5, 8.5]);
-    // No explicit fetch for this tile: navigation itself must demand it.
-    await expect
-      .poll(() => output.chunkSource.chunks.get("1,0,0")?.state, {
-        timeout: 60_000,
-      })
-      .toBe(ChunkState.GPU_MEMORY);
-    const second = await readTile(output.chunkSource, 1);
-    expect(second.labels).toEqual(
-      expectedTile(second.size, (x) => (x < 56 ? 131073n : 131129n)),
-    );
-    expect(f.origins()).toEqual([
-      [0, 0, 0],
-      [0, 0, 60],
-      [0, 0, 120],
-    ]);
-    expect(f.readPatch).toHaveBeenCalledTimes(3);
-    expect(f.native.chunks).toHaveLength(6);
-    expect(jobs()).toEqual([
-      [72, 60, 16],
-      [80, 60, 16],
-    ]);
-    expect(f.cancel).not.toHaveBeenCalled();
+    viewer.layout.restoreState("4panel");
+    const image = await addImage(viewer, native.url);
+    positionViewer(viewer, [74.5, 25.5, 24.5], offset);
+    const session = openWatershed(viewer, image);
+    configure(session);
+    const result = await addFromDialog(session);
+    const output = outputSource(result, shape, offset);
+    const first = await awaitTile(output.chunkSource, 0, 1n);
+    const neighbor = await awaitTile(output.chunkSource, 1, 1n);
+    const edge = await awaitTile(output.chunkSource, [2, 0, 1], 1n);
+    expect(first.labels).toEqual(expectedTile(first.size, () => 1n));
+    expect(neighbor.labels).toEqual(expectedTile(neighbor.size, () => 1n));
+    expect(edge.size).toEqual([20, 50, 16]);
+    expect(edge.labels).toEqual(expectedTile(edge.size, () => 1n));
     expect(
-      output.renderLayer.getValueAt(output.worldPosition([64.5, 20.5, 8.5])),
-    ).toBe(131073n);
-
-    viewer.position.value = output.worldPosition([32.5, 20.5, 8.5]);
-    expect((await readTile(output.chunkSource, 0)).labels).toEqual(
-      first.labels,
-    );
+      [...viewer.display.panels].filter((p) => p instanceof SliceViewPanel),
+    ).toHaveLength(3);
+    expect(visibleHaloShape(viewer, shape, offset)).toEqual(shape);
+    // XY alone plus halo would cover only 17 Z slices, not all 48. Neither
+    // independent per-view kernels nor per-render-chunk kernels can pass this.
+    expect(jobs.shapes()).toEqual([shape]);
+    viewer.projectionScale.value *= 1000;
     await settleView();
-    expect(f.run).toHaveBeenCalledTimes(3);
-    expect(f.native.chunks).toHaveLength(6);
-    expect(jobs()).toHaveLength(2);
-    expect(output.chunkSource.chunks.size).toBe(2);
-    expectPublicationActive(output);
-
-    const affinityImage = f.image.layer as ImageUserLayer;
-    const affinityRenderLayer = affinityImage.renderLayers.find(
-      (r): r is SliceViewVolumeRenderLayer =>
-        r instanceof SliceViewVolumeRenderLayer,
-    )!;
-    const affinitySources = affinityRenderLayer.multiscaleSource.getSources({
-      ...sourceOptions,
-      discreteValues: false,
-      modelChannelDimensionIndices: [3],
-    });
-    cleanup.push(() => {
-      for (const alternatives of affinitySources)
-        for (const { chunkSource } of alternatives) chunkSource.dispose();
-    });
-    expect(affinitySources[0][0].chunkSource.chunks.size).toBe(3);
-
-    // Restore/replacement can revoke ONNX without deleting its image layer.
-    // No isValid/assertValid/readTile calls after this point may drive cleanup:
-    // real publication disposal must signal the prepared affinity input itself.
-    f.publication.dispose();
-    await expect
-      .poll(() => viewer.layerManager.has(result), { timeout: 5_000 })
-      .toBe(false);
-    expect(viewer.layerManager.managedLayers).toEqual([f.raw, f.image]);
-    expect(f.image.layer).toBe(affinityImage);
-    expect(f.session.statusLevel, f.session.status).toBe("error");
-    expect(f.session.status).toMatch(/Watershed stopped/);
-    expect(() => output.volume.getSources(sourceOptions)).toThrow(
-      /unavailable/,
-    );
-    await expect
-      .poll(() => output.chunkSource.chunks.size, { timeout: 5_000 })
-      .toBe(0);
-    expect(f.run).toHaveBeenCalledTimes(3);
-    expect(f.native.chunks).toHaveLength(6);
-    expect(jobs()).toHaveLength(2);
+    await delay(250);
+    expect(jobs.shapes()).toEqual([shape]);
+    expect(
+      output.renderLayer.getValueAt(output.worldPosition([64.5, 25.5, 24.5])),
+    ).toBe(1n);
+    expect(native.chunks.length).toBeGreaterThan(1);
   }, 90_000);
 
-  it("cancels offscreen demand through both RPC tiers and discards an inference result returned late", async () => {
-    const jobs = observeWatershedWorker();
+  it("debounces navigation, clears old labels, and discards an obsolete real kernel before serially starting the latest region", async () => {
+    const jobs = observeWatershedWorker(3);
+    const shape = [384, 20, 16],
+      offset = [4, 6, -2];
+    const native = await precomputed(
+      "https://watershed-integration.invalid/navigation",
+      shape,
+      offset,
+      [32, 20, 16],
+      3,
+      (x, _y, _z, c) => (c === 0 && x === 256 ? 0 : 255),
+    );
     const viewer = makeViewer();
-    viewer.dataContext.chunkManager.chunkQueueManager.capacities.download.itemLimit.value = 1;
-    const f = await liveFixture(viewer, 120);
-    const result = await addFromDialog(f.session);
-    const output = outputSource(
-      result,
-      [180, 60, 16],
-      [4, 6, -2],
-      [1e-8, 2e-8, 3e-8],
-    );
-    viewer.position.value = output.worldPosition([96.5, 20.5, 8.5]);
-    viewer.crossSectionScale.value = 0.01;
-    result.setVisible(true);
-    await expect.poll(() => f.gated, { timeout: 60_000 }).toBe(true);
-    expect(f.native.chunks).toHaveLength(6); // Even the gated run read real raw data.
-    expect(f.signals[2].aborted).toBe(false);
-    viewer.position.value = output.worldPosition([32.5, 20.5, 8.5]);
-    // Only navigation removes demand: no test-owned AbortController or mock RPC.
-    await expect.poll(() => f.signals[2].aborted).toBe(true);
-    expect(f.cancel).toHaveBeenCalledTimes(1);
-    f.release();
-    await expect.poll(() => f.lateReturned).toBe(true);
-    await expect
-      .poll(() => output.chunkSource.chunks.get("0,0,0")?.state, {
-        timeout: 60_000,
-      })
-      .toBe(ChunkState.GPU_MEMORY);
-    expect(output.chunkSource.chunks.has("1,0,0")).toBe(false);
-    expect(jobs()).toEqual([[72, 60, 16]]);
+    const image = await addImage(viewer, native.url);
+    positionViewer(viewer, [90.5, 10.5, 8.5], offset, 0.3);
+    const session = openWatershed(viewer, image);
+    configure(session);
+    const result = await addFromDialog(session);
+    const output = outputSource(result, shape, offset);
+    await expect.poll(() => jobs.hasReply(0), { timeout: 60_000 }).toBe(true);
+    const initialHalo = visibleHaloShape(viewer, shape, offset);
+    expect(jobs.shapes()).toEqual([initialHalo]);
+    const pending = await readTile(output.chunkSource, 1);
+    expect(pending.labels).toEqual(expectedTile(pending.size, () => 0n));
+    // These distinct rectangles arrive less than 150 ms apart. Only the last
+    // one may become a kernel; the first native reply remains physically held.
+    for (const x of [180.5, 240.5, 290.5]) {
+      viewer.position.value = output.worldPosition([x, 10.5, 8.5]);
+      await settleView();
+      await delay(25);
+      expect(jobs.shapes()).toHaveLength(1);
+    }
+    const latestHalo = visibleHaloShape(viewer, shape, offset);
+    await delay(250);
+    expect(jobs.shapes()).toHaveLength(1); // Cancellation cannot free the slot.
+    jobs.release(0);
+    await expect.poll(() => jobs.hasReply(1), { timeout: 60_000 }).toBe(true);
+    expect(jobs.shapes()).toEqual([initialHalo, latestHalo]);
+    // The obsolete native result was real and has now returned, but must never
+    // populate either its old display tile or the pending new domain.
+    for (const grid of [1, 5]) {
+      const blank = await readTile(output.chunkSource, grid);
+      expect(blank.labels).toEqual(expectedTile(blank.size, () => 0n));
+    }
+    jobs.release(1);
+    const left = await awaitTile(output.chunkSource, 3, 1n);
+    const right = await awaitTile(output.chunkSource, 4, 2n);
+    const edge = await awaitTile(output.chunkSource, 5, 2n);
+    expect(left.labels).toEqual(expectedTile(left.size, () => 1n));
+    expect(right.labels).toEqual(expectedTile(right.size, () => 2n));
+    expect(edge.labels).toEqual(expectedTile(edge.size, () => 2n));
+    expect(right.labels[63]).toBe(edge.labels[0]);
+    const outside = await readTile(output.chunkSource, 1);
+    expect(outside.labels).toEqual(expectedTile(outside.size, () => 0n));
+    expect(jobs.shapes()).toHaveLength(2);
 
-    const first = await readTile(output.chunkSource, 0);
-    expect(first.labels).toEqual(
-      expectedTile(first.size, (x) => (x < 60 ? 1n : 61n)),
-    );
-    expect(f.run).toHaveBeenCalledTimes(3); // Earlier inference tiles stayed cached.
-    viewer.position.value = output.worldPosition([96.5, 20.5, 8.5]);
+    // Repeat with a FREE kernel slot and a previously published nonzero result:
+    // serialization alone must not masquerade as navigation debounce.
+    for (const x of [220.5, 190.5, 150.5]) {
+      viewer.position.value = output.worldPosition([x, 10.5, 8.5]);
+      await settleView();
+      await delay(25);
+      expect(jobs.shapes()).toHaveLength(2);
+    }
+    const finalHalo = visibleHaloShape(viewer, shape, offset);
+    await expect.poll(() => jobs.hasReply(2), { timeout: 60_000 }).toBe(true);
+    expect(jobs.shapes()).toEqual([initialHalo, latestHalo, finalHalo]);
+    // This was ID 2 before navigation. Await the real cache invalidation,
+    // rather than manually evicting a stale display copy to make it pass.
     await expect
-      .poll(() => output.chunkSource.chunks.get("1,0,0")?.state, {
-        timeout: 60_000,
-      })
-      .toBe(ChunkState.GPU_MEMORY);
-    const retried = await readTile(output.chunkSource, 1);
-    expect(retried.labels).toEqual(
-      expectedTile(retried.size, (x) => (x < 56 ? 131073n : 131129n)),
-    );
-    expect(f.origins()).toEqual([
-      [0, 0, 0],
-      [0, 0, 60],
-      [0, 0, 120],
-      [0, 0, 120],
-    ]);
-    expect(f.native.chunks).toHaveLength(6); // Native cache survived cancellation.
-    expect(jobs()).toEqual([
-      [72, 60, 16],
-      [80, 60, 16],
-    ]);
-    expect(f.session.statusLevel, f.session.status).toBe("info");
+      .poll(async () => (await readTile(output.chunkSource, 5)).labels[0])
+      .toBe(0n);
+    const cleared = await readTile(output.chunkSource, 5);
+    expect(cleared.labels).toEqual(expectedTile(cleared.size, () => 0n));
+    const waiting = await readTile(output.chunkSource, 1);
+    expect(waiting.labels).toEqual(expectedTile(waiting.size, () => 0n));
+    jobs.release(2);
+    const final = await awaitTile(output.chunkSource, 1, 1n);
+    expect(final.labels).toEqual(expectedTile(final.size, () => 1n));
+    expect(jobs.shapes()).toHaveLength(3);
+    expect(session.statusLevel, session.status).toBe("info");
   }, 90_000);
 
-  it("deleting a layer aborts active dependencies, expires its URL and cannot commit late work or kill the shared source", async () => {
-    const jobs = observeWatershedWorker();
-    const viewer = makeViewer();
-    const f = await liveFixture(viewer, 0);
-    const result = await addFromDialog(f.session);
-    const output = outputSource(
-      result,
-      [180, 60, 16],
-      [4, 6, -2],
-      [1e-8, 2e-8, 3e-8],
-    );
-    viewer.position.value = output.worldPosition([32.5, 20.5, 8.5]);
-    viewer.crossSectionScale.value = 0.01;
-    result.setVisible(true);
-    await expect.poll(() => f.gated, { timeout: 60_000 }).toBe(true);
-    expect(f.native.chunks).toHaveLength(2);
-    deleteLayer(result);
-    expect(() => output.volume.getSources(sourceOptions)).toThrow(
-      /unavailable/,
-    );
-    await expect.poll(() => f.signals[0].aborted).toBe(true);
-    f.release();
-    await expect.poll(() => f.lateReturned).toBe(true);
-    expect(output.chunkSource.chunks.size).toBe(0);
-    expect(jobs()).toEqual([]);
-    expect(viewer.layerManager.managedLayers).toEqual([f.raw, f.image]);
-    expect(f.input.isValid()).toBe(true);
-
-    // Reuse the same real source with a new publication after deletion.
-    const replacement = await addFromDialog(f.session);
-    const next = outputSource(
-      replacement,
-      [180, 60, 16],
-      [4, 6, -2],
-      [1e-8, 2e-8, 3e-8],
-    );
-    const first = await readTile(next.chunkSource, 0);
-    expect(first.labels).toEqual(
-      expectedTile(first.size, (x) => (x < 60 ? 1n : 61n)),
-    );
-    expect(f.origins()).toEqual([
-      [0, 0, 0],
-      [0, 0, 0],
-      [0, 0, 60],
-    ]);
-    expect(jobs()).toEqual([[72, 60, 16]]);
-    expect(f.session.statusLevel, f.session.status).toBe("info");
-  }, 90_000);
-
-  it("automatically duplicates native scalar probabilities and demands aligned UINT64 tiles as the viewer navigates, without an ROI", async () => {
+  it("automatically repeats scalar probabilities over XYZ and preserves exact regional splits across a display boundary", async () => {
     const jobs = observeWatershedWorker();
     const native = await precomputed(
-      "https://watershed-integration.invalid/scalar-probabilities",
+      "https://watershed-integration.invalid/scalar",
       [148, 5, 4],
       [10, 20, -3],
       [32, 5, 4],
@@ -884,128 +848,43 @@ describe("live watershed integration (real WebGL, chunk RPC and WASM workers)", 
       (x) => ((x >= 30 && x < 34) || (x >= 94 && x < 98) || x >= 136 ? 0 : 255),
     );
     const viewer = makeViewer();
-    viewer.coordinateSpace.restoreState({
-      x: [5e-9, "m"],
-      y: [10e-9, "m"],
-      z: [15e-9, "m"],
-    });
     const image = await addImage(viewer, native.url);
-    const imageRenderLayer = (image.layer as ImageUserLayer).renderLayers.find(
-      (r): r is SliceViewVolumeRenderLayer =>
-        r instanceof SliceViewVolumeRenderLayer,
-    )!;
-    expect(imageRenderLayer.multiscaleSource.rank).toBe(3);
+    positionViewer(viewer, [74.5, 2.5, 1.5], [10, 20, -3]);
     const session = openWatershed(viewer, image);
     expect(field(session, "Channels for −X −Y −Z").value).toBe("0, 0, 0");
     expect(field(session, "Use last channel as mask").checked).toBe(false);
     expect(field(session, "Use last channel as mask").disabled).toBe(true);
-    // Leave the automatic channel mapping untouched; edit only algorithm knobs.
-    configureThresholds(session);
+    configureThresholds(session); // Do not override the automatic mapping.
     const result = await addFromDialog(session);
-    const output = outputSource(
-      result,
-      [148, 5, 4],
-      [10, 20, -3],
-      [1e-8, 2e-8, 3e-8],
-    );
-    await settleView();
-    expect(native.chunks).toEqual([]);
-    expect(jobs()).toEqual([]);
-
-    viewer.position.value = output.worldPosition([16.5, 2.5, 1.5]);
-    const first = await readTile(output.chunkSource, 0);
-    expect(first.size).toEqual([64, 5, 4]);
-    // Probabilities are duplicated to all three negative-axis affinities, not
-    // post-masked: x=33 has zero probability but connects to positive x=34.
-    // The other three zero columns are background and split positive regions.
-    expect(first.labels).toEqual(
-      expectedTile(first.size, (x) => (x < 30 ? 1n : x < 33 ? 0n : 34n)),
-    );
-    expect(jobs()).toEqual([[72, 5, 4]]);
-    expect(native.chunks).toEqual([
-      "10-42_20-25_-3-1",
-      "42-74_20-25_-3-1",
-      "74-106_20-25_-3-1",
-    ]);
-    expect(output.chunkSource.chunks.has("1,0,0")).toBe(false);
-
-    viewer.crossSectionScale.value = 0.01;
-    result.setVisible(true);
-    await expect
-      .poll(() => output.chunkSource.chunks.get("0,0,0")?.state)
-      .toBe(ChunkState.GPU_MEMORY);
+    const output = outputSource(result, [148, 5, 4], [10, 20, -3]);
+    const label = (x: number) =>
+      x < 30 ? 1n : x < 33 ? 0n : x < 94 ? 2n : x < 97 ? 0n : x < 136 ? 3n : 0n;
+    for (const grid of [0, 1, 2]) {
+      const tile = await awaitTile(output.chunkSource, grid, label(grid * 64));
+      expect(tile.labels).toEqual(
+        expectedTile(tile.size, (x) => label(grid * 64 + x)),
+      );
+    }
+    // Zero probability is an affinity, not a post-mask: x=33 connects to x=34.
     expect(
       output.renderLayer.getValueAt(output.worldPosition([30.5, 2.5, 1.5])),
     ).toBe(0n);
     expect(
       output.renderLayer.getValueAt(output.worldPosition([33.5, 2.5, 1.5])),
-    ).toBe(34n);
-
-    viewer.position.value = output.worldPosition([110.5, 2.5, 1.5]);
-    // Only navigation, not a test-owned fetch, demands this new tile.
-    await expect
-      .poll(() => output.chunkSource.chunks.get("1,0,0")?.state, {
-        timeout: 60_000,
-      })
-      .toBe(ChunkState.GPU_MEMORY);
-    const second = await readTile(output.chunkSource, 1);
-    expect(second.size).toEqual([64, 5, 4]);
-    expect(second.labels).toEqual(
-      expectedTile(second.size, (x) =>
-        x < 30 ? 131073n : x < 33 ? 0n : 131106n,
-      ),
-    );
-    expect(jobs()).toEqual([
-      [72, 5, 4],
-      [80, 5, 4],
-    ]);
-    expect(native.chunks).toEqual([
-      "10-42_20-25_-3-1",
-      "42-74_20-25_-3-1",
-      "74-106_20-25_-3-1",
-      "106-138_20-25_-3-1",
-      "138-158_20-25_-3-1",
-    ]);
+    ).toBe(2n);
     expect(
-      output.renderLayer.getValueAt(output.worldPosition([98.5, 2.5, 1.5])),
-    ).toBe(131106n);
-
-    viewer.position.value = output.worldPosition([140.5, 2.5, 1.5]);
-    await expect
-      .poll(() => output.chunkSource.chunks.get("2,0,0")?.state, {
-        timeout: 60_000,
-      })
-      .toBe(ChunkState.GPU_MEMORY);
-    const edge = await readTile(output.chunkSource, 2);
-    expect(edge.size).toEqual([20, 5, 4]);
-    expect(edge.labels).toEqual(
-      expectedTile(edge.size, (x) => (x < 8 ? 262145n : 0n)),
-    );
+      output.renderLayer.getValueAt(output.worldPosition([63.5, 2.5, 1.5])),
+    ).toBe(2n);
     expect(
-      output.renderLayer.getValueAt(output.worldPosition([135.5, 2.5, 1.5])),
-    ).toBe(262145n);
-    expect(
-      output.renderLayer.getValueAt(output.worldPosition([136.5, 2.5, 1.5])),
-    ).toBe(0n);
-    expect(
-      output.renderLayer.getValueAt(output.worldPosition([148.5, 2.5, 1.5])),
-    ).toBeNull();
-    expect(
-      output.renderLayer.getValueAt(output.worldPosition([-0.5, 2.5, 1.5])),
-    ).toBeNull();
-    expect(jobs()).toEqual([
-      [72, 5, 4],
-      [80, 5, 4],
-      [28, 5, 4],
-    ]);
-    expect(native.chunks).toHaveLength(5);
-    expect(session.statusLevel, session.status).toBe("info");
+      output.renderLayer.getValueAt(output.worldPosition([64.5, 2.5, 1.5])),
+    ).toBe(2n);
+    expect(jobs.shapes()).toEqual([[148, 5, 4]]);
   }, 90_000);
 
-  it("uses the real mask controls to split normalized UINT8 affinities before WASM, while default-off layers stay connected", async () => {
+  it("uses real mask controls to gate BOTH edge endpoints regionally without changing a default-off publication", async () => {
     const jobs = observeWatershedWorker();
     const native = await precomputed(
-      "https://watershed-integration.invalid/masked-affinities",
+      "https://watershed-integration.invalid/mask",
       [148, 5, 4],
       [10, 20, -3],
       [32, 5, 4],
@@ -1014,124 +893,199 @@ describe("live watershed integration (real WebGL, chunk RPC and WASM workers)", 
         c !== 3 || x >= 136 ? 255 : x === 32 || x === 96 ? 77 : 76,
     );
     const viewer = makeViewer();
-    viewer.coordinateSpace.restoreState({
-      x: [5e-9, "m"],
-      y: [10e-9, "m"],
-      z: [15e-9, "m"],
-    });
     const image = await addImage(viewer, native.url);
+    positionViewer(viewer, [74.5, 2.5, 1.5], [10, 20, -3]);
     const session = openWatershed(viewer, image);
     configure(session);
     const useMask = field(session, "Use last channel as mask");
-    const maskThreshold = field(session, "Mask threshold");
     expect(useMask.type).toBe("checkbox");
     expect(useMask.checked).toBe(false);
-    expect(maskThreshold.type).toBe("number");
-    expect(maskThreshold.value).toBe("0.3");
-    expect(maskThreshold.disabled).toBe(true);
+    expect(field(session, "Mask threshold").disabled).toBe(true);
+    expect(field(session, "Mask threshold").value).toBe("0.3");
     const unmasked = await addFromDialog(session);
-    const off = outputSource(
-      unmasked,
-      [148, 5, 4],
-      [10, 20, -3],
-      [1e-8, 2e-8, 3e-8],
-    );
-    expect(useMask.disabled).toBe(false);
+    const off = outputSource(unmasked, [148, 5, 4], [10, 20, -3]);
+    const offFirst = await awaitTile(off.chunkSource, 0, 1n);
+    expect(offFirst.labels).toEqual(expectedTile(offFirst.size, () => 1n));
     useMask.click();
-    expect(useMask.checked).toBe(true);
     fill(session, "Mask threshold", "0.3");
     const masked = await addFromDialog(session);
-    const on = outputSource(
-      masked,
+    const on = outputSource(masked, [148, 5, 4], [10, 20, -3]);
+    const label = (x: number) =>
+      x < 32
+        ? 1n
+        : x === 32
+          ? 0n
+          : x < 96
+            ? 2n
+            : x === 96
+              ? 0n
+              : x < 136
+                ? 3n
+                : 0n;
+    for (const grid of [0, 1, 2]) {
+      const tile = await awaitTile(on.chunkSource, grid, label(grid * 64));
+      expect(tile.labels).toEqual(
+        expectedTile(tile.size, (x) => label(grid * 64 + x)),
+      );
+      const unmaskedTile = await readTile(off.chunkSource, grid);
+      expect(unmaskedTile.labels).toEqual(
+        expectedTile(unmaskedTile.size, () => 1n),
+      );
+    }
+    // 76/255 < .3 stays; 77/255 > .3 is masked. Merely zeroing output
+    // would leave both sides with ID 1 instead of splitting into basins 1/2/3.
+    for (const [x, expected] of [
+      [31, 1n],
+      [32, 0n],
+      [33, 2n],
+      [63, 2n],
+      [64, 2n],
+      [96, 0n],
+      [97, 3n],
+    ] as const)
+      expect(
+        on.renderLayer.getValueAt(on.worldPosition([x + 0.5, 2.5, 1.5])),
+      ).toBe(expected);
+    expect(jobs.shapes()).toEqual([
       [148, 5, 4],
-      [10, 20, -3],
-      [1e-8, 2e-8, 3e-8],
-    );
-    await settleView();
-    expect(native.chunks).toEqual([]);
-    expect(jobs()).toEqual([]);
+      [148, 5, 4],
+    ]);
+    expect(native.chunks).toHaveLength(5);
+  }, 90_000);
 
-    viewer.position.value = on.worldPosition([16.5, 2.5, 1.5]);
-    // The previous layer retains its default-off options after the form changes.
-    const offFirst = await readTile(off.chunkSource, 0);
-    expect(offFirst.labels).toEqual(expectedTile(offFirst.size, () => 1n));
-    const first = await readTile(on.chunkSource, 0);
-    expect(first.size).toEqual([64, 5, 4]);
-    // 76/255 < .3 stays connected; 77/255 > .3 becomes background. Both
-    // endpoints of each incident edge must be gated: x=33 must not reconnect
-    // masked x=32. Merely zeroing output would leave both sides with ID 1.
+  it("completes watershed → ONNX → native dependencies at download itemLimit=1 and revokes on ONNX invalidation with its image retained", async () => {
+    const jobs = observeWatershedWorker();
+    const viewer = makeViewer();
+    viewer.dataContext.chunkManager.chunkQueueManager.capacities.download.itemLimit.value = 1;
+    const f = await liveFixture(viewer);
+    positionViewer(viewer, [90.5, 30.5, 8.5], [4, 6, -2]);
+    const result = await addFromDialog(f.session);
+    const output = outputSource(result, [180, 60, 16], [4, 6, -2]);
+    for (const grid of [0, 1, 2]) {
+      const tile = await awaitTile(
+        output.chunkSource,
+        grid,
+        BigInt(Math.floor((grid * 64) / 60) + 1),
+      );
+      expect(tile.labels).toEqual(
+        expectedTile(tile.size, (x) =>
+          BigInt(Math.floor((grid * 64 + x) / 60) + 1),
+        ),
+      );
+    }
+    expect(f.origins()).toEqual([
+      [0, 0, 0],
+      [0, 0, 60],
+      [0, 0, 120],
+    ]);
+    expect(f.readPatch).toHaveBeenCalledTimes(3);
+    expect(f.native.chunks).toHaveLength(6);
+    expect(f.cancel).not.toHaveBeenCalled();
+    expect(jobs.shapes()).toEqual([[180, 60, 16]]);
+    output.chunkSource.invalidateCache();
+    await awaitTile(output.chunkSource, 1, 2n);
+    expect(f.run).toHaveBeenCalledTimes(3);
+    expect(jobs.shapes()).toHaveLength(1);
+    expectPublicationActive(output);
+    const affinityImage = f.image.layer;
+    f.publication.dispose(); // Revocation without deleting its source image.
+    await expect.poll(() => viewer.layerManager.has(result)).toBe(false);
+    expect(viewer.layerManager.managedLayers).toEqual([f.raw, f.image]);
+    expect(f.image.layer).toBe(affinityImage);
+    expect(f.session.statusLevel).toBe("error");
+    expect(f.session.status).toMatch(/Watershed stopped/);
+    expect(() => output.volume.getSources(sourceOptions)).toThrow(
+      /unavailable/,
+    );
+    await expect.poll(() => output.chunkSource.chunks.size).toBe(0);
+  }, 90_000);
+
+  it("deleting a watershed aborts active dependencies and cannot commit late inference or kill the shared source", async () => {
+    const jobs = observeWatershedWorker();
+    const viewer = makeViewer();
+    viewer.dataContext.chunkManager.chunkQueueManager.capacities.download.itemLimit.value = 1;
+    const f = await liveFixture(viewer, 0);
+    positionViewer(viewer, [90.5, 30.5, 8.5], [4, 6, -2]);
+    const result = await addFromDialog(f.session);
+    const output = outputSource(result, [180, 60, 16], [4, 6, -2]);
+    await expect.poll(() => f.gated, { timeout: 60_000 }).toBe(true);
+    expect(f.native.chunks).toHaveLength(2); // Gated evaluation read real raw data.
+    const blank = await readTile(output.chunkSource, 0);
+    expect(blank.labels).toEqual(expectedTile(blank.size, () => 0n));
+    deleteLayer(result);
+    expect(() => output.volume.getSources(sourceOptions)).toThrow(
+      /unavailable/,
+    );
+    await expect.poll(() => f.signals[0].aborted).toBe(true);
+    expect(f.cancel).toHaveBeenCalled();
+    f.release();
+    await expect.poll(() => f.lateReturned).toBe(true);
+    await expect.poll(() => output.chunkSource.chunks.size).toBe(0);
+    expect(jobs.shapes()).toEqual([]);
+    expect(f.input.isValid()).toBe(true);
+    const replacement = await addFromDialog(f.session);
+    const next = outputSource(replacement, [180, 60, 16], [4, 6, -2]);
+    const first = await awaitTile(next.chunkSource, 0, 1n);
     expect(first.labels).toEqual(
-      expectedTile(first.size, (x) => (x < 32 ? 1n : x === 32 ? 0n : 34n)),
+      expectedTile(first.size, (x) => (x < 60 ? 1n : 2n)),
     );
-    expect(jobs()).toEqual([
-      [72, 5, 4],
-      [72, 5, 4],
+    expect(f.origins()).toEqual([
+      [0, 0, 0],
+      [0, 0, 0],
+      [0, 0, 60],
+      [0, 0, 120],
     ]);
-    expect(native.chunks).toEqual([
-      "10-42_20-25_-3-1",
-      "42-74_20-25_-3-1",
-      "74-106_20-25_-3-1",
-    ]);
-    expect(on.chunkSource.chunks.has("1,0,0")).toBe(false);
+    expect(f.native.chunks).toHaveLength(6); // Native cache survives cancellation.
+    expect(jobs.shapes()).toEqual([[180, 60, 16]]);
+  }, 90_000);
 
-    viewer.crossSectionScale.value = 0.01;
-    masked.setVisible(true);
+  it("visibly rejects a union over 2**21 voxels with ZERO split fallback calls and recovers on the next smaller view", async () => {
+    const jobs = observeWatershedWorker();
+    const shape = [256, 256, 128],
+      offset = [0, 0, 0];
+    const native = await precomputed(
+      "https://watershed-integration.invalid/oversize",
+      shape,
+      offset,
+      [32, 32, 16],
+      3,
+      () => 255,
+    );
+    const viewer = makeViewer();
+    viewer.layout.restoreState("4panel");
+    const image = await addImage(viewer, native.url);
+    positionViewer(viewer, [128.5, 128.5, 64.5], offset, 4);
+    const session = openWatershed(viewer, image);
+    configure(session);
+    const result = await addFromDialog(session, false, "error");
+    const output = outputSource(result, shape, offset);
+    await expect.poll(() => session.statusLevel).toBe("error");
+    expect(session.status).toMatch(/2\*\*21|2,097,152|2097152/);
+    expect(session.dialog!.body.textContent).toContain(session.status);
+    expect(
+      visibleHaloShape(viewer, shape, offset).reduce((a, b) => a * b, 1),
+    ).toBeGreaterThan(2 ** 21);
+    const blank = await readTile(output.chunkSource, 0);
+    expect(blank.labels).toEqual(expectedTile(blank.size, () => 0n));
+    await delay(250);
+    expect(jobs.shapes()).toEqual([]);
+    expect(native.chunks).toEqual([]);
+    expect(viewer.layerManager.has(result)).toBe(true); // Nonfatal regional error.
+    viewer.crossSectionScale.value = 0.08;
     await expect
-      .poll(() => on.chunkSource.chunks.get("0,0,0")?.state)
-      .toBe(ChunkState.GPU_MEMORY);
-    expect(on.renderLayer.getValueAt(on.worldPosition([31.5, 2.5, 1.5]))).toBe(
-      1n,
-    );
-    expect(on.renderLayer.getValueAt(on.worldPosition([32.5, 2.5, 1.5]))).toBe(
-      0n,
-    );
-    expect(on.renderLayer.getValueAt(on.worldPosition([33.5, 2.5, 1.5]))).toBe(
-      34n,
-    );
-
-    viewer.position.value = on.worldPosition([110.5, 2.5, 1.5]);
-    await expect
-      .poll(() => on.chunkSource.chunks.get("1,0,0")?.state, {
-        timeout: 60_000,
-      })
-      .toBe(ChunkState.GPU_MEMORY);
-    const second = await readTile(on.chunkSource, 1);
-    expect(second.labels).toEqual(
-      expectedTile(second.size, (x) =>
-        x < 32 ? 131073n : x === 32 ? 0n : 131106n,
-      ),
-    );
-    expect(native.chunks).toHaveLength(5);
-
-    viewer.position.value = on.worldPosition([140.5, 2.5, 1.5]);
-    await expect
-      .poll(() => on.chunkSource.chunks.get("2,0,0")?.state, {
-        timeout: 60_000,
-      })
-      .toBe(ChunkState.GPU_MEMORY);
-    const edge = await readTile(on.chunkSource, 2);
-    expect(edge.size).toEqual([20, 5, 4]);
-    expect(edge.labels).toEqual(
-      expectedTile(edge.size, (x) => (x < 8 ? 262145n : 0n)),
-    );
-    expect(on.renderLayer.getValueAt(on.worldPosition([135.5, 2.5, 1.5]))).toBe(
-      262145n,
-    );
-    expect(on.renderLayer.getValueAt(on.worldPosition([136.5, 2.5, 1.5]))).toBe(
-      0n,
-    );
-    // Even a mask value of 255 is ignored in the default-off publication.
-    const offEdge = await readTile(off.chunkSource, 2);
-    expect(offEdge.labels).toEqual(expectedTile(offEdge.size, () => 262145n));
-    expect(jobs()).toEqual([
-      [72, 5, 4],
-      [72, 5, 4],
-      [80, 5, 4],
-      [28, 5, 4],
-      [28, 5, 4],
-    ]);
-    expect(native.chunks).toHaveLength(5);
-    expect(unmasked.visible).toBe(false);
-    expect(session.statusLevel, session.status).toBe("info");
+      .poll(
+        () =>
+          output.renderLayer.getValueAt(
+            output.worldPosition([128.5, 128.5, 64.5]),
+          ),
+        {
+          timeout: 60_000,
+        },
+      )
+      .toBe(1n);
+    const halo = visibleHaloShape(viewer, shape, offset);
+    expect(halo.reduce((a, b) => a * b, 1)).toBeLessThanOrEqual(2 ** 21);
+    expect(jobs.shapes()).toEqual([halo]);
+    expect(viewer.layerManager.has(result)).toBe(true);
   }, 90_000);
 });
