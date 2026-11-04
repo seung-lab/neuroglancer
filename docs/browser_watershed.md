@@ -30,12 +30,18 @@ required.
    no region/ROI fields or manual Run step.
 
 Creation publishes metadata, not a precomputed segmentation of the whole source.
-The box is expressed in the selected scale's **native grid coordinates**. After a
-**150 ms debounce**, one watershed computation runs over the entire box plus an
-**8-voxel halo per face**, clipped to source bounds. Labels from this single shared
-result are fetched and rendered in ordinary chunks; display-chunk requests never
-run watershed. Normal segmentation visibility, selection, opacity, and colors
-apply; initially all nonzero labels are shown with selected opacity `0.5`.
+The box is expressed in the selected scale's **native grid coordinates**. For the
+first visible box, or when the visible box leaves the completed result's bounds,
+one watershed computation runs after a **150 ms debounce**, over the entire box
+plus an **8-voxel halo per face**, clipped to source bounds. Navigation entirely
+inside the completed result reuses its labels, without requiring a fresh halo
+around the new view. For a single axis-aligned XY view at native voxel Z = k, this
+allows scrolling from k − 8 through k + 8 without recomputation, unless clipped by
+source bounds. All visible views must remain inside the shared XYZ result.
+Labels from this single shared result are fetched and rendered in ordinary
+chunks; display-chunk requests never run watershed. Normal segmentation
+visibility, selection, opacity, and colors apply; initially all nonzero labels
+are shown with selected opacity `0.5`.
 
 The computation box is limited to `2**21` (2,097,152) voxels, **including the clipped
 halo**. An oversized view reports a visible error, not a partial segmentation:
@@ -90,8 +96,9 @@ immutable for the lifetime of a source publication.
   return zero labels, not stale results.
 
 The halo provides context but this bounded computation is **not equivalent to
-whole-volume watershed**. Labels may change across navigation as the enclosing
-box changes; they are not persistent object identities. Changing the source,
+whole-volume watershed**. Labels remain unchanged while navigating inside a
+retained result, but may change when leaving it triggers a new computation; they
+are not persistent object identities. Changing the source,
 scale, channel mapping, or thresholds (including mask settings) creates a
 different segmentation; IDs should not be compared across configurations.
 Automatic channel defaults follow source/scale changes; valid user-entered
@@ -107,9 +114,11 @@ completed region result**. Display-chunk requests never trigger watershed or
 independent label numbering. Existing ONNX affinity images are requested through
 their normal inference datasource, not a second ONNX path.
 
-A changed viewport box immediately clears obsolete labels and invalidates cached
-output chunks, then schedules one new full-domain computation after the debounce.
-Completion also invalidates output caches so previously empty chunks can reload.
+A viewport box contained in the completed result preserves its labels and cached
+output chunks. Moving outside that result immediately clears obsolete labels and
+invalidates cached output chunks, then schedules one new full-domain computation
+after the debounce. Completion also invalidates output caches so previously empty
+chunks can reload.
 Hiding the output, or having no visible relevant slice view, clears the region and
 cancels pending work. Showing it again resumes viewport tracking. The source may
 be much larger than the computation cap; it is not read in full at creation.
