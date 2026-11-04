@@ -38,6 +38,22 @@ describe("watershed validation", () => {
       validateWatershedOptions(DEFAULT_WATERSHED_OPTIONS),
     ).not.toThrow();
   });
+  it("rejects sparse XYZ shapes and channel mappings", () => {
+    const shape = new Array<number>(3);
+    expect(() => validateWatershedShape(shape)).toThrow("three positive");
+    shape[0] = shape[2] = 1;
+    expect(() => validateWatershedShape(shape)).toThrow("three positive");
+    const channels = new Array<number>(3);
+    expect(() =>
+      validateWatershedChannels(4, channels, DEFAULT_WATERSHED_OPTIONS),
+    ).toThrow("three in-bounds");
+    channels[0] = 0;
+    channels[2] = 2;
+    expect(() =>
+      validateWatershedChannels(4, channels, DEFAULT_WATERSHED_OPTIONS),
+    ).toThrow("three in-bounds");
+  });
+
   it("accepts repeated channel mappings and optional normalized mask thresholds", () => {
     expect(() =>
       validateWatershedChannels(1, [0, 0, 0], DEFAULT_WATERSHED_OPTIONS),

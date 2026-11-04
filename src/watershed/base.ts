@@ -55,7 +55,7 @@ export const ABISS_WATERSHED_LICENSE_URL = new URL(
 export function validateWatershedShape(shapeXYZ: readonly number[]): number {
   if (
     shapeXYZ.length !== 3 ||
-    !shapeXYZ.every((x) => Number.isSafeInteger(x) && x > 0)
+    !Array.from(shapeXYZ).every((x) => Number.isSafeInteger(x) && x > 0)
   ) {
     throw new Error("Watershed shape must contain three positive XYZ integers");
   }
@@ -106,7 +106,7 @@ export function validateWatershedChannels(
 ): void {
   if (
     channelsXYZ.length !== 3 ||
-    channelsXYZ.some(
+    Array.from(channelsXYZ).some(
       (c) => !Number.isSafeInteger(c) || c < 0 || c >= channelCount,
     )
   ) {
