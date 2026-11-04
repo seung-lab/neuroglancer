@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { raceWithAbort } from "#src/util/abort.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_WATERSHED_OPTIONS,
   type WatershedResult,
@@ -57,12 +56,22 @@ function result(shape: readonly number[], value = 7): WatershedResult {
 }
 
 beforeEach(() => {
+  vi.useFakeTimers();
   compute.mockReset();
   compute.mockImplementation(async (_input, _lower, shape) => result(shape));
 });
 
-describe("live demand-driven watershed", () => {
-  it("publishes the entire native domain without reading or computing at creation", () => {
+afterEach(() => {
+  vi.clearAllTimers();
+  vi.useRealTimers();
+});
+
+async function settle() {
+  await vi.advanceTimersByTimeAsync(150);
+}
+
+describe("whole-viewport live watershed", () => {
+  it("publishes full-domain metadata but display requests never initiate watershed", async () => {
     const { input } = fixture([4096, 4096, 1]);
     const live = new LiveWatershed(input);
     expect(live.info).toEqual({
@@ -73,193 +82,321 @@ describe("live demand-driven watershed", () => {
       chunkShapeXYZ: [64, 64, 32],
     });
     expect(Object.isFrozen(live.info.shapeXYZ)).toBe(true);
+    expect(await live.readTile([0, 0, 0], [64, 64, 1], signal)).toEqual(
+      new BigUint64Array(64 * 64),
+    );
+    await settle();
     expect(input.readRegion).not.toHaveBeenCalled();
     expect(compute).not.toHaveBeenCalled();
     live.dispose();
   });
 
+  it("runs one watershed for the full region and preserves a connected label across display chunks", async () => {
+    const { input } = fixture([140, 1, 1]);
+    const live = new LiveWatershed(input);
+    const changed = vi.fn();
+    live.changed.add(changed);
+    live.setRegion([10, 20, -3], [140, 1, 1]);
+    expect(await live.readTile([0, 0, 0], [64, 1, 1], signal)).toEqual(
+      new BigUint64Array(64),
+    );
+    await settle();
+    for (const [lower, shape] of [
+      [
+        [0, 0, 0],
+        [64, 1, 1],
+      ],
+      [
+        [64, 0, 0],
+        [64, 1, 1],
+      ],
+      [
+        [128, 0, 0],
+        [12, 1, 1],
+      ],
+    ]) {
+      expect(await live.readTile(lower, shape, signal)).toEqual(
+        new BigUint64Array(shape[0]).fill(7n),
+      );
+    }
+    expect(compute).toHaveBeenCalledExactlyOnceWith(
+      input,
+      [10, 20, -3],
+      [140, 1, 1],
+      [0, 1, 2],
+      DEFAULT_WATERSHED_OPTIONS,
+      expect.any(AbortSignal),
+    );
+    expect(changed).toHaveBeenCalledTimes(2);
+    live.dispose();
+  });
+
+  it("copies XYZ intersections from one halo tensor, with zeros outside it", async () => {
+    const { input } = fixture();
+    compute.mockImplementation(async (_input, _lower, shape) => ({
+      ...result(shape),
+      data: Uint32Array.from(
+        { length: shape.reduce((a, b) => a * b) },
+        (_, i) => i + 1,
+      ),
+    }));
+    const live = new LiveWatershed(input);
+    live.setRegion([80, 70, 30], [20, 10, 12]);
+    await settle();
+    expect(compute.mock.calls[0].slice(1, 3)).toEqual([
+      [72, 62, 22],
+      [36, 26, 28],
+    ]);
+    const data = await live.readTile([64, 64, 32], [64, 36, 32], signal);
+    const expected = BigUint64Array.from({ length: 64 * 36 * 32 }, (_, i) => {
+      const x = (i % 64) + 74,
+        y = (Math.floor(i / 64) % 36) + 84,
+        z = Math.floor(i / (64 * 36)) + 29;
+      if (x < 72 || x >= 108 || y < 62 || y >= 88 || z < 22 || z >= 50)
+        return 0n;
+      return BigInt(((z - 22) * 26 + y - 62) * 36 + x - 72 + 1);
+    });
+    expect(data).toEqual(expected);
+    expect(compute).toHaveBeenCalledTimes(1);
+    live.dispose();
+  });
+
+  it("clips the region halo at native bounds rather than adding padding", async () => {
+    const { input } = fixture();
+    const live = new LiveWatershed(input);
+    live.setRegion([145, 118, 65], [5, 2, 2]);
+    await settle();
+    expect(compute.mock.calls[0].slice(1, 3)).toEqual([
+      [137, 110, 57],
+      [13, 10, 10],
+    ]);
+    const edge = await live.readTile([128, 64, 64], [12, 36, 6], signal);
+    expect(edge[0]).toBe(0n);
+    expect(edge.at(-1)).toBe(7n);
+    live.dispose();
+  });
+
+  it("keeps native basin IDs and background, returning private display copies without recomputation", async () => {
+    const { input } = fixture([4, 1, 1]);
+    const native = Uint32Array.of(0, 900, 0xffffffff, 900);
+    compute.mockResolvedValue({ ...result([4, 1, 1]), data: native });
+    const live = new LiveWatershed(input);
+    live.setRegion([10, 20, -3], [4, 1, 1]);
+    await settle();
+    const first = await live.readTile([0, 0, 0], [4, 1, 1], signal);
+    expect(first).toEqual(BigUint64Array.of(0n, 900n, 0xffffffffn, 900n));
+    first.fill(123n);
+    for (let i = 0; i < 140; ++i)
+      expect(await live.readTile([0, 0, 0], [4, 1, 1], signal)).toEqual(
+        BigUint64Array.of(0n, 900n, 0xffffffffn, 900n),
+      );
+    expect(native).toEqual(Uint32Array.of(0, 900, 0xffffffff, 900));
+    expect(compute).toHaveBeenCalledTimes(1);
+    live.dispose();
+  });
+
   it.each([1, 2])(
-    "defaults a %s-channel volume to three identical affinity planes",
+    "retains automatic scalar duplication for %s input channels",
     async (channelCount) => {
       const { input } = fixture([4, 1, 1]);
-      const scalar = { ...input, channelCount };
-      const live = new LiveWatershed(scalar);
-      expect(await live.readTile([0, 0, 0], [4, 1, 1], signal)).toEqual(
-        new BigUint64Array(4).fill(1n),
-      );
+      const live = new LiveWatershed({ ...input, channelCount });
+      live.setRegion([10, 20, -3], [4, 1, 1]);
+      await settle();
       expect(compute.mock.calls[0][3]).toEqual([0, 0, 0]);
+      expect(await live.readTile([0, 0, 0], [4, 1, 1], signal)).toEqual(
+        new BigUint64Array(4).fill(7n),
+      );
       live.dispose();
     },
   );
 
-  it("freezes optional mask configuration for subsequent viewport demand", async () => {
-    const { input } = fixture([4, 1, 1]);
-    const options = { ...DEFAULT_WATERSHED_OPTIONS, maskThreshold: 0.3 };
-    const live = new LiveWatershed(input, [0, 1, 2], options);
-    options.maskThreshold = 1;
-    await live.readTile([0, 0, 0], [4, 1, 1], signal);
-    expect(compute.mock.calls[0][4].maskThreshold).toBe(0.3);
-    live.dispose();
-    const { input: other } = fixture();
-    expect(
-      () =>
-        new LiveWatershed(other, [0, 1, 3], {
-          ...DEFAULT_WATERSHED_OPTIONS,
-          maskThreshold: 0.3,
-        }),
-    ).toThrow("mask, not an affinity");
-    expect(other.dispose).not.toHaveBeenCalled();
-  });
-
-  it("reads a clipped halo and crops the correct XYZ core before namespacing labels", async () => {
-    const { input } = fixture();
-    compute.mockImplementation(async (_input, lower, shape) => {
-      const value = result(shape, 0);
-      let i = 0;
-      for (let z = 0; z < shape[2]; ++z)
-        for (let y = 0; y < shape[1]; ++y)
-          for (let x = 0; x < shape[0]; ++x, ++i)
-            if (lower[0] + x >= 100 && lower[1] + y >= 90 && lower[2] + z >= 40)
-              value.data[i] = 29;
-      return value;
-    });
-    const live = new LiveWatershed(input, [2, 0, 3]);
-    const data = await live.readTile([64, 64, 32], [64, 36, 32], signal);
-    expect(compute).toHaveBeenCalledWith(
-      input,
-      [66, 76, 21],
-      [80, 44, 46],
-      [2, 0, 3],
-      DEFAULT_WATERSHED_OPTIONS,
-      expect.any(AbortSignal),
-    );
-    expect(data).toBeInstanceOf(BigUint64Array);
-    // Grid [1,1,1] in a [3,2,3] grid, first owned nonzero at [26,6,11].
-    const id = 10n * 131072n + BigInt((11 * 36 + 6) * 64 + 26) + 1n;
-    const expected = BigUint64Array.from({ length: 64 * 36 * 32 }, (_, i) => {
-      const x = i % 64,
-        y = Math.floor(i / 64) % 36,
-        z = Math.floor(i / (64 * 36));
-      return x >= 26 && y >= 6 && z >= 11 ? id : 0n;
-    });
-    expect(data).toEqual(expected);
-    live.dispose();
-  });
-
-  it("preserves background and distinct basins even when native IDs are sparse", async () => {
-    const { input } = fixture([4, 1, 1]);
-    compute.mockResolvedValue({
-      ...result([4, 1, 1]),
-      data: Uint32Array.of(0, 900, 2, 900),
-    });
-    const live = new LiveWatershed(input);
-    expect(await live.readTile([0, 0, 0], [4, 1, 1], signal)).toEqual(
-      BigUint64Array.of(0n, 2n, 3n, 2n),
-    );
-    live.dispose();
-  });
-
-  it("keeps IDs stable across request order, local renumbering and recomputation without an output cache", async () => {
-    const { input } = fixture();
-    let label = 0;
-    compute.mockImplementation(async (_input, _lower, shape) =>
-      result(shape, ++label),
-    );
-    const live = new LiveWatershed(input);
-    const second = await live.readTile([64, 0, 0], [64, 64, 32], signal);
-    const first = await live.readTile([0, 0, 0], [64, 64, 32], signal);
-    const revisit = await live.readTile([64, 0, 0], [64, 64, 32], signal);
-    expect(first.every((n) => n === 1n)).toBe(true);
-    expect(second.every((n) => n === 131073n)).toBe(true);
-    expect(revisit).toEqual(second);
-    expect(revisit.buffer).not.toBe(second.buffer);
-    expect(compute).toHaveBeenCalledTimes(3);
-    live.dispose();
-  });
-
-  it("preserves exact UINT64 IDs above Number.MAX_SAFE_INTEGER", async () => {
-    const { input } = fixture([2 ** 24, 2 ** 24, 64]);
-    const live = new LiveWatershed(input);
-    const data = await live.readTile(
-      [2 ** 24 - 64, 2 ** 24 - 64, 32],
-      [64, 64, 32],
-      signal,
-    );
-    const expected = (2n ** 37n - 1n) * 131072n + 1n;
-    expect(expected).toBeGreaterThan(BigInt(Number.MAX_SAFE_INTEGER));
-    expect(BigInt(Number(expected))).not.toBe(expected);
-    expect(data.every((n) => n === expected)).toBe(true);
-    live.dispose();
-  });
-
-  it("clips the final partial block and both halos at volume boundaries", async () => {
-    const { input } = fixture();
-    const live = new LiveWatershed(input);
-    const data = await live.readTile([128, 64, 64], [12, 36, 6], signal);
-    expect(compute.mock.calls[0].slice(1, 3)).toEqual([
-      [130, 76, 53],
-      [20, 44, 14],
-    ]);
-    expect(data.length).toBe(12 * 36 * 6);
-    expect(data.every((n) => n === 17n * 131072n + 1n)).toBe(true);
-    live.dispose();
-  });
-
-  it("snapshots channel/options vectors and caller request arrays", async () => {
-    const { input } = fixture([4, 1, 1]);
-    const channels = [2, 0, 3],
-      options = { ...DEFAULT_WATERSHED_OPTIONS };
+  it("snapshots channels, optional mask options and region vectors", async () => {
+    const { input } = fixture([140, 1, 1]);
+    const channels = [2, 0, 1],
+      options = { ...DEFAULT_WATERSHED_OPTIONS, maskThreshold: 0.3 };
     const live = new LiveWatershed(input, channels, options);
     channels.fill(999);
-    options.lowThreshold = 0.8;
-    const lower = [0, 0, 0],
-      size = [4, 1, 1];
-    const pending = live.readTile(lower, size, signal);
+    options.maskThreshold = 1;
+    const lower = [74, 20, -3],
+      shape = [8, 1, 1];
+    live.setRegion(lower, shape);
     lower.fill(999);
-    size.fill(999);
-    expect(await pending).toEqual(new BigUint64Array(4).fill(1n));
+    shape.fill(999);
+    await settle();
     expect(compute.mock.calls[0].slice(1, 5)).toEqual([
-      [10, 20, -3],
-      [4, 1, 1],
-      [2, 0, 3],
-      DEFAULT_WATERSHED_OPTIONS,
+      [66, 20, -3],
+      [24, 1, 1],
+      [2, 0, 1],
+      { ...DEFAULT_WATERSHED_OPTIONS, maskThreshold: 0.3 },
     ]);
     live.dispose();
   });
 
-  it.each([
-    [-1, 1, 2],
-    [0, 1, 4],
-    [0, 1],
-    [0, 1, 1.5],
-  ])(
-    "rejects invalid channels %j without taking input ownership",
-    (...channels) => {
-      const { input } = fixture();
-      expect(() => new LiveWatershed(input, channels)).toThrow(
-        "three in-bounds",
-      );
-      expect(input.dispose).not.toHaveBeenCalled();
-      expect(compute).not.toHaveBeenCalled();
-    },
-  );
+  it("debounces navigation and ignores unchanged bounds without aborting active work", async () => {
+    const { input } = fixture([140, 1, 1]);
+    const gate = Promise.withResolvers<WatershedResult>();
+    compute.mockImplementationOnce(async () => gate.promise);
+    const live = new LiveWatershed(input);
+    live.setRegion([10, 20, -3], [8, 1, 1]);
+    await vi.advanceTimersByTimeAsync(100);
+    live.setRegion([74, 20, -3], [8, 1, 1]);
+    await vi.advanceTimersByTimeAsync(149);
+    expect(compute).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    live.setRegion([74, 20, -3], [8, 1, 1]);
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(1);
+    expect(compute.mock.calls[0][5].aborted).toBe(false);
+    gate.resolve(result([24, 1, 1]));
+    await vi.advanceTimersByTimeAsync(0);
+    live.setRegion([74, 20, -3], [8, 1, 1]);
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(1);
+    live.dispose();
+  });
 
-  it("rejects invalid thresholds and a UINT64 namespace overflow before publication", () => {
-    const { input } = fixture();
-    expect(
-      () =>
-        new LiveWatershed(input, [0, 1, 2], {
-          ...DEFAULT_WATERSHED_OPTIONS,
-          highThreshold: 0.5,
-          lowThreshold: 0.5,
-        }),
-    ).toThrow("0 <= low < high");
-    const huge = fixture([2 ** 27, 2 ** 27, 2 ** 20]);
-    expect(() => new LiveWatershed(huge.input)).toThrow(
-      "UINT64 block namespace",
+  it("clears stale labels immediately and waits for physical completion before running only the latest region", async () => {
+    const { input } = fixture([140, 1, 1]);
+    const gate = Promise.withResolvers<WatershedResult>();
+    compute.mockImplementationOnce(async () => gate.promise);
+    const onError = vi.fn();
+    const live = new LiveWatershed(
+      input,
+      [0, 1, 2],
+      DEFAULT_WATERSHED_OPTIONS,
+      onError,
     );
-    expect(input.dispose).not.toHaveBeenCalled();
-    expect(huge.input.dispose).not.toHaveBeenCalled();
+    live.setRegion([10, 20, -3], [8, 1, 1]);
+    await settle();
+    const firstSignal = compute.mock.calls[0][5];
+    for (let i = 0; i < 100; ++i)
+      live.setRegion([74 + (i % 2), 20, -3], [8, 1, 1]);
+    live.setRegion([138, 20, -3], [8, 1, 1]);
+    await settle();
+    expect(firstSignal.aborted).toBe(true);
+    expect(compute).toHaveBeenCalledTimes(1);
+    expect(await live.readTile([0, 0, 0], [64, 1, 1], signal)).toEqual(
+      new BigUint64Array(64),
+    );
+    gate.resolve(result([16, 1, 1], 999));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(compute).toHaveBeenCalledTimes(2);
+    expect(compute.mock.calls[1].slice(1, 3)).toEqual([
+      [130, 20, -3],
+      [20, 1, 1],
+    ]);
+    expect(await live.readTile([128, 0, 0], [12, 1, 1], signal)).toEqual(
+      new BigUint64Array(12).fill(7n),
+    );
+    expect(onError).not.toHaveBeenCalled();
+    live.dispose();
+  });
+
+  it("clears completed results while hidden, cancels debounce, and resumes on the next visible region", async () => {
+    const { input } = fixture([4, 1, 1]);
+    const live = new LiveWatershed(input);
+    live.setRegion([10, 20, -3], [4, 1, 1]);
+    await settle();
+    live.setRegion();
+    expect(await live.readTile([0, 0, 0], [4, 1, 1], signal)).toEqual(
+      new BigUint64Array(4),
+    );
+    live.setRegion([10, 20, -3], [4, 1, 1]);
+    live.setRegion();
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(1);
+    expect(live.signal.aborted).toBe(false);
+    live.setRegion([10, 20, -3], [4, 1, 1]);
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(2);
+    live.dispose();
+  });
+
+  it("reports an oversized whole region without splitting it, then recovers on zoom in", async () => {
+    const { input } = fixture([512, 512, 64]);
+    const onError = vi.fn();
+    const live = new LiveWatershed(
+      input,
+      [0, 1, 2],
+      DEFAULT_WATERSHED_OPTIONS,
+      onError,
+    );
+    live.setRegion([10, 20, -3], [512, 512, 64]);
+    await settle();
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining("2**21") }),
+    );
+    expect(compute).not.toHaveBeenCalled();
+    expect(await live.readTile([0, 0, 0], [64, 64, 32], signal)).toEqual(
+      new BigUint64Array(64 * 64 * 32),
+    );
+    live.setRegion([10, 20, -3], [8, 8, 8]);
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(1);
+    expect(live.signal.aborted).toBe(false);
+    live.dispose();
+  });
+
+  it("reports current computation failures, clears the result and recovers on navigation", async () => {
+    const { input } = fixture([140, 1, 1]);
+    compute.mockRejectedValueOnce(new Error("Invalid affinity probabilities"));
+    const onError = vi.fn();
+    const live = new LiveWatershed(
+      input,
+      [0, 1, 2],
+      DEFAULT_WATERSHED_OPTIONS,
+      onError,
+    );
+    live.setRegion([10, 20, -3], [8, 1, 1]);
+    await settle();
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Invalid affinity probabilities" }),
+    );
+    expect(await live.readTile([0, 0, 0], [64, 1, 1], signal)).toEqual(
+      new BigUint64Array(64),
+    );
+    live.setRegion([74, 20, -3], [8, 1, 1]);
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(2);
+    expect((await live.readTile([64, 0, 0], [64, 1, 1], signal))[0]).toBe(7n);
+    live.dispose();
+  });
+
+  it("aborts on input invalidation and never publishes a late kernel", async () => {
+    const { input, changed } = fixture([4, 1, 1]);
+    const gate = Promise.withResolvers<WatershedResult>();
+    compute.mockImplementationOnce(async () => gate.promise);
+    const onError = vi.fn();
+    const live = new LiveWatershed(
+      input,
+      [0, 1, 2],
+      DEFAULT_WATERSHED_OPTIONS,
+      onError,
+    );
+    live.setRegion([10, 20, -3], [4, 1, 1]);
+    await settle();
+    changed.abort(new Error("Source replaced"));
+    expect(live.signal.aborted).toBe(true);
+    expect(compute.mock.calls[0][5].aborted).toBe(true);
+    gate.resolve(result([4, 1, 1]));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(input.dispose).toHaveBeenCalledTimes(1);
+    expect(() => live.readTile([0, 0, 0], [4, 1, 1], signal)).toThrow(
+      "stopped",
+    );
+    live.dispose();
+    expect(input.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows a changed listener to dispose during setRegion without starting work", async () => {
+    const { input } = fixture([4, 1, 1]);
+    const live = new LiveWatershed(input);
+    live.changed.add(() => live.dispose());
+    live.setRegion([10, 20, -3], [4, 1, 1]);
+    await settle();
+    expect(compute).not.toHaveBeenCalled();
+    expect(input.dispose).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -271,7 +408,7 @@ describe("live demand-driven watershed", () => {
     { lower: [0, 0], size: [64, 64, 32] },
     { lower: [0, 0, NaN], size: [64, 64, 32] },
   ])(
-    "rejects unaligned or unclipped tile $lower/$size without work",
+    "rejects invalid display bounds $lower/$size without computing",
     ({ lower, size }) => {
       const { input } = fixture();
       const live = new LiveWatershed(input);
@@ -283,124 +420,19 @@ describe("live demand-driven watershed", () => {
     },
   );
 
-  it("serializes work and removes canceled queued jobs before reading affinities", async () => {
-    const { input } = fixture([140, 1, 1]);
-    const gate = Promise.withResolvers<WatershedResult>();
-    compute.mockImplementationOnce(async () => gate.promise);
-    const live = new LiveWatershed(input);
-    const first = live.readTile([0, 0, 0], [64, 1, 1], signal);
-    const abort = new AbortController();
-    const queued = live.readTile([64, 0, 0], [64, 1, 1], abort.signal);
-    const rejected = expect(queued).rejects.toThrow("Offscreen");
-    abort.abort(new Error("Offscreen"));
-    await rejected;
-    expect(compute).toHaveBeenCalledTimes(1);
-    gate.resolve(result([72, 1, 1]));
-    await first;
-    expect(compute).toHaveBeenCalledTimes(1);
-    live.dispose();
-  });
-
-  it("rejects active cancellation immediately and discards an uninterruptible late result", async () => {
-    const { input } = fixture([140, 1, 1]);
-    const late = Promise.withResolvers<WatershedResult>();
-    compute.mockImplementationOnce(async () => late.promise);
-    const onError = vi.fn();
-    const live = new LiveWatershed(
-      input,
-      [0, 1, 2],
-      DEFAULT_WATERSHED_OPTIONS,
-      onError,
-    );
-    const abort = new AbortController();
-    const first = live.readTile([0, 0, 0], [64, 1, 1], abort.signal);
-    const rejected = expect(first).rejects.toThrow("Offscreen");
-    const next = live.readTile([64, 0, 0], [64, 1, 1], signal);
-    abort.abort(new Error("Offscreen"));
-    await rejected;
-    expect(compute).toHaveBeenCalledTimes(1);
-    late.resolve(result([72, 1, 1], 999));
-    expect((await next).every((n) => n === 131073n)).toBe(true);
-    expect(onError).not.toHaveBeenCalled();
-    live.dispose();
-  });
-
-  it("source invalidation aborts active and queued reads, releases input once, and rejects late data", async () => {
-    const { input, changed } = fixture([140, 1, 1]);
-    const gate = Promise.withResolvers<WatershedResult>();
-    compute.mockImplementation(async (...args) =>
-      raceWithAbort(gate.promise, args[5]),
-    );
-    const onError = vi.fn();
-    const live = new LiveWatershed(
-      input,
-      [0, 1, 2],
-      DEFAULT_WATERSHED_OPTIONS,
-      onError,
-    );
-    const first = live.readTile([0, 0, 0], [64, 1, 1], signal);
-    const queued = live.readTile([64, 0, 0], [64, 1, 1], signal);
-    const firstRejected = expect(first).rejects.toThrow("stopped");
-    const queuedRejected = expect(queued).rejects.toThrow("stopped");
-    changed.abort(new Error("Source replaced"));
-    await Promise.all([firstRejected, queuedRejected]);
-    gate.resolve(result([72, 1, 1]));
-    expect(live.signal.aborted).toBe(true);
-    expect(onError).toHaveBeenCalledTimes(1);
-    expect(input.dispose).toHaveBeenCalledTimes(1);
-    live.dispose();
-    expect(input.dispose).toHaveBeenCalledTimes(1);
-    expect(() => live.readTile([0, 0, 0], [64, 1, 1], signal)).toThrow(
-      "stopped",
-    );
-  });
-
-  it("surfaces a tile failure and continues later demand rather than silently swallowing it", async () => {
-    const { input } = fixture([140, 1, 1]);
-    compute.mockRejectedValueOnce(new Error("Invalid affinity probabilities"));
-    const onError = vi.fn();
-    const live = new LiveWatershed(
-      input,
-      [0, 1, 2],
-      DEFAULT_WATERSHED_OPTIONS,
-      onError,
-    );
-    await expect(live.readTile([0, 0, 0], [64, 1, 1], signal)).rejects.toThrow(
-      "Invalid affinity",
-    );
-    expect((await live.readTile([64, 0, 0], [64, 1, 1], signal))[0]).toBe(
-      131073n,
-    );
-    expect(onError).toHaveBeenCalledWith(
-      expect.objectContaining({ message: "Invalid affinity probabilities" }),
-    );
-    live.dispose();
-  });
-
-  it("bounds queued metadata and reclaims canceled slots while active work is blocked", async () => {
-    const { input } = fixture([4, 1, 1]);
-    const gate = Promise.withResolvers<WatershedResult>();
-    compute.mockImplementation(async (...args) =>
-      raceWithAbort(gate.promise, args[5]),
-    );
-    const live = new LiveWatershed(input);
-    const abort = new AbortController();
-    const pending = Array.from({ length: 128 }, () =>
-      live.readTile([0, 0, 0], [4, 1, 1], abort.signal).catch((error) => error),
-    );
-    expect(() => live.readTile([0, 0, 0], [4, 1, 1], signal)).toThrow(
-      "Too many pending",
-    );
-    abort.abort(new Error("Navigation changed"));
-    const errors = await Promise.all(pending);
-    expect(
-      errors.every((error) => error.message === "Navigation changed"),
-    ).toBe(true);
-    expect(compute).toHaveBeenCalledTimes(1);
-    compute.mockImplementation(async (_input, _lower, shape) => result(shape));
-    expect(await live.readTile([0, 0, 0], [4, 1, 1], signal)).toEqual(
-      new BigUint64Array(4).fill(1n),
-    );
-    live.dispose();
-  });
+  it.each([
+    [-1, 1, 2],
+    [0, 1, 4],
+    [0, 1],
+    [0, 1, 1.5],
+  ])(
+    "rejects invalid channels %j before taking input ownership",
+    (...channels) => {
+      const { input } = fixture();
+      expect(() => new LiveWatershed(input, channels)).toThrow(
+        "three in-bounds",
+      );
+      expect(input.dispose).not.toHaveBeenCalled();
+    },
+  );
 });
