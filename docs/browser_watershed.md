@@ -8,14 +8,21 @@ required.
 
 ## Usage
 
-1. Load a ready affinity **image** layer with a three-dimensional spatial domain
-   and at least three channels. For ONNX output, first create the affinity layer
-   with the existing ONNX inference command.
+1. Load a ready affinity **image** layer with a three-dimensional spatial domain.
+   Native scalar XYZ images and XYZC images with one or more channels are
+   supported. For ONNX output, first create the affinity layer with the existing
+   ONNX inference command.
 2. Open the command palette with **Ctrl+P** and select **WASM Watershed**.
 3. Choose the affinity image and native scale.
 4. Optionally expand **Advanced: channels and thresholds**. Map the channels for
-   affinities to the voxel's **−X, −Y, and −Z** neighbors (default `0, 1, 2`) and
-   adjust thresholds. Channel order is not inferred from a shader or model name.
+   affinities to the voxel's **−X, −Y, and −Z** neighbors. A scalar XYZ or XYZC1
+   source defaults to `0, 0, 0`: the same values are copied literally for all three
+   axes. Sources with at least three channels default to `0, 1, 2`; two-channel
+   sources also default to `0, 0, 0`. Repeated indices are allowed, and channel
+   order is not inferred from a shader or model name. With at least four source
+   channels, optionally check **Use last channel as mask** and adjust **Mask
+   threshold** (default `0.3`). Masking is **off by default**; the mask is always
+   the last source channel, which cannot also be selected as an affinity.
 5. Click **Add watershed layer**. A standard segmentation layer is added to the
    source's existing layer group, without changing the affinity layer or layout.
    Labels load for the **current view**, then on demand as you navigate.
@@ -36,11 +43,27 @@ immutable for the lifetime of a source publication.
 
 ## Input and algorithm semantics
 
-- Exactly three distinct channels are read and packed as planar `[3, Z, Y, X]`,
-  X fastest. Other channels are ignored.
-- `FLOAT32` affinities must be finite probabilities in `[0, 1]`. `UINT8` and
-  `UINT16` are normalized by `255` and `65535` respectively. Rendered shader
-  values, contrast settings, and display-channel selection do not affect input.
+- Three affinity planes are read according to the selected channel indices and
+  packed as planar `[3, Z, Y, X]`, X fastest. Indices must be in bounds but may
+  repeat, including `0, 0, 0`. A repeated scalar plane is copied unchanged; this
+  is **not** the neighbor-minimum conversion used by Abiss's Python scalar helper.
+  There is no neighbor-minimum mode.
+- `FLOAT32` inputs must be finite probabilities in `[0, 1]`. `UINT8` and `UINT16`
+  are normalized by `255` and `65535` respectively for **every plane read**,
+  including the optional mask. Rendered shader values, contrast settings, and
+  display-channel selection do not affect input.
+- Optional masking requires at least four source channels and reads the **last
+  channel** as a background/myelin mask, packed as a fourth plane. The three
+  selected affinity indices must exclude this channel, but may still repeat.
+  With masking off, no mask plane is read and other channels are ignored; the
+  last channel may be selected as an ordinary affinity.
+- **Mask threshold** must be finite and in `[0, 1]`, in normalized units even for
+  integer sources, not the raw integer mask units used by Abiss's Python helper.
+  Its default is `0.3`. Keep a voxel only if its normalized mask value is
+  **strictly less than** the threshold; equality and larger values are suppressed.
+  Before watershed, zero each affinity edge if **either endpoint** is masked.
+  This changes the affinity graph, not a post-watershed label mask: labels are
+  **not post-masked**.
 - High and low thresholds satisfy `0 ≤ low < high ≤ 1` in float32. Defaults are
   high `0.99999`, low `0.00005`, size `50`, and dust `50`. Size and dust are
   unsigned integer cleanup thresholds and can independently be zero.
@@ -56,8 +79,11 @@ immutable for the lifetime of a source publication.
 
 Halos reduce edge effects but do not eliminate seams. There is **no global
 stitching or whole-volume watershed**. Changing the source, scale, channel mapping,
-or thresholds creates a different segmentation; IDs should not be compared
-across configurations.
+or thresholds (including mask settings) creates a different segmentation; IDs
+should not be compared across configurations. Automatic channel defaults follow
+source/scale changes; valid user-entered mappings are preserved, while mappings
+that become invalid when the channel count changes are reset. Masking is turned
+off when the selected source/scale has fewer than four channels.
 
 ## Demand, caches, cancellation, and lifetime
 
@@ -78,12 +104,14 @@ kernels for that layer.
 
 Each output layer owns its publication, live computation, and retained affinity
 input. **Closing the dialog does not stop created layers**, and selecting a
-different source or scale in the dialog does not cancel existing outputs. Delete
-an output to stop its queued work and release its resources. Deleting or replacing
-its affinity source, changing source data or transforms, or resetting/disposal of
-the viewer also stops the dependent live layer. Errors and source invalidation
-are reported in the watershed dialog's status; the stopped output is removed so
-cached labels cannot remain looking valid.
+different source or scale in the dialog does not cancel existing outputs. Channel
+and mask controls are drafts for the next layer; editing them does not change an
+existing layer's configuration. Delete an output to stop its queued work and
+release its resources. Deleting or replacing its affinity source, changing source
+data or transforms, or resetting/disposal of the viewer also stops the dependent
+live layer. Errors and source invalidation are reported in the watershed dialog's
+status; the stopped output is removed so cached labels cannot remain looking
+valid.
 
 Result URLs use `watershed://…` and are **session-local**. Saving or sharing viewer
 state does not serialize labels or a watershed recipe. A restored URL cannot
