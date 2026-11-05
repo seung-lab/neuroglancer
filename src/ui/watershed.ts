@@ -106,6 +106,8 @@ export class WatershedSession extends RefCounted {
   scaleIndex = "0";
   useLastChannelAsMask = false;
   maskThreshold = "0.3";
+  useAgglomeration = false;
+  aggThreshold = "0.15";
   highThreshold = String(DEFAULT_WATERSHED_OPTIONS.highThreshold);
   lowThreshold = String(DEFAULT_WATERSHED_OPTIONS.lowThreshold);
   sizeThreshold = String(DEFAULT_WATERSHED_OPTIONS.sizeThreshold);
@@ -359,6 +361,14 @@ export class WatershedSession extends RefCounted {
         dustThreshold: integer(this.dustThreshold, "Dust threshold"),
         ...(this.useLastChannelAsMask
           ? { maskThreshold: threshold(this.maskThreshold, "Mask threshold") }
+          : {}),
+        ...(this.useAgglomeration
+          ? {
+              aggThreshold: threshold(
+                this.aggThreshold,
+                "Agglomeration threshold (agg_threshold)",
+              ),
+            }
           : {}),
       };
       validateWatershedOptions(options);
@@ -665,7 +675,8 @@ export class WatershedDialog extends FramedDialog {
       const probability =
         key === "highThreshold" ||
         key === "lowThreshold" ||
-        key === "maskThreshold";
+        key === "maskThreshold" ||
+        key === "aggThreshold";
       if (numeric) {
         input.min = "0";
         input.step = probability ? "any" : "1";
@@ -707,6 +718,23 @@ export class WatershedDialog extends FramedDialog {
     field("Low threshold", "lowThreshold", true, advanced);
     field("Size threshold", "sizeThreshold", true, advanced);
     field("Dust threshold", "dustThreshold", true, advanced);
+    const useAgglomeration = document.createElement("input");
+    useAgglomeration.type = "checkbox";
+    row("Agglomerate watershed basins", useAgglomeration, advanced);
+    useAgglomeration.addEventListener("change", () => {
+      session.useAgglomeration = useAgglomeration.checked;
+      session.changed.dispatch();
+    });
+    field(
+      "Agglomeration threshold (agg_threshold)",
+      "aggThreshold",
+      true,
+      advanced,
+    );
+    const agglomerationHelp = document.createElement("div");
+    agglomerationHelp.textContent =
+      "Optional post-watershed agglomeration is off by default. Merge basins when their shared-boundary mean affinity is strictly greater than the threshold; merged boundaries use summed affinities divided by total contact area. Lower thresholds merge more: 0 enables agglomeration, while 1 merges none. Size/dust cleanup runs before agglomeration, not again afterward; background 0 never merges. Final label IDs are not recompacted and may have gaps. Unchecking omits aggThreshold from saved options; a saved value of 0 enables it.";
+    advanced.append(agglomerationHelp);
     const status = text("");
     status.setAttribute("role", "status");
     status.style.cssText = "font-weight:bold;overflow-wrap:anywhere";
@@ -728,12 +756,15 @@ export class WatershedDialog extends FramedDialog {
       const maskAvailable = m !== undefined && m.channelCount >= 4;
       useMask.checked = session.useLastChannelAsMask;
       useMask.disabled = session.busy || !maskAvailable;
+      useAgglomeration.checked = session.useAgglomeration;
+      useAgglomeration.disabled = session.busy;
       for (const { input, key } of fields) {
         if (input.value !== session[key]) input.value = session[key];
         input.disabled =
           session.busy ||
           (key === "maskThreshold" &&
-            (!maskAvailable || !session.useLastChannelAsMask));
+            (!maskAvailable || !session.useLastChannelAsMask)) ||
+          (key === "aggThreshold" && !session.useAgglomeration);
       }
       metadata.textContent =
         m === undefined

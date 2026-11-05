@@ -420,6 +420,8 @@ describe("WASM watershed UI", () => {
       "Low threshold",
       "Size threshold",
       "Dust threshold",
+      "Agglomerate watershed basins",
+      "Agglomeration threshold (agg_threshold)",
     ]);
     expect(body.querySelector("details")!.open).toBe(false);
     expect(
@@ -471,6 +473,206 @@ describe("WASM watershed UI", () => {
     select.dispatchEvent(new Event("change"));
     expect(session.source).toBe(b);
   });
+
+  it("defaults agglomeration off and retains its optional threshold draft across toggles", () => {
+    const { session } = fixture(1);
+    session.open();
+    expect(session.useAgglomeration).toBe(false);
+    expect(session.aggThreshold).toBe("0.15");
+    const useAgglomeration = field(session, "Agglomerate watershed basins");
+    const aggThreshold = field(
+      session,
+      "Agglomeration threshold (agg_threshold)",
+    );
+    expect(useAgglomeration.type).toBe("checkbox");
+    expect(useAgglomeration.checked).toBe(false);
+    expect(useAgglomeration.disabled).toBe(false);
+    expect(aggThreshold.type).toBe("number");
+    expect(aggThreshold.value).toBe("0.15");
+    expect(aggThreshold.min).toBe("0");
+    expect(aggThreshold.max).toBe("1");
+    expect(aggThreshold.step).toBe("any");
+    expect(aggThreshold.disabled).toBe(true);
+    expect(aggThreshold.closest("details")).toBe(
+      useAgglomeration.closest("details"),
+    );
+    expect(aggThreshold.closest("details")).not.toBeNull();
+    useAgglomeration.click();
+    expect(session.useAgglomeration).toBe(true);
+    fill(session, "Agglomeration threshold (agg_threshold)", "0.35");
+    useAgglomeration.click();
+    expect(session.useAgglomeration).toBe(false);
+    expect(aggThreshold.disabled).toBe(true);
+    expect(aggThreshold.value).toBe("0.35");
+    useAgglomeration.click();
+    expect(aggThreshold.disabled).toBe(false);
+    expect(aggThreshold.value).toBe("0.35");
+    for (const explanation of [
+      "post-watershed agglomeration is off by default",
+      "shared-boundary mean affinity is strictly greater than the threshold",
+      "summed affinities divided by total contact area",
+      "Lower thresholds merge more",
+      "0 enables agglomeration, while 1 merges none",
+      "Size/dust cleanup runs before agglomeration, not again afterward",
+      "background 0 never merges",
+      "Final label IDs are not recompacted",
+      "Unchecking omits aggThreshold from saved options",
+      "a saved value of 0 enables it",
+    ])
+      expect(session.dialog!.body.textContent).toContain(explanation);
+  });
+
+  it.each(["0", "0.15", "1"])(
+    "passes enabled agglomeration threshold %s to live construction and roundtrips it in saved JSON",
+    async (value) => {
+      const f = fixture();
+      f.session.open();
+      field(f.session, "Agglomerate watershed basins").click();
+      fill(f.session, "Agglomeration threshold (agg_threshold)", value);
+      addButton(f.session).click();
+      await vi.waitFor(() =>
+        expect(f.session.status).toContain("Added live layer:"),
+      );
+      const options = {
+        ...DEFAULT_WATERSHED_OPTIONS,
+        aggThreshold: Number(value),
+      };
+      expect(f.createLive).toHaveBeenCalledExactlyOnceWith(
+        f.inputs.at(-1),
+        [0, 1, 2],
+        options,
+        expect.any(Function),
+      );
+      const json = JSON.parse(
+        JSON.stringify(f.resultLayers[0].layer!.toJSON()),
+      );
+      expect(json.source.url).toBe(WATERSHED_RECIPE_URL);
+      expect(json.source.state.options).toEqual(options);
+      expect(parseWatershedRecipe(json.source.state).options).toEqual(options);
+    },
+  );
+
+  it("ignores an unchecked invalid agglomeration draft without changing an existing masked/agglomerated layer", async () => {
+    const f = fixture();
+    f.session.open();
+    field(f.session, "Use last channel as mask").click();
+    fill(f.session, "Mask threshold", "0.4");
+    field(f.session, "Agglomerate watershed basins").click();
+    fill(f.session, "Agglomeration threshold (agg_threshold)", "0");
+    await f.session.addLayer();
+    const options = {
+      ...DEFAULT_WATERSHED_OPTIONS,
+      maskThreshold: 0.4,
+      aggThreshold: 0,
+    };
+    const saved = JSON.parse(JSON.stringify(f.resultLayers[0].layer!.toJSON()));
+    expect(f.createLive.mock.calls[0][2]).toEqual(options);
+    expect(saved.source.state.options).toEqual(options);
+    fill(f.session, "Agglomeration threshold (agg_threshold)", "");
+    field(f.session, "Agglomerate watershed basins").click();
+    expect(f.session.useAgglomeration).toBe(false);
+    expect(f.session.aggThreshold).toBe("");
+    expect(
+      field(f.session, "Agglomeration threshold (agg_threshold)").disabled,
+    ).toBe(true);
+    expect(field(f.session, "Use last channel as mask").checked).toBe(true);
+    await f.session.addLayer();
+    expect(f.session.status).toContain("Added live layer:");
+    expect(f.createLive.mock.calls[1][2]).toEqual({
+      ...DEFAULT_WATERSHED_OPTIONS,
+      maskThreshold: 0.4,
+    });
+    expect(f.createLive.mock.calls[1][2]).not.toHaveProperty("aggThreshold");
+    const unchecked = JSON.parse(
+      JSON.stringify(f.resultLayers[1].layer!.toJSON()),
+    );
+    expect(unchecked.source.state.options).not.toHaveProperty("aggThreshold");
+    expect(
+      parseWatershedRecipe(unchecked.source.state).options,
+    ).not.toHaveProperty("aggThreshold");
+    expect(f.createLive.mock.calls[0][2]).toEqual(options);
+    expect(f.resultLayers[0].layer!.toJSON()).toEqual(saved);
+    expect(f.publications[0].dispose).not.toHaveBeenCalled();
+    field(f.session, "Agglomerate watershed basins").click();
+    expect(
+      field(f.session, "Agglomeration threshold (agg_threshold)").value,
+    ).toBe("");
+    expect(
+      field(f.session, "Agglomeration threshold (agg_threshold)").disabled,
+    ).toBe(false);
+  });
+
+  it.each([false, true])(
+    "disables agglomeration controls during activation and preserves the enabled=%s draft on reopening",
+    async (enabled) => {
+      const f = fixture();
+      f.resultState.ready = false;
+      f.session.open();
+      if (enabled) {
+        field(f.session, "Agglomerate watershed basins").click();
+        fill(f.session, "Agglomeration threshold (agg_threshold)", "0.25");
+      }
+      const value = f.session.aggThreshold;
+      const adding = f.session.addLayer();
+      expect(f.session.busy).toBe(true);
+      expect(field(f.session, "Agglomerate watershed basins").disabled).toBe(
+        true,
+      );
+      expect(
+        field(f.session, "Agglomeration threshold (agg_threshold)").disabled,
+      ).toBe(true);
+      field(f.session, "Agglomerate watershed basins").click();
+      expect(f.session.useAgglomeration).toBe(enabled);
+      f.session.dialog!.close();
+      f.session.open();
+      expect(field(f.session, "Agglomerate watershed basins").checked).toBe(
+        enabled,
+      );
+      expect(field(f.session, "Agglomerate watershed basins").disabled).toBe(
+        true,
+      );
+      expect(
+        field(f.session, "Agglomeration threshold (agg_threshold)").value,
+      ).toBe(value);
+      expect(
+        field(f.session, "Agglomeration threshold (agg_threshold)").disabled,
+      ).toBe(true);
+      f.resultState.ready = true;
+      f.resultLayers[0].readyStateChanged.dispatch();
+      await adding;
+      expect(f.session.busy).toBe(false);
+      expect(field(f.session, "Agglomerate watershed basins").disabled).toBe(
+        false,
+      );
+      expect(
+        field(f.session, "Agglomeration threshold (agg_threshold)").disabled,
+      ).toBe(!enabled);
+      expect(f.createLive.mock.calls[0][2]).toEqual({
+        ...DEFAULT_WATERSHED_OPTIONS,
+        ...(enabled ? { aggThreshold: 0.25 } : {}),
+      });
+    },
+  );
+
+  it.each(["", "-0.01", "1.01"])(
+    "rejects invalid enabled agglomeration input %s from the dialog",
+    async (value) => {
+      const f = fixture();
+      f.session.open();
+      field(f.session, "Agglomerate watershed basins").click();
+      fill(f.session, "Agglomeration threshold (agg_threshold)", value);
+      addButton(f.session).click();
+      expect(f.session.statusLevel).toBe("error");
+      expect(f.session.status).toContain(
+        "Agglomeration threshold (agg_threshold) must be a number between 0 and 1",
+      );
+      expect(f.createLive).not.toHaveBeenCalled();
+      expect(f.publish).not.toHaveBeenCalled();
+      expect(f.session.busy).toBe(false);
+      for (const input of f.inputs)
+        expect(input.dispose).toHaveBeenCalledOnce();
+    },
+  );
 
   it("defaults a single-channel image to literal copies for all three axes", async () => {
     const f = fixture(1);
@@ -1527,6 +1729,36 @@ describe("WASM watershed UI", () => {
       "1.01",
       "Mask threshold must be a number between 0 and 1",
     ],
+    [
+      "aggThreshold",
+      "",
+      "Agglomeration threshold (agg_threshold) must be a number between 0 and 1",
+    ],
+    [
+      "aggThreshold",
+      "NaN",
+      "Agglomeration threshold (agg_threshold) must be a number between 0 and 1",
+    ],
+    [
+      "aggThreshold",
+      "Infinity",
+      "Agglomeration threshold (agg_threshold) must be a number between 0 and 1",
+    ],
+    [
+      "aggThreshold",
+      "-Infinity",
+      "Agglomeration threshold (agg_threshold) must be a number between 0 and 1",
+    ],
+    [
+      "aggThreshold",
+      "-0.01",
+      "Agglomeration threshold (agg_threshold) must be a number between 0 and 1",
+    ],
+    [
+      "aggThreshold",
+      "1.01",
+      "Agglomeration threshold (agg_threshold) must be a number between 0 and 1",
+    ],
     ["highThreshold", "NaN", "between 0 and 1"],
     ["highThreshold", "1.01", "between 0 and 1"],
     ["lowThreshold", "", "between 0 and 1"],
@@ -1543,6 +1775,7 @@ describe("WASM watershed UI", () => {
       const f = fixture();
       f.session[key] = value;
       f.session.useLastChannelAsMask = key === "maskThreshold";
+      f.session.useAgglomeration = key === "aggThreshold";
       await f.session.addLayer();
       expect(f.createLive).not.toHaveBeenCalled();
       expect(f.publish).not.toHaveBeenCalled();
