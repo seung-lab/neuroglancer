@@ -493,17 +493,36 @@ export class WatershedSession extends RefCounted {
       );
       // Constructor/publication/activation errors remain fatal. Once viewport
       // tracking starts, computation failures may recover on the next box.
+      let computeErrorStatus: string | undefined;
       const reportComputeError = (error: unknown) => {
         if (released) return;
         entry!.check();
         if (released || !this.alive) return;
-        this.setStatus(
-          `Watershed error (${layer!.name}): ${errorMessage(error)}. Navigate to retry; for an oversized region, zoom in or add a layer at a coarser native scale.`,
-          "error",
-        );
+        computeErrorStatus = `Watershed error (${layer!.name}): ${errorMessage(error)}. Adjust sidebar settings or navigate to retry; for an oversized region, reduce halo, zoom in, or add a layer at a coarser native scale.`;
+        this.setStatus(computeErrorStatus, "error");
         this.changed.dispatch();
       };
       reportError = reportComputeError;
+      removers.push(
+        live.changed.add(() => {
+          if (
+            released ||
+            !this.alive ||
+            computeErrorStatus === undefined ||
+            this.status !== computeErrorStatus ||
+            this.statusLevel !== "error"
+          )
+            return;
+          // Check source lifetime before clearing only this output's error.
+          entry!.check();
+          if (released || !this.alive) return;
+          computeErrorStatus = undefined;
+          // changed precedes onError too: announce a retry, not success. A
+          // failed retry will immediately report its new compute error.
+          this.setStatus(`Updating live watershed layer: ${layer!.name}…`);
+          this.changed.dispatch();
+        }),
+      );
       const unwatch = this.dependencies.watchViewport(
         this.viewer,
         preparedInput,

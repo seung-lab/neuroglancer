@@ -40,13 +40,16 @@ import { NullarySignal } from "#src/util/signal.js";
 import type { Viewer } from "#src/viewer.js";
 import { DEFAULT_WATERSHED_OPTIONS } from "#src/watershed/base.js";
 import type { PreparedAffinityInput } from "#src/watershed/input.js";
-import type { LiveWatershed } from "#src/watershed/live.js";
+import { LiveWatershed } from "#src/watershed/live.js";
 import {
   parseWatershedRecipe,
   WATERSHED_RECIPE_URL,
   type WatershedRecipe,
 } from "#src/watershed/recipe.js";
 import { installWatershedRecipeContext } from "#src/watershed/restore.js";
+import { computeWatershed } from "#src/watershed/run.js";
+
+vi.mock("#src/watershed/run.js", () => ({ computeWatershed: vi.fn() }));
 
 vi.mock("#src/layer/index.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -90,6 +93,7 @@ function makeInput(scaleIndex: number, channelCount = 4) {
 }
 
 function makeLive(input: PreparedAffinityInput) {
+  const changed = new NullarySignal();
   return {
     info: {
       shapeXYZ: input.upperBoundXYZ.map((x, i) => x - input.lowerBoundXYZ[i]),
@@ -99,8 +103,8 @@ function makeLive(input: PreparedAffinityInput) {
       chunkShapeXYZ: [64, 64, 32],
     },
     signal: input.signal,
-    changed: new NullarySignal(),
-    setRegion: vi.fn<LiveWatershed["setRegion"]>(),
+    changed,
+    setRegion: vi.fn<LiveWatershed["setRegion"]>(() => changed.dispatch()),
     assertValid: vi.fn(() => input.assertValid()),
     dispose: vi.fn(disposableOnce(() => input.dispose())),
   };
@@ -1212,6 +1216,10 @@ describe("WASM watershed UI", () => {
       [12, 12, 8],
     );
     expect(f.publications[0].dispose).not.toHaveBeenCalled();
+    expect(f.session.statusLevel).toBe("info");
+    expect(
+      f.session.dialog!.body.querySelector('[role="status"]')!.textContent,
+    ).not.toContain("Unsupported slice geometry");
   });
 
   it.each(["compute", "geometry"])(
@@ -1510,6 +1518,212 @@ describe("WASM watershed UI", () => {
       f.watchers[0].onRegion(region);
       expect(f.session.status).toBe(finalStatus);
       expect(f.lives[0].setRegion).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("recovers the visible status after a real halo-cap retry without viewport navigation", async () => {
+    const f = fixture();
+    let live: LiveWatershed | undefined;
+    f.createLive.mockImplementationOnce(
+      (...args) => (live = new LiveWatershed(...args)),
+    );
+    vi.mocked(computeWatershed).mockImplementationOnce(
+      async (input, lower, shape) => ({
+        data: new Uint32Array(shape.reduce((n, x) => n * x, 1)).fill(7),
+        shapeXYZ: [...shape],
+        offsetXYZ: [...lower],
+        spacingXYZ: [...input.spacingXYZ],
+        unitsXYZ: [...input.unitsXYZ],
+      }),
+    );
+    await f.session.addLayer();
+    f.session.open();
+    const producer = live!;
+    const status = f.session.dialog!.body.querySelector('[role="status"]')!;
+    const region = { lowerXYZ: [100, 90, 10], shapeXYZ: [16, 12, 8] };
+    f.watchers[0].onRegion(region);
+    producer.setParameters([0, 1, 2], DEFAULT_WATERSHED_OPTIONS, 200);
+    expect(f.session.statusLevel).toBe("error");
+    expect(status.textContent).toContain("2**21 voxel limit");
+    const failure = status.textContent;
+    expect(vi.mocked(computeWatershed)).not.toHaveBeenCalled();
+    // A second invalid retry dispatches changed *before* onError. The new
+    // failure must remain visible rather than being mistaken for completion.
+    producer.setParameters([0, 1, 2], DEFAULT_WATERSHED_OPTIONS, 201);
+    expect(f.session.statusLevel).toBe("error");
+    expect(status.getAttribute("data-severity")).toBe("error");
+    expect(status.textContent).toContain("2**21 voxel limit");
+
+    producer.setParameters([0, 1, 2], DEFAULT_WATERSHED_OPTIONS, 0);
+    expect(f.session.statusLevel).toBe("info");
+    expect(status.getAttribute("data-severity")).toBe("info");
+    expect(status.textContent).toContain(f.resultLayers[0].name);
+    expect(status.textContent).not.toContain("2**21 voxel limit");
+    await vi.waitFor(async () => {
+      const labels = await producer.readTile(
+        [64, 64, 32],
+        [64, 64, 32],
+        new AbortController().signal,
+      );
+      expect(labels).toContain(7n);
+    });
+    expect(vi.mocked(computeWatershed)).toHaveBeenCalledExactlyOnceWith(
+      f.inputs.at(-1),
+      region.lowerXYZ,
+      region.shapeXYZ,
+      [0, 1, 2],
+      DEFAULT_WATERSHED_OPTIONS,
+      expect.any(AbortSignal),
+    );
+    expect(f.session.statusLevel).toBe("info");
+    expect(status.textContent).not.toContain("2**21 voxel limit");
+    expect(failure).toContain("sidebar");
+    expect(failure).toContain("reduce halo");
+    expect(f.createLive).toHaveBeenCalledOnce();
+    expect(f.publish).toHaveBeenCalledOnce();
+    expect(f.layerManager.has(f.resultLayers[0])).toBe(true);
+    expect(f.watchers[0].dispose).not.toHaveBeenCalled();
+  });
+
+  it("clears only the current output's recoverable error on live completion", async () => {
+    const f = fixture();
+    await f.session.addLayer();
+    f.session.selectSource(f.b);
+    await f.session.addLayer();
+    f.session.open();
+    const status = f.session.dialog!.body.querySelector('[role="status"]')!;
+    const added = f.session.status;
+    f.lives[0].changed.dispatch();
+    expect(f.session.status).toBe(added);
+    f.onErrors[0](new Error("First output failed"));
+    f.onErrors[1](new Error("Second output failed"));
+    const secondError = f.session.status;
+    f.lives[0].changed.dispatch();
+    expect(f.session.status).toBe(secondError);
+    expect(status.getAttribute("data-severity")).toBe("error");
+    f.lives[1].changed.dispatch();
+    expect(f.session.statusLevel).toBe("info");
+    expect(status.textContent).toContain(f.resultLayers[1].name);
+    expect(status.textContent).not.toContain("Second output failed");
+    const recovered = f.session.status;
+    f.lives[0].changed.dispatch();
+    expect(f.session.status).toBe(recovered);
+    // Completion must not consume a later failure's ownership.
+    f.onErrors[1](new Error("Retry failed again"));
+    expect(status.textContent).toContain("Retry failed again");
+    expect(status.getAttribute("data-severity")).toBe("error");
+    f.lives[1].changed.dispatch();
+    expect(f.session.statusLevel).toBe("info");
+    expect(status.textContent).not.toContain("Retry failed again");
+  });
+
+  it.each(["metadata", "add", "another source stopped"])(
+    "does not replace an unrelated %s error when an earlier output recovers",
+    async (kind) => {
+      const f = fixture();
+      await f.session.addLayer();
+      f.onErrors[0](new Error("Recoverable compute error"));
+      if (kind === "metadata") {
+        f.prepareInput.mockImplementationOnce(() => {
+          throw new Error("Metadata unavailable");
+        });
+        f.session.selectScale("1");
+      } else if (kind === "add") {
+        f.session.channelsXYZ = "0, 1, 99";
+        await f.session.addLayer();
+      } else {
+        f.session.selectSource(f.b);
+        await f.session.addLayer();
+        f.inputs.at(-1)!.invalidate();
+      }
+      const unrelated = f.session.status;
+      expect(unrelated).not.toContain("Recoverable compute error");
+      f.lives[0].changed.dispatch();
+      expect(f.session.status).toBe(unrelated);
+      expect(f.session.statusLevel).toBe("error");
+      expect(f.publications[0].dispose).not.toHaveBeenCalled();
+    },
+  );
+
+  it("reports fatal source invalidation instead of recovery on live.changed", async () => {
+    const f = fixture();
+    await f.session.addLayer();
+    f.onErrors[0](new Error("Recoverable compute error"));
+    const live = f.lives[0];
+    const remove = vi.spyOn(live.changed, "remove");
+    f.inputs.at(-1)!.invalidate(false);
+    live.changed.dispatch();
+    expect(f.session.statusLevel).toBe("error");
+    expect(f.session.status).toContain("Watershed stopped");
+    expect(f.session.status).toContain("Source snapshot changed");
+    expect(f.layerManager.has(f.resultLayers[0])).toBe(false);
+    expect(f.publications[0].dispose).toHaveBeenCalledOnce();
+    expect(f.watchers[0].dispose).toHaveBeenCalledOnce();
+    expect(remove).toHaveBeenCalledOnce();
+    const stopped = f.session.status;
+    live.changed.dispatch();
+    f.onErrors[0](new Error("Late worker error"));
+    expect(f.session.status).toBe(stopped);
+  });
+
+  it.each(["delete", "reset", "dispose"])(
+    "removes the recovery listener on %s and ignores late changes",
+    async (action) => {
+      const f = fixture();
+      await f.session.addLayer();
+      f.onErrors[0](new Error("Recoverable compute error"));
+      const live = f.lives[0];
+      const remove = vi.spyOn(live.changed, "remove");
+      if (action === "delete") deleteLayer(f.resultLayers[0]);
+      else if (action === "reset") f.session.reset();
+      else f.owner.dispose();
+      expect(remove).toHaveBeenCalledOnce();
+      const status = f.session.status;
+      const changed = vi.fn();
+      const unwatch = f.session.changed.add(changed);
+      live.changed.dispatch();
+      f.onErrors[0](new Error("Late worker error"));
+      unwatch();
+      expect(f.session.status).toBe(status);
+      expect(changed).not.toHaveBeenCalled();
+      expect(f.publications[0].dispose).toHaveBeenCalledOnce();
+      expect(f.watchers[0].dispose).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(["initial", "active"])(
+    "handles a reentrant reset during %s live error recovery",
+    async (phase) => {
+      const f = fixture();
+      const unwatch = f.session.changed.add(() => {
+        if (f.session.status.startsWith("Updating live watershed layer:"))
+          f.session.reset();
+      });
+      if (phase === "initial") {
+        const watch = f.watchViewport.getMockImplementation()!;
+        f.watchViewport.mockImplementationOnce((...args) => {
+          const dispose = watch(...args);
+          f.onErrors[0](new Error("Recoverable compute error"));
+          f.lives[0].changed.dispatch();
+          return dispose;
+        });
+      }
+      await f.session.addLayer();
+      if (phase === "active") {
+        f.onErrors[0](new Error("Recoverable compute error"));
+        f.lives[0].changed.dispatch();
+      }
+      unwatch();
+      expect(f.session.status).toContain("Viewer reset");
+      expect(f.session.statusLevel).toBe("info");
+      expect(f.session.busy).toBe(false);
+      expect(f.layerManager.has(f.resultLayers[0])).toBe(false);
+      expect(f.sourceGroup.has(f.resultLayers[0])).toBe(false);
+      expect(f.publications[0].dispose).toHaveBeenCalledOnce();
+      expect(f.watchers[0].dispose).toHaveBeenCalledOnce();
+      const status = f.session.status;
+      f.lives[0].changed.dispatch();
+      expect(f.session.status).toBe(status);
     },
   );
 
