@@ -25,6 +25,7 @@ import {
 import {
   DEFAULT_WATERSHED_OPTIONS,
   validateWatershedChannels,
+  validateWatershedOptions,
 } from "#src/watershed/base.js";
 import type { WatershedRecipe } from "#src/watershed/recipe.js";
 import {
@@ -116,10 +117,113 @@ describe("parseWatershedRecipe", () => {
     expect(parsed).toEqual(value);
     expect(Object.keys(parsed).sort()).toEqual(Object.keys(value).sort());
     expect(parsed.options).not.toHaveProperty("maskThreshold");
+    expect(parsed.options).not.toHaveProperty("aggThreshold");
     expect(JSON.stringify(parseWatershedRecipe(parsed))).toBe(
       JSON.stringify(parsed),
     );
   });
+
+  it("preserves old version-1 JSON exactly without inserting an agglomeration default", () => {
+    const legacy = {
+      ...recipe(),
+      options: {
+        highThreshold: 0.99999,
+        lowThreshold: 0.00005,
+        sizeThreshold: 50,
+        dustThreshold: 50,
+      },
+    };
+    const saved = JSON.stringify(legacy);
+    const parsed = parseWatershedRecipe(JSON.parse(saved));
+    expect(() => validateWatershedOptions(parsed.options)).not.toThrow();
+    expect(parsed).toStrictEqual(legacy);
+    expect(Object.hasOwn(parsed.options, "aggThreshold")).toBe(false);
+    expect(JSON.stringify(parsed)).toBe(saved);
+    const restored = parseWatershedRecipe(JSON.parse(JSON.stringify(parsed)));
+    expect(Object.hasOwn(restored.options, "aggThreshold")).toBe(false);
+    expect(JSON.stringify(restored)).toBe(saved);
+  });
+
+  it.each([0, 0.15, 1])(
+    "preserves optional agglomeration threshold %s in saved JSON with and without masking",
+    (aggThreshold) => {
+      for (const maskOptions of [
+        {},
+        { maskThreshold: 0 },
+        { maskThreshold: 0.3 },
+        { maskThreshold: 1 },
+      ]) {
+        const value = {
+          ...recipe(),
+          options: {
+            ...DEFAULT_WATERSHED_OPTIONS,
+            ...maskOptions,
+            aggThreshold,
+          },
+        };
+        const saved = JSON.stringify(value);
+        const parsed = parseWatershedRecipe(JSON.parse(saved));
+        expect(() => validateWatershedOptions(parsed.options)).not.toThrow();
+        expect(parsed).toStrictEqual(value);
+        expect(Object.hasOwn(parsed.options, "aggThreshold")).toBe(true);
+        expect(parsed.options.aggThreshold).toBe(aggThreshold);
+        expect(JSON.stringify(parsed)).toBe(saved);
+        expect(JSON.stringify(parseWatershedRecipe(parsed))).toBe(saved);
+      }
+    },
+  );
+
+  it("detaches agglomeration and mask options in both directions and across parses", () => {
+    const input = {
+      ...recipe(),
+      options: {
+        ...DEFAULT_WATERSHED_OPTIONS,
+        maskThreshold: 0.3,
+        aggThreshold: 0.15,
+      },
+    };
+    const saved = JSON.stringify(input);
+    const parsed = parseWatershedRecipe(input);
+    const second = parseWatershedRecipe(input);
+    input.options.aggThreshold = 0;
+    input.options.maskThreshold = 1;
+    expect(JSON.stringify(parsed)).toBe(saved);
+    Object.assign(parsed.options, { aggThreshold: 1, maskThreshold: 0 });
+    expect(input.options.aggThreshold).toBe(0);
+    expect(input.options.maskThreshold).toBe(1);
+    expect(JSON.stringify(second)).toBe(saved);
+  });
+
+  it.each(
+    [undefined, null, "0", "0.15", true, false, NaN, Infinity, -Infinity].map(
+      (value) => [value],
+    ),
+  )(
+    "rejects a present nonfinite/nonnumeric agglomeration threshold %j visibly",
+    (aggThreshold) => {
+      expect(() =>
+        parseWith({ options: { ...DEFAULT_WATERSHED_OPTIONS, aggThreshold } }),
+      ).toThrow(/options\.aggThreshold: expected a finite number/);
+    },
+  );
+
+  it.each([-0.01, 1.01])(
+    "rejects out-of-range agglomeration threshold %s through base validation",
+    (aggThreshold) => {
+      expect(() =>
+        parseWith({ options: { ...DEFAULT_WATERSHED_OPTIONS, aggThreshold } }),
+      ).toThrow(/agglomeration/i);
+    },
+  );
+
+  it.each(["agg_threshold", "agglomerationThreshold"])(
+    "still rejects unsupported agglomeration option spelling %s",
+    (key) => {
+      expect(() =>
+        parseWith({ options: { ...DEFAULT_WATERSHED_OPTIONS, [key]: 0.15 } }),
+      ).toThrow(`options.${key}: expected a supported field`);
+    },
+  );
 
   it("round-trips repeated channels, non-default parameters, and optional mask endpoints", () => {
     for (const maskThreshold of [0, 0.3, 1]) {
@@ -263,6 +367,73 @@ describe("parseWatershedRecipe", () => {
       });
     }
   });
+
+  it.each([0, 0.15, 1])(
+    "preserves nested ONNX recipe JSON and validation with agglomeration threshold %s",
+    (aggThreshold) => {
+      const state = inferenceRecipe();
+      const source = {
+        ...richSources()[0],
+        ...inferenceSource(state),
+      };
+      const input = {
+        ...recipe(),
+        source: { name: "affinities", source: [source] },
+        options: {
+          ...DEFAULT_WATERSHED_OPTIONS,
+          maskThreshold: 0.3,
+          aggThreshold,
+        },
+      };
+      const saved = JSON.parse(JSON.stringify(input));
+      const parsed = parseWatershedRecipe(input);
+      expect(JSON.parse(JSON.stringify(parsed))).toStrictEqual(saved);
+      expect(parsed.options.aggThreshold).toBe(aggThreshold);
+      state.precision = "float32";
+      expect(JSON.parse(JSON.stringify(parsed))).toStrictEqual(saved);
+      expect(
+        parseWatershedRecipe(JSON.parse(JSON.stringify(parsed))),
+      ).toStrictEqual(parsed);
+      expect(() =>
+        parseWatershedRecipe({
+          ...input,
+          source: {
+            name: "affinities",
+            source: inferenceSource({
+              ...inferenceRecipe(),
+              precision: "fp16",
+            }),
+          },
+        }),
+      ).toThrow(
+        /Invalid watershed recipe .*state: Error: Invalid inference recipe/,
+      );
+      expect(() =>
+        parseWatershedRecipe({
+          ...input,
+          source: {
+            name: "affinities",
+            source: inferenceSource({
+              ...inferenceRecipe(),
+              source: { name: "raw", source: inferenceSource() },
+            }),
+          },
+        }),
+      ).toThrow(/recursive inference/);
+      expect(() =>
+        parseWatershedRecipe({
+          ...input,
+          source: {
+            name: "affinities",
+            source: inferenceSource({
+              ...inferenceRecipe(),
+              source: { name: "raw", source: "watershed://recipe" },
+            }),
+          },
+        }),
+      ).toThrow(/recursive watershed/);
+    },
+  );
 
   it("preserves a local-model inference descriptor without pretending it has a hosted URL", () => {
     const local = { kind: "local", name: "local.onnx", size: 3 } as const;
@@ -587,6 +758,10 @@ describe("parseWatershedRecipe", () => {
         {
           ...recipe(),
           options: accessor({ ...DEFAULT_WATERSHED_OPTIONS }, "highThreshold"),
+        },
+        {
+          ...recipe(),
+          options: accessor({ ...DEFAULT_WATERSHED_OPTIONS }, "aggThreshold"),
         },
         { ...recipe(), channelsXYZ: accessor([0, 1, 2], "1") },
         { ...recipe(), spacingXYZ: accessor([1, 1, 1], "0") },

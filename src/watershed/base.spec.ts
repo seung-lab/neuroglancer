@@ -15,6 +15,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import type { WatershedOptions } from "#src/watershed/base.js";
 import {
   DEFAULT_WATERSHED_OPTIONS,
   MAX_WATERSHED_VOXELS,
@@ -81,6 +82,52 @@ describe("watershed validation", () => {
       }),
     ).toThrow("mask, not an affinity");
   });
+  it("keeps agglomeration absent from the default options", () => {
+    expect(DEFAULT_WATERSHED_OPTIONS).not.toHaveProperty("aggThreshold");
+    const options = { ...DEFAULT_WATERSHED_OPTIONS };
+    expect(() => validateWatershedOptions(options)).not.toThrow();
+    expect(options).not.toHaveProperty("aggThreshold");
+  });
+
+  it.each([0, 0.15, 1])(
+    "accepts optional agglomeration threshold %s without requiring a mask channel",
+    (aggThreshold) => {
+      const options = { ...DEFAULT_WATERSHED_OPTIONS, aggThreshold };
+      expect(() => validateWatershedOptions(options)).not.toThrow();
+      expect(() =>
+        validateWatershedChannels(3, [0, 1, 2], options),
+      ).not.toThrow();
+      expect(options.aggThreshold).toBe(aggThreshold);
+      for (const maskThreshold of [0, 0.3, 1]) {
+        const masked = { ...options, maskThreshold };
+        expect(() => validateWatershedOptions(masked)).not.toThrow();
+        expect(() =>
+          validateWatershedChannels(4, [0, 1, 2], masked),
+        ).not.toThrow();
+        expect(() => validateWatershedChannels(3, [0, 1, 2], masked)).toThrow(
+          "at least four",
+        );
+        expect(() => validateWatershedChannels(4, [0, 1, 3], masked)).toThrow(
+          "mask, not an affinity",
+        );
+      }
+    },
+  );
+
+  it.each(
+    [null, "0", "0.15", false, NaN, Infinity, -Infinity, -0.01, 1.01].map(
+      (value) => [value],
+    ),
+  )("rejects invalid agglomeration threshold %j", (aggThreshold) => {
+    const options = {
+      ...DEFAULT_WATERSHED_OPTIONS,
+      aggThreshold,
+    } as unknown as WatershedOptions;
+    expect(() => validateWatershedOptions(options)).toThrow(
+      /[Aa]gglomeration.*finite.*\[0,1\]/,
+    );
+  });
+
   it.each([
     [],
     [1, 2],

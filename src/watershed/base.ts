@@ -23,6 +23,8 @@ export interface WatershedOptions {
   readonly dustThreshold: number;
   /** Optional last-channel background mask: keep values strictly below this. */
   readonly maskThreshold?: number;
+  /** Optional post-watershed mean-affinity agglomeration; zero enables it. */
+  readonly aggThreshold?: number;
 }
 
 export const DEFAULT_WATERSHED_OPTIONS: WatershedOptions = Object.freeze({
@@ -89,6 +91,16 @@ export function validateWatershedOptions(options: WatershedOptions): void {
       options.maskThreshold > 1)
   ) {
     throw new Error("Watershed mask threshold must be finite and in [0,1]");
+  }
+  if (
+    options.aggThreshold !== undefined &&
+    (!Number.isFinite(options.aggThreshold) ||
+      options.aggThreshold < 0 ||
+      options.aggThreshold > 1)
+  ) {
+    throw new Error(
+      "Watershed agglomeration threshold must be finite and in [0,1]",
+    );
   }
   for (const value of [options.sizeThreshold, options.dustThreshold]) {
     if (!Number.isInteger(value) || value < 0 || value > 0xffffffff) {

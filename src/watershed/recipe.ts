@@ -263,6 +263,7 @@ function parseOptions(value: unknown): WatershedOptions {
     "sizeThreshold",
     "dustThreshold",
     "maskThreshold",
+    "aggThreshold",
   ]);
   const result: WatershedOptions = {
     highThreshold: finite(obj.highThreshold, "options.highThreshold"),
@@ -271,6 +272,9 @@ function parseOptions(value: unknown): WatershedOptions {
     dustThreshold: finite(obj.dustThreshold, "options.dustThreshold"),
     ...("maskThreshold" in obj
       ? { maskThreshold: finite(obj.maskThreshold, "options.maskThreshold") }
+      : {}),
+    ...("aggThreshold" in obj
+      ? { aggThreshold: finite(obj.aggThreshold, "options.aggThreshold") }
       : {}),
   };
   validateWatershedOptions(result);
