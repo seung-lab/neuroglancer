@@ -25,6 +25,7 @@ import {
   LIVE_WATERSHED_DEBOUNCE_MS,
   LIVE_WATERSHED_HALO_XYZ,
   LiveWatershed,
+  type CompletedWatershedSnapshot,
 } from "#src/watershed/live.js";
 import { computeWatershed } from "#src/watershed/run.js";
 
@@ -139,13 +140,22 @@ describe("live watershed parameter editing", () => {
       const live = new LiveWatershed(input);
       const changed = vi.fn();
       live.changed.add(changed);
+      expect(live.epoch).toBe(0);
       live.setRegion([34, 20, -3], [8, 1, 1]);
+      expect(live.epoch).toBe(1);
+      expect(live.getCompletedSnapshot()).toBeUndefined();
       await settle();
+      const completed = live.getCompletedSnapshot();
+      expect(completed?.epoch).toBe(1);
       live.setRegion([42, 20, -3], [8, 1, 1]);
+      expect(live.epoch).toBe(1);
+      expect(live.getCompletedSnapshot()).toEqual(completed);
       expect(compute).toHaveBeenCalledTimes(1);
       expect(changed).toHaveBeenCalledTimes(2);
       const options = { ...DEFAULT_WATERSHED_OPTIONS, [key]: value };
       live.setParameters([0, 1, 2], options);
+      expect(live.epoch).toBe(2);
+      expect(live.getCompletedSnapshot()).toBeUndefined();
       expect(changed).toHaveBeenCalledTimes(3);
       expect(await live.readTile([0, 0, 0], [64, 1, 1], signal)).toEqual(
         new BigUint64Array(64),
@@ -164,6 +174,8 @@ describe("live watershed parameter editing", () => {
         options,
       ]);
       expect(changed).toHaveBeenCalledTimes(4);
+      expect(live.epoch).toBe(2);
+      expect(live.getCompletedSnapshot()?.epoch).toBe(2);
       expect((await live.readTile([0, 0, 0], [64, 1, 1], signal))[32]).toBe(7n);
       expect(input.dispose).not.toHaveBeenCalled();
       live.dispose();
@@ -187,9 +199,14 @@ describe("live watershed parameter editing", () => {
       live.setRegion([50 + halo, 20, -3], [8, 1, 1]);
       await settle();
       expect(compute).toHaveBeenCalledTimes(1);
+      expect(live.epoch).toBe(1);
+      expect(live.getCompletedSnapshot()?.epoch).toBe(1);
       live.setRegion([49 - halo, 20, -3], [8, 1, 1]);
+      expect(live.epoch).toBe(2);
+      expect(live.getCompletedSnapshot()).toBeUndefined();
       await settle();
       expect(compute).toHaveBeenCalledTimes(2);
+      expect(live.getCompletedSnapshot()?.epoch).toBe(2);
       expect(compute.mock.calls[1].slice(1, 3)).toEqual([
         [49 - 2 * halo, 20, -3],
         [8 + 2 * halo, 1, 1],
@@ -215,8 +232,12 @@ describe("live watershed parameter editing", () => {
     await settle();
     expect(compute).toHaveBeenCalledTimes(1);
     expect(changed).toHaveBeenCalledTimes(2);
+    expect(live.epoch).toBe(1);
+    expect(live.getCompletedSnapshot()?.epoch).toBe(1);
     // Omitting halo resets the custom constructor value to the default eight.
     live.setParameters([0, 1, 2], DEFAULT_WATERSHED_OPTIONS);
+    expect(live.epoch).toBe(2);
+    expect(live.getCompletedSnapshot()).toBeUndefined();
     expect(await live.readTile([0, 0, 0], [4, 1, 1], signal)).toEqual(
       new BigUint64Array(4),
     );
@@ -226,6 +247,8 @@ describe("live watershed parameter editing", () => {
       compute.mock.calls[0].slice(1, 3),
     );
     expect(changed).toHaveBeenCalledTimes(4);
+    expect(live.epoch).toBe(2);
+    expect(live.getCompletedSnapshot()?.epoch).toBe(2);
     live.dispose();
   });
 
@@ -290,8 +313,12 @@ describe("live watershed parameter editing", () => {
     noOp();
     await vi.advanceTimersByTimeAsync(50);
     expect(compute).toHaveBeenCalledTimes(1);
+    expect(live.epoch).toBe(1);
+    expect(live.getCompletedSnapshot()).toBeUndefined();
     noOp();
     await settle();
+    expect(live.epoch).toBe(1);
+    expect(live.getCompletedSnapshot()).toBeUndefined();
     expect(compute.mock.calls[0][5].aborted).toBe(false);
     expect(changed).toHaveBeenCalledTimes(1);
     gate.resolve(result([4, 1, 1]));
@@ -300,6 +327,8 @@ describe("live watershed parameter editing", () => {
     await settle();
     expect(changed).toHaveBeenCalledTimes(2);
     expect(compute).toHaveBeenCalledTimes(1);
+    expect(live.epoch).toBe(1);
+    expect(live.getCompletedSnapshot()?.epoch).toBe(1);
     expect(await live.readTile([0, 0, 0], [4, 1, 1], signal)).toEqual(
       new BigUint64Array(4).fill(7n),
     );
@@ -463,6 +492,7 @@ describe("live watershed parameter editing", () => {
       live.setRegion([34, 20, -3], [8, 1, 1]);
       await settle();
       const labels = await live.readTile([0, 0, 0], [64, 1, 1], signal);
+      const completed = live.getCompletedSnapshot();
       expect(() =>
         live.setParameters(
           channels ?? [2, 1, 0],
@@ -471,6 +501,8 @@ describe("live watershed parameter editing", () => {
         ),
       ).toThrow();
       expect(changed).toHaveBeenCalledTimes(2);
+      expect(live.epoch).toBe(1);
+      expect(live.getCompletedSnapshot()).toEqual(completed);
       expect(await live.readTile([0, 0, 0], [64, 1, 1], signal)).toEqual(
         labels,
       );
@@ -709,6 +741,447 @@ describe("live watershed parameter editing", () => {
     expect(compute).toHaveBeenCalledTimes(1);
     expect(input.dispose).toHaveBeenCalledTimes(1);
   });
+});
+
+describe("completed live watershed snapshots", () => {
+  it("owns exact-sized labels and bounds that can be mutated or transferred without affecting tiles", async () => {
+    const { input } = fixture([4, 1, 1]);
+    const backing = Uint32Array.of(123, 0, 900, 0xffffffff, 900, 456);
+    const native = backing.subarray(1, 5);
+    compute.mockResolvedValue({ ...result([4, 1, 1]), data: native });
+    const live = new LiveWatershed(input);
+    live.setRegion([10, 20, -3], [4, 1, 1]);
+    await settle();
+    const first = live.getCompletedSnapshot()!;
+    expect(first).toEqual({
+      epoch: 1,
+      lowerXYZ: [10, 20, -3],
+      sourceRelativeLowerXYZ: [0, 0, 0],
+      shapeXYZ: [4, 1, 1],
+      labels: Uint32Array.of(0, 900, 0xffffffff, 900),
+    });
+    expect(first.labels).toBeInstanceOf(Uint32Array);
+    expect(first.labels.buffer).not.toBe(native.buffer);
+    expect(first.labels.byteOffset).toBe(0);
+    expect(first.labels.buffer.byteLength).toBe(16);
+    expect(first.lowerXYZ).not.toBe(compute.mock.calls[0][1]);
+    expect(first.shapeXYZ).not.toBe(compute.mock.calls[0][2]);
+    const second = live.getCompletedSnapshot()!;
+    expect(second).toEqual(first);
+    expect(second.labels.buffer).not.toBe(first.labels.buffer);
+    expect(second.lowerXYZ).not.toBe(first.lowerXYZ);
+    expect(second.sourceRelativeLowerXYZ).not.toBe(
+      first.sourceRelativeLowerXYZ,
+    );
+    expect(second.shapeXYZ).not.toBe(first.shapeXYZ);
+    first.labels.fill(123);
+    (first.lowerXYZ as number[]).fill(999);
+    (first.sourceRelativeLowerXYZ as number[]).fill(999);
+    (first.shapeXYZ as number[]).fill(999);
+    const delivered = structuredClone(second, {
+      transfer: [second.labels.buffer],
+    });
+    expect(second.labels.byteLength).toBe(0);
+    // Node's structuredClone may return typed arrays from outside JSDOM's realm.
+    expect(Array.from(delivered.labels)).toEqual([0, 900, 0xffffffff, 900]);
+    expect(backing).toEqual(Uint32Array.of(123, 0, 900, 0xffffffff, 900, 456));
+    expect(live.getCompletedSnapshot()).toEqual({
+      epoch: delivered.epoch,
+      lowerXYZ: Array.from(delivered.lowerXYZ),
+      sourceRelativeLowerXYZ: Array.from(delivered.sourceRelativeLowerXYZ),
+      shapeXYZ: Array.from(delivered.shapeXYZ),
+      labels: Uint32Array.from(delivered.labels),
+    });
+    expect(await live.readTile([0, 0, 0], [4, 1, 1], signal)).toEqual(
+      BigUint64Array.of(0n, 900n, 0xffffffffn, 900n),
+    );
+    expect(live.epoch).toBe(1);
+    expect(compute).toHaveBeenCalledTimes(1);
+    live.dispose();
+    expect(Array.from(delivered.labels)).toEqual([0, 900, 0xffffffff, 900]);
+  });
+
+  it("aligns mesh volume-local offsets with native ROI offsets for negative/nonzero source bounds", async () => {
+    const { input: source } = fixture();
+    const input: PreparedAffinityInput = {
+      ...source,
+      lowerBoundXYZ: [-40, 20, -30],
+      upperBoundXYZ: [100, 120, 40],
+    };
+    const live = new LiveWatershed(input);
+    live.setRegion([-12, 50, -10], [8, 8, 4]);
+    await settle();
+    const snapshot = live.getCompletedSnapshot()!;
+    expect(snapshot.lowerXYZ).toEqual([-20, 42, -18]);
+    expect(snapshot.sourceRelativeLowerXYZ).toEqual([20, 22, 12]);
+    expect(snapshot.shapeXYZ).toEqual([24, 24, 20]);
+    expect(live.info.offsetXYZ).toEqual([60, -180, -28]);
+    const meshOffset = snapshot.sourceRelativeLowerXYZ.map(
+      (n, d) => n + live.info.offsetXYZ[d],
+    );
+    const nativeOffset = snapshot.lowerXYZ.map(
+      (n, d) => n + input.originXYZ[d],
+    );
+    expect(meshOffset).toEqual([80, -158, -16]);
+    expect(meshOffset).toEqual(nativeOffset);
+    expect(snapshot.epoch).toBe(live.epoch);
+    live.dispose();
+  });
+
+  it("checks readiness without requesting a snapshot or changing the content epoch", async () => {
+    const { input } = fixture([80, 1, 1]);
+    const live = new LiveWatershed(input);
+    const snapshot = vi
+      .spyOn(live, "getCompletedSnapshot")
+      .mockImplementation(() => {
+        throw new Error("Readiness must not copy labels");
+      });
+    const assertValid = vi.spyOn(input, "assertValid");
+    expect(live.hasCompletedResult).toBe(false);
+    expect(assertValid).toHaveBeenCalledTimes(1);
+    const readiness: boolean[] = [];
+    live.changed.add(() => readiness.push(live.hasCompletedResult));
+    live.setRegion([34, 20, -3], [8, 1, 1]);
+    expect(live.hasCompletedResult).toBe(false);
+    await settle();
+    assertValid.mockClear();
+    expect(live.hasCompletedResult).toBe(true);
+    expect(live.hasCompletedResult).toBe(true);
+    expect(assertValid).toHaveBeenCalledTimes(2);
+    live.setRegion([42, 20, -3], [8, 1, 1]);
+    live.setParameters([0, 1, 2], { ...DEFAULT_WATERSHED_OPTIONS });
+    expect(live.hasCompletedResult).toBe(true);
+    expect(live.epoch).toBe(1);
+    live.setParameters([2, 1, 0], DEFAULT_WATERSHED_OPTIONS);
+    expect(live.hasCompletedResult).toBe(false);
+    expect(live.epoch).toBe(2);
+    await settle();
+    expect(live.hasCompletedResult).toBe(true);
+    expect(live.epoch).toBe(2);
+    live.setRegion();
+    expect(live.hasCompletedResult).toBe(false);
+    expect(readiness).toEqual([false, true, false, true, false]);
+    expect(snapshot).not.toHaveBeenCalled();
+    expect(compute).toHaveBeenCalledTimes(2);
+    live.dispose();
+    expect(() => live.hasCompletedResult).toThrow("Live watershed stopped");
+    expect(readiness).toEqual([false, true, false, true, false]);
+  });
+
+  it.each([
+    {
+      halo: 8,
+      lower: [80, 70, 30],
+      shape: [20, 10, 12],
+      completedLower: [72, 62, 22],
+      completedShape: [36, 26, 28],
+    },
+    {
+      halo: 8,
+      lower: [10, 20, -3],
+      shape: [5, 2, 2],
+      completedLower: [10, 20, -3],
+      completedShape: [13, 10, 10],
+    },
+    {
+      halo: 8,
+      lower: [145, 118, 65],
+      shape: [5, 2, 2],
+      completedLower: [137, 110, 57],
+      completedShape: [13, 10, 10],
+    },
+    {
+      halo: 0,
+      lower: [10, 20, -3],
+      shape: [5, 2, 2],
+      completedLower: [10, 20, -3],
+      completedShape: [5, 2, 2],
+    },
+  ])(
+    "copies the X-fastest completed halo tensor at native $lower with halo $halo, not full-domain geometry",
+    async ({ halo, lower, shape, completedLower, completedShape }) => {
+      const { input } = fixture();
+      compute.mockImplementation(async (_input, _lower, shape) => ({
+        ...result(shape),
+        data: Uint32Array.from(
+          { length: shape.reduce((a, b) => a * b, 1) },
+          (_, i) => i + 1,
+        ),
+      }));
+      const live = new LiveWatershed(
+        input,
+        [0, 1, 2],
+        DEFAULT_WATERSHED_OPTIONS,
+        undefined,
+        halo,
+      );
+      live.setRegion(lower, shape);
+      await settle();
+      const snapshot = live.getCompletedSnapshot()!;
+      expect(snapshot.lowerXYZ).toEqual(completedLower);
+      expect(snapshot.sourceRelativeLowerXYZ).toEqual(
+        completedLower.map((n, d) => n - input.lowerBoundXYZ[d]),
+      );
+      expect(snapshot.shapeXYZ).toEqual(completedShape);
+      expect(snapshot.labels).toEqual(
+        Uint32Array.from(
+          { length: completedShape.reduce((a, b) => a * b, 1) },
+          (_, i) => i + 1,
+        ),
+      );
+      // Tiles are relative to the full domain, unlike native snapshot bounds.
+      const native = [10, 20, -3];
+      const tileLower = completedLower.map((n, d) => {
+        const chunk = live.info.chunkShapeXYZ[d];
+        return Math.floor((n - native[d]) / chunk) * chunk;
+      });
+      const tileShape = live.info.shapeXYZ.map((n, d) =>
+        Math.min(live.info.chunkShapeXYZ[d], n - tileLower[d]),
+      );
+      const tile = await live.readTile(tileLower, tileShape, signal);
+      const [sx, sy] = tileShape;
+      const expected = BigUint64Array.from(tile, (_, i) => {
+        const xyz = [
+          i % sx,
+          Math.floor(i / sx) % sy,
+          Math.floor(i / (sx * sy)),
+        ];
+        const local = xyz.map(
+          (n, d) => n + tileLower[d] + native[d] - completedLower[d],
+        );
+        if (local.some((n, d) => n < 0 || n >= completedShape[d])) return 0n;
+        return BigInt(
+          snapshot.labels[
+            (local[2] * completedShape[1] + local[1]) * completedShape[0] +
+              local[0]
+          ],
+        );
+      });
+      expect(expected.some((n) => n !== 0n)).toBe(true);
+      expect(tile).toEqual(expected);
+      expect(live.info.shapeXYZ).toEqual([140, 100, 70]);
+      expect(live.info.offsetXYZ).toEqual([110, -180, -1]);
+      expect(snapshot.epoch).toBe(live.epoch);
+      expect(compute).toHaveBeenCalledTimes(1);
+      live.dispose();
+    },
+  );
+
+  it("exposes no snapshot while absent, pending, failed or hidden and never publishes obsolete work", async () => {
+    const { input } = fixture([80, 1, 1]);
+    const gate = Promise.withResolvers<WatershedResult>();
+    compute.mockImplementationOnce(async () => gate.promise);
+    const onError = vi.fn();
+    const live = new LiveWatershed(
+      input,
+      [0, 1, 2],
+      DEFAULT_WATERSHED_OPTIONS,
+      onError,
+    );
+    const events: Array<[number, number | undefined]> = [];
+    live.changed.add(() => {
+      const snapshot = live.getCompletedSnapshot();
+      expect(live.hasCompletedResult).toBe(snapshot !== undefined);
+      events.push([live.epoch, snapshot?.epoch]);
+    });
+    expect(live.epoch).toBe(0);
+    expect(live.getCompletedSnapshot()).toBeUndefined();
+    live.setRegion();
+    expect(live.epoch).toBe(0);
+    live.setRegion([34, 20, -3], [8, 1, 1]);
+    expect(live.getCompletedSnapshot()).toBeUndefined();
+    await settle();
+    expect(live.getCompletedSnapshot()).toBeUndefined();
+    // An unfinished region cannot be reused even when the new view fits it.
+    live.setRegion([35, 20, -3], [8, 1, 1]);
+    expect(live.epoch).toBe(2);
+    compute.mockRejectedValueOnce(new Error("Current kernel failure"));
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(1);
+    gate.resolve(result([24, 1, 1], 999));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(compute).toHaveBeenCalledTimes(2);
+    expect(live.epoch).toBe(2);
+    expect(live.getCompletedSnapshot()).toBeUndefined();
+    expect(onError).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ message: "Current kernel failure" }),
+    );
+    live.setParameters([2, 1, 0], DEFAULT_WATERSHED_OPTIONS);
+    expect(live.epoch).toBe(3);
+    expect(live.getCompletedSnapshot()).toBeUndefined();
+    await settle();
+    const completed = live.getCompletedSnapshot()!;
+    expect(completed.epoch).toBe(3);
+    expect(completed.labels.every((n) => n === 7)).toBe(true);
+    live.setRegion();
+    expect(live.epoch).toBe(4);
+    expect(live.getCompletedSnapshot()).toBeUndefined();
+    live.setParameters([1, 2, 0], DEFAULT_WATERSHED_OPTIONS);
+    expect(live.epoch).toBe(5);
+    await settle();
+    expect(live.getCompletedSnapshot()).toBeUndefined();
+    expect(compute).toHaveBeenCalledTimes(3);
+    expect(events).toEqual([
+      [1, undefined],
+      [2, undefined],
+      [2, undefined],
+      [3, undefined],
+      [3, 3],
+      [4, undefined],
+      [5, undefined],
+    ]);
+    live.setRegion([35, 20, -3], [8, 1, 1]);
+    expect(live.epoch).toBe(6);
+    await settle();
+    expect(live.getCompletedSnapshot()?.epoch).toBe(6);
+    expect(completed.epoch).toBe(3);
+    expect(completed.labels.every((n) => n === 7)).toBe(true);
+    live.dispose();
+  });
+
+  it.each([1, 2])(
+    "does not return a result retired reentrantly during source assertion %s",
+    async (assertion) => {
+      const { input } = fixture([4, 1, 1]);
+      const live = new LiveWatershed(input);
+      live.setRegion([10, 20, -3], [4, 1, 1]);
+      await settle();
+      const assertValid = vi.spyOn(input, "assertValid");
+      if (assertion === 2) assertValid.mockImplementationOnce(() => {});
+      assertValid.mockImplementationOnce(() => {
+        live.setParameters([2, 1, 0], DEFAULT_WATERSHED_OPTIONS);
+      });
+      expect(live.getCompletedSnapshot()).toBeUndefined();
+      expect(live.hasCompletedResult).toBe(false);
+      expect(live.epoch).toBe(2);
+      await settle();
+      expect(live.getCompletedSnapshot()?.epoch).toBe(2);
+      expect(live.hasCompletedResult).toBe(true);
+      live.dispose();
+    },
+  );
+
+  it("preserves a snapshot when source validation reenters contained navigation", async () => {
+    const { input } = fixture([80, 1, 1]);
+    const live = new LiveWatershed(input);
+    live.setRegion([34, 20, -3], [8, 1, 1]);
+    await settle();
+    const completed = live.getCompletedSnapshot();
+    vi.spyOn(input, "assertValid")
+      .mockImplementationOnce(() => {})
+      .mockImplementationOnce(() => live.setRegion([42, 20, -3], [8, 1, 1]));
+    expect(live.getCompletedSnapshot()).toEqual(completed);
+    expect(live.epoch).toBe(1);
+    expect(compute).toHaveBeenCalledTimes(1);
+    live.dispose();
+  });
+
+  it.each([false, true])(
+    "checks readiness after reentrant source validation (contained: %s)",
+    async (contained) => {
+      const { input } = fixture([80, 1, 1]);
+      const live = new LiveWatershed(input);
+      live.setRegion([34, 20, -3], [8, 1, 1]);
+      await settle();
+      vi.spyOn(input, "assertValid").mockImplementationOnce(() => {
+        if (contained) live.setRegion([42, 20, -3], [8, 1, 1]);
+        else live.setParameters([2, 1, 0], DEFAULT_WATERSHED_OPTIONS);
+      });
+      expect(live.hasCompletedResult).toBe(contained);
+      expect(live.epoch).toBe(contained ? 1 : 2);
+      live.dispose();
+    },
+  );
+
+  it("pairs snapshots with the current epoch when an earlier completion listener invalidates labels", async () => {
+    const { input } = fixture([4, 1, 1]);
+    const live = new LiveWatershed(input);
+    live.changed.add(() => {
+      if (live.epoch === 1 && live.getCompletedSnapshot() !== undefined)
+        live.setParameters([2, 1, 0], DEFAULT_WATERSHED_OPTIONS);
+    });
+    const seen: Array<CompletedWatershedSnapshot | undefined> = [];
+    live.changed.add(() => seen.push(live.getCompletedSnapshot()));
+    live.setRegion([10, 20, -3], [4, 1, 1]);
+    await settle();
+    expect(live.epoch).toBe(2);
+    expect(seen).toEqual([undefined, undefined, undefined]);
+    await settle();
+    expect(seen.at(-1)?.epoch).toBe(2);
+    expect(compute).toHaveBeenCalledTimes(2);
+    live.dispose();
+  });
+
+  it.each([
+    { completed: false, query: "snapshot" },
+    { completed: true, query: "snapshot" },
+    { completed: false, query: "readiness" },
+    { completed: true, query: "readiness" },
+  ])(
+    "asserts source validity for $query even when completed is $completed, and disposal only signals abort",
+    async ({ completed, query }) => {
+      const { input } = fixture([4, 1, 1]);
+      const live = new LiveWatershed(input);
+      if (completed) {
+        live.setRegion([10, 20, -3], [4, 1, 1]);
+        await settle();
+      }
+      const changed = vi.fn();
+      const aborted = vi.fn();
+      live.changed.add(changed);
+      live.signal.addEventListener("abort", aborted);
+      vi.spyOn(input, "assertValid").mockImplementation(() => {
+        throw new Error("Source geometry changed");
+      });
+      const epoch = live.epoch;
+      const getResult = () =>
+        query === "snapshot"
+          ? live.getCompletedSnapshot()
+          : live.hasCompletedResult;
+      expect(getResult).toThrow("Source geometry changed");
+      expect(live.epoch).toBe(epoch);
+      expect(live.signal.aborted).toBe(true);
+      expect(aborted).toHaveBeenCalledTimes(1);
+      expect(changed).not.toHaveBeenCalled();
+      expect(input.dispose).toHaveBeenCalledTimes(1);
+      expect(getResult).toThrow("Live watershed stopped");
+      live.dispose();
+      expect(input.dispose).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([
+    { action: "dispose", query: "snapshot" },
+    { action: "source abort", query: "snapshot" },
+    { action: "dispose", query: "readiness" },
+    { action: "source abort", query: "readiness" },
+  ])(
+    "rejects $query after reentrant $action without emitting changed",
+    async ({ action, query }) => {
+      const { input, changed } = fixture([4, 1, 1]);
+      const live = new LiveWatershed(input);
+      live.setRegion([10, 20, -3], [4, 1, 1]);
+      await settle();
+      const notify = vi.fn();
+      live.changed.add(notify);
+      const assertValid = vi.spyOn(input, "assertValid");
+      if (query === "snapshot") assertValid.mockImplementationOnce(() => {});
+      assertValid.mockImplementationOnce(() => {
+        if (action === "dispose") live.dispose();
+        else changed.abort(new Error("Source replaced"));
+      });
+      const epoch = live.epoch;
+      const getResult = () =>
+        query === "snapshot"
+          ? live.getCompletedSnapshot()
+          : live.hasCompletedResult;
+      expect(getResult).toThrow("Live watershed stopped");
+      expect(live.epoch).toBe(epoch);
+      expect(live.signal.aborted).toBe(true);
+      expect(notify).not.toHaveBeenCalled();
+      expect(input.dispose).toHaveBeenCalledTimes(1);
+    },
+  );
 });
 
 describe("whole-viewport live watershed", () => {

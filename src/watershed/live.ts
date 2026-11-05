@@ -40,6 +40,21 @@ export interface LiveWatershedInfo extends Omit<WatershedResult, "data"> {
   readonly chunkShapeXYZ: readonly number[];
 }
 
+/** Owned copy of a completed halo region, with native and volume-local bounds. */
+export interface CompletedWatershedSnapshot {
+  readonly epoch: number;
+  /** Native input-grid lower bound; does not include input.originXYZ. */
+  readonly lowerXYZ: readonly number[];
+  /** lowerXYZ - input.lowerBoundXYZ, in the same volume-local grid as readTile.
+   * Use this offset for mesh vertices under the volume's model transform:
+   * sourceRelativeLowerXYZ + info.offsetXYZ = lowerXYZ + input.originXYZ.
+   * Using native lowerXYZ with info.offsetXYZ would add the lower bound twice. */
+  readonly sourceRelativeLowerXYZ: readonly number[];
+  readonly shapeXYZ: readonly number[];
+  /** Native basin IDs, including zero background, with X fastest. */
+  readonly labels: Uint32Array;
+}
+
 interface Region {
   readonly lower: readonly number[];
   readonly shape: readonly number[];
@@ -150,6 +165,45 @@ export class LiveWatershed {
       throw error;
     }
     this.signal.throwIfAborted();
+  }
+
+  /** Content revision, advanced before labels are retired, not on completion.
+   * Contained navigation and identical parameters preserve the epoch. Disposal
+   * is reported by signal rather than changed or a new epoch. */
+  get epoch(): number {
+    return this.revision;
+  }
+
+  /** Allocation-free readiness check; invalid lifetimes/sources still throw. */
+  get hasCompletedResult(): boolean {
+    this.assertValid();
+    return this.result !== undefined;
+  }
+
+  /** Copy only completed labels, never full-domain metadata or a pending ROI.
+   * Native lowerXYZ and volume-local sourceRelativeLowerXYZ describe the same
+   * tensor; use sourceRelativeLowerXYZ with the volume's model transform.
+   * The returned buffers may be mutated or transferred without affecting tiles
+   * or later snapshots. Callers must check epoch and signal after async work. */
+  getCompletedSnapshot(): CompletedWatershedSnapshot | undefined {
+    this.assertValid();
+    const result = this.result;
+    if (result === undefined) return undefined;
+    const epoch = this.revision;
+    const snapshot: CompletedWatershedSnapshot = {
+      epoch,
+      lowerXYZ: Array.from(result.region.lower),
+      sourceRelativeLowerXYZ: result.region.lower.map(
+        (n, i) => n - this.lowerBound[i],
+      ),
+      shapeXYZ: Array.from(result.region.shape),
+      labels: new Uint32Array(result.data),
+    };
+    // Source validation may reenter and retire the result. Never publish that
+    // obsolete copy under either its old epoch or the replacement epoch.
+    this.assertValid();
+    if (epoch !== this.revision || result !== this.result) return undefined;
+    return snapshot;
   }
 
   /** Atomically replace the configuration without replacing the retained input.
