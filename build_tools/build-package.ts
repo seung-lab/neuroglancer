@@ -109,7 +109,11 @@ export async function buildPackage(options: {
   }
 
   const otherSources = await glob(
-    ["**/*.{css,js,html,wasm}", "watershed/abiss/{LICENSE,*.tar.gz}"],
+    [
+      "**/*.{css,js,html,wasm}",
+      "watershed/abiss/{LICENSE,*.tar.gz}",
+      "watershed/meshing/**/*.{rs,py,md}",
+    ],
     { cwd: srcDir, nodir: true },
   );
   await Promise.all(
