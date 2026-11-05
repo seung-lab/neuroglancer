@@ -133,6 +133,54 @@ mappings are preserved, while mappings that become invalid when the channel coun
 changes are reset. Masking is turned off when the selected source/scale has fewer
 than four channels.
 
+## Dynamic meshes in the 3D view
+
+Live watershed outputs also expose a separate **meshes** subsource, enabled by
+default. After a result completes, select segments by toggling their visibility
+to generate meshes of their **final labels**, including any agglomeration. The
+existing segmentation mesh renderer supplies colors, picking, normals, and
+CPU/GPU cache management; there is no second segmentation or inference pipeline.
+Keep the volume subsource enabled and a relevant slice view visible, for example
+in the four-panel layout: the 3D camera frustum alone does not request a watershed
+region.
+
+Meshes cover only the retained completed region. They are **open at ROI
+boundaries**, with no zero padding or caps. A uniform foreground region has no
+internal surface and may produce an empty mesh. These partial meshes are not
+complete objects or whole-volume reconstructions. Extraction uses classic
+marching cubes, not voxel-face cubes, and does not guarantee manifold topology
+for ambiguous configurations.
+
+Contained navigation keeps the same labels and mesh caches. A new watershed
+region or changed parameters immediately retires the old meshes. IDs are local
+to each result, so existing visible selections are not automatically treated as
+picks in the new result: toggle their visibility **off, then on after computation
+completes**. A visible notice identifies stale selections. Shared linked-layer
+visibility, selected-ID sets, and equivalences are never cleared automatically.
+Manual equivalences and temporary segmentation previews are unsupported for
+these generated meshes; reset them before reselecting final labels. Saved viewer
+JSON includes visibility and the watershed recipe, not meshes; restored visible
+IDs likewise require re-selection after the new computation.
+
+Meshing runs off the main thread through the existing async-computation workers.
+It takes an owned snapshot of completed labels, not incomplete display tiles.
+Source-relative regional placement and the volume model transform apply source
+origin and spacing exactly once; the extractor already includes voxel centers.
+The existing mesh renderer uses float32 positions. A placement that cannot retain
+its vertex precision is rejected visibly rather than silently distorted.
+Late results are discarded after cancellation, deletion, or an epoch change.
+One physical extraction at a time per chunk worker bounds temporary snapshots;
+an already-running synchronous WASM call finishes before its memory is reused.
+
+There are separate limits: at most **16 approved mesh segments per layer**, the
+existing `2**21` watershed samples, and **262,144 conservative triangles /
+12,582,912 output bytes per mesh** before renderer normals and GPU buffers. The
+surface preflight counts up to five triangles per mixed cell and may reject a
+surface whose actual triangle count would fit. Errors are reported visibly;
+output is never truncated. Reduce the region or recreate the layer with a smaller
+halo. Normal chunk-cache budgets govern retained meshes, not a second unbounded
+mesh-result cache.
+
 ## Demand, caches, cancellation, and lifetime
 
 The output is an ordinary `VolumeChunkSource`, using Neuroglancer's standard chunk
@@ -288,6 +336,13 @@ Abiss commit, Emscripten version, checksums, ABI, and reproducible build details
 Post-watershed agglomeration is part of this GPL module. When redistributing a
 modified WASM build, update the corresponding source/build archive to match the
 shipped binary, including the agglomeration changes.
+
+The standalone marching-cubes module is separately **MIT-licensed**, adapted from
+the pinned Twinklebear/webgl-marching-cubes implementation. The dialog links to its
+MIT license, shipped in production assets. Its source, license, reproducible Rust
+build, limits, and geometry tests are documented in
+[`src/watershed/meshing/README.md`](../src/watershed/meshing/README.md) and included
+in the JavaScript package. This does not change the Abiss GPL license.
 
 Tests compare browser WASM labels exactly with native Abiss reference outputs,
 and exercise affinity reading, worker execution, live datasource publication, and
