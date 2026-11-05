@@ -38,7 +38,10 @@ import { disposableOnce, RefCounted } from "#src/util/disposable.js";
 import { registerActionListener } from "#src/util/event_action_map.js";
 import { NullarySignal } from "#src/util/signal.js";
 import type { Viewer } from "#src/viewer.js";
-import { DEFAULT_WATERSHED_OPTIONS } from "#src/watershed/base.js";
+import {
+  DEFAULT_WATERSHED_HALO,
+  DEFAULT_WATERSHED_OPTIONS,
+} from "#src/watershed/base.js";
 import type { PreparedAffinityInput } from "#src/watershed/input.js";
 import { LiveWatershed } from "#src/watershed/live.js";
 import {
@@ -386,7 +389,17 @@ describe("WASM watershed UI", () => {
     const { session, inputs, b } = fixture();
     session.open();
     expect(field(session, "Source scale index").value).toBe("0");
-    expect(field(session, "Channels for −X −Y −Z").value).toBe("0, 1, 2");
+    const halo = field(session, "Halo (voxels)");
+    expect(halo.type).toBe("number");
+    expect(halo.value).toBe(String(DEFAULT_WATERSHED_HALO));
+    expect(halo.min).toBe("0");
+    expect(halo.step).toBe("1");
+    expect(halo.max).toBe("");
+    expect(halo.disabled).toBe(false);
+    const channels = field(session, "Channels for −X −Y −Z");
+    expect(channels.value).toBe("0, 1, 2");
+    expect(channels.type).toBe("text");
+    expect(channels.closest("details")).not.toBeNull();
     // Public mask drafts: useLastChannelAsMask is boolean, maskThreshold is text.
     expect(session.useLastChannelAsMask).toBe(false);
     expect(session.maskThreshold).toBe("0.3");
@@ -417,6 +430,7 @@ describe("WASM watershed UI", () => {
       ),
     ).toEqual([
       "Source scale index",
+      "Halo (voxels)",
       "Channels for −X −Y −Z",
       "Use last channel as mask",
       "Mask threshold",
@@ -439,7 +453,9 @@ describe("WASM watershed UI", () => {
       "all visible slice views",
       "As you navigate",
       "150 ms debounce",
-      "8-voxel halo per face",
+      "configured halo per face (default 8 native voxels)",
+      "Halo and channel mapping are drafts for new layers",
+      "add or recreate a layer to change them",
       "not computed per display chunk",
       "labels may change across navigation",
       "not equivalent to whole-volume watershed",
@@ -476,6 +492,115 @@ describe("WASM watershed UI", () => {
     select.value = "1";
     select.dispatchEvent(new Event("change"));
     expect(session.source).toBe(b);
+  });
+
+  it.each(["8", "0", "2"])(
+    "passes dialog halo %s as the fifth producer argument and preserves channels in saved JSON",
+    async (value) => {
+      const f = fixture();
+      f.session.open();
+      expect(field(f.session, "Halo (voxels)").value).toBe("8");
+      if (value !== "8") fill(f.session, "Halo (voxels)", value);
+      fill(f.session, "Channels for −X −Y −Z", "2, 0, 2");
+      addButton(f.session).click();
+      await vi.waitFor(() =>
+        expect(f.session.status).toContain("Added live layer:"),
+      );
+      expect(f.createLive).toHaveBeenCalledExactlyOnceWith(
+        f.inputs.at(-1),
+        [2, 0, 2],
+        DEFAULT_WATERSHED_OPTIONS,
+        expect.any(Function),
+        Number(value),
+      );
+      const json = JSON.parse(
+        JSON.stringify(f.resultLayers[0].layer!.toJSON()),
+      );
+      expect(json.source.url).toBe(WATERSHED_RECIPE_URL);
+      expect(json.source.state.channelsXYZ).toEqual([2, 0, 2]);
+      expect(json.source.state.options).not.toHaveProperty("halo");
+      if (value === "8") expect(json.source.state).not.toHaveProperty("halo");
+      else expect(json.source.state.halo).toBe(Number(value));
+      expect(parseWatershedRecipe(json.source.state)).toEqual(
+        json.source.state,
+      );
+      expect(f.inputs.at(-1)!.dispose).not.toHaveBeenCalled();
+      deleteLayer(f.resultLayers[0]);
+      f.session.reset();
+      expect(f.publications[0].dispose).toHaveBeenCalledOnce();
+      expect(f.lives[0].dispose).toHaveBeenCalledOnce();
+      expect(f.watchers[0].dispose).toHaveBeenCalledOnce();
+      for (const input of f.inputs)
+        expect(input.dispose).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([
+    "",
+    "-1",
+    "0.5",
+    "NaN",
+    "Infinity",
+    "-Infinity",
+    "1e309",
+    "9007199254740992",
+  ])(
+    "rejects invalid dialog halo %s before construction or publication without leaking input",
+    async (value) => {
+      const f = fixture();
+      f.session.open();
+      // Number inputs sanitize non-finite text to empty, which must also fail.
+      fill(f.session, "Halo (voxels)", value);
+      addButton(f.session).click();
+      expect(f.session.statusLevel).toBe("error");
+      expect(f.session.status).toContain(
+        "Watershed halo must be a nonnegative safe integer in native voxels",
+      );
+      expect(f.createLive).not.toHaveBeenCalled();
+      expect(f.publish).not.toHaveBeenCalled();
+      expect(makeLayer).not.toHaveBeenCalled();
+      expect(f.watchViewport).not.toHaveBeenCalled();
+      expect(f.session.busy).toBe(false);
+      expect(field(f.session, "Halo (voxels)").disabled).toBe(false);
+      for (const input of f.inputs)
+        expect(input.dispose).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("keeps created halo and channel configurations independent of new-layer drafts", async () => {
+    const f = fixture();
+    f.session.open();
+    fill(f.session, "Halo (voxels)", "2");
+    fill(f.session, "Channels for −X −Y −Z", "2, 0, 2");
+    await f.session.addLayer();
+    const saved = JSON.parse(JSON.stringify(f.resultLayers[0].layer!.toJSON()));
+    fill(f.session, "Halo (voxels)", "0");
+    fill(f.session, "Channels for −X −Y −Z", "0, 0, 0");
+    expect(f.createLive).toHaveBeenCalledOnce();
+    expect(f.lives[0].setRegion).not.toHaveBeenCalled();
+    expect(f.resultLayers[0].layer!.toJSON()).toEqual(saved);
+    await f.session.addLayer();
+    expect(f.createLive.mock.calls[0][1]).toEqual([2, 0, 2]);
+    expect(f.createLive.mock.calls[0][4]).toBe(2);
+    expect(f.createLive.mock.calls[1][1]).toEqual([0, 0, 0]);
+    expect(f.createLive.mock.calls[1][4]).toBe(0);
+    expect(f.resultLayers[1].layer!.toJSON().source.state.halo).toBe(0);
+    fill(f.session, "Halo (voxels)", "8");
+    await f.session.addLayer();
+    expect(f.createLive.mock.calls[2][4]).toBe(DEFAULT_WATERSHED_HALO);
+    expect(f.resultLayers[2].layer!.toJSON().source.state).not.toHaveProperty(
+      "halo",
+    );
+    expect(f.resultLayers[0].layer!.toJSON()).toEqual(saved);
+    for (const publication of f.publications)
+      expect(publication.dispose).not.toHaveBeenCalled();
+    f.session.reset();
+    for (const publication of f.publications)
+      expect(publication.dispose).toHaveBeenCalledOnce();
+    for (const live of f.lives) expect(live.dispose).toHaveBeenCalledOnce();
+    for (const watcher of f.watchers)
+      expect(watcher.dispose).toHaveBeenCalledOnce();
+    for (const input of f.inputs) expect(input.dispose).toHaveBeenCalledOnce();
   });
 
   it("defaults agglomeration off and retains its optional threshold draft across toggles", () => {
@@ -546,6 +671,7 @@ describe("WASM watershed UI", () => {
         [0, 1, 2],
         options,
         expect.any(Function),
+        DEFAULT_WATERSHED_HALO,
       );
       const json = JSON.parse(
         JSON.stringify(f.resultLayers[0].layer!.toJSON()),
@@ -692,6 +818,7 @@ describe("WASM watershed UI", () => {
       [0, 0, 0],
       DEFAULT_WATERSHED_OPTIONS,
       expect.any(Function),
+      DEFAULT_WATERSHED_HALO,
     );
     expect(f.inputs.at(-1)!.readRegion).not.toHaveBeenCalled();
   });
@@ -708,6 +835,7 @@ describe("WASM watershed UI", () => {
         mapping.split(", ").map(Number),
         DEFAULT_WATERSHED_OPTIONS,
         expect.any(Function),
+        DEFAULT_WATERSHED_HALO,
       );
     },
   );
@@ -786,6 +914,7 @@ describe("WASM watershed UI", () => {
         [0, 1, 2],
         { ...DEFAULT_WATERSHED_OPTIONS, maskThreshold: Number(value) },
         expect.any(Function),
+        DEFAULT_WATERSHED_HALO,
       );
     },
   );
@@ -801,6 +930,7 @@ describe("WASM watershed UI", () => {
       [3, 3, 3],
       { ...DEFAULT_WATERSHED_OPTIONS, maskThreshold: 0.3 },
       expect.any(Function),
+      DEFAULT_WATERSHED_HALO,
     );
   });
 
@@ -819,6 +949,7 @@ describe("WASM watershed UI", () => {
         [3, 3, 3],
         { ...DEFAULT_WATERSHED_OPTIONS, maskThreshold: 0.3 },
         expect.any(Function),
+        DEFAULT_WATERSHED_HALO,
       );
 
       // Same-count metadata refreshes must leave even unfinished drafts alone.
@@ -842,6 +973,7 @@ describe("WASM watershed UI", () => {
         [0, 1, 2],
         { ...DEFAULT_WATERSHED_OPTIONS, maskThreshold: 0.3 },
         expect.any(Function),
+        DEFAULT_WATERSHED_HALO,
       );
       expect(f.createLive.mock.calls[0][1]).toEqual([3, 3, 3]);
       expect(f.publications[0].dispose).not.toHaveBeenCalled();
@@ -872,6 +1004,7 @@ describe("WASM watershed UI", () => {
         [0, 0, 0],
         DEFAULT_WATERSHED_OPTIONS,
         expect.any(Function),
+        DEFAULT_WATERSHED_HALO,
       );
       expect(f.createLive.mock.calls[0][2]).toEqual({
         ...DEFAULT_WATERSHED_OPTIONS,
@@ -986,6 +1119,7 @@ describe("WASM watershed UI", () => {
         dustThreshold: 3,
       },
       expect.any(Function),
+      DEFAULT_WATERSHED_HALO,
     );
     expect(f.publish).toHaveBeenCalledExactlyOnceWith(
       viewer.chunkManager,
@@ -1299,6 +1433,8 @@ describe("WASM watershed UI", () => {
     f.resultState.ready = false;
     f.session.open();
     fill(f.session, "High threshold", "0.8");
+    fill(f.session, "Halo (voxels)", "2");
+    fill(f.session, "Channels for −X −Y −Z", "2, 0, 2");
     field(f.session, "Use last channel as mask").click();
     fill(f.session, "Mask threshold", "0.7");
     const adding = f.session.addLayer();
@@ -1310,6 +1446,10 @@ describe("WASM watershed UI", () => {
     f.session.open();
     expect(field(f.session, "High threshold").value).toBe("0.8");
     expect(field(f.session, "High threshold").disabled).toBe(true);
+    expect(field(f.session, "Halo (voxels)").value).toBe("2");
+    expect(field(f.session, "Halo (voxels)").disabled).toBe(true);
+    expect(field(f.session, "Channels for −X −Y −Z").value).toBe("2, 0, 2");
+    expect(field(f.session, "Channels for −X −Y −Z").disabled).toBe(true);
     expect(field(f.session, "Use last channel as mask").disabled).toBe(true);
     expect(field(f.session, "Use last channel as mask").checked).toBe(true);
     expect(field(f.session, "Mask threshold").value).toBe("0.7");
@@ -1324,6 +1464,11 @@ describe("WASM watershed UI", () => {
     expect(f.root.add).toHaveBeenCalledOnce();
     expect(f.publications[0].dispose).not.toHaveBeenCalled();
     f.session.open();
+    expect(field(f.session, "Halo (voxels)").value).toBe("2");
+    expect(field(f.session, "Halo (voxels)").disabled).toBe(false);
+    expect(field(f.session, "Channels for −X −Y −Z").value).toBe("2, 0, 2");
+    expect(field(f.session, "Channels for −X −Y −Z").disabled).toBe(false);
+    expect(f.createLive.mock.calls[0][4]).toBe(2);
     expect(
       f.session.dialog!.body.querySelector('[role="status"]')!.textContent,
     ).toContain("Added live layer:");
@@ -1577,8 +1722,11 @@ describe("WASM watershed UI", () => {
     );
     expect(f.session.statusLevel).toBe("info");
     expect(status.textContent).not.toContain("2**21 voxel limit");
-    expect(failure).toContain("sidebar");
-    expect(failure).toContain("reduce halo");
+    expect(failure).toContain("Adjust sidebar thresholds");
+    expect(failure).toContain(
+      "add a layer in WASM Watershed with a smaller halo",
+    );
+    expect(failure).not.toContain("reduce halo");
     expect(f.createLive).toHaveBeenCalledOnce();
     expect(f.publish).toHaveBeenCalledOnce();
     expect(f.layerManager.has(f.resultLayers[0])).toBe(true);
@@ -1914,6 +2062,13 @@ describe("WASM watershed UI", () => {
     ["scaleIndex", "-1", "Source scale index"],
     ["scaleIndex", "0.5", "Source scale index"],
     ["scaleIndex", "", "Source scale index"],
+    ["halo", "", "nonnegative safe integer"],
+    ["halo", "-1", "nonnegative safe integer"],
+    ["halo", "0.5", "nonnegative safe integer"],
+    ["halo", "NaN", "nonnegative safe integer"],
+    ["halo", "Infinity", "nonnegative safe integer"],
+    ["halo", "-Infinity", "nonnegative safe integer"],
+    ["halo", "9007199254740992", "nonnegative safe integer"],
     ["channelsXYZ", "0, 1", "three integers"],
     ["channelsXYZ", "0, 1, 2, 3", "three integers"],
     ["channelsXYZ", "foo, 1, 2", "integer ≥ 0"],

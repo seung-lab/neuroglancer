@@ -30,7 +30,9 @@ import type { Viewer } from "#src/viewer.js";
 import {
   ABISS_WATERSHED_LICENSE_URL,
   ABISS_WATERSHED_SOURCE_URL,
+  DEFAULT_WATERSHED_HALO,
   DEFAULT_WATERSHED_OPTIONS,
+  validateWatershedHalo,
   validateWatershedOptions,
   type WatershedOptions,
 } from "#src/watershed/base.js";
@@ -50,6 +52,7 @@ export interface WatershedDependencies {
     channelsXYZ: readonly number[],
     options: WatershedOptions,
     onError: (error: unknown) => void,
+    halo?: number,
   ): LiveWatershed;
   publish: typeof publishLiveWatershed;
   watchViewport: typeof watchWatershedViewport;
@@ -104,6 +107,7 @@ export class WatershedSession extends RefCounted {
   source: ManagedUserLayer | undefined;
   metadata: InputMetadata | undefined;
   scaleIndex = "0";
+  halo = String(DEFAULT_WATERSHED_HALO);
   useLastChannelAsMask = false;
   maskThreshold = "0.3";
   useAgglomeration = false;
@@ -372,6 +376,8 @@ export class WatershedSession extends RefCounted {
           : {}),
       };
       validateWatershedOptions(options);
+      const halo = this.halo.trim() === "" ? NaN : Number(this.halo);
+      validateWatershedHalo(halo);
       // Validate and snapshot saved settings before constructing or publishing
       // a live computation. No labels or runtime references enter shared state.
       const recipe = parseWatershedRecipe({
@@ -381,6 +387,7 @@ export class WatershedSession extends RefCounted {
         source: { name: source.name, source: image.toJSON().source },
         inputScaleIndex,
         channelsXYZ,
+        ...(halo === DEFAULT_WATERSHED_HALO ? {} : { halo }),
         options,
         spacingXYZ: input.spacingXYZ,
       });
@@ -396,6 +403,7 @@ export class WatershedSession extends RefCounted {
         channelsXYZ,
         options,
         (error) => reportError(error),
+        halo,
       );
       input = undefined;
       if (startupErrors.length !== 0) throw startupErrors[0];
@@ -498,7 +506,7 @@ export class WatershedSession extends RefCounted {
         if (released) return;
         entry!.check();
         if (released || !this.alive) return;
-        computeErrorStatus = `Watershed error (${layer!.name}): ${errorMessage(error)}. Adjust sidebar settings or navigate to retry; for an oversized region, reduce halo, zoom in, or add a layer at a coarser native scale.`;
+        computeErrorStatus = `Watershed error (${layer!.name}): ${errorMessage(error)}. Adjust sidebar thresholds or navigate to retry; for an oversized region, zoom in or add a layer in WASM Watershed with a smaller halo or at a coarser native scale.`;
         this.setStatus(computeErrorStatus, "error");
         this.changed.dispatch();
       };
@@ -635,16 +643,16 @@ export class WatershedDialog extends FramedDialog {
       return element;
     };
     text(
-      "Add a segmentation with one shared result over the XYZ bounding box enclosing all visible slice views. As you navigate, a new box is computed after a 150 ms debounce, with an 8-voxel halo per face clipped to source bounds. UINT64 labels are fetched and rendered in chunks, not computed per display chunk; labels may change across navigation. This is not equivalent to whole-volume watershed.",
+      "Add a segmentation with one shared result over the XYZ bounding box enclosing all visible slice views. As you navigate, a new box is computed after a 150 ms debounce, with the configured halo per face (default 8 native voxels) clipped to source bounds. UINT64 labels are fetched and rendered in chunks, not computed per display chunk; labels may change across navigation. This is not equivalent to whole-volume watershed.",
     );
     text(
-      "The computation is limited to 2**21 (2,097,152) voxels INCLUDING the halo. Oversized views report an error: zoom in or add a layer at a coarser native scale. Computation is never silently split. Hiding the output or removing all relevant slice views clears its result.",
+      "The computation is limited to 2**21 (2,097,152) voxels INCLUDING the halo. Oversized views report an error: zoom in or add a layer with a smaller halo or at a coarser native scale. Computation is never silently split. Hiding the output or removing all relevant slice views clears its result.",
     );
     text(
       "Affinities connect each voxel towards its negative axes (−X, −Y, −Z). Integer values are normalized by their data type maximum; floating-point values are unchanged. Non-native transforms and mutable Python volume sources are rejected.",
     );
     text(
-      "Closing this dialog keeps created layers active. Deleting an output or its affinity source stops its work. Affinity data/transform changes and viewer reset also release dependent layers. Selecting another source here keeps existing layers active. Settings are saved as a JSON recipe and restored by recomputing one current-view union, after ALL affinity data for that box is available, not the whole dataset. Shared state contains no computed labels or local file bytes. Upstream ONNX layers need accessible source and model URLs to restore; legacy session-local URLs remain nonportable.",
+      "Closing this dialog keeps created layers active. Deleting an output or its affinity source stops its work. Affinity data/transform changes and viewer reset also release dependent layers. Selecting another source here keeps existing layers active. Halo and channel mapping are drafts for new layers; add or recreate a layer to change them. Settings are saved as a JSON recipe and restored by recomputing one current-view union, after ALL affinity data for that box is available, not the whole dataset. Shared state contains no computed labels or local file bytes. Upstream ONNX layers need accessible source and model URLs to restore; legacy session-local URLs remain nonportable.",
     );
     const license = text(
       "Algorithm license: GNU General Public License v3 or later (GPL v3+). ",
@@ -681,7 +689,7 @@ export class WatershedDialog extends FramedDialog {
     );
     const fields: Array<{
       input: HTMLInputElement;
-      key: "scaleIndex" | "channelsXYZ" | keyof WatershedOptions;
+      key: "scaleIndex" | "halo" | "channelsXYZ" | keyof WatershedOptions;
     }> = [];
     const field = (
       title: string,
@@ -709,6 +717,7 @@ export class WatershedDialog extends FramedDialog {
       fields.push({ input, key });
     };
     field("Source scale index", "scaleIndex", true);
+    field("Halo (voxels)", "halo", true);
     const metadata = text("");
     metadata.setAttribute("aria-label", "Selected scale bounds and voxel size");
     const advanced = document.createElement("details");
