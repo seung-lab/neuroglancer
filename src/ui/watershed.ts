@@ -32,6 +32,7 @@ import {
   ABISS_WATERSHED_SOURCE_URL,
   DEFAULT_WATERSHED_HALO,
   DEFAULT_WATERSHED_OPTIONS,
+  WATERSHED_MESH_LICENSE_URL,
   validateWatershedHalo,
   validateWatershedOptions,
   type WatershedOptions,
@@ -654,6 +655,9 @@ export class WatershedDialog extends FramedDialog {
     text(
       "Closing this dialog keeps created layers active. Deleting an output or its affinity source stops its work. Affinity data/transform changes and viewer reset also release dependent layers. Selecting another source here keeps existing layers active. Halo and channel mapping are drafts for new layers; add or recreate a layer to change them. Settings are saved as a JSON recipe and restored by recomputing one current-view union, after ALL affinity data for that box is available, not the whole dataset. Shared state contains no computed labels or local file bytes. Upstream ONNX layers need accessible source and model URLs to restore; legacy session-local URLs remain nonportable.",
     );
+    text(
+      "Select completed watershed segments to generate meshes in the 3D view. Meshes cover only the computed region and remain open at its boundary; a region filled by one label may have no surface. After labels are recomputed, toggle segment visibility off and on to mesh the new IDs. Linked-layer selections are never cleared automatically.",
+    );
     const license = text(
       "Algorithm license: GNU General Public License v3 or later (GPL v3+). ",
     );
@@ -663,6 +667,7 @@ export class WatershedDialog extends FramedDialog {
         "Corresponding source and build instructions",
         ABISS_WATERSHED_SOURCE_URL,
       ],
+      ["Marching cubes license (MIT)", WATERSHED_MESH_LICENSE_URL],
     ]) {
       const link = document.createElement("a");
       link.textContent = title;

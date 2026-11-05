@@ -487,11 +487,15 @@ describe("WASM watershed UI", () => {
       "source and model URLs",
       "legacy session-local URLs remain nonportable",
       "GPL v3+",
+      "meshes in the 3D view",
+      "remain open at its boundary",
+      "toggle segment visibility off and on",
+      "Marching cubes license (MIT)",
     ])
       expect(body.textContent).toContain(explanation);
     expect(
       body.querySelectorAll('a[target="_blank"][rel="noopener"]').length,
-    ).toBe(2);
+    ).toBe(3);
     const select = body.querySelector<HTMLSelectElement>(
       '[aria-label="Affinity image source"]',
     )!;

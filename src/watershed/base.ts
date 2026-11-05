@@ -56,6 +56,11 @@ export const ABISS_WATERSHED_LICENSE_URL = new URL(
   import.meta.url,
 ).href;
 
+export const WATERSHED_MESH_LICENSE_URL = new URL(
+  "./meshing/upstream/LICENSE.md",
+  import.meta.url,
+).href;
+
 export function validateWatershedHalo(halo: number): void {
   if (!Number.isSafeInteger(halo) || halo < 0) {
     throw new Error(
