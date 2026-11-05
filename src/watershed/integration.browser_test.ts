@@ -1954,6 +1954,19 @@ function watershedSourceControls(viewer: Viewer, result: ManagedUserLayer) {
       element.dispatchEvent(new Event("input", { bubbles: true }));
     },
     expectRecipe(recipe: WatershedRecipe) {
+      // These remain creation-dialog settings, not right-sidebar controls.
+      for (const label of [
+        "Halo (voxels)",
+        "Halo (voxels) slider",
+        "Channels for −X −Y −Z",
+        "−X affinity channel",
+        "−Y affinity channel",
+        "−Z affinity channel",
+      ])
+        expect(
+          view.element.querySelector(`[aria-label="${label}"]`),
+          `Absent SOURCE control: ${label}`,
+        ).toBeNull();
       const wrapper = view.element.querySelector<
         HTMLElement & {
           CodeMirror: CodeMirror.Editor;
@@ -1987,7 +2000,7 @@ function watershedSourceControls(viewer: Viewer, result: ManagedUserLayer) {
 const haloControlLabel = "Halo (voxels)";
 
 describe("right-sidebar live watershed parameters (real browser and WASM)", () => {
-  it("edits one default-off output in place, validates without work, and restores only the edited recipe into fresh working controls", async () => {
+  it("preserves creation-dialog halo/channels through in-place sidebar edits and output-only fresh restoration", async () => {
     const jobs = observeWatershedWorker(0, false, true);
     const regions = vi.spyOn(LiveWatershed.prototype, "setRegion");
     const native = await agglomerationFixture(
@@ -1998,7 +2011,17 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
     positionViewer(original, [2.5, 1.5, 0.5], agglomerationOffset);
     const session = openWatershed(original, image);
     configure(session, agglomerationChannels);
+    expect(field(session, haloControlLabel).value).toBe("8");
+    fill(session, haloControlLabel, "2");
+    expect(session.halo).toBe("2");
+    expect(session.channelsXYZ).toBe("2, 0, 1");
+    const prepareInput = vi.spyOn(session.dependencies, "prepareInput");
     const result = await addFromDialog(session);
+    expect(prepareInput).toHaveBeenCalledOnce();
+    const preparedInput = prepareInput.mock.results[0].value;
+    // Subsequent creation drafts must not mutate this output's captured recipe.
+    fill(session, haloControlLabel, "17");
+    fill(session, "Channels for −X −Y −Z", "0, 2, 1");
     session.dialog!.dispose();
     const output = outputSource(
       result,
@@ -2016,6 +2039,7 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
       source: { name: image.name, source: image.layer!.toJSON().source },
       inputScaleIndex: 0,
       channelsXYZ: agglomerationChannels,
+      halo: 2,
       options: { ...watershedThresholds },
       spacingXYZ: [...spacing],
     };
@@ -2030,6 +2054,10 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
     expect(producer).toBeInstanceOf(LiveWatershed);
     const sameIdentities = () => {
       expect(original.layerManager.managedLayers).toEqual([image, result]);
+      expect(result.isReady()).toBe(true);
+      expect(prepareInput).toHaveBeenCalledOnce();
+      expect(prepareInput.mock.results[0].value).toBe(preparedInput);
+      expect(preparedInput.signal.aborted).toBe(false);
       expect(result.layer).toBe(layer);
       expect(layer.displayState).toBe(displayState);
       expect(layer.dataSources).toEqual([controls.source]);
@@ -2080,19 +2108,14 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
     recipe.options = { ...recipe.options, maskThreshold: 0.3 };
     await expectResult(barrier, 5); // Both edges touching x=2 are removed.
 
-    // All other options and the channel map go through the SAME live producer.
+    // Sidebar options use the SAME producer/input and preserve the custom
+    // creation-dialog channel map and halo, despite the later dialog drafts.
     controls.fill("High threshold slider", "0.9");
     expect(controls.input("High threshold").value).toBe("0.9");
     controls.fill("Low threshold", "0.05");
     controls.fill("Size threshold", "1");
     controls.fill("Dust threshold", "1");
     controls.fill("Mask threshold", "0.4");
-    controls.fill("−X affinity channel", "0");
-    controls.fill("−Y affinity channel", "2");
-    controls.fill("−Z affinity channel", "1");
-    controls.fill(haloControlLabel, "2");
-    recipe.channelsXYZ = [0, 2, 1];
-    recipe.halo = 2;
     recipe.options = {
       ...recipe.options,
       highThreshold: 0.9,
@@ -2102,31 +2125,28 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
       maskThreshold: 0.4,
     };
     await expectResult(barrier, 6);
-    const xPlane = Array.from({ length: 6 }, () => [0, 1, 0.25, 1, 1]).flat();
     expect(jobs.affinities()).toEqual([
       agglomerationInput(),
       agglomerationInput(),
       agglomerationInput(),
       agglomerationInput(),
       agglomerationInput(true),
-      Float32Array.from([
-        ...new Array<number>(30).fill(1),
-        ...xPlane,
-        ...new Array<number>(30).fill(1),
-        ...Array.from({ length: 6 }, () => [0, 0, 1, 0, 0]).flat(),
-      ]),
+      agglomerationInput(true),
     ]);
-    for (const [label, invalid, valid, error] of [
-      ["High threshold", "0.05", "0.9", /low|high|threshold/i],
-      [haloControlLabel, "-1", "2", /halo|nonnegative/i],
-      ["−X affinity channel", "3", "0", /mask|channel/i],
-    ] as const) {
-      controls.fill(label, invalid);
-      expect(controls.view.element.textContent).toMatch(error);
-      await expectResult(barrier, 6); // Old recipe AND labels survive invalid drafts.
-      controls.fill(label, valid);
-      await expectResult(barrier, 6); // Recovering an unchanged recipe is a no-op.
-    }
+    controls.fill("High threshold", "0.05");
+    expect(controls.view.element.textContent).toMatch(/low|high|threshold/i);
+    await expectResult(barrier, 6); // Old recipe AND labels survive invalid drafts.
+    controls.fill("High threshold", "0.9");
+    await expectResult(barrier, 6); // Recovering an unchanged recipe is a no-op.
+    // Advanced saved-state validation still exists without sidebar inputs.
+    expect(() => state!.restoreState({ ...recipe, halo: -1 })).toThrow(
+      /halo|nonnegative/i,
+    );
+    await expectResult(barrier, 6);
+    expect(() =>
+      state!.restoreState({ ...recipe, channelsXYZ: [3, 0, 1] }),
+    ).toThrow(/mask|channel/i);
+    await expectResult(barrier, 6);
     expect(native.chunks).toHaveLength(1);
     const saved = saveOnlyWatershed(original, result, recipe);
     controls.dispose();
@@ -2139,6 +2159,8 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
     );
 
     const restored = makeViewer();
+    expect(restored.chunkManager).not.toBe(original.chunkManager);
+    expect(restored.dataContext.worker).not.toBe(original.dataContext.worker);
     const restoredResult = await restoreOnlyWatershed(restored, saved);
     const restoredOutput = outputSource(
       restoredResult,
@@ -2148,7 +2170,6 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
     await expectTiles(restoredOutput.chunkSource, agglomerationShape, barrier);
     const restoredControls = watershedSourceControls(restored, restoredResult);
     restoredControls.expectRecipe(recipe);
-    expect(restoredControls.input(haloControlLabel).value).toBe("2");
     expect(restoredControls.input("Agglomerate watershed basins").checked).toBe(
       true,
     );
@@ -2157,8 +2178,11 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
       true,
     );
     expect(restoredControls.input("Mask threshold").value).toBe("0.4");
+    expect(jobs.shapes()).toEqual(new Array(7).fill(agglomerationShape));
     expect(jobs.options()).toHaveLength(7);
     expect(jobs.options().at(-1)).toEqual(recipe.options);
+    expect(jobs.affinities().at(-1)).toEqual(agglomerationInput(true));
+    expect(saveOnlyWatershed(restored, restoredResult, recipe)).toEqual(saved);
     expect(native.chunks).toHaveLength(2);
     restoredControls.input("Use last channel as mask").click();
     const unmasked = {
@@ -2172,12 +2196,14 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
     await expectTiles(restoredOutput.chunkSource, agglomerationShape, () => 1n);
     expect(jobs.options()).toHaveLength(8);
     expect(jobs.options().at(-1)).toEqual(unmasked);
+    expect(jobs.affinities().at(-1)).toEqual(agglomerationInput());
     restoredControls.expectRecipe(recipe);
     expect(restored.layerManager.managedLayers).toEqual([restoredResult]);
   }, 120_000);
 
-  it("recomputes exact 17/1/5/17-slice halos without navigation, reuses the new domain, and recovers from a visible oversize edit", async () => {
+  it("creates a custom halo/channel mapping, then restores runtime 17/1/5/17-slice halos and recovers from an oversize saved config without sidebar controls", async () => {
     const jobs = observeWatershedWorker();
+    const regions = vi.spyOn(LiveWatershed.prototype, "setRegion");
     const shape = [148, 50, 512],
       offset = [10, 20, -3];
     const native = await precomputed(
@@ -2186,13 +2212,16 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
       offset,
       [32, 25, 16],
       3,
-      (x, _y, _z, c) => (c === 0 && x === 64 ? 0 : 255),
+      (x, _y, _z, c) => (c === 2 && x === 64 ? 0 : 255),
     );
     const viewer = makeViewer();
     const image = await addImage(viewer, native.url);
     positionViewer(viewer, [74.5, 25.5, 256.5], offset);
     const session = openWatershed(viewer, image);
-    configure(session);
+    configure(session, [2, 0, 1]);
+    fill(session, haloControlLabel, "2");
+    expect(session.halo).toBe("2");
+    expect(session.channelsXYZ).toBe("2, 0, 1");
     const result = await addFromDialog(session);
     const output = outputSource(result, shape, offset);
     const controls = watershedSourceControls(viewer, result);
@@ -2202,22 +2231,29 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
       mode: "live",
       source: { name: image.name, source: image.layer!.toJSON().source },
       inputScaleIndex: 0,
-      channelsXYZ: [0, 1, 2],
+      channelsXYZ: [2, 0, 1],
+      halo: 2,
       options: { ...watershedThresholds },
       spacingXYZ: [...spacing],
+    };
+    const loaded = controls.source.loadState!;
+    if (loaded.error !== undefined) throw loaded.error;
+    const state = loaded.dataSource.state!;
+    const producer = regions.mock.contexts[0] as LiveWatershed;
+    expect(producer).toBeInstanceOf(LiveWatershed);
+    // Use the real datasource Trackable with detached saved JSON. No sidebar
+    // halo/channel inputs exist, but programmatic reconfiguration still works.
+    const restoreHalo = (halo: number) => {
+      recipe.halo = halo;
+      state.restoreState(JSON.parse(JSON.stringify(recipe)));
     };
     const value = (x: number, z: number) =>
       output.renderLayer.getValueAt(output.worldPosition([x, 25.5, z]));
     await expect.poll(() => value(63.5, 256.5), { timeout: 60_000 }).toBe(1n);
     session.dialog!.dispose();
-    expect(visibleHaloBox(viewer, shape, offset)).toEqual({
-      origin: [0, 0, 248],
-      shape: [148, 50, 17],
-    });
-    expect(controls.input(haloControlLabel).value).toBe("8");
     const position = [...viewer.position.value];
     const zoom = viewer.crossSectionScale.value;
-    const expectedShapes = [[148, 50, 17]];
+    const expectedShapes = [[148, 50, 5]];
     const expectDomain = async (lowerZ: number, depth: number) => {
       // Native result containment, including zeros outside the current halo.
       // Different X/Z display chunks must copy the same regional basin IDs.
@@ -2245,13 +2281,24 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
           );
       }
       expect(jobs.shapes()).toEqual(expectedShapes);
+      expect(jobs.options().at(-1)).toEqual(recipe.options);
       controls.expectRecipe(recipe);
+      expect(result.isReady()).toBe(true);
+      expect(controls.source.loadState).toBe(loaded);
+      expect(loaded.dataSource.state).toBe(state);
+      expect((result.layer as SegmentationUserLayer).renderLayers).toContain(
+        output.renderLayer,
+      );
+      expect(output.renderLayer.multiscaleSource).toBe(output.volume);
+      expect(new Set(regions.mock.contexts)).toEqual(new Set([producer]));
+      expect(producer.signal.aborted).toBe(false);
       expectPublicationActive(output);
     };
-    await expectDomain(248, 17);
-    for (const halo of [0, 2, 8]) {
-      controls.fill(haloControlLabel, String(halo));
-      recipe.halo = halo;
+    // This five-slice native job proves creation forwarded halo=2 rather than
+    // silently using the default eight; the X split proves channel 2 is −X.
+    await expectDomain(254, 5);
+    for (const halo of [8, 0, 2, 8]) {
+      restoreHalo(halo);
       expectedShapes.push([148, 50, 1 + 2 * halo]);
       await expect
         .poll(() => jobs.shapes(), { timeout: 60_000 })
@@ -2263,7 +2310,8 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
     // This is a valid parameter but an invalid compute region: never split it
     // or run a fallback. The error must be visible, and recovery nonfatal.
     const fetched = native.chunks.length;
-    controls.fill(haloControlLabel, "512");
+    restoreHalo(512);
+    controls.expectRecipe(recipe);
     await expect.poll(() => session.statusLevel).toBe("error");
     expect(session.status).toMatch(/2\*\*21|2,097,152|2097152/);
     session.open();
@@ -2274,8 +2322,7 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
     expect(jobs.shapes()).toEqual(expectedShapes);
     expect(native.chunks).toHaveLength(fetched);
     expect(viewer.layerManager.has(result)).toBe(true);
-    controls.fill(haloControlLabel, "2");
-    recipe.halo = 2;
+    restoreHalo(2);
     expectedShapes.push([148, 50, 5]);
     await expectDomain(254, 5);
     expect(session.statusLevel, session.status).toBe("info");
@@ -2296,7 +2343,13 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
     controls.dispose();
     disposeViewers.get(viewer)!();
     expect(viewer.wasDisposed).toBe(true);
+    expect(producer.signal.aborted).toBe(true);
+    expect(() => output.volume.getSources(sourceOptions)).toThrow(
+      /unavailable/,
+    );
     const restored = makeViewer();
+    expect(restored.chunkManager).not.toBe(viewer.chunkManager);
+    expect(restored.dataContext.worker).not.toBe(viewer.dataContext.worker);
     const restoredResult = await restoreOnlyWatershed(restored, saved);
     const restoredOutput = outputSource(restoredResult, shape, offset);
     await expect
@@ -2310,9 +2363,15 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
       .toBe(2n);
     const restoredControls = watershedSourceControls(restored, restoredResult);
     restoredControls.expectRecipe(recipe);
-    expect(restoredControls.input(haloControlLabel).value).toBe("2");
+    expect(saveOnlyWatershed(restored, restoredResult, recipe)).toEqual(saved);
     expect(jobs.shapes()).toEqual([...expectedShapes, [148, 50, 5]]);
-    restoredControls.fill(haloControlLabel, "0");
+    const restoredLoaded = restoredControls.source.loadState!;
+    if (restoredLoaded.error !== undefined) throw restoredLoaded.error;
+    recipe.halo = 0;
+    restoredLoaded.dataSource.state!.restoreState(
+      JSON.parse(JSON.stringify(recipe)),
+    );
+    restoredControls.expectRecipe(recipe);
     await expect
       .poll(() => jobs.shapes(), { timeout: 60_000 })
       .toEqual([...expectedShapes, [148, 50, 5], [148, 50, 1]]);
