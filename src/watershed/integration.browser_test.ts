@@ -46,6 +46,7 @@ import { bindWatershed, type WatershedSession } from "#src/ui/watershed.js";
 import { vec3 } from "#src/util/geom.js";
 import * as matrix from "#src/util/matrix.js";
 import type { Viewer } from "#src/viewer.js";
+import type { WatershedOptions } from "#src/watershed/base.js";
 import type { WatershedRecipe } from "#src/watershed/recipe.js";
 import { mswFixture } from "#tests/fixtures/msw_browser.js";
 
@@ -206,7 +207,7 @@ const sourceOptions = {
   modelChannelDimensionIndices: [],
   multiscaleToViewTransform: matrix.createIdentity(Float32Array, 3),
 };
-const spacing = [1e-8, 2e-8, 3e-8];
+const spacing: [number, number, number] = [1e-8, 2e-8, 3e-8];
 
 function worldPosition(
   viewer: {
@@ -367,8 +368,17 @@ async function settleView() {
 
 /** Call through to the real computation worker. Optionally hold delivery of its
  * first replies, never replacing the native computation or its returned data. */
-function observeWatershedWorker(holdReplies = 0, observeInference = false) {
-  const jobs: Array<{ shape: number[]; release?: () => void }> = [];
+function observeWatershedWorker(
+  holdReplies = 0,
+  observeInference = false,
+  observeAffinities = false,
+) {
+  const jobs: Array<{
+    shape: number[];
+    options: WatershedOptions;
+    affinities?: Float32Array;
+    release?: () => void;
+  }> = [];
   const inferenceRuns: Array<{
     input: Float32Array;
     output?: Float32Array;
@@ -405,7 +415,11 @@ function observeWatershedWorker(holdReplies = 0, observeInference = false) {
     if (message?.t === "abissWatershed") {
       sequence.push("watershed");
       const index = jobs.length;
-      const job: (typeof jobs)[number] = { shape: [...message.args[1]] };
+      const job: (typeof jobs)[number] = {
+        shape: [...message.args[1]],
+        options: { ...message.args[2] },
+        affinities: observeAffinities ? message.args[0].slice() : undefined,
+      };
       jobs.push(job);
       if (index < holdReplies) {
         const worker = this;
@@ -438,6 +452,8 @@ function observeWatershedWorker(holdReplies = 0, observeInference = false) {
     inferenceRuns,
     sequence,
     shapes: () => jobs.map((job) => job.shape),
+    options: () => jobs.map((job) => job.options),
+    affinities: () => jobs.map((job) => job.affinities),
     hasReply: (index: number) => jobs[index]?.release !== undefined,
     release: (index: number) => {
       expect(jobs[index]?.release).toBeDefined();
@@ -504,6 +520,7 @@ async function precomputed(
   chunkShape: number[],
   channels: number,
   value: (x: number, y: number, z: number, channel: number) => number,
+  dataType: "uint8" | "float32" = "uint8",
 ) {
   const chunks: string[] = [];
   (await server()).use(
@@ -511,7 +528,7 @@ async function precomputed(
       HttpResponse.json({
         "@type": "neuroglancer_multiscale_volume",
         type: "image",
-        data_type: "uint8",
+        data_type: dataType,
         num_channels: channels,
         scales: [
           {
@@ -532,7 +549,8 @@ async function precomputed(
         key,
       )!;
       const [x0, x1, y0, y1, z0, z1] = bounds.slice(1).map(Number);
-      const data = new Uint8Array((x1 - x0) * (y1 - y0) * (z1 - z0) * channels);
+      const ArrayType = dataType === "float32" ? Float32Array : Uint8Array;
+      const data = new ArrayType((x1 - x0) * (y1 - y0) * (z1 - z0) * channels);
       let i = 0;
       for (let c = 0; c < channels; ++c)
         for (let z = z0; z < z1; ++z)
@@ -732,7 +750,126 @@ async function expectTiles(
   }
 }
 
+// Six parallel contacts all have exactly representable affinity .25. Strong
+// within-basin edges give [1, 1, 2, 2, 2] in each X row before agglomeration.
+// Keep Y/Z non-singleton so the real viewer has ordinary renderable bounds.
+const agglomerationShape = [5, 3, 2];
+const agglomerationOffset = [10, 20, -3];
+const agglomerationChannels: [number, number, number] = [2, 0, 1];
+const agglomerationThresholdLabel = "Agglomeration threshold (agg_threshold)";
+const watershedThresholds = {
+  highThreshold: 1,
+  lowThreshold: 0,
+  sizeThreshold: 0,
+  dustThreshold: 0,
+};
+
+async function agglomerationFixture(base: string) {
+  return precomputed(
+    base,
+    agglomerationShape,
+    agglomerationOffset,
+    agglomerationShape,
+    4,
+    (x, _y, _z, c) =>
+      c === 2 ? [0, 1, 0.25, 1, 1][x] : c === 3 ? Number(x === 2) : 1,
+    "float32",
+  );
+}
+
+// Independent source/label oracles, not labels from another watershed run.
+function agglomerationInput(mask = false) {
+  const xPlane = Array.from({ length: 6 }, () => [0, 1, 0.25, 1, 1]).flat();
+  return Float32Array.from([
+    ...xPlane,
+    ...new Array<number>(60).fill(1),
+    ...(mask ? Array.from({ length: 6 }, () => [0, 0, 1, 0, 0]).flat() : []),
+  ]);
+}
+
 function shareableWatershedRecipeTests() {
+  it("round-trips enabled agglomeration from real UI into an output-only fresh viewer with independent native values and merged labels", async () => {
+    const jobs = observeWatershedWorker(0, false, true);
+    const native = await agglomerationFixture(
+      "https://watershed-integration.invalid/share-agglomeration",
+    );
+    const original = makeViewer();
+    const image = await addImage(original, native.url);
+    positionViewer(original, [2.5, 1.5, 0.5], agglomerationOffset);
+    const session = openWatershed(original, image);
+    configure(session, agglomerationChannels);
+    field(session, "Agglomerate watershed basins").click();
+    fill(session, agglomerationThresholdLabel, "0.2");
+    const recipe: WatershedRecipe = {
+      version: 1,
+      profile: "visible-slice-union-v1",
+      mode: "live",
+      source: { name: image.name, source: image.layer!.toJSON().source },
+      inputScaleIndex: 0,
+      channelsXYZ: agglomerationChannels,
+      options: { ...watershedThresholds, aggThreshold: 0.2 },
+      spacingXYZ: [...spacing],
+    };
+    const result = await addFromDialog(session);
+    const output = outputSource(
+      result,
+      agglomerationShape,
+      agglomerationOffset,
+    );
+    // .25 > .2 merges both basins. Disabled would be [1, 1, 2, 2, 2].
+    await expectTiles(output.chunkSource, agglomerationShape, () => 1n);
+    expect(jobs.options()).toEqual([recipe.options]);
+    expect(jobs.affinities()).toEqual([agglomerationInput()]);
+    expect(native.chunks).toHaveLength(1);
+    // A later draft is not the saved publication's options.
+    fill(session, agglomerationThresholdLabel, "0.9");
+    field(session, "Agglomerate watershed basins").click();
+    const saved = saveOnlyWatershed(original, result, recipe);
+    expect(saved.layers).toHaveLength(1);
+    deleteLayer(result);
+    deleteLayer(image);
+    disposeViewers.get(original)!();
+    expect(original.wasDisposed).toBe(true);
+    expect(image.wasDisposed).toBe(true);
+    expect(result.wasDisposed).toBe(true);
+    expect(() => output.volume.getSources(sourceOptions)).toThrow(
+      /unavailable/,
+    );
+
+    const restored = makeViewer();
+    expect(restored.chunkManager).not.toBe(original.chunkManager);
+    expect(restored.dataContext.worker).not.toBe(original.dataContext.worker);
+    const restoredResult = await restoreOnlyWatershed(restored, saved);
+    const restoredOutput = outputSource(
+      restoredResult,
+      agglomerationShape,
+      agglomerationOffset,
+    );
+    await expectTiles(restoredOutput.chunkSource, agglomerationShape, () => 1n);
+    expect(
+      visibleHaloShape(restored, agglomerationShape, agglomerationOffset),
+    ).toEqual(agglomerationShape);
+    expect(jobs.shapes()).toEqual([agglomerationShape, agglomerationShape]);
+    expect(jobs.options()).toEqual([recipe.options, recipe.options]);
+    // The hidden restored image fetched HTTP again and transferred all three
+    // mapped float32 planes to real WASM; no old input/output object survived.
+    expect(native.chunks).toHaveLength(2);
+    expect(jobs.affinities()).toEqual([
+      agglomerationInput(),
+      agglomerationInput(),
+    ]);
+    for (let x = 0; x < 5; ++x)
+      await expect
+        .poll(() =>
+          restoredOutput.renderLayer.getValueAt(
+            restoredOutput.worldPosition([x + 0.5, 1.5, 0.5]),
+          ),
+        )
+        .toBe(1n);
+    expect(restored.layerManager.managedLayers).toEqual([restoredResult]);
+    expect(saveOnlyWatershed(restored, restoredResult, recipe)).toEqual(saved);
+  }, 120_000);
+
   it.each(["affinity", "scalar", "mask"] as const)(
     "round-trips %s UI output without its visible source or original publication, then follows navigation",
     async (kind) => {
@@ -1442,6 +1579,84 @@ describe("regional live watershed (real WebGL, chunk RPC and native WASM)", () =
       output.renderLayer.getValueAt(output.worldPosition([64.5, 2.5, 1.5])),
     ).toBe(2n);
     expect(jobs.shapes()).toEqual([[148, 5, 4]]);
+  }, 90_000);
+
+  it("uses real agglomeration controls: default off, strict equality, numeric zero on, and a masked barrier", async () => {
+    const jobs = observeWatershedWorker(0, false, true);
+    const native = await agglomerationFixture(
+      "https://watershed-integration.invalid/agglomeration-controls",
+    );
+    const viewer = makeViewer();
+    const image = await addImage(viewer, native.url);
+    positionViewer(viewer, [2.5, 1.5, 0.5], agglomerationOffset);
+    const session = openWatershed(viewer, image);
+    configure(session, agglomerationChannels);
+    const enabled = field(session, "Agglomerate watershed basins");
+    const threshold = field(session, agglomerationThresholdLabel);
+    expect(enabled.type).toBe("checkbox");
+    expect(enabled.checked).toBe(false);
+    expect(threshold.disabled).toBe(true);
+    expect(threshold.value).toBe("0.15");
+    const splitLabel = (x: number) => (x < 2 ? 1n : 2n);
+    const disabled = outputSource(
+      await addFromDialog(session),
+      agglomerationShape,
+      agglomerationOffset,
+    );
+    // This is also the actual old-export oracle, not an enabled-run comparison.
+    await expectTiles(disabled.chunkSource, agglomerationShape, splitLabel);
+    expect(jobs.options()).toEqual([watershedThresholds]);
+    expect(jobs.options()[0]).not.toHaveProperty("aggThreshold");
+
+    enabled.click();
+    expect(threshold.disabled).toBe(false);
+    fill(session, agglomerationThresholdLabel, "0.25");
+    const equality = outputSource(
+      await addFromDialog(session),
+      agglomerationShape,
+      agglomerationOffset,
+    );
+    await expectTiles(equality.chunkSource, agglomerationShape, splitLabel);
+
+    fill(session, agglomerationThresholdLabel, "0");
+    const zero = outputSource(
+      await addFromDialog(session),
+      agglomerationShape,
+      agglomerationOffset,
+    );
+    await expectTiles(zero.chunkSource, agglomerationShape, () => 1n);
+    field(session, "Use last channel as mask").click();
+    fill(session, "Mask threshold", "0.3");
+    const barrier = outputSource(
+      await addFromDialog(session),
+      agglomerationShape,
+      agglomerationOffset,
+    );
+    // Masked x=2 removes BOTH touching edges; even threshold 0 cannot merge
+    // through background or turn [1,1,0,2,2] into [1,1,0,1,1].
+    await expectTiles(barrier.chunkSource, agglomerationShape, (x) =>
+      x < 2 ? 1n : x === 2 ? 0n : 2n,
+    );
+    await expectTiles(disabled.chunkSource, agglomerationShape, splitLabel);
+    await expectTiles(equality.chunkSource, agglomerationShape, splitLabel);
+    await expectTiles(zero.chunkSource, agglomerationShape, () => 1n);
+    expect(jobs.options()).toEqual([
+      watershedThresholds,
+      { ...watershedThresholds, aggThreshold: 0.25 },
+      { ...watershedThresholds, aggThreshold: 0 },
+      { ...watershedThresholds, aggThreshold: 0, maskThreshold: 0.3 },
+    ]);
+    expect(jobs.affinities()).toEqual([
+      agglomerationInput(),
+      agglomerationInput(),
+      agglomerationInput(),
+      agglomerationInput(true),
+    ]);
+    expect(jobs.shapes()).toEqual(new Array(4).fill(agglomerationShape));
+    expect(
+      visibleHaloShape(viewer, agglomerationShape, agglomerationOffset),
+    ).toEqual(agglomerationShape);
+    expect(native.chunks).toHaveLength(1);
   }, 90_000);
 
   it("uses real mask controls to gate BOTH edge endpoints regionally without changing a default-off publication", async () => {

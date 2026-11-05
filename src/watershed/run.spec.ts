@@ -94,6 +94,43 @@ describe("watershed job coordination", () => {
     expect(affinities.byteLength).toBe(96);
   });
 
+  it.each([undefined, 0, 0.2])(
+    "snapshots agglomeration %s before awaiting input without adding a mask plane",
+    async (aggThreshold) => {
+      const { input, affinities } = makeInput();
+      const read = Promise.withResolvers<Float32Array>();
+      vi.mocked(input.readRegion).mockReturnValue(read.promise);
+      const options = {
+        ...DEFAULT_WATERSHED_OPTIONS,
+        ...(aggThreshold === undefined ? {} : { aggThreshold }),
+      };
+      const expected = { ...options };
+      const pending = computeWatershed(
+        input,
+        [10, 20, 30],
+        [2, 2, 2],
+        [2, 0, 1],
+        options,
+        new AbortController().signal,
+      );
+      options.aggThreshold = 0.9;
+      expect(request).not.toHaveBeenCalled();
+      expect(input.readRegion).toHaveBeenCalledExactlyOnceWith(
+        [10, 20, 30],
+        [2, 2, 2],
+        [2, 0, 1],
+        expect.any(AbortSignal),
+      );
+      read.resolve(affinities);
+      await pending;
+      expect(request).toHaveBeenCalledOnce();
+      expect(request.mock.calls[0][5]).toEqual(expected);
+      if (aggThreshold === undefined)
+        expect(request.mock.calls[0][5]).not.toHaveProperty("aggThreshold");
+      else expect(request.mock.calls[0][5].aggThreshold).toBe(aggThreshold);
+    },
+  );
+
   it.each([
     { latePlane: "final affinity", maskThreshold: undefined },
     { latePlane: "last-channel mask", maskThreshold: 0.3 },
