@@ -32,16 +32,21 @@ required.
    One shared result covers the **XYZ bounding box enclosing all visible relevant
    slice views**, and follows navigation, resizing, and layout changes. There are
    no region/ROI fields or manual Run step.
+6. To adjust an existing output, select its **Source** tab in the right sidebar.
+   **Watershed parameters** provides live threshold sliders, mask/agglomeration
+   checkboxes, precise numeric inputs, channel mapping, and **Halo (voxels)**.
+   The dialog's controls remain drafts for newly added layers.
 
 Creation publishes metadata, not a precomputed segmentation of the whole source.
 The box is expressed in the selected scale's **native grid coordinates**. For the
 first visible box, or when the visible box leaves the completed result's bounds,
 one watershed computation runs after a **150 ms debounce**, over the entire box
-plus an **8-voxel halo per face**, clipped to source bounds. Navigation entirely
-inside the completed result reuses its labels, without requiring a fresh halo
-around the new view. For a single axis-aligned XY view at native voxel Z = k, this
-allows scrolling from k − 8 through k + 8 without recomputation, unless clipped by
-source bounds. All visible views must remain inside the shared XYZ result.
+plus the configured halo per face (**8 native voxels by default**), clipped to
+source bounds. Navigation entirely inside the completed result reuses its labels,
+without requiring a fresh halo around the new view. With the default halo, a single
+axis-aligned XY view at native voxel Z = k allows scrolling from k − 8 through
+k + 8 without recomputation, unless clipped by source bounds. All visible views
+must remain inside the shared XYZ result.
 Labels from this single shared result are fetched and rendered in ordinary
 chunks; display-chunk requests never run watershed. Normal segmentation
 visibility, selection, opacity, and colors apply; initially all nonzero labels
@@ -49,7 +54,8 @@ are shown with selected opacity `0.5`.
 
 The computation box is limited to `2**21` (2,097,152) voxels, **including the clipped
 halo**. An oversized view reports a visible error, not a partial segmentation:
-**zoom in**, or select a coarser native scale and add a new layer. The box is never
+**zoom in**, reduce the sidebar halo, or select a coarser native scale and add a
+new layer. The box is never
 silently split into separate computations. The existing layer and viewport
 watcher stay active so navigation to a smaller box can retry. Computation waits
 for **ALL affinity data needed for the current box**, including its clipped halo,
@@ -152,9 +158,10 @@ kernels for that layer.
 Each output layer owns its publication, live computation, and retained affinity
 input. **Closing the dialog does not stop created layers**, and selecting a
 different source or scale in the dialog does not cancel existing outputs. Channel
-and threshold controls, including masking and agglomeration, are drafts for the
-next layer; editing them does not change an existing layer's configuration.
-Delete an output to stop its queued work and
+and threshold controls **in the dialog**, including masking and agglomeration,
+are drafts for the next layer. The **Source sidebar** edits the selected existing
+layer instead, without replacing its retained affinity input or upstream ONNX
+inference. Delete an output to stop its queued work and
 release its resources. Deleting or replacing its affinity source, changing source
 data or transforms, or resetting/disposal of the viewer also stops the dependent
 live layer. For outputs created in the dialog, source invalidation is reported
@@ -167,13 +174,45 @@ clear the result, but **keep the layer and watcher alive** so a later viewport b
 can retry. Fatal construction, publication, or activation errors still clean up
 the failed output.
 
+## Live sidebar parameters
+
+Select a watershed output's **Source** tab to edit its current configuration:
+
+- High and low thresholds have sliders and precise numeric inputs. Size and dust
+  cleanup thresholds use unsigned-integer inputs.
+- Masking and agglomeration have enable checkboxes, threshold sliders, and numeric
+  inputs. Disabled thresholds retain their local draft but are omitted from saved
+  options; an enabled threshold of `0` remains enabled.
+- The three affinity channel indices can be changed, including repeated indices.
+  Invalid channels or mask/channel combinations show an error without applying.
+- **Halo (voxels)** is isotropic padding on all six faces in the selected scale's
+  native voxel grid. It accepts nonnegative safe integers, including `0`; the
+  slider covers `0–64`, while the numeric input allows larger values without
+  silently clamping them. `0` computes only the visible union box.
+
+A valid parameter edit clears obsolete labels and reuses the same prepared input,
+output layer, and datasource. Rapid edits settle through the existing **150 ms
+compute debounce**; an already-running synchronous kernel finishes before the
+latest settings run, and obsolete results are discarded. Hidden outputs remain
+idle until visible. Changing parameters forces a fresh computation even if the
+view still fits inside the previous result's halo. Oversized boxes still report
+an error rather than splitting; lowering the halo or shrinking the view recovers.
+
+The sidebar updates the saved recipe and read-only JSON in place, without
+reloading the source. Controls are disabled while loading. Affinity source,
+native scale, and spacing are shown as read-only context: changing input geometry
+requires adding a new layer and is not an upstream inference-setting edit.
+
 ## Saving, sharing, and restoration
 
 New output layers use `watershed://recipe` with a JSON `source.state` recipe.
 Saving or sharing viewer JSON preserves the affinity source specification
 (including a nested ONNX recipe), native input scale and voxel spacing, literal
 XYZ channel mapping, thresholds, optional last-channel mask threshold, and optional
-agglomeration threshold. Masking is enabled exactly when `options.maskThreshold`
+agglomeration threshold, and the optional top-level `halo` in native voxels.
+Omitting `halo` preserves the default `8`; explicit `0` is retained. Sidebar edits
+are saved automatically and restored with the layer. Masking is enabled exactly
+when `options.maskThreshold`
 is present. Agglomeration is enabled exactly when `options.aggThreshold` is
 present, including a value of `0`; omitting it preserves the default watershed-only
 behavior. Unchecking **Agglomerate watershed basins** omits that key, regardless
