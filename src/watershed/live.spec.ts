@@ -17,10 +17,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_WATERSHED_OPTIONS,
+  type WatershedOptions,
   type WatershedResult,
 } from "#src/watershed/base.js";
 import type { PreparedAffinityInput } from "#src/watershed/input.js";
-import { LiveWatershed } from "#src/watershed/live.js";
+import {
+  LIVE_WATERSHED_DEBOUNCE_MS,
+  LIVE_WATERSHED_HALO_XYZ,
+  LiveWatershed,
+} from "#src/watershed/live.js";
 import { computeWatershed } from "#src/watershed/run.js";
 
 vi.mock("#src/watershed/run.js", () => ({ computeWatershed: vi.fn() }));
@@ -67,8 +72,644 @@ afterEach(() => {
 });
 
 async function settle() {
-  await vi.advanceTimersByTimeAsync(150);
+  await vi.advanceTimersByTimeAsync(LIVE_WATERSHED_DEBOUNCE_MS);
 }
+
+describe("live watershed parameter editing", () => {
+  it.each([0, 3, 8, 17])(
+    "uses constructor halo %s isotropically and retains the legacy default export",
+    async (halo) => {
+      const { input } = fixture();
+      const live = new LiveWatershed(
+        input,
+        [0, 1, 2],
+        DEFAULT_WATERSHED_OPTIONS,
+        undefined,
+        halo,
+      );
+      live.setRegion([80, 70, 30], [20, 10, 12]);
+      await settle();
+      expect(compute.mock.calls[0].slice(0, 5)).toEqual([
+        input,
+        [80, 70, 30].map((n) => n - halo),
+        [20, 10, 12].map((n) => n + 2 * halo),
+        [0, 1, 2],
+        DEFAULT_WATERSHED_OPTIONS,
+      ]);
+      expect(LIVE_WATERSHED_HALO_XYZ).toEqual([8, 8, 8]);
+      expect(Object.isFrozen(LIVE_WATERSHED_HALO_XYZ)).toBe(true);
+      live.dispose();
+    },
+  );
+
+  it.each([0, 3, 8, 17])(
+    "clips edited halo %s at both source boundaries, including negative native coordinates",
+    async (halo) => {
+      const { input } = fixture();
+      const live = new LiveWatershed(input);
+      live.setRegion([10, 20, -3], [5, 2, 2]);
+      live.setParameters([0, 1, 2], DEFAULT_WATERSHED_OPTIONS, halo);
+      await settle();
+      expect(compute).toHaveBeenCalledTimes(1);
+      expect(compute.mock.calls[0].slice(1, 3)).toEqual([
+        [10, 20, -3],
+        [5, 2, 2].map((n) => n + halo),
+      ]);
+      live.setRegion([145, 118, 65], [5, 2, 2]);
+      await settle();
+      expect(compute.mock.calls[1].slice(1, 3)).toEqual([
+        [145, 118, 65].map((n) => n - halo),
+        [5, 2, 2].map((n) => n + halo),
+      ]);
+      live.dispose();
+    },
+  );
+
+  it.each([
+    ["highThreshold", 0.8],
+    ["lowThreshold", 0.1],
+    ["sizeThreshold", 0],
+    ["dustThreshold", 0],
+    ["maskThreshold", 0],
+    ["aggThreshold", 0],
+  ] as const)(
+    "invalidates completed labels for a changed %s even after containment reuse",
+    async (key, value) => {
+      const { input } = fixture([80, 1, 1]);
+      const live = new LiveWatershed(input);
+      const changed = vi.fn();
+      live.changed.add(changed);
+      live.setRegion([34, 20, -3], [8, 1, 1]);
+      await settle();
+      live.setRegion([42, 20, -3], [8, 1, 1]);
+      expect(compute).toHaveBeenCalledTimes(1);
+      expect(changed).toHaveBeenCalledTimes(2);
+      const options = { ...DEFAULT_WATERSHED_OPTIONS, [key]: value };
+      live.setParameters([0, 1, 2], options);
+      expect(changed).toHaveBeenCalledTimes(3);
+      expect(await live.readTile([0, 0, 0], [64, 1, 1], signal)).toEqual(
+        new BigUint64Array(64),
+      );
+      // Re-reporting identical bounds must not cancel the parameter refresh.
+      live.setRegion([42, 20, -3], [8, 1, 1]);
+      await vi.advanceTimersByTimeAsync(149);
+      expect(compute).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(compute).toHaveBeenCalledTimes(2);
+      expect(compute.mock.calls[1].slice(0, 5)).toEqual([
+        input,
+        [34, 20, -3],
+        [24, 1, 1],
+        [0, 1, 2],
+        options,
+      ]);
+      expect(changed).toHaveBeenCalledTimes(4);
+      expect((await live.readTile([0, 0, 0], [64, 1, 1], signal))[32]).toBe(7n);
+      expect(input.dispose).not.toHaveBeenCalled();
+      live.dispose();
+    },
+  );
+
+  it.each([0, 3, 17])(
+    "preserves navigation containment reuse for unchanged parameters with halo %s",
+    async (halo) => {
+      const { input } = fixture([140, 1, 1]);
+      const live = new LiveWatershed(
+        input,
+        [0, 1, 2],
+        DEFAULT_WATERSHED_OPTIONS,
+        undefined,
+        halo,
+      );
+      live.setRegion([50, 20, -3], [8, 1, 1]);
+      await settle();
+      live.setRegion([50 - halo, 20, -3], [8, 1, 1]);
+      live.setRegion([50 + halo, 20, -3], [8, 1, 1]);
+      await settle();
+      expect(compute).toHaveBeenCalledTimes(1);
+      live.setRegion([49 - halo, 20, -3], [8, 1, 1]);
+      await settle();
+      expect(compute).toHaveBeenCalledTimes(2);
+      expect(compute.mock.calls[1].slice(1, 3)).toEqual([
+        [49 - 2 * halo, 20, -3],
+        [8 + 2 * halo, 1, 1],
+      ]);
+      live.dispose();
+    },
+  );
+
+  it("invalidates a halo-only change even when clipping leaves identical bounds", async () => {
+    const { input } = fixture([4, 1, 1]);
+    const live = new LiveWatershed(
+      input,
+      [0, 1, 2],
+      DEFAULT_WATERSHED_OPTIONS,
+      undefined,
+      3,
+    );
+    const changed = vi.fn();
+    live.changed.add(changed);
+    live.setRegion([10, 20, -3], [4, 1, 1]);
+    await settle();
+    live.setParameters([0, 1, 2], { ...DEFAULT_WATERSHED_OPTIONS }, 3);
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(1);
+    expect(changed).toHaveBeenCalledTimes(2);
+    // Omitting halo resets the custom constructor value to the default eight.
+    live.setParameters([0, 1, 2], DEFAULT_WATERSHED_OPTIONS);
+    expect(await live.readTile([0, 0, 0], [4, 1, 1], signal)).toEqual(
+      new BigUint64Array(4),
+    );
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(2);
+    expect(compute.mock.calls[1].slice(1, 3)).toEqual(
+      compute.mock.calls[0].slice(1, 3),
+    );
+    expect(changed).toHaveBeenCalledTimes(4);
+    live.dispose();
+  });
+
+  it("snapshots edited channels/options and removes optional stages when omitted", async () => {
+    const { input } = fixture([80, 1, 1]);
+    const live = new LiveWatershed(input);
+    live.setRegion([34, 20, -3], [8, 1, 1]);
+    await settle();
+    const channels = [2, 0, 1];
+    const options = {
+      ...DEFAULT_WATERSHED_OPTIONS,
+      maskThreshold: 0.3,
+      aggThreshold: 0,
+    };
+    live.setParameters(channels, options, 3);
+    channels.fill(999);
+    options.maskThreshold = 1;
+    options.aggThreshold = 1;
+    await settle();
+    expect(compute.mock.calls[1].slice(0, 5)).toEqual([
+      input,
+      [31, 20, -3],
+      [14, 1, 1],
+      [2, 0, 1],
+      { ...DEFAULT_WATERSHED_OPTIONS, maskThreshold: 0.3, aggThreshold: 0 },
+    ]);
+    expect(Object.isFrozen(compute.mock.calls[1][3])).toBe(true);
+    expect(Object.isFrozen(compute.mock.calls[1][4])).toBe(true);
+    live.setParameters([2, 0, 1], DEFAULT_WATERSHED_OPTIONS);
+    await settle();
+    expect(compute.mock.calls[2].slice(0, 5)).toEqual([
+      input,
+      [26, 20, -3],
+      [24, 1, 1],
+      [2, 0, 1],
+      DEFAULT_WATERSHED_OPTIONS,
+    ]);
+    expect(input.readRegion).not.toHaveBeenCalled();
+    expect(input.dispose).not.toHaveBeenCalled();
+    live.dispose();
+  });
+
+  it("treats equal values and absent/undefined optional stages as a no-op while pending, running and completed", async () => {
+    const { input } = fixture([4, 1, 1]);
+    const gate = Promise.withResolvers<WatershedResult>();
+    compute.mockImplementationOnce(async () => gate.promise);
+    const live = new LiveWatershed(input);
+    const changed = vi.fn();
+    live.changed.add(changed);
+    const noOp = () =>
+      live.setParameters(
+        [0, 1, 2],
+        {
+          ...DEFAULT_WATERSHED_OPTIONS,
+          maskThreshold: undefined,
+          aggThreshold: undefined,
+        },
+        8,
+      );
+    live.setRegion([10, 20, -3], [4, 1, 1]);
+    await vi.advanceTimersByTimeAsync(100);
+    noOp();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(compute).toHaveBeenCalledTimes(1);
+    noOp();
+    await settle();
+    expect(compute.mock.calls[0][5].aborted).toBe(false);
+    expect(changed).toHaveBeenCalledTimes(1);
+    gate.resolve(result([4, 1, 1]));
+    await vi.advanceTimersByTimeAsync(0);
+    noOp();
+    await settle();
+    expect(changed).toHaveBeenCalledTimes(2);
+    expect(compute).toHaveBeenCalledTimes(1);
+    expect(await live.readTile([0, 0, 0], [4, 1, 1], signal)).toEqual(
+      new BigUint64Array(4).fill(7n),
+    );
+    live.dispose();
+  });
+
+  it("serializes physical kernels and keeps only the latest parameters and requested view", async () => {
+    const { input } = fixture([140, 1, 1]);
+    const onError = vi.fn();
+    const live = new LiveWatershed(
+      input,
+      [0, 1, 2],
+      DEFAULT_WATERSHED_OPTIONS,
+      onError,
+    );
+    live.setRegion([34, 20, -3], [8, 1, 1]);
+    await settle();
+    const first = Promise.withResolvers<WatershedResult>();
+    const second = Promise.withResolvers<WatershedResult>();
+    compute.mockImplementationOnce(async () => first.promise);
+    compute.mockImplementationOnce(async () => second.promise);
+    const options = { ...DEFAULT_WATERSHED_OPTIONS, highThreshold: 0.8 };
+    live.setParameters([2, 1, 0], options, 0);
+    expect(await live.readTile([0, 0, 0], [64, 1, 1], signal)).toEqual(
+      new BigUint64Array(64),
+    );
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(2);
+    for (let i = 0; i < 100; ++i)
+      live.setParameters([0, 1, 2], {
+        ...DEFAULT_WATERSHED_OPTIONS,
+        sizeThreshold: i,
+      });
+    const latestOptions = {
+      ...DEFAULT_WATERSHED_OPTIONS,
+      highThreshold: 0.7,
+      maskThreshold: 0.4,
+      aggThreshold: 0,
+    };
+    live.setParameters([1, 2, 0], latestOptions, 3);
+    live.setRegion([42, 20, -3], [8, 1, 1]);
+    await settle();
+    expect(compute.mock.calls[1][5].aborted).toBe(true);
+    expect(compute).toHaveBeenCalledTimes(2);
+    // The in-flight invocation retains its own original configuration.
+    expect(compute.mock.calls[1].slice(0, 5)).toEqual([
+      input,
+      [34, 20, -3],
+      [8, 1, 1],
+      [2, 1, 0],
+      options,
+    ]);
+    first.resolve(result([8, 1, 1], 999));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(compute).toHaveBeenCalledTimes(3);
+    expect(compute.mock.calls[2].slice(0, 5)).toEqual([
+      input,
+      [39, 20, -3],
+      [14, 1, 1],
+      [1, 2, 0],
+      latestOptions,
+    ]);
+    expect(await live.readTile([0, 0, 0], [64, 1, 1], signal)).toEqual(
+      new BigUint64Array(64),
+    );
+    const finalOptions = { ...DEFAULT_WATERSHED_OPTIONS, highThreshold: 0.6 };
+    live.setRegion([100, 20, -3], [8, 1, 1]);
+    live.setParameters([2, 0, 1], finalOptions, 1);
+    await settle();
+    expect(compute.mock.calls[2][5].aborted).toBe(true);
+    expect(compute).toHaveBeenCalledTimes(3);
+    second.reject(new Error("Obsolete kernel failure"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(compute).toHaveBeenCalledTimes(4);
+    expect(compute.mock.calls[3].slice(0, 5)).toEqual([
+      input,
+      [99, 20, -3],
+      [10, 1, 1],
+      [2, 0, 1],
+      finalOptions,
+    ]);
+    expect((await live.readTile([64, 0, 0], [64, 1, 1], signal))[30]).toBe(7n);
+    expect(onError).not.toHaveBeenCalled();
+    expect(input.dispose).not.toHaveBeenCalled();
+    live.dispose();
+  });
+
+  it("waits for the full debounce even if an aborted kernel finishes sooner", async () => {
+    const { input } = fixture([80, 1, 1]);
+    const gate = Promise.withResolvers<WatershedResult>();
+    compute.mockImplementationOnce(async () => gate.promise);
+    const live = new LiveWatershed(input);
+    live.setRegion([34, 20, -3], [8, 1, 1]);
+    await settle();
+    live.setParameters([2, 1, 0], DEFAULT_WATERSHED_OPTIONS, 0);
+    gate.resolve(result([24, 1, 1], 999));
+    await vi.advanceTimersByTimeAsync(149);
+    expect(compute).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(compute).toHaveBeenCalledTimes(2);
+    expect(compute.mock.calls[1].slice(1, 5)).toEqual([
+      [34, 20, -3],
+      [8, 1, 1],
+      [2, 1, 0],
+      DEFAULT_WATERSHED_OPTIONS,
+    ]);
+    live.dispose();
+  });
+
+  const invalidEdits: {
+    name: string;
+    channels?: number[];
+    options?: Partial<WatershedOptions>;
+    halo?: number;
+  }[] = [
+    { name: "negative channel", channels: [-1, 1, 2] },
+    { name: "out-of-bounds channel", channels: [0, 1, 4] },
+    { name: "missing channel", channels: [0, 1] },
+    { name: "fractional channel", channels: [0, 1, 1.5] },
+    { name: "non-finite channel", channels: [0, 1, NaN] },
+    {
+      name: "mask channel used as affinity",
+      channels: [0, 1, 3],
+      options: { maskThreshold: 0 },
+    },
+    { name: "non-finite high threshold", options: { highThreshold: NaN } },
+    { name: "high threshold above one", options: { highThreshold: 1.1 } },
+    { name: "negative low threshold", options: { lowThreshold: -0.1 } },
+    { name: "unordered thresholds", options: { lowThreshold: 0.9 } },
+    {
+      name: "float32-equal thresholds",
+      options: { highThreshold: 0.5, lowThreshold: 0.5 - Number.EPSILON },
+    },
+    { name: "fractional size", options: { sizeThreshold: 0.5 } },
+    { name: "negative dust", options: { dustThreshold: -1 } },
+    { name: "overflowing size", options: { sizeThreshold: 2 ** 32 } },
+    { name: "negative mask", options: { maskThreshold: -0.1 } },
+    { name: "non-finite mask", options: { maskThreshold: NaN } },
+    { name: "agglomeration above one", options: { aggThreshold: 1.1 } },
+    { name: "non-finite agglomeration", options: { aggThreshold: Infinity } },
+    { name: "negative halo", halo: -1 },
+    { name: "fractional halo", halo: 0.5 },
+    { name: "NaN halo", halo: NaN },
+    { name: "infinite halo", halo: Infinity },
+    { name: "unsafe halo", halo: 2 ** 53 },
+  ];
+
+  it.each(invalidEdits)(
+    "rejects $name atomically, preserving labels and the old configuration",
+    async ({ channels, options, halo }) => {
+      const { input } = fixture([140, 1, 1]);
+      const onError = vi.fn();
+      const live = new LiveWatershed(
+        input,
+        [0, 1, 2],
+        DEFAULT_WATERSHED_OPTIONS,
+        onError,
+      );
+      const changed = vi.fn();
+      live.changed.add(changed);
+      live.setRegion([34, 20, -3], [8, 1, 1]);
+      await settle();
+      const labels = await live.readTile([0, 0, 0], [64, 1, 1], signal);
+      expect(() =>
+        live.setParameters(
+          channels ?? [2, 1, 0],
+          { ...DEFAULT_WATERSHED_OPTIONS, highThreshold: 0.8, ...options },
+          halo ?? 3,
+        ),
+      ).toThrow();
+      expect(changed).toHaveBeenCalledTimes(2);
+      expect(await live.readTile([0, 0, 0], [64, 1, 1], signal)).toEqual(
+        labels,
+      );
+      await settle();
+      expect(compute).toHaveBeenCalledTimes(1);
+      live.setRegion([100, 20, -3], [8, 1, 1]);
+      await settle();
+      expect(compute.mock.calls[1].slice(0, 5)).toEqual([
+        input,
+        [92, 20, -3],
+        [24, 1, 1],
+        [0, 1, 2],
+        DEFAULT_WATERSHED_OPTIONS,
+      ]);
+      expect(onError).not.toHaveBeenCalled();
+      expect(input.dispose).not.toHaveBeenCalled();
+      live.dispose();
+    },
+  );
+
+  it.each([-1, 0.5, NaN, Infinity, 2 ** 53])(
+    "rejects invalid constructor halo %s before taking input ownership",
+    (halo) => {
+      const { input } = fixture();
+      expect(
+        () =>
+          new LiveWatershed(
+            input,
+            [0, 1, 2],
+            DEFAULT_WATERSHED_OPTIONS,
+            undefined,
+            halo,
+          ),
+      ).toThrow();
+      expect(input.dispose).not.toHaveBeenCalled();
+    },
+  );
+
+  it("invalid edits neither reset a pending debounce nor cancel in-flight work", async () => {
+    const { input } = fixture([4, 1, 1]);
+    const gate = Promise.withResolvers<WatershedResult>();
+    compute.mockImplementationOnce(async () => gate.promise);
+    const live = new LiveWatershed(input);
+    live.setRegion([10, 20, -3], [4, 1, 1]);
+    await vi.advanceTimersByTimeAsync(100);
+    const invalid = () =>
+      live.setParameters([2, 1, 0], DEFAULT_WATERSHED_OPTIONS, -1);
+    expect(invalid).toThrow();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(compute).toHaveBeenCalledTimes(1);
+    expect(invalid).toThrow();
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(1);
+    expect(compute.mock.calls[0][5].aborted).toBe(false);
+    gate.resolve(result([4, 1, 1]));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await live.readTile([0, 0, 0], [4, 1, 1], signal)).toEqual(
+      new BigUint64Array(4).fill(7n),
+    );
+    live.dispose();
+  });
+
+  it("validates mask/channel compatibility before accepting an edit on a scalar source", async () => {
+    const { input } = fixture([4, 1, 1]);
+    const live = new LiveWatershed({ ...input, channelCount: 1 });
+    live.setRegion([10, 20, -3], [4, 1, 1]);
+    await settle();
+    expect(() =>
+      live.setParameters([0, 0, 0], {
+        ...DEFAULT_WATERSHED_OPTIONS,
+        maskThreshold: 0,
+      }),
+    ).toThrow("at least four");
+    expect(await live.readTile([0, 0, 0], [4, 1, 1], signal)).toEqual(
+      new BigUint64Array(4).fill(7n),
+    );
+    expect(compute).toHaveBeenCalledTimes(1);
+    live.dispose();
+  });
+
+  it("updates parameters while hidden without starting jobs and uses the latest values when visible", async () => {
+    const { input } = fixture([80, 1, 1]);
+    const gate = Promise.withResolvers<WatershedResult>();
+    compute.mockImplementationOnce(async () => gate.promise);
+    const live = new LiveWatershed(input);
+    live.setParameters([2, 0, 1], DEFAULT_WATERSHED_OPTIONS, 0);
+    await settle();
+    expect(compute).not.toHaveBeenCalled();
+    live.setRegion([34, 20, -3], [8, 1, 1]);
+    await settle();
+    live.setRegion();
+    const options = { ...DEFAULT_WATERSHED_OPTIONS, highThreshold: 0.8 };
+    live.setParameters([1, 2, 0], options, 3);
+    await settle();
+    expect(compute.mock.calls[0][5].aborted).toBe(true);
+    gate.resolve(result([8, 1, 1], 999));
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(1);
+    expect(await live.readTile([0, 0, 0], [64, 1, 1], signal)).toEqual(
+      new BigUint64Array(64),
+    );
+    live.setRegion([34, 20, -3], [8, 1, 1]);
+    await settle();
+    expect(compute.mock.calls[1].slice(0, 5)).toEqual([
+      input,
+      [31, 20, -3],
+      [14, 1, 1],
+      [1, 2, 0],
+      options,
+    ]);
+    live.dispose();
+  });
+
+  it("clears labels for an enlarged over-cap halo and recovers by reducing it on the same view", async () => {
+    const { input } = fixture([512, 512, 512]);
+    const onError = vi.fn();
+    const live = new LiveWatershed(
+      input,
+      [0, 1, 2],
+      DEFAULT_WATERSHED_OPTIONS,
+      onError,
+      0,
+    );
+    live.setRegion([74, 84, 61], [128, 128, 128]);
+    await settle();
+    expect(compute.mock.calls[0].slice(1, 3)).toEqual([
+      [74, 84, 61],
+      [128, 128, 128],
+    ]);
+    live.setParameters([0, 1, 2], DEFAULT_WATERSHED_OPTIONS, 1);
+    expect(onError).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ message: expect.stringContaining("2**21") }),
+    );
+    expect(await live.readTile([64, 64, 64], [64, 64, 32], signal)).toEqual(
+      new BigUint64Array(64 * 64 * 32),
+    );
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(1);
+    live.setRegion([74, 84, 61], [128, 128, 128]);
+    live.setParameters([0, 1, 2], DEFAULT_WATERSHED_OPTIONS, 0);
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(2);
+    expect(compute.mock.calls[1].slice(1, 3)).toEqual([
+      [74, 84, 61],
+      [128, 128, 128],
+    ]);
+    expect((await live.readTile([64, 64, 64], [64, 64, 32], signal))[0]).toBe(
+      7n,
+    );
+    expect(live.signal.aborted).toBe(false);
+    live.dispose();
+  });
+
+  it("recovers a failed computation by changing parameters without navigation", async () => {
+    const { input } = fixture([4, 1, 1]);
+    const onError = vi.fn();
+    compute.mockRejectedValueOnce(new Error("Current kernel failure"));
+    const live = new LiveWatershed(
+      input,
+      [0, 1, 2],
+      DEFAULT_WATERSHED_OPTIONS,
+      onError,
+    );
+    live.setRegion([10, 20, -3], [4, 1, 1]);
+    await settle();
+    live.setParameters([2, 1, 0], DEFAULT_WATERSHED_OPTIONS);
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(2);
+    expect(compute.mock.calls[1][3]).toEqual([2, 1, 0]);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(await live.readTile([0, 0, 0], [4, 1, 1], signal)).toEqual(
+      new BigUint64Array(4).fill(7n),
+    );
+    live.dispose();
+  });
+
+  it("checks source validity even for otherwise equal parameters and cancels pending work", async () => {
+    const { input } = fixture([4, 1, 1]);
+    const live = new LiveWatershed(input);
+    live.setRegion([10, 20, -3], [4, 1, 1]);
+    vi.spyOn(input, "assertValid").mockImplementation(() => {
+      throw new Error("Source geometry changed");
+    });
+    expect(() =>
+      live.setParameters([0, 1, 2], DEFAULT_WATERSHED_OPTIONS),
+    ).toThrow("Source geometry changed");
+    await settle();
+    expect(compute).not.toHaveBeenCalled();
+    expect(live.signal.aborted).toBe(true);
+    expect(input.dispose).toHaveBeenCalledTimes(1);
+    expect(() =>
+      live.setParameters([2, 1, 0], DEFAULT_WATERSHED_OPTIONS),
+    ).toThrow("stopped");
+  });
+
+  it("source invalidation aborts a parameter refresh and prevents all later edits", async () => {
+    const { input, changed } = fixture([4, 1, 1]);
+    const gate = Promise.withResolvers<WatershedResult>();
+    const onError = vi.fn();
+    const live = new LiveWatershed(
+      input,
+      [0, 1, 2],
+      DEFAULT_WATERSHED_OPTIONS,
+      onError,
+    );
+    live.setRegion([10, 20, -3], [4, 1, 1]);
+    await settle();
+    compute.mockImplementationOnce(async () => gate.promise);
+    live.setParameters([2, 1, 0], DEFAULT_WATERSHED_OPTIONS);
+    await settle();
+    live.setParameters([1, 0, 2], DEFAULT_WATERSHED_OPTIONS);
+    changed.abort(new Error("Source replaced"));
+    expect(compute.mock.calls[1][5].aborted).toBe(true);
+    gate.resolve(result([4, 1, 1], 999));
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(2);
+    expect(onError).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        message: "Watershed affinity source changed; add the layer again",
+      }),
+    );
+    expect(input.dispose).toHaveBeenCalledTimes(1);
+    expect(() =>
+      live.setParameters([1, 0, 2], DEFAULT_WATERSHED_OPTIONS),
+    ).toThrow("stopped");
+  });
+
+  it("allows a changed listener to dispose during a parameter refresh without starting work", async () => {
+    const { input } = fixture([4, 1, 1]);
+    const live = new LiveWatershed(input);
+    live.setRegion([10, 20, -3], [4, 1, 1]);
+    await settle();
+    live.changed.add(() => live.dispose());
+    live.setParameters([2, 1, 0], DEFAULT_WATERSHED_OPTIONS);
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(1);
+    expect(input.dispose).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("whole-viewport live watershed", () => {
   it("publishes full-domain metadata but display requests never initiate watershed", async () => {

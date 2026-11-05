@@ -17,8 +17,10 @@
 import { NullarySignal } from "#src/util/signal.js";
 import type { WatershedOptions, WatershedResult } from "#src/watershed/base.js";
 import {
+  DEFAULT_WATERSHED_HALO,
   DEFAULT_WATERSHED_OPTIONS,
   validateWatershedChannels,
+  validateWatershedHalo,
   validateWatershedOptions,
   validateWatershedShape,
 } from "#src/watershed/base.js";
@@ -27,7 +29,11 @@ import { computeWatershed } from "#src/watershed/run.js";
 
 // These are display/transport chunks, never independent watershed domains.
 export const LIVE_WATERSHED_TILE_SHAPE_XYZ = Object.freeze([64, 64, 32]);
-export const LIVE_WATERSHED_HALO_XYZ = Object.freeze([8, 8, 8]);
+export const LIVE_WATERSHED_HALO_XYZ = Object.freeze([
+  DEFAULT_WATERSHED_HALO,
+  DEFAULT_WATERSHED_HALO,
+  DEFAULT_WATERSHED_HALO,
+]);
 export const LIVE_WATERSHED_DEBOUNCE_MS = 150;
 
 export interface LiveWatershedInfo extends Omit<WatershedResult, "data"> {
@@ -59,8 +65,8 @@ export class LiveWatershed {
   readonly changed = new NullarySignal();
   private readonly lifetime = new AbortController();
   readonly signal = this.lifetime.signal;
-  private readonly channels: readonly number[];
-  private readonly options: WatershedOptions;
+  private channels: readonly number[];
+  private options: WatershedOptions;
   private readonly lowerBound: readonly number[];
   private readonly upperBound: readonly number[];
   private requested: Region | undefined;
@@ -82,12 +88,16 @@ export class LiveWatershed {
       : [0, 1, 2],
     options: WatershedOptions = DEFAULT_WATERSHED_OPTIONS,
     private readonly onError: (error: unknown) => void = () => {},
+    private halo = DEFAULT_WATERSHED_HALO,
   ) {
     input.assertValid();
-    validateWatershedOptions(options);
-    this.options = Object.freeze({ ...options });
-    validateWatershedChannels(input.channelCount, channelsXYZ, options);
-    this.channels = Object.freeze(Array.from(channelsXYZ));
+    const parameters = Object.freeze({ ...options });
+    const channels = Object.freeze(Array.from(channelsXYZ));
+    validateWatershedOptions(parameters);
+    validateWatershedChannels(input.channelCount, channels, parameters);
+    validateWatershedHalo(halo);
+    this.options = parameters;
+    this.channels = channels;
     this.lowerBound = Object.freeze(Array.from(input.lowerBoundXYZ));
     this.upperBound = Object.freeze(Array.from(input.upperBoundXYZ));
     const shapeXYZ = this.upperBound.map((n, i) => n - this.lowerBound[i]);
@@ -142,6 +152,37 @@ export class LiveWatershed {
     this.signal.throwIfAborted();
   }
 
+  /** Atomically replace the configuration without replacing the retained input.
+   * Changed parameters retire labels even when the current view was contained
+   * in the completed region. Hidden views remain idle until visible again. */
+  setParameters(
+    channelsXYZ: readonly number[],
+    options: WatershedOptions,
+    halo = DEFAULT_WATERSHED_HALO,
+  ): void {
+    this.assertValid();
+    const channels = Object.freeze(Array.from(channelsXYZ));
+    const parameters = Object.freeze({ ...options });
+    validateWatershedOptions(parameters);
+    validateWatershedChannels(this.input.channelCount, channels, parameters);
+    validateWatershedHalo(halo);
+    if (
+      halo === this.halo &&
+      channels.every((n, i) => n === this.channels[i]) &&
+      parameters.highThreshold === this.options.highThreshold &&
+      parameters.lowThreshold === this.options.lowThreshold &&
+      parameters.sizeThreshold === this.options.sizeThreshold &&
+      parameters.dustThreshold === this.options.dustThreshold &&
+      parameters.maskThreshold === this.options.maskThreshold &&
+      parameters.aggThreshold === this.options.aggThreshold
+    )
+      return;
+    this.channels = channels;
+    this.options = parameters;
+    this.halo = halo;
+    this.updateRegion(this.requested, false);
+  }
+
   /** Native input-grid bounds. No region means hidden/no visible slice views. */
   setRegion(lowerXYZ?: readonly number[], shapeXYZ?: readonly number[]): void {
     this.assertValid();
@@ -153,6 +194,13 @@ export class LiveWatershed {
             shape: Array.from(shapeXYZ ?? []),
           };
     if (sameRegion(requested, this.requested)) return;
+    this.updateRegion(requested, true);
+  }
+
+  private updateRegion(
+    requested: Region | undefined,
+    reuseResult: boolean,
+  ): void {
     let region: Region | undefined;
     let error: unknown;
     if (requested !== undefined) {
@@ -173,7 +221,7 @@ export class LiveWatershed {
           throw new Error(
             "Watershed viewport must be inside the native source bounds",
           );
-        const result = this.result;
+        const result = reuseResult ? this.result : undefined;
         if (
           result !== undefined &&
           requested.lower.every(
@@ -187,14 +235,12 @@ export class LiveWatershed {
           return;
         }
         const lower = requested.lower.map((n, i) =>
-          Math.max(this.lowerBound[i], n - LIVE_WATERSHED_HALO_XYZ[i]),
+          Math.max(this.lowerBound[i], n - this.halo),
         );
         const shape = requested.lower.map(
           (n, i) =>
-            Math.min(
-              this.upperBound[i],
-              n + requested.shape[i] + LIVE_WATERSHED_HALO_XYZ[i],
-            ) - lower[i],
+            Math.min(this.upperBound[i], n + requested.shape[i] + this.halo) -
+            lower[i],
         );
         try {
           validateWatershedShape(shape);
@@ -216,7 +262,10 @@ export class LiveWatershed {
     this.region = region;
     this.result = undefined;
     this.active?.abort(
-      new DOMException("Watershed viewport changed", "AbortError"),
+      new DOMException(
+        "Watershed viewport or parameters changed",
+        "AbortError",
+      ),
     );
     this.changed.dispatch();
     if (this.signal.aborted || revision !== this.revision) return;
