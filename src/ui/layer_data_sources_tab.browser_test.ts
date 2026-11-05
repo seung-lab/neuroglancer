@@ -30,7 +30,11 @@ import { DataSourceView } from "#src/ui/layer_data_sources_tab.js";
 import { MessageList, MessageSeverity } from "#src/util/message_list.js";
 import { MultiConsumerProgressListener } from "#src/util/progress_listener.js";
 import { NullarySignal } from "#src/util/signal.js";
-import { WATERSHED_RECIPE_URL } from "#src/watershed/recipe.js";
+import { WatershedParametersState } from "#src/watershed/parameters.js";
+import {
+  parseWatershedRecipe,
+  WATERSHED_RECIPE_URL,
+} from "#src/watershed/recipe.js";
 
 const disposers: Array<() => void> = [];
 
@@ -98,6 +102,18 @@ function sourceFixture(
     layer: { manager: { dataSourceProviderRegistry: registry } },
     loadState,
   };
+  const loadedState =
+    loadState instanceof LoadedLayerDataSource
+      ? loadState.dataSource?.state
+      : undefined;
+  if (loadedState !== undefined) {
+    // Mirror LayerDataSource's existing Trackable-state serialization hook.
+    disposers.push(
+      loadedState.changed.add(() => {
+        spec = { ...spec, state: loadedState.toJSON() };
+      }),
+    );
+  }
   const tab = { detectedLayerConstructor: undefined };
   const view = new DataSourceView(
     tab as unknown as LayerDataSourcesTab,
@@ -400,5 +416,107 @@ describe.each([
     await nextFrame();
     expect(refresh).not.toHaveBeenCalled();
     view.element.remove();
+  });
+});
+
+function editableWatershedFixture() {
+  const recipe = parseWatershedRecipe({
+    ...watershedRecipeState(),
+    source: {
+      name: "affinities",
+      source: "precomputed://https://example.com/affinities",
+    },
+  });
+  const apply = vi.fn();
+  const state = new WatershedParametersState(recipe, apply);
+  const loaded = Object.assign(Object.create(LoadedLayerDataSource.prototype), {
+    dataSource: { state },
+    enableDefaultSubsources: true,
+    enabledSubsourcesChanged: new NullarySignal(),
+    subsources: [],
+    transform: { mutableSourceRank: false, value: { sourceRank: 0 } },
+  }) as LoadedLayerDataSource;
+  const fixture = sourceFixture({
+    url: WATERSHED_RECIPE_URL,
+    state: recipe,
+    loadState: loaded,
+  });
+  return { ...fixture, state, apply, loaded };
+}
+
+describe("DataSourceView editable watershed parameters", () => {
+  it("shows enabled controls alongside read-only JSON without changing the source", () => {
+    const { view, source, apply, setSpec, registry } =
+      editableWatershedFixture();
+    const parameters = view.element.querySelector(
+      ".neuroglancer-watershed-parameters",
+    );
+    expect(parameters).not.toBeNull();
+    expect(parameters!.textContent).toContain("Watershed parameters");
+    expect(
+      parameters!.querySelector<HTMLInputElement>(
+        '[aria-label="Halo (voxels)"]',
+      )!.disabled,
+    ).toBe(false);
+    expect(sourceStateEditor(view, "Watershed").getValue()).toBe(
+      JSON.stringify(source.spec.state, null, 2),
+    );
+    expect(apply).not.toHaveBeenCalled();
+    expect(setSpec).not.toHaveBeenCalled();
+    expect(registry.get).not.toHaveBeenCalled();
+  });
+
+  it("persists valid control edits and refreshes JSON without a datasource reload", () => {
+    const { view, source, state, apply, loaded, setSpec, registry } =
+      editableWatershedFixture();
+    const halo = view.element.querySelector<HTMLInputElement>(
+      '[aria-label="Halo (voxels)"]',
+    )!;
+    const editor = sourceStateEditor(view, "Watershed");
+    halo.value = "0";
+    halo.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(apply).toHaveBeenCalledOnce();
+    expect(state.toJSON().halo).toBe(0);
+    expect(source.spec.state.halo).toBe(0);
+    expect(JSON.parse(editor.getValue()).halo).toBe(0);
+    expect(source.loadState).toBe(loaded);
+    expect(sourceStateEditor(view, "Watershed")).toBe(editor);
+    expect(setSpec).not.toHaveBeenCalled();
+    expect(registry.get).not.toHaveBeenCalled();
+  });
+
+  it("refreshes from external state changes, then removes controls/listeners on URL changes", () => {
+    const { view, source, state, update } = editableWatershedFixture();
+    state.restoreState({ ...state.toJSON(), halo: 3 });
+    expect(
+      view.element.querySelector<HTMLInputElement>(
+        '[aria-label="Halo (voxels)"]',
+      )!.value,
+    ).toBe("3");
+    expect(
+      JSON.parse(sourceStateEditor(view, "Watershed").getValue()).halo,
+    ).toBe(3);
+    update({ url: "precomputed://https://example.com/other" });
+    expect(
+      view.element.querySelector(".neuroglancer-watershed-parameters"),
+    ).toBeNull();
+    const generation = source.changed.count;
+    state.restoreState({ ...state.toJSON(), halo: 4 });
+    expect(source.changed.count).toBe(generation);
+  });
+
+  it("disables controls while loading and unsubscribes when the view is disposed", () => {
+    const { view, source, state, update } = editableWatershedFixture();
+    source.loadState = undefined;
+    update();
+    expect(
+      view.element.querySelector<HTMLInputElement>(
+        '[aria-label="Halo (voxels)"]',
+      )!.disabled,
+    ).toBe(true);
+    const generation = source.changed.count;
+    view.dispose();
+    state.restoreState({ ...state.toJSON(), halo: 5 });
+    expect(source.changed.count).toBe(generation);
   });
 });

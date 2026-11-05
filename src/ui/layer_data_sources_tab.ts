@@ -44,6 +44,7 @@ import { MultiscaleVolumeChunkSource } from "#src/sliceview/volume/frontend.js";
 import { TrackableBooleanCheckbox } from "#src/trackable_boolean.js";
 import type { WatchableValueInterface } from "#src/trackable_value.js";
 import { WatchableValue } from "#src/trackable_value.js";
+import { WatershedParametersWidget } from "#src/ui/watershed_parameters.js";
 import type { DebouncedFunction } from "#src/util/animation_frame_debounce.js";
 import { animationFrameDebounce } from "#src/util/animation_frame_debounce.js";
 import { DataType } from "#src/util/data_type.js";
@@ -57,7 +58,11 @@ import {
 import type { MessageList } from "#src/util/message_list.js";
 import { MessageSeverity } from "#src/util/message_list.js";
 import type { ProgressListener } from "#src/util/progress_listener.js";
-import { WATERSHED_RECIPE_URL } from "#src/watershed/recipe.js";
+import { WatershedParametersState } from "#src/watershed/parameters.js";
+import {
+  WATERSHED_RECIPE_URL,
+  parseWatershedRecipe,
+} from "#src/watershed/recipe.js";
 import { makeAddButton } from "#src/widget/add_button.js";
 import { CoordinateSpaceTransformWidget } from "#src/widget/coordinate_transform.js";
 import type {
@@ -330,6 +335,9 @@ export class DataSourceView extends RefCounted {
   private stateElement = document.createElement("div");
   private stateTitle = document.createElement("div");
   private stateEditor: CodeMirror.Editor | undefined;
+  private watershedParameters: WatershedParametersWidget | undefined;
+  private parametersState: WatershedParametersState | undefined;
+  private removeParametersListener: (() => void) | undefined;
 
   constructor(
     public tab: Borrowed<LayerDataSourcesTab>,
@@ -388,7 +396,57 @@ export class DataSourceView extends RefCounted {
     this.registerDisposer(() =>
       source.progressListener.removeListener(progressListenerWidget),
     );
+    this.registerDisposer(() => {
+      this.removeParametersListener?.();
+      this.watershedParameters?.dispose();
+    });
     this.updateView();
+  }
+
+  private updateWatershedParameters() {
+    let recipe;
+    if (this.source.spec.url === WATERSHED_RECIPE_URL) {
+      try {
+        recipe = parseWatershedRecipe(this.source.spec.state);
+      } catch {
+        // Invalid recipes are reported by the datasource; keep their JSON visible.
+      }
+    }
+    const { loadState } = this.source;
+    const state =
+      recipe !== undefined && loadState instanceof LoadedLayerDataSource
+        ? loadState.dataSource?.state
+        : undefined;
+    const parameters =
+      state instanceof WatershedParametersState ? state : undefined;
+    if (parameters !== this.parametersState) {
+      this.removeParametersListener?.();
+      this.parametersState = parameters;
+      this.removeParametersListener = parameters?.changed.add(() => {
+        this.source.changed.dispatch();
+        this.updateView();
+      });
+    }
+    if (recipe === undefined) {
+      this.watershedParameters?.dispose();
+      this.watershedParameters = undefined;
+      return;
+    }
+    let widget = this.watershedParameters;
+    if (widget === undefined) {
+      widget = this.watershedParameters = new WatershedParametersWidget(
+        recipe,
+        (next) => {
+          if (this.parametersState === undefined)
+            throw new Error("Watershed parameters are not ready");
+          this.parametersState.restoreState(next);
+        },
+      );
+      this.element.insertBefore(widget.element, this.stateElement);
+    } else {
+      widget.setRecipe(recipe);
+    }
+    widget.setEnabled(parameters !== undefined);
   }
 
   updateView() {
@@ -442,6 +500,7 @@ export class DataSourceView extends RefCounted {
         );
       if (this.stateEditor.getValue() !== json) this.stateEditor.setValue(json);
     }
+    this.updateWatershedParameters();
     const { loadState } = this.source;
     let { loadedView } = this;
     if (loadedView !== undefined) {
