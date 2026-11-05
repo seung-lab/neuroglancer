@@ -39,6 +39,20 @@ interface WatershedExports {
     labelPointer: number,
     labelCount: number,
   ): number;
+  abiss_watershed_agglomerate(
+    affinityPointer: number,
+    affinityCount: number,
+    x: number,
+    y: number,
+    z: number,
+    high: number,
+    low: number,
+    size: number,
+    dust: number,
+    aggThreshold: number,
+    labelPointer: number,
+    labelCount: number,
+  ): number;
   abiss_watershed_last_error(): number;
 }
 
@@ -144,7 +158,7 @@ export async function runWatershedWasm(
         }
       }
     }
-    const status = wasm.abiss_watershed(
+    const args = [
       affinityPointer,
       affinityCount,
       shapeXYZ[0],
@@ -154,9 +168,16 @@ export async function runWatershedWasm(
       options.lowThreshold,
       options.sizeThreshold,
       options.dustThreshold,
-      labelPointer,
-      voxels,
-    );
+    ] as const;
+    const status =
+      options.aggThreshold === undefined
+        ? wasm.abiss_watershed(...args, labelPointer, voxels)
+        : wasm.abiss_watershed_agglomerate(
+            ...args,
+            options.aggThreshold,
+            labelPointer,
+            voxels,
+          );
     if (status !== 0) {
       const start = wasm.abiss_watershed_last_error();
       const heap = new Uint8Array(wasm.memory.buffer);

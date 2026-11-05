@@ -29,12 +29,18 @@ interface NativeFixture {
 }
 
 let fixtures: NativeFixture[];
+let agglomerationFixtures: (NativeFixture & { agg_threshold: number | null })[];
 beforeAll(async () => {
   const response = await fetch(
     new URL("./testdata/native-reference.json", import.meta.url),
   );
   expect(response.ok).toBe(true);
   fixtures = await response.json();
+  const agglomerationResponse = await fetch(
+    new URL("./testdata/agglomeration-native-reference.json", import.meta.url),
+  );
+  expect(agglomerationResponse.ok).toBe(true);
+  agglomerationFixtures = await agglomerationResponse.json();
 });
 
 const keep = {
@@ -61,6 +67,141 @@ describe("standalone Abiss watershed WASM", () => {
       );
     }
   });
+
+  it("matches native agglomeration, cleanup ordering, and disabled parity fixtures", async () => {
+    expect(agglomerationFixtures).toHaveLength(31);
+    for (const f of agglomerationFixtures) {
+      const input = Float32Array.from(f.affinities);
+      const before = input.slice();
+      const output = await runWatershedWasm(input, f.dims, {
+        highThreshold: f.high,
+        lowThreshold: f.low,
+        sizeThreshold: f.size,
+        dustThreshold: f.dust,
+        ...(f.agg_threshold === null ? {} : { aggThreshold: f.agg_threshold }),
+      });
+      expect(Array.from(output), f.name).toEqual(f.labels);
+      expect(input, f.name).toEqual(before);
+    }
+  });
+
+  it.each([0, 1, 2])(
+    "optionally agglomerates negative-axis %s basins with a strict threshold",
+    async (axis) => {
+      const shape = [1, 1, 1];
+      shape[axis] = 5;
+      const input = new Float32Array(3 * 5).fill(1);
+      input.set([0, 1, 0.25, 1, 1], axis * 5);
+      const before = input.slice();
+      const separate = [1, 1, 2, 2, 2];
+      expect(Array.from(await runWatershedWasm(input, shape, keep))).toEqual(
+        separate,
+      );
+      for (const aggThreshold of [0.25, 1]) {
+        expect(
+          Array.from(
+            await runWatershedWasm(input, shape, { ...keep, aggThreshold }),
+          ),
+        ).toEqual(separate);
+      }
+      for (const aggThreshold of [0, 0.2]) {
+        expect(
+          Array.from(
+            await runWatershedWasm(input, shape, { ...keep, aggThreshold }),
+          ),
+        ).toEqual([1, 1, 1, 1, 1]);
+      }
+      expect(input).toEqual(before);
+      // Enabling the new export must not alter subsequent disabled calls.
+      expect(Array.from(await runWatershedWasm(input, shape, keep))).toEqual(
+        separate,
+      );
+    },
+  );
+
+  it("uses a contact-area mean rather than the maximum boundary affinity", async () => {
+    const input = new Float32Array(3 * 8).fill(1);
+    input[2] = 0.25;
+    input[6] = 0.75;
+    const shape = [4, 2, 1];
+    const separate = [1, 1, 2, 2, 1, 1, 2, 2];
+    expect(Array.from(await runWatershedWasm(input, shape, keep))).toEqual(
+      separate,
+    );
+    for (const aggThreshold of [0.5, 0.6]) {
+      expect(
+        Array.from(
+          await runWatershedWasm(input, shape, { ...keep, aggThreshold }),
+        ),
+      ).toEqual(separate);
+    }
+    expect(
+      Array.from(
+        await runWatershedWasm(input, shape, { ...keep, aggThreshold: 0.49 }),
+      ),
+    ).toEqual(new Array(8).fill(1));
+  });
+
+  it("retains weak and zero contacts in area-weighted shared-neighbor updates", async () => {
+    const input = new Float32Array(3 * 16).fill(1);
+    for (const [row, value] of [0.9, 0.6, 0.6, 0].entries())
+      input[row * 4 + 2] = value;
+    input[16 + 4 + 2] = input[16 + 4 + 3] = 0.8;
+    const shape = [4, 4, 1];
+    // A spans the left two columns, B the top-right pair, C the other right
+    // pairs. A-B has mean .9. After merging, (A+B)-C must have mean
+    // (.6 + .6 + 0 + .8 + .8) / 5 = .56, not an unweighted mean or a max.
+    expect(Array.from(await runWatershedWasm(input, shape, keep))).toEqual([
+      1, 1, 2, 2, 1, 1, 3, 3, 1, 1, 3, 3, 1, 1, 3, 3,
+    ]);
+    expect(
+      Array.from(
+        await runWatershedWasm(input, shape, { ...keep, aggThreshold: 0.58 }),
+      ),
+    ).toEqual([1, 1, 1, 1, 1, 1, 3, 3, 1, 1, 3, 3, 1, 1, 3, 3]);
+    expect(
+      Array.from(
+        await runWatershedWasm(input, shape, { ...keep, aggThreshold: 0.55 }),
+      ),
+    ).toEqual(new Array(16).fill(1));
+  });
+
+  it("never agglomerates through masked background, even at threshold zero", async () => {
+    const input = new Float32Array(4 * 5).fill(1);
+    input.set([0, 0, 0.5, 0, 0], 15);
+    const before = input.slice();
+    expect(
+      Array.from(
+        await runWatershedWasm(input, [5, 1, 1], {
+          ...keep,
+          maskThreshold: 0.5,
+          aggThreshold: 0,
+        }),
+      ),
+    ).toEqual([1, 1, 0, 2, 2]);
+    expect(input).toEqual(before);
+  });
+
+  it.each([NaN, Infinity, -0.1, 1.01])(
+    "rejects invalid agglomeration threshold %s before native execution",
+    async (aggThreshold) => {
+      await expect(
+        runWatershedWasm(new Float32Array(3 * 5).fill(1), [5, 1, 1], {
+          ...keep,
+          aggThreshold,
+        }),
+      ).rejects.toThrow("agglomeration threshold");
+      expect(
+        Array.from(
+          await runWatershedWasm(
+            new Float32Array(3 * 5).fill(1),
+            [5, 1, 1],
+            keep,
+          ),
+        ),
+      ).toEqual([1, 1, 1, 1, 1]);
+    },
+  );
 
   it.each([NaN, Infinity, -0.1, 1.01])(
     "surfaces invalid native affinity %s and recovers on the same instance",
@@ -187,6 +328,27 @@ describe("standalone Abiss watershed WASM", () => {
     outputs.forEach((output, i) => {
       expect(Array.from(output)).toEqual(new Array(24).fill(i % 2));
       expect(output.buffer).not.toBe(inputs[i].buffer);
+    });
+  });
+
+  it("keeps concurrent enabled and disabled calls independent", async () => {
+    const input = new Float32Array(3 * 5).fill(1);
+    input.set([0, 1, 0.25, 1, 1]);
+    const thresholds = [undefined, 0.2, 0.25, 0, 1];
+    const outputs = await Promise.all(
+      thresholds.map((aggThreshold) =>
+        runWatershedWasm(input, [5, 1, 1], {
+          ...keep,
+          ...(aggThreshold === undefined ? {} : { aggThreshold }),
+        }),
+      ),
+    );
+    expect(new Set(outputs.map((output) => output.buffer)).size).toBe(5);
+    outputs.forEach((output, i) => {
+      expect(Array.from(output)).toEqual(
+        i === 1 || i === 3 ? [1, 1, 1, 1, 1] : [1, 1, 2, 2, 2],
+      );
+      expect(output.buffer).not.toBe(input.buffer);
     });
   });
 
