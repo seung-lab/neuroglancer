@@ -48,4 +48,5 @@ with tempfile.TemporaryDirectory(prefix="watershed-meshing-") as work:
         command += ["--sysroot", os.environ["RUST_SYSROOT"]]
     command += [str(ROOT / "native.rs"), "-o", str(ROOT / "marching_cubes.wasm")]
     subprocess.run(command, env={**os.environ, "MC_CORE_RS": str(core_path)}, check=True)
+(ROOT / "marching_cubes.wasm").chmod(0o644)
 print(hashlib.sha256((ROOT / "marching_cubes.wasm").read_bytes()).hexdigest(), "marching_cubes.wasm")
