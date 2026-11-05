@@ -58,6 +58,7 @@ import { scaleByExp10, supportedUnits } from "#src/util/si_units.js";
 import { registerWatershedAttachment } from "#src/watershed/attachment.js";
 import type { WatershedResult } from "#src/watershed/base.js";
 import type { LiveWatershed } from "#src/watershed/live.js";
+import { WatershedParametersState } from "#src/watershed/parameters.js";
 import type { WatershedRecipe } from "#src/watershed/recipe.js";
 import {
   parseWatershedRecipe,
@@ -437,13 +438,14 @@ export class WatershedDataSourceProvider implements DataSourceProvider {
   async get(options: GetDataSourceOptions): Promise<DataSource> {
     options.signal.throwIfAborted();
     let url = options.url;
+    let recipe: WatershedRecipe | undefined;
     let owned: Awaited<ReturnType<typeof restoreWatershedRecipe>> | undefined;
     if (url === WATERSHED_RECIPE_URL) {
       const hint =
         options.state !== null && typeof options.state === "object"
           ? recipePublications.get(options.state)
           : undefined;
-      const recipe = parseWatershedRecipe(options.state);
+      recipe = parseWatershedRecipe(options.state);
       let seeded = false;
       if (
         hint !== undefined &&
@@ -472,7 +474,7 @@ export class WatershedDataSourceProvider implements DataSourceProvider {
     }
     try {
       options.signal.throwIfAborted();
-      return this.getPublished(options, url, owned);
+      return this.getPublished(options, url, owned, recipe);
     } catch (error) {
       owned?.dispose();
       throw error;
@@ -483,10 +485,11 @@ export class WatershedDataSourceProvider implements DataSourceProvider {
     options: GetDataSourceOptions,
     url: string,
     owned?: Awaited<ReturnType<typeof restoreWatershedRecipe>>,
+    recipe?: WatershedRecipe,
   ): DataSource {
     const resultId = parseWatershedUrl(url);
     const chunkManager = options.registry.chunkManager;
-    const { info } = requireResult(chunkManager, resultId);
+    const { info, live } = requireResult(chunkManager, resultId);
     const names = ["x", "y", "z"];
     const units: string[] = [];
     const scales = new Float64Array(3);
@@ -530,6 +533,12 @@ export class WatershedDataSourceProvider implements DataSourceProvider {
       });
     }
     return {
+      state:
+        recipe !== undefined && live !== undefined
+          ? new WatershedParametersState(recipe, (next) =>
+              live.setParameters(next.channelsXYZ, next.options, next.halo),
+            )
+          : undefined,
       canonicalUrl:
         options.url === WATERSHED_RECIPE_URL
           ? WATERSHED_RECIPE_URL

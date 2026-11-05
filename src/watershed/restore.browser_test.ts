@@ -47,6 +47,7 @@ import {
   type PreparedAffinityInput,
 } from "#src/watershed/input.js";
 import { LiveWatershed } from "#src/watershed/live.js";
+import { WatershedParametersState } from "#src/watershed/parameters.js";
 import {
   WATERSHED_RECIPE_URL,
   type WatershedRecipe,
@@ -239,6 +240,11 @@ function volume(data: DataSource) {
     .volume as WatershedMultiscaleVolumeChunkSource;
 }
 
+function parameters(data: DataSource): WatershedParametersState {
+  expect(data.state).toBeInstanceOf(WatershedParametersState);
+  return data.state as WatershedParametersState;
+}
+
 async function publicationIsAlive(options: GetDataSourceOptions, url: string) {
   const data = await new WatershedDataSourceProvider().get({ ...options, url });
   volume(data).dispose();
@@ -283,6 +289,7 @@ describe("watershed recipe datasource restoration", () => {
       [2, 0, 1],
       f.recipe.options,
       expect.any(Function),
+      undefined,
     );
     expect(f.input.readRegion).not.toHaveBeenCalled();
     expect(requestAsyncComputation).not.toHaveBeenCalled();
@@ -301,6 +308,57 @@ describe("watershed recipe datasource restoration", () => {
     expect(f.input.dispose).toHaveBeenCalledOnce();
     expect(f.disposeHidden).toHaveBeenCalledOnce();
   });
+
+  it.each([0, 2])(
+    "restores custom halo %s into the real scheduler rather than its default bounds",
+    async (halo) => {
+      const f = fixture();
+      f.recipe.halo = halo;
+      const data = await new WatershedDataSourceProvider().get(f.options);
+      expect(LiveWatershed).toHaveBeenCalledExactlyOnceWith(
+        f.input,
+        f.recipe.channelsXYZ,
+        f.recipe.options,
+        expect.any(Function),
+        halo,
+      );
+      expect(parameters(data).toJSON()).toEqual(f.recipe);
+      expect(f.input.readRegion).not.toHaveBeenCalled();
+      const detach = attachWatershedVolume(volume(data), makeOutput());
+      expect(detach).toBeTypeOf("function");
+      latestWatch()[3](region);
+      const lower = region.lowerXYZ.map((n) => n - halo);
+      const shape = region.shapeXYZ.map((n) => n + 2 * halo);
+      await vi.waitFor(() =>
+        expect(requestAsyncComputation).toHaveBeenCalledOnce(),
+      );
+      expect(f.input.readRegion).toHaveBeenCalledExactlyOnceWith(
+        lower,
+        shape,
+        [2, 0, 1, 3],
+        expect.any(AbortSignal),
+      );
+      expect(vi.mocked(requestAsyncComputation).mock.calls[0].slice(3)).toEqual(
+        [
+          new Float32Array(shape.reduce((n, x) => n * x, 1) * 4).fill(0.75),
+          shape,
+          f.recipe.options,
+        ],
+      );
+      await vi.waitFor(async () => {
+        const labels = await latestLive().readTile(
+          [0, 0, 0],
+          [20, 12, 10],
+          f.abort.signal,
+        );
+        expect(labels.filter((label) => label === 7n)).toHaveLength(
+          shape.reduce((n, x) => n * x, 1),
+        );
+      });
+      volume(data).dispose();
+      detach!();
+    },
+  );
 
   it("forwards full upstream ONNX recipe state, transforms and subsource selections unchanged", async () => {
     const f = fixture();
@@ -379,6 +437,7 @@ describe("watershed recipe datasource restoration", () => {
       f.recipe.channelsXYZ,
       f.recipe.options,
       expect.any(Function),
+      undefined,
     );
     f.abort.abort();
     expect(f.input.dispose).toHaveBeenCalledOnce();
@@ -422,6 +481,7 @@ describe("watershed recipe datasource restoration", () => {
         f.recipe.channelsXYZ,
         f.recipe.options,
         expect.any(Function),
+        undefined,
       );
       expect([...data.modelTransform.inputSpace.scales]).toEqual(
         selected.spacingXYZ,
@@ -882,6 +942,7 @@ describe("watershed recipe datasource restoration", () => {
       a.recipe.channelsXYZ,
       a.recipe.options,
       expect.any(Function),
+      undefined,
     );
     const output = makeOutput();
     const detach = attachWatershedVolume(volume(other), output);
@@ -968,4 +1029,402 @@ describe("watershed recipe datasource restoration", () => {
       /installed viewer context/i,
     );
   });
+});
+
+describe("live watershed recipe parameter state", () => {
+  it("updates the retained producer and current region before publishing changed state, clearing stale labels", async () => {
+    const f = fixture();
+    const data = await new WatershedDataSourceProvider().get(f.options);
+    const state = parameters(data);
+    const live = latestLive();
+    const source = volume(data);
+    const resultId = source.resultId;
+    const modelTransform = data.modelTransform;
+    const original = state.toJSON();
+    const setParameters = vi.spyOn(live, "setParameters");
+    const setRegion = vi.spyOn(live, "setRegion");
+    const detach = attachWatershedVolume(source, makeOutput());
+    latestWatch()[3](region);
+    const readLabels = () =>
+      live.readTile([0, 0, 0], [20, 12, 10], f.abort.signal);
+    await vi.waitFor(async () =>
+      expect((await readLabels()).some((label) => label === 7n)).toBe(true),
+    );
+    const next: WatershedRecipe = {
+      ...state.toJSON(),
+      channelsXYZ: [1, 2, 0],
+      halo: 2,
+      options: {
+        highThreshold: 0.9,
+        lowThreshold: 0.1,
+        sizeThreshold: 8,
+        dustThreshold: 1,
+        maskThreshold: 0.4,
+        aggThreshold: 0,
+      },
+    };
+    let resolveRead!: (value: Float32Array) => void;
+    vi.mocked(f.input.readRegion).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveRead = resolve;
+      }),
+    );
+    const duringApply: WatershedRecipe[] = [];
+    const removeChanged = live.changed.add(() =>
+      duringApply.push(state.toJSON()),
+    );
+    const changed = vi.fn(() => state.toJSON());
+    state.changed.add(changed);
+    state.restoreState(next);
+    removeChanged();
+    expect(setParameters).toHaveBeenCalledExactlyOnceWith(
+      next.channelsXYZ,
+      next.options,
+      next.halo,
+    );
+    expect(duringApply).toEqual([original]);
+    expect(changed).toHaveBeenCalledOnce();
+    expect(changed.mock.results[0].value).toEqual(next);
+    expect((await readLabels()).every((label) => label === 0n)).toBe(true);
+    await vi.waitFor(() => expect(f.input.readRegion).toHaveBeenCalledTimes(2));
+    expect(f.input.readRegion).toHaveBeenLastCalledWith(
+      [8, 6, 6],
+      [6, 6, 5],
+      [1, 2, 0, 3],
+      expect.any(AbortSignal),
+    );
+    expect(requestAsyncComputation).toHaveBeenCalledOnce();
+    expect((await readLabels()).every((label) => label === 0n)).toBe(true);
+    resolveRead(new Float32Array(6 * 6 * 5 * 4).fill(0.75));
+    await vi.waitFor(async () =>
+      expect((await readLabels()).filter((label) => label === 7n)).toHaveLength(
+        6 * 6 * 5,
+      ),
+    );
+    expect(requestAsyncComputation).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(requestAsyncComputation).mock.calls[1].slice(3)).toEqual([
+      new Float32Array(6 * 6 * 5 * 4).fill(0.75),
+      [6, 6, 5],
+      next.options,
+    ]);
+    state.restoreState(JSON.parse(JSON.stringify(next)));
+    expect(setParameters).toHaveBeenCalledOnce();
+    expect(changed).toHaveBeenCalledOnce();
+    expect(state.toJSON()).toEqual(next);
+    expect(JSON.parse(JSON.stringify(state))).toEqual(next);
+    expect(f.options.state).toEqual(original);
+    expect(data.state).toBe(state);
+    expect(volume(data)).toBe(source);
+    expect(source.resultId).toBe(resultId);
+    expect(data.modelTransform).toBe(modelTransform);
+    expect(latestLive()).toBe(live);
+    expect(setRegion).toHaveBeenCalledExactlyOnceWith(
+      region.lowerXYZ,
+      region.shapeXYZ,
+    );
+    // Hidden image construction is the upstream model-controller boundary.
+    // An edit must not cross it, re-prepare its input, or rebind its viewport.
+    expect(makeLayer).toHaveBeenCalledOnce();
+    expect(prepareAffinityInput).toHaveBeenCalledOnce();
+    expect(LiveWatershed).toHaveBeenCalledOnce();
+    expect(watchWatershedViewport).toHaveBeenCalledOnce();
+    expect(f.input.dispose).not.toHaveBeenCalled();
+    expect(f.disposeHidden).not.toHaveBeenCalled();
+    volume(data).dispose();
+    detach!();
+  });
+
+  it("edits hidden state without work, disables the mask, and resets optional parameters on the same current region", async () => {
+    const f = fixture();
+    const data = await new WatershedDataSourceProvider().get(f.options);
+    const state = parameters(data);
+    const live = latestLive();
+    const original = state.toJSON();
+    const changed = vi.fn();
+    state.changed.add(changed);
+    const { maskThreshold: _mask, ...unmasked } = original.options;
+    const next: WatershedRecipe = {
+      ...original,
+      channelsXYZ: [3, 1, 0],
+      halo: 0,
+      options: { ...unmasked, aggThreshold: 0 },
+    };
+    state.restoreState(next);
+    expect(state.toJSON()).toEqual(next);
+    expect(f.input.readRegion).not.toHaveBeenCalled();
+    expect(requestAsyncComputation).not.toHaveBeenCalled();
+    expect(watchWatershedViewport).not.toHaveBeenCalled();
+    attachWatershedVolume(volume(data), makeOutput());
+    latestWatch()[3](region);
+    const readLabels = () =>
+      live.readTile([0, 0, 0], [20, 12, 10], f.abort.signal);
+    await vi.waitFor(async () =>
+      expect((await readLabels()).filter((label) => label === 7n)).toHaveLength(
+        4,
+      ),
+    );
+    expect(f.input.readRegion).toHaveBeenCalledExactlyOnceWith(
+      region.lowerXYZ,
+      region.shapeXYZ,
+      [3, 1, 0],
+      expect.any(AbortSignal),
+    );
+    expect(vi.mocked(requestAsyncComputation).mock.calls[0][5]).toEqual(
+      next.options,
+    );
+    state.reset();
+    expect(state.toJSON()).toEqual(original);
+    expect(state.toJSON()).not.toHaveProperty("halo");
+    expect(state.toJSON().options).not.toHaveProperty("aggThreshold");
+    expect((await readLabels()).every((label) => label === 0n)).toBe(true);
+    await vi.waitFor(async () =>
+      expect((await readLabels()).filter((label) => label === 7n)).toHaveLength(
+        18 * 12 * 10,
+      ),
+    );
+    expect(f.input.readRegion).toHaveBeenLastCalledWith(
+      [2, 3, 4],
+      [18, 12, 10],
+      [2, 0, 1, 3],
+      expect.any(AbortSignal),
+    );
+    expect(vi.mocked(requestAsyncComputation).mock.calls[1][5]).toEqual(
+      original.options,
+    );
+    expect(changed).toHaveBeenCalledTimes(2);
+    expect(makeLayer).toHaveBeenCalledOnce();
+    expect(prepareAffinityInput).toHaveBeenCalledOnce();
+    expect(LiveWatershed).toHaveBeenCalledOnce();
+    expect(watchWatershedViewport).toHaveBeenCalledOnce();
+    volume(data).dispose();
+  });
+
+  it("gives a seeded live publication editable state and persists edits for an independent JSON restoration", async () => {
+    const f = fixture();
+    const seedInput = makeInput().input;
+    const live = new LiveWatershed(seedInput, [2, 0, 1], f.recipe.options);
+    const publication = publishLiveWatershed(f.chunkManager, live);
+    disposers.push(publication.dispose);
+    const source = makeWatershedRecipeSource(
+      publication,
+      f.recipe,
+      f.root.coordinateSpace,
+    );
+    const provider = new WatershedDataSourceProvider();
+    const data = await provider.get({ ...f.options, ...source });
+    const state = parameters(data);
+    live.setRegion(region.lowerXYZ, region.shapeXYZ);
+    const next: WatershedRecipe = {
+      ...state.toJSON(),
+      channelsXYZ: [0, 2, 1],
+      halo: 0,
+      options: { ...f.recipe.options, aggThreshold: 0.6 },
+    };
+    const setParameters = vi.spyOn(live, "setParameters");
+    state.restoreState(next);
+    expect(setParameters).toHaveBeenCalledExactlyOnceWith(
+      next.channelsXYZ,
+      next.options,
+      0,
+    );
+    await vi.waitFor(() =>
+      expect(requestAsyncComputation).toHaveBeenCalledOnce(),
+    );
+    expect(seedInput.readRegion).toHaveBeenCalledExactlyOnceWith(
+      region.lowerXYZ,
+      region.shapeXYZ,
+      [0, 2, 1, 3],
+      expect.any(AbortSignal),
+    );
+    expect(makeLayer).not.toHaveBeenCalled();
+    expect(prepareAffinityInput).not.toHaveBeenCalled();
+    expect(LiveWatershed).toHaveBeenCalledOnce();
+    expect(watchWatershedViewport).not.toHaveBeenCalled();
+    expect(volume(data).resultId).toBe(
+      publication.url.slice("watershed://".length),
+    );
+    const saved = JSON.parse(JSON.stringify(state));
+    expect(saved).toEqual(next);
+    expect(source.state).toBe(f.recipe);
+    expect(f.recipe).not.toEqual(next);
+    volume(data).dispose();
+    expect(seedInput.dispose).not.toHaveBeenCalled();
+    const restored = await provider.get({ ...f.options, state: saved });
+    expect(parameters(restored).toJSON()).toEqual(next);
+    expect(LiveWatershed).toHaveBeenLastCalledWith(
+      f.input,
+      next.channelsXYZ,
+      next.options,
+      expect.any(Function),
+      0,
+    );
+    expect(volume(restored).resultId).not.toBe(
+      publication.url.slice("watershed://".length),
+    );
+    volume(restored).dispose();
+    await publicationIsAlive(f.options, publication.url);
+    expect(seedInput.dispose).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid channel and halo edits without saving state, clearing labels, or scheduling work", async () => {
+    const f = fixture();
+    const data = await new WatershedDataSourceProvider().get(f.options);
+    const state = parameters(data);
+    const original = state.toJSON();
+    const live = latestLive();
+    attachWatershedVolume(volume(data), makeOutput());
+    latestWatch()[3](region);
+    const readLabels = () =>
+      live.readTile([0, 0, 0], [20, 12, 10], f.abort.signal);
+    await vi.waitFor(async () =>
+      expect((await readLabels()).some((label) => label === 7n)).toBe(true),
+    );
+    const labels = await readLabels();
+    const changed = vi.fn();
+    state.changed.add(changed);
+    const liveChanged = vi.fn();
+    const removeChanged = live.changed.add(liveChanged);
+    for (const [edit, error] of [
+      [{ channelsXYZ: [4, 0, 1] }, /in-bounds affinity channels/],
+      [{ channelsXYZ: [3, 0, 1] }, /mask, not an affinity channel/],
+      [{ halo: -1 }, /halo/],
+      [{ halo: 0.5 }, /halo/],
+    ] as const) {
+      expect(() => state.restoreState({ ...original, ...edit })).toThrow(error);
+      expect(state.toJSON()).toEqual(original);
+      expect(await readLabels()).toEqual(labels);
+    }
+    expect(changed).not.toHaveBeenCalled();
+    expect(liveChanged).not.toHaveBeenCalled();
+    expect(f.input.readRegion).toHaveBeenCalledOnce();
+    expect(requestAsyncComputation).toHaveBeenCalledOnce();
+    expect(live.signal.aborted).toBe(false);
+    state.restoreState({ ...original, halo: 0 });
+    expect(changed).toHaveBeenCalledOnce();
+    expect(liveChanged).toHaveBeenCalledOnce();
+    expect(state.toJSON().halo).toBe(0);
+    removeChanged();
+    volume(data).dispose();
+  });
+
+  it.each([false, true])(
+    "clears an oversized-halo error after a parameter-only retry without navigating (dismissed=%s)",
+    async (dismissed) => {
+      const f = fixture();
+      Object.assign(f.input, { upperBoundXYZ: [1026, 1027, 1028] });
+      const baseline = statusMessages.size;
+      const data = await new WatershedDataSourceProvider().get(f.options);
+      const state = parameters(data);
+      const detach = attachWatershedVolume(volume(data), makeOutput())!;
+      latestWatch()[3](region);
+      const original = state.toJSON();
+      state.restoreState({ ...original, halo: 512 });
+      expect(statusMessages.size).toBe(baseline + 1);
+      expect([...statusMessages].at(-1)?.element.textContent).toContain(
+        "2**21 voxel limit",
+      );
+      expect(requestAsyncComputation).not.toHaveBeenCalled();
+      if (dismissed) {
+        [...statusMessages].at(-1)!.element.querySelector("button")!.click();
+        expect(statusMessages.size).toBe(baseline);
+      }
+      expect(() => state.restoreState({ ...original, halo: 0 })).not.toThrow();
+      await vi.waitFor(async () => {
+        const labels = await latestLive().readTile(
+          [0, 0, 0],
+          [64, 64, 32],
+          f.abort.signal,
+        );
+        expect(labels.some((label) => label === 7n)).toBe(true);
+      });
+      expect(requestAsyncComputation).toHaveBeenCalledOnce();
+      expect(watchWatershedViewport).toHaveBeenCalledOnce();
+      expect(statusMessages.size).toBe(baseline);
+      detach();
+      volume(data).dispose();
+    },
+  );
+
+  it("reports source invalidation after a dismissed compute error and disposes the message safely", async () => {
+    const f = fixture();
+    Object.assign(f.input, { upperBoundXYZ: [1026, 1027, 1028] });
+    const baseline = statusMessages.size;
+    const data = await new WatershedDataSourceProvider().get(f.options);
+    attachWatershedVolume(volume(data), makeOutput());
+    latestWatch()[3](region);
+    parameters(data).restoreState({ ...f.recipe, halo: 512 });
+    const oldStatus = [...statusMessages].at(-1)!;
+    oldStatus.element.querySelector("button")!.click();
+    expect(statusMessages.size).toBe(baseline);
+    f.invalidation.abort();
+    expect(statusMessages.size).toBe(baseline + 1);
+    expect([...statusMessages].at(-1)).not.toBe(oldStatus);
+    expect([...statusMessages].at(-1)?.element.textContent).toMatch(
+      /affinity source changed/i,
+    );
+    expect(latestLive().signal.aborted).toBe(true);
+    volume(data).dispose();
+    expect(statusMessages.size).toBe(baseline);
+  });
+
+  it("rejects upstream source, native scale and spacing replacements before touching the producer", async () => {
+    const f = fixture();
+    const data = await new WatershedDataSourceProvider().get(f.options);
+    const state = parameters(data);
+    const original = state.toJSON();
+    const setParameters = vi.spyOn(latestLive(), "setParameters");
+    const changed = vi.fn();
+    state.changed.add(changed);
+    for (const edit of [
+      {
+        source: {
+          ...original.source,
+          source: "precomputed://https://example.com/different-affinities",
+        },
+      },
+      { inputScaleIndex: 0 },
+      { spacingXYZ: [32e-9, 20e-9, 40e-9] },
+    ]) {
+      expect(() => state.restoreState({ ...original, ...edit })).toThrow(
+        /input or native scale requires a new layer/,
+      );
+      expect(state.toJSON()).toEqual(original);
+    }
+    expect(setParameters).not.toHaveBeenCalled();
+    expect(changed).not.toHaveBeenCalled();
+    expect(makeLayer).toHaveBeenCalledOnce();
+    expect(prepareAffinityInput).toHaveBeenCalledOnce();
+    expect(LiveWatershed).toHaveBeenCalledOnce();
+    expect(watchWatershedViewport).not.toHaveBeenCalled();
+    expect(f.input.readRegion).not.toHaveBeenCalled();
+    volume(data).dispose();
+  });
+
+  it.each(["disposal", "source invalidation"] as const)(
+    "rejects an update after %s without replacing the saved recipe",
+    async (reason) => {
+      const f = fixture();
+      const data = await new WatershedDataSourceProvider().get(f.options);
+      const state = parameters(data);
+      const original = state.toJSON();
+      const changed = vi.fn();
+      state.changed.add(changed);
+      if (reason === "disposal") volume(data).dispose();
+      else f.invalidation.abort(new Error("native source metadata changed"));
+      expect(latestLive().signal.aborted).toBe(true);
+      expect(() =>
+        state.restoreState({ ...original, channelsXYZ: [0, 1, 2], halo: 0 }),
+      ).toThrow("Live watershed stopped");
+      expect(state.toJSON()).toEqual(original);
+      expect(JSON.parse(JSON.stringify(state))).toEqual(original);
+      expect(changed).not.toHaveBeenCalled();
+      expect(makeLayer).toHaveBeenCalledOnce();
+      expect(prepareAffinityInput).toHaveBeenCalledOnce();
+      expect(LiveWatershed).toHaveBeenCalledOnce();
+      expect(requestAsyncComputation).not.toHaveBeenCalled();
+      volume(data).dispose();
+      expect(f.input.dispose).toHaveBeenCalledOnce();
+      expect(f.disposeHidden).toHaveBeenCalledOnce();
+    },
+  );
 });

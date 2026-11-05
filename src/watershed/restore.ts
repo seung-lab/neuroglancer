@@ -19,7 +19,7 @@ import { publishLiveWatershed } from "#src/datasource/watershed/frontend.js";
 import { ImageUserLayer } from "#src/layer/image/index.js";
 import type { ManagedUserLayer } from "#src/layer/index.js";
 import { makeLayer } from "#src/layer/index.js";
-import { StatusMessage } from "#src/status.js";
+import { StatusMessage, statusMessages } from "#src/status.js";
 import { MessageSeverity } from "#src/util/message_list.js";
 import type { Viewer } from "#src/viewer.js";
 import type { PreparedAffinityInput } from "#src/watershed/input.js";
@@ -151,9 +151,14 @@ export async function restoreWatershedRecipe(
   let removeInvalidation: (() => void) | undefined;
   let detach: (() => void) | undefined;
   let status: StatusMessage | undefined;
+  const clearError = () => {
+    if (status !== undefined && statusMessages.has(status)) status.dispose();
+    status = undefined;
+  };
   const reportError = (error: unknown) => {
     if (disposed) return;
-    status ??= new StatusMessage();
+    if (status === undefined || !statusMessages.has(status))
+      status = new StatusMessage();
     status.setErrorMessage(
       `Restored watershed ${recipe.source.name}: ${error instanceof Error ? error.message : error}`,
     );
@@ -176,7 +181,7 @@ export async function restoreWatershedRecipe(
     if (root.refCount !== 0) root.unregisterDisposer(dispose);
     if (chunkManager.refCount !== 0) chunkManager.unregisterDisposer(dispose);
     stop();
-    status?.dispose();
+    clearError();
   };
   options.signal.addEventListener("abort", dispose, { once: true });
   root.registerDisposer(dispose);
@@ -200,6 +205,7 @@ export async function restoreWatershedRecipe(
       recipe.channelsXYZ,
       recipe.options,
       reportError,
+      recipe.halo,
     );
     input = undefined;
     const producer = live;
@@ -212,8 +218,13 @@ export async function restoreWatershedRecipe(
       stop();
     };
     live.signal.addEventListener("abort", invalidate, { once: true });
-    removeInvalidation = () =>
+    const removeRecovery = producer.changed.add(() => {
+      if (!stopped && !producer.signal.aborted) clearError();
+    });
+    removeInvalidation = () => {
       producer.signal.removeEventListener("abort", invalidate);
+      removeRecovery();
+    };
     live.signal.throwIfAborted();
     publication = publishLiveWatershed(chunkManager, live);
     signal.throwIfAborted();
@@ -239,8 +250,7 @@ export async function restoreWatershedRecipe(
           layer,
           (region) => {
             if (!active || stopped) return;
-            status?.dispose();
-            status = undefined;
+            clearError();
             producer.setRegion(region?.lowerXYZ, region?.shapeXYZ);
           },
           (error) => {
