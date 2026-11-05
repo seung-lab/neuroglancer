@@ -202,10 +202,13 @@ Select a watershed output's **Source** tab to edit only these settings:
   inputs. Disabled thresholds retain their local draft but are omitted from saved
   options; an enabled threshold of `0` remains enabled.
 
-A valid parameter edit clears obsolete labels and reuses the same prepared input,
-output layer, and datasource. Rapid edits settle through the existing **150 ms
-compute debounce**; an already-running synchronous kernel finishes before the
-latest settings run, and obsolete results are discarded. Hidden outputs remain
+Controls respond immediately, but settings are applied and saved only after
+**250 ms without another edit**. Invalid drafts cancel pending updates, as do
+external recipe changes or disabling/removing the controls. Once applied, a valid
+edit clears obsolete labels and reuses the same prepared input, output layer, and
+datasource. The existing **150 ms compute debounce** then runs; an already-running
+synchronous kernel finishes before the latest settings run, and obsolete results
+are discarded. Hidden outputs remain
 idle until visible. Changing parameters forces a fresh computation even if the
 view still fits inside the previous result's halo. Oversized boxes still report
 an error rather than splitting; shrinking the view can recover, or add a new
