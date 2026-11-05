@@ -13,7 +13,8 @@ required.
    supported. For ONNX output, first create the affinity layer with the existing
    ONNX inference command.
 2. Open the command palette with **Ctrl+P** and select **WASM Watershed**.
-3. Choose the affinity image and native scale.
+3. Choose the affinity image and native scale. Set **Halo (voxels)** if needed
+   (default `8` native voxels per face; `0` computes only the visible union box).
 4. Optionally expand **Advanced: channels and thresholds**. Map the channels for
    affinities to the voxel's **−X, −Y, and −Z** neighbors. A scalar XYZ or XYZC1
    source defaults to `0, 0, 0`: the same values are copied literally for all three
@@ -33,9 +34,11 @@ required.
    slice views**, and follows navigation, resizing, and layout changes. There are
    no region/ROI fields or manual Run step.
 6. To adjust an existing output, select its **Source** tab in the right sidebar.
-   **Watershed parameters** provides live threshold sliders, mask/agglomeration
-   checkboxes, precise numeric inputs, channel mapping, and **Halo (voxels)**.
-   The dialog's controls remain drafts for newly added layers.
+   **Watershed parameters** provides high/low thresholds, size/dust cleanup, and
+   mask/agglomeration settings, with threshold sliders and precise numeric inputs.
+   Halo and channel mapping are configured only in the **WASM Watershed** dialog;
+   add or recreate a layer to change them. All dialog controls remain drafts for
+   newly added layers.
 
 Creation publishes metadata, not a precomputed segmentation of the whole source.
 The box is expressed in the selected scale's **native grid coordinates**. For the
@@ -54,10 +57,10 @@ are shown with selected opacity `0.5`.
 
 The computation box is limited to `2**21` (2,097,152) voxels, **including the clipped
 halo**. An oversized view reports a visible error, not a partial segmentation:
-**zoom in**, reduce the sidebar halo, or select a coarser native scale and add a
-new layer. The box is never
-silently split into separate computations. The existing layer and viewport
-watcher stay active so navigation to a smaller box can retry. Computation waits
+**zoom in**, or add a new layer through **WASM Watershed** with a smaller halo or
+at a coarser native scale. The box is never silently split into separate
+computations. The existing layer and viewport watcher stay active so navigation
+to a smaller box can retry. Computation waits
 for **ALL affinity data needed for the current box**, including its clipped halo,
 not just whichever display chunks arrive first. It does **not** wait for or read
 the whole dataset.
@@ -122,9 +125,9 @@ immutable for the lifetime of a source publication.
 The halo provides context but this bounded computation is **not equivalent to
 whole-volume watershed**. Labels remain unchanged while navigating inside a
 retained result, but may change when leaving it triggers a new computation; they
-are not persistent object identities. Changing the source,
-scale, channel mapping, or thresholds (including mask and agglomeration settings)
-creates a different segmentation; IDs should not be compared across configurations.
+are not persistent object identities. Changing the source, scale, halo, channel
+mapping, or thresholds (including mask and agglomeration settings) creates a
+different segmentation; IDs should not be compared across configurations.
 Automatic channel defaults follow source/scale changes; valid user-entered
 mappings are preserved, while mappings that become invalid when the channel count
 changes are reset. Masking is turned off when the selected source/scale has fewer
@@ -157,11 +160,12 @@ kernels for that layer.
 
 Each output layer owns its publication, live computation, and retained affinity
 input. **Closing the dialog does not stop created layers**, and selecting a
-different source or scale in the dialog does not cancel existing outputs. Channel
-and threshold controls **in the dialog**, including masking and agglomeration,
-are drafts for the next layer. The **Source sidebar** edits the selected existing
-layer instead, without replacing its retained affinity input or upstream ONNX
-inference. Delete an output to stop its queued work and
+different source or scale in the dialog does not cancel existing outputs. Halo,
+channel mapping, and threshold controls **in the dialog**, including masking and
+agglomeration, are drafts for the next layer. The **Source sidebar** edits only the
+selected existing layer's high/low thresholds, size/dust cleanup, and
+mask/agglomeration settings, without replacing its retained affinity input or
+upstream ONNX inference. Delete an output to stop its queued work and
 release its resources. Deleting or replacing its affinity source, changing source
 data or transforms, or resetting/disposal of the viewer also stops the dependent
 live layer. For outputs created in the dialog, source invalidation is reported
@@ -174,21 +178,29 @@ clear the result, but **keep the layer and watcher alive** so a later viewport b
 can retry. Fatal construction, publication, or activation errors still clean up
 the failed output.
 
+## Dialog-only halo and channel mapping
+
+Configure **Halo (voxels)** and **Channels for −X −Y −Z** in **WASM Watershed**
+before adding a layer. These controls are not in the right sidebar. To change
+an existing output's halo or channel mapping, add or recreate the layer using
+this dialog; changing its drafts does not modify existing layers.
+
+Halo is isotropic padding on all six faces in the selected scale's native voxel
+grid. It accepts nonnegative safe integers, including `0`, without silently
+clamping larger values. The default is `8`; `0` computes only the visible union
+box. Channel mapping remains in **Advanced: channels and thresholds**, and allows
+repeated indices subject to source bounds and the optional last-channel mask.
+Saved recipes continue to support both halo and channel mapping.
+
 ## Live sidebar parameters
 
-Select a watershed output's **Source** tab to edit its current configuration:
+Select a watershed output's **Source** tab to edit only these settings:
 
 - High and low thresholds have sliders and precise numeric inputs. Size and dust
   cleanup thresholds use unsigned-integer inputs.
 - Masking and agglomeration have enable checkboxes, threshold sliders, and numeric
   inputs. Disabled thresholds retain their local draft but are omitted from saved
   options; an enabled threshold of `0` remains enabled.
-- The three affinity channel indices can be changed, including repeated indices.
-  Invalid channels or mask/channel combinations show an error without applying.
-- **Halo (voxels)** is isotropic padding on all six faces in the selected scale's
-  native voxel grid. It accepts nonnegative safe integers, including `0`; the
-  slider covers `0–64`, while the numeric input allows larger values without
-  silently clamping them. `0` computes only the visible union box.
 
 A valid parameter edit clears obsolete labels and reuses the same prepared input,
 output layer, and datasource. Rapid edits settle through the existing **150 ms
@@ -196,12 +208,14 @@ compute debounce**; an already-running synchronous kernel finishes before the
 latest settings run, and obsolete results are discarded. Hidden outputs remain
 idle until visible. Changing parameters forces a fresh computation even if the
 view still fits inside the previous result's halo. Oversized boxes still report
-an error rather than splitting; lowering the halo or shrinking the view recovers.
+an error rather than splitting; shrinking the view can recover, or add a new
+layer in **WASM Watershed** with a smaller halo.
 
 The sidebar updates the saved recipe and read-only JSON in place, without
 reloading the source. Controls are disabled while loading. Affinity source,
-native scale, and spacing are shown as read-only context: changing input geometry
-requires adding a new layer and is not an upstream inference-setting edit.
+native scale, and spacing are shown as read-only context. Changing input geometry,
+halo, or channel mapping requires adding or recreating a layer through **WASM
+Watershed** and is not an upstream inference-setting edit.
 
 ## Saving, sharing, and restoration
 
@@ -210,11 +224,13 @@ Saving or sharing viewer JSON preserves the affinity source specification
 (including a nested ONNX recipe), native input scale and voxel spacing, literal
 XYZ channel mapping, thresholds, optional last-channel mask threshold, and optional
 agglomeration threshold, and the optional top-level `halo` in native voxels.
-Omitting `halo` preserves the default `8`; explicit `0` is retained. Sidebar edits
-are saved automatically and restored with the layer. Masking is enabled exactly
-when `options.maskThreshold`
-is present. Agglomeration is enabled exactly when `options.aggThreshold` is
-present, including a value of `0`; omitting it preserves the default watershed-only
+Omitting `halo` preserves the default `8`; newly added layers omit this key when
+using the default, while explicit `0` is retained. Halo and channel mapping are
+configured in the **WASM Watershed** dialog, not the sidebar. Sidebar threshold,
+size/dust, mask, and agglomeration edits are saved automatically and restored with
+the layer. Masking is enabled exactly when `options.maskThreshold` is present.
+Agglomeration is enabled exactly when `options.aggThreshold` is present, including
+a value of `0`; omitting it preserves the default watershed-only
 behavior. Unchecking **Agglomerate watershed basins** omits that key, regardless
 of its retained threshold draft. The Source sidebar shows the complete, read-only
 recipe JSON even while loading or after an error. Draft changes in the watershed
