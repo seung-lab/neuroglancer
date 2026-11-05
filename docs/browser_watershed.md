@@ -23,6 +23,10 @@ required.
    channels, optionally check **Use last channel as mask** and adjust **Mask
    threshold** (default `0.3`). Masking is **off by default**; the mask is always
    the last source channel, which cannot also be selected as an affinity.
+   Optionally check **Agglomerate watershed basins** and set **Agglomeration
+   threshold (agg_threshold)**. Agglomeration is **off by default**; its threshold
+   draft starts at `0.15` and is used only when checked. Lower thresholds merge
+   more basins.
 5. Click **Add watershed layer**. A standard segmentation layer is added to the
    source's existing layer group, without changing the affinity layer or layout.
    One shared result covers the **XYZ bounding box enclosing all visible relevant
@@ -87,6 +91,20 @@ immutable for the lifetime of a source publication.
 - High and low thresholds satisfy `0 ≤ low < high ≤ 1` in float32. Defaults are
   high `0.99999`, low `0.00005`, size `50`, and dust `50`. Size and dust are
   unsigned integer cleanup thresholds and can independently be zero.
+- Optional **post-watershed agglomeration** merges neighboring nonzero basins
+  when their **mean affinity across the shared boundary is strictly greater
+  than** `aggThreshold`. Merged boundaries retain affinity sums and contact areas,
+  so subsequent means are weighted by total contact area, not an unweighted
+  average of boundary means. Final labels follow the full merge/remap chains.
+  Background label `0` never merges. Existing size/dust cleanup runs **before**
+  agglomeration and is not repeated afterward.
+- `aggThreshold` must be finite and in `[0, 1]`. Absence disables agglomeration;
+  **`0` enables it**, merging boundaries with positive mean affinity. A value of
+  **`1` merges nothing**, since no normalized mean is strictly greater than `1`.
+  Agglomeration does not recompact final label IDs: positive IDs may have gaps
+  and are not guaranteed to be consecutive. Equal-score merges have no
+  cross-platform canonical order; enabled results are not guaranteed to have
+  identical IDs or partitions across native and WASM builds for tied inputs.
 - All visible relevant slice rectangles contribute to **one enclosing XYZ box**,
   even if they lie in different views. A single computation includes the clipped
   halo as context; affinities leaving that computation domain are ignored.
@@ -99,8 +117,8 @@ The halo provides context but this bounded computation is **not equivalent to
 whole-volume watershed**. Labels remain unchanged while navigating inside a
 retained result, but may change when leaving it triggers a new computation; they
 are not persistent object identities. Changing the source,
-scale, channel mapping, or thresholds (including mask settings) creates a
-different segmentation; IDs should not be compared across configurations.
+scale, channel mapping, or thresholds (including mask and agglomeration settings)
+creates a different segmentation; IDs should not be compared across configurations.
 Automatic channel defaults follow source/scale changes; valid user-entered
 mappings are preserved, while mappings that become invalid when the channel count
 changes are reset. Masking is turned off when the selected source/scale has fewer
@@ -134,8 +152,9 @@ kernels for that layer.
 Each output layer owns its publication, live computation, and retained affinity
 input. **Closing the dialog does not stop created layers**, and selecting a
 different source or scale in the dialog does not cancel existing outputs. Channel
-and mask controls are drafts for the next layer; editing them does not change an
-existing layer's configuration. Delete an output to stop its queued work and
+and threshold controls, including masking and agglomeration, are drafts for the
+next layer; editing them does not change an existing layer's configuration.
+Delete an output to stop its queued work and
 release its resources. Deleting or replacing its affinity source, changing source
 data or transforms, or resetting/disposal of the viewer also stops the dependent
 live layer. For outputs created in the dialog, source invalidation is reported
@@ -153,10 +172,31 @@ the failed output.
 New output layers use `watershed://recipe` with a JSON `source.state` recipe.
 Saving or sharing viewer JSON preserves the affinity source specification
 (including a nested ONNX recipe), native input scale and voxel spacing, literal
-XYZ channel mapping, thresholds, and optional last-channel mask threshold. Masking
-is enabled exactly when `options.maskThreshold` is present. The Source sidebar
-shows the complete, read-only recipe JSON even while loading or after an error.
-Draft changes in the watershed dialog apply only to newly added layers.
+XYZ channel mapping, thresholds, optional last-channel mask threshold, and optional
+agglomeration threshold. Masking is enabled exactly when `options.maskThreshold`
+is present. Agglomeration is enabled exactly when `options.aggThreshold` is
+present, including a value of `0`; omitting it preserves the default watershed-only
+behavior. Unchecking **Agglomerate watershed basins** omits that key, regardless
+of its retained threshold draft. The Source sidebar shows the complete, read-only
+recipe JSON even while loading or after an error. Draft changes in the watershed
+dialog apply only to newly added layers.
+
+For example, the `options` object inside a layer's `source.state` can enable
+agglomeration with:
+
+```json
+{
+  "highThreshold": 0.99999,
+  "lowThreshold": 0.00005,
+  "sizeThreshold": 50,
+  "dustThreshold": 50,
+  "aggThreshold": 0.15
+}
+```
+
+The JSON key is `aggThreshold`; `agg_threshold` in the dialog label identifies the
+Abiss algorithm parameter. Remove the key to disable agglomeration, rather than
+setting it to `0`. The existing default options do not include this key.
 
 Restoring copied JSON reconstructs an independently owned live layer and
 **recomputes one current-view union** using the saved settings. It does not
@@ -184,6 +224,9 @@ Neuroglancer adapters. The dialog links to its
 both are included in production assets. See
 [`src/watershed/abiss/README.md`](../src/watershed/abiss/README.md) for the pinned
 Abiss commit, Emscripten version, checksums, ABI, and reproducible build details.
+Post-watershed agglomeration is part of this GPL module. When redistributing a
+modified WASM build, update the corresponding source/build archive to match the
+shipped binary, including the agglomeration changes.
 
 Tests compare browser WASM labels exactly with native Abiss reference outputs,
 and exercise affinity reading, worker execution, live datasource publication, and
