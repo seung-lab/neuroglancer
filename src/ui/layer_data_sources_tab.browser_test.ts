@@ -422,6 +422,7 @@ describe.each([
 function editableWatershedFixture() {
   const recipe = parseWatershedRecipe({
     ...watershedRecipeState(),
+    halo: 0,
     source: {
       name: "affinities",
       source: "precomputed://https://example.com/affinities",
@@ -455,9 +456,14 @@ describe("DataSourceView editable watershed parameters", () => {
     expect(parameters!.textContent).toContain("Watershed parameters");
     expect(
       parameters!.querySelector<HTMLInputElement>(
-        '[aria-label="Halo (voxels)"]',
+        '[aria-label="Size threshold"]',
       )!.disabled,
     ).toBe(false);
+    for (const control of parameters!.querySelectorAll("input")) {
+      expect(control.getAttribute("aria-label")).not.toMatch(
+        /halo|affinity channel/i,
+      );
+    }
     expect(sourceStateEditor(view, "Watershed").getValue()).toBe(
       JSON.stringify(source.spec.state, null, 2),
     );
@@ -469,16 +475,18 @@ describe("DataSourceView editable watershed parameters", () => {
   it("persists valid control edits and refreshes JSON without a datasource reload", () => {
     const { view, source, state, apply, loaded, setSpec, registry } =
       editableWatershedFixture();
-    const halo = view.element.querySelector<HTMLInputElement>(
-      '[aria-label="Halo (voxels)"]',
+    const size = view.element.querySelector<HTMLInputElement>(
+      '[aria-label="Size threshold"]',
     )!;
     const editor = sourceStateEditor(view, "Watershed");
-    halo.value = "0";
-    halo.dispatchEvent(new Event("input", { bubbles: true }));
+    size.value = "0";
+    size.dispatchEvent(new Event("input", { bubbles: true }));
     expect(apply).toHaveBeenCalledOnce();
-    expect(state.toJSON().halo).toBe(0);
-    expect(source.spec.state.halo).toBe(0);
+    expect(state.toJSON().options.sizeThreshold).toBe(0);
+    expect(source.spec.state.options.sizeThreshold).toBe(0);
+    expect(JSON.parse(editor.getValue()).options.sizeThreshold).toBe(0);
     expect(JSON.parse(editor.getValue()).halo).toBe(0);
+    expect(state.toJSON().channelsXYZ).toEqual([2, 0, 2]);
     expect(source.loadState).toBe(loaded);
     expect(sourceStateEditor(view, "Watershed")).toBe(editor);
     expect(setSpec).not.toHaveBeenCalled();
@@ -487,12 +495,16 @@ describe("DataSourceView editable watershed parameters", () => {
 
   it("refreshes from external state changes, then removes controls/listeners on URL changes", () => {
     const { view, source, state, update } = editableWatershedFixture();
-    state.restoreState({ ...state.toJSON(), halo: 3 });
+    state.restoreState({
+      ...state.toJSON(),
+      halo: 3,
+      options: { ...state.toJSON().options, sizeThreshold: 13 },
+    });
     expect(
       view.element.querySelector<HTMLInputElement>(
-        '[aria-label="Halo (voxels)"]',
+        '[aria-label="Size threshold"]',
       )!.value,
-    ).toBe("3");
+    ).toBe("13");
     expect(
       JSON.parse(sourceStateEditor(view, "Watershed").getValue()).halo,
     ).toBe(3);
@@ -511,7 +523,7 @@ describe("DataSourceView editable watershed parameters", () => {
     update();
     expect(
       view.element.querySelector<HTMLInputElement>(
-        '[aria-label="Halo (voxels)"]',
+        '[aria-label="Size threshold"]',
       )!.disabled,
     ).toBe(true);
     const generation = source.changed.count;

@@ -18,7 +18,6 @@ import { userEvent } from "@vitest/browser/context";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WatershedParametersWidget } from "#src/ui/watershed_parameters.js";
 import {
-  DEFAULT_WATERSHED_HALO,
   DEFAULT_WATERSHED_OPTIONS,
   validateWatershedChannels,
 } from "#src/watershed/base.js";
@@ -133,10 +132,6 @@ describe("WatershedParametersWidget", () => {
       "Dust threshold": "50",
       "Mask threshold": "0.3",
       [AGG]: "0.15",
-      "Halo (voxels)": String(DEFAULT_WATERSHED_HALO),
-      "−X affinity channel": "0",
-      "−Y affinity channel": "1",
-      "−Z affinity channel": "2",
     };
     for (const [label, value] of Object.entries(defaults)) {
       expect(input(widget, label).value).toBe(value);
@@ -155,7 +150,7 @@ describe("WatershedParametersWidget", () => {
     const labels = allInputs.map((element) =>
       element.getAttribute("aria-label"),
     );
-    expect(allInputs).toHaveLength(17);
+    expect(allInputs).toHaveLength(12);
     expect(labels.every(Boolean)).toBe(true);
     expect(new Set(labels).size).toBe(allInputs.length);
     expect(input(widget, MASK).checked).toBe(false);
@@ -182,6 +177,39 @@ describe("WatershedParametersWidget", () => {
     expect(original).toEqual(makeRecipe());
   });
 
+  it.each([undefined, 0, 4096])(
+    "hides halo and channel controls while preserving configured halo %s and channel mapping",
+    async (halo) => {
+      const recipe = makeRecipe();
+      recipe.channelsXYZ = [2, 0, 2];
+      if (halo !== undefined) recipe.halo = halo;
+      const { widget, apply, accepted } = fixture(recipe);
+      const expectNoAdvancedControls = () => {
+        for (const control of widget.element.querySelectorAll("input")) {
+          expect(control.getAttribute("aria-label")).not.toMatch(
+            /halo|affinity channel/i,
+          );
+        }
+      };
+      expectNoAdvancedControls();
+      await toggle(widget, AGGLOMERATE);
+      await fill(widget, AGG, "0");
+      await toggle(widget, MASK);
+      await fill(widget, "High threshold", "0.9");
+      for (const [saved] of apply.mock.calls) {
+        expect(saved.channelsXYZ).toEqual([2, 0, 2]);
+        if (halo === undefined) expect(saved).not.toHaveProperty("halo");
+        else expect(saved.halo).toBe(halo);
+      }
+      const updated = { ...accepted(), halo: 17, channelsXYZ: [1, 2, 0] };
+      widget.setRecipe(parseWatershedRecipe(updated));
+      expectNoAdvancedControls();
+      await fill(widget, "Size threshold", "51");
+      expect(accepted().halo).toBe(17);
+      expect(accepted().channelsXYZ).toEqual([1, 2, 0]);
+    },
+  );
+
   it("applies every required numeric field immediately, preserving source geometry", async () => {
     const { widget, original, apply, accepted } = fixture();
     const edits: Array<[string, string, (recipe: WatershedRecipe) => number]> =
@@ -190,13 +218,8 @@ describe("WatershedParametersWidget", () => {
         ["Low threshold", "0.0000123456789", (r) => r.options.lowThreshold],
         ["Size threshold", "0", (r) => r.options.sizeThreshold],
         ["Dust threshold", "4294967295", (r) => r.options.dustThreshold],
-        ["Halo (voxels)", "1024", (r) => r.halo!],
-        ["−X affinity channel", "6", (r) => r.channelsXYZ[0]],
-        ["−Y affinity channel", "0", (r) => r.channelsXYZ[1]],
-        ["−Z affinity channel", "6", (r) => r.channelsXYZ[2]],
         ["High threshold", "1", (r) => r.options.highThreshold],
         ["Low threshold", "0", (r) => r.options.lowThreshold],
-        ["Halo (voxels)", "0", (r) => r.halo!],
       ];
     for (const [label, text, get] of edits) {
       const count = apply.mock.calls.length;
@@ -218,15 +241,15 @@ describe("WatershedParametersWidget", () => {
     expect(original).toEqual(makeRecipe());
     // Disposing immediately after the input cannot lose a widget-side timer.
     widget.dispose();
-    expect(accepted().halo).toBe(0);
+    expect(accepted().channelsXYZ).toEqual(original.channelsXYZ);
+    expect(accepted()).not.toHaveProperty("halo");
   });
 
-  it("keeps typed precision and halo values beyond the slider maximum", async () => {
+  it("keeps typed probability precision without slider normalization", async () => {
     const { widget, accepted } = fixture();
     for (const [title, text] of [
       ["High threshold", "0.999999999123"],
       ["Low threshold", "0.00000000012345"],
-      ["Halo (voxels)", "9007199254740991"],
     ]) {
       await fill(widget, title, text);
       expect(input(widget, title).value).toBe(text);
@@ -234,9 +257,6 @@ describe("WatershedParametersWidget", () => {
     }
     expect(accepted().options.highThreshold).toBe(0.999999999123);
     expect(accepted().options.lowThreshold).toBe(0.00000000012345);
-    expect(accepted().halo).toBe(Number.MAX_SAFE_INTEGER);
-    expect(input(widget, "Halo (voxels) slider").value).toBe("64");
-    expect(input(widget, "Halo (voxels)").value).toBe("9007199254740991");
   });
 
   it("uses actual native sliders for every paired control", async () => {
@@ -250,7 +270,6 @@ describe("WatershedParametersWidget", () => {
       ["Low threshold", "{Home}", 0, (r) => r.options.lowThreshold],
       ["Mask threshold", "{End}", 1, (r) => r.options.maskThreshold!],
       [AGG, "{Home}", 0, (r) => r.options.aggThreshold!],
-      ["Halo (voxels)", "{End}", 64, (r) => r.halo!],
     ];
     for (const [title, key, value, get] of edits) {
       const slider = input(widget, `${title} slider`);
@@ -358,15 +377,6 @@ describe("WatershedParametersWidget", () => {
     ["Dust threshold", "-1", "70"],
     ["Dust threshold", "0.5", "70"],
     ["Dust threshold", "4294967296", "70"],
-    ["Halo (voxels)", "-1", "12"],
-    ["Halo (voxels)", "0.5", "12"],
-    ["Halo (voxels)", "9007199254740992", "12"],
-    ["−X affinity channel", "-1", "3"],
-    ["−X affinity channel", "0.5", "3"],
-    ["−Y affinity channel", "", "3"],
-    ["−Y affinity channel", "9007199254740992", "3"],
-    ["−Z affinity channel", "-1", "3"],
-    ["−Z affinity channel", "0.5", "3"],
   ])(
     "rejects %s = %s without mutating the recipe, then recovers",
     async (title, invalid, valid) => {
@@ -445,27 +455,26 @@ describe("WatershedParametersWidget", () => {
     expect(error(widget).hidden).toBe(true);
   });
 
-  it("reports callback channel-bound failures and allows correcting all pending drafts", async () => {
-    const { widget, apply, original, accepted } = fixture(
-      undefined,
-      (recipe) => {
-        validateWatershedChannels(4, recipe.channelsXYZ, recipe.options);
-      },
-    );
+  it("reports mask conflicts with configured channels without changing the mapping", async () => {
+    const initial = makeRecipe();
+    initial.channelsXYZ = [0, 1, 3];
+    const { widget, apply, original, accepted } = fixture(initial, (recipe) => {
+      validateWatershedChannels(4, recipe.channelsXYZ, recipe.options);
+    });
     const before = accepted();
-    await fill(widget, "−X affinity channel", "4");
+    await toggle(widget, MASK);
     expect(apply).toHaveBeenCalledTimes(1);
     expect(error(widget).textContent).toBe(
-      "Watershed needs three in-bounds affinity channels",
+      "The last input channel is a mask, not an affinity channel",
     );
     expect(accepted()).toBe(before);
     await fill(widget, "Size threshold", "123");
     expect(accepted()).toBe(before);
-    await fill(widget, "−X affinity channel", "2");
-    expect(accepted().channelsXYZ).toEqual([2, 1, 2]);
+    await toggle(widget, MASK);
+    expect(accepted().channelsXYZ).toEqual([0, 1, 3]);
     expect(accepted().options.sizeThreshold).toBe(123);
     expect(error(widget).hidden).toBe(true);
-    expect(original).toEqual(makeRecipe());
+    expect(original).toEqual(initial);
   });
 
   it("does not commit a thrown callback and permits retrying the same draft", async () => {
@@ -517,10 +526,6 @@ describe("WatershedParametersWidget", () => {
       "Dust threshold": 200,
       "Mask threshold": 0,
       [AGG]: 0,
-      "Halo (voxels)": 4096,
-      "−X affinity channel": 3,
-      "−Y affinity channel": 2,
-      "−Z affinity channel": 1,
     })) {
       expect(input(widget, label).valueAsNumber).toBe(value);
     }
@@ -535,12 +540,14 @@ describe("WatershedParametersWidget", () => {
     updated.source.name = "Do not adopt this mutation";
     await fill(widget, "Size threshold", "101");
     expect(apply.mock.calls[0][0].source.name).toBe("Replacement affinities");
+    expect(apply.mock.calls[0][0].halo).toBe(4096);
+    expect(apply.mock.calls[0][0].channelsXYZ).toEqual([3, 2, 1]);
   });
 
   it("disables all controls while loading and preserves optional enablement on refresh", async () => {
     const { widget, apply, accepted } = fixture();
     await toggle(widget, MASK);
-    await fill(widget, "Halo (voxels)", "99");
+    await fill(widget, "Size threshold", "99");
     const count = apply.mock.calls.length;
     widget.setEnabled(false);
     for (const element of widget.element.querySelectorAll("input")) {
@@ -563,9 +570,9 @@ describe("WatershedParametersWidget", () => {
     expect(input(widget, MASK).disabled).toBe(false);
     expectOptionalEnabled(widget, "Mask threshold", false);
     expectOptionalEnabled(widget, AGG, false);
-    expect(input(widget, "Halo (voxels)").value).toBe("17");
+    expect(input(widget, "Size threshold").value).toBe("50");
     widget.setRecipe(makeRecipe());
-    expect(input(widget, "Halo (voxels)").value).toBe("8");
+    expect(input(widget, "Size threshold").value).toBe("50");
     expect(apply).toHaveBeenCalledTimes(count);
   });
 

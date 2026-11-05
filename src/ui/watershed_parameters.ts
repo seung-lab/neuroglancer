@@ -18,15 +18,11 @@ import "#src/widget/range.css";
 import "#src/ui/watershed_parameters.css";
 
 import { RefCounted } from "#src/util/disposable.js";
-import {
-  DEFAULT_WATERSHED_HALO,
-  DEFAULT_WATERSHED_OPTIONS,
-  validateWatershedHalo,
-} from "#src/watershed/base.js";
+import { DEFAULT_WATERSHED_OPTIONS } from "#src/watershed/base.js";
 import type { WatershedRecipe } from "#src/watershed/recipe.js";
 import { parseWatershedRecipe } from "#src/watershed/recipe.js";
 
-type NumericKind = "probability" | "uint32" | "integer";
+type NumericKind = "probability" | "uint32";
 
 interface NumericControl {
   title: string;
@@ -87,15 +83,6 @@ export class WatershedParametersWidget extends RefCounted {
     0.15,
     1,
   );
-  private readonly halo = this.numeric(
-    "Halo (voxels)",
-    "integer",
-    DEFAULT_WATERSHED_HALO,
-    64,
-  );
-  private readonly channels = ["−X", "−Y", "−Z"].map((axis, i) =>
-    this.numeric(`${axis} affinity channel`, "integer", i),
-  );
   private recipe: WatershedRecipe;
   private applyingRecipe: WatershedRecipe | undefined;
   private enabled = true;
@@ -117,10 +104,6 @@ export class WatershedParametersWidget extends RefCounted {
     error.setAttribute("role", "alert");
     error.hidden = true;
     element.append(error);
-    this.halo.input.title =
-      "Isotropic padding on each side of the ROI, in native voxels.";
-    this.halo.slider!.title =
-      "Convenient range 0–64 voxels; enter larger halo values numerically.";
     this.showRecipe();
   }
 
@@ -137,13 +120,7 @@ export class WatershedParametersWidget extends RefCounted {
     const input = document.createElement("input");
     input.type = "number";
     input.min = "0";
-    input.max = String(
-      kind === "probability"
-        ? 1
-        : kind === "uint32"
-          ? 0xffffffff
-          : Number.MAX_SAFE_INTEGER,
-    );
+    input.max = String(kind === "probability" ? 1 : 0xffffffff);
     input.step = kind === "probability" ? "any" : "1";
     input.value = String(initial);
     input.id = `${this.id}-${this.controls.length}`;
@@ -164,7 +141,7 @@ export class WatershedParametersWidget extends RefCounted {
       pair.append(slider);
       // Unlike RangeWidget, retain the number input as an independent draft.
       // A range sanitizes/clamps its own value; it must never normalize a typed
-      // number (in particular a halo beyond the slider's convenient range).
+      // number.
       const fromSlider = () => {
         if (slider.disabled) return;
         input.value = slider.value;
@@ -210,12 +187,9 @@ export class WatershedParametersWidget extends RefCounted {
       if (Number.isFinite(value) && value >= 0 && value <= 1) return value;
       throw new Error(`${control.title} must be a finite number in [0, 1]`);
     }
-    const max =
-      control.kind === "uint32" ? 0xffffffff : Number.MAX_SAFE_INTEGER;
-    if (Number.isSafeInteger(value) && value >= 0 && value <= max) return value;
-    throw new Error(
-      `${control.title} must be ${control.kind === "uint32" ? "a uint32 integer" : "a nonnegative safe integer"}`,
-    );
+    if (Number.isSafeInteger(value) && value >= 0 && value <= 0xffffffff)
+      return value;
+    throw new Error(`${control.title} must be a uint32 integer`);
   }
 
   private syncSlider(control: NumericControl) {
@@ -240,10 +214,6 @@ export class WatershedParametersWidget extends RefCounted {
       [this.low, options.lowThreshold],
       [this.size, options.sizeThreshold],
       [this.dust, options.dustThreshold],
-      [this.halo, recipe.halo ?? DEFAULT_WATERSHED_HALO],
-      ...this.channels.map(
-        (control, i) => [control, recipe.channelsXYZ[i]] as const,
-      ),
       [this.mask, options.maskThreshold],
       [this.agglomeration, options.aggThreshold],
     ] as const) {
@@ -296,15 +266,8 @@ export class WatershedParametersWidget extends RefCounted {
   private applyDraft() {
     if (!this.enabled) return;
     try {
-      const halo = this.read(this.halo);
-      validateWatershedHalo(halo);
       const candidate = parseWatershedRecipe({
         ...this.recipe,
-        // Preserve an omitted default halo until it is actually changed.
-        ...(this.recipe.halo !== undefined || halo !== DEFAULT_WATERSHED_HALO
-          ? { halo }
-          : {}),
-        channelsXYZ: this.channels.map((control) => this.read(control)),
         options: {
           highThreshold: this.read(this.high),
           lowThreshold: this.read(this.low),
