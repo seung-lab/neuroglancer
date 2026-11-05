@@ -18,6 +18,7 @@ import "#src/util/polyfills.js";
 import "#src/datasource/precomputed/register_default.js";
 import "#src/kvstore/http/register_frontend.js";
 
+import type CodeMirror from "codemirror";
 import { http, HttpResponse, passthrough } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChunkState } from "#src/chunk_manager/base.js";
@@ -41,12 +42,15 @@ import { UncompressedVolumeChunk } from "#src/sliceview/uncompressed_chunk_forma
 import { DataType, VolumeType } from "#src/sliceview/volume/base.js";
 import type { VolumeChunkSource } from "#src/sliceview/volume/frontend.js";
 import { SliceViewVolumeRenderLayer } from "#src/sliceview/volume/renderlayer.js";
+import type { LayerDataSourcesTab } from "#src/ui/layer_data_sources_tab.js";
+import { DataSourceView } from "#src/ui/layer_data_sources_tab.js";
 import { makeMinimalViewer } from "#src/ui/minimal_viewer.js";
 import { bindWatershed, type WatershedSession } from "#src/ui/watershed.js";
 import { vec3 } from "#src/util/geom.js";
 import * as matrix from "#src/util/matrix.js";
 import type { Viewer } from "#src/viewer.js";
 import type { WatershedOptions } from "#src/watershed/base.js";
+import { LiveWatershed } from "#src/watershed/live.js";
 import type { WatershedRecipe } from "#src/watershed/recipe.js";
 import { mswFixture } from "#tests/fixtures/msw_browser.js";
 
@@ -1903,6 +1907,426 @@ describe("regional live watershed (real WebGL, chunk RPC and native WASM)", () =
     expect(jobs.shapes()).toEqual([halo]);
     expect(viewer.layerManager.has(result)).toBe(true);
   }, 90_000);
+});
+
+/** Mount the real SOURCE view on the real loaded result, not a widget callback
+ * fixture. Absolute positioning leaves the actual slice viewport unchanged. */
+function watershedSourceControls(viewer: Viewer, result: ManagedUserLayer) {
+  const source = result.layer!.dataSources[0];
+  const view = new DataSourceView(
+    { detectedLayerConstructor: undefined } as LayerDataSourcesTab,
+    source,
+  );
+  const host = document.createElement("aside");
+  host.setAttribute("aria-label", "Watershed SOURCE sidebar");
+  host.style.cssText =
+    "position:absolute;right:0;top:0;width:320px;max-height:480px;overflow:auto;z-index:10;background:#222";
+  host.append(view.element);
+  viewer.element.append(host);
+  // Normally LayerDataSourcesTab propagates this notification to updateView.
+  const removeChanged = source.changed.add(() => view.updateView());
+  let disposed = false;
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    removeChanged();
+    view.dispose();
+    host.remove();
+  };
+  cleanup.push(dispose);
+  const input = (label: string) => {
+    const element = view.element.querySelector<HTMLInputElement>(
+      `input[aria-label="${label}"]`,
+    );
+    expect(element, `SOURCE control: ${label}`).not.toBeNull();
+    expect(element!.checkVisibility(), label).toBe(true);
+    return element!;
+  };
+  return {
+    source,
+    view,
+    dispose,
+    input,
+    fill(label: string, value: string) {
+      const element = input(label);
+      expect(element.disabled, label).toBe(false);
+      element.value = value;
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+    },
+    expectRecipe(recipe: WatershedRecipe) {
+      const wrapper = view.element.querySelector<
+        HTMLElement & {
+          CodeMirror: CodeMirror.Editor;
+        }
+      >('[aria-label="Watershed source state"]');
+      expect(wrapper).not.toBeNull();
+      expect(wrapper!.CodeMirror.getOption("readOnly")).toBe(true);
+      expect(JSON.parse(wrapper!.CodeMirror.getValue())).toEqual(recipe);
+      const widget = view.element.querySelector(
+        ".neuroglancer-watershed-parameters",
+      )!;
+      expect(
+        widget.compareDocumentPosition(wrapper!) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).not.toBe(0);
+      const context = widget.querySelector(
+        '[aria-label="Watershed input context"]',
+      )!;
+      expect(context.textContent).toContain("Source and scale are read-only");
+      expect(context.querySelector("input,select,textarea")).toBeNull();
+      expect(JSON.parse(JSON.stringify(result.layer!.toJSON().source))).toEqual(
+        {
+          url: "watershed://recipe",
+          state: recipe,
+        },
+      );
+    },
+  };
+}
+
+const haloControlLabel = "Halo (voxels)";
+
+describe("right-sidebar live watershed parameters (real browser and WASM)", () => {
+  it("edits one default-off output in place, validates without work, and restores only the edited recipe into fresh working controls", async () => {
+    const jobs = observeWatershedWorker(0, false, true);
+    const regions = vi.spyOn(LiveWatershed.prototype, "setRegion");
+    const native = await agglomerationFixture(
+      "https://watershed-integration.invalid/sidebar-agglomeration",
+    );
+    const original = makeViewer();
+    const image = await addImage(original, native.url);
+    positionViewer(original, [2.5, 1.5, 0.5], agglomerationOffset);
+    const session = openWatershed(original, image);
+    configure(session, agglomerationChannels);
+    const result = await addFromDialog(session);
+    session.dialog!.dispose();
+    const output = outputSource(
+      result,
+      agglomerationShape,
+      agglomerationOffset,
+    );
+    const split = (x: number) => (x < 2 ? 1n : 2n);
+    const barrier = (x: number) => (x < 2 ? 1n : x === 2 ? 0n : 2n);
+    await expectTiles(output.chunkSource, agglomerationShape, split);
+    const controls = watershedSourceControls(original, result);
+    const recipe: WatershedRecipe = {
+      version: 1,
+      profile: "visible-slice-union-v1",
+      mode: "live",
+      source: { name: image.name, source: image.layer!.toJSON().source },
+      inputScaleIndex: 0,
+      channelsXYZ: agglomerationChannels,
+      options: { ...watershedThresholds },
+      spacingXYZ: [...spacing],
+    };
+    controls.expectRecipe(recipe);
+    const layer = result.layer as SegmentationUserLayer;
+    const loaded = controls.source.loadState!;
+    if (loaded.error !== undefined) throw loaded.error;
+    const dataSource = loaded.dataSource;
+    const state = dataSource.state;
+    const displayState = layer.displayState;
+    const producer = regions.mock.contexts[0] as LiveWatershed;
+    expect(producer).toBeInstanceOf(LiveWatershed);
+    const sameIdentities = () => {
+      expect(original.layerManager.managedLayers).toEqual([image, result]);
+      expect(result.layer).toBe(layer);
+      expect(layer.displayState).toBe(displayState);
+      expect(layer.dataSources).toEqual([controls.source]);
+      expect(controls.source.loadState).toBe(loaded);
+      expect(loaded.dataSource).toBe(dataSource);
+      expect(dataSource.state).toBe(state);
+      expect(state).toBeDefined();
+      expect(layer.renderLayers).toContain(output.renderLayer);
+      expect(output.renderLayer.multiscaleSource).toBe(output.volume);
+      expectPublicationActive(output);
+      expect(new Set(regions.mock.contexts)).toEqual(new Set([producer]));
+      expect(producer.signal.aborted).toBe(false);
+    };
+    const expectResult = async (
+      label: (x: number) => bigint,
+      count: number,
+    ) => {
+      await expectTiles(output.chunkSource, agglomerationShape, label);
+      await delay(200);
+      expect(jobs.shapes()).toEqual(new Array(count).fill(agglomerationShape));
+      expect(jobs.options().at(-1)).toEqual(recipe.options);
+      controls.expectRecipe(recipe);
+      sameIdentities();
+    };
+    expect(controls.input("Agglomerate watershed basins").checked).toBe(false);
+    expect(controls.input(agglomerationThresholdLabel).disabled).toBe(true);
+    controls.input("Agglomerate watershed basins").click();
+    controls.fill(agglomerationThresholdLabel, "0.2");
+    recipe.options = { ...recipe.options, aggThreshold: 0.2 };
+    // Real live producer clears immediately, before asynchronous cache eviction.
+    expect([
+      ...(await producer.readTile(
+        [0, 0, 0],
+        agglomerationShape,
+        new AbortController().signal,
+      )),
+    ]).toEqual(new Array(30).fill(0n));
+    await delay(40);
+    expect(jobs.options()).toEqual([watershedThresholds]);
+    await expectResult(() => 1n, 2); // Independent .25 > .2 contact oracle.
+    controls.fill(agglomerationThresholdLabel, "0.25");
+    recipe.options = { ...recipe.options, aggThreshold: 0.25 };
+    await expectResult(split, 3); // Equality MUST NOT merge.
+    controls.fill(agglomerationThresholdLabel, "0");
+    recipe.options = { ...recipe.options, aggThreshold: 0 };
+    await expectResult(() => 1n, 4); // Numeric zero is enabled, not absent.
+    controls.input("Use last channel as mask").click();
+    recipe.options = { ...recipe.options, maskThreshold: 0.3 };
+    await expectResult(barrier, 5); // Both edges touching x=2 are removed.
+
+    // All other options and the channel map go through the SAME live producer.
+    controls.fill("High threshold slider", "0.9");
+    expect(controls.input("High threshold").value).toBe("0.9");
+    controls.fill("Low threshold", "0.05");
+    controls.fill("Size threshold", "1");
+    controls.fill("Dust threshold", "1");
+    controls.fill("Mask threshold", "0.4");
+    controls.fill("−X affinity channel", "0");
+    controls.fill("−Y affinity channel", "2");
+    controls.fill("−Z affinity channel", "1");
+    controls.fill(haloControlLabel, "2");
+    recipe.channelsXYZ = [0, 2, 1];
+    recipe.halo = 2;
+    recipe.options = {
+      ...recipe.options,
+      highThreshold: 0.9,
+      lowThreshold: 0.05,
+      sizeThreshold: 1,
+      dustThreshold: 1,
+      maskThreshold: 0.4,
+    };
+    await expectResult(barrier, 6);
+    const xPlane = Array.from({ length: 6 }, () => [0, 1, 0.25, 1, 1]).flat();
+    expect(jobs.affinities()).toEqual([
+      agglomerationInput(),
+      agglomerationInput(),
+      agglomerationInput(),
+      agglomerationInput(),
+      agglomerationInput(true),
+      Float32Array.from([
+        ...new Array<number>(30).fill(1),
+        ...xPlane,
+        ...new Array<number>(30).fill(1),
+        ...Array.from({ length: 6 }, () => [0, 0, 1, 0, 0]).flat(),
+      ]),
+    ]);
+    for (const [label, invalid, valid, error] of [
+      ["High threshold", "0.05", "0.9", /low|high|threshold/i],
+      [haloControlLabel, "-1", "2", /halo|nonnegative/i],
+      ["−X affinity channel", "3", "0", /mask|channel/i],
+    ] as const) {
+      controls.fill(label, invalid);
+      expect(controls.view.element.textContent).toMatch(error);
+      await expectResult(barrier, 6); // Old recipe AND labels survive invalid drafts.
+      controls.fill(label, valid);
+      await expectResult(barrier, 6); // Recovering an unchanged recipe is a no-op.
+    }
+    expect(native.chunks).toHaveLength(1);
+    const saved = saveOnlyWatershed(original, result, recipe);
+    controls.dispose();
+    disposeViewers.get(original)!();
+    expect(original.wasDisposed).toBe(true);
+    expect(result.wasDisposed).toBe(true);
+    expect(producer.signal.aborted).toBe(true);
+    expect(() => output.volume.getSources(sourceOptions)).toThrow(
+      /unavailable/,
+    );
+
+    const restored = makeViewer();
+    const restoredResult = await restoreOnlyWatershed(restored, saved);
+    const restoredOutput = outputSource(
+      restoredResult,
+      agglomerationShape,
+      agglomerationOffset,
+    );
+    await expectTiles(restoredOutput.chunkSource, agglomerationShape, barrier);
+    const restoredControls = watershedSourceControls(restored, restoredResult);
+    restoredControls.expectRecipe(recipe);
+    expect(restoredControls.input(haloControlLabel).value).toBe("2");
+    expect(restoredControls.input("Agglomerate watershed basins").checked).toBe(
+      true,
+    );
+    expect(restoredControls.input(agglomerationThresholdLabel).value).toBe("0");
+    expect(restoredControls.input("Use last channel as mask").checked).toBe(
+      true,
+    );
+    expect(restoredControls.input("Mask threshold").value).toBe("0.4");
+    expect(jobs.options()).toHaveLength(7);
+    expect(jobs.options().at(-1)).toEqual(recipe.options);
+    expect(native.chunks).toHaveLength(2);
+    restoredControls.input("Use last channel as mask").click();
+    const unmasked = {
+      highThreshold: 0.9,
+      lowThreshold: 0.05,
+      sizeThreshold: 1,
+      dustThreshold: 1,
+      aggThreshold: 0,
+    };
+    recipe.options = unmasked;
+    await expectTiles(restoredOutput.chunkSource, agglomerationShape, () => 1n);
+    expect(jobs.options()).toHaveLength(8);
+    expect(jobs.options().at(-1)).toEqual(unmasked);
+    restoredControls.expectRecipe(recipe);
+    expect(restored.layerManager.managedLayers).toEqual([restoredResult]);
+  }, 120_000);
+
+  it("recomputes exact 17/1/5/17-slice halos without navigation, reuses the new domain, and recovers from a visible oversize edit", async () => {
+    const jobs = observeWatershedWorker();
+    const shape = [148, 50, 512],
+      offset = [10, 20, -3];
+    const native = await precomputed(
+      "https://watershed-integration.invalid/sidebar-z-halo",
+      shape,
+      offset,
+      [32, 25, 16],
+      3,
+      (x, _y, _z, c) => (c === 0 && x === 64 ? 0 : 255),
+    );
+    const viewer = makeViewer();
+    const image = await addImage(viewer, native.url);
+    positionViewer(viewer, [74.5, 25.5, 256.5], offset);
+    const session = openWatershed(viewer, image);
+    configure(session);
+    const result = await addFromDialog(session);
+    const output = outputSource(result, shape, offset);
+    const controls = watershedSourceControls(viewer, result);
+    const recipe: WatershedRecipe = {
+      version: 1,
+      profile: "visible-slice-union-v1",
+      mode: "live",
+      source: { name: image.name, source: image.layer!.toJSON().source },
+      inputScaleIndex: 0,
+      channelsXYZ: [0, 1, 2],
+      options: { ...watershedThresholds },
+      spacingXYZ: [...spacing],
+    };
+    const value = (x: number, z: number) =>
+      output.renderLayer.getValueAt(output.worldPosition([x, 25.5, z]));
+    await expect.poll(() => value(63.5, 256.5), { timeout: 60_000 }).toBe(1n);
+    session.dialog!.dispose();
+    expect(visibleHaloBox(viewer, shape, offset)).toEqual({
+      origin: [0, 0, 248],
+      shape: [148, 50, 17],
+    });
+    expect(controls.input(haloControlLabel).value).toBe("8");
+    const position = [...viewer.position.value];
+    const zoom = viewer.crossSectionScale.value;
+    const expectedShapes = [[148, 50, 17]];
+    const expectDomain = async (lowerZ: number, depth: number) => {
+      // Native result containment, including zeros outside the current halo.
+      // Different X/Z display chunks must copy the same regional basin IDs.
+      for (const grid of [
+        [0, 0, 7],
+        [1, 0, 8],
+      ]) {
+        await expect
+          .poll(
+            async () => {
+              const tile = await readTile(output.chunkSource, grid);
+              return tile.labels;
+            },
+            { timeout: 60_000 },
+          )
+          .toEqual(
+            Array.from({ length: 64 * 50 * 32 }, (_, i) => {
+              const z = grid[2] * 32 + Math.floor(i / (64 * 50));
+              return z >= lowerZ && z < lowerZ + depth
+                ? grid[0] === 0
+                  ? 1n
+                  : 2n
+                : 0n;
+            }),
+          );
+      }
+      expect(jobs.shapes()).toEqual(expectedShapes);
+      controls.expectRecipe(recipe);
+      expectPublicationActive(output);
+    };
+    await expectDomain(248, 17);
+    for (const halo of [0, 2, 8]) {
+      controls.fill(haloControlLabel, String(halo));
+      recipe.halo = halo;
+      expectedShapes.push([148, 50, 1 + 2 * halo]);
+      await expect
+        .poll(() => jobs.shapes(), { timeout: 60_000 })
+        .toEqual(expectedShapes);
+      await expectDomain(256 - halo, 1 + 2 * halo);
+      expect([...viewer.position.value]).toEqual(position);
+      expect(viewer.crossSectionScale.value).toBe(zoom);
+    }
+    // This is a valid parameter but an invalid compute region: never split it
+    // or run a fallback. The error must be visible, and recovery nonfatal.
+    const fetched = native.chunks.length;
+    controls.fill(haloControlLabel, "512");
+    await expect.poll(() => session.statusLevel).toBe("error");
+    expect(session.status).toMatch(/2\*\*21|2,097,152|2097152/);
+    session.open();
+    expect(session.dialog!.body.checkVisibility()).toBe(true);
+    expect(session.dialog!.body.textContent).toContain(session.status);
+    session.dialog!.dispose();
+    await delay(250);
+    expect(jobs.shapes()).toEqual(expectedShapes);
+    expect(native.chunks).toHaveLength(fetched);
+    expect(viewer.layerManager.has(result)).toBe(true);
+    controls.fill(haloControlLabel, "2");
+    recipe.halo = 2;
+    expectedShapes.push([148, 50, 5]);
+    await expectDomain(254, 5);
+    expect(session.statusLevel, session.status).toBe("info");
+    expect(session.status).not.toMatch(/2\*\*21 voxel limit/);
+    for (const z of [254.5, 258.5, 256.5]) {
+      viewer.position.value = output.worldPosition([74.5, 25.5, z]);
+      await settleView();
+      await delay(200);
+      expect(value(63.5, z)).toBe(1n);
+      expect(value(64.5, z)).toBe(2n);
+      expect(jobs.shapes()).toEqual(expectedShapes);
+    }
+    viewer.position.value = output.worldPosition([74.5, 25.5, 259.5]);
+    await expect.poll(() => value(63.5, 259.5), { timeout: 60_000 }).toBe(1n);
+    expectedShapes.push([148, 50, 5]);
+    await expectDomain(257, 5);
+    const saved = saveOnlyWatershed(viewer, result, recipe);
+    controls.dispose();
+    disposeViewers.get(viewer)!();
+    expect(viewer.wasDisposed).toBe(true);
+    const restored = makeViewer();
+    const restoredResult = await restoreOnlyWatershed(restored, saved);
+    const restoredOutput = outputSource(restoredResult, shape, offset);
+    await expect
+      .poll(
+        () =>
+          restoredOutput.renderLayer.getValueAt(
+            restoredOutput.worldPosition([64.5, 25.5, 259.5]),
+          ),
+        { timeout: 60_000 },
+      )
+      .toBe(2n);
+    const restoredControls = watershedSourceControls(restored, restoredResult);
+    restoredControls.expectRecipe(recipe);
+    expect(restoredControls.input(haloControlLabel).value).toBe("2");
+    expect(jobs.shapes()).toEqual([...expectedShapes, [148, 50, 5]]);
+    restoredControls.fill(haloControlLabel, "0");
+    await expect
+      .poll(() => jobs.shapes(), { timeout: 60_000 })
+      .toEqual([...expectedShapes, [148, 50, 5], [148, 50, 1]]);
+    await expect
+      .poll(
+        () =>
+          restoredOutput.renderLayer.getValueAt(
+            restoredOutput.worldPosition([64.5, 25.5, 259.5]),
+          ),
+        { timeout: 60_000 },
+      )
+      .toBe(2n);
+    expect(restored.layerManager.managedLayers).toEqual([restoredResult]);
+  }, 120_000);
 });
 
 // Preserve the original suite's first-load WASM HTTP assertion before these
