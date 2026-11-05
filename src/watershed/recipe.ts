@@ -19,13 +19,16 @@ import {
   parseInferenceRecipe,
 } from "#src/inference/recipe.js";
 import type { WatershedOptions } from "#src/watershed/base.js";
-import { validateWatershedOptions } from "#src/watershed/base.js";
+import {
+  validateWatershedHalo,
+  validateWatershedOptions,
+} from "#src/watershed/base.js";
 
 export const WATERSHED_RECIPE_URL = "watershed://recipe";
 
-/** Version/profile freeze one visible-slice union, an 8-voxel XYZ halo, and
- * 150 ms debounce. Current viewport/ROI bounds and runtime/session objects
- * are never saved.
+/** Version/profile freeze one visible-slice union and 150 ms debounce.
+ * The isotropic native-voxel halo defaults to 8 and may be overridden.
+ * Current viewport/ROI bounds and runtime/session objects are never saved.
  */
 export interface WatershedRecipe {
   version: 1;
@@ -34,6 +37,8 @@ export interface WatershedRecipe {
   source: { name: string; source: unknown };
   inputScaleIndex: number;
   channelsXYZ: [number, number, number];
+  /** Isotropic padding in native voxels; omission uses DEFAULT_WATERSHED_HALO. */
+  halo?: number;
   options: WatershedOptions;
   spacingXYZ: [number, number, number];
 }
@@ -293,6 +298,7 @@ export function parseWatershedRecipe(value: unknown): WatershedRecipe {
     "source",
     "inputScaleIndex",
     "channelsXYZ",
+    "halo",
     "options",
     "spacingXYZ",
   ]);
@@ -301,6 +307,8 @@ export function parseWatershedRecipe(value: unknown): WatershedRecipe {
     invalid("profile", '"visible-slice-union-v1"');
   if (obj.mode !== "live") invalid("mode", '"live"');
   const source = fields(obj.source, "source", ["name", "source"]);
+  const halo = "halo" in obj ? finite(obj.halo, "halo") : undefined;
+  if (halo !== undefined) validateWatershedHalo(halo);
   return {
     version: 1,
     profile: "visible-slice-union-v1",
@@ -312,6 +320,7 @@ export function parseWatershedRecipe(value: unknown): WatershedRecipe {
     inputScaleIndex: nonnegativeInteger(obj.inputScaleIndex, "inputScaleIndex"),
     // Native channel count/mask-channel bounds are checked when preparing input.
     channelsXYZ: triple(obj.channelsXYZ, "channelsXYZ", nonnegativeInteger),
+    ...(halo === undefined ? {} : { halo }),
     options: parseOptions(obj.options),
     spacingXYZ: triple(obj.spacingXYZ, "spacingXYZ", (value, path) => {
       const n = finite(value, path);

@@ -23,6 +23,7 @@ import {
   parseInferenceRecipe,
 } from "#src/inference/recipe.js";
 import {
+  DEFAULT_WATERSHED_HALO,
   DEFAULT_WATERSHED_OPTIONS,
   validateWatershedChannels,
   validateWatershedOptions,
@@ -116,6 +117,8 @@ describe("parseWatershedRecipe", () => {
     const parsed = parseWatershedRecipe(JSON.parse(JSON.stringify(value)));
     expect(parsed).toEqual(value);
     expect(Object.keys(parsed).sort()).toEqual(Object.keys(value).sort());
+    expect(Object.hasOwn(parsed, "halo")).toBe(false);
+    expect(parsed.halo ?? DEFAULT_WATERSHED_HALO).toBe(8);
     expect(parsed.options).not.toHaveProperty("maskThreshold");
     expect(parsed.options).not.toHaveProperty("aggThreshold");
     expect(JSON.stringify(parseWatershedRecipe(parsed))).toBe(
@@ -123,7 +126,7 @@ describe("parseWatershedRecipe", () => {
     );
   });
 
-  it("preserves old version-1 JSON exactly without inserting an agglomeration default", () => {
+  it("preserves old version-1 JSON exactly without inserting halo or agglomeration defaults", () => {
     const legacy = {
       ...recipe(),
       options: {
@@ -137,12 +140,155 @@ describe("parseWatershedRecipe", () => {
     const parsed = parseWatershedRecipe(JSON.parse(saved));
     expect(() => validateWatershedOptions(parsed.options)).not.toThrow();
     expect(parsed).toStrictEqual(legacy);
+    expect(Object.hasOwn(parsed, "halo")).toBe(false);
+    expect(Object.hasOwn(legacy, "halo")).toBe(false);
     expect(Object.hasOwn(parsed.options, "aggThreshold")).toBe(false);
     expect(JSON.stringify(parsed)).toBe(saved);
     const restored = parseWatershedRecipe(JSON.parse(JSON.stringify(parsed)));
+    expect(Object.hasOwn(restored, "halo")).toBe(false);
     expect(Object.hasOwn(restored.options, "aggThreshold")).toBe(false);
     expect(JSON.stringify(restored)).toBe(saved);
   });
+
+  it.each([0, 1, 8, 23, Number.MAX_SAFE_INTEGER])(
+    "round-trips explicit top-level halo %s with plain and nested ONNX sources and mask/agglomeration options",
+    (halo) => {
+      const legacy = recipe();
+      const legacyJSON = JSON.stringify(legacy);
+      for (const source of [legacy.source.source, inferenceSource()]) {
+        for (const optionalOptions of [
+          {},
+          { maskThreshold: 0, aggThreshold: 0 },
+          { maskThreshold: 0.3, aggThreshold: 0.15 },
+        ]) {
+          const input = {
+            ...legacy,
+            halo,
+            source: { name: "affinities", source },
+            options: { ...legacy.options, ...optionalOptions },
+          };
+          const parsed = parseWatershedRecipe(input);
+          const detached = parseWatershedRecipe(
+            JSON.parse(JSON.stringify(input)),
+          );
+          expect(parsed).toStrictEqual(input);
+          expect(detached).toStrictEqual(input);
+          expect(Object.hasOwn(parsed, "halo")).toBe(true);
+          expect(parsed.halo).toBe(halo);
+          expect(parsed.halo ?? DEFAULT_WATERSHED_HALO).toBe(halo);
+          expect(parsed.options).not.toHaveProperty("halo");
+          const saved = JSON.stringify(parsed);
+          expect(JSON.stringify(parseWatershedRecipe(JSON.parse(saved)))).toBe(
+            saved,
+          );
+        }
+      }
+      expect(JSON.stringify(legacy)).toBe(legacyJSON);
+      expect(legacy).not.toHaveProperty("halo");
+    },
+  );
+
+  it("detaches explicit halo, nested ONNX state, and mask/agglomeration options in both directions", () => {
+    const state = inferenceRecipe();
+    const input = {
+      ...recipe(),
+      halo: 0,
+      source: { name: "affinities", source: inferenceSource(state) },
+      options: {
+        ...DEFAULT_WATERSHED_OPTIONS,
+        maskThreshold: 0.3,
+        aggThreshold: 0,
+      },
+    };
+    const original = JSON.parse(JSON.stringify(input));
+    const parsed = parseWatershedRecipe(input);
+    const second = parseWatershedRecipe(input);
+    input.halo = 23;
+    input.options.maskThreshold = 1;
+    input.options.aggThreshold = 1;
+    state.precision = "float32";
+    expect(parsed).toStrictEqual(original);
+    parsed.halo = 8;
+    Object.assign(parsed.options, { maskThreshold: 0, aggThreshold: 0.15 });
+    const outputSource = parsed.source.source as { state: typeof state };
+    outputSource.state.precision = "float16";
+    outputSource.state.spacingZYX[0] = 999;
+    expect(input.halo).toBe(23);
+    expect(input.options.maskThreshold).toBe(1);
+    expect(input.options.aggThreshold).toBe(1);
+    expect(state.precision).toBe("float32");
+    expect(state.spacingZYX).toEqual([40, 8, 8]);
+    expect(second).toStrictEqual(original);
+  });
+
+  it.each(
+    [
+      undefined,
+      null,
+      "0",
+      "8",
+      true,
+      false,
+      -1,
+      -0.5,
+      0.5,
+      NaN,
+      Infinity,
+      -Infinity,
+      Number.MAX_SAFE_INTEGER + 1,
+      1n,
+      [],
+      [8, 8, 8],
+      {},
+      new Number(8),
+    ].map((halo) => [halo]),
+  )(
+    "rejects invalid or explicitly undefined top-level halo %s visibly",
+    (halo) => {
+      expect(() => parseWith({ halo })).toThrow(/halo/i);
+    },
+  );
+
+  it.each(
+    [
+      null,
+      "0",
+      "8",
+      true,
+      false,
+      -1,
+      -0.5,
+      0.5,
+      2 ** 53,
+      [],
+      [8, 8, 8],
+      {},
+    ].map((halo) => [halo]),
+  )("rejects invalid halo %j in detached saved JSON", (halo) => {
+    const input = JSON.parse(JSON.stringify({ ...recipe(), halo }));
+    expect(() => parseWatershedRecipe(input)).toThrow(/halo/i);
+  });
+
+  it.each([0, 23])(
+    "keeps full recipe/source/options field validation strict with halo %s",
+    (halo) => {
+      expect(() => parseWith({ halo, haloXYZ: [8, 8, 8] })).toThrow(
+        /haloXYZ: expected a supported field/,
+      );
+      expect(() => parseWith({ halo, haloZYX: [8, 8, 8] })).toThrow(
+        /haloZYX: expected a supported field/,
+      );
+      expect(() => parseWith({ halo, typo: undefined })).toThrow(
+        /typo: expected a supported field/,
+      );
+      expect(() =>
+        parseWith({ halo, source: { ...recipe().source, halo } }),
+      ).toThrow(/source\.halo: expected a supported field/);
+      expect(() =>
+        parseWith({ halo, options: { ...DEFAULT_WATERSHED_OPTIONS, halo } }),
+      ).toThrow(/options\.halo: expected a supported field/);
+    },
+  );
 
   it.each([0, 0.15, 1])(
     "preserves optional agglomeration threshold %s in saved JSON with and without masking",
@@ -754,6 +900,7 @@ describe("parseWatershedRecipe", () => {
       accessor(nested.model, "sha256");
       for (const value of [
         accessor(recipe(), "version"),
+        accessor(recipe(), "halo"),
         { ...recipe(), source: accessor({ ...recipe().source }, "source") },
         {
           ...recipe(),

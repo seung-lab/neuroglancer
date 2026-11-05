@@ -17,14 +17,55 @@
 import { describe, expect, it } from "vitest";
 import type { WatershedOptions } from "#src/watershed/base.js";
 import {
+  DEFAULT_WATERSHED_HALO,
   DEFAULT_WATERSHED_OPTIONS,
   MAX_WATERSHED_VOXELS,
   validateWatershedChannels,
+  validateWatershedHalo,
   validateWatershedOptions,
   validateWatershedShape,
 } from "#src/watershed/base.js";
 
 describe("watershed validation", () => {
+  it("defaults to an eight-native-voxel halo without adding a kernel option", () => {
+    expect(DEFAULT_WATERSHED_HALO).toBe(8);
+    expect(DEFAULT_WATERSHED_OPTIONS).not.toHaveProperty("halo");
+  });
+
+  it.each([0, 1, 8, 23, Number.MAX_SAFE_INTEGER])(
+    "accepts isotropic native-voxel halo %s",
+    (halo) => {
+      expect(() => validateWatershedHalo(halo)).not.toThrow();
+    },
+  );
+
+  it.each(
+    [
+      undefined,
+      null,
+      "0",
+      "8",
+      true,
+      false,
+      -1,
+      -0.5,
+      0.5,
+      NaN,
+      Infinity,
+      -Infinity,
+      Number.MAX_SAFE_INTEGER + 1,
+      1n,
+      [],
+      [8],
+      {},
+      new Number(8),
+    ].map((halo) => [halo]),
+  )("rejects invalid runtime halo %s visibly without coercion", (halo) => {
+    expect(() => validateWatershedHalo(halo as number)).toThrow(
+      "Watershed halo must be a nonnegative safe integer in native voxels",
+    );
+  });
+
   it("allows exactly the bounded volume size and zero cleanup thresholds", () => {
     expect(validateWatershedShape([128, 128, 128])).toBe(MAX_WATERSHED_VOXELS);
     expect(() =>

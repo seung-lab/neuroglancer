@@ -15,6 +15,8 @@
  */
 
 export const MAX_WATERSHED_VOXELS = 2 ** 21;
+/** Default isotropic padding in native voxels on each side of the ROI. */
+export const DEFAULT_WATERSHED_HALO = 8;
 
 export interface WatershedOptions {
   readonly highThreshold: number;
@@ -53,6 +55,14 @@ export const ABISS_WATERSHED_LICENSE_URL = new URL(
   "./abiss/LICENSE",
   import.meta.url,
 ).href;
+
+export function validateWatershedHalo(halo: number): void {
+  if (!Number.isSafeInteger(halo) || halo < 0) {
+    throw new Error(
+      "Watershed halo must be a nonnegative safe integer in native voxels",
+    );
+  }
+}
 
 export function validateWatershedShape(shapeXYZ: readonly number[]): number {
   if (
