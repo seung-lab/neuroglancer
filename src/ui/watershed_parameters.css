@@ -1,0 +1,86 @@
+/**
+ * @license
+ * Copyright 2026 Google Inc.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+.neuroglancer-watershed-parameters {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  margin: 4px 0;
+  padding: 5px;
+  border: 1px solid #555;
+  font: 10pt sans-serif;
+}
+
+.neuroglancer-watershed-parameters > legend {
+  font-weight: bold;
+}
+
+.neuroglancer-watershed-parameters-context {
+  font-size: 8pt;
+  color: #bbb;
+  overflow-wrap: anywhere;
+}
+
+.neuroglancer-watershed-parameters-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+  align-items: center;
+  gap: 4px;
+}
+
+.neuroglancer-watershed-parameters-row > label {
+  overflow-wrap: anywhere;
+}
+
+.neuroglancer-watershed-parameters .range-slider {
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+}
+
+.neuroglancer-watershed-parameters input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  width: 0;
+  margin: 0;
+}
+
+.neuroglancer-watershed-parameters input[type="number"] {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 12ch;
+  max-width: 100%;
+  background-color: #333;
+  color: #fff;
+  border: 0;
+}
+
+.neuroglancer-watershed-parameters-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.neuroglancer-watershed-parameters input:disabled {
+  opacity: 0.5;
+}
+
+.neuroglancer-watershed-parameters-error {
+  color: #ff9090;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
