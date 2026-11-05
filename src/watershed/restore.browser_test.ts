@@ -27,6 +27,7 @@ import {
   makeWatershedRecipeSource,
   publishLiveWatershed,
   WatershedDataSourceProvider,
+  WatershedMeshSource,
   type WatershedMultiscaleVolumeChunkSource,
 } from "#src/datasource/watershed/frontend.js";
 import { ImageUserLayer } from "#src/layer/image/index.js";
@@ -35,8 +36,10 @@ import type {
   TopLevelLayerListSpecification,
 } from "#src/layer/index.js";
 import { makeLayer } from "#src/layer/index.js";
+import { SharedDisjointUint64Sets } from "#src/shared_disjoint_sets.js";
 import { statusMessages } from "#src/status.js";
 import { WatchableValue } from "#src/trackable_value.js";
+import { Uint64Set } from "#src/uint64_set.js";
 import { RefCounted } from "#src/util/disposable.js";
 import { MessageList, MessageSeverity } from "#src/util/message_list.js";
 import { NullarySignal } from "#src/util/signal.js";
@@ -144,12 +147,31 @@ function makeHidden() {
   return { image, hidden, disposeHidden };
 }
 
+/** No worker/GL in this suite; model the mesh-source contract, not its constructor. */
+function makeMeshSource(options: WatershedMeshSource["OPTIONS"]) {
+  const state = new WatchableValue({ epoch: 0, generation: 0 });
+  return Object.assign(new RefCounted(), {
+    parameters: options.parameters,
+    state,
+    selection: undefined as WatershedMeshSource["selection"],
+    invalidateFor: vi.fn((epoch: number) => {
+      state.value = { epoch, generation: state.value.generation + 1 };
+    }),
+  });
+}
+
 function fixture(sharedChunkManager?: ChunkManager) {
   const chunkManager =
     sharedChunkManager?.addRef() ??
     (Object.assign(new RefCounted(), {
       rpc: { invoke: vi.fn(), promiseInvoke: vi.fn() },
       rpcId: 123,
+      getChunkSource: vi.fn(
+        (constructor: unknown, options: WatershedMeshSource["OPTIONS"]) => {
+          expect(constructor).toBe(WatershedMeshSource);
+          return makeMeshSource(options);
+        },
+      ),
     }) as unknown as ChunkManager);
   const coordinateSpace = new WatchableValue(
     makeCoordinateSpace({
@@ -251,7 +273,9 @@ async function publicationIsAlive(options: GetDataSourceOptions, url: string) {
 }
 
 function makeOutput() {
-  const output = new RefCounted() as ManagedUserLayer;
+  const output = Object.assign(new RefCounted(), {
+    layerChanged: new NullarySignal(),
+  }) as ManagedUserLayer;
   disposers.push(() => {
     if (!output.wasDisposed) output.dispose();
   });
@@ -705,6 +729,161 @@ describe("watershed recipe datasource restoration", () => {
     detach!();
     expect(unwatch).toHaveBeenCalledOnce();
   });
+
+  it("composes owned viewport attachment with mesh selection without replacing the native input lifetime", async () => {
+    const f = fixture();
+    const data = await new WatershedDataSourceProvider().get(f.options);
+    const mesh = data.subsources[1].subsource.mesh as WatershedMeshSource;
+    const output = makeOutput();
+    const visibleSegments = new Uint64Set();
+    const segmentEquivalences = new SharedDisjointUint64Sets();
+    output.registerDisposer(visibleSegments);
+    output.registerDisposer(segmentEquivalences);
+    Object.assign(output, {
+      layer: {
+        type: "segmentation",
+        displayState: {
+          segmentationGroupState: new WatchableValue({
+            visibleSegments,
+            segmentEquivalences,
+            useTemporaryVisibleSegments: new WatchableValue(false),
+            useTemporarySegmentEquivalences: new WatchableValue(false),
+          }),
+        },
+      },
+    });
+    const detach = attachWatershedVolume(volume(data), output)!;
+    const live = latestLive();
+    const selection = mesh.selection!;
+    expect(selection).toBeDefined();
+    expect(watchWatershedViewport).toHaveBeenCalledExactlyOnceWith(
+      f.viewer,
+      f.input,
+      output,
+      expect.any(Function),
+      expect.any(Function),
+    );
+    latestWatch()[3](region);
+    await vi.waitFor(() => expect(live.hasCompletedResult).toBe(true));
+    expect(selection.allows(7n, live.epoch)).toBe(false);
+    const generation = mesh.state.value.generation;
+    visibleSegments.add(7n);
+    expect(selection.allows(7n, live.epoch)).toBe(true);
+    expect(mesh.state.value.generation).toBeGreaterThan(generation);
+    expect(mesh.state.value.epoch).toBe(live.epoch);
+    expect(prepareAffinityInput).toHaveBeenCalledExactlyOnceWith(f.image, 2);
+    expect(f.input.readRegion).toHaveBeenCalledOnce();
+    expect(f.input.dispose).not.toHaveBeenCalled();
+    const unwatch = vi.mocked(watchWatershedViewport).mock.results[0].value;
+    detach();
+    expect(mesh.selection).toBeUndefined();
+    expect(selection.wasDisposed).toBe(true);
+    expect(unwatch).toHaveBeenCalledOnce();
+    expect(live.hasCompletedResult).toBe(false);
+    expect(f.input.dispose).not.toHaveBeenCalled();
+    const detachedGeneration = mesh.state.value.generation;
+    visibleSegments.delete(7n);
+    visibleSegments.add(7n);
+    expect(mesh.state.value.generation).toBe(detachedGeneration);
+    volume(data).dispose();
+    expect(mesh.wasDisposed).toBe(true);
+    expect(f.input.dispose).toHaveBeenCalledOnce();
+    expect(f.disposeHidden).toHaveBeenCalledOnce();
+    expect(unwatch).toHaveBeenCalledOnce();
+  });
+
+  it("replaces both owned viewport and mesh attachments twice, keeping stale cleanup inert", async () => {
+    const f = fixture();
+    const data = await new WatershedDataSourceProvider().get(f.options);
+    const source = volume(data);
+    const mesh = data.subsources[1].subsource.mesh as WatershedMeshSource;
+    const live = latestLive();
+    let detach = attachWatershedVolume(source, makeOutput())!;
+    const unwatchers = [];
+    const selectionDisposers = [];
+    for (let i = 0; i < 2; ++i) {
+      const previousDetach = detach;
+      const previousSelection = mesh.selection!;
+      const disposePrevious = vi.spyOn(previousSelection, "dispose");
+      selectionDisposers.push(disposePrevious);
+      const previousRegion = latestWatch()[3];
+      const unwatch = vi.mocked(watchWatershedViewport).mock.results[i].value;
+      unwatchers.push(unwatch);
+      detach = attachWatershedVolume(source, makeOutput())!;
+      const currentSelection = mesh.selection!;
+      const currentUnwatch = vi.mocked(watchWatershedViewport).mock.results[
+        i + 1
+      ].value;
+      expect(previousSelection.wasDisposed).toBe(true);
+      expect(disposePrevious).toHaveBeenCalledOnce();
+      expect(unwatch).toHaveBeenCalledOnce();
+      expect(currentSelection).not.toBe(previousSelection);
+      expect(f.input.dispose).not.toHaveBeenCalled();
+      expect(f.disposeHidden).not.toHaveBeenCalled();
+      expect(live.signal.aborted).toBe(false);
+      const epoch = live.epoch;
+      const generation = mesh.state.value.generation;
+      previousDetach();
+      previousDetach();
+      previousRegion(region);
+      expect(live.epoch).toBe(epoch);
+      expect(mesh.state.value.generation).toBe(generation);
+      expect(mesh.selection).toBe(currentSelection);
+      expect(currentSelection.wasDisposed).not.toBe(true);
+      expect(currentUnwatch).not.toHaveBeenCalled();
+      expect(unwatch).toHaveBeenCalledOnce();
+      expect(f.input.readRegion).not.toHaveBeenCalled();
+    }
+    expect(watchWatershedViewport).toHaveBeenCalledTimes(3);
+    latestWatch()[3](region);
+    await vi.waitFor(() => expect(live.hasCompletedResult).toBe(true));
+    expect(f.input.readRegion).toHaveBeenCalledOnce();
+    expect(prepareAffinityInput).toHaveBeenCalledOnce();
+    selectionDisposers.push(vi.spyOn(mesh.selection!, "dispose"));
+    unwatchers.push(vi.mocked(watchWatershedViewport).mock.results[2].value);
+    source.dispose(); // Recipe-restored input, unlike a seeded producer, is owned here.
+    detach();
+    detach();
+    source.dispose();
+    f.abort.abort();
+    for (const dispose of selectionDisposers)
+      expect(dispose).toHaveBeenCalledOnce();
+    for (const unwatch of unwatchers) expect(unwatch).toHaveBeenCalledOnce();
+    expect(mesh.selection).toBeUndefined();
+    expect(mesh.wasDisposed).toBe(true);
+    expect(f.input.dispose).toHaveBeenCalledOnce();
+    expect(f.disposeHidden).toHaveBeenCalledOnce();
+    expect(live.signal.aborted).toBe(true);
+  });
+
+  it.each(["input", "owner"] as const)(
+    "stops the composed mesh selection and viewport watcher on %s abort exactly once",
+    async (kind) => {
+      const f = fixture();
+      const data = await new WatershedDataSourceProvider().get(f.options);
+      const mesh = data.subsources[1].subsource.mesh as WatershedMeshSource;
+      const detach = attachWatershedVolume(volume(data), makeOutput())!;
+      const selection = mesh.selection!;
+      const onRegion = latestWatch()[3];
+      const unwatch = vi.mocked(watchWatershedViewport).mock.results[0].value;
+      if (kind === "input") f.invalidation.abort();
+      else f.abort.abort();
+      expect(selection.allows(7n, latestLive().epoch)).toBe(false);
+      expect(unwatch).toHaveBeenCalledOnce();
+      expect(f.input.dispose).toHaveBeenCalledOnce();
+      expect(f.disposeHidden).toHaveBeenCalledOnce();
+      onRegion(region);
+      await Promise.resolve();
+      expect(f.input.readRegion).not.toHaveBeenCalled();
+      expect(requestAsyncComputation).not.toHaveBeenCalled();
+      detach();
+      volume(data).dispose();
+      expect(mesh.wasDisposed).toBe(true);
+      expect(selection.wasDisposed).toBe(true);
+      expect(unwatch).toHaveBeenCalledOnce();
+      expect(f.input.dispose).toHaveBeenCalledOnce();
+    },
+  );
 
   it("keeps viewport and compute errors recoverable, reporting again after recovery", async () => {
     const f = fixture();

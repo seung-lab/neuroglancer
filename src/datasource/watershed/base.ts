@@ -19,6 +19,25 @@ import type { WatershedResult } from "#src/watershed/base.js";
 import { validateWatershedShape } from "#src/watershed/base.js";
 
 export const WATERSHED_TILE_RPC_ID = "watershed/tile";
+export const WATERSHED_MESH_RPC_ID = "watershed/mesh";
+
+export interface WatershedMeshState {
+  readonly epoch: number;
+  readonly generation: number;
+}
+
+export interface WatershedMeshSnapshot extends WatershedMeshState {
+  /** Volume-model-local placement; the model transform supplies source origin. */
+  readonly lowerXYZ: readonly number[];
+  readonly shapeXYZ: readonly number[];
+  readonly labels: Uint32Array;
+}
+
+export class MeshSourceParameters {
+  resultId: string;
+  meshKey: string;
+  static RPC_ID = "watershed/MeshSource";
+}
 /** Per ChunkManager; private snapshots and metadata, not render caches. */
 export const WATERSHED_RESULT_MEMORY_LIMIT = 128 * 1024 * 1024;
 export type WatershedResultInfo = Omit<WatershedResult, "data">;

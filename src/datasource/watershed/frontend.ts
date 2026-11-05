@@ -25,21 +25,25 @@ import type {
   DataSourceProvider,
   GetDataSourceOptions,
 } from "#src/datasource/index.js";
-import type {
-  LiveWatershedInfo,
-  WatershedResultInfo,
-} from "#src/datasource/watershed/base.js";
 import {
+  type LiveWatershedInfo,
+  type WatershedResultInfo,
   copyWatershedResultChunk,
   getLiveWatershedInfo,
   getWatershedResultInfo,
+  MeshSourceParameters,
   missingWatershedResult,
   parseWatershedUrl,
   validateLiveWatershedChunkBounds,
   VolumeSourceParameters,
   WATERSHED_RESULT_MEMORY_LIMIT,
+  WATERSHED_MESH_RPC_ID,
   WATERSHED_TILE_RPC_ID,
+  type WatershedMeshState,
+  type WatershedMeshSnapshot,
 } from "#src/datasource/watershed/base.js";
+import { MeshSource } from "#src/mesh/frontend.js";
+import { SharedWatchableValue } from "#src/shared_watchable_value.js";
 import type { VolumeSourceOptions } from "#src/sliceview/volume/base.js";
 import {
   DataType,
@@ -50,6 +54,7 @@ import {
   MultiscaleVolumeChunkSource,
   VolumeChunkSource,
 } from "#src/sliceview/volume/frontend.js";
+import { StatusMessage, statusMessages } from "#src/status.js";
 import { raceWithAbort } from "#src/util/abort.js";
 import { RefCounted } from "#src/util/disposable.js";
 import * as matrix from "#src/util/matrix.js";
@@ -58,6 +63,7 @@ import { scaleByExp10, supportedUnits } from "#src/util/si_units.js";
 import { registerWatershedAttachment } from "#src/watershed/attachment.js";
 import type { WatershedResult } from "#src/watershed/base.js";
 import type { LiveWatershed } from "#src/watershed/live.js";
+import { WatershedMeshSelection } from "#src/watershed/mesh_selection.js";
 import { WatershedParametersState } from "#src/watershed/parameters.js";
 import type { WatershedRecipe } from "#src/watershed/recipe.js";
 import {
@@ -74,6 +80,7 @@ interface PublishedResult {
   live?: LiveWatershed;
   removeInvalidation?: () => void;
   readonly sources: Set<WatershedVolumeChunkSource>;
+  readonly meshSources: Map<string, WatershedMeshSource>;
   invalidatingSources?: boolean;
 }
 
@@ -111,10 +118,15 @@ function invalidateResultSources(entry: PublishedResult) {
   entry.invalidatingSources = true;
   try {
     // Observers may dispose the publication during invalidation. Finish the
-    // captured sources even if disposal clears the set, without invalidating
-    // them recursively through disposeResult.
-    for (const source of Array.from(entry.sources)) {
+    // captured sources even if disposal clears the collections, without
+    // invalidating them recursively through disposeResult.
+    const volumeSources = Array.from(entry.sources);
+    const meshSources = Array.from(entry.meshSources.values());
+    for (const source of volumeSources) {
       if (!source.wasDisposed) source.invalidateCache();
+    }
+    for (const source of meshSources) {
+      if (!source.wasDisposed) source.invalidateFor(entry.live?.epoch ?? -1);
     }
   } finally {
     entry.invalidatingSources = false;
@@ -137,6 +149,7 @@ function disposeResult(session: Session, resultId: string) {
   } finally {
     invalidateResultSources(entry);
     entry.sources.clear();
+    entry.meshSources.clear();
   }
 }
 
@@ -233,6 +246,7 @@ export function publishWatershedResult(
     byteLength,
     data: snapshot,
     sources: new Set(),
+    meshSources: new Map(),
   });
   session.bytes += byteLength;
   return makePublication(session, resultId);
@@ -273,6 +287,7 @@ export function publishLiveWatershed(
       byteLength,
       live,
       sources: new Set(),
+      meshSources: new Map(),
     };
     session.results.set(resultId, entry);
     session.bytes += byteLength;
@@ -358,6 +373,109 @@ registerPromiseRPC<Uint32Array | BigUint64Array | undefined>(
     }
   },
 );
+
+registerPromiseRPC<WatershedMeshState | WatershedMeshSnapshot | undefined>(
+  WATERSHED_MESH_RPC_ID,
+  async function (x, { signal }) {
+    signal?.throwIfAborted();
+    const manager: ChunkManager = this.get(x.chunkManager);
+    const entry = sessions.get(manager)?.results.get(x.resultId);
+    const live = entry?.live;
+    const source = entry?.meshSources.get(x.meshKey);
+    if (
+      live === undefined ||
+      live.signal.aborted ||
+      source === undefined ||
+      source.wasDisposed ||
+      source.state.value.generation !== x.generation
+    )
+      return { value: undefined };
+    if (typeof x.error === "string") {
+      source.reportError(x.error);
+      return { value: undefined };
+    }
+    if (
+      typeof x.objectId !== "bigint" ||
+      x.objectId <= 0n ||
+      x.objectId > 0xffff_ffffn ||
+      !live.hasCompletedResult ||
+      !source.selection?.allows(x.objectId, live.epoch)
+    )
+      return { value: undefined };
+    if (!x.snapshot) return { value: source.state.value };
+    const snapshot = live.getCompletedSnapshot();
+    if (snapshot === undefined || snapshot.epoch !== source.state.value.epoch)
+      return { value: undefined };
+    return {
+      value: {
+        epoch: snapshot.epoch,
+        generation: source.state.value.generation,
+        lowerXYZ: snapshot.sourceRelativeLowerXYZ,
+        shapeXYZ: snapshot.shapeXYZ,
+        labels: snapshot.labels,
+      },
+      transfers: [snapshot.labels.buffer],
+    };
+  },
+);
+
+export class WatershedMeshSource extends WithParameters(
+  MeshSource,
+  MeshSourceParameters,
+) {
+  readonly state = this.registerDisposer(
+    SharedWatchableValue.make<WatershedMeshState>(this.chunkManager.rpc!, {
+      epoch: 0,
+      generation: 0,
+    }),
+  );
+  selection: WatershedMeshSelection | undefined;
+  private status: StatusMessage | undefined;
+
+  constructor(...args: ConstructorParameters<typeof MeshSource>) {
+    super(...args);
+    this.registerDisposer(() => this.clearError());
+  }
+
+  initializeCounterpart(rpc: NonNullable<MeshSource["rpc"]>, options: any) {
+    options.state = this.state.addCounterpartRef();
+    super.initializeCounterpart(rpc, options);
+  }
+
+  getChunk(x: any) {
+    const chunk = super.getChunk(x);
+    if (
+      chunk.fragmentIds.some((id) => id !== String(this.state.value.generation))
+    )
+      chunk.fragmentIds = [];
+    return chunk;
+  }
+
+  private clearError() {
+    if (this.status !== undefined && statusMessages.has(this.status))
+      this.status.dispose();
+    this.status = undefined;
+  }
+
+  reportError(error: string) {
+    if (this.status === undefined || !statusMessages.has(this.status))
+      this.status = new StatusMessage();
+    this.status.setErrorMessage(`Watershed meshing: ${error}`);
+  }
+
+  invalidateFor(epoch: number) {
+    if (this.wasDisposed) return;
+    this.clearError();
+    this.state.value = { epoch, generation: this.state.value.generation + 1 };
+    if (this.wasDisposed) return;
+    // Stop drawing old GPU fragments immediately, before worker-side eviction.
+    for (const chunk of this.chunks.values()) chunk.fragmentIds = [];
+    this.invalidateCache();
+    if (this.wasDisposed) return;
+    this.fragmentSource.invalidateCache();
+    this.chunkManager.chunkQueueManager.visibleChunksChanged.dispatch();
+  }
+}
 
 export class WatershedVolumeChunkSource extends WithParameters(
   VolumeChunkSource,
@@ -489,7 +607,8 @@ export class WatershedDataSourceProvider implements DataSourceProvider {
   ): DataSource {
     const resultId = parseWatershedUrl(url);
     const chunkManager = options.registry.chunkManager;
-    const { info, live } = requireResult(chunkManager, resultId);
+    const entry = requireResult(chunkManager, resultId);
+    const { info, live } = entry;
     const names = ["x", "y", "z"];
     const units: string[] = [];
     const scales = new Float64Array(3);
@@ -518,10 +637,62 @@ export class WatershedDataSourceProvider implements DataSourceProvider {
       resultId,
       info,
     );
-    if (owned !== undefined) {
-      volume.registerDisposer(owned.dispose);
+    const mesh =
+      live === undefined
+        ? undefined
+        : chunkManager.getChunkSource(WatershedMeshSource, {
+            parameters: { resultId, meshKey: getRandomHexString() },
+          });
+    if (mesh !== undefined && live !== undefined) {
+      entry.meshSources.set(mesh.parameters.meshKey, mesh);
+      mesh.state.value = { epoch: live.epoch, generation: 0 };
+      volume.registerDisposer(() => mesh.dispose());
+      volume.registerDisposer(() =>
+        entry.meshSources.delete(mesh.parameters.meshKey),
+      );
+    }
+    if (owned !== undefined) volume.registerDisposer(owned.dispose);
+    if (owned !== undefined || mesh !== undefined) {
+      let detachAttachment: (() => void) | undefined;
+      volume.registerDisposer(() => detachAttachment?.());
       volume.registerDisposer(
-        registerWatershedAttachment(volume, (layer) => owned.attach(layer)),
+        registerWatershedAttachment(volume, (layer) => {
+          detachAttachment?.();
+          const detach = owned?.attach(layer);
+          const selection =
+            live !== undefined && mesh !== undefined
+              ? new WatershedMeshSelection(live, layer)
+              : undefined;
+          if (
+            mesh !== undefined &&
+            selection !== undefined &&
+            live !== undefined
+          ) {
+            mesh.selection = selection;
+            mesh.invalidateFor(live.epoch);
+          }
+          const remove = selection?.changed.add(() => {
+            if (mesh !== undefined && !mesh.wasDisposed && live !== undefined)
+              mesh.invalidateFor(live.signal.aborted ? -1 : live.epoch);
+          });
+          let attached = true;
+          const cleanup = () => {
+            if (!attached) return;
+            attached = false;
+            if (detachAttachment === cleanup) detachAttachment = undefined;
+            remove?.();
+            if (mesh !== undefined && mesh.selection === selection)
+              mesh.selection = undefined;
+            selection?.dispose();
+            if (mesh !== undefined && !mesh.wasDisposed)
+              mesh.invalidateFor(
+                live?.signal.aborted ? -1 : (live?.epoch ?? -1),
+              );
+            detach?.();
+          };
+          detachAttachment = cleanup;
+          return cleanup;
+        }),
       );
       const dispose = () => volume.dispose();
       options.signal.addEventListener("abort", dispose, { once: true });
@@ -559,6 +730,9 @@ export class WatershedDataSourceProvider implements DataSourceProvider {
             volume,
           },
         },
+        ...(mesh === undefined
+          ? []
+          : [{ id: "meshes", default: true, subsource: { mesh } }]),
       ],
     };
   }

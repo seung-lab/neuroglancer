@@ -27,8 +27,13 @@ import type { ChunkManager } from "#src/chunk_manager/frontend.js";
 import { makeCoordinateSpace } from "#src/coordinate_transform.js";
 import { DataSourceRegistry } from "#src/datasource/index.js";
 import { WatershedVolumeChunkSource as BackendSource } from "#src/datasource/watershed/backend.js";
-import type { LiveWatershedInfo } from "#src/datasource/watershed/base.js";
+import type {
+  LiveWatershedInfo,
+  WatershedMeshState,
+  WatershedMeshSnapshot,
+} from "#src/datasource/watershed/base.js";
 import {
+  WATERSHED_MESH_RPC_ID,
   WATERSHED_RESULT_MEMORY_LIMIT,
   WATERSHED_TILE_RPC_ID,
 } from "#src/datasource/watershed/base.js";
@@ -36,8 +41,12 @@ import type { WatershedMultiscaleVolumeChunkSource } from "#src/datasource/water
 import {
   publishLiveWatershed,
   publishWatershedResult,
+  WatershedMeshSource,
 } from "#src/datasource/watershed/frontend.js";
 import { installWatershedDataSourceProvider } from "#src/datasource/watershed/register_default.js";
+import type { ManagedUserLayer } from "#src/layer/index.js";
+import { SharedDisjointUint64Sets } from "#src/shared_disjoint_sets.js";
+import { SharedWatchableValue } from "#src/shared_watchable_value.js";
 import { VolumeChunk } from "#src/sliceview/volume/backend.js";
 import type { VolumeChunkSpecification } from "#src/sliceview/volume/base.js";
 import {
@@ -47,14 +56,20 @@ import {
 } from "#src/sliceview/volume/base.js";
 import type { VolumeChunk as FrontendVolumeChunk } from "#src/sliceview/volume/frontend.js";
 import "#src/sliceview/uncompressed_chunk_format.js";
+import { statusMessages } from "#src/status.js";
 import { WatchableValue } from "#src/trackable_value.js";
+import { Uint64Set } from "#src/uint64_set.js";
 import { RefCounted } from "#src/util/disposable.js";
 import { vec3 } from "#src/util/geom.js";
 import * as matrix from "#src/util/matrix.js";
 import { NullarySignal, Signal } from "#src/util/signal.js";
+import { attachWatershedVolume } from "#src/watershed/attachment.js";
 import type { WatershedResult } from "#src/watershed/base.js";
 import { MAX_WATERSHED_VOXELS } from "#src/watershed/base.js";
-import type { LiveWatershed } from "#src/watershed/live.js";
+import type {
+  CompletedWatershedSnapshot,
+  LiveWatershed,
+} from "#src/watershed/live.js";
 import { RPC } from "#src/worker_rpc.js";
 import { dataSourceProviderFixture } from "#tests/fixtures/datasource_provider.js";
 
@@ -112,7 +127,34 @@ function makeLive(infoOverrides: Partial<LiveWatershedInfo> = {}) {
       );
     },
   );
+  const state = {
+    epoch: 0,
+    completed: undefined as CompletedWatershedSnapshot | undefined,
+  };
+  const getCompletedSnapshot = vi.fn<
+    () => CompletedWatershedSnapshot | undefined
+  >(() => {
+    assertValid();
+    const snapshot = state.completed;
+    return snapshot === undefined
+      ? undefined
+      : {
+          epoch: snapshot.epoch,
+          lowerXYZ: Array.from(snapshot.lowerXYZ),
+          sourceRelativeLowerXYZ: Array.from(snapshot.sourceRelativeLowerXYZ),
+          shapeXYZ: Array.from(snapshot.shapeXYZ),
+          labels: new Uint32Array(snapshot.labels),
+        };
+  });
   const live = {
+    get epoch() {
+      return state.epoch;
+    },
+    get hasCompletedResult() {
+      assertValid();
+      return state.completed !== undefined;
+    },
+    getCompletedSnapshot,
     info,
     signal: controller.signal,
     changed,
@@ -120,7 +162,17 @@ function makeLive(infoOverrides: Partial<LiveWatershedInfo> = {}) {
     dispose,
     readTile,
   } as unknown as LiveWatershed;
-  return { live, info, controller, changed, assertValid, dispose, readTile };
+  return {
+    live,
+    info,
+    controller,
+    changed,
+    assertValid,
+    dispose,
+    readTile,
+    state,
+    getCompletedSnapshot,
+  };
 }
 
 /** Real RPC handlers, async structured clone, and buffer transfer semantics. */
@@ -158,10 +210,37 @@ function createSession(waitUntilReady = false) {
     (_constructor: unknown, _options: { spec: VolumeChunkSpecification }) =>
       source,
   );
+  // Keep volume-only call queues/indices independent of the new mesh requests.
+  // Keep mesh construction local too: no render/cache or shared-state RPCs.
+  // The production state accessors, invalidation and private status remain real.
+  const getMeshSource = vi.fn(
+    (options: WatershedMeshSource["OPTIONS"]): WatershedMeshSource => {
+      const state = new SharedWatchableValue<WatershedMeshState>();
+      state.base = new WatchableValue({ epoch: 0, generation: 0 });
+      const makeState = vi
+        .spyOn(SharedWatchableValue, "make")
+        .mockReturnValueOnce(state);
+      try {
+        const mesh = new WatershedMeshSource(frontendManager, options);
+        mesh.invalidateCache = vi.fn();
+        mesh.fragmentSource.invalidateCache = vi.fn();
+        return mesh;
+      } finally {
+        makeState.mockRestore();
+      }
+    },
+  );
   const frontendManager = Object.assign(new RefCounted(), {
     rpc: frontendRpc,
     rpcId: managerId,
-    getChunkSource,
+    chunkQueueManager: { visibleChunksChanged: new NullarySignal() },
+    getChunkSource: (constructor: unknown, options: unknown) =>
+      constructor === WatershedMeshSource
+        ? getMeshSource(options as WatershedMeshSource["OPTIONS"])
+        : getChunkSource(
+            constructor,
+            options as { spec: VolumeChunkSpecification },
+          ),
   }) as unknown as ChunkManager;
   frontendRpc.set(managerId, frontendManager);
   const registry = new DataSourceRegistry({
@@ -177,6 +256,7 @@ function createSession(waitUntilReady = false) {
     registry,
     invalidateCache,
     getChunkSource,
+    getMeshSource,
     source,
     recomputeChunkPrioritiesLate,
     updateChunkState,
@@ -1077,6 +1157,598 @@ describe("session-local live watershed volume RPC", () => {
     session.recomputeChunkPrioritiesLate.dispatch();
     expect(demoted.downloadAbortController.signal.aborted).toBe(false);
   });
+});
+
+function makeMeshOutput(
+  session: ReturnType<typeof makeSession>,
+  restored: bigint[] = [],
+) {
+  const visibleSegments = new Uint64Set();
+  const segmentEquivalences = new SharedDisjointUint64Sets();
+  for (const id of restored) visibleSegments.add(id);
+  const groupState = new WatchableValue({
+    visibleSegments,
+    segmentEquivalences,
+    useTemporaryVisibleSegments: new WatchableValue(false),
+    useTemporarySegmentEquivalences: new WatchableValue(false),
+  });
+  const output = Object.assign(new RefCounted(), {
+    name: "watershed output",
+    layerChanged: new NullarySignal(),
+    layer: {
+      type: "segmentation",
+      displayState: {
+        segmentationGroupState: groupState,
+      },
+    },
+  }) as unknown as ManagedUserLayer;
+  output.registerDisposer(visibleSegments);
+  output.registerDisposer(segmentEquivalences);
+  session.frontendManager.registerDisposer(() => {
+    if (!output.wasDisposed) output.dispose();
+  });
+  return { output, visibleSegments, groupState };
+}
+
+async function meshFixture(complete = true) {
+  const session = makeSession();
+  const producer = makeLive();
+  producer.state.epoch = 5;
+  const snapshot: CompletedWatershedSnapshot = {
+    epoch: 5,
+    lowerXYZ: [-13, 8, -4],
+    sourceRelativeLowerXYZ: [1, 1, 0],
+    shapeXYZ: [2, 2, 2],
+    labels: Uint32Array.of(0, 7, 0xffffffff, 7, 7, 0, 7, 7),
+  };
+  if (complete) producer.state.completed = snapshot;
+  const handle = publishLiveWatershed(session.frontendManager, producer.live);
+  const abort = new AbortController();
+  const data = await getSource(session.registry, handle.url, abort.signal);
+  const volume = data.subsources[0].subsource
+    .volume as WatershedMultiscaleVolumeChunkSource;
+  const mesh = data.subsources[1].subsource.mesh as WatershedMeshSource;
+  const { output, visibleSegments, groupState } = makeMeshOutput(session);
+  const detach = attachWatershedVolume(volume, output)!;
+  return {
+    session,
+    producer,
+    snapshot,
+    handle,
+    abort,
+    data,
+    volume,
+    mesh,
+    output,
+    visibleSegments,
+    groupState,
+    detach,
+  };
+}
+
+function meshRequest<T = WatershedMeshState>(
+  session: ReturnType<typeof makeSession>,
+  mesh: WatershedMeshSource,
+  overrides: object = {},
+) {
+  return session.backendRpc.promiseInvoke<T | undefined>(
+    WATERSHED_MESH_RPC_ID,
+    {
+      chunkManager: session.frontendManager.rpcId,
+      ...mesh.parameters,
+      generation: mesh.state.value.generation,
+      objectId: 7n,
+      ...overrides,
+    },
+  );
+}
+
+describe("session-local live watershed mesh publication RPC", () => {
+  it("adds a default live mesh source per get, without changing static snapshot subsources", async () => {
+    const session = makeSession();
+    const staticHandle = publishWatershedResult(
+      session.frontendManager,
+      makeResult(),
+    );
+    const staticData = await getSource(session.registry, staticHandle.url);
+    expect(staticData.subsources).toHaveLength(1);
+    expect(staticData.subsources[0]).toMatchObject({
+      id: "default",
+      default: true,
+    });
+    expect(session.getMeshSource).not.toHaveBeenCalled();
+    const producer = makeLive();
+    producer.state.epoch = 4;
+    const handle = publishLiveWatershed(session.frontendManager, producer.live);
+    const first = await getSource(session.registry, handle.url);
+    const second = await getSource(session.registry, handle.url);
+    expect(first.subsources).toHaveLength(2);
+    expect(first.subsources[1]).toMatchObject({ id: "meshes", default: true });
+    const mesh1 = first.subsources[1].subsource.mesh as WatershedMeshSource;
+    const mesh2 = second.subsources[1].subsource.mesh as WatershedMeshSource;
+    expect(mesh1).not.toBe(mesh2);
+    expect(mesh1.parameters.resultId).toBe(handle.url.slice(12));
+    expect(mesh2.parameters.resultId).toBe(mesh1.parameters.resultId);
+    expect(mesh1.parameters.meshKey).not.toBe(mesh2.parameters.meshKey);
+    expect(mesh1.state.value).toEqual({ epoch: 4, generation: 0 });
+    expect(mesh2.state.value).toEqual({ epoch: 4, generation: 0 });
+    expect(session.getMeshSource).toHaveBeenCalledTimes(2);
+    expect(session.getChunkSource).not.toHaveBeenCalled();
+    expect(producer.readTile).not.toHaveBeenCalled();
+    expect(producer.getCompletedSnapshot).not.toHaveBeenCalled();
+    staticHandle.dispose();
+    handle.dispose();
+  });
+
+  it("requires completion and explicit post-completion selection, rejecting obsolete generations", async () => {
+    const f = await meshFixture(false);
+    f.visibleSegments.add(7n);
+    expect(await meshRequest(f.session, f.mesh)).toBeUndefined();
+    f.producer.state.completed = f.snapshot;
+    f.producer.changed.dispatch();
+    expect(await meshRequest(f.session, f.mesh)).toBeUndefined();
+    f.visibleSegments.delete(7n);
+    const oldGeneration = f.mesh.state.value.generation;
+    f.visibleSegments.add(7n);
+    expect(f.mesh.state.value.generation).toBeGreaterThan(oldGeneration);
+    expect(
+      await meshRequest(f.session, f.mesh, { generation: oldGeneration }),
+    ).toBeUndefined();
+    expect(await meshRequest(f.session, f.mesh)).toEqual(f.mesh.state.value);
+    expect(f.producer.getCompletedSnapshot).not.toHaveBeenCalled();
+    expect(f.producer.readTile).not.toHaveBeenCalled();
+    f.producer.state.epoch++;
+    f.producer.state.completed = undefined;
+    f.producer.changed.dispatch();
+    expect(f.mesh.state.value.epoch).toBe(6);
+    expect(await meshRequest(f.session, f.mesh)).toBeUndefined();
+    expect(f.mesh.invalidateCache).toHaveBeenCalled();
+    expect(f.mesh.fragmentSource.invalidateCache).toHaveBeenCalled();
+  });
+
+  it("transfers independent UINT32 completed-region copies with volume-local bounds, never double-offset native bounds", async () => {
+    const f = await meshFixture();
+    f.visibleSegments.add(7n);
+    const expected = Array.from(f.snapshot.labels);
+    for (let i = 0; i < 2; ++i) {
+      const reply = (await meshRequest<WatershedMeshSnapshot>(
+        f.session,
+        f.mesh,
+        { snapshot: true },
+      ))!;
+      expect(reply).toMatchObject({
+        epoch: 5,
+        generation: f.mesh.state.value.generation,
+        lowerXYZ: [1, 1, 0],
+        shapeXYZ: [2, 2, 2],
+      });
+      expect(reply.labels).toBeInstanceOf(Uint32Array);
+      expect(Array.from(reply.labels)).toEqual(expected);
+      expect(reply.labels.byteLength).toBe(8 * Uint32Array.BYTES_PER_ELEMENT);
+      expect(
+        reply.lowerXYZ.map((x, d) => x + f.producer.info.offsetXYZ[d]),
+      ).toEqual([24, -10, 7]);
+      // Native bounds [-13, 8, -4] plus origin [37, -18, 11] give the same placement.
+      expect(f.snapshot.lowerXYZ.map((x, d) => x + [37, -18, 11][d])).toEqual([
+        24, -10, 7,
+      ]);
+      const owned = f.producer.getCompletedSnapshot.mock.results.at(-1)!.value!;
+      expect(owned.labels.byteLength).toBe(0);
+      reply.labels.fill(123);
+      Reflect.set(reply.lowerXYZ, 0, 999);
+      Reflect.set(reply.shapeXYZ, 0, 999);
+      expect(Array.from(f.snapshot.labels)).toEqual(expected);
+      expect(f.snapshot.sourceRelativeLowerXYZ).toEqual([1, 1, 0]);
+      expect(f.snapshot.lowerXYZ).toEqual([-13, 8, -4]);
+      expect(f.snapshot.shapeXYZ).toEqual([2, 2, 2]);
+    }
+    expect(f.producer.getCompletedSnapshot).toHaveBeenCalledTimes(2);
+    expect(f.producer.readTile).not.toHaveBeenCalled();
+  });
+
+  it("authorizes only the owning mesh key/manager and valid positive UINT32 bigint IDs", async () => {
+    const f = await meshFixture();
+    f.visibleSegments.add(7n);
+    f.visibleSegments.add(0xffffffffn);
+    expect(
+      await meshRequest(f.session, f.mesh, { objectId: 0xffffffffn }),
+    ).toEqual(f.mesh.state.value);
+    for (const objectId of [0n, -1n, 0x1_0000_0000n, 7, "7", undefined, 8n]) {
+      expect(
+        await meshRequest(f.session, f.mesh, { objectId, snapshot: true }),
+      ).toBeUndefined();
+    }
+    for (const override of [{ resultId: "missing" }, { meshKey: "missing" }]) {
+      expect(await meshRequest(f.session, f.mesh, override)).toBeUndefined();
+    }
+    const otherSession = makeSession();
+    expect(await meshRequest(otherSession, f.mesh)).toBeUndefined();
+    const otherData = await getSource(f.session.registry, f.handle.url);
+    const otherMesh = otherData.subsources[1].subsource
+      .mesh as WatershedMeshSource;
+    expect(await meshRequest(f.session, otherMesh)).toBeUndefined();
+    expect(f.producer.getCompletedSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("does not treat restored visible IDs or another owner's consent as mesh demand", async () => {
+    const f = await meshFixture();
+    f.detach();
+    const { output, visibleSegments } = makeMeshOutput(f.session, [7n]);
+    const detach = attachWatershedVolume(f.volume, output)!;
+    expect(await meshRequest(f.session, f.mesh)).toBeUndefined();
+    visibleSegments.delete(7n);
+    visibleSegments.add(7n);
+    expect(await meshRequest(f.session, f.mesh)).toEqual(f.mesh.state.value);
+    detach();
+    expect(f.mesh.selection).toBeUndefined();
+    expect(await meshRequest(f.session, f.mesh)).toBeUndefined();
+    const generation = f.mesh.state.value.generation;
+    visibleSegments.delete(7n);
+    visibleSegments.add(7n);
+    expect(f.mesh.state.value.generation).toBe(generation);
+  });
+
+  it("discards unavailable snapshots and a snapshot retired during the synchronous read", async () => {
+    const f = await meshFixture();
+    f.visibleSegments.add(7n);
+    f.producer.getCompletedSnapshot.mockReturnValueOnce(undefined);
+    expect(
+      await meshRequest(f.session, f.mesh, { snapshot: true }),
+    ).toBeUndefined();
+    f.producer.getCompletedSnapshot.mockImplementationOnce(() => {
+      f.producer.state.epoch++;
+      f.producer.state.completed = undefined;
+      f.producer.changed.dispatch();
+      return f.snapshot;
+    });
+    expect(
+      await meshRequest(f.session, f.mesh, { snapshot: true }),
+    ).toBeUndefined();
+    expect(f.snapshot.labels.byteLength).toBe(32);
+    expect(f.mesh.state.value.epoch).toBe(6);
+  });
+
+  it("clears drawable manifest IDs synchronously, requests redraw, and rejects late old-generation manifests", async () => {
+    const f = await meshFixture();
+    const generation = f.mesh.state.value.generation;
+    const current = f.mesh.getChunk({ fragmentIds: [String(generation)] });
+    f.mesh.chunks.set("7", current);
+    const redraw = vi.fn();
+    const remove =
+      f.session.frontendManager.chunkQueueManager.visibleChunksChanged.add(
+        redraw,
+      );
+    f.producer.changed.dispatch();
+    expect(current.fragmentIds).toEqual([]);
+    expect(redraw).toHaveBeenCalledOnce();
+    expect(f.mesh.invalidateCache).toHaveBeenCalledTimes(2); // attach, then regional change
+    expect(f.mesh.fragmentSource.invalidateCache).toHaveBeenCalledTimes(2);
+    expect(
+      f.mesh.getChunk({ fragmentIds: [String(generation)] }).fragmentIds,
+    ).toEqual([]);
+    const next = String(f.mesh.state.value.generation);
+    expect(f.mesh.getChunk({ fragmentIds: [next] }).fragmentIds).toEqual([
+      next,
+    ]);
+    expect(
+      f.mesh.getChunk({ fragmentIds: [next, String(generation)] }).fragmentIds,
+    ).toEqual([]);
+    remove();
+  });
+
+  it("clears every live mesh immediately when a volume-cache observer disposes the publication reentrantly", async () => {
+    const f = await meshFixture();
+    f.visibleSegments.add(7n);
+    const siblingData = await getSource(f.session.registry, f.handle.url);
+    const siblingMesh = siblingData.subsources[1].subsource
+      .mesh as WatershedMeshSource;
+    const meshes = [f.mesh, siblingMesh];
+    const manifests = meshes.map((mesh) => {
+      const manifest = mesh.getChunk({
+        fragmentIds: [String(mesh.state.value.generation)],
+      });
+      mesh.chunks.set("7", manifest);
+      return manifest;
+    });
+    const invalidateMeshes = meshes.map((mesh) =>
+      vi.spyOn(mesh, "invalidateFor"),
+    );
+    for (const mesh of meshes) {
+      vi.mocked(mesh.invalidateCache).mockClear();
+      vi.mocked(mesh.fragmentSource.invalidateCache).mockClear();
+    }
+    const otherSource = Object.assign(new RefCounted(), {
+      invalidateCache: vi.fn(),
+    });
+    f.session.frontendManager.registerDisposer(otherSource);
+    f.session.getChunkSource
+      .mockReturnValueOnce(f.session.source)
+      .mockReturnValueOnce(otherSource);
+    f.volume.getSources(sourceOptions);
+    f.volume.getSources(sourceOptions);
+    f.session.invalidateCache.mockImplementationOnce(() => {
+      f.handle.dispose();
+      // Publication retirement is not volume/mesh owner disposal.
+      for (const mesh of meshes) expect(mesh.wasDisposed).not.toBe(true);
+    });
+    const redraw = vi.fn();
+    const removeRedraw =
+      f.session.frontendManager.chunkQueueManager.visibleChunksChanged.add(
+        redraw,
+      );
+    try {
+      f.producer.changed.dispatch();
+      // These IDs are drawable until worker-side eviction; clear them synchronously.
+      for (const manifest of manifests)
+        expect(manifest.fragmentIds).toEqual([]);
+      for (let i = 0; i < meshes.length; ++i) {
+        expect(invalidateMeshes[i]).toHaveBeenCalledExactlyOnceWith(-1);
+        expect(meshes[i].invalidateCache).toHaveBeenCalledOnce();
+        expect(meshes[i].fragmentSource.invalidateCache).toHaveBeenCalledOnce();
+        expect(meshes[i].wasDisposed).not.toBe(true);
+      }
+      expect(redraw).toHaveBeenCalledTimes(meshes.length);
+      expect(f.session.invalidateCache).toHaveBeenCalledOnce();
+      expect(otherSource.invalidateCache).toHaveBeenCalledOnce();
+      expect(f.producer.dispose).toHaveBeenCalledOnce();
+      await expect(getSource(f.session.registry, f.handle.url)).rejects.toThrow(
+        "unavailable",
+      );
+      f.producer.changed.dispatch();
+      f.handle.dispose();
+      expect(f.session.invalidateCache).toHaveBeenCalledOnce();
+      expect(otherSource.invalidateCache).toHaveBeenCalledOnce();
+      expect(f.producer.dispose).toHaveBeenCalledOnce();
+      for (let i = 0; i < meshes.length; ++i) {
+        expect(invalidateMeshes[i]).toHaveBeenCalledOnce();
+        expect(meshes[i].invalidateCache).toHaveBeenCalledOnce();
+        expect(meshes[i].fragmentSource.invalidateCache).toHaveBeenCalledOnce();
+      }
+      expect(redraw).toHaveBeenCalledTimes(meshes.length);
+    } finally {
+      removeRedraw();
+    }
+  });
+
+  it("reports current meshing errors once, ignores stale errors, and clears status on invalidation/disposal", async () => {
+    const f = await meshFixture();
+    const baseline = statusMessages.size;
+    const generation = f.mesh.state.value.generation;
+    expect(
+      await meshRequest(f.session, f.mesh, {
+        generation: generation - 1,
+        error: "obsolete",
+      }),
+    ).toBeUndefined();
+    expect(statusMessages.size).toBe(baseline);
+    await meshRequest(f.session, f.mesh, { error: "native mesh failed" });
+    await meshRequest(f.session, f.mesh, { error: "retry failed" });
+    expect(statusMessages.size).toBe(baseline + 1);
+    expect([...statusMessages].at(-1)?.element.textContent).toContain(
+      "Watershed meshing: retry failed",
+    );
+    [...statusMessages]
+      .at(-1)!
+      .element.querySelector<HTMLButtonElement>("button")!
+      .click();
+    expect(statusMessages.size).toBe(baseline);
+    f.producer.changed.dispatch(); // dismissed status must not be disposed a second time
+    expect(statusMessages.size).toBe(baseline);
+    await meshRequest(f.session, f.mesh, { error: "retry failed" });
+    expect(statusMessages.size).toBe(baseline + 1);
+    f.volume.dispose();
+    expect(f.mesh.wasDisposed).toBe(true);
+    expect(statusMessages.size).toBe(baseline);
+    expect(
+      await meshRequest(f.session, f.mesh, { error: "late" }),
+    ).toBeUndefined();
+    expect(statusMessages.size).toBe(baseline);
+    expect(f.producer.dispose).not.toHaveBeenCalled();
+  });
+
+  it("disposes seeded-volume selection listeners and warnings without stopping its live producer or output owner", async () => {
+    const f = await meshFixture();
+    const baseline = statusMessages.size;
+    const selection = f.mesh.selection!;
+    const disposeSelection = vi.spyOn(selection, "dispose");
+    const disposeMesh = vi.spyOn(f.mesh, "dispose");
+    const removals = [
+      vi.spyOn(selection.changed, "remove"),
+      vi.spyOn(f.producer.changed, "remove"),
+      vi.spyOn(f.output.layerChanged, "remove"),
+      vi.spyOn(f.groupState.changed, "remove"),
+      vi.spyOn(f.visibleSegments.changed, "remove"),
+      vi.spyOn(f.groupState.value.segmentEquivalences.changed, "remove"),
+      vi.spyOn(
+        f.groupState.value.useTemporaryVisibleSegments.changed,
+        "remove",
+      ),
+      vi.spyOn(
+        f.groupState.value.useTemporarySegmentEquivalences.changed,
+        "remove",
+      ),
+    ];
+    const removeAbort = vi.spyOn(
+      f.producer.controller.signal,
+      "removeEventListener",
+    );
+    f.visibleSegments.add(7n);
+    expect(await meshRequest(f.session, f.mesh)).toEqual(f.mesh.state.value);
+    ++f.producer.state.epoch;
+    f.producer.changed.dispatch();
+    expect(statusMessages.size).toBe(baseline + 1);
+    expect([...statusMessages].at(-1)?.element.textContent).toContain(
+      "re-select segments",
+    );
+
+    f.volume.dispose();
+    expect(selection.wasDisposed).toBe(true);
+    expect(f.mesh.selection).toBeUndefined();
+    expect(disposeSelection).toHaveBeenCalledOnce();
+    expect(disposeMesh).toHaveBeenCalledOnce();
+    for (const remove of removals) expect(remove).toHaveBeenCalledOnce();
+    expect(removeAbort).toHaveBeenCalledExactlyOnceWith(
+      "abort",
+      expect.any(Function),
+      undefined,
+    );
+    expect(statusMessages.size).toBe(baseline);
+    expect(f.abort.signal.aborted).toBe(false);
+    expect(f.output.refCount).toBe(1);
+    expect(f.output.wasDisposed).not.toBe(true);
+    expect(f.producer.controller.signal.aborted).toBe(false);
+    expect(f.producer.live.hasCompletedResult).toBe(true);
+    expect(f.producer.dispose).not.toHaveBeenCalled();
+    expect(attachWatershedVolume(f.volume, f.output)).toBeUndefined();
+    expect(await meshRequest(f.session, f.mesh)).toBeUndefined();
+
+    const generation = f.mesh.state.value.generation;
+    const invalidations = vi.mocked(f.mesh.invalidateCache).mock.calls.length;
+    const fragmentInvalidations = vi.mocked(
+      f.mesh.fragmentSource.invalidateCache,
+    ).mock.calls.length;
+    f.visibleSegments.delete(7n);
+    f.visibleSegments.add(7n);
+    f.groupState.value.useTemporaryVisibleSegments.value = true;
+    f.groupState.changed.dispatch();
+    f.output.layerChanged.dispatch();
+    f.producer.changed.dispatch();
+    expect(selection.allows(7n, f.producer.live.epoch)).toBe(false);
+    expect(f.mesh.state.value.generation).toBe(generation);
+    expect(f.mesh.invalidateCache).toHaveBeenCalledTimes(invalidations);
+    expect(f.mesh.fragmentSource.invalidateCache).toHaveBeenCalledTimes(
+      fragmentInvalidations,
+    );
+    expect(statusMessages.size).toBe(baseline);
+
+    f.detach();
+    f.detach();
+    f.volume.dispose();
+    f.abort.abort();
+    expect(disposeSelection).toHaveBeenCalledOnce();
+    expect(disposeMesh).toHaveBeenCalledOnce();
+    for (const remove of removals) expect(remove).toHaveBeenCalledOnce();
+    expect(f.producer.dispose).not.toHaveBeenCalled();
+    f.handle.dispose(); // Only the publication owner stops this seeded producer.
+    expect(f.producer.dispose).toHaveBeenCalledOnce();
+    expect(f.producer.controller.signal.aborted).toBe(true);
+    expect(f.output.refCount).toBe(1);
+    expect(statusMessages.size).toBe(baseline);
+  });
+
+  it.each(["same", "different"] as const)(
+    "retires both old selections across two reattachments to %s output owners",
+    async (kind) => {
+      const f = await meshFixture();
+      const baseline = statusMessages.size;
+      f.visibleSegments.add(7n);
+      ++f.producer.state.epoch;
+      f.producer.changed.dispatch();
+      expect(statusMessages.size).toBe(baseline + 1);
+      let active = {
+        output: f.output,
+        visibleSegments: f.visibleSegments,
+        groupState: f.groupState,
+        selection: f.mesh.selection!,
+        detach: f.detach,
+      };
+      for (let i = 0; i < 2; ++i) {
+        const previous = active;
+        const disposePrevious = vi.spyOn(previous.selection, "dispose");
+        const removeVisible = vi
+          .spyOn(previous.visibleSegments.changed, "remove")
+          .mockClear();
+        const removeLayer = vi
+          .spyOn(previous.output.layerChanged, "remove")
+          .mockClear();
+        const removeGroup = vi
+          .spyOn(previous.groupState.changed, "remove")
+          .mockClear();
+        const next =
+          kind === "same" ? previous : makeMeshOutput(f.session, [7n]);
+        const detach = attachWatershedVolume(f.volume, next.output)!;
+        active = { ...next, selection: f.mesh.selection!, detach };
+        expect(previous.selection.wasDisposed).toBe(true);
+        expect(disposePrevious).toHaveBeenCalledOnce();
+        expect(removeVisible).toHaveBeenCalledOnce();
+        expect(removeLayer).toHaveBeenCalledOnce();
+        expect(removeGroup).toHaveBeenCalledOnce();
+        expect(active.selection).not.toBe(previous.selection);
+        expect(statusMessages.size).toBe(baseline + 1);
+        expect(await meshRequest(f.session, f.mesh)).toBeUndefined();
+
+        const generation = f.mesh.state.value.generation;
+        previous.detach();
+        previous.detach();
+        expect(disposePrevious).toHaveBeenCalledOnce();
+        expect(f.mesh.selection).toBe(active.selection);
+        expect(active.selection.wasDisposed).not.toBe(true);
+        expect(f.mesh.state.value.generation).toBe(generation);
+        if (kind === "different") {
+          previous.visibleSegments.delete(7n);
+          previous.visibleSegments.add(7n);
+          previous.output.layerChanged.dispatch();
+          previous.groupState.changed.dispatch();
+          expect(f.mesh.state.value.generation).toBe(generation);
+          expect(statusMessages.size).toBe(baseline + 1);
+        }
+        active.visibleSegments.delete(7n);
+        active.visibleSegments.add(7n);
+        expect(await meshRequest(f.session, f.mesh)).toEqual(
+          f.mesh.state.value,
+        );
+        expect(statusMessages.size).toBe(baseline);
+      }
+      const disposeCurrent = vi.spyOn(active.selection, "dispose");
+      active.detach();
+      active.detach();
+      expect(disposeCurrent).toHaveBeenCalledOnce();
+      expect(f.mesh.selection).toBeUndefined();
+      expect(statusMessages.size).toBe(baseline);
+      f.volume.dispose();
+      f.volume.dispose();
+      active.detach();
+      f.detach();
+      expect(disposeCurrent).toHaveBeenCalledOnce();
+      expect(f.producer.dispose).not.toHaveBeenCalled();
+      expect(f.output.refCount).toBe(1);
+    },
+  );
+
+  it.each(["source", "publication", "manager", "owner"] as const)(
+    "retires mesh demand on %s lifetime without changing publication ownership",
+    async (kind) => {
+      const f = await meshFixture();
+      f.visibleSegments.add(7n);
+      expect(await meshRequest(f.session, f.mesh)).toEqual(f.mesh.state.value);
+      const oldGeneration = f.mesh.state.value.generation;
+      if (kind === "source") f.producer.controller.abort();
+      else if (kind === "publication") f.handle.dispose();
+      else if (kind === "manager") f.session.frontendManager.dispose();
+      else f.abort.abort();
+      expect(await meshRequest(f.session, f.mesh)).toBeUndefined();
+      expect(
+        await meshRequest(f.session, f.mesh, {
+          generation: oldGeneration,
+          snapshot: true,
+        }),
+      ).toBeUndefined();
+      expect(f.producer.getCompletedSnapshot).not.toHaveBeenCalled();
+      if (kind === "owner") {
+        expect(f.mesh.wasDisposed).toBe(true);
+        expect(f.producer.dispose).not.toHaveBeenCalled();
+        // One resolved owner's abort does not retire a session publication.
+        const next = await getSource(f.session.registry, f.handle.url);
+        expect(next.subsources[1].subsource.mesh).not.toBe(f.mesh);
+      } else {
+        expect(f.producer.dispose).toHaveBeenCalledOnce();
+        await expect(
+          getSource(f.session.registry, f.handle.url),
+        ).rejects.toThrow("unavailable");
+      }
+      f.detach();
+    },
+  );
 });
 
 describe("production chunk worker watershed registration", () => {
