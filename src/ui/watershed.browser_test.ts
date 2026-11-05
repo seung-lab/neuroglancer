@@ -333,6 +333,13 @@ function fill(session: WatershedSession, label: string, value: string) {
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
+const probabilityFields = [
+  ["High threshold", "highThreshold"],
+  ["Low threshold", "lowThreshold"],
+  ["Mask threshold", "maskThreshold"],
+  ["Agglomeration threshold (agg_threshold)", "aggThreshold"],
+] as const;
+
 function selectSource(session: WatershedSession, index: number) {
   const select = session.dialog!.body.querySelector<HTMLSelectElement>(
     '[aria-label="Affinity image source"]',
@@ -412,7 +419,7 @@ describe("WASM watershed UI", () => {
     expect(maskThreshold.value).toBe("0.3");
     expect(maskThreshold.min).toBe("0");
     expect(maskThreshold.max).toBe("1");
-    expect(maskThreshold.step).toBe("any");
+    expect(maskThreshold.step).toBe("0.01");
     expect(maskThreshold.disabled).toBe(true);
     expect(maskThreshold.closest("details")).not.toBeNull();
     for (const key of [
@@ -493,6 +500,124 @@ describe("WASM watershed UI", () => {
     select.dispatchEvent(new Event("change"));
     expect(session.source).toBe(b);
   });
+
+  it.each(probabilityFields)(
+    "steps %s by hundredths with native number-input spinners",
+    (label, key) => {
+      const { session } = fixture();
+      session.open();
+      field(session, "Use last channel as mask").click();
+      field(session, "Agglomerate watershed basins").click();
+      const input = field(session, label);
+      expect(input.type).toBe("number");
+      expect(input.min).toBe("0");
+      expect(input.max).toBe("1");
+      fill(session, label, "0.5");
+      // Exercise Chrome's native stepping, not just the step attribute.
+      input.stepUp();
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      expect(input.value).toBe("0.51");
+      expect(session[key]).toBe("0.51");
+      input.stepDown();
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      expect(input.value).toBe("0.5");
+      expect(session[key]).toBe("0.5");
+      for (const bound of ["0", "1"]) {
+        fill(session, label, bound);
+        if (bound === "0") input.stepDown();
+        else input.stepUp();
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        expect(input.value).toBe(bound);
+        expect(session[key]).toBe(bound);
+      }
+    },
+  );
+
+  it.each([
+    ["Source scale index", "scaleIndex"],
+    ["Halo (voxels)", "halo"],
+    ["Size threshold", "sizeThreshold"],
+    ["Dust threshold", "dustThreshold"],
+  ] as const)("keeps %s native spinner steps integral", (label, key) => {
+    const { session } = fixture();
+    session.open();
+    const input = field(session, label);
+    const initial = input.value;
+    expect(input.step).toBe("1");
+    input.stepUp();
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(input.valueAsNumber).toBe(Number(initial) + 1);
+    expect(session[key]).toBe(String(Number(initial) + 1));
+    input.stepDown();
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(input.value).toBe(initial);
+    expect(session[key]).toBe(initial);
+  });
+
+  it.each(["default", "typed"] as const)(
+    "accepts %s probability precision finer than the spinner step without rounding",
+    async (kind) => {
+      const f = fixture();
+      const { session } = f;
+      session.open();
+      field(session, "Use last channel as mask").click();
+      field(session, "Agglomerate watershed basins").click();
+      const drafts =
+        kind === "default"
+          ? {
+              highThreshold: String(DEFAULT_WATERSHED_OPTIONS.highThreshold),
+              lowThreshold: String(DEFAULT_WATERSHED_OPTIONS.lowThreshold),
+              maskThreshold: "0.3",
+              aggThreshold: "0.15",
+            }
+          : {
+              highThreshold: "0.87654321",
+              lowThreshold: "0.12345678",
+              maskThreshold: "0.3456789",
+              aggThreshold: "0.23456789",
+            };
+      for (const [label, key] of probabilityFields) {
+        if (kind === "typed") fill(session, label, drafts[key]);
+        expect(field(session, label).value).toBe(drafts[key]);
+        expect(session[key]).toBe(drafts[key]);
+      }
+      // Native step validity must not gate application-level validation.
+      expect(field(session, "High threshold").validity.stepMismatch).toBe(true);
+      expect(field(session, "Low threshold").validity.stepMismatch).toBe(true);
+      session.changed.dispatch();
+      session.dialog!.close();
+      session.open();
+      for (const [label, key] of probabilityFields)
+        expect(field(session, label).value).toBe(drafts[key]);
+      addButton(session).click();
+      await vi.waitFor(() =>
+        expect(session.status).toContain("Added live layer:"),
+      );
+      const options = {
+        ...DEFAULT_WATERSHED_OPTIONS,
+        highThreshold: Number(drafts.highThreshold),
+        lowThreshold: Number(drafts.lowThreshold),
+        maskThreshold: Number(drafts.maskThreshold),
+        aggThreshold: Number(drafts.aggThreshold),
+      };
+      expect(f.createLive).toHaveBeenCalledExactlyOnceWith(
+        f.inputs.at(-1),
+        [0, 1, 2],
+        options,
+        expect.any(Function),
+        DEFAULT_WATERSHED_HALO,
+      );
+      const json = JSON.parse(
+        JSON.stringify(f.resultLayers[0].layer!.toJSON()),
+      );
+      expect(json.source.state.options).toEqual(options);
+      expect(parseWatershedRecipe(json.source.state).options).toEqual(options);
+      for (const [label, key] of probabilityFields) {
+        expect(field(session, label).value).toBe(drafts[key]);
+        expect(session[key]).toBe(drafts[key]);
+      }
+    },
+  );
 
   it.each(["8", "0", "2"])(
     "passes dialog halo %s as the fifth producer argument and preserves channels in saved JSON",
@@ -620,7 +745,7 @@ describe("WASM watershed UI", () => {
     expect(aggThreshold.value).toBe("0.15");
     expect(aggThreshold.min).toBe("0");
     expect(aggThreshold.max).toBe("1");
-    expect(aggThreshold.step).toBe("any");
+    expect(aggThreshold.step).toBe("0.01");
     expect(aggThreshold.disabled).toBe(true);
     expect(aggThreshold.closest("details")).toBe(
       useAgglomeration.closest("details"),

@@ -706,7 +706,8 @@ export class WatershedDialog extends FramedDialog {
         key === "aggThreshold";
       if (numeric) {
         input.min = "0";
-        input.step = probability ? "any" : "1";
+        // The step controls native spinners, not accepted threshold precision.
+        input.step = probability ? "0.01" : "1";
       }
       if (probability) input.max = "1";
       row(title, input, parent);

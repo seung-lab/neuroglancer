@@ -131,7 +131,7 @@ export class WatershedParametersWidget extends RefCounted {
     input.type = "number";
     input.min = "0";
     input.max = String(kind === "probability" ? 1 : 0xffffffff);
-    input.step = kind === "probability" ? "any" : "1";
+    input.step = kind === "probability" ? "0.01" : "1";
     input.value = String(initial);
     input.id = `${this.id}-${this.controls.length}`;
     label.htmlFor = input.id;
@@ -144,7 +144,7 @@ export class WatershedParametersWidget extends RefCounted {
       slider.type = "range";
       slider.min = "0";
       slider.max = String(sliderMax);
-      slider.step = input.step;
+      slider.step = "any";
       slider.value = input.value;
       slider.setAttribute("aria-label", `${title} slider`);
       control.slider = slider;

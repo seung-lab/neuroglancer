@@ -264,7 +264,8 @@ describe("WatershedParametersWidget", () => {
       "Mask threshold",
       AGG,
     ]) {
-      expect(input(widget, title).step).toBe("any");
+      expect(input(widget, title).step).toBe("0.01");
+      expect(input(widget, `${title} slider`).step).toBe("any");
       expect(input(widget, `${title} slider`).min).toBe("0");
       expect(input(widget, `${title} slider`).max).toBe("1");
     }
@@ -376,10 +377,42 @@ describe("WatershedParametersWidget", () => {
     ]) {
       await fill(widget, title, text);
       expect(input(widget, title).value).toBe(text);
-      expect(input(widget, title).validity.valid).toBe(true);
+      // Fine typed values may be off the spinner's grid; application validation
+      // must still accept them without rounding or using native step validity.
+      expect(input(widget, title).validity.badInput).toBe(false);
+      expect(error(widget).hidden).toBe(true);
     }
     expect(accepted().options.highThreshold).toBe(0.999999999123);
     expect(accepted().options.lowThreshold).toBe(0.00000000012345);
+  });
+
+  it("steps probability spinners by 0.01 and integer spinners by 1", async () => {
+    const { widget, accepted } = fixture();
+    await toggle(widget, MASK);
+    await toggle(widget, AGGLOMERATE);
+    const edits = [
+      ["High threshold", "highThreshold", 0.8],
+      ["Low threshold", "lowThreshold", 0.1],
+      ["Mask threshold", "maskThreshold", 0.3],
+      [AGG, "aggThreshold", 0.15],
+      ["Size threshold", "sizeThreshold", 50],
+      ["Dust threshold", "dustThreshold", 50],
+    ] as const;
+    for (const [title, key, initial] of edits) {
+      await fill(widget, title, String(initial));
+      const spinner = input(widget, title);
+      const step =
+        key === "sizeThreshold" || key === "dustThreshold" ? 1 : 0.01;
+      spinner.focus();
+      await userEvent.keyboard("{ArrowUp}");
+      await vi.advanceTimersByTimeAsync(250);
+      expect(spinner.valueAsNumber).toBeCloseTo(initial + step, 12);
+      expect(accepted().options[key]).toBeCloseTo(initial + step, 12);
+      await userEvent.keyboard("{ArrowDown}");
+      await vi.advanceTimersByTimeAsync(250);
+      expect(spinner.valueAsNumber).toBeCloseTo(initial, 12);
+      expect(accepted().options[key]).toBeCloseTo(initial, 12);
+    }
   });
 
   it("uses actual native sliders for every paired control", async () => {
