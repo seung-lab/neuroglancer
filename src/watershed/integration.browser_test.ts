@@ -2075,6 +2075,11 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
       label: (x: number) => bigint,
       count: number,
     ) => {
+      // Unchanged labels can already match while the sidebar draft is pending.
+      await vi.waitFor(() => controls.expectRecipe(recipe));
+      await expect
+        .poll(() => jobs.options().at(-1), { timeout: 60_000 })
+        .toEqual(recipe.options);
       await expectTiles(output.chunkSource, agglomerationShape, label);
       await delay(200);
       expect(jobs.shapes()).toEqual(new Array(count).fill(agglomerationShape));
@@ -2084,19 +2089,26 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
     };
     expect(controls.input("Agglomerate watershed basins").checked).toBe(false);
     expect(controls.input(agglomerationThresholdLabel).disabled).toBe(true);
-    controls.input("Agglomerate watershed basins").click();
-    controls.fill(agglomerationThresholdLabel, "0.2");
-    recipe.options = { ...recipe.options, aggThreshold: 0.2 };
-    // Real live producer clears immediately, before asynchronous cache eviction.
-    expect([
-      ...(await producer.readTile(
+    // Observe invalidation itself so the zero-label assertion does not race
+    // the sidebar debounce or the subsequent real kernel's completion.
+    const clearing = vi.fn(() => ({
+      labels: producer.readTile(
         [0, 0, 0],
         agglomerationShape,
         new AbortController().signal,
-      )),
-    ]).toEqual(new Array(30).fill(0n));
-    await delay(40);
-    expect(jobs.options()).toEqual([watershedThresholds]);
+      ),
+      options: jobs.options(),
+    }));
+    const removeClearing = producer.changed.add(clearing);
+    cleanup.push(removeClearing);
+    controls.input("Agglomerate watershed basins").click();
+    controls.fill(agglomerationThresholdLabel, "0.2");
+    recipe.options = { ...recipe.options, aggThreshold: 0.2 };
+    await vi.waitFor(() => expect(clearing).toHaveBeenCalled());
+    removeClearing();
+    const pending = clearing.mock.results[0].value;
+    expect([...(await pending.labels)]).toEqual(new Array(30).fill(0n));
+    expect(pending.options).toEqual([watershedThresholds]);
     await expectResult(() => 1n, 2); // Independent .25 > .2 contact oracle.
     controls.fill(agglomerationThresholdLabel, "0.25");
     recipe.options = { ...recipe.options, aggThreshold: 0.25 };
@@ -2113,6 +2125,7 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
     controls.fill("High threshold slider", "0.9");
     expect(controls.input("High threshold").value).toBe("0.9");
     controls.fill("Low threshold", "0.05");
+    controls.fill("Size threshold", "2");
     controls.fill("Size threshold", "1");
     controls.fill("Dust threshold", "1");
     controls.fill("Mask threshold", "0.4");

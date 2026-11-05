@@ -472,7 +472,7 @@ describe("DataSourceView editable watershed parameters", () => {
     expect(registry.get).not.toHaveBeenCalled();
   });
 
-  it("persists valid control edits and refreshes JSON without a datasource reload", () => {
+  it("persists valid control edits and refreshes JSON without a datasource reload", async () => {
     const { view, source, state, apply, loaded, setSpec, registry } =
       editableWatershedFixture();
     const size = view.element.querySelector<HTMLInputElement>(
@@ -481,10 +481,12 @@ describe("DataSourceView editable watershed parameters", () => {
     const editor = sourceStateEditor(view, "Watershed");
     size.value = "0";
     size.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(apply).toHaveBeenCalledOnce();
-    expect(state.toJSON().options.sizeThreshold).toBe(0);
-    expect(source.spec.state.options.sizeThreshold).toBe(0);
-    expect(JSON.parse(editor.getValue()).options.sizeThreshold).toBe(0);
+    await vi.waitFor(() => {
+      expect(apply).toHaveBeenCalledOnce();
+      expect(state.toJSON().options.sizeThreshold).toBe(0);
+      expect(source.spec.state.options.sizeThreshold).toBe(0);
+      expect(JSON.parse(editor.getValue()).options.sizeThreshold).toBe(0);
+    });
     expect(JSON.parse(editor.getValue()).halo).toBe(0);
     expect(state.toJSON().channelsXYZ).toEqual([2, 0, 2]);
     expect(source.loadState).toBe(loaded);

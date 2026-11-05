@@ -17,6 +17,7 @@
 import "#src/widget/range.css";
 import "#src/ui/watershed_parameters.css";
 
+import { debounce } from "lodash-es";
 import { RefCounted } from "#src/util/disposable.js";
 import { DEFAULT_WATERSHED_OPTIONS } from "#src/watershed/base.js";
 import type { WatershedRecipe } from "#src/watershed/recipe.js";
@@ -31,6 +32,8 @@ interface NumericControl {
   slider?: HTMLInputElement;
 }
 
+const PARAMETER_UPDATE_DELAY = 250;
+
 let nextWidgetId = 0;
 
 function sameRecipe(a: WatershedRecipe, b: WatershedRecipe) {
@@ -41,8 +44,9 @@ function sameRecipe(a: WatershedRecipe, b: WatershedRecipe) {
 /**
  * Editor for a prepared watershed's recipe, not its upstream inference config.
  * The owner supplies model refreshes via setRecipe and loading state via
- * setEnabled. apply must synchronously accept the recipe or throw; scheduling
- * and the live runtime's debounce belong to the owner, not to this widget.
+ * setEnabled. Drafts are validated immediately and applied after editing settles.
+ * apply must synchronously accept the recipe or throw; the live runtime retains
+ * its separate computation debounce.
  */
 export class WatershedParametersWidget extends RefCounted {
   readonly element: HTMLElement = document.createElement("fieldset");
@@ -86,6 +90,12 @@ export class WatershedParametersWidget extends RefCounted {
   private recipe: WatershedRecipe;
   private applyingRecipe: WatershedRecipe | undefined;
   private enabled = true;
+  private readonly applyWhenSettled = this.registerCancellable(
+    debounce(
+      (recipe: WatershedRecipe) => this.applyRecipe(recipe),
+      PARAMETER_UPDATE_DELAY,
+    ),
+  );
 
   constructor(
     recipe: WatershedRecipe,
@@ -232,9 +242,11 @@ export class WatershedParametersWidget extends RefCounted {
     try {
       const parsed = parseWatershedRecipe(recipe);
       if (sameRecipe(parsed, this.applyingRecipe ?? this.recipe)) return;
+      this.applyWhenSettled.cancel();
       this.recipe = parsed;
       this.showRecipe();
     } catch (error) {
+      this.applyWhenSettled.cancel();
       this.setError(error);
     }
   }
@@ -242,6 +254,7 @@ export class WatershedParametersWidget extends RefCounted {
   /** Loading must not discard drafts, trigger writes, or re-enable optionals. */
   public setEnabled(enabled: boolean): void {
     this.enabled = enabled;
+    if (!enabled) this.applyWhenSettled.cancel();
     this.updateEnabled();
   }
 
@@ -265,6 +278,7 @@ export class WatershedParametersWidget extends RefCounted {
 
   private applyDraft() {
     if (!this.enabled) return;
+    this.applyWhenSettled.cancel();
     try {
       const candidate = parseWatershedRecipe({
         ...this.recipe,
@@ -281,22 +295,27 @@ export class WatershedParametersWidget extends RefCounted {
             : {}),
         },
       });
-      if (!sameRecipe(candidate, this.recipe)) {
-        // Keep our snapshot separate from the callback's copy, and recognize
-        // synchronous setRecipe echoes without overwriting remembered drafts.
-        const snapshot = parseWatershedRecipe(candidate);
-        const previous = this.recipe;
-        this.applyingRecipe = snapshot;
-        try {
-          this.apply(candidate);
-          if (this.recipe === previous) this.recipe = snapshot;
-        } finally {
-          this.applyingRecipe = undefined;
-        }
-      }
+      if (!sameRecipe(candidate, this.recipe)) this.applyWhenSettled(candidate);
       this.setError("");
     } catch (error) {
       this.setError(error);
+    }
+  }
+
+  private applyRecipe(candidate: WatershedRecipe) {
+    // Keep our snapshot separate from the callback's copy, and recognize
+    // synchronous setRecipe echoes without overwriting remembered drafts.
+    const snapshot = parseWatershedRecipe(candidate);
+    const previous = this.recipe;
+    this.applyingRecipe = snapshot;
+    try {
+      this.apply(candidate);
+      if (this.recipe === previous) this.recipe = snapshot;
+      this.setError("");
+    } catch (error) {
+      this.setError(error);
+    } finally {
+      this.applyingRecipe = undefined;
     }
   }
 
