@@ -3469,9 +3469,11 @@ export function UserLayerWithAnnotationsMixin<
       const context = this.getSelectedAnnotationContext();
       if (context === undefined) return;
       const { annotationLayerState, annotationId } = context;
-      const entries = this.annotationStates.states.flatMap((state) =>
-        Array.from(state.source, (annotation) => ({ annotation, state })),
-      );
+      const entries =
+        this.annotationListOrder ??
+        this.annotationStates.states.flatMap((state) =>
+          Array.from(state.source, (annotation) => ({ annotation, state })),
+        );
       const selectedIndex = entries.findIndex(
         (entry) =>
           entry.state === annotationLayerState &&
