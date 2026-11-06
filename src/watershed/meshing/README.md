@@ -10,8 +10,9 @@ identity, region placement, cancellation, generation checks, and cache eviction.
 ## Contract and limits
 
 - Positive integer XYZ dimensions, X-fastest bytes (`x + nx * (y + ny * z)`),
-  at most `2**21` samples, matching the watershed limit. Bytes must be **0/255**,
-  not 0/1: upstream normalizes by 255, and extraction uses isovalue 0.5.
+  at most `2**21` samples, independently of the larger watershed limit. Bytes
+  must be **0/255**, not 0/1: upstream normalizes by 255, and extraction uses
+  isovalue 0.5.
 - Returned coordinates are XYZ voxel-model-local coordinates, including the
   upstream `+0.5` voxel-center offset on **each** axis. There is no region origin,
   physical spacing, or datasource offset applied here. The caller must place

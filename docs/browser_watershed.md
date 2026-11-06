@@ -55,8 +55,11 @@ chunks; display-chunk requests never run watershed. Normal segmentation
 visibility, selection, opacity, and colors apply; initially all nonzero labels
 are shown with selected opacity `0.5`.
 
-The computation box is limited to `2**21` (2,097,152) voxels, **including the clipped
-halo**. An oversized view reports a visible error, not a partial segmentation:
+The computation box is limited to `2**26` (67,108,864; 64 Mi) voxels, **including the
+clipped halo**. The Abiss WASM heap can grow to 4 GiB, with additional JavaScript
+input/output buffers outside that heap. Large computations can require several
+GiB of memory; complex inputs may exhaust memory before reaching the voxel limit.
+An oversized view reports a visible error, not a partial segmentation:
 **zoom in**, or add a new layer through **WASM Watershed** with a smaller halo or
 at a coarser native scale. The box is never silently split into separate
 computations. The existing layer and viewport watcher stay active so navigation
@@ -173,7 +176,7 @@ One physical extraction at a time per chunk worker bounds temporary snapshots;
 an already-running synchronous WASM call finishes before its memory is reused.
 
 There are separate limits: at most **16 approved mesh segments per layer**, the
-existing `2**21` watershed samples, and **262,144 conservative triangles /
+independent `2**21` (2,097,152) samples per mesh, and **262,144 conservative triangles /
 12,582,912 output bytes per mesh** before renderer normals and GPU buffers. The
 surface preflight counts up to five triangles per mixed cell and may reject a
 surface whose actual triangle count would fit. Errors are reported visibly;
