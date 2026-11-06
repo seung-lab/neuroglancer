@@ -154,16 +154,18 @@ complete objects or whole-volume reconstructions. Extraction uses classic
 marching cubes, not voxel-face cubes, and does not guarantee manifold topology
 for ambiguous configurations.
 
-Contained navigation keeps the same labels and mesh caches. A new watershed
-region or changed parameters immediately retires the old meshes. IDs are local
-to each result, so existing visible selections are not automatically treated as
-picks in the new result: toggle their visibility **off, then on after computation
-completes**. A visible notice identifies stale selections. Shared linked-layer
-visibility, selected-ID sets, and equivalences are never cleared automatically.
-Manual equivalences and temporary segmentation previews are unsupported for
-these generated meshes; reset them before reselecting final labels. Saved viewer
-JSON includes visibility and the watershed recipe, not meshes; restored visible
-IDs likewise require re-selection after the new computation.
+Contained navigation and identical parameters keep the same labels, selections,
+and mesh caches. A new watershed region or changed watershed/agglomeration
+parameters immediately retires the old meshes and clears visible and starred
+segment IDs, before computation completes. IDs are local to each result; select
+segments again after the new result completes. Linked segmentation layers share
+these sets, so their selections are cleared together without unlinking them.
+Equivalences are not changed. Manual equivalences and temporary segmentation
+previews are unsupported for these generated meshes; reset them before selecting
+final labels. Saved viewer JSON includes visibility and the watershed recipe,
+not meshes; restored IDs are not automatically approved as picks in a new result.
+A visible notice identifies IDs added before completion or restored without a
+new selection.
 
 Meshing runs off the main thread through the existing async-computation workers.
 It takes an owned snapshot of completed labels, not incomplete display tiles.
