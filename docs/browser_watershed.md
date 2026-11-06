@@ -175,9 +175,10 @@ Late results are discarded after cancellation, deletion, or an epoch change.
 One physical extraction at a time per chunk worker bounds temporary snapshots;
 an already-running synchronous WASM call finishes before its memory is reused.
 
-There are separate limits: at most **16 approved mesh segments per layer**, the
-independent `2**21` (2,097,152) samples per mesh, and **262,144 conservative triangles /
-12,582,912 output bytes per mesh** before renderer normals and GPU buffers. The
+Meshes accept the same `2**26` (67,108,864; 64 Mi) samples as watershed. Separate
+limits remain: at most **16 approved mesh segments per layer**, and **262,144
+conservative triangles / 12,582,912 output bytes per mesh** before renderer normals
+and GPU buffers. The
 surface preflight counts up to five triangles per mixed cell and may reject a
 surface whose actual triangle count would fit. Errors are reported visibly;
 output is never truncated. Reduce the region or recreate the layer with a smaller
