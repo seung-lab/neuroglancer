@@ -38,7 +38,7 @@ with tempfile.TemporaryDirectory(prefix="watershed-meshing-") as work:
         rustc,
         "--edition=2021", "--crate-type=cdylib", "--target=wasm32-unknown-unknown",
         "-C", "opt-level=3", "-C", "lto=yes", "-C", "panic=abort",
-        "-C", "link-arg=--max-memory=67108864",
+        "-C", "link-arg=--max-memory=134217728",
         "-C", "link-arg=-zstack-size=1048576",
         "-C", "linker=" + os.environ.get("RUST_LINKER", shutil.which("rust-lld") or "rust-lld"),
         "--remap-path-prefix=" + str(ROOT) + "=/watershed/meshing",

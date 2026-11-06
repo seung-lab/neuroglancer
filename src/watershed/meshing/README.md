@@ -10,9 +10,9 @@ identity, region placement, cancellation, generation checks, and cache eviction.
 ## Contract and limits
 
 - Positive integer XYZ dimensions, X-fastest bytes (`x + nx * (y + ny * z)`),
-  at most `2**21` samples, independently of the larger watershed limit. Bytes
-  must be **0/255**, not 0/1: upstream normalizes by 255, and extraction uses
-  isovalue 0.5.
+  at most `2**26` samples (67,108,864 bytes / 64 Mi voxels), matching the
+  watershed limit. Bytes must be **0/255**, not 0/1: upstream normalizes by 255,
+  and extraction uses isovalue 0.5.
 - Returned coordinates are XYZ voxel-model-local coordinates, including the
   upstream `+0.5` voxel-center offset on **each** axis. There is no region origin,
   physical spacing, or datasource offset applied here. The caller must place
@@ -29,13 +29,17 @@ identity, region placement, cancellation, generation checks, and cache eviction.
   has ambiguous configurations (e.g. complementary cases 5/250 emit 2/4
   triangles). Do not assume complement-symmetric or guaranteed manifold output.
 - Before loading WASM or allocating native buffers, count mixed cells. Each has
-  an upper bound of five triangles. Reject if `mixedCells * 5 > 2**18` triangles,
+  an upper bound of five triangles. Reject if `mixedCells * 5 > 2**18` triangles
+  (262,144),
   equivalently more than 12,582,912 bytes of returned positions + indices.
   This is deliberately conservative: a surface can be rejected even if its exact
   triangle count would fit. Errors are visible; output is never truncated.
-- Native output allocation is at most 9,437,184 bytes, plus a mask of at most
-  2,097,152 bytes. Native extraction allocates nothing, checks output capacity,
-  and the module has a 64 MiB linear-memory ceiling. The returned mesh byte budget
+- Native position output remains capped at 9,437,184 bytes, plus a mask of at
+  most 67,108,864 bytes. `mc_alloc` accepts 1 through 67,108,864 bytes per
+  allocation: the larger of the input-mask and native-output limits. Native
+  extraction allocates nothing and retains its `2**18`-triangle output-capacity
+  guard. The module has a 128 MiB (134,217,728-byte) linear-memory ceiling, enough
+  for the mask, native output, and 1 MiB stack. The returned mesh byte budget
   is **not** a total process-memory budget: copied inputs, scratch/native output,
   JavaScript output, renderer normals/GPU buffers, and concurrent worker realms
   all contribute. The caller must separately bound selection/concurrency/cache
@@ -76,11 +80,14 @@ SHA-256:
 | --------------------- | ------------------------------------------------------------------ |
 | `upstream/lib.rs`     | `1a0a2756d60af44b9f0612cec881bdfc9da81065ba5ca8b9804324f1fbb06c2b` |
 | `upstream/LICENSE.md` | `c23c6b31737315fbe25de3e7f1936396f49cdd93fcb55d63e311b6b7ab0bc750` |
-| `native.rs`           | `accb866557f1b2be1a009923e64d848da3a141f97b67a91b037eb9395ce76649` |
-| `marching_cubes.wasm` | `15cbcd44151e148f9ca73f1cc0409ca9fb66ce42ac26b19ee8c4014636011108` |
+| `native.rs`           | `fb39ff53b8769a50b9cb7a5c84587c102a278f1fcf63b7a1c4466bb686d1ae11` |
+| `marching_cubes.wasm` | `4c4f0593bd49b6446253f6d8faa589f235f1bf26e109bc32763e5763ecc19667` |
 
 The checked-in module is 80,636 bytes, has no imports, and exports `memory`,
 `mc_alloc`, `mc_free`, `mc_extract`, plus linker globals `__data_end`/`__heap_base`.
+Its declared non-shared memory is initially 1,114,112 bytes (17 WASM pages), with
+an explicit maximum of 134,217,728 bytes (2,048 pages). Runtime growth to that
+maximum succeeds; growth by one additional page rejects.
 
 ## Rebuild
 
@@ -118,7 +125,7 @@ Official archive URLs and verified SHA-256 values:
   `82bcf1e75ad071548bb97f11676b332dd260807572414553a06ee5d88d20a63e`
 
 Two successive builds produced the listed identical module hash. Compiler flags,
-including source/temp path remapping and the 64 MiB maximum memory, are recorded
+including source/temp path remapping and the 128 MiB maximum memory, are recorded
 in `build.py`; no network access is used by that script.
 
 ## Browser verification
@@ -135,9 +142,10 @@ npm test -- --workspace /tmp/watershed-input.workspace.mts --project browser \
   src/watershed/meshing/wasm.browser_test.ts
 ```
 
-The 11 tests exercise actual WASM geometry: singleton positions, outward winding,
-area and signed volume; planes on all three axes in a non-cubic region; merged
-interface removal and open boundaries; thin regions; byte/shape/voxel/surface
-validation; large allocations, concurrent initialization, owned inputs/outputs,
+The browser tests exercise actual WASM geometry: singleton positions, outward
+winding, area and signed volume; planes on all three axes in a non-cubic region;
+merged interface removal and open boundaries; thin regions; byte/shape/voxel/surface
+validation; full 64 Mi-voxel (`[512, 512, 256]`) sparse-object extraction with exact
+translated octahedron geometry; concurrent initialization, owned inputs/outputs,
 and recovery after rejection. They do not claim renderer integration, global
 object completeness, or topology correctness on ambiguous configurations.

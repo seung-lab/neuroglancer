@@ -19,6 +19,7 @@ import {
   extractWatershedMesh,
   MAX_WATERSHED_MESH_BYTES,
   MAX_WATERSHED_MESH_TRIANGLES,
+  MAX_WATERSHED_MESH_VOXELS,
 } from "#src/watershed/meshing/wasm.js";
 
 function maskFrom(
@@ -196,7 +197,7 @@ describe("browser WASM watershed marching cubes", () => {
       [2, 2],
       [2, 2, 2.5],
       [NaN, 2, 2],
-      [2 ** 21 + 1, 1, 1],
+      [512, 512, 257],
     ]) {
       await expect(
         extractWatershedMesh(new Uint8Array(8), shape),
@@ -214,17 +215,29 @@ describe("browser WASM watershed marching cubes", () => {
     }
   });
 
-  it("keeps the independent two-Mi-voxel mesh cap despite the larger watershed limit", async () => {
-    await expect(
-      extractWatershedMesh(new Uint8Array(), [512, 512, 256]),
-    ).rejects.toThrow("Watershed mesh exceeds the 2**21 voxel limit");
-    const result = await extractWatershedMesh(
-      new Uint8Array(2_097_152),
-      [128, 128, 128],
+  it("meshes a full 64 Mi-voxel mask with exact sparse-object geometry", async () => {
+    const shape = [512, 512, 256];
+    const mask = new Uint8Array(67_108_864);
+    mask[(128 * 512 + 256) * 512 + 256] = 255;
+    const expected = await extractWatershedMesh(singleton(), [3, 3, 3]);
+    const saved = expected.vertexPositions.slice();
+    const result = await extractWatershedMesh(mask, shape);
+    expect(MAX_WATERSHED_MESH_VOXELS).toBe(67_108_864);
+    const offset = [255, 255, 127];
+    expect(result.vertexPositions).toEqual(
+      saved.map((value, i) => value + offset[i % 3]),
     );
-    expect(result.vertexPositions.length).toBe(0);
-    expect(result.indices.length).toBe(0);
-  });
+    expect(result.indices).toEqual(expected.indices);
+    expect(result.indices.length).toBe(24);
+    expect(expected.vertexPositions).toEqual(saved);
+    expect(mask[(128 * 512 + 256) * 512 + 256]).toBe(255);
+    expect(mask[0]).toBe(0);
+    await expect(
+      extractWatershedMesh(new Uint8Array(), [512, 512, 257]),
+    ).rejects.toThrow("2**26 voxel limit");
+    const recovered = await extractWatershedMesh(singleton(), [3, 3, 3]);
+    expect(recovered.vertexPositions).toEqual(saved);
+  }, 60_000);
 
   it("rejects high-complexity surfaces before extraction and recovers without truncation", async () => {
     const mask = maskFrom([40, 40, 40], (x, y, z) => (x + y + z) % 2 === 0);

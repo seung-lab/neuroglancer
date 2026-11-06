@@ -2,12 +2,12 @@
 // The table, corner/edge numbering, and interpolation are included unchanged.
 include!(env!("MC_CORE_RS"));
 
-const MAX_VOXELS: usize = 1 << 21;
+const MAX_VOXELS: usize = 1 << 26;
 const MAX_TRIANGLES: usize = 1 << 18;
 
 #[no_mangle]
 pub extern "C" fn mc_alloc(bytes: usize) -> *mut u8 {
-    if bytes == 0 || bytes > MAX_TRIANGLES * 9 * 4 {
+    if bytes == 0 || bytes > MAX_VOXELS.max(MAX_TRIANGLES * 9 * 4) {
         return std::ptr::null_mut();
     }
     let layout = std::alloc::Layout::from_size_align(bytes, 4).unwrap();

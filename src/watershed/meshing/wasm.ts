@@ -14,9 +14,12 @@
  * limitations under the License.
  */
 
-import { validateWatershedShape } from "#src/watershed/base.js";
+import {
+  MAX_WATERSHED_VOXELS,
+  validateWatershedShape,
+} from "#src/watershed/base.js";
 
-export const MAX_WATERSHED_MESH_VOXELS = 2 ** 21;
+export const MAX_WATERSHED_MESH_VOXELS = MAX_WATERSHED_VOXELS;
 export const MAX_WATERSHED_MESH_TRIANGLES = 2 ** 18;
 export const MAX_WATERSHED_MESH_BYTES =
   MAX_WATERSHED_MESH_TRIANGLES * 3 * (3 * 4 + 4);
@@ -69,10 +72,6 @@ export async function extractWatershedMesh(
   indices: Uint32Array<ArrayBuffer>;
 }> {
   const voxels = validateWatershedShape(shapeXYZ);
-  if (voxels > MAX_WATERSHED_MESH_VOXELS)
-    throw new Error(
-      "Watershed mesh exceeds the 2**21 voxel limit; use a smaller region for meshing",
-    );
   const [x, y, z] = shapeXYZ;
   if (!(mask instanceof Uint8Array) || mask.length !== voxels)
     throw new Error(
