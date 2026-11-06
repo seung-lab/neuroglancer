@@ -658,11 +658,11 @@ export class WatershedDataSourceProvider implements DataSourceProvider {
       volume.registerDisposer(
         registerWatershedAttachment(volume, (layer) => {
           detachAttachment?.();
-          const detach = owned?.attach(layer);
           const selection =
             live !== undefined && mesh !== undefined
               ? new WatershedMeshSelection(live, layer)
               : undefined;
+          const detach = owned?.attach(layer);
           if (
             mesh !== undefined &&
             selection !== undefined &&

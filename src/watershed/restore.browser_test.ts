@@ -39,6 +39,7 @@ import { makeLayer } from "#src/layer/index.js";
 import { SharedDisjointUint64Sets } from "#src/shared_disjoint_sets.js";
 import { statusMessages } from "#src/status.js";
 import { WatchableValue } from "#src/trackable_value.js";
+import { Uint64OrderedSet } from "#src/uint64_ordered_set.js";
 import { Uint64Set } from "#src/uint64_set.js";
 import { RefCounted } from "#src/util/disposable.js";
 import { MessageList, MessageSeverity } from "#src/util/message_list.js";
@@ -736,15 +737,32 @@ describe("watershed recipe datasource restoration", () => {
     const mesh = data.subsources[1].subsource.mesh as WatershedMeshSource;
     const output = makeOutput();
     const visibleSegments = new Uint64Set();
+    const selectedSegments = new Uint64OrderedSet();
     const segmentEquivalences = new SharedDisjointUint64Sets();
     output.registerDisposer(visibleSegments);
+    output.registerDisposer(selectedSegments);
     output.registerDisposer(segmentEquivalences);
+    // Match SegmentationUserLayerGroupState's visible/starred synchronization.
+    output.registerDisposer(
+      selectedSegments.changed.add((ids, add) => {
+        if (!add) {
+          if (ids) visibleSegments.delete(ids);
+          else visibleSegments.clear();
+        }
+      }),
+    );
+    output.registerDisposer(
+      visibleSegments.changed.add((ids, add) => {
+        if (add && ids) selectedSegments.add(ids);
+      }),
+    );
     Object.assign(output, {
       layer: {
         type: "segmentation",
         displayState: {
           segmentationGroupState: new WatchableValue({
             visibleSegments,
+            selectedSegments,
             segmentEquivalences,
             useTemporaryVisibleSegments: new WatchableValue(false),
             useTemporarySegmentEquivalences: new WatchableValue(false),
@@ -752,9 +770,22 @@ describe("watershed recipe datasource restoration", () => {
         },
       },
     });
+    visibleSegments.add(7n);
+    selectedSegments.add(9n); // Starred but hidden restored ID.
+    expect(visibleSegments.toJSON()).toEqual(["7"]);
+    expect(selectedSegments.toJSON()).toEqual(["7", "9"]);
+    // Initial viewport delivery may start an epoch synchronously inside attach.
+    vi.mocked(watchWatershedViewport).mockImplementationOnce(
+      (_viewer, _input, _output, onRegion) => {
+        onRegion(region);
+        return vi.fn();
+      },
+    );
     const detach = attachWatershedVolume(volume(data), output)!;
     const live = latestLive();
     const selection = mesh.selection!;
+    expect(visibleSegments.toJSON()).toEqual([]);
+    expect(selectedSegments.toJSON()).toEqual([]);
     expect(selection).toBeDefined();
     expect(watchWatershedViewport).toHaveBeenCalledExactlyOnceWith(
       f.viewer,
@@ -771,6 +802,17 @@ describe("watershed recipe datasource restoration", () => {
     expect(selection.allows(7n, live.epoch)).toBe(true);
     expect(mesh.state.value.generation).toBeGreaterThan(generation);
     expect(mesh.state.value.epoch).toBe(live.epoch);
+    expect(visibleSegments.toJSON()).toEqual(["7"]);
+    expect(selectedSegments.toJSON()).toEqual(["7"]);
+    const selectedEpoch = live.epoch;
+    const selectedGeneration = mesh.state.value.generation;
+    latestWatch()[3](region);
+    latestWatch()[3]({ lowerXYZ: [10, 8, 8], shapeXYZ: [1, 1, 1] });
+    expect(live.epoch).toBe(selectedEpoch);
+    expect(mesh.state.value.generation).toBe(selectedGeneration);
+    expect(selection.allows(7n, live.epoch)).toBe(true);
+    expect(visibleSegments.toJSON()).toEqual(["7"]);
+    expect(selectedSegments.toJSON()).toEqual(["7"]);
     expect(prepareAffinityInput).toHaveBeenCalledExactlyOnceWith(f.image, 2);
     expect(f.input.readRegion).toHaveBeenCalledOnce();
     expect(f.input.dispose).not.toHaveBeenCalled();

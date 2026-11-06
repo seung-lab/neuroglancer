@@ -58,6 +58,7 @@ import type { VolumeChunk as FrontendVolumeChunk } from "#src/sliceview/volume/f
 import "#src/sliceview/uncompressed_chunk_format.js";
 import { statusMessages } from "#src/status.js";
 import { WatchableValue } from "#src/trackable_value.js";
+import { Uint64OrderedSet } from "#src/uint64_ordered_set.js";
 import { Uint64Set } from "#src/uint64_set.js";
 import { RefCounted } from "#src/util/disposable.js";
 import { vec3 } from "#src/util/geom.js";
@@ -1174,10 +1175,11 @@ function makeMeshOutput(
   restored: bigint[] = [],
 ) {
   const visibleSegments = new Uint64Set();
+  const selectedSegments = new Uint64OrderedSet();
   const segmentEquivalences = new SharedDisjointUint64Sets();
-  for (const id of restored) visibleSegments.add(id);
   const groupState = new WatchableValue({
     visibleSegments,
+    selectedSegments,
     segmentEquivalences,
     useTemporaryVisibleSegments: new WatchableValue(false),
     useTemporarySegmentEquivalences: new WatchableValue(false),
@@ -1193,11 +1195,27 @@ function makeMeshOutput(
     },
   }) as unknown as ManagedUserLayer;
   output.registerDisposer(visibleSegments);
+  output.registerDisposer(selectedSegments);
   output.registerDisposer(segmentEquivalences);
+  // Match SegmentationUserLayerGroupState's visible/starred synchronization.
+  output.registerDisposer(
+    selectedSegments.changed.add((ids, add) => {
+      if (!add) {
+        if (ids) visibleSegments.delete(ids);
+        else visibleSegments.clear();
+      }
+    }),
+  );
+  output.registerDisposer(
+    visibleSegments.changed.add((ids, add) => {
+      if (add && ids) selectedSegments.add(ids);
+    }),
+  );
+  for (const id of restored) visibleSegments.add(id);
   session.frontendManager.registerDisposer(() => {
     if (!output.wasDisposed) output.dispose();
   });
-  return { output, visibleSegments, groupState };
+  return { output, visibleSegments, selectedSegments, groupState };
 }
 
 async function meshFixture(complete = true) {
@@ -1218,7 +1236,8 @@ async function meshFixture(complete = true) {
   const volume = data.subsources[0].subsource
     .volume as WatershedMultiscaleVolumeChunkSource;
   const mesh = data.subsources[1].subsource.mesh as WatershedMeshSource;
-  const { output, visibleSegments, groupState } = makeMeshOutput(session);
+  const { output, visibleSegments, selectedSegments, groupState } =
+    makeMeshOutput(session);
   const detach = attachWatershedVolume(volume, output)!;
   return {
     session,
@@ -1231,6 +1250,7 @@ async function meshFixture(complete = true) {
     mesh,
     output,
     visibleSegments,
+    selectedSegments,
     groupState,
     detach,
   };
@@ -1296,6 +1316,8 @@ describe("session-local live watershed mesh publication RPC", () => {
     expect(await meshRequest(f.session, f.mesh)).toBeUndefined();
     f.producer.state.completed = f.snapshot;
     f.producer.changed.dispatch();
+    expect(f.visibleSegments.toJSON()).toEqual(["7"]);
+    expect(f.selectedSegments.toJSON()).toEqual(["7"]);
     expect(await meshRequest(f.session, f.mesh)).toBeUndefined();
     f.visibleSegments.delete(7n);
     const oldGeneration = f.mesh.state.value.generation;
@@ -1307,9 +1329,13 @@ describe("session-local live watershed mesh publication RPC", () => {
     expect(await meshRequest(f.session, f.mesh)).toEqual(f.mesh.state.value);
     expect(f.producer.getCompletedSnapshot).not.toHaveBeenCalled();
     expect(f.producer.readTile).not.toHaveBeenCalled();
+    f.selectedSegments.add(9n); // Starred but hidden IDs must be cleared too.
+    expect(f.selectedSegments.toJSON()).toEqual(["7", "9"]);
     f.producer.state.epoch++;
     f.producer.state.completed = undefined;
     f.producer.changed.dispatch();
+    expect(f.visibleSegments.toJSON()).toEqual([]);
+    expect(f.selectedSegments.toJSON()).toEqual([]);
     expect(f.mesh.state.value.epoch).toBe(6);
     expect(await meshRequest(f.session, f.mesh)).toBeUndefined();
     expect(f.mesh.invalidateCache).toHaveBeenCalled();
@@ -1416,6 +1442,8 @@ describe("session-local live watershed mesh publication RPC", () => {
     ).toBeUndefined();
     expect(f.snapshot.labels.byteLength).toBe(32);
     expect(f.mesh.state.value.epoch).toBe(6);
+    expect(f.visibleSegments.toJSON()).toEqual([]);
+    expect(f.selectedSegments.toJSON()).toEqual([]);
   });
 
   it("clears drawable manifest IDs synchronously, requests redraw, and rejects late old-generation manifests", async () => {
@@ -1584,8 +1612,21 @@ describe("session-local live watershed mesh publication RPC", () => {
     );
     f.visibleSegments.add(7n);
     expect(await meshRequest(f.session, f.mesh)).toEqual(f.mesh.state.value);
+    f.selectedSegments.add(9n);
+    f.producer.state.completed = undefined;
     ++f.producer.state.epoch;
     f.producer.changed.dispatch();
+    expect(f.visibleSegments.toJSON()).toEqual([]);
+    expect(f.selectedSegments.toJSON()).toEqual([]);
+    expect(statusMessages.size).toBe(baseline);
+    // An explicit pick while computation is pending still needs a later repick.
+    f.visibleSegments.add(7n);
+    f.producer.state.completed = {
+      ...f.snapshot,
+      epoch: f.producer.state.epoch,
+    };
+    f.producer.changed.dispatch();
+    expect(await meshRequest(f.session, f.mesh)).toBeUndefined();
     expect(statusMessages.size).toBe(baseline + 1);
     expect([...statusMessages].at(-1)?.element.textContent).toContain(
       "re-select segments",
@@ -1652,12 +1693,26 @@ describe("session-local live watershed mesh publication RPC", () => {
       const f = await meshFixture();
       const baseline = statusMessages.size;
       f.visibleSegments.add(7n);
+      f.selectedSegments.add(9n);
+      f.producer.state.completed = undefined;
       ++f.producer.state.epoch;
       f.producer.changed.dispatch();
+      expect(f.visibleSegments.toJSON()).toEqual([]);
+      expect(f.selectedSegments.toJSON()).toEqual([]);
+      expect(statusMessages.size).toBe(baseline);
+      // Recreate stale consent explicitly, rather than retaining epoch-old IDs.
+      f.visibleSegments.add(7n);
+      f.producer.state.completed = {
+        ...f.snapshot,
+        epoch: f.producer.state.epoch,
+      };
+      f.producer.changed.dispatch();
+      expect(await meshRequest(f.session, f.mesh)).toBeUndefined();
       expect(statusMessages.size).toBe(baseline + 1);
       let active = {
         output: f.output,
         visibleSegments: f.visibleSegments,
+        selectedSegments: f.selectedSegments,
         groupState: f.groupState,
         selection: f.mesh.selection!,
         detach: f.detach,

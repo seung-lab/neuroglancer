@@ -199,6 +199,7 @@ async function fixture(
   session.lowThreshold = "0";
   session.sizeThreshold = "0";
   session.dustThreshold = "0";
+  const prepareInput = vi.spyOn(session.dependencies, "prepareInput");
   const createLive = vi.spyOn(session.dependencies, "createLive");
   // Hide synchronously at attachment, before a viewport can demand computation.
   const removeHide = viewer.layerManager.layersChanged.add(() => {
@@ -219,7 +220,17 @@ async function fixture(
   await expect.poll(() => result.isReady(), { timeout: 30_000 }).toBe(true);
   expect(result.visible).toBe(!hidden);
   const live = createLive.mock.results.at(-1)!.value;
-  return { viewer, dispose, image, result, live, jobs, chunks };
+  return {
+    viewer,
+    dispose,
+    image,
+    result,
+    live,
+    jobs,
+    chunks,
+    prepareInput,
+    createLive,
+  };
 }
 
 function output(result: ManagedUserLayer) {
@@ -389,6 +400,9 @@ describe("selected live watershed meshes (real Viewer, Chrome and WASM)", () => 
       (offset[0] + fragments[0].meshData.vertexPositions[0]) * spacing[0],
     ).toBeCloseTo(1.2e-7, 14);
 
+    // Include a starred-but-hidden ID: both NG selection sets must survive a
+    // contained view and an identical parameter restore, not just visibility.
+    out.group.selectedSegments.add(2n);
     const epoch = live.epoch;
     const counts = [
       jobs.watershed.length,
@@ -397,8 +411,12 @@ describe("selected live watershed meshes (real Viewer, Chrome and WASM)", () => 
     ];
     const cached = [...out.meshSource.fragmentSource.chunks.values()];
     position(viewer, [3, 1.5, 1.5]);
+    const recipe = out.dataSource.state!.toJSON();
+    out.dataSource.state!.restoreState(JSON.parse(JSON.stringify(recipe)));
     await settle(viewer);
     expect(live.epoch).toBe(epoch);
+    expect([...out.group.visibleSegments]).toEqual([1n]);
+    expect([...out.group.selectedSegments].sort()).toEqual([1n, 2n]);
     expect([
       jobs.watershed.length,
       jobs.mesh.length,
@@ -407,10 +425,51 @@ describe("selected live watershed meshes (real Viewer, Chrome and WASM)", () => 
     expect([...out.meshSource.fragmentSource.chunks.values()]).toEqual(cached);
     expect(out.volumeLayer.multiscaleSource).toBe(out.volume);
     expect(chunks).toEqual(["10-15_20-23_-3-0"]);
+
+    // A real watershed-parameter edit, unlike the identical restore above,
+    // starts a new label epoch and resets visible AND starred-only IDs.
+    const state = out.dataSource.state!;
+    const previous = state.toJSON() as WatershedRecipe;
+    state.restoreState({
+      ...previous,
+      options: { ...previous.options, dustThreshold: 1 },
+    });
+    expect(live.epoch).toBeGreaterThan(epoch);
+    expect(live.hasCompletedResult).toBe(false);
+    expect([...out.group.visibleSegments]).toEqual([]);
+    expect([...out.group.selectedSegments]).toEqual([]);
+    // The labels happen to be identical: a cached transport tile alone cannot
+    // prove that this rerun has completed and a new pick can be approved.
+    await expect
+      .poll(() => live.hasCompletedResult, { timeout: 60_000 })
+      .toBe(true);
+    await expect
+      .poll(() => labels(out.chunkSource), { timeout: 60_000 })
+      .toEqual(splitLabels);
+    await expect
+      .poll(() =>
+        residentFragments(out.meshSource).some((chunk) =>
+          fragments.includes(chunk),
+        ),
+      )
+      .toBe(false);
+    await settle(viewer);
+    expect([...out.group.visibleSegments]).toEqual([]);
+    expect([...out.group.selectedSegments]).toEqual([]);
+    expect(residentFragments(out.meshSource)).toHaveLength(0);
+    expect(jobs.snapshots).toHaveLength(counts[2]);
+    out.group.visibleSegments.add(1n);
+    expect(out.meshSource.selection!.allows(1n, live.epoch)).toBe(true);
+    const rerun = await awaitMesh(out.meshSource);
+    expectInternalPlane(rerun);
+    for (const fragment of rerun) expect(fragments).not.toContain(fragment);
+    expect(jobs.watershed).toHaveLength(counts[0] + 1);
+    expect(jobs.snapshots).toHaveLength(counts[2] + 1);
+    expect(out.volumeLayer.multiscaleSource).toBe(out.volume);
   }, 120_000);
 
-  it("adds a clipped ROI's nonzero lower bound exactly once to native vertices", async () => {
-    const { result, live } = await fixture("clipped", {
+  it("preserves clipped native vertices and clears both selection sets on a non-contained viewport", async () => {
+    const { viewer, result, live, jobs } = await fixture("clipped", {
       shapeXYZ: [133, 3, 3],
       splitX: 66,
       center: [66.5, 1.5, 1.5],
@@ -431,6 +490,64 @@ describe("selected live watershed meshes (real Viewer, Chrome and WASM)", () => 
     expect(
       (offset[0] + fragments[0].meshData.vertexPositions[0]) * spacing[0],
     ).toBeCloseTo(7.6e-7, 14);
+    out.group.selectedSegments.add(2n);
+    const epoch = live.epoch;
+    const snapshotCount = jobs.snapshots.length;
+    let observedEpoch = epoch;
+    const resets: Array<{
+      visible: bigint[];
+      selected: bigint[];
+      ready: boolean;
+      snapshots: number;
+    }> = [];
+    cleanup.push(
+      live.changed.add(() => {
+        if (live.epoch === observedEpoch) return;
+        observedEpoch = live.epoch;
+        resets.push({
+          visible: [...out.group.visibleSegments],
+          selected: [...out.group.selectedSegments],
+          ready: live.hasCompletedResult,
+          snapshots: jobs.snapshots.length,
+        });
+      }),
+    );
+    // Expand the actual Viewer viewport beyond the old completed ROI/halo.
+    // Keep the split in view so the same final numeric ID has a known surface.
+    viewer.crossSectionScale.value = 2;
+    await expect.poll(() => live.epoch).toBeGreaterThan(epoch);
+    expect(resets.length).toBeGreaterThan(0);
+    for (const reset of resets) {
+      expect(reset).toEqual({
+        visible: [],
+        selected: [],
+        ready: false,
+        snapshots: snapshotCount,
+      });
+    }
+    await expect
+      .poll(() => live.hasCompletedResult, { timeout: 60_000 })
+      .toBe(true);
+    expect(live.getCompletedSnapshot()!.lowerXYZ[0]).toBeLessThan(
+      snapshot.lowerXYZ[0],
+    );
+    await expect
+      .poll(() =>
+        residentFragments(out.meshSource).some((chunk) =>
+          fragments.includes(chunk),
+        ),
+      )
+      .toBe(false);
+    await settle(viewer);
+    expect([...out.group.visibleSegments]).toEqual([]);
+    expect([...out.group.selectedSegments]).toEqual([]);
+    expect(residentFragments(out.meshSource)).toHaveLength(0);
+    expect(jobs.snapshots).toHaveLength(snapshotCount);
+    out.group.visibleSegments.add(1n);
+    const expanded = await awaitMesh(out.meshSource);
+    expectInternalPlane(expanded, 66);
+    for (const fragment of expanded) expect(fragments).not.toContain(fragment);
+    expect(jobs.snapshots).toHaveLength(snapshotCount + 1);
   }, 120_000);
 
   it("keeps hidden layers idle and rejects a pick made before final labels exist", async () => {
@@ -439,6 +556,7 @@ describe("selected live watershed meshes (real Viewer, Chrome and WASM)", () => 
     });
     const out = output(result);
     out.group.visibleSegments.add(1n);
+    out.group.selectedSegments.add(2n);
     await settle(viewer);
     expect(live.hasCompletedResult).toBe(false);
     expect(jobs.watershed).toHaveLength(0);
@@ -450,93 +568,149 @@ describe("selected live watershed meshes (real Viewer, Chrome and WASM)", () => 
       .poll(() => labels(out.chunkSource), { timeout: 60_000 })
       .toEqual(splitLabels);
     await settle(viewer);
-    expect(out.group.visibleSegments.has(1n)).toBe(true);
+    // Starting the first observed live epoch clears the pre-completion pick.
+    expect([...out.group.visibleSegments]).toEqual([]);
+    expect([...out.group.selectedSegments]).toEqual([]);
     expect(jobs.watershed).toHaveLength(1);
     expect(jobs.snapshots).toHaveLength(0);
     expect(residentFragments(out.meshSource)).toHaveLength(0);
-    out.group.visibleSegments.delete(1n);
     out.group.visibleSegments.add(1n);
     expectInternalPlane(await awaitMesh(out.meshSource));
     expect(jobs.snapshots).toHaveLength(1);
   }, 120_000);
 
-  it("restores a recipe into a fresh worker without treating saved segment visibility as a current-epoch pick", async () => {
-    const original = await fixture("restore");
-    const old = output(original.result);
-    await expect
-      .poll(() => labels(old.chunkSource), { timeout: 60_000 })
-      .toEqual(splitLabels);
-    old.group.visibleSegments.add(1n);
-    expectInternalPlane(await awaitMesh(old.meshSource));
-    const saved = JSON.parse(
-      JSON.stringify(original.viewer.state.toJSON()),
-    ) as {
-      layers: Array<{
-        name: string;
-        source: { url: string; state: WatershedRecipe };
-        segments?: string[];
-      }>;
-    };
-    const layer = saved.layers.find(
-      (layer) => layer.name === original.result.name,
-    )!;
-    expect(layer.source.url).toBe("watershed://recipe");
-    expect(layer.segments).toEqual(["1"]);
-    saved.layers = [layer]; // Restore the recipe's embedded affinity source.
-    expect(JSON.stringify(saved)).not.toMatch(
-      /meshData|vertexPositions|fragmentIds/,
-    );
-    original.dispose();
-    expect(original.live.signal.aborted).toBe(true);
+  it.each([false, true])(
+    "restores a recipe into a fresh worker without approving saved IDs (initially hidden: %s)",
+    async (hidden) => {
+      const original = await fixture("restore");
+      const old = output(original.result);
+      await expect
+        .poll(() => labels(old.chunkSource), { timeout: 60_000 })
+        .toEqual(splitLabels);
+      old.group.visibleSegments.add(1n);
+      old.group.selectedSegments.add(2n);
+      expectInternalPlane(await awaitMesh(old.meshSource));
+      const saved = JSON.parse(
+        JSON.stringify(original.viewer.state.toJSON()),
+      ) as {
+        layers: Array<{
+          name: string;
+          source: { url: string; state: WatershedRecipe };
+          segments?: string[];
+          visible?: boolean;
+        }>;
+      };
+      const layer = saved.layers.find(
+        (layer) => layer.name === original.result.name,
+      )!;
+      expect(layer.source.url).toBe("watershed://recipe");
+      expect(layer.segments).toEqual(["1", "!2"]);
+      layer.visible = !hidden;
+      saved.layers = [layer]; // Restore the recipe's embedded affinity source.
+      expect(JSON.stringify(saved)).not.toMatch(
+        /meshData|vertexPositions|fragmentIds/,
+      );
+      original.dispose();
+      expect(original.live.signal.aborted).toBe(true);
 
-    const { viewer } = makeViewer();
-    const jobs = observeJobs(viewer);
-    expect(viewer.dataContext.worker).not.toBe(
-      original.viewer.dataContext.worker,
-    );
-    bindWatershed(viewer);
-    viewer.state.restoreState(saved);
-    await expect
-      .poll(
-        () => {
-          const result = viewer.layerManager.managedLayers[0];
-          for (const source of result?.layer?.dataSources ?? []) {
-            if (source.loadState?.error !== undefined)
-              throw source.loadState.error;
-          }
-          return result?.isReady();
-        },
-        { timeout: 60_000 },
-      )
-      .toBe(true);
-    expect(viewer.layerManager.managedLayers).toHaveLength(1);
-    const out = output(viewer.layerManager.managedLayers[0]);
-    expect(out.volume).not.toBe(old.volume);
-    expect(out.meshSource).not.toBe(old.meshSource);
-    await expect
-      .poll(() => labels(out.chunkSource), { timeout: 60_000 })
-      .toEqual(splitLabels);
-    await settle(viewer);
-    expect(out.group.visibleSegments.has(1n)).toBe(true);
-    expect(jobs.watershed).toHaveLength(1);
-    expect(jobs.snapshots).toHaveLength(0);
-    expect(residentFragments(out.meshSource)).toHaveLength(0);
-    out.group.visibleSegments.delete(1n);
-    out.group.visibleSegments.add(1n);
-    expectInternalPlane(await awaitMesh(out.meshSource));
-    expect(jobs.snapshots).toHaveLength(1);
-    expect(original.chunks).toHaveLength(2);
-  }, 120_000);
+      const { viewer } = makeViewer();
+      const jobs = observeJobs(viewer);
+      expect(viewer.dataContext.worker).not.toBe(
+        original.viewer.dataContext.worker,
+      );
+      bindWatershed(viewer);
+      viewer.state.restoreState(saved);
+      await expect
+        .poll(
+          () => {
+            const result = viewer.layerManager.managedLayers[0];
+            for (const source of result?.layer?.dataSources ?? []) {
+              if (source.loadState?.error !== undefined)
+                throw source.loadState.error;
+            }
+            return result?.isReady();
+          },
+          { timeout: 60_000 },
+        )
+        .toBe(true);
+      expect(viewer.layerManager.managedLayers).toHaveLength(1);
+      const restored = viewer.layerManager.managedLayers[0];
+      const out = output(restored);
+      expect(out.volume).not.toBe(old.volume);
+      expect(out.meshSource).not.toBe(old.meshSource);
+      if (hidden) {
+        // Attachment alone does not erase saved state or approve restored IDs.
+        // The first observed epoch begins only when this output becomes visible.
+        expect([...out.group.visibleSegments]).toEqual([1n]);
+        expect([...out.group.selectedSegments].sort()).toEqual([1n, 2n]);
+        expect(
+          out.meshSource.selection!.allows(
+            1n,
+            out.meshSource.state.value.epoch,
+          ),
+        ).toBe(false);
+        await settle(viewer);
+        expect(jobs.watershed).toHaveLength(0);
+        expect(jobs.snapshots).toHaveLength(0);
+        expect(residentFragments(out.meshSource)).toHaveLength(0);
+        restored.setVisible(true);
+      }
+      await expect
+        .poll(() => labels(out.chunkSource), { timeout: 60_000 })
+        .toEqual(splitLabels);
+      await settle(viewer);
+      // This fresh output-only restore observes an initial live run, so saved
+      // visible and starred IDs are reset, never implicitly approved as picks.
+      expect([...out.group.visibleSegments]).toEqual([]);
+      expect([...out.group.selectedSegments]).toEqual([]);
+      expect(jobs.watershed).toHaveLength(1);
+      expect(jobs.snapshots).toHaveLength(0);
+      expect(residentFragments(out.meshSource)).toHaveLength(0);
+      out.group.visibleSegments.add(1n);
+      expectInternalPlane(await awaitMesh(out.meshSource));
+      expect(jobs.snapshots).toHaveLength(1);
+      expect(original.chunks).toHaveLength(2);
+    },
+    120_000,
+  );
 
-  it("retires old meshes on rerun without rewriting group selection and requires off/on repicking of final labels", async () => {
-    const { viewer, result, live, jobs } = await fixture("rerun");
+  it("clears visible and starred IDs on agglomeration reruns and directly remeshes the same final ID", async () => {
+    const { viewer, image, result, live, jobs, prepareInput, createLive } =
+      await fixture("rerun");
     const out = output(result);
     await expect
       .poll(() => labels(out.chunkSource), { timeout: 60_000 })
       .toEqual(splitLabels);
     out.group.visibleSegments.add(1n);
+    out.group.selectedSegments.add(2n); // Starred but not visible.
     const old = await awaitMesh(out.meshSource);
     expectInternalPlane(old);
+    const input = prepareInput.mock.results[0].value;
+    const inputLayer = image.layer;
+    const unrelated = makeLayer(viewer.layerSpecification, "unrelated", {
+      type: "segmentation",
+      source: [],
+      segments: ["9", "!10"],
+    });
+    viewer.layerSpecification.add(unrelated);
+    const unrelatedGroup = (unrelated.layer as SegmentationUserLayer)
+      .displayState.segmentationGroupState.value;
+    const expectIdentityAndUnrelatedSelection = () => {
+      expect(prepareInput).toHaveBeenCalledOnce();
+      expect(createLive).toHaveBeenCalledOnce();
+      expect(prepareInput.mock.results[0].value).toBe(input);
+      expect(createLive.mock.results[0].value).toBe(live);
+      expect(image.layer).toBe(inputLayer);
+      expect(input.signal.aborted).toBe(false);
+      expect(live.signal.aborted).toBe(false);
+      expect(out.volumeLayer.multiscaleSource).toBe(out.volume);
+      expect(out.dataSource.subsources[0].subsource.volume).toBe(out.volume);
+      expect(out.dataSource.subsources[1].subsource.mesh).toBe(out.meshSource);
+      expect([...unrelatedGroup.visibleSegments]).toEqual([9n]);
+      expect([...unrelatedGroup.selectedSegments].sort()).toEqual(
+        [9n, 10n].sort(),
+      );
+    };
     const firstEpoch = live.epoch;
     const firstSnapshotCount = jobs.snapshots.length;
     const firstGeneration = out.meshSource.state.value.generation;
@@ -550,7 +724,10 @@ describe("selected live watershed meshes (real Viewer, Chrome and WASM)", () => 
     expect(out.meshSource.state.value.generation).toBeGreaterThan(
       firstGeneration,
     );
-    expect(out.group.visibleSegments.has(1n)).toBe(true);
+    expect([...out.group.visibleSegments]).toEqual([]);
+    expect([...out.group.selectedSegments]).toEqual([]);
+    expect(live.hasCompletedResult).toBe(false);
+    expectIdentityAndUnrelatedSelection();
     await expect
       .poll(() => live.hasCompletedResult, { timeout: 60_000 })
       .toBe(true);
@@ -563,14 +740,13 @@ describe("selected live watershed meshes (real Viewer, Chrome and WASM)", () => 
       )
       .toBe(false);
     await settle(viewer);
-    expect(out.group.visibleSegments.has(1n)).toBe(true);
+    expect([...out.group.visibleSegments]).toEqual([]);
+    expect([...out.group.selectedSegments]).toEqual([]);
     expect(residentFragments(out.meshSource)).toHaveLength(0);
     expect(jobs.snapshots).toHaveLength(firstSnapshotCount);
-    expect(out.volumeLayer.multiscaleSource).toBe(out.volume);
-    expect(out.dataSource.subsources[0].subsource.volume).toBe(out.volume);
-    expect(out.dataSource.subsources[1].subsource.mesh).toBe(out.meshSource);
+    expectIdentityAndUnrelatedSelection();
 
-    out.group.visibleSegments.delete(1n);
+    // No visibility-off toggle: epoch reset made the old numeric ID pickable.
     out.group.visibleSegments.add(1n);
     const merged = await awaitMesh(out.meshSource);
     // Agglomeration merges ALL final voxels into ID 1. An open, all-foreground
@@ -585,5 +761,80 @@ describe("selected live watershed meshes (real Viewer, Chrome and WASM)", () => 
     expect(out.meshLayer.isReady()).toBe(true);
     expect(jobs.snapshots).toHaveLength(firstSnapshotCount + 1);
     expect(jobs.watershed).toHaveLength(2);
+    expect([...out.group.visibleSegments]).toEqual([1n]);
+    expect([...out.group.selectedSegments]).toEqual([1n]);
+
+    // Turning agglomeration OFF restores the original native 1/2 interface,
+    // without replacing the input, producer, volume, or output mesh source.
+    out.group.selectedSegments.add(2n);
+    const mergedEpoch = live.epoch;
+    const mergedGeneration = out.meshSource.state.value.generation;
+    state.restoreState(recipe);
+    expect(live.epoch).toBeGreaterThan(mergedEpoch);
+    expect(out.meshSource.state.value.generation).toBeGreaterThan(
+      mergedGeneration,
+    );
+    expect(live.hasCompletedResult).toBe(false);
+    expect([...out.group.visibleSegments]).toEqual([]);
+    expect([...out.group.selectedSegments]).toEqual([]);
+    expectIdentityAndUnrelatedSelection();
+    await expect
+      .poll(() => labels(out.chunkSource), { timeout: 60_000 })
+      .toEqual(splitLabels);
+    await expect
+      .poll(() =>
+        residentFragments(out.meshSource).some((chunk) =>
+          merged.includes(chunk),
+        ),
+      )
+      .toBe(false);
+    await settle(viewer);
+    expect([...out.group.visibleSegments]).toEqual([]);
+    expect([...out.group.selectedSegments]).toEqual([]);
+    expect(residentFragments(out.meshSource)).toHaveLength(0);
+    expect(jobs.snapshots).toHaveLength(firstSnapshotCount + 1);
+    out.group.visibleSegments.add(1n);
+    const split = await awaitMesh(out.meshSource);
+    expectInternalPlane(split);
+    for (const fragment of split) {
+      expect(old).not.toContain(fragment);
+      expect(merged).not.toContain(fragment);
+    }
+    expect(jobs.snapshots).toHaveLength(firstSnapshotCount + 2);
+    expect(jobs.watershed).toHaveLength(3);
+    expectIdentityAndUnrelatedSelection();
+
+    // Identical parameters preserve the fresh selection and cached geometry.
+    const counts = [
+      jobs.watershed.length,
+      jobs.mesh.length,
+      jobs.snapshots.length,
+    ];
+    const cached = [...out.meshSource.fragmentSource.chunks.values()];
+    const splitEpoch = live.epoch;
+    state.restoreState(JSON.parse(JSON.stringify(recipe)));
+    await settle(viewer);
+    expect(live.epoch).toBe(splitEpoch);
+    expect([...out.group.visibleSegments]).toEqual([1n]);
+    expect([...out.group.selectedSegments]).toEqual([1n]);
+    expect([
+      jobs.watershed.length,
+      jobs.mesh.length,
+      jobs.snapshots.length,
+    ]).toEqual(counts);
+    expect([...out.meshSource.fragmentSource.chunks.values()]).toEqual(cached);
+    expectInternalPlane(await awaitMesh(out.meshSource));
+
+    // Completion uses the same signal as retirement, but without a new epoch
+    // it must keep fresh picks approved. The publication may refresh caches.
+    live.changed.dispatch();
+    expect(live.epoch).toBe(splitEpoch);
+    expect([...out.group.visibleSegments]).toEqual([1n]);
+    expect([...out.group.selectedSegments]).toEqual([1n]);
+    expect(out.meshSource.selection!.allows(1n, splitEpoch)).toBe(true);
+    expectInternalPlane(await awaitMesh(out.meshSource));
+    expect([...out.group.visibleSegments]).toEqual([1n]);
+    expect([...out.group.selectedSegments]).toEqual([1n]);
+    expectIdentityAndUnrelatedSelection();
   }, 120_000);
 });

@@ -201,7 +201,8 @@ export class WatershedMeshSelection extends RefCounted {
           this.stop();
           return;
         }
-        if (this.epoch !== this.live.epoch) {
+        const epochChanged = this.epoch !== this.live.epoch;
+        if (epochChanged) {
           this.epoch = this.live.epoch;
           this.resetApprovals();
         }
@@ -241,6 +242,11 @@ export class WatershedMeshSelection extends RefCounted {
               ),
             );
           }
+        }
+        if (epochChanged) {
+          group?.selectedSegments.clear();
+          if (this.stopped) return;
+          visible?.clear();
         }
         for (const id of this.approvedIDs) {
           if (!visible?.has(id)) {
