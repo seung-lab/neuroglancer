@@ -878,12 +878,22 @@ describe("native affinity input", () => {
     expect(f.source.refCount).toBe(1);
   });
 
-  it("caps reads at 2**21 spatial voxels before allocation/fetch", async () => {
-    const f = fixture({ upper: [2097153, 1, 1, 5] });
+  it("caps reads at 2**26 spatial voxels before allocation/fetch", async () => {
+    const f = fixture({ upper: [512, 512, 257, 5] });
     const input = f.prepare();
     await expect(
-      input.readRegion([0, 0, 0], [2097153, 1, 1], [0, 1, 2], signal),
-    ).rejects.toThrow("2**21");
+      input.readRegion([0, 0, 0], [512, 512, 257], [0, 1, 2], signal),
+    ).rejects.toThrow("2**26");
+    expect(f.source.fetchChunk).not.toHaveBeenCalled();
+    input.dispose();
+  });
+
+  it("allows a 64 Mi-voxel shape through to channel validation without allocating", async () => {
+    const f = fixture({ upper: [512, 512, 256, 5] });
+    const input = f.prepare();
+    await expect(
+      input.readRegion([0, 0, 0], [512, 512, 256], [], signal),
+    ).rejects.toThrow("Select 1..4 in-bounds affinity channels");
     expect(f.source.fetchChunk).not.toHaveBeenCalled();
     input.dispose();
   });

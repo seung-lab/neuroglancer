@@ -214,6 +214,18 @@ describe("browser WASM watershed marching cubes", () => {
     }
   });
 
+  it("keeps the independent two-Mi-voxel mesh cap despite the larger watershed limit", async () => {
+    await expect(
+      extractWatershedMesh(new Uint8Array(), [512, 512, 256]),
+    ).rejects.toThrow("Watershed mesh exceeds the 2**21 voxel limit");
+    const result = await extractWatershedMesh(
+      new Uint8Array(2_097_152),
+      [128, 128, 128],
+    );
+    expect(result.vertexPositions.length).toBe(0);
+    expect(result.indices.length).toBe(0);
+  });
+
   it("rejects high-complexity surfaces before extraction and recovers without truncation", async () => {
     const mask = maskFrom([40, 40, 40], (x, y, z) => (x + y + z) % 2 === 0);
     expect(mask.length).toBeLessThan(2 ** 21);

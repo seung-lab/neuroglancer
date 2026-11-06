@@ -65,7 +65,6 @@ import * as matrix from "#src/util/matrix.js";
 import { NullarySignal, Signal } from "#src/util/signal.js";
 import { attachWatershedVolume } from "#src/watershed/attachment.js";
 import type { WatershedResult } from "#src/watershed/base.js";
-import { MAX_WATERSHED_VOXELS } from "#src/watershed/base.js";
 import type {
   CompletedWatershedSnapshot,
   LiveWatershed,
@@ -501,6 +500,19 @@ describe("session-local watershed volume RPC", () => {
         unitsXYZ: ["invalid", "m", "m"],
       }),
     ).toThrow("units");
+    // Validate large shapes using a tiny buffer, never a cap-sized snapshot.
+    expect(() =>
+      publishWatershedResult(session.frontendManager, {
+        ...makeResult(),
+        shapeXYZ: [512, 512, 256],
+      }),
+    ).toThrow("data length");
+    expect(() =>
+      publishWatershedResult(session.frontendManager, {
+        ...makeResult(),
+        shapeXYZ: [512, 512, 257],
+      }),
+    ).toThrow("2**26 voxel limit");
     const handle = publishWatershedResult(
       session.frontendManager,
       makeResult(),
@@ -588,10 +600,8 @@ describe("session-local watershed volume RPC", () => {
 
   it("bounds aggregate snapshots plus metadata per manager and reclaims disposal capacity", () => {
     const session = makeSession();
-    const input = {
-      ...makeResult([128, 128, 128]),
-      data: new Uint32Array(MAX_WATERSHED_VOXELS),
-    };
+    // Keep each snapshot at 8 MiB, independent of the watershed compute cap.
+    const input = makeResult([128, 128, 128]);
     const count = WATERSHED_RESULT_MEMORY_LIMIT / input.data.byteLength - 1;
     const handles = Array.from({ length: count }, () =>
       publishWatershedResult(session.frontendManager, input),

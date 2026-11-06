@@ -68,6 +68,18 @@ describe("standalone Abiss watershed WASM", () => {
     }
   });
 
+  it("computes correct labels above the former two-Mi-voxel limit", async () => {
+    const shape = [129, 129, 129];
+    const voxels = shape.reduce((n, x) => n * x, 1);
+    expect(voxels).toBeGreaterThan(2 ** 21);
+    const input = new Float32Array(3 * voxels).fill(1);
+    const output = await runWatershedWasm(input, shape, keep);
+    expect(output.length).toBe(voxels);
+    expect(output.every((label) => label === 1)).toBe(true);
+    expect(input.every((value) => value === 1)).toBe(true);
+    expect(output.buffer).not.toBe(input.buffer);
+  });
+
   it("matches native agglomeration, cleanup ordering, and disabled parity fixtures", async () => {
     expect(agglomerationFixtures).toHaveLength(31);
     for (const f of agglomerationFixtures) {
@@ -366,7 +378,11 @@ describe("standalone Abiss watershed WASM", () => {
       runWatershedWasm(new Float32Array(20), [5, 1, 1], keep),
     ).rejects.toThrow("[3,Z,Y,X]");
     await expect(
-      runWatershedWasm(new Float32Array(), [129, 129, 129], keep),
-    ).rejects.toThrow("2**21");
+      runWatershedWasm(new Float32Array(), [512, 512, 257], keep),
+    ).rejects.toThrow("2**26");
+    // A valid cap-sized shape reaches buffer validation, without native allocation.
+    await expect(
+      runWatershedWasm(new Float32Array(), [512, 512, 256], keep),
+    ).rejects.toThrow("planar Float32");
   });
 });

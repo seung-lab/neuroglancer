@@ -1858,9 +1858,10 @@ describe("regional live watershed (real WebGL, chunk RPC and native WASM)", () =
     expect(jobs.shapes()).toEqual([[180, 60, 16]]);
   }, 90_000);
 
-  it("visibly rejects a union over 2**21 voxels with ZERO split fallback calls and recovers on the next smaller view", async () => {
+  it("visibly rejects a union over 2**26 voxels with ZERO split fallback calls and recovers on the next smaller view", async () => {
     const jobs = observeWatershedWorker();
-    const shape = [256, 256, 128],
+    // Only metadata grows; rejected regions must not fetch or allocate data.
+    const shape = [1024, 1024, 512],
       offset = [0, 0, 0];
     const native = await precomputed(
       "https://watershed-integration.invalid/oversize",
@@ -1873,17 +1874,17 @@ describe("regional live watershed (real WebGL, chunk RPC and native WASM)", () =
     const viewer = makeViewer();
     viewer.layout.restoreState("4panel");
     const image = await addImage(viewer, native.url);
-    positionViewer(viewer, [128.5, 128.5, 64.5], offset, 4);
+    positionViewer(viewer, [512.5, 512.5, 256.5], offset, 32);
     const session = openWatershed(viewer, image);
     configure(session);
     const result = await addFromDialog(session, false, "error");
     const output = outputSource(result, shape, offset);
     await expect.poll(() => session.statusLevel).toBe("error");
-    expect(session.status).toMatch(/2\*\*21|2,097,152|2097152/);
+    expect(session.status).toMatch(/2\*\*26|67,108,864|67108864/);
     expect(session.dialog!.body.textContent).toContain(session.status);
     expect(
       visibleHaloShape(viewer, shape, offset).reduce((a, b) => a * b, 1),
-    ).toBeGreaterThan(2 ** 21);
+    ).toBeGreaterThan(2 ** 26);
     const blank = await readTile(output.chunkSource, 0);
     expect(blank.labels).toEqual(expectedTile(blank.size, () => 0n));
     await delay(250);
@@ -1895,7 +1896,7 @@ describe("regional live watershed (real WebGL, chunk RPC and native WASM)", () =
       .poll(
         () =>
           output.renderLayer.getValueAt(
-            output.worldPosition([128.5, 128.5, 64.5]),
+            output.worldPosition([512.5, 512.5, 256.5]),
           ),
         {
           timeout: 60_000,
@@ -1903,7 +1904,8 @@ describe("regional live watershed (real WebGL, chunk RPC and native WASM)", () =
       )
       .toBe(1n);
     const halo = visibleHaloShape(viewer, shape, offset);
-    expect(halo.reduce((a, b) => a * b, 1)).toBeLessThanOrEqual(2 ** 21);
+    // Recovery deliberately runs a tiny real kernel, not a 64 Mi-voxel job.
+    expect(halo.reduce((a, b) => a * b, 1)).toBeLessThan(64 ** 3);
     expect(jobs.shapes()).toEqual([halo]);
     expect(viewer.layerManager.has(result)).toBe(true);
   }, 90_000);
@@ -2217,7 +2219,8 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
   it("creates a custom halo/channel mapping, then restores runtime 17/1/5/17-slice halos and recovers from an oversize saved config without sidebar controls", async () => {
     const jobs = observeWatershedWorker();
     const regions = vi.spyOn(LiveWatershed.prototype, "setRegion");
-    const shape = [148, 50, 512],
+    // Keep the visible kernels small while allowing an oversized saved halo.
+    const shape = [148, 50, 16384],
       offset = [10, 20, -3];
     const native = await precomputed(
       "https://watershed-integration.invalid/sidebar-z-halo",
@@ -2323,10 +2326,11 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
     // This is a valid parameter but an invalid compute region: never split it
     // or run a fallback. The error must be visible, and recovery nonfatal.
     const fetched = native.chunks.length;
-    restoreHalo(512);
+    expect(shape.reduce((a, b) => a * b, 1)).toBeGreaterThan(2 ** 26);
+    restoreHalo(16384);
     controls.expectRecipe(recipe);
     await expect.poll(() => session.statusLevel).toBe("error");
-    expect(session.status).toMatch(/2\*\*21|2,097,152|2097152/);
+    expect(session.status).toMatch(/2\*\*26|67,108,864|67108864/);
     session.open();
     expect(session.dialog!.body.checkVisibility()).toBe(true);
     expect(session.dialog!.body.textContent).toContain(session.status);
@@ -2339,7 +2343,7 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
     expectedShapes.push([148, 50, 5]);
     await expectDomain(254, 5);
     expect(session.statusLevel, session.status).toBe("info");
-    expect(session.status).not.toMatch(/2\*\*21 voxel limit/);
+    expect(session.status).not.toMatch(/2\*\*26 voxel limit/);
     for (const z of [254.5, 258.5, 256.5]) {
       viewer.position.value = output.worldPosition([74.5, 25.5, z]);
       await settleView();

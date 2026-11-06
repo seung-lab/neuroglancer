@@ -647,7 +647,7 @@ export class WatershedDialog extends FramedDialog {
       "Add a segmentation with one shared result over the XYZ bounding box enclosing all visible slice views. As you navigate, a new box is computed after a 150 ms debounce, with the configured halo per face (default 8 native voxels) clipped to source bounds. UINT64 labels are fetched and rendered in chunks, not computed per display chunk; labels may change across navigation. This is not equivalent to whole-volume watershed.",
     );
     text(
-      "The computation is limited to 2**21 (2,097,152) voxels INCLUDING the halo. Oversized views report an error: zoom in or add a layer with a smaller halo or at a coarser native scale. Computation is never silently split. Hiding the output or removing all relevant slice views clears its result.",
+      "The computation is limited to 2**26 (67,108,864) voxels INCLUDING the halo. Oversized views report an error: zoom in or add a layer with a smaller halo or at a coarser native scale. Computation is never silently split. Hiding the output or removing all relevant slice views clears its result.",
     );
     text(
       "Affinities connect each voxel towards its negative axes (−X, −Y, −Z). Integer values are normalized by their data type maximum; floating-point values are unchanged. Non-native transforms and mutable Python volume sources are rejected.",

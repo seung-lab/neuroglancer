@@ -109,11 +109,20 @@ describe("watershed snapshot metadata", () => {
     ).toThrow();
   });
 
-  it("accepts the maximum ROI but rejects a detached input", () => {
-    const data = new Uint32Array(MAX_WATERSHED_VOXELS);
-    const result = { ...makeResult(), data, shapeXYZ: [128, 128, 128] };
-    expect(getWatershedResultInfo(result).shapeXYZ).toEqual([128, 128, 128]);
-    structuredClone(data, { transfer: [data.buffer] });
+  it("validates the 64 Mi-voxel shape boundary before checking data length without allocating labels", () => {
+    const result = makeResult();
+    expect(() =>
+      getWatershedResultInfo({ ...result, shapeXYZ: [512, 512, 256] }),
+    ).toThrow("data length");
+    expect(() =>
+      getWatershedResultInfo({ ...result, shapeXYZ: [512, 512, 257] }),
+    ).toThrow("2**26 voxel limit");
+  });
+
+  it("accepts a small valid snapshot but rejects its detached input", () => {
+    const result = makeResult();
+    expect(getWatershedResultInfo(result).shapeXYZ).toEqual([5, 4, 3]);
+    structuredClone(result.data, { transfer: [result.data.buffer] });
     expect(() => getWatershedResultInfo(result)).toThrow("data length");
   });
 
@@ -195,11 +204,23 @@ describe("live watershed metadata and tile bounds", () => {
     { unitsXYZ: ["unknown", "m", "m"] },
     { spacingXYZ: [0, 1, 1] },
     { offsetXYZ: [Infinity, 0, 0] },
-    { shapeXYZ: [256, 256, 256], chunkShapeXYZ: [256, 256, 256] },
+    { shapeXYZ: [512, 512, 257], chunkShapeXYZ: [512, 512, 257] },
   ])("rejects invalid live metadata %j", (override) => {
     expect(() =>
       getLiveWatershedInfo({ ...makeLiveInfo(), ...override }),
     ).toThrow();
+  });
+
+  it("accepts exactly 64 Mi voxels per tile using metadata alone", () => {
+    const shapeXYZ = [512, 512, 256];
+    const info = getLiveWatershedInfo({
+      ...makeLiveInfo(),
+      shapeXYZ,
+      chunkShapeXYZ: shapeXYZ,
+    });
+    expect(validateLiveWatershedChunkBounds(info, [0, 0, 0], shapeXYZ)).toBe(
+      2 ** 26,
+    );
   });
 
   it("requires aligned full tiles or exact clipped final tiles, in local XYZ", () => {

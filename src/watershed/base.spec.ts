@@ -67,7 +67,12 @@ describe("watershed validation", () => {
   });
 
   it("allows exactly the bounded volume size and zero cleanup thresholds", () => {
-    expect(validateWatershedShape([128, 128, 128])).toBe(MAX_WATERSHED_VOXELS);
+    expect(MAX_WATERSHED_VOXELS).toBe(67_108_864);
+    expect(validateWatershedShape([512, 512, 256])).toBe(67_108_864);
+    expect(validateWatershedShape([128, 128, 128])).toBe(2 ** 21);
+    expect(() => validateWatershedShape([67_108_865, 1, 1])).toThrow(
+      "2**26 voxel limit",
+    );
     expect(() =>
       validateWatershedOptions({
         highThreshold: 1,
@@ -177,7 +182,7 @@ describe("watershed validation", () => {
     [1.5, 2, 3],
     [NaN, 2, 3],
     [Infinity, 2, 3],
-    [129, 129, 129],
+    [512, 512, 257],
   ])("rejects unsafe shape %j", (...shape) => {
     expect(() => validateWatershedShape(shape)).toThrow();
   });

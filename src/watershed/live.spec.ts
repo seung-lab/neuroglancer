@@ -632,9 +632,9 @@ describe("live watershed parameter editing", () => {
       [74, 84, 61],
       [128, 128, 128],
     ]);
-    live.setParameters([0, 1, 2], DEFAULT_WATERSHED_OPTIONS, 1);
+    live.setParameters([0, 1, 2], DEFAULT_WATERSHED_OPTIONS, 512);
     expect(onError).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ message: expect.stringContaining("2**21") }),
+      expect.objectContaining({ message: expect.stringContaining("2**26") }),
     );
     expect(await live.readTile([64, 64, 64], [64, 64, 32], signal)).toEqual(
       new BigUint64Array(64 * 64 * 32),
@@ -1480,7 +1480,7 @@ describe("whole-viewport live watershed", () => {
     live.dispose();
   });
 
-  it("reuses a completed region at the voxel cap without demanding another halo", async () => {
+  it("reuses a completed large region without demanding another halo", async () => {
     const { input } = fixture([512, 512, 512]);
     const onError = vi.fn();
     const live = new LiveWatershed(
@@ -1617,8 +1617,45 @@ describe("whole-viewport live watershed", () => {
     live.dispose();
   });
 
+  it("schedules exactly 64 Mi voxels without allocation, rejects a larger view, and recovers", async () => {
+    const { input } = fixture([512, 512, 512]);
+    const gate = Promise.withResolvers<WatershedResult>();
+    compute.mockImplementationOnce(() => gate.promise);
+    const onError = vi.fn();
+    const live = new LiveWatershed(
+      input,
+      [0, 1, 2],
+      DEFAULT_WATERSHED_OPTIONS,
+      onError,
+      0,
+    );
+    live.setRegion([10, 20, -3], [512, 512, 256]);
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(1);
+    expect(compute.mock.calls[0].slice(1, 3)).toEqual([
+      [10, 20, -3],
+      [512, 512, 256],
+    ]);
+    expect(onError).not.toHaveBeenCalled();
+    expect(live.hasCompletedResult).toBe(false);
+    live.setRegion([10, 20, -3], [512, 512, 257]);
+    expect(onError).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ message: expect.stringContaining("2**26") }),
+    );
+    expect(compute.mock.calls[0][5].aborted).toBe(true);
+    gate.resolve(result([1, 1, 1]));
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(1);
+    expect(live.hasCompletedResult).toBe(false);
+    live.setRegion([10, 20, -3], [8, 8, 8]);
+    await settle();
+    expect(compute).toHaveBeenCalledTimes(2);
+    expect(live.hasCompletedResult).toBe(true);
+    live.dispose();
+  });
+
   it("reports an oversized whole region without splitting it, then recovers on zoom in", async () => {
-    const { input } = fixture([512, 512, 64]);
+    const { input } = fixture([512, 512, 257]);
     const onError = vi.fn();
     const live = new LiveWatershed(
       input,
@@ -1626,10 +1663,10 @@ describe("whole-viewport live watershed", () => {
       DEFAULT_WATERSHED_OPTIONS,
       onError,
     );
-    live.setRegion([10, 20, -3], [512, 512, 64]);
+    live.setRegion([10, 20, -3], [512, 512, 257]);
     await settle();
     expect(onError).toHaveBeenCalledWith(
-      expect.objectContaining({ message: expect.stringContaining("2**21") }),
+      expect.objectContaining({ message: expect.stringContaining("2**26") }),
     );
     expect(compute).not.toHaveBeenCalled();
     expect(await live.readTile([0, 0, 0], [64, 64, 32], signal)).toEqual(

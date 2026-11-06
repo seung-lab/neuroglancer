@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-export const MAX_WATERSHED_VOXELS = 2 ** 21;
+export const MAX_WATERSHED_VOXELS = 2 ** 26;
 /** Default isotropic padding in native voxels on each side of the ROI. */
 export const DEFAULT_WATERSHED_HALO = 8;
 
@@ -78,7 +78,7 @@ export function validateWatershedShape(shapeXYZ: readonly number[]): number {
   }
   const voxels = shapeXYZ.reduce((a, b) => a * b, 1);
   if (!Number.isSafeInteger(voxels) || voxels > MAX_WATERSHED_VOXELS) {
-    throw new Error("Watershed ROI exceeds the 2**21 voxel limit");
+    throw new Error("Watershed ROI exceeds the 2**26 voxel limit");
   }
   return voxels;
 }

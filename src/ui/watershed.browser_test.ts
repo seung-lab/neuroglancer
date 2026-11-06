@@ -466,7 +466,7 @@ describe("WASM watershed UI", () => {
       "not computed per display chunk",
       "labels may change across navigation",
       "not equivalent to whole-volume watershed",
-      "2**21 (2,097,152) voxels INCLUDING the halo",
+      "2**26 (67,108,864) voxels INCLUDING the halo",
       "zoom in",
       "coarser native scale",
       "never silently split",
@@ -1489,14 +1489,20 @@ describe("WASM watershed UI", () => {
     "keeps an initial recoverable %s error visible instead of replacing it with Add success",
     async (kind) => {
       const f = fixture();
+      f.prepareInput.mockImplementationOnce(() => {
+        const input = makeInput(0);
+        input.upperBoundXYZ = input.lowerBoundXYZ.map((x) => x + 1024);
+        f.inputs.push(input);
+        return input;
+      });
       const message =
         kind === "compute"
-          ? "Region exceeds 2**21 voxels including halo"
+          ? "Region exceeds 2**26 voxels including halo"
           : "Unsupported slice geometry";
       const watch = f.watchViewport.getMockImplementation()!;
       f.watchViewport.mockImplementationOnce((...args) => {
         const dispose = watch(...args);
-        args[3]({ lowerXYZ: [10, 20, -30], shapeXYZ: [300, 200, 100] });
+        args[3]({ lowerXYZ: [10, 20, -30], shapeXYZ: [512, 512, 512] });
         if (kind === "compute") f.onErrors[0](new Error(message));
         else args[4](new Error(message));
         return dispose;
@@ -1757,7 +1763,7 @@ describe("WASM watershed UI", () => {
     expect(f.session.statusLevel).toBe("info");
   });
 
-  it.each(["worker failed", "Region exceeds 2**21 voxels including halo"])(
+  it.each(["worker failed", "Region exceeds 2**26 voxels including halo"])(
     "keeps a live layer and watcher after recoverable computation error: %s",
     async (message) => {
       const f = fixture();
@@ -1797,6 +1803,13 @@ describe("WASM watershed UI", () => {
 
   it("recovers the visible status after a real halo-cap retry without viewport navigation", async () => {
     const f = fixture();
+    // Enlarge only source metadata: the rejected halo must exceed 64 Mi voxels.
+    f.prepareInput.mockImplementationOnce(() => {
+      const input = makeInput(0);
+      input.upperBoundXYZ = input.lowerBoundXYZ.map((x) => x + 1024);
+      f.inputs.push(input);
+      return input;
+    });
     let live: LiveWatershed | undefined;
     f.createLive.mockImplementationOnce(
       (...args) => (live = new LiveWatershed(...args)),
@@ -1816,23 +1829,25 @@ describe("WASM watershed UI", () => {
     const status = f.session.dialog!.body.querySelector('[role="status"]')!;
     const region = { lowerXYZ: [100, 90, 10], shapeXYZ: [16, 12, 8] };
     f.watchers[0].onRegion(region);
-    producer.setParameters([0, 1, 2], DEFAULT_WATERSHED_OPTIONS, 200);
+    producer.setParameters([0, 1, 2], DEFAULT_WATERSHED_OPTIONS, 512);
     expect(f.session.statusLevel).toBe("error");
-    expect(status.textContent).toContain("2**21 voxel limit");
+    expect(status.textContent).toContain("2**26 voxel limit");
     const failure = status.textContent;
     expect(vi.mocked(computeWatershed)).not.toHaveBeenCalled();
+    expect(f.inputs.at(-1)!.readRegion).not.toHaveBeenCalled();
     // A second invalid retry dispatches changed *before* onError. The new
     // failure must remain visible rather than being mistaken for completion.
-    producer.setParameters([0, 1, 2], DEFAULT_WATERSHED_OPTIONS, 201);
+    producer.setParameters([0, 1, 2], DEFAULT_WATERSHED_OPTIONS, 513);
     expect(f.session.statusLevel).toBe("error");
     expect(status.getAttribute("data-severity")).toBe("error");
-    expect(status.textContent).toContain("2**21 voxel limit");
+    expect(status.textContent).toContain("2**26 voxel limit");
+    expect(vi.mocked(computeWatershed)).not.toHaveBeenCalled();
 
     producer.setParameters([0, 1, 2], DEFAULT_WATERSHED_OPTIONS, 0);
     expect(f.session.statusLevel).toBe("info");
     expect(status.getAttribute("data-severity")).toBe("info");
     expect(status.textContent).toContain(f.resultLayers[0].name);
-    expect(status.textContent).not.toContain("2**21 voxel limit");
+    expect(status.textContent).not.toContain("2**26 voxel limit");
     await vi.waitFor(async () => {
       const labels = await producer.readTile(
         [64, 64, 32],
@@ -1850,7 +1865,7 @@ describe("WASM watershed UI", () => {
       expect.any(AbortSignal),
     );
     expect(f.session.statusLevel).toBe("info");
-    expect(status.textContent).not.toContain("2**21 voxel limit");
+    expect(status.textContent).not.toContain("2**26 voxel limit");
     expect(failure).toContain("Adjust sidebar thresholds");
     expect(failure).toContain(
       "add a layer in WASM Watershed with a smaller halo",

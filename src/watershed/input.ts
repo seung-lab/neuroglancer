@@ -16,9 +16,7 @@ import { DataType } from "#src/util/data_type.js";
 import { valueOrThrow } from "#src/util/error.js";
 import * as matrix from "#src/util/matrix.js";
 import { supportedUnits } from "#src/util/si_units.js";
-
-// Keep input usable independently of the watershed runtime.
-const MAX_VOXELS = 2 ** 21;
+import { MAX_WATERSHED_VOXELS } from "#src/watershed/base.js";
 const AXES = ["x", "y", "z"] as const;
 
 export interface PreparedAffinityInput {
@@ -609,8 +607,8 @@ export function prepareAffinityInput(
           );
         }
         const count = shapeXYZ.reduce((a, b) => a * b, 1);
-        if (!Number.isSafeInteger(count) || count > MAX_VOXELS)
-          throw new RangeError("Affinity region exceeds 2**21 voxels");
+        if (!Number.isSafeInteger(count) || count > MAX_WATERSHED_VOXELS)
+          throw new RangeError("Affinity region exceeds 2**26 voxels");
         if (
           channelsXYZ.length < 1 ||
           channelsXYZ.length > 4 ||

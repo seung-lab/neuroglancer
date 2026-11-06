@@ -1500,9 +1500,10 @@ describe("live watershed recipe parameter state", () => {
       state.restoreState({ ...original, halo: 512 });
       expect(statusMessages.size).toBe(baseline + 1);
       expect([...statusMessages].at(-1)?.element.textContent).toContain(
-        "2**21 voxel limit",
+        "2**26 voxel limit",
       );
       expect(requestAsyncComputation).not.toHaveBeenCalled();
+      expect(f.input.readRegion).not.toHaveBeenCalled();
       if (dismissed) {
         [...statusMessages].at(-1)!.element.querySelector("button")!.click();
         expect(statusMessages.size).toBe(baseline);
@@ -1532,6 +1533,8 @@ describe("live watershed recipe parameter state", () => {
     attachWatershedVolume(volume(data), makeOutput());
     latestWatch()[3](region);
     parameters(data).restoreState({ ...f.recipe, halo: 512 });
+    expect(requestAsyncComputation).not.toHaveBeenCalled();
+    expect(f.input.readRegion).not.toHaveBeenCalled();
     const oldStatus = [...statusMessages].at(-1)!;
     oldStatus.element.querySelector("button")!.click();
     expect(statusMessages.size).toBe(baseline);

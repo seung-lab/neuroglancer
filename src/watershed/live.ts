@@ -300,7 +300,7 @@ export class LiveWatershed {
           validateWatershedShape(shape);
         } catch {
           throw new Error(
-            "Visible watershed region including its halo exceeds the 2**21 voxel limit; zoom in or select a coarser native source scale. The region will not be split into separate watersheds.",
+            "Visible watershed region including its halo exceeds the 2**26 voxel limit; zoom in or select a coarser native source scale. The region will not be split into separate watersheds.",
           );
         }
         region = { lower, shape };
