@@ -727,6 +727,7 @@ export class NumericalPropertiesSummary extends RefCounted {
         if (property.description) {
           spacers[1].title = property.description;
         }
+        spacers[1].appendChild(resetButton);
         container.appendChild(spacers[0]);
         container.appendChild(inputs[0]);
         const lessEqual1 = document.createElement("div");
@@ -744,7 +745,6 @@ export class NumericalPropertiesSummary extends RefCounted {
         container.appendChild(lessEqual2);
         container.appendChild(inputs[1]);
         container.appendChild(spacers[2]);
-        spacers[2].appendChild(resetButton);
       } else {
         container.appendChild(inputs[0]);
         container.appendChild(inputs[1]);

@@ -231,6 +231,7 @@
 }
 
 .neuroglancer-property-summary-reset {
+  flex-shrink: 0;
   background: transparent;
   border: 0;
   color: white;
