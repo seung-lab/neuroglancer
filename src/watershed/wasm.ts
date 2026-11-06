@@ -128,10 +128,10 @@ export async function runWatershedWasm(
   let affinityPointer = 0;
   let labelPointer = 0;
   try {
-    affinityPointer = wasm.malloc(
-      affinityCount * Float32Array.BYTES_PER_ELEMENT,
-    );
-    labelPointer = wasm.malloc(voxels * Uint32Array.BYTES_PER_ELEMENT);
+    // WASM i32 exports appear signed in JS; offsets above 2 GiB are unsigned.
+    affinityPointer =
+      wasm.malloc(affinityCount * Float32Array.BYTES_PER_ELEMENT) >>> 0;
+    labelPointer = wasm.malloc(voxels * Uint32Array.BYTES_PER_ELEMENT) >>> 0;
     if (affinityPointer === 0 || labelPointer === 0)
       throw new Error(
         "Abiss watershed WASM allocation failed; use a smaller ROI",
@@ -179,7 +179,7 @@ export async function runWatershedWasm(
             voxels,
           );
     if (status !== 0) {
-      const start = wasm.abiss_watershed_last_error();
+      const start = wasm.abiss_watershed_last_error() >>> 0;
       const heap = new Uint8Array(wasm.memory.buffer);
       const end = heap.indexOf(0, start);
       const message =
