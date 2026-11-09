@@ -128,6 +128,13 @@
   opacity: 0.5;
 }
 
+.neuroglancer-annotation-filter-results
+  .neuroglancer-segment-query-result-tag[aria-disabled="true"]
+  > * {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
 .neuroglancer-annotation-properties-header {
   display: flex;
   align-items: baseline;
@@ -138,7 +145,8 @@
   font-weight: bold;
 }
 
-.neuroglancer-annotation-hide-derived-properties {
+.neuroglancer-annotation-hide-derived-properties,
+.neuroglancer-annotation-show-unavailable-options {
   display: inline-flex;
   align-items: center;
   gap: 4px;

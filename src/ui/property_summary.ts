@@ -146,6 +146,7 @@ export interface IncludeExcludeChip {
   totalCount: number;
   included: boolean;
   excluded: boolean;
+  disabled?: boolean;
   onToggle: (target: "include" | "exclude", value: boolean) => void;
   headerLabel?: string;
   headerActive?: boolean;
@@ -1055,6 +1056,9 @@ export function renderIncludeExcludeChips(
       chipElement.appendChild(connector);
     }
     const inQuery = chip.included || chip.excluded;
+    chipElement.dataset.count = String(chip.count);
+    chipElement.dataset.filtered = String(inQuery);
+    chipElement.setAttribute("aria-disabled", String(chip.disabled ?? false));
     const addToggleButton = (include: boolean) => {
       const sideCount = include ? chip.count : chip.totalCount - chip.count;
       const toggleEl = document.createElement("div");
@@ -1072,6 +1076,7 @@ export function renderIncludeExcludeChips(
               return selected;
             },
             set value(v: boolean) {
+              if (chip.disabled) return;
               chip.onToggle(include ? "include" : "exclude", v);
             },
             changed: neverSignal,
@@ -1098,6 +1103,7 @@ export function renderIncludeExcludeChips(
       );
       headerBtn.textContent = chip.headerLabel;
       headerBtn.dataset.active = chip.headerActive ? "true" : "false";
+      headerBtn.disabled = chip.disabled ?? false;
       if (chip.desc) headerBtn.title = chip.desc;
       headerBtn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -1117,6 +1123,7 @@ export function renderIncludeExcludeChips(
       labelEl.textContent = chip.label;
       if (chip.desc) labelEl.title = chip.desc;
       labelEl.addEventListener("click", () => {
+        if (chip.disabled) return;
         chip.onToggle("include", !chip.included && !chip.excluded);
       });
       chipElement.appendChild(labelEl);

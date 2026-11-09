@@ -485,6 +485,7 @@ export class AnnotationLayerView extends AccordionTab {
   private categoricalSummaryContainer = document.createElement("div");
   private typeSummaryContainer = document.createElement("div");
   private propertyDetailsOpen = new Map<string, boolean>();
+  private showUnavailableEnumOptions = false;
   private numericalSummaryContainer = document.createElement("div");
   private derivedSummaryContainer = document.createElement("div");
   private derivedWarningElement = document.createElement("div");
@@ -775,7 +776,22 @@ export class AnnotationLayerView extends AccordionTab {
     this.registerEventListener(hideDerivedCheckbox, "change", () => {
       this.derivedSummaryContainer.hidden = hideDerivedCheckbox.checked;
     });
-    propertiesHeader.appendChild(hideDerivedLabel);
+    const showUnavailableLabel = document.createElement("label");
+    showUnavailableLabel.classList.add(
+      "neuroglancer-annotation-show-unavailable-options",
+    );
+    const showUnavailableCheckbox = document.createElement("input");
+    showUnavailableCheckbox.type = "checkbox";
+    showUnavailableLabel.append(
+      showUnavailableCheckbox,
+      "Show unavailable options",
+    );
+    this.registerEventListener(showUnavailableCheckbox, "change", () => {
+      this.showUnavailableEnumOptions = showUnavailableCheckbox.checked;
+      const result = this.annotationQueryResult.value;
+      if (result !== undefined) this.updateQueryStatistics(result);
+    });
+    propertiesHeader.append(hideDerivedLabel, showUnavailableLabel);
     this.queryStatistics.content.append(
       propertiesHeader,
       this.typeSummaryContainer,
@@ -1772,17 +1788,24 @@ export class AnnotationLayerView extends AccordionTab {
         const label = prop.enumLabels[vi];
         const count = counts.get(val) ?? 0;
         const fieldId = prop.identifier;
-        const isConstrained =
-          (constraint?.include.includes(val) ?? false) ||
-          (constraint?.exclude.includes(val) ?? false);
-        if (count === 0 && !isConstrained && counts.size !== 0) continue;
+        const included = constraint?.include.includes(val) ?? false;
+        const excluded = constraint?.exclude.includes(val) ?? false;
+        if (
+          !this.showUnavailableEnumOptions &&
+          count === 0 &&
+          !included &&
+          !excluded
+        ) {
+          continue;
+        }
         chips.push({
           key: `${fieldId}=${val}`,
           label,
           count,
           totalCount: result.count,
-          included: constraint?.include.includes(val) ?? false,
-          excluded: constraint?.exclude.includes(val) ?? false,
+          included,
+          excluded,
+          disabled: count === 0 && !included && !excluded,
           onToggle: (target, value) => {
             const curEnumConstraints =
               (
