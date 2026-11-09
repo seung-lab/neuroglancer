@@ -121,6 +121,10 @@ const ANNOTATION_LIST_DESCRIPTIONS_VISIBLE_KEY =
   "annotationListDescriptionsVisible";
 const ANNOTATION_LIST_SORT_KEY = "annotationListSort";
 const ANNOTATION_LIST_QUERY_KEY = "annotationListQuery";
+const ANNOTATION_LIST_HIDE_DERIVED_PROPERTIES_KEY =
+  "annotationListHideDerivedProperties";
+const ANNOTATION_LIST_SHOW_UNAVAILABLE_OPTIONS_KEY =
+  "annotationListShowUnavailableOptions";
 const ANNOTATION_RELATIONSHIPS_JSON_KEY = "annotationRelationships";
 const CROSS_SECTION_RENDER_SCALE_JSON_KEY = "crossSectionAnnotationSpacing";
 const PROJECTION_RENDER_SCALE_JSON_KEY = "projectionAnnotationSpacing";
@@ -574,6 +578,12 @@ export class AnnotationUserLayer extends Base {
     this.annotationListDescriptionsVisible.restoreState(
       specification[ANNOTATION_LIST_DESCRIPTIONS_VISIBLE_KEY],
     );
+    this.annotationListHideDerivedProperties.restoreState(
+      specification[ANNOTATION_LIST_HIDE_DERIVED_PROPERTIES_KEY],
+    );
+    this.annotationListShowUnavailableOptions.restoreState(
+      specification[ANNOTATION_LIST_SHOW_UNAVAILABLE_OPTIONS_KEY],
+    );
     const sortJson = verifyOptionalObjectProperty(
       specification,
       ANNOTATION_LIST_SORT_KEY,
@@ -885,6 +895,10 @@ export class AnnotationUserLayer extends Base {
       this.annotationListTypeColumnVisible.toJSON();
     x[ANNOTATION_LIST_DESCRIPTIONS_VISIBLE_KEY] =
       this.annotationListDescriptionsVisible.toJSON();
+    x[ANNOTATION_LIST_HIDE_DERIVED_PROPERTIES_KEY] =
+      this.annotationListHideDerivedProperties.toJSON();
+    x[ANNOTATION_LIST_SHOW_UNAVAILABLE_OPTIONS_KEY] =
+      this.annotationListShowUnavailableOptions.toJSON();
     const sortState = this.annotationListSortState.value;
     if (sortState !== null) {
       x[ANNOTATION_LIST_SORT_KEY] = sortState;

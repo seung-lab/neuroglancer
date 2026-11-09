@@ -485,7 +485,6 @@ export class AnnotationLayerView extends AccordionTab {
   private categoricalSummaryContainer = document.createElement("div");
   private typeSummaryContainer = document.createElement("div");
   private propertyDetailsOpen = new Map<string, boolean>();
-  private showUnavailableEnumOptions = false;
   private numericalSummaryContainer = document.createElement("div");
   private derivedSummaryContainer = document.createElement("div");
   private derivedWarningElement = document.createElement("div");
@@ -795,27 +794,39 @@ export class AnnotationLayerView extends AccordionTab {
     hideDerivedLabel.classList.add(
       "neuroglancer-annotation-hide-derived-properties",
     );
-    const hideDerivedCheckbox = document.createElement("input");
-    hideDerivedCheckbox.type = "checkbox";
+    const hideDerivedCheckbox = this.registerDisposer(
+      new TrackableBooleanCheckbox(
+        this.layer.annotationListHideDerivedProperties,
+      ),
+    ).element;
     hideDerivedLabel.append(hideDerivedCheckbox, "Hide derived properties");
-    this.registerEventListener(hideDerivedCheckbox, "change", () => {
-      this.derivedSummaryContainer.hidden = hideDerivedCheckbox.checked;
-    });
+    this.derivedSummaryContainer.hidden =
+      this.layer.annotationListHideDerivedProperties.value;
+    this.registerDisposer(
+      this.layer.annotationListHideDerivedProperties.changed.add(() => {
+        this.derivedSummaryContainer.hidden =
+          this.layer.annotationListHideDerivedProperties.value;
+      }),
+    );
     const showUnavailableLabel = document.createElement("label");
     showUnavailableLabel.classList.add(
       "neuroglancer-annotation-show-unavailable-options",
     );
-    const showUnavailableCheckbox = document.createElement("input");
-    showUnavailableCheckbox.type = "checkbox";
+    const showUnavailableCheckbox = this.registerDisposer(
+      new TrackableBooleanCheckbox(
+        this.layer.annotationListShowUnavailableOptions,
+      ),
+    ).element;
     showUnavailableLabel.append(
       showUnavailableCheckbox,
       "Show unavailable options",
     );
-    this.registerEventListener(showUnavailableCheckbox, "change", () => {
-      this.showUnavailableEnumOptions = showUnavailableCheckbox.checked;
-      const result = this.annotationQueryResult.value;
-      if (result !== undefined) this.updateQueryStatistics(result);
-    });
+    this.registerDisposer(
+      this.layer.annotationListShowUnavailableOptions.changed.add(() => {
+        const result = this.annotationQueryResult.value;
+        if (result !== undefined) this.updateQueryStatistics(result);
+      }),
+    );
     propertiesHeader.append(hideDerivedLabel, showUnavailableLabel);
     this.queryStatistics.content.append(
       propertiesHeader,
@@ -1816,7 +1827,7 @@ export class AnnotationLayerView extends AccordionTab {
         const included = constraint?.include.includes(val) ?? false;
         const excluded = constraint?.exclude.includes(val) ?? false;
         if (
-          !this.showUnavailableEnumOptions &&
+          !this.layer.annotationListShowUnavailableOptions.value &&
           count === 0 &&
           !included &&
           !excluded
@@ -3389,6 +3400,8 @@ export function UserLayerWithAnnotationsMixin<
       order: "asc" | "desc";
     } | null>(null);
     annotationListQuery = new WatchableValue<string>("");
+    annotationListHideDerivedProperties = new TrackableBoolean(false);
+    annotationListShowUnavailableOptions = new TrackableBoolean(false);
     // When enabled, the annotation list also shows the currently-rendered
     // annotations decoded from non-local (e.g. precomputed) sources.  Off by
     // default so rendering performance is unaffected unless the user opts in.
@@ -3424,6 +3437,12 @@ export function UserLayerWithAnnotationsMixin<
         this.specificationChanged.dispatch,
       );
       this.annotationListQuery.changed.add(this.specificationChanged.dispatch);
+      this.annotationListHideDerivedProperties.changed.add(
+        this.specificationChanged.dispatch,
+      );
+      this.annotationListShowUnavailableOptions.changed.add(
+        this.specificationChanged.dispatch,
+      );
       this.listLoadedAnnotations.changed.add(
         this.specificationChanged.dispatch,
       );
