@@ -751,6 +751,31 @@ export class AnnotationLayerView extends AccordionTab {
     this.queryStatistics.content.classList.add(
       "neuroglancer-annotation-filter-results",
     );
+    this.registerEventListener(
+      this.queryStatistics.content,
+      "click",
+      (event) => {
+        if (!(event instanceof MouseEvent) || !event.shiftKey) return;
+        if (!(event.target instanceof Element)) return;
+        const property = event.target.closest("summary")?.parentElement;
+        if (
+          !(property instanceof HTMLDetailsElement) ||
+          !property.classList.contains("neuroglancer-property-summary-property")
+        ) {
+          return;
+        }
+        event.preventDefault();
+        const open = !property.open;
+        for (const details of this.queryStatistics.content.querySelectorAll<HTMLDetailsElement>(
+          "details.neuroglancer-property-summary-property",
+        )) {
+          details.open = open;
+          const propertyId = details.dataset.propertyId;
+          if (propertyId !== undefined)
+            this.propertyDetailsOpen.set(propertyId, open);
+        }
+      },
+    );
     this.categoricalSummaryContainer.style.display = "none";
     this.numericalSummaryContainer.style.display = "none";
     this.derivedSummaryContainer.style.display = "none";
