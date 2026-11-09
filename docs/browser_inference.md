@@ -65,6 +65,39 @@ initialization are compatibility checks, not proof of execution support or
 prediction quality. Reduced precision and other preparation require independent
 validation for the intended use.
 
+## Offline W8A8 preparation for CPU/WASM
+
+`build_tools/quantize_inference_cpu.py` prepares the model6280000 model for the
+CPU provider without changing the browser runtime. It uses static QDQ with UINT8
+activations, per-channel INT8 weights, and Percentile 99.99 calibration. Each of
+its three depthwise ConvTranspose layers is lowered to four standard
+`QLinearConv` phases with UINT8 interleaving. Their bilinear weights are encoded
+losslessly. This lowering is specific to the validated `[1,4,4]` kernel,
+`[1,2,2]` strides, and `[0,1,1,0,1,1]` pads; unsupported geometry is rejected.
+Normalization and other unsupported operations remain float: this is W8A8
+convolution, not an entirely integer network.
+
+The tool requires the original FP32 ONNX model and a local calibration manifest
+containing 16 calibration and four disjoint held-out patches. The manifest records
+model/data SHA256, native XYZ bounds at 16×16×45 nm, raw XYZ1 UINT8 `.npy` files,
+and NCDHW FLOAT32 `.npy` files normalized by 255. All records are validated, but
+only the calibration split is consumed by the quantizer. Fresh work files prevent
+stale calibration caches; an adjacent JSON report records configuration and hashes.
+
+```sh
+python build_tools/quantize_inference_cpu.py \
+  --model /path/to/model6280000.onnx \
+  --calibration-manifest /path/to/calibration-manifest.json \
+  --output /path/to/model6280000-cpu-w8a8.onnx
+```
+
+Requires Python packages `numpy`, `onnx`, and `onnxruntime`. Load the resulting
+model with **CPU**, **float32** precision, and compatibility fixes **off**. Public
+input/output remain FLOAT32; an INT8 precision setting is not needed. Do not apply
+the FP16 converter to the quantized model. Browser execution, task quality, and
+performance must be validated separately: smaller weights do not guarantee faster
+inference, and finite predictions do not establish scientific accuracy.
+
 ## Sharing and restoration
 
 Saved viewer state contains a recipe describing the source, model identity, and
