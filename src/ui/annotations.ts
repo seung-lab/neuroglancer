@@ -484,7 +484,6 @@ export class AnnotationLayerView extends AccordionTab {
   private queryStatisticsElement = this.queryStatistics.count;
   private categoricalSummaryContainer = document.createElement("div");
   private typeSummaryContainer = document.createElement("div");
-  private propertyDetailsOpen = new Map<string, boolean>();
   private numericalSummaryContainer = document.createElement("div");
   private derivedSummaryContainer = document.createElement("div");
   private derivedWarningElement = document.createElement("div");
@@ -500,6 +499,14 @@ export class AnnotationLayerView extends AccordionTab {
   private numericalBoundsInitialized = false;
   private columnDropdown: HTMLElement | undefined;
   private columnDropdownAnchor: HTMLElement | undefined;
+
+  private setPropertyExpanded(id: string, open: boolean) {
+    const expanded = this.layer.annotationListExpandedProperties;
+    if (expanded.value.includes(id) === open) return;
+    expanded.value = open
+      ? [...expanded.value, id]
+      : expanded.value.filter((propertyId) => propertyId !== id);
+  }
 
   private closeColumnDropdown = () => {
     this.columnDropdown?.remove();
@@ -750,6 +757,18 @@ export class AnnotationLayerView extends AccordionTab {
     this.queryStatistics.content.classList.add(
       "neuroglancer-annotation-filter-results",
     );
+    this.registerDisposer(
+      this.layer.annotationListExpandedProperties.changed.add(() => {
+        const expanded = new Set(
+          this.layer.annotationListExpandedProperties.value,
+        );
+        for (const details of this.queryStatistics.content.querySelectorAll<HTMLDetailsElement>(
+          "details.neuroglancer-property-summary-property",
+        )) {
+          details.open = expanded.has(details.dataset.propertyId!);
+        }
+      }),
+    );
     this.registerEventListener(
       this.queryStatistics.content,
       "click",
@@ -765,14 +784,20 @@ export class AnnotationLayerView extends AccordionTab {
         }
         event.preventDefault();
         const open = !property.open;
+        const expanded = new Set(
+          this.layer.annotationListExpandedProperties.value,
+        );
         for (const details of this.queryStatistics.content.querySelectorAll<HTMLDetailsElement>(
           "details.neuroglancer-property-summary-property",
         )) {
           details.open = open;
           const propertyId = details.dataset.propertyId;
-          if (propertyId !== undefined)
-            this.propertyDetailsOpen.set(propertyId, open);
+          if (propertyId !== undefined) {
+            if (open) expanded.add(propertyId);
+            else expanded.delete(propertyId);
+          }
         }
+        this.layer.annotationListExpandedProperties.value = [...expanded];
       },
     );
     this.categoricalSummaryContainer.style.display = "none";
@@ -1604,9 +1629,10 @@ export class AnnotationLayerView extends AccordionTab {
         showPropertyTypes: false,
         expandableProperties: true,
         retainUnavailableProperties: true,
-        isPropertyExpanded: (id) => this.propertyDetailsOpen.get(id) ?? false,
+        isPropertyExpanded: (id) =>
+          this.layer.annotationListExpandedProperties.value.includes(id),
         onPropertyToggle: (id, open) => {
-          this.propertyDetailsOpen.set(id, open);
+          this.setPropertyExpanded(id, open);
         },
       },
     );
@@ -1892,9 +1918,11 @@ export class AnnotationLayerView extends AccordionTab {
           constraint !== undefined &&
           (constraint.include.length !== 0 || constraint.exclude.length !== 0),
         hidden: counts.size === 0,
-        open: this.propertyDetailsOpen.get(prop.identifier),
+        open: this.layer.annotationListExpandedProperties.value.includes(
+          prop.identifier,
+        ),
         onToggle: (open) => {
-          this.propertyDetailsOpen.set(prop.identifier, open);
+          this.setPropertyExpanded(prop.identifier, open);
         },
         chips,
       });
@@ -3400,6 +3428,7 @@ export function UserLayerWithAnnotationsMixin<
       order: "asc" | "desc";
     } | null>(null);
     annotationListQuery = new WatchableValue<string>("");
+    annotationListExpandedProperties = new WatchableValue<string[]>([]);
     annotationListHideDerivedProperties = new TrackableBoolean(false);
     annotationListShowUnavailableOptions = new TrackableBoolean(false);
     // When enabled, the annotation list also shows the currently-rendered
@@ -3437,6 +3466,9 @@ export function UserLayerWithAnnotationsMixin<
         this.specificationChanged.dispatch,
       );
       this.annotationListQuery.changed.add(this.specificationChanged.dispatch);
+      this.annotationListExpandedProperties.changed.add(
+        this.specificationChanged.dispatch,
+      );
       this.annotationListHideDerivedProperties.changed.add(
         this.specificationChanged.dispatch,
       );
