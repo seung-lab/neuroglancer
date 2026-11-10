@@ -139,6 +139,7 @@ export interface IncludeExcludeChip {
   desc?: string;
   /** Number of items that have this value in the current result set. */
   count: number;
+  displayCount?: number;
   /**
    * Total count used to derive the "exclude" side count.
    * The exclude-side shows `totalCount - count`.
@@ -1133,7 +1134,7 @@ export function renderIncludeExcludeChips(
       const countEl = document.createElement("span");
       countEl.classList.add("neuroglancer-segment-query-result-tag-count");
       if (!inQuery) {
-        countEl.textContent = String(chip.count);
+        countEl.textContent = String(chip.displayCount ?? chip.count);
       }
       chipElement.appendChild(countEl);
     }

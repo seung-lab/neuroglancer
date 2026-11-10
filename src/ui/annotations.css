@@ -129,10 +129,9 @@
 }
 
 .neuroglancer-annotation-filter-results
-  .neuroglancer-segment-query-result-tag[aria-disabled="true"]
+  .neuroglancer-segment-query-result-tag[data-count="0"]
   > * {
   opacity: 0.5;
-  pointer-events: none;
 }
 
 .neuroglancer-annotation-properties-header {

@@ -39,6 +39,25 @@ describe("tokenizePropertyQuery", () => {
 });
 
 describe("parsePropertyQuerySyntax", () => {
+  test.each(["status=#active|#pending", "#status=active|#pending"])(
+    "expands enum alternatives in %s",
+    (text) => {
+      const result = parsePropertyQuerySyntax(text);
+      expect(result.errors).toEqual([]);
+      expect(result.clauses).toEqual(
+        ["active", "pending"].map((value) => ({
+          type: "categorical",
+          text,
+          begin: 0,
+          end: text.length,
+          exclude: false,
+          field: "status",
+          value,
+        })),
+      );
+    },
+  );
+
   test("parses every shared clause without assigning domain meaning", () => {
     const result = parsePropertyQuerySyntax(
       "<score >count |length score>=0.5 #verified -#status=done /foo.*/ text",
@@ -94,6 +113,41 @@ describe("parsePropertyQuerySyntax", () => {
 });
 
 describe("serializePropertyQueryClauses", () => {
+  test("groups enum values by field and polarity without grouping booleans", () => {
+    expect(
+      serializePropertyQueryClauses([
+        {
+          type: "categorical",
+          exclude: false,
+          field: "status",
+          value: "active",
+        },
+        {
+          type: "categorical",
+          exclude: false,
+          field: "verified",
+          value: undefined,
+        },
+        {
+          type: "categorical",
+          exclude: false,
+          field: "status",
+          value: "pending",
+        },
+        { type: "categorical", exclude: true, field: "status", value: "done" },
+        {
+          type: "categorical",
+          exclude: true,
+          field: "status",
+          value: "unknown",
+        },
+        { type: "categorical", exclude: false, field: "kind", value: "a,b" },
+      ]),
+    ).toBe(
+      "status=#active|#pending #verified -status=#done|#unknown kind=#a,b",
+    );
+  });
+
   test("serializes the common canonical syntax", () => {
     expect(
       serializePropertyQueryClauses([

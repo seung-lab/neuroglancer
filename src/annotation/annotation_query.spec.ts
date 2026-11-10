@@ -245,6 +245,23 @@ describe("parseAnnotationQuery", () => {
     },
   );
 
+  it.each(["", "-"])("parses grouped enum values with prefix %s", (prefix) => {
+    const query = parseAnnotationQuery(
+      schema,
+      `${prefix}status=#pending|#active`,
+    ) as any;
+    expect(
+      query.enumConstraints[0][prefix === "" ? "include" : "exclude"],
+    ).toEqual([0, 1]);
+  });
+
+  it.each(["status=#active|#", "status=#|#active"])(
+    "rejects an empty enum alternative in %s",
+    (text) => {
+      expect(parseAnnotationQuery(schema, text)).toHaveProperty("errors");
+    },
+  );
+
   it.each(["-status=#DONE", "-#status=DONE"])(
     "parses enum exclude %s",
     (text) => {
@@ -348,6 +365,24 @@ describe("executeAnnotationQuery", () => {
     const result = executeAnnotationQuery(items, q);
     // banana(1) and cherry(2) → 2
     expect(result.count).toBe(2);
+  });
+
+  it("matches multiple included values of one enum with OR", () => {
+    const query = parseAnnotationQuery(
+      schema,
+      "status=#pending status=#active",
+    ) as any;
+    const result = executeAnnotationQuery(items, query);
+    expect(Array.from(result.indices!)).toEqual([0, 1, 3]);
+  });
+
+  it("combines enum OR selections with other filters", () => {
+    const query = parseAnnotationQuery(
+      schema,
+      "status=#pending status=#active #verified score>=0.6",
+    ) as any;
+    const result = executeAnnotationQuery(items, query);
+    expect(Array.from(result.indices!)).toEqual([0]);
   });
 
   it("filters by bool true", () => {
@@ -460,6 +495,40 @@ describe("unparseAnnotationQuery", () => {
       unparseAnnotationQuery(q),
     ) as any;
     expect(reparsed.enumConstraints[0].include).toEqual([1]);
+  });
+
+  it("compacts repeated enum clauses and round-trips grouped OR selections", () => {
+    const query = parseAnnotationQuery(
+      schema,
+      "status=#pending status=#active -status=#done",
+    ) as any;
+    const text = unparseAnnotationQuery(
+      query,
+      undefined,
+      undefined,
+      new Map([
+        [
+          "status",
+          new Map([
+            [0, "pending"],
+            [1, "active"],
+            [2, "done"],
+          ]),
+        ],
+      ]),
+    );
+    expect(text).toBe("status=#pending|#active -status=#done");
+    const reparsed = parseAnnotationQuery(schema, text) as any;
+    expect(reparsed.enumConstraints).toEqual(query.enumConstraints);
+    const items = makeItems([
+      { status: 0 },
+      { status: 1 },
+      { status: 2 },
+      { status: 0 },
+    ]);
+    expect(
+      Array.from(executeAnnotationQuery(items, reparsed).indices!),
+    ).toEqual([0, 1, 3]);
   });
 
   it("serializes enum constraints with schema labels", () => {

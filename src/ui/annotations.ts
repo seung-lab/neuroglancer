@@ -1840,10 +1840,34 @@ export class AnnotationLayerView extends AccordionTab {
       const constraint = lastQuery?.enumConstraints.find(
         (c) => c.fieldId === prop.identifier,
       );
+      const optionResult =
+        constraint === undefined
+          ? result
+          : executeAnnotationQuery(
+              items,
+              {
+                ...result.query,
+                enumConstraints: result.query.enumConstraints.filter(
+                  (entry) => entry.fieldId !== prop.identifier,
+                ),
+                sortBy: [],
+              },
+              new Set(this.coordDimNames),
+            );
+      const availableCounts = new Map<number, number>();
+      const optionIndices = optionResult.indices!;
+      for (let index = 0; index < optionIndices.length; ++index) {
+        const v = items[optionIndices[index]].values.get(prop.identifier);
+        if (typeof v === "number") {
+          availableCounts.set(v, (availableCounts.get(v) ?? 0) + 1);
+        }
+      }
       const counts = new Map<number, number>();
-      for (let j = 0; j < indices.length; ++j) {
-        const v = items[indices[j]].values.get(prop.identifier);
-        if (typeof v === "number") counts.set(v, (counts.get(v) ?? 0) + 1);
+      for (let index = 0; index < indices.length; ++index) {
+        const value = items[indices[index]].values.get(prop.identifier);
+        if (typeof value === "number") {
+          counts.set(value, (counts.get(value) ?? 0) + 1);
+        }
       }
       for (let vi = 0; vi < prop.enumValues.length; ++vi) {
         const val = prop.enumValues[vi];
@@ -1854,7 +1878,7 @@ export class AnnotationLayerView extends AccordionTab {
         const excluded = constraint?.exclude.includes(val) ?? false;
         if (
           !this.layer.annotationListShowUnavailableOptions.value &&
-          count === 0 &&
+          (availableCounts.get(val) ?? 0) === 0 &&
           !included &&
           !excluded
         ) {
@@ -1864,10 +1888,10 @@ export class AnnotationLayerView extends AccordionTab {
           key: `${fieldId}=${val}`,
           label,
           count,
+          displayCount: availableCounts.get(val) ?? 0,
           totalCount: result.count,
           included,
           excluded,
-          disabled: count === 0 && !included && !excluded,
           onToggle: (target, value) => {
             const curEnumConstraints =
               (
@@ -1917,7 +1941,7 @@ export class AnnotationLayerView extends AccordionTab {
         filtered:
           constraint !== undefined &&
           (constraint.include.length !== 0 || constraint.exclude.length !== 0),
-        hidden: counts.size === 0,
+        hidden: availableCounts.size === 0,
         open: this.layer.annotationListExpandedProperties.value.includes(
           prop.identifier,
         ),

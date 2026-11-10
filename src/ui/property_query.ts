@@ -218,15 +218,18 @@ export function parsePropertyQuerySyntax(text: string): ParsedPropertyQuery {
     const categoricalMatch =
       text.match(enumPattern) ?? text.match(categoricalPattern);
     if (categoricalMatch !== null) {
-      clauses.push({
-        type: "categorical",
-        text,
-        begin,
-        end,
-        exclude: categoricalMatch[1] === "-",
-        field: categoricalMatch[2],
-        value: categoricalMatch[3],
-      });
+      const values = categoricalMatch[3]?.split("|#") ?? [undefined];
+      for (const value of values) {
+        clauses.push({
+          type: "categorical",
+          text,
+          begin,
+          end,
+          exclude: categoricalMatch[1] === "-",
+          field: categoricalMatch[2],
+          value,
+        });
+      }
       continue;
     }
     const comparisonMatch = text.match(comparisonPattern);
@@ -448,5 +451,19 @@ export function serializePropertyQueryClause(
 export function serializePropertyQueryClauses(
   clauses: SerializablePropertyQueryClause[],
 ): string {
-  return clauses.map(serializePropertyQueryClause).join(" ");
+  const parts: string[] = [];
+  const enumGroups = new Map<string, number>();
+  for (const clause of clauses) {
+    if (clause.type === "categorical" && clause.value !== undefined) {
+      const key = `${clause.exclude ? "-" : ""}${clause.field}`;
+      const index = enumGroups.get(key);
+      if (index !== undefined) {
+        parts[index] += `|#${clause.value}`;
+        continue;
+      }
+      enumGroups.set(key, parts.length);
+    }
+    parts.push(serializePropertyQueryClause(clause));
+  }
+  return parts.join(" ");
 }
