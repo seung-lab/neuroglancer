@@ -31,6 +31,7 @@ import type { mat4 } from "#src/util/geom.js";
 import type { FetchOk, HttpError } from "#src/util/http_request.js";
 
 export const PYCG_APP_VERSION = 1;
+export const MESH_MANIFEST_V2_ACCEPT = "application/x.cave;manifest_version=2";
 export const GRAPHENE_MESH_NEW_SEGMENT_RPC_ID = "GrapheneMeshSource:NewSegment";
 
 export enum VolumeChunkEncoding {

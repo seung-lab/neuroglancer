@@ -37,6 +37,7 @@ import {
   isBaseSegmentId,
   parseGrapheneError,
   getHttpSource,
+  MESH_MANIFEST_V2_ACCEPT,
 } from "#src/datasource/graphene/base.js";
 import { decodeManifestChunk } from "#src/datasource/precomputed/backend.js";
 import { WithSharedKvStoreContextCounterpart } from "#src/kvstore/backend.js";
@@ -78,43 +79,33 @@ import {
 import type { RPC } from "#src/worker_rpc.js";
 import { registerSharedObject, registerRPC } from "#src/worker_rpc.js";
 
-function downloadFragmentWithSharding(
-  fragmentKvStore: KvStoreWithPath,
+function downloadFragment(
+  initialKvStore: KvStoreWithPath,
+  dynamicKvStore: KvStoreWithPath,
   fragmentId: string,
   signal: AbortSignal,
 ): Promise<ReadResponse> {
-  if (fragmentId && fragmentId.charAt(0) === "~") {
-    const parts = fragmentId.substring(1).split(":");
-    const byteRange = { offset: Number(parts[1]), length: Number(parts[2]) };
-    return readKvStore(
-      fragmentKvStore.store,
-      `${fragmentKvStore.path}initial/${parts[0]}`,
-      { signal, byteRange, throwIfMissing: true },
-    );
+  // A sharded fragment ends in `<shard>:<offset>:<length>`; an unsharded one ends in its
+  // bounding box, which is not a number.
+  const [shard, offset, length] = fragmentId.split(":").slice(-3);
+  if (!Number.isInteger(Number(length))) {
+    const file = fragmentId.startsWith("~")
+      ? fragmentId.substring(fragmentId.indexOf(":") + 1)
+      : fragmentId;
+    return readKvStore(dynamicKvStore.store, `${dynamicKvStore.path}${file}`, {
+      signal,
+      throwIfMissing: true,
+    });
   }
   return readKvStore(
-    fragmentKvStore.store,
-    `${fragmentKvStore.path}dynamic/${fragmentId}`,
-    { signal, throwIfMissing: true },
+    initialKvStore.store,
+    `${initialKvStore.path}${shard.replace("~", "")}`,
+    {
+      signal,
+      byteRange: { offset: Number(offset), length: Number(length) },
+      throwIfMissing: true,
+    },
   );
-}
-
-function downloadFragment(
-  fragmentKvStore: KvStoreWithPath,
-  fragmentId: string,
-  parameters: MeshSourceParameters,
-  signal: AbortSignal,
-): Promise<ReadResponse> {
-  if (parameters.sharding) {
-    return downloadFragmentWithSharding(fragmentKvStore, fragmentId, signal);
-  } else {
-    // TODO, is this change safe?
-    return readKvStore(
-      fragmentKvStore.store,
-      `${fragmentKvStore.path}${fragmentId}`,
-      { signal, throwIfMissing: true },
-    );
-  }
 }
 
 async function decodeDracoFragmentChunk(
@@ -137,8 +128,13 @@ export class GrapheneMeshSource extends WithParameters(
     this.sharedKvStoreContext.kvStoreContext,
     this.parameters.manifestUrl,
   );
-  fragmentKvStore = this.sharedKvStoreContext.kvStoreContext.getKvStore(
-    this.parameters.fragmentUrl,
+  initialKvStore = this.sharedKvStoreContext.kvStoreContext.getKvStore(
+    `${this.parameters.fragmentUrl}initial/`,
+  );
+  dynamicKvStore = this.sharedKvStoreContext.kvStoreContext.getKvStore(
+    this.parameters.sharding
+      ? `${this.parameters.fragmentUrl}dynamic/`
+      : this.parameters.fragmentUrl,
   );
 
   addNewSegment(segment: bigint) {
@@ -156,9 +152,12 @@ export class GrapheneMeshSource extends WithParameters(
       return decodeManifestChunk(chunk, { fragments: [] });
     }
     const { fetchOkImpl, baseUrl } = this.manifestHttpSource;
-    const manifestPath = `/manifest/${chunk.objectId}:${parameters.lod}?verify=1&prepend_seg_ids=1`;
+    const manifestPath = `/manifest/${chunk.objectId}:${parameters.lod}?verify=1&prepend_seg_ids=1&return_seg_ids=1`;
     const response = await (
-      await fetchOkImpl(baseUrl + manifestPath, { signal })
+      await fetchOkImpl(baseUrl + manifestPath, {
+        signal,
+        headers: { Accept: MESH_MANIFEST_V2_ACCEPT },
+      })
     ).json();
     const chunkIdentifier = manifestPath;
     if (newSegments.has(chunk.objectId)) {
@@ -176,19 +175,36 @@ export class GrapheneMeshSource extends WithParameters(
     } else {
       manifestRequestCount.delete(chunkIdentifier);
     }
+    if (response?.manifest_version >= 2) {
+      const fragments: string[] = [];
+      const { kvStoreContext } = this.sharedKvStoreContext;
+      for (const [bucket, list] of Object.entries<string[]>(
+        response.fragments,
+      )) {
+        const sharded = Number.isInteger(Number(list[0]?.split(":").pop()));
+        const store = kvStoreContext.getKvStore(`${bucket}/`);
+        if (sharded) {
+          this.initialKvStore = store;
+        } else {
+          this.dynamicKvStore = store;
+        }
+        fragments.push(...list);
+      }
+      return decodeManifestChunk(chunk, { fragments });
+    }
     return decodeManifestChunk(chunk, response);
   }
 
   async downloadFragment(chunk: FragmentChunk, signal: AbortSignal) {
-    const { response } = await downloadFragment(
-      this.fragmentKvStore,
+    const readResponse = await downloadFragment(
+      this.initialKvStore,
+      this.dynamicKvStore,
       chunk.fragmentId!,
-      this.parameters,
       signal,
     );
     await decodeDracoFragmentChunk(
       chunk,
-      new Uint8Array(await response.arrayBuffer()),
+      new Uint8Array(await readResponse.response.arrayBuffer()),
     );
   }
 
