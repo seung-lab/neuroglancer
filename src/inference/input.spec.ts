@@ -1181,6 +1181,106 @@ describe("prepareInferenceInput", () => {
     },
   );
 
+  it("overlaps at most eight chunk reads and packs out-of-order completions exactly", async () => {
+    const f = fixture({ upper: [6, 4, 2], chunkSize: [1, 1, 1] });
+    const input = f.prepare();
+    const fetch = f.source.fetchChunk.getMockImplementation()!;
+    const release: (() => void)[] = [];
+    let active = 0;
+    let maximum = 0;
+    let started = 0;
+    f.source.fetchChunk.mockImplementation(async (grid, copy, progress) => {
+      maximum = Math.max(maximum, ++active);
+      const index = started++;
+      try {
+        if (index < 8) {
+          await new Promise<void>((resolve) => {
+            release[index] = resolve;
+          });
+        }
+        return await fetch(grid, copy, progress);
+      } finally {
+        --active;
+      }
+    });
+    const pending = input.readPatch([0, 0, 0], [2, 4, 6], signal());
+    expect(started).toBe(8);
+    release[7]();
+    // One free slot keeps progressing while seven earlier requests are stalled.
+    await vi.waitFor(() => expect(started).toBe(48));
+    expect(active).toBe(7);
+    for (let i = 6; i >= 0; --i) release[i]();
+    expect(Array.from(await pending)).toEqual(codedPatch([0, 0, 0], [2, 4, 6]));
+    expect(maximum).toBe(8);
+    expect(active).toBe(0);
+    input.dispose();
+    expect(f.source.refCount).toBe(0);
+  });
+
+  it("aborts every concurrent requester when the input is disposed", async () => {
+    const f = fixture({ upper: [6, 4, 2], chunkSize: [1, 1, 1] });
+    const input = f.prepare();
+    let aborted = 0;
+    f.source.fetchChunk.mockImplementation(
+      async (_grid, _copy, progress) =>
+        new Promise<never>((_resolve, reject) => {
+          progress.signal!.addEventListener(
+            "abort",
+            () => {
+              ++aborted;
+              reject(progress.signal!.reason);
+            },
+            { once: true },
+          );
+        }),
+    );
+    const pending = input.readPatch([0, 0, 0], [2, 4, 6], signal());
+    expect(f.source.fetchChunk).toHaveBeenCalledTimes(8);
+    input.dispose();
+    await expect(pending).rejects.toThrow("disposed");
+    expect(aborted).toBe(8);
+    expect(f.source.fetchChunk).toHaveBeenCalledTimes(8);
+    expect(f.source.refCount).toBe(0);
+  });
+
+  it("cancels sibling requests on fetch failure without invalidating the input", async () => {
+    const f = fixture({ upper: [6, 4, 2], chunkSize: [1, 1, 1] });
+    const input = f.prepare();
+    const fetch = f.source.fetchChunk.getMockImplementation()!;
+    let fail!: (reason: Error) => void;
+    let aborted = 0;
+    f.source.fetchChunk.mockImplementationOnce(
+      async () =>
+        new Promise<never>((_resolve, reject) => {
+          fail = reject;
+        }),
+    );
+    f.source.fetchChunk.mockImplementation(
+      async (_grid, _copy, progress) =>
+        new Promise<never>((_resolve, reject) => {
+          progress.signal!.addEventListener(
+            "abort",
+            () => {
+              ++aborted;
+              reject(progress.signal!.reason);
+            },
+            { once: true },
+          );
+        }),
+    );
+    const pending = input.readPatch([0, 0, 0], [2, 4, 6], signal());
+    fail(new Error("network failed"));
+    await expect(pending).rejects.toThrow("network failed");
+    expect(aborted).toBe(7);
+    expect(f.source.fetchChunk).toHaveBeenCalledTimes(8);
+    expect(input.isValid()).toBe(true);
+    f.source.fetchChunk.mockImplementation(fetch);
+    expect(
+      Array.from(await input.readPatch([0, 0, 0], [2, 4, 6], signal())),
+    ).toEqual(codedPatch([0, 0, 0], [2, 4, 6]));
+    input.dispose();
+  });
+
   it("honors pre-abort and aborts outstanding fetches when disposed", async () => {
     const f = fixture();
     const input = f.prepare();

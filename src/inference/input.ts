@@ -679,7 +679,12 @@ export function prepareInferenceInput(
         originZYX = Array.from(originZYX);
         patchShapeZYX = Array.from(patchShapeZYX);
         assertValid();
-        const combinedSignal = AbortSignal.any([signal, lifetime.signal]);
+        const failed = new AbortController();
+        const combinedSignal = AbortSignal.any([
+          signal,
+          lifetime.signal,
+          failed.signal,
+        ]);
         combinedSignal.throwIfAborted();
         if (
           originZYX.length !== 3 ||
@@ -728,71 +733,89 @@ export function prepareInferenceInput(
             (patchLower[d] + patchShapeZYX[a]) / spec.chunkDataSize[d],
           );
         }
-        // Sequential fetches bound outstanding chunk requests and memory usage.
-        for (let g2 = gridLower[2]; g2 < gridUpper[2]; ++g2) {
-          for (let g1 = gridLower[1]; g1 < gridUpper[1]; ++g1) {
-            for (let g0 = gridLower[0]; g0 < gridUpper[0]; ++g0) {
-              combinedSignal.throwIfAborted();
-              assertValid();
-              const grid = new Float32Array([g0, g1, g2]);
-              // baseVoxelOffset is applied by the backend, not here. Applying it
-              // again would shift data (precomputed also encodes it in its transform).
-              const chunkOrigin = Array.from(
-                grid,
-                (g, d) => g * spec.chunkDataSize[d],
-              );
-              const result = await source.fetchChunk(
-                grid,
-                (chunk) => {
-                  // Never throw out of a chunk requester: fetchChunk's async requester
-                  // resolves transform(chunk) without catching callback exceptions.
-                  try {
-                    combinedSignal.throwIfAborted();
-                    assertValid();
-                    const volumeChunk = chunk as VolumeChunk;
-                    if (volumeChunk.chunkDataSize.length !== 3) {
-                      throw new Error("Inference chunk must have rank-3 data");
-                    }
-                    for (let a = 0; a < 3; ++a) {
-                      const d = dims[a];
-                      const requiredEnd = Math.min(
-                        chunkOrigin[d] + spec.chunkDataSize[d],
-                        patchLower[d] + patchShapeZYX[a],
-                        upper[d],
-                      );
-                      if (
-                        volumeChunk.chunkDataSize[d] > spec.chunkDataSize[d] ||
-                        chunkOrigin[d] + volumeChunk.chunkDataSize[d] <
-                          requiredEnd
-                      ) {
-                        throw new Error(
-                          "Inference chunk does not cover the requested in-bounds voxels",
-                        );
-                      }
-                    }
-                    copyChunkToZYXPatch(
-                      volumeChunk,
-                      {
-                        dataType,
-                        chunkOrigin,
-                        chunkDimensionsZYX: dims,
-                        patchLowerChunk: patchLower,
-                        patchShapeZYX,
-                        lowerBoundChunk: lower,
-                        upperBoundChunk: upper,
-                      },
-                      output,
-                    );
-                    return { ok: true as const };
-                  } catch (error) {
-                    return { ok: false as const, error };
+        // Keep source I/O overlapped without an unbounded fan-out. Chunk copies
+        // are synchronous and write disjoint parts of the patch.
+        const gridShape = gridUpper.map((end, d) => end - gridLower[d]);
+        const chunkCount = gridShape.reduce((a, b) => a * b, 1);
+        let nextChunk = 0;
+        const fetchChunks = async () => {
+          while (nextChunk < chunkCount) {
+            combinedSignal.throwIfAborted();
+            assertValid();
+            const index = nextChunk++;
+            const grid = new Float32Array([
+              gridLower[0] + (index % gridShape[0]),
+              gridLower[1] + (Math.floor(index / gridShape[0]) % gridShape[1]),
+              gridLower[2] + Math.floor(index / (gridShape[0] * gridShape[1])),
+            ]);
+            // baseVoxelOffset is applied by the backend, not here. Applying it
+            // again would shift data (precomputed also encodes it in its transform).
+            const chunkOrigin = Array.from(
+              grid,
+              (g, d) => g * spec.chunkDataSize[d],
+            );
+            const result = await source.fetchChunk(
+              grid,
+              (chunk) => {
+                // Never throw out of a chunk requester: fetchChunk's async requester
+                // resolves transform(chunk) without catching callback exceptions.
+                try {
+                  combinedSignal.throwIfAborted();
+                  assertValid();
+                  const volumeChunk = chunk as VolumeChunk;
+                  if (volumeChunk.chunkDataSize.length !== 3) {
+                    throw new Error("Inference chunk must have rank-3 data");
                   }
-                },
-                { signal: combinedSignal, retryTransientErrors: true },
-              );
-              if (!result.ok) throw result.error;
-            }
+                  for (let a = 0; a < 3; ++a) {
+                    const d = dims[a];
+                    const requiredEnd = Math.min(
+                      chunkOrigin[d] + spec.chunkDataSize[d],
+                      patchLower[d] + patchShapeZYX[a],
+                      upper[d],
+                    );
+                    if (
+                      volumeChunk.chunkDataSize[d] > spec.chunkDataSize[d] ||
+                      chunkOrigin[d] + volumeChunk.chunkDataSize[d] <
+                        requiredEnd
+                    ) {
+                      throw new Error(
+                        "Inference chunk does not cover the requested in-bounds voxels",
+                      );
+                    }
+                  }
+                  copyChunkToZYXPatch(
+                    volumeChunk,
+                    {
+                      dataType,
+                      chunkOrigin,
+                      chunkDimensionsZYX: dims,
+                      patchLowerChunk: patchLower,
+                      patchShapeZYX,
+                      lowerBoundChunk: lower,
+                      upperBoundChunk: upper,
+                    },
+                    output,
+                  );
+                  return { ok: true as const };
+                } catch (error) {
+                  return { ok: false as const, error };
+                }
+              },
+              { signal: combinedSignal, retryTransientErrors: true },
+            );
+            if (!result.ok) throw result.error;
           }
+        };
+        const pending = Array.from({ length: Math.min(8, chunkCount) }, () =>
+          fetchChunks(),
+        );
+        try {
+          await Promise.all(pending);
+        } catch (error) {
+          failed.abort(error);
+          // Settle all requesters before releasing the patch/source on failure.
+          await Promise.allSettled(pending);
+          throw error;
         }
         combinedSignal.throwIfAborted();
         assertValid();
