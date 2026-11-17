@@ -1214,7 +1214,7 @@ export class OnnxInferenceDialog extends FramedDialog {
       providerStatus.textContent =
         metadata === undefined
           ? `Requested: ${session.provider}. Runtime not initialized.`
-          : `Requested: ${metadata.requestedProvider}; last initialized provider: ${metadata.actualProvider === "wasm" ? "CPU (WASM)" : "WebGPU (native; CPU kernel fallback disabled)"}.${metadata.actualProvider !== "wasm" ? "" : ` WASM threads: ${metadata.threads}. CPU inference is single-threaded to keep popup login compatible.`}${metadata.fallbackReason === undefined ? "" : ` CPU fallback: ${metadata.fallbackReason}`}${metadata.preparation === undefined ? "" : ` Browser preparation: ${metadata.preparation} (legacy JSEP padding fixes, in memory).`}`;
+          : `Requested: ${metadata.requestedProvider}; last initialized provider: ${metadata.actualProvider === "wasm" ? "CPU (WASM)" : "WebGPU (native; CPU kernel fallback disabled)"}.${metadata.actualProvider !== "wasm" ? "" : ` WASM threads: ${metadata.threads}.`}${metadata.fallbackReason === undefined ? "" : ` CPU fallback: ${metadata.fallbackReason}`}${metadata.preparation === undefined ? "" : ` Browser preparation: ${metadata.preparation} (legacy JSEP padding fixes, in memory).`}`;
       precision.checked = session.precision === "float16";
       precisionStatus.textContent =
         metadata === undefined
