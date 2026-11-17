@@ -13,6 +13,7 @@ import {
 } from "#src/inference/input.js";
 import type { ImageUserLayer } from "#src/layer/image/index.js";
 import { getRenderLayerTransform } from "#src/render_coordinate_transform.js";
+import { UncompressedVolumeChunk } from "#src/sliceview/uncompressed_chunk_format.js";
 import type {
   VolumeChunk,
   VolumeChunkSource,
@@ -28,6 +29,28 @@ import { NullarySignal } from "#src/util/signal.js";
 // ownership are exercised with the same accessor/fetch callback contract.
 vi.mock("#src/sliceview/volume/renderlayer.js", () => ({
   SliceViewVolumeRenderLayer: class {},
+}));
+vi.mock("#src/sliceview/uncompressed_chunk_format.js", () => ({
+  UncompressedVolumeChunk: class UncompressedVolumeChunk {
+    declare chunkDataSize: Uint32Array;
+    declare data: TypedArray | null;
+    declare source: { spec: { fillValue: number | bigint } };
+    getValueAt(dataPosition: Uint32Array): number | bigint {
+      const { data } = this;
+      if (data === null) {
+        return this.source.spec.fillValue;
+      }
+      const { chunkDataSize } = this;
+      let index = 0;
+      let stride = 1;
+      const rank = dataPosition.length;
+      for (let i = 0; i < rank; ++i) {
+        index += stride * dataPosition[i];
+        stride *= chunkDataSize[i];
+      }
+      return data[index];
+    }
+  },
 }));
 
 function identity() {
@@ -1529,5 +1552,150 @@ describe("copyChunkToZYXPatch", () => {
     expect(output).toEqual(Float32Array.from(data));
     expect(data).toEqual(before);
     expect(output.buffer).not.toBe(data.buffer);
+  });
+
+  const axisPermutations: [number, number, number][] = [
+    [0, 1, 2],
+    [0, 2, 1],
+    [1, 0, 2],
+    [1, 2, 0],
+    [2, 0, 1],
+    [2, 1, 0],
+  ];
+
+  it.each(normalizationCases)(
+    "matches generic getValueAt bit-for-bit on UncompressedVolumeChunk across all 6 axis permutations for $name",
+    ({ dataType, values, fillValue }) => {
+      const chunkDataSize = new Uint32Array([4, 3, 2]);
+      const total = 24;
+      const Ctor = values.constructor as {
+        new (length: number): TypedArray;
+      };
+      const raw = new Ctor(total);
+      for (let i = 0; i < total; ++i) {
+        raw[i] = values[i % values.length] as never;
+      }
+
+      for (const dims of axisPermutations) {
+        const fastChunk = Object.assign(
+          Object.create(
+            UncompressedVolumeChunk.prototype,
+          ) as UncompressedVolumeChunk,
+          {
+            chunkDataSize,
+            data: raw,
+            source: { spec: { fillValue } } as never,
+          },
+        );
+        const genericChunk = {
+          chunkDataSize,
+          getValueAt: (p: Uint32Array) =>
+            UncompressedVolumeChunk.prototype.getValueAt.call(fastChunk, p),
+        };
+        const options = {
+          dataType,
+          chunkOrigin: [2, 4, 6],
+          chunkDimensionsZYX: dims,
+          patchLowerChunk: [1, 3, 5],
+          patchShapeZYX: [5, 6, 7],
+          lowerBoundChunk: [2, 4, 6],
+          upperBoundChunk: [5, 7, 8],
+        };
+        const fastOut = new Float32Array(5 * 6 * 7).fill(-123.456);
+        const genericOut = new Float32Array(5 * 6 * 7).fill(-123.456);
+        copyChunkToZYXPatch(fastChunk, options, fastOut);
+        copyChunkToZYXPatch(genericChunk, options, genericOut);
+        expect(Array.from(new Uint32Array(fastOut.buffer))).toEqual(
+          Array.from(new Uint32Array(genericOut.buffer)),
+        );
+      }
+    },
+  );
+
+  it("falls back to getValueAt for subclass prototype overrides, own overrides, null fill chunks, and mismatched raw data", () => {
+    const chunkDataSize = new Uint32Array([2, 2, 2]);
+    const raw = new Uint8Array([10, 20, 30, 40, 50, 60, 70, 80]);
+    const options = {
+      dataType: DataType.UINT8,
+      chunkOrigin: [0, 0, 0],
+      chunkDimensionsZYX: [2, 1, 0],
+      patchLowerChunk: [0, 0, 0],
+      patchShapeZYX: [2, 2, 2],
+      lowerBoundChunk: [0, 0, 0],
+      upperBoundChunk: [2, 2, 2],
+    };
+
+    class SubclassOverrideChunk extends UncompressedVolumeChunk {
+      calls = 0;
+      override getValueAt(dataPosition: Uint32Array): number | bigint {
+        ++this.calls;
+        return Number(super.getValueAt(dataPosition)) + 5;
+      }
+    }
+    const subChunk = Object.assign(
+      Object.create(SubclassOverrideChunk.prototype) as SubclassOverrideChunk,
+      {
+        calls: 0,
+        chunkDataSize,
+        data: raw,
+        source: { spec: { fillValue: 0 } } as never,
+      },
+    );
+    const subOut = new Float32Array(8);
+    copyChunkToZYXPatch(subChunk, options, subOut);
+    expect(subChunk.calls).toBe(8);
+    expect(subOut).toEqual(Float32Array.from(raw, (v) => (v + 5) / 255));
+
+    let ownCalls = 0;
+    const ownOverrideChunk = Object.assign(
+      Object.create(
+        UncompressedVolumeChunk.prototype,
+      ) as UncompressedVolumeChunk,
+      {
+        chunkDataSize,
+        data: raw,
+        source: { spec: { fillValue: 0 } } as never,
+        getValueAt(p: Uint32Array) {
+          ++ownCalls;
+          return (
+            Number(UncompressedVolumeChunk.prototype.getValueAt.call(this, p)) +
+            3
+          );
+        },
+      },
+    );
+    const ownOut = new Float32Array(8);
+    copyChunkToZYXPatch(ownOverrideChunk, options, ownOut);
+    expect(ownCalls).toBe(8);
+    expect(ownOut).toEqual(Float32Array.from(raw, (v) => (v + 3) / 255));
+
+    const fillChunk = Object.assign(
+      Object.create(
+        UncompressedVolumeChunk.prototype,
+      ) as UncompressedVolumeChunk,
+      {
+        chunkDataSize,
+        data: null,
+        source: { spec: { fillValue: 51 } } as never,
+      },
+    );
+    const fillOut = new Float32Array(8);
+    copyChunkToZYXPatch(fillChunk, options, fillOut);
+    expect(fillOut).toEqual(new Float32Array(8).fill(51 / 255));
+
+    const shortChunk = Object.assign(
+      Object.create(
+        UncompressedVolumeChunk.prototype,
+      ) as UncompressedVolumeChunk,
+      {
+        chunkDataSize,
+        data: raw.subarray(0, 7),
+        source: { spec: { fillValue: 0 } } as never,
+      },
+    );
+    const shortOut = new Float32Array(8);
+    expect(() => copyChunkToZYXPatch(shortChunk, options, shortOut)).toThrow(
+      "Inference chunk accessor did not return a scalar number",
+    );
   });
 });

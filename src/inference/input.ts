@@ -8,6 +8,7 @@ import { makeIdentityTransform } from "#src/coordinate_transform.js";
 import type { ImageUserLayer } from "#src/layer/image/index.js";
 import type { RenderLayerTransform } from "#src/render_coordinate_transform.js";
 import { getRenderLayerTransform } from "#src/render_coordinate_transform.js";
+import { UncompressedVolumeChunk } from "#src/sliceview/uncompressed_chunk_format.js";
 import type {
   VolumeChunk,
   VolumeChunkSource,
@@ -15,6 +16,7 @@ import type {
 import { SliceViewVolumeRenderLayer } from "#src/sliceview/volume/renderlayer.js";
 import { arraysEqual } from "#src/util/array.js";
 import type { DataType } from "#src/util/data_type.js";
+import { DATA_TYPE_ARRAY_CONSTRUCTOR } from "#src/util/data_type.js";
 import { valueOrThrow } from "#src/util/error.js";
 import { defaultDataTypeRange } from "#src/util/lerp.js";
 import * as matrix from "#src/util/matrix.js";
@@ -391,6 +393,12 @@ function getNormalizationDivisor(dataType: DataType): number {
   return Number(defaultDataTypeRange[dataType][1]);
 }
 
+const UINT8_DIVISOR_255_LUT = (() => {
+  const lut = new Float32Array(256);
+  for (let i = 0; i < 256; ++i) lut[i] = i / 255;
+  return lut;
+})();
+
 export interface ChunkToZYXPatchOptions {
   readonly dataType: DataType;
   readonly chunkOrigin: readonly number[];
@@ -401,11 +409,8 @@ export interface ChunkToZYXPatchOptions {
   readonly upperBoundChunk: readonly number[];
 }
 
-/**
- * Pure packing/normalization helper. Reads via the format-independent accessor;
- * does not retain, mutate, or transfer source data. Call ONLY inside fetchChunk's
- * callback. Only overlaps are written; the caller must ensure complete coverage.
- */
+/** Packs raw storage or accessor values without retaining or mutating source data.
+ * Call only inside fetchChunk's callback; the caller must ensure complete coverage. */
 export function copyChunkToZYXPatch(
   chunk: Pick<VolumeChunk, "chunkDataSize" | "getValueAt">,
   options: ChunkToZYXPatchOptions,
@@ -431,8 +436,110 @@ export function copyChunkToZYXPatch(
       upperBoundChunk[d],
     );
   }
-  const position = new Uint32Array(3);
   const [dz, dy, dx] = dims;
+  const size = chunk.chunkDataSize;
+  const expectedConstructor = DATA_TYPE_ARRAY_CONSTRUCTOR[options.dataType];
+  const rawData =
+    chunk.getValueAt === UncompressedVolumeChunk.prototype.getValueAt
+      ? (chunk as UncompressedVolumeChunk).data
+      : null;
+  if (
+    size.length === 3 &&
+    expectedConstructor !== undefined &&
+    rawData instanceof expectedConstructor &&
+    rawData.length === size[0] * size[1] * size[2]
+  ) {
+    const chunkStrides = [1, size[0], size[0] * size[1]];
+    const strideZ = chunkStrides[dz];
+    const strideY = chunkStrides[dy];
+    const strideX = chunkStrides[dx];
+    const countX = upper[2] - lower[2];
+    if (countX <= 0) return;
+    const xStartRel = lower[2] - chunkOrigin[dx];
+    const outXOffset = lower[2] - patchLower[dx];
+    const shapeY = shape[1];
+    const shapeX = shape[2];
+    const patchLowerZ = patchLower[dz];
+    const patchLowerY = patchLower[dy];
+    const chunkOriginZ = chunkOrigin[dz];
+    const chunkOriginY = chunkOrigin[dy];
+
+    if (rawData instanceof Uint8Array && divisor === 255) {
+      const lut = UINT8_DIVISOR_255_LUT;
+      for (let z = lower[0]; z < upper[0]; ++z) {
+        const zBase = (z - chunkOriginZ) * strideZ;
+        const outZBase = (z - patchLowerZ) * shapeY;
+        for (let y = lower[1]; y < upper[1]; ++y) {
+          let idx = zBase + (y - chunkOriginY) * strideY + xStartRel * strideX;
+          let offset = (outZBase + (y - patchLowerY)) * shapeX + outXOffset;
+          for (let i = 0; i < countX; ++i) {
+            output[offset++] = lut[rawData[idx]];
+            idx += strideX;
+          }
+        }
+      }
+      return;
+    }
+
+    if (rawData instanceof Float32Array && divisor === 1) {
+      if (strideX === 1) {
+        for (let z = lower[0]; z < upper[0]; ++z) {
+          const zBase = (z - chunkOriginZ) * strideZ;
+          const outZBase = (z - patchLowerZ) * shapeY;
+          for (let y = lower[1]; y < upper[1]; ++y) {
+            const idx = zBase + (y - chunkOriginY) * strideY + xStartRel;
+            const offset = (outZBase + (y - patchLowerY)) * shapeX + outXOffset;
+            output.set(rawData.subarray(idx, idx + countX), offset);
+          }
+        }
+        return;
+      }
+      for (let z = lower[0]; z < upper[0]; ++z) {
+        const zBase = (z - chunkOriginZ) * strideZ;
+        const outZBase = (z - patchLowerZ) * shapeY;
+        for (let y = lower[1]; y < upper[1]; ++y) {
+          let idx = zBase + (y - chunkOriginY) * strideY + xStartRel * strideX;
+          let offset = (outZBase + (y - patchLowerY)) * shapeX + outXOffset;
+          for (let i = 0; i < countX; ++i) {
+            output[offset++] = rawData[idx];
+            idx += strideX;
+          }
+        }
+      }
+      return;
+    }
+
+    if (rawData instanceof BigUint64Array) {
+      for (let z = lower[0]; z < upper[0]; ++z) {
+        const zBase = (z - chunkOriginZ) * strideZ;
+        const outZBase = (z - patchLowerZ) * shapeY;
+        for (let y = lower[1]; y < upper[1]; ++y) {
+          let idx = zBase + (y - chunkOriginY) * strideY + xStartRel * strideX;
+          let offset = (outZBase + (y - patchLowerY)) * shapeX + outXOffset;
+          for (let i = 0; i < countX; ++i) {
+            output[offset++] = Number(rawData[idx]) / divisor;
+            idx += strideX;
+          }
+        }
+      }
+      return;
+    }
+
+    for (let z = lower[0]; z < upper[0]; ++z) {
+      const zBase = (z - chunkOriginZ) * strideZ;
+      const outZBase = (z - patchLowerZ) * shapeY;
+      for (let y = lower[1]; y < upper[1]; ++y) {
+        let idx = zBase + (y - chunkOriginY) * strideY + xStartRel * strideX;
+        let offset = (outZBase + (y - patchLowerY)) * shapeX + outXOffset;
+        for (let i = 0; i < countX; ++i) {
+          output[offset++] = Number(rawData[idx]) / divisor;
+          idx += strideX;
+        }
+      }
+    }
+    return;
+  }
+  const position = new Uint32Array(3);
   for (let z = lower[0]; z < upper[0]; ++z) {
     position[dz] = z - chunkOrigin[dz];
     for (let y = lower[1]; y < upper[1]; ++y) {
@@ -715,7 +822,10 @@ export function prepareInferenceInput(
         if (!Number.isSafeInteger(count))
           throw new RangeError("Patch is too large");
         const output = new Float32Array(count);
-        output.fill(Number(fillValue) / divisor);
+        const fillNormalized = Number(fillValue) / divisor;
+        if (fillNormalized !== 0 || Object.is(fillNormalized, -0)) {
+          output.fill(fillNormalized);
+        }
         const patchLower = new Array<number>(3);
         const gridLower = new Array<number>(3);
         const gridUpper = new Array<number>(3);
