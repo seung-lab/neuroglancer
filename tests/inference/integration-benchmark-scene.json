@@ -1,0 +1,74 @@
+{
+  "dimensions": {
+    "x": [1.6e-8, "m"],
+    "y": [1.6e-8, "m"],
+    "z": [1.5e-8, "m"]
+  },
+  "position": [161000.828125, 128652.0234375, 4890.5],
+  "crossSectionScale": 0.3583323536400848,
+  "projectionScale": 524288,
+  "layers": [
+    {
+      "type": "image",
+      "source": "gs://princeton-eric-medial-entorhinal-cortex-prod-central1/alignment/img/v2/|neuroglancer-precomputed:",
+      "tab": "rendering",
+      "name": "mec"
+    },
+    {
+      "type": "image",
+      "source": {
+        "url": "inference://recipe",
+        "state": {
+          "version": 2,
+          "profile": "ncdhw-centered-v2",
+          "outputSpacingZYX": [4.5e-8, 1.6e-8, 1.6e-8],
+          "source": {
+            "name": "mec",
+            "source": "gs://princeton-eric-medial-entorhinal-cortex-prod-central1/alignment/img/v2/|neuroglancer-precomputed:"
+          },
+          "model": {
+            "kind": "url",
+            "name": "model300000.onnx",
+            "urls": [
+              "https://storage.googleapis.com/zetta-research-kisuk/hammerschmith_mouse_mec/DeepEM/experiments/260225-MEC-finetune-v1-mec+cutout1-8nm-updown2x-no-overseg-x0/models/aff3_mye1/model300000.onnx"
+            ],
+            "size": 42520250,
+            "sha256": "0493be1d38f98236a4782404e616569b5838020a5a892de429d30a5372285860"
+          },
+          "provider": "auto",
+          "mode": "live",
+          "spacingZYX": [4.5e-8, 1.6e-8, 1.6e-8],
+          "precision": "float16",
+          "compatibilityFixes": false,
+          "overlap": true
+        }
+      },
+      "tab": "source",
+      "shader": "#uicontrol invlerp normalized\nvoid main() {\n  float r = toNormalized(getDataValue(0));\n  float g = toNormalized(getDataValue(1));\n  float b = toNormalized(getDataValue(2)); \n  emitRGB(vec3(r,g,b));\n}",
+      "channelDimensions": {
+        "c^": [1, ""]
+      },
+      "name": "mec_affinity"
+    }
+  ],
+  "showSlices": false,
+  "selectedLayer": {
+    "layer": "mec_affinity"
+  },
+  "layout": {
+    "type": "row",
+    "children": [
+      {
+        "type": "viewer",
+        "layers": ["mec"],
+        "layout": "xy"
+      },
+      {
+        "type": "viewer",
+        "layers": ["mec_affinity"],
+        "layout": "xy"
+      }
+    ]
+  },
+  "uiControlVisibility": {}
+}
