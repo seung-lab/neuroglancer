@@ -1432,3 +1432,74 @@ describe("real RPC and scheduler cancellation ordering controls", () => {
     },
   );
 });
+
+describe("native demand re-resolution before priority flush", () => {
+  it.each([false, true])(
+    "recovers a cached native chunk evicted before recompute (reused for another grid: %s)",
+    async (reuse) => {
+      const h = fixture();
+      h.source.spec.upperVoxelBound[0] = 12;
+      const { chunk } = await cacheNativeInWorker(h);
+      expect(chunk.priorityTier).toBe(ChunkPriorityTier.RECENT);
+      expect(chunk.state).toBe(ChunkState.SYSTEM_MEMORY_WORKER);
+      h.backendQueue.systemMemoryCapacity.itemLimit.value = 1;
+      const replacement = h.source.getChunk(Float32Array.of(1, 0, 0));
+      const disposeDemand = h.backendManager.recomputeChunkPriorities.add(
+        () => {
+          h.backendManager.requestChunk(
+            replacement,
+            ChunkPriorityTier.VISIBLE,
+            0,
+            ChunkState.SYSTEM_MEMORY_WORKER,
+          );
+        },
+      );
+      h.backendManager.recomputeChunkPriorities.dispatch();
+      h.backendManager.updateQueueState([
+        ChunkPriorityTier.VISIBLE,
+        ChunkPriorityTier.PREFETCH,
+      ]);
+
+      // This RPC captures the cached chunk before the older queue-processing
+      // timer evicts it and before its new demand reaches priority recomputation.
+      const waiting = h.fetch();
+      await h.deliver();
+      expect(waiting.state()).toBe("pending");
+      expect(h.listenerCount()).toBe(1);
+      h.backendQueue.process();
+      expect(chunk.source).toBeNull();
+      expect(h.source.chunks.has(KEY)).toBe(false);
+      if (reuse) {
+        const other = h.source.getChunk(Float32Array.of(2, 0, 0));
+        expect(other).toBe(chunk);
+        expect(other.key).toBe("2,0,0");
+      }
+
+      await h.tick();
+      const fresh = h.source.chunks.get(KEY)!;
+      expect(fresh.source).toBe(h.source);
+      expect(fresh.state).toBe(ChunkState.DOWNLOADING);
+      expect(h.source.downloads.map((download) => download.key)).toEqual([
+        KEY,
+        "1,0,0",
+        KEY,
+      ]);
+      if (reuse) {
+        expect(fresh).not.toBe(chunk);
+        expect(chunk.state).toBe(ChunkState.NEW);
+        expect(chunk.priorityTier).toBe(ChunkPriorityTier.RECENT);
+      }
+      h.source.downloads.at(-1)!.resolve();
+      await h.deliver();
+      h.frontendQueue.flushPendingChunkUpdates();
+      await h.deliver();
+      await expect(waiting.promise).resolves.toEqual(NATIVE_DATA);
+      expect(h.listenerCount()).toBe(0);
+      expect(h.source.chunks.get(KEY)).toBe(fresh);
+      disposeDemand();
+      await h.tick();
+      expect(h.demandCount()).toBe(0);
+      expect(Reflect.get(h.backendQueue, "numFailed")).toBe(0);
+    },
+  );
+});

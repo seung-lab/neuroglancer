@@ -549,8 +549,10 @@ registerPromiseRPC(
       let chunk = source.getChunk(x.chunkGridPosition);
       const key = chunk.key!;
       const disposeRecompute = chunkManager.recomputeChunkPriorities.add(() => {
+        // A cached RECENT chunk may be evicted or pooled before this runs.
+        // Resolve by grid on every update instead of retaining its identity.
         chunkManager.requestChunk(
-          chunk,
+          source.getChunk(x.chunkGridPosition),
           ChunkPriorityTier.VISIBLE,
           Number.POSITIVE_INFINITY,
           ChunkState.SYSTEM_MEMORY,
