@@ -607,6 +607,41 @@ describe("half-input-stride post-crop blending", () => {
     expect(weights[0]).toBe(0);
   });
 
+  it.each([NaN, Infinity, -Infinity])(
+    "rejects nonfinite predictions outside the ROI before any write (%s)",
+    (bad) => {
+      const roi: VoxelBox = { origin: [2, 10, 10], shape: [1, 1, 1] };
+      const tile: VoxelBox = { origin: [2, 10, 10], shape: [16, 60, 60] };
+      const data = new Float32Array(4).fill(-1);
+      const weights = new Float64Array(1);
+      const source = new Float32Array(4 * spatialSize).fill(7);
+      source[source.length - 1] = bad;
+      expect(() =>
+        blendCroppedTile(source, data, weights, geometry, roi, tile, patchMask),
+      ).toThrow("predictions must be finite");
+      expect([...data]).toEqual([-1, -1, -1, -1]);
+      expect(weights[0]).toBe(0);
+    },
+  );
+
+  it.each([0, -1, NaN, Infinity, -Infinity])(
+    "rejects invalid mask weights outside the ROI before any write (%s)",
+    (bad) => {
+      const roi: VoxelBox = { origin: [2, 10, 10], shape: [1, 1, 1] };
+      const tile: VoxelBox = { origin: [2, 10, 10], shape: [16, 60, 60] };
+      const data = new Float32Array(4).fill(-1);
+      const weights = new Float64Array(1);
+      const source = new Float32Array(4 * spatialSize).fill(7);
+      const invalid = patchMask.slice();
+      invalid[invalid.length - 1] = bad;
+      expect(() =>
+        blendCroppedTile(source, data, weights, geometry, roi, tile, invalid),
+      ).toThrow("finite and positive");
+      expect([...data]).toEqual([-1, -1, -1, -1]);
+      expect(weights[0]).toBe(0);
+    },
+  );
+
   it("validates mask geometry and supports degenerate bump ranges", () => {
     expect(() => makeWuPatchMask([0, 60, 60], [10, 40, 40])).toThrow("shape");
     expect(() => makeWuPatchMask([16, 60, 60], [10, 40.5, 40])).toThrow(

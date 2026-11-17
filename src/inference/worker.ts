@@ -120,8 +120,9 @@ async function handle(request: InferenceWorkerRequest) {
         ) {
           throw new Error("Runtime output does not match model NCDHW metadata");
         }
-        for (const value of raw.data) {
-          if (!Number.isFinite(value))
+        const rawData = raw.data;
+        for (let i = 0, len = rawData.length; i < len; ++i) {
+          if (!Number.isFinite(rawData[i]))
             throw new Error(
               "Model produced non-finite output; no result published",
             );

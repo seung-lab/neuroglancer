@@ -496,10 +496,15 @@ export function blendCroppedTile(
     patchMask.buffer === weights.buffer
   )
     throw new Error("Blending buffers must not alias");
-  if (!patchMask.every((weight) => Number.isFinite(weight) && weight > 0))
-    throw new Error("Blending mask weights must be finite and positive");
-  if (!croppedOutput.every(Number.isFinite))
-    throw new Error("Blending predictions must be finite");
+  for (let i = 0; i < patchMask.length; ++i) {
+    const weight = patchMask[i];
+    if (!Number.isFinite(weight) || weight <= 0)
+      throw new Error("Blending mask weights must be finite and positive");
+  }
+  for (let i = 0; i < croppedOutput.length; ++i) {
+    if (!Number.isFinite(croppedOutput[i]))
+      throw new Error("Blending predictions must be finite");
+  }
   const lower = outputRoi.origin.map((start, axis) =>
     Math.max(start, tileOutput.origin[axis]),
   );
@@ -511,23 +516,20 @@ export function blendCroppedTile(
   );
   if (lower.some((start, axis) => start >= upper[axis]))
     throw new Error("Blended tile does not intersect output ROI");
+  const [, r1, r2] = retained;
+  const [t0, t1, t2] = tileOutput.origin;
+  const [o0, o1, o2] = outputRoi.origin;
+  const [, s1, s2] = outputRoi.shape;
+  const channels = geometry.outputChannels;
   for (let z = lower[0]; z < upper[0]; ++z) {
+    const srcZ = (z - t0) * r1;
+    const dstZ = (z - o0) * s1;
     for (let y = lower[1]; y < upper[1]; ++y) {
+      const srcY = (srcZ + y - t1) * r2 - t2;
+      const dstY = (dstZ + y - o1) * s2 - o2;
       for (let x = lower[2]; x < upper[2]; ++x) {
-        const source =
-          ((z - tileOutput.origin[0]) * retained[1] +
-            y -
-            tileOutput.origin[1]) *
-            retained[2] +
-          x -
-          tileOutput.origin[2];
-        const target =
-          ((z - outputRoi.origin[0]) * outputRoi.shape[1] +
-            y -
-            outputRoi.origin[1]) *
-            outputRoi.shape[2] +
-          x -
-          outputRoi.origin[2];
+        const source = srcY + x;
+        const target = dstY + x;
         const previousWeight = weights[target];
         const weight = patchMask[source];
         const totalWeight = previousWeight + weight;
@@ -541,7 +543,7 @@ export function blendCroppedTile(
           );
         const fraction = weight / totalWeight;
         weights[target] = totalWeight;
-        for (let c = 0; c < geometry.outputChannels; ++c) {
+        for (let c = 0; c < channels; ++c) {
           const i = c * destinationVolume + target;
           const value = croppedOutput[c * sourceVolume + source];
           if (!Number.isFinite(destination[i]))
@@ -653,8 +655,10 @@ export function stitchCroppedTile(
   ) {
     throw new Error("Cropped output and destination must not alias");
   }
-  if (!croppedOutput.every(Number.isFinite))
-    throw new Error("Stitching predictions must be finite");
+  for (let i = 0; i < croppedOutput.length; ++i) {
+    if (!Number.isFinite(croppedOutput[i]))
+      throw new Error("Stitching predictions must be finite");
+  }
   const nx = upper[2] - lower[2];
   for (let c = 0; c < geometry.outputChannels; ++c) {
     for (let z = lower[0]; z < upper[0]; ++z) {
